@@ -217,6 +217,7 @@ interface SubPiece {
   rates: Set<string>;
   isVatOnly: boolean;
   isInvoiceScopeVat: boolean;
+  isTaxInclusiveVat: boolean;
   isBuyerOnly: boolean;
   isExplicitUnit: boolean;
   isExplicitQtyOnly: boolean;
@@ -252,8 +253,9 @@ const BARE_UNACCENTED_PRICE_PREFIX = /(?<![\p{L}])gia\s*(?:[:=]\s*)?$/iu;
 const COMPOUND_GIA_BEFORE = /(?<![\p{L}])(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+gia\s*$/iu;
 const DEAL_VALUE_PREFIX = /(?<![\p{L}])(?:giá\s+trị|gia\s+tri)\s*(?:[:=]\s*)?$/iu;
 const PRICE_PREFIX = /(?:(?<![\p{L}])(?:đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|unit\s+price|price)(?:\s+(?:bán|lẻ|sỉ|mới|cũ|chưa\s+thuế|chưa\s+vat|gồm\s+vat|sau\s+thuế|trước\s+thuế|dự\s+kiến|khoảng|tầm))?|@)\s*(?:[:=]\s*)?$/iu;
-const TAX_INCLUSIVE_BEFORE = /(?<![\p{L}])(?:đã\s+(?:bao\s+)?gồm|gồm|bao\s+gồm|sau|da\s+(?:bao\s+)?gom|gom|bao\s+gom|incl(?:uding)?\.?)\s+(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|tax)\s*$/iu;
+const TAX_INCLUSIVE_BEFORE = /(?:^|\s)((?:chưa|không|chua|khong|trước|truoc|not\s+including|excl(?:uding)?\.?)(?:\s+(?:tính|tinh))?\s+)?(?:đã\s+(?:bao\s+)?gồm|gồm|bao\s+gồm|sau|da\s+(?:bao\s+)?gom|gom|bao\s+gom|incl(?:uding)?\.?)\s+(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|tax)\s*$/iu;
 const TAX_INCLUSIVE_AFTER = /^\s*(?:đồng|dong|vnđ|vnd|đ|₫)?(?:\s*\/\s*(?:1\s+)?[\p{L}]+)?\s*(?:[,(-]\s*)?(?:đã\s+(?:bao\s+)?gồm|gồm|bao\s+gồm|sau|da\s+(?:bao\s+)?gom|gom|bao\s+gom|incl(?:uding)?\.?)\s+(?:(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:vat|gtgt|thuế|thue|tax))/iu;
+const TAX_INCLUSIVE_PIECE = /^\s*(?:đã\s+(?:bao\s+)?gồm|gồm|bao\s+gồm|sau|da\s+(?:bao\s+)?gom|gom|bao\s+gom|incl(?:uding)?\.?)\s+(?:(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:vat|gtgt|thuế|thue|tax))/iu;
 const DISCOUNT_PREFIX = /(?<![\p{L}])(?:giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết\s+khấu|chiet\s+khau|ck(?![\p{L}])|discount|off|trừ|bớt)\s*(?:[:=]\s*)?$/iu;
 const STANDALONE_DISCOUNT_HEADER = /^\s*(?:chiết\s+khấu|chiet\s+khau|giảm(?:\s+giá)?|giam(?:\s+gia)?|ck(?![\p{L}])|discount|off)\s*(?:[:=]\s*)?$/iu;
 const TAX_AMOUNT_PREFIX = /(?<![\p{L}])(?:tiền\s+thuế(?:\s+(?:gtgt|vat))?|tien\s+thue(?:\s+(?:gtgt|vat))?|thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|vat|gtgt)\s*(?:[:=]\s*)?$/iu;
@@ -542,7 +544,9 @@ function extractFigureTokens(body: string): FigureToken[] {
         role = 'total';
       }
     }
-    if (role === 'price' && (TAX_INCLUSIVE_BEFORE.test(before) || TAX_INCLUSIVE_AFTER.test(after))) {
+    const taxIncBeforeMatch = TAX_INCLUSIVE_BEFORE.exec(before);
+    const hasTaxIncBefore = taxIncBeforeMatch !== null && taxIncBeforeMatch[1] === undefined;
+    if (role === 'price' && (hasTaxIncBefore || TAX_INCLUSIVE_AFTER.test(after))) {
       // Price quoted tax-inclusive ("50k đã gồm 5% VAT") is not a pre-tax unit price.
       role = 'total';
     }
@@ -627,6 +631,7 @@ function summarizeSubPiece(rawText: string, afterConjunction = false): SubPiece 
   const scopedText = rates.size > 0 && tokens.length === 0 ? text.replace(INVOICE_VAT_SCOPE, ' ') : text;
   const { exact, hasProduct } = descriptionTokens(scopedText);
   const isInvoiceScopeVat = rates.size > 0 && tokens.length === 0 && !hasProduct && scopedText !== text;
+  const isTaxInclusiveVat = rates.size > 0 && tokens.length === 0 && TAX_INCLUSIVE_PIECE.test(text);
   const hasNonAttrProductWords = [...exact].some((t) => !UNIT_ONLY_EXACT.has(t) && !ATTRIBUTE_ONLY_EXACT.has(t));
   const isVatOnly = rates.size > 0 && tokens.length === 0;
   const isBuyerOnly = tokens.length === 0 && rates.size === 0 && BUYER_ONLY_PREFIX.test(text);
@@ -642,6 +647,7 @@ function summarizeSubPiece(rawText: string, afterConjunction = false): SubPiece 
     rates,
     isVatOnly,
     isInvoiceScopeVat,
+    isTaxInclusiveVat,
     isBuyerOnly,
     isExplicitUnit,
     isExplicitQtyOnly,
@@ -857,6 +863,7 @@ function splitSentenceSegments(body: string): RawSegment[] {
 type TableColRole = 'item' | 'unit' | 'qty' | 'price' | 'vat' | 'total' | 'discount' | 'note' | 'ignore';
 const TABLE_HEADER_ROLE: Record<string, TableColRole> = {
   stt: 'ignore', no: 'ignore', tt: 'ignore', '#': 'ignore',
+  ma: 'ignore', 'ma hang': 'ignore', 'ma sp': 'ignore', 'ma san pham': 'ignore', code: 'ignore', sku: 'ignore', barcode: 'ignore',
   'ten hang': 'item', 'ten hang hoa': 'item', 'ten san pham': 'item', 'ten sp': 'item', 'ten mat hang': 'item',
   'san pham': 'item', sp: 'item', 'mat hang': 'item', 'hang hoa': 'item', 'hang hoa dich vu': 'item',
   'dich vu': 'item', 'noi dung': 'item', 'dien giai': 'item', ten: 'item', 'mo ta': 'item',
@@ -873,46 +880,64 @@ const TABLE_HEADER_ROLE: Record<string, TableColRole> = {
 interface TableColSpec {
   role: TableColRole;
   scale: string | null;
+  unit: string | undefined;
 }
 
 const UNSUPPORTED_CELL_CURRENCY = /(?<![\p{L}])(?:usd|eur|gbp|jpy|cny|rmb|aud|cad|sgd|thb|krw|twd|hkd|myr)(?![\p{L}])|[$€£¥₩]/iu;
 const PLAIN_SCALED_PRICE_CELL = /^[\d.,\s]+(?:\s*\/\s*(?:1\s+)?[\p{L}]+)?$/u;
 
-function tableColumnScale(rawHeaderCell: string, role: TableColRole): string | null {
+function parseTableColSpec(rawHeaderCell: string, role: TableColRole): TableColSpec {
   const suffixMatch = /\(([^()]+)\)\s*$/u.exec(rawHeaderCell) ?? /\/\s*([\p{L}\d.,]+)\s*$/u.exec(rawHeaderCell);
   if (role === 'qty') {
-    if (!suffixMatch) return '1';
-    const norm = foldDiacritics(suffixMatch[1]!.toLowerCase()).replace(/\s+/gu, ' ').trim();
-    return /(?:^|\s)(?:k|nghin|ngan|tr|trieu|ty|\d+)(?:\s|$)/u.test(norm) ? null : '1';
+    if (!suffixMatch) return { role, scale: '1', unit: undefined };
+    const rawSuffix = suffixMatch[1]!.trim();
+    const norm = foldDiacritics(rawSuffix.toLowerCase()).replace(/\s+/gu, ' ').trim();
+    if (/(?:^|\s)(?:k|nghin|ngan|tr|trieu|ty|\d+)(?:\s|$)/u.test(norm)) {
+      return { role, scale: null, unit: undefined };
+    }
+    const unitWord = /^[\p{L}]+$/u.exec(rawSuffix)?.[0];
+    return { role, scale: '1', unit: unitWord };
   }
-  if (role !== 'price' && role !== 'total' && role !== 'discount') return '1';
-  if (!suffixMatch) return '1';
+  if (role !== 'price' && role !== 'total' && role !== 'discount') return { role, scale: '1', unit: undefined };
+  if (!suffixMatch) return { role, scale: '1', unit: undefined };
   const norm = foldDiacritics(suffixMatch[1]!.toLowerCase()).replace(/\s+/gu, ' ').trim();
-  if (/^(?:d|dong|vnd|1)$/u.test(norm)) return '1';
-  if (/^(?:k|nghin|ngan|nghin dong|ngan dong|1[.,]000(?:\s*(?:d|dong|vnd))?)$/u.test(norm)) return '1000';
-  if (/^(?:tr|trieu|trieu dong|1[.,]000[.,]000(?:\s*(?:d|dong|vnd))?)$/u.test(norm)) return '1000000';
-  if (/^(?:ty|ty dong)$/u.test(norm)) return '1000000000';
-  return null;
+  if (/^(?:d|dong|vnd|1)$/u.test(norm)) return { role, scale: '1', unit: undefined };
+  if (/^(?:k|nghin|ngan|nghin dong|ngan dong|1[.,]000(?:\s*(?:d|dong|vnd))?)$/u.test(norm)) return { role, scale: '1000', unit: undefined };
+  if (/^(?:tr|trieu|trieu dong|1[.,]000[.,]000(?:\s*(?:d|dong|vnd))?)$/u.test(norm)) return { role, scale: '1000000', unit: undefined };
+  if (/^(?:ty|ty dong)$/u.test(norm)) return { role, scale: '1000000000', unit: undefined };
+  return { role, scale: null, unit: undefined };
 }
 
 function detectTableHeader(cells: readonly string[]): TableColSpec[] | null {
   if (cells.length < 2) return null;
   const cols: TableColSpec[] = [];
   let recognized = 0;
-  let hasCoreAnchor = false;
+  let unknownCount = 0;
+  let hasItem = false;
+  let hasQty = false;
+  let hasPrice = false;
   for (const rawCell of cells) {
     const cleaned = foldDiacritics(rawCell).replace(/\([^)]*\)/gu, '').replace(/[:=?/]+/gu, ' ').replace(/\s+/gu, ' ').trim();
     if (cleaned === '') {
-      cols.push({ role: 'ignore', scale: '1' });
+      cols.push({ role: 'ignore', scale: '1', unit: undefined });
       continue;
     }
     if (/\d/u.test(cleaned)) return null;
     const role = TABLE_HEADER_ROLE[cleaned] ?? null;
-    if (role === null) return null;
-    cols.push({ role, scale: tableColumnScale(rawCell, role) });
+    if (role === null) {
+      unknownCount += 1;
+      if (unknownCount > 1) return null;
+      cols.push({ role: 'ignore', scale: '1', unit: undefined });
+      continue;
+    }
+    cols.push(parseTableColSpec(rawCell, role));
     recognized += 1;
-    if (role === 'item' || role === 'qty' || role === 'price') hasCoreAnchor = true;
+    if (role === 'item') hasItem = true;
+    else if (role === 'qty') hasQty = true;
+    else if (role === 'price') hasPrice = true;
   }
+  const hasCoreAnchor = hasItem || hasQty || hasPrice;
+  if (unknownCount > 0 && !(recognized >= 3 && hasItem && hasQty && hasPrice)) return null;
   return recognized >= 2 && hasCoreAnchor ? cols : null;
 }
 
@@ -940,7 +965,14 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
     } else if (col.role === 'qty' && /\d/u.test(cell) && col.scale !== null) {
       const qToks = extractFigureTokens(collapseGroupedSpaces(`số lượng ${cell}`));
       if (qToks.length === 1 && qToks[0]!.role === 'qty' && !qToks[0]!.embeddedInProduct && !qToks[0]!.packagingSpec) {
-        tokens.push(qToks[0]!);
+        const tok = qToks[0]!;
+        if (col.unit !== undefined) {
+          if (tok.countUnit !== undefined && canonUnit(tok.countUnit) !== canonUnit(col.unit)) continue;
+          explicitUnits.add(col.unit);
+          tokens.push({ ...tok, countUnit: tok.countUnit ?? col.unit });
+        } else {
+          tokens.push(tok);
+        }
       }
     } else if (col.role === 'price' && /\d/u.test(cell) && col.scale !== null) {
       if (UNSUPPORTED_CELL_CURRENCY.test(cell)) continue;
@@ -980,16 +1012,30 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
   };
 }
 
-function extractTableClauses(body: string): { tableClauses: SourceClause[]; remainingBody: string } {
-  if (!body.includes('\t')) return { tableClauses: [], remainingBody: body };
+type SourceBlock = { kind: 'table'; clauses: SourceClause[] } | { kind: 'prose'; text: string };
+
+function splitSourceBlocks(body: string): SourceBlock[] {
+  if (!body.includes('\t')) return [{ kind: 'prose', text: body }];
   const lines = body.split(/\r?\n/u);
-  const tableClauses: SourceClause[] = [];
-  const proseLines: string[] = [];
+  const blocks: SourceBlock[] = [];
+  let proseBuf: string[] = [];
   let activeCols: TableColSpec[] | null = null;
+  const flushProse = () => {
+    if (proseBuf.length > 0) {
+      blocks.push({ kind: 'prose', text: proseBuf.join('\n') });
+      proseBuf = [];
+    }
+  };
+  const pushTableClause = (clause: SourceClause) => {
+    flushProse();
+    const last = blocks[blocks.length - 1];
+    if (last !== undefined && last.kind === 'table') last.clauses.push(clause);
+    else blocks.push({ kind: 'table', clauses: [clause] });
+  };
   for (const line of lines) {
     if (!line.includes('\t')) {
       if (line.trim() !== '') activeCols = null;
-      proseLines.push(line);
+      proseBuf.push(line);
       continue;
     }
     const rawCells = line.split('\t').map((c) => c.trim());
@@ -998,210 +1044,248 @@ function extractTableClauses(body: string): { tableClauses: SourceClause[]; rema
     const header = detectTableHeader(trimmedHeaderCells);
     if (header !== null) {
       activeCols = header;
+      flushProse();
       continue;
     }
     if (activeCols === null || rawCells.length < 2) {
-      proseLines.push(line);
+      proseBuf.push(line);
       continue;
     }
     const clause = buildTableRowClause(rawCells, activeCols);
-    if (clause !== null) tableClauses.push(clause);
+    if (clause !== null) pushTableClause(clause);
   }
-  return { tableClauses, remainingBody: proseLines.join('\n') };
+  flushProse();
+  return blocks;
+}
+
+function markPricesTaxInclusive(clause: SourceClause): void {
+  for (const tok of clause.tokens) {
+    if (tok.role === 'price') tok.role = 'total';
+  }
+  clause.usable = clause.tokens.filter(isUsableToken);
 }
 
 function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRates: Set<string> } {
-  const { tableClauses, remainingBody } = extractTableClauses(readPlain(source));
-  const rawSegments = splitSentenceSegments(remainingBody);
-  const clauses: SourceClause[] = [...tableClauses];
+  const blocks = splitSourceBlocks(readPlain(source));
+  const clauses: SourceClause[] = [];
   const leadingShared = new Set<string>();
   const trailingShared = new Set<string>();
-  let anyItemSeen = tableClauses.length > 0;
-  let anyLocalVatSeen = tableClauses.some((c) => c.localRates.size > 0);
+  let anyItemSeen = false;
+  let anyLocalVatSeen = false;
   let prevWasDiscountHeader = false;
-  const isSingleSegment = rawSegments.length === 1 && tableClauses.length === 0;
+  const isSingleBlockDoc = blocks.length === 1;
 
-  for (let segIdx = 0; segIdx < rawSegments.length; segIdx += 1) {
-    const { text: seg, indentedAfterNewline } = rawSegments[segIdx]!;
-    const isBullet = /^\s*[-*•]/u.test(seg);
-    let bodySeg = seg.replace(/^\s*[-*•]\s*/u, '');
-    if (STANDALONE_DISCOUNT_HEADER.test(bodySeg)) {
-      prevWasDiscountHeader = true;
-      continue;
-    }
-    const afterDiscountHeader = prevWasDiscountHeader;
-    prevWasDiscountHeader = false;
-    const hasExplicitTaxCue = /(?<![\p{L}])(?:vat|gtgt|thuế|thue|không\s+chịu\s+thuế|khong\s+chiu\s+thue|kct|không\s+kê\s+khai|khong\s+ke\s+khai|kkknt)(?![\p{L}])/iu.test(seg);
-    const segPrefixRates = new Set<string>();
-    const colonMatch = COLON_PREAMBLE.exec(bodySeg);
-    if (colonMatch) {
-      const prefix = colonMatch[1]!.trim();
-      const prefixRates = ratesInBody(collapseGroupedSpaces(prefix));
-      const prefixWithoutScope = prefix.replace(INVOICE_VAT_SCOPE, ' ').replace(INVOICE_HEADER_SCOPE, ' ');
-      if (prefixRates.size > 0 && extractFigureTokens(collapseGroupedSpaces(prefix)).length === 0 && !descriptionTokens(prefixWithoutScope).hasProduct) {
-        if (isSingleSegment || (!anyItemSeen && segIdx === 0 && INVOICE_HEADER_SCOPE.test(prefix))) {
-          for (const r of prefixRates) leadingShared.add(r);
-        } else {
-          for (const r of prefixRates) segPrefixRates.add(r);
-        }
-        bodySeg = colonMatch[2]!.trim();
-      }
-    }
-    const pieces = splitSubPieces(bodySeg);
-    if (pieces.length === 0) continue;
-    if (
-      afterDiscountHeader &&
-      !hasExplicitTaxCue &&
-      pieces.every(
-        (p) => !p.hasProductWords && (p.isVatOnly || (p.tokens.length <= 1 && p.usable.every((t) => !t.labeledPrice && t.role !== 'qty'))),
-      )
-    ) {
-      continue;
-    }
-
-    // A standalone VAT-only line/segment: leading when before any item, trailing invoice-wide at the end when unindented and no item had a local rate, else bound to the immediately preceding item.
-    if (pieces.every((p) => p.isVatOnly && !p.hasProductWords) && !isBullet) {
-      const rates = pieces.flatMap((p) => [...p.rates]);
-      if (!anyItemSeen) {
-        for (const r of rates) leadingShared.add(r);
-        continue;
-      }
-      if (pieces.some((p) => p.isInvoiceScopeVat) || (segIdx === rawSegments.length - 1 && !anyLocalVatSeen && !indentedAfterNewline)) {
-        for (const r of rates) trailingShared.add(r);
-        continue;
-      }
-      const prevClause = clauses[clauses.length - 1];
-      if (prevClause && prevClause.localRates.size === 0) {
-        for (const r of rates) prevClause.localRates.add(r);
-        anyLocalVatSeen = true;
+  for (let blockIdx = 0; blockIdx < blocks.length; blockIdx += 1) {
+    const block = blocks[blockIdx]!;
+    if (block.kind === 'table') {
+      prevWasDiscountHeader = false;
+      for (const c of block.clauses) {
+        clauses.push(c);
+        anyItemSeen = true;
+        if (c.localRates.size > 0) anyLocalVatSeen = true;
       }
       continue;
     }
+    const rawSegments = splitSentenceSegments(block.text);
+    const isSingleSegment = isSingleBlockDoc && rawSegments.length === 1;
+    const isLastBlock = blockIdx === blocks.length - 1;
 
-    // Merge a non-bulleted continuation line of only labeled fields ("đơn giá 50k", "số lượng 10") into the previous prose item when that item lacks those fields.
-    if (!isBullet && segPrefixRates.size === 0 && clauses.length > 0 && !clauses[clauses.length - 1]!.lockedFromTable && pieces.some((p) => !p.isVatOnly)) {
-      let mergedClause = clauses[clauses.length - 1]!;
-      let canMergeAll = true;
-      for (const piece of pieces) {
-        if (!canContinuePieceOnNewLine(mergedClause, piece)) {
-          canMergeAll = false;
-          break;
-        }
-        mergedClause = appendToClause(mergedClause, piece);
-      }
-      if (canMergeAll) {
-        clauses[clauses.length - 1] = mergedClause;
-        if (mergedClause.localRates.size > 0) anyLocalVatSeen = true;
+    for (let segIdx = 0; segIdx < rawSegments.length; segIdx += 1) {
+      const { text: seg, indentedAfterNewline } = rawSegments[segIdx]!;
+      const isBullet = /^\s*[-*•]/u.test(seg);
+      let bodySeg = seg.replace(/^\s*[-*•]\s*/u, '');
+      if (STANDALONE_DISCOUNT_HEADER.test(bodySeg)) {
+        prevWasDiscountHeader = true;
         continue;
       }
-    }
-
-    const segClauses: SourceClause[] = [];
-    let cur: SourceClause | null = null;
-    for (let i = 0; i < pieces.length; i += 1) {
-      const piece = pieces[i]!;
-      if (piece.isVatOnly) {
-        if (piece.hasProductWords) {
-          // Product-named VAT clause ("sách VAT 5%") stays an item clause and never leaks into sharedRates.
-          if (cur === null) {
-            cur = buildClause(piece);
-          } else if (cur.usable.length === 0 && !descriptionTokens(cur.text).hasProduct) {
-            cur = appendToClause(cur, piece);
+      const afterDiscountHeader = prevWasDiscountHeader;
+      prevWasDiscountHeader = false;
+      const hasExplicitTaxCue = /(?<![\p{L}])(?:vat|gtgt|thuế|thue|không\s+chịu\s+thuế|khong\s+chiu\s+thue|kct|không\s+kê\s+khai|khong\s+ke\s+khai|kkknt)(?![\p{L}])/iu.test(seg);
+      const segPrefixRates = new Set<string>();
+      const colonMatch = COLON_PREAMBLE.exec(bodySeg);
+      if (colonMatch) {
+        const prefix = colonMatch[1]!.trim();
+        const prefixRates = ratesInBody(collapseGroupedSpaces(prefix));
+        const prefixWithoutScope = prefix.replace(INVOICE_VAT_SCOPE, ' ').replace(INVOICE_HEADER_SCOPE, ' ');
+        if (prefixRates.size > 0 && extractFigureTokens(collapseGroupedSpaces(prefix)).length === 0 && !descriptionTokens(prefixWithoutScope).hasProduct) {
+          if (isSingleSegment || (!anyItemSeen && segIdx === 0 && INVOICE_HEADER_SCOPE.test(prefix))) {
+            for (const r of prefixRates) leadingShared.add(r);
           } else {
-            segClauses.push(cur);
-            cur = buildClause(piece);
+            for (const r of prefixRates) segPrefixRates.add(r);
           }
+          bodySeg = colonMatch[2]!.trim();
+        }
+      }
+      const pieces = splitSubPieces(bodySeg);
+      if (pieces.length === 0) continue;
+      if (
+        afterDiscountHeader &&
+        !hasExplicitTaxCue &&
+        pieces.every(
+          (p) => !p.hasProductWords && (p.isVatOnly || (p.tokens.length <= 1 && p.usable.every((t) => !t.labeledPrice && t.role !== 'qty'))),
+        )
+      ) {
+        continue;
+      }
+
+      // A standalone VAT-only line/segment: leading when before any item, trailing invoice-wide at the end when unindented and no item had a local rate, else bound to the immediately preceding item.
+      if (pieces.every((p) => p.isVatOnly && !p.hasProductWords) && !isBullet) {
+        const rates = pieces.flatMap((p) => [...p.rates]);
+        const prevClause = clauses[clauses.length - 1];
+        if (pieces.some((p) => p.isTaxInclusiveVat) && prevClause) {
+          markPricesTaxInclusive(prevClause);
           anyLocalVatSeen = true;
           continue;
         }
-        if (cur === null && segClauses.length === 0 && !anyItemSeen && isSingleSegment && !isBullet) {
-          for (const r of piece.rates) leadingShared.add(r);
+        if (!anyItemSeen) {
+          for (const r of rates) leadingShared.add(r);
           continue;
         }
-        const isLastPiece = i === pieces.length - 1;
-        if (cur !== null && cur.usable.length > 0 && !isLastPiece) {
-          for (const r of piece.rates) cur.localRates.add(r);
+        if (pieces.some((p) => p.isInvoiceScopeVat) || (isLastBlock && segIdx === rawSegments.length - 1 && !anyLocalVatSeen && !indentedAfterNewline)) {
+          for (const r of rates) trailingShared.add(r);
+          continue;
+        }
+        if (prevClause && prevClause.localRates.size === 0) {
+          for (const r of rates) prevClause.localRates.add(r);
           anyLocalVatSeen = true;
+        }
+        continue;
+      }
+
+      // Merge a non-bulleted continuation line of only labeled fields ("đơn giá 50k", "số lượng 10") into the previous prose item when that item lacks those fields.
+      if (!isBullet && segPrefixRates.size === 0 && clauses.length > 0 && !clauses[clauses.length - 1]!.lockedFromTable && pieces.some((p) => !p.isVatOnly)) {
+        let mergedClause = clauses[clauses.length - 1]!;
+        let canMergeAll = true;
+        for (const piece of pieces) {
+          if (!canContinuePieceOnNewLine(mergedClause, piece)) {
+            canMergeAll = false;
+            break;
+          }
+          mergedClause = appendToClause(mergedClause, piece);
+        }
+        if (canMergeAll) {
+          clauses[clauses.length - 1] = mergedClause;
+          if (mergedClause.localRates.size > 0) anyLocalVatSeen = true;
           continue;
         }
-        const localVatSeen =
-          anyLocalVatSeen ||
-          segPrefixRates.size > 0 ||
-          segClauses.some((c) => c.localRates.size > 0) ||
-          (cur !== null && cur.localRates.size > 0);
-        if (isLastPiece && !isBullet && cur !== null && cur.localRates.size === 0 && (piece.isInvoiceScopeVat || (!localVatSeen && isSingleSegment))) {
-          for (const r of piece.rates) trailingShared.add(r);
-          continue;
-        }
-        if (cur !== null && (cur.usable.length > 0 || cur.localRates.size > 0)) {
-          for (const r of piece.rates) cur.localRates.add(r);
-          anyLocalVatSeen = true;
-        } else {
-          // Never attribute a leading VAT-only piece backwards across a segment/bullet boundary into a previous item.
-          const prev = segClauses[segClauses.length - 1];
-          if (prev) {
-            for (const r of piece.rates) prev.localRates.add(r);
+      }
+
+      const segClauses: SourceClause[] = [];
+      let cur: SourceClause | null = null;
+      for (let i = 0; i < pieces.length; i += 1) {
+        const piece = pieces[i]!;
+        if (piece.isVatOnly) {
+          if (piece.hasProductWords) {
+            // Product-named VAT clause ("sách VAT 5%") stays an item clause and never leaks into sharedRates.
+            if (cur === null) {
+              cur = buildClause(piece);
+            } else if (cur.usable.length === 0 && !descriptionTokens(cur.text).hasProduct) {
+              cur = appendToClause(cur, piece);
+            } else {
+              segClauses.push(cur);
+              cur = buildClause(piece);
+            }
             anyLocalVatSeen = true;
-          } else if (!anyItemSeen && isSingleSegment && !isBullet) {
-            for (const r of piece.rates) leadingShared.add(r);
-          } else {
-            for (const r of piece.rates) segPrefixRates.add(r);
+            continue;
           }
+          if (piece.isTaxInclusiveVat && cur !== null) {
+            markPricesTaxInclusive(cur);
+            anyLocalVatSeen = true;
+            continue;
+          }
+          if (piece.isInvoiceScopeVat && !isBullet) {
+            for (const r of piece.rates) trailingShared.add(r);
+            continue;
+          }
+          if (cur === null && segClauses.length === 0 && !anyItemSeen && isSingleSegment && !isBullet) {
+            for (const r of piece.rates) leadingShared.add(r);
+            continue;
+          }
+          const isLastPiece = i === pieces.length - 1;
+          if (cur !== null && cur.usable.length > 0 && !isLastPiece) {
+            for (const r of piece.rates) cur.localRates.add(r);
+            anyLocalVatSeen = true;
+            continue;
+          }
+          const localVatSeen =
+            anyLocalVatSeen ||
+            segPrefixRates.size > 0 ||
+            segClauses.some((c) => c.localRates.size > 0) ||
+            (cur !== null && cur.localRates.size > 0);
+          if (isLastPiece && isSingleSegment && !isBullet && !localVatSeen && cur !== null && cur.localRates.size === 0) {
+            for (const r of piece.rates) trailingShared.add(r);
+            continue;
+          }
+          if (cur !== null && (cur.usable.length > 0 || cur.localRates.size > 0)) {
+            for (const r of piece.rates) cur.localRates.add(r);
+            anyLocalVatSeen = true;
+          } else {
+            // Never attribute a leading VAT-only piece backwards across a segment/bullet boundary into a previous item.
+            const prev = segClauses[segClauses.length - 1];
+            if (prev) {
+              for (const r of piece.rates) prev.localRates.add(r);
+              anyLocalVatSeen = true;
+            } else if (!anyItemSeen && isSingleSegment && !isBullet) {
+              for (const r of piece.rates) leadingShared.add(r);
+            } else {
+              for (const r of piece.rates) segPrefixRates.add(r);
+            }
+          }
+          continue;
         }
-        continue;
+        if (cur === null) {
+          cur = buildClause(piece);
+        } else if (shouldMergePiece(cur, piece)) {
+          cur = appendToClause(cur, piece);
+        } else {
+          if (cur.usable.length > 0 || cur.localRates.size > 0 || descriptionTokens(cur.text).hasProduct) {
+            segClauses.push(cur);
+          }
+          cur = buildClause(piece);
+        }
       }
-      if (cur === null) {
-        cur = buildClause(piece);
-      } else if (shouldMergePiece(cur, piece)) {
-        cur = appendToClause(cur, piece);
-      } else {
+      if (cur !== null) {
         if (cur.usable.length > 0 || cur.localRates.size > 0 || descriptionTokens(cur.text).hasProduct) {
           segClauses.push(cur);
         }
-        cur = buildClause(piece);
       }
-    }
-    if (cur !== null) {
-      if (cur.usable.length > 0 || cur.localRates.size > 0 || descriptionTokens(cur.text).hasProduct) {
-        segClauses.push(cur);
-      }
-    }
-    const prevClause = clauses[clauses.length - 1];
-    if (
-      !isBullet &&
-      segPrefixRates.size === 0 &&
-      segClauses.length === 1 &&
-      prevClause &&
-      !prevClause.lockedFromTable &&
-      prevClause.usable.length === 1 &&
-      prevClause.usable[0]!.role === 'qty' &&
-      !descriptionTokens(prevClause.text).hasProduct &&
-      prevClause.localRates.size === 0
-    ) {
-      const nextClause = segClauses[0]!;
-      const hasExplicitUnitPrice = /(?<![\p{L}])(?:đơn\s+giá|don\s+gia|unit\s+price)(?![\p{L}])/iu.test(nextClause.plainText);
+      const prevClause = clauses[clauses.length - 1];
       if (
-        !nextClause.usable.some((t) => t.role === 'qty') &&
-        nextClause.usable.length <= 1 &&
-        (prevClause.usable[0]!.value === '1' || hasExplicitUnitPrice)
+        !isBullet &&
+        segPrefixRates.size === 0 &&
+        segClauses.length === 1 &&
+        prevClause &&
+        !prevClause.lockedFromTable &&
+        prevClause.usable.length === 1 &&
+        prevClause.usable[0]!.role === 'qty' &&
+        !descriptionTokens(prevClause.text).hasProduct &&
+        prevClause.localRates.size === 0
       ) {
-        clauses[clauses.length - 1] = makeClause(
-          `${prevClause.plainText}, ${nextClause.plainText}`,
-          new Set(nextClause.localRates),
-          nextClause.conjunctionParts,
-        );
-        if (nextClause.localRates.size > 0) anyLocalVatSeen = true;
+        const nextClause = segClauses[0]!;
+        const hasExplicitUnitPrice = /(?<![\p{L}])(?:đơn\s+giá|don\s+gia|unit\s+price)(?![\p{L}])/iu.test(nextClause.plainText);
+        if (
+          !nextClause.usable.some((t) => t.role === 'qty') &&
+          nextClause.usable.length <= 1 &&
+          (prevClause.usable[0]!.value === '1' || hasExplicitUnitPrice)
+        ) {
+          clauses[clauses.length - 1] = makeClause(
+            `${prevClause.plainText}, ${nextClause.plainText}`,
+            new Set(nextClause.localRates),
+            nextClause.conjunctionParts,
+          );
+          if (nextClause.localRates.size > 0) anyLocalVatSeen = true;
+          anyItemSeen = true;
+          continue;
+        }
+      }
+      for (const c of segClauses) {
+        if (segPrefixRates.size > 0 && c.localRates.size === 0) {
+          for (const r of segPrefixRates) c.localRates.add(r);
+        }
+        if (c.localRates.size > 0) anyLocalVatSeen = true;
+        clauses.push(c);
         anyItemSeen = true;
-        continue;
       }
-    }
-    for (const c of segClauses) {
-      if (segPrefixRates.size > 0 && c.localRates.size === 0) {
-        for (const r of segPrefixRates) c.localRates.add(r);
-      }
-      if (c.localRates.size > 0) anyLocalVatSeen = true;
-      clauses.push(c);
-      anyItemSeen = true;
     }
   }
 
