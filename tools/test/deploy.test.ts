@@ -369,6 +369,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   });
 
   it('refuses retired CROVE_* credentials without LUDY_* replacement before pulling images and blocks un-cut-over crove_db-data volumes (#3972)', () => {
+    const readEnv = () => readFileSync(`${dir}/.env`, 'utf8');
     const secretCtx = 'secret-context-token-do-not-print';
     const beforeCtx = `POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=${secretCtx}\n`;
     writeFileSync(`${dir}/.env`, beforeCtx);
@@ -376,7 +377,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(resCtx.status, resCtx.out).toBe(2);
     expect(resCtx.out).toContain('CROVE_CONTEXT_TOKEN_KEY->LUDY_CONTEXT_TOKEN_KEY');
     expect(resCtx.out).not.toContain(secretCtx);
-    expect(envFile()).toBe(beforeCtx);
+    expect(readEnv()).toBe(beforeCtx);
     expect(calls()).toEqual([]);
 
     const secretPw = 'secret-app-pw-do-not-print';
@@ -386,12 +387,13 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(resPw.status, resPw.out).toBe(2);
     expect(resPw.out).toContain('CROVE_APP_DB_PASSWORD->LUDY_APP_DB_PASSWORD');
     expect(resPw.out).not.toContain(secretPw);
-    expect(envFile()).toBe(beforePw);
+    expect(readEnv()).toBe(beforePw);
     expect(calls()).toEqual([]);
 
     // Having both legacy CROVE_* and non-empty LUDY_* replacement proceeds normally.
     writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=valid-key\nCROVE_APP_DB_PASSWORD=${secretPw}\nLUDY_APP_DB_PASSWORD=new-pw\n`);
     expect(deploy('v1.0.0', 'a').status).toBe(0);
+    writeFileSync(log, '');
 
     // Retired CROVE_MODULES without LUDY_MODULES must abort before pulling images.
     const beforeMod = `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=valid-key\nCROVE_MODULES=finance\n`;
@@ -399,7 +401,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     const resMod = deploy('v1.0.0', 'a');
     expect(resMod.status, resMod.out).toBe(2);
     expect(resMod.out).toContain('CROVE_MODULES->LUDY_MODULES');
-    expect(envFile()).toBe(beforeMod);
+    expect(readEnv()).toBe(beforeMod);
     expect(calls()).toEqual([]);
 
     // Unrelated crove_db-data on the Docker host when this directory has no prior compose stack must NOT block a fresh deploy.
@@ -463,7 +465,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       STUB_POPULATED_MOUNTS: 'crove_files',
     });
     expect(missingFiles.status, missingFiles.out).toBe(1);
-    expect(missingFiles.out).toContain('found non-empty prior /data/files storage crove_files while destination ludy_files is missing or empty');
+    expect(missingFiles.out).toContain('found non-empty prior /data/files storage crove_files while destination ludy_files does not contain all migrated data');
 
     const emptyKeys = deploy('v1.0.1', 'b', {
       STUB_VOLUMES: 'crove_db-data ludy_db-data crove_keys ludy_keys',
@@ -471,7 +473,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       STUB_POPULATED_MOUNTS: 'crove_keys',
     });
     expect(emptyKeys.status, emptyKeys.out).toBe(1);
-    expect(emptyKeys.out).toContain('found non-empty prior /data/keys storage crove_keys while destination ludy_keys is missing or empty');
+    expect(emptyKeys.out).toContain('found non-empty prior /data/keys storage crove_keys while destination ludy_keys does not contain all migrated data');
 
     // Custom db volume configured on db service is checked rather than hardcoded ludy_db-data.
     const customVolMismatch = deploy('v1.0.1', 'b', {
@@ -523,23 +525,79 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(upgrade.status, upgrade.out).toBe(0);
   });
 
-  it('refuses switching project when another project running container holds shared db storage (#3972)', () => {
+  it('refuses project switch when another container holds shared or prior db storage, or when docker inspection fails (#3972)', () => {
     writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
-    const blocked = deploy('v1.0.0', 'a', {
+    const sharedHeld = deploy('v1.0.0', 'a', {
       STUB_NEW_DB_VOLUME: 'crove_db-data',
       STUB_RUNNING_CONTAINERS: 'crove-db-1',
       STUB_INSPECT_MOUNTS: 'crove-db-1|crove|volume|crove_db-data|',
     });
-    expect(blocked.status, blocked.out).toBe(1);
-    expect(blocked.out).toContain('still mounted by a running container outside project ludy');
+    expect(sharedHeld.status, sharedHeld.out).toBe(1);
+    expect(sharedHeld.out).toContain('still mounted by a running container outside project ludy');
     expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toContain('name: crove');
     expect(existsSync(`${dir}/.deploy/current`)).toBe(false);
     expect(calls().some((l) => l.startsWith('compose up '))).toBe(false);
+
+    // Running container still holding prior crove_db-data while switching to ludy_db-data is refused even with equal cluster IDs.
+    const sourceHeld = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=99 ludy_db-data=99',
+      STUB_RUNNING_CONTAINERS: 'crove-db-1',
+      STUB_INSPECT_MOUNTS: 'crove-db-1|crove|volume|crove_db-data|',
+    });
+    expect(sourceHeld.status, sourceHeld.out).toBe(1);
+    expect(sourceHeld.out).toContain('prior database storage crove_db-data is still mounted by a running container');
+
+    // Docker ps / inspect failures fail closed instead of looking like free storage.
+    const psFail = deploy('v1.0.0', 'a', { STUB_PS_FAIL: '1' });
+    expect(psFail.status, psFail.out).toBe(1);
+    expect(psFail.out).toContain('cannot inspect existing Docker containers');
+
+    const inspectFail = deploy('v1.0.0', 'a', {
+      STUB_RUNNING_CONTAINERS: 'crove-db-1',
+      STUB_INSPECT_FAIL: '1',
+    });
+    expect(inspectFail.status, inspectFail.out).toBe(1);
+    expect(inspectFail.out).toContain('cannot inspect running containers to verify database storage');
   });
 
-  it('requires recursive file parity for /data/files and strict byte parity for /data/keys (#3972)', () => {
-    writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+  it('detects prior project even if .env was already switched to ludy, and verifies stale PG / full recursive parity (#3972)', () => {
+    // 1) After deploying under crove, switching .env to ludy without cutting over still catches crove_db-data via .deploy/project.
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=crove\n');
+    const firstCrove = deploy('v1.0.0', 'a');
+    expect(firstCrove.status, firstCrove.out).toBe(0);
+    expect(readFileSync(`${dir}/.deploy/project`, 'utf8').trim()).toBe('crove');
 
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=ludy\n');
+    const blockedViaState = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1',
+    });
+    expect(blockedViaState.status, blockedViaState.out).toBe(1);
+    expect(blockedViaState.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    // 2) Without .deploy state, a running or stopped container labeled for $dir still catches crove_db-data.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+    const blockedViaContainer = deploy('v1.0.0', 'a', {
+      STUB_WORKDIR_CONTAINERS: `${dir}|db|crove-db-1`,
+      STUB_INSPECT_MOUNTS: 'crove-db-1|crove|volume|crove_db-data|',
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1',
+    });
+    expect(blockedViaContainer.status, blockedViaContainer.out).toBe(1);
+    expect(blockedViaContainer.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    // 3) Stale pg_control / pg_wal or postmaster.pid fails PG cluster parity even when system_identifier matches.
+    const stalePg = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=99 ludy_db-data=99',
+      STUB_PG_STALE_MOUNTS: 'ludy_db-data',
+    });
+    expect(stalePg.status, stalePg.out).toBe(1);
+    expect(stalePg.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    // 4) Incomplete /data/files or /data/keys parity fails without passing invalid CLI flags (e.g. --strict) to node -e.
     const partialFiles = deploy('v1.0.0', 'a', {
       STUB_PG_CLUSTER_IDS: 'crove_db-data=99 ludy_db-data=99',
       STUB_VOLUMES: 'crove_db-data ludy_db-data crove_files ludy_files',
@@ -554,7 +612,6 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       STUB_VOLUMES: 'crove_db-data ludy_db-data crove_keys ludy_keys',
       STUB_POPULATED_MOUNTS: 'crove_keys ludy_keys',
       STUB_PARTIAL_MOUNTS: 'ludy_keys',
-      STUB_REQUIRE_STRICT_MOUNTS: 'ludy_keys',
     });
     expect(partialKeys.status, partialKeys.out).toBe(1);
     expect(partialKeys.out).toContain('does not contain all migrated data');
@@ -563,9 +620,10 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       STUB_PG_CLUSTER_IDS: 'crove_db-data=99 ludy_db-data=99',
       STUB_VOLUMES: 'crove_db-data ludy_db-data crove_keys ludy_keys',
       STUB_POPULATED_MOUNTS: 'crove_keys ludy_keys',
-      STUB_REQUIRE_STRICT_MOUNTS: 'ludy_keys',
     });
     expect(okKeys.status, okKeys.out).toBe(0);
+    expect(readFileSync(`${log}.volumes`, 'utf8')).not.toContain(' --strict');
+    expect(readFileSync(`${dir}/.deploy/project`, 'utf8').trim()).toBe('ludy');
   });
 
   describe('build check', () => {

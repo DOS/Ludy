@@ -877,8 +877,14 @@ do_cutover_stack() {
     live_wal_img="$(docker inspect --format '{{.Config.Image}}' "$db_cid" 2>/dev/null | tr -d '\r\n')"
     live_wal_stanza="$(dc_proj "$proj" exec -T db printenv PGBACKREST_STANZA 2>/dev/null | tr -d '\r\n' || true)"
     live_repo1_path="$(dc_proj "$proj" exec -T db printenv PGBACKREST_REPO1_PATH 2>/dev/null | tr -d '\r\n' || true)"
-    if [[ "$live_repo1_path" =~ ^/([^/]+)/wal/?$ ]]; then
-      live_s3_prefix="${BASH_REMATCH[1]}"
+    local cand_prefix=''
+    case "$live_repo1_path" in
+      /*/wal) cand_prefix="${live_repo1_path#/}"; cand_prefix="${cand_prefix%/wal}" ;;
+      /*/wal/) cand_prefix="${live_repo1_path#/}"; cand_prefix="${cand_prefix%/wal/}" ;;
+    esac
+    if [[ "$cand_prefix" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] \
+      && [[ "/$cand_prefix/" != */./* ]] && [[ "/$cand_prefix/" != */../* ]]; then
+      live_s3_prefix="$cand_prefix"
     fi
     if [ -z "$live_wal_img" ] || [ -z "$live_wal_stanza" ] || [ -z "$live_s3_prefix" ]; then
       die "$EXIT_FAILED" "cannot inspect active WAL configuration on running db container ($proj): image='${live_wal_img}', PGBACKREST_STANZA='${live_wal_stanza}', PGBACKREST_REPO1_PATH='${live_repo1_path}'"
@@ -1045,6 +1051,7 @@ do_cutover_stack() {
     dc_proj ludy restart caddy
   fi
 
+  (umask 077 && mkdir -p "$(state_dir)" && printf 'ludy\n' >"$(state_dir)/project.tmp" && mv -f "$(state_dir)/project.tmp" "$(state_dir)/project")
   ROLLBACK_ARMED=0
   log "cutover-stack SUCCEEDED: project=ludy running cleanly; old ${proj}_* volumes retained until prune-old-volumes"
 }

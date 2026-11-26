@@ -33,7 +33,8 @@ if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
   exit 0
 fi
 if [ "${1:-}" = ps ]; then
-  proj='' svc='' status_filter=''
+  [ -z "${STUB_PS_FAIL:-}" ] || exit 1
+  proj='' svc='' status_filter='' wdir_filter='' id_filter=''
   shift
   while (($# > 0)); do
     case "$1" in
@@ -41,13 +42,34 @@ if [ "${1:-}" = ps ]; then
         case "$2" in
           label=com.docker.compose.project=*) proj="${2#label=com.docker.compose.project=}" ;;
           label=com.docker.compose.service=*) svc="${2#label=com.docker.compose.service=}" ;;
+          label=com.docker.compose.project.working_dir=*) wdir_filter="${2#label=com.docker.compose.project.working_dir=}" ;;
           status=*) status_filter="${2#status=}" ;;
+          id=*) id_filter="${2#id=}" ;;
         esac
         shift 2
         ;;
       *) shift ;;
     esac
   done
+  if [ -n "$wdir_filter" ]; then
+    for item in ${STUB_WORKDIR_CONTAINERS:-}; do
+      IFS='|' read -r iw isvc icid <<<"$item"
+      [ "$iw" = "$wdir_filter" ] || continue
+      if [ -n "$svc" ] && [ "$isvc" != "$svc" ]; then continue; fi
+      printf '%s\n' "$icid"
+    done
+    exit 0
+  fi
+  if [ -n "$id_filter" ]; then
+    for item in ${STUB_RUNNING_CONTAINERS:-}; do
+      if [ "$item" = "$id_filter" ]; then printf '%s\n' "$item"; exit 0; fi
+    done
+    for item in ${STUB_WORKDIR_CONTAINERS:-}; do
+      IFS='|' read -r _ _ icid <<<"$item"
+      if [ "$icid" = "$id_filter" ]; then printf '%s\n' "$icid"; exit 0; fi
+    done
+    exit 0
+  fi
   if [ "$status_filter" = running ]; then
     for item in ${STUB_RUNNING_CONTAINERS:-}; do printf '%s\n' "$item"; done
     exit 0
@@ -109,6 +131,7 @@ if [ "${1:-}" = volume ] && [ "${2:-}" = inspect ]; then
 fi
 if [ "${1:-}" = run ]; then
   printf 'docker %s\n' "$*" >>"$STUB_LOG.volumes"
+  raw_args="$*"
   vols=()
   shift
   while (($# > 0)); do
@@ -143,9 +166,12 @@ if [ "${1:-}" = run ]; then
     done
     return 1
   }
-  if [[ "$*" == *pg_control* ]]; then
+  if [[ "$raw_args" == *pg_control* ]]; then
     ((${#vols[@]} >= 2)) || exit 1
     if ! stub_is_populated "${vols[0]}"; then exit 0; fi
+    for m in ${STUB_PG_PID_MOUNTS:-} ${STUB_PG_STALE_MOUNTS:-}; do
+      if [ "$m" = "${vols[0]}" ] || [ "$m" = "${vols[1]}" ]; then exit 1; fi
+    done
     c0="$(stub_cluster_id "${vols[0]}" || true)"
     c1="$(stub_cluster_id "${vols[1]}" || true)"
     if [ -n "$c0" ] && [ "$c0" = "$c1" ]; then exit 0; fi
@@ -154,13 +180,10 @@ if [ "${1:-}" = run ]; then
   if ! stub_is_populated "${vols[0]}"; then exit 0; fi
   ((${#vols[@]} >= 2)) || exit 1
   if ! stub_is_populated "${vols[1]}"; then exit 1; fi
-  if [[ "$*" == *lstatSync* ]]; then
+  if [[ "$raw_args" == *lstatSync* ]] && [[ "$raw_args" == *readExact* ]]; then
     local_m=''
     for local_m in ${STUB_PARTIAL_MOUNTS:-}; do
       if [ "$local_m" = "${vols[1]}" ]; then exit 1; fi
-    done
-    for local_m in ${STUB_REQUIRE_STRICT_MOUNTS:-}; do
-      if [ "$local_m" = "${vols[1]}" ] && [[ " $* " != *" --strict "* ]]; then exit 1; fi
     done
   fi
   exit 0
@@ -178,8 +201,13 @@ fi
 # Skip the global options deploy.sh passes before the subcommand.
 files=()
 envfile=''
+proj_override=''
 while (($# > 0)); do
   case "$1" in
+    -p | --project-name)
+      proj_override="$2"
+      shift 2
+      ;;
     --env-file)
       envfile="$2"
       shift 2
@@ -237,7 +265,7 @@ case "$sub" in
       elif [ -n "${STUB_COMPOSE_PROJECT:-}" ]; then
         emit_stub_compose_config "$STUB_COMPOSE_PROJECT"
       else
-        proj="${COMPOSE_PROJECT_NAME:-}"
+        proj="${proj_override:-${COMPOSE_PROJECT_NAME:-}}"
         if [ -z "$proj" ] && [ -n "$envfile" ] && [ -f "$envfile" ]; then
           proj="$(sed -n -E 's/^[[:space:]]*(export[[:space:]]+)?COMPOSE_PROJECT_NAME[[:space:]]*[=:][[:space:]]*(.*)$/\2/p' "$envfile" | tail -n 1)"
           proj="${proj%$'\r'}"

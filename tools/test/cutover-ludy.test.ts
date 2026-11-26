@@ -191,13 +191,18 @@ function createCutoverFixture(): StubFixture {
     [
       '#!/usr/bin/env bash',
       'set -euo pipefail',
+      'eff_stanza="${WAL_STANZA:-}"',
+      'if [ -z "$eff_stanza" ] && [ -n "${LUDY_ENV_FILE:-}" ] && [ -f "$LUDY_ENV_FILE" ]; then',
+      "  eff_stanza=\"$(sed -n -E 's/\\r$//; s/^[[:space:]]*(export[[:space:]]+)?WAL_STANZA[[:space:]]*=[[:space:]]*//p' \"$LUDY_ENV_FILE\" | tail -n 1 | sed -E 's/[[:space:]]+#.*$//' | tr -d ' \\047\"')\"",
+      'fi',
+      'eff_stanza="${eff_stanza:-ludy}"',
       'if [ -n "${STUB_LOG_WAL_STANZA:-}" ]; then',
-      '  printf "wal.sh %s WAL_STANZA=%s\\n" "$*" "${WAL_STANZA:-}" >>"$STUB_LOG"',
+      '  printf "wal.sh %s WAL_STANZA=%s\\n" "$*" "$eff_stanza" >>"$STUB_LOG"',
       'else',
       '  printf "wal.sh %s\\n" "$*" >>"$STUB_LOG"',
       'fi',
       'if [ "${1:-}" = info ]; then printf "%b\\n" "${STUB_WAL_INFO:-stanza: ludy\\nstatus: ok\\nfull backup: 20261124-000000F}"; fi',
-      'if [ "${1:-}" = check ] && [ -n "${STUB_FAIL_WAL_CHECK_STANZA:-}" ] && [ "${WAL_STANZA:-}" = "$STUB_FAIL_WAL_CHECK_STANZA" ]; then',
+      'if [ "${1:-}" = check ] && [ -n "${STUB_FAIL_WAL_CHECK_STANZA:-}" ] && [ "$eff_stanza" = "$STUB_FAIL_WAL_CHECK_STANZA" ]; then',
       '  exit 1',
       'fi',
       'exit 0',
@@ -547,20 +552,21 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
   it('cutover-stack captures live db WAL configuration over .env defaults and aborts before stopping if unreadable (#3972)', { timeout: 15000 }, () => {
     const f = createCutoverFixture();
     writeFileSync(join(f.deployDir, 'compose.wal.yml'), 'services:\n  db:\n    image: ${WAL_DB_IMAGE:-ludy-db:local}\n');
-    const res = runCutover(['cutover-stack', '--dir', f.deployDir, '--overlay-dir', f.overlayDir], {
+    const res = runWithStubs(f, ['cutover-stack', '--dir', f.deployDir, '--overlay-dir', f.overlayDir], {
       STUB_DB_IMAGE: 'custom-pg:17',
       STUB_PRE_WAL_STANZA: 'custom_stanza',
-      STUB_PRE_WAL_REPO1_PATH: '/custom-prefix/wal/',
+      STUB_PRE_WAL_REPO1_PATH: '/pilot/finance/wal/',
     });
     expect(res.status, res.stderr + res.stdout).toBe(0);
     const updatedEnv = readFileSync(join(f.deployDir, '.env'), 'utf8');
     expect(updatedEnv).toContain('WAL_DB_IMAGE=custom-pg:17');
     expect(updatedEnv).toContain('WAL_STANZA=custom_stanza');
-    expect(updatedEnv).toContain('BACKUP_S3_PREFIX=custom-prefix');
+    expect(updatedEnv).toContain('BACKUP_S3_PREFIX=pilot/finance');
+    expect(readFileSync(join(f.deployDir, '.deploy', 'project'), 'utf8').trim()).toBe('ludy');
 
     const fBad = createCutoverFixture();
     writeFileSync(join(fBad.deployDir, 'compose.wal.yml'), 'services:\n  db:\n    image: ${WAL_DB_IMAGE:-ludy-db:local}\n');
-    const failRes = runCutover(['cutover-stack', '--dir', fBad.deployDir, '--overlay-dir', fBad.overlayDir], {
+    const failRes = runWithStubs(fBad, ['cutover-stack', '--dir', fBad.deployDir, '--overlay-dir', fBad.overlayDir], {
       STUB_PRE_WAL_STANZA: '',
     });
     expect(failRes.status).toBe(1);
@@ -662,6 +668,7 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     );
     expect(resWalRollback.status).not.toBe(0);
     const walStubLog = readFileSync(fWalRollback.stubLog, 'utf8');
+    expect(walStubLog).toContain('wal.sh check WAL_STANZA=ludy');
     expect(walStubLog).toContain('wal.sh setup WAL_STANZA=crove');
     expect(walStubLog).toContain('wal.sh check WAL_STANZA=crove');
   });

@@ -716,16 +716,18 @@ dc() {
 
 # Resolves the pre-deploy host Compose config (if $DEPLOY_DIR/docker-compose.yml already exists before activate),
 # passing only Compose files that currently exist on disk (supporting manual checkouts without docker-compose.override.yml).
+# Optional $1 overrides the Compose project name (-p) when inspecting an earlier stack after .env changed.
 dc_prev_config() {
+  local proj_override="${1:-}"
   [ -f "$DEPLOY_DIR/docker-compose.yml" ] || return 1
-  local args=(compose --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml")
+  local args=(compose)
+  if [ -n "$proj_override" ]; then args+=(-p "$proj_override"); fi
+  args+=(--project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml")
   local resolved_pilot='' resolved_wal='' pilot_rc=0 wal_rc=0
   if pilot_layout; then
     resolved_pilot="$(resolve_compose_overlay compose.pilot.yml fallback)" || pilot_rc=$?
     if ((pilot_rc == 0)) && [ -n "$resolved_pilot" ]; then
       args+=(-f "$resolved_pilot")
-    elif ((pilot_rc == 2)); then
-      return 1
     fi
   fi
   if [ -f "$DEPLOY_DIR/docker-compose.override.yml" ]; then args+=(-f "$DEPLOY_DIR/docker-compose.override.yml"); fi
@@ -739,9 +741,41 @@ dc_prev_config() {
   ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker "${args[@]}" config 2>/dev/null
 }
 
+# Detects the previous Compose project belonging to $DEPLOY_DIR from existing Docker containers (whose labels capture
+# the project that actually created them, even if .env was already edited to ludy) or saved state_dir/project (#3972).
+# Prints project name (possibly empty on fresh checkout) and returns 0, or returns 1 if Docker inspection fails.
+detect_prev_project() {
+  local wdir canon_dir ps_out cid c_proj still_exists
+  local -a dirs=("$DEPLOY_DIR")
+  canon_dir="$(cd -P "$DEPLOY_DIR" 2>/dev/null && pwd -P || true)"
+  if [ -n "$canon_dir" ] && [ "$canon_dir" != "$DEPLOY_DIR" ]; then
+    dirs+=("$canon_dir")
+  fi
+  for wdir in "${dirs[@]}"; do
+    ps_out="$(docker ps -a -q --filter "label=com.docker.compose.project.working_dir=$wdir" --filter 'label=com.docker.compose.service=db' 2>/dev/null)" || return 1
+    cid="$(printf '%s\n' "$ps_out" | head -n 1)"
+    if [ -z "$cid" ]; then
+      ps_out="$(docker ps -a -q --filter "label=com.docker.compose.project.working_dir=$wdir" 2>/dev/null)" || return 1
+      cid="$(printf '%s\n' "$ps_out" | head -n 1)"
+    fi
+    if [ -n "$cid" ]; then
+      if ! c_proj="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$cid" 2>/dev/null)"; then
+        still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 1
+        [ -z "$still_exists" ] || return 1
+        continue
+      fi
+      if [ -n "$c_proj" ]; then
+        printf '%s' "$c_proj"
+        return 0
+      fi
+    fi
+  done
+  read_state project
+}
+
 # Inspects existing Compose config with prior release images exported in this call only (#3972).
 dc_prev_config_for_release() {
-  local current_rel="$1" prev_img prev_ext prev_med
+  local current_rel="$1" proj_override="${2:-}" prev_img prev_ext prev_med
   if [ -n "$current_rel" ] && [ -f "$DEPLOY_DIR/releases/$current_rel/release.env" ]; then
     prev_img="$(release_field "$current_rel" IMAGE || true)"
     prev_ext="$(release_field "$current_rel" EXTRACT_IMAGE || true)"
@@ -750,7 +784,7 @@ dc_prev_config_for_release() {
     if [ -n "$prev_ext" ]; then export LUDY_EXTRACT_IMAGE="$prev_ext" CROVE_EXTRACT_IMAGE="$prev_ext"; fi
     if [ -n "$prev_med" ]; then export LUDY_MEDIA_IMAGE="$prev_med" CROVE_MEDIA_IMAGE="$prev_med"; fi
   fi
-  dc_prev_config
+  dc_prev_config "$proj_override"
 }
 
 # Image pins of a release. The images are exported too, so compose.host.yml can use ${LUDY_IMAGE} for services it
@@ -1112,9 +1146,73 @@ mount_label() {
   mount_docker_source "$1"
 }
 
-# Returns 0 if source mount has no PG data OR destination mount holds the exact same PostgreSQL Database system identifier.
+# Emits shared Node helpers verifying exact directory, symlink, and streaming 64 KiB file-content parity (#3972).
+node_tree_parity_js() {
+  cat <<'EOF'
+const fs = require("node:fs");
+const path = require("node:path");
+function readExact(fd, buf, len, pos) {
+  let off = 0;
+  while (off < len) {
+    const n = fs.readSync(fd, buf, off, len - off, pos + off);
+    if (n <= 0) return false;
+    off += n;
+  }
+  return true;
+}
+function filesEqual(a, b, size) {
+  if (size === 0) return true;
+  const fdA = fs.openSync(a, "r");
+  const fdB = fs.openSync(b, "r");
+  try {
+    const bufA = Buffer.allocUnsafe(Math.min(size, 65536));
+    const bufB = Buffer.allocUnsafe(bufA.length);
+    let pos = 0;
+    while (pos < size) {
+      const toRead = Math.min(bufA.length, size - pos);
+      if (!readExact(fdA, bufA, toRead, pos) || !readExact(fdB, bufB, toRead, pos)) return false;
+      if (!bufA.subarray(0, toRead).equals(bufB.subarray(0, toRead))) return false;
+      pos += toRead;
+    }
+    return true;
+  } finally {
+    fs.closeSync(fdA);
+    fs.closeSync(fdB);
+  }
+}
+function checkTree(srcRoot, dstRoot, rel) {
+  const srcPath = rel ? path.join(srcRoot, rel) : srcRoot;
+  const entries = fs.readdirSync(srcPath, { withFileTypes: true });
+  for (const ent of entries) {
+    const childRel = rel ? path.join(rel, ent.name) : ent.name;
+    const s = path.join(srcRoot, childRel);
+    const d = path.join(dstRoot, childRel);
+    let ss, ds;
+    try {
+      ss = fs.lstatSync(s);
+      ds = fs.lstatSync(d);
+    } catch {
+      return false;
+    }
+    if (ss.isDirectory()) {
+      if (!ds.isDirectory() || !checkTree(srcRoot, dstRoot, childRel)) return false;
+    } else if (ss.isSymbolicLink()) {
+      if (!ds.isSymbolicLink() || fs.readlinkSync(s) !== fs.readlinkSync(d)) return false;
+    } else if (ss.isFile()) {
+      if (!ds.isFile() || ss.size !== ds.size || !filesEqual(s, d, ss.size)) return false;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+EOF
+}
+
+# Returns 0 if source mount has no PG data OR destination mount holds an exact cleanly-stopped copy
+# (no postmaster.pid, matching PG_VERSION, full global/pg_control equality, and recursive pg_wal parity).
 mounts_match_pg_cluster() {
-  local src_spec="$1" dst_spec="$2" probe_image="$3" src_m dst_m
+  local src_spec="$1" dst_spec="$2" probe_image="$3" src_m dst_m js
   mount_exists "$src_spec" || return 0
   src_m="$(mount_docker_source "$src_spec")"
   if ! mount_exists "$dst_spec"; then
@@ -1127,28 +1225,38 @@ mounts_match_pg_cluster() {
     return $?
   fi
   dst_m="$(mount_docker_source "$dst_spec")"
+  js="$(node_tree_parity_js)"
+  js+=$'\nif (fs.readdirSync("/src").length === 0) process.exit(0);\n'
+  js+=$'if (fs.existsSync("/src/postmaster.pid") || fs.existsSync("/dst/postmaster.pid")) process.exit(1);\n'
+  js+=$'for (const d of ["/src", "/dst"]) {\n  if (!fs.existsSync(d + "/PG_VERSION") || !fs.existsSync(d + "/global/pg_control")) process.exit(1);\n}\n'
+  js+=$'if (!fs.readFileSync("/src/PG_VERSION").equals(fs.readFileSync("/dst/PG_VERSION"))) process.exit(1);\n'
+  js+=$'const a = fs.readFileSync("/src/global/pg_control");\n'
+  js+=$'const b = fs.readFileSync("/dst/global/pg_control");\n'
+  js+=$'if (a.length < 8 || a.subarray(0, 8).every((x) => x === 0) || !a.equals(b)) process.exit(1);\n'
+  js+=$'if (fs.existsSync("/src/pg_wal")) {\n'
+  js+=$'  let sw, dw;\n'
+  js+=$'  try { sw = fs.lstatSync("/src/pg_wal"); dw = fs.lstatSync("/dst/pg_wal"); } catch { process.exit(1); }\n'
+  js+=$'  if (sw.isSymbolicLink()) {\n'
+  js+=$'    if (!dw.isSymbolicLink() || fs.readlinkSync("/src/pg_wal") !== fs.readlinkSync("/dst/pg_wal")) process.exit(1);\n'
+  js+=$'  } else if (!sw.isDirectory() || !dw.isDirectory() || !checkTree("/src/pg_wal", "/dst/pg_wal", "")) {\n'
+  js+=$'    process.exit(1);\n'
+  js+=$'  }\n'
+  js+=$'}\n'
+  js+=$'process.exit(0);\n'
   docker run --rm --network none --user 0:0 \
     -v "${src_m}:/src:ro" -v "${dst_m}:/dst:ro" \
-    --entrypoint node "$probe_image" -e '
-      const fs = require("node:fs");
-      if (fs.readdirSync("/src").length === 0) process.exit(0);
-      for (const d of ["/src", "/dst"]) {
-        if (!fs.existsSync(d + "/PG_VERSION")) process.exit(1);
-      }
-      const a = fs.readFileSync("/src/global/pg_control").subarray(0, 8);
-      const b = fs.readFileSync("/dst/global/pg_control").subarray(0, 8);
-      if (a.length !== 8 || b.length !== 8 || a.every((x) => x === 0) || !a.equals(b)) process.exit(1);
-    ' >/dev/null 2>&1
+    --entrypoint node "$probe_image" -e "$js" >/dev/null 2>&1
 }
 
-# Returns 0 if a running container from another Compose project (or without a matching project label) currently mounts $dst_spec (#3972).
-db_storage_held_by_other_project() {
-  local dst_spec="$1" active_proj="$2" dst_type dst_src dst_canon cid c_proj m_type m_name m_src
+# Checks that no running container outside $allowed_proj (or any running container when $allowed_proj is empty)
+# currently mounts $dst_spec. Returns: 0 = verified free, 1 = held by conflicting container, 2 = inspect failed (#3972).
+check_storage_free() {
+  local dst_spec="$1" allowed_proj="${2:-}" dst_type dst_src dst_canon ps_out cid c_proj mounts_out still_running m_type m_name m_src
   local -a cids=()
   case "$dst_spec" in
     volume:*) dst_type='volume'; dst_src="${dst_spec#volume:}" ;;
     bind:*) dst_type='bind'; dst_src="${dst_spec#bind:}" ;;
-    *) return 1 ;;
+    *) return 2 ;;
   esac
   dst_src="${dst_src%/}"
   [ -n "$dst_src" ] || dst_src='/'
@@ -1156,31 +1264,39 @@ db_storage_held_by_other_project() {
   if [ "$dst_type" = 'bind' ] && [ -d "$dst_src" ]; then
     dst_canon="$(cd -P "$dst_src" 2>/dev/null && pwd -P || printf '%s' "$dst_src")"
   fi
-  mapfile -t cids < <(docker ps -q --filter status=running 2>/dev/null || true)
-  ((${#cids[@]} > 0)) || return 1
+  ps_out="$(docker ps -q --filter status=running 2>/dev/null)" || return 2
+  [ -n "$ps_out" ] || return 0
+  mapfile -t cids <<<"$ps_out"
   for cid in "${cids[@]}"; do
     [ -n "$cid" ] || continue
-    c_proj="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$cid" 2>/dev/null || true)"
-    if [ "$c_proj" = "$active_proj" ]; then continue; fi
+    if ! c_proj="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$cid" 2>/dev/null)"; then
+      still_running="$(docker ps -q --filter status=running --filter "id=$cid" 2>/dev/null)" || return 2
+      [ -z "$still_running" ] || return 2
+      continue
+    fi
+    if [ -n "$allowed_proj" ] && [ "$c_proj" = "$allowed_proj" ]; then continue; fi
+    if ! mounts_out="$(docker inspect --format '{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Source}}{{"\n"}}{{end}}' "$cid" 2>/dev/null)"; then
+      still_running="$(docker ps -q --filter status=running --filter "id=$cid" 2>/dev/null)" || return 2
+      [ -z "$still_running" ] || return 2
+      continue
+    fi
     while IFS='|' read -r m_type m_name m_src; do
       [ -n "$m_type" ] || continue
       m_src="${m_src%/}"
       [ -n "$m_src" ] || m_src='/'
       if [ "$dst_type" = 'volume' ] && [ "$m_type" = 'volume' ] && [ "$m_name" = "$dst_src" ]; then
-        return 0
+        return 1
       elif [ "$dst_type" = 'bind' ] && [ "$m_type" = 'bind' ] && { [ "$m_src" = "$dst_src" ] || [ "$m_src" = "$dst_canon" ]; }; then
-        return 0
+        return 1
       fi
-    done < <(docker inspect --format '{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Source}}{{"\n"}}{{end}}' "$cid" 2>/dev/null || true)
+    done <<<"$mounts_out"
   done
-  return 1
+  return 0
 }
 
-# Returns 0 if source mount has no entries OR destination mount exists with matching directory/symlink/file parity (#3972).
-# Pass 1 as 4th argument for full byte-for-byte comparison on every file (e.g. /data/keys).
+# Returns 0 if source mount has no entries OR destination mount exists with full recursive directory/symlink/byte parity (#3972).
 mount_data_migrated() {
-  local src_spec="$1" dst_spec="$2" probe_image="$3" strict_bytes="${4:-0}" src_m dst_m
-  local -a extra_args=()
+  local src_spec="$1" dst_spec="$2" probe_image="$3" src_m dst_m js
   mount_exists "$src_spec" || return 0
   src_m="$(mount_docker_source "$src_spec")"
   if ! mount_exists "$dst_spec"; then
@@ -1193,64 +1309,48 @@ mount_data_migrated() {
     return $?
   fi
   dst_m="$(mount_docker_source "$dst_spec")"
-  if [ "$strict_bytes" = 1 ]; then extra_args=(--strict); fi
+  js="$(node_tree_parity_js)"
+  js+=$'\nprocess.exit(checkTree("/src", "/dst", "") ? 0 : 1);\n'
   docker run --rm --network none --user 0:0 \
     -v "${src_m}:/src:ro" -v "${dst_m}:/dst:ro" \
-    --entrypoint node "$probe_image" -e '
-      const fs = require("node:fs");
-      const path = require("node:path");
-      const strictBytes = process.argv.includes("--strict");
-      const CHUNK = 4096;
-      function filesEqual(a, b, size) {
-        if (size === 0 || (!strictBytes && size > CHUNK)) return true;
-        const fdA = fs.openSync(a, "r");
-        const fdB = fs.openSync(b, "r");
-        try {
-          const bufA = Buffer.allocUnsafe(Math.min(size, 65536));
-          const bufB = Buffer.allocUnsafe(bufA.length);
-          let pos = 0;
-          while (pos < size) {
-            const toRead = Math.min(bufA.length, size - pos);
-            const nA = fs.readSync(fdA, bufA, 0, toRead, pos);
-            const nB = fs.readSync(fdB, bufB, 0, toRead, pos);
-            if (nA !== toRead || nB !== toRead) return false;
-            if (!bufA.subarray(0, toRead).equals(bufB.subarray(0, toRead))) return false;
-            pos += toRead;
-          }
-          return true;
-        } finally {
-          fs.closeSync(fdA);
-          fs.closeSync(fdB);
-        }
-      }
-      function check(rel) {
-        const srcPath = rel ? path.join("/src", rel) : "/src";
-        const entries = fs.readdirSync(srcPath, { withFileTypes: true });
-        for (const ent of entries) {
-          const childRel = rel ? path.join(rel, ent.name) : ent.name;
-          const s = path.join("/src", childRel);
-          const d = path.join("/dst", childRel);
-          let ss, ds;
-          try {
-            ss = fs.lstatSync(s);
-            ds = fs.lstatSync(d);
-          } catch {
-            return false;
-          }
-          if (ss.isDirectory()) {
-            if (!ds.isDirectory() || !check(childRel)) return false;
-          } else if (ss.isSymbolicLink()) {
-            if (!ds.isSymbolicLink() || fs.readlinkSync(s) !== fs.readlinkSync(d)) return false;
-          } else if (ss.isFile()) {
-            if (!ds.isFile() || ss.size !== ds.size || !filesEqual(s, d, ss.size)) return false;
-          } else {
-            return false;
-          }
-        }
-        return true;
-      }
-      process.exit(check("") ? 0 : 1);
-    ' ${extra_args[@]+"${extra_args[@]}"} >/dev/null 2>&1
+    --entrypoint node "$probe_image" -e "$js" >/dev/null 2>&1
+}
+
+# Verifies prior DB isolation, cluster parity, and persistent mount parity before starting new DB (#3972).
+verify_storage_cutover() {
+  local prev_config="$1" prev_proj="$2" new_config="$3" active_proj="$4" new_db="$5" image="$6" name="$7" current="$8"
+  local prev_db='' free_rc=0 target prev_m new_m
+  prev_db="$(compose_target_mount "$prev_config" "$prev_proj" /var/lib/postgresql/data 'db')"
+  if [ -n "$prev_db" ] && [ -n "$new_db" ] && [ "$prev_db" != "$new_db" ]; then
+    if mount_exists "$prev_db"; then
+      check_storage_free "$prev_db" "" || free_rc=$?
+      if ((free_rc == 1)); then
+        restore_pre_activate "$current"
+        record "deploy $name failed: prior db storage $(mount_label "$prev_db") held by running container"
+        die "$EXIT_FAILED" "prior database storage $(mount_label "$prev_db") is still mounted by a running container; stop the old stack and cut over volumes before deploying Stage 7"
+      elif ((free_rc != 0)); then
+        restore_pre_activate "$current"
+        record "deploy $name failed: cannot inspect running containers for $(mount_label "$prev_db")"
+        die "$EXIT_FAILED" "cannot inspect running containers to verify prior database storage $(mount_label "$prev_db"); nothing running was changed"
+      fi
+    fi
+    if ! mounts_match_pg_cluster "$prev_db" "$new_db" "$image"; then
+      restore_pre_activate "$current"
+      record "deploy $name failed: db storage $(mount_label "$prev_db") not cut over"
+      die "$EXIT_FAILED" "found prior database storage $(mount_label "$prev_db") without a matching copied PostgreSQL cluster in $(mount_label "$new_db") for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or keep COMPOSE_PROJECT_NAME=$prev_proj / mount $(mount_label "$prev_db") in $ENV_FILE) before deploying Stage 7"
+    fi
+  fi
+  for target in /data/files /data/keys /data/archive; do
+    prev_m="$(compose_target_mount "$prev_config" "$prev_proj" "$target" 'ludy|crove|worker|api')"
+    new_m="$(compose_target_mount "$new_config" "$active_proj" "$target" 'ludy|crove|worker|api')"
+    if [ -n "$prev_m" ] && [ -n "$new_m" ] && [ "$prev_m" != "$new_m" ]; then
+      if ! mount_data_migrated "$prev_m" "$new_m" "$image"; then
+        restore_pre_activate "$current"
+        record "deploy $name failed: $target storage $(mount_label "$prev_m") not cut over"
+        die "$EXIT_FAILED" "found non-empty prior $target storage $(mount_label "$prev_m") while destination $(mount_label "$new_m") does not contain all migrated data; cut over persistent volumes/paths before deploying Stage 7"
+      fi
+    fi
+  done
 }
 
 # Gracefully stops and removes containers belonging to a renamed service from a prior release (e.g., crove-extract ->
@@ -2374,15 +2474,37 @@ do_deploy() {
   # The build time the image carries, which orders the rolls (#1965).
   printf 'BUILD_EPOCH=%s\n' "$(image_build_epoch "$image")" >>"$dir/release.env"
 
-  local prev_config='' prev_proj=''
+  local prev_config='' prev_proj='' prev_proj_override='' prev_yaml_name='' alt_prev_config=''
   if [ -f "$DEPLOY_DIR/docker-compose.yml" ]; then
-    if ! prev_config="$(dc_prev_config_for_release "$current")" || [ -z "$prev_config" ]; then
+    if ! prev_proj_override="$(detect_prev_project)"; then
+      record "deploy $name failed: pre-deploy container inspection"
+      die "$EXIT_FAILED" "cannot inspect existing Docker containers for $DEPLOY_DIR before activating $release; nothing was changed"
+    fi
+    if ! prev_config="$(dc_prev_config_for_release "$current" "$prev_proj_override")" || [ -z "$prev_config" ]; then
       record "deploy $name failed: pre-deploy compose config"
       die "$EXIT_FAILED" "cannot inspect existing compose configuration in $DEPLOY_DIR before activating $release; nothing was changed"
     fi
     if ! prev_proj="$(compose_project_from_yaml "$prev_config")" || [ -z "$prev_proj" ]; then
       record "deploy $name failed: pre-deploy compose project"
       die "$EXIT_FAILED" "cannot determine existing compose project name in $DEPLOY_DIR before activating $release; nothing was changed"
+    fi
+    if [ -z "$prev_proj_override" ]; then
+      prev_yaml_name="$(sed -n -E 's/\r$//; s/[[:space:]]+#.*$//; s/^name:[[:space:]]*//p' "$DEPLOY_DIR/docker-compose.yml" | head -n 1 || true)"
+      prev_yaml_name="${prev_yaml_name#"${prev_yaml_name%%[![:space:]]*}"}"
+      prev_yaml_name="${prev_yaml_name%"${prev_yaml_name##*[![:space:]]}"}"
+      case "$prev_yaml_name" in
+        \"*\") prev_yaml_name="${prev_yaml_name#\"}"; prev_yaml_name="${prev_yaml_name%\"}" ;;
+        \'*\') prev_yaml_name="${prev_yaml_name#\'}"; prev_yaml_name="${prev_yaml_name%\'}" ;;
+      esac
+      [[ "$prev_yaml_name" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || prev_yaml_name=''
+      if [ -n "$prev_yaml_name" ] && [ "$prev_yaml_name" != "$prev_proj" ]; then
+        if ! alt_prev_config="$(dc_prev_config_for_release "$current" "$prev_yaml_name")" || [ -z "$alt_prev_config" ]; then
+          record "deploy $name failed: pre-deploy compose config ($prev_yaml_name)"
+          die "$EXIT_FAILED" "cannot inspect existing compose configuration for project $prev_yaml_name in $DEPLOY_DIR before activating $release; nothing was changed"
+        fi
+      else
+        prev_yaml_name=''
+      fi
     fi
   fi
   snapshot_pre_activate "$current" || {
@@ -2403,36 +2525,25 @@ do_deploy() {
     record "deploy $name failed: compose project"
     die "$EXIT_FAILED" 'cannot determine the compose project name; nothing was changed'
   fi
-  local new_db=''
+  local new_db='' new_db_free_rc=0
   new_db="$(compose_target_mount "$new_config" "$active_proj" /var/lib/postgresql/data 'db')"
   if [ -n "$prev_config" ] && [ -n "$prev_proj" ]; then
-    local prev_db=''
-    prev_db="$(compose_target_mount "$prev_config" "$prev_proj" /var/lib/postgresql/data 'db')"
-    if [ -n "$prev_db" ] && [ -n "$new_db" ] && [ "$prev_db" != "$new_db" ]; then
-      if ! mounts_match_pg_cluster "$prev_db" "$new_db" "$image"; then
-        restore_pre_activate "$current"
-        record "deploy $name failed: db storage $(mount_label "$prev_db") not cut over"
-        die "$EXIT_FAILED" "found prior database storage $(mount_label "$prev_db") without a matching copied PostgreSQL cluster in $(mount_label "$new_db") for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or keep COMPOSE_PROJECT_NAME=$prev_proj / mount $(mount_label "$prev_db") in $ENV_FILE) before deploying Stage 7"
-      fi
-    fi
-    local target prev_m new_m strict_bytes
-    for target in /data/files /data/keys /data/archive; do
-      prev_m="$(compose_target_mount "$prev_config" "$prev_proj" "$target" 'ludy|crove|worker|api')"
-      new_m="$(compose_target_mount "$new_config" "$active_proj" "$target" 'ludy|crove|worker|api')"
-      if [ -n "$prev_m" ] && [ -n "$new_m" ] && [ "$prev_m" != "$new_m" ]; then
-        if [ "$target" = '/data/keys' ]; then strict_bytes=1; else strict_bytes=0; fi
-        if ! mount_data_migrated "$prev_m" "$new_m" "$image" "$strict_bytes"; then
-          restore_pre_activate "$current"
-          record "deploy $name failed: $target storage $(mount_label "$prev_m") not cut over"
-          die "$EXIT_FAILED" "found non-empty prior $target storage $(mount_label "$prev_m") while destination $(mount_label "$new_m") does not contain all migrated data; cut over persistent volumes/paths before deploying Stage 7"
-        fi
-      fi
-    done
+    verify_storage_cutover "$prev_config" "$prev_proj" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current"
   fi
-  if [ -n "$new_db" ] && db_storage_held_by_other_project "$new_db" "$active_proj"; then
-    restore_pre_activate "$current"
-    record "deploy $name failed: db storage $(mount_label "$new_db") held by another project"
-    die "$EXIT_FAILED" "database storage $(mount_label "$new_db") is still mounted by a running container outside project $active_proj; stop the old stack before deploying Stage 7"
+  if [ -n "$alt_prev_config" ] && [ -n "$prev_yaml_name" ]; then
+    verify_storage_cutover "$alt_prev_config" "$prev_yaml_name" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current"
+  fi
+  if [ -n "$new_db" ]; then
+    check_storage_free "$new_db" "$active_proj" || new_db_free_rc=$?
+    if ((new_db_free_rc == 1)); then
+      restore_pre_activate "$current"
+      record "deploy $name failed: db storage $(mount_label "$new_db") held by another project"
+      die "$EXIT_FAILED" "database storage $(mount_label "$new_db") is still mounted by a running container outside project $active_proj; stop the old stack before deploying Stage 7"
+    elif ((new_db_free_rc != 0)); then
+      restore_pre_activate "$current"
+      record "deploy $name failed: cannot inspect running containers for $(mount_label "$new_db")"
+      die "$EXIT_FAILED" "cannot inspect running containers to verify database storage $(mount_label "$new_db"); nothing running was changed"
+    fi
   fi
 
   log 'starting the database'
@@ -2497,6 +2608,7 @@ do_deploy() {
     if [ -n "$current" ]; then write_state previous "$current"; fi
     write_state current "$name"
   fi
+  write_state project "$active_proj"
   # A rollback from this release puts the env file back only when this deploy is the one that changed it.
   # (A deploy of the same release again, that changed nothing, keeps the record: that release is still the one that wrote them.)
   if [ "$ENV_CHANGED" = 1 ]; then
