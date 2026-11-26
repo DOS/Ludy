@@ -880,6 +880,39 @@ function summarizeSubPiece(rawText: string, afterConjunction = false): SubPiece 
   };
 }
 
+const SLASH_LEFT_LABELED_VAT = new RegExp(
+  String.raw`(?<![\p{L}])${VAT_ALT_LABEL}(?:\s+(?:là|la|is))?\s*(?:[:=]\s*)?(?:\d{1,3}(?:[.,]\d+)?\s*%?|${EXEMPT_VAT_EXPR})\s*$`,
+  'iu',
+);
+const SLASH_LEFT_EXEMPT_VAT = new RegExp(String.raw`(?<![\p{L}])${EXEMPT_VAT_EXPR}\s*$`, 'iu');
+const SLASH_LEFT_PERCENT_VAT = new RegExp(String.raw`(?:^|\s)(\d{1,3}(?:[.,]\d+)?\s*%(?:\s*${VAT_ALT_LABEL})?)\s*$`, 'iu');
+const SLASH_RIGHT_VAT_ALT = new RegExp(
+  String.raw`^\s*(?:${VAT_ALT_LABEL}(?:\s+(?:là|la|is))?\s*(?:[:=]\s*)?)?(?:\d{1,3}(?:[.,]\d+)?\s*%?|${EXEMPT_VAT_EXPR})(?![\p{L}\d.,])`,
+  'iu',
+);
+
+function isSlashVatAltJoin(left: string, right: string): boolean {
+  const leftPlain = collapseGroupedSpaces(readPlain(left));
+  let leftEndsVat = SLASH_LEFT_LABELED_VAT.test(leftPlain) || SLASH_LEFT_EXEMPT_VAT.test(leftPlain);
+  if (!leftEndsVat) {
+    const pctEnd = SLASH_LEFT_PERCENT_VAT.exec(leftPlain);
+    if (pctEnd !== null && !DISCOUNT_PREFIX.test(leftPlain.slice(0, pctEnd.index + (pctEnd[0].length - pctEnd[1]!.length)))) {
+      leftEndsVat = true;
+    }
+  }
+  if (!leftEndsVat) return false;
+  const rightHeadPlain = collapseGroupedSpaces(readPlain(right.split(/,|(?:\s+(?:và|va|and)\s+)/iu)[0] ?? right));
+  if (!SLASH_RIGHT_VAT_ALT.test(rightHeadPlain)) return false;
+  const strippedRight = rightHeadPlain
+    .replace(VAT_ALT_SCOPED_STRIP, ' ')
+    .replace(RATE_AFTER_WORD, ' ')
+    .replace(PERCENT_ANY, ' ')
+    .replace(EXEMPT_VAT_RE, ' ')
+    .replace(INVOICE_VAT_SCOPE, ' ')
+    .replace(SLASH_RIGHT_VAT_ALT, ' ');
+  return extractFigureTokens(strippedRight).length === 0 && !descriptionTokens(strippedRight).hasProduct;
+}
+
 function splitSubPieces(bodySeg: string): SubPiece[] {
   const pieces: SubPiece[] = [];
   let start = 0;
@@ -907,18 +940,7 @@ function splitSubPieces(bodySeg: string): SubPiece[] {
       const packDenomAfterPrice =
         /(?:\d\s*(?:k|tr(?:iệu|ieu)?|tỷ|ty|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)|(?:đơn\s+giá|don\s+gia|giá(?:\s+bán)?|gia(?:\s+ban)?|unit\s+price|price)\s*(?:[:=]\s*)?\d+(?:[.,]\d+)?)\s*$/iu.test(left) &&
         /^\s*\d+(?:[.,]\d+)?(?:\s+(?!(?:vat|gtgt|thuế|thue)(?![\p{L}]))[\p{L}]+){0,2}(?=\s*(?:$|,|vat|gtgt|thuế|thue))/iu.test(right);
-      const leftPlain = collapseGroupedSpaces(readPlain(left));
-      const rightPlain = collapseGroupedSpaces(readPlain(right));
-      const vatAltJoin =
-        extractFigureTokens(leftPlain).length === 0 &&
-        (/(?:%|(?:vat|gtgt|thuế|thue|kct|kkknt)|không\s+chịu(?:\s+thuế)?|không\s+kê\s+khai)$/iu.test(leftPlain.trim()) ||
-          ratesInBody(leftPlain).size > 0 ||
-          hasUnsupportedVatText(leftPlain)) &&
-        new RegExp(String.raw`^\s*(?:${VAT_ALT_LABEL}\s*(?:[:=]\s*)?)?(?:\d{1,3}(?:[.,]\d+)?\s*%?|${EXEMPT_VAT_EXPR})`, 'iu').test(
-          rightPlain,
-        ) &&
-        extractFigureTokens(rightPlain.replace(RATE_AFTER_WORD, ' ').replace(PERCENT_ANY, ' ')).length === 0;
-      if (packDenomAfterPrice || vatAltJoin || !/\d/u.test(left) || !(/\d/u.test(right) || AMP_RIGHT_CUE.test(right))) continue;
+      if (packDenomAfterPrice || isSlashVatAltJoin(left, right) || !/\d/u.test(left) || !(/\d/u.test(right) || AMP_RIGHT_CUE.test(right))) continue;
     }
     const piece = summarizeSubPiece(bodySeg.slice(start, idx), afterConjunction);
     if (piece.text !== '' && !piece.isBuyerOnly) pieces.push(piece);
