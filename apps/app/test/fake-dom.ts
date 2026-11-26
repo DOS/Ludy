@@ -202,6 +202,12 @@ export class FakeDomNode {
     if (name === 'disabled') return this.disabled;
     return this.attrs.has(name) || (name === 'class' && this.className !== '');
   }
+  getAttributeNames(): string[] {
+    const names = new Set(this.attrs.keys());
+    if (this.className !== '') names.add('class');
+    if (this.disabled) names.add('disabled');
+    return [...names];
+  }
   addEventListener(type: string, fn: (e: unknown) => void, options?: boolean | { capture?: boolean }): void {
     const capture = typeof options === 'boolean' ? options : Boolean(options?.capture);
     let set = this._listeners.get(type);
@@ -289,6 +295,7 @@ export class FakeDomNode {
     return !defaultPrevented;
   }
   focus(): void {
+    if (this.disabled || this.getAttribute('aria-disabled') === 'true' || !this.isConnected) return;
     (globalThis.document as unknown as { activeElement: unknown }).activeElement = this;
   }
   blur(): void {

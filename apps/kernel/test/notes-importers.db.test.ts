@@ -776,17 +776,24 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     // 1. Holding org-wide notes.notebook.reorder must NOT block an ENEX import whose file notebooks already exist.
     const reorderGate = new pg.Client({ connectionString: adminUrl });
     await reorderGate.connect();
+    let reusePromise: Promise<{ status: number; body: Record<string, unknown> }> | undefined;
     try {
       await reorderGate.query('BEGIN');
       await reorderGate.query(
         'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
         [`notes.notebook.reorder:${orgId.toLowerCase()}`],
       );
-      const reuseRes = await uploadEnex('owner', makeEnex('So Tai Su Dung', 'Ghi Chu Tai Su Dung'));
+      reusePromise = uploadEnex('owner', makeEnex('So Tai Su Dung', 'Ghi Chu Tai Su Dung'));
+      void reusePromise.catch(() => undefined);
+      const timerRace = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('ENEX reuse blocked on org-wide notes.notebook.reorder lock')), 3000);
+      });
+      const reuseRes = await Promise.race([reusePromise, timerRace]);
       expect(reuseRes.status, JSON.stringify(reuseRes.body)).toBe(201);
       expect(reuseRes.body).toMatchObject({ importedNotes: 1, createdNotebooks: 0, reusedNotebooks: 1 });
     } finally {
       await reorderGate.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(reusePromise ? [reusePromise] : []);
       await reorderGate.end().catch(() => undefined);
     }
 
@@ -866,5 +873,32 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
       await Promise.allSettled(vanishPromise ? [vanishPromise] : []);
       await delGate.end().catch(() => undefined);
     }
+
+    // 4. Reverse-ID-order reuse with skipDuplicates=false concurrent with notebook rebalance avoids 40P01 deadlocks (#5035).
+    const revNbA = await createNb('So Dao Thu Tu A');
+    const revNbB = await createNb('So Dao Thu Tu B');
+    const [firstName, secondName] = revNbA < revNbB ? ['So Dao Thu Tu B', 'So Dao Thu Tu A'] : ['So Dao Thu Tu A', 'So Dao Thu Tu B'];
+    const reverseEnex = `<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Ghi Chu Dao 1</title>
+    <notebook>${firstName}</notebook>
+    <content><![CDATA[<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note><p>Dao 1</p></en-note>]]></content>
+  </note>
+  <note>
+    <title>Ghi Chu Dao 2</title>
+    <notebook>${secondName}</notebook>
+    <content><![CDATA[<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note><p>Dao 2</p></en-note>]]></content>
+  </note>
+</en-export>`;
+    await admin((c) =>
+      c.query(`UPDATE ludy_notes.notebook SET sort_key = $1 WHERE org_id = $2 AND id = $3`, ['z'.repeat(48), orgId, revNbB]),
+    );
+    const [revRes, rebalanceRes] = await Promise.all([
+      uploadEnex('owner', reverseEnex, { skipDuplicates: 'false' }),
+      uploadEnex('owner', makeEnex('So Moi Can Rebalance', 'Ghi Chu Moi Rebalance'), { skipDuplicates: 'false' }),
+    ]);
+    expect(revRes.status, JSON.stringify(revRes.body)).toBe(201);
+    expect(rebalanceRes.status, JSON.stringify(rebalanceRes.body)).toBe(201);
   });
 });

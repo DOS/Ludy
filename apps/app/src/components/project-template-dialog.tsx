@@ -97,11 +97,23 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
     [],
   );
 
+  useEffect(() => {
+    if (!open) {
+      pendingArchiveFocusRef.current = null;
+      succeededArchiveIdRef.current = null;
+    }
+  }, [open]);
+
   const getRestoreTargetRadio = (archivedId: string, archivedSucceeded = false): HTMLButtonElement | null => {
     const radios = Array.from(radioGroupRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? []).filter(
       (el) => el.isConnected !== false,
     );
     if (archivedSucceeded) {
+      // Preserve an alternative selected radio (e.g. if selection changed while archiving) before falling back to the built-in default.
+      const checkedRadio = radios.find((el) => el.getAttribute('aria-checked') === 'true');
+      if (checkedRadio && checkedRadio.getAttribute('data-testid') !== `template-option-${archivedId}`) {
+        return checkedRadio;
+      }
       // Target the fallback built-in option deterministically on success instead of racing aria-checked before commit.
       return (
         radios.find((el) => el.getAttribute('data-testid') === `template-option-${DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY}`) ??
@@ -417,9 +429,7 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                                 const archivedId = pendingArchiveFocusRef.current;
                                 if (!archivedId) return;
                                 const archivedSucceeded = succeededArchiveIdRef.current === archivedId;
-                                if (!archiveTemplate.isPending) {
-                                  pendingArchiveFocusRef.current = null;
-                                }
+                                // Keep pendingArchiveFocusRef intact until onOpenChange(true) / dialog close so finalFocus sees it even if invoked after onOpenChangeComplete.
                                 if (shouldRestoreRadioFocus(archivedId, true)) {
                                   restoreRadioFocus(archivedId, true, archivedSucceeded);
                                 }

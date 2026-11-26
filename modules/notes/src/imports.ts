@@ -140,6 +140,14 @@ export const noteImportEnex = defineCommand({
       const lockedExistingSet = new Set(matchedExistingIds.map((id) => id.toLowerCase()));
       if (matchedExistingIds.length > 0) {
         await lockNotebooksSharedInOrder(ctx, matchedExistingIds);
+        // Lock reused private notebook rows FOR SHARE in canonical id ASC order before note inserts or rebalance FOR UPDATE
+        // so reverse-order notes across shared/reused notebooks cannot deadlock with concurrent notebook rebalances.
+        await sql`WITH locked AS MATERIALIZED (
+          SELECT id FROM ludy_notes.notebook
+           WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${matchedExistingIds}::uuid[])
+           ORDER BY id FOR SHARE
+        )
+        SELECT pg_catalog.count(*)::int AS n FROM locked`.execute(ctx.trx);
         await loadPrivateNotebooks();
       }
 
@@ -589,12 +597,25 @@ export const todoImportTodoist = defineCommand({
 
       const seenTodoKeys = new Set<string>();
       if (input.skipDuplicates) {
+        const candidateTitles = [...new Set(pendingTodoCandidates.map((c) => c.task.title.trim().toLowerCase()))];
+        const candidateListIds = [
+          ...new Set(pendingTodoCandidates.map((c) => c.listId).filter((id): id is string => id !== null)),
+        ];
+        const hasInboxCandidate = pendingTodoCandidates.some((c) => c.listId === null);
         const existingTodos = await ctx.trx
           .selectFrom('ludy_notes.todo')
           .select(['list_id', 'title'])
           .where('org_id', '=', ctx.orgId)
           .where('owner_user_id', '=', userId)
           .where('deleted_at', 'is', null)
+          .where((eb) =>
+            hasInboxCandidate && candidateListIds.length > 0
+              ? eb.or([eb('list_id', 'is', null), eb('list_id', 'in', candidateListIds)])
+              : hasInboxCandidate
+                ? eb('list_id', 'is', null)
+                : eb('list_id', 'in', candidateListIds),
+          )
+          .where(sql<boolean>`pg_catalog.lower(pg_catalog.btrim(title)) = ANY(${candidateTitles}::text[])`)
           .execute();
         for (const t of existingTodos) {
           seenTodoKeys.add(`${t.list_id ?? 'inbox'}:${t.title.trim().toLowerCase()}`);

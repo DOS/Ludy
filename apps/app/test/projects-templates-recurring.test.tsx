@@ -158,8 +158,8 @@ vi.mock('@ludy/ui/components/dialog', async () => {
             if (!mountedRef.current) return;
             setClosing(false);
             if (open === undefined) setInternalOpen(false);
-            runFinalFocus();
             onOpenChangeComplete?.(false);
+            runFinalFocus();
           };
           pendingCompleteRef.current = complete;
           dialogMockState.pendingComplete = complete;
@@ -168,8 +168,8 @@ vi.mock('@ludy/ui/components/dialog', async () => {
         if (open === undefined) setInternalOpen(next);
         onOpenChange?.(next);
         if (!next) {
-          runFinalFocus();
           onOpenChangeComplete?.(false);
+          runFinalFocus();
         }
       };
       return createElement(DialogCtx.Provider, { value: { open: isOpen || closing, setOpen, finalFocusRef } }, children);
@@ -761,6 +761,7 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
       .querySelectorAll('button')
       .find((b) => b.textContent.trim() === catalog('vi').projects.templates.archiveConfirmBtn)!;
     expect(confirmArchiveBtn).toBeDefined();
+    confirmArchiveBtn.focus();
     await act(async () => {
       confirmArchiveBtn.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
       for (let i = 0; i < 6; i += 1) await Promise.resolve();
@@ -1112,11 +1113,13 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
     nameInput.focus();
     expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(nameInput);
 
-    // Completing the 100ms dialog close must inspect focus inside finalFocus() and leave nameInput focused.
+    // Completing the 100ms dialog close must inspect focus inside finalFocus() (even after onOpenChangeComplete) and leave nameInput focused.
+    expect(dialogMockState.pendingComplete).toBeTypeOf('function');
     await act(async () => {
-      dialogMockState.pendingComplete?.();
+      dialogMockState.pendingComplete!();
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
+    expect(container.querySelector('[data-slot="dialog-content"][data-variant="destructive"]')).toBeNull();
     expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(nameInput);
 
     await act(async () => {
@@ -1192,10 +1195,12 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
       confirmArchiveBtn.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
+    expect(dialogMockState.pendingComplete).toBeTypeOf('function');
     await act(async () => {
-      dialogMockState.pendingComplete?.();
+      dialogMockState.pendingComplete!();
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
+    expect(container.querySelector('[data-slot="dialog-content"][data-variant="destructive"]')).toBeNull();
 
     // User arrow-keys from pending custom template A to previous built-in radio B before archiving settles.
     await act(async () => {
@@ -1212,5 +1217,83 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
     });
     expect(prevRadio.getAttribute('aria-checked')).toBe('true');
     expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(prevRadio);
+  });
+
+  it('preserves user focus on name input when archive fails BEFORE 100ms ConfirmDialog close completes (#5035)', async () => {
+    setActiveLocale('vi');
+    archiveCalls.length = 0;
+    dialogMockState.deferClose = true;
+
+    const body = domHarness.installScopedDom();
+    const container = new FakeDomNode(1, 'div');
+    body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    domHarness.setMountedRoot(root);
+
+    const qc = queryClientState.current;
+    qc.clear();
+    const customTemplate: ProjectTemplateSummary = {
+      id: '40000000-0000-4000-8000-000000000007',
+      source: 'custom',
+      builtinKey: null,
+      name: 'Mẫu lỗi đóng nhanh',
+      description: null,
+      status: 'active',
+      tasks: [{ title: 'Bước 1', dueOffsetDays: 0 }],
+      taskCount: 1,
+      canManage: true,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+    const fixtures = {
+      templates: [...starterFixtures('vi'), customTemplate],
+      canWrite: true,
+    } satisfies ProjectTemplateListResult;
+    templateFixturesState.current = fixtures;
+    qc.setQueryData(['projects', 'listTemplates', { language: 'vi' }], fixtures);
+
+    archiveGate.error = new Error('fast archive failed');
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <I18nProvider>
+            <ProjectTemplateDialog mode="create" open onOpenChange={() => undefined} onCreated={() => undefined} />
+          </I18nProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    const customRadio = container.querySelector(`[data-testid="template-option-${customTemplate.id}"]`)!;
+    await act(async () => {
+      customRadio.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+    });
+    const archiveTrigger = container.querySelector(`[data-testid="template-archive-${customTemplate.id}"]`)!;
+    await act(async () => {
+      archiveTrigger.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+    });
+    const confirmArchiveBtn = container
+      .querySelectorAll('button')
+      .find((b) => b.textContent.trim() === catalog('vi').projects.templates.archiveConfirmBtn)!;
+    confirmArchiveBtn.focus();
+    await act(async () => {
+      confirmArchiveBtn.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    // User focuses nameInput after the fast failure settles, BEFORE onOpenChangeComplete(false) -> finalFocus() fires.
+    const nameInput = container.querySelector('input[id="template-dialog-name-create"]')!;
+    nameInput.focus();
+    expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(nameInput);
+
+    expect(dialogMockState.pendingComplete).toBeTypeOf('function');
+    await act(async () => {
+      dialogMockState.pendingComplete!();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(container.querySelector('[data-slot="dialog-content"][data-variant="destructive"]')).toBeNull();
+    expect(customRadio.getAttribute('aria-checked')).toBe('true');
+    expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(nameInput);
   });
 });
