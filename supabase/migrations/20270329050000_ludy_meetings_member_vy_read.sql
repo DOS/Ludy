@@ -151,10 +151,7 @@ CREATE POLICY meeting_result_read ON ludy_meetings.meeting_result AS RESTRICTIVE
       stage = 'published'
       AND ludy_kernel.ctx_actor_type() = 'agent'
       AND (SELECT ludy_kernel.ctx_acting_user_id()) IS NOT NULL
-      AND EXISTS (
-        SELECT 1 FROM ludy_meetings.meeting m
-        WHERE m.org_id = meeting_result.org_id AND m.id = meeting_result.meeting_id
-      )
+      AND ludy_meetings.is_agent_meeting_reader(org_id, meeting_id)
     )
   );
 
@@ -173,14 +170,12 @@ CREATE POLICY action_item_read ON ludy_meetings.action_item AS RESTRICTIVE FOR S
       AND '*' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[])
       AND ludy_meetings.is_org_minutes_meeting(org_id, meeting_id)
     )
+    -- member_vy mirrors the member's own published action-item view (unlike org-wide mcp_company, which filters flags = '[]'::jsonb).
     OR (
       stage = 'published'
       AND ludy_kernel.ctx_actor_type() = 'agent'
       AND (SELECT ludy_kernel.ctx_acting_user_id()) IS NOT NULL
-      AND EXISTS (
-        SELECT 1 FROM ludy_meetings.meeting m
-        WHERE m.org_id = action_item.org_id AND m.id = action_item.meeting_id
-      )
+      AND ludy_meetings.is_agent_meeting_reader(org_id, meeting_id)
     )
   );
 
@@ -191,10 +186,7 @@ CREATE POLICY meeting_link_read ON ludy_meetings.meeting_link AS RESTRICTIVE FOR
     OR (
       ludy_kernel.ctx_actor_type() = 'agent'
       AND (SELECT ludy_kernel.ctx_acting_user_id()) IS NOT NULL
-      AND EXISTS (
-        SELECT 1 FROM ludy_meetings.meeting m
-        WHERE m.org_id = meeting_link.org_id AND m.id = meeting_link.meeting_id
-      )
+      AND ludy_meetings.is_agent_meeting_reader(org_id, meeting_id)
     )
   );
 
