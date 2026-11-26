@@ -1062,9 +1062,15 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
       expect(reopenedRows[0]?.done_at).toBeNull();
 
       await exec(pMember.userId, snapOrg.orgId, 'kernel.task.set_status', { id: tDone, status: 'done' });
+      // Transition back out of 'done' before setting historical done_at: once 'done', done_at is immutable even for admin.
+      await admin.query('UPDATE ludy_kernel.task SET status = $1 WHERE org_id = $2 AND id = $3', [
+        'in_progress',
+        snapOrg.orgId,
+        tDone,
+      ]);
       await admin.query(
-        'UPDATE ludy_kernel.task SET created_at = $1, done_at = $2 WHERE org_id = $3 AND id = $4',
-        [vnMorning(d0), vnMorning(d1), snapOrg.orgId, tDone],
+        'UPDATE ludy_kernel.task SET status = $1, created_at = $2, done_at = $3 WHERE org_id = $4 AND id = $5',
+        ['done', vnMorning(d0), vnMorning(d1), snapOrg.orgId, tDone],
       );
       // Unrelated edit right now (d3) must keep done_at on d1 and keep burndown on d1!
       await exec(pMember.userId, snapOrg.orgId, 'kernel.task.update', {

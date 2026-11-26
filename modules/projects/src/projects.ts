@@ -1223,7 +1223,8 @@ export const projectTaskProjects = defineQuery({
   },
 });
 
-// Reads completed project tasks assigned to positions held by a member within a date window.
+// Reads completed project tasks attributed to the completing user (completed_by) within a done_at date window.
+// Rows with completed_by IS NULL (agent/system completions or legacy unattributable rows) are deterministically excluded rather than inferred from seat holder.
 // Manager-only query (called cross-module by hr.probation.* via ctx.query); caller RLS still filters projects and legal entities.
 export const projectMemberCompletedTasks = defineQuery({
   name: 'projects.member_completed_tasks',
@@ -1238,14 +1239,14 @@ export const projectMemberCompletedTasks = defineQuery({
           ON p.org_id = pt.org_id AND p.id = pt.project_id
         JOIN ludy_kernel.task t
           ON t.org_id = pt.org_id AND t.id = pt.task_id
-        JOIN ludy_kernel.position pos
-          ON pos.org_id = t.org_id AND pos.id = t.assignee_position_id
        WHERE pt.org_id = ${ctx.orgId}::uuid
          AND NOT p.is_template
          AND t.status = 'done'
-         AND pos.holder_user_id = ${input.userId}::uuid
-         AND (t.updated_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= ${input.from}::date
-         AND (t.updated_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= ${input.to}::date`.execute(ctx.trx);
+         AND t.completed_by IS NOT NULL
+         AND t.completed_by = ${input.userId}::uuid
+         AND t.done_at IS NOT NULL
+         AND t.done_at >= (${input.from}::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
+         AND t.done_at < ((${input.to}::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')`.execute(ctx.trx);
 
     const totalCount = Number(countRows[0]?.total_count ?? 0);
     if (totalCount === 0) {
@@ -1257,27 +1258,27 @@ export const projectMemberCompletedTasks = defineQuery({
       title: string;
       project_id: string;
       project_name: string;
-      updated_at: Date | string;
+      done_at: Date | string;
     }>`
       SELECT t.id AS task_id,
              t.title,
              p.id AS project_id,
              p.name AS project_name,
-             t.updated_at
+             t.done_at
         FROM ludy_projects.project_task pt
         JOIN ludy_projects.project p
           ON p.org_id = pt.org_id AND p.id = pt.project_id
         JOIN ludy_kernel.task t
           ON t.org_id = pt.org_id AND t.id = pt.task_id
-        JOIN ludy_kernel.position pos
-          ON pos.org_id = t.org_id AND pos.id = t.assignee_position_id
        WHERE pt.org_id = ${ctx.orgId}::uuid
          AND NOT p.is_template
          AND t.status = 'done'
-         AND pos.holder_user_id = ${input.userId}::uuid
-         AND (t.updated_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= ${input.from}::date
-         AND (t.updated_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= ${input.to}::date
-       ORDER BY t.updated_at DESC, t.id DESC
+         AND t.completed_by IS NOT NULL
+         AND t.completed_by = ${input.userId}::uuid
+         AND t.done_at IS NOT NULL
+         AND t.done_at >= (${input.from}::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
+         AND t.done_at < ((${input.to}::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
+       ORDER BY t.done_at DESC, t.id DESC
        LIMIT ${input.limit}`.execute(ctx.trx);
 
     return {
@@ -1287,7 +1288,7 @@ export const projectMemberCompletedTasks = defineQuery({
         title: r.title,
         projectId: r.project_id,
         projectName: r.project_name,
-        completedAt: new Date(r.updated_at).toISOString(),
+        completedAt: new Date(r.done_at).toISOString(),
       })),
     };
   },
