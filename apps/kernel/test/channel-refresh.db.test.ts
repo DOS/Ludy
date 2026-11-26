@@ -565,6 +565,7 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
       // Reconnecting an account while in backoff also clears the failure counter and backoff.
       succeed = false;
       code = '503';
+      await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET expires_at = now() + interval '1 hour' WHERE id = $1", [id]));
       for (let i = 0; i < 3; i += 1) await sweep();
       expect(await row(id)).toMatchObject({ refresh_failures: 3, refresh_last_error: '503' });
       expect((await row(id))?.refresh_next_at).not.toBeNull();
@@ -583,6 +584,12 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
         },
         { actor: asUser(o.owner), orgId: o.orgId },
       );
+      expect(await row(id)).toMatchObject({ refresh_failures: 0, refresh_last_error: null, refresh_next_at: null });
+
+      // Cooldown skips ('RECENT') do not increment failures, overwrite refresh_last_error, or schedule backoff.
+      code = 'RECENT';
+      await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET expires_at = now() + interval '1 hour' WHERE id = $1", [id]));
+      for (let i = 0; i < 4; i += 1) expect(await sweep()).toMatchObject({ failed: 1 });
       expect(await row(id)).toMatchObject({ refresh_failures: 0, refresh_last_error: null, refresh_next_at: null });
     } finally {
       warnSpy.mockRestore();

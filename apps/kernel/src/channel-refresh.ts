@@ -121,7 +121,12 @@ async function refreshOne(deps: RefreshDeps, refresher: Refresher, row: Due): Pr
     await deps.runtime.execute('kernel.channel.mark_expired', { connectionId: row.connection_id, reason: `refresh refused (${result.refused})`.slice(0, 200), ifVersion }, options);
     return 'expired';
   }
-  if ('failed' in result) return recordRefreshFailure(deps, row, result.failed);
+  if ('failed' in result) {
+    // Lazada/TikTok/Shopee return 'RECENT' when skipping a refresh inside their own cooldown gap: never record it as a
+    // failure, increment the failure counter, or back off past an imminent access-token expiry.
+    if (result.failed === 'RECENT') return 'failed';
+    return recordRefreshFailure(deps, row, result.failed);
+  }
   const next = deps.broker.seal(result.secret, binding);
   const command = { connectionId: row.connection_id, ifVersion, expiresAt: result.expiresAt?.toISOString() ?? null, credential: { keyId: next.keyId, envelope: next.envelope.toString('base64') } };
   // The provider has rotated the tokens: this write is the only copy of them, so a passing database error is retried.

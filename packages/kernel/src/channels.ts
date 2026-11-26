@@ -411,12 +411,60 @@ export const channelOAuthConsume = defineCommand({
 
 export const CHANNEL_REFRESH_BACKOFF_THRESHOLD = 3;
 export const CHANNEL_REFRESH_BACKOFF_SECONDS = [3600, 6 * 3600, 24 * 3600] as const;
-const SAFE_REFRESH_ERROR_CODE = /^[A-Za-z0-9_.-]{1,64}$/;
+const NUMERIC_OR_HTTP_ERROR_CODE = /^(?:-?\d{1,10}|HTTP_\d{3})$/;
+const KNOWN_REFRESH_ERROR_CODES = new Set([
+  'NETWORK',
+  'BAD_ANSWER',
+  'UNKNOWN',
+  'UNEXPECTED_ERROR',
+  'NO_ACCESS_TOKEN',
+  'CHANNEL_OWNER_LEFT',
+  'invalid_client',
+  'invalid_request',
+  'unauthorized_client',
+  'unsupported_grant_type',
+  'invalid_scope',
+  'temporarily_unavailable',
+  'server_error',
+  'rate_limit_exceeded',
+  'too_many_requests',
+  'access_denied',
+  'internal_error',
+  'service_unavailable',
+  'rateLimitExceeded',
+  'userRateLimitExceeded',
+  'quotaExceeded',
+  'dailyLimitExceeded',
+  'backendError',
+  'internalError',
+  'authError',
+  'AUTH_TYPE_UNSUPPORTED',
+  'IncompleteSignature',
+  'InvalidAppKey',
+  'IllegalAppKey',
+  'InvalidTimestamp',
+  'ApiCallLimit',
+  'AppCallLimit',
+  'Isp.MissingParameter',
+  'Isv.MissingParameter',
+  'UnknownError',
+  'error_auth',
+  'error_server',
+  'error_param',
+  'error_network',
+  'error_sign',
+  'error_data',
+  'error_busi',
+  'error_not_found',
+  'error_rate_limit',
+  'error_too_many_requests',
+]);
 
-/** Sanitizes a channel refresh failure code to a short token-free word, collapsing anything else to 'UNKNOWN'. */
+/** Maps known channel refresh failure codes (and numeric/HTTP codes) to themselves, collapsing anything unknown to 'UNKNOWN' so provider payloads or tokens cannot leak. */
 export function sanitizeChannelRefreshError(raw: string): string {
   const trimmed = raw.trim();
-  return SAFE_REFRESH_ERROR_CODE.test(trimmed) ? trimmed : 'UNKNOWN';
+  if (NUMERIC_OR_HTTP_ERROR_CODE.test(trimmed) || KNOWN_REFRESH_ERROR_CODES.has(trimmed)) return trimmed;
+  return 'UNKNOWN';
 }
 
 /** Returns the backoff delay in seconds for a consecutive failure count, 0 before the threshold. */
@@ -484,7 +532,7 @@ export const channelRefreshFail = defineCommand({
   input: z.strictObject({
     connectionId: zId,
     ifVersion: z.iso.datetime({ offset: true }),
-    code: z.string().regex(SAFE_REFRESH_ERROR_CODE),
+    code: z.string().refine((v) => v === v.trim() && sanitizeChannelRefreshError(v) === v, 'Unsupported refresh error code'),
   }),
   risk: 'R1',
   sideEffect: 'internal',

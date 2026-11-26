@@ -111,6 +111,7 @@ suite('channel refresh failure secrets invariant (#4251)', () => {
 
     const { orgId, owner, connectionId } = await orgWithConnection('zalo_oa', secretPayload);
     const { orgId: otherOrgId, owner: otherOwner, connectionId: otherConnId } = await orgWithConnection('threads', secretPayload);
+    const { orgId: bareOrgId, owner: bareOwner, connectionId: bareConnId } = await orgWithConnection('x', secretPayload);
 
     const logs: string[] = [];
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation((...args) => logs.push(args.map(String).join(' ')));
@@ -136,8 +137,19 @@ suite('channel refresh failure secrets invariant (#4251)', () => {
       const thrown = await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { threads: throwingRefresher } });
       expect(thrown.failed).toBeGreaterThanOrEqual(1);
 
+      // 3) Provider echoes a bare alphanumeric token (e.g., X error field holding a short token) 3 times -> collapsed to UNKNOWN, never stored or logged.
+      const bareTokenFailer: Refresher = {
+        provider: 'x',
+        refresh: async () => ({ failed: accessSecret }),
+      };
+      for (let i = 0; i < 3; i += 1) {
+        const res = await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { x: bareTokenFailer } });
+        expect(res.failed).toBeGreaterThanOrEqual(1);
+      }
+
       const allLogs = logs.join('\n');
       expect(allLogs).toContain(connectionId);
+      expect(allLogs).toContain(bareConnId);
       expect(allLogs).toContain('code=UNKNOWN');
       expect(allLogs).toContain('code=UNEXPECTED_ERROR');
       for (const secret of [accessSecret, refreshSecret, appSecret, 'Bearer', 'access_token', 'upstream rejected']) {
@@ -147,6 +159,7 @@ suite('channel refresh failure secrets invariant (#4251)', () => {
       for (const o of [
         { orgId, owner, connectionId },
         { orgId: otherOrgId, owner: otherOwner, connectionId: otherConnId },
+        { orgId: bareOrgId, owner: bareOwner, connectionId: bareConnId },
       ]) {
         const listed = await api.query('kernel.channel.list', { includeRevoked: true }, { actor: asUser(o.owner), orgId: o.orgId });
         const serializedList = JSON.stringify(listed);
@@ -207,8 +220,8 @@ suite('channel refresh failure secrets invariant (#4251)', () => {
       ),
     ).rejects.toMatchObject({ code: 'CHANNEL_NOT_FOUND' });
 
-    // Command input rejects raw platform text / whitespace / overly long values.
-    for (const badCode of ['Bearer secret', 'https://x.test?a=1', '{"a":1}', 'x'.repeat(65), '']) {
+    // Command input rejects raw platform text, whitespace, un-allowlisted bare strings/tokens, and overly long values.
+    for (const badCode of ['Bearer secret', 'https://x.test?a=1', '{"a":1}', 'tok_short_secret', 'x'.repeat(65), '']) {
       await expect(
         worker.execute(
           'kernel.channel.refresh_fail',
