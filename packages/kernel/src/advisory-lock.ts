@@ -40,8 +40,29 @@ export async function acquireChannelLocks(
   provider: string,
   externalAccountId: string,
 ): Promise<void> {
-  if (provider === 'whatsapp') {
-    await acquireAdvisoryXactLock(trx, `ludy.whatsapp_handover:${externalAccountId}`);
+  const channelKey = advisoryLockKey('crove.channel', orgId, provider, externalAccountId);
+  const handoverKey = provider.trim() === 'whatsapp' ? advisoryLockKey('ludy.whatsapp_handover', externalAccountId) : null;
+  if (handoverKey !== null) {
+    await acquireAdvisoryXactLock(trx, handoverKey);
   }
-  await acquireAdvisoryXactLock(trx, `crove.channel:${orgId}:${provider}:${externalAccountId}`);
+  await acquireAdvisoryXactLock(trx, channelKey);
+}
+
+// Disconnecting, revoking, or erasing an existing channel_connection row must keep working and drop credentials even
+// if a historical row written before connect validation holds a whitespace-only external_account_id (#5047).
+export async function acquireChannelLocksForStoredRow(
+  trx: CommandContext['trx'],
+  orgId: string,
+  provider: string,
+  externalAccountId: string,
+): Promise<void> {
+  if (externalAccountId.trim()) {
+    await acquireChannelLocks(trx, orgId, provider, externalAccountId);
+    return;
+  }
+  const channelPrefix = advisoryLockKey('crove.channel', orgId, provider);
+  if (provider.trim() === 'whatsapp') {
+    await acquireAdvisoryXactLock(trx, 'ludy.whatsapp_handover:');
+  }
+  await acquireAdvisoryXactLock(trx, `${channelPrefix}:`);
 }

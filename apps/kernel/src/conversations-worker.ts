@@ -72,13 +72,41 @@ export interface ClaimedNotice {
   dropped: boolean;
   // Why a notice was dropped: claimed five times without being finished, or waiting longer than seven days.
   reason: 'poison' | 'expired' | null;
+  receivedAt: string | null;
 }
 
 export async function claimNotices(workerDb: Db): Promise<ClaimedNotice[]> {
-  const { rows } = await sql<ClaimedNotice>`
-    SELECT seq::text AS seq, provider, body, attempts, dropped, reason
+  const { rows } = await sql<{
+    seq: string;
+    provider: string;
+    body: Buffer | null;
+    attempts: number;
+    dropped: boolean;
+    reason: 'poison' | 'expired' | null;
+    received_at: string | null;
+  }>`
+    SELECT
+      seq::text AS seq,
+      provider,
+      body,
+      attempts,
+      dropped,
+      reason,
+      CASE
+        WHEN received_at IS NOT NULL AND pg_catalog.isfinite(received_at)
+          THEN pg_catalog.to_char(received_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+        ELSE NULL
+      END AS received_at
     FROM ludy_kernel.conversation_inbound_claim(${CONVERSATION_CLAIM}::int, ${CONVERSATION_LEASE_SECONDS}::int)`.execute(workerDb);
-  return rows;
+  return rows.map((row) => ({
+    seq: row.seq,
+    provider: row.provider,
+    body: row.body,
+    attempts: row.attempts,
+    dropped: row.dropped,
+    reason: row.reason,
+    receivedAt: row.received_at,
+  }));
 }
 
 const finishNotice = async (workerDb: Db, seq: string): Promise<void> => {
@@ -198,10 +226,24 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
       log(`dropped notice ${notice.seq} (${notice.provider}, ${notice.reason ?? 'unknown'}) after ${notice.attempts} attempt(s)`);
       continue;
     }
+    const receivedAt = notice.receivedAt;
+    const receivedAtMs = receivedAt !== null ? Date.parse(receivedAt) : Number.NaN;
+    if (receivedAt === null || !Number.isFinite(receivedAtMs)) {
+      await finishNotice(deps.workerDb, notice.seq);
+      out.dropped++;
+      log(`dropped notice ${notice.seq} (${notice.provider}): invalid received_at`);
+      continue;
+    }
     const parse = Object.hasOwn(NOTICE_PARSERS, notice.provider) ? NOTICE_PARSERS[notice.provider] : undefined;
     let parsedList: readonly ConversationNotice[] | null = null;
     try {
-      const raw = parse ? parse(notice.body) : null;
+      // Anchor WhatsApp forward clock-skew checks to PostgreSQL `received_at` rather than worker claim time (#5047).
+      const raw =
+        notice.provider === 'whatsapp'
+          ? parseWhatsAppNotices(notice.body, receivedAtMs)
+          : parse
+            ? parse(notice.body)
+            : null;
       parsedList = raw === null ? null : Array.isArray(raw) ? raw : [raw as ConversationNotice];
     } catch (error) {
       if (!(error instanceof ConversationNoticeError)) throw error;
@@ -245,7 +287,12 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
           }
           const done = await deps.runtime.execute<{ stored: number }>(
             'kernel.conversation.ingest',
-            { connectionId: target.connectionId, events: parsed.events, ...(parsed.businessConnectionId ? { businessConnectionId: parsed.businessConnectionId } : {}) },
+            {
+              connectionId: target.connectionId,
+              events: parsed.events,
+              receivedAt,
+              ...(parsed.businessConnectionId ? { businessConnectionId: parsed.businessConnectionId } : {}),
+            },
             { actor: SYSTEM, orgId: target.orgId },
           );
           out.stored += done.stored;

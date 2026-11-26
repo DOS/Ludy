@@ -31,6 +31,8 @@ export const CONVERSATION_INSTAGRAM_COMMENT_MAX = 2_200;
 export const CONVERSATION_INSTAGRAM_DIRECT_MAX = 1_000;
 // WhatsApp Business (Cloud API) text body limit [M until the live check, docs/runbooks/whatsapp-conversations-live-check.md].
 export const CONVERSATION_WHATSAPP_REPLY_MAX = 4_096;
+// Maximum forward clock skew allowed on upstream WhatsApp webhook timestamps relative to DB `received_at` (#5047).
+export const CONVERSATION_WHATSAPP_CLOCK_SKEW_MS = 10 * 60_000;
 // Threads' own limit of 500 characters a post applies to a reply [U until the live check and the official page settle it] (#3133, plan section 4.4).
 export const CONVERSATION_THREADS_REPLY_MAX = 500;
 export const CONVERSATION_NOTE_MAX = 5_000;
@@ -184,6 +186,8 @@ export const zConversationIngest = z.strictObject({
   // Telegram Business (#3191): the business connection the events came through. They are stored only while the connection's own state lists it as
   // enabled (an unknown or disabled one stores nothing and counts as ignored), and never when the contact is the business account's own user.
   businessConnectionId: z.string().min(1).max(100).refine(noNul, 'NUL character').optional(),
+  // Database timestamp when the pending inbound notice was parked (`ludy_kernel.conversation_inbound_pending.received_at`, #5047).
+  receivedAt: z.iso.datetime({ offset: true }).optional(),
 });
 export type ConversationIngestInput = z.infer<typeof zConversationIngest>;
 // What the mail worker hands the core for one customer mail (#2439): the org is the worker's (found from the stored address), the events are
