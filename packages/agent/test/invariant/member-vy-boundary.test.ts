@@ -321,7 +321,7 @@ function scanSource(
   const tokens: Token[] = [];
   const chunks: string[] = [];
   const templates: number[] = [];
-  const parenAllowsRegexStack: Array<{ allowRegexAfter: boolean; inForHeader: boolean; semiSeen: boolean; depthInParen: number }> = [];
+  const parenAllowsRegexStack: Array<{ allowRegexAfter: boolean; inForHeader: boolean; semiSeen: boolean; depthInParen: number; savedLtCount: number }> = [];
   const jsxStack: Array<{ mode: 'openTag' | 'elem' | 'expr'; braceDepth: number; angleDepth: number }> = [];
   const suspiciousDivisionStarts = new Set<number>();
   const suspiciousRegexStarts = new Set<number>();
@@ -337,6 +337,7 @@ function scanSource(
   let prevWasLt = false;
   let prevWasGt = false;
   let prevWasRBrace = false;
+  let openLtCount = 0;
   let sameLineDivLine = -1;
   let sameLineDivStarts: number[] = [];
 
@@ -1001,12 +1002,15 @@ function scanSource(
         inForHeader: prevControlKeyword === 'for' || prevControlKeyword === 'for await',
         semiSeen: false,
         depthInParen: 0,
+        savedLtCount: openLtCount,
       });
       prevAllowsRegex = true;
       prevCouldBeDivision = false;
       prevWasDot = false;
     } else if (punct === ')') {
-      prevAllowsRegex = parenAllowsRegexStack.pop()?.allowRegexAfter ?? false;
+      const poppedParen = parenAllowsRegexStack.pop();
+      prevAllowsRegex = poppedParen?.allowRegexAfter ?? false;
+      if (poppedParen) openLtCount = poppedParen.savedLtCount;
       if (parenAllowsRegexStack.length > 0 && parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!.depthInParen > 0) {
         parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!.depthInParen -= 1;
       }
@@ -1037,8 +1041,35 @@ function scanSource(
         const topParen = parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!;
         if (topParen.inForHeader && topParen.depthInParen === 0) topParen.semiSeen = true;
       }
+      let closedGenericGt = false;
+      if (punct === '<') {
+        openLtCount += 1;
+      } else if (punct === '>') {
+        if (openLtCount > 0) {
+          openLtCount -= 1;
+          closedGenericGt = true;
+        }
+      } else if (
+        punct === ';' ||
+        punct === '=>' ||
+        punct === '&&' ||
+        punct === '||' ||
+        punct === '??' ||
+        punct === '==' ||
+        punct === '===' ||
+        punct === '!=' ||
+        punct === '!==' ||
+        punct === '<=' ||
+        punct === '=' ||
+        punct === '+=' ||
+        punct === '-=' ||
+        punct === '*=' ||
+        punct === '/='
+      ) {
+        openLtCount = 0;
+      }
       prevAllowsRegex = true;
-      prevCouldBeDivision = punct === '}' || punct === '>';
+      prevCouldBeDivision = punct === '}' || closedGenericGt;
       prevWasDot = false;
     }
     prevControlKeyword = '';
@@ -7790,8 +7821,14 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     // Regex literals inside code (including after comparison ops like ===, unary void, and for..of headers) must not trigger false-positive unresolved metered calls while ambiguous division/regex spots still do.
     expect(disallowedMeteredNotes('other.ts', 'const pattern = /metered(name)/;')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'enabled === /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', '2 > /metered(name)/.source.length;')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'a < b && c > /metered(name)/.test(s);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'if (a < b) { c > /metered(name)/.test(s); }')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'void /metered(name)/.test(text);')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'const x = obj.void / metered(dynKey) / 2;')).toEqual([
+      'unresolved metered key (dynKey)',
+    ]);
+    expect(disallowedMeteredNotes('other.ts', 'a as Foo<Record<string, number>> / metered(dynKey) / 2')).toEqual([
       'unresolved metered key (dynKey)',
     ]);
     expect(disallowedMeteredNotes('other.ts', 'for (const part of /metered(name)/.exec(text) ?? []) {}')).toEqual([]);

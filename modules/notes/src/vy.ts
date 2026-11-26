@@ -17,7 +17,7 @@ import {
   type TodoAcceptSuggestionsResult,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
-import { assertAuthor, assertNotInTrash, loadForChange, recordNoteVersionSnapshot } from './notes.ts';
+import { assertAuthor, assertNotInTrash, loadForChange, lockNote, recordNoteVersionSnapshot } from './notes.ts';
 import { TODO_SUMMARY_COLUMNS, detailsOf, due, lockTodoSortOrder, placeFrontBatch, remindAt, todoSummaryRow } from './todos.ts';
 
 const MODULE = 'notes';
@@ -309,6 +309,9 @@ export const todoAcceptSuggestions = defineCommand({
       // Serialize sort-key allocation before reading note revision/deleted_at so edits/deletes during a lock wait are caught.
       await lockTodoSortOrder(ctx, userId);
     }
+    // Hold a shared per-note advisory lock before reading revision/deleted_at so noteUpdate/noteDelete/noteRestoreVersion
+    // wait until todo inserts commit without hitting note_update RLS on shared org notes read by plain members.
+    await lockNote(ctx, input.noteId, true);
     const assertSourceNoteCurrent = async () => {
       const current = await ctx.trx
         .selectFrom('ludy_notes.note')

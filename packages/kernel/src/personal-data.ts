@@ -1877,7 +1877,8 @@ export const personalDataErase = defineCommand({
                  WHERE v.org_id = n.org_id AND v.note_id = n.id
                    AND (${mentions('v.title')} OR ${mentions('v.body')} OR ${freeTextMatch(probe, tagsOf('v'))})))
        ORDER BY n.id
-       FOR UPDATE OF n`.execute(ctx.trx);
+       -- personalDataErase only redacts non-key text columns on shared notes; FOR NO KEY UPDATE blocks concurrent edits without conflicting with FK FOR KEY SHARE inserts (e.g. todoCreate/todoAcceptSuggestions).
+       FOR NO KEY UPDATE OF n`.execute(ctx.trx);
     const { rows: notes } = await sql<{ title: boolean; body: boolean; tags: boolean }>`
       UPDATE ludy_notes.note t
          SET title = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), ERASED_TEXT_MARK)}, ${NOTE_TITLE_MAX}::int),

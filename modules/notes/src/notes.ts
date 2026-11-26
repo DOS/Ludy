@@ -141,6 +141,15 @@ export async function lockNotebookReorder(ctx: Pick<QueryContext, 'trx' | 'orgId
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
 }
 
+export async function lockNote(ctx: Pick<QueryContext, 'trx' | 'orgId'>, noteId: string, shared = false): Promise<void> {
+  const lockKey = `notes.note:${ctx.orgId.toLowerCase()}:${noteId.toLowerCase()}`;
+  if (shared) {
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
+  } else {
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
+  }
+}
+
 // Checks notebook readability under caller SELECT RLS with uniform 404 for missing or unreadable notebooks
 // so cross-member private notebook_id probing yields zero existence oracle, takes a shared per-notebook advisory
 // lock (SELECT FOR SHARE in PostgreSQL would apply UPDATE RLS and hide shared notebooks from plain members),
@@ -177,6 +186,7 @@ const notebookAuditFact = (noteVisibility: NoteVisibility, notebookId: string | 
 
 // The note as the caller may read it (row policies), with its body, locked for a change when `lock` is set.
 async function load(ctx: Pick<QueryContext, 'trx' | 'orgId'>, noteId: string, lock: boolean): Promise<SummaryRow & { body: string }> {
+  if (lock) await lockNote(ctx, noteId, false);
   let q = ctx.trx.selectFrom('ludy_notes.note').select([...SUMMARY, 'body']).where('org_id', '=', ctx.orgId).where('id', '=', noteId);
   if (lock) q = q.forUpdate();
   const row = await q.executeTakeFirst();

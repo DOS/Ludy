@@ -325,6 +325,7 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
     const lockParams = queries.filter((q) => q.sql.includes('pg_advisory_xact_lock')).flatMap((q) => q.parameters);
     expect(lockParams.some((p) => String(p).includes('todo_accept_run'))).toBe(false);
     expect(lockParams).toContain(`ludy_notes.todo_sort_order:${ORG_ID}:${USER_ID}`);
+    expect(lockParams).toContain(`notes.note:${ORG_ID}:${NOTE_ID}`);
   });
 
   it('rejects replay when any prior row exists or todo_source_run_once_uq conflicts', async () => {

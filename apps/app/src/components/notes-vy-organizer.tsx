@@ -192,17 +192,6 @@ export function NotesVyOrganizerPanel({
     },
   });
 
-  useEffect(() => {
-    if (!open) {
-      lastTriggerRef.current = false;
-      return;
-    }
-    if (!lastTriggerRef.current && statusReady && blocked === null) {
-      lastTriggerRef.current = true;
-      organizeMutation.mutate();
-    }
-  }, [open, statusReady, blocked]);
-
   const handleClose = () => {
     onClose();
     window.setTimeout(() => {
@@ -285,6 +274,18 @@ export function NotesVyOrganizerPanel({
       }
     },
   });
+
+  const isApplying = applyOne.isPending || applyAll.isPending;
+  useEffect(() => {
+    if (!open) {
+      lastTriggerRef.current = false;
+      return;
+    }
+    if (!lastTriggerRef.current && statusReady && blocked === null && !isApplying) {
+      lastTriggerRef.current = true;
+      organizeMutation.mutate();
+    }
+  }, [open, statusReady, blocked, isApplying]);
 
   if (!open) return null;
 

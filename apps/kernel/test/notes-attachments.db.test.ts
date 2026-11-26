@@ -586,10 +586,11 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
         { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
       );
       let sawEraseLockWait = false;
+      let erasePid: number | undefined;
       const deadline = Date.now() + 1500;
       while (!sawEraseLockWait && Date.now() < deadline) {
-        const waits = await rows<{ n: number }>(
-          `SELECT 1 AS n
+        const waits = await rows<{ pid: number }>(
+          `SELECT a.pid
              FROM pg_catalog.pg_stat_activity a
             WHERE a.datname = pg_catalog.current_database()
               AND a.state = 'active'
@@ -599,8 +600,12 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
             LIMIT 1`,
           [lockPid],
         );
-        if (waits.length > 0) sawEraseLockWait = true;
-        else await new Promise((resolve) => setTimeout(resolve, 10));
+        if (waits[0]) {
+          sawEraseLockWait = true;
+          erasePid = waits[0].pid;
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
       }
       expect(sawEraseLockWait).toBe(true);
       // Also launch notes.attachment.create against concurrentNote while lockClient holds it so erase and attachment.create genuinely contend upon release.
@@ -615,9 +620,12 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
               AND a.state = 'active'
               AND a.wait_event_type = 'Lock'
               AND a.query NOT LIKE '%ludy_notes.private_erase%'
-              AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+              AND (
+                $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+                OR ($2::int IS NOT NULL AND $2::int = ANY(pg_catalog.pg_blocking_pids(a.pid)))
+              )
             LIMIT 1`,
-          [lockPid],
+          [lockPid, erasePid ?? null],
         );
         if (waits.length > 0) sawAttachLockWait = true;
         else await new Promise((resolve) => setTimeout(resolve, 10));

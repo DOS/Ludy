@@ -180,17 +180,6 @@ export function MyWorkVyPlannerPanel({
     },
   });
 
-  useEffect(() => {
-    if (!open) {
-      lastTriggerRef.current = false;
-      return;
-    }
-    if (!lastTriggerRef.current && statusReady && blocked === null && !isViewer) {
-      lastTriggerRef.current = true;
-      planMutation.mutate();
-    }
-  }, [open, statusReady, blocked, isViewer]);
-
   const handleClose = () => {
     onClose();
     window.setTimeout(() => {
@@ -344,6 +333,18 @@ export function MyWorkVyPlannerPanel({
       }
     },
   });
+
+  const isApplying = applyFocus.isPending || applyOneReschedule.isPending || applyAllReschedules.isPending;
+  useEffect(() => {
+    if (!open) {
+      lastTriggerRef.current = false;
+      return;
+    }
+    if (!lastTriggerRef.current && statusReady && blocked === null && !isViewer && !isApplying) {
+      lastTriggerRef.current = true;
+      planMutation.mutate();
+    }
+  }, [open, statusReady, blocked, isViewer, isApplying]);
 
   if (!open || isViewer) return null;
 
