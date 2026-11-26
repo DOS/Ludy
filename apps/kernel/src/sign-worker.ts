@@ -1419,6 +1419,17 @@ export async function sweepSignPendingKycWork(
     deps.appOn ??
     (deps.runtime.appOn ? (orgId: string) => deps.runtime.appOn!(orgId, 'sign', { fresh: true }) : undefined);
   const isEnabled = createAppEnabledCache(resolvedAppOn);
+  const pendingSignEnableByOrg = new Map<string, boolean>();
+  const hasPendingSignEnable = async (orgId: string): Promise<boolean> => {
+    const cached = pendingSignEnableByOrg.get(orgId);
+    if (cached !== undefined) return cached;
+    const { rows } = await sql<{ pending: boolean }>`
+      SELECT ludy_sign.kyc_has_pending_sign_enable(${orgId}::uuid) AS pending
+    `.execute(deps.workerDb);
+    const pending = Boolean(rows[0]?.pending);
+    pendingSignEnableByOrg.set(orgId, pending);
+    return pending;
+  };
   let requeued = 0;
   let timedOut = 0;
   let after: KycRecoveryCursor | null = null;
@@ -1431,6 +1442,7 @@ export async function sweepSignPendingKycWork(
         if (!(await isEnabled(row.org_id))) continue;
         const updatedMs = new Date(row.updated_at_cursor).getTime();
         if (Number.isFinite(updatedMs) && updatedMs <= timeoutBefore.getTime()) {
+          if (!deps.bumpUpdatedAtOnRequeue && (await hasPendingSignEnable(row.org_id))) continue;
           const completed = await deps.runtime.execute<unknown>(
             'sign.kyc.inspect_complete',
             {

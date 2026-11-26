@@ -43,12 +43,16 @@ import {
   ROADMAP_SIGNAL_QUOTE_EXCERPT_MAX,
   ROADMAP_TITLE_MAX,
   zPersonalDataQuery,
+  personalDataProbe,
+  type Probe,
   type PersonalDataErasure,
   type PersonalDataNotice,
   type PersonalDataResult,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 import { MAIL_SOURCES_LEFT_OUT } from './offboarding.ts';
+
+export { personalDataProbe, type Probe };
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 const OWNERS: readonly MemberRole[] = ['owner'];
@@ -945,21 +949,6 @@ export const PERSONAL_DATA_SCHEMAS = ['ludy_kernel', 'ludy_finance', 'ludy_socia
 // left out). Read in the org's context, so row security keeps it to the org. Each column returns at most
 // PERSONAL_DATA_ROW_LIMIT rows; `truncated` says when one had more.
 export const PERSONAL_DATA_ROW_LIMIT = 200;
-
-export type Probe = { kind: 'email'; email: string } | { kind: 'digits'; digits: string };
-
-export function personalDataProbe(value: string): Probe | null {
-  const trimmed = value.trim();
-  if (/^[^\s@]+@[^\s@]+$/.test(trimmed)) return { kind: 'email', email: trimmed.toLowerCase() };
-  // A phone number (spaces, dots, dashes, brackets and a leading + allowed, as in "(028) 3829 1234"), a tax code (10
-  // digits, or 13 with a branch suffix), a national ID (12 digits) or a bank account number (8 to 20 digits; the 6 and 7 digit
-  // accounts are out of reach, as such a short value also matches amounts written with dots in free text).
-  if (/^[+(\d][\d\s().-]{7,40}$/.test(trimmed)) {
-    const digits = trimmed.replace(/\D/g, '');
-    if (digits.length >= 8 && digits.length <= 20) return { kind: 'digits', digits };
-  }
-  return null;
-}
 
 // Free text (#1678, shared with #1948): whether a text column mentions the probe's email address or digits among other
 // words, and the text with every mention replaced by a mark. Both go through ludy_kernel.text_mentions and
