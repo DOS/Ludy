@@ -19,7 +19,7 @@ import type tsType from 'typescript-api';
 import { describe, expect, it } from 'vitest';
 
 const requireTs = createRequire(import.meta.url);
-const tsApiPath = process.env.CROVE_INVARIANT_TS_API_PATH;
+const tsApiPath = process.env.LUDY_INVARIANT_TS_API_PATH;
 const ts = (tsApiPath ? requireTs(tsApiPath) : requireTs('typescript-api')) as typeof tsType;
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -3026,7 +3026,6 @@ function parseAstCandidates(text: string, filePath?: string | undefined): AstPar
       const sf = ts.createSourceFile(cand.name, text, ts.ScriptTarget.Latest, true, cand.kind) as TsSourceFileWithDiagnostics;
       const diags = getAstParseDiagnostics(sf);
       parsed.push({ sf, diags, isJsx: cand.kind === ts.ScriptKind.TSX });
-      if (diags.length === 0) break;
     } catch (err) {
       if (err instanceof RangeError) {
         hadRangeError = true;
@@ -3470,13 +3469,13 @@ function isAstIdentNonValueRequireOrImportKey(ident: tsType.Identifier, parent: 
   if (ts.isLabeledStatement(parent) && parent.label === ident) return true;
   if (ts.isBreakOrContinueStatement(parent) && parent.label === ident) return true;
   if (ts.isImportSpecifier(parent) || ts.isImportClause(parent) || ts.isNamespaceImport(parent)) return true;
-  if (
-    ts.isExportSpecifier(parent) &&
-    (parent.propertyName === ident || (parent.propertyName !== undefined && parent.name === ident))
-  ) {
-    return true;
+  if (ts.isExportSpecifier(parent)) {
+    const decl = parent.parent?.parent;
+    const hasModSpec = Boolean(decl && ts.isExportDeclaration(decl) && decl.moduleSpecifier !== undefined);
+    if (parent.propertyName === ident) return hasModSpec;
+    if (parent.propertyName !== undefined && parent.name === ident) return true;
   }
-  if (ts.isBindingElement(parent)) return true;
+  if (ts.isBindingElement(parent) && (parent.name === ident || parent.propertyName === ident)) return true;
   return false;
 }
 
@@ -3723,10 +3722,52 @@ function extractAstFacts(
   const seedCreateRequire = new Set<string>(['global:createRequire']);
   const seedRequire = new Set<string>(['global:require']);
   const seedRequireHosts = new Set<string>([...AST_REQUIRE_HOSTS].map((h) => `global:${h}`));
+  const seedNonSafeKillBases = new Set<string>();
+  const seedNonSafeKillValues = new Set<string>();
   const seedMeterAliases = new Set<string>(['global:metered']);
   const seedMeterNs = new Set<string>();
   const seedAgentBindings = new Set<string>();
   const seedExecuteAliases = new Set<string>(['global:execute']);
+
+  const expandAstBranchExprs = (expr: tsType.Expression): tsType.Expression[] => {
+    const out: tsType.Expression[] = [];
+    const bStack: tsType.Expression[] = [expr];
+    let count = 0;
+    while (bStack.length > 0 && count < 64) {
+      count += 1;
+      const cur = unwrapAstExpr(bStack.pop()!, true);
+      if (ts.isConditionalExpression(cur)) {
+        bStack.push(cur.whenFalse, cur.whenTrue);
+        continue;
+      }
+      if (
+        ts.isBinaryExpression(cur) &&
+        (cur.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+          cur.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+          cur.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken)
+      ) {
+        if (cur.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+          bStack.push(cur.right);
+        } else {
+          bStack.push(cur.left, cur.right);
+        }
+        continue;
+      }
+      out.push(cur);
+    }
+    return out;
+  };
+
+  const anyAstBranchMatchesSet = (
+    expr: tsType.Expression,
+    scope: AstLexScope,
+    set: ReadonlySet<string>,
+  ): boolean => {
+    for (const br of expandAstBranchExprs(expr)) {
+      if (ts.isIdentifier(br) && set.has(astVarKey(scope, br.text))) return true;
+    }
+    return false;
+  };
 
   const addFetchTaintEvent = (varKey: string, ev: FetchTaintEvent): boolean => {
     if (ev.fnNode === null) {
@@ -3923,11 +3964,34 @@ function extractAstFacts(
     if (AST_TABLE_TEXT_RE.test(val)) stringAndIdentMatches.add('table:crove_');
   };
 
+  const addPositionalEdge = (
+    fromKey: string,
+    toKey: string,
+    rawPos: number,
+    rhsNode: tsType.Node,
+  ): void => {
+    const edgeFnNode = getAstEnclosingFnNode(rhsNode);
+    const loopNode = getAstEnclosingLoopInFn(rhsNode, edgeFnNode);
+    const edge: PositionalAliasEdge = {
+      from: fromKey,
+      to: toKey,
+      rawPos,
+      effPos: loopNode ? loopNode.getStart(sf) : rawPos,
+      fnNode: edgeFnNode,
+      loopNode,
+      rhsNode,
+    };
+    const outEdges = positionalEdgesBySource.get(fromKey);
+    if (outEdges) outEdges.push(edge);
+    else positionalEdgesBySource.set(fromKey, [edge]);
+  };
+
   const recordBindAndMemberTarget = (
     targetKeys: string[],
     rhsExpr: tsType.Expression,
     evalScope: AstLexScope,
     assignEndPos?: number,
+    objDepth = 0,
   ): tsType.Expression => {
     const branchStack: tsType.Expression[] = [rhsExpr];
     let firstUnwrapped: tsType.Expression | null = null;
@@ -3964,35 +4028,62 @@ function extractAstFacts(
         }
         continue;
       }
+      if (!ts.isIdentifier(cur)) {
+        for (const tk of targetKeys) {
+          if (!tk.startsWith('prop:')) seedNonSafeKillBases.add(tk);
+        }
+      }
       if (targetKeys.length === 1 && ts.isIdentifier(cur)) {
         const fromKey = astVarKey(evalScope, cur.text);
         const toKey = targetKeys[0]!;
         addAliasEdge(aliasEdges, fromKey, toKey);
-        const edgeFnNode = getAstEnclosingFnNode(cur);
-        const loopNode = getAstEnclosingLoopInFn(cur, edgeFnNode);
-        const rawPos = assignEndPos ?? cur.getStart(sf);
-        const edge: PositionalAliasEdge = {
-          from: fromKey,
-          to: toKey,
-          rawPos,
-          effPos: loopNode ? loopNode.getStart(sf) : rawPos,
-          fnNode: edgeFnNode,
-          loopNode,
-          rhsNode: cur,
-        };
-        const outEdges = positionalEdgesBySource.get(fromKey);
-        if (outEdges) outEdges.push(edge);
-        else positionalEdgesBySource.set(fromKey, [edge]);
+        addPositionalEdge(fromKey, toKey, assignEndPos ?? cur.getStart(sf), cur);
       } else if (targetKeys.length > 0 && (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur))) {
         const mem = extractAstMemberName(cur, evalScope);
+        const memHost = unwrapAstExpr(mem.host, true);
         memberBindCandidates.push({
-          host: unwrapAstExpr(mem.host, true),
+          host: memHost,
           propName: mem.memberName,
           isComputedBracket: mem.isComputedBracket,
           targets: targetKeys,
           scope: evalScope,
           rhsExpr: cur,
         });
+        if (targetKeys.length === 1 && mem.memberName !== null) {
+          const toKey = targetKeys[0]!;
+          const rawPos = assignEndPos ?? cur.getStart(sf);
+          for (const br of expandAstBranchExprs(memHost)) {
+            if (ts.isIdentifier(br)) {
+              const propKey = `prop:${astVarKey(evalScope, br.text)}\0${mem.memberName}`;
+              addAliasEdge(aliasEdges, propKey, toKey);
+              addPositionalEdge(propKey, toKey, rawPos, cur);
+            }
+          }
+        }
+      } else if (targetKeys.length === 1 && ts.isObjectLiteralExpression(cur) && objDepth < 4) {
+        const baseKey = targetKeys[0]!;
+        for (const prop of cur.properties) {
+          if (ts.isPropertyAssignment(prop)) {
+            const keyInfo = resolveAstPropertyName(prop.name, evalScope);
+            if (keyInfo.name !== null) {
+              recordBindAndMemberTarget(
+                [`prop:${baseKey}\0${keyInfo.name}`],
+                prop.initializer,
+                evalScope,
+                assignEndPos,
+                objDepth + 1,
+              );
+            }
+          } else if (ts.isShorthandPropertyAssignment(prop)) {
+            recordBindAndMemberTarget(
+              [`prop:${baseKey}\0${prop.name.text}`],
+              prop.name,
+              evalScope,
+              assignEndPos,
+              objDepth + 1,
+            );
+          }
+        }
       }
     }
     return firstUnwrapped ?? unwrapAstExpr(rhsExpr, true);
@@ -4090,8 +4181,8 @@ function extractAstFacts(
             : { name: null, isComputedBracket: false };
         if (ts.isObjectBindingPattern(el.name)) {
           bStack.push({ bp: el.name, isTopLevel: false });
-          if (keyInfo.isComputedBracket) {
-            out.push({ key: null, isComputedBracket: true, isTopLevel, targets: [] });
+          if (keyInfo.isComputedBracket || keyInfo.name === 'WebSocket' || keyInfo.name === 'XMLHttpRequest') {
+            out.push({ key: keyInfo.name, isComputedBracket: keyInfo.isComputedBracket, isTopLevel, targets: [] });
           }
           continue;
         }
@@ -4388,7 +4479,16 @@ function extractAstFacts(
 
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const lhsExpr = unwrapAstExpr(node.left, false);
-      const lhsTarget = ts.isIdentifier(lhsExpr) ? [astVarKey(nextScope, lhsExpr.text)] : [];
+      let lhsTarget: string[] = ts.isIdentifier(lhsExpr) ? [astVarKey(nextScope, lhsExpr.text)] : [];
+      if (ts.isPropertyAccessExpression(lhsExpr) || ts.isElementAccessExpression(lhsExpr)) {
+        const lhsMem = extractAstMemberName(lhsExpr, nextScope);
+        const lhsHost = unwrapAstExpr(lhsMem.host, true);
+        if (ts.isIdentifier(lhsHost) && lhsMem.memberName !== null) {
+          const hostKey = astVarKey(nextScope, lhsHost.text);
+          seedNonSafeKillBases.add(hostKey);
+          lhsTarget = [`prop:${hostKey}\0${lhsMem.memberName}`];
+        }
+      }
       const rhsExpr = recordBindAndMemberTarget(lhsTarget, node.right, nextScope, node.end);
       if (ts.isIdentifier(lhsExpr) && node.parent) {
         let stmtCur: tsType.Node = node.parent;
@@ -4594,10 +4694,28 @@ function extractAstFacts(
     }
   }
 
+  const anyBranchMatchesModuleSpec = (
+    expr: tsType.Expression,
+    scope: AstLexScope,
+    specPred: (s: string) => boolean,
+  ): boolean => {
+    for (const br of expandAstBranchExprs(expr)) {
+      if (
+        ts.isCallExpression(br) &&
+        (br.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(br.expression) && br.expression.text === 'require'))
+      ) {
+        const arg0 = br.arguments[0];
+        const mSpec = arg0 ? resolveAstConstString(arg0, scope, 'full_const') : null;
+        if (mSpec !== null && specPred(mSpec)) return true;
+      }
+    }
+    return false;
+  };
+
   const requireHosts = propagateAliases(seedRequireHosts, aliasEdges);
   let nodeModuleNamespaces = propagateAliases(seedNodeModuleNs, aliasEdges);
   for (const access of hostMemberAccesses) {
-    if (ts.isIdentifier(access.hostExpr) && requireHosts.has(astVarKey(access.scope, access.hostExpr.text))) {
+    if (anyAstBranchMatchesSet(access.hostExpr, access.scope, requireHosts)) {
       if (access.memberName === 'require' || access.memberName === 'createRequire') {
         hasBareRequire = true;
       } else if (access.memberName === 'WebSocket' || access.memberName === 'XMLHttpRequest') {
@@ -4606,19 +4724,22 @@ function extractAstFacts(
     }
   }
   for (const cand of memberBindCandidates) {
-    if (ts.isIdentifier(cand.host) && nodeModuleNamespaces.has(astVarKey(cand.scope, cand.host.text)) && cand.propName === 'createRequire') {
+    if (anyAstBranchMatchesSet(cand.host, cand.scope, nodeModuleNamespaces) && cand.propName === 'createRequire') {
       hasBareRequire = true;
       for (const t of cand.targets) seedCreateRequire.add(t);
     }
-    if (ts.isIdentifier(cand.host) && requireHosts.has(astVarKey(cand.scope, cand.host.text)) && cand.propName === 'require') {
-      hasBareRequire = true;
-      for (const t of cand.targets) seedRequire.add(t);
+    if (anyAstBranchMatchesSet(cand.host, cand.scope, requireHosts)) {
+      if (cand.propName === 'require') {
+        hasBareRequire = true;
+        for (const t of cand.targets) seedRequire.add(t);
+      } else if (cand.propName === 'fetch') {
+        for (const t of cand.targets) seedFetchAtNode(t, cand.rhsExpr);
+      } else if (cand.propName === 'WebSocket' || cand.propName === 'XMLHttpRequest') {
+        stringAndIdentMatches.add(cand.propName);
+      }
     }
-    if (ts.isIdentifier(cand.host) && cand.propName === 'execute') {
+    if (cand.propName === 'execute') {
       for (const t of cand.targets) seedExecuteAliases.add(t);
-    }
-    if (ts.isIdentifier(cand.host) && requireHosts.has(astVarKey(cand.scope, cand.host.text)) && cand.propName === 'fetch') {
-      for (const t of cand.targets) seedFetchAtNode(t, cand.rhsExpr);
     }
   }
 
@@ -4627,8 +4748,8 @@ function extractAstFacts(
     const tgt = rgCall.arguments[0] ? unwrapAstExpr(rgCall.arguments[0], false) : null;
     const key = rgCall.arguments[1] ? unwrapAstExpr(rgCall.arguments[1], false) : null;
     const resolvedKey = key ? resolveAstConstString(key, rgScope, 'full_const') : null;
-    const tgtKey = tgt && ts.isIdentifier(tgt) ? astVarKey(rgScope, tgt.text) : null;
-    if (tgtKey && requireHosts.has(tgtKey)) {
+    const isReqHostTgt = Boolean(tgt && anyAstBranchMatchesSet(tgt, rgScope, requireHosts));
+    if (isReqHostTgt) {
       if (resolvedKey === 'require') {
         hasBareRequire = true;
         for (const t of getScopedAssignmentTargets(rgCall, rgScope)) seedRequire.add(t);
@@ -4637,13 +4758,15 @@ function extractAstFacts(
         for (const t of getScopedAssignmentTargets(rgCall, rgScope)) seedCreateRequire.add(t);
       } else if (resolvedKey === 'fetch') {
         for (const t of getScopedAssignmentTargets(rgCall, rgScope)) seedFetchAtNode(t, rgCall);
+      } else if (resolvedKey === 'WebSocket' || resolvedKey === 'XMLHttpRequest') {
+        stringAndIdentMatches.add(resolvedKey);
       }
     }
-    if (tgtKey && nodeModuleNamespaces.has(tgtKey) && resolvedKey === 'createRequire') {
+    if (tgt && anyAstBranchMatchesSet(tgt, rgScope, nodeModuleNamespaces) && resolvedKey === 'createRequire') {
       hasBareRequire = true;
       for (const t of getScopedAssignmentTargets(rgCall, rgScope)) seedCreateRequire.add(t);
     }
-    if (tgtKey && prePropagatedMeterNs.has(tgtKey) && resolvedKey === 'metered') {
+    if (tgt && anyAstBranchMatchesSet(tgt, rgScope, prePropagatedMeterNs) && resolvedKey === 'metered') {
       for (const t of getScopedAssignmentTargets(rgCall, rgScope)) seedMeterAliases.add(t);
     }
     if (resolvedKey === 'execute') {
@@ -4661,14 +4784,8 @@ function extractAstFacts(
       const mem = extractAstMemberName(site.calleeExpr, site.scope);
       const h = unwrapAstExpr(mem.host, true);
       if (mem.memberName === 'createRequire') {
-        if (ts.isIdentifier(h) && nodeModuleNamespaces.has(astVarKey(site.scope, h.text))) isMemberCreateRequire = true;
-        if (
-          ts.isCallExpression(h) &&
-          (h.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(h.expression) && h.expression.text === 'require'))
-        ) {
-          const arg0 = h.arguments[0];
-          const modSpec = arg0 ? resolveAstConstString(arg0, site.scope, 'full_const') : null;
-          if (modSpec !== null && isNodeModuleSpecifier(modSpec)) isMemberCreateRequire = true;
+        if (anyAstBranchMatchesSet(h, site.scope, nodeModuleNamespaces) || anyBranchMatchesModuleSpec(h, site.scope, isNodeModuleSpecifier)) {
+          isMemberCreateRequire = true;
         }
       }
     }
@@ -4685,7 +4802,7 @@ function extractAstFacts(
     } else if (ts.isPropertyAccessExpression(site.calleeExpr) || ts.isElementAccessExpression(site.calleeExpr)) {
       const mem = extractAstMemberName(site.calleeExpr, site.scope);
       const h = unwrapAstExpr(mem.host, true);
-      if (mem.memberName === 'require' && ts.isIdentifier(h) && requireHosts.has(astVarKey(site.scope, h.text))) {
+      if (mem.memberName === 'require' && anyAstBranchMatchesSet(h, site.scope, requireHosts)) {
         seedModuleBindingsFromCallSite(site);
       }
     }
@@ -4693,21 +4810,30 @@ function extractAstFacts(
   nodeModuleNamespaces = propagateAliases(seedNodeModuleNs, aliasEdges);
   const meterNamespaces = propagateAliases(seedMeterNs, aliasEdges);
   for (const cand of memberBindCandidates) {
-    if (ts.isIdentifier(cand.host) && meterNamespaces.has(astVarKey(cand.scope, cand.host.text)) && cand.propName === 'metered') {
+    if (anyAstBranchMatchesSet(cand.host, cand.scope, meterNamespaces) && cand.propName === 'metered') {
       for (const t of cand.targets) seedMeterAliases.add(t);
     }
   }
   const meterAliases = propagateAliases(seedMeterAliases, aliasEdges);
   const agentBindings = propagateAliases(seedAgentBindings, aliasEdges);
   const executeAliases = propagateAliases(seedExecuteAliases, aliasEdges);
+  const nonSafeKillBases = propagateAliases(seedNonSafeKillBases, aliasEdges);
+  for (const cand of memberBindCandidates) {
+    if (anyAstBranchMatchesSet(cand.host, cand.scope, nonSafeKillBases) || anyAstBranchMatchesSet(cand.host, cand.scope, requireHosts)) {
+      for (const t of cand.targets) seedNonSafeKillValues.add(t);
+    }
+  }
+  const nonSafeKillValues = propagateAliases(seedNonSafeKillValues, aliasEdges);
   for (const k of fetchKillCandidates) {
     let isKnownSafeKill = false;
     if (ts.isIdentifier(k.rhsExpr)) {
-      isKnownSafeKill = !requireHosts.has(astVarKey(k.evalScope, k.rhsExpr.text));
+      const rhsKey = astVarKey(k.evalScope, k.rhsExpr.text);
+      isKnownSafeKill = !requireHosts.has(rhsKey) && !nonSafeKillValues.has(rhsKey);
     } else if (ts.isPropertyAccessExpression(k.rhsExpr)) {
       const base = unwrapAstExpr(k.rhsExpr.expression, true);
-      if (ts.isIdentifier(base) && !requireHosts.has(astVarKey(k.evalScope, base.text))) {
-        isKnownSafeKill = true;
+      if (ts.isIdentifier(base)) {
+        const baseKey = astVarKey(k.evalScope, base.text);
+        isKnownSafeKill = !requireHosts.has(baseKey) && !nonSafeKillBases.has(baseKey);
       }
     } else if (
       ts.isFunctionLike(k.rhsExpr) ||
@@ -4761,7 +4887,7 @@ function extractAstFacts(
 
   // Check computed property access / Reflect.get / computed destructure on agent bindings
   for (const cand of memberBindCandidates) {
-    if (ts.isIdentifier(cand.host) && agentBindings.has(astVarKey(cand.scope, cand.host.text))) {
+    if (anyAstBranchMatchesSet(cand.host, cand.scope, agentBindings)) {
       if (cand.isComputedBracket && cand.propName === null) {
         hasNonDirectAgentComputedAccess = true;
       }
@@ -4774,7 +4900,7 @@ function extractAstFacts(
     const h = unwrapAstExpr(elNode.expression, false);
     const arg = unwrapAstExpr(elNode.argumentExpression, false);
     const isDirectLit = ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg);
-    if (!isDirectLit && ts.isIdentifier(h) && agentBindings.has(astVarKey(elScope, h.text))) {
+    if (!isDirectLit && anyAstBranchMatchesSet(h, elScope, agentBindings)) {
       hasNonDirectAgentComputedAccess = true;
     }
   }
@@ -4783,14 +4909,13 @@ function extractAstFacts(
     const key = rgCall.arguments[1] ? unwrapAstExpr(rgCall.arguments[1], false) : null;
     const resolvedKey = key ? resolveAstConstString(key, rgScope, 'full_const') : null;
     const isDirectLit = Boolean(key && (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)));
-    const tgtKey = tgt && ts.isIdentifier(tgt) ? astVarKey(rgScope, tgt.text) : null;
-    if (!isDirectLit && tgtKey && agentBindings.has(tgtKey)) {
+    if (!isDirectLit && tgt && anyAstBranchMatchesSet(tgt, rgScope, agentBindings)) {
       hasNonDirectAgentComputedAccess = true;
     }
-    if (tgtKey && requireHosts.has(tgtKey) && (resolvedKey === 'require' || resolvedKey === 'createRequire')) {
+    if (tgt && anyAstBranchMatchesSet(tgt, rgScope, requireHosts) && (resolvedKey === 'require' || resolvedKey === 'createRequire')) {
       hasBareRequire = true;
     }
-    if (tgtKey && nodeModuleNamespaces.has(tgtKey) && resolvedKey === 'createRequire') {
+    if (tgt && anyAstBranchMatchesSet(tgt, rgScope, nodeModuleNamespaces) && resolvedKey === 'createRequire') {
       hasBareRequire = true;
     }
   }
@@ -4819,20 +4944,34 @@ function extractAstFacts(
     } else if (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) {
       const mem = extractAstMemberName(callee, site.scope);
       const h = unwrapAstExpr(mem.host, true);
-      const hKey = ts.isIdentifier(h) ? astVarKey(site.scope, h.text) : null;
-      if (mem.memberName === 'require' && hKey && requireHosts.has(hKey)) {
+      if (mem.memberName === 'require' && anyAstBranchMatchesSet(h, site.scope, requireHosts)) {
         dynKind = 'require';
         isIndirectRequire = true;
       } else if (mem.memberName === 'execute') {
         callsExecute = true;
-      } else if (mem.memberName === 'fetch' && hKey && requireHosts.has(hKey)) {
-        callsFetch = true;
-      } else if (mem.memberName === 'get' && ts.isIdentifier(h) && h.text === 'Reflect') {
-        const tgt = site.call.arguments[0] ? unwrapAstExpr(site.call.arguments[0], false) : null;
-        const key = site.call.arguments[1] ? unwrapAstExpr(site.call.arguments[1], false) : null;
-        const keyStr = key ? resolveAstConstString(key, site.scope, 'full_const') : null;
-        if (tgt && ts.isIdentifier(tgt) && requireHosts.has(astVarKey(site.scope, tgt.text)) && keyStr === 'require') {
-          hasBareRequire = true;
+      } else if (mem.memberName === 'fetch') {
+        if (anyAstBranchMatchesSet(h, site.scope, requireHosts)) {
+          callsFetch = true;
+        } else {
+          for (const br of expandAstBranchExprs(h)) {
+            if (ts.isIdentifier(br) && isFetchTaintedAtCall(`prop:${astVarKey(site.scope, br.text)}\0fetch`, callee)) {
+              callsFetch = true;
+            }
+          }
+        }
+      } else if (mem.memberName !== null) {
+        for (const br of expandAstBranchExprs(h)) {
+          if (ts.isIdentifier(br) && isFetchTaintedAtCall(`prop:${astVarKey(site.scope, br.text)}\0${mem.memberName}`, callee)) {
+            callsFetch = true;
+          }
+        }
+        if (mem.memberName === 'get' && ts.isIdentifier(h) && h.text === 'Reflect') {
+          const tgt = site.call.arguments[0] ? unwrapAstExpr(site.call.arguments[0], false) : null;
+          const key = site.call.arguments[1] ? unwrapAstExpr(site.call.arguments[1], false) : null;
+          const keyStr = key ? resolveAstConstString(key, site.scope, 'full_const') : null;
+          if (tgt && anyAstBranchMatchesSet(tgt, site.scope, requireHosts) && keyStr === 'require') {
+            hasBareRequire = true;
+          }
         }
       }
     } else if (ts.isCallExpression(callee)) {
@@ -4844,14 +4983,8 @@ function extractAstFacts(
         const mem = extractAstMemberName(innerUnwrapped.calleeExpr, site.scope);
         const h = unwrapAstExpr(mem.host, true);
         if (mem.memberName === 'createRequire') {
-          if (ts.isIdentifier(h) && nodeModuleNamespaces.has(astVarKey(site.scope, h.text))) isCrCallee = true;
-          else if (
-            ts.isCallExpression(h) &&
-            (h.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(h.expression) && h.expression.text === 'require'))
-          ) {
-            const arg0 = h.arguments[0];
-            const mSpec = arg0 ? resolveAstConstString(arg0, site.scope, 'full_const') : null;
-            if (mSpec !== null && isNodeModuleSpecifier(mSpec)) isCrCallee = true;
+          if (anyAstBranchMatchesSet(h, site.scope, nodeModuleNamespaces) || anyBranchMatchesModuleSpec(h, site.scope, isNodeModuleSpecifier)) {
+            isCrCallee = true;
           }
         }
       }
@@ -4867,7 +5000,7 @@ function extractAstFacts(
             const tgt = callee.arguments[0] ? unwrapAstExpr(callee.arguments[0], false) : null;
             const key = callee.arguments[1] ? unwrapAstExpr(callee.arguments[1], false) : null;
             const keyStr = key ? resolveAstConstString(key, site.scope, 'full_const') : null;
-            if (tgt && ts.isIdentifier(tgt) && requireHosts.has(astVarKey(site.scope, tgt.text))) {
+            if (tgt && anyAstBranchMatchesSet(tgt, site.scope, requireHosts)) {
               if (keyStr === 'require') {
                 dynKind = 'require';
                 isIndirectRequire = true;
@@ -4921,14 +5054,8 @@ function extractAstFacts(
       const mem = extractAstMemberName(callee, site.scope);
       const h = unwrapAstExpr(mem.host, true);
       if (mem.memberName === 'metered') {
-        if (ts.isIdentifier(h) && meterNamespaces.has(astVarKey(site.scope, h.text))) isMeterCall = true;
-        else if (
-          ts.isCallExpression(h) &&
-          (h.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(h.expression) && h.expression.text === 'require'))
-        ) {
-          const arg0 = h.arguments[0];
-          const mSpec = arg0 ? resolveAstConstString(arg0, site.scope, 'full_const') : null;
-          if (mSpec !== null && isMeterModuleSpecifier(mSpec)) isMeterCall = true;
+        if (anyAstBranchMatchesSet(h, site.scope, meterNamespaces) || anyBranchMatchesModuleSpec(h, site.scope, isMeterModuleSpecifier)) {
+          isMeterCall = true;
         }
       }
     }
@@ -5140,7 +5267,7 @@ const ADAPTER_NOTE_IMPORT_RE = /(?:^|\/)note-ai-model(?:\.[cm]?[jt]s)?$/;
 const isNoteAiModelSpecifier = (spec: string): boolean => ADAPTER_NOTE_IMPORT_RE.test(normalizeModuleSpecifier(spec));
 const DEFAULT_ADAPTER_EXPORTS: readonly string[] = [...ADAPTER_FUNCTION_NOTES_KEYS.keys()];
 
-export function memberVyNames(text: string): string[] {
+export function memberVyNames(text: string, filePath?: string): string[] {
   const names = new Set(['memberVy', 'member_vy', 'PrivateText']);
   const found = new Set<string>();
   for (const name of names) {
@@ -5151,13 +5278,11 @@ export function memberVyNames(text: string): string[] {
       found.add(tok.value);
     }
   }
-  if (/\b(?:memberVy|member_vy|PrivateText)\b|['"`]|fromCharCode|\\u|\\x/.test(text)) {
-    const parsed = parseAstCandidates(text);
-    for (const sf of parsed.sources) {
-      const facts = extractAstFacts(sf, names);
-      for (const name of names) {
-        if (facts.stringAndIdentMatches.has(name)) found.add(name);
-      }
+  const parsed = parseAstCandidates(text, filePath);
+  for (const sf of parsed.sources) {
+    const facts = extractAstFacts(sf, names, filePath);
+    for (const name of names) {
+      if (facts.stringAndIdentMatches.has(name)) found.add(name);
     }
   }
   return [...found];
@@ -6950,20 +7075,21 @@ interface PrecomputedNotesAst {
   readonly hadRangeError: boolean;
 }
 
-const NOTES_METER_AST_TRIGGER_RE = /['"`]|import|require|Reflect|eval|Function|\\u|\\x|fromCharCode/;
-const NOTES_LITERAL_AST_TRIGGER_RE = /['"`]|fromCharCode|\\u|\\x/;
+const NOTES_METER_AST_TRIGGER_RE =
+  /['"`]|import|require|Reflect|eval|Function|globalThis|window|self|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}|fromCharCode/;
+const NOTES_LITERAL_AST_TRIGGER_RE = /['"`]|fromCharCode|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}/;
 const EMPTY_PRECOMPUTED_NOTES_AST: PrecomputedNotesAst = { factsList: [], hadRangeError: false };
 
 function hasNotesMeterTrigger(text: string): boolean {
   return (/\bmetered\b/.test(text) && /[(["'`[]/.test(text)) || NOTES_METER_AST_TRIGGER_RE.test(text);
 }
 
-function buildPrecomputedNotesAst(text: string): PrecomputedNotesAst {
+function buildPrecomputedNotesAst(text: string, filePath?: string): PrecomputedNotesAst {
   if (!hasNotesMeterTrigger(text)) return EMPTY_PRECOMPUTED_NOTES_AST;
-  const parsed = parseAstCandidates(text);
+  const parsed = parseAstCandidates(text, filePath);
   const emptySyms = new Set<string>();
   return {
-    factsList: parsed.sources.map((sf) => extractAstFacts(sf, emptySyms)),
+    factsList: parsed.sources.map((sf) => extractAstFacts(sf, emptySyms, filePath)),
     hadRangeError: parsed.hadRangeError,
   };
 }
@@ -7032,7 +7158,6 @@ function collectMeteredNotes(
   if (
     astData.hadRangeError &&
     resolvedOpts.includeUnresolved &&
-    found.size === 0 &&
     /\bmetered\b/.test(text) &&
     /<[A-Za-z>]/.test(text)
   ) {
@@ -7131,7 +7256,7 @@ export function notesKeyLiterals(text: string): string[] {
 }
 
 export function disallowedMeteredNotes(relFromSrc: string, text: string): string[] {
-  const precomputedAst = buildPrecomputedNotesAst(text);
+  const precomputedAst = buildPrecomputedNotesAst(text, relFromSrc);
   const calls = collectMeteredNotes(text, { includeUnresolved: true }, precomputedAst);
   const literals = collectNotesKeyLiterals(text, precomputedAst);
   const all = [...new Set([...calls, ...literals])];
@@ -7835,18 +7960,17 @@ export function adapterSymbolReferences(
   symbols: readonly string[],
   fileText: string,
   precomputedTokens?: readonly Token[],
+  filePath?: string,
 ): string[] {
   if (symbols.length === 0) return [];
   const symbolSet = new Set(symbols);
   const found = new Set<string>();
   collectSymbolTokenMatches(precomputedTokens ?? tokenize(fileText), symbolSet, found);
-  if (/['"`]|fromCharCode|\\u|\\x/.test(fileText) || symbols.some((sym) => fileText.includes(sym))) {
-    const parsed = parseAstCandidates(fileText);
-    for (const sf of parsed.sources) {
-      const facts = extractAstFacts(sf, symbolSet);
-      for (const sym of symbols) {
-        if (facts.stringAndIdentMatches.has(sym) || facts.interpolatedSymbolMatches.has(sym)) found.add(sym);
-      }
+  const parsed = parseAstCandidates(fileText, filePath);
+  for (const sf of parsed.sources) {
+    const facts = extractAstFacts(sf, symbolSet, filePath);
+    for (const sym of symbols) {
+      if (facts.stringAndIdentMatches.has(sym) || facts.interpolatedSymbolMatches.has(sym)) found.add(sym);
     }
   }
   for (const sym of symbols) {
@@ -7858,7 +7982,7 @@ export function adapterSymbolReferences(
   return symbols.filter((sym) => found.has(sym));
 }
 
-export function importsNoteAiModel(fileText: string): boolean {
+export function importsNoteAiModel(fileText: string, filePath?: string): boolean {
   const primary = scanSource(fileText, { emitTokens: true, stripCommentsMode: false, stripStrings: false });
   if (
     specifiers(fileText, primary.tokens, undefined, primary.unambiguousRegexSpans).specifiers.some((spec) =>
@@ -7876,11 +8000,10 @@ export function importsNoteAiModel(fileText: string): boolean {
   ) {
     return true;
   }
-  if (!/note-ai|['"`]|import|require|fromCharCode|\\u|\\x/.test(fileText)) return false;
-  const parsed = parseAstCandidates(fileText);
+  const parsed = parseAstCandidates(fileText, filePath);
   const emptySyms = new Set<string>();
   for (const sf of parsed.sources) {
-    const facts = extractAstFacts(sf, emptySyms);
+    const facts = extractAstFacts(sf, emptySyms, filePath);
     if (facts.specifiers.some((spec) => isNoteAiModelSpecifier(spec))) return true;
     for (const call of facts.dynamicCalls) {
       const s = call.resolvedSpec ?? call.inlineConcatSpec ?? call.literalSpec;
@@ -8104,7 +8227,7 @@ function collectIndexViolationsFromTokens(
         checkText = parts.join('');
       }
     }
-    for (const sym of adapterSymbolReferences(symbols, checkText, checkTokens)) {
+    for (const sym of adapterSymbolReferences(symbols, checkText, checkTokens, 'packages/agent/src/index.ts')) {
       out.push(`references ${sym} inside index.ts instead of direct re-export`);
     }
   }
@@ -8126,9 +8249,11 @@ export function indexReexportViolations(indexText: string, symbols: readonly str
   const astOut = new Set<string>();
   const needsIndexAst =
     primary.tokens.some((t) => t.kind === 'invalid') ||
-    /\b(?:import|export|require|createRequire|eval|Function|Reflect|globalThis|window|self)\b|['"`\\]|fromCharCode/.test(indexText) ||
+    /\b(?:import|export|require|createRequire|eval|Function|Reflect|globalThis|window|self)\b|['"`\\]|fromCharCode|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}/.test(
+      indexText,
+    ) ||
     symbols.some((s) => indexText.includes(s));
-  const parsed = needsIndexAst ? parseAstCandidates(indexText) : null;
+  const parsed = needsIndexAst ? parseAstCandidates(indexText, 'packages/agent/src/index.ts') : null;
   if (parsed && (parsed.hadRangeError || parsed.hasLexicalUnclosed)) {
     astOut.add('contains invalid or unclosed syntax');
   }
@@ -8805,7 +8930,7 @@ function shouldParseWorkspaceAst(
   if (relFromRoot && relFromRoot.startsWith('packages/agent/')) return true;
   if (fromRelPath === undefined && fileText.length < 30_000) return true;
   const hasRelevantKeywordHint =
-    /@(?:ludy|crove)|agent|note-ai|packages|import|export|require|createRequire|eval|Function|Reflect|generate|Summary|Todo|fromCharCode|\\u|\\x/.test(
+    /@(?:ludy|crove)|agent|note-ai|packages|\bimport(?=\s*(?:\(|\/\*))|\b(?:export|require|createRequire|eval|Function|Reflect)\b|generate|Summary|Todo|fromCharCode|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}|await\s+['"`]|<[A-Za-z_][\w.]*>\s*['"`]/.test(
       fileText,
     );
   if (
@@ -8814,7 +8939,7 @@ function shouldParseWorkspaceAst(
         (t) =>
           (t.kind === 'invalid' && (fromRelPath !== undefined || hasRelevantKeywordHint)) ||
           (t.kind === 'regex' &&
-            (/\b(?:import|require|createRequire|eval|Function|Reflect|agent|note-ai|generate|Todo|Summary|Note|fromCharCode)\b|@ludy|@crove|packages\/agent|\\u00|\\x[0-9a-f]/.test(
+            (/\bimport(?=\s*(?:\(|\/\*))|\b(?:require|createRequire|eval|Function|Reflect|agent|note-ai|generate|Todo|Summary|Note|fromCharCode)\b|@ludy|@crove|packages\/agent|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}/.test(
               t.raw,
             ) ||
               (/\{/.test(t.raw) && /['"`]/.test(t.raw)))),
@@ -8824,7 +8949,7 @@ function shouldParseWorkspaceAst(
     return true;
   }
   if (
-    /(?:@(?:ludy|crove)(?:$|[^a-zA-Z0-9_/]|\/(?:$|[^a-zA-Z0-9_]|a(?:$|g|[^a-zA-Z0-9_-])))|note-ai|packages\/agent|generate(?:Note|Todo)|SummaryText|TodoSuggest|TodoPlan|NoteOrganize|\\u00|\\x[0-9a-f]|fromCharCode|globalThis|createRequire|module\.require|window\.require|self\.require)/.test(
+    /(?:@(?:ludy|crove)(?:$|[^a-zA-Z0-9_/]|\/(?:$|[^a-zA-Z0-9_]|a(?:$|g|[^a-zA-Z0-9_-])))|note-ai|packages\/agent|generate(?:Note|Todo)|SummaryText|TodoSuggest|TodoPlan|NoteOrganize|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}|fromCharCode|globalThis|createRequire|module\.require|window\.require|self\.require|\bimport(?=\s*(?:\(|\/\*))|\b(?:Reflect|eval|Function)\b|await\s+['"`]|<[A-Za-z_][\w.]*>\s*['"`])/.test(
       fileText,
     )
   ) {
@@ -8836,8 +8961,7 @@ function shouldParseWorkspaceAst(
   if (symbols.some((sym) => fileText.includes(sym))) return true;
   if (
     isKnownJsxPath &&
-    /(?<![/*])\/(?![/*])[ \t]*\{(?![ \t]*[a-zA-Z0-9_$.]+[ \t]*\})/.test(fileText) &&
-    /\b(?:import\s*\(|import\s*\/\*|require|createRequire|eval|Function|Reflect)\b/.test(fileText)
+    /(?<![/*])\/(?![/*])[ \t]*\{(?![ \t]*[a-zA-Z0-9_$.]+[ \t]*\})/.test(fileText)
   ) {
     return true;
   }
@@ -8846,7 +8970,9 @@ function shouldParseWorkspaceAst(
     fileText.length < 30_000 &&
     /\b(?:import|export|require)\b/.test(fileText) &&
     /(?:^|\W)\.\.?(?:\/|['"`])/.test(fileText) &&
-    (/(?:agent|note-ai|packages|fromCharCode|\\u00|\\x[0-9a-f]|\\\r?\n)/i.test(fileText) ||
+    (/(?:agent|note-ai|packages|fromCharCode|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}|\\\r?\n)/i.test(
+      fileText,
+    ) ||
       /(?:import|require)\s*\([^)]*(?:\+|`|\$\{)/.test(fileText))
   ) {
     return true;
@@ -10691,7 +10817,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     const outside = srcFiles.filter((file) => !file.startsWith(`${MEMBER_VY}/`));
     const names = outside
       .filter((file) => !JOINTS.has(relFromSrc(file)))
-      .flatMap((file) => memberVyNames(readText(file)).map((n) => `${relative(ROOT, file)}: ${n}`));
+      .flatMap((file) => memberVyNames(readText(file), file).map((n) => `${relative(ROOT, file)}: ${n}`));
     expect(names, 'a member-Vy feature or its private type outside member-vy/').toEqual([]);
     // The notes feature keys of N8 are metered only from member-vy/ or the Stage A ModelPort adapter (note-ai-model.ts).
     const keys = outside.flatMap((file) =>
@@ -10707,7 +10833,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(adapterBad, 'notes ModelPort adapter violates thin-adapter rules').toEqual([]);
     const adapterImporters = srcFiles
       .filter((file) => relFromSrc(file) !== 'index.ts' && relFromSrc(file) !== 'note-ai-model.ts')
-      .filter((file) => importsNoteAiModel(readText(file)))
+      .filter((file) => importsNoteAiModel(readText(file), file))
       .map((file) => relative(ROOT, file));
     expect(adapterImporters, 'only packages/agent/src/index.ts may import note-ai-model').toEqual([]);
 
@@ -10732,7 +10858,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     const intraPkgRefs = srcFiles
       .filter((file) => relFromSrc(file) !== 'index.ts' && relFromSrc(file) !== 'note-ai-model.ts')
       .flatMap((file) =>
-        adapterSymbolReferences(seededExports, readText(file)).map((sym) => `${relative(ROOT, file)}: ${sym}`),
+        adapterSymbolReferences(seededExports, readText(file), undefined, file).map((sym) => `${relative(ROOT, file)}: ${sym}`),
       );
     expect(intraPkgRefs, 'intra-package files must not re-import note-ai-model exports via index.ts').toEqual([]);
 
@@ -11025,10 +11151,10 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
         "function a() { const f = globalThis.fetch; } function b(f: () => void) { f(); }",
       ),
     ).toEqual([]);
-    expect(disallowedMeteredNotes('other.ts', '<p>switch(x){}/{Number(metered(dynKey, fn))}/</p>')).toEqual([
+    expect(disallowedMeteredNotes('other.tsx', '<p>switch(x){}/{Number(metered(dynKey, fn))}/</p>')).toEqual([
       'unresolved metered key (dynKey)',
     ]);
-    expect(disallowedMeteredNotes('other.ts', '<p>switch(x){}/{Number(metered("no" + "tes.summary", fn))}/</p>')).toEqual([
+    expect(disallowedMeteredNotes('other.tsx', '<p>switch(x){}/{Number(metered("no" + "tes.summary", fn))}/</p>')).toEqual([
       'notes.summary',
     ]);
 
@@ -11138,7 +11264,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
         probeCount += 1;
 
         const meterProbe = wrap(kw, 'Number(metered(dynKey, fn))');
-        expect(disallowedMeteredNotes('other.ts', meterProbe), `meter bypass: ${meterProbe}`).toContain(
+        expect(disallowedMeteredNotes('other.tsx', meterProbe), `meter bypass: ${meterProbe}`).toContain(
           'unresolved metered key (dynKey)',
         );
         probeCount += 1;
@@ -11187,7 +11313,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(memberVyViolations('const opts = { require: true };')).toEqual([]);
     expect(orgFeatureViolations('export const Panel = () => <div>don\'t</div>;')).toEqual([]);
     expect(
-      disallowedMeteredNotes('other.ts', "export const C = () => <Comp keyProp={Reflect.apply(metered.bind(null), null, ['notes.' + 'summary', fn])} />;"),
+      disallowedMeteredNotes('other.tsx', "export const C = () => <Comp keyProp={Reflect.apply(metered.bind(null), null, ['notes.' + 'summary', fn])} />;"),
     ).toContain('notes.summary');
     expect(
       memberVyViolations("<p>return/{(() => { const load = require; return load('pg'); })()}/</p>"),
@@ -11207,7 +11333,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       ),
     ).toEqual([]);
     expect(
-      disallowedMeteredNotes('other.ts', "export const C = () => <p>return/{metered.bind(null, 'notes.summary')(fn)}/</p>;"),
+      disallowedMeteredNotes('other.tsx', "export const C = () => <p>return/{metered.bind(null, 'notes.summary')(fn)}/</p>;"),
     ).toEqual(['notes.summary']);
 
     // Codex review P2 regressions: file-extension strictness, block FunctionDeclaration scope, benign fetch import, interpolated symbol refs
@@ -11483,5 +11609,116 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
         'apps/web/src/C.tsx',
       ),
     ).toContain('uses require alias or bare require reference');
+
+    // Platform PO + Line PO blocking review regressions (B1, B2, B3a, B3b, B3c, B3d, N4)
+    // B1: TS/TSX <T>...</T> / + 1 polyglots across all scanners
+    expect(
+      disallowedMeteredNotes('other.ts', 'import * as m from "./meter.ts"; const a = <T>Reflect.get(m, "metered")(dynKey, fn) </T> / + 1;'),
+    ).toEqual(['unresolved metered key (dynKey)']);
+    expect(
+      indexReexportViolations(
+        "export * from './note-ai-model.ts'; const a = <T>Reflect.get(globalThis, 'require')('./note-ai-' + 'model.ts') </T> / + 1;",
+        DEFAULT_ADAPTER_EXPORTS,
+      ),
+    ).toContain('imports note-ai-model inside index.ts instead of direct re-export');
+    expect(
+      importsNoteAiModel("const a = <T>Reflect.get(globalThis, 'require')('./note-ai-' + 'model.ts') </T> / + 1;"),
+    ).toBe(true);
+    expect(memberVyNames("const a = <T>('Private' + 'Text') </T> / + 1;")).toEqual(['PrivateText']);
+    expect(adapterSymbolReferences(DEFAULT_ADAPTER_EXPORTS, "const a = <T>('generateNote' + 'SummaryText') </T> / + 1;")).toEqual([
+      'generateNoteSummaryText',
+    ]);
+    expect(memberVyViolations("const a = <T>Reflect.get(globalThis, 'require')('p' + 'g') </T> / + 1;")).toContain('imports pg');
+    expect(orgFeatureViolations("const a = <T>Reflect.get(globalThis, 'require')('./member-' + 'vy/x.ts') </T> / + 1;")).toContain(
+      'imports ./member-vy/x.ts',
+    );
+
+    // B2: BindingElement.initializer & local ExportSpecifier.propertyName in JSX / TS context
+    const b2Require = memberVyViolations("<b/>return/{(() => { const { load = require } = {}; return load('pg'); })()}/");
+    expect(b2Require).toContain('uses require alias or bare require reference');
+    expect(b2Require).toContain('imports pg');
+    expect(memberVyViolations('<b/>return/{(() => { const { c = createRequire } = {}; return c; })()}/')).toContain(
+      'uses require alias or bare require reference',
+    );
+    expect(
+      memberVyViolations('type A = string\n<div>return/{(() => { const { W = \\u0057ebSocket } = {}; return W; })()}/</div>'),
+    ).toContain('calls the network directly');
+    expect(memberVyViolations('<b/>return/{(() => { const { X = XMLHttpRequest } = {}; return X; })()}/')).toContain(
+      'calls the network directly',
+    );
+    expect(memberVyViolations('const load = null; export { require as load };')).toContain(
+      'uses require alias or bare require reference',
+    );
+    expect(memberVyViolations('export { WebSocket as WS };')).toContain('calls the network directly');
+
+    // B3a: Conditional / fallback hosts across hostMemberAccesses, memberBindCandidates, reflectGetCallNodes, callSites
+    const b3aBracket = memberVyViolations("(cond ? globalThis : window)['req' + 'uire']('pg');");
+    expect(b3aBracket).toContain('imports pg');
+    expect(b3aBracket).toContain('uses require alias or bare require reference');
+    const b3aProp = memberVyViolations("(cond ? globalThis : window).require('pg');");
+    expect(b3aProp).toContain('imports pg');
+    expect(b3aProp).toContain('uses require alias or bare require reference');
+    expect(memberVyViolations("const f = (cond ? globalThis : window)['fet' + 'ch']; f('https://x.test');")).toContain(
+      'calls the network directly',
+    );
+    expect(memberVyViolations("(cond ?? globalThis)['fet' + 'ch']('https://x.test');")).toContain('calls the network directly');
+    const b3aReflect = memberVyViolations("Reflect.get(cond ? globalThis : window, 'req' + 'uire')('pg');");
+    expect(b3aReflect).toContain('imports pg');
+    expect(b3aReflect).toContain('uses require alias or bare require reference');
+    expect(
+      disallowedMeteredNotes('other.ts', "import * as m from './meter.ts'; (cond ? m : m)['met' + 'ered']('notes.summary', fn);"),
+    ).toEqual(['notes.summary']);
+
+    // B3b: Local object-wrapper fetch reassignment cannot kill taint
+    expect(
+      memberVyViolations("let read = globalThis.fetch;\nconst wrap = { go: read };\nread = wrap.go;\nread('https://x.test');"),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations("let read = globalThis.fetch;\nconst wrap = { fetch: globalThis.fetch };\nread = wrap.fetch;\nread('https://x.test');"),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations("let read = cache.fetch;\nconst wrap = { fetch: globalThis.fetch };\nread = wrap.fetch;\nread('https://x.test');"),
+    ).toContain('calls the network directly');
+
+    // B3c: Reflect.get and computed destructuring of WebSocket / XMLHttpRequest
+    expect(memberVyViolations("const W = Reflect.get(globalThis, 'Web' + 'Socket'); void W;")).toContain('calls the network directly');
+    expect(memberVyViolations("const X = Reflect.get(globalThis, 'XML' + 'HttpRequest'); void X;")).toContain('calls the network directly');
+    expect(memberVyViolations("const { ['Web' + 'Socket']: W } = globalThis; void W;")).toContain('calls the network directly');
+    expect(memberVyViolations("const { ['XML' + 'HttpRequest']: X } = globalThis; void X;")).toContain('calls the network directly');
+
+    // B3d & N4: import(...), \u{72}equire, uppercase \x53, quote-free JSX fromCharCode, and RangeError fallback with non-empty found
+    expect(
+      workspaceAdapterLeakViolations(
+        "export const C = () => <div>/{Number(import('@ludy/' + 'agent'))}/</div>;",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toContain('dynamic import from @ludy/agent');
+    expect(
+      workspaceAdapterLeakViolations(
+        "export const C = () => <div>/{\\u{72}equire('@ludy/agent')}/</div>;",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toContain('uses require alias or bare require reference');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const fn = '\\x67enerate\\x4eote\\x53ummary\\x54ext'; void fn;",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toEqual(['generateNoteSummaryText']);
+    expect(
+      workspaceAdapterLeakViolations(
+        'export const C = () => <p>return/{import(String.fromCharCode(64,108,117,100,121,47,97,103,101,110,116))}/</p>;',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toContain('uses computed dynamic import or require');
+    expect(importsNoteAiModel("const m = import('./\\u006eote-ai-model.ts'); void m;")).toBe(true);
+    const n4Mixed = `metered('notes.summary', fn);\n${'<p>'.repeat(15_000)}return/{Number(metered(dynKey, fn))}/${'</p>'.repeat(15_000)}`;
+    const n4Out = disallowedMeteredNotes('other.tsx', n4Mixed);
+    expect(n4Out).toContain('notes.summary');
+    expect(n4Out).toContain('unresolved metered key (excessive nesting)');
   }, 30_000);
 });
