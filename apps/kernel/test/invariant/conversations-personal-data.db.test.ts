@@ -189,7 +189,7 @@ suite('conversation personal-data authorization, tenancy, and zero-PII audit inv
 
     // Every audit row holds only kind, matches, truncated and never contains PII.
     const audits = await rows<{ detail: Record<string, unknown> }>(
-      `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.personal_data_find' AND outcome = 'ok' ORDER BY id DESC`,
+      `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.personal_data_find' AND outcome = 'ok'`,
       [orgA.orgId],
     );
     expect(audits).toHaveLength(2);
@@ -199,7 +199,11 @@ suite('conversation personal-data authorization, tenancy, and zero-PII audit inv
         expect(text).not.toContain(secret);
       }
     }
-    expect(audits[0]?.detail).toEqual({ kind: 'digits', matches: 2, truncated: false });
-    expect(audits[1]?.detail).toEqual({ kind: 'email', matches: 2, truncated: false });
+    expect(audits.map((r) => r.detail)).toEqual(
+      expect.arrayContaining([
+        { kind: 'email', matches: 2, truncated: false },
+        { kind: 'digits', matches: 2, truncated: false },
+      ]),
+    );
   });
 });

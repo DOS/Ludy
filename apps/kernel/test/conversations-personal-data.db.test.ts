@@ -368,6 +368,20 @@ suite('conversation personal-data lookup and erasure flows (#3669)', () => {
       { actor: asUser(o.owner), orgId: o.orgId },
     );
     expect(emailAfterGenericErase.items.map((x) => x.identityId)).toEqual([keepEmailId]);
+
+    // Leading '+' with trunk '(0)' preserves intl=true in ludy_kernel.phone_key (e.g. +84 (0)24 3826 0000 -> 02438260000).
+    const fixedParty = await seedParty(o.orgId, 'Văn phòng Hà Nội', null, '02438260000');
+    const fixedWa = await seedIdentity(o.orgId, 'whatsapp', '842438260000', 'WA Cố Định');
+    const fixedWaConv = await seedConversation(o.orgId, waCh, 'direct', fixedWa);
+    await seedMessage(o.orgId, fixedWaConv, waCh, 'direct', 1, 'in', 'Tin cố định', { authorIdentityId: fixedWa });
+    const fixedFb = await seedIdentity(o.orgId, 'facebook_page', 'fb-fixed-1', 'FB Cố Định', { partyId: fixedParty });
+    await seedConversation(o.orgId, fbCh, 'direct', fixedFb);
+    const fixedFound = await rt.execute<ConversationPersonalDataResult>(
+      'kernel.conversation.personal_data_find',
+      { value: '+84 (0)24 3826 0000' },
+      { actor: asUser(o.owner), orgId: o.orgId },
+    );
+    expect(fixedFound.items.map((x) => x.identityId).sort()).toEqual([fixedWa, fixedFb].sort());
   });
 
   it('caps results at 50 identities and caps linkedContactNames at 3 on an identity in the returned page', async () => {

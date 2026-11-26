@@ -165,7 +165,7 @@ describe('the conversations pointer and lookup section on the personal-data page
   });
 
   it('renders nothing for empty results and shows an error when the lookup fails', () => {
-    expect(renderSection('vi', { data: { kind: 'email', items: [], truncated: false } })).toBe('');
+    expect(renderSection('vi', { data: { kind: 'email', items: [], totalMessages: 0, truncated: false } })).toBe('');
     expect(renderSection('vi', { data: undefined, error: new Error('lookup failed') })).toContain('lookup failed');
   });
 });

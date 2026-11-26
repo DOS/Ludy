@@ -11457,6 +11457,7 @@ export const en = {
     erase: "Erase this person's data",
     eraseConfirm: 'Erase the data marked "Erased" for {value}? This cannot be undone. Data that accounting law requires, and append-only records, are kept.',
     eraseLinkedConversationsWarning: 'Note: {count, plural, one {# customer conversation identity} other {# customer conversation identities}} below match only through a linked contact. Erasing CRM data first removes that contact email or phone, so those conversations will disappear from this search without being erased (erase them in Conversations below first if they belong to this person).',
+    eraseConversationsUncheckedWarning: 'Could not check Conversations because of the error below. Erasing CRM data first removes contact emails and phones, so any conversations matched only through a linked contact will no longer show in this search without being erased.',
     eraseNow: 'Erase for good',
     cancel: 'Cancel',
     stepUpErase: 'erase this personal data',

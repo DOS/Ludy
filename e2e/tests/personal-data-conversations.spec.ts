@@ -52,6 +52,10 @@ test('finds customer conversations by phone and email on Settings > Dữ liệu 
        INSERT INTO ludy_kernel.conversation_identity (org_id, provider, external_user_id, display_name)
        SELECT org_id, 'whatsapp', '84901234567', 'Chị Lan WhatsApp' FROM o RETURNING org_id, id
      ),
+     id_wa_only AS (
+       INSERT INTO ludy_kernel.conversation_identity (org_id, provider, external_user_id, display_name)
+       SELECT org_id, 'whatsapp', '84907778888', 'Khách WhatsApp Độc Lập' FROM o RETURNING org_id, id
+     ),
      id_fb_linked AS (
        INSERT INTO ludy_kernel.conversation_identity (org_id, provider, external_user_id, display_name)
        SELECT org_id, 'facebook_page', 'fb-psid-linked-99', 'Khách FB Liên Kết' FROM o RETURNING org_id, id
@@ -67,6 +71,10 @@ test('finds customer conversations by phone and email on Settings > Dữ liệu 
      c_wa AS (
        INSERT INTO ludy_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id, identity_id, status, last_seq, last_message_at, last_inbound_at)
        SELECT ch_wa.org_id, ch_wa.id, 'direct', 'wa-t1', id_wa.id, 'new', 1, now(), now() FROM ch_wa, id_wa RETURNING org_id, channel_connection_id, id
+     ),
+     c_wa_only AS (
+       INSERT INTO ludy_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id, identity_id, status, last_seq, last_message_at, last_inbound_at)
+       SELECT ch_wa.org_id, ch_wa.id, 'direct', 'wa-only-t1', id_wa_only.id, 'new', 1, now(), now() FROM ch_wa, id_wa_only RETURNING org_id, channel_connection_id, id
      ),
      c_fb_linked AS (
        INSERT INTO ludy_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id, identity_id, party_id, status, last_seq, last_message_at, last_inbound_at)
@@ -84,6 +92,10 @@ test('finds customer conversations by phone and email on Settings > Dữ liệu 
        INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, external_message_id, sent_at, author_kind, author_identity_id, body, tainted)
        SELECT c_wa.org_id, c_wa.id, c_wa.channel_connection_id, 'direct', 1, 'in', 'm-wa-1', now(), 'contact', id_wa.id, 'Nhắn từ WhatsApp', true FROM c_wa, id_wa
      ),
+     m_wa_only AS (
+       INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, external_message_id, sent_at, author_kind, author_identity_id, body, tainted)
+       SELECT c_wa_only.org_id, c_wa_only.id, c_wa_only.channel_connection_id, 'direct', 1, 'in', 'm-wa-only-1', now(), 'contact', id_wa_only.id, 'Nhắn riêng WhatsApp không có CRM', true FROM c_wa_only, id_wa_only
+     ),
      m_fb_linked AS (
        INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, external_message_id, sent_at, author_kind, author_identity_id, body, tainted)
        SELECT c_fb_linked.org_id, c_fb_linked.id, c_fb_linked.channel_connection_id, 'comment_thread', 1, 'in', 'm-fb-1', now(), 'contact', id_fb_linked.id, 'Bình luận đã gắn liên hệ', true FROM c_fb_linked, id_fb_linked
@@ -100,21 +112,24 @@ test('finds customer conversations by phone and email on Settings > Dữ liệu 
   await page.goto(`/o/${slug}/personal-data`);
   const input = page.getByLabel('Email, số điện thoại, mã số thuế hoặc số căn cước');
 
-  // Searching an email present only in Email conversation shows Hội thoại and must NOT render the empty-state banner.
-  await input.fill('khach-e2e@example.test');
-  await page.getByRole('button', { name: 'Tìm', exact: true }).click();
+  // Searching a WhatsApp-only number with 0 rows in org.personalData shows Hội thoại and MUST NOT render the empty-state banner.
+  await input.fill('0907 778 888');
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/org/personalData') && r.status() === 200),
+    page.waitForResponse((r) => r.url().includes('/conversations/personalDataFind') && r.status() === 200),
+    page.getByRole('button', { name: 'Tìm', exact: true }).click(),
+  ]);
   const section = page.getByTestId('personal-data-conversations-results');
   await expect(section).toBeVisible();
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
   await expect(page.getByText('Không tìm thấy dữ liệu nào khớp')).toHaveCount(0);
   await expect(section.getByTestId('personal-data-conversation-row')).toHaveCount(1);
-  await expect(section).toContainText('Anh Minh Email');
-  await expect(section).toContainText('khach-e2e@example.test');
-  await expect(section).not.toContainText('Khách Chỉ Nhắc Trong Tin');
+  await expect(section).toContainText('Khách WhatsApp Độc Lập');
 
-  // Cancel confirmation keeps the thread, then confirming prompts MFA step-up and erases only that email customer.
+  // Cancel confirmation keeps the thread, then confirming prompts MFA step-up and erases only that WhatsApp customer.
   await section.getByTestId('personal-data-conversation-erase').click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog).toContainText('Anh Minh Email');
+  await expect(dialog).toContainText('Khách WhatsApp Độc Lập');
   await dialog.getByRole('button', { name: 'Giữ lại' }).click();
   await expect(dialog).toBeHidden();
 
@@ -124,10 +139,18 @@ test('finds customer conversations by phone and email on Settings > Dữ liệu 
   await expect(page.getByText('Không tìm thấy dữ liệu nào khớp')).toBeVisible({ timeout: 30_000 });
   expect(
     sql<{ n: string }>(
-      `SELECT count(*)::text AS n FROM ludy_kernel.conversation c JOIN ludy_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug' AND c.kind = 'email'`,
+      `SELECT count(*)::text AS n FROM ludy_kernel.conversation c JOIN ludy_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug' AND c.external_thread_id = 'wa-only-t1'`,
       { slug },
     )[0]?.n,
   ).toBe('0');
+
+  // Searching an email identity shows Hội thoại alongside the Email match.
+  await input.fill('khach-e2e@example.test');
+  await page.getByRole('button', { name: 'Tìm', exact: true }).click();
+  await expect(section.getByTestId('personal-data-conversation-row')).toHaveCount(1);
+  await expect(section).toContainText('Anh Minh Email');
+  await expect(section).toContainText('khach-e2e@example.test');
+  await expect(section).not.toContainText('Khách Chỉ Nhắc Trong Tin');
 
   // Searching the phone number shows both Direct WhatsApp and Linked-contact Facebook rows, passes axe & 44 px tap targets on mobile,
   // warns before erasing the linked CRM party first, and erases WhatsApp cleanly within the active aal2 window without re-prompting MFA.
@@ -171,9 +194,9 @@ test('finds customer conversations by phone and email on Settings > Dữ liệu 
     `SELECT a.detail FROM ludy_kernel.audit_event a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug' AND a.command = 'kernel.conversation.personal_data_find' AND a.outcome = 'ok'`,
     { slug },
   );
-  expect(audits.length).toBeGreaterThanOrEqual(2);
+  expect(audits.length).toBeGreaterThanOrEqual(3);
   const serialized = JSON.stringify(audits);
-  for (const pii of ['khach-e2e@example.test', '0901234567', 'Chị Lan WhatsApp', 'Anh Minh Email']) {
+  for (const pii of ['khach-e2e@example.test', '0901234567', '0907778888', 'Chị Lan WhatsApp', 'Khách WhatsApp Độc Lập', 'Anh Minh Email']) {
     expect(serialized).not.toContain(pii);
   }
 });

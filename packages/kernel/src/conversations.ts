@@ -2883,14 +2883,16 @@ export const conversationPersonalDataFind = defineCommand({
     requireUser(ctx);
     const probe = personalDataProbe(input.value);
     if (!probe) throw new DomainError('PERSONAL_DATA_QUERY', 422, 'Hãy nhập một địa chỉ email, một số điện thoại, hoặc một mã số thuế hay số căn cước');
+    // Preserve leading '+' from input.value when calling ludy_kernel.phone_key so '+84 (0)24 ...' keeps intl=true.
+    const phoneProbe = input.value.trim();
     const directCondition =
       probe.kind === 'email'
         ? sql`i.provider = 'email' AND pg_catalog.lower(pg_catalog.btrim(i.external_user_id)) = ${probe.email}`
-        : sql`i.provider = 'whatsapp' AND i.external_user_id ~ '^[0-9]{7,15}$' AND ludy_kernel.phone_key(i.external_user_id) = ludy_kernel.phone_key(${probe.digits})`;
+        : sql`i.provider = 'whatsapp' AND i.external_user_id ~ '^[0-9]{7,15}$' AND ludy_kernel.phone_key(i.external_user_id) = ludy_kernel.phone_key(${phoneProbe})`;
     const partyCondition =
       probe.kind === 'email'
         ? sql`p.email IS NOT NULL AND pg_catalog.lower(pg_catalog.btrim(p.email)) = ${probe.email}`
-        : sql`p.phone IS NOT NULL AND ludy_kernel.phone_key(p.phone) = ludy_kernel.phone_key(${probe.digits})`;
+        : sql`p.phone IS NOT NULL AND ludy_kernel.phone_key(p.phone) = ludy_kernel.phone_key(${phoneProbe})`;
 
     const candidates = await sql<{
       id: string;

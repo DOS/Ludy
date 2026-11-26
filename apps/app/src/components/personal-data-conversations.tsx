@@ -2,7 +2,7 @@
 // Matching customer conversations on Settings > Personal data (#3669): shows bounded per-identity previews (direct email/WhatsApp
 // or via a linked contact) and erases one matched customer at a time via kernel.conversation.erase_contact (R3 step-up).
 import { useMutation } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { ConversationPersonalDataItem, ConversationPersonalDataResult } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
@@ -33,6 +33,11 @@ export function PersonalDataConversations({
   const [confirming, setConfirming] = useState<ConversationPersonalDataItem | null>(null);
   // One idempotency key per confirmed attempt, kept across the MFA step-up retry so a lost response never double-acts.
   const [activeAttempt, setActiveAttempt] = useState<EraseAttempt | null>(null);
+  // Tracks the latest live attempt across async MFA verification so cancelling mid-flight never runs eraseContact.
+  const activeAttemptRef = useRef<EraseAttempt | null>(null);
+  useEffect(() => () => {
+    activeAttemptRef.current = null;
+  }, []);
 
   const labelOf = (item: ConversationPersonalDataItem) => item.displayName ?? tc('anonymous', { tail: item.idTail });
   const channelLabelOf = (item: ConversationPersonalDataItem) =>
@@ -47,6 +52,7 @@ export function PersonalDataConversations({
         idempotencyKey: attempt.idempotencyKey,
       }),
     onSuccess: (done, attempt) => {
+      activeAttemptRef.current = null;
       setActiveAttempt(null);
       toast(t('erased', { name: labelOf(attempt.item), threads: done.threads, messages: done.messages }), 'success');
       void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
@@ -124,8 +130,12 @@ export function PersonalDataConversations({
       {stepUpAttempt && (
         <StepUpPrompt
           action={t('stepUp', { name: labelOf(stepUpAttempt.item) })}
-          onVerified={() => erase.mutateAsync(stepUpAttempt).then(() => undefined).catch(() => undefined)}
+          onVerified={() => {
+            if (activeAttemptRef.current?.idempotencyKey !== stepUpAttempt.idempotencyKey) return;
+            return erase.mutateAsync(stepUpAttempt).then(() => undefined).catch(() => undefined);
+          }}
           onCancel={() => {
+            activeAttemptRef.current = null;
             erase.reset();
             setActiveAttempt(null);
           }}
@@ -173,6 +183,7 @@ export function PersonalDataConversations({
                 aria-label={t('eraseAria', { name: customerLabel, channel: channelLabel })}
                 data-testid="personal-data-conversation-erase"
                 onClick={() => {
+                  activeAttemptRef.current = null;
                   erase.reset();
                   setActiveAttempt(null);
                   setConfirming(item);
@@ -199,6 +210,7 @@ export function PersonalDataConversations({
           if (!confirming) return;
           const attempt: EraseAttempt = { item: confirming, idempotencyKey: crypto.randomUUID() };
           setConfirming(null);
+          activeAttemptRef.current = attempt;
           setActiveAttempt(attempt);
           erase.mutate(attempt);
         }}

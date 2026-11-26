@@ -11454,6 +11454,7 @@ export const vi = {
     erase: 'Xóa dữ liệu của người này',
     eraseConfirm: 'Xóa các dữ liệu ghi "Xóa" của {value}? Không hoàn tác được. Dữ liệu phải giữ theo luật kế toán và các bản ghi chỉ ghi thêm vẫn được giữ.',
     eraseLinkedConversationsWarning: 'Lưu ý: còn {count, plural, other {# khách hàng hội thoại}} bên dưới chỉ khớp qua liên hệ đã gắn. Nếu xóa dữ liệu CRM trước, email và số điện thoại trên liên hệ đó bị xóa nên các hội thoại này sẽ không còn tìm thấy ở đây nữa dù chưa bị xóa (hãy xóa chúng ở mục Hội thoại bên dưới trước nếu đúng là của người này).',
+    eraseConversationsUncheckedWarning: 'Không kiểm tra được mục Hội thoại do lỗi tải bên dưới. Nếu xóa dữ liệu CRM trước, các hội thoại chỉ khớp qua liên hệ sẽ không còn tìm thấy ở đây nữa dù chưa bị xóa.',
     eraseNow: 'Xóa vĩnh viễn',
     cancel: 'Hủy',
     stepUpErase: 'xóa dữ liệu cá nhân này',

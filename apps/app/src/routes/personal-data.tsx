@@ -83,6 +83,7 @@ export function PersonalDataPage() {
   const hasPrivate = privateItems.length > 0;
   const meetingText = found.data?.meetingText ?? [];
   const convLoading = socialInstalled && conversations.isFetching;
+  const convFailed = socialInstalled && !convLoading && Boolean(conversations.error);
   const linkedConversationsCount = socialInstalled ? (conversations.data?.items.filter((item) => item.matchSource === 'linked_contact').length ?? 0) : 0;
   const hasConversations = socialInstalled && (conversations.data?.items.length ?? 0) > 0;
   // Hide duplicate 422 PERSONAL_DATA_QUERY error when the main personal-data query already shows the exact same validation text.
@@ -188,6 +189,11 @@ export function PersonalDataPage() {
           ) : (
             <div className="space-y-2 rounded-lg border border-destructive p-3">
               <p className="text-sm text-foreground">{t('eraseConfirm', { value })}</p>
+              {convFailed && (
+                <p className="text-xs font-medium text-warning" data-testid="personal-data-conv-unchecked-warning">
+                  {t('eraseConversationsUncheckedWarning')}
+                </p>
+              )}
               {linkedConversationsCount > 0 && (
                 <p className="text-xs font-medium text-warning" data-testid="personal-data-linked-erase-warning">
                   {t('eraseLinkedConversationsWarning', { count: linkedConversationsCount })}
