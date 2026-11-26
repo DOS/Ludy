@@ -176,6 +176,7 @@ async function main(): Promise<void> {
           if (/code object is not signed at all/i.test(reason)) {
             return { kind: 'unsigned' };
           }
+          cachedMacStatusPromise = null;
           return { kind: 'error', reason };
         });
     }

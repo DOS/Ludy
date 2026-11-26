@@ -3,7 +3,7 @@
 // Never invokes xcrun at runtime (clean Macs may lack Xcode CLT); uses only built-in macOS codesign, spctl, and ditto.
 import { execFile } from 'node:child_process';
 import { existsSync, lstatSync, mkdtempSync, openSync, closeSync, readdirSync, readlinkSync, readSync, realpathSync, rmSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, posix, relative, resolve } from 'node:path';
 import { createInflateRaw, crc32 as zlibCrc32 } from 'node:zlib';
 
 export const APPLE_BUNDLE_ID = 'vn.ludy.desktop';
@@ -62,15 +62,24 @@ export function normalizeAppleTeamId(value: string): string | null {
   return APPLE_TEAM_ID_PATTERN.test(clean) ? clean : null;
 }
 
+function hasAsciiControlChar(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
 export function parseCodesignVerifyOutput(output: string): void {
   const normalized = output.replace(/\r?\n/g, '\n').trim();
   if (!normalized) {
     throw new Error('codesign --verify produced empty output');
   }
-  if (!normalized.includes('valid on disk')) {
+  const lines = normalized.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.some((l) => l.endsWith(': valid on disk'))) {
     throw new Error('codesign --verify did not confirm bundle is valid on disk');
   }
-  if (!normalized.includes('satisfies its Designated Requirement')) {
+  if (!lines.some((l) => l.endsWith(': satisfies its Designated Requirement'))) {
     throw new Error('codesign --verify did not confirm Designated Requirement');
   }
 }
@@ -91,97 +100,194 @@ function parseCodesignFormatArches(formatLine: string): MacBundleArch[] {
   return arches;
 }
 
-export function parseCodesignDisplayOutput(
-  output: string,
-  options: { expectedIdentifier?: string; expectedTeamId?: string | null; expectedArch?: MacBundleArch | undefined } = {},
-): VerifiedMacAppSignature {
+interface ParsedCodesignDisplayFields {
+  scalars: Map<string, string>;
+  authorities: string[];
+}
+
+const CODESIGN_DISPLAY_SCALAR_PREFIXES: readonly { key: string; prefix: string }[] = [
+  { key: 'Executable=', prefix: 'Executable=' },
+  { key: 'Name=', prefix: 'Name=' },
+  { key: 'Identifier=', prefix: 'Identifier=' },
+  { key: 'Format=', prefix: 'Format=' },
+  { key: 'CodeDirectory ', prefix: 'CodeDirectory ' },
+  { key: 'VersionPlatform=', prefix: 'VersionPlatform=' },
+  { key: 'VersionMin=', prefix: 'VersionMin=' },
+  { key: 'VersionSDK=', prefix: 'VersionSDK=' },
+  { key: 'Hash type=', prefix: 'Hash type=' },
+  { key: 'Hash choices=', prefix: 'Hash choices=' },
+  { key: 'CMSDigest=', prefix: 'CMSDigest=' },
+  { key: 'CMSDigestType=', prefix: 'CMSDigestType=' },
+  { key: 'Page size=', prefix: 'Page size=' },
+  { key: 'CDHash=', prefix: 'CDHash=' },
+  { key: 'Signature size=', prefix: 'Signature size=' },
+  { key: 'Timestamp=', prefix: 'Timestamp=' },
+  { key: 'Signed Time=', prefix: 'Signed Time=' },
+  { key: 'Notarization Ticket=', prefix: 'Notarization Ticket=' },
+  { key: 'Info.plist', prefix: 'Info.plist entries=' },
+  { key: 'Info.plist', prefix: 'Info.plist=' },
+  { key: 'TeamIdentifier=', prefix: 'TeamIdentifier=' },
+  { key: 'Runtime Version=', prefix: 'Runtime Version=' },
+  { key: 'Sealed Resources', prefix: 'Sealed Resources ' },
+  { key: 'Sealed Resources', prefix: 'Sealed Resources=' },
+  { key: 'Internal requirements count=', prefix: 'Internal requirements count=' },
+  { key: 'Total signatures=', prefix: 'Total signatures=' },
+  { key: 'Chosen signature=', prefix: 'Chosen signature=' },
+  { key: 'Platform identifier=', prefix: 'Platform identifier=' },
+  { key: 'Digest algorithms=', prefix: 'Digest algorithms=' },
+];
+
+const CODESIGN_DISPLAY_MULTI_PREFIXES: readonly string[] = [
+  'CandidateCDHash ',
+  'CandidateCDHashFull ',
+  'Executable Segment ',
+  'Launch Constraints ',
+  'Launch Constraints(',
+  'Launch Constraints (',
+  'Launch Constraints=',
+  'Entitlements=',
+  'Entitlements ',
+];
+
+function parseCodesignDisplayFields(output: string): ParsedCodesignDisplayFields {
   const normalized = output.replace(/\r?\n/g, '\n');
   if (!normalized.trim()) {
     throw new Error('codesign --display produced empty output');
   }
   const lines = normalized.split('\n').map((line) => line.trim()).filter(Boolean);
-  const expectedIdentifier = options.expectedIdentifier ?? APPLE_BUNDLE_ID;
-
-  let identifier = '';
-  let formatLine = '';
-  let codeDirLine = '';
-  let hashType = '';
+  const scalars = new Map<string, string>();
   const authorities: string[] = [];
-  let timestamp = '';
-  let teamId = '';
-  let hasSealedResources = false;
 
   for (const line of lines) {
-    if (line.startsWith('Identifier=')) {
-      identifier = line.slice('Identifier='.length).trim();
-    } else if (line.startsWith('Format=')) {
-      formatLine = line.slice('Format='.length).trim();
-    } else if (line.startsWith('CodeDirectory ')) {
-      codeDirLine = line;
-    } else if (line.startsWith('Hash type=')) {
-      hashType = line.slice('Hash type='.length).trim();
-    } else if (line.startsWith('Authority=')) {
+    if (line.startsWith('Authority=')) {
       authorities.push(line.slice('Authority='.length).trim());
-    } else if (line.startsWith('Timestamp=')) {
-      timestamp = line.slice('Timestamp='.length).trim();
-    } else if (line.startsWith('TeamIdentifier=')) {
-      teamId = line.slice('TeamIdentifier='.length).trim();
-    } else if (line.startsWith('Sealed Resources ')) {
-      hasSealedResources = true;
+      continue;
     }
+    const scalarRule = CODESIGN_DISPLAY_SCALAR_PREFIXES.find((rule) => line.startsWith(rule.prefix));
+    if (scalarRule) {
+      if (scalars.has(scalarRule.key)) {
+        throw new Error(`Duplicate codesign --display field: ${scalarRule.key}`);
+      }
+      scalars.set(scalarRule.key, line.slice(scalarRule.prefix.length).trim());
+      continue;
+    }
+    if (CODESIGN_DISPLAY_MULTI_PREFIXES.some((prefix) => line.startsWith(prefix))) {
+      continue;
+    }
+    throw new Error(`Unexpected codesign --display output line: ${line}`);
+  }
+  return { scalars, authorities };
+}
+
+function parseCodeDirectoryFlags(codeDirLine: string | undefined): string[] {
+  if (!codeDirLine) {
+    throw new Error('codesign --display missing CodeDirectory flags');
+  }
+  const flagsMatch = /\bflags=0x[0-9a-f]+\(([^)]+)\)/i.exec(codeDirLine);
+  return (flagsMatch?.[1] ?? '').split(',').map((f) => f.trim().toLowerCase());
+}
+
+function assertDeveloperIdSignatureCommon(
+  fields: ParsedCodesignDisplayFields,
+  options: {
+    label: string;
+    requireHardenedRuntime: boolean;
+    expectedTeamId?: string | null | undefined;
+  },
+): { teamId: string; timestamp: string; flags: string[] } {
+  const codeDirLine = fields.scalars.get('CodeDirectory ');
+  const flags = parseCodeDirectoryFlags(codeDirLine);
+  if (flags.includes('adhoc')) {
+    throw new Error('Refused ad-hoc macOS code signature');
+  }
+  if (options.requireHardenedRuntime && !flags.includes('runtime')) {
+    throw new Error(`macOS ${options.label} signature must enable Hardened Runtime`);
+  }
+  const hashType = fields.scalars.get('Hash type=') ?? '';
+  if (!/^sha256(?:\s|$)/i.test(hashType)) {
+    throw new Error(`macOS ${options.label} signature must use SHA-256 CodeDirectory digest (got ${hashType || 'none'})`);
   }
 
+  const authorities = fields.authorities;
+  if (authorities.length === 0 || !authorities[0]!.startsWith('Developer ID Application:')) {
+    throw new Error(
+      `macOS ${options.label} signature is not signed with Developer ID Application (got ${authorities[0] ?? 'none'})`,
+    );
+  }
+  const leafMatch = /^Developer ID Application: .+\(([A-Z0-9]{10})\)$/.exec(authorities[0]!);
+  if (!leafMatch?.[1]) {
+    throw new Error(`macOS ${options.label} Developer ID Application authority missing 10-character Apple Team ID`);
+  }
+  if (
+    authorities.length !== 3 ||
+    authorities[1] !== 'Developer ID Certification Authority' ||
+    authorities[2] !== 'Apple Root CA'
+  ) {
+    throw new Error(
+      `macOS ${options.label} signature does not chain exclusively to Developer ID Certification Authority and Apple Root CA`,
+    );
+  }
+
+  const timestamp = fields.scalars.get('Timestamp=') ?? '';
+  if (!timestamp) {
+    throw new Error(`macOS ${options.label} signature is missing a secure Apple timestamp`);
+  }
+  const rawTeamId = fields.scalars.get('TeamIdentifier=') ?? '';
+  const normalizedTeam = normalizeAppleTeamId(rawTeamId);
+  if (!normalizedTeam) {
+    throw new Error(`macOS ${options.label} signature has invalid TeamIdentifier: ${rawTeamId || 'not set'}`);
+  }
+  if (leafMatch[1] !== normalizedTeam) {
+    throw new Error(
+      `macOS ${options.label} authority Team ID ${leafMatch[1]} does not match TeamIdentifier ${normalizedTeam}`,
+    );
+  }
+  if (options.expectedTeamId) {
+    const expectedTeam = normalizeAppleTeamId(options.expectedTeamId);
+    if (!expectedTeam || normalizedTeam !== expectedTeam) {
+      throw new Error(
+        `macOS ${options.label} TeamIdentifier ${normalizedTeam} does not match expected ${options.expectedTeamId}`,
+      );
+    }
+  }
+  return { teamId: normalizedTeam, timestamp, flags };
+}
+
+export function parseCodesignDisplayOutput(
+  output: string,
+  options: { expectedIdentifier?: string; expectedTeamId?: string | null; expectedArch?: MacBundleArch | undefined } = {},
+): VerifiedMacAppSignature {
+  const fields = parseCodesignDisplayFields(output);
+  const expectedIdentifier = options.expectedIdentifier ?? APPLE_BUNDLE_ID;
+
+  const identifier = fields.scalars.get('Identifier=') ?? '';
   if (identifier !== expectedIdentifier) {
     throw new Error(`codesign Identifier mismatch: expected ${expectedIdentifier}, got ${identifier || '(missing)'}`);
   }
+  const formatLine = fields.scalars.get('Format=') ?? '';
   const arches = formatLine ? parseCodesignFormatArches(formatLine) : [];
   if (options.expectedArch && !arches.includes(options.expectedArch)) {
     throw new Error(
       `macOS app bundle architecture (${arches.join(', ') || 'unknown'}) does not match expected ${options.expectedArch}`,
     );
   }
-  if (!codeDirLine) {
-    throw new Error('codesign --display missing CodeDirectory flags');
-  }
-  const flagsMatch = /\bflags=0x[0-9a-f]+\(([^)]+)\)/i.exec(codeDirLine);
-  const flags = (flagsMatch?.[1] ?? '').split(',').map((f) => f.trim().toLowerCase());
-  if (flags.includes('adhoc')) {
-    throw new Error('Refused ad-hoc macOS code signature');
-  }
-  if (!flags.includes('runtime')) {
-    throw new Error('macOS app signature must enable Hardened Runtime');
-  }
-  if (!hashType.toLowerCase().startsWith('sha256')) {
-    throw new Error(`macOS app signature must use SHA-256 CodeDirectory digest (got ${hashType || 'none'})`);
-  }
-  if (!hasSealedResources) {
+
+  const common = assertDeveloperIdSignatureCommon(fields, {
+    label: 'app',
+    requireHardenedRuntime: true,
+    expectedTeamId: options.expectedTeamId,
+  });
+
+  const sealedResources = fields.scalars.get('Sealed Resources');
+  if (!sealedResources || sealedResources.toLowerCase() === 'none') {
     throw new Error('macOS app signature is missing Sealed Resources metadata');
-  }
-  if (authorities.length === 0 || !authorities[0]!.startsWith('Developer ID Application:')) {
-    throw new Error(`macOS app signature is not signed with Developer ID Application (got ${authorities[0] ?? 'none'})`);
-  }
-  if (!authorities.includes('Developer ID Certification Authority') || !authorities.includes('Apple Root CA')) {
-    throw new Error('macOS app signature does not chain to Developer ID Certification Authority and Apple Root CA');
-  }
-  if (!timestamp) {
-    throw new Error('macOS app signature is missing a secure Apple timestamp');
-  }
-  const normalizedTeam = normalizeAppleTeamId(teamId);
-  if (!normalizedTeam) {
-    throw new Error(`macOS app signature has invalid TeamIdentifier: ${teamId || 'not set'}`);
-  }
-  if (options.expectedTeamId) {
-    const expectedTeam = normalizeAppleTeamId(options.expectedTeamId);
-    if (!expectedTeam || normalizedTeam !== expectedTeam) {
-      throw new Error(`macOS app TeamIdentifier ${normalizedTeam} does not match expected ${options.expectedTeamId}`);
-    }
   }
 
   return {
     identifier,
-    teamId: normalizedTeam,
-    authorities,
-    timestamp,
+    teamId: common.teamId,
+    authorities: fields.authorities,
+    timestamp: common.timestamp,
     hashType: 'sha256',
     hardenedRuntime: true,
     arches,
@@ -233,14 +339,22 @@ export function parseSpctlAssessOutput(
   if (!lines.some((l) => l.endsWith(': accepted'))) {
     throw new Error(`Gatekeeper spctl check did not accept target: ${normalized}`);
   }
-  const sourceLine = lines.find((l) => l.startsWith('source='));
+  const sourceLines = lines.filter((l) => l.startsWith('source='));
+  if (sourceLines.length > 1) {
+    throw new Error('Gatekeeper spctl output contains duplicate source= fields');
+  }
+  const sourceLine = sourceLines[0];
   const source = sourceLine ? sourceLine.slice('source='.length).trim() : '';
   if (source !== 'Notarized Developer ID') {
     throw new Error(`Gatekeeper spctl check requires Notarized Developer ID (got ${source || 'none'})`);
   }
-  const originLine = lines.find((l) => l.startsWith('origin='));
+  const originLines = lines.filter((l) => l.startsWith('origin='));
+  if (originLines.length > 1) {
+    throw new Error('Gatekeeper spctl output contains duplicate origin= fields');
+  }
+  const originLine = originLines[0];
   const origin = originLine ? originLine.slice('origin='.length).trim() : null;
-  if (options.requireOrigin !== false) {
+  if (origin !== null || options.requireOrigin !== false) {
     if (!origin || !origin.startsWith('Developer ID Application:')) {
       throw new Error(`Gatekeeper spctl check missing Developer ID Application origin (got ${origin ?? 'none'})`);
     }
@@ -266,6 +380,7 @@ interface ParsedZipEntryMeta {
   compressedSize: number;
   uncompressedSize: number;
   localHeaderOffset: number;
+  isSymlink: boolean;
 }
 
 function parseZipCentralDirectoryEntries(
@@ -320,6 +435,7 @@ function parseZipCentralDirectoryEntries(
 
     const diskNumber = tail.readUInt16LE(eocdOffset + 4);
     const cdDiskNumber = tail.readUInt16LE(eocdOffset + 6);
+    const diskEntryCount = tail.readUInt16LE(eocdOffset + 8);
     const entryCount = tail.readUInt16LE(eocdOffset + 10);
     const cdSize = tail.readUInt32LE(eocdOffset + 12);
     const cdOffset = tail.readUInt32LE(eocdOffset + 16);
@@ -327,13 +443,16 @@ function parseZipCentralDirectoryEntries(
     if (diskNumber !== 0 || cdDiskNumber !== 0) {
       throw new Error('Multi-disk ZIP archives are not supported');
     }
-    if (entryCount === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) {
+    if (diskEntryCount === 0xffff || entryCount === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) {
       throw new Error('Zip64 archives exceed supported bounds');
+    }
+    if (diskEntryCount !== entryCount) {
+      throw new Error('Split ZIP central directory entry count is not supported');
     }
     if (entryCount <= 0 || entryCount > maxEntries) {
       throw new Error(`ZIP entry count ${entryCount} exceeds allowed limit (${maxEntries})`);
     }
-    if (cdSize > 32 * 1024 * 1024 || cdOffset + cdSize > tailOffset + eocdOffset) {
+    if (cdSize > 32 * 1024 * 1024 || cdOffset + cdSize !== tailOffset + eocdOffset) {
       throw new Error('ZIP central directory bounds are invalid');
     }
 
@@ -346,10 +465,12 @@ function parseZipCentralDirectoryEntries(
     let totalUncompressedBytes = 0;
     const seenLowerNames = new Set<string>();
     const entries: ParsedZipEntryMeta[] = [];
+    const topBundle = requiredTopDir.replace(/\/+$/, '');
     for (let idx = 0; idx < entryCount; idx++) {
       if (cursor + 46 > cdBuf.length || cdBuf.readUInt32LE(cursor) !== 0x02014b50) {
         throw new Error('Malformed ZIP central directory header');
       }
+      const versionMadeBy = cdBuf.readUInt16LE(cursor + 4);
       const flags = cdBuf.readUInt16LE(cursor + 8);
       const method = cdBuf.readUInt16LE(cursor + 10);
       const crc32 = cdBuf.readUInt32LE(cursor + 16);
@@ -358,10 +479,15 @@ function parseZipCentralDirectoryEntries(
       const nameLen = cdBuf.readUInt16LE(cursor + 28);
       const extraLen = cdBuf.readUInt16LE(cursor + 30);
       const commentLen = cdBuf.readUInt16LE(cursor + 32);
+      const diskNumberStart = cdBuf.readUInt16LE(cursor + 34);
+      const externalFileAttributes = cdBuf.readUInt32LE(cursor + 38);
       const localHeaderOffset = cdBuf.readUInt32LE(cursor + 42);
       const headerEnd = cursor + 46 + nameLen + extraLen + commentLen;
       if (headerEnd > cdBuf.length) {
         throw new Error('Truncated ZIP central directory entry');
+      }
+      if (diskNumberStart !== 0) {
+        throw new Error('Multi-disk ZIP entries are not supported');
       }
       if (compressedSize === 0xffffffff || uncompressedSize === 0xffffffff || localHeaderOffset === 0xffffffff) {
         throw new Error('Zip64 entry sizes are not supported');
@@ -378,14 +504,14 @@ function parseZipCentralDirectoryEntries(
       if ((flags & 0x0001) !== 0) {
         throw new Error(`Encrypted ZIP entry is not supported: ${rawName}`);
       }
-      if (rawName.includes('\0') || rawName.includes('\\') || rawName.startsWith('/')) {
+      if (hasAsciiControlChar(rawName) || rawName.includes('\\') || rawName.startsWith('/')) {
         throw new Error(`Unsafe ZIP entry path: ${rawName}`);
       }
       const segments = rawName.split('/');
-      if (segments.some((seg) => seg === '..' || seg === '.')) {
+      const pathSegments = rawName.endsWith('/') ? segments.slice(0, -1) : segments;
+      if (pathSegments.length === 0 || pathSegments.some((seg) => seg === '' || seg === '..' || seg === '.')) {
         throw new Error(`Path traversal segment in ZIP entry: ${rawName}`);
       }
-      const topBundle = requiredTopDir.replace(/\/+$/, '');
       const allowedAppEntry = rawName === topBundle || rawName.startsWith(`${topBundle}/`);
       const allowedAppleDoubleEntry =
         rawName === '__MACOSX' ||
@@ -396,12 +522,43 @@ function parseZipCentralDirectoryEntries(
       if (!allowedAppEntry && !allowedAppleDoubleEntry) {
         throw new Error(`Unexpected ZIP entry outside ${requiredTopDir}: ${rawName}`);
       }
+      const creatorOs = versionMadeBy >>> 8;
+      let isSymlink = false;
+      if (creatorOs === 3 || creatorOs === 19) {
+        const unixMode = (externalFileAttributes >>> 16) & 0xffff;
+        if ((unixMode & 0o6000) !== 0) {
+          throw new Error(`Unsafe setuid/setgid UNIX mode in ZIP entry: ${rawName}`);
+        }
+        const fileType = unixMode & 0o170000;
+        if (fileType !== 0 && fileType !== 0o100000 && fileType !== 0o040000 && fileType !== 0o120000) {
+          throw new Error(`Unsupported special UNIX file type in ZIP entry (${fileType.toString(8)}): ${rawName}`);
+        }
+        if (fileType === 0o120000) {
+          if (rawName.endsWith('/')) {
+            throw new Error(`ZIP symlink entry must not end with slash: ${rawName}`);
+          }
+          const norm = rawName.replace(/\/+$/, '');
+          if (norm === topBundle || !norm.startsWith(`${topBundle}/`)) {
+            throw new Error(`ZIP symlink entry outside bundle contents is not allowed: ${rawName}`);
+          }
+          isSymlink = true;
+        }
+      }
       const lowerKey = rawName.replace(/\/+$/, '').toLowerCase();
       if (seenLowerNames.has(lowerKey)) {
         throw new Error(`Duplicate ZIP entry path: ${rawName}`);
       }
       seenLowerNames.add(lowerKey);
-      entries.push({ name: rawName, flags, method, crc32, compressedSize, uncompressedSize, localHeaderOffset });
+      entries.push({
+        name: rawName,
+        flags,
+        method,
+        crc32,
+        compressedSize,
+        uncompressedSize,
+        localHeaderOffset,
+        isSymlink,
+      });
       cursor = headerEnd;
     }
     if (cursor !== cdBuf.length) {
@@ -425,6 +582,24 @@ export function inspectZipCentralDirectory(
   return { entryCount: parsed.entryCount, totalUncompressedBytes: parsed.totalUncompressedBytes };
 }
 
+const MAX_ZIP_SYMLINK_TARGET_BYTES = 4096;
+
+function assertSafePreExtractionSymlinkTarget(entryName: string, topBundle: string, payloadBuf: Buffer): string {
+  if (payloadBuf.byteLength === 0 || payloadBuf.byteLength > MAX_ZIP_SYMLINK_TARGET_BYTES) {
+    throw new Error(`Pre-extraction ZIP symlink target size out of bounds for ${entryName}`);
+  }
+  const target = payloadBuf.toString('utf8');
+  if (hasAsciiControlChar(target) || target.startsWith('/') || target.startsWith('\\') || target.includes('\\')) {
+    throw new Error(`Unsafe pre-extraction ZIP symlink target for ${entryName}`);
+  }
+  const normEntry = entryName.replace(/\/+$/, '');
+  const resolvedTarget = posix.resolve('/', posix.dirname(normEntry), target).slice(1);
+  if (!resolvedTarget.startsWith(`${topBundle}/`) || resolvedTarget === topBundle) {
+    throw new Error(`Escaping pre-extraction ZIP symlink target for ${entryName}: ${target}`);
+  }
+  return normEntry;
+}
+
 export async function verifyZipDecompressedSizeBounds(
   zipPath: string,
   options: {
@@ -434,14 +609,26 @@ export async function verifyZipDecompressedSizeBounds(
   } = {},
 ): Promise<{ entryCount: number; actualDecompressedBytes: number }> {
   const maxTotalBytes = options.maxTotalUncompressedBytes ?? MAX_ZIP_EXTRACTED_BYTES;
+  const topBundle = (options.requiredTopDir ?? `${MAC_APP_BUNDLE_NAME}/`).replace(/\/+$/, '');
   const parsed = parseZipCentralDirectoryEntries(zipPath, options);
+  const sortedEntries = [...parsed.entries].sort((a, b) => a.localHeaderOffset - b.localHeaderOffset);
   const fd = openSync(zipPath, 'r');
   try {
     const lh = Buffer.alloc(30);
     let actualTotalBytes = 0;
-    for (const entry of parsed.entries) {
+    let expectedOffset = 0;
+    const symlinkPaths: string[] = [];
+    for (const entry of sortedEntries) {
       if (entry.method !== 0 && entry.method !== 8) {
         throw new Error(`Unsupported ZIP compression method (${entry.method}) for ${entry.name}`);
+      }
+      if (entry.isSymlink && (entry.uncompressedSize <= 0 || entry.uncompressedSize > MAX_ZIP_SYMLINK_TARGET_BYTES)) {
+        throw new Error(`Pre-extraction ZIP symlink target size out of bounds for ${entry.name}`);
+      }
+      if (entry.localHeaderOffset !== expectedOffset) {
+        throw new Error(
+          `ZIP local file headers are not contiguous before ${entry.name} (expected offset ${expectedOffset}, got ${entry.localHeaderOffset})`,
+        );
       }
       if (entry.localHeaderOffset + 30 > parsed.cdOffset) {
         throw new Error(`ZIP local file header out of bounds for ${entry.name}`);
@@ -476,6 +663,7 @@ export async function verifyZipDecompressedSizeBounds(
       if (lhNameBuf.toString('utf8') !== entry.name) {
         throw new Error(`ZIP local header filename mismatch for ${entry.name}`);
       }
+      let ddLen = 0;
       if ((lhFlags & 0x0008) === 0) {
         if (
           lhCompressedSize !== entry.compressedSize ||
@@ -498,6 +686,10 @@ export async function verifyZipDecompressedSizeBounds(
         }
         const hasSig = dd.length >= 16 && dd.readUInt32LE(0) === 0x08074b50;
         const ddBase = hasSig ? 4 : 0;
+        ddLen = hasSig ? 16 : 12;
+        if (ddOffset + ddLen > parsed.cdOffset) {
+          throw new Error(`ZIP data descriptor out of bounds for ${entry.name}`);
+        }
         if (
           dd.readUInt32LE(ddBase) !== entry.crc32 ||
           dd.readUInt32LE(ddBase + 4) !== entry.compressedSize ||
@@ -506,12 +698,14 @@ export async function verifyZipDecompressedSizeBounds(
           throw new Error(`ZIP data descriptor metadata mismatch for ${entry.name}`);
         }
       }
+      expectedOffset = dataStart + entry.compressedSize + ddLen;
 
       if (entry.method === 0) {
         if (entry.compressedSize !== entry.uncompressedSize) {
           throw new Error(`Stored ZIP entry size mismatch for ${entry.name}`);
         }
         let storedCrc = 0;
+        const symlinkChunks: Buffer[] = [];
         if (entry.uncompressedSize > 0) {
           const ioBuf = Buffer.alloc(65_536);
           let remaining = entry.uncompressedSize;
@@ -522,13 +716,20 @@ export async function verifyZipDecompressedSizeBounds(
             if (bytesRead <= 0) {
               throw new Error(`Unexpected EOF reading stored ZIP entry ${entry.name}`);
             }
-            storedCrc = zlibCrc32(ioBuf.subarray(0, bytesRead), storedCrc);
+            const slice = ioBuf.subarray(0, bytesRead);
+            storedCrc = zlibCrc32(slice, storedCrc);
+            if (entry.isSymlink) {
+              symlinkChunks.push(Buffer.from(slice));
+            }
             pos += bytesRead;
             remaining -= bytesRead;
           }
         }
         if ((storedCrc >>> 0) !== entry.crc32) {
           throw new Error(`ZIP entry ${entry.name} CRC-32 mismatch`);
+        }
+        if (entry.isSymlink) {
+          symlinkPaths.push(assertSafePreExtractionSymlinkTarget(entry.name, topBundle, Buffer.concat(symlinkChunks)));
         }
         actualTotalBytes += entry.uncompressedSize;
         if (actualTotalBytes > maxTotalBytes) {
@@ -540,6 +741,7 @@ export async function verifyZipDecompressedSizeBounds(
       if (entry.compressedSize === 0) {
         throw new Error(`Invalid empty deflate stream for ${entry.name}`);
       }
+      const symlinkChunks: Buffer[] = [];
       const entryActualBytes = await new Promise<number>((resolveStream, rejectStream) => {
         const inflate = createInflateRaw();
         let entryBytes = 0;
@@ -559,6 +761,13 @@ export async function verifyZipDecompressedSizeBounds(
           if (entryBytes > entry.uncompressedSize) {
             fail(new Error(`ZIP entry ${entry.name} actual decompressed size exceeds safety limit (${entry.uncompressedSize})`));
             return;
+          }
+          if (entry.isSymlink) {
+            if (entryBytes > MAX_ZIP_SYMLINK_TARGET_BYTES) {
+              fail(new Error(`Pre-extraction ZIP symlink target size out of bounds for ${entry.name}`));
+              return;
+            }
+            symlinkChunks.push(chunk);
           }
           if (actualTotalBytes > maxTotalBytes) {
             fail(new Error(`ZIP actual decompressed size exceeds safety limit (${maxTotalBytes} bytes)`));
@@ -613,6 +822,24 @@ export async function verifyZipDecompressedSizeBounds(
       });
       if (entryActualBytes > maxTotalBytes) {
         throw new Error(`ZIP actual decompressed size exceeds safety limit (${maxTotalBytes} bytes)`);
+      }
+      if (entry.isSymlink) {
+        symlinkPaths.push(assertSafePreExtractionSymlinkTarget(entry.name, topBundle, Buffer.concat(symlinkChunks)));
+      }
+    }
+    if (expectedOffset !== parsed.cdOffset) {
+      throw new Error(
+        `ZIP contains unreferenced bytes before central directory (ended at ${expectedOffset}, central directory at ${parsed.cdOffset})`,
+      );
+    }
+    if (symlinkPaths.length > 0) {
+      for (const entry of parsed.entries) {
+        const norm = entry.name.replace(/\/+$/, '');
+        for (const symPath of symlinkPaths) {
+          if (norm.startsWith(`${symPath}/`)) {
+            throw new Error(`ZIP entry traverses through symlink ${symPath}: ${entry.name}`);
+          }
+        }
       }
     }
     return { entryCount: parsed.entryCount, actualDecompressedBytes: actualTotalBytes };
@@ -773,23 +1000,15 @@ export async function verifyMacDmgPackage(
   }
   const execCmd = options.execCmd ?? defaultMacExecCmd;
 
-  await execCmd('codesign', ['--verify', '--verbose=2', dmgPath]);
+  const verifyOut = await execCmd('codesign', ['--verify', '--verbose=2', dmgPath]);
+  parseCodesignVerifyOutput(`${verifyOut.stdout}\n${verifyOut.stderr}`);
   const displayOut = await execCmd('codesign', ['--display', '--verbose=4', dmgPath]);
-  const lines = `${displayOut.stdout}\n${displayOut.stderr}`
-    .replace(/\r?\n/g, '\n')
-    .split('\n')
-    .map((l) => l.trim());
-  const teamLine = lines.find((l) => l.startsWith('TeamIdentifier='));
-  const foundTeam = teamLine ? normalizeAppleTeamId(teamLine.slice('TeamIdentifier='.length)) : null;
-  if (!foundTeam || foundTeam !== expected) {
-    throw new Error(`.dmg TeamIdentifier ${foundTeam ?? 'missing'} does not match expected ${expectedTeamId}`);
-  }
-  if (!lines.some((l) => l.startsWith('Authority=Developer ID Application:'))) {
-    throw new Error(`.dmg signature is missing Developer ID Application authority: ${dmgPath}`);
-  }
-  if (!lines.some((l) => l.startsWith('Timestamp=') && l.slice('Timestamp='.length).trim().length > 0)) {
-    throw new Error(`.dmg signature is missing secure Apple timestamp: ${dmgPath}`);
-  }
+  const fields = parseCodesignDisplayFields(`${displayOut.stdout}\n${displayOut.stderr}`);
+  assertDeveloperIdSignatureCommon(fields, {
+    label: '.dmg',
+    requireHardenedRuntime: false,
+    expectedTeamId: expected,
+  });
 
   const spctlOut = await execCmd('spctl', ['-a', '-t', 'open', '--context', 'context:primary-signature', '-vv', dmgPath]);
   parseSpctlAssessOutput(`${spctlOut.stdout}\n${spctlOut.stderr}`, {

@@ -556,6 +556,9 @@ export function parseDesktopReleaseManifest(
   }
 
   if (parsed.platform === 'darwin') {
+    if (parsed.packages.length !== 1) {
+      throw new UpdateFeedError('INVALID_MANIFEST', 'macOS release manifest must contain exactly 1 package entry');
+    }
     if (parsed.arch !== 'arm64' && parsed.arch !== 'x64') {
       throw new UpdateFeedError('INVALID_MANIFEST', 'macOS release manifest arch must be arm64 or x64');
     }
@@ -1219,7 +1222,7 @@ async function downloadStagedPackage(options: {
       }
       sha1Hash.update(buf);
       sha256Hash.update(buf);
-      writeFileSync(options.tempPath, buf);
+      writeFileSync(options.tempPath, buf, { mode: 0o600 });
     } else {
       const reader = res.body.getReader();
       const ws = createWriteStream(options.tempPath, { mode: 0o600 });
@@ -1343,7 +1346,7 @@ export async function prepareVerifiedUpdate(options: PrepareVerifiedUpdateOption
     }
 
     rmSync(options.stagingDir, { recursive: true, force: true });
-    mkdirSync(options.stagingDir, { recursive: true });
+    mkdirSync(options.stagingDir, { recursive: true, mode: 0o700 });
     const tempPath = join(options.stagingDir, `${target.file}.part`);
     const finalPath = join(options.stagingDir, target.file);
 
@@ -1416,7 +1419,7 @@ export async function prepareVerifiedUpdate(options: PrepareVerifiedUpdateOption
         throw new UpdateFeedError('MISSING_SIGNED_MANIFEST', `Update feed ${RELEASE_MANIFEST_SCRIPT_FILENAME} returned HTTP ${scriptRes.status}`);
       }
       const scriptBytes = await readBoundedResponseBytes(scriptRes, MAX_MANIFEST_BYTES, true);
-      mkdirSync(options.stagingDir, { recursive: true });
+      mkdirSync(options.stagingDir, { recursive: true, mode: 0o700 });
       const tempScriptPath = join(options.stagingDir, `verify-${randomUUID()}.ps1`);
       writeFileSync(tempScriptPath, scriptBytes, { mode: 0o600 });
       try {
@@ -1432,7 +1435,7 @@ export async function prepareVerifiedUpdate(options: PrepareVerifiedUpdateOption
   }
 
   rmSync(options.stagingDir, { recursive: true, force: true });
-  mkdirSync(options.stagingDir, { recursive: true });
+  mkdirSync(options.stagingDir, { recursive: true, mode: 0o700 });
   const tempPath = join(options.stagingDir, `${target.file}.part`);
   const finalPath = join(options.stagingDir, target.file);
 

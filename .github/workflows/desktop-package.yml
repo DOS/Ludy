@@ -629,7 +629,7 @@ jobs:
             echo "::error::Both APPLE_DEVELOPER_ID_CERT_P12_BASE64 and APPLE_DEVELOPER_ID_CERT_PASSWORD must be set in desktop-release."
             exit 1
           fi
-          team_id="$(printf '%s' "${APPLE_TEAM_ID:-}" | tr '[:lower:]' '[:upper:]' | xargs)"
+          team_id="$(printf '%s' "${APPLE_TEAM_ID:-}" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
           if ! [[ "$team_id" =~ ^[A-Z0-9]{10}$ ]]; then
             echo "::error::APPLE_TEAM_ID must be a 10-character alphanumeric Team ID in desktop-release."
             exit 1
@@ -693,6 +693,7 @@ jobs:
 
           kc_dir="$(mktemp -d "$RUNNER_TEMP/ludy-mac-kc-XXXXXX")"
           chmod 700 "$kc_dir"
+          kc_dir="$(cd "$kc_dir" && pwd -P)"
           keychain_file="$kc_dir/ephemeral.keychain-db"
           owner_marker="$RUNNER_TEMP/ludy-kc-owner.txt"
           rm -f "$owner_marker"
@@ -724,7 +725,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          team_id="$(printf '%s' "$APPLE_TEAM_ID" | tr '[:lower:]' '[:upper:]' | xargs)"
+          team_id="$(printf '%s' "$APPLE_TEAM_ID" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
           {
             echo "### Ludy Desktop signed and notarized release (macOS)"
             echo ""

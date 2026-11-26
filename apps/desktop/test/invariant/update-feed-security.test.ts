@@ -23,9 +23,11 @@ import {
   inspectZipCentralDirectory,
   MAC_APP_BUNDLE_NAME,
   parseCodesignDisplayOutput,
+  parseCodesignVerifyOutput,
   parseInfoPlistJson,
   parseSpctlAssessOutput,
   verifyExtractedDirectorySymlinks,
+  verifyMacDmgPackage,
   verifyMacSignedPackage,
   verifyZipDecompressedSizeBounds,
 } from '../../src/codesign.ts';
@@ -811,49 +813,111 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
   }
 
   function buildTestZip(
-    entries: Array<{ name: string; dataSize?: number; uncompressedSizeOverride?: number }>,
-    overrides: { diskNumber?: number; entryCount?: number } = {},
+    entries: Array<{
+      name: string;
+      dataSize?: number;
+      payload?: Buffer;
+      compress?: boolean;
+      useDataDescriptor?: boolean;
+      ddWithSignature?: boolean;
+      uncompressedSizeOverride?: number;
+      versionMadeBy?: number;
+      externalFileAttributes?: number;
+      localOffsetOverride?: number;
+      gapAfterBytes?: number;
+    }>,
+    overrides: {
+      diskNumber?: number;
+      diskEntryCount?: number;
+      entryCount?: number;
+      prependBytes?: Buffer;
+      preCdGapBytes?: Buffer;
+      postCdGapBytes?: Buffer;
+    } = {},
   ) {
     const localChunks: Array<Buffer<ArrayBuffer>> = [];
     const cdChunks: Array<Buffer<ArrayBuffer>> = [];
     let offset = 0;
+    if (overrides.prependBytes) {
+      localChunks.push(Buffer.from(overrides.prependBytes) as Buffer<ArrayBuffer>);
+      offset += overrides.prependBytes.length;
+    }
     for (const entry of entries) {
       const nameBuf = Buffer.from(entry.name, 'utf8');
-      const size = entry.dataSize ?? 4;
-      const lh = Buffer.alloc(30 + nameBuf.length + size);
-      const crc = size > 0 ? zlibCrc32(lh.subarray(30 + nameBuf.length)) >>> 0 : 0;
+      const rawData = entry.payload ?? Buffer.alloc(entry.dataSize ?? 4);
+      const crc = rawData.length > 0 ? zlibCrc32(rawData) >>> 0 : 0;
+      const method = entry.compress ? 8 : 0;
+      const compressedData = entry.compress ? deflateRawSync(rawData) : rawData;
+      const flags = entry.useDataDescriptor ? 0x0008 : 0;
+      const ddLen = entry.useDataDescriptor ? (entry.ddWithSignature !== false ? 16 : 12) : 0;
+
+      const lh = Buffer.alloc(30 + nameBuf.length + compressedData.length + ddLen);
       lh.writeUInt32LE(0x04034b50, 0);
       lh.writeUInt16LE(20, 4);
-      lh.writeUInt32LE(crc, 14);
-      lh.writeUInt32LE(size, 18);
-      lh.writeUInt32LE(size, 22);
+      lh.writeUInt16LE(flags, 6);
+      lh.writeUInt16LE(method, 8);
+      if (!entry.useDataDescriptor) {
+        lh.writeUInt32LE(crc, 14);
+        lh.writeUInt32LE(compressedData.length, 18);
+        lh.writeUInt32LE(rawData.length, 22);
+      }
       lh.writeUInt16LE(nameBuf.length, 26);
       nameBuf.copy(lh, 30);
+      compressedData.copy(lh, 30 + nameBuf.length);
+      if (entry.useDataDescriptor) {
+        const ddPos = 30 + nameBuf.length + compressedData.length;
+        if (entry.ddWithSignature !== false) {
+          lh.writeUInt32LE(0x08074b50, ddPos);
+          lh.writeUInt32LE(crc, ddPos + 4);
+          lh.writeUInt32LE(compressedData.length, ddPos + 8);
+          lh.writeUInt32LE(rawData.length, ddPos + 12);
+        } else {
+          lh.writeUInt32LE(crc, ddPos);
+          lh.writeUInt32LE(compressedData.length, ddPos + 4);
+          lh.writeUInt32LE(rawData.length, ddPos + 8);
+        }
+      }
 
       const cd = Buffer.alloc(46 + nameBuf.length);
       cd.writeUInt32LE(0x02014b50, 0);
-      cd.writeUInt16LE(20, 4);
+      cd.writeUInt16LE(entry.versionMadeBy ?? 20, 4);
       cd.writeUInt16LE(20, 6);
+      cd.writeUInt16LE(flags, 8);
+      cd.writeUInt16LE(method, 10);
       cd.writeUInt32LE(crc, 16);
-      cd.writeUInt32LE(size, 20);
-      cd.writeUInt32LE(entry.uncompressedSizeOverride ?? size, 24);
+      cd.writeUInt32LE(compressedData.length, 20);
+      cd.writeUInt32LE(entry.uncompressedSizeOverride ?? rawData.length, 24);
       cd.writeUInt16LE(nameBuf.length, 28);
-      cd.writeUInt32LE(offset, 42);
+      cd.writeUInt32LE(entry.externalFileAttributes ?? 0, 38);
+      cd.writeUInt32LE(entry.localOffsetOverride ?? offset, 42);
       nameBuf.copy(cd, 46);
       localChunks.push(lh);
       cdChunks.push(cd);
       offset += lh.length;
+      if (entry.gapAfterBytes && entry.gapAfterBytes > 0) {
+        localChunks.push(Buffer.alloc(entry.gapAfterBytes) as Buffer<ArrayBuffer>);
+        offset += entry.gapAfterBytes;
+      }
+    }
+    if (overrides.preCdGapBytes) {
+      localChunks.push(Buffer.from(overrides.preCdGapBytes) as Buffer<ArrayBuffer>);
+      offset += overrides.preCdGapBytes.length;
     }
     const cdBuf = Buffer.concat(cdChunks);
     const eocd = Buffer.alloc(22);
     eocd.writeUInt32LE(0x06054b50, 0);
     eocd.writeUInt16LE(overrides.diskNumber ?? 0, 4);
     eocd.writeUInt16LE(overrides.diskNumber ?? 0, 6);
-    eocd.writeUInt16LE(overrides.entryCount ?? entries.length, 8);
+    eocd.writeUInt16LE(overrides.diskEntryCount ?? overrides.entryCount ?? entries.length, 8);
     eocd.writeUInt16LE(overrides.entryCount ?? entries.length, 10);
     eocd.writeUInt32LE(cdBuf.length, 12);
     eocd.writeUInt32LE(offset, 16);
-    return Buffer.concat([...localChunks, cdBuf, eocd]);
+    const tailChunks: Array<Buffer<ArrayBuffer>> = [...localChunks, cdBuf];
+    if (overrides.postCdGapBytes) {
+      tailChunks.push(Buffer.from(overrides.postCdGapBytes) as Buffer<ArrayBuffer>);
+    }
+    tailChunks.push(eocd);
+    return Buffer.concat(tailChunks);
   }
 
   it('rejects cross-platform, wrong-arch, unsigned, unnotarized, and Team-ID-mismatched macOS manifests', async () => {
@@ -1202,7 +1266,7 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
             return { stdout: '', stderr: '' };
           }
           if (file === 'codesign' && args.includes('--verify')) {
-            return { stdout: 'Ludy Desktop.app: valid on disk\nsatisfies its Designated Requirement', stderr: '' };
+            return { stdout: 'Ludy Desktop.app: valid on disk\nLudy Desktop.app: satisfies its Designated Requirement', stderr: '' };
           }
           if (file === 'codesign' && args.includes('--display')) {
             return {
@@ -1231,5 +1295,236 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
         },
       }),
     ).rejects.toThrow(/version mismatch/);
+
+    // B1: Pre-extraction ZIP smuggling (prepended unreferenced LFH, gap, overlap, split counts, control chars, special UNIX modes, escaping/traversing symlinks)
+    const smuggledPrefix = Buffer.from('PK\x03\x04SMUGGLED-LOCAL-HEADER');
+    const prependedZip = join(dir, 'prepended-smuggle.zip');
+    writeFileSync(
+      prependedZip,
+      buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist` }], { prependBytes: smuggledPrefix }),
+    );
+    let dittoCalledOnPrepend = false;
+    await expect(
+      verifyMacSignedPackage(prependedZip, TEAM_ID, {
+        platform: 'darwin',
+        execCmd: async (file) => {
+          if (file === 'ditto') dittoCalledOnPrepend = true;
+          return { stdout: '', stderr: '' };
+        },
+      }),
+    ).rejects.toThrow(/not contiguous/);
+    expect(dittoCalledOnPrepend).toBe(false);
+
+    const gapBetweenZip = join(dir, 'gap-between.zip');
+    writeFileSync(
+      gapBetweenZip,
+      buildTestZip([
+        { name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist`, gapAfterBytes: 12 },
+        { name: `${MAC_APP_BUNDLE_NAME}/Contents/MacOS/Ludy Desktop` },
+      ]),
+    );
+    await expect(verifyZipDecompressedSizeBounds(gapBetweenZip)).rejects.toThrow(/not contiguous/);
+
+    const preCdGapZip = join(dir, 'pre-cd-gap.zip');
+    writeFileSync(
+      preCdGapZip,
+      buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist` }], {
+        preCdGapBytes: Buffer.from('unreferenced-bytes'),
+      }),
+    );
+    await expect(verifyZipDecompressedSizeBounds(preCdGapZip)).rejects.toThrow(/unreferenced bytes/);
+
+    const overlapZip = join(dir, 'overlap-lfh.zip');
+    writeFileSync(
+      overlapZip,
+      buildTestZip([
+        { name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist` },
+        { name: `${MAC_APP_BUNDLE_NAME}/Contents/MacOS/Ludy Desktop`, localOffsetOverride: 0 },
+      ]),
+    );
+    await expect(verifyZipDecompressedSizeBounds(overlapZip)).rejects.toThrow(/not contiguous/);
+
+    const splitCountZip = join(dir, 'split-count.zip');
+    writeFileSync(
+      splitCountZip,
+      buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist` }], { diskEntryCount: 2, entryCount: 1 }),
+    );
+    expect(() => inspectZipCentralDirectory(splitCountZip)).toThrow(/Split ZIP central directory/);
+
+    const postCdGapZip = join(dir, 'post-cd-gap.zip');
+    writeFileSync(
+      postCdGapZip,
+      buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist` }], { postCdGapBytes: Buffer.from('junk') }),
+    );
+    expect(() => inspectZipCentralDirectory(postCdGapZip)).toThrow(/central directory bounds are invalid/);
+
+    const controlCharZip = join(dir, 'control-char.zip');
+    writeFileSync(controlCharZip, buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info\n.plist` }]));
+    expect(() => inspectZipCentralDirectory(controlCharZip)).toThrow(/Unsafe ZIP entry path/);
+
+    for (const [label, mode] of [
+      ['fifo', 0o010644],
+      ['chardev', 0o020600],
+      ['socket', 0o140755],
+      ['setuid', 0o104755],
+      ['setgid', 0o102755],
+    ] as const) {
+      const badModeZip = join(dir, `unix-${label}.zip`);
+      writeFileSync(
+        badModeZip,
+        buildTestZip([
+          {
+            name: `${MAC_APP_BUNDLE_NAME}/Contents/MacOS/${label}`,
+            versionMadeBy: 0x031e,
+            externalFileAttributes: (mode << 16) >>> 0,
+          },
+        ]),
+      );
+      expect(() => inspectZipCentralDirectory(badModeZip), label).toThrow(/UNIX/);
+    }
+
+    const escapingSymZip = join(dir, 'escaping-symlink.zip');
+    writeFileSync(
+      escapingSymZip,
+      buildTestZip([
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/MacOS/escape`,
+          payload: Buffer.from('../../../etc/passwd', 'utf8'),
+          compress: true,
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o120755 << 16) >>> 0,
+        },
+      ]),
+    );
+    let dittoCalledOnSym = false;
+    await expect(
+      verifyMacSignedPackage(escapingSymZip, TEAM_ID, {
+        platform: 'darwin',
+        execCmd: async (file) => {
+          if (file === 'ditto') dittoCalledOnSym = true;
+          return { stdout: '', stderr: '' };
+        },
+      }),
+    ).rejects.toThrow(/Escaping pre-extraction ZIP symlink/);
+    expect(dittoCalledOnSym).toBe(false);
+
+    const symTraversalZip = join(dir, 'symlink-prefix-traversal.zip');
+    writeFileSync(
+      symTraversalZip,
+      buildTestZip([
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/MacOS/link`,
+          payload: Buffer.from('../Resources', 'utf8'),
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o120755 << 16) >>> 0,
+        },
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/MacOS/link/pwned`,
+          payload: Buffer.from('payload', 'utf8'),
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o100644 << 16) >>> 0,
+        },
+      ]),
+    );
+    await expect(verifyZipDecompressedSizeBounds(symTraversalZip)).rejects.toThrow(/traverses through symlink/);
+
+    const validBundleSymZip = join(dir, 'valid-framework-symlink.zip');
+    writeFileSync(
+      validBundleSymZip,
+      buildTestZip([
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/Frameworks/Test.framework/Versions/A/Test`,
+          payload: Buffer.from('mach-o', 'utf8'),
+          compress: true,
+          useDataDescriptor: true,
+          ddWithSignature: true,
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o100755 << 16) >>> 0,
+        },
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/Frameworks/Test.framework/Versions/Current`,
+          payload: Buffer.from('A', 'utf8'),
+          compress: true,
+          useDataDescriptor: true,
+          ddWithSignature: true,
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o120700 << 16) >>> 0,
+        },
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/Frameworks/Test.framework/Versions/._Current`,
+          payload: Buffer.from('appledouble', 'utf8'),
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o100600 << 16) >>> 0,
+        },
+      ]),
+    );
+    await expect(verifyZipDecompressedSizeBounds(validBundleSymZip)).resolves.toMatchObject({ entryCount: 3 });
+
+    // B2: Spoofed/duplicated codesign outputs and incomplete .dmg certificate chains
+    expect(() =>
+      parseCodesignVerifyOutput(
+        'Ludy Desktop.app: valid on disk spoof\nLudy Desktop.app: satisfies its Designated Requirement',
+      ),
+    ).toThrow(/valid on disk/);
+    expect(() =>
+      parseCodesignDisplayOutput(
+        [
+          `Identifier=${APPLE_BUNDLE_ID}`,
+          'CodeDirectory v=20500 size=100 flags=0x10000(runtime)',
+          'Hash type=sha256 size=32',
+          `Authority=Developer ID Application: Ludy (${TEAM_ID})`,
+          'Authority=Developer ID Certification Authority',
+          'Authority=Apple Root CA',
+          'Timestamp=Nov 26, 2026',
+          `TeamIdentifier=${TEAM_ID}`,
+          'TeamIdentifier=EVILTEAM99',
+          'Sealed Resources version=2',
+        ].join('\n'),
+        { expectedTeamId: TEAM_ID },
+      ),
+    ).toThrow(/Duplicate codesign --display/);
+    expect(() =>
+      parseCodesignDisplayOutput(
+        [
+          `Identifier=${APPLE_BUNDLE_ID}`,
+          'CodeDirectory v=20500 size=100 flags=0x10000(runtime)',
+          'Hash type=sha256 size=32',
+          `Authority=Developer ID Application: Ludy (${TEAM_ID})`,
+          'Authority=Developer ID Certification Authority',
+          'Authority=Apple Root CA',
+          'Timestamp=Nov 26, 2026',
+          `TeamIdentifier=${TEAM_ID}`,
+          'Sealed Resources version=2',
+          'InjectedLine=evil',
+        ].join('\n'),
+        { expectedTeamId: TEAM_ID },
+      ),
+    ).toThrow(/Unexpected codesign --display/);
+
+    const badDmgPath = join(dir, 'LudyDesktop-0.2.0-darwin-arm64.dmg');
+    await expect(
+      verifyMacDmgPackage(badDmgPath, TEAM_ID, {
+        platform: 'darwin',
+        execCmd: async (file, args) => {
+          if (file === 'codesign' && args.includes('--verify')) {
+            return { stdout: `${badDmgPath}: valid on disk\n${badDmgPath}: satisfies its Designated Requirement`, stderr: '' };
+          }
+          if (file === 'codesign' && args.includes('--display')) {
+            return {
+              stdout: [
+                'CodeDirectory v=20400 size=100 flags=0x0(none)',
+                'Hash type=sha256 size=32',
+                `Authority=Developer ID Application: Ludy (${TEAM_ID})`,
+                'Authority=Self Signed CA',
+                'Timestamp=Nov 26, 2026',
+                `TeamIdentifier=${TEAM_ID}`,
+              ].join('\n'),
+              stderr: '',
+            };
+          }
+          return { stdout: '', stderr: '' };
+        },
+      }),
+    ).rejects.toThrow(/chain exclusively/);
   });
 });

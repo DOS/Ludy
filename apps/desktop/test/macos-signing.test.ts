@@ -2,7 +2,7 @@
 // Unit tests for macOS packaging CLI args, credential/notarization validation, ephemeral Keychain lifecycle,
 // minimal Hardened Runtime entitlements, and release manifest/checksum generation (#4885).
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 function makeTempDir(prefix = 'ludy-mac-sign-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
   tempDirs.push(dir);
   return dir;
 }
@@ -162,6 +162,17 @@ describe('macOS packaging CLI & signing helpers', () => {
         exists: () => true,
       }),
     ).toThrow(/APPLE_KEYCHAIN_PATH cannot be combined/);
+    const hexIdentityCfg = resolveMacSigningConfig({
+      sign: true,
+      env: {
+        APPLE_TEAM_ID: TEAM_ID,
+        APPLE_CODESIGN_IDENTITY: CERT_HASH.toLowerCase(),
+        APPLE_ID: 'dev@example.com',
+        APPLE_APP_SPECIFIC_PASSWORD: 'app-pw',
+      },
+    });
+    expect(hexIdentityCfg).toMatchObject({ certMode: 'identity', identity: CERT_HASH });
+
     expect(() =>
       resolveMacSigningConfig({
         sign: true,
@@ -614,6 +625,61 @@ describe('macOS packaging CLI & signing helpers', () => {
         run: async () => 'done',
       }),
     ).rejects.toThrow(/Failed cleaning up ephemeral macOS Keychain/);
+
+    if (process.platform !== 'win32') {
+      const realKcDir = join(dir, 'real-kc-dir');
+      const symKcDir = join(dir, 'sym-kc-dir');
+      mkdirSync(realKcDir, { recursive: true });
+      symlinkSync(realKcDir, symKcDir);
+      const symKcPath = join(symKcDir, 'alias.keychain-db');
+      const canonicalKcPath = join(realKcDir, 'alias.keychain-db');
+
+      await expect(
+        withEphemeralMacKeychain({
+          signing: baseSigning,
+          env: { LUDY_MAC_EPHEMERAL_KEYCHAIN: symKcPath },
+          exists: () => false,
+          exec: (_file, args) => {
+            if (args[0] === 'list-keychains') return `    "${canonicalKcPath}"\n`;
+            return '';
+          },
+          run: async () => 'done',
+        }),
+      ).rejects.toThrow(/Refused to reuse Keychain already present in search list/);
+
+      let aliasExists = false;
+      await expect(
+        withEphemeralMacKeychain({
+          signing: baseSigning,
+          env: {
+            LUDY_MAC_EPHEMERAL_KEYCHAIN: symKcPath,
+            APPLE_CERT_P12_PASSWORD: 'p12-password',
+            APPLE_APP_SPECIFIC_PASSWORD: 'apple-app-password',
+          },
+          exists: (p) => (p === canonicalKcPath ? aliasExists : true),
+          runSecurityInteractive: () => {
+            aliasExists = true;
+          },
+          storeNotaryProfile: () => undefined,
+          exec: (_file, args) => {
+            if (args[0] === 'list-keychains' && !args.includes('-s')) {
+              return aliasExists
+                ? `    "${canonicalKcPath}"\n    "/Users/runner/Library/Keychains/login.keychain-db"`
+                : '    "/Users/runner/Library/Keychains/login.keychain-db"';
+            }
+            if (args[0] === 'find-identity') {
+              return `  1) ${CERT_HASH} "Developer ID Application: Ludy Test (${TEAM_ID})"`;
+            }
+            if (args[0] === 'delete-keychain') {
+              aliasExists = false;
+              return '';
+            }
+            return '';
+          },
+          run: async () => 'done',
+        }),
+      ).rejects.toThrow(/Ephemeral Keychain remained in search list/);
+    }
   });
 
   it('creates signed and unsigned macOS release manifests and SHA256SUMS.txt', () => {

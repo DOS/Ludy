@@ -194,6 +194,16 @@ describe('macOS codesign verification', () => {
     expect(() => parseCodesignVerifyOutput('/Applications/Ludy Desktop.app: valid on disk')).toThrow(
       /Designated Requirement/,
     );
+    expect(() =>
+      parseCodesignVerifyOutput(
+        '/Applications/Ludy Desktop.app: valid on disk (bypass)\n/Applications/Ludy Desktop.app: satisfies its Designated Requirement',
+      ),
+    ).toThrow(/valid on disk/);
+    expect(() =>
+      parseCodesignVerifyOutput(
+        '/Applications/Ludy Desktop.app: valid on disk\n/Applications/Ludy Desktop.app: satisfies its Designated Requirement bypass',
+      ),
+    ).toThrow(/Designated Requirement/);
   });
 
   it('parses Developer ID codesign --display output and rejects ad-hoc, non-runtime, SHA-1, and Team ID mismatches', () => {
@@ -265,6 +275,38 @@ describe('macOS codesign verification', () => {
     expect(() =>
       parseCodesignDisplayOutput(validDisplayOutput({ teamId: TEAM_ID }), { expectedTeamId: 'Z9Y8X7W6V5' }),
     ).toThrow(/does not match expected/);
+    expect(() =>
+      parseCodesignDisplayOutput(`${validDisplayOutput()}\nTeamIdentifier=EVILTEAM99`, { expectedTeamId: TEAM_ID }),
+    ).toThrow(/Duplicate codesign --display field: TeamIdentifier=/);
+    expect(() =>
+      parseCodesignDisplayOutput(`${validDisplayOutput()}\nUnexpectedInjected=yes`, { expectedTeamId: TEAM_ID }),
+    ).toThrow(/Unexpected codesign --display output line/);
+    expect(() =>
+      parseCodesignDisplayOutput(
+        validDisplayOutput({
+          authorities: [
+            `Developer ID Application: Ludy Test (OTHERTEAM1)`,
+            'Developer ID Certification Authority',
+            'Apple Root CA',
+          ],
+          teamId: TEAM_ID,
+        }),
+        { expectedTeamId: TEAM_ID },
+      ),
+    ).toThrow(/does not match TeamIdentifier/);
+    expect(() =>
+      parseCodesignDisplayOutput(
+        validDisplayOutput({
+          authorities: [
+            `Developer ID Application: Ludy Test (${TEAM_ID})`,
+            'Developer ID Certification Authority',
+            'Apple Root CA',
+            'Extra Untrusted Authority',
+          ],
+        }),
+        { expectedTeamId: TEAM_ID },
+      ),
+    ).toThrow(/chain exclusively/);
   });
 
   it('validates spctl Gatekeeper output and enforces Notarized Developer ID + Team ID', () => {
@@ -281,6 +323,9 @@ describe('macOS codesign verification', () => {
     expect(() => parseSpctlAssessOutput('/app: accepted\nsource=Notarized Developer ID')).toThrow(/missing Developer ID Application/);
     expect(() =>
       parseSpctlAssessOutput(validSpctlOutput('OTHERTEAM1'), { expectedTeamId: TEAM_ID }),
+    ).toThrow(/does not match expected/);
+    expect(() =>
+      parseSpctlAssessOutput(validSpctlOutput('OTHERTEAM1'), { expectedTeamId: TEAM_ID, requireOrigin: false }),
     ).toThrow(/does not match expected/);
   });
 
@@ -362,11 +407,20 @@ describe('macOS codesign verification', () => {
     writeFileSync(evilAppleDoubleZip, buildSyntheticZip([{ name: '__MACOSX/Evil.app/payload' }]));
     expect(() => inspectZipCentralDirectory(evilAppleDoubleZip)).toThrow(/Unexpected ZIP entry outside/);
 
-    const truncatedHeaderZip = join(dir, 'truncated-cd.zip');
+    const invalidCdBoundsZip = join(dir, 'invalid-cd-bounds.zip');
     writeFileSync(
-      truncatedHeaderZip,
+      invalidCdBoundsZip,
       buildSyntheticZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist` }], { cdSize: 10 }),
     );
+    expect(() => inspectZipCentralDirectory(invalidCdBoundsZip)).toThrow(/central directory bounds are invalid/);
+
+    const truncatedHeaderZip = join(dir, 'truncated-cd.zip');
+    const truncatedBuf = buildSyntheticZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist` }]);
+    const truncatedCdStart = truncatedBuf.readUInt32LE(truncatedBuf.length - 6);
+    const shortCd = truncatedBuf.subarray(truncatedCdStart, truncatedCdStart + 10);
+    const shortEocd = Buffer.from(truncatedBuf.subarray(truncatedBuf.length - 22));
+    shortEocd.writeUInt32LE(shortCd.length, 12);
+    writeFileSync(truncatedHeaderZip, Buffer.concat([truncatedBuf.subarray(0, truncatedCdStart), shortCd, shortEocd]));
     expect(() => inspectZipCentralDirectory(truncatedHeaderZip)).toThrow(/Malformed ZIP central directory header/);
 
     const trailingBytesZip = join(dir, 'trailing-cd.zip');
@@ -544,7 +598,7 @@ describe('macOS codesign verification', () => {
       verifyMacDmgPackage(dmgPath, TEAM_ID, {
         platform: 'darwin',
         execCmd: async (file, args) => {
-          if (file === 'codesign' && args.includes('--verify')) return { stdout: '', stderr: '' };
+          if (file === 'codesign' && args.includes('--verify')) return { stdout: '', stderr: validVerifyOutput() };
           if (file === 'codesign' && args.includes('--display')) return { stdout: '', stderr: validDisplayOutput() };
           if (file === 'spctl') return { stdout: `${dmgPath}: accepted\nsource=Notarized Developer ID\n`, stderr: '' };
           throw new Error(`unexpected: ${file}`);
@@ -555,7 +609,7 @@ describe('macOS codesign verification', () => {
       verifyMacDmgPackage(dmgPath, TEAM_ID, {
         platform: 'darwin',
         execCmd: async (file, args) => {
-          if (file === 'codesign' && args.includes('--verify')) return { stdout: '', stderr: '' };
+          if (file === 'codesign' && args.includes('--verify')) return { stdout: '', stderr: validVerifyOutput() };
           if (file === 'codesign' && args.includes('--display')) {
             return { stdout: '', stderr: validDisplayOutput({ timestamp: '' }) };
           }
@@ -563,5 +617,45 @@ describe('macOS codesign verification', () => {
         },
       }),
     ).rejects.toThrow(/missing secure Apple timestamp/);
+    await expect(
+      verifyMacDmgPackage(dmgPath, TEAM_ID, {
+        platform: 'darwin',
+        execCmd: async (file, args) => {
+          if (file === 'codesign' && args.includes('--verify')) return { stdout: '', stderr: validVerifyOutput() };
+          if (file === 'codesign' && args.includes('--display')) {
+            return { stdout: '', stderr: validDisplayOutput({ flags: 'flags=0x2(adhoc)' }) };
+          }
+          return { stdout: '', stderr: '' };
+        },
+      }),
+    ).rejects.toThrow(/ad-hoc/);
+    await expect(
+      verifyMacDmgPackage(dmgPath, TEAM_ID, {
+        platform: 'darwin',
+        execCmd: async (file, args) => {
+          if (file === 'codesign' && args.includes('--verify')) return { stdout: '', stderr: validVerifyOutput() };
+          if (file === 'codesign' && args.includes('--display')) {
+            return { stdout: '', stderr: `${validDisplayOutput()}\nTeamIdentifier=EVILTEAM99` };
+          }
+          return { stdout: '', stderr: '' };
+        },
+      }),
+    ).rejects.toThrow(/Duplicate codesign --display/);
+    await expect(
+      verifyMacDmgPackage(dmgPath, TEAM_ID, {
+        platform: 'darwin',
+        execCmd: async (file, args) => {
+          if (file === 'codesign' && args.includes('--verify')) return { stdout: '', stderr: validVerifyOutput() };
+          if (file === 'codesign' && args.includes('--display')) return { stdout: '', stderr: validDisplayOutput() };
+          if (file === 'spctl') {
+            return {
+              stdout: `${dmgPath}: accepted\nsource=Notarized Developer ID\norigin=Developer ID Application: Evil (OTHERTEAM1)\n`,
+              stderr: '',
+            };
+          }
+          return { stdout: '', stderr: '' };
+        },
+      }),
+    ).rejects.toThrow(/does not match expected/);
   });
 });

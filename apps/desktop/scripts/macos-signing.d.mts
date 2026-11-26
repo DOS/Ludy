@@ -76,6 +76,7 @@ export function withEphemeralMacKeychain<T>(options: {
   signing: Extract<MacSigningConfig, { enabled: true }>;
   env?: Readonly<Record<string, string | undefined>>;
   exists?: (path: string) => boolean;
+  realpath?: (path: string) => string;
   exec?: (file: string, args: readonly string[], options?: Record<string, unknown>) => string;
   runSecurityInteractive?: (commands: string) => void;
   storeNotaryProfile?: (opts: {

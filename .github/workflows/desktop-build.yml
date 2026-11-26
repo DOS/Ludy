@@ -28,7 +28,7 @@ on:
       - 'vitest.config.ts'
       - 'vitest.invariant.config.ts'
   push:
-    branches: [main]
+    branches: [main, dev]
     paths:
       - 'apps/desktop/**'
       - '.github/workflows/desktop-build.yml'

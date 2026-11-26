@@ -3,7 +3,7 @@
 // timestamp server validation, ephemeral Keychain lifecycle, minimal entitlements, and artifact checksum integrity (#4884, #4885).
 // Self-contained under test/invariant/: imports only the modules under test and Node built-ins.
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,7 +43,7 @@ afterEach(() => {
 });
 
 function makeTempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'ludy-inv-sign-'));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ludy-inv-sign-')));
   tempDirs.push(dir);
   return dir;
 }
@@ -361,6 +361,24 @@ describe('macOS signing credential, Keychain, entitlements, and ATS security inv
         run: async () => 'ok',
       }),
     ).rejects.toThrow(/Failed cleaning up ephemeral macOS Keychain/);
+
+    if (process.platform !== 'win32') {
+      const realKcDir = join(dir, 'real-kc');
+      const symKcDir = join(dir, 'sym-kc');
+      mkdirSync(realKcDir, { recursive: true });
+      symlinkSync(realKcDir, symKcDir);
+      const symKc = join(symKcDir, 'alias.keychain-db');
+      const realKc = join(realKcDir, 'alias.keychain-db');
+      await expect(
+        withEphemeralMacKeychain({
+          signing: cfg,
+          env: { LUDY_MAC_EPHEMERAL_KEYCHAIN: symKc },
+          exists: () => false,
+          exec: (_file, args) => (args[0] === 'list-keychains' ? `    "${realKc}"\n` : ''),
+          run: async () => 'ok',
+        }),
+      ).rejects.toThrow(/Refused to reuse Keychain already present in search list/);
+    }
   });
 
   it('keeps macOS Hardened Runtime entitlements minimal, locks ATS to 127.0.0.1, and verifies codesign/spctl invariants', () => {

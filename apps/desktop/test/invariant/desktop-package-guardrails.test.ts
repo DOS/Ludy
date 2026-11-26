@@ -212,7 +212,8 @@ describe('desktop-package workflow guardrails', () => {
     const macSigningScript = readFileSync(fileURLToPath(new URL('../../scripts/macos-signing.mjs', import.meta.url)), 'utf8');
     const macPackageScript = readFileSync(fileURLToPath(new URL('../../scripts/package-mac.mjs', import.meta.url)), 'utf8');
 
-    // desktop-build.yml must build unsigned macOS arm64 + x64 without any secrets and pin all actions to 40-hex SHAs.
+    // desktop-build.yml must build unsigned macOS arm64 + x64 without any secrets, trigger push on main/dev, and pin all actions to 40-hex SHAs.
+    expect(buildWorkflow).toMatch(/\n\s+push:\s*\n\s+branches:\s*\[main,\s*dev\]/);
     expect(buildWorkflow).toMatch(/\n\s+macos:\s*\n[\s\S]*?runs-on:\s*macos-latest/);
     expect(buildWorkflow).toContain('node apps/desktop/scripts/package-mac.mjs --arch all');
     expect(buildWorkflow).toContain('shasum -a 256 -c SHA256SUMS.txt');
@@ -271,6 +272,8 @@ describe('desktop-package workflow guardrails', () => {
     expect(macSignedBlock).toContain('spctl -a -t open --context context:primary-signature -vv');
     expect(macSignedBlock).toContain('if: always()');
     expect(macSignedBlock).toContain('LUDY_MAC_KEYCHAIN_OWNER_MARKER');
+    expect(macSignedBlock).toContain('kc_dir="$(cd "$kc_dir" && pwd -P)"');
+    expect(macSignedBlock).not.toContain('| xargs');
     expect(macSignedBlock).toContain('security delete-keychain "$LUDY_MAC_EPHEMERAL_KEYCHAIN"');
     expect(macSignedBlock).toContain('$RUNNER_TEMP/ludy-apple-devid.p12');
     expect(macSignedBlock).toContain('$RUNNER_TEMP/ludy-notary-key.p8');

@@ -309,5 +309,24 @@ describe('prepareVerifiedUpdate', () => {
       verifySignedPackage: async () => undefined,
     });
     expect(upToDate).toEqual({ status: 'up-to-date', version: '0.1.2' });
+
+    const twoPackagesManifest = JSON.stringify({
+      ...JSON.parse(macManifest),
+      packages: [
+        JSON.parse(macManifest).packages[0],
+        JSON.parse(macManifest).packages[0],
+      ],
+    });
+    await expect(
+      validateUpdateFeed({
+        feedUrl: macFeed,
+        platform: 'darwin',
+        arch: 'arm64',
+        expectedTeamId: teamId,
+        fetch: mockFeedFetch({
+          [`${macFeed}/release-manifest.json`]: new Response(twoPackagesManifest, { status: 200 }),
+        }),
+      }),
+    ).rejects.toThrow(/exactly 1 package entry/);
   });
 });

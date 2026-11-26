@@ -4,9 +4,9 @@
 // Never stores, logs, or passes certificates, passwords, or private keys in process argv or configs.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { APPLE_BUNDLE_ID, APPLE_TEAM_ID_PATTERN, normalizeAppleTeamId } from '../src/codesign.ts';
 
@@ -111,7 +111,7 @@ export function resolveMacSigningConfig({ sign = false, env = process.env, exist
 
   const p12File = env.APPLE_CERT_P12_FILE?.trim() ?? '';
   const p12Password = env.APPLE_CERT_P12_PASSWORD ?? '';
-  const identity = env.APPLE_CODESIGN_IDENTITY?.trim() ?? '';
+  let identity = env.APPLE_CODESIGN_IDENTITY?.trim() ?? '';
   const keychainPath = env.APPLE_KEYCHAIN_PATH?.trim() ?? '';
 
   if ((p12File !== '' && p12Password === '') || (p12File === '' && p12Password !== '')) {
@@ -138,6 +138,9 @@ export function resolveMacSigningConfig({ sign = false, env = process.env, exist
     certConfig = { certMode: 'p12', p12File: validatedP12 };
   } else {
     assertSafeValue('APPLE_CODESIGN_IDENTITY', identity);
+    if (/^[0-9a-f]{40}$/i.test(identity)) {
+      identity = identity.toUpperCase();
+    }
     const idTeamMatch = /\(([A-Z0-9]{10})\)\s*$/i.exec(identity);
     if (idTeamMatch?.[1] && idTeamMatch[1].toUpperCase() !== teamId) {
       throw new Error(`APPLE_CODESIGN_IDENTITY Team ID (${idTeamMatch[1].toUpperCase()}) does not match APPLE_TEAM_ID (${teamId})`);
@@ -394,11 +397,33 @@ function defaultStoreNotaryProfileViaPty({ profileName, appleId, teamId, keychai
   }
 }
 
+function canonicalizeExistingDir(dirPath, realpathFn = realpathSync) {
+  try {
+    return realpathFn(dirPath);
+  } catch {
+    return dirPath;
+  }
+}
+
+function canonicalizeKeychainPath(targetPath, realpathFn = realpathSync) {
+  try {
+    return realpathFn(targetPath);
+  } catch {
+    const parent = dirname(targetPath);
+    try {
+      return join(realpathFn(parent), basename(targetPath));
+    } catch {
+      return targetPath;
+    }
+  }
+}
+
 export async function withEphemeralMacKeychain(options) {
   const {
     signing,
     env = process.env,
     exists = existsSync,
+    realpath = realpathSync,
     exec = defaultExec,
     runSecurityInteractive = defaultRunSecurityInteractive,
     storeNotaryProfile = defaultStoreNotaryProfileViaPty,
@@ -422,13 +447,18 @@ export async function withEphemeralMacKeychain(options) {
     if (!requestedPath.endsWith('.keychain-db')) {
       throw new Error('LUDY_MAC_EPHEMERAL_KEYCHAIN must end with .keychain-db');
     }
-    if (exists(requestedPath)) {
-      throw new Error(`Refused to clobber pre-existing Keychain: ${requestedPath}`);
+    const preCanonicalPath = canonicalizeKeychainPath(requestedPath, realpath);
+    if (exists(requestedPath) || (preCanonicalPath !== requestedPath && exists(preCanonicalPath))) {
+      throw new Error(`Refused to clobber pre-existing Keychain: ${preCanonicalPath}`);
     }
     mkdirSync(dirname(requestedPath), { recursive: true, mode: 0o700 });
-    keychainPath = requestedPath;
+    keychainPath = canonicalizeKeychainPath(requestedPath, realpath);
+    if (exists(keychainPath)) {
+      throw new Error(`Refused to clobber pre-existing Keychain: ${keychainPath}`);
+    }
   } else {
-    tempDir = mkdtempSync(join(tmpdir(), 'ludy-mac-kc-'));
+    const resolvedTmp = canonicalizeExistingDir(tmpdir(), realpath);
+    tempDir = canonicalizeExistingDir(mkdtempSync(join(resolvedTmp, 'ludy-mac-kc-')), realpath);
     keychainPath = join(tempDir, 'ephemeral.keychain-db');
     if (exists(keychainPath)) {
       throw new Error(`Refused to clobber pre-existing Keychain: ${keychainPath}`);
@@ -436,7 +466,8 @@ export async function withEphemeralMacKeychain(options) {
   }
 
   const priorSearchList = parseKeychainSearchList(exec('security', ['list-keychains', '-d', 'user']));
-  if (priorSearchList.includes(keychainPath)) {
+  const canonicalPriorSearchList = priorSearchList.map((entry) => canonicalizeKeychainPath(entry, realpath));
+  if (canonicalPriorSearchList.includes(keychainPath)) {
     throw new Error(`Refused to reuse Keychain already present in search list: ${keychainPath}`);
   }
 
@@ -540,14 +571,16 @@ export async function withEphemeralMacKeychain(options) {
       }
     }
     try {
-      const afterList = parseKeychainSearchList(exec('security', ['list-keychains', '-d', 'user']));
+      const afterList = parseKeychainSearchList(exec('security', ['list-keychains', '-d', 'user'])).map((entry) =>
+        canonicalizeKeychainPath(entry, realpath),
+      );
       if (afterList.includes(keychainPath)) {
         errors.push(`Ephemeral Keychain remained in search list: ${keychainPath}`);
       }
     } catch (err) {
       errors.push(err instanceof Error ? err.message : String(err));
     }
-    if (exists(keychainPath)) {
+    if (exists(keychainPath) || (requestedPath && requestedPath !== keychainPath && exists(requestedPath))) {
       errors.push(`Ephemeral Keychain file still exists after cleanup: ${keychainPath}`);
     }
 
