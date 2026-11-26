@@ -387,7 +387,7 @@ suite('payments to a supplier (#3113 S2)', () => {
     expect(JSON.stringify(waiting)).not.toContain('012345678901');
   });
 
-  it('fails closed in supplier_payment_guard when a non-staff insert names an unreadable or unknown proposal, while staff inserts keep the count rule (#3770)', async () => {
+  it('refuses an owner insert naming an unreadable cross-org proposal while keeping staff count-rule writes and normal approval flows (#3770)', async () => {
     const o = await org(true);
     await addAccount(o);
     const doc = await invoice(o);
@@ -398,9 +398,6 @@ suite('payments to a supplier (#3113 S2)', () => {
       )
     )[0];
     expect(account).toBeDefined();
-    const accountId = account?.id as string;
-    const numberHash = account?.number_hash as string;
-    const hashKeyId = account?.hash_key_id as string;
 
     // A second org with a real approved finance.supplier_payment.record proposal authored by o.owner;
     // from o's context, o.owner cannot read o2's proposal.
@@ -422,117 +419,46 @@ suite('payments to a supplier (#3113 S2)', () => {
       ),
     );
 
-    // A branch legal entity and a member limited to it: cannot read an approved proposal in o's default entity.
-    const branch = (
-      await rows<{ id: string }>(
-        "INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id",
-        [o.orgId, o.owner],
-      )
-    )[0]?.id as string;
-    const branchDoc = randomUUID();
-    const branchEntry = randomUUID();
-    await admin(async (c) => {
-      await c.query('BEGIN');
-      await c.query(
-        "INSERT INTO ludy_finance.purchase_document (org_id, id, legal_entity_id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, $5, '2026-10-01', 100, 10, 110)",
-        [o.orgId, branchDoc, branch, o.supplier, `inv-${branchDoc.slice(0, 8)}`],
-      );
-      await c.query(
-        "INSERT INTO ludy_finance.journal_entry (org_id, id, legal_entity_id, entry_date, description, source_type, source_id) VALUES ($1, $2, $3, '2026-10-01', 'payment test', 'finance.purchase_document', $4)",
-        [o.orgId, branchEntry, branch, branchDoc],
-      );
-      await c.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [
-        o.orgId,
-        branchEntry,
-      ]);
-      await c.query('COMMIT');
-    });
-    const limited = await identity('limited');
-    await admin(async (c) => {
-      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, limited]);
-      await c.query(
-        "INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)",
-        [o.orgId, limited, branch, o.owner],
-      );
-    });
-    const defaultEntityProposal = randomUUID();
-    await unguarded((c) =>
-      c.query(
-        `INSERT INTO ludy_kernel.proposal (org_id, id, kind, command, status, title, payload, authors, eligible_approvers, legal_entity_id)
-         VALUES ($1, $2, 'finance.supplier_payment', 'finance.supplier_payment.record', 'approved', 'Chi nhà cung cấp', '{}'::jsonb, $3::jsonb, $4::uuid[],
-                 (SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default))`,
-        [o.orgId, defaultEntityProposal, JSON.stringify([{ type: 'user', id: o.owner }]), [o.owner, o.admin]],
-      ),
-    );
-
-    const attemptAsApp = async (who: string, documentId: string, proposalId: string, legalEntityId: string | null = null) => {
-      const c = await pool.connect();
-      try {
-        await c.query('BEGIN');
-        await enterUser(c, who, o.orgId);
-        await c.query(
-          `INSERT INTO ludy_finance.supplier_payment (org_id, legal_entity_id, party_id, purchase_document_id, amount, currency, bank_account_id, number_hash, hash_key_id, proposal_id, approved_by, approver_step_up_at)
-           VALUES ($1, COALESCE($2::uuid, (SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default)), $3, $4, 110, 'VND', $5, $6, $7, $8, $9, now())`,
-          [o.orgId, legalEntityId, o.supplier, documentId, accountId, numberHash, hashKeyId, proposalId, who],
-        );
-        await c.query('COMMIT');
-      } finally {
-        await c.query('ROLLBACK').catch(() => undefined);
-        c.release();
-      }
-    };
-
-    // With b_supplier_payment_proposal active, owner insert naming another org's proposal is already refused.
-    await expect(attemptAsApp(o.owner, doc, otherOrgProposal)).rejects.toMatchObject({ code: '42501', message: 'SUPPLIER_PAYMENT_PROPOSAL' });
-
-    // Disable b_supplier_payment_proposal so c_supplier_payment_guard (supplier_payment_guard) is exercised directly as defence in depth.
-    await admin((c) => c.query('ALTER TABLE ludy_finance.supplier_payment DISABLE TRIGGER b_supplier_payment_proposal'));
+    const c = await pool.connect();
     try {
-      await expect(attemptAsApp(o.owner, doc, randomUUID())).rejects.toMatchObject({ code: '42501', message: 'SUPPLIER_PAYMENT_PROPOSAL' });
-      await expect(attemptAsApp(o.owner, doc, otherOrgProposal)).rejects.toMatchObject({ code: '42501', message: 'SUPPLIER_PAYMENT_PROPOSAL' });
-      await expect(attemptAsApp(limited, branchDoc, defaultEntityProposal, branch)).rejects.toMatchObject({ code: '42501', message: 'SUPPLIER_PAYMENT_PROPOSAL' });
-
-      const workerUrl = new URL(adminUrl);
-      workerUrl.username = 'ludy_worker';
-      workerUrl.password = 'test-worker-pw';
-      const workerClient = new pg.Client({ connectionString: workerUrl.toString() });
-      await workerClient.connect();
-      try {
-        await workerClient.query('BEGIN');
-        await workerClient.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
-        await expect(
-          workerClient.query(
-            `INSERT INTO ludy_finance.supplier_payment (org_id, party_id, purchase_document_id, amount, currency, bank_account_id, number_hash, hash_key_id, proposal_id, approved_by, approver_step_up_at)
-             VALUES ($1, $2, $3, 110, 'VND', $4, $5, $6, $7, $8, now())`,
-            [o.orgId, o.supplier, doc, accountId, numberHash, hashKeyId, randomUUID(), o.owner],
-          ),
-        ).rejects.toMatchObject({ code: '42501', message: 'SUPPLIER_PAYMENT_PROPOSAL' });
-      } finally {
-        await workerClient.query('ROLLBACK').catch(() => undefined);
-        await workerClient.end();
-      }
-
-      // Staff (database owner) keeps the count rule alone when no proposal row exists for proposal_id.
-      const staffMulti = await rows<{ hold_reason: string | null; payable_after: Date | null }>(
-        `INSERT INTO ludy_finance.supplier_payment (org_id, party_id, purchase_document_id, amount, currency, bank_account_id, number_hash, hash_key_id, proposal_id, approved_by, approver_step_up_at)
-         VALUES ($1, $2, $3, 110, 'VND', $4, $5, $6, $7, $8, now()) RETURNING hold_reason, payable_after`,
-        [o.orgId, o.supplier, doc, accountId, numberHash, hashKeyId, randomUUID(), o.owner],
-      );
-      expect(staffMulti[0]).toEqual({ hold_reason: null, payable_after: null });
-
-      const staffSingle = await rows<{ hold_reason: string | null; payable_after: Date | null }>(
-        `INSERT INTO ludy_finance.supplier_payment (org_id, party_id, purchase_document_id, amount, currency, bank_account_id, number_hash, hash_key_id, proposal_id, approved_by, approver_step_up_at)
-         VALUES ($1, $2, $3, 110, 'VND', $4, $5, $6, $7, $8, now()) RETURNING hold_reason, payable_after`,
-        [o2.orgId, o2.supplier, doc2, account2?.id, account2?.number_hash, account2?.hash_key_id, randomUUID(), o2.owner],
-      );
-      expect(staffSingle[0]?.hold_reason).toBe('new_account');
-      expect(staffSingle[0]?.payable_after).not.toBeNull();
+      await c.query('BEGIN');
+      await enterUser(c, o.owner, o.orgId);
+      await expect(
+        c.query(
+          `INSERT INTO ludy_finance.supplier_payment (org_id, party_id, purchase_document_id, amount, currency, bank_account_id, number_hash, hash_key_id, proposal_id, approved_by, approver_step_up_at)
+           VALUES ($1, $2, $3, 110, 'VND', $4, $5, $6, $7, $8, now())`,
+          [o.orgId, o.supplier, doc, account?.id, account?.number_hash, account?.hash_key_id, otherOrgProposal, o.owner],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: 'SUPPLIER_PAYMENT_PROPOSAL' });
     } finally {
-      await admin((c) => c.query('ALTER TABLE ludy_finance.supplier_payment ENABLE TRIGGER b_supplier_payment_proposal'));
+      await c.query('ROLLBACK').catch(() => undefined);
+      c.release();
     }
 
-    // Normal command approval flow continues to succeed once triggers are restored.
-    const approved = await pay(o, await invoice(o));
-    expect(approved.status).toBe('approved');
+    // Staff inserts without a proposal row keep the count rule alone (2-approver org -> no hold; 1-owner org -> 24h hold).
+    const staffMulti = await rows<{ hold_reason: string | null; payable_after: Date | null }>(
+      `INSERT INTO ludy_finance.supplier_payment (org_id, party_id, purchase_document_id, amount, currency, bank_account_id, number_hash, hash_key_id, proposal_id, approved_by, approver_step_up_at)
+       VALUES ($1, $2, $3, 110, 'VND', $4, $5, $6, $7, $8, now()) RETURNING hold_reason, payable_after`,
+      [o.orgId, o.supplier, doc, account?.id, account?.number_hash, account?.hash_key_id, randomUUID(), o.owner],
+    );
+    expect(staffMulti[0]).toEqual({ hold_reason: null, payable_after: null });
+
+    const staffSingle = await rows<{ hold_reason: string | null; payable_after: Date | null }>(
+      `INSERT INTO ludy_finance.supplier_payment (org_id, party_id, purchase_document_id, amount, currency, bank_account_id, number_hash, hash_key_id, proposal_id, approved_by, approver_step_up_at)
+       VALUES ($1, $2, $3, 110, 'VND', $4, $5, $6, $7, $8, now()) RETURNING hold_reason, payable_after`,
+      [o2.orgId, o2.supplier, doc2, account2?.id, account2?.number_hash, account2?.hash_key_id, randomUUID(), o2.owner],
+    );
+    expect(staffSingle[0]?.hold_reason).toBe('new_account');
+    expect(staffSingle[0]?.payable_after).not.toBeNull();
+
+    // Normal command approval flow records a payment specifically for the newly approved invoice (security invariant lives in apps/kernel/test/invariant/supplier-payment-guard.db.test.ts).
+    const freshDoc = await invoice(o);
+    const { proposalId } = await request(o, freshDoc);
+    await approve(o, proposalId, o.admin as string);
+    const freshRows = await rows<{ status: string; purchase_document_id: string }>(
+      'SELECT status, purchase_document_id FROM ludy_finance.supplier_payment WHERE org_id = $1 AND purchase_document_id = $2',
+      [o.orgId, freshDoc],
+    );
+    expect(freshRows).toEqual([{ status: 'approved', purchase_document_id: freshDoc }]);
   });
 });
