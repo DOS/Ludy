@@ -569,17 +569,58 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     const beforeMonotonicTs = await noteUpdatedAt(monotonicNote);
     const beforeConcurrentTs = await noteUpdatedAt(concurrentNote);
 
-    const [eraseOut, linkOut, extraAtt] = await Promise.all([
-      rt.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() }),
-      rt.execute<{ noteId: string; linkId: string }>(
-        'notes.link.add',
-        { noteId: concurrentNote, targetType: 'kernel.party', targetId: partyId },
-        { actor: asUser(o.author.id), orgId: o.orgId },
-      ),
-      attached(o, o.author, concurrentNote, pdf('extra'), 'bo-sung.pdf'),
-    ]);
+    const lockClient = new pg.Client({ connectionString: adminUrl });
+    await lockClient.connect();
+    let eraseOut!: PersonalDataErasure;
+    try {
+      await lockClient.query('BEGIN');
+      // Hold concurrentNote FOR UPDATE (like notes.link.add before insertRecordLink) so private_erase must wait on it.
+      await lockClient.query('SELECT 1 FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, concurrentNote]);
+      const erasePromise = rt.execute<PersonalDataErasure>(
+        'kernel.personal_data.erase',
+        { value: email },
+        { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+      );
+      let sawEraseLockWait = false;
+      const deadline = Date.now() + 1500;
+      while (!sawEraseLockWait && Date.now() < deadline) {
+        const waits = await rows<{ n: number }>(
+          `SELECT 1 AS n
+             FROM pg_catalog.pg_stat_activity a
+             JOIN pg_catalog.pg_locks l ON l.pid = a.pid
+            WHERE a.datname = pg_catalog.current_database()
+              AND a.state = 'active'
+              AND a.wait_event_type = 'Lock'
+              AND NOT l.granted
+              AND l.relation = 'ludy_notes.note'::regclass
+              AND a.query LIKE '%ludy_notes.private_erase%'
+            LIMIT 1`,
+        );
+        if (waits.length > 0) sawEraseLockWait = true;
+        else await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(sawEraseLockWait).toBe(true);
+      // While personalDataErase holds party FOR NO KEY UPDATE and waits on concurrentNote, link_party_fk acquires FOR KEY SHARE on party without deadlocking.
+      await lockClient.query(
+        `INSERT INTO ludy_notes.link (org_id, note_id, todo_id, target_type, target_id, party_id, created_by)
+         VALUES ($1, $2, NULL, 'kernel.party', $3, $3, $4)`,
+        [o.orgId, concurrentNote, partyId, o.author.id],
+      );
+      await lockClient.query('COMMIT');
+      eraseOut = await erasePromise;
+    } finally {
+      await lockClient.query('ROLLBACK').catch(() => undefined);
+      await lockClient.end().catch(() => undefined);
+    }
+
+    const linkOut = await rt.execute<{ noteId: string; linkId: string }>(
+      'notes.link.add',
+      { noteId: monotonicNote, targetType: 'kernel.party', targetId: partyId },
+      { actor: asUser(o.author.id), orgId: o.orgId },
+    );
+    const extraAtt = await attached(o, o.author, concurrentNote, pdf('extra'), 'bo-sung.pdf');
     expect(eraseOut.erased).toContainEqual({ column: 'ludy_kernel.party.email', rows: 1 });
-    expect(linkOut.noteId).toBe(concurrentNote);
+    expect(linkOut.noteId).toBe(monotonicNote);
     expect(await doomed(o)).toEqual([`notes/${o.orgId}/${att1.id}`, `notes/${o.orgId}/${att2.id}`].sort());
     expect(await noteUpdatedAt(monotonicNote)).toBeGreaterThanOrEqual(beforeMonotonicTs);
     expect(await noteUpdatedAt(concurrentNote)).toBeGreaterThanOrEqual(beforeConcurrentTs);

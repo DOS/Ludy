@@ -333,13 +333,42 @@ export class FakeDomNode {
   }
   matches(selector: string): boolean {
     if (this.nodeType !== 1) return false;
-    const m = /^([a-zA-Z0-9_-]+)?(?:\[([^=\]]+)(?:="([^"]*)")?\])?$/.exec(selector.trim());
-    if (!m || (!m[1] && !m[2])) return false;
-    if (m[1] && this.tagName.toLowerCase() !== m[1].toLowerCase()) return false;
-    if (m[2]) {
-      return m[3] === undefined ? this.hasAttribute(m[2]) : this.getAttribute(m[2]) === m[3];
-    }
-    return true;
+    const parts = selector
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (parts.length === 0) return false;
+    return parts.some((part) => {
+      let rest = part;
+      const tagMatch = /^[a-zA-Z0-9_-]+/.exec(rest);
+      if (tagMatch) {
+        if (this.tagName.toLowerCase() !== tagMatch[0].toLowerCase()) return false;
+        rest = rest.slice(tagMatch[0].length);
+      }
+      while (rest.length > 0) {
+        if (rest.startsWith('[')) {
+          const attrMatch = /^\[([^=\]]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\]]*)))?\]/.exec(rest);
+          if (!attrMatch) return false;
+          const attrName = attrMatch[1]!.trim();
+          const expected = attrMatch[2] ?? attrMatch[3] ?? attrMatch[4];
+          if (expected === undefined ? !this.hasAttribute(attrName) : this.getAttribute(attrName) !== expected) {
+            return false;
+          }
+          rest = rest.slice(attrMatch[0].length);
+        } else if (rest.startsWith('#')) {
+          const idMatch = /^#([a-zA-Z0-9_-]+)/.exec(rest);
+          if (!idMatch || this.id !== idMatch[1]) return false;
+          rest = rest.slice(idMatch[0].length);
+        } else if (rest.startsWith('.')) {
+          const clsMatch = /^\.([a-zA-Z0-9_-]+)/.exec(rest);
+          if (!clsMatch || !this.classList.contains(clsMatch[1]!)) return false;
+          rest = rest.slice(clsMatch[0].length);
+        } else {
+          return false;
+        }
+      }
+      return true;
+    });
   }
   closest(selector: string): FakeDomNode | null {
     if (this.matches(selector)) return this;

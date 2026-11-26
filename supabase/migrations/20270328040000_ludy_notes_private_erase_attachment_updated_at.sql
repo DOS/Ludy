@@ -87,27 +87,24 @@ BEGIN
 
   PERFORM n.id
     FROM ludy_notes.note n
-   WHERE n.org_id = v_org
+   WHERE n.org_id = v_org AND n.visibility = 'private'
      AND (
-       (n.visibility = 'private'
-         AND (
-           ludy_kernel.text_mentions(n.title, p_kind, p_value)
-           OR ludy_kernel.text_mentions(n.body, p_kind, p_value)
-           OR ludy_kernel.text_mentions(pg_catalog.array_to_string(n.tags, ' '), p_kind, p_value)
-           OR EXISTS (
-             SELECT 1 FROM ludy_notes.note_version v
-              WHERE v.org_id = n.org_id AND v.note_id = n.id
-                AND (ludy_kernel.text_mentions(v.title, p_kind, p_value)
-                     OR ludy_kernel.text_mentions(v.body, p_kind, p_value)
-                     OR ludy_kernel.text_mentions(pg_catalog.array_to_string(v.tags, ' '), p_kind, p_value))
-           )
-           OR EXISTS (
-             SELECT 1 FROM ludy_notes.notebook b
-              WHERE b.org_id = v_org AND b.id = n.notebook_id AND b.visibility = 'private'
-                AND (ludy_kernel.text_mentions(b.name, p_kind, p_value)
-                     OR ludy_kernel.text_mentions(b.stack_name, p_kind, p_value))
-           )
-         ))
+       ludy_kernel.text_mentions(n.title, p_kind, p_value)
+       OR ludy_kernel.text_mentions(n.body, p_kind, p_value)
+       OR ludy_kernel.text_mentions(pg_catalog.array_to_string(n.tags, ' '), p_kind, p_value)
+       OR EXISTS (
+         SELECT 1 FROM ludy_notes.note_version v
+          WHERE v.org_id = n.org_id AND v.note_id = n.id
+            AND (ludy_kernel.text_mentions(v.title, p_kind, p_value)
+                 OR ludy_kernel.text_mentions(v.body, p_kind, p_value)
+                 OR ludy_kernel.text_mentions(pg_catalog.array_to_string(v.tags, ' '), p_kind, p_value))
+       )
+       OR EXISTS (
+         SELECT 1 FROM ludy_notes.notebook b
+          WHERE b.org_id = v_org AND b.id = n.notebook_id AND b.visibility = 'private'
+            AND (ludy_kernel.text_mentions(b.name, p_kind, p_value)
+                 OR ludy_kernel.text_mentions(b.stack_name, p_kind, p_value))
+       )
        OR EXISTS (
          SELECT 1 FROM ludy_notes.attachment a
           WHERE a.org_id = n.org_id AND a.note_id = n.id

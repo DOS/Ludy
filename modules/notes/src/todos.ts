@@ -829,13 +829,14 @@ export const todoComplete = defineCommand({
         }
       }
     }
-    let lockedOpenSiblings: Array<{ id: string; recurrence: unknown }> = [];
+    let lockedOpenSiblings: Array<{ id: string; recurrence: unknown; updated_at: Date | string }> = [];
+    let lockedMaxUpdatedMs = ctx.now.getTime();
     if (stopSeries) {
       // Pre-lock todoId plus all open recurring siblings in canonical id ASC order in one query so
       // concurrent multi-row operations (e.g. todoListDelete, todoListUpdate, todoReschedule) stay deadlock-free.
       const locked = await ctx.trx
         .selectFrom('ludy_notes.todo')
-        .select(['id', 'series_id', 'status', 'deleted_at', 'recurrence'])
+        .select(['id', 'series_id', 'status', 'deleted_at', 'recurrence', 'updated_at'])
         .where('org_id', '=', ctx.orgId)
         .where((eb) =>
           eb.or([
@@ -851,6 +852,10 @@ export const todoComplete = defineCommand({
         .orderBy('id')
         .forUpdate()
         .execute();
+      for (const r of locked) {
+        const ms = new Date(r.updated_at).getTime();
+        if (ms > lockedMaxUpdatedMs) lockedMaxUpdatedMs = ms;
+      }
       lockedOpenSiblings = locked
         .filter(
           (r) =>
@@ -860,12 +865,17 @@ export const todoComplete = defineCommand({
             r.deleted_at === null &&
             r.recurrence !== null,
         )
-        .map((r) => ({ id: r.id, recurrence: r.recurrence }));
+        .map((r) => ({ id: r.id, recurrence: r.recurrence, updated_at: r.updated_at }));
     }
     const before = await load(ctx, todoId, !stopSeries);
     assertNotInTrash(before);
     if (before.status === 'done') return written(before);
     if (before.status !== 'open') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Việc này đã được giao hoặc đã hủy');
+
+    const beforeUpdatedMs = new Date(before.updated_at).getTime();
+    if (beforeUpdatedMs > lockedMaxUpdatedMs) lockedMaxUpdatedMs = beforeUpdatedMs;
+    // Share one monotonic timestamp across done_at and stopped siblings so todoReopen without restoreSiblings matches before.done_at even after a lock wait.
+    const completionAt = lockedMaxUpdatedMs > ctx.now.getTime() ? new Date(lockedMaxUpdatedMs + 1) : ctx.now;
 
     const rule = parseTodoRecurrence(before.recurrence);
     const seriesId = rule !== null ? (before.series_id ?? before.id) : before.series_id;
@@ -874,11 +884,11 @@ export const todoComplete = defineCommand({
       .updateTable('ludy_notes.todo')
       .set({
         status: 'done',
-        done_at: ctx.now,
+        done_at: completionAt,
         ...(rule !== null && before.series_id === null && seriesId !== null ? { series_id: seriesId } : {}),
         ...(stopSeries && rule !== null ? { recurrence: null } : {}),
         revision: before.revision + 1,
-        updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})`,
+        updated_at: completionAt,
       })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', todoId)
@@ -895,7 +905,7 @@ export const todoComplete = defineCommand({
       if (lockedOpenSiblings.length > 0) {
         await ctx.trx
           .updateTable('ludy_notes.todo')
-          .set({ recurrence: null, revision: sql<number>`revision + 1`, updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})` })
+          .set({ recurrence: null, revision: sql<number>`revision + 1`, updated_at: completionAt })
           .where('org_id', '=', ctx.orgId)
           .where(
             'id',

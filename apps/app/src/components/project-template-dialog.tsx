@@ -94,12 +94,21 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
     [],
   );
 
-  const restoreRadioFocus = () => {
+  const shouldRestoreRadioFocus = (archivedId: string): boolean => {
+    const activeEl = document.activeElement;
+    if (!activeEl || activeEl === document.body) return true;
+    if ('isConnected' in activeEl && !(activeEl as { isConnected?: boolean }).isConnected) return true;
+    if (activeEl.getAttribute('data-testid') === `template-archive-${archivedId}`) return true;
+    return Boolean(radioGroupRef.current?.contains(activeEl));
+  };
+
+  const restoreRadioFocus = (archivedId: string) => {
     if (focusFrameRef.current !== null) {
       window.cancelAnimationFrame(focusFrameRef.current);
     }
     focusFrameRef.current = window.requestAnimationFrame(() => {
       focusFrameRef.current = null;
+      if (!shouldRestoreRadioFocus(archivedId)) return;
       const checkedRadio = radioGroupRef.current?.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]');
       if (checkedRadio?.isConnected) {
         checkedRadio.focus();
@@ -358,17 +367,18 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                               confirm={t('templates.archiveConfirmBtn')}
                               onConfirm={() => {
                                 const archivedId = selectedTemplate.id;
-                                // Dialog closes onto a loading/unmounting trigger; move focus to the checked radio immediately and after fallback selection settles.
-                                restoreRadioFocus();
+                                // Dialog closes onto a loading/unmounting trigger; move focus to the checked radio unless the user already moved elsewhere.
+                                restoreRadioFocus(archivedId);
                                 archiveTemplate.mutate(
                                   { templateId: archivedId, idempotencyKey: crypto.randomUUID() },
                                   {
                                     onSuccess: () => {
+                                      const restoreFallbackFocus = shouldRestoreRadioFocus(archivedId);
                                       refreshProjectQueries();
                                       setSelectedId((cur) => (cur === archivedId ? DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY : cur));
-                                    },
-                                    onSettled: () => {
-                                      restoreRadioFocus();
+                                      if (restoreFallbackFocus) {
+                                        restoreRadioFocus(archivedId);
+                                      }
                                     },
                                   },
                                 );

@@ -1570,7 +1570,8 @@ export const personalDataErase = defineCommand({
               OR EXISTS (SELECT 1 FROM ludy_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)) AS documented
         FROM ludy_kernel.party p
        WHERE p.org_id = ${ctx.orgId}::uuid AND ${partyMatch}
-       FOR UPDATE OF p`.execute(ctx.trx);
+       -- personalDataErase never changes party PK (org_id, id) or deletes party rows; FOR NO KEY UPDATE blocks concurrent party edits without conflicting with FK FOR KEY SHARE inserts (e.g. notes.link.add -> private_erase).
+       FOR NO KEY UPDATE OF p`.execute(ctx.trx);
     let keptParties = 0;
     const forgottenPartyIds: string[] = [];
     const documentedPartyIds: string[] = [];

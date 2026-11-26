@@ -7700,15 +7700,15 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       ),
     ).toEqual(['unresolved metered key (k)']);
     expect(
-      disallowedMeteredNotes(
-        'other.ts',
+      meteredNotes(
         "const k = 'notes.secret'; for (const k of items)\n  if (cond)\n    other(k);\n  else\n    metered(k, fn);",
+        { includeUnresolved: true },
       ),
     ).toEqual(['unresolved metered key (k)']);
     expect(
-      disallowedMeteredNotes(
-        'other.ts',
+      meteredNotes(
         "const k = 'notes.secret'; for (const k of items)\n  if (cond) x = { a: 1 };\n  else metered(k, fn);\nmetered(k, fn);",
+        { includeUnresolved: true },
       ).sort(),
     ).toEqual(['notes.secret', 'unresolved metered key (k)']);
 
