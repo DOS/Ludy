@@ -626,6 +626,54 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(readFileSync(`${dir}/.deploy/project`, 'utf8').trim()).toBe('ludy');
   });
 
+  it('catches host mount path changes via container mounts and .deploy/mounts, blocks active data writers, and fails closed on volume inspect error (#3972)', () => {
+    const oldPg = `${root}/pg-old`;
+    const newPg = `${root}/pg-new`;
+    mkdirSync(oldPg);
+    mkdirSync(newPg);
+
+    // 1) Container mount reports oldPg while new compose config specifies newPg -> blocked before up db.
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: ludy\nservices: {}\n');
+    const ctrBindBlocked = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_BIND: newPg,
+      STUB_PG_CLUSTER_IDS: `${oldPg}=cluster-old`,
+      STUB_WORKDIR_CONTAINERS: `${dir}|db|ludy-db-1`,
+      STUB_INSPECT_MOUNTS: `ludy-db-1|ludy|bind||${oldPg}|/var/lib/postgresql/data`,
+    });
+    expect(ctrBindBlocked.status, ctrBindBlocked.out).toBe(1);
+    expect(ctrBindBlocked.out).toContain(`without a matching copied PostgreSQL cluster in ${newPg}`);
+
+    // 2) After deploying with oldPg (.deploy/mounts records oldPg), editing compose.host.yml to newPg with no containers still blocks.
+    rmSync(`${dir}/docker-compose.yml`);
+    const initialBindOk = deploy('v1.0.0', 'a', { STUB_NEW_DB_BIND: oldPg });
+    expect(initialBindOk.status, initialBindOk.out).toBe(0);
+    expect(readFileSync(`${dir}/.deploy/mounts`, 'utf8')).toContain(`/var/lib/postgresql/data=bind:${oldPg}`);
+
+    const changedBindBlocked = deploy('v1.1.0', 'b', {
+      STUB_NEW_DB_BIND: newPg,
+      STUB_PG_CLUSTER_IDS: `${oldPg}=cluster-old`,
+    });
+    expect(changedBindBlocked.status, changedBindBlocked.out).toBe(1);
+    expect(changedBindBlocked.out).toContain(`without a matching copied PostgreSQL cluster in ${newPg}`);
+
+    // 3) Switching /data/files while keeping same DB mount refuses if a running container still mounts prior crove_files.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+    const dataWriterHeld = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_VOLUME: 'crove_db-data',
+      STUB_VOLUMES: 'crove_db-data crove_files',
+      STUB_RUNNING_CONTAINERS: 'crove-api-1',
+      STUB_INSPECT_MOUNTS: 'crove-api-1|crove|volume|crove_files|',
+    });
+    expect(dataWriterHeld.status, dataWriterHeld.out).toBe(1);
+    expect(dataWriterHeld.out).toContain('prior /data/files storage crove_files is still mounted by a running container');
+
+    // 4) Docker volume inspect failure fails closed instead of treating prior storage as absent.
+    const volInspectFail = deploy('v1.0.0', 'a', { STUB_VOLUME_INSPECT_FAIL: '1' });
+    expect(volInspectFail.status, volInspectFail.out).toBe(1);
+    expect(volInspectFail.out).toContain('cannot inspect prior database storage crove_db-data');
+  });
+
   describe('build check', () => {
     const build = (c: string) => digest(c).slice(0, 12);
     const withBuild = (release: string, c: string, env: Record<string, string> = {}) =>

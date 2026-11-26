@@ -396,17 +396,42 @@ rewrite_db_url_rhs() {
   fi
 }
 
-# Pure-bash env rewriter: renames CROVE_* -> LUDY_* (preferring existing LUDY_* / keeping last duplicate),
-# sets COMPOSE_PROJECT_NAME=ludy once, rewrites crove_<role>: DB URL usernames, and preserves comments & CRLF.
+# Returns 0 if a dotenv RHS is non-empty under Compose `:-` semantics (quotes preserved, unquoted comments stripped).
+env_rhs_is_nonempty() {
+  local v="$1"
+  v="${v#"${v%%[![:space:]]*}"}"
+  case "$v" in
+    \"*)
+      [[ "$v" =~ ^\"\"([[:space:]]*(#.*)?)?$ ]] && return 1
+      return 0
+      ;;
+    \'*)
+      [[ "$v" =~ ^\'\'([[:space:]]*(#.*)?)?$ ]] && return 1
+      return 0
+      ;;
+    \#* | '')
+      return 1
+      ;;
+    *)
+      v="$(printf '%s' "$v" | sed -E 's/[[:space:]]+#.*$//')"
+      v="${v%"${v##*[![:space:]]}"}"
+      [ -n "$v" ]
+      ;;
+  esac
+}
+
+# Pure-bash env rewriter: renames CROVE_* -> LUDY_* preserving Compose `:-` effective values (so a non-empty CROVE_*
+# overrides an empty LUDY_*=), sets COMPOSE_PROJECT_NAME=ludy once, rewrites crove_<role>: DB URLs, and keeps CRLF.
 rewrite_env_file() {
   local src="$1" dst="$2"
-  local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$'
   local split_re='^([[:space:]]*(export[[:space:]]+)?)([A-Za-z_][A-Za-z0-9_]*)([[:space:]]*[=:])(.*)$'
   [ -f "$src" ] || die "$EXIT_USAGE" "env source not found: $src"
-  local ludy_has=() crove_last=() i lineno=0 line line_cr cr_seen=0 lf_seen=0 last_compose=0
+  local ludy_last=() ludy_effective=() crove_last=() crove_effective=() i lineno=0 line line_cr cr_seen=0 lf_seen=0 last_compose=0
   for ((i = 0; i < ${#CROVE_NEW_KEYS[@]}; i++)); do
-    ludy_has[i]=0
+    ludy_last[i]=0
+    ludy_effective[i]=0
     crove_last[i]=0
+    crove_effective[i]=0
   done
 
   while IFS= read -r line || [ -n "$line" ]; do
@@ -417,14 +442,18 @@ rewrite_env_file() {
     else
       lf_seen=$((lf_seen + 1))
     fi
-    if [[ "$line" =~ $assign_re ]]; then
-      local key="${BASH_REMATCH[2]}" idx
+    if [[ "$line" =~ $split_re ]]; then
+      local key="${BASH_REMATCH[3]}" rhs="${BASH_REMATCH[5]}" idx eff=0
       if [ "$key" = COMPOSE_PROJECT_NAME ]; then
         last_compose=$lineno
       elif idx="$(target_map_index "$key")"; then
-        ludy_has[idx]=1
+        ludy_last[idx]=$lineno
+        if env_rhs_is_nonempty "$rhs"; then eff=1; fi
+        ludy_effective[idx]=$eff
       elif idx="$(key_map_index "$key")"; then
         crove_last[idx]=$lineno
+        if env_rhs_is_nonempty "$rhs"; then eff=1; fi
+        crove_effective[idx]=$eff
       fi
     fi
   done <"$src"
@@ -452,8 +481,17 @@ rewrite_env_file() {
         fi
         continue
       fi
+      if idx="$(target_map_index "$key")"; then
+        if ((ludy_effective[idx] == 0 && crove_effective[idx] == 1)); then
+          continue
+        fi
+      fi
       if idx="$(key_map_index "$key")"; then
-        if ((ludy_has[idx] == 1)) || ((lineno != crove_last[idx])); then
+        if ((ludy_effective[idx] == 1)); then
+          continue
+        elif ((crove_effective[idx] == 1)); then
+          if ((lineno != crove_last[idx])); then continue; fi
+        elif ((ludy_last[idx] > 0)) || ((lineno != crove_last[idx])); then
           continue
         fi
         printf '%s%s%s%s%s\n' "$prefix" "${CROVE_NEW_KEYS[$idx]}" "$sep" "$rhs" "$line_cr" >>"$dst"
@@ -1051,7 +1089,21 @@ do_cutover_stack() {
     dc_proj ludy restart caddy
   fi
 
-  (umask 077 && mkdir -p "$(state_dir)" && printf 'ludy\n' >"$(state_dir)/project.tmp" && mv -f "$(state_dir)/project.tmp" "$(state_dir)/project")
+  local mounts_content
+  mounts_content='/var/lib/postgresql/data=volume:ludy_db-data'
+  for vol in "${src_vols[@]}"; do
+    case "${vol#"${proj}_"}" in
+      files) mounts_content+=$'\n/data/files=volume:ludy_files' ;;
+      keys) mounts_content+=$'\n/data/keys=volume:ludy_keys' ;;
+      archive) mounts_content+=$'\n/data/archive=volume:ludy_archive' ;;
+    esac
+  done
+  (
+    umask 077
+    mkdir -p "$(state_dir)"
+    printf 'ludy\n' >"$(state_dir)/project.tmp" && mv -f "$(state_dir)/project.tmp" "$(state_dir)/project"
+    printf '%s\n' "$mounts_content" >"$(state_dir)/mounts.tmp" && mv -f "$(state_dir)/mounts.tmp" "$(state_dir)/mounts"
+  )
   ROLLBACK_ARMED=0
   log "cutover-stack SUCCEEDED: project=ludy running cleanly; old ${proj}_* volumes retained until prune-old-volumes"
 }

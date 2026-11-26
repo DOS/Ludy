@@ -97,12 +97,15 @@ if [ "${1:-}" = inspect ]; then
     esac
   done
   for item in ${STUB_INSPECT_MOUNTS:-}; do
-    IFS='|' read -r icid iproj imtype imname imsrc <<<"$item"
+    IFS='|' read -r icid iproj imtype imname imsrc imdst <<<"$item"
     [ "$icid" = "$target" ] || continue
     case "$fmt" in
       *Labels*)
         printf '%s\n' "$iproj"
         exit 0
+        ;;
+      *.Destination*)
+        [ -n "$imdst" ] && printf '%s|%s|%s|%s\n' "$imdst" "$imtype" "$imname" "$imsrc"
         ;;
       *.Mounts*)
         printf '%s|%s|%s\n' "$imtype" "$imname" "$imsrc"
@@ -124,9 +127,14 @@ if [ "${1:-}" = rm ]; then
   exit 0
 fi
 if [ "${1:-}" = volume ] && [ "${2:-}" = inspect ]; then
+  if [ -n "${STUB_VOLUME_INSPECT_FAIL:-}" ]; then
+    echo 'Cannot connect to the Docker daemon' >&2
+    exit 1
+  fi
   for v in ${STUB_VOLUMES:-}; do
     if [ "$v" = "${3:-}" ]; then exit 0; fi
   done
+  echo "Error response from daemon: get ${3:-}: No such volume" >&2
   exit 1
 fi
 if [ "${1:-}" = run ]; then

@@ -1126,11 +1126,27 @@ compose_target_mount() {
   printf 'volume:%s' "${resolved_name:-${proj}_${mount_src}}"
 }
 
+# Checks whether a volume or bind directory exists.
+# Returns: 0 = exists, 1 = confirmed absent, 2 = Docker inspect error or non-directory path (#3972).
 mount_exists() {
+  local err p
   case "$1" in
-    volume:*) docker volume inspect "${1#volume:}" >/dev/null 2>&1 ;;
-    bind:*) [ -d "${1#bind:}" ] ;;
-    *) return 1 ;;
+    volume:*)
+      if err="$(docker volume inspect "${1#volume:}" 2>&1 >/dev/null)"; then
+        return 0
+      fi
+      case "$err" in
+        *'No such volume'* | *'no such volume'* | *'not found'*) return 1 ;;
+        *) return 2 ;;
+      esac
+      ;;
+    bind:*)
+      p="${1#bind:}"
+      if [ -d "$p" ]; then return 0; fi
+      if [ ! -e "$p" ] && [ ! -L "$p" ]; then return 1; fi
+      return 2
+      ;;
+    *) return 2 ;;
   esac
 }
 
@@ -1209,13 +1225,16 @@ function checkTree(srcRoot, dstRoot, rel) {
 EOF
 }
 
-# Returns 0 if source mount has no PG data OR destination mount holds an exact cleanly-stopped copy
-# (no postmaster.pid, matching PG_VERSION, full global/pg_control equality, and recursive pg_wal parity).
+# Returns 0 if source mount has no PG data OR destination mount holds a complete, cleanly-stopped copy
+# (no postmaster.pid, matching PG_VERSION, full global/pg_control equality, and full recursive PGDATA parity).
 mounts_match_pg_cluster() {
-  local src_spec="$1" dst_spec="$2" probe_image="$3" src_m dst_m js
-  mount_exists "$src_spec" || return 0
+  local src_spec="$1" dst_spec="$2" probe_image="$3" src_m dst_m js src_rc=0 dst_rc=0
+  mount_exists "$src_spec" || src_rc=$?
+  if ((src_rc == 1)); then return 0; fi
+  if ((src_rc != 0)); then return 1; fi
   src_m="$(mount_docker_source "$src_spec")"
-  if ! mount_exists "$dst_spec"; then
+  mount_exists "$dst_spec" || dst_rc=$?
+  if ((dst_rc == 1)); then
     docker run --rm --network none --user 0:0 \
       -v "${src_m}:/src:ro" \
       --entrypoint node "$probe_image" -e '
@@ -1223,6 +1242,8 @@ mounts_match_pg_cluster() {
         process.exit(fs.readdirSync("/src").length === 0 ? 0 : 1);
       ' >/dev/null 2>&1
     return $?
+  elif ((dst_rc != 0)); then
+    return 1
   fi
   dst_m="$(mount_docker_source "$dst_spec")"
   js="$(node_tree_parity_js)"
@@ -1233,15 +1254,7 @@ mounts_match_pg_cluster() {
   js+=$'const a = fs.readFileSync("/src/global/pg_control");\n'
   js+=$'const b = fs.readFileSync("/dst/global/pg_control");\n'
   js+=$'if (a.length < 8 || a.subarray(0, 8).every((x) => x === 0) || !a.equals(b)) process.exit(1);\n'
-  js+=$'if (fs.existsSync("/src/pg_wal")) {\n'
-  js+=$'  let sw, dw;\n'
-  js+=$'  try { sw = fs.lstatSync("/src/pg_wal"); dw = fs.lstatSync("/dst/pg_wal"); } catch { process.exit(1); }\n'
-  js+=$'  if (sw.isSymbolicLink()) {\n'
-  js+=$'    if (!dw.isSymbolicLink() || fs.readlinkSync("/src/pg_wal") !== fs.readlinkSync("/dst/pg_wal")) process.exit(1);\n'
-  js+=$'  } else if (!sw.isDirectory() || !dw.isDirectory() || !checkTree("/src/pg_wal", "/dst/pg_wal", "")) {\n'
-  js+=$'    process.exit(1);\n'
-  js+=$'  }\n'
-  js+=$'}\n'
+  js+=$'if (!checkTree("/src", "/dst", "")) process.exit(1);\n'
   js+=$'process.exit(0);\n'
   docker run --rm --network none --user 0:0 \
     -v "${src_m}:/src:ro" -v "${dst_m}:/dst:ro" \
@@ -1296,10 +1309,13 @@ check_storage_free() {
 
 # Returns 0 if source mount has no entries OR destination mount exists with full recursive directory/symlink/byte parity (#3972).
 mount_data_migrated() {
-  local src_spec="$1" dst_spec="$2" probe_image="$3" src_m dst_m js
-  mount_exists "$src_spec" || return 0
+  local src_spec="$1" dst_spec="$2" probe_image="$3" src_m dst_m js src_rc=0 dst_rc=0
+  mount_exists "$src_spec" || src_rc=$?
+  if ((src_rc == 1)); then return 0; fi
+  if ((src_rc != 0)); then return 1; fi
   src_m="$(mount_docker_source "$src_spec")"
-  if ! mount_exists "$dst_spec"; then
+  mount_exists "$dst_spec" || dst_rc=$?
+  if ((dst_rc == 1)); then
     docker run --rm --network none --user 0:0 \
       -v "${src_m}:/src:ro" \
       --entrypoint node "$probe_image" -e '
@@ -1307,6 +1323,8 @@ mount_data_migrated() {
         process.exit(fs.readdirSync("/src").length === 0 ? 0 : 1);
       ' >/dev/null 2>&1
     return $?
+  elif ((dst_rc != 0)); then
+    return 1
   fi
   dst_m="$(mount_docker_source "$dst_spec")"
   js="$(node_tree_parity_js)"
@@ -1316,13 +1334,104 @@ mount_data_migrated() {
     --entrypoint node "$probe_image" -e "$js" >/dev/null 2>&1
 }
 
+# Inspects existing Docker containers belonging to $DEPLOY_DIR and captures their actual mounted sources (#3972).
+PREV_CTR_DB='' PREV_CTR_FILES='' PREV_CTR_KEYS='' PREV_CTR_ARCHIVE=''
+detect_prev_container_mounts() {
+  local wdir canon_dir ps_out cid mounts_out still_exists m_dst m_type m_name m_src spec
+  local -a dirs=("$DEPLOY_DIR") cids=()
+  PREV_CTR_DB='' PREV_CTR_FILES='' PREV_CTR_KEYS='' PREV_CTR_ARCHIVE=''
+  canon_dir="$(cd -P "$DEPLOY_DIR" 2>/dev/null && pwd -P || true)"
+  if [ -n "$canon_dir" ] && [ "$canon_dir" != "$DEPLOY_DIR" ]; then
+    dirs+=("$canon_dir")
+  fi
+  for wdir in "${dirs[@]}"; do
+    ps_out="$(docker ps -a -q --filter "label=com.docker.compose.project.working_dir=$wdir" 2>/dev/null)" || return 1
+    [ -n "$ps_out" ] || continue
+    mapfile -t cids <<<"$ps_out"
+    for cid in "${cids[@]}"; do
+      [ -n "$cid" ] || continue
+      if ! mounts_out="$(docker inspect --format '{{range .Mounts}}{{.Destination}}|{{.Type}}|{{.Name}}|{{.Source}}{{"\n"}}{{end}}' "$cid" 2>/dev/null)"; then
+        still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 1
+        [ -z "$still_exists" ] || return 1
+        continue
+      fi
+      while IFS='|' read -r m_dst m_type m_name m_src; do
+        [ -n "$m_dst" ] || continue
+        m_dst="${m_dst%/}"
+        case "$m_type" in
+          volume)
+            [ -n "$m_name" ] || continue
+            spec="volume:$m_name"
+            ;;
+          bind)
+            [ -n "$m_src" ] || continue
+            m_src="${m_src%/}"
+            [ -n "$m_src" ] || m_src='/'
+            spec="bind:$m_src"
+            ;;
+          *) continue ;;
+        esac
+        case "$m_dst" in
+          /var/lib/postgresql/data) if [ -z "$PREV_CTR_DB" ]; then PREV_CTR_DB="$spec"; fi ;;
+          /data/files) if [ -z "$PREV_CTR_FILES" ]; then PREV_CTR_FILES="$spec"; fi ;;
+          /data/keys) if [ -z "$PREV_CTR_KEYS" ]; then PREV_CTR_KEYS="$spec"; fi ;;
+          /data/archive) if [ -z "$PREV_CTR_ARCHIVE" ]; then PREV_CTR_ARCHIVE="$spec"; fi ;;
+        esac
+      done <<<"$mounts_out"
+    done
+  done
+  return 0
+}
+
+saved_mount_for() {
+  local target="$1"
+  [ -f "$(state_dir)/mounts" ] || return 0
+  sed -n -E "s|^${target}=||p" "$(state_dir)/mounts" | head -n 1
+}
+
+write_saved_mounts() {
+  local db_spec="$1" files_spec="$2" keys_spec="$3" archive_spec="$4"
+  write_state mounts "$(printf '/var/lib/postgresql/data=%s\n/data/files=%s\n/data/keys=%s\n/data/archive=%s' "$db_spec" "$files_spec" "$keys_spec" "$archive_spec")"
+}
+
+# Resolves prior mount spec using runtime/persisted overrides (when $use_overrides=1) before compose_target_mount (#3972).
+resolve_prev_mount_spec() {
+  local prev_config="$1" prev_proj="$2" target="$3" svcs="$4" use_overrides="${5:-1}" ctr_val='' saved_val=''
+  if [ "$use_overrides" = 1 ]; then
+    case "$target" in
+      /var/lib/postgresql/data) ctr_val="$PREV_CTR_DB" ;;
+      /data/files) ctr_val="$PREV_CTR_FILES" ;;
+      /data/keys) ctr_val="$PREV_CTR_KEYS" ;;
+      /data/archive) ctr_val="$PREV_CTR_ARCHIVE" ;;
+    esac
+    if [ -n "$ctr_val" ]; then
+      printf '%s' "$ctr_val"
+      return 0
+    fi
+    saved_val="$(saved_mount_for "$target")"
+    if [ -n "$saved_val" ]; then
+      printf '%s' "$saved_val"
+      return 0
+    fi
+  fi
+  compose_target_mount "$prev_config" "$prev_proj" "$target" "$svcs"
+}
+
 # Verifies prior DB isolation, cluster parity, and persistent mount parity before starting new DB (#3972).
 verify_storage_cutover() {
-  local prev_config="$1" prev_proj="$2" new_config="$3" active_proj="$4" new_db="$5" image="$6" name="$7" current="$8"
-  local prev_db='' free_rc=0 target prev_m new_m
-  prev_db="$(compose_target_mount "$prev_config" "$prev_proj" /var/lib/postgresql/data 'db')"
+  local prev_config="$1" prev_proj="$2" new_config="$3" active_proj="$4" new_db="$5" image="$6" name="$7" current="$8" use_overrides="${9:-1}"
+  local prev_db='' src_rc=0 dst_rc=0 free_rc=0 target prev_m new_m
+  prev_db="$(resolve_prev_mount_spec "$prev_config" "$prev_proj" /var/lib/postgresql/data 'db' "$use_overrides")"
   if [ -n "$prev_db" ] && [ -n "$new_db" ] && [ "$prev_db" != "$new_db" ]; then
-    if mount_exists "$prev_db"; then
+    src_rc=0
+    mount_exists "$prev_db" || src_rc=$?
+    if ((src_rc == 2)); then
+      restore_pre_activate "$current"
+      record "deploy $name failed: cannot inspect prior db storage $(mount_label "$prev_db")"
+      die "$EXIT_FAILED" "cannot inspect prior database storage $(mount_label "$prev_db"); nothing running was changed"
+    fi
+    if ((src_rc == 0)); then
+      free_rc=0
       check_storage_free "$prev_db" "" || free_rc=$?
       if ((free_rc == 1)); then
         restore_pre_activate "$current"
@@ -1333,21 +1442,55 @@ verify_storage_cutover() {
         record "deploy $name failed: cannot inspect running containers for $(mount_label "$prev_db")"
         die "$EXIT_FAILED" "cannot inspect running containers to verify prior database storage $(mount_label "$prev_db"); nothing running was changed"
       fi
-    fi
-    if ! mounts_match_pg_cluster "$prev_db" "$new_db" "$image"; then
-      restore_pre_activate "$current"
-      record "deploy $name failed: db storage $(mount_label "$prev_db") not cut over"
-      die "$EXIT_FAILED" "found prior database storage $(mount_label "$prev_db") without a matching copied PostgreSQL cluster in $(mount_label "$new_db") for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or keep COMPOSE_PROJECT_NAME=$prev_proj / mount $(mount_label "$prev_db") in $ENV_FILE) before deploying Stage 7"
+      dst_rc=0
+      mount_exists "$new_db" || dst_rc=$?
+      if ((dst_rc == 2)); then
+        restore_pre_activate "$current"
+        record "deploy $name failed: cannot inspect destination db storage $(mount_label "$new_db")"
+        die "$EXIT_FAILED" "cannot inspect destination database storage $(mount_label "$new_db"); nothing running was changed"
+      fi
+      if ! mounts_match_pg_cluster "$prev_db" "$new_db" "$image"; then
+        restore_pre_activate "$current"
+        record "deploy $name failed: db storage $(mount_label "$prev_db") not cut over"
+        die "$EXIT_FAILED" "found prior database storage $(mount_label "$prev_db") without a matching copied PostgreSQL cluster in $(mount_label "$new_db") for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or keep COMPOSE_PROJECT_NAME=$prev_proj / mount $(mount_label "$prev_db") in $ENV_FILE) before deploying Stage 7"
+      fi
     fi
   fi
   for target in /data/files /data/keys /data/archive; do
-    prev_m="$(compose_target_mount "$prev_config" "$prev_proj" "$target" 'ludy|crove|worker|api')"
+    prev_m="$(resolve_prev_mount_spec "$prev_config" "$prev_proj" "$target" 'ludy|crove|worker|api' "$use_overrides")"
     new_m="$(compose_target_mount "$new_config" "$active_proj" "$target" 'ludy|crove|worker|api')"
     if [ -n "$prev_m" ] && [ -n "$new_m" ] && [ "$prev_m" != "$new_m" ]; then
-      if ! mount_data_migrated "$prev_m" "$new_m" "$image"; then
+      src_rc=0
+      mount_exists "$prev_m" || src_rc=$?
+      if ((src_rc == 2)); then
         restore_pre_activate "$current"
-        record "deploy $name failed: $target storage $(mount_label "$prev_m") not cut over"
-        die "$EXIT_FAILED" "found non-empty prior $target storage $(mount_label "$prev_m") while destination $(mount_label "$new_m") does not contain all migrated data; cut over persistent volumes/paths before deploying Stage 7"
+        record "deploy $name failed: cannot inspect prior $target storage $(mount_label "$prev_m")"
+        die "$EXIT_FAILED" "cannot inspect prior $target storage $(mount_label "$prev_m"); nothing running was changed"
+      fi
+      if ((src_rc == 0)); then
+        free_rc=0
+        check_storage_free "$prev_m" "" || free_rc=$?
+        if ((free_rc == 1)); then
+          restore_pre_activate "$current"
+          record "deploy $name failed: prior $target storage $(mount_label "$prev_m") held by running container"
+          die "$EXIT_FAILED" "prior $target storage $(mount_label "$prev_m") is still mounted by a running container; stop the old stack and cut over persistent storage before deploying Stage 7"
+        elif ((free_rc != 0)); then
+          restore_pre_activate "$current"
+          record "deploy $name failed: cannot inspect running containers for $(mount_label "$prev_m")"
+          die "$EXIT_FAILED" "cannot inspect running containers to verify prior $target storage $(mount_label "$prev_m"); nothing running was changed"
+        fi
+        dst_rc=0
+        mount_exists "$new_m" || dst_rc=$?
+        if ((dst_rc == 2)); then
+          restore_pre_activate "$current"
+          record "deploy $name failed: cannot inspect destination $target storage $(mount_label "$new_m")"
+          die "$EXIT_FAILED" "cannot inspect destination $target storage $(mount_label "$new_m"); nothing running was changed"
+        fi
+        if ! mount_data_migrated "$prev_m" "$new_m" "$image"; then
+          restore_pre_activate "$current"
+          record "deploy $name failed: $target storage $(mount_label "$prev_m") not cut over"
+          die "$EXIT_FAILED" "found non-empty prior $target storage $(mount_label "$prev_m") while destination $(mount_label "$new_m") does not contain all migrated data; cut over persistent volumes/paths before deploying Stage 7"
+        fi
       fi
     fi
   done
@@ -1385,12 +1528,6 @@ remove_orphan_service() {
     return 1
   fi
 }
-
-# Returns 0 when both Docker volumes exist, hold initialized PostgreSQL clusters (PG_VERSION and global/pg_control),
-# and share the same 8-byte PostgreSQL Database system identifier (bytes 0..7 of global/pg_control). This rejects an
-# accidentally initdb'd empty ludy_db-data cluster while accepting an offline-copied cluster even after Postgres has run
-# on it. Uses --user 0:0 because PostgreSQL data directories are mode 0700 owned by uid 999 (#3972).
-# Kept cleanly above via mounts_match_pg_cluster().
 
 local_url() {
   local mapped port
@@ -2480,6 +2617,10 @@ do_deploy() {
       record "deploy $name failed: pre-deploy container inspection"
       die "$EXIT_FAILED" "cannot inspect existing Docker containers for $DEPLOY_DIR before activating $release; nothing was changed"
     fi
+    if ! detect_prev_container_mounts; then
+      record "deploy $name failed: pre-deploy mount inspection"
+      die "$EXIT_FAILED" "cannot inspect mounts on existing Docker containers for $DEPLOY_DIR before activating $release; nothing was changed"
+    fi
     if ! prev_config="$(dc_prev_config_for_release "$current" "$prev_proj_override")" || [ -z "$prev_config" ]; then
       record "deploy $name failed: pre-deploy compose config"
       die "$EXIT_FAILED" "cannot inspect existing compose configuration in $DEPLOY_DIR before activating $release; nothing was changed"
@@ -2525,15 +2666,21 @@ do_deploy() {
     record "deploy $name failed: compose project"
     die "$EXIT_FAILED" 'cannot determine the compose project name; nothing was changed'
   fi
-  local new_db='' new_db_free_rc=0
+  local new_db='' new_db_free_rc=0 new_db_exists_rc=0
   new_db="$(compose_target_mount "$new_config" "$active_proj" /var/lib/postgresql/data 'db')"
   if [ -n "$prev_config" ] && [ -n "$prev_proj" ]; then
-    verify_storage_cutover "$prev_config" "$prev_proj" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current"
+    verify_storage_cutover "$prev_config" "$prev_proj" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current" 1
   fi
   if [ -n "$alt_prev_config" ] && [ -n "$prev_yaml_name" ]; then
-    verify_storage_cutover "$alt_prev_config" "$prev_yaml_name" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current"
+    verify_storage_cutover "$alt_prev_config" "$prev_yaml_name" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current" 0
   fi
   if [ -n "$new_db" ]; then
+    mount_exists "$new_db" || new_db_exists_rc=$?
+    if ((new_db_exists_rc == 2)); then
+      restore_pre_activate "$current"
+      record "deploy $name failed: cannot inspect database storage $(mount_label "$new_db")"
+      die "$EXIT_FAILED" "cannot inspect destination database storage $(mount_label "$new_db"); nothing running was changed"
+    fi
     check_storage_free "$new_db" "$active_proj" || new_db_free_rc=$?
     if ((new_db_free_rc == 1)); then
       restore_pre_activate "$current"
@@ -2609,6 +2756,11 @@ do_deploy() {
     write_state current "$name"
   fi
   write_state project "$active_proj"
+  local saved_files='' saved_keys='' saved_archive=''
+  saved_files="$(compose_target_mount "$new_config" "$active_proj" /data/files 'ludy|crove|worker|api')"
+  saved_keys="$(compose_target_mount "$new_config" "$active_proj" /data/keys 'ludy|crove|worker|api')"
+  saved_archive="$(compose_target_mount "$new_config" "$active_proj" /data/archive 'ludy|crove|worker|api')"
+  write_saved_mounts "$new_db" "$saved_files" "$saved_keys" "$saved_archive"
   # A rollback from this release puts the env file back only when this deploy is the one that changed it.
   # (A deploy of the same release again, that changed nothing, keeps the record: that release is still the one that wrote them.)
   if [ "$ENV_CHANGED" = 1 ]; then

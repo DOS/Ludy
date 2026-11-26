@@ -549,6 +549,40 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(updatedEnv).toContain('BACKUP_S3_PREFIX=crove');
   });
 
+  it('cutover-stack preserves non-empty CROVE_* values when an empty LUDY_* assignment exists (#3972)', { timeout: 15000 }, () => {
+    const f = createCutoverFixture();
+    writeFileSync(
+      join(f.deployDir, '.env'),
+      [
+        'COMPOSE_FILE=docker-compose.yml:compose.pilot.yml:compose.host.yml',
+        'CROVE_DOMAIN=api.example.com',
+        'DATABASE_URL=postgres://crove_app:pw@db:5432/postgres',
+        'LUDY_MODULES=',
+        'CROVE_MODULES=kernel',
+        'CROVE_APP_DB_PASSWORD=real-pw',
+        'LUDY_APP_DB_PASSWORD="" # unset placeholder',
+        'LUDY_CONTEXT_TOKEN_KEY=   # unset',
+        'CROVE_CONTEXT_TOKEN_KEY=real-key',
+        'LUDY_DIR=/custom/ludy',
+        'CROVE_DIR=/stale/crove',
+        '',
+      ].join('\n'),
+    );
+    const res = runWithStubs(f, ['cutover-stack', '--dir', f.deployDir, '--overlay-dir', f.overlayDir]);
+    expect(res.status, res.stderr + res.stdout).toBe(0);
+    const updatedEnv = readFileSync(join(f.deployDir, '.env'), 'utf8');
+    expect(updatedEnv).toContain('LUDY_MODULES=kernel');
+    expect(updatedEnv).not.toMatch(/^LUDY_MODULES=$/m);
+    expect(updatedEnv).not.toContain('CROVE_MODULES=');
+    expect(updatedEnv).toContain('LUDY_APP_DB_PASSWORD=real-pw');
+    expect(updatedEnv).not.toContain('CROVE_APP_DB_PASSWORD=');
+    expect(updatedEnv).toContain('LUDY_CONTEXT_TOKEN_KEY=real-key');
+    expect(updatedEnv).not.toContain('CROVE_CONTEXT_TOKEN_KEY=');
+    expect(updatedEnv).toContain('LUDY_DIR=/custom/ludy');
+    expect(updatedEnv).not.toContain('CROVE_DIR=');
+    expect(readFileSync(join(f.deployDir, '.deploy', 'mounts'), 'utf8')).toContain('/var/lib/postgresql/data=volume:ludy_db-data');
+  });
+
   it('cutover-stack captures live db WAL configuration over .env defaults and aborts before stopping if unreadable (#3972)', { timeout: 15000 }, () => {
     const f = createCutoverFixture();
     writeFileSync(join(f.deployDir, 'compose.wal.yml'), 'services:\n  db:\n    image: ${WAL_DB_IMAGE:-ludy-db:local}\n');

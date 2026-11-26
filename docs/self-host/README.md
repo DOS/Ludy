@@ -261,12 +261,14 @@ If you are upgrading from a pre-Stage-7 release (where `docker-compose.yml` used
        bash "$STAGE/cutover-ludy.sh" cutover-stack --dir /opt/ludy --overlay-dir "$STAGE"
      )
      ```
-   - Or upgrade in place: pin `COMPOSE_PROJECT_NAME=crove` in `.env`, rename any `CROVE_APP_DB_PASSWORD`, `CROVE_WORKER_DB_PASSWORD`, `CROVE_PROBER_DB_PASSWORD`, `CROVE_REPORTER_DB_PASSWORD`, `CROVE_CONTEXT_TOKEN_KEY`, `CROVE_MODULES`, `CROVE_DOMAIN`, `CROVE_UPSTREAM` and `CROVE_DIR` entries to `LUDY_*` (keeping their values), and keep existing backup settings pinned (`BACKUP_S3_PREFIX=crove` if you use S3 backups without an explicit prefix; and if you use `tools/backup/compose.wal.yml`, also pin `WAL_STANZA=crove` and `WAL_DB_IMAGE=crove-db:local` until you run and verify `tools/deploy/cutover-ludy.sh switch-wal` or `tools/backup/wal.sh setup` and `tools/backup/wal.sh check`).
-3. Only after step 2 succeeds (if you used the automated cutover above, wait until `cutover-ludy.sh cutover-stack` exits `0`), stop and remove the renamed pre-Stage-7 containers (`crove`, `crove-extract`, `crove-media`) without deleting volumes before moving to the new release, then start Stage 7:
+   - Or upgrade in place: pin `COMPOSE_PROJECT_NAME=crove` in `.env`, rename any `CROVE_APP_DB_PASSWORD`, `CROVE_WORKER_DB_PASSWORD`, `CROVE_PROBER_DB_PASSWORD`, `CROVE_REPORTER_DB_PASSWORD`, `CROVE_CONTEXT_TOKEN_KEY`, `CROVE_MODULES`, `CROVE_DOMAIN`, `CROVE_UPSTREAM` and `CROVE_DIR` entries to `LUDY_*` (keeping their values; if `.env` also contains an empty `LUDY_*=` line such as `LUDY_MODULES=` alongside a non-empty `CROVE_*` line, remove the empty `LUDY_*=` line so the active `CROVE_*` setting is preserved), and keep existing backup settings pinned (`BACKUP_S3_PREFIX=crove` if you use S3 backups without an explicit prefix; and if you use `tools/backup/compose.wal.yml`, also pin `WAL_STANZA=crove` and `WAL_DB_IMAGE=crove-db:local` until you run and verify `tools/deploy/cutover-ludy.sh switch-wal` or `tools/backup/wal.sh setup` and `tools/backup/wal.sh check`).
+3. Only after step 2 succeeds (if you used the automated cutover above, wait until `cutover-ludy.sh cutover-stack` exits `0`), stop and remove the renamed pre-Stage-7 containers (`crove`, `crove-extract`, `crove-media`) without deleting volumes before moving to the new release, update any root `compose.pilot.yml` copy if `COMPOSE_FILE` references `./compose.pilot.yml`, verify the merged Compose configuration, and start Stage 7:
 
 ```bash
 docker compose down --timeout 30 --remove-orphans     # never pass -v or --volumes
 git fetch --tags && git checkout <new tag>
+if [ -f ./compose.pilot.yml ]; then cp tools/deploy/compose.pilot.yml ./compose.pilot.yml; fi
+docker compose config --quiet
 docker compose up -d --build
 curl -s http://127.0.0.1:8080/readyz                  # {"ready":true} once the new release serves
 ```
