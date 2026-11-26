@@ -484,10 +484,10 @@ function hasForbiddenBriefingHelperText(text: string, briefingOk: boolean): bool
 type BriefingLookupViewInput = {
   viewDef: string;
   reloptions: readonly string[] | null;
-  taintedViewDeps?: readonly string[];
-  taintedFnDeps?: readonly string[];
-  hasActiveOrgBindDep?: boolean;
-  activeKernelSchema?: string;
+  taintedViewDeps?: readonly string[] | undefined;
+  taintedFnDeps?: readonly string[] | undefined;
+  hasActiveOrgBindDep?: boolean | undefined;
+  activeKernelSchema?: string | undefined;
 };
 
 function isAllowedBriefingLookupView(input: BriefingLookupViewInput): boolean {
@@ -1390,23 +1390,24 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             const scanResult = preScan ?? (await runQuery((c) => scanPolicyContextReads(c, dbIds)));
             const scannedView = scanResult.scannedViews.find((v) => v.name === lookupCanon);
             expect(scannedView, `cataloged lookup view ${lookupCanon} must appear in scanned views`).toBeDefined();
+            if (!scannedView) throw new Error(`cataloged lookup view ${lookupCanon} missing from scannedViews`);
             const prettyOk = isAllowedBriefingLookupView({
               viewDef: meta.view_def ?? "",
               reloptions: meta.reloptions,
-              taintedViewDeps: scannedView?.taintedViewDeps,
-              taintedFnDeps: scannedView?.taintedFnDeps,
-              hasActiveOrgBindDep: scannedView?.hasActiveOrgBindDep,
+              taintedViewDeps: scannedView.taintedViewDeps,
+              taintedFnDeps: scannedView.taintedFnDeps,
+              hasActiveOrgBindDep: scannedView.hasActiveOrgBindDep,
               activeKernelSchema,
             });
             const unprettyOk = isAllowedBriefingLookupView({
-              viewDef: scannedView?.def ?? "",
+              viewDef: scannedView.def,
               reloptions: meta.reloptions,
-              taintedViewDeps: scannedView?.taintedViewDeps,
-              taintedFnDeps: scannedView?.taintedFnDeps,
-              hasActiveOrgBindDep: scannedView?.hasActiveOrgBindDep,
+              taintedViewDeps: scannedView.taintedViewDeps,
+              taintedFnDeps: scannedView.taintedFnDeps,
+              hasActiveOrgBindDep: scannedView.hasActiveOrgBindDep,
               activeKernelSchema,
             });
-            const viewOk = Boolean(scannedView && meta.view_def && prettyOk && unprettyOk);
+            const viewOk = Boolean(meta.view_def && prettyOk && unprettyOk);
             expect(
               viewOk,
               `cataloged lookup view ${lookupCanon} must stay clean of forbidden sealed reads/deps and enforce security_barrier + org/briefing binding`,
@@ -2648,20 +2649,21 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           const meta = await readRawViewMeta(viewName);
           const scannedView = scan.scannedViews.find((v) => v.name === `probe_brief.${viewName}`);
           expect(scannedView, `scanned view for probe_brief.${viewName}`).toBeDefined();
+          if (!scannedView) throw new Error(`scanned view for probe_brief.${viewName} missing`);
           const prettyOk = isAllowedBriefingLookupView({
             viewDef: meta.view_def ?? "",
             reloptions: meta.reloptions,
-            taintedViewDeps: scannedView?.taintedViewDeps,
-            taintedFnDeps: scannedView?.taintedFnDeps,
-            hasActiveOrgBindDep: scannedView?.hasActiveOrgBindDep,
+            taintedViewDeps: scannedView.taintedViewDeps,
+            taintedFnDeps: scannedView.taintedFnDeps,
+            hasActiveOrgBindDep: scannedView.hasActiveOrgBindDep,
             activeKernelSchema: activeKernel,
           });
           const unprettyOk = isAllowedBriefingLookupView({
-            viewDef: scannedView?.def ?? "",
+            viewDef: scannedView.def,
             reloptions: meta.reloptions,
-            taintedViewDeps: scannedView?.taintedViewDeps,
-            taintedFnDeps: scannedView?.taintedFnDeps,
-            hasActiveOrgBindDep: scannedView?.hasActiveOrgBindDep,
+            taintedViewDeps: scannedView.taintedViewDeps,
+            taintedFnDeps: scannedView.taintedFnDeps,
+            hasActiveOrgBindDep: scannedView.hasActiveOrgBindDep,
             activeKernelSchema: activeKernel,
           });
           return { meta, scannedView, prettyOk, unprettyOk };
@@ -2689,13 +2691,13 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         const decoy = await checkView("v_decoy");
         expect(decoy.prettyOk, "non-kernel decoy lookup view rejected on pretty viewdef").toBe(false);
         expect(decoy.unprettyOk, "non-kernel decoy lookup view rejected on canonical viewdef").toBe(false);
-        expect(decoy.scannedView?.hasActiveOrgBindDep, "decoy lacks active ctx_org_id pg_depend").toBe(false);
+        expect(decoy.scannedView.hasActiveOrgBindDep, "decoy lacks active ctx_org_id pg_depend").toBe(false);
 
         if (testCroveDecoy) {
           const croveDecoy = await checkView("v_crove_decoy");
           expect(croveDecoy.prettyOk, "crove_kernel decoy rejected under ludy_kernel pretty viewdef").toBe(false);
           expect(croveDecoy.unprettyOk, "crove_kernel decoy rejected under ludy_kernel canonical viewdef").toBe(false);
-          expect(croveDecoy.scannedView?.hasActiveOrgBindDep, "crove_kernel decoy lacks ludy_kernel.ctx_org_id pg_depend").toBe(
+          expect(croveDecoy.scannedView.hasActiveOrgBindDep, "crove_kernel decoy lacks ludy_kernel.ctx_org_id pg_depend").toBe(
             false,
           );
           expect(scan.taintedViews, "crove_kernel decoy remains in taintedViews").toContain("probe_brief.v_crove_decoy");
