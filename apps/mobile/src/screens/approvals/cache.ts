@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Offline-tolerant persisted read cache for the mobile approvals queue, chunked to fit KeyValue size limits.
+// Offline-tolerant persisted read cache for the mobile approvals queue, written atomically with generation isolation.
 
 import type { KeyValue } from '../../auth/vault.ts';
 
 const META_KEY = 'ludy.approvals.cache.meta.v1';
-const CHUNK_KEY_PREFIX = 'ludy.approvals.cache.chunk.v1.';
+const LEGACY_CHUNK_PREFIX = 'ludy.approvals.cache.chunk.v1.';
+const GEN_CHUNK_PREFIX = 'ludy.approvals.cache.v1.';
 const CACHE_VERSION = 1;
 const MAX_CHUNKS = 32;
 const MAX_CHUNK_BYTES = 1600;
@@ -37,11 +38,12 @@ export interface CachedApprovalSummary {
   dateLabel: string | null;
   failedChecks: number;
   warnChecks: number;
+  anomalyChecks?: number;
   unclassifiedLines: number;
   aiCoworker: { id: AiCoworkerId; label: string } | null;
   webPath: string;
   multiDecisionOnly: boolean;
-  multiDecisionReason: 'multiple_channels' | 'insufficient_role' | null;
+  multiDecisionReason: 'multiple_channels' | 'insufficient_role' | 'unsupported_on_mobile' | null;
   revision: number | null;
   leaveStatus?: string;
   socialChannelsCount?: number;
@@ -103,7 +105,6 @@ function splitUtf8Chunks(text: string, maxBytes: number): string[] {
     while (end > start && encoder.encode(text.slice(start, end)).length > maxBytes) {
       end = start + Math.max(1, Math.floor((end - start) * 0.75));
     }
-    // Avoid splitting a UTF-16 surrogate pair in half.
     if (end < text.length) {
       const code = text.charCodeAt(end - 1);
       if (code >= 0xd800 && code <= 0xdbff) end -= 1;
@@ -117,6 +118,7 @@ function splitUtf8Chunks(text: string, maxBytes: number): string[] {
 
 interface CacheMeta {
   v: number;
+  gen: number;
   serverUrl: string;
   orgSlug: string;
   savedAt: number;
@@ -128,6 +130,9 @@ function isCacheMeta(raw: unknown): raw is CacheMeta {
   const candidate = raw as Record<string, unknown>;
   return (
     candidate.v === CACHE_VERSION &&
+    typeof candidate.gen === 'number' &&
+    Number.isInteger(candidate.gen) &&
+    candidate.gen >= 1 &&
     typeof candidate.serverUrl === 'string' &&
     typeof candidate.orgSlug === 'string' &&
     typeof candidate.savedAt === 'number' &&
@@ -137,6 +142,15 @@ function isCacheMeta(raw: unknown): raw is CacheMeta {
     candidate.chunks >= 1 &&
     candidate.chunks <= MAX_CHUNKS
   );
+}
+
+function sanitizeParams(params: Record<string, string | number> | undefined): Record<string, string | number> | undefined {
+  if (!params) return undefined;
+  const out: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(params)) {
+    out[truncateText(key, 60)] = typeof value === 'string' ? truncateText(value, 140) : value;
+  }
+  return out;
 }
 
 function sanitizeSnapshot(input: Omit<CachedApprovalsSnapshot, 'v'>): CachedApprovalsSnapshot {
@@ -155,14 +169,51 @@ function sanitizeSnapshot(input: Omit<CachedApprovalsSnapshot, 'v'>): CachedAppr
     todayNotices: input.todayNotices.slice(0, MAX_TODAY_ITEMS).map((notice) => ({
       ...notice,
       titleKey: truncateText(notice.titleKey, 120),
+      ...(notice.titleParams ? { titleParams: sanitizeParams(notice.titleParams) } : {}),
     })),
   };
 }
 
-function isCachedSnapshotBody(raw: unknown): raw is Omit<CachedApprovalsSnapshot, 'v' | 'serverUrl' | 'orgSlug' | 'savedAt'> {
+function isCachedSnapshotBody(
+  raw: unknown,
+): raw is Omit<CachedApprovalsSnapshot, 'v' | 'serverUrl' | 'orgSlug' | 'savedAt'> {
   if (!raw || typeof raw !== 'object') return false;
   const obj = raw as Record<string, unknown>;
-  return Array.isArray(obj.items) && Array.isArray(obj.todayNotices) && typeof obj.coworkers === 'object' && obj.coworkers !== null;
+  return (
+    Array.isArray(obj.items) &&
+    Array.isArray(obj.todayNotices) &&
+    typeof obj.coworkers === 'object' &&
+    obj.coworkers !== null
+  );
+}
+
+function chunkKey(gen: number, index: number): string {
+  return `${GEN_CHUNK_PREFIX}${gen}.${index}`;
+}
+
+function fitSnapshotChunks(snapshot: CachedApprovalsSnapshot): string[] {
+  let itemLimit = snapshot.items.length;
+  let noticeLimit = snapshot.todayNotices.length;
+
+  while (true) {
+    const bodyJson = JSON.stringify({
+      items: snapshot.items.slice(0, itemLimit),
+      todayNotices: snapshot.todayNotices.slice(0, noticeLimit),
+      coworkers: snapshot.coworkers,
+    });
+    const chunks = splitUtf8Chunks(bodyJson, MAX_CHUNK_BYTES);
+    if (chunks.length <= MAX_CHUNKS) return chunks;
+    if (noticeLimit > 0) {
+      noticeLimit = Math.floor(noticeLimit / 2);
+      continue;
+    }
+    if (itemLimit > 0) {
+      itemLimit = Math.floor(itemLimit / 2);
+      continue;
+    }
+    // Even with zero items/notices, empty structure fits in 1 chunk.
+    return splitUtf8Chunks(JSON.stringify({ items: [], todayNotices: [], coworkers: {} }), MAX_CHUNK_BYTES);
+  }
 }
 
 export function createApprovalsCache(store: KeyValue): ApprovalsCache {
@@ -195,7 +246,7 @@ export function createApprovalsCache(store: KeyValue): ApprovalsCache {
 
         const parts: string[] = [];
         for (let i = 0; i < meta.chunks; i++) {
-          const part = await store.get(`${CHUNK_KEY_PREFIX}${i}`);
+          const part = await store.get(chunkKey(meta.gen, i));
           if (part === null) return null;
           parts.push(part);
         }
@@ -221,27 +272,17 @@ export function createApprovalsCache(store: KeyValue): ApprovalsCache {
     save(snapshot) {
       return serialize(async () => {
         const previous = await readMeta();
+        const nextGen = previous ? (previous.gen % 1_000_000) + 1 : 1;
         const sanitized = sanitizeSnapshot(snapshot);
-        const bodyJson = JSON.stringify({
-          items: sanitized.items,
-          todayNotices: sanitized.todayNotices,
-          coworkers: sanitized.coworkers,
-        });
-        let chunks = splitUtf8Chunks(bodyJson, MAX_CHUNK_BYTES);
-        if (chunks.length > MAX_CHUNKS) {
-          const trimmedJson = JSON.stringify({
-            items: sanitized.items.slice(0, 20),
-            todayNotices: sanitized.todayNotices.slice(0, 10),
-            coworkers: sanitized.coworkers,
-          });
-          chunks = splitUtf8Chunks(trimmedJson, MAX_CHUNK_BYTES).slice(0, MAX_CHUNKS);
-        }
+        const chunks = fitSnapshotChunks(sanitized);
 
+        // Write new generation chunks first, then flip META_KEY atomically so an interrupted save never mixes orgs.
         for (let i = 0; i < chunks.length; i++) {
-          await store.set(`${CHUNK_KEY_PREFIX}${i}`, chunks[i] ?? '');
+          await store.set(chunkKey(nextGen, i), chunks[i] ?? '');
         }
         const meta: CacheMeta = {
           v: CACHE_VERSION,
+          gen: nextGen,
           serverUrl: sanitized.serverUrl,
           orgSlug: sanitized.orgSlug,
           savedAt: sanitized.savedAt,
@@ -249,9 +290,10 @@ export function createApprovalsCache(store: KeyValue): ApprovalsCache {
         };
         await store.set(META_KEY, JSON.stringify(meta));
 
-        const prevCount = previous?.chunks ?? 0;
-        for (let i = chunks.length; i < prevCount; i++) {
-          await store.remove(`${CHUNK_KEY_PREFIX}${i}`);
+        if (previous) {
+          for (let i = 0; i < previous.chunks; i++) {
+            await store.remove(chunkKey(previous.gen, i));
+          }
         }
       });
     },
@@ -259,10 +301,14 @@ export function createApprovalsCache(store: KeyValue): ApprovalsCache {
     clear() {
       return serialize(async () => {
         const meta = await readMeta();
-        const count = meta?.chunks ?? MAX_CHUNKS;
         await store.remove(META_KEY);
-        for (let i = 0; i < count; i++) {
-          await store.remove(`${CHUNK_KEY_PREFIX}${i}`);
+        if (meta) {
+          for (let i = 0; i < meta.chunks; i++) {
+            await store.remove(chunkKey(meta.gen, i));
+          }
+        }
+        for (let i = 0; i < MAX_CHUNKS; i++) {
+          await store.remove(`${LEGACY_CHUNK_PREFIX}${i}`);
         }
       });
     },

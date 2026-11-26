@@ -20,13 +20,15 @@ interface ApprovalActionDeps {
   stepUp: StepUpGate;
   crypto: RandomBytesPort;
   isOffline?: boolean;
+  onKernelError?: (error: unknown) => void;
 }
 
-function mapActionError<T>(error: unknown): ApprovalActionOutcome<T> {
+function mapActionError<T>(error: unknown, onKernelError?: (error: unknown) => void): ApprovalActionOutcome<T> {
   if (isStepUpRequired(error) || isMfaRequired(error)) {
     return { ok: false, reason: 'kernel-step-up' };
   }
   if (isAuthBlockingError(error)) {
+    onKernelError?.(error);
     return { ok: false, reason: 'auth' };
   }
   if (isLikelyNetworkError(error)) {
@@ -77,7 +79,7 @@ export async function approveInboxProposal(
     if (!result.ok) return { ok: false, reason: result.reason };
     return { ok: true, value: result.value };
   } catch (error) {
-    return mapActionError(error);
+    return mapActionError(error, deps.onKernelError);
   }
 }
 
@@ -107,7 +109,7 @@ export async function editInboxProposal(
     });
     return { ok: true, value };
   } catch (error) {
-    return mapActionError(error);
+    return mapActionError(error, deps.onKernelError);
   }
 }
 
@@ -117,7 +119,7 @@ interface RejectInboxInput {
 }
 
 export async function rejectInboxProposal(
-  deps: Pick<ApprovalActionDeps, 'client' | 'isOffline'>,
+  deps: Pick<ApprovalActionDeps, 'client' | 'isOffline' | 'onKernelError'>,
   input: RejectInboxInput,
 ): Promise<ApprovalActionOutcome<Awaited<ReturnType<LudyClient['inbox']['reject']>>>> {
   if (deps.isOffline) return { ok: false, reason: 'offline' };
@@ -129,7 +131,7 @@ export async function rejectInboxProposal(
     });
     return { ok: true, value };
   } catch (error) {
-    return mapActionError(error);
+    return mapActionError(error, deps.onKernelError);
   }
 }
 
@@ -146,7 +148,7 @@ interface DecideSocialInput {
 }
 
 export async function decideSocialPostVariants(
-  deps: Pick<ApprovalActionDeps, 'client' | 'isOffline'>,
+  deps: Pick<ApprovalActionDeps, 'client' | 'isOffline' | 'onKernelError'>,
   input: DecideSocialInput,
 ): Promise<ApprovalActionOutcome<Awaited<ReturnType<LudyClient['social']['variants']['decide']>>>> {
   if (deps.isOffline) return { ok: false, reason: 'offline' };
@@ -160,14 +162,14 @@ export async function decideSocialPostVariants(
     });
     return { ok: true, value };
   } catch (error) {
-    return mapActionError(error);
+    return mapActionError(error, deps.onKernelError);
   }
 }
 
 export type HrDecisionStage = 'approve_l1' | 'approve_final' | 'reject';
 
 export async function decideLeaveRequest(
-  deps: Pick<ApprovalActionDeps, 'client' | 'isOffline'>,
+  deps: Pick<ApprovalActionDeps, 'client' | 'isOffline' | 'onKernelError'>,
   input: { requestId: string; stage: HrDecisionStage; note?: string },
 ): Promise<ApprovalActionOutcome<Awaited<ReturnType<LudyClient['hr']['leaveRequests']['approveFinal']>>>> {
   if (deps.isOffline) return { ok: false, reason: 'offline' };
@@ -182,12 +184,12 @@ export async function decideLeaveRequest(
     }
     return { ok: true, value: await deps.client.hr.leaveRequests.reject(payload) };
   } catch (error) {
-    return mapActionError(error);
+    return mapActionError(error, deps.onKernelError);
   }
 }
 
 export async function decideSalaryAdvance(
-  deps: Pick<ApprovalActionDeps, 'client' | 'stepUp' | 'isOffline'>,
+  deps: Pick<ApprovalActionDeps, 'client' | 'stepUp' | 'isOffline' | 'onKernelError'>,
   input: { requestId: string; stage: HrDecisionStage; note?: string; prompt: string },
 ): Promise<ApprovalActionOutcome<Awaited<ReturnType<LudyClient['hr']['salaryAdvances']['approveFinal']>>>> {
   if (deps.isOffline) return { ok: false, reason: 'offline' };
@@ -197,7 +199,6 @@ export async function decideSalaryAdvance(
     if (input.stage === 'reject') {
       return { ok: true, value: await deps.client.hr.salaryAdvances.reject(payload) };
     }
-    // Monetary request (salary advance): biometric step-up required before approval.
     const stepped = await deps.stepUp.run(input.prompt, () =>
       input.stage === 'approve_l1'
         ? deps.client.hr.salaryAdvances.approveL1(payload)
@@ -206,12 +207,12 @@ export async function decideSalaryAdvance(
     if (!stepped.ok) return { ok: false, reason: stepped.reason };
     return { ok: true, value: stepped.value };
   } catch (error) {
-    return mapActionError(error);
+    return mapActionError(error, deps.onKernelError);
   }
 }
 
 export async function decideBusinessTrip(
-  deps: Pick<ApprovalActionDeps, 'client' | 'stepUp' | 'isOffline'>,
+  deps: Pick<ApprovalActionDeps, 'client' | 'stepUp' | 'isOffline' | 'onKernelError'>,
   input: {
     requestId: string;
     stage: HrDecisionStage;
@@ -239,6 +240,6 @@ export async function decideBusinessTrip(
     }
     return { ok: true, value: await call() };
   } catch (error) {
-    return mapActionError(error);
+    return mapActionError(error, deps.onKernelError);
   }
 }

@@ -18,10 +18,11 @@ function groupThousands(digits: string, separator: string): string {
 
 /**
  * Formats a decimal string money amount without converting through JS `number`.
+ * When `currency` is omitted (`null`), formats the decimal value without inventing a currency symbol.
  */
 export function formatMoney(
   raw: string | null | undefined,
-  currency: string | null | undefined = 'VND',
+  currency?: string | null,
   locale: Locale = 'vi',
 ): string {
   if (raw === null || raw === undefined) return '';
@@ -34,9 +35,9 @@ export function formatMoney(
   const rawInt = (match[2] ?? '0').replace(/^0+(?=\d)/, '');
   let frac = (match[3] ?? '').replace(/0+$/, '');
 
-  const normalizedCurrency = (currency ?? 'VND').trim().toUpperCase() || 'VND';
+  const normalizedCurrency = currency ? currency.trim().toUpperCase() : '';
   if (frac.length > 4) frac = frac.slice(0, 4).replace(/0+$/, '');
-  if (normalizedCurrency !== 'VND' && frac.length === 1) {
+  if (normalizedCurrency && normalizedCurrency !== 'VND' && frac.length === 1) {
     frac = `${frac}0`;
   }
 
@@ -45,6 +46,7 @@ export function formatMoney(
   const intFormatted = groupThousands(rawInt, thousandsSep);
   const numberPart = frac ? `${sign}${intFormatted}${decimalSep}${frac}` : `${sign}${intFormatted}`;
 
+  if (!normalizedCurrency) return numberPart;
   if (normalizedCurrency === 'VND') return `${numberPart} ₫`;
   return `${numberPart} ${normalizedCurrency}`;
 }
@@ -164,10 +166,15 @@ export function buildWebUrl(
   if (relativePath === '/' && !orgSlug) return `${origin}/`;
   if (!orgSlug) return null;
 
+  const encodedSlug = encodeURIComponent(orgSlug);
   if (relativePath.startsWith('/o/')) {
+    const rest = relativePath.slice(3);
+    const slashIdx = rest.indexOf('/');
+    const pathSlug = slashIdx === -1 ? rest : rest.slice(0, slashIdx);
+    if (pathSlug !== encodedSlug && pathSlug !== orgSlug) return null;
     return `${origin}${relativePath}`;
   }
-  return `${origin}/o/${encodeURIComponent(orgSlug)}${relativePath}`;
+  return `${origin}/o/${encodedSlug}${relativePath}`;
 }
 
 const EXTERNAL_LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);

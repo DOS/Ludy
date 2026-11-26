@@ -9,12 +9,14 @@ import {
   isEngageProposalKind,
   isExpectedSkipError,
   isLikelyNetworkError,
+  isSupportedMobileInboxKind,
   itemKey,
   loadApprovalsSnapshot,
   readErrorCodeAndStatus,
   resolveCoworkerName,
   resolveInboxCoworker,
   todayCoworkerKeyForApp,
+  type ChartAccount,
   type InboxDetail,
   type InboxListItem,
   type SocialPostDetail,
@@ -23,6 +25,8 @@ import {
   filterGroupForSummary,
   filterQueueItems,
   formatTodayNoticeTitle,
+  isRevenueAccountCode,
+  pickableAccountsForMobile,
   resolveHrActionGuards,
   resolveInboxActionGuards,
   resolveSocialActionGuards,
@@ -44,6 +48,7 @@ function fakeInboxItem(overrides: Partial<InboxListItem> = {}): InboxListItem {
     issueDate: '2026-11-26',
     failedChecks: 0,
     warnChecks: 0,
+    anomalyChecks: 0,
     unclassifiedLines: 0,
     learnedRuleIds: [],
     otherRuleLines: 0,
@@ -134,19 +139,22 @@ function makeFakeClient(overrides: Record<string, unknown> = {}): LudyClient {
 }
 
 describe('cross-app queue aggregation and AI coworker attribution', () => {
-  it('merges Inbox, Social and HR items with coworker badges and supplier payment hint', async () => {
+  it('merges Inbox, Social and HR items cleanly with web routes and non-duplicated checks', async () => {
     const client = makeFakeClient({
       today: {
         list: async () => ({
           items: [
-            // Excluded because pending Finance/Social/HR proposals live in main actionable queue.
-            { kind: 'proposal', app: 'finance', id: 'fin-q', title: { key: 'finance.today.inbox' }, href: '/inbox' },
-            // Included: flag & deadline & non-queue proposal.
+            // Excluded because pending Finance/Social/HR queue items live directly in `items`.
+            { kind: 'proposal', app: 'finance', id: 'fin-q', title: { key: 'financeProposalsOther', params: { count: 1 } }, href: '/inbox' },
+            { kind: 'proposal', app: 'social', id: 'review', title: { key: 'social.review', params: { count: 1 } }, href: '/social' },
+            { kind: 'proposal', app: 'hr', id: 'leave-approvals', title: { key: 'hr.leaveApprovalsPending', params: { count: 1 } }, href: '/hr/employees' },
+            // Included: payroll adjustment proposal, ads flag, finance deadline.
+            { kind: 'proposal', app: 'hr', id: 'payroll-adjustments-pending', title: { key: 'hr.payrollAdjustmentsPending', params: { count: 2 } }, count: 2, href: '/hr/payroll' },
             {
               kind: 'flag',
               app: 'ads',
               id: 'ads-pace',
-              title: { key: 'ads.today.spend_pace', params: { campaign: 'Tết 2027' } },
+              title: { key: 'ads.cpr', params: { campaign: 'Tết 2027', account: 'FB', ratio: '2.4' } },
               amount: '2000000',
               currency: 'VND',
               severity: 'warn',
@@ -156,7 +164,7 @@ describe('cross-app queue aggregation and AI coworker attribution', () => {
               kind: 'deadline',
               app: 'finance',
               id: 'vat-due',
-              title: { key: 'finance.today.vat_due' },
+              title: { key: 'financeVatDue', params: { period: '11/2026', date: '20/12/2026' } },
               dueAt: '2026-11-30T17:00:00+07:00',
               href: '/finance/tax',
             },
@@ -183,14 +191,23 @@ describe('cross-app queue aggregation and AI coworker attribution', () => {
             sellerName: 'Khách hàng Beta',
             total: '9500000',
             failedChecks: 1,
+            warnChecks: 1,
+            anomalyChecks: 1,
             requestedByAgent: null,
           }),
           fakeInboxItem({
             id: 'p-3',
             kind: 'finance.purchase',
-            title: 'Hóa đơn điện lực',
+            title: 'Hóa đơn USD',
+            total: '1000',
             requestedByAgent: null,
             requestedByMcp: null,
+          }),
+          fakeInboxItem({
+            id: 'p-4',
+            kind: 'finance.cash_voucher',
+            title: 'Phiếu chi văn phòng phẩm',
+            total: '450000',
           }),
         ],
       },
@@ -214,60 +231,66 @@ describe('cross-app queue aggregation and AI coworker attribution', () => {
       },
       hr: {
         leaveRequests: {
-          list: async () => [
-            {
-              id: 'lv-1',
-              legalEntityId: 'le-1',
-              employeeId: 'emp-1',
-              employeeName: 'Nguyễn Văn A',
-              departmentId: 'd-1',
-              departmentName: 'Kinh doanh',
-              month: '2026-11',
-              startOn: '2026-11-28',
-              endOn: '2026-11-28',
-              kind: 'annual_leave',
-              days: '1',
-              status: 'pending_final',
-              reason: 'Việc gia đình',
-              decisionNote: null,
-              l1ApproverUserId: 'u-1',
-              l1ApproverName: 'Trưởng nhóm',
-              l1ActedAt: null,
-              finalActedBy: null,
-              finalActedByName: null,
-              finalActedAt: null,
-              payrollLeaveEntryId: null,
-              createdAt: '2026-11-26T07:00:00Z',
-              updatedAt: '2026-11-26T07:00:00Z',
-            },
-          ],
+          list: async ({ status }: { status?: string }) =>
+            status === 'pending_final'
+              ? [
+                  {
+                    id: 'lv-1',
+                    legalEntityId: 'le-1',
+                    employeeId: 'emp-1',
+                    employeeName: 'Nguyễn Văn A',
+                    departmentId: 'd-1',
+                    departmentName: 'Kinh doanh',
+                    month: '2026-11',
+                    startOn: '2026-11-28',
+                    endOn: '2026-11-28',
+                    kind: 'annual_leave',
+                    days: '1',
+                    status: 'pending_final',
+                    reason: 'Việc gia đình',
+                    decisionNote: null,
+                    l1ApproverUserId: 'u-1',
+                    l1ApproverName: 'Trưởng nhóm',
+                    l1ActedAt: null,
+                    finalActedBy: null,
+                    finalActedByName: null,
+                    finalActedAt: null,
+                    payrollLeaveEntryId: null,
+                    createdAt: '2026-11-26T07:00:00Z',
+                    updatedAt: '2026-11-26T07:00:00Z',
+                  },
+                ]
+              : [],
         },
         salaryAdvances: {
-          list: async () => [
-            {
-              id: 'adv-1',
-              legalEntityId: 'le-1',
-              employeeId: 'emp-2',
-              employeeName: 'Trần Thị B',
-              departmentId: 'd-1',
-              departmentName: 'Vận hành',
-              month: '2026-11',
-              amount: '3000000',
-              reason: 'Ứng lương tháng 11',
-              status: 'pending_final',
-              l1ApproverUserId: null,
-              l1ActedAt: null,
-              finalActedBy: null,
-              finalActedAt: null,
-              decisionNote: null,
-              payrollRunId: null,
-              createdAt: '2026-11-26T06:00:00Z',
-              updatedAt: '2026-11-26T06:00:00Z',
-              canApproveL1: false,
-              canApproveFinal: true,
-              canCancel: false,
-            },
-          ],
+          list: async ({ status }: { status?: string }) =>
+            status === 'pending_final'
+              ? [
+                  {
+                    id: 'adv-1',
+                    legalEntityId: 'le-1',
+                    employeeId: 'emp-2',
+                    employeeName: 'Trần Thị B',
+                    departmentId: 'd-1',
+                    departmentName: 'Vận hành',
+                    month: '2026-11',
+                    amount: '3000000',
+                    reason: 'Ứng lương tháng 11',
+                    status: 'pending_final',
+                    l1ApproverUserId: null,
+                    l1ActedAt: null,
+                    finalActedBy: null,
+                    finalActedAt: null,
+                    decisionNote: null,
+                    payrollRunId: null,
+                    createdAt: '2026-11-26T06:00:00Z',
+                    updatedAt: '2026-11-26T06:00:00Z',
+                    canApproveL1: false,
+                    canApproveFinal: true,
+                    canCancel: false,
+                  },
+                ]
+              : [],
         },
         businessTrips: { list: async () => [] },
         self: {
@@ -281,38 +304,47 @@ describe('cross-app queue aggregation and AI coworker attribution', () => {
 
     const snap = await loadApprovalsSnapshot({ client, serverUrl: SERVER, orgSlug: 'demo', now: () => 5000 });
     expect(snap.savedAt).toBe(5000);
-    expect(snap.items).toHaveLength(5);
+    expect(snap.items).toHaveLength(6);
 
+    // Supplier payment must open web instead of blind mobile approval (missing vendor/bank details).
     const payment = snap.items.find((i) => i.key === itemKey('inbox', 'p-1'));
     expect(payment?.amount).toBe('3200000');
     expect(payment?.currency).toBe('VND');
-    expect(payment?.requiresStepUp).toBe(true);
+    expect(payment?.multiDecisionOnly).toBe(true);
+    expect(payment?.multiDecisionReason).toBe('unsupported_on_mobile');
     expect(payment?.aiCoworker).toEqual({ id: 'finance', label: 'Ly' });
 
+    // `warnChecks` stays separate from `anomalyChecks` (no double counting).
     const quote = snap.items.find((i) => i.key === itemKey('inbox', 'p-2'));
+    expect(quote?.warnChecks).toBe(1);
+    expect(quote?.anomalyChecks).toBe(1);
     expect(quote?.aiCoworker).toEqual({ id: 'sales', label: 'Dy' });
-    // Failed checks item is sorted first!
     expect(snap.items[0]?.id).toBe('p-2');
 
-    // Human-uploaded purchase has no fake AI attribution.
-    const humanBill = snap.items.find((i) => i.key === itemKey('inbox', 'p-3'));
-    expect(humanBill?.aiCoworker).toBeNull();
+    // Foreign invoice list entry leaves currency null until detail load (never forces VND).
+    const invoice = snap.items.find((i) => i.key === itemKey('inbox', 'p-3'));
+    expect(invoice?.currency).toBeNull();
+    expect(invoice?.aiCoworker).toBeNull();
 
-    // Multi-channel Social post marked for web hand-off.
+    // Cash voucher IS always VND.
+    const voucher = snap.items.find((i) => i.key === itemKey('inbox', 'p-4'));
+    expect(voucher?.currency).toBe('VND');
+
+    // Social route uses `/social/<id>`, NOT `/social/posts/<id>`.
     const social = snap.items.find((i) => i.key === itemKey('social_post', 'soc-1'));
+    expect(social?.webPath).toBe('/social/soc-1');
     expect(social?.multiDecisionOnly).toBe(true);
     expect(social?.multiDecisionReason).toBe('multiple_channels');
 
     const adv = snap.items.find((i) => i.key === itemKey('hr_salary_advance', 'adv-1'));
+    expect(adv?.webPath).toBe('/hr/employees');
     expect(adv?.requiresStepUp).toBe(true);
-    expect(adv?.amount).toBe('3000000');
 
-    expect(snap.todayNotices).toHaveLength(2);
-    expect(snap.todayNotices[0]?.aiCoworkerLabel).toBe('Uy');
-    expect(snap.todayNotices[1]?.aiCoworkerLabel).toBe('Ly');
+    // `todayNotices` preserves `payroll-adjustments-pending` while omitting replaced queue items.
+    expect(snap.todayNotices.map((n) => n.id)).toEqual(['payroll-adjustments-pending', 'ads-pace', 'vat-due']);
   });
 
-  it('scopes member HR queue to managed departments L1 only', async () => {
+  it('scopes member HR queue to managed departments L1 with /hr/my path and reports HR failures', async () => {
     const client = makeFakeClient({
       org: {
         get: async () => ({ orgId: 'o1', slug: 'demo', name: 'Demo', role: 'member' }),
@@ -348,21 +380,6 @@ describe('cross-app queue aggregation and AI coworker attribution', () => {
                 createdAt: '2026-11-26T07:00:00Z',
               },
               {
-                id: 'lv-other-dept',
-                employeeId: 'emp-3',
-                employeeName: 'Other Dept',
-                departmentId: 'dept-tech',
-                departmentName: 'Tech',
-                month: '2026-11',
-                startOn: '2026-11-28',
-                endOn: '2026-11-28',
-                kind: 'annual_leave',
-                days: '1',
-                status: 'pending_l1',
-                reason: null,
-                createdAt: '2026-11-26T07:00:00Z',
-              },
-              {
                 id: 'lv-team',
                 employeeId: 'emp-2',
                 employeeName: 'Team Member',
@@ -379,7 +396,7 @@ describe('cross-app queue aggregation and AI coworker attribution', () => {
               },
             ],
           },
-          salaryAdvance: { list: async () => ({ items: [], l1Queue: [] }) },
+          salaryAdvance: { list: async () => { throw new TypeError('hr sub-call failed'); } },
           businessTrips: {
             list: async () => ({
               items: [],
@@ -409,11 +426,11 @@ describe('cross-app queue aggregation and AI coworker attribution', () => {
 
     const snap = await loadApprovalsSnapshot({ client, serverUrl: SERVER, orgSlug: 'demo' });
     expect(snap.items.map((i) => i.id)).toEqual(['trip-1', 'lv-team']);
-    expect(snap.items.find((i) => i.id === 'trip-1')?.requiresStepUp).toBe(true);
-    expect(snap.items.find((i) => i.id === 'lv-team')?.requiresStepUp).toBe(false);
+    expect(snap.items.every((i) => i.webPath === '/hr/my')).toBe(true);
+    expect(snap.partialFailureCount).toBe(1);
   });
 
-  it('tolerates MODULE_OFF skips and classifies network/auth errors properly', async () => {
+  it('distinguishes Engage Ads proposals from Ads spend proposals and classifies errors cleanly', async () => {
     const skipErr = Object.assign(new Error('off'), { code: 'MODULE_OFF', status: 404 });
     const netErr = new TypeError('Network request failed');
     const authErr = Object.assign(new Error('unauth'), { status: 401, code: 'UNAUTHENTICATED' });
@@ -427,8 +444,10 @@ describe('cross-app queue aggregation and AI coworker attribution', () => {
     expect(inferCoworkerKeyFromKind('ads.cap_set')).toBe('marketing');
     expect(todayCoworkerKeyForApp('conversations')).toBe('sales');
     expect(resolveCoworkerName({}, 'gm')).toBe('Vy');
-    expect(isEngageProposalKind('crm.quote_send')).toBe(true);
+    expect(isEngageProposalKind('ads.pause_all')).toBe(true);
+    expect(isAdsProposalKind('ads.pause_all')).toBe(false);
     expect(isAdsProposalKind('ads.cap_set')).toBe(true);
+    expect(isSupportedMobileInboxKind('finance.supplier_payment')).toBe(false);
     expect(resolveInboxCoworker(fakeInboxItem({ requestedByMcp: { client: 'Claude', host: 'x' } }), DEFAULT_COWORKERS)?.label).toBe('Claude');
 
     const offlineClient = makeFakeClient({
@@ -439,8 +458,8 @@ describe('cross-app queue aggregation and AI coworker attribution', () => {
   });
 });
 
-describe('queue filtering and detail action guard state', () => {
-  it('filters cross-app items cleanly and formats notice labels', () => {
+describe('queue filtering, localized Today notices, directional accounts and detail guards', () => {
+  it('filters cross-app items, translates Today titles, and filters accounts by invoice direction', () => {
     const items = [
       { key: 'inbox:1', source: 'inbox' as const, id: '1', subtype: 'finance.purchase' },
       { key: 'hr_leave:2', source: 'hr_leave' as const, id: '2', subtype: 'annual_leave' },
@@ -459,6 +478,7 @@ describe('queue filtering and detail action guard state', () => {
       dateLabel: null,
       failedChecks: 0,
       warnChecks: 0,
+      anomalyChecks: 0,
       unclassifiedLines: 0,
       aiCoworker: null,
       webPath: '/',
@@ -475,28 +495,88 @@ describe('queue filtering and detail action guard state', () => {
     expect(filterQueueItems(items, 'engage').map((i) => i.id)).toEqual(['4']);
 
     expect(
-      formatTodayNoticeTitle({
-        key: 'k',
-        kind: 'flag',
-        app: 'ads',
-        id: '1',
-        titleKey: 'ads.today.spend_pace',
-        titleParams: { name: 'Campaign A' },
-        amount: null,
-        currency: null,
-        count: null,
-        dueAt: null,
-        severity: 'warn',
-        webPath: '/ads',
-        aiCoworkerLabel: 'Uy',
-      }),
-    ).toBe('today spend pace: Campaign A');
+      formatTodayNoticeTitle(
+        {
+          key: 'k',
+          kind: 'flag',
+          app: 'ads',
+          id: '1',
+          titleKey: 'ads.cpr',
+          titleParams: { campaign: 'Tết', account: 'Meta', ratio: '2.2' },
+          amount: null,
+          currency: null,
+          count: null,
+          dueAt: null,
+          severity: 'warn',
+          webPath: '/ads',
+          aiCoworkerLabel: 'Uy',
+        },
+        'vi',
+      ),
+    ).toBe('Tết (Meta): chi phí mỗi kết quả gấp 2.2 lần mức thường thấy');
+
+    expect(
+      formatTodayNoticeTitle(
+        {
+          key: 'k2',
+          kind: 'message',
+          app: 'finance',
+          id: 's',
+          titleKey: 'financeStatementsStaged',
+          titleParams: { count: 3 },
+          amount: null,
+          currency: null,
+          count: 3,
+          dueAt: null,
+          severity: null,
+          webPath: '/inbox',
+          aiCoworkerLabel: 'Ly',
+        },
+        'en',
+      ),
+    ).toBe('3 bank statement(s) waiting for confirmation');
+
+    const chart: ChartAccount[] = [
+      { code: '6422', name: 'Chi phí QLDN', parentCode: '642', rootCode: '6', active: true, custom: false },
+      { code: '5111', name: 'Doanh thu bán hàng', parentCode: '511', rootCode: '5', active: true, custom: false },
+      { code: '711', name: 'Thu nhập khác', parentCode: null, rootCode: '7', active: true, custom: false },
+      { code: '152', name: 'Nguyên vật liệu', parentCode: null, rootCode: '1', active: false, custom: false },
+    ];
+    expect(isRevenueAccountCode('5111')).toBe(true);
+    expect(isRevenueAccountCode('6422')).toBe(false);
+    expect(pickableAccountsForMobile(chart, 'purchase').map((a) => a.code)).toEqual(['6422']);
+    expect(pickableAccountsForMobile(chart, 'sale').map((a) => a.code)).toEqual(['5111', '711']);
+    expect(pickableAccountsForMobile(chart, 'purchase', '152').map((a) => a.code)).toEqual(['6422', '152']);
   });
 
-  it('enforces four-eyes, failed checks, offline lock, and checklist completeness', () => {
+  it('enforces blocking checks, unclassified lines, Social in_review four-eyes, and live HR sync', () => {
+    const basePurchasePayload = {
+      seller: { name: 'NCC', taxCode: null, address: null, email: null, phone: null },
+      buyer: { name: 'Buyer', taxCode: null, address: null, email: null, phone: null },
+      invoice: {
+        template: null,
+        series: '1C26',
+        number: '001',
+        issueDate: '2026-11-26',
+        currency: 'VND',
+        paymentMethod: null,
+        taxAuthorityCode: null,
+        subtotal: '100000',
+        vatTotal: '10000',
+        total: '110000',
+      },
+      lines: [
+        { lineNo: 1, description: 'Bút bi', unit: null, quantity: '1', unitPrice: '100000', amount: '100000', vatRate: '10', debitAccount: '6422', reason: 'rule' },
+      ],
+      journal: [],
+      checks: [{ id: 'date_gap', status: 'fail' as const, message: 'Ngày hóa đơn cũ' }],
+      sourceFileId: 'f1',
+      extractionMethod: 'pdf_text_ai' as const,
+    };
+
     const detail = {
       ...fakeInboxItem({ failedChecks: 1, signatureStatus: 'unverified' }),
-      payload: null,
+      payload: basePurchasePayload,
       reversal: null,
       voucher: null,
       journalVoucher: null,
@@ -519,47 +599,70 @@ describe('queue filtering and detail action guard state', () => {
       originals: [],
     } as InboxDetail;
 
-    const needsAck = resolveInboxActionGuards(detail, {
-      isOffline: false,
-      editingAccounts: false,
-      acceptFailedChecks: false,
-      acceptUnverifiedSig: true,
-    });
-    expect(needsAck.needsFailedAck).toBe(true);
-    expect(needsAck.canApproveNow).toBe(false);
+    // Non-blocking failed check can be acknowledged.
+    expect(
+      resolveInboxActionGuards(detail, {
+        isOffline: false,
+        editingAccounts: false,
+        acceptFailedChecks: false,
+        acceptUnverifiedSig: true,
+      }).canApproveNow,
+    ).toBe(false);
 
-    const ready = resolveInboxActionGuards(detail, {
+    expect(
+      resolveInboxActionGuards(detail, {
+        isOffline: false,
+        editingAccounts: false,
+        acceptFailedChecks: true,
+        acceptUnverifiedSig: true,
+      }).canApproveNow,
+    ).toBe(true);
+
+    // Blocking check (`lines_sum`) cannot be overridden even with checkboxes ticked!
+    const blockingDetail: InboxDetail = {
+      ...detail,
+      payload: {
+        ...basePurchasePayload,
+        checks: [{ id: 'lines_sum', status: 'fail', message: 'Tổng dòng không khớp' }],
+      },
+    };
+    const blockingGuards = resolveInboxActionGuards(blockingDetail, {
       isOffline: false,
       editingAccounts: false,
       acceptFailedChecks: true,
       acceptUnverifiedSig: true,
     });
-    expect(ready.canApproveNow).toBe(true);
+    expect(blockingGuards.hasBlockingChecks).toBe(true);
+    expect(blockingGuards.canApproveNow).toBe(false);
+    expect(blockingGuards.canRejectNow).toBe(true);
 
-    const offline = resolveInboxActionGuards(detail, {
-      isOffline: true,
-      editingAccounts: false,
-      acceptFailedChecks: true,
-      acceptUnverifiedSig: true,
-    });
-    expect(offline.canApproveNow).toBe(false);
-    expect(offline.canRejectNow).toBe(false);
-
-    const fourEyes = resolveInboxActionGuards(
-      { ...detail, canApprove: false, approveReason: 'four_eyes' },
+    // Unclassified lines force edit before approve.
+    const unclassifiedGuards = resolveInboxActionGuards(
+      { ...detail, unclassifiedLines: 1 },
       { isOffline: false, editingAccounts: false, acceptFailedChecks: true, acceptUnverifiedSig: true },
     );
-    expect(fourEyes.needsFourEyes).toBe(true);
-    expect(fourEyes.showWebPrimary).toBe(true);
+    expect(unclassifiedGuards.hasUnclassifiedLines).toBe(true);
+    expect(unclassifiedGuards.canApproveNow).toBe(false);
 
+    // Supplier payment requires web view rather than blind mobile action.
+    const supplierGuards = resolveInboxActionGuards(
+      { ...detail, kind: 'finance.supplier_payment', payload: null, failedChecks: 0, signatureStatus: null },
+      { isOffline: false, editingAccounts: false, acceptFailedChecks: true, acceptUnverifiedSig: true },
+    );
+    expect(supplierGuards.unsupportedOnMobile).toBe(true);
+    expect(supplierGuards.canApproveNow).toBe(false);
+    expect(supplierGuards.showWebPrimary).toBe(true);
+
+    // Social `in_review`: another reviewer CAN approve even when fourEyes policy is enabled; author CANNOT.
     const socialPost = {
       id: 'soc-1',
+      authorUserId: 'author-u',
       variants: [
         {
           id: 'v1',
-          status: 'pending_review',
+          status: 'in_review',
           checklist: [{ id: 'chk-1', connectionId: 'c1', position: 0, label: 'Kiểm tra CTA' }],
-          review: { required: 1, approvedBy: [], fourEyes: false, client: false, clientVerdict: null },
+          review: { required: 1, approvedBy: [], fourEyes: true, client: false, clientVerdict: null },
         },
       ],
     } as unknown as SocialPostDetail;
@@ -567,21 +670,42 @@ describe('queue filtering and detail action guard state', () => {
     expect(
       resolveSocialActionGuards({ multiDecisionOnly: false }, socialPost, {
         isOffline: false,
-        tickedChecklistIds: {},
-      }).canApproveNow,
-    ).toBe(false);
+        currentUserId: 'author-u',
+        tickedChecklistIds: { 'chk-1': true },
+      }).isFourEyesBlocked,
+    ).toBe(true);
 
     expect(
       resolveSocialActionGuards({ multiDecisionOnly: false }, socialPost, {
         isOffline: false,
+        currentUserId: 'reviewer-u',
         tickedChecklistIds: { 'chk-1': true },
       }).canApproveNow,
     ).toBe(true);
 
     expect(
-      resolveHrActionGuards({ source: 'hr_leave', subtype: 'annual_leave', leaveStatus: 'pending_final' }, 'member', {
+      resolveSocialActionGuards({ multiDecisionOnly: false }, socialPost, {
         isOffline: false,
-      }).isRoleBlocked,
-    ).toBe(true);
+        currentUserId: 'reviewer-u',
+        tickedChecklistIds: {},
+      }).canApproveNow,
+    ).toBe(false);
+
+    // HR cached preview without live data must stay non-actionable.
+    expect(
+      resolveHrActionGuards(
+        { source: 'hr_salary_advance', subtype: 'pending_l1', leaveStatus: 'pending_l1' },
+        'owner',
+        { isOffline: false, hasLiveItem: false, canApproveL1: undefined },
+      ).canApproveNow,
+    ).toBe(false);
+
+    expect(
+      resolveHrActionGuards(
+        { source: 'hr_salary_advance', subtype: 'pending_l1', leaveStatus: 'pending_l1' },
+        'owner',
+        { isOffline: false, hasLiveItem: true, canApproveL1: true },
+      ).approveStage,
+    ).toBe('approve_l1');
   });
 });

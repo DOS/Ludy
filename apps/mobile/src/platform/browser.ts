@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The phone's system browser (ASWebAuthenticationSession on iOS, Custom Tabs on Android via expo-web-browser). Keeping OAuth in
-// the system browser instead of a WebView gives the phone's password manager and keeps tokens out of any embedded page (issue #4880).
+// the system browser instead of an embedded browser view gives the phone's password manager and keeps tokens out of any embedded page (issue #4880).
 import * as WebBrowser from 'expo-web-browser';
 import type { BrowserPort } from '../auth/session.ts';
 import { isSafeExternalWebUrl } from '../screens/approvals/format.ts';

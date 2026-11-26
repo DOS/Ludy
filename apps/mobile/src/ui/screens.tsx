@@ -120,6 +120,7 @@ export function HomeScreen(props: { state: Extract<SessionState, { status: 'acti
   if (org && !pickingOrg) {
     return (
       <ApprovalsQueueScreen
+        key={`${serverUrl}:${org.slug}`}
         canSwitchOrg={orgs.length > 1}
         locale={locale}
         onSwitchOrg={() => setPickingOrg(true)}
@@ -127,14 +128,16 @@ export function HomeScreen(props: { state: Extract<SessionState, { status: 'acti
         orgSlug={org.slug}
         role={org.role}
         serverUrl={serverUrl}
+        userId={me.data?.userId ?? null}
       />
     );
   }
 
-  // Offline launch with an already-selected org: let the queue show its persisted local cache immediately.
+  // Offline launch with an already-selected org: let the queue show its persisted local cache as read-only preview.
   if (me.isError && !isMfaRequired(me.error) && isLikelyNetworkError(me.error) && orgSlug && !pickingOrg) {
     return (
       <ApprovalsQueueScreen
+        key={`${serverUrl}:${orgSlug}`}
         canSwitchOrg={false}
         locale={locale}
         onSwitchOrg={() => setPickingOrg(false)}
@@ -142,6 +145,7 @@ export function HomeScreen(props: { state: Extract<SessionState, { status: 'acti
         orgSlug={orgSlug}
         role="member"
         serverUrl={serverUrl}
+        userId={null}
       />
     );
   }

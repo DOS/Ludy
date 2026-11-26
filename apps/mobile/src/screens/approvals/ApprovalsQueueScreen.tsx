@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Cross-app mobile approvals queue with offline read cache, AI coworker attribution and web hand-off (issue #4881).
 
+import { isMfaRequired } from '@ludy/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -26,29 +27,30 @@ import {
   type Locale,
 } from './format.ts';
 import {
-  filterQueueItems,
-  formatTodayNoticeTitle,
-  type QueueFilter,
-} from './view-state.ts';
-import {
   isLikelyNetworkError,
   loadApprovalsSnapshot,
   type LiveApprovalsSnapshot,
   type OrgDetail,
 } from './model.ts';
+import {
+  filterQueueItems,
+  formatTodayNoticeTitle,
+  type QueueFilter,
+} from './view-state.ts';
 
 export interface ApprovalsQueueScreenProps {
   serverUrl: string;
   orgSlug: string;
   orgName: string;
   role: OrgDetail['role'];
+  userId: string | null;
   locale: Locale;
   canSwitchOrg: boolean;
   onSwitchOrg: () => void;
 }
 
 export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
-  const { serverUrl, orgSlug, orgName, role, locale } = props;
+  const { serverUrl, orgSlug, orgName, role, userId, locale } = props;
   const palette = usePalette();
   const qc = useQueryClient();
   const client = useMemo(() => clientFor(serverUrl), [serverUrl]);
@@ -61,7 +63,12 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
 
   useEffect(() => {
     let cancelled = false;
+    setCachedSnapshot(null);
+    setSelectedKey(null);
+    setBannerMessage(null);
+    setFilter('all');
     setCacheLoaded(false);
+
     void approvalsCache
       .load(serverUrl, orgSlug)
       .then((snap) => {
@@ -85,14 +92,17 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
     queryKey: ['approvals', serverUrl, orgSlug],
     queryFn: async () => {
       const live = await loadApprovalsSnapshot({ client, serverUrl, orgSlug });
-      await approvalsCache.save({
-        serverUrl: live.serverUrl,
-        orgSlug: live.orgSlug,
-        savedAt: live.savedAt,
-        items: live.items,
-        todayNotices: live.todayNotices,
-        coworkers: live.coworkers,
-      });
+      // Persistence errors must never discard live server results.
+      void approvalsCache
+        .save({
+          serverUrl: live.serverUrl,
+          orgSlug: live.orgSlug,
+          savedAt: live.savedAt,
+          items: live.items,
+          todayNotices: live.todayNotices,
+          coworkers: live.coworkers,
+        })
+        .catch(() => undefined);
       setCachedSnapshot({
         v: 1,
         serverUrl: live.serverUrl,
@@ -107,10 +117,12 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
     enabled: cacheLoaded,
   });
 
-  const liveData = queueQuery.data;
-  const activeSnapshot = liveData ?? cachedSnapshot;
-  const isShowingOfflineCache = Boolean(!liveData && cachedSnapshot && queueQuery.isError);
-  const isOffline = Boolean(queueQuery.isError && isLikelyNetworkError(queueQuery.error));
+  const isNetworkOffline = Boolean(queueQuery.isError && isLikelyNetworkError(queueQuery.error));
+  const isNonNetworkError = Boolean(queueQuery.isError && !isNetworkOffline);
+  const liveData = isNonNetworkError ? undefined : queueQuery.data;
+  const activeSnapshot = isNonNetworkError ? null : (liveData ?? cachedSnapshot);
+  const isShowingOfflineCache = Boolean(isNetworkOffline && !liveData && cachedSnapshot);
+  const isCachedPreview = !liveData;
 
   const items = activeSnapshot?.items ?? [];
   const todayNotices = activeSnapshot?.todayNotices ?? [];
@@ -133,10 +145,13 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
     if (!opened) setBannerMessage(t('approvals.outcome.webError'));
   }
 
-  if (selectedSummary) {
+  if (selectedSummary && !isNonNetworkError) {
     return (
       <ApprovalDetailScreen
-        isOffline={isOffline || isShowingOfflineCache}
+        coworkers={activeSnapshot?.coworkers}
+        currentUserId={userId}
+        isCachedPreview={isCachedPreview}
+        isOffline={isNetworkOffline || isShowingOfflineCache}
         liveExtra={liveData?.liveByKey[selectedSummary.key]}
         locale={locale}
         onBack={() => setSelectedKey(null)}
@@ -197,6 +212,15 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
           </Banner>
         ) : null}
 
+        {isNonNetworkError ? (
+          <Banner tone="danger">
+            <Body tone="danger">
+              {isMfaRequired(queueQuery.error) ? t('home.error.mfa') : t('home.error.generic')}
+            </Body>
+            <PrimaryButton label={t('home.retry')} onPress={() => void queueQuery.refetch()} />
+          </Banner>
+        ) : null}
+
         {isShowingOfflineCache && cachedSnapshot ? (
           <Banner tone="warn">
             <Body tone="warning">
@@ -219,193 +243,209 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
           </Banner>
         ) : null}
 
-        {queueQuery.isError && !cachedSnapshot ? (
+        {isNetworkOffline && !cachedSnapshot ? (
           <Banner tone="danger">
             <Body tone="danger">{t('home.error.generic')}</Body>
             <PrimaryButton label={t('home.retry')} onPress={() => void queueQuery.refetch()} />
           </Banner>
         ) : null}
 
-        {/* Category Filter Strip */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-          {filterChips.map((chip) => {
-            const selected = filter === chip.id;
-            return (
-              <Pressable
-                key={chip.id}
-                accessibilityRole="tab"
-                accessibilityLabel={chip.label}
-                accessibilityState={{ selected }}
-                onPress={() => setFilter(chip.id)}
-                style={{
-                  minHeight: 44,
-                  paddingHorizontal: 14,
-                  borderRadius: 22,
-                  borderWidth: 1,
-                  borderColor: selected ? palette.primary : palette.border,
-                  backgroundColor: selected ? palette.primary : palette.surface,
-                  justifyContent: 'center',
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: '600',
-                    color: selected ? palette.primaryText : palette.text,
-                  }}
-                >
-                  {chip.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+        {!isNonNetworkError ? (
+          <>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              {filterChips.map((chip) => {
+                const selected = filter === chip.id;
+                return (
+                  <Pressable
+                    key={chip.id}
+                    accessibilityRole="tab"
+                    accessibilityLabel={chip.label}
+                    accessibilityState={{ selected }}
+                    onPress={() => setFilter(chip.id)}
+                    style={{
+                      minHeight: 44,
+                      paddingHorizontal: 14,
+                      borderRadius: 22,
+                      borderWidth: 1,
+                      borderColor: selected ? palette.primary : palette.border,
+                      backgroundColor: selected ? palette.primary : palette.surface,
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: '600',
+                        color: selected ? palette.primaryText : palette.text,
+                      }}
+                    >
+                      {chip.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
 
-        {queueQuery.isPending && !activeSnapshot ? (
-          <View style={{ paddingVertical: 24, alignItems: 'center', gap: 10 }}>
-            <ActivityIndicator accessibilityLabel={t('approvals.loading')} />
-            <Body tone="muted">{t('approvals.loading')}</Body>
-          </View>
-        ) : filteredItems.length === 0 ? (
-          <View style={[styles.card, { borderColor: palette.border, backgroundColor: palette.surface }]}>
-            <SectionHeading>{t('approvals.emptyTitle')}</SectionHeading>
-            <Body tone="muted">{t('approvals.emptyBody')}</Body>
-            <PrimaryButton label={t('approvals.refresh')} onPress={() => void queueQuery.refetch()} />
-          </View>
-        ) : (
-          filteredItems.map((item) => {
-            const amountText = item.amount ? formatMoney(item.amount, item.currency ?? 'VND', locale) : null;
-            const dateText = item.dateLabel
-              ? formatDateShort(item.dateLabel, locale)
-              : formatDateTimeShort(item.createdAt, locale);
+            {queueQuery.isPending && !activeSnapshot ? (
+              <View style={{ paddingVertical: 24, alignItems: 'center', gap: 10 }}>
+                <ActivityIndicator accessibilityLabel={t('approvals.loading')} />
+                <Body tone="muted">{t('approvals.loading')}</Body>
+              </View>
+            ) : filteredItems.length === 0 ? (
+              <View style={[styles.card, { borderColor: palette.border, backgroundColor: palette.surface }]}>
+                <SectionHeading>{t('approvals.emptyTitle')}</SectionHeading>
+                <Body tone="muted">{t('approvals.emptyBody')}</Body>
+                <PrimaryButton label={t('approvals.refresh')} onPress={() => void queueQuery.refetch()} />
+              </View>
+            ) : (
+              filteredItems.map((item) => {
+                const amountText = item.amount
+                  ? formatMoney(item.amount, item.currency, locale)
+                  : null;
+                const dateText = item.dateLabel
+                  ? formatDateShort(item.dateLabel, locale)
+                  : formatDateTimeShort(item.createdAt, locale);
 
-            const accessibilitySummary = [
-              item.title,
-              item.counterparty,
-              amountText,
-              item.aiCoworker ? t('approvals.ai.preparedBy', { name: item.aiCoworker.label }) : null,
-            ]
-              .filter(Boolean)
-              .join(', ');
+                const accessibilitySummary = [
+                  item.title,
+                  item.counterparty,
+                  amountText,
+                  item.aiCoworker ? t('approvals.ai.preparedBy', { name: item.aiCoworker.label }) : null,
+                ]
+                  .filter(Boolean)
+                  .join(', ');
 
-            return (
-              <Pressable
-                key={item.key}
-                accessibilityRole="button"
-                accessibilityLabel={accessibilitySummary}
-                onPress={() => {
-                  setBannerMessage(null);
-                  setSelectedKey(item.key);
-                }}
-                style={[
-                  styles.card,
-                  { borderColor: palette.border, backgroundColor: palette.surface, minHeight: 72 },
-                ]}
-              >
-                <View style={styles.row}>
-                  <Text style={[styles.cardTitle, { color: palette.text, flex: 1 }]}>{item.title}</Text>
-                  {amountText ? (
-                    <Text style={[styles.amount, { color: palette.text }]}>{amountText}</Text>
-                  ) : null}
-                </View>
+                return (
+                  <Pressable
+                    key={item.key}
+                    accessibilityRole="button"
+                    accessibilityLabel={accessibilitySummary}
+                    onPress={() => {
+                      setBannerMessage(null);
+                      setSelectedKey(item.key);
+                    }}
+                    style={[
+                      styles.card,
+                      { borderColor: palette.border, backgroundColor: palette.surface, minHeight: 72 },
+                    ]}
+                  >
+                    <View style={styles.row}>
+                      <Text style={[styles.cardTitle, { color: palette.text, flex: 1 }]}>{item.title}</Text>
+                      {amountText ? (
+                        <Text style={[styles.amount, { color: palette.text }]}>{amountText}</Text>
+                      ) : null}
+                    </View>
 
-                {item.counterparty ? (
-                  <Text style={[styles.meta, { color: palette.text }]}>{item.counterparty}</Text>
-                ) : item.subtitle ? (
-                  <Text style={[styles.meta, { color: palette.muted }]}>{item.subtitle}</Text>
-                ) : null}
-
-                {dateText ? (
-                  <Text style={[styles.meta, { color: palette.muted }]}>{dateText}</Text>
-                ) : null}
-
-                <View style={styles.actionsRow}>
-                  {item.aiCoworker ? (
-                    <Badge
-                      label={t('approvals.ai.preparedBy', { name: item.aiCoworker.label })}
-                      tone="info"
-                    />
-                  ) : null}
-                  {item.requiresStepUp ? <Badge label={t('approvals.badge.stepUp')} tone="info" /> : null}
-                  {item.failedChecks > 0 ? (
-                    <Badge
-                      label={t('approvals.badge.failedChecks', { count: String(item.failedChecks) })}
-                      tone="danger"
-                    />
-                  ) : null}
-                  {item.warnChecks > 0 ? (
-                    <Badge
-                      label={t('approvals.badge.warnChecks', { count: String(item.warnChecks) })}
-                      tone="warn"
-                    />
-                  ) : null}
-                  {item.unclassifiedLines > 0 ? (
-                    <Badge
-                      label={t('approvals.badge.unclassified', { count: String(item.unclassifiedLines) })}
-                      tone="warn"
-                    />
-                  ) : null}
-                  {item.multiDecisionOnly ? (
-                    <Badge label={t('approvals.badge.webOnly')} tone="warn" />
-                  ) : null}
-                </View>
-              </Pressable>
-            );
-          })
-        )}
-
-        {/* Cross-app "Hôm nay cần bạn" web hand-off notices */}
-        {todayNotices.length > 0 ? (
-          <View style={{ gap: 10, marginTop: 8 }}>
-            <SectionHeading>{t('approvals.today.heading')}</SectionHeading>
-            {todayNotices.map((notice) => {
-              const titleText = formatTodayNoticeTitle(notice);
-              return (
-                <View
-                  key={notice.key}
-                  style={[styles.card, { borderColor: palette.border, backgroundColor: palette.surface }]}
-                >
-                  <View style={styles.row}>
-                    <Badge
-                      label={`${noticeKindLabel(notice.kind)} (${notice.app})`}
-                      tone={notice.severity === 'block' ? 'danger' : notice.severity === 'warn' ? 'warn' : 'info'}
-                    />
-                    {notice.amount ? (
-                      <Text style={[styles.amount, { color: palette.text }]}>
-                        {formatMoney(notice.amount, notice.currency ?? 'VND', locale)}
-                      </Text>
+                    {item.counterparty ? (
+                      <Text style={[styles.meta, { color: palette.text }]}>{item.counterparty}</Text>
+                    ) : item.subtitle ? (
+                      <Text style={[styles.meta, { color: palette.muted }]}>{item.subtitle}</Text>
                     ) : null}
-                  </View>
-                  <Body>{titleText}</Body>
-                  <View style={styles.actionsRow}>
-                    {notice.aiCoworkerLabel ? (
-                      <Badge
-                        label={t('approvals.ai.preparedBy', { name: notice.aiCoworkerLabel })}
-                        tone="info"
+
+                    {dateText ? (
+                      <Text style={[styles.meta, { color: palette.muted }]}>{dateText}</Text>
+                    ) : null}
+
+                    <View style={styles.actionsRow}>
+                      {item.aiCoworker ? (
+                        <Badge
+                          label={t('approvals.ai.preparedBy', { name: item.aiCoworker.label })}
+                          tone="info"
+                        />
+                      ) : null}
+                      {item.requiresStepUp ? <Badge label={t('approvals.badge.stepUp')} tone="info" /> : null}
+                      {item.failedChecks > 0 ? (
+                        <Badge
+                          label={t('approvals.badge.failedChecks', { count: String(item.failedChecks) })}
+                          tone="danger"
+                        />
+                      ) : null}
+                      {item.warnChecks > 0 ? (
+                        <Badge
+                          label={t('approvals.badge.warnChecks', { count: String(item.warnChecks) })}
+                          tone="warn"
+                        />
+                      ) : null}
+                      {item.anomalyChecks && item.anomalyChecks > 0 ? (
+                        <Badge
+                          label={t('approvals.badge.anomalyChecks', { count: String(item.anomalyChecks) })}
+                          tone="warn"
+                        />
+                      ) : null}
+                      {item.unclassifiedLines > 0 ? (
+                        <Badge
+                          label={t('approvals.badge.unclassified', { count: String(item.unclassifiedLines) })}
+                          tone="warn"
+                        />
+                      ) : null}
+                      {item.multiDecisionOnly ? (
+                        <Badge label={t('approvals.badge.webOnly')} tone="warn" />
+                      ) : null}
+                    </View>
+                  </Pressable>
+                );
+              })
+            )}
+
+            {todayNotices.length > 0 ? (
+              <View style={{ gap: 10, marginTop: 8 }}>
+                <SectionHeading>{t('approvals.today.heading')}</SectionHeading>
+                {todayNotices.map((notice) => {
+                  const titleText = formatTodayNoticeTitle(notice, locale);
+                  return (
+                    <View
+                      key={notice.key}
+                      style={[styles.card, { borderColor: palette.border, backgroundColor: palette.surface }]}
+                    >
+                      <View style={styles.row}>
+                        <Badge
+                          label={`${noticeKindLabel(notice.kind)} (${notice.app})`}
+                          tone={
+                            notice.severity === 'block'
+                              ? 'danger'
+                              : notice.severity === 'warn'
+                                ? 'warn'
+                                : 'info'
+                          }
+                        />
+                        {notice.amount ? (
+                          <Text style={[styles.amount, { color: palette.text }]}>
+                            {formatMoney(notice.amount, notice.currency ?? 'VND', locale)}
+                          </Text>
+                        ) : null}
+                      </View>
+                      <Body>{titleText}</Body>
+                      <View style={styles.actionsRow}>
+                        {notice.aiCoworkerLabel ? (
+                          <Badge
+                            label={t('approvals.ai.preparedBy', { name: notice.aiCoworkerLabel })}
+                            tone="info"
+                          />
+                        ) : null}
+                        {notice.count ? (
+                          <Badge
+                            label={t('approvals.today.countHint', { count: String(notice.count) })}
+                            tone="info"
+                          />
+                        ) : null}
+                        {notice.dueAt ? (
+                          <Badge
+                            label={t('approvals.today.dueAt', { date: formatDateShort(notice.dueAt, locale) })}
+                            tone="warn"
+                          />
+                        ) : null}
+                      </View>
+                      <LinkButton
+                        label={t('approvals.action.openWeb')}
+                        accessibilityLabel={`${t('approvals.action.openWeb')}: ${titleText}`}
+                        onPress={() => void openWebPath(notice.webPath)}
                       />
-                    ) : null}
-                    {notice.count ? (
-                      <Badge
-                        label={t('approvals.today.countHint', { count: String(notice.count) })}
-                        tone="info"
-                      />
-                    ) : null}
-                    {notice.dueAt ? (
-                      <Badge
-                        label={t('approvals.today.dueAt', { date: formatDateShort(notice.dueAt, locale) })}
-                        tone="warn"
-                      />
-                    ) : null}
-                  </View>
-                  <LinkButton
-                    label={t('approvals.action.openWeb')}
-                    accessibilityLabel={`${t('approvals.action.openWeb')}: ${titleText}`}
-                    onPress={() => void openWebPath(notice.webPath)}
-                  />
-                </View>
-              );
-            })}
-          </View>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : null}
+          </>
         ) : null}
 
         <View style={{ marginTop: 12, alignItems: 'center', gap: 4 }}>

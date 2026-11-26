@@ -53,18 +53,43 @@ const ENGAGE_PROPOSAL_KINDS = new Set([
   'ads.manage_cancel',
 ]);
 
+const HR_QUEUE_TODAY_IDS = new Set([
+  'leave-approvals',
+  'salary-advance-approvals',
+  'business-trip-approvals',
+  'leave-approvals-l1',
+  'salary-advance-approvals-l1',
+  'business-trip-approvals-l1',
+]);
+
 export function isEngageProposalKind(kind: string): boolean {
   return ENGAGE_PROPOSAL_KINDS.has(kind);
 }
 
 export function isAdsProposalKind(kind: string): boolean {
+  if (isEngageProposalKind(kind)) return false;
   return (
     kind === 'ads.write_enable' ||
     kind === 'ads.account_enable' ||
     kind === 'ads.cap_set' ||
+    kind === 'ads.launches_unblock' ||
     kind === 'ads.campaign_launch' ||
-    kind === 'ads.launch_enable' ||
-    kind.startsWith('ads.')
+    kind === 'ads.object_resume' ||
+    kind === 'ads.budget_raise' ||
+    kind === 'ads.schedule_extend'
+  );
+}
+
+export function isSupportedMobileInboxKind(kind: string): boolean {
+  return (
+    kind === 'finance.purchase' ||
+    kind === 'finance.sale' ||
+    kind === 'finance.cash_voucher' ||
+    kind === 'finance.journal_voucher' ||
+    kind === 'finance.journal_reversal' ||
+    kind === 'finance.einvoice_issue' ||
+    isAdsProposalKind(kind) ||
+    isEngageProposalKind(kind)
   );
 }
 
@@ -173,14 +198,15 @@ export function isLikelyNetworkError(error: unknown): boolean {
 }
 
 function inboxAmountAndCurrency(item: InboxListItem): { amount: string | null; currency: string | null } {
-  if (item.total !== null) {
-    return { amount: item.total, currency: 'VND' };
+  if (item.kind === 'finance.cash_voucher' || item.kind === 'finance.journal_voucher') {
+    return { amount: item.total, currency: item.total ? 'VND' : null };
   }
   if (item.kind === 'finance.supplier_payment') {
     const hint = parseMoneyHintFromTitle(item.title);
     if (hint) return { amount: hint.amount, currency: hint.currency };
   }
-  return { amount: null, currency: null };
+  // `inbox.list` omits currency on invoices/ads/crm proposals; detail fetch provides the exact ISO currency.
+  return { amount: item.total, currency: null };
 }
 
 function inboxCounterparty(item: InboxListItem): string | null {
@@ -188,12 +214,16 @@ function inboxCounterparty(item: InboxListItem): string | null {
   return item.sellerName ?? item.buyerName;
 }
 
+function hrWebPath(role: OrgDetail['role']): string {
+  return role === 'owner' || role === 'admin' ? '/hr/employees' : '/hr/my';
+}
+
 function buildInboxSummary(
   item: InboxListItem,
   coworkers: CachedCoworkerDirectory,
 ): CachedApprovalSummary {
   const { amount, currency } = inboxAmountAndCurrency(item);
-  const requiresStepUp = true; // Kernel `inbox.approve` is always R3.
+  const supportedOnMobile = isSupportedMobileInboxKind(item.kind);
   return {
     key: itemKey('inbox', item.id),
     source: 'inbox',
@@ -204,17 +234,18 @@ function buildInboxSummary(
     counterparty: inboxCounterparty(item),
     amount,
     currency,
-    requiresStepUp,
+    requiresStepUp: true,
     requiresNetwork: true,
     createdAt: item.createdAt,
     dateLabel: item.issueDate,
     failedChecks: item.failedChecks,
-    warnChecks: item.warnChecks + (item.anomalyChecks ?? 0),
+    warnChecks: item.warnChecks,
+    anomalyChecks: item.anomalyChecks ?? 0,
     unclassifiedLines: item.unclassifiedLines,
     aiCoworker: resolveInboxCoworker(item, coworkers),
     webPath: `/inbox/${encodeURIComponent(item.id)}`,
-    multiDecisionOnly: false,
-    multiDecisionReason: null,
+    multiDecisionOnly: !supportedOnMobile,
+    multiDecisionReason: supportedOnMobile ? null : 'unsupported_on_mobile',
     revision: item.revision,
   };
 }
@@ -239,9 +270,10 @@ function buildLeaveSummary(item: HrLeaveRequestItem, role: OrgDetail['role']): C
     dateLabel: `${item.startOn}..${item.endOn}`,
     failedChecks: 0,
     warnChecks: 0,
+    anomalyChecks: 0,
     unclassifiedLines: 0,
     aiCoworker: null,
-    webPath: '/hr/employees',
+    webPath: hrWebPath(role),
     multiDecisionOnly: blockedByRole || (!canActAsL1 && !canActFinal),
     multiDecisionReason: blockedByRole ? 'insufficient_role' : null,
     revision: null,
@@ -251,7 +283,7 @@ function buildLeaveSummary(item: HrLeaveRequestItem, role: OrgDetail['role']): C
 
 function buildAdvanceSummary(
   item: HrAdvanceRequestItem,
-  coworkers: CachedCoworkerDirectory,
+  role: OrgDetail['role'],
 ): CachedApprovalSummary | null {
   if (!item.canApproveL1 && !item.canApproveFinal) return null;
   return {
@@ -264,16 +296,16 @@ function buildAdvanceSummary(
     counterparty: item.departmentName,
     amount: item.amount,
     currency: 'VND',
-    // Monetary request (payroll advance): guard with biometric confirmation.
     requiresStepUp: true,
     requiresNetwork: true,
     createdAt: item.createdAt,
     dateLabel: item.month,
     failedChecks: 0,
     warnChecks: 0,
+    anomalyChecks: 0,
     unclassifiedLines: 0,
     aiCoworker: null,
-    webPath: coworkers ? '/hr/employees' : '/hr/employees',
+    webPath: hrWebPath(role),
     multiDecisionOnly: false,
     multiDecisionReason: null,
     revision: null,
@@ -281,7 +313,10 @@ function buildAdvanceSummary(
   };
 }
 
-function buildTripSummary(item: HrTripRequestItem): CachedApprovalSummary | null {
+function buildTripSummary(
+  item: HrTripRequestItem,
+  role: OrgDetail['role'],
+): CachedApprovalSummary | null {
   if (!item.canApproveL1 && !item.canApproveFinal) return null;
   const hasMoney = isPositiveMoney(item.estimatedAllowance);
   return {
@@ -300,9 +335,10 @@ function buildTripSummary(item: HrTripRequestItem): CachedApprovalSummary | null
     dateLabel: item.startOn,
     failedChecks: 0,
     warnChecks: 0,
+    anomalyChecks: 0,
     unclassifiedLines: 0,
     aiCoworker: null,
-    webPath: '/hr/employees',
+    webPath: hrWebPath(role),
     multiDecisionOnly: false,
     multiDecisionReason: null,
     revision: null,
@@ -311,7 +347,6 @@ function buildTripSummary(item: HrTripRequestItem): CachedApprovalSummary | null
 }
 
 function compareQueueOrder(a: CachedApprovalSummary, b: CachedApprovalSummary): number {
-  // Prioritize failed/flagged items and monetary R3 items, then newest first.
   const aRisk = a.failedChecks > 0 ? 0 : 1;
   const bRisk = b.failedChecks > 0 ? 0 : 1;
   if (aRisk !== bRisk) return aRisk - bRisk;
@@ -336,12 +371,27 @@ async function safeRead<T>(
   }
 }
 
+function dedupeById<T extends { id: string }>(lists: readonly T[][]): T[] {
+  const seen = new Set<string>();
+  const merged: T[] = [];
+  for (const list of lists) {
+    for (const item of list) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
 interface LoadApprovalsParams {
   client: LudyClient;
   serverUrl: string;
   orgSlug: string;
   now?: () => number;
 }
+
+const HR_FETCH_LIMIT = 100;
 
 export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promise<LiveApprovalsSnapshot> {
   const { client, serverUrl, orgSlug } = params;
@@ -380,7 +430,7 @@ export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promis
     marketing: todayRes.value.coworkers.marketing || DEFAULT_COWORKERS.marketing,
   };
 
-  let partialFailureCount = (todayRes.failed ? 1 : 0) + (inboxRes.failed ? 1 : 0);
+  let partialFailureCount = (todayRes.failed ? 1 : 0) + (inboxRes.failed ? 1 : 0) + (todayRes.value.failed > 0 ? 1 : 0);
 
   const items: CachedApprovalSummary[] = [];
   const liveByKey: Record<string, LiveApprovalExtra> = {};
@@ -392,7 +442,6 @@ export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promis
     liveByKey[summary.key] = { inbox: inboxItem };
   }
 
-  // Social reviews (owners and admins only, when Social module is effective).
   if (isAdminOrOwner && effectiveApps.has('social')) {
     const socialRes = await safeRead(() => client.social.reviewInbox({}), { items: [], total: 0 });
     if (socialRes.failed) partialFailureCount += 1;
@@ -415,10 +464,10 @@ export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promis
         dateLabel: reviewItem.at,
         failedChecks: 0,
         warnChecks: 0,
+        anomalyChecks: 0,
         unclassifiedLines: 0,
-        // Detailed AI provenance (`origin === 'ai' || tainted`) comes from `social.posts.get`.
         aiCoworker: null,
-        webPath: `/social/posts/${encodeURIComponent(reviewItem.postId)}`,
+        webPath: `/social/${encodeURIComponent(reviewItem.postId)}`,
         multiDecisionOnly: multiChannel,
         multiDecisionReason: multiChannel ? 'multiple_channels' : null,
         revision: null,
@@ -434,55 +483,64 @@ export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promis
     }
   }
 
-  // HR pending leave requests, salary advances and business trips (when HR module is effective).
   if (effectiveApps.has('hr') && role !== 'viewer') {
     if (isAdminOrOwner) {
-      const [leavesRes, advancesRes, tripsRes] = await Promise.all([
-        safeRead(() => client.hr.leaveRequests.list({ limit: 100 }), [] as HrLeaveRequestItem[]),
-        safeRead(() => client.hr.salaryAdvances.list({ limit: 100 }), [] as HrAdvanceRequestItem[]),
-        safeRead(() => client.hr.businessTrips.list({ limit: 100 }), [] as HrTripRequestItem[]),
+      const [leavesL1, leavesFinal, advancesL1, advancesFinal, tripsL1, tripsFinal] = await Promise.all([
+        safeRead(() => client.hr.leaveRequests.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }), [] as HrLeaveRequestItem[]),
+        safeRead(() => client.hr.leaveRequests.list({ status: 'pending_final', limit: HR_FETCH_LIMIT }), [] as HrLeaveRequestItem[]),
+        safeRead(() => client.hr.salaryAdvances.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }), [] as HrAdvanceRequestItem[]),
+        safeRead(() => client.hr.salaryAdvances.list({ status: 'pending_final', limit: HR_FETCH_LIMIT }), [] as HrAdvanceRequestItem[]),
+        safeRead(() => client.hr.businessTrips.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }), [] as HrTripRequestItem[]),
+        safeRead(() => client.hr.businessTrips.list({ status: 'pending_final', limit: HR_FETCH_LIMIT }), [] as HrTripRequestItem[]),
       ]);
-      if (leavesRes.failed) partialFailureCount += 1;
-      if (advancesRes.failed) partialFailureCount += 1;
-      if (tripsRes.failed) partialFailureCount += 1;
 
-      for (const leave of leavesRes.value) {
+      const hrBatch = [leavesL1, leavesFinal, advancesL1, advancesFinal, tripsL1, tripsFinal];
+      for (const res of hrBatch) {
+        if (res.failed || res.value.length >= HR_FETCH_LIMIT) partialFailureCount += 1;
+      }
+
+      for (const leave of dedupeById([leavesL1.value, leavesFinal.value])) {
         if (leave.status !== 'pending_l1' && leave.status !== 'pending_final') continue;
         const summary = buildLeaveSummary(leave, role);
         items.push(summary);
         liveByKey[summary.key] = { leave };
       }
-      for (const adv of advancesRes.value) {
-        const summary = buildAdvanceSummary(adv, coworkers);
+      for (const adv of dedupeById([advancesL1.value, advancesFinal.value])) {
+        const summary = buildAdvanceSummary(adv, role);
         if (!summary) continue;
         items.push(summary);
         liveByKey[summary.key] = { advance: adv };
       }
-      for (const trip of tripsRes.value) {
-        const summary = buildTripSummary(trip);
+      for (const trip of dedupeById([tripsL1.value, tripsFinal.value])) {
+        const summary = buildTripSummary(trip, role);
         if (!summary) continue;
         items.push(summary);
         liveByKey[summary.key] = { trip };
       }
     } else if (role === 'member') {
       const profileRes = await safeRead(() => client.hr.self.profile.get({}), null);
+      if (profileRes.failed) partialFailureCount += 1;
       if (profileRes.value && profileRes.value.managedDepartments.length > 0) {
         const managedIds = new Set(profileRes.value.managedDepartments.map((d) => d.id));
         const selfEmpId = profileRes.value.employeeId;
         const [leavesRes, advRes, tripRes] = await Promise.all([
           safeRead(
-            () => client.hr.self.leave.requests({ scope: 'all', status: 'pending_l1', limit: 100 }),
+            () => client.hr.self.leave.requests({ scope: 'all', status: 'pending_l1', limit: HR_FETCH_LIMIT }),
             [] as HrLeaveRequestItem[],
           ),
           safeRead(
-            () => client.hr.self.salaryAdvance.list({ status: 'pending_l1', limit: 100 }),
+            () => client.hr.self.salaryAdvance.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }),
             { employeeId: null, employeeName: null, departmentId: null, items: [], l1Queue: [] },
           ),
           safeRead(
-            () => client.hr.self.businessTrips.list({ status: 'pending_l1', limit: 100 }),
+            () => client.hr.self.businessTrips.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }),
             { employeeId: null, employeeName: null, departmentId: null, items: [], l1Queue: [] },
           ),
         ]);
+        if (leavesRes.failed || leavesRes.value.length >= HR_FETCH_LIMIT) partialFailureCount += 1;
+        if (advRes.failed || advRes.value.l1Queue.length >= HR_FETCH_LIMIT) partialFailureCount += 1;
+        if (tripRes.failed || tripRes.value.l1Queue.length >= HR_FETCH_LIMIT) partialFailureCount += 1;
+
         for (const leave of leavesRes.value) {
           if (leave.status !== 'pending_l1') continue;
           if (selfEmpId && leave.employeeId === selfEmpId) continue;
@@ -492,13 +550,13 @@ export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promis
           liveByKey[summary.key] = { leave };
         }
         for (const adv of advRes.value.l1Queue) {
-          const summary = buildAdvanceSummary(adv, coworkers);
+          const summary = buildAdvanceSummary(adv, role);
           if (!summary) continue;
           items.push(summary);
           liveByKey[summary.key] = { advance: adv };
         }
         for (const trip of tripRes.value.l1Queue) {
-          const summary = buildTripSummary(trip);
+          const summary = buildTripSummary(trip, role);
           if (!summary) continue;
           items.push(summary);
           liveByKey[summary.key] = { trip };
@@ -509,14 +567,14 @@ export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promis
 
   items.sort(compareQueueOrder);
 
-  // Build "Hôm nay cần bạn" notice strip (flags, deadlines, messages, and non-queue proposals for web hand-off).
   const todayNotices: CachedTodayNotice[] = [];
   for (const notice of todayRes.value.items) {
     if (notice.annotates === 'proposal') continue;
-    if (notice.kind === 'proposal' && (notice.app === 'finance' || notice.app === 'social' || notice.app === 'hr')) {
-      // Individual pending proposals are already represented in `items`.
-      continue;
-    }
+    // Skip only the exact summary notices already replaced by individual items in `items`.
+    if (notice.app === 'finance' && notice.kind === 'proposal') continue;
+    if (notice.app === 'social' && notice.id === 'review') continue;
+    if (notice.app === 'hr' && HR_QUEUE_TODAY_IDS.has(notice.id)) continue;
+
     const coworkerId = todayCoworkerKeyForApp(notice.app);
     todayNotices.push({
       key: `${notice.app}:${notice.kind}:${notice.id}`,

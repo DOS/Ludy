@@ -2,7 +2,7 @@
 // Detail screen for a single cross-app approval item with biometric step-up, inline account edit and web hand-off (issue #4881).
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -15,7 +15,7 @@ import {
 import { normalizeServerUrl } from '../../config.ts';
 import { externalBrowser } from '../../platform/browser.ts';
 import { deviceCrypto } from '../../platform/crypto.ts';
-import { clientFor, SERVER_POLICY, stepUp, t } from '../../runtime.ts';
+import { clientFor, SERVER_POLICY, session, stepUp, t } from '../../runtime.ts';
 import {
   Badge,
   Banner,
@@ -38,14 +38,16 @@ import {
   editInboxProposal,
   rejectInboxProposal,
 } from './actions.ts';
-import type { CachedApprovalSummary } from './cache.ts';
+import type { CachedApprovalSummary, CachedCoworkerDirectory } from './cache.ts';
 import {
   buildWebUrl,
+  createIdempotencyKey,
   formatDateShort,
   formatMoney,
   type Locale,
 } from './format.ts';
 import {
+  DEFAULT_COWORKERS,
   isAdsProposalKind,
   isLikelyNetworkError,
   type ChartAccount,
@@ -53,6 +55,7 @@ import {
   type OrgDetail,
 } from './model.ts';
 import {
+  pickableAccountsForMobile,
   resolveHrActionGuards,
   resolveInboxActionGuards,
   resolveSocialActionGuards,
@@ -63,29 +66,47 @@ export interface ApprovalDetailScreenProps {
   orgSlug: string;
   locale: Locale;
   role: OrgDetail['role'];
+  currentUserId: string | null;
+  coworkers?: CachedCoworkerDirectory;
   summary: CachedApprovalSummary;
   liveExtra?: LiveApprovalExtra;
   isOffline: boolean;
+  isCachedPreview: boolean;
   onBack: () => void;
   onCompleted: (message: string) => void;
 }
 
+const INITIAL_LINES_PREVIEW = 25;
+const MAX_ACCOUNT_PICKER_ROWS = 80;
+
 export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
-  const { serverUrl, orgSlug, locale, role, summary, liveExtra, isOffline } = props;
+  const { serverUrl, orgSlug, locale, role, currentUserId, coworkers, summary, liveExtra, isOffline, isCachedPreview } = props;
   const palette = usePalette();
   const qc = useQueryClient();
   const client = useMemo(() => clientFor(serverUrl), [serverUrl]);
 
   const [busyAction, setBusyAction] = useState<'approve' | 'edit' | 'reject' | 'changes' | null>(null);
   const [note, setNote] = useState('');
-  const [acceptFailedChecks, setAcceptFailedChecks] = useState(false);
-  const [acceptUnverifiedSig, setAcceptUnverifiedSig] = useState(false);
+  const [failedAckRevision, setFailedAckRevision] = useState<number | null>(null);
+  const [sigAckRevision, setSigAckRevision] = useState<number | null>(null);
   const [editingAccounts, setEditingAccounts] = useState(false);
   const [lineEdits, setLineEdits] = useState<Record<number, string>>({});
   const [pickingLineNo, setPickingLineNo] = useState<number | null>(null);
+  const [pickingCurrentAcct, setPickingCurrentAcct] = useState<string | null>(null);
   const [accountSearch, setAccountSearch] = useState('');
+  const [showAllLines, setShowAllLines] = useState(false);
   const [tickedChecklistIds, setTickedChecklistIds] = useState<Record<string, boolean>>({});
   const [feedback, setFeedback] = useState<{ tone: 'info' | 'warn' | 'danger'; text: string; showWebButton?: boolean } | null>(null);
+
+  // Reuse one idempotency key per `(action, revision)` across transient retries until resolved or revision advances.
+  const retryKeysRef = useRef<Map<string, string>>(new Map());
+  function idempotencyKeyFor(slot: string): string {
+    const existing = retryKeysRef.current.get(slot);
+    if (existing) return existing;
+    const created = createIdempotencyKey(deviceCrypto);
+    retryKeysRef.current.set(slot, created);
+    return created;
+  }
 
   const inboxDetailQuery = useQuery({
     queryKey: ['approvals', 'inbox-detail', serverUrl, orgSlug, summary.id],
@@ -124,19 +145,37 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     enabled: editingAccounts && summary.source === 'inbox',
   });
 
-  const activeAccounts = useMemo<ChartAccount[]>(() => {
-    const list = (accountsQuery.data ?? []).filter((a) => a.active);
-    const q = accountSearch.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter(
-      (a) => a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q),
+  const inboxDetail = inboxDetailQuery.data ?? null;
+  const purchasePayload =
+    summary.source === 'inbox' &&
+    (summary.subtype === 'finance.purchase' || summary.subtype === 'finance.sale')
+      ? (inboxDetail?.payload ?? null)
+      : null;
+  const invoiceDirection: 'purchase' | 'sale' =
+    purchasePayload?.direction === 'sale' || inboxDetail?.direction === 'sale' ? 'sale' : 'purchase';
+
+  const { filteredAccounts, totalDirectionalAccounts } = useMemo<{
+    filteredAccounts: ChartAccount[];
+    totalDirectionalAccounts: number;
+  }>(() => {
+    const directional = pickableAccountsForMobile(
+      accountsQuery.data ?? [],
+      invoiceDirection,
+      pickingCurrentAcct,
     );
-  }, [accountsQuery.data, accountSearch]);
+    const q = accountSearch.trim().toLowerCase();
+    const matches = q
+      ? directional.filter((a) => a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q))
+      : directional;
+    return { filteredAccounts: matches, totalDirectionalAccounts: matches.length };
+  }, [accountsQuery.data, invoiceDirection, pickingCurrentAcct, accountSearch]);
 
   const effectiveOffline =
     isOffline ||
     (inboxDetailQuery.isError && isLikelyNetworkError(inboxDetailQuery.error)) ||
-    (socialDetailQuery.isError && isLikelyNetworkError(socialDetailQuery.error));
+    (socialDetailQuery.isError && isLikelyNetworkError(socialDetailQuery.error)) ||
+    (einvoiceQuery.isError && isLikelyNetworkError(einvoiceQuery.error)) ||
+    (adsQuery.isError && isLikelyNetworkError(adsQuery.error));
 
   async function handleOpenWeb(pathOverride?: string) {
     const url = buildWebUrl(serverUrl, orgSlug, pathOverride ?? summary.webPath, SERVER_POLICY);
@@ -156,6 +195,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     code?: string | null;
     message?: string;
   }) {
+    if (outcome.reason === 'auth') return;
     if (outcome.reason === 'biometric') {
       setFeedback({ tone: 'warn', text: t('approvals.outcome.biometricCancelled') });
       return;
@@ -177,11 +217,6 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     props.onCompleted(doneMessage);
   }
 
-  const inboxDetail = inboxDetailQuery.data ?? null;
-  const purchasePayload =
-    summary.source === 'inbox' && summary.subtype === 'finance.purchase'
-      ? (inboxDetail?.payload ?? null)
-      : null;
   const voucherPayload = inboxDetail?.voucher ?? null;
   const journalVoucherPayload = inboxDetail?.journalVoucher ?? null;
   const reversalPayload = inboxDetail?.reversal ?? null;
@@ -190,18 +225,32 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
   const adsChange = adsQuery.data?.change ?? null;
   const socialPost = socialDetailQuery.data ?? null;
 
+  const acceptFailedChecks = Boolean(inboxDetail && failedAckRevision === inboxDetail.revision);
+  const acceptUnverifiedSig = Boolean(inboxDetail && sigAckRevision === inboxDetail.revision);
+
   const inboxGuards = resolveInboxActionGuards(inboxDetail, {
     isOffline: effectiveOffline,
     editingAccounts,
     acceptFailedChecks,
     acceptUnverifiedSig,
+    einvoiceLoaded: einvoiceDetail !== null,
+    adsLoaded: adsChange !== null,
   });
+
   const socialGuards = resolveSocialActionGuards(summary, socialPost, {
     isOffline: effectiveOffline,
+    currentUserId,
     tickedChecklistIds,
   });
+
+  const hasLiveHrItem =
+    (summary.source === 'hr_leave' && liveExtra?.leave !== undefined) ||
+    (summary.source === 'hr_salary_advance' && liveExtra?.advance !== undefined) ||
+    (summary.source === 'hr_business_trip' && liveExtra?.trip !== undefined);
+
   const hrGuards = resolveHrActionGuards(summary, role, {
     isOffline: effectiveOffline,
+    hasLiveItem: !isCachedPreview && hasLiveHrItem,
     canApproveL1:
       summary.source === 'hr_salary_advance'
         ? liveExtra?.advance?.canApproveL1
@@ -212,13 +261,18 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
 
   const pendingSocialVariants = socialGuards.pendingVariants;
   const singleSocialVariant = socialGuards.singleVariant;
+  const marketingCoworkerName = coworkers?.marketing ?? DEFAULT_COWORKERS.marketing;
 
   const displayedAiCoworker = useMemo(() => {
     if (summary.aiCoworker) return summary.aiCoworker.label;
-    if (socialPost && (socialPost.origin === 'ai' || socialPost.tainted)) return 'Uy';
-    if (adsChange?.change === 'campaign_launch' && adsChange.origin === 'ai') return 'Uy';
+    if (socialPost && (socialPost.origin === 'ai' || socialPost.tainted)) return marketingCoworkerName;
+    if (adsChange?.change === 'campaign_launch' && adsChange.origin === 'ai') return marketingCoworkerName;
     return null;
-  }, [summary.aiCoworker, socialPost, adsChange]);
+  }, [summary.aiCoworker, socialPost, adsChange, marketingCoworkerName]);
+
+  const onKernelError = (err: unknown) => {
+    void session.reportKernelError(err);
+  };
 
   async function onApproveInbox() {
     if (!inboxDetail) return;
@@ -232,9 +286,10 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     }
     setFeedback(null);
     setBusyAction('approve');
+    const slot = `approve:${inboxDetail.id}:${inboxDetail.revision}`;
     try {
       const outcome = await approveInboxProposal(
-        { client, stepUp, crypto: deviceCrypto, isOffline: effectiveOffline },
+        { client, stepUp, crypto: deviceCrypto, isOffline: effectiveOffline, onKernelError },
         {
           id: inboxDetail.id,
           revision: inboxDetail.revision,
@@ -242,12 +297,14 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
           note,
           acceptFailedChecks: inboxGuards.needsFailedAck ? acceptFailedChecks : undefined,
           acceptUnverifiedSignature: inboxGuards.needsSigAck ? acceptUnverifiedSig : undefined,
+          idempotencyKey: idempotencyKeyFor(slot),
         },
       );
       if (!outcome.ok) {
         applyOutcomeError(outcome);
         return;
       }
+      retryKeysRef.current.delete(slot);
       await refreshAfterWrite(t('approvals.outcome.approved'));
     } finally {
       setBusyAction(null);
@@ -268,21 +325,26 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     }
     setFeedback(null);
     setBusyAction('edit');
+    const slot = `edit:${inboxDetail.id}:${inboxDetail.revision}`;
     try {
       const outcome = await editInboxProposal(
-        { client, crypto: deviceCrypto, isOffline: effectiveOffline },
+        { client, crypto: deviceCrypto, isOffline: effectiveOffline, onKernelError },
         {
           id: inboxDetail.id,
           revision: inboxDetail.revision,
           lineAccounts: changedLines,
+          idempotencyKey: idempotencyKeyFor(slot),
         },
       );
       if (!outcome.ok) {
         applyOutcomeError(outcome);
         return;
       }
+      retryKeysRef.current.delete(slot);
       setEditingAccounts(false);
       setLineEdits({});
+      setFailedAckRevision(null);
+      setSigAckRevision(null);
       await qc.invalidateQueries({ queryKey: ['approvals', 'inbox-detail', serverUrl, orgSlug, summary.id] });
       await qc.invalidateQueries({ queryKey: ['approvals', serverUrl, orgSlug] });
       setFeedback({ tone: 'info', text: t('approvals.detail.editSaved') });
@@ -297,7 +359,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     setBusyAction('reject');
     try {
       const outcome = await rejectInboxProposal(
-        { client, isOffline: effectiveOffline },
+        { client, isOffline: effectiveOffline, onKernelError },
         { id: inboxDetail.id, reason: note },
       );
       if (!outcome.ok) {
@@ -322,7 +384,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     setBusyAction(decision === 'approved' ? 'approve' : decision === 'changes_requested' ? 'changes' : 'reject');
     try {
       const outcome = await decideSocialPostVariants(
-        { client, isOffline: effectiveOffline },
+        { client, isOffline: effectiveOffline, onKernelError },
         {
           postId: socialPost.id,
           decision,
@@ -361,7 +423,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     try {
       if (summary.source === 'hr_leave') {
         const outcome = await decideLeaveRequest(
-          { client, isOffline: effectiveOffline },
+          { client, isOffline: effectiveOffline, onKernelError },
           { requestId: summary.id, stage, note },
         );
         if (!outcome.ok) {
@@ -370,7 +432,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
         }
       } else if (summary.source === 'hr_salary_advance') {
         const outcome = await decideSalaryAdvance(
-          { client, stepUp, isOffline: effectiveOffline },
+          { client, stepUp, isOffline: effectiveOffline, onKernelError },
           {
             requestId: summary.id,
             stage,
@@ -384,7 +446,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
         }
       } else if (summary.source === 'hr_business_trip') {
         const outcome = await decideBusinessTrip(
-          { client, stepUp, isOffline: effectiveOffline },
+          { client, stepUp, isOffline: effectiveOffline, onKernelError },
           {
             requestId: summary.id,
             stage,
@@ -404,27 +466,43 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     }
   }
 
-  const formattedSummaryAmount = summary.amount ? formatMoney(summary.amount, summary.currency ?? 'VND', locale) : null;
+  const formattedSummaryAmount = summary.amount ? formatMoney(summary.amount, summary.currency, locale) : null;
   const anyBusy = busyAction !== null;
 
   const isMultiSocial = summary.source === 'social_post' && socialGuards.isMultiDecision;
-  const isRoleBlockedHr =
-    (summary.source === 'hr_leave' ||
-      summary.source === 'hr_salary_advance' ||
-      summary.source === 'hr_business_trip') &&
-    hrGuards.isRoleBlocked;
+  const isHrItem =
+    summary.source === 'hr_leave' ||
+    summary.source === 'hr_salary_advance' ||
+    summary.source === 'hr_business_trip';
+  const isRoleBlockedHr = isHrItem && hrGuards.isRoleBlocked;
+  const isWaitingLiveHr = isHrItem && !hrGuards.hasLiveItem && !effectiveOffline;
 
   const inboxNeedsFourEyes = inboxGuards.needsFourEyes;
   const inboxCannotAct = inboxGuards.cannotActOnMobile;
+  const showWebPrimary =
+    (summary.source === 'inbox' && inboxGuards.showWebPrimary) ||
+    (summary.source === 'social_post' && socialGuards.showWebPrimary) ||
+    (isHrItem && hrGuards.showWebPrimary);
 
   const isDetailLoading =
     !effectiveOffline &&
     ((summary.source === 'inbox' && inboxDetailQuery.isPending) ||
-      (summary.source === 'social_post' && socialDetailQuery.isPending));
+      (summary.source === 'social_post' && socialDetailQuery.isPending) ||
+      (summary.source === 'inbox' && summary.subtype === 'finance.einvoice_issue' && einvoiceQuery.isPending) ||
+      (summary.source === 'inbox' && isAdsProposalKind(summary.subtype) && adsQuery.isPending));
 
   const detailLoadFailedOffline =
     (summary.source === 'inbox' && inboxDetailQuery.isError) ||
-    (summary.source === 'social_post' && socialDetailQuery.isError);
+    (summary.source === 'social_post' && socialDetailQuery.isError) ||
+    (summary.source === 'inbox' && summary.subtype === 'finance.einvoice_issue' && einvoiceQuery.isError) ||
+    (summary.source === 'inbox' && isAdsProposalKind(summary.subtype) && adsQuery.isError);
+
+  const hideNoteInput =
+    editingAccounts ||
+    isMultiSocial ||
+    isRoleBlockedHr ||
+    isWaitingLiveHr ||
+    (summary.source === 'inbox' && inboxCannotAct);
 
   return (
     <View style={[styles.scrollContainer, { backgroundColor: palette.background, paddingTop: 16 }]}>
@@ -446,6 +524,16 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
         {effectiveOffline ? (
           <Banner tone="warn">
             <Body tone="warning">{t('approvals.networkRequired')}</Body>
+          </Banner>
+        ) : isWaitingLiveHr ? (
+          <Banner tone="info">
+            <Body tone="muted">{t('approvals.detail.waitingLiveSync')}</Body>
+          </Banner>
+        ) : null}
+
+        {inboxGuards.inFlightExtraction ? (
+          <Banner tone="info">
+            <Body tone="muted">{t('approvals.detail.loading')}</Body>
           </Banner>
         ) : null}
 
@@ -496,7 +584,15 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
         {purchasePayload ? (
           <View style={[styles.card, { borderColor: palette.border, backgroundColor: palette.surface }]}>
             <Body>
-              {`${purchasePayload.seller.name}${purchasePayload.seller.taxCode ? ` (${t('approvals.detail.taxCode')}: ${purchasePayload.seller.taxCode})` : ''}`}
+              {`${invoiceDirection === 'sale' ? purchasePayload.buyer.name : purchasePayload.seller.name}${
+                (invoiceDirection === 'sale' ? purchasePayload.buyer.taxCode : purchasePayload.seller.taxCode)
+                  ? ` (${t('approvals.detail.taxCode')}: ${
+                      invoiceDirection === 'sale'
+                        ? purchasePayload.buyer.taxCode
+                        : purchasePayload.seller.taxCode
+                    })`
+                  : ''
+              }`}
             </Body>
             <Text style={[styles.meta, { color: palette.muted }]}>
               {`${purchasePayload.invoice.series}-${purchasePayload.invoice.number} | ${formatDateShort(purchasePayload.invoice.issueDate, locale)}`}
@@ -532,12 +628,19 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
             <SectionHeading>
               {t('approvals.detail.lines', { count: String(purchasePayload.lines.length) })}
             </SectionHeading>
-            {purchasePayload.lines.slice(0, 25).map((line) => {
+            {(showAllLines
+              ? purchasePayload.lines
+              : purchasePayload.lines.slice(0, INITIAL_LINES_PREVIEW)
+            ).map((line) => {
               const currentAcct = lineEdits[line.lineNo] ?? line.debitAccount;
+              const accountKey =
+                invoiceDirection === 'sale'
+                  ? 'approvals.detail.lineCreditAccount'
+                  : 'approvals.detail.lineAccount';
               const accountDisplay =
                 currentAcct === '000'
                   ? t('approvals.detail.unclassifiedAccount')
-                  : t('approvals.detail.lineAccount', { account: currentAcct });
+                  : t(accountKey, { account: currentAcct });
               return (
                 <View
                   key={line.lineNo}
@@ -563,6 +666,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
                       accessibilityLabel={`${t('approvals.detail.pickAccount')} ${line.lineNo}`}
                       onPress={() => {
                         setAccountSearch('');
+                        setPickingCurrentAcct(currentAcct);
                         setPickingLineNo(line.lineNo);
                       }}
                     />
@@ -570,6 +674,12 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
                 </View>
               );
             })}
+            {!showAllLines && purchasePayload.lines.length > INITIAL_LINES_PREVIEW ? (
+              <LinkButton
+                label={t('approvals.detail.showAllLines', { count: String(purchasePayload.lines.length) })}
+                onPress={() => setShowAllLines(true)}
+              />
+            ) : null}
           </View>
         ) : null}
 
@@ -596,11 +706,20 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
             <Text style={[styles.amount, { color: palette.text }]}>
               {formatMoney(journalVoucherPayload.total, 'VND', locale)}
             </Text>
-            {journalVoucherPayload.lines.slice(0, 20).map((line, index) => (
+            {(showAllLines
+              ? journalVoucherPayload.lines
+              : journalVoucherPayload.lines.slice(0, INITIAL_LINES_PREVIEW)
+            ).map((line, index) => (
               <Text key={`${line.account}-${index}`} style={[styles.meta, { color: palette.muted }]}>
                 {`${line.account}: Nợ ${formatMoney(line.debit, 'VND', locale)} / Có ${formatMoney(line.credit, 'VND', locale)}`}
               </Text>
             ))}
+            {!showAllLines && journalVoucherPayload.lines.length > INITIAL_LINES_PREVIEW ? (
+              <LinkButton
+                label={t('approvals.detail.showAllLines', { count: String(journalVoucherPayload.lines.length) })}
+                onPress={() => setShowAllLines(true)}
+              />
+            ) : null}
           </View>
         ) : null}
 
@@ -611,9 +730,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
             <Text style={[styles.meta, { color: palette.muted }]}>
               {formatDateShort(reversalPayload.entryDate, locale)}
             </Text>
-            {journalQuery.data ? (
-              <Body tone="muted">{journalQuery.data.description}</Body>
-            ) : null}
+            {journalQuery.data ? <Body tone="muted">{journalQuery.data.description}</Body> : null}
           </View>
         ) : null}
 
@@ -629,11 +746,19 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
             <Text style={[styles.amount, { color: palette.text }]}>
               {formatMoney(einvoiceDetail.total, einvoiceDetail.currency, locale)}
             </Text>
-            {einvoiceDetail.lines.slice(0, 15).map((line) => (
-              <Text key={line.lineNo} style={[styles.meta, { color: palette.muted }]}>
-                {`${line.lineNo}. ${line.description}: ${formatMoney(line.amount, einvoiceDetail.currency, locale)}`}
-              </Text>
-            ))}
+            {(showAllLines ? einvoiceDetail.lines : einvoiceDetail.lines.slice(0, INITIAL_LINES_PREVIEW)).map(
+              (line) => (
+                <Text key={line.lineNo} style={[styles.meta, { color: palette.muted }]}>
+                  {`${line.lineNo}. ${line.description}: ${formatMoney(line.amount, einvoiceDetail.currency, locale)}`}
+                </Text>
+              ),
+            )}
+            {!showAllLines && einvoiceDetail.lines.length > INITIAL_LINES_PREVIEW ? (
+              <LinkButton
+                label={t('approvals.detail.showAllLines', { count: String(einvoiceDetail.lines.length) })}
+                onPress={() => setShowAllLines(true)}
+              />
+            ) : null}
           </View>
         ) : null}
 
@@ -652,12 +777,17 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
           </View>
         ) : null}
 
-        {/* Engage AI Coworker Proposal */}
-        {inboxDetail && !engagePayload && summary.aiCoworker && !purchasePayload && !isAdsProposalKind(summary.subtype) ? (
+        {/* Engage / Unsupported Detail Notices */}
+        {inboxDetail && inboxGuards.unsupportedOnMobile ? (
+          <Banner tone="warn">
+            <Body tone="warning">{t('approvals.detail.unsupportedOnMobile')}</Body>
+          </Banner>
+        ) : inboxDetail && !engagePayload && summary.aiCoworker && !purchasePayload && !isAdsProposalKind(summary.subtype) ? (
           <Banner tone="info">
             <Body tone="muted">{t('approvals.detail.engageHidden')}</Body>
           </Banner>
         ) : null}
+
         {engagePayload ? (
           <View style={[styles.card, { borderColor: palette.border, backgroundColor: palette.surface }]}>
             <Text style={[styles.meta, { color: palette.muted }]}>
@@ -752,8 +882,30 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
           </View>
         ) : null}
 
-        {/* Four-eyes / Multi-decision / Role Notices */}
-        {inboxNeedsFourEyes ? (
+        {/* Pre-approval blocking / four-eyes / multi-decision banners */}
+        {inboxGuards.hasBlockingChecks ? (
+          <Banner tone="danger">
+            <Body tone="danger">{t('approvals.detail.blockingCheck')}</Body>
+          </Banner>
+        ) : null}
+
+        {inboxGuards.hasUnclassifiedLines ? (
+          <Banner tone="warn">
+            <Body tone="warning">
+              {t('approvals.detail.unclassifiedRequired', {
+                count: String(inboxDetail?.unclassifiedLines ?? summary.unclassifiedLines),
+              })}
+            </Body>
+          </Banner>
+        ) : null}
+
+        {inboxGuards.missingForeignRate ? (
+          <Banner tone="warn">
+            <Body tone="warning">{t('approvals.detail.foreignRateRequired')}</Body>
+          </Banner>
+        ) : null}
+
+        {inboxNeedsFourEyes || socialGuards.isFourEyesBlocked ? (
           <Banner tone="warn">
             <Body tone="warning">{t('approvals.detail.fourEyes')}</Body>
           </Banner>
@@ -776,15 +928,19 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
           </Banner>
         ) : null}
 
-        {/* Safety checkboxes for inbox items */}
-        {inboxDetail && inboxDetail.canApprove && !editingAccounts ? (
+        {/* Revision-bound safety acknowledgments */}
+        {inboxDetail && !inboxGuards.unsupportedOnMobile && inboxDetail.canApprove && !editingAccounts ? (
           <View style={{ gap: 4 }}>
-            {inboxDetail.failedChecks > 0 ? (
+            {inboxGuards.needsFailedAck ? (
               <CheckboxRow
                 label={t('approvals.detail.acceptFailedChecks')}
                 checked={acceptFailedChecks}
                 disabled={anyBusy}
-                onToggle={() => setAcceptFailedChecks((v) => !v)}
+                onToggle={() =>
+                  setFailedAckRevision((prev) =>
+                    prev === inboxDetail.revision ? null : inboxDetail.revision,
+                  )
+                }
               />
             ) : null}
             {inboxGuards.needsSigAck ? (
@@ -798,7 +954,11 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
                   label={t('approvals.detail.acceptSignature')}
                   checked={acceptUnverifiedSig}
                   disabled={anyBusy}
-                  onToggle={() => setAcceptUnverifiedSig((v) => !v)}
+                  onToggle={() =>
+                    setSigAckRevision((prev) =>
+                      prev === inboxDetail.revision ? null : inboxDetail.revision,
+                    )
+                  }
                 />
               </>
             ) : null}
@@ -806,7 +966,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
         ) : null}
 
         {/* Note / Reason input */}
-        {!isMultiSocial && !isRoleBlockedHr && !inboxCannotAct && !editingAccounts ? (
+        {!hideNoteInput ? (
           <View style={{ gap: 6 }}>
             <Text style={[styles.meta, { color: palette.text }]}>{t('approvals.detail.noteLabel')}</Text>
             <TextInput
@@ -847,9 +1007,13 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
         ) : null}
 
         {/* Single-tap Approve / Edit / Reject Action Bar */}
-        {!editingAccounts && summary.source === 'inbox' && inboxDetail ? (
+        {!editingAccounts && summary.source === 'inbox' && inboxDetail && !inboxGuards.unsupportedOnMobile ? (
           <View style={{ gap: 10 }}>
-            {inboxDetail.canApprove ? (
+            {inboxDetail.canApprove &&
+            inboxGuards.payloadReady &&
+            !inboxGuards.hasBlockingChecks &&
+            !inboxGuards.hasUnclassifiedLines &&
+            !inboxGuards.missingForeignRate ? (
               <PrimaryButton
                 label={busyAction === 'approve' ? t('approvals.action.working') : t('approvals.action.approve')}
                 accessibilityLabel={`${t('approvals.action.approve')}: ${summary.title}`}
@@ -859,7 +1023,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
               />
             ) : null}
             <View style={styles.actionsRow}>
-              {inboxDetail.canEdit && purchasePayload ? (
+              {inboxGuards.canEditNow ? (
                 <View style={{ flex: 1 }}>
                   <SecondaryButton
                     label={t('approvals.action.edit')}
@@ -869,7 +1033,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
                   />
                 </View>
               ) : null}
-              {inboxDetail.canReject ? (
+              {inboxDetail.canReject && inboxGuards.payloadReady ? (
                 <View style={{ flex: 1 }}>
                   <DangerButton
                     label={busyAction === 'reject' ? t('approvals.action.working') : t('approvals.action.reject')}
@@ -886,7 +1050,9 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
 
         {summary.source === 'social_post' && socialPost && !isMultiSocial && singleSocialVariant ? (
           <View style={{ gap: 10 }}>
-            {!singleSocialVariant.review.fourEyes ? (
+            {!socialGuards.isFourEyesBlocked &&
+            !socialGuards.alreadyApprovedByMe &&
+            !socialGuards.clientWaitingOnly ? (
               <PrimaryButton
                 label={busyAction === 'approve' ? t('approvals.action.working') : t('approvals.action.approve')}
                 accessibilityLabel={`${t('approvals.action.approve')}: ${summary.title}`}
@@ -894,18 +1060,14 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
                 disabled={effectiveOffline || anyBusy}
                 onPress={() => void onDecideSocial('approved')}
               />
-            ) : (
-              <Banner tone="warn">
-                <Body tone="warning">{t('approvals.detail.fourEyes')}</Body>
-              </Banner>
-            )}
+            ) : null}
             <View style={styles.actionsRow}>
               <View style={{ flex: 1 }}>
                 <SecondaryButton
                   label={busyAction === 'changes' ? t('approvals.action.working') : t('approvals.action.requestChanges')}
                   accessibilityLabel={`${t('approvals.action.requestChanges')}: ${summary.title}`}
                   busy={busyAction === 'changes'}
-                  disabled={effectiveOffline || anyBusy}
+                  disabled={!socialGuards.canRequestChangesNow || anyBusy}
                   onPress={() => void onDecideSocial('changes_requested')}
                 />
               </View>
@@ -914,7 +1076,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
                   label={busyAction === 'reject' ? t('approvals.action.working') : t('approvals.action.reject')}
                   accessibilityLabel={`${t('approvals.action.reject')}: ${summary.title}`}
                   busy={busyAction === 'reject'}
-                  disabled={effectiveOffline || anyBusy}
+                  disabled={!socialGuards.canRejectNow || anyBusy}
                   onPress={() => void onDecideSocial('rejected')}
                 />
               </View>
@@ -922,30 +1084,26 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
           </View>
         ) : null}
 
-        {(summary.source === 'hr_leave' ||
-          summary.source === 'hr_salary_advance' ||
-          summary.source === 'hr_business_trip') &&
-        !isRoleBlockedHr ? (
+        {isHrItem && !isRoleBlockedHr ? (
           <View style={{ gap: 10 }}>
             <PrimaryButton
               label={busyAction === 'approve' ? t('approvals.action.working') : t('approvals.action.approve')}
               accessibilityLabel={`${t('approvals.action.approve')}: ${summary.title}`}
               busy={busyAction === 'approve'}
-              disabled={effectiveOffline || anyBusy}
+              disabled={!hrGuards.canApproveNow || anyBusy}
               onPress={() => void onDecideHr('approve')}
             />
             <DangerButton
               label={busyAction === 'reject' ? t('approvals.action.working') : t('approvals.action.reject')}
               accessibilityLabel={`${t('approvals.action.reject')}: ${summary.title}`}
               busy={busyAction === 'reject'}
-              disabled={effectiveOffline || anyBusy}
+              disabled={!hrGuards.canRejectNow || anyBusy}
               onPress={() => void onDecideHr('reject')}
             />
           </View>
         ) : null}
 
-        {/* Always-present safe "Mở trên web" hand-off button */}
-        {isMultiSocial || isRoleBlockedHr || inboxNeedsFourEyes || inboxCannotAct ? (
+        {showWebPrimary ? (
           <PrimaryButton label={t('approvals.action.openWeb')} onPress={() => void handleOpenWeb()} />
         ) : (
           <SecondaryButton label={t('approvals.action.openWeb')} onPress={() => void handleOpenWeb()} />
@@ -956,7 +1114,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
         </Text>
       </ScrollView>
 
-      {/* Account picker modal for editing finance.purchase debit accounts */}
+      {/* Directional account picker modal for editing purchase/sale lines */}
       <Modal
         animationType="slide"
         onRequestClose={() => setPickingLineNo(null)}
@@ -971,16 +1129,24 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
             <TextInput
               accessibilityLabel={t('approvals.detail.pickAccount')}
               onChangeText={setAccountSearch}
-              placeholder="6422, 152, 156..."
+              placeholder={invoiceDirection === 'sale' ? '511, 515, 711...' : '6422, 152, 156...'}
               placeholderTextColor={palette.muted}
               style={[styles.input, { borderColor: palette.border, color: palette.text }]}
               value={accountSearch}
             />
+            {totalDirectionalAccounts > MAX_ACCOUNT_PICKER_ROWS ? (
+              <Text style={[styles.meta, { color: palette.muted }]}>
+                {t('approvals.detail.accountsTruncated', {
+                  shown: String(MAX_ACCOUNT_PICKER_ROWS),
+                  total: String(totalDirectionalAccounts),
+                })}
+              </Text>
+            ) : null}
             {accountsQuery.isPending ? (
               <ActivityIndicator accessibilityLabel={t('home.loading')} />
             ) : (
               <ScrollView contentContainerStyle={{ gap: 8, paddingBottom: 24 }}>
-                {activeAccounts.slice(0, 80).map((acct) => (
+                {filteredAccounts.slice(0, MAX_ACCOUNT_PICKER_ROWS).map((acct) => (
                   <Pressable
                     key={acct.code}
                     accessibilityRole="button"

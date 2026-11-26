@@ -65,13 +65,11 @@ describe('approval executors with biometric step-up and strict offline guard', (
   it('requires biometric confirmation before inbox R3 approval and passes UUID idempotencyKey', async () => {
     const authDenied = fakeLocalAuth({ level: 'biometric', answers: [false] });
     const gateDenied = createStepUpGate({ localAuth: authDenied, now: () => 1000 });
-    let sent = 0;
-    let capturedPayload: Record<string, unknown> | null = null;
+    const approvedPayloads: Array<Record<string, unknown>> = [];
     const client = {
       inbox: {
         approve: async (input: Record<string, unknown>) => {
-          sent += 1;
-          capturedPayload = input;
+          approvedPayloads.push(input);
           return { documentId: 'doc-1' };
         },
       },
@@ -82,7 +80,7 @@ describe('approval executors with biometric step-up and strict offline guard', (
       { id: 'p1', revision: 2, prompt: 'Duyệt hóa đơn' },
     );
     expect(cancelled).toEqual({ ok: false, reason: 'biometric' });
-    expect(sent).toBe(0);
+    expect(approvedPayloads).toHaveLength(0);
     expect(authDenied.prompts).toEqual(['Duyệt hóa đơn']);
 
     const authOk = fakeLocalAuth({ level: 'biometric', answers: [true] });
@@ -99,17 +97,19 @@ describe('approval executors with biometric step-up and strict offline guard', (
       },
     );
     expect(ok).toEqual({ ok: true, value: { documentId: 'doc-1' } });
-    expect(sent).toBe(1);
-    expect(capturedPayload?.note).toBe('OK');
-    expect(String(capturedPayload?.idempotencyKey)).toMatch(
+    expect(approvedPayloads).toHaveLength(1);
+    const first = approvedPayloads[0];
+    expect(first?.note).toBe('OK');
+    expect(String(first?.idempotencyKey)).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
     );
   });
 
-  it('maps STEP_UP_REQUIRED and MFA_REQUIRED refusals cleanly to kernel-step-up', async () => {
-    const auth = fakeLocalAuth({ level: 'biometric', answers: [true] });
-    const stepUp = createStepUpGate({ localAuth: auth, now: () => 1000 });
-    const client = {
+  it('forwards 401/MFA/revocation errors on mutations to onKernelError and maps STEP_UP_REQUIRED cleanly', async () => {
+    const auth = fakeLocalAuth({ level: 'biometric', answers: [true, true] });
+    const stepUp = createStepUpGate({ localAuth: auth, now: () => 1000, freshMs: 0 });
+
+    const stepUpClient = {
       inbox: {
         approve: async () => {
           throw Object.assign(new Error('Need 2FA'), { code: 'STEP_UP_REQUIRED', status: 403 });
@@ -117,24 +117,42 @@ describe('approval executors with biometric step-up and strict offline guard', (
       },
     } as unknown as LudyClient;
 
-    const outcome = await approveInboxProposal(
-      { client, stepUp, crypto: nodeCrypto },
-      { id: 'p1', revision: 1, prompt: 'Confirm' },
+    expect(
+      await approveInboxProposal(
+        { client: stepUpClient, stepUp, crypto: nodeCrypto },
+        { id: 'p1', revision: 1, prompt: 'Confirm' },
+      ),
+    ).toEqual({ ok: false, reason: 'kernel-step-up' });
+
+    const forwardedErrors: unknown[] = [];
+    const revokedErr = Object.assign(new Error('Session revoked'), { code: 'UNAUTHENTICATED', status: 401 });
+    const revokedClient = {
+      inbox: {
+        reject: async () => {
+          throw revokedErr;
+        },
+      },
+    } as unknown as LudyClient;
+
+    const res = await rejectInboxProposal(
+      { client: revokedClient, onKernelError: (err) => forwardedErrors.push(err) },
+      { id: 'p1' },
     );
-    expect(outcome).toEqual({ ok: false, reason: 'kernel-step-up' });
+    expect(res).toEqual({ ok: false, reason: 'auth' });
+    expect(forwardedErrors).toEqual([revokedErr]);
   });
 
   it('executes inline account edit and reject without biometric prompt', async () => {
-    let edited: Record<string, unknown> | null = null;
-    let rejected: Record<string, unknown> | null = null;
+    const editCalls: Array<Record<string, unknown>> = [];
+    const rejectCalls: Array<Record<string, unknown>> = [];
     const client = {
       inbox: {
         edit: async (input: Record<string, unknown>) => {
-          edited = input;
+          editCalls.push(input);
           return { revision: 3, changed: true };
         },
         reject: async (input: Record<string, unknown>) => {
-          rejected = input;
+          rejectCalls.push(input);
           return { ok: true };
         },
       },
@@ -145,11 +163,11 @@ describe('approval executors with biometric step-up and strict offline guard', (
       { id: 'p1', revision: 2, lineAccounts: [{ lineNo: 1, debitAccount: '6422' }] },
     );
     expect(editRes).toEqual({ ok: true, value: { revision: 3, changed: true } });
-    expect(edited?.lineAccounts).toEqual([{ lineNo: 1, debitAccount: '6422' }]);
+    expect(editCalls[0]?.lineAccounts).toEqual([{ lineNo: 1, debitAccount: '6422' }]);
 
     const rejRes = await rejectInboxProposal({ client }, { id: 'p1', reason: '   ' });
     expect(rejRes).toEqual({ ok: true, value: { ok: true } });
-    expect(Object.hasOwn(rejected ?? {}, 'reason')).toBe(false);
+    expect(Object.hasOwn(rejectCalls[0] ?? {}, 'reason')).toBe(false);
   });
 
   it('guards monetary HR approvals with biometrics and skips biometrics on zero-cost trips / leaves', async () => {
@@ -212,7 +230,6 @@ describe('approval executors with biometric step-up and strict offline guard', (
     );
     expect(auth.prompts).toHaveLength(2);
 
-    // Zero-allowance trip and leave do not trigger biometrics.
     await decideBusinessTrip(
       { client, stepUp },
       { requestId: 't2', stage: 'approve_l1', estimatedAllowance: '0', prompt: 'Không chi phí' },

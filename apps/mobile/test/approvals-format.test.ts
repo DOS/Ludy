@@ -16,10 +16,13 @@ import {
 import { counterCrypto, nodeCrypto, SERVER } from './helpers.ts';
 
 describe('approvals money formatting without JS float conversion', () => {
-  it('formats VND amounts cleanly in vi and en without losing 4 decimals or precision', () => {
+  it('formats VND, explicit currencies, and unknown-currency decimals without float conversion', () => {
     expect(formatMoney('1980000', 'VND', 'vi')).toBe('1.980.000 ₫');
     expect(formatMoney('1980000.0000', 'VND', 'vi')).toBe('1.980.000 ₫');
     expect(formatMoney('1980000', 'VND', 'en')).toBe('1,980,000 ₫');
+    // When currency is unknown (e.g. inbox list before detail load), omit symbol rather than assuming VND.
+    expect(formatMoney('1980000', null, 'vi')).toBe('1.980.000');
+    expect(formatMoney('1250.5', undefined, 'en')).toBe('1,250.5');
     // Keeps ledger decimals when present and exact huge integers (> 2^53).
     expect(formatMoney('12500.2500', 'VND', 'vi')).toBe('12.500,25 ₫');
     expect(formatMoney('12500.1234', 'VND', 'vi')).toBe('12.500,1234 ₫');
@@ -91,10 +94,11 @@ describe('safe web hand-off URL validation', () => {
     expect(isSafeRelativeWebPath('/inbox/1 2')).toBe(false);
   });
 
-  it('builds org-scoped URLs under trusted policy and refuses untrusted servers', () => {
+  it('builds org-scoped URLs under trusted policy and refuses untrusted servers or mismatched org slugs', () => {
     const policy = serverPolicy(SERVER, undefined);
     expect(buildWebUrl(SERVER, 'demo-co', '/inbox/p1', policy)).toBe(`${SERVER}/o/demo-co/inbox/p1`);
     expect(buildWebUrl(SERVER, 'demo-co', '/o/demo-co/hr/employees', policy)).toBe(`${SERVER}/o/demo-co/hr/employees`);
+    expect(buildWebUrl(SERVER, 'demo-co', '/o/other-co/hr/employees', policy)).toBeNull();
     expect(buildWebUrl('https://evil.example', 'demo-co', '/inbox/p1', policy)).toBeNull();
     expect(buildWebUrl('http://api.example.test', 'demo-co', '/inbox/p1')).toBeNull();
     expect(buildWebUrl(SERVER, 'demo-co', '//evil.example/foo', policy)).toBeNull();
