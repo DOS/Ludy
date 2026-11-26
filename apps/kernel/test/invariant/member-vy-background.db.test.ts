@@ -222,7 +222,9 @@ const RAW_CTX_GUC_RE =
 const MCP_HELPER_RE = /\b(ctx_mcp_member_id|conversation_access_mcp_member|ctx_mcp_engage_write)\b/i;
 const BRIEFING_HELPER_RE = /\bctx_briefing_user_id\b/i;
 const BRIEFING_HELPER_GLOBAL_RE =
-  /(?<![A-Za-z0-9_.])(?:(?:crove|ludy)_kernel\.)?ctx_briefing_user_id\s*\(\s*\)/gi;
+  /(?<![A-Za-z0-9_.]|\.\s+)(?:(?:crove|ludy)_kernel\.)?ctx_briefing_user_id\(\)/gi;
+const BRIEFING_LOOKUP_ORG_BIND_RE =
+  /(?<![A-Za-z0-9_.]|\.\s+)(?:(?:crove|ludy)_kernel\.)?ctx_org_id\s*\(/i;
 const STANDARD_CTX_ACCESSORS = new Set([
   "ctx_org_id()",
   "ctx_user_id()",
@@ -475,8 +477,41 @@ function isAllowedBriefingPolicy(
 }
 
 function hasForbiddenBriefingHelperText(text: string, briefingOk: boolean): boolean {
-  const rest = briefingOk ? text.replace(BRIEFING_HELPER_GLOBAL_RE, "") : text;
-  return BRIEFING_HELPER_RE.test(rest);
+  const check = (sql: string) => BRIEFING_HELPER_RE.test(briefingOk ? sql.replace(BRIEFING_HELPER_GLOBAL_RE, "") : sql);
+  return check(text) || check(stripSqlComments(text));
+}
+
+type BriefingLookupViewInput = {
+  viewDef: string;
+  reloptions: readonly string[] | null;
+  taintedViewDeps?: readonly string[];
+  taintedFnDeps?: readonly string[];
+};
+
+function isAllowedBriefingLookupView(input: BriefingLookupViewInput): boolean {
+  const rawDef = input.viewDef;
+  const cleanDef = stripSqlComments(rawDef);
+  const hasForbiddenRawOrClean = (re: RegExp) => re.test(rawDef) || re.test(cleanDef);
+  if (
+    hasForbiddenRawOrClean(ACTING_USER_RE) ||
+    hasForbiddenRawOrClean(CTX_VERIFIED_RE) ||
+    hasForbiddenRawOrClean(RAW_CTX_GUC_RE) ||
+    hasForbiddenRawOrClean(MCP_HELPER_RE) ||
+    hasForbiddenRawOrClean(UNICODE_ESCAPE_RE) ||
+    hasForbiddenRawOrClean(STD_STRINGS_RE) ||
+    hasForbiddenBriefingHelperText(rawDef, true)
+  ) {
+    return false;
+  }
+  if ((input.taintedViewDeps?.length ?? 0) > 0) return false;
+  if ((input.taintedFnDeps ?? []).some((fn) => fn !== "crove_kernel.ctx_briefing_user_id()")) return false;
+  const opts = input.reloptions ?? [];
+  const hasInvoker = opts.includes("security_invoker=true");
+  if (!hasInvoker) {
+    if (!opts.includes("security_barrier=true")) return false;
+    if (!BRIEFING_LOOKUP_ORG_BIND_RE.test(cleanDef) || !BRIEFING_HELPER_RE.test(cleanDef)) return false;
+  }
+  return true;
 }
 
 function isTamperedClosedPolicy(
@@ -625,6 +660,12 @@ async function scanPolicyContextReads(
   readers: string[];
   sealReaders: string[];
   taintedViews: string[];
+  scannedViews: Array<{
+    name: string;
+    def: string;
+    taintedViewDeps: string[];
+    taintedFnDeps: string[];
+  }>;
 }> {
   const activeKernelSchema = ids ? ids.schema("kernel") : "crove_kernel";
   const toCanonTable = (s: string) => (ids ? ids.toCanonicalTable(s) : s);
@@ -768,6 +809,26 @@ async function scanPolicyContextReads(
     list.push(d);
     depsByPolicy.set(d.pol_oid, list);
   }
+  const depsByView = new Map<string, Array<{ refclass: string; ref_oid: string }>>();
+  for (const d of viewDepRes.rows) {
+    const list = depsByView.get(d.view_oid) ?? [];
+    list.push(d);
+    depsByView.set(d.view_oid, list);
+  }
+  const mapTaintedProc = (proc: { sig: string }) => {
+    if (proc.sig === `${activeKernelSchema}.ctx_verified()`) return "crove_kernel.ctx_verified()";
+    if (proc.sig === `${activeKernelSchema}.ctx_acting_user_id()`) return "crove_kernel.ctx_acting_user_id()";
+    if (proc.sig === `${activeKernelSchema}.ctx_briefing_user_id()`) return "crove_kernel.ctx_briefing_user_id()";
+    const canon = toCanonSig(proc.sig);
+    if (
+      canonicalizeRelName(canon) === "crove_kernel.ctx_verified()" ||
+      canonicalizeRelName(canon) === "crove_kernel.ctx_acting_user_id()" ||
+      canonicalizeRelName(canon) === "crove_kernel.ctx_briefing_user_id()"
+    ) {
+      return `nonkernel:${proc.sig}`;
+    }
+    return canon;
+  };
 
   const policies: ScannedPolicy[] = policyRes.rows.map((pol) => {
     const canonTable = toCanonTable(pol.t);
@@ -781,21 +842,7 @@ async function scanPolicyContextReads(
         const proc = procByOid.get(d.ref_oid)!;
         return !isAllowedMcpHelperForPolicy(proc.sig, canonTable, pol.n);
       })
-      .map((d) => {
-        const proc = procByOid.get(d.ref_oid)!;
-        if (proc.sig === `${activeKernelSchema}.ctx_verified()`) return "crove_kernel.ctx_verified()";
-        if (proc.sig === `${activeKernelSchema}.ctx_acting_user_id()`) return "crove_kernel.ctx_acting_user_id()";
-        if (proc.sig === `${activeKernelSchema}.ctx_briefing_user_id()`) return "crove_kernel.ctx_briefing_user_id()";
-        const canon = toCanonSig(proc.sig);
-        if (
-          canonicalizeRelName(canon) === "crove_kernel.ctx_verified()" ||
-          canonicalizeRelName(canon) === "crove_kernel.ctx_acting_user_id()" ||
-          canonicalizeRelName(canon) === "crove_kernel.ctx_briefing_user_id()"
-        ) {
-          return `nonkernel:${proc.sig}`;
-        }
-        return canon;
-      });
+      .map((d) => mapTaintedProc(procByOid.get(d.ref_oid)!));
     return {
       t: canonTable,
       rawT: pol.t,
@@ -806,6 +853,20 @@ async function scanPolicyContextReads(
       rawText: pol.text,
       taintedViewDeps,
       taintedFnDeps,
+    };
+  });
+
+  const scannedViews = viewRes.rows.map((v) => {
+    const deps = depsByView.get(v.oid) ?? [];
+    return {
+      name: toCanonTable(v.name),
+      def: v.def,
+      taintedViewDeps: deps
+        .filter((d) => d.refclass === "pg_class" && taintedViewOids.has(d.ref_oid))
+        .map((d) => toCanonTable(viewByOid.get(d.ref_oid)!.name)),
+      taintedFnDeps: deps
+        .filter((d) => d.refclass === "pg_proc" && taintedProcs.has(d.ref_oid))
+        .map((d) => mapTaintedProc(procByOid.get(d.ref_oid)!)),
     };
   });
 
@@ -823,6 +884,7 @@ async function scanPolicyContextReads(
     readers,
     sealReaders,
     taintedViews: [...taintedViewOids].map((oid) => toCanonTable(viewByOid.get(oid)!.name)).sort(),
+    scannedViews,
   };
 }
 // Core catalog tables required unconditionally; the five opt-in Meetings read tables are admitted conditionally when present (#5073).
@@ -1224,13 +1286,17 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   };
 
   // #5080 / #5073 (ADR-0049 O1, step 0b): member_briefing context primitives land in Slice A after this invariant prerequisite.
-  const briefingObjects = async (): Promise<{
+  const briefingObjects = async (
+    preScan?: Awaited<ReturnType<typeof scanPolicyContextReads>>,
+    client?: pg.Client,
+  ): Promise<{
     entry: string[];
     helper: string[];
     allowedTables: Set<string>;
     allowedLookupViews: string[];
   }> => {
-    const found = await admin((c) =>
+    const runQuery = <T>(fn: (c: pg.Client) => Promise<T>) => (client ? fn(client) : admin(fn));
+    const found = await runQuery((c) =>
       c.query<{ entry: boolean; helper: boolean; catalog: boolean }>(
         `SELECT to_regprocedure('crove_kernel.enter_member_briefing_context(uuid,uuid,uuid)') IS NOT NULL AS entry,
                 to_regprocedure('crove_kernel.ctx_briefing_user_id()') IS NOT NULL AS helper,
@@ -1241,9 +1307,10 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const allowedTables = new Set<string>();
     const allowedLookupViews: string[] = [];
     if (row?.helper) {
+      expect(row.catalog, "member_briefing_table must exist whenever ctx_briefing_user_id exists").toBe(true);
       const toCanon = (name: string) => (dbIds ? dbIds.toCanonicalTable(name) : name);
       if (row.catalog) {
-        const catalogRows = await admin((c) =>
+        const catalogRows = await runQuery((c) =>
           c.query<{ table_name: string; mode: string }>(
             `SELECT table_name, mode FROM crove_kernel.member_briefing_table ORDER BY 1`,
           ),
@@ -1276,9 +1343,17 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           const dot = activeLookup.indexOf(".");
           const lookupSchema = activeLookup.slice(0, dot);
           const lookupRel = activeLookup.slice(dot + 1);
-          const lookupMeta = await admin((c) =>
-            c.query<{ relkind: string; relrowsecurity: boolean; reloptions: string[] | null; cols: string[] }>(
-              `SELECT c.relkind::text, c.relrowsecurity, c.reloptions,
+          const lookupMeta = await runQuery((c) =>
+            c.query<{
+              relkind: string;
+              relrowsecurity: boolean;
+              relforcerowsecurity: boolean;
+              reloptions: string[] | null;
+              view_def: string | null;
+              cols: string[];
+            }>(
+              `SELECT c.relkind::text, c.relrowsecurity, c.relforcerowsecurity, c.reloptions,
+                      CASE WHEN c.relkind IN ('v', 'm') THEN pg_catalog.pg_get_viewdef(c.oid, true) ELSE NULL END AS view_def,
                       ARRAY(SELECT a.attname FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped ORDER BY 1)::text[] AS cols
                FROM pg_catalog.pg_class c
                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -1288,6 +1363,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           );
           const meta = lookupMeta.rows[0];
           expect(meta, `cataloged lookup ${lookupCanon} must exist`).toBeDefined();
+          expect((meta?.cols ?? []).length, `cataloged lookup ${lookupCanon} must expose at least one column`).toBeGreaterThan(0);
           for (const col of meta?.cols ?? []) {
             expect(
               BRIEFING_ALLOWED_LOOKUP_COLUMNS.has(col),
@@ -1295,20 +1371,39 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             ).toBe(true);
           }
           if (meta?.relkind === "v") {
-            const hasInvoker = (meta.reloptions ?? []).includes("security_invoker=true");
-            if (!hasInvoker) {
-              expect(meta.reloptions ?? [], `lookup view ${lookupCanon} must set security_barrier=true`).toContain(
-                "security_barrier=true",
-              );
-            }
-            allowedLookupViews.push(lookupCanon);
+            const scanResult = preScan ?? (await runQuery((c) => scanPolicyContextReads(c, dbIds)));
+            const scannedView = scanResult.scannedViews.find((v) => v.name === lookupCanon);
+            expect(scannedView, `cataloged lookup view ${lookupCanon} must appear in scanned views`).toBeDefined();
+            const prettyOk = isAllowedBriefingLookupView({
+              viewDef: meta.view_def ?? "",
+              reloptions: meta.reloptions,
+              taintedViewDeps: scannedView?.taintedViewDeps,
+              taintedFnDeps: scannedView?.taintedFnDeps,
+            });
+            const unprettyOk = isAllowedBriefingLookupView({
+              viewDef: scannedView?.def ?? "",
+              reloptions: meta.reloptions,
+              taintedViewDeps: scannedView?.taintedViewDeps,
+              taintedFnDeps: scannedView?.taintedFnDeps,
+            });
+            const viewOk = Boolean(scannedView && meta.view_def && prettyOk && unprettyOk);
+            expect(
+              viewOk,
+              `cataloged lookup view ${lookupCanon} must stay clean of forbidden sealed reads/deps and enforce security_barrier + org/briefing binding`,
+            ).toBe(true);
+            if (viewOk) allowedLookupViews.push(lookupCanon);
           } else {
-            expect(meta?.relrowsecurity, `lookup table ${lookupCanon} must enable RLS`).toBe(true);
-            allowedTables.add(lookupCanon);
+            const isTable = ["r", "p"].includes(meta?.relkind ?? "");
+            expect(isTable, `cataloged lookup ${lookupCanon} must be a regular/partitioned table or view`).toBe(true);
+            expect(meta, `lookup table ${lookupCanon} must enable and force RLS`).toMatchObject({
+              relrowsecurity: true,
+              relforcerowsecurity: true,
+            });
+            if (isTable && meta?.relrowsecurity && meta?.relforcerowsecurity) {
+              allowedTables.add(lookupCanon);
+            }
           }
         }
-      } else {
-        for (const t of BRIEFING_ALLOWLISTED_TABLES) allowedTables.add(t);
       }
     }
     return {
@@ -1489,7 +1584,8 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("reads ctx_acting_user_id only in the pinned policies, and nowhere else: no function, wrapper or direct read of the sealed member", async () => {
-    const [found, briefing] = await Promise.all([admin((c) => scanPolicyContextReads(c, dbIds)), briefingObjects()]);
+    const found = await admin((c) => scanPolicyContextReads(c, dbIds));
+    const briefing = await briefingObjects(found);
     const activeKernelSchema = dbIds ? dbIds.schema("kernel") : "crove_kernel";
     const activeKindCompare = new RegExp(
       `\\(\\s*SELECT\\s*\\(${escapeRe(activeKernelSchema)}\\.ctx_verified\\(\\) ->> 'kind'::text\\)\\s*\\)\\s*=\\s*'mcp_company'::text`,
@@ -1762,6 +1858,22 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           taintedFnDeps: [],
         },
       },
+      {
+        label: "spaced nonkernel shadow text only",
+        p: {
+          ...validStandaloneBriefing,
+          text: "(other_schema . ctx_briefing_user_id() IS NOT NULL)",
+          taintedFnDeps: [],
+        },
+      },
+      {
+        label: "comment-spaced nonkernel shadow text only",
+        p: {
+          ...validStandaloneBriefing,
+          text: "(other_schema /* c */ . ctx_briefing_user_id() IS NOT NULL)",
+          taintedFnDeps: [],
+        },
+      },
       { label: "extra ctx_verified in standalone", p: { ...validStandaloneBriefing, text: `${validStandaloneBriefing.text} AND ${compare}` } },
       { label: "permissive on COMPANY_READ_POLICIES", p: { ...validCombinedCompanyBriefing, perm: true } },
     ] as const;
@@ -1863,6 +1975,142 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     };
     expect(readsSealedMember([briefingViewPolicy], briefingTainted, briefingAllowed)).toHaveLength(1);
     expect(hasForbiddenSealedRead(briefingViewPolicy, new Set(), briefingTainted, briefingAllowed)).toBe(true);
+    // Lookup view audit rejects sealed-context escapes, tainted deps, missing barrier/binding, and nonkernel shadows while admitting clean barrier/invoker views.
+    expect(
+      isAllowedBriefingLookupView({
+        viewDef:
+          "SELECT tm.org_id, tm.user_id, u.display_name FROM tenant_member tm WHERE tm.org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
+        reloptions: ["security_barrier=true"],
+        taintedViewDeps: [],
+        taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
+      }),
+    ).toBe(true);
+    expect(
+      isAllowedBriefingLookupView({
+        viewDef:
+          "SELECT tm.org_id, tm.user_id, u.display_name FROM tenant_member tm WHERE tm.org_id = ludy_kernel.ctx_org_id() AND ludy_kernel.ctx_briefing_user_id() IS NOT NULL",
+        reloptions: ["security_barrier=true"],
+        taintedViewDeps: [],
+        taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
+      }),
+    ).toBe(true);
+    expect(
+      isAllowedBriefingLookupView({
+        viewDef: "SELECT org_id, user_id, display_name FROM crove_kernel.member_display_name",
+        reloptions: ["security_invoker=true"],
+        taintedViewDeps: [],
+        taintedFnDeps: [],
+      }),
+    ).toBe(true);
+    for (const [label, input] of [
+      [
+        "barrier view reading ctx_verified",
+        {
+          viewDef:
+            "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND (crove_kernel.ctx_verified() ->> 'kind') = 'user'",
+          reloptions: ["security_barrier=true"],
+          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()", "crove_kernel.ctx_verified()"],
+        },
+      ],
+      [
+        "invoker view reading ctx_verified",
+        {
+          viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE (crove_kernel.ctx_verified() ->> 'kind') = 'member_briefing'",
+          reloptions: ["security_invoker=true"],
+          taintedFnDeps: ["crove_kernel.ctx_verified()"],
+        },
+      ],
+      [
+        "barrier view reading ctx_acting_user_id",
+        {
+          viewDef:
+            "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND crove_kernel.ctx_acting_user_id() IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()", "crove_kernel.ctx_acting_user_id()"],
+        },
+      ],
+      [
+        "barrier view reading raw GUC",
+        {
+          viewDef:
+            "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND current_setting('ludy.ctx', true) IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+        },
+      ],
+      [
+        "barrier view reading ctx_mcp_member_id",
+        {
+          viewDef:
+            "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND crove_kernel.ctx_mcp_member_id() IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+        },
+      ],
+      [
+        "view with tainted wrapper fn dep",
+        {
+          viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()", "crove_kernel.wrap_ctx()"],
+        },
+      ],
+      [
+        "view depending on tainted view",
+        {
+          viewDef: "SELECT org_id, user_id, display_name FROM v_inner WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+          taintedViewDeps: ["crove_kernel.v_ctx"],
+          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
+        },
+      ],
+      [
+        "barrier view missing ctx_org_id binding",
+        {
+          viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE crove_kernel.ctx_briefing_user_id() IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
+        },
+      ],
+      [
+        "barrier view with nonkernel ctx_org_id",
+        {
+          viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = evil.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
+        },
+      ],
+      [
+        "barrier view missing ctx_briefing_user_id binding",
+        {
+          viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id()",
+          reloptions: ["security_barrier=true"],
+        },
+      ],
+      [
+        "view with neither security_barrier nor security_invoker",
+        {
+          viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
+          reloptions: null,
+          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
+        },
+      ],
+      [
+        "barrier view with spaced nonkernel ctx_briefing_user_id",
+        {
+          viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND other_schema . ctx_briefing_user_id() IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+        },
+      ],
+      [
+        "view with comment-obfuscated ctx_verified",
+        {
+          viewDef:
+            "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND ctx_verified /* c */ () IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+        },
+      ],
+    ] as const) {
+      expect(isAllowedBriefingLookupView(input), label).toBe(false);
+    }
     // SQL comment stripper lexer regression cases: CR line comments, ident$ identifiers, UTF-8 dollar tags, CASE'x'/ée'x', and E'...' newline continuation.
     expect(stripSqlComments("SELECT 1 -- cr\r+ probe_3771 /* c */ . fn_sql /* c */ ()")).toContain("probe_3771   . fn_sql   ()");
     expect(stripSqlComments("DECLARE a$$foo$ int := 1; RETURN probe_3771 /* c */ . fn_sql /* c */ ();")).toContain("a$$foo$");
@@ -1877,7 +2125,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const activeKernel = dbIds ? dbIds.schema("kernel") : "crove_kernel";
     const activeMeetings = dbIds ? dbIds.schema("meetings") : "crove_meetings";
     const tenantRole = dbIds ? dbIds.role("tenant") : "crove_tenant";
-    const briefingForProbe = await briefingObjects();
     const result = await admin(async (c) => {
       await rawQuery(c, "BEGIN");
       try {
@@ -2048,6 +2295,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
            USING (pg_catalog.left(((SELECT ${activeKernel}.ctx_verified()) ->> 'kind'), 4) IS DISTINCT FROM 'mcp_' OR true)`,
         );
         const scan = await scanPolicyContextReads(c, dbIds);
+        const briefingForProbe = await briefingObjects(scan, c);
         return {
           taintedViews: scan.taintedViews.filter((v) => !briefingForProbe.allowedLookupViews.includes(v)),
           readers: scan.readers,
@@ -2055,6 +2303,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             .map((p) => `${p.t}.${p.n}`)
             .sort(),
           policies: scan.policies,
+          briefingAllowedTables: briefingForProbe.allowedTables,
         };
       } finally {
         await rawQuery(c, "ROLLBACK").catch(() => {});
@@ -2122,7 +2371,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     expect(result.flagged).toEqual(expectedFlagged);
     expect(result.flagged).not.toContain("probe_3771.t.p_ok");
     const forbiddenFlagged = result.policies
-      .filter((p) => hasForbiddenSealedRead(p, expectedProbePolicyKeys, new Set(result.taintedViews), briefingForProbe.allowedTables))
+      .filter((p) => hasForbiddenSealedRead(p, expectedProbePolicyKeys, new Set(result.taintedViews), result.briefingAllowedTables))
       .map((p) => `${p.t}.${p.n}`)
       .sort();
     expect(forbiddenFlagged).toEqual([...probeTamperedOnly].sort());
