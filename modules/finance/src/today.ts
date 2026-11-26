@@ -37,22 +37,19 @@ export const TODAY_PROPOSAL_GROUPS_MAX = 30;
 
 type Link = (path: string, entity?: string) => string;
 
-interface GroupRow {
+interface ProposalTodayRow {
+  row_kind: 'group' | 'flag';
   entity: string;
-  kind: string;
-  direction: string;
-  party: string;
-  currency: string;
-  n: string;
+  kind: string | null;
+  direction: string | null;
+  party: string | null;
+  currency: string | null;
+  n: string | null;
   amount: string | null;
-  first_id: string;
-  waiting: string;
-}
-
-interface FlagRow {
-  entity: string;
-  failed: string;
-  warned: string;
+  first_id: string | null;
+  waiting: string | null;
+  failed: string | null;
+  warned: string | null;
 }
 
 const MONEY = '^-?[0-9]{1,16}([.][0-9]{1,8})?$';
@@ -73,8 +70,7 @@ export const financeToday = defineQuery({
     };
     const items: TodayItem[] = [];
     if (ACTORS.includes(ctx.role)) {
-      items.push(...(await waitingProposals(ctx, userId, to)));
-      items.push(...(await flaggedProposals(ctx, userId, to)));
+      items.push(...(await proposalTodayItems(ctx, userId, to)));
       items.push(...(await einvoiceItems(ctx, to)));
       items.push(...(await originalItems(ctx)));
       items.push(...(await bankItems(ctx, entities, to)));
@@ -88,17 +84,13 @@ export const financeToday = defineQuery({
 
 const RFC_UUID = '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$';
 
-// The proposals of `p` waiting for the caller's own decision (the rule of waitingProposals below), as one predicate: the flags over proposals use the same
-// one, so a flag is always about proposals the list counts and never about ones that wait for someone else. Reads the org's preset and live roles in the same
-// SQL statement as the proposals so READ COMMITTED reads cannot observe a stale role or preset (#2749).
+// The proposals of `p` waiting for the caller's own decision, evaluated against the org's precomputed `role_sets` CTE
+// (preset + live roles + org-wide finance.proposal.approve holders) in the same SQL statement snapshot (#2749).
 function waitingForCaller(ctx: QueryContext, userId: string) {
   const isLedger = sql`p.command = ANY(${FINANCE_LEDGER_COMMANDS}::text[])`;
   const isLive = sql`p.command = ANY(${FINANCE_LIVE_COMMANDS}::text[])`;
-  const isAccountant = sql`NOT EXISTS (
-    SELECT 1 FROM ludy_kernel.tenant t
-    JOIN ludy_kernel.approval_preset ap ON ap.key = t.approval_preset
-    WHERE t.org_id = p.org_id AND NOT ap.ledger_chief_accountant_only
-  )`;
+  const callerEligible = sql`((${isLedger} AND r.ledger_ids @> ARRAY[${userId}::uuid] AND coalesce(p.eligible_approvers, ARRAY[]::uuid[]) @> ARRAY[${userId}::uuid])
+    OR (${isLive} AND r.live_ids @> ARRAY[${userId}::uuid]))`;
   // Match parseAuthors in approval.ts: malformed authors (including a stray co_author entry in authors) fail closed.
   const validAuthors = sql`pg_catalog.jsonb_typeof(p.authors) = 'array'
     AND NOT EXISTS (
@@ -110,35 +102,14 @@ function waitingForCaller(ctx: QueryContext, userId: string) {
             AND pg_catalog.jsonb_typeof(a -> 'run') = 'string' AND a ->> 'run' ~ ${RFC_UUID}))) IS NOT TRUE)`;
   const author = (who: ReturnType<typeof sql>) => sql`p.authors @> pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('type', 'user', 'id', ${who}))`;
   const coAuthor = (who: ReturnType<typeof sql>) => sql`coalesce(p.co_authors @> ARRAY[${who}::uuid], false)`;
-  const liveEligibleMember = sql`m.org_id = p.org_id
-    AND (
-      (${isLive} AND m.role IN ('owner', 'admin'))
-      OR (
-        ${isLedger}
-        AND m.user_id = ANY(coalesce(p.eligible_approvers, ARRAY[]::uuid[]))
-        AND (
-          (NOT ${isAccountant} AND m.role IN ('owner', 'admin'))
-          OR (
-            m.role <> 'viewer'
-            AND EXISTS (
-              SELECT 1 FROM ludy_kernel.role_assignment a
-              JOIN ludy_kernel.role_permission rp ON rp.role_key = a.role_key
-              WHERE a.org_id = m.org_id
-                AND a.user_id = m.user_id
-                AND a.legal_entity_id IS NULL
-                AND rp.permission = ${LEDGER_APPROVE_PERMISSION}
-            )
-          )
-        )
-      )
-    )`;
-  const callerEligible = sql`EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.user_id = ${userId}::uuid AND ${liveEligibleMember})`;
-  const callerIsOwner = sql`EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = p.org_id AND m.user_id = ${userId}::uuid AND m.role = 'owner')`;
-  const everyApproverWrote = sql`NOT EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE ${liveEligibleMember} AND NOT ${author(sql`m.user_id::text`)})`;
-  const soleApprover = sql`NOT EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.user_id <> ${userId}::uuid AND ${liveEligibleMember})`;
-  const someoneElseMayDecide = sql`EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE ${liveEligibleMember} AND NOT ${author(sql`m.user_id::text`)} AND NOT ${coAuthor(sql`m.user_id`)})`;
-  const authorAllowed = sql`CASE WHEN ${isLedger} AND ${isAccountant} THEN false WHEN ${callerIsOwner} THEN ${everyApproverWrote} ELSE ${soleApprover} END`;
-  const coAuthorAllowed = sql`CASE WHEN ${isLedger} AND ${isAccountant} THEN false ELSE NOT ${someoneElseMayDecide} END`;
+  const unnestEligible = () =>
+    sql`pg_catalog.unnest(CASE WHEN ${isLive} THEN r.live_ids ELSE coalesce(p.eligible_approvers, ARRAY[]::uuid[]) END) e(u)
+      WHERE (${isLive} OR e.u = ANY(r.ledger_ids))`;
+  const everyApproverWrote = sql`NOT EXISTS (SELECT 1 FROM ${unnestEligible()} AND NOT ${author(sql`e.u::text`)})`;
+  const soleApprover = sql`NOT EXISTS (SELECT 1 FROM ${unnestEligible()} AND e.u <> ${userId}::uuid)`;
+  const someoneElseMayDecide = sql`EXISTS (SELECT 1 FROM ${unnestEligible()} AND NOT ${author(sql`e.u::text`)} AND NOT ${coAuthor(sql`e.u`)})`;
+  const authorAllowed = sql`CASE WHEN ${isLedger} AND r.accountant THEN false WHEN r.caller_owner THEN ${everyApproverWrote} ELSE ${soleApprover} END`;
+  const coAuthorAllowed = sql`CASE WHEN ${isLedger} AND r.accountant THEN false ELSE NOT ${someoneElseMayDecide} END`;
   return sql`p.org_id = ${ctx.orgId}
         AND p.status = 'pending'
         AND p.command LIKE 'finance.%'
@@ -149,21 +120,52 @@ function waitingForCaller(ctx: QueryContext, userId: string) {
                   ELSE true END)`;
 }
 
-// The finance proposals waiting for the caller's own decision, one item per party, direction and currency in each
-// entity, with the exact total of their invoices. "Waiting for me": the caller is currently eligible under the org's
-// preset and live roles (in the proposal's approver snapshot for ledger commands, or any owner/admin for live commands),
-// and either did not write it or, when every eligible approver wrote it (owner override) or they are the sole eligible
-// approver, may decide it under four-eyes (never for ledger proposals under the accountant preset). A co-author (the
-// person a proposal rests on besides its writer, #2736) is shown it only when the preset allows it (not under the
-// accountant preset for ledger proposals) and no currently eligible approver is neither a writer nor a co-author:
-// co-authors only restrict, so the owner override stays on the writers. Money: a purchase invoice's total in its own
-// currency, never converted. A foreign-currency invoice booked in VND (#918) has its amounts in VND already, so it
-// counts as VND; one still waiting for its rate has the invoice's own amounts, so it is a group of its own currency.
-// Vouchers and other proposals have no invoice total and show no amount. A group list is capped, and the rest is one
-// more item that says how many.
-async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Promise<TodayItem[]> {
-  const { rows } = await sql<GroupRow>`
-    WITH w AS (
+// The finance proposals waiting for the caller's own decision and their failed/warn check flags, computed in one SQL
+// statement so the waiting groups and the flags that annotate them always observe the same snapshot (#2749).
+// "Waiting for me": the caller is currently eligible under the org's preset and live roles (in the proposal's approver
+// snapshot for ledger commands, or any owner/admin for live commands), and either did not write it or, when every
+// eligible approver wrote it (owner override) or they are the sole eligible approver, may decide it under four-eyes
+// (never for ledger proposals under the accountant preset). A co-author (the person a proposal rests on besides its
+// writer, #2736) is shown it only when the preset allows it (not under the accountant preset for ledger proposals) and
+// no currently eligible approver is neither a writer nor a co-author: co-authors only restrict, so the owner override
+// stays on the writers. Money: a purchase invoice's total in its own currency, never converted. A foreign-currency
+// invoice booked in VND (#918) has its amounts in VND already, so it counts as VND; one still waiting for its rate has
+// the invoice's own amounts, so it is a group of its own currency. Vouchers and other proposals have no invoice total
+// and show no amount. A group list is capped, and the rest is one more item that says how many.
+async function proposalTodayItems(ctx: QueryContext, userId: string, to: Link): Promise<TodayItem[]> {
+  const check = (status: string) =>
+    sql`EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(CASE WHEN pg_catalog.jsonb_typeof(p.payload -> 'checks') = 'array' THEN p.payload -> 'checks' ELSE '[]'::jsonb END) c WHERE c ->> 'status' = ${status})`;
+  const { rows } = await sql<ProposalTodayRow>`
+    WITH org_policy AS (
+      SELECT NOT EXISTS (
+        SELECT 1 FROM ludy_kernel.tenant t
+        JOIN ludy_kernel.approval_preset ap ON ap.key = t.approval_preset
+        WHERE t.org_id = ${ctx.orgId} AND NOT ap.ledger_chief_accountant_only
+      ) AS accountant
+    ),
+    live_approvers AS (
+      SELECT m.user_id,
+             (m.role IN ('owner', 'admin')) AS is_base,
+             (m.role = 'owner') AS is_owner,
+             (m.role <> 'viewer' AND EXISTS (
+               SELECT 1 FROM ludy_kernel.role_assignment a
+               JOIN ludy_kernel.role_permission rp ON rp.role_key = a.role_key
+               WHERE a.org_id = m.org_id
+                 AND a.user_id = m.user_id
+                 AND a.legal_entity_id IS NULL
+                 AND rp.permission = ${LEDGER_APPROVE_PERMISSION}
+             )) AS has_perm
+      FROM ludy_kernel.tenant_member m
+      WHERE m.org_id = ${ctx.orgId}
+    ),
+    role_sets AS (
+      SELECT (SELECT accountant FROM org_policy) AS accountant,
+             coalesce(pg_catalog.array_agg(user_id) FILTER (WHERE is_base), ARRAY[]::uuid[]) AS live_ids,
+             coalesce(pg_catalog.array_agg(user_id) FILTER (WHERE (NOT (SELECT accountant FROM org_policy) AND is_base) OR has_perm), ARRAY[]::uuid[]) AS ledger_ids,
+             coalesce(pg_catalog.bool_or(user_id = ${userId}::uuid AND is_owner), false) AS caller_owner
+      FROM live_approvers
+    ),
+    w AS (
       SELECT p.legal_entity_id::text AS entity,
              p.kind,
              p.id,
@@ -174,57 +176,71 @@ async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Pr
                   ELSE '' END AS party,
              CASE WHEN p.kind <> 'finance.purchase' OR (p.payload #> '{invoice,foreign}') IS NOT NULL THEN 'VND'
                   ELSE coalesce(nullif(p.payload #>> '{invoice,currency}', ''), 'VND') END AS currency,
-             CASE WHEN p.kind = 'finance.purchase' AND (p.payload #>> '{invoice,total}') ~ ${MONEY} THEN (p.payload #>> '{invoice,total}')::numeric END AS total
+             CASE WHEN p.kind = 'finance.purchase' AND (p.payload #>> '{invoice,total}') ~ ${MONEY} THEN (p.payload #>> '{invoice,total}')::numeric END AS total,
+             ${check('fail')} AS has_fail,
+             ${check('warn')} AS has_warn
       FROM ludy_kernel.proposal p
+      CROSS JOIN role_sets r
       WHERE ${waitingForCaller(ctx, userId)}
+    ),
+    groups AS (
+      SELECT entity, kind, direction, pg_catalog.min(party) AS party, currency,
+             pg_catalog.count(*)::text AS n,
+             pg_catalog.sum(total)::text AS amount,
+             (pg_catalog.array_agg(id ORDER BY created_at, id))[1]::text AS first_id,
+             pg_catalog.sum(pg_catalog.count(*)) OVER ()::text AS waiting,
+             pg_catalog.min(created_at) AS first_at
+      FROM w
+      GROUP BY entity, kind, direction, pg_catalog.lower(party), currency
+      ORDER BY pg_catalog.min(created_at), first_id
+      LIMIT ${TODAY_PROPOSAL_GROUPS_MAX}
+    ),
+    flags AS (
+      SELECT entity,
+             pg_catalog.count(*) FILTER (WHERE has_fail)::text AS failed,
+             pg_catalog.count(*) FILTER (WHERE NOT has_fail AND has_warn)::text AS warned
+      FROM w
+      GROUP BY entity
+    ),
+    combined AS (
+      SELECT 'group'::text AS row_kind, 0 AS ord, pg_catalog.row_number() OVER (ORDER BY first_at, first_id) AS seq,
+             entity, kind, direction, party, currency, n, amount, first_id, waiting, NULL::text AS failed, NULL::text AS warned
+      FROM groups
+      UNION ALL
+      SELECT 'flag'::text AS row_kind, 1 AS ord, pg_catalog.row_number() OVER (ORDER BY entity) AS seq,
+             entity, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, failed, warned
+      FROM flags
     )
-    SELECT entity, kind, direction, pg_catalog.min(party) AS party, currency,
-           pg_catalog.count(*)::text AS n,
-           pg_catalog.sum(total)::text AS amount,
-           (pg_catalog.array_agg(id ORDER BY created_at, id))[1]::text AS first_id,
-           pg_catalog.sum(pg_catalog.count(*)) OVER ()::text AS waiting
-    FROM w
-    GROUP BY entity, kind, direction, pg_catalog.lower(party), currency
-    ORDER BY pg_catalog.min(created_at), first_id
-    LIMIT ${TODAY_PROPOSAL_GROUPS_MAX}`.execute(ctx.trx);
-  const items = rows.map((r): TodayItem => {
+    SELECT row_kind, entity, kind, direction, party, currency, n, amount, first_id, waiting, failed, warned
+    FROM combined
+    ORDER BY ord, seq`.execute(ctx.trx);
+
+  const items: TodayItem[] = [];
+  const groupRows = rows.filter((r) => r.row_kind === 'group');
+  for (const r of groupRows) {
     const count = Number(r.n);
     const sale = r.direction === 'sale';
-    const named = r.party !== '';
-    return {
+    const party = r.party ?? '';
+    const named = party !== '';
+    items.push({
       kind: 'proposal',
       app: 'finance',
       // The party enters the id as a digest of its lower-cased name, so two parties never share an id however long their names.
-      id: `proposals:${r.entity}:${r.kind}:${r.direction}:${r.currency}:${sha256Hex(r.party.toLowerCase()).slice(0, 24)}`,
-      title: named ? { key: sale ? 'financeProposalsCustomer' : 'financeProposalsVendor', params: { count, party: r.party.slice(0, 500) } } : { key: 'financeProposalsOther', params: { count } },
+      id: `proposals:${r.entity}:${r.kind}:${r.direction}:${r.currency}:${sha256Hex(party.toLowerCase()).slice(0, 24)}`,
+      title: named ? { key: sale ? 'financeProposalsCustomer' : 'financeProposalsVendor', params: { count, party: party.slice(0, 500) } } : { key: 'financeProposalsOther', params: { count } },
       count,
-      ...(r.amount !== null ? { amount: r.amount, ...(r.currency !== 'VND' ? { currency: r.currency } : {}) } : {}),
+      ...(r.amount !== null ? { amount: r.amount, ...(r.currency !== 'VND' ? { currency: r.currency as string } : {}) } : {}),
       // One proposal opens itself; a group opens the Inbox.
       href: count === 1 ? to(`/inbox/${r.first_id}`, r.entity) : to('/inbox', r.entity),
-    };
-  });
-  const waiting = Number(rows[0]?.waiting ?? 0);
+    });
+  }
+  const waiting = Number(groupRows[0]?.waiting ?? 0);
   const listed = items.reduce((n, i) => n + (i.count ?? 0), 0);
   if (waiting > listed) {
     items.push({ kind: 'proposal', app: 'finance', id: 'proposals-more', title: { key: 'financeProposalsMore', params: { count: waiting - listed } }, count: waiting - listed, href: '/inbox' });
   }
-  return items;
-}
-
-// The proposals waiting for the caller (waitingProposals' rule) with a failed check (block) or a warning (warn), by entity: what to fix before approving. They are among the proposals
-// waitingProposals counts, so each flag annotates those items (a chip on them) and is not counted again.
-async function flaggedProposals(ctx: QueryContext, userId: string, to: Link): Promise<TodayItem[]> {
-  const check = (status: string) => sql`EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(coalesce(p.payload -> 'checks', '[]'::jsonb)) c WHERE c ->> 'status' = ${status})`;
-  const { rows } = await sql<FlagRow>`
-    SELECT p.legal_entity_id::text AS entity,
-           pg_catalog.count(*) FILTER (WHERE ${check('fail')})::text AS failed,
-           pg_catalog.count(*) FILTER (WHERE NOT ${check('fail')} AND ${check('warn')})::text AS warned
-    FROM ludy_kernel.proposal p
-    WHERE ${waitingForCaller(ctx, userId)}
-    GROUP BY 1
-    ORDER BY 1`.execute(ctx.trx);
-  const items: TodayItem[] = [];
   for (const r of rows) {
+    if (r.row_kind !== 'flag') continue;
     const failed = Number(r.failed);
     const warned = Number(r.warned);
     if (failed > 0) items.push({ kind: 'flag', app: 'finance', id: `checks-failed:${r.entity}`, title: { key: 'financeChecksFailed', params: { count: failed } }, count: failed, severity: 'block', annotates: 'proposal', href: to('/inbox', r.entity) });

@@ -513,6 +513,14 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     expect(groups.reduce((n, g) => n + (g.count ?? 0), 0)).toBeLessThanOrEqual(waiting);
     expect(groups.reduce((n, g) => n + (g.count ?? 0), 0)).toBeGreaterThanOrEqual(1000);
     expect(elapsed).toBeLessThan(5000);
+
+    // Repeat with the caller listed as a co-author on those 1,000 proposals so the co-author branch stays bounded too.
+    await admin((c) => c.query(`UPDATE ludy_kernel.proposal SET co_authors = ARRAY[$2::uuid] WHERE org_id = $1 AND title LIKE 'HĐ %'`, [orgId, users.owner]));
+    const coStarted = Date.now();
+    const coItems = await today(users.owner);
+    const coElapsed = Date.now() - coStarted;
+    expect(coItems.filter((i) => i.kind === 'proposal').reduce((n, g) => n + (g.count ?? 0), 0)).toBeGreaterThanOrEqual(1000);
+    expect(coElapsed).toBeLessThan(5000);
   });
 
   it('flags the sales e-invoices that need a person (#2502): failed, sent back with a reason, or unanswered for an hour; not a fresh send nor a plain draft', async () => {
