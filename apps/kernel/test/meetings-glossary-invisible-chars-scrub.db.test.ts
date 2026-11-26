@@ -80,12 +80,8 @@ suite('glossary_term_ok widening and NFKC address check (#4137 points 2b and 3)'
     before = mkdtempSync(join(tmpdir(), 'crove-glossary-invisible-before-'));
     for (const name of readdirSync(MIGRATIONS).filter((n) => n.endsWith('.sql') && n.slice(0, 14) < VERSION)) copyFileSync(join(MIGRATIONS, name), join(before, name));
     await migrate({ adminUrl, dir: before });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
 
-    const app = new URL(adminUrl);
-    app.username = 'crove_app';
-    app.password = 'test-app-pw';
-    pool = createPreCutoverPool({ connectionString: app.toString(), max: 2 });
+    pool = createPreCutoverPool({ connectionString: adminUrl, sessionRole: 'crove_app', max: 2 });
     const db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
@@ -112,7 +108,9 @@ suite('glossary_term_ok widening and NFKC address check (#4137 points 2b and 3)'
     upgraded = true;
     await pool.end();
     await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    const app = new URL(adminUrl);
     app.username = 'ludy_app';
+    app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 2 });
     runtime = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register(registry);
   }, 300_000);

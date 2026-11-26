@@ -504,7 +504,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
         [fn],
       )
     ).rows.map((r) => r.rolname);
-    expect(roleExecs).toEqual(['crove_worker', 'ludy_worker']);
+    expect(roleExecs).toEqual(['ludy_worker']);
 
     const callAs = async (user: string, password: string, cutoffExpr: string, withOrgContext = false) => {
       const url = new URL(adminUrl);

@@ -104,12 +104,7 @@ suite('activity entity backfill on PostgreSQL (#1805)', () => {
       copyFileSync(join(MIGRATIONS, name), join(before, name));
     }
     await migrate({ adminUrl, dir: before });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    const app = new URL(adminUrl);
-    app.username = 'crove_app';
-    app.password = 'test-app-pw';
-    appUrl = app.toString();
-    pool = createPreCutoverPool({ connectionString: appUrl, max: 2 });
+    pool = createPreCutoverPool({ connectionString: adminUrl, sessionRole: 'crove_app', max: 2 });
     const db = createDb(pool);
     // No context token key: the database starts at a version before enter_user_context (#1822).
     const rt = new Runtime(db, { manifests: TEST_MANIFESTS, contextTokenKey: null }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
