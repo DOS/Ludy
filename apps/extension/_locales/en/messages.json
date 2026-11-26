@@ -4,7 +4,7 @@
     "description": "The extension name (the store listing name and the toolbar tooltip base)."
   },
   "extDescription": {
-    "message": "Record a browser meeting's tab audio and your microphone into Ludy, and upload it when you stop.",
+    "message": "Record browser meeting audio and your mic into Ludy, and optionally save quick notes or clip the active page on click.",
     "description": "The store short description, at most 132 characters."
   },
   "extActionTitle": {

@@ -86,7 +86,7 @@ describe('localized manifest (the store listing in Vietnamese and English)', () 
   });
 
   it('the description is the store text in both languages, within the 132 character limit', () => {
-    expect(messagesOf('en').extDescription!.message).toBe("Record a browser meeting's tab audio and your microphone into Ludy, and upload it when you stop.");
+    expect(messagesOf('en').extDescription!.message).toBe('Record browser meeting audio and your mic into Ludy, and optionally save quick notes or clip the active page on click.');
     for (const lang of ['vi', 'en']) expect(messagesOf(lang).extDescription!.message.length).toBeLessThanOrEqual(132);
   });
 
