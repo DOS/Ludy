@@ -287,6 +287,7 @@ export function TaskChecklistSection({
   const [steps, setSteps] = useState<TaskChecklistStep[]>(() => checklist.map((step) => ({ ...step })));
   const [draft, setDraft] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const taskIdRef = useRef(taskId);
   const stepsRef = useRef<TaskChecklistStep[]>(steps);
   const savedStepsRef = useRef<TaskChecklistStep[]>(checklist.map((step) => ({ ...step })));
   const savedRef = useRef(serializeTaskChecklist(checklist));
@@ -315,6 +316,9 @@ export function TaskChecklistSection({
   const update = useMutation(
     orpc.tasks.update.mutationOptions({
       onSuccess: (result, variables) => {
+        if (variables.id !== taskIdRef.current || variables.idempotencyKey !== activeKeyRef.current) {
+          return invalidateTaskQueries();
+        }
         if (typeof result?.revision === 'number' && (revisionRef.current === undefined || result.revision > revisionRef.current)) {
           revisionRef.current = result.revision;
         }
@@ -332,36 +336,37 @@ export function TaskChecklistSection({
             return;
           }
         }
-        if (variables.idempotencyKey === activeKeyRef.current) {
-          activeKeyRef.current = null;
-          inFlightRef.current = false;
-          setIsSaving(false);
-        }
+        activeKeyRef.current = null;
+        inFlightRef.current = false;
+        setIsSaving(false);
         needsInvalidateRef.current = false;
         return invalidateTaskQueries();
       },
       onError: (err, variables) => {
-        if (variables.idempotencyKey === activeKeyRef.current) {
-          queuedStepsRef.current = null;
-          activeKeyRef.current = null;
-          inFlightRef.current = false;
-          setIsSaving(false);
-          const fallback = savedStepsRef.current.map((step) => ({ ...step }));
-          savedRef.current = serializeTaskChecklist(fallback);
-          setStepsSynced(fallback);
+        if (variables.id !== taskIdRef.current || variables.idempotencyKey !== activeKeyRef.current) {
+          if (isTaskStaleRevision(err)) {
+            void invalidateTaskQueries();
+          }
+          return;
         }
+        queuedStepsRef.current = null;
+        activeKeyRef.current = null;
+        inFlightRef.current = false;
+        setIsSaving(false);
+        const fallback = savedStepsRef.current.map((step) => ({ ...step }));
+        savedRef.current = serializeTaskChecklist(fallback);
+        setStepsSynced(fallback);
         if (isTaskStaleRevision(err) || needsInvalidateRef.current) {
           needsInvalidateRef.current = false;
           void invalidateTaskQueries();
         }
       },
       onSettled: (_data, _err, variables) => {
-        if (variables.idempotencyKey === activeKeyRef.current) {
-          queuedStepsRef.current = null;
-          activeKeyRef.current = null;
-          inFlightRef.current = false;
-          setIsSaving(false);
-        }
+        if (variables.id !== taskIdRef.current || variables.idempotencyKey !== activeKeyRef.current) return;
+        queuedStepsRef.current = null;
+        activeKeyRef.current = null;
+        inFlightRef.current = false;
+        setIsSaving(false);
       },
     }),
   );
@@ -379,8 +384,32 @@ export function TaskChecklistSection({
     });
   };
 
+  const resetMutation = update.reset;
+
   useEffect(() => {
     const incoming = serializeTaskChecklist(checklist);
+    if (taskId !== taskIdRef.current) {
+      taskIdRef.current = taskId;
+      const hadPendingInvalidate = needsInvalidateRef.current;
+      inFlightRef.current = false;
+      activeKeyRef.current = null;
+      queuedStepsRef.current = null;
+      needsInvalidateRef.current = false;
+      if (hadPendingInvalidate) {
+        void invalidateTaskQueries();
+      }
+      const synced = checklist.map((step) => ({ ...step }));
+      savedStepsRef.current = synced;
+      savedRef.current = incoming;
+      prevPropChecklistRef.current = incoming;
+      revisionRef.current = revision;
+      prevPropRevisionRef.current = revision;
+      setStepsSynced(synced);
+      setDraft('');
+      setIsSaving(false);
+      resetMutation();
+      return;
+    }
     const hasPending = update.isPending || isSaving;
     if (!hasPending) {
       const revisionAdvanced =
@@ -402,7 +431,7 @@ export function TaskChecklistSection({
         }
       }
     }
-  }, [checklist, revision, update.isPending, isSaving]);
+  }, [taskId, checklist, revision, update.isPending, isSaving, resetMutation]);
 
   const commit = (next: TaskChecklistStep[]) => {
     if (readOnly) return;

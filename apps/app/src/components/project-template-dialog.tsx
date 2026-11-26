@@ -82,11 +82,15 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
   const [nameError, setNameError] = useState(false);
   const [templateError, setTemplateError] = useState(false);
   const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
+  const openRef = useRef(open);
+  openRef.current = open;
   const radioGroupRef = useRef<HTMLDivElement>(null);
   const focusFrameRef = useRef<number | null>(null);
   const pendingArchiveFocusRef = useRef<string | null>(null);
   const succeededArchiveIdRef = useRef<string | null>(null);
   const archiveDialogVisibleRef = useRef(false);
+  const archiveEpochRef = useRef(0);
+  const [archivingEpochs, setArchivingEpochs] = useState<Record<string, number>>({});
 
   useEffect(
     () => () => {
@@ -96,13 +100,6 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
     },
     [],
   );
-
-  useEffect(() => {
-    if (!open) {
-      pendingArchiveFocusRef.current = null;
-      succeededArchiveIdRef.current = null;
-    }
-  }, [open]);
 
   const getRestoreTargetRadio = (archivedId: string, archivedSucceeded = false): HTMLButtonElement | null => {
     const radios = Array.from(radioGroupRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? []).filter(
@@ -147,9 +144,12 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
     if (focusFrameRef.current !== null) {
       window.cancelAnimationFrame(focusFrameRef.current);
     }
+    const archiveEpoch = archiveEpochRef.current;
     focusFrameRef.current = window.requestAnimationFrame(() => {
       focusFrameRef.current = null;
-      if (!open || !shouldRestoreRadioFocus(archivedId, includeConfirmDialog)) return;
+      if (!openRef.current || archiveEpoch !== archiveEpochRef.current || !shouldRestoreRadioFocus(archivedId, includeConfirmDialog)) {
+        return;
+      }
       const targetRadio = getRestoreTargetRadio(archivedId, archivedSucceeded);
       if (targetRadio?.isConnected !== false) {
         targetRadio?.focus();
@@ -164,19 +164,47 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
 
   const createFromTemplate = useMutation(orpc.projects.createFromTemplate.mutationOptions());
   const createTemplate = useMutation(orpc.projects.createTemplate.mutationOptions());
-  const archiveTemplate = useMutation(orpc.projects.archiveTemplate.mutationOptions());
+  const archiveTemplate = useMutation(
+    orpc.projects.archiveTemplate.mutationOptions({
+      onSuccess: () => {
+        refreshProjectQueries();
+      },
+      onError: (_err, { templateId }) => {
+        setArchivingEpochs((prev) => {
+          if (!(templateId in prev)) return prev;
+          const next = { ...prev };
+          delete next[templateId];
+          return next;
+        });
+      },
+    }),
+  );
 
-  const templates = listQuery.data?.templates ?? [];
+  const templates = (listQuery.data?.templates ?? []).filter((item) => {
+    const archivingEpoch = archivingEpochs[item.id];
+    return archivingEpoch === undefined || archivingEpoch === archiveEpochRef.current;
+  });
   const builtins = templates.filter((item) => item.source === 'builtin');
   const customs = templates.filter((item) => item.source === 'custom');
   const allTemplates = [...builtins, ...customs];
   const selectedTemplate: ProjectTemplateSummary | undefined =
-    templates.find((item) => item.id === selectedId) ?? templates[0];
+    templates.find((item) => item.id === selectedId) ??
+    (selectedId === DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY ? templates[0] : undefined);
+  const missingSelectedTemplate =
+    mode === 'create' && !listQuery.isPending && !listQuery.error && templates.length > 0 && !selectedTemplate;
 
   const saveInitialName = mode === 'save' ? props.initialName : '';
   const saveInitialDesc = mode === 'save' ? (props.initialDescription ?? '') : '';
 
   useEffect(() => {
+    if (focusFrameRef.current !== null) {
+      window.cancelAnimationFrame(focusFrameRef.current);
+      focusFrameRef.current = null;
+    }
+    pendingArchiveFocusRef.current = null;
+    succeededArchiveIdRef.current = null;
+    archiveDialogVisibleRef.current = false;
+    archiveEpochRef.current += 1;
     if (!open) return;
     setNameError(false);
     setTemplateError(false);
@@ -436,24 +464,27 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                               }}
                               onConfirm={() => {
                                 const archivedId = selectedTemplate.id;
+                                const archiveEpoch = archiveEpochRef.current;
                                 pendingArchiveFocusRef.current = archivedId;
                                 succeededArchiveIdRef.current = null;
+                                setArchivingEpochs((prev) => ({ ...prev, [archivedId]: archiveEpoch }));
                                 // Keep focus on the currently selected radio while pending or on error; switch to fallback on success unless user moved elsewhere.
                                 restoreRadioFocus(archivedId);
                                 archiveTemplate.mutate(
                                   { templateId: archivedId, idempotencyKey: crypto.randomUUID() },
                                   {
                                     onSuccess: () => {
+                                      if (archiveEpoch !== archiveEpochRef.current || !openRef.current) return;
                                       const restoreFallbackFocus =
                                         pendingArchiveFocusRef.current === archivedId && shouldRestoreRadioFocus(archivedId, true);
                                       succeededArchiveIdRef.current = archivedId;
-                                      refreshProjectQueries();
                                       setSelectedId((cur) => (cur === archivedId ? DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY : cur));
                                       if (restoreFallbackFocus) {
                                         restoreRadioFocus(archivedId, true, true);
                                       }
                                     },
                                     onSettled: () => {
+                                      if (archiveEpoch !== archiveEpochRef.current) return;
                                       if (!archiveDialogVisibleRef.current) {
                                         pendingArchiveFocusRef.current = null;
                                       }
@@ -514,7 +545,7 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                   )}
                 </>
               )}
-              {templateError && <ErrorText>{t('templates.templateRequired')}</ErrorText>}
+              {(templateError || missingSelectedTemplate) && <ErrorText>{t('templates.templateRequired')}</ErrorText>}
             </div>
           )}
 

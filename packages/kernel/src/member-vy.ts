@@ -166,6 +166,7 @@ async function assertVyModuleEnabled(ctx: Pick<CommandContext, 'trx' | 'orgId' |
   if (!ctx.installed(module)) {
     throw new DomainError('MODULE_OFF', 404, `Ứng dụng ${module} chưa được bật cho công ty này`, { module });
   }
+  // Keep the offAppsOf fallback while CommandContext.appEnabled remains optional in kernel-runtime.
   const enabled = ctx.appEnabled
     ? await ctx.appEnabled(module)
     : !(await offAppsOf(ctx.trx, ctx.orgId)).includes(module);
