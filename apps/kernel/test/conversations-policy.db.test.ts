@@ -286,8 +286,7 @@ suite('the conversation core: who reads what, the channel limit, the intake age 
     base.pathname = `/${moveDb}`;
     const url = base.toString();
     await migrate({ adminUrl: url, dir });
-    await setRolePasswords(url, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    const pool = createPreCutoverPool({ connectionString: urlFor(url, 'crove_app', 'test-app-pw'), max: 2 });
+    const pool = createPreCutoverPool({ connectionString: url, sessionRole: 'crove_app', max: 2 });
     pools.push(pool);
     const old = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] });
     const owner = await upsertIdentity(createDb(pool), { issuer: 'test', subject: randomUUID(), email: `owner-${randomUUID().slice(0, 8)}@move.test`, name: null });

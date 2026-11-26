@@ -735,7 +735,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       await appClient.query('BEGIN');
       await appClient.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgA, ownerToken]);
       await appClient.query('SAVEPOINT sp_forged_guc');
-      await appClient.query(`SET LOCAL crove.sign_personal_erase = '${orgA}'`);
+      await appClient.query(`SET LOCAL ludy.sign_personal_erase = '${orgA}'`);
       await expect(
         appClient.query('DELETE FROM ludy_sign.signer WHERE org_id = $1 AND id = $2', [orgA, e2TargetSignerId]),
       ).rejects.toThrow(/ENVELOPE_FROZEN/);

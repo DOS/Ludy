@@ -949,7 +949,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
           mfaAt: null,
         }),
       ]);
-      await inheritBypassClient.query("SELECT pg_catalog.set_config('crove.sign_template_inherit', $1, true)", [
+      await inheritBypassClient.query("SELECT pg_catalog.set_config('ludy.sign_template_inherit', $1, true)", [
         pendingEnv.envelopeId,
       ]);
       await expect(

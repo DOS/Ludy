@@ -148,10 +148,9 @@ suite('finance books per legal entity (#1280)', () => {
       copyFileSync(join(MIGRATIONS, name), join(before, name));
     }
     await migrate({ adminUrl, dir: before });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    pool = createPreCutoverPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 });
+    pool = createPreCutoverPool({ connectionString: adminUrl, sessionRole: 'crove_app', max: 2 });
     db = createDb(pool);
-    workerPool = createPreCutoverPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 1 });
+    workerPool = createPreCutoverPool({ connectionString: adminUrl, sessionRole: 'crove_worker', max: 1 });
     worker = createDb(workerPool);
     // The database is still before the keyed input hash's migration (20261103180000_crove_kernel_input_hash.sql), where
     // ludy_kernel.command_input_hash does not exist yet: this runtime writes the plain hash (#1741).

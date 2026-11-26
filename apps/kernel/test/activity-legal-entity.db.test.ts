@@ -79,7 +79,9 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
   // The database starts before the keyed input hash's migration (20261103180000_crove_kernel_input_hash.sql), where
   // ludy_kernel.command_input_hash does not exist yet: the runtime that seeds it writes the plain hash (#1741).
   function connect(inputHash: InputHashMode = 'keyed', preCutover = false) {
-    pool = preCutover ? createPreCutoverPool({ connectionString: appUrl, max: 4 }) : createPool({ connectionString: appUrl, max: 4 });
+    pool = preCutover
+      ? createPreCutoverPool({ connectionString: adminUrl, sessionRole: 'crove_app', max: 4 })
+      : createPool({ connectionString: appUrl, max: 4 });
     // No context token key: the database starts at a version before enter_user_context (#1822).
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, contextTokenKey: null, inputHash }).register({
       commands: [...kernelCommands, ...financeCommands],
@@ -139,11 +141,6 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
       copyFileSync(join(MIGRATIONS, name), join(before, name));
     }
     await migrate({ adminUrl, dir: before });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    const app = new URL(adminUrl);
-    app.username = 'crove_app';
-    app.password = 'test-app-pw';
-    appUrl = app.toString();
     connect('sha256', true);
 
     const db = createDb(pool);

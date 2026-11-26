@@ -28,7 +28,7 @@ const FILE_PATTERN = /^(\d{14})_(?:crove|ludy)_[a-z0-9]+_[a-z0-9_]+\.sql$/;
 // Ludy's own roles, by name (#2284): the roles the migrations create (both canonical ludy_* and legacy crove_* transition
 // aliases until #3972 drops the aliases). A shared database may hold another system's role named `ludy_something` or
 // `crove_something`; only these are trusted as Ludy's.
-export const LUDY_ROLES: readonly string[] = [
+const CANONICAL_LUDY_ROLES: readonly string[] = [
   'ludy_tenant',
   'ludy_app',
   'ludy_worker',
@@ -38,6 +38,9 @@ export const LUDY_ROLES: readonly string[] = [
   'ludy_definer_tenant',
   'ludy_definer_system',
   'ludy_definer_einvoice',
+];
+
+const LEGACY_CROVE_ROLES: readonly string[] = [
   'crove_tenant',
   'crove_app',
   'crove_worker',
@@ -48,6 +51,674 @@ export const LUDY_ROLES: readonly string[] = [
   'crove_definer_system',
   'crove_definer_einvoice',
 ];
+
+const LEGACY_LOGIN_ROLES: readonly string[] = [
+  'crove_app',
+  'crove_worker',
+  'crove_prober',
+  'crove_reporter',
+];
+
+const CORE_CUTOVER_MIGRATION = '20270315090000_ludy_kernel_rebrand_core_schemas_roles_gucs.sql';
+const STAGE7_CLUSTER_MARKER = 'ludy:stage7-contracted';
+
+export type CoreCutoverClusterState = 'uncontracted' | 'contracted' | 'wiped-marker';
+
+/** Classifies whether the 20270315090000 core cutover replay must strip transitional grants or fail closed on a missing marker. */
+export function classifyCoreCutoverState(input: {
+  markerPresent: boolean;
+  hasLudyRoles: boolean;
+  hasTransitionalGrants: boolean;
+  anyLegacyLoginExpired: boolean;
+  allLegacyLoginsExpired: boolean;
+}): CoreCutoverClusterState {
+  if (input.markerPresent) return 'contracted';
+  if (input.hasLudyRoles && (input.allLegacyLoginsExpired || (!input.hasTransitionalGrants && input.anyLegacyLoginExpired))) {
+    return 'wiped-marker';
+  }
+  return 'uncontracted';
+}
+
+export const LUDY_ROLES: readonly string[] = [...CANONICAL_LUDY_ROLES, ...LEGACY_CROVE_ROLES];
+
+async function isDatabaseStage7Contracted(client: pg.ClientBase): Promise<boolean> {
+  const { rows: metaTable } = await client.query<{ ok: boolean }>(
+    "SELECT pg_catalog.to_regclass('ludy_meta.schema_migrations') IS NOT NULL AS ok",
+  );
+  if (!metaTable[0]?.ok) return false;
+  const { rows } = await client.query<{ ok: boolean }>(
+    "SELECT EXISTS (SELECT 1 FROM ludy_meta.schema_migrations WHERE name LIKE '%\\_ludy\\_kernel\\_contract\\_crove\\_roles\\_and\\_gucs.sql') AS ok",
+  );
+  return rows[0]?.ok === true;
+}
+
+async function readCoreCutoverClusterState(client: pg.ClientBase): Promise<CoreCutoverClusterState> {
+  const { rows: stateRows } = await client.query<{
+    marker_present: boolean;
+    has_ludy_roles: boolean;
+    has_transitional_grants: boolean;
+    any_legacy_expired: boolean;
+    all_legacy_expired: boolean;
+  }>(
+    `SELECT
+       EXISTS (
+         SELECT 1 FROM pg_catalog.pg_roles r
+         WHERE r.rolname = 'crove_tenant'
+           AND pg_catalog.shobj_description(r.oid, 'pg_authid') = $1
+       ) AS marker_present,
+       EXISTS (
+         SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = ANY ($2::text[])
+       ) AS has_ludy_roles,
+       EXISTS (
+         SELECT 1
+         FROM pg_catalog.pg_auth_members am
+         JOIN pg_catalog.pg_roles tgt ON tgt.oid = am.roleid
+         JOIN pg_catalog.pg_roles mem ON mem.oid = am.member
+         WHERE mem.rolname = ANY ($3::text[])
+           AND tgt.rolname = ANY ($2::text[])
+       ) AS has_transitional_grants,
+       EXISTS (
+         SELECT 1 FROM pg_catalog.pg_roles
+         WHERE rolname = ANY ($4::text[])
+           AND rolvaliduntil IS NOT NULL
+           AND rolvaliduntil <= '1970-01-01 00:00:00+00'::timestamptz
+       ) AS any_legacy_expired,
+       (
+         EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = ANY ($4::text[]))
+         AND NOT EXISTS (
+           SELECT 1 FROM pg_catalog.pg_roles
+           WHERE rolname = ANY ($4::text[])
+             AND (rolvaliduntil IS NULL OR rolvaliduntil > '1970-01-01 00:00:00+00'::timestamptz)
+         )
+       ) AS all_legacy_expired`,
+    [STAGE7_CLUSTER_MARKER, CANONICAL_LUDY_ROLES, LEGACY_CROVE_ROLES, LEGACY_LOGIN_ROLES],
+  );
+  const s = stateRows[0];
+  return classifyCoreCutoverState({
+    markerPresent: s?.marker_present === true,
+    hasLudyRoles: s?.has_ludy_roles === true,
+    hasTransitionalGrants: s?.has_transitional_grants === true,
+    anyLegacyLoginExpired: s?.any_legacy_expired === true,
+    allLegacyLoginsExpired: s?.all_legacy_expired === true,
+  });
+}
+
+const DEFAULT_CLUSTER_LOCK_WAIT_MS = 30_000;
+
+// Acquires a cluster-wide tuple lock on crove_tenant in pg_authid until COMMIT so concurrent
+// migrate() runs across databases serialize core cutover and Stage 7 catalog mutations.
+async function lockClusterStage7Role(
+  client: pg.ClientBase,
+  options: { requireLock?: boolean; lockWaitMs?: number | undefined } = {},
+): Promise<void> {
+  const timeoutMs =
+    options.lockWaitMs !== undefined && Number.isFinite(options.lockWaitMs) && options.lockWaitMs > 0
+      ? Math.max(1, Math.trunc(options.lockWaitMs))
+      : DEFAULT_CLUSTER_LOCK_WAIT_MS;
+  const { rows: prevRows } = await client.query<{ v: string }>("SELECT pg_catalog.current_setting('lock_timeout') AS v");
+  const prevLockTimeout = prevRows[0]?.v ?? '0';
+  const failClause = options.requireLock
+    ? `
+        ELSE
+          RAISE EXCEPTION 'stage 7 concurrency guard failed: role % cannot acquire cluster lock on crove_tenant (requires superuser or CREATEROLE with ADMIN OPTION on crove_tenant)', current_user;`
+    : '';
+  await client.query("SELECT pg_catalog.set_config('lock_timeout', $1, true)", [`${timeoutMs}ms`]);
+  try {
+    await client.query(`DO $$
+      DECLARE
+        v_is_super boolean;
+        v_createrole boolean;
+      BEGIN
+        IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crove_tenant') THEN
+          SELECT COALESCE(rolsuper, false), COALESCE(rolcreaterole, false)
+          INTO v_is_super, v_createrole
+          FROM pg_catalog.pg_roles
+          WHERE rolname = current_user;
+          IF COALESCE(v_is_super, false)
+             OR (COALESCE(v_createrole, false)
+                 AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crove_tenant' AND rolsuper)
+                 AND pg_catalog.pg_has_role(current_user, 'crove_tenant', 'MEMBER WITH ADMIN OPTION')) THEN
+            EXECUTE pg_catalog.format('ALTER ROLE %I NOLOGIN', 'crove_tenant');${failClause}
+          END IF;
+        END IF;
+      END $$`);
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && (error as { code?: unknown }).code === '55P03') {
+      throw new Error(
+        `timed out after ${timeoutMs}ms waiting for cluster Stage 7 role lock on crove_tenant; another migration or password update is holding a lock on crove_tenant`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  await client.query("SELECT pg_catalog.set_config('lock_timeout', $1, true)", [prevLockTimeout]);
+}
+
+function isConcurrentCatalogUpdateError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  if (code === '40P01') return true;
+  return code === 'XX000' && typeof message === 'string' && message.includes('tuple concurrently updated');
+}
+
+// Revokes direct privileges on ludy_* objects bestowed by another grantor (e.g., via WITH GRANT OPTION)
+// by switching to the grantor role via SET LOCAL ROLE so PostgreSQL 17's object-level REVOKE removes them
+// before 20270327030000's fail-closed ACL verification runs. Each object class drains leaf-first across
+// bounded passes without using CASCADE so non-legacy dependents are never stripped silently. Also drains
+// pg_default_acl entries owned by roles where the runner only holds SET (not USAGE).
+async function revokeDelegatedLegacyObjectGrants(client: pg.ClientBase, shared: boolean): Promise<void> {
+  await client.query(`DO $$
+    DECLARE
+      v_orig_role text := current_user;
+      v_is_super boolean;
+      v_shared constant boolean := ${shared ? 'true' : 'false'};
+      v_pass integer;
+      v_progress boolean;
+      v_legacy_roles constant text[] := ARRAY[
+        'crove_tenant', 'crove_app', 'crove_worker', 'crove_prober', 'crove_reporter',
+        'crove_auth_reader', 'crove_definer_tenant', 'crove_definer_einvoice', 'crove_definer_system'
+      ];
+      r record;
+    BEGIN
+      SELECT COALESCE(rolsuper, false) INTO v_is_super
+      FROM pg_catalog.pg_roles WHERE rolname = v_orig_role;
+      v_is_super := COALESCE(v_is_super, false);
+
+      -- Columns first so table-level REVOKE never clears attacl independently.
+      v_pass := 0;
+      LOOP
+        v_pass := v_pass + 1;
+        v_progress := false;
+        FOR r IN
+          SELECT DISTINCT n.nspname AS schema_name, c.relname, att.attname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type, a.is_grantable
+          FROM pg_catalog.pg_attribute att
+          JOIN pg_catalog.pg_class c ON c.oid = att.attrelid
+          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
+          JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+          JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+          WHERE n.nspname LIKE 'ludy\\_%'
+            AND att.attnum > 0 AND NOT att.attisdropped
+            AND a.grantee <> c.relowner
+            AND gr.rolname = ANY (v_legacy_roles)
+            AND src.rolname <> v_orig_role
+            AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+          ORDER BY a.is_grantable ASC, n.nspname, c.relname, att.attname, gr.rolname, src.rolname, a.privilege_type
+        LOOP
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format('REVOKE %s (%I) ON %I.%I FROM %I', r.privilege_type, r.attname, r.schema_name, r.relname, r.grantee);
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+            v_progress := true;
+          EXCEPTION
+            WHEN insufficient_privilege
+              OR dependent_objects_still_exist
+              OR dependent_privilege_descriptors_still_exist THEN
+              NULL;
+          END;
+        END LOOP;
+        EXIT WHEN NOT v_progress OR v_pass >= 16;
+      END LOOP;
+
+      v_pass := 0;
+      LOOP
+        v_pass := v_pass + 1;
+        v_progress := false;
+        FOR r IN
+          SELECT DISTINCT n.nspname AS schema_name, c.relname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type, a.is_grantable
+          FROM pg_catalog.pg_class c
+          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+          JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+          JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+          WHERE n.nspname LIKE 'ludy\\_%'
+            AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+            AND a.grantee <> c.relowner
+            AND gr.rolname = ANY (v_legacy_roles)
+            AND src.rolname <> v_orig_role
+            AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+          ORDER BY a.is_grantable ASC, n.nspname, c.relname, gr.rolname, src.rolname, a.privilege_type
+        LOOP
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format('REVOKE %s ON TABLE %I.%I FROM %I', r.privilege_type, r.schema_name, r.relname, r.grantee);
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+            v_progress := true;
+          EXCEPTION
+            WHEN insufficient_privilege
+              OR dependent_objects_still_exist
+              OR dependent_privilege_descriptors_still_exist THEN
+              NULL;
+          END;
+        END LOOP;
+        EXIT WHEN NOT v_progress OR v_pass >= 16;
+      END LOOP;
+
+      v_pass := 0;
+      LOOP
+        v_pass := v_pass + 1;
+        v_progress := false;
+        FOR r IN
+          SELECT DISTINCT n.nspname AS schema_name, c.relname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type, a.is_grantable
+          FROM pg_catalog.pg_class c
+          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+          JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+          JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+          WHERE n.nspname LIKE 'ludy\\_%'
+            AND c.relkind = 'S'
+            AND a.grantee <> c.relowner
+            AND gr.rolname = ANY (v_legacy_roles)
+            AND src.rolname <> v_orig_role
+            AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+          ORDER BY a.is_grantable ASC, n.nspname, c.relname, gr.rolname, src.rolname, a.privilege_type
+        LOOP
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format('REVOKE %s ON SEQUENCE %I.%I FROM %I', r.privilege_type, r.schema_name, r.relname, r.grantee);
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+            v_progress := true;
+          EXCEPTION
+            WHEN insufficient_privilege
+              OR dependent_objects_still_exist
+              OR dependent_privilege_descriptors_still_exist THEN
+              NULL;
+          END;
+        END LOOP;
+        EXIT WHEN NOT v_progress OR v_pass >= 16;
+      END LOOP;
+
+      v_pass := 0;
+      LOOP
+        v_pass := v_pass + 1;
+        v_progress := false;
+        FOR r IN
+          SELECT DISTINCT p.oid::pg_catalog.regprocedure::text AS fn_sig, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type, a.is_grantable
+          FROM pg_catalog.pg_proc p
+          JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+          CROSS JOIN LATERAL pg_catalog.aclexplode(p.proacl) a
+          JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+          JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+          WHERE n.nspname LIKE 'ludy\\_%'
+            AND a.grantee <> p.proowner
+            AND gr.rolname = ANY (v_legacy_roles)
+            AND src.rolname <> v_orig_role
+            AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+          ORDER BY a.is_grantable ASC, p.oid::pg_catalog.regprocedure::text, gr.rolname, src.rolname, a.privilege_type
+        LOOP
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format('REVOKE %s ON ROUTINE %s FROM %I', r.privilege_type, r.fn_sig, r.grantee);
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+            v_progress := true;
+          EXCEPTION
+            WHEN insufficient_privilege
+              OR dependent_objects_still_exist
+              OR dependent_privilege_descriptors_still_exist THEN
+              NULL;
+          END;
+        END LOOP;
+        EXIT WHEN NOT v_progress OR v_pass >= 16;
+      END LOOP;
+
+      v_pass := 0;
+      LOOP
+        v_pass := v_pass + 1;
+        v_progress := false;
+        FOR r IN
+          SELECT DISTINCT n.nspname AS schema_name, t.typname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type, a.is_grantable
+          FROM pg_catalog.pg_type t
+          JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+          CROSS JOIN LATERAL pg_catalog.aclexplode(t.typacl) a
+          JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+          JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+          WHERE n.nspname LIKE 'ludy\\_%'
+            AND t.typacl IS NOT NULL
+            AND a.grantee <> t.typowner
+            AND gr.rolname = ANY (v_legacy_roles)
+            AND src.rolname <> v_orig_role
+            AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+          ORDER BY a.is_grantable ASC, n.nspname, t.typname, gr.rolname, src.rolname, a.privilege_type
+        LOOP
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format('REVOKE %s ON TYPE %I.%I FROM %I', r.privilege_type, r.schema_name, r.typname, r.grantee);
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+            v_progress := true;
+          EXCEPTION
+            WHEN insufficient_privilege
+              OR dependent_objects_still_exist
+              OR dependent_privilege_descriptors_still_exist THEN
+              NULL;
+          END;
+        END LOOP;
+        EXIT WHEN NOT v_progress OR v_pass >= 16;
+      END LOOP;
+
+      v_pass := 0;
+      LOOP
+        v_pass := v_pass + 1;
+        v_progress := false;
+        FOR r IN
+          SELECT DISTINCT n.nspname AS schema_name, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type, a.is_grantable
+          FROM pg_catalog.pg_namespace n
+          CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a
+          JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+          JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+          WHERE n.nspname LIKE 'ludy\\_%'
+            AND a.grantee <> n.nspowner
+            AND gr.rolname = ANY (v_legacy_roles)
+            AND src.rolname <> v_orig_role
+            AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+          ORDER BY a.is_grantable ASC, n.nspname, gr.rolname, src.rolname, a.privilege_type
+        LOOP
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format('REVOKE %s ON SCHEMA %I FROM %I', r.privilege_type, r.schema_name, r.grantee);
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+            v_progress := true;
+          EXCEPTION
+            WHEN insufficient_privilege
+              OR dependent_objects_still_exist
+              OR dependent_privilege_descriptors_still_exist THEN
+              NULL;
+          END;
+        END LOOP;
+        EXIT WHEN NOT v_progress OR v_pass >= 16;
+      END LOOP;
+
+      IF NOT v_is_super THEN
+        FOR r IN
+          SELECT DISTINCT
+            ow.rolname AS owner_role,
+            n.nspname AS schema_name,
+            CASE d.defaclobjtype
+              WHEN 'r' THEN 'TABLES'
+              WHEN 'S' THEN 'SEQUENCES'
+              WHEN 'f' THEN 'FUNCTIONS'
+              WHEN 'T' THEN 'TYPES'
+              WHEN 'n' THEN 'SCHEMAS'
+            END AS obj_kind,
+            gr.rolname AS grantee_role
+          FROM pg_catalog.pg_default_acl d
+          LEFT JOIN pg_catalog.pg_namespace n ON n.oid = d.defaclnamespace
+          JOIN pg_catalog.pg_roles ow ON ow.oid = d.defaclrole
+          CROSS JOIN LATERAL pg_catalog.aclexplode(d.defaclacl) a
+          JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+          WHERE d.defaclobjtype IN ('r', 'S', 'f', 'T', 'n')
+            AND (n.nspname LIKE 'ludy\\_%' OR (NOT v_shared AND d.defaclnamespace = 0))
+            AND gr.rolname = ANY (v_legacy_roles)
+            AND ow.rolname <> v_orig_role
+            AND NOT pg_catalog.pg_has_role(v_orig_role, ow.oid, 'USAGE')
+            AND pg_catalog.pg_has_role(v_orig_role, ow.oid, 'SET')
+          ORDER BY ow.rolname, n.nspname NULLS FIRST, obj_kind, gr.rolname
+        LOOP
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.owner_role);
+            IF r.schema_name IS NULL THEN
+              EXECUTE pg_catalog.format(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE ALL ON %s FROM %I',
+                r.owner_role, r.obj_kind, r.grantee_role
+              );
+            ELSE
+              EXECUTE pg_catalog.format(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I REVOKE ALL ON %s FROM %I',
+                r.owner_role, r.schema_name, r.obj_kind, r.grantee_role
+              );
+            END IF;
+          EXCEPTION
+            WHEN insufficient_privilege THEN
+              NULL;
+          END;
+          IF current_user <> v_orig_role THEN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+          END IF;
+        END LOOP;
+      END IF;
+    END $$`);
+}
+
+// Revokes grants and RLS policies on Supabase Auth objects that owned-database applyAuthGrants()
+// gave crove_auth_reader prior to Stage 7 contraction. Never called in shared-database mode.
+async function revokeLegacyAuthReaderGrants(client: pg.ClientBase): Promise<void> {
+  await client.query(`DO $$
+    DECLARE
+      v_orig_role text := current_user;
+      v_is_super boolean;
+      v_remaining text;
+      r record;
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crove_auth_reader')
+         OR pg_catalog.to_regnamespace('auth') IS NULL THEN
+        RETURN;
+      END IF;
+      SELECT COALESCE(rolsuper, false) INTO v_is_super
+      FROM pg_catalog.pg_roles WHERE rolname = v_orig_role;
+      v_is_super := COALESCE(v_is_super, false);
+
+      FOR r IN
+        SELECT n.nspname AS schema_name,
+               c.relname,
+               p.polname,
+               ow.rolname AS owner_name,
+               (NOT v_is_super AND NOT pg_catalog.pg_has_role(v_orig_role, c.relowner, 'USAGE')) AS need_set_role
+        FROM pg_catalog.pg_policy p
+        JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_catalog.pg_roles ow ON ow.oid = c.relowner
+        WHERE n.nspname = 'auth'
+          AND c.relname IN ('sessions', 'users', 'mfa_factors')
+          AND p.polname = 'crove_auth_reader_select'
+          AND (
+            v_is_super
+            OR pg_catalog.pg_has_role(v_orig_role, c.relowner, 'USAGE')
+            OR pg_catalog.pg_has_role(v_orig_role, c.relowner, 'SET')
+          )
+        ORDER BY c.relname
+      LOOP
+        IF r.need_set_role THEN
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.owner_name);
+            EXECUTE pg_catalog.format('DROP POLICY IF EXISTS %I ON %I.%I', r.polname, r.schema_name, r.relname);
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+          EXCEPTION WHEN insufficient_privilege THEN
+            NULL;
+          END;
+        ELSE
+          EXECUTE pg_catalog.format('DROP POLICY IF EXISTS %I ON %I.%I', r.polname, r.schema_name, r.relname);
+        END IF;
+      END LOOP;
+
+      FOR r IN
+        SELECT DISTINCT n.nspname AS schema_name, c.relname, att.attname, src.rolname AS grantor_name, a.privilege_type
+        FROM pg_catalog.pg_attribute att
+        JOIN pg_catalog.pg_class c ON c.oid = att.attrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
+        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+        WHERE n.nspname = 'auth'
+          AND c.relname IN ('sessions', 'users', 'mfa_factors')
+          AND att.attnum > 0 AND NOT att.attisdropped
+          AND a.grantee <> c.relowner
+          AND gr.rolname = 'crove_auth_reader'
+          AND (v_is_super OR src.rolname = v_orig_role OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+        ORDER BY c.relname, att.attname, src.rolname, a.privilege_type
+      LOOP
+        IF r.grantor_name <> v_orig_role THEN
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format(
+              'REVOKE %s (%I) ON %I.%I FROM %I',
+              r.privilege_type, r.attname, r.schema_name, r.relname, 'crove_auth_reader'
+            );
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+          EXCEPTION WHEN insufficient_privilege THEN
+            NULL;
+          END;
+        ELSE
+          EXECUTE pg_catalog.format(
+            'REVOKE %s (%I) ON %I.%I FROM %I',
+            r.privilege_type, r.attname, r.schema_name, r.relname, 'crove_auth_reader'
+          );
+        END IF;
+      END LOOP;
+
+      FOR r IN
+        SELECT DISTINCT n.nspname AS schema_name, c.relname, src.rolname AS grantor_name, a.privilege_type
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+        WHERE n.nspname = 'auth'
+          AND c.relname IN ('sessions', 'users', 'mfa_factors')
+          AND a.grantee <> c.relowner
+          AND gr.rolname = 'crove_auth_reader'
+          AND (v_is_super OR src.rolname = v_orig_role OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+        ORDER BY c.relname, src.rolname, a.privilege_type
+      LOOP
+        IF r.grantor_name <> v_orig_role THEN
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format(
+              'REVOKE %s ON TABLE %I.%I FROM %I',
+              r.privilege_type, r.schema_name, r.relname, 'crove_auth_reader'
+            );
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+          EXCEPTION WHEN insufficient_privilege THEN
+            NULL;
+          END;
+        ELSE
+          EXECUTE pg_catalog.format(
+            'REVOKE %s ON TABLE %I.%I FROM %I',
+            r.privilege_type, r.schema_name, r.relname, 'crove_auth_reader'
+          );
+        END IF;
+      END LOOP;
+
+      FOR r IN
+        SELECT DISTINCT n.nspname AS schema_name, src.rolname AS grantor_name, a.privilege_type
+        FROM pg_catalog.pg_namespace n
+        CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a
+        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+        WHERE n.nspname = 'auth'
+          AND a.grantee <> n.nspowner
+          AND gr.rolname = 'crove_auth_reader'
+          AND (v_is_super OR src.rolname = v_orig_role OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+        ORDER BY src.rolname, a.privilege_type
+      LOOP
+        IF r.grantor_name <> v_orig_role THEN
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format(
+              'REVOKE %s ON SCHEMA %I FROM %I',
+              r.privilege_type, r.schema_name, 'crove_auth_reader'
+            );
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+          EXCEPTION WHEN insufficient_privilege THEN
+            NULL;
+          END;
+        ELSE
+          EXECUTE pg_catalog.format(
+            'REVOKE %s ON SCHEMA %I FROM %I',
+            r.privilege_type, r.schema_name, 'crove_auth_reader'
+          );
+        END IF;
+      END LOOP;
+
+      SELECT pg_catalog.string_agg(desc_text, ', ' ORDER BY desc_text)
+      INTO v_remaining
+      FROM (
+        SELECT DISTINCT pg_catalog.format('policy %s on auth.%s', p.polname, c.relname) AS desc_text
+        FROM pg_catalog.pg_policy p
+        JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'auth'
+          AND c.relname IN ('sessions', 'users', 'mfa_factors')
+          AND p.polname = 'crove_auth_reader_select'
+        UNION ALL
+        SELECT DISTINCT pg_catalog.format('column auth.%s.%s (granted by %s)', c.relname, att.attname, src.rolname)
+        FROM pg_catalog.pg_attribute att
+        JOIN pg_catalog.pg_class c ON c.oid = att.attrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
+        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+        WHERE n.nspname = 'auth'
+          AND c.relname IN ('sessions', 'users', 'mfa_factors')
+          AND att.attnum > 0 AND NOT att.attisdropped
+          AND a.grantee <> c.relowner
+          AND gr.rolname = 'crove_auth_reader'
+        UNION ALL
+        SELECT DISTINCT pg_catalog.format('table auth.%s (granted by %s)', c.relname, src.rolname)
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+        WHERE n.nspname = 'auth'
+          AND c.relname IN ('sessions', 'users', 'mfa_factors')
+          AND a.grantee <> c.relowner
+          AND gr.rolname = 'crove_auth_reader'
+        UNION ALL
+        SELECT DISTINCT pg_catalog.format('schema auth (granted by %s)', src.rolname)
+        FROM pg_catalog.pg_namespace n
+        CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a
+        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+        WHERE n.nspname = 'auth'
+          AND a.grantee <> n.nspowner
+          AND gr.rolname = 'crove_auth_reader'
+      ) leftover_auth;
+      IF v_remaining IS NOT NULL THEN
+        RAISE EXCEPTION
+          'stage 7 contraction failed: legacy role crove_auth_reader still holds auth schema privileges or policies (%): revoke as the grantor/owner or superuser before retrying',
+          v_remaining;
+      END IF;
+    END $$`);
+}
 
 async function resolveMetaSchema(client: pg.ClientBase): Promise<'ludy_meta' | 'crove_meta'> {
   const { rows } = await client.query<{ ok: boolean }>("SELECT pg_catalog.to_regnamespace('ludy_meta') IS NOT NULL AS ok");
@@ -265,8 +936,10 @@ const FOREIGN_PRIVILEGES_SQL = `
     AND r.rolname <> current_user AND NOT r.rolsuper
   ORDER BY 1, 2`;
 
-async function foreignPrivileges(client: pg.ClientBase): Promise<Array<{ schema: string; role: string }>> {
-  const { rows } = await client.query<{ schema: string; role: string }>(FOREIGN_PRIVILEGES_SQL, [LUDY_ROLES]);
+async function foreignPrivileges(client: pg.ClientBase, contracted?: boolean): Promise<Array<{ schema: string; role: string }>> {
+  const stage7Done = contracted ?? (await isDatabaseStage7Contracted(client));
+  const trustedRoles = stage7Done ? CANONICAL_LUDY_ROLES : LUDY_ROLES;
+  const { rows } = await client.query<{ schema: string; role: string }>(FOREIGN_PRIVILEGES_SQL, [trustedRoles]);
   return rows;
 }
 
@@ -354,16 +1027,21 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
     }
     const modeSwitch = trimmedEnv('LUDY_SHARED_DATABASE_SWITCH');
     await recordDeploymentMode(client, shared, options.allowModeSwitch ?? modeSwitch === 'true', log);
-    const { rows } = await client.query<{ version: string; sha256: string }>(
-      `SELECT version, sha256 FROM ${meta}.schema_migrations`,
+    const { rows } = await client.query<{ version: string; name: string; sha256: string }>(
+      `SELECT version, name, sha256 FROM ${meta}.schema_migrations`,
     );
-    const ledger = new Map(rows.map((r) => [r.version, r.sha256]));
+    const ledger = new Map(rows.map((r) => [r.version, { name: r.name, sha256: r.sha256 }]));
     for (const file of files) {
       const known = ledger.get(file.version);
       const variantOf = variants.get(file.name);
       if (known !== undefined) {
-        if (known !== file.sha256 && known !== variantOf?.sha256) {
+        if (known.sha256 !== file.sha256 && known.sha256 !== variantOf?.sha256) {
           throw new Error(`migration ${file.name} was edited after it was applied; add a new migration instead`);
+        }
+        if (known.name !== file.name) {
+          throw new Error(
+            `migration ledger mismatch for version ${file.version}: recorded as ${known.name} but repository has ${file.name}`,
+          );
         }
         continue;
       }
@@ -387,9 +1065,29 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
         throw new Error(`shared database: ${file.name} changes state for the whole database and has no shared-database variant (looked in ${variantsDir}); refusing to apply it`);
       }
       log(variant === undefined ? `applying ${file.name}` : `applying ${file.name} (shared-database variant)`);
-      await client.query('BEGIN');
-      try {
-        await client.query(variant?.sql ?? file.sql);
+      const isClusterCutoverMigration =
+        file.name === CORE_CUTOVER_MIGRATION || file.name.endsWith('_ludy_kernel_contract_crove_roles_and_gucs.sql');
+      const maxAttempts = isClusterCutoverMigration ? 3 : 1;
+      for (let attempt = 1; ; attempt++) {
+        let coreCutoverState: CoreCutoverClusterState = 'uncontracted';
+        await client.query('BEGIN');
+        try {
+          if (file.name === CORE_CUTOVER_MIGRATION) {
+            await lockClusterStage7Role(client, { requireLock: true, lockWaitMs: options.lockWaitMs });
+            coreCutoverState = await readCoreCutoverClusterState(client);
+            if (coreCutoverState === 'wiped-marker') {
+              throw new Error(
+                'stage 7 replay guard failed: canonical ludy_* roles and expired crove_* login role(s) already exist on this cluster without the Stage 7 marker on crove_tenant; refusing to re-grant crove_* -> ludy_* memberships (restore COMMENT ON ROLE "crove_tenant" IS \'ludy:stage7-contracted\' if Stage 7 already completed)',
+              );
+            }
+          } else if (file.name.endsWith('_ludy_kernel_contract_crove_roles_and_gucs.sql')) {
+            await lockClusterStage7Role(client, { lockWaitMs: options.lockWaitMs });
+            await revokeDelegatedLegacyObjectGrants(client, shared);
+          }
+          await client.query(variant?.sql ?? file.sql);
+          if (!shared && file.name.endsWith('_ludy_kernel_contract_crove_roles_and_gucs.sql')) {
+            await revokeLegacyAuthReaderGrants(client);
+          }
         if (!shared && file.name === '20261015120000_crove_kernel_revoke_temp.sql') {
           // Immutable 20261015120000 predates ADR-0054's ludy_* roles (its filter is NOT LIKE 'crove\_%'), so on a
           // cluster where ludy_* roles already exist it grants them TEMPORARY before revoking PUBLIC. Take TEMPORARY
@@ -409,6 +1107,52 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
             END IF;
           END $$;`);
         }
+        if (file.name === CORE_CUTOVER_MIGRATION && coreCutoverState === 'contracted') {
+          // Immutable 20270315090000 grants cluster-wide transitional ludy_* memberships to legacy crove_* roles.
+          // Once Stage 7 contraction is already active on the cluster, revoke those transitional grants before COMMIT
+          // so replaying 20270315090000 for a new database never re-exposes legacy roles on existing databases (while
+          // leaving uncontracted clusters untouched until Stage 7 itself commits).
+          await client.query(`DO $$
+            DECLARE
+              r record;
+              v_is_super boolean;
+              v_legacy_roles constant text[] := ARRAY[
+                'crove_tenant', 'crove_app', 'crove_worker', 'crove_prober', 'crove_reporter',
+                'crove_auth_reader', 'crove_definer_tenant', 'crove_definer_einvoice', 'crove_definer_system'
+              ];
+              v_ludy_roles constant text[] := ARRAY[
+                'ludy_tenant', 'ludy_app', 'ludy_worker', 'ludy_prober', 'ludy_reporter',
+                'ludy_auth_reader', 'ludy_definer_tenant', 'ludy_definer_einvoice', 'ludy_definer_system'
+              ];
+            BEGIN
+              SELECT COALESCE(ro.rolsuper, false) INTO v_is_super
+              FROM pg_catalog.pg_roles ro WHERE ro.rolname = current_user;
+              v_is_super := COALESCE(v_is_super, false);
+              FOR r IN
+                SELECT tgt.rolname AS target_role, mem.rolname AS member_role, gr.rolname AS grantor_role
+                FROM pg_catalog.pg_auth_members am
+                JOIN pg_catalog.pg_roles tgt ON tgt.oid = am.roleid
+                JOIN pg_catalog.pg_roles mem ON mem.oid = am.member
+                JOIN pg_catalog.pg_roles gr ON gr.oid = am.grantor
+                WHERE mem.rolname = ANY (v_legacy_roles)
+                  AND tgt.rolname = ANY (v_ludy_roles)
+                  AND (v_is_super OR gr.rolname = current_user)
+                ORDER BY tgt.rolname, mem.rolname, gr.rolname
+              LOOP
+                EXECUTE pg_catalog.format('REVOKE %I FROM %I GRANTED BY %I', r.target_role, r.member_role, r.grantor_role);
+              END LOOP;
+              IF EXISTS (
+                SELECT 1
+                FROM pg_catalog.pg_auth_members am
+                JOIN pg_catalog.pg_roles tgt ON tgt.oid = am.roleid
+                JOIN pg_catalog.pg_roles mem ON mem.oid = am.member
+                WHERE mem.rolname = ANY (v_legacy_roles)
+                  AND tgt.rolname = ANY (v_ludy_roles)
+              ) THEN
+                RAISE EXCEPTION 'stage 7 replay guard failed: legacy crove_* role still holds ludy_* membership before COMMIT';
+              END IF;
+            END $$;`);
+        }
         // Re-resolve after running the migration so the #3970 schema rename writes its own ledger row into ludy_meta.
         meta = await resolveMetaSchema(client);
         // A variant's own hash is what the ledger records, so a database-wide migration that ran in shared mode shows it.
@@ -417,10 +1161,15 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
           file.name,
           variant?.sha256 ?? file.sha256,
         ]);
-        await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw new Error(`migration ${file.name} failed: ${(error as Error).message}`, { cause: error });
+          await client.query('COMMIT');
+          break;
+        } catch (error) {
+          await client.query('ROLLBACK');
+          if (attempt < maxAttempts && isConcurrentCatalogUpdateError(error)) {
+            continue;
+          }
+          throw new Error(`migration ${file.name} failed: ${(error as Error).message}`, { cause: error });
+        }
       }
       applied.push(file.name);
     }
@@ -1119,7 +1868,8 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
        )
      ORDER BY 1, 2`,
   );
-  const foreign = shared ? await foreignPrivileges(client) : [];
+  const contracted = await isDatabaseStage7Contracted(client);
+  const foreign = shared ? await foreignPrivileges(client, contracted) : [];
   // The membership rule without its TEMPORARY condition: in a shared database every role holds TEMPORARY, so what must
   // still be refused is a role that is not Ludy's, not a superuser and not the runner acting as a Ludy role (a membership,
   // SET, or ADMIN OPTION, directly or through other roles): it would carry that role's rights into the definer owners.
@@ -1135,9 +1885,326 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
         [LUDY_ROLES],
       )
     : { rows: [] as Array<{ rolname: string; via: string }> };
+  let legacyMemberships: Array<{ member: string; target: string; grantor: string }> = [];
+  let legacyIndirectMemberships: Array<{ member: string; target: string; via: string | null }> = [];
+  let legacyObjectPrivileges: Array<{ schema: string; role: string; kind: string }> = [];
+  let legacyLiveLogins: Array<{ role: string; valid_until: string | null }> = [];
+  let legacyPasswordsPresent: Array<{ role: string }> = [];
+  let legacyClusterMarkerMissing = false;
+  let legacyDefaultAcls: Array<{ owner: string; schema: string | null; kind: string; grantee: string }> = [];
+  let legacyOwnedObjects: Array<{ schema: string; owner: string; kind: string; object: string }> = [];
+  let legacyAuthGrants: Array<{ kind: string; object: string }> = [];
+  let legacyActiveSessions: Array<{ pid: number; role: string; database: string | null; application: string | null }> = [];
+  if (contracted) {
+    const { rows: activeSessions } = await client.query<{
+      pid: number;
+      role: string;
+      database: string | null;
+      application: string | null;
+    }>(
+      `SELECT a.pid,
+              a.usename::text AS role,
+              a.datname::text AS database,
+              NULLIF(a.application_name, '')::text AS application
+       FROM pg_catalog.pg_stat_activity a
+       WHERE a.pid <> pg_catalog.pg_backend_pid()
+         AND a.usename = ANY ($1::text[])
+       ORDER BY a.datname::text COLLATE "C" NULLS FIRST, a.usename::text COLLATE "C", a.pid`,
+      [LEGACY_CROVE_ROLES],
+    );
+    legacyActiveSessions = activeSessions;
+    const { rows: markerRows } = await client.query<{ missing: boolean }>(
+      `SELECT NOT EXISTS (
+         SELECT 1 FROM pg_catalog.pg_roles r
+         WHERE r.rolname = 'crove_tenant'
+           AND pg_catalog.shobj_description(r.oid, 'pg_authid') = $1
+       ) AS missing`,
+      [STAGE7_CLUSTER_MARKER],
+    );
+    legacyClusterMarkerMissing = markerRows[0]?.missing === true;
+    const { rows } = await client.query<{ member: string; target: string; grantor: string }>(
+      `SELECT mem.rolname::text AS member, tgt.rolname::text AS target, gr.rolname::text AS grantor
+       FROM pg_catalog.pg_auth_members am
+       JOIN pg_catalog.pg_roles mem ON mem.oid = am.member
+       JOIN pg_catalog.pg_roles tgt ON tgt.oid = am.roleid
+       JOIN pg_catalog.pg_roles gr ON gr.oid = am.grantor
+       WHERE mem.rolname = ANY ($1::text[])
+         AND tgt.rolname = ANY ($2::text[])
+       ORDER BY tgt.rolname::text COLLATE "C", mem.rolname::text COLLATE "C", gr.rolname::text COLLATE "C"`,
+      [LEGACY_CROVE_ROLES, CANONICAL_LUDY_ROLES],
+    );
+    legacyMemberships = rows;
+    const { rows: indirect } = await client.query<{ member: string; target: string; via: string | null }>(
+      `SELECT mem.rolname::text AS member,
+              tgt.rolname::text AS target,
+              (SELECT pg_catalog.string_agg(DISTINCT g.rolname::text COLLATE "C", ', ' ORDER BY g.rolname::text COLLATE "C")
+               FROM pg_catalog.pg_auth_members am
+               JOIN pg_catalog.pg_roles g ON g.oid = am.roleid
+               WHERE am.member = mem.oid
+                 AND am.roleid <> tgt.oid
+                 AND (
+                   pg_catalog.pg_has_role(am.roleid, tgt.oid, 'MEMBER')
+                   OR pg_catalog.pg_has_role(am.roleid, tgt.oid, 'USAGE')
+                   OR pg_catalog.pg_has_role(am.roleid, tgt.oid, 'SET')
+                 )) AS via
+       FROM pg_catalog.pg_roles mem
+       CROSS JOIN pg_catalog.pg_roles tgt
+       WHERE mem.rolname = ANY ($1::text[])
+         AND tgt.rolname = ANY ($2::text[])
+         AND (
+           pg_catalog.pg_has_role(mem.oid, tgt.oid, 'MEMBER')
+           OR pg_catalog.pg_has_role(mem.oid, tgt.oid, 'USAGE')
+           OR pg_catalog.pg_has_role(mem.oid, tgt.oid, 'SET')
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM pg_catalog.pg_auth_members direct
+           WHERE direct.member = mem.oid AND direct.roleid = tgt.oid
+         )
+       ORDER BY tgt.rolname::text COLLATE "C", mem.rolname::text COLLATE "C"`,
+      [LEGACY_CROVE_ROLES, CANONICAL_LUDY_ROLES],
+    );
+    legacyIndirectMemberships = indirect;
+    const { rows: liveLogins } = await client.query<{ role: string; valid_until: string | null }>(
+      `SELECT r.rolname::text AS role, r.rolvaliduntil::text AS valid_until
+       FROM pg_catalog.pg_roles r
+       WHERE r.rolname = ANY ($1::text[])
+         AND (r.rolvaliduntil IS NULL OR r.rolvaliduntil > '1970-01-01 00:00:00+00'::timestamptz)
+       ORDER BY r.rolname::text COLLATE "C"`,
+      [LEGACY_LOGIN_ROLES],
+    );
+    legacyLiveLogins = liveLogins;
+    const { rows: authidReadable } = await client.query<{ ok: boolean }>(
+      "SELECT pg_catalog.has_table_privilege(current_user, 'pg_catalog.pg_authid', 'SELECT') AS ok",
+    );
+    if (authidReadable[0]?.ok === true) {
+      const { rows: pwRows } = await client.query<{ role: string }>(
+        `SELECT r.rolname::text AS role
+         FROM pg_catalog.pg_authid r
+         WHERE r.rolname = ANY ($1::text[])
+           AND r.rolpassword IS NOT NULL
+         ORDER BY r.rolname::text COLLATE "C"`,
+        [LEGACY_LOGIN_ROLES],
+      );
+      legacyPasswordsPresent = pwRows;
+    }
+    const { rows: defaultAclRows } = await client.query<{ owner: string; schema: string | null; kind: string; grantee: string }>(
+      `SELECT DISTINCT ow.rolname::text AS owner,
+              n.nspname::text AS schema,
+              CASE d.defaclobjtype
+                WHEN 'r' THEN 'tables'
+                WHEN 'S' THEN 'sequences'
+                WHEN 'f' THEN 'functions'
+                WHEN 'T' THEN 'types'
+                WHEN 'n' THEN 'schemas'
+                ELSE d.defaclobjtype::text
+              END AS kind,
+              gr.rolname::text AS grantee
+       FROM pg_catalog.pg_default_acl d
+       LEFT JOIN pg_catalog.pg_namespace n ON n.oid = d.defaclnamespace
+       JOIN pg_catalog.pg_roles ow ON ow.oid = d.defaclrole
+       CROSS JOIN LATERAL pg_catalog.aclexplode(d.defaclacl) a
+       JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+       WHERE (n.nspname LIKE 'ludy\\_%' OR (NOT $2::boolean AND d.defaclnamespace = 0))
+         AND gr.rolname = ANY ($1::text[])
+       ORDER BY 1, 2 NULLS FIRST, 3, 4`,
+      [LEGACY_CROVE_ROLES, shared],
+    );
+    legacyDefaultAcls = defaultAclRows;
+    const { rows: directObjectAcls } = await client.query<{ schema: string; role: string; kind: string }>(
+      `SELECT DISTINCT x.schema, gr.rolname::text AS role, x.kind
+       FROM (
+         SELECT n.nspname::text AS schema, a.grantee, 'schema'::text AS kind
+         FROM pg_catalog.pg_namespace n
+         CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a
+         WHERE n.nspname LIKE 'ludy\\_%'
+         UNION ALL
+         SELECT n.nspname::text, a.grantee, 'relation'::text
+         FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+         WHERE n.nspname LIKE 'ludy\\_%' AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+         UNION ALL
+         SELECT n.nspname::text, a.grantee, 'column'::text
+         FROM pg_catalog.pg_attribute att
+         JOIN pg_catalog.pg_class c ON c.oid = att.attrelid
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
+         WHERE n.nspname LIKE 'ludy\\_%' AND att.attnum > 0 AND NOT att.attisdropped AND att.attacl IS NOT NULL
+         UNION ALL
+         SELECT n.nspname::text, a.grantee, 'routine'::text
+         FROM pg_catalog.pg_proc p
+         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+         CROSS JOIN LATERAL pg_catalog.aclexplode(p.proacl) a
+         WHERE n.nspname LIKE 'ludy\\_%' AND a.grantee <> p.proowner
+         UNION ALL
+         SELECT n.nspname::text, a.grantee, 'type'::text
+         FROM pg_catalog.pg_type t
+         JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+         CROSS JOIN LATERAL pg_catalog.aclexplode(t.typacl) a
+         WHERE n.nspname LIKE 'ludy\\_%' AND t.typacl IS NOT NULL AND a.grantee <> t.typowner
+       ) x
+       JOIN pg_catalog.pg_roles gr ON gr.oid = x.grantee
+       WHERE gr.rolname = ANY ($1::text[])
+       ORDER BY 1, 2, 3`,
+      [LEGACY_CROVE_ROLES],
+    );
+    legacyObjectPrivileges = directObjectAcls;
+    const { rows: ownedObjects } = await client.query<{ schema: string; owner: string; kind: string; object: string }>(
+      `SELECT DISTINCT x.schema, ow.rolname::text AS owner, x.kind, x.object
+       FROM (
+         SELECT n.nspname::text AS schema, n.nspowner AS owner_oid, 'schema'::text AS kind, n.nspname::text AS object
+         FROM pg_catalog.pg_namespace n
+         WHERE n.nspname LIKE 'ludy\\_%'
+         UNION ALL
+         SELECT n.nspname::text, c.relowner, CASE WHEN c.relkind = 'S' THEN 'sequence'::text ELSE 'relation'::text END, pg_catalog.format('%I.%I', n.nspname, c.relname)
+         FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname LIKE 'ludy\\_%' AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+         UNION ALL
+         SELECT n.nspname::text, p.proowner, 'routine'::text, p.oid::pg_catalog.regprocedure::text
+         FROM pg_catalog.pg_proc p
+         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname LIKE 'ludy\\_%'
+         UNION ALL
+         SELECT n.nspname::text, t.typowner, 'type'::text, pg_catalog.format('%I.%I', n.nspname, t.typname)
+         FROM pg_catalog.pg_type t
+         JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+         WHERE n.nspname LIKE 'ludy\\_%'
+           AND (
+             t.typrelid = 0
+             OR EXISTS (SELECT 1 FROM pg_catalog.pg_class rc WHERE rc.oid = t.typrelid AND rc.relkind = 'c')
+           )
+           AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_type elem WHERE elem.typarray = t.oid)
+         UNION ALL
+         SELECT addr.object_names[1]::text,
+                d.refobjid,
+                addr.type::text,
+                pg_catalog.array_to_string(addr.object_names, '.')
+                  || CASE WHEN pg_catalog.cardinality(addr.object_args) > 0
+                          THEN '(' || pg_catalog.array_to_string(addr.object_args, ', ') || ')'
+                          ELSE ''
+                     END
+         FROM pg_catalog.pg_shdepend d
+         CROSS JOIN LATERAL pg_catalog.pg_identify_object_as_address(d.classid, d.objid, d.objsubid) addr
+         WHERE d.dbid = (SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())
+           AND d.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+           AND d.deptype = 'o'
+           AND d.classid NOT IN (
+             'pg_catalog.pg_namespace'::pg_catalog.regclass,
+             'pg_catalog.pg_class'::pg_catalog.regclass,
+             'pg_catalog.pg_proc'::pg_catalog.regclass,
+             'pg_catalog.pg_type'::pg_catalog.regclass
+           )
+           AND addr.object_names[1] LIKE 'ludy\\_%'
+       ) x
+       JOIN pg_catalog.pg_roles ow ON ow.oid = x.owner_oid
+       WHERE ow.rolname = ANY ($1::text[])
+       ORDER BY 1, 2, 3, 4`,
+      [LEGACY_CROVE_ROLES],
+    );
+    legacyOwnedObjects = ownedObjects;
+    if (!shared) {
+      const { rows: authGrants } = await client.query<{ kind: string; object: string }>(
+        `SELECT DISTINCT x.kind, x.object
+         FROM (
+           SELECT 'policy'::text AS kind, pg_catalog.format('auth.%I (%s)', c.relname, p.polname) AS object
+           FROM pg_catalog.pg_policy p
+           JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'auth'
+             AND c.relname IN ('sessions', 'users', 'mfa_factors')
+             AND p.polname = 'crove_auth_reader_select'
+           UNION ALL
+           SELECT 'column privilege'::text, pg_catalog.format('auth.%I.%I', c.relname, att.attname)
+           FROM pg_catalog.pg_attribute att
+           JOIN pg_catalog.pg_class c ON c.oid = att.attrelid
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+           CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
+           JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+           WHERE n.nspname = 'auth'
+             AND c.relname IN ('sessions', 'users', 'mfa_factors')
+             AND att.attnum > 0 AND NOT att.attisdropped
+             AND a.grantee <> c.relowner
+             AND gr.rolname = 'crove_auth_reader'
+           UNION ALL
+           SELECT 'table privilege'::text, pg_catalog.format('auth.%I', c.relname)
+           FROM pg_catalog.pg_class c
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+           CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+           JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+           WHERE n.nspname = 'auth'
+             AND c.relname IN ('sessions', 'users', 'mfa_factors')
+             AND a.grantee <> c.relowner
+             AND gr.rolname = 'crove_auth_reader'
+           UNION ALL
+           SELECT 'schema privilege'::text, 'auth'::text
+           FROM pg_catalog.pg_namespace n
+           CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a
+           JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+           WHERE n.nspname = 'auth'
+             AND a.grantee <> n.nspowner
+             AND gr.rolname = 'crove_auth_reader'
+         ) x
+         ORDER BY 1, 2`,
+      );
+      legacyAuthGrants = authGrants;
+    }
+  }
   const { rows: dbRows } = await client.query<{ name: string }>('SELECT pg_catalog.quote_ident(pg_catalog.current_database()) AS name');
   const dbName = dbRows[0]?.name ?? 'current_database';
   return [
+    ...legacyActiveSessions.map(
+      (s) =>
+        `legacy role ${s.role} still has an active PostgreSQL session (pid ${s.pid} on ${s.database ?? '<no database>'}${s.application ? `, ${s.application}` : ''}) after Stage 7 contraction; ` +
+        `fix: disconnect that service and switch it to the corresponding ludy_* role`,
+    ),
+    ...(legacyClusterMarkerMissing
+      ? [
+          `cluster Stage 7 contraction marker is missing from crove_tenant after Stage 7 contraction; ` +
+            `fix as the role owner or superuser: COMMENT ON ROLE "crove_tenant" IS '${STAGE7_CLUSTER_MARKER}'`,
+        ]
+      : []),
+    ...legacyMemberships.map(
+      (m) =>
+        `legacy role ${m.member} still holds membership in ${m.target} (granted by ${m.grantor}) after Stage 7 contraction; ` +
+        `fix: REVOKE ${quoteIdent(m.target)} FROM ${quoteIdent(m.member)} GRANTED BY ${quoteIdent(m.grantor)}`,
+    ),
+    ...legacyIndirectMemberships.map(
+      (m) =>
+        `legacy role ${m.member} still holds indirect membership in ${m.target}` +
+        `${m.via ? ` via ${m.via}` : ''} after Stage 7 contraction; ` +
+        `fix: revoke the intermediate role grant${m.via ? ` (REVOKE ${m.via.split(', ').map(quoteIdent).join(', ')} FROM ${quoteIdent(m.member)})` : ''} so ${m.member} cannot act as ${m.target}`,
+    ),
+    ...legacyLiveLogins.map(
+      (r) =>
+        `legacy login role ${r.role} does not have an expired VALID UNTIL after Stage 7 contraction (rolvaliduntil=${r.valid_until ?? 'NULL'}); ` +
+        `fix as the role owner or superuser: ALTER ROLE ${quoteIdent(r.role)} WITH PASSWORD NULL VALID UNTIL '-infinity'`,
+    ),
+    ...legacyPasswordsPresent.map(
+      (r) =>
+        `legacy login role ${r.role} still has a password verifier in pg_authid after Stage 7 contraction; ` +
+        `fix as the role owner or superuser: ALTER ROLE ${quoteIdent(r.role)} WITH PASSWORD NULL VALID UNTIL '-infinity'`,
+    ),
+    ...legacyDefaultAcls.map(
+      (d) =>
+        `legacy role ${d.grantee} still holds default privileges on ${d.kind} in ${d.schema ?? 'all schemas'} for role ${d.owner} after Stage 7 contraction; ` +
+        `fix: ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdent(d.owner)}${d.schema ? ` IN SCHEMA ${quoteIdent(d.schema)}` : ''} REVOKE ALL ON ${d.kind.toUpperCase()} FROM ${quoteIdent(d.grantee)}`,
+    ),
+    ...legacyObjectPrivileges.map(
+      (p) =>
+        `legacy role ${p.role} still holds direct ${p.kind} privileges in ${p.schema} after Stage 7 contraction; ` +
+        `fix: revoke ${p.kind} privileges in ${quoteIdent(p.schema)} from ${quoteIdent(p.role)}`,
+    ),
+    ...legacyAuthGrants.map(
+      (a) =>
+        `legacy role crove_auth_reader still holds ${a.kind} on ${a.object} after Stage 7 contraction; ` +
+        `fix: revoke crove_auth_reader grants and drop crove_auth_reader_select policies on auth`,
+    ),
+    ...legacyOwnedObjects.map(
+      (o) =>
+        `legacy role ${o.owner} still owns ${o.kind} ${o.object} in ${o.schema} after Stage 7 contraction; ` +
+        `fix: reassign ownership of ${o.kind} ${o.object} away from ${quoteIdent(o.owner)}`,
+    ),
     ...functions.map((f) => {
       const alter = `ALTER ${f.kind === 'p' ? 'PROCEDURE' : 'FUNCTION'} ${f.fn}`;
       const fix = `${f.extra ? `${alter} RESET ALL; ` : ''}${alter} SET search_path = pg_catalog, pg_temp`;
@@ -1317,6 +2384,9 @@ export async function applyAuthGrants(options: AuthGrantsOptions): Promise<void>
             GRANT SELECT (oauth_client_id) ON auth.sessions TO ${readerRole};
           END IF;
         END $grant$;`);
+      if (readerRole === 'ludy_auth_reader') {
+        await revokeLegacyAuthReaderGrants(client);
+      }
       const { rows } = await client.query<{ ok: boolean; invites: boolean }>(
         `SELECT ${kernel}.auth_grants_ready() AS ok, ${kernel}.auth_email_check_ready() AS invites`,
       );
@@ -1337,21 +2407,61 @@ export async function applyAuthGrants(options: AuthGrantsOptions): Promise<void>
 // Sets login-role passwords from configuration. Values never appear in migrations or logs.
 // In a shared database (#2284) a role that is not Ludy's (supabase_auth_admin, say) belongs to the other system: a password
 // for it is refused, never applied.
-export async function setRolePasswords(adminUrl: string, passwords: Record<string, string | undefined>, options: { sharedDatabase?: boolean } = {}): Promise<void> {
+export async function setRolePasswords(
+  adminUrl: string,
+  passwords: Record<string, string | undefined>,
+  options: { sharedDatabase?: boolean; lockWaitMs?: number } = {},
+): Promise<void> {
   if (options.sharedDatabase === undefined) rejectLegacySharedDatabaseEnv('CROVE_SHARED_DATABASE', 'LUDY_SHARED_DATABASE');
   const shared = options.sharedDatabase ?? sharedDatabaseSetting(trimmedEnv('LUDY_SHARED_DATABASE'));
   const client = new pg.Client({ connectionString: adminUrl, application_name: 'ludy-migrate' });
   await client.connect();
   try {
-    for (const [role, password] of Object.entries(passwords)) {
-      if (!password) continue;
-      if (shared && !LUDY_ROLES.includes(role)) throw new Error(`shared database: refusing to set the password of ${role}, which is not a Ludy role`);
-      const { rows } = await client.query<{ sql: string }>('SELECT format($$ALTER ROLE %I PASSWORD %L$$, $1::text, $2::text) AS sql', [
-        role,
-        password,
-      ]);
-      const sql = rows[0]?.sql;
-      if (sql) await client.query(sql);
+    const entries = Object.entries(passwords).filter((entry): entry is [string, string] => Boolean(entry[1]));
+    if (entries.length === 0) return;
+    for (const [role] of entries) {
+      if (shared && !LUDY_ROLES.includes(role)) {
+        throw new Error(`shared database: refusing to set the password of ${role}, which is not a Ludy role`);
+      }
+    }
+    const applyAll = async (): Promise<void> => {
+      for (const [role, password] of entries) {
+        const { rows } = await client.query<{ sql: string }>('SELECT format($$ALTER ROLE %I PASSWORD %L$$, $1::text, $2::text) AS sql', [
+          role,
+          password,
+        ]);
+        const sql = rows[0]?.sql;
+        if (sql) await client.query(sql);
+      }
+    };
+    const firstLegacyRole = entries.find(([role]) => LEGACY_CROVE_ROLES.includes(role))?.[0];
+    if (!firstLegacyRole) {
+      await applyAll();
+      return;
+    }
+    const assertLegacyAllowed = async (): Promise<void> => {
+      if ((await isDatabaseStage7Contracted(client)) || (await readCoreCutoverClusterState(client)) !== 'uncontracted') {
+        throw new Error(
+          `refusing to set a password on legacy role ${firstLegacyRole} after Stage 7 contraction; use the canonical ludy_* role instead`,
+        );
+      }
+    };
+    for (let attempt = 1; ; attempt++) {
+      await client.query('BEGIN');
+      try {
+        await assertLegacyAllowed();
+        await lockClusterStage7Role(client, { requireLock: true, lockWaitMs: options.lockWaitMs });
+        await assertLegacyAllowed();
+        await applyAll();
+        await client.query('COMMIT');
+        break;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        if (attempt < 3 && isConcurrentCatalogUpdateError(error)) {
+          continue;
+        }
+        throw error;
+      }
     }
   } finally {
     await client.end();

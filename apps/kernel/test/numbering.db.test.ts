@@ -56,7 +56,9 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
   // The database starts before the keyed input hash's migration (20261103180000_crove_kernel_input_hash.sql), where
   // ludy_kernel.command_input_hash does not exist yet: the runtime that seeds it writes the plain hash (#1741).
   function connect(inputHash: InputHashMode = 'keyed', preCutover = false) {
-    pool = preCutover ? createPreCutoverPool({ connectionString: appUrl, max: 4 }) : createPool({ connectionString: appUrl, max: 4 });
+    pool = preCutover
+      ? createPreCutoverPool({ connectionString: adminUrl, sessionRole: 'crove_app', max: 4 })
+      : createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
     // No context token key: the database starts at a version before enter_user_context (#1822).
     rt = new Runtime(db, { manifests: TEST_MANIFESTS, contextTokenKey: null, inputHash }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
@@ -67,7 +69,7 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
 
   // As ludy_app in the user's context: a voucher and its entry, committed.
   async function post(user: string, org: string, kind: 'journal' | 'cash_receipt', date: string): Promise<{ id: string; number: number; period: string; allocation: string }> {
-    const c = upgraded ? new pg.Client({ connectionString: appUrl }) : createPreCutoverClient({ connectionString: appUrl });
+    const c = upgraded ? new pg.Client({ connectionString: appUrl }) : createPreCutoverClient({ connectionString: adminUrl, sessionRole: 'crove_app' });
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -121,11 +123,6 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
       copyFileSync(join(MIGRATIONS, name), join(before, name));
     }
     await migrate({ adminUrl, dir: before });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    const app = new URL(adminUrl);
-    app.username = 'crove_app';
-    app.password = 'test-app-pw';
-    appUrl = app.toString();
     connect('sha256', true);
     owner = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'owner@numbering.test', name: null });
     adminUser = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'admin@numbering.test', name: null });
@@ -138,7 +135,9 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
     await migrate({ adminUrl, dir: MIGRATIONS });
     upgraded = true;
     await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    const app = new URL(adminUrl);
     app.username = 'ludy_app';
+    app.password = 'test-app-pw';
     appUrl = app.toString();
     // Connections opened before the migration may hold plans of the tables as they were.
     await pool.end();

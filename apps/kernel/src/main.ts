@@ -63,10 +63,6 @@ async function runMigrate(config: Config) {
     ludy_worker: config.LUDY_WORKER_DB_PASSWORD,
     ludy_prober: config.LUDY_PROBER_DB_PASSWORD,
     ludy_reporter: config.LUDY_REPORTER_DB_PASSWORD,
-    crove_app: config.LUDY_APP_DB_PASSWORD,
-    crove_worker: config.LUDY_WORKER_DB_PASSWORD,
-    crove_prober: config.LUDY_PROBER_DB_PASSWORD,
-    crove_reporter: config.LUDY_REPORTER_DB_PASSWORD,
     // Supabase Auth's role belongs to the other system in a shared database.
     ...(shared ? {} : { supabase_auth_admin: config.AUTH_DB_PASSWORD }),
   }, { sharedDatabase: shared });
