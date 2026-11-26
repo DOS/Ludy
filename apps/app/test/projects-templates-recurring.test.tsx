@@ -23,7 +23,10 @@ import { catalog, setActiveLocale } from '../src/i18n/runtime.ts';
 
 const authState = vi.hoisted(() => ({ modules: ['projects', 'notes'] as string[] }));
 const archiveCalls = vi.hoisted(() => [] as unknown[]);
-const archiveGate = vi.hoisted(() => ({ pending: null as Promise<void> | null }));
+const archiveGate = vi.hoisted(() => ({
+  pending: null as Promise<void> | null,
+  error: null as Error | null,
+}));
 const dialogMockState = vi.hoisted(() => ({
   deferClose: false,
   pendingComplete: null as (() => void) | null,
@@ -66,6 +69,7 @@ vi.mock('../src/lib/api.ts', async () => {
               if (path.join('.') === 'projects.archiveTemplate') {
                 archiveCalls.push(input);
                 if (archiveGate.pending) await archiveGate.pending;
+                if (archiveGate.error) throw archiveGate.error;
                 return { archived: true };
               }
               return {};
@@ -643,6 +647,7 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
 
   afterEach(async () => {
     archiveGate.pending = null;
+    archiveGate.error = null;
     dialogMockState.deferClose = false;
     dialogMockState.pendingComplete = null;
     await domHarness.teardownScopedDom();
@@ -936,5 +941,86 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
     const fallbackRadio = container.querySelector('[data-testid="template-option-software-project"]');
     expect(fallbackRadio?.getAttribute('aria-checked')).toBe('true');
     expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(fallbackRadio);
+  });
+
+  it('keeps focus on the still-selected custom template when archive fails (#5035)', async () => {
+    setActiveLocale('vi');
+    archiveCalls.length = 0;
+    let rejectPending!: () => void;
+    archiveGate.pending = new Promise<void>((resolve) => {
+      rejectPending = () => {
+        archiveGate.error = new Error('archive failed');
+        resolve();
+      };
+    });
+
+    const body = domHarness.installScopedDom();
+    const container = new FakeDomNode(1, 'div');
+    body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    domHarness.setMountedRoot(root);
+
+    const qc = queryClientState.current;
+    qc.clear();
+    const customTemplate: ProjectTemplateSummary = {
+      id: '40000000-0000-4000-8000-000000000004',
+      source: 'custom',
+      builtinKey: null,
+      name: 'Mẫu lỗi lưu trữ',
+      description: null,
+      status: 'active',
+      tasks: [{ title: 'Bước 1', dueOffsetDays: 0 }],
+      taskCount: 1,
+      canManage: true,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+    const fixtures = {
+      templates: [...starterFixtures('vi'), customTemplate],
+      canWrite: true,
+    } satisfies ProjectTemplateListResult;
+    templateFixturesState.current = fixtures;
+    qc.setQueryData(['projects', 'listTemplates', { language: 'vi' }], fixtures);
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <I18nProvider>
+            <ProjectTemplateDialog mode="create" open onOpenChange={() => undefined} onCreated={() => undefined} />
+          </I18nProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    const customRadio = container.querySelector(`[data-testid="template-option-${customTemplate.id}"]`)!;
+    await act(async () => {
+      customRadio.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+    });
+    const archiveTrigger = container.querySelector(`[data-testid="template-archive-${customTemplate.id}"]`)!;
+    await act(async () => {
+      archiveTrigger.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+    });
+    const confirmArchiveBtn = container
+      .querySelectorAll('button')
+      .find((b) => b.textContent.trim() === catalog('vi').projects.templates.archiveConfirmBtn)!;
+    confirmArchiveBtn.focus();
+    await act(async () => {
+      confirmArchiveBtn.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    // While pending after dialog closes, focus stays on the selected custom radio instead of jumping to software-project.
+    expect(customRadio.getAttribute('aria-checked')).toBe('true');
+    expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(customRadio);
+
+    await act(async () => {
+      rejectPending();
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    // On failure, custom radio stays selected and focused so arrow navigation starts from the right option.
+    expect(customRadio.getAttribute('aria-checked')).toBe('true');
+    expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(customRadio);
   });
 });

@@ -715,4 +715,148 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
       await nbLockClient.end().catch(() => undefined);
     }
   });
+
+  it('serializes concurrent personalDataErase across shared notebooks and private note moves into those notebooks without deadlocking (#5035)', async () => {
+    const o = await org();
+    const emailA = 'doi-tac-a@example.com';
+    const emailB = 'doi-tac-b@example.com';
+    const sharedNbA = await rt.execute<{ notebookId: string }>(
+      'notes.notebook.create',
+      { name: `Sổ tay đối tác ${emailA}`, visibility: 'org' },
+      { actor: asUser(o.owner.id), orgId: o.orgId },
+    );
+    const sharedNbB = await rt.execute<{ notebookId: string }>(
+      'notes.notebook.create',
+      { name: `Sổ tay đối tác ${emailB}`, visibility: 'org' },
+      { actor: asUser(o.owner.id), orgId: o.orgId },
+    );
+    const createdA = await rt.execute<NoteWritten>(
+      'notes.note.create',
+      { title: 'Ghi chú riêng 1', body: 'Nội dung sạch', visibility: 'private' },
+      { actor: asUser(o.author.id), orgId: o.orgId },
+    );
+    const createdB = await rt.execute<NoteWritten>(
+      'notes.note.create',
+      { title: 'Ghi chú riêng 2', body: 'Nội dung sạch', visibility: 'private' },
+      { actor: asUser(o.author.id), orgId: o.orgId },
+    );
+    const attA = await attached(o, o.author, createdA.noteId, pdf('a'), 'dinh-kem-a.pdf');
+    extract.text = `Email liên hệ: ${emailA}`;
+    await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: attA.id });
+    const attB = await attached(o, o.author, createdB.noteId, pdf('b'), 'dinh-kem-b.pdf');
+    extract.text = `Email liên hệ: ${emailB}`;
+    await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: attB.id });
+
+    for (const val of [emailA, emailB]) {
+      await rt.execute<PersonalDataNotice>('kernel.personal_data.notify', { value: val }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
+    }
+    const notifiedEvts = await rows<{ id: string }>(
+      `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 2`,
+      [o.orgId],
+    );
+    for (const evt of notifiedEvts) {
+      await worker.execute('kernel.notification.dispatch', { eventId: evt.id }, { actor: SYSTEM, orgId: o.orgId });
+    }
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [o.orgId]);
+      await c.query(`UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [o.orgId]);
+      await c.query('COMMIT');
+    });
+
+    const waitBlockedOnPid = async (blockingPid: number, queryPattern: string): Promise<number> => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const waits = await rows<{ pid: number }>(
+          `SELECT a.pid
+             FROM pg_catalog.pg_stat_activity a
+            WHERE a.datname = pg_catalog.current_database()
+              AND a.state = 'active'
+              AND a.wait_event_type = 'Lock'
+              AND a.query ILIKE $2
+              AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+            LIMIT 1`,
+          [blockingPid, queryPattern],
+        );
+        if (waits[0]) return waits[0].pid;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Timed out waiting for query ${queryPattern} to block on pid ${blockingPid}`);
+    };
+
+    // Interleaving 1: erase holds shared notebook row lock + notes.erase barrier and waits on createdA row lock while noteUpdate tries to move createdA -> sharedNbA.
+    const gateA = new pg.Client({ connectionString: adminUrl });
+    await gateA.connect();
+    try {
+      const gateAPid = (await gateA.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await gateA.query('BEGIN');
+      await gateA.query('SELECT 1 FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, createdA.noteId]);
+      const erasePromise = rt.execute<PersonalDataErasure>(
+        'kernel.personal_data.erase',
+        { value: emailA },
+        { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+      );
+      const erasePid = await waitBlockedOnPid(gateAPid, '%private_erase%');
+      const movePromise = rt.execute<NoteWritten>(
+        'notes.note.update',
+        { noteId: createdA.noteId, revision: createdA.revision, notebookId: sharedNbA.notebookId },
+        { actor: asUser(o.author.id), orgId: o.orgId },
+      );
+      await waitBlockedOnPid(erasePid, '%pg_advisory_xact_lock_shared%');
+      await gateA.query('COMMIT');
+      const [eraseRes, moveRes] = await Promise.all([erasePromise, movePromise]);
+      expect(eraseRes.erased).toContainEqual({ column: 'ludy_notes.notebook.name', rows: 1 });
+      expect(moveRes.noteId).toBe(createdA.noteId);
+    } finally {
+      await gateA.query('ROLLBACK').catch(() => undefined);
+      await gateA.end().catch(() => undefined);
+    }
+
+    // Interleaving 2: noteUpdate holds shared notes.erase barrier and createdB FOR UPDATE while erase(emailB) arrives.
+    const gateB = new pg.Client({ connectionString: adminUrl });
+    await gateB.connect();
+    try {
+      const gateBPid = (await gateB.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await gateB.query('BEGIN');
+      await gateB.query('SELECT 1 FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, createdB.noteId]);
+      const movePromise = rt.execute<NoteWritten>(
+        'notes.note.update',
+        { noteId: createdB.noteId, revision: createdB.revision, notebookId: sharedNbB.notebookId },
+        { actor: asUser(o.author.id), orgId: o.orgId },
+      );
+      const movePid = await waitBlockedOnPid(gateBPid, '%from "ludy_notes"."note"%for update%');
+      const erasePromise = rt.execute<PersonalDataErasure>(
+        'kernel.personal_data.erase',
+        { value: emailB },
+        { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+      );
+      await waitBlockedOnPid(movePid, '%pg_advisory_xact_lock%');
+      await gateB.query('COMMIT');
+      const [moveRes, eraseRes] = await Promise.all([movePromise, erasePromise]);
+      expect(moveRes.noteId).toBe(createdB.noteId);
+      expect(eraseRes.erased).toContainEqual({ column: 'ludy_notes.notebook.name', rows: 1 });
+    } finally {
+      await gateB.query('ROLLBACK').catch(() => undefined);
+      await gateB.end().catch(() => undefined);
+    }
+
+    const nbRows = await rows<{ id: string; name: string }>(
+      'SELECT id, name FROM ludy_notes.notebook WHERE org_id = $1 AND id = ANY($2::uuid[])',
+      [o.orgId, [sharedNbA.notebookId, sharedNbB.notebookId]],
+    );
+    expect(nbRows).toHaveLength(2);
+    expect(nbRows.every((nb) => !nb.name.includes(emailA) && !nb.name.includes(emailB))).toBe(true);
+    const movedRows = await rows<{ id: string; notebook_id: string | null }>(
+      'SELECT id, notebook_id FROM ludy_notes.note WHERE org_id = $1 AND id = ANY($2::uuid[])',
+      [o.orgId, [createdA.noteId, createdB.noteId]],
+    );
+    expect(movedRows).toEqual(
+      expect.arrayContaining([
+        { id: createdA.noteId, notebook_id: sharedNbA.notebookId },
+        { id: createdB.noteId, notebook_id: sharedNbB.notebookId },
+      ]),
+    );
+    expect(await doomed(o)).toEqual([`notes/${o.orgId}/${attA.id}`, `notes/${o.orgId}/${attB.id}`].sort());
+  });
 });

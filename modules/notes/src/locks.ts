@@ -4,11 +4,12 @@ import { sql } from 'kysely';
 import type { QueryContext } from '@ludy/kernel-runtime';
 
 export async function lockNotebook(ctx: Pick<QueryContext, 'trx' | 'orgId'>, notebookId: string, shared = false): Promise<void> {
+  const eraseKey = `notes.erase:${ctx.orgId.toLowerCase()}`;
   const lockKey = `notes.notebook:${ctx.orgId.toLowerCase()}:${notebookId.toLowerCase()}`;
   if (shared) {
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${eraseKey}, 0)), pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
   } else {
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${eraseKey}, 0)), pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
   }
 }
 

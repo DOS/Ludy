@@ -163,12 +163,10 @@ const notebookAuditFact = (noteVisibility: NoteVisibility, notebookId: string | 
   notebookId === null ? { notebookId: null } : noteVisibility === 'org' ? { notebookId } : { notebook: 'private' as const };
 
 // The note as the caller may read it (row policies), with its body, locked for a change when `lock` is set.
+// Every `lock = true` caller (loadForChange, noteUpdate, noteSetVisibility) already performed a pre-lock read
+// via `load(..., false)`, so no extra pre-lock SELECT is needed here.
 async function load(ctx: Pick<QueryContext, 'trx' | 'orgId'>, noteId: string, lock: boolean): Promise<SummaryRow & { body: string }> {
-  if (lock) {
-    const readable = await ctx.trx.selectFrom('ludy_notes.note').select('id').where('org_id', '=', ctx.orgId).where('id', '=', noteId).executeTakeFirst();
-    if (!readable) throw notFound();
-    await lockNote(ctx, noteId, false);
-  }
+  if (lock) await lockNote(ctx, noteId, false);
   let q = ctx.trx.selectFrom('ludy_notes.note').select([...SUMMARY, 'body']).where('org_id', '=', ctx.orgId).where('id', '=', noteId);
   if (lock) q = q.forUpdate();
   const row = await q.executeTakeFirst();
@@ -500,8 +498,14 @@ export const noteSetVisibility = defineCommand({
     const peek = await load(ctx, input.noteId, false);
     assertAuthor(peek, userId);
     if (peek.visibility === input.visibility) return written(peek);
-    if (input.visibility === 'org' && peek.notebook_id !== null) {
-      await resolveNotebookForNote(ctx, peek.notebook_id, peek.author_user_id, 'org');
+    if (peek.notebook_id !== null) {
+      if (input.visibility === 'org') {
+        await resolveNotebookForNote(ctx, peek.notebook_id, peek.author_user_id, 'org');
+      } else {
+        // Turning a note private while inside a notebook triggers b_note_notebook_integrity FOR SHARE on that notebook;
+        // acquire shared notes.erase + notebook lock first to keep canonical notebook -> note lock order.
+        await lockNotebook(ctx, peek.notebook_id, true);
+      }
     }
     const before = await load(ctx, input.noteId, true);
     assertAuthor(before, userId);

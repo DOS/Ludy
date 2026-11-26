@@ -348,6 +348,10 @@ function scanSource(
   let asTypeBrace = 0;
   let asTypeAngle = 0;
   let lastTokenWasTypeVoid = false;
+  const braceExprStack: boolean[] = [];
+  let nextLBraceCanBeExpr = false;
+  let expectCaseColon = false;
+  let lastRBraceWasExpr = false;
 
   const AS_TYPE_PREFIX_IDENTS = new Set([
     'keyof',
@@ -359,6 +363,113 @@ function scanSource(
     'new',
     'asserts',
   ]);
+  const BRACE_EXPR_PREV_KEYWORDS = new Set([
+    'return',
+    'throw',
+    'yield',
+    'await',
+    'typeof',
+    'void',
+    'delete',
+    'in',
+    'instanceof',
+    'of',
+    'new',
+    'as',
+    'satisfies',
+  ]);
+  const BRACE_EXPR_PREV_PUNCTS = new Set([
+    '=',
+    '+=',
+    '-=',
+    '*=',
+    '/=',
+    '%=',
+    '**=',
+    '<<=',
+    '>>=',
+    '>>>=',
+    '&=',
+    '|=',
+    '^=',
+    '&&=',
+    '||=',
+    '??=',
+    '(',
+    '[',
+    ',',
+    '?',
+    ':',
+    '+',
+    '-',
+    '*',
+    '/',
+    '%',
+    '**',
+    '&',
+    '|',
+    '^',
+    '<<',
+    '>>',
+    '>>>',
+    '&&',
+    '||',
+    '??',
+    '==',
+    '===',
+    '!=',
+    '!==',
+    '<',
+    '<=',
+    '>',
+    '>=',
+    '!',
+    '~',
+    '...',
+  ]);
+
+  const trackBraceExprToken = (tok: Token): void => {
+    lastRBraceWasExpr = false;
+    if (tok.kind === 'punct') {
+      if (tok.value === '{') {
+        braceExprStack.push(nextLBraceCanBeExpr);
+        nextLBraceCanBeExpr = false;
+        expectCaseColon = false;
+        return;
+      }
+      if (tok.value === '}') {
+        lastRBraceWasExpr = braceExprStack.pop() ?? false;
+        nextLBraceCanBeExpr = false;
+        expectCaseColon = false;
+        return;
+      }
+      if (tok.value === ':' && expectCaseColon) {
+        expectCaseColon = false;
+        nextLBraceCanBeExpr = false;
+        return;
+      }
+      expectCaseColon = false;
+      nextLBraceCanBeExpr = BRACE_EXPR_PREV_PUNCTS.has(tok.value);
+      return;
+    }
+    if (tok.kind === 'template_head' || tok.kind === 'template_middle') {
+      expectCaseColon = false;
+      nextLBraceCanBeExpr = true;
+      return;
+    }
+    if (tok.kind === 'ident' && !tok.escaped && !prevWasDot) {
+      if (tok.value === 'case' || tok.value === 'default') {
+        expectCaseColon = true;
+        nextLBraceCanBeExpr = tok.value === 'default';
+      } else {
+        expectCaseColon = false;
+        nextLBraceCanBeExpr = BRACE_EXPR_PREV_KEYWORDS.has(tok.value);
+      }
+      return;
+    }
+    expectCaseColon = false;
+    nextLBraceCanBeExpr = false;
+  };
 
   const resetAsType = (): void => {
     asTypeActive = false;
@@ -416,7 +527,12 @@ function scanSource(
           asTypeAngle -= 1;
           if (asTypeAngle === 0) asTypeExpectAtom = false;
         }
-      } else if (tok.kind === 'template' && asTypeBrace === 0 && asTypeParen === 0 && asTypeBracket === 0) {
+      } else if (
+        (tok.kind === 'template' || tok.kind === 'template_middle' || tok.kind === 'template_tail') &&
+        asTypeBrace === 0 &&
+        asTypeParen === 0 &&
+        asTypeBracket === 0
+      ) {
         resetAsType();
       }
       return;
@@ -446,8 +562,8 @@ function scanSource(
       else resetAsType();
       return;
     }
-    if (tok.kind === 'template') {
-      if (asTypeExpectAtom && !tok.raw.startsWith('}')) asTypeExpectAtom = false;
+    if (tok.kind === 'template' || tok.kind === 'template_head' || tok.kind === 'template_middle' || tok.kind === 'template_tail') {
+      if (asTypeExpectAtom && tok.kind === 'template') asTypeExpectAtom = false;
       else resetAsType();
       return;
     }
@@ -510,6 +626,7 @@ function scanSource(
 
   const emit = (tok: Token): void => {
     trackAsTypeToken(tok);
+    trackBraceExprToken(tok);
     if (options.emitTokens) tokens.push(tok);
   };
 
@@ -1208,7 +1325,7 @@ function scanSource(
         openLtCount = 0;
       }
       prevAllowsRegex = true;
-      prevCouldBeDivision = punct === '}' || closedGenericGt;
+      prevCouldBeDivision = (punct === '}' && lastRBraceWasExpr) || closedGenericGt;
       prevWasDot = false;
     }
     prevControlKeyword = '';
@@ -7974,6 +8091,18 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       disallowedMeteredNotes('other.ts', 'const x = 1 as T extends U ? A : void / Number(metered("notes." + "a", fn)) / 2;'),
     ).toEqual(['notes.a']);
     expect(disallowedMeteredNotes('other.ts', 'const x = obj.void / metered(dynKey) / 2;')).toEqual([
+      'unresolved metered key (dynKey)',
+    ]);
+    expect(disallowedMeteredNotes('other.ts', 'if (enabled) {} /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'if (enabled) { doWork(); } /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'function f() {} /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'try {} catch {} /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', '{ const a = 1; } /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'const f = () => {} /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'const x = { a: 1 } / Number(metered("notes." + "a", fn)) / 2;')).toEqual([
+      'notes.a',
+    ]);
+    expect(disallowedMeteredNotes('other.ts', 'const x = { a: { b: 1 } } / Number(metered(dynKey, fn)) / 2;')).toEqual([
       'unresolved metered key (dynKey)',
     ]);
     expect(disallowedMeteredNotes('other.ts', 'a as Foo<Record<string, number>> / metered(dynKey) / 2')).toEqual([

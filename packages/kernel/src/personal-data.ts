@@ -1864,6 +1864,32 @@ export const personalDataErase = defineCommand({
     const tagsOf = (alias: string) => sql`pg_catalog.array_to_string(${sql.ref(`${alias}.tags`)}, ' ')`;
     const keptTags = sql`ARRAY(SELECT g.v FROM pg_catalog.unnest(t.tags) WITH ORDINALITY AS g(v, i) WHERE NOT ${freeTextMatch(probe, sql.ref('g.v'))} ORDER BY g.i)`;
     const stillAcross = freeTextMatch(probe, sql`pg_catalog.array_to_string(${keptTags}, ' ')`);
+    // Acquire the single bounded org erasure barrier before any ludy_notes lock/update and update shared notebooks
+    // before shared/private notes so concurrent notebook-referencing writes (noteUpdate/noteSetVisibility/notebookUpdate)
+    // stay strictly deadlock-free in canonical notes.erase -> notebook[id ASC] -> note[id ASC] order.
+    const notesEraseLockKey = `notes.erase:${ctx.orgId.toLowerCase()}`;
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${notesEraseLockKey}, 0))`.execute(ctx.trx);
+    await sql`
+      SELECT b.id FROM ludy_notes.notebook b
+       WHERE b.org_id = ${ctx.orgId}::uuid AND b.visibility = 'org'
+         AND (${mentions('b.name')} OR (b.stack_name IS NOT NULL AND ${mentions('b.stack_name')}))
+       ORDER BY b.id
+       FOR NO KEY UPDATE OF b`.execute(ctx.trx);
+    const { rows: notebooks } = await sql<{ name: boolean; stack_name: boolean }>`
+      UPDATE ludy_notes.notebook t
+         SET name = COALESCE(NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.name'), ERASED_TEXT_MARK)}, ${NOTEBOOK_NAME_MAX}::int)), ''), ${ERASED_TEXT_MARK}),
+             stack_name = CASE
+               WHEN t.stack_name IS NOT NULL AND ${mentions('t.stack_name')}
+                 THEN COALESCE(NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.stack_name'), ERASED_TEXT_MARK)}, ${NOTEBOOK_STACK_MAX}::int)), ''), ${ERASED_TEXT_MARK})
+               ELSE t.stack_name
+             END,
+             revision = t.revision + 1, updated_at = ${ctx.now}
+        FROM ludy_notes.notebook o
+       WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
+         AND (${mentions('t.name')} OR (t.stack_name IS NOT NULL AND ${mentions('t.stack_name')}))
+       RETURNING ${mentions('o.name')} AS name, (o.stack_name IS NOT NULL AND ${mentions('o.stack_name')}) AS stack_name`.execute(ctx.trx);
+    add('ludy_notes.notebook.name', notebooks.filter((b) => b.name).length);
+    add('ludy_notes.notebook.stack_name', notebooks.filter((b) => b.stack_name).length);
     // Lock every shared note whose text or any snapshot names the value first, in id order (#3562). A restore of a
     // snapshot (notes.note.restore_version) locks its note before it reads the snapshot, so it either lands before
     // these statements, whose fresh reads then see and edit out what it wrote back, or waits and finds the snapshot
@@ -1941,21 +1967,6 @@ export const personalDataErase = defineCommand({
         .where('id', 'in', touchedSharedNoteIds)
         .execute();
     }
-    const { rows: notebooks } = await sql<{ name: boolean; stack_name: boolean }>`
-      UPDATE ludy_notes.notebook t
-         SET name = COALESCE(NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.name'), ERASED_TEXT_MARK)}, ${NOTEBOOK_NAME_MAX}::int)), ''), ${ERASED_TEXT_MARK}),
-             stack_name = CASE
-               WHEN t.stack_name IS NOT NULL AND ${mentions('t.stack_name')}
-                 THEN COALESCE(NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.stack_name'), ERASED_TEXT_MARK)}, ${NOTEBOOK_STACK_MAX}::int)), ''), ${ERASED_TEXT_MARK})
-               ELSE t.stack_name
-             END,
-             revision = t.revision + 1, updated_at = ${ctx.now}
-        FROM ludy_notes.notebook o
-       WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
-         AND (${mentions('t.name')} OR (t.stack_name IS NOT NULL AND ${mentions('t.stack_name')}))
-       RETURNING ${mentions('o.name')} AS name, (o.stack_name IS NOT NULL AND ${mentions('o.stack_name')}) AS stack_name`.execute(ctx.trx);
-    add('ludy_notes.notebook.name', notebooks.filter((b) => b.name).length);
-    add('ludy_notes.notebook.stack_name', notebooks.filter((b) => b.stack_name).length);
     const { rows: privateRows } = await sql<{ notes: string; todos: string; untold_notes: string; untold_todos: string; note_ids: string[]; todo_ids: string[] }>`
       SELECT notes, todos, untold_notes, untold_todos, note_ids, todo_ids FROM ludy_notes.private_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
     const sum = (key: 'notes' | 'todos' | 'untold_notes' | 'untold_todos') => privateRows.reduce((n, r) => n + Number(r[key]), 0);

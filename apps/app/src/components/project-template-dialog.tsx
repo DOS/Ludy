@@ -96,11 +96,16 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
     [],
   );
 
-  const getFallbackRadio = (archivedId: string): HTMLButtonElement | null => {
+  const getRestoreTargetRadio = (archivedId: string): HTMLButtonElement | null => {
     const radios = Array.from(radioGroupRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? []).filter(
-      (el) => el.isConnected !== false && el.getAttribute('data-testid') !== `template-option-${archivedId}`,
+      (el) => el.isConnected !== false,
     );
-    return radios.find((el) => el.getAttribute('aria-checked') === 'true') ?? radios[0] ?? null;
+    // Keep focus on the currently selected radio while pending or on failure; switch to another option once archived.
+    return (
+      radios.find((el) => el.getAttribute('aria-checked') === 'true') ??
+      radios.find((el) => el.getAttribute('data-testid') !== `template-option-${archivedId}`) ??
+      null
+    );
   };
 
   const shouldRestoreRadioFocus = (archivedId: string, includeConfirmDialog = false): boolean => {
@@ -119,9 +124,9 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
     focusFrameRef.current = window.requestAnimationFrame(() => {
       focusFrameRef.current = null;
       if (!open || !shouldRestoreRadioFocus(archivedId, includeConfirmDialog)) return;
-      const fallbackRadio = getFallbackRadio(archivedId);
-      if (fallbackRadio?.isConnected !== false) {
-        fallbackRadio?.focus();
+      const targetRadio = getRestoreTargetRadio(archivedId);
+      if (targetRadio?.isConnected !== false) {
+        targetRadio?.focus();
       }
     });
   };
@@ -384,7 +389,7 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                               finalFocus={() => {
                                 const archivedId = pendingArchiveFocusRef.current;
                                 if (!archivedId) return true;
-                                return getFallbackRadio(archivedId) ?? radioGroupRef.current ?? true;
+                                return getRestoreTargetRadio(archivedId) ?? radioGroupRef.current ?? true;
                               }}
                               onOpenChangeComplete={(nextOpen) => {
                                 archiveDialogVisibleRef.current = nextOpen;
@@ -401,7 +406,7 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                               onConfirm={() => {
                                 const archivedId = selectedTemplate.id;
                                 pendingArchiveFocusRef.current = archivedId;
-                                // Dialog closes onto a loading/unmounting trigger; hand focus to a surviving radio after close/settle unless user moved elsewhere.
+                                // Keep focus on the currently selected radio while pending or on error; switch to fallback on success unless user moved elsewhere.
                                 restoreRadioFocus(archivedId);
                                 archiveTemplate.mutate(
                                   { templateId: archivedId, idempotencyKey: crypto.randomUUID() },
