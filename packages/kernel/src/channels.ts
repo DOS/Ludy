@@ -432,8 +432,11 @@ const KNOWN_REFRESH_ERROR_CODES = new Set([
   '1',
   '2',
   '4',
+  '10',
   '17',
   '32',
+  '102',
+  '200',
   '613',
   '10000',
   '10002',
@@ -473,6 +476,8 @@ const KNOWN_REFRESH_ERROR_CODES = new Set([
   'Isv.MissingParameter',
   'UnknownError',
   'error_auth',
+  'common.error_auth',
+  'error_permission',
   'error_server',
   'error_param',
   'error_network',
@@ -566,14 +571,14 @@ export const channelRefreshFail = defineCommand({
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const row = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
-      .select(['status', 'provider', 'updated_at', 'expires_at', 'refresh_failures', 'refresh_last_error'])
+      .select(['status', 'provider', 'updated_at', 'expires_at', 'refresh_failures', 'refresh_last_error', 'refresh_next_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .forUpdate()
       .executeTakeFirst();
     if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     if (row.status !== 'active' || Math.floor(row.updated_at.getTime()) !== Date.parse(input.ifVersion)) {
-      return { connectionId: input.connectionId, recorded: false, failures: row.refresh_failures, backoffSeconds: 0, nextAt: null };
+      return { connectionId: input.connectionId, recorded: false, failures: row.refresh_failures, backoffSeconds: 0, nextAt: null, enteredBackoff: false };
     }
     const failures = row.refresh_last_error === input.code ? row.refresh_failures + 1 : 1;
     let backoffSeconds = channelRefreshBackoffSeconds(failures);
@@ -582,13 +587,14 @@ export const channelRefreshFail = defineCommand({
       const nowMs = ctx.now.getTime();
       let nextMs = nowMs + backoffSeconds * 1000;
       let skipBackoff = false;
-      // Threads refreshes with its access token itself (no separate refresh token): keep one final try before
-      // expiry whenever backoff would otherwise jump past a still-unexpired token's end.
+      // Threads refreshes with its access token itself (no separate refresh token): keep at least one sweep window
+      // (15 minutes before expiry) whenever the backoff would land past or too close to a still-unexpired token's end.
       if (row.provider === 'threads' && row.expires_at !== null) {
         const expMs = new Date(row.expires_at).getTime();
-        if (expMs > nowMs && nextMs > expMs) {
-          if (expMs - 15 * 60_000 > nowMs) {
-            nextMs = Math.max(nowMs + 10 * 60_000, expMs - 15 * 60_000);
+        const windowEnd = expMs - 15 * 60_000;
+        if (expMs > nowMs && nextMs > windowEnd) {
+          if (windowEnd > nowMs) {
+            nextMs = Math.max(nowMs + 10 * 60_000, windowEnd);
             backoffSeconds = Math.max(1, Math.round((nextMs - nowMs) / 1000));
           } else {
             // Inside the final 15 minutes before expiry: leave next_at null so the next 10-minute sweep gets one
@@ -600,6 +606,7 @@ export const channelRefreshFail = defineCommand({
       }
       nextAt = skipBackoff ? null : new Date(nextMs).toISOString();
     }
+    const enteredBackoff = row.refresh_next_at === null && nextAt !== null;
     await ctx.trx
       .updateTable('ludy_kernel.channel_connection')
       .set({
@@ -611,7 +618,7 @@ export const channelRefreshFail = defineCommand({
       .where('id', '=', input.connectionId)
       .execute();
     ctx.audit({ connection_id: input.connectionId, provider: row.provider, code: input.code, failures, backoff_seconds: backoffSeconds });
-    return { connectionId: input.connectionId, recorded: true, failures, backoffSeconds, nextAt };
+    return { connectionId: input.connectionId, recorded: true, failures, backoffSeconds, nextAt, enteredBackoff };
   },
 });
 

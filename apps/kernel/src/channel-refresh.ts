@@ -12,7 +12,7 @@ import { sql } from 'kysely';
 import type { Refresher } from '@ludy/channel';
 import type { Db } from '@ludy/db';
 import { DomainError, type CredentialBroker, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
-import { CHANNEL_REFRESH_BACKOFF_THRESHOLD, sanitizeChannelRefreshError, type SealedChannelCredential } from '@ludy/kernel';
+import { sanitizeChannelRefreshError, type SealedChannelCredential } from '@ludy/kernel';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.channel.refresh' };
 // Refresh tokens that expire within this window: Zalo's access tokens last 25 hours, so a sweep every 10 minutes
@@ -82,12 +82,12 @@ async function recordRefreshFailure(deps: RefreshDeps, row: Due, rawCode: string
   const options = { actor: ACTOR, orgId: row.org_id };
   const ifVersion = row.version.toISOString();
   try {
-    const recorded = await deps.runtime.execute<{ recorded: boolean; failures: number; backoffSeconds: number }>(
+    const recorded = await deps.runtime.execute<{ recorded: boolean; failures: number; backoffSeconds: number; enteredBackoff: boolean }>(
       'kernel.channel.refresh_fail',
       { connectionId: row.connection_id, ifVersion, code },
       options,
     );
-    if (recorded.recorded && recorded.failures === CHANNEL_REFRESH_BACKOFF_THRESHOLD) {
+    if (recorded.recorded && recorded.enteredBackoff) {
       console.warn(
         `[channel-refresh] backoff connection=${row.connection_id} org=${row.org_id} provider=${row.provider} code=${code} failures=${recorded.failures} backoff_seconds=${recorded.backoffSeconds}`,
       );

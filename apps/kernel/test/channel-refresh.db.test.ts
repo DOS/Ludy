@@ -597,9 +597,10 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
       }
       expect(await row(id)).toMatchObject({ refresh_failures: 0, refresh_last_error: null, refresh_next_at: null });
 
-      // Threads refreshes using its access token itself: when expiry is imminent (50 minutes left), the 3rd failure clamps backoff before expiry;
-      // inside the final 15 minutes (14 minutes left), it stays eligible for one final sweep instead of jumping past expiry.
-      const threadsConn = await connect(o, 50 * 60_000, JSON.stringify({ accessToken: 't-soon' }), 'threads');
+      // Threads refreshes using its access token itself: when expiry is 65 minutes away (inside 1h + 15m margin),
+      // the 3rd failure clamps backoff to at least 15 minutes before expiry; inside the final 15 minutes (14 minutes left),
+      // it stays eligible for one final sweep without firing a premature backoff warning until backoff actually starts.
+      const threadsConn = await connect(o, 65 * 60_000, JSON.stringify({ accessToken: 't-soon' }), 'threads');
       const threadsFailer: Refresher = {
         provider: 'threads',
         horizonSeconds: 7 * 24 * 3600,
@@ -611,26 +612,39 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
       const tr = await row(threadsConn);
       expect(tr).toMatchObject({ refresh_failures: 3, refresh_last_error: '503' });
       expect(tr?.refresh_next_at).not.toBeNull();
-      expect(tr?.refresh_next_at?.getTime() ?? Infinity).toBeLessThan(tr?.expires_at.getTime() ?? 0);
+      expect(tr?.refresh_next_at?.getTime() ?? Infinity).toBeLessThanOrEqual((tr?.expires_at.getTime() ?? 0) - 14 * 60_000);
 
+      const warnsBeforeLast15 = warnSpy.mock.calls.length;
       const threadsLast15 = await connect(o, 14 * 60_000, JSON.stringify({ accessToken: 't-14m' }), 'threads');
       for (let i = 0; i < 3; i += 1) {
         expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { threads: threadsFailer } })).toMatchObject({ failed: 1 });
       }
       expect(await row(threadsLast15)).toMatchObject({ refresh_failures: 3, refresh_last_error: '503', refresh_next_at: null });
+      expect(warnSpy.mock.calls.length).toBe(warnsBeforeLast15);
+      // Once expired, the next failure enters backoff and logs once cleanly.
+      await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET expires_at = now() - interval '1 minute' WHERE id = $1", [threadsLast15]));
+      expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { threads: threadsFailer } })).toMatchObject({ failed: 1 });
+      expect((await row(threadsLast15))?.refresh_next_at).not.toBeNull();
+      expect(warnSpy.mock.calls.length).toBe(warnsBeforeLast15 + 1);
 
-      // Known Lazada codes (InvalidParameter vs AppKeyNotFound) are preserved distinctly rather than collapsed to UNKNOWN.
-      let lazadaCode = 'InvalidParameter';
+      // Known Lazada & Shopee codes are preserved distinctly rather than collapsed to UNKNOWN.
+      let namedCode = 'InvalidParameter';
       const lazadaNamedFailer: Refresher = {
         provider: 'marketplace_lazada',
-        refresh: async () => ({ failed: lazadaCode }),
+        refresh: async () => ({ failed: namedCode }),
       };
       const lazadaConn = await connect(o, 2 * HOUR, JSON.stringify({ accessToken: 'l-1' }), 'marketplace_lazada');
       expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { marketplace_lazada: lazadaNamedFailer } })).toMatchObject({ failed: 1 });
       expect(await row(lazadaConn)).toMatchObject({ refresh_failures: 1, refresh_last_error: 'InvalidParameter' });
-      lazadaCode = 'AppKeyNotFound';
+      namedCode = 'AppKeyNotFound';
       expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { marketplace_lazada: lazadaNamedFailer } })).toMatchObject({ failed: 1 });
       expect(await row(lazadaConn)).toMatchObject({ refresh_failures: 1, refresh_last_error: 'AppKeyNotFound' });
+      namedCode = 'common.error_auth';
+      expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { marketplace_lazada: lazadaNamedFailer } })).toMatchObject({ failed: 1 });
+      expect(await row(lazadaConn)).toMatchObject({ refresh_failures: 1, refresh_last_error: 'common.error_auth' });
+      namedCode = 'error_permission';
+      expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { marketplace_lazada: lazadaNamedFailer } })).toMatchObject({ failed: 1 });
+      expect(await row(lazadaConn)).toMatchObject({ refresh_failures: 1, refresh_last_error: 'error_permission' });
     } finally {
       warnSpy.mockRestore();
     }
