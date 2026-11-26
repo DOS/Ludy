@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { deflateRawSync } from 'node:zlib';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   formatSignedReleaseManifestScript,
@@ -26,6 +27,7 @@ import {
   parseSpctlAssessOutput,
   verifyExtractedDirectorySymlinks,
   verifyMacSignedPackage,
+  verifyZipDecompressedSizeBounds,
 } from '../../src/codesign.ts';
 import type { FetchLike } from '../../src/exchange.ts';
 import {
@@ -1051,6 +1053,61 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
       buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist` }], { entryCount: 0xffff }),
     );
     expect(() => inspectZipCentralDirectory(zip64)).toThrow(/Zip64/);
+
+    const declaredBombZip = join(dir, 'declared-bomb.zip');
+    writeFileSync(
+      declaredBombZip,
+      buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Resources/blob`, uncompressedSizeOverride: 500_000_000 }]),
+    );
+    expect(() =>
+      inspectZipCentralDirectory(declaredBombZip, { maxTotalUncompressedBytes: 1024 * 1024 }),
+    ).toThrow(/safety limit/);
+
+    // Forged Central Directory claiming 64 bytes while compressed deflate stream actually expands to 2 MiB.
+    const realBombPayload = deflateRawSync(Buffer.alloc(2 * 1024 * 1024, 0x41));
+    const nameBuf = Buffer.from(`${MAC_APP_BUNDLE_NAME}/Contents/Resources/payload`, 'utf8');
+    const bombLh = Buffer.alloc(30 + nameBuf.length);
+    bombLh.writeUInt32LE(0x04034b50, 0);
+    bombLh.writeUInt16LE(20, 4);
+    bombLh.writeUInt16LE(8, 8);
+    bombLh.writeUInt32LE(realBombPayload.length, 18);
+    bombLh.writeUInt32LE(64, 22);
+    bombLh.writeUInt16LE(nameBuf.length, 26);
+    nameBuf.copy(bombLh, 30);
+    const bombCd = Buffer.alloc(46 + nameBuf.length);
+    bombCd.writeUInt32LE(0x02014b50, 0);
+    bombCd.writeUInt16LE(20, 4);
+    bombCd.writeUInt16LE(20, 6);
+    bombCd.writeUInt16LE(8, 10);
+    bombCd.writeUInt32LE(realBombPayload.length, 20);
+    bombCd.writeUInt32LE(64, 24);
+    bombCd.writeUInt16LE(nameBuf.length, 28);
+    bombCd.writeUInt32LE(0, 42);
+    nameBuf.copy(bombCd, 46);
+    const bombEocd = Buffer.alloc(22);
+    bombEocd.writeUInt32LE(0x06054b50, 0);
+    bombEocd.writeUInt16LE(1, 8);
+    bombEocd.writeUInt16LE(1, 10);
+    bombEocd.writeUInt32LE(bombCd.length, 12);
+    bombEocd.writeUInt32LE(bombLh.length + realBombPayload.length, 16);
+    const forgedDeflateBomb = join(dir, 'forged-deflate-bomb.zip');
+    writeFileSync(forgedDeflateBomb, Buffer.concat([bombLh, realBombPayload, bombCd, bombEocd]));
+
+    await expect(
+      verifyZipDecompressedSizeBounds(forgedDeflateBomb, { maxTotalUncompressedBytes: 1024 * 1024 }),
+    ).rejects.toThrow(/actual decompressed size exceeds safety limit/);
+
+    let dittoInvokedOnBomb = false;
+    await expect(
+      verifyMacSignedPackage(forgedDeflateBomb, TEAM_ID, {
+        platform: 'darwin',
+        execCmd: async (file) => {
+          if (file === 'ditto') dittoInvokedOnBomb = true;
+          return { stdout: '', stderr: '' };
+        },
+      }),
+    ).rejects.toThrow(/actual decompressed size exceeds safety limit/);
+    expect(dittoInvokedOnBomb).toBe(false);
 
     if (process.platform !== 'win32') {
       const symBundle = join(dir, 'sym-bundle');

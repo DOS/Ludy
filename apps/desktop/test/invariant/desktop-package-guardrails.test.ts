@@ -218,7 +218,13 @@ describe('desktop-package workflow guardrails', () => {
     expect(buildWorkflow).toContain('shasum -a 256 -c SHA256SUMS.txt');
     expect(buildWorkflow).toContain('hdiutil verify "$arch_dir/$dmg"');
     expect(buildWorkflow).toContain('inspectZipCentralDirectory(process.argv[1])');
+    expect(buildWorkflow).toContain('verifyZipDecompressedSizeBounds(process.argv[1])');
     expect(buildWorkflow).toContain('verifyExtractedDirectorySymlinks');
+    const macSmokeIdx = buildWorkflow.indexOf('name: Smoke-start packaged macOS app');
+    const macSummaryIdx = buildWorkflow.indexOf('name: Idle memory report for packaged macOS app');
+    expect(macSmokeIdx).toBeGreaterThan(-1);
+    expect(macSummaryIdx).toBeGreaterThan(macSmokeIdx);
+    expect(buildWorkflow.slice(macSmokeIdx, macSummaryIdx)).not.toContain('continue-on-error: true');
     expect(buildWorkflow).not.toContain('secrets.');
     const buildUses = [...buildWorkflow.matchAll(/uses:\s*([^\s#]+)/g)].map((m) => m[1]);
     expect(buildUses.length).toBeGreaterThan(0);

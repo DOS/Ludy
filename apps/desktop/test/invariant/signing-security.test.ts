@@ -20,6 +20,7 @@ import {
   MAC_HELPER_ENTITLEMENTS_PATH,
   parseCodesignIdentities,
   resolveMacSigningConfig,
+  runSecurityInteractiveLines,
   selectMacEntitlementsForFile,
   withEphemeralMacKeychain,
 } from '../../scripts/macos-signing.mjs';
@@ -287,6 +288,21 @@ describe('macOS signing credential, Keychain, entitlements, and ATS security inv
       p12Password: p12Value,
     });
     expect(cmds).toContain('set-key-partition-list -S apple-tool:,apple:,codesign:');
+
+    const executedSecurityLines: string[] = [];
+    expect(() =>
+      runSecurityInteractiveLines(
+        'create-keychain -p "a" "/tmp/kc.keychain-db"\nset-keychain-settings -lut 21600 "/tmp/kc.keychain-db"\nunlock-keychain -p "a" "/tmp/kc.keychain-db"\n',
+        (_cmd, _args, opts) => {
+          executedSecurityLines.push(opts.input.trim());
+          if (opts.input.startsWith('set-keychain-settings')) {
+            return { status: 50, stderr: 'set-keychain-settings failed' };
+          }
+          return { status: 0, stdout: '' };
+        },
+      ),
+    ).toThrow(/security interactive set-keychain-settings failed/);
+    expect(executedSecurityLines).toHaveLength(2);
   });
 
   it('enforces ephemeral Keychain anti-clobber and fail-closed cleanup', async () => {

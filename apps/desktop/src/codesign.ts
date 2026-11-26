@@ -2,8 +2,9 @@
 // macOS code-signature, Hardened Runtime, Gatekeeper (spctl), and safe ZIP update archive verification (#4885).
 // Never invokes xcrun at runtime (clean Macs may lack Xcode CLT); uses only built-in macOS codesign, spctl, and ditto.
 import { execFile } from 'node:child_process';
-import { existsSync, lstatSync, mkdtempSync, openSync, closeSync, readdirSync, readlinkSync, readSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, openSync, closeSync, readdirSync, readlinkSync, readSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
+import { createInflateRaw } from 'node:zlib';
 
 export const APPLE_BUNDLE_ID = 'vn.ludy.desktop';
 export const MAC_APP_BUNDLE_NAME = 'Ludy Desktop.app';
@@ -257,19 +258,37 @@ export function parseSpctlAssessOutput(
   return { source, origin };
 }
 
-export function inspectZipCentralDirectory(
+interface ParsedZipEntryMeta {
+  name: string;
+  method: number;
+  compressedSize: number;
+  uncompressedSize: number;
+  localHeaderOffset: number;
+}
+
+function parseZipCentralDirectoryEntries(
   zipPath: string,
   options: {
-    requiredTopDir?: string;
-    maxEntries?: number;
-    maxTotalUncompressedBytes?: number;
+    requiredTopDir?: string | undefined;
+    maxEntries?: number | undefined;
+    maxTotalUncompressedBytes?: number | undefined;
   } = {},
-): { entryCount: number; totalUncompressedBytes: number } {
+): {
+  entryCount: number;
+  totalUncompressedBytes: number;
+  cdOffset: number;
+  entries: ParsedZipEntryMeta[];
+} {
   const maxEntries = options.maxEntries ?? MAX_ZIP_ENTRIES;
   const maxTotalBytes = options.maxTotalUncompressedBytes ?? MAX_ZIP_EXTRACTED_BYTES;
   const requiredTopDir = options.requiredTopDir ?? `${MAC_APP_BUNDLE_NAME}/`;
 
-  const stat = statSync(zipPath);
+  let stat;
+  try {
+    stat = lstatSync(zipPath);
+  } catch {
+    throw new Error(`Invalid macOS update archive: ${zipPath}`);
+  }
   if (!stat.isFile() || stat.size < 22) {
     throw new Error(`Invalid macOS update archive: ${zipPath}`);
   }
@@ -324,20 +343,23 @@ export function inspectZipCentralDirectory(
     let cursor = 0;
     let totalUncompressedBytes = 0;
     const seenLowerNames = new Set<string>();
+    const entries: ParsedZipEntryMeta[] = [];
     for (let idx = 0; idx < entryCount; idx++) {
       if (cursor + 46 > cdBuf.length || cdBuf.readUInt32LE(cursor) !== 0x02014b50) {
         throw new Error('Malformed ZIP central directory header');
       }
+      const method = cdBuf.readUInt16LE(cursor + 10);
       const compressedSize = cdBuf.readUInt32LE(cursor + 20);
       const uncompressedSize = cdBuf.readUInt32LE(cursor + 24);
       const nameLen = cdBuf.readUInt16LE(cursor + 28);
       const extraLen = cdBuf.readUInt16LE(cursor + 30);
       const commentLen = cdBuf.readUInt16LE(cursor + 32);
+      const localHeaderOffset = cdBuf.readUInt32LE(cursor + 42);
       const headerEnd = cursor + 46 + nameLen + extraLen + commentLen;
       if (headerEnd > cdBuf.length) {
         throw new Error('Truncated ZIP central directory entry');
       }
-      if (compressedSize === 0xffffffff || uncompressedSize === 0xffffffff) {
+      if (compressedSize === 0xffffffff || uncompressedSize === 0xffffffff || localHeaderOffset === 0xffffffff) {
         throw new Error('Zip64 entry sizes are not supported');
       }
       if (uncompressedSize > maxTotalBytes) {
@@ -372,12 +394,145 @@ export function inspectZipCentralDirectory(
         throw new Error(`Duplicate ZIP entry path: ${rawName}`);
       }
       seenLowerNames.add(lowerKey);
+      entries.push({ name: rawName, method, compressedSize, uncompressedSize, localHeaderOffset });
       cursor = headerEnd;
     }
     if (cursor !== cdBuf.length) {
       throw new Error('ZIP central directory contains unexpected trailing bytes');
     }
-    return { entryCount, totalUncompressedBytes };
+    return { entryCount, totalUncompressedBytes, cdOffset, entries };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+export function inspectZipCentralDirectory(
+  zipPath: string,
+  options: {
+    requiredTopDir?: string;
+    maxEntries?: number;
+    maxTotalUncompressedBytes?: number;
+  } = {},
+): { entryCount: number; totalUncompressedBytes: number } {
+  const parsed = parseZipCentralDirectoryEntries(zipPath, options);
+  return { entryCount: parsed.entryCount, totalUncompressedBytes: parsed.totalUncompressedBytes };
+}
+
+export async function verifyZipDecompressedSizeBounds(
+  zipPath: string,
+  options: {
+    requiredTopDir?: string;
+    maxEntries?: number;
+    maxTotalUncompressedBytes?: number;
+  } = {},
+): Promise<{ entryCount: number; actualDecompressedBytes: number }> {
+  const maxTotalBytes = options.maxTotalUncompressedBytes ?? MAX_ZIP_EXTRACTED_BYTES;
+  const parsed = parseZipCentralDirectoryEntries(zipPath, options);
+  const fd = openSync(zipPath, 'r');
+  try {
+    const lh = Buffer.alloc(30);
+    let actualTotalBytes = 0;
+    for (const entry of parsed.entries) {
+      if (entry.method !== 0 && entry.method !== 8) {
+        throw new Error(`Unsupported ZIP compression method (${entry.method}) for ${entry.name}`);
+      }
+      if (entry.localHeaderOffset + 30 > parsed.cdOffset) {
+        throw new Error(`ZIP local file header out of bounds for ${entry.name}`);
+      }
+      if (readSync(fd, lh, 0, 30, entry.localHeaderOffset) !== 30 || lh.readUInt32LE(0) !== 0x04034b50) {
+        throw new Error(`Invalid ZIP local file header for ${entry.name}`);
+      }
+      const lhNameLen = lh.readUInt16LE(26);
+      const lhExtraLen = lh.readUInt16LE(28);
+      const dataStart = entry.localHeaderOffset + 30 + lhNameLen + lhExtraLen;
+      if (dataStart + entry.compressedSize > parsed.cdOffset) {
+        throw new Error(`ZIP compressed entry extends past central directory for ${entry.name}`);
+      }
+
+      if (entry.method === 0) {
+        if (entry.compressedSize !== entry.uncompressedSize) {
+          throw new Error(`Stored ZIP entry size mismatch for ${entry.name}`);
+        }
+        actualTotalBytes += entry.uncompressedSize;
+        if (actualTotalBytes > maxTotalBytes) {
+          throw new Error(`ZIP actual decompressed size exceeds safety limit (${maxTotalBytes} bytes)`);
+        }
+        continue;
+      }
+
+      if (entry.compressedSize === 0) {
+        throw new Error(`Invalid empty deflate stream for ${entry.name}`);
+      }
+      const entryActualBytes = await new Promise<number>((resolveStream, rejectStream) => {
+        const inflate = createInflateRaw();
+        let entryBytes = 0;
+        let settled = false;
+        const fail = (err: Error): void => {
+          if (settled) return;
+          settled = true;
+          inflate.destroy();
+          rejectStream(err);
+        };
+        inflate.on('error', (err) => fail(err));
+        inflate.on('data', (chunk: Buffer) => {
+          entryBytes += chunk.byteLength;
+          actualTotalBytes += chunk.byteLength;
+          if (entryBytes > entry.uncompressedSize) {
+            fail(new Error(`ZIP entry ${entry.name} actual decompressed size exceeds safety limit (${entry.uncompressedSize})`));
+            return;
+          }
+          if (actualTotalBytes > maxTotalBytes) {
+            fail(new Error(`ZIP actual decompressed size exceeds safety limit (${maxTotalBytes} bytes)`));
+          }
+        });
+        inflate.on('end', () => {
+          if (settled) return;
+          settled = true;
+          if (entryBytes !== entry.uncompressedSize) {
+            rejectStream(
+              new Error(`ZIP entry ${entry.name} decompressed size (${entryBytes}) does not match declared (${entry.uncompressedSize})`),
+            );
+            return;
+          }
+          resolveStream(entryBytes);
+        });
+        (async () => {
+          const ioBuf = Buffer.alloc(65_536);
+          let remaining = entry.compressedSize;
+          let pos = dataStart;
+          while (remaining > 0 && !settled) {
+            const toRead = Math.min(remaining, ioBuf.length);
+            const bytesRead = readSync(fd, ioBuf, 0, toRead, pos);
+            if (bytesRead <= 0) {
+              fail(new Error(`Unexpected EOF reading ZIP entry ${entry.name}`));
+              return;
+            }
+            pos += bytesRead;
+            remaining -= bytesRead;
+            const slice = ioBuf.subarray(0, bytesRead);
+            if (!inflate.write(slice) && !settled) {
+              await new Promise<void>((resDrain) => {
+                const onDrain = (): void => {
+                  inflate.off('close', onClose);
+                  resDrain();
+                };
+                const onClose = (): void => {
+                  inflate.off('drain', onDrain);
+                  resDrain();
+                };
+                inflate.once('drain', onDrain);
+                inflate.once('close', onClose);
+              });
+            }
+          }
+          if (!settled) inflate.end();
+        })().catch((err) => fail(err instanceof Error ? err : new Error(String(err))));
+      });
+      if (entryActualBytes > maxTotalBytes) {
+        throw new Error(`ZIP actual decompressed size exceeds safety limit (${maxTotalBytes} bytes)`);
+      }
+    }
+    return { entryCount: parsed.entryCount, actualDecompressedBytes: actualTotalBytes };
   } finally {
     closeSync(fd);
   }
@@ -492,7 +647,7 @@ export async function verifyMacSignedPackage(
   if (!expectedTeamId) {
     throw new Error('Refused macOS signed update verification without an expected Apple Team ID');
   }
-  inspectZipCentralDirectory(zipPath, { requiredTopDir: `${MAC_APP_BUNDLE_NAME}/` });
+  await verifyZipDecompressedSizeBounds(zipPath, { requiredTopDir: `${MAC_APP_BUNDLE_NAME}/` });
 
   const extractDir = mkdtempSync(join(dirname(zipPath), 'verify-mac-zip-'));
   const execCmd = options.execCmd ?? defaultMacExecCmd;

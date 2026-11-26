@@ -307,16 +307,31 @@ function defaultExec(file, args, options = {}) {
   });
 }
 
-function defaultRunSecurityInteractive(commands) {
-  const res = spawnSync('security', ['-i'], {
-    input: commands,
-    encoding: 'utf8',
-    maxBuffer: 8 * 1024 * 1024,
-  });
-  if (res.status !== 0) {
-    const detail = (res.stderr || res.stdout || '').trim() || `exit ${String(res.status)}`;
-    throw new Error(`security interactive command failed: ${detail}`);
+export function runSecurityInteractiveLines(commands, spawnImpl = spawnSync) {
+  const lines = commands
+    .replace(/\r?\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (const line of lines) {
+    const res = spawnImpl('security', ['-i'], {
+      input: `${line}\n`,
+      encoding: 'utf8',
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    if (res.error || res.status !== 0) {
+      const cmdName = line.split(/\s+/)[0] || 'command';
+      const detail =
+        res.error?.message ||
+        (res.stderr || res.stdout || '').trim() ||
+        `exit ${String(res.status)}`;
+      throw new Error(`security interactive ${cmdName} failed: ${detail}`);
+    }
   }
+}
+
+function defaultRunSecurityInteractive(commands) {
+  runSecurityInteractiveLines(commands);
 }
 
 function defaultStoreNotaryProfileViaPty({ profileName, appleId, teamId, keychainPath, appSpecificPassword }) {

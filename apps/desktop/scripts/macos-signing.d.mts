@@ -45,6 +45,14 @@ export function formatSecurityImportCommands(options: {
   p12Path: string;
   p12Password: string;
 }): string;
+export function runSecurityInteractiveLines(
+  commands: string,
+  spawnImpl?: (
+    command: string,
+    args: readonly string[],
+    options: { input: string; encoding: string; maxBuffer: number },
+  ) => { status: number | null; error?: Error | undefined; stdout?: string | undefined; stderr?: string | undefined },
+): void;
 export function parseCodesignIdentities(
   findIdentityOutput: string,
   expectedTeamId?: string | null,

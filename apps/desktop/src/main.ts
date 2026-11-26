@@ -154,38 +154,52 @@ async function main(): Promise<void> {
     },
   };
   const smokeDir = smokeDirFor(process.env, config.ludyUrl);
-  let cachedMacTeamId: string | null = config.expectedTeamId;
-  let cachedMacBundleVerify: Promise<string | null> | null = null;
-  const verifyRunningMacBundle = (): Promise<string | null> => {
-    if (cachedMacTeamId) return Promise.resolve(cachedMacTeamId);
-    if (!isDarwin || !app.isPackaged || macAppBundlePath === null) return Promise.resolve(null);
-    if (!cachedMacBundleVerify) {
-      cachedMacBundleVerify = verifyMacAppBundle(macAppBundlePath, {
+  type MacBundleStatus =
+    | { kind: 'signed'; teamId: string }
+    | { kind: 'unsigned' }
+    | { kind: 'error'; reason: string };
+  let cachedMacStatusPromise: Promise<MacBundleStatus> | null = null;
+  const probeRunningMacBundle = (): Promise<MacBundleStatus> => {
+    if (config.expectedTeamId) {
+      return Promise.resolve({ kind: 'signed', teamId: config.expectedTeamId });
+    }
+    if (!isDarwin || !app.isPackaged || macAppBundlePath === null) {
+      return Promise.resolve({ kind: 'error', reason: 'not running inside packaged macOS .app bundle' });
+    }
+    if (!cachedMacStatusPromise) {
+      cachedMacStatusPromise = verifyMacAppBundle(macAppBundlePath, {
         expectedTeamId: config.expectedTeamId,
         requireGatekeeper: false,
       })
-        .then((verified) => {
-          cachedMacTeamId = verified.teamId;
-          return verified.teamId;
-        })
-        .catch(() => null);
+        .then((verified): MacBundleStatus => ({ kind: 'signed', teamId: verified.teamId }))
+        .catch((err): MacBundleStatus => {
+          const reason = err instanceof Error ? err.message : String(err);
+          if (/code object is not signed at all/i.test(reason)) {
+            return { kind: 'unsigned' };
+          }
+          return { kind: 'error', reason };
+        });
     }
-    return cachedMacBundleVerify;
+    return cachedMacStatusPromise;
   };
-  let runningExecutableHasSignature = false;
+  const verifyRunningMacBundle = async (): Promise<string | null> => {
+    const status = await probeRunningMacBundle();
+    return status.kind === 'signed' ? status.teamId : null;
+  };
+  let runningExecutableUnsigned = false;
   if (!isDarwin) {
     try {
       extractEmbeddedPkcs7Der(process.execPath);
-      runningExecutableHasSignature = true;
     } catch {
-      runningExecutableHasSignature = false;
+      runningExecutableUnsigned = true;
     }
   } else if (smokeDir !== null && config.updateUrl !== null && !config.expectedTeamId && macAppBundlePath !== null) {
-    runningExecutableHasSignature = (await verifyRunningMacBundle()) !== null;
+    const macStatus = await probeRunningMacBundle();
+    runningExecutableUnsigned = macStatus.kind === 'unsigned';
   }
   const updaterSupported = squirrelInstalled || (isDarwin && app.isPackaged && macAppBundlePath !== null);
   const allowUnsignedSmoke =
-    smokeDir !== null && !config.expectedPublisherThumbprint && !config.expectedTeamId && !runningExecutableHasSignature;
+    smokeDir !== null && !config.expectedPublisherThumbprint && !config.expectedTeamId && runningExecutableUnsigned;
   const resolveHost = (targetHost: string) => lookup(targetHost, { all: true });
   let cachedRunningThumbprint: string | null = config.expectedPublisherThumbprint;
   const resolveTrustedThumbprint = async (): Promise<string | null> => {
@@ -220,7 +234,7 @@ async function main(): Promise<void> {
             expectedArch: targetArch,
           });
         }
-      : verifyWindowsSignedPackage,
+      : (pkgPath, thumbprint) => verifyWindowsSignedPackage(pkgPath, thumbprint),
     log,
   });
 
