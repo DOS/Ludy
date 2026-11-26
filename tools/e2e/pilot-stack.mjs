@@ -13,7 +13,7 @@
 //   docker tag ludy:split ludy:local && docker tag ludy-extract:split ludy-extract:local && docker tag ludy-media:split ludy-media:local   (or build them as :local)
 //   node tools/e2e/pilot-stack.mjs
 // Environment: PILOT_PROJECT (compose project, default ludy-pilot-<random>; must contain "pilot" and have no containers or
-// volumes yet), PILOT_PORT (default 18090). Inherited COMPOSE_* and LUDY_* variables are not passed on.
+// volumes yet), PILOT_PORT (default 18090). Inherited COMPOSE_*, LUDY_* and CROVE_* variables are not passed on.
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -41,8 +41,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function assert(condition, message) {
   if (!condition) throw new Error(`assertion failed: ${message}`);
 }
-// An exported LUDY_MODULES, COMPOSE_PROFILES or COMPOSE_FILE would override the empty .env and change the stack under test.
-const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(COMPOSE_|LUDY_)/.test(name)));
+// An exported LUDY_MODULES, COMPOSE_PROFILES or COMPOSE_FILE would override the empty .env and change the stack under test;
+// filtering CROVE_* as well prevents host shell variables from tripping retired-variable fail-closed guards.
+const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(COMPOSE_|LUDY_|CROVE_)/.test(name)));
 const docker = (args) => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...inherited, PORT, PUBLIC_URL: `http://localhost:${PORT}` } });
 const compose = (args) => docker([...COMPOSE, ...args]);
 

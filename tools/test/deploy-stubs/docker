@@ -4,7 +4,9 @@
 # `compose ps --status running` lists), STUB_WORKER_DOWN_DIGEST (the worker is down while this image runs),
 # STUB_MIGRATE_EXIT, STUB_PULL_FAIL, STUB_BUILD_TIMES (space-separated digest=LUDY_BUILD_TIME pairs that `image
 # inspect` answers; an image not listed carries none), STUB_ORPHAN_CONTAINERS (space-separated
-# project:service=id entries returned for matching `docker ps` label filters).
+# project:service=id entries returned for matching `docker ps` label filters), STUB_VOLUMES (space-separated
+# volume names reported by `docker volume inspect`), STUB_PG_VOLUMES (space-separated volume names reported as
+# containing a PostgreSQL cluster by `docker run ... -v <vol>:/d:ro`).
 #
 # `compose run migrate` reads the env file the way the real step does (#3282): with a LUDY_CONTEXT_TOKEN_KEY it logs
 # `context token key installed`, or `unchanged` when the same key was installed by an earlier run (kept in
@@ -70,6 +72,28 @@ fi
 if [ "${1:-}" = volume ] && [ "${2:-}" = inspect ]; then
   for v in ${STUB_VOLUMES:-}; do
     if [ "$v" = "${3:-}" ]; then exit 0; fi
+  done
+  exit 1
+fi
+if [ "${1:-}" = run ]; then
+  printf 'docker %s\n' "$*" >>"$STUB_LOG.volumes"
+  vol=''
+  shift
+  while (($# > 0)); do
+    case "$1" in
+      -v)
+        if (($# >= 2)); then
+          vol="${2%%:*}"
+          shift 2
+        else
+          shift
+        fi
+        ;;
+      *) shift ;;
+    esac
+  done
+  for v in ${STUB_PG_VOLUMES:-}; do
+    if [ "$v" = "$vol" ]; then exit 0; fi
   done
   exit 1
 fi

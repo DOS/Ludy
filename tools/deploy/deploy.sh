@@ -893,6 +893,16 @@ remove_orphan_service() {
   fi
 }
 
+# Returns 0 when Docker volume $1 exists and holds an initialized PostgreSQL cluster (PG_VERSION and global/pg_control).
+# Used with --user 0:0 because PostgreSQL volume directories are mode 0700 owned by postgres (uid 999) while app images
+# run non-root; only invoked when both crove_db-data and ludy_db-data exist on the host (#3972).
+volume_has_pg_cluster() {
+  local vol="$1" probe_image="$2"
+  docker volume inspect "$vol" >/dev/null 2>&1 || return 1
+  docker run --rm --network none --user 0:0 -v "${vol}:/d:ro" --entrypoint /bin/sh "$probe_image" \
+    -c 'test -f /d/PG_VERSION && test -f /d/global/pg_control' >/dev/null 2>&1
+}
+
 local_url() {
   local mapped port
   if [ -n "$SMOKE_URL" ]; then
@@ -1132,8 +1142,8 @@ env_var_is_set() {
   ((set_flag == 1))
 }
 
-# Refuses to start migrate if retired CROVE_* credentials sit in $ENV_FILE without their LUDY_* replacement, so
-# compose defaults cannot overwrite real DB passwords or trigger an unintended context key rotation (#3972).
+# Refuses to start if retired CROVE_* variables sit in $ENV_FILE without their LUDY_* replacement, so compose defaults
+# cannot overwrite real DB passwords, trigger unintended context key rotation, or re-enable all modules (#3972).
 retired_env_preflight() {
   local pair old new missing=()
   for pair in \
@@ -1141,7 +1151,8 @@ retired_env_preflight() {
     CROVE_WORKER_DB_PASSWORD:LUDY_WORKER_DB_PASSWORD \
     CROVE_PROBER_DB_PASSWORD:LUDY_PROBER_DB_PASSWORD \
     CROVE_REPORTER_DB_PASSWORD:LUDY_REPORTER_DB_PASSWORD \
-    CROVE_CONTEXT_TOKEN_KEY:LUDY_CONTEXT_TOKEN_KEY
+    CROVE_CONTEXT_TOKEN_KEY:LUDY_CONTEXT_TOKEN_KEY \
+    CROVE_MODULES:LUDY_MODULES
   do
     old="${pair%%:*}"
     new="${pair#*:}"
@@ -1150,7 +1161,7 @@ retired_env_preflight() {
     fi
   done
   if ((${#missing[@]} > 0)); then
-    die "$EXIT_USAGE" "$ENV_FILE sets retired CROVE_* credential variable(s) without their LUDY_* replacement (${missing[*]}); rename them (keeping their existing values) before deploying (#3972)"
+    die "$EXIT_USAGE" "$ENV_FILE sets retired CROVE_* variable(s) without their LUDY_* replacement (${missing[*]}); rename them (keeping their existing values) before deploying (#3972)"
   fi
 }
 
@@ -1985,10 +1996,10 @@ do_deploy() {
     record "deploy $name failed: compose project"
     die "$EXIT_FAILED" 'cannot determine the compose project name; nothing was changed'
   fi
-  if [ "$active_proj" = ludy ] && docker volume inspect crove_db-data >/dev/null 2>&1 && ! docker volume inspect ludy_db-data >/dev/null 2>&1; then
+  if [ "$active_proj" = ludy ] && docker volume inspect crove_db-data >/dev/null 2>&1 && ! volume_has_pg_cluster ludy_db-data "$image"; then
     if [ -n "$current" ]; then activate "$current"; fi
     record "deploy $name failed: crove_db-data not cut over"
-    die "$EXIT_FAILED" "found legacy volume crove_db-data without ludy_db-data for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or set COMPOSE_PROJECT_NAME=crove in $ENV_FILE) before deploying Stage 7 so Compose does not initialize an empty database"
+    die "$EXIT_FAILED" "found legacy volume crove_db-data without a populated PostgreSQL cluster in ludy_db-data for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or set COMPOSE_PROJECT_NAME=crove in $ENV_FILE) before deploying Stage 7 so Compose does not initialize an empty database"
   fi
 
   log 'starting the database'

@@ -239,7 +239,7 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     expect(loaded.AUTH_ALLOWED_EMAILS).toEqual(['owner@example.test']);
   });
 
-  it('runs the finance module by default for api, worker and prober, and follows LUDY_MODULES', () => {
+  it('runs the finance module by default for api, worker and prober, follows LUDY_MODULES, and flags retired CROVE_MODULES without LUDY_MODULES', () => {
     const files = ['docker-compose.yml', 'compose.pilot.yml'];
     for (const [env, expected] of [
       [{}, 'finance'],
@@ -247,8 +247,16 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
       [{ LUDY_MODULES: 'finance,crm' }, 'finance,crm'],
     ] as const) {
       const services = config(files, env, ['prober']);
-      for (const name of ['api', 'worker', 'prober']) expect(services[name]?.environment?.['LUDY_MODULES'], `${name} ${JSON.stringify(env)}`).toBe(expected);
+      for (const name of ['api', 'worker', 'prober']) {
+        expect(services[name]?.environment?.['LUDY_MODULES'], `${name} ${JSON.stringify(env)}`).toBe(expected);
+        expect(services[name]?.environment?.['LUDY_RETIRED_MODULES'], `${name} ${JSON.stringify(env)}`).toBe('');
+      }
     }
+    expect(config(['docker-compose.yml'], { CROVE_MODULES: 'kernel' })['ludy']?.environment?.['LUDY_RETIRED_MODULES']).toBe('CROVE_MODULES');
+    const retiredPilot = config(files, { CROVE_MODULES: 'kernel' }, ['prober']);
+    for (const name of ['api', 'worker', 'prober']) expect(retiredPilot[name]?.environment?.['LUDY_RETIRED_MODULES'], name).toBe('CROVE_MODULES');
+    const replacedPilot = config(files, { CROVE_MODULES: 'kernel', LUDY_MODULES: 'finance,crm' }, ['prober']);
+    for (const name of ['api', 'worker', 'prober']) expect(replacedPilot[name]?.environment?.['LUDY_RETIRED_MODULES'], name).toBe('finance,crm');
   });
 
   it('points the prober at the API, since ludy does not run', () => {

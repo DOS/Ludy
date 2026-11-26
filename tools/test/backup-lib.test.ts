@@ -2,9 +2,9 @@
 // catch what they claim to, and the shell's sealed size must agree with seal.mjs.
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { keyId, sealedSize } from '../backup/seal.mjs';
 
@@ -147,5 +147,48 @@ describe.skipIf(!hasBash)('backup lib.sh', { timeout: 120_000 }, () => {
     const missing = bash(`meta_value SCHEMA_VERSION '${meta}'`);
     expect(missing.status).toBe(1);
     expect(missing.err).toContain('meta.env has no SCHEMA_VERSION');
+  });
+
+  it('fails closed on retired CROVE_DIR without LUDY_DIR and auto-detects active app service (#3972)', () => {
+    const retired = bash('printf "%s" "$LUDY_DIR"', { CROVE_DIR: '/opt/crove' });
+    expect(retired.status).toBe(2);
+    expect(retired.err).toMatch(/CROVE_DIR.*LUDY_DIR/);
+    expect(retired.out).toBe('');
+
+    const replaced = bash('printf "%s" "$LUDY_DIR"', { CROVE_DIR: '/opt/crove', LUDY_DIR: '/opt/ludy' });
+    expect(replaced.status).toBe(0);
+    expect(replaced.out).toBe('/opt/ludy');
+
+    const stubRoot = join(dir, 'app-svc-stub').replaceAll('\\', '/');
+    const stubBin = `${stubRoot}/bin`;
+    mkdirSync(stubBin, { recursive: true });
+    writeFileSync(
+      `${stubBin}/docker`,
+      [
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        '[ -z "${STUB_DC_FAIL:-}" ] || exit 1',
+        'if [ "${1:-}" = compose ] && [ "${2:-}" = config ] && [ "${3:-}" = --services ]; then',
+        '  for s in ${STUB_SERVICES:-}; do printf "%s\\n" "$s"; done',
+        '  exit 0',
+        'fi',
+        'exit 1',
+        '',
+      ].join('\n'),
+    );
+    chmodSync(`${stubBin}/docker`, 0o755);
+
+    const pathWithStub = `${stubBin}${delimiter}${process.env['PATH'] ?? ''}`;
+    for (const [env, expected] of [
+      [{ STUB_SERVICES: 'db ludy crove api worker' }, 'ludy'],
+      [{ STUB_SERVICES: 'db crove prober' }, 'crove'],
+      [{ STUB_SERVICES: 'db api worker prober' }, 'worker'],
+      [{ STUB_SERVICES: 'db api' }, 'api'],
+      [{ STUB_DC_FAIL: '1' }, 'ludy'],
+    ] as const) {
+      const detected = bash('default_app_service', { PATH: pathWithStub, LUDY_DIR: stubRoot, ...env });
+      expect(detected.status, JSON.stringify(env)).toBe(0);
+      expect(detected.out, JSON.stringify(env)).toBe(expected);
+    }
   });
 });

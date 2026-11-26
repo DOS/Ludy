@@ -86,7 +86,7 @@ BACKUP_S3_PREFIX="${BACKUP_S3_PREFIX:-ludy}"
 STORAGE="${STORAGE:-local}"
 RESTORE_PRESTART="${RESTORE_PRESTART:-db}"
 RESTORE_SAMPLE="${RESTORE_SAMPLE:-50}"
-RESTORE_FILES_SERVICE="${RESTORE_FILES_SERVICE:-ludy}"
+RESTORE_FILES_SERVICE="${RESTORE_FILES_SERVICE:-$(default_app_service)}"
 RESTORE_READY_TIMEOUT="${RESTORE_READY_TIMEOUT:-600}"
 RESTORE_FILES="${RESTORE_FILES:-copy}"
 RESTORE_ARCHIVE="${RESTORE_ARCHIVE:-check}"
@@ -419,9 +419,9 @@ phase_done "blob check"
 STEP="starting the stack"
 services="$(dc config --services)"
 api="${RESTORE_API_SERVICE:-}"
-[ -n "$api" ] || { if grep -qx ludy <<<"$services"; then api=ludy; else api=api; fi; }
+[ -n "$api" ] || { if grep -qx ludy <<<"$services"; then api=ludy; elif grep -qx crove <<<"$services"; then api=crove; else api=api; fi; }
 worker="${RESTORE_WORKER_SERVICE:-}"
-[ -n "$worker" ] || { if grep -qx ludy <<<"$services"; then worker=ludy; else worker=worker; fi; }
+[ -n "$worker" ] || { if grep -qx ludy <<<"$services"; then worker=ludy; elif grep -qx crove <<<"$services"; then worker=crove; else worker=worker; fi; }
 deadline=$(($(date +%s) + RESTORE_READY_TIMEOUT))
 # migrate first, alone: the exports below are re-recorded before the worker starts, so no export job the restored
 # queue still holds can record a newer export that the re-record would then shadow.

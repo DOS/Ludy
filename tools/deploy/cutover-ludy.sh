@@ -421,7 +421,7 @@ write_env_in_place() {
 }
 
 upsert_env_kv_file() {
-  local src="$1" dst="$2" k1="$3" v1="$4" k2="$5" v2="$6" k3="$7" v3="$8"
+  local src="$1" dst="$2" k1="${3:-}" v1="${4:-}" k2="${5:-}" v2="${6:-}" k3="${7:-}" v3="${8:-}"
   local split_re='^([[:space:]]*(export[[:space:]]+)?)([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:]'
   local line line_cr cr_seen=0 lf_seen=0 s1=0 s2=0 s3=0
   : >"$dst"
@@ -429,13 +429,13 @@ upsert_env_kv_file() {
     if [[ "$line" == *$'\r' ]]; then line="${line%$'\r'}"; line_cr=$'\r'; cr_seen=$((cr_seen + 1)); else line_cr=''; lf_seen=$((lf_seen + 1)); fi
     if [[ "$line" =~ $split_re ]]; then
       local key="${BASH_REMATCH[3]}" prefix="${BASH_REMATCH[1]}"
-      if [ "$key" = "$k1" ]; then
+      if [ -n "$k1" ] && [ "$key" = "$k1" ]; then
         if ((s1 == 0)); then printf '%s%s=%s%s\n' "$prefix" "$k1" "$v1" "$line_cr" >>"$dst"; s1=1; fi
         continue
-      elif [ "$key" = "$k2" ]; then
+      elif [ -n "$k2" ] && [ "$key" = "$k2" ]; then
         if ((s2 == 0)); then printf '%s%s=%s%s\n' "$prefix" "$k2" "$v2" "$line_cr" >>"$dst"; s2=1; fi
         continue
-      elif [ "$key" = "$k3" ]; then
+      elif [ -n "$k3" ] && [ "$key" = "$k3" ]; then
         if ((s3 == 0)); then printf '%s%s=%s%s\n' "$prefix" "$k3" "$v3" "$line_cr" >>"$dst"; s3=1; fi
         continue
       fi
@@ -444,9 +444,9 @@ upsert_env_kv_file() {
   done <"$src"
   local dcr=''
   if ((cr_seen > 0 && lf_seen == 0)); then dcr=$'\r'; fi
-  if ((s1 == 0)); then printf '%s=%s%s\n' "$k1" "$v1" "$dcr" >>"$dst"; fi
-  if ((s2 == 0)); then printf '%s=%s%s\n' "$k2" "$v2" "$dcr" >>"$dst"; fi
-  if ((s3 == 0)); then printf '%s=%s%s\n' "$k3" "$v3" "$dcr" >>"$dst"; fi
+  if [ -n "$k1" ] && ((s1 == 0)); then printf '%s=%s%s\n' "$k1" "$v1" "$dcr" >>"$dst"; fi
+  if [ -n "$k2" ] && ((s2 == 0)); then printf '%s=%s%s\n' "$k2" "$v2" "$dcr" >>"$dst"; fi
+  if [ -n "$k3" ] && ((s3 == 0)); then printf '%s=%s%s\n' "$k3" "$v3" "$dcr" >>"$dst"; fi
 }
 
 detect_active_project() {
@@ -855,6 +855,14 @@ do_cutover_stack() {
     TEMP_FILES+=("$wal_tmp")
     upsert_env_kv_file "$env_tmp" "$wal_tmp" WAL_DB_IMAGE "$cur_wal_img" WAL_STANZA "$cur_wal_stanza" BACKUP_S3_PREFIX "$cur_s3_prefix"
     mv -f "$wal_tmp" "$env_tmp"
+  elif [ -n "$(env_last_value BACKUP_S3_ENDPOINT)" ] || [ -n "$(env_last_value BACKUP_S3_BUCKET)" ]; then
+    # Non-WAL S3 backup stacks also defaulted BACKUP_S3_PREFIX=crove before Stage 7; keep existing runs/blobs reachable (#3972).
+    local cur_s3_prefix s3_tmp
+    cur_s3_prefix="$(env_or_default BACKUP_S3_PREFIX 'crove')"
+    s3_tmp="$(umask 077 && mktemp "$(state_dir)/.env.cutover-s3-XXXXXX")"
+    TEMP_FILES+=("$s3_tmp")
+    upsert_env_kv_file "$env_tmp" "$s3_tmp" BACKUP_S3_PREFIX "$cur_s3_prefix"
+    mv -f "$s3_tmp" "$env_tmp"
   fi
 
   # Arm EXIT-based rollback before stopping services or copying volumes.

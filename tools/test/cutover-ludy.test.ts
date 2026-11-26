@@ -501,4 +501,30 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(updatedEnv).toContain('WAL_STANZA=crove');
     expect(updatedEnv).toContain('BACKUP_S3_PREFIX=crove');
   });
+
+  it('cutover-stack preserves BACKUP_S3_PREFIX on non-WAL S3 backup stacks (#3972)', { timeout: 15000 }, () => {
+    const f = createCutoverFixture();
+    writeFileSync(
+      join(f.deployDir, '.env'),
+      readFileSync(join(f.deployDir, '.env'), 'utf8') + 'BACKUP_S3_ENDPOINT=https://s3.example.com\nBACKUP_S3_BUCKET=ludy-backups\n',
+    );
+    const res = runWithStubs(f, ['cutover-stack', '--dir', f.deployDir, '--overlay-dir', f.overlayDir]);
+    expect(res.status, res.stderr).toBe(0);
+    const updatedEnv = readFileSync(join(f.deployDir, '.env'), 'utf8');
+    expect(updatedEnv).toContain('BACKUP_S3_PREFIX=crove');
+    expect(updatedEnv).not.toContain('WAL_DB_IMAGE=');
+    expect(updatedEnv).not.toContain('WAL_STANZA=');
+
+    const fExplicit = createCutoverFixture();
+    writeFileSync(
+      join(fExplicit.deployDir, '.env'),
+      readFileSync(join(fExplicit.deployDir, '.env'), 'utf8') +
+        'BACKUP_S3_ENDPOINT=https://s3.example.com\nBACKUP_S3_BUCKET=ludy-backups\nBACKUP_S3_PREFIX=custom\n',
+    );
+    const resExplicit = runWithStubs(fExplicit, ['cutover-stack', '--dir', fExplicit.deployDir, '--overlay-dir', fExplicit.overlayDir]);
+    expect(resExplicit.status, resExplicit.stderr).toBe(0);
+    const updatedExplicit = readFileSync(join(fExplicit.deployDir, '.env'), 'utf8');
+    expect(updatedExplicit).toContain('BACKUP_S3_PREFIX=custom');
+    expect(updatedExplicit).not.toContain('BACKUP_S3_PREFIX=crove');
+  });
 });

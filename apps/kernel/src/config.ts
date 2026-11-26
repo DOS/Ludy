@@ -878,6 +878,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (env.CROVE_SHARED_DATABASE_SWITCH?.trim()) {
     throw new Error('Invalid configuration: CROVE_SHARED_DATABASE_SWITCH has been retired; rename it to LUDY_SHARED_DATABASE_SWITCH');
   }
+  const hasExplicitLudyModules = Boolean(env.LUDY_MODULES?.split(',').some((m) => m.trim().length > 0));
+  if (env.LUDY_RETIRED_MODULES?.trim() === 'CROVE_MODULES' || (Boolean(env.CROVE_MODULES?.trim()) && !hasExplicitLudyModules)) {
+    throw new Error('Invalid configuration: CROVE_MODULES has been retired; rename it to LUDY_MODULES');
+  }
   const parsed = schema.safeParse(env);
   if (!parsed.success) {
     const fields = parsed.error.issues.map((i) => (i.code === 'custom' ? `${i.path.join('.')} (${i.message})` : i.path.join('.'))).join(', ');

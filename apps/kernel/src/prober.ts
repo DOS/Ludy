@@ -208,6 +208,10 @@ export interface Thresholds {
 }
 
 export function loadProberConfig(env: NodeJS.ProcessEnv = process.env, everySeconds: number | null = null): ProberConfig {
+  const hasExplicitLudyModules = Boolean(env.LUDY_MODULES?.split(',').some((m) => m.trim().length > 0));
+  if (env.LUDY_RETIRED_MODULES?.trim() === 'CROVE_MODULES' || (Boolean(env.CROVE_MODULES?.trim()) && !hasExplicitLudyModules)) {
+    throw new Error('invalid prober configuration: CROVE_MODULES has been retired; rename it to LUDY_MODULES');
+  }
   const rawModules = env.LUDY_MODULES?.trim();
   const normalizedEnv: Record<string, string | undefined> = { ...env };
   if (rawModules) {

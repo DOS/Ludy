@@ -11,7 +11,7 @@ enough. This guide is for an instance other people use.
 
 | | One firm, up to about 20 client companies |
 |---|---|
-| CPU, memory | 4 vCPU, 8 GB. PostgreSQL, Supabase Auth, the Ludy kernel and `crove-extract` (the file parsing sandbox, up to 1 GB on its own) |
+| CPU, memory | 4 vCPU, 8 GB. PostgreSQL, Supabase Auth, the Ludy kernel and `ludy-extract` (the file parsing sandbox, up to 1 GB on its own) |
 | Disk | 40 GB SSD with files in an S3 bucket, more with local files (`STORAGE=local`): the database, Docker images, logs and local backup runs |
 | OS | any current Linux with Docker Engine 24 or newer and the compose plugin v2.24 or newer (`docker compose version`) |
 | Network | a domain name pointing at the server, ports 80 and 443 open (TLS); every other port stays closed |
@@ -37,7 +37,7 @@ git tag --list 'v*' --sort=-v:refname | head -5      # the newest releases
 git checkout <tag>                                   # for example v0.3.0
 ```
 
-The stack builds its two images (`crove:local` and `crove-extract:local`) from this checkout the first time it starts.
+The stack builds its images (`ludy:local`, `ludy-extract:local` and `ludy-media:local`) from this checkout the first time it starts.
 
 ## 3. Settings (`.env`)
 
@@ -246,6 +246,11 @@ webhook: [secret-rotation.md](../runbooks/secret-rotation.md).
 
 ## 11. Upgrades and migrations
 
+If you are upgrading from a pre-Stage-7 release (where `docker-compose.yml` used Compose project `name: crove`, `crove_*` Docker volumes and `CROVE_*` settings in `.env`), cut over the stack before running `docker compose up -d --build` on the new tag, or Compose will create empty `ludy_*` volumes and refuse retired variables:
+
+- Either run `tools/deploy/cutover-ludy.sh cutover-stack --dir /opt/ludy --overlay-dir /opt/ludy/tools/deploy` to copy volumes into `ludy_*` and rewrite `CROVE_*` keys to `LUDY_*`.
+- Or pin `COMPOSE_PROJECT_NAME=crove` in `.env` and rename any `CROVE_APP_DB_PASSWORD`, `CROVE_WORKER_DB_PASSWORD`, `CROVE_PROBER_DB_PASSWORD`, `CROVE_REPORTER_DB_PASSWORD`, `CROVE_CONTEXT_TOKEN_KEY`, `CROVE_MODULES`, `CROVE_DOMAIN`, `CROVE_UPSTREAM` and `CROVE_DIR` entries to `LUDY_*` (keeping their values).
+
 Take a backup, then move the checkout to the new release and start the stack again:
 
 ```bash
@@ -273,6 +278,6 @@ and publish your own.
 | `/readyz` answers 503 | its body says which part is not ready: a migration missing (`docker compose logs migrate`) or Supabase Auth's grants (`docker compose up auth-grants`) |
 | Nobody receives mail | the `SMTP_*` settings, `docker compose logs auth`, and the provider's sending log |
 | Everyone is rate limited at once | `TRUSTED_PROXY_HOPS` does not count your reverse proxy (section 3) |
-| Uploaded PDFs stay unread | `AI_*` unset or failing (`docker compose logs crove`); XML needs no AI |
+| Uploaded PDFs stay unread | `AI_*` unset or failing (`docker compose logs ludy`); XML needs no AI |
 
 [incidents.md](../runbooks/incidents.md) has the steps for the problems the status page and the prober report.

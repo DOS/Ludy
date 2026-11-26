@@ -392,11 +392,30 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=valid-key\nCROVE_APP_DB_PASSWORD=${secretPw}\nLUDY_APP_DB_PASSWORD=new-pw\n`);
     expect(deploy('v1.0.0', 'a').status).toBe(0);
 
-    // Self-hosted volume cutover guard: crove_db-data without ludy_db-data under project ludy must abort before starting db.
+    // Retired CROVE_MODULES without LUDY_MODULES must abort before pulling images.
+    const beforeMod = `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=valid-key\nCROVE_MODULES=finance\n`;
+    writeFileSync(`${dir}/.env`, beforeMod);
+    const resMod = deploy('v1.0.0', 'a');
+    expect(resMod.status, resMod.out).toBe(2);
+    expect(resMod.out).toContain('CROVE_MODULES->LUDY_MODULES');
+    expect(envFile()).toBe(beforeMod);
+    expect(calls()).toEqual([]);
+
+    // Self-hosted volume cutover guard: crove_db-data without a populated ludy_db-data under project ludy must abort before starting db.
+    writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=valid-key\n`);
     const volGuard = deploy('v1.0.1', 'b', { STUB_VOLUMES: 'crove_db-data' });
     expect(volGuard.status, volGuard.out).toBe(1);
-    expect(volGuard.out).toContain('found legacy volume crove_db-data without ludy_db-data');
+    expect(volGuard.out).toContain('found legacy volume crove_db-data without a populated PostgreSQL cluster in ludy_db-data');
     expect(volGuard.out).toContain('cutover-ludy.sh cutover-stack');
+
+    // Empty ludy_db-data (no PG_VERSION / pg_control) alongside crove_db-data must also fail closed.
+    const emptyVolGuard = deploy('v1.0.1', 'b', { STUB_VOLUMES: 'crove_db-data ludy_db-data' });
+    expect(emptyVolGuard.status, emptyVolGuard.out).toBe(1);
+    expect(emptyVolGuard.out).toContain('found legacy volume crove_db-data without a populated PostgreSQL cluster in ludy_db-data');
+
+    // Populated ludy_db-data passes the cutover guard.
+    const populatedVolGuard = deploy('v1.0.1', 'b', { STUB_VOLUMES: 'crove_db-data ludy_db-data', STUB_PG_VOLUMES: 'ludy_db-data' });
+    expect(populatedVolGuard.status, populatedVolGuard.out).toBe(0);
   });
 
   // #892: with --build, /version must report the build being deployed, so an old container that still answers fails.
