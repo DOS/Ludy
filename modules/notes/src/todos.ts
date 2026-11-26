@@ -747,6 +747,13 @@ export const todoComplete = defineCommand({
     const stopSeries = input.stopSeries === true;
     let lockedList: { id: string; sections: unknown } | undefined;
     let precomputedSortKey: string | null = null;
+    let preSiblings: Array<{
+      id: string;
+      due_on: string | null;
+      due_at: Date | string | null;
+      time_zone: string;
+      created_at: Date | string;
+    }> | null = null;
     if (!stopSeries) {
       const peek = await ctx.trx
         .selectFrom('ludy_notes.todo')
@@ -755,27 +762,23 @@ export const todoComplete = defineCommand({
         .where('id', '=', todoId)
         .executeTakeFirst();
       if (peek && peek.recurrence !== null && peek.status === 'open' && peek.deleted_at === null) {
-        // Check in O(1) whether a newer sibling already suppresses spawning under seriesLock before reading ownKeys / rebalancing.
+        // Read the series siblings once under lockTodoSeries and reuse them both to skip ownKeys when a newer
+        // sibling already exists and to compute the next occurrence date/time if spawning.
         const peekSeriesId = peek.series_id ?? todoId;
         const peekCreatedAt = new Date(peek.created_at).getTime();
-        const sameMsStart = new Date(peekCreatedAt);
-        const nextMsStart = new Date(peekCreatedAt + 1);
-        const newerSibling = await ctx.trx
+        preSiblings = await ctx.trx
           .selectFrom('ludy_notes.todo')
-          .select('id')
+          .select(['id', 'due_on', 'due_at', 'time_zone', 'created_at'])
           .where('org_id', '=', ctx.orgId)
           .where('series_id', '=', peekSeriesId)
           .where('id', '<>', todoId)
           .where('deleted_at', 'is', null)
-          .where((eb) =>
-            eb.or([
-              eb('created_at', '>=', nextMsStart),
-              eb.and([eb('created_at', '>=', sameMsStart), eb('id', '>', todoId)]),
-            ]),
-          )
-          .limit(1)
-          .executeTakeFirst();
-        if (!newerSibling) {
+          .execute();
+        const peekHasNewerSibling = preSiblings.some((r) => {
+          const createdMs = new Date(r.created_at).getTime();
+          return createdMs > peekCreatedAt || (createdMs === peekCreatedAt && r.id > todoId);
+        });
+        if (!peekHasNewerSibling) {
           if (peek.list_id !== null) {
             lockedList = await ctx.trx
               .selectFrom('ludy_notes.todo_list')
@@ -878,14 +881,16 @@ export const todoComplete = defineCommand({
     if (rule !== null && !stopSeries && seriesId !== null) {
       const anchorDate = before.due_on ?? zonedDate(before.time_zone, ctx.now.getTime());
       const beforeCreatedAt = new Date(before.created_at).getTime();
-      const siblings = await ctx.trx
-        .selectFrom('ludy_notes.todo')
-        .select(['id', 'due_on', 'due_at', 'time_zone', 'created_at'])
-        .where('org_id', '=', ctx.orgId)
-        .where('series_id', '=', seriesId)
-        .where('id', '<>', before.id)
-        .where('deleted_at', 'is', null)
-        .execute();
+      const siblings =
+        preSiblings ??
+        (await ctx.trx
+          .selectFrom('ludy_notes.todo')
+          .select(['id', 'due_on', 'due_at', 'time_zone', 'created_at'])
+          .where('org_id', '=', ctx.orgId)
+          .where('series_id', '=', seriesId)
+          .where('id', '<>', before.id)
+          .where('deleted_at', 'is', null)
+          .execute());
 
       // Do not spawn if a newer non-deleted occurrence already exists in the series (reopened old rows must not
       // duplicate the series, whereas older reopened rows do not block a newer occurrence from spawning ahead).
@@ -1413,6 +1418,18 @@ export const todoLinkAdd = defineCommand({
   target,
   handler: async (ctx, input): Promise<{ todoId: string; linkId: string }> => {
     const userId = userOf(ctx.actor);
+    const peek = await load(ctx, input.todoId, false);
+    assertNotInTrash(peek);
+    if (input.targetType === 'kernel.party') {
+      // Match personalDataErase lock order (party -> todo) before taking todo FOR UPDATE.
+      await ctx.trx
+        .selectFrom('ludy_kernel.party')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.targetId)
+        .forKeyShare()
+        .executeTakeFirst();
+    }
     const row = await load(ctx, input.todoId, true);
     assertNotInTrash(row);
     const linkId = await insertRecordLink(ctx, { kind: 'todo', id: row.id }, userId, input.targetType, input.targetId);

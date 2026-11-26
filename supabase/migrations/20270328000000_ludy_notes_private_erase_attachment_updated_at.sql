@@ -1,9 +1,9 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Ludy Notes (#5035, #4213, PR #4820 follow-up): restate ludy_notes.private_erase(p_kind text, p_value text)
 -- symmetrically with shared-note attachment erasure (packages/kernel/src/personal-data.ts):
--- lock attachment-matched surviving parent notes in the single note[id ASC] pass (using FOR NO KEY UPDATE so
--- FK FOR KEY SHARE inserts in todoComplete never deadlock, and before att_gone so noteAttachmentDelete order matches),
--- then bump ludy_notes.note.updated_at on surviving parent notes whose attachments were erased.
+-- lock attachment-matched parent notes in the single set-based note[id ASC] pass using FOR NO KEY UPDATE (so
+-- FK FOR KEY SHARE inserts in todoComplete never block/deadlock, note -> attachment matches noteAttachmentDelete,
+-- and concurrent private_erase serializes cleanly), then bump surviving parent updated_at monotonically.
 -- Idempotent; preserves signature, security definer, search_path, return columns, and post-Stage-7 grants.
 SET LOCAL lock_timeout = '2s';
 
@@ -19,7 +19,6 @@ DECLARE
   v_templates jsonb := '[]'::jsonb;
   v_lists jsonb := '[]'::jsonb;
   v_notebooks jsonb := '[]'::jsonb;
-  v_note_lock record;
 BEGIN
   IF v_org IS NULL OR ludy_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR NOT EXISTS (
     SELECT 1 FROM ludy_kernel.tenant_member m
@@ -56,62 +55,35 @@ BEGIN
    ORDER BY b.id
    FOR UPDATE;
 
-  FOR v_note_lock IN
-    SELECT n.id,
-           (
-             ludy_kernel.text_mentions(n.title, p_kind, p_value)
-             OR ludy_kernel.text_mentions(n.body, p_kind, p_value)
-             OR ludy_kernel.text_mentions(pg_catalog.array_to_string(n.tags, ' '), p_kind, p_value)
-             OR EXISTS (
-               SELECT 1 FROM ludy_notes.note_version v
-                WHERE v.org_id = n.org_id AND v.note_id = n.id
-                  AND (ludy_kernel.text_mentions(v.title, p_kind, p_value)
-                       OR ludy_kernel.text_mentions(v.body, p_kind, p_value)
-                       OR ludy_kernel.text_mentions(pg_catalog.array_to_string(v.tags, ' '), p_kind, p_value))
-             )
-             OR EXISTS (
-               SELECT 1 FROM ludy_notes.notebook b
-                WHERE b.org_id = v_org AND b.id = n.notebook_id AND b.visibility = 'private'
-                  AND (ludy_kernel.text_mentions(b.name, p_kind, p_value)
-                       OR ludy_kernel.text_mentions(b.stack_name, p_kind, p_value))
-             )
-           ) AS strong_lock
-      FROM ludy_notes.note n
-     WHERE n.org_id = v_org AND n.visibility = 'private'
-       AND (
-         ludy_kernel.text_mentions(n.title, p_kind, p_value)
-         OR ludy_kernel.text_mentions(n.body, p_kind, p_value)
-         OR ludy_kernel.text_mentions(pg_catalog.array_to_string(n.tags, ' '), p_kind, p_value)
-         OR EXISTS (
-           SELECT 1 FROM ludy_notes.note_version v
-            WHERE v.org_id = n.org_id AND v.note_id = n.id
-              AND (ludy_kernel.text_mentions(v.title, p_kind, p_value)
-                   OR ludy_kernel.text_mentions(v.body, p_kind, p_value)
-                   OR ludy_kernel.text_mentions(pg_catalog.array_to_string(v.tags, ' '), p_kind, p_value))
-         )
-         OR EXISTS (
-           SELECT 1 FROM ludy_notes.notebook b
-            WHERE b.org_id = v_org AND b.id = n.notebook_id AND b.visibility = 'private'
-              AND (ludy_kernel.text_mentions(b.name, p_kind, p_value)
-                   OR ludy_kernel.text_mentions(b.stack_name, p_kind, p_value))
-         )
-         OR EXISTS (
-           SELECT 1 FROM ludy_notes.attachment a
-            WHERE a.org_id = n.org_id AND a.note_id = n.id
-              AND (ludy_kernel.text_mentions(a.filename, p_kind, p_value)
-                   OR ludy_kernel.text_mentions(a.extracted_text, p_kind, p_value))
-         )
+  PERFORM n.id
+    FROM ludy_notes.note n
+   WHERE n.org_id = v_org AND n.visibility = 'private'
+     AND (
+       ludy_kernel.text_mentions(n.title, p_kind, p_value)
+       OR ludy_kernel.text_mentions(n.body, p_kind, p_value)
+       OR ludy_kernel.text_mentions(pg_catalog.array_to_string(n.tags, ' '), p_kind, p_value)
+       OR EXISTS (
+         SELECT 1 FROM ludy_notes.note_version v
+          WHERE v.org_id = n.org_id AND v.note_id = n.id
+            AND (ludy_kernel.text_mentions(v.title, p_kind, p_value)
+                 OR ludy_kernel.text_mentions(v.body, p_kind, p_value)
+                 OR ludy_kernel.text_mentions(pg_catalog.array_to_string(v.tags, ' '), p_kind, p_value))
        )
-     ORDER BY n.id
-  LOOP
-    IF v_note_lock.strong_lock THEN
-      PERFORM n.id FROM ludy_notes.note n WHERE n.org_id = v_org AND n.id = v_note_lock.id FOR UPDATE;
-    ELSE
-      -- Surviving attachment-matched parent notes only bump updated_at: FOR NO KEY UPDATE preserves
-      -- note[id ASC] -> attachment order (noteAttachmentDelete) while remaining compatible with todoComplete's FOR KEY SHARE.
-      PERFORM n.id FROM ludy_notes.note n WHERE n.org_id = v_org AND n.id = v_note_lock.id FOR NO KEY UPDATE;
-    END IF;
-  END LOOP;
+       OR EXISTS (
+         SELECT 1 FROM ludy_notes.notebook b
+          WHERE b.org_id = v_org AND b.id = n.notebook_id AND b.visibility = 'private'
+            AND (ludy_kernel.text_mentions(b.name, p_kind, p_value)
+                 OR ludy_kernel.text_mentions(b.stack_name, p_kind, p_value))
+       )
+       OR EXISTS (
+         SELECT 1 FROM ludy_notes.attachment a
+          WHERE a.org_id = n.org_id AND a.note_id = n.id
+            AND (ludy_kernel.text_mentions(a.filename, p_kind, p_value)
+                 OR ludy_kernel.text_mentions(a.extracted_text, p_kind, p_value))
+       )
+     )
+   ORDER BY n.id
+   FOR NO KEY UPDATE;
 
   PERFORM tpl.id
     FROM ludy_notes.note_template tpl
@@ -289,7 +261,7 @@ BEGIN
 
   IF COALESCE(pg_catalog.array_length(v_touched_notes, 1), 0) > 0 THEN
     UPDATE ludy_notes.note n
-       SET updated_at = pg_catalog.now()
+       SET updated_at = pg_catalog.greatest(n.updated_at, pg_catalog.clock_timestamp())
      WHERE n.org_id = v_org AND n.id = ANY (v_touched_notes);
   END IF;
 

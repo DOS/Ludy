@@ -526,4 +526,55 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     await sweepNoteAttachmentBlobs({ workerDb, store, force: true });
     expect(blobsOf(o)).toEqual([`notes/${o.orgId}/${keptAtt.id}`]);
   });
+
+  it('erases private attachments concurrently with notes.link.add(kernel.party) without deadlocking or regressing updated_at (#5035)', async () => {
+    const o = await org();
+    const email = 'dong-bo-xoa@example.com';
+    const partyId = randomUUID();
+    await rows(`INSERT INTO ludy_kernel.party (org_id, id, name, email) VALUES ($1, $2, 'Khách đồng bộ', $3)`, [o.orgId, partyId, email]);
+    const monotonicNote = await createNote(o, o.author, 'private', 'Ghi chú giữ mốc thời gian');
+    const concurrentNote = await createNote(o, o.author, 'private', 'Ghi chú đồng thời gắn liên kết');
+    const att1 = await attached(o, o.author, monotonicNote, pdf('m1'), 'moc-thoi-gian.pdf');
+    const att2 = await attached(o, o.author, concurrentNote, pdf('m2'), 'hop-dong.pdf');
+    extract.text = `Email liên hệ: ${email}`;
+    await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: att1.id });
+    await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: att2.id });
+
+    await rt.execute<PersonalDataNotice>('kernel.personal_data.notify', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
+    const [notifiedEvt] = await rows<{ id: string }>(
+      `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`,
+      [o.orgId],
+    );
+    await worker.execute('kernel.notification.dispatch', { eventId: notifiedEvt?.id }, { actor: SYSTEM, orgId: o.orgId });
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [o.orgId]);
+      await c.query(`UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [o.orgId]);
+      // Push updated_at ahead of transaction start time so attachment erasure must never move updated_at backward.
+      await c.query(`UPDATE ludy_notes.note SET updated_at = pg_catalog.clock_timestamp() + interval '10 minutes' WHERE org_id = $1 AND id = $2`, [o.orgId, monotonicNote]);
+      await c.query('COMMIT');
+    });
+    const [{ updated_at: beforeEraseTs }] = await rows<{ updated_at: Date | string }>(
+      `SELECT updated_at FROM ludy_notes.note WHERE org_id = $1 AND id = $2`,
+      [o.orgId, monotonicNote],
+    );
+
+    const [eraseOut, linkOut] = await Promise.all([
+      rt.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() }),
+      rt.execute<{ noteId: string; linkId: string }>(
+        'notes.link.add',
+        { noteId: concurrentNote, targetType: 'kernel.party', targetId: partyId },
+        { actor: asUser(o.author.id), orgId: o.orgId },
+      ),
+    ]);
+    expect(eraseOut.erased).toContainEqual({ column: 'ludy_kernel.party.email', rows: 1 });
+    expect(linkOut.noteId).toBe(concurrentNote);
+    expect(await doomed(o)).toEqual([`notes/${o.orgId}/${att1.id}`, `notes/${o.orgId}/${att2.id}`].sort());
+    const [{ updated_at: afterEraseTs }] = await rows<{ updated_at: Date | string }>(
+      `SELECT updated_at FROM ludy_notes.note WHERE org_id = $1 AND id = $2`,
+      [o.orgId, monotonicNote],
+    );
+    expect(new Date(afterEraseTs).getTime()).toBeGreaterThanOrEqual(new Date(beforeEraseTs).getTime());
+  });
 });

@@ -564,6 +564,19 @@ export const linkAdd = defineCommand({
   target,
   handler: async (ctx, input): Promise<{ noteId: string; linkId: string }> => {
     const userId = userOf(ctx.actor);
+    const peek = await load(ctx, input.noteId, false);
+    assertAuthor(peek, userId);
+    assertNotInTrash(peek);
+    if (input.targetType === 'kernel.party') {
+      // Match personalDataErase lock order (party -> note) before taking note FOR UPDATE.
+      await ctx.trx
+        .selectFrom('ludy_kernel.party')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.targetId)
+        .forKeyShare()
+        .executeTakeFirst();
+    }
     const note = await loadForChange(ctx, input.noteId, (row) => assertAuthor(row, userId));
     assertNotInTrash(note);
     const linkId = await addLink(ctx, note, userId, input.targetType, input.targetId);
