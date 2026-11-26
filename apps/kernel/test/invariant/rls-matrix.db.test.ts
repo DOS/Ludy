@@ -87,6 +87,15 @@ const MACHINERY = new Set([
   'crove_meetings.chat_channel_target',
   // #3168: the message of a queued post to a minutes channel, kept only while the post is queued and deleted when it settles: reached only by definers, no login role grant.
   'crove_meetings.chat_post_body',
+  // #5157 Step 0 / #5158 Slice 1 (Projects GitHub Integration, ADR-0060): idempotent sync delivery ledger
+  // (carries RESTRICTIVE project_visibility alongside REVOKE ALL), per-connection webhook secret hashes, and
+  // transient PAT raw webhook notice buffer (deleted on claim and by 10-minute keeping sweep). Definer-only with RLS
+  // enabled and zero login role grants; land before their tables (PENDING_TABLES). (github_webhook_pending is
+  // orgless like conversation_inbound_pending, so it stays outside this org_id RLS matrix and is guarded by
+  // agents.db.test.ts plus its Slice 1 orgless definer invariant.)
+  'crove_projects.github_sync_delivery',
+  'crove_projects.github_webhook_hook',
+  'crove_projects.github_webhook_notice',
   // #4398 / #4399 (Projects Public Roadmap, ADR-0057): short-lived hashed email OTP challenges (otp_sha256, rate counters) and sealed subscriber emails (preserving roadmap_vote anonymity):
   // reached only by definers with RLS enabled and zero login role grants. Land before their tables (PENDING_TABLES).
   'crove_projects.roadmap_otp',
@@ -117,6 +126,12 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   // #5073 / #5080 (ADR-0049 #5108): short-lived 36h prep lines for opted-in members, strict user + member_briefing RLS.
   'crove_meetings.morning_brief_lines',
+  'crove_projects.github_project_binding',
+  'crove_projects.github_project_repo',
+  'crove_projects.github_sync_delivery',
+  'crove_projects.github_task_link',
+  'crove_projects.github_webhook_hook',
+  'crove_projects.github_webhook_notice',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -829,6 +844,30 @@ const projectsCycleTaskSetup = (o: { id: string; owner: string }) => {
       { table: 'crove_projects.project', values: project },
       { table: 'crove_projects.project_cycle', values: cycle },
       { table: 'crove_kernel.task', values: task },
+    ],
+  };
+};
+// Projects GitHub integration (#5157 Step 0 / #5158 Slice 1, ADR-0060): unique repo/issue counters and parent binding setup.
+let githubRepoSeq = 100_000;
+let githubIssueSeq = 1;
+const projectsGithubBindingSetup = (o: { id: string; owner: string }) => {
+  const project = projectsProjectRow(o);
+  const connection = { ...channelConnectionRow(o), provider: 'github_pat' };
+  const binding = {
+    org_id: o.id,
+    id: randomUUID(),
+    project_id: project.id,
+    channel_connection_id: connection.id,
+    created_by: o.owner,
+  };
+  return {
+    project,
+    connection,
+    binding,
+    setup: [
+      { table: 'crove_projects.project', values: project },
+      { table: 'crove_kernel.channel_connection', values: connection },
+      { table: 'crove_projects.github_project_binding', values: binding },
     ],
   };
 };
@@ -3911,6 +3950,131 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // Private by nature: the system context reads none.
   'crove_notes.todo_list': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), owner_user_id: o.owner, name: `RLS matrix list ${tag()}`, sort_key: 'a0' } }),
+  },
+  // Projects GitHub integration (#5157 Step 0 / #5158 Slice 1, ADR-0060): per-project GitHub App/PAT binding, bounded repo list,
+  // idempotent sync ledger, tainted PR/issue links, PAT hook hashes, and transient PAT webhook notice. Land in PENDING_TABLES before migrations.
+  'crove_projects.github_project_binding': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      const connection = { ...channelConnectionRow(o), provider: 'github_pat' };
+      return {
+        setup: [
+          { table: 'crove_projects.project', values: project },
+          { table: 'crove_kernel.channel_connection', values: connection },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          channel_connection_id: connection.id,
+          created_by: o.owner,
+        },
+      };
+    },
+  },
+  'crove_projects.github_project_repo': {
+    make: (o) => {
+      const { project, binding, setup } = projectsGithubBindingSetup(o);
+      return {
+        setup,
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          binding_id: binding.id,
+          github_repo_id: githubRepoSeq++,
+          repo_full_name: `octo/rls-repo-${tag()}`,
+          created_by: o.owner,
+        },
+      };
+    },
+  },
+  'crove_projects.github_sync_delivery': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      return {
+        setup: [{ table: 'crove_projects.project', values: project }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          direction: 'inbound',
+          delivery_id: randomUUID(),
+          event_type: 'issues.opened',
+          status: 'queued',
+        },
+      };
+    },
+  },
+  'crove_projects.github_task_link': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      const task = { org_id: o.id, id: randomUUID(), title: 'RLS matrix task', source: 'human', created_by_type: 'user' };
+      const issueNumber = githubIssueSeq++;
+      const repo = `octo/rls-repo-${tag()}`;
+      return {
+        setup: [
+          { table: 'crove_projects.project', values: project },
+          { table: 'crove_kernel.task', values: task },
+          { table: 'crove_projects.project_task', values: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: task.id } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          task_id: task.id,
+          repo_full_name: repo,
+          kind: 'issue',
+          external_number: issueNumber,
+          external_url: `https://github.com/${repo}/issues/${issueNumber}`,
+          external_title: 'RLS matrix linked issue',
+          external_state: 'open',
+          link_source: 'manual',
+          tainted: 'true',
+          created_by: o.owner,
+        },
+      };
+    },
+  },
+  'crove_projects.github_webhook_hook': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'github_pat' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          channel_connection_id: connection.id,
+          hook_key_sha256: hex64(),
+        },
+      };
+    },
+  },
+  'crove_projects.github_webhook_notice': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'github_pat' };
+      const hook = {
+        org_id: o.id,
+        id: randomUUID(),
+        channel_connection_id: connection.id,
+        hook_key_sha256: hex64(),
+      };
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_projects.github_webhook_hook', values: hook },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          hook_id: hook.id,
+          delivery_id: randomUUID(),
+          event_type: 'issues',
+          signature_256: `sha256=${hex64()}`,
+          body: `\\x${Buffer.from('{"action":"opened"}').toString('hex')}`,
+        },
+      };
+    },
   },
   // Projects and task board (ADR-0048, docs/plan/projects.md section 4.1 and 6, #2586): org-visible under apply_tenant_rls.
   'crove_projects.project': {

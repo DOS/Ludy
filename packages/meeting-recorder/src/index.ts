@@ -264,7 +264,15 @@ export interface RecordingWriter {
   markStopped(by: 'user' | RecordingStopReason): Promise<void>;
 }
 
-export async function beginRecording(store: ChunkStore, meta: Omit<RecordingMeta, 'chunkCount' | 'elapsedMs' | 'updatedAt'>): Promise<RecordingWriter> {
+export interface BeginRecordingOptions {
+  onMarkStoppedError?: (error: unknown) => void;
+}
+
+export async function beginRecording(
+  store: ChunkStore,
+  meta: Omit<RecordingMeta, 'chunkCount' | 'elapsedMs' | 'updatedAt'>,
+  options?: BeginRecordingOptions,
+): Promise<RecordingWriter> {
   let current: RecordingMeta = { ...meta, chunkCount: 0, elapsedMs: 0, updatedAt: Date.now() };
   await store.put(current);
   // Writes queue up behind each other: the browser may deliver a chunk while the last one is still being stored.
@@ -294,7 +302,15 @@ export async function beginRecording(store: ChunkStore, meta: Omit<RecordingMeta
       if (current.stopped !== undefined) return Promise.resolve();
       current = { ...current, stopped: by };
       // Never rejects: the mark is already in memory, and a device too full to save it must not stop the recording from ending.
-      const next = queue.then(() => store.put(current)).catch(() => undefined);
+      const next = queue
+        .then(() => store.put(current))
+        .catch((error: unknown) => {
+          try {
+            options?.onMarkStoppedError?.(error);
+          } catch {
+            /* Best-effort telemetry must never reject markStopped or break queue. */
+          }
+        });
       queue = next;
       return next;
     },

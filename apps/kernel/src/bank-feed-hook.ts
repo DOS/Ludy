@@ -5,8 +5,11 @@
 //   The API (acceptBankFeedHook): after the per-address limit and the body cap (http.ts, before this runs) it checks the headers and the timestamp window, looks the hash up, applies a budget per hook, and stores the RAW
 //   notice for the worker (ludy_finance.bank_feed_hook_put_notice): the request id, the provider's timestamp and signature as sent, the body. It checks no signature (it has no secret) and stores no transaction.
 //   The worker (claimBankFeedHookNotices, verifyBankFeedHookNotices): claims the waiting notices, opens each connection's sealed secret, has the adapter verify the HMAC (constant-time) and that the body names the
-//   connection's own client, and queues one coalesced pull for each connection with a good notice (apps/kernel/src/worker.ts). A refused one is counted on the hook; ten in an hour stop it until it is rotated.
-// The notice's body is personal data (the transfer content and the payer's name): it is kept only until the worker claims it (the claim deletes it); one older than ten minutes, whatever its state, goes at the next claim or the nightly sweep (so it can stay longer while the worker is down), and
+//   connection's own client, and queues one coalesced pull for each connection with a good notice (apps/kernel/src/worker.ts). Request-id deduplication covers waiting rows only: once claim deletes a notice,
+//   a valid replay is accepted again and coalesces into one pull per singleton slot (BANK_FEED_NOTICE_SLOT_SECONDS), pulling from the stored cursor. A refused notice is counted on the hook generation that
+//   received it; ten in an hour stop it until it is rotated.
+// The notice's body is personal data (the transfer content and the payer's name): deleted on claim, and any notice older than ten minutes, whatever its state, goes at the next claim or the nightly sweep (it can
+// stay longer while the worker is down, or if Finance or the connector is switched off after it was stored, until the sweep runs again, an erasure or the org purge), and
 // nothing here logs it, the signature, the hook key or the secret: a log line carries a count and a code.
 import { createHash } from 'node:crypto';
 import { sql, type Transaction } from 'kysely';
@@ -74,9 +77,17 @@ export async function acceptBankFeedHook(runtime: Runtime, provider: BankFeedPro
   const turn = budget.take(hook.hookId);
   if (!turn.allowed) return { status: 429, retryAfterSeconds: turn.retryAfterSeconds };
   const put = await runtime.orgless(async (db) => {
-    const { rows } = await sql<{ put: string }>`
-      SELECT ludy_finance.bank_feed_hook_put_notice(${hook.hookId}::uuid, ${hash}, ${requestId}, ${timestamp}, ${signature}, ${request.body}) AS put`.execute(db);
-    return rows[0]?.put ?? 'gone';
+    try {
+      const { rows } = await sql<{ put: string }>`
+        SELECT ludy_finance.bank_feed_hook_put_notice(${hook.hookId}::uuid, ${hash}, ${requestId}, ${timestamp}, ${signature}, ${request.body}) AS put`.execute(db);
+      return rows[0]?.put ?? 'gone';
+    } catch (error) {
+      // Catch inside orgless before Runtime.orgless wraps SQLSTATE 54000 into an INTERNAL DomainError.
+      if (error instanceof Error && error.message.includes('BANK_FEED_HOOK_BACKLOG_FULL')) {
+        return 'busy';
+      }
+      throw error;
+    }
   });
   if (put === 'accepted' || put === 'duplicate') return { status: 200 };
   if (put === 'busy') return { status: 503, code: 'BANK_FEED_HOOK_BUSY' };
@@ -86,6 +97,7 @@ export async function acceptBankFeedHook(runtime: Runtime, provider: BankFeedPro
 export interface BankFeedHookNoticeRow {
   orgId: string;
   hookId: string;
+  generation: number;
   connectionId: string;
   provider: string;
   requestId: string;
@@ -94,11 +106,61 @@ export interface BankFeedHookNoticeRow {
   body: string;
 }
 
-// The relay's claim of waiting notices (ludy_finance.bank_feed_hook_claim, the worker login's alone). The rows are deleted as they are claimed, and anything older than ten minutes is swept first.
+export interface BankFeedHookClaimBatch {
+  rows: BankFeedHookNoticeRow[];
+  // Total queue rows popped (including inactive/stopped hooks dropped in SQL as NULL placeholders)
+  // so the relay loop keeps draining whenever a full batch was consumed.
+  claimed: number;
+}
+
+// The relay's claim of waiting notices (ludy_finance.bank_feed_hook_claim, the worker login's alone). Notices
+// older than ten minutes are swept first (ADR-0039), then up to BANK_FEED_HOOK_CLAIM remaining rows are
+// deleted and returned with active rows plus all-NULL placeholders for stopped/inactive hooks.
+export async function claimBankFeedHookBatch(trx: Transaction<Database>): Promise<BankFeedHookClaimBatch> {
+  const { rows } = await sql<{
+    org_id: string | null;
+    hook_id: string | null;
+    generation: number | null;
+    connection_id: string | null;
+    provider: string | null;
+    request_id: string | null;
+    notice_timestamp: string | null;
+    signature: string | null;
+    body: string | null;
+  }>`
+    SELECT org_id, hook_id, generation, connection_id, provider, request_id, notice_timestamp, signature, body FROM ludy_finance.bank_feed_hook_claim(${BANK_FEED_HOOK_CLAIM}::int)`.execute(trx);
+  const active: BankFeedHookNoticeRow[] = [];
+  for (const r of rows) {
+    if (
+      r.org_id === null ||
+      r.hook_id === null ||
+      r.generation === null ||
+      r.connection_id === null ||
+      r.provider === null ||
+      r.request_id === null ||
+      r.notice_timestamp === null ||
+      r.signature === null ||
+      r.body === null
+    ) {
+      continue;
+    }
+    active.push({
+      orgId: r.org_id,
+      hookId: r.hook_id,
+      generation: Number(r.generation),
+      connectionId: r.connection_id,
+      provider: r.provider,
+      requestId: r.request_id,
+      timestamp: r.notice_timestamp,
+      signature: r.signature,
+      body: r.body,
+    });
+  }
+  return { rows: active, claimed: rows.length };
+}
+
 export async function claimBankFeedHookNotices(trx: Transaction<Database>): Promise<BankFeedHookNoticeRow[]> {
-  const { rows } = await sql<{ org_id: string; hook_id: string; connection_id: string; provider: string; request_id: string; notice_timestamp: string; signature: string; body: string }>`
-    SELECT org_id, hook_id, connection_id, provider, request_id, notice_timestamp, signature, body FROM ludy_finance.bank_feed_hook_claim(${BANK_FEED_HOOK_CLAIM}::int)`.execute(trx);
-  return rows.map((r) => ({ orgId: r.org_id, hookId: r.hook_id, connectionId: r.connection_id, provider: r.provider, requestId: r.request_id, timestamp: r.notice_timestamp, signature: r.signature, body: r.body }));
+  return (await claimBankFeedHookBatch(trx)).rows;
 }
 
 // The nightly sweep of notices older than ten minutes (ludy_finance.bank_feed_hook_sweep), for a worker that was away: how many went.
@@ -107,10 +169,10 @@ export async function sweepBankFeedHookNotices(workerDb: Db): Promise<number> {
   return Number(rows[0]?.swept ?? 0);
 }
 
-// Counts a refused notice on its hook; true when the hook is now stopped (ten within an hour). The worker calls it AFTER the claim's transaction has committed, never inside it: the claim holds the deleted notices'
+// Counts a refused notice on its hook when the hook's generation still matches what the claim saw; true when the hook is now stopped (ten within an hour). The worker calls it AFTER the claim's transaction has committed, never inside it: the claim holds the deleted notices'
 // row locks, and an API retry of the same request id that holds the hook's lock would otherwise wait on the claim while the claim waits on the hook.
-export async function rejectBankFeedHook(db: Db | Transaction<Database>, hookId: string): Promise<boolean> {
-  const { rows } = await sql<{ stopped: boolean }>`SELECT ludy_finance.bank_feed_hook_reject(${hookId}::uuid) AS stopped`.execute(db);
+export async function rejectBankFeedHook(db: Db | Transaction<Database>, hookId: string, generation: number): Promise<boolean> {
+  const { rows } = await sql<{ stopped: boolean }>`SELECT ludy_finance.bank_feed_hook_reject(${hookId}::uuid, ${generation}::int) AS stopped`.execute(db);
   return rows[0]?.stopped === true;
 }
 
@@ -122,7 +184,7 @@ export interface BankFeedHookDeps {
   runtime: Runtime;
   broker: CredentialBroker;
   providers: Readonly<Record<string, BankFeedProvider>>;
-  reject: (hookId: string) => Promise<unknown>;
+  reject: (hookId: string, generation: number) => Promise<unknown>;
 }
 
 interface SealedChannelCredential {
@@ -177,7 +239,7 @@ export async function verifyBankFeedHookNotices(deps: BankFeedHookDeps, rows: re
       // Signed with the connection's own secret but not a notice the adapter reads: dropped, not counted.
       verdicts.push('dropped');
     } else {
-      await deps.reject(row.hookId);
+      await deps.reject(row.hookId, row.generation);
       verdicts.push('refused');
     }
   }

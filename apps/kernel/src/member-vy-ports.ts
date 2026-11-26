@@ -122,50 +122,64 @@ export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_T
   // A prompt names its own meter key when it is not the summary's: a translation counts under meetings.translate (#3184) and so never cuts off a summary, a transcription or live notes.
   // A question about meetings counts under meetings.ask (#3161) for the same reason.
   return {
-    generate: (_who, prompt) =>
-      prompt.feature === 'meetings.adherence'
-        ? generateMeetingAdherenceText(config, prompt, Math.min(timeoutMs, ADHERENCE_TIMEOUT_MS))
-        : prompt.feature === 'meetings.digest'
-        ? generateMeetingDigestText(config, prompt, Math.min(timeoutMs, DIGEST_TIMEOUT_MS))
-        : prompt.feature === 'meetings.assignee'
-        ? generateMeetingAssigneeText(config, prompt, Math.min(timeoutMs, ASSIGNEE_TIMEOUT_MS))
-        : prompt.feature === 'meetings.brief'
-        ? generateMeetingBriefText(config, prompt, Math.min(timeoutMs, BRIEF_TIMEOUT_MS))
-        : prompt.feature === 'meetings.chapters'
-        ? generateMeetingChaptersText(config, prompt, Math.min(timeoutMs, CHAPTERS_TIMEOUT_MS))
-        : prompt.feature === 'meetings.title'
-        ? generateMeetingTitleText(config, prompt, Math.min(timeoutMs, TITLE_TIMEOUT_MS))
-        : prompt.feature === 'meetings.commitments'
-        ? generateMeetingCommitmentsText(config, prompt, Math.min(timeoutMs, COMMITMENTS_TIMEOUT_MS))
-        : prompt.feature === 'meetings.template_suggest'
-        ? generateMeetingTemplateSuggestText(config, prompt, Math.min(timeoutMs, TEMPLATE_SUGGEST_TIMEOUT_MS))
-        : prompt.feature === 'meetings.open_points'
-        ? generateMeetingOpenPointsText(config, prompt, Math.min(timeoutMs, OPEN_POINTS_TIMEOUT_MS))
-        : prompt.feature === 'meetings.sales_insight'
-        ? generateMeetingSalesInsightText(config, prompt, Math.min(timeoutMs, SALES_INSIGHT_TIMEOUT_MS))
-        : prompt.feature === 'meetings.label_suggest'
-        ? generateMeetingLabelSuggestText(config, prompt, Math.min(timeoutMs, LABEL_SUGGEST_TIMEOUT_MS))
-        : prompt.feature === 'meetings.followup_note'
-        ? generateMeetingFollowupNoteText(config, prompt, Math.min(timeoutMs, FOLLOWUP_NOTE_TIMEOUT_MS))
-        : prompt.feature === 'meetings.deal_update'
-        ? generateMeetingDealUpdateText(config, prompt, Math.min(timeoutMs, DEAL_UPDATE_TIMEOUT_MS))
-        : prompt.feature === 'meetings.translate'
-        ? generateMeetingTranslationText(config, prompt, timeoutMs)
-        : prompt.feature === 'meetings.ask'
-          ? generateMeetingAskText(config, prompt, Math.min(timeoutMs, ASK_TIMEOUT_MS))
-          : prompt.feature === 'projects.tasks_from_note'
-            ? generateTasksFromNoteText(config, prompt, Math.min(timeoutMs, TASKS_FROM_NOTE_TIMEOUT_MS))
-            : prompt.feature === 'projects.tasks_from_source'
-              ? generateTasksFromSourceText(config, prompt, Math.min(timeoutMs, TASKS_FROM_NOTE_TIMEOUT_MS))
-              : prompt.feature === 'notes.summary'
-                ? invokeNoteAiModel(prompt, (safePrompt, signal) => generateNoteSummaryText(config, safePrompt, signal), timeoutMs)
-                : prompt.feature === 'notes.todo_suggest'
-                  ? invokeNoteAiModel(prompt, (safePrompt, signal) => generateTodoSuggestText(config, safePrompt, signal), timeoutMs)
-                  : prompt.feature === 'notes.todo_plan'
-                    ? invokeNoteAiModel(prompt, (safePrompt, signal) => generateTodoPlanText(config, safePrompt, signal), timeoutMs)
-                    : prompt.feature === 'notes.organize'
-                      ? invokeNoteAiModel(prompt, (safePrompt, signal) => generateNoteOrganizeText(config, safePrompt, signal), timeoutMs)
-                      : generateMeetingSummaryText(config, prompt, timeoutMs),
+    generate: async (_who, prompt) => {
+      if (prompt === null || typeof prompt !== 'object' || Array.isArray(prompt)) {
+        throw new NoteAiModelError('failed');
+      }
+      // Single-read destructure inside try/catch so hostile or mutating prompt.feature getters fail closed as 'failed'.
+      let feature: unknown;
+      try {
+        ({ feature } = prompt);
+      } catch {
+        throw new NoteAiModelError('failed');
+      }
+      switch (feature) {
+        case 'meetings.adherence':
+          return generateMeetingAdherenceText(config, prompt, Math.min(timeoutMs, ADHERENCE_TIMEOUT_MS));
+        case 'meetings.digest':
+          return generateMeetingDigestText(config, prompt, Math.min(timeoutMs, DIGEST_TIMEOUT_MS));
+        case 'meetings.assignee':
+          return generateMeetingAssigneeText(config, prompt, Math.min(timeoutMs, ASSIGNEE_TIMEOUT_MS));
+        case 'meetings.brief':
+          return generateMeetingBriefText(config, prompt, Math.min(timeoutMs, BRIEF_TIMEOUT_MS));
+        case 'meetings.chapters':
+          return generateMeetingChaptersText(config, prompt, Math.min(timeoutMs, CHAPTERS_TIMEOUT_MS));
+        case 'meetings.title':
+          return generateMeetingTitleText(config, prompt, Math.min(timeoutMs, TITLE_TIMEOUT_MS));
+        case 'meetings.commitments':
+          return generateMeetingCommitmentsText(config, prompt, Math.min(timeoutMs, COMMITMENTS_TIMEOUT_MS));
+        case 'meetings.template_suggest':
+          return generateMeetingTemplateSuggestText(config, prompt, Math.min(timeoutMs, TEMPLATE_SUGGEST_TIMEOUT_MS));
+        case 'meetings.open_points':
+          return generateMeetingOpenPointsText(config, prompt, Math.min(timeoutMs, OPEN_POINTS_TIMEOUT_MS));
+        case 'meetings.sales_insight':
+          return generateMeetingSalesInsightText(config, prompt, Math.min(timeoutMs, SALES_INSIGHT_TIMEOUT_MS));
+        case 'meetings.label_suggest':
+          return generateMeetingLabelSuggestText(config, prompt, Math.min(timeoutMs, LABEL_SUGGEST_TIMEOUT_MS));
+        case 'meetings.followup_note':
+          return generateMeetingFollowupNoteText(config, prompt, Math.min(timeoutMs, FOLLOWUP_NOTE_TIMEOUT_MS));
+        case 'meetings.deal_update':
+          return generateMeetingDealUpdateText(config, prompt, Math.min(timeoutMs, DEAL_UPDATE_TIMEOUT_MS));
+        case 'meetings.translate':
+          return generateMeetingTranslationText(config, prompt, timeoutMs);
+        case 'meetings.ask':
+          return generateMeetingAskText(config, prompt, Math.min(timeoutMs, ASK_TIMEOUT_MS));
+        case 'projects.tasks_from_note':
+          return generateTasksFromNoteText(config, prompt, Math.min(timeoutMs, TASKS_FROM_NOTE_TIMEOUT_MS));
+        case 'projects.tasks_from_source':
+          return generateTasksFromSourceText(config, prompt, Math.min(timeoutMs, TASKS_FROM_NOTE_TIMEOUT_MS));
+        case 'notes.summary':
+          return invokeNoteAiModel(prompt, (safePrompt, signal) => generateNoteSummaryText(config, safePrompt, signal), timeoutMs);
+        case 'notes.todo_suggest':
+          return invokeNoteAiModel(prompt, (safePrompt, signal) => generateTodoSuggestText(config, safePrompt, signal), timeoutMs);
+        case 'notes.todo_plan':
+          return invokeNoteAiModel(prompt, (safePrompt, signal) => generateTodoPlanText(config, safePrompt, signal), timeoutMs);
+        case 'notes.organize':
+          return invokeNoteAiModel(prompt, (safePrompt, signal) => generateNoteOrganizeText(config, safePrompt, signal), timeoutMs);
+        default:
+          return generateMeetingSummaryText(config, prompt, timeoutMs);
+      }
+    },
   };
 }
 

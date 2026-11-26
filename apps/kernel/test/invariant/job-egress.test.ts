@@ -9,6 +9,7 @@ import { deriveRisk, type CommandDef } from '@ludy/kernel-runtime';
 import { adsCommands } from '@ludy/mod-ads';
 import { crmCommands } from '@ludy/mod-crm';
 import { meetingsCommands } from '@ludy/mod-meetings';
+import { projectsCommands } from '@ludy/mod-projects';
 import { signCommands } from '@ludy/mod-sign';
 import { FINANCE_NOTIFYING_EVENTS, financeCommands } from '@ludy/mod-finance';
 import { CHAT_ALERTING_EVENTS, CHAT_ALERT_TEST_EVENT, NOTIFYING_EVENTS, socialCommands } from '@ludy/mod-social';
@@ -62,7 +63,7 @@ function workProblems(sites: readonly WorkSite[]): string[] {
 
 const RANK = { R0: 0, R1: 1, R2: 2, R3: 3 } as const;
 const all = (): Array<CommandDef<unknown, unknown>> =>
-  [...kernelCommands, orgPurgeCommand({ store: {} as never }), numberReseedCommand(), ...financeCommands, ...socialCommands, ...crmCommands, ...adsCommands, ...meetingsCommands, ...signCommands] as Array<CommandDef<unknown, unknown>>;
+  [...kernelCommands, orgPurgeCommand({ store: {} as never }), numberReseedCommand(), ...financeCommands, ...socialCommands, ...crmCommands, ...adsCommands, ...meetingsCommands, ...projectsCommands, ...signCommands] as Array<CommandDef<unknown, unknown>>;
 
 // Commands below R2 whose handlers emit an event that feeds a queue with egress, themselves or through a nested
 // command they run (ctx.run or ctx.tryRun, followed transitively). None since #1662 and #1698 (coordinator decision):
@@ -152,6 +153,11 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   // Mobile native push sweep (#4883): claims unread conversation_new and approval_waiting notifications with eligible mobile
   // devices and queues QUEUES.nativePush; each device registration runs through kernel.native_push.register, which declares an external effect.
   enqueueNativePushes: { command: 'kernel.native_push.register' },
+  // Projects GitHub integration (#5157 Step 0 -> #5158 Slice 1 / #5159 Slice 2, ADR-0060):
+  // - projects-github-webhook processes verified inbound hooks only for repos/projects configured via projects.github.binding.save (R2 external), and may queue hydration on projects-github-hydrate.
+  // - projects-github-sweep (egress: 'none') hands queued outbound Done <-> Close/Reopen deliveries to projects-github-outbound, isolated behind opt-in binding enabled through projects.github.binding.save (R2 external) so board drags stay R1 internal.
+  'projects-github-webhook handler': { command: 'projects.github.binding.save' },
+  'projects-github-sweep handler': { command: 'projects.github.binding.save' },
 };
 
 // Reviewed send sites that may be listed before the site exists, so the two steps of an invariant change can land apart (the PENDING_DEPS pattern): each names the issue that adds
@@ -162,6 +168,9 @@ const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'finance-misa-amis-push handler': '#3902',
   // The weekly meetings notice sweep (#4967, step 0 of 2): the site and its command land in the table's own PR, which removes this entry.
   'meetings-weekly handler': '#4967',
+  // Projects GitHub integration (#5157 Step 0 of 2): send sites and projects.github.binding.save land in #5158 (webhook) and #5159 (sweep), which remove these entries.
+  'projects-github-webhook handler': '#5158',
+  'projects-github-sweep handler': '#5159',
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.

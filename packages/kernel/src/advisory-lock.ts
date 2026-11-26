@@ -39,6 +39,8 @@ export async function acquireAdvisoryXactLockShared(trx: CommandContext['trx'], 
   await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${trimmed}, 0))`.execute(trx);
 }
 
+// Global lock hierarchy for note-bound Vy runs (#4725, synchronized with packages/kernel/src/member-vy.ts):
+//   (note row locks of DELETE) -> adv_lock('ludy.note_vy:<org>') -> ai_run FOR UPDATE -> member_vy_result
 /** Canonical per-org lock key serializing note-bound Vy starts (shared) against note hard-delete trigger (exclusive). */
 export function noteVyLockKey(orgId: string): string {
   return advisoryLockKey('ludy.note_vy', orgId.toLowerCase());

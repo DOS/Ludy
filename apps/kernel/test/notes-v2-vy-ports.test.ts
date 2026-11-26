@@ -142,6 +142,13 @@ describe('summaryModelPort Notes v2 Vy routing (#3563)', () => {
         });
 
         // Hostile prompt getters throwing explicit NoteAiModelError('timeout') must be normalized to 'failed'.
+        const hostileFeaturePrompt: ModelPrompt = {
+          get feature(): ModelPrompt['feature'] {
+            throw new NoteAiModelError('timeout');
+          },
+          system: 'sys',
+          user: 'u',
+        };
         const hostileSystemPrompt: ModelPrompt = {
           feature: 'notes.todo_plan',
           get system(): string {
@@ -157,6 +164,11 @@ describe('summaryModelPort Notes v2 Vy routing (#3563)', () => {
           },
         };
         await withAiScope({ orgId: 'org-1', memberRunId: 'run-hostile', meter: okMeter }, async () => {
+          await expect(validPort.generate(WHO, hostileFeaturePrompt)).rejects.toMatchObject({
+            name: 'NoteAiModelError',
+            kind: 'failed',
+            message: 'NOTE_AI_FAILED',
+          });
           await expect(validPort.generate(WHO, hostileSystemPrompt)).rejects.toMatchObject({
             name: 'NoteAiModelError',
             kind: 'failed',

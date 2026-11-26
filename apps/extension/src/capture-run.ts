@@ -85,6 +85,20 @@ export interface Running {
   onLost(listener: (reason: RecordingStopReason) => void): void;
 }
 
+function warnMarkStoppedFailure(err: unknown): void {
+  const code =
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (typeof err.code === 'string' || typeof err.code === 'number')
+      ? err.code
+      : undefined;
+  console.warn('[clipper] markStopped retry failed', {
+    name: err instanceof Error ? err.name : typeof err,
+    ...(code !== undefined ? { code } : {}),
+  });
+}
+
 export async function startCapture(params: CaptureParams, deps: CaptureDeps = browserDeps()): Promise<{ ok: true; running: Running } | { ok: false; reason: Failure; held?: CaptureHeld }> {
   const blocker = consentBlocker({ title: params.title, consentMethod: params.consentMethod, consentAgreed: params.consentAgreed });
   if (blocker) return { ok: false, reason: blocker };
@@ -96,6 +110,7 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
   // A1 (#3159): a recording that ends without the member's click is reported once, with a code.
   let stopRequested = false;
   let stopInFlight: Promise<{ uploaded: boolean; meetingId: string; message?: string }> | null = null;
+  let warnMarkStoppedRetry = false;
   let lost: RecordingStopReason | null = null;
   const lostListeners: Array<(reason: RecordingStopReason) => void> = [];
   const fireLost = (reason: RecordingStopReason) => {
@@ -135,15 +150,23 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
     },
     makeRecorder: (stream) => new MediaRecorder(stream, plan.mimeType ? { mimeType: plan.mimeType } : undefined),
     async begin(meetingId, recorder) {
-      return beginRecording(deps.store, {
-        id: crypto.randomUUID(),
-        scope: params.orgId,
-        meetingId,
-        title: params.title.trim(),
-        kind: plan.kind,
-        mimeType: recorder.mimeType || plan.mimeType || (plan.kind === 'video' ? 'video/webm' : 'audio/webm'),
-        startedAt: deps.now(),
-      });
+      return beginRecording(
+        deps.store,
+        {
+          id: crypto.randomUUID(),
+          scope: params.orgId,
+          meetingId,
+          title: params.title.trim(),
+          kind: plan.kind,
+          mimeType: recorder.mimeType || plan.mimeType || (plan.kind === 'video' ? 'video/webm' : 'audio/webm'),
+          startedAt: deps.now(),
+        },
+        {
+          onMarkStoppedError: (err) => {
+            if (warnMarkStoppedRetry) warnMarkStoppedFailure(err);
+          },
+        },
+      );
     },
     wakeLock: async () => null,
     unmounted: () => false,
@@ -213,7 +236,12 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
           if (recorder.state !== 'inactive') {
             await writer.markStopped(stopReason ?? 'user');
           } else {
-            await writer.markStopped(stopReason ?? 'user').catch(() => undefined);
+            warnMarkStoppedRetry = true;
+            try {
+              await writer.markStopped(stopReason ?? 'user').catch(warnMarkStoppedFailure);
+            } finally {
+              warnMarkStoppedRetry = false;
+            }
           }
           stopRequested = true;
           try {

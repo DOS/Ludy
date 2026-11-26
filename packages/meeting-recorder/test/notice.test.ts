@@ -67,6 +67,28 @@ describe('how a recording ended (A1, #3159)', () => {
     expect(s.saved.at(-1)?.stopped).toBe('mic_lost');
   });
 
+  it('isolates a throwing onMarkStoppedError callback so markStopped resolves and queue stays usable', async () => {
+    const s = store();
+    let failStop = true;
+    const origPut = s.put;
+    s.put = async (meta) => {
+      if (failStop && meta.stopped !== undefined) throw new Error('QuotaExceededError');
+      return origPut(meta);
+    };
+    let loggedError: unknown;
+    const writer = await beginRecording(s, base, {
+      onMarkStoppedError: (error) => {
+        loggedError = error;
+        throw new Error('console.warn failed');
+      },
+    });
+    await expect(writer.markStopped('user')).resolves.toBeUndefined();
+    expect(loggedError).toBeInstanceOf(Error);
+    failStop = false;
+    await expect(writer.touch(500)).resolves.toBeUndefined();
+    expect(s.saved.at(-1)?.elapsedMs).toBe(500);
+  });
+
   it('knows its codes', () => {
     expect(isRecordingStopReason('left_screen')).toBe(true);
     expect(isRecordingStopReason('because')).toBe(false);

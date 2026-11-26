@@ -181,7 +181,7 @@ jobs:
           SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
           MODULES_ENV: ${{ vars.DEPLOY_MODULES_ENVIRONMENT }}
-          DEPLOY_MODULES: ${{ vars.DEPLOY_LUDY_MODULES || vars.DEPLOY_CROVE_MODULES }}
+          DEPLOY_MODULES: ${{ vars.DEPLOY_LUDY_MODULES }}
         run: |
           set -euo pipefail
           if [ "$MODULES_ENV" = pilot ] && [ -n "$DEPLOY_MODULES" ]; then
