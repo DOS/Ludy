@@ -3,7 +3,7 @@
 -- meetings the member reads (the same 50 newest meetings, reader rule and 7 day window as the other numbers). It is a NEW worker-only definer, ludy_meetings.weekly_tracked_hits, and ludy_meetings.weekly_notices_due
 -- (20270327100000) is left exactly as it is: a function cannot gain an output column in place, and a dropped and recreated one cannot be replayed by the migration replay (each file must re-apply on its own).
 -- The command calls it for the one member the due definer just returned, never the sweep's listing, because up to 50 meetings x 20000 lines x 20 terms for each of 200 members could outrun the worker's statement
--- timeout and keep every org from its notice. The counting is ludy_meetings.tracker_hits_in (20270327190000), the one statement of the matching rule shared with the tracker alert. It returns a number only
+-- timeout and keep every org from its notice. The counting is ludy_meetings.tracker_hits_in (20270327210000), the one statement of the matching rule shared with the tracker alert. It returns a number only
 -- (no text, no jsonb, no id): NULL when the org keeps no tracked word or the member is not an active member, else at most 999. Grants as the other worker definers: EXECUTE to ludy_worker only, and the same
 -- context gate as tracker_alert_hits (NO_CONTEXT unless the actor is the system and p_org_id is the context's org).
 SET LOCAL lock_timeout = '2s';
