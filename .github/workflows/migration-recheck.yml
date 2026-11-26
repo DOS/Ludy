@@ -1,15 +1,16 @@
 # Issue #251: GitHub does not re-run pull_request checks when the base branch moves, so a PR whose new migration was
-# newer than main when its Docs check ran can fall behind while it waits. After every push to main, re-run the Docs
-# check of open PRs whose added migrations are no longer newer than main; its Migration order step reads the live
-# base branch and fails the required check. A re-run replays the original run's workflow file, so for a run from
-# before that step existed (or when a re-run is refused) it creates a failing "Docs check" check run on the PR head
-# instead. Runs trusted code from main only: PR heads are fetched as git objects and read with ls-tree/diff, never
-# checked out or executed. See tools/ci/migration-recheck.mjs.
+# newer than its base branch when its Docs check ran can fall behind while it waits. After every push to dev or main,
+# re-run the Docs check of open PRs targeting that branch whose added migrations are no longer newer than the base; its
+# Migration order step reads the live base branch and fails the required check. A re-run replays the original run's
+# workflow file, so for a run from before that step existed (or when a re-run is refused) it creates a failing
+# "Docs check" check run on the PR head instead. Runs trusted code from the pushed protected base branch (dev or main)
+# only: PR heads are fetched as git objects and read with ls-tree/diff, never checked out or executed. See
+# tools/ci/migration-recheck.mjs.
 name: migration-recheck
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 
 permissions:
@@ -22,7 +23,7 @@ concurrency:
 jobs:
   recheck:
     name: Re-check open PR migrations
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -44,4 +45,4 @@ jobs:
       - name: Re-run the Docs check of PRs whose migrations fell behind
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node tools/ci/migration-recheck.mjs main HEAD
+        run: node tools/ci/migration-recheck.mjs "${GITHUB_REF_NAME}" HEAD
