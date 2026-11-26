@@ -147,26 +147,33 @@ async function check(ctx: QueryContext, input: BankStatementImport, legalEntityI
   const { lines, keys } = readStatement(input);
   const { stored, chain } = await storedAround(ctx, legalEntityId, input.bankAccount, lines, keys);
   const checked = checkStatement(input, stored, chain);
-  // Only once the feed has pulled: before that nothing it supplies is in the books, and its first pull may start later than the day set (the day then moves up), so a file's lines are kept.
+  // Only once every active feed link has a cut-over and has pulled: before that at least one link may not cover those days yet, and a first pull may move its day up, so a file's lines are kept and deduplicated.
   const cutover = await feedCutover(ctx, legalEntityId, input.bankAccount, true);
   return cutover ? skipFedLines(checked, cutover) : checked;
 }
 
-// The day a bank feed takes over an account from statement files (#4218): the earliest cut-over of its mappings whose
-// connection is still active, so a feed that stopped (expired or revoked) never leaves lines in neither source. Null when
-// there is none: files and the feed are only deduplicated.
+// The day bank feeds take over an account from statement files (#4218, #4226): the latest cut-over across all
+// mappings on the account whose connection is active, and only once every such mapping has a cut-over (and, when
+// syncedOnly is true, a cursor). If there are no active mappings, or any active mapping has feed_from IS NULL (or
+// cursor IS NULL when syncedOnly is true), return null so statement imports fall back to transaction deduplication
+// instead of skipping days an active link does not cover; days between an earlier link's cut-over and the latest
+// cut-over stay kept and deduplicated too. Inactive or revoked connections continue to be ignored.
 export async function feedCutover(ctx: QueryContext, legalEntityId: string, bankAccountCode: string, syncedOnly = false): Promise<string | null> {
   const row = await ctx.trx
     .selectFrom('ludy_finance.bank_feed_account as a')
     .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
-    .select((eb) => eb.fn.min('a.feed_from').as('feed_from'))
+    .select((eb) => [
+      eb.fn.max('a.feed_from').as('feed_from'),
+      sql<boolean | null>`pg_catalog.bool_and(a.feed_from IS NOT NULL)`.as('all_cutover'),
+      sql<boolean | null>`pg_catalog.bool_and(a.cursor IS NOT NULL)`.as('all_synced'),
+    ])
     .where('a.org_id', '=', ctx.orgId)
     .where('a.legal_entity_id', '=', legalEntityId)
     .where('a.bank_account', '=', bankAccountCode)
     .where('c.status', '=', 'active')
-    .$if(syncedOnly, (q) => q.where('a.cursor', 'is not', null))
     .executeTakeFirst();
-  return row?.feed_from ?? null;
+  if (!row || row.all_cutover !== true || (syncedOnly && row.all_synced !== true)) return null;
+  return row.feed_from;
 }
 
 // Stores the lines a check found new or ambiguous as one import of the account, under the account's lock (the caller

@@ -634,6 +634,178 @@ suite('bank statement import (#326)', () => {
     expect((await feed('unmap', owner, { feedAccountId: mapped.body.feedAccountId, idempotencyKey: randomUUID() })).status).toBe(200);
   });
 
+  // #4226: multiple active bank feed links on one bank account keep their own cut-over on pulls and take the latest cut-over for statement imports only once every active link has a cut-over and a cursor.
+  describe('bank feed cut-over with several links on one bank account (#4226)', () => {
+    const dayOf = (offset: number) => new Date(Date.parse(`${vietnamToday()}T00:00:00Z`) + offset * 86_400_000).toISOString().slice(0, 10);
+    const pull = (feedAccountId: string, fromCursor: string | null, cursor: string, lines: BankFeedLine[]) =>
+      worker.execute<BankImportResult>('finance.bank_feed.record_pull', { feedAccountId, fromCursor, lines, cursor }, { actor: SYSTEM, orgId });
+    const pullAudit = async (feedAccountId: string) =>
+      (
+        await admin((c) =>
+          c.query<{ detail: Record<string, unknown> }>(
+            `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.bank_feed.record_pull' AND detail ->> 'feedAccountId' = $2 ORDER BY occurred_at DESC LIMIT 1`,
+            [orgId, feedAccountId],
+          ),
+        )
+      ).rows[0]?.detail;
+    const setupAccount = async (bankAccount: string) => {
+      expect((await rpc('accounts/create', await tokenFor(owner), { parentCode: '1121', code: bankAccount, name: `Multi-link ${bankAccount}` })).status).toBe(200);
+      const connA = String((await feed('connectSandbox', owner, { displayName: `Ngân hàng A (${bankAccount})` })).body.connectionId);
+      const connB = String((await feed('connectSandbox', owner, { displayName: `Ngân hàng B (${bankAccount})` })).body.connectionId);
+      await sync(connA);
+      await sync(connB);
+      const mapLink = async (connectionId: string, externalAccountId: string, feedFrom: string | null) => {
+        const res = await feed('map', owner, { connectionId, externalAccountId, bankAccount, feedFrom, idempotencyKey: randomUUID() });
+        expect(res.status).toBe(200);
+        return String(res.body.feedAccountId);
+      };
+      const cleanup = async (connections: readonly string[], feedAccountIds: readonly string[]) => {
+        for (const id of feedAccountIds) {
+          expect((await feed('unmap', owner, { feedAccountId: id, idempotencyKey: randomUUID() })).status).toBe(200);
+        }
+        for (const id of connections) {
+          await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgId, id]));
+        }
+      };
+      return { connA, connB, mapLink, cleanup };
+    };
+
+    it('filters each feed link by its own cut-over and uses the latest cut-over for statement imports when all active links are synced', async () => {
+      const { connA, connB, mapLink, cleanup } = await setupAccount('1121.MLT1');
+      const earlyCut = dayOf(-5);
+      const lateCut = dayOf(-2);
+      const linkAId = await mapLink(connA, 'SBX-001', earlyCut);
+      const linkBId = await mapLink(connB, 'SBX-002', lateCut);
+
+      try {
+        // Each feed link filters incoming lines strictly against its own feed_from, never borrowing the other link's day.
+        const pullA = await pull(linkAId, null, dayOf(-1), [
+          feedLine(dayOf(-6), '100000', 'MLT1-A-D6'),
+          feedLine(earlyCut, '200000', 'MLT1-A-D5'),
+          feedLine(dayOf(-3), '300000', 'MLT1-A-D3'),
+          feedLine(dayOf(-1), '400000', 'MLT1-A-D1'),
+        ]);
+        expect(pullA.counts).toEqual({ new: 3, duplicate: 0, ambiguous: 0, conflict: 0, invalid: 0 });
+        expect(await pullAudit(linkAId)).toMatchObject({ feedAccountId: linkAId, feedFrom: earlyCut, skippedBeforeFeedFrom: 1 });
+
+        const pullB = await pull(linkBId, null, dayOf(0), [
+          feedLine(earlyCut, '500000', 'MLT1-B-D5'),
+          feedLine(dayOf(-3), '600000', 'MLT1-B-D3'),
+          feedLine(lateCut, '700000', 'MLT1-B-D2'),
+          feedLine(dayOf(0), '800000', 'MLT1-B-D0'),
+        ]);
+        expect(pullB.counts).toEqual({ new: 2, duplicate: 0, ambiguous: 0, conflict: 0, invalid: 0 });
+        expect(await pullAudit(linkBId)).toMatchObject({ feedAccountId: linkBId, feedFrom: lateCut, skippedBeforeFeedFrom: 2 });
+        expect((await stored('1121.MLT1')).map((l) => l.bank_ref)).toEqual(['MLT1-A-D5', 'MLT1-A-D3', 'MLT1-B-D2', 'MLT1-A-D1', 'MLT1-B-D0']);
+
+        // Statement import takes MAX(feed_from): days before lateCut (including days between earlyCut and lateCut) are kept and deduplicated.
+        const stmtRows = [
+          row(dayOf(-6), '100000', '', '', 'MLT1-S-D6'),
+          row(dayOf(-4), '150000', '', '', 'MLT1-S-D4'),
+          row(dayOf(-3), '300000', '', '', 'MLT1-A-D3'),
+          row(lateCut, '750000', '', '', 'MLT1-S-D2'),
+          row(dayOf(-1), '850000', '', '', 'MLT1-S-D1'),
+        ];
+        const shown = await preview(stmtRows, '1121.MLT1');
+        expect(shown.status).toBe(200);
+        expect(shown.body.feed).toEqual({ from: lateCut, leftOut: 2 });
+        expect(shown.body.counts).toMatchObject({ new: 2, duplicate: 3 });
+        expect(shown.body.rows.map((r: { status: string }) => r.status)).toEqual(['new', 'new', 'duplicate', 'duplicate', 'duplicate']);
+
+        expect(await importFile(stmtRows, '1121.MLT1')).toMatchObject({ status: 200, body: { counts: { new: 2, duplicate: 3 } } });
+        expect((await stored('1121.MLT1')).map((l) => l.bank_ref)).toEqual([
+          'MLT1-S-D6',
+          'MLT1-A-D5',
+          'MLT1-S-D4',
+          'MLT1-A-D3',
+          'MLT1-B-D2',
+          'MLT1-A-D1',
+          'MLT1-B-D0',
+        ]);
+      } finally {
+        await cleanup([connA, connB], [linkAId, linkBId]);
+      }
+    });
+
+    it('returns no cut-over for statement imports when any active link is unsynced or has no feed_from', async () => {
+      const { connA, connB, mapLink, cleanup } = await setupAccount('1121.MLT2');
+      const earlyCut = dayOf(-5);
+      const lateCut = dayOf(-2);
+      const linkAId = await mapLink(connA, 'SBX-001', earlyCut);
+      const linkBId = await mapLink(connB, 'SBX-002', lateCut);
+
+      try {
+        await pull(linkAId, null, dayOf(-1), [feedLine(earlyCut, '200000', 'MLT2-A-D5')]);
+        // Link B is active with cursor IS NULL, so statement import must not skip days yet.
+        const unsyncedRows = [row(dayOf(-4), '150000', '', '', 'MLT2-U-D4'), row(dayOf(-1), '250000', '', '', 'MLT2-U-D1')];
+        const unsyncedPreview = await preview(unsyncedRows, '1121.MLT2');
+        expect(unsyncedPreview.body.feed).toBeUndefined();
+        expect(unsyncedPreview.body.counts).toMatchObject({ new: 2, duplicate: 0 });
+        expect(await importFile(unsyncedRows, '1121.MLT2')).toMatchObject({ status: 200, body: { counts: { new: 2, duplicate: 0 } } });
+        expect((await stored('1121.MLT2')).map((l) => l.bank_ref)).toEqual(['MLT2-A-D5', 'MLT2-U-D4', 'MLT2-U-D1']);
+
+        // Once Link B also pulls, MAX(feed_from) becomes active.
+        await pull(linkBId, null, dayOf(-1), [feedLine(lateCut, '700000', 'MLT2-B-D2')]);
+        expect((await preview([row(dayOf(0), '900000', '', '', 'MLT2-CHK')], '1121.MLT2')).body.feed).toEqual({ from: lateCut, leftOut: 1 });
+
+        // Clearing feed_from on one active link disables cut-over skipping across the whole account while leaving its own pulls unfiltered.
+        await mapLink(connB, 'SBX-002', null);
+        const nullRows = [row(dayOf(-3), '300000', '', '', 'MLT2-N-D3'), row(dayOf(0), '400000', '', '', 'MLT2-N-D0')];
+        const nullPreview = await preview(nullRows, '1121.MLT2');
+        expect(nullPreview.body.feed).toBeUndefined();
+        expect(nullPreview.body.counts).toMatchObject({ new: 2, duplicate: 0 });
+        expect(await importFile(nullRows, '1121.MLT2')).toMatchObject({ status: 200, body: { counts: { new: 2, duplicate: 0 } } });
+
+        const nullPull = await pull(linkBId, dayOf(-1), dayOf(0), [feedLine(dayOf(-6), '120000', 'MLT2-B-D6')]);
+        expect(nullPull.counts).toMatchObject({ new: 1, duplicate: 0 });
+        expect((await stored('1121.MLT2')).map((l) => l.bank_ref)).toEqual([
+          'MLT2-B-D6',
+          'MLT2-A-D5',
+          'MLT2-U-D4',
+          'MLT2-N-D3',
+          'MLT2-B-D2',
+          'MLT2-U-D1',
+          'MLT2-N-D0',
+        ]);
+      } finally {
+        await cleanup([connA, connB], [linkAId, linkBId]);
+      }
+    });
+
+    it('ignores revoked and expired links when computing cut-over', async () => {
+      const { connA, connB, mapLink, cleanup } = await setupAccount('1121.MLT3');
+      const earlyCut = dayOf(-5);
+      const lateCut = dayOf(-2);
+      const linkAId = await mapLink(connA, 'SBX-001', earlyCut);
+      const linkBId = await mapLink(connB, 'SBX-002', null);
+
+      try {
+        await pull(linkAId, null, dayOf(-1), []);
+        const rows = [row(dayOf(-6), '100000', '', '', 'MLT3-D6'), row(dayOf(-4), '200000', '', '', 'MLT3-D4'), row(dayOf(-1), '300000', '', '', 'MLT3-D1')];
+        expect((await preview(rows, '1121.MLT3')).body.feed).toBeUndefined();
+
+        // Revoking Link B (which had feed_from = null and cursor = null) leaves Link A as the only active link.
+        await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgId, connB]));
+        const afterRevoke = await preview(rows, '1121.MLT3');
+        expect(afterRevoke.body.feed).toEqual({ from: earlyCut, leftOut: 2 });
+        expect(afterRevoke.body.counts).toMatchObject({ new: 1, duplicate: 2 });
+
+        // An expired link with a later feed_from and null cursor is also ignored.
+        await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE org_id = $1 AND id = $2`, [orgId, connB]));
+        await admin((c) => c.query(`UPDATE ludy_finance.bank_feed_account SET feed_from = $3, cursor = NULL WHERE org_id = $1 AND id = $2`, [orgId, linkBId, lateCut]));
+        expect((await preview(rows, '1121.MLT3')).body.feed).toEqual({ from: earlyCut, leftOut: 2 });
+
+        // With no active link left, statement import does not skip days.
+        await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgId, connA]));
+        const noneActive = await preview(rows, '1121.MLT3');
+        expect(noneActive.body.feed).toBeUndefined();
+        expect(noneActive.body.counts).toMatchObject({ new: 3, duplicate: 0 });
+      } finally {
+        await cleanup([connA, connB], [linkAId, linkBId]);
+      }
+    });
+  });
+
   it('maps only a bank feed connection, and only an active one', async () => {
     const social = await admin(
       async (c) =>
