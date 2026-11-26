@@ -693,9 +693,6 @@ importers:
       '@ludy/client':
         specifier: workspace:*
         version: link:../../packages/client
-      '@ludy/kernel-contract':
-        specifier: workspace:*
-        version: link:../../packages/kernel-contract
       '@tanstack/react-query':
         specifier: 'catalog:'
         version: 5.104.2(react@19.3.0)

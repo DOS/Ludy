@@ -24,6 +24,11 @@
       // Playwright specs are run by `playwright test` from the package script.
       "entry": ["src/background.ts", "src/offscreen.ts", "src/popup.ts", "src/mic.ts", "src/connected.ts", "scripts/*.mjs", "e2e/*.spec.ts"]
     },
+    "apps/mobile": {
+      // knip's Expo plugin reads app.config.ts and infers expo-updates and expo-system-ui from it (userInterfaceStyle); this first slice
+      // installs neither (no OTA updates, no runtime theme switching), so they are not dependencies.
+      "ignoreDependencies": ["expo-updates", "expo-system-ui"]
+    },
     "apps/extract": {
       // child.ts is spawned by path from the sandbox (src/sandbox.ts); the container scripts run inside the image in CI.
       "entry": ["src/child.ts", "test/container/*.mjs"]
