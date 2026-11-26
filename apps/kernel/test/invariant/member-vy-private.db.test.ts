@@ -196,6 +196,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
         ),
       )
     ).rows[0]?.ok;
+  let hasSystemFeature = false;
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -281,6 +282,12 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
         UNION ALL SELECT 'resultBind', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = to_regclass('crove_kernel.member_vy_result') AND tgname = 'member_vy_result_bind' AND NOT tgisinternal)
         UNION ALL SELECT 'catalog', to_regclass('crove_kernel.permission_catalog') IS NOT NULL AND to_regclass('crove_kernel.permission_default') IS NOT NULL`);
       for (const row of found.rows) has[row.r as keyof typeof has] = row.w;
+      hasSystemFeature =
+        (
+          await c.query<{ w: boolean }>(
+            "SELECT to_regclass('crove_kernel.member_vy_system_feature') IS NOT NULL AS w",
+          )
+        ).rows[0]?.w === true;
     });
     const installed = await api.runtime.execute<{
       agentId: string;
@@ -918,10 +925,31 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
           .ok,
         "an org-chart template",
       ).toBe(false);
-      for (const actor of [agentActor, system]) {
+      expect(
+        (await insertAgent(agentActor, users.vyUser)).ok,
+        `${agentActor.name} making a member's Vy`,
+      ).toBe(false);
+      if (hasSystemFeature) {
         expect(
-          (await insertAgent(actor, users.vyUser)).ok,
-          `${actor.name} making a member's Vy`,
+          (await insertAgent(system, users.vyUser)).ok,
+          `${system.name} making a member's Vy for an active vy.use member`,
+        ).toBe(true);
+        expect(
+          (await insertAgent(system, users.viewer)).ok,
+          `${system.name} making a member's Vy for a viewer without vy.use`,
+        ).toBe(false);
+        expect(
+          (await insertAgent(system, randomUUID())).ok,
+          `${system.name} making a member's Vy for a non-member`,
+        ).toBe(false);
+        expect(
+          (await insertAgent(system, users.vyUser, "finance.chief_accountant")).ok,
+          `${system.name} making a member's Vy with a non-member_vy template`,
+        ).toBe(false);
+      } else {
+        expect(
+          (await insertAgent(system, users.vyUser)).ok,
+          `${system.name} making a member's Vy before member_vy_system_feature`,
         ).toBe(false);
       }
     });

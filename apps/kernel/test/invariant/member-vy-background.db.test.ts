@@ -28,6 +28,7 @@ import { migrate } from "@ludy/db/migrate";
 import {
   createOrg,
   kernelCommands,
+  MEMBER_VY_FEATURES,
   upsertIdentity,
   kernelQueries,
 } from "@ludy/kernel";
@@ -36,7 +37,7 @@ import { financeCommands, financeQueries } from "@ludy/mod-finance";
 import { TEST_MANIFESTS } from "./fixtures/manifests.ts";
 import { contextToken } from "./fixtures/context-token.ts";
 import { aiRunFeature, type AiRunFeature } from "./fixtures/ai-run-feature.ts";
-import { auditRoleFunctionExecute, createDbClient, createDbPool, rawQuery, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
+import { auditRoleFunctionExecute, auditRoleTablePrivileges, createDbClient, createDbPool, rawQuery, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 // The extra column of an ai_run seed once the table has `feature` (#3029); empty before.
 let FEAT: AiRunFeature = { cols: "", vals: "" };
@@ -56,12 +57,43 @@ const CTX_WRITERS = [
 ];
 const MEMBER_ENTRY = "crove_kernel.enter_member_vy_context(uuid,uuid,uuid)";
 // Policies that read ctx_acting_user_id, as (table, policy, command, permissive).
-const POLICIES = [
+const CORE_POLICIES: ReadonlyArray<readonly [string, string, string, boolean]> = [
   ["crove_kernel.ai_run", "member_vy_read", "*", false],
   ["crove_kernel.member_vy_memory", "member_read", "r", false],
-  ["crove_kernel.member_vy_result", "member_only", "*", false],
   ["crove_notes.note", "note_read", "r", false],
 ];
+const RESULT_LEGACY_POLICY = ["crove_kernel.member_vy_result", "member_only", "*", false] as const;
+const RESULT_SPLIT_POLICIES: ReadonlyArray<readonly [string, string, string, boolean]> = [
+  ["crove_kernel.member_vy_result", "member_delete", "d", false],
+  ["crove_kernel.member_vy_result", "member_insert", "a", false],
+  ["crove_kernel.member_vy_result", "member_read", "r", false],
+  ["crove_kernel.member_vy_result", "member_update", "w", false],
+];
+const OPT_IN_MEETINGS_CATALOG: Record<
+  string,
+  { readonly mode: "read"; readonly policy: readonly [string, string, string, boolean] }
+> = {
+  "crove_meetings.action_item": {
+    mode: "read",
+    policy: ["crove_meetings.action_item", "action_item_read", "r", false],
+  },
+  "crove_meetings.calendar_agenda": {
+    mode: "read",
+    policy: ["crove_meetings.calendar_agenda", "calendar_agenda_read", "r", false],
+  },
+  "crove_meetings.meeting": {
+    mode: "read",
+    policy: ["crove_meetings.meeting", "meeting_read", "r", false],
+  },
+  "crove_meetings.meeting_link": {
+    mode: "read",
+    policy: ["crove_meetings.meeting_link", "meeting_link_read", "r", false],
+  },
+  "crove_meetings.meeting_result": {
+    mode: "read",
+    policy: ["crove_meetings.meeting_result", "meeting_result_read", "r", false],
+  },
+};
 // Five named restrictive read policies may read the sealed context once, to compare its kind with 'mcp_company' (#3731, #3858, #3771):
 // `(SELECT <kernel>.ctx_verified() ->> 'kind') = 'mcp_company'`. That comparison (and for meeting_read only, the person-branch role list
 // `ARRAY['owner', 'admin', 'member']`, whose string 'member' the net would otherwise take for a read of the sealed member) is set aside per
@@ -385,6 +417,65 @@ function readsSealedMember(
     .map(({ t, n }) => ({ t, n }));
 }
 
+// Separately checks for forbidden sealed-context reads even when a policy is permitted to call ctx_acting_user_id (#5073).
+function hasForbiddenSealedRead(
+  p: SealedPolicyInput,
+  expectedMemberPolicyKeys: ReadonlySet<string>,
+  taintedViews?: ReadonlySet<string>,
+): boolean {
+  const viewHit =
+    (p.taintedViewDeps?.length ?? 0) > 0 ||
+    (taintedViews ? [...taintedViews].some((v) => qualifiedOrClauseRefRe(v, true).test(p.text)) : false);
+  const canonT = canonicalizeRelName(p.t);
+  const isMemberPolicy = expectedMemberPolicyKeys.has(`${canonT}.${p.n}`);
+  const allow = COMPANY_READ_POLICIES.find((entry) => entry.t === canonT && entry.n === p.n);
+  if (allow) {
+    const extraFnHit = (p.taintedFnDeps ?? []).some((fn) => {
+      const c = canonicalizeRelName(fn);
+      return c !== "crove_kernel.ctx_verified()" && !(isMemberPolicy && c === "crove_kernel.ctx_acting_user_id()");
+    });
+    if (viewHit || extraFnHit) return true;
+    if (p.cmd !== undefined && p.cmd !== "r") return true;
+    if (p.perm !== undefined && p.perm !== false) return true;
+    if ((p.text.match(CTX_VERIFIED_GLOBAL_RE) ?? []).length !== 1 || (p.text.match(KIND_COMPARE) ?? []).length !== 1) return true;
+    let rest = p.text.replace(KIND_COMPARE, "");
+    if (allow.allowRoleList) rest = rest.replace(ROLE_LIST, "");
+    return (
+      CTX_VERIFIED_RE.test(rest) ||
+      RAW_CTX_GUC_RE.test(rest) ||
+      MEMBER_LITERAL_RE.test(rest) ||
+      (!isMemberPolicy && ACTING_USER_RE.test(rest))
+    );
+  }
+  const closedAllow = MCP_SEALED_CLOSED_POLICIES.find((entry) => entry.t === canonT && entry.n === p.n);
+  if (closedAllow) {
+    const extraFnHit = (p.taintedFnDeps ?? []).some((fn) => canonicalizeRelName(fn) !== "crove_kernel.ctx_verified()");
+    if (viewHit || extraFnHit) return true;
+    if (p.cmd !== undefined && p.cmd !== closedAllow.cmd) return true;
+    if (p.perm !== undefined && p.perm !== closedAllow.perm) return true;
+    if ((p.text.match(MCP_PREFIX_CLOSED) ?? []).length !== closedAllow.expectedCount) return true;
+    let rest = p.text.replace(MCP_PREFIX_CLOSED, "");
+    if (closedAllow.allowConversationReply) {
+      if ((rest.match(CONVERSATION_REPLY_PRED) ?? []).length !== 1) return true;
+      rest = rest.replace(CONVERSATION_REPLY_PRED, "").replace(/\bOR\b/g, "");
+    }
+    if (ACTING_USER_RE.test(rest) || CTX_VERIFIED_RE.test(rest) || RAW_CTX_GUC_RE.test(rest) || MEMBER_LITERAL_RE.test(rest)) {
+      return true;
+    }
+    return !/^[\s()]*$/.test(rest);
+  }
+  const extraFnHit = (p.taintedFnDeps ?? []).some(
+    (fn) => !(isMemberPolicy && canonicalizeRelName(fn) === "crove_kernel.ctx_acting_user_id()"),
+  );
+  return (
+    viewHit ||
+    extraFnHit ||
+    CTX_VERIFIED_RE.test(p.text) ||
+    RAW_CTX_GUC_RE.test(p.text) ||
+    (!isMemberPolicy && ACTING_USER_RE.test(p.text))
+  );
+}
+
 type ScannedPolicy = SealedPolicyInput & {
   rawT: string;
   rawText: string;
@@ -584,12 +675,19 @@ async function scanPolicyContextReads(
     taintedViews: [...taintedViewOids].map((oid) => toCanonTable(viewByOid.get(oid)!.name)).sort(),
   };
 }
-// What the catalog may hold, nothing else. No meeting table (Platform PO decision on #2756), no task, proposal or notification.
-const CATALOG: Record<string, string> = {
+// Core catalog tables required unconditionally; the five opt-in Meetings read tables are admitted conditionally when present (#5073).
+// Notes and memory stay pinned unconditionally; party and CRM tables are never admitted to member_vy_table.
+const CORE_CATALOG: Record<string, string> = {
   "crove_kernel.ai_run": "write",
   "crove_kernel.member_vy_memory": "read",
   "crove_kernel.member_vy_result": "write",
   "crove_notes.note": "read",
+};
+const CATALOG: Record<string, string> = {
+  ...CORE_CATALOG,
+  ...Object.fromEntries(
+    Object.entries(OPT_IN_MEETINGS_CATALOG).map(([table, entry]) => [table, entry.mode]),
+  ),
 };
 // Guarded tables that carry their own narrow rule, and the exempt ones: each pinned by name below, not by the enumeration.
 const NARROW = [
@@ -621,10 +719,11 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   let orgId = "";
   let otherOrg = "";
   let branch = "";
-  const users = { owner: "", vyUser: "", other: "", viewer: "", limited: "" };
+  const users = { owner: "", vyUser: "", other: "", viewer: "", limited: "", sysUser: "" };
   let orgChart = { agentId: "", runId: "" };
   const vyAgent: Record<string, string> = {};
   const has = { entry: false, catalog: false, kind: false, notes: false };
+  let hasSystemFeature = false;
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const c = createDbClient({ connectionString: adminUrl }, dbIds);
@@ -779,6 +878,30 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     );
   };
 
+  const readCatalogTables = async () =>
+    (
+      await admin((c) =>
+        c.query<{ table_name: string; mode: string }>(
+          "SELECT table_name, mode FROM crove_kernel.member_vy_table ORDER BY 1",
+        ),
+      )
+    ).rows.map((r) => ({
+      ...r,
+      table_name: dbIds ? dbIds.toCanonicalTable(r.table_name) : r.table_name,
+    }));
+
+  const expectedMemberPolicies = async () => {
+    const catalog = await readCatalogTables();
+    const meetingsPolicies = catalog
+      .map((r) => OPT_IN_MEETINGS_CATALOG[r.table_name]?.policy)
+      .filter((p): p is readonly [string, string, string, boolean] => Boolean(p));
+    return [
+      ...CORE_POLICIES,
+      ...(hasSystemFeature ? RESULT_SPLIT_POLICIES : [RESULT_LEGACY_POLICY]),
+      ...meetingsPolicies,
+    ];
+  };
+
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -839,8 +962,8 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         )
       ).rows[0]?.id as string;
       await c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'member')`,
-        [orgId, users.vyUser, users.other, users.viewer, users.limited],
+        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'member'), ($1, $6, 'member')`,
+        [orgId, users.vyUser, users.other, users.viewer, users.limited, users.sysUser],
       );
       await c.query(
         `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`,
@@ -852,6 +975,12 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         UNION ALL SELECT 'kind', EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'crove_kernel.agent'::regclass AND attname = 'kind' AND NOT attisdropped)
         UNION ALL SELECT 'notes', to_regclass('crove_notes.note') IS NOT NULL`);
       for (const row of found.rows) has[row.r as keyof typeof has] = row.w;
+      hasSystemFeature =
+        (
+          await c.query<{ w: boolean }>(
+            "SELECT to_regclass('crove_kernel.member_vy_system_feature') IS NOT NULL AS w",
+          )
+        ).rows[0]?.w === true;
     });
     const installed = await api.runtime.execute<{
       agentId: string;
@@ -1133,6 +1262,23 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       "functions that read the sealed member directly",
     ).toEqual(["crove_kernel.ctx_acting_user_id()", ...(await mcpMemberObjects()).helper].sort());
     expect(found.taintedViews, "views or materialized views that touch the sealed context").toEqual([]);
+    const meetingHelpers = await admin((c) =>
+      c.query<{ name: string; body: string }>(
+        `SELECT p.oid::regprocedure::text AS name, pg_get_functiondef(p.oid) AS body
+         FROM pg_proc p
+         WHERE p.oid IN (
+           to_regprocedure('crove_meetings.is_meeting_reader(uuid,uuid,uuid)'),
+           to_regprocedure('crove_meetings.is_meeting_recorder(uuid,uuid)')
+         )
+         ORDER BY 1`,
+      ),
+    );
+    for (const helper of meetingHelpers.rows) {
+      expect(
+        helper.body,
+        `${helper.name} must not read ctx_acting_user_id or ctx_verified`,
+      ).not.toMatch(/ctx_acting_user_id|ctx_verified|'(?:crove|ludy)\.ctx/i);
+    }
     // The named company-read policies, when they exist, read the sealed kind through the one allowed comparison, once each, as restrictive read policies.
     for (const p of found.policies.filter((x) => COMPANY_READ_POLICIES.some((entry) => entry.t === x.t && entry.n === x.n))) {
       expect([...p.text.matchAll(KIND_COMPARE)].length, `${p.t}.${p.n}: one comparison of the sealed kind`).toBe(1);
@@ -1156,10 +1302,16 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       const pb = String(b[1]);
       return pa < pb ? -1 : pa > pb ? 1 : 0;
     };
+    const expectedPolicies = await expectedMemberPolicies();
+    const expectedPolicyKeys = new Set(expectedPolicies.map(([t, n]) => `${t}.${n}`));
     expect(
       found.policies.filter((p) => readsSealedMember([p]).length > 0).map((p) => [p.t, p.n, p.cmd, p.perm]).sort(byTablePolicy),
       "policies that read the helper: (table, policy, command, permissive)",
-    ).toEqual([...POLICIES].sort(byTablePolicy));
+    ).toEqual([...expectedPolicies].sort(byTablePolicy));
+    expect(
+      found.policies.filter((p) => hasForbiddenSealedRead(p, expectedPolicyKeys)).map((p) => `${p.t}.${p.n}`).sort(),
+      "policies reading ctx_acting_user_id must have zero forbidden sealed-context reads",
+    ).toEqual([]);
   });
 
   it("sets aside only the one comparison of the sealed kind in allowlisted policies, and flags every other match (planted texts)", () => {
@@ -1456,6 +1608,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           taintedViews: scan.taintedViews,
           readers: scan.readers,
           flagged: readsSealedMember(scan.policies).map((p) => `${p.t}.${p.n}`).sort(),
+          policies: scan.policies,
         };
       } finally {
         await rawQuery(c, "ROLLBACK").catch(() => {});
@@ -1471,8 +1624,9 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       "probe_3771.v_via_fn",
     ]);
     expect(result.readers).toEqual(["probe_3771.fn_dollar_acting()"]);
-    const expectedFlagged = [
-      ...POLICIES.map(([t, n]) => `${t}.${n}`),
+    const expectedPoliciesForProbe = await expectedMemberPolicies();
+    const expectedProbePolicyKeys = new Set(expectedPoliciesForProbe.map(([t, n]) => `${t}.${n}`));
+    const probeTamperedOnly = [
       "crove_kernel.mail_event.mcp_sealed_closed",
       "crove_meetings.meeting_result.meeting_result_read",
       "probe_3771.t.p_bare_ctx",
@@ -1512,9 +1666,21 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       "probe_3771.t.p_view_fn",
       "probe_3771.t.p_view_with_check",
       "probe_3771.t.p_wrap_mcp",
+    ];
+    const expectedFlagged = [
+      ...new Set([
+        ...expectedPoliciesForProbe.map(([t, n]) => `${t}.${n}`),
+        ...probeTamperedOnly,
+      ]),
     ].sort();
     expect(result.flagged).toEqual(expectedFlagged);
     expect(result.flagged).not.toContain("probe_3771.t.p_ok");
+    const forbiddenFlagged = result.policies
+      .filter((p) => hasForbiddenSealedRead(p, expectedProbePolicyKeys, new Set(result.taintedViews)))
+      .map((p) => `${p.t}.${p.n}`)
+      .sort();
+    expect(forbiddenFlagged).toEqual([...probeTamperedOnly].sort());
+    expect(forbiddenFlagged).not.toContain("probe_3771.t.p_ok");
   });
 
   // ---- The catalog -----------------------------------------------------------------------------------------------------------
@@ -1523,18 +1689,22 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     expect(has.catalog, "the catalog exists exactly when the entry does").toBe(
       has.entry,
     );
-    const catalog = (
-      await admin((c) =>
-        c.query<{ table_name: string; mode: string }>(
-          "SELECT table_name, mode FROM crove_kernel.member_vy_table ORDER BY 1",
-        ),
-      )
-    ).rows.map((r) => ({ ...r, table_name: dbIds ? dbIds.toCanonicalTable(r.table_name) : r.table_name }));
-    // A subset of the explicit list: no meeting table, no task, proposal or notification, whatever policy comes with it.
-    for (const row of catalog)
+    const catalog = await readCatalogTables();
+    for (const [table, mode] of Object.entries(CORE_CATALOG)) {
+      expect(
+        catalog.find((r) => r.table_name === table)?.mode,
+        `core catalog table ${table}`,
+      ).toBe(mode);
+    }
+    for (const row of catalog) {
       expect(CATALOG[row.table_name], `catalog row ${row.table_name}`).toBe(
         row.mode,
       );
+      expect(
+        row.table_name === "crove_kernel.party" || row.table_name.startsWith("crove_crm."),
+        `${row.table_name}: party and CRM tables must never enter member_vy_table`,
+      ).toBe(false);
+    }
     const tables = (
       await admin((c) =>
         c.query<{ t: string; cmd: string }>(
@@ -3139,5 +3309,658 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     }
     const kept = await admin((c) => c.query<{ body: string | null; tainted: boolean }>(`SELECT body, tainted FROM crove_kernel.member_vy_result WHERE id = $1`, [mine]));
     expect(kept.rows[0], "the probes were rolled back: the accepted result is as the member left it").toEqual({ body: "x", tainted: false });
+  });
+
+  describe("system-startable feature catalog and narrow system-insert gate (#5073)", () => {
+    it("keeps member_vy_system_feature migration-only and admits system inserts only under exact guards", async () => {
+      const systemStartableEntries = Object.entries(MEMBER_VY_FEATURES)
+        .filter(([, def]) => (def as { readonly systemStartable?: boolean }).systemStartable === true)
+        .map(([feature, def]) => ({ feature, module: def.module }))
+        .sort((a, b) => (a.feature < b.feature ? -1 : a.feature > b.feature ? 1 : 0));
+
+      const vyRun = await liveRun("vyUser");
+
+      if (!hasSystemFeature) {
+        expect(
+          systemStartableEntries,
+          "no feature may declare systemStartable before member_vy_system_feature exists",
+        ).toEqual([]);
+        const agentFail = await outcome(
+          inContext(workerUrl, systemEnter, (c) =>
+            c.query(
+              `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by)
+               VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`,
+              [orgId, randomUUID(), users.sysUser],
+            ),
+          ),
+        );
+        expect(agentFail, "system cannot insert member_vy agent before Step 1").toMatchObject({ ok: false, code: "42501" });
+
+        const runFail = await outcome(
+          inContext(workerUrl, systemEnter, (c) =>
+            c.query(
+              `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, feature)
+               VALUES ($1, $2, $3, 'meetings', 'running', true, now(), now() + interval '30 minutes', 'meetings.brief_daily')`,
+              [orgId, randomUUID(), vyRun.agentId],
+            ),
+          ),
+        );
+        expect(runFail, "system cannot insert member_vy ai_run before Step 1").toMatchObject({ ok: false, code: "42501" });
+
+        const resultFail = await outcome(
+          inContext(workerUrl, systemEnter, (c) =>
+            c.query(
+              `INSERT INTO crove_kernel.member_vy_result
+               (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+               VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'running', NULL, true, true, now() + interval '30 minutes')`,
+              [orgId, randomUUID(), users.vyUser, vyRun.runId, randomUUID()],
+            ),
+          ),
+        );
+        expect(resultFail, "system cannot insert member_vy_result before Step 1").toMatchObject({ ok: false, code: "42501" });
+
+        await inContext(workerUrl, systemEnter, async (c) => {
+          const seen = await c.query("SELECT id FROM crove_kernel.member_vy_result WHERE org_id = $1", [orgId]);
+          expect(seen.rowCount, "system sees zero member_vy_result rows").toBe(0);
+        });
+        return;
+      }
+
+      const brandWritePrivs = await admin((c) =>
+        auditRoleTablePrivileges(c, dbIds, "crove_kernel.member_vy_system_feature", [
+          "INSERT",
+          "UPDATE",
+          "DELETE",
+          "TRUNCATE",
+        ]),
+      );
+      expect(
+        brandWritePrivs.filter((r) => r.ok),
+        "runtime roles must have zero write table privileges on member_vy_system_feature",
+      ).toEqual([]);
+
+      const extraWritePrivs = await admin((c) =>
+        c.query<{ r: string; p: string }>(
+          `SELECT role_name AS r, priv AS p FROM (
+             SELECT 'public'::text AS role_name, p AS priv,
+                    (pg_catalog.has_table_privilege('public', 'crove_kernel.member_vy_system_feature', p)
+                     OR (p IN ('INSERT', 'UPDATE') AND pg_catalog.has_any_column_privilege('public', 'crove_kernel.member_vy_system_feature', p))) AS ok
+             FROM pg_catalog.unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) AS p
+             UNION ALL
+             SELECT r.rolname AS role_name, p AS priv,
+                    (pg_catalog.has_table_privilege(r.oid, cls.oid, p)
+                     OR (p IN ('INSERT', 'UPDATE') AND pg_catalog.has_any_column_privilege(r.oid, cls.oid, p))) AS ok
+             FROM pg_catalog.pg_roles r
+             CROSS JOIN pg_catalog.unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) AS p
+             CROSS JOIN (SELECT oid, relowner FROM pg_catalog.pg_class WHERE oid = 'crove_kernel.member_vy_system_feature'::regclass) AS cls
+             WHERE NOT r.rolsuper
+               AND r.oid <> cls.relowner
+               AND r.rolname NOT LIKE 'pg\\_%'
+               AND r.rolname NOT LIKE '%\\_test\\_%'
+               AND r.rolname NOT LIKE 'crove\\_test%'
+               AND r.rolname NOT LIKE 'ludy\\_test%'
+               AND r.rolname <> 'ludy_migrate_test'
+           ) s WHERE s.ok`,
+        ),
+      );
+      expect(
+        extraWritePrivs.rows,
+        "PUBLIC and all non-system non-owner roles must have zero table or column write privileges on member_vy_system_feature",
+      ).toEqual([]);
+
+      const guard = await admin((c) =>
+        c.query<{ tgname: string; tgenabled: string; fn: string }>(
+          `SELECT t.tgname, t.tgenabled::text AS tgenabled, t.tgfoid::regprocedure::text AS fn
+           FROM pg_trigger t
+           WHERE t.tgrelid = 'crove_kernel.member_vy_system_feature'::regclass
+             AND NOT t.tgisinternal
+             AND t.tgname = 'agent_write_guard'`,
+        ),
+      );
+      expect(guard.rows, "agent_write_guard installed on member_vy_system_feature").toHaveLength(1);
+      expect(["O", "A"]).toContain(guard.rows[0]?.tgenabled);
+      expect(guard.rows[0]?.fn).toBe("crove_kernel.agent_write_guard()");
+
+      for (const [label, url, enter] of [
+        ["crove_app", appUrl, userEnter(users.owner)],
+        ["crove_worker", workerUrl, systemEnter],
+      ] as const) {
+        const directInsert = await outcome(
+          inContext(url, enter, (c) =>
+            c.query(
+              `INSERT INTO crove_kernel.member_vy_system_feature (feature, module, adr) VALUES ('notes.summary', 'notes', 'ADR-0049')`,
+            ),
+          ),
+        );
+        expect(directInsert, `${label} inserting into member_vy_system_feature`).toMatchObject({ ok: false, code: "42501" });
+      }
+
+      const catalogRows = (
+        await admin((c) =>
+          c.query<{ feature: string; module: string }>(
+            "SELECT feature, module FROM crove_kernel.member_vy_system_feature ORDER BY 1",
+          ),
+        )
+      ).rows;
+      expect(catalogRows, "member_vy_system_feature rows").toEqual([
+        { feature: "meetings.brief_daily", module: "meetings" },
+      ]);
+      expect(
+        systemStartableEntries,
+        "MEMBER_VY_FEATURES systemStartable (feature, module) entries match member_vy_system_feature",
+      ).toEqual(catalogRows);
+
+      const memberActiveExec = await admin((c) =>
+        auditRoleFunctionExecute(
+          c,
+          dbIds,
+          "crove_kernel.member_vy_member_active(uuid,uuid)",
+          ["crove_worker"],
+          "non_system",
+        ),
+      );
+      expect(
+        memberActiveExec.rows.filter((r) => r.ok !== r.expected && r.rolname !== "ludy_migrate_test"),
+        "member_vy_member_active stays worker-only across all non-system roles",
+      ).toEqual([]);
+      const memberActivePublic = await admin((c) =>
+        c.query<{ ok: boolean }>(
+          "SELECT pg_catalog.has_function_privilege('public', 'crove_kernel.member_vy_member_active(uuid,uuid)', 'EXECUTE') AS ok",
+        ),
+      );
+      expect(memberActivePublic.rows[0]?.ok, "member_vy_member_active must not be executable by PUBLIC").toBe(false);
+
+      const vyNoteId = (
+        await admin((c) =>
+          c.query<{ id: string }>(
+            "SELECT id FROM crove_notes.note WHERE org_id = $1 AND author_user_id = $2 LIMIT 1",
+            [orgId, users.vyUser],
+          ),
+        )
+      ).rows[0]?.id;
+      expect(vyNoteId, "seeded note for vyUser exists for note_member_vy_guard").toBeTruthy();
+
+      const interactiveResult = await outcome(
+        inContext(appUrl, userEnter(users.vyUser), (c) =>
+          c.query(
+            `INSERT INTO crove_kernel.member_vy_result
+             (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+             VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'running', NULL, true, true, now() + interval '30 minutes')`,
+            [orgId, randomUUID(), users.vyUser, vyRun.runId, vyNoteId],
+          ),
+        ),
+      );
+      expect(
+        interactiveResult.ok,
+        "crove_app member insert still succeeds without EXECUTE on worker-only helpers",
+      ).toBe(true);
+
+      const sysAgentId = randomUUID();
+      const dailyRunId = randomUUID();
+      const resultId = randomUUID();
+      const subjectId = randomUUID();
+
+      await inContext(workerUrl, systemEnter, async (c) => {
+        const ag = await c.query(
+          `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by)
+           VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`,
+          [orgId, sysAgentId, users.sysUser],
+        );
+        expect(ag.rowCount, "system inserts member_vy agent for active vy.use member").toBe(1);
+
+        await c.query("SAVEPOINT sp_wrong_mod");
+        const wrongModuleRun = await outcome(
+          c.query(
+            `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, feature)
+             VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes', 'meetings.brief_daily')`,
+            [orgId, randomUUID(), sysAgentId],
+          ),
+        );
+        await c.query("ROLLBACK TO SAVEPOINT sp_wrong_mod");
+        expect(wrongModuleRun, "system cannot insert ai_run with meetings.brief_daily under wrong module notes").toMatchObject({
+          ok: false,
+          code: "42501",
+        });
+
+        const run = await c.query(
+          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, feature)
+           VALUES ($1, $2, $3, 'meetings', 'running', true, now(), now() + interval '30 minutes', 'meetings.brief_daily')`,
+          [orgId, dailyRunId, sysAgentId],
+        );
+        expect(run.rowCount, "system inserts ai_run for listed (feature, module) pair").toBe(1);
+
+        for (const [badFeature, badModule] of [
+          ["notes.summary", "notes"],
+          ["meetings.brief", "meetings"],
+        ] as const) {
+          await c.query("SAVEPOINT sp_bad_run");
+          const badRun = await outcome(
+            c.query(
+              `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, feature)
+               VALUES ($1, $2, $3, $4, 'running', true, now(), now() + interval '30 minutes', $5)`,
+              [orgId, randomUUID(), sysAgentId, badModule, badFeature],
+            ),
+          );
+          await c.query("ROLLBACK TO SAVEPOINT sp_bad_run");
+          expect(badRun, `system cannot insert ai_run for unlisted feature ${badFeature}`).toMatchObject({
+            ok: false,
+            code: "42501",
+          });
+        }
+
+        await c.query("SAVEPOINT sp_ret");
+        const insertReturning = await outcome(
+          c.query(
+            `INSERT INTO crove_kernel.member_vy_result
+             (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+             VALUES ($1, $2, $3, $4, 'meetings.brief_daily', 'meetings.brief_daily', $5, 'running', NULL, true, true, now() + interval '30 minutes')
+             RETURNING id`,
+            [orgId, randomUUID(), users.sysUser, dailyRunId, subjectId],
+          ),
+        );
+        await c.query("ROLLBACK TO SAVEPOINT sp_ret");
+        expect(insertReturning, "system cannot INSERT ... RETURNING on member_vy_result").toMatchObject({
+          ok: false,
+          code: "42501",
+        });
+
+        for (const [label, targetUser, targetRunId, status, body, feat] of [
+          ["ready with body", users.sysUser, dailyRunId, "ready", "text", "meetings.brief_daily"],
+          ["failed without body", users.sysUser, dailyRunId, "failed", null, "meetings.brief_daily"],
+          ["running with non-null body", users.sysUser, dailyRunId, "running", "text", "meetings.brief_daily"],
+          ["unlisted notes.summary on matching run", users.vyUser, vyRun.runId, "running", null, "notes.summary"],
+          ["unlisted meetings.brief", users.sysUser, dailyRunId, "running", null, "meetings.brief"],
+        ] as const) {
+          await c.query("SAVEPOINT sp_bad_res");
+          const badRes = await outcome(
+            c.query(
+              `INSERT INTO crove_kernel.member_vy_result
+               (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+               VALUES ($1, $2, $3, $4, $5, 'meetings.brief_daily', $6, $7, $8, true, true, now() + interval '30 minutes')`,
+              [orgId, randomUUID(), targetUser, targetRunId, feat, subjectId, status, body],
+            ),
+          );
+          await c.query("ROLLBACK TO SAVEPOINT sp_bad_res");
+          expect(badRes, `system rejected for member_vy_result (${label})`).toMatchObject({
+            ok: false,
+            code: "42501",
+          });
+        }
+
+        const okRes = await c.query(
+          `INSERT INTO crove_kernel.member_vy_result
+           (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+           VALUES ($1, $2, $3, $4, 'meetings.brief_daily', 'meetings.brief_daily', $5, 'running', NULL, true, true, now() + interval '30 minutes')`,
+          [orgId, resultId, users.sysUser, dailyRunId, subjectId],
+        );
+        expect(okRes.rowCount, "system inserts empty running member_vy_result for listed feature").toBe(1);
+
+        const readRes = await c.query(
+          "SELECT id FROM crove_kernel.member_vy_result WHERE org_id = $1 AND id = $2",
+          [orgId, resultId],
+        );
+        expect(readRes.rowCount, "system cannot SELECT member_vy_result").toBe(0);
+
+        const checkNoWrite = async (savepoint: string, label: string, sqlText: string, params: readonly unknown[] = []) => {
+          await c.query(`SAVEPOINT ${savepoint}`);
+          const res = await c.query(sqlText, [...params]).then(
+            (r) => ({ ok: true as const, rowCount: r.rowCount ?? 0 }),
+            (e: { code?: string }) => ({ ok: false as const, code: e.code ?? "" }),
+          );
+          await c.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+          if (res.ok) {
+            expect(res.rowCount, `${label}: zero rows changed`).toBe(0);
+          } else {
+            expect(res.code, `${label}: refused with 42501`).toBe("42501");
+          }
+        };
+
+        await checkNoWrite(
+          "sp_upd_filtered",
+          "system cannot UPDATE filtered member_vy_result",
+          "UPDATE crove_kernel.member_vy_result SET body = 'tamper', status = 'ready' WHERE org_id = $1 AND id = $2",
+          [orgId, resultId],
+        );
+        await checkNoWrite(
+          "sp_upd_sweep",
+          "system cannot UPDATE unfiltered member_vy_result",
+          "UPDATE crove_kernel.member_vy_result SET body = 'tamper', status = 'ready'",
+        );
+        await checkNoWrite(
+          "sp_del_filtered",
+          "system cannot DELETE filtered member_vy_result",
+          "DELETE FROM crove_kernel.member_vy_result WHERE org_id = $1 AND id = $2",
+          [orgId, resultId],
+        );
+        await checkNoWrite(
+          "sp_del_sweep",
+          "system cannot DELETE unfiltered member_vy_result",
+          "DELETE FROM crove_kernel.member_vy_result",
+        );
+      });
+
+      const viewerAgentFail = await outcome(
+        inContext(workerUrl, systemEnter, (c) =>
+          c.query(
+            `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by)
+             VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`,
+            [orgId, randomUUID(), users.viewer],
+          ),
+        ),
+      );
+      expect(viewerAgentFail, "system cannot insert member_vy agent for viewer without vy.use").toMatchObject({
+        ok: false,
+        code: "42501",
+      });
+
+      const crossOrgAgentFail = await outcome(
+        inContext(workerUrl, systemEnter, (c) =>
+          c.query(
+            `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by)
+             VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`,
+            [otherOrg, randomUUID(), users.other],
+          ),
+        ),
+      );
+      expect(crossOrgAgentFail, "system in orgId cannot insert member_vy agent in otherOrg").toMatchObject({
+        ok: false,
+        code: "42501",
+      });
+
+      const vyAgentId = await ensureAgent("vyUser");
+      await admin((c) =>
+        c.query(
+          `UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now()
+           WHERE org_id = $1 AND agent_id = $2 AND status = 'running' AND feature = 'meetings.brief_daily'`,
+          [orgId, vyAgentId],
+        ),
+      );
+      const seededDailyRunId = randomUUID();
+      await inContext(
+        workerUrl,
+        systemEnter,
+        (c) =>
+          c.query(
+            `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, feature)
+             VALUES ($1, $2, $3, 'meetings', 'running', true, now(), now() + interval '30 minutes', 'meetings.brief_daily')`,
+            [orgId, seededDailyRunId, vyAgentId],
+          ),
+        true,
+      );
+
+      const savedCatalog = (
+        await admin((c) =>
+          c.query<{ feature: string; module: string; adr: string }>(
+            "SELECT feature, module, adr FROM crove_kernel.member_vy_system_feature ORDER BY 1",
+          ),
+        )
+      ).rows;
+      await admin((c) => c.query("DELETE FROM crove_kernel.member_vy_system_feature"));
+      try {
+        const emptyAgentFail = await outcome(
+          inContext(workerUrl, systemEnter, (c) =>
+            c.query(
+              `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by)
+               VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`,
+              [orgId, randomUUID(), users.sysUser],
+            ),
+          ),
+        );
+        expect(emptyAgentFail, "system cannot insert member_vy agent when member_vy_system_feature is empty").toMatchObject({
+          ok: false,
+          code: "42501",
+        });
+        const emptyRunFail = await outcome(
+          inContext(workerUrl, systemEnter, (c) =>
+            c.query(
+              `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, feature)
+               VALUES ($1, $2, $3, 'meetings', 'running', true, now(), now() + interval '30 minutes', 'meetings.brief_daily')`,
+              [orgId, randomUUID(), vyAgentId],
+            ),
+          ),
+        );
+        expect(emptyRunFail, "system cannot insert ai_run when member_vy_system_feature is empty").toMatchObject({
+          ok: false,
+          code: "42501",
+        });
+      } finally {
+        await admin(async (c) => {
+          for (const row of savedCatalog) {
+            await c.query(
+              "INSERT INTO crove_kernel.member_vy_system_feature (feature, module, adr) VALUES ($1, $2, $3) ON CONFLICT (feature) DO NOTHING",
+              [row.feature, row.module, row.adr],
+            );
+          }
+        });
+      }
+
+      const assertIndependentResultLayer = async (layerLabel: string) => {
+        await inContext(workerUrl, systemEnter, async (c) => {
+          for (const [caseLabel, targetUser, targetRunId, status, body, feat] of [
+            ["ready with body", users.vyUser, seededDailyRunId, "ready", "text", "meetings.brief_daily"],
+            ["failed without body", users.vyUser, seededDailyRunId, "failed", null, "meetings.brief_daily"],
+            ["running with non-null body", users.vyUser, seededDailyRunId, "running", "text", "meetings.brief_daily"],
+            ["unlisted notes.summary on matching run", users.vyUser, vyRun.runId, "running", null, "notes.summary"],
+            ["viewer without vy.use", users.viewer, seededDailyRunId, "running", null, "meetings.brief_daily"],
+          ] as const) {
+            await c.query("SAVEPOINT sp_ind_bad");
+            const bad = await outcome(
+              c.query(
+                `INSERT INTO crove_kernel.member_vy_result
+                 (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+                 VALUES ($1, $2, $3, $4, $5, 'meetings.brief_daily', $6, $7, $8, true, true, now() + interval '30 minutes')`,
+                [orgId, randomUUID(), targetUser, targetRunId, feat, subjectId, status, body],
+              ),
+            );
+            await c.query("ROLLBACK TO SAVEPOINT sp_ind_bad");
+            expect(bad, `${layerLabel} rejects (${caseLabel})`).toMatchObject({ ok: false, code: "42501" });
+          }
+
+          await c.query("SAVEPOINT sp_ind_ok");
+          const ok = await c.query(
+            `INSERT INTO crove_kernel.member_vy_result
+             (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+             VALUES ($1, $2, $3, $4, 'meetings.brief_daily', 'meetings.brief_daily', $5, 'running', NULL, true, true, now() + interval '30 minutes')`,
+            [orgId, randomUUID(), users.vyUser, seededDailyRunId, subjectId],
+          );
+          await c.query("ROLLBACK TO SAVEPOINT sp_ind_ok");
+          expect(ok.rowCount, `${layerLabel} accepts valid empty running row`).toBe(1);
+        });
+
+        await admin((c) =>
+          c.query(
+            `INSERT INTO crove_kernel.member_permission_override (org_id, user_id, permission, allowed, set_by)
+             VALUES ($1, $2, 'vy.use', false, $3)`,
+            [orgId, users.vyUser, users.owner],
+          ),
+        );
+        try {
+          const deniedOwnRun = await outcome(
+            inContext(workerUrl, systemEnter, (c) =>
+              c.query(
+                `INSERT INTO crove_kernel.member_vy_result
+                 (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+                 VALUES ($1, $2, $3, $4, 'meetings.brief_daily', 'meetings.brief_daily', $5, 'running', NULL, true, true, now() + interval '30 minutes')`,
+                [orgId, randomUUID(), users.vyUser, seededDailyRunId, subjectId],
+              ),
+            ),
+          );
+          expect(
+            deniedOwnRun,
+            `${layerLabel} rejects vyUser own daily run once vy.use is denied`,
+          ).toMatchObject({ ok: false, code: "42501" });
+        } finally {
+          await admin((c) =>
+            c.query(
+              `DELETE FROM crove_kernel.member_permission_override
+               WHERE org_id = $1 AND user_id = $2 AND permission = 'vy.use'`,
+              [orgId, users.vyUser],
+            ),
+          );
+        }
+      };
+
+      try {
+        await admin((c) => c.query("ALTER TABLE crove_kernel.member_vy_result DISABLE TRIGGER member_vy_result_bind"));
+        try {
+          await assertIndependentResultLayer("member_vy_result RLS policies without trigger");
+        } finally {
+          await admin((c) => c.query("ALTER TABLE crove_kernel.member_vy_result ENABLE TRIGGER member_vy_result_bind"));
+        }
+
+        await admin((c) => c.query("ALTER TABLE crove_kernel.member_vy_result DISABLE ROW LEVEL SECURITY"));
+        try {
+          await assertIndependentResultLayer("member_vy_result_bind trigger without RLS");
+          const wrongMemberOnValidRun = await outcome(
+            inContext(workerUrl, systemEnter, (c) =>
+              c.query(
+                `INSERT INTO crove_kernel.member_vy_result
+                 (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+                 VALUES ($1, $2, $3, $4, 'meetings.brief_daily', 'meetings.brief_daily', $5, 'running', NULL, true, true, now() + interval '30 minutes')`,
+                [orgId, randomUUID(), users.other, seededDailyRunId, subjectId],
+              ),
+            ),
+          );
+          expect(
+            wrongMemberOnValidRun,
+            "member_vy_result_bind without RLS rejects active other member on valid vyUser daily run",
+          ).toMatchObject({ ok: false, code: "42501" });
+        } finally {
+          await admin((c) => c.query("ALTER TABLE crove_kernel.member_vy_result ENABLE ROW LEVEL SECURITY"));
+        }
+
+        for (const [label, applySql, undoSql] of [
+          [
+            "disabled user account",
+            `UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id IN ('${users.vyUser}', '${users.sysUser}')`,
+            `UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id IN ('${users.vyUser}', '${users.sysUser}')`,
+          ],
+          [
+            "vy.use denied override",
+            `INSERT INTO crove_kernel.member_permission_override (org_id, user_id, permission, allowed, set_by)
+             VALUES ('${orgId}', '${users.vyUser}', 'vy.use', false, '${users.owner}'),
+                    ('${orgId}', '${users.sysUser}', 'vy.use', false, '${users.owner}')`,
+            `DELETE FROM crove_kernel.member_permission_override
+             WHERE org_id = '${orgId}' AND user_id IN ('${users.vyUser}', '${users.sysUser}') AND permission = 'vy.use'`,
+          ],
+          [
+            "removed tenant member",
+            `DELETE FROM crove_kernel.tenant_member WHERE org_id = '${orgId}' AND user_id IN ('${users.vyUser}', '${users.sysUser}')`,
+            `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+             VALUES ('${orgId}', '${users.vyUser}', 'member'), ('${orgId}', '${users.sysUser}', 'member')`,
+          ],
+        ] as const) {
+          await admin((c) => c.query(applySql));
+          try {
+            const blockedAgentOnSys = await outcome(
+              inContext(workerUrl, systemEnter, (c) =>
+                c.query(
+                  `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by)
+                   VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`,
+                  [orgId, randomUUID(), users.sysUser],
+                ),
+              ),
+            );
+            expect(blockedAgentOnSys, `system cannot insert agent for ${label}`).toMatchObject({
+              ok: false,
+              code: "42501",
+            });
+
+            const blockedRun = await outcome(
+              inContext(workerUrl, systemEnter, (c) =>
+                c.query(
+                  `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, feature)
+                   VALUES ($1, $2, $3, 'meetings', 'running', true, now(), now() + interval '30 minutes', 'meetings.brief_daily')`,
+                  [orgId, randomUUID(), vyAgentId],
+                ),
+              ),
+            );
+            expect(blockedRun, `system cannot insert ai_run for ${label}`).toMatchObject({ ok: false, code: "42501" });
+
+            const blockedRes = await outcome(
+              inContext(workerUrl, systemEnter, (c) =>
+                c.query(
+                  `INSERT INTO crove_kernel.member_vy_result
+                   (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+                   VALUES ($1, $2, $3, $4, 'meetings.brief_daily', 'meetings.brief_daily', $5, 'running', NULL, true, true, now() + interval '30 minutes')`,
+                  [orgId, randomUUID(), users.vyUser, seededDailyRunId, randomUUID()],
+                ),
+              ),
+            );
+            expect(blockedRes, `system cannot insert member_vy_result for ${label}`).toMatchObject({
+              ok: false,
+              code: "42501",
+            });
+          } finally {
+            await admin((c) => c.query(undoSql));
+          }
+        }
+      } finally {
+        await admin((c) =>
+          c.query(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE id = $1`, [
+            seededDailyRunId,
+          ]),
+        );
+      }
+
+      const wrongModRunId = randomUUID();
+      await admin(async (c) => {
+        await c.query("BEGIN");
+        try {
+          await c.query("SET LOCAL session_replication_role = replica");
+          await c.query(
+            `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, feature)
+             VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes', 'meetings.brief_daily')`,
+            [orgId, wrongModRunId, vyAgentId],
+          );
+          await c.query("COMMIT");
+        } catch (err) {
+          await c.query("ROLLBACK");
+          throw err;
+        }
+      });
+      try {
+        await admin((c) => c.query("ALTER TABLE crove_kernel.member_vy_result DISABLE ROW LEVEL SECURITY"));
+        try {
+          const wrongActiveMemberRes = await outcome(
+            inContext(workerUrl, systemEnter, (c) =>
+              c.query(
+                `INSERT INTO crove_kernel.member_vy_result
+                 (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+                 VALUES ($1, $2, $3, $4, 'meetings.brief_daily', 'meetings.brief_daily', $5, 'running', NULL, true, true, now() + interval '30 minutes')`,
+                [orgId, randomUUID(), users.other, wrongModRunId, subjectId],
+              ),
+            ),
+          );
+          expect(
+            wrongActiveMemberRes,
+            "member_vy_result_bind rejects active other member paired with vyUser daily run",
+          ).toMatchObject({ ok: false, code: "42501" });
+
+          const wrongModRes = await outcome(
+            inContext(workerUrl, systemEnter, (c) =>
+              c.query(
+                `INSERT INTO crove_kernel.member_vy_result
+                 (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+                 VALUES ($1, $2, $3, $4, 'meetings.brief_daily', 'meetings.brief_daily', $5, 'running', NULL, true, true, now() + interval '30 minutes')`,
+                [orgId, randomUUID(), users.vyUser, wrongModRunId, subjectId],
+              ),
+            ),
+          );
+          expect(
+            wrongModRes,
+            "member_vy_result_bind without RLS rejects valid feature paired with mismatched run module",
+          ).toMatchObject({ ok: false, code: "42501" });
+        } finally {
+          await admin((c) => c.query("ALTER TABLE crove_kernel.member_vy_result ENABLE ROW LEVEL SECURITY"));
+        }
+      } finally {
+        await admin((c) =>
+          c.query(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE id = $1`, [
+            wrongModRunId,
+          ]),
+        );
+      }
+    });
   });
 });
