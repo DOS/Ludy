@@ -33,6 +33,7 @@ export const zPaymentReminderCustomer = z.object({
   total: z.string(),
   foreignTotals: z.array(zReminderForeignAmount),
   hasForeignCurrency: z.boolean(),
+  allForeignAmounts: z.boolean(),
   other: z.string(),
   lastReminder: zLastReminder.nullable(),
 });
@@ -48,6 +49,7 @@ export const zPausedCustomer = z.object({
   total: z.string(),
   foreignTotals: z.array(zReminderForeignAmount),
   hasForeignCurrency: z.boolean(),
+  allForeignAmounts: z.boolean(),
 });
 
 export type PausedCustomer = z.infer<typeof zPausedCustomer>;
@@ -107,6 +109,7 @@ export const zPaymentReminderDraft = z.object({
   total: z.string(),
   foreignTotals: z.array(zReminderForeignAmount),
   hasForeignCurrency: z.boolean(),
+  allForeignAmounts: z.boolean(),
   other: z.string(),
   lastReminder: zLastReminder.nullable(),
   // The fixed template words for this level and language; a drafted text replaces them only when it passes the same checks.
@@ -133,8 +136,9 @@ export const zPaymentReminderSend = z.object({
   payToId: zId.nullable(),
   // Sent anyway although a reminder of this level went out within the last days.
   confirm: z.boolean().optional(),
-  // True when lead/closing are AI-drafted wording; deterministic no-digit/no-link check is enforced on send as well.
-  aiWorded: z.boolean().optional(),
+  // True when lead / closing are untouched AI-drafted wording; deterministic no-digit/no-link check is enforced per flagged field on send.
+  aiLead: z.boolean().optional(),
+  aiClosing: z.boolean().optional(),
 });
 export type PaymentReminderSend = z.infer<typeof zPaymentReminderSend>;
 

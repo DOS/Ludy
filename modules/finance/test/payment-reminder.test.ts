@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PAYMENT_TERMS_DAYS,
   addDays,
+  allForeignAmountsOf,
   allocateReceivable,
   daysBetween,
   foreignTotalsOf,
@@ -120,6 +121,19 @@ describe('allocateReceivable', () => {
       { currency: 'EUR', amountDue: '100.5' },
       { currency: 'USD', amountDue: '0.3' },
     ]);
+    expect(allForeignAmountsOf(r.open, 'VND')).toBe(true);
+    expect(allForeignAmountsOf([], 'VND')).toBe(false);
+  });
+
+  it('falls back to null foreignAmountDue when a tiny remaining balance rounds to zero in the invoice currency', () => {
+    const r = allocateReceivable(
+      [{ ...inv('1', '2026-08-01', '25450', 'USD'), foreignTotal: '1.00' }],
+      '100',
+      today,
+    );
+    expect(r.open[0]).toMatchObject({ amountDue: '100', foreignTotal: '1', foreignAmountDue: null });
+    expect(foreignTotalsOf(r.open, 'VND')).toEqual([]);
+    expect(allForeignAmountsOf(r.open, 'VND')).toBe(false);
   });
 });
 
@@ -212,9 +226,9 @@ describe('renderPaymentReminderMail', () => {
     expect(mail.text).not.toContain('Thông tin chuyển khoản');
   });
 
-  it('renders English for an English reminder, naming the book currency by its code', () => {
+  it('renders English for an English reminder, naming the book currency by its code and English grouping', () => {
     const mail = renderPaymentReminderMail({ ...base, lang: 'en' }, { replyTo: null });
-    expect(mail.text).toContain('Total: 1.734.567 VND');
+    expect(mail.text).toContain('Total: 1,734,567 VND');
     expect(mail.text).not.toContain('đồng');
     expect(mail.html).toContain('lang="en"');
   });
@@ -264,17 +278,18 @@ describe('renderPaymentReminderMail', () => {
         total: '38175000',
         currency: 'VND',
         foreignTotals: [{ currency: 'USD', amountDue: '1500' }],
+        allForeignAmounts: true,
       },
       { replyTo: null },
     );
-    expect(mail.text).toContain('1.000 USD (booked: 25.450.000 VND)');
-    expect(mail.text).toContain('500 USD (invoice 1.000 USD; booked: 12.725.000 VND)');
-    expect(mail.text).toContain('Total: 1.500 USD (booked: 38.175.000 VND)');
-    expect(mail.html).toContain('1.000 USD<br><span');
-    expect(mail.html).toContain('booked: 25.450.000 VND');
+    expect(mail.text).toContain('1,000 USD (booked: 25,450,000 VND)');
+    expect(mail.text).toContain('500 USD (invoice 1,000 USD; booked: 12,725,000 VND)');
+    expect(mail.text).toContain('Total: 1,500 USD (booked: 38,175,000 VND)');
+    expect(mail.html).toContain('1,000 USD<br><span');
+    expect(mail.html).toContain('booked: 25,450,000 VND');
   });
 
-  it('clearly labels booked amounts when a foreign-currency invoice has no foreign total', () => {
+  it('clearly labels booked amounts when a foreign-currency invoice has no foreign total or rounds below minor unit', () => {
     const mail = renderPaymentReminderMail(
       {
         ...base,
@@ -292,15 +307,60 @@ describe('renderPaymentReminderMail', () => {
             foreignTotal: null,
             foreignAmountDue: null,
           },
+          {
+            series: 'C26TAA',
+            number: '15b',
+            date: '2026-09-02',
+            dueDate: '2026-10-02',
+            daysOverdue: 32,
+            amountDue: '100',
+            currency: 'VND',
+            invoiceCurrency: 'USD',
+            foreignTotal: '1',
+            foreignAmountDue: null,
+          },
         ],
-        count: 1,
-        total: '25450000',
+        count: 2,
+        total: '25450100',
         currency: 'VND',
+        allForeignAmounts: false,
       },
       { replyTo: null },
     );
-    expect(mail.text).toContain('25.450.000 VND (booked; USD invoice)');
-    expect(mail.text).toContain('Total (booked): 25.450.000 VND');
+    expect(mail.text).toContain('25,450,000 VND (booked; USD invoice)');
+    expect(mail.text).toContain('100 VND (booked; 1 USD invoice)');
+    expect(mail.text).not.toContain('0 USD');
+    expect(mail.text).toContain('Total (booked): 25,450,100 VND');
+  });
+
+  it('uses explicit allForeignAmounts: false when a cut list omits a non-foreign tail invoice', () => {
+    const mail = renderPaymentReminderMail(
+      {
+        ...base,
+        lang: 'en',
+        invoices: [
+          {
+            series: 'C26TAA',
+            number: '18',
+            date: '2026-09-01',
+            dueDate: '2026-10-01',
+            daysOverdue: 33,
+            amountDue: '25450000',
+            currency: 'VND',
+            invoiceCurrency: 'USD',
+            foreignTotal: '1000',
+            foreignAmountDue: '1000',
+          },
+        ],
+        count: 2,
+        total: '26450000',
+        currency: 'VND',
+        foreignTotals: [{ currency: 'USD', amountDue: '1000' }],
+        allForeignAmounts: false,
+      },
+      { replyTo: null },
+    );
+    expect(mail.text).toContain('Total (booked): 26,450,000 VND (includes 1,000 USD)');
   });
 
   it('labels booked total and includes foreign summary when a customer owes mixed VND and foreign invoices', () => {

@@ -94,7 +94,8 @@ function allocateForeign(
   const cur = invoice.currency.trim().toUpperCase();
   const decimals = Math.min(4, Math.max(CURRENCY_MINOR_UNITS[cur] ?? 2, foreign.decimalPlaces()));
   const prorated = foreign.times(due).div(total).toDecimalPlaces(decimals, Decimal.ROUND_HALF_UP);
-  return { foreignTotal, foreignAmountDue: canonical(prorated) };
+  // If a tiny remaining balance rounds to zero in the invoice's currency, fall back to showing the booked amount instead of "0 USD".
+  return { foreignTotal, foreignAmountDue: prorated.isZero() ? null : canonical(prorated) };
 }
 
 // Lays the customer's 131 balance over its invoices, newest first, and dates each against today. A balance at or below zero (a credit,
@@ -138,6 +139,15 @@ export function foreignTotalsOf(
   return [...byCurrency.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([currency, amount]) => ({ currency, amountDue: canonical(amount) }));
+}
+
+// True only when every overdue invoice is in a foreign currency and has a computable non-zero foreign amount due.
+export function allForeignAmountsOf(
+  invoices: readonly Pick<OpenInvoice, 'currency' | 'foreignAmountDue'>[],
+  bookCurrency: string,
+): boolean {
+  const book = bookCurrency.trim().toUpperCase();
+  return invoices.length > 0 && invoices.every((i) => i.currency.trim().toUpperCase() !== book && i.foreignAmountDue !== null);
 }
 
 // The notice level of a customer: by the oldest of its overdue invoices. Null when none is overdue.

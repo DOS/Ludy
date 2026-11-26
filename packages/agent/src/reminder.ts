@@ -84,20 +84,35 @@ export function reminderTextProblem(text: string, orgName: string): 'FIGURES' | 
   if (hasInvisibleFormat(text)) return 'FIGURES';
   const name = orgName.trim().normalize('NFKC');
   const normalized = text.normalize('NFKC');
-  const rest = name === '' ? normalized : stripTrustedPhrases(normalized, [name]);
+  const rest = name === '' ? normalized : stripTrustedPhrases(normalized, [name], { caseInsensitive: true });
   if (draftFiguresOutside(rest, []).length > 0 || /\p{N}/u.test(rest) || hasNumberWords(rest) || CURRENCY_SIGN.test(rest)) return 'FIGURES';
   if (hasAddress(rest) || draftLinksOutside(rest, []).length > 0 || hasPromptMarkupLeak(text) || hasObfuscatedContactOrLink(rest) || hasAutonomousActionDirective(rest)) return 'LINK';
   return null;
 }
 
+const REMINDER_FIELD_MAX = { lead: LEAD_MAX, closing: CLOSING_MAX } as const;
+const cleanReminderText = (value: string | undefined) => (value ?? '').replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+
+/** Validates a single reminder field (`lead` or `closing`) using the same deterministic rules as `checkReminderWords`. */
+export function checkReminderField(
+  field: 'lead' | 'closing',
+  orgName: string,
+  value: string | undefined,
+): { kind: 'ok'; text: string } | { kind: 'none'; code: 'EMPTY' | 'FIGURES' | 'LINK' | 'TOO_LONG' } {
+  const text = cleanReminderText(value);
+  if (text === '') return { kind: 'none', code: 'EMPTY' };
+  if (Array.from(text).length > REMINDER_FIELD_MAX[field]) return { kind: 'none', code: 'TOO_LONG' };
+  const problem = reminderTextProblem(text, orgName);
+  if (problem) return { kind: 'none', code: problem };
+  return { kind: 'ok', text };
+}
+
 /** The words the model gave, or why there are none. Pure: the model call is the caller's. */
 export function checkReminderWords(request: ReminderWordsRequest, output: { lead?: string; closing?: string } | null): ReminderWordsResult {
-  const clean = (value: string | undefined) => (value ?? '').replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-  const lead = clean(output?.lead);
-  const closing = clean(output?.closing);
-  if (lead === '' || closing === '') return { kind: 'none', code: 'EMPTY' };
-  if (Array.from(lead).length > LEAD_MAX || Array.from(closing).length > CLOSING_MAX) return { kind: 'none', code: 'TOO_LONG' };
-  const problem = reminderTextProblem(lead, request.orgName) ?? reminderTextProblem(closing, request.orgName);
-  if (problem) return { kind: 'none', code: problem };
-  return { kind: 'words', words: { lead, closing } };
+  if (!output) return { kind: 'none', code: 'EMPTY' };
+  const lead = checkReminderField('lead', request.orgName, output.lead);
+  if (lead.kind === 'none') return lead;
+  const closing = checkReminderField('closing', request.orgName, output.closing);
+  if (closing.kind === 'none') return closing;
+  return { kind: 'words', words: { lead: lead.text, closing: closing.text } };
 }

@@ -35,7 +35,8 @@ interface Edit {
   lead?: string;
   closing?: string;
   payToId?: string | null;
-  aiWorded?: boolean;
+  aiLead?: boolean;
+  aiClosing?: boolean;
 }
 // How the send of one draft ended.
 type Outcome = { state: 'sent' } | { state: 'suppressed' } | { state: 'error'; error: unknown; repeat: boolean };
@@ -83,15 +84,15 @@ function DraftCard({
   // as they are.
   const [hint, setHint] = useState('');
   // The person's own words before the coworker's replaced them, for a way back.
-  const [before, setBefore] = useState<{ lead: string; closing: string } | null>(null);
+  const [before, setBefore] = useState<{ lead: string; closing: string; aiLead: boolean; aiClosing: boolean } | null>(null);
   const wording = useMutation({
     onMutate: () => onAsking(true),
     onSettled: () => onAsking(false),
     mutationFn: () => client.paymentReminders.wording({ partyId: draft.partyId, ...(legalEntityId ? { legalEntityId } : {}), ...(hint.trim() ? { hint: hint.trim() } : {}) }),
     onSuccess: (answer) => {
       if (answer.words && !sent) {
-        setBefore({ lead: words.lead, closing: words.closing });
-        onEdit({ lead: answer.words.lead, closing: answer.words.closing, aiWorded: true });
+        setBefore({ lead: words.lead, closing: words.closing, aiLead: edit.aiLead === true, aiClosing: edit.aiClosing === true });
+        onEdit({ lead: answer.words.lead, closing: answer.words.closing, aiLead: true, aiClosing: true });
       }
     },
   });
@@ -141,7 +142,7 @@ function DraftCard({
           {wording.error && <ErrorText>{errorMessage(wording.error)}</ErrorText>}
           {before && wording.data?.words && (
             <Button variant="ghost" size="sm" onClick={() => {
-                onEdit({ ...before, aiWorded: false });
+                onEdit(before);
                 setBefore(null);
                 wording.reset();
               }}>
@@ -163,7 +164,7 @@ function DraftCard({
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-lead`}>{t('lead')}</Label>
-          <Textarea id={`${id}-lead`} value={words.lead} maxLength={PAYMENT_REMINDER_TEXT_MAX} onChange={(e) => onEdit({ lead: e.target.value, aiWorded: false })} />
+          <Textarea id={`${id}-lead`} value={words.lead} maxLength={PAYMENT_REMINDER_TEXT_MAX} onChange={(e) => onEdit({ lead: e.target.value, aiLead: false })} />
         </div>
 
         <div>
@@ -178,7 +179,7 @@ function DraftCard({
                   <TableCell className="tabular-nums">{f.date(i.dueDate)}</TableCell>
                   <TableCell className="tabular-nums">{t('days', { count: i.daysOverdue })}</TableCell>
                   <TableCell className={NUM}>
-                    {i.foreignAmountDue !== null ? (
+                    {i.currency.toUpperCase() !== draft.currency.toUpperCase() && i.foreignAmountDue !== null ? (
                       <div>
                         <div>{f.money(i.foreignAmountDue, i.currency)}</div>
                         <div className="text-xs text-subtle-foreground">
@@ -190,7 +191,9 @@ function DraftCard({
                     ) : i.currency.toUpperCase() !== draft.currency.toUpperCase() ? (
                       <div>
                         <div>{f.money(i.amountDue, draft.currency)}</div>
-                        <div className="text-xs text-subtle-foreground">{t('bookedOnly', { currency: i.currency })}</div>
+                        <div className="text-xs text-subtle-foreground">
+                          {i.foreignTotal ? t('bookedInvoice', { total: f.money(i.foreignTotal, i.currency) }) : t('bookedOnly', { currency: i.currency })}
+                        </div>
                       </div>
                     ) : (
                       f.money(i.amountDue, draft.currency)
@@ -221,7 +224,7 @@ function DraftCard({
 
         <div className="space-y-1">
           <Label htmlFor={`${id}-closing`}>{t('closing')}</Label>
-          <Textarea id={`${id}-closing`} value={words.closing} maxLength={PAYMENT_REMINDER_TEXT_MAX} onChange={(e) => onEdit({ closing: e.target.value, aiWorded: false })} />
+          <Textarea id={`${id}-closing`} value={words.closing} maxLength={PAYMENT_REMINDER_TEXT_MAX} onChange={(e) => onEdit({ closing: e.target.value, aiClosing: false })} />
         </div>
       </fieldset>
 
@@ -260,32 +263,59 @@ function DraftCard({
   );
 }
 
-function FactsTotal({ draft }: { draft: PaymentReminderDraft }) {
+function OwedAmount({
+  total,
+  currency,
+  foreignTotals,
+  hasForeignCurrency,
+  allForeignAmounts,
+  noteWeight = '',
+}: {
+  total: string;
+  currency: string;
+  foreignTotals: Array<{ currency: string; amountDue: string }>;
+  hasForeignCurrency: boolean;
+  allForeignAmounts: boolean;
+  noteWeight?: string;
+}) {
   const t = useTranslations('paymentReminders');
   const f = useFormat();
-  const foreignText = draft.foreignTotals.map((ft) => f.money(ft.amountDue, ft.currency)).join(' + ');
-  const allForeignWithAmount = draft.invoices.length > 0 && draft.invoices.every((i) => i.foreignAmountDue !== null && i.currency.toUpperCase() !== draft.currency.toUpperCase());
+  const foreignText = foreignTotals.map((ft) => f.money(ft.amountDue, ft.currency)).join(' + ');
+  if (allForeignAmounts && foreignText) {
+    return (
+      <div>
+        <div>{foreignText}</div>
+        <div className={`text-xs ${noteWeight} text-subtle-foreground`.trim()}>{t('bookedAmount', { amount: f.money(total, currency) })}</div>
+      </div>
+    );
+  }
+  if (hasForeignCurrency) {
+    return (
+      <div>
+        <div>{f.money(total, currency)}</div>
+        <div className={`text-xs ${noteWeight} text-subtle-foreground`.trim()}>{foreignText ? t('includesForeign', { amount: foreignText }) : t('bookedShort')}</div>
+      </div>
+    );
+  }
+  return <>{f.money(total, currency)}</>;
+}
+
+function FactsTotal({ draft }: { draft: PaymentReminderDraft }) {
+  const t = useTranslations('paymentReminders');
   return (
     <TableRow>
       <TableCell className="font-medium" colSpan={4}>
-        {draft.hasForeignCurrency && !allForeignWithAmount ? t('totalBooked') : t('total')}
+        {draft.hasForeignCurrency && !draft.allForeignAmounts ? t('totalBooked') : t('total')}
       </TableCell>
       <TableCell className={`${NUM} font-medium`}>
-        {allForeignWithAmount && foreignText ? (
-          <div>
-            <div>{foreignText}</div>
-            <div className="text-xs font-normal text-subtle-foreground">{t('bookedAmount', { amount: f.money(draft.total, draft.currency) })}</div>
-          </div>
-        ) : draft.hasForeignCurrency ? (
-          <div>
-            <div>{f.money(draft.total, draft.currency)}</div>
-            <div className="text-xs font-normal text-subtle-foreground">
-              {foreignText ? t('includesForeign', { amount: foreignText }) : t('bookedShort')}
-            </div>
-          </div>
-        ) : (
-          f.money(draft.total, draft.currency)
-        )}
+        <OwedAmount
+          total={draft.total}
+          currency={draft.currency}
+          foreignTotals={draft.foreignTotals}
+          hasForeignCurrency={draft.hasForeignCurrency}
+          allForeignAmounts={draft.allForeignAmounts}
+          noteWeight="font-normal"
+        />
       </TableCell>
     </TableRow>
   );
@@ -325,7 +355,8 @@ function Review({ ids, legalEntityId, onClose }: { ids: string[]; legalEntityId:
         closing: words.closing,
         payToId,
         ...(confirm ? { confirm: true } : {}),
-        ...(edit.aiWorded ? { aiWorded: true } : {}),
+        ...(edit.aiLead ? { aiLead: true } : {}),
+        ...(edit.aiClosing ? { aiClosing: true } : {}),
       });
       setOutcomes((o) => ({ ...o, [draft.partyId]: { state: sent.status === 'suppressed' ? 'suppressed' : 'sent' } }));
     } catch (error) {
@@ -405,7 +436,6 @@ function Review({ ids, legalEntityId, onClose }: { ids: string[]; legalEntityId:
 function Row({ customer, checked, onCheck, onOpen, currency }: { customer: PaymentReminderCustomer; checked: boolean; onCheck: (value: boolean) => void; onOpen: () => void; currency: string }) {
   const t = useTranslations('paymentReminders');
   const f = useFormat();
-  const foreignText = customer.foreignTotals.map((ft) => f.money(ft.amountDue, ft.currency)).join(' + ');
   return (
     <TableRow data-testid="reminder-row">
       <TableCell className="w-10">
@@ -422,21 +452,13 @@ function Row({ customer, checked, onCheck, onOpen, currency }: { customer: Payme
         <Badge variant={customer.level === 3 ? 'destructive' : 'outline'}>{t(LEVEL[customer.level])}</Badge>
       </TableCell>
       <TableCell className={NUM}>
-        {customer.lang === 'en' && foreignText ? (
-          <div>
-            <div>{foreignText}</div>
-            <div className="text-xs text-subtle-foreground">{t('bookedAmount', { amount: f.money(customer.total, currency) })}</div>
-          </div>
-        ) : customer.hasForeignCurrency ? (
-          <div>
-            <div>{f.money(customer.total, currency)}</div>
-            <div className="text-xs text-subtle-foreground">
-              {foreignText ? t('includesForeign', { amount: foreignText }) : t('bookedShort')}
-            </div>
-          </div>
-        ) : (
-          f.money(customer.total, currency)
-        )}
+        <OwedAmount
+          total={customer.total}
+          currency={currency}
+          foreignTotals={customer.foreignTotals}
+          hasForeignCurrency={customer.hasForeignCurrency}
+          allForeignAmounts={customer.allForeignAmounts}
+        />
       </TableCell>
       <TableCell className="text-sm text-muted-foreground">
         {customer.lastReminder ? t('lastReminder', { date: f.date(customer.lastReminder.at), level: t(LEVEL[customer.lastReminder.level]) }) : t('never')}
@@ -569,11 +591,14 @@ function PausedCustomers({ paused, currency, canEdit }: { paused: PausedCustomer
       <h2 className="text-sm font-medium text-muted-foreground">{t('paused.title', { count: paused.length })}</h2>
       <ul className="mt-2 divide-y rounded-xl border bg-card">
         {paused.map((c) => {
+          const foreignText = c.foreignTotals.map((ft) => f.money(ft.amountDue, ft.currency)).join(' + ');
           const pausedTotal =
-            c.foreignTotals.length > 0
-              ? `${f.money(c.total, currency)} (${c.foreignTotals.map((ft) => f.money(ft.amountDue, ft.currency)).join(' + ')})`
+            c.allForeignAmounts && foreignText
+              ? `${foreignText} (${t('bookedAmount', { amount: f.money(c.total, currency) })})`
               : c.hasForeignCurrency
-                ? `${f.money(c.total, currency)} (${t('bookedShort')})`
+                ? foreignText
+                  ? `${f.money(c.total, currency)} (${t('includesForeign', { amount: foreignText })})`
+                  : `${f.money(c.total, currency)} (${t('bookedShort')})`
                 : f.money(c.total, currency);
           return (
             <li key={c.partyId} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">

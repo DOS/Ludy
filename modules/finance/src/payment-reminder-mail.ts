@@ -6,6 +6,8 @@
 // reaches the Inbox.
 import { z } from 'zod';
 import { PAYMENT_REMINDER_TEXT_MAX, zId } from '@ludy/kernel-contract';
+import { money } from '@ludy/l10n-vn';
+import { allForeignAmountsOf } from './domain/payment-reminder.ts';
 import { formatAmount, formatDate, escapeHtml, oneLine, type RenderedMail } from './missing-invoices.ts';
 
 export const PAYMENT_REMINDER_TEMPLATE = 'finance.payment_reminder';
@@ -60,6 +62,7 @@ export const zPaymentReminderMail = z.object({
   total: z.string().max(40),
   currency: z.string().regex(/^[A-Z]{3}$/),
   foreignTotals: z.array(zPaymentReminderForeignTotal).max(100).optional(),
+  allForeignAmounts: z.boolean().optional(),
   payTo: zPaymentReminderPayTo.nullable(),
 });
 export type PaymentReminderMail = z.infer<typeof zPaymentReminderMail>;
@@ -73,6 +76,7 @@ const LABELS = {
     total: 'Tổng cộng',
     totalBooked: 'Tổng cộng (ghi sổ)',
     booked: (bookAmount: string) => `ghi sổ: ${bookAmount}`,
+    bookedOfInvoice: (invTotal: string) => `ghi sổ; hóa đơn ${invTotal}`,
     bookedOnlyNote: (invCurrency: string) => `ghi sổ; hóa đơn ${invCurrency}`,
     partialOfInvoice: (invTotal: string, bookAmount: string) => `hóa đơn ${invTotal}; ghi sổ: ${bookAmount}`,
     includesForeign: (foreignText: string) => `gồm ${foreignText}`,
@@ -91,6 +95,7 @@ const LABELS = {
     total: 'Total',
     totalBooked: 'Total (booked)',
     booked: (bookAmount: string) => `booked: ${bookAmount}`,
+    bookedOfInvoice: (invTotal: string) => `booked; ${invTotal} invoice`,
     bookedOnlyNote: (invCurrency: string) => `booked; ${invCurrency} invoice`,
     partialOfInvoice: (invTotal: string, bookAmount: string) => `invoice ${invTotal}; booked: ${bookAmount}`,
     includesForeign: (foreignText: string) => `includes ${foreignText}`,
@@ -110,10 +115,14 @@ function invoiceName(invoice: PaymentReminderInvoice, lang: 'vi' | 'en'): string
   return LABELS[lang].invoice(symbol, oneLine(invoice.number, 50));
 }
 
-// The amount as the books hold it. In an English mail the book currency is named by its code, not as "đồng".
+// The amount formatted by mail language: Vietnamese uses '.' grouping / ',' decimal / "đồng"; English uses ',' grouping / '.' decimal / ISO code.
 function amount(value: string, currency: string, lang: 'vi' | 'en'): string {
-  const text = formatAmount(value, currency);
-  return lang === 'en' && currency === 'VND' ? text.replace(/ đồng$/, ' VND') : text;
+  if (lang === 'vi') return formatAmount(value, currency);
+  const fixed = money(value).toFixed();
+  const negative = fixed.startsWith('-');
+  const [whole = '0', fraction] = (negative ? fixed.slice(1) : fixed).split('.');
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${negative ? '-' : ''}${grouped}${fraction ? `.${fraction}` : ''} ${currency}`;
 }
 
 function invoiceAmountDisplay(
@@ -133,7 +142,10 @@ function invoiceAmountDisplay(
     }
     return { primary: foreignText, note: t.booked(bookedText) };
   }
-  return { primary: bookedText, note: t.bookedOnlyNote(invCurrency) };
+  return {
+    primary: bookedText,
+    note: invoice.foreignTotal ? t.bookedOfInvoice(amount(invoice.foreignTotal, invCurrency, lang)) : t.bookedOnlyNote(invCurrency),
+  };
 }
 
 // The mail from its stored merge data. replyTo: the org's inbound address when the deployment receives mail. brand: the product name users
@@ -158,11 +170,16 @@ export function renderPaymentReminderMail(raw: unknown, context: { replyTo: stri
   });
   const totalText = amount(mail.total, mail.currency, mail.lang);
   const anyForeign = mail.invoices.some((i) => (i.invoiceCurrency ?? i.currency).toUpperCase() !== book) || (mail.foreignTotals?.length ?? 0) > 0;
-  const allShownForeignWithAmount = mail.invoices.every((i) => (i.invoiceCurrency ?? i.currency).toUpperCase() !== book && Boolean(i.foreignAmountDue));
+  const allForeignWithAmount =
+    mail.allForeignAmounts ??
+    allForeignAmountsOf(
+      mail.invoices.map((i) => ({ currency: i.invoiceCurrency ?? i.currency, foreignAmountDue: i.foreignAmountDue ?? null })),
+      book,
+    );
   const foreignSummary = (mail.foreignTotals ?? []).map((ft) => amount(ft.amountDue, ft.currency, mail.lang)).join(' + ');
   const totalLine = !anyForeign
     ? `${t.total}: ${totalText}`
-    : mail.lang === 'en' && allShownForeignWithAmount && foreignSummary
+    : mail.lang === 'en' && allForeignWithAmount && foreignSummary
       ? `${t.total}: ${foreignSummary} (${t.booked(totalText)})`
       : foreignSummary
         ? `${t.totalBooked}: ${totalText} (${t.includesForeign(foreignSummary)})`
