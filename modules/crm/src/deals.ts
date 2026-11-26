@@ -92,6 +92,8 @@ export const pipelineStages = defineQuery({
   name: 'crm.stage.list',
   input: z.strictObject({}),
   access: ALL,
+  // Opted in for member-scoped Vy daily briefings (ADR-0049 amendment, #5073).
+  memberVy: { reads: [] },
   handler: async (ctx): Promise<PipelineStage[]> => loadStages(ctx),
 });
 
@@ -141,8 +143,9 @@ export interface Row {
   keep_party_name: string | null;
 }
 
-// Owners and admins delete any deal, a member the ones they made (the delete command enforces it).
-export const mayDelete = (ctx: Reader, createdBy: string): boolean => ctx.role === 'owner' || ctx.role === 'admin' || (ctx.role === 'member' && ctx.actor.type === 'user' && ctx.actor.userId === createdBy);
+// Owners and admins delete any deal, a member the ones they made (the delete command enforces it); non-user actors (such as memberVy) never delete.
+export const mayDelete = (ctx: Reader, createdBy: string): boolean =>
+  ctx.actor.type === 'user' && (ctx.role === 'owner' || ctx.role === 'admin' || (ctx.role === 'member' && ctx.actor.userId === createdBy));
 
 export function view(r: Row, canDelete: boolean): Deal {
   return {
@@ -437,6 +440,8 @@ export const dealGet = defineQuery({
   name: 'crm.deal.get',
   input: zDealRef,
   access: ALL,
+  // Opted in for member-scoped Vy daily briefings (ADR-0049 amendment, #5073).
+  memberVy: { reads: [] },
   handler: async (ctx, input): Promise<Deal> => loadView(ctx, input.dealId),
 });
 
@@ -444,6 +449,8 @@ export const dealList = defineQuery({
   name: 'crm.deal.list',
   input: zDealListQuery,
   access: ALL,
+  // Opted in for member-scoped Vy daily briefings (ADR-0049 amendment, #5073).
+  memberVy: { reads: [] },
   handler: async (ctx, input): Promise<DealPage> => {
     const limit = input.limit ?? DEAL_PAGE_SIZE;
     let q = base(ctx);
