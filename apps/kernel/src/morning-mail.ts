@@ -3,8 +3,9 @@
 // - v1 count-only payloads (`{ lang, org, count, path }`) hold only the count and meetings link, nothing sensitive.
 // - v2 full briefing payloads (`{ lang, org, path, day }`) store metadata only in `mail_message.payload`; `morningMailTemplate.render`
 //   fails closed until Slice A wires `meetings.morning.mail_content`, and `renderMorningBriefingMail` strictly validates both the stored
-//   payload and the render-time briefing content (with matching `day`), strips invisible/control characters, validates same-org internal
-//   paths, formats decimal-string money via `@ludy/l10n-vn`, and escapes every dynamic field in HTML.
+//   payload and the render-time briefing content (with matching `day`), strips invisible/control characters and enforces post-NFKC caps,
+//   validates same-org internal paths, formats decimal-string money via `@ludy/l10n-vn`, keeps attributes free of titles/names, and
+//   escapes every dynamic field in HTML.
 import {
   MORNING_BRIEFING_CAPS,
   followupClean,
@@ -17,6 +18,9 @@ import {
 } from '@ludy/kernel-contract';
 import { money } from '@ludy/l10n-vn';
 import type { MailTemplate } from './mail-queue.ts';
+
+const ORG_NAME_MAX = 200;
+const BRAND_NAME_MAX = 200;
 
 const COPY = {
   vi: {
@@ -41,12 +45,16 @@ const BRIEFING_COPY = {
         ? `Mở trang Cuộc họp để xem chi tiết ${total} cuộc họp hôm nay.`
         : `Đang hiển thị ${shown} cuộc họp đầu tiên trong tổng số ${total} cuộc họp.`,
     openMeetings: 'Mở trang Cuộc họp',
+    meetingLabel: (index: number) => `Cuộc họp ${index}`,
+    timeLabel: 'Thời gian',
     untitled: 'Cuộc họp không tiêu đề',
     openMeeting: 'Mở cuộc họp',
     openRecord: 'Mở trang ghi cuộc họp',
+    meetingAria: (label: string, index: number) => `${label} (cuộc họp ${index})`,
     attendeesLabel: 'Thành phần',
+    inviteesLabel: 'Khách mời',
     invitees: (count: number) => `${count} khách mời`,
-    readersPrefix: 'Người đọc trong tổ chức: ',
+    readersHeading: 'Người đọc trong tổ chức',
     moreReaders: (count: number) => `+${count} khác`,
     decisionsHeading: 'Quyết định từ cuộc họp trước',
     openItemsHeading: 'Việc cần làm còn mở',
@@ -54,8 +62,12 @@ const BRIEFING_COPY = {
     mine: 'Việc của bạn',
     dueOn: (day: string) => `Hạn ${day}`,
     dealsHeading: 'Cơ hội CRM đang mở',
-    openDeals: 'Xem danh sách cơ hội',
+    dealStageLabel: 'Giai đoạn',
+    dealAmountLabel: 'Giá trị',
+    dealExpectedCloseLabel: 'Dự kiến chốt',
     expectedClose: (day: string) => `Dự kiến chốt ${day}`,
+    openDeals: 'Xem danh sách cơ hội',
+    dealsAria: (index: number) => `Xem danh sách cơ hội (cuộc họp ${index})`,
     vyHeading: 'Gợi ý chuẩn bị của Vy',
     footer: (brand: string, org: string) =>
       `Thư này chứa nội dung các cuộc họp của bạn và do ${brand} gửi theo lựa chọn của bạn ở ${org}.`,
@@ -70,12 +82,16 @@ const BRIEFING_COPY = {
         ? `Open Meetings to see all ${total} meetings today.`
         : `Showing the first ${shown} of ${total} meetings.`,
     openMeetings: 'Open Meetings',
+    meetingLabel: (index: number) => `Meeting ${index}`,
+    timeLabel: 'Time',
     untitled: 'Untitled meeting',
     openMeeting: 'Open meeting',
     openRecord: 'Open meeting recorder',
+    meetingAria: (label: string, index: number) => `${label} (meeting ${index})`,
     attendeesLabel: 'Attendees',
+    inviteesLabel: 'Invitees',
     invitees: (count: number) => (count === 1 ? '1 invitee' : `${count} invitees`),
-    readersPrefix: 'Org readers: ',
+    readersHeading: 'Org readers',
     moreReaders: (count: number) => `+${count} more`,
     decisionsHeading: 'Decisions from previous meeting',
     openItemsHeading: 'Open action items',
@@ -83,8 +99,12 @@ const BRIEFING_COPY = {
     mine: 'Yours',
     dueOn: (day: string) => `Due ${day}`,
     dealsHeading: 'Open CRM deals',
-    openDeals: 'Open deals list',
+    dealStageLabel: 'Stage',
+    dealAmountLabel: 'Amount',
+    dealExpectedCloseLabel: 'Expected close',
     expectedClose: (day: string) => `Expected close ${day}`,
+    openDeals: 'Open deals list',
+    dealsAria: (index: number) => `Open deals list (meeting ${index})`,
     vyHeading: 'Vy prep lines',
     footer: (brand: string, org: string) =>
       `This email contains your meeting content and was sent by ${brand} because you asked for it in ${org}.`,
@@ -97,7 +117,12 @@ type BriefingLang = keyof typeof BRIEFING_COPY;
 const escapeHtml = (value: string): string =>
   value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
 
-const oneLine = (value: string): string => followupClean(value, true);
+function oneLine(value: string, max?: number): string {
+  const cleaned = followupClean(value, true);
+  if (max === undefined) return cleaned;
+  const chars = Array.from(cleaned);
+  return chars.length > max ? chars.slice(0, max).join('').trimEnd() : cleaned;
+}
 
 function formatDay(day: string, lang: BriefingLang): string {
   const [y, m, d] = day.split('-');
@@ -220,52 +245,93 @@ function meetingLinkLabel(path: string | undefined, orgPrefix: string, lang: Bri
   return t.openMeeting;
 }
 
-function buildAttendeesLine(meeting: MorningBriefingMeeting, lang: BriefingLang): string | null {
+function buildAttendees(
+  meeting: MorningBriefingMeeting,
+  lang: BriefingLang,
+): { textLines: string[]; htmlLine: string } | null {
   const t = BRIEFING_COPY[lang];
-  const parts: string[] = [];
-  if (meeting.inviteeCount > 0) {
-    parts.push(t.invitees(meeting.inviteeCount));
+  const readers = meeting.readerNames
+    .map((name) => oneLine(name, MORNING_BRIEFING_CAPS.nameMax))
+    .filter((name) => name !== '');
+  const hasInvitees = meeting.inviteeCount > 0;
+  const hasReaders = readers.length > 0 || meeting.extraReadersCount > 0;
+  if (!hasInvitees && !hasReaders) return null;
+
+  const textLines: string[] = [`${t.attendeesLabel}:`];
+  const htmlParts: string[] = [];
+
+  if (hasInvitees) {
+    const inviteesText = t.invitees(meeting.inviteeCount);
+    textLines.push(`  ${t.inviteesLabel}: ${inviteesText}`);
+    htmlParts.push(inviteesText);
   }
-  const readers = meeting.readerNames.map(oneLine).filter((name) => name !== '');
-  if (readers.length > 0 || meeting.extraReadersCount > 0) {
+
+  if (hasReaders) {
     const extra = meeting.extraReadersCount > 0 ? t.moreReaders(meeting.extraReadersCount) : '';
+    textLines.push(`  ${t.readersHeading}:`);
+    for (const reader of readers) {
+      textLines.push(`  - ${reader}`);
+    }
+    if (extra !== '') {
+      textLines.push(`  - ${extra}`);
+    }
     const readerSummary =
       readers.length > 0 && extra !== ''
         ? `${readers.join(', ')} (${extra})`
         : readers.length > 0
           ? readers.join(', ')
           : extra;
-    parts.push(`${t.readersPrefix}${readerSummary}`);
+    htmlParts.push(`${t.readersHeading}: ${readerSummary}`);
   }
-  return parts.length > 0 ? `${t.attendeesLabel}: ${parts.join('; ')}` : null;
+
+  return { textLines, htmlLine: `${t.attendeesLabel}: ${htmlParts.join('; ')}` };
 }
 
-function formatOpenItemText(item: MorningBriefingOpenItem, lang: BriefingLang): { text: string; tags: string[]; dueText: string | null } | null {
-  const cleaned = oneLine(item.text);
+function formatOpenItemText(
+  item: MorningBriefingOpenItem,
+  lang: BriefingLang,
+): { text: string; markers: string[]; dueText: string | null } | null {
+  const cleaned = oneLine(item.text, MORNING_BRIEFING_CAPS.actionItemTextMax);
   if (cleaned === '') return null;
   const t = BRIEFING_COPY[lang];
-  const tags: string[] = [];
-  if (item.mine) tags.push(t.mine);
-  if (item.overdue) tags.push(t.overdue);
+  const markers: string[] = [];
+  if (item.mine) markers.push(t.mine);
+  if (item.overdue) markers.push(t.overdue);
   const dueText = item.dueOn ? t.dueOn(formatDay(item.dueOn, lang)) : null;
-  if (dueText) tags.push(dueText);
-  return { text: cleaned, tags, dueText };
+  if (dueText) markers.push(dueText);
+  return { text: cleaned, markers, dueText };
 }
 
-function formatDealSummary(deal: MorningBriefingDeal, lang: BriefingLang): { title: string; details: string[] } | null {
-  const title = oneLine(deal.title);
+function formatDealSummary(
+  deal: MorningBriefingDeal,
+  lang: BriefingLang,
+): { title: string; labeledLines: string[]; htmlDetails: string[] } | null {
+  const title = oneLine(deal.title, MORNING_BRIEFING_CAPS.dealTitleMax);
   if (title === '') return null;
   const t = BRIEFING_COPY[lang];
-  const details: string[] = [];
-  const stage = oneLine(deal.stage);
-  if (stage !== '') details.push(stage);
-  if (deal.amount != null) details.push(formatDealAmount(deal.amount, lang));
-  if (deal.expectedClose) details.push(t.expectedClose(formatDay(deal.expectedClose, lang)));
-  return { title, details };
+  const labeledLines: string[] = [];
+  const htmlDetails: string[] = [];
+  const stage = oneLine(deal.stage, MORNING_BRIEFING_CAPS.dealStageMax);
+  if (stage !== '') {
+    labeledLines.push(`${t.dealStageLabel}: ${stage}`);
+    htmlDetails.push(stage);
+  }
+  if (deal.amount != null) {
+    const formattedAmount = formatDealAmount(deal.amount, lang);
+    labeledLines.push(`${t.dealAmountLabel}: ${formattedAmount}`);
+    htmlDetails.push(formattedAmount);
+  }
+  if (deal.expectedClose) {
+    const formattedClose = formatDay(deal.expectedClose, lang);
+    labeledLines.push(`${t.dealExpectedCloseLabel}: ${formattedClose}`);
+    htmlDetails.push(t.expectedClose(formattedClose));
+  }
+  return { title, labeledLines, htmlDetails };
 }
 
 function renderMeetingBlock(
   meeting: MorningBriefingMeeting,
+  meetingIndex: number,
   contentDay: string,
   lang: BriefingLang,
   orgPrefix: string,
@@ -275,7 +341,7 @@ function renderMeetingBlock(
 ): { textLines: string[]; html: string } {
   const t = BRIEFING_COPY[lang];
   const timeWindow = formatTimeWindow(meeting.startAt, meeting.endAt, meeting.timeZone, contentDay, lang);
-  const title = oneLine(meeting.title) || t.untitled;
+  const title = oneLine(meeting.title, MORNING_BRIEFING_CAPS.titleMax) || t.untitled;
   if (
     meeting.path !== undefined &&
     meeting.path !== `${orgPrefix}/meetings` &&
@@ -285,8 +351,10 @@ function renderMeetingBlock(
   }
   const meetingUrl = safeUrl(meeting.path ?? fallbackPath);
   const openLabel = meetingLinkLabel(meeting.path, orgPrefix, lang);
-  const attendees = buildAttendeesLine(meeting, lang);
-  const decisions = meeting.previousDecisions.map(oneLine).filter((d) => d !== '');
+  const attendees = buildAttendees(meeting, lang);
+  const decisions = meeting.previousDecisions
+    .map((d) => oneLine(d, MORNING_BRIEFING_CAPS.decisionTextMax))
+    .filter((d) => d !== '');
   const items = meeting.openItems
     .map((item) => {
       const formatted = formatOpenItemText(item, lang);
@@ -296,25 +364,37 @@ function renderMeetingBlock(
   const deals = meeting.deals
     .map((deal) => formatDealSummary(deal, lang))
     .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
-  const vyLines = (meeting.vyLines ?? []).map(oneLine).filter((line) => line !== '');
+  const vyLines = (meeting.vyLines ?? [])
+    .map((line) => oneLine(line, MORNING_BRIEFING_CAPS.vyLineTextMax))
+    .filter((line) => line !== '');
 
-  const textLines: string[] = [`${timeWindow} | ${title}`, `${openLabel}: ${meetingUrl}`];
-  if (attendees) textLines.push(attendees);
+  const textLines: string[] = [
+    `${t.meetingLabel(meetingIndex)}: ${title}`,
+    `${t.timeLabel}: ${timeWindow}`,
+    `${openLabel}: ${meetingUrl}`,
+  ];
+  if (attendees) textLines.push(...attendees.textLines);
   if (decisions.length > 0) {
     textLines.push(`${t.decisionsHeading}:`, ...decisions.map((d) => `  - ${d}`));
   }
   if (items.length > 0) {
-    textLines.push(
-      `${t.openItemsHeading}:`,
-      ...items.map((item) => `  - ${item.text}${item.tags.length > 0 ? ` (${item.tags.join(', ')})` : ''}`),
-    );
+    textLines.push(`${t.openItemsHeading}:`);
+    for (const item of items) {
+      textLines.push(`  - ${item.text}`);
+      for (const marker of item.markers) {
+        textLines.push(`    ${marker}`);
+      }
+    }
   }
   if (deals.length > 0) {
-    textLines.push(
-      `${t.dealsHeading}:`,
-      ...deals.map((deal) => `  - ${deal.title}${deal.details.length > 0 ? ` (${deal.details.join(' | ')})` : ''}`),
-      `  ${t.openDeals}: ${dealsUrl}`,
-    );
+    textLines.push(`${t.dealsHeading}:`);
+    for (const deal of deals) {
+      textLines.push(`  - ${deal.title}`);
+      for (const line of deal.labeledLines) {
+        textLines.push(`    ${line}`);
+      }
+    }
+    textLines.push(`  ${t.openDeals}: ${dealsUrl}`);
   }
   if (vyLines.length > 0) {
     textLines.push(`${t.vyHeading}:`, ...vyLines.map((line) => `  - ${line}`));
@@ -326,7 +406,7 @@ function renderMeetingBlock(
     `<h2 style="margin:0 0 8px;font-size:16px;line-height:1.4;color:#1f2328">${escapeHtml(title)}</h2>`,
   ];
   if (attendees) {
-    htmlParts.push(`<p style="margin:0 0 8px;font-size:14px;color:#57606a">${escapeHtml(attendees)}</p>`);
+    htmlParts.push(`<p style="margin:0 0 8px;font-size:14px;color:#57606a">${escapeHtml(attendees.htmlLine)}</p>`);
   }
   if (decisions.length > 0) {
     htmlParts.push(
@@ -362,13 +442,13 @@ function renderMeetingBlock(
     const dealLis = deals
       .map(
         (deal) =>
-          `<li style="margin:4px 0">${escapeHtml(deal.title)}${deal.details.length > 0 ? ` <span style="font-size:13px;color:#57606a">(${escapeHtml(deal.details.join(' | '))})</span>` : ''}</li>`,
+          `<li style="margin:4px 0">${escapeHtml(deal.title)}${deal.htmlDetails.length > 0 ? ` <span style="font-size:13px;color:#57606a">(${escapeHtml(deal.htmlDetails.join(' | '))})</span>` : ''}</li>`,
       )
       .join('');
     htmlParts.push(
       `<h3 style="margin:10px 0 4px;font-size:13px;font-weight:600;color:#1f2328">${escapeHtml(t.dealsHeading)}</h3>`,
       `<ul style="margin:0 0 8px;padding-left:18px">${dealLis}</ul>`,
-      `<p style="margin:6px 0 8px"><a href="${escapeHtml(dealsUrl)}" aria-label="${escapeHtml(`${t.openDeals}: ${title}`)}" style="display:inline-block;padding:10px 14px;min-height:44px;line-height:22px;box-sizing:border-box;border:1px solid #d0d7de;border-radius:6px;color:#b91c1c;text-decoration:underline;font-weight:600">${escapeHtml(t.openDeals)}</a></p>`,
+      `<p style="margin:6px 0 8px"><a href="${escapeHtml(dealsUrl)}" aria-label="${escapeHtml(t.dealsAria(meetingIndex))}" style="display:inline-block;padding:10px 14px;min-height:44px;line-height:22px;box-sizing:border-box;border:1px solid #d0d7de;border-radius:6px;color:#b91c1c;text-decoration:underline;font-weight:600">${escapeHtml(t.openDeals)}</a></p>`,
     );
   }
   if (vyLines.length > 0) {
@@ -380,7 +460,7 @@ function renderMeetingBlock(
     );
   }
   htmlParts.push(
-    `<p style="margin:12px 0 0"><a href="${escapeHtml(meetingUrl)}" aria-label="${escapeHtml(`${openLabel}: ${title}`)}" style="display:inline-block;padding:10px 14px;min-height:44px;line-height:22px;box-sizing:border-box;border:1px solid #d0d7de;border-radius:6px;color:#1f2328;text-decoration:underline;font-weight:600">${escapeHtml(openLabel)}</a></p>`,
+    `<p style="margin:12px 0 0"><a href="${escapeHtml(meetingUrl)}" aria-label="${escapeHtml(t.meetingAria(openLabel, meetingIndex))}" style="display:inline-block;padding:10px 14px;min-height:44px;line-height:22px;box-sizing:border-box;border:1px solid #d0d7de;border-radius:6px;color:#1f2328;text-decoration:underline;font-weight:600">${escapeHtml(openLabel)}</a></p>`,
     '</section>',
   );
   return { textLines, html: htmlParts.join('\n') };
@@ -420,8 +500,8 @@ export function renderMorningBriefingMail(
   };
 
   const t = BRIEFING_COPY[mail.lang];
-  const brand = oneLine(context.brand ?? '') || 'Ludy';
-  const org = oneLine(mail.org) || brand;
+  const brand = oneLine(context.brand ?? '', BRAND_NAME_MAX) || 'Ludy';
+  const org = oneLine(mail.org, ORG_NAME_MAX) || brand;
   const formattedDay = formatDay(content.day, mail.lang);
   const heading = t.title(formattedDay, org);
   const lead = content.totalMeetings === 0 ? t.leadNone : t.leadCount(content.totalMeetings);
@@ -432,8 +512,8 @@ export function renderMorningBriefingMail(
   const dealsUrl = safeUrl(`${orgPrefix}/deals`);
   const settingsUrl = safeUrl(`${orgPrefix}/settings/notifications`);
 
-  const renderedMeetings = content.meetings.map((meeting) =>
-    renderMeetingBlock(meeting, content.day, mail.lang, orgPrefix, mail.path, dealsUrl, safeUrl),
+  const renderedMeetings = content.meetings.map((meeting, idx) =>
+    renderMeetingBlock(meeting, idx + 1, content.day, mail.lang, orgPrefix, mail.path, dealsUrl, safeUrl),
   );
 
   const textParts: string[] = [heading, '', lead];

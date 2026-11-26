@@ -419,15 +419,19 @@ describe('morning briefing contract (#5080)', () => {
     expect(out?.text).toContain('Lịch họp ngày 26/11/2026 tại Công ty <A>');
     expect(out?.text).toContain('Hôm nay bạn có 1 cuộc họp.');
     expect(out?.text).toContain('Mở trang Cuộc họp: https://ludy.test/o/acme/meetings');
-    expect(out?.text).toContain('09:00 - 09:30 (Asia/Ho_Chi_Minh) | Họp giao ban tuần');
+    expect(out?.text).toContain('Cuộc họp 1: Họp giao ban tuần');
+    expect(out?.text).toContain('Thời gian: 09:00 - 09:30 (Asia/Ho_Chi_Minh)');
     expect(out?.text).toContain(`Mở cuộc họp: https://ludy.test/o/acme/meetings/${ID}`);
-    expect(out?.text).toContain('Thành phần: 4 khách mời; Người đọc trong tổ chức: An, Bình (+2 khác)');
+    expect(out?.text).toContain(
+      'Thành phần:\n  Khách mời: 4 khách mời\n  Người đọc trong tổ chức:\n  - An\n  - Bình\n  - +2 khác',
+    );
     expect(out?.text).toContain('Quyết định từ cuộc họp trước:\n  - Chốt báo giá tháng 12');
-    expect(out?.text).toContain('Gửi hợp đồng cho khách (Việc của bạn, Hạn 26/11/2026)');
-    expect(out?.text).toContain('Rà soát điều khoản thanh toán (Quá hạn, Hạn 20/11/2026)');
-    expect(out?.text).toContain('Gói Enterprise Q4 (Thương lượng | 15.000.000 đồng | Dự kiến chốt 15/12/2026)');
-    expect(out?.text).toContain('  - Gói Mở Rộng\n');
-    expect(out?.text).toContain('Xem danh sách cơ hội: https://ludy.test/o/acme/deals');
+    expect(out?.text).toContain(
+      'Việc cần làm còn mở:\n  - Gửi hợp đồng cho khách\n    Việc của bạn\n    Hạn 26/11/2026\n  - Rà soát điều khoản thanh toán\n    Quá hạn\n    Hạn 20/11/2026',
+    );
+    expect(out?.text).toContain(
+      'Cơ hội CRM đang mở:\n  - Gói Enterprise Q4\n    Giai đoạn: Thương lượng\n    Giá trị: 15.000.000 đồng\n    Dự kiến chốt: 15/12/2026\n  - Gói Mở Rộng\n  Xem danh sách cơ hội: https://ludy.test/o/acme/deals',
+    );
     expect(out?.text).toContain('Gợi ý chuẩn bị của Vy:\n  - Kiểm tra lại tiến độ gửi hợp đồng trước giờ họp.');
     expect(out?.text).toContain('Thư này chứa nội dung các cuộc họp của bạn và do Ludy gửi theo lựa chọn của bạn ở Công ty <A>.');
     expect(out?.text).toContain('Tắt thông báo này trong Cài đặt thông báo: https://ludy.test/o/acme/settings/notifications');
@@ -437,6 +441,9 @@ describe('morning briefing contract (#5080)', () => {
     expect(out?.html).toContain(`href="https://ludy.test/o/acme/meetings/${ID}"`);
     expect(out?.html).toContain('href="https://ludy.test/o/acme/deals"');
     expect(out?.html).toContain('href="https://ludy.test/o/acme/settings/notifications"');
+    expect(out?.html).toContain('aria-label="Mở cuộc họp (cuộc họp 1)"');
+    expect(out?.html).toContain('aria-label="Xem danh sách cơ hội (cuộc họp 1)"');
+    expect(out?.html).not.toMatch(/aria-label="[^"]*(?:Họp giao ban tuần|Công ty|An|Bình|Gói Enterprise)/);
     expect(out?.html).toContain('Thư này chứa nội dung các cuộc họp của bạn và do Ludy gửi theo lựa chọn của bạn ở Công ty &lt;A&gt;.');
     expect(out?.html).toContain('Gợi ý chuẩn bị của Vy');
     expect(out?.html).toContain('Việc của bạn');
@@ -492,21 +499,26 @@ describe('morning briefing contract (#5080)', () => {
     expect(out?.html).toContain('lang="en"');
     expect(out?.text).toContain('Meetings for 2026-11-26 at Acme Co');
     expect(out?.text).toContain('You have 2 meetings today.');
-    expect(out?.text).toContain('09:00 - 10:30 (America/New_York) | Untitled meeting');
+    expect(out?.text).toContain('Meeting 1: Untitled meeting');
+    expect(out?.text).toContain('Time: 09:00 - 10:30 (America/New_York)');
     expect(out?.text).toContain('Open Meetings: https://ludy.test/o/acme/meetings');
-    expect(out?.text).toContain('Attendees: 1 invitee; Org readers: Alice (+1 more)');
+    expect(out?.text).toContain('Attendees:\n  Invitees: 1 invitee\n  Org readers:\n  - Alice\n  - +1 more');
     expect(out?.text).toContain('Decisions from previous meeting:\n  - Approve Q4 discount tiers');
-    expect(out?.text).toContain('Send signed addendum (Yours, Overdue, Due 2026-11-24)');
-    expect(out?.text).toContain('Acme Renewal (Proposal | 15,000,000 VND | Expected close 2026-12-15)');
-    expect(out?.text).toContain('Open deals list: https://ludy.test/o/acme/deals');
+    expect(out?.text).toContain('Open action items:\n  - Send signed addendum\n    Yours\n    Overdue\n    Due 2026-11-24');
+    expect(out?.text).toContain(
+      'Open CRM deals:\n  - Acme Renewal\n    Stage: Proposal\n    Amount: 15,000,000 VND\n    Expected close: 2026-12-15\n  Open deals list: https://ludy.test/o/acme/deals',
+    );
     expect(out?.text).toContain('Vy prep lines:\n  - Confirm pricing tier before the call.');
-    expect(out?.text).toContain('16:00 - 16:45 (Asia/Ho_Chi_Minh) | Engineering Sync');
+    expect(out?.text).toContain('Meeting 2: Engineering Sync');
+    expect(out?.text).toContain('Time: 16:00 - 16:45 (Asia/Ho_Chi_Minh)');
     expect(out?.text).toContain('Open meeting recorder: https://ludy.test/o/acme/meetings/record');
     expect(out?.text).toContain('This email contains your meeting content and was sent by Ludy because you asked for it in Acme Co.');
     expect(out?.text).toContain('Turn this notice off in Notification settings: https://ludy.test/o/acme/settings/notifications');
     expect(out?.html).toContain('09:00 - 10:30 (America/New_York)');
     expect(out?.html).toContain('16:00 - 16:45 (Asia/Ho_Chi_Minh)');
     expect(out?.html).toContain('Open meeting recorder');
+    expect(out?.html).toContain('aria-label="Open Meetings (meeting 1)"');
+    expect(out?.html).toContain('aria-label="Open meeting recorder (meeting 2)"');
     expect(out?.html).toContain('This email contains your meeting content and was sent by Ludy because you asked for it in Acme Co.');
   });
 
@@ -529,9 +541,9 @@ describe('morning briefing contract (#5080)', () => {
       }),
       briefingCtx(),
     );
-    expect(vi?.text).toContain('9.007.199.254.740.993,25 đồng');
-    expect(vi?.text).toContain('123.456.789.012.345.678,99 đồng');
-    expect(vi?.text).toContain('Deal Chưa Chốt Giá (Mới | Dự kiến chốt 01/12/2026)');
+    expect(vi?.text).toContain('Giá trị: 9.007.199.254.740.993,25 đồng');
+    expect(vi?.text).toContain('Giá trị: 123.456.789.012.345.678,99 đồng');
+    expect(vi?.text).toContain('  - Deal Chưa Chốt Giá\n    Giai đoạn: Mới\n    Dự kiến chốt: 01/12/2026');
     expect(vi?.html).toContain('9.007.199.254.740.993,25 đồng');
 
     const en = renderMorningBriefingMail(
@@ -549,8 +561,8 @@ describe('morning briefing contract (#5080)', () => {
       }),
       briefingCtx({ subject: 'Morning briefing' }),
     );
-    expect(en?.text).toContain('9,007,199,254,740,993.25 VND');
-    expect(en?.text).toContain('123,456,789,012,345,678.99 VND');
+    expect(en?.text).toContain('Amount: 9,007,199,254,740,993.25 VND');
+    expect(en?.text).toContain('Amount: 123,456,789,012,345,678.99 VND');
   });
 
   it('omits Vy prep lines section cleanly when vyLines is undefined or empty (AI-off facts-only)', () => {
@@ -633,6 +645,50 @@ describe('morning briefing contract (#5080)', () => {
     for (const prefix of ['Org', 'Brand', 'Title', 'Reader', 'Decision', 'Item', 'Deal', 'Stage', 'Vy']) {
       expect(out?.html).toContain(`${prefix} &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; &#39;test&#39; Clean Text`);
     }
+    expect(out?.html).not.toMatch(/aria-label="[^"]*(?:script|Clean|Org|Brand|Title|Reader|Deal)/);
+  });
+
+  it('enforces per-field caps after Unicode NFKC expansion and keeps titles/names out of HTML attributes', () => {
+    const out = renderMorningBriefingMail(
+      briefingMail({ lang: 'vi', org: 'ﬃ'.repeat(200) }),
+      briefingContent({
+        meetings: [
+          sampleMeeting({
+            title: 'ﬃ'.repeat(MORNING_BRIEFING_CAPS.titleMax),
+            readerNames: ['ﬃ'.repeat(MORNING_BRIEFING_CAPS.nameMax)],
+            previousDecisions: ['ﬃ'.repeat(MORNING_BRIEFING_CAPS.decisionTextMax)],
+            openItems: [{ text: 'ﬃ'.repeat(MORNING_BRIEFING_CAPS.actionItemTextMax), overdue: false, mine: false }],
+            deals: [
+              {
+                id: DEAL_ID,
+                title: 'ﬃ'.repeat(MORNING_BRIEFING_CAPS.dealTitleMax),
+                stage: 'ﬃ'.repeat(MORNING_BRIEFING_CAPS.dealStageMax),
+                amount: null,
+                expectedClose: null,
+              },
+            ],
+            vyLines: ['ﬃ'.repeat(MORNING_BRIEFING_CAPS.vyLineTextMax)],
+          }),
+        ],
+      }),
+      briefingCtx({ brand: 'ﬃ'.repeat(200) }),
+    );
+    expect(out).not.toBeNull();
+    const expanded240 = 'ffi'.repeat(80);
+    const expanded200 = `${'ffi'.repeat(66)}ff`;
+    const expanded120 = 'ffi'.repeat(40);
+    const expanded80 = `${'ffi'.repeat(26)}ff`;
+    expect(out?.text).toContain(`Lịch họp ngày 26/11/2026 tại ${expanded200}\n`);
+    expect(out?.text).toContain(`Cuộc họp 1: ${expanded120}\n`);
+    expect(out?.text).toContain(`  - ${expanded80}\n`);
+    expect(out?.text).toContain(`Quyết định từ cuộc họp trước:\n  - ${expanded240}\n`);
+    expect(out?.text).toContain(`Việc cần làm còn mở:\n  - ${expanded240}\n`);
+    expect(out?.text).toContain(`Cơ hội CRM đang mở:\n  - ${expanded120}\n    Giai đoạn: ${expanded80}\n`);
+    expect(out?.text).toContain(`Gợi ý chuẩn bị của Vy:\n  - ${expanded240}\n`);
+    expect(out?.text).toContain(`và do ${expanded200} gửi theo lựa chọn của bạn ở ${expanded200}.`);
+    expect(out?.text).not.toContain('ffi'.repeat(81));
+    expect(out?.html).not.toContain('ffi'.repeat(81));
+    expect(out?.html).not.toMatch(/aria-label="[^"]*ffi/);
   });
 
   it('formats overnight meetings across midnight and DST transitions cleanly in the meeting timeZone', () => {
@@ -650,7 +706,7 @@ describe('morning briefing contract (#5080)', () => {
       }),
       briefingCtx(),
     );
-    expect(overnight?.text).toContain('26/11/2026 23:30 - 27/11/2026 00:30 (Asia/Ho_Chi_Minh) | Họp giao ban tuần');
+    expect(overnight?.text).toContain('Cuộc họp 1: Họp giao ban tuần\nThời gian: 26/11/2026 23:30 - 27/11/2026 00:30 (Asia/Ho_Chi_Minh)');
 
     // Fall-back DST transition in America/New_York (2026-11-01): 05:45Z (UTC-04:00) to 06:15Z (UTC-05:00).
     const dst = renderMorningBriefingMail(
@@ -668,7 +724,7 @@ describe('morning briefing contract (#5080)', () => {
       }),
       briefingCtx({ subject: 'Morning briefing' }),
     );
-    expect(dst?.text).toContain('01:45 (UTC-04:00) - 01:15 (UTC-05:00) (America/New_York) | Họp giao ban tuần');
+    expect(dst?.text).toContain('Meeting 1: Họp giao ban tuần\nTime: 01:45 (UTC-04:00) - 01:15 (UTC-05:00) (America/New_York)');
     expect(dst?.html).toContain('01:45 (UTC-04:00) - 01:15 (UTC-05:00) (America/New_York)');
   });
 
