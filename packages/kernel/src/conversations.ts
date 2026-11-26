@@ -24,6 +24,7 @@ import {
   CONVERSATION_FACEBOOK_DIRECT_MAX,
   CONVERSATION_INSTAGRAM_DIRECT_MAX,
   CONVERSATION_PREVIEW_CHARS,
+  CONVERSATION_WHATSAPP_CLOCK_SKEW_MS,
   EMAIL_PROVIDER,
   EMAIL_REFS_MAX,
   conversationRules,
@@ -104,7 +105,13 @@ import {
   type Availability,
   type ConversationIntent,
   CONVERSATION_ATTACHMENTS_MAX,
+  CONVERSATION_PERSONAL_DATA_LINKED_NAMES_MAX,
+  CONVERSATION_PERSONAL_DATA_MATCH_MAX,
   CONVERSATION_RETENTION_DEFAULT_MONTHS,
+  personalDataProbe,
+  zPersonalDataQuery,
+  type ConversationPersonalDataItem,
+  type ConversationPersonalDataResult,
   type ConversationAttachmentView,
   type ConversationAutoDraft,
   type ConversationCounted,
@@ -132,7 +139,7 @@ import { z } from 'zod';
 import { zId, zTodayItems, type TodayItem } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, conversationKey, defineCommand, defineQuery, newConversationBlobId, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
-import { acquireChannelLocks } from './advisory-lock.ts';
+import { acquireChannelLocksForStoredRow } from './advisory-lock.ts';
 import { parseBusinessAccounts } from './channels.ts';
 import { createMailMessage } from './mail.ts';
 import { notifyMembers, ownersAndAdmins } from './notifications.ts';
@@ -324,11 +331,30 @@ export const conversationIngest = defineCommand({
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
   handler: async (ctx, input): Promise<ConversationIngested> => {
     requireSystem(ctx);
-    return ingestEvents(ctx, input.connectionId, input.events, input.businessConnectionId);
+    return ingestEvents(ctx, input.connectionId, input.events, input.businessConnectionId, input.receivedAt);
   },
 });
 
-async function ingestEvents(ctx: CommandContext, connectionId: string, inputEvents: readonly ConversationEvent[], businessConnectionId?: string): Promise<ConversationIngested> {
+const ISO_DATETIME = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/;
+const WHATSAPP_CLOCK_SKEW_NANOS = BigInt(CONVERSATION_WHATSAPP_CLOCK_SKEW_MS) * 1_000_000n;
+
+// Parse ISO-8601 timestamps into UTC epoch nanoseconds so Postgres `timestamptz` checks never truncate at milliseconds (#5047).
+function isoToEpochNanos(value: string): bigint | null {
+  const match = ISO_DATETIME.exec(value);
+  if (!match) return null;
+  const wholeSecondMs = Date.parse(`${match[1]}T${match[2]}${match[4]}`);
+  if (!Number.isFinite(wholeSecondMs)) return null;
+  const frac = (match[3] ?? '').slice(0, 9).padEnd(9, '0');
+  return BigInt(wholeSecondMs) * 1_000_000n + BigInt(frac);
+}
+
+async function ingestEvents(
+  ctx: CommandContext,
+  connectionId: string,
+  inputEvents: readonly ConversationEvent[],
+  businessConnectionId?: string,
+  receivedAt?: string,
+): Promise<ConversationIngested> {
   const out: ConversationIngested = { stored: 0, duplicates: 0, ignored: 0 };
   const reserved: MailImageSlot[] = [];
   const connection = await connectionOf(ctx, connectionId, true);
@@ -371,21 +397,53 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
     ownerUserId = account.userId;
   }
   // A WhatsApp number can change hands (one org disconnects it, another connects it) while notices of the first are still waiting: a notice names no org
-  // and may wait up to seven days. An event dated before this connection began is the earlier holder's customer's, never ours. A reconnect of a live
-  // connection keeps its row and its date; a number connected again after a disconnect is a new row, so its date is the start of this holder.
-  let notBefore: number | null = null;
+  // and may wait up to seven days. An event dated before this connection began (or parked in the inbound queue before it began, even if Meta's timestamp was
+  // skewed forward) is the earlier holder's customer's, never ours. A reconnect of a live connection keeps its row and its date; a number connected again
+  // after a disconnect is a new row, so its date is the start of this holder.
+  const receivedAtNanos = receivedAt !== undefined ? isoToEpochNanos(receivedAt) : null;
+  const validReceivedAt = receivedAt !== undefined && receivedAtNanos !== null ? receivedAt : null;
+  let notBeforeNanos: bigint | null = null;
+  let hasNotBefore = false;
+  let receivedBeforeConnected = false;
   if (connection.provider === 'whatsapp') {
-    const since = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('connected_at').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
-    notBefore = since ? new Date(since.connected_at).getTime() : null;
+    const since = await ctx.trx
+      .selectFrom('ludy_kernel.channel_connection')
+      .select([
+        sql<string | null>`CASE WHEN pg_catalog.isfinite(connected_at) THEN pg_catalog.to_char(connected_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') ELSE NULL END`.as('connected_at_iso'),
+        sql<boolean>`(${validReceivedAt}::timestamptz IS NOT NULL AND ${validReceivedAt}::timestamptz < connected_at)`.as('received_before_connected'),
+      ])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', connectionId)
+      .executeTakeFirst();
+    hasNotBefore = since !== undefined;
+    notBeforeNanos = since?.connected_at_iso ? isoToEpochNanos(since.connected_at_iso) : null;
+    receivedBeforeConnected = Boolean(since?.received_before_connected);
   }
   // Oldest first, so a thread's messages take their seq in the order the platform dated them within one notice.
-  const events = inputEvents.map((event, i) => ({ event, i })).sort((a, b) => Date.parse(a.event.at) - Date.parse(b.event.at) || a.i - b.i);
-  for (const { event } of events) {
+  const events = inputEvents
+    .map((event, i) => ({ event, i, eventNanos: isoToEpochNanos(event.at) }))
+    .sort((a, b) => (a.eventNanos !== null && b.eventNanos !== null ? (a.eventNanos < b.eventNanos ? -1 : a.eventNanos > b.eventNanos ? 1 : a.i - b.i) : Date.parse(a.event.at) - Date.parse(b.event.at) || a.i - b.i));
+  for (const { event, eventNanos } of events) {
     // A Telegram business thread (`b:<chat>:<business connection id>`) is stored only through the gate above, and only for the connection that gate
     // checked: a thread of that shape with no business connection, or of another one, is refused whatever the notice parser said.
     const businessThread = connection.provider === 'telegram' && event.threadId.startsWith('b:');
     const businessMismatch = connection.provider === 'telegram' && (businessThread !== (businessConnectionId !== undefined) || (businessThread && BUSINESS_THREAD.exec(event.threadId)?.[1] !== businessConnectionId));
-    if (!rules.kinds.includes(event.kind) || businessMismatch || (ownerUserId !== null && event.contact.id === ownerUserId) || (notBefore !== null && Date.parse(event.at) < notBefore)) {
+    // For WhatsApp (#5047), require receivedAt and enforce sub-millisecond boundaries, failing closed when:
+    //   1) receivedAt is missing or non-ISO (blocks direct WhatsApp ingest bypassing webhook queue timestamps),
+    //   2) event.at < connected_at (blocks delayed Meta retries of pre-handover messages),
+    //   3) receivedAt < connected_at (blocks pre-handover queued webhooks whose event.at was skewed forward), or
+    //   4) event.at > receivedAt + CONVERSATION_WHATSAPP_CLOCK_SKEW_MS (defense-in-depth at command boundary).
+    const whatsappBlocked =
+      connection.provider === 'whatsapp' &&
+      (!hasNotBefore ||
+        notBeforeNanos === null ||
+        eventNanos === null ||
+        receivedAtNanos === null ||
+        receivedBeforeConnected ||
+        eventNanos < notBeforeNanos ||
+        receivedAtNanos < notBeforeNanos ||
+        eventNanos > receivedAtNanos + WHATSAPP_CLOCK_SKEW_NANOS);
+    if (!rules.kinds.includes(event.kind) || businessMismatch || (ownerUserId !== null && event.contact.id === ownerUserId) || whatsappBlocked) {
       out.ignored++;
       continue;
     }
@@ -2863,6 +2921,265 @@ export const conversationEraseContact = defineCommand({
   },
 });
 
+// Finds customer conversation identities matching a typed email or phone number for Settings > Personal data (#3669).
+// Owners and admins only (`access: ADMINS`, audited without storing any searched value or customer PII in the audit row).
+// Never scans message body text: matches only active (`erased_at IS NULL`) non-orphan identities directly (email provider or
+// WhatsApp `wa_id`) or via a linked `party` (`identity.party_id` or `conversation.party_id`). Bounded to 50 identities.
+export const conversationPersonalDataFind = defineCommand({
+  name: 'kernel.conversation.personal_data_find',
+  input: zPersonalDataQuery,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ADMINS,
+  handler: async (ctx, input): Promise<ConversationPersonalDataResult> => {
+    requireUser(ctx);
+    const probe = personalDataProbe(input.value);
+    if (!probe) throw new DomainError('PERSONAL_DATA_QUERY', 422, 'Hãy nhập một địa chỉ email, một số điện thoại, hoặc một mã số thuế hay số căn cước');
+    // Preserve leading '+' from input.value when calling ludy_kernel.phone_key so '+84 (0)24 ...' keeps intl=true.
+    const phoneProbe = input.value.trim();
+    const directCondition =
+      probe.kind === 'email'
+        ? sql`i.provider = 'email' AND pg_catalog.lower(pg_catalog.btrim(i.external_user_id)) = ${probe.email}`
+        : sql`i.provider = 'whatsapp' AND i.external_user_id ~ '^[0-9]{7,15}$' AND ludy_kernel.phone_key(i.external_user_id) = ludy_kernel.phone_key(${phoneProbe})`;
+    const partyCondition =
+      probe.kind === 'email'
+        ? sql`p.email IS NOT NULL AND pg_catalog.lower(pg_catalog.btrim(p.email)) = ${probe.email}`
+        : sql`p.phone IS NOT NULL AND ludy_kernel.phone_key(p.phone) = ludy_kernel.phone_key(${phoneProbe})`;
+
+    const candidates = await sql<{
+      id: string;
+      provider: string;
+      external_user_id: string;
+      display_name: string | null;
+      is_direct: boolean;
+    }>`
+      WITH direct_hits AS (
+        SELECT i.id
+        FROM ludy_kernel.conversation_identity i
+        WHERE i.org_id = ${ctx.orgId}::uuid
+          AND i.erased_at IS NULL
+          AND ${directCondition}
+          AND (
+            EXISTS (SELECT 1 FROM ludy_kernel.conversation conv WHERE conv.org_id = i.org_id AND conv.identity_id = i.id)
+            OR EXISTS (SELECT 1 FROM ludy_kernel.conversation_message msg WHERE msg.org_id = i.org_id AND msg.author_identity_id = i.id)
+          )
+      ),
+      matching_parties AS (
+        SELECT p.id, p.name
+        FROM ludy_kernel.party p
+        WHERE p.org_id = ${ctx.orgId}::uuid
+          AND ${partyCondition}
+      ),
+      linked_hits AS (
+        SELECT i.id
+        FROM ludy_kernel.conversation_identity i
+        JOIN matching_parties mp ON mp.id = i.party_id
+        WHERE i.org_id = ${ctx.orgId}::uuid
+          AND i.erased_at IS NULL
+          AND (
+            EXISTS (SELECT 1 FROM ludy_kernel.conversation conv WHERE conv.org_id = i.org_id AND conv.identity_id = i.id)
+            OR EXISTS (SELECT 1 FROM ludy_kernel.conversation_message msg WHERE msg.org_id = i.org_id AND msg.author_identity_id = i.id)
+          )
+        UNION
+        SELECT c.identity_id AS id
+        FROM ludy_kernel.conversation c
+        JOIN matching_parties mp ON mp.id = c.party_id
+        JOIN ludy_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
+        WHERE c.org_id = ${ctx.orgId}::uuid
+          AND c.identity_id IS NOT NULL
+          AND i.erased_at IS NULL
+      ),
+      candidate_flags AS (
+        SELECT id, true AS is_direct FROM direct_hits
+        UNION ALL
+        SELECT id, false AS is_direct FROM linked_hits
+      ),
+      dedup AS (
+        SELECT id, bool_or(is_direct) AS is_direct
+        FROM candidate_flags
+        GROUP BY id
+      )
+      SELECT i.id, i.provider, i.external_user_id, i.display_name, d.is_direct
+      FROM dedup d
+      JOIN ludy_kernel.conversation_identity i ON i.org_id = ${ctx.orgId}::uuid AND i.id = d.id
+      ORDER BY d.is_direct DESC, i.updated_at DESC, i.id DESC
+      LIMIT ${CONVERSATION_PERSONAL_DATA_MATCH_MAX + 1}`.execute(ctx.trx);
+
+    const truncated = candidates.rows.length > CONVERSATION_PERSONAL_DATA_MATCH_MAX;
+    const picked = candidates.rows.slice(0, CONVERSATION_PERSONAL_DATA_MATCH_MAX);
+    if (picked.length === 0) {
+      ctx.audit({ kind: probe.kind, matches: 0, truncated: false });
+      return { kind: probe.kind, items: [], totalMessages: 0, truncated: false };
+    }
+
+    const ids = picked.map((r) => r.id);
+    const stats = await sql<{
+      identity_id: string;
+      threads: number;
+      in_comments: boolean;
+      messages: number;
+      notes: number;
+      channel_name: string | null;
+      target_conversation_id: string | null;
+      target_message_id: string | null;
+      linked_contact_names: string[];
+      total_messages: number;
+    }>`
+      WITH target_ids AS (
+        SELECT pg_catalog.unnest(${ids}::uuid[]) AS identity_id
+      ),
+      owned_convs AS (
+        SELECT c.id, c.identity_id, c.channel_connection_id, c.kind, c.last_message_at, c.created_at
+        FROM ludy_kernel.conversation c
+        WHERE c.org_id = ${ctx.orgId}::uuid
+          AND c.identity_id = ANY(${ids}::uuid[])
+      ),
+      owned_thread_counts AS (
+        SELECT
+          oc.identity_id,
+          count(*)::int AS threads,
+          bool_or(oc.kind = 'comment_thread') AS in_comments
+        FROM owned_convs oc
+        GROUP BY oc.identity_id
+      ),
+      owned_msg_counts AS (
+        SELECT oc.identity_id, count(*)::int AS messages
+        FROM owned_convs oc
+        JOIN ludy_kernel.conversation_message m
+          ON m.org_id = ${ctx.orgId}::uuid AND m.conversation_id = oc.id
+        GROUP BY oc.identity_id
+      ),
+      owned_note_counts AS (
+        SELECT oc.identity_id, count(*)::int AS notes
+        FROM owned_convs oc
+        JOIN ludy_kernel.conversation_note n
+          ON n.org_id = ${ctx.orgId}::uuid AND n.conversation_id = oc.id
+        GROUP BY oc.identity_id
+      ),
+      newest_owned AS (
+        SELECT DISTINCT ON (oc.identity_id)
+          oc.identity_id,
+          oc.id AS conversation_id,
+          ch.display_name AS channel_name
+        FROM owned_convs oc
+        JOIN ludy_kernel.channel_connection ch
+          ON ch.org_id = ${ctx.orgId}::uuid AND ch.id = oc.channel_connection_id
+        ORDER BY oc.identity_id, oc.last_message_at DESC NULLS LAST, oc.created_at DESC, oc.id DESC
+      ),
+      other_msg_counts AS (
+        SELECT
+          m.author_identity_id AS identity_id,
+          count(*)::int AS messages
+        FROM ludy_kernel.conversation_message m
+        JOIN ludy_kernel.conversation c
+          ON c.org_id = m.org_id AND c.id = m.conversation_id
+        WHERE m.org_id = ${ctx.orgId}::uuid
+          AND m.author_identity_id = ANY(${ids}::uuid[])
+          AND c.identity_id IS DISTINCT FROM m.author_identity_id
+        GROUP BY m.author_identity_id
+      ),
+      unique_msg_count AS (
+        SELECT count(*)::int AS total_messages
+        FROM (
+          SELECT m.id
+          FROM owned_convs oc
+          JOIN ludy_kernel.conversation_message m
+            ON m.org_id = ${ctx.orgId}::uuid AND m.conversation_id = oc.id
+          UNION
+          SELECT m.id
+          FROM ludy_kernel.conversation_message m
+          WHERE m.org_id = ${ctx.orgId}::uuid
+            AND m.author_identity_id = ANY(${ids}::uuid[])
+        ) u
+      ),
+      newest_authored AS (
+        SELECT DISTINCT ON (m.author_identity_id)
+          m.author_identity_id AS identity_id,
+          m.conversation_id,
+          m.id AS message_id,
+          ch.display_name AS channel_name
+        FROM ludy_kernel.conversation_message m
+        JOIN ludy_kernel.channel_connection ch
+          ON ch.org_id = m.org_id AND ch.id = m.channel_connection_id
+        WHERE m.org_id = ${ctx.orgId}::uuid
+          AND m.author_identity_id = ANY(${ids}::uuid[])
+        ORDER BY m.author_identity_id, m.sent_at DESC, m.received_at DESC, m.id DESC
+      ),
+      matching_parties AS (
+        SELECT p.id, p.name
+        FROM ludy_kernel.party p
+        WHERE p.org_id = ${ctx.orgId}::uuid
+          AND ${partyCondition}
+      ),
+      linked_party_names AS (
+        SELECT
+          x.identity_id,
+          (pg_catalog.array_agg(x.party_name ORDER BY x.party_name, x.party_id))[1:${CONVERSATION_PERSONAL_DATA_LINKED_NAMES_MAX}] AS names
+        FROM (
+          SELECT DISTINCT i.id AS identity_id, mp.id AS party_id, mp.name AS party_name
+          FROM ludy_kernel.conversation_identity i
+          JOIN matching_parties mp ON mp.id = i.party_id
+          WHERE i.org_id = ${ctx.orgId}::uuid AND i.id = ANY(${ids}::uuid[])
+          UNION
+          SELECT DISTINCT c.identity_id, mp.id AS party_id, mp.name AS party_name
+          FROM ludy_kernel.conversation c
+          JOIN matching_parties mp ON mp.id = c.party_id
+          WHERE c.org_id = ${ctx.orgId}::uuid AND c.identity_id = ANY(${ids}::uuid[])
+        ) x
+        GROUP BY x.identity_id
+      )
+      SELECT
+        t.identity_id,
+        COALESCE(otc.threads, 0)::int AS threads,
+        COALESCE(otc.in_comments, false) AS in_comments,
+        (COALESCE(omc.messages, 0) + COALESCE(xmc.messages, 0))::int AS messages,
+        COALESCE(onc.notes, 0)::int AS notes,
+        COALESCE(no.channel_name, na.channel_name) AS channel_name,
+        CASE WHEN COALESCE(otc.threads, 0) > 0 THEN no.conversation_id ELSE na.conversation_id END AS target_conversation_id,
+        CASE WHEN COALESCE(otc.threads, 0) > 0 THEN NULL ELSE na.message_id END AS target_message_id,
+        COALESCE(lpn.names, '{}'::text[]) AS linked_contact_names,
+        (SELECT total_messages FROM unique_msg_count)::int AS total_messages
+      FROM target_ids t
+      LEFT JOIN owned_thread_counts otc ON otc.identity_id = t.identity_id
+      LEFT JOIN owned_msg_counts omc ON omc.identity_id = t.identity_id
+      LEFT JOIN owned_note_counts onc ON onc.identity_id = t.identity_id
+      LEFT JOIN newest_owned no ON no.identity_id = t.identity_id
+      LEFT JOIN other_msg_counts xmc ON xmc.identity_id = t.identity_id
+      LEFT JOIN newest_authored na ON na.identity_id = t.identity_id
+      LEFT JOIN linked_party_names lpn ON lpn.identity_id = t.identity_id`.execute(ctx.trx);
+
+    const byIdentity = new Map(stats.rows.map((r) => [r.identity_id, r]));
+    const items: ConversationPersonalDataItem[] = [];
+    for (const c of picked) {
+      const s = byIdentity.get(c.id);
+      if (!s?.target_conversation_id) continue;
+      if (s.threads === 0 && !s.target_message_id) continue;
+      const tail = c.external_user_id ? c.external_user_id.slice(-4) : '';
+      items.push({
+        identityId: c.id,
+        provider: c.provider,
+        channelName: s.channel_name ?? c.provider,
+        displayName: c.display_name,
+        idTail: tail,
+        address: c.provider === EMAIL_PROVIDER ? c.external_user_id : null,
+        matchSource: c.is_direct ? 'direct' : 'linked_contact',
+        linkedContactNames: (s.linked_contact_names ?? []).slice(0, CONVERSATION_PERSONAL_DATA_LINKED_NAMES_MAX),
+        threads: Number(s.threads),
+        messages: Number(s.messages),
+        notes: Number(s.notes),
+        inComments: Boolean(s.in_comments),
+        eraseTarget: {
+          conversationId: s.target_conversation_id,
+          ...(s.threads === 0 && s.target_message_id ? { messageId: s.target_message_id } : {}),
+        },
+      });
+    }
+    const totalMessages = Number(stats.rows[0]?.total_messages ?? 0);
+    ctx.audit({ kind: probe.kind, matches: items.length, truncated });
+    return { kind: probe.kind, items, totalMessages, truncated };
+  },
+});
+
 // The retention purge of the org in context (the worker, as the system): the threads whose last message is past the org's
 // retention, oldest first, at most `limit` a call, and the identities left with no thread. `more` says the batch was full, so the
 // job calls again. It deletes nothing of an org that keeps threads (retention NULL), and it never touches a thread of another org.
@@ -2969,7 +3286,7 @@ export const conversationEraseChannel = defineCommand({
     if (!conversationRules(target.provider)) throw new DomainError('CHANNEL_NOT_CONVERSATIONAL', 422, 'Kết nối này không phải kênh trò chuyện với khách');
     // Skip the cross-org handover lock when the row is already revoked so deleting old history never stalls a new holder.
     if (target.status !== 'revoked') {
-      await acquireChannelLocks(ctx.trx, ctx.orgId, target.provider, target.external_account_id);
+      await acquireChannelLocksForStoredRow(ctx.trx, ctx.orgId, target.provider, target.external_account_id);
     }
     const connection = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
@@ -3828,6 +4145,7 @@ export const conversationCommands = [
   conversationSetAvailability,
   conversationSandboxComment,
   conversationRetentionSet,
+  conversationPersonalDataFind,
   conversationEraseContact,
   conversationPurgeExpired,
   conversationEraseConnection,

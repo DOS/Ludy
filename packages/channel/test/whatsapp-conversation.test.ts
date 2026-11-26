@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ConversationNoticeError,
   Graph,
+  WHATSAPP_CLOCK_SKEW_MS,
   WHATSAPP_MAX_NOTICE_BYTES,
   WHATSAPP_MEDIA_HOSTS,
   WhatsAppConversations,
@@ -162,7 +163,10 @@ describe('parseWhatsAppNotices', () => {
   it('dates nothing more than a few minutes ahead of the clock, so the 24-hour window is never stretched', () => {
     const at = (seconds: number) =>
       parse(notice({ contacts: [{ profile: { name: 'Lan' }, wa_id: CUSTOMER }], messages: [{ from: CUSTOMER, id: `wamid.t${seconds}`, timestamp: String(seconds), type: 'text', text: { body: 'x' } }] })).flatMap((n) => n.events);
+    const skewSec = WHATSAPP_CLOCK_SKEW_MS / 1000;
     expect(at(T0 + 60 + 5 * 60)).toHaveLength(1);
+    expect(at(T0 + 60 + skewSec)).toHaveLength(1);
+    expect(at(T0 + 60 + skewSec + 1)).toEqual([]);
     expect(at(T0 + 60 + 11 * 60)).toEqual([]);
     expect(at(T0 + 3_600)).toEqual([]);
   });

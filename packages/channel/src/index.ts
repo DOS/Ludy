@@ -206,13 +206,14 @@ export interface ReconcileInput {
 export type ReconcileResult = { found: true; externalId: string; url: string | null; draft?: 'draft' | 'pending' } | { found: false } | { found: 'unknown' };
 
 // Renews a connection's tokens before they expire (providers with short-lived tokens and refresh tokens, such as Zalo
-// OA). refused: the provider turned the refresh down and the connection needs reconnecting; failed: try again later.
+// OA). refused: the provider turned the refresh down and the connection needs reconnecting; failed: try again later;
+// skipped: skipped locally inside a cooldown window without calling the provider.
 export interface Refresher {
   // A channel provider, or a marketplace connection's (`marketplace_<adapter>`, whose token life is the platform's own).
   readonly provider: ChannelProviderId | `marketplace_${string}`;
   // How long before expiry to renew (6 hours when unset): long-lived tokens are renewed days ahead.
   readonly horizonSeconds?: number;
-  refresh(secret: string): Promise<{ secret: string; expiresAt: Date | null } | { refused: string } | { failed: string }>;
+  refresh(secret: string): Promise<{ secret: string; expiresAt: Date | null } | { refused: string } | { failed: string } | { skipped: 'recent' }>;
 }
 
 // What a platform reports for a published post (Social plan S8). Counts use these names whatever the platform calls

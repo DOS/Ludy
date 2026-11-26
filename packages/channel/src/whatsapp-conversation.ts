@@ -114,12 +114,12 @@ const idOf = (value: unknown, pattern: RegExp): string | null => {
 
 // The platform's time, in seconds (a string) [M]; a value in milliseconds is read as such. Outside a sane range it is no event: not dated in 1970 (which would close
 // its reply window at once), and not ahead of this clock by more than a few minutes (a message dated a day ahead would stretch the 24-hour window to two days).
-const CLOCK_SKEW_MS = 10 * 60_000;
+export const WHATSAPP_CLOCK_SKEW_MS = 10 * 60_000;
 function atOf(value: unknown, now: number): string | null {
   const n = typeof value === 'string' && /^\d{1,16}$/.test(value) ? Number(value) : typeof value === 'number' && Number.isFinite(value) ? value : NaN;
   if (!Number.isFinite(n) || n <= 0) return null;
   const ms = n < 1e11 ? n * 1000 : n;
-  return ms >= Date.UTC(2020, 0, 1) && ms <= now + CLOCK_SKEW_MS ? new Date(ms).toISOString() : null;
+  return ms >= Date.UTC(2020, 0, 1) && ms <= now + WHATSAPP_CLOCK_SKEW_MS ? new Date(ms).toISOString() : null;
 }
 
 const captionOf = (media: WaMedia | null | undefined): string => (typeof media?.caption === 'string' ? clean(media.caption).trim().slice(0, TEXT_MAX) : '');

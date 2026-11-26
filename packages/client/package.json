@@ -1,0 +1,19 @@
+{
+  "name": "@ludy/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "The oRPC client factory and the kernel's error predicates, shared by the Ludy web app and the Ludy mobile app. No React, no storage: the caller brings the origin and the headers.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ludy/kernel-contract": "workspace:*",
+    "@orpc/client": "catalog:",
+    "@orpc/contract": "catalog:"
+  }
+}

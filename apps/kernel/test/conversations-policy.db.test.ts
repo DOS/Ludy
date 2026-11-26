@@ -339,16 +339,16 @@ suite('the conversation core: who reads what, the channel limit, the intake age 
     const old = await enqueue('{"v":1,"old":true}');
     const fresh = await enqueue('{"v":1,"fresh":true}');
     await rows("UPDATE ludy_kernel.conversation_inbound_pending SET received_at = now() - interval '8 days' WHERE seq = $1", [old]);
-    const claimed = await withClient(workerUrl, async (c) => (await c.query('SELECT seq, body, dropped, reason FROM ludy_kernel.conversation_inbound_claim(10, 60)')).rows);
+    const claimed = await withClient(workerUrl, async (c) => (await c.query('SELECT seq, body, dropped, reason, received_at FROM ludy_kernel.conversation_inbound_claim(10, 60)')).rows);
     expect(claimed).toEqual([
-      { seq: old, body: null, dropped: true, reason: 'expired' },
-      { seq: fresh, body: Buffer.from('{"v":1,"fresh":true}'), dropped: false, reason: null },
+      { seq: old, body: null, dropped: true, reason: 'expired', received_at: expect.any(Date) },
+      { seq: fresh, body: Buffer.from('{"v":1,"fresh":true}'), dropped: false, reason: null, received_at: expect.any(Date) },
     ]);
     expect(await rows('SELECT seq::text AS seq FROM ludy_kernel.conversation_inbound_pending')).toEqual([{ seq: fresh }]);
     // An expired notice is dropped even while a worker holds its lease (the worker that held it is gone or too slow).
     await rows("UPDATE ludy_kernel.conversation_inbound_pending SET received_at = now() - interval '8 days' WHERE seq = $1", [fresh]);
-    const second = await withClient(workerUrl, async (c) => (await c.query('SELECT seq, body, dropped, reason FROM ludy_kernel.conversation_inbound_claim(10, 60)')).rows);
-    expect(second).toEqual([{ seq: fresh, body: null, dropped: true, reason: 'expired' }]);
+    const second = await withClient(workerUrl, async (c) => (await c.query('SELECT seq, body, dropped, reason, received_at FROM ludy_kernel.conversation_inbound_claim(10, 60)')).rows);
+    expect(second).toEqual([{ seq: fresh, body: null, dropped: true, reason: 'expired', received_at: expect.any(Date) }]);
     expect(await rows('SELECT 1 FROM ludy_kernel.conversation_inbound_pending')).toHaveLength(0);
   });
 });

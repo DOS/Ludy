@@ -31,6 +31,8 @@ export const CONVERSATION_INSTAGRAM_COMMENT_MAX = 2_200;
 export const CONVERSATION_INSTAGRAM_DIRECT_MAX = 1_000;
 // WhatsApp Business (Cloud API) text body limit [M until the live check, docs/runbooks/whatsapp-conversations-live-check.md].
 export const CONVERSATION_WHATSAPP_REPLY_MAX = 4_096;
+// Maximum forward clock skew allowed on upstream WhatsApp webhook timestamps relative to DB `received_at` (#5047).
+export const CONVERSATION_WHATSAPP_CLOCK_SKEW_MS = 10 * 60_000;
 // Threads' own limit of 500 characters a post applies to a reply [U until the live check and the official page settle it] (#3133, plan section 4.4).
 export const CONVERSATION_THREADS_REPLY_MAX = 500;
 export const CONVERSATION_NOTE_MAX = 5_000;
@@ -184,6 +186,8 @@ export const zConversationIngest = z.strictObject({
   // Telegram Business (#3191): the business connection the events came through. They are stored only while the connection's own state lists it as
   // enabled (an unknown or disabled one stores nothing and counts as ignored), and never when the contact is the business account's own user.
   businessConnectionId: z.string().min(1).max(100).refine(noNul, 'NUL character').optional(),
+  // Database timestamp when the pending inbound notice was parked (`ludy_kernel.conversation_inbound_pending.received_at`, #5047).
+  receivedAt: z.iso.datetime({ offset: true }).optional(),
 });
 export type ConversationIngestInput = z.infer<typeof zConversationIngest>;
 // What the mail worker hands the core for one customer mail (#2439): the org is the worker's (found from the stored address), the events are
@@ -747,3 +751,42 @@ export const zAvailabilitySet = z.strictObject({ status: zMemberAvailabilityStat
 export const zAvailabilityEntry = z.strictObject({ userId: zId, status: zMemberAvailabilityStatus, until: z.iso.datetime({ offset: true }).nullable() });
 export const zAvailability = z.strictObject({ me: zAvailabilityEntry, members: z.array(zAvailabilityEntry) });
 export type Availability = z.infer<typeof zAvailability>;
+
+// Finding customer conversations for personal-data erasure from Settings > Personal data (#3669): bounded counts and minimal
+// preview per matching identity, with the exact target conversation (and optional message for commenter-only identities)
+// to pass to kernel.conversation.erase_contact.
+export const CONVERSATION_PERSONAL_DATA_MATCH_MAX = 50;
+export const CONVERSATION_PERSONAL_DATA_LINKED_NAMES_MAX = 3;
+export const CONVERSATION_PERSONAL_DATA_MATCH_SOURCES = ['direct', 'linked_contact'] as const;
+export type ConversationPersonalDataMatchSource = (typeof CONVERSATION_PERSONAL_DATA_MATCH_SOURCES)[number];
+
+export const zConversationPersonalDataEraseTarget = z.strictObject({
+  conversationId: zId,
+  messageId: zId.optional(),
+});
+export type ConversationPersonalDataEraseTarget = z.infer<typeof zConversationPersonalDataEraseTarget>;
+
+export const zConversationPersonalDataItem = z.strictObject({
+  identityId: zId,
+  provider: z.string(),
+  channelName: z.string(),
+  displayName: z.string().nullable(),
+  idTail: z.string(),
+  address: z.string().nullable(),
+  matchSource: z.enum(CONVERSATION_PERSONAL_DATA_MATCH_SOURCES),
+  linkedContactNames: z.array(z.string()).max(CONVERSATION_PERSONAL_DATA_LINKED_NAMES_MAX),
+  threads: z.number().int().min(0),
+  messages: z.number().int().min(0),
+  notes: z.number().int().min(0),
+  inComments: z.boolean(),
+  eraseTarget: zConversationPersonalDataEraseTarget,
+});
+export type ConversationPersonalDataItem = z.infer<typeof zConversationPersonalDataItem>;
+
+export const zConversationPersonalDataResult = z.strictObject({
+  kind: z.enum(['email', 'digits']),
+  items: z.array(zConversationPersonalDataItem),
+  totalMessages: z.number().int().min(0),
+  truncated: z.boolean(),
+});
+export type ConversationPersonalDataResult = z.infer<typeof zConversationPersonalDataResult>;

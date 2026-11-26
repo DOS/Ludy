@@ -3,18 +3,12 @@
 // working in the member's other orgs. So that answer leaves the org (back to the start page, which lists only the
 // orgs this session can enter) and never signs the device out of Supabase Auth. Any other dead session still signs
 // out, as before. No browser or API imports, so it is unit tested.
-import { ORG_HEADER } from '@ludy/kernel-contract';
+import { requestHeaders } from '@ludy/client';
 import { isMfaRequired, isOrgAccessRevoked, isUnauthenticated } from './errors.ts';
 import { takeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
 
-// The request headers for the kernel. `org` is null for org-less calls; the user's own sign-out revoke is one, so
-// an org that refuses this session cannot swallow it (the kernel picks an org that can run it, or none).
-export function requestHeaders(token: string | null, org: string | null): Record<string, string> {
-  return {
-    ...(token ? { authorization: `Bearer ${token}` } : {}),
-    ...(org ? { [ORG_HEADER]: org } : {}),
-  };
-}
+// The request headers for the kernel live in packages/client, shared with the mobile app (issue #4880).
+export { requestHeaders };
 
 const LEFT_KEY = 'ludy-org-left';
 const LEGACY_LEFT_KEY = 'crove-org-left';

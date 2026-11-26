@@ -15,6 +15,7 @@ import { Button } from '@ludy/ui/components/button';
 import { Input } from '@ludy/ui/components/input';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { MeetingOwnerDeletion } from '../components/meeting-owner-deletion.tsx';
+import { PersonalDataConversations } from '../components/personal-data-conversations.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, PageSkeleton, TableSkeleton } from '../components/ui.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
@@ -39,14 +40,24 @@ export function PersonalDataPage() {
   const t = useTranslations('personalData');
   const org = useQuery(orpc.org.get.queryOptions());
   const canRead = org.data?.role === 'owner' || org.data?.role === 'admin';
+  const socialInstalled = installedModules().includes('social');
   const [draft, setDraft] = useState('');
   const [value, setValue] = useState('');
+  const [searchRun, setSearchRun] = useState(0);
   // Each search is a command that leaves an audit row (#1678): run on each submit, not again on focus; an erasure, an
   // access change or a resync of the stream runs it again, which leaves another row. An answer no longer shown is
   // dropped (gcTime 0), so searching a value again asks the server again.
   const found = useQuery({
     ...orpc.org.personalData.queryOptions({ input: { value } }),
     enabled: canRead && value.length >= 3,
+    retry: false,
+    staleTime: Infinity,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+  });
+  const conversations = useQuery({
+    ...orpc.conversations.personalDataFind.queryOptions({ input: { value } }),
+    enabled: canRead && socialInstalled && value.length >= 3,
     retry: false,
     staleTime: Infinity,
     gcTime: 0,
@@ -71,9 +82,15 @@ export function PersonalDataPage() {
   const privateItems = found.data?.privateItems ?? [];
   const hasPrivate = privateItems.length > 0;
   const meetingText = found.data?.meetingText ?? [];
+  const convLoading = socialInstalled && conversations.isFetching;
+  const convFailed = socialInstalled && !convLoading && Boolean(conversations.error);
+  const linkedConversationsCount = socialInstalled ? (conversations.data?.items.filter((item) => item.matchSource === 'linked_contact').length ?? 0) : 0;
+  const hasConversations = socialInstalled && (conversations.data?.items.length ?? 0) > 0;
+  // Hide duplicate 422 PERSONAL_DATA_QUERY error when the main personal-data query already shows the exact same validation text.
+  const convError = conversations.error && (!found.error || errorMessage(conversations.error) !== errorMessage(found.error)) ? conversations.error : null;
   // Meeting text the owner reads is redacted in place by the erasure; the rest waits for the notice (#2594).
   const hasErasable = (found.data?.matches.some((m) => m.handling === 'erase') ?? false) || hasPrivate || meetingText.length > 0;
-  const hasAny = (found.data?.matches.length ?? 0) > 0 || hasPrivate || meetingText.length > 0;
+  const hasAny = (found.data?.matches.length ?? 0) > 0 || hasPrivate || meetingText.length > 0 || hasConversations;
   const nameOf = (userId: string) => {
     const member = org.data?.members.find((m) => m.userId === userId);
     return member ? (member.displayName ?? member.email) : t('formerMember');
@@ -109,8 +126,12 @@ export function PersonalDataPage() {
         onSubmit={(event) => {
           event.preventDefault();
           // The same value again: search again (the key does not change, so the query would not run).
-          if (draft.trim() === value) void found.refetch();
+          if (draft.trim() === value) {
+            void found.refetch();
+            if (socialInstalled) void conversations.refetch();
+          }
           setValue(draft.trim());
+          setSearchRun((n) => n + 1);
           erase.reset();
           notify.reset();
           setConfirming(false);
@@ -129,8 +150,8 @@ export function PersonalDataPage() {
         )}
       </form>
       <p className="mb-4 max-w-3xl text-xs text-muted-foreground">{t('hint')}</p>
-      {/* Customer conversations are not found by this search (their names and addresses are erased with their threads): the Inbox is where they go (#3635). */}
-      {installedModules().includes('social') && org.data && (
+      {/* Customer conversation lookup by typed email/phone or linked contact (#3669), plus Inbox pointer for unlinked social channels (#3635). */}
+      {socialInstalled && org.data && (
         <p className="mb-4 max-w-3xl text-xs text-muted-foreground" data-testid="personal-data-conversations">
           {t('conversations')}{' '}
           <Link to="/o/$slug/social/inbox" params={{ slug: org.data.slug }} className="text-link underline">
@@ -162,12 +183,22 @@ export function PersonalDataPage() {
       {isOwner && hasErasable && !erase.data && (
         <div className="mb-4 max-w-3xl space-y-2">
           {!confirming ? (
-            <Button variant="destructive" onClick={() => setConfirming(true)}>
+            <Button variant="destructive" disabled={convLoading} onClick={() => setConfirming(true)}>
               {t('erase')}
             </Button>
           ) : (
             <div className="space-y-2 rounded-lg border border-destructive p-3">
               <p className="text-sm text-foreground">{t('eraseConfirm', { value })}</p>
+              {convFailed && (
+                <p className="text-xs font-medium text-warning" data-testid="personal-data-conv-unchecked-warning">
+                  {t('eraseConversationsUncheckedWarning')}
+                </p>
+              )}
+              {linkedConversationsCount > 0 && (
+                <p className="text-xs font-medium text-warning" data-testid="personal-data-linked-erase-warning">
+                  {t('eraseLinkedConversationsWarning', { count: linkedConversationsCount })}
+                </p>
+              )}
               <div className="flex gap-2">
                 <Button loading={erase.isPending} variant="destructive" onClick={eraseNow}>
                   {t('eraseNow')}
@@ -190,9 +221,9 @@ export function PersonalDataPage() {
         <TableSkeleton columns={4} />
       ) : found.error ? (
         <ErrorText>{errorMessage(found.error)}</ErrorText>
-      ) : !found.data ? null : !hasAny ? (
+      ) : !found.data ? null : !hasAny && (!socialInstalled || (!conversations.isFetching && !conversations.error && conversations.data !== undefined)) ? (
         <Empty title={t('none')} />
-      ) : (
+      ) : !hasAny ? null : (
         <>
           {found.data.privateItems === null && <p className="mb-4 max-w-3xl text-xs text-muted-foreground">{t('privateOwnersOnly')}</p>}
           {privateItems.length > 0 && (
@@ -245,6 +276,9 @@ export function PersonalDataPage() {
             </DataTable>
           )}
         </>
+      )}
+      {socialInstalled && value.length >= 3 && (
+        <PersonalDataConversations key={searchRun} data={conversations.data} isFetching={conversations.isFetching} error={convError} />
       )}
       {/* A separate section: the owner's compliance deletion of meetings, which never shows a meeting's title or text. */}
       {isOwner && installedModules().includes('meetings') && <MeetingOwnerDeletion nameOf={nameOf} />}

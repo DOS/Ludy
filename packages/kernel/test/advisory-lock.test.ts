@@ -2,7 +2,38 @@
 import { DummyDriver, Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler, type CompiledQuery } from 'kysely';
 import { describe, expect, it } from 'vitest';
 import type { CommandContext } from '@ludy/kernel-runtime';
-import { acquireAdvisoryXactLock, advisoryLockKey } from '../src/advisory-lock.ts';
+import { acquireAdvisoryXactLock, acquireChannelLocks, acquireChannelLocksForStoredRow, advisoryLockKey } from '../src/advisory-lock.ts';
+
+function createCapturingDb() {
+  const executed: CompiledQuery[] = [];
+  const baseDriver = new DummyDriver();
+  const db = new Kysely<unknown>({
+    dialect: {
+      createAdapter: () => new PostgresAdapter(),
+      createIntrospector: (k) => new PostgresIntrospector(k),
+      createQueryCompiler: () => new PostgresQueryCompiler(),
+      createDriver: () => ({
+        ...baseDriver,
+        init: async () => undefined,
+        acquireConnection: async () => ({
+          executeQuery: async <R>(compiledQuery: CompiledQuery) => {
+            executed.push(compiledQuery);
+            return { rows: [] as R[] };
+          },
+          streamQuery: async function* <R>(): AsyncIterableIterator<{ rows: R[] }> {
+            yield { rows: [] };
+          },
+        }),
+        beginTransaction: async () => undefined,
+        commitTransaction: async () => undefined,
+        rollbackTransaction: async () => undefined,
+        releaseConnection: async () => undefined,
+        destroy: async () => undefined,
+      }),
+    },
+  });
+  return { db, executed };
+}
 
 describe('shared PostgreSQL transaction advisory lock helper (#3447)', () => {
   it('builds canonical colon-delimited lock keys and rejects empty segments', () => {
@@ -15,33 +46,7 @@ describe('shared PostgreSQL transaction advisory lock helper (#3447)', () => {
   });
 
   it('executes parameterized pg_advisory_xact_lock(hashtextextended(key, 0)) on the given transaction', async () => {
-    const executed: CompiledQuery[] = [];
-    const baseDriver = new DummyDriver();
-    const db = new Kysely<unknown>({
-      dialect: {
-        createAdapter: () => new PostgresAdapter(),
-        createIntrospector: (k) => new PostgresIntrospector(k),
-        createQueryCompiler: () => new PostgresQueryCompiler(),
-        createDriver: () => ({
-          ...baseDriver,
-          init: async () => undefined,
-          acquireConnection: async () => ({
-            executeQuery: async <R>(compiledQuery: CompiledQuery) => {
-              executed.push(compiledQuery);
-              return { rows: [] as R[] };
-            },
-            streamQuery: async function* <R>(): AsyncIterableIterator<{ rows: R[] }> {
-              yield { rows: [] };
-            },
-          }),
-          beginTransaction: async () => undefined,
-          commitTransaction: async () => undefined,
-          rollbackTransaction: async () => undefined,
-          releaseConnection: async () => undefined,
-          destroy: async () => undefined,
-        }),
-      },
-    });
+    const { db, executed } = createCapturingDb();
 
     await expect(acquireAdvisoryXactLock(db as unknown as CommandContext['trx'], '   ')).rejects.toThrow(/non-empty lock key/);
     expect(executed).toHaveLength(0);
@@ -53,5 +58,47 @@ describe('shared PostgreSQL transaction advisory lock helper (#3447)', () => {
     expect(executed).toHaveLength(1);
     expect(executed[0]?.sql).toBe('SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))');
     expect(executed[0]?.parameters).toEqual([key]);
+  });
+
+  it('acquires channel locks via advisoryLockKey in global handover -> per-org order, trims segments, and fails fast on empty parts (#5047)', async () => {
+    const { db, executed } = createCapturingDb();
+    const trx = db as unknown as CommandContext['trx'];
+
+    await expect(acquireChannelLocks(trx, '   ', 'whatsapp', '10400000001000')).rejects.toThrow(/non-empty key parts/);
+    await expect(acquireChannelLocks(trx, 'org-1', '   ', '10400000001000')).rejects.toThrow(/non-empty key parts/);
+    await expect(acquireChannelLocks(trx, 'org-1', 'whatsapp', '   ')).rejects.toThrow(/non-empty key parts/);
+    expect(executed).toHaveLength(0);
+
+    await acquireChannelLocks(trx, ' org-1 ', ' whatsapp ', ' 10400000001000 ');
+    await acquireChannelLocks(trx, 'org-2', 'facebook_page', 'page-99');
+    await db.destroy();
+
+    expect(executed.map((q) => q.parameters)).toEqual([
+      ['ludy.whatsapp_handover:10400000001000'],
+      ['crove.channel:org-1:whatsapp:10400000001000'],
+      ['crove.channel:org-2:facebook_page:page-99'],
+    ]);
+  });
+
+  it('keeps stored-row disconnect/revoke locks functional for legacy whitespace-only external_account_id rows (#5047)', async () => {
+    const { db, executed } = createCapturingDb();
+    const trx = db as unknown as CommandContext['trx'];
+
+    await expect(acquireChannelLocksForStoredRow(trx, '   ', 'whatsapp', '   ')).rejects.toThrow(/non-empty key parts/);
+    await expect(acquireChannelLocksForStoredRow(trx, 'org-1', '   ', '   ')).rejects.toThrow(/non-empty key parts/);
+    expect(executed).toHaveLength(0);
+
+    await acquireChannelLocksForStoredRow(trx, 'org-1', 'whatsapp', '   ');
+    await acquireChannelLocksForStoredRow(trx, 'org-2', 'facebook_page', '   ');
+    await acquireChannelLocksForStoredRow(trx, ' org-3 ', ' whatsapp ', ' 10400000009999 ');
+    await db.destroy();
+
+    expect(executed.map((q) => q.parameters)).toEqual([
+      ['ludy.whatsapp_handover:'],
+      ['crove.channel:org-1:whatsapp:'],
+      ['crove.channel:org-2:facebook_page:'],
+      ['ludy.whatsapp_handover:10400000009999'],
+      ['crove.channel:org-3:whatsapp:10400000009999'],
+    ]);
   });
 });

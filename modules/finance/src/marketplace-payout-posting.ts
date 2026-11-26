@@ -70,6 +70,8 @@ const bad = (reason: string, extra: Record<string, unknown> = {}) => new DomainE
 
 const POSITIVE = /^\d+(\.\d{1,4})?$/;
 const SIGNED = /^-?\d+(\.\d{1,4})?$/;
+// Suffix on the `otherReceivable` (1388) debit line for tax withheld by mistake (#4303 S4): fee clearing excludes lines with this suffix (#4336).
+export const WITHHELD_IN_ERROR_MEMO_SUFFIX = ', thuế sàn khấu trừ nhầm';
 
 // The classification of the lines (#4303 S4), checked against the stored lines with no slack. Returns what each kind adds up to; throws when a line is unclassified, classified twice, or classified as what it is not.
 // `other` lines must be above zero and carry an `incentive` or `carrier_compensation`; a line's tax withheld needs `withheld_in_error`, allowed only for a seller that is no household. An adjustment's amount
@@ -166,7 +168,7 @@ function payoutProposalLines(
   if (split && money(split.vat).greaterThan(0)) lines.push({ account: map.vatPayable.code, debit: toMoney(money(split.vat)), credit: '0', partyId: null, memo });
   if (split && money(split.pit).greaterThan(0)) lines.push({ account: map.pitPayable.code, debit: toMoney(money(split.pit)), credit: '0', partyId: null, memo });
   // Tax withheld from a seller that is no household: not a prepayment of its tax, a receivable from the platform (research rule 4; Uncertain (#2520): the refund may come from the tax office).
-  if (kinds.taxInError.greaterThan(0)) lines.push({ account: map.otherReceivable.code, debit: toMoney(kinds.taxInError), credit: '0', partyId: input.partyId, memo: `${memo}, thuế sàn khấu trừ nhầm` });
+  if (kinds.taxInError.greaterThan(0)) lines.push({ account: map.otherReceivable.code, debit: toMoney(kinds.taxInError), credit: '0', partyId: input.partyId, memo: `${memo}${WITHHELD_IN_ERROR_MEMO_SUFFIX}` });
   lines.push({ account: map.receivable.code, debit: '0', credit: toMoney(receivable), partyId: input.partyId, memo });
   // Money the platform paid beyond the sales (#4303 S4): an incentive is other income; a compensation reduces the cost of goods already booked, up to the cost the person stated, and the rest is other income.
   // Below cost the shortfall stays a loss in 632 by itself: no line. The compensation is netted with its receipt here, so it never touches 1388 (research rule 2, direct route; 1381 is not used).

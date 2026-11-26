@@ -8,7 +8,11 @@
 import type { Locale } from '../i18n/locale.ts';
 import type { Translate } from '../i18n/runtime.ts';
 import { KERNEL_LOCALE, kernelErrorMessage } from './kernel-errors.ts';
+import { isMfaRequired, isOrgAccessRevoked, isServerRefusal, isStepUpRequired, isUnauthenticated } from '@ludy/client';
 import { isNetworkFailure } from './network-error.ts';
+
+// The kernel's refusals, read the same way by the mobile app (packages/client).
+export { isMfaRequired, isOrgAccessRevoked, isServerRefusal, isStepUpRequired, isUnauthenticated };
 
 export class ApiError extends Error {
   readonly code: string;
@@ -81,39 +85,11 @@ export function describeError(error: unknown, t: Translate, locale: Locale): str
   return t('common.error');
 }
 
-// The session is valid but has not passed the user's second factor yet (issue #126): the kernel refuses every
-// call until it has. Not a sign-out: the SPA opens the MFA challenge (/mfa, issue #32).
-export function isMfaRequired(error: unknown): boolean {
-  return (error as { code?: string } | null)?.code === 'MFA_REQUIRED';
-}
-
-// The server answered and refused (a 4xx with its code, from the RPC path or a fetch path): nothing it was asked to do was done. A lost response, a timeout or a 5xx says nothing about whether it was done.
-export function isServerRefusal(error: unknown): boolean {
-  const status = (error as { status?: unknown } | null)?.status;
-  return typeof status === 'number' && status >= 400 && status < 500;
-}
-
-// The org's owner revoked this session for that org only (issue #247): leave the org, keep the session.
-export function isOrgAccessRevoked(error: unknown): boolean {
-  return (error as { code?: string } | null)?.code === 'SESSION_REVOKED_IN_ORG';
-}
-
-// R3 work (approve, membership changes) needs a second factor verified in the last 5 minutes (policy P11).
-export function isStepUpRequired(error: unknown): boolean {
-  return (error as { code?: string } | null)?.code === 'STEP_UP_REQUIRED';
-}
-
 // Per-org disabled module refusal (ADR-0053): MODULE_OFF 404 carrying optional `data.module`.
 export function isModuleOff(error: unknown, module?: string): boolean {
   const e = error as { code?: string; data?: { module?: unknown } } | null;
   if (e?.code !== 'MODULE_OFF') return false;
   return module === undefined || e.data?.module === module;
-}
-
-export function isUnauthenticated(error: unknown): boolean {
-  const e = error as { status?: number; code?: string } | null;
-  if (isMfaRequired(error) || isOrgAccessRevoked(error)) return false;
-  return e?.status === 401 || e?.code === 'UNAUTHORIZED' || e?.code === 'UNAUTHENTICATED';
 }
 
 // The kernel completes a few staged uploads at a time and answers 503 UPLOAD_BUSY past that (issue #223), leaving the

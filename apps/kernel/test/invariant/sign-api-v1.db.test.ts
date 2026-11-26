@@ -164,6 +164,7 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
   let appUnentitled!: ReturnType<typeof createHttpApp>;
   let appTightRate!: ReturnType<typeof createHttpApp>;
   let appDefaultPdfLimits!: ReturnType<typeof createHttpApp>;
+  let headroomApp!: ReturnType<typeof createHttpApp>;
   let tightKeyReadLimit!: RateLimiter;
   let tightPdfReads!: ConcurrencyLimiter;
   const store = new MemoryStore();
@@ -395,6 +396,15 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
       },
     });
     appDefaultPdfLimits = createHttpApp({
+      config,
+      runtime,
+      store,
+      authenticate,
+      pool,
+      aiEnabled: false,
+      billing: { entitlements: async () => ['full'] },
+    });
+    headroomApp = createHttpApp({
       config,
       runtime,
       store,
@@ -1899,6 +1909,146 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
     );
     expect(postHeadGet.status).toBe(200);
     await postHeadGet.arrayBuffer();
+
+    // Cross-tenant v1 headroom reservation (#5024, Platform PO note 2): neither 4 held public PDFs + heavy Org A v1
+    // nor 4 heavy Org A v1 downloads + public bursts can starve Org B's 2-slot v1 fair share.
+
+    // Order 1 (public-first): 4 public PDFs held + 2 Org A v1 held -> 3rd Org A v1 gets 503 SIGN_PDF_BUSY, while
+    // Org B still gets 2 concurrent 200 v1 /sealed downloads cleanly.
+    const order1Held: Response[] = [];
+    try {
+      for (const ip of ['198.51.100.130', '198.51.100.130', '198.51.100.131', '198.51.100.131']) {
+        const pubRes = await headroomApp.request('/api/sign/pdf', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+          body: JSON.stringify({ token: pubToken }),
+        });
+        expect(pubRes.status).toBe(200);
+        order1Held.push(pubRes);
+      }
+      for (const ip of ['198.51.100.140', '198.51.100.141']) {
+        const orgARes = await apiGet(
+          `/api/v1/sign/envelopes/${ids.completedEnv}/sealed`,
+          `Bearer ${readOnlySecret}`,
+          headroomApp,
+          ip,
+        );
+        expect(orgARes.status).toBe(200);
+        order1Held.push(orgARes);
+      }
+
+      const orgAThird = await apiGet(
+        `/api/v1/sign/envelopes/${ids.completedEnv}/sealed`,
+        `Bearer ${readOnlySecret}`,
+        headroomApp,
+        '198.51.100.142',
+      );
+      expect(orgAThird.status).toBe(503);
+      await expect(orgAThird.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
+
+      const orgBDownloads = await Promise.all([
+        apiGet(`/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`, `Bearer ${orgBReadSecret}`, headroomApp, '198.51.100.143'),
+        apiGet(`/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`, `Bearer ${orgBReadSecret}`, headroomApp, '198.51.100.144'),
+      ]);
+      for (const orgBRes of orgBDownloads) {
+        expect(orgBRes.status).toBe(200);
+        expect(orgBRes.headers.get('content-type')).toBe('application/pdf');
+        expect((await orgBRes.arrayBuffer()).byteLength).toBeGreaterThan(0);
+      }
+    } finally {
+      await Promise.all(order1Held.map((r) => r.body?.cancel().catch(() => {})));
+    }
+
+    // Order 2 (Org A-first): 4 Org A v1 held + 2 public PDFs held -> 3rd public PDF gets 503 SIGN_PDF_BUSY, while
+    // Org B still gets 2 concurrent 200 v1 /sealed downloads cleanly.
+    const order2Held: Response[] = [];
+    try {
+      for (const ip of ['198.51.100.150', '198.51.100.151', '198.51.100.152', '198.51.100.153']) {
+        const orgARes = await apiGet(
+          `/api/v1/sign/envelopes/${ids.completedEnv}/sealed`,
+          `Bearer ${readOnlySecret}`,
+          headroomApp,
+          ip,
+        );
+        expect(orgARes.status).toBe(200);
+        order2Held.push(orgARes);
+      }
+      for (const ip of ['198.51.100.160', '198.51.100.161']) {
+        const pubRes = await headroomApp.request('/api/sign/pdf', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+          body: JSON.stringify({ token: pubToken }),
+        });
+        expect(pubRes.status).toBe(200);
+        order2Held.push(pubRes);
+      }
+
+      const pubThird = await headroomApp.request('/api/sign/pdf', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.162' },
+        body: JSON.stringify({ token: pubToken }),
+      });
+      expect(pubThird.status).toBe(503);
+      await expect(pubThird.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
+
+      const orgBDownloads = await Promise.all([
+        apiGet(`/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`, `Bearer ${orgBReadSecret}`, headroomApp, '198.51.100.163'),
+        apiGet(`/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`, `Bearer ${orgBReadSecret}`, headroomApp, '198.51.100.164'),
+      ]);
+      for (const orgBRes of orgBDownloads) {
+        expect(orgBRes.status).toBe(200);
+        expect(orgBRes.headers.get('content-type')).toBe('application/pdf');
+        expect((await orgBRes.arrayBuffer()).byteLength).toBeGreaterThan(0);
+      }
+    } finally {
+      await Promise.all(order2Held.map((r) => r.body?.cancel().catch(() => {})));
+    }
+
+    // When Org A holds 4 v1 streams and Org B already holds 2 v1 streams (otherOrgsV1 = 2 >= V1_CROSS_TENANT_HEADROOM),
+    // reservedHeadroom drops to 0 so 2 concurrent public PDF reads succeed (all 8 process slots utilized cleanly).
+    const order3Held: Response[] = [];
+    try {
+      for (const ip of ['198.51.100.170', '198.51.100.171', '198.51.100.172', '198.51.100.173']) {
+        const orgARes = await apiGet(
+          `/api/v1/sign/envelopes/${ids.completedEnv}/sealed`,
+          `Bearer ${readOnlySecret}`,
+          headroomApp,
+          ip,
+        );
+        expect(orgARes.status).toBe(200);
+        order3Held.push(orgARes);
+      }
+      for (const ip of ['198.51.100.174', '198.51.100.175']) {
+        const orgBRes = await apiGet(
+          `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
+          `Bearer ${orgBReadSecret}`,
+          headroomApp,
+          ip,
+        );
+        expect(orgBRes.status).toBe(200);
+        order3Held.push(orgBRes);
+      }
+
+      const publicReads = await Promise.all([
+        headroomApp.request('/api/sign/pdf', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.176' },
+          body: JSON.stringify({ token: pubToken }),
+        }),
+        headroomApp.request('/api/sign/pdf', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.177' },
+          body: JSON.stringify({ token: pubToken }),
+        }),
+      ]);
+      for (const pubRes of publicReads) {
+        expect(pubRes.status).toBe(200);
+        expect(pubRes.headers.get('content-type')).toBe('application/pdf');
+        expect((await pubRes.arrayBuffer()).byteLength).toBeGreaterThan(0);
+      }
+    } finally {
+      await Promise.all(order3Held.map((r) => r.body?.cancel().catch(() => {})));
+    }
 
     // Revoking fullScopeKeyId via RPC cuts access immediately.
     const revRes = await rpc('sign/api_keys/revoke', owner, { apiKeyId: fullScopeKeyId });
