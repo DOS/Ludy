@@ -141,6 +141,8 @@ import { configureOpsAlerts, flushOpsAlerts } from './ops-alert.ts';
 // How long a stop waits for the queued operational alerts to post (#1993).
 const STOP_FLUSH_MS = 5_000;
 import { createPushSender, loadVapidKeys } from './web-push.ts';
+import type { NativePushOutcome, NativePushPayload, NativePushSender, NativePushTarget } from './native-push.ts';
+export type { NativePushOutcome, NativePushPayload, NativePushSender, NativePushTarget };
 import { WORKER_LAG_EXIT_MS, WORKER_LAG_SUSTAIN_MS, startLagWatchdog } from './back-pressure.ts';
 import { bankFeedHostedProviders, bankFeedProviders, type BankFeedProvider } from '@ludy/bank-feed';
 import { hostBoundFetch } from './marketplace-adapter-kit.ts';
@@ -222,6 +224,8 @@ export interface KernelAdapters {
   broker?: CredentialBroker;
   connectors?: readonly Connector[];
   billing?: Billing;
+  // Open mobile native push sender (#4883); unset on self-host so native push stays disabled with no vendor SDKs or secrets.
+  nativePush?: NativePushSender | null;
 }
 
 export type ResolvedAdapters = Required<KernelAdapters>;
@@ -769,6 +773,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     broker: adapters.broker ?? noCredentialBroker,
     connectors: adapters.connectors ?? [],
     billing: adapters.billing ?? selfHostBilling,
+    nativePush: adapters.nativePush ?? null,
   };
 
   function buildRuntime(connectionString: string, applicationName: string, max: number, mcpEntry?: 'worker') {
@@ -920,7 +925,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           // The marketplaces whose signed push the API stores for the worker (#4346, S2 of #4315): only the adapters this deployment runs (MARKETPLACE_PROVIDERS), and only with a credential broker, as the worker's relay needs one
           // to open the connection's secret: without it the route is not registered and no raw push can be stored.
           ...(resolved.broker.id !== 'none' ? { marketplacePush: { adapters: Object.keys(marketplaceProvidersOf(config)).filter(isMarketplacePushAdapter) } } : {}),
-          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', bankFeedHosted: bankFeedHostedOf(config), einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), misaAmis: Boolean(config.MISA_AMIS_CLIENT_ID), misaAsp: Boolean(config.MISA_ASP_CLIENT_ID), misaAmisPush: Boolean(config.MISA_AMIS_CLIENT_ID) && config.MISA_AMIS_PUSH === 'on', misaAspPush: Boolean(config.MISA_ASP_CLIENT_ID) && config.MISA_ASP_PUSH === 'on', emailSenderCheck: Boolean(config.INBOUND_AUTHSERV_ID), adsLaunchProviders: Object.keys(adWritersOf(config)), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', ...(whatsappApp(config) && config.CHANNEL_WHATSAPP_VERIFY_TOKEN ? { whatsapp: whatsappApp(config) } : {}), connectors: channelConnectors(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), publicUrl: appUrl(config), apiUrl: config.PUBLIC_URL, ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
+          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', bankFeedHosted: bankFeedHostedOf(config), einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), misaAmis: Boolean(config.MISA_AMIS_CLIENT_ID), misaAsp: Boolean(config.MISA_ASP_CLIENT_ID), misaAmisPush: Boolean(config.MISA_AMIS_CLIENT_ID) && config.MISA_AMIS_PUSH === 'on', misaAspPush: Boolean(config.MISA_ASP_CLIENT_ID) && config.MISA_ASP_PUSH === 'on', emailSenderCheck: Boolean(config.INBOUND_AUTHSERV_ID), adsLaunchProviders: Object.keys(adWritersOf(config)), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', ...(whatsappApp(config) && config.CHANNEL_WHATSAPP_VERIFY_TOKEN ? { whatsapp: whatsappApp(config) } : {}), connectors: channelConnectors(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), publicUrl: appUrl(config), apiUrl: config.PUBLIC_URL, ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}), ...(resolved.nativePush ? { nativePush: true } : {}) },
           ...(stream ? { stream } : {}),
           // An API process of its own waits in /readyz for its workers' build (#1952); the single "all" process is its
           // own worker, so it has none to wait for.
@@ -987,6 +992,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             ...(transcribeEnabled(config) ? { meetingsTranscribe: { provider: { baseURL: config.TRANSCRIBE_BASE_URL as string, apiKey: config.TRANSCRIBE_API_KEY ?? null, model: config.TRANSCRIBE_MODEL as string, mode: config.TRANSCRIBE_API_MODE }, measurer: mediaMeasurerFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS) } } : {}),
             outboxLagPauseSeconds: config.OUTBOX_LAG_PAUSE_SECONDS,
             ...(vapid ? { push: { sender: createPushSender(vapid), brand: config.BRAND_NAME } } : {}),
+            ...(resolved.nativePush ? { nativePush: resolved.nativePush } : {}),
           }),
         );
         // The worker watchdog (#894, plan §4.9): a loop blocked over 5 s for 30 s exits the process, which restarts.

@@ -2826,6 +2826,42 @@ export const zPushSubscribe = z.strictObject({
   label: z.string().max(200).optional(),
 });
 
+// Mobile native push (#4883, ADR-0059): scoped APNs/FCM device registration bound to the signed-in session.
+// Tokens are opaque device registration tokens (never returned by queries, never logged or audited).
+export const NATIVE_PUSH_PLATFORMS = ['apns', 'fcm'] as const;
+export const zNativePushPlatform = z.enum(NATIVE_PUSH_PLATFORMS);
+export type NativePushPlatform = z.infer<typeof zNativePushPlatform>;
+
+export const zNativePushDeviceSummary = z.object({
+  id: zId,
+  platform: zNativePushPlatform,
+  label: z.string().nullable(),
+  createdAt: z.string(),
+  lastUsedAt: z.string().nullable(),
+  current: z.boolean(),
+});
+
+export const zNativePushStatus = z.object({
+  enabled: z.boolean(),
+  registered: z.boolean(),
+  devices: z.array(zNativePushDeviceSummary),
+});
+
+const noNulChar = (value: string) => !value.includes('\0');
+const zNativePushToken = z.string().trim().min(16).max(4096).regex(/^\S+$/).refine(noNulChar, 'Invalid control character');
+
+export const zNativePushRegister = z.strictObject({
+  platform: zNativePushPlatform,
+  token: zNativePushToken,
+  label: z.string().trim().min(1).max(120).refine(noNulChar, 'Invalid control character').optional(),
+});
+
+export const zNativePushUnregister = z.union([
+  z.strictObject({ id: zId }),
+  z.strictObject({ platform: zNativePushPlatform, token: zNativePushToken }),
+  z.strictObject({ current: z.literal(true) }),
+]);
+
 // Who follows a channel's account (#1146), as Instagram and Threads give it: shares of the followers by age bucket
 // ("18-24"), gender ("F", "M", "U"), city as the platform names it, and country (ISO 3166-1 alpha-2), each with how
 // many followers it holds. Cities and countries are the 10 largest. The bounds keep a snapshot well under the

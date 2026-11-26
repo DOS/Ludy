@@ -37,6 +37,7 @@ import { systemMeter } from './ai-meter.ts';
 import { jobGroup, jobKey, systemJobKey } from './job-keys.ts';
 import { runLinkPreviewJob } from './link-preview.ts';
 import { runPushJob, type PushSender } from './web-push.ts';
+import { NATIVE_PUSH_SWEEP_MS, enqueueNativePushes, runNativePushJob, type NativePushJob, type NativePushSender } from './native-push.ts';
 import { DEFAULT_EXPORT_RETENTION_DAYS, runOrgExport } from './org-export.ts';
 import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging, sweepTmpBlobs } from './retention.ts';
@@ -711,6 +712,8 @@ export interface WorkerDeps {
   // Browser push for Social notifications (#1238): the sender with the deployment's VAPID keys and the product name
   // the push shows as its title. Unset: no push is queued or sent.
   push?: { sender: PushSender; brand: string };
+  // Open mobile native push sender (#4883); unset on self-host keeps native push disabled.
+  nativePush?: NativePushSender;
   // The WORM fact stream (worm.ts, #891): the store batches go to and how long after a row is written it is archived.
   // Unset: nothing is archived.
   // restoreAlertDays: days the verifier alerts on a restore acknowledgement after the store wrote it (#2020).
@@ -2236,6 +2239,36 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     conversationPublishers && conversationBroker
       ? { broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined) }
       : undefined;
+  let stopped = false;
+  let pushingNative = false;
+  let nativePushFull = false;
+  const nativePushOrgs = new Set<string>();
+  const nativePushSweep = async (orgId?: string) => {
+    if (stopped) return;
+    if (orgId) nativePushOrgs.add(orgId);
+    else nativePushFull = true;
+    if (pushingNative) return;
+    pushingNative = true;
+    try {
+      while (!stopped && (nativePushFull || nativePushOrgs.size > 0)) {
+        if (nativePushFull) {
+          nativePushFull = false;
+          nativePushOrgs.clear();
+          await relayBatch(deps.workerDb, boss, async (trx) => [(onBatch) => enqueueNativePushes(onBatch, trx)]);
+          continue;
+        }
+        const nextOrg = nativePushOrgs.values().next().value;
+        if (!nextOrg) break;
+        nativePushOrgs.delete(nextOrg);
+        await relayBatch(deps.workerDb, boss, async (trx) => [(onBatch) => enqueueNativePushes(onBatch, trx, undefined, nextOrg)]);
+      }
+    } catch (error) {
+      console.warn('[native-push] sweep', error instanceof Error ? error.name : 'error');
+    } finally {
+      pushingNative = false;
+    }
+  };
+
   if (conversationPublishers && conversationBroker) {
     await boss.work<ConversationJob | ConversationSyncJob | ConversationAttachmentJob | ConversationChatJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
@@ -2264,6 +2297,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (job.data.action === 'history' || job.data.action === 'profile') {
         const outcome = await runConversationSync(sendDeps, job.data);
         console.log(`[conversations] ${job.data.action} ${job.data.action === 'profile' ? job.data.identityId : job.data.connectionId}: ${outcome}`);
+        if (deps.nativePush) void nativePushSweep(job.data.orgId);
         return;
       }
       const outcome = await runConversationJob(sendDeps, job.data);
@@ -2327,7 +2361,19 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         console.warn(`[kernel-push] ${job.data.eventId.slice(0, 8)} not queued`, error instanceof Error ? error.name : 'error');
       }
     }
+    if (deps.nativePush && job.data.type === 'kernel.proposal.created') void nativePushSweep(job.data.orgId);
   });
+
+  // Mobile native push (#4883): send content-free notification payloads via the configured NativePushSender adapter.
+  if (deps.nativePush) {
+    const nativePush = deps.nativePush;
+    const nativePushCheckUpstream = deps.runtime.sessionMode === 'db';
+    await boss.work<NativePushJob>(QUEUES.nativePush, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const done = await runNativePushJob({ runtime: deps.runtime, sender: nativePush, orgId: job.data.orgId, notificationId: job.data.notificationId, checkUpstream: nativePushCheckUpstream });
+      if (done.sent + done.gone + done.failed > 0) console.log(`[native-push] ${job.data.notificationId.slice(0, 8)}: sent ${done.sent}, gone ${done.gone}, failed ${done.failed}`);
+    });
+  }
 
   // Browser push of a kernel notification (#3736): read what to send, post it to each of the member's devices, record the answers.
   if (deps.push) {
@@ -2691,6 +2737,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     try {
       const done = await sweepMcpProposalNotices({ runtime: deps.runtime, workerDb: deps.workerDb });
       if (done > 0) console.log(`[mcp-proposal-notice] told the approvers of ${done} proposal(s)`);
+      if (done > 0 && deps.nativePush) void nativePushSweep();
     } catch (error) {
       console.error('[mcp-proposal-notice] sweep', error instanceof Error ? error.name : 'error');
     } finally {
@@ -2699,6 +2746,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   };
   const mcpProposalNoticeTimer = setInterval(() => void mcpProposalNoticeSweep(), MCP_PROPOSAL_NOTICE_SWEEP_MS);
   void mcpProposalNoticeSweep();
+  const nativePushTimer = deps.nativePush ? setInterval(() => void nativePushSweep(), NATIVE_PUSH_SWEEP_MS) : null;
 
   // The Engage reads of an AI app (#4069): a person who connected one before the consent screen named them is told once, in the app.
   let engageNoticing = false;
@@ -3144,7 +3192,6 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       .catch((error: unknown) => console.error(`[social-chat-alert] event ${row.event_id.slice(0, 8)}: not queued (${error instanceof Error ? error.name : typeof error})`));
 
   let running = false;
-  let stopped = false;
   const relay = async () => {
     if (running || stopped) return;
     running = true;
@@ -3966,7 +4013,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (ads) await runAdsDeletions({ runtime: deps.runtime, workerDb: deps.workerDb });
       // The notices the webhook parked (#2303): stored under their connections' orgs, then deleted. Nothing is waiting where
       // no connection has a platform that sends them.
-      await runConversationIntake({ workerDb: deps.workerDb, runtime: deps.runtime, businessLookup });
+      const intake = await runConversationIntake({ workerDb: deps.workerDb, runtime: deps.runtime, businessLookup });
+      if (deps.nativePush && intake.stored > 0) void nativePushSweep();
       // Meta's data deletion requests that name conversations (CV6, #2305), the same callback as the Ads one above.
       await runConversationDeletions({ runtime: deps.runtime, workerDb: deps.workerDb });
       await sweepStaleReplies({ workerDb: deps.workerDb, runtime: deps.runtime });
@@ -4077,6 +4125,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     }
   };
   const heldTimer = setInterval(() => void heldSweep(), HELD_SWEEP_MS);
+  if (nativePushTimer) void nativePushSweep();
   console.log('[worker] started');
 
   return async () => {
@@ -4102,6 +4151,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (missingInvoiceTimer) clearInterval(missingInvoiceTimer);
     clearInterval(proposalNudgeTimer);
     clearInterval(mcpProposalNoticeTimer);
+    if (nativePushTimer) clearInterval(nativePushTimer);
     clearInterval(mcpEngageReadsNoticeTimer);
     clearInterval(securityTimer);
     if (closingTimer) clearInterval(closingTimer);
