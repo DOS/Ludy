@@ -84,4 +84,17 @@ describe('wordReminder', () => {
     const ok = setup(async () => ({ kind: 'words', words: WORDS }), budget);
     expect((await wordReminder(ok.ai, ORG, USER, FACTS, undefined)).ai).toBe('used');
   });
+
+  it('enforces the deterministic no-digit and no-link check even if a reader returns unchecked words', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const withDigits = setup(async () => ({ kind: 'words', words: { lead: 'Quý khách còn nợ 500.000 đồng.', closing: WORDS.closing } }));
+    expect(await wordReminder(withDigits.ai, ORG, USER, FACTS, undefined)).toEqual({ ai: 'failed', words: null });
+    const withLink = setup(async () => ({ kind: 'words', words: { lead: WORDS.lead, closing: 'Thanh toán tại https://evil.test/pay.' } }));
+    expect(await wordReminder(withLink.ai, ORG, USER, FACTS, undefined)).toEqual({ ai: 'failed', words: null });
+    const logged = JSON.stringify(log.mock.calls);
+    expect(logged).toContain('FIGURES');
+    expect(logged).toContain('LINK');
+    expect(logged).not.toContain('500.000');
+    expect(logged).not.toContain('evil.test');
+  });
 });

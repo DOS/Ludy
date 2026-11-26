@@ -8,7 +8,8 @@
 // - what is still owed is the customer's balance on 131 (reversals counted, as the customers list does), laid over the customer's
 //   invoices newest first: the oldest invoices are taken as paid first. Whatever balance no invoice covers (an opening balance, a
 //   manual journal) is `other`: shown to the person, never worded into a reminder.
-import { Decimal } from '@ludy/l10n-vn';
+import { Decimal, money } from '@ludy/l10n-vn';
+import { canonical } from './money.ts';
 
 export const PAYMENT_TERMS_DAYS = 30;
 // A customer's notice level by the days its oldest overdue invoice is late: first from the first day, second from the 15th, final from the 30th.
@@ -27,11 +28,17 @@ export interface SaleInvoice {
   // The invoice total in the book currency, a decimal string.
   total: string;
   currency: string;
+  // The invoice total in its own currency when foreign (#918, #2491), a decimal string; null when in the book currency.
+  foreignTotal?: string | null;
 }
 
 export interface OpenInvoice extends SaleInvoice {
-  // What is still owed on this invoice, a decimal string, at most its total.
+  // What is still owed on this invoice in the book currency, a decimal string, at most its total.
   amountDue: string;
+  // Normalized foreign_total when positive, else null.
+  foreignTotal: string | null;
+  // What is still owed in the invoice's own foreign currency (exact when unpaid), or null when partially paid or unrecorded.
+  foreignAmountDue: string | null;
   dueDate: string;
   // Whole days past the due date as of today (0 or less: not yet due).
   daysOverdue: number;
@@ -72,6 +79,22 @@ function newestFirst(a: SaleInvoice, b: SaleInvoice): number {
   return bySeries !== 0 ? bySeries : b.id.localeCompare(a.id);
 }
 
+function allocateForeign(
+  invoice: SaleInvoice,
+  total: InstanceType<typeof Decimal>,
+  due: InstanceType<typeof Decimal>,
+): { foreignTotal: string | null; foreignAmountDue: string | null } {
+  if (invoice.foreignTotal === null || invoice.foreignTotal === undefined) {
+    return { foreignTotal: null, foreignAmountDue: null };
+  }
+  const foreign = money(invoice.foreignTotal);
+  if (foreign.lessThanOrEqualTo(0)) return { foreignTotal: null, foreignAmountDue: null };
+  const foreignTotal = canonical(foreign);
+  // Only an unpaid invoice has an exact foreign balance; partial receipts post to 131 in book currency only, so never estimate or assume foreign minor units.
+  if (due.equals(total)) return { foreignTotal, foreignAmountDue: foreignTotal };
+  return { foreignTotal, foreignAmountDue: null };
+}
+
 // Lays the customer's 131 balance over its invoices, newest first, and dates each against today. A balance at or below zero (a credit,
 // or nothing owed) leaves no invoice open.
 export function allocateReceivable(invoices: readonly SaleInvoice[], balance: string, today: string, termsDays: number = PAYMENT_TERMS_DAYS): Receivable {
@@ -84,7 +107,8 @@ export function allocateReceivable(invoices: readonly SaleInvoice[], balance: st
     const due = Decimal.min(total, left);
     left = left.minus(due);
     const dueDate = addDays(invoice.date, termsDays);
-    open.push({ ...invoice, amountDue: due.toFixed(), dueDate, daysOverdue: daysBetween(dueDate, today) });
+    const { foreignTotal, foreignAmountDue } = allocateForeign(invoice, total, due);
+    open.push({ ...invoice, amountDue: due.toFixed(), foreignTotal, foreignAmountDue, dueDate, daysOverdue: daysBetween(dueDate, today) });
   }
   return { open: open.reverse(), other: left.toFixed() };
 }
@@ -95,6 +119,32 @@ export function overdueOf(receivable: Receivable): OpenInvoice[] {
 
 export function totalOf(invoices: readonly { amountDue: string }[]): string {
   return invoices.reduce((sum, i) => sum.plus(i.amountDue), new Decimal(0)).toFixed();
+}
+
+// Overdue foreign amounts owed, grouped per invoice currency (excluding book currency) via decimal.js.
+export function foreignTotalsOf(
+  invoices: readonly Pick<OpenInvoice, 'currency' | 'foreignAmountDue'>[],
+  bookCurrency: string,
+): Array<{ currency: string; amountDue: string }> {
+  const book = bookCurrency.trim().toUpperCase();
+  const byCurrency = new Map<string, InstanceType<typeof Decimal>>();
+  for (const invoice of invoices) {
+    const currency = invoice.currency.trim().toUpperCase();
+    if (currency === book || invoice.foreignAmountDue === null) continue;
+    byCurrency.set(currency, (byCurrency.get(currency) ?? new Decimal(0)).plus(money(invoice.foreignAmountDue)));
+  }
+  return [...byCurrency.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([currency, amount]) => ({ currency, amountDue: canonical(amount) }));
+}
+
+// True only when every overdue invoice is in a foreign currency and has a computable non-zero foreign amount due.
+export function allForeignAmountsOf(
+  invoices: readonly Pick<OpenInvoice, 'currency' | 'foreignAmountDue'>[],
+  bookCurrency: string,
+): boolean {
+  const book = bookCurrency.trim().toUpperCase();
+  return invoices.length > 0 && invoices.every((i) => i.currency.trim().toUpperCase() !== book && i.foreignAmountDue !== null);
 }
 
 // The notice level of a customer: by the oldest of its overdue invoices. Null when none is overdue.
