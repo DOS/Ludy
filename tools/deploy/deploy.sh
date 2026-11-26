@@ -750,32 +750,42 @@ dc_prev_config() {
 # the project that actually created them, even if .env was already edited to ludy) or saved state_dir/project (#3972).
 # Prints project name (possibly empty on fresh checkout) and returns 0, or returns 1 if Docker inspection fails.
 detect_prev_project() {
-  local wdir canon_dir ps_out cid c_proj still_exists
-  local -a dirs=("$DEPLOY_DIR")
+  local saved_proj wdir canon_dir filter_svc ps_out cid c_proj still_exists
+  local -a dirs=("$DEPLOY_DIR") cids=()
+  saved_proj="$(read_state project)"
+  if [ -n "$saved_proj" ]; then
+    printf '%s' "$saved_proj"
+    return 0
+  fi
   canon_dir="$(cd -P "$DEPLOY_DIR" 2>/dev/null && pwd -P || true)"
   if [ -n "$canon_dir" ] && [ "$canon_dir" != "$DEPLOY_DIR" ]; then
     dirs+=("$canon_dir")
   fi
   for wdir in "${dirs[@]}"; do
-    ps_out="$(docker ps -a -q --filter "label=com.docker.compose.project.working_dir=$wdir" --filter 'label=com.docker.compose.service=db' 2>/dev/null)" || return 1
-    cid="$(printf '%s\n' "$ps_out" | head -n 1)"
-    if [ -z "$cid" ]; then
-      ps_out="$(docker ps -a -q --filter "label=com.docker.compose.project.working_dir=$wdir" 2>/dev/null)" || return 1
-      cid="$(printf '%s\n' "$ps_out" | head -n 1)"
-    fi
-    if [ -n "$cid" ]; then
-      if ! c_proj="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$cid" 2>/dev/null)"; then
-        still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 1
-        [ -z "$still_exists" ] || return 1
-        continue
+    for filter_svc in 'label=com.docker.compose.service=db' ''; do
+      if [ -n "$filter_svc" ]; then
+        ps_out="$(docker ps -a -q --filter "label=com.docker.compose.project.working_dir=$wdir" --filter "$filter_svc" 2>/dev/null)" || return 1
+      else
+        ps_out="$(docker ps -a -q --filter "label=com.docker.compose.project.working_dir=$wdir" 2>/dev/null)" || return 1
       fi
-      if [ -n "$c_proj" ]; then
+      [ -n "$ps_out" ] || continue
+      mapfile -t cids <<<"$ps_out"
+      for cid in "${cids[@]}"; do
+        [ -n "$cid" ] || continue
+        if ! c_proj="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$cid" 2>/dev/null)"; then
+          still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 1
+          [ -z "$still_exists" ] || return 1
+          continue
+        fi
+        case "$c_proj" in
+          '' | *-restore-test | crove-restore-* | ludy-restore-*) continue ;;
+        esac
         printf '%s' "$c_proj"
         return 0
-      fi
-    fi
+      done
+    done
   done
-  read_state project
+  return 0
 }
 
 # Inspects existing Compose config with prior release images exported in this call only (#3972).
@@ -932,6 +942,17 @@ activate() {
     fi
   fi
   # The three files are moved in a row, so a plain `docker compose` (the backup cron) sees them together as nearly as it can.
+  if [ -n "$COMPOSE_PROJECT_OVERRIDE" ] && plain_compose_omits_override_and_project; then
+    local base_yaml_name=''
+    base_yaml_name="$(compose_file_yaml_name "$DEPLOY_DIR/docker-compose.yml.tmp")"
+    if [ "$base_yaml_name" != "$COMPOSE_PROJECT_OVERRIDE" ]; then
+      {
+        printf 'name: %s\n' "$COMPOSE_PROJECT_OVERRIDE"
+        grep -v -E '^name:' "$DEPLOY_DIR/docker-compose.yml.tmp" || true
+      } >"$DEPLOY_DIR/docker-compose.yml.proj"
+      mv -f "$DEPLOY_DIR/docker-compose.yml.proj" "$DEPLOY_DIR/docker-compose.yml.tmp"
+    fi
+  fi
   if [ -f "$DEPLOY_DIR/compose.pilot.yml.tmp" ]; then mv -f "$DEPLOY_DIR/compose.pilot.yml.tmp" "$DEPLOY_DIR/compose.pilot.yml"; fi
   mv -f "$DEPLOY_DIR/docker-compose.yml.tmp" "$DEPLOY_DIR/docker-compose.yml"
   mv -f "$DEPLOY_DIR/docker-compose.override.yml.tmp" "$DEPLOY_DIR/docker-compose.override.yml"
@@ -1378,10 +1399,115 @@ normalize_pgdata_subpath() {
   esac
 }
 
-# Resolves normalized PGDATA subpath under /var/lib/postgresql/data from service $svc in Compose config YAML.
+# Reads the top-level `name:` scalar from a compose YAML file (trimmed/unquoted, empty if absent).
+compose_file_yaml_name() {
+  local file="$1" val=''
+  [ -f "$file" ] || return 0
+  val="$(sed -n -E 's/\r$//; s/[[:space:]]+#.*$//; s/^name:[[:space:]]*//p' "$file" | head -n 1 || true)"
+  unquote_compose_scalar "$val"
+}
+
+# Returns 0 when COMPOSE_FILE omits docker-compose.override.yml and .env defines no COMPOSE_PROJECT_NAME (#3972).
+plain_compose_omits_override_and_project() {
+  local cf_val=''
+  cf_val="$(env_compose_file_value || true)"
+  [ -n "$cf_val" ] && ! env_compose_file_lists docker-compose.override.yml && ! env_var_is_set COMPOSE_PROJECT_NAME
+}
+
+# Reads resolved image reference for service $svc from Compose config YAML.
+compose_service_image() {
+  local config_out="$1" target_svc="$2" line section='' in_svc=0 raw=''
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ ^([a-zA-Z0-9_-]+):([[:space:]]*.*)?$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      in_svc=0
+      continue
+    fi
+    if [ "$section" = services ]; then
+      if [[ "$line" =~ ^[[:space:]]{2}([a-zA-Z0-9._-]+):([[:space:]]*(#.*)?)?$ ]]; then
+        if [ "${BASH_REMATCH[1]}" = "$target_svc" ]; then in_svc=1; else in_svc=0; fi
+        continue
+      fi
+      if ((in_svc)) && [[ "$line" =~ ^[[:space:]]{4}image:[[:space:]]*(.+)$ ]]; then
+        raw="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+        if [ -n "$raw" ] && [ "$raw" != 'null' ]; then
+          printf '%s' "$raw"
+          return 0
+        fi
+      fi
+    fi
+  done <<<"$config_out"
+  return 1
+}
+
+# Inspects local image metadata for default ENV PGDATA (empty if unavailable or unset).
+image_env_pgdata() {
+  local img="$1" env_out line found=0 raw=''
+  [ -n "$img" ] || return 1
+  env_out="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$img" 2>/dev/null)" || return 1
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    case "$line" in
+      PGDATA=*) found=1; raw="${line#PGDATA=}" ;;
+    esac
+  done <<<"$env_out"
+  ((found)) || return 1
+  printf '%s' "$raw"
+}
+
+# Returns 0 with the first nested target path under /var/lib/postgresql/data/* mounted on service db (#3972).
+compose_nested_db_mount() {
+  local config_out="$1" line section='' in_db=0 in_vols=0 tgt=''
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ ^([a-zA-Z0-9_-]+):([[:space:]]*.*)?$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      in_db=0; in_vols=0
+      continue
+    fi
+    if [ "$section" = services ]; then
+      if [[ "$line" =~ ^[[:space:]]{2}([a-zA-Z0-9._-]+):([[:space:]]*(#.*)?)?$ ]]; then
+        if [ "${BASH_REMATCH[1]}" = db ]; then in_db=1; else in_db=0; fi
+        in_vols=0
+        continue
+      fi
+      if ((in_db)); then
+        if [[ "$line" =~ ^[[:space:]]{4}volumes:[[:space:]]*(\[\][[:space:]]*)?$ ]]; then
+          in_vols=1
+          continue
+        elif [[ "$line" =~ ^[[:space:]]{4}[a-zA-Z0-9._-]+: ]]; then
+          in_vols=0
+          continue
+        fi
+        if ((in_vols)); then
+          tgt=''
+          if [[ "$line" =~ ^[[:space:]]*-[[:space:]]+target:[[:space:]]*(.+)$ ]] || [[ "$line" =~ ^[[:space:]]+target:[[:space:]]*(.+)$ ]]; then
+            tgt="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+          elif [[ "$line" =~ ^[[:space:]]*-[[:space:]]+([^:]+):([^:]+)(:[^:]*)?$ ]]; then
+            tgt="$(unquote_compose_scalar "${BASH_REMATCH[2]}")"
+          fi
+          tgt="${tgt%/}"
+          if [[ "$tgt" == /var/lib/postgresql/data/* ]]; then
+            printf '%s' "$tgt"
+            return 0
+          fi
+        fi
+      fi
+    fi
+  done <<<"$config_out"
+  return 1
+}
+
+# Resolves normalized PGDATA subpath under /var/lib/postgresql/data from service $svc (or its image ENV PGDATA).
 compose_service_pgdata_subpath() {
-  local config_out="$1" svc="$2" pg=''
+  local config_out="$1" svc="$2" pg='' img=''
   pg="$(compose_service_env_value "$config_out" "$svc" PGDATA 2>/dev/null || true)"
+  if [ -z "$pg" ]; then
+    if img="$(compose_service_image "$config_out" "$svc" 2>/dev/null)" && [ -n "$img" ]; then
+      pg="$(image_env_pgdata "$img" 2>/dev/null || true)"
+    fi
+  fi
   normalize_pgdata_subpath "$pg"
 }
 
@@ -1793,12 +1919,12 @@ mount_data_migrated() {
     --entrypoint node "$probe_image" -e "$js" >/dev/null 2>&1
 }
 
-# Inspects existing Docker containers belonging to $DEPLOY_DIR and captures their actual mounted sources and PGDATA (#3972).
-PREV_CTR_DB='' PREV_CTR_FILES='' PREV_CTR_KEYS='' PREV_CTR_ARCHIVE='' PREV_CTR_PGDATA='' PREV_CTR_PGDATA_SET=0
+# Inspects existing Docker containers belonging to $DEPLOY_DIR (scoped to $target_proj when given) and captures their actual mounted sources and PGDATA (#3972).
+PREV_CTR_DB='' PREV_CTR_FILES='' PREV_CTR_KEYS='' PREV_CTR_ARCHIVE='' PREV_CTR_PGDATA='' PREV_CTR_PGDATA_SET=0 PREV_CTR_NESTED_DB=''
 detect_prev_container_mounts() {
-  local wdir canon_dir ps_out cid mounts_out hc_json hc_subpaths env_out env_line still_exists m_dst m_type m_name m_src spec subpath h_tgt h_type h_src h_sub seen_specs has_db_mount found_pg raw_pg norm_pg
+  local target_proj="${1:-}" wdir canon_dir ps_out cid c_proj mounts_out hc_json hc_subpaths env_out env_line still_exists m_dst m_type m_name m_src spec subpath h_tgt h_type h_src h_sub seen_specs has_db_mount found_pg raw_pg norm_pg
   local -a dirs=("$DEPLOY_DIR") cids=()
-  PREV_CTR_DB='' PREV_CTR_FILES='' PREV_CTR_KEYS='' PREV_CTR_ARCHIVE='' PREV_CTR_PGDATA='' PREV_CTR_PGDATA_SET=0
+  PREV_CTR_DB='' PREV_CTR_FILES='' PREV_CTR_KEYS='' PREV_CTR_ARCHIVE='' PREV_CTR_PGDATA='' PREV_CTR_PGDATA_SET=0 PREV_CTR_NESTED_DB=''
   canon_dir="$(cd -P "$DEPLOY_DIR" 2>/dev/null && pwd -P || true)"
   if [ -n "$canon_dir" ] && [ "$canon_dir" != "$DEPLOY_DIR" ]; then
     dirs+=("$canon_dir")
@@ -1809,6 +1935,17 @@ detect_prev_container_mounts() {
     mapfile -t cids <<<"$ps_out"
     for cid in "${cids[@]}"; do
       [ -n "$cid" ] || continue
+      if ! c_proj="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$cid" 2>/dev/null)"; then
+        still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 1
+        [ -z "$still_exists" ] || return 1
+        continue
+      fi
+      case "$c_proj" in
+        *-restore-test | crove-restore-* | ludy-restore-*) continue ;;
+      esac
+      if [ -n "$target_proj" ] && [ "$c_proj" != "$target_proj" ]; then
+        continue
+      fi
       if ! mounts_out="$(docker inspect --format '{{range .Mounts}}{{.Destination}}|{{.Type}}|{{.Name}}|{{.Source}}{{"\n"}}{{end}}' "$cid" 2>/dev/null)"; then
         still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 1
         [ -z "$still_exists" ] || return 1
@@ -1856,6 +1993,7 @@ detect_prev_container_mounts() {
         seen_specs="$(append_unique_line "$seen_specs" "${m_dst}|${spec}")"
         case "$m_dst" in
           /var/lib/postgresql/data) PREV_CTR_DB="$(append_unique_line "$PREV_CTR_DB" "$spec")"; has_db_mount=1 ;;
+          /var/lib/postgresql/data/*) if [ -z "$PREV_CTR_NESTED_DB" ]; then PREV_CTR_NESTED_DB="$m_dst"; fi ;;
           /data/files) PREV_CTR_FILES="$(append_unique_line "$PREV_CTR_FILES" "$spec")" ;;
           /data/keys) PREV_CTR_KEYS="$(append_unique_line "$PREV_CTR_KEYS" "$spec")" ;;
           /data/archive) PREV_CTR_ARCHIVE="$(append_unique_line "$PREV_CTR_ARCHIVE" "$spec")" ;;
@@ -1869,6 +2007,7 @@ detect_prev_container_mounts() {
           if ! printf '%s\n' "$seen_specs" | grep -qx -F -- "${h_tgt}|${spec}"; then
             case "$h_tgt" in
               /var/lib/postgresql/data) PREV_CTR_DB="$(append_unique_line "$PREV_CTR_DB" "$spec")"; has_db_mount=1 ;;
+              /var/lib/postgresql/data/*) if [ -z "$PREV_CTR_NESTED_DB" ]; then PREV_CTR_NESTED_DB="$h_tgt"; fi ;;
               /data/files) PREV_CTR_FILES="$(append_unique_line "$PREV_CTR_FILES" "$spec")" ;;
               /data/keys) PREV_CTR_KEYS="$(append_unique_line "$PREV_CTR_KEYS" "$spec")" ;;
               /data/archive) PREV_CTR_ARCHIVE="$(append_unique_line "$PREV_CTR_ARCHIVE" "$spec")" ;;
@@ -1976,9 +2115,14 @@ resolve_prev_mount_specs() {
   compose_active_target_mounts "$prev_config" "$prev_proj" "$target" "$svcs"
 }
 
-# Verifies new Compose layout constraints (valid PGDATA, no subpaths, aligned api/worker persistent mounts) (#3972).
+# Verifies new Compose layout constraints (no nested PGDATA mounts, valid PGDATA, no subpaths, aligned api/worker mounts) (#3972).
 check_new_storage_layout() {
-  local new_config="$1" active_proj="$2" new_db="$3" name="$4" current="$5" new_pgdata_sub='' target svc m api_has worker_has api_m worker_m is_local=0
+  local new_config="$1" active_proj="$2" new_db="$3" name="$4" current="$5" nested_db='' new_pgdata_sub='' target svc m api_has worker_has api_m worker_m is_local=0
+  if nested_db="$(compose_nested_db_mount "$new_config")"; then
+    restore_pre_activate "$current"
+    record "deploy $name failed: nested mount under /var/lib/postgresql/data ($nested_db)"
+    die "$EXIT_FAILED" "unsupported nested mount at $nested_db under /var/lib/postgresql/data; mount a single volume or bind path at /var/lib/postgresql/data before deploying"
+  fi
   if ! new_pgdata_sub="$(compose_service_pgdata_subpath "$new_config" db)"; then
     restore_pre_activate "$current"
     record "deploy $name failed: invalid db PGDATA path"
@@ -2012,7 +2156,17 @@ check_new_storage_layout() {
 # Verifies prior DB isolation, cluster parity, and persistent mount parity before starting new DB (#3972).
 verify_storage_cutover() {
   local prev_config="$1" prev_proj="$2" new_config="$3" active_proj="$4" new_db="$5" image="$6" name="$7" current="$8" use_overrides="${9:-1}"
-  local prev_pgdata_sub='' new_pgdata_sub='' cfg_prev_db='' prev_db_specs='' prev_db='' src_rc=0 dst_rc=0 free_rc=0 target svc cfg_prev_m prev_specs prev_m new_specs new_m
+  local nested_prev_db='' prev_pgdata_sub='' new_pgdata_sub='' cfg_prev_db='' prev_db_specs='' prev_db='' src_rc=0 dst_rc=0 free_rc=0 target svc cfg_prev_m prev_specs prev_m new_specs new_m
+  if nested_prev_db="$(compose_nested_db_mount "$prev_config")"; then
+    restore_pre_activate "$current"
+    record "deploy $name failed: prior nested mount under /var/lib/postgresql/data ($nested_prev_db)"
+    die "$EXIT_FAILED" "unsupported nested mount at $nested_prev_db under /var/lib/postgresql/data in prior stack ($prev_proj); consolidate onto a single /var/lib/postgresql/data mount before deploying"
+  fi
+  if [ "$use_overrides" = 1 ] && [ -n "$PREV_CTR_NESTED_DB" ]; then
+    restore_pre_activate "$current"
+    record "deploy $name failed: running container has nested mount under /var/lib/postgresql/data ($PREV_CTR_NESTED_DB)"
+    die "$EXIT_FAILED" "unsupported nested mount at $PREV_CTR_NESTED_DB under /var/lib/postgresql/data on existing container; consolidate onto a single /var/lib/postgresql/data mount before deploying"
+  fi
   if ! prev_pgdata_sub="$(resolve_prev_pgdata_sub "$prev_config" "$use_overrides")"; then
     restore_pre_activate "$current"
     record "deploy $name failed: invalid prior db PGDATA path"
@@ -3125,13 +3279,6 @@ recover() {
   fi
   log "rolling back to $target"
   activate "$target"
-  if [ -n "$COMPOSE_PROJECT_OVERRIDE" ]; then
-    local cf_val=''
-    cf_val="$(env_compose_file_value || true)"
-    if [ -n "$cf_val" ] && ! env_compose_file_lists docker-compose.override.yml && ! env_var_is_set COMPOSE_PROJECT_NAME; then
-      log "warning: COMPOSE_FILE in $ENV_FILE omits docker-compose.override.yml and sets no COMPOSE_PROJECT_NAME; plain docker compose may not keep project $COMPOSE_PROJECT_OVERRIDE"
-    fi
-  fi
   if roll_services "$(direction_to "$target" "$failed")"; then
     if [ -n "$COMPOSE_PROJECT_OVERRIDE" ]; then write_state project "$COMPOSE_PROJECT_OVERRIDE"; fi
     record "$what failed, rolled back to $target"
@@ -3281,10 +3428,6 @@ do_deploy() {
       record "deploy $name failed: pre-deploy container inspection"
       die "$EXIT_FAILED" "cannot inspect existing Docker containers for $DEPLOY_DIR before activating $release; nothing was changed"
     fi
-    if ! detect_prev_container_mounts; then
-      record "deploy $name failed: pre-deploy mount inspection"
-      die "$EXIT_FAILED" "cannot inspect mounts on existing Docker containers for $DEPLOY_DIR before activating $release; nothing was changed"
-    fi
     if ! prev_config="$(dc_prev_config_for_release "$current" "$prev_proj_override")" || [ -z "$prev_config" ]; then
       record "deploy $name failed: pre-deploy compose config"
       die "$EXIT_FAILED" "cannot inspect existing compose configuration in $DEPLOY_DIR before activating $release; nothing was changed"
@@ -3292,6 +3435,10 @@ do_deploy() {
     if ! prev_proj="$(compose_project_from_yaml "$prev_config")" || [ -z "$prev_proj" ]; then
       record "deploy $name failed: pre-deploy compose project"
       die "$EXIT_FAILED" "cannot determine existing compose project name in $DEPLOY_DIR before activating $release; nothing was changed"
+    fi
+    if ! detect_prev_container_mounts "$prev_proj"; then
+      record "deploy $name failed: pre-deploy mount inspection"
+      die "$EXIT_FAILED" "cannot inspect mounts on existing Docker containers for $DEPLOY_DIR before activating $release; nothing was changed"
     fi
     if [ -z "$prev_proj_override" ]; then
       prev_yaml_name="$(sed -n -E 's/\r$//; s/[[:space:]]+#.*$//; s/^name:[[:space:]]*//p' "$DEPLOY_DIR/docker-compose.yml" | head -n 1 || true)"
@@ -3338,6 +3485,13 @@ do_deploy() {
   fi
   if [ -n "$alt_prev_config" ] && [ -n "$prev_yaml_name" ]; then
     verify_storage_cutover "$alt_prev_config" "$prev_yaml_name" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current" 0
+  fi
+  if [ -n "$current" ] && [ -f "$DEPLOY_DIR/releases/$current/docker-compose.yml" ] && [ -n "$active_proj" ]; then
+    if plain_compose_omits_override_and_project && [ "$(compose_file_yaml_name "$DEPLOY_DIR/releases/$current/docker-compose.yml")" != "$active_proj" ]; then
+      restore_pre_activate "$current"
+      record "deploy $name failed: COMPOSE_FILE omits docker-compose.override.yml without COMPOSE_PROJECT_NAME"
+      die "$EXIT_USAGE" "cannot deploy $release safely while previous release $current uses another project name: COMPOSE_FILE in $ENV_FILE omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME, so recovery would switch projects; add docker-compose.override.yml to COMPOSE_FILE or set COMPOSE_PROJECT_NAME=$active_proj in $ENV_FILE first"
+    fi
   fi
   if [ -n "$new_db" ]; then
     mount_exists "$new_db" || new_db_exists_rc=$?
@@ -3493,6 +3647,11 @@ do_rollback() {
     fi
   fi
   if [ -n "$rollback_proj" ]; then COMPOSE_PROJECT_OVERRIDE="$rollback_proj"; fi
+  if [ -n "$rollback_proj" ] && plain_compose_omits_override_and_project; then
+    if [ "$(compose_file_yaml_name "$DEPLOY_DIR/releases/$previous/docker-compose.yml")" != "$rollback_proj" ]; then
+      die "$EXIT_USAGE" "cannot roll back to $previous on project $rollback_proj: COMPOSE_FILE in $ENV_FILE omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME, so plain docker compose would switch projects after rollback; add docker-compose.override.yml to COMPOSE_FILE or set COMPOSE_PROJECT_NAME=$rollback_proj in $ENV_FILE first"
+    fi
+  fi
   restore_env_of "$current"
   # The images are normally still on the host. Pull them again (by digest, so nothing else can arrive) in case
   # they were pruned; without registry credentials a private image that is gone cannot come back.
@@ -3501,13 +3660,6 @@ do_rollback() {
   fi
   # Usually toward an older build, the API first; back to a newer one (a second rollback), the worker first (#1965).
   activate "$previous"
-  if [ -n "$COMPOSE_PROJECT_OVERRIDE" ]; then
-    local cf_val=''
-    cf_val="$(env_compose_file_value || true)"
-    if [ -n "$cf_val" ] && ! env_compose_file_lists docker-compose.override.yml && ! env_var_is_set COMPOSE_PROJECT_NAME; then
-      log "warning: COMPOSE_FILE in $ENV_FILE omits docker-compose.override.yml and sets no COMPOSE_PROJECT_NAME; plain docker compose may not keep project $COMPOSE_PROJECT_OVERRIDE"
-    fi
-  fi
   if ! roll_services "$(direction_to "$previous" "$current")"; then
     recover "$current" "rollback to $previous" "$previous"
   fi

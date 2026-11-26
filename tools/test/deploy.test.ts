@@ -966,6 +966,48 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
     expect(afterAbortPlainCfg.status, afterAbortPlainCfg.stderr).toBe(0);
     expect(afterAbortPlainCfg.stdout).toMatch(/^name: ludy$/m);
+
+    // Rollback to legacy `name: crove` fails closed when COMPOSE_FILE omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME,
+    // and succeeds once COMPOSE_PROJECT_NAME=ludy is set (#3972 Round 11).
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\nCOMPOSE_FILE=docker-compose.yml:compose.host.yml\n');
+    const unsafeRollback = run(['rollback']);
+    expect(unsafeRollback.status, unsafeRollback.out).toBe(2);
+    expect(unsafeRollback.out).toContain('omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME');
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\nCOMPOSE_FILE=docker-compose.yml:compose.host.yml\nCOMPOSE_PROJECT_NAME=ludy\n');
+    expect(run(['rollback']).status).toBe(0);
+
+    // Nested mount under /var/lib/postgresql/data/pgdata is rejected before up db (#3972 Round 11).
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const nestedDb = deploy('v1.0.0', 'a', { STUB_NEW_DB_NESTED_MOUNT: '/var/lib/postgresql/data/pgdata' });
+    expect(nestedDb.status, nestedDb.out).toBe(1);
+    expect(nestedDb.out).toContain('unsupported nested mount at /var/lib/postgresql/data/pgdata');
+
+    // Leftover restore-drill container (`project=ludy-restore-test`) in same working_dir does not pollute real stack (#3972 Round 11).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    expect(deploy('v1.0.0', 'a', { STUB_VOLUMES: 'ludy_db-data' }).status).toBe(0);
+    const drillIgnored = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_WORKDIR_CONTAINERS: `${dir}|db|drill-db-1 ${dir}|db|ludy-db-1`,
+      STUB_INSPECT_MOUNTS: 'drill-db-1|ludy-restore-test|volume|drill_db-data||/var/lib/postgresql/data ludy-db-1|ludy|volume|ludy_db-data||/var/lib/postgresql/data',
+    });
+    expect(drillIgnored.status, drillIgnored.out).toBe(0);
+
+    // Image ENV PGDATA fallback matches running container PGDATA when Compose YAML omits PGDATA (#3972 Round 11).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const imgPgdataOk = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_NEW_DB_IMAGE: 'custom-pg:17',
+      STUB_IMAGE_PGDATA: 'custom-pg:17=/var/lib/postgresql/data/pgdata',
+      STUB_WORKDIR_CONTAINERS: `${dir}|db|ludy-db-1`,
+      STUB_INSPECT_MOUNTS: 'ludy-db-1|ludy|volume|ludy_db-data||/var/lib/postgresql/data',
+      STUB_INSPECT_ENV: 'ludy-db-1|PGDATA=/var/lib/postgresql/data/pgdata',
+    });
+    expect(imgPgdataOk.status, imgPgdataOk.out).toBe(0);
+    expect(readFileSync(`${dir}/.deploy/mounts`, 'utf8')).toContain('PGDATA_SUB=pgdata');
   });
 
   describe('build check', () => {

@@ -442,17 +442,19 @@ hash_stdin_sha256() {
 dotenv_lookup() {
   local name="$1"
   local set_ref="__DE_S_${name}" val_ref="__DE_V_${name}"
+  if [ "$name" != COMPOSE_PROJECT_NAME ] && ! key_map_index "$name" >/dev/null && ! target_map_index "$name" >/dev/null; then
+    case $'\n'"${__DE_EXPORTED_NAMES:-}"$'\n' in
+      *$'\n'"$name"$'\n'*)
+        DOTENV_LOOKUP_SET=1
+        DOTENV_LOOKUP_VAL="${!name-}"
+        return 0
+        ;;
+    esac
+  fi
   if [ "${!set_ref-0}" = 1 ]; then
     DOTENV_LOOKUP_SET=1
     DOTENV_LOOKUP_VAL="${!val_ref-}"
     return 0
-  fi
-  if [ "$name" != COMPOSE_PROJECT_NAME ] && ! key_map_index "$name" >/dev/null && ! target_map_index "$name" >/dev/null; then
-    if [ -n "${!name+x}" ]; then
-      DOTENV_LOOKUP_SET=1
-      DOTENV_LOOKUP_VAL="${!name-}"
-      return 0
-    fi
   fi
   DOTENV_LOOKUP_SET=0
   DOTENV_LOOKUP_VAL=''
@@ -533,10 +535,6 @@ dotenv_parse_rhs() {
   local raw="$1" file="$2" lineno="$3" cur_key="$4"
   local value rest trail='' out='' i c nc len bs=''
   printf -v bs '%b' '\134'
-  if [[ "$raw" =~ ^[[:space:]]+# ]]; then
-    DOTENV_REPLY=''
-    return 0
-  fi
   value="${raw#"${raw%%[![:space:]]*}"}"
   case "$value" in
     \'*)
@@ -607,6 +605,7 @@ eval_dotenv_state() {
     set -euo pipefail
     local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$'
     local lineno=0 line key rhs seen_keys='' i
+    __DE_EXPORTED_NAMES="$(env | sed -n -E 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p')"
     while IFS= read -r line || [ -n "$line" ]; do
       lineno=$((lineno + 1))
       line="${line%$'\r'}"
@@ -1369,7 +1368,7 @@ do_cutover_stack() {
   fi
 
   local mounts_content='' db_mount_seen=0 svc cid m_lines m_dst m_type m_name m_src spec seen_mount_lines=''
-  for svc in db ludy api worker; do
+  for svc in db crove ludy api worker; do
     cid="$(dc_proj ludy ps -q "$svc" 2>/dev/null | head -n 1 || true)"
     [ -n "$cid" ] || continue
     m_lines="$(docker inspect --format '{{range .Mounts}}{{.Destination}}|{{.Type}}|{{.Name}}|{{.Source}}{{"\n"}}{{end}}' "$cid")" || die "$EXIT_FAILED" "cannot inspect mounts of running $svc container ($cid)"

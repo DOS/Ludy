@@ -252,7 +252,7 @@ case "$cmd" in
           stub-db-cid)
             printf '/var/lib/postgresql/data|volume|ludy_db-data|\\n'
             ;;
-          stub-ludy-cid | stub-api-cid | stub-worker-cid)
+          stub-crove-cid | stub-ludy-cid | stub-api-cid | stub-worker-cid)
             printf '/data/files|volume|ludy_files|\\n/data/keys|volume|ludy_keys|\\n/data/archive|volume|ludy_archive|\\n'
             ;;
         esac
@@ -606,7 +606,7 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
         'CROVE_MODULES=kernel',
         'CROVE_APP_DB_PASSWORD=real-pw',
         'LUDY_APP_DB_PASSWORD="" # unset placeholder',
-        'LUDY_CONTEXT_TOKEN_KEY=   # unset',
+        "LUDY_CONTEXT_TOKEN_KEY='' # unset",
         'CROVE_CONTEXT_TOKEN_KEY=real-key',
         'LUDY_REPORTER_DB_PASSWORD=#abc',
         'CROVE_REPORTER_DB_PASSWORD=old-pw',
@@ -864,5 +864,31 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(mountsSaved).not.toContain('/data/files=volume:ludy_files');
     expect(mountsSaved).toContain('/data/keys=volume:custom_keys');
     expect(mountsSaved).toContain('PGDATA_SUB=pgdata');
+
+    // 5) Exported OS env wins over empty .env line (`ALT=` in .env, `ALT=live` in env) and `= #new` is non-empty literal (`#new`) (#3972 Round 11).
+    const osEnvIn = join(work, '.env.os-prec.in');
+    const osEnvOut = join(work, '.env.os-prec.out');
+    writeFileSync(
+      osEnvIn,
+      ['ALT=', 'CROVE_APP_DB_PASSWORD=old-pw', 'LUDY_APP_DB_PASSWORD=${ALT}', 'CROVE_WORKER_DB_PASSWORD=old-worker', 'LUDY_WORKER_DB_PASSWORD= #new-password', ''].join('\n'),
+    );
+    const rOs = spawnSync('bash', [scriptPath, 'rewrite-env', osEnvIn, osEnvOut], { encoding: 'utf8', env: { ...process.env, ALT: 'live' } });
+    expect(rOs.status, rOs.stderr).toBe(0);
+    const outOs = readFileSync(osEnvOut, 'utf8');
+    expect(outOs).toContain('LUDY_APP_DB_PASSWORD=${ALT}');
+    expect(outOs).not.toContain('CROVE_APP_DB_PASSWORD=');
+    expect(outOs).toContain('LUDY_WORKER_DB_PASSWORD= #new-password');
+    expect(outOs).not.toContain('CROVE_WORKER_DB_PASSWORD=');
+
+    // 6) cutover-stack on source checkout still named `crove` captures `stub-crove-cid` mounts into .deploy/mounts (#3972 Round 11).
+    const fCroveSvc = createCutoverFixture();
+    const resCroveSvc = runWithStubs(fCroveSvc, ['cutover-stack', '--dir', fCroveSvc.deployDir, '--overlay-dir', fCroveSvc.overlayDir], {
+      STUB_SERVICES: 'db migrate auth auth-grants crove',
+    });
+    expect(resCroveSvc.status, resCroveSvc.stderr).toBe(0);
+    const croveSvcMounts = readFileSync(join(fCroveSvc.deployDir, '.deploy', 'mounts'), 'utf8');
+    expect(croveSvcMounts).toContain('/data/files=volume:ludy_files');
+    expect(croveSvcMounts).toContain('/data/keys=volume:ludy_keys');
+    expect(croveSvcMounts).toContain('/data/archive=volume:ludy_archive');
   });
 });
