@@ -211,6 +211,8 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
   const detailQuery = useQuery<ConversationDetail>({
     queryKey: detailQueryKey,
     retry: false,
+    staleTime: 0,
+    gcTime: 0,
     queryFn: async ({ signal }) => {
       const startEpoch = conversationsCache.epoch();
       const live = await client.conversations.get({ conversationId });

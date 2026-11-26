@@ -106,7 +106,8 @@ describe('conversations persisted KeyValue read cache', () => {
 
     const loaded = await cache.load(SERVER, 'acme-vn', 'user-a');
     expect(loaded).not.toBeNull();
-    expect(loaded?.lists.new).toHaveLength(12);
+    expect(loaded?.lists.new).toHaveLength(18);
+    expect(loaded?.lists.new?.some((item) => item.id === 'conv-17')).toBe(true);
     expect(loaded?.counts?.unread).toBe(7);
     expect(Object.keys(loaded?.threads ?? {})).toHaveLength(15);
     expect(loaded?.threads['conv-0']).toBeUndefined();
@@ -410,10 +411,20 @@ describe('conversations persisted KeyValue read cache', () => {
       savedAt: 2000,
       detail: page2Detail,
     });
+    await cache.upsertThread({
+      serverUrl: SERVER,
+      orgSlug: 'org-a',
+      userId: 'user-a',
+      savedAt: 3000,
+      detail: makeDetail(46),
+    });
 
     const loaded = await cache.load(SERVER, 'org-a', 'user-a');
     expect(loaded?.threads['conv-45']).toBeDefined();
+    expect(loaded?.threads['conv-46']).toBeDefined();
     expect(loaded?.lists.new?.some((item) => item.id === 'conv-45')).toBe(true);
+    expect(loaded?.lists.new?.some((item) => item.id === 'conv-46')).toBe(true);
     expect(loaded?.lists.all?.some((item) => item.id === 'conv-45')).toBe(true);
+    expect(loaded?.lists.all?.some((item) => item.id === 'conv-46')).toBe(true);
   });
 });

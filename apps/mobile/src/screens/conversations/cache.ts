@@ -647,6 +647,7 @@ export function createConversationsCache(store: KeyValue): ConversationsCache {
         if (isWriteStale(params)) return null;
         const existing = await loadUnlocked(params.serverUrl, params.orgSlug, userId);
         const conv = params.detail.conversation;
+        const retainedThreadIds = new Set(Object.keys(existing?.threads ?? {}));
         const statusTab: ConversationFilterTab | null =
           conv.status === 'new' || conv.status === 'pending' ? conv.status : null;
         const nextLists: Partial<Record<ConversationFilterTab, ConversationSummary[]>> = {};
@@ -661,8 +662,18 @@ export function createConversationsCache(store: KeyValue): ConversationsCache {
             nextLists[tab] = arr.filter((item) => item.id !== conv.id);
           } else if (arr.some((item) => item.id === conv.id)) {
             nextLists[tab] = arr.map((item) => (item.id === conv.id ? conv : item));
+          } else if (arr.length < MAX_LIST_ITEMS) {
+            nextLists[tab] = [...arr, conv];
           } else {
-            nextLists[tab] = [...arr.slice(0, Math.max(0, MAX_LIST_ITEMS - 1)), conv];
+            let dropIdx = arr.length - 1;
+            for (let i = arr.length - 1; i >= 0; i--) {
+              const candidate = arr[i];
+              if (candidate && !retainedThreadIds.has(candidate.id)) {
+                dropIdx = i;
+                break;
+              }
+            }
+            nextLists[tab] = [...arr.filter((_, i) => i !== dropIdx), conv];
           }
         }
         const next: Omit<CachedConversationsSnapshot, 'v'> = {
