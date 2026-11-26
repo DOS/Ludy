@@ -83,6 +83,29 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
   const [templateError, setTemplateError] = useState(false);
   const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
   const radioGroupRef = useRef<HTMLDivElement>(null);
+  const focusFrameRef = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (focusFrameRef.current !== null) {
+        window.cancelAnimationFrame(focusFrameRef.current);
+      }
+    },
+    [],
+  );
+
+  const restoreRadioFocus = () => {
+    if (focusFrameRef.current !== null) {
+      window.cancelAnimationFrame(focusFrameRef.current);
+    }
+    focusFrameRef.current = window.requestAnimationFrame(() => {
+      focusFrameRef.current = null;
+      const checkedRadio = radioGroupRef.current?.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]');
+      if (checkedRadio?.isConnected) {
+        checkedRadio.focus();
+      }
+    });
+  };
 
   const listQuery = useQuery({
     ...orpc.projects.listTemplates.queryOptions({ input: { language } }),
@@ -335,12 +358,17 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                               confirm={t('templates.archiveConfirmBtn')}
                               onConfirm={() => {
                                 const archivedId = selectedTemplate.id;
+                                // Dialog closes onto a loading/unmounting trigger; move focus to the checked radio immediately and after fallback selection settles.
+                                restoreRadioFocus();
                                 archiveTemplate.mutate(
                                   { templateId: archivedId, idempotencyKey: crypto.randomUUID() },
                                   {
                                     onSuccess: () => {
                                       refreshProjectQueries();
                                       setSelectedId((cur) => (cur === archivedId ? DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY : cur));
+                                    },
+                                    onSettled: () => {
+                                      restoreRadioFocus();
                                     },
                                   },
                                 );

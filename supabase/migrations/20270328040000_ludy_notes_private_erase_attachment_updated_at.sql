@@ -29,8 +29,38 @@ BEGIN
   PERFORM ludy_kernel.text_mention_pattern(p_kind, p_value);
   v_key := ludy_notes.private_notice_key_of(v_org, p_kind, p_value);
 
-  -- Global lock DAG: notebook[id ASC] -> note[id ASC] -> note_template[id ASC] -> todo_list[id ASC] -> todo[id ASC]
-  -- before any DELETE/UPDATE so concurrent commands and FK ON DELETE SET NULL / CASCADE stay deadlock-free.
+  -- Global lock DAG: notebook advisory lock -> notebook[id ASC] -> note[id ASC] -> note_template[id ASC] -> todo_list[id ASC] -> todo[id ASC]
+  -- before any DELETE/UPDATE so concurrent noteUpdate (resolveNotebookForNote advisory lock -> note FOR UPDATE -> notebook FOR SHARE)
+  -- and FK ON DELETE SET NULL / CASCADE stay deadlock-free.
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('notes.notebook:' || v_org::text || ':' || nb.id::text, 0)
+  )
+    FROM (
+      SELECT b.id
+        FROM ludy_notes.notebook b
+       WHERE b.org_id = v_org AND b.visibility = 'private'
+         AND (
+           ludy_kernel.text_mentions(b.name, p_kind, p_value)
+           OR ludy_kernel.text_mentions(b.stack_name, p_kind, p_value)
+           OR EXISTS (
+             SELECT 1 FROM ludy_notes.note n
+              WHERE n.org_id = v_org AND n.notebook_id = b.id AND n.visibility = 'private'
+                AND (ludy_kernel.text_mentions(n.title, p_kind, p_value)
+                     OR ludy_kernel.text_mentions(n.body, p_kind, p_value)
+                     OR ludy_kernel.text_mentions(pg_catalog.array_to_string(n.tags, ' '), p_kind, p_value)
+                     OR EXISTS (
+                       SELECT 1 FROM ludy_notes.note_version v
+                        WHERE v.org_id = n.org_id AND v.note_id = n.id
+                          AND (ludy_kernel.text_mentions(v.title, p_kind, p_value)
+                               OR ludy_kernel.text_mentions(v.body, p_kind, p_value)
+                               OR ludy_kernel.text_mentions(pg_catalog.array_to_string(v.tags, ' '), p_kind, p_value))
+                     ))
+           )
+         )
+       ORDER BY b.id
+      OFFSET 0
+    ) nb;
+
   PERFORM b.id
     FROM ludy_notes.notebook b
    WHERE b.org_id = v_org AND b.visibility = 'private'
@@ -57,24 +87,27 @@ BEGIN
 
   PERFORM n.id
     FROM ludy_notes.note n
-   WHERE n.org_id = v_org AND n.visibility = 'private'
+   WHERE n.org_id = v_org
      AND (
-       ludy_kernel.text_mentions(n.title, p_kind, p_value)
-       OR ludy_kernel.text_mentions(n.body, p_kind, p_value)
-       OR ludy_kernel.text_mentions(pg_catalog.array_to_string(n.tags, ' '), p_kind, p_value)
-       OR EXISTS (
-         SELECT 1 FROM ludy_notes.note_version v
-          WHERE v.org_id = n.org_id AND v.note_id = n.id
-            AND (ludy_kernel.text_mentions(v.title, p_kind, p_value)
-                 OR ludy_kernel.text_mentions(v.body, p_kind, p_value)
-                 OR ludy_kernel.text_mentions(pg_catalog.array_to_string(v.tags, ' '), p_kind, p_value))
-       )
-       OR EXISTS (
-         SELECT 1 FROM ludy_notes.notebook b
-          WHERE b.org_id = v_org AND b.id = n.notebook_id AND b.visibility = 'private'
-            AND (ludy_kernel.text_mentions(b.name, p_kind, p_value)
-                 OR ludy_kernel.text_mentions(b.stack_name, p_kind, p_value))
-       )
+       (n.visibility = 'private'
+         AND (
+           ludy_kernel.text_mentions(n.title, p_kind, p_value)
+           OR ludy_kernel.text_mentions(n.body, p_kind, p_value)
+           OR ludy_kernel.text_mentions(pg_catalog.array_to_string(n.tags, ' '), p_kind, p_value)
+           OR EXISTS (
+             SELECT 1 FROM ludy_notes.note_version v
+              WHERE v.org_id = n.org_id AND v.note_id = n.id
+                AND (ludy_kernel.text_mentions(v.title, p_kind, p_value)
+                     OR ludy_kernel.text_mentions(v.body, p_kind, p_value)
+                     OR ludy_kernel.text_mentions(pg_catalog.array_to_string(v.tags, ' '), p_kind, p_value))
+           )
+           OR EXISTS (
+             SELECT 1 FROM ludy_notes.notebook b
+              WHERE b.org_id = v_org AND b.id = n.notebook_id AND b.visibility = 'private'
+                AND (ludy_kernel.text_mentions(b.name, p_kind, p_value)
+                     OR ludy_kernel.text_mentions(b.stack_name, p_kind, p_value))
+           )
+         ))
        OR EXISTS (
          SELECT 1 FROM ludy_notes.attachment a
           WHERE a.org_id = n.org_id AND a.note_id = n.id

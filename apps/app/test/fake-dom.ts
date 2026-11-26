@@ -18,7 +18,6 @@ export class FakeDomNode {
   parentNode: FakeDomNode | null = null;
   attrs = new Map<string, string>();
   nodeValue = '';
-  private _textContent = '';
   private _value = '';
   private _listeners = new Map<string, Set<{ fn: (e: unknown) => void; capture: boolean }>>();
   className = '';
@@ -129,14 +128,24 @@ export class FakeDomNode {
     return false;
   }
   get textContent(): string {
-    if (this.nodeType === 3 || this.nodeType === 8) return this._textContent;
-    return this.childNodes.length > 0 ? this.childNodes.map((c) => c.textContent).join('') : this._textContent;
+    if (this.nodeType === 3 || this.nodeType === 8) return this.nodeValue;
+    return this.childNodes.map((c) => c.textContent).join('');
   }
   set textContent(v: string) {
     const s = String(v ?? '');
-    this._textContent = s;
-    if (this.nodeType === 3) this.nodeValue = s;
-    else this.childNodes = [];
+    if (this.nodeType === 3 || this.nodeType === 8) {
+      this.nodeValue = s;
+      return;
+    }
+    for (const child of this.childNodes) {
+      if (child.parentNode === this) child.parentNode = null;
+    }
+    this.childNodes = [];
+    if (s !== '') {
+      const textNode = new FakeDomNode(3);
+      textNode.nodeValue = s;
+      this.appendChild(textNode);
+    }
   }
   appendChild(child: FakeDomNode): FakeDomNode {
     return this.insertBefore(child, null);
@@ -205,7 +214,7 @@ export class FakeDomNode {
   dispatchEvent(rawEvent: Record<string, unknown>): boolean {
     const path: Array<{
       node: FakeDomNode | Record<string, unknown>;
-      listeners?: Map<string, Set<{ fn: (e: unknown) => void; capture: boolean }>>;
+      listeners?: Map<string, Set<{ fn: (e: unknown) => void; capture: boolean }>> | undefined;
     }> = [{ node: this, listeners: this._listeners }];
     let cur = this.parentNode;
     while (cur) {
@@ -215,7 +224,10 @@ export class FakeDomNode {
     const doc = globalThis.document as unknown as {
       _listeners?: Map<string, Set<{ fn: (e: unknown) => void; capture: boolean }>>;
     };
-    path.push({ node: doc as unknown as Record<string, unknown>, listeners: doc._listeners });
+    path.push({
+      node: doc as unknown as Record<string, unknown>,
+      ...(doc._listeners ? { listeners: doc._listeners } : {}),
+    });
 
     const eventType = String(rawEvent.type);
     const bubbles = rawEvent.bubbles !== false;
@@ -442,20 +454,23 @@ export function createScopedDomHarness(onTeardown?: () => void) {
   };
 
   const teardownScopedDom = async () => {
-    if (mountedRoot) {
-      await act(async () => {
-        mountedRoot?.unmount();
-      });
+    try {
+      if (mountedRoot) {
+        await act(async () => {
+          mountedRoot?.unmount();
+        });
+      }
+    } finally {
       mountedRoot = null;
+      for (const t of scheduledTimers) clearTimeout(t);
+      scheduledTimers = [];
+      for (const [key, entry] of savedGlobals) {
+        if (entry.had) (globalThis as Record<string, unknown>)[key] = entry.value;
+        else delete (globalThis as Record<string, unknown>)[key];
+      }
+      savedGlobals.clear();
+      onTeardown?.();
     }
-    for (const t of scheduledTimers) clearTimeout(t);
-    scheduledTimers = [];
-    for (const [key, entry] of savedGlobals) {
-      if (entry.had) (globalThis as Record<string, unknown>)[key] = entry.value;
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    savedGlobals.clear();
-    onTeardown?.();
   };
 
   return {

@@ -675,11 +675,14 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
     await act(async () => {
       confirmArchiveBtn.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
       for (let i = 0; i < 6; i += 1) await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 20));
     });
     expect(archiveCalls).toHaveLength(1);
     expect((archiveCalls[0] as { templateId: string }).templateId).toBe(customTemplate.id);
-    // Archiving the selected custom template falls back to DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY.
-    expect(container.querySelector('[data-testid="template-option-software-project"]')?.getAttribute('aria-checked')).toBe('true');
+    // Archiving the selected custom template falls back to DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY and moves focus onto its radio option.
+    const fallbackRadio = container.querySelector('[data-testid="template-option-software-project"]');
+    expect(fallbackRadio?.getAttribute('aria-checked')).toBe('true');
+    expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(fallbackRadio);
 
     // Reopening create dialog resets selection via useEffect back to software-project.
     await act(async () => {

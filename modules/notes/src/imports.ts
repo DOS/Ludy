@@ -85,44 +85,53 @@ export const noteImportEnex = defineCommand({
       await resolveNotebookForNote(ctx, targetNotebookId, userId, 'private');
     }
 
-    const mightCreateFileNotebooks =
-      targetNotebookId === null &&
-      !input.ignoreFileNotebooks &&
-      input.notes.some((item) => Boolean(item.notebookName));
+    const neededFileNotebookNames = new Set<string>();
+    if (targetNotebookId === null && !input.ignoreFileNotebooks) {
+      for (const item of input.notes) {
+        if (item.notebookName) neededFileNotebookNames.add(item.notebookName.trim().toLowerCase());
+      }
+    }
 
     const privateNotebookByName = new Map<string, string>();
     let totalOwnedNotebooks = 0;
     let lastNotebookSortKey: string | null = null;
-    if (mightCreateFileNotebooks) {
-      // Match notebookCreate/notebookUpdate lock order before reading existing notebooks and max(sort_key).
-      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+    if (neededFileNotebookNames.size > 0) {
+      const loadPrivateNotebooks = async () => {
+        privateNotebookByName.clear();
+        const existingNotebooks = await ctx.trx
+          .selectFrom('ludy_notes.notebook')
+          .select(['id', 'name', 'sort_key'])
+          .where('org_id', '=', ctx.orgId)
+          .where('author_user_id', '=', userId)
+          .where('visibility', '=', 'private')
+          .orderBy('sort_key')
+          .orderBy('id')
+          .execute();
+        for (const nb of existingNotebooks) {
+          const key = nb.name.trim().toLowerCase();
+          if (!privateNotebookByName.has(key)) privateNotebookByName.set(key, nb.id);
+        }
+      };
 
-      const existingNotebooks = await ctx.trx
-        .selectFrom('ludy_notes.notebook')
-        .select(['id', 'name', 'sort_key'])
-        .where('org_id', '=', ctx.orgId)
-        .where('author_user_id', '=', userId)
-        .where('visibility', '=', 'private')
-        .orderBy('sort_key')
-        .orderBy('id')
-        .execute();
+      await loadPrivateNotebooks();
+      const missingAnyFileNotebook = [...neededFileNotebookNames].some((key) => !privateNotebookByName.has(key));
+      if (missingAnyFileNotebook) {
+        // Only hold the org-wide notebook reorder lock when at least one file notebook is missing and must be created.
+        await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+        await loadPrivateNotebooks();
 
-      for (const nb of existingNotebooks) {
-        const key = nb.name.trim().toLowerCase();
-        if (!privateNotebookByName.has(key)) privateNotebookByName.set(key, nb.id);
+        const existingAllCountRow = await ctx.trx
+          .selectFrom('ludy_notes.notebook')
+          .select(({ fn }) => fn.countAll<string>().as('n'))
+          .where('org_id', '=', ctx.orgId)
+          .where('author_user_id', '=', userId)
+          .executeTakeFirst();
+        totalOwnedNotebooks = Number(existingAllCountRow?.n ?? 0);
+
+        const { rows: lastNbRows } = await sql<{ last: string | null }>`
+          SELECT pg_catalog.max(sort_key) AS last FROM ludy_notes.notebook WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
+        lastNotebookSortKey = lastNbRows[0]?.last ?? null;
       }
-
-      const existingAllCountRow = await ctx.trx
-        .selectFrom('ludy_notes.notebook')
-        .select(({ fn }) => fn.countAll<string>().as('n'))
-        .where('org_id', '=', ctx.orgId)
-        .where('author_user_id', '=', userId)
-        .executeTakeFirst();
-      totalOwnedNotebooks = Number(existingAllCountRow?.n ?? 0);
-
-      const { rows: lastNbRows } = await sql<{ last: string | null }>`
-        SELECT pg_catalog.max(sort_key) AS last FROM ludy_notes.notebook WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
-      lastNotebookSortKey = lastNbRows[0]?.last ?? null;
     }
 
     const seenNoteKeys = new Set<string>();

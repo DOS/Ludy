@@ -527,7 +527,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     expect(blobsOf(o)).toEqual([`notes/${o.orgId}/${keptAtt.id}`]);
   });
 
-  it('erases private attachments concurrently with notes.link.add(kernel.party) without deadlocking or regressing updated_at (#5035)', async () => {
+  it('erases private attachments concurrently with notes.attachment.create and notes.link.add(kernel.party) without deadlocking, privilege errors, or regressing updated_at (#5035)', async () => {
     const o = await org();
     const email = 'dong-bo-xoa@example.com';
     const partyId = randomUUID();
@@ -551,7 +551,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [o.orgId]);
       await c.query(`UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [o.orgId]);
-      // Push updated_at ahead of transaction start time on both notes so neither erasure nor concurrent link touch can regress it.
+      // Push updated_at ahead of transaction start time on both notes so neither erasure nor concurrent attachment/link writes can regress it.
       await c.query(
         `UPDATE ludy_notes.note SET updated_at = pg_catalog.clock_timestamp() + interval '10 minutes' WHERE org_id = $1 AND id = ANY($2::uuid[])`,
         [o.orgId, [monotonicNote, concurrentNote]],
@@ -569,13 +569,14 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     const beforeMonotonicTs = await noteUpdatedAt(monotonicNote);
     const beforeConcurrentTs = await noteUpdatedAt(concurrentNote);
 
-    const [eraseOut, linkOut] = await Promise.all([
+    const [eraseOut, linkOut, extraAtt] = await Promise.all([
       rt.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() }),
       rt.execute<{ noteId: string; linkId: string }>(
         'notes.link.add',
         { noteId: concurrentNote, targetType: 'kernel.party', targetId: partyId },
         { actor: asUser(o.author.id), orgId: o.orgId },
       ),
+      attached(o, o.author, concurrentNote, pdf('extra'), 'bo-sung.pdf'),
     ]);
     expect(eraseOut.erased).toContainEqual({ column: 'ludy_kernel.party.email', rows: 1 });
     expect(linkOut.noteId).toBe(concurrentNote);
@@ -584,7 +585,6 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     expect(await noteUpdatedAt(concurrentNote)).toBeGreaterThanOrEqual(beforeConcurrentTs);
 
     // Attachment delete on a note whose updated_at is ahead of transaction time must also keep updated_at monotonic.
-    const extraAtt = await attached(o, o.author, concurrentNote, pdf('extra'), 'bo-sung.pdf');
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');

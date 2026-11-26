@@ -320,7 +320,7 @@ function scanSource(
   const tokens: Token[] = [];
   const chunks: string[] = [];
   const templates: number[] = [];
-  const parenAllowsRegexStack: boolean[] = [];
+  const parenAllowsRegexStack: Array<{ allowRegexAfter: boolean; inForHeader: boolean; semiSeen: boolean; depthInParen: number }> = [];
   const jsxStack: Array<{ mode: 'openTag' | 'elem' | 'expr'; braceDepth: number; angleDepth: number }> = [];
   const suspiciousDivisionStarts = new Set<number>();
   const suspiciousRegexStarts = new Set<number>();
@@ -331,7 +331,7 @@ function scanSource(
   let prevAllowsRegex = true;
   let prevCouldBeDivision = false;
   let prevWasDot = false;
-  let prevWasControlKeyword = false;
+  let prevControlKeyword = '';
   let prevWasLt = false;
   let prevWasGt = false;
   let prevWasRBrace = false;
@@ -400,7 +400,7 @@ function scanSource(
         prevAllowsRegex = true;
         prevCouldBeDivision = false;
         prevWasDot = false;
-        prevWasControlKeyword = false;
+        prevControlKeyword = '';
         prevWasLt = false;
         prevWasGt = false;
         prevWasRBrace = false;
@@ -425,7 +425,7 @@ function scanSource(
           prevAllowsRegex = false;
           prevCouldBeDivision = false;
           prevWasDot = false;
-          prevWasControlKeyword = false;
+          prevControlKeyword = '';
           prevWasLt = false;
           prevWasGt = true;
           prevWasRBrace = false;
@@ -439,7 +439,7 @@ function scanSource(
         prevAllowsRegex = false;
         prevCouldBeDivision = false;
         prevWasDot = false;
-        prevWasControlKeyword = false;
+        prevControlKeyword = '';
         prevWasLt = false;
         prevWasGt = false;
         prevWasRBrace = false;
@@ -454,7 +454,7 @@ function scanSource(
         prevAllowsRegex = false;
         prevCouldBeDivision = false;
         prevWasDot = false;
-        prevWasControlKeyword = false;
+        prevControlKeyword = '';
         prevWasLt = false;
         prevWasGt = true;
         prevWasRBrace = false;
@@ -468,7 +468,7 @@ function scanSource(
         prevAllowsRegex = false;
         prevCouldBeDivision = false;
         prevWasDot = false;
-        prevWasControlKeyword = false;
+        prevControlKeyword = '';
         prevWasLt = true;
         prevWasGt = false;
         prevWasRBrace = false;
@@ -480,7 +480,7 @@ function scanSource(
       prevAllowsRegex = false;
       prevCouldBeDivision = false;
       prevWasDot = false;
-      prevWasControlKeyword = false;
+      prevControlKeyword = '';
       prevWasLt = false;
       prevWasGt = false;
       prevWasRBrace = false;
@@ -604,7 +604,7 @@ function scanSource(
       prevAllowsRegex = false;
       prevCouldBeDivision = false;
       prevWasDot = false;
-      prevWasControlKeyword = false;
+      prevControlKeyword = '';
       prevWasLt = false;
       prevWasGt = false;
       prevWasRBrace = false;
@@ -699,7 +699,7 @@ function scanSource(
       prevAllowsRegex = hitInterpolation;
       prevCouldBeDivision = false;
       prevWasDot = false;
-      prevWasControlKeyword = false;
+      prevControlKeyword = '';
       prevWasLt = false;
       prevWasGt = false;
       prevWasRBrace = false;
@@ -716,7 +716,7 @@ function scanSource(
       prevAllowsRegex = false;
       prevCouldBeDivision = false;
       prevWasDot = false;
-      prevWasControlKeyword = false;
+      prevControlKeyword = '';
       prevWasLt = false;
       prevWasGt = true;
       prevWasRBrace = false;
@@ -780,7 +780,7 @@ function scanSource(
       prevAllowsRegex = false;
       prevCouldBeDivision = false;
       prevWasDot = false;
-      prevWasControlKeyword = false;
+      prevControlKeyword = '';
       prevWasLt = false;
       prevWasGt = false;
       prevWasRBrace = false;
@@ -817,7 +817,7 @@ function scanSource(
       prevAllowsRegex = false;
       prevCouldBeDivision = false;
       prevWasDot = false;
-      prevWasControlKeyword = false;
+      prevControlKeyword = '';
       prevWasLt = false;
       prevWasGt = false;
       prevWasRBrace = false;
@@ -887,13 +887,25 @@ function scanSource(
         line,
       });
       if (valid) {
+        const topParen = parenAllowsRegexStack[parenAllowsRegexStack.length - 1];
+        const isForOfHead =
+          !prevWasDot &&
+          value === 'of' &&
+          Boolean(topParen?.inForHeader && !topParen.semiSeen && topParen.depthInParen === 0);
         prevAllowsRegex = !prevWasDot && REGEX_PREFIX_KEYWORDS.has(value);
-        prevCouldBeDivision = !prevWasDot && (value === 'await' || value === 'yield' || value === 'of' || value === 'void');
-        prevWasControlKeyword = !prevWasDot && CONTROL_KEYWORDS.has(value);
+        prevCouldBeDivision =
+          !prevWasDot &&
+          (value === 'await' || value === 'yield' || (value === 'of' && !isForOfHead) || value === 'void');
+        prevControlKeyword =
+          !prevWasDot && value === 'await' && prevControlKeyword === 'for'
+            ? 'for await'
+            : !prevWasDot && CONTROL_KEYWORDS.has(value)
+              ? value
+              : '';
       } else {
         prevAllowsRegex = false;
         prevCouldBeDivision = false;
-        prevWasControlKeyword = false;
+        prevControlKeyword = '';
       }
       prevWasDot = false;
       prevWasLt = false;
@@ -920,7 +932,7 @@ function scanSource(
         prevAllowsRegex = false;
         prevCouldBeDivision = false;
         prevWasDot = false;
-        prevWasControlKeyword = false;
+        prevControlKeyword = '';
         prevWasLt = false;
         prevWasGt = true;
         prevWasRBrace = false;
@@ -934,7 +946,7 @@ function scanSource(
         prevAllowsRegex = false;
         prevCouldBeDivision = false;
         prevWasDot = false;
-        prevWasControlKeyword = false;
+        prevControlKeyword = '';
         prevWasLt = true;
         prevWasGt = false;
         prevWasRBrace = false;
@@ -978,12 +990,23 @@ function scanSource(
     }
 
     if (punct === '(') {
-      parenAllowsRegexStack.push(prevWasControlKeyword);
+      if (parenAllowsRegexStack.length > 0) {
+        parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!.depthInParen += 1;
+      }
+      parenAllowsRegexStack.push({
+        allowRegexAfter: prevControlKeyword !== '',
+        inForHeader: prevControlKeyword === 'for' || prevControlKeyword === 'for await',
+        semiSeen: false,
+        depthInParen: 0,
+      });
       prevAllowsRegex = true;
       prevCouldBeDivision = false;
       prevWasDot = false;
     } else if (punct === ')') {
-      prevAllowsRegex = parenAllowsRegexStack.pop() ?? false;
+      prevAllowsRegex = parenAllowsRegexStack.pop()?.allowRegexAfter ?? false;
+      if (parenAllowsRegexStack.length > 0 && parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!.depthInParen > 0) {
+        parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!.depthInParen -= 1;
+      }
       prevCouldBeDivision = false;
       prevWasDot = false;
     } else if (punct === '.' || punct === '?.') {
@@ -991,6 +1014,9 @@ function scanSource(
       prevAllowsRegex = false;
       prevCouldBeDivision = false;
     } else if (punct === ']' || punct === '++' || punct === '--') {
+      if (punct === ']' && parenAllowsRegexStack.length > 0 && parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!.depthInParen > 0) {
+        parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!.depthInParen -= 1;
+      }
       prevAllowsRegex = false;
       prevCouldBeDivision = false;
       prevWasDot = false;
@@ -998,11 +1024,21 @@ function scanSource(
       // Prefix `!expr` leaves prevAllowsRegex=true; TypeScript postfix `expr!` preserves prevAllowsRegex and prevCouldBeDivision for `/`.
       prevWasDot = false;
     } else {
+      if (punct === '[' || punct === '{') {
+        if (parenAllowsRegexStack.length > 0) {
+          parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!.depthInParen += 1;
+        }
+      } else if (punct === '}' && parenAllowsRegexStack.length > 0 && parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!.depthInParen > 0) {
+        parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!.depthInParen -= 1;
+      } else if ((punct === ';' || punct === '=') && parenAllowsRegexStack.length > 0) {
+        const topParen = parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!;
+        if (topParen.inForHeader && topParen.depthInParen === 0) topParen.semiSeen = true;
+      }
       prevAllowsRegex = true;
       prevCouldBeDivision = punct === '}' || punct === '>';
       prevWasDot = false;
     }
-    prevWasControlKeyword = false;
+    prevControlKeyword = '';
     prevWasLt = punct === '<';
     prevWasGt = punct === '>';
     prevWasRBrace = punct === '}';
@@ -1365,8 +1401,8 @@ function propagateAliases(seeds: Iterable<string>, edges: ReadonlyMap<string, Re
 const SKIP_TYPE_KW = new Set(['=', ';', ',', 'in', 'of']);
 
 const TYPE_BRACE_PREV_PUNCTS = new Set([':', '|', '&', '(', '<', ',', '=>', '?']);
-const TYPE_BRACE_PREV_IDENTS = new Set(['readonly', 'keyof', 'infer']);
-const POST_TYPE_CONT_PUNCTS = new Set(['=', ',', ')', ';', '|', '&', '[', '.', '?', '<', '{', '=>']);
+const TYPE_BRACE_PREV_IDENTS = new Set(['readonly', 'keyof', 'infer', 'is', 'extends']);
+const POST_TYPE_CONT_PUNCTS = new Set(['=', ',', ')', ';', '|', '&', '[', '.', '?', ':', '<', '{', '=>']);
 
 function skipOptionalTypeForward(tokens: readonly Token[], colonIdx: number, delims: DelimiterPairs, limit = 64): number {
   if (tokens[colonIdx]?.kind !== 'punct' || tokens[colonIdx]?.value !== ':') return colonIdx;
@@ -1713,6 +1749,8 @@ function matchInlineModuleMemberCall(
   memberName: string,
   delims: DelimiterPairs,
   resolveStaticStr: (start: number, end: number) => string | null,
+  minBound = 0,
+  maxBound = tokens.length,
 ): { spec: string; modCloseEnd: number; memberEndIdx: number | null } | null {
   const fnTok = tokens[callIdentIdx];
   if (!fnTok || fnTok.kind !== 'ident' || (fnTok.value !== 'import' && fnTok.value !== 'require') || isMemberPrev(tokens, callIdentIdx)) {
@@ -1727,7 +1765,7 @@ function matchInlineModuleMemberCall(
   if (closeMod <= callIdentIdx + 1) return null;
 
   let wrapParens = 0;
-  for (let b = callIdentIdx - 1; b >= Math.max(0, callIdentIdx - 8); b -= 1) {
+  for (let b = callIdentIdx - 1; b >= Math.max(minBound, callIdentIdx - 8); b -= 1) {
     const bt = tokens[b]!;
     if (bt.kind === 'ident' && bt.value === 'await') continue;
     if (bt.kind === 'punct' && bt.value === '(' && isGroupingOpenParen(tokens, b)) {
@@ -1739,7 +1777,7 @@ function matchInlineModuleMemberCall(
 
   let afterClose = closeMod + 1;
   let steps = 0;
-  while (afterClose < tokens.length && steps < 12) {
+  while (afterClose < maxBound && steps < 12) {
     steps += 1;
     const tk = tokens[afterClose]!;
     if (tk.kind === 'punct' && tk.value === '!') {
@@ -1784,7 +1822,7 @@ function matchInlineModuleMemberSpan(
     break;
   }
   if (p >= end) return null;
-  const matched = matchInlineModuleMemberCall(tokens, p, specPred, memberName, delims, resolveStaticStr);
+  const matched = matchInlineModuleMemberCall(tokens, p, specPred, memberName, delims, resolveStaticStr, start, end);
   if (!matched) return null;
   if (matched.memberEndIdx !== null && matched.memberEndIdx + 1 === end) {
     return { kind: 'member', spec: matched.spec, memberEndIdx: matched.memberEndIdx };
@@ -3263,17 +3301,40 @@ function findBracelessStatementEnd(
   let bd = 0;
   let cd = 0;
   let td = 0;
+  let openIfs = 0;
+  let headerEndIdx = -1;
   const limit = Math.min(tokens.length, startIdx + 256);
   for (let p = startIdx; p < limit; p += 1) {
     const tk = tokens[p]!;
     if (pd === 0 && bd === 0 && cd === 0 && td === 0 && p > startIdx) {
       const prev = tokens[p - 1]!;
       const prevContinues =
+        p - 1 === headerEndIdx ||
         (prev.kind === 'punct' && STMT_PREV_OPENERS.has(prev.value)) ||
         (prev.kind === 'ident' && STMT_HEADER_KW.has(prev.value));
       const nextContinues = tk.kind === 'punct' && STMT_NEXT_CONT.has(tk.value);
       if (tk.line > prev.line && !prevContinues && !nextContinues && !(tk.kind === 'ident' && tk.value === 'else')) {
         return p;
+      }
+    }
+    if (pd === 0 && bd === 0 && cd === 0 && td === 0 && tk.kind === 'ident' && !isMemberPrev(tokens, p)) {
+      if (tk.value === 'if' || tk.value === 'while' || tk.value === 'for') {
+        const parenIdx =
+          tk.value === 'for' && tokens[p + 1]?.kind === 'ident' && tokens[p + 1]?.value === 'await' ? p + 2 : p + 1;
+        const parenTok = tokens[parenIdx];
+        if (parenTok?.kind === 'punct' && parenTok.value === '(') {
+          const closeParen = delims.paren[parenIdx] ?? -1;
+          if (closeParen > parenIdx && closeParen < limit) {
+            if (tk.value === 'if') openIfs += 1;
+            headerEndIdx = closeParen;
+            p = closeParen;
+            continue;
+          }
+        }
+      } else if (tk.value === 'else') {
+        if (openIfs > 0) openIfs -= 1;
+        headerEndIdx = p;
+        continue;
       }
     }
     if (tk.kind === 'template_head') {
@@ -3295,7 +3356,16 @@ function findBracelessStatementEnd(
         if (pd === 0 && bd === 0 && cd === 0 && td === 0) return p;
         if (bd > 0) bd -= 1;
       } else if (tk.value === '{') {
-        if (pd === 0 && bd === 0 && cd === 0 && td === 0) {
+        const prevTok = tokens[p - 1];
+        const isExprBrace =
+          (prevTok?.kind === 'punct' && STMT_PREV_OPENERS.has(prevTok.value) && prevTok.value !== ':') ||
+          (prevTok?.kind === 'ident' &&
+            (prevTok.value === 'return' ||
+              prevTok.value === 'throw' ||
+              prevTok.value === 'yield' ||
+              prevTok.value === 'await' ||
+              prevTok.value === 'default'));
+        if (pd === 0 && bd === 0 && cd === 0 && td === 0 && !isExprBrace) {
           const closeBrace = delims.brace[p] ?? -1;
           if (closeBrace > p) {
             const after = tokens[closeBrace + 1];
@@ -3311,6 +3381,9 @@ function findBracelessStatementEnd(
         if (pd === 0 && bd === 0 && cd === 0 && td === 0) return p;
         if (cd > 0) cd -= 1;
       } else if (tk.value === ';' && pd === 0 && bd === 0 && cd === 0 && td === 0) {
+        if (openIfs > 0 && tokens[p + 1]?.kind === 'ident' && tokens[p + 1]?.value === 'else') {
+          continue;
+        }
         return p;
       }
     }
@@ -4322,10 +4395,23 @@ function skipRawWsAndComments(text: string, startIdx: number, maxChars = 256): n
   return p;
 }
 
-function collectRawMeteredNotes(text: string, skipParenStarts?: ReadonlySet<number>): string[] {
+function collectRawMeteredNotes(
+  text: string,
+  skipParenStarts?: ReadonlySet<number>,
+  skipTextSpans: ReadonlyArray<{ start: number; end: number }> = [],
+): string[] {
   const out: string[] = [];
   let pos = 0;
+  let spanCursor = 0;
   while ((pos = text.indexOf('metered', pos)) >= 0) {
+    while (spanCursor < skipTextSpans.length && skipTextSpans[spanCursor]!.end <= pos) {
+      spanCursor += 1;
+    }
+    const activeSpan = skipTextSpans[spanCursor];
+    if (activeSpan && pos >= activeSpan.start && pos < activeSpan.end) {
+      pos = activeSpan.end;
+      continue;
+    }
     const before = pos > 0 ? text[pos - 1]! : '';
     let j = pos + 'metered'.length;
     pos = j;
@@ -4403,6 +4489,16 @@ export function meteredNotes(text: string, options?: { includeUnresolved?: boole
   const resolvedOpts = { includeUnresolved: Boolean(options?.includeUnresolved) };
   const resolvedParenStarts = new Set<number>();
   const ignoreUnresolvedInRanges = resolvedOpts.includeUnresolved ? primary.unambiguousRegexSpans : [];
+  const validTextSpans = primary.tokens
+    .filter(
+      (tk) =>
+        tk.kind === 'string' ||
+        tk.kind === 'template' ||
+        tk.kind === 'template_head' ||
+        tk.kind === 'template_middle' ||
+        tk.kind === 'template_tail',
+    )
+    .map((tk) => ({ start: tk.start, end: tk.end }));
   const found = new Set<string>([
     ...collectMeteredNotesFromTokens(primary.tokens, text, { ...resolvedOpts, resolvedParenStarts }),
     ...collectMeteredNotesFromTokens(tokenize(text, { scanRegexAsDivision: true }), text, {
@@ -4410,7 +4506,7 @@ export function meteredNotes(text: string, options?: { includeUnresolved?: boole
       ignoreUnresolvedInRanges,
     }),
     ...(extraTokens ? collectMeteredNotesFromTokens(extraTokens, text, { ...resolvedOpts, resolvedParenStarts }) : []),
-    ...collectRawMeteredNotes(text, resolvedParenStarts),
+    ...collectRawMeteredNotes(text, resolvedParenStarts, validTextSpans),
     ...[...text.matchAll(/\bmetered\(\s*['"`](notes\.[a-z0-9_]+)['"`]/g)].map((m) => m[1]!),
   ]);
   return [...found];
@@ -7581,7 +7677,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       expect(violations, inlineCreateReq).toContain('uses require alias or bare require reference');
     }
 
-    // 3. collectScopedConstBindings handles generic block fns, inline object-union return types, and braceless for loops.
+    // 3. collectScopedConstBindings handles generic block fns, inline object-union/conditional return types, and braceless for + if/else loops.
     expect(
       disallowedMeteredNotes('other.ts', "const k = 'finance.a'; function run<T>(k: T) { metered(k, fn); }"),
     ).toEqual(['unresolved metered key (k)']);
@@ -7594,32 +7690,53 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(
       disallowedMeteredNotes(
         'other.ts',
+        "const k = 'finance.a'; function run<T>(k: T): T extends string ? { ok: true } : { ok: false } { metered(k, fn); return { ok: false }; }",
+      ),
+    ).toEqual(['unresolved metered key (k)']);
+    expect(
+      disallowedMeteredNotes(
+        'other.ts',
         "const k = 'finance.a'; for (const k of items) metered(k, fn); metered(k, fn);",
       ),
     ).toEqual(['unresolved metered key (k)']);
+    expect(
+      disallowedMeteredNotes(
+        'other.ts',
+        "const k = 'notes.secret'; for (const k of items)\n  if (cond)\n    other(k);\n  else\n    metered(k, fn);",
+      ),
+    ).toEqual(['unresolved metered key (k)']);
+    expect(
+      disallowedMeteredNotes(
+        'other.ts',
+        "const k = 'notes.secret'; for (const k of items)\n  if (cond) x = { a: 1 };\n  else metered(k, fn);\nmetered(k, fn);",
+      ).sort(),
+    ).toEqual(['notes.secret', 'unresolved metered key (k)']);
 
-    // 4. Indirect require/import('./meter.ts').metered and bracketed call/apply/Reflect['apply'] extract note keys.
-    expect(disallowedMeteredNotes('other.ts', "require('./meter.ts').metered('notes.secret', fn);")).toContain(
+    // 4. Indirect require/import('./meter.ts').metered and bracketed call/apply/Reflect['apply'] extract note keys directly via meteredNotes.
+    expect(meteredNotes("require('./meter.ts').metered('notes.secret', fn);")).toContain('notes.secret');
+    expect(meteredNotes("const f = (await import('./meter.ts')).metered; f('notes.secret', fn);")).toContain(
       'notes.secret',
     );
     expect(
-      disallowedMeteredNotes('other.ts', "const f = (await import('./meter.ts')).metered; f('notes.secret', fn);"),
+      meteredNotes("const f = (0, (await import('./meter.ts')).metered); f('notes.secret', fn);"),
     ).toContain('notes.secret');
-    expect(disallowedMeteredNotes('other.ts', "const m = require('./meter.ts'); m.metered('notes.secret', fn);")).toContain(
+    expect(
+      meteredNotes("const secretKey = 'notes.secret'; const m = require('./meter.ts'); m.metered(secretKey, fn);"),
+    ).toContain('notes.secret');
+    expect(meteredNotes("const secretKey = 'notes.secret'; metered['call'](null, secretKey, fn);")).toContain(
       'notes.secret',
     );
-    expect(disallowedMeteredNotes('other.ts', "metered['call'](null, 'notes.secret', fn);")).toContain('notes.secret');
-    expect(disallowedMeteredNotes('other.ts', "metered?.['apply'](null, ['notes.secret', fn]);")).toContain(
+    expect(meteredNotes("const secretKey = 'notes.secret'; metered?.['apply'](null, [secretKey, fn]);")).toContain(
       'notes.secret',
     );
-    expect(disallowedMeteredNotes('other.ts', "Reflect['apply'](metered, null, ['notes.secret', fn]);")).toContain(
+    expect(meteredNotes("const secretKey = 'notes.secret'; Reflect['apply'](metered, null, [secretKey, fn]);")).toContain(
       'notes.secret',
     );
-    expect(disallowedMeteredNotes('other.ts', "Reflect?.['apply'](metered, null, ['notes.secret', fn]);")).toContain(
+    expect(meteredNotes("const secretKey = 'notes.secret'; Reflect?.['apply'](metered, null, [secretKey, fn]);")).toContain(
       'notes.secret',
     );
 
-    // 5. isEnclosingPatternContext + skipOptionalTypeForward handle default params, generics, and benign if(fn({ require: true })).
+    // 5. isEnclosingPatternContext + skipOptionalTypeForward handle default params, generics, type predicates/assertions/conditionals, and benign if(fn({ require: true })).
     expect(memberVyViolations('if (fn({ require: true })) { return 1; }')).toEqual([]);
     expect(
       memberVyViolations('function run<T>(a = 1, { require: req }: T): { ok: boolean } { return req; }'),
@@ -7627,11 +7744,22 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(memberVyViolations('const [a = 1, { require: req }] = items;')).toContain(
       'uses require alias or bare require reference',
     );
+    expect(
+      memberVyViolations("export const f = (x: unknown, { require: r }: any): x is { a: 1 } => r('pg')"),
+    ).toContain('uses require alias or bare require reference');
+    expect(
+      memberVyViolations("(x, { require: r }: any): asserts x is { a: 1 } => { r('pg'); }"),
+    ).toContain('uses require alias or bare require reference');
+    expect(
+      memberVyViolations("<T,>({ require: r }: any): T extends { a: 1 } ? 1 : 2 => r('pg')"),
+    ).toContain('uses require alias or bare require reference');
 
-    // 6. collectRawMeteredNotes folds comments before '(' / quotes / '+' and 3-way literal splits; leak check handles unclosed backticks + comments + 3-way splits.
+    // 6. collectRawMeteredNotes folds comments before '(' / quotes / '+' outside valid string/template literals; leak check handles unclosed backticks + comments + 3-way splits.
     expect(meteredNotes("metered /* c */ ( /* q */ 'no' /* c1 */ + 't' + 'es.summary', fn)")).toContain(
       'notes.summary',
     );
+    expect(meteredNotes('const msg = "metered(\'no\' + \'tes.summary\', fn)";')).toEqual([]);
+    expect(meteredNotes("const tpl = `prefix ${x} metered('no' + 'tes.summary', fn)`;")).toEqual([]);
     expect(
       workspaceAdapterLeakViolations(
         "const bad = `unclosed;\nrequire('@lu' /* c */ + 'dy/' /* c2 */ + 'agent');",
@@ -7650,9 +7778,14 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     ).toBeGreaterThan(0);
     expect(workspaceAdapterLeakViolations('const spread = { ...x };', ['summarize'], 'packages/other/ok.ts')).toEqual([]);
 
-    // Regex literals inside code (including after comparison ops like ===) must not trigger false-positive unresolved metered calls while ambiguous division/regex spots still do.
+    // Regex literals inside code (including after comparison ops like === and for..of headers) must not trigger false-positive unresolved metered calls while ambiguous division/regex spots still do.
     expect(disallowedMeteredNotes('other.ts', 'const pattern = /metered(name)/;')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'enabled === /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'for (const part of /metered(name)/.exec(text) ?? []) {}')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'for await (const part of /metered(name)/.exec(text) ?? []) {}')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'const x = of / metered(dynKey) / 2;')).toEqual([
+      'unresolved metered key (dynKey)',
+    ]);
     expect(
       disallowedMeteredNotes('other.ts', "const suffix = 'summary'; metered('notes.' + suffix, fn);"),
     ).toEqual(['notes.summary']);

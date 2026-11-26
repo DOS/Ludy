@@ -514,16 +514,6 @@ export const todoCreate = defineCommand({
       if (!sourceNote) throw new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú này');
       sourceTainted = sourceNote.tainted;
     }
-    if (input.link?.targetType === 'kernel.party') {
-      // Match personalDataErase lock order (party -> todo_list -> note) before acquiring list/sort locks or inserting.
-      await ctx.trx
-        .selectFrom('ludy_kernel.party')
-        .select('id')
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', input.link.targetId)
-        .forKeyShare()
-        .executeTakeFirst();
-    }
     const listId = normalizeListId(input.listId);
     await validateTodoListAndSection(ctx, listId, input.sectionId, true);
     await lockTodoSortOrder(ctx, userId);
@@ -888,7 +878,7 @@ export const todoComplete = defineCommand({
         ...(rule !== null && before.series_id === null && seriesId !== null ? { series_id: seriesId } : {}),
         ...(stopSeries && rule !== null ? { recurrence: null } : {}),
         revision: before.revision + 1,
-        updated_at: ctx.now,
+        updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})`,
       })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', todoId)
@@ -905,7 +895,7 @@ export const todoComplete = defineCommand({
       if (lockedOpenSiblings.length > 0) {
         await ctx.trx
           .updateTable('ludy_notes.todo')
-          .set({ recurrence: null, revision: sql<number>`revision + 1`, updated_at: ctx.now })
+          .set({ recurrence: null, revision: sql<number>`revision + 1`, updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})` })
           .where('org_id', '=', ctx.orgId)
           .where(
             'id',
@@ -1472,26 +1462,6 @@ export const todoLinkAdd = defineCommand({
   target,
   handler: async (ctx, input): Promise<{ todoId: string; linkId: string }> => {
     const userId = userOf(ctx.actor);
-    if (input.targetType === 'kernel.party') {
-      const peek = await ctx.trx
-        .selectFrom('ludy_notes.todo')
-        .select(['deleted_at'])
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', input.todoId)
-        .executeTakeFirst();
-      if (!peek) throw notFound();
-      if (peek.deleted_at !== null) {
-        throw new DomainError('TODO_IN_TRASH', 409, 'Việc này đang ở thùng rác; hãy khôi phục trước');
-      }
-      // Match personalDataErase lock order (party -> todo) before taking todo FOR UPDATE.
-      await ctx.trx
-        .selectFrom('ludy_kernel.party')
-        .select('id')
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', input.targetId)
-        .forKeyShare()
-        .executeTakeFirst();
-    }
     const row = await load(ctx, input.todoId, true);
     assertNotInTrash(row);
     const linkId = await insertRecordLink(ctx, { kind: 'todo', id: row.id }, userId, input.targetType, input.targetId);
