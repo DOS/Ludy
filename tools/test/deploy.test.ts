@@ -1166,6 +1166,17 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(rbStaleFiles.out).toContain('rollback would revert to stale data');
     expect(readFileSync(`${dir}/.deploy/current`, 'utf8').trim()).toBe(releaseDir('v1.1.0', 'b'));
 
+    // Cross-volume rollback fails closed when an active (running, paused, or restarting) container still mounts the active volume (#3972 Round 15).
+    const rbBusyFiles = run(['rollback'], {
+      STUB_VOLUMES: 'ludy_db-data ludy_files ludy_files_v2',
+      STUB_POPULATED_MOUNTS: 'ludy_files ludy_files_v2',
+      STUB_NEW_FILES_VOLUME: 'ludy_files',
+      STUB_PAUSED_CONTAINERS: 'live-api-1',
+      STUB_INSPECT_MOUNTS: 'live-api-1|ludy|volume|ludy_files_v2||',
+    });
+    expect(rbBusyFiles.status, rbBusyFiles.out).toBe(1);
+    expect(rbBusyFiles.out).toContain('still mounted by a running, paused, or restarting container');
+
     const rbPgdataChange = run(['rollback'], {
       STUB_VOLUMES: 'ludy_db-data',
       STUB_NEW_DB_PGDATA: '/var/lib/postgresql/data/other',
@@ -1214,6 +1225,24 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       STUB_INSPECT_MOUNTS: `other-db-1|other|bind||${parentBind}|`,
     });
     expect(siblingFree.status, siblingFree.out).toBe(0);
+
+    // Paused and restarting containers block storage cutover just like running containers (#3972 Round 15).
+    for (const [label, statusEnv] of [
+      ['paused', { STUB_PAUSED_CONTAINERS: 'paused-db-1' }],
+      ['restarting', { STUB_RESTARTING_CONTAINERS: 'restarting-db-1' }],
+    ] as const) {
+      rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+      rmSync(`${dir}/docker-compose.yml`, { force: true });
+      const cid = label === 'paused' ? 'paused-db-1' : 'restarting-db-1';
+      const activeHeld = deploy('v1.0.0', 'a', {
+        STUB_NEW_DB_BIND: childBind,
+        ...statusEnv,
+        STUB_INSPECT_WORKDIRS: `${cid}|/opt/other`,
+        STUB_INSPECT_MOUNTS: `${cid}|other|bind||${parentBind}|`,
+      });
+      expect(activeHeld.status, `${label}: ${activeHeld.out}`).toBe(1);
+      expect(activeHeld.out).toContain('still mounted by a running container outside project');
+    }
 
     // Failed restore_pre_activate preserves $PRE_ACTIVATE_SNAP across EXIT cleanup so the reported recovery path remains intact (#3972 Round 14).
     if (process.platform !== 'win32' && process.getuid?.() !== 0) {
@@ -1895,11 +1924,22 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       });
     });
 
-    it('takes the key from the env file only: a variable of the caller does not reach migrate', () => {
+    it('takes the key from the env file only: caller LUDY_ and CROVE_CONTEXT_TOKEN_KEY do not reach migrate or up', () => {
       writeFileSync(`${dir}/.env`, 'LUDY_CONTEXT_TOKEN_KEY=\n');
-      const res = deploy('v1.0.0', 'a', { LUDY_CONTEXT_TOKEN_KEY: 'from-the-session' });
+      const res = deploy('v1.0.0', 'a', {
+        LUDY_CONTEXT_TOKEN_KEY: 'from-the-session',
+        CROVE_CONTEXT_TOKEN_KEY: 'legacy-from-session',
+      });
       expect(res.status, res.out).toBe(0);
       expect(res.out).toContain('context token key generated');
+      expect(existsSync(`${log}.envvar`)).toBe(false);
+
+      expect(deploy('v1.1.0', 'b').status).toBe(0);
+      const rb = run(['rollback'], {
+        LUDY_CONTEXT_TOKEN_KEY: 'from-the-session',
+        CROVE_CONTEXT_TOKEN_KEY: 'legacy-from-session',
+      });
+      expect(rb.status, rb.out).toBe(0);
       expect(existsSync(`${log}.envvar`)).toBe(false);
     });
 

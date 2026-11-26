@@ -63,7 +63,7 @@ export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
 # The env file is the one source of the context token key (#3282): a variable of the SSH session would win over the file in
 # compose's interpolation, and `migrate` would install a key the file does not hold.
-unset LUDY_CONTEXT_TOKEN_KEY
+unset LUDY_CONTEXT_TOKEN_KEY CROVE_CONTEXT_TOKEN_KEY
 
 DIR_FROM_CLI=0
 ENV_FROM_CLI=0
@@ -2029,8 +2029,9 @@ bind_paths_overlap() {
   return 1
 }
 
-# Checks that no running container outside $allowed_proj (or any running container when $allowed_proj is empty)
-# currently mounts $dst_spec. Returns: 0 = verified free, 1 = held by conflicting container, 2 = inspect failed (#3972).
+# Checks that no running, paused, or restarting container outside $allowed_proj (or any active container when
+# $allowed_proj is empty) currently mounts $dst_spec. Returns: 0 = verified free, 1 = held by conflicting container,
+# 2 = inspect failed (#3972).
 check_storage_free() {
   local dst_spec="$1" allowed_proj="${2:-}" dst_type dst_src dst_canon ps_out cid c_proj c_wdir c_wdir_canon deploy_dir_norm canon_deploy_dir mounts_out still_running m_type m_name m_src m_canon
   local -a cids=()
@@ -2048,19 +2049,19 @@ check_storage_free() {
   deploy_dir_norm="${DEPLOY_DIR%/}"
   [ -n "$deploy_dir_norm" ] || deploy_dir_norm='/'
   canon_deploy_dir="$(canonicalize_bind_path "$deploy_dir_norm")"
-  ps_out="$(docker ps -q --filter status=running 2>/dev/null)" || return 2
+  ps_out="$(docker ps -q --filter status=running --filter status=paused --filter status=restarting 2>/dev/null)" || return 2
   [ -n "$ps_out" ] || return 0
   mapfile -t cids <<<"$ps_out"
   for cid in "${cids[@]}"; do
     [ -n "$cid" ] || continue
     if ! c_proj="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$cid" 2>/dev/null)"; then
-      still_running="$(docker ps -q --filter status=running --filter "id=$cid" 2>/dev/null)" || return 2
+      still_running="$(docker ps -q --filter status=running --filter status=paused --filter status=restarting --filter "id=$cid" 2>/dev/null)" || return 2
       [ -z "$still_running" ] || return 2
       continue
     fi
     if [ -n "$allowed_proj" ] && [ "$c_proj" = "$allowed_proj" ]; then
       if ! c_wdir="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$cid" 2>/dev/null)"; then
-        still_running="$(docker ps -q --filter status=running --filter "id=$cid" 2>/dev/null)" || return 2
+        still_running="$(docker ps -q --filter status=running --filter status=paused --filter status=restarting --filter "id=$cid" 2>/dev/null)" || return 2
         [ -z "$still_running" ] || return 2
         continue
       fi
@@ -2074,7 +2075,7 @@ check_storage_free() {
       fi
     fi
     if ! mounts_out="$(docker inspect --format '{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Source}}{{"\n"}}{{end}}' "$cid" 2>/dev/null)"; then
-      still_running="$(docker ps -q --filter status=running --filter "id=$cid" 2>/dev/null)" || return 2
+      still_running="$(docker ps -q --filter status=running --filter status=paused --filter status=restarting --filter "id=$cid" 2>/dev/null)" || return 2
       [ -z "$still_running" ] || return 2
       continue
     fi
@@ -2400,7 +2401,7 @@ abort_rollback_pre_services() {
 RB_DB='' RB_PGDATA_SUB='' RB_FILES='' RB_KEYS='' RB_ARCHIVE=''
 verify_rollback_storage() {
   local rb_config="$1" rb_proj="$2" prev_img="$3" previous="$4" current="$5" cur_db_specs="$6" cur_pgdata_sub="$7" cur_files_specs="$8" cur_keys_specs="$9" cur_archive_specs="${10}"
-  local rb_db='' rb_pgdata_sub='' cur_db='' target='' cur_specs='' cur_m='' rb_specs='' rb_m='' src_rc=0 dst_rc=0 migrated=0 dst_labels=''
+  local rb_db='' rb_pgdata_sub='' cur_db='' target='' cur_specs='' cur_m='' rb_specs='' rb_m='' src_rc=0 dst_rc=0 free_rc=0 migrated=0 dst_labels=''
   rb_db="$(compose_target_mount "$rb_config" "$rb_proj" /var/lib/postgresql/data 'db')"
   if ! check_target_storage_layout "$rb_config" "$rb_proj" "$rb_db" 1; then
     abort_rollback_pre_services "$previous" "$current" "$STORAGE_LAYOUT_SUMMARY" "cannot roll back to $previous: $STORAGE_LAYOUT_ERR"
@@ -2438,6 +2439,17 @@ verify_rollback_storage() {
           "cannot inspect active $target storage $(mount_label "$cur_m") before rolling back to $previous; nothing running was changed"
       fi
       ((src_rc == 0)) || continue
+      free_rc=0
+      check_storage_free "$cur_m" "" || free_rc=$?
+      if ((free_rc == 1)); then
+        abort_rollback_pre_services "$previous" "$current" \
+          "active $target storage $(mount_label "$cur_m") held by running container" \
+          "cannot roll back to $previous safely: active $target storage $(mount_label "$cur_m") is still mounted by a running, paused, or restarting container; stop the stack and sync data before switching storage mounts on rollback"
+      elif ((free_rc != 0)); then
+        abort_rollback_pre_services "$previous" "$current" \
+          "cannot inspect containers for $(mount_label "$cur_m")" \
+          "cannot inspect active containers to verify $target storage $(mount_label "$cur_m") before rolling back to $previous; nothing running was changed"
+      fi
       if [ -z "$rb_specs" ]; then
         if ! mount_is_empty "$cur_m" "$prev_img"; then
           abort_rollback_pre_services "$previous" "$current" \

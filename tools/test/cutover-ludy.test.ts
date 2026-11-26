@@ -242,18 +242,41 @@ case "$cmd" in
     if [[ " $* " == *"{{range .Mounts}}"* ]]; then
       cid="\${@: -1}"
       if [ -n "\${STUB_CONTAINER_MOUNTS:-}" ]; then
+        matched=0
         for line in \${STUB_CONTAINER_MOUNTS}; do
           if [ "\${line%%|*}" = "$cid" ]; then
             printf '%s\\n' "\${line#*|}"
+            matched=1
           fi
         done
+        if [ "$matched" = 0 ] && [[ "$cid" =~ ^stub-([a-z0-9_-]+)-([a-z0-9_-]+)-cid$ ]]; then
+          m_proj="\${BASH_REMATCH[1]}"
+          m_svc="\${BASH_REMATCH[2]}"
+          for line in \${STUB_CONTAINER_MOUNTS}; do
+            if [ "\${line%%|*}" = "stub-\${m_svc}-cid" ]; then
+              rest="\${line#*|}"
+              rest="\${rest//|volume|ludy_/|volume|\${m_proj}_}"
+              printf '%s\\n' "$rest"
+            fi
+          done
+        fi
       else
         case "$cid" in
           stub-db-cid)
             printf '/var/lib/postgresql/data|volume|ludy_db-data|\\n'
             ;;
+          stub-*-db-cid)
+            m_proj="\${cid#stub-}"
+            m_proj="\${m_proj%-db-cid}"
+            printf '/var/lib/postgresql/data|volume|%s_db-data|\\n' "$m_proj"
+            ;;
           stub-crove-cid | stub-ludy-cid | stub-api-cid | stub-worker-cid)
             printf '/data/files|volume|ludy_files|\\n/data/keys|volume|ludy_keys|\\n/data/archive|volume|ludy_archive|\\n'
+            ;;
+          stub-*-crove-cid | stub-*-ludy-cid | stub-*-api-cid | stub-*-worker-cid)
+            m_proj="\${cid#stub-}"
+            m_proj="\${m_proj%-*-cid}"
+            printf '/data/files|volume|%s_files|\\n/data/keys|volume|%s_keys|\\n/data/archive|volume|%s_archive|\\n' "$m_proj" "$m_proj" "$m_proj"
             ;;
         esac
       fi
@@ -368,15 +391,72 @@ case "$cmd" in
       config)
         if [ "\${1:-}" = --services ]; then
           for s in \${STUB_SERVICES:-db migrate auth auth-grants worker api caddy prober}; do echo "$s"; done
+        elif [ -z "\${1:-}" ]; then
+          if [ "$proj" = crove ] && [ -n "\${STUB_CONFIG_YAML_CROVE:-}" ]; then
+            printf '%b' "$STUB_CONFIG_YAML_CROVE"
+          elif [ "$proj" = ludy ] && [ -n "\${STUB_CONFIG_YAML_LUDY:-}" ]; then
+            printf '%b' "$STUB_CONFIG_YAML_LUDY"
+          elif [ -n "\${STUB_CONFIG_YAML:-}" ]; then
+            printf '%b' "\${STUB_CONFIG_YAML//\\{proj\\}/$proj}"
+          else
+            printf 'name: %s\\nservices:\\n' "$proj"
+            vol_defs=''
+            for s in \${STUB_SERVICES:-db migrate auth auth-grants worker api caddy prober}; do
+              printf '  %s:\\n' "$s"
+              emitted_svc=0
+              if [ -n "\${STUB_CONTAINER_MOUNTS:-}" ]; then
+                for line in \${STUB_CONTAINER_MOUNTS}; do
+                  if [ "\${line%%|*}" = "stub-\${s}-cid" ]; then
+                    if [ "$emitted_svc" = 0 ]; then printf '    volumes:\\n'; emitted_svc=1; fi
+                    rest="\${line#*|}"
+                    IFS='|' read -r m_dst m_type m_name m_src _ <<<"$rest"
+                    if [ "$m_type" = bind ]; then
+                      printf '      - type: bind\\n        source: %s\\n        target: %s\\n' "$m_src" "$m_dst"
+                    elif [ "$m_type" = volume ]; then
+                      m_name="\${m_name/#ludy_/\${proj}_}"
+                      printf '      - type: volume\\n        source: %s\\n        target: %s\\n' "$m_name" "$m_dst"
+                      vol_defs="\${vol_defs}  \${m_name}:\\n    name: \${m_name}\\n"
+                    fi
+                  fi
+                done
+                if [ "$emitted_svc" = 1 ]; then continue; fi
+              fi
+              case "$s" in
+                db)
+                  printf '    volumes:\\n      - type: volume\\n        source: db-data\\n        target: /var/lib/postgresql/data\\n'
+                  vol_defs="\${vol_defs}  db-data:\\n    name: \${proj}_db-data\\n"
+                  ;;
+                api | worker | crove | ludy)
+                  printf '    volumes:\\n      - type: volume\\n        source: files\\n        target: /data/files\\n      - type: volume\\n        source: keys\\n        target: /data/keys\\n      - type: volume\\n        source: archive\\n        target: /data/archive\\n'
+                  vol_defs="\${vol_defs}  files:\\n    name: \${proj}_files\\n  keys:\\n    name: \${proj}_keys\\n  archive:\\n    name: \${proj}_archive\\n"
+                  ;;
+              esac
+            done
+            if [ -n "$vol_defs" ]; then
+              printf 'volumes:\\n%b' "$vol_defs"
+            fi
+          fi
         fi
         ;;
       ps)
         if [ "\${1:-}" = -q ] && [ "\${2:-}" = db ]; then
-          if [ -n "\${STUB_DB_CID-stub-db-cid}" ]; then printf '%s\\n' "\${STUB_DB_CID-stub-db-cid}"; fi
+          if [ -n "\${STUB_DB_CID+x}" ]; then
+            if [ -n "$STUB_DB_CID" ]; then printf '%s\\n' "$STUB_DB_CID"; fi
+          elif [ "$proj" = ludy ]; then
+            printf 'stub-db-cid\\n'
+          else
+            printf 'stub-%s-db-cid\\n' "$proj"
+          fi
         elif [ "\${1:-}" = -q ] && [ -n "\${2:-}" ]; then
           svc="$2"
           case " \${STUB_SERVICES:-db migrate auth auth-grants worker api caddy prober} " in
-            *" $svc "*) printf 'stub-%s-cid\\n' "$svc" ;;
+            *" $svc "*)
+              if [ "$proj" = ludy ]; then
+                printf 'stub-%s-cid\\n' "$svc"
+              else
+                printf 'stub-%s-%s-cid\\n' "$proj" "$svc"
+              fi
+              ;;
           esac
         elif [ "$proj" = crove ] || [ "$proj" = ludy ]; then
           for s in db worker api; do echo "$s"; done
@@ -865,20 +945,37 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(mountsSaved).toContain('/data/keys=volume:custom_keys');
     expect(mountsSaved).toContain('PGDATA_SUB=pgdata');
 
-    // 5) Exported OS env wins over empty .env line (`ALT=` in .env, `ALT=live` in env) and `= #new` is non-empty literal (`#new`) (#3972 Round 11).
+    // 5) Ephemeral caller OS env over empty .env fallback MUST fail closed so a subsequent clean `docker compose up` does not lose passwords; persisted .env indirection and `= #new` pass (#3972 Round 15).
     const osEnvIn = join(work, '.env.os-prec.in');
     const osEnvOut = join(work, '.env.os-prec.out');
     writeFileSync(
       osEnvIn,
       ['ALT=', 'CROVE_APP_DB_PASSWORD=old-pw', 'LUDY_APP_DB_PASSWORD=${ALT}', 'CROVE_WORKER_DB_PASSWORD=old-worker', 'LUDY_WORKER_DB_PASSWORD= #new-password', ''].join('\n'),
     );
-    const rOs = spawnSync('bash', [scriptPath, 'rewrite-env', osEnvIn, osEnvOut], { encoding: 'utf8', env: { ...process.env, ALT: 'live' } });
-    expect(rOs.status, rOs.stderr).toBe(0);
-    const outOs = readFileSync(osEnvOut, 'utf8');
-    expect(outOs).toContain('LUDY_APP_DB_PASSWORD=${ALT}');
-    expect(outOs).not.toContain('CROVE_APP_DB_PASSWORD=');
-    expect(outOs).toContain('LUDY_WORKER_DB_PASSWORD= #new-password');
-    expect(outOs).not.toContain('CROVE_WORKER_DB_PASSWORD=');
+    const rOsOnly = spawnSync('bash', [scriptPath, 'rewrite-env', osEnvIn, osEnvOut], { encoding: 'utf8', env: { ...process.env, ALT: 'live' } });
+    expect(rOsOnly.status).not.toBe(0);
+    expect(rOsOnly.stderr).toContain('LUDY_APP_DB_PASSWORD');
+    expect(rOsOnly.stderr).toContain('clean environment');
+    expect(`${rOsOnly.stdout}${rOsOnly.stderr}`).not.toContain('old-pw');
+
+    const persistedEnvIn = join(work, '.env.persisted.in');
+    const persistedEnvOut = join(work, '.env.persisted.out');
+    writeFileSync(
+      persistedEnvIn,
+      ['ALT=persisted-pw', 'CROVE_APP_DB_PASSWORD=old-pw', 'LUDY_APP_DB_PASSWORD=${ALT}', 'CROVE_WORKER_DB_PASSWORD=old-worker', 'LUDY_WORKER_DB_PASSWORD= #new-password', ''].join('\n'),
+    );
+    const rPersisted = spawnSync('bash', [scriptPath, 'rewrite-env', persistedEnvIn, persistedEnvOut], { encoding: 'utf8', env: { ...process.env, ALT: 'live' } });
+    expect(rPersisted.status, rPersisted.stderr).toBe(0);
+    const outPersisted = readFileSync(persistedEnvOut, 'utf8');
+    expect(outPersisted).toContain('ALT=persisted-pw');
+    expect(outPersisted).toContain('LUDY_APP_DB_PASSWORD=${ALT}');
+    expect(outPersisted).not.toContain('CROVE_APP_DB_PASSWORD=');
+    expect(outPersisted).toContain('LUDY_WORKER_DB_PASSWORD= #new-password');
+    expect(outPersisted).not.toContain('CROVE_WORKER_DB_PASSWORD=');
+
+    const rEmptyOverride = spawnSync('bash', [scriptPath, 'rewrite-env', persistedEnvIn, persistedEnvOut], { encoding: 'utf8', env: { ...process.env, ALT: '' } });
+    expect(rEmptyOverride.status).not.toBe(0);
+    expect(rEmptyOverride.stderr).toContain('LUDY_APP_DB_PASSWORD');
 
     // 6) cutover-stack on source checkout still named `crove` captures `stub-crove-cid` mounts into .deploy/mounts (#3972 Round 11).
     const fCroveSvc = createCutoverFixture();
@@ -953,5 +1050,115 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(resMissingCustom.status).toBe(2);
     expect(resMissingCustom.stderr).toContain('missing-storage.yml');
     expect(readFileSync(fMissingCustom.stubLog, 'utf8')).not.toContain(' stop');
+
+    // 10) cutover-stack refuses changing bind/non-prefixed/live storage mounts before stopping containers, and detects interpolated COMPOSE_FILE with COMPOSE_PATH_SEPARATOR (#3972 Round 15).
+    const fBindShift = createCutoverFixture();
+    const bindShiftRes = runWithStubs(fBindShift, ['cutover-stack', '--dir', fBindShift.deployDir, '--overlay-dir', fBindShift.overlayDir], {
+      STUB_CONFIG_YAML: [
+        'name: {proj}',
+        'services:',
+        '  db:',
+        '    volumes:',
+        '      - type: volume',
+        '        source: db-data',
+        '        target: /var/lib/postgresql/data',
+        '  api:',
+        '    volumes:',
+        '      - type: bind',
+        '        source: /srv/{proj}/files',
+        '        target: /data/files',
+        'volumes:',
+        '  db-data:',
+        '    name: {proj}_db-data',
+        '',
+      ].join('\n'),
+    });
+    expect(bindShiftRes.status).toBe(1);
+    expect(bindShiftRes.stderr).toContain('cannot automatically migrate /data/files mount on service api');
+    expect(bindShiftRes.stderr).toContain('bind:/srv/crove/files');
+    expect(bindShiftRes.stderr).toContain('bind:/srv/ludy/files');
+    expect(readFileSync(fBindShift.stubLog, 'utf8')).not.toContain(' stop');
+    expect(readFileSync(fBindShift.stubLog, 'utf8')).not.toContain('pg_dump');
+
+    const fNamedShift = createCutoverFixture();
+    const namedShiftRes = runWithStubs(fNamedShift, ['cutover-stack', '--dir', fNamedShift.deployDir, '--overlay-dir', fNamedShift.overlayDir], {
+      STUB_CONFIG_YAML: [
+        'name: {proj}',
+        'services:',
+        '  db:',
+        '    volumes:',
+        '      - type: volume',
+        '        source: db-data',
+        '        target: /var/lib/postgresql/data',
+        '  api:',
+        '    volumes:',
+        '      - type: volume',
+        '        source: custom_files',
+        '        target: /data/files',
+        'volumes:',
+        '  db-data:',
+        '    name: {proj}_db-data',
+        '  custom_files:',
+        '    name: data_{proj}_files',
+        '',
+      ].join('\n'),
+    });
+    expect(namedShiftRes.status).toBe(1);
+    expect(namedShiftRes.stderr).toContain('volume:data_crove_files');
+    expect(namedShiftRes.stderr).toContain('volume:data_ludy_files');
+    expect(readFileSync(fNamedShift.stubLog, 'utf8')).not.toContain(' stop');
+
+    const fLiveMismatch = createCutoverFixture();
+    const liveMismatchRes = runWithStubs(fLiveMismatch, ['cutover-stack', '--dir', fLiveMismatch.deployDir, '--overlay-dir', fLiveMismatch.overlayDir], {
+      STUB_CONFIG_YAML: [
+        'name: {proj}',
+        'services:',
+        '  db:',
+        '    volumes:',
+        '      - type: volume',
+        '        source: db-data',
+        '        target: /var/lib/postgresql/data',
+        '  api:',
+        '    volumes:',
+        '      - type: volume',
+        '        source: files',
+        '        target: /data/files',
+        'volumes:',
+        '  db-data:',
+        '    name: {proj}_db-data',
+        '  files:',
+        '    name: {proj}_files',
+        '',
+      ].join('\n'),
+      STUB_CONTAINER_MOUNTS: 'stub-crove-db-cid|/var/lib/postgresql/data|volume|crove_db-data| stub-crove-api-cid|/data/files|bind||/srv/live-only-files',
+    });
+    expect(liveMismatchRes.status).toBe(1);
+    expect(liveMismatchRes.stderr).toContain('bind:/srv/live-only-files');
+    expect(liveMismatchRes.stderr).toContain('volume:ludy_files');
+    expect(readFileSync(fLiveMismatch.stubLog, 'utf8')).not.toContain(' stop');
+
+    const fSepWal = createCutoverFixture();
+    mkdirSync(join(fSepWal.deployDir, 'tools/backup'), { recursive: true });
+    writeFileSync(join(fSepWal.deployDir, 'tools/backup/compose.wal.yml'), 'services:\n  db:\n    image: ${WAL_DB_IMAGE:-ludy-db:local}\n');
+    writeFileSync(
+      join(fSepWal.deployDir, '.env'),
+      [
+        'WAL_OVERLAY=tools/backup/compose.wal.yml',
+        'COMPOSE_PATH_SEPARATOR=;',
+        'COMPOSE_FILE=docker-compose.yml;compose.pilot.yml;compose.host.yml;${WAL_OVERLAY}',
+        'CROVE_DOMAIN=api.example.com',
+        'DATABASE_URL=postgres://crove_app:pw@db:5432/postgres',
+        '',
+      ].join('\n'),
+    );
+    const resSepWal = runWithStubs(fSepWal, ['cutover-stack', '--dir', fSepWal.deployDir, '--overlay-dir', fSepWal.overlayDir]);
+    expect(resSepWal.status, resSepWal.stderr).toBe(0);
+    expect(readFileSync(`${fSepWal.stubLog}.files`, 'utf8')).toContain(`${fSepWal.deployDir}/tools/backup/compose.wal.yml`);
+    const sepWalEnv = readFileSync(join(fSepWal.deployDir, '.env'), 'utf8');
+    expect(sepWalEnv).toContain('WAL_DB_IMAGE=crove-db:local');
+    expect(sepWalEnv).toContain('WAL_STANZA=crove');
+    const pruneSepBlocked = runWithStubs(fSepWal, ['prune-old-volumes', '--dir', fSepWal.deployDir, '--overlay-dir', fSepWal.overlayDir]);
+    expect(pruneSepBlocked.status).toBe(1);
+    expect(pruneSepBlocked.stderr).toContain('WAL_STANZA must be ludy');
   });
 });

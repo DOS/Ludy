@@ -198,10 +198,54 @@ env_or_default() {
   printf '%s' "${v:-$2}"
 }
 
+COMPOSE_FILE_ITEMS=()
+COMPOSE_FILE_RAW=''
+
+# Parses COMPOSE_FILE and COMPOSE_PATH_SEPARATOR from $ENV_FILE via eval_dotenv_key (#3972).
+# Returns 0 on success (populating COMPOSE_FILE_RAW and COMPOSE_FILE_ITEMS), or 2 on dotenv parse error.
+parse_compose_file_items() {
+  local cf='' sep='' rest='' item='' done_split=0
+  COMPOSE_FILE_ITEMS=()
+  COMPOSE_FILE_RAW=''
+  if ! cf="$(eval_dotenv_key "$ENV_FILE" COMPOSE_FILE 1 2>/dev/null)"; then
+    return 2
+  fi
+  COMPOSE_FILE_RAW="$cf"
+  if ! sep="$(eval_dotenv_key "$ENV_FILE" COMPOSE_PATH_SEPARATOR 1 2>/dev/null)"; then
+    return 2
+  fi
+  [ -n "$sep" ] || sep="${COMPOSE_PATH_SEPARATOR:-:}"
+  [ -n "$cf" ] || return 0
+  rest="$cf"
+  while ((done_split == 0)); do
+    case "$rest" in
+      *"$sep"*)
+        item="${rest%%"$sep"*}"
+        rest="${rest#*"$sep"}"
+        ;;
+      *)
+        item="$rest"
+        done_split=1
+        ;;
+    esac
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    [ -n "$item" ] || continue
+    COMPOSE_FILE_ITEMS+=("$item")
+  done
+  return 0
+}
+
 env_compose_file_lists() {
-  local val
-  val="$(env_last_value COMPOSE_FILE)"
-  [ -n "$val" ] && [[ "$val" == *"$1"* ]]
+  local base="$1" item=''
+  parse_compose_file_items || return 1
+  [ -n "$COMPOSE_FILE_RAW" ] || return 1
+  for item in "${COMPOSE_FILE_ITEMS[@]+"${COMPOSE_FILE_ITEMS[@]}"}"; do
+    if [ "$item" = "$base" ] || [[ "$item" == */"$base" ]]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 pilot_layout() {
@@ -209,15 +253,16 @@ pilot_layout() {
 }
 
 # Resolves an overlay compose file (such as compose.pilot.yml or compose.wal.yml) from COMPOSE_FILE in $ENV_FILE
-# or optionally falls back to $DEPLOY_DIR/<basename>. Returns 1 if not active, or 2 if COMPOSE_FILE names it
-# and the resolved file does not exist on disk.
+# or optionally falls back to $DEPLOY_DIR/<basename>. Returns 1 if not active, or 2 if COMPOSE_FILE parse fails /
+# names it and the resolved file does not exist on disk.
 resolve_compose_overlay() {
-  local base="$1" fallback="${2:-fallback}" cf item resolved=''
-  local -a cf_items=()
-  cf="$(env_last_value COMPOSE_FILE)"
-  if [ -n "$cf" ]; then
-    IFS=':' read -ra cf_items <<<"$cf"
-    for item in "${cf_items[@]}"; do
+  local base="$1" fallback="${2:-fallback}" item='' resolved='' rc=0
+  parse_compose_file_items || rc=$?
+  if ((rc == 2)); then
+    return 2
+  fi
+  if [ -n "$COMPOSE_FILE_RAW" ]; then
+    for item in "${COMPOSE_FILE_ITEMS[@]+"${COMPOSE_FILE_ITEMS[@]}"}"; do
       if [ "$item" = "$base" ] || [[ "$item" == */"$base" ]]; then
         if [[ "$item" == /* ]]; then
           resolved="$item"
@@ -289,22 +334,15 @@ insert_dc_compose_file_at() {
 # Resolves the ordered Compose file list matching Docker Compose semantics (`COMPOSE_FILE` or standard defaults) (#3972).
 # Returns 0 on success (populating DC_COMPOSE_FILES), or 2 with COMPOSE_FILES_ERR describing the missing/invalid file.
 build_compose_file_args() {
-  local cf='' sep=':' item='' resolved='' has_override=0 has_wal=0 pilot_idx=-1 host_idx=-1 idx=0 ins_idx=0
-  local -a cf_items=()
+  local item='' resolved='' has_override=0 has_wal=0 pilot_idx=-1 host_idx=-1 idx=0 ins_idx=0
   DC_COMPOSE_FILES=()
   COMPOSE_FILES_ERR=''
-  if ! cf="$(eval_dotenv_key "$ENV_FILE" COMPOSE_FILE 1 2>/dev/null)"; then
+  if ! parse_compose_file_items; then
     COMPOSE_FILES_ERR="cannot parse $ENV_FILE while resolving COMPOSE_FILE"
     return 2
   fi
-  sep="$(eval_dotenv_key "$ENV_FILE" COMPOSE_PATH_SEPARATOR 1 2>/dev/null || true)"
-  [ -n "$sep" ] || sep=':'
-  if [ -n "$cf" ]; then
-    IFS="$sep" read -ra cf_items <<<"$cf"
-    for item in "${cf_items[@]}"; do
-      item="${item#"${item%%[![:space:]]*}"}"
-      item="${item%"${item##*[![:space:]]}"}"
-      [ -n "$item" ] || continue
+  if [ -n "$COMPOSE_FILE_RAW" ]; then
+    for item in "${COMPOSE_FILE_ITEMS[@]+"${COMPOSE_FILE_ITEMS[@]}"}"; do
       if [[ "$item" == /* ]]; then
         resolved="$item"
       else
@@ -700,14 +738,19 @@ dotenv_parse_rhs() {
 }
 
 # Evaluates dotenv assignments top-to-bottom and outputs hashed state summaries (never plaintext values) (#3972).
+# When $use_os_env=0, ignores caller OS environment variables (simulating a clean `docker compose up` from dotenv only).
 eval_dotenv_state() {
-  local src_path="$1" normalize_urls="${2:-0}"
+  local src_path="$1" normalize_urls="${2:-0}" use_os_env="${3:-1}"
   (
     set -euo pipefail
     local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$'
     local lineno=0 line key rhs seen_keys='' i
     [ -r "$1" ] || exit 1
-    __DE_EXPORTED_NAMES="$(env | sed -n -E 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p')" || exit 1
+    if [ "$use_os_env" = 1 ]; then
+      __DE_EXPORTED_NAMES="$(env | sed -n -E 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p')" || exit 1
+    else
+      __DE_EXPORTED_NAMES=''
+    fi
     while IFS= read -r line || [ -n "$line" ]; do
       lineno=$((lineno + 1))
       line="${line%$'\r'}"
@@ -802,10 +845,12 @@ rewrite_env_file() {
   local src="$1" dst="$2"
   local split_re='^([[:space:]]*(export[[:space:]]+)?)([A-Za-z_][A-Za-z0-9_]*)([[:space:]]*[=:])(.*)$'
   [ -f "$src" ] || die "$EXIT_USAGE" "env source not found: $src"
-  local pre_state='' post_state=''
-  pre_state="$(eval_dotenv_state "$src" 1)" || die "$EXIT_FAILED" "cannot safely evaluate $src for CROVE_* -> LUDY_* env rewrite"
+  local pre_state='' pre_clean='' post_state='' post_clean=''
+  pre_state="$(eval_dotenv_state "$src" 1 1)" || die "$EXIT_FAILED" "cannot safely evaluate $src for CROVE_* -> LUDY_* env rewrite"
+  pre_clean="$(eval_dotenv_state "$src" 1 0)" || die "$EXIT_FAILED" "cannot safely evaluate $src in a clean environment without shell-only overrides"
 
   local ludy_last=() ludy_effective=() crove_last=() crove_effective=() pre_eff_nonempty=() pre_pair_hash=()
+  local pre_clean_eff_nonempty=() pre_clean_pair_hash=()
   local i lineno=0 line line_cr cr_seen=0 lf_seen=0 last_compose=0
   for ((i = 0; i < ${#CROVE_NEW_KEYS[@]}; i++)); do
     ludy_last[i]=0
@@ -814,9 +859,11 @@ rewrite_env_file() {
     crove_effective[i]=0
     pre_eff_nonempty[i]=0
     pre_pair_hash[i]=''
+    pre_clean_eff_nonempty[i]=0
+    pre_clean_pair_hash[i]=''
   done
 
-  local s_kind s_f1 s_f2 s_f3 s_f4 s_f5 pre_other_keys=() pre_other_hashes=()
+  local s_kind s_f1 s_f2 s_f3 s_f4 s_f5 pre_other_keys=() pre_other_hashes=() pre_clean_other_keys=() pre_clean_other_hashes=()
   while IFS='|' read -r s_kind s_f1 s_f2 s_f3 s_f4 s_f5; do
     case "$s_kind" in
       P)
@@ -831,6 +878,18 @@ rewrite_env_file() {
         ;;
     esac
   done <<<"$pre_state"
+  while IFS='|' read -r s_kind s_f1 s_f2 s_f3 s_f4 s_f5; do
+    case "$s_kind" in
+      P)
+        pre_clean_eff_nonempty[s_f1]="$s_f4"
+        pre_clean_pair_hash[s_f1]="$s_f5"
+        ;;
+      K)
+        pre_clean_other_keys+=("$s_f1")
+        pre_clean_other_hashes+=("$s_f2")
+        ;;
+    esac
+  done <<<"$pre_clean"
 
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
@@ -903,7 +962,7 @@ rewrite_env_file() {
     printf 'COMPOSE_PROJECT_NAME=ludy%s\n' "$default_cr" >>"$dst"
   fi
 
-  post_state="$(eval_dotenv_state "$dst" 0)" || die "$EXIT_FAILED" "rewritten env file failed validation (check references to retired CROVE_* variables)"
+  post_state="$(eval_dotenv_state "$dst" 0 1)" || die "$EXIT_FAILED" "rewritten env file failed validation (check references to retired CROVE_* variables)"
   while IFS='|' read -r s_kind s_f1 s_f2 s_f3 s_f4 s_f5; do
     case "$s_kind" in
       P)
@@ -921,6 +980,25 @@ rewrite_env_file() {
         ;;
     esac
   done <<<"$post_state"
+
+  post_clean="$(eval_dotenv_state "$dst" 0 0)" || die "$EXIT_FAILED" "rewritten env file failed clean-environment validation (check references to retired CROVE_* variables or shell-only overrides)"
+  while IFS='|' read -r s_kind s_f1 s_f2 s_f3 s_f4 s_f5; do
+    case "$s_kind" in
+      P)
+        if ((s_f2 != pre_clean_eff_nonempty[s_f1])) || ((s_f3 != 0)) || [ "$s_f5" != "${pre_clean_pair_hash[$s_f1]}" ]; then
+          die "$EXIT_FAILED" "env rewrite would alter effective Compose value for ${CROVE_NEW_KEYS[$s_f1]} in a clean environment without shell-only overrides; persist the value in $src before running cutover-stack"
+        fi
+        ;;
+      K)
+        local j
+        for ((j = 0; j < ${#pre_clean_other_keys[@]}; j++)); do
+          if [ "${pre_clean_other_keys[$j]}" = "$s_f1" ] && [ "${pre_clean_other_hashes[$j]}" != "$s_f2" ]; then
+            die "$EXIT_FAILED" "env rewrite would alter effective Compose value for $s_f1 in a clean environment without shell-only overrides; remove references to retired CROVE_* variables or persist dependencies in $src before running cutover-stack"
+          fi
+        done
+        ;;
+    esac
+  done <<<"$post_clean"
 }
 
 write_env_in_place() {
@@ -959,8 +1037,12 @@ upsert_env_kv_file() {
 }
 
 detect_active_project() {
-  local proj
-  proj="$(env_last_value COMPOSE_PROJECT_NAME)"
+  local proj=''
+  if proj="$(eval_dotenv_key "$ENV_FILE" COMPOSE_PROJECT_NAME 1 2>/dev/null)"; then
+    :
+  else
+    proj="$(env_last_value COMPOSE_PROJECT_NAME)"
+  fi
   if [ -n "$proj" ]; then
     printf '%s' "$proj"
     return 0
@@ -1260,6 +1342,477 @@ check_host_compose_safe() {
   done <"$file"
 }
 
+cutover_unquote_scalar() {
+  local line="$1" dq_re sq_re
+  dq_re='^"([^"]*)"[[:space:]]*(#.*)?$'
+  sq_re="^'([^']*)'[[:space:]]*(#.*)?$"
+  line="${line#"${line%%[![:space:]]*}"}"
+  if [[ "$line" =~ $dq_re ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  elif [[ "$line" =~ $sq_re ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  else
+    line="${line%%[[:space:]]#*}"
+    line="${line%"${line##*[![:space:]]}"}"
+    printf '%s' "$line"
+  fi
+}
+
+cutover_norm_bind_path() {
+  local p="$1"
+  if [[ "$p" != /* ]]; then
+    if [ "$p" = . ]; then
+      p="$DEPLOY_DIR"
+    else
+      p="$DEPLOY_DIR/${p#./}"
+    fi
+  fi
+  while [[ "$p" == */ && "$p" != / ]]; do p="${p%/}"; done
+  if [ -d "$p" ]; then
+    p="$(cd -P "$p" 2>/dev/null && pwd -P || printf '%s' "$p")"
+  fi
+  printf '%s' "$p"
+}
+
+cutover_compose_service_enabled() {
+  local config_out="$1" target_svc="$2" env_path="${3:-$ENV_FILE}"
+  local line section='' found=0 in_svc=0 in_prof=0 has_prof=0 item='' active_csv='' active_p='' prof_rest='' inner=''
+  local -a svc_profs=() active_profs=()
+  local top_re='^([a-zA-Z0-9_-]+):([[:space:]]*.*)?$'
+  local svc_re='^[[:space:]]{2}([a-zA-Z0-9._-]+):([[:space:]]*(#.*)?)?$'
+  local prof_re='^[[:space:]]{4}profiles:[[:space:]]*(.*)$'
+  local prop_re='^[[:space:]]{4}[a-zA-Z0-9._-]+:'
+  local arr_re='^\[(.*)\]$'
+  local list_re='^[[:space:]]*-[[:space:]]*(.+)$'
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ $top_re ]]; then
+      section="${BASH_REMATCH[1]}"
+      in_svc=0; in_prof=0
+      continue
+    fi
+    if [ "$section" = services ]; then
+      if [[ "$line" =~ $svc_re ]]; then
+        if [ "${BASH_REMATCH[1]}" = "$target_svc" ]; then found=1; in_svc=1; else in_svc=0; fi
+        in_prof=0
+        continue
+      fi
+      if ((in_svc)); then
+        if [[ "$line" =~ $prof_re ]]; then
+          prof_rest="${BASH_REMATCH[1]}"
+          prof_rest="${prof_rest%%#*}"
+          prof_rest="${prof_rest#"${prof_rest%%[![:space:]]*}"}"
+          prof_rest="${prof_rest%"${prof_rest##*[![:space:]]}"}"
+          has_prof=1
+          if [ -z "$prof_rest" ]; then
+            in_prof=1
+          elif [ "$prof_rest" = '[]' ]; then
+            return 0
+          elif [[ "$prof_rest" =~ $arr_re ]]; then
+            inner="${BASH_REMATCH[1]}"
+            IFS=',' read -ra svc_profs <<<"$inner"
+            in_prof=0
+          fi
+          continue
+        elif [[ "$line" =~ $prop_re ]]; then
+          in_prof=0
+          continue
+        fi
+        if ((in_prof)) && [[ "$line" =~ $list_re ]]; then
+          svc_profs+=("${BASH_REMATCH[1]}")
+        fi
+      fi
+    fi
+  done <<<"$config_out"
+
+  ((found)) || return 1
+  ((has_prof)) || return 0
+  ((${#svc_profs[@]} > 0)) || return 0
+  active_csv="${COMPOSE_PROFILES:-}"
+  if [ -z "$active_csv" ]; then
+    active_csv="$(eval_dotenv_key "$env_path" COMPOSE_PROFILES 1 2>/dev/null || true)"
+  fi
+  [ -n "$active_csv" ] || return 1
+  IFS=',' read -ra active_profs <<<"$active_csv"
+  for item in "${svc_profs[@]+"${svc_profs[@]}"}"; do
+    item="$(cutover_unquote_scalar "$item")"
+    for active_p in "${active_profs[@]+"${active_profs[@]}"}"; do
+      active_p="${active_p#"${active_p%%[![:space:]]*}"}"
+      active_p="${active_p%"${active_p##*[![:space:]]}"}"
+      if [ -n "$active_p" ] && { [ "$active_p" = '*' ] || [ "$active_p" = "$item" ]; }; then
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+cutover_compose_volume_name() {
+  local config_out="$1" proj="$2" vol_key="$3"
+  local line section='' vol_match=0 resolved='' is_ext=0 ext_val=''
+  local top_re='^([a-zA-Z0-9_-]+):([[:space:]]*.*)?$'
+  local vol_re='^[[:space:]]{2}([a-zA-Z0-9._-]+):([[:space:]]*.*)?$'
+  local name_re='^[[:space:]]{4}name:[[:space:]]*(.+)$'
+  local ext_re='^[[:space:]]{4}external:[[:space:]]*(.+)$'
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ $top_re ]]; then
+      section="${BASH_REMATCH[1]}"
+      vol_match=0
+      continue
+    fi
+    if [ "$section" = volumes ]; then
+      if [[ "$line" =~ $vol_re ]]; then
+        if [ "${BASH_REMATCH[1]}" = "$vol_key" ]; then
+          vol_match=1; resolved=''; is_ext=0
+        else
+          if ((vol_match)); then break; fi
+          vol_match=0
+        fi
+        continue
+      fi
+      if ((vol_match)); then
+        if [[ "$line" =~ $name_re ]]; then
+          resolved="$(cutover_unquote_scalar "${BASH_REMATCH[1]}")"
+          break
+        elif [[ "$line" =~ $ext_re ]]; then
+          ext_val="$(cutover_unquote_scalar "${BASH_REMATCH[1]}")"
+          if [ "$ext_val" = true ]; then is_ext=1; fi
+        fi
+      fi
+    fi
+  done <<<"$config_out"
+  if [ -n "$resolved" ] && [ "$resolved" != null ]; then
+    printf '%s' "$resolved"
+  elif ((is_ext)); then
+    printf '%s' "$vol_key"
+  else
+    printf '%s_%s' "$proj" "$vol_key"
+  fi
+}
+
+cutover_emit_compose_mount() {
+  local config_out="$1" proj="$2" svc="$3" cur_type="$4" cur_src="$5" cur_tgt="$6" cur_sub="$7"
+  local resolved_vol='' spec=''
+  [ -n "$svc" ] && [ -n "$cur_tgt" ] || return 0
+  while [[ "$cur_tgt" == */ && "$cur_tgt" != / ]]; do cur_tgt="${cur_tgt%/}"; done
+  case "$cur_type" in
+    tmpfs | npipe | cluster) return 0 ;;
+  esac
+  if [ "$svc" = db ] && [[ "$cur_tgt" == /var/lib/postgresql/data/* ]]; then
+    printf 'NESTED_DB|%s\n' "$cur_tgt"
+    return 0
+  fi
+  if [ "$cur_type" = bind ] || { [ -z "$cur_type" ] && [[ "$cur_src" == /* || "$cur_src" == .* ]]; }; then
+    [ -n "$cur_src" ] || return 0
+    if [[ "$cur_src" != /* ]]; then
+      if [ "$cur_src" = . ]; then
+        cur_src="$DEPLOY_DIR"
+      else
+        cur_src="$DEPLOY_DIR/${cur_src#./}"
+      fi
+    fi
+    while [[ "$cur_src" == */ && "$cur_src" != / ]]; do cur_src="${cur_src%/}"; done
+    printf '%s|%s|bind:%s\n' "$svc" "$cur_tgt" "$cur_src"
+    return 0
+  fi
+  if [ -z "$cur_src" ]; then
+    printf '%s|%s|anonymous:\n' "$svc" "$cur_tgt"
+    return 0
+  fi
+  resolved_vol="$(cutover_compose_volume_name "$config_out" "$proj" "$cur_src")"
+  cur_sub="${cur_sub#/}"
+  cur_sub="${cur_sub%/}"
+  if [ -n "$cur_sub" ]; then
+    spec="volume:${resolved_vol}:${cur_sub}"
+  else
+    spec="volume:${resolved_vol}"
+  fi
+  printf '%s|%s|%s\n' "$svc" "$cur_tgt" "$spec"
+}
+
+# Lists `<service>|<target>|<spec>` storage mounts (or `NESTED_DB|<target>`) across enabled services in Compose config (#3972).
+cutover_compose_storage_mounts() {
+  local config_out="$1" proj="$2" env_path="${3:-$ENV_FILE}"
+  local line section='' cur_svc='' svc_enabled=0 in_vols=0
+  local cur_type='' cur_src='' cur_tgt='' cur_sub=''
+  local top_re='^([a-zA-Z0-9_-]+):([[:space:]]*.*)?$'
+  local svc_re='^[[:space:]]{2}([a-zA-Z0-9._-]+):([[:space:]]*(#.*)?)?$'
+  local vols_re='^[[:space:]]{4}volumes:[[:space:]]*(\[\][[:space:]]*)?(#.*)?$'
+  local prop_re='^[[:space:]]{4}[a-zA-Z0-9._-]+:'
+  local item_re='^[[:space:]]*-[[:space:]]+(.*)$'
+  local item_kv_re='^(type|source|target|read_only|consistency|bind|volume|tmpfs|subpath):[[:space:]]*(.*)$'
+  local short_re='^([^:]+):([^:]+)(:[^:]*)?$'
+  local sub_kv_re='^[[:space:]]+(type|source|target|subpath):[[:space:]]*(.*)$'
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ $top_re ]]; then
+      if ((svc_enabled && in_vols)) && [ -n "$cur_tgt" ]; then
+        cutover_emit_compose_mount "$config_out" "$proj" "$cur_svc" "$cur_type" "$cur_src" "$cur_tgt" "$cur_sub"
+      fi
+      section="${BASH_REMATCH[1]}"
+      cur_svc=''; svc_enabled=0; in_vols=0
+      cur_type=''; cur_src=''; cur_tgt=''; cur_sub=''
+      continue
+    fi
+    if [ "$section" = services ]; then
+      if [[ "$line" =~ $svc_re ]]; then
+        if ((svc_enabled && in_vols)) && [ -n "$cur_tgt" ]; then
+          cutover_emit_compose_mount "$config_out" "$proj" "$cur_svc" "$cur_type" "$cur_src" "$cur_tgt" "$cur_sub"
+        fi
+        cur_svc="${BASH_REMATCH[1]}"
+        in_vols=0
+        cur_type=''; cur_src=''; cur_tgt=''; cur_sub=''
+        if cutover_compose_service_enabled "$config_out" "$cur_svc" "$env_path"; then
+          svc_enabled=1
+        else
+          svc_enabled=0
+        fi
+        continue
+      fi
+      if ((svc_enabled)); then
+        if [[ "$line" =~ $vols_re ]]; then
+          if ((in_vols)) && [ -n "$cur_tgt" ]; then
+            cutover_emit_compose_mount "$config_out" "$proj" "$cur_svc" "$cur_type" "$cur_src" "$cur_tgt" "$cur_sub"
+          fi
+          cur_type=''; cur_src=''; cur_tgt=''; cur_sub=''
+          if [ -n "${BASH_REMATCH[1]}" ]; then in_vols=0; else in_vols=1; fi
+          continue
+        elif [[ "$line" =~ $prop_re ]]; then
+          if ((in_vols)) && [ -n "$cur_tgt" ]; then
+            cutover_emit_compose_mount "$config_out" "$proj" "$cur_svc" "$cur_type" "$cur_src" "$cur_tgt" "$cur_sub"
+          fi
+          in_vols=0
+          cur_type=''; cur_src=''; cur_tgt=''; cur_sub=''
+          continue
+        fi
+        if ((in_vols)); then
+          if [[ "$line" =~ $item_re ]]; then
+            local item="${BASH_REMATCH[1]}" item_uq=''
+            if [ -n "$cur_tgt" ]; then
+              cutover_emit_compose_mount "$config_out" "$proj" "$cur_svc" "$cur_type" "$cur_src" "$cur_tgt" "$cur_sub"
+            fi
+            cur_type=''; cur_src=''; cur_tgt=''; cur_sub=''
+            if [[ "$item" =~ $item_kv_re ]]; then
+              local k="${BASH_REMATCH[1]}" v="${BASH_REMATCH[2]}"
+              case "$k" in
+                type) cur_type="$(cutover_unquote_scalar "$v")" ;;
+                source) cur_src="$(cutover_unquote_scalar "$v")" ;;
+                target) cur_tgt="$(cutover_unquote_scalar "$v")" ;;
+                subpath) cur_sub="$(cutover_unquote_scalar "$v")" ;;
+              esac
+            else
+              item_uq="$(cutover_unquote_scalar "$item")"
+              if [[ "$item_uq" =~ $short_re ]]; then
+                cur_src="${BASH_REMATCH[1]}"
+                cur_tgt="${BASH_REMATCH[2]}"
+                cutover_emit_compose_mount "$config_out" "$proj" "$cur_svc" '' "$cur_src" "$cur_tgt" ''
+                cur_type=''; cur_src=''; cur_tgt=''; cur_sub=''
+              elif [[ "$item_uq" == /* ]]; then
+                cutover_emit_compose_mount "$config_out" "$proj" "$cur_svc" volume '' "$item_uq" ''
+              fi
+            fi
+          elif [[ "$line" =~ $sub_kv_re ]]; then
+            local k="${BASH_REMATCH[1]}" v="${BASH_REMATCH[2]}"
+            case "$k" in
+              type) cur_type="$(cutover_unquote_scalar "$v")" ;;
+              source) cur_src="$(cutover_unquote_scalar "$v")" ;;
+              target) cur_tgt="$(cutover_unquote_scalar "$v")" ;;
+              subpath) cur_sub="$(cutover_unquote_scalar "$v")" ;;
+            esac
+          fi
+        fi
+      fi
+    fi
+  done <<<"$config_out"
+  if ((svc_enabled && in_vols)) && [ -n "$cur_tgt" ]; then
+    cutover_emit_compose_mount "$config_out" "$proj" "$cur_svc" "$cur_type" "$cur_src" "$cur_tgt" "$cur_sub"
+  fi
+}
+
+# Refuses cutover-stack BEFORE stopping containers if any bind mount, external volume, or non-${proj}_* volume changes
+# across COMPOSE_PROJECT_NAME=$proj -> ludy, or if any persistent volume on $proj was omitted from copy (#3972).
+check_cutover_storage_mounts() {
+  local proj="$1" env_tmp="$2"
+  shift 2
+  local src_vols=("$@")
+  local f src_cfg='' dst_cfg='' src_mounts='' dst_mounts=''
+  build_compose_file_args || die "$EXIT_USAGE" "$COMPOSE_FILES_ERR"
+  local src_args=(compose --project-name "$proj" --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE")
+  local dst_args=(compose --project-name ludy --project-directory "$DEPLOY_DIR" --env-file "$env_tmp")
+  for f in "${DC_COMPOSE_FILES[@]}"; do
+    src_args+=(-f "$f")
+    if [ "$f" = "$DEPLOY_DIR/compose.host.yml" ]; then
+      dst_args+=(-f "$STAGE_DIR/caddy/compose.host.yml")
+    elif [ "$f" = "$DEPLOY_DIR/compose.wal.yml" ]; then
+      dst_args+=(-f "$STAGE_DIR/backup/compose.wal.yml")
+    else
+      dst_args+=(-f "$f")
+    fi
+  done
+  src_cfg="$(env -u COMPOSE_PROJECT_NAME -u COMPOSE_FILE docker "${src_args[@]}" config)" \
+    || die "$EXIT_FAILED" "cannot inspect merged compose configuration for project $proj before cutover"
+  dst_cfg="$(env -u COMPOSE_PROJECT_NAME -u COMPOSE_FILE docker "${dst_args[@]}" config)" \
+    || die "$EXIT_FAILED" "cannot inspect merged compose configuration for target project ludy before cutover"
+
+  src_mounts="$(cutover_compose_storage_mounts "$src_cfg" "$proj" "$ENV_FILE")"
+  dst_mounts="$(cutover_compose_storage_mounts "$dst_cfg" ludy "$env_tmp")"
+
+  local svc cids cid m_lines m_dst m_type m_name m_src live_spec entry
+  for svc in db crove ludy api worker; do
+    cids="$(dc_proj "$proj" ps -q "$svc" 2>/dev/null || true)"
+    [ -n "$cids" ] || continue
+    while IFS= read -r cid; do
+      cid="${cid%$'\r'}"
+      [ -n "$cid" ] || continue
+      m_lines="$(docker inspect --format '{{range .Mounts}}{{.Destination}}|{{.Type}}|{{.Name}}|{{.Source}}{{"\n"}}{{end}}' "$cid")" \
+        || die "$EXIT_FAILED" "cannot inspect mounts of running $svc container ($cid) before cutover"
+      while IFS='|' read -r m_dst m_type m_name m_src; do
+        [ -n "$m_dst" ] || continue
+        while [[ "$m_dst" == */ && "$m_dst" != / ]]; do m_dst="${m_dst%/}"; done
+        if [ "$svc" = db ] && [[ "$m_dst" == /var/lib/postgresql/data/* ]]; then
+          die "$EXIT_FAILED" "running db container ($cid) has unsupported nested mount at $m_dst under /var/lib/postgresql/data; consolidate onto one /var/lib/postgresql/data mount before cutover"
+        fi
+        case "$m_dst" in
+          /var/lib/postgresql/data | /data/files | /data/keys | /data/archive) ;;
+          *) continue ;;
+        esac
+        case "$m_type" in
+          volume)
+            [ -n "$m_name" ] || continue
+            live_spec="volume:$m_name"
+            ;;
+          bind)
+            [ -n "$m_src" ] || continue
+            while [[ "$m_src" == */ && "$m_src" != / ]]; do m_src="${m_src%/}"; done
+            live_spec="bind:$m_src"
+            ;;
+          *) continue ;;
+        esac
+        entry="${svc}|${m_dst}|${live_spec}"
+        case $'\n'"$src_mounts"$'\n' in
+          *$'\n'"$entry"$'\n'*) ;;
+          *) src_mounts="${src_mounts:+$src_mounts$'\n'}$entry" ;;
+        esac
+      done <<<"$m_lines"
+    done <<<"$cids"
+  done
+
+  local d_svc='' d_tgt='' d_spec='' dst_has_db=0
+  while IFS='|' read -r d_svc d_tgt d_spec; do
+    [ -n "$d_svc" ] || continue
+    if [ "$d_svc" = NESTED_DB ]; then
+      die "$EXIT_FAILED" "target compose configuration (ludy) has unsupported nested mount at $d_tgt under /var/lib/postgresql/data"
+    fi
+    if [ "$d_svc" = db ] && [ "$d_tgt" = /var/lib/postgresql/data ] && [ "$d_spec" != anonymous: ]; then
+      dst_has_db=1
+    fi
+    case "$d_tgt" in
+      /var/lib/postgresql/data | /data/files | /data/keys | /data/archive)
+        case "$d_spec" in
+          volume:*:*)
+            die "$EXIT_FAILED" "target compose configuration (ludy) uses unsupported volume subpath mount on $d_tgt (${d_spec#volume:})"
+            ;;
+        esac
+        ;;
+    esac
+  done <<<"$dst_mounts"
+  ((dst_has_db == 1)) || die "$EXIT_FAILED" 'target compose configuration (ludy) defines no persistent mount at /var/lib/postgresql/data'
+
+  local s_svc='' s_tgt='' s_spec='' dst_cands='' dst_summary='' match_found=0
+  while IFS='|' read -r s_svc s_tgt s_spec; do
+    [ -n "$s_svc" ] || continue
+    if [ "$s_svc" = NESTED_DB ]; then
+      die "$EXIT_FAILED" "source compose configuration ($proj) has unsupported nested mount at $s_tgt under /var/lib/postgresql/data"
+    fi
+    case "$s_tgt" in
+      /var/lib/postgresql/data | /data/files | /data/keys | /data/archive)
+        case "$s_spec" in
+          volume:*:*)
+            die "$EXIT_FAILED" "source compose configuration ($proj) uses unsupported volume subpath mount on $s_tgt (${s_spec#volume:})"
+            ;;
+        esac
+        ;;
+    esac
+    case "$s_spec" in
+      '' | anonymous:) continue ;;
+    esac
+
+    dst_cands=''
+    dst_summary=''
+    while IFS='|' read -r d_svc d_tgt d_spec; do
+      [ -n "$d_svc" ] || continue
+      [ "$d_svc" != NESTED_DB ] || continue
+      [ "$d_tgt" = "$s_tgt" ] || continue
+      if [ "$d_svc" != "$s_svc" ]; then
+        if ! { [ "$s_svc" = crove ] && [ "$d_svc" = ludy ]; } && ! { [ "$s_svc" = ludy ] && [ "$d_svc" = crove ]; }; then
+          continue
+        fi
+      fi
+      case $'\n'"$dst_cands"$'\n' in
+        *$'\n'"$d_spec"$'\n'*) ;;
+        *)
+          dst_cands="${dst_cands:+$dst_cands$'\n'}$d_spec"
+          dst_summary="${dst_summary:+${dst_summary}, }$d_spec"
+          ;;
+      esac
+    done <<<"$dst_mounts"
+
+    match_found=0
+    while IFS= read -r d_spec; do
+      [ -n "$d_spec" ] || continue
+      if [ "$s_spec" = "$d_spec" ]; then
+        match_found=1
+        break
+      fi
+      case "$s_spec" in
+        bind:*)
+          if [[ "$d_spec" == bind:* ]]; then
+            local s_bind='' d_bind=''
+            s_bind="$(cutover_norm_bind_path "${s_spec#bind:}")"
+            d_bind="$(cutover_norm_bind_path "${d_spec#bind:}")"
+            if [ "$s_bind" = "$d_bind" ]; then
+              match_found=1
+              break
+            fi
+          fi
+          ;;
+        "volume:${proj}_"*)
+          local vol_name='' suffix='' expected_dst='' v='' copied=0
+          vol_name="${s_spec#volume:}"
+          suffix="${vol_name#"${proj}_"}"
+          if [ "$suffix" = media-scratch ]; then
+            case "$s_tgt" in
+              /var/lib/postgresql/data | /data/files | /data/keys | /data/archive) ;;
+              *)
+                match_found=1
+                break
+                ;;
+            esac
+          fi
+          expected_dst="volume:ludy_${suffix}"
+          if [ "$d_spec" = "$expected_dst" ]; then
+            for v in "${src_vols[@]+"${src_vols[@]}"}"; do
+              if [ "$v" = "$vol_name" ]; then
+                copied=1
+                break
+              fi
+            done
+            if ((copied == 1)) || ! docker volume inspect "$vol_name" >/dev/null 2>&1; then
+              match_found=1
+              break
+            fi
+          fi
+          ;;
+      esac
+    done <<<"$dst_cands"
+
+    if ((match_found == 0)); then
+      die "$EXIT_FAILED" "cutover-stack cannot automatically migrate $s_tgt mount on service $s_svc from $s_spec to ${dst_summary:-unmounted} (only ${proj}_* -> ludy_* Docker volumes are copied); keep a project-independent mount path or migrate $s_tgt manually before running cutover-stack"
+    fi
+  done <<<"$src_mounts"
+}
+
 rollback_cutover_stack() {
   [ "${ROLLBACK_ARMED:-0}" = 1 ] || return 0
   ROLLBACK_ARMED=0
@@ -1351,46 +1904,9 @@ do_cutover_stack() {
   ((${#src_vols[@]} > 0)) || die "$EXIT_FAILED" "no Docker volumes found matching ${proj}_*"
   printf '%s\n' "${src_vols[@]}" | grep -x "${proj}_db-data" >/dev/null || die "$EXIT_FAILED" "missing required ${proj}_db-data volume"
 
-  log "pulling helper copy image $VOLUME_COPY_IMAGE if needed"
-  docker pull --quiet "$VOLUME_COPY_IMAGE" >/dev/null
-
-  # Fail closed BEFORE mutating anything if any target ludy_* volume is already populated.
-  for vol in "${src_vols[@]}"; do
-    local suffix="${vol#"${proj}_"}"
-    local dst="ludy_$suffix"
-    if docker volume inspect "$dst" >/dev/null 2>&1; then
-      local existing
-      existing="$(docker run --rm --network none -v "${dst}:/dst:ro" --entrypoint sh "$VOLUME_COPY_IMAGE" -c 'find /dst -mindepth 1 -maxdepth 1 -print -quit')"
-      if [ -n "$existing" ]; then
-        die "$EXIT_FAILED" "target volume $dst already exists and is non-empty; refusing to overwrite"
-      fi
-    fi
-  done
-
-  local stamp backup_dir f
+  local stamp env_tmp
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  backup_dir="$(state_dir)/cutover-backup-$stamp"
-  (
-    umask 077
-    mkdir -p "$backup_dir"
-    cp "$ENV_FILE" "$backup_dir/env.pre-cutover"
-    chmod 0600 "$backup_dir/env.pre-cutover"
-    for f in Caddyfile compose.host.yml compose.wal.yml; do
-      if [ -f "$DEPLOY_DIR/$f" ]; then cp "$DEPLOY_DIR/$f" "$backup_dir/$f"; fi
-    done
-  )
-  ROLLBACK_BACKUP_DIR="$backup_dir"
   stage_overlays "$stamp"
-
-  log 'taking logical PostgreSQL backup before stopping stack'
-  (
-    umask 077
-    dc_proj "$proj" exec -T db pg_dump -U postgres -d postgres --format=custom --exclude-table-data=ludy_kernel.context_key --exclude-table-data=crove_kernel.context_key >"$backup_dir/db.dump"
-    [ -s "$backup_dir/db.dump" ]
-  )
-  dc_proj "$proj" exec -T db pg_restore --list <"$backup_dir/db.dump" >/dev/null
-
-  local env_tmp
   env_tmp="$(umask 077 && mktemp "$(state_dir)/.env.cutover-tmp-XXXXXX")"
   TEMP_FILES+=("$env_tmp")
   rewrite_env_file "$ENV_FILE" "$env_tmp"
@@ -1413,6 +1929,45 @@ do_cutover_stack() {
       mv -f "$s3_tmp" "$env_tmp"
     fi
   fi
+
+  check_cutover_storage_mounts "$proj" "$env_tmp" "${src_vols[@]}"
+
+  log "pulling helper copy image $VOLUME_COPY_IMAGE if needed"
+  docker pull --quiet "$VOLUME_COPY_IMAGE" >/dev/null
+
+  # Fail closed BEFORE mutating anything if any target ludy_* volume is already populated.
+  for vol in "${src_vols[@]}"; do
+    local suffix="${vol#"${proj}_"}"
+    local dst="ludy_$suffix"
+    if docker volume inspect "$dst" >/dev/null 2>&1; then
+      local existing
+      existing="$(docker run --rm --network none -v "${dst}:/dst:ro" --entrypoint sh "$VOLUME_COPY_IMAGE" -c 'find /dst -mindepth 1 -maxdepth 1 -print -quit')"
+      if [ -n "$existing" ]; then
+        die "$EXIT_FAILED" "target volume $dst already exists and is non-empty; refusing to overwrite"
+      fi
+    fi
+  done
+
+  local backup_dir f
+  backup_dir="$(state_dir)/cutover-backup-$stamp"
+  (
+    umask 077
+    mkdir -p "$backup_dir"
+    cp "$ENV_FILE" "$backup_dir/env.pre-cutover"
+    chmod 0600 "$backup_dir/env.pre-cutover"
+    for f in Caddyfile compose.host.yml compose.wal.yml; do
+      if [ -f "$DEPLOY_DIR/$f" ]; then cp "$DEPLOY_DIR/$f" "$backup_dir/$f"; fi
+    done
+  )
+  ROLLBACK_BACKUP_DIR="$backup_dir"
+
+  log 'taking logical PostgreSQL backup before stopping stack'
+  (
+    umask 077
+    dc_proj "$proj" exec -T db pg_dump -U postgres -d postgres --format=custom --exclude-table-data=ludy_kernel.context_key --exclude-table-data=crove_kernel.context_key >"$backup_dir/db.dump"
+    [ -s "$backup_dir/db.dump" ]
+  )
+  dc_proj "$proj" exec -T db pg_restore --list <"$backup_dir/db.dump" >/dev/null
 
   # Arm EXIT-based rollback before stopping services or copying volumes.
   LUDY_VOLUMES_COMMITTED=0
@@ -1579,6 +2134,7 @@ do_switch_wal() {
   require_docker_compose
   [ "$ENV_FILE" = "$DEPLOY_DIR/.env" ] || die "$EXIT_USAGE" "switch-wal requires --env-file to be $DEPLOY_DIR/.env (wal.sh reads LUDY_DIR/.env)"
   [ -w "$ENV_FILE" ] && [ -w "$DEPLOY_DIR" ] || die "$EXIT_USAGE" "$ENV_FILE and $DEPLOY_DIR must be writable"
+  build_compose_file_args || die "$EXIT_USAGE" "$COMPOSE_FILES_ERR"
   env_compose_file_lists compose.wal.yml || die "$EXIT_USAGE" "COMPOSE_FILE in $ENV_FILE does not list compose.wal.yml"
   local wal_file=''
   wal_file="$(resolve_wal_compose_file)" || die "$EXIT_USAGE" "compose.wal.yml listed in $ENV_FILE does not exist under $DEPLOY_DIR"
@@ -1662,6 +2218,7 @@ do_switch_wal() {
 do_prune_old_volumes() {
   require_paths 0
   require_docker_compose
+  build_compose_file_args || die "$EXIT_USAGE" "$COMPOSE_FILES_ERR"
   acquire_lock
   trap '' HUP PIPE
   export_release_images
@@ -1734,7 +2291,12 @@ do_prune_old_volumes() {
   fi
 
   # L1: When WAL archiving is active, refuse to prune without a verified healthy backup under stanza ludy.
-  if resolve_wal_compose_file >/dev/null 2>&1 || env_compose_file_lists compose.wal.yml; then
+  local wal_probe='' wal_probe_rc=0
+  wal_probe="$(resolve_wal_compose_file)" || wal_probe_rc=$?
+  if ((wal_probe_rc == 2)); then
+    die "$EXIT_FAILED" "cannot resolve compose.wal.yml from $ENV_FILE; refusing to prune crove_* volumes while WAL configuration is unreadable or missing"
+  fi
+  if [ -n "$wal_probe" ] || env_compose_file_lists compose.wal.yml; then
     [ "$ENV_FILE" = "$DEPLOY_DIR/.env" ] || die "$EXIT_USAGE" "prune-old-volumes with WAL requires --env-file to be $DEPLOY_DIR/.env (wal.sh reads LUDY_DIR/.env)"
     [ -n "$OVERLAY_DIR" ] && [ -f "$OVERLAY_DIR/backup/wal.sh" ] || die "$EXIT_USAGE" 'prune-old-volumes requires --overlay-dir with backup/wal.sh when compose.wal.yml is active'
     local stanza wal_info wal_backups

@@ -59,7 +59,7 @@ if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
 fi
 if [ "${1:-}" = ps ]; then
   [ -z "${STUB_PS_FAIL:-}" ] || exit 1
-  proj='' svc='' status_filter='' wdir_filter='' id_filter=''
+  proj='' svc='' status_running=0 status_paused=0 status_restarting=0 has_status_filter=0 wdir_filter='' id_filter=''
   shift
   while (($# > 0)); do
     case "$1" in
@@ -68,7 +68,10 @@ if [ "${1:-}" = ps ]; then
           label=com.docker.compose.project=*) proj="${2#label=com.docker.compose.project=}" ;;
           label=com.docker.compose.service=*) svc="${2#label=com.docker.compose.service=}" ;;
           label=com.docker.compose.project.working_dir=*) wdir_filter="${2#label=com.docker.compose.project.working_dir=}" ;;
-          status=*) status_filter="${2#status=}" ;;
+          status=running) status_running=1; has_status_filter=1 ;;
+          status=paused) status_paused=1; has_status_filter=1 ;;
+          status=restarting) status_restarting=1; has_status_filter=1 ;;
+          status=*) has_status_filter=1 ;;
           id=*) id_filter="${2#id=}" ;;
         esac
         shift 2
@@ -86,17 +89,37 @@ if [ "${1:-}" = ps ]; then
     exit 0
   fi
   if [ -n "$id_filter" ]; then
-    for item in ${STUB_RUNNING_CONTAINERS:-}; do
-      if [ "$item" = "$id_filter" ]; then printf '%s\n' "$item"; exit 0; fi
-    done
-    for item in ${STUB_WORKDIR_CONTAINERS:-}; do
-      IFS='|' read -r _ _ icid <<<"$item"
-      if [ "$icid" = "$id_filter" ]; then printf '%s\n' "$icid"; exit 0; fi
-    done
+    if ((has_status_filter == 0 || status_running == 1)); then
+      for item in ${STUB_RUNNING_CONTAINERS:-}; do
+        if [ "$item" = "$id_filter" ]; then printf '%s\n' "$item"; exit 0; fi
+      done
+      for item in ${STUB_WORKDIR_CONTAINERS:-}; do
+        IFS='|' read -r _ _ icid <<<"$item"
+        if [ "$icid" = "$id_filter" ]; then printf '%s\n' "$icid"; exit 0; fi
+      done
+    fi
+    if ((has_status_filter == 0 || status_paused == 1)); then
+      for item in ${STUB_PAUSED_CONTAINERS:-}; do
+        if [ "$item" = "$id_filter" ]; then printf '%s\n' "$item"; exit 0; fi
+      done
+    fi
+    if ((has_status_filter == 0 || status_restarting == 1)); then
+      for item in ${STUB_RESTARTING_CONTAINERS:-}; do
+        if [ "$item" = "$id_filter" ]; then printf '%s\n' "$item"; exit 0; fi
+      done
+    fi
     exit 0
   fi
-  if [ "$status_filter" = running ]; then
-    for item in ${STUB_RUNNING_CONTAINERS:-}; do printf '%s\n' "$item"; done
+  if ((has_status_filter == 1)); then
+    if ((status_running == 1)); then
+      for item in ${STUB_RUNNING_CONTAINERS:-}; do printf '%s\n' "$item"; done
+    fi
+    if ((status_paused == 1)); then
+      for item in ${STUB_PAUSED_CONTAINERS:-}; do printf '%s\n' "$item"; done
+    fi
+    if ((status_restarting == 1)); then
+      for item in ${STUB_RESTARTING_CONTAINERS:-}; do printf '%s\n' "$item"; done
+    fi
     exit 0
   fi
   printf 'docker ps --filter label=com.docker.compose.project=%s --filter label=com.docker.compose.service=%s\n' "$proj" "$svc" >>"$STUB_LOG.orphans"
@@ -460,7 +483,7 @@ case "$sub" in
     case "$args" in
       *migrate*)
         # An environment variable of the caller must not reach the step: the env file is the one source of the key.
-        { [ -z "${LUDY_CONTEXT_TOKEN_KEY+x}" ]; } || echo seen >"$STUB_LOG.envvar"
+        { [ -z "${LUDY_CONTEXT_TOKEN_KEY+x}" ] && [ -z "${CROVE_CONTEXT_TOKEN_KEY+x}" ]; } || echo seen >"$STUB_LOG.envvar"
         key="$(sed -n 's/^LUDY_CONTEXT_TOKEN_KEY=//p' "$envfile" | tail -n 1)"
         if [ -n "$key" ]; then
           if [ -f "$STUB_LOG.installed" ] && [ "$(cat "$STUB_LOG.installed")" = "$key" ]; then echo 'context token key unchanged'; else
@@ -487,7 +510,9 @@ case "$sub" in
       for s in ${STUB_RUNNING:-worker}; do echo "$s"; done
     fi
     ;;
-  up) ;;
+  up)
+    { [ -z "${LUDY_CONTEXT_TOKEN_KEY+x}" ] && [ -z "${CROVE_CONTEXT_TOKEN_KEY+x}" ]; } || echo seen >"$STUB_LOG.envvar"
+    ;;
   logs) [ -z "${STUB_WORKER_LOG:-}" ] || echo "$STUB_WORKER_LOG" ;;
   rm) [ -z "${STUB_RM_FAIL:-}" ] || { echo 'rm: stub failure' >&2; exit 1; } ;;
   *)
