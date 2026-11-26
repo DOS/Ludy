@@ -125,8 +125,8 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
 
   const askSettlement = (o: Org, settlementId: string, user = o.admin, runtime = rt) =>
     runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_settlement.record', input: { settlementId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
-  const ask = (o: Org, settlementId: string, bankLineId: string, user = o.admin, runtime = rt) =>
-    runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_payout.record', input: { settlementId, bankLineId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
+  const ask = (o: Org, settlementId: string, bankLineId: string, user = o.admin, runtime = rt, adjustments?: { kind: 'withheld_in_error'; lineId: string; amount: string }[]) =>
+    runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_payout.record', input: { settlementId, bankLineId, ...(adjustments ? { adjustments } : {}) } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   async function approve(o: Org, proposalId: string, user = o.owner, runtime = rt) {
     const detail = await runtime.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(user), orgId: o.orgId });
     return runtime.execute<{ voucherId: string; journalEntryId: string; code: string }>('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(user), orgId: o.orgId });
@@ -382,5 +382,49 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     await expect(insert('proposal_id, fee_document_id, settlement_id', [proposalId, doc, randomUUID()])).rejects.toMatchObject({ code: '23514' });
     await expect(insert('proposal_id, fee_document_id, payout_settlement_id, payout_bank_line_id', [proposalId, doc, randomUUID(), randomUUID()])).rejects.toMatchObject({ code: '23514' });
     await expect(insert('proposal_id, fee_document_id, closing_year', [proposalId, doc, 2025])).rejects.toMatchObject({ code: '23514' });
+  });
+
+  it('never treats tax withheld by mistake on 1388 or unrelated 1388 vouchers as waiting fees, even with retired: false (#4336)', async () => {
+    const rtPayout331 = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
+      commands: [...kernelCommands, ...financeCommands.filter((c) => notMarketplace(c.name)), ...createMarketplaceSettlementCommands({ maps: confirmedMaps() }).commands, ...createMarketplacePayoutCommands({ maps: confirmedMaps() }).commands, ...createMarketplaceFeeClearingCommands({ maps: confirmedMaps(), retired: false }).commands],
+      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
+    });
+    // 1) Under the 331 fee path, withheld_in_error debits 1388 for 2 000: fee clearing must see 0 waiting fees and refuse with NOTHING_WAITING.
+    const o1 = await org('tt133', false);
+    const s1 = await seed(o1, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', commission: '10000', tax: '2000' }]);
+    await approve(o1, (await askSettlement(o1, s1, o1.admin, rtPayout331)).proposalId, o1.owner, rtPayout331);
+    const b1 = await bankLine(o1, '2026-10-20', '88000');
+    const [line1] = await rows<{ id: string }>('SELECT id FROM ludy_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [o1.orgId, s1]);
+    await approve(o1, (await ask(o1, s1, b1, o1.admin, rtPayout331, [{ kind: 'withheld_in_error', lineId: line1?.id as string, amount: '2000' }])).proposalId, o1.owner, rtPayout331);
+    const party1 = (await partyOf(o1, 'shopee')) as string;
+    expect(await fees1388(o1)).toBe('2000');
+    const doc1 = await invoice(o1, party1);
+    await expect(askFee(o1, doc1, o1.admin, rtPayout331)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_NOTHING_TO_CLEAR', status: 409, details: { reason: 'NOTHING_WAITING' } });
+
+    // 2) An unrelated manual journal voucher on 1388 under the platform party is not waiting fees either.
+    const manual = await rtPayout331.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: 'finance.journal_voucher.record', input: { date: '2026-10-21', description: 'Phải thu khác sàn', lines: [{ account: '1388', partyId: party1, debit: '5000', credit: '0' }, { account: '711', debit: '0', credit: '5000' }] } },
+      { actor: asUser(o1.admin), orgId: o1.orgId, idempotencyKey: randomUUID() },
+    );
+    await approve(o1, manual.proposalId, o1.owner, rtPayout331);
+    await expect(askFee(o1, doc1, o1.admin, rtPayout331)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_NOTHING_TO_CLEAR', status: 409, details: { reason: 'NOTHING_WAITING' } });
+
+    // 3) When a payout puts both fees (10 000) and withheld_in_error (2 000) on 1388, clearing clears only 10 000 and leaves 2 000 on 1388 untouched.
+    const o2 = await org('tt133', false);
+    const s2 = await seed(o2, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', commission: '10000', tax: '2000' }]);
+    await post(o2, s2);
+    const b2 = await bankLine(o2, '2026-10-20', '88000');
+    const [line2] = await rows<{ id: string }>('SELECT id FROM ludy_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [o2.orgId, s2]);
+    await approve(o2, (await ask(o2, s2, b2, o2.admin, rt, [{ kind: 'withheld_in_error', lineId: line2?.id as string, amount: '2000' }])).proposalId);
+    const party2 = (await partyOf(o2, 'shopee')) as string;
+    expect(await fees1388(o2)).toBe('12000');
+    const doc2 = await invoice(o2, party2);
+    const cleared = await askFee(o2, doc2);
+    expect(await payloadOf(o2, cleared.proposalId)).toMatchObject({ waiting: '10000', amount: '10000' });
+    await approve(o2, cleared.proposalId);
+    expect(await fees1388(o2)).toBe('2000');
+    const extra = await invoice(o2, party2, { total: 5000, vat: 0 });
+    await expect(askFee(o2, extra)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_NOTHING_TO_CLEAR', status: 409, details: { reason: 'NOTHING_WAITING' } });
   });
 });

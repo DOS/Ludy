@@ -21,6 +21,7 @@ import { assertUsableAccounts } from './accounts.ts';
 import { JOURNAL_VOUCHER_SOURCE, journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
 import { feeClearingProposal, type FeeClearingProposal } from './marketplace-fee-clearing-posting.ts';
+import { WITHHELD_IN_ERROR_MEMO_SUFFIX } from './marketplace-payout-posting.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
 import { booksOn } from './payroll-posting.ts';
@@ -67,7 +68,7 @@ export async function standingInvoiceEntry(ctx: QueryContext, documentId: string
 }
 
 // The credit (less debit) to 331 that the invoice's entry names the party for: what the invoice has to clear.
-export async function invoicePayable(ctx: QueryContext, entryId: string, partyId: string): Promise<string> {
+export async function invoicePayable(ctx: QueryContext, entryId: string, partyId: string, payablePrefix = MARKETPLACE_POSTING_MAPS.tt133?.feePayable.code ?? '331'): Promise<string> {
   return (
     await ctx.trx
       .selectFrom('ludy_finance.journal_line as l')
@@ -75,13 +76,13 @@ export async function invoicePayable(ctx: QueryContext, entryId: string, partyId
       .where('l.org_id', '=', ctx.orgId)
       .where('l.entry_id', '=', entryId)
       .where('l.party_id', '=', partyId)
-      .where('l.account_code', 'like', `${MARKETPLACE_POSTING_MAPS.tt133?.feePayable.code ?? '331'}%`)
+      .where('l.account_code', 'like', `${payablePrefix}%`)
       .executeTakeFirstOrThrow()
   ).total;
 }
 
 // What the invoice's standing clearings took: the credit to 1388 of every clearing voucher that names it and whose entry is not reversed.
-export async function invoiceCleared(ctx: QueryContext, documentId: string): Promise<string> {
+export async function invoiceCleared(ctx: QueryContext, documentId: string, awaitingPrefix = MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388'): Promise<string> {
   return (
     await ctx.trx
       .selectFrom('ludy_finance.journal_voucher as j')
@@ -90,22 +91,54 @@ export async function invoiceCleared(ctx: QueryContext, documentId: string): Pro
       .select(sql<string>`coalesce(sum(l.credit), 0)`.as('total'))
       .where('j.org_id', '=', ctx.orgId)
       .where('j.fee_document_id', '=', documentId)
-      .where('l.account_code', 'like', `${MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388'}%`)
+      .where('l.account_code', 'like', `${awaitingPrefix}%`)
       .where(sql<boolean>`NOT ${reversedSource('j', JOURNAL_VOUCHER_SOURCE)}`)
       .executeTakeFirstOrThrow()
   ).total;
 }
 
-// The sum of the account's lines (debit minus credit) that name the party, in the entity: a reversal entry takes back what it reverses, so the balance already counts it.
+// Whether a line on `feeAwaitingInvoice` (1388) belongs to waiting-fee clearing rather than tax withheld by mistake (`withheld_in_error`, #4303 S4) or an unrelated 1388 posting (#4336).
+export function isFeeWaitingSource(source: { feeDocumentId: string | null; payoutSettlementId: string | null; payoutFees?: string | null; memo: string | null }): boolean {
+  if (source.feeDocumentId !== null) return true;
+  if (source.payoutSettlementId === null) return false;
+  if ((source.memo ?? '').endsWith(WITHHELD_IN_ERROR_MEMO_SUFFIX)) return false;
+  if (source.payoutFees !== null && source.payoutFees !== undefined) {
+    if (!/^\d+(\.\d{1,4})?$/.test(source.payoutFees) || !money(source.payoutFees).greaterThan(0)) return false;
+  }
+  return true;
+}
+
+// The sum of the waiting-fees account's lines (debit minus credit) that name the party, in the entity: a reversal entry takes back what it reverses, so the balance already counts it.
+// Only fee-clearing vouchers (`fee_document_id`) and the fee lines of payout vouchers (`payout_settlement_id`, excluding `withheld_in_error` lines and zero-fee payouts), plus their reversals, are counted;
+// tax withheld by mistake (`otherReceivable` on 1388) and unrelated 1388 entries are never treated as fees awaiting an invoice (#4336).
 export async function balanceOf(ctx: QueryContext, legalEntityId: string, partyId: string, prefix: string): Promise<{ balance: string; lastDate: string | null }> {
+  const withheldMemoSuffix = `%${WITHHELD_IN_ERROR_MEMO_SUFFIX}`;
   const row = await ctx.trx
     .selectFrom('ludy_finance.journal_line as l')
     .innerJoin('ludy_finance.journal_entry as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.entry_id'))
+    .leftJoin('ludy_finance.journal_entry as orig', (join) => join.onRef('orig.org_id', '=', 'e.org_id').onRef('orig.id', '=', 'e.reverses_entry_id'))
+    .innerJoin('ludy_finance.journal_voucher as v', (join) =>
+      join
+        .onRef('v.org_id', '=', 'e.org_id')
+        .on('v.id', '=', sql<string>`coalesce(orig.source_id, e.source_id)`)
+        .on(sql<string>`coalesce(orig.source_type, e.source_type)`, '=', JOURNAL_VOUCHER_SOURCE),
+    )
+    .leftJoin('ludy_kernel.proposal as p', (join) => join.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.proposal_id'))
     .select([sql<string>`coalesce(sum(l.debit) - sum(l.credit), 0)`.as('balance'), sql<string | null>`max(e.entry_date)::text`.as('last_date')])
     .where('l.org_id', '=', ctx.orgId)
     .where('l.legal_entity_id', '=', legalEntityId)
     .where('l.party_id', '=', partyId)
     .where('l.account_code', 'like', `${prefix}%`)
+    .where(
+      sql<boolean>`(
+        v.fee_document_id IS NOT NULL
+        OR (
+          v.payout_settlement_id IS NOT NULL
+          AND coalesce(l.memo, '') NOT LIKE ${withheldMemoSuffix}
+          AND (p.id IS NULL OR ((p.payload->>'fees') ~ '^[0-9]+(\\.[0-9]{1,4})?$' AND (p.payload->>'fees')::numeric > 0))
+        )
+      )`,
+    )
     .executeTakeFirstOrThrow();
   return { balance: money(row.balance).toFixed(), lastDate: row.last_date };
 }
@@ -138,16 +171,30 @@ async function buildClearing(ctx: QueryContext, maps: Maps, documentId: string, 
   const entry = await standingInvoiceEntry(ctx, doc.id);
   if (!entry) throw notUsable('NOT_POSTED');
   if (entry.reversed) throw notUsable('REVERSED');
-  const payable = await invoicePayable(ctx, entry.id, link.id);
+  const invoiceDate = entry.entryDate;
+  const initialRegime = (await booksOn(ctx, doc.legal_entity_id, invoiceDate)).regime;
+  const initialMap = (Object.hasOwn(maps, initialRegime) ? maps[initialRegime] : undefined) ?? MARKETPLACE_POSTING_MAPS.tt133;
+  const initialPayableCode = initialMap?.feePayable.code ?? '331';
+  const initialAwaitingCode = initialMap?.feeAwaitingInvoice.code ?? '1388';
+  let payable = await invoicePayable(ctx, entry.id, link.id, initialPayableCode);
   if (!money(payable).greaterThan(0)) throw notUsable('NO_PAYABLE');
   // What the invoice's standing clearings took: the credit to 1388 of every clearing voucher that names it and whose entry is not reversed.
-  const cleared = await invoiceCleared(ctx, doc.id);
-  const waiting = await balanceOf(ctx, doc.legal_entity_id, link.id, MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388');
+  let waiting = await balanceOf(ctx, doc.legal_entity_id, link.id, initialAwaitingCode);
   // The entry is dated the later of the invoice's own posting (its entry date, which may follow the invoice date) and the last posting on the platform's 1388, so it never precedes either.
-  const invoiceDate = entry.entryDate;
-  const date = waiting.lastDate && waiting.lastDate > invoiceDate ? waiting.lastDate : invoiceDate;
-  const regime = (await booksOn(ctx, doc.legal_entity_id, date)).regime;
-  const map = requireConfirmedMarketplaceMap(regime, maps);
+  let date = waiting.lastDate && waiting.lastDate > invoiceDate ? waiting.lastDate : invoiceDate;
+  let regime = date === invoiceDate ? initialRegime : (await booksOn(ctx, doc.legal_entity_id, date)).regime;
+  let map = requireConfirmedMarketplaceMap(regime, maps);
+  if (map.feeAwaitingInvoice.code !== initialAwaitingCode) {
+    waiting = await balanceOf(ctx, doc.legal_entity_id, link.id, map.feeAwaitingInvoice.code);
+    date = waiting.lastDate && waiting.lastDate > invoiceDate ? waiting.lastDate : invoiceDate;
+    regime = date === invoiceDate ? initialRegime : (await booksOn(ctx, doc.legal_entity_id, date)).regime;
+    map = requireConfirmedMarketplaceMap(regime, maps);
+  }
+  if (map.feePayable.code !== initialPayableCode) {
+    payable = await invoicePayable(ctx, entry.id, link.id, map.feePayable.code);
+    if (!money(payable).greaterThan(0)) throw notUsable('NO_PAYABLE');
+  }
+  const cleared = await invoiceCleared(ctx, doc.id, map.feeAwaitingInvoice.code);
   const lockedThrough = await periodLockedThrough(ctx, doc.legal_entity_id);
   if (lockedThrough && date <= lockedThrough) {
     throw new DomainError('PERIOD_LOCKED', 409, `Sổ đã khóa đến hết ngày ${dateLabel(lockedThrough)}, nên không ghi được bút toán ngày ${dateLabel(date)}`, { lockedThrough, entryDate: date });

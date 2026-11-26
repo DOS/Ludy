@@ -4,7 +4,8 @@ import { DomainError } from '@ludy/kernel-runtime';
 import { money, sum, toMoney } from '@ludy/l10n-vn';
 import type { MarketplacePayoutAdjustment, MarketplacePayoutProposal } from '@ludy/kernel-contract';
 import { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from '../src/marketplace-posting-map.ts';
-import { payoutPaths, payoutProposal, type PayoutPostingLine, type PayoutProposalInput } from '../src/marketplace-payout-posting.ts';
+import { isFeeWaitingSource } from '../src/marketplace-fee-clearing-record.ts';
+import { WITHHELD_IN_ERROR_MEMO_SUFFIX, payoutPaths, payoutProposal, type PayoutPostingLine, type PayoutProposalInput } from '../src/marketplace-payout-posting.ts';
 import { createMarketplacePayoutCommands, payoutProposalMismatch } from '../src/marketplace-payout-record.ts';
 
 const confirmed = (): Record<string, MarketplacePostingMap> => {
@@ -128,6 +129,18 @@ describe('a payout with the lines a person classified (#4303 S4)', () => {
     // Not classified: refused as before. A line with no tax cannot be classified as withheld.
     expect(code(() => payoutProposal(input(lines), confirmed()))).toMatchObject({ reason: 'TAX_SPLIT' });
     expect(code(() => payoutProposal(withAdj([line({ id: ids(1) })], adjustments), confirmed()))).toMatchObject({ reason: 'ADJUSTMENT_NOTHING' });
+  });
+  it('keeps the fee debit and the withheld_in_error debit distinct even when both land on 1388 (#4336)', () => {
+    const maps = confirmed();
+    const with1388Fees = { tt133: { ...maps.tt133!, feePayable: { ...maps.tt133!.feePayable, code: '1388' } } };
+    const lines = [line({ id: ids(1), sales: '100000', commission: '10000', taxWithheld: '2000', net: '88000' })];
+    const p = payoutProposal(withAdj(lines, [{ kind: 'withheld_in_error', lineId: ids(1), amount: '2000' }], { household: false }), with1388Fees);
+    const lines1388 = p.lines.filter((l) => l.account === '1388');
+    expect(lines1388.map((l) => [l.debit, l.memo.endsWith(WITHHELD_IN_ERROR_MEMO_SUFFIX)])).toEqual([
+      ['10000', false],
+      ['2000', true],
+    ]);
+    expect(lines1388.filter((l) => isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: ID, payoutFees: p.fees, memo: l.memo })).map((l) => l.debit)).toEqual(['10000']);
   });
   it('posts a household\'s incentive beside the tax it credited to 3331 and 3335: the two are cleared separately and the entry balances', () => {
     const lines = [lost(1, '5000', '2000')];

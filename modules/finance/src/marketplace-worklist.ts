@@ -96,7 +96,8 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
     handler: async (ctx, input): Promise<MarketplaceWorklist> => {
       const entity = input.legalEntityId === undefined ? sql`TRUE` : sql`s.legal_entity_id = ${input.legalEntityId}::uuid`;
       const standing = sql`s.reversal_of IS NULL AND NOT EXISTS (SELECT 1 FROM ludy_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`;
-      const feesAccount = MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388';
+      const maps = options.maps ?? MARKETPLACE_POSTING_MAPS;
+      const today = typeof options.today === 'function' ? options.today() : (options.today ?? (await databaseToday(ctx.trx)));
 
       // Settlements that stand and have no posting voucher: the platform paid for them and the books do not say so yet. A settlement posts as one voucher per month of delivery, all by ONE proposal
       // (#2516 rework, slice C1), so it is one row with its months and the net of their entries (a settlement of zero net posts nothing and is not offered). A settlement with a sale that has no
@@ -117,7 +118,7 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
         const stored = monthsOf.get(s.id) ?? { months: [], waiting: 0 };
         // The months with something to post, known with the VAT rates (a month of pieces at different rates can net to zero while 33311 is not); a settlement whose sales have a delivery day but no VAT rate row for
         // it waits too (#4303 S3b): the months it waits for, nothing to ask for.
-        const offered = stored.waiting > 0 ? { months: [], gaps: [] } : await offeredMonths(ctx, s.legal_entity_id, stored.months, await separateReturnOn(ctx, s.legal_entity_id, s.period_end, options.maps ?? MARKETPLACE_POSTING_MAPS), vatMemo);
+        const offered = stored.waiting > 0 ? { months: [], gaps: [] } : await offeredMonths(ctx, s.legal_entity_id, stored.months, await separateReturnOn(ctx, s.legal_entity_id, s.period_end, maps), vatMemo);
         const m = { months: offered.months, waiting: stored.waiting };
         const vatGaps = offered.gaps;
         if (m.months.length === 0 && m.waiting === 0) continue;
@@ -197,7 +198,16 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
         .where('m.org_id', '=', ctx.orgId);
       if (input.legalEntityId !== undefined) links = links.where('m.legal_entity_id', '=', input.legalEntityId);
       const invoices: MarketplaceWorklist['invoices'] = [];
+      const regimes = new Map<string, string>();
       for (const link of options.feeClearing === true ? await links.orderBy('m.platform').execute() : []) {
+        let regime = regimes.get(link.legal_entity_id);
+        if (regime === undefined) {
+          regime = (await booksOn(ctx, link.legal_entity_id, today)).regime;
+          regimes.set(link.legal_entity_id, regime);
+        }
+        const entityMap = (Object.hasOwn(maps, regime) ? maps[regime] : undefined) ?? MARKETPLACE_POSTING_MAPS.tt133;
+        const feesAccount = entityMap?.feeAwaitingInvoice.code ?? '1388';
+        const payableAccount = entityMap?.feePayable.code ?? '331';
         const waiting = money((await balanceOf(ctx, link.legal_entity_id, link.party_id, feesAccount)).balance);
         if (!waiting.greaterThan(0)) continue;
         const docs = await ctx.trx
@@ -214,7 +224,7 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
         for (const doc of docs) {
           const entry = await standingInvoiceEntry(ctx, doc.id);
           if (!entry || entry.reversed) continue;
-          const remaining = money(await invoicePayable(ctx, entry.id, link.party_id)).minus(money(await invoiceCleared(ctx, doc.id)));
+          const remaining = money(await invoicePayable(ctx, entry.id, link.party_id, payableAccount)).minus(money(await invoiceCleared(ctx, doc.id, feesAccount)));
           const clearable = remaining.lessThan(waiting) ? remaining : waiting;
           if (!clearable.greaterThan(0)) continue;
           invoices.push({
@@ -243,11 +253,10 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
       }));
 
       // The month-end accrual of the fees without an invoice, and the reversal of a standing one (slice F, option 2): a company's, never a household's. `options.today` is for a test.
-      const offers = await feeAccrualOffers(ctx, input.legalEntityId, (typeof options.today === 'function' ? options.today() : (options.today ?? (await databaseToday(ctx.trx)))), options.maps ?? MARKETPLACE_POSTING_MAPS, platformPartyName);
+      const offers = await feeAccrualOffers(ctx, input.legalEntityId, today, maps, platformPartyName);
       const accruals: MarketplaceWorklist['accruals'] = offers.accruals.map((a) => ({ ...a, platformName: platformPartyName(a.platform) }));
       const accrualReversals: MarketplaceWorklist['accrualReversals'] = offers.reversals.map((r) => ({ ...r, platformName: platformPartyName(r.platform) }));
 
-      const maps = options.maps ?? MARKETPLACE_POSTING_MAPS;
       return {
         postingConfirmed: await postingConfirmed(ctx, input.legalEntityId, maps, ['sales', 'payout', 'fee_accrual']),
         salesPostingConfirmed: await postingConfirmed(ctx, input.legalEntityId, maps, ['sales']),
