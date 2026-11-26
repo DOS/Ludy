@@ -289,7 +289,7 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
           </Banner>
         ) : null}
 
-        {!isNonNetworkError ? (
+        {!isNonNetworkError && !(isNetworkOffline && !activeSnapshot) ? (
           <>
             <ScrollView
               accessibilityRole="tablist"

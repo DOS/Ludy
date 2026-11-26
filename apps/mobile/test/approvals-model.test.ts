@@ -822,7 +822,7 @@ describe('queue filtering, localized Today notices, directional accounts and det
       variants: [
         {
           ...socialPost.variants[0],
-          bannedWords: [{ word: 'cam kết 100%', level: 'block' }],
+          bannedWords: [{ phrase: 'cam kết 100%', level: 'block' }],
           bannedWordsStatus: 'checked',
         },
       ],
@@ -843,7 +843,7 @@ describe('queue filtering, localized Today notices, directional accounts and det
       variants: [
         {
           ...socialPost.variants[0],
-          bannedWords: [{ word: 'siêu rẻ', level: 'warn' }],
+          bannedWords: [{ phrase: 'siêu rẻ', level: 'warn' }],
           bannedWordsStatus: 'checked',
         },
       ],

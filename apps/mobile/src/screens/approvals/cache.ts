@@ -388,7 +388,6 @@ export function createApprovalsCache(store: KeyValue): ApprovalsCache {
         const meta = await readMeta();
         const staged = await readStage();
         await store.remove(META_KEY);
-        await store.remove(STAGE_KEY);
         if (meta) {
           highestGen = Math.max(highestGen, meta.gen);
           await removeChunks(meta.gen, meta.chunks);
@@ -402,6 +401,7 @@ export function createApprovalsCache(store: KeyValue): ApprovalsCache {
         for (let i = 0; i < MAX_CHUNKS; i++) {
           await store.remove(`${LEGACY_CHUNK_PREFIX}${i}`);
         }
+        await store.remove(STAGE_KEY);
       });
     },
   };

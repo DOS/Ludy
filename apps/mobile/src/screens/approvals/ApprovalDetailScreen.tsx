@@ -136,7 +136,11 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     enabled: summary.source === 'inbox' && isAdsProposalKind(summary.subtype),
   });
 
-  const reversalEntryId = inboxDetailQuery.data?.reversal?.entryId ?? null;
+  const inboxRefused = Boolean(
+    summary.source === 'inbox' && inboxDetailQuery.isError && !isLikelyNetworkError(inboxDetailQuery.error),
+  );
+  const inboxDetail = inboxRefused ? null : (inboxDetailQuery.data ?? null);
+  const reversalEntryId = inboxDetail?.reversal?.entryId ?? null;
   const journalQuery = useQuery({
     queryKey: ['approvals', 'journal', serverUrl, orgSlug, reversalEntryId],
     queryFn: () => client.journal.get({ id: reversalEntryId as string }),
@@ -149,9 +153,6 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     enabled: editingAccounts && summary.source === 'inbox',
   });
 
-  const inboxRefused = Boolean(
-    summary.source === 'inbox' && inboxDetailQuery.isError && !isLikelyNetworkError(inboxDetailQuery.error),
-  );
   const socialRefused = Boolean(
     summary.source === 'social_post' &&
       socialDetailQuery.isError &&
@@ -180,7 +181,6 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     (adsRefused && isMfaRequired(adsQuery.error)) ||
     (journalRefused && isMfaRequired(journalQuery.error));
 
-  const inboxDetail = inboxRefused ? null : (inboxDetailQuery.data ?? null);
   const purchasePayload =
     summary.source === 'inbox' &&
     (summary.subtype === 'finance.purchase' || summary.subtype === 'finance.sale')
@@ -419,12 +419,23 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
 
   async function onDecideSocial(decision: 'approved' | 'changes_requested' | 'rejected') {
     if (!socialPost || !singleSocialVariant) return;
+    if (
+      decision === 'approved' &&
+      (socialGuards.isFourEyesBlocked ||
+        socialGuards.alreadyApprovedByMe ||
+        socialGuards.clientWaitingOnly ||
+        socialGuards.hasBlockingBannedWord ||
+        socialGuards.hasUnpreviewableMedia)
+    ) {
+      return;
+    }
     const requiredChecks = singleSocialVariant.checklist;
     const checkedIds = requiredChecks.filter((c) => tickedChecklistIds[c.id]).map((c) => c.id);
     if (decision === 'approved' && checkedIds.length < requiredChecks.length) {
       setFeedback({ tone: 'warn', text: t('approvals.outcome.checklistMissing') });
       return;
     }
+    if (decision === 'approved' && !socialGuards.canApproveNow) return;
     setFeedback(null);
     setBusyAction(decision === 'approved' ? 'approve' : decision === 'changes_requested' ? 'changes' : 'reject');
     try {
@@ -1339,7 +1350,8 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
             {!socialGuards.isFourEyesBlocked &&
             !socialGuards.alreadyApprovedByMe &&
             !socialGuards.clientWaitingOnly &&
-            !socialGuards.hasBlockingBannedWord ? (
+            !socialGuards.hasBlockingBannedWord &&
+            !socialGuards.hasUnpreviewableMedia ? (
               <PrimaryButton
                 label={busyAction === 'approve' ? t('approvals.action.working') : t('approvals.action.approve')}
                 accessibilityLabel={`${t('approvals.action.approve')}: ${summary.title}`}

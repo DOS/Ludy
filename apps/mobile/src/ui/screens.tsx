@@ -133,7 +133,7 @@ export function HomeScreen(props: { state: Extract<SessionState, { status: 'acti
     );
   }
 
-  // Offline launch with an already-selected org: let the queue show its persisted local cache as read-only preview.
+  // Network failure fetching user identity before me.get() resolves: show offline error/retry view (user-bound local cache stays locked until userId is confirmed).
   if (me.isError && !isMfaRequired(me.error) && isLikelyNetworkError(me.error) && orgSlug && !pickingOrg) {
     return (
       <ApprovalsQueueScreen
