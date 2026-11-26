@@ -8038,6 +8038,7 @@ export const en = {
     testedAt: 'Last tested {when}',
     neverPolled: 'No orders pulled yet',
     polledAt: 'Orders last pulled {when}',
+    incomePolledAt: 'Income last pulled {when}',
     ordersWaiting: '{count, plural, one {# order} other {# orders}} waiting in the Inbox to confirm.',
     fieldLabels: { user: 'Username', username: 'Username', account: 'Account', email: 'Email', login: 'Login', password: 'Password', apiKey: 'API key', apiSecret: 'API secret', appKey: 'App Key', serviceId: 'App Service ID', appSecret: 'App Secret', appId: 'App ID', clientId: 'Client ID', clientSecret: 'Client secret', shopId: 'Shop ID', token: 'Access token' },
     status: {
@@ -8073,6 +8074,11 @@ export const en = {
       rate_limited: 'The marketplace is limiting calls, will try again later',
       too_large: 'Too many orders to read at once',
       not_recognized: 'Could not recognise the marketplace\'s order format',
+    },
+    incomePollStates: {
+      ok: 'Income pulled',
+      too_large: 'Too many income lines for one day to read at once',
+      not_recognized: 'Could not recognise the marketplace\'s income format',
     },
   },
   misaAmisConnections: {
@@ -18859,6 +18865,7 @@ export const en = {
         authorize_target: 'See which marketplace connection to finish authorizing',
         connect: 'Connect a seller account on a marketplace',
         ingest_page: 'Take a page of orders from a marketplace into the Inbox and link it to the connection',
+        last_settlement_end: 'Read the latest standing settlement end day for an entity and platform',
         list: 'See the marketplace connections',
         poll_target: 'See which marketplace connection to pull orders from',
         push_hook: 'See whether a marketplace connection\'s push address is set and whether pushes arrive',

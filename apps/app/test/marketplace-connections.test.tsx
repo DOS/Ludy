@@ -171,6 +171,15 @@ describe('MarketplaceConnectionsCard', () => {
     for (const state of ['ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized'] as const) {
       expect(card('owner', { connections: [connection({ lastPolledAt: at, lastPollState: state })] })).toContain(esc(en.marketplaceConnections.pollStates[state]));
     }
+    const splitLegs = card('owner', { connections: [connection({ lastPolledAt: at, lastPollState: 'ok', lastIncomePolledAt: at, lastIncomePollState: 'rate_limited' })] });
+    expect(splitLegs).toContain(esc(en.marketplaceConnections.pollStates.ok));
+    expect(splitLegs).toContain(esc(en.marketplaceConnections.pollStates.rate_limited));
+    expect(splitLegs).toContain('Income last pulled');
+    const incomeOk = card('owner', { connections: [connection({ lastPolledAt: at, lastPollState: 'ok', lastIncomePolledAt: at, lastIncomePollState: 'ok' })] });
+    expect(incomeOk).toContain(esc(en.marketplaceConnections.incomePollStates.ok));
+    const incomeBad = card('owner', { connections: [connection({ lastPolledAt: at, lastPollState: 'ok', lastIncomePolledAt: at, lastIncomePollState: 'not_recognized' })] });
+    expect(incomeBad).toContain(esc(en.marketplaceConnections.incomePollStates.not_recognized));
+    expect(incomeBad).not.toContain(esc(en.marketplaceConnections.pollStates.not_recognized));
     expect(card('owner', { connections: [connection({ status: 'expired' })] })).toContain(en.marketplaceConnections.status.expired);
     // A connection that is no longer active has no test and no pull to run.
     const dead = card('owner', { connections: [connection({ status: 'error' })] });

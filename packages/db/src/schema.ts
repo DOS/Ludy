@@ -707,7 +707,14 @@ export type MisaAmisMatchTable = Refine<
 export type MarketplaceColumnProfileTable = Refine<G.FinanceMarketplaceColumnProfileTable, { platform: ColumnType<ChannelPlatform, ChannelPlatform, never> }>;
 export type MarketplaceConnectionTable = Refine<
   G.FinanceMarketplaceConnectionTable,
-  { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; last_test_state: MarketplaceTestState | null; last_poll_state: MarketplacePollState | null; authorize_state: MarketplaceAuthorizeState | null; legal_entity_id: LegalEntityColumn },
+  {
+    platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>;
+    last_test_state: MarketplaceTestState | null;
+    last_poll_state: MarketplacePollState | null;
+    last_income_poll_state: MarketplacePollState | null;
+    authorize_state: MarketplaceAuthorizeState | null;
+    legal_entity_id: LegalEntityColumn;
+  },
   'legal_entity_id'
 >;
 export type BankPartyRuleTable = Refine<G.FinanceBankPartyRuleTable, { kind: ColumnType<BankPartyRuleKind, BankPartyRuleKind, never>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;

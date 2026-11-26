@@ -1535,6 +1535,8 @@ export interface FinanceMarketplaceConnectionTable {
   reauthorize_by: ColumnType<Date | null, Date | string | null, Date | string | null>;
   authorize_pending_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   seller_ref: string | null;
+  last_income_polled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  last_income_poll_state: string | null;
 }
 
 /** ludy_finance.marketplace_party */

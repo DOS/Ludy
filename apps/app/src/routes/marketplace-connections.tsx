@@ -19,7 +19,7 @@ import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
-import { adapterIdOf, authorizeStateKey, canAuthorize, canPollNow, connectablePlatforms, disconnectInput, fieldIsSecret, fieldLabelKey, marketplaceCardShown, PLATFORM_KEYS, pollStateKey, reauthorizeNotice, reauthorizeNoticeKey, testStateKey } from '../lib/marketplace-connections.ts';
+import { adapterIdOf, authorizeStateKey, canAuthorize, canPollNow, connectablePlatforms, disconnectInput, fieldIsSecret, fieldLabelKey, incomePollStateKey, marketplaceCardShown, PLATFORM_KEYS, pollStateKey, reauthorizeNotice, reauthorizeNoticeKey, testStateKey } from '../lib/marketplace-connections.ts';
 import type { Role } from '../lib/members.ts';
 
 const refresh = async () => {
@@ -103,6 +103,11 @@ function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: 
       <p className="mt-1 text-sm text-muted-foreground">
         {connection.lastPolledAt ? `${t('polledAt', { when: f.dateTime(connection.lastPolledAt) })}${connection.lastPollState ? ` · ${t(pollStateKey(connection, connection.lastPollState) as never)}` : ''}` : t('neverPolled')}
       </p>
+      {connection.lastIncomePolledAt && (
+        <p className="mt-1 text-sm text-muted-foreground">
+          {`${t('incomePolledAt', { when: f.dateTime(connection.lastIncomePolledAt) })}${connection.lastIncomePollState ? ` · ${t(incomePollStateKey(connection.lastIncomePollState) as never)}` : ''}`}
+        </p>
+      )}
       {connection.ordersWaiting > 0 && <p className="mt-1 text-sm text-muted-foreground">{t('ordersWaiting', { count: connection.ordersWaiting })}</p>}
       {canManage && (
         <div className="mt-2 flex flex-wrap gap-2">

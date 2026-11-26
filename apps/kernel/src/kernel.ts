@@ -409,7 +409,7 @@ export function serverRuntime(cells: CellResolver, config: Config, options: Omit
 // OAuth connectors of the providers this deployment has app credentials for (Social plan S6); a provider without
 // them is not offered.
 type ChannelConfig = Pick<Config, 'CHANNEL_SANDBOX' | 'CHANNEL_BLUESKY' | 'CHANNEL_TELEGRAM' | 'CHANNEL_MASTODON' | 'CHANNEL_DISCORD' | 'CHANNEL_WORDPRESS' | 'CHANNEL_THREADS_APP_ID' | 'CHANNEL_THREADS_APP_SECRET' | 'CHANNEL_LINKEDIN_CLIENT_ID' | 'CHANNEL_LINKEDIN_CLIENT_SECRET' | 'CHANNEL_GOOGLE_CLIENT_ID' | 'CHANNEL_GOOGLE_CLIENT_SECRET' | 'CHANNEL_GOOGLE_BUSINESS' | 'CHANNEL_TIKTOK_CLIENT_KEY' | 'CHANNEL_TIKTOK_CLIENT_SECRET' | 'CHANNEL_TIKTOK_VIDEO_LIST' | 'CHANNEL_TIKTOK_INBOX' | 'CHANNEL_X_CLIENT_ID' | 'CHANNEL_X_CLIENT_SECRET' | 'CHANNEL_PINTEREST_APP_ID' | 'CHANNEL_PINTEREST_APP_SECRET' | 'CHANNEL_META_APP_ID' | 'CHANNEL_META_APP_SECRET' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_ADS_WRITE_APP_ID' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION' | 'CHANNEL_ZALO_APP_ID' | 'CHANNEL_ZALO_APP_SECRET' | 'MARKETPLACE_PROVIDERS'> &
-  Partial<Pick<Config, 'CHANNEL_INSTAGRAM_APP_ID' | 'CHANNEL_INSTAGRAM_APP_SECRET' | 'CHANNEL_GOOGLE_ADS_CLIENT_ID' | 'CHANNEL_GOOGLE_ADS_CLIENT_SECRET' | 'CHANNEL_X_METRICS' | 'CHANNEL_LINKEDIN_ANALYTICS' | 'CHANNEL_LINKEDIN_ORGANIZATIONS' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_ID' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET' | 'BRAND_NAME'>>;
+  Partial<Pick<Config, 'MARKETPLACE_INCOME_PROVIDERS' | 'CHANNEL_INSTAGRAM_APP_ID' | 'CHANNEL_INSTAGRAM_APP_SECRET' | 'CHANNEL_GOOGLE_ADS_CLIENT_ID' | 'CHANNEL_GOOGLE_ADS_CLIENT_SECRET' | 'CHANNEL_X_METRICS' | 'CHANNEL_LINKEDIN_ANALYTICS' | 'CHANNEL_LINKEDIN_ORGANIZATIONS' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_ID' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET' | 'BRAND_NAME'>>;
 // The LinkedIn app, for Company Pages too once it has the Community Management API (#1077).
 // The Company Pages app: its own when set (LinkedIn grants the Community Management API only to an app with no other
 // product), the member app otherwise.
@@ -522,7 +522,15 @@ export function misaAspClientOf(config: Pick<Config, 'MISA_ASP_CLIENT_ID'>, tran
 
 // The marketplace providers this deployment offers, by adapter id (ADR-0045 point 7, #2519): the ones MARKETPLACE_PROVIDERS names. `sandbox` is the offline provider. A real adapter is
 // added here with its own entry when it is built; an id this build does not know is left out, so a typo offers nothing.
-export function marketplaceProvidersOf(config: Pick<Config, 'MARKETPLACE_PROVIDERS'>): Readonly<Record<string, MarketplaceProvider>> {
+export function marketplaceProvidersOf(
+  config: Pick<Config, 'MARKETPLACE_PROVIDERS'> & Partial<Pick<Config, 'MARKETPLACE_INCOME_PROVIDERS'>>,
+): Readonly<Record<string, MarketplaceProvider>> {
+  const incomeEnabled = new Set(
+    (config.MARKETPLACE_INCOME_PROVIDERS ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean),
+  );
   const out: Record<string, MarketplaceProvider> = {};
   for (const raw of config.MARKETPLACE_PROVIDERS.split(',')) {
     const id = raw.trim();
@@ -535,11 +543,13 @@ export function marketplaceProvidersOf(config: Pick<Config, 'MARKETPLACE_PROVIDE
       out[id] = withTiktokAuthorize(tiktokMarketplace(options, caller), { tokenFetch: hostBoundFetch(TIKTOK_TOKEN_HOSTS), caller });
     }
     // Lazada (#2524, S2 = #4238): named by the deployment, never on its own. Its calls are bound to the hosts the adapter names; the seller's own App Key and Secret are sealed per connection.
+    // The income leg (#4302, #4306) is gated behind MARKETPLACE_INCOME_PROVIDERS until the live settlement check passes on a real Lazada shop (#2522).
     if (id === 'lazada' && isMarketplaceAdapter(id)) {
-      // One signed caller for the orders and the finance reads, so the app's calls are spaced across both (#4302: the income leg).
       const options = { fetch: hostBoundFetch(LAZADA_HOSTS) };
       const caller = lazadaCaller(options);
-      out[id] = withLazadaAuthorize(withLazadaIncome(lazadaMarketplace(options, caller), options, lazadaFinance(options, caller)), { tokenFetch: hostBoundFetch(LAZADA_TOKEN_HOSTS) });
+      const base = lazadaMarketplace(options, caller);
+      const provider = incomeEnabled.has(id) ? withLazadaIncome(base, options, lazadaFinance(options, caller)) : base;
+      out[id] = withLazadaAuthorize(provider, { tokenFetch: hostBoundFetch(LAZADA_TOKEN_HOSTS) });
     }
   }
   return out;

@@ -8036,6 +8036,7 @@ export const vi = {
     testedAt: 'Kiểm tra lần cuối {when}',
     neverPolled: 'Chưa lấy đơn lần nào',
     polledAt: 'Lấy đơn lần cuối {when}',
+    incomePolledAt: 'Lấy thu nhập lần cuối {when}',
     ordersWaiting: 'Có {count, plural, other {# đơn}} đang chờ xác nhận ở Hộp thư.',
     fieldLabels: { user: 'Tên đăng nhập', username: 'Tên đăng nhập', account: 'Tài khoản', email: 'Email', login: 'Tên đăng nhập', password: 'Mật khẩu', apiKey: 'Khóa API', apiSecret: 'Mã bí mật API', appKey: 'Khóa ứng dụng (App Key)', serviceId: 'Mã dịch vụ của ứng dụng (Service ID)', appSecret: 'Mã bí mật ứng dụng (App Secret)', appId: 'Mã ứng dụng', clientId: 'Mã khách hàng', clientSecret: 'Mật khẩu khách hàng', shopId: 'Mã gian hàng', token: 'Mã truy cập' },
     status: {
@@ -8071,6 +8072,11 @@ export const vi = {
       rate_limited: 'Sàn đang giới hạn số lần gọi, sẽ thử lại sau',
       too_large: 'Lượt đơn quá lớn để đọc một lần',
       not_recognized: 'Không nhận ra định dạng đơn hàng từ sàn',
+    },
+    incomePollStates: {
+      ok: 'Lấy thu nhập thành công',
+      too_large: 'Số dòng thu nhập của ngày quá lớn để đọc một lần',
+      not_recognized: 'Không nhận ra định dạng báo cáo thu nhập từ sàn',
     },
   },
   misaAmisConnections: {
@@ -18859,6 +18865,7 @@ export const vi = {
         authorize_target: 'Xem kết nối sàn cần hoàn tất cấp quyền',
         connect: 'Kết nối tài khoản người bán trên sàn',
         ingest_page: 'Nhận một trang đơn hàng từ sàn vào hộp thư và ghi liên kết với kết nối',
+        last_settlement_end: 'Xem ngày kết thúc kỳ quyết toán mới nhất của pháp nhân và sàn',
         list: 'Xem các kết nối sàn thương mại điện tử',
         poll_target: 'Xem kết nối sàn cần lấy đơn',
         push_hook: 'Xem địa chỉ nhận thông báo đẩy của kết nối sàn đã đặt chưa và thông báo có đến không',

@@ -45,6 +45,17 @@ export const pollStateKey = (connection: Pick<MarketplaceConnection, 'provider' 
   return state === 'credentials' && own && connection.lastTestState === 'api_not_enabled' ? `${own.poll}.not_authorized` : POLL_STATE_KEYS[state];
 };
 
+export const INCOME_POLL_STATE_KEYS = {
+  ok: 'incomePollStates.ok',
+  unreachable: 'pollStates.unreachable',
+  credentials: 'pollStates.credentials',
+  rate_limited: 'pollStates.rate_limited',
+  too_large: 'incomePollStates.too_large',
+  not_recognized: 'incomePollStates.not_recognized',
+} as const satisfies Record<MarketplacePollState, string>;
+
+export const incomePollStateKey = (state: MarketplacePollState): string => INCOME_POLL_STATE_KEYS[state];
+
 export const PLATFORM_KEYS = { shopee: 'platforms.shopee', tiktok_shop: 'platforms.tiktok_shop', lazada: 'platforms.lazada' } as const;
 
 // Whether the marketplace card draws: the deployment offers an adapter to connect, or the org already has a connection (a viewer still reads it when the adapter was turned off

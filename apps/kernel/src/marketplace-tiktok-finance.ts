@@ -43,7 +43,8 @@ export const TIKTOK_FINANCE_MAX_DAYS = 31;
 const MAX_STATEMENT_PAGES = 3;
 const MAX_TRANSACTION_PAGES = 30;
 const MAX_PAYMENT_PAGES = 3;
-const MAX_STATEMENTS = 100;
+export const TIKTOK_FINANCE_MAX_STATEMENTS = 100;
+const MAX_STATEMENTS = TIKTOK_FINANCE_MAX_STATEMENTS;
 const MAX_FIELDS = 200;
 const VIETNAM_OFFSET_MS = 7 * 3_600_000;
 const DAY_MS = 86_400_000;
@@ -202,13 +203,22 @@ export interface TiktokFinanceWindow {
   endDay: string;
 }
 
+export interface TiktokIncomeOptions {
+  // Only read transactions for PAID statements whose payout day equals this YYYY-MM-DD (other days' statements are ignored, so a busy statement on another day never bricks this one).
+  paidDay?: string;
+  // Pre-fetched statements covering the window, so a multi-day catch-up run shares one statements read across days.
+  statements?: readonly TiktokStatement[];
+  // Skip the best-effort payments API call when the caller only needs lines and adjustments.
+  includePayments?: boolean;
+}
+
 export interface TiktokFinance {
   // The statements generated in a window.
   statements(secret: string, window: TiktokFinanceWindow): Promise<TiktokStatement[]>;
   // The payments initiated in a window.
   payments(secret: string, window: TiktokFinanceWindow): Promise<TiktokPayment[]>;
   // The PAID statements of a window as the income of each order by payout day, the adjustments, and the statements and payments that settle the currency.
-  income(secret: string, window: TiktokFinanceWindow): Promise<TiktokIncome>;
+  income(secret: string, window: TiktokFinanceWindow, options?: TiktokIncomeOptions): Promise<TiktokIncome>;
 }
 
 function checkWindow(window: TiktokFinanceWindow): { geSec: number; ltSec: number } {
@@ -335,18 +345,21 @@ export function tiktokFinance(options: TiktokOptions, caller: TiktokCaller = tik
     statements: (secret, window) => readStatements(parseTiktokSecret(secret), window),
     payments: (secret, window) => readPayments(parseTiktokSecret(secret), window),
 
-    async income(secret, window) {
+    async income(secret, window, options) {
       checkWindow(window);
       const credential = parseTiktokSecret(secret);
-      const statements = await readStatements(credential, window);
-      const paid = statements.filter((s) => s.status === 'PAID');
+      const statements = options?.statements ? [...options.statements] : await readStatements(credential, window);
+      const paid = statements.filter((s) => s.status === 'PAID' && (options?.paidDay === undefined || s.paidDay === options.paidDay));
       const transactions: Transaction[] = [];
       for (const statement of paid) transactions.push(...(await readTransactions(credential, statement)));
       // Best-effort: the official page says the payments API is unavailable to SEA markets, and no line depends on it. A failed read is `null`, never a failed income.
-      const payments = await readPayments(credential, window).catch((error: unknown) => {
-        if (error instanceof MarketplaceProviderError) return null;
-        throw error;
-      });
+      const payments =
+        options?.includePayments === false
+          ? null
+          : await readPayments(credential, window).catch((error: unknown) => {
+              if (error instanceof MarketplaceProviderError) return null;
+              throw error;
+            });
       const orders = transactions.filter((t): t is OrderTransaction => t.kind === 'order');
       const adjustments = transactions.filter((t): t is AdjustmentTransaction => t.kind === 'adjustment');
       return {
@@ -355,7 +368,7 @@ export function tiktokFinance(options: TiktokOptions, caller: TiktokCaller = tik
         payments,
         lines: aggregate(orders),
         adjustments: adjustments.map((a) => ({ id: a.adjustmentId, type: a.type, orderNo: a.orderNo, paidAt: a.paidAt, amount: a.amount, known: a.known })).sort((a, b) => (a.paidAt < b.paidAt ? -1 : a.paidAt > b.paidAt ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
-        pendingStatements: statements.length - paid.length,
+        pendingStatements: statements.filter((s) => s.status !== 'PAID').length,
       };
     },
   };

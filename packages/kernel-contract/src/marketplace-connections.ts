@@ -43,6 +43,8 @@ export const zMarketplaceConnection = z.object({
   lastTestedAt: z.iso.datetime({ offset: true }).nullable(),
   lastPolledAt: z.iso.datetime({ offset: true }).nullable(),
   lastPollState: zMarketplacePollState.nullable(),
+  lastIncomePolledAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  lastIncomePollState: zMarketplacePollState.nullable().optional(),
   // The orders waiting in the Inbox for a member to confirm or reject, counted from the staged files this connection's polls ingested.
   ordersWaiting: z.number().int().nonnegative(),
   // Where the seller's authorization stands (#4238): a code is waiting for the worker, it worked, Lazada refused the code, or the exchange failed. Null: never started.
@@ -96,6 +98,8 @@ export interface MarketplacePageIngested {
 // The command that records a poll: the cursor the next poll resumes from (moved only after the page was ingested) and how it ended. What waits in the Inbox is counted when the list is read.
 export const zMarketplaceConnectionRecordPoll = z.strictObject({
   id: zId,
+  // Which leg this record belongs to; omitted defaults to the orders leg so existing callers stay unchanged.
+  leg: z.enum(['orders', 'income']).optional(),
   state: zMarketplacePollState,
   // Left out, the cursor stays where it was (a failed poll never moves it).
   cursor: z.string().min(1).max(200).nullable().optional(),

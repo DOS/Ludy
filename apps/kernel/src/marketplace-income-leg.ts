@@ -13,13 +13,22 @@
 //   before and paid on the day, and keeps the lines paid on it. A statement unpaid for longer than that lookback is not read (the same named gap).
 // A reader refuses a window it cannot read whole (more orders than its page limit, an answer it does not recognise) as `not_recognized`: the leg records that state and the cursor stays, so a day that
 // cannot be read is seen and retried, never skipped.
-import { MarketplaceProviderError, type MarketplaceIncomeLine, type MarketplaceIncomePage, type MarketplacePlatformKey, type MarketplaceProvider } from '@ludy/mod-finance';
+import { sha256Hex } from '@ludy/kernel-runtime';
+import { money, toMoney } from '@ludy/l10n-vn';
+import {
+  MarketplaceProviderError,
+  type MarketplaceIncomeLine,
+  type MarketplaceIncomeOptions,
+  type MarketplaceIncomePage,
+  type MarketplacePlatformKey,
+  type MarketplaceProvider,
+} from '@ludy/mod-finance';
 import { isoDay, notRecognized } from './marketplace-adapter-kit.ts';
 import { lazadaFinance } from './marketplace-lazada-finance.ts';
 import type { LazadaOptions } from './marketplace-lazada.ts';
 import { shopeeFinance } from './marketplace-shopee-finance.ts';
 import type { ShopeeOptions } from './marketplace-shopee.ts';
-import { tiktokFinance } from './marketplace-tiktok-finance.ts';
+import { TIKTOK_FINANCE_MAX_STATEMENTS, tiktokFinance, type TiktokAdjustment, type TiktokIncome, type TiktokStatement } from './marketplace-tiktok-finance.ts';
 import type { TiktokOptions } from './marketplace-tiktok.ts';
 
 const DAY_MS = 86_400_000;
@@ -73,6 +82,31 @@ export interface IncomeRead {
   pending: number;
 }
 
+export interface FirstIncomeDayInput {
+  nowMs: number;
+  createdAt?: string | null;
+  lastSettlementEnd?: string | null;
+}
+
+// Earliest closed payment day to start from when the income cursor is null (#4306): the later of 30 days back, the day the connection was created in Vietnam, and the day after the last standing
+// settlement's period end, so early runs do not raise UNKNOWN_ORDERS or OVERLAP against already-imported reports.
+export function firstIncomeDay(input: FirstIncomeDayInput): string {
+  const today = vietnamDay(input.nowMs);
+  let start = addDays(today, -INCOME_FIRST_DAYS);
+  if (input.createdAt) {
+    const parsed = Date.parse(input.createdAt);
+    if (Number.isFinite(parsed)) {
+      const createdDay = vietnamDay(parsed);
+      if (createdDay > start) start = createdDay;
+    }
+  }
+  if (input.lastSettlementEnd && isoDay(input.lastSettlementEnd)) {
+    const afterSettlement = addDays(input.lastSettlementEnd, 1);
+    if (afterSettlement > start) start = afterSettlement;
+  }
+  return start;
+}
+
 export interface IncomeDayOptions {
   since: string | null;
   nowMs: number;
@@ -80,6 +114,8 @@ export interface IncomeDayOptions {
   lookbackDays: number;
   // Wait on a day that still has unpaid lines (see the header).
   waitPending: boolean;
+  // Earliest YYYY-MM-DD to start from when `since` is null.
+  minStartDay?: string;
   read(window: { startDay: string; endDay: string }): Promise<IncomeRead>;
 }
 
@@ -88,10 +124,12 @@ export async function readIncomeDay(options: IncomeDayOptions): Promise<Marketpl
   const held = options.since === null ? null : INCOME_CURSOR.exec(options.since);
   // A cursor that is not ours is not guessed at: the poll records `not_recognized` and the cursor stays where it was.
   if (options.since !== null && (held === null || !isoDay(held[1] as string))) throw notRecognized();
-  const day = held ? (held[1] as string) : addDays(today, -INCOME_FIRST_DAYS);
-  // Only a day that has been over for a whole day is read (a grace of one day: a platform may mark a release or a statement paid a little after midnight, and the cursor never goes back); the cursor
-  // is anchored on the first day so the start does not drift with the calendar.
-  if (day >= addDays(today, -1)) return { lines: [], nextCursor: `d:${day}` };
+  const defaultFirst = addDays(today, -INCOME_FIRST_DAYS);
+  const firstDay = options.minStartDay !== undefined && isoDay(options.minStartDay) && options.minStartDay > defaultFirst ? options.minStartDay : defaultFirst;
+  const day = held ? (held[1] as string) : firstDay;
+  // Only a day that has been over for a whole day is read (a grace of one day: a platform may mark a release or a statement paid a little after midnight, and the cursor never goes back).
+  // When no cursor exists yet (`options.since === null`), return `nextCursor: null` so neither the cursor nor `last_settlement_end` is anchored before an eligible closed day exists.
+  if (day >= addDays(today, -1)) return { lines: [], nextCursor: options.since === null ? null : `d:${day}` };
   const read = await options.read({ startDay: addDays(day, -options.lookbackDays), endDay: day });
   if (options.waitPending && read.pending > 0 && day > addDays(today, -INCOME_PENDING_WAIT_DAYS)) return { lines: [], nextCursor: `d:${day}` };
   const next = addDays(day, 1);
@@ -137,17 +175,46 @@ function only(platform: MarketplacePlatformKey, wanted: MarketplacePlatformKey):
   if (platform !== wanted) throw new MarketplaceProviderError('unreachable');
 }
 
+const adjustmentLine = (adjustment: TiktokAdjustment & { orderNo: string }): MarketplaceIncomeLine => {
+  const amount = toMoney(money(adjustment.amount));
+  return {
+    orderNo: adjustment.orderNo,
+    paidAt: adjustment.paidAt,
+    sales: '0',
+    sellerDiscount: '0',
+    commission: '0',
+    serviceFee: '0',
+    paymentFee: '0',
+    shipping: '0',
+    taxWithheld: '0',
+    refund: '0',
+    other: amount,
+    net: amount,
+  };
+};
+
+interface TiktokStatementCache {
+  byDay: Map<string, TiktokStatement[]>;
+}
+
+const windowDays = (startDay: string, endDay: string): string[] => {
+  const days: string[] = [];
+  for (let ms = Date.parse(startDay); ms <= Date.parse(endDay); ms += DAY_MS) days.push(new Date(ms).toISOString().slice(0, 10));
+  return days;
+};
+
 export function withLazadaIncome(provider: MarketplaceProvider, options: LazadaOptions, finance = lazadaFinance(options)): MarketplaceProvider {
   const now = options.now ?? (() => new Date());
   return {
     ...provider,
-    async listIncome(secret, platform, since) {
+    async listIncome(secret, platform, since, incomeOptions?: MarketplaceIncomeOptions) {
       only(platform, 'lazada');
       return readIncomeDay({
         since,
         nowMs: now().getTime(),
         lookbackDays: 0,
         waitPending: true,
+        ...(incomeOptions?.minStartDay !== undefined ? { minStartDay: incomeOptions.minStartDay } : {}),
         read: async (window) => {
           const income = await finance.income(secret, window);
           return { lines: income.lines.map(common), pending: income.pendingLines };
@@ -161,16 +228,68 @@ export function withTiktokIncome(provider: MarketplaceProvider, options: TiktokO
   const now = options.now ?? (() => new Date());
   return {
     ...provider,
-    async listIncome(secret, platform, since) {
+    async listIncome(secret, platform, since, incomeOptions?: MarketplaceIncomeOptions) {
       only(platform, 'tiktok_shop');
       return readIncomeDay({
         since,
         nowMs: now().getTime(),
         lookbackDays: TIKTOK_LOOKBACK_DAYS,
         waitPending: false,
+        ...(incomeOptions?.minStartDay !== undefined ? { minStartDay: incomeOptions.minStartDay } : {}),
         read: async (window) => {
-          const income = await finance.income(secret, window);
-          return { lines: income.lines.map(common), pending: income.pendingStatements };
+          const cache = incomeOptions?.cache;
+          let income: TiktokIncome;
+          if (!cache) {
+            income = await finance.income(secret, window, { paidDay: window.endDay, includePayments: false });
+          } else {
+            const key = `tiktok:statements:${sha256Hex(new TextEncoder().encode(secret))}`;
+            let entry = cache.get(key) as TiktokStatementCache | undefined;
+            if (!entry) {
+              entry = { byDay: new Map() };
+              cache.set(key, entry);
+            }
+            const days = windowDays(window.startDay, window.endDay);
+            const missing = days.filter((d) => !entry.byDay.has(d));
+            if (missing.length === days.length) {
+              income = await finance.income(secret, window, { paidDay: window.endDay, includePayments: false });
+              for (const d of days) entry.byDay.set(d, []);
+              for (const statement of income.statements) {
+                if (statement.day < window.startDay || statement.day > window.endDay) throw notRecognized();
+                entry.byDay.get(statement.day)?.push(statement);
+              }
+            } else {
+              if (missing.length > 0) {
+                // `days` spans at most TIKTOK_FINANCE_MAX_DAYS, so any subset `[missing[0], missing.at(-1)]` stays within the platform's 31-day limit.
+                const missStart = missing[0] as string;
+                const missEnd = missing.at(-1) as string;
+                const fetched = await finance.statements(secret, { startDay: missStart, endDay: missEnd });
+                const missingSet = new Set(missing);
+                for (const d of missing) entry.byDay.set(d, []);
+                for (const statement of fetched) {
+                  if (statement.day < missStart || statement.day > missEnd) throw notRecognized();
+                  if (missingSet.has(statement.day)) entry.byDay.get(statement.day)?.push(statement);
+                }
+              }
+              const seenIds = new Set<string>();
+              const statements: TiktokStatement[] = [];
+              for (const d of days) {
+                for (const statement of entry.byDay.get(d) ?? []) {
+                  if (seenIds.has(statement.id)) throw notRecognized();
+                  seenIds.add(statement.id);
+                  statements.push(statement);
+                  if (statements.length > TIKTOK_FINANCE_MAX_STATEMENTS) throw notRecognized();
+                }
+              }
+              income = await finance.income(secret, window, { paidDay: window.endDay, statements, includePayments: false });
+            }
+          }
+          const lines = [
+            ...income.lines.map(common),
+            ...income.adjustments
+              .filter((adjustment): adjustment is TiktokAdjustment & { orderNo: string } => adjustment.orderNo !== null && adjustment.type !== 'RESERVE')
+              .map(adjustmentLine),
+          ];
+          return { lines, pending: income.pendingStatements };
         },
       });
     },
@@ -181,13 +300,14 @@ export function withShopeeIncome(provider: MarketplaceProvider, options: ShopeeO
   const now = options.now ?? (() => new Date());
   return {
     ...provider,
-    async listIncome(secret, platform, since) {
+    async listIncome(secret, platform, since, incomeOptions?: MarketplaceIncomeOptions) {
       only(platform, 'shopee');
       return readIncomeDay({
         since,
         nowMs: now().getTime(),
         lookbackDays: 0,
         waitPending: false,
+        ...(incomeOptions?.minStartDay !== undefined ? { minStartDay: incomeOptions.minStartDay } : {}),
         // A day with more orders than one list call holds (a campaign day) is read in halves, down to about an hour, and the halves are ONE page: one file for the day, so no two files share a day.
         read: async (window) => {
           const day = window.endDay;

@@ -600,6 +600,7 @@ const UNIONS = unions({
   'ludy_finance.misa_amis_push.state': MISA_AMIS_PUSH_STATES,
   'ludy_finance.misa_amis_push.source_type': MISA_AMIS_PUSH_SOURCES,
   'ludy_finance.marketplace_connection.last_poll_state': MARKETPLACE_POLL_STATES,
+  'ludy_finance.marketplace_connection.last_income_poll_state': MARKETPLACE_POLL_STATES,
   'ludy_finance.marketplace_connection.authorize_state': MARKETPLACE_AUTHORIZE_STATES,
   'ludy_finance.marketplace_connection.platform': CHANNEL_PLATFORMS,
   'ludy_finance.marketplace_column_profile.platform': CHANNEL_PLATFORMS,
