@@ -109,26 +109,31 @@ async function readSlicedWindow<T extends { more: boolean }>(
   fromMs: number,
   maxEndMs: number,
   initialWidth: number,
-  readSlice: (endMs: number) => Promise<T>,
+  readSlice: (endMs: number, width: number) => Promise<T>,
 ): Promise<{ endMs: number; width: number; result: T } | null> {
+  let prevEndMs: number | null = null;
   for (let width = initialWidth; width < SLICES_MS.length; width += 1) {
     // The platform allows at most 15 days between the two times.
     const endMs = Math.min(startMs + SLICES_MS[width]!, maxEndMs, fromMs + WINDOW_DAYS * DAY_MS - 1000);
     if (Math.floor(endMs / 1000) <= Math.floor(fromMs / 1000)) return null;
-    const result = await readSlice(endMs);
+    if (endMs === prevEndMs) continue;
+    prevEndMs = endMs;
+    const result = await readSlice(endMs, width);
     if (!result.more) return { endMs, width, result };
   }
   // Over a page even in the smallest window: not skipped, not stored.
   throw notRecognized();
 }
 
+interface SelectedReturns {
+  numbers: string[];
+  taken: ShopeeReturn[];
+  heldAt: number | null;
+  sameSecondOverflowAt: number | null;
+}
+
 // Take returns deterministically by `(updatedAt, returnSn)` while their detail calls and combined order set fit within one poll's caps; hold the rest for the next poll.
-function selectReturns(
-  orderNumbers: readonly string[],
-  returns: readonly ShopeeReturn[],
-  returnsFrom: number,
-  returnsEnd: number,
-): { numbers: string[]; taken: ShopeeReturn[]; heldAt: number | null } {
+function selectReturns(orderNumbers: readonly string[], returns: readonly ShopeeReturn[], returnsFrom: number, returnsEnd: number): SelectedReturns {
   const wanted = returns.filter(mayBringGoodsBack);
   const sorted = [...wanted].sort((a, b) => a.updatedAt - b.updatedAt || (a.returnSn < b.returnSn ? -1 : a.returnSn > b.returnSn ? 1 : 0));
   const union = new Set(orderNumbers);
@@ -148,17 +153,19 @@ function selectReturns(
     union.add(ret.orderNo);
     taken.push(ret);
   }
-  if (heldAt === null) return { numbers: [...union].sort(), taken, heldAt: null };
+  if (heldAt === null) return { numbers: [...union].sort(), taken, heldAt: null, sameSecondOverflowAt: null };
   const cappedHeldAt = Math.min(heldAt, returnsEnd);
-  // Over 40 eligible returns within the same second cannot be split by a whole-second time filter: fail loudly rather than looping or skipping.
-  if (hitDetailCap && taken.length > 0 && cappedHeldAt <= taken[0]!.updatedAt) throw notRecognized();
+  // Over 40 eligible returns within the same second cannot be split by a whole-second time filter: signal overflow so the caller narrows past later bursts or refuses loudly.
+  if (hitDetailCap && taken.length > 0 && cappedHeldAt <= taken[0]!.updatedAt) {
+    return { numbers: [], taken: [], heldAt: null, sameSecondOverflowAt: taken[0]!.updatedAt };
+  }
   const nextReturnsAt =
     hitDetailCap && taken.length > 0
       ? cappedHeldAt - TIE_MS > taken[0]!.updatedAt
         ? cappedHeldAt - TIE_MS
         : cappedHeldAt
-      : Math.max(returnsFrom, cappedHeldAt - TIE_MS);
-  return { numbers: [...union].sort(), taken, heldAt: nextReturnsAt };
+      : Math.max(returnsFrom, cappedHeldAt);
+  return { numbers: [...union].sort(), taken, heldAt: nextReturnsAt, sameSecondOverflowAt: null };
 }
 
 interface RawOrder {
@@ -329,13 +336,23 @@ export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller =
       let returnsEnd = ordersStart;
       let returnsWidth = ordersWidth;
       let found: ReturnsWindow = { returns: [], more: false };
+      let selected: SelectedReturns = { numbers: [], taken: [], heldAt: null, sameSecondOverflowAt: null };
       let returnsSkipped = false;
 
+      const selectOrNarrow = (orderNumbers: readonly string[], returns: readonly ShopeeReturn[], fromMs: number, endMs: number, startMs: number, width: number): SelectedReturns | null => {
+        const picked = selectReturns(orderNumbers, returns, fromMs, endMs);
+        if (picked.sameSecondOverflowAt === null) return picked;
+        if (width + 1 < SLICES_MS.length && picked.sameSecondOverflowAt > startMs + SLICES_MS[SLICES_MS.length - 1]!) return null;
+        throw notRecognized();
+      };
+
       if (cursor === null || cursor.returnsAt === null) {
-        const synced = await readSlicedWindow(ordersStart, ordersFrom, nowMs, ordersWidth, async (endMs) => {
+        const synced = await readSlicedWindow(ordersStart, ordersFrom, nowMs, ordersWidth, async (endMs, width) => {
           const ordersRead = await listWindow(credential, ordersFrom, endMs);
           const returnsFound = await readReturnList(caller, credential, ordersFrom, endMs, nowMs);
-          return { ordersRead, returnsFound, more: ordersRead.more || returnsFound.more };
+          if (ordersRead.more || returnsFound.more) return { ordersRead, returnsFound, picked: null as SelectedReturns | null, more: true };
+          const picked = selectOrNarrow(ordersRead.numbers, returnsFound.returns, ordersFrom, endMs, ordersStart, width);
+          return { ordersRead, returnsFound, picked, more: picked === null };
         });
         if (synced === null) return { orders: [], nextCursor: since };
         ordersEnd = synced.endMs;
@@ -344,8 +361,12 @@ export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller =
         returnsEnd = synced.endMs;
         returnsWidth = synced.width;
         found = synced.result.returnsFound;
+        selected = synced.result.picked!;
       } else {
-        if (ordersStart < nowMs) {
+        returnsFrom = Math.max(cursor.returnsAt, floor);
+        returnsWidth = cursor.returnsWidth;
+        // Catch up held returns before reading a newer 100-order overlap so steady order volume cannot starve returns.
+        if (Math.floor(returnsFrom / 1000) >= Math.floor(ordersStart / 1000) && ordersStart < nowMs) {
           const ordersSliced = await readSlicedWindow(ordersStart, ordersFrom, nowMs, ordersWidth, (endMs) => listWindow(credential, ordersFrom, endMs));
           if (ordersSliced !== null) {
             ordersEnd = ordersSliced.endMs;
@@ -353,22 +374,24 @@ export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller =
             read = ordersSliced.result;
           }
         }
-        returnsFrom = Math.max(cursor.returnsAt, floor);
-        returnsWidth = cursor.returnsWidth;
-        const returnsSliced = await readSlicedWindow(returnsFrom, returnsFrom, Math.min(ordersEnd, nowMs), returnsWidth, (endMs) =>
-          readReturnList(caller, credential, returnsFrom, endMs, nowMs),
-        );
+        const returnsSliced = await readSlicedWindow(returnsFrom, returnsFrom, Math.min(ordersEnd, nowMs), returnsWidth, async (endMs, width) => {
+          const returnsFound = await readReturnList(caller, credential, returnsFrom, endMs, nowMs);
+          if (returnsFound.more) return { returnsFound, picked: null as SelectedReturns | null, more: true };
+          const picked = selectOrNarrow(read.numbers, returnsFound.returns, returnsFrom, endMs, returnsFrom, width);
+          return { returnsFound, picked, more: picked === null };
+        });
         if (returnsSliced === null) {
           returnsEnd = returnsFrom;
           returnsSkipped = true;
+          selected = selectReturns(read.numbers, [], returnsFrom, returnsEnd);
         } else {
           returnsEnd = returnsSliced.endMs;
           returnsWidth = returnsSliced.width;
-          found = returnsSliced.result;
+          found = returnsSliced.result.returnsFound;
+          selected = returnsSliced.result.picked!;
         }
       }
 
-      const selected = selectReturns(read.numbers, found.returns, returnsFrom, returnsEnd);
       let nextReturnsAt: number | null = null;
       let nextReturnsWidth = 0;
       if (selected.heldAt !== null) {

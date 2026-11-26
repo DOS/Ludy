@@ -338,22 +338,78 @@ describe('overlap and cursor advance over the detail cap (#4287)', () => {
     expect(second).toEqual({ orders: [], nextCursor: `o:${new Date(NOW).toISOString()}`, more: false });
   });
 
-  it('holds returns before exceeding the 100-order page cap and finishes them on the next poll', async () => {
+  it('holds returns before exceeding the 100-order page cap and finishes them on the next poll even when the clock advances and 100 orders remain in the overlap', async () => {
+    let clock = NOW;
     const updated = Array.from({ length: 95 }, (_, i) => order(`U${String(i).padStart(2, '0')}`, { updatedMs: NOW - 30_000 }));
     const oldOrders = Array.from({ length: 10 }, (_, i) => order(`A${String(i).padStart(2, '0')}`, { updatedMs: NOW - 2 * HOUR }));
     const returns = oldOrders.map((o, i) => ret(`R${String(i).padStart(2, '0')}`, o.sn, { updatedMs: NOW - 20_000 + i * 1000 }));
-    const s = setup([...updated, ...oldOrders], returns);
-    const first = await s.provider.listOrders(SECRET, 'shopee', `o:${new Date(NOW - MIN).toISOString()}`);
+    const extra = Array.from({ length: 5 }, (_, i) => order(`V${String(i).padStart(2, '0')}`, { updatedMs: NOW + 30_000 }));
+    const fake = fakeShopee({ ...CRED, raws: [...updated, ...oldOrders, ...extra], returns, now: () => clock });
+    const options = { fetch: hostBoundFetch(SHOPEE_HOSTS, fake.fetch), now: () => new Date(clock), spacingMs: 0 };
+    const provider = shopeeMarketplace(options, shopeeCaller(options));
+
+    const first = await provider.listOrders(SECRET, 'shopee', `o:${new Date(NOW - MIN).toISOString()}`);
     expect(new Set(first.orders.map((o) => o.orderNo)).size).toBe(100);
-    expect(detailCalls(s.fake).map((c) => c.query.return_sn)).toEqual(['R00', 'R01', 'R02', 'R03', 'R04']);
+    expect(detailCalls(fake).map((c) => c.query.return_sn)).toEqual(['R00', 'R01', 'R02', 'R03', 'R04']);
+    expect(first.nextCursor).toBe(`o:${new Date(NOW).toISOString()};r:${new Date(NOW - 15_000).toISOString()}`);
     expect(first.more).toBe(true);
 
-    s.fake.calls.length = 0;
-    const second = await s.provider.listOrders(SECRET, 'shopee', first.nextCursor);
-    expect(detailCalls(s.fake).map((c) => c.query.return_sn)).toEqual(['R05', 'R06', 'R07', 'R08', 'R09']);
+    // Advance the clock by 1 minute: `[NOW - 10m, NOW + 1m]` now holds 100 orders (`U00..U94` + `V00..V04`), yet returns catch up first without starving.
+    clock = NOW + MIN;
+    fake.calls.length = 0;
+    const second = await provider.listOrders(SECRET, 'shopee', first.nextCursor);
+    expect(fake.calls.some((c) => c.path === '/api/v2/order/get_order_list')).toBe(false);
+    expect(detailCalls(fake).map((c) => c.query.return_sn)).toEqual(['R05', 'R06', 'R07', 'R08', 'R09']);
     expect(second.orders.filter((o) => o.stage === 'returned').map((o) => o.orderNo)).toEqual(['A05', 'A06', 'A07', 'A08', 'A09']);
-    expect(second.more).toBe(false);
+    expect(second.more).toBe(true);
     expect(second.nextCursor).toBe(`o:${new Date(NOW).toISOString()}`);
+
+    fake.calls.length = 0;
+    const third = await provider.listOrders(SECRET, 'shopee', second.nextCursor);
+    expect(third.orders.map((o) => o.orderNo)).toContain('V04');
+    expect(third.more).toBe(true);
+    expect(third.nextCursor).toBe(`o:${new Date(NOW + MIN).toISOString()};r:${new Date(NOW - 20_000).toISOString()}`);
+
+    const fourth = await provider.listOrders(SECRET, 'shopee', third.nextCursor);
+    expect(fourth.more).toBe(false);
+    expect(fourth.nextCursor).toBe(`o:${new Date(NOW + MIN).toISOString()}`);
+  });
+
+  it('narrows past a later single-second >40 return burst on a wide window instead of refusing earlier orders', async () => {
+    const earlyOrder = order('EARLY1', { updatedMs: NOW - 14 * DAY });
+    const burstOrders = Array.from({ length: 41 }, (_, i) => order(`B${String(i).padStart(2, '0')}`, { updatedMs: NOW - 2 * DAY }));
+    const burstReturns = burstOrders.map((o, i) => ret(`BR${String(i).padStart(2, '0')}`, o.sn, { updatedMs: NOW - DAY }));
+    const s = setup([earlyOrder, ...burstOrders], burstReturns);
+    const page = await s.provider.listOrders(SECRET, 'shopee', null);
+    expect(stagesOf(page, 'EARLY1')).toEqual(['completed:AT-MAU-DL+MU-MAU']);
+    expect(page.nextCursor).toBe(`o:${new Date(NOW - 12 * DAY).toISOString()};s:1`);
+    expect(page.more).toBe(true);
+  });
+
+  it('narrows and widens the held returns slice width (`;rs:`) when catch-up returns span over 150 entries', async () => {
+    const orders = [order('A1', { updatedMs: NOW - 10 * DAY })];
+    // 160 REQUESTED returns spread over 10 days, plus 1 accepted return at the end.
+    const many = Array.from({ length: 160 }, (_, i) => ret(`RQ${String(i).padStart(3, '0')}`, 'A1', { status: 'REQUESTED', updatedMs: NOW - 10 * DAY + i * HOUR }));
+    const accepted = ret('RA1', 'A1', { updatedMs: NOW - DAY });
+    const s = setup(orders, [...many, accepted]);
+    const held = `o:${new Date(NOW).toISOString()};r:${new Date(NOW - 11 * DAY).toISOString()}`;
+    const p1 = await s.provider.listOrders(SECRET, 'shopee', held);
+    expect(p1.orders).toEqual([]);
+    expect(p1.more).toBe(true);
+    expect(p1.nextCursor).toBe(`o:${new Date(NOW).toISOString()};r:${new Date(NOW - 8 * DAY).toISOString()};rs:1`);
+
+    const p2 = await s.provider.listOrders(SECRET, 'shopee', p1.nextCursor);
+    expect(p2.more).toBe(true);
+    expect(p2.nextCursor).toBe(`o:${new Date(NOW).toISOString()};r:${new Date(NOW - 5 * DAY).toISOString()};rs:1`);
+
+    const p3 = await s.provider.listOrders(SECRET, 'shopee', p2.nextCursor);
+    expect(p3.more).toBe(true);
+    expect(p3.nextCursor).toBe(`o:${new Date(NOW).toISOString()};r:${new Date(NOW - 2 * DAY).toISOString()};rs:1`);
+
+    const p4 = await s.provider.listOrders(SECRET, 'shopee', p3.nextCursor);
+    expect(stagesOf(p4, 'A1')).toEqual(['returned:AT-MAU-DL', 'completed:MU-MAU']);
+    expect(p4.more).toBe(false);
+    expect(p4.nextCursor).toBe(`o:${new Date(NOW).toISOString()}`);
   });
 
   it('refuses a return list entry without update_time and ignores a held returns cursor ahead of the orders cursor', async () => {
