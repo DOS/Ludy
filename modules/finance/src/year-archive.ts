@@ -172,7 +172,7 @@ export interface ArchiveSource {
   lockedThrough: string | null;
   // The package already recorded for the year, if any: the worker builds nothing more (a job retried after its record).
   recorded: RecordedArchive | null;
-  // The original file of every document (purchase or sale) whose entry is dated in the year, once each.
+  // The original file (plus any attached original e-invoice XML) of every document (purchase or sale) whose entry is dated in the year, once each.
   files: ArchiveSourceFile[];
   // The legal entities whose books go in the package (#1280): the default entity, then every other entity with an entry
   // dated up to the year's end. Each gets its own journal, ledger, statements and VAT working.
@@ -190,16 +190,31 @@ export const yearArchiveSource = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .executeTakeFirstOrThrow();
     const files = await ctx.trx
-      .selectFrom('ludy_finance.journal_entry as j')
-      .innerJoin('ludy_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'j.org_id').onRef('d.id', '=', 'j.source_id'))
-      .innerJoin('ludy_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'd.org_id').onRef('f.id', '=', 'd.source_file_id'))
+      .with('docs', (db) =>
+        db
+          .selectFrom('ludy_finance.journal_entry as j')
+          .innerJoin('ludy_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'j.org_id').onRef('d.id', '=', 'j.source_id'))
+          .select(['d.org_id', 'd.source_file_id', 'd.proposal_id'])
+          .where('j.org_id', '=', ctx.orgId)
+          .where('j.source_type', '=', 'finance.purchase_document')
+          .where('j.entry_date', '>=', `${input.year}-01-01`)
+          .where('j.entry_date', '<=', `${input.year}-12-31`),
+      )
+      .selectFrom('docs')
+      .innerJoin('ludy_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'docs.org_id').onRef('f.id', '=', 'docs.source_file_id'))
       .select(['f.id', 'f.filename', 'f.content_type', 'f.storage_key', 'f.generation', 'f.sha256'])
-      .distinct()
-      .where('j.org_id', '=', ctx.orgId)
-      .where('j.source_type', '=', 'finance.purchase_document')
-      .where('j.entry_date', '>=', `${input.year}-01-01`)
-      .where('j.entry_date', '<=', `${input.year}-12-31`)
-      .orderBy('f.id')
+      .where('docs.source_file_id', 'is not', null)
+      .union((eb) =>
+        eb
+          .selectFrom('docs')
+          .innerJoin('ludy_kernel.extraction as x', (join) =>
+            join.onRef('x.org_id', '=', 'docs.org_id').onRef('x.original_of_proposal_id', '=', 'docs.proposal_id'),
+          )
+          .innerJoin('ludy_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'x.org_id').onRef('f.id', '=', 'x.file_id'))
+          .select(['f.id', 'f.filename', 'f.content_type', 'f.storage_key', 'f.generation', 'f.sha256'])
+          .where('docs.proposal_id', 'is not', null),
+      )
+      .orderBy('id')
       .execute();
     const legalEntities = await archiveEntities(ctx, input.year);
     return {
