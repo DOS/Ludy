@@ -39,7 +39,7 @@ export const MISA_GATES = [
   { issue: 2506, what: 'a person who can read the primary text checked the plan against Decree 254/2026 and Circular 91/2026' },
   { issue: 2507, what: 'the owner finished the MISA registration and click-through acceptance for the production app' },
 ] as const;
-export const MISA_GATES_DONE: readonly number[] = [];
+export const MISA_GATES_DONE: readonly number[] = Object.freeze([]);
 
 export function misaBlockers(done: readonly number[] = MISA_GATES_DONE): readonly { issue: number; what: string }[] {
   return MISA_GATES.filter((gate) => !done.includes(gate.issue));
@@ -168,14 +168,20 @@ const MAX_ATTEMPTS = 3;
 // The request, written
 // ---------------------------------------------------------------------------
 
+const DECIMAL = /^-?(?:0|[1-9]\d{0,15})(?:\.\d{1,8})?$/;
+const isDecimal = (value: unknown): value is string => typeof value === 'string' && DECIMAL.test(value);
+
 // An exact number in the JSON text: a decimal string checked here, written without quotes and never through a JS number.
-class Num {
+export class Num {
   readonly text: string;
   constructor(value: string) {
+    if (!isDecimal(value)) {
+      throw new RangeError('MISA decimal value must be an exact decimal string');
+    }
     this.text = value;
+    Object.freeze(this);
   }
 }
-const DECIMAL = /^-?(?:0|[1-9]\d{0,15})(?:\.\d{1,8})?$/;
 const num = (value: string): Num => new Num(value);
 
 function json(value: unknown): string {
@@ -217,7 +223,7 @@ function invoiceData(request: EInvoiceRequest, series: string, original: EInvoic
   if (nationality !== null && MISA_BUYER_NATIONALITY_FIELD === null) return 'invalid_data';
   if (request.lines.length === 0 || request.lines.length > MISA_LIMITS.maxLinesPerInvoice) return 'invalid_data';
   if (!/^[1-9]$/.test(request.templateNo) || !SYMBOL.test(request.symbol) || !SERIES.test(series)) return 'series_unknown';
-  if (![request.subtotal, request.vatAmount, request.total].every((v) => DECIMAL.test(v))) return 'invalid_data';
+  if (![request.subtotal, request.vatAmount, request.total].every(isDecimal)) return 'invalid_data';
   const byRate = new Map<string, { taxable: bigint; vat: bigint }>();
   const details: Obj[] = [];
   let quantityDigits = 0;
@@ -225,7 +231,7 @@ function invoiceData(request: EInvoiceRequest, series: string, original: EInvoic
   let amountDigits = 0;
   for (const [index, line] of request.lines.entries()) {
     const rate = rateName(line.vatRate);
-    if (rate === null || ![line.quantity, line.unitPrice, line.amount, line.vatAmount].every((v) => DECIMAL.test(v)) || line.description.trim() === '') return 'invalid_data';
+    if (rate === null || ![line.quantity, line.unitPrice, line.amount, line.vatAmount].every(isDecimal) || line.description.trim() === '') return 'invalid_data';
     quantityDigits = Math.max(quantityDigits, fractionDigits(line.quantity));
     priceDigits = Math.max(priceDigits, fractionDigits(line.unitPrice));
     amountDigits = Math.max(amountDigits, fractionDigits(line.amount), fractionDigits(line.vatAmount));
@@ -322,6 +328,19 @@ const tag = (xml: string, name: string): string | null => {
 };
 
 export function createMisaEInvoiceProvider(options: MisaOptions): EInvoiceProvider {
+  return createMisaEInvoiceProviderWithGates(options, MISA_GATES_DONE);
+}
+
+// Test-only seam inside @ludy/einvoice (never re-exported from src/index.ts), so package unit tests exercise the gated factory and adapter while MISA_GATES_DONE is empty.
+export function createMisaEInvoiceProviderForTest(options: MisaOptions, done: readonly number[] = MISA_GATES.map((g) => g.issue)): EInvoiceProvider {
+  return createMisaEInvoiceProviderWithGates(options, done);
+}
+
+function createMisaEInvoiceProviderWithGates(options: MisaOptions, done: readonly number[]): EInvoiceProvider {
+  const blockers = misaBlockers(done);
+  if (blockers.length > 0) {
+    throw new Error(`MISA meInvoice adapter is refused until ${blockers.map((b) => `#${b.issue}`).join(' and ')} are done and written in issue #2503`);
+  }
   const now = options.now ?? (() => new Date());
   const reasonCodes = options.reasonCodes ?? ADJUST_REPLACE_REASON_CODES.codes;
   // The token of a credential, in memory only (valid about 14 days at MISA; held for a few hours so a restart and a rotation cost nothing).

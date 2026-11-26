@@ -6,7 +6,20 @@ import { fromMinor, toMinor } from './decimal.ts';
 import { ADJUST_REPLACE_REASON_CODES, isReasonCode, type ReasonCode } from './reason-codes.ts';
 
 export * from './port.ts';
-export * from './misa.ts';
+export {
+  MISA_BASE_URL,
+  MISA_CONNECT_FIELDS,
+  MISA_GATES,
+  MISA_GATES_DONE,
+  MISA_HOSTS,
+  MISA_LIMITS,
+  createMisaEInvoiceProvider,
+  misaBlockers,
+  type MisaOptions,
+  type MisaRequest,
+  type MisaResponse,
+  type MisaTransport,
+} from './misa.ts';
 export * from './reason-codes.ts';
 
 // ---------------------------------------------------------------------------
