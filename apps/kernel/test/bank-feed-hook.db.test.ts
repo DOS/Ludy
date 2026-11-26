@@ -266,7 +266,7 @@ suite('Bank feed webhook (#4203)', () => {
       connectionId = await connect(orgId, owner.userId);
       otherConnectionId = await connect(otherOrgId, outsider.userId);
 
-      // Simulate a hook claimed before rotation and rotated right before applying 20270329000000 (#4225).
+      // Simulate a hook claimed before rotation and rotated right before applying 20270329010000 (#4225).
       preUpgradeConnId = await connect(otherOrgId, outsider.userId);
       const preOldKey = randomBytes(16).toString('base64url');
       await asSealedApp(outsider, otherOrgId, 'SELECT ludy_finance.bank_feed_hook_set($1::uuid, $2)', [preUpgradeConnId, bankFeedHookKeyHash(preOldKey)]);
