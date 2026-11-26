@@ -4,7 +4,7 @@
 // date and the seat. Nothing here needs AI; the work Vy does for this screen arrives in a later step and lands in these same drafts.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
 import { MEETING_SUMMARY_TEMPLATES, templateSections, textToSections, type ActionItemView, type AssigneeAnswer, type MeetingSummaryTemplate, type MeetingVisibility, type MinutesTemplateCopy, type TranscriptRedacted } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
@@ -99,8 +99,66 @@ export function useSectionHeading(template: MeetingSummaryTemplate, copy: Minute
   return (key: string): string => sectionHeadingText(tm as unknown as (key: never) => string, template, copy, key);
 }
 
+export function hasSummaryText(result: { summary: string; decisions: readonly string[] } | null): boolean {
+  return result !== null && (result.summary.trim() !== '' || result.decisions.some((d) => d.trim() !== ''));
+}
+
+function sectionValuesFromSummary(
+  defs: ReadonlyArray<{ key: string }>,
+  summary: string,
+  template: MeetingSummaryTemplate,
+  copy: MinutesTemplateCopy | null,
+): Record<string, string> {
+  const parsed = defs.length === 0 ? null : textToSections(template, summary, copy?.sections ?? null);
+  return Object.fromEntries(
+    defs.map((d, i) => [d.key, parsed ? (parsed.find((p) => p.key === d.key)?.text ?? '') : i === 0 ? summary : '']),
+  );
+}
+
+export function isSummaryDraftDirty({
+  summary,
+  decisions,
+  template,
+  copy,
+  text,
+  values,
+  lines,
+}: {
+  summary: string;
+  decisions: readonly string[];
+  template: MeetingSummaryTemplate;
+  copy: MinutesTemplateCopy | null;
+  text: string;
+  values: Readonly<Record<string, string>>;
+  lines: string;
+}): boolean {
+  const defs = templateSections(template, copy?.sections ?? null);
+  const summaryDirty =
+    defs.length === 0
+      ? text !== summary
+      : (() => {
+          const savedValues = sectionValuesFromSummary(defs, summary, template, copy);
+          return defs.some((d) => (values[d.key] ?? '') !== (savedValues[d.key] ?? ''));
+        })();
+  return summaryDirty || lines !== decisions.join('\n');
+}
+
 // The recorder's draft summary and decisions (one decision per line). On a template the summary is typed section by section; the kernel makes the one text from them.
-function SummaryEditor({ meetingId, summary, decisions, template, copy }: { meetingId: string; summary: string; decisions: string[]; template: MeetingSummaryTemplate; copy: MinutesTemplateCopy | null }) {
+function SummaryEditor({
+  meetingId,
+  summary,
+  decisions,
+  template,
+  copy,
+  onDirtyChange,
+}: {
+  meetingId: string;
+  summary: string;
+  decisions: string[];
+  template: MeetingSummaryTemplate;
+  copy: MinutesTemplateCopy | null;
+  onDirtyChange?: ((dirty: boolean) => void) | undefined;
+}) {
   const t = useTranslations('meetings.results');
   const tm = useTranslations('meetings');
   const heading = useSectionHeading(template, copy);
@@ -109,9 +167,7 @@ function SummaryEditor({ meetingId, summary, decisions, template, copy }: { meet
   // Text that is not in this template's form (typed before the recorder changed the type) goes into the first section, never lost.
   const reflowed = defs.length > 0 && parsed === null && summary.trim() !== '';
   const [text, setText] = useState(summary);
-  const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(defs.map((d, i) => [d.key, parsed ? ((parsed.find((p) => p.key === d.key)?.text) ?? '') : i === 0 ? summary : ''])),
-  );
+  const [values, setValues] = useState<Record<string, string>>(() => sectionValuesFromSummary(defs, summary, template, copy));
   const [lines, setLines] = useState(decisions.join('\n'));
   const decisionsKey = decisions.join('\n');
   const copyHash = copy?.hash ?? null;
@@ -125,11 +181,8 @@ function SummaryEditor({ meetingId, summary, decisions, template, copy }: { meet
     ) {
       prevServerRef.current = { summary, decisionsKey, template, copyHash };
       const currentDefs = templateSections(template, copy?.sections ?? null);
-      const nextParsed = currentDefs.length === 0 ? null : textToSections(template, summary, copy?.sections ?? null);
       setText(summary);
-      setValues(
-        Object.fromEntries(currentDefs.map((d, i) => [d.key, nextParsed ? ((nextParsed.find((p) => p.key === d.key)?.text) ?? '') : i === 0 ? summary : ''])),
-      );
+      setValues(sectionValuesFromSummary(currentDefs, summary, template, copy));
       setLines(decisionsKey);
     }
   }, [summary, decisionsKey, template, copy, copyHash]);
@@ -140,8 +193,20 @@ function SummaryEditor({ meetingId, summary, decisions, template, copy }: { meet
   const save = useMutation({
     mutationFn: () =>
       orpc.meetings.results.saveSummary.call(defs.length === 0 ? { meetingId, summary: text.trim(), decisions: decisionList } : { meetingId, sections, decisions: decisionList }),
-    onSuccess: refresh,
+    onSuccess: async () => {
+      if (defs.length === 0) setText((current) => current.trim());
+      else setValues((current) => Object.fromEntries(defs.map((d) => [d.key, (current[d.key] ?? '').trim()])));
+      setLines(decisionList.join('\n'));
+      await queryClient.invalidateQueries({ queryKey: orpc.meetings.results.key() });
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.redactCandidates.key() });
+    },
   });
+  const dirty = isSummaryDraftDirty({ summary, decisions, template, copy, text, values, lines });
+  const unsavedOrPending = dirty || save.isPending;
+  useEffect(() => {
+    onDirtyChange?.(unsavedOrPending);
+  }, [unsavedOrPending, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   return (
     <div className="space-y-2">
       {defs.length === 0 ? (
@@ -484,16 +549,19 @@ function hasNotesModule(): boolean {
   }
 }
 
-function SaveSummaryAsNote({
+export function SaveSummaryAsNote({
   meetingId,
   visibility,
   slug,
+  unsavedDraft = false,
 }: {
   meetingId: string;
   visibility: MeetingVisibility | undefined;
   slug: string | undefined;
+  unsavedDraft?: boolean | undefined;
 }) {
   const t = useTranslations('meetings.results');
+  const hintId = useId();
   const [savedNoteId, setSavedNoteId] = useState<string | null>(null);
   const save = useMutation({
     mutationFn: () => orpc.notes.fromMeetingSummary.call({ meetingId }),
@@ -502,12 +570,22 @@ function SaveSummaryAsNote({
       void queryClient.invalidateQueries({ queryKey: orpc.notes.key() });
     },
   });
+  const disabled = save.isPending || unsavedDraft;
   return (
     <div className="space-y-2 border-t pt-3" data-testid="save-summary-as-note-box">
       {visibility !== 'org' ? (
         <ConfirmDialog
-          render={<Button type="button" size="sm" variant="outline" loading={save.isPending} data-testid="save-summary-as-note" />}
-          disabled={save.isPending}
+          render={
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              loading={save.isPending}
+              {...(unsavedDraft ? { 'aria-describedby': hintId } : {})}
+              data-testid="save-summary-as-note"
+            />
+          }
+          disabled={disabled}
           title={t('saveAsNoteConfirmTitle')}
           description={t('saveAsNoteConfirmDesc')}
           confirm={t('saveAsNoteConfirmAction')}
@@ -521,13 +599,17 @@ function SaveSummaryAsNote({
           size="sm"
           variant="outline"
           loading={save.isPending}
-          disabled={save.isPending}
+          disabled={disabled}
+          {...(unsavedDraft ? { 'aria-describedby': hintId } : {})}
           onClick={() => save.mutate()}
           data-testid="save-summary-as-note"
         >
           {t('saveAsNote')}
         </Button>
       )}
+      <div id={hintId} role="status" aria-live="polite" className="empty:mb-0" data-testid={unsavedDraft ? 'save-summary-unsaved-warning' : undefined}>
+        {unsavedDraft ? <p className="text-xs text-warning">{t('saveAsNoteUnsavedDraft')}</p> : null}
+      </div>
       {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
       {savedNoteId !== null && (
         <p role="status" className="text-xs text-muted-foreground" data-testid="saved-summary-note">
@@ -596,6 +678,10 @@ export function MeetingResults({
   const [localLastRedacted, setLocalLastRedacted] = useState<TranscriptRedacted | null>(null);
   const [localRedactedEpoch, setLocalRedactedEpoch] = useState(0);
   const localDoneRef = useRef<HTMLDivElement | null>(null);
+  const [hasUnsavedDraft, setHasUnsavedDraft] = useState(false);
+  useEffect(() => {
+    setHasUnsavedDraft(false);
+  }, [meetingId]);
   const redactEnabled = redaction
     ? redaction.queryEnabled
     : Boolean(query.data?.isRecorder && (query.data.draft !== null || query.data.items.some((i) => i.stage === 'draft')));
@@ -633,15 +719,10 @@ export function MeetingResults({
   const hasDraft = draft !== null || items.some((i) => i.stage === 'draft');
   // A meeting whose draft is only transcript lines (a transcription, or a new one after the minutes were shared) still has something to share (#4899).
   const canPublish = hasDraft || data.transcriptDraft > 0;
-  const hasPublishedSummary =
-    published !== null && (published.summary.trim() !== '' || published.decisions.some((d) => d.trim() !== ''));
-  const hasDraftSummary =
-    isRecorder &&
-    published === null &&
-    draft !== null &&
-    !draft.tainted &&
-    (draft.summary.trim() !== '' || draft.decisions.some((d) => d.trim() !== ''));
+  const hasPublishedSummary = hasSummaryText(published);
+  const hasDraftSummary = isRecorder && !hasPublishedSummary && draft !== null && !draft.tainted && hasSummaryText(draft);
   const canSaveAsNote = hasNotesModule() && (hasPublishedSummary || hasDraftSummary);
+  const unsavedDraftForNote = !hasPublishedSummary && hasUnsavedDraft;
   // What Vy wrote and the recorder has not read: the draft is not shared until they confirm it (or rewrite it).
   // The rows on the screen that Vy wrote: the review names exactly these, so a row copied in another tab after this one loaded keeps its mark.
   const unreadIds = [...(draft?.tainted ? [draft.id] : []), ...items.filter((i) => i.stage === 'draft' && i.tainted).map((i) => i.id)];
@@ -679,7 +760,15 @@ export function MeetingResults({
             {isRecorder && <MinutesVersionPublisher meetingId={meetingId} original={publishedOriginal} />}
           </section>
         )}
-        {canSaveAsNote && <SaveSummaryAsNote key={meetingId} meetingId={meetingId} visibility={visibility} slug={slug} />}
+        {canSaveAsNote && (
+          <SaveSummaryAsNote
+            key={meetingId}
+            meetingId={meetingId}
+            visibility={visibility}
+            slug={slug}
+            unsavedDraft={unsavedDraftForNote}
+          />
+        )}
         {/* Ký biên bản họp (#4703): the handoff shows only while the org setting is on; the server refuses a new minutes envelope while it is off. */}
         {signInfo && minutesEsignOn && (published !== null || items.some((i) => i.stage === 'published')) && (
           <MeetingMinutesSignHandoff
@@ -729,7 +818,15 @@ export function MeetingResults({
               {draft?.tainted && <Badge variant="outline">{t('fromVy')}</Badge>}
             </h3>
             {hasDraft && <p className="text-xs text-muted-foreground">{t('draftExpiry')}</p>}
-            <SummaryEditor key={`${template}-${minutesTemplate?.hash ?? ''}-${draft?.id ?? 'new'}`} meetingId={meetingId} summary={draft?.summary ?? ''} decisions={draft?.decisions ?? []} template={template} copy={minutesTemplate} />
+            <SummaryEditor
+              key={`${template}-${minutesTemplate?.hash ?? ''}-${draft?.id ?? 'new'}`}
+              meetingId={meetingId}
+              summary={draft?.summary ?? ''}
+              decisions={draft?.decisions ?? []}
+              template={template}
+              copy={minutesTemplate}
+              onDirtyChange={setHasUnsavedDraft}
+            />
             {hasDraft && <MeetingTranslation meetingId={meetingId} stage="draft" original={{ summary: draft?.summary ?? '', decisions: draft?.decisions ?? [], items: items.filter((i) => i.stage === 'draft') }} />}
           </section>
         )}

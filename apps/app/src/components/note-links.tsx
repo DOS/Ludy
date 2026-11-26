@@ -8,6 +8,7 @@ import { useId, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { NoteLink, NoteLinkTargetInput } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { meetingsInstalled } from './linked-meetings.tsx';
@@ -27,6 +28,14 @@ const KIND = {
 } as const satisfies Record<NoteLink['targetType'], string>;
 
 type LinkableType = 'kernel.task' | 'projects.project' | 'meetings.meeting';
+
+export const MEETING_PICKER_LIMIT = 100;
+
+export function filterMeetingOptions<T extends { label: string }>(items: readonly T[], search: string): T[] {
+  const needle = search.trim().toLocaleLowerCase();
+  if (needle === '') return [...items];
+  return items.filter((item) => item.label.toLocaleLowerCase().includes(needle));
+}
 
 function Open({ link, slug, children }: { link: NoteLink; slug: string; children: string }) {
   const className = 'text-link hover:underline';
@@ -135,6 +144,7 @@ export function RecordLinkAdder({
   error,
   onClearError,
   defaultOpen = false,
+  defaultTargetType = 'kernel.task',
 }: {
   existingLinks: NoteLink[];
   onAdd: (target: NoteLinkTargetInput) => Promise<unknown> | unknown;
@@ -142,6 +152,7 @@ export function RecordLinkAdder({
   error?: unknown;
   onClearError?: (() => void) | undefined;
   defaultOpen?: boolean | undefined;
+  defaultTargetType?: LinkableType | undefined;
 }) {
   const t = useTranslations('notes.links');
   const common = useTranslations('common');
@@ -149,8 +160,9 @@ export function RecordLinkAdder({
   const hasProjects = projectsInstalled();
   const hasMeetings = meetingsInstalled();
   const [open, setOpen] = useState(defaultOpen);
-  const [targetType, setTargetType] = useState<LinkableType>('kernel.task');
+  const [targetType, setTargetType] = useState<LinkableType>(defaultTargetType);
   const [targetId, setTargetId] = useState('');
+  const [meetingSearch, setMeetingSearch] = useState('');
 
   const tasks = useQuery({
     ...orpc.tasks.list.queryOptions({ input: {} }),
@@ -161,11 +173,15 @@ export function RecordLinkAdder({
     enabled: open && hasProjects && targetType === 'projects.project',
   });
   const meetings = useQuery({
-    ...orpc.meetings.list.queryOptions({ input: { limit: 100 } }),
+    ...orpc.meetings.list.queryOptions({ input: { limit: MEETING_PICKER_LIMIT } }),
     enabled: open && hasMeetings && targetType === 'meetings.meeting',
   });
 
   const alreadyLinked = new Set(existingLinks.filter((l) => l.targetType === targetType).map((l) => l.targetId));
+  const meetingItems = (meetings.data ?? [])
+    .filter((item) => !alreadyLinked.has(item.id))
+    .map((item) => ({ id: item.id, label: item.title }));
+  const filteredMeetings = filterMeetingOptions(meetingItems, meetingSearch);
   const options =
     targetType === 'kernel.task'
       ? (tasks.data ?? []).filter((item) => !alreadyLinked.has(item.id)).map((item) => ({ id: item.id, label: taskTitleText(item) }))
@@ -173,9 +189,10 @@ export function RecordLinkAdder({
         ? (projects.data?.projects ?? [])
             .filter((item) => item.status !== 'archived' && !alreadyLinked.has(item.id))
             .map((item) => ({ id: item.id, label: item.name }))
-        : (meetings.data ?? [])
-            .filter((item) => !alreadyLinked.has(item.id))
-            .map((item) => ({ id: item.id, label: item.title }));
+        : filteredMeetings;
+  const selectedTargetId = options.some((opt) => opt.id === targetId) ? targetId : '';
+  const hitMeetingWindow = targetType === 'meetings.meeting' && (meetings.data?.length ?? 0) >= MEETING_PICKER_LIMIT;
+  const meetingSearchNoMatch = targetType === 'meetings.meeting' && meetingItems.length > 0 && filteredMeetings.length === 0;
 
   const loading =
     targetType === 'kernel.task'
@@ -210,10 +227,11 @@ export function RecordLinkAdder({
   }
 
   const handleAdd = async () => {
-    if (!targetId || adding) return;
+    if (!selectedTargetId || adding) return;
     try {
-      await onAdd({ targetType, targetId });
+      await onAdd({ targetType, targetId: selectedTargetId });
       setTargetId('');
+      setMeetingSearch('');
       setOpen(false);
     } catch {
       // Surfaced through the caller's error state; keep the picker open so the user can retry.
@@ -232,6 +250,7 @@ export function RecordLinkAdder({
             onChange={(e) => {
               setTargetType(e.target.value as LinkableType);
               setTargetId('');
+              setMeetingSearch('');
               onClearError?.();
             }}
             data-testid="record-link-type"
@@ -246,7 +265,7 @@ export function RecordLinkAdder({
           <NativeSelect
             id={`${id}-record`}
             className="mt-1 w-full"
-            value={targetId}
+            value={selectedTargetId}
             disabled={loading || options.length === 0}
             onChange={(e) => {
               setTargetId(e.target.value);
@@ -263,11 +282,42 @@ export function RecordLinkAdder({
           </NativeSelect>
         </label>
       </div>
-      {!loading && !loadError && options.length === 0 && <p className="text-xs text-subtle-foreground">{t('noTargets')}</p>}
+      {targetType === 'meetings.meeting' && !loading && !loadError && (meetingItems.length > 0 || hitMeetingWindow) && (
+        <div className="space-y-1">
+          {meetingItems.length > 0 && (
+            <label htmlFor={`${id}-meeting-search`} className="block text-xs">
+              <span className="text-subtle-foreground">{t('searchMeetings')}</span>
+              <Input
+                id={`${id}-meeting-search`}
+                type="search"
+                maxLength={200}
+                className="mt-1 w-full"
+                value={meetingSearch}
+                placeholder={t('searchMeetingsPlaceholder')}
+                onChange={(e) => {
+                  setMeetingSearch(e.target.value);
+                  onClearError?.();
+                }}
+                data-testid="record-link-meeting-search"
+              />
+            </label>
+          )}
+          {hitMeetingWindow && (
+            <p className="text-xs text-subtle-foreground" data-testid="record-link-meeting-window-hint">
+              {t('meetingWindowHint', { limit: String(MEETING_PICKER_LIMIT) })}
+            </p>
+          )}
+        </div>
+      )}
+      {!loading && !loadError && options.length === 0 && (
+        <p className="text-xs text-subtle-foreground" data-testid={meetingSearchNoMatch ? 'record-link-no-match' : undefined}>
+          {meetingSearchNoMatch ? t('noMatchingMeetings') : t('noTargets')}
+        </p>
+      )}
       {loadError && <ErrorText>{errorMessage(loadError)}</ErrorText>}
       {error ? <ErrorText>{errorMessage(error)}</ErrorText> : null}
       <div className="flex flex-wrap gap-2">
-        <Button type="button" size="sm" loading={adding} disabled={!targetId || adding} onClick={() => void handleAdd()} data-testid="record-link-save">
+        <Button type="button" size="sm" loading={adding} disabled={!selectedTargetId || adding} onClick={() => void handleAdd()} data-testid="record-link-save">
           {t('save')}
         </Button>
         <Button
@@ -276,6 +326,7 @@ export function RecordLinkAdder({
           size="sm"
           onClick={() => {
             setTargetId('');
+            setMeetingSearch('');
             setOpen(false);
             onClearError?.();
           }}
