@@ -20,6 +20,7 @@ import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { runMarketplaceAuthorize, runMarketplacePoll, runMarketplaceTest } from '../src/marketplace-poll-job.ts';
+import { refreshChannels } from '../src/channel-refresh.ts';
 import { withTiktokAuthorize } from '../src/marketplace-tiktok-authorize.ts';
 import { TIKTOK_HOSTS, tiktokCaller } from '../src/marketplace-tiktok.ts';
 import { tiktokMarketplace } from '../src/marketplace-tiktok-orders.ts';
@@ -272,6 +273,9 @@ suite('marketplace connections (#2519)', () => {
         ordersWaiting: 0,
         authorizeState: null,
         reauthorizeBy: null,
+        refreshError: null,
+        refreshFailures: 0,
+        refreshNextAt: null,
       },
     ]);
     expect((await rpc('marketplace/connections/list', await tokenFor(outsider), undefined, otherSlug)).body).toEqual([]);
@@ -1099,5 +1103,38 @@ suite('marketplace connections (#2519)', () => {
     expect(due.rows.length).toBeGreaterThan(0);
     expect(due.rows.every((r) => r.provider === 'marketplace_sandbox')).toBe(true);
     await expect(pool.query('SELECT * FROM ludy_finance.marketplace_poll_due(NULL, NULL, 100)')).rejects.toMatchObject({ code: '42501' });
+  });
+
+  it('exposes channel refresh failure code and backoff status through connections/list (#4251)', async () => {
+    const entity = String((await rows<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh làm mới', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    const channelId = randomUUID();
+    const account = `acct-refresh-${randomUUID().slice(0, 8)}`;
+    const sealed = vault.seal(JSON.stringify({ accessToken: 'a-1', refreshToken: 'r-1' }), { orgId, provider: 'marketplace_sandbox', externalAccountId: account });
+    await rows(
+      `INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by, expires_at)
+       VALUES ($1, $2, 'marketplace_sandbox', $3, 'Gian hàng thử', $4, now() + interval '1 hour')`,
+      [orgId, channelId, account, owner.userId],
+    );
+    await rows(
+      `INSERT INTO ludy_kernel.credential (org_id, connection_id, key_id, envelope)
+       VALUES ($1, $2, $3, $4)`,
+      [orgId, channelId, sealed.keyId, sealed.envelope],
+    );
+    await rows(
+      `INSERT INTO ludy_finance.marketplace_connection (org_id, legal_entity_id, channel_connection_id, provider, platform)
+       VALUES ($1, $2, $3, 'marketplace_sandbox', 'lazada')`,
+      [orgId, entity, channelId],
+    );
+    const failer = { provider: 'marketplace_sandbox' as const, refresh: async () => ({ failed: '503' }) };
+    for (let i = 0; i < 3; i += 1) {
+      await refreshChannels({ runtime: worker, broker: vault, workerDb: createDb(workerPool), refreshers: { marketplace_sandbox: failer } });
+    }
+    const listed = (await call('connections/list', owner)).body as Array<{ connectionId: string; refreshError?: string | null; refreshFailures?: number; refreshNextAt?: string | null }>;
+    expect(listed.find((c) => c.connectionId === channelId)).toMatchObject({
+      connectionId: channelId,
+      refreshError: '503',
+      refreshFailures: 3,
+      refreshNextAt: expect.any(String),
+    });
   });
 });

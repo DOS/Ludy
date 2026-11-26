@@ -19479,6 +19479,7 @@ export const vi = {
         oauth_begin: 'Bắt đầu đăng nhập để kết nối kênh',
         oauth_consume: 'Hoàn tất đăng nhập để kết nối kênh',
         refresh: 'Làm mới thông tin đăng nhập của kênh',
+        refresh_fail: 'Ghi nhận lỗi và lịch thử lại làm mới thông tin đăng nhập kênh',
         reseal: 'Mã hóa lại thông tin đăng nhập của kênh',
         telegram_business_allow: 'Cho phép hoặc ngừng nhận tin của một tài khoản Telegram Business',
         telegram_business_known: 'Kiểm tra tài khoản Telegram Business đã được ghi nhận chưa',

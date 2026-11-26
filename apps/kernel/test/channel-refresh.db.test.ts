@@ -5,7 +5,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Refresher } from '@ludy/channel';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
@@ -78,7 +78,14 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
     return vault.open({ keyId: s.keyId, envelope: Buffer.from(s.envelope, 'base64') }, { orgId, provider: s.provider, externalAccountId: s.externalAccountId });
   };
   const row = (connectionId: string) =>
-    admin(async (c) => (await c.query<{ status: string; expires_at: Date }>('SELECT status, expires_at FROM ludy_kernel.channel_connection WHERE id = $1', [connectionId])).rows[0]);
+    admin(async (c) =>
+      (
+        await c.query<{ status: string; expires_at: Date; updated_at: Date; refresh_failures: number; refresh_last_error: string | null; refresh_next_at: Date | null }>(
+          'SELECT status, expires_at, updated_at, refresh_failures, refresh_last_error, refresh_next_at FROM ludy_kernel.channel_connection WHERE id = $1',
+          [connectionId],
+        )
+      ).rows[0],
+    );
 
   // Hands out a new pair per refresh and remembers what it was given.
   function fakeRefresher(answer: 'ok' | 'refused' | 'failed' = 'ok'): Refresher & { seen: string[] } {
@@ -468,5 +475,190 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
     expect(await secretOf(o.orgId, threads)).toBe(JSON.stringify({ accessToken: 't-2' }));
     // Three days out is outside Zalo's 6-hour window: untouched.
     expect(await secretOf(o.orgId, zalo)).toBe(JSON.stringify({ accessToken: 'a-1', refreshToken: 'r-1' }));
+  });
+
+  it('backs off exponentially after 3 consecutive failures with the same code, logs once cleanly, and resets on success (#4251)', async () => {
+    const o = await org();
+    const id = await connect(o, HOUR);
+    const initialUpdatedAt = (await row(id))?.updated_at.getTime();
+    let calls = 0;
+    let code = '503';
+    let succeed = false;
+    const refresher: Refresher = {
+      provider: 'zalo_oa',
+      refresh: async () => {
+        calls += 1;
+        if (succeed) return { secret: JSON.stringify({ accessToken: 'a-ok', refreshToken: 'r-ok' }), expiresAt: new Date(Date.now() + 25 * HOUR) };
+        return { failed: code };
+      },
+    };
+    const sweep = () => refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { zalo_oa: refresher } });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      // Failures 1 and 2: stay due on the next sweep with no backoff or log spam yet.
+      expect(await sweep()).toMatchObject({ refreshed: 0, expired: 0, failed: 1 });
+      expect(await row(id)).toMatchObject({ status: 'active', refresh_failures: 1, refresh_last_error: '503', refresh_next_at: null });
+      expect(await sweep()).toMatchObject({ refreshed: 0, expired: 0, failed: 1 });
+      expect(await row(id)).toMatchObject({ status: 'active', refresh_failures: 2, refresh_last_error: '503', refresh_next_at: null });
+      expect(warnSpy).not.toHaveBeenCalled();
+
+      // Failure 3 with the same code: enters 1-hour backoff and logs once cleanly.
+      const before3 = Date.now();
+      expect(await sweep()).toMatchObject({ refreshed: 0, expired: 0, failed: 1 });
+      const r3 = await row(id);
+      expect(r3).toMatchObject({ status: 'active', refresh_failures: 3, refresh_last_error: '503' });
+      expect(r3?.refresh_next_at).not.toBeNull();
+      const delay3 = (r3?.refresh_next_at?.getTime() ?? 0) - before3;
+      expect(delay3).toBeGreaterThanOrEqual(3500_000);
+      expect(delay3).toBeLessThanOrEqual(3700_000);
+      // updated_at is untouched so concurrent ifVersion checks (authorize_complete / mark_expired) are not disrupted.
+      expect(r3?.updated_at.getTime()).toBe(initialUpdatedAt);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0]?.[0]).toContain(`connection=${id}`);
+      expect(warnSpy.mock.calls[0]?.[0]).toContain(`org=${o.orgId}`);
+      expect(warnSpy.mock.calls[0]?.[0]).toContain('code=503');
+      expect(warnSpy.mock.calls[0]?.[0]).toContain('backoff_seconds=3600');
+
+      // Operator visibility via kernel.channel.list.
+      const listed = await api.query<Array<{ id: string; refreshError: string | null; refreshFailures: number; refreshNextAt: string | null }>>('kernel.channel.list', {}, { actor: asUser(o.owner), orgId: o.orgId });
+      expect(listed.find((c) => c.id === id)).toMatchObject({ refreshError: '503', refreshFailures: 3 });
+
+      // Next sweep while in backoff skips it completely: the refresher is not called.
+      expect(await sweep()).toMatchObject({ refreshed: 0, expired: 0, failed: 0 });
+      expect(calls).toBe(3);
+
+      // Once backoff elapses: failure 4 backs off 6 hours, failure 5 backs off 24 hours, failure 6 stays capped at 24 hours, with no duplicate log spam.
+      const expireBackoff = () => admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET refresh_next_at = now() - interval '1 second' WHERE id = $1", [id]));
+      for (const [expectedFailures, expectedHours] of [[4, 6], [5, 24], [6, 24]] as const) {
+        await expireBackoff();
+        const t = Date.now();
+        expect(await sweep()).toMatchObject({ failed: 1 });
+        const rn = await row(id);
+        expect(rn?.refresh_failures).toBe(expectedFailures);
+        const delayMs = (rn?.refresh_next_at?.getTime() ?? 0) - t;
+        expect(delayMs).toBeGreaterThanOrEqual((expectedHours * 3600 - 120) * 1000);
+        expect(delayMs).toBeLessThanOrEqual((expectedHours * 3600 + 120) * 1000);
+      }
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+
+      // Changing failure code resets the consecutive streak to 1 and clears backoff.
+      await expireBackoff();
+      code = 'NETWORK';
+      expect(await sweep()).toMatchObject({ failed: 1 });
+      expect(await row(id)).toMatchObject({ refresh_failures: 1, refresh_last_error: 'NETWORK', refresh_next_at: null });
+
+      // Two more with NETWORK -> backs off again and logs once for the new streak.
+      expect(await sweep()).toMatchObject({ failed: 1 });
+      expect(await sweep()).toMatchObject({ failed: 1 });
+      expect(await row(id)).toMatchObject({ refresh_failures: 3, refresh_last_error: 'NETWORK' });
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+
+      // A successful refresh after backoff elapses resets counter, error code, and backoff.
+      await expireBackoff();
+      succeed = true;
+      expect(await sweep()).toMatchObject({ refreshed: 1, expired: 0, failed: 0 });
+      expect(await row(id)).toMatchObject({ status: 'active', refresh_failures: 0, refresh_last_error: null, refresh_next_at: null });
+      expect(await secretOf(o.orgId, id)).toBe(JSON.stringify({ accessToken: 'a-ok', refreshToken: 'r-ok' }));
+      const afterSuccess = await api.query<Array<{ id: string; refreshError: string | null; refreshFailures: number; refreshNextAt: string | null }>>('kernel.channel.list', {}, { actor: asUser(o.owner), orgId: o.orgId });
+      expect(afterSuccess.find((c) => c.id === id)).toMatchObject({ refreshError: null, refreshFailures: 0, refreshNextAt: null });
+
+      // Reconnecting an account while in backoff also clears the failure counter and backoff.
+      succeed = false;
+      code = '503';
+      await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET expires_at = now() + interval '1 hour' WHERE id = $1", [id]));
+      for (let i = 0; i < 3; i += 1) await sweep();
+      expect(await row(id)).toMatchObject({ refresh_failures: 3, refresh_last_error: '503' });
+      expect((await row(id))?.refresh_next_at).not.toBeNull();
+      const accountRow = await admin((c) => c.query<{ external_account_id: string }>('SELECT external_account_id FROM ludy_kernel.channel_connection WHERE id = $1', [id]));
+      const account = accountRow.rows[0]?.external_account_id as string;
+      const resealed = vault.seal(JSON.stringify({ accessToken: 'a-re', refreshToken: 'r-re' }), { orgId: o.orgId, provider: 'zalo_oa', externalAccountId: account });
+      await api.execute(
+        'kernel.channel.connect',
+        {
+          provider: 'zalo_oa',
+          externalAccountId: account,
+          displayName: 'Zalo OA',
+          scopes: ['oa'],
+          expiresAt: new Date(Date.now() + HOUR).toISOString(),
+          credential: { keyId: resealed.keyId, envelope: resealed.envelope.toString('base64') },
+        },
+        { actor: asUser(o.owner), orgId: o.orgId },
+      );
+      expect(await row(id)).toMatchObject({ refresh_failures: 0, refresh_last_error: null, refresh_next_at: null });
+
+      // Cooldown skips ({ skipped: 'recent' }) do not increment failures, overwrite refresh_last_error, or schedule backoff.
+      const cooldownRefresher: Refresher = {
+        provider: 'zalo_oa',
+        refresh: async () => ({ skipped: 'recent' }),
+      };
+      await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET expires_at = now() + interval '1 hour' WHERE id = $1", [id]));
+      for (let i = 0; i < 4; i += 1) {
+        expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { zalo_oa: cooldownRefresher } })).toMatchObject({ refreshed: 0, expired: 0, failed: 0 });
+      }
+      expect(await row(id)).toMatchObject({ refresh_failures: 0, refresh_last_error: null, refresh_next_at: null });
+
+      // Threads refreshes using its access token itself: when expiry is 65 minutes away (inside 1h + 15m margin),
+      // the 3rd failure clamps backoff to at least 15 minutes before expiry; inside the final 15 minutes (14 minutes left),
+      // it stays eligible for one final sweep without firing a premature backoff warning until backoff actually starts.
+      const threadsConn = await connect(o, 65 * 60_000, JSON.stringify({ accessToken: 't-soon' }), 'threads');
+      const threadsFailer: Refresher = {
+        provider: 'threads',
+        horizonSeconds: 7 * 24 * 3600,
+        refresh: async () => ({ failed: '503' }),
+      };
+      for (let i = 0; i < 3; i += 1) {
+        expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { threads: threadsFailer } })).toMatchObject({ failed: 1 });
+      }
+      const tr = await row(threadsConn);
+      expect(tr).toMatchObject({ refresh_failures: 3, refresh_last_error: '503' });
+      expect(tr?.refresh_next_at).not.toBeNull();
+      expect(tr?.refresh_next_at?.getTime() ?? Infinity).toBeLessThanOrEqual((tr?.expires_at.getTime() ?? 0) - 14 * 60_000);
+
+      // With 16 minutes left, windowEnd is 1 minute ahead (never pushed out to +10m where a slightly early sweep tick would miss it).
+      const threads16m = await connect(o, 16 * 60_000, JSON.stringify({ accessToken: 't-16m' }), 'threads');
+      const before16m = Date.now();
+      for (let i = 0; i < 3; i += 1) {
+        expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { threads: threadsFailer } })).toMatchObject({ failed: 1 });
+      }
+      const tr16 = await row(threads16m);
+      expect(tr16).toMatchObject({ refresh_failures: 3, refresh_last_error: '503' });
+      expect(tr16?.refresh_next_at).not.toBeNull();
+      expect(tr16?.refresh_next_at?.getTime() ?? Infinity).toBeLessThanOrEqual(before16m + 3 * 60_000);
+      await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET refresh_next_at = now() + interval '2 hours' WHERE id = $1", [threads16m]));
+
+      const warnsBeforeLast15 = warnSpy.mock.calls.length;
+      const threadsLast15 = await connect(o, 14 * 60_000, JSON.stringify({ accessToken: 't-14m' }), 'threads');
+      for (let i = 0; i < 3; i += 1) {
+        expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { threads: threadsFailer } })).toMatchObject({ failed: 1 });
+      }
+      expect(await row(threadsLast15)).toMatchObject({ refresh_failures: 3, refresh_last_error: '503', refresh_next_at: null });
+      expect(warnSpy.mock.calls.length).toBe(warnsBeforeLast15);
+      // Once expired, the next failure enters backoff and logs once cleanly.
+      await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET expires_at = now() - interval '1 minute' WHERE id = $1", [threadsLast15]));
+      expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { threads: threadsFailer } })).toMatchObject({ failed: 1 });
+      expect((await row(threadsLast15))?.refresh_next_at).not.toBeNull();
+      expect(warnSpy.mock.calls.length).toBe(warnsBeforeLast15 + 1);
+
+      // Known Lazada & Shopee codes are preserved distinctly rather than collapsed to UNKNOWN.
+      let namedCode = 'InvalidParameter';
+      const lazadaNamedFailer: Refresher = {
+        provider: 'marketplace_lazada',
+        refresh: async () => ({ failed: namedCode }),
+      };
+      const lazadaConn = await connect(o, 2 * HOUR, JSON.stringify({ accessToken: 'l-1' }), 'marketplace_lazada');
+      expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { marketplace_lazada: lazadaNamedFailer } })).toMatchObject({ failed: 1 });
+      expect(await row(lazadaConn)).toMatchObject({ refresh_failures: 1, refresh_last_error: 'InvalidParameter' });
+      namedCode = 'AppKeyNotFound';
+      expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { marketplace_lazada: lazadaNamedFailer } })).toMatchObject({ failed: 1 });
+      expect(await row(lazadaConn)).toMatchObject({ refresh_failures: 1, refresh_last_error: 'AppKeyNotFound' });
+      namedCode = 'common.error_auth';
+      expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { marketplace_lazada: lazadaNamedFailer } })).toMatchObject({ failed: 1 });
+      expect(await row(lazadaConn)).toMatchObject({ refresh_failures: 1, refresh_last_error: 'common.error_auth' });
+      namedCode = 'error_permission';
+      expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { marketplace_lazada: lazadaNamedFailer } })).toMatchObject({ failed: 1 });
+      expect(await row(lazadaConn)).toMatchObject({ refresh_failures: 1, refresh_last_error: 'error_permission' });
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
