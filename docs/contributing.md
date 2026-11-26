@@ -53,10 +53,10 @@ The fake model answers the fixed summary to a summary request and, for the membe
 
 Read this before you add a migration, and again right before you merge a PR that adds one (#1492).
 
-- Versions are not reserved. Name a new migration with any version above the newest on `main` when you start.
-- Right before merging, merge `origin/main`, run `pnpm migration:rebase` (it renames every migration your branch adds, in order, to whole hours after `main`'s newest when any of them fell behind, and fixes their references in the files your branch changed), commit, push, wait for green, then merge.
+- Versions are not reserved. Name a new migration with any version above the newest on `dev` (and `main` if ahead) when you start.
+- Right before merging into `dev`, merge `origin/dev`, run `pnpm migration:rebase` (it renames every migration your branch adds, in order, to whole hours after `dev`'s newest when any of them fell behind, and fixes their references in the files your branch changed), commit, push, wait for green, then merge. For a PR targeting `main`, pass `origin/main` to `pnpm migration:rebase`.
 - The "Migration order" step of the Docs check job fails a PR that adds an older or equal version (`tools/ci/migration-order.mjs`).
-- GitHub does not re-run PR checks when `main` moves, so after every push to `main` the migration-recheck workflow re-runs the Docs check of open PRs whose migrations fell behind (`tools/ci/migration-recheck.mjs`). When it fails, run `pnpm migration:rebase`, commit, push, and never merge with the old version.
+- GitHub does not re-run PR checks when the target branch moves, so after every push to `dev` or `main` the migration-recheck workflow re-runs the Docs check of open PRs whose migrations fell behind (`tools/ci/migration-recheck.mjs`). When it fails, run `pnpm migration:rebase` (against `origin/dev`, or `origin/main` if targeting `main`), commit, push, and never merge with the old version.
 
 ## Agent sessions
 
