@@ -768,7 +768,7 @@ suite('Meetings 5-table member_vy read opt-in (#5073 Step 2a)', () => {
     }
 
     await admin((c) =>
-      c.query(`UPDATE ludy_kernel.ai_run SET status = 'cancelled' WHERE org_id = $1 AND id = $2`, [
+      c.query(`UPDATE ludy_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND id = $2`, [
         orgA,
         runs.memberVy.runId,
       ]),
@@ -797,7 +797,7 @@ suite('Meetings 5-table member_vy read opt-in (#5073 Step 2a)', () => {
       );
     } finally {
       await admin((c) =>
-        c.query(`UPDATE ludy_kernel.ai_run SET status = 'running' WHERE org_id = $1 AND id = $2`, [
+        c.query(`UPDATE ludy_kernel.ai_run SET status = 'running', finished_at = NULL WHERE org_id = $1 AND id = $2`, [
           orgA,
           runs.memberVy.runId,
         ]),
