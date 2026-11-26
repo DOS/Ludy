@@ -46,6 +46,8 @@ const TS_TENANT_LOCKS: Readonly<Record<string, string>> = {
   'modules/hr/src/overtime.ts': "the owner's switch requiring L1 overtime approval before final sign-off: an UPDATE of the tenant row only",
   'modules/finance/src/own-tax-code.ts': "a purchase posting and an extraction read the org's and the entities' tax codes FOR SHARE (loadOwnTaxCodes); they write ledger rows, never a member or position row",
   'packages/kernel/src/personal-data.ts': "an erasure clears the org's contact email (a raw UPDATE of the tenant row); its only row lock, the parties FOR UPDATE, comes before, and it touches no member or position row",
+  'packages/kernel/src/member-vy.ts':
+    "kernel.member_vy.run.start_daily runs non-locking tenant status and module checks before locking, then locks tenant_member FOR SHARE FIRST and tenant FOR SHARE SECOND (zero member, assignment or position rows locked after tenant, matching the canonical member-then-tenant order of #1943), then locks the member's agent FOR SHARE before inserting ai_run (#5073)",
 };
 
 const DEFINITION = /CREATE (?:OR REPLACE )?FUNCTION\s+([a-z_]+\.[a-z_0-9]+)\s*\(([^)]*)\)[\s\S]*?\$\$([\s\S]*?)\$\$/gi;

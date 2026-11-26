@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// What Ludy Desktop is pointed at (ADR-0055 slice 2, issue #4515). Nothing is baked in: no default server, no secret.
+// What Ludy Desktop is pointed at (ADR-0055 slice 2, #4515/#4884/#4885). Nothing is baked in: no default server, no secret.
 //   - LUDY_URL (or `ludyUrl` in config.json in the user data folder): the Ludy deployment to sign in to and to open.
-//   - LUDY_DESKTOP_UPDATE_URL (or `updateUrl`): the folder that holds the Squirrel.Windows feed (RELEASES, release-manifest.json and the nupkg).
+//   - LUDY_DESKTOP_UPDATE_URL (or `updateUrl`): the folder that holds the update feed (RELEASES / release-manifest.json / packages).
 //   - LUDY_DESKTOP_UPDATE_ORIGIN (or `updateOrigin`): optional origin pin that the update feed URL must match.
-//   - LUDY_DESKTOP_UPDATE_PUBLISHER_SHA1 (or `updatePublisherThumbprint`): optional 40-hex signing certificate thumbprint pin.
+//   - LUDY_DESKTOP_UPDATE_PUBLISHER_SHA1 (or `updatePublisherThumbprint`): optional Windows 40-hex signing certificate thumbprint pin.
+//   - LUDY_DESKTOP_UPDATE_TEAM_ID (or `updateTeamId`): optional macOS 10-char Apple Developer Team ID pin.
 // An environment variable wins over the file. A value that is not a safe address is reported and ignored, never used: the shell
 // sends the member's token only to the configured Ludy origin, and loads no remote content at all.
+import { APPLE_TEAM_ID_PATTERN, normalizeAppleTeamId } from './codesign.ts';
 import { parseFeedOrigin, resolveFeedUrl, type FeedUrlOptions } from './update-feed.ts';
 
 export interface DesktopConfig {
@@ -20,6 +22,7 @@ export interface DesktopConfig {
 export interface UpdatePolicyConfig extends DesktopConfig {
   allowedUpdateOrigin: string | null;
   expectedPublisherThumbprint: string | null;
+  expectedTeamId: string | null;
 }
 
 export type UrlCheck = { ok: true; url: string } | { ok: false; reason: string };
@@ -55,7 +58,7 @@ export function parseLudyUrl(value: string): UrlCheck {
   return { ok: true, url: url.origin };
 }
 
-// The update feed folder: Squirrel.Windows asks `<url>/RELEASES` and `release-manifest.json`, with SSRF and origin-pinning checks.
+// The update feed folder: asks `<url>/RELEASES` (Windows) and `<url>/release-manifest.json`, with SSRF and origin-pinning checks.
 export function parseUpdateUrl(value: string, options: FeedUrlOptions = {}): UrlCheck {
   return resolveFeedUrl(value, options);
 }
@@ -71,10 +74,12 @@ interface RawFileConfig {
   updateUrl?: string;
   updateOrigin?: string;
   updatePublisherThumbprint?: string;
+  updateTeamId?: string;
   invalidLudyType?: boolean;
   invalidUpdateType?: boolean;
   invalidOriginType?: boolean;
   invalidThumbprintType?: boolean;
+  invalidTeamIdType?: boolean;
 }
 
 function readFileConfig(text: string | null, problems: string[]): RawFileConfig {
@@ -112,6 +117,13 @@ function readFileConfig(text: string | null, problems: string[]): RawFileConfig 
         problems.push('updatePublisherThumbprint trong config.json phải là chuỗi');
       }
     }
+    if (Object.hasOwn(record, 'updateTeamId') && record.updateTeamId !== undefined) {
+      if (typeof record.updateTeamId === 'string') out.updateTeamId = record.updateTeamId;
+      else {
+        out.invalidTeamIdType = true;
+        problems.push('updateTeamId trong config.json phải là chuỗi');
+      }
+    }
     return out;
   } catch {
     problems.push('config.json không đọc được (phải là JSON dạng {"ludyUrl": "..."})');
@@ -126,11 +138,13 @@ export function loadUpdateConfig(sources: ConfigSources): UpdatePolicyConfig {
   const envUpdate = sources.env.LUDY_DESKTOP_UPDATE_URL?.trim();
   const envOrigin = sources.env.LUDY_DESKTOP_UPDATE_ORIGIN?.trim();
   const envThumbprint = sources.env.LUDY_DESKTOP_UPDATE_PUBLISHER_SHA1?.trim();
+  const envTeamId = sources.env.LUDY_DESKTOP_UPDATE_TEAM_ID?.trim();
 
   const ludyRaw = envLudy || file.ludyUrl;
   const updateRaw = envUpdate || file.updateUrl;
   const originRaw = envOrigin || file.updateOrigin?.trim() || '';
   const thumbprintRaw = envThumbprint || file.updatePublisherThumbprint?.trim() || '';
+  const teamIdRaw = envTeamId || file.updateTeamId?.trim() || '';
 
   let ludyUrl: string | null = null;
   if (ludyRaw) {
@@ -160,9 +174,20 @@ export function loadUpdateConfig(sources: ConfigSources): UpdatePolicyConfig {
     }
   }
 
+  let expectedTeamId: string | null = null;
+  let teamIdInvalid = Boolean(!envTeamId && file.invalidTeamIdType);
+  if (teamIdRaw) {
+    const normalized = normalizeAppleTeamId(teamIdRaw);
+    if (normalized && APPLE_TEAM_ID_PATTERN.test(normalized)) expectedTeamId = normalized;
+    else {
+      teamIdInvalid = true;
+      problems.push('Mã định danh nhóm Apple (Team ID) phải gồm đúng 10 ký tự chữ và số');
+    }
+  }
+
   let updateUrl: string | null = null;
   if (updateRaw && !(file.invalidUpdateType && !envUpdate)) {
-    if (originInvalid || thumbprintInvalid) {
+    if (originInvalid || thumbprintInvalid || teamIdInvalid) {
       // Fail closed when pinning policy is invalid so an unverified feed cannot run.
       updateUrl = null;
     } else {
@@ -172,7 +197,7 @@ export function loadUpdateConfig(sources: ConfigSources): UpdatePolicyConfig {
     }
   }
 
-  return { ludyUrl, updateUrl, allowedUpdateOrigin, expectedPublisherThumbprint, problems };
+  return { ludyUrl, updateUrl, allowedUpdateOrigin, expectedPublisherThumbprint, expectedTeamId, problems };
 }
 
 export function loadConfig(sources: ConfigSources): DesktopConfig {

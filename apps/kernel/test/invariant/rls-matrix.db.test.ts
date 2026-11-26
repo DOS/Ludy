@@ -6656,6 +6656,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
       await admin.query('DELETE FROM crove_meetings.meeting WHERE id = ANY($1::uuid[])', [meetingsIds]);
       await admin.query('DELETE FROM crove_meetings.calendar_agenda WHERE id = ANY($1::uuid[])', [agendaIds]);
       await admin.query('DELETE FROM crove_kernel.calendar_connection WHERE id = ANY($1::uuid[])', [connIds]);
+      await admin.query('DELETE FROM crove_kernel.ai_run WHERE org_id = $1::uuid AND id = $2::uuid', [orgs.A.id, viewerVyRun]);
+      await admin.query('DELETE FROM crove_kernel.agent WHERE org_id = $1::uuid AND id = $2::uuid', [orgs.A.id, viewerVyAgent]);
+      await admin.query('DELETE FROM crove_kernel.member_permission_override WHERE org_id = $1::uuid AND user_id = $2::uuid', [orgs.A.id, viewerVyUser]);
+      await admin.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1::uuid AND user_id = $2::uuid', [orgs.A.id, viewerVyUser]);
+      await admin.query('DELETE FROM crove_kernel.user_account WHERE id = $1::uuid', [viewerVyUser]);
     }
   });
 });

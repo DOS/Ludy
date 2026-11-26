@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -378,7 +378,7 @@ describe('resolveBundledModernSigntool', () => {
     writeFileSync(expectedSigntool, 'MZ');
 
     const localReq = createRequire(join(dir, 'index.js'));
-    expect(resolveBundledModernSigntool(localReq)).toBe(expectedSigntool);
+    expect(realpathSync(resolveBundledModernSigntool(localReq))).toBe(realpathSync(expectedSigntool));
   });
 });
 

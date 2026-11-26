@@ -21,12 +21,24 @@ export interface CaptureStartOptions {
   onSilentAlert?: (kind: 'silent-loopback' | 'silent-mic') => void;
   onMicMissing?: () => void;
   onUnexpectedEnd?: (reason: 'device_lost' | 'unknown') => void;
+  signal?: AbortSignal;
 }
 
 export interface CaptureModule {
   start(source: CaptureSource, meetingKey: string, options?: CaptureStartOptions): Promise<void>;
   readonly pieces: AsyncIterable<CapturePiece>;
   stop(): Promise<void>;
+}
+
+export const CAPTURE_CANCELLED = 'CAPTURE_CANCELLED';
+
+export class CaptureCancelledError extends Error {
+  readonly code = CAPTURE_CANCELLED;
+
+  constructor(message = 'Capture start cancelled') {
+    super(message);
+    this.name = 'CaptureCancelledError';
+  }
 }
 
 export const PROCESS_LOOPBACK_UNSUPPORTED = 'PROCESS_LOOPBACK_UNSUPPORTED';

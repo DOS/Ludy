@@ -24,6 +24,8 @@ import {
   type RecordingNoticeLanguage,
 } from './consent.ts';
 import {
+  CAPTURE_CANCELLED,
+  CaptureCancelledError,
   PROCESS_LOOPBACK_UNSUPPORTED,
   ProcessLoopbackUnsupportedError,
   type CaptureModule,
@@ -121,6 +123,7 @@ export function createCaptureController(deps: CaptureControllerDeps) {
   const log = deps.log ?? (() => undefined);
 
   let phase: CaptureTrayState['phase'] = 'idle';
+  let pendingStart: { controller: AbortController; cancelled: boolean } | null = null;
   let windows: OfferedWindow[] = [];
   let agendaEvents: AgendaEvent[] = [];
   let active: {
@@ -197,6 +200,8 @@ export function createCaptureController(deps: CaptureControllerDeps) {
     }
 
     phase = 'preparing';
+    const startAttempt = { controller: new AbortController(), cancelled: false };
+    pendingStart = startAttempt;
     deps.onTrayState({ phase: 'preparing', warning: null });
     deps.ui.updateConsentState(currentView({ busy: true }));
 
@@ -221,11 +226,15 @@ export function createCaptureController(deps: CaptureControllerDeps) {
     const pendingLiveChunks: Array<{ bytes: Uint8Array; mimeType: string; durationMs: number }> = [];
     try {
       await deps.recordingStore.prepareDir(recordingId);
+      if (startAttempt.cancelled || startAttempt.controller.signal.aborted) {
+        throw new CaptureCancelledError();
+      }
       // Step 1: Probe / open capture device FIRST (without writing or sending any audio). If Win10 < build 20348 does not
       // support per-app loopback and allowSystemFallback is not explicitly ticked, fail here cleanly before creating a meeting.
       await deps.capture.start(draft.source, joinUrl ?? draft.agendaId ?? '', {
         ...(draft.targetPid !== undefined ? { targetPid: draft.targetPid } : {}),
         ...(draft.allowSystemFallback ? { allowSystemFallback: true } : {}),
+        signal: startAttempt.controller.signal,
         onLiveChunk(piece) {
           if (!draft.liveNotes) return;
           if (active) liveQueue.push(piece.bytes, piece.mimeType, piece.durationMs);
@@ -256,6 +265,9 @@ export function createCaptureController(deps: CaptureControllerDeps) {
         },
       });
       startedCapture.open = true;
+      if (startAttempt.cancelled || startAttempt.controller.signal.aborted) {
+        throw new CaptureCancelledError();
+      }
 
       // Step 2: Create the server meeting with the confirmed consent record BEFORE recording/storing/sending any audio.
       const created = await createDesktopMeeting(deps.fetch, session.ludyUrl, session.token, {
@@ -266,6 +278,10 @@ export function createCaptureController(deps: CaptureControllerDeps) {
         ...(draft.agendaId ? { agendaId: draft.agendaId } : {}),
         ...(joinUrl ? { joinUrl } : {}),
       });
+      if (startAttempt.cancelled || startAttempt.controller.signal.aborted) {
+        throw new CaptureCancelledError();
+      }
+      if (pendingStart === startAttempt) pendingStart = null;
 
       const startedAt = now();
       const title = draft.title.trim();
@@ -307,10 +323,14 @@ export function createCaptureController(deps: CaptureControllerDeps) {
       deps.ui.showPill({ meetingId: created.meetingId, title, elapsedMs: 0, warning: initialWarning });
       return { ok: true, meetingId: created.meetingId };
     } catch (error) {
+      if (pendingStart === startAttempt) pendingStart = null;
       if (startedCapture.open) {
         await deps.capture.stop().catch(() => undefined);
       }
       await deps.recordingStore.remove(recordingId).catch(() => undefined);
+      if (startAttempt.cancelled || (error as { code?: unknown })?.code === CAPTURE_CANCELLED) {
+        return { ok: false, error: 'Đã hủy ghi cuộc họp.' };
+      }
       phase = 'consent';
       deps.onTrayState({ phase: 'consent', meetingTitle: null, elapsedMs: 0, warning: null });
 
@@ -423,9 +443,14 @@ export function createCaptureController(deps: CaptureControllerDeps) {
     startCapture,
     stopCapture,
     cancelConsent() {
-      if (phase === 'consent') {
+      if (phase === 'preparing' && pendingStart) {
+        pendingStart.cancelled = true;
+        pendingStart.controller.abort();
+        pendingStart = null;
+      }
+      if (phase === 'consent' || phase === 'preparing') {
         phase = 'idle';
-        deps.onTrayState({ phase: 'idle' });
+        deps.onTrayState({ phase: 'idle', meetingTitle: null, elapsedMs: 0, warning: null });
       }
       deps.ui.closeConsent();
     },
