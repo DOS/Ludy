@@ -6,7 +6,6 @@ import {
   MARKETPLACE_SETTLEMENT_COMMAND,
   VOUCHER_KIND,
   zCashVoucherProposal,
-  zInboxJournalVoucherProposal,
   zJournalVoucherProposal,
   zMarketplaceSettlementProposal,
   zId,
@@ -176,9 +175,17 @@ function signatureStatusOf(value: string | null): SignatureStatus | null {
 function parseJournalVoucher(kind: string, command: string | null, raw: unknown): JournalVoucherProposal | null {
   if (kind !== JOURNAL_VOUCHER_KIND) return null;
   if (command === MARKETPLACE_SETTLEMENT_COMMAND) {
-    if (!zMarketplaceSettlementProposal.safeParse(raw).success) return null;
-    const normalized = zInboxJournalVoucherProposal.safeParse(raw);
-    return normalized.success ? normalized.data : null;
+    const result = zMarketplaceSettlementProposal.safeParse(raw);
+    if (!result.success) return null;
+    const d = result.data;
+    return {
+      date: d.date,
+      description: d.description,
+      lines: d.lines,
+      total: d.total,
+      ...(d.legalEntityId === undefined ? {} : { legalEntityId: d.legalEntityId }),
+      ...(d.surplusCountId === undefined ? {} : { surplusCountId: d.surplusCountId }),
+    };
   }
   const result = zJournalVoucherProposal.safeParse(raw);
   return result.success ? result.data : null;
@@ -223,10 +230,10 @@ function toInboxItem(row: {
   mcp_client_name?: string | null;
   mcp_client_host?: string | null;
   legal_entity_id: string;
-}, agentName: string | null) {
+}, agentName: string | null, parsedJournalVoucher?: JournalVoucherProposal | null) {
   const payload = parsePayload(row.kind, row.payload);
   const cashVoucher = parseVoucher(row.kind, row.payload);
-  const voucher = cashVoucher ?? parseJournalVoucher(row.kind, row.command ?? null, row.payload);
+  const voucher = cashVoucher ?? (parsedJournalVoucher !== undefined ? parsedJournalVoucher : parseJournalVoucher(row.kind, row.command ?? null, row.payload));
   // An invoice's checks, or the warnings a payment voucher carries (#2419).
   const checks = payload?.checks ?? cashVoucher?.checks ?? [];
   const direction = payload ? (payload.direction ?? 'purchase') : null;
@@ -484,13 +491,14 @@ export const inboxGet = defineQuery({
             .execute()
         : [];
     const engage = (ctx.role === 'owner' || ctx.role === 'admin') && isEngageProposalKind(row.kind) ? engageViewOf(row.kind, row.command, row.payload, await engageAboutOf(ctx.trx, ctx.orgId, row.command, row.payload)) : null;
+    const journalVoucher = parseJournalVoucher(row.kind, row.command, row.payload);
     return {
-      ...toInboxItem(row, agent?.display_name ?? null),
+      ...toInboxItem(row, agent?.display_name ?? null, journalVoucher),
       revision: row.revision,
       payload: parsePayload(row.kind, row.payload),
       reversal: parseReversal(row.kind, row.payload),
       voucher: parseVoucher(row.kind, row.payload),
-      journalVoucher: parseJournalVoucher(row.kind, row.command, row.payload),
+      journalVoucher,
       // The text an AI coworker proposes may be a reply in a thread this reader may not read (a private message, an email): only the people who approve it, owners and admins, who read every thread, see it.
       engage: engage,
       error: null,

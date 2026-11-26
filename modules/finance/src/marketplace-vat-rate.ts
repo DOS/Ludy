@@ -32,11 +32,12 @@ async function ratesOf(ctx: Ctx, entity: string): Promise<MarketplaceVatRates> {
   return { legalEntityId: entity, rows: rows.map((r): MarketplaceVatRateRow => ({ effectiveFrom: r.effective_from, method: r.method, vatPercent: r.vat_percent })) };
 }
 
-// Every entry of an entity, ordered as `marketplaceVatRateAt` orders candidates: greatest effective_from first and, within a date, latest entry first (matches marketplace_vat_rate_entity_idx).
+// Every active entry of an entity (the latest entry per effective date), ordered as `marketplaceVatRateAt` orders candidates: greatest effective_from first (matches marketplace_vat_rate_entity_idx).
 export async function marketplaceVatRateEntries(ctx: Ctx, entity: string): Promise<MarketplaceVatRateRow[]> {
   const rows = await ctx.trx
     .selectFrom('ludy_finance.marketplace_vat_rate')
     .select(['effective_from', 'method', 'vat_percent'])
+    .distinctOn('effective_from')
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)
     .orderBy('effective_from', 'desc')

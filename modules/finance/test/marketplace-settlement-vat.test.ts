@@ -19,6 +19,9 @@ function fakeCtx(rows: readonly StoredRow[]) {
         select() {
           return chain;
         },
+        distinctOn() {
+          return chain;
+        },
         where(col: string, _op: string, val: string) {
           if (col === 'legal_entity_id') entity = val;
           return chain;

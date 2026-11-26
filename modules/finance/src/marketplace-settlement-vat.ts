@@ -21,10 +21,11 @@ async function entityRatesOf(ctx: Ctx, entityId: string, memo: Map<string, Settl
     byEntity = new Map();
     entityRatesCache.set(memo, byEntity);
   }
-  const cached = byEntity.get(entityId);
+  const cacheKey = `${ctx.orgId}:${entityId}`;
+  const cached = byEntity.get(cacheKey);
   if (cached !== undefined) return cached;
   const rows = await marketplaceVatRateEntries(ctx, entityId);
-  byEntity.set(entityId, rows);
+  byEntity.set(cacheKey, rows);
   return rows;
 }
 
@@ -33,14 +34,14 @@ export async function resolveVatRates(ctx: Ctx, entityId: string, days: Iterable
   const out: Record<string, SettlementVatRate | null> = {};
   const missing: string[] = [];
   for (const day of days) {
-    const key = `${entityId}:${day}`;
+    const key = `${ctx.orgId}:${entityId}:${day}`;
     if (memo.has(key)) out[day] = memo.get(key) ?? null;
     else missing.push(day);
   }
   if (missing.length === 0) return out;
   const entries = await entityRatesOf(ctx, entityId, memo);
   for (const day of missing) {
-    const key = `${entityId}:${day}`;
+    const key = `${ctx.orgId}:${entityId}:${day}`;
     if (!memo.has(key)) {
       const row = pickMarketplaceVatRate(entries, day);
       memo.set(key, row === null ? null : row.method === 'deduction' && row.vatPercent !== null ? { method: 'deduction', vatPercent: row.vatPercent } : { method: 'none' });
