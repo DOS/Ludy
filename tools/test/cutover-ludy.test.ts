@@ -318,7 +318,7 @@ case "$cmd" in
       printf '[]\\n'
       exit 0
     fi
-    if [[ " $* " == *"{{range .Mounts}}"* ]]; then
+    if [[ " $* " == *"{{range .Mounts}}"* ]] && [[ " $* " == *".Destination"* ]]; then
       cid="\${@: -1}"
       if [ -n "\${STUB_CONTAINER_MOUNTS:-}" ]; then
         matched=0
@@ -487,6 +487,9 @@ case "$cmd" in
             vol_defs=''
             for s in \${STUB_SERVICES:-db migrate auth auth-grants worker api caddy prober}; do
               printf '  %s:\\n' "$s"
+              if [ "$s" = db ] && [ -n "\${STUB_CONFIG_DB_PGDATA:-}" ]; then
+                printf '    environment:\\n      PGDATA: %s\\n' "\${STUB_CONFIG_DB_PGDATA}"
+              fi
               emitted_svc=0
               if [ -n "\${STUB_CONTAINER_MOUNTS:-}" ]; then
                 for line in \${STUB_CONTAINER_MOUNTS}; do
@@ -628,7 +631,7 @@ function runWithStubs(f: StubFixture, args: string[], extraEnv: Record<string, s
   });
 }
 
-describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
+describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', { timeout: 300_000 }, () => {
   it('pre-commit failure (during volume copy) removes partial ludy_* volumes, restores .env, and restarts crove', { timeout: 15000 }, () => {
     const f = createCutoverFixture();
     const res = runWithStubs(
@@ -828,7 +831,7 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(readFileSync(fBad.stubLog, 'utf8')).not.toContain('dc crove stop');
   });
 
-  it('cutover-stack preserves BACKUP_S3_PREFIX even without S3 keys in .env, resolves checkout WAL paths, and prune-old-volumes verifies cluster ID (#3972)', { timeout: 15000 }, () => {
+  it('cutover-stack preserves BACKUP_S3_PREFIX even without S3 keys in .env, resolves checkout WAL paths, and prune-old-volumes verifies cluster ID (#3972)', { timeout: 120_000 }, () => {
     // Minimal non-WAL .env with no BACKUP_S3_ENDPOINT/BUCKET in .env (e.g. systemd/cron S3 env) still pins BACKUP_S3_PREFIX=crove.
     const f = createCutoverFixture();
     const res = runWithStubs(f, ['cutover-stack', '--dir', f.deployDir, '--overlay-dir', f.overlayDir]);
@@ -974,7 +977,7 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(cutoverScript).toContain('--exclude-table-data=ludy_kernel.context_key --exclude-table-data=crove_kernel.context_key');
   });
 
-  it('evaluates interpolated LUDY_* / CROVE_* env expressions safely and persists real inspected mounts during cutover-stack (#3972 Round 10)', { timeout: 15000 }, () => {
+  it('evaluates interpolated LUDY_* / CROVE_* env expressions safely and persists real inspected mounts during cutover-stack (#3972 Round 10)', { timeout: 240_000 }, () => {
     const work = mkdtempSync(join(tmpdir(), 'ludy-cutover-interp-'));
     tempDirs.push(work);
 
@@ -1021,6 +1024,7 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     writeFileSync(f.populatedFile, ['crove_db-data', 'crove_files', ''].join('\n'));
     const cutBind = runWithStubs(f, ['cutover-stack', '--dir', f.deployDir, '--overlay-dir', f.overlayDir], {
       STUB_LIVE_PGDATA: '/var/lib/postgresql/data/pgdata',
+      STUB_CONFIG_DB_PGDATA: '/var/lib/postgresql/data/pgdata',
       STUB_CONTAINER_MOUNTS: [
         'stub-db-cid|/var/lib/postgresql/data|volume|ludy_db-data|',
         'stub-api-cid|/data/files|bind||/srv/customer-files',

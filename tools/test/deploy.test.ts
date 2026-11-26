@@ -1014,6 +1014,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     // Rollback to legacy `name: crove` fails closed when COMPOSE_FILE omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME,
     // and succeeds once COMPOSE_PROJECT_NAME=ludy is set (#3972 Round 11).
+    // Roll back to v1.1.0 (name: ludy) first so `previous` is again the legacy v1.0.0 (name: crove) release.
+    expect(run(['rollback']).status).toBe(0);
     writeFileSync(`${dir}/compose.host.yml`, 'services: {}\n');
     writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\nCOMPOSE_FILE=docker-compose.yml:compose.host.yml\n');
     const unsafeRollback = run(['rollback']);
