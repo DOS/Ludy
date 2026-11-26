@@ -13,14 +13,16 @@
 // order carries `pickup_done_time`) is a parcel the platform gave up on, goods gone and not back: it stays `shipped` (stock stays out; a write-off is a person's bookkeeping) and never becomes `cancelled`.
 // A cancellation by the buyer or the seller, or any cancellation before pickup, stays `cancelled`; one after pickup that names nobody is treated like the platform's.
 //
-// THE CURSOR is `o:<iso>;s:<n>`: the end of the window read and the width the next read starts with (`;s:0` is left out). The list gives order numbers and statuses only, no time and no promised order, so the
-// poll cannot resume in the middle of a window: it reads [cursor - 10 minutes, end], and when the list says `more` (over 100 orders: the port's page) the window is cut to the next narrower width: 15 days (the
-// platform's own limit), 3 days, a day, 6 hours, an hour, 10 minutes, a minute; past that the page is `not_recognized`, never skipped without a trace. The width that worked is kept in the cursor: a window with
-// no order makes the next one wider (a quiet shop is read in one call, and a burst that was cut is passed quickly), a window with orders keeps its width. A caught-up poll moves the cursor only when it found orders.
+// THE CURSOR is `o:<iso>[;s:<n>][;r:<iso>[;rs:<n>]]`: the end of the orders window read and the width the next read starts with (`;s:0` is left out). The list gives order numbers and statuses only, no time and
+// no promised order, so the orders poll cannot resume in the middle of a window: it reads [cursor - 10 minutes, end], and when the list says `more` (over 100 orders: the port's page) the window is cut to the next
+// narrower width: 15 days (the platform's own limit), 3 days, a day, 6 hours, an hour, 10 minutes, a minute; past that the page is `not_recognized`, never skipped without a trace. The width that worked is kept in
+// the cursor: a window with no order makes the next one wider (a quiet shop is read in one call, and a burst that was cut is passed quickly), a window with orders keeps its width. A caught-up poll moves the
+// cursor only when it found orders. When a window holds more eligible returns than SHOPEE_MAX_RETURN_DETAILS (or pushes orders past PAGE_SIZE), returns are taken deterministically by `(update_time, return_sn)`
+// while they fit, orders advance to `end`, and `;r:<iso>[;rs:<n>]` holds the returns window before the first untaken return (without re-applying the 10-minute overlap) until returns catch up to `o:`.
 import { money, toMoney } from '@ludy/l10n-vn';
 import { MARKETPLACE_PLATFORM_LIMITS, MarketplaceProviderError, marketplaceCellText, type MarketplaceOrder, type MarketplaceOrderLine, type MarketplaceOrderPage, type MarketplaceOrderStage, type MarketplacePlatformKey, type MarketplaceProvider, type MarketplaceTestResult } from '@ludy/mod-finance';
 import { cleanLabel, marketplaceDigits, marketplaceIdentifier, marketplaceMoney, notRecognized, pickAllowed } from './marketplace-adapter-kit.ts';
-import { SHOPEE_MAX_RETURN_DETAILS, goodsBackLines, mayBringGoodsBack, readReturnDetail, readReturnList, type ShopeeReturn } from './marketplace-shopee-returns.ts';
+import { SHOPEE_MAX_RETURN_DETAILS, goodsBackLines, mayBringGoodsBack, readReturnDetail, readReturnList, type ReturnsWindow, type ShopeeReturn } from './marketplace-shopee-returns.ts';
 import { SHOPEE_HOSTS, parseShopeeAnswer, parseShopeeSecret, shopeeCaller, testShopeeConnection, type ShopeeCaller, type ShopeeCredential, type ShopeeOptions } from './marketplace-shopee.ts';
 
 const ORDER_LIST_PATH = '/api/v2/order/get_order_list';
@@ -35,6 +37,8 @@ const DAY_MS = 86_400_000;
 const SLICES_MS: readonly number[] = [WINDOW_DAYS * DAY_MS, 3 * DAY_MS, DAY_MS, 6 * 3_600_000, 3_600_000, 600_000, 60_000];
 // A resumed read starts this far before the cursor, so an order Shopee updates late is caught; the confirm step dedupes and moves a stage forward only.
 const OVERLAP_MS = 10 * 60_000;
+// Held returns resume this far before the first untaken return when strictly past the first taken return's second, so whole-second filtering never loses or loops.
+const TIE_MS = 1000;
 const MAX_LINES_PER_ORDER = 500;
 const VIETNAM_OFFSET_MS = 7 * 3_600_000;
 // A record updated later than this past the clock is not Shopee's: it would move the cursor into the future and the shop would stop syncing without a word.
@@ -74,14 +78,95 @@ function timeOf(value: unknown, required: boolean): number | null {
   return value * 1000;
 }
 
-const CURSOR = /^o:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)(?:;s:([0-6]))?$/;
-function readCursor(since: string | null): { at: number; width: number } | null {
+const CURSOR = /^o:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)(?:;s:([0-6]))?(?:;r:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)(?:;rs:([0-6]))?)?$/;
+interface ShopeeCursor {
+  at: number;
+  width: number;
+  returnsAt: number | null;
+  returnsWidth: number;
+}
+function readCursor(since: string | null): ShopeeCursor | null {
   const m = since === null ? null : CURSOR.exec(since);
   if (!m) return null;
   const at = Date.parse(m[1]!);
-  return Number.isNaN(at) ? null : { at, width: m[2] === undefined ? 0 : Number(m[2]) };
+  const returnsAt = m[3] === undefined ? null : Date.parse(m[3]);
+  if (Number.isNaN(at) || (returnsAt !== null && (Number.isNaN(returnsAt) || returnsAt > at))) return null;
+  return {
+    at,
+    width: m[2] === undefined ? 0 : Number(m[2]),
+    returnsAt,
+    returnsWidth: m[4] === undefined ? 0 : Number(m[4]),
+  };
 }
-const writeCursor = (ms: number, width: number): string => `o:${new Date(ms).toISOString()}${width === 0 ? '' : `;s:${width}`}`;
+function writeCursor(ms: number, width: number, returnsAt: number | null = null, returnsWidth = 0): string {
+  const orders = `o:${new Date(ms).toISOString()}${width === 0 ? '' : `;s:${width}`}`;
+  if (returnsAt === null) return orders;
+  return `${orders};r:${new Date(returnsAt).toISOString()}${returnsWidth === 0 ? '' : `;rs:${returnsWidth}`}`;
+}
+
+async function readSlicedWindow<T extends { more: boolean }>(
+  startMs: number,
+  fromMs: number,
+  maxEndMs: number,
+  initialWidth: number,
+  readSlice: (endMs: number, width: number) => Promise<T>,
+): Promise<{ endMs: number; width: number; result: T } | null> {
+  let prevEndMs: number | null = null;
+  for (let width = initialWidth; width < SLICES_MS.length; width += 1) {
+    // The platform allows at most 15 days between the two times.
+    const endMs = Math.min(startMs + SLICES_MS[width]!, maxEndMs, fromMs + WINDOW_DAYS * DAY_MS - 1000);
+    if (Math.floor(endMs / 1000) <= Math.floor(fromMs / 1000)) return null;
+    if (endMs === prevEndMs) continue;
+    prevEndMs = endMs;
+    const result = await readSlice(endMs, width);
+    if (!result.more) return { endMs, width, result };
+  }
+  // Over a page even in the smallest window: not skipped, not stored.
+  throw notRecognized();
+}
+
+interface SelectedReturns {
+  numbers: string[];
+  taken: ShopeeReturn[];
+  heldAt: number | null;
+  sameSecondOverflowAt: number | null;
+}
+
+// Take returns deterministically by `(updatedAt, returnSn)` while their detail calls and combined order set fit within one poll's caps; hold the rest for the next poll.
+function selectReturns(orderNumbers: readonly string[], returns: readonly ShopeeReturn[], returnsFrom: number, returnsEnd: number): SelectedReturns {
+  const wanted = returns.filter(mayBringGoodsBack);
+  const sorted = [...wanted].sort((a, b) => a.updatedAt - b.updatedAt || (a.returnSn < b.returnSn ? -1 : a.returnSn > b.returnSn ? 1 : 0));
+  const union = new Set(orderNumbers);
+  const taken: ShopeeReturn[] = [];
+  let heldAt: number | null = null;
+  let hitDetailCap = false;
+  for (const ret of sorted) {
+    if (taken.length >= SHOPEE_MAX_RETURN_DETAILS) {
+      heldAt = ret.updatedAt;
+      hitDetailCap = true;
+      break;
+    }
+    if (!union.has(ret.orderNo) && union.size + 1 > PAGE_SIZE) {
+      heldAt = ret.updatedAt;
+      break;
+    }
+    union.add(ret.orderNo);
+    taken.push(ret);
+  }
+  if (heldAt === null) return { numbers: [...union].sort(), taken, heldAt: null, sameSecondOverflowAt: null };
+  const cappedHeldAt = Math.min(heldAt, returnsEnd);
+  // Over 40 eligible returns within the same second cannot be split by a whole-second time filter: signal overflow so the caller narrows past later bursts or refuses loudly.
+  if (hitDetailCap && taken.length > 0 && cappedHeldAt <= taken[0]!.updatedAt) {
+    return { numbers: [], taken: [], heldAt: null, sameSecondOverflowAt: taken[0]!.updatedAt };
+  }
+  const nextReturnsAt =
+    hitDetailCap && taken.length > 0
+      ? cappedHeldAt - TIE_MS > taken[0]!.updatedAt
+        ? cappedHeldAt - TIE_MS
+        : cappedHeldAt
+      : Math.max(returnsFrom, cappedHeldAt);
+  return { numbers: [...union].sort(), taken, heldAt: nextReturnsAt, sameSecondOverflowAt: null };
+}
 
 interface RawOrder {
   id: string;
@@ -241,42 +326,99 @@ export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller =
       const nowMs = now().getTime();
       const floor = nowMs - WINDOW_DAYS * DAY_MS;
       const cursor = readCursor(since);
-      const start = Math.max(cursor?.at ?? floor, floor);
-      const from = Math.max(start - OVERLAP_MS, floor);
+      const ordersStart = Math.max(cursor?.at ?? floor, floor);
+      const ordersFrom = Math.max(ordersStart - OVERLAP_MS, floor);
 
-      let end = start;
-      let numbers: string[] = [];
-      let returns: ShopeeReturn[] = [];
-      let width = cursor?.width ?? 0;
-      for (; width < SLICES_MS.length; width += 1) {
-        // The platform allows at most 15 days between the two times.
-        end = Math.min(start + SLICES_MS[width]!, nowMs, from + WINDOW_DAYS * DAY_MS - 1000);
-        // Nothing past the cursor yet.
-        if (end <= from) return { orders: [], nextCursor: since };
-        const read = await listWindow(credential, from, end);
-        const found = await readReturnList(caller, credential, from, end, nowMs);
-        // The orders to read: those the list names and those of the returns that could bring goods back (a return of any other kind moves no stock and needs no order). Over a page, or over what the detail
-        // calls may cost, the window is cut narrower, exactly as when the list itself says there is more.
-        const wanted = found.returns.filter(mayBringGoodsBack);
-        const union = new Set([...read.numbers, ...wanted.map((r) => r.orderNo)]);
-        if (!read.more && !found.more && union.size <= PAGE_SIZE && wanted.length <= SHOPEE_MAX_RETURN_DETAILS) {
-          numbers = [...union];
-          returns = wanted;
-          break;
+      let ordersEnd = ordersStart;
+      let ordersWidth = cursor?.width ?? 0;
+      let ordersPolled = false;
+      let read: { numbers: string[]; more: boolean } = { numbers: [], more: false };
+      let returnsFrom = ordersFrom;
+      let returnsEnd = ordersStart;
+      let returnsWidth = ordersWidth;
+      let found: ReturnsWindow = { returns: [], more: false };
+      let selected: SelectedReturns = { numbers: [], taken: [], heldAt: null, sameSecondOverflowAt: null };
+      let returnsSkipped = false;
+
+      const selectOrNarrow = (orderNumbers: readonly string[], returns: readonly ShopeeReturn[], fromMs: number, endMs: number, startMs: number, width: number): SelectedReturns | null => {
+        const picked = selectReturns(orderNumbers, returns, fromMs, endMs);
+        if (picked.sameSecondOverflowAt === null) return picked;
+        if (width + 1 < SLICES_MS.length && picked.sameSecondOverflowAt > startMs + SLICES_MS[SLICES_MS.length - 1]!) return null;
+        throw notRecognized();
+      };
+
+      if (cursor === null || cursor.returnsAt === null) {
+        const synced = await readSlicedWindow(ordersStart, ordersFrom, nowMs, ordersWidth, async (endMs, width) => {
+          const ordersRead = await listWindow(credential, ordersFrom, endMs);
+          const returnsFound = await readReturnList(caller, credential, ordersFrom, endMs, nowMs);
+          if (ordersRead.more || returnsFound.more) return { ordersRead, returnsFound, picked: null as SelectedReturns | null, more: true };
+          const picked = selectOrNarrow(ordersRead.numbers, returnsFound.returns, ordersFrom, endMs, ordersStart, width);
+          return { ordersRead, returnsFound, picked, more: picked === null };
+        });
+        if (synced === null) return { orders: [], nextCursor: since };
+        ordersPolled = true;
+        ordersEnd = synced.endMs;
+        ordersWidth = synced.width;
+        read = synced.result.ordersRead;
+        returnsEnd = synced.endMs;
+        returnsWidth = synced.width;
+        found = synced.result.returnsFound;
+        selected = synced.result.picked!;
+      } else {
+        // Keep a held returns cursor even if the 15-day orders floor crept past it between polls (bounded to one window behind floor); Shopee limits span, not lookback.
+        returnsFrom = Math.max(cursor.returnsAt, floor - WINDOW_DAYS * DAY_MS);
+        returnsWidth = cursor.returnsWidth;
+        // Catch up held returns before reading a newer 100-order overlap so steady order volume cannot starve returns.
+        if (Math.floor(returnsFrom / 1000) >= Math.floor(ordersStart / 1000) && ordersStart < nowMs) {
+          const ordersSliced = await readSlicedWindow(ordersStart, ordersFrom, nowMs, ordersWidth, (endMs) => listWindow(credential, ordersFrom, endMs));
+          if (ordersSliced !== null) {
+            ordersPolled = true;
+            ordersEnd = ordersSliced.endMs;
+            ordersWidth = ordersSliced.width;
+            read = ordersSliced.result;
+          }
+        }
+        const returnsSliced = await readSlicedWindow(returnsFrom, returnsFrom, Math.min(ordersEnd, nowMs), returnsWidth, async (endMs, width) => {
+          const returnsFound = await readReturnList(caller, credential, returnsFrom, endMs, nowMs);
+          if (returnsFound.more) return { returnsFound, picked: null as SelectedReturns | null, more: true };
+          const picked = selectOrNarrow(read.numbers, returnsFound.returns, returnsFrom, endMs, returnsFrom, width);
+          return { returnsFound, picked, more: picked === null };
+        });
+        if (returnsSliced === null) {
+          returnsEnd = returnsFrom;
+          returnsSkipped = true;
+          selected = selectReturns(read.numbers, [], returnsFrom, returnsEnd);
+        } else {
+          returnsEnd = returnsSliced.endMs;
+          returnsWidth = returnsSliced.width;
+          found = returnsSliced.result.returnsFound;
+          selected = returnsSliced.result.picked!;
         }
       }
-      // Over a page even in the smallest window: not skipped, not stored.
-      if (width >= SLICES_MS.length) throw notRecognized();
 
-      if (numbers.length === 0) {
-        // Caught up with nothing new: the cursor stays. Catching up through empty time: the cursor moves on, wider next time, and the poll reads the next window.
-        if (end >= nowMs) return { orders: [], nextCursor: since };
-        return { orders: [], nextCursor: writeCursor(end, Math.max(0, width - 1)), more: true };
+      let nextReturnsAt: number | null = null;
+      let nextReturnsWidth = 0;
+      if (selected.heldAt !== null) {
+        nextReturnsAt = selected.heldAt;
+        nextReturnsWidth = returnsWidth;
+      } else if (returnsSkipped || returnsEnd < ordersEnd) {
+        nextReturnsAt = returnsEnd;
+        nextReturnsWidth = returnsSkipped ? returnsWidth : found.returns.length === 0 ? Math.max(0, returnsWidth - 1) : returnsWidth;
       }
-      const details = await readDetails(credential, numbers);
+      const nextOrdersWidth = ordersPolled && ordersEnd < nowMs && read.numbers.length === 0 ? Math.max(0, ordersWidth - 1) : ordersWidth;
+      const nextCursor = writeCursor(ordersEnd, nextOrdersWidth, nextReturnsAt, nextReturnsWidth);
+      const hasMore = ordersEnd < nowMs || (nextReturnsAt !== null && Math.floor(ordersEnd / 1000) > Math.floor(nextReturnsAt / 1000));
+
+      if (selected.numbers.length === 0) {
+        // Caught up with nothing new: the cursor stays. Catching up through empty time (or clearing a held returns cursor): the cursor moves on.
+        if ((cursor === null || cursor.returnsAt === null) && ordersEnd >= nowMs && nextReturnsAt === null) return { orders: [], nextCursor: since };
+        if (nextCursor === since) return { orders: [], nextCursor: since };
+        return { orders: [], nextCursor, more: hasMore };
+      }
+      const details = await readDetails(credential, selected.numbers);
       const byNumber = new Map(details.map((o) => [o.id, o] as const));
       // The returns that could bring goods back, one detail call each: the lines whose goods reached the seller are `returned`. An order that has not shipped (or was cancelled) cannot have goods coming back.
-      for (const ret of returns) {
+      for (const ret of selected.taken) {
         const order = byNumber.get(ret.orderNo);
         if (!order) throw notRecognized();
         // An order that has not shipped (or was cancelled) cannot have goods coming back: no call is made for it.
@@ -289,7 +431,7 @@ export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller =
         const back = goodsBackLines(detail, held);
         for (const key of back) order.returnedLines.add(key);
       }
-      return { orders: toPortOrders(details), nextCursor: writeCursor(end, width), more: end < nowMs };
+      return { orders: toPortOrders(details), nextCursor, more: hasMore };
     },
 
     // Not in this slice: the order's money lines come with the escrow reads (S3); a poll never asks for them today.
