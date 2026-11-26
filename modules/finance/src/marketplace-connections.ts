@@ -343,7 +343,7 @@ export const marketplaceConnectionLastSettlementEnd = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<string | null> => {
     const { rows } = await sql<{ period_end: string }>`
-      SELECT s.period_end::text AS period_end
+      SELECT pg_catalog.to_char(s.period_end, 'YYYY-MM-DD') AS period_end
       FROM ludy_finance.channel_settlement s
       WHERE s.org_id = ${ctx.orgId}::uuid
         AND s.legal_entity_id = ${input.legalEntityId}::uuid

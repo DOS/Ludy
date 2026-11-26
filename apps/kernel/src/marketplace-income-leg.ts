@@ -277,7 +277,9 @@ export function withTiktokIncome(provider: MarketplaceProvider, options: TiktokO
           }
           const lines = [
             ...income.lines.map(common),
-            ...income.adjustments.filter((adjustment): adjustment is TiktokAdjustment & { orderNo: string } => adjustment.orderNo !== null).map(adjustmentLine),
+            ...income.adjustments
+              .filter((adjustment): adjustment is TiktokAdjustment & { orderNo: string } => adjustment.orderNo !== null && adjustment.type !== 'RESERVE')
+              .map(adjustmentLine),
           ];
           return { lines, pending: income.pendingStatements };
         },

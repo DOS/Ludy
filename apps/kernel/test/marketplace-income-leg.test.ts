@@ -525,11 +525,12 @@ describe('a TikTok Shop day read end to end (#4306)', () => {
     const orderAdj = { id: '163670004141300201', type: 'PLATFORM_PENALTY', adjustment_id: '88001122', adjustment_order_id: '576463220456500101', adjustment_amount: '-15000' };
     const shopAdj = { id: '163670004141300202', type: 'OTHER_ADJUSTMENT', adjustment_id: '88001123', adjustment_amount: '-5000' };
     const reserveTx = { id: '163670004141300203', type: 'RESERVE', adjustment_id: '88001124', reserve_amount: '-20000' };
+    const orderReserveTx = { id: '163670004141300204', type: 'RESERVE', adjustment_id: '88001125', adjustment_order_id: '576463220456500101', reserve_amount: '-30000' };
     const otherDayTx = fakeFinanceOrder({ order_id: '576463220456500109' });
     const { provider: p, fake } = provider({
       statements: [targetStmt, busyStmt, otherStmt],
       statementTransactions: {
-        '723880456409700001': { transactions: [orderTx, orderAdj, shopAdj, reserveTx] },
+        '723880456409700001': { transactions: [orderTx, orderAdj, shopAdj, reserveTx, orderReserveTx] },
         '723880456409700002': { transactions: Array.from({ length: 3001 }, () => fakeFinanceOrder()) },
         '723880456409700003': { transactions: [otherDayTx] },
       },
