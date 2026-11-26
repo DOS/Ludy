@@ -83,6 +83,79 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
   const [templateError, setTemplateError] = useState(false);
   const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
   const radioGroupRef = useRef<HTMLDivElement>(null);
+  const focusFrameRef = useRef<number | null>(null);
+  const pendingArchiveFocusRef = useRef<string | null>(null);
+  const succeededArchiveIdRef = useRef<string | null>(null);
+  const archiveDialogVisibleRef = useRef(false);
+
+  useEffect(
+    () => () => {
+      if (focusFrameRef.current !== null) {
+        window.cancelAnimationFrame(focusFrameRef.current);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!open) {
+      pendingArchiveFocusRef.current = null;
+      succeededArchiveIdRef.current = null;
+    }
+  }, [open]);
+
+  const getRestoreTargetRadio = (archivedId: string, archivedSucceeded = false): HTMLButtonElement | null => {
+    const radios = Array.from(radioGroupRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? []).filter(
+      (el) => el.isConnected !== false,
+    );
+    if (archivedSucceeded) {
+      // Preserve an alternative selected radio (e.g. if selection changed while archiving) before falling back to the built-in default.
+      const checkedRadio = radios.find((el) => el.getAttribute('aria-checked') === 'true');
+      if (checkedRadio && checkedRadio.getAttribute('data-testid') !== `template-option-${archivedId}`) {
+        return checkedRadio;
+      }
+      // Target the fallback built-in option deterministically on success instead of racing aria-checked before commit.
+      return (
+        radios.find((el) => el.getAttribute('data-testid') === `template-option-${DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY}`) ??
+        radios.find((el) => el.getAttribute('data-testid') !== `template-option-${archivedId}`) ??
+        null
+      );
+    }
+    // Keep focus on the currently selected radio while pending or on failure; switch to another option once archived.
+    return (
+      radios.find((el) => el.getAttribute('aria-checked') === 'true') ??
+      radios.find((el) => el.getAttribute('data-testid') !== `template-option-${archivedId}`) ??
+      null
+    );
+  };
+
+  const shouldRestoreRadioFocus = (archivedId: string, includeConfirmDialog = false): boolean => {
+    const activeEl = document.activeElement;
+    if (!activeEl || activeEl === document.body || activeEl === document.documentElement) return true;
+    if ('isConnected' in activeEl && !(activeEl as { isConnected?: boolean }).isConnected) return true;
+    const activeTestId = activeEl.getAttribute('data-testid');
+    if (activeTestId === `template-option-${archivedId}` || activeTestId === `template-archive-${archivedId}`) {
+      return true;
+    }
+    if (includeConfirmDialog && activeEl.closest?.('[data-slot="dialog-content"][data-variant="destructive"]')) {
+      return true;
+    }
+    return false;
+  };
+
+  const restoreRadioFocus = (archivedId: string, includeConfirmDialog = false, archivedSucceeded = false) => {
+    if (focusFrameRef.current !== null) {
+      window.cancelAnimationFrame(focusFrameRef.current);
+    }
+    focusFrameRef.current = window.requestAnimationFrame(() => {
+      focusFrameRef.current = null;
+      if (!open || !shouldRestoreRadioFocus(archivedId, includeConfirmDialog)) return;
+      const targetRadio = getRestoreTargetRadio(archivedId, archivedSucceeded);
+      if (targetRadio?.isConnected !== false) {
+        targetRadio?.focus();
+      }
+    });
+  };
 
   const listQuery = useQuery({
     ...orpc.projects.listTemplates.queryOptions({ input: { language } }),
@@ -284,79 +357,126 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                           {t('templates.customEmpty')}
                         </p>
                       ) : (
-                        <ul className="max-h-40 divide-y overflow-y-auto rounded-lg border">
+                        <div className="max-h-40 divide-y overflow-y-auto rounded-lg border">
                           {customs.map((tpl, idx) => {
                             const flatIndex = builtins.length + idx;
                             const chosen = selectedTemplate?.id === tpl.id;
                             const focusable = chosen || (!selectedTemplate && flatIndex === 0);
                             return (
-                              <li
+                              <button
                                 key={tpl.id}
-                                className={`flex items-center justify-between gap-2 px-3 py-1.5 ${
-                                  chosen ? 'bg-primary/5' : ''
+                                type="button"
+                                role="radio"
+                                aria-checked={chosen}
+                                tabIndex={focusable ? 0 : -1}
+                                data-template-radio-index={flatIndex}
+                                data-testid={`template-option-${tpl.id}`}
+                                onClick={() => handleSelectTemplate(tpl)}
+                                onKeyDown={(e) => handleRadioKeyDown(e, flatIndex)}
+                                className={`flex min-h-11 w-full flex-col justify-center px-3 py-2 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
+                                  chosen ? 'bg-primary/5 ring-1 ring-inset ring-primary' : 'hover:bg-muted/40'
                                 }`}
                               >
-                                <button
-                                  type="button"
-                                  role="radio"
-                                  aria-checked={chosen}
-                                  tabIndex={focusable ? 0 : -1}
-                                  data-template-radio-index={flatIndex}
-                                  data-testid={`template-option-${tpl.id}`}
-                                  onClick={() => handleSelectTemplate(tpl)}
-                                  onKeyDown={(e) => handleRadioKeyDown(e, flatIndex)}
-                                  className="flex min-h-11 min-w-0 flex-1 flex-col justify-center rounded-md py-1 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                                >
-                                  <p className="truncate text-sm font-medium text-foreground">{tpl.name}</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    {t('templates.taskCount', { count: tpl.taskCount })}
-                                  </p>
-                                </button>
-                                {tpl.canManage && (
-                                  <ConfirmDialog
-                                    destructive
-                                    title={t('templates.archiveConfirmTitle', { name: tpl.name })}
-                                    description={t('templates.archiveConfirmDesc')}
-                                    confirm={t('templates.archiveConfirmBtn')}
-                                    onConfirm={() =>
-                                      archiveTemplate.mutate(
-                                        { templateId: tpl.id, idempotencyKey: crypto.randomUUID() },
-                                        {
-                                          onSuccess: () => {
-                                            refreshProjectQueries();
-                                            if (selectedId === tpl.id) setSelectedId(DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY);
-                                          },
-                                        },
-                                      )
-                                    }
-                                    render={
-                                      <Button
-                                        type="button"
-                                        size="icon-sm"
-                                        variant="ghost"
-                                        loading={archiveTemplate.isPending}
-                                        aria-label={t('templates.archiveBtn', { name: tpl.name })}
-                                      />
-                                    }
-                                  >
-                                    <ProjectIcon name="archive" className="size-3.5" />
-                                  </ConfirmDialog>
-                                )}
-                              </li>
+                                <span className="truncate text-sm font-medium text-foreground">{tpl.name}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {t('templates.taskCount', { count: tpl.taskCount })}
+                                </span>
+                              </button>
                             );
                           })}
-                        </ul>
+                        </div>
                       )}
                     </div>
                   </div>
 
                   {selectedTemplate && (
-                    <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+                    <div data-testid="template-preview" className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs font-medium text-foreground">{t('templates.previewTitle')}</p>
-                        <Badge variant="outline" className="h-5 px-1.5 text-[11px] tabular-nums">
-                          {t('templates.taskCount', { count: selectedTemplate.taskCount })}
-                        </Badge>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <p className="text-xs font-medium text-foreground">{t('templates.previewTitle')}</p>
+                          <span className="truncate text-xs text-muted-foreground">{selectedTemplate.name}</span>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <Badge variant="outline" className="h-5 px-1.5 text-[11px] tabular-nums">
+                            {t('templates.taskCount', { count: selectedTemplate.taskCount })}
+                          </Badge>
+                          {selectedTemplate.source === 'custom' && selectedTemplate.canManage && (
+                            <ConfirmDialog
+                              destructive
+                              title={t('templates.archiveConfirmTitle', { name: selectedTemplate.name })}
+                              description={t('templates.archiveConfirmDesc')}
+                              confirm={t('templates.archiveConfirmBtn')}
+                              onOpenChange={(nextOpen) => {
+                                if (nextOpen) {
+                                  archiveDialogVisibleRef.current = true;
+                                  pendingArchiveFocusRef.current = null;
+                                  succeededArchiveIdRef.current = null;
+                                }
+                              }}
+                              finalFocus={() => {
+                                const archivedId = pendingArchiveFocusRef.current;
+                                if (!archivedId) return true;
+                                if (!shouldRestoreRadioFocus(archivedId, true)) return false;
+                                return (
+                                  getRestoreTargetRadio(archivedId, succeededArchiveIdRef.current === archivedId) ??
+                                  radioGroupRef.current ??
+                                  true
+                                );
+                              }}
+                              onOpenChangeComplete={(nextOpen) => {
+                                archiveDialogVisibleRef.current = nextOpen;
+                                if (nextOpen) return;
+                                const archivedId = pendingArchiveFocusRef.current;
+                                if (!archivedId) return;
+                                const archivedSucceeded = succeededArchiveIdRef.current === archivedId;
+                                // Keep pendingArchiveFocusRef intact until onOpenChange(true) / dialog close so finalFocus sees it even if invoked after onOpenChangeComplete.
+                                if (shouldRestoreRadioFocus(archivedId, true)) {
+                                  restoreRadioFocus(archivedId, true, archivedSucceeded);
+                                }
+                              }}
+                              onConfirm={() => {
+                                const archivedId = selectedTemplate.id;
+                                pendingArchiveFocusRef.current = archivedId;
+                                succeededArchiveIdRef.current = null;
+                                // Keep focus on the currently selected radio while pending or on error; switch to fallback on success unless user moved elsewhere.
+                                restoreRadioFocus(archivedId);
+                                archiveTemplate.mutate(
+                                  { templateId: archivedId, idempotencyKey: crypto.randomUUID() },
+                                  {
+                                    onSuccess: () => {
+                                      const restoreFallbackFocus =
+                                        pendingArchiveFocusRef.current === archivedId && shouldRestoreRadioFocus(archivedId, true);
+                                      succeededArchiveIdRef.current = archivedId;
+                                      refreshProjectQueries();
+                                      setSelectedId((cur) => (cur === archivedId ? DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY : cur));
+                                      if (restoreFallbackFocus) {
+                                        restoreRadioFocus(archivedId, true, true);
+                                      }
+                                    },
+                                    onSettled: () => {
+                                      if (!archiveDialogVisibleRef.current) {
+                                        pendingArchiveFocusRef.current = null;
+                                      }
+                                    },
+                                  },
+                                );
+                              }}
+                              render={
+                                <Button
+                                  type="button"
+                                  size="icon-sm"
+                                  variant="ghost"
+                                  className="max-md:min-h-11 max-md:min-w-11"
+                                  loading={archiveTemplate.isPending}
+                                  aria-label={t('templates.archiveBtn', { name: selectedTemplate.name })}
+                                  data-testid={`template-archive-${selectedTemplate.id}`}
+                                />
+                              }
+                            >
+                              <ProjectIcon name="archive" className="size-3.5" />
+                            </ConfirmDialog>
+                          )}
+                        </div>
                       </div>
                       {selectedTemplate.tasks.length === 0 ? (
                         <p className="text-xs text-muted-foreground">{t('templates.emptyTasks')}</p>

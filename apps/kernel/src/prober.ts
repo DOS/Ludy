@@ -20,7 +20,7 @@
 import { createS3Client } from '@ludy/kernel-runtime';
 import pg from 'pg';
 import { z } from 'zod';
-import { isHostedSupabase, modulesSetting } from './config.ts';
+import { hasRetiredModulesWithoutReplacement, isHostedSupabase, modulesSetting } from './config.ts';
 import { probeStatus, writeStatusFile } from './status-page.ts';
 import { FULL_VERIFY_ALERT_DAYS, LocalArchiveStore, S3ArchiveStore, readVerifyMarker, type ArchiveS3Sender, type ArchiveStore } from './worm.ts';
 import { effectiveRepeatSeconds, memoryAlertGate, pgAlertGate, problemKey, type AlertGate, type GateResult } from './alert-gate.ts';
@@ -208,6 +208,9 @@ export interface Thresholds {
 }
 
 export function loadProberConfig(env: NodeJS.ProcessEnv = process.env, everySeconds: number | null = null): ProberConfig {
+  if (hasRetiredModulesWithoutReplacement(env)) {
+    throw new Error('invalid prober configuration: CROVE_MODULES has been retired; rename it to LUDY_MODULES');
+  }
   const rawModules = env.LUDY_MODULES?.trim();
   const normalizedEnv: Record<string, string | undefined> = { ...env };
   if (rawModules) {

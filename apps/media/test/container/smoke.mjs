@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Container smoke test for crove-media (AI Meeting Notes M3, #2577).
+// Container smoke test for ludy-media (AI Meeting Notes M3, #2577).
 // Runs against the real container in CI and verifies all operations and acceptance criteria:
 // 1. Probing, normalizing to mono Opus, splitting into 10-minute segments, extracting audio from video, repackaging video.
 // 2. Acceptance criterion 1: A 2-hour file is normalized and split within the time limit.
@@ -10,9 +10,9 @@ import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const [base = 'http://crove-media:8095'] = process.argv.slice(2);
+const [base = 'http://ludy-media:8095'] = process.argv.slice(2);
 
-console.log(`Starting crove-media smoke test against ${base}...`);
+console.log(`Starting ludy-media smoke test against ${base}...`);
 
 // Verify healthz
 const healthRes = await fetch(`${base}/healthz`);
@@ -20,7 +20,7 @@ if (!healthRes.ok) {
   console.error(`FAIL: /healthz returned status ${healthRes.status}`);
   process.exit(1);
 }
-console.log('crove-media /healthz is healthy');
+console.log('ludy-media /healthz is healthy');
 
 // Generate test audio and video payloads using ffmpeg
 function genMedia(args, outName) {
@@ -193,4 +193,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('\nALL crove-media smoke checks passed successfully!');
+console.log('\nALL ludy-media smoke checks passed successfully!');

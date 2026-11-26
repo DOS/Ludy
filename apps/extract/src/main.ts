@@ -1,4 +1,4 @@
-// crove-extract entry point (plan §7.6, External-tenant gate T12). The service must run with no credentials: in
+// ludy-extract entry point (plan §7.6, External-tenant gate T12). The service must run with no credentials: in
 // its image, and wherever NODE_ENV is not explicitly development or test, it refuses to start when its
 // environment holds any variable outside an explicit allowlist. `pnpm dev` starts it through dev.ts.
 import { existsSync } from 'node:fs';
@@ -59,14 +59,13 @@ export function unexpectedVariables(env: NodeJS.ProcessEnv): string[] {
 // Written into the ludy-extract image at build time (apps/extract/Dockerfile). Where it exists the allowlist
 // always applies, whatever NODE_ENV says: an env_file with NODE_ENV=development cannot switch the guard off.
 export const IMAGE_MARKER = '/etc/ludy-extract-image';
-export const LEGACY_IMAGE_MARKER = '/etc/crove-extract-image';
 
 // Only an explicit development or test run, outside the image, relaxes the guard; an unset, empty or unknown
 // NODE_ENV enforces it.
 const RELAXED_NODE_ENV = new Set(['development', 'test']);
 
 export function enforcesAllowlist(env: NodeJS.ProcessEnv, markerPath?: string): boolean {
-  const hasMarker = markerPath !== undefined ? existsSync(markerPath) : existsSync(IMAGE_MARKER) || existsSync(LEGACY_IMAGE_MARKER);
+  const hasMarker = markerPath !== undefined ? existsSync(markerPath) : existsSync(IMAGE_MARKER);
   return hasMarker || !RELAXED_NODE_ENV.has(env.NODE_ENV ?? '');
 }
 
@@ -86,13 +85,13 @@ export function loadExtractConfig(
   if (enforcesAllowlist(env, options.markerPath)) {
     const unexpected = unexpectedVariables(env);
     if (unexpected.length > 0) {
-      throw new Error(`crove-extract runs with its own settings only; remove ${unexpected.join(', ')} from its environment`);
+      throw new Error(`ludy-extract runs with its own settings only; remove ${unexpected.join(', ')} from its environment`);
     }
   } else {
     const credentials = credentialVariables(env);
     if (credentials.length > 0) {
       warn(
-        `[extract] crove-extract must run without credentials; remove ${credentials.join(', ')} from its environment (development: continuing; parser processes get an empty environment)`,
+        `[extract] ludy-extract must run without credentials; remove ${credentials.join(', ')} from its environment (development: continuing; parser processes get an empty environment)`,
       );
     }
   }

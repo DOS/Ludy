@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Nightly backup of a Crove docker compose stack (issues #307, #351). Runbook: docs/runbooks/backup-and-restore.md.
+# Nightly backup of a Ludy docker compose stack (issues #307, #351). Runbook: docs/runbooks/backup-and-restore.md.
 #
 # One run writes <BACKUP_DIR>/<run id>/ (the run id is the UTC start time, 20261017T020000Z):
-#   db.dump       pg_dump --format=custom of the whole database: every Crove schema, Supabase Auth's `auth` schema,
+#   db.dump       pg_dump --format=custom of the whole database: every Ludy schema, Supabase Auth's `auth` schema,
 #                 the ludy_jobs queue and the migration ledger. The rows of ludy_kernel.context_key are left out:
 #                 a restore makes a new key (docs/runbooks/context-key-rotation.md).
 #   roles.sql     the cluster's roles, memberships and role settings, without passwords (migrate sets them again)
@@ -33,19 +33,19 @@
 # exit 1. A deployment (PUBLIC_URL not on localhost) without BACKUP_S3_ENDPOINT keeps its run but fails the same way:
 # a copy on the same disk is not a backup.
 #
-# Settings come from the environment, then from $LUDY_DIR/.env (or $CROVE_DIR/.env), read as docker compose reads it (see .env.example,
+# Settings come from the environment, then from $LUDY_DIR/.env, read as docker compose reads it (see .env.example,
 # "Backups"):
-#   LUDY_DIR / CROVE_DIR     directory of docker-compose.yml and .env (default: this checkout)
+#   LUDY_DIR                 directory of docker-compose.yml and .env (default: this checkout)
 #   BACKUP_DIR               where runs are written (default: $LUDY_DIR/.data/backups)
 #   BACKUP_KEEP_DAYS         days a run is kept in BACKUP_DIR and in the bucket (default 30)
 #   BACKUP_LOCAL_KEEP_DAYS   days a run is kept in BACKUP_DIR when a bucket is set (default BACKUP_KEEP_DAYS)
-#   BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET, BACKUP_S3_PREFIX (default crove), BACKUP_S3_ACCESS_KEY_ID,
+#   BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET, BACKUP_S3_PREFIX (default ludy), BACKUP_S3_ACCESS_KEY_ID,
 #   BACKUP_S3_SECRET_ACCESS_KEY, BACKUP_S3_NETWORK (Docker network of the client container; default Docker's)
 #   BACKUP_ENCRYPTION_KEY    32 random bytes (base64 or hex): seals what goes to the bucket; keep a copy apart from it
 #   BACKUP_ENCRYPTION_KEY_PREVIOUS  the key before a rotation, until the runs it sealed are gone
 #   BACKUP_HEARTBEAT_URL     an outside heartbeat monitor's ping URL, pinged after each complete run
-#   BACKUP_FILES_SERVICE     with STORAGE=local, the service that mounts the files volume (default crove)
-#   BACKUP_NODE_SERVICE      the service whose image runs seal.mjs (default crove)
+#   BACKUP_FILES_SERVICE     with STORAGE=local, the service that mounts the files volume (default ludy)
+#   BACKUP_NODE_SERVICE      the service whose image runs seal.mjs (default ludy)
 #   BACKUP_ALERT             prober (default) or off
 #   STORAGE, S3_*            the stack's own storage settings
 set -Eeuo pipefail
@@ -103,8 +103,8 @@ load_env_file "$LUDY_DIR/.env"
 BACKUP_DIR="${BACKUP_DIR:-$LUDY_DIR/.data/backups}"
 BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-30}"
 BACKUP_LOCAL_KEEP_DAYS="${BACKUP_LOCAL_KEEP_DAYS:-$BACKUP_KEEP_DAYS}"
-BACKUP_S3_PREFIX="${BACKUP_S3_PREFIX:-crove}"
-BACKUP_FILES_SERVICE="${BACKUP_FILES_SERVICE:-crove}"
+BACKUP_S3_PREFIX="${BACKUP_S3_PREFIX:-ludy}"
+BACKUP_FILES_SERVICE="${BACKUP_FILES_SERVICE:-$(default_app_service)}"
 BACKUP_ALERT="${BACKUP_ALERT:-prober}"
 STORAGE="${STORAGE:-local}"
 RUN="$BACKUP_DIR/$RUN_ID"
@@ -170,34 +170,34 @@ done
 
 # --- Database: one REPEATABLE READ snapshot for the dump, the counts, the file references and the versions ----------
 STEP="database dump"
-dc exec -T db sh -c 'rm -rf /tmp/crove-backup && mkdir -m 700 /tmp/crove-backup'
+dc exec -T db sh -c 'rm -rf /tmp/ludy-backup && mkdir -m 700 /tmp/ludy-backup'
 # pg_dump runs inside the exported snapshot while this transaction holds it, so the counts, file references and schema
 # version are exactly what the dump contains.
 db_psql -d postgres <<SQL
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SELECT pg_catalog.pg_export_snapshot() AS snapshot, pg_catalog.to_char(pg_catalog.clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS snapshot_at \gset
-\setenv CROVE_SNAPSHOT :snapshot
-\! pg_dump -U postgres -d postgres --format=custom --snapshot="\$CROVE_SNAPSHOT" --exclude-table-data=ludy_kernel.context_key --exclude-table-data=crove_kernel.context_key --file=/tmp/crove-backup/db.dump && touch /tmp/crove-backup/dump.ok
-$COUNTS_SQL \g /tmp/crove-backup/counts.tsv
-$FILE_REFS_SQL \g /tmp/crove-backup/file-refs.tsv
-COPY (SELECT (SELECT max(version) FROM ludy_meta.schema_migrations), pg_catalog.current_setting('server_version'), :'snapshot_at') TO STDOUT \g /tmp/crove-backup/versions.tsv
+\setenv LUDY_SNAPSHOT :snapshot
+\! pg_dump -U postgres -d postgres --format=custom --snapshot="\$LUDY_SNAPSHOT" --exclude-table-data=ludy_kernel.context_key --exclude-table-data=crove_kernel.context_key --file=/tmp/ludy-backup/db.dump && touch /tmp/ludy-backup/dump.ok
+$COUNTS_SQL \g /tmp/ludy-backup/counts.tsv
+$FILE_REFS_SQL \g /tmp/ludy-backup/file-refs.tsv
+COPY (SELECT (SELECT max(version) FROM ludy_meta.schema_migrations), pg_catalog.current_setting('server_version'), :'snapshot_at') TO STDOUT \g /tmp/ludy-backup/versions.tsv
 COMMIT;
 SQL
-dc exec -T db test -f /tmp/crove-backup/dump.ok
-dc exec -T db pg_restore --list /tmp/crove-backup/db.dump >/dev/null
+dc exec -T db test -f /tmp/ludy-backup/dump.ok
+dc exec -T db pg_restore --list /tmp/ludy-backup/db.dump >/dev/null
 for f in db.dump counts.tsv file-refs.tsv versions.tsv; do
   dest="$PARTIAL/$f"
   [ "$f" = versions.tsv ] && dest="$TMP/$f"
-  dc exec -T db cat "/tmp/crove-backup/$f" >"$dest"
-  inside="$(dc exec -T db sha256sum "/tmp/crove-backup/$f" | cut -d' ' -f1)"
+  dc exec -T db cat "/tmp/ludy-backup/$f" >"$dest"
+  inside="$(dc exec -T db sha256sum "/tmp/ludy-backup/$f" | cut -d' ' -f1)"
   outside="$(sha256sum <"$dest" | cut -d' ' -f1)"
   [ "$inside" = "$outside" ] || { STEP="copying $f out of the db container (checksum differs)"; false; }
 done
-dc exec -T db rm -rf /tmp/crove-backup
+dc exec -T db rm -rf /tmp/ludy-backup
 IFS=$'\t' read -r schema_version postgres_version snapshot_at <"$TMP/versions.tsv"
 [[ "$schema_version" =~ ^[0-9]{14}$ ]] || { STEP="database dump: no schema version in ludy_meta.schema_migrations"; false; }
 dc exec -T db pg_dumpall -U postgres --roles-only --no-role-passwords >"$PARTIAL/roles.sql"
-grep -Eq 'CREATE ROLE (ludy|crove)_app' "$PARTIAL/roles.sql" || { STEP="roles dump (no ludy_app role)"; false; }
+grep -Eq 'CREATE ROLE ludy_app' "$PARTIAL/roles.sql" || { STEP="roles dump (no ludy_app role)"; false; }
 dump_size="$(du -h "$PARTIAL/db.dump" | cut -f1)"
 tables="$(wc -l <"$PARTIAL/counts.tsv")"
 file_rows="$(wc -l <"$PARTIAL/file-refs.tsv")"

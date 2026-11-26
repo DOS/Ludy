@@ -14,11 +14,18 @@ import { PgBoss } from 'pg-boss';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import {
+  createOrg,
+  kernelCommands,
+  kernelQueries,
+  PENDING_NOTE_ATTACHMENT_REASON,
+  PENDING_PRIVATE_NOTE_ATTACHMENT_REASON,
+  upsertIdentity,
+} from '@ludy/kernel';
 import type { ExtractClient, ExtractKind, ExtractResult } from '@ludy/extract-contract';
 import type { PersonalDataErasure, PersonalDataNotice, PersonalDataResult } from '@ludy/kernel-contract';
 import { NOTE_ATTACHMENT_MAX_BYTES, type Note, type NoteAttachment, type NoteSummary, type NoteWritten } from '@ludy/kernel-contract';
-import { Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { mintContextToken, Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import { NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT, notesCommands, notesQueries } from '@ludy/mod-notes';
 import { hashExtensionSecret, newExtensionToken } from '../src/auth-extension.ts';
 import { createAuthenticator } from '../src/auth.ts';
@@ -34,6 +41,27 @@ const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'notes' };
 const SECRET = 'test-only-jwt-secret-for-note-attachments-0123456789';
 const ISSUER = 'https://issuer.example.com';
+
+// Tracks started concurrent commands so early rejections are observed immediately during lock-wait polling and drained after gate ROLLBACK.
+function createConcurrencyTracker() {
+  const started: Array<Promise<unknown>> = [];
+  let earlyError: { error: unknown } | null = null;
+  return {
+    track<T>(promise: Promise<T>): Promise<T> {
+      void promise.catch((err) => {
+        if (!earlyError) earlyError = { error: err };
+      });
+      started.push(promise);
+      return promise;
+    },
+    throwIfFailed(): void {
+      if (earlyError) throw earlyError.error;
+    },
+    async drain(): Promise<void> {
+      await Promise.allSettled(started);
+    },
+  };
+}
 
 class MemoryStore implements BlobStore {
   readonly blobs = new Map<string, Uint8Array>();
@@ -98,6 +126,30 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     }
   }
   const rows = <T extends pg.QueryResultRow>(text: string, params: unknown[] = []) => admin(async (c) => (await c.query<T>(text, params)).rows);
+  const waitBlockedOnPid = async (
+    blockingPid: number,
+    queryPattern: string,
+    tracker: ReturnType<typeof createConcurrencyTracker>,
+  ): Promise<number> => {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      tracker.throwIfFailed();
+      const waits = await rows<{ pid: number }>(
+        `SELECT a.pid
+           FROM pg_catalog.pg_stat_activity a
+          WHERE a.datname = pg_catalog.current_database()
+            AND a.state = 'active'
+            AND a.wait_event_type = 'Lock'
+            AND a.query ILIKE $2
+            AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+          LIMIT 1`,
+        [blockingPid, queryPattern],
+      );
+      if (waits[0]) return waits[0].pid;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`Timed out waiting for query ${queryPattern} to block on pid ${blockingPid}`);
+  };
 
   type Person = { id: string; subject: string; email: string };
   type Org = { orgId: string; slug: string; owner: Person; admin: Person; author: Person; other: Person; viewer: Person };
@@ -464,12 +516,32 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     expect(found.privateItems).toEqual([{ authorUserId: o.author.id, notes: 1, todos: 0 }]);
     expect(JSON.stringify(found)).not.toContain('ho-so-');
 
+    // Backdate both notes' updated_at so we verify shared- and private-note attachment erasure symmetrically bump updated_at.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_notes.note SET updated_at = updated_at - interval '1 hour' WHERE org_id = $1 AND id = ANY($2::uuid[])`, [o.orgId, [privNote, sharedNote]]);
+      await c.query('COMMIT');
+    });
+    const noteTimestamps = async () => {
+      const result = await rows<{ id: string; updated_at: Date | string }>(
+        `SELECT id, updated_at FROM ludy_notes.note WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+        [o.orgId, [privNote, sharedNote]],
+      );
+      const map = new Map(result.map((r) => [r.id, new Date(r.updated_at).getTime()]));
+      return { priv: map.get(privNote) ?? 0, shared: map.get(sharedNote) ?? 0 };
+    };
+    const beforeFirstErase = await noteTimestamps();
+
     // First erase (before notice): removes shared attachment + queues its blob; keeps private attachment.
     const firstErase = await rt.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
     expect(firstErase.erased).toContainEqual({ column: 'ludy_notes.attachment.extracted_text', rows: 1 });
     expect(await doomed(o)).toEqual([`notes/${o.orgId}/${sharedAtt.id}`]);
+    const afterFirstErase = await noteTimestamps();
+    expect(afterFirstErase.shared).toBeGreaterThan(beforeFirstErase.shared);
+    expect(afterFirstErase.priv).toBe(beforeFirstErase.priv);
 
-    // Notify + dispatch + age 25 hours, then second erase removes the private attachment + queues its blob.
+    // Notify + dispatch + age 25 hours, then second erase removes the private attachment + queues its blob and bumps privNote.updated_at.
     await rt.execute<PersonalDataNotice>('kernel.personal_data.notify', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
     const [notifiedEvent] = await rows<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`, [o.orgId]);
     await worker.execute('kernel.notification.dispatch', { eventId: notifiedEvent?.id }, { actor: SYSTEM, orgId: o.orgId });
@@ -482,6 +554,8 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     });
     await rt.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
     expect(await doomed(o)).toEqual([`notes/${o.orgId}/${privAtt.id}`, `notes/${o.orgId}/${sharedAtt.id}`].sort());
+    const afterSecondErase = await noteTimestamps();
+    expect(afterSecondErase.priv).toBeGreaterThan(afterFirstErase.priv);
 
     // Now test member_items.purge cascading a remaining private attachment and keeping shared ones.
     const privTwo = await createNote(o, o.author, 'private', 'Tệp thành viên rời');
@@ -503,5 +577,723 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     expect(await doomed(o)).toEqual([`notes/${o.orgId}/${privAtt.id}`, `notes/${o.orgId}/${purgeAtt.id}`, `notes/${o.orgId}/${sharedAtt.id}`].sort());
     await sweepNoteAttachmentBlobs({ workerDb, store, force: true });
     expect(blobsOf(o)).toEqual([`notes/${o.orgId}/${keptAtt.id}`]);
+  });
+
+  it('erases private attachments concurrently with notes.attachment.create and notes.link.add(kernel.party) without deadlocking, privilege errors, or regressing updated_at (#5035)', async () => {
+    const o = await org();
+    const email = 'dong-bo-xoa@example.com';
+    const partyId = randomUUID();
+    await rows(`INSERT INTO ludy_kernel.party (org_id, id, name, email) VALUES ($1, $2, 'Khách đồng bộ', $3)`, [o.orgId, partyId, email]);
+    const monotonicNote = await createNote(o, o.author, 'private', 'Ghi chú giữ mốc thời gian');
+    const concurrentNote = await createNote(o, o.author, 'private', 'Ghi chú đồng thời gắn liên kết');
+    const linkRaceNote = await createNote(o, o.author, 'private', 'Ghi chú nối liên kết đồng thời');
+    const att1 = await attached(o, o.author, monotonicNote, pdf('m1'), 'moc-thoi-gian.pdf');
+    const att2 = await attached(o, o.author, concurrentNote, pdf('m2'), 'hop-dong.pdf');
+    extract.text = `Email liên hệ: ${email}`;
+    await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: att1.id });
+    await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: att2.id });
+
+    await rt.execute<PersonalDataNotice>('kernel.personal_data.notify', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
+    const [notifiedEvt] = await rows<{ id: string }>(
+      `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`,
+      [o.orgId],
+    );
+    await worker.execute('kernel.notification.dispatch', { eventId: notifiedEvt?.id }, { actor: SYSTEM, orgId: o.orgId });
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [o.orgId]);
+      await c.query(`UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [o.orgId]);
+      // Push updated_at ahead of transaction start time on both notes so neither erasure nor concurrent attachment/link writes can regress it.
+      await c.query(
+        `UPDATE ludy_notes.note SET updated_at = pg_catalog.clock_timestamp() + interval '10 minutes' WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+        [o.orgId, [monotonicNote, concurrentNote]],
+      );
+      await c.query('COMMIT');
+    });
+    const noteUpdatedAt = async (noteId: string) => {
+      const result = await rows<{ updated_at: Date | string }>(
+        `SELECT updated_at FROM ludy_notes.note WHERE org_id = $1 AND id = $2`,
+        [o.orgId, noteId],
+      );
+      if (!result[0]) throw new Error(`missing note ${noteId}`);
+      return new Date(result[0].updated_at).getTime();
+    };
+    const beforeMonotonicTs = await noteUpdatedAt(monotonicNote);
+    const beforeConcurrentTs = await noteUpdatedAt(concurrentNote);
+
+    const lockClient = new pg.Client({ connectionString: adminUrl });
+    await lockClient.connect();
+    let eraseOut!: PersonalDataErasure;
+    let extraAtt!: NoteAttachment;
+    const tracker = createConcurrencyTracker();
+    try {
+      const pidRes = await lockClient.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid');
+      const lockPid = pidRes.rows[0]?.pid;
+      expect(lockPid).toBeTypeOf('number');
+      await lockClient.query('BEGIN');
+      // Hold concurrentNote FOR UPDATE (like notes.link.add before insertRecordLink) so private_erase and attachment.create must wait on it.
+      await lockClient.query('SELECT 1 FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, concurrentNote]);
+      const erasePromise = tracker.track(
+        rt.execute<PersonalDataErasure>(
+          'kernel.personal_data.erase',
+          { value: email },
+          { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+        ),
+      );
+      let sawEraseLockWait = false;
+      let erasePid: number | undefined;
+      const deadline = Date.now() + 1500;
+      while (!sawEraseLockWait && Date.now() < deadline) {
+        tracker.throwIfFailed();
+        const waits = await rows<{ pid: number }>(
+          `SELECT a.pid
+             FROM pg_catalog.pg_stat_activity a
+            WHERE a.datname = pg_catalog.current_database()
+              AND a.state = 'active'
+              AND a.wait_event_type = 'Lock'
+              AND a.query LIKE '%ludy_notes.private_erase%'
+              AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+            LIMIT 1`,
+          [lockPid],
+        );
+        if (waits[0]) {
+          sawEraseLockWait = true;
+          erasePid = waits[0].pid;
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      expect(sawEraseLockWait).toBe(true);
+      // Also launch notes.attachment.create against concurrentNote while lockClient holds it so erase and attachment.create genuinely contend upon release.
+      const attachPromise = tracker.track(attached(o, o.author, concurrentNote, pdf('extra'), 'bo-sung.pdf'));
+      let sawAttachLockWait = false;
+      const attachDeadline = Date.now() + 1000;
+      while (!sawAttachLockWait && Date.now() < attachDeadline) {
+        tracker.throwIfFailed();
+        const waits = await rows<{ n: number }>(
+          `SELECT 1 AS n
+             FROM pg_catalog.pg_stat_activity a
+            WHERE a.datname = pg_catalog.current_database()
+              AND a.state = 'active'
+              AND a.wait_event_type = 'Lock'
+              AND a.query NOT LIKE '%ludy_notes.private_erase%'
+              AND (
+                $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+                OR ($2::int IS NOT NULL AND $2::int = ANY(pg_catalog.pg_blocking_pids(a.pid)))
+              )
+            LIMIT 1`,
+          [lockPid, erasePid ?? null],
+        );
+        if (waits.length > 0) sawAttachLockWait = true;
+        else await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(sawAttachLockWait).toBe(true);
+      // While personalDataErase holds party FOR NO KEY UPDATE and waits on concurrentNote, invoke real notes.link.add
+      // against that party on a separate note and confirm it completes without blocking or deadlocking.
+      let linkTimer: ReturnType<typeof setTimeout> | undefined;
+      const concurrentLinkPromise = tracker.track(
+        rt.execute<{ noteId: string; linkId: string }>(
+          'notes.link.add',
+          { noteId: linkRaceNote, targetType: 'kernel.party', targetId: partyId },
+          { actor: asUser(o.author.id), orgId: o.orgId },
+        ),
+      );
+      const concurrentLinkOut = await Promise.race([
+        concurrentLinkPromise,
+        new Promise<never>((_, reject) => {
+          linkTimer = setTimeout(
+            () => reject(new Error('notes.link.add blocked while personalDataErase held party FOR NO KEY UPDATE')),
+            2000,
+          );
+        }),
+      ]).finally(() => {
+        if (linkTimer) clearTimeout(linkTimer);
+      });
+      expect(concurrentLinkOut.noteId).toBe(linkRaceNote);
+      // While personalDataErase holds party FOR NO KEY UPDATE and waits on concurrentNote, link_party_fk acquires FOR KEY SHARE on party without deadlocking.
+      await lockClient.query(
+        `INSERT INTO ludy_notes.link (org_id, note_id, todo_id, target_type, target_id, party_id, created_by)
+         VALUES ($1, $2, NULL, 'kernel.party', $3, $3, $4)`,
+        [o.orgId, concurrentNote, partyId, o.author.id],
+      );
+      await lockClient.query('COMMIT');
+      [eraseOut, extraAtt] = await Promise.all([erasePromise, attachPromise]);
+    } finally {
+      await lockClient.query('ROLLBACK').catch(() => undefined);
+      await tracker.drain();
+      await lockClient.end().catch(() => undefined);
+    }
+
+    const linkOut = await rt.execute<{ noteId: string; linkId: string }>(
+      'notes.link.add',
+      { noteId: monotonicNote, targetType: 'kernel.party', targetId: partyId },
+      { actor: asUser(o.author.id), orgId: o.orgId },
+    );
+    expect(extraAtt.noteId).toBe(concurrentNote);
+    expect(eraseOut.erased).toContainEqual({ column: 'ludy_kernel.party.email', rows: 1 });
+    expect(linkOut.noteId).toBe(monotonicNote);
+    expect(await doomed(o)).toEqual([`notes/${o.orgId}/${att1.id}`, `notes/${o.orgId}/${att2.id}`].sort());
+    expect(await noteUpdatedAt(monotonicNote)).toBeGreaterThanOrEqual(beforeMonotonicTs);
+    expect(await noteUpdatedAt(concurrentNote)).toBeGreaterThanOrEqual(beforeConcurrentTs);
+
+    // Attachment delete on a note whose updated_at is ahead of transaction time must also keep updated_at monotonic.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_notes.note SET updated_at = pg_catalog.clock_timestamp() + interval '10 minutes' WHERE org_id = $1 AND id = $2`, [o.orgId, concurrentNote]);
+      await c.query('COMMIT');
+    });
+    const beforeDeleteTs = await noteUpdatedAt(concurrentNote);
+    await rt.execute('notes.attachment.delete', { attachmentId: extraAtt.id }, { actor: asUser(o.author.id), orgId: o.orgId });
+    expect(await noteUpdatedAt(concurrentNote)).toBeGreaterThanOrEqual(beforeDeleteTs);
+
+    // Uppercase notebookId in notes.note.create must hash the same lowercase advisory lock key as PostgreSQL nb.id::text in private_erase.
+    const privNb = await rt.execute<{ notebookId: string }>(
+      'notes.notebook.create',
+      { name: 'Sổ tay chữ hoa', visibility: 'private' },
+      { actor: asUser(o.author.id), orgId: o.orgId },
+    );
+    const nbLockClient = new pg.Client({ connectionString: adminUrl });
+    await nbLockClient.connect();
+    const nbTracker = createConcurrencyTracker();
+    try {
+      const pidRes = await nbLockClient.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid');
+      const nbLockPid = pidRes.rows[0]?.pid;
+      expect(nbLockPid).toBeTypeOf('number');
+      await nbLockClient.query('BEGIN');
+      await nbLockClient.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.notebook:${o.orgId.toLowerCase()}:${privNb.notebookId.toLowerCase()}`],
+      );
+      const upperNotePromise = nbTracker.track(
+        rt.execute<NoteWritten>(
+          'notes.note.create',
+          { title: 'Ghi chú UUID hoa', body: 'Nội dung', visibility: 'private', notebookId: privNb.notebookId.toUpperCase() },
+          { actor: asUser(o.author.id), orgId: o.orgId },
+        ),
+      );
+      let sawNbLockWait = false;
+      const nbDeadline = Date.now() + 1500;
+      while (!sawNbLockWait && Date.now() < nbDeadline) {
+        nbTracker.throwIfFailed();
+        const waits = await rows<{ n: number }>(
+          `SELECT 1 AS n
+             FROM pg_catalog.pg_stat_activity a
+            WHERE a.datname = pg_catalog.current_database()
+              AND a.state = 'active'
+              AND a.wait_event_type = 'Lock'
+              AND a.query LIKE '%pg_advisory_xact_lock_shared%'
+              AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+            LIMIT 1`,
+          [nbLockPid],
+        );
+        if (waits.length > 0) sawNbLockWait = true;
+        else await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(sawNbLockWait).toBe(true);
+      await nbLockClient.query('COMMIT');
+      const upperCreated = await upperNotePromise;
+      expect(upperCreated.noteId).toBeTruthy();
+    } finally {
+      await nbLockClient.query('ROLLBACK').catch(() => undefined);
+      await nbTracker.drain();
+      await nbLockClient.end().catch(() => undefined);
+    }
+  });
+
+  it('serializes concurrent personalDataErase across shared notebooks and private note moves into those notebooks without deadlocking (#5035)', async () => {
+    const o = await org();
+    const emailA = 'doi-tac-a@example.com';
+    const emailB = 'doi-tac-b@example.com';
+    const sharedNbA = await rt.execute<{ notebookId: string }>(
+      'notes.notebook.create',
+      { name: `Sổ tay đối tác ${emailA}`, visibility: 'org' },
+      { actor: asUser(o.owner.id), orgId: o.orgId },
+    );
+    const sharedNbB = await rt.execute<{ notebookId: string }>(
+      'notes.notebook.create',
+      { name: `Sổ tay đối tác ${emailB}`, visibility: 'org' },
+      { actor: asUser(o.owner.id), orgId: o.orgId },
+    );
+    const createdA = await rt.execute<NoteWritten>(
+      'notes.note.create',
+      { title: 'Ghi chú riêng 1', body: 'Nội dung sạch', visibility: 'private' },
+      { actor: asUser(o.author.id), orgId: o.orgId },
+    );
+    const createdB = await rt.execute<NoteWritten>(
+      'notes.note.create',
+      { title: 'Ghi chú riêng 2', body: 'Nội dung sạch', visibility: 'private' },
+      { actor: asUser(o.author.id), orgId: o.orgId },
+    );
+    const attA = await attached(o, o.author, createdA.noteId, pdf('a'), 'dinh-kem-a.pdf');
+    extract.text = `Email liên hệ: ${emailA}`;
+    await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: attA.id });
+    const attB = await attached(o, o.author, createdB.noteId, pdf('b'), 'dinh-kem-b.pdf');
+    extract.text = `Email liên hệ: ${emailB}`;
+    await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: attB.id });
+
+    for (const val of [emailA, emailB]) {
+      await rt.execute<PersonalDataNotice>('kernel.personal_data.notify', { value: val }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
+    }
+    const notifiedEvts = await rows<{ id: string }>(
+      `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 2`,
+      [o.orgId],
+    );
+    for (const evt of notifiedEvts) {
+      await worker.execute('kernel.notification.dispatch', { eventId: evt.id }, { actor: SYSTEM, orgId: o.orgId });
+    }
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [o.orgId]);
+      await c.query(`UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [o.orgId]);
+      await c.query('COMMIT');
+    });
+
+    const waitBlockedOnPid = async (
+      blockingPid: number,
+      queryPattern: string,
+      tracker: ReturnType<typeof createConcurrencyTracker>,
+    ): Promise<number> => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        tracker.throwIfFailed();
+        const waits = await rows<{ pid: number }>(
+          `SELECT a.pid
+             FROM pg_catalog.pg_stat_activity a
+            WHERE a.datname = pg_catalog.current_database()
+              AND a.state = 'active'
+              AND a.wait_event_type = 'Lock'
+              AND a.query ILIKE $2
+              AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+            LIMIT 1`,
+          [blockingPid, queryPattern],
+        );
+        if (waits[0]) return waits[0].pid;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Timed out waiting for query ${queryPattern} to block on pid ${blockingPid}`);
+    };
+
+    // Interleaving 1: erase holds shared notebook row lock + notes.erase barrier and waits on createdA row lock while noteUpdate tries to move createdA -> sharedNbA.
+    const gateA = new pg.Client({ connectionString: adminUrl });
+    await gateA.connect();
+    const trackerA = createConcurrencyTracker();
+    try {
+      const gateAPid = (await gateA.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await gateA.query('BEGIN');
+      await gateA.query('SELECT 1 FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, createdA.noteId]);
+      const erasePromise = trackerA.track(
+        rt.execute<PersonalDataErasure>(
+          'kernel.personal_data.erase',
+          { value: emailA },
+          { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+        ),
+      );
+      const erasePid = await waitBlockedOnPid(gateAPid, '%private_erase%', trackerA);
+      const movePromise = trackerA.track(
+        rt.execute<NoteWritten>(
+          'notes.note.update',
+          { noteId: createdA.noteId, revision: createdA.revision, notebookId: sharedNbA.notebookId },
+          { actor: asUser(o.author.id), orgId: o.orgId },
+        ),
+      );
+      await waitBlockedOnPid(erasePid, '%pg_advisory_xact_lock_shared%', trackerA);
+      await gateA.query('COMMIT');
+      const [eraseRes, moveRes] = await Promise.all([erasePromise, movePromise]);
+      expect(eraseRes.erased).toContainEqual({ column: 'ludy_notes.notebook.name', rows: 1 });
+      expect(moveRes.noteId).toBe(createdA.noteId);
+    } finally {
+      await gateA.query('ROLLBACK').catch(() => undefined);
+      await trackerA.drain();
+      await gateA.end().catch(() => undefined);
+    }
+
+    // Interleaving 2: noteUpdate holds shared notes.erase barrier and createdB FOR UPDATE while erase(emailB) arrives.
+    const gateB = new pg.Client({ connectionString: adminUrl });
+    await gateB.connect();
+    const trackerB = createConcurrencyTracker();
+    try {
+      const gateBPid = (await gateB.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await gateB.query('BEGIN');
+      await gateB.query('SELECT 1 FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, createdB.noteId]);
+      const movePromise = trackerB.track(
+        rt.execute<NoteWritten>(
+          'notes.note.update',
+          { noteId: createdB.noteId, revision: createdB.revision, notebookId: sharedNbB.notebookId },
+          { actor: asUser(o.author.id), orgId: o.orgId },
+        ),
+      );
+      const movePid = await waitBlockedOnPid(gateBPid, '%from "ludy_notes"."note"%for update%', trackerB);
+      const erasePromise = trackerB.track(
+        rt.execute<PersonalDataErasure>(
+          'kernel.personal_data.erase',
+          { value: emailB },
+          { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+        ),
+      );
+      await waitBlockedOnPid(movePid, '%pg_advisory_xact_lock%', trackerB);
+      await gateB.query('COMMIT');
+      const [moveRes, eraseRes] = await Promise.all([movePromise, erasePromise]);
+      expect(moveRes.noteId).toBe(createdB.noteId);
+      expect(eraseRes.erased).toContainEqual({ column: 'ludy_notes.notebook.name', rows: 1 });
+    } finally {
+      await gateB.query('ROLLBACK').catch(() => undefined);
+      await trackerB.drain();
+      await gateB.end().catch(() => undefined);
+    }
+
+    const nbRows = await rows<{ id: string; name: string }>(
+      'SELECT id, name FROM ludy_notes.notebook WHERE org_id = $1 AND id = ANY($2::uuid[])',
+      [o.orgId, [sharedNbA.notebookId, sharedNbB.notebookId]],
+    );
+    expect(nbRows).toHaveLength(2);
+    expect(nbRows.every((nb) => !nb.name.includes(emailA) && !nb.name.includes(emailB))).toBe(true);
+    const movedRows = await rows<{ id: string; notebook_id: string | null }>(
+      'SELECT id, notebook_id FROM ludy_notes.note WHERE org_id = $1 AND id = ANY($2::uuid[])',
+      [o.orgId, [createdA.noteId, createdB.noteId]],
+    );
+    expect(movedRows).toEqual(
+      expect.arrayContaining([
+        { id: createdA.noteId, notebook_id: sharedNbA.notebookId },
+        { id: createdB.noteId, notebook_id: sharedNbB.notebookId },
+      ]),
+    );
+    expect(await doomed(o)).toEqual([`notes/${o.orgId}/${attA.id}`, `notes/${o.orgId}/${attB.id}`].sort());
+  });
+
+  it('erases shared-note attachments concurrently with notes.attachment.delete without deadlocking or regressing updated_at (#5035)', async () => {
+    const o = await org();
+    const sharedEmail = 'chia-se-dinh-kem@example.com';
+    const sharedNote = await createNote(o, o.author, 'org', 'Ghi chú dùng chung sạch');
+    const sharedAtt1 = await attached(o, o.author, sharedNote, pdf('s1'), 'dinh-kem-chia-se-1.pdf');
+    extract.text = `Email liên hệ: ${sharedEmail}`;
+    await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: sharedAtt1.id });
+    const sharedAtt2 = await attached(o, o.author, sharedNote, pdf('s2'), 'dinh-kem-chia-se-2.pdf');
+
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_notes.note SET updated_at = pg_catalog.clock_timestamp() + interval '10 minutes' WHERE org_id = $1 AND id = $2`, [o.orgId, sharedNote]);
+      await c.query('COMMIT');
+    });
+    const noteUpdatedAt = async () => {
+      const result = await rows<{ updated_at: Date | string }>(
+        `SELECT updated_at FROM ludy_notes.note WHERE org_id = $1 AND id = $2`,
+        [o.orgId, sharedNote],
+      );
+      return new Date(result[0]!.updated_at).getTime();
+    };
+    const beforeTs = await noteUpdatedAt();
+
+    const attGate = new pg.Client({ connectionString: adminUrl });
+    await attGate.connect();
+    const attTracker = createConcurrencyTracker();
+    try {
+      const attGatePid = (await attGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await attGate.query('BEGIN');
+      // Hold sharedAtt1 row lock so personalDataErase acquires sharedNote FOR NO KEY UPDATE first and waits at attachment DELETE.
+      await attGate.query('SELECT 1 FROM ludy_notes.attachment WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, sharedAtt1.id]);
+      const erasePromise = attTracker.track(
+        rt.execute<PersonalDataErasure>(
+          'kernel.personal_data.erase',
+          { value: sharedEmail },
+          { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+        ),
+      );
+      const erasePid = await waitBlockedOnPid(attGatePid, '%delete from ludy_notes.attachment%', attTracker);
+      // Concurrent noteAttachmentDelete on sharedAtt2 blocks cleanly on erasePid's parent sharedNote lock (note -> attachment order).
+      const deletePromise = attTracker.track(
+        rt.execute(
+          'notes.attachment.delete',
+          { attachmentId: sharedAtt2.id },
+          { actor: asUser(o.author.id), orgId: o.orgId },
+        ),
+      );
+      await waitBlockedOnPid(erasePid, '%from "ludy_notes"."note"%for update%', attTracker);
+      await attGate.query('COMMIT');
+      const [eraseRes] = await Promise.all([erasePromise, deletePromise]);
+      expect(eraseRes.erased).toContainEqual({ column: 'ludy_notes.attachment.extracted_text', rows: 1 });
+    } finally {
+      await attGate.query('ROLLBACK').catch(() => undefined);
+      await attTracker.drain();
+      await attGate.end().catch(() => undefined);
+    }
+
+    expect(await doomed(o)).toEqual([`notes/${o.orgId}/${sharedAtt1.id}`, `notes/${o.orgId}/${sharedAtt2.id}`].sort());
+    expect(await noteUpdatedAt()).toBeGreaterThanOrEqual(beforeTs);
+
+    // Concurrent attachmentExtractRecord waits on personalDataErase's shared notes.erase barrier instead of writing matching text mid-erasure (#5035).
+    const raceEmail = 'extract-lock-race@example.com';
+    const cleanNote = await createNote(o, o.author, 'org', 'Ghi chú sạch chờ extract');
+    const pendingAtt = await attached(o, o.author, cleanNote, pdf('pending-extract'), 'sach-cho-extract.pdf');
+    const blockerNote = await createNote(o, o.author, 'org', `Báo cáo ${raceEmail}`);
+    const extractGate = new pg.Client({ connectionString: adminUrl });
+    await extractGate.connect();
+    const extractTracker = createConcurrencyTracker();
+    try {
+      const extractGatePid = (await extractGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await extractGate.query('BEGIN');
+      await extractGate.query('SELECT 1 FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, blockerNote]);
+      const erasePromise2 = extractTracker.track(
+        rt.execute<PersonalDataErasure>(
+          'kernel.personal_data.erase',
+          { value: raceEmail },
+          { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+        ),
+      );
+      const erasePid2 = await waitBlockedOnPid(extractGatePid, '%SELECT n.id FROM ludy_notes.note n%', extractTracker);
+      const extractPromise = extractTracker.track(
+        worker.execute<{ updated: boolean }>(
+          'notes.attachment.extract_record',
+          { attachmentId: pendingAtt.id, status: 'done', extractedText: `Contact ${raceEmail}` },
+          { actor: { type: 'system', component: 'notes' }, orgId: o.orgId },
+        ),
+      );
+      await waitBlockedOnPid(erasePid2, '%pg_advisory_xact_lock_shared%', extractTracker);
+      await extractGate.query('COMMIT');
+      const [eraseRes2, extractRes] = await Promise.all([erasePromise2, extractPromise]);
+      expect(eraseRes2.erased).toContainEqual({ column: 'ludy_notes.note.title', rows: 1 });
+      // Initial erasure does not pretend completeness while pendingAtt is still awaiting text extraction.
+      expect(eraseRes2.kept).toContainEqual({
+        column: 'ludy_notes.attachment.extracted_text',
+        rows: 1,
+        reason: PENDING_NOTE_ATTACHMENT_REASON,
+      });
+      expect(extractRes).toEqual({ updated: true });
+
+      // Follow-up erasure after extraction finishes catches the newly extracted text and cleans up cleanly.
+      const followUpErase = await rt.execute<PersonalDataErasure>(
+        'kernel.personal_data.erase',
+        { value: raceEmail },
+        { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+      );
+      expect(followUpErase.erased).toContainEqual({ column: 'ludy_notes.attachment.extracted_text', rows: 1 });
+      expect(followUpErase.kept).toEqual([]);
+      const remainingAtt = await rows<{ id: string }>(
+        'SELECT id FROM ludy_notes.attachment WHERE org_id = $1 AND id = $2',
+        [o.orgId, pendingAtt.id],
+      );
+      expect(remainingAtt).toEqual([]);
+      expect(await doomed(o)).toContain(`notes/${o.orgId}/${pendingAtt.id}`);
+    } finally {
+      await extractGate.query('ROLLBACK').catch(() => undefined);
+      await extractTracker.drain();
+      await extractGate.end().catch(() => undefined);
+    }
+  });
+
+  it('reports private pending attachments under kept during erasure without disclosing note/filename metadata, and clears on follow-up erase (#5035)', async () => {
+    const o = await org();
+    const privEmail = 'private-pending-race@example.com';
+    const privCleanNote = await createNote(o, o.author, 'private', 'Ghi chú riêng sạch chờ extract');
+    const privPendingAtt = await attached(o, o.author, privCleanNote, pdf('private-pending'), 'bi-mat-cho-extract.pdf');
+
+    // Direct calls without owner user context are refused by the SECURITY DEFINER count helper.
+    await expect(rows('SELECT ludy_notes.private_pending_attachment_count()')).rejects.toThrow();
+    await expect(workerPool.query('SELECT ludy_notes.private_pending_attachment_count()')).rejects.toThrow();
+    // Under authenticated ludy_tenant sessions, non-owners (admin and author member) get 42501 while owner reads exact pending count.
+    const queryPendingCountAs = async (who: Person): Promise<string> => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const ctxToken = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+          userId: who.id,
+          orgId: o.orgId,
+          sessionId: null,
+          aal: 'aal1',
+          mfaAt: null,
+        });
+        await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, ctxToken]);
+        const res = await client.query<{ n: string }>('SELECT ludy_notes.private_pending_attachment_count()::text AS n');
+        return res.rows[0]?.n ?? '';
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    };
+    await expect(queryPendingCountAs(o.admin)).rejects.toMatchObject({ code: '42501', message: 'NOTES_FORBIDDEN' });
+    await expect(queryPendingCountAs(o.author)).rejects.toMatchObject({ code: '42501', message: 'NOTES_FORBIDDEN' });
+    await expect(queryPendingCountAs(o.owner)).resolves.toBe('1');
+
+    const firstErase = await rt.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: privEmail },
+      { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(firstErase.kept).toContainEqual({
+      column: 'ludy_notes.attachment',
+      rows: 1,
+      reason: PENDING_PRIVATE_NOTE_ATTACHMENT_REASON,
+    });
+    const firstJson = JSON.stringify(firstErase);
+    expect(firstJson).not.toContain('bi-mat-cho-extract');
+    expect(firstJson).not.toContain(privCleanNote);
+    expect(firstJson).not.toContain(privPendingAtt.id);
+    expect(firstJson).not.toContain(o.author.id);
+
+    // Worker finishes extraction with matching PII, then follow-up find/notify/erase deletes the private note and clears kept[].
+    const recorded = await worker.execute<{ updated: boolean }>(
+      'notes.attachment.extract_record',
+      { attachmentId: privPendingAtt.id, status: 'done', extractedText: `Private ${privEmail}` },
+      { actor: { type: 'system', component: 'notes' }, orgId: o.orgId },
+    );
+    expect(recorded).toEqual({ updated: true });
+
+    await rt.execute<PersonalDataNotice>(
+      'kernel.personal_data.notify',
+      { value: privEmail },
+      { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    const [notifiedEvent] = await rows<{ id: string }>(
+      `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`,
+      [o.orgId],
+    );
+    await worker.execute('kernel.notification.dispatch', { eventId: notifiedEvent?.id }, { actor: SYSTEM, orgId: o.orgId });
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`,
+        [o.orgId],
+      );
+      await c.query(
+        `UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`,
+        [o.orgId],
+      );
+      await c.query('COMMIT');
+    });
+
+    const secondErase = await rt.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: privEmail },
+      { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(secondErase.erased).toContainEqual({ column: 'ludy_notes.note', rows: 1 });
+    expect(secondErase.kept).toEqual([]);
+    const remaining = await rows<{ id: string }>(
+      'SELECT id FROM ludy_notes.attachment WHERE org_id = $1 AND id = $2',
+      [o.orgId, privPendingAtt.id],
+    );
+    expect(remaining).toEqual([]);
+    expect(await doomed(o)).toContain(`notes/${o.orgId}/${privPendingAtt.id}`);
+
+    // A still-pending private attachment deleted by private_erase (via filename match) must not linger in kept[].
+    const privNameEmail = 'private-pending-name@example.com';
+    const privNameNote = await createNote(o, o.author, 'private', 'Ghi chú giữ lại');
+    const privNameAtt = await attached(o, o.author, privNameNote, pdf('pending-name'), `${privNameEmail} ho-so.pdf`);
+    await rt.execute<PersonalDataNotice>(
+      'kernel.personal_data.notify',
+      { value: privNameEmail },
+      { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    const [notifiedNameEvent] = await rows<{ id: string }>(
+      `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`,
+      [o.orgId],
+    );
+    await worker.execute('kernel.notification.dispatch', { eventId: notifiedNameEvent?.id }, { actor: SYSTEM, orgId: o.orgId });
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`,
+        [o.orgId],
+      );
+      await c.query(
+        `UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`,
+        [o.orgId],
+      );
+      await c.query('COMMIT');
+    });
+    const erasedByName = await rt.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: privNameEmail },
+      { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(erasedByName.erased).toContainEqual({ column: 'ludy_notes.note', rows: 1 });
+    expect(erasedByName.kept).toEqual([]);
+    expect(await doomed(o)).toContain(`notes/${o.orgId}/${privNameAtt.id}`);
+  });
+
+  it('serializes direct SQL ludy_notes.attachment_record_extract calls against concurrent personalDataErase during rolling deploys (#5035)', async () => {
+    const o = await org();
+    const rollingEmail = 'rolling-worker-extract@example.com';
+    const rollingNote = await createNote(o, o.author, 'org', 'Ghi chú worker cũ');
+    const rollingAtt = await attached(o, o.author, rollingNote, pdf('rolling-extract'), 'worker-cu.pdf');
+    const blockerNote = await createNote(o, o.author, 'org', `Hợp đồng ${rollingEmail}`);
+    await expect(
+      pool.query('SELECT ludy_notes.attachment_record_extract($1::uuid, $2::text, $3::text)', [rollingAtt.id, 'done', 'x']),
+    ).rejects.toMatchObject({ code: '42501' });
+
+    const rollingGate = new pg.Client({ connectionString: adminUrl });
+    await rollingGate.connect();
+    const rollingTracker = createConcurrencyTracker();
+    try {
+      const rollingGatePid = (await rollingGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await rollingGate.query('BEGIN');
+      await rollingGate.query('SELECT 1 FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, blockerNote]);
+
+      const erasePromise = rollingTracker.track(
+        rt.execute<PersonalDataErasure>(
+          'kernel.personal_data.erase',
+          { value: rollingEmail },
+          { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+        ),
+      );
+      const erasePid = await waitBlockedOnPid(rollingGatePid, '%SELECT n.id FROM ludy_notes.note n%', rollingTracker);
+
+      // Simulate an older rolling-deploy worker calling SQL ludy_notes.attachment_record_extract directly without TS lockNotesEraseShared.
+      const directExtractPromise = rollingTracker.track(
+        (async (): Promise<boolean> => {
+          const client = await workerPool.connect();
+          try {
+            await client.query('BEGIN');
+            await client.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
+            const res = await client.query<{ updated: boolean }>(
+              `SELECT ludy_notes.attachment_record_extract($1::uuid, 'done', $2::text) AS updated`,
+              [rollingAtt.id, `Rolling ${rollingEmail}`],
+            );
+            await client.query('COMMIT');
+            return res.rows[0]?.updated === true;
+          } catch (err) {
+            await client.query('ROLLBACK').catch(() => undefined);
+            throw err;
+          } finally {
+            client.release();
+          }
+        })(),
+      );
+      await waitBlockedOnPid(erasePid, '%attachment_record_extract%', rollingTracker);
+
+      await rollingGate.query('COMMIT');
+      const [eraseRes, extractUpdated] = await Promise.all([erasePromise, directExtractPromise]);
+      expect(eraseRes.erased).toContainEqual({ column: 'ludy_notes.note.title', rows: 1 });
+      expect(eraseRes.kept).toContainEqual({
+        column: 'ludy_notes.attachment.extracted_text',
+        rows: 1,
+        reason: PENDING_NOTE_ATTACHMENT_REASON,
+      });
+      expect(extractUpdated).toBe(true);
+
+      // Follow-up erasure cleans up the newly extracted attachment with zero lost rows or lingering kept[] entries.
+      const followUpErase = await rt.execute<PersonalDataErasure>(
+        'kernel.personal_data.erase',
+        { value: rollingEmail },
+        { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+      );
+      expect(followUpErase.erased).toContainEqual({ column: 'ludy_notes.attachment.extracted_text', rows: 1 });
+      expect(followUpErase.kept).toEqual([]);
+      const remaining = await rows<{ id: string }>(
+        'SELECT id FROM ludy_notes.attachment WHERE org_id = $1 AND id = $2',
+        [o.orgId, rollingAtt.id],
+      );
+      expect(remaining).toEqual([]);
+      expect(await doomed(o)).toContain(`notes/${o.orgId}/${rollingAtt.id}`);
+    } finally {
+      await rollingGate.query('ROLLBACK').catch(() => undefined);
+      await rollingTracker.drain();
+      await rollingGate.end().catch(() => undefined);
+    }
   });
 });

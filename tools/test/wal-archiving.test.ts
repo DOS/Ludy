@@ -27,7 +27,7 @@ const hasBash = spawnSync('bash', ['-c', 'exit 0']).status === 0;
 describe.skipIf(!hasBash)('wal.sh', () => {
   it('parses, and refuses an unknown command and a bad restore target', () => {
     expect(spawnSync('bash', ['-n', resolve(repo, 'tools/backup/wal.sh')]).status).toBe(0);
-    const env = { ...process.env, LUDY_DIR: repo, CROVE_DIR: repo, BACKUP_ALERT: 'off' };
+    const env = { ...process.env, LUDY_DIR: repo, BACKUP_ALERT: 'off' };
     const run = (...args: string[]) => spawnSync('bash', [resolve(repo, 'tools/backup/wal.sh'), ...args], { env, encoding: 'utf8' });
     const unknown = run('frobnicate');
     expect(unknown.status).toBe(2);
@@ -46,7 +46,7 @@ describe.skipIf(!hasBash)('wal.sh', () => {
 
   it('refuses an unsafe or invalid WAL_STANZA before calling docker', () => {
     for (const bad of ["ludy'; DROP TABLE x;--", 'Ludy', 'bad stanza', '-ludy', 'a'.repeat(65)]) {
-      const env = { ...process.env, LUDY_DIR: repo, CROVE_DIR: repo, BACKUP_ALERT: 'off', WAL_STANZA: bad };
+      const env = { ...process.env, LUDY_DIR: repo, BACKUP_ALERT: 'off', WAL_STANZA: bad };
       const res = spawnSync('bash', [resolve(repo, 'tools/backup/wal.sh'), 'check'], { env, encoding: 'utf8' });
       expect(res.status, bad).toBe(2);
       expect(res.stderr, bad).toContain('WAL_STANZA');
@@ -82,18 +82,18 @@ describe.skipIf(!hasCompose)('compose.wal.yml', { timeout: 60_000 }, () => {
 
   it('gives db the bucket, the encryption and the retention, and builds the image from tools/wal', () => {
     const db = services(settings)['db'];
-    expect(db?.image).toBe('crove-db:local');
-    expect(services({ ...settings, WAL_DB_IMAGE: 'crove-db:other' })['db']?.image).toBe('crove-db:other');
+    expect(db?.image).toBe('ludy-db:local');
+    expect(services({ ...settings, WAL_DB_IMAGE: 'ludy-db:other' })['db']?.image).toBe('ludy-db:other');
     expect(db?.build?.context?.replaceAll('\\', '/')).toMatch(/\/tools\/wal$/);
     expect(db?.environment).toMatchObject({
-      PGBACKREST_STANZA: 'crove',
+      PGBACKREST_STANZA: 'ludy',
       PGBACKREST_REPO1_TYPE: 's3',
       PGBACKREST_REPO1_S3_BUCKET: 'bucket-ref',
       PGBACKREST_REPO1_S3_ENDPOINT: 's3.storage.example',
       PGBACKREST_REPO1_STORAGE_PORT: '443',
       PGBACKREST_REPO1_S3_URI_STYLE: 'host',
       PGBACKREST_REPO1_STORAGE_VERIFY_TLS: 'y',
-      PGBACKREST_REPO1_PATH: '/crove/wal',
+      PGBACKREST_REPO1_PATH: '/ludy/wal',
       PGBACKREST_REPO1_CIPHER_TYPE: 'aes-256-cbc',
       PGBACKREST_REPO1_CIPHER_PASS: 'encryption-key-ref',
       PGBACKREST_REPO1_RETENTION_FULL: '4',

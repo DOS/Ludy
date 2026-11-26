@@ -95,7 +95,7 @@ jobs:
             fi
           done
           port="${DEPLOY_PORT:-22}"
-          dir="${DEPLOY_DIR:-/opt/crove}"
+          dir="${DEPLOY_DIR:-/opt/ludy}"
           env_file="${DEPLOY_ENV_FILE:-$dir/.env}"
           [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.:-]+$ ]] || { echo '::error::DEPLOY_HOST must be a host name or IP'; exit 1; }
           [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo '::error::DEPLOY_USER must be a plain user name'; exit 1; }
@@ -130,6 +130,16 @@ jobs:
             ServerAliveInterval 30
             ServerAliveCountMax 10
           EOF
+          if [ -z "$DEPLOY_DIR" ]; then
+            host_dir_state="$(ssh -F "$ssh_dir/config" ludy-target 'has_ludy=0; has_crove=0; if [ -e /opt/ludy/.env ] || [ -d /opt/ludy/.deploy ]; then has_ludy=1; fi; if [ -e /opt/crove/.env ] || [ -d /opt/crove/.deploy ]; then has_crove=1; fi; if [ "$has_ludy" = 1 ] && [ "$has_crove" = 1 ]; then ludy_real="$(cd -P /opt/ludy 2>/dev/null && pwd -P)"; crove_real="$(cd -P /opt/crove 2>/dev/null && pwd -P)"; if [ -n "$ludy_real" ] && [ "$ludy_real" = "$crove_real" ]; then echo ludy; else echo both_distinct; fi; elif [ "$has_ludy" = 1 ]; then echo ludy; elif [ "$has_crove" = 1 ]; then echo legacy_crove; else echo none; fi' < /dev/null)"
+            if [ "$host_dir_state" = both_distinct ]; then
+              echo '::error::DEPLOY_DIR is not set and the host has both /opt/ludy and /opt/crove as distinct installations; set the DEPLOY_DIR environment variable explicitly to choose which stack to target before running this workflow'
+              exit 1
+            elif [ "$host_dir_state" = legacy_crove ]; then
+              echo '::error::DEPLOY_DIR is not set and the host has /opt/crove without /opt/ludy; set the DEPLOY_DIR environment variable to /opt/crove (or move the stack to /opt/ludy) before running this workflow'
+              exit 1
+            fi
+          fi
           {
             echo "ssh_config=$ssh_dir/config"
             echo "dir=$dir"

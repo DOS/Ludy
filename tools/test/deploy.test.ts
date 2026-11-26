@@ -11,14 +11,14 @@ import { AVAILABLE_MODULES } from '../../apps/kernel/src/config.ts';
 const repo = resolve(import.meta.dirname, '../..');
 const script = join(repo, 'tools/deploy/deploy.sh');
 // Linux and macOS (CI runs it on Linux). Under Git Bash on Windows the same suite takes about 15 minutes, since every
-// case forks a few hundred processes; set CROVE_DEPLOY_TESTS=1 to run it there anyway.
+// case forks a few hundred processes; set LUDY_DEPLOY_TESTS=1 to run it there anyway.
 const hasBash = spawnSync('bash', ['-c', 'exit 0']).status === 0;
-const runHere = hasBash && (process.platform !== 'win32' || process.env['CROVE_DEPLOY_TESTS'] === '1');
+const runHere = hasBash && (process.platform !== 'win32' || process.env['LUDY_DEPLOY_TESTS'] === '1');
 
 const digest = (c: string) => c.repeat(64);
-const image = (c: string) => `ghcr.io/example/crove@sha256:${digest(c)}`;
-const extract = (c: string) => `ghcr.io/example/crove-extract@sha256:${digest(c)}`;
-const media = (c: string) => `ghcr.io/example/crove-media@sha256:${digest(c)}`;
+const image = (c: string) => `ghcr.io/example/ludy@sha256:${digest(c)}`;
+const extract = (c: string) => `ghcr.io/example/ludy-extract@sha256:${digest(c)}`;
+const media = (c: string) => `ghcr.io/example/ludy-media@sha256:${digest(c)}`;
 const releaseDir = (release: string, c: string) => `${release}-${digest(c).slice(0, 12)}`;
 // Forward slashes: the script takes absolute paths without backslashes (Git Bash on Windows accepts C:/...).
 const slash = (p: string) => p.replaceAll('\\', '/');
@@ -65,7 +65,7 @@ const indexOf = (lines: string[], text: string) => lines.findIndex((l) => l.incl
 
 describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   beforeEach(() => {
-    root = slash(mkdtempSync(join(tmpdir(), 'crove-deploy-')));
+    root = slash(mkdtempSync(join(tmpdir(), 'ludy-deploy-')));
     dir = `${root}/host`;
     log = `${root}/calls.log`;
     compose = `${root}/docker-compose.yml`;
@@ -79,12 +79,12 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       chmodSync(`${root}/bin/${stub}`, 0o755);
     }
     writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
-    writeFileSync(compose, 'name: crove\nservices: {}\n');
+    writeFileSync(compose, 'name: ludy\nservices: {}\n');
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
   it('pulls by digest, migrates first, then rolls infrastructure, the app and the prober, and records the release', () => {
-    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants crove-extract crove-media mailpit crove prober' });
+    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants ludy-extract ludy-media mailpit ludy prober' });
     expect(res.status, res.out).toBe(0);
     const c = calls();
     const order = [
@@ -96,9 +96,9 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       'compose run --rm --no-TTY --no-deps migrate',
       'compose up --detach --no-build --no-deps --wait --wait-timeout 600 auth',
       'compose run --rm --no-TTY --no-deps auth-grants',
-      'compose up --detach --no-build --no-deps --wait --wait-timeout 600 crove-extract crove-media mailpit',
-      'compose up --detach --no-build --no-deps --wait --wait-timeout 600 crove',
-      'compose port crove 8080',
+      'compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy-extract ludy-media mailpit',
+      'compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy',
+      'compose port ludy 8080',
       'compose up --detach --no-build --no-deps --wait --wait-timeout 600 prober',
     ].map((step) => indexOf(c, step));
     expect(order.every((i) => i >= 0), c.join('\n')).toBe(true);
@@ -106,11 +106,11 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     expect(state('current')).toBe(releaseDir('v1.0.0', 'a'));
     expect(state('previous')).toBe('');
-    expect(running()).toContain(`crove: { image: '${image('a')}', build: !reset null }`);
-    expect(running()).toContain(`crove-extract: { image: '${extract('a')}', build: !reset null }`);
-    expect(running()).toContain(`crove-media: { image: '${media('a')}', build: !reset null }`);
+    expect(running()).toContain(`ludy: { image: '${image('a')}', build: !reset null }`);
+    expect(running()).toContain(`ludy-extract: { image: '${extract('a')}', build: !reset null }`);
+    expect(running()).toContain(`ludy-media: { image: '${media('a')}', build: !reset null }`);
     expect(readFileSync(`${dir}/releases/${releaseDir('v1.0.0', 'a')}/release.env`, 'utf8')).toContain(`MEDIA_IMAGE=${media('a')}`);
-    expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toBe('name: crove\nservices: {}\n');
+    expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toBe('name: ludy\nservices: {}\n');
     expect(readFileSync(`${dir}/.deploy/history.log`, 'utf8')).toMatch(/deploy v1\.0\.0-a{12} ok/);
     // The script installs itself for a manual rollback.
     expect(readFileSync(`${dir}/.deploy/deploy.sh`, 'utf8')).toBe(readFileSync(script, 'utf8'));
@@ -120,7 +120,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
   // #2118, #2133: the pilot's split API and worker. compose.pilot.yml ships with each release, next to its compose file;
   // the host chooses the layout by listing it in COMPOSE_FILE, and the pins of api and worker follow that choice.
-  const SPLIT = 'db migrate auth auth-grants crove-extract mailpit api worker';
+  const SPLIT = 'db migrate auth auth-grants ludy-extract mailpit api worker';
   const PILOT_ENV = 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:compose.pilot.yml:docker-compose.override.yml:compose.host.yml\n';
   const NOT_PILOT_ENV = 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:compose.host.yml\n';
   const filesOf = () => readFileSync(`${log}.files`, 'utf8').split('\n').filter(Boolean);
@@ -150,8 +150,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     // The split roles roll worker first, then the API, and the smoke test finds the API's port.
     const c = calls();
     // The all-in-one container of an earlier layout goes first, so it keeps neither the API's port nor the worker's jobs.
-    expect(indexOf(c, 'compose rm --stop --force crove')).toBeGreaterThanOrEqual(0);
-    expect(indexOf(c, 'compose rm --stop --force crove')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps worker'));
+    expect(indexOf(c, 'compose rm --stop --force ludy')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(c, 'compose rm --stop --force ludy')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps worker'));
     expect(indexOf(c, 'compose up --detach --no-build --no-deps worker')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 api'));
     expect(c.some((l) => l === 'compose port api 8080')).toBe(true);
 
@@ -199,23 +199,23 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     }
   });
 
-  it('rolls back to a release staged before crove-media was published: no media image to pull, none pinned (#2988)', () => {
+  it('rolls back to a release staged before ludy-media was published: no media image to pull, none pinned (#2988)', () => {
     expect(deploy('v1.0.0', 'a').status).toBe(0);
     expect(deploy('v1.1.0', 'b').status).toBe(0);
     // Release a as an earlier deploy.sh staged it: no MEDIA_IMAGE in release.env and no pin in its override.
     const old = `${dir}/releases/${releaseDir('v1.0.0', 'a')}`;
     writeFileSync(`${old}/release.env`, readFileSync(`${old}/release.env`, 'utf8').split('\n').filter((l) => !l.startsWith('MEDIA_IMAGE=')).join('\n'));
-    writeFileSync(`${old}/docker-compose.override.yml`, readFileSync(`${old}/docker-compose.override.yml`, 'utf8').split('\n').filter((l) => !l.includes('crove-media:')).join('\n'));
+    writeFileSync(`${old}/docker-compose.override.yml`, readFileSync(`${old}/docker-compose.override.yml`, 'utf8').split('\n').filter((l) => !l.includes('ludy-media:')).join('\n'));
     writeFileSync(log, '');
     const back = run(['rollback']);
     expect(back.status, back.out).toBe(0);
     const c = calls();
     expect(indexOf(c, `pull ${image('a')}`)).toBeGreaterThanOrEqual(0);
     expect(indexOf(c, `pull ${extract('a')}`)).toBeGreaterThanOrEqual(0);
-    // Nothing was pulled for a media image: no `pull` with an empty reference, no crove-media digest.
+    // Nothing was pulled for a media image: no `pull` with an empty reference, no ludy-media digest.
     expect(c.filter((line) => line.startsWith('pull') && !line.includes('@sha256:'))).toEqual([]);
-    expect(c.some((line) => line.includes('crove-media@'))).toBe(false);
-    expect(running()).not.toContain('crove-media: {');
+    expect(c.some((line) => line.includes('ludy-media@'))).toBe(false);
+    expect(running()).not.toContain('ludy-media: {');
   });
 
   it('takes the pins of api and worker out when the host goes back to one container, and from a release staged with them (#2133)', () => {
@@ -237,10 +237,12 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(running()).not.toContain('api: {');
     expect(running()).not.toContain('worker: {');
     // A rollback to the release with the old pins: stripped on activation, so the active override has none either.
+    writeFileSync(`${dir}/compose.host.yml`, 'services: {}\n');
     expect(run(['rollback']).status).toBe(0);
+    rmSync(`${dir}/compose.host.yml`, { force: true });
     expect(running()).not.toContain('api: {');
     expect(running()).not.toContain('worker: {');
-    expect(running()).toContain(`crove: { image: '${image('b')}', build: !reset null }`);
+    expect(running()).toContain(`ludy: { image: '${image('b')}', build: !reset null }`);
     // And forward again into the pilot layout: the pins come back with the layout.
     writeFileSync(`${dir}/.env`, PILOT_ENV);
     expect(deploy('v1.3.0', 'd', { STUB_SERVICES: SPLIT }).status).toBe(0);
@@ -262,9 +264,9 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(res.out).toContain('lists compose.wal.yml but');
   });
 
-  it('stops before pulling when COMPOSE_FILE lists compose.pilot.yml and neither the release nor the host has the file, rather than roll the all-in-one crove (#2118, #2133)', () => {
+  it('stops before pulling when COMPOSE_FILE lists compose.pilot.yml and neither the release nor the host has the file, rather than roll the all-in-one ludy (#2118, #2133)', () => {
     writeFileSync(`${dir}/.env`, PILOT_ENV);
-    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants crove-extract mailpit crove' });
+    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants ludy-extract mailpit ludy' });
     expect(res.status, res.out).toBe(2);
     expect(res.out).toContain('lists compose.pilot.yml but this release does not carry it');
     expect(calls().some((l) => l.startsWith('pull '))).toBe(false);
@@ -286,15 +288,1304 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     for (const files of filesOf()) expect(files).toBe(`${dir}/docker-compose.yml ${dir}/compose.pilot.yml ${dir}/docker-compose.override.yml`);
   });
 
-  it('says so when it cannot remove the old crove container, and goes on', () => {
+  it('says so when it cannot remove the old ludy container, and goes on', () => {
     writeFileSync(`${dir}/.env`, PILOT_ENV);
     writeFileSync(`${root}/compose.pilot.yml`, 'services: {}\n');
-    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants crove-extract mailpit api worker', STUB_RM_FAIL: '1' });
+    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants ludy-extract mailpit api worker', STUB_RM_FAIL: '1' });
     expect(res.status, res.out).toBe(0);
-    expect(res.out).toContain('could not remove the old crove container (the deploy goes on): rm: stub failure');
+    expect(res.out).toContain('could not remove the old ludy container (the deploy goes on): rm: stub failure');
+  });
+
+  it('cleans up renamed v0.3.12 crove-extract/crove-media/crove containers gracefully scoped to the project before starting replacements, and supports rolling back to v0.3.12 (#3972)', () => {
+    writeFileSync(`${dir}/.env`, `${PILOT_ENV}COMPOSE_PROJECT_NAME=ludy\n`);
+    writeFileSync(`${root}/compose.pilot.yml`, 'services: {}\n');
+    const res = deploy('v0.4.0', 'b', {
+      STUB_SERVICES: 'db migrate auth auth-grants ludy-extract ludy-media mailpit api worker',
+      STUB_ORPHAN_CONTAINERS: 'ludy:crove-extract=cid-ext ludy:crove-media=cid-media ludy:crove=cid-app ludy:crove=cid-backup-run:True otherproj:crove-extract=cid-other',
+    });
+    expect(res.status, res.out).toBe(0);
+    const c = calls();
+    expect(indexOf(c, 'docker stop --time 30 cid-ext')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(c, 'docker stop --time 30 cid-ext')).toBeLessThan(indexOf(c, 'docker rm cid-ext'));
+    expect(indexOf(c, 'docker rm cid-ext')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy-extract ludy-media mailpit'));
+    expect(indexOf(c, 'docker stop --time 30 cid-media')).toBeLessThan(indexOf(c, 'docker rm cid-media'));
+    expect(indexOf(c, 'docker rm cid-media')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy-extract ludy-media mailpit'));
+    expect(indexOf(c, 'docker stop --time 30 cid-app')).toBeLessThan(indexOf(c, 'docker rm cid-app'));
+    expect(indexOf(c, 'docker rm cid-app')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps worker'));
+    expect(c.some((l) => l.includes('cid-backup-run'))).toBe(false);
+    expect(c.some((l) => l.includes('cid-other'))).toBe(false);
+
+    // Stage a v0.3.12-shaped release using legacy service names (`crove`, `crove-extract`, `crove-media`) as previous and roll back to it.
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=ludy\n');
+    const legacyRel = releaseDir('v0.3.12', 'a');
+    const legacyDir = `${dir}/releases/${legacyRel}`;
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(`${legacyDir}/docker-compose.yml`, 'name: crove\nservices:\n  crove:\n  crove-extract:\n  crove-media:\n');
+    writeFileSync(
+      `${legacyDir}/docker-compose.override.yml`,
+      `services:\n  crove: { image: '${image('a')}', build: !reset null }\n  crove-extract: { image: '${extract('a')}', build: !reset null }\n  crove-media: { image: '${media('a')}', build: !reset null }\n`,
+    );
+    writeFileSync(`${legacyDir}/release.env`, `RELEASE=v0.3.12\nIMAGE=${image('a')}\nEXTRACT_IMAGE=${extract('a')}\nMEDIA_IMAGE=${media('a')}\nBUILD=\nSTAGED_AT=20261124T000000.000000000Z\n`);
+    writeFileSync(`${dir}/.deploy/previous`, `${legacyRel}\n`);
+    writeFileSync(log, '');
+    const back = run(['rollback'], {
+      STUB_SERVICES: 'db migrate auth auth-grants crove-extract crove-media mailpit crove',
+      STUB_ORPHAN_CONTAINERS: 'ludy:ludy-extract=cid-new-ext ludy:ludy-media=cid-new-media ludy:ludy=cid-new-app',
+    });
+    expect(back.status, back.out).toBe(0);
+    const rc = calls();
+    expect(indexOf(rc, 'docker stop --time 30 cid-new-ext')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(rc, 'docker stop --time 30 cid-new-ext')).toBeLessThan(indexOf(rc, 'docker rm cid-new-ext'));
+    expect(indexOf(rc, 'docker rm cid-new-ext')).toBeLessThan(indexOf(rc, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 crove-extract crove-media mailpit'));
+    expect(indexOf(rc, 'docker rm cid-new-media')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(rc, 'docker rm cid-new-app')).toBeGreaterThanOrEqual(0);
+    expect(rc.some((l) => l === 'compose port crove 8080')).toBe(true);
+    expect(rc.some((l) => l.endsWith('compose up --detach --no-build --no-deps --wait --wait-timeout 600 crove'))).toBe(true);
+  });
+
+  it('uses the merged compose project name (e.g. compose.host.yml) for orphan cleanup and fails closed on empty project or failed stop/rm (#3972)', () => {
+    writeFileSync(`${dir}/.env`, PILOT_ENV);
+    writeFileSync(`${root}/compose.pilot.yml`, 'services: {}\n');
+    writeFileSync(`${dir}/compose.host.yml`, 'name: beta\nservices: {}\n');
+    const beta = deploy('v0.4.0', 'b', {
+      STUB_SERVICES: 'db migrate auth auth-grants ludy-extract ludy-media mailpit api worker',
+      STUB_ORPHAN_CONTAINERS: 'beta:crove-extract=cid-beta-ext ludy:crove-extract=cid-ludy-ext',
+    });
+    expect(beta.status, beta.out).toBe(0);
+    const bc = calls();
+    expect(bc.some((l) => l === 'docker stop --time 30 cid-beta-ext')).toBe(true);
+    expect(bc.some((l) => l === 'docker rm cid-beta-ext')).toBe(true);
+    expect(bc.some((l) => l.includes('cid-ludy-ext'))).toBe(false);
+
+    rmSync(`${dir}/compose.host.yml`, { force: true });
+    expect(deploy('v0.4.1', 'c', { STUB_COMPOSE_PROJECT: '__empty__' }).status).not.toBe(0);
+    for (const failEnv of [{ STUB_ORPHAN_STOP_FAIL: '1' }, { STUB_ORPHAN_RM_FAIL: '1' }] as Record<string, string>[]) {
+      const failed = deploy('v0.4.2', 'd', {
+        STUB_SERVICES: 'db migrate auth auth-grants ludy-extract api worker',
+        STUB_ORPHAN_CONTAINERS: 'ludy:crove-extract=cid-stuck',
+        ...failEnv,
+      });
+      expect(failed.status, failed.out).not.toBe(0);
+      expect(failed.out).toContain('failed to');
+    }
+  });
+
+  it('refuses retired CROVE_* credentials without LUDY_* replacement before pulling images and blocks un-cut-over crove_db-data volumes (#3972)', () => {
+    const readEnv = () => readFileSync(`${dir}/.env`, 'utf8');
+    const secretCtx = 'secret-context-token-do-not-print';
+    const beforeCtx = `POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=${secretCtx}\n`;
+    writeFileSync(`${dir}/.env`, beforeCtx);
+    const resCtx = deploy('v1.0.0', 'a');
+    expect(resCtx.status, resCtx.out).toBe(2);
+    expect(resCtx.out).toContain('CROVE_CONTEXT_TOKEN_KEY->LUDY_CONTEXT_TOKEN_KEY');
+    expect(resCtx.out).not.toContain(secretCtx);
+    expect(readEnv()).toBe(beforeCtx);
+    expect(calls()).toEqual([]);
+
+    const secretPw = 'secret-app-pw-do-not-print';
+    const beforePw = `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=valid-key\nCROVE_APP_DB_PASSWORD=${secretPw}\n`;
+    writeFileSync(`${dir}/.env`, beforePw);
+    const resPw = deploy('v1.0.0', 'a');
+    expect(resPw.status, resPw.out).toBe(2);
+    expect(resPw.out).toContain('CROVE_APP_DB_PASSWORD->LUDY_APP_DB_PASSWORD');
+    expect(resPw.out).not.toContain(secretPw);
+    expect(readEnv()).toBe(beforePw);
+    expect(calls()).toEqual([]);
+
+    // Having both legacy CROVE_* and non-empty LUDY_* replacement proceeds normally.
+    writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=valid-key\nCROVE_APP_DB_PASSWORD=${secretPw}\nLUDY_APP_DB_PASSWORD=new-pw\n`);
+    expect(deploy('v1.0.0', 'a').status).toBe(0);
+    writeFileSync(log, '');
+
+    // Retired CROVE_MODULES without LUDY_MODULES must abort before pulling images.
+    const beforeMod = `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=valid-key\nCROVE_MODULES=finance\n`;
+    writeFileSync(`${dir}/.env`, beforeMod);
+    const resMod = deploy('v1.0.0', 'a');
+    expect(resMod.status, resMod.out).toBe(2);
+    expect(resMod.out).toContain('CROVE_MODULES->LUDY_MODULES');
+    expect(readEnv()).toBe(beforeMod);
+    expect(calls()).toEqual([]);
+
+    // Unrelated crove_db-data on the Docker host when this directory has no prior compose stack must NOT block a fresh deploy.
+    writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=valid-key\n`);
+    const freshWithOtherStack = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=unrelated-cluster',
+    });
+    expect(freshWithOtherStack.status, freshWithOtherStack.out).toBe(0);
+
+    // Simulate a first-time deploy over an existing manual pre-Stage-7 checkout (no .deploy/current yet):
+    // failing the storage guard must abort AND restore the original crove docker-compose.yml without leaving override behind.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    const legacyCompose = 'name: crove\nservices:\n  db:\n  crove:\n';
+    writeFileSync(`${dir}/docker-compose.yml`, legacyCompose);
+    rmSync(`${dir}/docker-compose.override.yml`, { force: true });
+
+    const volGuard = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1',
+    });
+    expect(volGuard.status, volGuard.out).toBe(1);
+    expect(volGuard.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+    expect(volGuard.out).toContain('cutover-ludy.sh cutover-stack');
+    expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toBe(legacyCompose);
+    expect(existsSync(`${dir}/docker-compose.override.yml`)).toBe(false);
+
+    // Empty ludy_db-data (no PG_VERSION / pg_control) alongside populated crove_db-data fails closed and keeps compose intact.
+    const emptyVolGuard = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1',
+    });
+    expect(emptyVolGuard.status, emptyVolGuard.out).toBe(1);
+    expect(emptyVolGuard.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+    expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toBe(legacyCompose);
+
+    // Freshly initialized empty ludy_db-data (mismatched system_identifier) alongside crove_db-data fails closed.
+    const mismatchedVolGuard = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-old ludy_db-data=cluster-fresh',
+    });
+    expect(mismatchedVolGuard.status, mismatchedVolGuard.out).toBe(1);
+    expect(mismatchedVolGuard.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    // Bind-mounted PostgreSQL target path on host is verified just like named volumes and fails if empty/mismatched.
+    const bindPgDir = `${root}/empty-pg-bind`;
+    mkdirSync(bindPgDir);
+    const bindMismatch = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_NEW_DB_BIND: bindPgDir,
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1',
+    });
+    expect(bindMismatch.status, bindMismatch.out).toBe(1);
+    expect(bindMismatch.out).toContain(`without a matching copied PostgreSQL cluster in ${bindPgDir}`);
+
+    // Reusing crove_db-data while non-empty crove_files or crove_keys lacks migrated ludy_* data fails closed.
+    const missingFiles = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data crove_files',
+      STUB_NEW_DB_VOLUME: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1',
+      STUB_POPULATED_MOUNTS: 'crove_files',
+    });
+    expect(missingFiles.status, missingFiles.out).toBe(1);
+    expect(missingFiles.out).toContain('found non-empty prior /data/files storage crove_files while destination ludy_files does not contain all migrated data');
+
+    const emptyKeys = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data crove_keys ludy_keys',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1 ludy_db-data=cluster-1',
+      STUB_POPULATED_MOUNTS: 'crove_keys',
+    });
+    expect(emptyKeys.status, emptyKeys.out).toBe(1);
+    expect(emptyKeys.out).toContain('found non-empty prior /data/keys storage crove_keys while destination ludy_keys does not contain all migrated data');
+
+    // Custom db volume configured on db service is checked rather than hardcoded ludy_db-data.
+    const customVolMismatch = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data custom_db-data',
+      STUB_NEW_DB_VOLUME: 'custom_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1 custom_db-data=c2',
+    });
+    expect(customVolMismatch.status, customVolMismatch.out).toBe(1);
+    expect(customVolMismatch.out).toContain('without a matching copied PostgreSQL cluster in custom_db-data');
+
+    // Fully migrated ludy_* DB + files + keys (while empty crove_archive is skipped cleanly) succeeds.
+    const fullCutover = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data crove_files ludy_files crove_keys ludy_keys crove_archive',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1 ludy_db-data=cluster-1',
+      STUB_POPULATED_MOUNTS: 'crove_files ludy_files crove_keys ludy_keys',
+    });
+    expect(fullCutover.status, fullCutover.out).toBe(0);
   });
 
   // #892: with --build, /version must report the build being deployed, so an old container that still answers fails.
+  it('resolves tools/backup/compose.wal.yml from COMPOSE_FILE in preflight and compose calls (#3972)', () => {
+    mkdirSync(`${dir}/tools/backup`, { recursive: true });
+    writeFileSync(`${dir}/tools/backup/compose.wal.yml`, 'services: {}\n');
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:tools/backup/compose.wal.yml\n');
+    const ok = deploy('v1.0.0', 'a');
+    expect(ok.status, ok.out).toBe(0);
+    expect(readFileSync(`${log}.files`, 'utf8')).toContain(`${dir}/tools/backup/compose.wal.yml`);
+
+    rmSync(`${dir}/tools/backup/compose.wal.yml`);
+    const missing = deploy('v1.0.1', 'b');
+    expect(missing.status, missing.out).toBe(2);
+    expect(missing.out).toContain('lists compose.wal.yml but');
+
+    // Interpolated COMPOSE_FILE + custom COMPOSE_PATH_SEPARATOR resolves identically to Compose and fails closed when missing (#3972 Round 16).
+    mkdirSync(`${dir}/tools/backup`, { recursive: true });
+    writeFileSync(`${dir}/tools/backup/compose.wal.yml`, 'services: {}\n');
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nWAL_OVERLAY=tools/backup/compose.wal.yml\nCOMPOSE_PATH_SEPARATOR=;\nCOMPOSE_FILE=docker-compose.yml;${WAL_OVERLAY}\n');
+    rmSync(`${log}.files`, { force: true });
+    const okInterp = deploy('v1.0.2', 'c');
+    expect(okInterp.status, okInterp.out).toBe(0);
+    expect(readFileSync(`${log}.files`, 'utf8')).toContain(`${dir}/tools/backup/compose.wal.yml`);
+    rmSync(`${dir}/tools/backup/compose.wal.yml`);
+    const missingInterp = deploy('v1.0.3', 'd');
+    expect(missingInterp.status, missingInterp.out).toBe(2);
+    expect(missingInterp.out).toContain('lists compose.wal.yml but');
+
+    // Exact Compose path & declared order preserved for site.yml after compose.host.yml and nested site/compose.host.yml (#3972 Round 17).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/compose.host.yml`, 'services: {}\n');
+    writeFileSync(`${dir}/site.yml`, 'services: {}\n');
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:compose.host.yml:site.yml\n');
+    rmSync(`${log}.files`, { force: true });
+    const siteAfterHost = deploy('v1.0.4', 'e');
+    expect(siteAfterHost.status, siteAfterHost.out).toBe(0);
+    for (const files of readFileSync(`${log}.files`, 'utf8').split('\n').filter(Boolean)) {
+      expect(files).toBe(`${dir}/docker-compose.yml ${dir}/docker-compose.override.yml ${dir}/compose.host.yml ${dir}/site.yml`);
+    }
+
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:site/compose.host.yml\n');
+    const missingNestedHost = deploy('v1.0.5', 'f');
+    expect(missingNestedHost.status, missingNestedHost.out).toBe(2);
+    expect(missingNestedHost.out).toContain('lists site/compose.host.yml but the file does not exist');
+
+    mkdirSync(`${dir}/site`, { recursive: true });
+    writeFileSync(`${dir}/site/compose.host.yml`, 'services: {}\n');
+    rmSync(`${log}.files`, { force: true });
+    const nestedHost = deploy('v1.0.6', '1');
+    expect(nestedHost.status, nestedHost.out).toBe(0);
+    for (const files of readFileSync(`${log}.files`, 'utf8').split('\n').filter(Boolean)) {
+      expect(files).toBe(`${dir}/docker-compose.yml ${dir}/docker-compose.override.yml ${dir}/site/compose.host.yml`);
+    }
+    rmSync(`${dir}/compose.host.yml`, { force: true });
+    rmSync(`${dir}/site.yml`, { force: true });
+    rmSync(`${dir}/site`, { recursive: true, force: true });
+  });
+
+  it('fails closed before activate when pre-deploy compose inspection fails, and exports prior release images (#3972)', () => {
+    writeFileSync(`${dir}/docker-compose.yml`, '# manual checkout\nname: crove\nservices: {}\n');
+    const blocked = deploy('v1.0.0', 'a', { STUB_PREV_CONFIG_FAIL: '1' });
+    expect(blocked.status, blocked.out).toBe(1);
+    expect(blocked.out).toContain('cannot inspect existing compose configuration');
+    expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toContain('# manual checkout');
+    expect(existsSync(`${dir}/.deploy/current`)).toBe(false);
+
+    rmSync(`${dir}/docker-compose.yml`);
+    expect(deploy('v1.0.0', 'a').status).toBe(0);
+    const upgrade = deploy('v1.1.0', 'b', {
+      STUB_PREV_CONFIG_REQUIRE_ENV: 'CROVE_IMAGE',
+      STUB_PREV_IMAGE_MATCH: digest('a'),
+    });
+    expect(upgrade.status, upgrade.out).toBe(0);
+  });
+
+  it('refuses project switch when another container holds shared or prior db storage, or when docker inspection fails (#3972)', () => {
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+    const sharedHeld = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_VOLUME: 'crove_db-data',
+      STUB_RUNNING_CONTAINERS: 'crove-db-1',
+      STUB_INSPECT_MOUNTS: 'crove-db-1|crove|volume|crove_db-data|',
+    });
+    expect(sharedHeld.status, sharedHeld.out).toBe(1);
+    expect(sharedHeld.out).toContain('still mounted by a running container outside project ludy');
+    expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toContain('name: crove');
+    expect(existsSync(`${dir}/.deploy/current`)).toBe(false);
+    expect(calls().some((l) => l.startsWith('compose up '))).toBe(false);
+
+    // Running container still holding prior crove_db-data while switching to ludy_db-data is refused even with equal cluster IDs.
+    const sourceHeld = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=99 ludy_db-data=99',
+      STUB_RUNNING_CONTAINERS: 'crove-db-1',
+      STUB_INSPECT_MOUNTS: 'crove-db-1|crove|volume|crove_db-data|',
+    });
+    expect(sourceHeld.status, sourceHeld.out).toBe(1);
+    expect(sourceHeld.out).toContain('prior database storage crove_db-data is still mounted by a running container');
+
+    // Docker ps / inspect failures fail closed instead of looking like free storage.
+    const psFail = deploy('v1.0.0', 'a', { STUB_PS_FAIL: '1' });
+    expect(psFail.status, psFail.out).toBe(1);
+    expect(psFail.out).toContain('cannot inspect existing Docker containers');
+
+    const inspectFail = deploy('v1.0.0', 'a', {
+      STUB_RUNNING_CONTAINERS: 'crove-db-1',
+      STUB_INSPECT_FAIL: '1',
+    });
+    expect(inspectFail.status, inspectFail.out).toBe(1);
+    expect(inspectFail.out).toContain('cannot inspect running containers to verify database storage');
+  });
+
+  it('detects prior project even if .env was already switched to ludy, and verifies stale PG / full recursive parity (#3972)', () => {
+    // 1) After deploying under crove, switching .env to ludy without cutting over still catches crove_db-data via .deploy/project.
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=crove\n');
+    const firstCrove = deploy('v1.0.0', 'a');
+    expect(firstCrove.status, firstCrove.out).toBe(0);
+    expect(readFileSync(`${dir}/.deploy/project`, 'utf8').trim()).toBe('crove');
+
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=ludy\n');
+    const blockedViaState = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1',
+    });
+    expect(blockedViaState.status, blockedViaState.out).toBe(1);
+    expect(blockedViaState.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    // 2) Without .deploy state, a running or stopped container labeled for $dir still catches crove_db-data.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+    const blockedViaContainer = deploy('v1.0.0', 'a', {
+      STUB_WORKDIR_CONTAINERS: `${dir}|db|crove-db-1`,
+      STUB_INSPECT_MOUNTS: 'crove-db-1|crove|volume|crove_db-data|',
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1',
+    });
+    expect(blockedViaContainer.status, blockedViaContainer.out).toBe(1);
+    expect(blockedViaContainer.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    // 3) Stale pg_control / pg_wal or postmaster.pid fails PG cluster parity even when system_identifier matches.
+    const stalePg = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=99 ludy_db-data=99',
+      STUB_PG_STALE_MOUNTS: 'ludy_db-data',
+    });
+    expect(stalePg.status, stalePg.out).toBe(1);
+    expect(stalePg.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    // 4) Incomplete /data/files or /data/keys parity fails without passing invalid CLI flags (e.g. --strict) to node -e.
+    const partialFiles = deploy('v1.0.0', 'a', {
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=99 ludy_db-data=99',
+      STUB_VOLUMES: 'crove_db-data ludy_db-data crove_files ludy_files',
+      STUB_POPULATED_MOUNTS: 'crove_files ludy_files',
+      STUB_PARTIAL_MOUNTS: 'ludy_files',
+    });
+    expect(partialFiles.status, partialFiles.out).toBe(1);
+    expect(partialFiles.out).toContain('does not contain all migrated data');
+
+    const partialKeys = deploy('v1.0.0', 'a', {
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=99 ludy_db-data=99',
+      STUB_VOLUMES: 'crove_db-data ludy_db-data crove_keys ludy_keys',
+      STUB_POPULATED_MOUNTS: 'crove_keys ludy_keys',
+      STUB_PARTIAL_MOUNTS: 'ludy_keys',
+    });
+    expect(partialKeys.status, partialKeys.out).toBe(1);
+    expect(partialKeys.out).toContain('does not contain all migrated data');
+
+    const okKeys = deploy('v1.0.0', 'a', {
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=99 ludy_db-data=99',
+      STUB_VOLUMES: 'crove_db-data ludy_db-data crove_keys ludy_keys',
+      STUB_POPULATED_MOUNTS: 'crove_keys ludy_keys',
+    });
+    expect(okKeys.status, okKeys.out).toBe(0);
+    expect(readFileSync(`${log}.volumes`, 'utf8')).not.toContain(' --strict');
+    expect(readFileSync(`${dir}/.deploy/project`, 'utf8').trim()).toBe('ludy');
+  });
+
+  it('catches host mount path changes via container mounts and .deploy/mounts, blocks active data writers, and fails closed on volume inspect error (#3972)', () => {
+    const oldPg = `${root}/pg-old`;
+    const newPg = `${root}/pg-new`;
+    mkdirSync(oldPg);
+    mkdirSync(newPg);
+
+    // 1) Container mount reports oldPg while new compose config specifies newPg -> blocked before up db.
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: ludy\nservices: {}\n');
+    const ctrBindBlocked = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_BIND: newPg,
+      STUB_PG_CLUSTER_IDS: `${oldPg}=cluster-old`,
+      STUB_WORKDIR_CONTAINERS: `${dir}|db|ludy-db-1`,
+      STUB_INSPECT_MOUNTS: `ludy-db-1|ludy|bind||${oldPg}|/var/lib/postgresql/data`,
+    });
+    expect(ctrBindBlocked.status, ctrBindBlocked.out).toBe(1);
+    expect(ctrBindBlocked.out).toContain(`without a matching copied PostgreSQL cluster in ${newPg}`);
+
+    // 2) After deploying with oldPg (.deploy/mounts records oldPg), editing compose.host.yml to newPg with no containers still blocks.
+    rmSync(`${dir}/docker-compose.yml`);
+    const initialBindOk = deploy('v1.0.0', 'a', { STUB_NEW_DB_BIND: oldPg });
+    expect(initialBindOk.status, initialBindOk.out).toBe(0);
+    expect(readFileSync(`${dir}/.deploy/mounts`, 'utf8')).toContain(`/var/lib/postgresql/data=bind:${oldPg}`);
+
+    const changedBindBlocked = deploy('v1.1.0', 'b', {
+      STUB_NEW_DB_BIND: newPg,
+      STUB_PG_CLUSTER_IDS: `${oldPg}=cluster-old`,
+    });
+    expect(changedBindBlocked.status, changedBindBlocked.out).toBe(1);
+    expect(changedBindBlocked.out).toContain(`without a matching copied PostgreSQL cluster in ${newPg}`);
+
+    // 3) Switching /data/files while keeping same DB mount refuses if a running container still mounts prior crove_files.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+    const dataWriterHeld = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_VOLUME: 'crove_db-data',
+      STUB_VOLUMES: 'crove_db-data crove_files',
+      STUB_RUNNING_CONTAINERS: 'crove-api-1',
+      STUB_INSPECT_MOUNTS: 'crove-api-1|crove|volume|crove_files|',
+    });
+    expect(dataWriterHeld.status, dataWriterHeld.out).toBe(1);
+    expect(dataWriterHeld.out).toContain('prior /data/files storage crove_files is still mounted by a running container');
+
+    // 4) Docker volume inspect failure fails closed instead of treating prior storage as absent.
+    const volInspectFail = deploy('v1.0.0', 'a', { STUB_VOLUME_INSPECT_FAIL: '1' });
+    expect(volInspectFail.status, volInspectFail.out).toBe(1);
+    expect(volInspectFail.out).toContain('cannot inspect prior database storage crove_db-data');
+  });
+
+  it('fails closed on missing new mounts, extra PGDATA files, volume subpaths, and keeps project across recover and rollback (#3972)', () => {
+    const croveCompose = `${root}/docker-compose.crove.yml`;
+    writeFileSync(croveCompose, 'name: crove\nservices: {}\n');
+
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+    const missingNewDb = deploy('v1.0.0', 'a', {
+      STUB_OMIT_NEW_DB_MOUNT: '1',
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1',
+    });
+    expect(missingNewDb.status, missingNewDb.out).toBe(1);
+    expect(missingNewDb.out).toContain('defines no persistent mount at /var/lib/postgresql/data');
+
+    const missingNewFiles = deploy('v1.0.0', 'a', {
+      STUB_OMIT_NEW_FILES_MOUNT: '1',
+      STUB_VOLUMES: 'crove_db-data ludy_db-data crove_files',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_POPULATED_MOUNTS: 'crove_files',
+    });
+    expect(missingNewFiles.status, missingNewFiles.out).toBe(1);
+    expect(missingNewFiles.out).toContain('defines no persistent mount at /data/files');
+
+    const extraPg = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_PG_EXTRA_FILES_MOUNTS: 'ludy_db-data',
+    });
+    expect(extraPg.status, extraPg.out).toBe(1);
+    expect(extraPg.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    const subpathMount = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_SUBPATH: 'pg17',
+    });
+    expect(subpathMount.status, subpathMount.out).toBe(1);
+    expect(subpathMount.out).toContain('unsupported volume subpath mount on /var/lib/postgresql/data');
+
+    rmSync(`${dir}/docker-compose.yml`);
+    const v1Crove = run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', croveCompose]);
+    expect(v1Crove.status, v1Crove.out).toBe(0);
+    expect(readFileSync(`${dir}/.deploy/project`, 'utf8').trim()).toBe('crove');
+
+    writeFileSync(`${log}.project`, '');
+    const failedSwitch = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_BAD_DIGEST: digest('b'),
+      STUB_LOG_PROJECT: '1',
+    });
+    expect(failedSwitch.status, failedSwitch.out).toBe(1);
+    const recoverProjects = readFileSync(`${log}.project`, 'utf8').split('\n').filter(Boolean);
+    expect(recoverProjects.some((l) => l === 'project ludy up' || l === 'project ludy port')).toBe(true);
+    expect(recoverProjects.filter((l) => l.startsWith('project  '))).toContain('project  config');
+    expect(readFileSync(`${dir}/.deploy/project`, 'utf8').trim()).toBe('ludy');
+    expect(running()).toContain('name: ludy');
+
+    const recoverPlainCfg = spawnSync('docker', ['compose', '--env-file', `${dir}/.env`, '-f', `${dir}/docker-compose.yml`, '-f', `${dir}/docker-compose.override.yml`, 'config'], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${join(root, 'bin')}${delimiter}${process.env['PATH'] ?? ''}`, STUB_LOG: log, STUB_DEPLOY_DIR: dir },
+    });
+    expect(recoverPlainCfg.status, recoverPlainCfg.stderr).toBe(0);
+    expect(recoverPlainCfg.stdout).toMatch(/^name: ludy$/m);
+
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    expect(run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', croveCompose]).status).toBe(0);
+    const v2Ludy = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+    });
+    expect(v2Ludy.status, v2Ludy.out).toBe(0);
+    expect(readFileSync(`${dir}/.deploy/project`, 'utf8').trim()).toBe('ludy');
+
+    writeFileSync(`${log}.project`, '');
+    const back = run(['rollback'], { STUB_LOG_PROJECT: '1' });
+    expect(back.status, back.out).toBe(0);
+    const rollbackProjects = readFileSync(`${log}.project`, 'utf8').split('\n').filter(Boolean);
+    expect(rollbackProjects.some((l) => l === 'project ludy up' || l === 'project ludy port')).toBe(true);
+    expect(rollbackProjects.filter((l) => l !== 'project  config').every((l) => l.startsWith('project ludy '))).toBe(true);
+    expect(running()).toContain('name: ludy');
+
+    // Plain `docker compose config` (without -p or COMPOSE_PROJECT_NAME in .env) stays on project ludy after rollback.
+    const plainCfg = spawnSync('docker', ['compose', '--env-file', `${dir}/.env`, '-f', `${dir}/docker-compose.yml`, '-f', `${dir}/docker-compose.override.yml`, 'config'], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${join(root, 'bin')}${delimiter}${process.env['PATH'] ?? ''}`, STUB_LOG: log, STUB_DEPLOY_DIR: dir },
+    });
+    expect(plainCfg.status, plainCfg.stderr).toBe(0);
+    expect(plainCfg.stdout).toMatch(/^name: ludy$/m);
+  });
+
+  it('refuses retired CROVE_DEPLOY_DIR / CROVE_ENV_FILE, pre-Stage-7 --compose files, HostConfig.Mounts subpaths, split api/worker mismatches, and handles custom PGDATA (#3972)', () => {
+    const croveCompose = `${root}/docker-compose.crove.yml`;
+    writeFileSync(croveCompose, 'name: crove\nservices:\n  crove:\n  crove-extract:\n  crove-media:\n');
+    const preStage7Compose = run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', croveCompose]);
+    expect(preStage7Compose.status, preStage7Compose.out).toBe(2);
+    expect(preStage7Compose.out).toContain("defines pre-Stage-7 service 'crove' without 'ludy'");
+    expect(existsSync(`${dir}/releases/${releaseDir('v1.0.0', 'a')}`)).toBe(false);
+
+    // Retired CROVE_DEPLOY_DIR and CROVE_ENV_FILE fail closed unless overridden by LUDY_* or CLI flags.
+    const binEnv = {
+      ...process.env,
+      PATH: `${join(root, 'bin')}${delimiter}${process.env['PATH'] ?? ''}`,
+      STUB_LOG: log,
+      STUB_DEPLOY_DIR: dir,
+    };
+    const retiredDirEnv: Record<string, string | undefined> = { ...binEnv, CROVE_DEPLOY_DIR: '/opt/crove' };
+    delete retiredDirEnv['LUDY_DEPLOY_DIR'];
+    const statusRetired = spawnSync('bash', [script, 'status'], { encoding: 'utf8', env: retiredDirEnv });
+    expect(statusRetired.status).toBe(2);
+    expect(`${statusRetired.stdout}${statusRetired.stderr}`).toContain('CROVE_DEPLOY_DIR is retired');
+
+    const statusCli = spawnSync('bash', [script, 'status', '--dir', dir], { encoding: 'utf8', env: retiredDirEnv });
+    expect(statusCli.status).toBe(0);
+
+    const retiredFileEnv: Record<string, string | undefined> = { ...binEnv, LUDY_DEPLOY_DIR: dir, CROVE_ENV_FILE: `${root}/old.env` };
+    delete retiredFileEnv['LUDY_ENV_FILE'];
+    const rollbackRetiredEnvFile = spawnSync('bash', [script, 'rollback'], { encoding: 'utf8', env: retiredFileEnv });
+    expect(rollbackRetiredEnvFile.status).toBe(2);
+    expect(`${rollbackRetiredEnvFile.stdout}${rollbackRetiredEnvFile.stderr}`).toContain('CROVE_ENV_FILE is retired');
+
+    // Existing container with VolumeOptions.Subpath in HostConfig.Mounts still fails closed even after compose subpath is removed.
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: ludy\nservices: {}\n');
+    const hcSubpathBlocked = deploy('v1.0.0', 'a', {
+      STUB_WORKDIR_CONTAINERS: `${dir}|db|ludy-db-1`,
+      STUB_INSPECT_MOUNTS: 'ludy-db-1|ludy|volume|ludy_db-data||/var/lib/postgresql/data',
+      STUB_INSPECT_HOSTCONFIG_MOUNTS: 'ludy-db-1|[{"Type":"volume","Source":"ludy_db-data","Target":"/var/lib/postgresql/data","VolumeOptions":{"Subpath":"pg17"}}]',
+    });
+    expect(hcSubpathBlocked.status, hcSubpathBlocked.out).toBe(1);
+    expect(hcSubpathBlocked.out).toContain('unsupported volume subpath mount on /var/lib/postgresql/data');
+
+    // Split api/worker persistent mount parity checks.
+    rmSync(`${dir}/docker-compose.yml`);
+    const localFilesMismatch = deploy('v1.0.0', 'a', {
+      STUB_SPLIT_PILOT_SERVICES: '1',
+      STUB_NEW_API_FILES_VOL_NAME: 'ludy_files_a',
+      STUB_NEW_WORKER_FILES_VOL_NAME: 'ludy_files_b',
+    });
+    expect(localFilesMismatch.status, localFilesMismatch.out).toBe(1);
+    expect(localFilesMismatch.out).toContain('api and worker mount different /data/files storage');
+
+    const localFilesOmitted = deploy('v1.0.0', 'a', {
+      STUB_SPLIT_PILOT_SERVICES: '1',
+      STUB_OMIT_NEW_WORKER_FILES_MOUNT: '1',
+    });
+    expect(localFilesOmitted.status, localFilesOmitted.out).toBe(1);
+    expect(localFilesOmitted.out).toContain('must share the same persistent /data/files mount');
+
+    const s3KeysMismatch = deploy('v1.0.0', 'a', {
+      STUB_SPLIT_PILOT_SERVICES: '1',
+      STUB_NEW_STORAGE: 's3',
+      STUB_NEW_API_FILES_VOL_NAME: 'ludy_files_a',
+      STUB_NEW_WORKER_FILES_VOL_NAME: 'ludy_files_b',
+      STUB_NEW_API_KEYS_VOL_NAME: 'ludy_keys_a',
+      STUB_NEW_WORKER_KEYS_VOL_NAME: 'ludy_keys_b',
+    });
+    expect(s3KeysMismatch.status, s3KeysMismatch.out).toBe(1);
+    expect(s3KeysMismatch.out).toContain('api and worker mount different /data/keys storage');
+
+    const archiveMismatch = deploy('v1.0.0', 'a', {
+      STUB_SPLIT_PILOT_SERVICES: '1',
+      STUB_NEW_API_ARCHIVE_VOL_NAME: 'ludy_api_archive',
+    });
+    expect(archiveMismatch.status, archiveMismatch.out).toBe(1);
+    expect(archiveMismatch.out).toContain('api and worker mount different /data/archive storage');
+
+    const s3FilesAllowed = deploy('v1.0.0', 'a', {
+      STUB_SPLIT_PILOT_SERVICES: '1',
+      STUB_NEW_STORAGE: 's3',
+      STUB_NEW_API_FILES_VOL_NAME: 'ludy_files_a',
+      STUB_NEW_WORKER_FILES_VOL_NAME: 'ludy_files_b',
+    });
+    expect(s3FilesAllowed.status, s3FilesAllowed.out).toBe(0);
+
+    // Re-deploying the same split S3 /data/files mounts keeps both populated volumes without demanding cross-copy.
+    const s3FilesRedeploy = deploy('v1.1.0', 'b', {
+      STUB_SPLIT_PILOT_SERVICES: '1',
+      STUB_NEW_STORAGE: 's3',
+      STUB_NEW_API_FILES_VOL_NAME: 'ludy_files_a',
+      STUB_NEW_WORKER_FILES_VOL_NAME: 'ludy_files_b',
+      STUB_VOLUMES: 'ludy_db-data ludy_files_a ludy_files_b',
+      STUB_POPULATED_MOUNTS: 'ludy_files_a ludy_files_b',
+    });
+    expect(s3FilesRedeploy.status, s3FilesRedeploy.out).toBe(0);
+
+    // Custom PGDATA subdir passes when both match and blocks when PGDATA changes on same or new volume.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+    writeFileSync(`${log}.volumes`, '');
+    const customPgOk = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_PREV_DB_PGDATA: '/var/lib/postgresql/data/pgdata',
+      STUB_NEW_DB_PGDATA: '/var/lib/postgresql/data/pgdata',
+      STUB_PG_SUBDIR_MOUNTS: 'crove_db-data=pgdata ludy_db-data=pgdata',
+    });
+    expect(customPgOk.status, customPgOk.out).toBe(0);
+    expect(readFileSync(`${log}.volumes`, 'utf8')).toContain('SRC_PGDATA_SUB=pgdata');
+    expect(readFileSync(`${log}.volumes`, 'utf8')).toContain('DST_PGDATA_SUB=pgdata');
+
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+    const customPgChangedOnSameVol = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1',
+      STUB_NEW_DB_VOLUME: 'crove_db-data',
+      STUB_PREV_DB_PGDATA: '/var/lib/postgresql/data/pgdata',
+      STUB_PG_SUBDIR_MOUNTS: 'crove_db-data=pgdata',
+    });
+    expect(customPgChangedOnSameVol.status, customPgChangedOnSameVol.out).toBe(1);
+    expect(customPgChangedOnSameVol.out).toContain('PGDATA /var/lib/postgresql/data/pgdata');
+
+    const badPgdata = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_PGDATA: '/var/lib/postgresql/outside',
+    });
+    expect(badPgdata.status, badPgdata.out).toBe(1);
+    expect(badPgdata.out).toContain('unsupported PGDATA path outside /var/lib/postgresql/data');
+
+    // Container PGDATA in .Config.Env catches in-place compose.host.yml PGDATA edit on same volume,
+    // and persists PGDATA_SUB in .deploy/mounts after containers are gone (#3972 Round 10).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: ludy\nservices: {}\n');
+    const ctrPgChanged = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'ludy_db-data=c1',
+      STUB_WORKDIR_CONTAINERS: `${dir}|db|ludy-db-1`,
+      STUB_INSPECT_MOUNTS: 'ludy-db-1|ludy|volume|ludy_db-data||/var/lib/postgresql/data',
+      STUB_INSPECT_ENV: 'ludy-db-1|PGDATA=/var/lib/postgresql/data/a',
+      STUB_NEW_DB_PGDATA: '/var/lib/postgresql/data/b',
+      STUB_PG_SUBDIR_MOUNTS: 'ludy_db-data=a',
+    });
+    expect(ctrPgChanged.status, ctrPgChanged.out).toBe(1);
+    expect(ctrPgChanged.out).toContain('PGDATA /var/lib/postgresql/data/a while new config uses /var/lib/postgresql/data/b');
+
+    rmSync(`${dir}/docker-compose.yml`);
+    const persistedPgOk = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_NEW_DB_PGDATA: '/var/lib/postgresql/data/a',
+    });
+    expect(persistedPgOk.status, persistedPgOk.out).toBe(0);
+    expect(readFileSync(`${dir}/.deploy/mounts`, 'utf8')).toContain('PGDATA_SUB=a');
+
+    const persistedPgChanged = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'ludy_db-data=c1',
+      STUB_NEW_DB_PGDATA: '/var/lib/postgresql/data/b',
+      STUB_PG_SUBDIR_MOUNTS: 'ludy_db-data=a',
+    });
+    expect(persistedPgChanged.status, persistedPgChanged.out).toBe(1);
+    expect(persistedPgChanged.out).toContain('PGDATA /var/lib/postgresql/data/a while new config uses /var/lib/postgresql/data/b');
+
+    // Same Compose project name (`ludy`) from a different working directory still blocks shared storage (#3972 Round 10).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const otherDirCollision = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_RUNNING_CONTAINERS: 'other-ludy-db-1',
+      STUB_INSPECT_MOUNTS: 'other-ludy-db-1|ludy|volume|ludy_db-data|',
+      STUB_INSPECT_WORKDIRS: 'other-ludy-db-1|/opt/other-ludy',
+    });
+    expect(otherDirCollision.status, otherDirCollision.out).toBe(1);
+    expect(otherDirCollision.out).toContain(`outside project ludy (${dir})`);
+
+    // Same project + matching working_dir IS exempt on normal re-deploy.
+    const sameDirRunningOk = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_RUNNING_CONTAINERS: 'ludy-db-1',
+      STUB_INSPECT_MOUNTS: 'ludy-db-1|ludy|volume|ludy_db-data|',
+      STUB_INSPECT_WORKDIRS: `ludy-db-1|${dir}`,
+    });
+    expect(sameDirRunningOk.status, sameDirRunningOk.out).toBe(0);
+
+    // Pre-up-db aborted deploy after rolling back to legacy `name: crove` preserves `name: ludy` in docker-compose.override.yml (#3972 Round 10).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const croveLegacy = `${root}/legacy-base.yml`;
+    writeFileSync(croveLegacy, 'name: crove\nservices: {}\n');
+    expect(run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', croveLegacy]).status).toBe(0);
+    expect(deploy('v1.1.0', 'b', { STUB_VOLUMES: 'crove_db-data ludy_db-data', STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1' }).status).toBe(0);
+    expect(run(['rollback']).status).toBe(0);
+    expect(running()).toContain('name: ludy');
+
+    const abortedNext = deploy('v1.2.0', 'c', { STUB_NEW_DB_SUBPATH: 'pg17' });
+    expect(abortedNext.status).toBe(1);
+    expect(running()).toContain('name: ludy');
+    const afterAbortPlainCfg = spawnSync('docker', ['compose', '--env-file', `${dir}/.env`, '-f', `${dir}/docker-compose.yml`, '-f', `${dir}/docker-compose.override.yml`, 'config'], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${join(root, 'bin')}${delimiter}${process.env['PATH'] ?? ''}`, STUB_LOG: log, STUB_DEPLOY_DIR: dir },
+    });
+    expect(afterAbortPlainCfg.status, afterAbortPlainCfg.stderr).toBe(0);
+    expect(afterAbortPlainCfg.stdout).toMatch(/^name: ludy$/m);
+
+    // Rollback to legacy `name: crove` fails closed when COMPOSE_FILE omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME,
+    // and succeeds once COMPOSE_PROJECT_NAME=ludy is set (#3972 Round 11).
+    // Roll back to v1.1.0 (name: ludy) first so `previous` is again the legacy v1.0.0 (name: crove) release.
+    expect(run(['rollback']).status).toBe(0);
+    writeFileSync(`${dir}/compose.host.yml`, 'services: {}\n');
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\nCOMPOSE_FILE=docker-compose.yml:compose.host.yml\n');
+    const unsafeRollback = run(['rollback']);
+    expect(unsafeRollback.status, unsafeRollback.out).toBe(2);
+    expect(unsafeRollback.out).toContain('omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME');
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\nCOMPOSE_FILE=docker-compose.yml:compose.host.yml\nCOMPOSE_PROJECT_NAME=ludy\n');
+    expect(run(['rollback']).status).toBe(0);
+    rmSync(`${dir}/compose.host.yml`, { force: true });
+
+    // Nested mount under /var/lib/postgresql/data/pgdata is rejected before up db (#3972 Round 11).
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const nestedDb = deploy('v1.0.0', 'a', { STUB_NEW_DB_NESTED_MOUNT: '/var/lib/postgresql/data/pgdata' });
+    expect(nestedDb.status, nestedDb.out).toBe(1);
+    expect(nestedDb.out).toContain('unsupported nested mount at /var/lib/postgresql/data/pgdata');
+
+    // Leftover restore-drill container (`project=ludy-restore-test`) in same working_dir does not pollute real stack (#3972 Round 11).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    expect(deploy('v1.0.0', 'a', { STUB_VOLUMES: 'ludy_db-data' }).status).toBe(0);
+    const drillIgnored = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_WORKDIR_CONTAINERS: `${dir}|db|drill-db-1 ${dir}|db|ludy-db-1`,
+      STUB_INSPECT_MOUNTS: 'drill-db-1|ludy-restore-test|volume|drill_db-data||/var/lib/postgresql/data ludy-db-1|ludy|volume|ludy_db-data||/var/lib/postgresql/data',
+    });
+    expect(drillIgnored.status, drillIgnored.out).toBe(0);
+
+    // Image ENV PGDATA fallback matches running container PGDATA when Compose YAML omits PGDATA (#3972 Round 11).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const imgPgdataOk = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_NEW_DB_IMAGE: 'custom-pg:17',
+      STUB_IMAGE_PGDATA: 'custom-pg:17=/var/lib/postgresql/data/pgdata',
+      STUB_WORKDIR_CONTAINERS: `${dir}|db|ludy-db-1`,
+      STUB_INSPECT_MOUNTS: 'ludy-db-1|ludy|volume|ludy_db-data||/var/lib/postgresql/data',
+      STUB_INSPECT_ENV: 'ludy-db-1|PGDATA=/var/lib/postgresql/data/pgdata',
+    });
+    expect(imgPgdataOk.status, imgPgdataOk.out).toBe(0);
+    expect(readFileSync(`${dir}/.deploy/mounts`, 'utf8')).toContain('PGDATA_SUB=pgdata');
+
+    // Missing $DEPLOY_DIR/docker-compose.yml still verifies prior storage via staged release, .deploy/mounts, or containers (#3972 Round 13).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    expect(deploy('v1.0.0', 'a', { STUB_VOLUMES: 'ludy_db-data' }).status).toBe(0);
+    const croveRelCompose = `${root}/crove-prev.yml`;
+    writeFileSync(croveRelCompose, 'name: crove\nservices: {}\n');
+    const prevRelName = releaseDir('v1.0.0', 'a');
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/.deploy/project`, 'crove\n');
+    writeFileSync(`${dir}/.deploy/mounts`, '/var/lib/postgresql/data=volume:crove_db-data\nPGDATA_SUB=\n');
+    writeFileSync(`${dir}/releases/${prevRelName}/docker-compose.yml`, readFileSync(croveRelCompose, 'utf8'));
+    const missingRootViaRel = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1',
+    });
+    expect(missingRootViaRel.status, missingRootViaRel.out).toBe(1);
+    expect(missingRootViaRel.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    // Missing both root and release compose files still blocks via .deploy/mounts, via containers, or fails closed if mounts missing.
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    rmSync(`${dir}/releases/${prevRelName}/docker-compose.yml`, { force: true });
+    const missingComposeViaMounts = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1',
+    });
+    expect(missingComposeViaMounts.status, missingComposeViaMounts.out).toBe(1);
+    expect(missingComposeViaMounts.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    rmSync(`${dir}/.deploy/mounts`, { force: true });
+    rmSync(`${dir}/.deploy/current`, { force: true });
+    const missingComposeNoMounts = deploy('v1.1.0', 'b');
+    expect(missingComposeNoMounts.status, missingComposeNoMounts.out).toBe(1);
+    expect(missingComposeNoMounts.out).toContain('without docker-compose.yml or recorded database storage mounts');
+
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const missingComposeViaCtr = deploy('v1.0.0', 'a', {
+      STUB_WORKDIR_CONTAINERS: `${dir}|db|crove-db-1`,
+      STUB_INSPECT_MOUNTS: 'crove-db-1|crove|volume|crove_db-data||/var/lib/postgresql/data',
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1',
+    });
+    expect(missingComposeViaCtr.status, missingComposeViaCtr.out).toBe(1);
+    expect(missingComposeViaCtr.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    // Unpulled target db image fails closed when inspect+pull fail, and pulls + reads ENV PGDATA when pull succeeds (#3972 Round 13).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const unpulledFail = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_IMAGE: 'unpulled-pg:17',
+      STUB_IMAGE_INSPECT_FAIL: 'unpulled-pg:17',
+      STUB_PULL_FAIL_IMAGES: 'unpulled-pg:17',
+    });
+    expect(unpulledFail.status, unpulledFail.out).toBe(1);
+    expect(unpulledFail.out).toContain('cannot inspect target db image metadata to determine PGDATA');
+
+    const unpulledPulled = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_IMAGE: 'unpulled-pg:17',
+      STUB_IMAGE_INSPECT_FAIL: 'unpulled-pg:17',
+      STUB_PULL_RESOLVES_IMAGE_INSPECT: '1',
+      STUB_IMAGE_PGDATA: 'unpulled-pg:17=/var/lib/postgresql/data/pg17custom',
+    });
+    expect(unpulledPulled.status, unpulledPulled.out).toBe(0);
+    expect(readFileSync(`${dir}/.deploy/mounts`, 'utf8')).toContain('PGDATA_SUB=pg17custom');
+
+    // Rollback fails closed if .env or an override file sets a conflicting project for plain docker compose (#3972 Round 13).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+    expect(deploy('v1.0.0', 'a').status).toBe(0);
+    expect(deploy('v1.1.0', 'b').status).toBe(0);
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=crove\n');
+    const rbEnvConflict = run(['rollback']);
+    expect(rbEnvConflict.status, rbEnvConflict.out).toBe(2);
+    expect(rbEnvConflict.out).toContain('sets COMPOSE_PROJECT_NAME=crove');
+
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:compose.host.yml\n');
+    writeFileSync(`${dir}/compose.host.yml`, 'name: crove\nservices: {}\n');
+    const rbHostConflict = run(['rollback']);
+    expect(rbHostConflict.status, rbHostConflict.out).toBe(2);
+    expect(rbHostConflict.out).toContain("resolves plain docker compose to project 'crove'");
+    rmSync(`${dir}/compose.host.yml`, { force: true });
+
+    // SIGTERM after activate during pre-up-db checks restores the original compose files via cleanup (#3972 Round 13).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    rmSync(`${dir}/docker-compose.override.yml`, { force: true });
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+    const preSignalCompose = '# pre-deploy sentinel\nname: crove\nservices: {}\n';
+    writeFileSync(`${dir}/docker-compose.yml`, preSignalCompose);
+    const sigBin = `${root}/sigbin`;
+    mkdirSync(sigBin, { recursive: true });
+    writeFileSync(
+      `${sigBin}/docker`,
+      [
+        '#!/usr/bin/env bash',
+        'if [ "${1:-}" = volume ] && [ "${2:-}" = inspect ]; then',
+        '  pid="$(cat "${STUB_DEPLOY_DIR}/.deploy/lock/pid" 2>/dev/null || true)"',
+        '  if [ -n "$pid" ]; then kill -TERM "$pid" 2>/dev/null || true; fi',
+        'fi',
+        `exec "${root}/bin/docker" "$@"`,
+        '',
+      ].join('\n'),
+    );
+    chmodSync(`${sigBin}/docker`, 0o755);
+    const sigRes = spawnSync(
+      'bash',
+      [script, 'deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          PATH: `${sigBin}${delimiter}${join(root, 'bin')}${delimiter}${process.env['PATH'] ?? ''}`,
+          LUDY_DEPLOY_DIR: dir,
+          LUDY_READY_TIMEOUT: '1',
+          LUDY_WORKER_SETTLE: '0',
+          STUB_LOG: log,
+          STUB_DEPLOY_DIR: dir,
+          STUB_OPENSSL_KEY_FILE: `${root}/openssl-key`,
+          STUB_AUTH_ENABLE: '0',
+          STUB_WAIT_TIMEOUT: '1',
+          STUB_VOLUMES: 'crove_db-data',
+        },
+      },
+    );
+    expect(sigRes.status).toBe(143);
+    expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toBe(preSignalCompose);
+    expect(existsSync(`${dir}/docker-compose.override.yml`)).toBe(false);
+    expect(existsSync(`${dir}/.deploy/lock`)).toBe(false);
+
+    // Rollback fails closed on stale/mismatched /data/files volume, PGDATA change, or missing COMPOSE_FILE entry (#3972 Round 14).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+    expect(deploy('v1.0.0', 'a', { STUB_VOLUMES: 'ludy_db-data ludy_files' }).status).toBe(0);
+    expect(
+      deploy('v1.1.0', 'b', {
+        STUB_VOLUMES: 'ludy_db-data ludy_files ludy_files_v2',
+        STUB_POPULATED_MOUNTS: 'ludy_files ludy_files_v2',
+        STUB_NEW_FILES_VOLUME: 'ludy_files_v2',
+      }).status,
+    ).toBe(0);
+    const rbStaleFiles = run(['rollback'], {
+      STUB_VOLUMES: 'ludy_db-data ludy_files ludy_files_v2',
+      STUB_POPULATED_MOUNTS: 'ludy_files ludy_files_v2',
+      STUB_PARTIAL_MOUNTS: 'ludy_files',
+      STUB_NEW_FILES_VOLUME: 'ludy_files',
+    });
+    expect(rbStaleFiles.status, rbStaleFiles.out).toBe(1);
+    expect(rbStaleFiles.out).toContain('rollback would revert to stale data');
+    expect(readFileSync(`${dir}/.deploy/current`, 'utf8').trim()).toBe(releaseDir('v1.1.0', 'b'));
+
+    // Cross-volume rollback fails closed when an active (running, paused, or restarting) container still mounts the active volume (#3972 Round 15).
+    const rbBusyFiles = run(['rollback'], {
+      STUB_VOLUMES: 'ludy_db-data ludy_files ludy_files_v2',
+      STUB_POPULATED_MOUNTS: 'ludy_files ludy_files_v2',
+      STUB_NEW_FILES_VOLUME: 'ludy_files',
+      STUB_PAUSED_CONTAINERS: 'live-api-1',
+      STUB_INSPECT_MOUNTS: 'live-api-1|ludy|volume|ludy_files_v2||',
+    });
+    expect(rbBusyFiles.status, rbBusyFiles.out).toBe(1);
+    expect(rbBusyFiles.out).toContain('still mounted by a running, paused, or restarting container');
+
+    const rbPgdataChange = run(['rollback'], {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_NEW_DB_PGDATA: '/var/lib/postgresql/data/other',
+    });
+    expect(rbPgdataChange.status, rbPgdataChange.out).toBe(1);
+    expect(rbPgdataChange.out).toContain('PGDATA /var/lib/postgresql/data/other');
+
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:compose.host.yml\n');
+    const rbMissingHostFile = run(['rollback']);
+    expect(rbMissingHostFile.status, rbMissingHostFile.out).toBe(2);
+    expect(rbMissingHostFile.out).toContain(`plain docker compose in ${dir} resolves to project`);
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+
+    // Parent/child bind paths and symlinked bind mounts collide cleanly in check_storage_free without false-positiving on siblings (#3972 Round 14).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const parentBind = `${root}/srv-db`;
+    const childBind = `${parentBind}/pgdata`;
+    const siblingBind = `${root}/srv-db2`;
+    const linkBind = `${root}/srv-db-link`;
+    mkdirSync(childBind, { recursive: true });
+    mkdirSync(siblingBind, { recursive: true });
+    symlinkSync(parentBind, linkBind);
+    const parentHeld = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_BIND: childBind,
+      STUB_RUNNING_CONTAINERS: 'other-db-1',
+      STUB_INSPECT_WORKDIRS: 'other-db-1|/opt/other',
+      STUB_INSPECT_MOUNTS: `other-db-1|other|bind||${parentBind}|`,
+    });
+    expect(parentHeld.status, parentHeld.out).toBe(1);
+    expect(parentHeld.out).toContain('still mounted by a running container outside project');
+
+    const childHeld = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_BIND: linkBind,
+      STUB_RUNNING_CONTAINERS: 'other-db-1',
+      STUB_INSPECT_WORKDIRS: 'other-db-1|/opt/other',
+      STUB_INSPECT_MOUNTS: `other-db-1|other|bind||${childBind}|`,
+    });
+    expect(childHeld.status, childHeld.out).toBe(1);
+    expect(childHeld.out).toContain('still mounted by a running container outside project');
+
+    const siblingFree = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_BIND: siblingBind,
+      STUB_RUNNING_CONTAINERS: 'other-db-1',
+      STUB_INSPECT_WORKDIRS: 'other-db-1|/opt/other',
+      STUB_INSPECT_MOUNTS: `other-db-1|other|bind||${parentBind}|`,
+    });
+    expect(siblingFree.status, siblingFree.out).toBe(0);
+
+    // Paused and restarting containers block storage cutover just like running containers (#3972 Round 15).
+    for (const [label, statusEnv] of [
+      ['paused', { STUB_PAUSED_CONTAINERS: 'paused-db-1' }],
+      ['restarting', { STUB_RESTARTING_CONTAINERS: 'restarting-db-1' }],
+    ] as const) {
+      rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+      rmSync(`${dir}/docker-compose.yml`, { force: true });
+      const cid = label === 'paused' ? 'paused-db-1' : 'restarting-db-1';
+      const activeHeld = deploy('v1.0.0', 'a', {
+        STUB_NEW_DB_BIND: childBind,
+        ...statusEnv,
+        STUB_INSPECT_WORKDIRS: `${cid}|/opt/other`,
+        STUB_INSPECT_MOUNTS: `${cid}|other|bind||${parentBind}|`,
+      });
+      expect(activeHeld.status, `${label}: ${activeHeld.out}`).toBe(1);
+      expect(activeHeld.out).toContain('still mounted by a running container outside project');
+    }
+
+    // Stopped container owned by another working directory under COMPOSE_PROJECT_NAME=ludy blocks BOTH deploy and rollback even with non-overlapping storage (#3972 Round 16).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const foreignDeploy = deploy('v1.0.0', 'a', {
+      STUB_PROJECT_CONTAINERS: 'ludy|other-stopped-db-1',
+      STUB_INSPECT_WORKDIRS: 'other-stopped-db-1|/opt/other-ludy',
+    });
+    expect(foreignDeploy.status, foreignDeploy.out).toBe(1);
+    expect(foreignDeploy.out).toContain("Compose project 'ludy' is already owned by another installation at /opt/other-ludy");
+
+    expect(deploy('v1.0.0', 'a', { STUB_PROJECT_CONTAINERS: 'ludy|own-db-1', STUB_INSPECT_WORKDIRS: `own-db-1|${dir}` }).status).toBe(0);
+    expect(deploy('v1.1.0', 'b').status).toBe(0);
+    const foreignRollback = run(['rollback'], {
+      STUB_PROJECT_CONTAINERS: 'ludy|other-stopped-db-1',
+      STUB_INSPECT_WORKDIRS: 'other-stopped-db-1|/opt/other-ludy',
+    });
+    expect(foreignRollback.status, foreignRollback.out).toBe(1);
+    expect(foreignRollback.out).toContain("Compose project 'ludy' is already owned by another installation at /opt/other-ludy");
+
+    // Round 17 regressions (#3972 Round 17):
+    // 1) Auto-recover refuses to revert to an older release when the failed deploy used a copied /data/files volume with unmigrated data.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+    const filesMapEnv = `${digest('a')}=ludy_files ${digest('b')}=ludy_files_v2`;
+    expect(deploy('v1.0.0', 'a', { STUB_VOLUMES: 'ludy_db-data ludy_files', STUB_FILES_VOL_BY_DIGEST: filesMapEnv }).status).toBe(0);
+    const autoRecBlocked = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'ludy_db-data ludy_files ludy_files_v2',
+      STUB_POPULATED_MOUNTS: 'ludy_files ludy_files_v2',
+      STUB_PARTIAL_MOUNTS: 'ludy_files',
+      STUB_FILES_VOL_BY_DIGEST: filesMapEnv,
+      STUB_BAD_DIGEST: digest('b'),
+    });
+    expect(autoRecBlocked.status, autoRecBlocked.out).toBe(3);
+    expect(autoRecBlocked.out).toContain('automatic rollback');
+    expect(autoRecBlocked.out).toContain('rollback would revert to stale data');
+    expect(running()).toContain(image('b'));
+    expect(state('current')).toBe(releaseDir('v1.0.0', 'a'));
+
+    // 2) Cross-project/cross-volume `up db` failure restarts previous `db` before rolling services when new db storage is free,
+    // and refuses with exit 3 when the failed new db container still holds the copied storage.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const croveBase = `${root}/crove-after-db-fail.yml`;
+    writeFileSync(croveBase, 'name: crove\nservices: {}\n');
+    expect(run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', croveBase]).status).toBe(0);
+    writeFileSync(`${log}.project`, '');
+    writeFileSync(log, '');
+    const afterDbRec = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_UP_DB_FAIL_PROJ: 'ludy',
+      STUB_LOG_PROJECT: '1',
+    });
+    expect(afterDbRec.status, afterDbRec.out).toBe(1);
+    expect(afterDbRec.out).toContain(`rolled back to ${releaseDir('v1.0.0', 'a')}, which serves again`);
+    const dbRecCalls = readFileSync(`${log}.project`, 'utf8').split('\n').filter(Boolean);
+    const oldDbUpIdx = dbRecCalls.findIndex((l) => l === 'project crove up');
+    const firstOldPortIdx = dbRecCalls.findIndex((l) => l === 'project crove port');
+    expect(oldDbUpIdx).toBeGreaterThan(-1);
+    expect(firstOldPortIdx).toBeGreaterThan(oldDbUpIdx);
+
+    const afterDbHeld = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_UP_DB_FAIL_PROJ: 'ludy',
+      STUB_RESTARTING_CONTAINERS: 'ludy-restarting-db',
+      STUB_INSPECT_WORKDIRS: `ludy-restarting-db|${dir}`,
+      STUB_INSPECT_MOUNTS: 'ludy-restarting-db|ludy|volume|ludy_db-data||',
+    });
+    expect(afterDbHeld.status, afterDbHeld.out).toBe(3);
+    expect(afterDbHeld.out).toContain('failed database storage ludy_db-data is still mounted');
+
+    // 3) Valid multiline single-quoted OAUTH_JWKS works in both deploy and rollback.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const mlEnv = [
+      'POSTGRES_PASSWORD=x',
+      'LUDY_CONTEXT_TOKEN_KEY=already-here',
+      "OAUTH_JWKS='{\n  \"keys\": [\n    {\"kty\": \"RSA\", \"use\": \"sig\"}\n  ]\n}' # inline comment",
+      'COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml',
+      '',
+    ].join('\n');
+    writeFileSync(`${dir}/.env`, mlEnv);
+    expect(deploy('v1.0.0', 'a').status).toBe(0);
+    expect(deploy('v1.1.0', 'b').status).toBe(0);
+    const mlRollback = run(['rollback']);
+    expect(mlRollback.status, mlRollback.out).toBe(0);
+    expect(readFileSync(`${dir}/.env`, 'utf8')).toBe(mlEnv);
+
+    // 4) Out-of-tree --env-file rollback still checks plain docker compose in $DEPLOY_DIR ($dir/.env) as tools/backup/lib.sh loads it.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const extEnv = `${root}/external.env`;
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=ludy\n');
+    writeFileSync(extEnv, 'POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=ludy\n');
+    expect(run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--env-file', extEnv]).status).toBe(0);
+    expect(run(['deploy', '--release', 'v1.1.0', '--image', image('b'), '--extract-image', extract('b'), '--media-image', media('b'), '--compose', compose, '--env-file', extEnv]).status).toBe(0);
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=crove\n');
+    const extRollback = run(['rollback', '--env-file', extEnv]);
+    expect(extRollback.status, extRollback.out).toBe(2);
+    expect(extRollback.out).toContain('sets COMPOSE_PROJECT_NAME=crove');
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+
+    // Round 18 regressions (#3972 Round 18):
+    // 1) after_db_fail refuses rollback (exit 3) before `up db` if rollback Compose DB volume or PGDATA drifted from pre-deploy state.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(croveBase, 'name: crove\nservices: {}\n');
+    expect(run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', croveBase]).status).toBe(0);
+    writeFileSync(`${log}.project`, '');
+    const driftedDbRec = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data crove_drifted-db ludy_db-data',
+      STUB_CROVE_DB_VOLUME: 'crove_drifted-db',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_UP_DB_FAIL_PROJ: 'ludy',
+      STUB_LOG_PROJECT: '1',
+    });
+    expect(driftedDbRec.status, driftedDbRec.out).toBe(3);
+    expect(driftedDbRec.out).toContain('does not match pre-deploy database storage');
+    expect(readFileSync(`${log}.project`, 'utf8').split('\n')).not.toContain('project crove up');
+
+    const driftedPgRec = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PREV_DB_PGDATA: '/var/lib/postgresql/data/drifted',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_UP_DB_FAIL_PROJ: 'ludy',
+      STUB_LOG_PROJECT: '1',
+    });
+    expect(driftedPgRec.status, driftedPgRec.out).toBe(3);
+    expect(driftedPgRec.out).toContain('does not match pre-deploy database storage');
+    expect(readFileSync(`${log}.project`, 'utf8').split('\n')).not.toContain('project crove up');
+
+    // 2) Cross-type Docker volume Mountpoint vs host bind overlap blocks check_storage_free in both directions.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const volBackingPath = `${root}/docker-vols/ludy_db-data/_data`;
+    mkdirSync(volBackingPath, { recursive: true });
+    const crossVolTarget = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_VOLUME_MOUNTPOINTS: `ludy_db-data=${volBackingPath}`,
+      STUB_RUNNING_CONTAINERS: 'bind-holder-1',
+      STUB_INSPECT_WORKDIRS: 'bind-holder-1|/opt/other',
+      STUB_INSPECT_MOUNTS: `bind-holder-1|other|bind||${volBackingPath}|`,
+    });
+    expect(crossVolTarget.status, crossVolTarget.out).toBe(1);
+    expect(crossVolTarget.out).toContain('still mounted by a running container outside project');
+
+    const crossBindTarget = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_BIND: volBackingPath,
+      STUB_VOLUMES: 'other_db-data',
+      STUB_VOLUME_MOUNTPOINTS: `other_db-data=${volBackingPath}`,
+      STUB_RUNNING_CONTAINERS: 'vol-holder-1',
+      STUB_INSPECT_WORKDIRS: 'vol-holder-1|/opt/other',
+      STUB_INSPECT_MOUNTS: 'vol-holder-1|other|volume|other_db-data||',
+    });
+    expect(crossBindTarget.status, crossBindTarget.out).toBe(1);
+    expect(crossBindTarget.out).toContain('still mounted by a running container outside project');
+
+    // 3) plain_compose_omits_override_and_project inspects each env file in-process without subshell array staleness.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(croveBase, 'name: crove\nservices: {}\n');
+    const inTreeEnv = 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:compose.host.yml\n';
+    const outTreeEnv = 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:docker-compose.override.yml\n';
+    writeFileSync(`${dir}/.env`, inTreeEnv);
+    writeFileSync(extEnv, outTreeEnv);
+    writeFileSync(`${dir}/compose.host.yml`, 'services: {}\n');
+    expect(run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', croveBase, '--env-file', extEnv]).status).toBe(0);
+    const staleArrayGuard = run(['deploy', '--release', 'v1.1.0', '--image', image('b'), '--extract-image', extract('b'), '--media-image', media('b'), '--compose', compose, '--env-file', extEnv]);
+    expect(staleArrayGuard.status, staleArrayGuard.out).toBe(2);
+    expect(staleArrayGuard.out).toContain('COMPOSE_FILE omits docker-compose.override.yml');
+    rmSync(`${dir}/compose.host.yml`, { force: true });
+
+    // 4) --modules changing /data/files via Compose interpolation re-validates storage continuity before rolling and updates .deploy/mounts.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\n');
+    expect(deploy('v1.0.0', 'a', { STUB_VOLUMES: 'ludy_db-data ludy_files' }).status).toBe(0);
+    writeFileSync(log, '');
+    const modSwitchBlocked = run(
+      ['deploy', '--release', 'v1.1.0', '--image', image('b'), '--extract-image', extract('b'), '--media-image', media('b'), '--compose', compose, '--modules', 'finance,crm'],
+      {
+        STUB_VOLUMES: 'ludy_db-data ludy_files ludy_files_mod',
+        STUB_POPULATED_MOUNTS: 'ludy_files',
+        STUB_FILES_VOL_IF_ENV_HAS: 'LUDY_MODULES=finance,crm|ludy_files_mod',
+      },
+    );
+    expect(modSwitchBlocked.status, modSwitchBlocked.out).toBe(1);
+    expect(modSwitchBlocked.out).toContain('storage changed incompatibly');
+    expect(readFileSync(`${dir}/.env`, 'utf8')).not.toContain('LUDY_MODULES=finance,crm');
+    expect(calls().some((l) => l.startsWith('compose up') && l.includes(' ludy'))).toBe(false);
+
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\n');
+    const modSwitchFresh = run(
+      ['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--modules', 'finance,crm'],
+      { STUB_FILES_VOL_IF_ENV_HAS: 'LUDY_MODULES=finance,crm|ludy_files_mod' },
+    );
+    expect(modSwitchFresh.status, modSwitchFresh.out).toBe(0);
+    expect(state('mounts')).toContain('/data/files=volume:ludy_files_mod');
+
+    // Round 19 regressions (#3972 Round 19):
+    // 1) Distinct DB storage still refuses deploy before `up db` when destination /data/keys or /data/files is held by another project.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+    writeFileSync(log, '');
+    const heldAppMount = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'ludy_db-data ludy_keys',
+      STUB_RUNNING_CONTAINERS: 'other-app-1',
+      STUB_INSPECT_WORKDIRS: 'other-app-1|/opt/other-app',
+      STUB_INSPECT_MOUNTS: 'other-app-1|other|volume|ludy_keys||',
+    });
+    expect(heldAppMount.status, heldAppMount.out).toBe(1);
+    expect(heldAppMount.out).toContain('/data/keys storage ludy_keys is still mounted by a running container outside project');
+    expect(calls().some((l) => l.startsWith('compose up'))).toBe(false);
+
+    // 2) COMPOSE_FILE omitting compose.host.yml while $DEPLOY_DIR/compose.host.yml exists still includes compose.host.yml in dc().
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/compose.host.yml`, 'services: {}\n');
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:docker-compose.override.yml\n');
+    rmSync(`${log}.files`, { force: true });
+    const hostFallback = deploy('v1.0.0', 'a');
+    expect(hostFallback.status, hostFallback.out).toBe(0);
+    for (const files of readFileSync(`${log}.files`, 'utf8').split('\n').filter(Boolean)) {
+      expect(files).toBe(`${dir}/docker-compose.yml ${dir}/docker-compose.override.yml ${dir}/compose.host.yml`);
+    }
+    rmSync(`${dir}/compose.host.yml`, { force: true });
+
+    // 3) Both deploy workflows reject ambiguous dual /opt/ludy + /opt/crove hosts when DEPLOY_DIR is unset.
+    for (const wfRel of ['.github/workflows/deploy.yml', '.github/workflows/pilot-ludy-cutover.yml']) {
+      const wfText = readFileSync(join(repo, wfRel), 'utf8');
+      expect(wfText, wfRel).toContain('both_distinct');
+      expect(wfText, wfRel).toContain('cd -P /opt/ludy');
+      expect(wfText, wfRel).toContain('cd -P /opt/crove');
+    }
+
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+
+    // Failed restore_pre_activate preserves $PRE_ACTIVATE_SNAP across EXIT cleanup so the reported recovery path remains intact (#3972 Round 14).
+    if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+      rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+      rmSync(`${dir}/docker-compose.yml`, { force: true });
+      writeFileSync(`${dir}/docker-compose.yml`, 'name: ludy\nservices: {}\n');
+      const roBin = `${root}/robin`;
+      mkdirSync(roBin, { recursive: true });
+      writeFileSync(
+        `${roBin}/docker`,
+        [
+          '#!/usr/bin/env bash',
+          'if [ "${1:-}" = ps ] && [[ " $* " == *" status=running "* ]]; then',
+          '  chmod 0555 "${STUB_DEPLOY_DIR}"',
+          '  exit 1',
+          'fi',
+          `exec "${root}/bin/docker" "$@"`,
+          '',
+        ].join('\n'),
+      );
+      chmodSync(`${roBin}/docker`, 0o755);
+      let keptSnapPath: string | undefined;
+      try {
+        const roRes = spawnSync(
+          'bash',
+          [script, 'deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose],
+          {
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              PATH: `${roBin}${delimiter}${join(root, 'bin')}${delimiter}${process.env['PATH'] ?? ''}`,
+              LUDY_DEPLOY_DIR: dir,
+              LUDY_READY_TIMEOUT: '1',
+              LUDY_WORKER_SETTLE: '0',
+              STUB_LOG: log,
+              STUB_DEPLOY_DIR: dir,
+              STUB_OPENSSL_KEY_FILE: `${root}/openssl-key`,
+              SMOKE_EMAIL: '',
+              SMOKE_PASSWORD: '',
+              SMOKE_ORG: '',
+            },
+          },
+        );
+        const roOut = `${roRes.stdout}${roRes.stderr}`;
+        expect(roRes.status, roOut).not.toBe(0);
+        expect(roOut).toContain('snapshot kept at ');
+        keptSnapPath = /snapshot kept at (\S+)/.exec(roOut)?.[1];
+        expect(keptSnapPath).toBeTruthy();
+        expect(existsSync(keptSnapPath!)).toBe(true);
+      } finally {
+        chmodSync(dir, 0o755);
+        if (keptSnapPath) rmSync(keptSnapPath, { recursive: true, force: true });
+      }
+    }
+  });
+
   describe('build check', () => {
     const build = (c: string) => digest(c).slice(0, 12);
     const withBuild = (release: string, c: string, env: Record<string, string> = {}) =>
@@ -355,7 +1646,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   });
 
   it('rolls the worker before the API when they run as separate services', () => {
-    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants crove-extract api worker' });
+    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants ludy-extract api worker' });
     expect(res.status, res.out).toBe(0);
     const c = calls();
     const worker = indexOf(c, 'compose up --detach --no-build --no-deps worker');
@@ -365,13 +1656,13 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(ps).toBeGreaterThan(worker);
     expect(api).toBeGreaterThan(ps);
     expect(indexOf(c, 'compose port api 8080')).toBeGreaterThan(api);
-    expect(c.some((l) => / crove$/.test(l) && !l.startsWith('compose rm '))).toBe(false);
+    expect(c.some((l) => / (ludy|crove)$/.test(l) && !l.startsWith('compose rm ') && !l.startsWith('docker rm '))).toBe(false);
   });
 
   // #1965 (plan §3.5): toward an older release the API goes first, so the worker that runs is never older than the API
   // that serves (whose /readyz waits on an older worker, #1952); toward a newer one, the worker first.
   describe('separate services, toward an older release (#1965)', () => {
-    const env = { STUB_SERVICES: 'db migrate auth crove-extract api worker' };
+    const env = { STUB_SERVICES: 'db migrate auth ludy-extract api worker' };
     const worker = 'compose up --detach --no-build --no-deps worker';
     const api = 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 api';
     const last = (lines: string[], text: string) => lines.findLastIndex((l) => l.includes(text));
@@ -462,7 +1753,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   });
 
   it('does not roll the API when the new worker does not stay up, and rolls back', () => {
-    const env = { STUB_SERVICES: 'db migrate auth crove-extract api worker' };
+    const env = { STUB_SERVICES: 'db migrate auth ludy-extract api worker' };
     expect(deploy('v1.0.0', 'a', env).status).toBe(0);
     rmSync(log);
     const res = deploy('v1.1.0', 'b', { ...env, STUB_WORKER_DOWN_DIGEST: digest('b') });
@@ -480,7 +1771,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   it('asks for readiness at least once, however short the timeout, so a ready instance is never taken for a failed one (#1841)', () => {
     // A timeout of 0 forces the boundary that made the case above flaky: the whole second passes before the first
     // question, as when bash's SECONDS ticks right after the deadline is set.
-    const env = { CROVE_READY_TIMEOUT: '0', STUB_SERVICES: 'db migrate auth crove-extract api worker' };
+    const env = { LUDY_READY_TIMEOUT: '0', STUB_SERVICES: 'db migrate auth ludy-extract api worker' };
     const ready = deploy('v1.0.0', 'a', env);
     expect(ready.status, ready.out).toBe(0);
     expect(ready.out).toContain('ready: every committed migration is applied');
@@ -514,7 +1805,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   });
 
   it('never runs the account step of the smoke test on the host, so a rollback cannot depend on the smoke account', () => {
-    const res = deploy('v1.0.0', 'a', { SMOKE_EMAIL: 'smoke@example.com', SMOKE_PASSWORD: 'x', SMOKE_ORG: 'crove-smoke', STUB_SIGNIN_FAIL: '1' });
+    const res = deploy('v1.0.0', 'a', { SMOKE_EMAIL: 'smoke@example.com', SMOKE_PASSWORD: 'x', SMOKE_ORG: 'ludy-smoke', STUB_SIGNIN_FAIL: '1' });
     expect(res.status, res.out).toBe(0);
     expect(res.out).not.toContain('signs in, uploads');
     expect(readFileSync(log, 'utf8')).not.toContain('/auth/v1/token');
@@ -610,9 +1901,9 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
   it.each([
     ['a release id with shell characters', ['--release', 'v1;rm -rf /', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a')], '--release must match'],
-    ['an image without a digest', ['--release', 'v1', '--image', 'ghcr.io/example/crove:v1', '--extract-image', extract('a'), '--media-image', media('a')], '--image must be pinned by digest'],
-    ['an extract image without a digest', ['--release', 'v1', '--image', image('a'), '--extract-image', 'crove-extract:latest', '--media-image', media('a')], '--extract-image must be pinned'],
-    ['a media image without a digest', ['--release', 'v1', '--image', image('a'), '--extract-image', extract('a'), '--media-image', 'crove-media:latest'], '--media-image must be pinned'],
+    ['an image without a digest', ['--release', 'v1', '--image', 'ghcr.io/example/ludy:v1', '--extract-image', extract('a'), '--media-image', media('a')], '--image must be pinned by digest'],
+    ['an extract image without a digest', ['--release', 'v1', '--image', image('a'), '--extract-image', 'ludy-extract:latest', '--media-image', media('a')], '--extract-image must be pinned'],
+    ['a media image without a digest', ['--release', 'v1', '--image', image('a'), '--extract-image', extract('a'), '--media-image', 'ludy-media:latest'], '--media-image must be pinned'],
     ['no media image', ['--release', 'v1', '--image', image('a'), '--extract-image', extract('a')], '--media-image must be pinned'],
   ])('refuses %s before calling docker', (_name, args, message) => {
     const res = run(['deploy', ...args, '--compose', compose]);
@@ -667,7 +1958,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   });
 
   it('keeps the newest releases and never removes the current or previous one', () => {
-    for (const [i, c] of ['a', 'b', 'c', 'd'].entries()) expect(deploy(`v1.${i}.0`, c, { CROVE_KEEP_RELEASES: '2' }).status).toBe(0);
+    for (const [i, c] of ['a', 'b', 'c', 'd'].entries()) expect(deploy(`v1.${i}.0`, c, { LUDY_KEEP_RELEASES: '2' }).status).toBe(0);
     const left = readdirSync(`${dir}/releases`).sort();
     expect(left).toEqual([releaseDir('v1.2.0', 'c'), releaseDir('v1.3.0', 'd')]);
   });
@@ -750,8 +2041,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     it.each([
       ['a value', 'LUDY_CONTEXT_TOKEN_KEY=abc'],
-      ['legacy CROVE_CONTEXT_TOKEN_KEY value', 'CROVE_CONTEXT_TOKEN_KEY=abc'],
-      ['export and a quoted value', 'export LUDY_CONTEXT_TOKEN_KEY="abc"'],
+        ['export and a quoted value', 'export LUDY_CONTEXT_TOKEN_KEY="abc"'],
       ['a value and a comment', 'LUDY_CONTEXT_TOKEN_KEY = abc # mine'],
       ['a quoted value with a space and a hash', 'LUDY_CONTEXT_TOKEN_KEY="a # b"'],
       ['a value that starts with a hash (in doubt: kept)', 'LUDY_CONTEXT_TOKEN_KEY=#abc'],
@@ -793,7 +2083,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         writeFileSync(`${root}/bin/${name}`, `#!/bin/sh\nprintf '%s %s\\n' "${name}" "$*" >>"$STUB_LOG.shim-argv"\nenv >>"$STUB_LOG.shim-env"\nexec ${real} "$@"\n`);
         chmodSync(`${root}/bin/${name}`, 0o755);
       }
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=\n');
       const res = deploy('v1.0.0', 'a');
       expect(res.status, res.out).toBe(0);
       const key = keyOf();
@@ -817,17 +2107,17 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
 
     it('stops before anything changes when the key cannot be made, and leaves the env file as it was', () => {
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=\n');
       expect(deploy('v1.0.0', 'a', { STUB_OPENSSL_FAIL: '1' }).status).toBe(1);
       expect(deploy('v1.0.0', 'a').status).toBe(0);
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=\n');
       rmSync(log);
       const failed = deploy('v1.1.0', 'b', { STUB_OPENSSL_FAIL: '1' });
       expect(failed.status, failed.out).toBe(1);
       expect(failed.out).toContain('openssl did not make a 32 byte key');
       expect(failed.out).toContain('the context token key could not be written');
       expect(failed.out).toContain(`${releaseDir('v1.0.0', 'a')} still runs`);
-      expect(envFile()).toBe('POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\n');
+      expect(envFile()).toBe('POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=\n');
       // The migration did not run, the services were not changed, no copy of the env file is left.
       expect(calls().some((l) => l.startsWith('compose run'))).toBe(false);
       expect(running()).toContain(image('a'));
@@ -852,7 +2142,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(calls()).toEqual([]);
       // A key that is there needs no write access.
       chmodSync(`${dir}/.env`, 0o644);
-      writeFileSync(`${dir}/.env`, 'CROVE_CONTEXT_TOKEN_KEY=abc\n');
+      writeFileSync(`${dir}/.env`, 'LUDY_CONTEXT_TOKEN_KEY=abc\n');
       chmodSync(`${dir}/.env`, 0o444);
       expect(deploy('v1.0.0', 'a').status).toBe(0);
     });
@@ -868,7 +2158,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
 
     it('leaves the key where it is when the migration fails, on a rollback and on a later deploy', () => {
-      writeFileSync(`${dir}/.env`, 'CROVE_CONTEXT_TOKEN_KEY=\n');
+      writeFileSync(`${dir}/.env`, 'LUDY_CONTEXT_TOKEN_KEY=\n');
       const failed = deploy('v1.0.0', 'a', { STUB_MIGRATE_EXIT: '1' });
       expect(failed.status, failed.out).toBe(1);
       const key = keyOf();
@@ -882,7 +2172,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     // A write into the env file that fails or is cut off is put back; when even that fails, both copies stay and are named.
     describe('a failed overwrite of the env file', () => {
-      const ORIGINAL = 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\nOTHER=1\n';
+      const ORIGINAL = 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=\nOTHER=1\n';
       // A `cat` that writes three bytes and fails when it reads the pattern's file.
       const failingCat = (pattern: string) => {
         const real = spawnSync('bash', ['-c', 'command -v cat'], { encoding: 'utf8' }).stdout.trim();
@@ -921,11 +2211,22 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       });
     });
 
-    it('takes the key from the env file only: a variable of the caller does not reach migrate', () => {
+    it('takes the key from the env file only: caller LUDY_ and CROVE_CONTEXT_TOKEN_KEY do not reach migrate or up', () => {
       writeFileSync(`${dir}/.env`, 'LUDY_CONTEXT_TOKEN_KEY=\n');
-      const res = deploy('v1.0.0', 'a', { CROVE_CONTEXT_TOKEN_KEY: 'from-the-session', LUDY_CONTEXT_TOKEN_KEY: 'from-the-session' });
+      const res = deploy('v1.0.0', 'a', {
+        LUDY_CONTEXT_TOKEN_KEY: 'from-the-session',
+        CROVE_CONTEXT_TOKEN_KEY: 'legacy-from-session',
+      });
       expect(res.status, res.out).toBe(0);
       expect(res.out).toContain('context token key generated');
+      expect(existsSync(`${log}.envvar`)).toBe(false);
+
+      expect(deploy('v1.1.0', 'b').status).toBe(0);
+      const rb = run(['rollback'], {
+        LUDY_CONTEXT_TOKEN_KEY: 'from-the-session',
+        CROVE_CONTEXT_TOKEN_KEY: 'legacy-from-session',
+      });
+      expect(rb.status, rb.out).toBe(0);
       expect(existsSync(`${log}.envvar`)).toBe(false);
     });
 
@@ -975,30 +2276,30 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
   describe('smoke', () => {
     it('passes when every check answers', () => {
-      const res = run(['smoke', 'https://crove.example.test/']);
+      const res = run(['smoke', 'https://ludy.example.test/']);
       expect(res.status, res.out).toBe(0);
       const urls = readFileSync(log, 'utf8');
       for (const path of ['/healthz', '/readyz', '/api/config', '/auth/v1/health', '/login', '/assets/index-abc123.js']) {
-        expect(urls).toContain(`curl https://crove.example.test${path}\n`);
+        expect(urls).toContain(`curl https://ludy.example.test${path}\n`);
       }
     });
 
     it('checks /version when given the build being deployed (#892)', () => {
-      const ok = run(['smoke', 'https://crove.example.test', 'dev']);
+      const ok = run(['smoke', 'https://ludy.example.test', 'dev']);
       expect(ok.status, ok.out).toBe(0);
       expect(ok.out).toContain('smoke ok: /version answers build dev with every migration applied');
-      const other = run(['smoke', 'https://crove.example.test', '0123456789ab']);
+      const other = run(['smoke', 'https://ludy.example.test', '0123456789ab']);
       expect(other.status).toBe(1);
       expect(other.out).toContain('smoke failed: /version answers build 0123456789ab with every migration applied');
-      const behind = run(['smoke', 'https://crove.example.test', 'dev'], { STUB_MIGRATION_MISSING: '1' });
+      const behind = run(['smoke', 'https://ludy.example.test', 'dev'], { STUB_MIGRATION_MISSING: '1' });
       expect(behind.status).toBe(1);
-      expect(behind.out).toContain('"migrationsMissing":["20990101000000_crove_kernel_next.sql"]');
-      expect(run(['smoke', 'https://crove.example.test']).out).not.toContain('/version');
-      expect(run(['smoke', 'https://crove.example.test', 'a b']).status).toBe(2);
+      expect(behind.out).toContain('"migrationsMissing":["20990101000000_ludy_kernel_next.sql"]');
+      expect(run(['smoke', 'https://ludy.example.test']).out).not.toContain('/version');
+      expect(run(['smoke', 'https://ludy.example.test', 'a b']).status).toBe(2);
     });
 
     it('fails, naming the check, when one does not answer', () => {
-      const res = run(['smoke', 'https://crove.example.test'], { STUB_READYZ_FAIL: '1' });
+      const res = run(['smoke', 'https://ludy.example.test'], { STUB_READYZ_FAIL: '1' });
       expect(res.status).toBe(1);
       expect(res.out).toContain('smoke failed: /readyz answers ready');
       expect(res.out).toContain('smoke ok: /healthz answers ok');
@@ -1007,25 +2308,25 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     describe('account step (#690)', () => {
       // A password with characters a JSON body or a shell would have to escape.
       const PASSWORD = 'smoke "pass" \\ word $HOME 0123';
-      const account = { SMOKE_EMAIL: 'smoke@example.com', SMOKE_PASSWORD: PASSWORD, SMOKE_ORG: 'crove-smoke', CROVE_SMOKE_POLL_SECONDS: '1' };
-      const STEP = 'signs in, uploads a synthetic e-invoice to org crove-smoke and gets a proposal';
+      const account = { SMOKE_EMAIL: 'smoke@example.com', SMOKE_PASSWORD: PASSWORD, SMOKE_ORG: 'ludy-smoke', LUDY_SMOKE_POLL_SECONDS: '1' };
+      const STEP = 'signs in, uploads a synthetic e-invoice to org ludy-smoke and gets a proposal';
       const read = (suffix: string) => (existsSync(`${log}.${suffix}`) ? readFileSync(`${log}.${suffix}`, 'utf8') : '');
 
       it('is skipped with a notice without SMOKE_EMAIL and SMOKE_PASSWORD', () => {
-        const res = run(['smoke', 'https://crove.example.test'], { SMOKE_EMAIL: 'smoke@example.com' });
+        const res = run(['smoke', 'https://ludy.example.test'], { SMOKE_EMAIL: 'smoke@example.com' });
         expect(res.status, res.out).toBe(0);
         expect(res.out).toContain('smoke skipped: sign-in and upload (SMOKE_EMAIL and SMOKE_PASSWORD are not set)');
         expect(readFileSync(log, 'utf8')).not.toContain('/auth/v1/token');
       });
 
       it('fails the smoke command, which makes the workflow roll back', () => {
-        const res = run(['smoke', 'https://crove.example.test'], { ...account, STUB_SIGNIN_FAIL: '1' });
+        const res = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_SIGNIN_FAIL: '1' });
         expect(res.status).toBe(1);
-        expect(res.out).toContain('smoke test failed on https://crove.example.test');
+        expect(res.out).toContain('smoke test failed on https://ludy.example.test');
       });
 
       it('signs in, uploads one synthetic e-invoice, waits for its proposal and rejects it', () => {
-        const res = run(['smoke', 'https://crove.example.test'], account);
+        const res = run(['smoke', 'https://ludy.example.test'], account);
         expect(res.status, res.out).toBe(0);
         expect(res.out).toContain(`smoke ok: ${STEP}`);
         expect(JSON.parse(read('signin'))).toEqual({ email: 'smoke@example.com', password: PASSWORD });
@@ -1043,7 +2344,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       });
 
       it('fails when the sign-in is refused, without uploading', () => {
-        const res = run(['smoke', 'https://crove.example.test'], { ...account, STUB_SIGNIN_FAIL: '1' });
+        const res = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_SIGNIN_FAIL: '1' });
         expect(res.status).toBe(1);
         expect(res.out).toContain('smoke: signing in with SMOKE_EMAIL and SMOKE_PASSWORD failed');
         expect(res.out).toContain(`smoke failed: ${STEP}`);
@@ -1051,34 +2352,34 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       });
 
       it('fails when the worker cannot extract the upload, or no proposal comes in time', () => {
-        const failed = run(['smoke', 'https://crove.example.test'], { ...account, STUB_FILE_STATUS: 'failed' });
+        const failed = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_FILE_STATUS: 'failed' });
         expect(failed.status).toBe(1);
         expect(failed.out).toContain('smoke: the worker could not extract the synthetic e-invoice: UNREADABLE');
-        const pending = run(['smoke', 'https://crove.example.test'], { ...account, STUB_FILE_STATUS: 'extracting' });
+        const pending = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_FILE_STATUS: 'extracting' });
         expect(pending.status).toBe(1);
         expect(pending.out).toContain('smoke: no proposal after 1s (file extracting)');
         // An empty proposal id is not filled from the next field.
-        const noId = run(['smoke', 'https://crove.example.test'], { ...account, STUB_FILE_STATUS: 'proposed-no-id' });
+        const noId = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_FILE_STATUS: 'proposed-no-id' });
         expect(noId.status).toBe(1);
         expect(noId.out).toContain('smoke: no proposal after 1s (file proposed)');
         expect(read('rpc')).toBe('');
       });
 
       it('fails when the proposal cannot be rejected', () => {
-        const res = run(['smoke', 'https://crove.example.test'], { ...account, STUB_REJECT_FAIL: '1' });
+        const res = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_REJECT_FAIL: '1' });
         expect(res.status).toBe(1);
         expect(res.out).toContain('smoke: rejecting the smoke proposal proposal-1 failed');
       });
 
       it('never sends the password over plain http to another host', () => {
-        const res = run(['smoke', 'http://crove.example.test'], account);
+        const res = run(['smoke', 'http://ludy.example.test'], account);
         expect(res.status).toBe(1);
         expect(res.out).toContain('the account step signs in only over https');
         expect(read('signin')).toBe('');
       });
 
       it('refuses an org that is not a slug', () => {
-        const res = run(['smoke', 'https://crove.example.test'], { ...account, SMOKE_ORG: 'Crove Smoke' });
+        const res = run(['smoke', 'https://ludy.example.test'], { ...account, SMOKE_ORG: 'Ludy Smoke' });
         expect(res.status).toBe(1);
         expect(res.out).toContain("SMOKE_ORG must be the smoke org's slug");
         expect(read('signin')).toBe('');
@@ -1098,8 +2399,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         STUB_VERSION_BUILD: SHA,
         STUB_APP_HTML: html,
         STUB_APP_BUNDLE_JS: `const env={PROD:!0,VITE_BUILD:\`${SHA}\`};`,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(backtick.status, backtick.out).toBe(0);
       expect(backtick.out).toContain(`web app ok: ${APP} bundle VITE_BUILD matches ${API}/version (${SHA})`);
@@ -1107,8 +2408,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const quoted = run(['check-app-build', `${APP}/`, SHA], {
         STUB_APP_HTML: html,
         STUB_APP_BUNDLE_JS: `const env={"VITE_BUILD":"${SHA}"};`,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(quoted.status, quoted.out).toBe(0);
       expect(quoted.out).toContain(`web app ok: ${APP} bundle VITE_BUILD matches ${SHA}`);
@@ -1121,8 +2422,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
           STUB_VERSION_BUILD: SHA,
           STUB_APP_BUNDLE_JS: `navigator.serviceWorker?.register("/assets/sw.js");import("${ref}");`,
           STUB_APP_ROUTER_JS: `const e={VITE_BUILD:\`${SHA}\`};`,
-          CROVE_APP_BUILD_TIMEOUT: '0',
-          CROVE_APP_BUILD_POLL: '0',
+          LUDY_APP_BUILD_TIMEOUT: '0',
+          LUDY_APP_BUILD_POLL: '0',
         });
         expect(ok.status, `${ref}: ${ok.out}`).toBe(0);
         const curls = readFileSync(log, 'utf8');
@@ -1137,8 +2438,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${OLD}\`};`,
         STUB_APP_BUNDLE_NEXT: `const env={VITE_BUILD:\`${SHA}\`};`,
         STUB_APP_SWITCH_ON: '2',
-        CROVE_APP_BUILD_TIMEOUT: '2',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '2',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(res.status, res.out).toBe(0);
       expect(res.out).toContain(`waiting for web app at ${APP} to serve build ${SHA} (observed: ${OLD})`);
@@ -1149,8 +2450,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const stale = run(['check-app-build', APP, SHA, API], {
         STUB_VERSION_BUILD: SHA,
         STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${OLD}\`};`,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(stale.status).toBe(1);
       expect(stale.out).toContain(`web app at ${APP} does not serve bundle build ${SHA} (observed: ${OLD}) matching ${API}/version`);
@@ -1158,8 +2459,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const staleQuoted = run(['check-app-build', APP, SHA, API], {
         STUB_VERSION_BUILD: SHA,
         STUB_APP_BUNDLE_JS: `const env={"VITE_BUILD":"${OLD}"};`,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(staleQuoted.status).toBe(1);
       expect(staleQuoted.out).toContain(`web app at ${APP} does not serve bundle build ${SHA} (observed: ${OLD}) matching ${API}/version`);
@@ -1167,8 +2468,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const empty = run(['check-app-build', APP, SHA, API], {
         STUB_VERSION_BUILD: SHA,
         STUB_APP_BUNDLE_JS: 'const env={VITE_BUILD:``};',
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(empty.status).toBe(1);
       expect(empty.out).toContain('(observed: (empty))');
@@ -1176,16 +2477,16 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const apiMismatch = run(['check-app-build', APP, SHA, API], {
         STUB_VERSION_BUILD: OLD,
         STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${SHA}\`};`,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(apiMismatch.status).toBe(1);
       expect(apiMismatch.out).toContain(`API at ${API}/version does not report build ${SHA}`);
 
       const noBundle = run(['check-app-build', APP, SHA], {
         STUB_NO_BUNDLE: '1',
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(noBundle.status).toBe(1);
       expect(noBundle.out).toContain('(observed: no script bundle in HTML)');
@@ -1193,8 +2494,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const bareShaWithoutKey = run(['check-app-build', APP, SHA, API], {
         STUB_VERSION_BUILD: SHA,
         STUB_APP_BUNDLE_JS: `const COMMIT="${SHA}";`,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(bareShaWithoutKey.status).toBe(1);
       expect(bareShaWithoutKey.out).toContain('(observed: none)');
@@ -1210,8 +2511,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       ].join('');
       const unsafeOnly = run(['check-app-build', APP, SHA], {
         STUB_APP_HTML: unsafeHtml,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(unsafeOnly.status).toBe(1);
       expect(unsafeOnly.out).toContain('(observed: no script bundle in HTML)');
@@ -1222,8 +2523,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const mixed = run(['check-app-build', APP, SHA], {
         STUB_APP_HTML: `${unsafeHtml}<script type="module" src="/assets/index-abc123.js"></script>`,
         STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${SHA}\`};`,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(mixed.status, mixed.out).toBe(0);
       expect(readFileSync(log, 'utf8')).toBe(`curl ${APP}/login\ncurl ${APP}/assets/index-abc123.js\n`);
@@ -1232,16 +2533,16 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
       const redirect = run(['check-app-build', APP, SHA], {
         STUB_APP_REDIRECT: '1',
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(redirect.status).toBe(1);
       expect(redirect.out).toContain('(observed: request failed)');
 
       const leadingZero = run(['check-app-build', APP, SHA], {
         STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${SHA}\`};`,
-        CROVE_APP_BUILD_TIMEOUT: '08',
-        CROVE_APP_BUILD_POLL: '00',
+        LUDY_APP_BUILD_TIMEOUT: '08',
+        LUDY_APP_BUILD_POLL: '00',
       });
       expect(leadingZero.status, leadingZero.out).toBe(0);
     });
@@ -1267,7 +2568,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     // What a stale pilot env file holds before: the bundled Supabase Auth, an invite-only sign-up policy and its prober.
     const BEFORE = [
       'POSTGRES_PASSWORD=x',
-      'CROVE_CONTEXT_TOKEN_KEY=already-here',
+      'LUDY_CONTEXT_TOKEN_KEY=already-here',
       '# kept comment: AUTH_SIGNUP_POLICY=open',
       'AUTH_JWT_SECRET=keep-this-secret',
       'AUTH_ISSUER=crove-auth',
@@ -1275,7 +2576,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       'export AUTH_UPSTREAM_URL=http://auth:9999',
       'AUTH_SIGNUP_POLICY=invite_only',
       'AUTH_SIGNUP_ALLOWED_DOMAINS=example.net',
-      'PROBER_AUTH_URL=http://crove:8080/auth/v1',
+      'PROBER_AUTH_URL=http://ludy:8080/auth/v1',
       'AUTH_OAUTH_PROVIDERS=github',
       'PUBLIC_URL=https://api.example.com',
       '',
@@ -1296,7 +2597,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     const copies = () => readdirSync(dir).filter((f) => f.startsWith('.env.bak-'));
     const everyFile = (d: string): string[] =>
       readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? everyFile(`${d}/${e.name}`) : [`${d}/${e.name}`]));
-    const SPLIT_SERVICES = 'db migrate auth auth-grants crove-extract api worker prober';
+    const SPLIT_SERVICES = 'db migrate auth auth-grants ludy-extract api worker prober';
 
     it('leaves the env file alone without --auth-settings', () => {
       writeFileSync(`${dir}/.env`, BEFORE);
@@ -1317,7 +2618,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(res.status, res.out).toBe(0);
       expect(lines(envFile())).toEqual([
         'POSTGRES_PASSWORD=x',
-        'CROVE_CONTEXT_TOKEN_KEY=already-here',
+        'LUDY_CONTEXT_TOKEN_KEY=already-here',
         '# kept comment: AUTH_SIGNUP_POLICY=open',
         'AUTH_JWT_SECRET=keep-this-secret',
         'PUBLIC_URL=https://api.example.com',
@@ -1392,7 +2693,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
 
     it('keeps Windows line breaks: the added lines get them too', () => {
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\r\nCROVE_CONTEXT_TOKEN_KEY=already-here\r\nAUTH_SIGNUP_POLICY=invite_only\r\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\r\nLUDY_CONTEXT_TOKEN_KEY=already-here\r\nAUTH_SIGNUP_POLICY=invite_only\r\n');
       expect(deployIdp('v1.0.0', 'a').status).toBe(0);
       const text = envFile();
       expect(text.split('\n').filter(Boolean).every((l) => l.endsWith('\r'))).toBe(true);
@@ -1401,7 +2702,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
 
     it('does not take a commented-out line, another setting with a longer name or a value for an assignment', () => {
-      const before = '# AUTH_ISSUER=old\nAUTH_ISSUER_EXTRA=keep\nSOME=AUTH_SIGNUP_POLICY=x\nCROVE_CONTEXT_TOKEN_KEY=already-here\n  AUTH_SIGNUP_POLICY : allowlist\n';
+      const before = '# AUTH_ISSUER=old\nAUTH_ISSUER_EXTRA=keep\nSOME=AUTH_SIGNUP_POLICY=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\n  AUTH_SIGNUP_POLICY : allowlist\n';
       writeFileSync(`${dir}/.env`, before);
       expect(deployIdp('v1.0.0', 'a').status).toBe(0);
       const env = lines(envFile());
@@ -1777,7 +3078,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     it('does not print the worker log when the env file lists who may sign in (it may be a public CI log), and does otherwise', () => {
       const down = { STUB_SERVICES: SPLIT_SERVICES, STUB_WORKER_DOWN_DIGEST: digest('a'), STUB_WORKER_LOG: 'worker: refused owner@gmail.com- in AUTH_ALLOWED_EMAILS' };
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=k\nAUTH_ALLOWED_EMAILS=@example.com,owner@gmail.com-\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=k\nAUTH_ALLOWED_EMAILS=@example.com,owner@gmail.com-\n');
       const hidden = deploy('v1.0.0', 'a', down);
       expect(hidden.status, hidden.out).toBe(1);
       expect(hidden.out).toContain('the worker is not running');
@@ -1785,7 +3086,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(hidden.out).not.toContain('owner@gmail.com-');
       // An empty value, a commented-out line and another setting that starts with the name are not a list.
       for (const line of ['AUTH_ALLOWED_EMAILS=\n', '# AUTH_ALLOWED_EMAILS=@example.com\n', 'AUTH_ALLOWED_EMAILS_X=@example.com\n']) {
-        writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=k\n${line}`);
+        writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=k\n${line}`);
         const shown = deploy('v1.0.0', 'a', down);
         expect(shown.out, line).toContain('worker: refused owner@gmail.com-');
       }
@@ -1839,7 +3140,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     it('removes only a regular settings file of the incoming directory: not through .., not a link', () => {
       writeFileSync(`${dir}/.env`, BEFORE);
-      writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+      writeFileSync(`${dir}/docker-compose.yml`, 'name: ludy\nservices: {}\n');
       mkdirSync(`${dir}/.deploy/incoming/run`, { recursive: true });
       const args = (file: string) => ['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--auth-settings', file];
       // The compose file reached with ..: read (and refused: not settings), never deleted.
@@ -1914,7 +3215,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     it('skips the proxy checks of the smoke test when the env file has no bundled proxy, however the line is written, and not otherwise', () => {
       const smoked = (line: string, extra: Record<string, string> = {}) => {
-        writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=k\n${line}`);
+        writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=k\n${line}`);
         rmSync(log, { force: true });
         return deploy('v1.0.0', 'a', extra);
       };
@@ -1930,10 +3231,10 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       }
       // The workflow's public smoke test has no env file: it reads the deployed /api/config. An authUrl that is not the API's own /auth/v1
       // means a remote provider, and the account step is skipped.
-      const account = { SMOKE_EMAIL: 'smoke@example.test', SMOKE_PASSWORD: 'smoke-password-1', SMOKE_ORG: 'crove-smoke' };
-      const pub = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_NO_PROXY: '1' });
+      const account = { SMOKE_EMAIL: 'smoke@example.test', SMOKE_PASSWORD: 'smoke-password-1', SMOKE_ORG: 'ludy-smoke' };
+      const pub = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_NO_PROXY: '1' });
       // The kernel with no proxy still answers 200 to a GET with its page: not the proxy.
-      const pubPage = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_NO_PROXY: 'html' });
+      const pubPage = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_NO_PROXY: 'html' });
       expect(pubPage.status, pubPage.out).toBe(0);
       expect(pubPage.out).toContain('smoke skipped: /auth/v1/health');
       // (Another host, but a proxy that answers here, is still the bundled Auth: that is checked below.)
@@ -1942,25 +3243,25 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(pub.out).toContain('smoke skipped: sign-in and upload');
       expect(readFileSync(`${log}.argv`, 'utf8')).not.toContain('/auth/v1/token');
       // The bundled proxy, announced at the address asked, is still checked, account step included.
-      const bundled = run(['smoke', 'https://crove.example.test'], account);
+      const bundled = run(['smoke', 'https://ludy.example.test'], account);
       expect(bundled.status, bundled.out).toBe(0);
       expect(bundled.out).toContain('smoke ok: /auth/v1/health answers');
       expect(bundled.out).toContain('signs in, uploads a synthetic e-invoice');
       // An address that only differs in case, scheme or a default port is the same bundled Auth: still checked, and a broken sign-in still fails.
-      for (const authUrl of ['https://CROVE.example.test/auth/v1', 'https://crove.example.test:443/auth/v1', 'http://crove.example.test/auth/v1']) {
-        const same = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: authUrl, STUB_SIGNIN_FAIL: '1' });
+      for (const authUrl of ['https://LUDY.example.test/auth/v1', 'https://ludy.example.test:443/auth/v1', 'http://ludy.example.test/auth/v1']) {
+        const same = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_AUTH_URL: authUrl, STUB_SIGNIN_FAIL: '1' });
         expect(same.status, `${authUrl}: ${same.out}`).toBe(1);
         expect(same.out).not.toContain('Supabase Auth is a remote provider');
         expect(same.out).toContain('smoke ok: /auth/v1/health answers');
       }
       // With the Auth URL the settings name, /api/config must report exactly that: the right one passes, anything else fails.
-      const otherHostWithProxy = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_SIGNIN_FAIL: '1' });
+      const otherHostWithProxy = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_SIGNIN_FAIL: '1' });
       expect(otherHostWithProxy.status, otherHostWithProxy.out).toBe(1);
       expect(otherHostWithProxy.out).toContain('smoke ok: /auth/v1/health answers');
-      const right = run(['smoke', 'https://crove.example.test'], { STUB_AUTH_URL: 'https://idp.example.com/auth/v1', SMOKE_EXPECT_AUTH_URL: 'https://idp.example.com/auth/v1' });
+      const right = run(['smoke', 'https://ludy.example.test'], { STUB_AUTH_URL: 'https://idp.example.com/auth/v1', SMOKE_EXPECT_AUTH_URL: 'https://idp.example.com/auth/v1' });
       expect(right.status, right.out).toBe(0);
       expect(right.out).toContain('smoke ok: /api/config names the configured Auth URL');
-      const stale = run(['smoke', 'https://crove.example.test'], { SMOKE_EXPECT_AUTH_URL: 'https://idp.example.com/auth/v1' });
+      const stale = run(['smoke', 'https://ludy.example.test'], { SMOKE_EXPECT_AUTH_URL: 'https://idp.example.com/auth/v1' });
       expect(stale.status).toBe(1);
       expect(stale.out).toContain('smoke failed: /api/config names the configured Auth URL');
       expect(stale.out).not.toContain('idp.example.com');
@@ -1979,9 +3280,9 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     const MOD_BEFORE = [
       'POSTGRES_PASSWORD=x',
       'LUDY_CONTEXT_TOKEN_KEY=already-here',
-      '# CROVE_MODULES=commented-old',
-      'CROVE_MODULES_EXTRA=keep',
-      'CROVE_MODULES=finance,crm,social',
+      '# LUDY_MODULES=commented-old',
+      'LUDY_MODULES_EXTRA=keep',
+      'LUDY_MODULES=finance,crm,social',
       'OTHER=1',
       '',
     ].join('\n');
@@ -2061,7 +3362,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(copies()).toEqual([]);
     });
 
-    it('writes LUDY_MODULES (replacing legacy CROVE_MODULES without conflicts), preserves lines/comments/CRLF/inode/mode, backs up once, verifies /api/config, and is idempotent', () => {
+    it('writes LUDY_MODULES, preserves lines/comments/CRLF/inode/mode, backs up once, verifies /api/config, and is idempotent', () => {
       writeFileSync(`${dir}/.env`, MOD_BEFORE);
       chmodSync(`${dir}/.env`, 0o600);
       const beforeStat = statSync(`${dir}/.env`);
@@ -2070,8 +3371,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(lines(envFile())).toEqual([
         'POSTGRES_PASSWORD=x',
         'LUDY_CONTEXT_TOKEN_KEY=already-here',
-        '# CROVE_MODULES=commented-old',
-        'CROVE_MODULES_EXTRA=keep',
+        '# LUDY_MODULES=commented-old',
+        'LUDY_MODULES_EXTRA=keep',
         'LUDY_MODULES=finance,crm,social,sign',
         'OTHER=1',
       ]);
@@ -2097,7 +3398,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
 
       // Deduplicates multiple assignments, appends when missing, and preserves CRLF line endings.
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\r\nLUDY_CONTEXT_TOKEN_KEY=already-here\r\nCROVE_MODULES=old\r\nOTHER=1\r\nexport LUDY_MODULES = finance\r\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\r\nLUDY_CONTEXT_TOKEN_KEY=already-here\r\nLUDY_MODULES=old\r\nOTHER=1\r\nexport LUDY_MODULES = finance\r\n');
       const crlf = deployModules('v1.2.0', 'c', 'finance,sign');
       expect(crlf.status, crlf.out).toBe(0);
       expect(envFile()).toBe('POSTGRES_PASSWORD=x\r\nLUDY_CONTEXT_TOKEN_KEY=already-here\r\nOTHER=1\r\nLUDY_MODULES=finance,sign\r\n');
@@ -2115,14 +3416,14 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         '["crm","finance","kernel","sign","social"]',
         '[ "sign" , "social" , "crm" , "finance" , "kernel" ]',
       ]) {
-        const ok = run(['smoke', 'https://crove.example.test'], { SMOKE_EXPECT_MODULES: 'finance,crm,social,sign', STUB_CONFIG_MODULES: modulesJson });
+        const ok = run(['smoke', 'https://ludy.example.test'], { SMOKE_EXPECT_MODULES: 'finance,crm,social,sign', STUB_CONFIG_MODULES: modulesJson });
         expect(ok.status, `${modulesJson}: ${ok.out}`).toBe(0);
         expect(ok.out).toContain('smoke ok: /api/config lists the expected modules');
       }
-      expect(run(['smoke', 'https://crove.example.test'], { SMOKE_EXPECT_MODULES: 'kernel', STUB_CONFIG_MODULES: '["kernel"]' }).status).toBe(0);
+      expect(run(['smoke', 'https://ludy.example.test'], { SMOKE_EXPECT_MODULES: 'kernel', STUB_CONFIG_MODULES: '["kernel"]' }).status).toBe(0);
 
       for (const badJson of ['[]', '["kernel","finance","crm","social"]', '["kernel","finance","crm","social","sign","ads"]', '["kernel","finance","finance"]']) {
-        const bad = run(['smoke', 'https://crove.example.test'], { SMOKE_EXPECT_MODULES: 'finance,crm,social,sign', STUB_CONFIG_MODULES: badJson });
+        const bad = run(['smoke', 'https://ludy.example.test'], { SMOKE_EXPECT_MODULES: 'finance,crm,social,sign', STUB_CONFIG_MODULES: badJson });
         expect(bad.status, `${badJson}: ${bad.out}`).toBe(1);
         expect(bad.out).toContain('smoke failed: /api/config lists the expected modules');
       }
@@ -2180,6 +3481,20 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(backEdited.out).toContain('is left as it is');
       expect(envFile()).toBe(edited);
       expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
+
+      // Rollback restores MOD_BEFORE cleanly when restore_env_of would reintroduce a conflicting COMPOSE_PROJECT_NAME (#3972 Round 13).
+      writeFileSync(`${dir}/.env`, MOD_BEFORE);
+      expect(deployModules('v1.3.0', 'd', 'finance,crm,social,sign').status).toBe(0);
+      const beforeConflictEnv = envFile();
+      const backupFields = state('env-backup').split(' ');
+      const backupFilePath = backupFields[1] ?? '';
+      expect(backupFilePath.length).toBeGreaterThan(0);
+      writeFileSync(backupFilePath, `${MOD_BEFORE}COMPOSE_PROJECT_NAME=crove\n`, { mode: 0o600 });
+      const backConflict = run(['rollback']);
+      expect(backConflict.status, backConflict.out).toBe(2);
+      expect(backConflict.out).toContain('sets COMPOSE_PROJECT_NAME=crove');
+      expect(envFile()).toBe(beforeConflictEnv);
+      expect(state('env-backup')).toContain(releaseDir('v1.3.0', 'd'));
     });
 
     it('prunes old env backups when --modules writes .env and stops before pulling if .env is read-only', () => {
@@ -2205,7 +3520,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       writeFileSync(`${dir}/.env`, COMBINED_BEFORE);
       expect(deploy('v1.0.0', 'a').status).toBe(0);
 
-      // Failure on module smoke mismatch restores the true pre-deploy .env (both old AUTH_* and old CROVE_MODULES).
+      // Failure on module smoke mismatch restores the true pre-deploy .env (both old AUTH_* and old LUDY_MODULES).
       const modFail = deployBoth('v1.1.0', 'b', IDP, 'finance,crm,social,sign', { STUB_CONFIG_MODULES: 'kernel,finance,crm,social' });
       expect(modFail.status, modFail.out).toBe(1);
       expect(modFail.out).toContain('smoke failed: /api/config lists the expected modules');

@@ -61,7 +61,7 @@ function statusFromAnotherClient(endpoint: Endpoint): number {
   const script =
     "fetch('http://127.0.0.1:8080' + process.argv[1], { method: 'POST', headers: { 'content-type': 'application/json' }, body: process.argv[2] })" +
     '.then((r) => console.log(r.status))';
-  return Number(compose(['exec', '-T', 'crove', 'node', '-e', script, endpoint.path, JSON.stringify(endpoint.body())]).trim());
+  return Number(compose(['exec', '-T', 'ludy', 'node', '-e', script, endpoint.path, JSON.stringify(endpoint.body())]).trim());
 }
 
 test.describe('Supabase Auth rate limits through /auth/v1', () => {

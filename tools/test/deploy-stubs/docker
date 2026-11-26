@@ -2,10 +2,13 @@
 # A stand-in for docker in tools/test/deploy.test.ts. Records each call in $STUB_LOG and answers what deploy.sh
 # asks. Settings (environment): STUB_SERVICES (compose services, space separated), STUB_RUNNING (services that
 # `compose ps --status running` lists), STUB_WORKER_DOWN_DIGEST (the worker is down while this image runs),
-# STUB_MIGRATE_EXIT, STUB_PULL_FAIL, STUB_BUILD_TIMES (space-separated digest=CROVE_BUILD_TIME pairs that `image
-# inspect` answers; an image not listed carries none).
+# STUB_MIGRATE_EXIT, STUB_PULL_FAIL, STUB_BUILD_TIMES (space-separated digest=LUDY_BUILD_TIME pairs that `image
+# inspect` answers; an image not listed carries none), STUB_ORPHAN_CONTAINERS (space-separated
+# project:service=id entries returned for matching `docker ps` label filters), STUB_VOLUMES (space-separated
+# volume names reported by `docker volume inspect`), STUB_PG_CLUSTER_IDS (space-separated vol=cluster_id pairs
+# reported by `docker run ... -v <vol>:...` when matching PostgreSQL cluster identifiers).
 #
-# `compose run migrate` reads the env file the way the real step does (#3282): with a CROVE_CONTEXT_TOKEN_KEY it logs
+# `compose run migrate` reads the env file the way the real step does (#3282): with a LUDY_CONTEXT_TOKEN_KEY it logs
 # `context token key installed`, or `unchanged` when the same key was installed by an earlier run (kept in
 # $STUB_LOG.installed); without one it logs nothing. It never prints the key. `compose exec` is the read-only count of
 # plain idempotency rows: it answers STUB_PLAIN_ROWS (default 0), or fails with STUB_PSQL_FAIL as its error text.
@@ -18,15 +21,336 @@ if [ "${1:-}" = login ]; then
   exit 0
 fi
 if [ "${1:-}" = pull ]; then
-  printf 'pull %s DOCKER_CONFIG=%s\n' "${*: -1}" "${DOCKER_CONFIG:-}" >>"$STUB_LOG"
+  pull_target="${*: -1}"
+  printf 'pull %s DOCKER_CONFIG=%s\n' "$pull_target" "${DOCKER_CONFIG:-}" >>"$STUB_LOG"
   [ -z "${STUB_PULL_FAIL:-}" ] || exit 1
+  for pair in ${STUB_PULL_FAIL_IMAGES:-}; do
+    if [ "$pair" = "$pull_target" ]; then exit 1; fi
+  done
+  printf '%s\n' "$pull_target" >>"$STUB_LOG.pulled"
   exit 0
 fi
 if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
-  printf 'image inspect %s\n' "${*: -1}" >>"$STUB_LOG"
-  for pair in ${STUB_BUILD_TIMES:-}; do
-    case "${*: -1}" in *"@sha256:${pair%%=*}") printf 'PATH=/usr/bin\nLUDY_BUILD_TIME=%s\n' "${pair#*=}" ;; esac
+  inspect_target="${*: -1}"
+  printf 'image inspect %s\n' "$inspect_target" >>"$STUB_LOG"
+  inspect_fail=0
+  for pair in ${STUB_IMAGE_INSPECT_FAIL:-}; do
+    if [ "$pair" = "$inspect_target" ]; then
+      if [ "${STUB_PULL_RESOLVES_IMAGE_INSPECT:-0}" = 1 ] && [ -f "$STUB_LOG.pulled" ] && grep -qx -F -- "$inspect_target" "$STUB_LOG.pulled"; then
+        inspect_fail=0
+      else
+        inspect_fail=1
+      fi
+    fi
   done
+  if ((inspect_fail)); then
+    echo "Error: No such image: $inspect_target" >&2
+    exit 1
+  fi
+  for pair in ${STUB_BUILD_TIMES:-}; do
+    case "$inspect_target" in *"@sha256:${pair%%=*}") printf 'PATH=/usr/bin\nLUDY_BUILD_TIME=%s\n' "${pair#*=}" ;; esac
+  done
+  for pair in ${STUB_IMAGE_PGDATA:-}; do
+    if [ "${pair%%=*}" = "$inspect_target" ]; then
+      printf 'PGDATA=%s\n' "${pair#*=}"
+    fi
+  done
+  exit 0
+fi
+if [ "${1:-}" = ps ]; then
+  [ -z "${STUB_PS_FAIL:-}" ] || exit 1
+  proj='' svc='' quiet=0 status_running=0 status_paused=0 status_restarting=0 has_status_filter=0 wdir_filter='' id_filter=''
+  shift
+  while (($# > 0)); do
+    case "$1" in
+      -q | -aq | -qa) quiet=1; shift ;;
+      --filter)
+        case "$2" in
+          label=com.docker.compose.project=*) proj="${2#label=com.docker.compose.project=}" ;;
+          label=com.docker.compose.service=*) svc="${2#label=com.docker.compose.service=}" ;;
+          label=com.docker.compose.project.working_dir=*) wdir_filter="${2#label=com.docker.compose.project.working_dir=}" ;;
+          status=running) status_running=1; has_status_filter=1 ;;
+          status=paused) status_paused=1; has_status_filter=1 ;;
+          status=restarting) status_restarting=1; has_status_filter=1 ;;
+          status=*) has_status_filter=1 ;;
+          id=*) id_filter="${2#id=}" ;;
+        esac
+        shift 2
+        ;;
+      *) shift ;;
+    esac
+  done
+  if [ -n "$wdir_filter" ]; then
+    for item in ${STUB_WORKDIR_CONTAINERS:-}; do
+      IFS='|' read -r iw isvc icid <<<"$item"
+      [ "$iw" = "$wdir_filter" ] || continue
+      if [ -n "$svc" ] && [ "$isvc" != "$svc" ]; then continue; fi
+      printf '%s\n' "$icid"
+    done
+    exit 0
+  fi
+  if [ -n "$id_filter" ]; then
+    if ((has_status_filter == 0 || status_running == 1)); then
+      for item in ${STUB_RUNNING_CONTAINERS:-}; do
+        if [ "$item" = "$id_filter" ]; then printf '%s\n' "$item"; exit 0; fi
+      done
+      for item in ${STUB_WORKDIR_CONTAINERS:-}; do
+        IFS='|' read -r _ _ icid <<<"$item"
+        if [ "$icid" = "$id_filter" ]; then printf '%s\n' "$icid"; exit 0; fi
+      done
+    fi
+    if ((has_status_filter == 0 || status_paused == 1)); then
+      for item in ${STUB_PAUSED_CONTAINERS:-}; do
+        if [ "$item" = "$id_filter" ]; then printf '%s\n' "$item"; exit 0; fi
+      done
+    fi
+    if ((has_status_filter == 0 || status_restarting == 1)); then
+      for item in ${STUB_RESTARTING_CONTAINERS:-}; do
+        if [ "$item" = "$id_filter" ]; then printf '%s\n' "$item"; exit 0; fi
+      done
+    fi
+    if ((has_status_filter == 0)); then
+      for item in ${STUB_PROJECT_CONTAINERS:-}; do
+        IFS='|' read -r _ icid <<<"$item"
+        if [ "$icid" = "$id_filter" ]; then printf '%s\n' "$icid"; exit 0; fi
+      done
+    fi
+    exit 0
+  fi
+  if [ -n "$proj" ] && [ -z "$svc" ] && ((quiet == 1)); then
+    for item in ${STUB_PROJECT_CONTAINERS:-}; do
+      IFS='|' read -r iproj icid <<<"$item"
+      if [ "$iproj" = "$proj" ]; then printf '%s\n' "$icid"; fi
+    done
+    exit 0
+  fi
+  if ((has_status_filter == 1)); then
+    if ((status_running == 1)); then
+      for item in ${STUB_RUNNING_CONTAINERS:-}; do printf '%s\n' "$item"; done
+    fi
+    if ((status_paused == 1)); then
+      for item in ${STUB_PAUSED_CONTAINERS:-}; do printf '%s\n' "$item"; done
+    fi
+    if ((status_restarting == 1)); then
+      for item in ${STUB_RESTARTING_CONTAINERS:-}; do printf '%s\n' "$item"; done
+    fi
+    exit 0
+  fi
+  printf 'docker ps --filter label=com.docker.compose.project=%s --filter label=com.docker.compose.service=%s\n' "$proj" "$svc" >>"$STUB_LOG.orphans"
+  for item in ${STUB_ORPHAN_CONTAINERS:-}; do
+    key="${item%%=*}"
+    val="${item#*=}"
+    cid="${val%%:*}"
+    if [ "$val" != "$cid" ]; then oneoff="${val#*:}"; else oneoff='False'; fi
+    if [ "$key" = "${proj}:${svc}" ]; then
+      printf '%s %s\n' "$cid" "$oneoff"
+    fi
+  done
+  exit 0
+fi
+if [ "${1:-}" = inspect ]; then
+  [ -z "${STUB_INSPECT_FAIL:-}" ] || exit 1
+  shift
+  fmt='' target=''
+  while (($# > 0)); do
+    case "$1" in
+      --format) fmt="$2"; shift 2 ;;
+      *) target="$1"; shift ;;
+    esac
+  done
+  if [[ "$fmt" == *working_dir* ]]; then
+    for item in ${STUB_INSPECT_WORKDIRS:-}; do
+      if [ "${item%%|*}" = "$target" ]; then
+        printf '%s\n' "${item#*|}"
+        exit 0
+      fi
+    done
+    for item in ${STUB_WORKDIR_CONTAINERS:-}; do
+      IFS='|' read -r iw _ icid <<<"$item"
+      if [ "$icid" = "$target" ]; then
+        printf '%s\n' "$iw"
+        exit 0
+      fi
+    done
+    exit 0
+  fi
+  if [[ "$fmt" == *Config.Env* ]]; then
+    for item in ${STUB_INSPECT_ENV:-}; do
+      if [ "${item%%|*}" = "$target" ]; then
+        printf '%s\n' "${item#*|}"
+      fi
+    done
+    exit 0
+  fi
+  if [[ "$fmt" == *HostConfig.Mounts* ]]; then
+    for item in ${STUB_INSPECT_HOSTCONFIG_MOUNTS:-}; do
+      if [ "${item%%|*}" = "$target" ]; then
+        printf '%s\n' "${item#*|}"
+        exit 0
+      fi
+    done
+    printf '[]\n'
+    exit 0
+  fi
+  for item in ${STUB_INSPECT_MOUNTS:-}; do
+    IFS='|' read -r icid iproj imtype imname imsrc imdst <<<"$item"
+    [ "$icid" = "$target" ] || continue
+    case "$fmt" in
+      *Labels*)
+        printf '%s\n' "$iproj"
+        exit 0
+        ;;
+      *.Destination*)
+        [ -n "$imdst" ] && printf '%s|%s|%s|%s\n' "$imdst" "$imtype" "$imname" "$imsrc"
+        ;;
+      *.Mounts*)
+        printf '%s|%s|%s\n' "$imtype" "$imname" "$imsrc"
+        ;;
+    esac
+  done
+  exit 0
+fi
+if [ "${1:-}" = stop ]; then
+  printf 'docker %s\n' "$*" >>"$STUB_LOG"
+  printf 'docker %s\n' "$*" >>"$STUB_LOG.orphans"
+  [ -z "${STUB_ORPHAN_STOP_FAIL:-}" ] || { echo 'stop: stub failure' >&2; exit 1; }
+  exit 0
+fi
+if [ "${1:-}" = rm ]; then
+  printf 'docker %s\n' "$*" >>"$STUB_LOG"
+  printf 'docker %s\n' "$*" >>"$STUB_LOG.orphans"
+  [ -z "${STUB_ORPHAN_RM_FAIL:-}" ] || { echo 'rm: stub failure' >&2; exit 1; }
+  exit 0
+fi
+if [ "${1:-}" = volume ] && [ "${2:-}" = inspect ]; then
+  if [ -n "${STUB_VOLUME_INSPECT_FAIL:-}" ]; then
+    echo 'Cannot connect to the Docker daemon' >&2
+    exit 1
+  fi
+  shift 2
+  v_fmt='' v_target=''
+  while (($# > 0)); do
+    case "$1" in
+      --format | -f)
+        if (($# >= 2)); then v_fmt="$2"; shift 2; else shift; fi
+        ;;
+      *)
+        v_target="$1"
+        shift
+        ;;
+    esac
+  done
+  v_found=0
+  for v in ${STUB_VOLUMES:-}; do
+    if [ "$v" = "$v_target" ]; then v_found=1; break; fi
+  done
+  if ((v_found == 0)) && [ -n "${STUB_VOLUME_MOUNTPOINTS:-}" ]; then
+    for pair in ${STUB_VOLUME_MOUNTPOINTS}; do
+      if [ "${pair%%=*}" = "$v_target" ]; then v_found=1; break; fi
+    done
+  fi
+  if ((v_found)); then
+    if [[ "$v_fmt" == *Mountpoint* ]]; then
+      for pair in ${STUB_VOLUME_MOUNTPOINTS:-}; do
+        if [ "${pair%%=*}" = "$v_target" ]; then
+          printf '%s\n' "${pair#*=}"
+          break
+        fi
+      done
+    fi
+    exit 0
+  fi
+  echo "Error response from daemon: get $v_target: No such volume" >&2
+  exit 1
+fi
+if [ "${1:-}" = run ]; then
+  printf 'docker %s\n' "$*" >>"$STUB_LOG.volumes"
+  raw_args="$*"
+  vols=()
+  src_pgdata_sub=''
+  dst_pgdata_sub=''
+  shift
+  while (($# > 0)); do
+    case "$1" in
+      -v)
+        if (($# >= 2)); then
+          vols+=("${2%%:*}")
+          shift 2
+        else
+          shift
+        fi
+        ;;
+      -e)
+        if (($# >= 2)); then
+          case "$2" in
+            SRC_PGDATA_SUB=*) src_pgdata_sub="${2#SRC_PGDATA_SUB=}" ;;
+            DST_PGDATA_SUB=*) dst_pgdata_sub="${2#DST_PGDATA_SUB=}" ;;
+          esac
+          shift 2
+        else
+          shift
+        fi
+        ;;
+      *) shift ;;
+    esac
+  done
+  ((${#vols[@]} >= 1)) || exit 1
+  stub_pgdata_matches() {
+    local target="$1" actual="$2" pair
+    [ -n "${STUB_PG_SUBDIR_MOUNTS:-}" ] || return 0
+    for pair in ${STUB_PG_SUBDIR_MOUNTS}; do
+      if [ "${pair%%=*}" = "$target" ]; then
+        [ "${pair#*=}" = "$actual" ]
+        return $?
+      fi
+    done
+    return 0
+  }
+  stub_cluster_id() {
+    local target="$1" pair
+    for pair in ${STUB_PG_CLUSTER_IDS:-}; do
+      if [ "${pair%%=*}" = "$target" ] && [ -n "${pair#*=}" ]; then
+        printf '%s' "${pair#*=}"
+        return 0
+      fi
+    done
+    return 1
+  }
+  stub_is_populated() {
+    local target="$1" m
+    if stub_cluster_id "$target" >/dev/null; then return 0; fi
+    for m in ${STUB_POPULATED_MOUNTS:-}; do
+      if [ "$m" = "$target" ]; then return 0; fi
+    done
+    return 1
+  }
+  if [[ "$raw_args" == *pg_control* ]]; then
+    ((${#vols[@]} >= 2)) || exit 1
+    if ! stub_is_populated "${vols[0]}"; then exit 0; fi
+    for m in ${STUB_PG_PID_MOUNTS:-} ${STUB_PG_STALE_MOUNTS:-}; do
+      if [ "$m" = "${vols[0]}" ] || [ "$m" = "${vols[1]}" ]; then exit 1; fi
+    done
+    if [[ "$raw_args" == *dstEntries* ]]; then
+      for m in ${STUB_PG_EXTRA_FILES_MOUNTS:-}; do
+        if [ "$m" = "${vols[1]}" ]; then exit 1; fi
+      done
+    fi
+    c0="$(stub_cluster_id "${vols[0]}" || true)"
+    c1="$(stub_cluster_id "${vols[1]}" || true)"
+    stub_pgdata_matches "${vols[0]}" "$src_pgdata_sub" || exit 1
+    stub_pgdata_matches "${vols[1]}" "$dst_pgdata_sub" || exit 1
+    if [ -n "$c0" ] && [ "$c0" = "$c1" ]; then exit 0; fi
+    exit 1
+  fi
+  if ! stub_is_populated "${vols[0]}"; then exit 0; fi
+  ((${#vols[@]} >= 2)) || exit 1
+  if ! stub_is_populated "${vols[1]}"; then exit 1; fi
+  if [[ "$raw_args" == *lstatSync* ]] && [[ "$raw_args" == *readExact* ]]; then
+    local_m=''
+    for local_m in ${STUB_PARTIAL_MOUNTS:-}; do
+      if [ "$local_m" = "${vols[1]}" ]; then exit 1; fi
+    done
+  fi
   exit 0
 fi
 [ "${1:-}" = compose ] || {
@@ -42,13 +366,22 @@ fi
 # Skip the global options deploy.sh passes before the subcommand.
 files=()
 envfile=''
+proj_override=''
+proj_dir=''
 while (($# > 0)); do
   case "$1" in
+    -p | --project-name)
+      proj_override="$2"
+      shift 2
+      ;;
     --env-file)
       envfile="$2"
       shift 2
       ;;
-    --project-directory) shift 2 ;;
+    --project-directory)
+      proj_dir="$2"
+      shift 2
+      ;;
     -f)
       files+=("$2")
       shift 2
@@ -60,15 +393,224 @@ sub="$1"
 shift
 args="$*"
 printf 'compose %s %s\n' "$sub" "$args" >>"$STUB_LOG"
-# The compose files of each call, apart from the log so the order checks stay as they are.
-printf '%s\n' "${files[*]}" >>"$STUB_LOG.files"
+if [ "${STUB_LOG_PROJECT:-}" = 1 ]; then
+  printf 'project %s %s\n' "${proj_override:-}" "$sub" >>"$STUB_LOG.project"
+fi
+# The compose files of each active call (`config` without flags is read-only YAML resolution before/after activate).
+if [ "$sub" != config ] || [ -n "$args" ]; then
+  printf '%s\n' "${files[*]:-}" >>"$STUB_LOG.files"
+fi
+
+emit_stub_compose_config() {
+  local p="$1" app_svc='ludy' db_mounts_yaml='' db_env_yaml='' files_mount_yaml='' files_vol="${1}_files" keys_vol="${1}_keys" archive_vol="${1}_archive" db_vol="${1}_db-data"
+  if [ "$p" = crove ]; then app_svc='crove'; fi
+  case " ${STUB_SERVICES:-} " in *" worker "*) app_svc='worker' ;; esac
+  if [ "$p" = crove ] && [ -n "${STUB_PREV_DB_IMAGE:-}" ]; then
+    db_env_yaml="    image: ${STUB_PREV_DB_IMAGE}\n"
+  elif [ "$p" != crove ] && [ -n "${STUB_NEW_DB_IMAGE:-}" ]; then
+    db_env_yaml="    image: ${STUB_NEW_DB_IMAGE}\n"
+  fi
+  if [ "$p" = crove ] && [ -n "${STUB_PREV_DB_PGDATA:-}" ]; then
+    db_env_yaml="${db_env_yaml}    environment:\n      PGDATA: ${STUB_PREV_DB_PGDATA}\n"
+  elif [ "$p" != crove ] && [ -n "${STUB_NEW_DB_PGDATA:-}" ]; then
+    db_env_yaml="${db_env_yaml}    environment:\n      PGDATA: ${STUB_NEW_DB_PGDATA}\n"
+  fi
+  if [ "$p" != crove ] && [ -n "${STUB_OMIT_NEW_DB_MOUNT:-}" ]; then
+    db_mounts_yaml='    volumes: []'
+  elif [ "$p" != crove ] && [ -n "${STUB_NEW_DB_BIND:-}" ]; then
+    db_mounts_yaml="    volumes:\n      - type: bind\n        source: ${STUB_NEW_DB_BIND}\n        target: /var/lib/postgresql/data"
+  elif [ "$p" != crove ] && [ -n "${STUB_NEW_DB_SUBPATH:-}" ]; then
+    db_mounts_yaml="    volumes:\n      - type: volume\n        source: db-data\n        target: /var/lib/postgresql/data\n        volume:\n          subpath: ${STUB_NEW_DB_SUBPATH}"
+  else
+    db_mounts_yaml="    volumes:\n      - type: volume\n        source: db-data\n        target: /var/lib/postgresql/data"
+  fi
+  if [ "$p" != crove ] && [ -n "${STUB_NEW_DB_NESTED_MOUNT:-}" ]; then
+    db_mounts_yaml="${db_mounts_yaml}\n      - type: volume\n        source: db-data\n        target: ${STUB_NEW_DB_NESTED_MOUNT}"
+  fi
+  if [ "$p" = crove ] && [ -n "${STUB_CROVE_DB_VOLUME:-}" ]; then db_vol="$STUB_CROVE_DB_VOLUME"; fi
+  if [ "$p" != crove ] && [ -n "${STUB_NEW_DB_VOLUME:-${STUB_DB_VOLUME:-}}" ]; then
+    db_vol="${STUB_NEW_DB_VOLUME:-${STUB_DB_VOLUME:-}}"
+  fi
+  if [ -n "${STUB_DB_VOL_BY_DIGEST:-}" ] && [ -n "${STUB_DEPLOY_DIR:-}" ] && [ -f "$STUB_DEPLOY_DIR/docker-compose.override.yml" ]; then
+    for _dbv_pair in ${STUB_DB_VOL_BY_DIGEST}; do
+      if grep -q -F -- "${_dbv_pair%%=*}" "$STUB_DEPLOY_DIR/docker-compose.override.yml"; then
+        db_vol="${_dbv_pair#*=}"
+      fi
+    done
+  fi
+  if [ "$p" != crove ] && [ -n "${STUB_NEW_FILES_VOLUME:-}" ]; then files_vol="$STUB_NEW_FILES_VOLUME"; fi
+  if [ "$p" != crove ] && [ -n "${STUB_FILES_VOL_BY_DIGEST:-}" ] && [ -n "${STUB_DEPLOY_DIR:-}" ] && [ -f "$STUB_DEPLOY_DIR/docker-compose.override.yml" ]; then
+    for _fv_pair in ${STUB_FILES_VOL_BY_DIGEST}; do
+      if grep -q -F -- "${_fv_pair%%=*}" "$STUB_DEPLOY_DIR/docker-compose.override.yml"; then
+        files_vol="${_fv_pair#*=}"
+      fi
+    done
+  fi
+  if [ "$p" != crove ] && [ -n "${STUB_FILES_VOL_IF_ENV_HAS:-}" ]; then
+    local _cfg_env="${envfile:-${proj_dir:-$PWD}/.env}" _fenv_pair=''
+    if [ -f "$_cfg_env" ]; then
+      for _fenv_pair in ${STUB_FILES_VOL_IF_ENV_HAS}; do
+        if grep -q -F -- "${_fenv_pair%%|*}" "$_cfg_env"; then
+          files_vol="${_fenv_pair#*|}"
+        fi
+      done
+    fi
+  fi
+  if [ "$p" != crove ] && [ -n "${STUB_NEW_KEYS_VOLUME:-}" ]; then keys_vol="$STUB_NEW_KEYS_VOLUME"; fi
+  if [ "$p" != crove ] && [ -n "${STUB_NEW_ARCHIVE_VOLUME:-}" ]; then archive_vol="$STUB_NEW_ARCHIVE_VOLUME"; fi
+  if [ "$p" != crove ] && [ "${STUB_SPLIT_PILOT_SERVICES:-0}" = 1 ]; then
+    local storage_yaml='' api_files_yaml='' worker_files_yaml='' api_archive_yaml=''
+    if [ -n "${STUB_NEW_STORAGE:-}" ]; then
+      storage_yaml="    environment:\n      STORAGE: ${STUB_NEW_STORAGE}\n"
+    fi
+    if [ -z "${STUB_OMIT_NEW_API_FILES_MOUNT:-}" ]; then
+      api_files_yaml="      - type: volume\n        source: api-files\n        target: /data/files\n"
+    fi
+    if [ -z "${STUB_OMIT_NEW_WORKER_FILES_MOUNT:-}" ]; then
+      worker_files_yaml="      - type: volume\n        source: worker-files\n        target: /data/files\n"
+    fi
+    if [ -n "${STUB_NEW_API_ARCHIVE_VOL_NAME:-}" ]; then
+      api_archive_yaml="      - type: volume\n        source: api-archive\n        target: /data/archive\n"
+    fi
+    printf 'name: %s\nservices:\n  db:\n%b%b\n  ludy:\n    profiles:\n      - all-in-one\n    volumes:\n      - type: volume\n        source: dormant-files\n        target: /data/files\n      - type: volume\n        source: api-keys\n        target: /data/keys\n      - type: volume\n        source: archive\n        target: /data/archive\n  api:\n%b    volumes:\n%b      - type: volume\n        source: api-keys\n        target: /data/keys\n%b  worker:\n%b    volumes:\n%b      - type: volume\n        source: worker-keys\n        target: /data/keys\n      - type: volume\n        source: archive\n        target: /data/archive\nvolumes:\n  db-data:\n    name: %s\n  dormant-files:\n    name: %s_dormant-files\n  api-files:\n    name: %s\n  worker-files:\n    name: %s\n  api-keys:\n    name: %s\n  worker-keys:\n    name: %s\n  archive:\n    name: %s\n  api-archive:\n    name: %s\n' \
+      "$p" "$db_env_yaml" "$db_mounts_yaml" "$storage_yaml" "$api_files_yaml" "$api_archive_yaml" "$storage_yaml" "$worker_files_yaml" "$db_vol" "$p" "${STUB_NEW_API_FILES_VOL_NAME:-${p}_files}" "${STUB_NEW_WORKER_FILES_VOL_NAME:-${p}_files}" "${STUB_NEW_API_KEYS_VOL_NAME:-$keys_vol}" "${STUB_NEW_WORKER_KEYS_VOL_NAME:-$keys_vol}" "$archive_vol" "${STUB_NEW_API_ARCHIVE_VOL_NAME:-$archive_vol}"
+    return 0
+  fi
+  if [ "$p" = crove ] || [ -z "${STUB_OMIT_NEW_FILES_MOUNT:-}" ]; then
+    files_mount_yaml="      - type: volume\n        source: files\n        target: /data/files\n"
+  fi
+  printf 'name: %s\nservices:\n  db:\n%b%b\n  %s:\n    volumes:\n%b      - type: volume\n        source: keys\n        target: /data/keys\n      - type: volume\n        source: archive\n        target: /data/archive\nvolumes:\n  db-data:\n    name: %s\n  files:\n    name: %s\n  keys:\n    name: %s\n  archive:\n    name: %s\n' \
+    "$p" "$db_env_yaml" "$db_mounts_yaml" "$app_svc" "$files_mount_yaml" "$db_vol" "$files_vol" "$keys_vol" "$archive_vol"
+}
+
+stub_load_env_vars() {
+  local eff_env="${envfile:-${proj_dir:-$PWD}/.env}"
+  [ -f "$eff_env" ] || return 0
+  local _in_q='' _bs='' _el='' _qi=0 _qc='' _ek='' _ev='' _eq='' _closed=0
+  printf -v _bs '%b' '\134'
+  while IFS= read -r _el || [ -n "$_el" ]; do
+    _el="${_el%$'\r'}"
+    if [ -n "$_in_q" ]; then
+      _qi=0
+      while ((_qi < ${#_el})); do
+        _qc="${_el:_qi:1}"
+        if [ "$_qc" = "$_bs" ]; then
+          _qi=$((_qi + 2))
+          continue
+        elif [ "$_qc" = "$_in_q" ]; then
+          _in_q=''
+          break
+        fi
+        _qi=$((_qi + 1))
+      done
+      continue
+    fi
+    [[ "$_el" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+    [[ "$_el" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$ ]] || continue
+    _ek="${BASH_REMATCH[2]}"
+    _ev="${BASH_REMATCH[3]#"${BASH_REMATCH[3]%%[![:space:]]*}"}"
+    if [[ "$_ev" == \'* ]] || [[ "$_ev" == \"* ]]; then
+      _eq="${_ev:0:1}"
+      _qi=1
+      _closed=0
+      while ((_qi < ${#_ev})); do
+        _qc="${_ev:_qi:1}"
+        if [ "$_qc" = "$_bs" ]; then
+          _qi=$((_qi + 2))
+          continue
+        elif [ "$_qc" = "$_eq" ]; then
+          _closed=1
+          break
+        fi
+        _qi=$((_qi + 1))
+      done
+      if ((_closed == 0)); then
+        _in_q="$_eq"
+        continue
+      fi
+    fi
+    _ev="${_ev%%[[:space:]]#*}"
+    _ev="${_ev%"${_ev##*[![:space:]]}"}"
+    case "$_ev" in
+      \"*\") _ev="${_ev#\"}"; _ev="${_ev%\"}" ;;
+      \'*\') _ev="${_ev#\'}"; _ev="${_ev%\'}" ;;
+    esac
+    printf -v "_STUB_ENV_${_ek}" '%s' "$_ev"
+  done <"$eff_env"
+}
+
+stub_resolve_compose_files() {
+  ((${#files[@]} == 0)) || return 0
+  local base_dir="${proj_dir:-$PWD}" eff_env="${envfile:-${proj_dir:-$PWD}/.env}"
+  local cf_stub='' sep_stub="${COMPOSE_PATH_SEPARATOR:-:}" _var_re='\$\{([A-Za-z_][A-Za-z0-9_]*)\}'
+  local _vk='' _vref='' _vv='' cf_item='' cf_res=''
+  local -a cf_arr=()
+  if [ -f "$eff_env" ]; then
+    if [ -n "${_STUB_ENV_COMPOSE_PATH_SEPARATOR:-}" ]; then
+      sep_stub="${_STUB_ENV_COMPOSE_PATH_SEPARATOR}"
+    fi
+    cf_stub="${_STUB_ENV_COMPOSE_FILE:-}"
+    while [[ "$cf_stub" =~ $_var_re ]]; do
+      _vk="${BASH_REMATCH[1]}"
+      _vref="_STUB_ENV_${_vk}"
+      _vv="${!_vk:-${!_vref:-}}"
+      cf_stub="${cf_stub//\$\{$_vk\}/$_vv}"
+    done
+  fi
+  if [ -n "$cf_stub" ]; then
+    IFS="$sep_stub" read -ra cf_arr <<<"$cf_stub"
+    for cf_item in "${cf_arr[@]+"${cf_arr[@]}"}"; do
+      cf_item="${cf_item#"${cf_item%%[![:space:]]*}"}"
+      cf_item="${cf_item%"${cf_item##*[![:space:]]}"}"
+      [ -n "$cf_item" ] || continue
+      if [[ "$cf_item" == /* ]]; then cf_res="$cf_item"; else cf_res="$base_dir/$cf_item"; fi
+      if [ ! -f "$cf_res" ]; then
+        echo "compose file \"$cf_item\" set by COMPOSE_FILE environment variable is invalid: no such file" >&2
+        return 1
+      fi
+      files+=("$cf_res")
+    done
+  else
+    [ -f "$base_dir/docker-compose.yml" ] || { echo 'no configuration file provided: not found' >&2; return 1; }
+    files+=("$base_dir/docker-compose.yml")
+    if [ -f "$base_dir/docker-compose.override.yml" ]; then files+=("$base_dir/docker-compose.override.yml"); fi
+  fi
+}
+
+stub_effective_project() {
+  local proj="${proj_override:-${COMPOSE_PROJECT_NAME:-${_STUB_ENV_COMPOSE_PROJECT_NAME:-}}}" cf='' cname=''
+  if [ -z "$proj" ]; then
+    for cf in ${files[@]+"${files[@]}"}; do
+      [ -f "$cf" ] || continue
+      cname="$(sed -n -E 's/^name:[[:space:]]*(.*)$/\1/p' "$cf" | head -n 1)"
+      cname="${cname%$'\r'}"
+      if [ -n "$cname" ]; then proj="$cname"; fi
+    done
+  fi
+  printf '%s' "${proj:-ludy}"
+}
 
 case "$sub" in
   config)
     # STUB_CONFIG_FAIL_IF_ENV_HAS: the compose files do not load while the env file holds this text (#2704).
     if [ "${1:-}" = --quiet ] && [ -n "${STUB_CONFIG_FAIL_IF_ENV_HAS:-}" ] && grep -q -F -- "$STUB_CONFIG_FAIL_IF_ENV_HAS" "$envfile"; then exit 1; fi
     if [ "${1:-}" = --services ]; then
-      for s in ${STUB_SERVICES:-db migrate auth auth-grants crove-extract mailpit crove}; do echo "$s"; done
+      for s in ${STUB_SERVICES:-db migrate auth auth-grants ludy-extract mailpit ludy}; do echo "$s"; done
+    elif [ -z "${1:-}" ]; then
+      if [ -n "${STUB_PREV_CONFIG_FAIL:-}" ]; then exit 1; fi
+      if [ -n "${STUB_PREV_CONFIG_REQUIRE_ENV:-}" ] && [ -f "$STUB_DEPLOY_DIR/docker-compose.override.yml" ] && grep -q "${STUB_PREV_IMAGE_MATCH:-__none__}" "$STUB_DEPLOY_DIR/docker-compose.override.yml"; then
+        req_var="$STUB_PREV_CONFIG_REQUIRE_ENV"
+        if [ -z "${!req_var:-}" ]; then exit 1; fi
+      fi
+      stub_load_env_vars
+      stub_resolve_compose_files || exit 1
+      if [ "${STUB_COMPOSE_PROJECT:-}" = __empty__ ]; then
+        exit 0
+      elif [ -n "${STUB_COMPOSE_PROJECT:-}" ]; then
+        emit_stub_compose_config "$STUB_COMPOSE_PROJECT"
+      else
+        emit_stub_compose_config "$(stub_effective_project)"
+      fi
     fi
     ;;
   port) echo '127.0.0.1:18080' ;;
@@ -78,9 +620,6 @@ case "$sub" in
         # An environment variable of the caller must not reach the step: the env file is the one source of the key.
         { [ -z "${LUDY_CONTEXT_TOKEN_KEY+x}" ] && [ -z "${CROVE_CONTEXT_TOKEN_KEY+x}" ]; } || echo seen >"$STUB_LOG.envvar"
         key="$(sed -n 's/^LUDY_CONTEXT_TOKEN_KEY=//p' "$envfile" | tail -n 1)"
-        if [ -z "$key" ]; then
-          key="$(sed -n 's/^CROVE_CONTEXT_TOKEN_KEY=//p' "$envfile" | tail -n 1)"
-        fi
         if [ -n "$key" ]; then
           if [ -f "$STUB_LOG.installed" ] && [ "$(cat "$STUB_LOG.installed")" = "$key" ]; then echo 'context token key unchanged'; else
             printf '%s\n' "$key" >"$STUB_LOG.installed"
@@ -106,7 +645,18 @@ case "$sub" in
       for s in ${STUB_RUNNING:-worker}; do echo "$s"; done
     fi
     ;;
-  up) ;;
+  up)
+    { [ -z "${LUDY_CONTEXT_TOKEN_KEY+x}" ] && [ -z "${CROVE_CONTEXT_TOKEN_KEY+x}" ]; } || echo seen >"$STUB_LOG.envvar"
+    if [ -n "${STUB_UP_DB_FAIL_PROJ:-}" ]; then
+      stub_load_env_vars
+      if ((${#files[@]} == 0)); then stub_resolve_compose_files || true; fi
+      if [ "$(stub_effective_project)" = "$STUB_UP_DB_FAIL_PROJ" ]; then
+        case " $args " in
+          *" db "*) exit 1 ;;
+        esac
+      fi
+    fi
+    ;;
   logs) [ -z "${STUB_WORKER_LOG:-}" ] || echo "$STUB_WORKER_LOG" ;;
   rm) [ -z "${STUB_RM_FAIL:-}" ] || { echo 'rm: stub failure' >&2; exit 1; } ;;
   *)

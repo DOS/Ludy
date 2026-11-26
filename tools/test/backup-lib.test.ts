@@ -2,15 +2,15 @@
 // catch what they claim to, and the shell's sealed size must agree with seal.mjs.
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { keyId, sealedSize } from '../backup/seal.mjs';
 
 const lib = resolve(import.meta.dirname, '../backup/lib.sh').replaceAll('\\', '/');
 const hasBash = spawnSync('bash', ['-c', 'exit 0']).status === 0;
-const dir = mkdtempSync(join(tmpdir(), 'crove-backup-lib-'));
+const dir = mkdtempSync(join(tmpdir(), 'ludy-backup-lib-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 function bash(script: string, env: Record<string, string> = {}, input = '') {
@@ -104,8 +104,8 @@ describe.skipIf(!hasBash)('backup lib.sh', { timeout: 120_000 }, () => {
   });
 
   it('tells a development URL from a deployment, and counts no URL as a deployment', () => {
-    const local = ['http://localhost:8080', 'http://LOCALHOST', 'http://crove.localhost/x', 'http://127.0.0.1:18181', 'http://127.12.0.3', 'http://[::1]:8080'];
-    const deployed = ['', 'https://crove.example.com', 'https://127.example.com', 'http://127.0.0.1.nip.io', 'https://localhost.example.com', 'http://10.0.0.5:8080'];
+    const local = ['http://localhost:8080', 'http://LOCALHOST', 'http://ludy.localhost/x', 'http://127.0.0.1:18181', 'http://127.12.0.3', 'http://[::1]:8080'];
+    const deployed = ['', 'https://ludy.example.com', 'https://127.example.com', 'http://127.0.0.1.nip.io', 'https://localhost.example.com', 'http://10.0.0.5:8080'];
     const res = bash(`for u in ${[...local, ...deployed].map((u) => `'${u}'`).join(' ')}; do if is_local_url "$u"; then echo local; else echo deployed; fi; done`);
     expect(res.out.trim().split('\n')).toEqual([...local.map(() => 'local'), ...deployed.map(() => 'deployed')]);
   });
@@ -147,5 +147,52 @@ describe.skipIf(!hasBash)('backup lib.sh', { timeout: 120_000 }, () => {
     const missing = bash(`meta_value SCHEMA_VERSION '${meta}'`);
     expect(missing.status).toBe(1);
     expect(missing.err).toContain('meta.env has no SCHEMA_VERSION');
+  });
+
+  it('fails closed on retired CROVE_DIR without LUDY_DIR and auto-detects active app service (#3972)', () => {
+    const retired = bash('printf "%s" "$LUDY_DIR"', { CROVE_DIR: '/opt/crove' });
+    expect(retired.status).toBe(2);
+    expect(retired.err).toMatch(/CROVE_DIR.*LUDY_DIR/);
+    expect(retired.out).toBe('');
+
+    const replaced = bash('printf "%s" "$LUDY_DIR"', { CROVE_DIR: '/opt/crove', LUDY_DIR: '/opt/ludy' });
+    expect(replaced.status).toBe(0);
+    expect(replaced.out).toBe('/opt/ludy');
+
+    const stubRoot = join(dir, 'app-svc-stub').replaceAll('\\', '/');
+    const stubBin = `${stubRoot}/bin`;
+    mkdirSync(stubBin, { recursive: true });
+    writeFileSync(
+      `${stubBin}/docker`,
+      [
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        '[ -z "${STUB_DC_FAIL:-}" ] || exit 1',
+        'if [ "${1:-}" = compose ] && [ "${2:-}" = config ] && [ "${3:-}" = --services ]; then',
+        '  for s in ${STUB_SERVICES:-}; do printf "%s\\n" "$s"; done',
+        '  exit 0',
+        'fi',
+        'exit 1',
+        '',
+      ].join('\n'),
+    );
+    chmodSync(`${stubBin}/docker`, 0o755);
+
+    const pathWithStub = `${stubBin}${delimiter}${process.env['PATH'] ?? ''}`;
+    for (const [env, expected] of [
+      [{ STUB_SERVICES: 'db ludy crove api worker' }, 'ludy'],
+      [{ STUB_SERVICES: 'db crove prober' }, 'crove'],
+      [{ STUB_SERVICES: 'db api worker prober' }, 'worker'],
+      [{ STUB_SERVICES: 'db api' }, 'api'],
+      [{ STUB_DC_FAIL: '1' }, 'ludy'],
+    ] as const) {
+      const detected = bash('default_app_service', { PATH: pathWithStub, LUDY_DIR: stubRoot, ...env });
+      expect(detected.status, JSON.stringify(env)).toBe(0);
+      expect(detected.out, JSON.stringify(env)).toBe(expected);
+    }
+
+    const backupScript = readFileSync(resolve(import.meta.dirname, '../backup/backup.sh'), 'utf8');
+    expect(backupScript).toContain('--exclude-table-data=ludy_kernel.context_key');
+    expect(backupScript).toContain('--exclude-table-data=crove_kernel.context_key');
   });
 });

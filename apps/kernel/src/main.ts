@@ -31,7 +31,7 @@
 // It wires the open-source default adapters into the composition root (createKernel, ADR-0030).
 import { randomBytes } from 'node:crypto';
 import { applyAuthGrants, installDdlWatch, migrate, setRolePasswords } from '@ludy/db/migrate';
-import { liveAuthUrl, loadConfig, type Config } from './config.ts';
+import { assertNoRetiredMigrateCredentials, liveAuthUrl, loadConfig, type Config } from './config.ts';
 import { installJsonLogs, parseLogFormat } from './log.ts';
 import { createKernel, defaultAdapters, type ServerRole } from './kernel.ts';
 import { describeMailer } from './mail.ts';
@@ -45,6 +45,7 @@ type Role = 'migrate' | 'auth-grants' | 'prober' | 'usage-report' | 'pilot-check
 const ROLES: readonly Role[] = ['migrate', 'auth-grants', 'api', 'worker', 'all', 'prober', 'usage-report', 'pilot-check', 'exports-rebind', 'user-disable', 'user-enable', 'org-purge', 'restore-report', 'shred-replay', 'telegram-webhook-rekey', 'vapid-keys', 'context-token-key'];
 
 async function runMigrate(config: Config) {
+  assertNoRetiredMigrateCredentials(process.env);
   const adminUrl = config.ADMIN_DATABASE_URL;
   if (!adminUrl) throw new Error('ADMIN_DATABASE_URL is required for migrate');
   const applied = await migrate({

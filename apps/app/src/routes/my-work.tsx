@@ -1332,6 +1332,7 @@ export function MyWorkPage() {
   const work = useQuery({ ...orpc.notes.todos.myWork.queryOptions({ input: myWorkInput }), refetchInterval, enabled: needsWork });
   const closed = useQuery({ ...orpc.notes.todos.list.queryOptions({ input: closedInput }), refetchInterval, enabled: view === 'done' || view === 'trash' });
   const hasTodoFilters = effectiveListFilter !== 'all' || tagFilter !== '' || priorityFilter !== null;
+  // Preview-only duplicate estimates capped at the notes.todos.list schema max (500); server import_todoist validates all rows under lock.
   const importOpenTodos = useQuery({
     ...orpc.notes.todos.list.queryOptions({ input: { view: 'open', limit: 500 } }),
     enabled: writer && importOpen && (!needsWork || hasTodoFilters),

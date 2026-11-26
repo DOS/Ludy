@@ -16,14 +16,14 @@
 //      of the batch it names) and nothing else is asked of it.
 // No AI endpoint is configured: e-invoice XML is read without AI. Plain Node (26+), no dependencies.
 //
-// Environment: SPLIT_PROJECT (compose project, default crove-split), SPLIT_PORT (default 18080).
+// Environment: SPLIT_PROJECT (compose project, default ludy-split), SPLIT_PORT (default 18080).
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
-const PROJECT = process.env.SPLIT_PROJECT ?? 'crove-split';
+const PROJECT = process.env.SPLIT_PROJECT ?? 'ludy-split';
 const BASE_URL = `http://127.0.0.1:${process.env.SPLIT_PORT ?? '18080'}`;
 const COMPOSE = ['compose', '-p', PROJECT, '-f', `${ROOT}docker-compose.yml`, '-f', `${ROOT}docker-compose.split.yml`];
 // The throwaway values in docker-compose.split.yml.
@@ -92,8 +92,8 @@ function containerOf(service) {
 
 function checkTopology() {
   const running = compose(['ps', '--services', '--status', 'running']).split(/\r?\n/).filter(Boolean);
-  for (const service of ['api', 'worker', 'minio', 'crove-extract']) assert(running.includes(service), `${service} is running`);
-  assert(!running.includes('crove'), 'the all-in-one crove service is not running');
+  for (const service of ['api', 'worker', 'minio', 'ludy-extract']) assert(running.includes(service), `${service} is running`);
+  assert(!running.includes('ludy'), 'the all-in-one ludy service is not running');
   const volumes = docker(['volume', 'ls', '-q', '--filter', `label=com.docker.compose.project=${PROJECT}`]).split(/\r?\n/).filter(Boolean);
   assert(!volumes.some((v) => v.endsWith('_files')), `no files volume in project ${PROJECT} (found ${volumes.join(', ')})`);
 
@@ -103,7 +103,7 @@ function checkTopology() {
     assert(container.Mounts.length === 0, `${service} has no volume or bind mount (found ${JSON.stringify(container.Mounts)})`);
     const nets = Object.keys(container.NetworkSettings.Networks);
     assert(nets.includes(extractNet) === (service === 'worker'), `only the worker is on ${extractNet} (${service}: ${nets.join(', ')})`);
-    assert(container.Config.Image === 'crove:split', `${service} runs crove:split`);
+    assert(container.Config.Image === 'ludy:split', `${service} runs ludy:split`);
     const logs = compose(['logs', '--no-color', service]);
     assert(logs.includes(`[storage] s3 bucket ${BUCKET} at minio:9000`), `${service} logs that it stores blobs in the bucket`);
   }
@@ -192,7 +192,7 @@ async function main() {
     checkTopology();
     return true;
   });
-  log('topology: api and worker are separate containers of one image, no mounts, only the worker reaches crove-extract');
+  log('topology: api and worker are separate containers of one image, no mounts, only the worker reaches ludy-extract');
 
   const token = await signUp();
   const org = await rpc(token, 'org/create', { name: 'Công ty Split Stack', idempotencyKey: randomUUID() });

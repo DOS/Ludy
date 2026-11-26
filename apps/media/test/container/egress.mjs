@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Egress probe for the `media-image` CI job. The job runs it in the network namespace
-// of the crove-media container (docker run --network container:<name>), where every probe must fail,
+// of the ludy-media container (docker run --network container:<name>), where every probe must fail,
 // and once on an ordinary network as a control, where the probes should succeed.
 // Usage: node egress.mjs blocked|control
 import { promises as dns } from 'node:dns';

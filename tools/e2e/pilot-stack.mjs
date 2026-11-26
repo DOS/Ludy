@@ -2,18 +2,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // End-to-end boot of the pilot layout (issue #2133): docker-compose.yml with tools/deploy/compose.pilot.yml, laid out as
 // they are on a deploy host (both files in one directory, the images already built), then the real HTTP API:
-//   1. the topology: `api` and `worker` run as two containers of one image, the all-in-one `crove` does not, the API holds no
+//   1. the topology: `api` and `worker` run as two containers of one image, the all-in-one `ludy` does not, the API holds no
 //      WORKER_DATABASE_URL and no EXTRACT_URL, only the worker is on the extract network, both run only the finance module;
 //   2. sign up, create an org, upload the synthetic e-invoice: the API stores it on the `files` volume the two containers
-//      share, and the worker reads it into a pending proposal through crove-extract.
+//      share, and the worker reads it into a pending proposal through ludy-extract.
 // It proves that `extends`, `!reset` and `!override` compose the way the unit test's `docker compose config` says, on the
 // compose version of the machine it runs on, and that the layout a pilot deploys actually starts and works.
 // No AI endpoint: e-invoice XML is read without AI. Plain Node (26+), no dependencies; needs docker with compose.
 //
-//   docker tag crove:split crove:local && docker tag crove-extract:split crove-extract:local && docker tag crove-media:split crove-media:local   (or build them as :local)
+//   docker tag ludy:split ludy:local && docker tag ludy-extract:split ludy-extract:local && docker tag ludy-media:split ludy-media:local   (or build them as :local)
 //   node tools/e2e/pilot-stack.mjs
-// Environment: PILOT_PROJECT (compose project, default crove-pilot-<random>; must contain "pilot" and have no containers or
-// volumes yet), PILOT_PORT (default 18090). Inherited COMPOSE_* and CROVE_* variables are not passed on.
+// Environment: PILOT_PROJECT (compose project, default ludy-pilot-<random>; must contain "pilot" and have no containers or
+// volumes yet), PILOT_PORT (default 18090). Inherited COMPOSE_*, LUDY_* and CROVE_* variables are not passed on.
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url)).replaceAll('\\', '/');
 // A fresh name per run, so the run only ever removes what it created. A name given in PILOT_PROJECT must not exist yet.
-const PROJECT = process.env.PILOT_PROJECT ?? `crove-pilot-${randomBytes(3).toString('hex')}`;
+const PROJECT = process.env.PILOT_PROJECT ?? `ludy-pilot-${randomBytes(3).toString('hex')}`;
 // The project is torn down with its volumes at the end: its name must be one nobody gives a real stack.
 if (!/^[a-z][a-z0-9-]{0,30}$/.test(PROJECT) || !PROJECT.includes('pilot')) throw new Error('PILOT_PROJECT is lower-case letters, digits and -, and contains "pilot"');
 const PORT = process.env.PILOT_PORT ?? '18090';
@@ -41,7 +41,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function assert(condition, message) {
   if (!condition) throw new Error(`assertion failed: ${message}`);
 }
-// An exported LUDY_MODULES, CROVE_MODULES, COMPOSE_PROFILES or COMPOSE_FILE would override the empty .env and change the stack under test.
+// An exported LUDY_MODULES, COMPOSE_PROFILES or COMPOSE_FILE would override the empty .env and change the stack under test;
+// filtering CROVE_* as well prevents host shell variables from tripping retired-variable fail-closed guards.
 const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(COMPOSE_|LUDY_|CROVE_)/.test(name)));
 const docker = (args) => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...inherited, PORT, PUBLIC_URL: `http://localhost:${PORT}` } });
 const compose = (args) => docker([...COMPOSE, ...args]);
@@ -86,27 +87,27 @@ const envOf = (container) => Object.fromEntries(container.Config.Env.map((line) 
 
 function checkTopology() {
   const running = compose(['ps', '--services', '--status', 'running']).split(/\r?\n/).filter(Boolean);
-  for (const service of ['api', 'worker', 'crove-extract', 'crove-media']) assert(running.includes(service), `${service} is running`);
-  assert(!running.includes('crove'), 'the all-in-one crove service is not running');
+  for (const service of ['api', 'worker', 'ludy-extract', 'ludy-media']) assert(running.includes(service), `${service} is running`);
+  assert(!running.includes('ludy'), 'the all-in-one ludy service is not running');
   const api = containerOf('api');
   const worker = containerOf('worker');
   const apiEnv = envOf(api);
   const workerEnv = envOf(worker);
   assert(!('WORKER_DATABASE_URL' in apiEnv), 'the API container has no WORKER_DATABASE_URL');
   assert(!('EXTRACT_URL' in apiEnv), 'the API container has no EXTRACT_URL');
-  assert(workerEnv['WORKER_DATABASE_URL']?.includes('ludy_worker') || workerEnv['WORKER_DATABASE_URL']?.includes('crove_worker'), 'the worker container has the worker login');
+  assert(workerEnv['WORKER_DATABASE_URL']?.includes('ludy_worker'), 'the worker container has the worker login');
   assert(workerEnv['EXTRACT_URL'] === 'http://ludy-extract:8090', 'the worker reaches ludy-extract');
-  assert(apiEnv['DATABASE_URL']?.includes('ludy_app') || apiEnv['DATABASE_URL']?.includes('crove_app'), 'the API runs on the app login');
+  assert(apiEnv['DATABASE_URL']?.includes('ludy_app'), 'the API runs on the app login');
   for (const [name, env] of [['api', apiEnv], ['worker', workerEnv]]) assert(env['LUDY_MODULES'] === 'finance', `${name} runs the finance module only (LUDY_MODULES=${env['LUDY_MODULES']})`);
   const extractNet = `${PROJECT}_extract`;
   assert(!Object.keys(api.NetworkSettings.Networks).includes(extractNet), 'the API is not on the extract network');
   assert(Object.keys(worker.NetworkSettings.Networks).includes(extractNet), 'the worker is on the extract network');
-  // Meeting recordings are measured in crove-media (#2985): the API at upload and the worker at transcription reach it, and it is on no other network.
+  // Meeting recordings are measured in ludy-media (#2985): the API at upload and the worker at transcription reach it, and it is on no other network.
   const mediaNet = `${PROJECT}_media`;
   assert(Object.keys(api.NetworkSettings.Networks).includes(mediaNet), 'the API is on the media network');
   assert(Object.keys(worker.NetworkSettings.Networks).includes(mediaNet), 'the worker is on the media network');
   assert(apiEnv['MEDIA_URL'] === 'http://ludy-media:8095' && workerEnv['MEDIA_URL'] === 'http://ludy-media:8095', 'api and worker reach ludy-media at MEDIA_URL');
-  assert(Object.keys(containerOf('crove-media').NetworkSettings.Networks).join() === mediaNet, 'crove-media is on the media network only');
+  assert(Object.keys(containerOf('ludy-media').NetworkSettings.Networks).join() === mediaNet, 'ludy-media is on the media network only');
   assert(api.Image === worker.Image, 'api and worker run the same image');
   assert(JSON.stringify(api.Config.Cmd) === '["api"]' && JSON.stringify(worker.Config.Cmd) === '["worker"]', `commands api and worker (${api.Config.Cmd}, ${worker.Config.Cmd})`);
   const volume = (container) => container.Mounts.find((m) => m.Destination === '/data/files')?.Name;
@@ -121,7 +122,7 @@ async function main() {
   copyFileSync(`${ROOT}tools/deploy/compose.pilot.yml`, `${DIR}/compose.pilot.yml`);
   writeFileSync(`${DIR}/.env`, '');
   log(`starting ${PROJECT} from ${DIR}`);
-  // The images are the ones built before (crove:local and crove-extract:local): the layout is started, not built.
+  // The images are the ones built before (ludy:local and ludy-extract:local): the layout is started, not built.
   // Never take over, and later remove, a project this run did not create.
   const existing = [compose(['ps', '-aq']), docker(['volume', 'ls', '-q', '--filter', `label=com.docker.compose.project=${PROJECT}`])].join('').trim();
   assert(existing === '', `the compose project ${PROJECT} already has containers or volumes: pick another PILOT_PROJECT`);
@@ -167,7 +168,7 @@ async function main() {
   });
   const proposal = await rpc(token, 'inbox/get', { id: file.proposalId }, org.slug);
   assert(proposal.status === 'pending' && proposal.sellerName === SELLER && TOTAL.test(proposal.total ?? ''), `the proposal reads ${proposal.sellerName} ${proposal.total}`);
-  log('upload: the API stored it, the worker read it through crove-extract into a pending proposal');
+  log('upload: the API stored it, the worker read it through ludy-extract into a pending proposal');
 }
 
 try {

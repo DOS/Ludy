@@ -2,7 +2,7 @@
 # on the stack's own network, so no spec ever reaches a real model. The default stack (compose.e2e.yml alone) has no model and MEETINGS_SUMMARY off, and the specs of e2e/tests rely on that: never add these
 # settings there. Paths are relative to the first compose file (the repository root).
 services:
-  crove:
+  ludy:
     environment:
       AI_BASE_URL: http://fake-model:30001/v1
       AI_MODEL: fake-summary
@@ -22,7 +22,7 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ['no-new-privileges:true']
-    # Only the model's network, which is internal: the service is reachable from crove and from nothing else, and has no route out. "Reaches no other host" is enforced here, not only by its code.
+    # Only the model's network, which is internal: the service is reachable from ludy and from nothing else, and has no route out. "Reaches no other host" is enforced here, not only by its code.
     networks:
       - model
 networks:

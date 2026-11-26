@@ -2,6 +2,7 @@
 // Isolated note attachments (#3561, docs/plan/notes-v2.md V2-5, owner decision A3, ADR-0037):
 // <= 25 MiB files and clipboard screenshots attached directly to a note under ludy_notes.attachment
 // and private BlobStore keys notes/<org_id>/<attachment_id>, never touching ludy_kernel.file.
+import { sql } from 'kysely';
 import {
   auditValue,
   NOTE_ATTACHMENTS_PER_NOTE_MAX,
@@ -17,6 +18,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { notesManifest } from './manifest.ts';
+import { lockNotesEraseShared } from './locks.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -136,6 +138,8 @@ export const noteAttachmentCreate = defineCommand({
     if (input.storageKey !== expectedKey) {
       throw new DomainError('INVALID', 400, 'Khóa lưu trữ tệp đính kèm không hợp lệ');
     }
+    // Participate in shared notes.erase barrier before locking/attaching to the note so personalDataErase cannot miss a newly matched filename.
+    await lockNotesEraseShared(ctx);
     const note = await loadParentNoteForWrite(ctx, input.noteId, (row) => {
       if (row.author_user_id !== userId) {
         throw new DomainError('NOTE_AUTHOR_ONLY', 403, 'Chỉ người viết ghi chú mới đính kèm được tệp');
@@ -173,7 +177,7 @@ export const noteAttachmentCreate = defineCommand({
 
     await ctx.trx
       .updateTable('ludy_notes.note')
-      .set({ updated_at: ctx.now })
+      .set({ updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})` })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)
       .execute();
@@ -238,7 +242,7 @@ export const noteAttachmentDelete = defineCommand({
 
     await ctx.trx
       .updateTable('ludy_notes.note')
-      .set({ updated_at: ctx.now })
+      .set({ updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})` })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', att.note_id)
       .execute();

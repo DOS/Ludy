@@ -226,10 +226,15 @@ describe('configuration guards', () => {
   });
 
   // Plan Decision 12, ADR-0031.
-  it('enables every module by default, always keeps kernel, ignores retired CROVE_MODULES, and refuses an unknown module', () => {
+  it('enables every module by default, always keeps kernel, fails closed on retired CROVE_MODULES without LUDY_MODULES, and refuses an unknown module', () => {
     expect(loadConfig(base).LUDY_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
     expect(loadConfig({ ...base, LUDY_MODULES: '  ' }).LUDY_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
-    expect(loadConfig({ ...base, CROVE_MODULES: 'kernel' }).LUDY_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(() => loadConfig({ ...base, CROVE_MODULES: 'kernel' })).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
+    expect(() => loadConfig({ ...base, CROVE_MODULES: 'kernel', LUDY_MODULES: ' , ' })).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
+    expect(() => loadConfig({ ...base, LUDY_RETIRED_MODULES: 'CROVE_MODULES', LUDY_MODULES: 'finance' })).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
+    expect(() => loadConfig({ ...base, LUDY_RETIRED_MODULES: 'CROVE_MODULES:,', LUDY_MODULES: 'finance' })).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
+    expect(loadConfig({ ...base, LUDY_RETIRED_MODULES: 'CROVE_MODULES:finance', LUDY_MODULES: 'finance' }).LUDY_MODULES).toEqual(['kernel', 'finance']);
+    expect(loadConfig({ ...base, CROVE_MODULES: 'kernel', LUDY_MODULES: 'finance' }).LUDY_MODULES).toEqual(['kernel', 'finance']);
     expect(loadConfig({ ...base, LUDY_MODULES: ',' }).LUDY_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
     expect(loadConfig({ ...base, LUDY_MODULES: ' , ,' }).LUDY_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
     expect(loadConfig({ ...base, LUDY_MODULES: 'kernel' }).LUDY_MODULES).toEqual(['kernel']);

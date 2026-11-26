@@ -475,6 +475,16 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     expect(dup.status).toBe(201);
     expect(dup.body).toMatchObject({ importedTodos: 0, skippedDuplicates: 4 });
 
+    // Vietnamese uppercase 'Đ' vs lowercase 'đ' still deduplicates under LC_CTYPE=C PostgreSQL databases (#5035).
+    const viUpperCsv = 'TYPE,CONTENT,PRIORITY\ntask,Đơn hàng cần duyệt,1\n';
+    const viLowerCsv = 'TYPE,CONTENT,PRIORITY\ntask,đơn hàng cần duyệt,1\n';
+    const viFirst = await uploadTodoist('member', viUpperCsv, { skipDuplicates: 'true' });
+    expect(viFirst.status).toBe(201);
+    expect(viFirst.body).toMatchObject({ importedTodos: 1, skippedDuplicates: 0 });
+    const viDup = await uploadTodoist('member', viLowerCsv, { skipDuplicates: 'true' });
+    expect(viDup.status).toBe(201);
+    expect(viDup.body).toMatchObject({ importedTodos: 0, skippedDuplicates: 1 });
+
     // Other member sees zero imported lists or todos.
     const otherLists = await rpc('notes/todos/lists/list', await asJsonHeaders('other'), {});
     expect((otherLists.body as { lists: TodoListSummary[] }).lists).toEqual([]);
@@ -681,5 +691,267 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     });
     expect(rawBadUtf8.status).toBe(400);
     expect(((await rawBadUtf8.json()) as { code?: string }).code).toBe('NOTE_IMPORT_INVALID');
+  });
+
+  it('serializes concurrent Todoist import, list creation, and todo creation without sort_key collisions or deadlocks (#5035)', async () => {
+    const ownerHeaders = await asJsonHeaders('owner');
+    const authHdrs = await asAuthHeaders('owner');
+    const seedRes = await rpc('notes/todos/create', ownerHeaders, { title: 'Seed Rebalance Tail' });
+    expect(seedRes.status, JSON.stringify(seedRes.body)).toBe(200);
+    const seedTodoId = String(seedRes.body.todoId);
+    const tightKey = 'z'.repeat(48);
+    await admin((c) =>
+      c.query(`UPDATE ludy_notes.todo SET sort_key = $1 WHERE org_id = $2 AND id = $3`, [tightKey, orgId, seedTodoId]),
+    );
+
+    const concurrentRows = Array.from({ length: 260 }, (_, idx) => `task,Concurrent Task ${String(idx).padStart(3, '0')},,${(idx % 4) + 1},1,,,`).join('\n');
+    const concurrentCsv = `TYPE,CONTENT,DESCRIPTION,PRIORITY,INDENT,DATE,TIMEZONE,LABELS\n${concurrentRows}\n`;
+
+    const importReq = async () => {
+      const form = new FormData();
+      form.append('file', new Blob([new TextEncoder().encode(concurrentCsv)], { type: 'text/csv' }), 'Concurrent Import.csv');
+      const res = await app.request('/api/notes/import/todoist', {
+        method: 'POST',
+        headers: authHdrs,
+        body: form,
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+
+    const [importRes, listRes1, listRes2, ...createResults] = await Promise.all([
+      importReq(),
+      rpc('notes/todos/lists/create', ownerHeaders, { name: 'Concurrent List A', color: 'blue', sections: [] }),
+      rpc('notes/todos/lists/create', ownerHeaders, { name: 'Concurrent List B', color: 'emerald', sections: [] }),
+      ...Array.from({ length: 6 }, (_, i) => rpc('notes/todos/create', ownerHeaders, { title: `Manual Concurrent ${i}` })),
+    ]);
+
+    expect(importRes.status, JSON.stringify(importRes.body)).toBe(201);
+    expect(listRes1.status, JSON.stringify(listRes1.body)).toBe(200);
+    expect(listRes2.status, JSON.stringify(listRes2.body)).toBe(200);
+    for (const cr of createResults) {
+      expect(cr.status, JSON.stringify(cr.body)).toBe(200);
+    }
+
+    const createdTodoIds = [
+      ...((importRes.body as unknown as TodoistImportResult).todoIds ?? []),
+      ...createResults.map((r) => String(r.body.todoId)),
+    ];
+    expect(createdTodoIds).toHaveLength(266);
+
+    const allIds = [seedTodoId, ...createdTodoIds];
+    const ownerTodos = await admin(async (c) =>
+      (await c.query<{ id: string; owner_user_id: string; sort_key: string }>(
+        `SELECT id, owner_user_id, sort_key FROM ludy_notes.todo WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY sort_key ASC, id ASC`,
+        [orgId, allIds],
+      )).rows,
+    );
+    expect(ownerTodos).toHaveLength(267);
+    const ownerUserId = ownerTodos[0]!.owner_user_id;
+    expect(ownerTodos.every((r) => r.owner_user_id === ownerUserId)).toBe(true);
+    expect(new Set(ownerTodos.map((r) => r.sort_key)).size).toBe(267);
+    expect(ownerTodos.every((r) => r.sort_key.length <= 48)).toBe(true);
+    const rebalancedSeed = ownerTodos.find((r) => r.id === seedTodoId);
+    expect(rebalancedSeed).toBeDefined();
+    expect(rebalancedSeed!.sort_key).not.toBe(tightKey);
+
+    const ownerLists = await admin(async (c) =>
+      (await c.query<{ id: string; sort_key: string }>(
+        `SELECT id, sort_key FROM ludy_notes.todo_list WHERE org_id = $1 AND owner_user_id = $2 AND deleted_at IS NULL ORDER BY sort_key ASC, id ASC`,
+        [orgId, ownerUserId],
+      )).rows,
+    );
+    expect(ownerLists.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(ownerLists.map((r) => r.sort_key)).size).toBe(ownerLists.length);
+  });
+
+  it('skips org-wide reorder lock when ENEX only reuses existing notebooks, locks duplicate-named notebooks, and rejects concurrent delete/rename shifts (#5035)', async () => {
+    const ownerHeaders = await asJsonHeaders('owner');
+    const createNb = async (name: string) => {
+      const created = await rpc('notes/notebooks/create', ownerHeaders, { name, visibility: 'private' });
+      expect(created.status, JSON.stringify(created.body)).toBe(200);
+      return String(created.body.notebookId);
+    };
+    const makeEnex = (nbName: string, title: string) => `<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <notebook>${nbName}</notebook>
+  <note>
+    <title>${title}</title>
+    <content><![CDATA[<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note><p>${title}</p></en-note>]]></content>
+  </note>
+</en-export>`;
+
+    const reuseId = await createNb('So Tai Su Dung');
+    expect(reuseId).toBeTruthy();
+
+    // 1. Holding org-wide notes.notebook.reorder must NOT block an ENEX import whose file notebooks already exist.
+    const reorderGate = new pg.Client({ connectionString: adminUrl });
+    await reorderGate.connect();
+    let reusePromise: Promise<{ status: number; body: Record<string, unknown> }> | undefined;
+    try {
+      await reorderGate.query('BEGIN');
+      await reorderGate.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.notebook.reorder:${orgId.toLowerCase()}`],
+      );
+      reusePromise = uploadEnex('owner', makeEnex('So Tai Su Dung', 'Ghi Chu Tai Su Dung'));
+      void reusePromise.catch(() => undefined);
+      const timerRace = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('ENEX reuse blocked on org-wide notes.notebook.reorder lock')), 3000);
+      });
+      const reuseRes = await Promise.race([reusePromise, timerRace]);
+      expect(reuseRes.status, JSON.stringify(reuseRes.body)).toBe(201);
+      expect(reuseRes.body).toMatchObject({ importedNotes: 1, createdNotebooks: 0, reusedNotebooks: 1 });
+    } finally {
+      await reorderGate.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(reusePromise ? [reusePromise] : []);
+      await reorderGate.end().catch(() => undefined);
+    }
+
+    const waitAdvisorySharedWait = async (blockingPid: number, errors: unknown[]): Promise<void> => {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        if (errors.length > 0) throw errors[0];
+        const waits = await admin(async (c) =>
+          (await c.query<{ pid: number }>(
+            `SELECT a.pid
+               FROM pg_catalog.pg_stat_activity a
+              WHERE a.datname = pg_catalog.current_database()
+                AND a.state = 'active'
+                AND a.wait_event_type = 'Lock'
+                AND a.query ILIKE '%pg_advisory_xact_lock_shared%'
+                AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+              LIMIT 1`,
+            [blockingPid],
+          )).rows,
+        );
+        if (waits.length > 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Timed out waiting for shared advisory lock blocked on pid ${blockingPid}`);
+    };
+
+    // 2. Duplicate-named private notebooks: locking the second duplicate notebook still blocks ENEX import on shared advisory lock.
+    await createNb('So Trung Ten');
+    const dupNb2 = await createNb('So Trung Ten');
+    const dupGate = new pg.Client({ connectionString: adminUrl });
+    await dupGate.connect();
+    const dupErrors: unknown[] = [];
+    let importPromise: Promise<{ status: number; body: Record<string, unknown> }> | undefined;
+    try {
+      const dupPid = (await dupGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await dupGate.query('BEGIN');
+      await dupGate.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.notebook:${orgId.toLowerCase()}:${dupNb2.toLowerCase()}`],
+      );
+      importPromise = uploadEnex('owner', makeEnex('So Trung Ten', 'Ghi Chu Trung Ten'));
+      void importPromise.catch((err) => dupErrors.push(err));
+      await waitAdvisorySharedWait(dupPid, dupErrors);
+      await dupGate.query('COMMIT');
+      const dupRes = await importPromise;
+      expect(dupRes.status, JSON.stringify(dupRes.body)).toBe(201);
+      expect(dupRes.body).toMatchObject({ importedNotes: 1, createdNotebooks: 0, reusedNotebooks: 1 });
+    } finally {
+      await dupGate.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(importPromise ? [importPromise] : []);
+      await dupGate.end().catch(() => undefined);
+    }
+
+    // 3. If a reused existing file notebook is deleted concurrently while import waits on its lock, abort cleanly with 409 CONFLICT.
+    const vanishId = await createNb('So Bi Xoa Dong Thoi');
+    const delGate = new pg.Client({ connectionString: adminUrl });
+    await delGate.connect();
+    const delErrors: unknown[] = [];
+    let vanishPromise: Promise<{ status: number; body: Record<string, unknown> }> | undefined;
+    try {
+      const delPid = (await delGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await delGate.query('BEGIN');
+      await delGate.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.notebook:${orgId.toLowerCase()}:${vanishId.toLowerCase()}`],
+      );
+      vanishPromise = uploadEnex('owner', makeEnex('So Bi Xoa Dong Thoi', 'Ghi Chu So Bi Xoa'));
+      void vanishPromise.catch((err) => delErrors.push(err));
+      await waitAdvisorySharedWait(delPid, delErrors);
+      await delGate.query(`DELETE FROM ludy_notes.notebook WHERE org_id = $1 AND id = $2`, [orgId, vanishId]);
+      await delGate.query('COMMIT');
+      const vanishRes = await vanishPromise;
+      expect(vanishRes.status, JSON.stringify(vanishRes.body)).toBe(409);
+      expect(vanishRes.body.code).toBe('CONFLICT');
+    } finally {
+      await delGate.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(vanishPromise ? [vanishPromise] : []);
+      await delGate.end().catch(() => undefined);
+    }
+
+    // 4. Reverse-ID-order reuse with skipDuplicates=false concurrent with notebook rebalance avoids 40P01 deadlocks (#5035).
+    const revNbA = await createNb('So Dao Thu Tu A');
+    const revNbB = await createNb('So Dao Thu Tu B');
+    const [firstName, secondName] = revNbA < revNbB ? ['So Dao Thu Tu B', 'So Dao Thu Tu A'] : ['So Dao Thu Tu A', 'So Dao Thu Tu B'];
+    const reverseEnex = `<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Ghi Chu Dao 1</title>
+    <notebook>${firstName}</notebook>
+    <content><![CDATA[<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note><p>Dao 1</p></en-note>]]></content>
+  </note>
+  <note>
+    <title>Ghi Chu Dao 2</title>
+    <notebook>${secondName}</notebook>
+    <content><![CDATA[<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note><p>Dao 2</p></en-note>]]></content>
+  </note>
+</en-export>`;
+    await admin((c) =>
+      c.query(`UPDATE ludy_notes.notebook SET sort_key = $1 WHERE org_id = $2 AND id = $3`, ['z'.repeat(81), orgId, revNbB]),
+    );
+    const [revRes, rebalanceRes] = await Promise.all([
+      uploadEnex('owner', reverseEnex, { skipDuplicates: 'false' }),
+      rpc('notes/notebooks/create', await asJsonHeaders('owner'), { name: 'So Moi Can Rebalance', visibility: 'private' }),
+    ]);
+    expect(revRes.status, JSON.stringify(revRes.body)).toBe(201);
+    expect(rebalanceRes.status, JSON.stringify(rebalanceRes.body)).toBe(200);
+    const rebalancedKey = await admin(async (c) =>
+      (await c.query<{ sort_key: string }>(`SELECT sort_key FROM ludy_notes.notebook WHERE org_id = $1 AND id = $2`, [orgId, revNbB])).rows[0]?.sort_key,
+    );
+    expect(rebalancedKey).toBeDefined();
+    expect(rebalancedKey!.length).toBeLessThan(81);
+
+    // 5. Unfiled ENEX imports (no <notebook> tag and no targetNotebookId) must still acquire shared notes.erase (#5035).
+    const unfiledPdfB64 = Buffer.from(tinyPdf()).toString('base64');
+    const unfiledEnex = `<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Ghi Chu Khong So Tay</title>
+    <content><![CDATA[<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note><p>Unfiled</p></en-note>]]></content>
+    <resource>
+      <data encoding="base64">${unfiledPdfB64}</data>
+      <mime>application/pdf</mime>
+      <resource-attributes><file-name>unfiled-hop-dong.pdf</file-name></resource-attributes>
+    </resource>
+  </note>
+</en-export>`;
+    const eraseGate = new pg.Client({ connectionString: adminUrl });
+    await eraseGate.connect();
+    const eraseErrors: unknown[] = [];
+    let unfiledPromise: Promise<{ status: number; body: Record<string, unknown> }> | undefined;
+    try {
+      const erasePid = (await eraseGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await eraseGate.query('BEGIN');
+      await eraseGate.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.erase:${orgId.toLowerCase()}`],
+      );
+      unfiledPromise = uploadEnex('owner', unfiledEnex);
+      void unfiledPromise.catch((err) => eraseErrors.push(err));
+      await waitAdvisorySharedWait(erasePid, eraseErrors);
+      await eraseGate.query('COMMIT');
+      const unfiledRes = await unfiledPromise;
+      expect(unfiledRes.status, JSON.stringify(unfiledRes.body)).toBe(201);
+      expect(unfiledRes.body).toMatchObject({ importedNotes: 1, attachmentsCount: 1, createdNotebooks: 0, reusedNotebooks: 0 });
+    } finally {
+      await eraseGate.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(unfiledPromise ? [unfiledPromise] : []);
+      await eraseGate.end().catch(() => undefined);
+    }
   });
 });

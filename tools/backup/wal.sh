@@ -20,8 +20,8 @@
 #                                a scratch copy never pushes into the bucket it was restored from; for the real thing,
 #                                after checking the data, run `wal.sh setup` to start archiving again (a new timeline)
 #
-# Settings: the stack's .env (LUDY_DIR / CROVE_DIR, default this checkout), as backup.sh reads it. The bucket and its
-# keys are BACKUP_S3_*; the others are the WAL_* settings of tools/backup/compose.wal.yml (WAL_STANZA default crove,
+# Settings: the stack's .env (LUDY_DIR, default this checkout), as backup.sh reads it. The bucket and its
+# keys are BACKUP_S3_*; the others are the WAL_* settings of tools/backup/compose.wal.yml (WAL_STANZA default ludy,
 # WAL_ENCRYPTION_KEY, WAL_S3_ENDPOINT, WAL_S3_PORT, WAL_S3_REGION, WAL_S3_URI_STYLE, WAL_RETENTION_FULL,
 # WAL_RETENTION_DIFF). WAL_ARCHIVE_TIMEOUT (default 60) is the longest a write waits before its WAL segment is closed and
 # pushed: the recovery point objective is that plus the upload time. BACKUP_ALERT=off turns the failure alert off.
@@ -62,7 +62,7 @@ WAL_ARCHIVE_TIMEOUT="${WAL_ARCHIVE_TIMEOUT:-60}"
   echo '[wal] WAL_ARCHIVE_TIMEOUT is a whole number of seconds, 10 to 3600' >&2
   exit 2
 }
-WAL_STANZA="${WAL_STANZA:-crove}"
+WAL_STANZA="${WAL_STANZA:-ludy}"
 [[ "$WAL_STANZA" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]] || {
   echo '[wal] WAL_STANZA must start with a lowercase letter or digit and use only lowercase letters, digits, _ or - (max 64 chars)' >&2
   exit 2

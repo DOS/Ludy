@@ -1,26 +1,26 @@
 # Split roles on S3 storage (External-tenant gate T7): `api` and `worker` run as separate containers from the same
 # image, with STORAGE=s3 against MinIO and no shared files volume. An override of docker-compose.yml:
 #
-#   docker compose -p crove-split -f docker-compose.yml -f docker-compose.split.yml up -d --build
+#   docker compose -p ludy-split -f docker-compose.yml -f docker-compose.split.yml up -d --build
 #   node tools/e2e/split-stack.mjs
-#   docker compose -p crove-split -f docker-compose.yml -f docker-compose.split.yml down -v
-#   docker image rm crove:split crove-extract:split crove-media:split
+#   docker compose -p ludy-split -f docker-compose.yml -f docker-compose.split.yml down -v
+#   docker image rm ludy:split ludy-extract:split ludy-media:split
 #
-# The CI job `split-stack` in .github/workflows/ci.yml runs exactly this. The all-in-one `crove` service is moved
+# The CI job `split-stack` in .github/workflows/ci.yml runs exactly this. The all-in-one `ludy` service is moved
 # to the `all-in-one` profile, so it does not start. Images are tagged :split so a running default stack keeps its
 # own. Every secret here is a throwaway value for local use; the API listens on 127.0.0.1:${SPLIT_PORT:-18080}.
-# The project name below keeps it apart from the default `crove` stack (and its database) even without `-p`.
-name: crove-split
+# The project name below keeps it apart from the default `ludy` stack (and its database) even without `-p`.
+name: ludy-split
 
-x-crove-env: &crove-env
+x-ludy-env: &ludy-env
   AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-local-only-jwt-secret-change-me-0123456789}
   AUTH_ISSUER: ludy-auth
   AUTH_AUTOCONFIRM: 'true'
   AUTH_SESSION_CHECK: db
   AUTH_STEP_UP: 'off'
   AUTH_UPSTREAM_URL: http://auth:9999
-  DATABASE_URL: postgres://ludy_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
-  LUDY_CONTEXT_TOKEN_KEY: ${LUDY_CONTEXT_TOKEN_KEY:-${CROVE_CONTEXT_TOKEN_KEY:-}}
+  DATABASE_URL: postgres://ludy_app:${LUDY_APP_DB_PASSWORD:-local-app-password}@db:5432/postgres
+  LUDY_CONTEXT_TOKEN_KEY: ${LUDY_CONTEXT_TOKEN_KEY:-}
   # JSON logs and the pool sizes (#2175), as in docker-compose.yml.
   LOG_FORMAT: ${LOG_FORMAT:-text}
   DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
@@ -42,7 +42,7 @@ x-crove-env: &crove-env
 
 services:
   migrate:
-    image: crove:split
+    image: ludy:split
 
   # Same URLs and sign-up settings as the API below, whatever a local .env says.
   auth:
@@ -55,17 +55,17 @@ services:
       GOTRUE_MAILER_AUTOCONFIRM: 'true'
 
   auth-grants:
-    image: crove:split
+    image: ludy:split
 
-  crove:
-    image: crove:split
+  ludy:
+    image: ludy:split
     profiles: ['all-in-one']
 
-  crove-extract:
-    image: crove-extract:split
+  ludy-extract:
+    image: ludy-extract:split
 
-  crove-media:
-    image: crove-media:split
+  ludy-media:
+    image: ludy-media:split
 
   # Same image and digest as the MinIO in the CI `check` job. Not on the `extract` network: the sandbox has no route
   # to the blobs. No port is published; tools/e2e/split-stack.mjs lists the bucket with `mc` inside the container.
@@ -113,15 +113,15 @@ services:
       minio:
         condition: service_healthy
 
-  # HTTP API and web UI only. It stores uploads and inbound mail in the bucket and never calls crove-extract, so it
+  # HTTP API and web UI only. It stores uploads and inbound mail in the bucket and never calls ludy-extract, so it
   # is not on the `extract` network.
   api:
     build: .
-    image: crove:split
+    image: ludy:split
     command: ['api']
     restart: unless-stopped
     environment:
-      <<: *crove-env
+      <<: *ludy-env
     ports:
       - '127.0.0.1:${SPLIT_PORT:-18080}:8080'
     networks:
@@ -138,20 +138,20 @@ services:
       minio-init:
         condition: service_completed_successfully
 
-  # Outbox relay and jobs: reads the blobs the API stored, has crove-extract parse them and files the results.
+  # Outbox relay and jobs: reads the blobs the API stored, has ludy-extract parse them and files the results.
   worker:
     build: .
-    image: crove:split
+    image: ludy:split
     command: ['worker']
     restart: unless-stopped
     # The image's healthcheck probes the API port, which the worker does not open.
     healthcheck:
       disable: true
     environment:
-      <<: *crove-env
-      WORKER_DATABASE_URL: postgres://ludy_worker:${LUDY_WORKER_DB_PASSWORD:-${CROVE_WORKER_DB_PASSWORD:-local-worker-password}}@db:5432/postgres
+      <<: *ludy-env
+      WORKER_DATABASE_URL: postgres://ludy_worker:${LUDY_WORKER_DB_PASSWORD:-local-worker-password}@db:5432/postgres
       EXTRACT_URL: http://ludy-extract:8090
-      # The sandbox's slots (docker-compose.yml gives the same value to crove-extract), which the worker never exceeds.
+      # The sandbox's slots (docker-compose.yml gives the same value to ludy-extract), which the worker never exceeds.
       EXTRACT_CONCURRENCY: ${EXTRACT_CONCURRENCY:-4}
       # The WORM fact stream (#891) in the Object Lock bucket, with the shortest lag so the run sees a batch.
       ARCHIVE_STORE: s3
@@ -167,14 +167,14 @@ services:
         condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully
-      crove-extract:
+      ludy-extract:
         condition: service_healthy
 
-  # The prober (profile `prober`) asks Supabase Auth through the API's /auth/v1 proxy: `crove` does not run here (#1994).
+  # The prober (profile `prober`) asks Supabase Auth through the API's /auth/v1 proxy: `ludy` does not run here (#1994).
   prober:
     # The image built for this stack, like api and worker, so the probe the end-to-end script runs is of this checkout's code
-    # (the base file names crove:local, which an earlier run may have left behind).
-    image: crove:split
+    # (the base file names ludy:local, which an earlier run may have left behind).
+    image: ludy:split
     # Its bucket and its MinIO user (#2094) exist once minio-init is done, so the first probe finds them.
     depends_on:
       minio-init:

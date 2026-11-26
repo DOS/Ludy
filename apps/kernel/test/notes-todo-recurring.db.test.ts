@@ -924,4 +924,123 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
       status: 409,
     });
   });
+
+  it('serializes notes.todo.complete behind shared notes.erase so concurrent sibling erasure still spawns next occurrence (#5035)', async () => {
+    const o = await setupOrg();
+    const r1 = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Chuoi lap dong bo xoa',
+      dueOn: '2027-09-01',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const firstDone = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: r1.todoId });
+    const r2Id = firstDone.nextTodoId as string;
+    expect(r2Id).toBeTruthy();
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: r1.todoId });
+
+    const eraseGate = new pg.Client({ connectionString: adminUrl });
+    await eraseGate.connect();
+    const errors: unknown[] = [];
+    let completePromise: Promise<TodoCompleteResult> | undefined;
+    try {
+      const gatePid = (await eraseGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await eraseGate.query('BEGIN');
+      await eraseGate.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.erase:${o.orgId.toLowerCase()}`],
+      );
+      completePromise = o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: r1.todoId });
+      void completePromise.catch((err) => errors.push(err));
+
+      let sawWait = false;
+      const deadline = Date.now() + 3000;
+      while (!sawWait && Date.now() < deadline) {
+        if (errors.length > 0) throw errors[0];
+        const waits = await admin(async (c) =>
+          (await c.query<{ pid: number }>(
+            `SELECT a.pid
+               FROM pg_catalog.pg_stat_activity a
+              WHERE a.datname = pg_catalog.current_database()
+                AND a.state = 'active'
+                AND a.wait_event_type = 'Lock'
+                AND a.query ILIKE '%pg_advisory_xact_lock_shared%'
+                AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+              LIMIT 1`,
+            [gatePid],
+          )).rows,
+        );
+        if (waits.length > 0) sawWait = true;
+        else await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(sawWait).toBe(true);
+
+      await eraseGate.query(`DELETE FROM ludy_notes.todo WHERE org_id = $1 AND id = $2`, [o.orgId, r2Id]);
+      await eraseGate.query('COMMIT');
+
+      const completed = await completePromise;
+      expect(completed.nextDueOn).toBe('2027-09-02');
+      expect(completed.nextTodoId).toBeTruthy();
+      expect(completed.nextTodoId).not.toBe(r2Id);
+    } finally {
+      await eraseGate.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(completePromise ? [completePromise] : []);
+      await eraseGate.end().catch(() => undefined);
+    }
+  });
+
+  it('touchTodo strictly advances updated_at by >= 1 ms when ctx.now trails stopSeries so todoReopen without restoreSiblings skips link-edited siblings (#5035)', async () => {
+    const o = await setupOrg();
+    const targetTask = await admin(async (c) =>
+      (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Ref task clock skew', 'human', 'user') RETURNING id`, [o.orgId])).rows[0] as { id: string },
+    );
+    const t1 = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Chuoi lien ket lech clock',
+      dueOn: '2027-09-10',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const first = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: t1.todoId });
+    const t2Id = first.nextTodoId as string;
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: t1.todoId });
+
+    const stopped = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: t1.todoId, stopSeries: true });
+    expect(stopped.stoppedSiblings).toEqual([{ todoId: t2Id, recurrence: { freq: 'daily', interval: 1 } }]);
+
+    // Simulate stopSeries having finished with a newer ctx.now than an already-started todoLinkAdd/todoLinkRemove call.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL session_replication_role = 'replica'");
+      await c.query(
+        `UPDATE ludy_notes.todo
+            SET done_at = CASE WHEN done_at IS NOT NULL THEN done_at + interval '10 seconds' ELSE NULL END,
+                updated_at = updated_at + interval '10 seconds'
+          WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+        [o.orgId, [t1.todoId, t2Id]],
+      );
+      await c.query('COMMIT');
+    });
+    const shiftedT2 = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: t2Id });
+    const stoppedMs = new Date(shiftedT2.updatedAt).getTime();
+
+    const added = await o.exec<{ todoId: string; linkId: string }>(o.mine, 'notes.todo.link_add', {
+      todoId: t2Id,
+      targetType: 'kernel.task',
+      targetId: targetTask.id,
+    });
+    const afterAdd = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: t2Id });
+    const afterAddMs = new Date(afterAdd.updatedAt).getTime();
+    expect(afterAddMs).toBeGreaterThan(stoppedMs);
+
+    const removed = await o.exec<{ todoId: string; linkId: string }>(o.mine, 'notes.todo.link_remove', { linkId: added.linkId });
+    expect(removed.todoId).toBe(t2Id);
+    const afterRemove = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: t2Id });
+    expect(new Date(afterRemove.updatedAt).getTime()).toBeGreaterThan(afterAddMs);
+
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', {
+      todoId: t1.todoId,
+      expectedRevision: stopped.revision,
+      restoreRecurrence: stopped.stoppedRecurrence,
+    });
+    expect((await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: t2Id })).recurrence).toBeNull();
+  });
 });

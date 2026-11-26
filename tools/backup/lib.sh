@@ -8,9 +8,13 @@ umask 077
 # Git Bash on Windows rewrites arguments that look like paths (/data/files); Linux ignores these.
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
+if [ -z "${LUDY_DIR:-}" ] && [ -n "${CROVE_DIR:-}" ]; then
+  echo 'CROVE_DIR has been retired; rename it to LUDY_DIR before running backup or restore scripts (#3972)' >&2
+  exit 2
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LUDY_DIR="${LUDY_DIR:-${CROVE_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}}"
-CROVE_DIR="$LUDY_DIR"
+LUDY_DIR="${LUDY_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 
 # The MinIO client, from the same pinned image as the MinIO in docker-compose.split.yml (AGENTS.md, "Updating
 # pinned images").
@@ -140,15 +144,31 @@ meta_value() {
   printf '%s' "${line#*=}"
 }
 
-# node_run <host dir> <args...>: runs node from the stack's own image (service BACKUP_NODE_SERVICE, default crove) as
-# the host user, in the given directory (mounted at /work), with tools/backup at /crove-backup. The backup keys reach
-# it by name (-e), never on a command line. The host itself needs no Node.
+# Resolves the default compose service for node/files helpers: prefers `ludy`, then legacy `crove` (rollback
+# compatibility), then split-layout `worker` / `api`, falling back to `ludy` if compose config is unavailable.
+default_app_service() {
+  local services svc
+  services="$(dc config --services 2>/dev/null || true)"
+  for svc in ludy crove worker api; do
+    if grep -qx "$svc" <<<"$services"; then
+      printf '%s' "$svc"
+      return 0
+    fi
+  done
+  printf 'ludy'
+}
+
+# node_run <host dir> <args...>: runs node from the stack's own image (service BACKUP_NODE_SERVICE, auto-detected via
+# default_app_service) as the host user, in the given directory (mounted at /work), with tools/backup at /ludy-backup.
+# The backup keys reach it by name (-e), never on a command line. The host itself needs no Node.
 node_run() {
-  local dir="$1"
+  local dir="$1" svc
   shift
+  svc="${BACKUP_NODE_SERVICE:-}"
+  [ -n "$svc" ] || svc="$(default_app_service)"
   dc run --rm --no-deps -T --user "$(id -u):$(id -g)" -e HOME=/tmp -e BACKUP_ENCRYPTION_KEY -e BACKUP_ENCRYPTION_KEY_PREVIOUS \
-    -v "$(host_path "$dir"):/work" -v "$(host_path "$SCRIPT_DIR"):/crove-backup:ro" -w /work --entrypoint node \
-    "${BACKUP_NODE_SERVICE:-crove}" "$@" </dev/null
+    -v "$(host_path "$dir"):/work" -v "$(host_path "$SCRIPT_DIR"):/ludy-backup:ro" -w /work --entrypoint node \
+    "$svc" "$@" </dev/null
 }
 
 # Turns `mc ls --recursive --json` output on stdin into "key<TAB>size" lines, one per object (keys relative to the
@@ -194,7 +214,7 @@ backup_key_id() {
 seal_run() {
   local dir="$1"
   shift
-  node_run "$dir" /crove-backup/seal.mjs "$@"
+  node_run "$dir" /ludy-backup/seal.mjs "$@"
 }
 
 # The sealed size of a file of $1 bytes (seal.mjs sealedSize): a 28-byte header and a 16-byte tag per 64 KiB chunk.

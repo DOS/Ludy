@@ -47,6 +47,7 @@ import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { loadNoteAttachments } from './attachments.ts';
 import { canOpen, insertRecordLink, loadEnrichedLinks, NOTE_TARGET_QUERIES } from './links.ts';
+import { lockNote, lockNotebook, lockNotesEraseShared } from './locks.ts';
 import { notesManifest } from './manifest.ts';
 import { TODO_SUMMARY_COLUMNS, loadSourceNotes, todoSummaryRow } from './todos.ts';
 
@@ -137,19 +138,20 @@ export async function resolveNotebookForNote(
   noteAuthorUserId: string,
   noteVisibility: NoteVisibility,
 ): Promise<{ id: string; visibility: NoteVisibility }> {
+  const normNotebookId = notebookId.toLowerCase();
   const first = await ctx.trx
     .selectFrom('ludy_notes.notebook')
     .select(['id', 'author_user_id', 'visibility'])
     .where('org_id', '=', ctx.orgId)
-    .where('id', '=', notebookId)
+    .where('id', '=', normNotebookId)
     .executeTakeFirst();
   if (!first) throw notebookNotFound();
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId}:${notebookId}`}, 0))`.execute(ctx.trx);
+  await lockNotebook(ctx, normNotebookId, true);
   const nb = await ctx.trx
     .selectFrom('ludy_notes.notebook')
     .select(['id', 'author_user_id', 'visibility'])
     .where('org_id', '=', ctx.orgId)
-    .where('id', '=', notebookId)
+    .where('id', '=', normNotebookId)
     .executeTakeFirst();
   if (!nb) throw notebookNotFound();
   if (nb.visibility === 'private' && nb.author_user_id !== noteAuthorUserId) throw notebookNotFound();
@@ -161,7 +163,10 @@ const notebookAuditFact = (noteVisibility: NoteVisibility, notebookId: string | 
   notebookId === null ? { notebookId: null } : noteVisibility === 'org' ? { notebookId } : { notebook: 'private' as const };
 
 // The note as the caller may read it (row policies), with its body, locked for a change when `lock` is set.
+// Every `lock = true` caller (loadForChange, noteUpdate, noteSetVisibility) already performed a pre-lock read
+// via `load(..., false)`, so no extra pre-lock SELECT is needed here.
 async function load(ctx: Pick<QueryContext, 'trx' | 'orgId'>, noteId: string, lock: boolean): Promise<SummaryRow & { body: string }> {
+  if (lock) await lockNote(ctx, noteId, false);
   let q = ctx.trx.selectFrom('ludy_notes.note').select([...SUMMARY, 'body']).where('org_id', '=', ctx.orgId).where('id', '=', noteId);
   if (lock) q = q.forUpdate();
   const row = await q.executeTakeFirst();
@@ -209,7 +214,12 @@ const linkTargetFact = (visibility: NoteVisibility, targetType: string, targetId
 // A link added or removed changes the note as others see it; touching the note sends its stream hint (#69), so open
 // apps read the note and the record's panel again.
 async function touch(ctx: CommandContext, noteId: string): Promise<void> {
-  await ctx.trx.updateTable('ludy_notes.note').set({ updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', noteId).execute();
+  await ctx.trx
+    .updateTable('ludy_notes.note')
+    .set({ updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})` })
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', noteId)
+    .execute();
 }
 const target = (input: { noteId: string }) => ({ type: 'notes.note', id: input.noteId });
 
@@ -405,7 +415,7 @@ export const noteUpdate = defineCommand({
           ...(input.notebookId !== undefined ? { notebook_id: nextNotebookId } : {}),
           ...(clearTaint ? { tainted: false } : {}),
           revision: before.revision + 1,
-          updated_at: ctx.now,
+          updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})`,
         })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.noteId)
@@ -488,31 +498,47 @@ export const noteSetVisibility = defineCommand({
     const peek = await load(ctx, input.noteId, false);
     assertAuthor(peek, userId);
     if (peek.visibility === input.visibility) return written(peek);
-    if (input.visibility === 'org' && peek.notebook_id !== null) {
-      await resolveNotebookForNote(ctx, peek.notebook_id, peek.author_user_id, 'org');
+    if (peek.notebook_id !== null) {
+      if (input.visibility === 'org') {
+        await resolveNotebookForNote(ctx, peek.notebook_id, peek.author_user_id, 'org');
+      } else {
+        // Turning a note private while inside a notebook triggers b_note_notebook_integrity FOR SHARE on that notebook;
+        // acquire shared notes.erase + notebook lock first to keep canonical notebook -> note lock order.
+        await lockNotebook(ctx, peek.notebook_id, true);
+      }
+    } else {
+      // Acquire shared notes.erase even when peek.notebook_id is null so a concurrent move into a notebook
+      // cannot trigger b_note_notebook_integrity FOR SHARE against personalDataErase without serialization.
+      await lockNotesEraseShared(ctx);
     }
     const before = await load(ctx, input.noteId, true);
     assertAuthor(before, userId);
     if (before.visibility === input.visibility) return written(before);
-    if (input.visibility === 'org' && before.notebook_id !== null && before.notebook_id !== peek.notebook_id) {
+    if (before.notebook_id !== null && before.notebook_id !== peek.notebook_id) {
       // Do not acquire a new notebook lock while already holding note FOR UPDATE (canonical lock order is notebook -> note);
-      // verify accessibility without locking and rely on b_note_notebook_integrity to enforce cross-visibility atomically.
-      const movedNb = await ctx.trx
-        .selectFrom('ludy_notes.notebook')
-        .select(['id', 'author_user_id', 'visibility'])
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', before.notebook_id)
-        .executeTakeFirst();
-      if (!movedNb || (movedNb.visibility === 'private' && movedNb.author_user_id !== before.author_user_id)) {
-        throw notebookNotFound();
+      // preserve 404/422 refusal on private/unreadable notebooks and fail with retryable 409 otherwise so
+      // b_note_notebook_integrity never locks an unlocked notebook FOR SHARE while holding note FOR UPDATE.
+      if (input.visibility === 'org') {
+        const movedNb = await ctx.trx
+          .selectFrom('ludy_notes.notebook')
+          .select(['id', 'author_user_id', 'visibility'])
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', before.notebook_id)
+          .executeTakeFirst();
+        if (!movedNb || (movedNb.visibility === 'private' && movedNb.author_user_id !== before.author_user_id)) {
+          throw notebookNotFound();
+        }
+        if (movedNb.visibility === 'private') throw sharedNotePrivateNotebook();
       }
-      if (movedNb.visibility === 'private') throw sharedNotePrivateNotebook();
+      throw new DomainError('NOTE_REVISION_CONFLICT', 409, 'Ghi chú vừa được chuyển sang sổ tay khác; hãy thử lại', {
+        revision: before.revision,
+      });
     }
     let row: { id: string; revision: number };
     try {
       row = await ctx.trx
         .updateTable('ludy_notes.note')
-        .set({ visibility: input.visibility, revision: before.revision + 1, updated_at: ctx.now })
+        .set({ visibility: input.visibility, revision: before.revision + 1, updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})` })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.noteId)
         .returning(['id', 'revision'])
@@ -851,7 +877,7 @@ export const noteRestoreVersion = defineCommand({
         tags: version.tags,
         tainted: nextTainted,
         revision: before.revision + 1,
-        updated_at: ctx.now,
+        updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})`,
       })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)

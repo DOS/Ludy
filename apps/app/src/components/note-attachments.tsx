@@ -405,6 +405,14 @@ export function NoteAttachments({
   const [pollCycle, setPollCycle] = useState(0);
   const [pollPaused, setPollPaused] = useState(false);
   const [retryingPoll, setRetryingPoll] = useState(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!hasPending) {
@@ -448,17 +456,21 @@ export function NoteAttachments({
   }, [hasPending, pendingIdsKey, pollCycle]);
 
   const handleRetryPoll = async () => {
-    if (retryingPoll) return;
+    if (retryingPoll || !mountedRef.current) return;
     setActionError(null);
     setRetryingPoll(true);
     try {
       await refreshNotes();
+      if (!mountedRef.current) return;
       setPollPaused(false);
       setPollCycle((c) => c + 1);
     } catch (err) {
+      if (!mountedRef.current) return;
       setActionError(err);
     } finally {
-      setRetryingPoll(false);
+      if (mountedRef.current) {
+        setRetryingPoll(false);
+      }
     }
   };
 

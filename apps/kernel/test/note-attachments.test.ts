@@ -44,6 +44,18 @@ describe('classifyNoteAttachment active-markup sniffing (#4213)', () => {
     expect(noteAttachmentContentDisposition('photo.png', result.contentType)).toMatch(/^attachment;/);
     expect(NOTE_ATTACHMENT_CSP).toContain("script-src 'none'");
     expect(NOTE_ATTACHMENT_CSP).toContain('sandbox;');
+
+    const spacedDoctypePayload = enc.encode(`<!-- ${comment} -->\n<!DOCTYPE   svg PUBLIC "-//W3C//DTD SVG 1.1//EN">`);
+    expect(classifyNoteAttachment(spacedDoctypePayload, 'vector.png', 'image/png')).toEqual({
+      contentType: 'image/svg+xml',
+      extractStatus: 'skipped',
+    });
+
+    const preambleDoctypePayload = enc.encode(`${'x'.repeat(1200)}\n<!doctype\tSVG>`);
+    expect(classifyNoteAttachment(preambleDoctypePayload, 'vector.bin', 'application/octet-stream')).toEqual({
+      contentType: 'image/svg+xml',
+      extractStatus: 'skipped',
+    });
   });
 
   it('classifies <!doctype html and <html after a multi-kilobyte comment or preamble as text/html (attachment, skipped)', () => {

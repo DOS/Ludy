@@ -32,12 +32,15 @@ const NOW = new Date('2026-11-25T00:00:00.000Z');
 
 function createTodoAcceptTrx(opts: {
   note?: { id: string; revision: number; deleted_at: Date | null } | undefined;
+  noteOnRecheck?: { id: string; revision: number; deleted_at: Date | null } | undefined;
+  recheckSelectIndex?: number | undefined;
   priorTodoId?: string | undefined;
   uniqueConflictOnInsert?: boolean | undefined;
 }) {
   const queries: CompiledQuery[] = [];
   const insertedSeqs: Array<number | null> = [];
   let insertCount = 0;
+  let noteSelectCount = 0;
 
   const conn: DatabaseConnection = {
     executeQuery: async <R>(compiled: CompiledQuery): Promise<QueryResult<R>> => {
@@ -47,7 +50,10 @@ function createTodoAcceptTrx(opts: {
         return { rows: [{ pg_advisory_xact_lock: '' }] } as QueryResult<R>;
       }
       if (sqlText.includes('from "ludy_notes"."note"')) {
-        return { rows: opts.note ? [opts.note] : [] } as QueryResult<R>;
+        noteSelectCount += 1;
+        const triggerSelect = opts.recheckSelectIndex ?? 3;
+        const selected = noteSelectCount >= triggerSelect && opts.noteOnRecheck ? opts.noteOnRecheck : opts.note;
+        return { rows: selected ? [selected] : [] } as QueryResult<R>;
       }
       if (sqlText.startsWith('insert into "ludy_notes"."todo"')) {
         if (opts.uniqueConflictOnInsert) {
@@ -291,8 +297,11 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
       todoIds: [`${TODO_BASE}2`, `${TODO_BASE}1`],
     });
     expect(insertedSeqs).toEqual([0, 1]);
-    expect(queries[0]?.sql).toContain('pg_advisory_xact_lock');
-    expect(queries[0]?.parameters).toEqual([`ludy_notes.todo_accept_run:${ORG_ID}:${USER_ID}:${RUN_ID}`]);
+    expect(queries[0]?.sql.toLowerCase()).toContain('from "ludy_notes"."note"');
+    expect(queries[1]?.sql).toContain('pg_advisory_xact_lock_shared');
+    expect(queries[1]?.parameters).toEqual([`notes.erase:${ORG_ID}`]);
+    expect(queries[2]?.sql).toContain('pg_advisory_xact_lock');
+    expect(queries[2]?.parameters).toEqual([`ludy_notes.todo_accept_run:${ORG_ID}:${USER_ID}:${RUN_ID}`]);
     expect(audits).toEqual([
       {
         noteId: NOTE_ID,
@@ -304,7 +313,7 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
     ]);
   });
 
-  it('skips the advisory lock when runId is omitted', async () => {
+  it('skips the per-run advisory lock when runId is omitted while still acquiring todo_sort_order', async () => {
     const { trx, queries, insertedSeqs } = createTodoAcceptTrx({
       note: { id: NOTE_ID, revision: 2, deleted_at: null },
     });
@@ -318,7 +327,10 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
     const out = await todoAcceptSuggestions.handler(ctx, noRunInput);
     expect(out.created).toBe(1);
     expect(insertedSeqs).toEqual([null]);
-    expect(queries.some((q) => q.sql.includes('pg_advisory_xact_lock'))).toBe(false);
+    const lockParams = queries.filter((q) => q.sql.includes('pg_advisory_xact_lock')).flatMap((q) => q.parameters);
+    expect(lockParams.some((p) => String(p).includes('todo_accept_run'))).toBe(false);
+    expect(lockParams).toContain(`ludy_notes.todo_sort_order:${ORG_ID}:${USER_ID}`);
+    expect(lockParams).toContain(`notes.note:${ORG_ID}:${NOTE_ID}`);
   });
 
   it('rejects replay when any prior row exists or todo_source_run_once_uq conflicts', async () => {
@@ -330,7 +342,9 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
       todoAcceptSuggestions.handler(makeTodoCtx(priorTrx.trx).ctx, baseInput),
     ).rejects.toMatchObject({ code: 'VY_RUN_ALREADY_ACCEPTED', status: 409 });
     expect(priorTrx.insertedSeqs).toEqual([]);
-    expect(priorTrx.queries[0]?.sql).toContain('pg_advisory_xact_lock');
+    expect(priorTrx.queries[0]?.sql.toLowerCase()).toContain('from "ludy_notes"."note"');
+    expect(priorTrx.queries[1]?.sql).toContain('pg_advisory_xact_lock_shared');
+    expect(priorTrx.queries[2]?.sql).toContain('pg_advisory_xact_lock');
 
     const conflictTrx = createTodoAcceptTrx({
       note: { id: NOTE_ID, revision: 2, deleted_at: null },
@@ -346,6 +360,7 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
     await expect(
       todoAcceptSuggestions.handler(makeTodoCtx(missing.trx).ctx, baseInput),
     ).rejects.toMatchObject({ code: 'NOTE_NOT_FOUND', status: 404 });
+    expect(missing.queries.some((q) => q.sql.includes('pg_advisory_xact_lock'))).toBe(false);
 
     const trashed = createTodoAcceptTrx({ note: { id: NOTE_ID, revision: 2, deleted_at: NOW } });
     await expect(
@@ -356,5 +371,24 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
     await expect(
       todoAcceptSuggestions.handler(makeTodoCtx(stale.trx).ctx, baseInput),
     ).rejects.toMatchObject({ code: 'NOTE_REVISION_CONFLICT', status: 409, details: { revision: 3 } });
+
+    const staleDuringLockWait = createTodoAcceptTrx({
+      note: { id: NOTE_ID, revision: 2, deleted_at: null },
+      noteOnRecheck: { id: NOTE_ID, revision: 3, deleted_at: null },
+      recheckSelectIndex: 2,
+    });
+    await expect(
+      todoAcceptSuggestions.handler(makeTodoCtx(staleDuringLockWait.trx).ctx, baseInput),
+    ).rejects.toMatchObject({ code: 'NOTE_REVISION_CONFLICT', status: 409, details: { revision: 3 } });
+    expect(staleDuringLockWait.insertedSeqs).toEqual([]);
+
+    const staleAfterRebalance = createTodoAcceptTrx({
+      note: { id: NOTE_ID, revision: 2, deleted_at: null },
+      noteOnRecheck: { id: NOTE_ID, revision: 2, deleted_at: NOW },
+    });
+    await expect(
+      todoAcceptSuggestions.handler(makeTodoCtx(staleAfterRebalance.trx).ctx, baseInput),
+    ).rejects.toMatchObject({ code: 'NOTE_IN_TRASH', status: 409 });
+    expect(staleAfterRebalance.insertedSeqs).toEqual([]);
   });
 });

@@ -8,7 +8,7 @@ services:
     environment:
       GOTRUE_MAILER_AUTOCONFIRM: 'false'
       GOTRUE_RATE_LIMIT_EMAIL_SENT: '10000'
-  crove:
+  ludy:
     environment:
       AUTH_AUTOCONFIRM: 'false'
       AUTH_RATE_LIMIT_EMAIL_SENT: '10000'
