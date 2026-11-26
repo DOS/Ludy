@@ -1947,6 +1947,9 @@ export class Runtime {
       if (q.memberVy !== undefined && q.stream === true) {
         throw new Error(`query ${q.name}: Vy in member mode reads no streamed query (a stream is not a bounded read of the member's own rows)`);
       }
+      if (q.memberVy !== undefined && q.sensitive === true) {
+        throw new Error(`query ${q.name}: Vy in member mode reads no sensitive query (sensitive reads are user-only and audited before reading)`);
+      }
       if (q.memberVy !== undefined && !Array.isArray(q.access)) {
         throw new Error(`query ${q.name}: Vy in member mode reads only a query with a role list as access (the member's role must be in it)`);
       }

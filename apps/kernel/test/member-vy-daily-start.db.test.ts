@@ -289,6 +289,12 @@ suite('kernel.member_vy.run.start_daily (#5073)', () => {
         outcome: { status: 'ready', body: JSON.stringify({ acme_secret_meeting: 1 }) },
       }),
     ).rejects.toMatchObject({ code: 'VALIDATION' });
+    await expect(
+      memberVyRuntime(worker, orgId, { agentId: daily.agentId, runId: daily.runId }).execute('kernel.member_vy.result.store', {
+        runId: daily.runId,
+        outcome: { status: 'ready', body: '{"v":1,"v":2}' },
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION' });
     await memberVyRuntime(worker, orgId, { agentId: daily.agentId, runId: daily.runId }).execute('kernel.member_vy.result.store', {
       runId: daily.runId,
       outcome: { status: 'ready', body: JSON.stringify({ meetings: 2, lines: 4 }) },
@@ -434,5 +440,51 @@ suite('kernel.member_vy.run.start_daily (#5073)', () => {
       [orgId, users.bob],
     );
     expect(agents).toHaveLength(1);
+  });
+
+  it('locks tenant_member FOR SHARE before tenant FOR SHARE so membership updates can still lock tenant FOR NO KEY UPDATE (#5073)', async () => {
+    const holder = new pg.Client({ connectionString: adminUrl });
+    await holder.connect();
+    let startedRunId: string | null = null;
+    try {
+      await holder.query('BEGIN');
+      const holderPid = (await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+      await holder.query(
+        `SELECT user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2 FOR UPDATE`,
+        [orgId, users.alice],
+      );
+      const waitingStart = startDaily(users.alice);
+      let waiting = false;
+      for (let i = 0; i < 100 && !waiting; i++) {
+        waiting =
+          (
+            await sqlAdmin(
+              `SELECT 1 FROM pg_stat_activity
+               WHERE datname = current_database()
+                 AND wait_event_type = 'Lock'
+                 AND query ILIKE '%tenant_member%'
+                 AND $1::int = ANY(pg_catalog.pg_blocking_pids(pid))`,
+              [holderPid],
+            )
+          ).length > 0;
+        if (!waiting) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(waiting, 'start_daily is blocked waiting on tenant_member FOR SHARE').toBe(true);
+      const tenantLock = await holder.query(
+        `SELECT org_id FROM ludy_kernel.tenant WHERE org_id = $1 FOR NO KEY UPDATE NOWAIT`,
+        [orgId],
+      );
+      expect(tenantLock.rowCount, 'tenant row stays unlocked while start_daily waits on tenant_member').toBe(1);
+      await holder.query('COMMIT');
+      const res = await waitingStart;
+      startedRunId = res.runId;
+      expect(res.runId).toMatch(/^[0-9a-f-]{36}$/);
+    } finally {
+      await holder.query('ROLLBACK').catch(() => {});
+      await holder.end();
+      if (startedRunId) {
+        await worker.execute('kernel.member_vy.run.finish', { runId: startedRunId, errorCode: 'AI_STOPPED' }, { actor: SYSTEM, orgId });
+      }
+    }
   });
 });

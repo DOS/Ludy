@@ -94,6 +94,7 @@ const COUNTS_ONLY_BODY_RE =
   /^\{\s*"[a-z_]{1,12}"\s*:\s*(?:0|[1-9][0-9]{0,9})(?:\s*,\s*"[a-z_]{1,12}"\s*:\s*(?:0|[1-9][0-9]{0,9}))*\s*\}$/;
 function isCountsOnlyResultBody(body: string): boolean {
   if (body.length < 2 || body.length > 160 || !COUNTS_ONLY_BODY_RE.test(body)) return false;
+  const rawKeyTokens = body.match(/"[a-z_]{1,12}"\s*:/g);
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
@@ -103,6 +104,8 @@ function isCountsOnlyResultBody(body: string): boolean {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return false;
   const entries = Object.entries(parsed);
   return (
+    rawKeyTokens !== null &&
+    rawKeyTokens.length === entries.length &&
     entries.length >= 1 &&
     entries.length <= DAILY_BRIEF_COUNT_KEYS.size &&
     entries.every(
@@ -201,6 +204,7 @@ async function ensureMemberVyAgent(
       const e = error as { code?: string; constraint?: string };
       if (e.code === '23505' && e.constraint === 'agent_member_vy_uq') {
         await sql`ROLLBACK TO SAVEPOINT member_vy_agent_create`.execute(ctx.trx);
+        await sql`RELEASE SAVEPOINT member_vy_agent_create`.execute(ctx.trx);
         agent = await ctx.trx
           .selectFrom('ludy_kernel.agent')
           .select(['id', 'status'])
@@ -382,23 +386,18 @@ export const memberVyRunStartDaily = defineCommand({
     if (!catalog) {
       throw new DomainError('VALIDATION', 422, 'Tính năng Vy này chưa được mở cho lượt chạy hệ thống');
     }
-    // Lock the tenant row FOR SHARE so concurrent app switches (kernel.org.set_app) or offboarding serialize cleanly with starting a system run.
-    const { rows: gateRows } = await sql<{ status: string | null; app_on: boolean }>`
-      SELECT
-        t.status,
-        ludy_kernel.org_app_on(${ctx.orgId}::uuid, ${feature.module}::text) AS app_on
-      FROM ludy_kernel.tenant t
-      WHERE t.org_id = ${ctx.orgId}::uuid
-      FOR SHARE`.execute(ctx.trx);
-    const gate = gateRows[0];
-    if (!gate || gate.status !== 'active') {
+    // Run non-locking tenant status and module availability checks before acquiring any row locks (never hold tenant FOR SHARE across entitlementsOf or ahead of tenant_member).
+    const tenantPre = await ctx.trx
+      .selectFrom('ludy_kernel.tenant')
+      .select('status')
+      .where('org_id', '=', ctx.orgId)
+      .executeTakeFirst();
+    if (!tenantPre || tenantPre.status !== 'active') {
       throw new DomainError('TENANT_NOT_ACTIVE', 403, 'Công ty này không còn hoạt động');
     }
     await assertVyModuleEnabled(ctx, feature.module);
-    if (!gate.app_on) {
-      throw new DomainError('MODULE_OFF', 404, `Ứng dụng ${feature.module} đã được tắt cho công ty này`, { module: feature.module });
-    }
-    // Lock the membership row FOR SHARE so concurrent member removal or permission revocation serializes with starting a system run.
+    // Canonical lock order (#1943, lock-order.test.ts): lock tenant_member FOR SHARE BEFORE tenant FOR SHARE so concurrent member.remove/change_role
+    // (tenant_member FOR UPDATE -> chief_accountant_keep_guard -> tenant FOR NO KEY UPDATE) cannot AB-BA deadlock.
     const memberRow = await ctx.trx
       .selectFrom('ludy_kernel.tenant_member')
       .select('user_id')
@@ -406,6 +405,19 @@ export const memberVyRunStartDaily = defineCommand({
       .where('user_id', '=', input.userId)
       .forShare()
       .executeTakeFirst();
+    // Read status and apps_off directly from the FOR SHARE locked tenant row (not STABLE org_app_on()) so PostgreSQL EvalPlanQual returns committed updates.
+    const { rows: gateRows } = await sql<{ status: string | null; apps_off: readonly string[] | null }>`
+      SELECT t.status, t.apps_off
+      FROM ludy_kernel.tenant t
+      WHERE t.org_id = ${ctx.orgId}::uuid
+      FOR SHARE`.execute(ctx.trx);
+    const gate = gateRows[0];
+    if (!gate || gate.status !== 'active') {
+      throw new DomainError('TENANT_NOT_ACTIVE', 403, 'Công ty này không còn hoạt động');
+    }
+    if (gate.apps_off?.includes(feature.module)) {
+      throw new DomainError('MODULE_OFF', 404, `Ứng dụng ${feature.module} đã được tắt cho công ty này`, { module: feature.module });
+    }
     if (!memberRow) {
       throw new DomainError('VY_NOT_ALLOWED', 403, 'Thành viên chưa được phép làm việc với Vy');
     }

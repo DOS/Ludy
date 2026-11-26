@@ -466,6 +466,17 @@ suite("member-scoped agent actor in the runtime", () => {
     expect(() =>
       make().register({
         queries: [
+          query("meetings.t_brief_sensitive", {
+            access: ["owner", "admin", "member"],
+            sensitive: true,
+            memberVy: { reads: [] },
+          }),
+        ],
+      }),
+    ).toThrow(/sensitive query/);
+    expect(() =>
+      make().register({
+        queries: [
           query("crm.t_deal_mcp", {
             access: ["owner", "admin"],
             mcp: { scope: "ludy.read" },

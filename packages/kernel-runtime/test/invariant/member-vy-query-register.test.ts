@@ -63,6 +63,21 @@ describe('QueryDef.memberVy registration rules', () => {
       new Runtime(noopCells, { manifests: [] }).register({
         queries: [
           defineQuery({
+            name: 'meetings.brief.sensitive',
+            input: z.object({}),
+            access: ['owner', 'admin', 'member'],
+            sensitive: true,
+            memberVy: { reads: [] },
+            handler: async () => ({}),
+          }),
+        ],
+      }),
+    ).toThrow(/sensitive query/);
+
+    expect(() =>
+      new Runtime(noopCells, { manifests: [] }).register({
+        queries: [
+          defineQuery({
             name: 'crm.deal.mcp',
             input: z.object({}),
             access: ['owner', 'admin'],

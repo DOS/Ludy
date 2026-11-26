@@ -4040,11 +4040,42 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         );
         expect(modChange, "ai_run.module is immutable on system-startable member_vy runs").toMatchObject({ ok: false, code: "42501" });
 
+        await admin((c) => c.query("ALTER TABLE crove_kernel.member_vy_result DISABLE ROW LEVEL SECURITY"));
+        try {
+          const sysResultMutate = await outcome(
+            inContext(workerUrl, systemEnter, (c) =>
+              c.query(
+                `UPDATE crove_kernel.member_vy_result SET status = 'failed', tainted = false WHERE org_id = $1 AND id = $2`,
+                [orgId, dailyResultId],
+              ),
+            ),
+          );
+          expect(sysResultMutate, "member_vy_result_bind blocks system UPDATE mutating status + tainted").toMatchObject({
+            ok: false,
+            code: "42501",
+          });
+          const sysTaintedOnly = await outcome(
+            inContext(workerUrl, systemEnter, (c) =>
+              c.query(
+                `UPDATE crove_kernel.member_vy_result SET tainted = false WHERE org_id = $1 AND id = $2`,
+                [orgId, dailyResultId],
+              ),
+            ),
+          );
+          expect(sysTaintedOnly, "member_vy_result_bind fires on tainted-only UPDATE (no OF column filter)").toMatchObject({
+            ok: false,
+            code: "42501",
+          });
+        } finally {
+          await admin((c) => c.query("ALTER TABLE crove_kernel.member_vy_result ENABLE ROW LEVEL SECURITY"));
+        }
+
         await inContext(workerUrl, memberEnter(vyRun.agentId, dailyRunId), async (c) => {
           for (const badBody of [
             "Tom tat hop luc 9h voi khach A",
             JSON.stringify({ meetings: 2, note: "khong duoc luu chu" }),
             JSON.stringify({ acme_secret_meeting: 1 }),
+            '{"v":1,"v":2}',
             JSON.stringify([1, 2]),
           ]) {
             await c.query("SAVEPOINT sp_counts_bad");

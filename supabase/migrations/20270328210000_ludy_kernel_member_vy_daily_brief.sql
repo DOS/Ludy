@@ -165,9 +165,16 @@ BEGIN
          OR OLD.status IS DISTINCT FROM 'running'
          OR NEW.status IS DISTINCT FROM 'failed'
          OR NEW.body IS NOT NULL
+         OR NEW.org_id IS DISTINCT FROM OLD.org_id
+         OR NEW.id IS DISTINCT FROM OLD.id
          OR NEW.member_user_id IS DISTINCT FROM OLD.member_user_id
          OR NEW.run_id IS DISTINCT FROM OLD.run_id
          OR NEW.feature IS DISTINCT FROM OLD.feature
+         OR NEW.subject_type IS DISTINCT FROM OLD.subject_type
+         OR NEW.subject_id IS DISTINCT FROM OLD.subject_id
+         OR NEW.source_revision IS DISTINCT FROM OLD.source_revision
+         OR NEW.tainted IS DISTINCT FROM OLD.tainted
+         OR NEW.private_read IS DISTINCT FROM OLD.private_read
          OR NEW.created_at IS DISTINCT FROM OLD.created_at
          OR NEW.expires_at IS DISTINCT FROM OLD.expires_at THEN
         RAISE EXCEPTION 'new row violates row-level security policy for table "member_vy_result"' USING ERRCODE = '42501', HINT = 'MEMBER_VY_RESULT_RUN_MISMATCH';
@@ -189,6 +196,8 @@ BEGIN
       END;
       IF pg_catalog.jsonb_typeof(v_body) <> 'object'
          OR (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(v_body)) NOT BETWEEN 1 AND 6
+         OR pg_catalog.regexp_count(NEW.body, '"[a-z_]{1,12}"[[:space:]]*:')
+            IS DISTINCT FROM (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(v_body))::integer
          OR EXISTS (
            SELECT 1 FROM pg_catalog.jsonb_each(v_body) AS e(k, v)
            WHERE e.k <> ALL (ARRAY['v', 'meetings', 'facts', 'sentences', 'lines', 'dropped'])
@@ -211,7 +220,7 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION ludy_kernel.member_vy_result_bind() FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 DROP TRIGGER IF EXISTS member_vy_result_bind ON ludy_kernel.member_vy_result;
-CREATE TRIGGER member_vy_result_bind BEFORE INSERT OR UPDATE OF member_user_id, run_id, feature, status, body, created_at, expires_at ON ludy_kernel.member_vy_result
+CREATE TRIGGER member_vy_result_bind BEFORE INSERT OR UPDATE ON ludy_kernel.member_vy_result
   FOR EACH ROW EXECUTE FUNCTION ludy_kernel.member_vy_result_bind();
 
 DROP POLICY IF EXISTS member_only ON ludy_kernel.member_vy_result;
