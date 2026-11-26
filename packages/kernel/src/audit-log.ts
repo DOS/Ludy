@@ -2,7 +2,7 @@
 // which object and when, newest first and paged; the commands the org's log holds, for the filter; and the filtered
 // list as a CSV file, itself audited. Reads stay inside the org (audit_event's tenant RLS); the roles are the query's
 // access list. A row's detail is shown as one line with any key that looks like a secret left out.
-import { sql, type Kysely, type RawBuilder, type Transaction } from 'kysely';
+import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
 import {
   AUDIT_EXPORT_LIMIT,
@@ -16,15 +16,13 @@ import {
   type AuditOutcome,
   type AuditPage,
 } from '@ludy/kernel-contract';
-import type { Database, MemberRole } from '@ludy/db';
+import type { Db, MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 const TZ = 'Asia/Ho_Chi_Minh';
 // How many distinct commands the filter offers.
 const COMMAND_LIMIT = 500;
-
-type Db = Kysely<Database> | Transaction<Database>;
 
 interface AuditRow {
   id: string;

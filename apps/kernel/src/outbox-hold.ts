@@ -4,10 +4,8 @@
 // (ludy_kernel.outbox_hold) instead of queueing anything, and the held sweep puts the parked events back on the outbox, oldest first, once the app is on again
 // (the choice and the entitlement, asked here in TypeScript). A parked event lives no longer than the outbox retention window: the day's purge deletes it with its day, and the
 // retention job logs how many per app (ludy_kernel.outbox_held_expire); the app recovers that work through its own sweeps on switch-on (ADR-0053 section 4).
-import { sql, type Kysely, type Transaction } from 'kysely';
-import type { Database } from '@ludy/db';
-
-type Db = Transaction<Database> | Kysely<Database>;
+import { sql } from 'kysely';
+import type { Db } from '@ludy/db';
 
 /** How often the worker looks for parked events whose app is on again. */
 export const HELD_SWEEP_MS = 10_000;
