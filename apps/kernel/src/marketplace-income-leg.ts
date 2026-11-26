@@ -28,7 +28,7 @@ import { lazadaFinance } from './marketplace-lazada-finance.ts';
 import type { LazadaOptions } from './marketplace-lazada.ts';
 import { shopeeFinance } from './marketplace-shopee-finance.ts';
 import type { ShopeeOptions } from './marketplace-shopee.ts';
-import { tiktokFinance, type TiktokAdjustment, type TiktokStatement } from './marketplace-tiktok-finance.ts';
+import { TIKTOK_FINANCE_MAX_STATEMENTS, tiktokFinance, type TiktokAdjustment, type TiktokIncome, type TiktokStatement } from './marketplace-tiktok-finance.ts';
 import type { TiktokOptions } from './marketplace-tiktok.ts';
 
 const DAY_MS = 86_400_000;
@@ -238,7 +238,7 @@ export function withTiktokIncome(provider: MarketplaceProvider, options: TiktokO
         ...(incomeOptions?.minStartDay !== undefined ? { minStartDay: incomeOptions.minStartDay } : {}),
         read: async (window) => {
           const cache = incomeOptions?.cache;
-          let income;
+          let income: TiktokIncome;
           if (!cache) {
             income = await finance.income(secret, window, { paidDay: window.endDay, includePayments: false });
           } else {
@@ -256,6 +256,7 @@ export function withTiktokIncome(provider: MarketplaceProvider, options: TiktokO
               for (const statement of income.statements) entry.byDay.get(statement.day)?.push(statement);
             } else {
               if (missing.length > 0) {
+                // `days` spans at most TIKTOK_FINANCE_MAX_DAYS, so any subset `[missing[0], missing.at(-1)]` stays within the platform's 31-day limit.
                 const fetched = await finance.statements(secret, { startDay: missing[0] as string, endDay: missing.at(-1) as string });
                 const missingSet = new Set(missing);
                 for (const d of missing) entry.byDay.set(d, []);
@@ -265,9 +266,10 @@ export function withTiktokIncome(provider: MarketplaceProvider, options: TiktokO
               const statements: TiktokStatement[] = [];
               for (const d of days) {
                 for (const statement of entry.byDay.get(d) ?? []) {
-                  if (seenIds.has(statement.id)) continue;
+                  if (seenIds.has(statement.id)) throw notRecognized();
                   seenIds.add(statement.id);
                   statements.push(statement);
+                  if (statements.length > TIKTOK_FINANCE_MAX_STATEMENTS) throw notRecognized();
                 }
               }
               income = await finance.income(secret, window, { paidDay: window.endDay, statements, includePayments: false });

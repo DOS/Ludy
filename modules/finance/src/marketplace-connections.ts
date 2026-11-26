@@ -288,7 +288,6 @@ export type MarketplacePollTarget =
       lastIncomePollState: string | null;
       lastIncomePolledAt: string | null;
       createdAt: string;
-      lastSettlementEnd: string | null;
     };
 
 export const marketplaceConnectionPollTarget = defineQuery({
@@ -320,24 +319,6 @@ export const marketplaceConnectionPollTarget = defineQuery({
     if (row.status !== 'active') return { action: 'none', reason: 'not_active' };
     const adapter = marketplaceAdapterOf(row.provider);
     if (!adapter) return { action: 'none', reason: 'unknown_adapter' };
-    const hasIncomeCursor = row.poll_cursor !== null && row.poll_cursor.includes('|') && row.poll_cursor.slice(row.poll_cursor.indexOf('|') + 1) !== '';
-    let lastSettlementEnd: string | null = null;
-    if (!hasIncomeCursor) {
-      const { rows: settled } = await sql<{ period_end: string }>`
-        SELECT s.period_end::text AS period_end
-        FROM ludy_finance.channel_settlement s
-        WHERE s.org_id = ${ctx.orgId}::uuid
-          AND s.legal_entity_id = ${row.legal_entity_id}::uuid
-          AND s.platform = ${row.platform}
-          AND s.reversal_of IS NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM ludy_finance.channel_settlement r
-            WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id
-          )
-        ORDER BY s.period_end DESC
-        LIMIT 1`.execute(ctx.trx);
-      lastSettlementEnd = settled[0]?.period_end ?? null;
-    }
     return {
       action: 'poll',
       id: row.id,
@@ -351,8 +332,30 @@ export const marketplaceConnectionPollTarget = defineQuery({
       lastIncomePollState: row.last_income_poll_state,
       lastIncomePolledAt: row.last_income_polled_at ? new Date(row.last_income_polled_at).toISOString() : null,
       createdAt: new Date(row.created_at).toISOString(),
-      lastSettlementEnd,
     };
+  },
+});
+
+// Newest standing settlement's period end for an entity and platform (#4306), queried only when a connection with an active income leg has no income cursor yet.
+export const marketplaceConnectionLastSettlementEnd = defineQuery({
+  name: 'finance.marketplace_connection.last_settlement_end',
+  input: z.strictObject({ legalEntityId: zId, platform: zMarketplacePlatform }),
+  access: 'system',
+  handler: async (ctx, input): Promise<string | null> => {
+    const { rows } = await sql<{ period_end: string }>`
+      SELECT s.period_end::text AS period_end
+      FROM ludy_finance.channel_settlement s
+      WHERE s.org_id = ${ctx.orgId}::uuid
+        AND s.legal_entity_id = ${input.legalEntityId}::uuid
+        AND s.platform = ${input.platform}
+        AND s.reversal_of IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM ludy_finance.channel_settlement r
+          WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id
+        )
+      ORDER BY s.period_end DESC
+      LIMIT 1`.execute(ctx.trx);
+    return rows[0]?.period_end ?? null;
   },
 });
 
@@ -890,4 +893,13 @@ export const marketplaceConnectionCommands = [
   marketplaceConnectionAuthorizeComplete,
   marketplaceConnectionPushHookSet,
 ];
-export const marketplaceConnectionQueries = [marketplaceConnectionPushHook, marketplaceConnectionList, marketplaceConnectionTarget, marketplaceConnectionPollTarget, marketplaceConnectionAuthorizeLookup, marketplaceConnectionAuthorizeTarget, marketplaceConnectionStaged];
+export const marketplaceConnectionQueries = [
+  marketplaceConnectionPushHook,
+  marketplaceConnectionList,
+  marketplaceConnectionTarget,
+  marketplaceConnectionPollTarget,
+  marketplaceConnectionLastSettlementEnd,
+  marketplaceConnectionAuthorizeLookup,
+  marketplaceConnectionAuthorizeTarget,
+  marketplaceConnectionStaged,
+];

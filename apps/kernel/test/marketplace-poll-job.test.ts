@@ -21,7 +21,7 @@ const goodPage = (): MarketplaceOrderPage => ({
   nextCursor: 'sandbox:1',
 });
 
-const TARGET_EXTRAS = { lastIncomePollState: null, lastIncomePolledAt: null, createdAt: '2026-10-01T00:00:00.000Z', lastSettlementEnd: null } as const;
+const TARGET_EXTRAS = { lastIncomePollState: null, lastIncomePolledAt: null, createdAt: '2026-10-01T00:00:00.000Z' } as const;
 
 function setup(listOrders: () => Promise<unknown>, platform: 'lazada' | 'shopee' | 'tiktok_shop' = 'shopee', duplicate = false, ingestFails = false) {
   const executed: Array<{ name: string; input: Record<string, unknown> }> = [];

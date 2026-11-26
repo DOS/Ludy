@@ -253,10 +253,12 @@ suite('marketplace connections (#2519)', () => {
     const id = String(connected.body.id);
     expect(await rows('SELECT provider, connected_by FROM ludy_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([{ provider: 'marketplace_sandbox', connected_by: adminUser.userId }]);
     // A refused poll and a test leave their marks (and the back-off they start); connecting the same account again with a new credential clears them, so the next poll is not held back by the old one.
-    await rows("UPDATE ludy_finance.marketplace_connection SET last_poll_state = 'credentials', last_polled_at = now(), last_test_state = 'wrong_credentials', last_tested_at = now() WHERE org_id = $1 AND id = $2", [orgId, id]);
+    await rows("UPDATE ludy_finance.marketplace_connection SET last_poll_state = 'credentials', last_polled_at = now(), last_income_poll_state = 'credentials', last_income_polled_at = now(), last_test_state = 'wrong_credentials', last_tested_at = now() WHERE org_id = $1 AND id = $2", [orgId, id]);
     // The same account again is the same connection.
     expect((await call('connections/connect', owner, connectInput())).body).toEqual({ id });
-    expect(await rows('SELECT last_poll_state, last_polled_at, last_test_state, last_tested_at FROM ludy_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id])).toEqual([{ last_poll_state: null, last_polled_at: null, last_test_state: null, last_tested_at: null }]);
+    expect(await rows('SELECT last_poll_state, last_polled_at, last_income_poll_state, last_income_polled_at, last_test_state, last_tested_at FROM ludy_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id])).toEqual([
+      { last_poll_state: null, last_polled_at: null, last_income_poll_state: null, last_income_polled_at: null, last_test_state: null, last_tested_at: null },
+    ]);
     expect((await call('connections/list', viewer)).body).toEqual([
       {
         id,
@@ -270,6 +272,8 @@ suite('marketplace connections (#2519)', () => {
         lastTestedAt: null,
         lastPolledAt: null,
         lastPollState: null,
+        lastIncomePolledAt: null,
+        lastIncomePollState: null,
         ordersWaiting: 0,
         authorizeState: null,
         reauthorizeBy: null,
@@ -1140,7 +1144,7 @@ suite('marketplace connections (#2519)', () => {
     });
   });
 
-  it('tracks income leg poll state separately from orders and resolves poll_target settlement boundary (#4306)', async () => {
+  it('tracks income leg poll state separately from orders and resolves last_settlement_end (#4306)', async () => {
     const entity = String((await rows<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh thu nhập', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
     const connected = await call('connections/connect', owner, connectInput({ platform: 'tiktok_shop', legalEntityId: entity }));
     expect(connected.status).toBe(200);
@@ -1148,8 +1152,9 @@ suite('marketplace connections (#2519)', () => {
 
     const sys = { actor: { type: 'system' as const, component: 'finance.marketplace' }, orgId };
     const targetOf = () => worker.query<MarketplacePollTarget>('finance.marketplace_connection.poll_target', { id }, sys);
+    const settlementEnd = () => worker.query<string | null>('finance.marketplace_connection.last_settlement_end', { legalEntityId: entity, platform: 'tiktok_shop' }, sys);
 
-    // No settlements yet: poll_target returns createdAt and lastSettlementEnd: null.
+    // No settlements yet: poll_target returns createdAt and last_settlement_end returns null.
     const initial = await targetOf();
     expect(initial).toMatchObject({
       action: 'poll',
@@ -1158,19 +1163,15 @@ suite('marketplace connections (#2519)', () => {
       lastPolledAt: null,
       lastIncomePollState: null,
       lastIncomePolledAt: null,
-      lastSettlementEnd: null,
     });
     if (initial.action === 'poll') expect(Number.isFinite(Date.parse(initial.createdAt))).toBe(true);
+    expect(await settlementEnd()).toBeNull();
 
     // Insert a standing settlement up to 2026-10-31 and a newer reversed one up to 2026-11-12: only the standing period_end counts.
-    const standing = String(
-      (
-        await rows<{ id: string }>(
-          `INSERT INTO ludy_finance.channel_settlement (org_id, legal_entity_id, platform, period_start, period_end, report_net)
-           VALUES ($1, $2, 'tiktok_shop', '2026-10-01', '2026-10-31', 500000) RETURNING id`,
-          [orgId, entity],
-        )
-      )[0]?.id,
+    await rows(
+      `INSERT INTO ludy_finance.channel_settlement (org_id, legal_entity_id, platform, period_start, period_end, report_net)
+       VALUES ($1, $2, 'tiktok_shop', '2026-10-01', '2026-10-31', 500000)`,
+      [orgId, entity],
     );
     const toReverse = String(
       (
@@ -1192,12 +1193,12 @@ suite('marketplace connections (#2519)', () => {
        VALUES ($1, $2, 'shopee', '2026-11-01', '2026-11-20', 250000)`,
       [orgId, entity],
     );
-    expect(standing).toBeTruthy();
-    expect(await targetOf()).toMatchObject({ action: 'poll', lastSettlementEnd: '2026-10-31' });
+    expect(await settlementEnd()).toBe('2026-10-31');
 
-    // Running orders + failing income in worker sets orders last_poll_state='ok' and income last_income_poll_state='rate_limited'.
+    // Running orders + failing income in worker forwards minStartDay from settlement end, sets orders last_poll_state='ok' and income last_income_poll_state='rate_limited'.
     let orderCalls = 0;
     let incomeCalls = 0;
+    const minStartDays: Array<string | undefined> = [];
     const provider: MarketplaceProvider = {
       ...createSandboxMarketplaceProvider(),
       hosts: ['open-api.tiktokglobalshop.com'],
@@ -1205,8 +1206,9 @@ suite('marketplace connections (#2519)', () => {
         orderCalls += 1;
         return { orders: [], nextCursor: `o:${orderCalls}` };
       },
-      async listIncome() {
+      async listIncome(_secret, _platform, _since, options) {
         incomeCalls += 1;
+        minStartDays.push(options?.minStartDay);
         throw new MarketplaceProviderError('rate_limited');
       },
     };
@@ -1214,20 +1216,22 @@ suite('marketplace connections (#2519)', () => {
     expect(await runMarketplacePoll({ runtime: worker, broker: vault, store, providers: { sandbox: provider } }, { orgId, connectionId: id }, 1, () => t0)).toEqual({ state: 'rate_limited', orders: 0, staged: false });
     expect(orderCalls).toBe(1);
     expect(incomeCalls).toBe(1);
+    expect(minStartDays).toEqual(['2026-11-01']);
 
     const listed = (await call('connections/list', owner)).body as Array<{ id: string; lastPollState: string | null; lastIncomePollState: string | null; lastIncomePolledAt: string | null }>;
-    expect(listed.find((c) => c.id === id)).toMatchObject({ lastPollState: 'ok', lastIncomePollState: 'rate_limited' });
-    expect(listed.find((c) => c.id === id)?.lastIncomePolledAt).not.toBeNull();
+    const rowListed = listed.find((c) => c.id === id);
+    expect(rowListed).toMatchObject({ lastPollState: 'ok', lastIncomePollState: 'rate_limited' });
+    expect(rowListed?.lastIncomePolledAt).not.toBeNull();
 
-    // 10 minutes later (within 1h income backoff): orders leg still runs, income leg stays backed off.
-    const t1 = new Date(t0.getTime() + 10 * 60_000);
+    // 10 minutes after the DB-recorded lastIncomePolledAt (within 1h income backoff): orders leg still runs, income leg stays backed off.
+    const t1 = new Date(Date.parse(String(rowListed?.lastIncomePolledAt)) + 10 * 60_000);
     expect(await runMarketplacePoll({ runtime: worker, broker: vault, store, providers: { sandbox: provider } }, { orgId, connectionId: id }, 1, () => t1)).toEqual({ state: 'ok', orders: 0, staged: false });
     expect(orderCalls).toBe(2);
     expect(incomeCalls).toBe(1);
 
-    // Record an income cursor: poll_target no longer queries settlements and reconnect clears both leg states.
+    // Record an income cursor and reconnect: reconnect clears both leg states.
     await worker.execute('finance.marketplace_connection.record_poll', { id, leg: 'income', state: 'ok', cursor: 'o:2|d:2026-11-05' }, sys);
-    expect(await targetOf()).toMatchObject({ action: 'poll', lastIncomePollState: 'ok', lastSettlementEnd: null, cursor: 'o:2|d:2026-11-05' });
+    expect(await targetOf()).toMatchObject({ action: 'poll', lastIncomePollState: 'ok', cursor: 'o:2|d:2026-11-05' });
 
     expect((await call('connections/connect', owner, connectInput({ platform: 'tiktok_shop', legalEntityId: entity }))).status).toBe(200);
     expect(await targetOf()).toMatchObject({ action: 'poll', lastPollState: null, lastPolledAt: null, lastIncomePollState: null, lastIncomePolledAt: null });

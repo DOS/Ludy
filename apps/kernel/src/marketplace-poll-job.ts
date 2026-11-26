@@ -284,8 +284,13 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
     target.lastIncomePolledAt !== null &&
     now().getTime() - Date.parse(target.lastIncomePolledAt) < incomeWait;
   if (last.outcome.state === 'ok' && typeof provider.listIncome === 'function' && !incomeBackedOff) {
+    const parts = splitPollCursor(held.cursor);
+    const lastSettlementEnd =
+      parts.income === null
+        ? await deps.runtime.query<string | null>('finance.marketplace_connection.last_settlement_end', { legalEntityId: target.legalEntityId, platform: target.platform }, options)
+        : null;
     const incomeOptions: MarketplaceIncomeOptions = {
-      minStartDay: firstIncomeDay({ nowMs: now().getTime(), createdAt: target.createdAt, lastSettlementEnd: target.lastSettlementEnd }),
+      minStartDay: firstIncomeDay({ nowMs: now().getTime(), createdAt: target.createdAt, lastSettlementEnd }),
       cache: new Map<string, unknown>(),
     };
     for (let pages = 0; pages < MARKETPLACE_MAX_PAGES_PER_RUN; pages++) {

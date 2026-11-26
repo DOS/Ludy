@@ -15,7 +15,7 @@ import { shopeeMarketplace } from '../src/marketplace-shopee-orders.ts';
 import { LAZADA_HOSTS, lazadaCaller, lazadaMarketplace } from '../src/marketplace-lazada.ts';
 import { lazadaFinance } from '../src/marketplace-lazada-finance.ts';
 import { TIKTOK_HOSTS, tiktokCaller } from '../src/marketplace-tiktok.ts';
-import { tiktokFinance } from '../src/marketplace-tiktok-finance.ts';
+import { TIKTOK_FINANCE_MAX_STATEMENTS, tiktokFinance } from '../src/marketplace-tiktok-finance.ts';
 import { tiktokMarketplace } from '../src/marketplace-tiktok-orders.ts';
 import { fakeLazada } from './fake-lazada.ts';
 import { fakeShopee } from './fake-shopee.ts';
@@ -153,29 +153,35 @@ function setup(
   } = {},
 ) {
   const executed: Array<{ name: string; input: Record<string, unknown> }> = [];
+  const settlementQueries: Array<Record<string, unknown>> = [];
   const puts: Array<{ key: string; bytes: Uint8Array }> = [];
   let cursor = held.cursor;
   const adapter = opts.adapter ?? 'sandbox';
   const platform = opts.platform ?? 'shopee';
   const runtime = {
-    query: async (name: string) =>
-      name === 'kernel.channel.credential'
-        ? { provider: `marketplace_${adapter}`, externalAccountId: 'x', keyId: 'k', envelope: Buffer.from('e').toString('base64') }
-        : {
-            action: 'poll',
-            id: CONNECTION,
-            channelConnectionId: '33333333-3333-4333-8333-333333333333',
-            adapter,
-            platform,
-            legalEntityId: '44444444-4444-4444-8444-444444444444',
-            cursor,
-            lastPollState: held.lastPollState ?? 'ok',
-            lastPolledAt: held.lastPolledAt ?? null,
-            lastIncomePollState: held.lastIncomePollState ?? null,
-            lastIncomePolledAt: held.lastIncomePolledAt ?? null,
-            createdAt: held.createdAt ?? '2026-10-01T00:00:00.000Z',
-            lastSettlementEnd: held.lastSettlementEnd ?? null,
-          },
+    query: async (name: string, input: Record<string, unknown>) => {
+      if (name === 'kernel.channel.credential') {
+        return { provider: `marketplace_${adapter}`, externalAccountId: 'x', keyId: 'k', envelope: Buffer.from('e').toString('base64') };
+      }
+      if (name === 'finance.marketplace_connection.last_settlement_end') {
+        settlementQueries.push(input);
+        return held.lastSettlementEnd ?? null;
+      }
+      return {
+        action: 'poll',
+        id: CONNECTION,
+        channelConnectionId: '33333333-3333-4333-8333-333333333333',
+        adapter,
+        platform,
+        legalEntityId: '44444444-4444-4444-8444-444444444444',
+        cursor,
+        lastPollState: held.lastPollState ?? 'ok',
+        lastPolledAt: held.lastPolledAt ?? null,
+        lastIncomePollState: held.lastIncomePollState ?? null,
+        lastIncomePolledAt: held.lastIncomePolledAt ?? null,
+        createdAt: held.createdAt ?? '2026-10-01T00:00:00.000Z',
+      };
+    },
     execute: async (name: string, input: Record<string, unknown>) => {
       executed.push({ name, input });
       if (opts.ingestFails && name === 'finance.marketplace_connection.ingest_page') throw new Error('the file could not be filed');
@@ -204,7 +210,7 @@ function setup(
   const run = (maxPages?: number) => runMarketplacePoll(deps, { orgId: ORG, connectionId: CONNECTION }, maxPages, () => new Date(opts.nowMs ?? NOW));
   const polls = () => executed.filter((e) => e.name === 'finance.marketplace_connection.record_poll').map((e) => e.input);
   const ingests = () => executed.filter((e) => e.name === 'finance.marketplace_connection.ingest_page').map((e) => e.input);
-  return { run, polls, ingests, puts, stored: () => cursor };
+  return { run, polls, ingests, puts, stored: () => cursor, settlementQueries: () => settlementQueries.length };
 }
 
 describe('the leg in the worker', () => {
@@ -326,19 +332,28 @@ describe('the leg in the worker', () => {
     expect(listIncomeAfter).toHaveBeenCalledTimes(1);
   });
 
-  it('forwards minStartDay from connection creation and last standing settlement end (#4306)', async () => {
+  it('forwards minStartDay from connection creation and last standing settlement end only on the first income poll (#4306)', async () => {
     const received: Array<MarketplaceIncomeOptions | undefined> = [];
-    const { run } = setup(
+    const first = setup(
       async (_secret, _platform, _since, options) => {
         received.push(options);
         return { lines: [], nextCursor: 'd:2026-11-16' };
       },
       { cursor: null, createdAt: '2026-11-05T00:00:00.000Z', lastSettlementEnd: '2026-11-14' },
     );
-    await run();
+    await first.run();
+    expect(first.settlementQueries()).toBe(1);
     expect(received).toHaveLength(1);
     expect(received[0]?.minStartDay).toBe('2026-11-15');
     expect(received[0]?.cache).toBeInstanceOf(Map);
+
+    // An existing income cursor or provider without listIncome skips the settlement query completely.
+    const resumed = setup(async () => ({ lines: [], nextCursor: 'd:2026-11-16' }), { cursor: 'o:1|d:2026-11-15', lastSettlementEnd: '2026-11-14' });
+    await resumed.run();
+    expect(resumed.settlementQueries()).toBe(0);
+    const noIncome = setup(undefined, { cursor: null, lastSettlementEnd: '2026-11-14' });
+    await noIncome.run();
+    expect(noIncome.settlementQueries()).toBe(0);
   });
 
   it('refuses a page the port does not name: a broken identity, an extra field, a formula-like order number, too many lines', async () => {
@@ -554,21 +569,22 @@ describe('a TikTok Shop day read end to end (#4306)', () => {
       query: async (name: string) =>
         name === 'kernel.channel.credential'
           ? { provider: 'marketplace_tiktok_shop', externalAccountId: 'shop', keyId: 'k', envelope: Buffer.from('e').toString('base64') }
-          : {
-              action: 'poll',
-              id: CONNECTION,
-              channelConnectionId: '33333333-3333-4333-8333-333333333333',
-              adapter: 'tiktok_shop',
-              platform: 'tiktok_shop',
-              legalEntityId: '44444444-4444-4444-8444-444444444444',
-              cursor,
-              lastPollState: 'ok',
-              lastPolledAt: null,
-              lastIncomePollState: null,
-              lastIncomePolledAt: null,
-              createdAt: '2026-10-01T00:00:00.000Z',
-              lastSettlementEnd: null,
-            },
+          : name === 'finance.marketplace_connection.last_settlement_end'
+            ? null
+            : {
+                action: 'poll',
+                id: CONNECTION,
+                channelConnectionId: '33333333-3333-4333-8333-333333333333',
+                adapter: 'tiktok_shop',
+                platform: 'tiktok_shop',
+                legalEntityId: '44444444-4444-4444-8444-444444444444',
+                cursor,
+                lastPollState: 'ok',
+                lastPolledAt: null,
+                lastIncomePollState: null,
+                lastIncomePolledAt: null,
+                createdAt: '2026-10-01T00:00:00.000Z',
+              },
       execute: async (name: string, input: Record<string, unknown>) => {
         if (name === 'finance.marketplace_connection.record_poll' && typeof input.cursor === 'string') cursor = input.cursor;
         return name === 'finance.marketplace_connection.ingest_page' ? { fileId: '55555555-5555-4555-8555-555555555555', duplicate: false } : {};
@@ -597,5 +613,40 @@ describe('a TikTok Shop day read end to end (#4306)', () => {
     expect(puts).toHaveLength(1);
     expect(new TextDecoder().decode(puts[0])).toContain('576463220456500110');
     expect(cursor).toBe('o:2026-11-20T00:00:00.000Z|d:2026-11-19');
+  });
+
+  it('refuses a cached statement window that exceeds TIKTOK_FINANCE_MAX_STATEMENTS or repeats a statement id (#4306)', async () => {
+    const cache = new Map<string, unknown>();
+    // 100 statements on day 1 (legal) + 1 more on day 2 = 101 > TIKTOK_FINANCE_MAX_STATEMENTS.
+    const day1Statements = Array.from({ length: TIKTOK_FINANCE_MAX_STATEMENTS }, (_, i) =>
+      fakeStatement({ id: `72388045640971${String(i).padStart(4, '0')}`, statement_time: sec('2026-11-01T05:00:00Z'), payment_time: sec('2026-11-02T05:00:00Z') }),
+    );
+    const day2Statement = fakeStatement({ id: '723880456409719999', statement_time: sec('2026-11-15T05:00:00Z'), payment_time: sec('2026-11-15T05:00:00Z') });
+    const overLimit = provider({ statements: [...day1Statements, day2Statement], statementTransactions: {} }).provider;
+    expect((await overLimit.listIncome?.(SECRET, 'tiktok_shop', 'd:2026-11-14', { cache }))?.nextCursor).toBe('d:2026-11-15');
+    await expect(overLimit.listIncome?.(SECRET, 'tiktok_shop', 'd:2026-11-15', { cache })).rejects.toMatchObject({ kind: 'not_recognized' });
+
+    // A statement id repeated across two separate day fetches fails as not_recognized rather than deduping silently.
+    const dupCache = new Map<string, unknown>();
+    const baseOptions = { fetch: hostBoundFetch(TIKTOK_HOSTS, async () => new Response('')), now: () => new Date(NOW), sleep: async () => undefined };
+    let callIdx = 0;
+    const dupFinance = {
+      statements: async () => [{ id: 'dup-1', day: '2026-11-15', payout: '1000', status: 'PAID', paymentId: 'p1', paidDay: '2026-11-15' }],
+      payments: async () => [],
+      income: async () => {
+        callIdx += 1;
+        return {
+          currency: 'VND' as const,
+          statements: callIdx === 1 ? [{ id: 'dup-1', day: '2026-11-10', payout: '1000', status: 'PAID', paymentId: 'p1', paidDay: '2026-11-10' }] : [],
+          payments: null,
+          lines: [],
+          adjustments: [],
+          pendingStatements: 0,
+        };
+      },
+    };
+    const dupProvider = withTiktokIncome(tiktokMarketplace(baseOptions), baseOptions, dupFinance);
+    await dupProvider.listIncome?.(SECRET, 'tiktok_shop', 'd:2026-11-14', { cache: dupCache });
+    await expect(dupProvider.listIncome?.(SECRET, 'tiktok_shop', 'd:2026-11-15', { cache: dupCache })).rejects.toMatchObject({ kind: 'not_recognized' });
   });
 });

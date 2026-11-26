@@ -103,6 +103,11 @@ function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: 
       <p className="mt-1 text-sm text-muted-foreground">
         {connection.lastPolledAt ? `${t('polledAt', { when: f.dateTime(connection.lastPolledAt) })}${connection.lastPollState ? ` · ${t(pollStateKey(connection, connection.lastPollState) as never)}` : ''}` : t('neverPolled')}
       </p>
+      {connection.lastIncomePolledAt && (
+        <p className="mt-1 text-sm text-muted-foreground">
+          {`${t('incomePolledAt', { when: f.dateTime(connection.lastIncomePolledAt) })}${connection.lastIncomePollState ? ` · ${t(pollStateKey(connection, connection.lastIncomePollState) as never)}` : ''}`}
+        </p>
+      )}
       {connection.ordersWaiting > 0 && <p className="mt-1 text-sm text-muted-foreground">{t('ordersWaiting', { count: connection.ordersWaiting })}</p>}
       {canManage && (
         <div className="mt-2 flex flex-wrap gap-2">
