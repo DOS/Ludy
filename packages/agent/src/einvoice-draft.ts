@@ -271,7 +271,7 @@ const MULTIPLY_AFTER = /^\s*(?:\*|×|x(?![\p{L}]))\s*(?=\d)/iu;
 const COLON_PREAMBLE = /^([^:]+):([\s\S]+)$/u;
 const INVOICE_HEADER_SCOPE = /(?:^|[^\p{L}])(?:hóa\s+đơn|hoa\s+don|invoice|toàn\s+bộ|toan\s+bo|áp\s+dụng\s+chung|ap\s+dung\s+chung)(?![\p{L}])/iu;
 const INVOICE_VAT_SCOPE = /(?:^|[^\p{L}])(?:(?:cho|của|cua|trên|tren|on|tính\s+trên|tinh\s+tren|áp\s+dụng(?:\s+chung)?(?:\s+cho)?|ap\s+dung(?:\s+chung)?(?:\s+cho)?)\s+)?(?:toàn\s+bộ(?:\s+(?:hóa\s+đơn|hoa\s+don|đơn(?:\s+hàng)?|don(?:\s+hang)?|mặt\s+hàng|mat\s+hang|hàng|hang))?|toan\s+bo(?:\s+(?:hoa\s+don|don(?:\s+hang)?|mat\s+hang|hang))?|cả\s+(?:hóa\s+đơn|hoa\s+don|đơn(?:\s+hàng)?|don(?:\s+hang)?)|ca\s+(?:hoa\s+don|don(?:\s+hang)?)|tất\s+cả(?:\s+(?:mặt\s+hàng|hàng|hóa\s+đơn))?|tat\s+ca(?:\s+(?:mat\s+hang|hang|hoa\s+don))?|toàn\s+đơn|toan\s+don|cả\s+đơn|ca\s+don|hóa\s+đơn|hoa\s+don|áp\s+dụng\s+chung|ap\s+dung\s+chung|for\s+(?:the\s+)?(?:whole\s+invoice|all(?:\s+items)?)|all\s+items|entire\s+invoice)(?![\p{L}])/giu;
-const LEADING_TRANSACTION_VERB = /^\s*(?:mua|bán|ban|xuất|xuat|đặt|dat|lấy|lay|chốt|chot|gửi|gui|giao|thêm|them|kèm|kem|cộng|cong|nhập|nhap|order|buy|sell|sold|bought|purchased|invoiced|plus|add)(?![\p{L}])(?:\s+(?:thêm|them|kèm|kem))?\s*(?=\d)/iu;
+const LEADING_TRANSACTION_VERB = /^\s*(?:(?:khách(?:\s+(?:hàng|quen|lẻ|mua))?|khach(?:\s+(?:hang|quen|le|mua))?|người\s+mua|nguoi\s+mua)\s+(?:đặt|dat|mua|lấy|lay|chốt|chot|gửi|gui|order)|(?:mua|bán|ban|xuất|xuat|đặt|dat|lấy|lay|chốt|chot|gửi|gui|giao|thêm|them|kèm|kem|cộng|cong|nhập|nhap|order|buy|sell|sold|bought|purchased|invoiced|plus|add)(?![\p{L}])(?:\s+(?:thêm|them|kèm|kem))?)\s*(?=\d)/iu;
 const TRANSACTION_VERB_SPLIT = /(?:^|\s)(?:mua|bán|ban|xuất|xuat|đặt|dat|lấy|lay|chốt|chot|gửi|gui|giao|thêm|them|kèm|kem|cộng|cong|nhập|nhap|order|buy|sell|sold|bought|purchased|invoiced|plus|add)(?![\p{L}])\s*/giu;
 const RECIPIENT_BEFORE_NUMBER = /^\s*(?:(?:(?:cho|tới|toi|đến|den)(?![\p{L}])\s+)?(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách\s+(?:hàng|lẻ|mua)|khach\s+(?:hang|le|mua)|người\s+mua|nguoi\s+mua|công\s+ty|cong\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,3}|(?:cho|tới|toi|đến|den|gửi|gui)(?![\p{L}])(?:\s+[\p{L}]+){1,3})\s*$/iu;
 const SENTENCE_DELIM = /\r?\n|;|\.(?=\s|$)/gu;
@@ -316,7 +316,7 @@ const UNIT_ONLY_EXACT = new Set([
   'đôi', 'ly', 'cốc', 'coc', 'khối', 'khoi', 'tờ', 'tấm', 'tam',
   'cây', 'cay', 'bịch', 'bich', 'hũ', 'hu', 'lọ', 'lo', 'vỉ', 'vi',
   'ống', 'ong', 'viên', 'vien', 'miếng', 'mieng', 'thanh', 'cặp', 'cap',
-  'chuyến', 'chuyen', 'lượt', 'luot', 'tấn', 'tạ', 'lạng', 'khay', 'ổ',
+  'chuyến', 'chuyen', 'lượt', 'luot', 'tấn', 'tạ', 'tá', 'lạng', 'khay', 'ổ',
   ...Object.keys(UNIT_ALIASES),
 ]);
 const ATTRIBUTE_ONLY_EXACT = new Set(['size', 'cỡ', 's', 'm', 'l', 'xl', 'xxl', 'xs']);
@@ -332,7 +332,7 @@ const STRIP_MONEY_OR_LABELED = new RegExp(
     PERCENT_ANY.source,
     RATE_AFTER_WORD.source,
     String.raw`(?<![\p{L}])(?:tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền(?:\s+hàng)?|tong\s+tien(?:\s+hang)?|tổng\s+thanh\s+toán|tong\s+thanh\s+toan|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tiền\s+thuế(?:\s+(?:gtgt|vat))?|tien\s+thue(?:\s+(?:gtgt|vat))?|trả\s+trước|tra\s+truoc|đặt\s+cọc|dat\s+coc|cọc|đã\s+trả|da\s+tra|còn\s+lại|con\s+lai|thanh\s+toán|thanh\s+toan|giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết\s+khấu|chiet\s+khau|ck(?![\p{L}])|discount|off|trừ|bớt|đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|(?<!(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+)gia|unit\s+price|price|số\s+lượng|so\s+luong|sl(?![\p{L}])|qty(?![\p{L}])|quantity|tổng|total|amount)(?:\s+(?:là|la|is)(?![\p{L}]))?\s*(?:[:=]\s*)?\d+(?:[.,]\d+)*(?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*)?(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
-    String.raw`(?<![\p{L}])(?:xuất\s+hóa\s+đơn|xuat\s+hoa\s+don|hóa\s+đơn(?:\s+trước)?|hoa\s+don(?:\s+truoc)?|(?:gửi\s+)?cùng\s+khách|gui\s+cung\s+khach|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người\s+mua|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}\s*$|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách(?:\s+(?:hàng|quen|lẻ))?|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,2}|ngày\s+hôm\s+nay|ngay\s+hom\s+nay|ngày\s+hôm\s+qua|ngay\s+hom\s+qua|hôm\s+nay|hom\s+nay|hôm\s+qua|hom\s+qua|hôm\s+kia|hom\s+kia|ngày\s+mai|ngay\s+mai|sáng\s+nay|sang\s+nay|chiều\s+nay|chieu\s+nay|tuần\s+này|tuan\s+nay|tuần\s+trước|tuan\s+truoc|tháng\s+này|thang\s+nay|tháng\s+trước|thang\s+truoc|today|yesterday|cơ\s+hội|co\s+hoi|đơn\s+vị|don\s+vi|khách\s+(?:hàng|quen|lẻ)|khach\s+(?:hang|quen|le)|người\s+mua|nguoi\s+mua|chiết\s+khấu|chiet\s+khau|giảm\s+giá|giam\s+gia|thuế\s+suất|thue\s+suat|(?:không|khong|chưa|chua)\s+(?:(?:bao\s+)?gồm\s+)?(?:vat|gtgt|thuế|thue|tax)|(?:không|khong)\s+chịu(?:\s+(?:thuế|thue))?|(?:không|khong)\s+kê\s+khai|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền|tong\s+tien)(?![\p{L}])`,
+    String.raw`(?<![\p{L}])(?:xuất\s+hóa\s+đơn|xuat\s+hoa\s+don|hóa\s+đơn(?:\s+trước)?|hoa\s+don(?:\s+truoc)?|(?:gửi\s+)?cùng\s+khách|gui\s+cung\s+khach|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người\s+mua|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}\s*$|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách(?:\s+(?:hàng|quen|lẻ))?|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,2}|(?:khách(?:\s+(?:hàng|quen|lẻ|mua))?|khach(?:\s+(?:hang|quen|le|mua))?|người\s+mua|nguoi\s+mua)\s+(?:đặt|dat|mua|lấy|lay|chốt|chot|gửi|gui|order)|ngày\s+hôm\s+nay|ngay\s+hom\s+nay|ngày\s+hôm\s+qua|ngay\s+hom\s+qua|hôm\s+nay|hom\s+nay|hôm\s+qua|hom\s+qua|hôm\s+kia|hom\s+kia|ngày\s+mai|ngay\s+mai|sáng\s+nay|sang\s+nay|chiều\s+nay|chieu\s+nay|tuần\s+này|tuan\s+nay|tuần\s+trước|tuan\s+truoc|tháng\s+này|thang\s+nay|tháng\s+trước|thang\s+truoc|today|yesterday|cơ\s+hội|co\s+hoi|đơn\s+vị|don\s+vi|khách\s+(?:hàng|quen|lẻ)|khach\s+(?:hang|quen|le)|người\s+mua|nguoi\s+mua|chiết\s+khấu|chiet\s+khau|giảm\s+giá|giam\s+gia|thuế\s+suất|thue\s+suat|(?:không|khong|chưa|chua)\s+(?:(?:bao\s+)?gồm\s+)?(?:vat|gtgt|thuế|thue|tax)|(?:không|khong)\s+chịu(?:\s+(?:thuế|thue))?|(?:không|khong)\s+kê\s+khai|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền|tong\s+tien)(?![\p{L}])`,
     String.raw`\d+(?:[.,]\d+)*\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
     String.raw`\d+(?:[.,]\d+)*\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}])`,
   ].join('|'),
@@ -399,12 +399,16 @@ function unitsAccentCompatible(rawA: string, rawB: string): boolean {
   return false;
 }
 
+const ALLOWED_VN_VAT_TEXT = new Set(['0%', '5%', '8%', '10%', 'KCT', 'KKKNT']);
+
 const hasUnsupportedVatText = (text: string): boolean => {
   for (const m of text.matchAll(
-    /(?<![\p{L}])(?:vat|gtgt|thuế(?:\s+(?:suất|gtgt|vat))?|thue(?:\s+(?:suat|gtgt|vat))?)\s*(?:[:=]\s*)?(\d{1,2}(?:[.,]\d+)?)\s*%?|(\d{1,2}(?:[.,]\d+)?)\s*%\s*(?:vat|gtgt|thuế|thue)(?![\p{L}])/giu,
+    /(?<![\p{L}])(?:(?:(?<!(?:tiền|tien)\s+)(?:thuế(?:\s+(?:suất|gtgt|vat))?|thue(?:\s+(?:suat|gtgt|vat))?))|vat|gtgt)\s*(?:[:=]\s*)?(?:(\d+(?:[.,]\d+)?)\s*%|(\d{1,2})(?![\d.,])(?!\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}])))|(?<![\p{L}])(\d+(?:[.,]\d+)?)\s*%\s*(?:vat|gtgt|thuế|thue)(?![\p{L}])/giu,
   )) {
-    const rawRate = m[1] ?? m[2];
-    if (rawRate !== undefined && writtenVatRate(canon(rawRate)) === null) return true;
+    const rawRate = m[1] ?? m[2] ?? m[3];
+    if (rawRate === undefined) continue;
+    const rate = writtenVatRate(canon(rawRate));
+    if (rate === null || !ALLOWED_VN_VAT_TEXT.has(rate)) return true;
   }
   return false;
 };
@@ -554,7 +558,10 @@ function extractFigureTokens(body: string): FigureToken[] {
     const rawBeforeTax = body.slice(lastTaxBoundary, start);
     const isNegativeNumber = (prevChar === '-' || prevChar === '−') && (start < 2 || /[\s:=(,;]/u.test(body[start - 2] ?? ''));
     const hasForeignCurrencyAfter = UNSUPPORTED_CELL_CURRENCY.test(/^\s*(?:[\p{L}]+|[$€£¥₩])/u.exec(after)?.[0] ?? '');
-    const hasForeignCurrencyBefore = /[$€£¥₩]\s*$/u.test(rawBeforeTax);
+    const hasForeignCurrencyBefore =
+      /(?:(?<![\p{L}])(?:usd|eur|gbp|jpy|cny|rmb|aud|cad|sgd|thb|krw|twd|hkd|myr|chf|nzd|inr|php|idr|rub|sek|nok|dkk|pln|aed|sar|bnd|khr|lak|mmk)|[$€£¥₩])\s*(?:[:=]\s*)?$/iu.test(
+        rawBeforeTax,
+      );
     let role: FigureRole = 'unknown';
     if (isNegativeNumber || hasForeignCurrencyAfter || hasForeignCurrencyBefore) role = 'total';
     else if (hasTotalPrefix || hasEqualsResult) role = 'total';
@@ -1216,8 +1223,17 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
     // ignore, total, discount, and note columns never emit usable qty, unitPrice, or VAT tokens.
   }
   if (!rowTextHasContent || itemParts.length === 0) return null;
-  if (rowHasForeignCurrency || rawCells.some((c) => UNSUPPORTED_CELL_CURRENCY.test(c))) {
+  if (rowHasForeignCurrency) {
     tokens.length = 0;
+  } else {
+    for (let i = 0; i < rawCells.length; i += 1) {
+      const colRole = cols[i]?.role ?? 'ignore';
+      if (colRole === 'vat' || colRole === 'item' || colRole === 'unit' || colRole === 'qty') continue;
+      if (UNSUPPORTED_CELL_CURRENCY.test(rawCells[i] ?? '')) {
+        tokens.length = 0;
+        break;
+      }
+    }
   }
   if (dvtUnits.size > 0) {
     const matchesDvt = (u: string) => [...dvtUnits].some((du) => /^[\p{L}][\p{L}\p{N}]*$/u.test(du) && unitsAccentCompatible(du, u));
@@ -1361,7 +1377,8 @@ function parsePriceTaxInclusivePreamble(rawPrefix: string): { isPriceTaxInclusiv
   const rates = ratesInBody(collapseGroupedSpaces(prefix));
   const prefixHasPriceLabel = /(?<![\p{L}])(?:đơn\s+giá|don\s+gia|giá(?:\s+bán)?|gia(?:\s+ban)?|unit\s+price|price)(?![\p{L}])/iu.test(prefix);
   const prefixTaxIncMatch = TAX_INCLUSIVE_BEFORE.exec(`${prefix} `);
-  const isPriceTaxInclusive = prefixHasPriceLabel && prefixTaxIncMatch !== null && prefixTaxIncMatch[1] === undefined;
+  const startsWithTaxInclusive = TAX_INCLUSIVE_PIECE.test(prefix);
+  const isPriceTaxInclusive = (prefixHasPriceLabel || startsWithTaxInclusive) && prefixTaxIncMatch !== null && prefixTaxIncMatch[1] === undefined;
   if (rates.size === 0 && !isPriceTaxInclusive) return null;
   let prefixWithoutScope = prefix
     .replace(INVOICE_VAT_SCOPE, ' ')
@@ -1371,6 +1388,7 @@ function parsePriceTaxInclusivePreamble(rawPrefix: string): { isPriceTaxInclusiv
     prefixWithoutScope = prefixWithoutScope
       .replace(/(?<![\p{L}])(?:đơn\s+giá|don\s+gia|giá(?:\s+bán)?|gia(?:\s+ban)?|unit\s+price|price)(?:\s+(?:bán|lẻ|sỉ|trên|tren|này|nay|đó|do))?(?![\p{L}])/iu, ' ')
       .replace(/(?<![\p{L}])(?:nêu\s+trên|neu\s+tren|trên|tren|này|nay|above)(?![\p{L}])/giu, ' ')
+      .replace(TAX_INCLUSIVE_PIECE, ' ')
       .replace(TAX_INCLUSIVE_BEFORE, ' ');
   }
   if (extractFigureTokens(collapseGroupedSpaces(prefix)).length > 0) return null;
@@ -1524,7 +1542,7 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
           for (const r of rates) trailingShared.add(r);
           continue;
         }
-        if (prevClause && prevClause.localRates.size === 0) {
+        if (prevClause) {
           for (const r of rates) prevClause.localRates.add(r);
           anyLocalVatSeen = true;
         }
@@ -1734,15 +1752,6 @@ function clauseAcceptsFigures(clause: SourceClause, quantity: string, unitPrice:
       if (pTok.dealValueOnly && !money(qTok.value).equals(1)) continue;
       if (pTok.priceUnit !== undefined) {
         if (qTok.countUnit !== undefined && !unitsAccentCompatible(qTok.countUnit, pTok.priceUnit)) continue;
-        if (
-          qTok.countUnit === undefined &&
-          !clause.lockedFromTable &&
-          qTok.wordAfter !== undefined &&
-          clause.coreExactTokens.size > 1 &&
-          !unitsAccentCompatible(qTok.wordAfter, pTok.priceUnit)
-        ) {
-          continue;
-        }
         if (qTok.countUnit === undefined && clause.explicitUnits.size > 0 && ![...clause.explicitUnits].some((u) => unitsAccentCompatible(u, pTok.priceUnit!))) {
           continue;
         }
@@ -1800,7 +1809,7 @@ function clauseAcceptsLineText(clause: SourceClause, description: string, unit: 
       if (tok === 'size' || tok === 'cỡ') continue;
       if (!tokensAccentCompatible(tok, clause.exactTokens, clause.foldedTokens)) return false;
     }
-    for (const ct of clause.exactTokens) {
+    for (const ct of clause.coreExactTokens) {
       if (NEGATION_TOKENS.has(ct) && !tokensAccentCompatible(ct, desc.exact, desc.folded)) return false;
     }
   }
