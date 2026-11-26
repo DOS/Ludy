@@ -302,5 +302,43 @@ describe('AI draft request/discard and markRead executors', () => {
     expect(
       await markConversationRead({ client }, { conversationId: 'c-1', seq: 5 }),
     ).toEqual({ ok: true, value: { conversationId: 'c-1' } });
+
+    const missingClient = {
+      conversations: {
+        markRead: async () => {
+          throw Object.assign(new Error('Gone'), { code: 'CONVERSATION_NOT_FOUND', status: 404 });
+        },
+        reply: async () => {
+          throw Object.assign(new Error('Write forbidden'), { code: 'FORBIDDEN', status: 403 });
+        },
+      },
+    } as unknown as LudyClient;
+
+    expect(
+      await markConversationRead({ client: missingClient }, { conversationId: 'c-1', seq: 5 }),
+    ).toEqual({
+      ok: false,
+      reason: 'not-found',
+      code: 'CONVERSATION_NOT_FOUND',
+      message: 'Gone',
+    });
+
+    // Write permission denial (403 FORBIDDEN) stays 'refused' rather than falsely evicting read access.
+    expect(
+      await sendConversationReply(
+        { client: missingClient, now: () => Date.parse('2026-11-26T10:00:00.000Z') },
+        {
+          detail: makeDetail(),
+          body: 'Xin chào',
+          lastSeenSeq: 1,
+          role: 'member',
+        },
+      ),
+    ).toEqual({
+      ok: false,
+      reason: 'refused',
+      code: 'FORBIDDEN',
+      message: 'Write forbidden',
+    });
   });
 });

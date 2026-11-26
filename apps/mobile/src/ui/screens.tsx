@@ -2,14 +2,24 @@
 // The screens of the mobile client: sign in, unlock, and home workspace with Approvals and Conversations tabs (issues #4880, #4881, #4882).
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Pressable, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  AppState,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  StatusBar,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { isMfaRequired } from '@ludy/client';
 import type { MessageKey } from '../i18n.ts';
 import { SERVER_POLICY, clientFor, conversationsCache, locale, session, t } from '../runtime.ts';
 import { ApprovalsQueueScreen } from '../screens/approvals/ApprovalsQueueScreen.tsx';
 import { isLikelyNetworkError } from '../screens/approvals/model.ts';
 import { ConversationsInboxScreen } from '../screens/conversations/ConversationsInboxScreen.tsx';
-import { isAuthBlockingError } from '../screens/conversations/model.ts';
+import { isAccessRefusalError, isAuthBlockingError } from '../screens/conversations/model.ts';
 import { Body, LinkButton, PrimaryButton, Screen, Title } from './parts.tsx';
 import { styles, usePalette } from './theme.ts';
 import type { SessionState } from '../auth/session.ts';
@@ -169,7 +179,7 @@ export function HomeScreen(props: {
     staleTime: 30_000,
     refetchInterval: (query) => {
       if (!isAppActive || !org || pickingOrg) return false;
-      if (query.state.error && !isLikelyNetworkError(query.state.error)) return false;
+      if (query.state.error && isAccessRefusalError(query.state.error)) return false;
       return 30_000;
     },
   });
@@ -179,14 +189,16 @@ export function HomeScreen(props: {
     const wasActive = wasAppActiveRef.current;
     wasAppActiveRef.current = isAppActive;
     if (!wasActive && isAppActive && org && !pickingOrg) {
-      if (!countsQuery.isError || isLikelyNetworkError(countsQuery.error)) {
+      if (!countsQuery.isError || !isAccessRefusalError(countsQuery.error)) {
         void qc.invalidateQueries({ queryKey: countsQueryKey, exact: true });
       }
     }
   }, [isAppActive, org, pickingOrg, countsQuery.isError, countsQuery.error, qc, countsQueryKey]);
 
   useEffect(() => {
-    if (!countsQuery.isError || isLikelyNetworkError(countsQuery.error)) return;
+    if (!countsQuery.isError || isLikelyNetworkError(countsQuery.error) || !isAccessRefusalError(countsQuery.error)) {
+      return;
+    }
     if (isAuthBlockingError(countsQuery.error)) {
       void session.reportKernelError(countsQuery.error);
     }
@@ -238,13 +250,16 @@ export function HomeScreen(props: {
         ? t('tabs.conversationsUnreadA11y', { count: String(badgeCount) })
         : t('tabs.conversations');
 
+    const androidTopInset = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0;
+
     return (
-      <View style={{ flex: 1, backgroundColor: palette.background, paddingTop: 12 }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: palette.background, paddingTop: androidTopInset }}>
         <View
           accessibilityRole="tablist"
           style={{
             flexDirection: 'row',
             gap: 8,
+            paddingTop: 8,
             paddingHorizontal: 16,
             paddingBottom: 4,
           }}
@@ -333,9 +348,9 @@ export function HomeScreen(props: {
           </Pressable>
         </View>
 
-        {activeTab === 'approvals' ? (
+        <View style={{ flex: 1, display: activeTab === 'approvals' ? 'flex' : 'none' }}>
           <ApprovalsQueueScreen
-            key={`approvals:${serverUrl}:${activeWorkspace.orgSlug}`}
+            key={`approvals:${serverUrl}:${activeWorkspace.orgSlug}:${activeWorkspace.userId ?? ''}`}
             canSwitchOrg={activeWorkspace.canSwitchOrg}
             locale={locale}
             onSwitchOrg={activeWorkspace.onSwitchOrg}
@@ -345,11 +360,13 @@ export function HomeScreen(props: {
             serverUrl={serverUrl}
             userId={activeWorkspace.userId}
           />
-        ) : (
+        </View>
+        <View style={{ flex: 1, display: activeTab === 'conversations' ? 'flex' : 'none' }}>
           <ConversationsInboxScreen
-            key={`conversations:${serverUrl}:${activeWorkspace.orgSlug}`}
+            key={`conversations:${serverUrl}:${activeWorkspace.orgSlug}:${activeWorkspace.userId ?? ''}`}
             canSwitchOrg={activeWorkspace.canSwitchOrg}
             initialConversationId={pendingConversationId}
+            isActiveTab={activeTab === 'conversations'}
             locale={locale}
             onInitialConversationConsumed={() => setPendingConversationId(null)}
             onSwitchOrg={activeWorkspace.onSwitchOrg}
@@ -359,8 +376,8 @@ export function HomeScreen(props: {
             serverUrl={serverUrl}
             userId={activeWorkspace.userId}
           />
-        )}
-      </View>
+        </View>
+      </SafeAreaView>
     );
   }
 

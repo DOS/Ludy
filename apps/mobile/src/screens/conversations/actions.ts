@@ -6,6 +6,7 @@ import {
   evaluateReplyWindow,
   hasNamePlaceholder,
   isAuthBlockingError,
+  isConversationMissingError,
   isConversationMovedError,
   isLikelyNetworkError,
   isRateLimitedError,
@@ -31,6 +32,7 @@ export type ConversationActionOutcome<T> =
         | 'too-long'
         | 'placeholder'
         | 'moved'
+        | 'not-found'
         | 'rate-limited'
         | 'ai-off'
         | 'kernel-step-up'
@@ -61,6 +63,10 @@ function mapActionError<T>(
   if (isAuthBlockingError(error)) {
     onKernelError?.(error);
     return { ok: false, reason: 'auth' };
+  }
+  if (isConversationMissingError(error)) {
+    const { code, message } = readErrorCodeAndStatus(error);
+    return { ok: false, reason: 'not-found', code, message };
   }
   if (isConversationMovedError(error)) {
     const { message } = readErrorCodeAndStatus(error);

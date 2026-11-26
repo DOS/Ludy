@@ -50,6 +50,16 @@ export function isConversationForbiddenOrMissing(error: unknown): boolean {
   return status === 403 || status === 404;
 }
 
+export function isConversationMissingError(error: unknown): boolean {
+  if (isStepUpRequired(error) || isMfaRequired(error) || isAuthBlockingError(error)) return false;
+  const { code, status } = readErrorCodeAndStatus(error);
+  return code === 'CONVERSATION_NOT_FOUND' || code === 'NOT_FOUND' || status === 404;
+}
+
+export function isAccessRefusalError(error: unknown): boolean {
+  return isAuthBlockingError(error) || isConversationForbiddenOrMissing(error);
+}
+
 export function isConversationMovedError(error: unknown): boolean {
   return readErrorCodeAndStatus(error).code === 'CONVERSATION_MOVED';
 }
@@ -159,7 +169,7 @@ export function formatChannelProviderLabel(provider: string, kind: ConversationK
   return provider;
 }
 
-export function parseReplyWindowUntil(replyWindowUntil: string | null | undefined): number | null {
+function parseReplyWindowUntil(replyWindowUntil: string | null | undefined): number | null {
   if (!replyWindowUntil) return null;
   const ms = Date.parse(replyWindowUntil);
   return Number.isFinite(ms) ? ms : null;

@@ -39,6 +39,7 @@ import type { CachedConversationThread } from './cache.ts';
 import {
   buildConversationWebPath,
   evaluateReplyWindow,
+  fetchDeploymentAiEnabled,
   formatChannelProviderLabel,
   formatWindowDuration,
   getContactDisplayName,
@@ -67,13 +68,13 @@ interface ConversationThreadScreenProps {
   aiEnabled: boolean;
   salesCoworkerName: string;
   members: readonly OrgMember[];
-  isListOffline?: boolean;
   onBack: () => void;
   onRefreshList: () => void;
 }
 
 const WINDOW_TICK_MS = 30_000;
 const DRAFT_POLL_MS = 3_000;
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
 function MessageRowSeparator() {
   return <View style={{ height: 10 }} />;
@@ -117,7 +118,6 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
     aiEnabled,
     salesCoworkerName,
     members,
-    isListOffline = false,
   } = props;
   const palette = usePalette();
   const qc = useQueryClient();
@@ -196,6 +196,7 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
 
   const detailQuery = useQuery<ConversationDetail>({
     queryKey: detailQueryKey,
+    retry: false,
     queryFn: async ({ signal }) => {
       const startEpoch = conversationsCache.epoch();
       const live = await client.conversations.get({ conversationId });
@@ -291,19 +292,36 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
     }
   }, [detailQuery.isError, detailQuery.data, detailQuery.error, serverUrl, orgSlug, userId, conversationId, qc, detailQueryKey]);
 
-  // Live thread fetch overrides stale parent list offline state once detailQuery settles online.
-  const isNetworkOffline = Boolean(
-    detailQuery.isError
-      ? isLikelyNetworkError(detailQuery.error)
-      : detailQuery.isPending && !detailQuery.data && isListOffline,
-  );
+  const aiConfigQuery = useQuery<boolean>({
+    queryKey: ['server-config-ai', serverUrl],
+    queryFn: () => fetchDeploymentAiEnabled(serverUrl, { forceRefresh: true }),
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  const retriedAiConfigRef = useRef(false);
+  useEffect(() => {
+    retriedAiConfigRef.current = false;
+  }, [serverUrl, orgSlug, conversationId]);
+
+  const isNetworkOffline = Boolean(detailQuery.isError && isLikelyNetworkError(detailQuery.error));
   const rawError = detailQuery.error ?? accessDeniedError;
   const isNonNetworkError = Boolean(
     accessDeniedError !== null || (detailQuery.isError && !isLikelyNetworkError(detailQuery.error)),
   );
-  const liveDetail = isNonNetworkError ? undefined : detailQuery.data;
-  const activeDetail = isNonNetworkError ? null : (liveDetail ?? cachedThread?.detail ?? null);
+  const liveDetail = isNonNetworkError || isNetworkOffline ? undefined : detailQuery.data;
+  // Wait for permission verification before revealing cached messages; only fall back to cache once offline error is confirmed.
+  const activeDetail = isNonNetworkError
+    ? null
+    : (liveDetail ?? (isNetworkOffline ? (cachedThread?.detail ?? null) : null));
   const activeReplyWindowUntil = activeDetail?.conversation.replyWindowUntil ?? null;
+
+  useEffect(() => {
+    if (liveDetail && aiConfigQuery.data !== true && !aiConfigQuery.isFetching && !retriedAiConfigRef.current) {
+      retriedAiConfigRef.current = true;
+      void aiConfigQuery.refetch();
+    }
+  }, [liveDetail, aiConfigQuery]);
 
   // Live ticking clock for Zalo 48h and platform reply windows; cleaned up cleanly on unmount.
   useEffect(() => {
@@ -316,7 +334,7 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
     const untilMs = Date.parse(activeReplyWindowUntil);
     const msLeft = Number.isFinite(untilMs) ? untilMs - Date.now() : 0;
     const expiryTimer =
-      msLeft > 0 && msLeft <= 60_000
+      msLeft > 0 && msLeft < MAX_TIMEOUT_MS
         ? setTimeout(() => {
             setNowMs(Date.now());
           }, msLeft + 50)
@@ -334,6 +352,30 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
       setSeenSeq(liveDetail.conversation.lastSeq);
     }
   }, [liveDetail, seenSeq]);
+
+  function handleConversationNotFound(code?: string | null, message?: string) {
+    const err = Object.assign(new Error(message || 'Conversation not found'), {
+      code: code ?? 'CONVERSATION_NOT_FOUND',
+      status: 404,
+    });
+    setAccessDeniedError(err);
+    setCachedThread(null);
+    void conversationsCache.evictThread({
+      serverUrl,
+      orgSlug,
+      userId,
+      conversationId,
+      expectedEpoch: conversationsCache.epoch(),
+      isSessionStillActive: () => {
+        const after = session.state();
+        return after.status === 'active' && after.serverUrl === serverUrl && after.orgSlug === orgSlug;
+      },
+    });
+    qc.removeQueries({ queryKey: detailQueryKey, exact: true });
+    onRefreshListRef.current();
+  }
+  const handleConversationNotFoundRef = useRef(handleConversationNotFound);
+  handleConversationNotFoundRef.current = handleConversationNotFound;
 
   // Best-effort markRead once `seenSeq` is initialized, guarded by active scope ref so polling refetches never drop completion.
   useEffect(() => {
@@ -372,6 +414,8 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
         if (res.ok) {
           lastMarkedSeqRef.current = Math.max(lastMarkedSeqRef.current ?? -1, targetSeq);
           onRefreshListRef.current();
+        } else if (res.reason === 'not-found') {
+          handleConversationNotFoundRef.current(res.code, res.message);
         }
       })
       .finally(() => {
@@ -413,6 +457,10 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
     actionKind: 'send' | 'draft' = 'send',
   ) {
     if (outcome.reason === 'auth') return;
+    if (outcome.reason === 'not-found') {
+      handleConversationNotFound(outcome.code, outcome.message);
+      return;
+    }
     if (outcome.reason === 'kernel-step-up') {
       setFeedback({ tone: 'warn', text: t('stepUp.kernel'), showWeb: true });
       return;
@@ -546,7 +594,7 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
     }
   }
 
-  const effectiveAiEnabled = !isNetworkOffline && aiEnabled;
+  const effectiveAiEnabled = !isNetworkOffline && (aiConfigQuery.data ?? aiEnabled);
   const canWrite = role !== 'viewer';
   const windowState = activeDetail
     ? evaluateReplyWindow({

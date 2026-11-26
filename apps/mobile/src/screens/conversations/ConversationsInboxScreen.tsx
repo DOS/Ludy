@@ -3,9 +3,10 @@
 
 import { isMfaRequired } from '@ludy/client';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
   Pressable,
   RefreshControl,
@@ -30,6 +31,7 @@ import {
   formatWindowDuration,
   getContactDisplayName,
   getSummaryWindowBadge,
+  isAccessRefusalError,
   isAuthBlockingError,
   isLikelyNetworkError,
   mergeConversationPages,
@@ -51,12 +53,14 @@ interface ConversationsInboxScreenProps {
   locale: Locale;
   canSwitchOrg: boolean;
   onSwitchOrg: () => void;
+  isActiveTab?: boolean;
   initialConversationId?: string | null;
   onInitialConversationConsumed?: () => void;
 }
 
 const PAGE_LIMIT = 30;
 const CLOCK_TICK_MS = 60_000;
+const INBOX_POLL_MS = 30_000;
 
 function ListRowSeparator() {
   return <View style={{ height: 12 }} />;
@@ -70,6 +74,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
     role,
     userId,
     locale,
+    isActiveTab = true,
     initialConversationId,
     onInitialConversationConsumed,
   } = props;
@@ -86,6 +91,15 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
   const [refusalError, setRefusalError] = useState<unknown>(null);
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [isAppActive, setIsAppActive] = useState(() => AppState.currentState === 'active');
+  const prevCountsSigRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next) => {
+      setIsAppActive(next === 'active');
+    });
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     if (initialConversationId && !/[\s\p{C}]/u.test(initialConversationId)) {
@@ -106,6 +120,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
     setRefusalError(null);
     setBannerMessage(null);
     setFilter('new');
+    prevCountsSigRef.current = null;
 
     if (!userId) {
       setCacheLoaded(true);
@@ -171,6 +186,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
       return counts;
     },
     enabled: cacheLoaded && refusalError === null,
+    retry: false,
     staleTime: 30_000,
   });
 
@@ -238,50 +254,99 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
       return listed;
     },
     enabled: cacheLoaded && refusalError === null,
+    retry: false,
+    refetchInterval: (query) => {
+      if (!isActiveTab || !isAppActive || selectedConversationId || refusalError !== null) {
+        return false;
+      }
+      if (query.state.error && isAccessRefusalError(query.state.error)) {
+        return false;
+      }
+      return INBOX_POLL_MS;
+    },
   });
 
-  const liveNonNetworkError =
-    (listQuery.isError && !isLikelyNetworkError(listQuery.error) ? listQuery.error : null) ??
-    (countsQuery.isError && !isLikelyNetworkError(countsQuery.error) ? countsQuery.error : null) ??
-    (orgQuery.isError && !isLikelyNetworkError(orgQuery.error) ? orgQuery.error : null);
+  const refetchListRef = useRef(listQuery.refetch);
+  refetchListRef.current = listQuery.refetch;
+  const isListFetchingRef = useRef(listQuery.isFetching);
+  isListFetchingRef.current = listQuery.isFetching;
 
-  // Purge both persisted disk cache and React Query caches immediately on non-network refusal (403/re-auth) and abort pending writes via epoch bump.
+  const countsSignature = countsQuery.data
+    ? `${countsQuery.data.new}|${countsQuery.data.pending}|${countsQuery.data.resolved}|${countsQuery.data.unread}`
+    : null;
+
+  // Keep the visible inbox list synchronized when periodic unread/status counts detect new conversations.
   useEffect(() => {
-    if (!liveNonNetworkError) return;
-    if (isAuthBlockingError(liveNonNetworkError)) {
-      void session.reportKernelError(liveNonNetworkError);
+    if (countsSignature === null) return;
+    const prev = prevCountsSigRef.current;
+    prevCountsSigRef.current = countsSignature;
+    if (
+      prev !== null &&
+      prev !== countsSignature &&
+      cacheLoaded &&
+      isActiveTab &&
+      isAppActive &&
+      !selectedConversationId &&
+      refusalError === null &&
+      !isListFetchingRef.current
+    ) {
+      void refetchListRef.current();
     }
-    setRefusalError(liveNonNetworkError);
+  }, [countsSignature, cacheLoaded, isActiveTab, isAppActive, selectedConversationId, refusalError]);
+
+  const liveAccessRefusalError =
+    (listQuery.isError && !isLikelyNetworkError(listQuery.error) && isAccessRefusalError(listQuery.error)
+      ? listQuery.error
+      : null) ??
+    (countsQuery.isError && !isLikelyNetworkError(countsQuery.error) && isAccessRefusalError(countsQuery.error)
+      ? countsQuery.error
+      : null) ??
+    (orgQuery.isError && !isLikelyNetworkError(orgQuery.error) && isAccessRefusalError(orgQuery.error)
+      ? orgQuery.error
+      : null);
+
+  // Purge both persisted disk cache and React Query caches strictly on access/auth refusals (never on transient 429/5xx).
+  useEffect(() => {
+    if (!liveAccessRefusalError) return;
+    if (isAuthBlockingError(liveAccessRefusalError)) {
+      void session.reportKernelError(liveAccessRefusalError);
+    }
+    setRefusalError(liveAccessRefusalError);
     setCachedSnapshot(null);
     setSelectedConversationId(null);
     void conversationsCache.clearScope({ serverUrl, orgSlug, userId });
     qc.removeQueries({ queryKey: ['conversations', 'list', serverUrl, orgSlug] });
     qc.removeQueries({ queryKey: ['conversations', 'detail', serverUrl, orgSlug] });
     qc.removeQueries({ queryKey: ['conversations', 'counts', serverUrl, orgSlug] });
-  }, [liveNonNetworkError, qc, serverUrl, orgSlug, userId]);
+  }, [liveAccessRefusalError, qc, serverUrl, orgSlug, userId]);
 
-  const nonNetworkErrorObj = refusalError ?? liveNonNetworkError;
+  const listTransientError =
+    listQuery.isError && !isLikelyNetworkError(listQuery.error) && !isAccessRefusalError(listQuery.error)
+      ? listQuery.error
+      : null;
+
+  const accessRefusalObj = refusalError ?? liveAccessRefusalError;
+  const nonNetworkErrorObj = accessRefusalObj ?? listTransientError;
+  const isAccessDenied = accessRefusalObj !== null;
   const isNonNetworkError = nonNetworkErrorObj !== null;
   const isListNetworkOffline =
     !isNonNetworkError && Boolean(listQuery.isError && isLikelyNetworkError(listQuery.error));
-  const isCountsNetworkOffline =
-    !isNonNetworkError && Boolean(countsQuery.isError && isLikelyNetworkError(countsQuery.error));
+  const isCountsUnavailable = countsQuery.isError;
 
-  const liveCounts = isNonNetworkError || isCountsNetworkOffline ? undefined : countsQuery.data;
-  const activeCounts = isNonNetworkError ? null : (liveCounts ?? cachedSnapshot?.counts ?? null);
+  const liveCounts = isAccessDenied || isCountsUnavailable ? undefined : countsQuery.data;
+  const activeCounts = isAccessDenied ? null : (liveCounts ?? cachedSnapshot?.counts ?? null);
 
   const liveItems = useMemo(() => {
     if (isNonNetworkError || !listQuery.data) return null;
     return mergeConversationPages(listQuery.data.pages);
   }, [isNonNetworkError, listQuery.data]);
 
-  const cachedItemsForTab = isNonNetworkError ? null : (cachedSnapshot?.lists[filter] ?? null);
-  const activeItems = isNonNetworkError ? null : (liveItems ?? cachedItemsForTab);
+  const cachedItemsForTab = isAccessDenied ? null : (cachedSnapshot?.lists[filter] ?? null);
+  const activeItems = isAccessDenied ? null : (liveItems ?? (isNonNetworkError ? null : cachedItemsForTab));
   const isShowingOfflineBanner = Boolean(isListNetworkOffline && (cachedSnapshot !== null || liveItems !== null));
 
   const effectiveRole = orgQuery.data?.role ?? role;
   const members = orgQuery.data?.members ?? [];
-  const aiEnabled = !isListNetworkOffline && aiEnabledQuery.data === true;
 
   function refreshAll() {
     void qc.invalidateQueries({ queryKey: ['conversations', 'list', serverUrl, orgSlug] });
@@ -299,12 +364,11 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
     if (!opened) setBannerMessage(t('approvals.outcome.webError'));
   }
 
-  if (selectedConversationId && !isNonNetworkError) {
+  if (selectedConversationId && !isAccessDenied) {
     return (
       <ConversationThreadScreen
-        aiEnabled={aiEnabled}
+        aiEnabled={aiEnabledQuery.data === true}
         conversationId={selectedConversationId}
-        isListOffline={isListNetworkOffline}
         locale={locale}
         members={members}
         onBack={() => setSelectedConversationId(null)}

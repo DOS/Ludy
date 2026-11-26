@@ -27,7 +27,9 @@ import {
   getContactDisplayName,
   getSummaryWindowBadge,
   hasNamePlaceholder,
+  isAccessRefusalError,
   isConversationForbiddenOrMissing,
+  isConversationMissingError,
   isValidUuid,
   mergeConversationPages,
   replyTextFor,
@@ -340,5 +342,17 @@ describe('deployment aiEnabled flag and sales coworker resolution', () => {
       },
     } as unknown as LudyClient;
     await expect(resolveSalesCoworkerName(authClient)).rejects.toMatchObject({ code: 'MFA_REQUIRED' });
+  });
+
+  it('classifies missing/forbidden refusals distinctly from transient 429 rate-limit errors', () => {
+    const notFound = Object.assign(new Error('Missing'), { code: 'CONVERSATION_NOT_FOUND', status: 404 });
+    const forbidden = Object.assign(new Error('Forbidden'), { code: 'FORBIDDEN', status: 403 });
+    const rateLimited = Object.assign(new Error('Too many'), { code: 'RATE_LIMITED', status: 429 });
+
+    expect(isConversationMissingError(notFound)).toBe(true);
+    expect(isConversationMissingError(forbidden)).toBe(false);
+    expect(isAccessRefusalError(notFound)).toBe(true);
+    expect(isAccessRefusalError(forbidden)).toBe(true);
+    expect(isAccessRefusalError(rateLimited)).toBe(false);
   });
 });
