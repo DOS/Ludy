@@ -133,6 +133,13 @@ export interface MarketplaceIncomePage {
   more?: boolean;
 }
 
+export interface MarketplaceIncomeOptions {
+  // Earliest closed payment day to read when `since` is null (later of 30 days back, connection creation, and the day after the last stored settlement).
+  minStartDay?: string;
+  // Per-run scratch cache shared across days in one poll run, never across connections or runs.
+  cache?: Map<string, unknown>;
+}
+
 // What a platform paid and kept for one order (the figures of an income report, #2516), decimal strings.
 export interface MarketplaceOrderFinance {
   orderNo: string;
@@ -179,7 +186,7 @@ export interface MarketplaceProvider {
   orderFinance(secret: string, orderNo: string): Promise<MarketplaceOrderFinance | null>;
   // The income of ONE closed payment day after the cursor (null: from the start of the first window), at most one day, as the lines of the income path. Left out by an adapter with no income
   // reader (the offline one): its poll has no income leg.
-  listIncome?(secret: string, platform: MarketplacePlatformKey, since: string | null): Promise<MarketplaceIncomePage>;
+  listIncome?(secret: string, platform: MarketplacePlatformKey, since: string | null, options?: MarketplaceIncomeOptions): Promise<MarketplaceIncomePage>;
   listStock(secret: string): Promise<MarketplaceStockLevel[]>;
 }
 

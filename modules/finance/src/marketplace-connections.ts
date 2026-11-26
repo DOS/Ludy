@@ -129,6 +129,8 @@ export const marketplaceConnectionConnect = defineCommand({
           .set({
             last_poll_state: null,
             last_polled_at: null,
+            last_income_poll_state: null,
+            last_income_polled_at: null,
             last_test_state: null,
             last_tested_at: null,
             // A new secret may belong to another app: its key replaces the old one, and any authorization of the old one (pending or done) is gone with it.
@@ -273,7 +275,21 @@ export const marketplaceConnectionRequestTest = defineCommand({
 // What the worker needs to poll one connection, or why it must not: a connection that is gone, or whose channel connection is no longer active (revoked, expired, in error), is left alone.
 export type MarketplacePollTarget =
   | { action: 'none'; reason: 'not_found' | 'not_active' | 'unknown_adapter' }
-  | { action: 'poll'; id: string; channelConnectionId: string; adapter: MarketplaceAdapterId; platform: MarketplacePlatformKey; legalEntityId: string; cursor: string | null; lastPollState: string | null; lastPolledAt: string | null };
+  | {
+      action: 'poll';
+      id: string;
+      channelConnectionId: string;
+      adapter: MarketplaceAdapterId;
+      platform: MarketplacePlatformKey;
+      legalEntityId: string;
+      cursor: string | null;
+      lastPollState: string | null;
+      lastPolledAt: string | null;
+      lastIncomePollState: string | null;
+      lastIncomePolledAt: string | null;
+      createdAt: string;
+      lastSettlementEnd: string | null;
+    };
 
 export const marketplaceConnectionPollTarget = defineQuery({
   name: 'finance.marketplace_connection.poll_target',
@@ -283,7 +299,20 @@ export const marketplaceConnectionPollTarget = defineQuery({
     const row = await ctx.trx
       .selectFrom('ludy_finance.marketplace_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.platform', 'c.legal_entity_id', 'c.poll_cursor', 'c.last_poll_state', 'c.last_polled_at', 'ch.status'])
+      .select([
+        'c.id',
+        'c.channel_connection_id',
+        'c.provider',
+        'c.platform',
+        'c.legal_entity_id',
+        'c.poll_cursor',
+        'c.last_poll_state',
+        'c.last_polled_at',
+        'c.last_income_poll_state',
+        'c.last_income_polled_at',
+        'c.created_at',
+        'ch.status',
+      ])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
       .executeTakeFirst();
@@ -291,7 +320,39 @@ export const marketplaceConnectionPollTarget = defineQuery({
     if (row.status !== 'active') return { action: 'none', reason: 'not_active' };
     const adapter = marketplaceAdapterOf(row.provider);
     if (!adapter) return { action: 'none', reason: 'unknown_adapter' };
-    return { action: 'poll', id: row.id, channelConnectionId: row.channel_connection_id, adapter, platform: row.platform, legalEntityId: row.legal_entity_id, cursor: row.poll_cursor, lastPollState: row.last_poll_state, lastPolledAt: row.last_polled_at ? new Date(row.last_polled_at).toISOString() : null };
+    const hasIncomeCursor = row.poll_cursor !== null && row.poll_cursor.includes('|') && row.poll_cursor.slice(row.poll_cursor.indexOf('|') + 1) !== '';
+    let lastSettlementEnd: string | null = null;
+    if (!hasIncomeCursor) {
+      const { rows: settled } = await sql<{ period_end: string }>`
+        SELECT s.period_end::text AS period_end
+        FROM ludy_finance.channel_settlement s
+        WHERE s.org_id = ${ctx.orgId}::uuid
+          AND s.legal_entity_id = ${row.legal_entity_id}::uuid
+          AND s.platform = ${row.platform}
+          AND s.reversal_of IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM ludy_finance.channel_settlement r
+            WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id
+          )
+        ORDER BY s.period_end DESC
+        LIMIT 1`.execute(ctx.trx);
+      lastSettlementEnd = settled[0]?.period_end ?? null;
+    }
+    return {
+      action: 'poll',
+      id: row.id,
+      channelConnectionId: row.channel_connection_id,
+      adapter,
+      platform: row.platform,
+      legalEntityId: row.legal_entity_id,
+      cursor: row.poll_cursor,
+      lastPollState: row.last_poll_state,
+      lastPolledAt: row.last_polled_at ? new Date(row.last_polled_at).toISOString() : null,
+      lastIncomePollState: row.last_income_poll_state,
+      lastIncomePolledAt: row.last_income_polled_at ? new Date(row.last_income_polled_at).toISOString() : null,
+      createdAt: new Date(row.created_at).toISOString(),
+      lastSettlementEnd,
+    };
   },
 });
 
@@ -352,18 +413,20 @@ export const marketplaceConnectionRecordPoll = defineCommand({
   handler: async (ctx, input): Promise<{ recorded: boolean }> => {
     const found = await ctx.trx.selectFrom('ludy_finance.marketplace_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).forUpdate().executeTakeFirst();
     if (!found) return { recorded: false };
+    const leg = input.leg ?? 'orders';
     await ctx.trx
       .updateTable('ludy_finance.marketplace_connection')
       .set({
-        last_polled_at: ctx.now,
-        last_poll_state: input.state,
+        ...(leg === 'income'
+          ? { last_income_polled_at: ctx.now, last_income_poll_state: input.state }
+          : { last_polled_at: ctx.now, last_poll_state: input.state }),
         // A cursor given moves it (only after the page was ingested); left out, it stays where it was.
         ...(input.cursor ? { poll_cursor: input.cursor } : {}),
       })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
       .execute();
-    ctx.audit({ state: input.state });
+    ctx.audit({ leg, state: input.state });
     return { recorded: true };
   },
 });
@@ -626,6 +689,8 @@ export const marketplaceConnectionAuthorizeComplete = defineCommand({
         // A new authorization ends what the old credential earned: the back-off after its refused polls and its last test no longer describe it.
         last_poll_state: null,
         last_polled_at: null,
+        last_income_poll_state: null,
+        last_income_polled_at: null,
         last_test_state: null,
         last_tested_at: null,
       })
@@ -655,6 +720,8 @@ export const marketplaceConnectionList = defineQuery({
         'c.last_tested_at',
         'c.last_polled_at',
         'c.last_poll_state',
+        'c.last_income_polled_at',
+        'c.last_income_poll_state',
         'c.authorize_state',
         'c.authorize_pending_at',
         'c.reauthorize_by',
@@ -696,6 +763,8 @@ export const marketplaceConnectionList = defineQuery({
       lastTestedAt: iso(r.last_tested_at),
       lastPolledAt: iso(r.last_polled_at),
       lastPollState: r.last_poll_state,
+      lastIncomePolledAt: iso(r.last_income_polled_at),
+      lastIncomePollState: r.last_income_poll_state,
       ordersWaiting: waiting.get(r.id) ?? 0,
       // A code that waited for the worker past the window is shown as failed: nothing else would ever clear it.
       authorizeState: r.authorize_state === 'pending' && pendingExpired(r.authorize_pending_at, Date.now()) ? ('failed' as const) : r.authorize_state,

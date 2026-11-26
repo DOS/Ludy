@@ -14,7 +14,7 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import type { ExtractClient } from '@ludy/extract-contract';
 import { kernelCommands, kernelQueries } from '@ludy/kernel';
 import { CredentialVault, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
-import { MarketplaceProviderError, createSandboxMarketplaceProvider, marketplaceAuthorizeCodeAccount, financeCommands, financeQueries, readMarketplaceFile, type MarketplaceProvider } from '@ludy/mod-finance';
+import { MarketplaceProviderError, createSandboxMarketplaceProvider, marketplaceAuthorizeCodeAccount, financeCommands, financeQueries, readMarketplaceFile, type MarketplacePollTarget, type MarketplaceProvider } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -1058,7 +1058,8 @@ suite('marketplace connections (#2519)', () => {
     expect(await asRole(adminUser, async (c) => (await c.query(insertSql, [orgId, entity, channel, 'marketplace_sandbox', 'shopee'])).rowCount)).toBe(1);
     const id = String((await rows<{ id: string }>(insertSql, [orgId, entity, channel, 'marketplace_sandbox', 'shopee']))[0]?.id);
     for (const who of [member, viewer, adminUser, owner]) expect(await asRole(who, async (c) => (await c.query('SELECT 1 FROM ludy_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id])).rowCount)).toBe(1);
-    const setPoll = "UPDATE ludy_finance.marketplace_connection SET last_test_state = 'works', last_tested_at = now(), poll_cursor = 'c1', last_polled_at = now(), last_poll_state = 'ok' WHERE org_id = $1 AND id = $2";
+    const setPoll =
+      "UPDATE ludy_finance.marketplace_connection SET last_test_state = 'works', last_tested_at = now(), poll_cursor = 'c1', last_polled_at = now(), last_poll_state = 'ok', last_income_polled_at = now(), last_income_poll_state = 'ok' WHERE org_id = $1 AND id = $2";
     for (const who of [member, viewer]) {
       expect(await asRole(who, async (c) => (await c.query(setPoll, [orgId, id])).rowCount)).toBe(0);
       expect(await asRole(who, async (c) => (await c.query('DELETE FROM ludy_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id])).rowCount)).toBe(0);
@@ -1093,6 +1094,7 @@ suite('marketplace connections (#2519)', () => {
     await expect(rows("UPDATE ludy_finance.marketplace_connection SET last_test_state = 'works' WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toMatchObject({ code: '23514' });
     await expect(rows("UPDATE ludy_finance.marketplace_connection SET last_test_state = 'broken', last_tested_at = now() WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toMatchObject({ code: '23514' });
     await expect(rows("UPDATE ludy_finance.marketplace_connection SET last_poll_state = 'broken' WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toMatchObject({ code: '23514' });
+    await expect(rows("UPDATE ludy_finance.marketplace_connection SET last_income_poll_state = 'broken' WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toMatchObject({ code: '23514' });
     await expect(rows('UPDATE ludy_finance.marketplace_connection SET orders_waiting = -1 WHERE org_id = $1 AND id = $2', [orgId, id])).rejects.toMatchObject({ code: '23514' });
     await expect(rows('UPDATE ludy_finance.marketplace_connection SET poll_cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, id, 'x'.repeat(201)])).rejects.toMatchObject({ code: '23514' });
     await rows('DELETE FROM ludy_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id]);
@@ -1136,5 +1138,98 @@ suite('marketplace connections (#2519)', () => {
       refreshFailures: 3,
       refreshNextAt: expect.any(String),
     });
+  });
+
+  it('tracks income leg poll state separately from orders and resolves poll_target settlement boundary (#4306)', async () => {
+    const entity = String((await rows<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh thu nhập', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    const connected = await call('connections/connect', owner, connectInput({ platform: 'tiktok_shop', legalEntityId: entity }));
+    expect(connected.status).toBe(200);
+    const id = String(connected.body.id);
+
+    const sys = { actor: { type: 'system' as const, component: 'finance.marketplace' }, orgId };
+    const targetOf = () => worker.query<MarketplacePollTarget>('finance.marketplace_connection.poll_target', { id }, sys);
+
+    // No settlements yet: poll_target returns createdAt and lastSettlementEnd: null.
+    const initial = await targetOf();
+    expect(initial).toMatchObject({
+      action: 'poll',
+      id,
+      lastPollState: null,
+      lastPolledAt: null,
+      lastIncomePollState: null,
+      lastIncomePolledAt: null,
+      lastSettlementEnd: null,
+    });
+    if (initial.action === 'poll') expect(Number.isFinite(Date.parse(initial.createdAt))).toBe(true);
+
+    // Insert a standing settlement up to 2026-10-31 and a newer reversed one up to 2026-11-12: only the standing period_end counts.
+    const standing = String(
+      (
+        await rows<{ id: string }>(
+          `INSERT INTO ludy_finance.channel_settlement (org_id, legal_entity_id, platform, period_start, period_end, report_net)
+           VALUES ($1, $2, 'tiktok_shop', '2026-10-01', '2026-10-31', 500000) RETURNING id`,
+          [orgId, entity],
+        )
+      )[0]?.id,
+    );
+    const toReverse = String(
+      (
+        await rows<{ id: string }>(
+          `INSERT INTO ludy_finance.channel_settlement (org_id, legal_entity_id, platform, period_start, period_end, report_net)
+           VALUES ($1, $2, 'tiktok_shop', '2026-11-01', '2026-11-12', 100000) RETURNING id`,
+          [orgId, entity],
+        )
+      )[0]?.id,
+    );
+    await rows(
+      `INSERT INTO ludy_finance.channel_settlement (org_id, legal_entity_id, platform, period_start, period_end, report_net, reversal_of)
+       VALUES ($1, $2, 'tiktok_shop', '2026-11-01', '2026-11-12', -100000, $3)`,
+      [orgId, entity, toReverse],
+    );
+    // Another platform's newer settlement does not leak across platforms.
+    await rows(
+      `INSERT INTO ludy_finance.channel_settlement (org_id, legal_entity_id, platform, period_start, period_end, report_net)
+       VALUES ($1, $2, 'shopee', '2026-11-01', '2026-11-20', 250000)`,
+      [orgId, entity],
+    );
+    expect(standing).toBeTruthy();
+    expect(await targetOf()).toMatchObject({ action: 'poll', lastSettlementEnd: '2026-10-31' });
+
+    // Running orders + failing income in worker sets orders last_poll_state='ok' and income last_income_poll_state='rate_limited'.
+    let orderCalls = 0;
+    let incomeCalls = 0;
+    const provider: MarketplaceProvider = {
+      ...createSandboxMarketplaceProvider(),
+      hosts: ['open-api.tiktokglobalshop.com'],
+      async listOrders() {
+        orderCalls += 1;
+        return { orders: [], nextCursor: `o:${orderCalls}` };
+      },
+      async listIncome() {
+        incomeCalls += 1;
+        throw new MarketplaceProviderError('rate_limited');
+      },
+    };
+    const t0 = new Date('2026-11-26T10:00:00Z');
+    expect(await runMarketplacePoll({ runtime: worker, broker: vault, store, providers: { sandbox: provider } }, { orgId, connectionId: id }, 1, () => t0)).toEqual({ state: 'rate_limited', orders: 0, staged: false });
+    expect(orderCalls).toBe(1);
+    expect(incomeCalls).toBe(1);
+
+    const listed = (await call('connections/list', owner)).body as Array<{ id: string; lastPollState: string | null; lastIncomePollState: string | null; lastIncomePolledAt: string | null }>;
+    expect(listed.find((c) => c.id === id)).toMatchObject({ lastPollState: 'ok', lastIncomePollState: 'rate_limited' });
+    expect(listed.find((c) => c.id === id)?.lastIncomePolledAt).not.toBeNull();
+
+    // 10 minutes later (within 1h income backoff): orders leg still runs, income leg stays backed off.
+    const t1 = new Date(t0.getTime() + 10 * 60_000);
+    expect(await runMarketplacePoll({ runtime: worker, broker: vault, store, providers: { sandbox: provider } }, { orgId, connectionId: id }, 1, () => t1)).toEqual({ state: 'ok', orders: 0, staged: false });
+    expect(orderCalls).toBe(2);
+    expect(incomeCalls).toBe(1);
+
+    // Record an income cursor: poll_target no longer queries settlements and reconnect clears both leg states.
+    await worker.execute('finance.marketplace_connection.record_poll', { id, leg: 'income', state: 'ok', cursor: 'o:2|d:2026-11-05' }, sys);
+    expect(await targetOf()).toMatchObject({ action: 'poll', lastIncomePollState: 'ok', lastSettlementEnd: null, cursor: 'o:2|d:2026-11-05' });
+
+    expect((await call('connections/connect', owner, connectInput({ platform: 'tiktok_shop', legalEntityId: entity }))).status).toBe(200);
+    expect(await targetOf()).toMatchObject({ action: 'poll', lastPollState: null, lastPolledAt: null, lastIncomePollState: null, lastIncomePolledAt: null });
   });
 });

@@ -21,6 +21,7 @@ import {
   parseMarketplaceIncomePage,
   parseMarketplaceOrderPage,
   splitWritableOrders,
+  type MarketplaceIncomeOptions,
   type MarketplaceOrder,
   type MarketplacePollEnding,
   type MarketplacePollTarget,
@@ -31,7 +32,7 @@ import {
 import { z } from 'zod';
 import { zId } from '@ludy/kernel-contract';
 import { DomainError, fileKey, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
-import { joinPollCursor, splitPollCursor } from './marketplace-income-leg.ts';
+import { firstIncomeDay, joinPollCursor, splitPollCursor } from './marketplace-income-leg.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.marketplace' };
 
@@ -231,17 +232,25 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
   // Backing off after a failed poll: only a provider that reaches a host (the offline one cannot fail this way).
   const wait = target.lastPollState === null ? undefined : MARKETPLACE_BACKOFF_MS[target.lastPollState];
   if (provider.hosts.length > 0 && wait !== undefined && target.lastPolledAt !== null && now().getTime() - Date.parse(target.lastPolledAt) < wait) return { state: 'skipped', reason: 'backoff' };
-  // What the row holds now (the cursor and the last state): a poll that changes nothing it holds writes nothing (the 15-minute sweep would otherwise add an audit row for every connection every time),
-  // and after a page the next one starts from the cursor the page recorded.
-  const held = { cursor: target.cursor, state: target.lastPollState };
-  const record = async (fields: { state: MarketplacePollEnding; cursor?: string }) => {
-    // A failure of a provider that reaches a host is always written (its time starts the back-off, one row an hour at most); anything else that changes nothing the row holds is not.
-    const unchanged = fields.state === held.state && (fields.cursor === undefined || fields.cursor === held.cursor);
+  // What each leg holds now (shared cursor plus its own poll state): a poll that changes nothing it holds writes nothing (the 15-minute sweep would otherwise add an audit row for every connection
+  // every time), and after a page the next one starts from the cursor the page recorded. Income failures only back off the income leg so orders keep polling normally (#4306).
+  const held = { cursor: target.cursor, state: target.lastPollState, incomeState: target.lastIncomePollState };
+  const writePoll = async (leg: 'orders' | 'income', fields: { state: MarketplacePollEnding; cursor?: string }) => {
+    // A failure of a provider that reaches a host is always written (its time starts that leg's back-off, one row an hour at most); anything else that changes nothing the row holds is not.
+    const prevState = leg === 'income' ? held.incomeState : held.state;
+    const unchanged = fields.state === prevState && (fields.cursor === undefined || fields.cursor === held.cursor);
     if (unchanged && !(provider.hosts.length > 0 && fields.state !== 'ok')) return;
-    await deps.runtime.execute('finance.marketplace_connection.record_poll', { id: job.connectionId, ...fields }, options);
-    held.state = fields.state;
+    await deps.runtime.execute(
+      'finance.marketplace_connection.record_poll',
+      leg === 'income' ? { id: job.connectionId, leg, ...fields } : { id: job.connectionId, ...fields },
+      options,
+    );
+    if (leg === 'income') held.incomeState = fields.state;
+    else held.state = fields.state;
     if (fields.cursor !== undefined) held.cursor = fields.cursor;
   };
+  const record = (fields: { state: MarketplacePollEnding; cursor?: string }) => writePoll('orders', fields);
+  const recordIncome = (fields: { state: MarketplacePollEnding; cursor?: string }) => writePoll('income', fields);
 
   const secret = await openSecret(deps, provider, job.orgId, target.channelConnectionId, options);
   if (secret === null) {
@@ -266,17 +275,27 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
     staged = staged || last.outcome.staged;
     if (!last.more) break;
   }
-  // The income leg (#4302) runs after a whole orders leg only: a state the orders leg ended in (credentials, rate limit, unreachable) is not made worse by asking the same account for more. Its files
-  // are the days of income the platform has paid, one file a day; nothing is confirmed and nothing posts.
-  if (last.outcome.state === 'ok' && typeof provider.listIncome === 'function') {
+  // The income leg (#4302) runs after a whole orders leg only, and respects its own independent back-off (#4306): a state the orders leg ended in (credentials, rate limit, unreachable) is not made worse
+  // by asking the same account for more. Its files are the days of income the platform has paid, one file a day; nothing is confirmed and nothing posts.
+  const incomeWait = held.incomeState === null ? undefined : MARKETPLACE_BACKOFF_MS[held.incomeState];
+  const incomeBackedOff =
+    provider.hosts.length > 0 &&
+    incomeWait !== undefined &&
+    target.lastIncomePolledAt !== null &&
+    now().getTime() - Date.parse(target.lastIncomePolledAt) < incomeWait;
+  if (last.outcome.state === 'ok' && typeof provider.listIncome === 'function' && !incomeBackedOff) {
+    const incomeOptions: MarketplaceIncomeOptions = {
+      minStartDay: firstIncomeDay({ nowMs: now().getTime(), createdAt: target.createdAt, lastSettlementEnd: target.lastSettlementEnd }),
+      cache: new Map<string, unknown>(),
+    };
     for (let pages = 0; pages < MARKETPLACE_MAX_PAGES_PER_RUN; pages++) {
       const current = await openSecret(deps, provider, job.orgId, target.channelConnectionId, options);
       if (current === null) {
-        await record({ state: 'credentials' });
+        await recordIncome({ state: 'credentials' });
         last = { outcome: { state: 'credentials', orders: 0, staged: false }, more: false };
         break;
       }
-      const income = await pollIncomePage({ deps, job, target, provider, secret: current, record, held, options });
+      const income = await pollIncomePage({ deps, job, target, provider, secret: current, record: recordIncome, held, options, incomeOptions });
       staged = staged || income.outcome.staged;
       last = { outcome: { state: income.outcome.state, orders: 0, staged: false }, more: income.more };
       if (!income.more) break;
@@ -298,8 +317,12 @@ interface PageContext {
   provider: MarketplaceProvider;
   secret: string;
   record: (fields: { state: MarketplacePollEnding; cursor?: string }) => Promise<void>;
-  held: { cursor: string | null; state: string | null };
+  held: { cursor: string | null; state: string | null; incomeState: string | null };
   options: { actor: typeof SYSTEM; orgId: string };
+}
+
+interface IncomePageContext extends PageContext {
+  incomeOptions: MarketplaceIncomeOptions;
 }
 
 async function pollPage(ctx: PageContext): Promise<MarketplacePageResult> {
@@ -400,13 +423,13 @@ async function pollPage(ctx: PageContext): Promise<MarketplacePageResult> {
 
 // One day of the income leg: ask the provider for the next closed payment day after the income part of the cursor, check the page, write the day's lines as the platform's income CSV and ingest it with
 // the SAME command as an order page (the income reader of the worker takes it from there), then, only then, move the income part. A day with no lines moves the cursor and writes nothing.
-async function pollIncomePage(ctx: PageContext): Promise<MarketplacePageResult> {
-  const { deps, job, target, provider, secret, record, held, options } = ctx;
+async function pollIncomePage(ctx: IncomePageContext): Promise<MarketplacePageResult> {
+  const { deps, job, target, provider, secret, record, held, options, incomeOptions } = ctx;
   const stop = (state: MarketplacePollEnding): MarketplacePageResult => ({ outcome: { state, orders: 0, staged: false }, more: false });
   const parts = splitPollCursor(held.cursor);
   let given;
   try {
-    given = await (provider.listIncome as NonNullable<MarketplaceProvider['listIncome']>)(secret, target.platform, parts.income);
+    given = await (provider.listIncome as NonNullable<MarketplaceProvider['listIncome']>)(secret, target.platform, parts.income, incomeOptions);
   } catch (error) {
     // The cursor stays: the next poll asks for the same day again. The error's text is neither kept nor logged (see pollPage).
     const state: MarketplacePollEnding = error instanceof MarketplaceProviderError ? error.kind : 'unreachable';

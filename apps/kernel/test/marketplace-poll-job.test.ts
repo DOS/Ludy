@@ -21,11 +21,13 @@ const goodPage = (): MarketplaceOrderPage => ({
   nextCursor: 'sandbox:1',
 });
 
+const TARGET_EXTRAS = { lastIncomePollState: null, lastIncomePolledAt: null, createdAt: '2026-10-01T00:00:00.000Z', lastSettlementEnd: null } as const;
+
 function setup(listOrders: () => Promise<unknown>, platform: 'lazada' | 'shopee' | 'tiktok_shop' = 'shopee', duplicate = false, ingestFails = false) {
   const executed: Array<{ name: string; input: Record<string, unknown> }> = [];
   const puts: string[] = [];
   const runtime = {
-    query: async () => ({ action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'sandbox', platform, legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: null, lastPollState: null, lastPolledAt: null }),
+    query: async () => ({ action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'sandbox', platform, legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: null, lastPollState: null, lastPolledAt: null, ...TARGET_EXTRAS }),
     execute: async (name: string, input: Record<string, unknown>) => {
       executed.push({ name, input });
       if (ingestFails && name === 'finance.marketplace_connection.ingest_page') throw new Error('the page could not be filed');
@@ -296,7 +298,7 @@ describe('the job payload is closed, and a test only records its state (#4238)',
           ? opts.credential
             ? opts.credential()
             : { provider: 'marketplace_lazada', externalAccountId: 'x:lazada', keyId: 'k', envelope: Buffer.from('e').toString('base64') }
-          : { action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'lazada', platform: 'lazada', legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: 'u:2026-11-02T00:00:00.000Z', lastPollState: 'ok', ...opts.target },
+          : { action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'lazada', platform: 'lazada', legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: 'u:2026-11-02T00:00:00.000Z', lastPollState: 'ok', lastPolledAt: null, ...TARGET_EXTRAS, ...opts.target },
       execute: async (name: string, input: Record<string, unknown>) => {
         executed.push({ name, input });
         return {};
@@ -360,7 +362,7 @@ describe('a connection whose polls fail backs off (#4238)', () => {
       query: async (name: string) =>
         name === 'kernel.channel.credential'
           ? { provider: 'marketplace_lazada', externalAccountId: 'x', keyId: 'k', envelope: Buffer.from('e').toString('base64') }
-          : { action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'lazada', platform: 'lazada', legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: null, lastPollState, lastPolledAt },
+          : { action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'lazada', platform: 'lazada', legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: null, lastPollState, lastPolledAt, ...TARGET_EXTRAS },
       execute: async () => ({}),
     } as unknown as Runtime;
     const provider = { id: 'lazada', hosts, connectFields: [], capabilities: { platforms: {} }, testConnection: async () => 'works', listOrders: async () => ((asked += 1), { orders: [], nextCursor: null }), orderFinance: async () => null, listStock: async () => [] } as unknown as MarketplaceProvider;
@@ -401,7 +403,7 @@ describe('every page asks again whether the credential may still be used (#4238)
           if (opens > 1) throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'x');
           return { provider: 'marketplace_lazada', externalAccountId: 'x', keyId: 'k', envelope: Buffer.from('e').toString('base64') };
         }
-        return { action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'lazada', platform: 'lazada', legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: null, lastPollState: null, lastPolledAt: null };
+        return { action: 'poll', id: CONNECTION, channelConnectionId: '33333333-3333-4333-8333-333333333333', adapter: 'lazada', platform: 'lazada', legalEntityId: '44444444-4444-4444-8444-444444444444', cursor: null, lastPollState: null, lastPolledAt: null, ...TARGET_EXTRAS };
       },
       execute: async (name: string, input: Record<string, unknown>) => {
         executed.push({ name, input });
@@ -584,5 +586,17 @@ describe('the worker finishes a seller\'s authorization (#4238)', () => {
     const off = setupAuthorize({ target: { adapter: 'other' } });
     expect(await off.run()).toEqual({ state: 'skipped', reason: 'provider_off' });
     expect(zMarketplaceJob.safeParse({ orgId: ORG, connectionId: CONNECTION, kind: 'authorize' }).success).toBe(true);
+  });
+});
+
+describe('orders cursor separator safety in pollPage (#4306)', () => {
+  it('refuses an orders nextCursor containing `|` as not_recognized without ingesting or moving cursor', async () => {
+    for (const page of [{ ...goodPage(), nextCursor: 'o:1|2' }, { orders: [], nextCursor: 'bad|cursor' }]) {
+      const { run, polls, ingests, puts } = setup(async () => page);
+      expect(await run()).toEqual({ state: 'not_recognized', orders: 0, staged: false });
+      expect(polls()).toEqual([{ id: CONNECTION, state: 'not_recognized' }]);
+      expect(ingests()).toHaveLength(0);
+      expect(puts).toHaveLength(0);
+    }
   });
 });
