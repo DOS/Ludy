@@ -441,3 +441,60 @@ BEGIN
   END LOOP;
 END $$;
 GRANT EXECUTE ON FUNCTION ludy_notes.private_pending_attachment_count() TO ludy_tenant;
+
+-- Hold shared notes.erase inside the worker extract definer too so mixed-version workers during rolling deploys
+-- serialize cleanly with personalDataErase instead of finalizing newly matched attachments mid-erasure (#5035).
+CREATE OR REPLACE FUNCTION ludy_notes.attachment_record_extract(
+  p_attachment_id uuid,
+  p_status text,
+  p_extracted_text text
+) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := ludy_kernel.ctx_org_id();
+  v_n bigint;
+BEGIN
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'ludy_worker', 'MEMBER') THEN
+    RAISE EXCEPTION 'NOTES_WORKER_ONLY' USING ERRCODE = '42501';
+  END IF;
+  IF v_org IS NULL OR ludy_kernel.ctx_actor_type() IS DISTINCT FROM 'system' THEN
+    RAISE EXCEPTION 'NOTES_SYSTEM_CONTEXT' USING ERRCODE = '42501';
+  END IF;
+  IF p_status NOT IN ('done', 'skipped', 'failed') THEN
+    RAISE EXCEPTION 'NOTES_EXTRACT_STATUS_INVALID' USING ERRCODE = '22023';
+  END IF;
+
+  PERFORM pg_catalog.pg_advisory_xact_lock_shared(
+    pg_catalog.hashtextextended('notes.erase:' || v_org::text, 0)
+  );
+
+  UPDATE ludy_notes.attachment a
+     SET extract_status = p_status,
+         extracted_text = CASE
+           WHEN p_status = 'done' AND p_extracted_text IS NOT NULL AND pg_catalog.btrim(p_extracted_text) <> ''
+             THEN pg_catalog.left(p_extracted_text, 200000)
+           ELSE NULL
+         END
+   WHERE a.org_id = v_org
+     AND a.id = p_attachment_id
+     AND a.extract_status = 'pending';
+
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n > 0;
+END $$;
+
+REVOKE ALL ON FUNCTION ludy_notes.attachment_record_extract(uuid, text, text) FROM PUBLIC;
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT rolname
+      FROM pg_catalog.pg_roles
+     WHERE (rolname LIKE 'ludy\_%' OR rolname LIKE 'crove\_%' OR rolname IN ('anon', 'authenticated', 'service_role'))
+       AND rolname <> current_user
+  LOOP
+    EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION ludy_notes.attachment_record_extract(uuid, text, text) FROM %I', r.rolname);
+  END LOOP;
+END $$;
+GRANT EXECUTE ON FUNCTION ludy_notes.attachment_record_extract(uuid, text, text) TO ludy_worker;

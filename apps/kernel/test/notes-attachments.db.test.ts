@@ -25,7 +25,7 @@ import {
 import type { ExtractClient, ExtractKind, ExtractResult } from '@ludy/extract-contract';
 import type { PersonalDataErasure, PersonalDataNotice, PersonalDataResult } from '@ludy/kernel-contract';
 import { NOTE_ATTACHMENT_MAX_BYTES, type Note, type NoteAttachment, type NoteSummary, type NoteWritten } from '@ludy/kernel-contract';
-import { Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { mintContextToken, Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import { NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT, notesCommands, notesQueries } from '@ludy/mod-notes';
 import { hashExtensionSecret, newExtensionToken } from '../src/auth-extension.ts';
 import { createAuthenticator } from '../src/auth.ts';
@@ -126,6 +126,30 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     }
   }
   const rows = <T extends pg.QueryResultRow>(text: string, params: unknown[] = []) => admin(async (c) => (await c.query<T>(text, params)).rows);
+  const waitBlockedOnPid = async (
+    blockingPid: number,
+    queryPattern: string,
+    tracker: ReturnType<typeof createConcurrencyTracker>,
+  ): Promise<number> => {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      tracker.throwIfFailed();
+      const waits = await rows<{ pid: number }>(
+        `SELECT a.pid
+           FROM pg_catalog.pg_stat_activity a
+          WHERE a.datname = pg_catalog.current_database()
+            AND a.state = 'active'
+            AND a.wait_event_type = 'Lock'
+            AND a.query ILIKE $2
+            AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+          LIMIT 1`,
+        [blockingPid, queryPattern],
+      );
+      if (waits[0]) return waits[0].pid;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`Timed out waiting for query ${queryPattern} to block on pid ${blockingPid}`);
+  };
 
   type Person = { id: string; subject: string; email: string };
   type Org = { orgId: string; slug: string; owner: Person; admin: Person; author: Person; other: Person; viewer: Person };
@@ -963,31 +987,6 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     };
     const beforeTs = await noteUpdatedAt();
 
-    const waitBlockedOnPid = async (
-      blockingPid: number,
-      queryPattern: string,
-      tracker: ReturnType<typeof createConcurrencyTracker>,
-    ): Promise<number> => {
-      const deadline = Date.now() + 5000;
-      while (Date.now() < deadline) {
-        tracker.throwIfFailed();
-        const waits = await rows<{ pid: number }>(
-          `SELECT a.pid
-             FROM pg_catalog.pg_stat_activity a
-            WHERE a.datname = pg_catalog.current_database()
-              AND a.state = 'active'
-              AND a.wait_event_type = 'Lock'
-              AND a.query ILIKE $2
-              AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
-            LIMIT 1`,
-          [blockingPid, queryPattern],
-        );
-        if (waits[0]) return waits[0].pid;
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      throw new Error(`Timed out waiting for query ${queryPattern} to block on pid ${blockingPid}`);
-    };
-
     const attGate = new pg.Client({ connectionString: adminUrl });
     await attGate.connect();
     const attTracker = createConcurrencyTracker();
@@ -1094,6 +1093,29 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     // Direct calls without owner user context are refused by the SECURITY DEFINER count helper.
     await expect(rows('SELECT ludy_notes.private_pending_attachment_count()')).rejects.toThrow();
     await expect(workerPool.query('SELECT ludy_notes.private_pending_attachment_count()')).rejects.toThrow();
+    // Under authenticated ludy_tenant sessions, non-owners (admin and author member) get 42501 while owner reads exact pending count.
+    const queryPendingCountAs = async (who: Person): Promise<string> => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const ctxToken = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+          userId: who.id,
+          orgId: o.orgId,
+          sessionId: null,
+          aal: 'aal1',
+          mfaAt: null,
+        });
+        await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, ctxToken]);
+        const res = await client.query<{ n: string }>('SELECT ludy_notes.private_pending_attachment_count()::text AS n');
+        return res.rows[0]?.n ?? '';
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    };
+    await expect(queryPendingCountAs(o.admin)).rejects.toMatchObject({ code: '42501', message: 'NOTES_FORBIDDEN' });
+    await expect(queryPendingCountAs(o.author)).rejects.toMatchObject({ code: '42501', message: 'NOTES_FORBIDDEN' });
+    await expect(queryPendingCountAs(o.owner)).resolves.toBe('1');
 
     const firstErase = await rt.execute<PersonalDataErasure>(
       'kernel.personal_data.erase',
@@ -1192,5 +1214,86 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     expect(erasedByName.erased).toContainEqual({ column: 'ludy_notes.note', rows: 1 });
     expect(erasedByName.kept).toEqual([]);
     expect(await doomed(o)).toContain(`notes/${o.orgId}/${privNameAtt.id}`);
+  });
+
+  it('serializes direct SQL ludy_notes.attachment_record_extract calls against concurrent personalDataErase during rolling deploys (#5035)', async () => {
+    const o = await org();
+    const rollingEmail = 'rolling-worker-extract@example.com';
+    const rollingNote = await createNote(o, o.author, 'org', 'Ghi chú worker cũ');
+    const rollingAtt = await attached(o, o.author, rollingNote, pdf('rolling-extract'), 'worker-cu.pdf');
+    const blockerNote = await createNote(o, o.author, 'org', `Hợp đồng ${rollingEmail}`);
+    await expect(
+      pool.query('SELECT ludy_notes.attachment_record_extract($1::uuid, $2::text, $3::text)', [rollingAtt.id, 'done', 'x']),
+    ).rejects.toMatchObject({ code: '42501' });
+
+    const rollingGate = new pg.Client({ connectionString: adminUrl });
+    await rollingGate.connect();
+    const rollingTracker = createConcurrencyTracker();
+    try {
+      const rollingGatePid = (await rollingGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await rollingGate.query('BEGIN');
+      await rollingGate.query('SELECT 1 FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, blockerNote]);
+
+      const erasePromise = rollingTracker.track(
+        rt.execute<PersonalDataErasure>(
+          'kernel.personal_data.erase',
+          { value: rollingEmail },
+          { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+        ),
+      );
+      const erasePid = await waitBlockedOnPid(rollingGatePid, '%SELECT n.id FROM ludy_notes.note n%', rollingTracker);
+
+      // Simulate an older rolling-deploy worker calling SQL ludy_notes.attachment_record_extract directly without TS lockNotesEraseShared.
+      const directExtractPromise = rollingTracker.track(
+        (async (): Promise<boolean> => {
+          const client = await workerPool.connect();
+          try {
+            await client.query('BEGIN');
+            await client.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
+            const res = await client.query<{ updated: boolean }>(
+              `SELECT ludy_notes.attachment_record_extract($1::uuid, 'done', $2::text) AS updated`,
+              [rollingAtt.id, `Rolling ${rollingEmail}`],
+            );
+            await client.query('COMMIT');
+            return res.rows[0]?.updated === true;
+          } catch (err) {
+            await client.query('ROLLBACK').catch(() => undefined);
+            throw err;
+          } finally {
+            client.release();
+          }
+        })(),
+      );
+      await waitBlockedOnPid(erasePid, '%attachment_record_extract%', rollingTracker);
+
+      await rollingGate.query('COMMIT');
+      const [eraseRes, extractUpdated] = await Promise.all([erasePromise, directExtractPromise]);
+      expect(eraseRes.erased).toContainEqual({ column: 'ludy_notes.note.title', rows: 1 });
+      expect(eraseRes.kept).toContainEqual({
+        column: 'ludy_notes.attachment.extracted_text',
+        rows: 1,
+        reason: PENDING_NOTE_ATTACHMENT_REASON,
+      });
+      expect(extractUpdated).toBe(true);
+
+      // Follow-up erasure cleans up the newly extracted attachment with zero lost rows or lingering kept[] entries.
+      const followUpErase = await rt.execute<PersonalDataErasure>(
+        'kernel.personal_data.erase',
+        { value: rollingEmail },
+        { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+      );
+      expect(followUpErase.erased).toContainEqual({ column: 'ludy_notes.attachment.extracted_text', rows: 1 });
+      expect(followUpErase.kept).toEqual([]);
+      const remaining = await rows<{ id: string }>(
+        'SELECT id FROM ludy_notes.attachment WHERE org_id = $1 AND id = $2',
+        [o.orgId, rollingAtt.id],
+      );
+      expect(remaining).toEqual([]);
+      expect(await doomed(o)).toContain(`notes/${o.orgId}/${rollingAtt.id}`);
+    } finally {
+      await rollingGate.query('ROLLBACK').catch(() => undefined);
+      await rollingTracker.drain();
+      await rollingGate.end().catch(() => undefined);
+    }
   });
 });
