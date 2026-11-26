@@ -40,12 +40,13 @@ function claimed(over: Partial<ClaimedCallback> = {}): ClaimedCallback {
   };
 }
 
-function fixture(claims: ClaimedCallback[][], executeError?: (name: string) => unknown) {
+function fixture(claims: ClaimedCallback[][], executeError?: (name: string) => unknown, purged = 0) {
   const queries: { sql: string; parameters: readonly unknown[] }[] = [];
   const batches = [...claims];
   const connection: DatabaseConnection = {
     executeQuery: async <R>(query: CompiledQuery): Promise<QueryResult<R>> => {
       queries.push({ sql: query.sql, parameters: query.parameters });
+      if (query.sql.includes('misa_amis_callback_sweep')) return { rows: [{ purged }] as unknown as R[] };
       return { rows: (query.sql.includes('misa_amis_callback_claim') ? (batches.shift() ?? []) : [{ done: 1 }]) as unknown as R[] };
     },
     streamQuery: async function* () {
@@ -188,5 +189,17 @@ describe('the relay', () => {
     const empty = fixture([]);
     expect(await runMisaAmisCallbacks({ runtime: empty.runtime, workerDb: empty.workerDb as never })).toBe(0);
     expect(empty.queries.filter((q) => q.sql.includes('misa_amis_callback_done'))).toEqual([]);
+  });
+
+  it('sweeps expired results before claiming and logs only the numeric purged count when non-zero (#4048 L6)', async () => {
+    const clean = fixture([], undefined, 0);
+    expect(await runMisaAmisCallbacks({ runtime: clean.runtime, workerDb: clean.workerDb as never })).toBe(0);
+    expect(clean.queries.some((q) => q.sql.includes('misa_amis_callback_sweep'))).toBe(true);
+    expect(logs).toEqual([]);
+
+    const swept = fixture([], undefined, 4);
+    expect(await runMisaAmisCallbacks({ runtime: swept.runtime, workerDb: swept.workerDb as never })).toBe(0);
+    expect(logs).toEqual(['[misa-amis-callback] expired: CALLBACK_EXPIRED count=4']);
+    for (const secret of [REASON_TEXT, REF1, CODE]) expect(logs.join('\n')).not.toContain(secret);
   });
 });

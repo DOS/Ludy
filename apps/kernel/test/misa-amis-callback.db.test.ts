@@ -6,15 +6,16 @@
 // in misa-amis-callback.test.ts and the relay's decisions in misa-amis-callback-relay.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { inspect } from 'node:util';
 import { SignJWT } from 'jose';
 import { sql } from 'kysely';
 import pg from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { kernelCommands, kernelQueries } from '@ludy/kernel';
 import { Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
-import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { AMIS_PLACEHOLDER_BRANCH, amisBatchDigest, amisContextOf, financeCommands, financeQueries, loadAmisEntries, type MisaAmisMatchResults, type MisaAmisPushResult } from '@ludy/mod-finance';
 import { signCallbackData } from '@ludy/misa-amis';
 import { createAuthenticator } from '../src/auth.ts';
 import { runMisaAmisCallbacks } from '../src/misa-amis-callback-relay.ts';
@@ -198,9 +199,14 @@ suite('MISA AMIS callback (#3903)', () => {
   });
 
   describe('the definers', () => {
-    const FNS = ['ludy_finance.misa_amis_callback_enqueue(text,uuid[],integer[],boolean[],text[],text[])', 'ludy_finance.misa_amis_callback_claim(integer)', 'ludy_finance.misa_amis_callback_done(bigint[])'] as const;
+    const FNS = [
+      'ludy_finance.misa_amis_callback_enqueue(text,uuid[],integer[],boolean[],text[],text[])',
+      'ludy_finance.misa_amis_callback_claim(integer)',
+      'ludy_finance.misa_amis_callback_done(bigint[])',
+      'ludy_finance.misa_amis_callback_sweep()',
+    ] as const;
 
-    it('are SECURITY DEFINER with a pinned search path; the API login runs the enqueue alone, the worker login the claim and done alone; no role touches the table', async () => {
+    it('are SECURITY DEFINER with a pinned search path; the API login runs the enqueue alone, the worker login the claim, done and sweep alone; no role touches the table', async () => {
       for (const fn of FNS) {
         const got = (await rows<{ secdef: boolean; config: string[] | null; acl: string | null }>('SELECT prosecdef AS secdef, proconfig AS config, proacl::text AS acl FROM pg_proc WHERE oid = $1::regprocedure', [fn]))[0];
         expect(got?.secdef, fn).toBe(true);
@@ -211,6 +217,7 @@ suite('MISA AMIS callback (#3903)', () => {
         [FNS[0]]: { ludy_app: true, ludy_worker: false, ludy_tenant: false, ludy_definer_tenant: false },
         [FNS[1]]: { ludy_app: false, ludy_worker: true, ludy_tenant: false, ludy_definer_tenant: false },
         [FNS[2]]: { ludy_app: false, ludy_worker: true, ludy_tenant: false, ludy_definer_tenant: false },
+        [FNS[3]]: { ludy_app: false, ludy_worker: true, ludy_tenant: false, ludy_definer_tenant: false },
       };
       for (const [fn, roles] of Object.entries(allowed)) {
         for (const [role, ok] of Object.entries(roles)) {
@@ -307,7 +314,7 @@ suite('MISA AMIS callback (#3903)', () => {
       expect(await enqueue(A.code, [{ refid: randomUUID() }])).toBe(1);
     });
 
-    it('claim answers, per waiting result, the organisation that stored its refid: one row for one organisation, two for a refid two hold, none-matching for an unknown one', async () => {
+    it('claim answers, per waiting result, the organisation that stored its refid: one row for one organisation, null m_* for a refid two hold, and null m_* for an unknown one (#4048 F2)', async () => {
       const mine = randomUUID();
       const both = randomUUID();
       const unknown = randomUUID();
@@ -319,13 +326,49 @@ suite('MISA AMIS callback (#3903)', () => {
       const of = (refid: string) => got.filter((r) => r.org_refid === refid);
       expect(of(mine)).toHaveLength(1);
       expect(of(mine)[0]).toMatchObject({ m_org_id: A.org, m_connection_id: A.connection, m_state: 'sent', m_attempts: 1, m_voucher_type: 1, m_org_company_code: A.code, org_company_code: A.code, success: true, voucher_type: 1 });
-      expect(of(both).map((r) => r.m_org_id).sort()).toEqual([A.org, B.org].sort());
+      expect(of(both)).toHaveLength(1);
+      expect(of(both)[0]).toMatchObject({ m_org_id: null, m_connection_id: null, m_state: null });
       expect(of(unknown)).toHaveLength(1);
       expect(of(unknown)[0]).toMatchObject({ m_org_id: null, m_connection_id: null, m_state: null });
       expect(Object.keys(got[0] ?? {}).sort()).toEqual(['error_code', 'error_message', 'm_attempts', 'm_connection_id', 'm_org_company_code', 'm_org_id', 'm_state', 'm_voucher_type', 'org_company_code', 'org_refid', 'seq', 'success', 'voucher_type']);
     });
 
-    it('claim marks what it took, takes it again after five minutes if it is not done, and done deletes it; results older than seven days are purged', async () => {
+    it('claim refuses cross-org ambiguity even when a second holder has Finance off, an inactive tenant, or another product (#4048 F2)', async () => {
+      const financeOffRef = randomUUID();
+      await seed(A, financeOffRef, 'sent');
+      await seed(B, financeOffRef, 'sent');
+      await api.execute('kernel.org.set_app', { module: 'finance', enabled: false }, ownerOf(B));
+      try {
+        await enqueue(A.code, [{ refid: financeOffRef }]);
+        expect((await claim()).map((r) => r.m_org_id)).toEqual([null]);
+      } finally {
+        await api.execute('kernel.org.set_app', { module: 'finance', enabled: true }, ownerOf(B));
+      }
+
+      await clearPending();
+      const inactiveRef = randomUUID();
+      await seed(A, inactiveRef, 'sent');
+      await seed(B, inactiveRef, 'sent');
+      await rows("UPDATE ludy_kernel.tenant SET status = 'closed' WHERE org_id = $1", [B.org]);
+      try {
+        await enqueue(A.code, [{ refid: inactiveRef }]);
+        expect((await claim()).map((r) => r.m_org_id)).toEqual([null]);
+      } finally {
+        await rows("UPDATE ludy_kernel.tenant SET status = 'active' WHERE org_id = $1", [B.org]);
+      }
+
+      await clearPending();
+      const crossProductRef = randomUUID();
+      await seed(A, crossProductRef, 'sent');
+      await seed(C, crossProductRef, 'sent');
+      await enqueue(A.code, [{ refid: crossProductRef }]);
+      expect((await claim()).map((r) => r.m_org_id)).toEqual([null]);
+      expect((await stateOf(A, financeOffRef))?.state).toBe('sent');
+      expect((await stateOf(A, inactiveRef))?.state).toBe('sent');
+      expect((await stateOf(A, crossProductRef))?.state).toBe('sent');
+    });
+
+    it('claim marks what it took, takes it again after five minutes if it is not done, and done deletes it; results older than seven days are skipped by claim and purged by sweep', async () => {
       const refid = randomUUID();
       await seed(A, refid, 'sent');
       await enqueue(A.code, [{ refid }]);
@@ -341,6 +384,8 @@ suite('MISA AMIS callback (#3903)', () => {
       await enqueue(A.code, [{ refid: randomUUID() }]);
       await rows("UPDATE ludy_finance.misa_amis_callback_pending SET received_at = pg_catalog.now() - interval '8 days'");
       expect(await claim()).toEqual([]);
+      const purged = await worker.orgless(async (db) => Number((await sql<{ n: number }>`SELECT ludy_finance.misa_amis_callback_sweep() AS n`.execute(db)).rows[0]?.n));
+      expect(purged).toBe(1);
       expect(await pending()).toEqual([]);
     });
 
@@ -547,6 +592,189 @@ suite('MISA AMIS callback (#3903)', () => {
       expect(other.status).toBe(401);
       expect(await pending()).toEqual([]);
       expect((await stateOf(C, refid))?.state).toBe('sent');
+    });
+  });
+
+  describe('follow-up hardening (#4048 L2, L3, L6)', () => {
+    function captureConsole() {
+      const lines: string[] = [];
+      const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) =>
+        vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+          lines.push(args.map((a) => (typeof a === 'string' ? a : inspect(a, { depth: 5 }))).join(' '));
+        }),
+      );
+      return {
+        all: () => lines.join('\n'),
+        restore: () => {
+          for (const spy of spies) spy.mockRestore();
+        },
+      };
+    }
+
+    it('logs only CALLBACK_EXPIRED and the purged count when the relay sweeps results older than seven days, and nothing when zero expire (#4048 L6)', async () => {
+      const exp1 = randomUUID();
+      const exp2 = randomUUID();
+      await enqueue(A.code, [{ refid: exp1, ok: false, code: 'Boom', text: REASON_TEXT }, { refid: exp2 }]);
+      await rows("UPDATE ludy_finance.misa_amis_callback_pending SET received_at = pg_catalog.now() - interval '8 days'");
+
+      const cap = captureConsole();
+      try {
+        expect(await relay()).toBe(0);
+        expect(await pending()).toEqual([]);
+        const firstLogs = cap.all();
+        expect(firstLogs).toContain('[misa-amis-callback] expired: CALLBACK_EXPIRED count=2');
+        for (const secret of [REASON_TEXT, CLIENT, ASP_CLIENT, exp1, exp2, A.code]) expect(firstLogs, secret).not.toContain(secret);
+
+        expect(await relay()).toBe(0);
+        expect(cap.all()).toBe(firstLogs);
+      } finally {
+        cap.restore();
+      }
+    });
+
+    it('logs nothing of body, signature, MISA refusal text, or ClientID across real Runtime failures during enqueueing and recording (#4048 L2)', async () => {
+      const enqueueRefid = randomUUID();
+      const enqueueBody = message([{ org_refid: enqueueRefid, voucher_type: 1, success: false, error_message: REASON_TEXT }]);
+      const enqueueSig = (JSON.parse(enqueueBody) as { signature: string }).signature;
+
+      // 1. Force a real P0001 INTERNAL failure inside api.orgless -> logInternal + route 503 catch.
+      await rows(`
+        CREATE OR REPLACE FUNCTION ludy_finance.test_cb_enqueue_fail() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'TEST_CB_ENQUEUE_INTERNAL' USING ERRCODE = 'P0001';
+        END $$
+      `);
+      await rows('CREATE TRIGGER z_test_cb_enqueue_fail BEFORE INSERT ON ludy_finance.misa_amis_callback_pending FOR EACH ROW EXECUTE FUNCTION ludy_finance.test_cb_enqueue_fail()');
+      const cap1 = captureConsole();
+      try {
+        const res = await post(enqueueBody);
+        expect(res.status).toBe(503);
+        expect(await res.json()).toEqual({ code: 'CALLBACK_UNAVAILABLE' });
+        const logged = cap1.all();
+        expect(logged).toContain('CALLBACK_UNAVAILABLE');
+        expect(logged).toContain('[orgless]');
+        for (const secret of [enqueueBody, enqueueSig, REASON_TEXT, enqueueRefid, CLIENT, ASP_CLIENT, A.code]) expect(logged, secret).not.toContain(secret);
+      } finally {
+        cap1.restore();
+        await rows('DROP TRIGGER IF EXISTS z_test_cb_enqueue_fail ON ludy_finance.misa_amis_callback_pending');
+        await rows('DROP FUNCTION IF EXISTS ludy_finance.test_cb_enqueue_fail()');
+      }
+
+      // 2a. Force a real SQL check constraint (23514 -> INVALID) in worker.execute('finance.misa_amis.push_record', ...).
+      const checkRefid = randomUUID();
+      await seed(A, checkRefid, 'sent');
+      const checkBody = message([{ org_refid: checkRefid, voucher_type: 1, success: false, error_message: REASON_TEXT }]);
+      const checkSig = (JSON.parse(checkBody) as { signature: string }).signature;
+      await rows(`ALTER TABLE ludy_finance.misa_amis_push ADD CONSTRAINT test_cb_reason_refuse CHECK (reason IS DISTINCT FROM '${REASON_TEXT}') NOT VALID`);
+      const cap2a = captureConsole();
+      try {
+        expect((await post(checkBody)).status).toBe(200);
+        await relay();
+        expect((await stateOf(A, checkRefid))?.state).toBe('sent');
+        expect(await pending()).toEqual([]);
+        const logged = cap2a.all();
+        for (const secret of [checkBody, checkSig, REASON_TEXT, checkRefid, CLIENT, ASP_CLIENT, A.code]) expect(logged, secret).not.toContain(secret);
+      } finally {
+        cap2a.restore();
+        await rows('ALTER TABLE ludy_finance.misa_amis_push DROP CONSTRAINT IF EXISTS test_cb_reason_refuse');
+      }
+
+      // 2b. Force a real P0001 INTERNAL error in worker.execute('finance.misa_amis.push_record', ...) -> logInternal + RELAY_FAILED.
+      const internalRefid = randomUUID();
+      await seed(A, internalRefid, 'sent');
+      const internalBody = message([{ org_refid: internalRefid, voucher_type: 1, success: false, error_message: REASON_TEXT }]);
+      const internalSig = (JSON.parse(internalBody) as { signature: string }).signature;
+      await rows(`
+        CREATE OR REPLACE FUNCTION ludy_finance.test_cb_push_fail() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'TEST_CB_RELAY_INTERNAL' USING ERRCODE = 'P0001';
+        END $$
+      `);
+      await rows('CREATE TRIGGER z_test_cb_push_fail BEFORE UPDATE ON ludy_finance.misa_amis_push FOR EACH ROW EXECUTE FUNCTION ludy_finance.test_cb_push_fail()');
+      const cap2b = captureConsole();
+      try {
+        expect((await post(internalBody)).status).toBe(200);
+        await relay();
+        expect((await stateOf(A, internalRefid))?.state).toBe('sent');
+        // Unanswered internal failures stay pending for retry.
+        expect(await pending()).toHaveLength(1);
+        const logged = cap2b.all();
+        expect(logged).toContain('RELAY_FAILED');
+        expect(logged).toContain('[execute finance.misa_amis.push_record]');
+        for (const secret of [internalBody, internalSig, REASON_TEXT, internalRefid, CLIENT, ASP_CLIENT, A.code]) expect(logged, secret).not.toContain(secret);
+      } finally {
+        cap2b.restore();
+        await rows('DROP TRIGGER IF EXISTS z_test_cb_push_fail ON ludy_finance.misa_amis_push');
+        await rows('DROP FUNCTION IF EXISTS ludy_finance.test_cb_push_fail()');
+        await clearPending();
+      }
+    });
+
+    it('generates voucher source_id / org_refid strictly on the server and rejects client-supplied sourceId or orgRefid on push (#4048 L3)', async () => {
+      const injectedId = randomUUID();
+      const ask = { kind: 'cash_payment' as const, from: '2026-10-01', to: '2026-10-31' };
+      const ownerMfaOf = (who: typeof A) => ({
+        actor: { type: 'user' as const, userId: who === A ? users.owner : users.outsider, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) },
+        orgId: who.org,
+        idempotencyKey: randomUUID(),
+      });
+
+      const createVoucherAndPushPrep = async (who: typeof A, label: string) => {
+        const req = await api.execute<{ proposalId: string }>(
+          'kernel.proposal.request',
+          {
+            command: 'finance.voucher.record',
+            input: {
+              type: 'cash_payment',
+              date: '2026-10-20',
+              cashAccount: '1111',
+              personName: 'Nguyen Van An',
+              description: `Chi phi van phong ${label}`,
+              lines: [{ account: '6422', amount: '100000' }],
+              id: injectedId,
+              sourceId: injectedId,
+            },
+          },
+          { ...ownerOf(who), idempotencyKey: randomUUID() },
+        );
+        const recorded = await api.execute<{ voucherId: string }>('kernel.proposal.approve', { id: req.proposalId, revision: 1 }, ownerMfaOf(who));
+        expect(recorded.voucherId).not.toBe(injectedId);
+
+        await api.execute('finance.misa_amis_match.request_check', { id: who.connection, ask }, ownerOf(who));
+        const [stored] = await rows<{ requested_at: Date }>('SELECT requested_at FROM ludy_finance.misa_amis_match_check WHERE org_id = $1 AND connection_id = $2', [who.org, who.connection]);
+        await worker.execute(
+          'finance.misa_amis_match.record_check',
+          { connectionId: who.connection, requestedAt: new Date(stored?.requested_at as Date).toISOString(), state: 'done', failure: null, results: [] },
+          { actor: { type: 'system', component: 'finance.misa_amis' }, orgId: who.org },
+        );
+        const fullAsk = { ...ask, legalEntityId: who.entity };
+        const matches = await api.query<MisaAmisMatchResults>('finance.misa_amis_match.results', { legalEntityId: who.entity, ask: fullAsk }, ownerOf(who));
+        const { entries } = await loadAmisEntries(
+          <T>(name: string, input: unknown): Promise<T> => api.query<T>(name, input, ownerOf(who)),
+          fullAsk,
+          amisContextOf(fullAsk, AMIS_PLACEHOLDER_BRANCH, matches),
+          501,
+        );
+        return { voucherId: recorded.voucherId, digest: amisBatchDigest(entries) };
+      };
+
+      const a = await createVoucherAndPushPrep(A, 'A');
+      const b = await createVoucherAndPushPrep(B, 'B');
+
+      await expect(api.execute('finance.misa_amis.push', { connectionId: A.connection, ...ask, digest: a.digest, sourceId: injectedId }, ownerOf(A))).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+      await expect(api.execute('finance.misa_amis.push', { connectionId: A.connection, ...ask, digest: a.digest, orgRefid: injectedId }, ownerOf(A))).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+
+      const pushA = await api.execute<MisaAmisPushResult>('finance.misa_amis.push', { connectionId: A.connection, ...ask, digest: a.digest }, ownerOf(A));
+      const pushB = await api.execute<MisaAmisPushResult>('finance.misa_amis.push', { connectionId: B.connection, ...ask, digest: b.digest }, ownerOf(B));
+      expect(pushA.queued).toBeGreaterThanOrEqual(1);
+      expect(pushB.queued).toBeGreaterThanOrEqual(1);
+
+      const [rowA] = await rows<{ source_id: string; org_refid: string }>('SELECT source_id, org_refid FROM ludy_finance.misa_amis_push WHERE org_id = $1 AND source_id = $2', [A.org, a.voucherId]);
+      const [rowB] = await rows<{ source_id: string; org_refid: string }>('SELECT source_id, org_refid FROM ludy_finance.misa_amis_push WHERE org_id = $1 AND source_id = $2', [B.org, b.voucherId]);
+      expect(rowA).toEqual({ source_id: a.voucherId, org_refid: a.voucherId });
+      expect(rowB).toEqual({ source_id: b.voucherId, org_refid: b.voucherId });
+      expect(rowA?.org_refid).not.toBe(rowB?.org_refid);
+      expect(rowA?.org_refid).not.toBe(injectedId);
     });
   });
 });
