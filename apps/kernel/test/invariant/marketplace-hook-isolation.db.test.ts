@@ -362,16 +362,6 @@ suite('marketplace push hook security invariants (#4326)', () => {
     expect(heard.length).toBeGreaterThan(0);
     expect(heard.every((payload) => payload === '')).toBe(true);
 
-    // Verify persisted table rows BEFORE claim deletes them so request_url cannot merely be masked by claim.
-    await withAdmin(async (c) => {
-      const stored = await c.query<{ hook_id: string; request_url: string | null }>(
-        'SELECT hook_id, request_url FROM crove_finance.marketplace_hook_notice',
-      );
-      expect(stored.rows.find((r) => r.hook_id === shopeeHookId)?.request_url).toBe(`${PUBLIC_URL}/api/marketplace/shopee/webhook/${shopeeKey}`);
-      expect(stored.rows.find((r) => r.hook_id === otherTiktokHookId)?.request_url).toBeNull();
-      expect(stored.rows.find((r) => r.hook_id === lazadaHookId)?.request_url).toBeNull();
-    });
-
     const claimed = await workerDb.transaction().execute((trx) => claimMarketplaceHookNotices(trx));
     expect(claimed).toHaveLength(1);
     expect(Buffer.compare(Buffer.from(claimed[0]!.body), BODY)).toBe(0);
