@@ -704,4 +704,119 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
       ).kind,
     ).toBe('proposal');
   });
+
+  it('rejects discount figures, mixed missing-figure clauses, spaced packaging specs, and cross-line description digits while allowing buyer verbs, bare small prices, newline invoice VAT headers, and shipping lines (#4119)', () => {
+    // Discounts cannot be reused as unit prices; explicit "đơn giá" keeps precedence.
+    const discounted = req('2 áo đơn giá 100k giảm 10k');
+    expect(
+      checkEInvoiceDraft(
+        discounted,
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '10000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        discounted,
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+
+    // Two distinct product clauses joined by "và" stay separate when only the second has figures.
+    const missingFirst = req('áo đỏ và 3 quần xanh giá 100k');
+    expect(
+      checkEInvoiceDraft(
+        missingFirst,
+        answer([line({ description: 'Áo đỏ', unit: null, quantity: '3', unitPrice: '100000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        missingFirst,
+        answer([line({ description: 'Quần xanh', unit: null, quantity: '3', unitPrice: '100000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+
+    // Spaced packaging units ("850 g") and spaced hardware specs ("20000 mAh") are not sale quantities or unit prices.
+    const spacedPkg = req('2 hộp sữa 850 g giá 100k');
+    expect(
+      checkEInvoiceDraft(
+        spacedPkg,
+        answer([line({ description: 'Sữa 850 g', unit: 'hộp', quantity: '850', unitPrice: '100000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        spacedPkg,
+        answer([line({ description: 'Sữa 850 g', unit: 'hộp', quantity: '2', unitPrice: '100000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('2 pin dự phòng 20000 mAh'),
+        answer([line({ description: 'Pin dự phòng 20000 mAh', unit: null, quantity: '2', unitPrice: '20000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 tem 500'),
+        answer([line({ description: 'Tem', unit: null, quantity: '2', unitPrice: '500', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+
+    // Numbers inside description or unit must belong to that item's own source clause.
+    expect(
+      checkEInvoiceDraft(
+        req('2 hộp trà ô long 100g giá 50k; 3 hộp cà phê 250g giá 80k'),
+        answer([line({ description: 'Trà ô long 250g', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    // Buyer + transaction verb before quantity keeps quantity eligible.
+    expect(
+      checkEInvoiceDraft(
+        req('chị Lan mua 2 áo giá 100k'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('bán cho anh Nam 2 áo giá 100k'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('bán 2 hộp bánh A giá 120k'),
+        answer([line({ description: 'Bánh A', unit: 'hộp', quantity: '2', unitPrice: '120000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('ban 2 hop banh A gia 120k'),
+        answer([line({ description: 'Bánh A', unit: 'hộp', quantity: '2', unitPrice: '120000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+
+    // Invoice-level VAT preamble before ":" applies across line breaks when no item overrides it.
+    expect(
+      checkEInvoiceDraft(
+        req('Xuất hóa đơn đã gồm VAT 8%: 2 sách giá 50k\n3 bút giá 10k'),
+        answer([
+          line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' }),
+          line({ description: 'Bút', unit: null, quantity: '3', unitPrice: '10000', vatRate: '8%' }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+
+    // Shipping fee lines ("Giao hàng") from previous invoices keep their item description.
+    expect(
+      checkEInvoiceDraft(
+        req('giống lần trước\n\nHóa đơn trước gửi cùng khách:\n- Giao hàng, số lượng 1, đơn giá 50000\n- Sách, số lượng 2, đơn giá 100000'),
+        answer([
+          line({ description: 'Giao hàng', unit: null, quantity: '1', unitPrice: '50000', vatRate: null }),
+          line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '100000', vatRate: null }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+  });
 });
