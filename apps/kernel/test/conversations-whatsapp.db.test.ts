@@ -11,12 +11,12 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Graph, WHATSAPP_MAX_NOTICE_BYTES, WhatsAppConversations, type ConversationAdapter, type Fetch } from '@ludy/channel';
+import { Graph, WHATSAPP_CLOCK_SKEW_MS, WHATSAPP_MAX_NOTICE_BYTES, WhatsAppConversations, type ConversationAdapter, type Fetch } from '@ludy/channel';
 import { metered, type AiUsage, type ReplyDraftRequest, type ReplyDraftResult } from '@ludy/agent';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { EXPORT_TABLES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import type { ConversationDetail } from '@ludy/kernel-contract';
+import { CONVERSATION_WHATSAPP_CLOCK_SKEW_MS, type ConversationDetail } from '@ludy/kernel-contract';
 import { CredentialVault, Runtime, parseVaultKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
@@ -281,6 +281,131 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       expect(await intake()).toMatchObject({ dropped: 0 });
       expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [b.orgId])).toHaveLength(1);
       expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
+    });
+
+    it('rejects pre-handover webhooks whose upstream Meta timestamp is skewed forward past connected_at, and enforces WHATSAPP_CLOCK_SKEW_MS relative to received_at (#5047)', async () => {
+      expect(CONVERSATION_WHATSAPP_CLOCK_SKEW_MS).toBe(WHATSAPP_CLOCK_SKEW_MS);
+
+      const a = await org();
+      const b = await org();
+      // Upstream Meta timestamp skewed +5 min ahead (within WHATSAPP_CLOCK_SKEW_MS) arrives while Org A still owns the number.
+      const skewedAt = Date.now() + 5 * 60_000;
+      expect((await post(app, customerNotice(a, message(LAN, { timestamp: String(skewedAt) })))).status).toBe(200);
+      expect(await waiting()).toBe(1);
+
+      await new Promise((r) => setTimeout(r, 10));
+      await api.execute('kernel.channel.disconnect', { connectionId: a.connectionId }, { actor: asUser(a.owner), orgId: a.orgId });
+      const sealed = vault.seal(JSON.stringify({ accessToken: ACCESS_TOKEN, wabaId: '204000000000001' }), { orgId: b.orgId, provider: 'whatsapp', externalAccountId: a.phoneId });
+      const bConnected = await api.execute<{ connectionId: string }>(
+        'kernel.channel.connect',
+        { provider: 'whatsapp', externalAccountId: a.phoneId, displayName: 'Tiệm B Skew', scopes: ['whatsapp_business_messaging'], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+        { actor: asUser(b.owner), orgId: b.orgId },
+      );
+
+      // Even though event.at > b.connected_at, received_at < b.connected_at, so intake fails closed and never leaks Org A's notice into Org B.
+      expect(await intake()).toEqual({ stored: 0, dropped: 0 });
+      expect(await waiting()).toBe(0);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = ANY($1::uuid[])', [[a.orgId, b.orgId]])).toHaveLength(0);
+
+      // Post-handover fresh notice arrives after connected_at and is stored for Org B.
+      await new Promise((r) => setTimeout(r, 15));
+      const holder: Org = { ...b, phoneId: a.phoneId, connectionId: bConnected.connectionId };
+      expect((await post(app, customerNotice(holder, message(MINH, { timestamp: String(Date.now()) })))).status).toBe(200);
+      expect(await intake()).toEqual({ stored: 1, dropped: 0 });
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [b.orgId])).toHaveLength(1);
+
+      // Worker intake anchors WHATSAPP_CLOCK_SKEW_MS to DB received_at rather than worker claim time:
+      // +10m exact passes, while +10m + 1ms is ignored/dropped before reaching Org B.
+      const baseReceivedMs = Date.now() - 20 * 60_000;
+      const baseConnectedIso = new Date(baseReceivedMs - 60_000).toISOString();
+      await rows('UPDATE ludy_kernel.channel_connection SET connected_at = $3::timestamptz WHERE org_id = $1 AND id = $2', [b.orgId, holder.connectionId, baseConnectedIso]);
+      const atBoundaryBody = customerNotice(holder, message('84900000003', { timestamp: String(baseReceivedMs + WHATSAPP_CLOCK_SKEW_MS) }));
+      const pastBoundaryBody = customerNotice(holder, message('84900000003', { timestamp: String(baseReceivedMs + WHATSAPP_CLOCK_SKEW_MS + 1) }));
+      await rows(
+        `INSERT INTO ludy_kernel.conversation_inbound_pending (provider, body, received_at) VALUES ('whatsapp', $1, $3::timestamptz), ('whatsapp', $2, $3::timestamptz)`,
+        [Buffer.from(atBoundaryBody, 'utf8'), Buffer.from(pastBoundaryBody, 'utf8'), new Date(baseReceivedMs).toISOString()],
+      );
+      expect(await intake()).toEqual({ stored: 1, dropped: 0 });
+      expect(await waiting()).toBe(0);
+
+      // Direct kernel.conversation.ingest and intake microsecond-precision boundary checks (#5047).
+      const subMsBaseMs = Math.floor((Date.now() - 25 * 60_000) / 1000) * 1000;
+      const isoWithMicros = (secOffsetMs: number, micros: number) => {
+        const msStr = new Date(subMsBaseMs + secOffsetMs).toISOString();
+        return `${msStr.slice(0, -1)}${String(micros).padStart(3, '0')}Z`;
+      };
+      const subMsConnectedIso = isoWithMicros(0, 456);
+      await rows('UPDATE ludy_kernel.channel_connection SET connected_at = $3::timestamptz WHERE org_id = $1 AND id = $2', [b.orgId, holder.connectionId, subMsConnectedIso]);
+      const mkEventIso = (atIso: string, suffix: string) => ({
+        kind: 'direct' as const,
+        threadId: '84900000003',
+        messageId: `wamid.skew-${suffix}-${randomUUID().slice(0, 8)}`,
+        direction: 'in' as const,
+        contact: { id: '84900000003', name: 'Khách Boundary' },
+        text: `boundary-${suffix}`,
+        at: atIso,
+      });
+      // Same millisecond (.123ms), 1us before connected_at: parked webhook skewed +5m is rejected by intake, while +200us passes.
+      const preSubMsSkewBody = customerNotice(holder, message('84900000004', { timestamp: String(Math.floor((subMsBaseMs + 5 * 60_000) / 1000)) }));
+      const postSubMsBody = customerNotice(holder, message('84900000005', { timestamp: String(Math.floor((subMsBaseMs + 10_000) / 1000)) }));
+      const invalidInfinityBody = customerNotice(holder, message('84900000006', { timestamp: String(Math.floor((subMsBaseMs + 10_000) / 1000)) }));
+      await rows(
+        `INSERT INTO ludy_kernel.conversation_inbound_pending (provider, body, received_at)
+         VALUES ('whatsapp', $1, $4::timestamptz), ('whatsapp', $2, $5::timestamptz), ('whatsapp', $3, 'infinity'::timestamptz)`,
+        [
+          Buffer.from(preSubMsSkewBody, 'utf8'),
+          Buffer.from(postSubMsBody, 'utf8'),
+          Buffer.from(invalidInfinityBody, 'utf8'),
+          isoWithMicros(0, 100),
+          isoWithMicros(0, 700),
+        ],
+      );
+      // Pre-handover sub-ms notice ignored (0), post-handover sub-ms notice stored (1), non-finite 'infinity' row dropped alone (1).
+      expect(await intake()).toEqual({ stored: 1, dropped: 1 });
+      expect(await waiting()).toBe(0);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [b.orgId, '84900000004'])).toHaveLength(0);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [b.orgId, '84900000005'])).toHaveLength(1);
+
+      // receivedAt 1us before connected_at (same millisecond) with event.at +5m ahead -> ignored.
+      await expect(
+        worker.execute(
+          'kernel.conversation.ingest',
+          { connectionId: holder.connectionId, receivedAt: isoWithMicros(0, 455), events: [mkEventIso(isoWithMicros(5 * 60_000, 456), 'pre-recv-us')] },
+          { actor: SYSTEM, orgId: b.orgId },
+        ),
+      ).resolves.toMatchObject({ stored: 0, ignored: 1 });
+      // event.at 1us before connected_at (same millisecond) with receivedAt >= connected_at -> ignored.
+      await expect(
+        worker.execute(
+          'kernel.conversation.ingest',
+          { connectionId: holder.connectionId, receivedAt: subMsConnectedIso, events: [mkEventIso(isoWithMicros(0, 455), 'pre-event-us')] },
+          { actor: SYSTEM, orgId: b.orgId },
+        ),
+      ).resolves.toMatchObject({ stored: 0, ignored: 1 });
+      // receivedAt === connected_at and event.at === receivedAt + CONVERSATION_WHATSAPP_CLOCK_SKEW_MS (exact microsecond) -> stored.
+      await expect(
+        worker.execute(
+          'kernel.conversation.ingest',
+          { connectionId: holder.connectionId, receivedAt: subMsConnectedIso, events: [mkEventIso(isoWithMicros(CONVERSATION_WHATSAPP_CLOCK_SKEW_MS, 456), 'exact-max-us')] },
+          { actor: SYSTEM, orgId: b.orgId },
+        ),
+      ).resolves.toMatchObject({ stored: 1, ignored: 0 });
+      // Omitting receivedAt on WhatsApp fails closed (#5047).
+      await expect(
+        worker.execute(
+          'kernel.conversation.ingest',
+          { connectionId: holder.connectionId, events: [mkEventIso(subMsConnectedIso, 'missing-recv')] },
+          { actor: SYSTEM, orgId: b.orgId },
+        ),
+      ).resolves.toMatchObject({ stored: 0, ignored: 1 });
+      // receivedAt === connected_at and event.at === receivedAt + CONVERSATION_WHATSAPP_CLOCK_SKEW_MS + 1us -> ignored.
+      await expect(
+        worker.execute(
+          'kernel.conversation.ingest',
+          { connectionId: holder.connectionId, receivedAt: subMsConnectedIso, events: [mkEventIso(isoWithMicros(CONVERSATION_WHATSAPP_CLOCK_SKEW_MS, 457), 'over-max-us')] },
+          { actor: SYSTEM, orgId: b.orgId },
+        ),
+      ).resolves.toMatchObject({ stored: 0, ignored: 1 });
     });
 
     it('serializes Org B connect behind Org A disconnect on the handover lock and stores post-lock connected_at (#3152)', async () => {
@@ -1013,11 +1138,12 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
 
     it('is rejected at ingest when an event names both an address and a reference, or a reference that is not a token', async () => {
       const o = await org();
-      const event = (attachments: unknown[]) => ({ kind: 'direct', threadId: LAN, messageId: `m-${randomUUID()}`, direction: 'in', contact: { id: LAN }, text: '[Khách gửi ảnh]', at: new Date().toISOString(), attachments });
-      await expect(worker.execute('kernel.conversation.ingest', { connectionId: o.connectionId, events: [event([{ kind: 'image', url: 'https://lookaside.fbsbx.com/x', mediaRef: '1' }])] }, { actor: SYSTEM, orgId: o.orgId })).rejects.toBeDefined();
-      await expect(worker.execute('kernel.conversation.ingest', { connectionId: o.connectionId, events: [event([{ kind: 'image', mediaRef: 'https://evil.example/x' }])] }, { actor: SYSTEM, orgId: o.orgId })).rejects.toBeDefined();
-      await expect(worker.execute('kernel.conversation.ingest', { connectionId: o.connectionId, events: [event([{ kind: 'image' }])] }, { actor: SYSTEM, orgId: o.orgId })).rejects.toBeDefined();
-      await expect(worker.execute('kernel.conversation.ingest', { connectionId: o.connectionId, events: [event([{ kind: 'image', mediaRef: '555111222333' }])] }, { actor: SYSTEM, orgId: o.orgId })).resolves.toMatchObject({ stored: 1 });
+      const eventAt = new Date().toISOString();
+      const event = (attachments: unknown[]) => ({ kind: 'direct', threadId: LAN, messageId: `m-${randomUUID()}`, direction: 'in', contact: { id: LAN }, text: '[Khách gửi ảnh]', at: eventAt, attachments });
+      await expect(worker.execute('kernel.conversation.ingest', { connectionId: o.connectionId, receivedAt: eventAt, events: [event([{ kind: 'image', url: 'https://lookaside.fbsbx.com/x', mediaRef: '1' }])] }, { actor: SYSTEM, orgId: o.orgId })).rejects.toBeDefined();
+      await expect(worker.execute('kernel.conversation.ingest', { connectionId: o.connectionId, receivedAt: eventAt, events: [event([{ kind: 'image', mediaRef: 'https://evil.example/x' }])] }, { actor: SYSTEM, orgId: o.orgId })).rejects.toBeDefined();
+      await expect(worker.execute('kernel.conversation.ingest', { connectionId: o.connectionId, receivedAt: eventAt, events: [event([{ kind: 'image' }])] }, { actor: SYSTEM, orgId: o.orgId })).rejects.toBeDefined();
+      await expect(worker.execute('kernel.conversation.ingest', { connectionId: o.connectionId, receivedAt: eventAt, events: [event([{ kind: 'image', mediaRef: '555111222333' }])] }, { actor: SYSTEM, orgId: o.orgId })).resolves.toMatchObject({ stored: 1 });
     });
   });
 

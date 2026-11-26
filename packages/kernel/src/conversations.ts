@@ -24,6 +24,7 @@ import {
   CONVERSATION_FACEBOOK_DIRECT_MAX,
   CONVERSATION_INSTAGRAM_DIRECT_MAX,
   CONVERSATION_PREVIEW_CHARS,
+  CONVERSATION_WHATSAPP_CLOCK_SKEW_MS,
   EMAIL_PROVIDER,
   EMAIL_REFS_MAX,
   conversationRules,
@@ -138,7 +139,7 @@ import { z } from 'zod';
 import { zId, zTodayItems, type TodayItem } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, conversationKey, defineCommand, defineQuery, newConversationBlobId, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
-import { acquireChannelLocks } from './advisory-lock.ts';
+import { acquireChannelLocksForStoredRow } from './advisory-lock.ts';
 import { parseBusinessAccounts } from './channels.ts';
 import { createMailMessage } from './mail.ts';
 import { notifyMembers, ownersAndAdmins } from './notifications.ts';
@@ -330,11 +331,30 @@ export const conversationIngest = defineCommand({
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
   handler: async (ctx, input): Promise<ConversationIngested> => {
     requireSystem(ctx);
-    return ingestEvents(ctx, input.connectionId, input.events, input.businessConnectionId);
+    return ingestEvents(ctx, input.connectionId, input.events, input.businessConnectionId, input.receivedAt);
   },
 });
 
-async function ingestEvents(ctx: CommandContext, connectionId: string, inputEvents: readonly ConversationEvent[], businessConnectionId?: string): Promise<ConversationIngested> {
+const ISO_DATETIME = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/;
+const WHATSAPP_CLOCK_SKEW_NANOS = BigInt(CONVERSATION_WHATSAPP_CLOCK_SKEW_MS) * 1_000_000n;
+
+// Parse ISO-8601 timestamps into UTC epoch nanoseconds so Postgres `timestamptz` checks never truncate at milliseconds (#5047).
+function isoToEpochNanos(value: string): bigint | null {
+  const match = ISO_DATETIME.exec(value);
+  if (!match) return null;
+  const wholeSecondMs = Date.parse(`${match[1]}T${match[2]}${match[4]}`);
+  if (!Number.isFinite(wholeSecondMs)) return null;
+  const frac = (match[3] ?? '').slice(0, 9).padEnd(9, '0');
+  return BigInt(wholeSecondMs) * 1_000_000n + BigInt(frac);
+}
+
+async function ingestEvents(
+  ctx: CommandContext,
+  connectionId: string,
+  inputEvents: readonly ConversationEvent[],
+  businessConnectionId?: string,
+  receivedAt?: string,
+): Promise<ConversationIngested> {
   const out: ConversationIngested = { stored: 0, duplicates: 0, ignored: 0 };
   const reserved: MailImageSlot[] = [];
   const connection = await connectionOf(ctx, connectionId, true);
@@ -377,21 +397,53 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
     ownerUserId = account.userId;
   }
   // A WhatsApp number can change hands (one org disconnects it, another connects it) while notices of the first are still waiting: a notice names no org
-  // and may wait up to seven days. An event dated before this connection began is the earlier holder's customer's, never ours. A reconnect of a live
-  // connection keeps its row and its date; a number connected again after a disconnect is a new row, so its date is the start of this holder.
-  let notBefore: number | null = null;
+  // and may wait up to seven days. An event dated before this connection began (or parked in the inbound queue before it began, even if Meta's timestamp was
+  // skewed forward) is the earlier holder's customer's, never ours. A reconnect of a live connection keeps its row and its date; a number connected again
+  // after a disconnect is a new row, so its date is the start of this holder.
+  const receivedAtNanos = receivedAt !== undefined ? isoToEpochNanos(receivedAt) : null;
+  const validReceivedAt = receivedAt !== undefined && receivedAtNanos !== null ? receivedAt : null;
+  let notBeforeNanos: bigint | null = null;
+  let hasNotBefore = false;
+  let receivedBeforeConnected = false;
   if (connection.provider === 'whatsapp') {
-    const since = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('connected_at').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
-    notBefore = since ? new Date(since.connected_at).getTime() : null;
+    const since = await ctx.trx
+      .selectFrom('ludy_kernel.channel_connection')
+      .select([
+        sql<string | null>`CASE WHEN pg_catalog.isfinite(connected_at) THEN pg_catalog.to_char(connected_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') ELSE NULL END`.as('connected_at_iso'),
+        sql<boolean>`(${validReceivedAt}::timestamptz IS NOT NULL AND ${validReceivedAt}::timestamptz < connected_at)`.as('received_before_connected'),
+      ])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', connectionId)
+      .executeTakeFirst();
+    hasNotBefore = since !== undefined;
+    notBeforeNanos = since?.connected_at_iso ? isoToEpochNanos(since.connected_at_iso) : null;
+    receivedBeforeConnected = Boolean(since?.received_before_connected);
   }
   // Oldest first, so a thread's messages take their seq in the order the platform dated them within one notice.
-  const events = inputEvents.map((event, i) => ({ event, i })).sort((a, b) => Date.parse(a.event.at) - Date.parse(b.event.at) || a.i - b.i);
-  for (const { event } of events) {
+  const events = inputEvents
+    .map((event, i) => ({ event, i, eventNanos: isoToEpochNanos(event.at) }))
+    .sort((a, b) => (a.eventNanos !== null && b.eventNanos !== null ? (a.eventNanos < b.eventNanos ? -1 : a.eventNanos > b.eventNanos ? 1 : a.i - b.i) : Date.parse(a.event.at) - Date.parse(b.event.at) || a.i - b.i));
+  for (const { event, eventNanos } of events) {
     // A Telegram business thread (`b:<chat>:<business connection id>`) is stored only through the gate above, and only for the connection that gate
     // checked: a thread of that shape with no business connection, or of another one, is refused whatever the notice parser said.
     const businessThread = connection.provider === 'telegram' && event.threadId.startsWith('b:');
     const businessMismatch = connection.provider === 'telegram' && (businessThread !== (businessConnectionId !== undefined) || (businessThread && BUSINESS_THREAD.exec(event.threadId)?.[1] !== businessConnectionId));
-    if (!rules.kinds.includes(event.kind) || businessMismatch || (ownerUserId !== null && event.contact.id === ownerUserId) || (notBefore !== null && Date.parse(event.at) < notBefore)) {
+    // For WhatsApp (#5047), require receivedAt and enforce sub-millisecond boundaries, failing closed when:
+    //   1) receivedAt is missing or non-ISO (blocks direct WhatsApp ingest bypassing webhook queue timestamps),
+    //   2) event.at < connected_at (blocks delayed Meta retries of pre-handover messages),
+    //   3) receivedAt < connected_at (blocks pre-handover queued webhooks whose event.at was skewed forward), or
+    //   4) event.at > receivedAt + CONVERSATION_WHATSAPP_CLOCK_SKEW_MS (defense-in-depth at command boundary).
+    const whatsappBlocked =
+      connection.provider === 'whatsapp' &&
+      (!hasNotBefore ||
+        notBeforeNanos === null ||
+        eventNanos === null ||
+        receivedAtNanos === null ||
+        receivedBeforeConnected ||
+        eventNanos < notBeforeNanos ||
+        receivedAtNanos < notBeforeNanos ||
+        eventNanos > receivedAtNanos + WHATSAPP_CLOCK_SKEW_NANOS);
+    if (!rules.kinds.includes(event.kind) || businessMismatch || (ownerUserId !== null && event.contact.id === ownerUserId) || whatsappBlocked) {
       out.ignored++;
       continue;
     }
@@ -3234,7 +3286,7 @@ export const conversationEraseChannel = defineCommand({
     if (!conversationRules(target.provider)) throw new DomainError('CHANNEL_NOT_CONVERSATIONAL', 422, 'Kết nối này không phải kênh trò chuyện với khách');
     // Skip the cross-org handover lock when the row is already revoked so deleting old history never stalls a new holder.
     if (target.status !== 'revoked') {
-      await acquireChannelLocks(ctx.trx, ctx.orgId, target.provider, target.external_account_id);
+      await acquireChannelLocksForStoredRow(ctx.trx, ctx.orgId, target.provider, target.external_account_id);
     }
     const connection = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')

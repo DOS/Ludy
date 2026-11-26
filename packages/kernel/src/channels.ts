@@ -15,7 +15,7 @@ import { z } from 'zod';
 import { isAdProviderId, isAdWriteProviderId, zId } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
-import { acquireChannelLocks } from './advisory-lock.ts';
+import { acquireChannelLocks, acquireChannelLocksForStoredRow } from './advisory-lock.ts';
 import { notifyMembers, ownersAndAdmins, TELEGRAM_CHAT_DISPLACED } from './notifications.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -54,7 +54,7 @@ function requireUser(ctx: CommandContext): string {
 
 export const zChannelConnect = z.strictObject({
   provider: zProvider,
-  externalAccountId: z.string().min(1).max(200),
+  externalAccountId: z.string().min(1).max(200).refine((value) => value.trim().length > 0, 'External account id must not be blank'),
   displayName: z.string().trim().min(1).max(200),
   scopes: z.array(z.string().min(1).max(200)).max(100),
   expiresAt: z.iso.datetime({ offset: true }).nullable(),
@@ -69,6 +69,15 @@ async function readPostLockTimestamp(trx: CommandContext['trx']): Promise<Date> 
   const raw = rows[0]?.now;
   if (!raw) throw new Error('pg_catalog.clock_timestamp() returned no row');
   return raw instanceof Date ? raw : new Date(raw);
+}
+
+// Preserve full PostgreSQL microsecond precision when stamping connected_at after lock release so JS Date ms truncation
+// cannot shift connected_at earlier than an inbound notice parked in the same millisecond (#5047).
+async function readPostLockTimestampIso(trx: CommandContext['trx']): Promise<string> {
+  const { rows } = await sql<{ now: string }>`SELECT pg_catalog.to_char(pg_catalog.clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS now`.execute(trx);
+  const raw = rows[0]?.now;
+  if (!raw) throw new Error('pg_catalog.clock_timestamp() returned no row');
+  return raw;
 }
 
 export const channelConnect = defineCommand({
@@ -146,10 +155,13 @@ export const channelConnect = defineCommand({
         });
       id = row.id;
       if (input.provider === 'whatsapp') {
-        const postInsertNow = await readPostLockTimestamp(ctx.trx);
+        const postInsertIso = await readPostLockTimestampIso(ctx.trx);
         await ctx.trx
           .updateTable('ludy_kernel.channel_connection')
-          .set({ connected_at: postInsertNow, updated_at: postInsertNow })
+          .set({
+            connected_at: sql<Date>`${postInsertIso}::timestamptz`,
+            updated_at: sql<Date>`${postInsertIso}::timestamptz`,
+          })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', id)
           .execute();
@@ -185,7 +197,7 @@ export const channelDisconnect = defineCommand({
     if (!target) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     // Skip cross-org handover locks for an already-revoked row so idempotent disconnect/credential drop never stalls a new holder.
     if (target.status !== 'revoked') {
-      await acquireChannelLocks(ctx.trx, ctx.orgId, target.provider, target.external_account_id);
+      await acquireChannelLocksForStoredRow(ctx.trx, ctx.orgId, target.provider, target.external_account_id);
     }
     const row = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
@@ -278,7 +290,7 @@ export const channelRevokeByPlatform = defineCommand({
     if (!target) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     // Skip cross-org handover locks for an already-revoked row so idempotent disconnect/credential drop never stalls a new holder.
     if (target.status !== 'revoked') {
-      await acquireChannelLocks(ctx.trx, ctx.orgId, target.provider, target.external_account_id);
+      await acquireChannelLocksForStoredRow(ctx.trx, ctx.orgId, target.provider, target.external_account_id);
     }
     const row = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
