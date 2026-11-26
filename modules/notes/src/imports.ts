@@ -82,6 +82,11 @@ export const noteImportEnex = defineCommand({
       await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${enexLockKey}, 0))`.execute(ctx.trx);
     }
 
+    // Hold shared notes.erase upfront for every ENEX import path (unfiled notes, targetNotebookId,
+    // ignoreFileNotebooks, and file notebooks) so concurrent personal_data.erase cannot commit
+    // over imported private notes or attachments (#5035).
+    await lockNotesEraseShared(ctx);
+
     const targetNotebookId = input.targetNotebookId ? input.targetNotebookId.toLowerCase() : null;
     if (targetNotebookId !== null) {
       await resolveNotebookForNote(ctx, targetNotebookId, userId, 'private');
@@ -120,8 +125,6 @@ export const noteImportEnex = defineCommand({
         return idsByKey;
       };
 
-      // Hold shared notes.erase upfront so concurrent erasure cannot commit over notebooks read below.
-      await lockNotesEraseShared(ctx);
       let idsByKey = await loadPrivateNotebooks();
       let heldReorderLock = false;
       if ([...neededFileNotebookNames].some((key) => !privateNotebookByName.has(key))) {

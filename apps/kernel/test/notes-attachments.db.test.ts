@@ -562,6 +562,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     await rows(`INSERT INTO ludy_kernel.party (org_id, id, name, email) VALUES ($1, $2, 'Khách đồng bộ', $3)`, [o.orgId, partyId, email]);
     const monotonicNote = await createNote(o, o.author, 'private', 'Ghi chú giữ mốc thời gian');
     const concurrentNote = await createNote(o, o.author, 'private', 'Ghi chú đồng thời gắn liên kết');
+    const linkRaceNote = await createNote(o, o.author, 'private', 'Ghi chú nối liên kết đồng thời');
     const att1 = await attached(o, o.author, monotonicNote, pdf('m1'), 'moc-thoi-gian.pdf');
     const att2 = await attached(o, o.author, concurrentNote, pdf('m2'), 'hop-dong.pdf');
     extract.text = `Email liên hệ: ${email}`;
@@ -664,6 +665,28 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
         else await new Promise((resolve) => setTimeout(resolve, 10));
       }
       expect(sawAttachLockWait).toBe(true);
+      // While personalDataErase holds party FOR NO KEY UPDATE and waits on concurrentNote, invoke real notes.link.add
+      // against that party on a separate note and confirm it completes without blocking or deadlocking.
+      let linkTimer: ReturnType<typeof setTimeout> | undefined;
+      const concurrentLinkPromise = tracker.track(
+        rt.execute<{ noteId: string; linkId: string }>(
+          'notes.link.add',
+          { noteId: linkRaceNote, targetType: 'kernel.party', targetId: partyId },
+          { actor: asUser(o.author.id), orgId: o.orgId },
+        ),
+      );
+      const concurrentLinkOut = await Promise.race([
+        concurrentLinkPromise,
+        new Promise<never>((_, reject) => {
+          linkTimer = setTimeout(
+            () => reject(new Error('notes.link.add blocked while personalDataErase held party FOR NO KEY UPDATE')),
+            2000,
+          );
+        }),
+      ]).finally(() => {
+        if (linkTimer) clearTimeout(linkTimer);
+      });
+      expect(concurrentLinkOut.noteId).toBe(linkRaceNote);
       // While personalDataErase holds party FOR NO KEY UPDATE and waits on concurrentNote, link_party_fk acquires FOR KEY SHARE on party without deadlocking.
       await lockClient.query(
         `INSERT INTO ludy_notes.link (org_id, note_id, todo_id, target_type, target_id, party_id, created_by)

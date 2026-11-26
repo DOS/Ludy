@@ -915,5 +915,43 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     );
     expect(rebalancedKey).toBeDefined();
     expect(rebalancedKey!.length).toBeLessThan(81);
+
+    // 5. Unfiled ENEX imports (no <notebook> tag and no targetNotebookId) must still acquire shared notes.erase (#5035).
+    const unfiledPdfB64 = Buffer.from(tinyPdf()).toString('base64');
+    const unfiledEnex = `<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Ghi Chu Khong So Tay</title>
+    <content><![CDATA[<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note><p>Unfiled</p></en-note>]]></content>
+    <resource>
+      <data encoding="base64">${unfiledPdfB64}</data>
+      <mime>application/pdf</mime>
+      <resource-attributes><file-name>unfiled-hop-dong.pdf</file-name></resource-attributes>
+    </resource>
+  </note>
+</en-export>`;
+    const eraseGate = new pg.Client({ connectionString: adminUrl });
+    await eraseGate.connect();
+    const eraseErrors: unknown[] = [];
+    let unfiledPromise: Promise<{ status: number; body: Record<string, unknown> }> | undefined;
+    try {
+      const erasePid = (await eraseGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await eraseGate.query('BEGIN');
+      await eraseGate.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.erase:${orgId.toLowerCase()}`],
+      );
+      unfiledPromise = uploadEnex('owner', unfiledEnex);
+      void unfiledPromise.catch((err) => eraseErrors.push(err));
+      await waitAdvisorySharedWait(erasePid, eraseErrors);
+      await eraseGate.query('COMMIT');
+      const unfiledRes = await unfiledPromise;
+      expect(unfiledRes.status, JSON.stringify(unfiledRes.body)).toBe(201);
+      expect(unfiledRes.body).toMatchObject({ importedNotes: 1, attachmentsCount: 1, createdNotebooks: 0, reusedNotebooks: 0 });
+    } finally {
+      await eraseGate.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(unfiledPromise ? [unfiledPromise] : []);
+      await eraseGate.end().catch(() => undefined);
+    }
   });
 });

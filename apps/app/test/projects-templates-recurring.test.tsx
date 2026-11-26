@@ -101,10 +101,12 @@ vi.mock('@ludy/ui/components/dialog', async () => {
     open: boolean;
     setOpen: (next: boolean) => void;
     finalFocusRef: { current: unknown };
+    defaultFocusTargetRef: { current: unknown };
   }>({
     open: false,
     setOpen: () => undefined,
     finalFocusRef: { current: undefined },
+    defaultFocusTargetRef: { current: undefined },
   });
   return {
     Dialog: ({
@@ -121,6 +123,7 @@ vi.mock('@ludy/ui/components/dialog', async () => {
       const [internalOpen, setInternalOpen] = useState(false);
       const [closing, setClosing] = useState(false);
       const finalFocusRef = useRef<unknown>(undefined);
+      const defaultFocusTargetRef = useRef<unknown>(undefined);
       const mountedRef = useRef(true);
       const pendingCompleteRef = useRef<(() => void) | null>(null);
       useEffect(() => {
@@ -137,8 +140,10 @@ vi.mock('@ludy/ui/components/dialog', async () => {
       const runFinalFocus = () => {
         const ff = finalFocusRef.current;
         const resolved = typeof ff === 'function' ? (ff as (t: string) => unknown)('keyboard') : ff;
-        if (resolved && typeof resolved === 'object') {
-          const target = 'current' in resolved ? (resolved as { current: unknown }).current : resolved;
+        if (resolved === false) return;
+        const focusable = resolved === true || resolved === undefined ? defaultFocusTargetRef.current : resolved;
+        if (focusable && typeof focusable === 'object') {
+          const target = 'current' in focusable ? (focusable as { current: unknown }).current : focusable;
           if (target && typeof target === 'object' && 'focus' in target && typeof (target as { focus?: unknown }).focus === 'function') {
             (target as { focus: () => void }).focus();
           }
@@ -172,23 +177,43 @@ vi.mock('@ludy/ui/components/dialog', async () => {
           runFinalFocus();
         }
       };
-      return createElement(DialogCtx.Provider, { value: { open: isOpen || closing, setOpen, finalFocusRef } }, children);
+      return createElement(
+        DialogCtx.Provider,
+        { value: { open: isOpen || closing, setOpen, finalFocusRef, defaultFocusTargetRef } },
+        children,
+      );
     },
     DialogTrigger: ({ render, disabled, children }: { render?: ReactNode; disabled?: boolean; children?: ReactNode }) => {
-      const { setOpen } = useContext(DialogCtx);
+      const { setOpen, defaultFocusTargetRef } = useContext(DialogCtx);
+      const captureTrigger = (e: unknown) => {
+        const currentTarget = (e as { currentTarget?: unknown } | null)?.currentTarget;
+        if (currentTarget) defaultFocusTargetRef.current = currentTarget;
+      };
       if (isValidElement(render)) {
         const typedRender = render as React.ReactElement<{ onClick?: (e: unknown) => void; disabled?: boolean; children?: ReactNode }>;
         const prevClick = typedRender.props.onClick;
         const nextProps = {
           disabled: Boolean(disabled),
           onClick: (e: unknown) => {
+            captureTrigger(e);
             prevClick?.(e);
             if (!disabled) setOpen(true);
           },
         };
         return children !== undefined ? cloneElement(typedRender, nextProps, children) : cloneElement(typedRender, nextProps);
       }
-      return createElement('button', { type: 'button', disabled: Boolean(disabled), onClick: () => setOpen(true) }, children);
+      return createElement(
+        'button',
+        {
+          type: 'button',
+          disabled: Boolean(disabled),
+          onClick: (e: unknown) => {
+            captureTrigger(e);
+            setOpen(true);
+          },
+        },
+        children,
+      );
     },
     DialogContent: ({
       children,
@@ -1038,7 +1063,8 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
 
-    // On failure, custom radio stays selected and focused so arrow navigation starts from the right option.
+    // On failure, ErrorText renders the failure alert while custom radio stays selected and focused.
+    expect(container.querySelector('[data-slot="alert"][role="alert"]')?.textContent).toContain('archive failed');
     expect(customRadio.getAttribute('aria-checked')).toBe('true');
     expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(customRadio);
   });
@@ -1281,6 +1307,9 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
       for (let i = 0; i < 6; i += 1) await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
+
+    // Assert the archive failure alert actually rendered before simulating user focus onto nameInput.
+    expect(container.querySelector('[data-slot="alert"][role="alert"]')?.textContent).toContain('fast archive failed');
 
     // User focuses nameInput after the fast failure settles, BEFORE onOpenChangeComplete(false) -> finalFocus() fires.
     const nameInput = container.querySelector('input[id="template-dialog-name-create"]')!;
