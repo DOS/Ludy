@@ -13,7 +13,7 @@ export const WEEKLY_KIND = 'meetings.weekly';
 export const WEEKLY_MAIL_TEMPLATE = 'meetings.weekly';
 export const WEEKLY_MAIL_SOURCE = 'meetings.weekly';
 export const WEEKLY_DEFAULT_MINUTE = 8 * 60;
-// The most the tracked-word number says (#5019): the definer clamps there and the text says "at least" from it.
+// The most the tracked-word number says (#5019): the definer clamps there and the text writes it "999+" (that already says "more", so it never also says "at least"; below it, "at least" follows `cut`).
 export const WEEKLY_TRACKED_MAX = 999;
 
 export const zWeeklySet = z.strictObject({

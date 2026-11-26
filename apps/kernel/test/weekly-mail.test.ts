@@ -51,6 +51,9 @@ describe('the weekly mail', () => {
     // A cut list says "at least" for this number too (the number may have counted only the meetings the card lists).
     expect(weeklyLines({ ...base, lang: 'vi', tracked: 12, cut: true } as never)[3]).toBe('Từ khóa theo dõi của tổ chức xuất hiện ít nhất 12 lần');
     expect(weeklyLines({ ...base, lang: 'en', tracked: 12, cut: true } as never)[3]).toBe("The organization's tracked words came up at least 12 times");
+    // Cut and at the most: "999+" alone, never "at least 999+".
+    expect(weeklyLines({ ...base, lang: 'en', tracked: 999, cut: true } as never)[3]).toBe("The organization's tracked words came up 999+ times");
+    expect(weeklyLines({ ...base, lang: 'vi', tracked: 999, cut: true } as never)[3]).toBe('Từ khóa theo dõi của tổ chức xuất hiện 999+ lần');
     const mail = await weeklyMailTemplate.render(input({ ...base, tracked: 7 }));
     expect(mail?.text).toContain('Từ khóa theo dõi của tổ chức xuất hiện 7 lần');
     expect(mail?.html).toContain('<li>Từ khóa theo dõi của tổ chức xuất hiện 7 lần</li>');
