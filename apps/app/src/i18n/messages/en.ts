@@ -19035,6 +19035,7 @@ export const en = {
       },
       overview: 'View the accounting overview: cash, profit, receivables, payables',
       cash_forecast: 'View the 30, 60 and 90-day cash forecast',
+      home_money: 'See what customers owe, what you owe and the bank balance on Home',
       payroll: {
         settlement: 'See where the posting and the payments of an approved pay month stand',
       },
