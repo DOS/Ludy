@@ -587,8 +587,9 @@ export const channelRefreshFail = defineCommand({
       const nowMs = ctx.now.getTime();
       let nextMs = nowMs + backoffSeconds * 1000;
       let skipBackoff = false;
-      // Threads refreshes with its access token itself (no separate refresh token): keep at least one sweep window
-      // (15 minutes before expiry) whenever the backoff would land past or too close to a still-unexpired token's end.
+      // Threads (7-day horizon) refreshes with its access token itself (no separate refresh token): keep at least one
+      // sweep window (15m before expiry) whenever backoff would land past or too close to an unexpired token's end.
+      // Providers with separate refresh tokens and short horizons (Zalo 6h, TikTok 2h, X 30m, GBP 15m) keep full backoff.
       if (row.provider === 'threads' && row.expires_at !== null) {
         const expMs = new Date(row.expires_at).getTime();
         const windowEnd = expMs - 15 * 60_000;

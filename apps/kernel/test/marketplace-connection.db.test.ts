@@ -273,6 +273,9 @@ suite('marketplace connections (#2519)', () => {
         ordersWaiting: 0,
         authorizeState: null,
         reauthorizeBy: null,
+        refreshError: null,
+        refreshFailures: 0,
+        refreshNextAt: null,
       },
     ]);
     expect((await rpc('marketplace/connections/list', await tokenFor(outsider), undefined, otherSlug)).body).toEqual([]);
