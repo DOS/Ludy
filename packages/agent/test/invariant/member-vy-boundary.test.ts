@@ -4271,9 +4271,7 @@ function extractAstFacts(
     rhsExpr: tsType.Expression,
     evalScope: AstLexScope,
     scopeForTargets: AstLexScope | null,
-    assignEndPos?: number,
   ): void => {
-    const rhsBranches = expandAstBranchExprs(rhsExpr);
     for (const entry of entries) {
       const scopedTargets = scopeForTargets
         ? entry.targets.map((n) => astVarKey(scopeForTargets, n))
@@ -4301,19 +4299,90 @@ function extractAstFacts(
           rhsExpr,
         });
       }
-      if (scopedTargets.length > 0) {
-        if (!entry.isTopLevel) {
-          localWrapperBindTargets.push({ hostExpr: rhsExpr, targets: scopedTargets, scope: evalScope });
-        } else {
-          for (const br of rhsBranches) {
-            if (ts.isObjectLiteralExpression(br)) {
-              forwardObjectLiteralTargets(br, entry.key, scopedTargets, evalScope, assignEndPos, 0);
+      if (scopedTargets.length > 0 && !entry.isTopLevel) {
+        localWrapperBindTargets.push({ hostExpr: rhsExpr, targets: scopedTargets, scope: evalScope });
+      }
+    }
+  };
+
+  function forwardRhsValueToTarget(
+    targetNode: tsType.BindingName | tsType.Expression,
+    targetScope: AstLexScope,
+    rhsVal: tsType.Expression,
+    evalScope: AstLexScope,
+    assignEndPos: number | undefined,
+    depth: number,
+  ): void {
+    if (ts.isIdentifier(targetNode)) {
+      recordBindAndMemberTarget([astVarKey(targetScope, targetNode.text)], rhsVal, evalScope, assignEndPos, depth);
+    } else if (ts.isObjectBindingPattern(targetNode)) {
+      recordDestructuredEntries(extractObjectBindingDestructurePairs(targetNode, targetScope), rhsVal, evalScope, null);
+      forwardObjectPatternToRhs(targetNode, rhsVal, evalScope, targetScope, assignEndPos, depth);
+    } else if (ts.isObjectLiteralExpression(targetNode)) {
+      recordDestructuredEntries(collectDestructuringTargetsAndRefs(targetNode, targetScope).entries, rhsVal, evalScope, targetScope);
+      forwardObjectPatternToRhs(targetNode, rhsVal, evalScope, targetScope, assignEndPos, depth);
+    } else if (ts.isArrayBindingPattern(targetNode) || ts.isArrayLiteralExpression(targetNode)) {
+      recordArrayDestructure(targetNode, rhsVal, evalScope, targetScope, assignEndPos, depth);
+    }
+  }
+
+  function forwardObjectPatternToRhs(
+    objPatOrLit: tsType.ObjectBindingPattern | tsType.ObjectLiteralExpression,
+    rhsExpr: tsType.Expression,
+    evalScope: AstLexScope,
+    targetScope: AstLexScope,
+    assignEndPos: number | undefined,
+    depth = 0,
+  ): void {
+    if (depth >= 4) return;
+    const rhsObjs = expandAstBranchExprs(rhsExpr).filter((br): br is tsType.ObjectLiteralExpression =>
+      ts.isObjectLiteralExpression(br),
+    );
+    if (rhsObjs.length === 0) return;
+    const slots: Array<{ key: string | null; targetNode: tsType.BindingName | tsType.Expression }> = [];
+    if (ts.isObjectBindingPattern(objPatOrLit)) {
+      for (const el of objPatOrLit.elements) {
+        if (el.dotDotDotToken) continue;
+        const key = el.propertyName
+          ? resolveAstPropertyName(el.propertyName, evalScope).name
+          : ts.isIdentifier(el.name)
+            ? el.name.text
+            : null;
+        slots.push({ key, targetNode: el.name });
+      }
+    } else {
+      for (const prop of objPatOrLit.properties) {
+        if (ts.isShorthandPropertyAssignment(prop)) {
+          slots.push({ key: prop.name.text, targetNode: prop.name });
+        } else if (ts.isPropertyAssignment(prop)) {
+          const key = resolveAstPropertyName(prop.name, evalScope).name;
+          const init = unwrapAstExpr(prop.initializer, false);
+          const targetNode =
+            ts.isBinaryExpression(init) && init.operatorToken.kind === ts.SyntaxKind.EqualsToken
+              ? unwrapAstExpr(init.left, false)
+              : init;
+          slots.push({ key, targetNode });
+        }
+      }
+    }
+    for (const slot of slots) {
+      for (const objLit of rhsObjs) {
+        for (const prop of objLit.properties) {
+          if (ts.isPropertyAssignment(prop)) {
+            if (slot.key === null || resolveAstPropertyName(prop.name, evalScope).name === slot.key) {
+              forwardRhsValueToTarget(slot.targetNode, targetScope, prop.initializer, evalScope, assignEndPos, depth + 1);
             }
+          } else if (ts.isShorthandPropertyAssignment(prop)) {
+            if (slot.key === null || prop.name.text === slot.key) {
+              forwardRhsValueToTarget(slot.targetNode, targetScope, prop.name, evalScope, assignEndPos, depth + 1);
+            }
+          } else if (ts.isSpreadAssignment(prop)) {
+            forwardRhsValueToTarget(slot.targetNode, targetScope, prop.expression, evalScope, assignEndPos, depth + 1);
           }
         }
       }
     }
-  };
+  }
 
   const collectAssignTargetIdentifiers = (
     target: tsType.BindingName | tsType.Expression,
@@ -4402,15 +4471,7 @@ function extractAstFacts(
           }
         }
         for (const rhsItem of rhsItems) {
-          if (ts.isIdentifier(item.node)) {
-            recordBindAndMemberTarget([astVarKey(targetScope, item.node.text)], rhsItem, evalScope, assignEndPos);
-          } else if (ts.isObjectBindingPattern(item.node)) {
-            recordDestructuredEntries(extractObjectBindingDestructurePairs(item.node, targetScope), rhsItem, evalScope, null, assignEndPos);
-          } else if (ts.isObjectLiteralExpression(item.node)) {
-            recordDestructuredEntries(collectDestructuringTargetsAndRefs(item.node, targetScope).entries, rhsItem, evalScope, targetScope, assignEndPos);
-          } else if (ts.isArrayBindingPattern(item.node) || ts.isArrayLiteralExpression(item.node)) {
-            recordArrayDestructure(item.node, rhsItem, evalScope, targetScope, assignEndPos, depth + 1);
-          }
+          forwardRhsValueToTarget(item.node, targetScope, rhsItem, evalScope, assignEndPos, depth + 1);
         }
       }
     }
@@ -4755,7 +4816,8 @@ function extractAstFacts(
           });
         }
         if (ts.isObjectBindingPattern(node.name)) {
-          recordDestructuredEntries(getDestructurePairsForRhs(node.initializer, nextScope), rhsExpr, nextScope, null, node.end);
+          recordDestructuredEntries(getDestructurePairsForRhs(node.initializer, nextScope), rhsExpr, nextScope, null);
+          forwardObjectPatternToRhs(node.name, rhsExpr, nextScope, varDeclScope, node.end);
         } else if (ts.isArrayBindingPattern(node.name)) {
           recordArrayDestructure(node.name, rhsExpr, nextScope, varDeclScope, node.end);
         }
@@ -4766,7 +4828,8 @@ function extractAstFacts(
       const rhsTarget = ts.isIdentifier(node.name) ? [astVarKey(nextScope, node.name.text)] : [];
       const rhsExpr = recordBindAndMemberTarget(rhsTarget, node.initializer, nextScope, node.end);
       if (ts.isObjectBindingPattern(node.name)) {
-        recordDestructuredEntries(getDestructurePairsForRhs(node.initializer, nextScope), rhsExpr, nextScope, null, node.end);
+        recordDestructuredEntries(getDestructurePairsForRhs(node.initializer, nextScope), rhsExpr, nextScope, null);
+        forwardObjectPatternToRhs(node.name, rhsExpr, nextScope, nextScope, node.end);
       } else if (ts.isArrayBindingPattern(node.name)) {
         recordArrayDestructure(node.name, rhsExpr, nextScope, nextScope, node.end);
       }
@@ -4809,8 +4872,8 @@ function extractAstFacts(
           rhsExpr,
           nextScope,
           nextScope,
-          node.end,
         );
+        forwardObjectPatternToRhs(lhsExpr, rhsExpr, nextScope, nextScope, node.end);
       } else if (ts.isArrayLiteralExpression(lhsExpr)) {
         recordArrayDestructure(lhsExpr, rhsExpr, nextScope, nextScope, node.end);
       }
@@ -7430,9 +7493,9 @@ interface PrecomputedNotesAst {
 }
 
 const NOTES_METER_AST_TRIGGER_RE =
-  /['"`]|import|require|Reflect|eval|Function|globalThis|window|self|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}|from(?:CharCode|CodePoint)|\bString(?:\s*\?\.)?\s*\[/;
+  /['"`]|import|require|Reflect|eval|Function|globalThis|window|self|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}|from(?:CharCode|CodePoint)|\bString(?:\s*\))*(?:\s*\?\.)?\s*\[|\b(?:globalThis|window|self|module|global)\s*(?:\?\.)?\s*\[/;
 const NOTES_LITERAL_AST_TRIGGER_RE =
-  /['"`]|from(?:CharCode|CodePoint)|\bString(?:\s*\?\.)?\s*\[|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}/;
+  /['"`]|from(?:CharCode|CodePoint)|\bString(?:\s*\))*(?:\s*\?\.)?\s*\[|\b(?:globalThis|window|self|module|global)\s*(?:\?\.)?\s*\[|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}/;
 const EMPTY_PRECOMPUTED_NOTES_AST: PrecomputedNotesAst = { factsList: [], hadRangeError: false };
 
 function hasNotesMeterTrigger(text: string): boolean {
@@ -8604,7 +8667,7 @@ export function indexReexportViolations(indexText: string, symbols: readonly str
   const astOut = new Set<string>();
   const needsIndexAst =
     primary.tokens.some((t) => t.kind === 'invalid') ||
-    /\b(?:import|export|require|createRequire|eval|Function|Reflect|globalThis|window|self)\b|['"`\\]|from(?:CharCode|CodePoint)|\bString(?:\s*\?\.)?\s*\[|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}/.test(
+    /\b(?:import|export|require|createRequire|eval|Function|Reflect|globalThis|window|self)\b|['"`\\]|from(?:CharCode|CodePoint)|\bString(?:\s*\))*(?:\s*\?\.)?\s*\[|\b(?:globalThis|window|self|module|global)\s*(?:\?\.)?\s*\[|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}/.test(
       indexText,
     ) ||
     symbols.some((s) => indexText.includes(s));
@@ -9294,7 +9357,7 @@ function shouldParseWorkspaceAst(
   if (relFromRoot && relFromRoot.startsWith('packages/agent/')) return true;
   if (fromRelPath === undefined && fileText.length < 30_000) return true;
   const hasRelevantKeywordHint =
-    /@(?:ludy|crove)|agent|note-ai|packages|\bimport(?=\s*(?:\(|\/\*))|\b(?:export|require|createRequire|eval|Function|Reflect)\b|generate|Summary|Todo|from(?:CharCode|CodePoint)|\bString(?:\s*\?\.)?\s*\[|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|await\s+['"`]/.test(
+    /@(?:ludy|crove)|agent|note-ai|packages|\bimport(?=\s*(?:\(|\/\*))|\b(?:export|require|createRequire|eval|Function|Reflect)\b|generate|Summary|Todo|from(?:CharCode|CodePoint)|\bString(?:\s*\))*(?:\s*\?\.)?\s*\[|\b(?:globalThis|window|self|module|global)\s*(?:\?\.)?\s*\[|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|await\s+['"`]/.test(
       fileText,
     );
   if (
@@ -9303,7 +9366,7 @@ function shouldParseWorkspaceAst(
         (t) =>
           (t.kind === 'invalid' && (fromRelPath !== undefined || hasRelevantKeywordHint)) ||
           (t.kind === 'regex' &&
-            (/\bimport(?=\s*(?:\(|\/\*))|\b(?:require|createRequire|eval|Function|Reflect|agent|note-ai|generate|Todo|Summary|Note)|from(?:CharCode|CodePoint)|\bString(?:\s*\?\.)?\s*\[|@ludy|@crove|packages\/agent|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]/.test(
+            (/\bimport(?=\s*(?:\(|\/\*))|\b(?:require|createRequire|eval|Function|Reflect|agent|note-ai|generate|Todo|Summary|Note)|from(?:CharCode|CodePoint)|\bString(?:\s*\))*(?:\s*\?\.)?\s*\[|\b(?:globalThis|window|self|module|global)\s*(?:\?\.)?\s*\[|@ludy|@crove|packages\/agent|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]/.test(
               t.raw,
             ) ||
               (/\{/.test(t.raw) && /['"`]/.test(t.raw)))),
@@ -9313,7 +9376,7 @@ function shouldParseWorkspaceAst(
     return true;
   }
   if (
-    /(?:@(?:ludy|crove)(?:$|[^a-zA-Z0-9_/]|\/(?:$|[^a-zA-Z0-9_]|a(?:$|g|[^a-zA-Z0-9_-])))|note-ai|packages\/agent|generate(?:Note|Todo)|SummaryText|TodoSuggest|TodoPlan|NoteOrganize|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|from(?:CharCode|CodePoint)|\bString(?:\s*\?\.)?\s*\[|globalThis|createRequire|module\.require|window\.require|self\.require|\bimport(?=\s*(?:\(|\/\*))|\b(?:Reflect|eval|Function)\b|await\s+['"`])/.test(
+    /(?:@(?:ludy|crove)(?:$|[^a-zA-Z0-9_/]|\/(?:$|[^a-zA-Z0-9_]|a(?:$|g|[^a-zA-Z0-9_-])))|note-ai|packages\/agent|generate(?:Note|Todo)|SummaryText|TodoSuggest|TodoPlan|NoteOrganize|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|from(?:CharCode|CodePoint)|\bString(?:\s*\))*(?:\s*\?\.)?\s*\[|\b(?:globalThis|window|self|module|global)\s*(?:\?\.)?\s*\[|globalThis|createRequire|module\.require|window\.require|self\.require|\bimport(?=\s*(?:\(|\/\*))|\b(?:Reflect|eval|Function)\b|await\s+['"`])/.test(
       fileText,
     )
   ) {
@@ -9337,7 +9400,7 @@ function shouldParseWorkspaceAst(
     (/(?:agent|note-ai|packages|from(?:CharCode|CodePoint)|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|\\\r?\n)/i.test(
       fileText,
     ) ||
-      /\bString(?:\s*\?\.)?\s*\[/.test(fileText) ||
+      /\bString(?:\s*\))*(?:\s*\?\.)?\s*\[|\b(?:globalThis|window|self|module|global)\s*(?:\?\.)?\s*\[/.test(fileText) ||
       /(?:import|require)\s*\([^)]*(?:\+|`|\$\{)/.test(fileText))
   ) {
     return true;
@@ -12071,6 +12134,12 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(
       memberVyViolations("const [fn] = [globalThis.fetch];\nfn('https://x.test');"),
     ).toContain('calls the network directly');
+    expect(
+      memberVyViolations("const { a: [fn] } = { a: [globalThis.fetch] };\nfn('https://x.test');"),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations("let fn;\n({ a: [fn] } = { a: [globalThis.fetch] });\nfn('https://x.test');"),
+    ).toContain('calls the network directly');
 
     // B3c: Reflect.get and computed destructuring of WebSocket / XMLHttpRequest
     expect(memberVyViolations("const W = Reflect.get(globalThis, 'Web' + 'Socket'); void W;")).toContain('calls the network directly');
@@ -12152,6 +12221,20 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(
       workspaceAdapterLeakViolations(
         'export const fn = globalThis.String.fromCodePoint(103,101,110,101,114,97,116,101,78,111,116,101,83,117,109,109,97,114,121,84,101,120,116);',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toEqual(['generateNoteSummaryText']);
+    expect(
+      workspaceAdapterLeakViolations(
+        "export const fn = (String)['from' + 'CodePoint'](103,101,110,101,114,97,116,101,78,111,116,101,83,117,109,109,97,114,121,84,101,120,116);",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toEqual(['generateNoteSummaryText']);
+    expect(
+      workspaceAdapterLeakViolations(
+        "export const fn = window['String']['from' + 'CharCode'](103,101,110,101,114,97,116,101,78,111,116,101,83,117,109,109,97,114,121,84,101,120,116);",
         DEFAULT_ADAPTER_EXPORTS,
         'apps/web/src/C.tsx',
       ),
