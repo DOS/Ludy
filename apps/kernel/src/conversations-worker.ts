@@ -936,12 +936,15 @@ export interface AttachmentDeps {
 }
 
 // Fetches one pending image and records what came of it: 'stored', 'dropped' (the image will never be fetched), 'retry' (asked again by the
-// relay after a few minutes, up to five tries), or 'none' (nothing to do: the row is gone, stored, or its connection is not active). The
+// relay after a few minutes, up to five tries), 'none' (nothing to do: the row is gone, stored, or its connection is not active), or
+// 'ATTACHMENT_CONNECTION_MISMATCH' (wrong connection id in job, leaving the pending row untouched for its owning connection's job). The
 // outcome string is for the log and carries no platform text.
 export async function runConversationAttachment(deps: AttachmentDeps, job: ConversationAttachmentJob): Promise<string> {
   const options = { actor: SYSTEM, orgId: job.orgId };
   const source = await deps.runtime.query<AttachmentSource | null>('kernel.conversation.attachment_source', { attachmentId: job.attachmentId }, options);
   if (!source) return 'none';
+  // Fail closed without deleting or mutating the pending attachment owned by source.connectionId when a job carries a different connectionId (#3152).
+  if (source.connectionId !== job.connectionId) return 'ATTACHMENT_CONNECTION_MISMATCH';
   const failed = async (retry: boolean, code: string): Promise<string> => {
     await deps.runtime.execute('kernel.conversation.attachment_record', { outcome: 'failed', attachmentId: job.attachmentId, retry, code }, options);
     return retry ? 'retry' : 'dropped';
@@ -961,6 +964,8 @@ export async function runConversationAttachment(deps: AttachmentDeps, job: Conve
       return failed(true, 'CREDENTIAL_ERROR');
     }
     if (opened.kind === 'refused') return failed(false, opened.code);
+    // Defence in depth (#3152): refuse if the opened connection's provider disagrees with the attachment's provider before egress.
+    if (opened.provider !== source.provider) return failed(false, 'ATTACHMENT_PROVIDER_MISMATCH');
     got = await fetchConversationMedia(adapter, { externalAccountId: opened.externalAccountId, secret: opened.secret, mediaRef: source.mediaRef, hosts, ...(deps.egress ? { egress: deps.egress } : {}) });
   } else {
     return 'none';
@@ -1059,7 +1064,7 @@ interface SealedChannelCredential {
   envelope: string;
 }
 
-type Opened = { kind: 'ok'; externalAccountId: string; secret: string } | { kind: 'refused'; code: string; expired: boolean };
+type Opened = { kind: 'ok'; provider: string; externalAccountId: string; secret: string } | { kind: 'refused'; code: string; expired: boolean };
 
 // The credential of a connection, opened here and nowhere else. kernel.channel.credential refuses once the member who connected
 // the account may no longer use it or the connection is not active.
@@ -1075,7 +1080,7 @@ async function open(deps: Pick<SendDeps, 'runtime' | 'broker'>, job: { orgId: st
     throw error;
   }
   const secret = deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, { orgId: job.orgId, provider: sealed.provider, externalAccountId: sealed.externalAccountId });
-  return { kind: 'ok', externalAccountId: sealed.externalAccountId, secret };
+  return { kind: 'ok', provider: sealed.provider, externalAccountId: sealed.externalAccountId, secret };
 }
 
 const expire = async (deps: SendDeps, job: { orgId: string; connectionId: string }, reason: string, version: string): Promise<void> => {

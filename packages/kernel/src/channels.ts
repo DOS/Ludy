@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { isAdProviderId, isAdWriteProviderId, zId } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { acquireChannelLocks } from './advisory-lock.ts';
 import { notifyMembers, ownersAndAdmins, TELEGRAM_CHAT_DISPLACED } from './notifications.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -63,6 +64,13 @@ export const zChannelConnect = z.strictObject({
 });
 export type ChannelConnectInput = z.infer<typeof zChannelConnect>;
 
+async function readPostLockTimestamp(trx: CommandContext['trx']): Promise<Date> {
+  const { rows } = await sql<{ now: Date }>`SELECT pg_catalog.clock_timestamp() AS now`.execute(trx);
+  const raw = rows[0]?.now;
+  if (!raw) throw new Error('pg_catalog.clock_timestamp() returned no row');
+  return raw instanceof Date ? raw : new Date(raw);
+}
+
 export const channelConnect = defineCommand({
   name: 'kernel.channel.connect',
   input: zChannelConnect,
@@ -71,6 +79,21 @@ export const channelConnect = defineCommand({
   access: ADMINS,
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
+    await acquireChannelLocks(ctx.trx, ctx.orgId, input.provider, input.externalAccountId);
+    // Reconnecting a live connection of the same account keeps its row; a revoked one is history and stays. The
+    // member who reconnects becomes its connector, so the credential lives on their membership from now on.
+    const existing = await ctx.trx
+      .selectFrom('ludy_kernel.channel_connection')
+      .select(['id', 'chat_state'])
+      .where('org_id', '=', ctx.orgId)
+      .where('provider', '=', input.provider)
+      .where('external_account_id', '=', input.externalAccountId)
+      .where('status', '<>', 'revoked')
+      .forUpdate()
+      .executeTakeFirst();
+    // Read clock_timestamp() strictly after acquiring locks (and, for a new WhatsApp row, strictly after INSERT clears
+    // any unique-index wait against an uncommitted org_purge delete) so connected_at cannot predate the previous holder (#3152).
+    const now = existing && input.provider === 'whatsapp' ? await readPostLockTimestamp(ctx.trx) : ctx.now;
     const values = {
       display_name: input.displayName,
       scopes: input.scopes,
@@ -86,22 +109,8 @@ export const channelConnect = defineCommand({
       history_synced_at: null,
       // ... also a YouTube channel, whose due time is its own interval (#3134): a reconnect after a refused token must not wait out the hold.
       history_next_at: null,
-      updated_at: ctx.now,
+      updated_at: now,
     };
-    // Two connects of one account at once serialize here, so the second finds the first's row and reconnects
-    // instead of failing on the unique index (no row exists yet for FOR UPDATE to lock).
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.channel:${ctx.orgId}:${input.provider}:${input.externalAccountId}`}, 0))`.execute(ctx.trx);
-    // Reconnecting a live connection of the same account keeps its row; a revoked one is history and stays. The
-    // member who reconnects becomes its connector, so the credential lives on their membership from now on.
-    const existing = await ctx.trx
-      .selectFrom('ludy_kernel.channel_connection')
-      .select(['id', 'chat_state'])
-      .where('org_id', '=', ctx.orgId)
-      .where('provider', '=', input.provider)
-      .where('external_account_id', '=', input.externalAccountId)
-      .where('status', '<>', 'revoked')
-      .forUpdate()
-      .executeTakeFirst();
     let id: string;
     if (existing) {
       await ctx.trx.updateTable('ludy_kernel.channel_connection').set(values).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
@@ -111,7 +120,7 @@ export const channelConnect = defineCommand({
       if (input.provider === 'telegram' && (existing.chat_state === 'on' || existing.chat_state === 'enabling')) {
         await ctx.trx
           .updateTable('ludy_kernel.channel_connection')
-          .set({ chat_hook_next: newChatHook(), chat_state: 'enabling', chat_error: null, chat_changed_at: ctx.now })
+          .set({ chat_hook_next: newChatHook(), chat_state: 'enabling', chat_error: null, chat_changed_at: now })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', id)
           .execute();
@@ -133,6 +142,15 @@ export const channelConnect = defineCommand({
           throw error;
         });
       id = row.id;
+      if (input.provider === 'whatsapp') {
+        const postInsertNow = await readPostLockTimestamp(ctx.trx);
+        await ctx.trx
+          .updateTable('ludy_kernel.channel_connection')
+          .set({ connected_at: postInsertNow, updated_at: postInsertNow })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', id)
+          .execute();
+      }
     }
     await sql`SELECT ludy_kernel.credential_put(${id}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`
       .execute(ctx.trx)
@@ -154,6 +172,18 @@ export const channelDisconnect = defineCommand({
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
   handler: async (ctx, input) => {
     requireUser(ctx);
+    // Plain read first (no FOR UPDATE) so the handover and per-org advisory locks are always acquired before any row lock (#3152).
+    const target = await ctx.trx
+      .selectFrom('ludy_kernel.channel_connection')
+      .select(['status', 'provider', 'external_account_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .executeTakeFirst();
+    if (!target) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    // Skip cross-org handover locks for an already-revoked row so idempotent disconnect/credential drop never stalls a new holder.
+    if (target.status !== 'revoked') {
+      await acquireChannelLocks(ctx.trx, ctx.orgId, target.provider, target.external_account_id);
+    }
     const row = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
       .select(['status', 'provider', 'chat_state'])
@@ -169,11 +199,12 @@ export const channelDisconnect = defineCommand({
       throw new DomainError('CHAT_IS_ON', 409, 'Hãy tắt nhận tin nhắn của khách trước khi ngắt kết nối kênh này, để Ludy gỡ webhook ở Telegram');
     }
     if (row.status !== 'revoked') {
+      const updatedAt = row.provider === 'whatsapp' ? await readPostLockTimestamp(ctx.trx) : ctx.now;
       await ctx.trx
         .updateTable('ludy_kernel.channel_connection')
         // A Telegram connection that answered chats gives its hook up too (#3132): the webhook at Telegram is left to be removed in BotFather, and a
         // notice that still comes in on it finds no connection and is dropped.
-        .set({ status: 'revoked', status_reason: input.reason ?? 'disconnected', updated_at: ctx.now, chat_state: 'off', chat_hook: null, chat_hook_next: null, chat_bot_id: null, chat_hook_key_id: null, chat_displace_pending: false, chat_hook_rekey_after: null, chat_business: '[]', chat_business_order: '{}' })
+        .set({ status: 'revoked', status_reason: input.reason ?? 'disconnected', updated_at: updatedAt, chat_state: 'off', chat_hook: null, chat_hook_next: null, chat_bot_id: null, chat_hook_key_id: null, chat_displace_pending: false, chat_hook_rekey_after: null, chat_business: '[]', chat_business_order: '{}' })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
         .execute();
@@ -234,6 +265,18 @@ export const channelRevokeByPlatform = defineCommand({
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
+    // Plain read first (no FOR UPDATE) so the handover and per-org advisory locks are always acquired before any row lock (#3152).
+    const target = await ctx.trx
+      .selectFrom('ludy_kernel.channel_connection')
+      .select(['status', 'provider', 'external_account_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .executeTakeFirst();
+    if (!target) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    // Skip cross-org handover locks for an already-revoked row so idempotent disconnect/credential drop never stalls a new holder.
+    if (target.status !== 'revoked') {
+      await acquireChannelLocks(ctx.trx, ctx.orgId, target.provider, target.external_account_id);
+    }
     const row = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
       .select(['status', 'provider'])
@@ -243,11 +286,12 @@ export const channelRevokeByPlatform = defineCommand({
       .executeTakeFirst();
     if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     if (row.status !== 'revoked') {
+      const updatedAt = row.provider === 'whatsapp' ? await readPostLockTimestamp(ctx.trx) : ctx.now;
       await ctx.trx
         .updateTable('ludy_kernel.channel_connection')
         // The ad account's name and the permissions its token held go with the token: what a revoked connection keeps is its
         // platform id and the time it closed.
-        .set({ status: 'revoked', status_reason: input.reason ?? 'platform_deletion', display_name: 'Deleted', scopes: [], updated_at: ctx.now })
+        .set({ status: 'revoked', status_reason: input.reason ?? 'platform_deletion', display_name: 'Deleted', scopes: [], updated_at: updatedAt })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
         .execute();

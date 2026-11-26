@@ -132,6 +132,7 @@ import { z } from 'zod';
 import { zId, zTodayItems, type TodayItem } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, conversationKey, defineCommand, defineQuery, newConversationBlobId, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { acquireChannelLocks } from './advisory-lock.ts';
 import { parseBusinessAccounts } from './channels.ts';
 import { createMailMessage } from './mail.ts';
 import { notifyMembers, ownersAndAdmins } from './notifications.ts';
@@ -2955,6 +2956,21 @@ export const conversationEraseChannel = defineCommand({
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
   handler: async (ctx, input): Promise<ConversationChannelErased> => {
     requireUser(ctx);
+    // Plain read first (no FOR UPDATE) so handover and per-org advisory locks are acquired before any row lock (#3152).
+    const target = await ctx.trx
+      .selectFrom('ludy_kernel.channel_connection')
+      .select(['status', 'provider', 'external_account_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .executeTakeFirst();
+    if (!target) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    // Only a conversation channel: an ads, bank feed, e-invoice, marketplace or email connection has no conversations to erase here, and this R3 command
+    // must not disconnect one. Refused before anything changes.
+    if (!conversationRules(target.provider)) throw new DomainError('CHANNEL_NOT_CONVERSATIONAL', 422, 'Kết nối này không phải kênh trò chuyện với khách');
+    // Skip the cross-org handover lock when the row is already revoked so deleting old history never stalls a new holder.
+    if (target.status !== 'revoked') {
+      await acquireChannelLocks(ctx.trx, ctx.orgId, target.provider, target.external_account_id);
+    }
     const connection = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
       .select(['status', 'provider'])
@@ -2963,9 +2979,6 @@ export const conversationEraseChannel = defineCommand({
       .forUpdate()
       .executeTakeFirst();
     if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
-    // Only a conversation channel: an ads, bank feed, e-invoice, marketplace or email connection has no conversations to erase here, and this R3 command
-    // must not disconnect one. Refused before anything changes.
-    if (!conversationRules(connection.provider)) throw new DomainError('CHANNEL_NOT_CONVERSATIONAL', 422, 'Kết nối này không phải kênh trò chuyện với khách');
     if (connection.status !== 'revoked') await ctx.run('kernel.channel.disconnect', { connectionId: input.connectionId });
     const erased = await eraseConnectionConversations(ctx, input.connectionId);
     ctx.audit({ connection_id: input.connectionId, threads: erased.threads, messages: erased.messages, identities: erased.identities });
@@ -3227,6 +3240,7 @@ export const conversationAttachmentRequest = defineCommand({
 });
 
 export interface AttachmentSource {
+  connectionId: string;
   provider: string;
   // Where the image is: the platform's address, or (#3131) the provider-scoped reference its adapter turns into bytes with the connection's credential. Exactly
   // one is set. Personal data, read here for the one fetch and put nowhere.
@@ -3251,7 +3265,13 @@ export const conversationAttachmentSource = defineQuery({
     if (!row || row.state !== 'pending' || (!row.source_url && !row.source_ref)) return null;
     const connection = await connectionOf(ctx, row.channel_connection_id);
     if (!connection || connection.status !== 'active') return null;
-    return { provider: connection.provider, sourceUrl: row.source_url, mediaRef: row.source_url ? null : row.source_ref, storageKey: row.storage_key };
+    return {
+      connectionId: row.channel_connection_id,
+      provider: connection.provider,
+      sourceUrl: row.source_url,
+      mediaRef: row.source_url ? null : row.source_ref,
+      storageKey: row.storage_key,
+    };
   },
 });
 
