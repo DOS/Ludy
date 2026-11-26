@@ -7,11 +7,17 @@ import { join } from 'node:path';
 import type pg from 'pg';
 import { Hono } from 'hono';
 import { SignAiReader } from '@ludy/agent';
-import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
+import { sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
-import { createHttpApp, releaseOnResponseClose } from '../src/http.ts';
+import {
+  PDF_STREAM_LEASE_MS,
+  PDF_STREAM_MAX_LEASE_MS,
+  PUBLIC_PDF_STREAM_LEASE_MS,
+  createHttpApp,
+  releaseOnResponseClose,
+} from '../src/http.ts';
 import { SIGN_ATTACHMENT_MAX_BYTES, verifySignAttachmentBytes } from '../src/sign-link.ts';
 
 const ORG_ID = '01900000-0000-7000-8000-000000000010';
@@ -1498,6 +1504,508 @@ describe('os.sign RPC handlers (#3325)', () => {
         expect(releasePreFinished).toHaveBeenCalledTimes(1);
         expect(finishedEmitter.listenerCount('finish')).toBe(0);
         expect(finishedEmitter.listenerCount('close')).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('destroys stalled outgoing target once with zero args and errors unread streams on lease expiry (#5024)', async () => {
+      expect(PDF_STREAM_LEASE_MS).toBe(60_000);
+      expect(PUBLIC_PDF_STREAM_LEASE_MS).toBe(15_000);
+
+      vi.useFakeTimers();
+      try {
+        const bytes = new Uint8Array([1, 2, 3, 4]);
+
+        // Unread stream with attached outgoing: expiry calls outgoing.destroy() with zero args and errors the stream.
+        const releaseUnread = vi.fn();
+        const destroyUnread = vi.fn();
+        const unreadOutgoing = Object.assign(new EventEmitter(), { destroy: destroyUnread });
+        const unreadCtx = {
+          env: { outgoing: unreadOutgoing },
+          req: { raw: new AbortController().signal },
+        } as unknown as Parameters<typeof releaseOnResponseClose>[2];
+
+        const unreadStream = releaseOnResponseClose(bytes, releaseUnread, unreadCtx);
+        vi.advanceTimersByTime(PDF_STREAM_LEASE_MS - 1);
+        expect(releaseUnread).not.toHaveBeenCalled();
+        expect(destroyUnread).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+        expect(releaseUnread).toHaveBeenCalledTimes(1);
+        expect(destroyUnread).toHaveBeenCalledTimes(1);
+        expect(destroyUnread).toHaveBeenCalledWith();
+
+        const unreadReader = unreadStream.getReader();
+        await expect(unreadReader.read()).rejects.toThrow('PDF response stream lease expired');
+
+        // Subsequent events remain no-ops.
+        unreadOutgoing.emit('close');
+        unreadOutgoing.emit('finish');
+        expect(releaseUnread).toHaveBeenCalledTimes(1);
+        expect(destroyUnread).toHaveBeenCalledTimes(1);
+
+        // Unread stream with custom PUBLIC_PDF_STREAM_LEASE_MS expires at 15_000ms (not 14_999ms).
+        const releasePubLease = vi.fn();
+        const destroyPubLease = vi.fn();
+        const pubOutgoing = Object.assign(new EventEmitter(), { destroy: destroyPubLease });
+        const pubStream = releaseOnResponseClose(
+          bytes,
+          releasePubLease,
+          { env: { outgoing: pubOutgoing }, req: { raw: new AbortController().signal } } as unknown as Parameters<
+            typeof releaseOnResponseClose
+          >[2],
+          PUBLIC_PDF_STREAM_LEASE_MS,
+        );
+        vi.advanceTimersByTime(PUBLIC_PDF_STREAM_LEASE_MS - 1);
+        expect(releasePubLease).not.toHaveBeenCalled();
+        expect(destroyPubLease).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+        expect(releasePubLease).toHaveBeenCalledTimes(1);
+        expect(destroyPubLease).toHaveBeenCalledTimes(1);
+        expect(destroyPubLease).toHaveBeenCalledWith();
+        await expect(pubStream.getReader().read()).rejects.toThrow('PDF response stream lease expired');
+
+        // Stalled after stream pull() #1/#2 already closed: destroys outgoing once without throwing on closed stream.
+        const releasePulled = vi.fn();
+        const destroyPulled = vi.fn(() => {
+          throw new Error('destroy error should be caught');
+        });
+        const pulledOutgoing = Object.assign(new EventEmitter(), { destroy: destroyPulled });
+        const pulledStream = releaseOnResponseClose(bytes, releasePulled, {
+          env: { outgoing: pulledOutgoing },
+          req: { raw: new AbortController().signal },
+        } as unknown as Parameters<typeof releaseOnResponseClose>[2]);
+        const pulledReader = pulledStream.getReader();
+        expect((await pulledReader.read()).done).toBe(false);
+        expect((await pulledReader.read()).done).toBe(true);
+        vi.advanceTimersByTime(PDF_STREAM_LEASE_MS);
+        expect(releasePulled).toHaveBeenCalledTimes(1);
+        expect(destroyPulled).toHaveBeenCalledTimes(1);
+        expect(destroyPulled).toHaveBeenCalledWith();
+
+        // Normal finish, normal close, and pre-finished/pre-closed/pre-destroyed sockets never call destroy().
+        const destroyNormalFinish = vi.fn();
+        const normalFinishOutgoing = Object.assign(new EventEmitter(), { destroy: destroyNormalFinish });
+        releaseOnResponseClose(bytes, vi.fn(), {
+          env: { outgoing: normalFinishOutgoing },
+          req: { raw: new AbortController().signal },
+        } as unknown as Parameters<typeof releaseOnResponseClose>[2]);
+        normalFinishOutgoing.emit('finish');
+        vi.advanceTimersByTime(PDF_STREAM_LEASE_MS);
+        expect(destroyNormalFinish).not.toHaveBeenCalled();
+
+        const destroyNormalClose = vi.fn();
+        const normalCloseOutgoing = Object.assign(new EventEmitter(), { destroy: destroyNormalClose });
+        releaseOnResponseClose(bytes, vi.fn(), {
+          env: { outgoing: normalCloseOutgoing },
+          req: { raw: new AbortController().signal },
+        } as unknown as Parameters<typeof releaseOnResponseClose>[2]);
+        normalCloseOutgoing.emit('close');
+        vi.advanceTimersByTime(PDF_STREAM_LEASE_MS);
+        expect(destroyNormalClose).not.toHaveBeenCalled();
+
+        for (const flags of [{ writableFinished: true }, { closed: true }, { destroyed: true }]) {
+          const destroyPre = vi.fn();
+          const releasePre = vi.fn();
+          const preOutgoing = Object.assign(new EventEmitter(), { ...flags, destroy: destroyPre });
+          releaseOnResponseClose(bytes, releasePre, {
+            env: { outgoing: preOutgoing },
+            req: { raw: new AbortController().signal },
+          } as unknown as Parameters<typeof releaseOnResponseClose>[2]);
+          vi.advanceTimersByTime(PDF_STREAM_LEASE_MS);
+          expect(releasePre).toHaveBeenCalledTimes(1);
+          expect(destroyPre).not.toHaveBeenCalled();
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('uses 15s lease on all 4 public PDF/QR routes and preserves 60s lease on /api/v1/sign/* routes (#5024)', async () => {
+      vi.useFakeTimers();
+      try {
+        const pdfBytes = Uint8Array.from(Buffer.from('%PDF-1.4\n%%EOF\n', 'utf8'));
+        const pngBytes = new Uint8Array(64);
+        pngBytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+        const certBytes = Uint8Array.from(Buffer.from('{"certificateCode":"CS-1111-2222-3333"}', 'utf8'));
+
+        const pdfSha = sha256Hex(pdfBytes);
+        const pngSha = sha256Hex(pngBytes);
+        const certSha = sha256Hex(certBytes);
+        const blobs = new Map<string, Uint8Array>([
+          ['k/pdf', pdfBytes],
+          ['k/qr', pngBytes],
+          ['k/cert', certBytes],
+        ]);
+        const store = {
+          put: async () => 'gen-1',
+          get: async (key: string) => {
+            const found = blobs.get(key);
+            if (!found) throw new Error(`missing ${key}`);
+            return found;
+          },
+          delete: async () => {},
+        } as unknown as BlobStore;
+
+        const fakeOrglessDb = {
+          getExecutor: () => ({
+            transformQuery: (node: unknown) => node,
+            compileQuery: (node: unknown) => ({ query: node, sql: JSON.stringify(node), parameters: [] }),
+            executeQuery: async ({ sql }: { sql: string }) => {
+              if (sql.includes('public_deposit_qr_source')) {
+                return {
+                  rows: [{ source: { orgId: ORG_ID, otpRequired: false, storageKey: 'k/qr', generation: 'g1', sha256: pngSha } }],
+                };
+              }
+              if (
+                sql.includes('public_pdf_source') ||
+                sql.includes('public_direct_pdf_source') ||
+                sql.includes('public_hub_pdf_source')
+              ) {
+                return {
+                  rows: [{ source: { orgId: ORG_ID, otpRequired: false, storageKey: 'k/pdf', generation: 'g1', sha256: pdfSha } }],
+                };
+              }
+              if (sql.includes('api_key_authenticate')) {
+                return {
+                  rows: [{ auth: { status: 'ok', orgId: ORG_ID, orgSlug: 'acme', scopes: ['sign:read'] } }],
+                };
+              }
+              if (sql.includes('api_key_envelope_file_source')) {
+                const isCert = sql.includes('"certificate"');
+                return {
+                  rows: [
+                    {
+                      out: {
+                        status: 'ok',
+                        envelopeId: ENVELOPE_ID,
+                        storageKey: isCert ? 'k/cert' : 'k/pdf',
+                        generation: 'g1',
+                        sha256: isCert ? certSha : pdfSha,
+                      },
+                    },
+                  ],
+                };
+              }
+              return { rows: [] };
+            },
+          }),
+        };
+
+        const routeRuntime = {
+          installed: (name: string) => name === 'kernel' || name === 'sign',
+          modules: () => ['kernel', 'sign'],
+          orgless: async <T>(fn: (db: never) => Promise<T>) => fn(fakeOrglessDb as never),
+        } as unknown as Runtime;
+
+        const routeApp = createHttpApp({
+          config: buildConfig(),
+          runtime: routeRuntime,
+          store,
+          authenticate: async () => buildUser(),
+          pool: {} as pg.Pool,
+          aiEnabled: false,
+        });
+
+        const token = 'T'.repeat(43);
+        const publicCases: Array<{ path: string; body: unknown }> = [
+          { path: '/api/sign/pdf', body: { token } },
+          { path: '/api/sign/deposit-qr', body: { token } },
+          { path: '/api/sign/direct/pdf', body: { token } },
+          { path: '/api/sign/public-hub/acme', body: { action: 'pdf', templateId: TEMPLATE_ID } },
+        ];
+
+        for (const [idx, item] of publicCases.entries()) {
+          const destroy = vi.fn();
+          const outgoing = Object.assign(new EventEmitter(), { destroy });
+          const res = await routeApp.request(
+            item.path,
+            {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                'x-forwarded-for': `198.51.100.${10 + idx}`,
+              },
+              body: JSON.stringify(item.body),
+            },
+            { outgoing },
+          );
+          expect(res.status, item.path).toBe(200);
+          vi.advanceTimersByTime(PUBLIC_PDF_STREAM_LEASE_MS - 1);
+          expect(destroy, `${item.path} before 15s`).not.toHaveBeenCalled();
+
+          vi.advanceTimersByTime(1);
+          expect(destroy, `${item.path} at 15s`).toHaveBeenCalledTimes(1);
+          expect(destroy).toHaveBeenCalledWith();
+          await expect(res.body!.getReader().read()).rejects.toThrow('PDF response stream lease expired');
+        }
+
+        const apiKeyBearer = `Bearer ludy_sk_${'a'.repeat(32)}`;
+        for (const [idx, suffix] of ['sealed', 'certificate'].entries()) {
+          const destroy = vi.fn();
+          const outgoing = Object.assign(new EventEmitter(), { destroy });
+          const res = await routeApp.request(
+            `/api/v1/sign/envelopes/${ENVELOPE_ID}/${suffix}`,
+            {
+              method: 'GET',
+              headers: {
+                authorization: apiKeyBearer,
+                'x-forwarded-for': `198.51.100.${30 + idx}`,
+              },
+            },
+            { outgoing },
+          );
+          expect(res.status, suffix).toBe(200);
+          vi.advanceTimersByTime(PUBLIC_PDF_STREAM_LEASE_MS);
+          expect(destroy, `${suffix} at 15s`).not.toHaveBeenCalled();
+
+          vi.advanceTimersByTime(PDF_STREAM_LEASE_MS - PUBLIC_PDF_STREAM_LEASE_MS - 1);
+          expect(destroy, `${suffix} before 60s`).not.toHaveBeenCalled();
+
+          vi.advanceTimersByTime(1);
+          expect(destroy, `${suffix} at 60s`).toHaveBeenCalledTimes(1);
+          expect(destroy).toHaveBeenCalledWith();
+          await expect(res.body!.getReader().read()).rejects.toThrow('PDF response stream lease expired');
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    const createChunkTestOutgoing = () => {
+      const listeners = new Map<string, Set<() => void>>();
+      const add = (evt: string, fn: () => void) => {
+        let set = listeners.get(evt);
+        if (!set) {
+          set = new Set();
+          listeners.set(evt, set);
+        }
+        set.add(fn);
+      };
+      const remove = (evt: string, fn: () => void) => {
+        listeners.get(evt)?.delete(fn);
+      };
+      const outgoing = {
+        writableFinished: false,
+        closed: false,
+        destroyed: false,
+        destroy: vi.fn(() => {
+          outgoing.destroyed = true;
+        }),
+        on: (evt: string, fn: () => void) => {
+          add(evt, fn);
+        },
+        off: (evt: string, fn: () => void) => {
+          remove(evt, fn);
+        },
+        emit: (evt: string) => {
+          for (const fn of Array.from(listeners.get(evt) ?? [])) {
+            fn();
+          }
+        },
+        listenerCount: (evt: string) => listeners.get(evt)?.size ?? 0,
+      };
+      return outgoing;
+    };
+
+    it('completes a slow-but-steady 10 MiB public PDF download over 48s without hitting the 15s idle lease', async () => {
+      vi.useFakeTimers();
+      try {
+        expect(PDF_STREAM_MAX_LEASE_MS).toBe(120_000);
+        const totalBytes = 10 * 1024 * 1024;
+        const expected = new Uint8Array(totalBytes);
+        expected[0] = 0x25;
+        expected[1] = 0x50;
+        expected[64 * 1024] = 0x3b;
+        expected[5 * 1024 * 1024] = 0x7a;
+        expected[totalBytes - 2] = 0x45;
+        expected[totalBytes - 1] = 0x0a;
+
+        const outgoing = createChunkTestOutgoing();
+        const release = vi.fn();
+        const stream = releaseOnResponseClose(
+          expected,
+          release,
+          { env: { outgoing } } as unknown as Parameters<typeof releaseOnResponseClose>[2],
+          PUBLIC_PDF_STREAM_LEASE_MS,
+        );
+        const reader = stream.getReader();
+        const received = new Uint8Array(totalBytes);
+        let receivedOffset = 0;
+        let chunks = 0;
+
+        while (true) {
+          vi.advanceTimersByTime(300);
+          const result = await reader.read();
+          if (result.done) break;
+          chunks += 1;
+          expect(result.value.byteLength).toBe(64 * 1024);
+          received.set(result.value, receivedOffset);
+          receivedOffset += result.value.byteLength;
+        }
+
+        expect(chunks).toBe(160);
+        expect(chunks * 300).toBeGreaterThan(PUBLIC_PDF_STREAM_LEASE_MS);
+        expect(receivedOffset).toBe(totalBytes);
+        expect(received[0]).toBe(expected[0]);
+        expect(received[1]).toBe(expected[1]);
+        expect(received[64 * 1024]).toBe(expected[64 * 1024]);
+        expect(received[5 * 1024 * 1024]).toBe(expected[5 * 1024 * 1024]);
+        expect(received[totalBytes - 2]).toBe(expected[totalBytes - 2]);
+        expect(received[totalBytes - 1]).toBe(expected[totalBytes - 1]);
+
+        expect(release).not.toHaveBeenCalled();
+        expect(outgoing.destroy).not.toHaveBeenCalled();
+
+        outgoing.emit('finish');
+        expect(release).toHaveBeenCalledTimes(1);
+        expect(outgoing.destroy).not.toHaveBeenCalled();
+        expect(outgoing.listenerCount('finish')).toBe(0);
+        expect(outgoing.listenerCount('close')).toBe(0);
+        expect(outgoing.listenerCount('drain')).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('aborts a stalled public PDF stream 15s after the last chunk pull', async () => {
+      vi.useFakeTimers();
+      try {
+        const outgoing = createChunkTestOutgoing();
+        const release = vi.fn();
+        const stream = releaseOnResponseClose(
+          new Uint8Array(256 * 1024),
+          release,
+          { env: { outgoing } } as unknown as Parameters<typeof releaseOnResponseClose>[2],
+          PUBLIC_PDF_STREAM_LEASE_MS,
+        );
+        const reader = stream.getReader();
+
+        const first = await reader.read();
+        expect(first.done).toBe(false);
+        expect(first.value?.byteLength).toBe(64 * 1024);
+
+        vi.advanceTimersByTime(10_000);
+        const second = await reader.read();
+        expect(second.done).toBe(false);
+        expect(second.value?.byteLength).toBe(64 * 1024);
+
+        vi.advanceTimersByTime(PUBLIC_PDF_STREAM_LEASE_MS - 1);
+        expect(release).not.toHaveBeenCalled();
+        expect(outgoing.destroy).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+        expect(release).toHaveBeenCalledTimes(1);
+        expect(outgoing.destroy).toHaveBeenCalledTimes(1);
+        expect(outgoing.destroy).toHaveBeenCalledWith();
+        expect(outgoing.listenerCount('finish')).toBe(0);
+        expect(outgoing.listenerCount('close')).toBe(0);
+        expect(outgoing.listenerCount('drain')).toBe(0);
+        await expect(reader.read()).rejects.toThrow('PDF response stream lease expired');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('aborts a trickle-read DoS at the 120s absolute max lease even when chunks reset the idle timer', async () => {
+      vi.useFakeTimers();
+      try {
+        const outgoing = createChunkTestOutgoing();
+        const release = vi.fn();
+        const stream = releaseOnResponseClose(
+          new Uint8Array(1024 * 1024),
+          release,
+          { env: { outgoing } } as unknown as Parameters<typeof releaseOnResponseClose>[2],
+          PUBLIC_PDF_STREAM_LEASE_MS,
+        );
+        const reader = stream.getReader();
+
+        const first = await reader.read();
+        expect(first.done).toBe(false);
+
+        for (let i = 1; i < 12; i += 1) {
+          vi.advanceTimersByTime(10_000);
+          const chunk = await reader.read();
+          expect(chunk.done).toBe(false);
+        }
+
+        vi.advanceTimersByTime(PDF_STREAM_MAX_LEASE_MS - 110_000 - 1);
+        expect(release).not.toHaveBeenCalled();
+        expect(outgoing.destroy).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+        expect(release).toHaveBeenCalledTimes(1);
+        expect(outgoing.destroy).toHaveBeenCalledTimes(1);
+        expect(outgoing.destroy).toHaveBeenCalledWith();
+        expect(outgoing.listenerCount('finish')).toBe(0);
+        expect(outgoing.listenerCount('close')).toBe(0);
+        expect(outgoing.listenerCount('drain')).toBe(0);
+        await expect(reader.read()).rejects.toThrow('PDF response stream lease expired');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('resets the idle timer on outgoing drain events while enforcing the 120s absolute cap', async () => {
+      vi.useFakeTimers();
+      try {
+        const outgoing1 = createChunkTestOutgoing();
+        const release1 = vi.fn();
+        const stream1 = releaseOnResponseClose(
+          new Uint8Array([1, 2, 3, 4]),
+          release1,
+          { env: { outgoing: outgoing1 } } as unknown as Parameters<typeof releaseOnResponseClose>[2],
+          PUBLIC_PDF_STREAM_LEASE_MS,
+        );
+        const reader1 = stream1.getReader();
+        const chunk1 = await reader1.read();
+        expect(chunk1.done).toBe(false);
+
+        vi.advanceTimersByTime(10_000);
+        outgoing1.emit('drain');
+        vi.advanceTimersByTime(10_000);
+
+        expect(release1).not.toHaveBeenCalled();
+        expect(outgoing1.destroy).not.toHaveBeenCalled();
+
+        outgoing1.emit('finish');
+        expect(release1).toHaveBeenCalledTimes(1);
+        expect(outgoing1.destroy).not.toHaveBeenCalled();
+        expect(outgoing1.listenerCount('finish')).toBe(0);
+        expect(outgoing1.listenerCount('close')).toBe(0);
+        expect(outgoing1.listenerCount('drain')).toBe(0);
+
+        const outgoing2 = createChunkTestOutgoing();
+        const release2 = vi.fn();
+        const stream2 = releaseOnResponseClose(
+          new Uint8Array([1, 2, 3, 4]),
+          release2,
+          { env: { outgoing: outgoing2 } } as unknown as Parameters<typeof releaseOnResponseClose>[2],
+          PUBLIC_PDF_STREAM_LEASE_MS,
+        );
+        const reader2 = stream2.getReader();
+        const chunk2 = await reader2.read();
+        expect(chunk2.done).toBe(false);
+
+        for (let i = 0; i < 11; i += 1) {
+          vi.advanceTimersByTime(10_000);
+          outgoing2.emit('drain');
+        }
+
+        vi.advanceTimersByTime(PDF_STREAM_MAX_LEASE_MS - 110_000 - 1);
+        expect(release2).not.toHaveBeenCalled();
+        expect(outgoing2.destroy).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+        expect(release2).toHaveBeenCalledTimes(1);
+        expect(outgoing2.destroy).toHaveBeenCalledTimes(1);
+        expect(outgoing2.destroy).toHaveBeenCalledWith();
+        expect(outgoing2.listenerCount('finish')).toBe(0);
+        expect(outgoing2.listenerCount('close')).toBe(0);
+        expect(outgoing2.listenerCount('drain')).toBe(0);
+        await expect(reader2.read()).rejects.toThrow('PDF response stream lease expired');
       } finally {
         vi.useRealTimers();
       }
