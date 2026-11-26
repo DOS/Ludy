@@ -356,6 +356,9 @@ catalogs:
     typescript:
       specifier: 7.0.2
       version: 7.0.2
+    typescript-api:
+      specifier: npm:typescript@6.0.3
+      version: 6.0.3
     unpdf:
       specifier: 1.8.1
       version: 1.8.1
@@ -1043,6 +1046,9 @@ importers:
       '@ludy/media':
         specifier: workspace:*
         version: link:../../apps/media
+      typescript-api:
+        specifier: 'catalog:'
+        version: typescript@6.0.3
 
   packages/bank-feed: {}
 
