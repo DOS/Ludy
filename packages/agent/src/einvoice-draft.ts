@@ -228,6 +228,8 @@ interface SubPiece {
 
 const DATE_SLASH_OR_DASH = /(?<!\d)\d{1,2}[/-]\d{1,2}[/-]\d{2,4}(?!\d)/gu;
 const DATE_ISO = /(?<!\d)\d{4}-\d{1,2}-\d{1,2}(?!\d)/gu;
+const DATE_DAY_MONTH_WITH_CUE = /(?<![\p{L}])(?:ngày|ngay|giao(?:\s+(?:ngày|ngay|hàng\s+ngày|hang\s+ngay))?|nhận(?:\s+(?:ngày|ngay))?|nhan(?:\s+(?:ngày|ngay))?|xuất(?:\s+(?:ngày|ngay))?|xuat(?:\s+(?:ngày|ngay))?|đặt(?:\s+(?:ngày|ngay))?|dat(?:\s+(?:ngày|ngay))?|hạn|han|hôm|hom|vào(?:\s+(?:ngày|ngay))?|từ\s+ngày|đến\s+ngày|date)\s*(?:[:=]?\s*)?(?:3[01]|[12]\d|0?[1-9])\s*[/-]\s*(?:1[0-2]|0?[1-9])(?![\d/.-])/giu;
+const DATE_DAY_MONTH_WORDS = /(?<![\p{L}])(?:ngày|ngay|tháng|thang)?\s*(?:3[01]|[12]\d|0?[1-9])\s*(?:tháng|thang)\s*(?:1[0-2]|0?[1-9])(?![\d])/giu;
 const PERCENT_ANY = /(?<!\d)\d{1,3}(?:[.,]\d+)?\s*%/gu;
 const LIST_PAREN_PREFIX = /^\s*\d+\)\s+/u;
 const LIST_DOT_PREFIX = /^\s*\d{1,2}\.\s+/u;
@@ -267,7 +269,7 @@ const AMP_RIGHT_CUE = /^\s*(?:\d|vat|gtgt|thuế|thue|số\s+lượng|so\s+luong
 const BUYER_ONLY_PREFIX = /^\s*(?:giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)|giao\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách\s+(?:hàng|lẻ|quen)|công\s+ty|cty)|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách\s+(?:hàng|lẻ|quen|mua)|khach\s+(?:hang|le|quen|mua)|người\s+mua|nguoi\s+mua|công\s+ty|cong\s+ty|cty|bên|ben|đối\s+tác|doi\s+tac)|người\s+mua|nguoi\s+mua|khách\s+(?:hàng|lẻ|quen|tên|là|mua)|khach\s+(?:hang|le|quen|ten|la|mua)|buyer|customer)(?![\p{L}])/iu;
 const EXPLICIT_UNIT_PREFIX = /^\s*(?:đơn\s+vị|don\s+vi|đvt|dvt|unit)\b/iu;
 const EXPLICIT_UNIT_VALUE = /(?:^|,)\s*(?:đơn\s+vị|don\s+vi|đvt|dvt|unit)\s*(?:[:=]\s*)?([\p{L}]+)/giu;
-const SHIPPING_NOTE = /(?<![\p{L}])(?:miễn\s+phí\s+(?:ship|vận\s+chuyển|giao\s+hàng)|mien\s+phi\s+(?:ship|van\s+chuyen|giao\s+hang)|free\s*ship|freeship|bao\s+ship|giao\s+(?:hàng\s+)?(?:miễn\s+phí|tận\s+nơi|nhanh|ngay|hỏa\s+tốc)|giao\s+(?:hang\s+)?(?:mien\s+phi|tan\s+noi|nhanh|ngay|hoa\s+toc))(?![\p{L}])/giu;
+const SHIPPING_NOTE = /(?<![\p{L}])(?:miễn\s+phí\s+(?:ship|vận\s+chuyển|giao\s+hàng)|mien\s+phi\s+(?:ship|van\s+chuyen|giao\s+hang)|free\s*ship|freeship|bao\s+ship|giao\s+(?:hàng\s+)?(?:miễn\s+phí|tận\s+nơi|nhanh|ngay|hỏa\s+tốc|hôm\s+nay|ngày\s+mai|mai|cuối\s+tuần|tuần\s+tới|sáng|chiều|tối)|giao\s+(?:hang\s+)?(?:mien\s+phi|tan\s+noi|nhanh|ngay|hoa\s+toc|hom\s+nay|ngay\s+mai|cuoi\s+tuan|tuan\s+toi|sang|chieu|toi))(?![\p{L}])/giu;
 
 // Exact lowercase tokens (never accent-folded) so accented Vietnamese words ("bàn" table, "hoa" flower, "bò" beef, "giò" pork roll, "cải" greens, "gối" pillow, "khách sạn" hotel) never collide with boilerplate/units ("bán", "hóa", "bộ", "giờ", "cái", "gói", "khách hàng").
 const BOILERPLATE_EXACT = new Set([
@@ -280,16 +282,27 @@ const BOILERPLATE_EXACT = new Set([
   'đã', 'gồm', 'chưa', 'áp', 'dụng',
   'invoice', 'sales', 'sale', 'tax', 'order',
 ]);
+const UNIT_ALIASES: Record<string, string> = {
+  g: 'gam', gram: 'gam', grams: 'gam', gam: 'gam',
+  kg: 'kg', kilogram: 'kg', kilograms: 'kg',
+  l: 'lit', lit: 'lit', lít: 'lit', liter: 'lit', liters: 'lit', litre: 'lit', litres: 'lit',
+  m: 'met', met: 'met', mét: 'met', meter: 'met', meters: 'met', metre: 'met', metres: 'met',
+  pc: 'pcs', pcs: 'pcs', piece: 'pcs', pieces: 'pcs',
+  box: 'box', boxes: 'box', pack: 'pack', packs: 'pack', bag: 'bag', bags: 'bag',
+  bottle: 'bottle', bottles: 'bottle', can: 'can', cans: 'can', cup: 'cup', cups: 'cup',
+  pair: 'pair', pairs: 'pair', roll: 'roll', rolls: 'roll', sheet: 'sheet', sheets: 'sheet',
+  set: 'set', sets: 'set', unit: 'unit', units: 'unit', item: 'item', items: 'item',
+  hour: 'hour', hours: 'hour', day: 'day', days: 'day', night: 'night', nights: 'night',
+  month: 'month', months: 'month', year: 'year', years: 'year', time: 'time', times: 'time',
+  session: 'session', sessions: 'session', portion: 'portion', portions: 'portion',
+  serving: 'serving', servings: 'serving',
+};
 const UNIT_ONLY_EXACT = new Set([
-  'hộp', 'hop', 'cái', 'cai', 'chiếc', 'chiec', 'gói', 'goi', 'kg', 'g', 'gam', 'gram', 'lít', 'l', 'ml',
+  'hộp', 'hop', 'cái', 'cai', 'chiếc', 'chiec', 'gói', 'goi', 'ml',
   'bộ', 'thùng', 'thung', 'chai', 'lon', 'cuốn', 'cuon', 'cuộn', 'ram', 'tập', 'tap', 'quyển', 'quyen', 'giờ', 'ngày', 'đêm', 'dem',
-  'tháng', 'năm', 'lần', 'buổi', 'phần', 'suất', 'túi', 'tui', 'bao', 'mét', 'm',
+  'tháng', 'năm', 'lần', 'buổi', 'phần', 'suất', 'túi', 'tui', 'bao',
   'đôi', 'ly', 'cốc', 'coc', 'khối', 'khoi', 'tờ', 'tấm',
-  'box', 'boxes', 'pcs', 'pc', 'set', 'sets', 'pack', 'packs', 'bag', 'bags', 'bottle', 'bottles', 'can', 'cans', 'cup', 'cups',
-  'piece', 'pieces', 'pair', 'pairs', 'roll', 'rolls', 'sheet', 'sheets', 'unit', 'units', 'item', 'items',
-  'gram', 'grams', 'kilogram', 'kilograms', 'liter', 'liters', 'litre', 'litres', 'meter', 'meters', 'metre', 'metres',
-  'hour', 'hours', 'day', 'days', 'night', 'nights', 'month', 'months', 'year', 'years', 'time', 'times',
-  'session', 'sessions', 'portion', 'portions', 'serving', 'servings',
+  ...Object.keys(UNIT_ALIASES),
 ]);
 const ATTRIBUTE_ONLY_EXACT = new Set(['size', 'cỡ', 's', 'm', 'l', 'xl', 'xxl', 'xs']);
 
@@ -298,6 +311,8 @@ const STRIP_MONEY_OR_LABELED = new RegExp(
   [
     DATE_SLASH_OR_DASH.source,
     DATE_ISO.source,
+    DATE_DAY_MONTH_WITH_CUE.source,
+    DATE_DAY_MONTH_WORDS.source,
     PERCENT_ANY.source,
     RATE_AFTER_WORD.source,
     String.raw`(?<![\p{L}])(?:tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền(?:\s+hàng)?|tong\s+tien(?:\s+hang)?|tổng\s+thanh\s+toán|tong\s+thanh\s+toan|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tiền\s+thuế(?:\s+(?:gtgt|vat))?|tien\s+thue(?:\s+(?:gtgt|vat))?|trả\s+trước|tra\s+truoc|đặt\s+cọc|dat\s+coc|cọc|đã\s+trả|da\s+tra|còn\s+lại|con\s+lai|thanh\s+toán|thanh\s+toan|giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết\s+khấu|chiet\s+khau|ck(?![\p{L}])|discount|off|trừ|bớt|đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|(?<!(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+)gia|unit\s+price|price|số\s+lượng|so\s+luong|sl(?![\p{L}])|qty(?![\p{L}])|quantity|tổng|total|amount)\s*(?:[:=]\s*)?\d+(?:[.,]\d+)*(?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*)?(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
@@ -351,20 +366,6 @@ function contextBeforeFigure(segmentBefore: string): { hasProduct: boolean; hasU
   return { hasProduct, hasUnit };
 }
 
-const UNIT_ALIASES: Record<string, string> = {
-  g: 'gam', gram: 'gam', gam: 'gam',
-  l: 'lit', lit: 'lit', liter: 'lit', liters: 'lit', litre: 'lit', litres: 'lit',
-  m: 'met', met: 'met', meter: 'met', meters: 'met', metre: 'met', metres: 'met',
-  pc: 'pcs', pcs: 'pcs', piece: 'pcs', pieces: 'pcs',
-  box: 'box', boxes: 'box', pack: 'pack', packs: 'pack', bag: 'bag', bags: 'bag',
-  bottle: 'bottle', bottles: 'bottle', can: 'can', cans: 'can', cup: 'cup', cups: 'cup',
-  pair: 'pair', pairs: 'pair', roll: 'roll', rolls: 'roll', sheet: 'sheet', sheets: 'sheet',
-  unit: 'unit', units: 'unit', item: 'item', items: 'item',
-  hour: 'hour', hours: 'hour', day: 'day', days: 'day', night: 'night', nights: 'night',
-  month: 'month', months: 'month', year: 'year', years: 'year', time: 'time', times: 'time',
-  session: 'session', sessions: 'session', portion: 'portion', portions: 'portion',
-  serving: 'serving', servings: 'serving',
-};
 const canonUnit = (u: string): string => {
   const folded = foldDiacritics(readPlain(u)).trim();
   return UNIT_ALIASES[folded] ?? folded;
@@ -379,7 +380,7 @@ function startsWithUnitWord(after: string, extraUnits?: ReadonlySet<string>): bo
 
 function excludedSpans(body: string): Span[] {
   const spans: Span[] = [];
-  for (const re of [DATE_SLASH_OR_DASH, DATE_ISO, PERCENT_ANY]) {
+  for (const re of [DATE_SLASH_OR_DASH, DATE_ISO, DATE_DAY_MONTH_WITH_CUE, DATE_DAY_MONTH_WORDS, PERCENT_ANY]) {
     for (const m of body.matchAll(re)) {
       if (m.index !== undefined) spans.push([m.index, m.index + m[0].length]);
     }
@@ -662,7 +663,7 @@ function splitSubPieces(bodySeg: string): SubPiece[] {
       const right = bodySeg.slice(idx + sep.length);
       const packDenomAfterPrice =
         /(?:\d\s*(?:k|tr(?:iệu|ieu)?|tỷ|ty|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)|(?:đơn\s+giá|don\s+gia|giá(?:\s+bán)?|gia(?:\s+ban)?|unit\s+price|price)\s*(?:[:=]\s*)?\d+(?:[.,]\d+)?)\s*$/iu.test(left) &&
-        /^\s*\d+(?:[.,]\d+)?(?:\s+[\p{L}]+){0,2}\s*$/u.test(right);
+        /^\s*\d+(?:[.,]\d+)?(?:\s+(?!(?:vat|gtgt|thuế|thue)(?![\p{L}]))[\p{L}]+){0,2}(?=\s*(?:$|,|vat|gtgt|thuế|thue))/iu.test(right);
       if (packDenomAfterPrice || !/\d/u.test(left) || !(/\d/u.test(right) || AMP_RIGHT_CUE.test(right))) continue;
     }
     const piece = summarizeSubPiece(bodySeg.slice(start, idx), afterConjunction);
@@ -839,36 +840,118 @@ const TABLE_HEADER_ROLE: Record<string, TableColRole> = {
   'ghi chu': 'note', note: 'note', notes: 'note', remark: 'note', remarks: 'note',
 };
 
-function detectTableHeader(cells: readonly string[]): TableColRole[] | null {
+interface TableColSpec {
+  role: TableColRole;
+  scale: string | null;
+}
+
+const CELL_SCALE_OR_CURRENCY = /(?<![\p{L}])(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}])/iu;
+
+function tableColumnScale(rawHeaderCell: string, role: TableColRole): string | null {
+  if (role !== 'price' && role !== 'total' && role !== 'discount') return '1';
+  const suffixMatch = /\(([^()]+)\)\s*$/u.exec(rawHeaderCell) ?? /\/\s*([\p{L}\d.,]+)\s*$/u.exec(rawHeaderCell);
+  if (!suffixMatch) return '1';
+  const norm = foldDiacritics(suffixMatch[1]!.toLowerCase()).replace(/\s+/gu, ' ').trim();
+  if (/^(?:d|dong|vnd|1)$/u.test(norm)) return '1';
+  if (/^(?:k|nghin|ngan|nghin dong|ngan dong|1[.,]000(?:\s*(?:d|dong|vnd))?)$/u.test(norm)) return '1000';
+  if (/^(?:tr|trieu|trieu dong|1[.,]000[.,]000(?:\s*(?:d|dong|vnd))?)$/u.test(norm)) return '1000000';
+  if (/^(?:ty|ty dong)$/u.test(norm)) return '1000000000';
+  return null;
+}
+
+function detectTableHeader(cells: readonly string[]): TableColSpec[] | null {
   if (cells.length < 2) return null;
-  const roles: TableColRole[] = [];
+  const cols: TableColSpec[] = [];
   let recognized = 0;
   let hasCoreAnchor = false;
   for (const rawCell of cells) {
     const cleaned = foldDiacritics(rawCell).replace(/\([^)]*\)/gu, '').replace(/[:=?/]+/gu, ' ').replace(/\s+/gu, ' ').trim();
     if (cleaned === '') {
-      roles.push('ignore');
+      cols.push({ role: 'ignore', scale: '1' });
       continue;
     }
     if (/\d/u.test(cleaned)) return null;
     const role = TABLE_HEADER_ROLE[cleaned] ?? null;
     if (role === null) return null;
-    roles.push(role);
+    cols.push({ role, scale: tableColumnScale(rawCell, role) });
     recognized += 1;
     if (role === 'item' || role === 'qty' || role === 'price') hasCoreAnchor = true;
   }
-  return recognized >= 2 && hasCoreAnchor ? roles : null;
+  return recognized >= 2 && hasCoreAnchor ? cols : null;
 }
 
-function normalizeTableInput(body: string): string {
-  if (!body.includes('\t')) return body;
+function buildTableRowClause(rawCells: readonly string[], cols: readonly TableColSpec[]): SourceClause | null {
+  const itemIdx = cols.findIndex((c) => c.role === 'item');
+  const itemVal = itemIdx >= 0 ? (rawCells[itemIdx] ?? '') : '';
+  if (/^(?:tổng(?:\s+cộng)?|tong(?:\s+cong)?|cộng|cong|thành\s+tiền|thanh\s+tien|total|subtotal)\s*:?$/iu.test(itemVal)) {
+    return null;
+  }
+  const itemParts: string[] = [];
+  const explicitUnits = new Set<string>();
+  const vatRates = new Set<string>();
+  const tokens: FigureToken[] = [];
+  let rowTextHasContent = false;
+  for (let i = 0; i < Math.min(rawCells.length, cols.length); i += 1) {
+    const cell = rawCells[i] ?? '';
+    if (cell === '') continue;
+    const col = cols[i]!;
+    if (col.role === 'ignore') continue;
+    rowTextHasContent = true;
+    if (col.role === 'item') {
+      itemParts.push(cell);
+    } else if (col.role === 'unit') {
+      for (const um of cell.matchAll(/[\p{L}]+/gu)) explicitUnits.add(um[0]);
+    } else if (col.role === 'qty' && /\d/u.test(cell)) {
+      const qToks = extractFigureTokens(collapseGroupedSpaces(`số lượng ${cell}`));
+      if (qToks.length === 1 && qToks[0]!.role === 'qty' && !qToks[0]!.embeddedInProduct && !qToks[0]!.packagingSpec) {
+        tokens.push(qToks[0]!);
+      }
+    } else if (col.role === 'price' && /\d/u.test(cell) && col.scale !== null) {
+      if (col.scale !== '1' && CELL_SCALE_OR_CURRENCY.test(cell)) continue;
+      const pToks = extractFigureTokens(collapseGroupedSpaces(`đơn giá ${cell}`));
+      const usablePrice = pToks.filter((t) => t.role === 'price' && !t.embeddedInProduct && !t.packagingSpec);
+      if (usablePrice.length === 1 && pToks.length === 1) {
+        const tok = usablePrice[0]!;
+        const scaledValue = col.scale === '1' ? tok.value : money(tok.value).times(col.scale).toFixed();
+        tokens.push({ ...tok, value: scaledValue, labeledPrice: true, dealValueOnly: false });
+      }
+    } else if (col.role === 'vat' && /(?:\d|kct|kkknt|không\s+chịu|khong\s+chiu|không\s+kê|khong\s+ke)/iu.test(cell)) {
+      const taxText = /^(?:vat|gtgt|thuế|thue|kct|kkknt|không)/iu.test(cell) ? cell : `vat ${cell}`;
+      for (const r of ratesInBody(collapseGroupedSpaces(taxText))) vatRates.add(r);
+    }
+    // ignore, total, discount, and note columns never emit usable qty, unitPrice, or VAT tokens.
+  }
+  if (!rowTextHasContent || itemParts.length === 0) return null;
+  const plainText = rawCells.filter(Boolean).join(', ');
+  const itemText = collapseGroupedSpaces(itemParts.join(', '));
+  const { exact, folded, unitTokens } = descriptionTokens(itemText);
+  for (const u of explicitUnits) unitTokens.add(u);
+  const coreExactTokens = coreProductTokens(itemText);
+  return {
+    plainText,
+    text: itemText,
+    tokens,
+    usable: tokens.filter(isUsableToken),
+    localRates: vatRates,
+    exactTokens: exact,
+    coreExactTokens,
+    foldedTokens: folded,
+    unitTokens,
+    explicitUnits,
+    conjunctionParts: [],
+  };
+}
+
+function extractTableClauses(body: string): { tableClauses: SourceClause[]; remainingBody: string } {
+  if (!body.includes('\t')) return { tableClauses: [], remainingBody: body };
   const lines = body.split(/\r?\n/u);
-  const out: string[] = [];
-  let activeCols: TableColRole[] | null = null;
+  const tableClauses: SourceClause[] = [];
+  const proseLines: string[] = [];
+  let activeCols: TableColSpec[] | null = null;
   for (const line of lines) {
     if (!line.includes('\t')) {
       if (line.trim() !== '') activeCols = null;
-      out.push(line);
+      proseLines.push(line);
       continue;
     }
     const rawCells = line.split('\t').map((c) => c.trim());
@@ -880,48 +963,25 @@ function normalizeTableInput(body: string): string {
       continue;
     }
     if (activeCols === null || rawCells.length < 2) {
-      out.push(line);
+      proseLines.push(line);
       continue;
     }
-    const itemIdx = activeCols.indexOf('item');
-    const itemVal = itemIdx >= 0 ? (rawCells[itemIdx] ?? '') : '';
-    if (/^(?:tổng(?:\s+cộng)?|tong(?:\s+cong)?|cộng|cong|thành\s+tiền|thanh\s+tien|total|subtotal)\s*:?$/iu.test(itemVal)) {
-      const amounts = rawCells.filter((c, i) => i !== itemIdx && /\d/u.test(c));
-      if (amounts.length > 0) out.push(`tổng cộng ${amounts.join(' ')}`);
-      continue;
-    }
-    const parts: string[] = [];
-    for (let i = 0; i < Math.min(rawCells.length, activeCols.length); i += 1) {
-      const cell = rawCells[i] ?? '';
-      if (cell === '') continue;
-      const role = activeCols[i]!;
-      if (role === 'ignore') continue;
-      if (role === 'item') parts.push(cell);
-      else if (role === 'note') parts.push(`(${cell})`);
-      else if (role === 'unit') parts.push(`đơn vị ${cell}`);
-      else if (role === 'qty' && /\d/u.test(cell)) parts.push(`số lượng ${cell}`);
-      else if (role === 'price' && /\d/u.test(cell)) parts.push(`đơn giá ${cell}`);
-      else if (role === 'vat' && /(?:\d|kct|kkknt|không\s+chịu|khong\s+chiu|không\s+kê|khong\s+ke)/iu.test(cell)) {
-        const hasTaxPrefix = /^(?:vat|gtgt|thuế|thue|kct|kkknt|không)/iu.test(cell);
-        parts.push(hasTaxPrefix ? cell : `vat ${cell}`);
-      } else if (role === 'total' && /\d/u.test(cell)) parts.push(`tổng tiền ${cell}`);
-      else if (role === 'discount' && (/\d/u.test(cell) || cell.includes('%'))) parts.push(`chiết khấu ${cell}`);
-    }
-    if (parts.length > 0) out.push(parts.join(', '));
+    const clause = buildTableRowClause(rawCells, activeCols);
+    if (clause !== null) tableClauses.push(clause);
   }
-  return out.join('\n');
+  return { tableClauses, remainingBody: proseLines.join('\n') };
 }
 
 function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRates: Set<string> } {
-  const body = normalizeTableInput(readPlain(source));
-  const rawSegments = splitSentenceSegments(body);
-  const clauses: SourceClause[] = [];
+  const { tableClauses, remainingBody } = extractTableClauses(readPlain(source));
+  const rawSegments = splitSentenceSegments(remainingBody);
+  const clauses: SourceClause[] = [...tableClauses];
   const leadingShared = new Set<string>();
   const trailingShared = new Set<string>();
-  let anyItemSeen = false;
-  let anyLocalVatSeen = false;
+  let anyItemSeen = tableClauses.length > 0;
+  let anyLocalVatSeen = tableClauses.some((c) => c.localRates.size > 0);
   let prevWasDiscountHeader = false;
-  const isSingleSegment = rawSegments.length === 1;
+  const isSingleSegment = rawSegments.length === 1 && tableClauses.length === 0;
 
   for (let segIdx = 0; segIdx < rawSegments.length; segIdx += 1) {
     const { text: seg, indentedAfterNewline } = rawSegments[segIdx]!;
@@ -1031,8 +1091,7 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
           segPrefixRates.size > 0 ||
           segClauses.some((c) => c.localRates.size > 0) ||
           (cur !== null && cur.localRates.size > 0);
-        const hasClauseScopeOverride = piece.isInvoiceScopeVat && !segPrefixRates.size && !segClauses.some((c) => c.localRates.size > 0);
-        if (isLastPiece && !isBullet && cur !== null && cur.localRates.size === 0 && (hasClauseScopeOverride || (!localVatSeen && isSingleSegment))) {
+        if (isLastPiece && !isBullet && cur !== null && cur.localRates.size === 0 && (piece.isInvoiceScopeVat || (!localVatSeen && isSingleSegment))) {
           for (const r of piece.rates) trailingShared.add(r);
           continue;
         }
@@ -1304,12 +1363,13 @@ export function checkEInvoiceDraft(request: EInvoiceDraftRequest, output: EInvoi
 
   const fullEdges: number[][] = [];
   const figEdges: number[][] = [];
+  const singleNoProduct = clauses.length === 1 && ![...clauses[0]!.exactTokens].some((t) => !UNIT_ONLY_EXACT.has(t));
   for (const line of lines) {
     const scores = clauses.map((c) => scoreClauseMatch(line.description, line.unit, c));
     const maxScore = Math.max(...scores);
     const full: number[] = [];
     const figs: number[] = [];
-    if (clauses.length === 1 || maxScore > 0) {
+    if (singleNoProduct || maxScore > 0) {
       for (let j = 0; j < clauses.length; j += 1) {
         if ((scores[j] ?? 0) !== maxScore) continue;
         const clause = clauses[j]!;

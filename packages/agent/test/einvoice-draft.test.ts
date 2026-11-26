@@ -1517,5 +1517,101 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         answer([line({ description: 'Bút', unit: 'cái', quantity: '5000', unitPrice: '2', vatRate: null })], null),
       ),
     ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    const tsvScaled = req('Tên hàng\tSL\tĐơn giá (nghìn đồng)\nGạo\t2\t50');
+    expect(
+      checkEInvoiceDraft(
+        tsvScaled,
+        answer([line({ description: 'Gạo', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        tsvScaled,
+        answer([line({ description: 'Gạo', unit: null, quantity: '2', unitPrice: '50', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá (USD)\nGạo\t2\t50'),
+        answer([line({ description: 'Gạo', unit: null, quantity: '2', unitPrice: '50', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('SL\tĐơn giá\tTên hàng\n2\t50000\tGạo'),
+        answer([line({ description: 'Gạo', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá\nÁo\t2\t\nQuần\t\t50000'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá\tGhi chú\nBút\t2\t\t50k'),
+        answer([line({ description: 'Bút', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    expect(
+      checkEInvoiceDraft(
+        req('Mua 20 hộp phấn giá 50k / 10 hộp, VAT 8%'),
+        answer([line({ description: 'Phấn', unit: 'hộp', quantity: '20', unitPrice: '50000', vatRate: '8%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Mua 2kg gạo giá 30k / 10 kg, VAT 8%'),
+        answer([line({ description: 'Gạo', unit: 'kg', quantity: '2', unitPrice: '30000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo 50k; sữa giao ngày 20/11 giá 100k'),
+        answer([
+          line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '50000', vatRate: null }),
+          line({ description: 'Sữa', unit: null, quantity: '11', unitPrice: '100000', vatRate: null }),
+        ], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo giá 50k VAT 8%, 3 quần giá 100k, 4 mũ giá 50k, VAT 10% cho toàn bộ hóa đơn'),
+        answer([
+          line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' }),
+          line({ description: 'Quần', unit: null, quantity: '3', unitPrice: '100000', vatRate: '10%' }),
+          line({ description: 'Mũ', unit: null, quantity: '4', unitPrice: '50000', vatRate: '10%' }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+
+    expect(
+      checkEInvoiceDraft(
+        req('2 hộp trà giá 50k; 3 hộp trà giá 70k giao ngày mai'),
+        answer([
+          line({ description: 'Trà', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: null }),
+          line({ description: 'Trà', unit: 'hộp', quantity: '3', unitPrice: '70000', vatRate: null }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+
+    expect(
+      checkEInvoiceDraft(
+        req('2 hộp sữa giá 100k'),
+        answer([line({ description: 'Xe tải', unit: 'hộp', quantity: '2', unitPrice: '100000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    expect(
+      checkEInvoiceDraft(
+        req('2 kilograms rice at 20k/kg'),
+        answer([line({ description: 'rice', unit: 'kilograms', quantity: '2', unitPrice: '20000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
   });
 });
