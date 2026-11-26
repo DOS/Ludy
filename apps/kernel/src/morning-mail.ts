@@ -40,9 +40,10 @@ const BRIEFING_COPY = {
       shown === 0
         ? `Mở trang Cuộc họp để xem chi tiết ${total} cuộc họp hôm nay.`
         : `Đang hiển thị ${shown} cuộc họp đầu tiên trong tổng số ${total} cuộc họp.`,
-    openToday: 'Xem các cuộc họp hôm nay',
+    openMeetings: 'Mở trang Cuộc họp',
     untitled: 'Cuộc họp không tiêu đề',
     openMeeting: 'Mở cuộc họp',
+    openRecord: 'Mở trang ghi cuộc họp',
     attendeesLabel: 'Thành phần',
     invitees: (count: number) => `${count} khách mời`,
     readersPrefix: 'Người đọc trong tổ chức: ',
@@ -56,7 +57,8 @@ const BRIEFING_COPY = {
     openDeals: 'Xem danh sách cơ hội',
     expectedClose: (day: string) => `Dự kiến chốt ${day}`,
     vyHeading: 'Gợi ý chuẩn bị của Vy',
-    footer: (brand: string, org: string) => `Thư này do ${brand} gửi theo lựa chọn của bạn ở ${org}.`,
+    footer: (brand: string, org: string) =>
+      `Thư này chứa nội dung các cuộc họp của bạn và do ${brand} gửi theo lựa chọn của bạn ở ${org}.`,
     settingsLink: 'Tắt thông báo này trong Cài đặt thông báo',
   },
   en: {
@@ -65,11 +67,12 @@ const BRIEFING_COPY = {
     leadCount: (total: number) => (total === 1 ? 'You have 1 meeting today.' : `You have ${total} meetings today.`),
     truncated: (shown: number, total: number) =>
       shown === 0
-        ? `Open the Meetings page to see all ${total} meetings today.`
+        ? `Open Meetings to see all ${total} meetings today.`
         : `Showing the first ${shown} of ${total} meetings.`,
-    openToday: "See today's meetings",
+    openMeetings: 'Open Meetings',
     untitled: 'Untitled meeting',
     openMeeting: 'Open meeting',
+    openRecord: 'Open meeting recorder',
     attendeesLabel: 'Attendees',
     invitees: (count: number) => (count === 1 ? '1 invitee' : `${count} invitees`),
     readersPrefix: 'Org readers: ',
@@ -80,10 +83,11 @@ const BRIEFING_COPY = {
     mine: 'Yours',
     dueOn: (day: string) => `Due ${day}`,
     dealsHeading: 'Open CRM deals',
-    openDeals: 'Open deals',
+    openDeals: 'Open deals list',
     expectedClose: (day: string) => `Expected close ${day}`,
     vyHeading: 'Vy prep lines',
-    footer: (brand: string, org: string) => `${brand} sent this because you asked for it in ${org}.`,
+    footer: (brand: string, org: string) =>
+      `This email contains your meeting content and was sent by ${brand} because you asked for it in ${org}.`,
     settingsLink: 'Turn this notice off in Notification settings',
   },
 } as const;
@@ -136,7 +140,7 @@ function formatTimeWindow(startAt: string, endAt: string, timeZone: string, cont
   const startMs = Date.parse(startAt);
   const endMs = Date.parse(endAt);
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
-    return `${oneLine(startAt)} - ${oneLine(endAt)}`;
+    return `${oneLine(startAt)} - ${oneLine(endAt)} (${oneLine(timeZone)})`;
   }
   let zone = timeZone;
   let startParts = formatZonedParts(startMs, zone);
@@ -147,19 +151,18 @@ function formatTimeWindow(startAt: string, endAt: string, timeZone: string, cont
     endParts = formatZonedParts(endMs, zone);
   }
   if (!startParts || !endParts) {
-    return `${oneLine(startAt)} - ${oneLine(endAt)}`;
+    return `${oneLine(startAt)} - ${oneLine(endAt)} (${oneLine(zone)})`;
   }
   const startDay = `${startParts.year}-${startParts.month}-${startParts.day}`;
   const endDay = `${endParts.year}-${endParts.month}-${endParts.day}`;
   const startTime = `${startParts.hour}:${startParts.minute}`;
   const endTime = `${endParts.hour}:${endParts.minute}`;
-  const fallbackZone = zone !== timeZone ? ` (${zone})` : '';
   if (startDay === endDay) {
     return startDay === contentDay
-      ? `${startTime} - ${endTime}${fallbackZone}`
-      : `${formatDay(startDay, lang)} ${startTime} - ${endTime}${fallbackZone}`;
+      ? `${startTime} - ${endTime} (${zone})`
+      : `${formatDay(startDay, lang)} ${startTime} - ${endTime} (${zone})`;
   }
-  return `${formatDay(startDay, lang)} ${startTime} - ${formatDay(endDay, lang)} ${endTime}${fallbackZone}`;
+  return `${formatDay(startDay, lang)} ${startTime} - ${formatDay(endDay, lang)} ${endTime} (${zone})`;
 }
 
 // Decimal-string money formatting via decimal.js (`money`), avoiding JS float conversion.
@@ -188,7 +191,24 @@ function normalizePublicRoot(publicUrl: string): string {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error('TEMPLATE_DATA: invalid morning briefing publicUrl protocol');
   }
+  if (
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.search !== '' ||
+    parsed.hash !== '' ||
+    root.includes('?') ||
+    root.includes('#')
+  ) {
+    throw new Error('TEMPLATE_DATA: invalid morning briefing publicUrl credentials or suffix');
+  }
   return root;
+}
+
+function meetingLinkLabel(path: string | undefined, orgPrefix: string, lang: BriefingLang): string {
+  const t = BRIEFING_COPY[lang];
+  if (!path || path === `${orgPrefix}/meetings`) return t.openMeetings;
+  if (path === `${orgPrefix}/meetings/record`) return t.openRecord;
+  return t.openMeeting;
 }
 
 function buildAttendeesLine(meeting: MorningBriefingMeeting, lang: BriefingLang): string | null {
@@ -239,6 +259,7 @@ function renderMeetingBlock(
   meeting: MorningBriefingMeeting,
   contentDay: string,
   lang: BriefingLang,
+  orgPrefix: string,
   fallbackPath: string,
   dealsUrl: string,
   safeUrl: (path: string) => string,
@@ -247,7 +268,7 @@ function renderMeetingBlock(
   const timeWindow = formatTimeWindow(meeting.startAt, meeting.endAt, meeting.timeZone, contentDay, lang);
   const title = oneLine(meeting.title) || t.untitled;
   const meetingUrl = safeUrl(meeting.path ?? fallbackPath);
-  const openLabel = meeting.path ? t.openMeeting : t.openToday;
+  const openLabel = meetingLinkLabel(meeting.path, orgPrefix, lang);
   const attendees = buildAttendeesLine(meeting, lang);
   const decisions = meeting.previousDecisions.map(oneLine).filter((d) => d !== '');
   const items = meeting.openItems
@@ -286,7 +307,7 @@ function renderMeetingBlock(
   const htmlParts: string[] = [
     '<section style="margin:0 0 18px;padding:14px 16px;border:1px solid #d0d7de;border-radius:8px;background:#ffffff">',
     `<p style="margin:0 0 4px;font-size:13px;color:#57606a">${escapeHtml(timeWindow)}</p>`,
-    `<h2 style="margin:0 0 8px;font-size:16px;line-height:1.4"><a href="${escapeHtml(meetingUrl)}" style="color:#1f2328;text-decoration:underline">${escapeHtml(title)}</a></h2>`,
+    `<h2 style="margin:0 0 8px;font-size:16px;line-height:1.4;color:#1f2328">${escapeHtml(title)}</h2>`,
   ];
   if (attendees) {
     htmlParts.push(`<p style="margin:0 0 8px;font-size:14px;color:#57606a">${escapeHtml(attendees)}</p>`);
@@ -325,12 +346,13 @@ function renderMeetingBlock(
     const dealLis = deals
       .map(
         (deal) =>
-          `<li style="margin:4px 0"><a href="${escapeHtml(dealsUrl)}" style="color:#b91c1c;text-decoration:underline">${escapeHtml(deal.title)}</a>${deal.details.length > 0 ? ` <span style="font-size:13px;color:#57606a">(${escapeHtml(deal.details.join(' | '))})</span>` : ''}</li>`,
+          `<li style="margin:4px 0">${escapeHtml(deal.title)}${deal.details.length > 0 ? ` <span style="font-size:13px;color:#57606a">(${escapeHtml(deal.details.join(' | '))})</span>` : ''}</li>`,
       )
       .join('');
     htmlParts.push(
       `<h3 style="margin:10px 0 4px;font-size:13px;font-weight:600;color:#1f2328">${escapeHtml(t.dealsHeading)}</h3>`,
       `<ul style="margin:0 0 8px;padding-left:18px">${dealLis}</ul>`,
+      `<p style="margin:6px 0 8px"><a href="${escapeHtml(dealsUrl)}" aria-label="${escapeHtml(`${t.openDeals}: ${title}`)}" style="display:inline-block;padding:10px 14px;min-height:44px;line-height:22px;box-sizing:border-box;border:1px solid #d0d7de;border-radius:6px;color:#b91c1c;text-decoration:underline;font-weight:600">${escapeHtml(t.openDeals)}</a></p>`,
     );
   }
   if (vyLines.length > 0) {
@@ -341,7 +363,10 @@ function renderMeetingBlock(
       '</div>',
     );
   }
-  htmlParts.push('</section>');
+  htmlParts.push(
+    `<p style="margin:12px 0 0"><a href="${escapeHtml(meetingUrl)}" aria-label="${escapeHtml(`${openLabel}: ${title}`)}" style="display:inline-block;padding:10px 14px;min-height:44px;line-height:22px;box-sizing:border-box;border:1px solid #d0d7de;border-radius:6px;color:#1f2328;text-decoration:underline;font-weight:600">${escapeHtml(openLabel)}</a></p>`,
+    '</section>',
+  );
   return { textLines, html: htmlParts.join('\n') };
 }
 
@@ -392,16 +417,16 @@ export function renderMorningBriefingMail(
   const settingsUrl = safeUrl(`${orgPrefix}/settings/notifications`);
 
   const renderedMeetings = content.meetings.map((meeting) =>
-    renderMeetingBlock(meeting, content.day, mail.lang, mail.path, dealsUrl, safeUrl),
+    renderMeetingBlock(meeting, content.day, mail.lang, orgPrefix, mail.path, dealsUrl, safeUrl),
   );
 
   const textParts: string[] = [heading, '', lead];
   if (truncatedNote) textParts.push(truncatedNote);
-  textParts.push('', `${t.openToday}: ${meetingsUrl}`);
+  textParts.push('', `${t.openMeetings}: ${meetingsUrl}`);
   for (const block of renderedMeetings) {
     textParts.push('', ...block.textLines);
   }
-  textParts.push('', `${t.footer(brand, org)} ${t.settingsLink}: ${settingsUrl}`);
+  textParts.push('', t.footer(brand, org), `${t.settingsLink}: ${settingsUrl}`);
 
   const html = `<!doctype html>
 <html lang="${mail.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -410,9 +435,10 @@ export function renderMorningBriefingMail(
 <h1 style="margin:0 0 8px;font-size:20px;line-height:1.3">${escapeHtml(heading)}</h1>
 <p style="margin:0 0 8px">${escapeHtml(lead)}</p>
 ${truncatedNote ? `<p style="margin:0 0 12px;font-size:14px;color:#57606a">${escapeHtml(truncatedNote)}</p>` : ''}
-<p style="margin:12px 0 20px"><a href="${escapeHtml(meetingsUrl)}" style="display:inline-block;padding:10px 16px;min-height:44px;line-height:24px;box-sizing:border-box;background:#b91c1c;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600">${escapeHtml(t.openToday)}</a></p>
+<p style="margin:12px 0 20px"><a href="${escapeHtml(meetingsUrl)}" style="display:inline-block;padding:10px 16px;min-height:44px;line-height:24px;box-sizing:border-box;background:#b91c1c;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600">${escapeHtml(t.openMeetings)}</a></p>
 ${renderedMeetings.map((block) => block.html).join('\n')}
-<p style="margin:20px 0 0;font-size:13px;color:#57606a">${escapeHtml(t.footer(brand, org))} <a href="${escapeHtml(settingsUrl)}" style="color:#57606a;text-decoration:underline">${escapeHtml(t.settingsLink)}</a>.</p>
+<p style="margin:20px 0 4px;font-size:13px;color:#57606a">${escapeHtml(t.footer(brand, org))}</p>
+<p style="margin:0"><a href="${escapeHtml(settingsUrl)}" style="display:inline-block;padding:10px 0;min-height:44px;line-height:24px;box-sizing:border-box;font-size:13px;color:#57606a;text-decoration:underline">${escapeHtml(t.settingsLink)}</a></p>
 </div>
 </body></html>`;
 

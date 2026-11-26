@@ -418,7 +418,8 @@ describe('morning briefing contract (#5080)', () => {
     expect(out?.html).toContain('lang="vi"');
     expect(out?.text).toContain('Lịch họp ngày 26/11/2026 tại Công ty <A>');
     expect(out?.text).toContain('Hôm nay bạn có 1 cuộc họp.');
-    expect(out?.text).toContain('09:00 - 09:30 | Họp giao ban tuần');
+    expect(out?.text).toContain('Mở trang Cuộc họp: https://ludy.test/o/acme/meetings');
+    expect(out?.text).toContain('09:00 - 09:30 (Asia/Ho_Chi_Minh) | Họp giao ban tuần');
     expect(out?.text).toContain(`Mở cuộc họp: https://ludy.test/o/acme/meetings/${ID}`);
     expect(out?.text).toContain('Thành phần: 4 khách mời; Người đọc trong tổ chức: An, Bình (+2 khác)');
     expect(out?.text).toContain('Quyết định từ cuộc họp trước:\n  - Chốt báo giá tháng 12');
@@ -428,18 +429,26 @@ describe('morning briefing contract (#5080)', () => {
     expect(out?.text).toContain('  - Gói Mở Rộng\n');
     expect(out?.text).toContain('Xem danh sách cơ hội: https://ludy.test/o/acme/deals');
     expect(out?.text).toContain('Gợi ý chuẩn bị của Vy:\n  - Kiểm tra lại tiến độ gửi hợp đồng trước giờ họp.');
+    expect(out?.text).toContain('Thư này chứa nội dung các cuộc họp của bạn và do Ludy gửi theo lựa chọn của bạn ở Công ty <A>.');
     expect(out?.text).toContain('Tắt thông báo này trong Cài đặt thông báo: https://ludy.test/o/acme/settings/notifications');
 
     expect(out?.html).toContain('Công ty &lt;A&gt;');
+    expect(out?.html).toContain('09:00 - 09:30 (Asia/Ho_Chi_Minh)');
     expect(out?.html).toContain(`href="https://ludy.test/o/acme/meetings/${ID}"`);
     expect(out?.html).toContain('href="https://ludy.test/o/acme/deals"');
     expect(out?.html).toContain('href="https://ludy.test/o/acme/settings/notifications"');
+    expect(out?.html).toContain('Thư này chứa nội dung các cuộc họp của bạn và do Ludy gửi theo lựa chọn của bạn ở Công ty &lt;A&gt;.');
     expect(out?.html).toContain('Gợi ý chuẩn bị của Vy');
     expect(out?.html).toContain('Việc của bạn');
     expect(out?.html).toContain('Quá hạn');
+    const anchors = out?.html.match(/<a\b[^>]*>/g) ?? [];
+    expect(anchors.length).toBeGreaterThanOrEqual(4);
+    for (const anchor of anchors) {
+      expect(anchor).toContain('min-height:44px');
+    }
   });
 
-  it('renders full English daily briefing with timezone conversion, untitled fallback, and fallback meeting path', () => {
+  it('renders full English daily briefing with timezone conversion, untitled fallback, and accurate destination labels', () => {
     const out = renderMorningBriefingMail(
       briefingMail({ lang: 'en', org: 'Acme Co' }),
       briefingContent({
@@ -483,17 +492,22 @@ describe('morning briefing contract (#5080)', () => {
     expect(out?.html).toContain('lang="en"');
     expect(out?.text).toContain('Meetings for 2026-11-26 at Acme Co');
     expect(out?.text).toContain('You have 2 meetings today.');
-    expect(out?.text).toContain('09:00 - 10:30 | Untitled meeting');
-    expect(out?.text).toContain("See today's meetings: https://ludy.test/o/acme/meetings");
+    expect(out?.text).toContain('09:00 - 10:30 (America/New_York) | Untitled meeting');
+    expect(out?.text).toContain('Open Meetings: https://ludy.test/o/acme/meetings');
     expect(out?.text).toContain('Attendees: 1 invitee; Org readers: Alice (+1 more)');
     expect(out?.text).toContain('Decisions from previous meeting:\n  - Approve Q4 discount tiers');
     expect(out?.text).toContain('Send signed addendum (Yours, Overdue, Due 2026-11-24)');
     expect(out?.text).toContain('Acme Renewal (Proposal | 15,000,000 VND | Expected close 2026-12-15)');
-    expect(out?.text).toContain('Open deals: https://ludy.test/o/acme/deals');
+    expect(out?.text).toContain('Open deals list: https://ludy.test/o/acme/deals');
     expect(out?.text).toContain('Vy prep lines:\n  - Confirm pricing tier before the call.');
-    expect(out?.text).toContain('16:00 - 16:45 | Engineering Sync');
-    expect(out?.text).toContain('Open meeting: https://ludy.test/o/acme/meetings/record');
+    expect(out?.text).toContain('16:00 - 16:45 (Asia/Ho_Chi_Minh) | Engineering Sync');
+    expect(out?.text).toContain('Open meeting recorder: https://ludy.test/o/acme/meetings/record');
+    expect(out?.text).toContain('This email contains your meeting content and was sent by Ludy because you asked for it in Acme Co.');
     expect(out?.text).toContain('Turn this notice off in Notification settings: https://ludy.test/o/acme/settings/notifications');
+    expect(out?.html).toContain('09:00 - 10:30 (America/New_York)');
+    expect(out?.html).toContain('16:00 - 16:45 (Asia/Ho_Chi_Minh)');
+    expect(out?.html).toContain('Open meeting recorder');
+    expect(out?.html).toContain('This email contains your meeting content and was sent by Ludy because you asked for it in Acme Co.');
   });
 
   it('formats large decimal-string CRM amounts without JS float precision loss and handles nullable amount', () => {
@@ -636,7 +650,7 @@ describe('morning briefing contract (#5080)', () => {
       }),
       briefingCtx(),
     );
-    expect(out?.text).toContain('26/11/2026 23:30 - 27/11/2026 00:30 | Họp giao ban tuần');
+    expect(out?.text).toContain('26/11/2026 23:30 - 27/11/2026 00:30 (Asia/Ho_Chi_Minh) | Họp giao ban tuần');
   });
 
   it('renders clean zero-meetings state and truncated-day indicator', () => {
@@ -708,13 +722,21 @@ describe('morning briefing contract (#5080)', () => {
         briefingCtx(),
       ),
     ).toThrow();
-    // Invalid publicUrl protocol or control chars.
-    expect(() =>
-      renderMorningBriefingMail(briefingMail(), briefingContent(), briefingCtx({ publicUrl: 'javascript:alert(1)' })),
-    ).toThrow();
-    expect(() =>
-      renderMorningBriefingMail(briefingMail(), briefingContent(), briefingCtx({ publicUrl: 'https://ludy.test\n' })),
-    ).toThrow();
+    // Invalid publicUrl protocol, credentials, query, fragment, or control chars.
+    for (const badUrl of [
+      'javascript:alert(1)',
+      'https://ludy.test\n',
+      'https://user:pass@ludy.test',
+      'https://user@ludy.test',
+      'https://ludy.test?next=https://evil.test',
+      'https://ludy.test/#app',
+      'https://ludy.test/?',
+      'https://ludy.test/#',
+    ]) {
+      expect(() =>
+        renderMorningBriefingMail(briefingMail(), briefingContent(), briefingCtx({ publicUrl: badUrl })),
+      ).toThrow();
+    }
     // Day mismatch between stored payload and render-time content.
     expect(() =>
       renderMorningBriefingMail(briefingMail({ day: '2026-11-26' }), briefingContent({ day: '2026-11-27' }), briefingCtx()),
