@@ -13,8 +13,11 @@ import { systemBrowser } from './platform/browser.ts';
 import { deviceCrypto } from './platform/crypto.ts';
 import { deviceLocalAuth } from './platform/local-auth.ts';
 import { secureKeyValue } from './platform/secure-store.ts';
+import { createApprovalsCache, type ApprovalsCache } from './screens/approvals/cache.ts';
 
-export const t = createTranslator(deviceLocale());
+export const locale = deviceLocale();
+export const t = createTranslator(locale);
+export const approvalsCache: ApprovalsCache = createApprovalsCache(secureKeyValue);
 
 // Inlined by Expo at build time; public settings, never secrets (config.ts serverPolicy).
 export const SERVER_POLICY = serverPolicy(process.env['EXPO_PUBLIC_LUDY_URL'], process.env['EXPO_PUBLIC_LUDY_CUSTOM_SERVER']);
