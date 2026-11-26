@@ -25,6 +25,8 @@ export const morningMailTemplate: MailTemplate = {
     if (!input.subject) return null;
     // Merge data that is not exactly the template's throws; the queue records TEMPLATE_DATA.
     const mail = zMorningMail.parse(input.payload);
+    // Fail closed until Slice C implements render-time full briefing lookup and templates.
+    if (!('count' in mail)) return null;
     const t = COPY[mail.lang];
     const url = `${input.publicUrl.replace(/\/+$/, '')}${mail.path}`;
     const text = [t.lead(mail.count), '', `${t.open}: ${url}`, '', t.footer(input.brand, mail.org)].join('\n');

@@ -52,6 +52,9 @@ export const morningSet = defineCommand({
       ctx.audit({ enabled: false });
       return zMorningState.parse({ enabled: false, minute: input.minute, timeZone: input.timeZone, language: input.language });
     }
+    if (input.content !== 'count' || input.vyLines) {
+      throw new DomainError('BRIEFING_NOT_ENABLED', 422, 'Chưa hỗ trợ lưu cài đặt bản tin buổi sáng đầy đủ');
+    }
     // The member's own membership row, locked FOR KEY SHARE until this command commits: a removal of the member (a DELETE of that row, whose trigger deletes the setting) waits for the save, so the save cannot land
     // after the trigger and leave a setting for a departed member; and a save that meets a removal already committed finds no row and is refused. (A role change or a removal waits for the save to commit, for a moment; another save does not wait.)
     const member = await ctx.trx

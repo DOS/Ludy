@@ -17343,6 +17343,7 @@ export const vi = {
       ASK_BUSY: 'Vy đang bận trả lời các câu hỏi. Hãy thử lại sau vài phút.',
       BRIEF_OFF: 'Hệ thống này chưa bật việc Vy viết phần chuẩn bị cho cuộc họp.',
       BRIEF_BUSY: 'Vy đang bận viết các phần chuẩn bị. Hãy thử lại sau vài phút.',
+      BRIEFING_NOT_ENABLED: 'Chưa bật chế độ bản tin buổi sáng đầy đủ trên hệ thống này.',
       ADHERENCE_OFF: 'Hệ thống này chưa bật việc nhờ Vy kiểm tra cuộc họp đã bàn đủ chưa.',
       ADHERENCE_BUSY: 'Vy đang bận kiểm tra các cuộc họp. Hãy thử lại sau vài phút.',
       TITLE_BUSY: 'Vy đang bận gợi ý tên. Hãy thử lại sau vài phút.',
