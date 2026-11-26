@@ -395,18 +395,24 @@ describe('ephemeral multi-certificate PFX staging and cleanup', () => {
 
     let seenImportScript = '';
     let seenImportEnv = {};
-    const staged = importEphemeralPfx('C:\\tmp\\bundle.pfx', (psScript, env) => {
-      seenImportScript = psScript;
-      seenImportEnv = env;
-      return JSON.stringify({ leaf, cleanup: [leaf, intermediate] });
-    });
+    const recordFile = join(makeTempDir(), 'cleanup-record.txt');
+    const staged = importEphemeralPfx(
+      'C:\\tmp\\bundle.pfx',
+      (psScript, env) => {
+        seenImportScript = psScript;
+        seenImportEnv = env;
+        return JSON.stringify({ leaf, cleanup: [leaf, intermediate] });
+      },
+      recordFile,
+    );
     expect(staged.leafThumbprint).toBe(leaf.toUpperCase());
     expect(staged.cleanupThumbprints).toEqual([leaf.toUpperCase(), intermediate.toUpperCase()]);
-    expect(seenImportEnv).toEqual({ LUDY_PFX_FILE: 'C:\\tmp\\bundle.pfx' });
+    expect(seenImportEnv).toEqual({ LUDY_PFX_FILE: 'C:\\tmp\\bundle.pfx', LUDY_CERT_RECORD_FILE: recordFile });
     expect(seenImportScript).toContain('X509Certificate2Collection');
     expect(seenImportScript).toContain('$_.HasPrivateKey');
     expect(seenImportScript).toContain('$leaves.Count -ne 1');
     expect(seenImportScript).toContain('$preExisting.ContainsKey($leafThumb)');
+    expect(seenImportScript).toContain('LUDY_CERT_RECORD_FILE');
     expect(seenImportScript).toContain('Remove-Item -LiteralPath $p -DeleteKey');
 
     let seenCleanupScript = '';
@@ -416,10 +422,16 @@ describe('ephemeral multi-certificate PFX staging and cleanup', () => {
       seenCleanupEnv = env;
       return '';
     });
-    expect(seenCleanupScript).toContain('Remove-Item -LiteralPath $storePath -DeleteKey');
+    expect(seenCleanupScript).toContain('Remove-Item -LiteralPath $storePath -DeleteKey -ErrorAction Stop');
+    expect(seenCleanupScript).not.toContain('SilentlyContinue');
     expect(seenCleanupEnv).toEqual({
       LUDY_CERT_THUMBRINTS: `${leaf.toUpperCase()},${intermediate.toUpperCase()}`,
     });
+    expect(() =>
+      removeEphemeralCerts([leaf], () => {
+        throw new Error('Failed deleting temporary signing certificate(s)');
+      }),
+    ).toThrow(/Failed deleting temporary signing certificate/);
   });
 
   it('reconciles effective timestamp server from WINDOWS_SIGN_WITH_PARAMS /tr and rejects conflicts with WINDOWS_TIMESTAMP_SERVER', () => {

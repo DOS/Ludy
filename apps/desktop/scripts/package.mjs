@@ -168,6 +168,9 @@ function buildImportEphemeralPfxScript() {
     '      }',
     '    }',
     '  }',
+    '  if ($cleanupCandidates.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($env:LUDY_CERT_RECORD_FILE)) {',
+    '    [System.IO.File]::WriteAllText($env:LUDY_CERT_RECORD_FILE, ($cleanupCandidates -join ","), [System.Text.UTF8Encoding]::new($false))',
+    '  }',
     '  try {',
     '    $imported = @(Import-PfxCertificate -FilePath $env:LUDY_PFX_FILE -CertStoreLocation "Cert:\\CurrentUser\\My" -Password $secure)',
     '    foreach ($item in $imported) {',
@@ -177,6 +180,10 @@ function buildImportEphemeralPfxScript() {
     '          $importedThumbs += $t',
     '        }',
     '      }',
+    '    }',
+    '    $allCleanup = @($importedThumbs + $cleanupCandidates | Select-Object -Unique)',
+    '    if ($allCleanup.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($env:LUDY_CERT_RECORD_FILE)) {',
+    '      [System.IO.File]::WriteAllText($env:LUDY_CERT_RECORD_FILE, ($allCleanup -join ","), [System.Text.UTF8Encoding]::new($false))',
     '    }',
     '    if ($importedThumbs -notcontains $leafThumb) {',
     '      throw "Expected private-key leaf thumbprint $leafThumb was not imported into Cert:\\CurrentUser\\My"',
@@ -201,8 +208,11 @@ function buildImportEphemeralPfxScript() {
   ].join('\n');
 }
 
-export function importEphemeralPfx(pfxFile, runPowerShell = defaultRunPowerShell) {
-  const out = runPowerShell(buildImportEphemeralPfxScript(), { LUDY_PFX_FILE: pfxFile });
+export function importEphemeralPfx(pfxFile, runPowerShell = defaultRunPowerShell, cleanupRecordFile = '') {
+  const out = runPowerShell(buildImportEphemeralPfxScript(), {
+    LUDY_PFX_FILE: pfxFile,
+    ...(cleanupRecordFile ? { LUDY_CERT_RECORD_FILE: cleanupRecordFile } : {}),
+  });
   return parseImportedPfxResult(out);
 }
 
@@ -210,13 +220,23 @@ export function removeEphemeralCerts(thumbprints, runPowerShell = defaultRunPowe
   const valid = normalizeThumbprintList(thumbprints);
   if (valid.length === 0) return;
   const ps = [
-    "$ErrorActionPreference = 'SilentlyContinue'",
+    "$ErrorActionPreference = 'Stop'",
+    '$failures = @()',
     'foreach ($raw in ($env:LUDY_CERT_THUMBRINTS -split ",")) {',
     '  $t = $raw.Trim()',
     '  if ($t -match "^[0-9a-fA-F]{40}$") {',
     '    $storePath = "Cert:\\CurrentUser\\My\\$t"',
-    '    if (Test-Path -LiteralPath $storePath) { Remove-Item -LiteralPath $storePath -DeleteKey }',
+    '    if (Test-Path -LiteralPath $storePath) {',
+    '      try {',
+    '        Remove-Item -LiteralPath $storePath -DeleteKey -ErrorAction Stop',
+    '      } catch {',
+    '        $failures += "${t}: $($_.Exception.Message)"',
+    '      }',
+    '    }',
     '  }',
+    '}',
+    'if ($failures.Count -gt 0) {',
+    '  throw "Failed deleting temporary signing certificate(s): $($failures -join "; ")"',
     '}',
   ].join('\n');
   runPowerShell(ps, { LUDY_CERT_THUMBRINTS: valid.join(',') });
@@ -289,11 +309,15 @@ if (isMainEntry(process.argv[1], fileURLToPath(import.meta.url))) {
   await rm(packed, { recursive: true, force: true });
   await rm(installer, { recursive: true, force: true });
 
+  const cleanupRecordFile = join(outRoot, '.ludy-pfx-cleanup.tmp');
+  await rm(cleanupRecordFile, { force: true });
   let ephemeralCleanupThumbprints = [];
   let effectiveSigning = signing;
+  let primaryError = null;
+  let cleanupFailure = null;
   try {
     if (signing.enabled && signing.mode === 'pfx') {
-      const staged = importEphemeralPfx(signing.certificateFile);
+      const staged = importEphemeralPfx(signing.certificateFile, defaultRunPowerShell, cleanupRecordFile);
       ephemeralCleanupThumbprints = staged.cleanupThumbprints;
       // Remove PFX path/password from process.env immediately so @electron/windows-sign uses only the store thumbprint.
       delete process.env.WINDOWS_CERTIFICATE_FILE;
@@ -376,13 +400,31 @@ if (isMainEntry(process.argv[1], fileURLToPath(import.meta.url))) {
     } finally {
       await rm(vendorDir, { recursive: true, force: true });
     }
+  } catch (err) {
+    primaryError = err;
+    throw err;
   } finally {
-    if (ephemeralCleanupThumbprints.length > 0) {
+    let recordedThumbprints = [];
+    if (existsSync(cleanupRecordFile)) {
       try {
-        removeEphemeralCerts(ephemeralCleanupThumbprints);
-      } catch (cleanupError) {
-        console.error(`warning: failed removing ephemeral certificates from store: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+        recordedThumbprints = normalizeThumbprintList(readFileSync(cleanupRecordFile, 'utf8'));
+      } finally {
+        await rm(cleanupRecordFile, { force: true });
       }
     }
+    const allCleanup = normalizeThumbprintList([...ephemeralCleanupThumbprints, ...recordedThumbprints]);
+    if (allCleanup.length > 0) {
+      try {
+        removeEphemeralCerts(allCleanup);
+      } catch (cleanupError) {
+        cleanupFailure = cleanupError;
+        if (primaryError) {
+          console.error(`warning: failed removing ephemeral certificates from store: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+        }
+      }
+    }
+  }
+  if (cleanupFailure) {
+    throw cleanupFailure;
   }
 }

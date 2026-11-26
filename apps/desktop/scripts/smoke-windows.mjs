@@ -81,8 +81,8 @@ async function resolveSmokeSigntoolPath() {
   return 'signtool.exe';
 }
 
-async function verifyAuthenticode(filePaths) {
-  const verified = await verifyWindowsAuthenticodeFiles(filePaths);
+async function verifyAuthenticode(filePaths, expectedThumbprint = null) {
+  const verified = await verifyWindowsAuthenticodeFiles(filePaths, expectedThumbprint);
   const peTargets = filePaths.filter((p) => !p.toLowerCase().endsWith('.ps1'));
   if (peTargets.length > 0) {
     const signtoolExe = await resolveSmokeSigntoolPath();
@@ -267,12 +267,16 @@ try {
       assert(manifest.signed === expectSigned, `${dir}/${RELEASE_MANIFEST_FILENAME} signed=${String(manifest.signed)}, expected ${String(expectSigned)}`);
     }
     if (expectSigned) {
-      await verifyAuthenticode([
-        join(installerA, 'LudyDesktop-Setup.exe'),
-        join(installerB, 'LudyDesktop-Setup.exe'),
-        join(installerA, RELEASE_MANIFEST_SCRIPT_FILENAME),
-        join(installerB, RELEASE_MANIFEST_SCRIPT_FILENAME),
-      ]);
+      assert(pinnedThumbprint && /^[0-9a-f]{40}$/i.test(pinnedThumbprint), 'signed smoke requires publisherThumbprint in installer A release-manifest.json');
+      await verifyAuthenticode(
+        [
+          join(installerA, 'LudyDesktop-Setup.exe'),
+          join(installerB, 'LudyDesktop-Setup.exe'),
+          join(installerA, RELEASE_MANIFEST_SCRIPT_FILENAME),
+          join(installerB, RELEASE_MANIFEST_SCRIPT_FILENAME),
+        ],
+        pinnedThumbprint,
+      );
     }
     versionA = /-(\d+\.\d+\.\d+)-full\.nupkg/.exec(readdirSync(installerA).find((n) => n.endsWith('-full.nupkg')) ?? '')?.[1] ?? 'A';
     versionB = /-(\d+\.\d+\.\d+)-full\.nupkg/.exec(readdirSync(installerB).find((n) => n.endsWith('-full.nupkg')) ?? '')?.[1] ?? 'B';
@@ -317,11 +321,14 @@ try {
     assert(state.execPath.includes(`\\app-${versionA}\\`), `unexpected exe path ${state.execPath}`);
     assert(state.update.kind === 'idle' || state.update.kind === 'checking', `update state at start: ${JSON.stringify(state.update)} (feed ${fake.url}/feed)`);
     if (expectSigned) {
-      await verifyAuthenticode([
-        updateExe,
-        join(installRoot, `app-${versionA}`, EXE),
-        join(installRoot, `app-${versionA}`, 'resources', 'app.asar.unpacked', 'bin', 'ludy-wasapi-loopback.exe'),
-      ]);
+      await verifyAuthenticode(
+        [
+          updateExe,
+          join(installRoot, `app-${versionA}`, EXE),
+          join(installRoot, `app-${versionA}`, 'resources', 'app.asar.unpacked', 'bin', 'ludy-wasapi-loopback.exe'),
+        ],
+        pinnedThumbprint,
+      );
     }
     return note;
   });
@@ -441,11 +448,14 @@ try {
     assert(state.execPath.includes(`\\app-${versionB}\\`), `unexpected exe path ${state.execPath}`);
     assert(state.squirrelInstalled === true, 'the updated app does not detect its Squirrel install');
     if (expectSigned) {
-      await verifyAuthenticode([
-        updateExe,
-        join(installRoot, `app-${versionB}`, EXE),
-        join(installRoot, `app-${versionB}`, 'resources', 'app.asar.unpacked', 'bin', 'ludy-wasapi-loopback.exe'),
-      ]);
+      await verifyAuthenticode(
+        [
+          updateExe,
+          join(installRoot, `app-${versionB}`, EXE),
+          join(installRoot, `app-${versionB}`, 'resources', 'app.asar.unpacked', 'bin', 'ludy-wasapi-loopback.exe'),
+        ],
+        pinnedThumbprint,
+      );
     }
     await waitState('the updated app still signed in', (s) => s.auth.kind === 'signed-in', { timeoutMs: 60_000 });
     writeFileSync(join(out, 'running-version.txt'), `${state.version}\n`);

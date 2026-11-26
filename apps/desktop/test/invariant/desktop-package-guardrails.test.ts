@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Security invariant guardrails for the signed Windows release pipeline (#4884).
 // Self-contained under test/invariant/ with no imports from outside this directory or workspace packages.
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -18,16 +19,85 @@ describe('desktop-package workflow guardrails', () => {
     expect(workflow).not.toMatch(/on:[\s\S]*?\n\s*push:/);
     expect(workflow).not.toContain('pull_request_target');
 
-    // Prepare job needs actions: read (not checks: read) and selects the latest matching run on release SHA before checking completion/conclusion.
+    // Prepare job needs actions: read (not checks: read) and pipes gh api --paginate --slurp to standalone jq (never --slurp with --jq).
     expect(workflow).toMatch(/prepare:[\s\S]*?permissions:\s*\n\s*contents:\s*read\s*\n\s*actions:\s*read/);
     expect(workflow).not.toContain('checks: read');
     expect(workflow).toContain('--paginate --slurp');
+    expect(workflow).not.toMatch(/--slurp[^\n]*--jq/);
     expect(workflow).toContain('.[].workflow_runs[]');
     expect(workflow).toContain('(.event == "push" or .event == "workflow_dispatch")');
     expect(workflow).toContain('.head_repository.full_name == env.REPO');
     expect(workflow).toContain('[ "$run_status" != \'completed\' ]');
     expect(workflow).toContain('[ "$run_conclusion" != \'success\' ]');
     expect(workflow).toContain("check_workflow_jobs \"$SHA\" '.github/workflows/desktop-build.yml'");
+
+    const runsJqMatch = workflow.match(/WF_PATH="\$workflow_path"\s+jq -r '([^']+)'/);
+    const jobsJqMatch = workflow.match(/jq -r '(\.\[\]\.jobs\[\][^']+)'/);
+    expect(runsJqMatch?.[1]).toBeTruthy();
+    expect(jobsJqMatch?.[1]).toBeTruthy();
+    if (spawnSync('jq', ['--version'], { encoding: 'utf8' }).status === 0) {
+      const paginatedRuns = JSON.stringify([
+        {
+          workflow_runs: [
+            {
+              id: 101,
+              path: '.github/workflows/ci.yml',
+              head_branch: 'main',
+              event: 'push',
+              head_repository: { full_name: 'DOS/Ludy' },
+              status: 'completed',
+              conclusion: 'success',
+              created_at: '2026-11-26T10:00:00Z',
+            },
+            {
+              id: 102,
+              path: '.github/workflows/ci.yml',
+              head_branch: 'main',
+              event: 'pull_request',
+              head_repository: { full_name: 'fork/Ludy' },
+              status: 'completed',
+              conclusion: 'success',
+              created_at: '2026-11-26T12:00:00Z',
+            },
+          ],
+        },
+        {
+          workflow_runs: [
+            {
+              id: 103,
+              path: '.github/workflows/ci.yml',
+              head_branch: 'main',
+              event: 'workflow_dispatch',
+              head_repository: { full_name: 'DOS/Ludy' },
+              status: 'completed',
+              conclusion: 'failure',
+              created_at: '2026-11-26T11:00:00Z',
+            },
+          ],
+        },
+      ]);
+      const runsRes = spawnSync('jq', ['-r', runsJqMatch![1]!], {
+        input: paginatedRuns,
+        encoding: 'utf8',
+        env: { ...process.env, REPO: 'DOS/Ludy', WF_PATH: '.github/workflows/ci.yml' },
+      });
+      expect(runsRes.status).toBe(0);
+      expect(runsRes.stdout.trim()).toBe('103\tcompleted\tfailure');
+
+      const paginatedJobs = JSON.stringify([
+        { jobs: [{ name: 'Lint, typecheck, test', status: 'completed', conclusion: 'success' }] },
+        { jobs: [{ name: 'Second page job', status: 'in_progress', conclusion: null }] },
+      ]);
+      const jobsRes = spawnSync('jq', ['-r', jobsJqMatch![1]!], {
+        input: paginatedJobs,
+        encoding: 'utf8',
+      });
+      expect(jobsRes.status).toBe(0);
+      expect(jobsRes.stdout.trim().split('\n')).toEqual([
+        'Lint, typecheck, test\tcompleted\tsuccess',
+        'Second page job\tin_progress\t',
+      ]);
+    }
 
     // Every job must gate on refs/heads/main.
     const mainGates = workflow.match(/github\.ref == 'refs\/heads\/main'/g) ?? [];

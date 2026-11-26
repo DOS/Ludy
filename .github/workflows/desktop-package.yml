@@ -127,8 +127,8 @@ jobs:
             local workflow_path="$2"
             shift 2
             local run_row run_id run_status run_conclusion jobs name row status conclusion
-            run_row="$(WF_PATH="$workflow_path" gh api "repos/$REPO/actions/runs?head_sha=$target_sha&per_page=100" --paginate --slurp \
-              --jq '[.[].workflow_runs[] | select(.path == env.WF_PATH and .head_branch == "main" and (.event == "push" or .event == "workflow_dispatch") and .head_repository.full_name == env.REPO)] | sort_by(.created_at) | last | if . == null then empty else [.id, .status, (.conclusion // "")] | @tsv end')"
+            run_row="$(gh api "repos/$REPO/actions/runs?head_sha=$target_sha&per_page=100" --paginate --slurp \
+              | WF_PATH="$workflow_path" jq -r '[.[].workflow_runs[] | select(.path == env.WF_PATH and .head_branch == "main" and (.event == "push" or .event == "workflow_dispatch") and .head_repository.full_name == env.REPO)] | sort_by(.created_at) | last | if . == null then empty else [.id, .status, (.conclusion // "")] | @tsv end')"
             if [ -z "$run_row" ]; then
               for name in "$@"; do
                 pending+=("$name@$target_sha")
@@ -149,7 +149,7 @@ jobs:
               return
             fi
             jobs="$(gh api "repos/$REPO/actions/runs/$run_id/jobs?per_page=100" --paginate --slurp \
-              --jq '.[].jobs[] | [.name, .status, (.conclusion // "")] | @tsv')"
+              | jq -r '.[].jobs[] | [.name, .status, (.conclusion // "")] | @tsv')"
             for name in "$@"; do
               row="$(awk -F'\t' -v n="$name" '$1 == n { print; exit }' <<<"$jobs")"
               status="$(cut -f2 <<<"$row")"
@@ -455,15 +455,24 @@ jobs:
             }
           }
           $uniqueThumbs = @($rawList | ForEach-Object { ($_ -replace '\s+', '').ToUpperInvariant() } | Where-Object { $_ -match '^[0-9A-F]{40}$' } | Select-Object -Unique)
+          $cleanupErrors = @()
           foreach ($t in $uniqueThumbs) {
             $storePath = "Cert:\CurrentUser\My\$t"
             if (Test-Path -LiteralPath $storePath) {
-              Remove-Item -LiteralPath $storePath -DeleteKey -ErrorAction SilentlyContinue
+              try {
+                Remove-Item -LiteralPath $storePath -DeleteKey -ErrorAction Stop
+              } catch {
+                $cleanupErrors += "${t}: $($_.Exception.Message)"
+              }
             }
           }
           $pfxPath = Join-Path $env:RUNNER_TEMP 'ludy-signing.pfx'
           if (Test-Path -LiteralPath $pfxPath) {
-            Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $pfxPath -Force -ErrorAction Stop
+          }
+          if ($cleanupErrors.Count -gt 0) {
+            Write-Error ("Failed deleting temporary signing certificate(s): " + ($cleanupErrors -join '; '))
+            exit 1
           }
 
       - name: Upload signed release artifacts

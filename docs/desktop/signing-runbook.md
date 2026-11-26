@@ -16,7 +16,7 @@
 ## Step 1. Configure the `desktop-release` GitHub environment (owner)
 
 1. In GitHub repository settings, create an environment named `desktop-release`.
-2. Enable **Required reviewers** and add the owner so no signed build can access signing credentials without explicit approval.
+2. Enable **Required reviewers**, add the owner, and disable **Allow administrators to bypass configured protection rules** so no signed build can access signing credentials without explicit owner approval.
 3. Restrict **Deployment branches and tags** on `desktop-release` to **Selected branches** -> `main` only (because `desktop-package.yml` dispatches strictly from `refs/heads/main`, so the workflow definition always comes from reviewed `main`).
 4. Keep `desktop-build.yml` completely secret-free for pull request and `main` CI checks.
 
@@ -91,7 +91,9 @@ Stop if the feed returns 404/HTML for `RELEASES` or `release-manifest.json`, if 
 
 ### Roll back a bad desktop release
 
-1. **Immediate halt:** remove `RELEASES`, `release-manifest.json`, and `release-manifest.ps1` from the HTTPS feed host (or atomically restore the previous known-good version's `RELEASES`, `release-manifest.json`, `release-manifest.ps1`, `SHA256SUMS.txt`, and `.nupkg` files together so `release-manifest.ps1` always matches `release-manifest.json`). Clients already on the previous version stop seeing an update; clients on the bad version stay running until a newer fixed version is published.
+1. **Immediate halt:**
+   - **Block future downloads:** remove `RELEASES`, `release-manifest.json`, and `release-manifest.ps1` from the HTTPS feed host (or atomically restore the previous known-good version's `RELEASES`, `release-manifest.json`, `release-manifest.ps1`, `SHA256SUMS.txt`, and `.nupkg` files together so `release-manifest.ps1` always matches `release-manifest.json`). Clients still on the previous version stop seeing an update.
+   - **Clients where the bad update is already marked ready (`Khởi động lại để cập nhật`):** removing or restoring hosted feed metadata does **not** withdraw an update that Squirrel has already downloaded and unpacked locally. Instruct affected members **not** to click **Khởi động lại để cập nhật** and either leave the previous running version open until the forward fix (`0.1.3` below) is published or run a verified clean reinstall of the previous signed installer from the release page.
 2. **Forward fix:** Squirrel.Windows only upgrades forward in semver (`X.Y.Z`). To roll members back from `0.1.2` to `0.1.1` automatically, rebuild and sign the fixed source as `0.1.3`, verify it, and publish `0.1.3` to the feed.
 3. Unpublish or mark the bad GitHub release as superseded so new downloads do not pick it up.
 

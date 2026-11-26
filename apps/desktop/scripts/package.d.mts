@@ -8,6 +8,7 @@ export function parseImportedPfxResult(rawOutput: string): { leafThumbprint: str
 export function importEphemeralPfx(
   pfxFile: string,
   runPowerShell?: (psScript: string, env: Record<string, string>) => string,
+  cleanupRecordFile?: string,
 ): { leafThumbprint: string; cleanupThumbprints: string[] };
 export function removeEphemeralCerts(
   thumbprints: readonly string[] | string,

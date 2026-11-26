@@ -82,6 +82,7 @@ const CHECK_AUTHENTICODE_PS = [
   '  [pscustomobject]@{',
   '    path = [string]$file',
   '    status = [string]$sig.Status',
+  '    signatureType = [string]$sig.SignatureType',
   '    thumbprint = if ($sig.SignerCertificate) { [string]$sig.SignerCertificate.Thumbprint } else { $null }',
   '    hasTimestamp = ($null -ne $sig.TimeStamperCertificate)',
   '  }',
@@ -517,6 +518,9 @@ export function parseAuthenticodeCheckResults(
     const record = row as Record<string, unknown>;
     if (record.status !== 'Valid') {
       throw new Error(`Authenticode signature invalid for ${target}: status=${String(record.status)}`);
+    }
+    if (record.signatureType !== undefined && record.signatureType !== 'Embedded') {
+      throw new Error(`Authenticode check on ${target} must verify an embedded signature (got ${String(record.signatureType)})`);
     }
     if (record.hasTimestamp !== true) {
       throw new Error(`Authenticode signature on ${target} is missing a timestamp`);

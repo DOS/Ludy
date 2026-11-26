@@ -147,13 +147,11 @@ describe('parseAuthenticodeCheckResults', () => {
     expect(() => parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, timestampType: 'authenticode-legacy' }]), ['a.exe'])).toThrow(/RFC 3161/);
     expect(() => parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, fileDigestOid: SHA1_OID }]), ['a.exe'])).toThrow(/SHA-256/);
     expect(() => parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, tsDigestOid: SHA1_OID }]), ['a.exe'])).toThrow(/SHA-256/);
-    expect(() =>
-      parseAuthenticodeCheckResults(
-        JSON.stringify([okRow, { ...okRow, path: 'b.exe', thumbprint: 'f'.repeat(40) }]),
-        ['a.exe', 'b.exe'],
-      ),
-    ).toThrow(/mismatch/);
+    expect(() => parseAuthenticodeCheckResults(JSON.stringify([okRow, { ...okRow, path: 'b.exe', thumbprint: 'f'.repeat(40) }]), ['a.exe', 'b.exe'])).toThrow(/mismatch/);
     expect(() => parseAuthenticodeCheckResults(JSON.stringify([okRow]), ['a.exe'], 'e'.repeat(40))).toThrow(/does not match expected/);
+    expect(parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, signatureType: 'Embedded' }]), ['a.exe'], THUMB)).toEqual({ thumbprint: THUMB });
+    expect(() => parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, signatureType: 'Catalog' }]), ['a.exe'], THUMB)).toThrow(/embedded signature/i);
+    expect(() => parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, signatureType: 'None' }]), ['a.exe'], THUMB)).toThrow(/embedded signature/i);
   });
 });
 
