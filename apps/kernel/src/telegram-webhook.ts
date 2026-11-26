@@ -14,8 +14,6 @@ import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 
 export const TELEGRAM_WEBHOOK_PATH = '/api/channels/telegram/webhook/:hook';
 export const TELEGRAM_SECRET_HEADER = 'x-telegram-bot-api-secret-token';
-// The provider name the update is parked under: the worker's parser and its hook lookup are keyed by it, and the backlog cap is its own.
-export const TELEGRAM_INTAKE_PROVIDER = 'telegram_chat';
 
 export interface TelegramWebhookConfig {
   // The keys the hook secret is derived from, the current one first (the broker's `deriveKeys`): one under a rotation that keeps the old key.
@@ -107,16 +105,19 @@ export async function acceptTelegramWebhook(
   const stateKey = telegramBusinessState(update) !== null ? `${request.hook}:update:${(update as { update_id: number }).update_id}` : null;
   if (stateKey !== null && !replays?.has(stateKey)) keys.push(stateKey);
   if (keys.length === 0) return { status: 200, parked: false };
+  let parked = false;
   try {
-    await runtime.orgless(async (db) => {
-      await sql`SELECT ludy_kernel.conversation_inbound_enqueue(${TELEGRAM_INTAKE_PROVIDER}, ${wrapTelegramChatNotice(request.hook, body)}::bytea)`.execute(db);
-    });
+    const { rows } = await runtime.orgless(async (db) =>
+      sql<{ seq: string | null }>`SELECT ludy_kernel.telegram_inbound_enqueue(${request.hook}, ${wrapTelegramChatNotice(request.hook, body)}::bytea) AS seq`.execute(db),
+    );
+    parked = rows[0]?.seq != null;
   } catch (error) {
-    // The definer refuses past 10000 waiting notices (53400), which the runtime maps to OVERLOADED. Telegram retries a delivery that was not
+    // The definer refuses past the per-org or 10000 provider cap (53400), which the runtime maps to OVERLOADED. Telegram retries a delivery that was not
     // answered 2xx [M], so this one is asked for again.
     if (error instanceof DomainError && error.code === 'OVERLOADED') return { status: 503, code: 'BACKLOG' };
     throw error;
   }
+  if (!parked) return { status: 200, parked: false };
   for (const key of keys) replays?.add(key);
   return { status: 200, parked: true };
 }

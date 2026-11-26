@@ -126,7 +126,7 @@ import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
 import { HELD_SWEEP_MS, holdEvents, planHolds, releaseHeld, releaseHeldOfOrg, type SweepCursor } from './outbox-hold.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
-import { failUndraftable, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
+import { failUndraftable, reconcileTelegramDisplacements, rekeyTelegramWebhooks, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
@@ -2242,7 +2242,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // Telegram bot chats switched on or off (#3132): the webhook is set or deleted with the bot token only this worker opens; ids only in the job. The
       // webhook's address is the API's own origin (PUBLIC_URL, where webhooks are answered), not the web app's.
       if (job.data.action === 'chat') {
-        const outcome = await runTelegramChatHook({ runtime: deps.runtime, broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined), baseUrl: deps.publicUrl ?? '' }, job.data);
+        const outcome = await runTelegramChatHook({ runtime: deps.runtime, broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined), baseUrl: deps.publicUrl ?? '', workerDb: deps.workerDb }, job.data);
         console.log(`[conversations] chat ${job.data.on ? 'enable' : 'disable'} ${job.data.connectionId}: ${outcome}`);
         return;
       }
@@ -2831,6 +2831,24 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       }
     } catch (error) {
       console.error('[subject-key-reseal] sweep', error instanceof Error ? error.name : typeof error);
+    }
+    try {
+      if (channels.publishers && deps.publicUrl) {
+        const webhooks = await rekeyTelegramWebhooks({
+          runtime: deps.runtime,
+          broker: channels.broker,
+          workerDb: deps.workerDb,
+          adapter: (provider: string) => (Object.hasOwn(channels.publishers ?? {}, provider) ? channels.publishers?.[provider]?.conversations : undefined),
+          baseUrl: deps.publicUrl,
+        });
+        if (!webhooks.skipped && webhooks.rekeyed + webhooks.failed + webhooks.leftActive + webhooks.leftInactive > 0) {
+          console.log(
+            `[telegram-webhook-rekey] rekeyed ${webhooks.rekeyed}, failed ${webhooks.failed}; left under an older key: ${webhooks.leftActive} active, ${webhooks.leftInactive} to reconnect`,
+          );
+        }
+      }
+    } catch (error) {
+      console.error('[telegram-webhook-rekey] sweep', error instanceof Error ? error.name : typeof error);
     } finally {
       resealing = false;
     }
@@ -3952,6 +3970,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // Meta's data deletion requests that name conversations (CV6, #2305), the same callback as the Ads one above.
       await runConversationDeletions({ runtime: deps.runtime, workerDb: deps.workerDb });
       await sweepStaleReplies({ workerDb: deps.workerDb, runtime: deps.runtime });
+      await reconcileTelegramDisplacements({ workerDb: deps.workerDb, runtime: deps.runtime });
       // What the webhook did not bring (CV5b, #2329): the recent history of an account that is due (the first read of a new or
       // reconnected one, then hourly) and the name of a customer who has none yet, for the providers whose adapters can read them. The
       // history read only runs where the deployment has turned it on, once its live check has settled the platform's shapes.

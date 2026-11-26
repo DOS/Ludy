@@ -36,7 +36,7 @@ export const kindKey = (kind: KnownNotificationKind) => kind.replace('.', '_') a
 // Kinds shown but never turned off, so not in the settings: a notice an action waits on (#1678: a personal-data erasure
 // deletes the private items it names once their authors were told; #4069: an AI app connected before its Engage reads existed can now read the Hộp thư, bookings and ads, and its owner is
 // told once whatever they muted, because it is about their own consent).
-export const REQUIRED_NOTIFICATION_KINDS = ['kernel.personal_data_notice', 'kernel.mcp_engage_reads'] as const;
+export const REQUIRED_NOTIFICATION_KINDS = ['kernel.personal_data_notice', 'kernel.mcp_engage_reads', 'kernel.telegram_chat_displaced'] as const;
 type ShownNotificationKind = KnownNotificationKind | (typeof REQUIRED_NOTIFICATION_KINDS)[number];
 
 export const isKnownKind = (kind: string): kind is ShownNotificationKind =>
@@ -58,6 +58,7 @@ export type NotificationTarget =
   | { to: 'meeting'; id: string }
   | { to: 'meetings' }
   | { to: 'ads' }
+  | { to: 'channels' }
   | { to: 'agents' }
   | { to: 'aiConnections' };
 
@@ -106,6 +107,9 @@ export function notificationTarget(item: { kind: string; subjectId: string | nul
     // The AI budget's notice (#2382) opens the page with this month's use and the budgets, where an owner raises one.
     case 'kernel.ai_budget':
       return { to: 'agents' };
+    // Another org enabled the same Telegram bot, so receiving messages turned off here (#3150 item 2).
+    case 'kernel.telegram_chat_displaced':
+      return { to: 'channels' };
     // The Engage reads notice (#4069) opens the AI connections screen, where each connected app is listed and can be disconnected.
     case 'kernel.mcp_engage_reads':
       return { to: 'aiConnections' };
@@ -189,7 +193,7 @@ export function parseNotificationsSearch(search: Record<string, unknown>): Notif
 
 const FINANCE_KERNEL_KINDS = new Set(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.original_flagged']);
 const TEAMWORK_KERNEL_KINDS = new Set(['kernel.task_assigned', 'kernel.task_rerouted']);
-const ENGAGE_KERNEL_KINDS = new Set(['kernel.conversation_new', 'kernel.channel_expired']);
+const ENGAGE_KERNEL_KINDS = new Set(['kernel.conversation_new', 'kernel.channel_expired', 'kernel.telegram_chat_displaced']);
 const AI_KERNEL_KINDS = new Set(['kernel.ai_budget', 'kernel.mcp_engage_reads']);
 
 /** Map a notification kind to its primary Ludy App (or 'kernel' for org-wide core notices). */
