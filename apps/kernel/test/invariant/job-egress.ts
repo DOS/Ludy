@@ -140,6 +140,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   mail: ['provider:mail'],
   push: ['tenant_url'],
   'push.brand': [],
+  // Mobile native push adapter (#4883): optional open NativePushSender interface passed through KernelAdapters (unset on self-host);
+  // only the kernel-native-push job reaches it, with content-free notification payloads (title/kind + deep-link path/id only).
+  nativePush: ['provider:native_push'],
   archive: [],
   usageLimits: [],
   // The operator's alert webhook.
@@ -153,7 +156,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
 // directory runs from the base branch on a protected-path PR, so a new field lands in two steps (#1663): its
 // classification here first, which passes both the PR's own copy and the base one, then the field in a later PR, whose
 // base copy already knows it. Remove the entry once the field is on the base branch.
-export const PENDING_DEPS: Readonly<Record<string, string>> = {};
+export const PENDING_DEPS: Readonly<Record<string, string>> = {
+  nativePush: '#4883',
+};
 
 // What the classification of WorkerDeps gets wrong (#1663), given its top-level fields: a field DEPS_REACH does not
 // classify fails (the safety direction: a new dependency is classified before it is used), and so does an entry for a
