@@ -249,23 +249,26 @@ export interface StatementCheck {
   keys: string[];
 }
 
-// A statement checked for an account a feed supplies from `from` on (#4218): the file's lines dated on or after it are
-// skipped, shown as duplicates (the feed already holds or will bring them) and never stored, and the balance breaks
-// they would have shown go with them. Lines before the day are checked and stored as ever. The preview says how many
-// were skipped, so the screen can warn.
+// A statement checked for an account a feed supplies from `from` on (#4218): the file's new and ambiguous lines dated
+// on or after it are skipped, shown as duplicates (the feed already holds or will bring them) and never stored, and the
+// balance breaks they would have shown go with them. Lines whose reference conflicts with the books or the file (#2191)
+// stay flagged as conflicts with their clash and are stored flagged, never silently dropped as duplicates. Lines before
+// the day are checked and stored as ever. The preview says how many were skipped, so the screen can warn.
 export function skipFedLines(checked: StatementCheck, from: string): StatementCheck {
   let leftOut = 0;
+  const skippedRows = new Set<number>();
   const counts = { ...checked.preview.counts };
   const rows = checked.preview.rows.map((row) => {
-    if (row.date === null || row.date < from || row.status === null || row.status === 'duplicate') return row;
+    if (row.date === null || row.date < from || row.status === null || row.status === 'duplicate' || row.status === 'conflict') return row;
     counts[row.status]--;
     counts.duplicate++;
     leftOut++;
+    skippedRows.add(row.rowNo);
     return { ...row, status: 'duplicate' as const, clash: null };
   });
   return {
     ...checked,
-    lines: checked.lines.filter((l) => l.date < from),
+    lines: checked.lines.filter((l) => !skippedRows.has(l.rowNo)),
     preview: { ...checked.preview, rows, counts, breaks: checked.preview.breaks.filter((b) => b.date < from), feed: { from, leftOut } },
   };
 }

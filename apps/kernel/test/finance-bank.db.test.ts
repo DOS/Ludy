@@ -572,7 +572,18 @@ suite('bank statement import (#326)', () => {
     expect(shown.body.feed).toEqual({ from: cut, leftOut: 2 });
     expect(shown.body.rows.map((r: { status: string }) => r.status)).toEqual(['new', 'new', 'duplicate', 'duplicate']);
     // Imported, only the days before the cut-over are stored; the same file again stores nothing.
-    expect(await importFile(rows, '1121.CUT')).toMatchObject({ status: 200, body: { counts: { new: 2, duplicate: 2 } } });
+    expect(await importFile(rows, '1121.CUT')).toMatchObject({ status: 200, body: { counts: { new: 2, duplicate: 2 }, feed: { from: cut, leftOut: 2 } } });
+    const cutActivity = await admin(
+      async (c) =>
+        (
+          await c.query<{ summary: string }>(
+            `SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND kind = 'bank.statement_imported' ORDER BY occurred_at DESC LIMIT 1`,
+            [orgId],
+          )
+        ).rows[0]?.summary,
+    );
+    expect(cutActivity).toContain('0 dòng đã có, 2 dòng bỏ qua');
+    expect(cutActivity).toContain(cut);
     expect((await stored('1121.CUT')).map((l) => l.bank_ref)).toEqual(['CUT-A', 'CUT-B']);
     expect(await importFile(rows, '1121.CUT')).toMatchObject({ status: 200, body: { counts: { new: 0, duplicate: 4 } } });
     // Another bank account has no cut-over and takes the same lines; clearing the day on this one lifts the skip.
@@ -802,6 +813,45 @@ suite('bank statement import (#326)', () => {
         expect(noneActive.body.counts).toMatchObject({ new: 3, duplicate: 0 });
       } finally {
         await cleanup([connA, connB], [linkAId, linkBId]);
+      }
+    });
+
+    it('ignores a bank feed cut-over mapping in another legal entity (#4223)', async () => {
+      const { connA, connB, cleanup } = await setupAccount('1121.MLT4');
+      const cut = dayOf(-2);
+      const branch = await admin(
+        async (c) =>
+          (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh cut-over', 'branch', $2) RETURNING id`, [orgId, owner.userId])).rows[0]
+            ?.id as string,
+      );
+      const defId = await defaultEntity();
+      const mapEntity = async (connectionId: string, externalAccountId: string, legalEntityId: string, feedFrom: string | null) => {
+        const res = await feed('map', owner, { connectionId, externalAccountId, bankAccount: '1121.MLT4', legalEntityId, feedFrom, idempotencyKey: randomUUID() });
+        expect(res.status).toBe(200);
+        return String(res.body.feedAccountId);
+      };
+      const branchLinkId = await mapEntity(connA, 'SBX-001', branch, cut);
+      let defLinkId: string | null = null;
+
+      try {
+        await pull(branchLinkId, null, dayOf(-1), []);
+        const stmtRows = [row(dayOf(-4), '100000', '', '', 'ENT-D4'), row(dayOf(-1), '200000', '', '', 'ENT-D1')];
+        // Branch has a synced cut-over mapping on 1121.MLT4, while the default entity has none: default entity keeps all lines.
+        const defPreview = await rpc('bank/preview', await tokenFor(member), { bankAccount: '1121.MLT4', filename: 'sao-ke.xlsx', rows: stmtRows, legalEntityId: defId });
+        expect(defPreview.status).toBe(200);
+        expect(defPreview.body.feed).toBeUndefined();
+        expect(defPreview.body.counts).toMatchObject({ new: 2, duplicate: 0 });
+
+        // Once default entity also maps and syncs with cut-over, an unsynced/null mapping in the branch does not disable default entity's cut-over.
+        defLinkId = await mapEntity(connB, 'SBX-002', defId, cut);
+        await pull(defLinkId, null, dayOf(-1), []);
+        await admin((c) => c.query(`UPDATE ludy_finance.bank_feed_account SET feed_from = NULL, cursor = NULL WHERE org_id = $1 AND id = $2`, [orgId, branchLinkId]));
+        const withOwnLink = await rpc('bank/preview', await tokenFor(member), { bankAccount: '1121.MLT4', filename: 'sao-ke.xlsx', rows: stmtRows, legalEntityId: defId });
+        expect(withOwnLink.status).toBe(200);
+        expect(withOwnLink.body.feed).toEqual({ from: cut, leftOut: 1 });
+        expect(withOwnLink.body.counts).toMatchObject({ new: 1, duplicate: 1 });
+      } finally {
+        await cleanup([connA, connB], defLinkId ? [branchLinkId, defLinkId] : [branchLinkId]);
       }
     });
   });
@@ -1460,6 +1510,141 @@ suite('bank statement import (#326)', () => {
       expect((await confirm(again)).body.counts).toMatchObject({ new: 0, conflict: 1 });
       // The imported summary counts the stored conflict line.
       expect(await status(again)).toMatchObject({ status: 'imported', statement: { state: 'imported', newLines: 1 } });
+    });
+
+    it('separates cut-over-skipped lines from plain duplicates in staged and imported summaries, BankImportResult, and activity text (#4223)', async () => {
+      const dayOf = (offset: number) => new Date(Date.parse(`${vietnamToday()}T00:00:00Z`) + offset * 86_400_000).toISOString().slice(0, 10);
+      const cut = dayOf(-2);
+      const accountNo = '19880007777';
+      expect((await rpc('accounts/create', await tokenFor(owner), { parentCode: '1121', code: '1121.STG', name: 'Staged cut-over' })).status).toBe(200);
+      const connId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng staged cut-over' })).body.connectionId);
+      await admin((c) =>
+        c.query('INSERT INTO ludy_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connId, accountNo, 'TK Staged']),
+      );
+      const mapped = await feed('map', owner, { connectionId: connId, externalAccountId: accountNo, bankAccount: '1121.STG', feedFrom: cut, idempotencyKey: randomUUID() });
+      expect(mapped.status).toBe(200);
+      const feedAccountId = String(mapped.body.feedAccountId);
+
+      try {
+        await admin((c) => c.query('UPDATE ludy_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, feedAccountId, dayOf(-3)]));
+        // One line already stored before the cut-over, so it is a genuine plain duplicate.
+        expect((await importFile([row(dayOf(-4), '50000', '', '', 'STG-OLD-DUP')], '1121.STG')).status).toBe(200);
+
+        const rows = [
+          row(dayOf(-4), '50000', '', '', 'STG-OLD-DUP'),
+          row(dayOf(-3), '100000', '', '', 'STG-PRE-NEW'),
+          row(cut, '200000', '', '', 'STG-CUT-1'),
+          row(dayOf(-1), '300000', '', '', 'STG-CUT-2'),
+        ];
+        const outcome = await stage(rows, accountNo);
+        expect(outcome).toMatchObject({
+          outcome: 'staged',
+          summary: { state: 'staged', bankAccount: '1121.STG', lines: 4, newLines: 1, duplicateLines: 1, feed: { from: cut, leftOut: 2 } },
+        });
+        if (outcome.outcome !== 'staged') throw new Error(`not staged: ${outcome.outcome}`);
+        const fileId = await ingestZip();
+        await recordRead(fileId, { status: 'done', statement: true, result: { kind: 'bank_statement', summary: outcome.summary, rows }, summary: 'Sao kê chờ nhập' });
+
+        expect(await status(fileId)).toMatchObject({
+          status: 'staged',
+          statement: { state: 'staged', newLines: 1, duplicateLines: 1, feed: { from: cut, leftOut: 2 } },
+        });
+        const confirmed = await confirm(fileId);
+        expect(confirmed).toMatchObject({
+          status: 200,
+          body: { counts: { new: 1, duplicate: 3 }, feed: { from: cut, leftOut: 2 } },
+        });
+        expect(await status(fileId)).toMatchObject({
+          status: 'imported',
+          statement: { state: 'imported', newLines: 1, duplicateLines: 1, feed: { from: cut, leftOut: 2 } },
+        });
+        const activities = await admin(
+          async (c) =>
+            (
+              await c.query<{ kind: string; summary: string }>(
+                `SELECT kind, summary FROM ludy_kernel.activity WHERE org_id = $1 AND ((record_type = 'kernel.file' AND record_id = $2) OR (record_type = 'finance.bank_account' AND record_id = $3))`,
+                [orgId, fileId, String(confirmed.body.importId)],
+              )
+            ).rows,
+        );
+        const byKind = new Map(activities.map((a) => [a.kind, a.summary]));
+        expect(byKind.get('statement.imported')).toContain(`1 dòng đã có, 2 dòng bỏ qua (nguồn tự động từ ${cut})`);
+        expect(byKind.get('bank.statement_imported')).toContain(`1 dòng đã có, 2 dòng bỏ qua (nguồn tự động từ ${cut})`);
+
+        // If the cut-over day is cleared after staging, confirming updates the imported summary to clear `feed`.
+        const rows2 = [row(dayOf(-1), '400000', '', '', 'STG-CLR-1')];
+        const outcome2 = await stage(rows2, accountNo);
+        if (outcome2.outcome !== 'staged') throw new Error(`not staged: ${outcome2.outcome}`);
+        expect(outcome2.summary.feed).toEqual({ from: cut, leftOut: 1 });
+        const fileId2 = await ingestZip();
+        await recordRead(fileId2, { status: 'done', statement: true, result: { kind: 'bank_statement', summary: outcome2.summary, rows: rows2 }, summary: 'Sao kê chờ nhập' });
+        expect((await feed('map', owner, { connectionId: connId, externalAccountId: accountNo, bankAccount: '1121.STG', feedFrom: null, idempotencyKey: randomUUID() })).status).toBe(200);
+        const confirmed2 = await confirm(fileId2);
+        expect(confirmed2.status).toBe(200);
+        expect(confirmed2.body.feed).toBeUndefined();
+        expect(await status(fileId2)).toMatchObject({ status: 'imported', statement: { state: 'imported', newLines: 1, duplicateLines: 0, feed: null } });
+      } finally {
+        await feed('unmap', owner, { feedAccountId, idempotencyKey: randomUUID() });
+        await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgId, connId]));
+      }
+    });
+
+    it('preserves conflicts on or after the cut-over day and refuses import with STATEMENT_CONFLICTS_CHANGED when setting or clearing the day (#4223)', async () => {
+      const dayOf = (offset: number) => new Date(Date.parse(`${vietnamToday()}T00:00:00Z`) + offset * 86_400_000).toISOString().slice(0, 10);
+      const cut = dayOf(-2);
+      const conflictDay = dayOf(-1);
+      const accountNo = '19880008888';
+      expect((await rpc('accounts/create', await tokenFor(owner), { parentCode: '1121', code: '1121.CFL', name: 'Conflict cut-over' })).status).toBe(200);
+      const connId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng conflict cut-over' })).body.connectionId);
+      await admin((c) =>
+        c.query('INSERT INTO ludy_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connId, accountNo, 'TK Conflict']),
+      );
+      const mapped = await feed('map', owner, { connectionId: connId, externalAccountId: accountNo, bankAccount: '1121.CFL', feedFrom: cut, idempotencyKey: randomUUID() });
+      expect(mapped.status).toBe(200);
+      const feedAccountId = String(mapped.body.feedAccountId);
+      const ingestIntoCfl = async (line: BankFeedLine) =>
+        worker.execute<BankImportResult>('finance.bank.ingest', { bankAccount: '1121.CFL', legalEntityId: await defaultEntity(), source: 'sandbox', lines: [line] }, { actor: SYSTEM, orgId });
+
+      try {
+        await admin((c) => c.query('UPDATE ludy_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, feedAccountId, dayOf(-3)]));
+        // Existing feed line on or after the cut-over: a file line sharing its reference with another amount stays a conflict, never masked as a duplicate.
+        await ingestIntoCfl(feedLine(conflictDay, '2000000', 'CFL-CUT-1', null, 'Giao dịch thật'));
+        const existingConflictRows = [row(conflictDay, '9000000', '', '', 'CFL-CUT-1', 'Số tiền khác'), row(conflictDay, '50000', '', '', 'CFL-CUT-SKIP')];
+        const stagedWithConflict = await stage(existingConflictRows, accountNo);
+        expect(stagedWithConflict).toMatchObject({
+          outcome: 'staged',
+          summary: { lines: 2, newLines: 1, duplicateLines: 0, conflictLines: 1, feed: { from: cut, leftOut: 1 } },
+        });
+        if (stagedWithConflict.outcome !== 'staged') throw new Error(`not staged: ${stagedWithConflict.outcome}`);
+        const cflFileId = await ingestZip();
+        await recordRead(cflFileId, { status: 'done', statement: true, result: { kind: 'bank_statement', summary: stagedWithConflict.summary, rows: existingConflictRows }, summary: 'Sao kê chờ nhập' });
+        const listed = await rpc('bank/statementLines', await tokenFor(member), { fileId: cflFileId });
+        expect(listed.status).toBe(200);
+        expect(listed.body).toMatchObject({ conflicts: 1, feed: { from: cut, leftOut: 1 } });
+        expect((listed.body.lines as Array<{ reference: string; status: string; clash: unknown }>).map((l) => [l.reference, l.status, l.clash])).toEqual([
+          ['CFL-CUT-1', 'conflict', { date: conflictDay, amount: '2000000' }],
+          ['CFL-CUT-SKIP', 'duplicate', null],
+        ]);
+
+        // Staged with no conflict while cut-over is set; then a conflicting feed line arrives -> confirm must refuse with STATEMENT_CONFLICTS_CHANGED both while set and after clearing.
+        const deferredRows = [row(conflictDay, '9000000', '', '', 'CFL-SET-CLR', 'Chuyển khoản lạ')];
+        const stagedClean = await stage(deferredRows, accountNo);
+        if (stagedClean.outcome !== 'staged') throw new Error(`not staged: ${stagedClean.outcome}`);
+        expect(stagedClean.summary.conflictLines).toBe(0);
+        const deferredId = await ingestZip();
+        await recordRead(deferredId, { status: 'done', statement: true, result: { kind: 'bank_statement', summary: stagedClean.summary, rows: deferredRows }, summary: 'Sao kê chờ nhập' });
+
+        await ingestIntoCfl(feedLine(conflictDay, '3000000', 'CFL-SET-CLR', null, 'Giao dịch thật'));
+        expect(await confirm(deferredId)).toMatchObject({ status: 409, body: { code: 'STATEMENT_CONFLICTS_CHANGED' } });
+        // Clearing the cut-over day still refuses with STATEMENT_CONFLICTS_CHANGED, and setting it again does too.
+        expect((await feed('map', owner, { connectionId: connId, externalAccountId: accountNo, bankAccount: '1121.CFL', feedFrom: null, idempotencyKey: randomUUID() })).status).toBe(200);
+        expect(await confirm(deferredId)).toMatchObject({ status: 409, body: { code: 'STATEMENT_CONFLICTS_CHANGED' } });
+        expect((await feed('map', owner, { connectionId: connId, externalAccountId: accountNo, bankAccount: '1121.CFL', feedFrom: cut, idempotencyKey: randomUUID() })).status).toBe(200);
+        expect(await confirm(deferredId)).toMatchObject({ status: 409, body: { code: 'STATEMENT_CONFLICTS_CHANGED' } });
+      } finally {
+        await feed('unmap', owner, { feedAccountId, idempotencyKey: randomUUID() });
+        await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgId, connId]));
+      }
     });
 
     // #2196: a statement forwarded by email names the mail it came in, so the card can show its sender.

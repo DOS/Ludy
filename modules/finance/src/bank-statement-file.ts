@@ -102,6 +102,7 @@ export const bankStatementStage = defineQuery({
       }
       // A total the summary cannot hold (zMoney has 16 integer digits) would drop the statement out of the Inbox: refused.
       if (totalIn.gte('1e16') || totalOut.gte('1e16')) return { outcome: 'refused', code: 'STATEMENT_TOTAL_TOO_LARGE', message: 'Tổng tiền của sao kê vượt giới hạn; hãy kiểm tra các số tiền trong tệp', rows: [] };
+      const feedSkipped = preview.feed?.leftOut ?? 0;
       return {
         outcome: 'staged',
         summary: {
@@ -113,9 +114,10 @@ export const bankStatementStage = defineQuery({
           filename: input.filename,
           lines: preview.rows.length,
           newLines: preview.counts.new + preview.counts.ambiguous + preview.counts.conflict,
-          duplicateLines: preview.counts.duplicate,
+          duplicateLines: preview.counts.duplicate - feedSkipped,
           conflictLines: preview.counts.conflict,
           conflictRows: preview.rows.filter((r) => r.status === 'conflict').map((r) => r.rowNo),
+          feed: preview.feed ?? null,
           from: preview.from,
           to: preview.to,
           totalIn: totalIn.toFixed(),
@@ -179,11 +181,13 @@ export const bankStatementConfirm = defineCommand({
     }
     const legalEntityId = await resolveLegalEntity(ctx, place.legalEntityId);
     const result = await importStatement(ctx, { bankAccount: place.bankAccount, filename: staged.summary.filename, rows: staged.rows, legalEntityId }, legalEntityId, input.fileId, new Set(staged.summary.conflictRows));
+    const feedSkipped = result.feed?.leftOut ?? 0;
     await ctx.run('kernel.extraction.statement_state', {
       fileId: input.fileId,
       state: 'imported',
       newLines: result.counts.new + result.counts.ambiguous + result.counts.conflict,
-      duplicateLines: result.counts.duplicate,
+      duplicateLines: result.counts.duplicate - feedSkipped,
+      feed: result.feed ?? null,
       importId: result.importId,
     });
     return result;
@@ -227,7 +231,12 @@ export const bankStatementLines = defineQuery({
     const others = preview.rows.filter((r) => r.status !== 'conflict');
     // Every conflict is listed, whatever the cap: importing stores them all, so none may go unseen. The other lines fill
     // what is left of the cap.
-    return { lines: [...conflicts, ...others].slice(0, Math.max(STATEMENT_LINES_SHOWN, conflicts.length)), total: preview.rows.length, conflicts: conflicts.length };
+    return {
+      lines: [...conflicts, ...others].slice(0, Math.max(STATEMENT_LINES_SHOWN, conflicts.length)),
+      total: preview.rows.length,
+      conflicts: conflicts.length,
+      ...(preview.feed ? { feed: preview.feed } : {}),
+    };
   },
 });
 
@@ -384,12 +393,13 @@ export async function readStatementFile(deps: StatementFileDeps, orgId: string, 
     return { handled: true };
   }
   const { summary } = outcome;
+  const feedNote = summary.feed && summary.feed.leftOut > 0 ? `, ${summary.feed.leftOut} dòng bỏ qua (nguồn tự động từ ${summary.feed.from})` : '';
   await record('done', {
     error: null,
     result: { kind: 'bank_statement', summary, rows },
     // The run belongs to the entity the account is mapped to: only members who see it see the statement's account and totals.
     legalEntityId: summary.legalEntityId,
-    summary: `Sao kê tài khoản ${summary.bankAccount} chờ nhập: ${summary.lines} dòng, ${summary.newLines} dòng mới`,
+    summary: `Sao kê tài khoản ${summary.bankAccount} chờ nhập: ${summary.lines} dòng, ${summary.newLines} dòng mới${feedNote}`,
   });
   return { handled: true };
 }

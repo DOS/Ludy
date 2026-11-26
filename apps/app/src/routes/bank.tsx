@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { BankImportResult, BankLine, BankLineStatus, BankLineVoucher, BankRowError, BankSignDepositCandidate } from '@ludy/kernel-contract';
+import type { BankImportPreview, BankImportResult, BankLine, BankLineStatus, BankLineVoucher, BankRowError, BankSignDepositCandidate } from '@ludy/kernel-contract';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button, buttonVariants } from '@ludy/ui/components/button';
@@ -55,9 +55,97 @@ type FileState =
 
 const STATUS_VARIANT: Record<BankLineStatus, 'success' | 'secondary' | 'warning'> = { new: 'success', duplicate: 'secondary', ambiguous: 'warning', conflict: 'warning' };
 
-function StatementImport({ bankAccount, onImported }: { bankAccount: string; onImported: (result: BankImportResult, to: string | null) => void }) {
+export function StatementImportPreview({ data, importing, onImport }: { data: BankImportPreview; importing: boolean; onImport: () => void }) {
   const t = useTranslations('bank');
   const f = useFormat();
+  const toStore = data.counts.new + data.counts.ambiguous + data.counts.conflict;
+  const feedSkipped = data.feed?.leftOut ?? 0;
+  // Every conflict row is listed (#2191), whatever the cap: an import stores them all, so none may go unseen. The other
+  // rows fill what is left of the cap, in the file's order.
+  const shownRows = [...data.rows.filter((r) => r.status === 'conflict'), ...data.rows.filter((r) => r.status !== 'conflict')].slice(0, Math.max(PREVIEW_ROWS, data.counts.conflict));
+  const range = { from: data.from ? f.date(data.from) : '', to: data.to ? f.date(data.to) : '' };
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-foreground">
+        {feedSkipped > 0
+          ? t('summaryWithFeed', { ...data.counts, duplicate: data.counts.duplicate - feedSkipped, feedSkipped, ...range })
+          : t('summary', { ...data.counts, ...range })}
+        {data.order === 'newest_first' && ` ${t('newestFirst')}`}
+      </p>
+      {data.counts.ambiguous > 0 && <Notice>{t('ambiguousNote')}</Notice>}
+      {data.counts.conflict > 0 && (
+        <Alert className="border-warning/30 bg-warning/10 text-warning" role="note" data-testid="bank-conflict-note">
+          <AlertDescription className="text-warning">{t('conflictNote', { count: data.counts.conflict })}</AlertDescription>
+        </Alert>
+      )}
+      {data.feed && data.feed.leftOut > 0 && (
+        <Alert className="border-warning/30 bg-warning/10 text-warning" role="note" data-testid="bank-feed-skipped">
+          <AlertDescription className="text-warning">{t('feedSkipped', { count: data.feed.leftOut, from: f.date(data.feed.from) })}</AlertDescription>
+        </Alert>
+      )}
+      {data.breaks.length > 0 && (
+        <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
+          <AlertDescription className="text-warning">
+            {t('breaks', { count: data.breaks.length, date: f.date(data.breaks[0]?.date ?? ''), expected: f.money(data.breaks[0]?.expected ?? '0'), balance: f.money(data.breaks[0]?.balance ?? '0') })}
+          </AlertDescription>
+        </Alert>
+      )}
+      <DataTable numeric={[4, 5, 6]} head={[t('columns.row'), t('columns.date'), t('columns.reference'), t('columns.description'), t('columns.moneyIn'), t('columns.moneyOut'), t('columns.balance'), t('columns.status')]}>
+        {shownRows.map((row) => {
+          const out = row.amount?.startsWith('-') ?? false;
+          return (
+            <TableRow key={row.rowNo}>
+              <TableCell className="text-muted-foreground tabular-nums">{row.rowNo}</TableCell>
+              <TableCell className="tabular-nums">{row.date ? f.date(row.date) : ''}</TableCell>
+              <TableCell className="font-mono text-xs">{row.reference ?? ''}</TableCell>
+              <TableCell className="text-foreground">{row.description}</TableCell>
+              <TableCell className={NUM}>{row.amount && !out ? f.money(row.amount) : ''}</TableCell>
+              <TableCell className={NUM}>{row.amount && out ? f.money(row.amount.slice(1)) : ''}</TableCell>
+              <TableCell className={NUM}>{row.balance ? f.money(row.balance) : ''}</TableCell>
+              <TableCell>
+                {row.status ? (
+                  <>
+                    <Badge variant={STATUS_VARIANT[row.status]}>{t(`status.${row.status}`)}</Badge>
+                    {row.clash && <p className="mt-1 text-xs text-subtle-foreground">{t('clash', { date: f.date(row.clash.date), amount: f.money(row.clash.amount) })}</p>}
+                  </>
+                ) : (
+                  <span className="text-destructive">{row.errors.map((e: BankRowError) => t(`errors.${e}`)).join(', ')}</span>
+                )}
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </DataTable>
+      {data.rows.length > shownRows.length && <p className="text-xs text-subtle-foreground">{t('moreRows', { count: data.rows.length - shownRows.length })}</p>}
+      <Button loading={importing} size="lg" disabled={!data.ok || toStore === 0 || importing} onClick={onImport}>
+        {t('import', { count: toStore })}
+      </Button>
+      {!data.ok && <p className="text-sm text-destructive">{t('fixRows')}</p>}
+    </div>
+  );
+}
+
+export function StatementImportedNotice({ result }: { result: BankImportResult }) {
+  const t = useTranslations('bank');
+  const f = useFormat();
+  const stored = result.counts.new + result.counts.ambiguous + result.counts.conflict;
+  const feedSkipped = result.feed?.leftOut ?? 0;
+  return (
+    <Notice>
+      {feedSkipped > 0 && result.feed
+        ? t('importedWithFeed', {
+            stored,
+            duplicate: result.counts.duplicate - feedSkipped,
+            feedSkipped,
+            from: f.date(result.feed.from),
+          })
+        : t('imported', { ...result.counts, stored })}
+    </Notice>
+  );
+}
+
+function StatementImport({ bankAccount, onImported }: { bankAccount: string; onImported: (result: BankImportResult, to: string | null) => void }) {
+  const t = useTranslations('bank');
   const [file, setFile] = useState<FileState>({ status: 'none' });
   const [mapping, setMapping] = useState<StatementMapping | null>(null);
   // One key per checked file: a retry is the same import.
@@ -113,10 +201,6 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
   };
 
   const data = preview.data;
-  const toStore = data ? data.counts.new + data.counts.ambiguous + data.counts.conflict : 0;
-  // Every conflict row is listed (#2191), whatever the cap: an import stores them all, so none may go unseen. The other
-  // rows fill what is left of the cap, in the file's order.
-  const shownRows = data ? [...data.rows.filter((r) => r.status === 'conflict'), ...data.rows.filter((r) => r.status !== 'conflict')].slice(0, Math.max(PREVIEW_ROWS, data.counts.conflict)) : [];
 
   return (
     <Card className="mb-6 block space-y-4 p-4">
@@ -178,65 +262,9 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
           {statement && statement.length === 0 && <Notice>{t('problems.no_lines')}</Notice>}
           {preview.isLoading && <Spinner />}
           {preview.error && <ErrorText>{errorMessage(preview.error)}</ErrorText>}
-          {data && !imported.data && (
-            <div className="space-y-3">
-              <p className="text-sm text-foreground">
-                {t('summary', { ...data.counts, from: data.from ? f.date(data.from) : '', to: data.to ? f.date(data.to) : '' })}
-                {data.order === 'newest_first' && ` ${t('newestFirst')}`}
-              </p>
-              {data.counts.ambiguous > 0 && <Notice>{t('ambiguousNote')}</Notice>}
-              {data.counts.conflict > 0 && (
-                <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
-                  <AlertDescription className="text-warning">{t('conflictNote', { count: data.counts.conflict })}</AlertDescription>
-                </Alert>
-              )}
-              {data.feed && data.feed.leftOut > 0 && (
-                <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
-                  <AlertDescription className="text-warning">{t('feedSkipped', { count: data.feed.leftOut, from: f.date(data.feed.from) })}</AlertDescription>
-                </Alert>
-              )}
-              {data.breaks.length > 0 && (
-                <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
-                  <AlertDescription className="text-warning">
-                    {t('breaks', { count: data.breaks.length, date: f.date(data.breaks[0]?.date ?? ''), expected: f.money(data.breaks[0]?.expected ?? '0'), balance: f.money(data.breaks[0]?.balance ?? '0') })}
-                  </AlertDescription>
-                </Alert>
-              )}
-              <DataTable numeric={[4, 5, 6]} head={[t('columns.row'), t('columns.date'), t('columns.reference'), t('columns.description'), t('columns.moneyIn'), t('columns.moneyOut'), t('columns.balance'), t('columns.status')]}>
-                {shownRows.map((row) => {
-                  const out = row.amount?.startsWith('-') ?? false;
-                  return (
-                    <TableRow key={row.rowNo}>
-                      <TableCell className="text-muted-foreground tabular-nums">{row.rowNo}</TableCell>
-                      <TableCell className="tabular-nums">{row.date ? f.date(row.date) : ''}</TableCell>
-                      <TableCell className="font-mono text-xs">{row.reference ?? ''}</TableCell>
-                      <TableCell className="text-foreground">{row.description}</TableCell>
-                      <TableCell className={NUM}>{row.amount && !out ? f.money(row.amount) : ''}</TableCell>
-                      <TableCell className={NUM}>{row.amount && out ? f.money(row.amount.slice(1)) : ''}</TableCell>
-                      <TableCell className={NUM}>{row.balance ? f.money(row.balance) : ''}</TableCell>
-                      <TableCell>
-                        {row.status ? (
-                          <>
-                            <Badge variant={STATUS_VARIANT[row.status]}>{t(`status.${row.status}`)}</Badge>
-                            {row.clash && <p className="mt-1 text-xs text-subtle-foreground">{t('clash', { date: f.date(row.clash.date), amount: f.money(row.clash.amount) })}</p>}
-                          </>
-                        ) : (
-                          <span className="text-destructive">{row.errors.map((e: BankRowError) => t(`errors.${e}`)).join(', ')}</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </DataTable>
-              {data.rows.length > shownRows.length && <p className="text-xs text-subtle-foreground">{t('moreRows', { count: data.rows.length - shownRows.length })}</p>}
-              <Button loading={imported.isPending} size="lg" disabled={!data.ok || toStore === 0 || imported.isPending} onClick={() => input && imported.mutate({ ...input, idempotencyKey })}>
-                {t('import', { count: toStore })}
-              </Button>
-              {!data.ok && <p className="text-sm text-destructive">{t('fixRows')}</p>}
-            </div>
-          )}
+          {data && !imported.data && <StatementImportPreview data={data} importing={imported.isPending} onImport={() => input && imported.mutate({ ...input, idempotencyKey })} />}
           {imported.error && <ErrorText>{errorMessage(imported.error)}</ErrorText>}
-          {imported.data && <Notice>{t('imported', { ...imported.data.counts, stored: imported.data.counts.new + imported.data.counts.ambiguous + imported.data.counts.conflict })}</Notice>}
+          {imported.data && <StatementImportedNotice result={imported.data} />}
         </div>
       )}
     </Card>

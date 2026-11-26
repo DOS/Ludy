@@ -271,4 +271,61 @@ describe('skipFedLines (#4218)', () => {
     expect(skipped.lines).toHaveLength(3);
     expect(skipped.preview.feed).toEqual({ from: '2026-11-01', leftOut: 0 });
   });
+
+  it('skips ambiguous lines on or after the day, while keeping conflicts flagged and stored (#4223)', () => {
+    // Rows: keyless ambiguous before cut-over, keyless ambiguous on cut-over, conflict after cut-over, already-duplicate after cut-over, new after cut-over.
+    const rows = [
+      row('2026-10-10', '100', ''),
+      row('2026-10-15', '200', ''),
+      row('2026-10-16', '9000', '', '', 'FT-CONFLICT'),
+      row('2026-10-17', '300', '', '', 'FT-DUP'),
+      row('2026-10-18', '400', '', '', 'FT-NEW'),
+    ];
+    const stored = {
+      keys: new Set(['ref:FT-CONFLICT', 'ref:FT-DUP']),
+      dateAmounts: new Set(['2026-10-10|100', '2026-10-15|200']),
+      refs: new Map([
+        ['FT-CONFLICT', [{ date: '2026-10-16', amount: '2000' }]],
+        ['FT-DUP', [{ date: '2026-10-17', amount: '300' }]],
+      ]),
+    };
+    const skipped = skipFedLines(checkStatement(input(rows), stored, { before: null, within: [] }), '2026-10-15');
+    expect(skipped.preview.rows.map((r) => [r.status, r.clash])).toEqual([
+      ['ambiguous', null],
+      ['duplicate', null],
+      ['conflict', { date: '2026-10-16', amount: '2000' }],
+      ['duplicate', null],
+      ['duplicate', null],
+    ]);
+    // Ambiguous on cut-over (1) + new after cut-over (1) = 2 skipped; already-duplicate and conflict are not counted as skipped by cut-over.
+    expect(skipped.preview.counts).toEqual({ new: 0, duplicate: 3, ambiguous: 1, conflict: 1, invalid: 0 });
+    expect(skipped.preview.feed).toEqual({ from: '2026-10-15', leftOut: 2 });
+    expect(skipped.lines.map((l) => [l.date, l.reference, l.key, l.ambiguous])).toEqual([
+      ['2026-10-10', null, null, true],
+      ['2026-10-16', 'FT-CONFLICT', null, true],
+    ]);
+  });
+
+  it('keeps newest-first preview order and oldest-first stored lines across the cut-over day (#4223)', () => {
+    const rows = [
+      row('2026-10-20', '400', '', '1400', 'NF-4'),
+      row('2026-10-15', '300', '', '1000', 'NF-3'),
+      row('2026-10-12', '200', '', '700', 'NF-2'),
+      row('2026-10-10', '500', '', '500', 'NF-1'),
+    ];
+    const skipped = skipFedLines(checkStatement(input(rows), none, { before: null, within: [] }), '2026-10-15');
+    expect(skipped.preview.order).toBe('newest_first');
+    expect(skipped.preview.rows.map((r) => [r.date, r.status])).toEqual([
+      ['2026-10-20', 'duplicate'],
+      ['2026-10-15', 'duplicate'],
+      ['2026-10-12', 'new'],
+      ['2026-10-10', 'new'],
+    ]);
+    expect(skipped.preview.counts).toEqual({ new: 2, duplicate: 2, ambiguous: 0, conflict: 0, invalid: 0 });
+    expect(skipped.preview.feed).toEqual({ from: '2026-10-15', leftOut: 2 });
+    expect(skipped.lines.map((l) => [l.date, l.reference, l.position])).toEqual([
+      ['2026-10-10', 'NF-1', 1],
+      ['2026-10-12', 'NF-2', 2],
+    ]);
+  });
 });
