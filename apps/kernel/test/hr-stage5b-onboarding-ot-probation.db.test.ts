@@ -636,11 +636,18 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       projectId: orgProjId,
       title: 'Hoàn thiện tích hợp ngân hàng',
       assigneePositionId: seatA,
-      status: 'done',
     });
     const { taskId: t2 } = await o.exec<{ taskId: string }>(o.owner, 'projects.task.create', {
       projectId: orgProjId,
       title: 'Viết test hóa đơn điện tử',
+      assigneePositionId: seatA,
+    });
+    await o.exec(o.staffA, 'kernel.task.set_status', { id: t1, status: 'done' });
+    await o.exec(o.staffA, 'kernel.task.set_status', { id: t2, status: 'done' });
+    // Task assigned to seatA but completed by owner must NOT count toward staffA (#4821).
+    const { taskId: tOwnerDone } = await o.exec<{ taskId: string }>(o.owner, 'projects.task.create', {
+      projectId: orgProjId,
+      title: 'Tác vụ do chủ doanh nghiệp hoàn thành giúp',
       assigneePositionId: seatA,
       status: 'done',
     });
@@ -684,6 +691,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     expect(preview.completedTasksCount).toBe(3);
     expect(preview.completedTasks.some((t) => t.taskId === t1)).toBe(true);
     expect(preview.completedTasks.some((t) => t.taskId === t2)).toBe(true);
+    expect(preview.completedTasks.some((t) => t.taskId === tOwnerDone)).toBe(false);
 
     // Ly draft via kernel orchestration respects AI off (100% deterministic parity) and used with meter.
     const probationPorts = {
