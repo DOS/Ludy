@@ -32,6 +32,34 @@ async function ratesOf(ctx: Ctx, entity: string): Promise<MarketplaceVatRates> {
   return { legalEntityId: entity, rows: rows.map((r): MarketplaceVatRateRow => ({ effectiveFrom: r.effective_from, method: r.method, vatPercent: r.vat_percent })) };
 }
 
+// Every active entry of an entity (the latest entry per effective date), ordered as `marketplaceVatRateAt` orders candidates: greatest effective_from first (matches marketplace_vat_rate_entity_idx).
+export async function marketplaceVatRateEntries(ctx: Ctx, entity: string): Promise<MarketplaceVatRateRow[]> {
+  const rows = await ctx.trx
+    .selectFrom('ludy_finance.marketplace_vat_rate')
+    .select(['effective_from', 'method', 'vat_percent'])
+    .distinctOn('effective_from')
+    .where('org_id', '=', ctx.orgId)
+    .where('legal_entity_id', '=', entity)
+    .orderBy('effective_from', 'desc')
+    .orderBy('created_at', 'desc')
+    .orderBy('id', 'desc')
+    .execute();
+  return rows.map((r): MarketplaceVatRateRow => ({ effectiveFrom: r.effective_from, method: r.method, vatPercent: r.vat_percent }));
+}
+
+// The row in force on `date` from `entries` ordered by (effective_from desc, created_at desc, id desc): the greatest effective_from on or before `date` and, among entries of that date, the latest entered.
+export function pickMarketplaceVatRate(entries: readonly MarketplaceVatRateRow[], date: string): MarketplaceVatRateRow | null {
+  let lo = 0;
+  let hi = entries.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    const entry = entries[mid];
+    if (entry && entry.effectiveFrom > date) lo = mid + 1;
+    else hi = mid;
+  }
+  return entries[lo] ?? null;
+}
+
 // The row in force on `date`: the greatest effective_from on or before it and, among the entries of that date, the latest entered; null when none covers it. The sales posting holds the month back on null.
 export async function marketplaceVatRateAt(ctx: Ctx, entity: string, date: string): Promise<MarketplaceVatRateRow | null> {
   const row = await ctx.trx

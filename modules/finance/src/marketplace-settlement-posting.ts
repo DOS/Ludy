@@ -243,7 +243,7 @@ export function settlementProposal(input: SettlementProposalInput, maps?: Readon
   const problems = journalVoucherProblems(lines.map((l) => ({ ...l, partyId: l.partyId ?? (l.account === map.receivable.code ? 'pending' : null) })));
   if (problems.length > 0) throw new DomainError('MARKETPLACE_SETTLEMENT_NOT_POSTABLE', 422, 'Bút toán của kỳ đối soát không hợp lệ', { problems });
   return {
-    description: `Đối soát ${input.platform} ${input.periodFrom} đến ${input.periodTo}, tháng ${input.month}`.slice(0, 500),
+    description: `Đối soát ${input.platform} ${input.periodFrom} đến ${input.periodTo}, tháng ${input.month}`.slice(0, 300),
     month: input.month,
     date: input.date,
     sales: toMoney(sum(input.lines.map((l) => l.sales))),

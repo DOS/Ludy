@@ -1,23 +1,49 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The VAT rates a marketplace settlement's entries need (#4303 S3b, parent #2520, plan docs/plan/stock-and-marketplaces.md section 8.4). The rate of a piece is the one in force on its delivery day for the entity,
-// read ONLY through marketplaceVatRateAt (the one function of the rate table: the greatest effective date on or before the day, the latest entry of that date), once per distinct day and request. No row for
-// a day gives null, which holds the settlement back with words (MARKETPLACE_SETTLEMENT_WAITING_VAT_RATE) instead of posting a guessed rate; method `none` gives no VAT line. No rate is a constant here.
+// The VAT rates a marketplace settlement's entries need (#4303 S3b, parent #2520, plan docs/plan/stock-and-marketplaces.md section 8.4). The rate of a piece is the one in force on its delivery day for the entity
+// (the greatest effective date on or before the day, the latest entry of that date), resolved in memory from a single batch read of the entity's entries per request (#4341) with the exact same precedence rule as
+// marketplaceVatRateAt. No row for a day gives null, which holds the settlement back with words (MARKETPLACE_SETTLEMENT_WAITING_VAT_RATE) instead of posting a guessed rate; method `none` gives no VAT line. No rate is a constant here.
+import type { MarketplaceVatRateRow } from '@ludy/kernel-contract';
 import type { QueryContext } from '@ludy/kernel-runtime';
 import type { SettlementMonth } from './marketplace-settlement-months.ts';
 import { entryIsEmpty, vatDatesOf, type SettlementVatRate, type SettlementVatRates } from './marketplace-settlement-posting.ts';
 import { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { booksOn } from './payroll-posting.ts';
-import { marketplaceVatRateAt } from './marketplace-vat-rate.ts';
+import { marketplaceVatRateEntries, pickMarketplaceVatRate } from './marketplace-vat-rate.ts';
 
 type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
 
-// The rate in force on each of the days for the entity, null where no row covers the day. `memo` shares the answers inside one request (a worklist reads many settlements of one entity).
+// Per-request cache of an entity's rate entries, keyed by the caller's memo Map so a worklist or multi-month settlement reads the entity's rate table at most once per request without changing caller signatures.
+const entityRatesCache = new WeakMap<Map<string, SettlementVatRate | null>, Map<string, readonly MarketplaceVatRateRow[]>>();
+
+async function entityRatesOf(ctx: Ctx, entityId: string, memo: Map<string, SettlementVatRate | null>): Promise<readonly MarketplaceVatRateRow[]> {
+  let byEntity = entityRatesCache.get(memo);
+  if (!byEntity) {
+    byEntity = new Map();
+    entityRatesCache.set(memo, byEntity);
+  }
+  const cacheKey = `${ctx.orgId}:${entityId}`;
+  const cached = byEntity.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const rows = await marketplaceVatRateEntries(ctx, entityId);
+  byEntity.set(cacheKey, rows);
+  return rows;
+}
+
+// The rate in force on each of the days for the entity, null where no row covers the day. `memo` shares the entity's entries and resolved days inside one request (a worklist reads many settlements of one entity).
 export async function resolveVatRates(ctx: Ctx, entityId: string, days: Iterable<string>, memo: Map<string, SettlementVatRate | null> = new Map()): Promise<SettlementVatRates> {
   const out: Record<string, SettlementVatRate | null> = {};
+  const missing: string[] = [];
   for (const day of days) {
-    const key = `${entityId}:${day}`;
+    const key = `${ctx.orgId}:${entityId}:${day}`;
+    if (memo.has(key)) out[day] = memo.get(key) ?? null;
+    else missing.push(day);
+  }
+  if (missing.length === 0) return out;
+  const entries = await entityRatesOf(ctx, entityId, memo);
+  for (const day of missing) {
+    const key = `${ctx.orgId}:${entityId}:${day}`;
     if (!memo.has(key)) {
-      const row = await marketplaceVatRateAt(ctx, entityId, day);
+      const row = pickMarketplaceVatRate(entries, day);
       memo.set(key, row === null ? null : row.method === 'deduction' && row.vatPercent !== null ? { method: 'deduction', vatPercent: row.vatPercent } : { method: 'none' });
     }
     out[day] = memo.get(key) ?? null;
@@ -44,7 +70,7 @@ export async function offeredMonths(
   entityId: string,
   months: readonly SettlementMonth[],
   separateReturn: boolean,
-  memo?: Map<string, SettlementVatRate | null>,
+  memo: Map<string, SettlementVatRate | null> = new Map(),
 ): Promise<{ months: SettlementMonth[]; gaps: string[] }> {
   const kept: SettlementMonth[] = [];
   const gaps: string[] = [];
