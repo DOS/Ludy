@@ -795,10 +795,16 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
       );
       reusePromise = uploadEnex('owner', makeEnex('So Tai Su Dung', 'Ghi Chu Tai Su Dung'));
       void reusePromise.catch(() => undefined);
-      const timerRace = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('ENEX reuse blocked on org-wide notes.notebook.reorder lock')), 3000);
-      });
-      const reuseRes = await Promise.race([reusePromise, timerRace]);
+      let raceTimer: ReturnType<typeof setTimeout> | undefined;
+      let reuseRes: { status: number; body: Record<string, unknown> };
+      try {
+        const timerRace = new Promise<never>((_, reject) => {
+          raceTimer = setTimeout(() => reject(new Error('ENEX reuse blocked on org-wide notes.notebook.reorder lock')), 3000);
+        });
+        reuseRes = await Promise.race([reusePromise, timerRace]);
+      } finally {
+        clearTimeout(raceTimer);
+      }
       expect(reuseRes.status, JSON.stringify(reuseRes.body)).toBe(201);
       expect(reuseRes.body).toMatchObject({ importedNotes: 1, createdNotebooks: 0, reusedNotebooks: 1 });
     } finally {

@@ -28,7 +28,7 @@ import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-ru
 import { NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT } from './attachments.ts';
 import { lockNotebookReorder, lockNotebooksSharedInOrder, lockNotesEraseShared } from './locks.ts';
 import { NOTEBOOK_REBALANCE_AT, rebalanceEditableNotebooksBatch } from './notebooks.ts';
-import { hasWholeOrgScope, resolveNotebookForNote } from './notes.ts';
+import { hasWholeOrgScope, resolveNotebookForNote, rethrowNotebookConstraintError } from './notes.ts';
 import { detailsOf, due, lockTodoListOrder, lockTodoSortOrder, lockTodosInOrder, ownKeys, parseSections, remindAt } from './todos.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -314,24 +314,29 @@ export const noteImportEnex = defineCommand({
 
     for (let offset = 0; offset < pendingNotes.length; offset += INSERT_BATCH_SIZE) {
       const chunk = pendingNotes.slice(offset, offset + INSERT_BATCH_SIZE);
-      const insertedNotes = await ctx.trx
-        .insertInto('ludy_notes.note')
-        .values(
-          chunk.map((entry) => ({
-            org_id: ctx.orgId,
-            author_user_id: userId,
-            notebook_id: entry.notebookId,
-            visibility: 'private' as const,
-            title: entry.item.title,
-            body: entry.item.body,
-            tags: entry.item.tags,
-            tainted: true,
-            created_at: entry.createdAt,
-            updated_at: entry.updatedAt,
-          })),
-        )
-        .returning('id')
-        .execute();
+      let insertedNotes: Array<{ id: string }>;
+      try {
+        insertedNotes = await ctx.trx
+          .insertInto('ludy_notes.note')
+          .values(
+            chunk.map((entry) => ({
+              org_id: ctx.orgId,
+              author_user_id: userId,
+              notebook_id: entry.notebookId,
+              visibility: 'private' as const,
+              title: entry.item.title,
+              body: entry.item.body,
+              tags: entry.item.tags,
+              tainted: true,
+              created_at: entry.createdAt,
+              updated_at: entry.updatedAt,
+            })),
+          )
+          .returning('id')
+          .execute();
+      } catch (err) {
+        rethrowNotebookConstraintError(err);
+      }
       if (insertedNotes.length !== chunk.length) {
         throw new Error('note batch insert count mismatch');
       }

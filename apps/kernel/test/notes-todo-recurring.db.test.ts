@@ -10,6 +10,7 @@ import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import {
+  type NoteWritten,
   type NotesExport,
   type Todo,
   type TodoCompleteResult,
@@ -1287,5 +1288,354 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     const revDay3Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: revDay2Id });
     const revDay3 = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: revDay3Res.nextTodoId as string });
     expect(revDay3.dueTime).toBe('03:30');
+  });
+
+  it('clears sourceNoteId cleanly across concurrent noteDelete, trash.empty, and notes.erase during todoComplete (#5122)', async () => {
+    const o = await setupOrg();
+
+    const waitLockBlockedOnPid = async (
+      blockerPids: number | readonly number[],
+      errors: unknown[],
+      options?: { queryLike?: string; excludePids?: number[] },
+    ): Promise<number> => {
+      const targets: number[] = typeof blockerPids === 'number' ? [blockerPids] : [...blockerPids];
+      const deadline = Date.now() + 3000;
+      const exclude = options?.excludePids ?? [];
+      while (Date.now() < deadline) {
+        if (errors.length > 0) throw errors[0];
+        const waits = await admin(async (c) =>
+          (await c.query<{ pid: number }>(
+            `SELECT a.pid
+               FROM pg_catalog.pg_stat_activity a
+              WHERE a.datname = pg_catalog.current_database()
+                AND a.state = 'active'
+                AND a.wait_event_type = 'Lock'
+                AND ($2::text IS NULL OR a.query ILIKE $2)
+                AND pg_catalog.pg_blocking_pids(a.pid) && $1::int[]
+                AND NOT (a.pid = ANY($3::int[]))
+              LIMIT 1`,
+            [targets, options?.queryLike ?? null, exclude],
+          )).rows,
+        );
+        if (waits.length > 0) return waits[0]!.pid;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Timed out waiting for lock blocked on pids [${targets.join(', ')}]`);
+    };
+
+    const waitSharedLockBlocked = async (gatePid: number, errors: unknown[]): Promise<void> => {
+      await waitLockBlockedOnPid(gatePid, errors, { queryLike: '%pg_advisory_xact_lock_shared%' });
+    };
+
+    // 1. Concurrent noteDelete (via exclusive notes.note:<org>:<id> lock) serializes with todoComplete and drops trashed sourceNoteId.
+    const noteA = await o.exec<NoteWritten>(o.mine, 'notes.note.create', {
+      title: 'Ghi chu xoa mem dong bo',
+      body: 'Noi dung',
+      visibility: 'private',
+    });
+    const todoA = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Viec lap xoa mem nguon',
+      dueOn: '2027-10-01',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+      sourceNoteId: noteA.noteId,
+    });
+    const noteGate = new pg.Client({ connectionString: adminUrl });
+    await noteGate.connect();
+    const errorsA: unknown[] = [];
+    let completePromiseA: Promise<TodoCompleteResult> | undefined;
+    try {
+      const gatePid = (await noteGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await noteGate.query('BEGIN');
+      await noteGate.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.note:${o.orgId.toLowerCase()}:${noteA.noteId.toLowerCase()}`],
+      );
+      completePromiseA = o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: todoA.todoId });
+      void completePromiseA.catch((err) => errorsA.push(err));
+      await waitSharedLockBlocked(gatePid, errorsA);
+      // Verify todoComplete acquires lockNote(S) BEFORE taking FOR UPDATE on todoA (prevents 3-way noteRestore/trash_empty cycle).
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        try {
+          const lockedRow = await c.query<{ id: string }>(
+            'SELECT id FROM ludy_notes.todo WHERE org_id = $1 AND id = $2 FOR UPDATE NOWAIT',
+            [o.orgId, todoA.todoId],
+          );
+          expect(lockedRow.rows).toHaveLength(1);
+        } finally {
+          await c.query('ROLLBACK');
+        }
+      });
+      await noteGate.query('UPDATE ludy_notes.note SET deleted_at = now() WHERE org_id = $1 AND id = $2', [o.orgId, noteA.noteId]);
+      await noteGate.query('COMMIT');
+      const resA = await completePromiseA;
+      expect(resA.nextTodoId).toBeTruthy();
+      const nextA = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: resA.nextTodoId as string });
+      expect(nextA.sourceNoteId).toBeNull();
+    } finally {
+      await noteGate.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(completePromiseA ? [completePromiseA] : []);
+      await noteGate.end().catch(() => undefined);
+    }
+
+    // 2. Concurrent notes.trash.empty + noteRestore + todoComplete on a >30-day trashed note completes cleanly with zero deadlock or FK violation.
+    const noteB = await o.exec<NoteWritten>(o.mine, 'notes.note.create', {
+      title: 'Ghi chu don thung rac dong bo',
+      body: 'Noi dung',
+      visibility: 'private',
+    });
+    const todoB = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Viec lap don thung rac',
+      dueOn: '2027-10-05',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+      sourceNoteId: noteB.noteId,
+    });
+    await o.exec(o.mine, 'notes.note.delete', { noteId: noteB.noteId });
+    await admin((c) =>
+      c.query(`UPDATE ludy_notes.note SET deleted_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2`, [o.orgId, noteB.noteId]),
+    );
+    const workerUrl = new URL(adminUrl);
+    workerUrl.username = 'ludy_worker';
+    workerUrl.password = 'test-worker-pw';
+    const workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
+    try {
+      const worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({
+        commands: [...kernelCommands, ...notesCommands],
+        queries: [...kernelQueries({ inboundDomain: null }), ...notesQueries],
+      });
+      const [resB, trashRes] = await Promise.all([
+        o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: todoB.todoId }),
+        worker.execute<{ removed: number }>('notes.trash.empty', {}, { actor: { type: 'system', component: 'notes' }, orgId: o.orgId }),
+      ]);
+      expect(trashRes.removed).toBeGreaterThanOrEqual(1);
+      expect(resB.nextTodoId).toBeTruthy();
+      const prevB = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: todoB.todoId });
+      const nextB = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: resB.nextTodoId as string });
+      expect(prevB.sourceNoteId).toBeNull();
+      expect(nextB.sourceNoteId).toBeNull();
+
+      // 2b. 3-way concurrency: todoGate holds todoD, trash.empty deletes noteD and blocks on todoD, noteRestore holds lockNote(X) and blocks on trash.empty's noteD lock, and todoComplete blocks behind todoGate -> releasing todoGate resolves all 3 cleanly with zero deadlock.
+      const noteD = await o.exec<NoteWritten>(o.mine, 'notes.note.create', {
+        title: 'Ghi chu kiem tra vong khoa 3 ben',
+        body: 'Noi dung',
+        visibility: 'private',
+      });
+      const todoD = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+        title: 'Viec lap vong khoa 3 ben',
+        dueOn: '2027-10-08',
+        timeZone: 'Asia/Ho_Chi_Minh',
+        recurrence: { freq: 'daily', interval: 1 },
+        sourceNoteId: noteD.noteId,
+      });
+      await o.exec(o.mine, 'notes.note.delete', { noteId: noteD.noteId });
+      await admin((c) =>
+        c.query(`UPDATE ludy_notes.note SET deleted_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2`, [o.orgId, noteD.noteId]),
+      );
+      const todoGate = new pg.Client({ connectionString: adminUrl });
+      await todoGate.connect();
+      const errors3: unknown[] = [];
+      let trash3Promise: Promise<{ removed: number }> | undefined;
+      let restore3Promise: Promise<unknown> | undefined;
+      let comp3Promise: Promise<TodoCompleteResult> | undefined;
+      try {
+        const todoGatePid = (await todoGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+        await todoGate.query('BEGIN');
+        await todoGate.query('SELECT id FROM ludy_notes.todo WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, todoD.todoId]);
+
+        trash3Promise = worker.execute<{ removed: number }>('notes.trash.empty', {}, { actor: { type: 'system', component: 'notes' }, orgId: o.orgId });
+        void trash3Promise.catch((err) => errors3.push(err));
+        const trashPid = await waitLockBlockedOnPid(todoGatePid, errors3);
+
+        restore3Promise = o.exec(o.mine, 'notes.note.restore', { noteId: noteD.noteId });
+        void restore3Promise.catch((err) => {
+          if (!(err && typeof err === 'object' && 'code' in err && err.code === 'NOTE_NOT_FOUND')) {
+            errors3.push(err);
+          }
+        });
+        const restorePid = await waitLockBlockedOnPid(trashPid, errors3);
+
+        comp3Promise = o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: todoD.todoId });
+        void comp3Promise.catch((err) => errors3.push(err));
+        await waitLockBlockedOnPid([todoGatePid, trashPid], errors3, {
+          queryLike: '%for update%',
+          excludePids: [trashPid, restorePid],
+        });
+
+        await todoGate.query('COMMIT');
+        const [comp3, trash3, restore3] = await Promise.allSettled([comp3Promise, trash3Promise, restore3Promise]);
+        expect(comp3.status).toBe('fulfilled');
+        expect(trash3.status).toBe('fulfilled');
+        if (trash3.status === 'fulfilled') {
+          expect(trash3.value.removed).toBeGreaterThanOrEqual(1);
+        }
+        expect(restore3.status).toBe('rejected');
+        if (restore3.status === 'rejected') {
+          expect(restore3.reason).toMatchObject({ code: 'NOTE_NOT_FOUND', status: 404 });
+        }
+        if (comp3.status === 'fulfilled') {
+          expect(comp3.value.nextTodoId).toBeTruthy();
+          const nextD = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: comp3.value.nextTodoId as string });
+          expect(nextD.sourceNoteId).toBeNull();
+        }
+      } finally {
+        await todoGate.query('ROLLBACK').catch(() => undefined);
+        await Promise.allSettled(
+          [comp3Promise, trash3Promise, restore3Promise].filter((p): p is Promise<unknown> => p !== undefined),
+        );
+        await todoGate.end().catch(() => undefined);
+      }
+    } finally {
+      await workerPool.end();
+    }
+
+    // 3. Concurrent hard delete under notes.erase:<org> triggers ON DELETE SET NULL on todo_source_note_fk before todoComplete reads before.
+    const noteC = await o.exec<NoteWritten>(o.mine, 'notes.note.create', {
+      title: 'Ghi chu xoa cung duoi notes.erase',
+      body: 'Noi dung',
+      visibility: 'private',
+    });
+    const todoC = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Viec lap xoa cung nguon',
+      dueOn: '2027-10-10',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+      sourceNoteId: noteC.noteId,
+    });
+    const eraseGate = new pg.Client({ connectionString: adminUrl });
+    await eraseGate.connect();
+    const errorsC: unknown[] = [];
+    let completePromiseC: Promise<TodoCompleteResult> | undefined;
+    try {
+      const gatePid = (await eraseGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await eraseGate.query('BEGIN');
+      await eraseGate.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.erase:${o.orgId.toLowerCase()}`],
+      );
+      completePromiseC = o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: todoC.todoId });
+      void completePromiseC.catch((err) => errorsC.push(err));
+      await waitSharedLockBlocked(gatePid, errorsC);
+      await eraseGate.query('DELETE FROM ludy_notes.note WHERE org_id = $1 AND id = $2', [o.orgId, noteC.noteId]);
+      await eraseGate.query('COMMIT');
+      const resC = await completePromiseC;
+      expect(resC.nextTodoId).toBeTruthy();
+      const prevC = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: todoC.todoId });
+      const nextC = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: resC.nextTodoId as string });
+      expect(prevC.sourceNoteId).toBeNull();
+      expect(nextC.sourceNoteId).toBeNull();
+    } finally {
+      await eraseGate.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(completePromiseC ? [completePromiseC] : []);
+      await eraseGate.end().catch(() => undefined);
+    }
+
+    // 4. Equal sort_key forces placeBetween -> rebalance (todo FOR UPDATE): lockNote(S) still acquires BEFORE rebalance runs.
+    const noteD = await o.exec<NoteWritten>(o.mine, 'notes.note.create', {
+      title: 'Ghi chu rebalance lock order',
+      body: 'Noi dung',
+      visibility: 'private',
+    });
+    const d1 = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Viec lap dong sort key 1',
+      dueOn: '2027-10-12',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+      sourceNoteId: noteD.noteId,
+    });
+    const d2 = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Viec lap dong sort key 2',
+      dueOn: '2027-10-13',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+      sourceNoteId: noteD.noteId,
+    });
+    const [firstId, secondId] = [d1.todoId, d2.todoId].sort() as [string, string];
+    await admin(async (c) => {
+      await c.query(
+        "UPDATE ludy_notes.todo SET sort_key = '0000' WHERE org_id = $1 AND id = ANY($2::uuid[])",
+        [o.orgId, [firstId, secondId]],
+      );
+    });
+    const noteGateD = new pg.Client({ connectionString: adminUrl });
+    await noteGateD.connect();
+    const errorsD: unknown[] = [];
+    let completePromiseD: Promise<TodoCompleteResult> | undefined;
+    try {
+      const gatePid = (await noteGateD.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await noteGateD.query('BEGIN');
+      await noteGateD.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.note:${o.orgId.toLowerCase()}:${noteD.noteId.toLowerCase()}`],
+      );
+      completePromiseD = o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: firstId });
+      void completePromiseD.catch((err) => errorsD.push(err));
+      await waitSharedLockBlocked(gatePid, errorsD);
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        try {
+          const unlockedRows = await c.query<{ id: string }>(
+            'SELECT id FROM ludy_notes.todo WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE NOWAIT',
+            [o.orgId, [firstId, secondId]],
+          );
+          expect(unlockedRows.rows).toHaveLength(2);
+        } finally {
+          await c.query('ROLLBACK');
+        }
+      });
+      await noteGateD.query('UPDATE ludy_notes.note SET deleted_at = now() WHERE org_id = $1 AND id = $2', [o.orgId, noteD.noteId]);
+      await noteGateD.query('COMMIT');
+      const resD = await completePromiseD;
+      expect(resD.nextTodoId).toBeTruthy();
+      const nextD = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: resD.nextTodoId as string });
+      expect(nextD.sourceNoteId).toBeNull();
+      const rebalancedKeys = await admin(async (c) =>
+        (
+          await c.query<{ id: string; sort_key: string }>(
+            'SELECT id, sort_key FROM ludy_notes.todo WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY id',
+            [o.orgId, [firstId, secondId]],
+          )
+        ).rows,
+      );
+      expect(rebalancedKeys).toHaveLength(2);
+      expect(rebalancedKeys[0]!.sort_key).not.toBe(rebalancedKeys[1]!.sort_key);
+    } finally {
+      await noteGateD.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(completePromiseD ? [completePromiseD] : []);
+      await noteGateD.end().catch(() => undefined);
+    }
+
+    // 5. Note converted to private before other member's todoComplete skips lockNote(S) cleanly without blocking on author's lock.
+    const noteE = await o.exec<NoteWritten>(o.other, 'notes.note.create', {
+      title: 'Ghi chu dung chung chuyen rieng tu',
+      body: 'Noi dung',
+      visibility: 'org',
+    });
+    const todoE = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Viec lap khi ghi chu chuyen rieng tu',
+      dueOn: '2027-10-14',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+      sourceNoteId: noteE.noteId,
+    });
+    await o.exec(o.other, 'notes.note.set_visibility', { noteId: noteE.noteId, visibility: 'private' });
+    const noteGateE = new pg.Client({ connectionString: adminUrl });
+    await noteGateE.connect();
+    try {
+      await noteGateE.query('BEGIN');
+      await noteGateE.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.note:${o.orgId.toLowerCase()}:${noteE.noteId.toLowerCase()}`],
+      );
+      const resE = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: todoE.todoId });
+      expect(resE.nextTodoId).toBeTruthy();
+      const nextE = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: resE.nextTodoId as string });
+      expect(nextE.sourceNoteId).toBeNull();
+      await noteGateE.query('COMMIT');
+    } finally {
+      await noteGateE.query('ROLLBACK').catch(() => undefined);
+      await noteGateE.end().catch(() => undefined);
+    }
   });
 });

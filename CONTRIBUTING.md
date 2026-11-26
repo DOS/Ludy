@@ -26,7 +26,7 @@ LUDY_TEST_ADMIN_URL=postgres://postgres:...@localhost:5432/postgres pnpm test:db
 [AGENTS.md](./AGENTS.md) is the source of truth and applies to humans and agents alike. In short:
 
 - **One write path.** Every state change is a command executed through `Runtime.execute()`. No other code writes tenant tables.
-- **Schema only via migrations** in `supabase/migrations/<14-digit UTC>_crove_<module>_<desc>.sql`: idempotent, never edit an applied file, never DDL at runtime, every function sets `search_path = pg_catalog, pg_temp`.
+- **Schema only via migrations** in `supabase/migrations/<14-digit UTC>_ludy_<module>_<desc>.sql`: idempotent, never edit an applied file, never DDL at runtime, every function sets `search_path = pg_catalog, pg_temp`.
 - **Tenancy:** every tenant table has `org_id`, `PRIMARY KEY (org_id, id)` and RLS via `ludy_kernel.apply_tenant_rls`.
 - **Money** is NUMERIC in SQL and a decimal string elsewhere; arithmetic through `decimal.js`. Never JS numbers for amounts.
 - **AI** calls only in `packages/agent`, through an OpenAI-compatible endpoint. AI output is tainted: deterministic checks decide, humans approve.
@@ -49,4 +49,4 @@ Contributors keep the copyright in their work and grant the project owner a lice
 
 ## Trademarks
 
-The Crove name and logo are covered by [TRADEMARKS.md](./TRADEMARKS.md).
+The Ludy name and logo are covered by [TRADEMARKS.md](./TRADEMARKS.md).

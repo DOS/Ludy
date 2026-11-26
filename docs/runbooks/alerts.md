@@ -59,7 +59,7 @@ At the uptime service, create one check:
 | Certificate | alert when it expires within 14 days, if the service offers it |
 | Alerts | the owner's phone: the service's app, SMS, or the Telegram chat from step 1 |
 
-Then test it once: stop the API (`docker compose stop crove`, or `api` in the split layout) for longer than one interval, check that the phone gets the alert, and start it again (`docker compose start crove`). Do it outside the partner's working hours.
+Then test it once: stop the API (`docker compose stop ludy`, or `api` in the split layout) for longer than one interval, check that the phone gets the alert, and start it again (`docker compose start ludy`). Do it outside the partner's working hours.
 
 ## 3. The heartbeat monitor
 

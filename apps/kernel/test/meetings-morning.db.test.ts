@@ -126,6 +126,12 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     for (const bad of [{ minute: -1 }, { minute: 1440 }, { minute: 7.5 }, { timeZone: 'Mars/Olympus' }, { timeZone: '' }, { language: 'fr' }, { extra: 1 }]) {
       expect(await refuses(set('lan', { enabled: true, ...bad })), JSON.stringify(bad)).not.toBeNull();
     }
+    expect(await refuses(set('lan', { enabled: true, content: 'full' }))).toBe('BRIEFING_NOT_ENABLED');
+    expect(await refuses(set('lan', { enabled: true, content: 'full', vyLines: true }))).toBe('BRIEFING_NOT_ENABLED');
+    expect(await refuses(set('lan', { enabled: true, vyLines: true }))).not.toBeNull();
+    // Turning off always deletes the subscription even if unimplemented v2 flags are passed.
+    await set('lan', { enabled: true });
+    await set('lan', { enabled: false, content: 'full', vyLines: true });
     expect(await get('lan')).toMatchObject({ enabled: false });
   });
 

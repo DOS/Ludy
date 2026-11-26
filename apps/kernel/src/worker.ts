@@ -131,7 +131,7 @@ import { failUndraftable, reconcileTelegramDisplacements, rekeyTelegramWebhooks,
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
-import { BANK_FEED_HOOK_CLAIM, claimBankFeedHookNotices, rejectBankFeedHook, sweepBankFeedHookNotices, verifyBankFeedHookNotices } from './bank-feed-hook.ts';
+import { BANK_FEED_HOOK_CLAIM, claimBankFeedHookBatch, rejectBankFeedHook, sweepBankFeedHookNotices, verifyBankFeedHookNotices } from './bank-feed-hook.ts';
 import { MARKETPLACE_HOOK_CLAIM, MARKETPLACE_PUSH_SLOT_SECONDS, claimMarketplaceHookNotices, rejectMarketplaceHook, sweepMarketplaceHookNotices, verifyMarketplaceHookNotices } from './marketplace-push-relay.ts';
 import { runAdsDeletions } from './ads-deletion.ts';
 import { runMisaAmisCallbacks } from './misa-amis-callback-relay.ts';
@@ -598,7 +598,98 @@ const CALENDAR_WRITEBACK_RETRY_LIMIT = 3;
 const CALENDAR_WRITEBACK_BUSY_TRIES = 4;
 const CALENDAR_WRITEBACK_BUSY_WAIT_MS = 5_000;
 // One sync a connection per slot for the signed notices that ask for one.
-const BANK_FEED_NOTICE_SLOT_SECONDS = 30;
+export const BANK_FEED_NOTICE_SLOT_SECONDS = 30;
+
+// Shared pg-boss send options for one coalesced bank-feed pull queued from a verified webhook notice.
+// Request-id deduplication covers waiting rows only: once claim deletes a notice, a post-claim replay of a
+// valid notice is accepted again, and this singleton slot coalesces it into one pull per connection.
+export function bankFeedSyncNoticeOptions(orgId: string, connectionId: string): SendOptions {
+  return {
+    singletonKey: jobKey(orgId, QUEUES.bankFeedSync, connectionId),
+    singletonSeconds: BANK_FEED_NOTICE_SLOT_SECONDS,
+    retryLimit: BANK_FEED_SYNC_RETRY_LIMIT,
+    retryDelay: 30,
+    retryBackoff: true,
+  };
+}
+
+export interface CollectBankFeedHookDeps {
+  runtime: Runtime;
+  broker: CredentialBroker;
+  providers: Readonly<Record<string, BankFeedProvider>>;
+  reject: (hookId: string, generation: number) => Promise<void>;
+}
+
+// Claims one bounded batch of waiting hosted-webhook notices inside the relay transaction, verifies HMAC
+// signatures and client ownership, updates tallies, and yields per-row sync targets (with NULL placeholders for
+// dropped notices) so relayBatch's step count matches total popped rows and never stops the relay loop early.
+export async function collectVerifiedBankFeedHookTargets(
+  deps: CollectBankFeedHookDeps,
+  trx: Transaction<Database>,
+  tally: { ok: number; refused: number; dropped: number } = { ok: 0, refused: 0, dropped: 0 },
+): Promise<Array<BankFeedSyncJob | null>> {
+  const { rows, claimed } = await claimBankFeedHookBatch(trx);
+  tally.dropped += claimed - rows.length;
+  const verdicts = await verifyBankFeedHookNotices(deps, rows);
+  const seen = new Set<string>();
+  const targets: Array<BankFeedSyncJob | null> = rows.map((row, i) => {
+    const verdict = verdicts[i] ?? 'dropped';
+    tally[verdict]++;
+    const targetKey = `${row.orgId}:${row.connectionId}`;
+    if (verdict !== 'ok' || seen.has(targetKey)) return null;
+    seen.add(targetKey);
+    return { orgId: row.orgId, connectionId: row.connectionId } satisfies BankFeedSyncJob;
+  });
+  for (let i = rows.length; i < claimed; i++) targets.push(null);
+  return targets;
+}
+
+export interface BankFeedHookRelayDeps {
+  workerDb: Db;
+  boss: JobSender;
+  runtime: Runtime;
+  broker: CredentialBroker;
+  providers: Readonly<Record<string, BankFeedProvider>>;
+}
+
+// Shared production relay round for hosted bank feed webhooks: claims one bounded batch, verifies HMACs and
+// client ownership, enqueues coalesced sync jobs in the same transaction, then tallies post-commit refusals.
+export async function relayBankFeedHookBatch(
+  deps: BankFeedHookRelayDeps,
+): Promise<{ claimed: number; ok: number; refused: number; dropped: number }> {
+  const tally = { ok: 0, refused: 0, dropped: 0 };
+  // The refused notices are counted on their hook generation after the batch commits (see rejectBankFeedHook): one entry per refused notice.
+  const refusedHooks: Array<{ hookId: string; generation: number }> = [];
+  const relay = () =>
+    relayBatch(deps.workerDb, deps.boss, async (trx) => {
+      const targets = await collectVerifiedBankFeedHookTargets(
+        { runtime: deps.runtime, broker: deps.broker, providers: deps.providers, reject: async (hookId, generation) => void refusedHooks.push({ hookId, generation }) },
+        trx,
+        tally,
+      );
+      return targets.map((target) =>
+        target
+          ? (boss: JobSender) => boss.send(QUEUES.bankFeedSync, target, bankFeedSyncNoticeOptions(target.orgId, target.connectionId))
+          : async () => null,
+      );
+    });
+  const claimed = await relay();
+  for (const refused of refusedHooks) await rejectBankFeedHook(deps.workerDb, refused.hookId, refused.generation);
+  return { claimed, ...tally };
+}
+
+// Shared production drain loop for hosted bank feed webhooks: runs bounded relayBankFeedHookBatch
+// rounds until claimed drops below BANK_FEED_HOOK_CLAIM so a full batch of dropped notices never stops early.
+export async function relayBankFeedHookBatches(
+  deps: BankFeedHookRelayDeps,
+  onBatch?: (batch: { claimed: number; ok: number; refused: number; dropped: number }) => void,
+): Promise<void> {
+  for (;;) {
+    const batch = await relayBankFeedHookBatch(deps);
+    onBatch?.(batch);
+    if (batch.claimed < BANK_FEED_HOOK_CLAIM) return;
+  }
+}
 
 export interface WorkerDeps {
   connectionString: string;
@@ -3933,34 +4024,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       const hostedFeeds = deps.channels?.bankFeedHosted;
       if (finance && deps.channels?.broker && hostedFeeds && Object.keys(hostedFeeds).length > 0) {
         const broker = deps.channels.broker;
-        for (;;) {
-          const tally = { ok: 0, refused: 0, dropped: 0 };
-          // The refused notices are counted on their hooks after the batch commits (see rejectBankFeedHook): one entry per refused notice.
-          const refusedHooks: string[] = [];
-          const claimed = await relayBatch(deps.workerDb, boss, async (trx) => {
-            const rows = await claimBankFeedHookNotices(trx);
-            const verdicts = await verifyBankFeedHookNotices({ runtime: deps.runtime, broker, providers: hostedFeeds, reject: async (hookId) => void refusedHooks.push(hookId) }, rows);
-            const seen = new Set<string>();
-            return rows.map((row, i) => {
-              const verdict = verdicts[i] ?? 'dropped';
-              tally[verdict]++;
-              if (verdict !== 'ok' || seen.has(row.connectionId)) return async () => null;
-              seen.add(row.connectionId);
-              const target = { orgId: row.orgId, connectionId: row.connectionId } satisfies BankFeedSyncJob;
-              return (boss: JobSender) =>
-                boss.send(QUEUES.bankFeedSync, target, {
-                  singletonKey: jobKey(target.orgId, QUEUES.bankFeedSync, target.connectionId),
-                  singletonSeconds: BANK_FEED_NOTICE_SLOT_SECONDS,
-                  retryLimit: BANK_FEED_SYNC_RETRY_LIMIT,
-                  retryDelay: 30,
-                  retryBackoff: true,
-                });
-            });
-          });
-          for (const hookId of refusedHooks) await rejectBankFeedHook(deps.workerDb, hookId);
-          if (claimed > 0) console.log(`[bank-feed-hook] ${claimed} notice(s): ${tally.ok} verified, ${tally.refused} refused, ${tally.dropped} dropped`);
-          if (claimed < BANK_FEED_HOOK_CLAIM) break;
-        }
+        await relayBankFeedHookBatches(
+          { workerDb: deps.workerDb, boss, runtime: deps.runtime, broker, providers: hostedFeeds },
+          ({ claimed, ok, refused, dropped }) => {
+            if (claimed > 0) console.log(`[bank-feed-hook] ${claimed} notice(s): ${ok} verified, ${refused} refused, ${dropped} dropped`);
+          },
+        );
       }
       // A signed push of a marketplace (TikTok Shop, Shopee, Lazada; #4327, S3a of #4315): the route stored the raw push under the hook key of one connection; here the connection's sealed secret is opened, the HMAC is checked
       // (constant-time) and the push must name the connection's own shop or seller, and each connection with a good push gets ONE coalesced poll (ids only: the body is never in a job). A refused one is counted on its hook after the batch

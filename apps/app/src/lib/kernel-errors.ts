@@ -592,6 +592,8 @@ export const KERNEL_ERROR_CODES = [
   'ASK_BUSY',
   'BRIEF_OFF',
   'BRIEF_BUSY',
+  // Full daily briefing mail (#5080).
+  'BRIEFING_NOT_ENABLED',
   // Vy checking a meeting's agenda against its transcript (#3959).
   'ADHERENCE_OFF',
   'ADHERENCE_BUSY',
