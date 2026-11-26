@@ -661,18 +661,42 @@ function readableAgendaPlatforms(trx: QueryContext['trx'], orgId: string, userId
     .where('c.read_events', '=', true);
 }
 
+// Exact character set preserved by ludy_kernel.search_fold (migration 20261023060000): ASCII letters/digits plus Vietnamese letters and đ/Đ.
+const SEARCH_FOLD_KEPT = new Set(
+  'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789àáạảãâầấậẩẫăằắặẳẵÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴèéẹẻẽêềếệểễÈÉẸẺẼÊỀẾỆỂỄìíịỉĩÌÍỊỈĨòóọỏõôồốộổỗơờớợởỡÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠùúụủũưừứựửữÙÚỤỦŨƯỪỨỰỬỮỳýỵỷỹỲÝỴỶỸđĐ',
+);
+const SEARCH_MEANINGFUL_CHAR = /[\p{L}\p{N}\p{Extended_Pictographic}]/u;
+
+// Maximal runs of meaningful characters dropped by search_fold (e.g. CJK, Hangul, Cyrillic, emoji, non-Vietnamese diacritics)
+// so mixed queries like "東京 2026" or "🎯 Q4" still require the non-Latin/emoji part alongside the folded part (#5052).
+function unfoldedSearchTerms(search: string): string[] {
+  const terms = new Set<string>();
+  let run = '';
+  for (const ch of search.normalize('NFC')) {
+    if (!SEARCH_FOLD_KEPT.has(ch) && SEARCH_MEANINGFUL_CHAR.test(ch)) {
+      run += ch;
+    } else if (run !== '') {
+      terms.add(run);
+      run = '';
+    }
+  }
+  if (run !== '') terms.add(run);
+  return [...terms];
+}
+
 export const meetingList = defineQuery({
   name: 'meetings.meeting.list',
   input: zMeetingListInput,
   access: READERS,
   handler: async (ctx, input): Promise<MeetingListItem[]> => {
     const userId = userOf(ctx.actor);
+    const today = vnDay(new Date());
     let query = ctx.trx
       .selectFrom('ludy_meetings.meeting')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       // A meeting past its text date is gone from its day, not from the nightly job's run (#2579).
-      .where((eb) => eb.or([eb('text_retention_date', 'is', null), eb('text_retention_date', '>', vnDay(new Date()))]));
+      .where((eb) => eb.or([eb('text_retention_date', 'is', null), eb('text_retention_date', '>', today)]));
 
     if (input.visibility) {
       query = query.where('visibility', '=', input.visibility);
@@ -680,18 +704,33 @@ export const meetingList = defineQuery({
 
     const search = input.search?.trim();
     if (search) {
+      const normalized = search.normalize('NFC');
       query = query.where(
-        sql<boolean>`(CASE WHEN ludy_kernel.search_fold(${search}) = '' THEN pg_catalog.strpos(pg_catalog.lower(title), pg_catalog.lower(${search})) > 0 ELSE pg_catalog.strpos(ludy_kernel.search_fold(title), ludy_kernel.search_fold(${search})) > 0 END)`,
+        sql<boolean>`(CASE WHEN ludy_kernel.search_fold(${search}) = '' THEN pg_catalog.strpos(pg_catalog.lower(pg_catalog.normalize(title, 'NFC')), pg_catalog.lower(${normalized})) > 0 ELSE pg_catalog.strpos(ludy_kernel.search_fold(title), ludy_kernel.search_fold(${search})) > 0 END)`,
       );
+      const extraTerms = unfoldedSearchTerms(normalized);
+      if (extraTerms.length > 0) {
+        query = query.where(
+          sql<boolean>`NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(${extraTerms}::text[]) AS t(term) WHERE pg_catalog.strpos(pg_catalog.lower(pg_catalog.normalize(title, 'NFC')), pg_catalog.lower(t.term)) = 0)`,
+        );
+      }
     }
 
-    // Ordered and paged by the held time as the answer carries it (milliseconds: startedAt ?? createdAt),
-    // so a page boundary inside one millisecond neither repeats nor skips a meeting (#5052).
-    const heldAt = sql`pg_catalog.date_trunc('milliseconds', COALESCE(started_at, created_at))`;
+    // Ordered and paged on (COALESCE(started_at, created_at) DESC, id DESC) matching meeting_held_idx (#5052).
+    // When afterStartedAt + afterId match the cursor row under caller RLS and retention, refine to the row's exact timestamp
+    // so multiple meetings inside the same millisecond page without skipping or repeating.
+    const heldAt = sql`COALESCE(started_at, created_at)`;
     if (input.afterStartedAt !== undefined && input.afterId !== undefined) {
-      query = query.where(
-        sql<boolean>`(${heldAt}, id) < (pg_catalog.date_trunc('milliseconds', ${input.afterStartedAt}::timestamptz), ${input.afterId}::uuid)`,
-      );
+      const cursorAt = sql`COALESCE(
+        (SELECT COALESCE(c.started_at, c.created_at)
+         FROM ludy_meetings.meeting c
+         WHERE c.org_id = ${ctx.orgId}::uuid
+           AND c.id = ${input.afterId}::uuid
+           AND (c.text_retention_date IS NULL OR c.text_retention_date > ${today}::date)
+           AND pg_catalog.date_trunc('milliseconds', COALESCE(c.started_at, c.created_at)) = pg_catalog.date_trunc('milliseconds', ${input.afterStartedAt}::timestamptz)),
+        ${input.afterStartedAt}::timestamptz
+      )`;
+      query = query.where(sql<boolean>`(${heldAt}, id) < (${cursorAt}, ${input.afterId}::uuid)`);
     }
 
     const rows = (await query

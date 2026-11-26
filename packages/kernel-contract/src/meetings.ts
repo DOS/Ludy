@@ -136,7 +136,12 @@ export const zMeetingListInput = z
     visibility: zMeetingVisibility.optional(),
     limit: z.number().int().min(1).max(200).optional(),
     // Plain-text title search (Vietnamese diacritics and case folded; #5052). Empty or whitespace-only behaves as unset.
-    search: z.string().trim().max(200).optional(),
+    search: z
+      .string()
+      .trim()
+      .max(200)
+      .refine((v) => !v.includes('\u0000'), 'Control character NUL is not allowed')
+      .optional(),
     // Keyset cursor (#5052): held time (`startedAt ?? createdAt`) and `id` of the last item of the previous page, both or neither.
     afterStartedAt: z.iso.datetime({ offset: true }).optional(),
     afterId: zId.optional(),
