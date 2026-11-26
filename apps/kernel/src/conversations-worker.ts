@@ -680,17 +680,17 @@ export async function rekeyTelegramWebhooks(deps: TelegramWebhookRekeyDeps): Pro
       let wrappedToSeen = false;
       let lockLost = false;
       for (const [index, row] of rows.entries()) {
+        if (seen.has(row.connection_id)) {
+          wrappedToSeen = true;
+          continue;
+        }
+        seen.add(row.connection_id);
         if (index > 0) {
           if (!(await tryAcquireWebhookLock(deps.workerDb, REKEY_LOCK_KEY, lockOwner, REKEY_SWEEP_TTL_SECONDS))) {
             lockLost = true;
             break;
           }
         }
-        if (seen.has(row.connection_id)) {
-          wrappedToSeen = true;
-          continue;
-        }
-        seen.add(row.connection_id);
         const result = await rekeyOneTelegramWebhook(deps, adapter, current, derived.key, row).catch((error: unknown) => {
           console.error(`[telegram-webhook-rekey] connection ${row.connection_id.slice(0, 8)}`, error instanceof Error ? error.name : typeof error);
           return 'failed' as const;
@@ -781,7 +781,15 @@ async function rekeyOneTelegramWebhook(
           }
           return 'skipped';
         }
-        if (renewLock && !(await renewLock().catch(() => false))) return 'skipped';
+        if (renewLock) {
+          let renewed: boolean;
+          try {
+            renewed = await renewLock();
+          } catch (error) {
+            return failRetry(work.hookFp, rekeyErrorLabel(error));
+          }
+          if (!renewed) return 'skipped';
+        }
       }
       let answer: Awaited<ReturnType<NonNullable<ConversationAdapter['chatHook']>>>;
       try {

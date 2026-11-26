@@ -372,6 +372,9 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
     ]);
 
     const firstHook = await turnOn(first);
+    // Park a notice on first's live hook before second takes over the bot.
+    expect((await post(firstHook, update('Tin trước khi bị chiếm', 4100, 1))).status).toBe(200);
+    expect(await rows("SELECT 1 FROM crove_kernel.conversation_inbound_pending WHERE provider = 'telegram_chat'")).toHaveLength(1);
     const secondHook = await turnOn(second);
 
     // Second org carries zero cross-org details in audit events.
@@ -407,10 +410,11 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
     expect(JSON.stringify(notifs)).not.toContain(second.connectionId);
     expect(JSON.stringify(notifs)).not.toContain(sharedToken);
 
-    // Retired hook drops parked notices without creating any thread.
-    expect((await post(firstHook, update('Tin tới hook bị chiếm', 4101, 1))).status).toBe(200);
+    // Retired hook drops both pre-takeover parked notices and post-takeover attempts without creating threads in either org.
+    expect(await runConversationIntake({ workerDb, runtime: worker })).toEqual({ stored: 0, dropped: 1 });
+    expect((await post(firstHook, update('Tin tới hook bị chiếm', 4101, 2))).status).toBe(200);
     expect(await runConversationIntake({ workerDb, runtime: worker })).toEqual({ stored: 0, dropped: 0 });
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [first.orgId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = ANY($1::uuid[])', [[first.orgId, second.orgId]])).toHaveLength(0);
 
     // Stale takenAt guard keeps newer holder active.
     const staleRes = await worker.execute<{ displaced: boolean }>(
