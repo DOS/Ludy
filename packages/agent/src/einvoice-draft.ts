@@ -407,13 +407,26 @@ const STRIP_MONEY_OR_LABELED = new RegExp(
     TIME_OF_DAY.source,
     PERCENT_ANY.source,
     RATE_AFTER_WORD.source,
-    String.raw`(?<![\p{L}])(?:tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền(?:\s+hàng)?|tong\s+tien(?:\s+hang)?|tổng\s+thanh\s+toán|tong\s+thanh\s+toan|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tiền\s+thuế(?:\s+(?:gtgt|vat))?|tien\s+thue(?:\s+(?:gtgt|vat))?|trả\s+trước|tra\s+truoc|đặt\s+cọc|dat\s+coc|cọc|đã\s+trả|da\s+tra|còn\s+lại|con\s+lai|thanh\s+toán|thanh\s+toan|giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết\s+khấu|chiet\s+khau|ck(?![\p{L}])|discount|off|trừ|bớt|đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|(?<!(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+)gia|unit\s+price|price|số\s+lượng|so\s+luong|sl(?![\p{L}])|qty(?![\p{L}])|quantity|tổng|total|amount)(?:\s+(?:là|la|is)(?![\p{L}]))?\s*(?:[:=]\s*)?\d+(?:[.,]\d+)*(?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*)?(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
+    String.raw`(?<![\p{L}])(?:tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền(?:\s+hàng)?|tong\s+tien(?:\s+hang)?|tổng\s+thanh\s+toán|tong\s+thanh\s+toan|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tiền\s+thuế(?:\s+(?:gtgt|vat))?|tien\s+thue(?:\s+(?:gtgt|vat))?|giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết\s+khấu|chiet\s+khau|ck(?![\p{L}])|discount|off|trừ|bớt|đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|(?<!(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+)gia|unit\s+price|price|số\s+lượng|so\s+luong|sl(?![\p{L}])|qty(?![\p{L}])|quantity|tổng|total|amount)(?:\s+(?:là|la|is)(?![\p{L}]))?\s*(?:[:=]\s*)?\d+(?:[.,]\d+)*(?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*)?(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
     String.raw`(?<![\p{L}])(?:xuất\s+hóa\s+đơn|xuat\s+hoa\s+don|hóa\s+đơn(?:\s+trước)?|hoa\s+don(?:\s+truoc)?|(?:gửi\s+)?cùng\s+khách|gui\s+cung\s+khach|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người\s+mua|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}\s*$|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách(?:\s+(?:hàng|quen|lẻ))?|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,2}|(?:khách(?:\s+(?:hàng|quen|lẻ|mua))?|khach(?:\s+(?:hang|quen|le|mua))?|người\s+mua|nguoi\s+mua)\s+(?:đặt|dat|mua|lấy|lay|chốt|chot|gửi|gui|order)|ngày\s+hôm\s+nay|ngay\s+hom\s+nay|ngày\s+hôm\s+qua|ngay\s+hom\s+qua|hôm\s+nay|hom\s+nay|hôm\s+qua|hom\s+qua|hôm\s+kia|hom\s+kia|ngày\s+mai|ngay\s+mai|sáng\s+nay|sang\s+nay|chiều\s+nay|chieu\s+nay|tuần\s+này|tuan\s+nay|tuần\s+trước|tuan\s+truoc|tháng\s+này|thang\s+nay|tháng\s+trước|thang\s+truoc|today|yesterday|cơ\s+hội|co\s+hoi|đơn\s+vị|don\s+vi|khách\s+(?:hàng|quen|lẻ)|khach\s+(?:hang|quen|le)|người\s+mua|nguoi\s+mua|chiết\s+khấu|chiet\s+khau|giảm\s+giá|giam\s+gia|thuế\s+suất|thue\s+suat|(?:không|khong|chưa|chua)\s+(?:(?:bao\s+)?(?:gồm|gom|tính|tinh|có|co)\s+)?(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat|suất|suat))?|thue(?:\s+(?:gtgt|vat|suat))?|tax)|(?:không|khong)\s+chịu(?:\s+(?:thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|vat|gtgt))?|(?:không|khong)\s+kê\s+khai(?:\s+(?:tính\s+)?(?:nộp\s+)?(?:thuế|thue))?|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền|tong\s+tien)(?![\p{L}])`,
     String.raw`\d+(?:[.,]\d+)*\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
     String.raw`\d+(?:[.,]\d+)*\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}])`,
   ].join('|'),
   'giu',
 );
+const STRIP_PAYMENT_OR_AMOUNT =
+  /(?<![\p{L}])(?:trả\s+trước|tra\s+truoc|đặt\s+cọc|dat\s+coc|cọc|đã\s+trả|da\s+tra|còn\s+lại|con\s+lai|thanh\s+toán|thanh\s+toan)(?:(\s+(?:là|la|is)(?![\p{L}])\s*(?:[:=]\s*)?|\s*[:=]\s*)|\s+)\d+(?:[.,]\d+)*((?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*)?(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?)/giu;
+
+function stripPaymentNotes(text: string): string {
+  return text.replace(STRIP_PAYMENT_OR_AMOUNT, (full, sep: string | undefined, moneyTag: string, offset: number, source: string) => {
+    // Preserve payment/prepaid words that are part of an item/service name followed by a unit ("Dịch vụ thanh toán 2 lần giá 500k").
+    if (sep === undefined && moneyTag.trim() === '') {
+      const nextWord = /^\s*([\p{L}][\p{L}\p{N}]*)/u.exec(source.slice(offset + full.length))?.[1];
+      if (nextWord !== undefined && UNIT_ONLY_EXACT.has(nextWord)) return full;
+    }
+    return ' ';
+  });
+}
 
 function foldDiacritics(value: string): string {
   return value.normalize('NFD').replace(/\p{Mn}/gu, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').normalize('NFKC');
@@ -428,7 +441,7 @@ function descriptionTokens(
   const unitTokens = new Set<string>();
   let hasProduct = false;
   let hasUnit = false;
-  const cleaned = read(text).replace(STRIP_MONEY_OR_LABELED, ' ');
+  const cleaned = stripPaymentNotes(read(text)).replace(STRIP_MONEY_OR_LABELED, ' ');
   for (const raw of cleaned.match(/[\p{L}\p{N}]+/gu) ?? []) {
     if (/^\d+$/u.test(raw)) {
       // Keep model/version digits that follow a product word ("iPhone 15", "tháng 11"), and all digits in structured item names ("7 Up", "1984"), while ignoring prose leading quantity digits.
@@ -454,8 +467,8 @@ function descriptionTokens(
 
 function contextBeforeFigure(segmentBefore: string): { hasProduct: boolean; hasUnit: boolean } {
   let afterVerb = segmentBefore.replace(LEADING_BATCH_BEFORE_NUM, '');
-  for (const vm of segmentBefore.matchAll(TRANSACTION_VERB_SPLIT)) {
-    if (vm.index !== undefined) afterVerb = segmentBefore.slice(vm.index + vm[0].length).replace(LEADING_BATCH_BEFORE_NUM, '');
+  for (const verbMatch of segmentBefore.matchAll(TRANSACTION_VERB_SPLIT)) {
+    if (verbMatch.index !== undefined) afterVerb = segmentBefore.slice(verbMatch.index + verbMatch[0].length).replace(LEADING_BATCH_BEFORE_NUM, '');
   }
   if (RECIPIENT_BEFORE_NUMBER.test(afterVerb)) return { hasProduct: false, hasUnit: false };
   const { hasProduct, hasUnit } = descriptionTokens(afterVerb);

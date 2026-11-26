@@ -1316,6 +1316,12 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         answer([line({ description: 'Dịch vụ thanh toán', unit: 'lần', quantity: '2', unitPrice: '500000', vatRate: null })], null),
       ).kind,
     ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('Gói trả trước 6 tháng giá 300k'),
+        answer([line({ description: 'Gói trả trước', unit: 'tháng', quantity: '6', unitPrice: '300000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
 
     const packQuote = req('Phấn giá 50k/10 hộp');
     expect(

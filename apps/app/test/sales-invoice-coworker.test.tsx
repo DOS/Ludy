@@ -100,6 +100,17 @@ async function flushAsync(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 15));
 }
 
+// Wait for TanStack Query's notifyManager (which batches subscriber updates via setTimeout(0)) inside React act().
+async function waitUntil(predicate: () => boolean, label: string, maxAttempts = 50): Promise<void> {
+  for (let i = 0; i < maxAttempts; i += 1) {
+    if (predicate()) return;
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 2));
+    });
+  }
+  throw new Error(`Timed out waiting for: ${label}`);
+}
+
 describe('CoworkerBox (#4119)', () => {
   const domHarness = createScopedDomHarness();
 
@@ -195,6 +206,7 @@ describe('CoworkerBox (#4119)', () => {
     await act(async () => {
       clickButton(host.askButton());
     });
+    await waitUntil(() => host.textarea().disabled, 'pending state disables textarea');
     expect(apiState.suggestCalls).toEqual([{ text: 'bán 10 hộp bánh A giá 120k, thuế 8%', date: '2026-11-26' }]);
     expect(host.textarea().disabled).toBe(true);
     expect(host.askButton().disabled).toBe(true);
@@ -209,6 +221,7 @@ describe('CoworkerBox (#4119)', () => {
       resolveSuggest(USED_PROPOSAL);
       await flushAsync();
     });
+    await waitUntil(() => !host.textarea().disabled && host.statusNode() !== null, 'stale state renders');
 
     expect(host.filled).toEqual([]);
     expect(host.filledCount()).toBe(0);
@@ -232,6 +245,7 @@ describe('CoworkerBox (#4119)', () => {
       clickButton(host.askButton());
       await flushAsync();
     });
+    await waitUntil(() => host.statusNode() !== null, 'filled state renders');
 
     expect(host.filled).toEqual([USED_PROPOSAL]);
     expect(host.filledCount()).toBe(1);
@@ -269,6 +283,7 @@ describe('CoworkerBox (#4119)', () => {
       clickButton(host.askButton());
       await flushAsync();
     });
+    await waitUntil(() => host.statusNode() !== null, 'filled state renders');
     expect(host.statusNode()?.getAttribute('data-state')).toBe('filled');
 
     await act(async () => {
@@ -282,6 +297,7 @@ describe('CoworkerBox (#4119)', () => {
       clickButton(host.askButton());
       await flushAsync();
     });
+    await waitUntil(() => host.statusNode() !== null, 'partial state renders');
     expect(host.statusNode()?.getAttribute('data-state')).toBe('partial');
 
     await act(async () => {
@@ -294,6 +310,7 @@ describe('CoworkerBox (#4119)', () => {
     await act(async () => {
       clickButton(host.askButton());
     });
+    await waitUntil(() => host.textarea().disabled, 'deferred request 1 pending');
     await act(async () => {
       host.setDate('2026-11-28');
     });
@@ -301,6 +318,7 @@ describe('CoworkerBox (#4119)', () => {
       resolveDeferred(USED_PROPOSAL);
       await flushAsync();
     });
+    await waitUntil(() => !host.textarea().disabled && host.statusNode() !== null, 'stale state 1 renders');
     expect(host.statusNode()?.getAttribute('data-state')).toBe('stale');
 
     await act(async () => {
@@ -312,6 +330,7 @@ describe('CoworkerBox (#4119)', () => {
     await act(async () => {
       clickButton(host.askButton());
     });
+    await waitUntil(() => host.textarea().disabled, 'deferred request 2 pending');
     await act(async () => {
       host.setDate('2026-11-29');
     });
@@ -319,6 +338,7 @@ describe('CoworkerBox (#4119)', () => {
       resolveDeferred(USED_PROPOSAL);
       await flushAsync();
     });
+    await waitUntil(() => !host.textarea().disabled && host.statusNode() !== null, 'stale state 2 renders');
     expect(host.statusNode()?.getAttribute('data-state')).toBe('stale');
 
     await act(async () => {
@@ -332,12 +352,14 @@ describe('CoworkerBox (#4119)', () => {
       clickButton(host.askButton());
       await flushAsync();
     });
+    await waitUntil(() => host.statusNode() !== null, 'refused state renders');
     expect(host.statusNode()?.getAttribute('data-state')).toBe('refused');
 
     mode = 'reject';
     await act(async () => {
       clickButton(host.askButton());
     });
+    await waitUntil(() => host.textarea().disabled, 'reject request pending');
     // Cleared immediately while pending.
     expect(host.statusNode()).toBeNull();
 
@@ -345,6 +367,7 @@ describe('CoworkerBox (#4119)', () => {
       rejectDeferred(new Error('Không kết nối được máy chủ'));
       await flushAsync();
     });
+    await waitUntil(() => !host.textarea().disabled && host.alertNode() !== null, 'error alert renders');
     expect(host.statusNode()).toBeNull();
     expect(host.alertNode()?.textContent).toContain('Không kết nối được máy chủ');
 
@@ -352,6 +375,7 @@ describe('CoworkerBox (#4119)', () => {
     await act(async () => {
       typeTextarea(host.textarea(), 'bán 6 hộp bánh A giá 120k');
     });
+    await waitUntil(() => host.alertNode() === null, 'error alert clears after text edit');
     expect(host.alertNode()).toBeNull();
   });
 });
