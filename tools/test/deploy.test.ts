@@ -508,6 +508,19 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     const missing = deploy('v1.0.1', 'b');
     expect(missing.status, missing.out).toBe(2);
     expect(missing.out).toContain('lists compose.wal.yml but');
+
+    // Interpolated COMPOSE_FILE + custom COMPOSE_PATH_SEPARATOR resolves identically to Compose and fails closed when missing (#3972 Round 16).
+    mkdirSync(`${dir}/tools/backup`, { recursive: true });
+    writeFileSync(`${dir}/tools/backup/compose.wal.yml`, 'services: {}\n');
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nWAL_OVERLAY=tools/backup/compose.wal.yml\nCOMPOSE_PATH_SEPARATOR=;\nCOMPOSE_FILE=docker-compose.yml;${WAL_OVERLAY}\n');
+    rmSync(`${log}.files`, { force: true });
+    const okInterp = deploy('v1.0.2', 'c');
+    expect(okInterp.status, okInterp.out).toBe(0);
+    expect(readFileSync(`${log}.files`, 'utf8')).toContain(`${dir}/tools/backup/compose.wal.yml`);
+    rmSync(`${dir}/tools/backup/compose.wal.yml`);
+    const missingInterp = deploy('v1.0.3', 'd');
+    expect(missingInterp.status, missingInterp.out).toBe(2);
+    expect(missingInterp.out).toContain('lists compose.wal.yml but');
   });
 
   it('fails closed before activate when pre-deploy compose inspection fails, and exports prior release images (#3972)', () => {
@@ -1243,6 +1256,25 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(activeHeld.status, `${label}: ${activeHeld.out}`).toBe(1);
       expect(activeHeld.out).toContain('still mounted by a running container outside project');
     }
+
+    // Stopped container owned by another working directory under COMPOSE_PROJECT_NAME=ludy blocks BOTH deploy and rollback even with non-overlapping storage (#3972 Round 16).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const foreignDeploy = deploy('v1.0.0', 'a', {
+      STUB_PROJECT_CONTAINERS: 'ludy|other-stopped-db-1',
+      STUB_INSPECT_WORKDIRS: 'other-stopped-db-1|/opt/other-ludy',
+    });
+    expect(foreignDeploy.status, foreignDeploy.out).toBe(1);
+    expect(foreignDeploy.out).toContain("Compose project 'ludy' is already owned by another installation at /opt/other-ludy");
+
+    expect(deploy('v1.0.0', 'a', { STUB_PROJECT_CONTAINERS: 'ludy|own-db-1', STUB_INSPECT_WORKDIRS: `own-db-1|${dir}` }).status).toBe(0);
+    expect(deploy('v1.1.0', 'b').status).toBe(0);
+    const foreignRollback = run(['rollback'], {
+      STUB_PROJECT_CONTAINERS: 'ludy|other-stopped-db-1',
+      STUB_INSPECT_WORKDIRS: 'other-stopped-db-1|/opt/other-ludy',
+    });
+    expect(foreignRollback.status, foreignRollback.out).toBe(1);
+    expect(foreignRollback.out).toContain("Compose project 'ludy' is already owned by another installation at /opt/other-ludy");
 
     // Failed restore_pre_activate preserves $PRE_ACTIVATE_SNAP across EXIT cleanup so the reported recovery path remains intact (#3972 Round 14).
     if (process.platform !== 'win32' && process.getuid?.() !== 0) {

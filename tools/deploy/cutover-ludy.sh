@@ -561,7 +561,7 @@ hash_stdin_sha256() {
 dotenv_lookup() {
   local name="$1"
   local set_ref="__DE_S_${name}" val_ref="__DE_V_${name}"
-  if [ "$name" != COMPOSE_PROJECT_NAME ] && ! key_map_index "$name" >/dev/null && ! target_map_index "$name" >/dev/null; then
+  if [ "$name" != COMPOSE_PROJECT_NAME ]; then
     case $'\n'"${__DE_EXPORTED_NAMES:-}"$'\n' in
       *$'\n'"$name"$'\n'*)
         DOTENV_LOOKUP_SET=1
@@ -739,8 +739,9 @@ dotenv_parse_rhs() {
 
 # Evaluates dotenv assignments top-to-bottom and outputs hashed state summaries (never plaintext values) (#3972).
 # When $use_os_env=0, ignores caller OS environment variables (simulating a clean `docker compose up` from dotenv only).
+# When $ignore_legacy=1, evaluates effective values under post-cutover Stage 7 Compose (which ignores retired CROVE_*).
 eval_dotenv_state() {
-  local src_path="$1" normalize_urls="${2:-0}" use_os_env="${3:-1}"
+  local src_path="$1" normalize_urls="${2:-0}" use_os_env="${3:-1}" ignore_legacy="${4:-0}"
   (
     set -euo pipefail
     local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$'
@@ -771,14 +772,19 @@ eval_dotenv_state() {
 
     for ((i = 0; i < ${#CROVE_NEW_KEYS[@]}; i++)); do
       local new_k="${CROVE_NEW_KEYS[$i]}" old_k="${CROVE_OLD_KEYS[$i]}"
-      local ns_ref="__DE_S_${new_k}" nv_ref="__DE_V_${new_k}" os_ref="__DE_S_${old_k}" ov_ref="__DE_V_${old_k}"
-      local n_val='' o_val='' n_eff=0 o_eff=0 eff_nonempty=0 eff_val='' eff_hash=''
-      if [ "${!ns_ref-0}" = 1 ]; then
-        n_val="${!nv_ref-}"
-        if [ -n "$n_val" ]; then n_eff=1; fi
-      fi
-      if [ "${!os_ref-0}" = 1 ]; then
-        o_val="${!ov_ref-}"
+      local os_ref="__DE_S_${old_k}" ov_ref="__DE_V_${old_k}"
+      local n_val='' o_val='' n_eff=0 o_eff=0 o_file_eff=0 eff_nonempty=0 eff_val='' eff_hash=''
+      DOTENV_LOOKUP_SET=0
+      DOTENV_LOOKUP_VAL=''
+      dotenv_lookup "$new_k"
+      n_val="$DOTENV_LOOKUP_VAL"
+      if [ -n "$n_val" ]; then n_eff=1; fi
+      if [ "${!os_ref-0}" = 1 ] && [ -n "${!ov_ref-}" ]; then o_file_eff=1; fi
+      if ((ignore_legacy == 0)); then
+        DOTENV_LOOKUP_SET=0
+        DOTENV_LOOKUP_VAL=''
+        dotenv_lookup "$old_k"
+        o_val="$DOTENV_LOOKUP_VAL"
         if [ -n "$o_val" ]; then o_eff=1; fi
       fi
       if ((n_eff)); then
@@ -790,13 +796,16 @@ eval_dotenv_state() {
       fi
       eff_hash="$(printf '%s' "$eff_val" | hash_stdin_sha256)" || exit 1
       [ -n "$eff_hash" ] || exit 1
-      printf 'P|%s|%s|%s|%s|%s\n' "$i" "$n_eff" "$o_eff" "$eff_nonempty" "$eff_hash"
+      printf 'P|%s|%s|%s|%s|%s\n' "$i" "$n_eff" "$o_file_eff" "$eff_nonempty" "$eff_hash"
     done
 
     while IFS= read -r key; do
       [ -n "$key" ] || continue
-      local kv_ref="__DE_V_${key}" val='' norm_val='' hash=''
-      val="${!kv_ref-}"
+      local val='' norm_val='' hash=''
+      DOTENV_LOOKUP_SET=0
+      DOTENV_LOOKUP_VAL=''
+      dotenv_lookup "$key"
+      val="$DOTENV_LOOKUP_VAL"
       norm_val="$val"
       if ((normalize_urls)); then
         norm_val="$(rewrite_db_url_rhs "$key" "$val")" || exit 1
@@ -810,8 +819,9 @@ eval_dotenv_state() {
 
 # Evaluates the effective Compose dotenv value of $target_key in $src_path (after quotes and ${...} expansion) (#3972).
 # When $ignore_os_target=1, unsets $target_key in the subshell so caller env does not shadow the file assignment.
+# When $use_os_env=0, evaluates purely from $src_path without caller OS environment variables.
 eval_dotenv_key() {
-  local src_path="$1" target_key="$2" ignore_os_target="${3:-0}"
+  local src_path="$1" target_key="$2" ignore_os_target="${3:-0}" use_os_env="${4:-1}"
   (
     set -euo pipefail
     local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$'
@@ -820,7 +830,11 @@ eval_dotenv_key() {
     if [ "$ignore_os_target" = 1 ]; then
       unset "$target_key" 2>/dev/null || true
     fi
-    __DE_EXPORTED_NAMES="$(env | sed -n -E 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p')" || exit 1
+    if [ "$use_os_env" = 1 ]; then
+      __DE_EXPORTED_NAMES="$(env | sed -n -E 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p')" || exit 1
+    else
+      __DE_EXPORTED_NAMES=''
+    fi
     while IFS= read -r line || [ -n "$line" ]; do
       lineno=$((lineno + 1))
       line="${line%$'\r'}"
@@ -846,8 +860,8 @@ rewrite_env_file() {
   local split_re='^([[:space:]]*(export[[:space:]]+)?)([A-Za-z_][A-Za-z0-9_]*)([[:space:]]*[=:])(.*)$'
   [ -f "$src" ] || die "$EXIT_USAGE" "env source not found: $src"
   local pre_state='' pre_clean='' post_state='' post_clean=''
-  pre_state="$(eval_dotenv_state "$src" 1 1)" || die "$EXIT_FAILED" "cannot safely evaluate $src for CROVE_* -> LUDY_* env rewrite"
-  pre_clean="$(eval_dotenv_state "$src" 1 0)" || die "$EXIT_FAILED" "cannot safely evaluate $src in a clean environment without shell-only overrides"
+  pre_state="$(eval_dotenv_state "$src" 1 1 0)" || die "$EXIT_FAILED" "cannot safely evaluate $src for CROVE_* -> LUDY_* env rewrite"
+  pre_clean="$(eval_dotenv_state "$src" 1 0 0)" || die "$EXIT_FAILED" "cannot safely evaluate $src in a clean environment without shell-only overrides"
 
   local ludy_last=() ludy_effective=() crove_last=() crove_effective=() pre_eff_nonempty=() pre_pair_hash=()
   local pre_clean_eff_nonempty=() pre_clean_pair_hash=()
@@ -867,8 +881,6 @@ rewrite_env_file() {
   while IFS='|' read -r s_kind s_f1 s_f2 s_f3 s_f4 s_f5; do
     case "$s_kind" in
       P)
-        ludy_effective[s_f1]="$s_f2"
-        crove_effective[s_f1]="$s_f3"
         pre_eff_nonempty[s_f1]="$s_f4"
         pre_pair_hash[s_f1]="$s_f5"
         ;;
@@ -881,6 +893,8 @@ rewrite_env_file() {
   while IFS='|' read -r s_kind s_f1 s_f2 s_f3 s_f4 s_f5; do
     case "$s_kind" in
       P)
+        ludy_effective[s_f1]="$s_f2"
+        crove_effective[s_f1]="$s_f3"
         pre_clean_eff_nonempty[s_f1]="$s_f4"
         pre_clean_pair_hash[s_f1]="$s_f5"
         ;;
@@ -962,12 +976,12 @@ rewrite_env_file() {
     printf 'COMPOSE_PROJECT_NAME=ludy%s\n' "$default_cr" >>"$dst"
   fi
 
-  post_state="$(eval_dotenv_state "$dst" 0 1)" || die "$EXIT_FAILED" "rewritten env file failed validation (check references to retired CROVE_* variables)"
+  post_state="$(eval_dotenv_state "$dst" 0 1 1)" || die "$EXIT_FAILED" "rewritten env file failed validation (check references to retired CROVE_* variables)"
   while IFS='|' read -r s_kind s_f1 s_f2 s_f3 s_f4 s_f5; do
     case "$s_kind" in
       P)
-        if ((s_f2 != pre_eff_nonempty[s_f1])) || ((s_f3 != 0)) || [ "$s_f5" != "${pre_pair_hash[$s_f1]}" ]; then
-          die "$EXIT_FAILED" "env rewrite would alter effective Compose value for ${CROVE_NEW_KEYS[$s_f1]} (check variable references to ${CROVE_OLD_KEYS[$s_f1]} or indirect defaults)"
+        if ((s_f4 != pre_eff_nonempty[s_f1])) || ((s_f3 != 0)) || [ "$s_f5" != "${pre_pair_hash[$s_f1]}" ]; then
+          die "$EXIT_FAILED" "env rewrite would alter effective Compose value for ${CROVE_NEW_KEYS[$s_f1]} under the active shell environment (unset conflicting exported ${CROVE_OLD_KEYS[$s_f1]}/${CROVE_NEW_KEYS[$s_f1]} overrides or persist them in $src before running cutover-stack)"
         fi
         ;;
       K)
@@ -981,11 +995,11 @@ rewrite_env_file() {
     esac
   done <<<"$post_state"
 
-  post_clean="$(eval_dotenv_state "$dst" 0 0)" || die "$EXIT_FAILED" "rewritten env file failed clean-environment validation (check references to retired CROVE_* variables or shell-only overrides)"
+  post_clean="$(eval_dotenv_state "$dst" 0 0 1)" || die "$EXIT_FAILED" "rewritten env file failed clean-environment validation (check references to retired CROVE_* variables or shell-only overrides)"
   while IFS='|' read -r s_kind s_f1 s_f2 s_f3 s_f4 s_f5; do
     case "$s_kind" in
       P)
-        if ((s_f2 != pre_clean_eff_nonempty[s_f1])) || ((s_f3 != 0)) || [ "$s_f5" != "${pre_clean_pair_hash[$s_f1]}" ]; then
+        if ((s_f4 != pre_clean_eff_nonempty[s_f1])) || ((s_f3 != 0)) || [ "$s_f5" != "${pre_clean_pair_hash[$s_f1]}" ]; then
           die "$EXIT_FAILED" "env rewrite would alter effective Compose value for ${CROVE_NEW_KEYS[$s_f1]} in a clean environment without shell-only overrides; persist the value in $src before running cutover-stack"
         fi
         ;;
@@ -1034,6 +1048,82 @@ upsert_env_kv_file() {
   if [ -n "$k1" ] && ((s1 == 0)); then printf '%s=%s%s\n' "$k1" "$v1" "$dcr" >>"$dst"; fi
   if [ -n "$k2" ] && ((s2 == 0)); then printf '%s=%s%s\n' "$k2" "$v2" "$dcr" >>"$dst"; fi
   if [ -n "$k3" ] && ((s3 == 0)); then printf '%s=%s%s\n' "$k3" "$v3" "$dcr" >>"$dst"; fi
+}
+
+# Ensures BACKUP_S3_PREFIX evaluates non-empty in clean env by preserving simple ${VAR:-} expressions (updating their
+# default to $fallback) rather than overwriting the dynamic expression with a static literal (#3972).
+preserve_s3_prefix_default() {
+  local src="$1" dst="$2" fallback="$3"
+  local split_re='^([[:space:]]*(export[[:space:]]+)?)([A-Za-z_][A-Za-z0-9_]*)([[:space:]]*[=:])(.*)$'
+  local lineno=0 last_line=0 line cr_seen=0 lf_seen=0 line_cr=''
+  while IFS= read -r line || [ -n "$line" ]; do
+    lineno=$((lineno + 1))
+    if [[ "$line" == *$'\r' ]]; then line="${line%$'\r'}"; cr_seen=$((cr_seen + 1)); else lf_seen=$((lf_seen + 1)); fi
+    if [[ "$line" =~ $split_re ]] && [ "${BASH_REMATCH[3]}" = BACKUP_S3_PREFIX ]; then
+      last_line="$lineno"
+    fi
+  done <"$src"
+
+  if ((last_line == 0)); then
+    upsert_env_kv_file "$src" "$dst" BACKUP_S3_PREFIX "$fallback"
+    return 0
+  fi
+
+  local dq_re='^"([^"]*)"([[:space:]]*#.*|[[:space:]]*)$'
+  local sq_re="^'([^']*)'([[:space:]]*#.*|[[:space:]]*)$"
+  local var_brace_re='^\$\{([A-Za-z_][A-Za-z0-9_]*)((:-|-)([[:space:]]*))?\}$'
+  # shellcheck disable=SC2016
+  local var_plain_re='^\$([A-Za-z_][A-Za-z0-9_]*)$'
+  local prefix='' sep='=' rhs='' trimmed='' quote='' body='' comment='' new_rhs='' verify=''
+
+  lineno=0
+  : >"$dst"
+  while IFS= read -r line || [ -n "$line" ]; do
+    lineno=$((lineno + 1))
+    if [[ "$line" == *$'\r' ]]; then line="${line%$'\r'}"; line_cr=$'\r'; else line_cr=''; fi
+    if ((lineno == last_line)) && [[ "$line" =~ $split_re ]] && [ "${BASH_REMATCH[3]}" = BACKUP_S3_PREFIX ]; then
+      prefix="${BASH_REMATCH[1]}"
+      sep="${BASH_REMATCH[4]}"
+      rhs="${BASH_REMATCH[5]}"
+      trimmed="${rhs#"${rhs%%[![:space:]]*}"}"
+      quote=''; body=''; comment=''
+      if [[ "$trimmed" =~ $dq_re ]]; then
+        quote='"'
+        body="${BASH_REMATCH[1]}"
+        comment="${BASH_REMATCH[2]}"
+      elif [[ "$trimmed" =~ $sq_re ]]; then
+        quote="'"
+        body="${BASH_REMATCH[1]}"
+        comment="${BASH_REMATCH[2]}"
+      else
+        if [[ "$trimmed" =~ ^([[:space:]]*#.*)$ ]]; then
+          body=''
+          comment=" ${trimmed#"${trimmed%%[![:space:]]*}"}"
+        else
+          local no_c="${trimmed%%[[:space:]]#*}"
+          if [ "$no_c" != "$trimmed" ]; then
+            comment="${trimmed#"$no_c"}"
+          fi
+          body="${no_c%"${no_c##*[![:space:]]}"}"
+        fi
+      fi
+      if [ -z "$body" ]; then
+        new_rhs="${fallback}${comment}"
+      elif [ "$quote" != "'" ] && [[ "$body" =~ $var_brace_re ]]; then
+        new_rhs="${quote}\${${BASH_REMATCH[1]}:-${fallback}}${quote}${comment}"
+      elif [ "$quote" != "'" ] && [[ "$body" =~ $var_plain_re ]]; then
+        new_rhs="${quote}\${${BASH_REMATCH[1]}:-${fallback}}${quote}${comment}"
+      else
+        die "$EXIT_FAILED" "BACKUP_S3_PREFIX in $ENV_FILE uses a dynamic expression that evaluates empty in a clean environment; set an explicit fallback (such as \${VAR:-$fallback}) before running cutover-stack"
+      fi
+      printf '%sBACKUP_S3_PREFIX%s%s%s\n' "$prefix" "$sep" "$new_rhs" "$line_cr" >>"$dst"
+      continue
+    fi
+    printf '%s%s\n' "$line" "$line_cr" >>"$dst"
+  done <"$src"
+
+  verify="$(eval_dotenv_key "$dst" BACKUP_S3_PREFIX 1 0 2>/dev/null || true)"
+  [ "$verify" = "$fallback" ] || die "$EXIT_FAILED" "cannot preserve safe non-empty default for BACKUP_S3_PREFIX in $dst"
 }
 
 detect_active_project() {
@@ -1630,8 +1720,201 @@ cutover_compose_storage_mounts() {
   fi
 }
 
-# Refuses cutover-stack BEFORE stopping containers if any bind mount, external volume, or non-${proj}_* volume changes
-# across COMPOSE_PROJECT_NAME=$proj -> ludy, or if any persistent volume on $proj was omitted from copy (#3972).
+cutover_parse_hostconfig_subpath_mounts() {
+  awk '
+  BEGIN {
+    s = ""
+    while ((getline line) > 0) s = s "\n" line
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+    if (s == "" || s == "null" || s == "[]") exit 0
+    n = length(s)
+    if (substr(s, 1, 1) != "[" || substr(s, n, 1) != "]") exit 1
+    in_str = 0; esc = 0; str_val = ""
+    depth = 0; arr_depth = 0; expect_key = 0; expect_val = 0
+    cur_key = ""; d2_key = ""
+    m_type = ""; m_src = ""; m_tgt = ""; m_sub = ""
+    in_elem = 0
+    for (i = 1; i <= n; i++) {
+      c = substr(s, i, 1)
+      if (in_str) {
+        if (esc) {
+          if (c == "n") str_val = str_val "\n"
+          else if (c == "r") str_val = str_val "\r"
+          else if (c == "t") str_val = str_val "\t"
+          else str_val = str_val c
+          esc = 0
+        } else if (c == "\\") {
+          esc = 1
+        } else if (c == "\"") {
+          in_str = 0
+          if (depth == 1 && arr_depth == 1 && expect_key) {
+            cur_key = str_val
+            expect_key = 0
+          } else if (depth == 1 && arr_depth == 1 && expect_val) {
+            if (cur_key == "Type") m_type = str_val
+            else if (cur_key == "Source") m_src = str_val
+            else if (cur_key == "Target") m_tgt = str_val
+            expect_val = 0
+          } else if (depth == 2 && arr_depth == 1 && cur_key == "VolumeOptions") {
+            if (expect_key) {
+              d2_key = str_val
+              expect_key = 0
+            } else if (expect_val) {
+              if (d2_key == "Subpath") m_sub = str_val
+              expect_val = 0
+            }
+          }
+        } else {
+          str_val = str_val c
+        }
+        continue
+      }
+      if (c == "\"") {
+        in_str = 1; esc = 0; str_val = ""
+        continue
+      }
+      if (c ~ /[[:space:]]/) continue
+      if (c == "{") {
+        depth++
+        if (depth == 1 && arr_depth == 1) {
+          in_elem = 1
+          m_type = ""; m_src = ""; m_tgt = ""; m_sub = ""
+          cur_key = ""; d2_key = ""; expect_key = 1; expect_val = 0
+        } else if (depth == 2 && arr_depth == 1) {
+          d2_key = ""; expect_key = (cur_key == "VolumeOptions") ? 1 : 0; expect_val = 0
+        } else {
+          expect_key = 0; expect_val = 0
+        }
+      } else if (c == "}") {
+        if (depth <= 0) exit 1
+        if (depth == 1 && in_elem) {
+          gsub(/^\/+|\/+$/, "", m_sub)
+          if (m_sub != "" && m_tgt != "" && m_type != "" && m_src != "") {
+            printf "%s|%s|%s|%s\n", m_tgt, m_type, m_src, m_sub
+          }
+          in_elem = 0; cur_key = ""; expect_key = 0; expect_val = 0
+        } else if (depth == 2) {
+          d2_key = ""; expect_val = 0
+        }
+        depth--
+      } else if (c == "[") {
+        arr_depth++
+        expect_val = 0
+      } else if (c == "]") {
+        if (arr_depth <= 0) exit 1
+        arr_depth--
+      } else if (c == ":") {
+        if ((depth == 1 || (depth == 2 && cur_key == "VolumeOptions")) && arr_depth == 1) expect_val = 1
+      } else if (c == ",") {
+        if (depth == 1 && arr_depth == 1) { expect_key = 1; expect_val = 0; cur_key = "" }
+        else if (depth == 2 && arr_depth == 1 && cur_key == "VolumeOptions") { expect_key = 1; expect_val = 0; d2_key = "" }
+      } else {
+        expect_val = 0
+      }
+    }
+    if (in_str || depth != 0 || arr_depth != 0) exit 1
+  }'
+}
+
+cutover_compose_service_env_value() {
+  local config_out="$1" target_svc="$2" target_var="$3"
+  local line section='' in_svc=0 in_env=0 k='' raw=''
+  local top_re='^([a-zA-Z0-9_-]+):([[:space:]]*.*)?$'
+  local svc_re='^[[:space:]]{2}([a-zA-Z0-9._-]+):([[:space:]]*(#.*)?)?$'
+  local env_re='^[[:space:]]{4}environment:[[:space:]]*(\{\}[[:space:]]*|\[\][[:space:]]*)?$'
+  local prop_re='^[[:space:]]{4}[a-zA-Z0-9._-]+:'
+  local map_re='^[[:space:]]{6}([A-Za-z_][A-Za-z0-9_]*):[[:space:]]*(.*)$'
+  local list_re='^[[:space:]]*-[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)=(.*)$'
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ $top_re ]]; then
+      section="${BASH_REMATCH[1]}"
+      in_svc=0; in_env=0
+      continue
+    fi
+    if [ "$section" = services ]; then
+      if [[ "$line" =~ $svc_re ]]; then
+        if [ "${BASH_REMATCH[1]}" = "$target_svc" ]; then in_svc=1; else in_svc=0; fi
+        in_env=0
+        continue
+      fi
+      if ((in_svc)); then
+        if [[ "$line" =~ $env_re ]]; then
+          if [ -n "${BASH_REMATCH[1]}" ]; then in_env=0; else in_env=1; fi
+          continue
+        elif [[ "$line" =~ $prop_re ]]; then
+          in_env=0
+          continue
+        fi
+        if ((in_env)); then
+          if [[ "$line" =~ $map_re ]]; then
+            k="${BASH_REMATCH[1]}"
+            raw="${BASH_REMATCH[2]}"
+          elif [[ "$line" =~ $list_re ]]; then
+            k="${BASH_REMATCH[1]}"
+            raw="${BASH_REMATCH[2]}"
+          else
+            continue
+          fi
+          if [ "$k" = "$target_var" ]; then
+            raw="$(cutover_unquote_scalar "$raw")"
+            if [ "$raw" = null ]; then raw=''; fi
+            printf '%s' "$raw"
+            return 0
+          fi
+        fi
+      fi
+    fi
+  done <<<"$config_out"
+  return 1
+}
+
+cutover_compose_service_image() {
+  local config_out="$1" target_svc="$2" line section='' in_svc=0 raw=''
+  local top_re='^([a-zA-Z0-9_-]+):([[:space:]]*.*)?$'
+  local svc_re='^[[:space:]]{2}([a-zA-Z0-9._-]+):([[:space:]]*(#.*)?)?$'
+  local img_re='^[[:space:]]{4}image:[[:space:]]*(.+)$'
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ $top_re ]]; then
+      section="${BASH_REMATCH[1]}"
+      in_svc=0
+      continue
+    fi
+    if [ "$section" = services ]; then
+      if [[ "$line" =~ $svc_re ]]; then
+        if [ "${BASH_REMATCH[1]}" = "$target_svc" ]; then in_svc=1; else in_svc=0; fi
+        continue
+      fi
+      if ((in_svc)) && [[ "$line" =~ $img_re ]]; then
+        raw="$(cutover_unquote_scalar "${BASH_REMATCH[1]}")"
+        if [ -n "$raw" ] && [ "$raw" != null ]; then
+          printf '%s' "$raw"
+          return 0
+        fi
+      fi
+    fi
+  done <<<"$config_out"
+  return 1
+}
+
+# Inspects local image metadata for default ENV PGDATA: 0 = found, 1 = no PGDATA, 2 = inspect failed.
+cutover_image_env_pgdata() {
+  local img="$1" env_out='' line='' found=0 raw=''
+  [ -n "$img" ] || return 2
+  env_out="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$img" 2>/dev/null)" || return 2
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    case "$line" in
+      PGDATA=*) found=1; raw="${line#PGDATA=}" ;;
+    esac
+  done <<<"$env_out"
+  ((found)) || return 1
+  printf '%s' "$raw"
+}
+
+# Refuses cutover-stack BEFORE stopping containers if any bind mount, external volume, non-${proj}_* volume,
+# live HostConfig.Mounts subpath, or effective db PGDATA path changes across COMPOSE_PROJECT_NAME=$proj -> ludy (#3972).
 check_cutover_storage_mounts() {
   local proj="$1" env_tmp="$2"
   shift 2
@@ -1655,16 +1938,68 @@ check_cutover_storage_mounts() {
   dst_cfg="$(env -u COMPOSE_PROJECT_NAME -u COMPOSE_FILE docker "${dst_args[@]}" config)" \
     || die "$EXIT_FAILED" "cannot inspect merged compose configuration for target project ludy before cutover"
 
+  local live_pgdata='' live_pg_sub='' src_pg_raw='' src_pg_set=0 src_pg_sub='' dst_pg_raw='' dst_pg_set=0 dst_pg_sub=''
+  local src_db_img='' dst_db_img='' eff_src_pg_sub='' eff_dst_pg_sub='' img_pg='' img_rc=0
+  live_pgdata="$(dc_proj "$proj" exec -T db printenv PGDATA 2>/dev/null | tr -d '\r\n' || true)"
+  live_pg_sub="$(normalize_pgdata_subpath "$live_pgdata")" \
+    || die "$EXIT_FAILED" "running $proj db container sets unsupported PGDATA path '$live_pgdata'"
+  if src_pg_raw="$(cutover_compose_service_env_value "$src_cfg" db PGDATA)"; then
+    src_pg_set=1
+    src_pg_sub="$(normalize_pgdata_subpath "$src_pg_raw")" \
+      || die "$EXIT_FAILED" "source compose configuration ($proj) sets unsupported db PGDATA path '$src_pg_raw'"
+  fi
+  if dst_pg_raw="$(cutover_compose_service_env_value "$dst_cfg" db PGDATA)"; then
+    dst_pg_set=1
+    dst_pg_sub="$(normalize_pgdata_subpath "$dst_pg_raw")" \
+      || die "$EXIT_FAILED" "target compose configuration (ludy) sets unsupported db PGDATA path '$dst_pg_raw'"
+  fi
+  src_db_img="$(cutover_compose_service_image "$src_cfg" db 2>/dev/null || true)"
+  dst_db_img="$(cutover_compose_service_image "$dst_cfg" db 2>/dev/null || true)"
+  if ((src_pg_set)); then
+    eff_src_pg_sub="$src_pg_sub"
+  else
+    eff_src_pg_sub="$live_pg_sub"
+  fi
+  if ((dst_pg_set)); then
+    eff_dst_pg_sub="$dst_pg_sub"
+  elif [ -z "$dst_db_img" ] || { [ "$dst_db_img" = "$src_db_img" ] && ((src_pg_set == 0)); }; then
+    eff_dst_pg_sub="$live_pg_sub"
+  else
+    img_rc=0
+    img_pg="$(cutover_image_env_pgdata "$dst_db_img" 2>/dev/null)" || img_rc=$?
+    if ((img_rc == 2)); then
+      die "$EXIT_FAILED" "cannot inspect target db image ($dst_db_img) PGDATA metadata before cutover"
+    elif ((img_rc == 1)); then
+      img_pg=''
+    fi
+    eff_dst_pg_sub="$(normalize_pgdata_subpath "$img_pg")" \
+      || die "$EXIT_FAILED" "target db image ($dst_db_img) sets unsupported PGDATA path '$img_pg'"
+  fi
+  if [ "$eff_dst_pg_sub" != "$live_pg_sub" ] || [ "$eff_dst_pg_sub" != "$eff_src_pg_sub" ]; then
+    die "$EXIT_FAILED" "cutover-stack cannot switch db PGDATA from /var/lib/postgresql/data${live_pg_sub:+/$live_pg_sub} (source config: /var/lib/postgresql/data${eff_src_pg_sub:+/$eff_src_pg_sub}) to /var/lib/postgresql/data${eff_dst_pg_sub:+/$eff_dst_pg_sub}; keep a project-independent PGDATA path before running cutover-stack"
+  fi
+
   src_mounts="$(cutover_compose_storage_mounts "$src_cfg" "$proj" "$ENV_FILE")"
   dst_mounts="$(cutover_compose_storage_mounts "$dst_cfg" ludy "$env_tmp")"
 
-  local svc cids cid m_lines m_dst m_type m_name m_src live_spec entry
+  local svc cids cid m_lines hc_json='' hc_subpaths='' h_tgt='' h_src='' h_sub='' m_dst m_type m_name m_src live_spec entry
   for svc in db crove ludy api worker; do
     cids="$(dc_proj "$proj" ps -q "$svc" 2>/dev/null || true)"
     [ -n "$cids" ] || continue
     while IFS= read -r cid; do
       cid="${cid%$'\r'}"
       [ -n "$cid" ] || continue
+      hc_json="$(docker inspect --format '{{json .HostConfig.Mounts}}' "$cid" 2>/dev/null)" \
+        || die "$EXIT_FAILED" "cannot inspect HostConfig.Mounts of running $svc container ($cid) before cutover"
+      hc_subpaths="$(cutover_parse_hostconfig_subpath_mounts <<<"$hc_json")" \
+        || die "$EXIT_FAILED" "cannot parse HostConfig.Mounts of running $svc container ($cid) before cutover"
+      if [ -n "$hc_subpaths" ]; then
+        while IFS='|' read -r h_tgt _ h_src h_sub; do
+          [ -n "$h_tgt" ] || continue
+          while [[ "$h_tgt" == */ && "$h_tgt" != / ]]; do h_tgt="${h_tgt%/}"; done
+          die "$EXIT_FAILED" "running $svc container ($cid) mounts unsupported volume subpath ${h_src}:${h_sub} at $h_tgt; consolidate onto a dedicated volume or bind mount before running cutover-stack"
+        done <<<"$hc_subpaths"
+      fi
       m_lines="$(docker inspect --format '{{range .Mounts}}{{.Destination}}|{{.Type}}|{{.Name}}|{{.Source}}{{"\n"}}{{end}}' "$cid")" \
         || die "$EXIT_FAILED" "cannot inspect mounts of running $svc container ($cid) before cutover"
       while IFS='|' read -r m_dst m_type m_name m_src; do
@@ -1869,6 +2204,10 @@ do_cutover_stack() {
 
   dc_proj "$proj" ps --status running --services | grep -x db >/dev/null || die "$EXIT_FAILED" "db is not running under project $proj"
   check_expected_schemas "$proj" || exit "$EXIT_FAILED"
+  local pre_cluster_id='' post_cluster_id='' cid_re='^[0-9]+$'
+  pre_cluster_id="$(dc_proj "$proj" exec -T db psql -U postgres -d postgres -Atc \
+    'SELECT system_identifier FROM pg_control_system();' | tr -d '\r\n')"
+  [[ "$pre_cluster_id" =~ $cid_re ]] || die "$EXIT_FAILED" "cannot read PostgreSQL cluster system_identifier from running $proj db container"
 
   local live_wal_img='' live_wal_stanza='' live_s3_prefix=''
   if [ -n "$wal_file" ]; then
@@ -1912,20 +2251,32 @@ do_cutover_stack() {
   rewrite_env_file "$ENV_FILE" "$env_tmp"
   # Keep live pre-switch WAL/S3 settings pinned until `switch-wal` (or operator S3 migration) completes (#3972).
   if [ -n "$wal_file" ]; then
-    local wal_tmp
+    local cur_s3_clean='' cur_s3_live='' wal_tmp='' s3_tmp=''
+    cur_s3_clean="$(eval_dotenv_key "$env_tmp" BACKUP_S3_PREFIX 1 0)" || die "$EXIT_FAILED" "cannot evaluate BACKUP_S3_PREFIX in $env_tmp"
+    cur_s3_live="$(eval_dotenv_key "$env_tmp" BACKUP_S3_PREFIX 1 1)" || die "$EXIT_FAILED" "cannot evaluate BACKUP_S3_PREFIX in $env_tmp"
+    if { [ -n "$cur_s3_clean" ] && [ "$cur_s3_clean" != "$live_s3_prefix" ]; } \
+      || { [ -n "$cur_s3_live" ] && [ "$cur_s3_live" != "$live_s3_prefix" ]; }; then
+      die "$EXIT_FAILED" "refusing cutover-stack: $ENV_FILE configures BACKUP_S3_PREFIX='${cur_s3_clean:-$cur_s3_live}' for nightly backups while running db container archives WAL under '/$live_s3_prefix/wal'; align BACKUP_S3_PREFIX before running cutover-stack"
+    fi
     wal_tmp="$(umask 077 && mktemp "$(state_dir)/.env.cutover-wal-XXXXXX")"
     TEMP_FILES+=("$wal_tmp")
-    upsert_env_kv_file "$env_tmp" "$wal_tmp" WAL_DB_IMAGE "$live_wal_img" WAL_STANZA "$live_wal_stanza" BACKUP_S3_PREFIX "$live_s3_prefix"
+    upsert_env_kv_file "$env_tmp" "$wal_tmp" WAL_DB_IMAGE "$live_wal_img" WAL_STANZA "$live_wal_stanza"
     mv -f "$wal_tmp" "$env_tmp"
-  else
-    # Always preserve the pre-Stage-7 default BACKUP_S3_PREFIX=crove (including empty or empty-expanding expressions) (#3972).
-    local cur_s3_prefix=''
-    cur_s3_prefix="$(eval_dotenv_key "$env_tmp" BACKUP_S3_PREFIX 1)" || die "$EXIT_FAILED" "cannot evaluate BACKUP_S3_PREFIX in $env_tmp"
-    if [ -z "$cur_s3_prefix" ]; then
-      local s3_tmp
+    if [ -z "$cur_s3_clean" ]; then
       s3_tmp="$(umask 077 && mktemp "$(state_dir)/.env.cutover-s3-XXXXXX")"
       TEMP_FILES+=("$s3_tmp")
-      upsert_env_kv_file "$env_tmp" "$s3_tmp" BACKUP_S3_PREFIX crove
+      preserve_s3_prefix_default "$env_tmp" "$s3_tmp" "$live_s3_prefix"
+      mv -f "$s3_tmp" "$env_tmp"
+    fi
+  else
+    # Preserve dynamic BACKUP_S3_PREFIX expressions (updating empty defaults to `crove`), or pin literal `crove` (#3972).
+    local cur_s3_prefix=''
+    cur_s3_prefix="$(eval_dotenv_key "$env_tmp" BACKUP_S3_PREFIX 1 0)" || die "$EXIT_FAILED" "cannot evaluate BACKUP_S3_PREFIX in $env_tmp"
+    if [ -z "$cur_s3_prefix" ]; then
+      local s3_tmp=''
+      s3_tmp="$(umask 077 && mktemp "$(state_dir)/.env.cutover-s3-XXXXXX")"
+      TEMP_FILES+=("$s3_tmp")
+      preserve_s3_prefix_default "$env_tmp" "$s3_tmp" crove
       mv -f "$s3_tmp" "$env_tmp"
     fi
   fi
@@ -2043,6 +2394,12 @@ do_cutover_stack() {
     bash "$STAGE_DIR/deploy.sh" smoke "$READY_URL" ${RELEASE_BUILD:+"$RELEASE_BUILD"}
 
   check_expected_schemas ludy
+  post_cluster_id="$(dc_proj ludy exec -T db psql -U postgres -d postgres -Atc \
+    'SELECT system_identifier FROM pg_control_system();' | tr -d '\r\n')"
+  if [ -z "$post_cluster_id" ] || [ "$post_cluster_id" != "$pre_cluster_id" ]; then
+    err "refusing to open traffic: ludy db cluster system_identifier ('${post_cluster_id:-unknown}') does not match pre-cutover $proj cluster ('$pre_cluster_id')"
+    return 1
+  fi
   local legacy_sessions
   legacy_sessions="$(dc_proj ludy exec -T db psql -U postgres -d postgres -Atc \
     "SELECT count(*) FROM pg_stat_activity WHERE usename LIKE 'crove_%';")"

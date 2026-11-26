@@ -731,18 +731,43 @@ guard_run() {
 DC_PREFIX=()
 COMPOSE_PROJECT_OVERRIDE=''
 dc() {
-  local args=(compose)
+  local args=(compose) wal_file='' wal_rc=0 resolved_pilot='' pilot_rc=0 item='' resolved='' base=''
+  deploy_parse_compose_file_items || return 1
   if [ -n "$COMPOSE_PROJECT_OVERRIDE" ]; then args+=(-p "$COMPOSE_PROJECT_OVERRIDE"); fi
   args+=(--project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml")
   # The pilot's split API and worker (tools/deploy/compose.pilot.yml, #2118) right after the release's file: they extend its
   # `ludy` service, whose image the release's pins (next) must then replace. The host chooses the layout by listing the file
   # in COMPOSE_FILE (#2133); the file itself comes with each release (activate), so it stays in step with docker-compose.yml.
-  if pilot_layout && [ -f "$DEPLOY_DIR/compose.pilot.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.pilot.yml"); fi
+  if pilot_layout; then
+    if [ -f "$DEPLOY_DIR/compose.pilot.yml" ]; then
+      args+=(-f "$DEPLOY_DIR/compose.pilot.yml")
+    else
+      resolved_pilot="$(resolve_compose_overlay compose.pilot.yml nofallback 2>/dev/null)" || pilot_rc=$?
+      if ((pilot_rc == 0)) && [ -n "$resolved_pilot" ]; then
+        args+=(-f "$resolved_pilot")
+      elif ((pilot_rc == 2)); then
+        return 1
+      fi
+    fi
+  fi
   args+=(-f "$DEPLOY_DIR/docker-compose.override.yml")
   # The database image with pgBackRest and the bucket's settings (tools/backup/compose.wal.yml, #2120). The image
   # (ludy-db:local, built from tools/wal) is on the host, never pulled: a deploy starts `db` with --no-build.
-  local wal_file=''
-  if wal_file="$(resolve_wal_compose_file 2>/dev/null)" && [ -n "$wal_file" ]; then args+=(-f "$wal_file"); fi
+  wal_file="$(resolve_wal_compose_file)" || wal_rc=$?
+  if ((wal_rc == 2)); then
+    return 1
+  elif ((wal_rc == 0)) && [ -n "$wal_file" ]; then
+    args+=(-f "$wal_file")
+  fi
+  for item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
+    base="${item##*/}"
+    case "$base" in
+      docker-compose.yml | compose.pilot.yml | docker-compose.override.yml | compose.wal.yml | compose.host.yml) continue ;;
+    esac
+    if [[ "$item" == /* ]]; then resolved="$item"; else resolved="$DEPLOY_DIR/$item"; fi
+    [ -f "$resolved" ] || return 1
+    args+=(-f "$resolved")
+  done
   if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.host.yml"); fi
   # DC_PREFIX: a command to run docker under (the count of plain idempotency rows runs under `timeout`).
   ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker "${args[@]}" "$@"
@@ -753,8 +778,9 @@ dc() {
 # or recovery from a staged release directory when $DEPLOY_DIR/docker-compose.yml was removed).
 # Optional $1 overrides the Compose project name (-p) when inspecting an earlier stack after .env changed.
 dc_prev_config() {
-  local proj_override="${1:-}" base_compose="${2:-$DEPLOY_DIR/docker-compose.yml}" rel_dir=''
+  local proj_override="${1:-}" base_compose="${2:-$DEPLOY_DIR/docker-compose.yml}" rel_dir='' item='' resolved='' base=''
   [ -f "$base_compose" ] || return 1
+  deploy_parse_compose_file_items || return 1
   if [ "$base_compose" != "$DEPLOY_DIR/docker-compose.yml" ]; then
     rel_dir="$(dirname "$base_compose")"
   fi
@@ -768,6 +794,8 @@ dc_prev_config() {
       args+=(-f "$resolved_pilot")
     elif [ -n "$rel_dir" ] && [ -f "$rel_dir/compose.pilot.yml" ]; then
       args+=(-f "$rel_dir/compose.pilot.yml")
+    elif ((pilot_rc == 2)); then
+      return 1
     fi
   fi
   if [ -f "$DEPLOY_DIR/docker-compose.override.yml" ]; then
@@ -781,6 +809,15 @@ dc_prev_config() {
   elif ((wal_rc == 2)); then
     return 1
   fi
+  for item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
+    base="${item##*/}"
+    case "$base" in
+      docker-compose.yml | compose.pilot.yml | docker-compose.override.yml | compose.wal.yml | compose.host.yml) continue ;;
+    esac
+    if [[ "$item" == /* ]]; then resolved="$item"; else resolved="$DEPLOY_DIR/$item"; fi
+    [ -f "$resolved" ] || return 1
+    args+=(-f "$resolved")
+  done
   if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.host.yml"); fi
   ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker "${args[@]}" config 2>/dev/null
 }
@@ -866,37 +903,255 @@ pilot_layout() {
   env_compose_file_lists compose.pilot.yml
 }
 
-# Last COMPOSE_FILE assignment in $ENV_FILE (trimmed, matching dotenv/compose semantics).
-env_compose_file_value() {
-  local val
-  val="$(sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?COMPOSE_FILE[[:space:]]*=[[:space:]]*//p' "$ENV_FILE" \
-    | tail -n 1 | sed -E 's/[[:space:]]+#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//')"
-  case "$val" in
-    \"*\") val="${val#\"}"; val="${val%\"}" ;;
-    \'*\') val="${val#\'}"; val="${val%\'}" ;;
-  esac
-  printf '%s' "$val"
+# Pure-bash dotenv interpolation helpers matching Compose dotenv semantics for COMPOSE_FILE & COMPOSE_PATH_SEPARATOR (#3972).
+DEPLOY_DOTENV_REPLY=''
+DEPLOY_DOTENV_LOOKUP_SET=0
+DEPLOY_DOTENV_LOOKUP_VAL=''
+__DEPLOY_DE_EXPORTED_NAMES=''
+
+deploy_dotenv_lookup() {
+  local name="$1"
+  local set_ref="__DEPLOY_DE_S_${name}" val_ref="__DEPLOY_DE_V_${name}"
+  if [ "$name" != COMPOSE_PROJECT_NAME ]; then
+    case $'\n'"${__DEPLOY_DE_EXPORTED_NAMES:-}"$'\n' in
+      *$'\n'"$name"$'\n'*)
+        DEPLOY_DOTENV_LOOKUP_SET=1
+        DEPLOY_DOTENV_LOOKUP_VAL="${!name-}"
+        return 0
+        ;;
+    esac
+  fi
+  if [ "${!set_ref-0}" = 1 ]; then
+    DEPLOY_DOTENV_LOOKUP_SET=1
+    DEPLOY_DOTENV_LOOKUP_VAL="${!val_ref-}"
+    return 0
+  fi
+  DEPLOY_DOTENV_LOOKUP_SET=0
+  DEPLOY_DOTENV_LOOKUP_VAL=''
 }
 
-# Whether the env file's COMPOSE_FILE names a compose file (the name is matched literally). The last assignment wins, as in a dotenv
-# file: `export` and spaces around `=` are allowed, a trailing ` # comment` is not part of the value, and a commented-out line is not
-# an assignment. The one reading of that line, for the pilot layout and for the WAL overlay (#2162).
+deploy_dotenv_interpolate() {
+  local s="$1" file="$2" lineno="$3" cur_key="$4"
+  local out='' i=0 len="${#1}" rest='' name='' op='' word='' val='' depth=0 j=0 body='' rlen=0 is_set=0
+  local name_re='^([A-Za-z_][A-Za-z0-9_]*)'
+  local ref_re='^([A-Za-z_][A-Za-z0-9_]*)((:?[-+?])(.*))?$'
+  while [ "$i" -lt "$len" ]; do
+    if [ "${s:i:1}" != '$' ]; then
+      out+="${s:i:1}"
+      i=$((i + 1))
+      continue
+    fi
+    rest="${s:i+1}"
+    if [[ "$rest" == '$'* ]]; then
+      out+='$'
+      i=$((i + 2))
+    elif [[ "$rest" =~ $name_re ]]; then
+      name="${BASH_REMATCH[1]}"
+      deploy_dotenv_lookup "$name"
+      out+="$DEPLOY_DOTENV_LOOKUP_VAL"
+      i=$((i + 1 + ${#name}))
+    elif [[ "$rest" != '{'* ]]; then
+      out+='$'
+      i=$((i + 1))
+    else
+      depth=0
+      rlen="${#rest}"
+      for ((j = 0; j < rlen; j++)); do
+        case "${rest:j:1}" in
+          '{') depth=$((depth + 1)) ;;
+          '}') depth=$((depth - 1)); [ "$depth" -eq 0 ] && break ;;
+        esac
+      done
+      [ "$depth" -eq 0 ] || return 1
+      body="${rest:1:j-1}"
+      [[ "$body" =~ $ref_re ]] || return 1
+      name="${BASH_REMATCH[1]}"
+      op="${BASH_REMATCH[3]-}"
+      word="${BASH_REMATCH[4]-}"
+      deploy_dotenv_lookup "$name"
+      val="$DEPLOY_DOTENV_LOOKUP_VAL"
+      is_set="$DEPLOY_DOTENV_LOOKUP_SET"
+      case "$op" in
+        ':-') [ -n "$val" ] || { deploy_dotenv_interpolate "$word" "$file" "$lineno" "$cur_key" || return 1; val="$DEPLOY_DOTENV_REPLY"; } ;;
+        '-') [ "$is_set" = 1 ] || { deploy_dotenv_interpolate "$word" "$file" "$lineno" "$cur_key" || return 1; val="$DEPLOY_DOTENV_REPLY"; } ;;
+        ':+') if [ -n "$val" ]; then deploy_dotenv_interpolate "$word" "$file" "$lineno" "$cur_key" || return 1; val="$DEPLOY_DOTENV_REPLY"; fi ;;
+        '+') if [ "$is_set" = 1 ]; then deploy_dotenv_interpolate "$word" "$file" "$lineno" "$cur_key" || return 1; val="$DEPLOY_DOTENV_REPLY"; else val=''; fi ;;
+        ':?') [ -n "$val" ] || return 1 ;;
+        '?') [ "$is_set" = 1 ] || return 1 ;;
+      esac
+      out+="$val"
+      i=$((i + 2 + j))
+    fi
+  done
+  DEPLOY_DOTENV_REPLY="$out"
+}
+
+deploy_dotenv_parse_rhs() {
+  local raw="$1" file="$2" lineno="$3" cur_key="$4"
+  local value='' trail='' out='' i=0 c='' nc='' len=0 bs=''
+  local trail_re='^([[:space:]]*#.*|[[:space:]]*)$'
+  printf -v bs '%b' '\134'
+  value="${raw#"${raw%%[![:space:]]*}"}"
+  case "$value" in
+    \'*)
+      len="${#value}"
+      for ((i = 1; i < len; i++)); do
+        c="${value:i:1}"
+        if [ "$c" = "$bs" ]; then
+          if [ $((i + 1)) -lt "$len" ]; then
+            i=$((i + 1))
+            nc="${value:i:1}"
+            if [ "$nc" = "'" ]; then out+="'"; else out+="${bs}${nc}"; fi
+          else
+            out+="$bs"
+          fi
+        elif [ "$c" = "'" ]; then
+          trail="${value:i+1}"
+          break
+        else
+          out+="$c"
+        fi
+      done
+      [ "$i" -lt "$len" ] || return 1
+      ;;
+    \"*)
+      len="${#value}"
+      for ((i = 1; i < len; i++)); do
+        c="${value:i:1}"
+        if [ "$c" = "$bs" ]; then
+          i=$((i + 1))
+          [ "$i" -lt "$len" ] || break
+          nc="${value:i:1}"
+          case "$nc" in
+            n) out+=$'\n' ;;
+            t) out+=$'\t' ;;
+            r) out+=$'\r' ;;
+            '"') out+='"' ;;
+            '$') out+='$$' ;;
+            *)
+              if [ "$nc" = "$bs" ]; then out+="$bs"; else out+="${bs}${nc}"; fi
+              ;;
+          esac
+        elif [ "$c" = '"' ]; then
+          trail="${value:i+1}"
+          break
+        else
+          out+="$c"
+        fi
+      done
+      [ "$i" -lt "$len" ] || return 1
+      deploy_dotenv_interpolate "$out" "$file" "$lineno" "$cur_key" || return 1
+      out="$DEPLOY_DOTENV_REPLY"
+      ;;
+    *)
+      value="${value%%[[:space:]]#*}"
+      value="${value%"${value##*[![:space:]]}"}"
+      deploy_dotenv_interpolate "$value" "$file" "$lineno" "$cur_key" || return 1
+      out="$DEPLOY_DOTENV_REPLY"
+      trail=''
+      ;;
+  esac
+  [[ "$trail" =~ $trail_re ]] || return 1
+  DEPLOY_DOTENV_REPLY="$out"
+}
+
+deploy_dotenv_eval_key() {
+  local src_path="$1" target_key="$2" ignore_os_target="${3:-0}"
+  (
+    set -euo pipefail
+    local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$'
+    local blank_re='^[[:space:]]*(#.*)?$'
+    local lineno=0 line='' key='' rhs=''
+    [ -r "$1" ] || exit 1
+    if [ "$ignore_os_target" = 1 ]; then
+      unset "$target_key" 2>/dev/null || true
+    fi
+    __DEPLOY_DE_EXPORTED_NAMES="$(env | sed -n -E 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p')" || exit 1
+    while IFS= read -r line || [ -n "$line" ]; do
+      lineno=$((lineno + 1))
+      line="${line%$'\r'}"
+      [[ "$line" =~ $blank_re ]] && continue
+      [[ "$line" =~ $assign_re ]] || continue
+      key="${BASH_REMATCH[2]}"
+      rhs="${BASH_REMATCH[3]}"
+      deploy_dotenv_parse_rhs "$rhs" "$src_path" "$lineno" "$key" || exit 1
+      printf -v "__DEPLOY_DE_S_${key}" '%s' 1 || exit 1
+      printf -v "__DEPLOY_DE_V_${key}" '%s' "$DEPLOY_DOTENV_REPLY" || exit 1
+    done <"$1"
+    DEPLOY_DOTENV_LOOKUP_SET=0
+    DEPLOY_DOTENV_LOOKUP_VAL=''
+    deploy_dotenv_lookup "$target_key"
+    printf '%s' "$DEPLOY_DOTENV_LOOKUP_VAL"
+  )
+}
+
+DEPLOY_COMPOSE_FILE_ITEMS=()
+DEPLOY_COMPOSE_FILE_RAW=''
+deploy_parse_compose_file_items() {
+  local cf='' sep='' rest_cf='' item='' done_split=0
+  DEPLOY_COMPOSE_FILE_ITEMS=()
+  DEPLOY_COMPOSE_FILE_RAW=''
+  [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] || return 0
+  if ! cf="$(deploy_dotenv_eval_key "$ENV_FILE" COMPOSE_FILE 1 2>/dev/null)"; then
+    return 2
+  fi
+  DEPLOY_COMPOSE_FILE_RAW="$cf"
+  if ! sep="$(deploy_dotenv_eval_key "$ENV_FILE" COMPOSE_PATH_SEPARATOR 1 2>/dev/null)"; then
+    return 2
+  fi
+  [ -n "$sep" ] || sep="${COMPOSE_PATH_SEPARATOR:-:}"
+  [ -n "$cf" ] || return 0
+  rest_cf="$cf"
+  while ((done_split == 0)); do
+    case "$rest_cf" in
+      *"$sep"*)
+        item="${rest_cf%%"$sep"*}"
+        rest_cf="${rest_cf#*"$sep"}"
+        ;;
+      *)
+        item="$rest_cf"
+        done_split=1
+        ;;
+    esac
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    [ -n "$item" ] || continue
+    DEPLOY_COMPOSE_FILE_ITEMS+=("$item")
+  done
+  return 0
+}
+
+# Resolved COMPOSE_FILE assignment in $ENV_FILE (trimmed and interpolated matching dotenv/compose semantics).
+env_compose_file_value() {
+  deploy_parse_compose_file_items || return 1
+  printf '%s' "$DEPLOY_COMPOSE_FILE_RAW"
+}
+
+# Whether the env file's COMPOSE_FILE lists a compose file basename (matching exact entry or */basename after
+# variable interpolation and COMPOSE_PATH_SEPARATOR splitting) (#2162, #3972).
 env_compose_file_lists() {
-  env_compose_file_value | grep -q -F -- "$1"
+  local base="$1" item=''
+  deploy_parse_compose_file_items || return 1
+  [ -n "$DEPLOY_COMPOSE_FILE_RAW" ] || return 1
+  for item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
+    if [ "$item" = "$base" ] || [[ "$item" == */"$base" ]]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 # Resolves an overlay compose file (such as compose.pilot.yml or compose.wal.yml) from COMPOSE_FILE in $ENV_FILE,
 # or falls back to $DEPLOY_DIR/<basename> when fallback=fallback and COMPOSE_FILE does not name it (#3972).
-# Returns 1 when absent/inactive, or 2 when COMPOSE_FILE names it and the referenced file does not exist on disk.
+# Returns 1 when absent/inactive, or 2 when COMPOSE_FILE cannot be parsed or names a missing file.
 resolve_compose_overlay() {
-  local base="$1" fallback="${2:-fallback}" cf item resolved='' listed=0
-  local -a cf_items=()
-  cf="$(env_compose_file_value)"
-  if [ -n "$cf" ]; then
-    IFS=':' read -ra cf_items <<<"$cf"
-    for item in "${cf_items[@]+"${cf_items[@]}"}"; do
-      item="${item#"${item%%[![:space:]]*}"}"
-      item="${item%"${item##*[![:space:]]}"}"
+  local base="$1" fallback="${2:-fallback}" item='' resolved='' listed=0 rc=0
+  deploy_parse_compose_file_items || rc=$?
+  if ((rc == 2)); then
+    return 2
+  fi
+  if [ -n "$DEPLOY_COMPOSE_FILE_RAW" ]; then
+    for item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
       if [ "$item" = "$base" ] || [[ "$item" == */"$base" ]]; then
         listed=1
         if [[ "$item" == /* ]]; then
@@ -1482,8 +1737,7 @@ plain_compose_omits_override_and_project() {
 # Checks whether plain `docker compose` after rollback to $previous_name stays on $rollback_proj (#3972).
 ROLLBACK_PROJ_ERR=''
 check_rollback_plain_project() {
-  local rollback_proj="$1" release_compose="$2" previous_name="$3" env_proj='' norm_env_proj='' cf_val='' resolved_name='' norm_yaml='' item n
-  local -a cf_items=()
+  local rollback_proj="$1" release_compose="$2" previous_name="$3" env_proj='' norm_env_proj='' resolved_name='' norm_yaml='' item n
   ROLLBACK_PROJ_ERR=''
   [ -n "$rollback_proj" ] || return 0
   if env_proj="$(env_var_last_value COMPOSE_PROJECT_NAME "$ENV_FILE" 2>/dev/null)" && [ -n "$env_proj" ]; then
@@ -1502,13 +1756,12 @@ check_rollback_plain_project() {
       return 1
     fi
   fi
-  cf_val="$(env_var_last_value COMPOSE_FILE "$ENV_FILE" 2>/dev/null || true)"
-  if [ -n "$cf_val" ]; then
-    IFS=':' read -ra cf_items <<<"$cf_val"
-    for item in "${cf_items[@]+"${cf_items[@]}"}"; do
-      item="${item#"${item%%[![:space:]]*}"}"
-      item="${item%"${item##*[![:space:]]}"}"
-      [ -n "$item" ] || continue
+  if ! deploy_parse_compose_file_items; then
+    ROLLBACK_PROJ_ERR="cannot roll back to $previous_name on project $rollback_proj: cannot parse COMPOSE_FILE or COMPOSE_PATH_SEPARATOR in $ENV_FILE"
+    return 1
+  fi
+  if [ -n "$DEPLOY_COMPOSE_FILE_RAW" ]; then
+    for item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
       if [ "$item" = docker-compose.yml ] || [[ "$item" == */docker-compose.yml ]]; then
         n="$(compose_file_yaml_name "$release_compose")"
         if [ -n "$n" ]; then resolved_name="$n"; fi
@@ -2092,6 +2345,44 @@ check_storage_free() {
         fi
       fi
     done <<<"$mounts_out"
+  done
+  return 0
+}
+
+# Checks that no existing container (running, paused, restarting, or stopped) uses Compose project name $target_proj
+# from another working directory than $DEPLOY_DIR. Returns: 0 = owned cleanly, 1 = foreign project collision, 2 = inspect error (#3972).
+PROJECT_CONFLICT_WDIR=''
+PROJECT_CONFLICT_CID=''
+check_project_ownership() {
+  local target_proj="$1" deploy_dir_norm='' canon_deploy_dir='' ps_out='' cid='' c_wdir='' c_wdir_canon='' still_exists=''
+  local -a cids=()
+  PROJECT_CONFLICT_WDIR=''
+  PROJECT_CONFLICT_CID=''
+  [ -n "$target_proj" ] || return 0
+  deploy_dir_norm="${DEPLOY_DIR%/}"
+  [ -n "$deploy_dir_norm" ] || deploy_dir_norm='/'
+  canon_deploy_dir="$(canonicalize_bind_path "$deploy_dir_norm")"
+  ps_out="$(docker ps -a -q --filter "label=com.docker.compose.project=$target_proj" 2>/dev/null)" || return 2
+  [ -n "$ps_out" ] || return 0
+  mapfile -t cids <<<"$ps_out"
+  for cid in "${cids[@]}"; do
+    [ -n "$cid" ] || continue
+    if ! c_wdir="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$cid" 2>/dev/null)"; then
+      still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 2
+      [ -z "$still_exists" ] || return 2
+      continue
+    fi
+    if [ -n "$c_wdir" ]; then
+      c_wdir="${c_wdir%/}"
+      [ -n "$c_wdir" ] || c_wdir='/'
+      c_wdir_canon="$(canonicalize_bind_path "$c_wdir")"
+      if [ "$c_wdir" = "$deploy_dir_norm" ] || [ "$c_wdir" = "$canon_deploy_dir" ] || [ "$c_wdir_canon" = "$canon_deploy_dir" ]; then
+        continue
+      fi
+    fi
+    PROJECT_CONFLICT_WDIR="${c_wdir:-unknown}"
+    PROJECT_CONFLICT_CID="$cid"
+    return 1
   done
   return 0
 }
@@ -2868,11 +3159,20 @@ preflight() {
   [ -f "$ENV_FILE" ] || die "$EXIT_USAGE" "env file $ENV_FILE not found (copy .env.example there and change every secret)"
   # The WAL archiving overlay (#2120) stays the host's own file: without it the deploy would recreate `db` on the plain PostgreSQL image,
   # while the volume still tells PostgreSQL to push every WAL segment with a command that image does not have.
-  local wal_rc=0
+  deploy_parse_compose_file_items || die "$EXIT_USAGE" "cannot parse COMPOSE_FILE or COMPOSE_PATH_SEPARATOR in $ENV_FILE"
+  local wal_rc=0 extra_item='' extra_base='' extra_resolved=''
   resolve_wal_compose_file >/dev/null || wal_rc=$?
   if ((wal_rc == 2)); then
     die "$EXIT_USAGE" "COMPOSE_FILE in $ENV_FILE lists compose.wal.yml but the referenced file does not exist under $DEPLOY_DIR: copy tools/backup/compose.wal.yml there (docs/runbooks/backup-and-restore.md, \"Point in time recovery\")"
   fi
+  for extra_item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
+    extra_base="${extra_item##*/}"
+    case "$extra_base" in
+      docker-compose.yml | compose.pilot.yml | docker-compose.override.yml | compose.wal.yml | compose.host.yml) continue ;;
+    esac
+    if [[ "$extra_item" == /* ]]; then extra_resolved="$extra_item"; else extra_resolved="$DEPLOY_DIR/$extra_item"; fi
+    [ -f "$extra_resolved" ] || die "$EXIT_USAGE" "COMPOSE_FILE in $ENV_FILE lists $extra_item but the file does not exist ($extra_resolved)"
+  done
   command -v docker >/dev/null || die "$EXIT_USAGE" 'docker is not installed'
   command -v curl >/dev/null || die "$EXIT_USAGE" 'curl is not installed'
   compose_version_ok || die "$EXIT_USAGE" 'docker compose v2.24 or newer is required'
@@ -3834,6 +4134,17 @@ do_deploy() {
     record "deploy $name failed: compose project"
     die "$EXIT_FAILED" 'cannot determine the compose project name; nothing was changed'
   fi
+  local own_rc=0
+  check_project_ownership "$active_proj" || own_rc=$?
+  if ((own_rc == 1)); then
+    restore_pre_activate "$current"
+    record "deploy $name failed: project $active_proj owned by $PROJECT_CONFLICT_WDIR"
+    die "$EXIT_FAILED" "Compose project '$active_proj' is already owned by another installation at $PROJECT_CONFLICT_WDIR (container $PROJECT_CONFLICT_CID); choose a distinct COMPOSE_PROJECT_NAME in $ENV_FILE before deploying"
+  elif ((own_rc != 0)); then
+    restore_pre_activate "$current"
+    record "deploy $name failed: cannot inspect project ownership ($active_proj)"
+    die "$EXIT_FAILED" "cannot inspect existing containers for project '$active_proj'; nothing was changed"
+  fi
   local new_db='' new_db_free_rc=0 new_db_exists_rc=0
   new_db="$(compose_target_mount "$new_config" "$active_proj" /var/lib/postgresql/data 'db')"
   check_new_storage_layout "$new_config" "$active_proj" "$new_db" "$name" "$current"
@@ -4075,6 +4386,17 @@ do_rollback() {
   rb_proj="$rollback_proj"
   if [ -z "$rb_proj" ]; then
     rb_proj="$(compose_project_from_yaml "$rb_config" 2>/dev/null || true)"
+  fi
+  local rb_own_rc=0
+  check_project_ownership "${rb_proj:-ludy}" || rb_own_rc=$?
+  if ((rb_own_rc == 1)); then
+    abort_rollback_pre_services "$previous" "$current" \
+      "project ${rb_proj:-ludy} owned by $PROJECT_CONFLICT_WDIR" \
+      "cannot roll back to $previous safely: Compose project '${rb_proj:-ludy}' is already owned by another installation at $PROJECT_CONFLICT_WDIR (container $PROJECT_CONFLICT_CID)"
+  elif ((rb_own_rc != 0)); then
+    abort_rollback_pre_services "$previous" "$current" \
+      "cannot inspect project ownership (${rb_proj:-ludy})" \
+      "cannot inspect existing containers for project '${rb_proj:-ludy}' before rolling back to $previous; nothing running was changed"
   fi
   verify_rollback_storage "$rb_config" "${rb_proj:-ludy}" "$prev_img" "$previous" "$current" \
     "$cur_db_specs" "$cur_pgdata_sub" "$cur_files_specs" "$cur_keys_specs" "$cur_archive_specs"

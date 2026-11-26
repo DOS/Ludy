@@ -239,6 +239,19 @@ case "$cmd" in
       if [ -n "\${STUB_DB_IMAGE-crove-db:local}" ]; then printf '%s\\n' "\${STUB_DB_IMAGE-crove-db:local}"; fi
       exit 0
     fi
+    if [[ " $* " == *"HostConfig.Mounts"* ]]; then
+      cid="\${@: -1}"
+      if [ -n "\${STUB_HOSTCONFIG_MOUNTS:-}" ]; then
+        for line in \${STUB_HOSTCONFIG_MOUNTS}; do
+          if [ "\${line%%|*}" = "$cid" ]; then
+            printf '%s\\n' "\${line#*|}"
+            exit 0
+          fi
+        done
+      fi
+      printf '[]\\n'
+      exit 0
+    fi
     if [[ " $* " == *"{{range .Mounts}}"* ]]; then
       cid="\${@: -1}"
       if [ -n "\${STUB_CONTAINER_MOUNTS:-}" ]; then
@@ -480,6 +493,13 @@ case "$cmd" in
           *pg_restore*) cat >/dev/null ;;
           *)
             case "$last" in
+              *pg_control_system*)
+                if [ "$proj" = ludy ]; then
+                  echo "\${STUB_POST_CLUSTER_ID:-\${STUB_PRE_CLUSTER_ID:-7400000000000000001}}"
+                else
+                  echo "\${STUB_PRE_CLUSTER_ID:-7400000000000000001}"
+                fi
+                ;;
               *pg_namespace*)
                 for s in ludy_ads ludy_crm ludy_finance ludy_hr ludy_jobs ludy_kernel ludy_meetings ludy_meta ludy_notes ludy_projects ludy_sign ludy_social; do
                   echo "$s"
@@ -955,7 +975,7 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     const rOsOnly = spawnSync('bash', [scriptPath, 'rewrite-env', osEnvIn, osEnvOut], { encoding: 'utf8', env: { ...process.env, ALT: 'live' } });
     expect(rOsOnly.status).not.toBe(0);
     expect(rOsOnly.stderr).toContain('LUDY_APP_DB_PASSWORD');
-    expect(rOsOnly.stderr).toContain('clean environment');
+    expect(rOsOnly.stderr).toContain('active shell environment');
     expect(`${rOsOnly.stdout}${rOsOnly.stderr}`).not.toContain('old-pw');
 
     const persistedEnvIn = join(work, '.env.persisted.in');
@@ -1038,8 +1058,8 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     const filesLog = readFileSync(`${fCustom.stubLog}.files`, 'utf8');
     expect(filesLog).toContain(`${fCustom.deployDir}/docker-compose.yml ${fCustom.deployDir}/storage.yml ${fCustom.deployDir}/compose.host.yml`);
     const customEnvOut = readFileSync(join(fCustom.deployDir, '.env'), 'utf8');
-    expect(customEnvOut).toContain('BACKUP_S3_PREFIX=crove');
-    expect(customEnvOut).not.toContain('BACKUP_S3_PREFIX=${SITE_PREFIX:-}');
+    expect(customEnvOut).toContain('BACKUP_S3_PREFIX=${SITE_PREFIX:-crove}');
+    expect(customEnvOut).not.toContain('BACKUP_S3_PREFIX=crove');
 
     const fMissingCustom = createCutoverFixture();
     writeFileSync(
@@ -1160,5 +1180,108 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     const pruneSepBlocked = runWithStubs(fSepWal, ['prune-old-volumes', '--dir', fSepWal.deployDir, '--overlay-dir', fSepWal.overlayDir]);
     expect(pruneSepBlocked.status).toBe(1);
     expect(pruneSepBlocked.stderr).toContain('WAL_STANZA must be ludy');
+
+    // 11) Round 16 hardening regressions: PGDATA drift, cluster ID mismatch, caller CROVE_* env conflicts,
+    // HostConfig.Mounts subpath on live container, WAL vs nightly S3 prefix conflict, and static vs dynamic BACKUP_S3_PREFIX (#3972 Round 16).
+    const fPgdataShift = createCutoverFixture();
+    const pgdataShiftRes = runWithStubs(fPgdataShift, ['cutover-stack', '--dir', fPgdataShift.deployDir, '--overlay-dir', fPgdataShift.overlayDir], {
+      STUB_LIVE_PGDATA: '/var/lib/postgresql/data/crove',
+      STUB_CONFIG_YAML: [
+        'name: {proj}',
+        'services:',
+        '  db:',
+        '    environment:',
+        '      PGDATA: /var/lib/postgresql/data/{proj}',
+        '    volumes:',
+        '      - type: volume',
+        '        source: db-data',
+        '        target: /var/lib/postgresql/data',
+        '  api:',
+        '    volumes:',
+        '      - type: volume',
+        '        source: files',
+        '        target: /data/files',
+        'volumes:',
+        '  db-data:',
+        '    name: {proj}_db-data',
+        '  files:',
+        '    name: {proj}_files',
+        '',
+      ].join('\n'),
+    });
+    expect(pgdataShiftRes.status).toBe(1);
+    expect(pgdataShiftRes.stderr).toContain('cannot switch db PGDATA');
+    expect(pgdataShiftRes.stderr).toContain('/var/lib/postgresql/data/crove');
+    expect(pgdataShiftRes.stderr).toContain('/var/lib/postgresql/data/ludy');
+    expect(readFileSync(fPgdataShift.stubLog, 'utf8')).not.toContain(' stop');
+    expect(readFileSync(fPgdataShift.stubLog, 'utf8')).not.toContain('pg_dump');
+
+    const fClusterMismatch = createCutoverFixture();
+    const clusterMismatchRes = runWithStubs(fClusterMismatch, ['cutover-stack', '--dir', fClusterMismatch.deployDir, '--overlay-dir', fClusterMismatch.overlayDir], {
+      STUB_PRE_CLUSTER_ID: '7400000000000000111',
+      STUB_POST_CLUSTER_ID: '7400000000000000222',
+    });
+    expect(clusterMismatchRes.status).toBe(1);
+    expect(clusterMismatchRes.stderr).toContain('system_identifier');
+    expect(clusterMismatchRes.stderr).toContain('does not match pre-cutover crove cluster');
+    expect(readFileSync(fClusterMismatch.stubLog, 'utf8')).not.toContain('caddy');
+
+    const conflictIn = join(work, '.env.shell-conflict.in');
+    const conflictOut = join(work, '.env.shell-conflict.out');
+    writeFileSync(conflictIn, 'CROVE_APP_DB_PASSWORD=file-secret\nCROVE_DOMAIN=app.example.com\n');
+    const rShellConflict = spawnSync('bash', [scriptPath, 'rewrite-env', conflictIn, conflictOut], {
+      encoding: 'utf8',
+      env: { ...process.env, CROVE_APP_DB_PASSWORD: 'shell-secret' },
+    });
+    expect(rShellConflict.status).not.toBe(0);
+    expect(rShellConflict.stderr).toContain('LUDY_APP_DB_PASSWORD');
+    expect(rShellConflict.stderr).toContain('active shell environment');
+    expect(`${rShellConflict.stdout}${rShellConflict.stderr}`).not.toContain('file-secret');
+    expect(`${rShellConflict.stdout}${rShellConflict.stderr}`).not.toContain('shell-secret');
+
+    const fLiveSubpath = createCutoverFixture();
+    const liveSubpathRes = runWithStubs(fLiveSubpath, ['cutover-stack', '--dir', fLiveSubpath.deployDir, '--overlay-dir', fLiveSubpath.overlayDir], {
+      STUB_HOSTCONFIG_MOUNTS:
+        'stub-crove-api-cid|[{"Type":"volume","Source":"crove_files","Target":"/data/files","VolumeOptions":{"Subpath":"tenant1"}}]',
+    });
+    expect(liveSubpathRes.status).toBe(1);
+    expect(liveSubpathRes.stderr).toContain('unsupported volume subpath crove_files:tenant1 at /data/files');
+    expect(readFileSync(fLiveSubpath.stubLog, 'utf8')).not.toContain(' stop');
+
+    const fS3Conflict = createCutoverFixture();
+    writeFileSync(join(fS3Conflict.deployDir, 'compose.wal.yml'), 'services:\n  db:\n    image: ${WAL_DB_IMAGE:-ludy-db:local}\n');
+    writeFileSync(
+      join(fS3Conflict.deployDir, '.env'),
+      [
+        'COMPOSE_FILE=docker-compose.yml:compose.pilot.yml:compose.host.yml',
+        'CROVE_DOMAIN=api.example.com',
+        'DATABASE_URL=postgres://crove_app:pw@db:5432/postgres',
+        'BACKUP_S3_PREFIX=nightly-new',
+        '',
+      ].join('\n'),
+    );
+    const s3ConflictRes = runWithStubs(fS3Conflict, ['cutover-stack', '--dir', fS3Conflict.deployDir, '--overlay-dir', fS3Conflict.overlayDir], {
+      STUB_PRE_WAL_REPO1_PATH: '/crove/wal',
+    });
+    expect(s3ConflictRes.status).toBe(1);
+    expect(s3ConflictRes.stderr).toContain('refusing cutover-stack');
+    expect(s3ConflictRes.stderr).toContain("BACKUP_S3_PREFIX='nightly-new'");
+    expect(s3ConflictRes.stderr).toContain('/crove/wal');
+    expect(readFileSync(fS3Conflict.stubLog, 'utf8')).not.toContain(' stop');
+
+    const fStaticEmptyS3 = createCutoverFixture();
+    writeFileSync(
+      join(fStaticEmptyS3.deployDir, '.env'),
+      [
+        'COMPOSE_FILE=docker-compose.yml:compose.pilot.yml:compose.host.yml',
+        'CROVE_DOMAIN=api.example.com',
+        'DATABASE_URL=postgres://crove_app:pw@db:5432/postgres',
+        'BACKUP_S3_PREFIX="" # static empty',
+        '',
+      ].join('\n'),
+    );
+    const resStaticEmpty = runWithStubs(fStaticEmptyS3, ['cutover-stack', '--dir', fStaticEmptyS3.deployDir, '--overlay-dir', fStaticEmptyS3.overlayDir]);
+    expect(resStaticEmpty.status, resStaticEmpty.stderr).toBe(0);
+    expect(readFileSync(join(fStaticEmptyS3.deployDir, '.env'), 'utf8')).toContain('BACKUP_S3_PREFIX=crove # static empty');
   });
 });

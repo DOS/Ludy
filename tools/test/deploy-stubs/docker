@@ -59,10 +59,11 @@ if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
 fi
 if [ "${1:-}" = ps ]; then
   [ -z "${STUB_PS_FAIL:-}" ] || exit 1
-  proj='' svc='' status_running=0 status_paused=0 status_restarting=0 has_status_filter=0 wdir_filter='' id_filter=''
+  proj='' svc='' quiet=0 status_running=0 status_paused=0 status_restarting=0 has_status_filter=0 wdir_filter='' id_filter=''
   shift
   while (($# > 0)); do
     case "$1" in
+      -q | -aq | -qa) quiet=1; shift ;;
       --filter)
         case "$2" in
           label=com.docker.compose.project=*) proj="${2#label=com.docker.compose.project=}" ;;
@@ -108,6 +109,19 @@ if [ "${1:-}" = ps ]; then
         if [ "$item" = "$id_filter" ]; then printf '%s\n' "$item"; exit 0; fi
       done
     fi
+    if ((has_status_filter == 0)); then
+      for item in ${STUB_PROJECT_CONTAINERS:-}; do
+        IFS='|' read -r _ icid <<<"$item"
+        if [ "$icid" = "$id_filter" ]; then printf '%s\n' "$icid"; exit 0; fi
+      done
+    fi
+    exit 0
+  fi
+  if [ -n "$proj" ] && [ -z "$svc" ] && ((quiet == 1)); then
+    for item in ${STUB_PROJECT_CONTAINERS:-}; do
+      IFS='|' read -r iproj icid <<<"$item"
+      if [ "$iproj" = "$proj" ]; then printf '%s\n' "$icid"; fi
+    done
     exit 0
   fi
   if ((has_status_filter == 1)); then
@@ -430,15 +444,35 @@ case "$sub" in
         base_dir="${proj_dir:-$PWD}"
         eff_env="${envfile:-$base_dir/.env}"
         cf_stub=''
+        sep_stub="${COMPOSE_PATH_SEPARATOR:-:}"
         if [ -f "$eff_env" ]; then
-          cf_stub="$(sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?COMPOSE_FILE[[:space:]]*[=:][[:space:]]*//p' "$eff_env" | tail -n 1 | sed -E 's/[[:space:]]+#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//')"
-          case "$cf_stub" in
-            \"*\") cf_stub="${cf_stub#\"}"; cf_stub="${cf_stub%\"}" ;;
-            \'*\') cf_stub="${cf_stub#\'}"; cf_stub="${cf_stub%\'}" ;;
-          esac
+          while IFS= read -r _el || [ -n "$_el" ]; do
+            _el="${_el%$'\r'}"
+            [[ "$_el" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$ ]] || continue
+            _ek="${BASH_REMATCH[2]}"
+            _ev="${BASH_REMATCH[3]#"${BASH_REMATCH[3]%%[![:space:]]*}"}"
+            _ev="${_ev%%[[:space:]]#*}"
+            _ev="${_ev%"${_ev##*[![:space:]]}"}"
+            case "$_ev" in
+              \"*\") _ev="${_ev#\"}"; _ev="${_ev%\"}" ;;
+              \'*\') _ev="${_ev#\'}"; _ev="${_ev%\'}" ;;
+            esac
+            printf -v "_STUB_ENV_${_ek}" '%s' "$_ev"
+          done <"$eff_env"
+          if [ -n "${_STUB_ENV_COMPOSE_PATH_SEPARATOR:-}" ]; then
+            sep_stub="${_STUB_ENV_COMPOSE_PATH_SEPARATOR}"
+          fi
+          cf_stub="${_STUB_ENV_COMPOSE_FILE:-}"
+          _var_re='\$\{([A-Za-z_][A-Za-z0-9_]*)\}'
+          while [[ "$cf_stub" =~ $_var_re ]]; do
+            _vk="${BASH_REMATCH[1]}"
+            _vref="_STUB_ENV_${_vk}"
+            _vv="${!_vk:-${!_vref:-}}"
+            cf_stub="${cf_stub//\$\{$_vk\}/$_vv}"
+          done
         fi
         if [ -n "$cf_stub" ]; then
-          IFS=':' read -ra cf_arr <<<"$cf_stub"
+          IFS="$sep_stub" read -ra cf_arr <<<"$cf_stub"
           for cf_item in "${cf_arr[@]+"${cf_arr[@]}"}"; do
             cf_item="${cf_item#"${cf_item%%[![:space:]]*}"}"
             cf_item="${cf_item%"${cf_item##*[![:space:]]}"}"
