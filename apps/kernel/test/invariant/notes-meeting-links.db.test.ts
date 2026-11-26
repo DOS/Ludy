@@ -41,14 +41,16 @@ suite('Notes meeting links & summary-to-note security invariants (#1679, #3519)'
   let runtime: Runtime;
   let runtimeNoMeetings: Runtime;
   let httpApp: ReturnType<typeof createHttpApp>;
-  const users: Record<string, string> = {};
+  const USER_KEYS = ['owner', 'recorder', 'attendee', 'other', 'viewer', 'outsider'] as const;
+  type UserKey = (typeof USER_KEYS)[number];
+  const users: Record<UserKey, string> = { owner: '', recorder: '', attendee: '', other: '', viewer: '', outsider: '' };
 
-  const asUser = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const });
-  const exec = <O = unknown>(who: string, name: string, input: unknown, rt = runtime, targetOrg = orgId) =>
+  const asUser = (who: UserKey) => ({ type: 'user' as const, userId: users[who], aal: 'aal1' as const });
+  const exec = <O = unknown>(who: UserKey, name: string, input: unknown, rt = runtime, targetOrg = orgId) =>
     rt.execute<O>(name, input, { actor: asUser(who), orgId: targetOrg });
-  const query = <O = unknown>(who: string, name: string, input: unknown, rt = runtime, targetOrg = orgId) =>
+  const query = <O = unknown>(who: UserKey, name: string, input: unknown, rt = runtime, targetOrg = orgId) =>
     rt.query<O>(name, input, { actor: asUser(who), orgId: targetOrg });
-  const saveSummary = (who: string, input: { meetingId: string; title?: string }, rt = runtime, targetOrg = orgId) =>
+  const saveSummary = (who: UserKey, input: { meetingId: string; title?: string }, rt = runtime, targetOrg = orgId) =>
     saveMeetingSummaryAsNote(rt, targetOrg, asUser(who), input);
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
@@ -64,8 +66,8 @@ suite('Notes meeting links & summary-to-note security invariants (#1679, #3519)'
     admin((c) => c.query<R>(text, params));
 
   async function seedMeeting(
-    recorder: string,
-    readers: string[],
+    recorder: UserKey,
+    readers: readonly UserKey[],
     opts: { title?: string; visibility?: 'attendees' | 'org'; textRetentionDaysOffset?: number } = {},
   ): Promise<string> {
     const meetingId = randomUUID();
@@ -148,7 +150,7 @@ suite('Notes meeting links & summary-to-note security invariants (#1679, #3519)'
       aiEnabled: false,
     });
 
-    for (const key of ['owner', 'recorder', 'attendee', 'other', 'viewer', 'outsider']) {
+    for (const key of USER_KEYS) {
       users[key] = await upsertIdentity(db, { issuer: ISSUER, subject: key, email: `${key}@notes-links-inv.test`, name: null });
     }
     const createdOrg = await createOrg(runtime, asUser('owner'), 'Notes Links Inv Org');
