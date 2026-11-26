@@ -49,6 +49,10 @@ export const zMarketplaceConnection = z.object({
   authorizeState: zMarketplaceAuthorizeState.nullable(),
   // When the refresh token ends (a date, never a token): after it the seller authorizes again. Null until an authorization worked.
   reauthorizeBy: z.iso.datetime({ offset: true }).nullable(),
+  // Last sanitized refresh failure code, consecutive failure count, and next retry timestamp when in backoff (#4251).
+  refreshError: z.string().nullable().optional(),
+  refreshFailures: z.number().int().nonnegative().optional(),
+  refreshNextAt: z.iso.datetime({ offset: true }).nullable().optional(),
 });
 export type MarketplaceConnection = z.infer<typeof zMarketplaceConnection>;
 

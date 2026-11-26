@@ -594,7 +594,7 @@ export const channelRefreshFail = defineCommand({
         const windowEnd = expMs - 15 * 60_000;
         if (expMs > nowMs && nextMs > windowEnd) {
           if (windowEnd > nowMs) {
-            nextMs = Math.max(nowMs + 10 * 60_000, windowEnd);
+            nextMs = windowEnd;
             backoffSeconds = Math.max(1, Math.round((nextMs - nowMs) / 1000));
           } else {
             // Inside the final 15 minutes before expiry: leave next_at null so the next 10-minute sweep gets one

@@ -660,6 +660,9 @@ export const marketplaceConnectionList = defineQuery({
         'c.reauthorize_by',
         'ch.display_name',
         'ch.status',
+        'ch.refresh_last_error',
+        'ch.refresh_failures',
+        'ch.refresh_next_at',
       ])
       .where('c.org_id', '=', ctx.orgId)
       .orderBy('c.created_at')
@@ -697,6 +700,9 @@ export const marketplaceConnectionList = defineQuery({
       // A code that waited for the worker past the window is shown as failed: nothing else would ever clear it.
       authorizeState: r.authorize_state === 'pending' && pendingExpired(r.authorize_pending_at, Date.now()) ? ('failed' as const) : r.authorize_state,
       reauthorizeBy: iso(r.reauthorize_by),
+      refreshError: r.refresh_last_error,
+      refreshFailures: r.refresh_failures,
+      refreshNextAt: iso(r.refresh_next_at),
     }));
   },
 });

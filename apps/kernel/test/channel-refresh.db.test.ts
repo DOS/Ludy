@@ -614,6 +614,18 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
       expect(tr?.refresh_next_at).not.toBeNull();
       expect(tr?.refresh_next_at?.getTime() ?? Infinity).toBeLessThanOrEqual((tr?.expires_at.getTime() ?? 0) - 14 * 60_000);
 
+      // With 16 minutes left, windowEnd is 1 minute ahead (never pushed out to +10m where a slightly early sweep tick would miss it).
+      const threads16m = await connect(o, 16 * 60_000, JSON.stringify({ accessToken: 't-16m' }), 'threads');
+      const before16m = Date.now();
+      for (let i = 0; i < 3; i += 1) {
+        expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { threads: threadsFailer } })).toMatchObject({ failed: 1 });
+      }
+      const tr16 = await row(threads16m);
+      expect(tr16).toMatchObject({ refresh_failures: 3, refresh_last_error: '503' });
+      expect(tr16?.refresh_next_at).not.toBeNull();
+      expect(tr16?.refresh_next_at?.getTime() ?? Infinity).toBeLessThanOrEqual(before16m + 3 * 60_000);
+      await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET refresh_next_at = now() + interval '2 hours' WHERE id = $1", [threads16m]));
+
       const warnsBeforeLast15 = warnSpy.mock.calls.length;
       const threadsLast15 = await connect(o, 14 * 60_000, JSON.stringify({ accessToken: 't-14m' }), 'threads');
       for (let i = 0; i < 3; i += 1) {
