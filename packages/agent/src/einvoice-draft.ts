@@ -133,15 +133,26 @@ export function figuresOfText(text: string): Set<string> {
 
 // The VAT rates the text states: a number before a percent sign, a number after "VAT", "GTGT" or "thuế (suất)", and the words of the two exemptions.
 // A percent after a discount word is a discount, not a rate.
+const VALID_PERCENT_VAT_RATES = new Set(['0%', '5%', '8%', '10%']);
+const TAX_RATE_PREFIX = /(?<![\p{L}])(?:vat|gtgt|thuế\s+suất|thuế|thue\s+suat|thue)\s*(?::\s*)?$/iu;
+const MONEY_END_BEFORE_RATE = /(?:\d\s*(?:đồng|dong|vnđ|vnd|đ|₫|tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)|\d{4,})\s*$/iu;
 const RATE_BEFORE_SIGN = /(?<!(?:giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết khấu|chiet khau|ck|discount|off)\s{0,3})(?<![\d.,])(\d{1,3}(?:[.,]\d+)?)(?![\d.,]\d)\s*%/gu;
 const RATE_AFTER_WORD = /(?<![\p{L}])(?:vat|gtgt|thuế\s+suất|thuế|thue\s+suat|thue)\s*(?::\s*)?(\d{1,3}(?:[.,]\d+)?)(?![\d.,]\d)(?!\d)(?!\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))/gu;
 function ratesInBody(body: string): Set<string> {
   const rates = new Set<string>();
-  for (const re of [RATE_BEFORE_SIGN, RATE_AFTER_WORD]) {
-    for (const match of body.matchAll(re)) {
-      const written = writtenVatRate(canon(match[1] ?? ''));
-      if (written !== null) rates.add(written);
+  for (const match of body.matchAll(RATE_BEFORE_SIGN)) {
+    const written = writtenVatRate(canon(match[1] ?? ''));
+    if (written === null || !VALID_PERCENT_VAT_RATES.has(written)) continue;
+    const before = body.slice(0, match.index ?? 0);
+    const localBefore = before.slice(Math.max(before.lastIndexOf(','), before.lastIndexOf(';'), before.lastIndexOf('\n'), before.lastIndexOf(':')) + 1);
+    const cleanLocal = localBefore.replace(INVOICE_HEADER_SCOPE, ' ');
+    if (TAX_RATE_PREFIX.test(localBefore) || MONEY_END_BEFORE_RATE.test(localBefore) || !descriptionTokens(cleanLocal).hasProduct) {
+      rates.add(written);
     }
+  }
+  for (const match of body.matchAll(RATE_AFTER_WORD)) {
+    const written = writtenVatRate(canon(match[1] ?? ''));
+    if (written !== null && VALID_PERCENT_VAT_RATES.has(written)) rates.add(written);
   }
   if (/không\s+chịu\s+thuế|khong\s+chiu\s+thue|(?<![\p{L}])kct(?![\p{L}])/u.test(body)) rates.add('KCT');
   if (/không\s+kê\s+khai|khong\s+ke\s+khai|(?<![\p{L}])kkknt(?![\p{L}])/u.test(body)) rates.add('KKKNT');
@@ -156,7 +167,7 @@ export function ratesOfText(text: string): Set<string> {
 // Structured clause reading: bind figures (quantity vs unitPrice) and VAT rates to each item's own clause.
 // ---------------------------------------------------------------------------------------------------------------------
 type Span = readonly [start: number, end: number];
-type FigureRole = 'qty' | 'price' | 'total' | 'discount' | 'unknown';
+type FigureRole = 'qty' | 'price' | 'total' | 'discount' | 'tax' | 'unknown';
 interface FigureToken {
   value: string;
   role: FigureRole;
@@ -201,7 +212,7 @@ const LIST_DOT_PREFIX = /^\s*\d{1,2}\.\s+/u;
 const CURRENCY_SUFFIX = /^\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}])/iu;
 const PER_UNIT_SUFFIX = /^\s*(?:\/\s*[\p{L}]+|mỗi\s+[\p{L}]+|moi\s+[\p{L}]+|per\s+[\p{L}]+)/iu;
 const PURE_SCALE_UNITS = new Set(['nghìn', 'nghin', 'ngàn', 'ngan']);
-const SPEC_SUFFIX = /^\s*(?:ml|cl|dl|mg|mm|cm|m2|m3|gsm|gb|tb|mb|kb|mah|wh|hz|px|inch|dpi|rpm)(?![\p{L}])/iu;
+const SPEC_SUFFIX = /^\s*(ml|cl|dl|mg|mm|cm|m2|m3|gsm|gb|tb|mb|kb|mah|wh|hz|px|inch|dpi|rpm)(?![\p{L}])/iu;
 const PACKAGING_GLUED = /^(?:g|kg|l|m|gam|gram|lít|lit|mét|met)(?![\p{L}])/iu;
 const PACKAGING_SPACED = /^\s+(?:g|kg|l|m|gam|gram|lít|lit|mét|met)(?![\p{L}])/iu;
 const ATTR_PREFIX = /(?<![\p{L}])(?:size|cỡ|loại|loai|gen|version|model|mã|code|thế\s+hệ|the\s+he|mẫu)\s*(?:[:=]\s*)?$/iu;
@@ -210,6 +221,7 @@ const BARE_UNACCENTED_PRICE_PREFIX = /(?<![\p{L}])gia\s*(?:[:=]\s*)?$/iu;
 const COMPOUND_GIA_BEFORE = /(?<![\p{L}])(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+gia\s*$/iu;
 const PRICE_PREFIX = /(?:(?<![\p{L}])(?:đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|unit\s+price|price)(?:\s+(?:bán|lẻ|sỉ|mới|cũ|chưa\s+thuế|chưa\s+vat|gồm\s+vat|sau\s+thuế|trước\s+thuế|dự\s+kiến|khoảng|tầm))?|@)\s*(?:[:=]\s*)?$/iu;
 const DISCOUNT_PREFIX = /(?<![\p{L}])(?:giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết\s+khấu|chiet\s+khau|ck(?![\p{L}])|discount|off|trừ|bớt)\s*(?:[:=]\s*)?$/iu;
+const TAX_AMOUNT_PREFIX = /(?<![\p{L}])(?:tiền\s+thuế(?:\s+(?:gtgt|vat))?|tien\s+thue(?:\s+(?:gtgt|vat))?|thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|vat|gtgt)\s*(?:[:=]\s*)?$/iu;
 const TOTAL_PREFIX = /(?<![\p{L}])(?:tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền(?:\s+hàng)?|tong\s+tien(?:\s+hang)?|tổng\s+thanh\s+toán|tong\s+thanh\s+toan|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tổng|total|amount)(?:\s+(?:hàng|thanh\s+toán|bán|chưa\s+thuế|chưa\s+vat|gồm\s+vat|sau\s+thuế|trước\s+thuế|dự\s+kiến))?\s*(?:[:=]\s*)?$/iu;
 const MULTIPLY_PREFIX = /(?:\*|×|(?<![\p{L}])x)\s*$/iu;
 const MULTIPLY_AFTER = /^\s*(?:\*|×|x(?![\p{L}]))\s*(?=\d)/iu;
@@ -218,7 +230,7 @@ const INVOICE_HEADER_SCOPE = /(?:^|[^\p{L}])(?:hóa\s+đơn|hoa\s+don|invoice|to
 const TRANSACTION_VERB_SPLIT = /(?:^|\s)(?:mua|bán|ban|xuất|xuat|đặt|dat|lấy|lay|chốt|chot|gửi|gui|giao|order|buy|sell)(?![\p{L}])\s*/giu;
 const RECIPIENT_BEFORE_NUMBER = /^\s*(?:(?:cho|tới|toi|đến|den)(?![\p{L}])\s+)?(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách(?:\s+hàng)?|khach(?:\s+hang)?|người\s+mua|nguoi\s+mua|công\s+ty|cong\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,3}\s*$/iu;
 const SENTENCE_DELIM = /\r?\n|;|\.(?=\s|$)/gu;
-const SUB_SPLIT = /(?<!\d),|,(?!\d)|\s+(?:và|and|\+)\s+|(?<=[\p{L}\d%])\s*\+\s*(?=(?:\d|vat|gtgt|thuế|thue))|\s*&\s*/giu;
+const SUB_SPLIT = /(?<!\d),|,(?!\d)|\s+(?:và|and|\+)\s+|(?<=[\p{L}\d%])\s*\+\s*(?=(?:\d|vat|gtgt|thuế|thue))|\s*[&|]\s*|\s+\/\s+/giu;
 const AMP_RIGHT_CUE = /^\s*(?:\d|vat|gtgt|thuế|thue|số\s+lượng|so\s+luong|sl(?![\p{L}])|qty(?![\p{L}])|đơn\s+giá|don\s+gia|giá(?![\p{L}]))/iu;
 const BUYER_ONLY_PREFIX = /^\s*(?:giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)|giao\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|công\s+ty|cty)|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người\s+mua|nguoi\s+mua|công\s+ty|cong\s+ty|cty|bên|ben|đối\s+tác|doi\s+tac)|người\s+mua|nguoi\s+mua|khách(?:\s+hàng)?|khach(?:\s+hang)?|buyer|customer)(?![\p{L}])/iu;
 const EXPLICIT_UNIT_PREFIX = /^\s*(?:đơn\s+vị|don\s+vi|đvt|dvt|unit)\b/iu;
@@ -250,7 +262,7 @@ const STRIP_MONEY_OR_LABELED = new RegExp(
     DATE_ISO.source,
     PERCENT_ANY.source,
     RATE_AFTER_WORD.source,
-    String.raw`(?<![\p{L}])(?:tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền(?:\s+hàng)?|tong\s+tien(?:\s+hang)?|tổng\s+thanh\s+toán|tong\s+thanh\s+toan|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết\s+khấu|chiet\s+khau|ck(?![\p{L}])|discount|off|trừ|bớt|đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|(?<!(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+)gia|unit\s+price|price|số\s+lượng|so\s+luong|sl(?![\p{L}])|qty(?![\p{L}])|quantity|tổng|total|amount)\s*(?:[:=]\s*)?\d+(?:[.,]\d+)*(?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*)?(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
+    String.raw`(?<![\p{L}])(?:tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền(?:\s+hàng)?|tong\s+tien(?:\s+hang)?|tổng\s+thanh\s+toán|tong\s+thanh\s+toan|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tiền\s+thuế(?:\s+(?:gtgt|vat))?|tien\s+thue(?:\s+(?:gtgt|vat))?|giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết\s+khấu|chiet\s+khau|ck(?![\p{L}])|discount|off|trừ|bớt|đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|(?<!(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+)gia|unit\s+price|price|số\s+lượng|so\s+luong|sl(?![\p{L}])|qty(?![\p{L}])|quantity|tổng|total|amount)\s*(?:[:=]\s*)?\d+(?:[.,]\d+)*(?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*)?(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
     String.raw`(?<![\p{L}])(?:xuất\s+hóa\s+đơn|xuat\s+hoa\s+don|hóa\s+đơn(?:\s+trước)?|hoa\s+don(?:\s+truoc)?|gửi\s+cùng\s+khách|gui\s+cung\s+khach|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)|cơ\s+hội|co\s+hoi|đơn\s+vị|don\s+vi|khách\s+hàng|khach\s+hang|người\s+mua|nguoi\s+mua|chiết\s+khấu|chiet\s+khau|giảm\s+giá|giam\s+gia|thuế\s+suất|thue\s+suat|không\s+chịu\s+thuế|khong\s+chiu\s+thue|không\s+kê\s+khai|khong\s+ke\s+khai|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền|tong\s+tien)(?![\p{L}])`,
     String.raw`\d+(?:[.,]\d+)*\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
     String.raw`\d+(?:[.,]\d+)*\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}])`,
@@ -368,24 +380,30 @@ function extractFigureTokens(body: string): FigureToken[] {
       PRICE_PREFIX.test(before) ||
       (BARE_UNACCENTED_PRICE_PREFIX.test(before) && !startsWithUnitWord(after) && !COMPOUND_GIA_BEFORE.test(before));
     const hasDiscountPrefix = DISCOUNT_PREFIX.test(before);
+    const hasTaxPrefix = TAX_AMOUNT_PREFIX.test(before);
     const hasTotalPrefix = TOTAL_PREFIX.test(before);
     const prevToken = tokens[tokens.length - 1];
     const hasMultiplyBefore = prevToken !== undefined && MULTIPLY_PREFIX.test(before);
     const hasMultiplyAfter = MULTIPLY_AFTER.test(after);
     const hasEqualsResult =
-      prevToken !== undefined && !hasQtyPrefix && !hasPricePrefix && !hasDiscountPrefix && /=\s*$/u.test(before);
+      prevToken !== undefined && !hasQtyPrefix && !hasPricePrefix && !hasDiscountPrefix && !hasTaxPrefix && /=\s*$/u.test(before);
     const isPureScale = unit !== undefined && PURE_SCALE_UNITS.has(unit);
     const hasMoneySuffix = (unit !== undefined && (!isPureScale || hasProductBefore || hasMultiplyAfter)) || CURRENCY_SUFFIX.test(after);
     const hasPerUnitSuffix = PER_UNIT_SUFFIX.test(after);
     const hasExplicitLabel =
-      hasQtyPrefix || hasPricePrefix || hasDiscountPrefix || hasTotalPrefix || hasEqualsResult || hasMoneySuffix || hasPerUnitSuffix;
-    if (
-      unit === undefined &&
-      !hasExplicitLabel &&
-      (((hasProductBefore || hasUnitBefore) && SPEC_SUFFIX.test(after)) ||
-        ATTR_PREFIX.test(before) ||
-        (prevChar === '-' && hasProductBefore))
-    ) {
+      hasQtyPrefix || hasPricePrefix || hasDiscountPrefix || hasTaxPrefix || hasTotalPrefix || hasEqualsResult || hasMoneySuffix || hasPerUnitSuffix;
+    const specMatch = unit === undefined && !hasExplicitLabel && (hasProductBefore || hasUnitBefore) ? SPEC_SUFFIX.exec(after) : null;
+    const pkgUnitMatch =
+      unit === undefined && !hasExplicitLabel && !hasMultiplyAfter && (hasProductBefore || hasUnitBefore)
+        ? /^\s*(g|kg|l|m|gam|gram|lít|lit|mét|met)(?![\p{L}])/iu.exec(after)
+        : null;
+    const candidateUnit = specMatch?.[1] ?? pkgUnitMatch?.[1];
+    const unitSoldPerSameUnit =
+      candidateUnit !== undefined &&
+      !hasUnitBefore &&
+      tokens.every((t) => t.embeddedInProduct) &&
+      new RegExp(`(?:/|mỗi\\s+|moi\\s+|per\\s+)${candidateUnit}(?![\\p{L}])`, 'iu').test(after);
+    if (unit === undefined && !hasExplicitLabel && ((specMatch !== null && !unitSoldPerSameUnit) || ATTR_PREFIX.test(before) || (prevChar === '-' && hasProductBefore))) {
       lastBoundary = end;
       continue;
     }
@@ -397,23 +415,26 @@ function extractFigureTokens(body: string): FigureToken[] {
     let role: FigureRole = 'unknown';
     if (hasTotalPrefix || hasEqualsResult) role = 'total';
     else if (hasDiscountPrefix) role = 'discount';
+    else if (hasTaxPrefix && !hasPricePrefix) role = 'tax';
     else if (hasQtyPrefix && !hasPricePrefix && !hasMoneySuffix && !hasPerUnitSuffix) role = 'qty';
     else if ((hasPricePrefix || hasMoneySuffix || hasPerUnitSuffix) && !hasQtyPrefix) role = 'price';
     else if (hasMultiplyBefore) role = prevToken.role === 'price' ? 'qty' : 'price';
     const labeledPrice = role === 'price' && hasPricePrefix;
     const afterUnit = startsWithUnitWord(after);
 
-    // Model numbers ("iPhone 15", "Nokia 3310") and packaging weights/volumes ("Sữa 850g", "2 hộp sữa 850 g", "2 hộp 850g sữa") after product or unit words cannot act as sale figures.
-    const gluedPackaging = role === 'unknown' && unit === undefined && !hasMultiplyAfter && PACKAGING_GLUED.test(after) && (hasProductBefore || hasUnitBefore);
+    // Model numbers ("iPhone 15", "Nokia 3310") and packaging weights/volumes ("Sữa 850g", "2 hộp sữa 850 g", "2 hộp 850g sữa") after product or unit words cannot act as sale figures, unless a bulk product ("Tinh dầu 500 ml giá 200đ/ml") is priced in that exact unit with no container count.
+    const gluedPackaging = role === 'unknown' && unit === undefined && !hasMultiplyAfter && !unitSoldPerSameUnit && PACKAGING_GLUED.test(after) && (hasProductBefore || hasUnitBefore);
     const spacedPackaging =
       role === 'unknown' &&
       unit === undefined &&
       !hasMultiplyAfter &&
+      !unitSoldPerSameUnit &&
       PACKAGING_SPACED.test(after) &&
       (hasProductBefore || hasUnitBefore) &&
       (hasUnitBefore || tokens.some((t) => !t.embeddedInProduct));
     const packagingSpec = gluedPackaging || spacedPackaging;
     const embeddedInProduct =
+      !unitSoldPerSameUnit &&
       role === 'unknown' &&
       hasProductBefore &&
       !hasMultiplyAfter &&
@@ -425,7 +446,7 @@ function extractFigureTokens(body: string): FigureToken[] {
   return tokens;
 }
 
-const isUsableToken = (token: FigureToken): boolean => token.role !== 'total' && token.role !== 'discount';
+const isUsableToken = (token: FigureToken): boolean => token.role !== 'total' && token.role !== 'discount' && token.role !== 'tax';
 
 function chooseClauseTokens(plainText: string, collapsedText: string): FigureToken[] {
   const collapsedTokens = extractFigureTokens(collapsedText);
@@ -488,10 +509,14 @@ function splitSubPieces(bodySeg: string): SubPiece[] {
       const right = bodySeg.slice(idx + sep.length);
       const bothSidesHaveClauseData = /\d/u.test(left) && (/\d/u.test(right) || AMP_RIGHT_CUE.test(right));
       if (!bothSidesHaveClauseData && !AMP_RIGHT_CUE.test(right)) continue;
+    } else if (sep.includes('/')) {
+      const left = bodySeg.slice(start, idx);
+      const right = bodySeg.slice(idx + sep.length);
+      if (!/\d/u.test(left) || !(/\d/u.test(right) || AMP_RIGHT_CUE.test(right))) continue;
     }
     const piece = summarizeSubPiece(bodySeg.slice(start, idx), afterConjunction);
     if (piece.text !== '' && !piece.isBuyerOnly) pieces.push(piece);
-    afterConjunction = !sep.includes(',');
+    afterConjunction = !sep.includes(',') && !sep.includes('/') && !sep.includes('|');
     start = idx + sep.length;
   }
   const tail = summarizeSubPiece(bodySeg.slice(start), afterConjunction);
@@ -522,9 +547,12 @@ function shouldMergePiece(cur: SourceClause, piece: SubPiece): boolean {
   const curTok = cur.usable[0]!;
   const pTok = piece.usable[0]!;
   if (curTok.role !== 'unknown' && curTok.role === pTok.role) return false;
-  // Two non-empty product descriptions ("áo thun giá 150k, 2 quần") belong to separate items, whereas ("bánh A giá 120k, sl 10") or ("giá trị 12500000.5 VND, 1 gói") do not introduce a second product.
+  // Two non-empty product descriptions ("áo thun giá 150k, 2 quần") belong to separate items, whereas ("bánh A giá 120k, sl 10"), ("giá trị 12500000.5 VND, 1 gói"), or one compound product name joined by "và"/"&" ("2 gói dịch vụ thiết kế và in ấn giá 500k") stay together.
   const curProduct = descriptionTokens(cur.text).hasProduct;
-  if (curProduct && piece.hasProductWords) return false;
+  if (curProduct && piece.hasProductWords) {
+    if (piece.afterConjunction && curTok.role !== 'price' && pTok.role === 'price' && !/^\d/u.test(piece.text)) return true;
+    return false;
+  }
   return true;
 }
 
@@ -730,6 +758,38 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
         segClauses.push(cur);
       }
     }
+    const prevClause = clauses[clauses.length - 1];
+    if (
+      !isBullet &&
+      segPrefixRates.size === 0 &&
+      segClauses.length === 1 &&
+      prevClause &&
+      prevClause.usable.length === 1 &&
+      prevClause.usable[0]!.role === 'qty' &&
+      !descriptionTokens(prevClause.text).hasProduct &&
+      prevClause.localRates.size === 0
+    ) {
+      const nextClause = segClauses[0]!;
+      if (!nextClause.usable.some((t) => t.role === 'qty') && nextClause.usable.length <= 1) {
+        const combinedPlain = `${prevClause.plainText}, ${nextClause.plainText}`;
+        const combinedText = collapseGroupedSpaces(combinedPlain);
+        const combinedTokens = chooseClauseTokens(combinedPlain, combinedText);
+        const combinedUsable = combinedTokens.filter(isUsableToken);
+        const combinedDesc = descriptionTokens(combinedText);
+        clauses[clauses.length - 1] = {
+          plainText: combinedPlain,
+          text: combinedText,
+          tokens: combinedTokens,
+          usable: combinedUsable,
+          localRates: new Set(nextClause.localRates),
+          exactTokens: combinedDesc.exact,
+          foldedTokens: combinedDesc.folded,
+        };
+        if (nextClause.localRates.size > 0) anyLocalVatSeen = true;
+        anyItemSeen = true;
+        continue;
+      }
+    }
     for (const c of segClauses) {
       if (segPrefixRates.size > 0 && c.localRates.size === 0) {
         for (const r of segPrefixRates) c.localRates.add(r);
@@ -747,6 +807,12 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
 function clauseAcceptsFigures(clause: SourceClause, quantity: string, unitPrice: string): boolean {
   const usable = clause.usable;
   if (usable.length < 2) return false;
+  const distinctPriceValues = new Set(usable.filter((t) => t.role === 'price').map((t) => t.value));
+  const distinctLabeledPrices = new Set(usable.filter((t) => t.role === 'price' && t.labeledPrice).map((t) => t.value));
+  const nonEmbeddedNonPriceCount = usable.filter((t) => !t.embeddedInProduct && !t.packagingSpec && t.role !== 'price').length;
+  // When unsplit text still mixes multiple prices across multiple item candidates, fail closed rather than cross-pairing.
+  if (distinctLabeledPrices.size > 1) return false;
+  if (distinctPriceValues.size > 1 && nonEmbeddedNonPriceCount > 1) return false;
   const hasExplicitQty = usable.some((t) => t.role === 'qty');
   const hasExplicitPrice = usable.some((t) => t.role === 'price');
   const hasLabeledPrice = usable.some((t) => t.role === 'price' && t.labeledPrice);
@@ -786,12 +852,22 @@ function clauseAcceptsRate(clause: SourceClause, sharedRates: ReadonlySet<string
 
 function scoreClauseMatch(description: string, clause: SourceClause): number {
   const { exact } = descriptionTokens(description);
-  let score = 0;
+  let overlap = 0;
+  let matchedCount = 0;
   for (const tok of exact) {
-    if (clause.exactTokens.has(tok)) score += 2;
-    else if (clause.foldedTokens.has(foldDiacritics(tok))) score += 1;
+    if (clause.exactTokens.has(tok)) {
+      overlap += 2;
+      matchedCount += 1;
+    } else if (clause.foldedTokens.has(foldDiacritics(tok))) {
+      overlap += 1;
+      matchedCount += 1;
+    }
   }
-  return score;
+  if (overlap === 0) return 0;
+  const clauseProductCount = [...clause.exactTokens].filter((t) => !UNIT_ONLY_EXACT.has(t) && !ATTRIBUTE_ONLY_EXACT.has(t)).length;
+  const missingFromLine = Math.max(0, clauseProductCount - matchedCount);
+  const extraInLine = Math.max(0, exact.size - matchedCount);
+  return Math.max(1, overlap * 16 - missingFromLine * 2 - extraInLine * 2);
 }
 
 function maxBipartiteMatch(leftCount: number, rightCount: number, edges: readonly number[][]): number {
