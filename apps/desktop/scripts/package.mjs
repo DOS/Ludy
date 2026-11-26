@@ -87,45 +87,134 @@ export function resolveBundledModernSigntool(req = createRequire(import.meta.url
   return join(dirname(dirname(windowsSignEntry)), 'vendor', 'signtool.exe');
 }
 
-function importEphemeralPfx(pfxFile) {
-  const ps = [
-    "$ErrorActionPreference = 'Stop'",
-    '$secure = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force',
-    '$pfxCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($env:LUDY_PFX_FILE, $secure)',
-    'if (-not $pfxCert.Thumbprint) { throw "PFX certificate has no thumbprint" }',
-    '$existingStorePath = "Cert:\\CurrentUser\\My\\$($pfxCert.Thumbprint)"',
-    'if (Test-Path -LiteralPath $existingStorePath) {',
-    '  throw "Certificate $($pfxCert.Thumbprint) already exists in Cert:\\CurrentUser\\My; refusing to overwrite or delete pre-existing store entry. Pass WINDOWS_CERT_SHA1 instead."',
-    '}',
-    "$cert = Import-PfxCertificate -FilePath $env:LUDY_PFX_FILE -CertStoreLocation 'Cert:\\CurrentUser\\My' -Password $secure",
-    'if (-not $cert.Thumbprint) { throw "Imported PFX certificate has no thumbprint" }',
-    'Write-Output $cert.Thumbprint',
-  ].join('\n');
-  const thumb = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+function defaultRunPowerShell(psScript, env) {
+  return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psScript], {
     encoding: 'utf8',
     maxBuffer: 1024 * 1024,
-    env: { ...process.env, LUDY_PFX_FILE: pfxFile },
-  }).trim();
-  if (!SHA1_HEX.test(thumb)) {
-    throw new Error('Imported PFX certificate returned an invalid thumbprint');
-  }
-  return thumb.toUpperCase();
+    env: { ...process.env, ...env },
+  });
 }
 
-function removeEphemeralCert(thumbprint) {
-  if (!thumbprint || !SHA1_HEX.test(thumbprint)) return;
-  const ps = [
-    "$ErrorActionPreference = 'SilentlyContinue'",
-    'if ($env:LUDY_CERT_THUMBPRINT -match "^[0-9a-fA-F]{40}$") {',
-    '  $storePath = "Cert:\\CurrentUser\\My\\$($env:LUDY_CERT_THUMBPRINT)"',
-    '  if (Test-Path -LiteralPath $storePath) { Remove-Item -LiteralPath $storePath -DeleteKey }',
+export function normalizeThumbprintList(raw) {
+  const items = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(/[,\s]+/) : [];
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    if (typeof item !== 'string') continue;
+    const clean = item.trim().toUpperCase();
+    if (!SHA1_HEX.test(clean) || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+  }
+  return out;
+}
+
+export function parseImportedPfxResult(rawOutput) {
+  const trimmed = rawOutput.trim();
+  if (!trimmed) {
+    throw new Error('Imported PFX certificate returned empty output');
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error('Imported PFX certificate returned malformed metadata');
+  }
+  const leaf = typeof parsed?.leaf === 'string' ? parsed.leaf.trim().toUpperCase() : '';
+  if (!SHA1_HEX.test(leaf)) {
+    throw new Error('Imported PFX certificate returned an invalid leaf thumbprint');
+  }
+  const cleanupThumbprints = normalizeThumbprintList(parsed?.cleanup);
+  if (!cleanupThumbprints.includes(leaf)) {
+    cleanupThumbprints.unshift(leaf);
+  }
+  return { leafThumbprint: leaf, cleanupThumbprints };
+}
+
+function buildImportEphemeralPfxScript() {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    '$secure = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force',
+    '$col = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection',
+    '$col.Import($env:LUDY_PFX_FILE, $secure, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)',
+    '$importedThumbs = @()',
+    'try {',
+    '  $leaves = @($col | Where-Object { $_.HasPrivateKey })',
+    '  if ($leaves.Count -ne 1) {',
+    '    throw "PFX must contain exactly 1 certificate with a private key (found $($leaves.Count))"',
+    '  }',
+    '  $leafThumb = ($leaves[0].Thumbprint -replace "\\s+", "").ToUpperInvariant()',
+    '  if ($leafThumb -notmatch "^[0-9A-F]{40}$") {',
+    '    throw "PFX private-key leaf certificate has no valid SHA-1 thumbprint"',
+    '  }',
+    '  $preExisting = @{}',
+    '  foreach ($c in (Get-ChildItem -LiteralPath "Cert:\\CurrentUser\\My")) {',
+    '    if ($c.Thumbprint) { $preExisting[($c.Thumbprint -replace "\\s+", "").ToUpperInvariant()] = $true }',
+    '  }',
+    '  if ($preExisting.ContainsKey($leafThumb)) {',
+    '    throw "Certificate $leafThumb already exists in Cert:\\CurrentUser\\My; refusing to overwrite or delete pre-existing store entry. Pass WINDOWS_CERT_SHA1 instead."',
+    '  }',
+    '  $cleanupCandidates = @()',
+    '  foreach ($c in $col) {',
+    '    if ($c.Thumbprint) {',
+    '      $t = ($c.Thumbprint -replace "\\s+", "").ToUpperInvariant()',
+    '      if ($t -match "^[0-9A-F]{40}$" -and -not $preExisting.ContainsKey($t) -and ($cleanupCandidates -notcontains $t)) {',
+    '        $cleanupCandidates += $t',
+    '      }',
+    '    }',
+    '  }',
+    '  try {',
+    '    $imported = @(Import-PfxCertificate -FilePath $env:LUDY_PFX_FILE -CertStoreLocation "Cert:\\CurrentUser\\My" -Password $secure)',
+    '    foreach ($item in $imported) {',
+    '      if ($item.Thumbprint) {',
+    '        $t = ($item.Thumbprint -replace "\\s+", "").ToUpperInvariant()',
+    '        if ($t -match "^[0-9A-F]{40}$" -and -not $preExisting.ContainsKey($t) -and ($importedThumbs -notcontains $t)) {',
+    '          $importedThumbs += $t',
+    '        }',
+    '      }',
+    '    }',
+    '    if ($importedThumbs -notcontains $leafThumb) {',
+    '      throw "Expected private-key leaf thumbprint $leafThumb was not imported into Cert:\\CurrentUser\\My"',
+    '    }',
+    '    $leafInStore = Get-Item -LiteralPath "Cert:\\CurrentUser\\My\\$leafThumb" -ErrorAction Stop',
+    '    if (-not $leafInStore.HasPrivateKey) {',
+    '      throw "Imported leaf certificate $leafThumb in Cert:\\CurrentUser\\My is missing private key"',
+    '    }',
+    '  } catch {',
+    '    foreach ($t in @($importedThumbs + $cleanupCandidates | Select-Object -Unique)) {',
+    '      if ($t -match "^[0-9A-F]{40}$") {',
+    '        $p = "Cert:\\CurrentUser\\My\\$t"',
+    '        if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -DeleteKey -ErrorAction SilentlyContinue }',
+    '      }',
+    '    }',
+    '    throw',
+    '  }',
+    '  @{ leaf = $leafThumb; cleanup = @($importedThumbs) } | ConvertTo-Json -Compress',
+    '} finally {',
+    '  foreach ($c in $col) { $c.Dispose() }',
     '}',
   ].join('\n');
-  execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
-    encoding: 'utf8',
-    maxBuffer: 1024 * 1024,
-    env: { ...process.env, LUDY_CERT_THUMBPRINT: thumbprint },
-  });
+}
+
+export function importEphemeralPfx(pfxFile, runPowerShell = defaultRunPowerShell) {
+  const out = runPowerShell(buildImportEphemeralPfxScript(), { LUDY_PFX_FILE: pfxFile });
+  return parseImportedPfxResult(out);
+}
+
+export function removeEphemeralCerts(thumbprints, runPowerShell = defaultRunPowerShell) {
+  const valid = normalizeThumbprintList(thumbprints);
+  if (valid.length === 0) return;
+  const ps = [
+    "$ErrorActionPreference = 'SilentlyContinue'",
+    'foreach ($raw in ($env:LUDY_CERT_THUMBRINTS -split ",")) {',
+    '  $t = $raw.Trim()',
+    '  if ($t -match "^[0-9a-fA-F]{40}$") {',
+    '    $storePath = "Cert:\\CurrentUser\\My\\$t"',
+    '    if (Test-Path -LiteralPath $storePath) { Remove-Item -LiteralPath $storePath -DeleteKey }',
+    '  }',
+    '}',
+  ].join('\n');
+  runPowerShell(ps, { LUDY_CERT_THUMBRINTS: valid.join(',') });
 }
 
 async function prepareSquirrelVendor(req, stagingParent, signing) {
@@ -195,21 +284,22 @@ if (isMainEntry(process.argv[1], fileURLToPath(import.meta.url))) {
   await rm(packed, { recursive: true, force: true });
   await rm(installer, { recursive: true, force: true });
 
-  let ephemeralThumbprint = null;
+  let ephemeralCleanupThumbprints = [];
   let effectiveSigning = signing;
   try {
     if (signing.enabled && signing.mode === 'pfx') {
-      ephemeralThumbprint = importEphemeralPfx(signing.certificateFile);
+      const staged = importEphemeralPfx(signing.certificateFile);
+      ephemeralCleanupThumbprints = staged.cleanupThumbprints;
       // Remove PFX path/password from process.env immediately so @electron/windows-sign uses only the store thumbprint.
       delete process.env.WINDOWS_CERTIFICATE_FILE;
       delete process.env.WINDOWS_CERTIFICATE_PASSWORD;
       effectiveSigning = {
         enabled: true,
         mode: 'thumbprint',
-        thumbprint: ephemeralThumbprint,
+        thumbprint: staged.leafThumbprint,
         timestampServer: signing.timestampServer,
         signtoolPath: signing.signtoolPath,
-        signWithParams: ['/fd', 'sha256', '/tr', signing.timestampServer, '/td', 'sha256', '/sha1', ephemeralThumbprint],
+        signWithParams: ['/fd', 'sha256', '/tr', signing.timestampServer, '/td', 'sha256', '/sha1', staged.leafThumbprint],
       };
     }
 
@@ -282,11 +372,11 @@ if (isMainEntry(process.argv[1], fileURLToPath(import.meta.url))) {
       await rm(vendorDir, { recursive: true, force: true });
     }
   } finally {
-    if (ephemeralThumbprint) {
+    if (ephemeralCleanupThumbprints.length > 0) {
       try {
-        removeEphemeralCert(ephemeralThumbprint);
+        removeEphemeralCerts(ephemeralCleanupThumbprints);
       } catch (cleanupError) {
-        console.error(`warning: failed removing ephemeral certificate from store: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+        console.error(`warning: failed removing ephemeral certificates from store: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
       }
     }
   }

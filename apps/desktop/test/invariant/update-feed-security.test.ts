@@ -23,6 +23,7 @@ import {
   isDisallowedRemoteHost,
   isPrivateOrReservedIp,
   MAX_MANIFEST_BYTES,
+  MAX_PACKAGE_BYTES,
   parseDesktopReleaseManifest,
   parseFeedOrigin,
   parseReleasesManifest,
@@ -108,12 +109,17 @@ describe('update feed SSRF, origin pinning, and traversal invariants', () => {
       '224.0.0.1',
       '::1',
       '::',
+      '::127.0.0.1',
       'fe80::1',
+      'fe81::1',
       'fc00::1',
       'fd12:3456::1',
       '::ffff:127.0.0.1',
       '::ffff:a9fe:a9fe',
       '::ffff:10.0.0.1',
+      '::ffff:0:127.0.0.1',
+      '::ffff:0:10.0.0.1',
+      '2002:7f00:1::1',
     ]) {
       expect(isPrivateOrReservedIp(ip), ip).toBe(true);
     }
@@ -121,9 +127,31 @@ describe('update feed SSRF, origin pinning, and traversal invariants', () => {
     expect(isPrivateOrReservedIp('2606:4700:4700::1111')).toBe(false);
   });
 
-  it('blocks disallowed remote hostnames, raw path traversal, and off-origin feeds', () => {
-    for (const host of ['metadata', 'localhost', 'db.internal', 'printer.local', 'foo.localhost', '169.254.169.254']) {
+  it('blocks disallowed remote hostnames, trailing-dot bypasses, raw path traversal, and off-origin feeds', () => {
+    for (const host of [
+      '',
+      '.',
+      'metadata',
+      'localhost',
+      'localhost.',
+      'db.internal',
+      'metadata.google.internal.',
+      'printer.local',
+      'printer.local.',
+      'intranet.',
+      'foo.localhost',
+      'foo.localhost.',
+      '169.254.169.254',
+    ]) {
       expect(isDisallowedRemoteHost(host), host).toBe(true);
+    }
+    for (const trailingUrl of [
+      'https://localhost./feed',
+      'https://metadata.google.internal./feed',
+      'https://printer.local./feed',
+      'https://intranet./feed',
+    ]) {
+      expect(resolveFeedUrl(trailingUrl).ok, trailingUrl).toBe(false);
     }
     expect(isDisallowedRemoteHost('updates.example.vn')).toBe(false);
     expect(unwrapIpLiteral('[2606:4700:4700::1111]')).toBe('2606:4700:4700::1111');
@@ -135,7 +163,7 @@ describe('update feed SSRF, origin pinning, and traversal invariants', () => {
     expect(resolveFeedUrl('https://evil.example/feed', { allowedOrigin: 'https://updates.example.vn' }).ok).toBe(false);
   });
 
-  it('rejects arbitrary HTTP download URLs, cross-origin URLs, traversal, and HTML in RELEASES', () => {
+  it('rejects arbitrary HTTP download URLs, cross-origin URLs, traversal, oversized entries, and HTML in RELEASES', () => {
     const cases = [
       `${SHA1_B} http://updates.example.vn/ludy-desktop/LudyDesktop-0.1.1-full.nupkg 100`,
       `${SHA1_B} https://evil.example/ludy-desktop/LudyDesktop-0.1.1-full.nupkg 100`,
@@ -144,6 +172,7 @@ describe('update feed SSRF, origin pinning, and traversal invariants', () => {
       `${SHA1_B} sub/LudyDesktop-0.1.1-full.nupkg 100`,
       `${SHA1_B} LudyDesktop-0.1.1-full.nupkg?token=abc 100`,
       `${SHA1_B} file:///C:/evil.nupkg 100`,
+      `${SHA1_B} LudyDesktop-0.1.1-full.nupkg ${MAX_PACKAGE_BYTES + 1}`,
       'not-a-sha1 LudyDesktop-0.1.1-full.nupkg 100',
       '<!doctype html><html><body>error</body></html>',
     ];
@@ -452,6 +481,13 @@ describe('update signature and trusted publisher invariants', () => {
       timestampMode: 'rfc3161' | 'legacy' | 'none';
       tsImprintOid?: string;
       tsaSignerAlgOid?: string;
+      forgedImprint?: Buffer;
+      duplicateRfc3161Attr?: boolean;
+      twoTokensInSet?: boolean;
+      coexistLegacy?: boolean;
+      multiSignerInfos?: boolean;
+      extraChildInExplicit?: boolean;
+      truncatedExplicit?: boolean;
     }): Buffer => {
       const spcIndirect = tlv(
         0x30,
@@ -460,15 +496,22 @@ describe('update signature and trusted publisher invariants', () => {
           tlv(0x30, Buffer.concat([algId(opts.fileDigestOid), tlv(0x04, Buffer.alloc(32, 1))])),
         ]),
       );
-      const encap = tlv(0x30, Buffer.concat([oidTlv('1.3.6.1.4.1.311.2.1.4'), tlv(0xa0, spcIndirect)]));
-      let unsignedAttr: Buffer = Buffer.alloc(0);
-      if (opts.timestampMode === 'rfc3161') {
+      const spcWrapper = opts.truncatedExplicit
+        ? tlv(0xa0, Buffer.from([0x30, 0x7f]))
+        : opts.extraChildInExplicit
+          ? tlv(0xa0, Buffer.concat([spcIndirect, tlv(0x05, Buffer.alloc(0))]))
+          : tlv(0xa0, spcIndirect);
+      const encap = tlv(0x30, Buffer.concat([oidTlv('1.3.6.1.4.1.311.2.1.4'), spcWrapper]));
+
+      const encryptedSignature = Buffer.from('test-encrypted-signature-bytes');
+      const signatureSha256 = createHash('sha256').update(encryptedSignature).digest();
+      const mkTsToken = (imprint: Buffer): Buffer => {
         const tstInfo = tlv(
           0x30,
           Buffer.concat([
             tlv(0x02, Buffer.from([1])),
             oidTlv('1.2.3.4'),
-            tlv(0x30, Buffer.concat([algId(opts.tsImprintOid ?? OID_SHA256), tlv(0x04, Buffer.alloc(32, 2))])),
+            tlv(0x30, Buffer.concat([algId(opts.tsImprintOid ?? OID_SHA256), tlv(0x04, imprint)])),
           ]),
         );
         const tsEncap = tlv(0x30, Buffer.concat([oidTlv('1.2.840.113549.1.9.16.1.4'), tlv(0xa0, tlv(0x04, tstInfo))]));
@@ -477,35 +520,99 @@ describe('update signature and trusted publisher invariants', () => {
           0x30,
           Buffer.concat([tlv(0x02, Buffer.from([3])), tlv(0x31, algId(opts.tsaSignerAlgOid ?? OID_SHA256)), tsEncap, tlv(0x31, tsSigner)]),
         );
-        const tsToken = tlv(0x30, Buffer.concat([oidTlv('1.2.840.113549.1.7.2'), tlv(0xa0, tsSignedData)]));
-        const attr = tlv(0x30, Buffer.concat([oidTlv('1.3.6.1.4.1.311.3.3.1'), tlv(0x31, tsToken)]));
-        unsignedAttr = tlv(0xa1, attr);
+        return tlv(0x30, Buffer.concat([oidTlv('1.2.840.113549.1.7.2'), tlv(0xa0, tsSignedData)]));
+      };
+
+      const attrItems: Buffer[] = [];
+      if (opts.timestampMode === 'rfc3161') {
+        const goodToken = mkTsToken(opts.forgedImprint ?? signatureSha256);
+        const dummyBadToken = mkTsToken(Buffer.alloc(32, 9));
+        if (opts.twoTokensInSet) {
+          attrItems.push(tlv(0x30, Buffer.concat([oidTlv('1.3.6.1.4.1.311.3.3.1'), tlv(0x31, Buffer.concat([dummyBadToken, goodToken]))])));
+        } else {
+          attrItems.push(tlv(0x30, Buffer.concat([oidTlv('1.3.6.1.4.1.311.3.3.1'), tlv(0x31, goodToken)])));
+        }
+        if (opts.duplicateRfc3161Attr) {
+          attrItems.push(tlv(0x30, Buffer.concat([oidTlv('1.3.6.1.4.1.311.3.3.1'), tlv(0x31, dummyBadToken)])));
+        }
+        if (opts.coexistLegacy) {
+          attrItems.push(tlv(0x30, Buffer.concat([oidTlv('1.2.840.113549.1.9.6'), tlv(0x31, Buffer.from([0x05, 0x00]))])));
+        }
       } else if (opts.timestampMode === 'legacy') {
-        unsignedAttr = tlv(0xa1, tlv(0x30, Buffer.concat([oidTlv('1.2.840.113549.1.9.6'), tlv(0x31, Buffer.from([0x05, 0x00]))])));
+        attrItems.push(tlv(0x30, Buffer.concat([oidTlv('1.2.840.113549.1.9.6'), tlv(0x31, Buffer.from([0x05, 0x00]))])));
       }
+      const unsignedAttr: Buffer = attrItems.length > 0 ? tlv(0xa1, Buffer.concat(attrItems)) : Buffer.alloc(0);
+
+      const sid = tlv(0x30, Buffer.concat([tlv(0x30, Buffer.alloc(0)), tlv(0x02, Buffer.from([1]))]));
       const signerInfo = tlv(
         0x30,
-        Buffer.concat([tlv(0x02, Buffer.from([1])), algId(opts.signerAlgOid), unsignedAttr]),
+        Buffer.concat([
+          tlv(0x02, Buffer.from([1])),
+          sid,
+          algId(opts.signerAlgOid),
+          algId('1.2.840.113549.1.1.11'),
+          tlv(0x04, encryptedSignature),
+          unsignedAttr,
+        ]),
       );
+      const signerSet = opts.multiSignerInfos ? tlv(0x31, Buffer.concat([signerInfo, signerInfo])) : tlv(0x31, signerInfo);
       const signedData = tlv(
         0x30,
-        Buffer.concat([tlv(0x02, Buffer.from([1])), tlv(0x31, algId(opts.signerAlgOid)), encap, tlv(0x31, signerInfo)]),
+        Buffer.concat([tlv(0x02, Buffer.from([1])), tlv(0x31, algId(opts.signerAlgOid)), encap, signerSet]),
       );
       return tlv(0x30, Buffer.concat([oidTlv('1.2.840.113549.1.7.2'), tlv(0xa0, signedData)]));
     };
 
-    // Valid SHA-256 /fd + SHA-256 /td TSTInfo.messageImprint signed by a SHA-384 TSA cert succeeds.
+    // Valid SHA-256 /fd + SHA-256 SignerInfo + SHA-256 /td TSTInfo.messageImprint bound to SignerInfo signature succeeds.
     expect(
       inspectAuthenticodePkcs7Der(
         buildCms({ fileDigestOid: OID_SHA256, signerAlgOid: OID_SHA256, timestampMode: 'rfc3161', tsImprintOid: OID_SHA256, tsaSignerAlgOid: OID_SHA384 }),
       ),
     ).toEqual({
       fileDigestOid: OID_SHA256,
+      signerDigestOid: OID_SHA256,
       timestampType: 'rfc3161',
       tsDigestOid: OID_SHA256,
     });
 
-    // Reject weak /fd SHA-1 in SpcIndirectDataContent even if SignerInfo claims SHA-256, and weak /td SHA-1 in TSTInfo even if TSA SignerInfo is SHA-256.
+    // Reject forged/mismatched RFC 3161 imprint, duplicate tokens/attributes, multiple SignerInfos, and bounded [0] wrapper bypasses.
+    expect(() =>
+      inspectAuthenticodePkcs7Der(
+        buildCms({
+          fileDigestOid: OID_SHA256,
+          signerAlgOid: OID_SHA256,
+          timestampMode: 'rfc3161',
+          forgedImprint: Buffer.alloc(32, 0xaa),
+        }),
+      ),
+    ).toThrow(/messageImprint digest does not match/);
+    expect(() =>
+      inspectAuthenticodePkcs7Der(
+        buildCms({ fileDigestOid: OID_SHA256, signerAlgOid: OID_SHA256, timestampMode: 'rfc3161', twoTokensInSet: true }),
+      ),
+    ).toThrow(/exactly one timestamp token/);
+    expect(() =>
+      inspectAuthenticodePkcs7Der(
+        buildCms({ fileDigestOid: OID_SHA256, signerAlgOid: OID_SHA256, timestampMode: 'rfc3161', duplicateRfc3161Attr: true }),
+      ),
+    ).toThrow(/Duplicate RFC 3161/);
+    expect(() =>
+      inspectAuthenticodePkcs7Der(
+        buildCms({ fileDigestOid: OID_SHA256, signerAlgOid: OID_SHA256, timestampMode: 'rfc3161', multiSignerInfos: true }),
+      ),
+    ).toThrow(/exactly one SignerInfo/);
+    expect(() =>
+      inspectAuthenticodePkcs7Der(
+        buildCms({ fileDigestOid: OID_SHA256, signerAlgOid: OID_SHA256, timestampMode: 'rfc3161', extraChildInExplicit: true }),
+      ),
+    ).toThrow(/exactly one ASN\.1 DER element/);
+    expect(() =>
+      inspectAuthenticodePkcs7Der(
+        buildCms({ fileDigestOid: OID_SHA256, signerAlgOid: OID_SHA256, timestampMode: 'rfc3161', truncatedExplicit: true }),
+      ),
+    ).toThrow(/Truncated ASN\.1 DER TLV/);
+
+    // Reject weak /fd SHA-1, weak /fd SignerInfo.digestAlgorithm SHA-1, weak /td SHA-1, and co-existing legacy counter-sign.
     const psValidWinVerify = async (_s: string, _e: Record<string, string>, stdin?: string) => {
       const paths = JSON.parse(stdin ?? '[]') as string[];
       return JSON.stringify(paths.map((p) => ({ path: p, status: 'Valid', thumbprint: THUMB, hasTimestamp: true })));
@@ -531,12 +638,26 @@ describe('update signature and trusted publisher invariants', () => {
     );
     await expect(verifyWindowsAuthenticodeFiles([weakFdPs1], THUMB, psValidWinVerify, 'win32')).rejects.toThrow(/SHA-256 digest/);
 
+    const weakSignerAlgPs1 = mkPs1(
+      'weak-signer-alg.ps1',
+      manifestJson,
+      buildCms({ fileDigestOid: OID_SHA256, signerAlgOid: OID_SHA1, timestampMode: 'rfc3161', tsImprintOid: OID_SHA256 }),
+    );
+    await expect(verifyWindowsAuthenticodeFiles([weakSignerAlgPs1], THUMB, psValidWinVerify, 'win32')).rejects.toThrow(/SHA-256 digest/);
+
     const weakTdPs1 = mkPs1(
       'weak-td.ps1',
       manifestJson,
       buildCms({ fileDigestOid: OID_SHA256, signerAlgOid: OID_SHA256, timestampMode: 'rfc3161', tsImprintOid: OID_SHA1, tsaSignerAlgOid: OID_SHA256 }),
     );
     await expect(verifyWindowsAuthenticodeFiles([weakTdPs1], THUMB, psValidWinVerify, 'win32')).rejects.toThrow(/SHA-256 digest/);
+
+    const coexistLegacyPs1 = mkPs1(
+      'coexist-legacy.ps1',
+      manifestJson,
+      buildCms({ fileDigestOid: OID_SHA256, signerAlgOid: OID_SHA256, timestampMode: 'rfc3161', coexistLegacy: true }),
+    );
+    await expect(verifyWindowsAuthenticodeFiles([coexistLegacyPs1], THUMB, psValidWinVerify, 'win32')).rejects.toThrow(/RFC 3161/);
 
     const legacyTsPs1 = mkPs1(
       'legacy-ts.ps1',

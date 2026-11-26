@@ -5,7 +5,13 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { resolveBundledModernSigntool } from '../scripts/package.mjs';
+import {
+  importEphemeralPfx,
+  normalizeThumbprintList,
+  parseImportedPfxResult,
+  removeEphemeralCerts,
+  resolveBundledModernSigntool,
+} from '../scripts/package.mjs';
 import {
   buildPackagerWindowsSign,
   buildWinstallerSignOptions,
@@ -359,5 +365,60 @@ describe('resolveBundledModernSigntool', () => {
 
     const localReq = createRequire(join(dir, 'index.js'));
     expect(resolveBundledModernSigntool(localReq)).toBe(expectedSigntool);
+  });
+});
+
+describe('ephemeral multi-certificate PFX staging and cleanup', () => {
+  const leaf = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
+  const intermediate = 'b1c2d3e4f5061728394a5b6c7d8e9f0123456789';
+
+  it('normalizes and parses multi-certificate PFX results and cleans up all newly imported certificates', () => {
+    expect(normalizeThumbprintList([leaf, ` ${intermediate} `, leaf.toUpperCase(), 'bad-thumb', ''])).toEqual([
+      leaf.toUpperCase(),
+      intermediate.toUpperCase(),
+    ]);
+
+    const parsed = parseImportedPfxResult(
+      JSON.stringify({
+        leaf: leaf,
+        cleanup: [leaf, intermediate],
+      }),
+    );
+    expect(parsed).toEqual({
+      leafThumbprint: leaf.toUpperCase(),
+      cleanupThumbprints: [leaf.toUpperCase(), intermediate.toUpperCase()],
+    });
+
+    expect(() => parseImportedPfxResult('')).toThrow(/empty output/);
+    expect(() => parseImportedPfxResult('not-json')).toThrow(/malformed metadata/);
+    expect(() => parseImportedPfxResult(JSON.stringify({ leaf: 'short' }))).toThrow(/invalid leaf thumbprint/);
+
+    let seenImportScript = '';
+    let seenImportEnv = {};
+    const staged = importEphemeralPfx('C:\\tmp\\bundle.pfx', (psScript, env) => {
+      seenImportScript = psScript;
+      seenImportEnv = env;
+      return JSON.stringify({ leaf, cleanup: [leaf, intermediate] });
+    });
+    expect(staged.leafThumbprint).toBe(leaf.toUpperCase());
+    expect(staged.cleanupThumbprints).toEqual([leaf.toUpperCase(), intermediate.toUpperCase()]);
+    expect(seenImportEnv).toEqual({ LUDY_PFX_FILE: 'C:\\tmp\\bundle.pfx' });
+    expect(seenImportScript).toContain('X509Certificate2Collection');
+    expect(seenImportScript).toContain('$_.HasPrivateKey');
+    expect(seenImportScript).toContain('$leaves.Count -ne 1');
+    expect(seenImportScript).toContain('$preExisting.ContainsKey($leafThumb)');
+    expect(seenImportScript).toContain('Remove-Item -LiteralPath $p -DeleteKey');
+
+    let seenCleanupScript = '';
+    let seenCleanupEnv = {};
+    removeEphemeralCerts([leaf, intermediate, 'not-hex'], (psScript, env) => {
+      seenCleanupScript = psScript;
+      seenCleanupEnv = env;
+      return '';
+    });
+    expect(seenCleanupScript).toContain('Remove-Item -LiteralPath $storePath -DeleteKey');
+    expect(seenCleanupEnv).toEqual({
+      LUDY_CERT_THUMBRINTS: `${leaf.toUpperCase()},${intermediate.toUpperCase()}`,
+    });
   });
 });

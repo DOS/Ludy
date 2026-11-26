@@ -44,7 +44,7 @@ jobs:
     timeout-minutes: 35
     permissions:
       contents: read
-      checks: read
+      actions: read
     outputs:
       mode: ${{ steps.target.outputs.mode }}
       version: ${{ steps.target.outputs.version }}
@@ -133,16 +133,16 @@ jobs:
             local workflow_path="$2"
             shift 2
             local run_id jobs name row status conclusion
-            run_id="$(gh api "repos/$REPO/actions/runs?head_sha=$target_sha&per_page=100" --paginate \
-              --jq "[.workflow_runs[] | select(.path == \"$workflow_path\" and .head_branch == \"main\")] | sort_by(.created_at) | last | .id // empty")"
+            run_id="$(WF_PATH="$workflow_path" gh api "repos/$REPO/actions/runs?head_sha=$target_sha&per_page=100" --paginate --slurp \
+              --jq '[.[].workflow_runs[] | select(.path == env.WF_PATH and .head_branch == "main" and (.event == "push" or .event == "workflow_dispatch") and .head_repository.full_name == env.REPO and .status == "completed" and .conclusion == "success")] | sort_by(.created_at) | last | .id // empty')"
             if [ -z "$run_id" ]; then
               for name in "$@"; do
                 pending+=("$name@$target_sha")
               done
               return
             fi
-            jobs="$(gh api "repos/$REPO/actions/runs/$run_id/jobs?per_page=100" --paginate \
-              --jq '.jobs[] | [.name, .status, (.conclusion // "")] | @tsv')"
+            jobs="$(gh api "repos/$REPO/actions/runs/$run_id/jobs?per_page=100" --paginate --slurp \
+              --jq '.[].jobs[] | [.name, .status, (.conclusion // "")] | @tsv')"
             for name in "$@"; do
               row="$(awk -F'\t' -v n="$name" '$1 == n { print; exit }' <<<"$jobs")"
               status="$(cut -f2 <<<"$row")"
@@ -267,9 +267,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --filter "@ludy/desktop" --filter "ludy-monorepo"
 
-      # Fail closed if signing secrets are missing or incomplete; if a base64 PFX is supplied, import it ephemerally into
-      # Cert:\CurrentUser\My so the password never crosses a CLI boundary and remove it in the cleanup step.
-      - name: Validate and stage signing credentials
+      # Fail closed early if signing secrets are missing or incomplete; defer PFX import until right before package.mjs --sign.
+      - name: Validate signing secret presence
         shell: pwsh
         env:
           WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
@@ -297,20 +296,6 @@ jobs:
             exit 1
           }
 
-          if ($hasPfx) {
-            $pfxPath = Join-Path $env:RUNNER_TEMP 'ludy-signing.pfx'
-            $bytes = [System.Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64.Trim())
-            [System.IO.File]::WriteAllBytes($pfxPath, $bytes)
-            try {
-              $secure = ConvertTo-SecureString -String $env:WINDOWS_CERT_PASSWORD -AsPlainText -Force
-              $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation 'Cert:\CurrentUser\My' -Password $secure
-              if (-not $cert.Thumbprint) { throw 'Imported signing certificate has no thumbprint' }
-              "WINDOWS_CERT_SHA1=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            } finally {
-              if (Test-Path -LiteralPath $pfxPath) { Remove-Item -LiteralPath $pfxPath -Force }
-            }
-          }
-
       - name: Typecheck
         run: pnpm --filter "@ludy/desktop" typecheck
 
@@ -319,6 +304,96 @@ jobs:
 
       - name: Compile Win32 WASAPI loopback helper
         run: node apps/desktop/scripts/build-native.mjs --require-win32
+
+      # Inspect the PFX with X509Certificate2Collection (multi-cert safe, exactly 1 private-key leaf), enforce anti-clobber,
+      # import ephemerally right before packaging, and record only newly imported thumbprints for guaranteed cleanup.
+      - name: Stage ephemeral PFX signing certificate
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_PFX_BASE64)) {
+            exit 0
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'ludy-signing.pfx'
+          $bytes = [System.Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64.Trim())
+          [System.IO.File]::WriteAllBytes($pfxPath, $bytes)
+          try {
+            $secure = ConvertTo-SecureString -String $env:WINDOWS_CERT_PASSWORD -AsPlainText -Force
+            $col = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
+            $col.Import($pfxPath, $secure, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
+            try {
+              $leaves = @($col | Where-Object { $_.HasPrivateKey })
+              if ($leaves.Count -ne 1) {
+                throw "PFX must contain exactly 1 certificate with a private key (found $($leaves.Count))"
+              }
+              $leafThumb = ($leaves[0].Thumbprint -replace '\s+', '').ToUpperInvariant()
+              if ($leafThumb -notmatch '^[0-9A-F]{40}$') {
+                throw 'PFX private-key leaf certificate has no valid SHA-1 thumbprint'
+              }
+
+              $preExisting = @{}
+              foreach ($c in (Get-ChildItem -LiteralPath 'Cert:\CurrentUser\My')) {
+                if ($c.Thumbprint) { $preExisting[($c.Thumbprint -replace '\s+', '').ToUpperInvariant()] = $true }
+              }
+              if ($preExisting.ContainsKey($leafThumb)) {
+                throw "Certificate $leafThumb already exists in Cert:\CurrentUser\My; refusing to overwrite or delete pre-existing store entry."
+              }
+
+              $cleanupCandidates = @()
+              foreach ($c in $col) {
+                if ($c.Thumbprint) {
+                  $t = ($c.Thumbprint -replace '\s+', '').ToUpperInvariant()
+                  if ($t -match '^[0-9A-F]{40}$' -and -not $preExisting.ContainsKey($t) -and ($cleanupCandidates -notcontains $t)) {
+                    $cleanupCandidates += $t
+                  }
+                }
+              }
+              if ($cleanupCandidates.Count -gt 0) {
+                "WINDOWS_CERT_CLEANUP_THUMBS=$($cleanupCandidates -join ',')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+              }
+
+              $importedThumbs = @()
+              try {
+                $imported = @(Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation 'Cert:\CurrentUser\My' -Password $secure)
+                foreach ($item in $imported) {
+                  if ($item.Thumbprint) {
+                    $t = ($item.Thumbprint -replace '\s+', '').ToUpperInvariant()
+                    if ($t -match '^[0-9A-F]{40}$' -and -not $preExisting.ContainsKey($t) -and ($importedThumbs -notcontains $t)) {
+                      $importedThumbs += $t
+                    }
+                  }
+                }
+                if ($importedThumbs -notcontains $leafThumb) {
+                  throw "Expected private-key leaf thumbprint $leafThumb was not imported into Cert:\CurrentUser\My"
+                }
+                $leafInStore = Get-Item -LiteralPath "Cert:\CurrentUser\My\$leafThumb" -ErrorAction Stop
+                if (-not $leafInStore.HasPrivateKey) {
+                  throw "Imported leaf certificate $leafThumb in Cert:\CurrentUser\My is missing private key"
+                }
+              } catch {
+                foreach ($t in @($importedThumbs + $cleanupCandidates | Select-Object -Unique)) {
+                  if ($t -match '^[0-9A-F]{40}$') {
+                    $p = "Cert:\CurrentUser\My\$t"
+                    if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -DeleteKey -ErrorAction SilentlyContinue }
+                  }
+                }
+                throw
+              }
+
+              $allCleanup = @($importedThumbs + $cleanupCandidates | Select-Object -Unique)
+              if ($allCleanup.Count -gt 0) {
+                "WINDOWS_CERT_CLEANUP_THUMBS=$($allCleanup -join ',')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+              }
+              "WINDOWS_CERT_SHA1=$leafThumb" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            } finally {
+              foreach ($c in $col) { $c.Dispose() }
+            }
+          } finally {
+            if (Test-Path -LiteralPath $pfxPath) { Remove-Item -LiteralPath $pfxPath -Force }
+          }
 
       - name: Build and sign Squirrel.Windows installer and feed artifacts
         shell: pwsh
@@ -365,8 +440,16 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          if ($env:WINDOWS_CERT_SHA1) {
-            $storePath = "Cert:\CurrentUser\My\$($env:WINDOWS_CERT_SHA1)"
+          $rawList = @()
+          if ($env:WINDOWS_CERT_CLEANUP_THUMBS) {
+            $rawList += ($env:WINDOWS_CERT_CLEANUP_THUMBS -split ',')
+            if ($env:WINDOWS_CERT_SHA1) {
+              $rawList += $env:WINDOWS_CERT_SHA1
+            }
+          }
+          $uniqueThumbs = @($rawList | ForEach-Object { ($_ -replace '\s+', '').ToUpperInvariant() } | Where-Object { $_ -match '^[0-9A-F]{40}$' } | Select-Object -Unique)
+          foreach ($t in $uniqueThumbs) {
+            $storePath = "Cert:\CurrentUser\My\$t"
             if (Test-Path -LiteralPath $storePath) {
               Remove-Item -LiteralPath $storePath -DeleteKey -ErrorAction SilentlyContinue
             }

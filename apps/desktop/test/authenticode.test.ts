@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -38,6 +39,7 @@ function buildMinimalSignedPe(cmsDer: Buffer): Buffer {
   buf.writeUInt32LE(peOffset, 0x3c);
   buf.writeUInt32LE(0x00004550, peOffset);
   buf.writeUInt16LE(0x020b, optOffset);
+  buf.writeUInt32LE(16, optOffset + 108);
   buf.writeUInt32LE(winCertOffset, secDirOffset);
   buf.writeUInt32LE(winCertLen, secDirOffset + 4);
   buf.writeUInt32LE(winCertLen, winCertOffset);
@@ -72,15 +74,21 @@ function buildValidSha256Rfc3161CmsDer(): Buffer {
     0x30,
     Buffer.concat([tlv(0x30, oidTlv('1.3.6.1.4.1.311.2.1.15')), tlv(0x30, Buffer.concat([algId(OID_SHA256), tlv(0x04, Buffer.alloc(32, 1))]))]),
   );
+  const encryptedSignature = Buffer.from('test-authenticode-encrypted-digest');
+  const signatureSha256 = createHash('sha256').update(encryptedSignature).digest();
   const tstInfo = tlv(
     0x30,
-    Buffer.concat([tlv(0x02, Buffer.from([1])), oidTlv('1.2.3.4'), tlv(0x30, Buffer.concat([algId(OID_SHA256), tlv(0x04, Buffer.alloc(32, 2))]))]),
+    Buffer.concat([tlv(0x02, Buffer.from([1])), oidTlv('1.2.3.4'), tlv(0x30, Buffer.concat([algId(OID_SHA256), tlv(0x04, signatureSha256)]))]),
   );
   const tsEncap = tlv(0x30, Buffer.concat([oidTlv('1.2.840.113549.1.9.16.1.4'), tlv(0xa0, tlv(0x04, tstInfo))]));
   const tsSignedData = tlv(0x30, Buffer.concat([tlv(0x02, Buffer.from([3])), tlv(0x31, algId(OID_SHA256)), tsEncap, tlv(0x31, tlv(0x30, algId(OID_SHA256)))]));
   const tsToken = tlv(0x30, Buffer.concat([oidTlv('1.2.840.113549.1.7.2'), tlv(0xa0, tsSignedData)]));
   const unsignedAttr = tlv(0xa1, tlv(0x30, Buffer.concat([oidTlv('1.3.6.1.4.1.311.3.3.1'), tlv(0x31, tsToken)])));
-  const signerInfo = tlv(0x30, Buffer.concat([tlv(0x02, Buffer.from([1])), algId(OID_SHA256), unsignedAttr]));
+  const sid = tlv(0x30, Buffer.concat([tlv(0x30, Buffer.alloc(0)), tlv(0x02, Buffer.from([1]))]));
+  const signerInfo = tlv(
+    0x30,
+    Buffer.concat([tlv(0x02, Buffer.from([1])), sid, algId(OID_SHA256), algId('1.2.840.113549.1.1.11'), tlv(0x04, encryptedSignature), unsignedAttr]),
+  );
   const encap = tlv(0x30, Buffer.concat([oidTlv('1.3.6.1.4.1.311.2.1.4'), tlv(0xa0, spcIndirect)]));
   const signedData = tlv(0x30, Buffer.concat([tlv(0x02, Buffer.from([1])), tlv(0x31, algId(OID_SHA256)), encap, tlv(0x31, signerInfo)]));
   return tlv(0x30, Buffer.concat([oidTlv('1.2.840.113549.1.7.2'), tlv(0xa0, signedData)]));
@@ -192,5 +200,42 @@ describe('release-manifest.ps1 formatting, PKCS#7 extraction, and package verifi
     };
     await verifyWindowsSignedPackage(pkg, THUMB, happyPs, 'win32');
     expect(sawStdinPaths).toHaveLength(3);
+  });
+
+  it('rejects duplicate signature markers or payload blocks in signed .ps1 scripts and malformed PE headers', () => {
+    const dir = makeTempDir();
+    const manifestJson = JSON.stringify({ schemaVersion: 1, version: '0.1.2', signed: true });
+    const baseScript = formatSignedReleaseManifestScript(manifestJson);
+    const cmsB64 = buildValidSha256Rfc3161CmsDer().toString('base64');
+
+    const dupBlock = `${baseScript}${baseScript}# SIG # Begin signature block\r\n# ${cmsB64}\r\n# SIG # End signature block\r\n`;
+    expect(() => parseSignedReleaseManifestScript(dupBlock)).toThrow(/exactly one JSON payload block/);
+
+    const dupSig = `${baseScript}# SIG # Begin signature block\r\n# ${cmsB64}\r\n# SIG # End signature block\r\n# SIG # Begin signature block\r\n# ${cmsB64}\r\n# SIG # End signature block\r\n`;
+    expect(() => parseSignedReleaseManifestScript(dupSig)).toThrow(/duplicate signature block/);
+    const dupSigPath = join(dir, 'dup-sig.ps1');
+    writeFileSync(dupSigPath, dupSig, 'utf8');
+    expect(() => extractEmbeddedPkcs7Der(dupSigPath)).toThrow(/duplicate signature block/);
+
+    const truncatedPe = join(dir, 'truncated-headers.exe');
+    const smallPe = Buffer.alloc(176);
+    smallPe.writeUInt16LE(0x5a4d, 0);
+    smallPe.writeUInt32LE(0x80, 0x3c);
+    smallPe.writeUInt32LE(0x00004550, 0x80);
+    // peOffset + 176 exceeds 176 bytes, so header extraction must fail closed.
+    writeFileSync(truncatedPe, smallPe);
+    expect(() => extractEmbeddedPkcs7Der(truncatedPe)).toThrow(/Corrupt PE header offset/);
+
+    const tinyRvaPe = join(dir, 'no-secdir.exe');
+    const validSizedPe = buildMinimalSignedPe(buildValidSha256Rfc3161CmsDer());
+    validSizedPe.writeUInt32LE(4, 0x80 + 24 + 108);
+    writeFileSync(tinyRvaPe, validSizedPe);
+    expect(() => extractEmbeddedPkcs7Der(tinyRvaPe)).toThrow(/DataDirectory entry 4/);
+
+    const oversizedSecPe = join(dir, 'oversized-secdir.exe');
+    const oversizedPe = buildMinimalSignedPe(buildValidSha256Rfc3161CmsDer());
+    oversizedPe.writeUInt32LE(16 * 1024 * 1024 + 1, 0x80 + 24 + 112 + 4 * 8 + 4);
+    writeFileSync(oversizedSecPe, oversizedPe);
+    expect(() => extractEmbeddedPkcs7Der(oversizedSecPe)).toThrow(/security directory/);
   });
 });

@@ -33,21 +33,94 @@ function assertSafeToken(label, value) {
   return value;
 }
 
+function parseIpv6Groups(address) {
+  let clean = address.toLowerCase();
+  const zoneIdx = clean.indexOf('%');
+  if (zoneIdx !== -1) clean = clean.slice(0, zoneIdx);
+  if (clean.includes('.')) {
+    const lastColon = clean.lastIndexOf(':');
+    if (lastColon === -1) return null;
+    const octets = clean.slice(lastColon + 1).split('.').map(Number);
+    if (octets.length !== 4 || octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) return null;
+    const hi = ((octets[0] << 8) | octets[1]).toString(16);
+    const lo = ((octets[2] << 8) | octets[3]).toString(16);
+    clean = `${clean.slice(0, lastColon)}:${hi}:${lo}`;
+  }
+  const halves = clean.split('::');
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(':') : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const missing = halves.length === 2 ? 8 - (left.length + right.length) : 0;
+  if (halves.length === 2 ? missing < 1 : left.length !== 8) return null;
+  const parts = [...left, ...Array.from({ length: missing }, () => '0'), ...right];
+  const groups = [];
+  for (const part of parts) {
+    if (!/^[0-9a-f]{1,4}$/.test(part)) return null;
+    groups.push(Number.parseInt(part, 16));
+  }
+  return groups;
+}
+
 function isDisallowedTimestampHost(hostname) {
   let bare = hostname.trim().toLowerCase();
   if (bare.startsWith('[') && bare.endsWith(']')) bare = bare.slice(1, -1);
+  if (bare.includes('%')) return true;
+  bare = bare.replace(/\.+$/, '');
   if (!bare) return true;
-  if (bare === 'localhost' || bare.endsWith('.local') || bare.endsWith('.internal') || bare.endsWith('.localhost')) {
+  if (
+    bare === 'localhost' ||
+    bare.endsWith('.local') ||
+    bare.endsWith('.internal') ||
+    bare.endsWith('.localhost') ||
+    bare.endsWith('.arpa')
+  ) {
     return true;
   }
   const ipKind = isIP(bare);
   if (ipKind === 4) {
-    const [a, b] = bare.split('.').map(Number);
-    if (a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 100 && b >= 64 && b <= 127) || a >= 224) {
+    const [a, b, c] = bare.split('.').map(Number);
+    if (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 192 && b === 168) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+      (a === 198 && (b === 18 || b === 19)) ||
+      (a === 198 && b === 51 && c === 100) ||
+      (a === 203 && b === 0 && c === 113) ||
+      a >= 224
+    ) {
       return true;
     }
   } else if (ipKind === 6) {
-    if (bare === '::' || bare === '::1' || bare.startsWith('fe80:') || bare.startsWith('fc') || bare.startsWith('fd') || bare.startsWith('::ffff:')) {
+    const g = parseIpv6Groups(bare);
+    if (!g) return true;
+    // IPv4-compatible ::/96 (includes :: and ::1), IPv4-mapped ::ffff:0:0/96, IPv4-translated ::ffff:0:0:0/96
+    const allZeroTop6 = g.slice(0, 6).every((w) => w === 0);
+    const ipv4Mapped = g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0xffff;
+    const ipv4Translated = g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0xffff && g[5] === 0;
+    if (allZeroTop6 || ipv4Mapped || ipv4Translated) {
+      return true;
+    }
+    // ULA fc00::/7, link-local fe80::/10 (fe80..febf), deprecated site-local fec0::/10, multicast ff00::/8
+    if (
+      (g[0] & 0xfe00) === 0xfc00 ||
+      (g[0] & 0xffc0) === 0xfe80 ||
+      (g[0] & 0xffc0) === 0xfec0 ||
+      (g[0] & 0xff00) === 0xff00
+    ) {
+      return true;
+    }
+    // 6to4 2002::/16, documentation 2001:db8::/32, discard 100::/64, NAT64 64:ff9b::/96 & 64:ff9b:1::/48
+    if (
+      g[0] === 0x2002 ||
+      (g[0] === 0x2001 && g[1] === 0x0db8) ||
+      (g[0] === 0x0100 && g[1] === 0 && g[2] === 0 && g[3] === 0) ||
+      (g[0] === 0x0064 && g[1] === 0xff9b && ((g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0) || g[2] === 1))
+    ) {
       return true;
     }
   } else if (!bare.includes('.')) {

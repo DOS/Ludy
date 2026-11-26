@@ -169,8 +169,13 @@ export function isPrivateOrReservedIp(rawIp: string): boolean {
     if (!g) return true;
     const allZeroExceptLast = g.slice(0, 7).every((x) => x === 0);
     if (allZeroExceptLast && (g[7] === 0 || g[7] === 1)) return true; // :: or ::1
-    const isV4Mapped = g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0 && (g[5] === 0xffff || g[5] === 0);
-    if (isV4Mapped) {
+    const isV4MappedOrTranslated =
+      g[0] === 0 &&
+      g[1] === 0 &&
+      g[2] === 0 &&
+      g[3] === 0 &&
+      ((g[4] === 0 && (g[5] === 0xffff || g[5] === 0)) || (g[4] === 0xffff && g[5] === 0));
+    if (isV4MappedOrTranslated) {
       const a = (g[6]! >> 8) & 0xff;
       const b = g[6]! & 0xff;
       const c = (g[7]! >> 8) & 0xff;
@@ -181,6 +186,7 @@ export function isPrivateOrReservedIp(rawIp: string): boolean {
     if ((g[0]! & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
     if ((g[0]! & 0xffc0) === 0xfec0) return true; // fec0::/10 site-local
     if ((g[0]! & 0xff00) === 0xff00) return true; // ff00::/8 multicast
+    if (g[0] === 0x2002) return true; // 2002::/16 6to4
     if (g[0] === 0x2001 && g[1] === 0x0db8) return true; // 2001:db8::/32 documentation
     if (g[0] === 0x0100 && g[1] === 0 && g[2] === 0 && g[3] === 0) return true; // 0100::/64 discard
     if (g[0] === 0x0064 && g[1] === 0xff9b && (g[2] === 0 || g[2] === 1)) return true; // NAT64
@@ -196,8 +202,8 @@ export function unwrapIpLiteral(hostname: string): string | null {
 }
 
 export function isDisallowedRemoteHost(hostname: string): boolean {
-  const bare = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '');
-  if (bare === '') return true;
+  const bare = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+  if (bare === '' || bare === 'localhost') return true;
   if (isIP(bare) !== 0) return isPrivateOrReservedIp(bare);
   if (!bare.includes('.')) return true;
   if (bare.endsWith('.local') || bare.endsWith('.internal') || bare.endsWith('.arpa') || bare.endsWith('.localhost')) {
@@ -406,8 +412,8 @@ export function parseReleasesManifest(text: string, feedUrl: string): ParsedRele
     const rawTarget = match[2]!;
     const rawSize = match[3]!;
     const size = Number(rawSize);
-    if (!Number.isSafeInteger(size) || size <= 0 || String(size) !== rawSize) {
-      throw new UpdateFeedError('INVALID_RELEASES', 'Invalid package size in RELEASES manifest');
+    if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_PACKAGE_BYTES || String(size) !== rawSize) {
+      throw new UpdateFeedError('INVALID_RELEASES', 'Invalid or oversized package size in RELEASES manifest');
     }
     const file = resolveReleaseEntryTarget(rawTarget, checkedFeed.url);
     const pkgMatch = PACKAGE_FILE_PATTERN.exec(file);

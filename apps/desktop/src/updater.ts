@@ -126,6 +126,9 @@ async function startLocalFeedServer(stagingDir: string, packageFile: string): Pr
           return;
         }
         const stream = createReadStream(packagePath);
+        res.on('close', () => {
+          if (!res.writableEnded) stream.destroy();
+        });
         stream.on('error', () => {
           if (!res.headersSent) res.writeHead(500);
           res.destroy();

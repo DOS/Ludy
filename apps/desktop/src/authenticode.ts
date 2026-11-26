@@ -2,6 +2,7 @@
 // Verifies Windows Authenticode signatures, SpcIndirectDataContent SHA-256 file digest (/fd), RFC 3161 TSTInfo
 // messageImprint SHA-256 digest (/td), and signed release-manifest.ps1 scripts before Squirrel sees an update.
 import { execFile } from 'node:child_process';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { closeSync, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -38,15 +39,18 @@ const EXTRACT_NUPKG_TARGETS_PS = [
   '      continue',
   '    }',
   '    if ($entry.Length -lt 0 -or $entry.Length -gt $maxBytes) { throw "Update binary entry exceeds extracted size limit" }',
+  '    $key = $rel.ToLowerInvariant()',
+  '    if ($targets.ContainsKey($key)) { throw "Duplicate update binary entry in archive: $rel" }',
   '    $outPath = [System.IO.Path]::GetFullPath((Join-Path $destRoot $rel))',
   '    if (-not $outPath.StartsWith($destRoot, [System.StringComparison]::OrdinalIgnoreCase)) {',
   '      throw "Unsafe zip path: $($entry.FullName)"',
   '    }',
+  '    $targets[$key] = $outPath',
   '    $parent = [System.IO.Path]::GetDirectoryName($outPath)',
   '    if (-not (Test-Path -LiteralPath $parent)) { [void][System.IO.Directory]::CreateDirectory($parent) }',
   '    $inStream = $entry.Open()',
   '    try {',
-  '      $outStream = [System.IO.File]::Open($outPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)',
+  '      $outStream = [System.IO.File]::Open($outPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)',
   '      try {',
   '        for (;;) {',
   '          $n = $inStream.Read($buf, 0, $buf.Length)',
@@ -57,7 +61,6 @@ const EXTRACT_NUPKG_TARGETS_PS = [
   '        }',
   '      } finally { $outStream.Dispose() }',
   '    } finally { $inStream.Dispose() }',
-  '    $targets[$rel.ToLowerInvariant()] = $outPath',
   '  }',
   '  if ($targets.Count -ne 3) { throw "Update package is missing required signed binaries" }',
   '} finally {',
@@ -164,19 +167,31 @@ function decodeDerOid(buf: Buffer, tlv: DerTlv): string {
 
 export interface InspectedAuthenticodeCms {
   fileDigestOid: string;
+  signerDigestOid: string;
   timestampType: 'rfc3161' | 'authenticode-legacy' | 'none';
   tsDigestOid: string | null;
 }
 
-function inspectRfc3161Token(buf: Buffer, tokenTlv: DerTlv): string {
+function unwrapExplicitSingleChild(buf: Buffer, wrapper: DerTlv, label: string): DerTlv {
+  if (wrapper.tag !== 0xa0) {
+    throw new Error(`${label} must be [0] EXPLICIT`);
+  }
+  const children = readDerChildren(buf, wrapper.contentStart, wrapper.contentEnd);
+  if (children.length !== 1) {
+    throw new Error(`${label} wrapper must contain exactly one ASN.1 DER element`);
+  }
+  return children[0]!;
+}
+
+function inspectRfc3161Token(buf: Buffer, tokenTlv: DerTlv, expectedSignatureSha256: Buffer): string {
   if (tokenTlv.tag !== 0x30) {
     throw new Error('RFC 3161 timestamp token is not a ContentInfo SEQUENCE');
   }
   const ci = readDerChildren(buf, tokenTlv.contentStart, tokenTlv.contentEnd);
-  if (ci.length < 2 || decodeDerOid(buf, ci[0]!) !== OID_SIGNED_DATA || ci[1]!.tag !== 0xa0) {
+  if (ci.length < 2 || decodeDerOid(buf, ci[0]!) !== OID_SIGNED_DATA) {
     throw new Error('RFC 3161 timestamp token does not contain SignedData');
   }
-  const signedData = readDerTlv(buf, ci[1]!.contentStart);
+  const signedData = unwrapExplicitSingleChild(buf, ci[1]!, 'RFC 3161 SignedData');
   if (signedData.tag !== 0x30) {
     throw new Error('Invalid SignedData inside RFC 3161 timestamp token');
   }
@@ -185,43 +200,83 @@ function inspectRfc3161Token(buf: Buffer, tokenTlv: DerTlv): string {
     throw new Error('RFC 3161 SignedData missing encapContentInfo');
   }
   const encap = readDerChildren(buf, sdFields[2]!.contentStart, sdFields[2]!.contentEnd);
-  if (encap.length < 2 || decodeDerOid(buf, encap[0]!) !== OID_TST_INFO || encap[1]!.tag !== 0xa0) {
+  if (encap.length < 2 || decodeDerOid(buf, encap[0]!) !== OID_TST_INFO) {
     throw new Error('RFC 3161 encapContentInfo is not id-ct-TSTInfo');
   }
-  const tstOctet = readDerTlv(buf, encap[1]!.contentStart);
+  const tstOctet = unwrapExplicitSingleChild(buf, encap[1]!, 'RFC 3161 TSTInfo octet wrapper');
   if (tstOctet.tag !== 0x04) {
     throw new Error('RFC 3161 TSTInfo wrapper is not an OCTET STRING');
   }
-  const tstInfo = readDerTlv(buf, tstOctet.contentStart);
-  if (tstInfo.tag !== 0x30 || tstInfo.contentEnd > tstOctet.contentEnd) {
-    throw new Error('RFC 3161 TSTInfo is not a valid SEQUENCE');
+  const tstInner = readDerChildren(buf, tstOctet.contentStart, tstOctet.contentEnd);
+  if (tstInner.length !== 1 || tstInner[0]!.tag !== 0x30) {
+    throw new Error('RFC 3161 TSTInfo is not a valid single SEQUENCE');
   }
+  const tstInfo = tstInner[0]!;
   const tstFields = readDerChildren(buf, tstInfo.contentStart, tstInfo.contentEnd);
   // TSTInfo ::= SEQUENCE { version INTEGER, policy OBJECT IDENTIFIER, messageImprint MessageImprint, ... }
   if (tstFields.length < 3 || tstFields[2]!.tag !== 0x30) {
     throw new Error('RFC 3161 TSTInfo missing messageImprint');
   }
   const msgImprint = readDerChildren(buf, tstFields[2]!.contentStart, tstFields[2]!.contentEnd);
-  if (msgImprint.length < 2 || msgImprint[0]!.tag !== 0x30) {
-    throw new Error('RFC 3161 messageImprint missing hashAlgorithm');
+  if (msgImprint.length !== 2 || msgImprint[0]!.tag !== 0x30 || msgImprint[1]!.tag !== 0x04) {
+    throw new Error('RFC 3161 messageImprint must contain hashAlgorithm and hashedMessage OCTET STRING');
   }
   const hashAlg = readDerChildren(buf, msgImprint[0]!.contentStart, msgImprint[0]!.contentEnd);
   if (hashAlg.length < 1) {
     throw new Error('RFC 3161 messageImprint AlgorithmIdentifier is empty');
   }
+  const imprintBytes = buf.subarray(msgImprint[1]!.contentStart, msgImprint[1]!.contentEnd);
+  if (imprintBytes.length !== expectedSignatureSha256.length || !timingSafeEqual(imprintBytes, expectedSignatureSha256)) {
+    throw new Error('RFC 3161 TSTInfo messageImprint digest does not match SignerInfo signature');
+  }
   return decodeDerOid(buf, hashAlg[0]!);
+}
+
+function parseRfc5652SignerInfo(
+  der: Buffer,
+  signerTlv: DerTlv,
+): { signerDigestOid: string; encryptedDigest: Buffer; unsignedAttrs: DerTlv | null } {
+  const fields = readDerChildren(der, signerTlv.contentStart, signerTlv.contentEnd);
+  // version (0x02), sid (0x30 | 0x80), digestAlgorithm (0x30)
+  if (fields.length < 5 || fields[0]!.tag !== 0x02 || (fields[1]!.tag !== 0x30 && fields[1]!.tag !== 0x80) || fields[2]!.tag !== 0x30) {
+    throw new Error('Invalid RFC 5652 SignerInfo header fields');
+  }
+  const digestAlgFields = readDerChildren(der, fields[2]!.contentStart, fields[2]!.contentEnd);
+  if (digestAlgFields.length < 1) {
+    throw new Error('SignerInfo digestAlgorithm AlgorithmIdentifier is empty');
+  }
+  const signerDigestOid = decodeDerOid(der, digestAlgFields[0]!);
+
+  let idx = 3;
+  if (fields[idx]?.tag === 0xa0) {
+    idx += 1;
+  }
+  const sigAlg = fields[idx];
+  const sigVal = fields[idx + 1];
+  if (!sigAlg || sigAlg.tag !== 0x30 || !sigVal || sigVal.tag !== 0x04) {
+    throw new Error('SignerInfo missing signatureAlgorithm or encryptedDigest OCTET STRING');
+  }
+  const encryptedDigest = der.subarray(sigVal.contentStart, sigVal.contentEnd);
+  let unsignedAttrs: DerTlv | null = null;
+  if (idx + 2 < fields.length) {
+    if (idx + 3 !== fields.length || fields[idx + 2]!.tag !== 0xa1) {
+      throw new Error('SignerInfo contains invalid trailing or duplicate unsignedAttrs');
+    }
+    unsignedAttrs = fields[idx + 2]!;
+  }
+  return { signerDigestOid, encryptedDigest, unsignedAttrs };
 }
 
 export function inspectAuthenticodePkcs7Der(der: Buffer): InspectedAuthenticodeCms {
   const outer = readDerTlv(der, 0);
-  if (outer.tag !== 0x30) {
-    throw new Error('Authenticode CMS does not start with ContentInfo SEQUENCE');
+  if (outer.tag !== 0x30 || outer.nextOffset !== der.length) {
+    throw new Error('Authenticode CMS must contain a single outer ContentInfo SEQUENCE');
   }
   const ci = readDerChildren(der, outer.contentStart, outer.contentEnd);
-  if (ci.length < 2 || decodeDerOid(der, ci[0]!) !== OID_SIGNED_DATA || ci[1]!.tag !== 0xa0) {
+  if (ci.length < 2 || decodeDerOid(der, ci[0]!) !== OID_SIGNED_DATA) {
     throw new Error('Authenticode CMS is not PKCS#7 SignedData');
   }
-  const signedData = readDerTlv(der, ci[1]!.contentStart);
+  const signedData = unwrapExplicitSingleChild(der, ci[1]!, 'Authenticode SignedData');
   if (signedData.tag !== 0x30) {
     throw new Error('Authenticode SignedData is not a SEQUENCE');
   }
@@ -232,10 +287,10 @@ export function inspectAuthenticodePkcs7Der(der: Buffer): InspectedAuthenticodeC
 
   // Extract SpcIndirectDataContent.messageDigest.digestAlgorithm (the true /fd Authenticode file digest OID).
   const encap = readDerChildren(der, sdFields[2]!.contentStart, sdFields[2]!.contentEnd);
-  if (encap.length < 2 || decodeDerOid(der, encap[0]!) !== OID_SPC_INDIRECT_DATA || encap[1]!.tag !== 0xa0) {
+  if (encap.length < 2 || decodeDerOid(der, encap[0]!) !== OID_SPC_INDIRECT_DATA) {
     throw new Error('Authenticode encapContentInfo does not hold SpcIndirectDataContent');
   }
-  const spcIndirect = readDerTlv(der, encap[1]!.contentStart);
+  const spcIndirect = unwrapExplicitSingleChild(der, encap[1]!, 'Authenticode SpcIndirectDataContent');
   if (spcIndirect.tag !== 0x30) {
     throw new Error('SpcIndirectDataContent is not a SEQUENCE');
   }
@@ -264,40 +319,55 @@ export function inspectAuthenticodePkcs7Der(der: Buffer): InspectedAuthenticodeC
     throw new Error('Authenticode SignedData missing signerInfos SET');
   }
   const signers = readDerChildren(der, signerInfosSet.contentStart, signerInfosSet.contentEnd);
-  if (signers.length === 0 || signers[0]!.tag !== 0x30) {
-    throw new Error('Authenticode signerInfos SET contains no SignerInfo');
+  if (signers.length !== 1 || signers[0]!.tag !== 0x30) {
+    throw new Error(`Authenticode signerInfos SET must contain exactly one SignerInfo (got ${signers.length})`);
   }
-  const signerFields = readDerChildren(der, signers[0]!.contentStart, signers[0]!.contentEnd);
-  const unsignedAttrs = signerFields.find((field) => field.tag === 0xa1);
+  const { signerDigestOid, encryptedDigest, unsignedAttrs } = parseRfc5652SignerInfo(der, signers[0]!);
   if (!unsignedAttrs) {
-    return { fileDigestOid, timestampType: 'none', tsDigestOid: null };
+    return { fileDigestOid, signerDigestOid, timestampType: 'none', tsDigestOid: null };
   }
+
+  const expectedSignatureSha256 = createHash('sha256').update(encryptedDigest).digest();
   const attrs = readDerChildren(der, unsignedAttrs.contentStart, unsignedAttrs.contentEnd);
+  let rfc3161TsDigestOid: string | null = null;
+  let rfc3161Count = 0;
+  let hasLegacyCounterSign = false;
+
   for (const attr of attrs) {
-    if (attr.tag !== 0x30) continue;
+    if (attr.tag !== 0x30) {
+      throw new Error('Invalid Attribute TLV inside SignerInfo unsignedAttrs');
+    }
     const parts = readDerChildren(der, attr.contentStart, attr.contentEnd);
-    if (parts.length < 2) continue;
+    if (parts.length !== 2) {
+      throw new Error('Invalid Attribute structure inside SignerInfo unsignedAttrs');
+    }
     const oid = decodeDerOid(der, parts[0]!);
     if (oid === OID_RFC3161_COUNTER_SIGN) {
+      rfc3161Count += 1;
+      if (rfc3161Count > 1) {
+        throw new Error('Duplicate RFC 3161 timestamp attributes in Authenticode SignerInfo');
+      }
       const valSet = parts[1]!;
       if (valSet.tag !== 0x31) {
         throw new Error('RFC 3161 unsigned attribute values must be a SET');
       }
       const tokens = readDerChildren(der, valSet.contentStart, valSet.contentEnd);
-      if (tokens.length === 0) {
-        throw new Error('RFC 3161 unsigned attribute has no timestamp token');
+      if (tokens.length !== 1) {
+        throw new Error(`RFC 3161 unsigned attribute must contain exactly one timestamp token (got ${tokens.length})`);
       }
-      return {
-        fileDigestOid,
-        timestampType: 'rfc3161',
-        tsDigestOid: inspectRfc3161Token(der, tokens[0]!),
-      };
-    }
-    if (oid === OID_LEGACY_COUNTER_SIGN) {
-      return { fileDigestOid, timestampType: 'authenticode-legacy', tsDigestOid: null };
+      rfc3161TsDigestOid = inspectRfc3161Token(der, tokens[0]!, expectedSignatureSha256);
+    } else if (oid === OID_LEGACY_COUNTER_SIGN) {
+      hasLegacyCounterSign = true;
     }
   }
-  return { fileDigestOid, timestampType: 'none', tsDigestOid: null };
+
+  if (hasLegacyCounterSign) {
+    return { fileDigestOid, signerDigestOid, timestampType: 'authenticode-legacy', tsDigestOid: null };
+  }
+  if (rfc3161Count === 1) {
+    return { fileDigestOid, signerDigestOid, timestampType: 'rfc3161', tsDigestOid: rfc3161TsDigestOid };
+  }
+  return { fileDigestOid, signerDigestOid, timestampType: 'none', tsDigestOid: null };
 }
 
 function trimAsn1SequencePadding(raw: Buffer): Buffer {
@@ -317,6 +387,9 @@ export function extractEmbeddedPkcs7Der(filePath: string): Buffer {
     const end = text.indexOf(endMarker);
     if (begin === -1 || end === -1 || end <= begin) {
       throw new Error(`Signed manifest script ${filePath} has no Authenticode signature block`);
+    }
+    if (text.indexOf(beginMarker, begin + beginMarker.length) !== -1 || text.indexOf(endMarker, end + endMarker.length) !== -1) {
+      throw new Error(`Signed manifest script ${filePath} contains duplicate signature block markers`);
     }
     const body = text.slice(begin + beginMarker.length, end);
     const base64 = body
@@ -341,28 +414,36 @@ export function extractEmbeddedPkcs7Der(filePath: string): Buffer {
       throw new Error(`Invalid PE DOS header: ${filePath}`);
     }
     const peOffset = dos.readUInt32LE(0x3c);
-    if (peOffset + 256 > stat.size) {
+    if (peOffset + 176 > stat.size) {
       throw new Error(`Corrupt PE header offset: ${filePath}`);
     }
     const headers = Buffer.alloc(256);
-    if (readSync(fd, headers, 0, 256, peOffset) < 168 || headers.readUInt32LE(0) !== 0x00004550) {
+    if (readSync(fd, headers, 0, 256, peOffset) < 176 || headers.readUInt32LE(0) !== 0x00004550) {
       throw new Error(`Invalid PE signature: ${filePath}`);
     }
     const optOffset = 24;
     const magic = headers.readUInt16LE(optOffset);
     let dataDirOffset: number;
+    let rvaCountOffset: number;
     if (magic === 0x10b) {
+      rvaCountOffset = optOffset + 92;
       dataDirOffset = optOffset + 96;
     } else if (magic === 0x20b) {
+      rvaCountOffset = optOffset + 108;
       dataDirOffset = optOffset + 112;
     } else {
       throw new Error(`Unsupported PE optional header magic 0x${magic.toString(16)}: ${filePath}`);
     }
+    const numberOfRvaAndSizes = headers.readUInt32LE(rvaCountOffset);
+    if (numberOfRvaAndSizes <= 4) {
+      throw new Error(`PE binary lacks DataDirectory entry 4 for Authenticode: ${filePath}`);
+    }
     const secDirOffset = dataDirOffset + 4 * 8;
     const secFileOffset = headers.readUInt32LE(secDirOffset);
     const secSize = headers.readUInt32LE(secDirOffset + 4);
-    if (secFileOffset === 0 || secSize <= 8 || secFileOffset + secSize > stat.size) {
-      throw new Error(`PE binary has no Authenticode security directory: ${filePath}`);
+    const MAX_WIN_CERT_BYTES = 16 * 1024 * 1024;
+    if (secFileOffset === 0 || secSize <= 8 || secSize > MAX_WIN_CERT_BYTES || secFileOffset + secSize > stat.size) {
+      throw new Error(`PE binary has invalid or missing Authenticode security directory: ${filePath}`);
     }
     const certBuf = Buffer.alloc(secSize);
     if (readSync(fd, certBuf, 0, secSize, secFileOffset) < secSize) {
@@ -392,13 +473,22 @@ export function formatSignedReleaseManifestScript(manifestJson: string): string 
 }
 
 export function parseSignedReleaseManifestScript(scriptContent: string): Buffer {
-  const sigIndex = scriptContent.indexOf('# SIG # Begin signature block');
-  const unsignedPart = sigIndex === -1 ? scriptContent : scriptContent.slice(0, sigIndex);
-  const match = /\$LudyReleaseManifestJson = @'\r?\n([^\r\n]+)\r?\n'@/.exec(unsignedPart);
-  if (!match?.[1]) {
-    throw new Error('Signed release manifest script does not contain expected JSON block');
+  const beginMarker = '# SIG # Begin signature block';
+  const endMarker = '# SIG # End signature block';
+  const sigIndex = scriptContent.indexOf(beginMarker);
+  if (sigIndex !== -1 && scriptContent.indexOf(beginMarker, sigIndex + beginMarker.length) !== -1) {
+    throw new Error('Signed release manifest script contains duplicate signature block markers');
   }
-  return Buffer.from(match[1], 'utf8');
+  const endIndex = scriptContent.indexOf(endMarker);
+  if (endIndex !== -1 && scriptContent.indexOf(endMarker, endIndex + endMarker.length) !== -1) {
+    throw new Error('Signed release manifest script contains duplicate end signature block markers');
+  }
+  const unsignedPart = sigIndex === -1 ? scriptContent : scriptContent.slice(0, sigIndex);
+  const matches = [...unsignedPart.matchAll(/\$LudyReleaseManifestJson = @'\r?\n([^\r\n]+)\r?\n'@/g)];
+  if (matches.length !== 1 || !matches[0]?.[1]) {
+    throw new Error('Signed release manifest script must contain exactly one JSON payload block');
+  }
+  return Buffer.from(matches[0][1], 'utf8');
 }
 
 export function parseAuthenticodeCheckResults(
@@ -436,6 +526,9 @@ export function parseAuthenticodeCheckResults(
     }
     if (record.fileDigestOid !== OID_SHA256) {
       throw new Error(`Authenticode signature on ${target} must use SHA-256 digest (got ${String(record.fileDigestOid)})`);
+    }
+    if (record.signerDigestOid !== undefined && record.signerDigestOid !== OID_SHA256) {
+      throw new Error(`Authenticode SignerInfo on ${target} must use SHA-256 digest (got ${String(record.signerDigestOid)})`);
     }
     if (record.tsDigestOid !== OID_SHA256) {
       throw new Error(`RFC 3161 timestamp on ${target} must use SHA-256 digest (got ${String(record.tsDigestOid)})`);
@@ -516,6 +609,7 @@ export async function verifyWindowsAuthenticodeFiles(
     return {
       ...(row as Record<string, unknown>),
       fileDigestOid: cms.fileDigestOid,
+      signerDigestOid: cms.signerDigestOid,
       timestampType: cms.timestampType,
       tsDigestOid: cms.tsDigestOid,
     };
