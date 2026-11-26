@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
 import appConfig from '../app.config.ts';
-import { APP_SCHEME, cloudServerUrl, normalizeServerUrl, REDIRECT_URI } from '../src/config.ts';
+import { APP_SCHEME, cloudServerUrl, normalizeServerUrl, REDIRECT_URI, serverAllowed, serverPolicy } from '../src/config.ts';
 import { AUTO_LOCK_AFTER_MS, shouldAutoLock } from '../src/auth/auto-lock.ts';
 
 describe('server address', () => {
@@ -29,6 +29,22 @@ describe('server address', () => {
     expect(cloudServerUrl(undefined)).toBeNull();
     expect(cloudServerUrl('')).toBeNull();
     expect(cloudServerUrl('not a url')).toBeNull();
+  });
+});
+
+describe('server policy', () => {
+  it('lets a Cloud build sign in to its own address only, and a build with no setting to none', () => {
+    const cloud = serverPolicy('https://api.ludy.vn', undefined);
+    expect(serverAllowed(cloud, 'https://api.ludy.vn')).toBe(true);
+    expect(serverAllowed(cloud, 'https://evil.example')).toBe(false);
+    expect(serverAllowed(serverPolicy(undefined, undefined), 'https://api.ludy.vn')).toBe(false);
+    expect(serverAllowed(serverPolicy('junk', '0'), 'https://api.ludy.vn')).toBe(false);
+  });
+
+  it('shows the address field only for a build made for one operator', () => {
+    expect(serverPolicy(undefined, '1')).toEqual({ kind: 'custom' });
+    expect(serverAllowed(serverPolicy(undefined, '1'), 'https://ludy.congty.vn')).toBe(true);
+    expect(serverPolicy('https://api.ludy.vn', '1').kind).toBe('cloud');
   });
 });
 

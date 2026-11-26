@@ -52,6 +52,11 @@ export interface SessionDeps {
   now: () => number;
   // The words of the system's biometric prompt.
   unlockPrompt: string;
+  // Whether this build may sign in to this server address (config.ts serverAllowed).
+  serverAllowed: (serverUrl: string) => boolean;
+  // Best effort, on a person's own sign-out only: ends the session on the server before the phone forgets it. Given the access
+  // token and the org; never throws into the sign-out, and is given 3 seconds.
+  revokeOnServer?: (accessToken: string, orgSlug: string | null) => Promise<void>;
 }
 
 export interface SessionManager {
@@ -128,6 +133,11 @@ export function createSessionManager(deps: SessionDeps): SessionManager {
   }
 
   async function signOut(notice?: SignOutNotice): Promise<void> {
+    // The person's own sign-out ends the session on the server first, while the token is still in hand.
+    if (!notice && deps.revokeOnServer && access && state.status === 'active') {
+      const revoke = deps.revokeOnServer(access.accessToken, state.orgSlug).catch(() => undefined);
+      await Promise.race([revoke, new Promise<void>((resolve) => setTimeout(resolve, 3000))]);
+    }
     epoch += 1;
     held = null;
     access = null;
@@ -190,7 +200,7 @@ export function createSessionManager(deps: SessionDeps): SessionManager {
       signingIn = true;
       try {
         const serverUrl = normalizeServerUrl(rawServerUrl);
-        if (!serverUrl) return { ok: false, reason: 'unsupported-server' };
+        if (!serverUrl || !deps.serverAllowed(serverUrl)) return { ok: false, reason: 'unsupported-server' };
         // A token in the Keychain of a phone with no screen lock is a token anyone holding the phone can use: refused.
         if ((await deps.localAuth.level().catch(() => 'none' as const)) === 'none') return { ok: false, reason: 'no-device-lock' };
         const endpoints = await discover(serverUrl);

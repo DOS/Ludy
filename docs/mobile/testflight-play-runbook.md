@@ -8,7 +8,7 @@ In the identity provider's OAuth App of the deployment (the one whose client id 
 
 ## 2. Build settings
 
-- Cloud build: set `EXPO_PUBLIC_LUDY_URL=https://api.ludy.vn` in the EAS build profile (a public address). Self-host builds leave it unset: the app then asks for the server address.
+- Cloud build: set `EXPO_PUBLIC_LUDY_URL=https://api.ludy.vn` in the EAS build profile (a public address). A build for one self-hosting operator sets `EXPO_PUBLIC_LUDY_CUSTOM_SERVER=1` instead (the app then asks for the server address) and registers its redirect URI on that operator's OAuth App only, never on Cloud's. With neither variable the app refuses to sign in.
 - Bundle id and Android package: `vn.ludy.app` (`apps/mobile/app.config.ts`).
 - Add the app icon and splash before a store submission (not in this slice).
 

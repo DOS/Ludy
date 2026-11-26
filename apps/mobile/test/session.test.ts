@@ -15,13 +15,13 @@ const grant = (refresh: string, expiresInSeconds = 3600, tag = refresh) => token
 // Made when the request is answered, so the token's end date follows the clock of that moment.
 const later = (refresh: string) => () => grant(refresh);
 
-function build(options: { script?: Parameters<typeof scriptedFetch>[0]; local?: ReturnType<typeof fakeLocalAuth>; store?: ReturnType<typeof memoryStore>; browserResult?: (url: string) => Promise<{ type: 'success'; url: string } | { type: 'cancel' }> } = {}) {
+function build(options: { revoke?: (token: string, org: string | null) => Promise<void>; script?: Parameters<typeof scriptedFetch>[0]; local?: ReturnType<typeof fakeLocalAuth>; store?: ReturnType<typeof memoryStore>; browserResult?: (url: string) => Promise<{ type: 'success'; url: string } | { type: 'cancel' }> } = {}) {
   clock = 1_800_000_000_000;
   const store = options.store ?? memoryStore();
   const { fn, calls } = scriptedFetch(options.script ?? {});
   const browser = fakeBrowser(options.browserResult ?? (async (url) => ({ type: 'success', url: callbackFor(url) })));
   const local = options.local ?? fakeLocalAuth();
-  const manager: SessionManager = createSessionManager({ vault: createVault(store), crypto: nodeCrypto, browser, localAuth: local, fetchFn: fn, now: () => clock, unlockPrompt: 'Mở Ludy' });
+  const manager: SessionManager = createSessionManager({ vault: createVault(store), crypto: nodeCrypto, browser, localAuth: local, fetchFn: fn, now: () => clock, unlockPrompt: 'Mở Ludy', serverAllowed: (url) => url === SERVER, ...(options.revoke ? { revokeOnServer: options.revoke } : {}) });
   return { manager, store, calls, browser, local };
 }
 
@@ -101,6 +101,14 @@ describe('sign in', () => {
     expect(await ctx.manager.signIn(SERVER)).toEqual({ ok: false, reason: 'storage' });
     expect(ctx.manager.state()).toEqual({ status: 'signed-out', notice: null });
     expect(await ctx.manager.accessToken()).toBeNull();
+  });
+
+  it('refuses a server address this build does not allow, before any request (a typed address must not reach Cloud\'s provider)', async () => {
+    const ctx = build({ script: { 'https://evil.example/api/config': [config()] } });
+    await ctx.manager.start();
+    expect(await ctx.manager.signIn('https://evil.example')).toEqual({ ok: false, reason: 'unsupported-server' });
+    expect(ctx.calls).toHaveLength(0);
+    expect(ctx.browser.opened).toHaveLength(0);
   });
 
   it('runs one sign-in at a time', async () => {
@@ -277,6 +285,23 @@ describe('sign out and revocation', () => {
       expect(manager.reportKernelError(error)).toBe(false);
     }
     expect(manager.state().status).toBe('active');
+  });
+
+  it('ends the session on the server on the person\'s own sign-out, but not when the server ended it', async () => {
+    const revoked: Array<[string, string | null]> = [];
+    const ctx = build({ revoke: async (token, org) => void revoked.push([token, org]), script: { [CONFIG_URL]: [config()], [ENDPOINTS.tokenUrl]: [later('refresh-1')] } });
+    await ctx.manager.start();
+    await ctx.manager.signIn(SERVER);
+    await ctx.manager.setOrg('acme');
+    await ctx.manager.signOut();
+    expect(revoked).toHaveLength(1);
+    expect(revoked[0]?.[1]).toBe('acme');
+    expect(ctx.store.data.size).toBe(0);
+    const again = build({ revoke: async () => Promise.reject(new Error('x')), script: { [CONFIG_URL]: [config()], [ENDPOINTS.tokenUrl]: [later('refresh-1')] } });
+    await again.manager.start();
+    await again.manager.signIn(SERVER);
+    await again.manager.signOut();
+    expect(again.store.data.size).toBe(0);
   });
 
   it('keeps the org the person chose', async () => {

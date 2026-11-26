@@ -37,3 +37,20 @@ export function normalizeServerUrl(raw: string): string | null {
 export function cloudServerUrl(raw: string | undefined): string | null {
   return raw === undefined || raw.trim() === '' ? null : normalizeServerUrl(raw);
 }
+
+// Which servers this build may sign in to (the review of #4880: one custom-scheme redirect URI is shared by every deployment, so a
+// build that accepts any typed address could be pointed at a server that names Ludy Cloud's provider and client id, and would then
+// receive Cloud tokens). `cloud`: only the build's own address (the field is hidden). `custom`: a build made for one operator who
+// registered the redirect URI on their own OAuth App only (EXPO_PUBLIC_LUDY_CUSTOM_SERVER=1), which shows the address field.
+// `none`: neither is set, and the app refuses to sign in rather than trust a typed address.
+export type ServerPolicy = { kind: 'cloud'; url: string } | { kind: 'custom' } | { kind: 'none' };
+
+export function serverPolicy(cloudRaw: string | undefined, customRaw: string | undefined): ServerPolicy {
+  const cloud = cloudServerUrl(cloudRaw);
+  if (cloud) return { kind: 'cloud', url: cloud };
+  return customRaw === '1' ? { kind: 'custom' } : { kind: 'none' };
+}
+
+export function serverAllowed(policy: ServerPolicy, serverUrl: string): boolean {
+  return policy.kind === 'custom' || (policy.kind === 'cloud' && policy.url === serverUrl);
+}

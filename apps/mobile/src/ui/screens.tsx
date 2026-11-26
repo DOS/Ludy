@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Text, TextInput } from 'react-native';
 import { isMfaRequired } from '@ludy/client';
 import type { MessageKey } from '../i18n.ts';
-import { CLOUD_SERVER_URL, clientFor, session, t } from '../runtime.ts';
+import { SERVER_POLICY, clientFor, session, t } from '../runtime.ts';
 import { Body, LinkButton, PrimaryButton, Screen, Title } from './parts.tsx';
 import { styles, usePalette } from './theme.ts';
 import type { SessionState } from '../auth/session.ts';
@@ -28,7 +28,7 @@ export function SignInScreen(props: { notice: 'revoked' | 'expired' | null }) {
   const signIn = async () => {
     setBusy(true);
     setError(null);
-    const result = await session.signIn(CLOUD_SERVER_URL ?? server);
+    const result = await session.signIn(SERVER_POLICY.kind === 'cloud' ? SERVER_POLICY.url : server);
     setBusy(false);
     // On success the state changes and this screen goes away.
     if (!result.ok) setError(ERROR_KEYS[result.reason] ?? 'signIn.error.generic');
@@ -39,7 +39,7 @@ export function SignInScreen(props: { notice: 'revoked' | 'expired' | null }) {
       <Title>{t('signIn.title')}</Title>
       <Body>{t('signIn.lead')}</Body>
       {noticeKey ? <Body tone="danger">{t(noticeKey)}</Body> : null}
-      {CLOUD_SERVER_URL === null ? (
+      {SERVER_POLICY.kind === 'custom' ? (
         <>
           <Text accessibilityRole="text" style={[styles.body, { color: palette.text }]}>
             {t('signIn.server')}

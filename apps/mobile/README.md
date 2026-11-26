@@ -9,7 +9,8 @@ The Expo (React Native) app of ADR-0059, Phase 2a, first slice ([#4880](https://
 - **Tokens**: only the refresh token is stored, in the Keychain / Keystore (`expo-secure-store`, this device only, readable while unlocked). The access token lives in memory. Refresh tokens rotate; the new one is stored before the new access token is used, one refresh runs at a time, and a rejected refresh token signs the phone out. Sign-out clears the secure store.
 - **Biometric**: the app opens behind Face ID, fingerprint or the phone's passcode, and locks after 60 seconds in the background. `StepUpGate` asks again before a sensitive action. The kernel's second factor for R3 is not done here (screen: approvals, #4881).
 - **Revocation**: a 401 or an org revoke signs the phone out; the home screen asks the server every 5 minutes.
-- **Server address**: asked for in a build without `EXPO_PUBLIC_LUDY_URL` (self-hosters); hidden when it is set (Cloud).
+- **Which server**: a Cloud build sets `EXPO_PUBLIC_LUDY_URL` and signs in to that address only (no field). A build for one self-hosting operator sets `EXPO_PUBLIC_LUDY_CUSTOM_SERVER=1` and shows the address field. With neither the app refuses to sign in. Reason: the redirect URI is shared by every deployment, so a build that accepts any typed address could be pointed at a server that names Cloud's provider and client id and would receive Cloud tokens. A custom build must register its redirect URI on its own operator's OAuth App only.
+- **Sign-out** ends the session on the server first (best effort, `sessions.revoke`), then clears the phone.
 
 ## Develop
 

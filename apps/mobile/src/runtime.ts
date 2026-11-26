@@ -6,7 +6,8 @@ import { createLudyClient, isMfaRequired, isOrgAccessRevoked, isUnauthenticated,
 import { createSessionManager } from './auth/session.ts';
 import { createStepUpGate } from './auth/step-up.ts';
 import { createVault } from './auth/vault.ts';
-import { cloudServerUrl } from './config.ts';
+import { serverAllowed, serverPolicy } from './config.ts';
+import { jwtClaims } from './auth/oauth.ts';
 import { createTranslator, deviceLocale } from './i18n.ts';
 import { systemBrowser } from './platform/browser.ts';
 import { deviceCrypto } from './platform/crypto.ts';
@@ -15,8 +16,8 @@ import { secureKeyValue } from './platform/secure-store.ts';
 
 export const t = createTranslator(deviceLocale());
 
-// Inlined by Expo at build time; a public address, never a secret. Null for a build that asks for the server address.
-export const CLOUD_SERVER_URL = cloudServerUrl(process.env['EXPO_PUBLIC_LUDY_URL']);
+// Inlined by Expo at build time; public settings, never secrets (config.ts serverPolicy).
+export const SERVER_POLICY = serverPolicy(process.env['EXPO_PUBLIC_LUDY_URL'], process.env['EXPO_PUBLIC_LUDY_CUSTOM_SERVER']);
 
 export const session = createSessionManager({
   vault: createVault(secureKeyValue),
@@ -26,6 +27,15 @@ export const session = createSessionManager({
   fetchFn: (input, init) => fetch(input, init),
   now: () => Date.now(),
   unlockPrompt: t('lock.prompt'),
+  serverAllowed: (serverUrl) => serverAllowed(SERVER_POLICY, serverUrl),
+  // The org's own revoke of this session, as the web app's sign-out does: the session id and the user are the token's claims.
+  revokeOnServer: async (accessToken, orgSlug) => {
+    const claims = jwtClaims(accessToken);
+    const state = session.state();
+    if (!orgSlug || state.status !== 'active' || typeof claims?.['sub'] !== 'string' || typeof claims['session_id'] !== 'string') return;
+    const client = createLudyClient({ origin: state.serverUrl, headers: () => requestHeaders(accessToken, orgSlug) });
+    await client.sessions.revoke({ userId: claims['sub'], sessionId: claims['session_id'] });
+  },
 });
 
 export const stepUp = createStepUpGate({ localAuth: deviceLocalAuth, now: () => Date.now() });
@@ -48,7 +58,11 @@ export function clientFor(serverUrl: string): LudyClient {
     origin: serverUrl,
     headers: async () => {
       const state = session.state();
-      return requestHeaders(await session.accessToken(), state.status === 'active' ? state.orgSlug : null);
+      const token = await session.accessToken();
+      // No token (a refresh that did not work, a lock): the request is not sent. Sent without one, the kernel would answer 401 and
+      // the phone would sign out a session that is still good.
+      if (!token) throw new Error('no session token');
+      return requestHeaders(token, state.status === 'active' ? state.orgSlug : null);
     },
   });
 }
