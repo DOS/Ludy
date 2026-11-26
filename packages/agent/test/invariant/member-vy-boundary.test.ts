@@ -2999,7 +2999,7 @@ function getAstParseDiagnostics(sf: TsSourceFileWithDiagnostics): readonly tsTyp
   return sf.parseDiagnostics ?? [];
 }
 
-const AST_PARSE_CACHE_MAX = 32;
+const AST_PARSE_CACHE_MAX = 256;
 const astParseCache = new Map<string, AstParsedResult>();
 
 function parseAstCandidates(text: string, filePath?: string | undefined): AstParsedResult {
@@ -8888,12 +8888,16 @@ function hasTokenResolvedWorkspaceTarget(
   for (let pIdx = 0; pIdx < primaryLists.length; pIdx += 1) {
     const tokens = primaryLists[pIdx]!;
     let hasConcatOp = false;
+    let hasPlusOp = false;
     let hasStrOrTpl = false;
     for (let i = 0; i < tokens.length; i += 1) {
       const tk = tokens[i]!;
-      if (tk.kind === 'template_head' || (tk.kind === 'punct' && tk.value === '+')) hasConcatOp = true;
-      else if (tk.kind === 'string' || tk.kind === 'template') hasStrOrTpl = true;
-      if (hasConcatOp && hasStrOrTpl) break;
+      if (tk.kind === 'template_head') hasConcatOp = true;
+      else if (tk.kind === 'punct' && tk.value === '+') {
+        hasConcatOp = true;
+        hasPlusOp = true;
+      } else if (tk.kind === 'string' || tk.kind === 'template') hasStrOrTpl = true;
+      if (hasConcatOp && hasPlusOp && hasStrOrTpl) break;
     }
     if (!hasConcatOp || !hasStrOrTpl) continue;
     const delims = precomputedDelims?.[pIdx] ?? pairDelimiters(tokens);
@@ -8929,6 +8933,11 @@ function hasTokenResolvedWorkspaceTarget(
           const val = tryResolveConstantStringExpr(tokens, i, tailIdx + 1, delims, templateNext, constLookup, 0, templateTail);
           if (val !== null && (symbolSet.has(val) || isAgentOrAdapterTextValue(val, fromRelPath))) return true;
         }
+      }
+      if (!hasPlusOp) continue;
+      if (t.kind !== 'template_head' && !(t.kind === 'punct' && t.value === '(')) {
+        const nextTok = tokens[i + 1];
+        if (!nextTok || nextTok.kind !== 'punct' || nextTok.value !== '+') continue;
       }
       const maxEnd = Math.min(tokens.length, i + 128);
       const firstEnd = advanceOp(i, maxEnd);
@@ -8973,7 +8982,7 @@ function shouldParseWorkspaceAst(
   if (relFromRoot && relFromRoot.startsWith('packages/agent/')) return true;
   if (fromRelPath === undefined && fileText.length < 30_000) return true;
   const hasRelevantKeywordHint =
-    /@(?:ludy|crove)|agent|note-ai|packages|\bimport(?=\s*(?:\(|\/\*))|\b(?:export|require|createRequire|eval|Function|Reflect)\b|generate|Summary|Todo|fromCharCode|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}|await\s+['"`]|<[A-Za-z_][\w.]*>\s*['"`]/.test(
+    /@(?:ludy|crove)|agent|note-ai|packages|\bimport(?=\s*(?:\(|\/\*))|\b(?:export|require|createRequire|eval|Function|Reflect)\b|generate|Summary|Todo|fromCharCode|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|await\s+['"`]/.test(
       fileText,
     );
   if (
@@ -8982,7 +8991,7 @@ function shouldParseWorkspaceAst(
         (t) =>
           (t.kind === 'invalid' && (fromRelPath !== undefined || hasRelevantKeywordHint)) ||
           (t.kind === 'regex' &&
-            (/\bimport(?=\s*(?:\(|\/\*))|\b(?:require|createRequire|eval|Function|Reflect|agent|note-ai|generate|Todo|Summary|Note|fromCharCode)\b|@ludy|@crove|packages\/agent|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}/.test(
+            (/\bimport(?=\s*(?:\(|\/\*))|\b(?:require|createRequire|eval|Function|Reflect|agent|note-ai|generate|Todo|Summary|Note|fromCharCode)\b|@ludy|@crove|packages\/agent|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]/.test(
               t.raw,
             ) ||
               (/\{/.test(t.raw) && /['"`]/.test(t.raw)))),
@@ -8992,7 +9001,7 @@ function shouldParseWorkspaceAst(
     return true;
   }
   if (
-    /(?:@(?:ludy|crove)(?:$|[^a-zA-Z0-9_/]|\/(?:$|[^a-zA-Z0-9_]|a(?:$|g|[^a-zA-Z0-9_-])))|note-ai|packages\/agent|generate(?:Note|Todo)|SummaryText|TodoSuggest|TodoPlan|NoteOrganize|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}|fromCharCode|globalThis|createRequire|module\.require|window\.require|self\.require|\bimport(?=\s*(?:\(|\/\*))|\b(?:Reflect|eval|Function)\b|await\s+['"`]|<[A-Za-z_][\w.]*>\s*['"`])/.test(
+    /(?:@(?:ludy|crove)(?:$|[^a-zA-Z0-9_/]|\/(?:$|[^a-zA-Z0-9_]|a(?:$|g|[^a-zA-Z0-9_-])))|note-ai|packages\/agent|generate(?:Note|Todo)|SummaryText|TodoSuggest|TodoPlan|NoteOrganize|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|fromCharCode|globalThis|createRequire|module\.require|window\.require|self\.require|\bimport(?=\s*(?:\(|\/\*))|\b(?:Reflect|eval|Function)\b|await\s+['"`])/.test(
       fileText,
     )
   ) {
@@ -9013,7 +9022,7 @@ function shouldParseWorkspaceAst(
     fileText.length < 30_000 &&
     /\b(?:import|export|require)\b/.test(fileText) &&
     /(?:^|\W)\.\.?(?:\/|['"`])/.test(fileText) &&
-    (/(?:agent|note-ai|packages|fromCharCode|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}|\\\r?\n)/i.test(
+    (/(?:agent|note-ai|packages|fromCharCode|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|\\\r?\n)/i.test(
       fileText,
     ) ||
       /(?:import|require)\s*\([^)]*(?:\+|`|\$\{)/.test(fileText))
@@ -11749,6 +11758,13 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(
       workspaceAdapterLeakViolations(
         "export const C = () => <div>/{\\u{72}equire('@ludy/agent')}/</div>;",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toContain('dynamic require from @ludy/agent');
+    expect(
+      workspaceAdapterLeakViolations(
+        "export const C = () => <div>/{((r) => r('@ludy/agent'))(\\u{72}equire)}/</div>;",
         DEFAULT_ADAPTER_EXPORTS,
         'apps/web/src/C.tsx',
       ),
