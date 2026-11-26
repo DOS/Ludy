@@ -1195,6 +1195,9 @@ suite('marketplace connections (#2519)', () => {
     );
     expect(await settlementEnd()).toBe('2026-10-31');
 
+    // Backdate created_at before the settlement period so firstIncomeDay is anchored by lastSettlementEnd + 1 regardless of test run date.
+    await rows("UPDATE ludy_finance.marketplace_connection SET created_at = '2026-10-01T00:00:00Z' WHERE org_id = $1 AND id = $2", [orgId, id]);
+
     // Running orders + failing income in worker forwards minStartDay from settlement end, sets orders last_poll_state='ok' and income last_income_poll_state='rate_limited'.
     let orderCalls = 0;
     let incomeCalls = 0;

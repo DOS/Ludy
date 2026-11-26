@@ -8066,6 +8066,11 @@ export const vi = {
       too_large: 'Lượt đơn quá lớn để đọc một lần',
       not_recognized: 'Không nhận ra định dạng đơn hàng từ sàn',
     },
+    incomePollStates: {
+      ok: 'Lấy thu nhập thành công',
+      too_large: 'Số dòng thu nhập của ngày quá lớn để đọc một lần',
+      not_recognized: 'Không nhận ra định dạng báo cáo thu nhập từ sàn',
+    },
   },
   misaAmisConnections: {
     title: 'MISA AMIS Kế toán: gửi chứng từ cho kế toán',

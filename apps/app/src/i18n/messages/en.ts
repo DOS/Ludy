@@ -8068,6 +8068,11 @@ export const en = {
       too_large: 'Too many orders to read at once',
       not_recognized: 'Could not recognise the marketplace\'s order format',
     },
+    incomePollStates: {
+      ok: 'Income pulled',
+      too_large: 'Too many income lines for one day to read at once',
+      not_recognized: 'Could not recognise the marketplace\'s income format',
+    },
   },
   misaAmisConnections: {
     title: 'MISA AMIS Kế toán: send vouchers to your accountant',
