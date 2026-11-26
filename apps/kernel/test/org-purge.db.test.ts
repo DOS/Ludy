@@ -280,6 +280,21 @@ suite('org purge on PostgreSQL (#1024)', () => {
         Buffer.concat([Buffer.from([4]), Buffer.alloc(64, 7)]).toString('base64url'),
         Buffer.alloc(16, 9).toString('base64url'),
       ]);
+      // The owner's mobile native push device and dispatch ledger (#4883): deleted with the org's other kernel rows.
+      await c.query(
+        `INSERT INTO ludy_kernel.native_push_device (org_id, user_id, session_id, platform, token, label) VALUES ($1, $2, $3, 'fcm', $4, 'Phone')`,
+        [org.orgId, owner, randomUUID(), `fcm-purge-token-${tag}`],
+      );
+      const nativePushNotice = (
+        await c.query<{ id: string }>(
+          `INSERT INTO ludy_kernel.notification (org_id, user_id, kind, dedupe_key) VALUES ($1, $2, 'kernel.conversation_new', $3) RETURNING id`,
+          [org.orgId, owner, `purge-native-push-${tag}`],
+        )
+      ).rows[0]?.id;
+      await c.query(
+        `INSERT INTO ludy_kernel.native_push_sent (org_id, notification_id) VALUES ($1, $2)`,
+        [org.orgId, nativePushNotice],
+      );
       // The owner's saved view of the posts, shared with the org (#1300): deleted with the org's other Social rows.
       await c.query(`INSERT INTO ludy_social.saved_view (org_id, user_id, name, filters, shared) VALUES ($1, $2, 'Tuần này', '{"tab":"calendar"}', true)`, [org.orgId, owner]);
       // The owner's saved view of the deals (CRM K3, #2227), private: deleted before the members it names.
@@ -598,6 +613,8 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(before['ludy_kernel.proposal']).toBe(2);
     expect(before['ludy_social.push_subscription']).toBe(1);
     expect(before['ludy_kernel.push_subscription']).toBe(1);
+    expect(before['ludy_kernel.native_push_device']).toBe(1);
+    expect(before['ludy_kernel.native_push_sent']).toBe(1);
     expect(before['ludy_social.saved_view']).toBe(1);
     expect(before['ludy_kernel.saved_view']).toBe(1);
     expect(before['ludy_social.media_archive']).toBe(2);
@@ -641,6 +658,8 @@ suite('org purge on PostgreSQL (#1024)', () => {
             'ludy_finance.bank_account_number': 1,
             'ludy_social.push_subscription': 1,
             'ludy_kernel.push_subscription': 1,
+            'ludy_kernel.native_push_device': 1,
+            'ludy_kernel.native_push_sent': 1,
             'ludy_social.saved_view': 1,
             'ludy_kernel.saved_view': 1,
             'ludy_social.media_archive': 2,

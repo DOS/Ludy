@@ -162,8 +162,6 @@ const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'finance-misa-amis-push handler': '#3902',
   // The weekly meetings notice sweep (#4967, step 0 of 2): the site and its command land in the table's own PR, which removes this entry.
   'meetings-weekly handler': '#4967',
-  // Mobile native push (#4883, step 0 of 2): enqueueNativePushes and kernel.native_push.register land in the feature PR, which removes this entry.
-  enqueueNativePushes: '#4883',
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.

@@ -93,6 +93,8 @@ export const kernelManifest = defineModule({
       member_vy_result: columns(['org_id', 'id', 'member_user_id', 'run_id', 'feature', 'subject_type', 'subject_id', 'status', 'error_code', 'source_revision', 'tainted', 'private_read', 'created_at', 'expires_at'], { body: 'pii' }),
       member_vy_system_feature: columns(['feature', 'module', 'adr', 'created_at']),
       member_vy_table: columns(['table_name', 'mode', 'adr']),
+      native_push_device: columns(['org_id', 'id', 'user_id', 'session_id', 'platform', 'failure_count', 'generation', 'created_at', 'refreshed_at', 'last_used_at'], { token: 'sensitive', token_sha256: 'sensitive', label: 'pii' }),
+      native_push_sent: columns(['org_id', 'id', 'notification_id', 'dispatched_at']),
       notification: columns(['org_id', 'id', 'user_id', 'kind', 'dedupe_key', 'event_id', 'subject_type', 'subject_id', 'detail', 'created_at', 'read_at', 'legal_entity_id']),
       notification_mute: columns(['org_id', 'user_id', 'kind', 'created_at']),
       number_allocation: columns(['org_id', 'id', 'series_id', 'legal_entity_id', 'number', 'target_type', 'target_id', 'allocated_by', 'allocated_at']),

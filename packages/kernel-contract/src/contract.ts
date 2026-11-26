@@ -166,6 +166,9 @@ import {
   zPurchaseDocument,
   zDocumentExport,
   zSearchResult,
+  zNativePushRegister,
+  zNativePushStatus,
+  zNativePushUnregister,
   zNotificationKind,
   zNotifications,
   zPushStatus,
@@ -3052,6 +3055,13 @@ export const contract = {
       status: oc.input(z.strictObject({ endpoint: z.string().max(2048).nullable() })).output(zPushStatus),
       subscribe: oc.input(zPushSubscribe).output(z.object({ id: zId })),
       unsubscribe: oc.input(z.union([z.strictObject({ endpoint: z.string().min(1).max(2048) }), z.strictObject({ id: zId })])).output(z.object({ removed: z.number().int() })),
+    },
+    // Mobile native push (#4883, ADR-0059): APNs/FCM device registration bound to the signed-in session.
+    // register answers NATIVE_PUSH_DISABLED when the deployment leaves the native push sender interface unset.
+    nativePush: {
+      status: oc.input(z.object({})).output(zNativePushStatus),
+      register: oc.input(zNativePushRegister).output(z.object({ id: zId })),
+      unregister: oc.input(zNativePushUnregister).output(z.object({ removed: z.number().int() })),
     },
   },
   // Saved views of a list (CRM plan 4.3, #2227), the kernel's: named filters and a sort, private or shared with the org, at

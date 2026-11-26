@@ -145,6 +145,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_meetings_personal_data_meeting_place.sql',
       // #2334 (original XML retention): the purge restatement extends v_keep_file with attached original XMLs and restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_original_xml_retention.sql',
+      // #4883 (mobile native push): the purge restatement that adds ludy_kernel.native_push_device and native_push_sent restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_native_push.sql',
     ]);
   });
 });
