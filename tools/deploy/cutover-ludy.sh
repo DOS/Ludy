@@ -845,6 +845,17 @@ do_cutover_stack() {
   env_tmp="$(umask 077 && mktemp "$(state_dir)/.env.cutover-tmp-XXXXXX")"
   TEMP_FILES+=("$env_tmp")
   rewrite_env_file "$ENV_FILE" "$env_tmp"
+  # Keep pre-switch WAL settings pinned until `switch-wal` builds ludy-db:local and creates stanza `ludy` (#3972).
+  if [ -f "$DEPLOY_DIR/compose.wal.yml" ]; then
+    local cur_wal_img cur_wal_stanza cur_s3_prefix wal_tmp
+    cur_wal_img="$(env_or_default WAL_DB_IMAGE 'crove-db:local')"
+    cur_wal_stanza="$(env_or_default WAL_STANZA 'crove')"
+    cur_s3_prefix="$(env_or_default BACKUP_S3_PREFIX 'crove')"
+    wal_tmp="$(umask 077 && mktemp "$(state_dir)/.env.cutover-wal-XXXXXX")"
+    TEMP_FILES+=("$wal_tmp")
+    upsert_env_kv_file "$env_tmp" "$wal_tmp" WAL_DB_IMAGE "$cur_wal_img" WAL_STANZA "$cur_wal_stanza" BACKUP_S3_PREFIX "$cur_s3_prefix"
+    mv -f "$wal_tmp" "$env_tmp"
+  fi
 
   # Arm EXIT-based rollback before stopping services or copying volumes.
   LUDY_VOLUMES_COMMITTED=0

@@ -294,7 +294,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(res.out).toContain('could not remove the old ludy container (the deploy goes on): rm: stub failure');
   });
 
-  it('cleans up renamed v0.3.12 crove-extract/crove-media/crove containers scoped to the project before starting replacements, and supports rolling back to v0.3.12 (#3972)', () => {
+  it('cleans up renamed v0.3.12 crove-extract/crove-media/crove containers gracefully scoped to the project before starting replacements, and supports rolling back to v0.3.12 (#3972)', () => {
     writeFileSync(`${dir}/.env`, `${PILOT_ENV}COMPOSE_PROJECT_NAME=ludy\n`);
     writeFileSync(`${root}/compose.pilot.yml`, 'services: {}\n');
     const res = deploy('v0.4.0', 'b', {
@@ -303,12 +303,13 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
     expect(res.status, res.out).toBe(0);
     const c = calls();
-    expect(indexOf(c, 'docker rm --force cid-ext')).toBeGreaterThanOrEqual(0);
-    expect(indexOf(c, 'docker rm --force cid-ext')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy-extract ludy-media mailpit'));
-    expect(indexOf(c, 'docker rm --force cid-media')).toBeGreaterThanOrEqual(0);
-    expect(indexOf(c, 'docker rm --force cid-media')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy-extract ludy-media mailpit'));
-    expect(indexOf(c, 'docker rm --force cid-app')).toBeGreaterThanOrEqual(0);
-    expect(indexOf(c, 'docker rm --force cid-app')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps worker'));
+    expect(indexOf(c, 'docker stop --time 30 cid-ext')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(c, 'docker stop --time 30 cid-ext')).toBeLessThan(indexOf(c, 'docker rm cid-ext'));
+    expect(indexOf(c, 'docker rm cid-ext')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy-extract ludy-media mailpit'));
+    expect(indexOf(c, 'docker stop --time 30 cid-media')).toBeLessThan(indexOf(c, 'docker rm cid-media'));
+    expect(indexOf(c, 'docker rm cid-media')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy-extract ludy-media mailpit'));
+    expect(indexOf(c, 'docker stop --time 30 cid-app')).toBeLessThan(indexOf(c, 'docker rm cid-app'));
+    expect(indexOf(c, 'docker rm cid-app')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps worker'));
     expect(c.some((l) => l.includes('cid-other'))).toBe(false);
 
     // Stage a v0.3.12-shaped release using legacy service names (`crove`, `crove-extract`, `crove-media`) as previous and roll back to it.
@@ -330,12 +331,72 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
     expect(back.status, back.out).toBe(0);
     const rc = calls();
-    expect(indexOf(rc, 'docker rm --force cid-new-ext')).toBeGreaterThanOrEqual(0);
-    expect(indexOf(rc, 'docker rm --force cid-new-ext')).toBeLessThan(indexOf(rc, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 crove-extract crove-media mailpit'));
-    expect(indexOf(rc, 'docker rm --force cid-new-media')).toBeGreaterThanOrEqual(0);
-    expect(indexOf(rc, 'docker rm --force cid-new-app')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(rc, 'docker stop --time 30 cid-new-ext')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(rc, 'docker stop --time 30 cid-new-ext')).toBeLessThan(indexOf(rc, 'docker rm cid-new-ext'));
+    expect(indexOf(rc, 'docker rm cid-new-ext')).toBeLessThan(indexOf(rc, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 crove-extract crove-media mailpit'));
+    expect(indexOf(rc, 'docker rm cid-new-media')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(rc, 'docker rm cid-new-app')).toBeGreaterThanOrEqual(0);
     expect(rc.some((l) => l === 'compose port crove 8080')).toBe(true);
     expect(rc.some((l) => l.endsWith('compose up --detach --no-build --no-deps --wait --wait-timeout 600 crove'))).toBe(true);
+  });
+
+  it('uses the merged compose project name (e.g. compose.host.yml) for orphan cleanup and fails closed on empty project or failed stop/rm (#3972)', () => {
+    writeFileSync(`${dir}/.env`, PILOT_ENV);
+    writeFileSync(`${root}/compose.pilot.yml`, 'services: {}\n');
+    writeFileSync(`${dir}/compose.host.yml`, 'name: beta\nservices: {}\n');
+    const beta = deploy('v0.4.0', 'b', {
+      STUB_SERVICES: 'db migrate auth auth-grants ludy-extract ludy-media mailpit api worker',
+      STUB_ORPHAN_CONTAINERS: 'beta:crove-extract=cid-beta-ext ludy:crove-extract=cid-ludy-ext',
+    });
+    expect(beta.status, beta.out).toBe(0);
+    const bc = calls();
+    expect(bc.some((l) => l === 'docker stop --time 30 cid-beta-ext')).toBe(true);
+    expect(bc.some((l) => l === 'docker rm cid-beta-ext')).toBe(true);
+    expect(bc.some((l) => l.includes('cid-ludy-ext'))).toBe(false);
+
+    rmSync(`${dir}/compose.host.yml`, { force: true });
+    expect(deploy('v0.4.1', 'c', { STUB_COMPOSE_PROJECT: '__empty__' }).status).not.toBe(0);
+    for (const failEnv of [{ STUB_ORPHAN_STOP_FAIL: '1' }, { STUB_ORPHAN_RM_FAIL: '1' }] as Record<string, string>[]) {
+      const failed = deploy('v0.4.2', 'd', {
+        STUB_SERVICES: 'db migrate auth auth-grants ludy-extract api worker',
+        STUB_ORPHAN_CONTAINERS: 'ludy:crove-extract=cid-stuck',
+        ...failEnv,
+      });
+      expect(failed.status, failed.out).not.toBe(0);
+      expect(failed.out).toContain('failed to');
+    }
+  });
+
+  it('refuses retired CROVE_* credentials without LUDY_* replacement before pulling images and blocks un-cut-over crove_db-data volumes (#3972)', () => {
+    const secretCtx = 'secret-context-token-do-not-print';
+    const beforeCtx = `POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=${secretCtx}\n`;
+    writeFileSync(`${dir}/.env`, beforeCtx);
+    const resCtx = deploy('v1.0.0', 'a');
+    expect(resCtx.status, resCtx.out).toBe(2);
+    expect(resCtx.out).toContain('CROVE_CONTEXT_TOKEN_KEY->LUDY_CONTEXT_TOKEN_KEY');
+    expect(resCtx.out).not.toContain(secretCtx);
+    expect(envFile()).toBe(beforeCtx);
+    expect(calls()).toEqual([]);
+
+    const secretPw = 'secret-app-pw-do-not-print';
+    const beforePw = `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=valid-key\nCROVE_APP_DB_PASSWORD=${secretPw}\n`;
+    writeFileSync(`${dir}/.env`, beforePw);
+    const resPw = deploy('v1.0.0', 'a');
+    expect(resPw.status, resPw.out).toBe(2);
+    expect(resPw.out).toContain('CROVE_APP_DB_PASSWORD->LUDY_APP_DB_PASSWORD');
+    expect(resPw.out).not.toContain(secretPw);
+    expect(envFile()).toBe(beforePw);
+    expect(calls()).toEqual([]);
+
+    // Having both legacy CROVE_* and non-empty LUDY_* replacement proceeds normally.
+    writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=valid-key\nCROVE_APP_DB_PASSWORD=${secretPw}\nLUDY_APP_DB_PASSWORD=new-pw\n`);
+    expect(deploy('v1.0.0', 'a').status).toBe(0);
+
+    // Self-hosted volume cutover guard: crove_db-data without ludy_db-data under project ludy must abort before starting db.
+    const volGuard = deploy('v1.0.1', 'b', { STUB_VOLUMES: 'crove_db-data' });
+    expect(volGuard.status, volGuard.out).toBe(1);
+    expect(volGuard.out).toContain('found legacy volume crove_db-data without ludy_db-data');
+    expect(volGuard.out).toContain('cutover-ludy.sh cutover-stack');
   });
 
   // #892: with --build, /version must report the build being deployed, so an old container that still answers fails.

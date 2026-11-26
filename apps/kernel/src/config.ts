@@ -845,6 +845,32 @@ export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_
   ADS_SANDBOX: 'true' | 'false';
 };
 
+const RETIRED_MIGRATE_CREDENTIAL_PAIRS: ReadonlyArray<readonly [oldKey: string, newKey: string, localDefault: string | null]> = [
+  ['CROVE_APP_DB_PASSWORD', 'LUDY_APP_DB_PASSWORD', 'local-app-password'],
+  ['CROVE_WORKER_DB_PASSWORD', 'LUDY_WORKER_DB_PASSWORD', 'local-worker-password'],
+  ['CROVE_PROBER_DB_PASSWORD', 'LUDY_PROBER_DB_PASSWORD', 'local-prober-password'],
+  ['CROVE_REPORTER_DB_PASSWORD', 'LUDY_REPORTER_DB_PASSWORD', 'local-reporter-password'],
+  ['CROVE_CONTEXT_TOKEN_KEY', 'LUDY_CONTEXT_TOKEN_KEY', null],
+];
+
+// Fails closed before migrate overwrites role passwords or context keys if retired CROVE_* credentials sit in .env (#3972).
+export function assertNoRetiredMigrateCredentials(env: NodeJS.ProcessEnv = process.env): void {
+  const flagged = new Set((env.LUDY_RETIRED_CREDENTIALS ?? '').split(/\s+/).filter(Boolean));
+  const missing: string[] = [];
+  for (const [oldKey, newKey, localDefault] of RETIRED_MIGRATE_CREDENTIAL_PAIRS) {
+    const oldPresent = flagged.has(oldKey) || Boolean(env[oldKey]?.trim());
+    if (!oldPresent) continue;
+    const newVal = env[newKey]?.trim();
+    const newEffective = Boolean(newVal && newVal !== localDefault);
+    if (!newEffective) missing.push(`${oldKey}->${newKey}`);
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `Invalid configuration: retired CROVE_* credential variable(s) set without matching LUDY_* replacement (${missing.join(', ')}); rename them before running migrate (#3972)`,
+    );
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (env.CROVE_SHARED_DATABASE?.trim()) {
     throw new Error('Invalid configuration: CROVE_SHARED_DATABASE has been retired; rename it to LUDY_SHARED_DATABASE');

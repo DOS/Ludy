@@ -1,5 +1,7 @@
 # Ludy self-host: `docker compose up` then open http://localhost:8080.
 # Defaults are for local use only. For a real deployment, copy .env.example to .env and change every secret.
+# Self-hosters upgrading from pre-Stage-7 releases (`name: crove`): run `tools/deploy/cutover-ludy.sh cutover-stack`
+# (or pin `COMPOSE_PROJECT_NAME=crove` in `.env` until volume cutover) so Compose does not create empty `ludy_*` volumes.
 name: ludy
 
 
@@ -31,6 +33,8 @@ services:
       LUDY_WORKER_DB_PASSWORD: ${LUDY_WORKER_DB_PASSWORD:-local-worker-password}
       LUDY_PROBER_DB_PASSWORD: ${LUDY_PROBER_DB_PASSWORD:-local-prober-password}
       LUDY_REPORTER_DB_PASSWORD: ${LUDY_REPORTER_DB_PASSWORD:-local-reporter-password}
+      # Presence-only names of retired CROVE_* credentials so migrate fails closed before overwriting DB passwords (#3972).
+      LUDY_RETIRED_CREDENTIALS: "${CROVE_APP_DB_PASSWORD:+CROVE_APP_DB_PASSWORD }${CROVE_WORKER_DB_PASSWORD:+CROVE_WORKER_DB_PASSWORD }${CROVE_PROBER_DB_PASSWORD:+CROVE_PROBER_DB_PASSWORD }${CROVE_REPORTER_DB_PASSWORD:+CROVE_REPORTER_DB_PASSWORD }${CROVE_CONTEXT_TOKEN_KEY:+CROVE_CONTEXT_TOKEN_KEY }"
       AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-local-auth-password}
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-local-only-jwt-secret-change-me-0123456789}
       # Bundled GoTrue default keeps crove-auth to match existing self-hosted user_account.issuer rows.

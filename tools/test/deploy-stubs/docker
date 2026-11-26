@@ -55,11 +55,23 @@ if [ "${1:-}" = ps ]; then
   done
   exit 0
 fi
+if [ "${1:-}" = stop ]; then
+  printf 'docker %s\n' "$*" >>"$STUB_LOG"
+  printf 'docker %s\n' "$*" >>"$STUB_LOG.orphans"
+  [ -z "${STUB_ORPHAN_STOP_FAIL:-}" ] || { echo 'stop: stub failure' >&2; exit 1; }
+  exit 0
+fi
 if [ "${1:-}" = rm ]; then
   printf 'docker %s\n' "$*" >>"$STUB_LOG"
   printf 'docker %s\n' "$*" >>"$STUB_LOG.orphans"
-  [ -z "${STUB_RM_FAIL:-}" ] || { echo 'rm: stub failure' >&2; exit 1; }
+  [ -z "${STUB_ORPHAN_RM_FAIL:-}" ] || { echo 'rm: stub failure' >&2; exit 1; }
   exit 0
+fi
+if [ "${1:-}" = volume ] && [ "${2:-}" = inspect ]; then
+  for v in ${STUB_VOLUMES:-}; do
+    if [ "$v" = "${3:-}" ]; then exit 0; fi
+  done
+  exit 1
 fi
 [ "${1:-}" = compose ] || {
   echo "stub docker: unexpected $*" >&2
@@ -101,6 +113,27 @@ case "$sub" in
     if [ "${1:-}" = --quiet ] && [ -n "${STUB_CONFIG_FAIL_IF_ENV_HAS:-}" ] && grep -q -F -- "$STUB_CONFIG_FAIL_IF_ENV_HAS" "$envfile"; then exit 1; fi
     if [ "${1:-}" = --services ]; then
       for s in ${STUB_SERVICES:-db migrate auth auth-grants ludy-extract mailpit ludy}; do echo "$s"; done
+    elif [ -z "${1:-}" ]; then
+      if [ "${STUB_COMPOSE_PROJECT:-}" = __empty__ ]; then
+        exit 0
+      elif [ -n "${STUB_COMPOSE_PROJECT:-}" ]; then
+        printf 'name: %s\n' "$STUB_COMPOSE_PROJECT"
+      else
+        proj="${COMPOSE_PROJECT_NAME:-}"
+        if [ -z "$proj" ] && [ -n "$envfile" ] && [ -f "$envfile" ]; then
+          proj="$(sed -n -E 's/^[[:space:]]*(export[[:space:]]+)?COMPOSE_PROJECT_NAME[[:space:]]*[=:][[:space:]]*(.*)$/\2/p' "$envfile" | tail -n 1)"
+          proj="${proj%$'\r'}"
+        fi
+        if [ -z "$proj" ]; then
+          for cf in "${files[@]}"; do
+            [ -f "$cf" ] || continue
+            cname="$(sed -n -E 's/^name:[[:space:]]*(.*)$/\1/p' "$cf" | head -n 1)"
+            cname="${cname%$'\r'}"
+            if [ -n "$cname" ]; then proj="$cname"; fi
+          done
+        fi
+        printf 'name: %s\n' "${proj:-ludy}"
+      fi
     fi
     ;;
   port) echo '127.0.0.1:18080' ;;

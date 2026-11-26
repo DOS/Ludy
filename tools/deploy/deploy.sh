@@ -846,42 +846,50 @@ unquote_compose_scalar() {
   fi
 }
 
-# Project name docker compose gives containers in $DEPLOY_DIR, matching Compose's own precedence:
-# COMPOSE_PROJECT_NAME (env) -> COMPOSE_PROJECT_NAME (in $ENV_FILE) -> top-level `name:` in docker-compose.yml -> basename of $DEPLOY_DIR.
+# Resolved project name from the merged Compose configuration (honoring COMPOSE_PROJECT_NAME, .env, docker-compose.yml,
+# and overrides such as compose.host.yml). Fails closed if the project name cannot be determined.
 compose_project() {
-  local raw='' line
-  if [ -n "${COMPOSE_PROJECT_NAME:-}" ]; then
-    raw="$COMPOSE_PROJECT_NAME"
-  elif [ -n "${ENV_FILE:-}" ] && [ -f "$ENV_FILE" ]; then
-    line="$(sed -n -E 's/^[[:space:]]*(export[[:space:]]+)?COMPOSE_PROJECT_NAME[[:space:]]*[=:][[:space:]]*(.*)$/\2/p' "$ENV_FILE" | tail -n 1)"
+  local config_out line raw=''
+  config_out="$(dc config 2>/dev/null)" || return 1
+  while IFS= read -r line; do
     line="${line%$'\r'}"
-    if [ -n "$line" ]; then raw="$(unquote_compose_scalar "$line")"; fi
-  fi
-  if [ -z "$raw" ] && [ -f "$DEPLOY_DIR/docker-compose.yml" ]; then
-    line="$(sed -n -E 's/^name:[[:space:]]*(.*)$/\1/p' "$DEPLOY_DIR/docker-compose.yml" | head -n 1)"
-    line="${line%$'\r'}"
-    if [ -n "$line" ]; then raw="$(unquote_compose_scalar "$line")"; fi
-  fi
-  if [ -z "$raw" ]; then raw="$(basename "$DEPLOY_DIR")"; fi
+    if [[ "$line" =~ ^name:[[:space:]]*(.+)$ ]]; then
+      raw="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+      break
+    fi
+  done <<<"$config_out"
   raw="${raw,,}"
   raw="${raw//[^a-z0-9_-]/}"
-  if [[ "$raw" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then printf '%s' "$raw"; fi
+  [[ "$raw" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || return 1
+  printf '%s' "$raw"
 }
 
-# Removes containers belonging to a renamed service from a prior release (e.g., crove-extract -> ludy-extract across v0.3.12 -> Stage 7)
-# scoped strictly by this stack's Compose project label so other stacks on the host are untouched.
+# Gracefully stops and removes containers belonging to a renamed service from a prior release (e.g., crove-extract ->
+# ludy-extract across v0.3.12 -> Stage 7), strictly scoped by this stack's merged Compose project label. Fails closed
+# if project discovery, listing, stopping, or removal fails so conflicting old containers never remain alongside new ones.
 remove_orphan_service() {
-  local svc="$1" proj id removed
+  local svc="$1" proj ps_out id
   local -a ids=()
-  proj="$(compose_project)"
-  [ -n "$proj" ] || return 0
+  if ! proj="$(compose_project)"; then
+    err "cannot determine Compose project name before removing old $svc container(s)"
+    return 1
+  fi
+  if ! ps_out="$(docker ps -aq --filter "label=com.docker.compose.project=$proj" --filter "label=com.docker.compose.service=$svc")"; then
+    err "cannot inspect containers for service $svc in project $proj"
+    return 1
+  fi
   while IFS= read -r id; do
     if [[ "$id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then ids+=("$id"); fi
-  done < <(docker ps -aq --filter "label=com.docker.compose.project=$proj" --filter "label=com.docker.compose.service=$svc" 2>/dev/null || true)
+  done <<<"$ps_out"
   ((${#ids[@]} > 0)) || return 0
-  log "removing old $svc container(s) from project $proj"
-  if ! removed="$(docker rm --force "${ids[@]}" 2>&1)"; then
-    log "could not remove old $svc container(s) (the deploy goes on): ${removed:0:300}"
+  log "stopping and removing old $svc container(s) from project $proj"
+  if ! docker stop --time 30 "${ids[@]}" >&2; then
+    err "failed to stop old $svc container(s) in project $proj"
+    return 1
+  fi
+  if ! docker rm "${ids[@]}" >&2; then
+    err "failed to remove old $svc container(s) in project $proj"
+    return 1
   fi
 }
 
@@ -987,10 +995,10 @@ roll_services() {
     dc run --rm --no-TTY --no-deps auth-grants || return 1
   fi
   # Clean up renamed sandbox containers across v0.3.12 <-> Stage 7 deploy/rollback transitions before starting replacements.
-  if has_service ludy-extract && ! has_service crove-extract; then remove_orphan_service crove-extract; fi
-  if has_service ludy-media && ! has_service crove-media; then remove_orphan_service crove-media; fi
-  if has_service crove-extract && ! has_service ludy-extract; then remove_orphan_service ludy-extract; fi
-  if has_service crove-media && ! has_service ludy-media; then remove_orphan_service ludy-media; fi
+  if has_service ludy-extract && ! has_service crove-extract; then remove_orphan_service crove-extract || return 1; fi
+  if has_service ludy-media && ! has_service crove-media; then remove_orphan_service crove-media || return 1; fi
+  if has_service crove-extract && ! has_service ludy-extract; then remove_orphan_service ludy-extract || return 1; fi
+  if has_service crove-media && ! has_service ludy-media; then remove_orphan_service ludy-media || return 1; fi
   for s in "${infra[@]}"; do if [ "$s" != auth ]; then rest+=("$s"); fi; done
   if ((${#rest[@]} > 0)); then
     log "starting ${rest[*]}"
@@ -1001,7 +1009,7 @@ roll_services() {
     # port and run the worker's jobs beside the new one (#2118). Nothing to remove on a later deploy.
     local removed
     if ! removed="$(dc rm --stop --force "$all_in_one" 2>&1)"; then log "could not remove the old $all_in_one container (the deploy goes on): ${removed:0:300}"; fi
-    remove_orphan_service "$other_all_in_one"
+    remove_orphan_service "$other_all_in_one" || return 1
     if [ "$direction" = back ]; then
       log 'rolling the API (toward an older build: the API before the worker)'
       up api || return 1
@@ -1012,11 +1020,11 @@ roll_services() {
       up api || return 1
     fi
   elif has_service ludy; then
-    remove_orphan_service crove
+    remove_orphan_service crove || return 1
     log 'rolling ludy (api and worker in one container)'
     up ludy || return 1
   else
-    remove_orphan_service ludy
+    remove_orphan_service ludy || return 1
     log 'rolling crove (api and worker in one container)'
     up crove || return 1
   fi
@@ -1094,31 +1102,71 @@ preflight() {
 # is there is never replaced, and a deploy that wrongly takes a key for missing would destroy one.
 # Sets KEY_LINE (0: no assignment) and KEY_SET (1: the effective value is not empty). Builtins only: the value is never
 # an argument or an environment variable of another process, and it is never printed.
-KEY_LINE=0 KEY_SET=0
+KEY_LINE=0 KEY_SET=0 LEGACY_KEY_SET=0
+env_var_effective() {
+  local raw="$1" value="$1"
+  if [[ "$raw" =~ ^[[:space:]]+# ]]; then
+    value=''
+  else
+    value="${value#"${value%%[![:space:]]*}"}"
+    # Empty quotes end the value, whatever follows them (a comment); else a comment starts at the first ` #`.
+    if [[ "$value" =~ ^(\"\"|\'\')[[:space:]]*(#.*)?$ ]]; then
+      value=''
+    else
+      value="${value%%[[:space:]]#*}"
+      value="${value%"${value##*[![:space:]]}"}"
+    fi
+  fi
+  [ -n "$value" ]
+}
+
+env_var_is_set() {
+  local target="$1" file="${2:-$ENV_FILE}" line set_flag=0
+  [ -f "$file" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$ ]] && [ "${BASH_REMATCH[2]}" = "$target" ]; then
+      if env_var_effective "${BASH_REMATCH[3]}"; then set_flag=1; else set_flag=0; fi
+    fi
+  done <"$file"
+  ((set_flag == 1))
+}
+
+# Refuses to start migrate if retired CROVE_* credentials sit in $ENV_FILE without their LUDY_* replacement, so
+# compose defaults cannot overwrite real DB passwords or trigger an unintended context key rotation (#3972).
+retired_env_preflight() {
+  local pair old new missing=()
+  for pair in \
+    CROVE_APP_DB_PASSWORD:LUDY_APP_DB_PASSWORD \
+    CROVE_WORKER_DB_PASSWORD:LUDY_WORKER_DB_PASSWORD \
+    CROVE_PROBER_DB_PASSWORD:LUDY_PROBER_DB_PASSWORD \
+    CROVE_REPORTER_DB_PASSWORD:LUDY_REPORTER_DB_PASSWORD \
+    CROVE_CONTEXT_TOKEN_KEY:LUDY_CONTEXT_TOKEN_KEY
+  do
+    old="${pair%%:*}"
+    new="${pair#*:}"
+    if env_var_is_set "$old" && ! env_var_is_set "$new"; then
+      missing+=("$old->$new")
+    fi
+  done
+  if ((${#missing[@]} > 0)); then
+    die "$EXIT_USAGE" "$ENV_FILE sets retired CROVE_* credential variable(s) without their LUDY_* replacement (${missing[*]}); rename them (keeping their existing values) before deploying (#3972)"
+  fi
+}
+
 env_key_scan() {
-  local file="${1:-$ENV_FILE}" line raw value n=0 val_set=0
-  KEY_LINE=0 KEY_SET=0
+  local file="${1:-$ENV_FILE}" line n=0 val_set=0 legacy_set=0
+  KEY_LINE=0 KEY_SET=0 LEGACY_KEY_SET=0
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
     line="${line%$'\r'}"
     if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?LUDY_CONTEXT_TOKEN_KEY[[:space:]]*[=:](.*)$ ]]; then
-      raw="${BASH_REMATCH[2]}"
-      value="$raw"
-      if [[ "$raw" =~ ^[[:space:]]+# ]]; then
-        value=''
-      else
-        value="${value#"${value%%[![:space:]]*}"}"
-        # Empty quotes end the value, whatever follows them (a comment); else a comment starts at the first ` #`.
-        if [[ "$value" =~ ^(\"\"|\'\')[[:space:]]*(#.*)?$ ]]; then
-          value=''
-        else
-          value="${value%%[[:space:]]#*}"
-          value="${value%"${value##*[![:space:]]}"}"
-        fi
-      fi
-      if [ -n "$value" ]; then val_set=1; else val_set=0; fi
+      if env_var_effective "${BASH_REMATCH[2]}"; then val_set=1; else val_set=0; fi
       KEY_LINE=$n
       KEY_SET=$val_set
+    elif [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?CROVE_CONTEXT_TOKEN_KEY[[:space:]]*[=:](.*)$ ]]; then
+      if env_var_effective "${BASH_REMATCH[2]}"; then legacy_set=1; else legacy_set=0; fi
+      LEGACY_KEY_SET=$legacy_set
     fi
   done <"$file"
 }
@@ -1127,6 +1175,9 @@ env_key_scan() {
 context_token_key_preflight() {
   env_key_scan
   ((KEY_SET)) && return 0
+  if ((LEGACY_KEY_SET)); then
+    die "$EXIT_USAGE" "$ENV_FILE sets retired CROVE_CONTEXT_TOKEN_KEY without LUDY_CONTEXT_TOKEN_KEY; rename it to LUDY_CONTEXT_TOKEN_KEY (keeping its existing value) before deploying (#3972)"
+  fi
   command -v openssl >/dev/null || die "$EXIT_USAGE" "$ENV_FILE has no LUDY_CONTEXT_TOKEN_KEY and openssl is not installed to make one (docs/runbooks/context-token-key.md)"
   [ -w "$ENV_FILE" ] || die "$EXIT_USAGE" "$ENV_FILE has no LUDY_CONTEXT_TOKEN_KEY and the deploy user cannot write to the file (docs/runbooks/context-token-key.md)"
 }
@@ -1150,6 +1201,10 @@ ensure_context_token_key() {
   if ((KEY_SET)); then
     log 'context token key present'
     return 0
+  fi
+  if ((LEGACY_KEY_SET)); then
+    err "$ENV_FILE sets retired CROVE_CONTEXT_TOKEN_KEY without LUDY_CONTEXT_TOKEN_KEY; rename it to LUDY_CONTEXT_TOKEN_KEY (keeping its existing value) before deploying (#3972)"
+    return 1
   fi
   KEY_TMP="$(mktemp "$(state_dir)/env-key.XXXXXX")" || {
     err 'cannot make a temporary file for the context token key'
@@ -1865,6 +1920,7 @@ do_deploy() {
   fi
   read_registry_password
   preflight
+  retired_env_preflight
   if [ -n "$auth_settings" ] || ((modules_given)); then
     # Found out now: a write that fails halfway is the one thing that can leave the env file broken.
     { [ -w "$ENV_FILE" ] && [ -w "$(dirname "$ENV_FILE")" ]; } || die "$EXIT_USAGE" "$ENV_CHANGE_LABEL need $ENV_FILE and its directory writable by the deploy user (the dated copy goes next to it); nothing was changed"
@@ -1922,6 +1978,17 @@ do_deploy() {
     if [ -n "$current" ]; then activate "$current"; fi
     record "deploy $name failed: compose config"
     die "$EXIT_FAILED" 'the compose files do not load with this env file; nothing was changed'
+  fi
+  local active_proj=''
+  if ! active_proj="$(compose_project)"; then
+    if [ -n "$current" ]; then activate "$current"; fi
+    record "deploy $name failed: compose project"
+    die "$EXIT_FAILED" 'cannot determine the compose project name; nothing was changed'
+  fi
+  if [ "$active_proj" = ludy ] && docker volume inspect crove_db-data >/dev/null 2>&1 && ! docker volume inspect ludy_db-data >/dev/null 2>&1; then
+    if [ -n "$current" ]; then activate "$current"; fi
+    record "deploy $name failed: crove_db-data not cut over"
+    die "$EXIT_FAILED" "found legacy volume crove_db-data without ludy_db-data for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or set COMPOSE_PROJECT_NAME=crove in $ENV_FILE) before deploying Stage 7 so Compose does not initialize an empty database"
   fi
 
   log 'starting the database'

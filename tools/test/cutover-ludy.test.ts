@@ -490,4 +490,15 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(readFileSync(f.volsFile, 'utf8')).not.toContain('crove_');
     expect(readFileSync(f.volsFile, 'utf8')).toContain('ludy_files');
   });
+
+  it('cutover-stack preserves pre-switch WAL settings until switch-wal runs when compose.wal.yml is present (#3972)', { timeout: 15000 }, () => {
+    const f = createCutoverFixture();
+    writeFileSync(join(f.deployDir, 'compose.wal.yml'), 'services:\n  db:\n    image: ${WAL_DB_IMAGE:-ludy-db:local}\n');
+    const res = runWithStubs(f, ['cutover-stack', '--dir', f.deployDir, '--overlay-dir', f.overlayDir]);
+    expect(res.status, res.stderr).toBe(0);
+    const updatedEnv = readFileSync(join(f.deployDir, '.env'), 'utf8');
+    expect(updatedEnv).toContain('WAL_DB_IMAGE=crove-db:local');
+    expect(updatedEnv).toContain('WAL_STANZA=crove');
+    expect(updatedEnv).toContain('BACKUP_S3_PREFIX=crove');
+  });
 });
