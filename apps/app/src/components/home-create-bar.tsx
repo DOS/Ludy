@@ -18,8 +18,8 @@ export function HomeCreateBar({ slug, items }: { slug: string; items: readonly Q
   return (
     <>
       {/* Room for the bar below, so the last of Home is not hidden under it. */}
-      <div aria-hidden="true" className="h-36 sm:hidden" />
-      <PhoneActionBar data-testid="home-create-bar" aria-label={t('homeRow')} className="grid grid-cols-2 justify-stretch">
+      <div aria-hidden="true" className="h-[calc(9.5rem+env(safe-area-inset-bottom))] sm:hidden" />
+      <PhoneActionBar data-testid="home-create-bar" aria-label={t('homeRow')} className="grid grid-cols-2 items-stretch justify-stretch">
         {picked.map((item, index) => (
           <Link
             key={item.id}

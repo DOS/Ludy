@@ -81,8 +81,10 @@ describe('homeCreateItems', () => {
   });
 
   it('shows only what the apps that are on offer, and never the quick-capture action', () => {
-    expect(ids(homeCreateItems(items(['notes'])))).toEqual(['newTeamTask', 'newNote']);
-    expect(ids(homeCreateItems(items(['crm'])))).toEqual(['newContact', 'newTeamTask', 'newDeal']);
+    // Nothing fills the place of a job whose app is off: a notes-only org has no weekly create job, a crm-only org has the contact.
+    expect(ids(homeCreateItems(items(['notes'])))).toEqual([]);
+    expect(ids(homeCreateItems(items(['crm'])))).toEqual(['newContact']);
+    expect(ids(homeCreateItems(items(['finance'])))).toEqual(['uploadDocument', 'recordExpense', 'createSalesInvoice']);
   });
 
   it('shows nothing to a viewer or while the role is unknown', () => {
@@ -92,6 +94,7 @@ describe('homeCreateItems', () => {
 
   it('never exceeds the asked maximum', () => {
     expect(homeCreateItems(items(['finance', 'crm']), 2)).toHaveLength(2);
+    expect(homeCreateItems(items(['finance', 'crm']), 0)).toEqual([]);
   });
 });
 
@@ -117,16 +120,13 @@ describe('HomeCreateBar', () => {
   });
 
   it('an odd last link takes the whole row', () => {
-    expect(render(<HomeCreateBar slug="acme" items={items(['notes'])} />).match(/<a /g)).toHaveLength(2);
-    // A member with finance only: the three finance jobs, then the team task the role may create, so four; a member of a
-    // finance-only org that cannot create tasks gets three.
-    const three = render(<HomeCreateBar slug="acme" items={buildQuickCreateItems({ modules: ['finance'], role: 'member', canCreateTeamTask: false, canQuickCapture: false })} />);
+    const three = render(<HomeCreateBar slug="acme" items={items(['finance'])} />);
     expect(three.match(/<a /g)).toHaveLength(3);
     expect(three.match(/col-span-2/g)).toHaveLength(1);
   });
 
   it('leaves room under the last of Home so the bar does not hide it', () => {
-    expect(render(<HomeCreateBar slug="acme" items={items(['finance'])} />)).toContain('aria-hidden="true" class="h-36 sm:hidden"');
+    expect(render(<HomeCreateBar slug="acme" items={items(['finance'])} />)).toMatch(/aria-hidden="true" class="h-\[calc\([^"]*safe-area-inset-bottom[^"]*\)\] sm:hidden"/);
   });
 
   it('renders nothing for a viewer or an org with no app that creates', () => {
