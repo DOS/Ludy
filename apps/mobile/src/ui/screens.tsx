@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The three screens of the first slice: sign in, unlock, and a stub home (issue #4880).
+// The three screens of the mobile client: sign in, unlock, and home approvals queue (issues #4880, #4881).
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Text, TextInput } from 'react-native';
 import { isMfaRequired } from '@ludy/client';
 import type { MessageKey } from '../i18n.ts';
-import { SERVER_POLICY, clientFor, session, t } from '../runtime.ts';
+import { SERVER_POLICY, clientFor, locale, session, t } from '../runtime.ts';
+import { ApprovalsQueueScreen } from '../screens/approvals/ApprovalsQueueScreen.tsx';
+import { isLikelyNetworkError } from '../screens/approvals/model.ts';
 import { Body, LinkButton, PrimaryButton, Screen, Title } from './parts.tsx';
 import { styles, usePalette } from './theme.ts';
 import type { SessionState } from '../auth/session.ts';
@@ -100,6 +102,8 @@ export const SESSION_CHECK_MS = 5 * 60_000;
 export function HomeScreen(props: { state: Extract<SessionState, { status: 'active' }> }) {
   const { serverUrl, orgSlug } = props.state;
   const client = useMemo(() => clientFor(serverUrl), [serverUrl]);
+  const [pickingOrg, setPickingOrg] = useState(false);
+
   const me = useQuery({
     queryKey: ['me', serverUrl],
     queryFn: () => client.me.get(),
@@ -107,10 +111,40 @@ export function HomeScreen(props: { state: Extract<SessionState, { status: 'acti
   });
   const orgs = me.data?.orgs ?? [];
   const org = orgs.find((o) => o.slug === orgSlug) ?? null;
+
   // One org: used without asking. Several: the person picks once, and the choice is kept.
   useEffect(() => {
     if (!orgSlug && orgs.length === 1 && orgs[0]) void session.setOrg(orgs[0].slug);
   }, [orgSlug, orgs]);
+
+  if (org && !pickingOrg) {
+    return (
+      <ApprovalsQueueScreen
+        canSwitchOrg={orgs.length > 1}
+        locale={locale}
+        onSwitchOrg={() => setPickingOrg(true)}
+        orgName={org.name}
+        orgSlug={org.slug}
+        role={org.role}
+        serverUrl={serverUrl}
+      />
+    );
+  }
+
+  // Offline launch with an already-selected org: let the queue show its persisted local cache immediately.
+  if (me.isError && !isMfaRequired(me.error) && isLikelyNetworkError(me.error) && orgSlug && !pickingOrg) {
+    return (
+      <ApprovalsQueueScreen
+        canSwitchOrg={false}
+        locale={locale}
+        onSwitchOrg={() => setPickingOrg(false)}
+        orgName={orgSlug}
+        orgSlug={orgSlug}
+        role="member"
+        serverUrl={serverUrl}
+      />
+    );
+  }
 
   return (
     <Screen>
@@ -127,17 +161,25 @@ export function HomeScreen(props: { state: Extract<SessionState, { status: 'acti
       ) : (
         <>
           <Title>{t('home.title', { name: me.data.displayName ?? me.data.email })}</Title>
-          {org ? <Body>{t('home.org', { org: org.name })}</Body> : null}
-          {!org && orgs.length === 0 ? <Body>{t('home.noOrg')}</Body> : null}
-          {!org && orgs.length > 1 ? (
+          {orgs.length === 0 ? <Body>{t('home.noOrg')}</Body> : null}
+          {orgs.length > 1 || (orgs.length === 1 && !org) ? (
             <>
               <Body>{t('home.pickOrg')}</Body>
               {orgs.map((o) => (
-                <PrimaryButton key={o.slug} label={o.name} onPress={() => void session.setOrg(o.slug)} />
+                <PrimaryButton
+                  key={o.slug}
+                  label={o.name}
+                  onPress={() => {
+                    void session.setOrg(o.slug);
+                    setPickingOrg(false);
+                  }}
+                />
               ))}
+              {pickingOrg && org ? (
+                <LinkButton label={t('approvals.back')} onPress={() => setPickingOrg(false)} />
+              ) : null}
             </>
           ) : null}
-          <Body tone="muted">{t('home.stub')}</Body>
         </>
       )}
       <LinkButton label={t('home.signOut')} onPress={() => void session.signOut()} />

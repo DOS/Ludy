@@ -4,7 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { ActivityIndicator, AppState, View } from 'react-native';
 import { shouldAutoLock } from './auth/auto-lock.ts';
-import { queryClient, session, stepUp } from './runtime.ts';
+import { approvalsCache, queryClient, session, stepUp } from './runtime.ts';
 import { HomeScreen, LockScreen, SignInScreen } from './ui/screens.tsx';
 import { usePalette } from './ui/theme.ts';
 
@@ -31,7 +31,10 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (state.status !== 'active') stepUp.reset();
-    if (state.status === 'signed-out') queryClient.clear();
+    if (state.status === 'signed-out') {
+      queryClient.clear();
+      void approvalsCache.clear();
+    }
   }, [state.status]);
 
   return (
