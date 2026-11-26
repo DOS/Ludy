@@ -254,8 +254,8 @@ const BARE_UNACCENTED_PRICE_PREFIX = /(?<![\p{L}])gia\s*(?:[:=]\s*)?$/iu;
 const COMPOUND_GIA_BEFORE = /(?<![\p{L}])(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+gia\s*$/iu;
 const DEAL_VALUE_PREFIX = /(?<![\p{L}])(?:giá\s+trị|gia\s+tri)\s*(?:[:=]\s*)?$/iu;
 const PRICE_PREFIX = /(?:(?<![\p{L}])(?:đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|unit\s+price|price)(?:\s+(?:bán|lẻ|sỉ|mới|cũ|chưa\s+thuế|chưa\s+vat|gồm\s+vat|sau\s+thuế|trước\s+thuế|dự\s+kiến|khoảng|tầm))?|@)\s*(?:[:=]\s*)?$/iu;
-const TAX_INCLUSIVE_BEFORE = /(?:^|\s)((?:chưa|không|chua|khong|trước|truoc|not\s+including|excl(?:uding)?\.?)(?:\s+(?:tính|tinh))?\s+)?(?:đã\s+(?:bao\s+)?gồm|gồm|bao\s+gồm|sau|da\s+(?:bao\s+)?gom|gom|bao\s+gom|incl(?:uding)?\.?)\s+(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|tax)\s*$/iu;
-const TAX_INCLUSIVE_AFTER = /^\s*(?:đồng|dong|vnđ|vnd|đ|₫)?(?:\s*\/\s*(?:1\s+)?[\p{L}]+)?\s*(?:[,(-]\s*)?(?:đã\s+(?:bao\s+)?gồm|gồm|bao\s+gồm|sau|da\s+(?:bao\s+)?gom|gom|bao\s+gom|incl(?:uding)?\.?)\s+(?:(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:vat|gtgt|thuế|thue|tax))/iu;
+const TAX_INCLUSIVE_BEFORE = /(?:^|\s)((?:chưa|không|chua|khong|trước|truoc|not\s+including|excl(?:uding)?\.?)(?:\s+(?:tính|tinh))?\s+)?(?:đã\s+(?:bao\s+)?gồm|gồm|bao\s+gồm|sau|da\s+(?:bao\s+)?gom|gom|bao\s+gom|incl(?:uding)?\.?)\s+(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|tax)(?:\s+\d{1,2}(?:[.,]\d+)?\s*%)?\s*$/iu;
+const TAX_INCLUSIVE_AFTER = /^\s*(?:đồng|dong|vnđ|vnd|đ|₫)?(?:\s*\/\s*(?:1\s+)?[\p{L}][\p{L}\p{N}]*)?\s*(?:[,(-]\s*)?(?:đã\s+(?:bao\s+)?gồm|gồm|bao\s+gồm|sau|da\s+(?:bao\s+)?gom|gom|bao\s+gom|incl(?:uding)?\.?)\s+(?:(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:vat|gtgt|thuế|thue|tax))/iu;
 const TAX_INCLUSIVE_PIECE = /^\s*(?:đã\s+(?:bao\s+)?gồm|gồm|bao\s+gồm|sau|da\s+(?:bao\s+)?gom|gom|bao\s+gom|incl(?:uding)?\.?)\s+(?:(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:vat|gtgt|thuế|thue|tax))/iu;
 const DISCOUNT_PREFIX = /(?<![\p{L}])(?:giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết\s+khấu|chiet\s+khau|ck(?![\p{L}])|discount|off|trừ|bớt)\s*(?:[:=]\s*)?$/iu;
 const STANDALONE_DISCOUNT_HEADER = /^\s*(?:chiết\s+khấu|chiet\s+khau|giảm(?:\s+giá)?|giam(?:\s+gia)?|ck(?![\p{L}])|discount|off)\s*(?:[:=]\s*)?$/iu;
@@ -910,11 +910,18 @@ function parseTableColSpec(rawHeaderCell: string, role: TableColRole): TableColS
   }
   if (role !== 'price' && role !== 'total' && role !== 'discount') return { role, scale: '1', unit: undefined };
   if (!suffixMatch) return { role, scale: '1', unit: undefined };
-  const norm = foldDiacritics(suffixMatch[1]!.toLowerCase()).replace(/\s+/gu, ' ').trim();
+  const rawSuffix = suffixMatch[1]!.trim();
+  const norm = foldDiacritics(rawSuffix.toLowerCase()).replace(/\s+/gu, ' ').trim();
   if (/^(?:d|dong|vnd|1)$/u.test(norm)) return { role, scale: '1', unit: undefined };
   if (/^(?:k|nghin|ngan|nghin dong|ngan dong|1[.,]000(?:\s*(?:d|dong|vnd))?)$/u.test(norm)) return { role, scale: '1000', unit: undefined };
   if (/^(?:tr|trieu|trieu dong|1[.,]000[.,]000(?:\s*(?:d|dong|vnd))?)$/u.test(norm)) return { role, scale: '1000000', unit: undefined };
   if (/^(?:ty|ty dong)$/u.test(norm)) return { role, scale: '1000000000', unit: undefined };
+  if (role === 'price' && /\/\s*([\p{L}][\p{L}\p{N}]*)\s*$/u.test(rawHeaderCell)) {
+    const unitWord = /^[\p{L}][\p{L}\p{N}]*$/u.exec(rawSuffix)?.[0];
+    if (unitWord !== undefined && UNIT_ONLY_EXACT.has(readPlain(unitWord))) {
+      return { role: 'price', scale: '1', unit: unitWord };
+    }
+  }
   return { role, scale: null, unit: undefined };
 }
 
@@ -997,7 +1004,13 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
       if (usablePrice.length === 1 && pToks.length === 1) {
         const tok = usablePrice[0]!;
         const scaledValue = col.scale === '1' ? tok.value : money(tok.value).times(col.scale).toFixed();
-        tokens.push({ ...tok, value: scaledValue, labeledPrice: true, dealValueOnly: false });
+        if (col.unit !== undefined) {
+          if (tok.priceUnit !== undefined && canonUnit(tok.priceUnit) !== canonUnit(col.unit)) continue;
+          explicitUnits.add(col.unit);
+          tokens.push({ ...tok, value: scaledValue, priceUnit: tok.priceUnit ?? col.unit, labeledPrice: true, dealValueOnly: false });
+        } else {
+          tokens.push({ ...tok, value: scaledValue, labeledPrice: true, dealValueOnly: false });
+        }
       }
     } else if (col.role === 'vat' && /(?:\d|kct|kkknt|không\s+chịu|khong\s+chiu|không\s+kê|khong\s+ke)/iu.test(cell)) {
       const taxText = /^(?:vat|gtgt|thuế|thue|kct|kkknt|không)/iu.test(cell) ? cell : `vat ${cell}`;
@@ -1133,7 +1146,11 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
         const prefixHasPriceLabel = /(?<![\p{L}])(?:đơn\s+giá|don\s+gia|giá(?:\s+bán)?|gia(?:\s+ban)?|unit\s+price|price)\b/iu.test(prefix);
         const prefixTaxIncMatch = TAX_INCLUSIVE_BEFORE.exec(`${prefix} `);
         const prefixTaxInclusive = prefixHasPriceLabel && prefixTaxIncMatch !== null && prefixTaxIncMatch[1] === undefined;
-        if (prefixRates.size > 0 && extractFigureTokens(collapseGroupedSpaces(prefix)).length === 0 && !descriptionTokens(prefixWithoutScope).hasProduct) {
+        if (
+          (prefixRates.size > 0 || prefixTaxInclusive) &&
+          extractFigureTokens(collapseGroupedSpaces(prefix)).length === 0 &&
+          !descriptionTokens(prefixWithoutScope).hasProduct
+        ) {
           if (isSingleSegment || (!anyItemSeen && segIdx === 0 && (INVOICE_HEADER_SCOPE.test(prefix) || prefixTaxInclusive))) {
             for (const r of prefixRates) leadingShared.add(r);
             if (prefixTaxInclusive) leadingPriceTaxInclusive = true;
@@ -1184,14 +1201,17 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
       if (!isBullet && segPrefixRates.size === 0 && clauses.length > 0 && !clauses[clauses.length - 1]!.lockedFromTable && pieces.some((p) => !p.isVatOnly)) {
         let mergedClause = clauses[clauses.length - 1]!;
         let canMergeAll = true;
+        let sawTaxInclusive = false;
         for (const piece of pieces) {
           if (!canContinuePieceOnNewLine(mergedClause, piece)) {
             canMergeAll = false;
             break;
           }
-          mergedClause = appendToClause(mergedClause, piece);
+          if (piece.isTaxInclusiveVat) sawTaxInclusive = true;
+          else mergedClause = appendToClause(mergedClause, piece);
         }
         if (canMergeAll) {
+          if (sawTaxInclusive) markPricesTaxInclusive(mergedClause);
           clauses[clauses.length - 1] = mergedClause;
           if (mergedClause.localRates.size > 0) anyLocalVatSeen = true;
           continue;
@@ -1296,11 +1316,15 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
           nextClause.usable.length <= 1 &&
           (prevClause.usable[0]!.value === '1' || hasExplicitUnitPrice)
         ) {
-          clauses[clauses.length - 1] = makeClause(
+          const merged = makeClause(
             `${prevClause.plainText}, ${nextClause.plainText}`,
             new Set(nextClause.localRates),
             nextClause.conjunctionParts,
           );
+          if ((leadingPriceTaxInclusive || segPriceTaxInclusive) && !/(?<![\p{L}])(?:chưa|chua|không|khong)\s+(?:bao\s+gồm\s+)?(?:vat|gtgt|thuế|thue)/iu.test(merged.plainText)) {
+            markPricesTaxInclusive(merged);
+          }
+          clauses[clauses.length - 1] = merged;
           if (nextClause.localRates.size > 0) anyLocalVatSeen = true;
           anyItemSeen = true;
           continue;

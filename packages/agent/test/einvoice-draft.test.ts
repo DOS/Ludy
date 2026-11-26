@@ -1836,5 +1836,30 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         answer([line({ description: 'Gạo', unit: 'kg', quantity: '2', unitPrice: '50000', vatRate: null })], null),
       ).kind,
     ).toBe('proposal');
+
+    expect(
+      checkEInvoiceDraft(
+        req('Đơn giá đã gồm VAT: 2 áo giá 50k, VAT 8%'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo giá 50k\nthành tiền 100k, đã gồm VAT 8%'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 m² thảm 50k/m² đã gồm VAT 8%'),
+        answer([line({ description: 'Thảm', unit: 'm²', quantity: '2', unitPrice: '50000', vatRate: '8%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá/kg\nGạo\t2\t50000'),
+        answer([line({ description: 'Gạo', unit: 'kg', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
   });
 });
