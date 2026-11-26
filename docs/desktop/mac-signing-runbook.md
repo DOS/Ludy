@@ -73,7 +73,11 @@ Before publishing the draft release or pointing users to a new macOS release:
    codesign --verify --deep --strict --verbose=2 "/Applications/Ludy Desktop.app"
    spctl -a -t exec -vv "/Applications/Ludy Desktop.app"
    ```
-4. Configure `LUDY_URL` and `LUDY_DESKTOP_UPDATE_URL` (and optionally `LUDY_DESKTOP_UPDATE_TEAM_ID`), sign in via the browser PKCE flow, quit and reopen to confirm Keychain persistence (`safeStorage`), and test an A-to-B update over the staging HTTPS feed.
+4. Configure `LUDY_URL`, sign in via the browser PKCE flow, and quit and reopen `Ludy Desktop.app` to confirm Keychain session persistence (`safeStorage`).
+5. Run a separate **A-to-B** upgrade test from an earlier signed version `A` (`< X.Y.Z`) to draft `B` (`X.Y.Z`):
+   - Install signed version `A` (never reinstall `B` over `B`, or `prepareVerifiedUpdate` will report `up-to-date` without downloading the `.zip`; for the very first signed release `0.1.0`, use a prior `0.1.0` draft `A` upgrading to `0.1.1` draft `B` on the staging feed).
+   - Point `LUDY_DESKTOP_UPDATE_URL` (and `LUDY_DESKTOP_UPDATE_TEAM_ID` if overriding) at the staging HTTPS feed hosting `B` (see Step 6).
+   - Wait for background download and verification, click **Khởi động lại để cập nhật**, and verify **Cài đặt -> Giới thiệu** and `Info.plist` report `X.Y.Z` (`B`).
 
 ## Step 6. Host the macOS HTTPS update feeds and publish
 

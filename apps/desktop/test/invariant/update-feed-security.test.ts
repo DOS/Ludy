@@ -1362,6 +1362,20 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
     writeFileSync(controlCharZip, buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info\n.plist` }]));
     expect(() => inspectZipCentralDirectory(controlCharZip)).toThrow(/Unsafe ZIP entry path/);
 
+    const oversizedPathZip = join(dir, 'oversized-path.zip');
+    writeFileSync(
+      oversizedPathZip,
+      buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Resources/${'a'.repeat(1100)}` }]),
+    );
+    expect(() => inspectZipCentralDirectory(oversizedPathZip)).toThrow(/path length/);
+
+    const deepPathZip = join(dir, 'deep-path.zip');
+    writeFileSync(
+      deepPathZip,
+      buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/${Array.from({ length: 70 }, () => 'd').join('/')}/f` }]),
+    );
+    expect(() => inspectZipCentralDirectory(deepPathZip)).toThrow(/path depth/);
+
     for (const [label, mode] of [
       ['fifo', 0o010644],
       ['chardev', 0o020600],

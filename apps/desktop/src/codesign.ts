@@ -11,6 +11,8 @@ export const MAC_APP_BUNDLE_NAME = 'Ludy Desktop.app';
 export const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/;
 export const MAX_ZIP_ENTRIES = 20_000;
 export const MAX_ZIP_EXTRACTED_BYTES = 1024 * 1024 * 1024;
+export const MAX_ZIP_PATH_BYTES = 1024;
+export const MAX_ZIP_PATH_DEPTH = 64;
 
 export type MacBundleArch = 'arm64' | 'x64';
 
@@ -500,6 +502,9 @@ function parseZipCentralDirectoryEntries(
         throw new Error(`ZIP total uncompressed size exceeds safety limit (${maxTotalBytes} bytes)`);
       }
 
+      if (nameLen > MAX_ZIP_PATH_BYTES) {
+        throw new Error(`ZIP entry path length (${nameLen}) exceeds safety limit (${MAX_ZIP_PATH_BYTES})`);
+      }
       const rawName = cdBuf.subarray(cursor + 46, cursor + 46 + nameLen).toString('utf8');
       if ((flags & 0x0001) !== 0) {
         throw new Error(`Encrypted ZIP entry is not supported: ${rawName}`);
@@ -509,6 +514,9 @@ function parseZipCentralDirectoryEntries(
       }
       const segments = rawName.split('/');
       const pathSegments = rawName.endsWith('/') ? segments.slice(0, -1) : segments;
+      if (pathSegments.length > MAX_ZIP_PATH_DEPTH) {
+        throw new Error(`ZIP entry path depth (${pathSegments.length}) exceeds safety limit (${MAX_ZIP_PATH_DEPTH})`);
+      }
       if (pathSegments.length === 0 || pathSegments.some((seg) => seg === '' || seg === '..' || seg === '.')) {
         throw new Error(`Path traversal segment in ZIP entry: ${rawName}`);
       }
