@@ -5,27 +5,37 @@
 -- rotated address.
 --
 -- Changes:
---   1. Add generation (integer, default 1, >= 1) to ludy_finance.marketplace_hook.
---   2. Increment generation on key rotation in ludy_finance.marketplace_hook_set.
---   3. Append trailing generation to ludy_finance.marketplace_hook_claim's
---      returned columns (preserving named-column callers during rolling deploy).
+--   1. Add generation (integer, default 1, >= 1) and per-rotation reject_token
+--      (uuid, NULL until first rotation) to ludy_finance.marketplace_hook.
+--   2. Increment generation and mint a fresh reject_token on key rotation in
+--      ludy_finance.marketplace_hook_set.
+--   3. Return COALESCE(h.reject_token, h.id) as hook_id and append trailing
+--      generation to ludy_finance.marketplace_hook_claim so both new 2-arg
+--      workers and pre-PR/rolled-back 1-arg workers distinguish each key
+--      generation (ADR-0001).
 --   4. Add generation-bound ludy_finance.marketplace_hook_reject(uuid, integer)
---      and keep the 1-arg ludy_finance.marketplace_hook_reject(uuid) as a safe
---      generation-1 compatibility shim for rolling deploy and rollback (ADR-0001).
+--      while preserving post-stop batch refusal counts, and resolve the 1-arg
+--      ludy_finance.marketplace_hook_reject(uuid) compatibility shim against
+--      COALESCE(h.reject_token, h.id).
 --
 -- Note: the request_url Shopee-only guard on marketplace_hook_put_notice already
 -- landed in 20270207100000_crove_finance_marketplace_hook_request_url_shopee.sql (#4327).
 SET LOCAL lock_timeout = '2s';
 
 -- ---------------------------------------------------------------------------
--- 1. Track hook generation on ludy_finance.marketplace_hook
+-- 1. Track hook generation and per-rotation reject_token
 -- ---------------------------------------------------------------------------
 ALTER TABLE ludy_finance.marketplace_hook
-  ADD COLUMN IF NOT EXISTS generation integer NOT NULL DEFAULT 1;
+  ADD COLUMN IF NOT EXISTS generation integer NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS reject_token uuid;
 
 ALTER TABLE ludy_finance.marketplace_hook
   DROP CONSTRAINT IF EXISTS marketplace_hook_generation_check,
   ADD CONSTRAINT marketplace_hook_generation_check CHECK (generation >= 1);
+
+CREATE UNIQUE INDEX IF NOT EXISTS marketplace_hook_reject_token_uq
+  ON ludy_finance.marketplace_hook (reject_token)
+  WHERE reject_token IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- 2. Increment generation on rotation in ludy_finance.marketplace_hook_set
@@ -57,6 +67,7 @@ BEGIN
   ON CONFLICT ON CONSTRAINT marketplace_hook_connection_uq DO UPDATE SET
     key_sha256 = EXCLUDED.key_sha256,
     generation = h.generation + 1,
+    reject_token = pg_catalog.gen_random_uuid(),
     rotated_at = pg_catalog.clock_timestamp(),
     rejected_count = 0,
     rejected_window_start = NULL,
@@ -70,7 +81,7 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
--- 3. Return hook generation from ludy_finance.marketplace_hook_claim
+-- 3. Return hook generation and token from ludy_finance.marketplace_hook_claim
 -- ---------------------------------------------------------------------------
 -- ludy:contract adr=0045
 DROP FUNCTION IF EXISTS ludy_finance.marketplace_hook_claim(integer);
@@ -88,7 +99,7 @@ BEGIN
     )
     RETURNING n.org_id AS c_org, n.hook_id AS c_hook, n.dedupe_key AS c_dedupe, n.authorization_header AS c_authorization, n.body AS c_body, n.request_url AS c_url
   )
-  SELECT cl.c_org, cl.c_hook, m.id, m.channel_connection_id, pg_catalog.substr(m.provider, 13), m.platform, cl.c_dedupe, cl.c_authorization, cl.c_body, cl.c_url, h.generation
+  SELECT cl.c_org, COALESCE(h.reject_token, h.id), m.id, m.channel_connection_id, pg_catalog.substr(m.provider, 13), m.platform, cl.c_dedupe, cl.c_authorization, cl.c_body, cl.c_url, h.generation
   FROM claimed cl
   JOIN ludy_finance.marketplace_hook h ON h.org_id = cl.c_org AND h.id = cl.c_hook AND h.stopped_at IS NULL
   JOIN ludy_finance.marketplace_connection m ON m.org_id = h.org_id AND m.id = h.marketplace_connection_id
@@ -111,12 +122,10 @@ BEGIN
   END IF;
   UPDATE ludy_finance.marketplace_hook h SET
     rejected_count = CASE
-      WHEN h.stopped_at IS NOT NULL THEN h.rejected_count
       WHEN h.rejected_window_start IS NULL OR h.rejected_window_start < v_now - interval '1 hour' THEN 1
       ELSE h.rejected_count + 1
     END,
     rejected_window_start = CASE
-      WHEN h.stopped_at IS NOT NULL THEN h.rejected_window_start
       WHEN h.rejected_window_start IS NULL OR h.rejected_window_start < v_now - interval '1 hour' THEN v_now
       ELSE h.rejected_window_start
     END,
@@ -124,16 +133,29 @@ BEGIN
       WHEN h.stopped_at IS NOT NULL THEN h.stopped_at
       WHEN (CASE WHEN h.rejected_window_start IS NULL OR h.rejected_window_start < v_now - interval '1 hour' THEN 1 ELSE h.rejected_count + 1 END) >= 10 THEN v_now
     END
-  WHERE h.id = p_hook AND h.generation = p_generation
+  WHERE (h.id = p_hook OR h.reject_token = p_hook) AND h.generation = p_generation
   RETURNING h.stopped_at IS NOT NULL INTO v_stopped;
   RETURN COALESCE(v_stopped, false);
 END $$;
 
--- Compatibility shim for workers deployed prior to this migration (or rolled back to one): counts only against generation 1 so a pre-rotation call can never affect a rotated address.
+-- Compatibility shim for workers deployed prior to this migration (or rolled back to one): resolves the per-rotation token claim returned in hook_id so stale pre-rotation rejections stay ignored while current-generation rejections still stop at 10.
 CREATE OR REPLACE FUNCTION ludy_finance.marketplace_hook_reject(p_hook uuid)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+#variable_conflict use_column
+DECLARE
+  v_hook uuid;
+  v_generation integer;
 BEGIN
-  RETURN ludy_finance.marketplace_hook_reject(p_hook, 1);
+  IF p_hook IS NULL THEN
+    RETURN false;
+  END IF;
+  SELECT h.id, h.generation INTO v_hook, v_generation
+  FROM ludy_finance.marketplace_hook h
+  WHERE COALESCE(h.reject_token, h.id) = p_hook;
+  IF v_hook IS NULL THEN
+    RETURN false;
+  END IF;
+  RETURN ludy_finance.marketplace_hook_reject(v_hook, v_generation);
 END $$;
 
 REVOKE ALL ON FUNCTION

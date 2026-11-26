@@ -361,6 +361,39 @@ suite('marketplace push hook security invariants (#4326)', () => {
       expect(left.rows[0]?.n).toBe(0);
     });
     await withAdmin((c) => c.query("UPDATE crove_kernel.tenant SET apps_off = '{}'::text[] WHERE org_id = $1", [orgId]));
+
+    // Revoking the channel connection isolates queued pushes independently even when Finance stays enabled.
+    expect(
+      await acceptMarketplacePush(apiRuntime, 'shopee', { key: shopeeKey, authorization: HEADER, body: BODY }, budget, PUBLIC_URL),
+    ).toEqual({ status: 200 });
+    await withAdmin((c) =>
+      c.query(
+        "UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2)",
+        [orgId, shopeeConnId],
+      ),
+    );
+    expect(await acceptMarketplacePush(apiRuntime, 'shopee', { key: shopeeKey, authorization: HEADER, body: BODY }, budget, PUBLIC_URL)).toEqual({ status: 404 });
+    expect(
+      await appPool
+        .query<{ put: string }>('SELECT crove_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5, $6) AS put', [
+          shopeeHookId,
+          sha(shopeeKey),
+          sha('revoked-conn-put'),
+          HEADER,
+          BODY,
+          null,
+        ])
+        .then((r) => r.rows[0]?.put),
+    ).toBe('gone');
+    expect(await workerDb.transaction().execute((trx) => claimMarketplaceHookNotices(trx))).toEqual([]);
+    await withAdmin(async (c) => {
+      const left = await c.query<{ n: number }>('SELECT pg_catalog.count(*)::int AS n FROM crove_finance.marketplace_hook_notice');
+      expect(left.rows[0]?.n).toBe(0);
+      await c.query(
+        "UPDATE crove_kernel.channel_connection SET status = 'active' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2)",
+        [orgId, shopeeConnId],
+      );
+    });
   });
 
   it('confines the raw body to marketplace_hook_notice, emits empty notifications, and names both tables in org_purge', async () => {
@@ -412,30 +445,74 @@ suite('marketplace push hook security invariants (#4326)', () => {
     expect(preRotation?.hookId).toBe(shopeeHookId);
     const oldGeneration = preRotation!.generation;
 
-    // Rotate before the post-commit reject runs: generation increments and waiting pushes are dropped.
+    // Rotate before the post-commit reject runs: generation increments, reject_token rotates, and waiting pushes are dropped.
     const nextKey = randomBytes(16).toString('base64url');
     await withSealedApp(users.owner, orgId, 'SELECT crove_finance.marketplace_hook_set($1::uuid, $2)', [shopeeConnId, sha(nextKey)]);
 
-    // Stale generation refusal (both 2-arg and 1-arg gen-1 shim) is a no-op and never increments or stops the rotated hook.
-    expect(await rejectMarketplaceHook(workerDb, shopeeHookId, oldGeneration)).toBe(false);
-    expect((await workerPool.query<{ stopped: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS stopped', [shopeeHookId])).rows[0]?.stopped).toBe(false);
-    const afterStale = await withSealedApp<{ rejected_count: number; stopped: boolean }>(
-      users.owner,
-      orgId,
-      'SELECT rejected_count, stopped FROM crove_finance.marketplace_hook_status($1::uuid)',
-      [shopeeConnId],
-    );
-    expect(afterStale).toEqual([{ rejected_count: 0, stopped: false }]);
+    // Stale generation refusal (both 2-arg and 1-arg compatibility shim) is a no-op and never increments or stops the rotated hook.
+    expect(await rejectMarketplaceHook(workerDb, preRotation!.hookId, oldGeneration)).toBe(false);
+    expect((await workerPool.query<{ stopped: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS stopped', [preRotation!.hookId])).rows[0]?.stopped).toBe(false);
+    expect(
+      await withSealedApp<{ rejected_count: number; stopped: boolean }>(
+        users.owner,
+        orgId,
+        'SELECT rejected_count, stopped FROM crove_finance.marketplace_hook_status($1::uuid)',
+        [shopeeConnId],
+      ),
+    ).toEqual([{ rejected_count: 0, stopped: false }]);
 
-    // Current generation refusal counts normally.
-    expect(await rejectMarketplaceHook(workerDb, shopeeHookId, oldGeneration + 1)).toBe(false);
-    const afterCurrent = await withSealedApp<{ rejected_count: number; stopped: boolean }>(
-      users.owner,
-      orgId,
-      'SELECT rejected_count, stopped FROM crove_finance.marketplace_hook_status($1::uuid)',
-      [shopeeConnId],
-    );
-    expect(afterCurrent).toEqual([{ rejected_count: 1, stopped: false }]);
+    // Current generation claim returns a distinct per-rotation token so even a rolled-back 1-arg worker still counts and stops at 10.
+    expect(await acceptMarketplacePush(apiRuntime, 'shopee', { key: nextKey, authorization: HEADER, body: BODY }, budget, PUBLIC_URL)).toEqual({ status: 200 });
+    const [postRotation] = await workerDb.transaction().execute((trx) => claimMarketplaceHookNotices(trx));
+    expect(postRotation?.generation).toBe(oldGeneration + 1);
+    expect(postRotation?.hookId).not.toBe(shopeeHookId);
+
+    // 1st refusal via 2-arg worker, then 2nd..10th via rolled-back 1-arg worker stop the rotated address on the 10th.
+    expect(await rejectMarketplaceHook(workerDb, postRotation!.hookId, postRotation!.generation)).toBe(false);
+    for (let n = 2; n < 10; n++) {
+      expect((await workerPool.query<{ stopped: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS stopped', [postRotation!.hookId])).rows[0]?.stopped).toBe(false);
+    }
+    expect((await workerPool.query<{ stopped: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS stopped', [postRotation!.hookId])).rows[0]?.stopped).toBe(true);
+    const stoppedAtTen = await withAdmin(async (c) => {
+      const ts = (await c.query<{ stopped_at: string | null }>('SELECT stopped_at::text AS stopped_at FROM crove_finance.marketplace_hook WHERE id = $1', [shopeeHookId])).rows[0]?.stopped_at ?? null;
+      expect(ts).not.toBeNull();
+      return ts;
+    });
+
+    // Additional refusals from the same current-generation batch keep updating rejected_count while preserving stopped_at.
+    expect(await rejectMarketplaceHook(workerDb, postRotation!.hookId, postRotation!.generation)).toBe(true);
+    expect((await workerPool.query<{ stopped: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS stopped', [postRotation!.hookId])).rows[0]?.stopped).toBe(true);
+    expect(
+      await withSealedApp<{ rejected_count: number; stopped: boolean }>(
+        users.owner,
+        orgId,
+        'SELECT rejected_count, stopped FROM crove_finance.marketplace_hook_status($1::uuid)',
+        [shopeeConnId],
+      ),
+    ).toEqual([{ rejected_count: 12, stopped: true }]);
+    await withAdmin(async (c) => {
+      const stoppedAfter = (await c.query<{ stopped_at: string | null }>('SELECT stopped_at::text AS stopped_at FROM crove_finance.marketplace_hook WHERE id = $1', [shopeeHookId])).rows[0]?.stopped_at ?? null;
+      expect(stoppedAfter).toBe(stoppedAtTen);
+    });
+
+    // Rotating again invalidates the previous rotation's 1-arg token and 2-arg generation, while minting another distinct token.
+    const gen3Key = randomBytes(16).toString('base64url');
+    await withSealedApp(users.owner, orgId, 'SELECT crove_finance.marketplace_hook_set($1::uuid, $2)', [shopeeConnId, sha(gen3Key)]);
+    expect(await rejectMarketplaceHook(workerDb, postRotation!.hookId, postRotation!.generation)).toBe(false);
+    expect((await workerPool.query<{ stopped: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS stopped', [postRotation!.hookId])).rows[0]?.stopped).toBe(false);
+    expect(
+      await withSealedApp<{ rejected_count: number; stopped: boolean }>(
+        users.owner,
+        orgId,
+        'SELECT rejected_count, stopped FROM crove_finance.marketplace_hook_status($1::uuid)',
+        [shopeeConnId],
+      ),
+    ).toEqual([{ rejected_count: 0, stopped: false }]);
+    expect(await acceptMarketplacePush(apiRuntime, 'shopee', { key: gen3Key, authorization: HEADER, body: BODY }, budget, PUBLIC_URL)).toEqual({ status: 200 });
+    const [gen3Claim] = await workerDb.transaction().execute((trx) => claimMarketplaceHookNotices(trx));
+    expect(gen3Claim?.generation).toBe(oldGeneration + 2);
+    expect(gen3Claim?.hookId).not.toBe(shopeeHookId);
+    expect(gen3Claim?.hookId).not.toBe(postRotation!.hookId);
   });
 
   it('scopes personal_data_erase_marketplace_hook_notice strictly to the caller org when erasing matching notices', async () => {

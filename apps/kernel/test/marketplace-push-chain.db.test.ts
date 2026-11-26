@@ -325,7 +325,9 @@ suite('Marketplace push chain (#4364)', () => {
       expect(verdicts).toEqual(['refused']);
       return [];
     });
-    expect(claimedPreRotation).toEqual([{ hookId: tiktok.hookId, generation: 2 }]);
+    expect(claimedPreRotation).toHaveLength(1);
+    expect(claimedPreRotation[0]?.generation).toBe(2);
+    expect(claimedPreRotation[0]?.hookId).not.toBe(tiktok.hookId);
     // Rotate before the post-commit reject runs: the hook moves to generation 3, and the pre-rotation refusal must not count against it.
     const gen3 = await api.execute<{ key: string }>('finance.marketplace_connection.push_hook_set', { id: tiktok.connectionId }, { actor: asOwner(), orgId });
     expect(await rejectMarketplaceHook(workerDb, claimedPreRotation[0]!.hookId, claimedPreRotation[0]!.generation)).toBe(false);
