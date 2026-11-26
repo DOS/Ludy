@@ -18,7 +18,7 @@ import type { MemberRole } from '@ludy/db';
 import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { bankLineStates } from './bank-match.ts';
-import { balanceOf, invoiceCleared, invoicePayable, standingInvoiceEntry } from './marketplace-fee-clearing-record.ts';
+import { balanceOf, resolveInvoiceClearingState, standingInvoiceEntry } from './marketplace-fee-clearing-record.ts';
 import { payoutOfBankLine } from './marketplace-payout-line.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { feeAccrualOffers } from './marketplace-fee-accrual.ts';
@@ -198,18 +198,26 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
         .where('m.org_id', '=', ctx.orgId);
       if (input.legalEntityId !== undefined) links = links.where('m.legal_entity_id', '=', input.legalEntityId);
       const invoices: MarketplaceWorklist['invoices'] = [];
-      const regimes = new Map<string, string>();
+      const awaitingCodes = [...new Set(Object.values(maps).map((m) => m.feeAwaitingInvoice.code))];
+      if (awaitingCodes.length === 0) awaitingCodes.push(MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388');
       for (const link of options.feeClearing === true ? await links.orderBy('m.platform').execute() : []) {
-        let regime = regimes.get(link.legal_entity_id);
-        if (regime === undefined) {
-          regime = (await booksOn(ctx, link.legal_entity_id, today)).regime;
-          regimes.set(link.legal_entity_id, regime);
+        const balances = new Map<string, Promise<{ balance: string; lastDate: string | null }>>();
+        const readBalance = (code: string) => {
+          let p = balances.get(code);
+          if (!p) {
+            p = balanceOf(ctx, link.legal_entity_id, link.party_id, code);
+            balances.set(code, p);
+          }
+          return p;
+        };
+        let hasAnyWaiting = false;
+        for (const code of awaitingCodes) {
+          if (money((await readBalance(code)).balance).greaterThan(0)) {
+            hasAnyWaiting = true;
+            break;
+          }
         }
-        const entityMap = (Object.hasOwn(maps, regime) ? maps[regime] : undefined) ?? MARKETPLACE_POSTING_MAPS.tt133;
-        const feesAccount = entityMap?.feeAwaitingInvoice.code ?? '1388';
-        const payableAccount = entityMap?.feePayable.code ?? '331';
-        const waiting = money((await balanceOf(ctx, link.legal_entity_id, link.party_id, feesAccount)).balance);
-        if (!waiting.greaterThan(0)) continue;
+        if (!hasAnyWaiting) continue;
         const docs = await ctx.trx
           .selectFrom('ludy_finance.purchase_document')
           .select(['id', 'invoice_series', 'invoice_number', 'invoice_date'])
@@ -224,7 +232,11 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
         for (const doc of docs) {
           const entry = await standingInvoiceEntry(ctx, doc.id);
           if (!entry || entry.reversed) continue;
-          const remaining = money(await invoicePayable(ctx, entry.id, link.party_id, payableAccount)).minus(money(await invoiceCleared(ctx, doc.id, feesAccount)));
+          const resolved = await resolveInvoiceClearingState(ctx, maps, link.legal_entity_id, link.party_id, doc.id, entry.id, entry.entryDate, { readBalance });
+          if (!resolved) continue;
+          const waiting = money(resolved.waiting.balance);
+          if (!waiting.greaterThan(0)) continue;
+          const remaining = money(resolved.payable).minus(money(resolved.cleared));
           const clearable = remaining.lessThan(waiting) ? remaining : waiting;
           if (!clearable.greaterThan(0)) continue;
           invoices.push({

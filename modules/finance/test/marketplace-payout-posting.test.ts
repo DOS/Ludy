@@ -140,7 +140,7 @@ describe('a payout with the lines a person classified (#4303 S4)', () => {
       ['10000', false],
       ['2000', true],
     ]);
-    expect(lines1388.filter((l) => isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: ID, payoutFees: p.fees, memo: l.memo })).map((l) => l.debit)).toEqual(['10000']);
+    expect(lines1388.filter((l) => isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: ID, proposalId: ID, payoutFees: p.fees, memo: l.memo })).map((l) => l.debit)).toEqual(['10000']);
   });
   it('posts a household\'s incentive beside the tax it credited to 3331 and 3335: the two are cleared separately and the entry balances', () => {
     const lines = [lost(1, '5000', '2000')];

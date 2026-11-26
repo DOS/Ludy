@@ -100,10 +100,11 @@ describe('the fee clearing commands', () => {
 
 describe('separating feeAwaitingInvoice from withheld_in_error on 1388 (#4336)', () => {
   it('counts only fee-clearing vouchers and non-withheld payout fee lines, never withheld_in_error or unrelated 1388 entries', () => {
-    expect(isFeeWaitingSource({ feeDocumentId: DOC, payoutSettlementId: null, memo: 'Shopee hóa đơn 1' })).toBe(true);
-    expect(isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: DOC, payoutFees: '28000', memo: 'Shopee 2026-10-01 đến 2026-10-15' })).toBe(true);
-    expect(isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: DOC, payoutFees: '28000', memo: `Shopee 2026-10-01 đến 2026-10-15${WITHHELD_IN_ERROR_MEMO_SUFFIX}` })).toBe(false);
-    expect(isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: DOC, payoutFees: '0', memo: 'Shopee 2026-10-01 đến 2026-10-15' })).toBe(false);
-    expect(isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: null, memo: 'Bồi thường mất hàng' })).toBe(false);
+    expect(isFeeWaitingSource({ feeDocumentId: DOC, payoutSettlementId: null, proposalId: DOC, payoutFees: null, memo: 'Shopee hóa đơn 1' })).toBe(true);
+    expect(isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: DOC, proposalId: DOC, payoutFees: '28000', memo: 'Shopee 2026-10-01 đến 2026-10-15' })).toBe(true);
+    expect(isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: DOC, proposalId: DOC, payoutFees: '28000', memo: `Shopee 2026-10-01 đến 2026-10-15${WITHHELD_IN_ERROR_MEMO_SUFFIX}` })).toBe(false);
+    expect(isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: DOC, proposalId: DOC, payoutFees: '0', memo: 'Shopee 2026-10-01 đến 2026-10-15' })).toBe(false);
+    expect(isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: DOC, proposalId: DOC, payoutFees: null, memo: 'Shopee 2026-10-01 đến 2026-10-15' })).toBe(false);
+    expect(isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: null, proposalId: DOC, payoutFees: null, memo: 'Bồi thường mất hàng' })).toBe(false);
   });
 });
