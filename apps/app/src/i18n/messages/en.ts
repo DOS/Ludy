@@ -3715,6 +3715,7 @@ export const en = {
       DATE_FUTURE: 'The invoice date cannot be after today.',
       SALE_DATE_INVALID: 'The sale date is not valid.',
       SALE_DATE_AFTER_INVOICE: 'The sale date cannot be after the invoice date.',
+      RATE_DATE_INVALID: 'The VAT rate date is not valid.',
       LATE_REASON_REQUIRED: 'This invoice is late: give the reason before issuing it.',
       CURRENCY_UNSUPPORTED: 'Invoices are made in Vietnamese dong only.',
       SERIES_REQUIRED: 'Choose an invoice series.',

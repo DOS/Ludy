@@ -3,7 +3,7 @@
 // its lines (decimal arithmetic, never a typed total) and the checks Decree 254 Art. 10 and the provider's rules ask of it. Pure:
 // no database, no provider. A failed check is a code on a field; nothing is sent either way.
 import { isVietnamHoliday, type BuyerIdentityKind, type BuyerKind, type DraftIssue, type DraftIssueCode } from '@ludy/kernel-contract';
-import { computeLineTotals, money, normalizeVatRate, parseTaxCode, reducedRateApplies, sumLineTotals } from '@ludy/l10n-vn';
+import { computeLineTotals, isCalendarDate, money, normalizeVatRate, parseTaxCode, reducedRateApplies, sumLineTotals } from '@ludy/l10n-vn';
 
 export { normalizeVatRate };
 
@@ -65,9 +65,6 @@ export function computeDraft(lines: readonly DraftLineInput[]): ComputedDraft {
   return { lines: computed, ...sumLineTotals(computed) };
 }
 
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
-const isDay = (value: string): boolean => DAY.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
-
 // The day after `date` that is a working day (YYYY-MM-DD): not a Saturday, a Sunday or a Vietnamese public holiday of the shared calendar (packages/kernel-contract calendar.ts: the fixed
 // dates every year and the Tết and Hùng Kings days of the years in its lunar table; a year beyond the table has the fixed ones only). The government also moves days off and sets
 // compensation days by decision each year, and the calendar does not carry them, so the answer is exact only where the calendar is. A day the calendar lacks counts as a working day
@@ -86,7 +83,7 @@ export function nextWorkingDay(date: string): string {
 // A sale invoiced after its next working day (Decree 254 Art. 9, as read by the accountant of #2506: signed and sent for the code by the next working day) is a late invoice:
 // the fine is heavy, and the sale still belongs to the VAT period of its own date (#3535).
 export function isLateSale(saleDate: string | null, invoiceDate: string): boolean {
-  if (!saleDate || !isDay(saleDate) || !isDay(invoiceDate) || saleDate >= invoiceDate) return false;
+  if (!saleDate || !isCalendarDate(saleDate) || !isCalendarDate(invoiceDate) || saleDate >= invoiceDate) return false;
   return invoiceDate > nextWorkingDay(saleDate);
 }
 
@@ -117,14 +114,16 @@ export function checkDraft(input: DraftInput, computed: ComputedDraft, today: st
   const add = (field: string, code: DraftIssueCode) => issues.push({ field, code });
 
   if (!input.date) add('date', 'DATE_REQUIRED');
-  else if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || Number.isNaN(Date.parse(`${input.date}T00:00:00Z`)) || new Date(`${input.date}T00:00:00Z`).toISOString().slice(0, 10) !== input.date) add('date', 'DATE_INVALID');
+  else if (!isCalendarDate(input.date)) add('date', 'DATE_INVALID');
   else if (input.date > today) add('date', 'DATE_FUTURE');
 
   if (input.saleDate !== null) {
-    if (!isDay(input.saleDate)) add('saleDate', 'SALE_DATE_INVALID');
-    else if (isDay(input.date) && input.saleDate > input.date) add('saleDate', 'SALE_DATE_AFTER_INVOICE');
+    if (!isCalendarDate(input.saleDate)) add('saleDate', 'SALE_DATE_INVALID');
+    else if (isCalendarDate(input.date) && input.saleDate > input.date) add('saleDate', 'SALE_DATE_AFTER_INVOICE');
     else if (isLateSale(input.saleDate, input.date) && !input.lateReason?.trim()) add('lateReason', 'LATE_REASON_REQUIRED');
   }
+
+  if (input.rateDate != null && !isCalendarDate(input.rateDate)) add('rateDate', 'RATE_DATE_INVALID');
 
   if (input.currency !== 'VND') add('currency', 'CURRENCY_UNSUPPORTED');
   if (!input.seriesId) add('series', 'SERIES_REQUIRED');
@@ -157,9 +156,9 @@ export function checkDraft(input: DraftInput, computed: ComputedDraft, today: st
   }
 
   // 8% only inside a period the reduced rate applied, by the sale date (the invoice date when there is none); an adjustment or a replacement is judged on its original's. With no valid
-  // day there is nothing to judge on: the date check says so.
+  // day there is nothing to judge on: the date, sale-date, or rate-date check says so.
   const rateDay = input.rateDate ?? input.saleDate ?? input.date;
-  const rateDayKnown = isDay(rateDay);
+  const rateDayKnown = isCalendarDate(rateDay);
   if (input.lines.length === 0) add('lines', 'LINES_REQUIRED');
   input.lines.forEach((line, index) => {
     const at = (key: string) => `lines.${index + 1}.${key}`;

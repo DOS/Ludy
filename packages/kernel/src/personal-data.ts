@@ -64,7 +64,8 @@ export type PersonalDataHandling = (typeof PERSONAL_DATA_HANDLINGS)[number];
 // among which a value may be written (a note's body, an activity line, a comment, a description; #1678, #1948), matched
 // by freeTextMatch below.
 // account_number: a bank account number kept as its digits (6 to 20), compared with a searched code of digits (#2402).
-export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'account_number', 'other'] as const;
+// national_id: a person's national ID (CCCD, 12 digits) matched by digits (#3682); ASCII letters stay significant so alphanumeric IDs (passports) do not match digit probes.
+export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'account_number', 'national_id', 'other'] as const;
 export type PersonalDataKind = (typeof PERSONAL_DATA_KINDS)[number];
 
 // The handlings of personal data held in the org's own tables: what the finder reports and an erasure reads.
@@ -252,7 +253,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'ludy_finance.einvoice_draft.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'ludy_finance.einvoice_draft.buyer_name': { kind: 'name', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'ludy_finance.einvoice_draft.buyer_address': { kind: 'address', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
-  'ludy_finance.einvoice_draft.buyer_identity': { kind: 'other', handling: 'keep_legal', reason: "The CCCD, passport number or budget-relation unit code an individual buyer gave on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)" },
+  'ludy_finance.einvoice_draft.buyer_identity': { kind: 'national_id', handling: 'keep_legal', reason: "The CCCD, passport number or budget-relation unit code an individual buyer gave on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)" },
   'ludy_finance.einvoice_draft.buyer_nationality': { kind: 'other', handling: 'keep_legal', reason: "The nationality a foreign buyer gave with a passport on a sales e-invoice draft (Decree 254 Appendix point 4.b, #3709), which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41); it is classified with the identity it belongs to" },
   'ludy_finance.einvoice_draft.buyer_email': { kind: 'email', handling: 'keep_legal', reason: 'Where the buyer asked for the invoice on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   // A sent quote (#2694): the buyer as the customer's contact was when the quote was sent. The quote is frozen once sent (a guard trigger), so the erase command cannot change it;
@@ -1037,6 +1038,7 @@ function columnMatch(kind: PersonalDataKind, probe: Probe, column: RawBuilder<un
   }
   const digits = sql`pg_catalog.regexp_replace(${column}, '[^0-9]', '', 'g')`;
   if (kind === 'tax_code' || kind === 'account_number') return sql<boolean>`${digits} = ${probe.digits}`;
+  if (kind === 'national_id') return sql<boolean>`pg_catalog.regexp_replace(${column}, '[^0-9A-Za-z]', '', 'g') = ${probe.digits}`;
   if (kind === 'phone') {
     const local = probe.digits.startsWith('84') ? `0${probe.digits.slice(2)}` : probe.digits;
     const international = local.startsWith('0') ? `84${local.slice(1)}` : local;

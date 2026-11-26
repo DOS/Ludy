@@ -3713,6 +3713,7 @@ export const vi = {
       DATE_FUTURE: 'Ngày lập không được sau hôm nay.',
       SALE_DATE_INVALID: 'Ngày bán không hợp lệ.',
       SALE_DATE_AFTER_INVOICE: 'Ngày bán không được sau ngày lập hóa đơn.',
+      RATE_DATE_INVALID: 'Ngày tính thuế suất không hợp lệ.',
       LATE_REASON_REQUIRED: 'Hóa đơn lập muộn: hãy ghi lý do trước khi phát hành.',
       CURRENCY_UNSUPPORTED: 'Chỉ lập hóa đơn bằng đồng Việt Nam.',
       SERIES_REQUIRED: 'Hãy chọn ký hiệu hóa đơn.',
