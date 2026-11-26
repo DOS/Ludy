@@ -102,6 +102,12 @@ async function publishOnSandbox(page: Page, channel: string, body: string): Prom
   return postId;
 }
 
+// SheetContent runs a 150ms fade-in-0 animation, so scanning right after toBeVisible() measures translucent contrast over SheetOverlay.
+async function waitForSheetSettled(sheet: Locator): Promise<void> {
+  await sheet.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished.catch(() => {}))));
+  await expect.poll(() => sheet.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
+}
+
 test('a channel that needs two approvals waits for a second admin, then is approved', async ({ page, browser }) => {
   await signInNewUser(page, newEmail('social-steps'));
   const slug = await createOrg(page, 'Công ty Hai Người Duyệt');
@@ -740,6 +746,7 @@ test('moves saved replies and auto-draft from Channels to the Inbox settings dra
   await expect(sheet.getByTestId('saved-replies')).toBeVisible();
   expect((await sheet.getByTestId('saved-reply-add').boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
 
+  await waitForSheetSettled(sheet);
   const phoneScan = await new AxeBuilder({ page }).include('[data-testid="inbox-settings-sheet"]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
   expect(phoneScan.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical')).toEqual([]);
 
@@ -802,6 +809,7 @@ test('moves saved replies and auto-draft from Channels to the Inbox settings dra
   await page.setViewportSize({ width: 1280, height: 800 });
   await trigger.click();
   await expect(sheet).toBeVisible();
+  await waitForSheetSettled(sheet);
   const desktopScan = await new AxeBuilder({ page }).include('[data-testid="inbox-settings-sheet"]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
   expect(desktopScan.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical')).toEqual([]);
 });
