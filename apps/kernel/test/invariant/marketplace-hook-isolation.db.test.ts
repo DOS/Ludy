@@ -45,6 +45,7 @@ const DEFINERS: ReadonlyArray<{ sig: string; roles: readonly string[] }> = [
   { sig: 'crove_finance.marketplace_hook_sweep()', roles: ['crove_worker'] },
   { sig: 'crove_finance.marketplace_hook_claim(integer)', roles: ['crove_worker'] },
   { sig: 'crove_finance.marketplace_hook_reject(uuid,integer)', roles: ['crove_worker'] },
+  { sig: 'crove_finance.marketplace_hook_reject(uuid)', roles: ['crove_worker'] },
 ];
 
 suite('marketplace push hook security invariants (#4326)', () => {
@@ -219,11 +220,8 @@ suite('marketplace push hook security invariants (#4326)', () => {
     }
   });
 
-  it('pins SECURITY DEFINER, search_path, no PUBLIC grant, and exact EXECUTE matrix across all roles (dropping unbound 1-arg reject)', async () => {
+  it('pins SECURITY DEFINER, search_path, no PUBLIC grant, and exact EXECUTE matrix across all roles', async () => {
     await withAdmin(async (c) => {
-      const legacy = await c.query<{ oid: string | null }>("SELECT pg_catalog.to_regprocedure('crove_finance.marketplace_hook_reject(uuid)') AS oid");
-      expect(legacy.rows[0]?.oid).toBeNull();
-
       for (const def of DEFINERS) {
         const meta = await c.query<{ secdef: boolean; config: string[] | null; acl: string | null }>(
           'SELECT prosecdef AS secdef, proconfig AS config, proacl::text AS acl FROM pg_catalog.pg_proc WHERE oid = $1::regprocedure',
@@ -254,6 +252,7 @@ suite('marketplace push hook security invariants (#4326)', () => {
     await expect(workerPool.query("SELECT crove_finance.personal_data_erase_marketplace_hook_notice('email', 'x@example.test')")).rejects.toMatchObject({ code: '42501' });
     await expect(appPool.query('SELECT * FROM crove_finance.marketplace_hook_claim(10)')).rejects.toMatchObject({ code: '42501' });
     await expect(appPool.query('SELECT crove_finance.marketplace_hook_reject($1::uuid, 1)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
+    await expect(appPool.query('SELECT crove_finance.marketplace_hook_reject($1::uuid)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
     await expect(appPool.query('SELECT crove_finance.marketplace_hook_sweep()')).rejects.toMatchObject({ code: '42501' });
   });
 
@@ -317,6 +316,16 @@ suite('marketplace push hook security invariants (#4326)', () => {
       ).then((r) => r.rows[0]?.put),
     ).toBe('accepted');
 
+    // Verify persisted table rows BEFORE claim deletes them so request_url cannot merely be masked by claim.
+    await withAdmin(async (c) => {
+      const stored = await c.query<{ hook_id: string; request_url: string | null }>(
+        'SELECT hook_id, request_url FROM crove_finance.marketplace_hook_notice',
+      );
+      expect(stored.rows.find((r) => r.hook_id === shopeeHookId)?.request_url).toBe(`${PUBLIC_URL}/api/marketplace/shopee/webhook/${shopeeKey}`);
+      expect(stored.rows.find((r) => r.hook_id === otherTiktokHookId)?.request_url).toBeNull();
+      expect(stored.rows.find((r) => r.hook_id === lazadaHookId)?.request_url).toBeNull();
+    });
+
     const claimed = await workerDb.transaction().execute((trx) => claimMarketplaceHookNotices(trx));
     const shopeeRow = claimed.find((r) => r.hookId === shopeeHookId);
     const tiktokRow = claimed.find((r) => r.hookId === otherTiktokHookId);
@@ -352,6 +361,16 @@ suite('marketplace push hook security invariants (#4326)', () => {
     await listener.end();
     expect(heard.length).toBeGreaterThan(0);
     expect(heard.every((payload) => payload === '')).toBe(true);
+
+    // Verify persisted table rows BEFORE claim deletes them so request_url cannot merely be masked by claim.
+    await withAdmin(async (c) => {
+      const stored = await c.query<{ hook_id: string; request_url: string | null }>(
+        'SELECT hook_id, request_url FROM crove_finance.marketplace_hook_notice',
+      );
+      expect(stored.rows.find((r) => r.hook_id === shopeeHookId)?.request_url).toBe(`${PUBLIC_URL}/api/marketplace/shopee/webhook/${shopeeKey}`);
+      expect(stored.rows.find((r) => r.hook_id === otherTiktokHookId)?.request_url).toBeNull();
+      expect(stored.rows.find((r) => r.hook_id === lazadaHookId)?.request_url).toBeNull();
+    });
 
     const claimed = await workerDb.transaction().execute((trx) => claimMarketplaceHookNotices(trx));
     expect(claimed).toHaveLength(1);
@@ -391,8 +410,9 @@ suite('marketplace push hook security invariants (#4326)', () => {
     const nextKey = randomBytes(16).toString('base64url');
     await withSealedApp(users.owner, orgId, 'SELECT crove_finance.marketplace_hook_set($1::uuid, $2)', [shopeeConnId, sha(nextKey)]);
 
-    // Stale generation refusal is a no-op and never increments rejected_count or stops the rotated hook.
+    // Stale generation refusal (both 2-arg and 1-arg gen-1 shim) is a no-op and never increments or stops the rotated hook.
     expect(await rejectMarketplaceHook(workerDb, shopeeHookId, oldGeneration)).toBe(false);
+    expect((await workerPool.query<{ stopped: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS stopped', [shopeeHookId])).rows[0]?.stopped).toBe(false);
     const afterStale = await withSealedApp<{ rejected_count: number; stopped: boolean }>(
       users.owner,
       orgId,
@@ -410,5 +430,41 @@ suite('marketplace push hook security invariants (#4326)', () => {
       [shopeeConnId],
     );
     expect(afterCurrent).toEqual([{ rejected_count: 1, stopped: false }]);
+  });
+
+  it('scopes personal_data_erase_marketplace_hook_notice strictly to the caller org when erasing matching notices', async () => {
+    const email = 'erase.isolated@example.test';
+    const body = Buffer.from(JSON.stringify({ buyer: 'Nguyễn Văn Tám', email }), 'utf8');
+    const currentShopeeKey = randomBytes(16).toString('base64url');
+    await withSealedApp(users.owner, orgId, 'SELECT crove_finance.marketplace_hook_set($1::uuid, $2)', [shopeeConnId, sha(currentShopeeKey)]);
+
+    expect(
+      await appPool.query<{ put: string }>(
+        'SELECT crove_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5, $6) AS put',
+        [shopeeHookId, sha(currentShopeeKey), sha('erase-iso-org-a'), HEADER, body, `${PUBLIC_URL}/api/marketplace/shopee/webhook/${currentShopeeKey}`],
+      ).then((r) => r.rows[0]?.put),
+    ).toBe('accepted');
+    expect(
+      await appPool.query<{ put: string }>(
+        'SELECT crove_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5, $6) AS put',
+        [otherTiktokHookId, sha(otherTiktokKey), sha('erase-iso-org-b'), HEADER, body, null],
+      ).then((r) => r.rows[0]?.put),
+    ).toBe('accepted');
+
+    const erased = await withSealedApp<{ rows: number }>(
+      users.owner,
+      orgId,
+      "SELECT crove_finance.personal_data_erase_marketplace_hook_notice('email', $1) AS rows",
+      [email],
+    );
+    expect(erased).toEqual([{ rows: 1 }]);
+
+    await withAdmin(async (c) => {
+      const remaining = await c.query<{ org_id: string; hook_id: string }>(
+        'SELECT org_id, hook_id FROM crove_finance.marketplace_hook_notice ORDER BY received_at, id',
+      );
+      expect(remaining.rows).toEqual([{ org_id: otherOrgId, hook_id: otherTiktokHookId }]);
+      await c.query('DELETE FROM crove_finance.marketplace_hook_notice');
+    });
   });
 });

@@ -274,8 +274,9 @@ suite('Marketplace push hook (#4316)', () => {
       const [afterRotate] = await rows<{ generation: number }>('SELECT generation FROM ludy_finance.marketplace_hook WHERE id = $1', [hookOfPush]);
       const gen2 = afterRotate?.generation ?? 0;
       expect(gen2).toBe(gen1 + 1);
-      // A pre-rotation refusal arriving after rotation (generation 1 vs 2) never counts against or stops the rotated address.
+      // A pre-rotation refusal arriving after rotation (generation 1 vs 2, or via the 1-arg compatibility shim) never counts against or stops the rotated address.
       expect(await asWorker<{ r: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid, $2::int) AS r', [hookOfPush, gen1])).toEqual([{ r: false }]);
+      expect(await asWorker<{ r: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid) AS r', [hookOfPush])).toEqual([{ r: false }]);
       expect((await pushStatus(owner)).body).toMatchObject({ stopped: false, rejectedCount: 0, rotatedAt: expect.any(String) });
       const newHash = sha(keyOf(String(rotated.body.address)));
       expect(newHash).not.toBe(oldHash);
@@ -384,8 +385,8 @@ suite('Marketplace push hook (#4316)', () => {
     await expect(workerPool.query('SELECT ludy_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5, $6)', [randomUUID(), '0'.repeat(64), '0'.repeat(64), 'a', Buffer.from('b'), null])).rejects.toMatchObject({ code: '42501' });
     await expect(pool.query('SELECT * FROM ludy_finance.marketplace_hook_claim(10)')).rejects.toMatchObject({ code: '42501' });
     await expect(pool.query('SELECT ludy_finance.marketplace_hook_reject($1::uuid, 1)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query('SELECT ludy_finance.marketplace_hook_reject($1::uuid)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
     await expect(pool.query('SELECT ludy_finance.marketplace_hook_sweep()')).rejects.toMatchObject({ code: '42501' });
-    expect(await rows<{ oid: string | null }>("SELECT to_regprocedure('ludy_finance.marketplace_hook_reject(uuid)') AS oid")).toEqual([{ oid: null }]);
     // The owner's side needs a sealed context of an owner or admin: with none, even the API login is refused.
     await expect(pool.query('SELECT ludy_finance.marketplace_hook_set($1::uuid, $2)', [connectionId, '0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
     await expect(pool.query('SELECT * FROM ludy_finance.marketplace_hook_status($1::uuid)', [connectionId])).rejects.toMatchObject({ code: '42501' });
@@ -405,6 +406,11 @@ suite('Marketplace push hook (#4316)', () => {
     expect(await put(otherHookId, sha(otherKey), sha('other'), BODY, URL_SIGNED)).toBe('accepted');
     expect(await put(lazadaHook, sha(lazadaKey), sha('lazada-with-address'), BODY, URL_SIGNED)).toBe('accepted');
     expect(await put(hookId, sha(key), sha('shopee-with-address'), BODY, URL_SIGNED)).toBe('accepted');
+    // Inspect the stored table rows BEFORE claim deletes them to confirm request_url was never written for TikTok Shop or Lazada.
+    const storedBeforeClaim = await rows<{ hook_id: string; dedupe_key: string; request_url: string | null }>('SELECT hook_id, dedupe_key, request_url FROM ludy_finance.marketplace_hook_notice');
+    expect(storedBeforeClaim.find((r) => r.hook_id === otherHookId)?.request_url).toBeNull();
+    expect(storedBeforeClaim.find((r) => r.hook_id === lazadaHook)?.request_url).toBeNull();
+    expect(storedBeforeClaim.find((r) => r.dedupe_key === sha('shopee-with-address'))?.request_url).toBe(URL_SIGNED);
     const claimed = await asWorker<{ org_id: string; hook_id: string; marketplace_connection_id: string; adapter: string; platform: string; dedupe_key: string; authorization_header: string; body: Buffer; request_url: string | null; generation: number }>(
       'SELECT * FROM ludy_finance.marketplace_hook_claim(10)',
     );

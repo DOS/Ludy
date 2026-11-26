@@ -7,9 +7,11 @@
 -- Changes:
 --   1. Add generation (integer, default 1, >= 1) to ludy_finance.marketplace_hook.
 --   2. Increment generation on key rotation in ludy_finance.marketplace_hook_set.
---   3. Append generation to ludy_finance.marketplace_hook_claim's returned columns.
---   4. Require matching generation in ludy_finance.marketplace_hook_reject(uuid, integer)
---      and drop the unbound 1-argument marketplace_hook_reject(uuid).
+--   3. Append trailing generation to ludy_finance.marketplace_hook_claim's
+--      returned columns (preserving named-column callers during rolling deploy).
+--   4. Add generation-bound ludy_finance.marketplace_hook_reject(uuid, integer)
+--      and keep the 1-arg ludy_finance.marketplace_hook_reject(uuid) as a safe
+--      generation-1 compatibility shim for rolling deploy and rollback (ADR-0001).
 --
 -- Note: the request_url Shopee-only guard on marketplace_hook_put_notice already
 -- landed in 20270207100000_crove_finance_marketplace_hook_request_url_shopee.sql (#4327).
@@ -97,9 +99,7 @@ END $$;
 -- ---------------------------------------------------------------------------
 -- 4. Require matching generation in ludy_finance.marketplace_hook_reject
 -- ---------------------------------------------------------------------------
--- ludy:contract adr=0045
-DROP FUNCTION IF EXISTS ludy_finance.marketplace_hook_reject(uuid);
-CREATE FUNCTION ludy_finance.marketplace_hook_reject(p_hook uuid, p_generation integer)
+CREATE OR REPLACE FUNCTION ludy_finance.marketplace_hook_reject(p_hook uuid, p_generation integer)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 #variable_conflict use_column
 DECLARE
@@ -110,8 +110,16 @@ BEGIN
     RETURN false;
   END IF;
   UPDATE ludy_finance.marketplace_hook h SET
-    rejected_count = CASE WHEN h.rejected_window_start IS NULL OR h.rejected_window_start < v_now - interval '1 hour' THEN 1 ELSE h.rejected_count + 1 END,
-    rejected_window_start = CASE WHEN h.rejected_window_start IS NULL OR h.rejected_window_start < v_now - interval '1 hour' THEN v_now ELSE h.rejected_window_start END,
+    rejected_count = CASE
+      WHEN h.stopped_at IS NOT NULL THEN h.rejected_count
+      WHEN h.rejected_window_start IS NULL OR h.rejected_window_start < v_now - interval '1 hour' THEN 1
+      ELSE h.rejected_count + 1
+    END,
+    rejected_window_start = CASE
+      WHEN h.stopped_at IS NOT NULL THEN h.rejected_window_start
+      WHEN h.rejected_window_start IS NULL OR h.rejected_window_start < v_now - interval '1 hour' THEN v_now
+      ELSE h.rejected_window_start
+    END,
     stopped_at = CASE
       WHEN h.stopped_at IS NOT NULL THEN h.stopped_at
       WHEN (CASE WHEN h.rejected_window_start IS NULL OR h.rejected_window_start < v_now - interval '1 hour' THEN 1 ELSE h.rejected_count + 1 END) >= 10 THEN v_now
@@ -121,10 +129,18 @@ BEGIN
   RETURN COALESCE(v_stopped, false);
 END $$;
 
+-- Compatibility shim for workers deployed prior to this migration (or rolled back to one): counts only against generation 1 so a pre-rotation call can never affect a rotated address.
+CREATE OR REPLACE FUNCTION ludy_finance.marketplace_hook_reject(p_hook uuid)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  RETURN ludy_finance.marketplace_hook_reject(p_hook, 1);
+END $$;
+
 REVOKE ALL ON FUNCTION
   ludy_finance.marketplace_hook_set(uuid, text),
   ludy_finance.marketplace_hook_claim(integer),
-  ludy_finance.marketplace_hook_reject(uuid, integer)
+  ludy_finance.marketplace_hook_reject(uuid, integer),
+  ludy_finance.marketplace_hook_reject(uuid)
 FROM PUBLIC;
 DO $$
 DECLARE
@@ -135,7 +151,7 @@ BEGIN
     WHERE (rolname LIKE 'ludy\_%' OR rolname LIKE 'crove\_%') AND rolname <> current_user
   LOOP
     EXECUTE pg_catalog.format(
-      'REVOKE ALL ON FUNCTION ludy_finance.marketplace_hook_set(uuid, text), ludy_finance.marketplace_hook_claim(integer), ludy_finance.marketplace_hook_reject(uuid, integer) FROM %I',
+      'REVOKE ALL ON FUNCTION ludy_finance.marketplace_hook_set(uuid, text), ludy_finance.marketplace_hook_claim(integer), ludy_finance.marketplace_hook_reject(uuid, integer), ludy_finance.marketplace_hook_reject(uuid) FROM %I',
       r.rolname
     );
   END LOOP;
@@ -145,5 +161,6 @@ GRANT EXECUTE ON FUNCTION
 TO ludy_app;
 GRANT EXECUTE ON FUNCTION
   ludy_finance.marketplace_hook_claim(integer),
-  ludy_finance.marketplace_hook_reject(uuid, integer)
+  ludy_finance.marketplace_hook_reject(uuid, integer),
+  ludy_finance.marketplace_hook_reject(uuid)
 TO ludy_worker;
