@@ -10,6 +10,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import type { ExtractClient } from '@ludy/extract-contract';
+import type { ParsedInvoice } from '@ludy/l10n-vn';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { kernelCommands, kernelQueries } from '@ludy/kernel';
 import { BlobNotFoundError, Runtime, archiveKey, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
@@ -25,6 +26,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url), 'utf8');
+const PARSED = JSON.parse(readFileSync(new URL('../../../packages/l10n-vn/test/fixtures/einvoice-basic.parsed.json', import.meta.url), 'utf8')) as ParsedInvoice;
 const SECRET = 'test-only-jwt-secret-for-year-archive-0123456789';
 const ISSUER = 'ludy-auth';
 // The fixture invoice's buyer: the org's own tax code (checksum-invalid, no real company).
@@ -295,5 +297,105 @@ suite('fiscal year archive packages (#922)', () => {
       checked: 1,
       problems: [{ code: 'manifest_changed', name: 'manifest' }],
     });
+  });
+
+  it('includes attached original XMLs in the archive manifest and verifies them (#2334)', async () => {
+    const created = await rpc('org/create', await tokenFor(owner), { name: 'Công ty Lưu trữ XML gốc', idempotencyKey: randomUUID() }, null);
+    expect(created.status).toBe(200);
+    const pdfOrg = { slug: String(created.body?.slug), orgId: String(created.body?.orgId) };
+    const invite = await rpc('org/invite', await tokenFor(owner, { mfa: true }), { email: adminUser.email, role: 'admin' }, pdfOrg.slug);
+    expect(invite.status).toBe(200);
+    expect((await rpc('invites/accept', await tokenFor(adminUser), { token: String(invite.body?.acceptPath).split('#')[1] }, null)).status).toBe(200);
+    expect((await rpc('org/setTaxCode', await tokenFor(owner), { taxCode: BUYER_TAX_CODE }, pdfOrg.slug)).status).toBe(200);
+
+    // Post a 2025 purchase invoice from its PDF reading.
+    const pdfExtract: ExtractClient = {
+      extract: async (kind, bytes) => (kind === 'pdf_text' ? ({ ok: true, kind: 'pdf_text', text: 'x'.repeat(100), pages: 1 } as never) : extract.extract(kind, bytes)),
+    };
+    const reading = {
+      fromText: async () => ({ ...structuredClone(PARSED), source: 'ai' as const, number: '8101', issueDate: '2025-06-15' }),
+      fromImage: async () => null,
+    };
+    const pdfBytes = new TextEncoder().encode(`%PDF-1.4 hoa don 8101 ${randomUUID()}`);
+    const pdfSha = sha256Hex(pdfBytes);
+    const pdfKey = fileKey(pdfOrg.orgId, pdfSha);
+    const pdfGen = await store.put(pdfKey, pdfBytes);
+    const pdf = await runtime.execute<{ fileId: string }>(
+      'kernel.file.ingest',
+      { filename: 'hd-2025-06-15.pdf', contentType: 'application/pdf', sizeBytes: pdfBytes.byteLength, sha256: pdfSha, storageKey: pdfKey, generation: pdfGen, source: 'upload' },
+      { actor: asUser(owner), orgId: pdfOrg.orgId },
+    );
+    const pdfProposed = await extractAndPropose({ runtime: workerRuntime, store, extractor: reading as never, extract: pdfExtract, today: () => '2026-10-21' }, pdfOrg.orgId, pdf.fileId);
+    const proposalId = String(pdfProposed.proposalId);
+    expect(pdfProposed.proposalId).toEqual(expect.any(String));
+    const edited = await rpc('inbox/edit', await tokenFor(owner), { id: proposalId, revision: 1, lineAccounts: [{ lineNo: 3, debitAccount: '6421' }], idempotencyKey: randomUUID() }, pdfOrg.slug);
+    expect(edited.status).toBe(200);
+    const approved = await rpc(
+      'inbox/approve',
+      await tokenFor(adminUser, { mfa: true }),
+      { acceptFailedChecks: true, acceptUnverifiedSignature: true, id: proposalId, revision: 2, idempotencyKey: randomUUID() },
+      pdfOrg.slug,
+    );
+    expect(approved.status).toBe(200);
+
+    // Attach the seller's original XML after posting.
+    const xmlBytes = new TextEncoder().encode(
+      FIXTURE.replace('<SHDon>1234</SHDon>', '<SHDon>8101</SHDon>').replace('<NLap>2026-09-15</NLap>', '<NLap>2025-06-15</NLap>'),
+    );
+    const xmlSha = sha256Hex(xmlBytes);
+    const xmlKey = fileKey(pdfOrg.orgId, xmlSha);
+    const xmlGen = await store.put(xmlKey, xmlBytes);
+    const xml = await runtime.execute<{ fileId: string }>(
+      'kernel.file.ingest',
+      { filename: 'hd-2025-06-15.xml', contentType: 'application/xml', sizeBytes: xmlBytes.byteLength, sha256: xmlSha, storageKey: xmlKey, generation: xmlGen, source: 'upload' },
+      { actor: asUser(owner), orgId: pdfOrg.orgId },
+    );
+    const attached = await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-21' }, pdfOrg.orgId, xml.fileId);
+    expect(attached.proposalId).toBeNull();
+
+    // An unposted XML dated in the same year stays out of the archive.
+    const unpostedBytes = new TextEncoder().encode(
+      FIXTURE.replace('<SHDon>1234</SHDon>', '<SHDon>8102</SHDon>').replace('<NLap>2026-09-15</NLap>', '<NLap>2025-07-01</NLap>'),
+    );
+    const unpostedSha = sha256Hex(unpostedBytes);
+    const unpostedKey = fileKey(pdfOrg.orgId, unpostedSha);
+    const unpostedGen = await store.put(unpostedKey, unpostedBytes);
+    const unposted = await runtime.execute<{ fileId: string }>(
+      'kernel.file.ingest',
+      { filename: 'hd-2025-07-01.xml', contentType: 'application/xml', sizeBytes: unpostedBytes.byteLength, sha256: unpostedSha, storageKey: unpostedKey, generation: unpostedGen, source: 'upload' },
+      { actor: asUser(owner), orgId: pdfOrg.orgId },
+    );
+    await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-21' }, pdfOrg.orgId, unposted.fileId);
+
+    for (let month = 1; month <= 12; month++) {
+      const locked = await rpc('periodLock/lock', await tokenFor(owner), { month: `2025-${String(month).padStart(2, '0')}`, idempotencyKey: randomUUID() }, pdfOrg.slug);
+      expect(locked.status).toBe(200);
+    }
+    const asked = await rpc('yearArchive/build', await tokenFor(owner, { mfa: true }), { year: 2025, idempotencyKey: randomUUID() }, pdfOrg.slug);
+    expect(asked).toMatchObject({ status: 200, body: { year: 2025, state: 'requested' } });
+    const event = await admin(async (c) => (await c.query(`SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.archive_requested'`, [pdfOrg.orgId])).rows);
+    const requestCommandId = String(event[0]?.payload.requestCommandId);
+    const built = await runYearArchive({ runtime: workerRuntime, store }, pdfOrg.orgId, 2025, { requestCommandId });
+    expect(built.recorded).toBe(true);
+
+    const list = await rpc('yearArchive/list', await tokenFor(owner), undefined, pdfOrg.slug);
+    expect(list).toMatchObject({ status: 200, body: { archives: [{ year: 2025, state: 'built', documents: 2 }] } });
+
+    const manifestRes = await get('/api/finance-archive/2025/manifest', owner, pdfOrg.slug);
+    expect(manifestRes.status).toBe(200);
+    const manifest = (await manifestRes.json()) as YearArchiveManifest;
+    expect(manifest.documents.map((d) => d.key).sort()).toEqual([pdfKey, xmlKey].sort());
+    expect(await (await get('/api/finance-archive/2025/verify', owner, pdfOrg.slug)).json()).toEqual({
+      year: 2025,
+      ok: true,
+      checked: 1 + manifest.parts.length + 2,
+      problems: [],
+    });
+
+    // Losing the attached original XML blob fails archive verification.
+    store.blobs.delete(xmlKey);
+    const missing = await (await get('/api/finance-archive/2025/verify', owner, pdfOrg.slug)).json();
+    expect(missing).toMatchObject({ year: 2025, ok: false });
+    expect(missing.problems).toEqual(expect.arrayContaining([{ code: 'missing', name: 'hd-2025-06-15.xml' }]));
   });
 });
