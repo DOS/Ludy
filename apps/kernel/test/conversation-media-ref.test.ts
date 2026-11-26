@@ -3,12 +3,15 @@
 // through the egress guard of @ludy/kernel-runtime: the provider's media hosts only, https only on the real path, no redirect followed (the token is never
 // sent to a second host), a byte cap, and the bytes are an image only if their first bytes say so. The guard's own options (a local server, any port, http)
 // are the tests' alone.
+import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TELEGRAM_PHOTO_MAX_BYTES, type ConversationAdapter, type ConversationMediaInput } from '@ludy/channel';
 import { CONVERSATION_IMAGE_MAX_BYTES } from '@ludy/kernel-contract';
+import { CredentialVault, parseVaultKey, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import { fetchConversationMedia, mediaHostsOf } from '../src/conversation-media.ts';
+import { runConversationAttachment } from '../src/conversations-worker.ts';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 2, 0, 0, 0, 3, 8, 6, 0, 0, 0, 0, 0, 0, 0]);
 const SECRET = JSON.stringify({ accessToken: 'tok-not-real-0123456789abcdef', wabaId: '204000000000001' });
@@ -107,5 +110,89 @@ describe('mediaHostsOf', () => {
 
   it('holds the Telegram package\'s cap to the core\'s (the package does not import the contract)', () => {
     expect(TELEGRAM_PHOTO_MAX_BYTES).toBe(CONVERSATION_IMAGE_MAX_BYTES);
+  });
+});
+
+describe('runConversationAttachment mismatch guards (#3152)', () => {
+  const store: BlobStore = {
+    put: async () => 'gen-1',
+    get: async () => new Uint8Array(),
+    delete: async () => undefined,
+  };
+
+  it('fails closed with ATTACHMENT_CONNECTION_MISMATCH before querying credentials or modifying the row', async () => {
+    const queries: string[] = [];
+    const recorded: unknown[] = [];
+    let mediaCalled = 0;
+    const runtime = {
+      query: async (name: string) => {
+        queries.push(name);
+        if (name === 'kernel.conversation.attachment_source') {
+          return { connectionId: randomUUID(), provider: 'whatsapp', sourceUrl: null, mediaRef: '555111222333', storageKey: 'k1' };
+        }
+        throw new Error(`unexpected query ${name}`);
+      },
+      execute: async (name: string, input: unknown) => {
+        if (name === 'kernel.conversation.attachment_record') recorded.push(input);
+        return { recorded: true };
+      },
+    } as unknown as Runtime;
+    const vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
+    const adapter: ConversationAdapter = {
+      provider: 'whatsapp',
+      reply: async () => ({ kind: 'unknown' }),
+      media: async () => {
+        mediaCalled++;
+        return { kind: 'ok', bytes: PNG };
+      },
+    };
+    const outcome = await runConversationAttachment(
+      { runtime, store, broker: vault, adapter: () => adapter, egress },
+      { orgId: randomUUID(), connectionId: randomUUID(), action: 'attachment', attachmentId: randomUUID() },
+    );
+    expect(outcome).toBe('ATTACHMENT_CONNECTION_MISMATCH');
+    expect(queries).toEqual(['kernel.conversation.attachment_source']);
+    expect(mediaCalled).toBe(0);
+    expect(recorded).toEqual([]);
+  });
+
+  it('fails closed with ATTACHMENT_PROVIDER_MISMATCH when opened credential provider differs from attachment source provider', async () => {
+    const orgId = randomUUID();
+    const connectionId = randomUUID();
+    const attachmentId = randomUUID();
+    const vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
+    const sealed = vault.seal(JSON.stringify({ botToken: '123:abc' }), { orgId, provider: 'telegram', externalAccountId: 'tg-acc-1' });
+    const recorded: unknown[] = [];
+    let mediaCalled = 0;
+    const runtime = {
+      query: async (name: string) => {
+        if (name === 'kernel.conversation.attachment_source') {
+          return { connectionId, provider: 'whatsapp', sourceUrl: null, mediaRef: '555111222333', storageKey: 'k1' };
+        }
+        if (name === 'kernel.channel.credential') {
+          return { provider: 'telegram', externalAccountId: 'tg-acc-1', keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') };
+        }
+        throw new Error(`unexpected query ${name}`);
+      },
+      execute: async (name: string, input: unknown) => {
+        if (name === 'kernel.conversation.attachment_record') recorded.push(input);
+        return { recorded: true };
+      },
+    } as unknown as Runtime;
+    const adapter: ConversationAdapter = {
+      provider: 'whatsapp',
+      reply: async () => ({ kind: 'unknown' }),
+      media: async () => {
+        mediaCalled++;
+        return { kind: 'ok', bytes: PNG };
+      },
+    };
+    const outcome = await runConversationAttachment(
+      { runtime, store, broker: vault, adapter: () => adapter, egress },
+      { orgId, connectionId, action: 'attachment', attachmentId },
+    );
+    expect(outcome).toBe('dropped');
+    expect(mediaCalled).toBe(0);
+    expect(recorded).toEqual([{ outcome: 'failed', attachmentId, retry: false, code: 'ATTACHMENT_PROVIDER_MISMATCH' }]);
   });
 });
