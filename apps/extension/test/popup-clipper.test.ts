@@ -1950,4 +1950,117 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('logs structured error name/code without note or tab content when pre-stop markStopped retry fails (#5122)', async () => {
+    vi.resetModules();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    class FakeInactiveRecorder {
+      static instances: FakeInactiveRecorder[] = [];
+      static isTypeSupported = () => true;
+      state = 'inactive';
+      mimeType = 'audio/webm';
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      private listeners = new Map<string, Array<(event: unknown) => void>>();
+      constructor() {
+        FakeInactiveRecorder.instances.push(this);
+      }
+      start() {
+        this.state = 'recording';
+      }
+      stop() {
+        this.state = 'inactive';
+        for (const fn of this.listeners.get('stop') ?? []) fn({});
+      }
+      addEventListener(type: string, listener: (event: unknown) => void) {
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+      }
+      markAlreadyStopped() {
+        this.state = 'inactive';
+        for (const fn of this.listeners.get('stop') ?? []) fn({});
+      }
+    }
+    class FakeStream {
+      tracks = [{ stop() {} }];
+      getTracks = () => this.tracks;
+      getAudioTracks = () => this.tracks;
+      getVideoTracks = () => [];
+    }
+    class FakeAudioContext {
+      destination = {};
+      createMediaStreamDestination = () => ({ stream: new FakeStream() });
+      createMediaStreamSource = () => ({ connect() {} });
+      close = () => Promise.resolve();
+    }
+    vi.stubGlobal('MediaRecorder', FakeInactiveRecorder);
+    vi.stubGlobal('MediaStream', FakeStream);
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    try {
+      const { startCapture } = await import('../src/capture-run.ts');
+      const metas = new Map<string, import('@ludy/meeting-recorder').RecordingMeta>();
+      let putCalls = 0;
+      const client = {
+        createMeeting: async () => ({ meetingId: 'mtg-warn-1' }),
+        captureHeartbeat: async () => ({ open: true }),
+        sendLiveChunk: async () => undefined,
+        uploadMedia: async () => ({ fileId: 'file-1' }),
+        recordingStopped: async () => undefined,
+      };
+      const started = await startCapture(
+        {
+          address: 'https://ludy.example',
+          token: 'crx_test',
+          orgId: 'org1',
+          uploads: 'direct',
+          title: 'Secret meeting title',
+          consentMethod: 'told_at_start',
+          consentAgreed: true,
+          keepVideo: false,
+          liveNotes: false,
+          streamId: 'stream-1',
+          joinUrl: 'https://meet.google.com/abc-defg-hij',
+        },
+        {
+          store: {
+            put: async (m) => {
+              putCalls += 1;
+              if (putCalls === 2) {
+                throw Object.assign(new Error('Secret tab body https://private.example'), {
+                  name: 'QuotaExceededError',
+                  code: 'IDB_WRITE_ERR',
+                });
+              }
+              metas.set(m.id, m);
+            },
+            append: async () => undefined,
+            list: async () => [...metas.values()],
+            chunks: async () => [new Blob(['audio'])],
+            remove: async (id) => void metas.delete(id),
+          },
+          client: () => client as unknown as import('../src/api.ts').Client,
+          getTabStream: async () => new FakeStream() as unknown as MediaStream,
+          getMicStream: async () => null,
+          now: () => 1_700_000_000_000,
+        },
+      );
+      expect(started.ok).toBe(true);
+      if (!started.ok) return;
+      FakeInactiveRecorder.instances[0]!.markAlreadyStopped();
+      const stopped = await started.running.stop('tab_closed');
+      expect(stopped).toEqual({ uploaded: true, meetingId: 'mtg-warn-1' });
+      expect(putCalls).toBeGreaterThanOrEqual(2);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith('[clipper] markStopped retry failed', {
+        name: 'QuotaExceededError',
+        code: 'IDB_WRITE_ERR',
+      });
+      const logged = JSON.stringify(warnSpy.mock.calls);
+      expect(logged).not.toContain('Secret tab body');
+      expect(logged).not.toContain('private.example');
+      expect(logged).not.toContain('Secret meeting title');
+      expect(logged).not.toContain('abc-defg-hij');
+    } finally {
+      warnSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
 });

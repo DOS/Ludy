@@ -150,6 +150,7 @@ export const memberVyRunStart = defineCommand({
         throw new DomainError('MODULE_OFF', 404, 'Ứng dụng notes chưa được bật cho công ty này', { module: 'notes' });
       }
       // Enforce org-level app gate and entitlements before acquiring the org lock and without querying notes.note.get.
+      // Keep the offAppsOf fallback while CommandContext.appEnabled remains optional in kernel-runtime.
       const notesEnabled = ctx.appEnabled
         ? await ctx.appEnabled('notes')
         : !(await offAppsOf(ctx.trx, ctx.orgId)).includes('notes');

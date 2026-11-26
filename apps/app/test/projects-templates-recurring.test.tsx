@@ -64,7 +64,7 @@ vi.mock('../src/lib/api.ts', async () => {
           };
         }
         if (prop === 'mutationOptions') {
-          return () => ({
+          return (opts: Record<string, unknown> = {}) => ({
             mutationFn: async (input: unknown) => {
               if (path.join('.') === 'projects.archiveTemplate') {
                 archiveCalls.push(input);
@@ -74,6 +74,7 @@ vi.mock('../src/lib/api.ts', async () => {
               }
               return {};
             },
+            ...opts,
           });
         }
         if (prop === 'call') return () => Promise.resolve({});
@@ -1334,5 +1335,138 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
     expect(container.querySelector('[data-slot="dialog-content"][data-variant="destructive"]')).toBeNull();
     expect(customRadio.getAttribute('aria-checked')).toBe('true');
     expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(nameInput);
+  });
+
+  it('resets archive focus state when closed mid-archive and ignores stale callbacks after reopen (#5122)', async () => {
+    setActiveLocale('vi');
+    archiveCalls.length = 0;
+    let resolveArchive!: () => void;
+    archiveGate.pending = new Promise<void>((resolve) => {
+      resolveArchive = resolve;
+    });
+
+    const body = domHarness.installScopedDom();
+    const outsideBtn = new FakeDomNode(1, 'button');
+    body.appendChild(outsideBtn);
+    const container = new FakeDomNode(1, 'div');
+    body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    domHarness.setMountedRoot(root);
+
+    const qc = queryClientState.current;
+    qc.clear();
+    const customTemplate: ProjectTemplateSummary = {
+      id: '40000000-0000-4000-8000-000000000008',
+      source: 'custom',
+      builtinKey: null,
+      name: 'Mẫu đóng giữa chừng',
+      description: null,
+      status: 'active',
+      tasks: [{ title: 'Bước 1', dueOffsetDays: 0 }],
+      taskCount: 1,
+      canManage: true,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+    const secondTemplate: ProjectTemplateSummary = {
+      ...customTemplate,
+      id: '40000000-0000-4000-8000-000000000009',
+      name: 'Mẫu giữ lựa chọn mới',
+    };
+    const fixtures = {
+      templates: [...starterFixtures('vi'), customTemplate, secondTemplate],
+      canWrite: true,
+    } satisfies ProjectTemplateListResult;
+    templateFixturesState.current = fixtures;
+    qc.setQueryData(['projects', 'listTemplates', { language: 'vi' }], fixtures);
+
+    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
+    try {
+      const renderDialog = async (open: boolean) => {
+        await act(async () => {
+          root.render(
+            <QueryClientProvider client={qc}>
+              <I18nProvider>
+                <ProjectTemplateDialog mode="create" open={open} onOpenChange={() => undefined} onCreated={() => undefined} />
+              </I18nProvider>
+            </QueryClientProvider>,
+          );
+        });
+      };
+
+      await renderDialog(true);
+      const customRadio = container.querySelector(`[data-testid="template-option-${customTemplate.id}"]`)!;
+      await act(async () => {
+        customRadio.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+      });
+      const archiveTrigger = container.querySelector(`[data-testid="template-archive-${customTemplate.id}"]`)!;
+      await act(async () => {
+        archiveTrigger.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+      });
+      const confirmArchiveBtn = container
+        .querySelectorAll('button')
+        .find((b) => b.textContent.trim() === catalog('vi').projects.templates.archiveConfirmBtn)!;
+      confirmArchiveBtn.focus();
+      await act(async () => {
+        confirmArchiveBtn.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+      });
+
+      // Close mid-archive before rAF or mutation settles, and keep external focus undisturbed.
+      await renderDialog(false);
+      outsideBtn.focus();
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(outsideBtn);
+
+      // Reopen before the stale archive resolves: archiving customTemplate stays hidden so it cannot be re-selected;
+      // select secondTemplate and focus it, then resolve the stale archive so templates refresh without stealing focus from secondTemplate.
+      await renderDialog(true);
+      expect(container.querySelector(`[data-testid="template-option-${customTemplate.id}"]`)).toBeNull();
+      const secondRadio = container.querySelector(`[data-testid="template-option-${secondTemplate.id}"]`)!;
+      await act(async () => {
+        secondRadio.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+      });
+      secondRadio.focus();
+      expect(secondRadio.getAttribute('aria-checked')).toBe('true');
+
+      invalidateSpy.mockClear();
+      templateFixturesState.current = {
+        templates: [...starterFixtures('vi'), secondTemplate],
+        canWrite: true,
+      };
+      await act(async () => {
+        resolveArchive();
+        for (let i = 0; i < 8; i += 1) await Promise.resolve();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(invalidateSpy).toHaveBeenCalled();
+      expect(container.querySelector(`[data-testid="template-option-${customTemplate.id}"]`)).toBeNull();
+      const keptSecondRadio = container.querySelector(`[data-testid="template-option-${secondTemplate.id}"]`)!;
+      expect(keptSecondRadio.getAttribute('aria-checked')).toBe('true');
+      expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(keptSecondRadio);
+
+      // If an already-selected custom template disappears via refetch, ask the user to pick again instead of falling back to templates[0].
+      templateFixturesState.current = {
+        templates: [...starterFixtures('vi')],
+        canWrite: true,
+      };
+      await act(async () => {
+        await qc.invalidateQueries();
+      });
+      await vi.waitFor(async () => {
+        await act(async () => {
+          await Promise.resolve();
+        });
+        const submitBtn = container.querySelector('button[type="submit"]') as FakeDomNode & { disabled?: boolean };
+        expect(submitBtn.disabled).toBe(true);
+        expect(container.textContent).toContain(catalog('vi').projects.templates.templateRequired);
+      });
+      expect(
+        container.querySelector('[data-testid="template-option-software-project"]')?.getAttribute('aria-checked'),
+      ).toBe('false');
+    } finally {
+      invalidateSpy.mockRestore();
+    }
   });
 });

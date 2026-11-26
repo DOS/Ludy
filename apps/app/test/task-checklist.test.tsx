@@ -548,4 +548,197 @@ describe('TaskChecklistSection mounted DOM overlapping edits & 44px targets (#47
     expect(badgeText()).toBe('2/2');
     invalidateSpy.mockRestore();
   });
+
+  it('resets local steps and coalescing queue on taskId swap mid-save and ignores stale mutation callbacks (#5122)', async () => {
+    const body = domHarness.installScopedDom();
+    const container = new FakeDomNode(1, 'div');
+    body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    domHarness.setMountedRoot(root);
+
+    const TASK_A = '20000000-0000-4000-8000-000000000111';
+    const TASK_B = '20000000-0000-4000-8000-000000000112';
+    const TASK_C = '20000000-0000-4000-8000-000000000113';
+    const TASK_C2 = '20000000-0000-4000-8000-000000000114';
+    const TASK_D = '20000000-0000-4000-8000-000000000115';
+    const pending: Array<{
+      variables: Record<string, unknown>;
+      resolve: (value: unknown) => void;
+      reject: (err: unknown) => void;
+    }> = [];
+    mutationState.handler = (variables) =>
+      new Promise((resolve, reject) => {
+        pending.push({ variables, resolve, reject });
+      });
+
+    let updateHostProps!: (next: { taskId: string; checklist: TaskChecklistStep[]; revision: number }) => void;
+    function Host() {
+      const [state, setState] = useState<{ taskId: string; checklist: TaskChecklistStep[]; revision: number }>({
+        taskId: TASK_A,
+        checklist: [
+          { text: 'Việc A1', done: false },
+          { text: 'Việc A2', done: false },
+        ],
+        revision: 5,
+      });
+      updateHostProps = setState;
+      return wrap(
+        <TaskChecklistSection
+          taskId={state.taskId}
+          checklist={state.checklist}
+          revision={state.revision}
+          checkedOut={false}
+        />,
+      );
+    }
+
+    await act(async () => {
+      root.render(<Host />);
+    });
+
+    const checkboxes = () => container.querySelectorAll('input').filter((el) => el.type === 'checkbox');
+    const badgeText = () => container.querySelector('[data-testid="task-checklist-badge"]')?.textContent ?? '';
+    const invalidateSpy = vi.spyOn(queryClientState.current, 'invalidateQueries');
+    try {
+      // 1. Trigger an in-flight save + queued follow-up edit on TASK_A.
+      await act(async () => {
+        const cb0 = checkboxes()[0]!;
+        const cb1 = checkboxes()[1]!;
+        cb0.checked = true;
+        cb0.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+        cb1.checked = true;
+        cb1.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+      });
+      expect(pending).toHaveLength(1);
+      expect(pending[0]!.variables).toMatchObject({ id: TASK_A, expectedRevision: 5 });
+
+      // 2. Swap taskId to TASK_B mid-save without key={task.id}: UI resets to TASK_B and clears saving/disabled state.
+      await act(async () => {
+        updateHostProps({
+          taskId: TASK_B,
+          checklist: [{ text: 'Việc B1', done: true }],
+          revision: 1,
+        });
+      });
+      expect(checkboxes()).toHaveLength(1);
+      expect(checkboxes()[0]!.checked).toBe(true);
+      expect(checkboxes()[0]!.disabled).toBe(false);
+      expect(badgeText()).toBe('1/1');
+      expect(container.textContent).not.toContain(viMessages.tasks.checklistSaving);
+
+      // 3. Start a save on TASK_B, then resolve the stale TASK_A mutation: refreshes stale cache without flushing TASK_A's queue or touching TASK_B.
+      await act(async () => {
+        const cbB = checkboxes()[0]!;
+        cbB.checked = false;
+        cbB.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+      });
+      expect(pending).toHaveLength(2);
+      expect(pending[1]!.variables).toMatchObject({ id: TASK_B, expectedRevision: 1 });
+
+      invalidateSpy.mockClear();
+      await act(async () => {
+        pending[0]!.resolve({ taskId: TASK_A, revision: 6 });
+      });
+      expect(pending).toHaveLength(2);
+      expect(invalidateSpy).toHaveBeenCalled();
+      expect(checkboxes()[0]!.checked).toBe(false);
+      expect(checkboxes()[0]!.disabled).toBe(true);
+
+      await act(async () => {
+        pending[1]!.resolve({ taskId: TASK_B, revision: 2 });
+      });
+      expect(invalidateSpy).toHaveBeenCalled();
+      expect(checkboxes()[0]!.disabled).toBe(false);
+      expect(badgeText()).toBe('0/1');
+
+      // 4. Swap TASK_B -> TASK_C mid-save and reject stale TASK_B mutation: refreshes stale cache on TASK_STALE_REVISION without reverting or alerting TASK_C.
+      await act(async () => {
+        const cbB = checkboxes()[0]!;
+        cbB.checked = true;
+        cbB.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+      });
+      expect(pending).toHaveLength(3);
+      expect(pending[2]!.variables).toMatchObject({ id: TASK_B, expectedRevision: 2 });
+
+      await act(async () => {
+        updateHostProps({
+          taskId: TASK_C,
+          checklist: [{ text: 'Việc C1', done: false }],
+          revision: 10,
+        });
+      });
+      invalidateSpy.mockClear();
+      await act(async () => {
+        pending[2]!.reject(Object.assign(new Error('stale'), { code: 'TASK_STALE_REVISION' }));
+      });
+      expect(invalidateSpy).toHaveBeenCalled();
+      expect(container.querySelectorAll('[data-slot="alert"][role="alert"]')).toHaveLength(0);
+      expect(checkboxes()[0]!.checked).toBe(false);
+
+      // 5. Subsequent edit on TASK_C uses TASK_C's revision=10 cleanly.
+      await act(async () => {
+        const cbC = checkboxes()[0]!;
+        cbC.checked = true;
+        cbC.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+      });
+      expect(pending).toHaveLength(4);
+      expect(pending[3]!.variables).toMatchObject({ id: TASK_C, expectedRevision: 10 });
+      await act(async () => {
+        pending[3]!.resolve({ taskId: TASK_C, revision: 11 });
+      });
+      expect(badgeText()).toBe('1/1');
+
+      // 6. Chained save #1 succeeds then queued save #2 is interrupted by taskId swap and rejects (non-stale): swap still flushes TASK_C2's pending invalidation.
+      await act(async () => {
+        updateHostProps({
+          taskId: TASK_C2,
+          checklist: [
+            { text: 'Việc C2-1', done: false },
+            { text: 'Việc C2-2', done: false },
+          ],
+          revision: 20,
+        });
+      });
+      await act(async () => {
+        const cb0 = checkboxes()[0]!;
+        const cb1 = checkboxes()[1]!;
+        cb0.checked = true;
+        cb0.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+        cb1.checked = true;
+        cb1.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+      });
+      expect(pending).toHaveLength(5);
+      expect(pending[4]!.variables).toMatchObject({ id: TASK_C2, expectedRevision: 20 });
+
+      invalidateSpy.mockClear();
+      await act(async () => {
+        pending[4]!.resolve({ taskId: TASK_C2, revision: 21 });
+      });
+      expect(pending).toHaveLength(6);
+      expect(pending[5]!.variables).toMatchObject({ id: TASK_C2, expectedRevision: 21 });
+      expect(invalidateSpy).not.toHaveBeenCalled();
+
+      await act(async () => {
+        updateHostProps({
+          taskId: TASK_D,
+          checklist: [{ text: 'Việc D1', done: false }],
+          revision: 1,
+        });
+      });
+      expect(invalidateSpy).toHaveBeenCalledTimes(3);
+      expect(invalidateSpy.mock.calls.map(([arg]) => arg)).toEqual([
+        { queryKey: ['tasks'] },
+        { queryKey: ['projects'] },
+        { queryKey: ['notes'] },
+      ]);
+
+      await act(async () => {
+        pending[5]!.reject(new Error('network timeout'));
+      });
+      expect(container.querySelectorAll('[data-slot="alert"][role="alert"]')).toHaveLength(0);
+      expect(checkboxes()[0]!.checked).toBe(false);
+    } finally {
+      invalidateSpy.mockRestore();
+    }
+  });
 });

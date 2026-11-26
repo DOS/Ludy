@@ -117,7 +117,7 @@ const notebookNotFound = () => new DomainError('NOTEBOOK_NOT_FOUND', 404, 'Khôn
 const sharedNotePrivateNotebook = () =>
   new DomainError('NOTES_SHARED_NOTE_PRIVATE_NOTEBOOK', 422, 'Ghi chú dùng chung không thể đặt trong sổ tay riêng; hãy chọn sổ tay dùng chung hoặc bỏ chọn sổ tay');
 
-function rethrowNotebookConstraintError(err: unknown): never {
+export function rethrowNotebookConstraintError(err: unknown): never {
   const pgErr = err as { code?: string; message?: string } | null;
   if (pgErr?.code === '23514' && pgErr.message?.includes('NOTES_SHARED_NOTE_PRIVATE_NOTEBOOK')) {
     throw sharedNotePrivateNotebook();
