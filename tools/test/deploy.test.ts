@@ -1367,6 +1367,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     rmSync(`${dir}/docker-compose.yml`, { force: true });
     const mlEnv = [
       'POSTGRES_PASSWORD=x',
+      'LUDY_CONTEXT_TOKEN_KEY=already-here',
       "OAUTH_JWKS='{\n  \"keys\": [\n    {\"kty\": \"RSA\", \"use\": \"sig\"}\n  ]\n}' # inline comment",
       'COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml',
       '',
