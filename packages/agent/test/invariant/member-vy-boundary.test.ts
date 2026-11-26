@@ -351,7 +351,26 @@ function scanSource(
   const braceExprStack: boolean[] = [];
   let nextLBraceCanBeExpr = false;
   let expectCaseColon = false;
+  let expectDefaultColon = false;
+  let caseExprParenDepth = 0;
+  let caseExprBracketDepth = 0;
+  let caseExprBraceDepth = 0;
+  let caseExprTernaryDepth = 0;
   let lastRBraceWasExpr = false;
+  let prevWasArrow = false;
+  let prevWasAsyncExpr = false;
+  let braceTrackParenDepth = 0;
+  const fnClassStack: Array<{
+    kind: 'function' | 'class';
+    isExpr: boolean;
+    braceDepth: number;
+    parenDepth: number;
+    angleDepth: number;
+    sawParenOpen: boolean;
+    sawParenClose: boolean;
+    inReturnType: boolean;
+    lastWasTypeConnector: boolean;
+  }> = [];
 
   const AS_TYPE_PREFIX_IDENTS = new Set([
     'keyof',
@@ -430,44 +449,184 @@ function scanSource(
 
   const trackBraceExprToken = (tok: Token): void => {
     lastRBraceWasExpr = false;
+    const curWasArrow = prevWasArrow;
+    const curWasAsyncExpr = prevWasAsyncExpr;
+    prevWasArrow = false;
+    prevWasAsyncExpr = false;
+    const curBraceDepth = braceExprStack.length;
+    const curParenDepth = braceTrackParenDepth;
+
+    let hitCaseColon = false;
+    const wasExpectDefaultColon = expectDefaultColon;
+    expectDefaultColon = false;
+    if (wasExpectDefaultColon && tok.kind === 'punct' && tok.value === ':') {
+      hitCaseColon = true;
+    } else if (expectCaseColon) {
+      if (tok.kind === 'punct') {
+        if (tok.value === '(') caseExprParenDepth += 1;
+        else if (tok.value === ')') {
+          if (caseExprParenDepth > 0) caseExprParenDepth -= 1;
+        } else if (tok.value === '[') caseExprBracketDepth += 1;
+        else if (tok.value === ']') {
+          if (caseExprBracketDepth > 0) caseExprBracketDepth -= 1;
+        } else if (tok.value === '{') caseExprBraceDepth += 1;
+        else if (tok.value === '}') {
+          if (caseExprBraceDepth > 0) caseExprBraceDepth -= 1;
+          else expectCaseColon = false;
+        } else if (caseExprParenDepth === 0 && caseExprBracketDepth === 0 && caseExprBraceDepth === 0) {
+          if (tok.value === '?') caseExprTernaryDepth += 1;
+          else if (tok.value === ':') {
+            if (caseExprTernaryDepth > 0) caseExprTernaryDepth -= 1;
+            else {
+              expectCaseColon = false;
+              hitCaseColon = true;
+            }
+          } else if (tok.value === ';') {
+            expectCaseColon = false;
+          }
+        }
+      }
+    }
+
+    const topFnClass = fnClassStack[fnClassStack.length - 1];
     if (tok.kind === 'punct') {
       if (tok.value === '{') {
+        if (
+          topFnClass &&
+          curBraceDepth === topFnClass.braceDepth &&
+          curParenDepth === topFnClass.parenDepth &&
+          topFnClass.angleDepth === 0
+        ) {
+          if (topFnClass.kind === 'class') {
+            braceExprStack.push(topFnClass.isExpr);
+            fnClassStack.pop();
+            nextLBraceCanBeExpr = false;
+            return;
+          }
+          if (!topFnClass.sawParenOpen || !topFnClass.sawParenClose) {
+            fnClassStack.pop();
+          } else if (topFnClass.inReturnType && topFnClass.lastWasTypeConnector) {
+            topFnClass.lastWasTypeConnector = false;
+          } else {
+            braceExprStack.push(topFnClass.isExpr);
+            fnClassStack.pop();
+            nextLBraceCanBeExpr = false;
+            return;
+          }
+        }
         braceExprStack.push(nextLBraceCanBeExpr);
         nextLBraceCanBeExpr = false;
-        expectCaseColon = false;
         return;
       }
       if (tok.value === '}') {
         lastRBraceWasExpr = braceExprStack.pop() ?? false;
+        while (fnClassStack.length > 0 && braceExprStack.length < fnClassStack[fnClassStack.length - 1]!.braceDepth) {
+          fnClassStack.pop();
+        }
+        const activeAfterClose = fnClassStack[fnClassStack.length - 1];
+        if (activeAfterClose && braceExprStack.length === activeAfterClose.braceDepth && curParenDepth === activeAfterClose.parenDepth) {
+          activeAfterClose.lastWasTypeConnector = false;
+        }
         nextLBraceCanBeExpr = false;
-        expectCaseColon = false;
         return;
       }
-      if (tok.value === ':' && expectCaseColon) {
-        expectCaseColon = false;
+      if (tok.value === '(') {
+        braceTrackParenDepth += 1;
+      } else if (tok.value === ')' && braceTrackParenDepth > 0) {
+        braceTrackParenDepth -= 1;
+      }
+      if (topFnClass && curBraceDepth === topFnClass.braceDepth && curParenDepth === topFnClass.parenDepth) {
+        if (tok.value === ';' || (topFnClass.kind === 'class' && topFnClass.angleDepth === 0 && tok.value === ':')) {
+          fnClassStack.pop();
+        } else if (tok.value === '<') {
+          topFnClass.angleDepth += 1;
+          topFnClass.lastWasTypeConnector = true;
+        } else if (tok.value === '>' && topFnClass.angleDepth > 0) {
+          topFnClass.angleDepth -= 1;
+          topFnClass.lastWasTypeConnector = false;
+        } else if (tok.value === '(' && topFnClass.angleDepth === 0) {
+          if (topFnClass.kind === 'function' && !topFnClass.sawParenOpen) topFnClass.sawParenOpen = true;
+          if (topFnClass.inReturnType) topFnClass.lastWasTypeConnector = true;
+        } else if (tok.value === ':' && topFnClass.angleDepth === 0) {
+          if (topFnClass.kind === 'function' && topFnClass.sawParenClose && !topFnClass.inReturnType) {
+            topFnClass.inReturnType = true;
+            topFnClass.lastWasTypeConnector = true;
+          } else if (topFnClass.kind === 'function' && !topFnClass.sawParenOpen) {
+            fnClassStack.pop();
+          } else if (topFnClass.kind === 'function' && topFnClass.inReturnType) {
+            topFnClass.lastWasTypeConnector = true;
+          }
+        } else if (topFnClass.inReturnType && topFnClass.angleDepth === 0) {
+          topFnClass.lastWasTypeConnector =
+            tok.value === '|' ||
+            tok.value === '&' ||
+            tok.value === '=>' ||
+            tok.value === '[' ||
+            tok.value === ',' ||
+            tok.value === '?' ||
+            tok.value === '=';
+        }
+      } else if (
+        topFnClass &&
+        curBraceDepth === topFnClass.braceDepth &&
+        braceTrackParenDepth === topFnClass.parenDepth &&
+        topFnClass.angleDepth === 0 &&
+        tok.value === ')' &&
+        topFnClass.kind === 'function' &&
+        topFnClass.sawParenOpen &&
+        !topFnClass.sawParenClose
+      ) {
+        topFnClass.sawParenClose = true;
+      }
+      if (hitCaseColon) {
         nextLBraceCanBeExpr = false;
         return;
       }
-      expectCaseColon = false;
+      prevWasArrow = tok.value === '=>';
       nextLBraceCanBeExpr = BRACE_EXPR_PREV_PUNCTS.has(tok.value);
       return;
     }
     if (tok.kind === 'template_head' || tok.kind === 'template_middle') {
-      expectCaseColon = false;
       nextLBraceCanBeExpr = true;
       return;
     }
     if (tok.kind === 'ident' && !tok.escaped && !prevWasDot) {
-      if (tok.value === 'case' || tok.value === 'default') {
+      if (topFnClass && curBraceDepth === topFnClass.braceDepth && curParenDepth === topFnClass.parenDepth && topFnClass.angleDepth === 0 && topFnClass.inReturnType) {
+        topFnClass.lastWasTypeConnector =
+          tok.value === 'is' || tok.value === 'extends' || AS_TYPE_PREFIX_IDENTS.has(tok.value);
+      }
+      if (tok.value === 'case') {
         expectCaseColon = true;
-        nextLBraceCanBeExpr = tok.value === 'default';
+        caseExprParenDepth = 0;
+        caseExprBracketDepth = 0;
+        caseExprBraceDepth = 0;
+        caseExprTernaryDepth = 0;
+        nextLBraceCanBeExpr = true;
+      } else if (tok.value === 'default') {
+        expectDefaultColon = true;
+        nextLBraceCanBeExpr = true;
+      } else if (tok.value === 'function' || tok.value === 'class') {
+        const isExpr = nextLBraceCanBeExpr || curWasArrow || (tok.value === 'function' && curWasAsyncExpr);
+        fnClassStack.push({
+          kind: tok.value,
+          isExpr,
+          braceDepth: curBraceDepth,
+          parenDepth: curParenDepth,
+          angleDepth: 0,
+          sawParenOpen: false,
+          sawParenClose: tok.value === 'class',
+          inReturnType: false,
+          lastWasTypeConnector: false,
+        });
+        nextLBraceCanBeExpr = false;
       } else {
-        expectCaseColon = false;
+        if (tok.value === 'async') {
+          prevWasAsyncExpr = nextLBraceCanBeExpr || curWasArrow;
+        }
         nextLBraceCanBeExpr = BRACE_EXPR_PREV_KEYWORDS.has(tok.value);
       }
       return;
     }
-    expectCaseColon = false;
     nextLBraceCanBeExpr = false;
   };
 
@@ -7511,6 +7670,23 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(disallowedMeteredNotes('other.ts', '(1 as any) satisfies any | void / Number(metered(`no${part}`, fn)) / 2;')).toEqual([
       'unresolved metered key (`no${part}`)',
     ]);
+    expect(memberVyViolations('const f = function () {} / Number(import("p" + "g")) / 2;').length).toBeGreaterThan(0);
+    expect(memberVyViolations(`const f = function () {} / (import('pg'), "'") / 2;`).length).toBeGreaterThan(0);
+    expect(memberVyViolations('const f = async function* foo(a = {}): { ok: number } { return { ok: 1 }; } / Number(import("p" + "g")) / 2;').length).toBeGreaterThan(0);
+    expect(memberVyViolations('const f = () => function () {} / Number(import("p" + "g")) / 2;').length).toBeGreaterThan(0);
+    expect(memberVyViolations('const c = class extends Base { m() {} } / Number(import("p" + "g")) / 2;').length).toBeGreaterThan(0);
+    expect(memberVyViolations(`const c = class {} / (import('pg'), "'") / 2;`).length).toBeGreaterThan(0);
+    expect(orgFeatureViolations('const f = function () {} / Number(import("./member-vy/" + "x.ts")) / 2;').length).toBeGreaterThan(0);
+    expect(orgFeatureViolations('const c = class {} / Number(import("./member-vy/" + "x.ts")) / 2;').length).toBeGreaterThan(0);
+    expect(
+      workspaceAdapterLeakViolations(
+        'const c = class {} / Number(import("@ludy/" + "agent")) / 2;',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/app/src/sneaky.ts',
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(disallowedMeteredNotes('other.ts', 'const f = function () {} / Number(metered("notes." + "a", fn)) / 2;')).toEqual(['notes.a']);
+    expect(disallowedMeteredNotes('other.ts', 'const c = class {} / Number(metered("notes." + "a", fn)) / 2;')).toEqual(['notes.a']);
     expect(
       workspaceAdapterLeakViolations(
         `const bad = 'unclosed; import { x } from "@ludy/\\agent";`,
@@ -8096,6 +8272,9 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(disallowedMeteredNotes('other.ts', 'if (enabled) {} /metered(name)/.test(text);')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'if (enabled) { doWork(); } /metered(name)/.test(text);')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'function f() {} /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'export function f(): { a: number } { return { a: 1 }; } /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'class C {} /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'switch (x) { case 1: {} /metered(name)/.test(text); case a ? b : c: {} /metered(name)/.test(text); }')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'try {} catch {} /metered(name)/.test(text);')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', '{ const a = 1; } /metered(name)/.test(text);')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'const f = () => {} /metered(name)/.test(text);')).toEqual([]);

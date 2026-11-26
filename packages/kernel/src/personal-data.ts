@@ -1331,6 +1331,8 @@ export const personalDataFind = defineCommand({
 
 // What an erasure says of meeting text it left or could not search (#2594).
 export const MEETING_TEXT_SKIPPED_REASON = 'The meeting text of this organization was too large to search in time, so it was not searched: search again, or ask support, before relying on this erasure for meeting text';
+export const PENDING_NOTE_ATTACHMENT_REASON =
+  'Text extraction is still pending for shared note attachments, so their extracted text could not be searched yet: search or erase again once extraction completes';
 export const UNTOLD_MEETING_REASON =
   'Text of a meeting the owner cannot read, where no notice covers its recorder and its text as it is now (not sent, the recorder not told 24 hours ago, or the text changed since): send the notice, wait 24 hours, then erase again; the recorder or an owner can also delete the meeting';
 // The statuses of a mail that has left Ludy or may have (the mail table's own set): handed to the worker (sending), outcome unknown (ambiguous), or sent on to its recipient (sent,
@@ -1971,6 +1973,14 @@ export const personalDataErase = defineCommand({
         .where('id', 'in', touchedSharedNoteIds)
         .execute();
     }
+    const { rows: pendingSharedAttRows } = await sql<{ pending: string }>`
+      SELECT pg_catalog.count(*)::text AS pending
+        FROM ludy_notes.attachment a
+        JOIN ludy_notes.note n ON n.org_id = a.org_id AND n.id = a.note_id
+       WHERE a.org_id = ${ctx.orgId}::uuid
+         AND n.visibility = 'org'
+         AND a.extract_status = 'pending'`.execute(ctx.trx);
+    const pendingSharedAttachments = Number(pendingSharedAttRows[0]?.pending ?? 0);
     const { rows: privateRows } = await sql<{ notes: string; todos: string; untold_notes: string; untold_todos: string; note_ids: string[]; todo_ids: string[] }>`
       SELECT notes, todos, untold_notes, untold_todos, note_ids, todo_ids FROM ludy_notes.private_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
     const sum = (key: 'notes' | 'todos' | 'untold_notes' | 'untold_todos') => privateRows.reduce((n, r) => n + Number(r[key]), 0);
@@ -2654,6 +2664,13 @@ export const personalDataErase = defineCommand({
     if (untold.todos > 0) kept.set('ludy_notes.todo', { column: 'ludy_notes.todo', rows: untold.todos, reason: UNTOLD_PRIVATE_REASON });
     // Meeting text the search could not read in time: said in the answer, never left out silently (#2594).
     if (after.meetingTextSkipped) kept.set('ludy_meetings', { column: 'ludy_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
+    if (pendingSharedAttachments > 0) {
+      kept.set('ludy_notes.attachment.extracted_text', {
+        column: 'ludy_notes.attachment.extracted_text',
+        rows: pendingSharedAttachments,
+        reason: PENDING_NOTE_ATTACHMENT_REASON,
+      });
+    }
     const keptRows = new Map<string, number>();
     for (const k of kept.values()) keptRows.set(k.column, (keptRows.get(k.column) ?? 0) + k.rows);
     const result: PersonalDataErasure = {

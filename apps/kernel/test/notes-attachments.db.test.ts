@@ -14,7 +14,7 @@ import { PgBoss } from 'pg-boss';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { createOrg, kernelCommands, kernelQueries, PENDING_NOTE_ATTACHMENT_REASON, upsertIdentity } from '@ludy/kernel';
 import type { ExtractClient, ExtractKind, ExtractResult } from '@ludy/extract-contract';
 import type { PersonalDataErasure, PersonalDataNotice, PersonalDataResult } from '@ludy/kernel-contract';
 import { NOTE_ATTACHMENT_MAX_BYTES, type Note, type NoteAttachment, type NoteSummary, type NoteWritten } from '@ludy/kernel-contract';
@@ -1014,7 +1014,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
           { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
         ),
       );
-      const erasePid2 = await waitBlockedOnPid(extractGatePid, '%for no key update of n%', extractTracker);
+      const erasePid2 = await waitBlockedOnPid(extractGatePid, '%SELECT n.id FROM ludy_notes.note n%', extractTracker);
       const extractPromise = extractTracker.track(
         worker.execute<{ updated: boolean }>(
           'notes.attachment.extract_record',
@@ -1026,12 +1026,28 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
       await extractGate.query('COMMIT');
       const [eraseRes2, extractRes] = await Promise.all([erasePromise2, extractPromise]);
       expect(eraseRes2.erased).toContainEqual({ column: 'ludy_notes.note.title', rows: 1 });
+      // Initial erasure does not pretend completeness while pendingAtt is still awaiting text extraction.
+      expect(eraseRes2.kept).toContainEqual({
+        column: 'ludy_notes.attachment.extracted_text',
+        rows: 1,
+        reason: PENDING_NOTE_ATTACHMENT_REASON,
+      });
       expect(extractRes).toEqual({ updated: true });
-      const storedAtt = await rows<{ extract_status: string; extracted_text: string | null }>(
-        'SELECT extract_status, extracted_text FROM ludy_notes.attachment WHERE org_id = $1 AND id = $2',
+
+      // Follow-up erasure after extraction finishes catches the newly extracted text and cleans up cleanly.
+      const followUpErase = await rt.execute<PersonalDataErasure>(
+        'kernel.personal_data.erase',
+        { value: raceEmail },
+        { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+      );
+      expect(followUpErase.erased).toContainEqual({ column: 'ludy_notes.attachment.extracted_text', rows: 1 });
+      expect(followUpErase.kept).toEqual([]);
+      const remainingAtt = await rows<{ id: string }>(
+        'SELECT id FROM ludy_notes.attachment WHERE org_id = $1 AND id = $2',
         [o.orgId, pendingAtt.id],
       );
-      expect(storedAtt[0]).toEqual({ extract_status: 'done', extracted_text: `Contact ${raceEmail}` });
+      expect(remainingAtt).toEqual([]);
+      expect(await doomed(o)).toContain(`notes/${o.orgId}/${pendingAtt.id}`);
     } finally {
       await extractGate.query('ROLLBACK').catch(() => undefined);
       await extractTracker.drain();
