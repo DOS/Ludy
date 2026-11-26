@@ -601,5 +601,84 @@ suite('eSign KYC worker authorization, recovery cursor, and re-enable race invar
     );
     expect(timedOutRow.rows[0]?.status).toBe('needs_review');
     expect(timedOutRow.rows[0]?.findings_json?.inspectState).toBe('failed');
+
+    // 5. Bound kyc_has_pending_sign_enable age to 15 minutes (#5024): an undrained apps_changed event older than
+    //    15 minutes (20 minutes) must return false and let periodic sweepSignPendingKycWork time out overdue checks.
+    await runtime.execute(
+      'kernel.org.set_app',
+      { module: 'sign', enabled: false },
+      { actor: asMfa(owner.userId, owner.session), orgId: org.orgId },
+    );
+    await drainOutbox();
+
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `UPDATE ludy_sign.kyc_check
+            SET status = 'pending',
+                updated_at = now() - interval '45 minutes'
+          WHERE org_id = $1 AND id = $2`,
+        [org.orgId, kycRow.id],
+      );
+      await c.query('COMMIT');
+    });
+
+    await runtime.execute(
+      'kernel.org.set_app',
+      { module: 'sign', enabled: true },
+      { actor: asMfa(owner.userId, owner.session), orgId: org.orgId },
+    );
+
+    const freshEnableBeforeBackdate = await workerPool!.query<{ pending: boolean }>(
+      `SELECT ludy_sign.kyc_has_pending_sign_enable($1::uuid) AS pending`,
+      [org.orgId],
+    );
+    expect(freshEnableBeforeBackdate.rows[0]?.pending).toBe(true);
+
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      const aged = await c.query(
+        `UPDATE ludy_kernel.outbox_event e
+            SET created_at = pg_catalog.now() - interval '20 minutes'
+           FROM ludy_kernel.outbox_pending p
+          WHERE p.org_id = $1
+            AND e.org_id = p.org_id
+            AND e.id = p.event_id
+            AND e.type = 'kernel.org.apps_changed'
+            AND e.payload ->> 'module' = 'sign'
+            AND e.payload ->> 'enabled' = 'true'`,
+        [org.orgId],
+      );
+      expect(aged.rowCount ?? 0).toBeGreaterThanOrEqual(1);
+      await c.query('COMMIT');
+    });
+
+    const stalePendingEnable = await workerPool!.query<{ pending: boolean }>(
+      `SELECT ludy_sign.kyc_has_pending_sign_enable($1::uuid) AS pending`,
+      [org.orgId],
+    );
+    expect(stalePendingEnable.rows[0]?.pending).toBe(false);
+
+    const staleEnablePeriodicTimeout = await sweepSignPendingKycWork({
+      workerDb,
+      runtime: workerRuntime,
+      orgId: org.orgId,
+      olderThan: new Date(Date.now() - 60_000),
+      timeoutBefore: new Date(Date.now() - 30 * 60_000),
+      bumpUpdatedAtOnRequeue: false,
+      enqueueKycInspect: async () => {},
+    });
+    expect(staleEnablePeriodicTimeout).toEqual({ requeued: 0, timedOut: 1 });
+
+    const timedOutAfterStaleEnable = await admin((c) =>
+      c.query<{ status: string; findings_json: { inspectState?: string } }>(
+        `SELECT status, findings_json FROM ludy_sign.kyc_check WHERE org_id = $1 AND id = $2`,
+        [org.orgId, kycRow.id],
+      ),
+    );
+    expect(timedOutAfterStaleEnable.rows[0]?.status).toBe('needs_review');
+    expect(timedOutAfterStaleEnable.rows[0]?.findings_json?.inspectState).toBe('failed');
   }, 60_000);
 });

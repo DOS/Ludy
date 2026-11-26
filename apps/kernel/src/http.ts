@@ -1976,11 +1976,16 @@ export function createHttpApp(deps: HttpDeps) {
     const V1_CROSS_TENANT_HEADROOM = 2;
     let processPdfInUse = 0;
     const v1PdfByOrg = new Map<string, number>();
-    const hasHeavySingleOrgV1 = (): boolean => {
+    const reservedOtherV1Headroom = (): number => {
+      let maxOrg = 0;
+      let totalV1 = 0;
       for (const n of v1PdfByOrg.values()) {
-        if (n > V1_FAIR_SHARE_PER_ORG) return true;
+        totalV1 += n;
+        if (n > maxOrg) maxOrg = n;
       }
-      return false;
+      if (maxOrg <= V1_FAIR_SHARE_PER_ORG) return 0;
+      const otherOrgsV1 = totalV1 - maxOrg;
+      return Math.max(0, V1_CROSS_TENANT_HEADROOM - otherOrgsV1);
     };
     const signProcessPdfPool = new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX, perKey: SIGN_PDF_READS_MAX });
     const signPdfReads = deps.signLimits?.pdfReads ?? new ConcurrencyLimiter({ total: publicPdfSlots, perKey: publicPdfSlots });
@@ -2006,7 +2011,8 @@ export function createHttpApp(deps: HttpDeps) {
         releaseLimiter();
         return null;
       }
-      if (hasHeavySingleOrgV1() && processPdfInUse >= SIGN_PDF_READS_MAX - V1_CROSS_TENANT_HEADROOM) {
+      const reservedHeadroom = reservedOtherV1Headroom();
+      if (reservedHeadroom > 0 && processPdfInUse >= SIGN_PDF_READS_MAX - reservedHeadroom) {
         releasePublicPool();
         releaseIp();
         releaseLimiter();
@@ -2583,9 +2589,16 @@ export function createHttpApp(deps: HttpDeps) {
       const releaseLimiter = signApiV1PdfReads.tryAcquire(orgId);
       if (!releaseLimiter) return null;
       if (!useApiV1PdfPool) return releaseLimiter;
+      const orgInUse = v1PdfByOrg.get(orgId) ?? 0;
+      let otherOrgsV1ForOrg = 0;
+      for (const [otherOrgId, n] of v1PdfByOrg.entries()) {
+        if (otherOrgId !== orgId) otherOrgsV1ForOrg += n;
+      }
+      const neededHeadroom = Math.max(0, V1_CROSS_TENANT_HEADROOM - otherOrgsV1ForOrg);
       if (
-        (v1PdfByOrg.get(orgId) ?? 0) >= V1_FAIR_SHARE_PER_ORG &&
-        processPdfInUse >= SIGN_PDF_READS_MAX - V1_CROSS_TENANT_HEADROOM
+        orgInUse >= V1_FAIR_SHARE_PER_ORG &&
+        neededHeadroom > 0 &&
+        processPdfInUse >= SIGN_PDF_READS_MAX - neededHeadroom
       ) {
         releaseLimiter();
         return null;
@@ -2596,7 +2609,7 @@ export function createHttpApp(deps: HttpDeps) {
         return null;
       }
       processPdfInUse += 1;
-      v1PdfByOrg.set(orgId, (v1PdfByOrg.get(orgId) ?? 0) + 1);
+      v1PdfByOrg.set(orgId, orgInUse + 1);
       let released = false;
       return () => {
         if (released) return;

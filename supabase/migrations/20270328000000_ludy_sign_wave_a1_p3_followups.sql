@@ -1,7 +1,8 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Wave A1 P3 follow-up (#5024): worker-only definer checking whether an org has an undrained
--- kernel.org.apps_changed (module='sign', enabled='true') outbox event so periodic KYC timeout
--- sweeps do not time out long-paused checks before the relay's apps_changed renewal runs.
+-- Wave A1 P3 follow-up (#5024): worker-only definer checking whether an org has a fresh (within 15 minutes)
+-- undrained kernel.org.apps_changed (module='sign', enabled='true') outbox event so periodic KYC timeout
+-- sweeps do not time out long-paused checks before the relay's apps_changed renewal runs, while bounding the
+-- deferral window to 15 minutes so stuck outbox rows cannot defer overdue KYC timeouts forever.
 
 SET LOCAL lock_timeout = '2s';
 
@@ -31,6 +32,7 @@ BEGIN
       AND e.type = 'kernel.org.apps_changed'
       AND e.payload ->> 'module' = 'sign'
       AND e.payload ->> 'enabled' = 'true'
+      AND e.created_at >= pg_catalog.now() - interval '15 minutes'
   );
 END $$;
 

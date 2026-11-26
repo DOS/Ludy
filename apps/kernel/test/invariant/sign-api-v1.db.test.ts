@@ -2004,6 +2004,52 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
       await Promise.all(order2Held.map((r) => r.body?.cancel().catch(() => {})));
     }
 
+    // When Org A holds 4 v1 streams and Org B already holds 2 v1 streams (otherOrgsV1 = 2 >= V1_CROSS_TENANT_HEADROOM),
+    // reservedHeadroom drops to 0 so 2 concurrent public PDF reads succeed (all 8 process slots utilized cleanly).
+    const order3Held: Response[] = [];
+    try {
+      for (const ip of ['198.51.100.170', '198.51.100.171', '198.51.100.172', '198.51.100.173']) {
+        const orgARes = await apiGet(
+          `/api/v1/sign/envelopes/${ids.completedEnv}/sealed`,
+          `Bearer ${readOnlySecret}`,
+          headroomApp,
+          ip,
+        );
+        expect(orgARes.status).toBe(200);
+        order3Held.push(orgARes);
+      }
+      for (const ip of ['198.51.100.174', '198.51.100.175']) {
+        const orgBRes = await apiGet(
+          `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
+          `Bearer ${orgBReadSecret}`,
+          headroomApp,
+          ip,
+        );
+        expect(orgBRes.status).toBe(200);
+        order3Held.push(orgBRes);
+      }
+
+      const publicReads = await Promise.all([
+        headroomApp.request('/api/sign/pdf', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.176' },
+          body: JSON.stringify({ token: pubToken }),
+        }),
+        headroomApp.request('/api/sign/pdf', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.177' },
+          body: JSON.stringify({ token: pubToken }),
+        }),
+      ]);
+      for (const pubRes of publicReads) {
+        expect(pubRes.status).toBe(200);
+        expect(pubRes.headers.get('content-type')).toBe('application/pdf');
+        expect((await pubRes.arrayBuffer()).byteLength).toBeGreaterThan(0);
+      }
+    } finally {
+      await Promise.all(order3Held.map((r) => r.body?.cancel().catch(() => {})));
+    }
+
     // Revoking fullScopeKeyId via RPC cuts access immediately.
     const revRes = await rpc('sign/api_keys/revoke', owner, { apiKeyId: fullScopeKeyId });
     expect(revRes.status).toBe(200);
