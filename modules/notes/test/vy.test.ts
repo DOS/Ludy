@@ -298,8 +298,10 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
     });
     expect(insertedSeqs).toEqual([0, 1]);
     expect(queries[0]?.sql.toLowerCase()).toContain('from "ludy_notes"."note"');
-    expect(queries[1]?.sql).toContain('pg_advisory_xact_lock');
-    expect(queries[1]?.parameters).toEqual([`ludy_notes.todo_accept_run:${ORG_ID}:${USER_ID}:${RUN_ID}`]);
+    expect(queries[1]?.sql).toContain('pg_advisory_xact_lock_shared');
+    expect(queries[1]?.parameters).toEqual([`notes.erase:${ORG_ID}`]);
+    expect(queries[2]?.sql).toContain('pg_advisory_xact_lock');
+    expect(queries[2]?.parameters).toEqual([`ludy_notes.todo_accept_run:${ORG_ID}:${USER_ID}:${RUN_ID}`]);
     expect(audits).toEqual([
       {
         noteId: NOTE_ID,
@@ -341,7 +343,8 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
     ).rejects.toMatchObject({ code: 'VY_RUN_ALREADY_ACCEPTED', status: 409 });
     expect(priorTrx.insertedSeqs).toEqual([]);
     expect(priorTrx.queries[0]?.sql.toLowerCase()).toContain('from "ludy_notes"."note"');
-    expect(priorTrx.queries[1]?.sql).toContain('pg_advisory_xact_lock');
+    expect(priorTrx.queries[1]?.sql).toContain('pg_advisory_xact_lock_shared');
+    expect(priorTrx.queries[2]?.sql).toContain('pg_advisory_xact_lock');
 
     const conflictTrx = createTodoAcceptTrx({
       note: { id: NOTE_ID, revision: 2, deleted_at: null },

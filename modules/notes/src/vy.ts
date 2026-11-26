@@ -17,7 +17,7 @@ import {
   type TodoAcceptSuggestionsResult,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
-import { lockNote } from './locks.ts';
+import { lockNote, lockNotesEraseShared } from './locks.ts';
 import { assertAuthor, assertNotInTrash, loadForChange, recordNoteVersionSnapshot } from './notes.ts';
 import { TODO_SUMMARY_COLUMNS, detailsOf, due, lockTodoSortOrder, placeFrontBatch, remindAt, todoSummaryRow } from './todos.ts';
 
@@ -322,6 +322,9 @@ export const todoAcceptSuggestions = defineCommand({
     // Verify note readability and baseline revision under caller RLS before acquiring any lock so probing an
     // unreadable note returns 404 immediately without lock-wait timing leakage.
     let note = await assertSourceNoteCurrent();
+    // Hold shared notes.erase before reading committed note revision / acquiring todo_accept_run / todo_sort_order /
+    // notes.note so personalDataErase shared-note redactions cannot commit or race past stale MVCC revision reads.
+    await lockNotesEraseShared(ctx);
     if (input.runId !== undefined) {
       // Serialize concurrent accepts per (org, owner, runId) before reading note/prior rows so partial-purged runs
       // (e.g. source_run_seq = 0 removed while source_run_seq >= 1 survives) cannot race past the prior check.

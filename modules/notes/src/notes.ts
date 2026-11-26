@@ -47,7 +47,7 @@ import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { loadNoteAttachments } from './attachments.ts';
 import { canOpen, insertRecordLink, loadEnrichedLinks, NOTE_TARGET_QUERIES } from './links.ts';
-import { lockNote, lockNotebook } from './locks.ts';
+import { lockNote, lockNotebook, lockNotesEraseShared } from './locks.ts';
 import { notesManifest } from './manifest.ts';
 import { TODO_SUMMARY_COLUMNS, loadSourceNotes, todoSummaryRow } from './todos.ts';
 
@@ -506,23 +506,33 @@ export const noteSetVisibility = defineCommand({
         // acquire shared notes.erase + notebook lock first to keep canonical notebook -> note lock order.
         await lockNotebook(ctx, peek.notebook_id, true);
       }
+    } else {
+      // Acquire shared notes.erase even when peek.notebook_id is null so a concurrent move into a notebook
+      // cannot trigger b_note_notebook_integrity FOR SHARE against personalDataErase without serialization.
+      await lockNotesEraseShared(ctx);
     }
     const before = await load(ctx, input.noteId, true);
     assertAuthor(before, userId);
     if (before.visibility === input.visibility) return written(before);
-    if (input.visibility === 'org' && before.notebook_id !== null && before.notebook_id !== peek.notebook_id) {
+    if (before.notebook_id !== null && before.notebook_id !== peek.notebook_id) {
       // Do not acquire a new notebook lock while already holding note FOR UPDATE (canonical lock order is notebook -> note);
-      // verify accessibility without locking and rely on b_note_notebook_integrity to enforce cross-visibility atomically.
-      const movedNb = await ctx.trx
-        .selectFrom('ludy_notes.notebook')
-        .select(['id', 'author_user_id', 'visibility'])
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', before.notebook_id)
-        .executeTakeFirst();
-      if (!movedNb || (movedNb.visibility === 'private' && movedNb.author_user_id !== before.author_user_id)) {
-        throw notebookNotFound();
+      // preserve 404/422 refusal on private/unreadable notebooks and fail with retryable 409 otherwise so
+      // b_note_notebook_integrity never locks an unlocked notebook FOR SHARE while holding note FOR UPDATE.
+      if (input.visibility === 'org') {
+        const movedNb = await ctx.trx
+          .selectFrom('ludy_notes.notebook')
+          .select(['id', 'author_user_id', 'visibility'])
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', before.notebook_id)
+          .executeTakeFirst();
+        if (!movedNb || (movedNb.visibility === 'private' && movedNb.author_user_id !== before.author_user_id)) {
+          throw notebookNotFound();
+        }
+        if (movedNb.visibility === 'private') throw sharedNotePrivateNotebook();
       }
-      if (movedNb.visibility === 'private') throw sharedNotePrivateNotebook();
+      throw new DomainError('NOTE_REVISION_CONFLICT', 409, 'Ghi chú vừa được chuyển sang sổ tay khác; hãy thử lại', {
+        revision: before.revision,
+      });
     }
     let row: { id: string; revision: number };
     try {

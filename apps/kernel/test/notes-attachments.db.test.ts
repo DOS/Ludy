@@ -859,4 +859,80 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     );
     expect(await doomed(o)).toEqual([`notes/${o.orgId}/${attA.id}`, `notes/${o.orgId}/${attB.id}`].sort());
   });
+
+  it('erases shared-note attachments concurrently with notes.attachment.delete without deadlocking or regressing updated_at (#5035)', async () => {
+    const o = await org();
+    const sharedEmail = 'chia-se-dinh-kem@example.com';
+    const sharedNote = await createNote(o, o.author, 'org', 'Ghi chú dùng chung sạch');
+    const sharedAtt1 = await attached(o, o.author, sharedNote, pdf('s1'), 'dinh-kem-chia-se-1.pdf');
+    extract.text = `Email liên hệ: ${sharedEmail}`;
+    await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: sharedAtt1.id });
+    const sharedAtt2 = await attached(o, o.author, sharedNote, pdf('s2'), 'dinh-kem-chia-se-2.pdf');
+
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_notes.note SET updated_at = pg_catalog.clock_timestamp() + interval '10 minutes' WHERE org_id = $1 AND id = $2`, [o.orgId, sharedNote]);
+      await c.query('COMMIT');
+    });
+    const noteUpdatedAt = async () => {
+      const result = await rows<{ updated_at: Date | string }>(
+        `SELECT updated_at FROM ludy_notes.note WHERE org_id = $1 AND id = $2`,
+        [o.orgId, sharedNote],
+      );
+      return new Date(result[0]!.updated_at).getTime();
+    };
+    const beforeTs = await noteUpdatedAt();
+
+    const waitBlockedOnPid = async (blockingPid: number, queryPattern: string): Promise<number> => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const waits = await rows<{ pid: number }>(
+          `SELECT a.pid
+             FROM pg_catalog.pg_stat_activity a
+            WHERE a.datname = pg_catalog.current_database()
+              AND a.state = 'active'
+              AND a.wait_event_type = 'Lock'
+              AND a.query ILIKE $2
+              AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+            LIMIT 1`,
+          [blockingPid, queryPattern],
+        );
+        if (waits[0]) return waits[0].pid;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Timed out waiting for query ${queryPattern} to block on pid ${blockingPid}`);
+    };
+
+    const attGate = new pg.Client({ connectionString: adminUrl });
+    await attGate.connect();
+    try {
+      const attGatePid = (await attGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await attGate.query('BEGIN');
+      // Hold sharedAtt1 row lock so personalDataErase acquires sharedNote FOR NO KEY UPDATE first and waits at attachment DELETE.
+      await attGate.query('SELECT 1 FROM ludy_notes.attachment WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, sharedAtt1.id]);
+      const erasePromise = rt.execute<PersonalDataErasure>(
+        'kernel.personal_data.erase',
+        { value: sharedEmail },
+        { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+      );
+      const erasePid = await waitBlockedOnPid(attGatePid, '%delete from ludy_notes.attachment%');
+      // Concurrent noteAttachmentDelete on sharedAtt2 blocks cleanly on erasePid's parent sharedNote lock (note -> attachment order).
+      const deletePromise = rt.execute(
+        'notes.attachment.delete',
+        { attachmentId: sharedAtt2.id },
+        { actor: asUser(o.author.id), orgId: o.orgId },
+      );
+      await waitBlockedOnPid(erasePid, '%from "ludy_notes"."note"%for update%');
+      await attGate.query('COMMIT');
+      const [eraseRes] = await Promise.all([erasePromise, deletePromise]);
+      expect(eraseRes.erased).toContainEqual({ column: 'ludy_notes.attachment.extracted_text', rows: 1 });
+    } finally {
+      await attGate.query('ROLLBACK').catch(() => undefined);
+      await attGate.end().catch(() => undefined);
+    }
+
+    expect(await doomed(o)).toEqual([`notes/${o.orgId}/${sharedAtt1.id}`, `notes/${o.orgId}/${sharedAtt2.id}`].sort());
+    expect(await noteUpdatedAt()).toBeGreaterThanOrEqual(beforeTs);
+  });
 });

@@ -1883,17 +1883,16 @@ export const personalDataErase = defineCommand({
                  THEN COALESCE(NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.stack_name'), ERASED_TEXT_MARK)}, ${NOTEBOOK_STACK_MAX}::int)), ''), ${ERASED_TEXT_MARK})
                ELSE t.stack_name
              END,
-             revision = t.revision + 1, updated_at = ${ctx.now}
+             revision = t.revision + 1, updated_at = GREATEST(t.updated_at, pg_catalog.clock_timestamp(), ${ctx.now})
         FROM ludy_notes.notebook o
        WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
          AND (${mentions('t.name')} OR (t.stack_name IS NOT NULL AND ${mentions('t.stack_name')}))
        RETURNING ${mentions('o.name')} AS name, (o.stack_name IS NOT NULL AND ${mentions('o.stack_name')}) AS stack_name`.execute(ctx.trx);
     add('ludy_notes.notebook.name', notebooks.filter((b) => b.name).length);
     add('ludy_notes.notebook.stack_name', notebooks.filter((b) => b.stack_name).length);
-    // Lock every shared note whose text or any snapshot names the value first, in id order (#3562). A restore of a
-    // snapshot (notes.note.restore_version) locks its note before it reads the snapshot, so it either lands before
-    // these statements, whose fresh reads then see and edit out what it wrote back, or waits and finds the snapshot
-    // gone: an erased value never comes back from the version history.
+    // Lock every shared note whose text, snapshot, or attachment names the value first, in id order (#3562, #5035).
+    // Including attachments here ensures personalDataErase locks note -> attachment in the same order as
+    // noteAttachmentDelete, preventing AB-BA deadlocks when only a shared attachment matches.
     await sql`
       SELECT n.id FROM ludy_notes.note n
        WHERE n.org_id = ${ctx.orgId}::uuid AND n.visibility = 'org'
@@ -1901,7 +1900,11 @@ export const personalDataErase = defineCommand({
               OR EXISTS (
                 SELECT 1 FROM ludy_notes.note_version v
                  WHERE v.org_id = n.org_id AND v.note_id = n.id
-                   AND (${mentions('v.title')} OR ${mentions('v.body')} OR ${freeTextMatch(probe, tagsOf('v'))})))
+                   AND (${mentions('v.title')} OR ${mentions('v.body')} OR ${freeTextMatch(probe, tagsOf('v'))}))
+              OR EXISTS (
+                SELECT 1 FROM ludy_notes.attachment a
+                 WHERE a.org_id = n.org_id AND a.note_id = n.id
+                   AND (${mentions('a.filename')} OR ${mentions('a.extracted_text')})))
        ORDER BY n.id
        -- personalDataErase only redacts non-key text columns on shared notes; FOR NO KEY UPDATE blocks concurrent edits without conflicting with FK FOR KEY SHARE inserts (e.g. todoCreate/todoAcceptSuggestions).
        FOR NO KEY UPDATE OF n`.execute(ctx.trx);
@@ -1910,7 +1913,7 @@ export const personalDataErase = defineCommand({
          SET title = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), ERASED_TEXT_MARK)}, ${NOTE_TITLE_MAX}::int),
              body = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.body'), ERASED_TEXT_MARK)}, ${NOTE_BODY_MAX}::int),
              tags = CASE WHEN ${stillAcross} THEN '{}'::text[] ELSE ${keptTags} END,
-             revision = t.revision + 1, updated_at = ${ctx.now}
+             revision = t.revision + 1, updated_at = GREATEST(t.updated_at, pg_catalog.clock_timestamp(), ${ctx.now})
         FROM ludy_notes.note o
        WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
          AND (${mentions('t.title')} OR ${mentions('t.body')} OR ${freeTextMatch(probe, tagsOf('t'))})
@@ -1962,7 +1965,7 @@ export const personalDataErase = defineCommand({
     if (touchedSharedNoteIds.length > 0) {
       await ctx.trx
         .updateTable('ludy_notes.note')
-        .set({ updated_at: ctx.now })
+        .set({ updated_at: sql<Date>`GREATEST(updated_at, pg_catalog.clock_timestamp(), ${ctx.now})` })
         .where('org_id', '=', ctx.orgId)
         .where('id', 'in', touchedSharedNoteIds)
         .execute();

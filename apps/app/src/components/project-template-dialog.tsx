@@ -389,6 +389,7 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                               finalFocus={() => {
                                 const archivedId = pendingArchiveFocusRef.current;
                                 if (!archivedId) return true;
+                                if (!shouldRestoreRadioFocus(archivedId, true)) return false;
                                 return getRestoreTargetRadio(archivedId) ?? radioGroupRef.current ?? true;
                               }}
                               onOpenChangeComplete={(nextOpen) => {

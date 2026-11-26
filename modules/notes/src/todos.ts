@@ -75,7 +75,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { insertRecordLink, loadEnrichedLinks } from './links.ts';
-import { lockNote } from './locks.ts';
+import { lockNote, lockNotesEraseShared } from './locks.ts';
 import { notesManifest } from './manifest.ts';
 
 // Owners, admins and members keep to-dos; viewers write none (notes.md §3.5). They run the reads, where the row
@@ -521,6 +521,11 @@ export const todoCreate = defineCommand({
       sourceTainted = sourceNote.tainted;
     }
     const listId = normalizeListId(input.listId);
+    // Hold shared notes.erase before todo_list FOR SHARE / todo_sort_order / notes.note so concurrent personalDataErase
+    // / private_erase cannot invert (notes.erase -> note -> todo_list) against (todo_list -> notes.note).
+    if (input.sourceNoteId !== undefined) {
+      await lockNotesEraseShared(ctx);
+    }
     await validateTodoListAndSection(ctx, listId, input.sectionId, true);
     await lockTodoSortOrder(ctx, userId);
     if (input.sourceNoteId !== undefined) {
@@ -799,13 +804,14 @@ export const todoComplete = defineCommand({
     if (!stopSeries) {
       const peek = await ctx.trx
         .selectFrom('ludy_notes.todo')
-        .select(['list_id', 'recurrence', 'status', 'deleted_at', 'series_id', 'created_at'])
+        .select(['list_id', 'recurrence', 'series_id', 'created_at'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', todoId)
         .executeTakeFirst();
-      if (peek && peek.recurrence !== null && peek.status === 'open' && peek.deleted_at === null) {
+      if (peek && peek.recurrence !== null) {
         // Read the series siblings once under lockTodoSeries and reuse them both to skip ownKeys when a newer
-        // sibling already exists and to compute the next occurrence date/time if spawning.
+        // sibling already exists and to compute the next occurrence date/time if spawning. Precompute whenever a
+        // recurring row might spawn so concurrent status/trash flips between peek and load cannot skip precomputedSortKey.
         const peekSeriesId = peek.series_id ?? todoId;
         const peekCreatedAt = new Date(peek.created_at).getTime();
         preSiblings = await ctx.trx

@@ -223,7 +223,11 @@ describe('todo source notes (#1676)', () => {
       }),
     ).rejects.toMatchObject({ code: 'NOTE_NOT_FOUND', status: 404 });
     expect(insertedValues).toBeUndefined();
-    expect(recordedLocks).toEqual([`ludy_notes.todo_sort_order:${ORG}:${USER}`, `notes.note:${ORG}:${NOTE_1}`]);
+    expect(recordedLocks).toEqual([
+      `notes.erase:${ORG}`,
+      `ludy_notes.todo_sort_order:${ORG}:${USER}`,
+      `notes.note:${ORG}:${NOTE_1}`,
+    ]);
 
     // Concurrent Vy summary tainting the source note while waiting on todo sort lock is inherited from the locked re-read.
     const taintedAfterLock = await todoCreate.handler(

@@ -1023,4 +1023,90 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
     expect(customRadio.getAttribute('aria-checked')).toBe('true');
     expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(customRadio);
   });
+
+  it('respects user focus moved to another input before the 100ms ConfirmDialog close finishes (#5035)', async () => {
+    setActiveLocale('vi');
+    archiveCalls.length = 0;
+    dialogMockState.deferClose = true;
+
+    const body = domHarness.installScopedDom();
+    const container = new FakeDomNode(1, 'div');
+    body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    domHarness.setMountedRoot(root);
+
+    const qc = queryClientState.current;
+    qc.clear();
+    const customTemplate: ProjectTemplateSummary = {
+      id: '40000000-0000-4000-8000-000000000005',
+      source: 'custom',
+      builtinKey: null,
+      name: 'Mẫu rời tiêu điểm khi đóng',
+      description: null,
+      status: 'active',
+      tasks: [{ title: 'Bước 1', dueOffsetDays: 0 }],
+      taskCount: 1,
+      canManage: true,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+    const fixtures = {
+      templates: [...starterFixtures('vi'), customTemplate],
+      canWrite: true,
+    } satisfies ProjectTemplateListResult;
+    templateFixturesState.current = fixtures;
+    qc.setQueryData(['projects', 'listTemplates', { language: 'vi' }], fixtures);
+
+    let resolveArchive!: () => void;
+    archiveGate.pending = new Promise<void>((resolve) => {
+      resolveArchive = resolve;
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <I18nProvider>
+            <ProjectTemplateDialog mode="create" open onOpenChange={() => undefined} onCreated={() => undefined} />
+          </I18nProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    const customRadio = container.querySelector(`[data-testid="template-option-${customTemplate.id}"]`)!;
+    await act(async () => {
+      customRadio.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+    });
+    const archiveTrigger = container.querySelector(`[data-testid="template-archive-${customTemplate.id}"]`)!;
+    await act(async () => {
+      archiveTrigger.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+    });
+    const confirmArchiveBtn = container
+      .querySelectorAll('button')
+      .find((b) => b.textContent.trim() === catalog('vi').projects.templates.archiveConfirmBtn)!;
+    confirmArchiveBtn.focus();
+    await act(async () => {
+      confirmArchiveBtn.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    // User focuses the project name input BEFORE the 100ms ConfirmDialog close animation completes.
+    const nameInput = container.querySelector('input[id="template-dialog-name-create"]')!;
+    nameInput.focus();
+    expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(nameInput);
+
+    // Completing the 100ms dialog close must inspect focus inside finalFocus() and leave nameInput focused.
+    await act(async () => {
+      dialogMockState.pendingComplete?.();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(nameInput);
+
+    await act(async () => {
+      resolveArchive();
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(container.querySelector('[data-testid="template-option-software-project"]')?.getAttribute('aria-checked')).toBe('true');
+    expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(nameInput);
+  });
 });
