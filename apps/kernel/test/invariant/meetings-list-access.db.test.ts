@@ -127,9 +127,9 @@ suite('meetings.meeting.list access invariants (#5052)', () => {
   });
 
   it('enforces RLS, visibility, retention expiry, org isolation, viewer refusal, and system actor refusal across search and cursors', async () => {
-    const hiddenMs = await seedMeeting('Họp bí mật Hoa Sen', { readers: ['nam'], startedAt: '2026-11-25T04:00:00.900Z' });
-    const sharedOrg = await seedMeeting('Họp chung Hoa Sen', { visibility: 'org', readers: [], startedAt: '2026-11-25T04:00:00.100Z' });
-    const expired = await seedMeeting('Họp hết hạn Hoa Sen', { readers: ['solo'], expired: true, startedAt: '2026-11-25T05:00:00.000Z' });
+    const hiddenMs = await seedMeeting('Họp bí mật Hoa Sen', { readers: ['nam'], startedAt: '2026-11-25T04:00:00.000900Z' });
+    const expired = await seedMeeting('Họp hết hạn Hoa Sen', { readers: ['solo'], expired: true, startedAt: '2026-11-25T04:00:00.000800Z' });
+    const sharedOrg = await seedMeeting('Họp chung Hoa Sen', { visibility: 'org', readers: [], startedAt: '2026-11-25T04:00:00.000100Z' });
     const otherOrgMeeting = await seedMeeting('Họp Hoa Sen Công Ty Khác', {
       org: otherOrgId,
       recorder: 'otherOwner',
@@ -144,13 +144,31 @@ suite('meetings.meeting.list access invariants (#5052)', () => {
     expect((await listMeetings('rec', { search: 'Hoa Sen' })).map((m) => m.id)).toEqual([hiddenMs, sharedOrg]);
     expect((await listMeetings('rec')).map((m) => m.id)).not.toContain(expired);
 
-    // Passing a hidden meeting's id and truncated timestamp as cursor reveals no sub-millisecond metadata: cursor subquery ignores hidden rows.
+    // Passing a hidden or expired meeting's id with a truncated millisecond timestamp reveals no sub-millisecond metadata:
+    // no server-side cursor lookup runs, so sharedOrg (.000100Z > .000Z) is never returned after a truncated cursor.
     const fromHiddenCursor = await listMeetings('solo', {
       afterStartedAt: '2026-11-25T04:00:00.000Z',
       afterId: hiddenMs,
     });
-    expect(fromHiddenCursor.map((m) => m.id)).not.toContain(sharedOrg);
-    expect(fromHiddenCursor.map((m) => m.id)).not.toContain(hiddenMs);
+    expect(fromHiddenCursor).toEqual([]);
+
+    const fromExpiredCursor = await listMeetings('solo', {
+      afterStartedAt: '2026-11-25T04:00:00.000Z',
+      afterId: expired,
+    });
+    expect(fromExpiredCursor).toEqual([]);
+
+    // Authorized reader `nam` receives exact 6-digit microsecond precision and pages past `hiddenMs` to `sharedOrg`.
+    const namPage1 = await listMeetings('nam', { search: 'Hoa Sen', limit: 1 });
+    expect(namPage1.map((m) => m.id)).toEqual([hiddenMs]);
+    expect(namPage1[0]?.startedAt).toBe('2026-11-25T04:00:00.000900Z');
+    const namPage2 = await listMeetings('nam', {
+      search: 'Hoa Sen',
+      limit: 1,
+      afterStartedAt: namPage1[0]!.startedAt!,
+      afterId: namPage1[0]!.id,
+    });
+    expect(namPage2.map((m) => m.id)).toEqual([sharedOrg]);
 
     // Same member `solo` sees `otherOrgMeeting` inside otherOrgId, never inside orgId.
     expect((await listMeetings('solo', { search: 'Công Ty Khác' }, otherOrgId)).map((m) => m.id)).toEqual([otherOrgMeeting]);

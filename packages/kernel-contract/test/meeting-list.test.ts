@@ -19,6 +19,24 @@ describe('zMeetingListInput (#5052)', () => {
     ).toBe(true);
     expect(
       zMeetingListInput.safeParse({
+        afterStartedAt: '2026-11-25T03:00:00.123900Z',
+        afterId: ID,
+      }).success,
+    ).toBe(true);
+    expect(
+      zMeetingListInput.safeParse({
+        afterStartedAt: '2026-11-25T10:00:00+15:59',
+        afterId: ID,
+      }).success,
+    ).toBe(true);
+    expect(
+      zMeetingListInput.safeParse({
+        afterStartedAt: '2026-11-25T10:00:00-15:59',
+        afterId: ID,
+      }).success,
+    ).toBe(true);
+    expect(
+      zMeetingListInput.safeParse({
         visibility: 'attendees',
         limit: 50,
         search: 'hoa sen',
@@ -28,11 +46,16 @@ describe('zMeetingListInput (#5052)', () => {
     ).toBe(true);
   });
 
-  it('refuses half cursors, invalid timestamps or ids, out-of-range limits, long search, and extra fields', () => {
+  it('refuses half cursors, invalid or out-of-range timestamps, invalid ids, out-of-range limits, long search, and extra fields', () => {
     expect(zMeetingListInput.safeParse({ afterStartedAt: '2026-11-25T03:00:00.000Z' }).success).toBe(false);
     expect(zMeetingListInput.safeParse({ afterId: ID }).success).toBe(false);
     expect(zMeetingListInput.safeParse({ afterStartedAt: 'not-a-date', afterId: ID }).success).toBe(false);
     expect(zMeetingListInput.safeParse({ afterStartedAt: '2026-11-25', afterId: ID }).success).toBe(false);
+    expect(zMeetingListInput.safeParse({ afterStartedAt: '2026-11-25T03:00:00+16:00', afterId: ID }).success).toBe(false);
+    expect(zMeetingListInput.safeParse({ afterStartedAt: '2026-11-25T03:00:00-16:00', afterId: ID }).success).toBe(false);
+    expect(zMeetingListInput.safeParse({ afterStartedAt: '2026-11-25T03:00:00+23:59', afterId: ID }).success).toBe(false);
+    expect(zMeetingListInput.safeParse({ afterStartedAt: '2026-11-25T03:00:00-23:59', afterId: ID }).success).toBe(false);
+    expect(zMeetingListInput.safeParse({ afterStartedAt: '0000-01-01T00:00:00Z', afterId: ID }).success).toBe(false);
     expect(zMeetingListInput.safeParse({ afterStartedAt: '2026-11-25T03:00:00Z', afterId: 'not-a-uuid' }).success).toBe(false);
     expect(zMeetingListInput.safeParse({ search: 'a'.repeat(201) }).success).toBe(false);
     expect(zMeetingListInput.safeParse({ search: 'abc\u0000def' }).success).toBe(false);

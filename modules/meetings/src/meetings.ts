@@ -201,6 +201,8 @@ interface MeetingRow {
   text_retention_date: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
+  started_at_iso?: string | null;
+  created_at_iso?: string;
 }
 
 function toSummary(
@@ -218,7 +220,7 @@ function toSummary(
     title: r.title,
     language: r.language,
     status: r.status,
-    startedAt: r.started_at ? new Date(r.started_at).toISOString() : null,
+    startedAt: r.started_at_iso ?? (r.started_at ? new Date(r.started_at).toISOString() : null),
     endedAt: r.ended_at ? new Date(r.ended_at).toISOString() : null,
     lengthSeconds: r.length_seconds,
     keepVideo: r.keep_video,
@@ -232,7 +234,7 @@ function toSummary(
     hasTranscript,
     platform,
     readersCount,
-    createdAt: new Date(r.created_at).toISOString(),
+    createdAt: r.created_at_iso ?? new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at).toISOString(),
   };
 }
@@ -668,11 +670,13 @@ const SEARCH_FOLD_KEPT = new Set(
 const SEARCH_MEANINGFUL_CHAR = /[\p{L}\p{N}\p{Extended_Pictographic}]/u;
 
 // Maximal runs of meaningful characters dropped by search_fold (e.g. CJK, Hangul, Cyrillic, emoji, non-Vietnamese diacritics)
-// so mixed queries like "東京 2026" or "🎯 Q4" still require the non-Latin/emoji part alongside the folded part (#5052).
+// plus whitespace-delimited tokens carrying literal `%` or `_`, so mixed queries like "東京 2026", "🎯 Q4", "50%", or "ma_01"
+// still require those literal parts alongside the Vietnamese-folded match (#5052).
 function unfoldedSearchTerms(search: string): string[] {
+  const nfc = search.normalize('NFC');
   const terms = new Set<string>();
   let run = '';
-  for (const ch of search.normalize('NFC')) {
+  for (const ch of nfc) {
     if (!SEARCH_FOLD_KEPT.has(ch) && SEARCH_MEANINGFUL_CHAR.test(ch)) {
       run += ch;
     } else if (run !== '') {
@@ -681,6 +685,11 @@ function unfoldedSearchTerms(search: string): string[] {
     }
   }
   if (run !== '') terms.add(run);
+  for (const token of nfc.split(/\s+/u)) {
+    if (token !== '' && (token.includes('%') || token.includes('_'))) {
+      terms.add(token);
+    }
+  }
   return [...terms];
 }
 
@@ -694,6 +703,10 @@ export const meetingList = defineQuery({
     let query = ctx.trx
       .selectFrom('ludy_meetings.meeting')
       .selectAll()
+      .select([
+        sql<string | null>`pg_catalog.to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as('started_at_iso'),
+        sql<string>`pg_catalog.to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as('created_at_iso'),
+      ])
       .where('org_id', '=', ctx.orgId)
       // A meeting past its text date is gone from its day, not from the nightly job's run (#2579).
       .where((eb) => eb.or([eb('text_retention_date', 'is', null), eb('text_retention_date', '>', today)]));
@@ -717,20 +730,11 @@ export const meetingList = defineQuery({
     }
 
     // Ordered and paged on (COALESCE(started_at, created_at) DESC, id DESC) matching meeting_held_idx (#5052).
-    // When afterStartedAt + afterId match the cursor row under caller RLS and retention, refine to the row's exact timestamp
-    // so multiple meetings inside the same millisecond page without skipping or repeating.
+    // startedAt and createdAt carry PostgreSQL microsecond precision (UTC), so keyset cursors stay lossless across
+    // sub-millisecond ties even if the cursor row is deleted, expired, or unshared before the next page.
     const heldAt = sql`COALESCE(started_at, created_at)`;
     if (input.afterStartedAt !== undefined && input.afterId !== undefined) {
-      const cursorAt = sql`COALESCE(
-        (SELECT COALESCE(c.started_at, c.created_at)
-         FROM ludy_meetings.meeting c
-         WHERE c.org_id = ${ctx.orgId}::uuid
-           AND c.id = ${input.afterId}::uuid
-           AND (c.text_retention_date IS NULL OR c.text_retention_date > ${today}::date)
-           AND pg_catalog.date_trunc('milliseconds', COALESCE(c.started_at, c.created_at)) = pg_catalog.date_trunc('milliseconds', ${input.afterStartedAt}::timestamptz)),
-        ${input.afterStartedAt}::timestamptz
-      )`;
-      query = query.where(sql<boolean>`(${heldAt}, id) < (${cursorAt}, ${input.afterId}::uuid)`);
+      query = query.where(sql<boolean>`(${heldAt}, id) < (${input.afterStartedAt}::timestamptz, ${input.afterId}::uuid)`);
     }
 
     const rows = (await query
@@ -813,6 +817,10 @@ export const meetingGet = defineQuery({
     const meeting = (await ctx.trx
       .selectFrom('ludy_meetings.meeting')
       .selectAll()
+      .select([
+        sql<string | null>`pg_catalog.to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as('started_at_iso'),
+        sql<string>`pg_catalog.to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as('created_at_iso'),
+      ])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst()) as unknown as MeetingRow | undefined;

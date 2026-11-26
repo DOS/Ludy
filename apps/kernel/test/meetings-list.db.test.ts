@@ -10,9 +10,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import type { MeetingListInput, MeetingListItem } from '@ludy/kernel-contract';
+import type { MeetingDetail, MeetingListInput, MeetingListItem } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
+import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -22,6 +23,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('meetings.meeting.list search and cursor pagination (#5052)', () => {
   const dbName = `ludy_test_meeting_list_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let appPool: pg.Pool;
   const pools: pg.Pool[] = [];
   let orgId = '';
   let runtime: Runtime;
@@ -79,7 +81,7 @@ suite('meetings.meeting.list search and cursor pagination (#5052)', () => {
     const url = new URL(adminUrl);
     url.username = 'ludy_app';
     url.password = 'test-app-pw';
-    const appPool = createPool({ connectionString: url.toString(), max: 4 });
+    appPool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(appPool);
     const db = createDb(appPool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
@@ -110,32 +112,49 @@ suite('meetings.meeting.list search and cursor pagination (#5052)', () => {
     await root.end();
   });
 
-  it('pages deterministically across sub-millisecond ties, NULL started_at, and deleted cursors without skips or duplicates', async () => {
+  it('pages deterministically across sub-millisecond ties, NULL started_at, and deleted sub-ms cursors without skips or duplicates', async () => {
     const newest = await seedMeeting('Mới nhất', { startedAt: '2026-11-25T05:00:00.000Z' });
     const idLow = '019a0000-0000-7000-8000-000000000001';
     const idHigh = '019a0000-0000-7000-8000-000000000002';
-    // True chronological order puts .123900Z ahead of .123100Z, and the InitPlan cursor lookup preserves that boundary.
+    // True chronological order puts .123900Z ahead of .123100Z; microsecond precision in startedAt preserves that boundary.
     await seedMeeting('Cùng mili giây mới hơn', { id: idLow, startedAt: '2026-11-25T03:00:00.123900Z' });
     await seedMeeting('Cùng mili giây cũ hơn', { id: idHigh, startedAt: '2026-11-25T03:00:00.123100Z' });
-    const nullStarted = await seedMeeting('Chưa đặt giờ bắt đầu', { startedAt: null, createdAt: '2026-11-25T02:00:00.456Z' });
-    const deletedTail = await seedMeeting('Họp sẽ xóa', { startedAt: '2026-11-24T04:00:00.000Z' });
+    const nullStarted = await seedMeeting('Chưa đặt giờ bắt đầu', { startedAt: null, createdAt: '2026-11-25T02:00:00.456789Z' });
+    const deletedSubMsNew = '019a0000-0000-7000-8000-000000000003';
+    const deletedSubMsOld = '019a0000-0000-7000-8000-000000000004';
+    await seedMeeting('Họp sẽ xóa trong cùng mili giây', { id: deletedSubMsNew, startedAt: '2026-11-24T04:00:00.500900Z' });
+    await seedMeeting('Họp giữ lại trong cùng mili giây', { id: deletedSubMsOld, startedAt: '2026-11-24T04:00:00.500100Z' });
     const older = await seedMeeting('Cũ hơn', { startedAt: '2026-11-24T03:00:00.000Z' });
 
     const page1 = await listMeetings('solo', { limit: 2 });
     expect(page1.map((m) => m.id)).toEqual([newest, idLow]);
     const c1 = page1.at(-1)!;
+    expect(c1.startedAt).toBe('2026-11-25T03:00:00.123900Z');
+    const detail = await runtime.query<MeetingDetail>('meetings.meeting.get', { meetingId: idLow }, { actor: asUser('solo'), orgId });
+    expect(detail.startedAt).toBe('2026-11-25T03:00:00.123900Z');
+
     const page2 = await listMeetings('solo', { limit: 2, afterStartedAt: c1.startedAt ?? c1.createdAt, afterId: c1.id });
     expect(page2.map((m) => m.id)).toEqual([idHigh, nullStarted]);
     const c2 = page2.at(-1)!;
-    const page3 = await listMeetings('solo', { limit: 2, afterStartedAt: c2.startedAt ?? c2.createdAt, afterId: c2.id });
-    expect(page3.map((m) => m.id)).toEqual([deletedTail, older]);
-    const c3 = page3.at(-1)!;
-    expect(await listMeetings('solo', { limit: 2, afterStartedAt: c3.startedAt ?? c3.createdAt, afterId: c3.id })).toEqual([]);
+    expect(c2.startedAt).toBeNull();
+    expect(c2.createdAt).toBe('2026-11-25T02:00:00.456789Z');
 
-    // Deleted cursor row still falls back cleanly to afterStartedAt and returns older rows.
-    await sqlAdmin('DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, deletedTail]);
-    const afterDeleted = await listMeetings('solo', { limit: 2, afterStartedAt: '2026-11-24T04:00:00.000Z', afterId: deletedTail });
-    expect(afterDeleted.map((m) => m.id)).toEqual([older]);
+    const page3 = await listMeetings('solo', { limit: 2, afterStartedAt: c2.startedAt ?? c2.createdAt, afterId: c2.id });
+    expect(page3.map((m) => m.id)).toEqual([deletedSubMsNew, deletedSubMsOld]);
+    const c3 = page3.at(-1)!;
+    const page4 = await listMeetings('solo', { limit: 2, afterStartedAt: c3.startedAt ?? c3.createdAt, afterId: c3.id });
+    expect(page4.map((m) => m.id)).toEqual([older]);
+    const c4 = page4.at(-1)!;
+    expect(await listMeetings('solo', { limit: 2, afterStartedAt: c4.startedAt ?? c4.createdAt, afterId: c4.id })).toEqual([]);
+
+    // Fetch a cursor pointing at deletedSubMsNew, delete it before page 2, and confirm deletedSubMsOld inside the same millisecond is not skipped.
+    const pageBeforeDelete = await listMeetings('solo', { limit: 1, afterStartedAt: c2.startedAt ?? c2.createdAt, afterId: c2.id });
+    expect(pageBeforeDelete.map((m) => m.id)).toEqual([deletedSubMsNew]);
+    const cDel = pageBeforeDelete[0]!;
+    expect(cDel.startedAt).toBe('2026-11-24T04:00:00.500900Z');
+    await sqlAdmin('DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, deletedSubMsNew]);
+    const afterDeleted = await listMeetings('solo', { limit: 2, afterStartedAt: cDel.startedAt!, afterId: cDel.id });
+    expect(afterDeleted.map((m) => m.id)).toEqual([deletedSubMsOld, older]);
   });
 
   it('searches titles with Vietnamese fold, mixed non-Latin/emoji with digits, literal wildcards, whitespace-as-unset, and cursor', async () => {
@@ -145,7 +164,9 @@ suite('meetings.meeting.list search and cursor pagination (#5052)', () => {
     const tokyo = await seedMeeting('Họp 東京 2026', { startedAt: '2026-11-25T03:00:00Z' });
     await seedMeeting('Họp Hà Nội 2026', { startedAt: '2026-11-25T02:30:00Z' });
     const pct = await seedMeeting('Tăng 50% quý 4', { startedAt: '2026-11-25T02:00:00Z' });
+    await seedMeeting('50 người tham dự', { startedAt: '2026-11-25T01:45:00Z' });
     const under = await seedMeeting('Mã ma_01 nội bộ', { startedAt: '2026-11-25T01:30:00Z' });
+    await seedMeeting('Mã ma-01 nội bộ', { startedAt: '2026-11-25T01:15:00Z' });
     const emojiQ4 = await seedMeeting('🎯 Kế hoạch Q4', { startedAt: '2026-11-25T01:00:00Z' });
     await seedMeeting('Kế hoạch Q4 chung', { startedAt: '2026-11-25T00:30:00Z' });
 
@@ -153,10 +174,13 @@ suite('meetings.meeting.list search and cursor pagination (#5052)', () => {
     expect((await listMeetings('solo', { search: 'HOA SEN' })).map((m) => m.id)).toEqual([lotusNew, lotusOld]);
     expect((await listMeetings('solo', { search: '東京 2026' })).map((m) => m.id)).toEqual([tokyo]);
     expect((await listMeetings('solo', { search: '🎯 Q4' })).map((m) => m.id)).toEqual([emojiQ4]);
+    expect((await listMeetings('solo', { search: '50%' })).map((m) => m.id)).toEqual([pct]);
+    expect((await listMeetings('solo', { search: 'tang 50%' })).map((m) => m.id)).toEqual([pct]);
+    expect((await listMeetings('solo', { search: 'ma_01' })).map((m) => m.id)).toEqual([under]);
     expect((await listMeetings('solo', { search: '%' })).map((m) => m.id)).toEqual([pct]);
     expect((await listMeetings('solo', { search: '_' })).map((m) => m.id)).toEqual([under]);
     expect((await listMeetings('solo', { search: '🎯' })).map((m) => m.id)).toEqual([emojiQ4]);
-    expect(await listMeetings('solo', { search: '   ' })).toHaveLength(9);
+    expect(await listMeetings('solo', { search: '   ' })).toHaveLength(11);
 
     const searchPage1 = await listMeetings('solo', { search: 'hoa sen', limit: 1 });
     expect(searchPage1.map((m) => m.id)).toEqual([lotusNew]);
@@ -170,14 +194,21 @@ suite('meetings.meeting.list search and cursor pagination (#5052)', () => {
     expect(searchPage2.map((m) => m.id)).toEqual([lotusOld]);
   });
 
-  it('rejects half-cursors and NUL bytes in search via schema validation', async () => {
+  it('rejects half-cursors, out-of-range offsets, and NUL bytes in search via schema validation', async () => {
     await expect(
       runtime.query('meetings.meeting.list', { afterStartedAt: '2026-11-25T03:00:00Z' }, { actor: asUser('solo'), orgId }),
+    ).rejects.toMatchObject({ code: 'VALIDATION' });
+    await expect(
+      runtime.query(
+        'meetings.meeting.list',
+        { afterStartedAt: '2026-11-25T03:00:00+16:00', afterId: '019a0000-0000-7000-8000-000000000001' },
+        { actor: asUser('solo'), orgId },
+      ),
     ).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(listMeetings('solo', { search: 'abc\u0000def' })).rejects.toMatchObject({ code: 'VALIDATION' });
   });
 
-  it('reaches meetings older than the newest 100 and scans meeting_held_idx without a Sort node', async () => {
+  it('reaches meetings older than the newest 100 and scans meeting_held_idx without a Sort node under RLS', async () => {
     const oldTarget = await seedMeeting('Họp ký hợp đồng Hoa Sen 2025', { startedAt: '2025-01-01T00:00:00.000Z' });
     await sqlAdmin(
       `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, created_at, updated_at)
@@ -203,51 +234,70 @@ suite('meetings.meeting.list search and cursor pagination (#5052)', () => {
     expect(secondPage.at(-1)?.id).toBe(oldTarget);
 
     await sqlAdmin('ANALYZE ludy_meetings.meeting');
-    const plans = await admin(async (c) => {
+    const c = await appPool.connect();
+    let plans: { p1: string; p2: string; p3: string };
+    try {
       await c.query('BEGIN');
-      try {
-        await c.query('SET LOCAL enable_seqscan = off');
-        const p1 = await c.query<{ 'QUERY PLAN': string }>(
-          `EXPLAIN (COSTS OFF)
-           SELECT * FROM ludy_meetings.meeting
-           WHERE org_id = $1::uuid
-             AND (text_retention_date IS NULL OR text_retention_date > current_date)
-           ORDER BY COALESCE(started_at, created_at) DESC, id DESC
-           LIMIT 100`,
-          [orgId],
-        );
-        const p2 = await c.query<{ 'QUERY PLAN': string }>(
-          `EXPLAIN (COSTS OFF)
-           SELECT * FROM ludy_meetings.meeting
-           WHERE org_id = $1::uuid
-             AND (text_retention_date IS NULL OR text_retention_date > current_date)
-             AND (COALESCE(started_at, created_at), id) < (
-               COALESCE(
-                 (SELECT COALESCE(c.started_at, c.created_at)
-                  FROM ludy_meetings.meeting c
-                  WHERE c.org_id = $1::uuid
-                    AND c.id = $3::uuid
-                    AND (c.text_retention_date IS NULL OR c.text_retention_date > current_date)
-                    AND pg_catalog.date_trunc('milliseconds', COALESCE(c.started_at, c.created_at)) = pg_catalog.date_trunc('milliseconds', $2::timestamptz)),
-                 $2::timestamptz
-               ),
-               $3::uuid
-             )
-           ORDER BY COALESCE(started_at, created_at) DESC, id DESC
-           LIMIT 100`,
-          [orgId, tail.startedAt ?? tail.createdAt, tail.id],
-        );
-        return {
-          p1: p1.rows.map((r) => r['QUERY PLAN']).join('\n'),
-          p2: p2.rows.map((r) => r['QUERY PLAN']).join('\n'),
-        };
-      } finally {
-        await c.query('ROLLBACK').catch(() => {});
-      }
-    });
+      await enterUser(c, users.solo as string, orgId);
+      const roleRow = (
+        await c.query<{ cur: string; sess: string; rls: string }>(
+          "SELECT current_user AS cur, session_user AS sess, pg_catalog.current_setting('row_security') AS rls",
+        )
+      ).rows[0];
+      expect(roleRow).toEqual({ cur: 'ludy_app', sess: 'ludy_app', rls: 'on' });
+      await c.query('SET LOCAL enable_seqscan = off');
+      const p1 = await c.query<{ 'QUERY PLAN': string }>(
+        `EXPLAIN (COSTS OFF)
+         SELECT *,
+           pg_catalog.to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at_iso,
+           pg_catalog.to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_iso
+         FROM ludy_meetings.meeting
+         WHERE org_id = $1::uuid
+           AND (text_retention_date IS NULL OR text_retention_date > current_date)
+         ORDER BY COALESCE(started_at, created_at) DESC, id DESC
+         LIMIT 100`,
+        [orgId],
+      );
+      const p2 = await c.query<{ 'QUERY PLAN': string }>(
+        `EXPLAIN (COSTS OFF)
+         SELECT *,
+           pg_catalog.to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at_iso,
+           pg_catalog.to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_iso
+         FROM ludy_meetings.meeting
+         WHERE org_id = $1::uuid
+           AND (text_retention_date IS NULL OR text_retention_date > current_date)
+           AND (COALESCE(started_at, created_at), id) < ($2::timestamptz, $3::uuid)
+         ORDER BY COALESCE(started_at, created_at) DESC, id DESC
+         LIMIT 100`,
+        [orgId, tail.startedAt ?? tail.createdAt, tail.id],
+      );
+      const p3 = await c.query<{ 'QUERY PLAN': string }>(
+        `EXPLAIN (COSTS OFF)
+         SELECT *,
+           pg_catalog.to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at_iso,
+           pg_catalog.to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_iso
+         FROM ludy_meetings.meeting
+         WHERE org_id = $1::uuid
+           AND (text_retention_date IS NULL OR text_retention_date > current_date)
+           AND (CASE WHEN ludy_kernel.search_fold($2::text) = '' THEN pg_catalog.strpos(pg_catalog.lower(pg_catalog.normalize(title, 'NFC')), pg_catalog.lower($2::text)) > 0 ELSE pg_catalog.strpos(ludy_kernel.search_fold(title), ludy_kernel.search_fold($2::text)) > 0 END)
+         ORDER BY COALESCE(started_at, created_at) DESC, id DESC
+         LIMIT 100`,
+        [orgId, 'hoa sen'],
+      );
+      plans = {
+        p1: p1.rows.map((r) => r['QUERY PLAN']).join('\n'),
+        p2: p2.rows.map((r) => r['QUERY PLAN']).join('\n'),
+        p3: p3.rows.map((r) => r['QUERY PLAN']).join('\n'),
+      };
+    } finally {
+      await c.query('ROLLBACK').catch(() => {});
+      c.release();
+    }
     expect(plans.p1).toContain('meeting_held_idx');
     expect(plans.p1).not.toMatch(/\bSort\b/);
     expect(plans.p2).toContain('meeting_held_idx');
     expect(plans.p2).not.toMatch(/\bSort\b/);
+    expect(plans.p3).toContain('meeting_held_idx');
+    expect(plans.p3).not.toMatch(/\bSort\b/);
   });
 });
