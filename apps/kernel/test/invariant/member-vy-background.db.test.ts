@@ -1358,7 +1358,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           const lookupSchema = activeLookup.slice(0, dot);
           const lookupRel = activeLookup.slice(dot + 1);
           const lookupMeta = await runQuery((c) =>
-            c.query<{
+            rawQuery<{
               relkind: string;
               relrowsecurity: boolean;
               relforcerowsecurity: boolean;
@@ -1366,6 +1366,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
               view_def: string | null;
               cols: string[];
             }>(
+              c,
               `SELECT c.relkind::text, c.relrowsecurity, c.relforcerowsecurity, c.reloptions,
                       CASE WHEN c.relkind IN ('v', 'm') THEN pg_catalog.pg_get_viewdef(c.oid, true) ELSE NULL END AS view_def,
                       ARRAY(SELECT a.attname FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped ORDER BY 1)::text[] AS cols
@@ -2562,6 +2563,147 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       .sort();
     expect(forbiddenFlagged).toEqual([...probeTamperedOnly].sort());
     expect(forbiddenFlagged).not.toContain("probe_3771.t.p_ok");
+  });
+
+  it("audits real PG17 security_barrier lookup views via rawQuery and pg_depend without canonicalizing active kernel schemas", async () => {
+    const activeKernel = dbIds ? dbIds.schema("kernel") : "crove_kernel";
+    await admin(async (c) => {
+      await rawQuery(c, "BEGIN");
+      try {
+        const pre = (
+          await rawQuery<{ has_helper: boolean; has_catalog: boolean; has_crove_procs: boolean }>(
+            c,
+            `SELECT to_regprocedure($1) IS NOT NULL AS has_helper,
+                    to_regclass($2) IS NOT NULL AS has_catalog,
+                    (to_regprocedure('crove_kernel.ctx_org_id()') IS NOT NULL OR to_regprocedure('crove_kernel.ctx_briefing_user_id()') IS NOT NULL) AS has_crove_procs`,
+            [`${activeKernel}.ctx_briefing_user_id()`, `${activeKernel}.member_briefing_table`],
+          )
+        ).rows[0]!;
+        if (!pre.has_helper) {
+          await rawQuery(
+            c,
+            `CREATE FUNCTION ${activeKernel}.ctx_briefing_user_id() RETURNS uuid LANGUAGE sql STABLE AS $$
+               SELECT CASE WHEN (${activeKernel}.ctx_verified() ->> 'kind') = 'member_briefing'
+                           THEN (${activeKernel}.ctx_verified() ->> 'member')::uuid
+                           ELSE NULL::uuid END
+             $$`,
+          );
+        }
+        await rawQuery(
+          c,
+          `CREATE SCHEMA probe_brief;
+           CREATE TABLE probe_brief.src (org_id uuid, user_id uuid, display_name text);
+           CREATE VIEW probe_brief.v_clean_lookup WITH (security_barrier = true) AS
+             SELECT org_id, user_id, display_name
+             FROM probe_brief.src
+             WHERE org_id = (SELECT ${activeKernel}.ctx_org_id())
+               AND user_id = (SELECT ${activeKernel}.ctx_briefing_user_id());
+           CREATE SCHEMA probe_decoy;
+           CREATE FUNCTION probe_decoy.ctx_org_id() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT NULL::uuid $$;
+           CREATE FUNCTION probe_decoy.ctx_briefing_user_id() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT NULL::uuid $$;
+           CREATE VIEW probe_brief.v_decoy WITH (security_barrier = true) AS
+             SELECT org_id, user_id, display_name
+             FROM probe_brief.src
+             WHERE org_id = (SELECT probe_decoy.ctx_org_id())
+               AND user_id = (SELECT probe_decoy.ctx_briefing_user_id());`,
+        );
+        const testCroveDecoy = activeKernel !== "crove_kernel" && !pre.has_crove_procs;
+        if (testCroveDecoy) {
+          await rawQuery(
+            c,
+            `CREATE SCHEMA IF NOT EXISTS crove_kernel;
+             CREATE FUNCTION crove_kernel.ctx_org_id() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT NULL::uuid $$;
+             CREATE FUNCTION crove_kernel.ctx_briefing_user_id() RETURNS uuid LANGUAGE sql STABLE AS $$
+               SELECT (${activeKernel}.ctx_verified() ->> 'member')::uuid
+             $$;
+             CREATE VIEW probe_brief.v_crove_decoy WITH (security_barrier = true) AS
+               SELECT org_id, user_id, display_name
+               FROM probe_brief.src
+               WHERE org_id = (SELECT crove_kernel.ctx_org_id())
+                 AND user_id = (SELECT crove_kernel.ctx_briefing_user_id());`,
+          );
+        }
+        if (!pre.has_catalog) {
+          await rawQuery(
+            c,
+            `CREATE TABLE ${activeKernel}.member_briefing_table (table_name text PRIMARY KEY, mode text NOT NULL);
+             INSERT INTO ${activeKernel}.member_briefing_table (table_name, mode) VALUES ('probe_brief.v_clean_lookup', 'read');`,
+          );
+        }
+
+        const scan = await scanPolicyContextReads(c, dbIds);
+        const readRawViewMeta = async (viewName: string) =>
+          (
+            await rawQuery<{ reloptions: string[] | null; view_def: string | null }>(
+              c,
+              `SELECT c.reloptions, pg_catalog.pg_get_viewdef(c.oid, true) AS view_def
+               FROM pg_catalog.pg_class c
+               JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'probe_brief' AND c.relname = $1`,
+              [viewName],
+            )
+          ).rows[0]!;
+
+        const checkView = async (viewName: string) => {
+          const meta = await readRawViewMeta(viewName);
+          const scannedView = scan.scannedViews.find((v) => v.name === `probe_brief.${viewName}`);
+          expect(scannedView, `scanned view for probe_brief.${viewName}`).toBeDefined();
+          const prettyOk = isAllowedBriefingLookupView({
+            viewDef: meta.view_def ?? "",
+            reloptions: meta.reloptions,
+            taintedViewDeps: scannedView?.taintedViewDeps,
+            taintedFnDeps: scannedView?.taintedFnDeps,
+            hasActiveOrgBindDep: scannedView?.hasActiveOrgBindDep,
+            activeKernelSchema: activeKernel,
+          });
+          const unprettyOk = isAllowedBriefingLookupView({
+            viewDef: scannedView?.def ?? "",
+            reloptions: meta.reloptions,
+            taintedViewDeps: scannedView?.taintedViewDeps,
+            taintedFnDeps: scannedView?.taintedFnDeps,
+            hasActiveOrgBindDep: scannedView?.hasActiveOrgBindDep,
+            activeKernelSchema: activeKernel,
+          });
+          return { meta, scannedView, prettyOk, unprettyOk };
+        };
+
+        const clean = await checkView("v_clean_lookup");
+        expect(clean.meta.view_def ?? "", "rawQuery preserves active kernel schema in pretty viewdef").toContain(
+          `${activeKernel}.ctx_briefing_user_id()`,
+        );
+        if (activeKernel !== "crove_kernel") {
+          expect(clean.meta.view_def ?? "", "rawQuery must not canonicalize active kernel schema to crove_kernel").not.toContain(
+            "crove_kernel.",
+          );
+        }
+        expect(clean.prettyOk, "PG17 pretty viewdef passes for active-schema initPlan lookup view").toBe(true);
+        expect(clean.unprettyOk, "PG17 canonical viewdef passes for active-schema initPlan lookup view").toBe(true);
+
+        if (!pre.has_catalog) {
+          const briefing = await briefingObjects(scan, c);
+          expect(briefing.allowedLookupViews, "briefingObjects admits verified clean lookup view").toEqual([
+            "probe_brief.v_clean_lookup",
+          ]);
+        }
+
+        const decoy = await checkView("v_decoy");
+        expect(decoy.prettyOk, "non-kernel decoy lookup view rejected on pretty viewdef").toBe(false);
+        expect(decoy.unprettyOk, "non-kernel decoy lookup view rejected on canonical viewdef").toBe(false);
+        expect(decoy.scannedView?.hasActiveOrgBindDep, "decoy lacks active ctx_org_id pg_depend").toBe(false);
+
+        if (testCroveDecoy) {
+          const croveDecoy = await checkView("v_crove_decoy");
+          expect(croveDecoy.prettyOk, "crove_kernel decoy rejected under ludy_kernel pretty viewdef").toBe(false);
+          expect(croveDecoy.unprettyOk, "crove_kernel decoy rejected under ludy_kernel canonical viewdef").toBe(false);
+          expect(croveDecoy.scannedView?.hasActiveOrgBindDep, "crove_kernel decoy lacks ludy_kernel.ctx_org_id pg_depend").toBe(
+            false,
+          );
+          expect(scan.taintedViews, "crove_kernel decoy remains in taintedViews").toContain("probe_brief.v_crove_decoy");
+        }
+      } finally {
+        await rawQuery(c, "ROLLBACK").catch(() => {});
+      }
+    });
   });
 
   // ---- The catalog -----------------------------------------------------------------------------------------------------------
