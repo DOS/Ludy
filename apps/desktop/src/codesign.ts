@@ -544,7 +544,7 @@ function parseZipCentralDirectoryEntries(
           isSymlink = true;
         }
       }
-      const lowerKey = rawName.replace(/\/+$/, '').toLowerCase();
+      const lowerKey = normalizeZipPathKey(rawName);
       if (seenLowerNames.has(lowerKey)) {
         throw new Error(`Duplicate ZIP entry path: ${rawName}`);
       }
@@ -583,8 +583,17 @@ export function inspectZipCentralDirectory(
 }
 
 const MAX_ZIP_SYMLINK_TARGET_BYTES = 4096;
+const MAX_ZIP_SYMLINK_HOPS = 40;
 
-function assertSafePreExtractionSymlinkTarget(entryName: string, topBundle: string, payloadBuf: Buffer): string {
+function normalizeZipPathKey(rawPath: string): string {
+  return rawPath.replace(/\/+$/, '').normalize('NFD').toLowerCase();
+}
+
+function parsePreExtractionSymlinkTarget(
+  entryName: string,
+  topBundle: string,
+  payloadBuf: Buffer,
+): { key: string; rawPath: string; target: string } {
   if (payloadBuf.byteLength === 0 || payloadBuf.byteLength > MAX_ZIP_SYMLINK_TARGET_BYTES) {
     throw new Error(`Pre-extraction ZIP symlink target size out of bounds for ${entryName}`);
   }
@@ -597,7 +606,7 @@ function assertSafePreExtractionSymlinkTarget(entryName: string, topBundle: stri
   if (!resolvedTarget.startsWith(`${topBundle}/`) || resolvedTarget === topBundle) {
     throw new Error(`Escaping pre-extraction ZIP symlink target for ${entryName}: ${target}`);
   }
-  return normEntry;
+  return { key: normalizeZipPathKey(normEntry), rawPath: normEntry, target };
 }
 
 export async function verifyZipDecompressedSizeBounds(
@@ -617,7 +626,7 @@ export async function verifyZipDecompressedSizeBounds(
     const lh = Buffer.alloc(30);
     let actualTotalBytes = 0;
     let expectedOffset = 0;
-    const symlinkPaths: string[] = [];
+    const symlinkTargetsByKey = new Map<string, { rawPath: string; target: string }>();
     for (const entry of sortedEntries) {
       if (entry.method !== 0 && entry.method !== 8) {
         throw new Error(`Unsupported ZIP compression method (${entry.method}) for ${entry.name}`);
@@ -729,7 +738,8 @@ export async function verifyZipDecompressedSizeBounds(
           throw new Error(`ZIP entry ${entry.name} CRC-32 mismatch`);
         }
         if (entry.isSymlink) {
-          symlinkPaths.push(assertSafePreExtractionSymlinkTarget(entry.name, topBundle, Buffer.concat(symlinkChunks)));
+          const parsedSym = parsePreExtractionSymlinkTarget(entry.name, topBundle, Buffer.concat(symlinkChunks));
+          symlinkTargetsByKey.set(parsedSym.key, { rawPath: parsedSym.rawPath, target: parsedSym.target });
         }
         actualTotalBytes += entry.uncompressedSize;
         if (actualTotalBytes > maxTotalBytes) {
@@ -824,7 +834,8 @@ export async function verifyZipDecompressedSizeBounds(
         throw new Error(`ZIP actual decompressed size exceeds safety limit (${maxTotalBytes} bytes)`);
       }
       if (entry.isSymlink) {
-        symlinkPaths.push(assertSafePreExtractionSymlinkTarget(entry.name, topBundle, Buffer.concat(symlinkChunks)));
+        const parsedSym = parsePreExtractionSymlinkTarget(entry.name, topBundle, Buffer.concat(symlinkChunks));
+        symlinkTargetsByKey.set(parsedSym.key, { rawPath: parsedSym.rawPath, target: parsedSym.target });
       }
     }
     if (expectedOffset !== parsed.cdOffset) {
@@ -832,13 +843,60 @@ export async function verifyZipDecompressedSizeBounds(
         `ZIP contains unreferenced bytes before central directory (ended at ${expectedOffset}, central directory at ${parsed.cdOffset})`,
       );
     }
-    if (symlinkPaths.length > 0) {
+    if (symlinkTargetsByKey.size > 0) {
+      const nonSymlinkKeys = new Set<string>();
+      const topBundleKey = normalizeZipPathKey(topBundle);
       for (const entry of parsed.entries) {
         const norm = entry.name.replace(/\/+$/, '');
-        for (const symPath of symlinkPaths) {
-          if (norm.startsWith(`${symPath}/`)) {
-            throw new Error(`ZIP entry traverses through symlink ${symPath}: ${entry.name}`);
+        const segs = norm.split('/');
+        let prefix = '';
+        for (let i = 0; i < segs.length - 1; i++) {
+          prefix = i === 0 ? segs[0]! : `${prefix}/${segs[i]!}`;
+          const ancestorHit = symlinkTargetsByKey.get(normalizeZipPathKey(prefix));
+          if (ancestorHit) {
+            throw new Error(`ZIP entry traverses through symlink ${ancestorHit.rawPath}: ${entry.name}`);
           }
+        }
+        if (!entry.isSymlink && (norm === topBundle || norm.startsWith(`${topBundle}/`))) {
+          let dirPrefix = '';
+          for (let i = 0; i < segs.length; i++) {
+            dirPrefix = i === 0 ? segs[0]! : `${dirPrefix}/${segs[i]!}`;
+            nonSymlinkKeys.add(normalizeZipPathKey(dirPrefix));
+          }
+        }
+      }
+      for (const symInfo of symlinkTargetsByKey.values()) {
+        const current = symInfo.rawPath.split('/').slice(0, -1);
+        const pending = symInfo.target.split('/');
+        let hops = 0;
+        while (pending.length > 0) {
+          const seg = pending.shift()!;
+          if (seg === '' || seg === '.') {
+            continue;
+          }
+          if (seg === '..') {
+            if (current.length <= 1) {
+              throw new Error(`Escaping pre-extraction ZIP symlink target chain for ${symInfo.rawPath}: ${symInfo.target}`);
+            }
+            current.pop();
+            continue;
+          }
+          current.push(seg);
+          const intermediate = symlinkTargetsByKey.get(normalizeZipPathKey(current.join('/')));
+          if (intermediate) {
+            hops += 1;
+            if (hops > MAX_ZIP_SYMLINK_HOPS) {
+              throw new Error(`Cyclic or excessively nested pre-extraction ZIP symlink for ${symInfo.rawPath}: ${symInfo.target}`);
+            }
+            current.pop();
+            pending.unshift(...intermediate.target.split('/'));
+          }
+        }
+        if (current.length < 2 || normalizeZipPathKey(current[0]!) !== topBundleKey) {
+          throw new Error(`Escaping pre-extraction ZIP symlink target chain for ${symInfo.rawPath}: ${symInfo.target}`);
+        }
+        if (!nonSymlinkKeys.has(normalizeZipPathKey(current.join('/')))) {
+          throw new Error(`Unresolved or dangling pre-extraction ZIP symlink target for ${symInfo.rawPath}: ${symInfo.target}`);
         }
       }
     }
@@ -870,12 +928,13 @@ export function verifyExtractedDirectorySymlinks(rootDir: string): void {
         if (relLex === '..' || relLex.startsWith('../') || relLex.startsWith('..\\')) {
           throw new Error(`Refused escaping symlink inside macOS bundle: ${fullPath} -> ${linkTarget}`);
         }
-        if (existsSync(fullPath)) {
-          const realTarget = realpathSync(fullPath);
-          const relReal = relative(realRoot, realTarget);
-          if (relReal === '..' || relReal.startsWith('../') || relReal.startsWith('..\\')) {
-            throw new Error(`Refused escaping symlink target inside macOS bundle: ${fullPath}`);
-          }
+        if (!existsSync(fullPath)) {
+          throw new Error(`Refused dangling symlink inside macOS bundle: ${fullPath} -> ${linkTarget}`);
+        }
+        const realTarget = realpathSync(fullPath);
+        const relReal = relative(realRoot, realTarget);
+        if (relReal === '..' || relReal.startsWith('../') || relReal.startsWith('..\\')) {
+          throw new Error(`Refused escaping symlink target inside macOS bundle: ${fullPath}`);
         }
       } else if (st.isDirectory()) {
         stack.push(fullPath);

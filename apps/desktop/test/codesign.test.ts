@@ -616,7 +616,7 @@ describe('macOS codesign verification', () => {
           return { stdout: '', stderr: '' };
         },
       }),
-    ).rejects.toThrow(/missing secure Apple timestamp/);
+    ).rejects.toThrow(/secure Apple timestamp/);
     await expect(
       verifyMacDmgPackage(dmgPath, TEAM_ID, {
         platform: 'darwin',

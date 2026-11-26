@@ -1428,6 +1428,93 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
     );
     await expect(verifyZipDecompressedSizeBounds(symTraversalZip)).rejects.toThrow(/traverses through symlink/);
 
+    const symTraversalCaseAndUnicodeZip = join(dir, 'symlink-apfs-case-nfd.zip');
+    writeFileSync(
+      symTraversalCaseAndUnicodeZip,
+      buildTestZip([
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/MacOS/Caf\u00e9`,
+          payload: Buffer.from('../Resources', 'utf8'),
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o120755 << 16) >>> 0,
+        },
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/MacOS/cafe\u0301/pwned`,
+          payload: Buffer.from('payload', 'utf8'),
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o100644 << 16) >>> 0,
+        },
+      ]),
+    );
+    await expect(verifyZipDecompressedSizeBounds(symTraversalCaseAndUnicodeZip)).rejects.toThrow(
+      /traverses through symlink/,
+    );
+
+    const multiHopEscapeZip = join(dir, 'multi-hop-escape.zip');
+    writeFileSync(
+      multiHopEscapeZip,
+      buildTestZip([
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/Frameworks/Foo.framework/Versions/A/short`,
+          payload: Buffer.from('../../..', 'utf8'),
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o120755 << 16) >>> 0,
+        },
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/MacOS/chain`,
+          payload: Buffer.from('../Frameworks/Foo.framework/Versions/A/short/../../..', 'utf8'),
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o120755 << 16) >>> 0,
+        },
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/Frameworks/Anchor.txt`,
+          payload: Buffer.from('ok', 'utf8'),
+        },
+      ]),
+    );
+    await expect(verifyZipDecompressedSizeBounds(multiHopEscapeZip)).rejects.toThrow(/symlink target chain/);
+
+    const cyclicSymZip = join(dir, 'cyclic-symlink.zip');
+    writeFileSync(
+      cyclicSymZip,
+      buildTestZip([
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/MacOS/symA`,
+          payload: Buffer.from('symB', 'utf8'),
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o120755 << 16) >>> 0,
+        },
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/MacOS/symB`,
+          payload: Buffer.from('symA', 'utf8'),
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o120755 << 16) >>> 0,
+        },
+      ]),
+    );
+    await expect(verifyZipDecompressedSizeBounds(cyclicSymZip)).rejects.toThrow(/Cyclic or excessively nested/);
+
+    const danglingSymZip = join(dir, 'dangling-symlink.zip');
+    writeFileSync(
+      danglingSymZip,
+      buildTestZip([
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/MacOS/dangling`,
+          payload: Buffer.from('../Resources/nonexistent', 'utf8'),
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o120755 << 16) >>> 0,
+        },
+      ]),
+    );
+    await expect(verifyZipDecompressedSizeBounds(danglingSymZip)).rejects.toThrow(/Unresolved or dangling/);
+
+    if (process.platform !== 'win32') {
+      const danglingBundle = join(dir, 'dangling-bundle');
+      mkdirSync(join(danglingBundle, 'Contents', 'MacOS'), { recursive: true });
+      symlinkSync('../Resources/missing', join(danglingBundle, 'Contents', 'MacOS', 'broken'));
+      expect(() => verifyExtractedDirectorySymlinks(danglingBundle)).toThrow(/dangling symlink/);
+    }
+
     const validBundleSymZip = join(dir, 'valid-framework-symlink.zip');
     writeFileSync(
       validBundleSymZip,
@@ -1442,8 +1529,26 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
           externalFileAttributes: (0o100755 << 16) >>> 0,
         },
         {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/Frameworks/Test.framework/Versions/A/Resources/Info.plist`,
+          payload: Buffer.from('<plist/>', 'utf8'),
+          compress: true,
+          useDataDescriptor: true,
+          ddWithSignature: true,
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o100644 << 16) >>> 0,
+        },
+        {
           name: `${MAC_APP_BUNDLE_NAME}/Contents/Frameworks/Test.framework/Versions/Current`,
           payload: Buffer.from('A', 'utf8'),
+          compress: true,
+          useDataDescriptor: true,
+          ddWithSignature: true,
+          versionMadeBy: 0x031e,
+          externalFileAttributes: (0o120700 << 16) >>> 0,
+        },
+        {
+          name: `${MAC_APP_BUNDLE_NAME}/Contents/Frameworks/Test.framework/Resources`,
+          payload: Buffer.from('Versions/Current/Resources', 'utf8'),
           compress: true,
           useDataDescriptor: true,
           ddWithSignature: true,
@@ -1458,7 +1563,7 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
         },
       ]),
     );
-    await expect(verifyZipDecompressedSizeBounds(validBundleSymZip)).resolves.toMatchObject({ entryCount: 3 });
+    await expect(verifyZipDecompressedSizeBounds(validBundleSymZip)).resolves.toMatchObject({ entryCount: 5 });
 
     // B2: Spoofed/duplicated codesign outputs and incomplete .dmg certificate chains
     expect(() =>

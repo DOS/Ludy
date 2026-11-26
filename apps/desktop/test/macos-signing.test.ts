@@ -648,6 +648,8 @@ describe('macOS packaging CLI & signing helpers', () => {
       ).rejects.toThrow(/Refused to reuse Keychain already present in search list/);
 
       let aliasExists = false;
+      let aliasSearchList = ['/Users/runner/Library/Keychains/login.keychain-db'];
+      let setupListApplied = false;
       await expect(
         withEphemeralMacKeychain({
           signing: baseSigning,
@@ -656,16 +658,21 @@ describe('macOS packaging CLI & signing helpers', () => {
             APPLE_CERT_P12_PASSWORD: 'p12-password',
             APPLE_APP_SPECIFIC_PASSWORD: 'apple-app-password',
           },
-          exists: (p) => (p === canonicalKcPath ? aliasExists : true),
+          exists: (p) => (p === canonicalKcPath || p === symKcPath ? aliasExists : true),
           runSecurityInteractive: () => {
             aliasExists = true;
           },
           storeNotaryProfile: () => undefined,
           exec: (_file, args) => {
             if (args[0] === 'list-keychains' && !args.includes('-s')) {
-              return aliasExists
-                ? `    "${canonicalKcPath}"\n    "/Users/runner/Library/Keychains/login.keychain-db"`
-                : '    "/Users/runner/Library/Keychains/login.keychain-db"';
+              return aliasSearchList.map((p) => `    "${p}"`).join('\n');
+            }
+            if (args[0] === 'list-keychains' && args.includes('-s')) {
+              if (!setupListApplied) {
+                setupListApplied = true;
+                aliasSearchList = args.slice(4);
+              }
+              return '';
             }
             if (args[0] === 'find-identity') {
               return `  1) ${CERT_HASH} "Developer ID Application: Ludy Test (${TEAM_ID})"`;
