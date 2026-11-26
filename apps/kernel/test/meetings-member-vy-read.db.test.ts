@@ -715,7 +715,7 @@ suite('Meetings 5-table member_vy read opt-in (#5073 Step 2a)', () => {
       expect(crossRows, `${table} cross-org`).toBe(0);
     }
 
-    // Demoting memberVy to viewer or closing the run denies is_agent_meeting_reader and calendar_agenda_read.
+    // Demoting memberVy to viewer refuses entry (VY_NOT_ALLOWED) and fails helper and RLS checks in-context.
     await admin((c) =>
       c.query(`UPDATE ludy_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [
         orgA,
@@ -723,8 +723,41 @@ suite('Meetings 5-table member_vy read opt-in (#5073 Step 2a)', () => {
       ]),
     );
     try {
-      expect(await seenIds(memberEnter, 'ludy_meetings.meeting', meetingPool)).toEqual([]);
-      expect(await seenIds(memberEnter, 'ludy_meetings.calendar_agenda', agendaPool)).toEqual([]);
+      await expect(seenIds(memberEnter, 'ludy_meetings.meeting', meetingPool)).rejects.toMatchObject({
+        code: '42501',
+        message: 'VY_NOT_ALLOWED',
+      });
+      await inRoleContext(
+        adminUrl,
+        (c) =>
+          c.query(
+            `SELECT ludy_kernel.ctx_write(jsonb_build_object(
+               'v', 1, 'org', $1::uuid, 'actor', 'agent', 'user', NULL, 'role', 'member',
+               'agent', $2::uuid, 'run', $3::uuid, 'position', NULL, 'module', 'meetings',
+               'max_risk', 'R1', 'tainted', true, 'le_scope', '["*"]'::jsonb, 'flags', '[]'::jsonb,
+               'kind', 'member_vy', 'member', $4::uuid
+             ))`,
+            [orgA, runs.memberVy.agentId, runs.memberVy.runId, users.memberVy],
+          ),
+        async (c) => {
+          await c.query('SET LOCAL ROLE ludy_tenant');
+          const res = await c.query<{ ok: boolean }>('SELECT ludy_meetings.is_agent_meeting_reader($1::uuid, $2::uuid) AS ok', [
+            orgA,
+            ids.mOrg,
+          ]);
+          expect(res.rows[0]?.ok).toBe(false);
+          const seenMeetings = await c.query<{ id: string }>(
+            'SELECT id FROM ludy_meetings.meeting WHERE id = ANY($1::uuid[])',
+            [meetingPool],
+          );
+          expect(seenMeetings.rows).toEqual([]);
+          const seenAgenda = await c.query<{ id: string }>(
+            'SELECT id FROM ludy_meetings.calendar_agenda WHERE id = ANY($1::uuid[])',
+            [agendaPool],
+          );
+          expect(seenAgenda.rows).toEqual([]);
+        },
+      );
     } finally {
       await admin((c) =>
         c.query(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [
