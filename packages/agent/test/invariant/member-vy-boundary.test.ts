@@ -80,6 +80,7 @@ export interface Token {
   start: number;
   end: number;
   line: number;
+  inJsxOpenTag?: boolean;
 }
 
 const REGEX_PREFIX_KEYWORDS = new Set([
@@ -1105,6 +1106,8 @@ function scanSource(
       const raw = text.slice(start, j);
       const value = valChunks.join('');
       if (options.stripCommentsMode) chunks.push(raw);
+      const topJsxOpen = options.jsx ? jsxStack[jsxStack.length - 1] : undefined;
+      const inJsxOpenTag = Boolean(valid && topJsxOpen?.mode === 'openTag' && topJsxOpen.angleDepth === 0);
       emit({
         kind: valid ? 'ident' : 'invalid',
         raw,
@@ -1113,6 +1116,7 @@ function scanSource(
         start,
         end: j,
         line,
+        ...(inJsxOpenTag ? { inJsxOpenTag: true } : {}),
       });
       if (valid) {
         const topParen = parenAllowsRegexStack[parenAllowsRegexStack.length - 1];
@@ -2394,7 +2398,13 @@ function analyzeTokenAliases(
         const nextIsColon =
           rawNext?.kind === 'punct' &&
           (rawNext.value === ':' || (rawNext.value === '?' && tokens[i + 2]?.kind === 'punct' && tokens[i + 2]?.value === ':'));
-        if (!(isKeySep && nextIsColon)) {
+        const isJsxAttrProp =
+          Boolean(t.inJsxOpenTag) &&
+          prevVal !== '<' &&
+          !isMemberPrev(tokens, i) &&
+          rawNext?.kind === 'punct' &&
+          (rawNext.value === '=' || rawNext.value === '>' || rawNext.value === '/');
+        if (!(isKeySep && nextIsColon) && !isJsxAttrProp) {
           hasBareRequire = true;
         }
       }
@@ -2989,7 +2999,7 @@ function getAstParseDiagnostics(sf: TsSourceFileWithDiagnostics): readonly tsTyp
   return sf.parseDiagnostics ?? [];
 }
 
-const AST_PARSE_CACHE_MAX = 8;
+const AST_PARSE_CACHE_MAX = 32;
 const astParseCache = new Map<string, AstParsedResult>();
 
 function parseAstCandidates(text: string, filePath?: string | undefined): AstParsedResult {
@@ -5141,11 +5151,13 @@ export function memberVyNames(text: string): string[] {
       found.add(tok.value);
     }
   }
-  const parsed = parseAstCandidates(text);
-  for (const sf of parsed.sources) {
-    const facts = extractAstFacts(sf, names);
-    for (const name of names) {
-      if (facts.stringAndIdentMatches.has(name)) found.add(name);
+  if (/\b(?:memberVy|member_vy|PrivateText)\b|['"`]|fromCharCode|\\u|\\x/.test(text)) {
+    const parsed = parseAstCandidates(text);
+    for (const sf of parsed.sources) {
+      const facts = extractAstFacts(sf, names);
+      for (const name of names) {
+        if (facts.stringAndIdentMatches.has(name)) found.add(name);
+      }
     }
   }
   return [...found];
@@ -6938,12 +6950,16 @@ interface PrecomputedNotesAst {
   readonly hadRangeError: boolean;
 }
 
-const NOTES_METER_AST_TRIGGER_RE = /\bmetered\b|['"`]|import|require|Reflect|eval|Function|\\u|\\x|fromCharCode/;
+const NOTES_METER_AST_TRIGGER_RE = /['"`]|import|require|Reflect|eval|Function|\\u|\\x|fromCharCode/;
 const NOTES_LITERAL_AST_TRIGGER_RE = /['"`]|fromCharCode|\\u|\\x/;
 const EMPTY_PRECOMPUTED_NOTES_AST: PrecomputedNotesAst = { factsList: [], hadRangeError: false };
 
+function hasNotesMeterTrigger(text: string): boolean {
+  return (/\bmetered\b/.test(text) && /[(["'`[]/.test(text)) || NOTES_METER_AST_TRIGGER_RE.test(text);
+}
+
 function buildPrecomputedNotesAst(text: string): PrecomputedNotesAst {
-  if (!NOTES_METER_AST_TRIGGER_RE.test(text)) return EMPTY_PRECOMPUTED_NOTES_AST;
+  if (!hasNotesMeterTrigger(text)) return EMPTY_PRECOMPUTED_NOTES_AST;
   const parsed = parseAstCandidates(text);
   const emptySyms = new Set<string>();
   return {
@@ -7824,11 +7840,13 @@ export function adapterSymbolReferences(
   const symbolSet = new Set(symbols);
   const found = new Set<string>();
   collectSymbolTokenMatches(precomputedTokens ?? tokenize(fileText), symbolSet, found);
-  const parsed = parseAstCandidates(fileText);
-  for (const sf of parsed.sources) {
-    const facts = extractAstFacts(sf, symbolSet);
-    for (const sym of symbols) {
-      if (facts.stringAndIdentMatches.has(sym) || facts.interpolatedSymbolMatches.has(sym)) found.add(sym);
+  if (/['"`]|fromCharCode|\\u|\\x/.test(fileText) || symbols.some((sym) => fileText.includes(sym))) {
+    const parsed = parseAstCandidates(fileText);
+    for (const sf of parsed.sources) {
+      const facts = extractAstFacts(sf, symbolSet);
+      for (const sym of symbols) {
+        if (facts.stringAndIdentMatches.has(sym) || facts.interpolatedSymbolMatches.has(sym)) found.add(sym);
+      }
     }
   }
   for (const sym of symbols) {
@@ -7858,6 +7876,7 @@ export function importsNoteAiModel(fileText: string): boolean {
   ) {
     return true;
   }
+  if (!/note-ai|['"`]|import|require|fromCharCode|\\u|\\x/.test(fileText)) return false;
   const parsed = parseAstCandidates(fileText);
   const emptySyms = new Set<string>();
   for (const sf of parsed.sources) {
@@ -8651,8 +8670,10 @@ function collectWorkspacePass(
   out: Set<string>,
   unambiguousRegexSpans?: ReadonlyArray<{ start: number; end: number }>,
   deferredSyntaxState?: { hasInvalidSyntax: boolean },
+  delimsOut?: DelimiterPairs[],
 ): boolean {
   const delims = pairDelimiters(toks);
+  if (delimsOut) delimsOut.push(delims);
   const { specifiers: specs, scan } = specifiers(fileText, toks, delims, unambiguousRegexSpans);
   if (specs.some((spec) => isNoteAiModelSpecifier(spec))) {
     out.add('imports note-ai-model');
@@ -8693,19 +8714,21 @@ function hasTokenResolvedWorkspaceTarget(
   primaryLists: ReadonlyArray<readonly Token[]>,
   symbols: readonly string[],
   fromRelPath: string | undefined,
+  precomputedDelims?: readonly DelimiterPairs[],
 ): boolean {
   const symbolSet = new Set(symbols);
-  for (const tokens of primaryLists) {
+  for (let pIdx = 0; pIdx < primaryLists.length; pIdx += 1) {
+    const tokens = primaryLists[pIdx]!;
     let hasConcatOp = false;
+    let hasStrOrTpl = false;
     for (let i = 0; i < tokens.length; i += 1) {
       const tk = tokens[i]!;
-      if (tk.kind === 'template_head' || (tk.kind === 'punct' && tk.value === '+')) {
-        hasConcatOp = true;
-        break;
-      }
+      if (tk.kind === 'template_head' || (tk.kind === 'punct' && tk.value === '+')) hasConcatOp = true;
+      else if (tk.kind === 'string' || tk.kind === 'template') hasStrOrTpl = true;
+      if (hasConcatOp && hasStrOrTpl) break;
     }
-    if (!hasConcatOp) continue;
-    const delims = pairDelimiters(tokens);
+    if (!hasConcatOp || !hasStrOrTpl) continue;
+    const delims = precomputedDelims?.[pIdx] ?? pairDelimiters(tokens);
     const { templateTail, templateNext } = buildTemplateMaps(tokens);
     const { scopes, tokenScope } = collectScopedConstBindings(tokens, delims, templateNext, templateTail);
     const constLookup: ConstLookupFn = (name, idx) => lookupScopedConst(scopes, tokenScope[idx] ?? 0, name);
@@ -8775,18 +8798,26 @@ function shouldParseWorkspaceAst(
   primaryLists: ReadonlyArray<readonly Token[]>,
   outSize: number,
   tokenRelevant: boolean,
+  primaryDelims?: readonly DelimiterPairs[],
 ): boolean {
   if (tokenRelevant || outSize > 0) return true;
   const relFromRoot = fromRelPath?.replace(/\\/g, '/');
   if (relFromRoot && relFromRoot.startsWith('packages/agent/')) return true;
   if (fromRelPath === undefined && fileText.length < 30_000) return true;
+  const hasRelevantKeywordHint =
+    /@(?:ludy|crove)|agent|note-ai|packages|import|export|require|createRequire|eval|Function|Reflect|generate|Summary|Todo|fromCharCode|\\u|\\x/.test(
+      fileText,
+    );
   if (
     primaryLists.some((toks) =>
       toks.some(
         (t) =>
-          t.kind === 'invalid' ||
+          (t.kind === 'invalid' && (fromRelPath !== undefined || hasRelevantKeywordHint)) ||
           (t.kind === 'regex' &&
-            /(?:[({'"`\\]|\b(?:import|require|createRequire|agent|model|generate)\b|@ludy|@crove|packages)/.test(t.raw)),
+            (/\b(?:import|require|createRequire|eval|Function|Reflect|agent|note-ai|generate|Todo|Summary|Note|fromCharCode)\b|@ludy|@crove|packages\/agent|\\u00|\\x[0-9a-f]/.test(
+              t.raw,
+            ) ||
+              (/\{/.test(t.raw) && /['"`]/.test(t.raw)))),
       ),
     )
   ) {
@@ -8799,16 +8830,24 @@ function shouldParseWorkspaceAst(
   ) {
     return true;
   }
-  if (hasTokenResolvedWorkspaceTarget(primaryLists, symbols, fromRelPath)) {
+  if (hasTokenResolvedWorkspaceTarget(primaryLists, symbols, fromRelPath, primaryDelims)) {
     return true;
   }
   if (symbols.some((sym) => fileText.includes(sym))) return true;
-  if (isKnownJsxPath && /(?<![/*])\/(?![/*])\s*\{/.test(fileText)) return true;
+  if (
+    isKnownJsxPath &&
+    /(?<![/*])\/(?![/*])[ \t]*\{(?![ \t]*[a-zA-Z0-9_$.]+[ \t]*\})/.test(fileText) &&
+    /\b(?:import\s*\(|import\s*\/\*|require|createRequire|eval|Function|Reflect)\b/.test(fileText)
+  ) {
+    return true;
+  }
   if (
     Boolean(relFromRoot && relFromRoot.startsWith('packages/')) &&
     fileText.length < 30_000 &&
     /\b(?:import|export|require)\b/.test(fileText) &&
-    /(?:^|\W)\.\.?(?:\/|['"`])/.test(fileText)
+    /(?:^|\W)\.\.?(?:\/|['"`])/.test(fileText) &&
+    (/(?:agent|note-ai|packages|fromCharCode|\\u00|\\x[0-9a-f]|\\\r?\n)/i.test(fileText) ||
+      /(?:import|require)\s*\([^)]*(?:\+|`|\$\{)/.test(fileText))
   ) {
     return true;
   }
@@ -8822,13 +8861,26 @@ export function workspaceAdapterLeakViolations(
 ): string[] {
   const { primaryPasses, speculativePasses, isKnownJsxPath } = scanDualJsxAndTsPasses(fileText, fromRelPath);
   const primaryLists = primaryPasses.map((p) => p.tokens);
+  const primaryDelims: DelimiterPairs[] = [];
 
   const symbolSet = new Set(symbols);
   const out = new Set<string>();
   let tokenRelevant = false;
   const syntaxState = { hasInvalidSyntax: false };
   for (const pass of primaryPasses) {
-    if (collectWorkspacePass(fileText, pass.tokens, symbolSet, fromRelPath, true, out, pass.unambiguousRegexSpans, syntaxState)) {
+    if (
+      collectWorkspacePass(
+        fileText,
+        pass.tokens,
+        symbolSet,
+        fromRelPath,
+        true,
+        out,
+        pass.unambiguousRegexSpans,
+        syntaxState,
+        primaryDelims,
+      )
+    ) {
       tokenRelevant = true;
     }
   }
@@ -8838,7 +8890,18 @@ export function workspaceAdapterLeakViolations(
     }
   }
 
-  if (shouldParseWorkspaceAst(fileText, symbols, fromRelPath, isKnownJsxPath, primaryLists, out.size, tokenRelevant)) {
+  if (
+    shouldParseWorkspaceAst(
+      fileText,
+      symbols,
+      fromRelPath,
+      isKnownJsxPath,
+      primaryLists,
+      out.size,
+      tokenRelevant,
+      primaryDelims,
+    )
+  ) {
     const parsed = parseAstCandidates(fileText, fromRelPath);
     const astFailedParse = parsed.hadRangeError || !parsed.hasCleanParse;
     let astRelevant = tokenRelevant || out.size > 0 || Boolean(fromRelPath && fromRelPath.replace(/\\/g, '/').startsWith('packages/agent/'));
@@ -11399,5 +11462,26 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(
       memberVyViolations('let read = globalThis.fetch;\nfor (let i = 0; i < 2; i += 1) {\n  { if (i === 0) break; read = cache.fetch; }\n  read(key);\n}'),
     ).toContain('calls the network directly');
+    expect(
+      workspaceAdapterLeakViolations(
+        "import { AiBudgetExhaustedError } from '@ludy/agent';\nexport const C = () => <Field a={1} require={true} />;",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toEqual([]);
+    expect(
+      workspaceAdapterLeakViolations(
+        "import { AiBudgetExhaustedError } from '@ludy/agent';\nexport const C = () => <Field a={1} require />;",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toEqual([]);
+    expect(
+      workspaceAdapterLeakViolations(
+        "import { AiBudgetExhaustedError } from '@ludy/agent';\nexport const C = () => <Field a={require} />;",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toContain('uses require alias or bare require reference');
   }, 30_000);
 });
