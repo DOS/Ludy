@@ -1211,5 +1211,103 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         answer([line({ description: 'Khách sạn', unit: 'đêm', quantity: '2', unitPrice: '100000', vatRate: '8%' })], null),
       ).kind,
     ).toBe('proposal');
+
+    const multilineDiscount = req('2 áo giá 100k\nChiết khấu\n10%');
+    expect(
+      checkEInvoiceDraft(
+        multilineDiscount,
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: '10%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+    expect(
+      checkEInvoiceDraft(
+        multilineDiscount,
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo giá 100k\nChiết khấu: 10%'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: '10%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo giá 100k\nChiết khấu\nVAT 8%'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: '8%' })], null),
+      ).kind,
+    ).toBe('proposal');
+
+    expect(
+      checkEInvoiceDraft(
+        req('Cơ hội Gói thiết kế của Công ty Hoa Mai, giá trị 100000 VND.\nsố lượng 3'),
+        answer([line({ description: 'Gói thiết kế', unit: 'gói', quantity: '3', unitPrice: '100000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Cơ hội Gói thiết kế của Công ty Hoa Mai, giá trị 100000 VND.\nsố lượng 1'),
+        answer([line({ description: 'Gói thiết kế', unit: 'gói', quantity: '1', unitPrice: '100000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+
+    expect(
+      checkEInvoiceDraft(
+        req('7Up giá 10k/chai'),
+        answer([line({ description: '7Up', unit: 'chai', quantity: '7', unitPrice: '10000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('7Up giá 10k/chai'),
+        answer([line({ description: '7Up', unit: 'chai', quantity: '1', unitPrice: '10000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 chai 7Up giá 10k/chai'),
+        answer([line({ description: '7Up', unit: 'chai', quantity: '2', unitPrice: '10000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+
+    expect(
+      checkEInvoiceDraft(
+        req('Vải 2 cuộn, đơn giá 150k/cuộn'),
+        answer([line({ description: 'Vải', unit: 'cuộn', quantity: '2', unitPrice: '150000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('Vải 2 cuộn, đơn giá 150k/cuộn'),
+        answer([line({ description: 'Vải', unit: 'cuộn', quantity: '150000', unitPrice: '2', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    const unaccentedAnd = req('ban 2 ao gia 100k va 3 quan gia 200k');
+    expect(
+      checkEInvoiceDraft(
+        unaccentedAnd,
+        answer([
+          line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: null }),
+          line({ description: 'Quần', unit: null, quantity: '3', unitPrice: '200000', vatRate: null }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        unaccentedAnd,
+        answer([
+          line({ description: 'Áo', unit: null, quantity: '3', unitPrice: '100000', vatRate: null }),
+          line({ description: 'Quần', unit: null, quantity: '2', unitPrice: '200000', vatRate: null }),
+        ], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    expect(
+      checkEInvoiceDraft(
+        req('Dịch vụ thanh toán 2 lần giá 500k'),
+        answer([line({ description: 'Dịch vụ thanh toán', unit: 'lần', quantity: '2', unitPrice: '500000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
   });
 });
