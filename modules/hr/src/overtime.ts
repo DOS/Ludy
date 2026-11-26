@@ -24,7 +24,7 @@ import {
 } from '@ludy/kernel-contract';
 import { money } from '@ludy/l10n-vn';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
-import { MANAGERS, userOf } from './employees.ts';
+import { lockEmployeeErasure, MANAGERS, userOf } from './employees.ts';
 import { assertL1Authority, assertNotSelfApprover, resolveSelfEmployee, selfNotLinked, STAFF_ROLES } from './leave-requests.ts';
 import { hrManifest } from './manifest.ts';
 import { isoDate as iso } from './payroll-dates.ts';
@@ -219,16 +219,20 @@ async function assertEmployeeNotErasedForRequest(
   }
 }
 
-async function assertEmployeeNotErasedForOvertime(trx: QueryContext['trx'], orgId: string, employeeId: string) {
-  const emp = await trx
-    .selectFrom('ludy_hr.payroll_employee')
-    .select(['id', 'erased_at'])
+async function preReadAndLockOvertimeErasure(
+  trx: QueryContext['trx'],
+  orgId: string,
+  requestId: string,
+): Promise<{ id: string; employee_id: string }> {
+  const preRead = await trx
+    .selectFrom('ludy_hr.overtime_request')
+    .select(['id', 'employee_id'])
     .where('org_id', '=', orgId)
-    .where('id', '=', employeeId)
+    .where('id', '=', requestId)
     .executeTakeFirst();
-  if (!emp || emp.erased_at !== null) {
-    throw new DomainError('HR_EMPLOYEE_ERASED', 409, 'Hồ sơ nhân viên đã được xóa theo yêu cầu');
-  }
+  if (!preRead) throw otNotFound();
+  await lockEmployeeErasure(trx, orgId, preRead.employee_id);
+  return preRead;
 }
 
 export const selfOvertimeSubmit = defineCommand({
@@ -259,13 +263,23 @@ export const selfOvertimeSubmit = defineCommand({
     const callerUserId = userOf(ctx.actor);
     const emp = await resolveSelfEmployee(ctx.trx, ctx.orgId, callerUserId);
     if (!emp) throw selfNotLinked();
-    await assertEmployeeNotErasedForOvertime(ctx.trx, ctx.orgId, emp.id);
-    if (emp.status !== 'active') {
-      throw new DomainError('HR_EMPLOYEE_ENDED', 409, 'Nhân viên đã nghỉ việc, không thể gửi đơn làm thêm giờ');
-    }
 
     const month = input.workDate.slice(0, 7);
     await lockOvertimeEmployeeMonth(ctx.trx, ctx.orgId, emp.id, month);
+    await lockEmployeeErasure(ctx.trx, ctx.orgId, emp.id);
+    const lockedEmp = await ctx.trx
+      .selectFrom('ludy_hr.payroll_employee')
+      .select(['id', 'status', 'erased_at', 'department_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', emp.id)
+      .executeTakeFirst();
+    if (!lockedEmp || lockedEmp.erased_at !== null) {
+      throw new DomainError('HR_EMPLOYEE_ERASED', 409, 'Hồ sơ nhân viên đã được xóa theo yêu cầu');
+    }
+    if (lockedEmp.status !== 'active') {
+      throw new DomainError('HR_EMPLOYEE_ENDED', 409, 'Nhân viên đã nghỉ việc, không thể gửi đơn làm thêm giờ');
+    }
+
     const existingRows = await ctx.trx
       .selectFrom('ludy_hr.overtime_request')
       .select(['work_date', 'hours'])
@@ -289,12 +303,12 @@ export const selfOvertimeSubmit = defineCommand({
     }
 
     let initialStatus: 'pending_l1' | 'pending_final' = 'pending_final';
-    if (emp.department_id !== null) {
+    if (lockedEmp.department_id !== null) {
       const dept = await ctx.trx
         .selectFrom('ludy_hr.department')
         .select(['manager_user_id', 'archived_at'])
         .where('org_id', '=', ctx.orgId)
-        .where('id', '=', emp.department_id)
+        .where('id', '=', lockedEmp.department_id)
         .executeTakeFirst();
       if (
         dept &&
@@ -319,7 +333,7 @@ export const selfOvertimeSubmit = defineCommand({
       .values({
         org_id: ctx.orgId,
         employee_id: emp.id,
-        department_id: emp.department_id,
+        department_id: lockedEmp.department_id,
         month,
         work_date: input.workDate,
         hours: formatHoursString(money(input.hours)),
@@ -532,6 +546,8 @@ export const overtimeApproveL1 = defineCommand({
     const role = ctx.role;
     if (!role) throw new DomainError('FORBIDDEN', 403, 'Chưa xác định vai trò trong tổ chức');
 
+    await preReadAndLockOvertimeErasure(ctx.trx, ctx.orgId, input.requestId);
+
     const existing = await ctx.trx
       .selectFrom('ludy_hr.overtime_request')
       .select(['id', 'employee_id', 'department_id', 'status'])
@@ -620,9 +636,10 @@ export const overtimeApproveFinal = defineCommand({
 
     await lockOvertimeRun(ctx.trx, ctx.orgId, preRead.legal_entity_id, preRead.month);
     await lockOvertimeEmployeeMonth(ctx.trx, ctx.orgId, preRead.employee_id, preRead.month);
+    await lockEmployeeErasure(ctx.trx, ctx.orgId, preRead.employee_id);
 
-    const selfApproved = await assertNotSelfApprover(ctx.trx, ctx.orgId, callerUserId, role, preRead.employee_id, true);
     await assertEmployeeNotErasedForRequest(ctx.trx, ctx.orgId, preRead.id);
+    const selfApproved = await assertNotSelfApprover(ctx.trx, ctx.orgId, callerUserId, role, preRead.employee_id, true);
     if (preRead.status !== 'pending_l1' && preRead.status !== 'pending_final') {
       throw invalidOtState('Chỉ duyệt chốt được đơn làm thêm giờ đang chờ duyệt');
     }
@@ -746,6 +763,8 @@ export const overtimeReject = defineCommand({
     const callerUserId = userOf(ctx.actor);
     const role = ctx.role;
     if (!role) throw new DomainError('FORBIDDEN', 403, 'Chưa xác định vai trò trong tổ chức');
+
+    await preReadAndLockOvertimeErasure(ctx.trx, ctx.orgId, input.requestId);
 
     const existing = await ctx.trx
       .selectFrom('ludy_hr.overtime_request')
