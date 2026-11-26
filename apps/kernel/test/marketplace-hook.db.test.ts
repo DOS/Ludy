@@ -6,6 +6,9 @@
 // calls them (S3); here the API login is shown to be refused them without one.
 // Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
@@ -77,6 +80,10 @@ suite('Marketplace push hook (#4316)', () => {
   let otherConnectionId = '';
   let hookId = '';
   let otherHookId = '';
+  let preUpgradeConnId = '';
+  let preUpgradeHookId = '';
+  let preUpgradeClaimId = '';
+  let preUpgradeRotatedKey = '';
   const key = randomBytes(16).toString('base64url');
   const otherKey = randomBytes(16).toString('base64url');
 
@@ -153,48 +160,77 @@ suite('Marketplace push hook (#4316)', () => {
     const base = new URL(ADMIN as string);
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
-    await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
-    const login = (username: string, password: string) => {
-      const url = new URL(adminUrl);
-      url.username = username;
-      url.password = password;
-      return url.toString();
-    };
-    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
-    const db = createDb(pool);
-    runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' as const }).register({
-      commands: [...kernelCommands, ...financeCommands],
-      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
-    });
-    const config = loadConfig({ DATABASE_URL: login('ludy_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
-    const vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
-    app = createHttpApp({ config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false, channels: { broker: vault, sandbox: false, apiUrl: 'https://api.example.test', marketplaceProviders: { shopee: { id: 'shopee', hosts: [] }, tiktok_shop: { id: 'tiktok_shop', hosts: [] } } as never }, marketplacePush: { adapters: ['shopee', 'tiktok_shop'] } });
-    for (const who of [owner, outsider, adminUser, member]) {
-      const me = await rpc('me/get', await tokenFor(who), undefined, null);
-      expect(me.status).toBe(200);
-      who.userId = String(me.body?.userId);
+    const preDir = mkdtempSync(join(tmpdir(), 'ludy-4326-pre-'));
+    try {
+      const migrationNames = readdirSync(MIGRATIONS).filter((n) => n.endsWith('.sql')).sort();
+      const cutFile = migrationNames.find((n) => n.endsWith('_ludy_finance_marketplace_hook_reject_generation.sql'));
+      expect(cutFile).toBeTruthy();
+      for (const name of migrationNames) {
+        if (name < cutFile!) symlinkSync(join(MIGRATIONS, name), join(preDir, name));
+      }
+      await migrate({
+        adminUrl,
+        dir: preDir,
+        sharedVariantsDir: fileURLToPath(new URL('../../../supabase/shared-variants', import.meta.url)),
+      });
+      await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+      const login = (username: string, password: string) => {
+        const url = new URL(adminUrl);
+        url.username = username;
+        url.password = password;
+        return url.toString();
+      };
+      pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+      workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
+      const db = createDb(pool);
+      runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' as const }).register({
+        commands: [...kernelCommands, ...financeCommands],
+        queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
+      });
+      const config = loadConfig({ DATABASE_URL: login('ludy_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
+      const vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
+      app = createHttpApp({ config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false, channels: { broker: vault, sandbox: false, apiUrl: 'https://api.example.test', marketplaceProviders: { shopee: { id: 'shopee', hosts: [] }, tiktok_shop: { id: 'tiktok_shop', hosts: [] } } as never }, marketplacePush: { adapters: ['shopee', 'tiktok_shop'] } });
+      for (const who of [owner, outsider, adminUser, member]) {
+        const me = await rpc('me/get', await tokenFor(who), undefined, null);
+        expect(me.status).toBe(200);
+        who.userId = String(me.body?.userId);
+      }
+      const created = await rpc('org/create', await tokenFor(owner), { name: 'Công ty nhận push', idempotencyKey: randomUUID() }, null);
+      orgId = String(created.body?.orgId);
+      slug = String(created.body?.slug);
+      const other = await rpc('org/create', await tokenFor(outsider), { name: 'Công ty khác', idempotencyKey: randomUUID() }, null);
+      otherOrgId = String(other.body?.orgId);
+      otherSlug = String(other.body?.slug);
+      await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser.userId, member.userId]);
+      // A marketplace connection of each org (the channel connection that holds its credential, then the connection itself: its entity is the org's default, by its trigger), and a hook of each.
+      const connect = async (org: string, by: string, adapter: string) => {
+        const channel = randomUUID();
+        const connection = randomUUID();
+        await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, 'Sàn thử', $5)", [org, channel, `marketplace_${adapter}`, `acct-${randomUUID().slice(0, 8)}`, by]);
+        await rows('INSERT INTO ludy_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, $4, $5)', [org, connection, channel, `marketplace_${adapter}`, adapter]);
+        return connection;
+      };
+      connectionId = await connect(orgId, owner.userId, 'shopee');
+      otherConnectionId = await connect(otherOrgId, outsider.userId, 'tiktok_shop');
+      hookId = (await rows<{ id: string }>('INSERT INTO ludy_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [orgId, connectionId, sha(key)]))[0]?.id ?? '';
+      otherHookId = (await rows<{ id: string }>('INSERT INTO ludy_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [otherOrgId, otherConnectionId, sha(otherKey)]))[0]?.id ?? '';
+
+      // Simulate a hook claimed before rotation and rotated right before applying 20270328170000 (#4326).
+      preUpgradeConnId = await connect(otherOrgId, outsider.userId, 'lazada');
+      const preOldKey = randomBytes(16).toString('base64url');
+      await asSealedApp(outsider, otherOrgId, 'SELECT ludy_finance.marketplace_hook_set($1::uuid, $2)', [preUpgradeConnId, sha(preOldKey)]);
+      preUpgradeHookId = (await rows<{ id: string }>('SELECT id FROM ludy_finance.marketplace_hook WHERE marketplace_connection_id = $1', [preUpgradeConnId]))[0]?.id ?? '';
+      expect(await put(preUpgradeHookId, sha(preOldKey), sha('pre-upgrade-push'))).toBe('accepted');
+      const preClaims = await asWorker<{ hook_id: string }>('SELECT hook_id FROM ludy_finance.marketplace_hook_claim(10)');
+      expect(preClaims).toEqual([{ hook_id: preUpgradeHookId }]);
+      preUpgradeClaimId = preClaims[0]!.hook_id;
+      preUpgradeRotatedKey = randomBytes(16).toString('base64url');
+      await asSealedApp(outsider, otherOrgId, 'SELECT ludy_finance.marketplace_hook_set($1::uuid, $2)', [preUpgradeConnId, sha(preUpgradeRotatedKey)]);
+
+      await migrate({ adminUrl, dir: MIGRATIONS });
+    } finally {
+      rmSync(preDir, { recursive: true, force: true });
     }
-    const created = await rpc('org/create', await tokenFor(owner), { name: 'Công ty nhận push', idempotencyKey: randomUUID() }, null);
-    orgId = String(created.body?.orgId);
-    slug = String(created.body?.slug);
-    const other = await rpc('org/create', await tokenFor(outsider), { name: 'Công ty khác', idempotencyKey: randomUUID() }, null);
-    otherOrgId = String(other.body?.orgId);
-    otherSlug = String(other.body?.slug);
-    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser.userId, member.userId]);
-    // A marketplace connection of each org (the channel connection that holds its credential, then the connection itself: its entity is the org's default, by its trigger), and a hook of each.
-    const connect = async (org: string, by: string, adapter: string) => {
-      const channel = randomUUID();
-      const connection = randomUUID();
-      await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, 'Sàn thử', $5)", [org, channel, `marketplace_${adapter}`, `acct-${randomUUID().slice(0, 8)}`, by]);
-      await rows('INSERT INTO ludy_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, $4, $5)', [org, connection, channel, `marketplace_${adapter}`, adapter]);
-      return connection;
-    };
-    connectionId = await connect(orgId, owner.userId, 'shopee');
-    otherConnectionId = await connect(otherOrgId, outsider.userId, 'tiktok_shop');
-    hookId = (await rows<{ id: string }>('INSERT INTO ludy_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [orgId, connectionId, sha(key)]))[0]?.id ?? '';
-    otherHookId = (await rows<{ id: string }>('INSERT INTO ludy_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [otherOrgId, otherConnectionId, sha(otherKey)]))[0]?.id ?? '';
   }, 120_000);
 
   afterAll(async () => {
@@ -593,6 +629,28 @@ suite('Marketplace push hook (#4316)', () => {
       expect(await put(capHookId, sha(capKey), sha('global-after-free'))).toBe('accepted');
       expect(await put(capHookId, sha(capKey), sha('global-over-again'))).toBe('busy');
       await rows('DELETE FROM ludy_finance.marketplace_hook_notice');
+    });
+
+    it('backfills reject_token on hooks rotated before migration so stale pre-upgrade 1-arg rejections stay ignored while current ones stop at 10', async () => {
+      const [row] = await rows<{ reject_token: string | null }>('SELECT reject_token FROM ludy_finance.marketplace_hook WHERE id = $1', [preUpgradeHookId]);
+      expect(row?.reject_token).toBeTruthy();
+      expect(row?.reject_token).not.toBe(preUpgradeHookId);
+      expect(await asWorker<{ stopped: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid) AS stopped', [preUpgradeClaimId])).toEqual([{ stopped: false }]);
+      expect(
+        await asSealedApp<{ rejected_count: number; stopped: boolean }>(outsider, otherOrgId, 'SELECT rejected_count, stopped FROM ludy_finance.marketplace_hook_status($1::uuid)', [preUpgradeConnId]),
+      ).toEqual([{ rejected_count: 0, stopped: false }]);
+      expect(await put(preUpgradeHookId, sha(preUpgradeRotatedKey), sha('post-upgrade-push'))).toBe('accepted');
+      const claimed = await asWorker<{ hook_id: string }>('SELECT hook_id FROM ludy_finance.marketplace_hook_claim(10)');
+      expect(claimed).toEqual([{ hook_id: row!.reject_token }]);
+      for (let n = 1; n < 10; n++) {
+        expect(await asWorker<{ stopped: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid) AS stopped', [claimed[0]!.hook_id])).toEqual([{ stopped: false }]);
+      }
+      expect(await asWorker<{ stopped: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid) AS stopped', [claimed[0]!.hook_id])).toEqual([{ stopped: true }]);
+      expect(
+        await asSealedApp<{ rejected_count: number; stopped: boolean }>(outsider, otherOrgId, 'SELECT rejected_count, stopped FROM ludy_finance.marketplace_hook_status($1::uuid)', [preUpgradeConnId]),
+      ).toEqual([{ rejected_count: 10, stopped: true }]);
+      await rows('DELETE FROM ludy_finance.marketplace_hook WHERE org_id = $1 AND id = $2', [otherOrgId, preUpgradeHookId]);
+      await rows('DELETE FROM ludy_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [otherOrgId, preUpgradeConnId]);
     });
   });
 

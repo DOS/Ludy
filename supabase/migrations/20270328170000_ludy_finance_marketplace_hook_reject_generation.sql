@@ -33,9 +33,17 @@ ALTER TABLE ludy_finance.marketplace_hook
   DROP CONSTRAINT IF EXISTS marketplace_hook_generation_check,
   ADD CONSTRAINT marketplace_hook_generation_check CHECK (generation >= 1);
 
+-- Any hook already rotated prior to this migration gets a fresh token so
+-- stale pre-rotation 1-arg rejections held by an older worker cannot count
+-- against the rotated address after the upgrade.
+UPDATE ludy_finance.marketplace_hook
+SET reject_token = pg_catalog.gen_random_uuid()
+WHERE rotated_at IS NOT NULL AND reject_token IS NULL;
+
+-- Index the exact identifier that marketplace_hook_claim returns and both
+-- marketplace_hook_reject overloads look up.
 CREATE UNIQUE INDEX IF NOT EXISTS marketplace_hook_reject_token_uq
-  ON ludy_finance.marketplace_hook (reject_token)
-  WHERE reject_token IS NOT NULL;
+  ON ludy_finance.marketplace_hook ((COALESCE(reject_token, id)));
 
 -- ---------------------------------------------------------------------------
 -- 2. Increment generation on rotation in ludy_finance.marketplace_hook_set
@@ -133,7 +141,7 @@ BEGIN
       WHEN h.stopped_at IS NOT NULL THEN h.stopped_at
       WHEN (CASE WHEN h.rejected_window_start IS NULL OR h.rejected_window_start < v_now - interval '1 hour' THEN 1 ELSE h.rejected_count + 1 END) >= 10 THEN v_now
     END
-  WHERE (h.id = p_hook OR h.reject_token = p_hook) AND h.generation = p_generation
+  WHERE COALESCE(h.reject_token, h.id) = p_hook AND h.generation = p_generation
   RETURNING h.stopped_at IS NOT NULL INTO v_stopped;
   RETURN COALESCE(v_stopped, false);
 END $$;
@@ -143,19 +151,18 @@ CREATE OR REPLACE FUNCTION ludy_finance.marketplace_hook_reject(p_hook uuid)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 #variable_conflict use_column
 DECLARE
-  v_hook uuid;
   v_generation integer;
 BEGIN
   IF p_hook IS NULL THEN
     RETURN false;
   END IF;
-  SELECT h.id, h.generation INTO v_hook, v_generation
+  SELECT h.generation INTO v_generation
   FROM ludy_finance.marketplace_hook h
   WHERE COALESCE(h.reject_token, h.id) = p_hook;
-  IF v_hook IS NULL THEN
+  IF v_generation IS NULL THEN
     RETURN false;
   END IF;
-  RETURN ludy_finance.marketplace_hook_reject(v_hook, v_generation);
+  RETURN ludy_finance.marketplace_hook_reject(p_hook, v_generation);
 END $$;
 
 REVOKE ALL ON FUNCTION

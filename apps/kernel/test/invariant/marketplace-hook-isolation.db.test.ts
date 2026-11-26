@@ -208,11 +208,77 @@ suite('marketplace push hook security invariants (#4326)', () => {
   it('keeps marketplace_hook and marketplace_hook_notice definer-only with RLS enabled and zero grants to any role', async () => {
     await withAdmin(async (c) => {
       for (const table of ['crove_finance.marketplace_hook', 'crove_finance.marketplace_hook_notice']) {
-        const rls = await c.query<{ on: boolean }>('SELECT relrowsecurity AS on FROM pg_catalog.pg_class WHERE oid = $1::regclass', [table]);
-        expect(rls.rows[0]?.on, table).toBe(true);
-        const privs = await auditRoleTablePrivileges(c, dbIds, table, ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'], 'non_system');
+        const reg = dbIds!.table(table);
+        const rls = await c.query<{ on: boolean }>('SELECT relrowsecurity AS on FROM pg_catalog.pg_class WHERE oid = pg_catalog.to_regclass($1)', [reg]);
+        expect(rls.rows, table).toEqual([{ on: true }]);
+
+        const tableAcl = await c.query<{ grantee: string; privilege_type: string }>(
+          `SELECT COALESCE(r.rolname, 'PUBLIC') AS grantee, a.privilege_type
+             FROM pg_catalog.pg_class c
+             CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(c.relacl, pg_catalog.acldefault('r', c.relowner))) a
+             LEFT JOIN pg_catalog.pg_roles r ON r.oid = a.grantee
+            WHERE c.oid = pg_catalog.to_regclass($1)
+              AND a.grantee <> c.relowner
+            ORDER BY 1, 2`,
+          [reg],
+        );
+        expect(tableAcl.rows, table).toEqual([]);
+
+        const privs = await auditRoleTablePrivileges(
+          c,
+          dbIds,
+          table,
+          ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'],
+          'non_system',
+        );
+        expect(privs.length, table).toBeGreaterThan(0);
         expect(privs.filter((row) => row.ok), table).toEqual([]);
+
+        const colAcl = await c.query<{ attname: string; grantee: string; privilege_type: string }>(
+          `SELECT a.attname, COALESCE(r.rolname, 'PUBLIC') AS grantee, acl.privilege_type
+             FROM pg_catalog.pg_class c
+             JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+             CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl
+             LEFT JOIN pg_catalog.pg_roles r ON r.oid = acl.grantee
+            WHERE c.oid = pg_catalog.to_regclass($1)
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+              AND a.attacl IS NOT NULL
+              AND acl.grantee <> c.relowner
+            ORDER BY 1, 2, 3`,
+          [reg],
+        );
+        expect(colAcl.rows, table).toEqual([]);
+
+        const colPrivs = await c.query<{ rolname: string; privilege: string }>(
+          `SELECT r.rolname, p AS privilege
+             FROM pg_catalog.pg_class c
+             JOIN pg_catalog.pg_roles r ON r.oid <> c.relowner
+             CROSS JOIN pg_catalog.unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) AS p
+            WHERE c.oid = pg_catalog.to_regclass($1)
+              AND r.rolname !~ '^pg_'
+              AND NOT r.rolsuper
+              AND pg_catalog.has_any_column_privilege(r.oid, c.oid, p)
+            ORDER BY 1, 2`,
+          [reg],
+        );
+        expect(colPrivs.rows, table).toEqual([]);
+
+        const publicPrivs = await c.query<{ privilege: string }>(
+          `SELECT p AS privilege
+             FROM pg_catalog.unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']) AS p
+            WHERE pg_catalog.has_table_privilege('public', $1::regclass, p)
+               OR (p IN ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES') AND pg_catalog.has_any_column_privilege('public', $1::regclass, p))
+            ORDER BY 1`,
+          [reg],
+        );
+        expect(publicPrivs.rows, table).toEqual([]);
       }
+      const idx = await c.query<{ indexdef: string }>(
+        "SELECT pg_catalog.pg_get_indexdef(i.indexrelid) AS indexdef FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class ic ON ic.oid = i.indexrelid WHERE i.indrelid = pg_catalog.to_regclass($1) AND ic.relname = 'marketplace_hook_reject_token_uq' AND i.indisvalid",
+        [dbIds!.table('crove_finance.marketplace_hook')],
+      );
+      expect(idx.rows[0]?.indexdef).toContain('COALESCE(reject_token, id)');
     });
     for (const table of ['crove_finance.marketplace_hook', 'crove_finance.marketplace_hook_notice']) {
       await expect(appPool.query(`SELECT 1 FROM ${table}`)).rejects.toMatchObject({ code: '42501' });
@@ -327,14 +393,17 @@ suite('marketplace push hook security invariants (#4326)', () => {
     });
 
     const claimed = await workerDb.transaction().execute((trx) => claimMarketplaceHookNotices(trx));
-    const shopeeRow = claimed.find((r) => r.hookId === shopeeHookId);
-    const tiktokRow = claimed.find((r) => r.hookId === otherTiktokHookId);
-    const lazadaRow = claimed.find((r) => r.hookId === lazadaHookId);
+    const shopeeRow = claimed.find((r) => r.marketplaceConnectionId === shopeeConnId);
+    const tiktokRow = claimed.find((r) => r.marketplaceConnectionId === otherTiktokConnId);
+    const lazadaRow = claimed.find((r) => r.marketplaceConnectionId === lazadaConnId);
     expect(shopeeRow?.orgId).toBe(orgId);
+    expect(shopeeRow?.hookId).toBe(shopeeHookId);
     expect(shopeeRow?.requestUrl).toBe(`${PUBLIC_URL}/api/marketplace/shopee/webhook/${shopeeKey}`);
     expect(tiktokRow?.orgId).toBe(otherOrgId);
+    expect(tiktokRow?.hookId).toBe(otherTiktokHookId);
     expect(tiktokRow?.requestUrl).toBeNull();
     expect(lazadaRow?.orgId).toBe(orgId);
+    expect(lazadaRow?.hookId).not.toBe(lazadaHookId);
     expect(lazadaRow?.requestUrl).toBeNull();
 
     // Turning Finance off or revoking the channel connection makes lookup empty, put 'gone', and claim drop waiting pushes.
