@@ -207,6 +207,37 @@ pilot_layout() {
   env_compose_file_lists compose.pilot.yml
 }
 
+# Prints the active WAL compose file path if enabled (either an explicit path listed in COMPOSE_FILE such as
+# tools/backup/compose.wal.yml, or $DEPLOY_DIR/compose.wal.yml). Returns 1 if WAL is not enabled, or 2 if
+# COMPOSE_FILE names a compose.wal.yml path that does not exist on disk.
+resolve_wal_compose_file() {
+  local cf item resolved=''
+  local -a cf_items=()
+  cf="$(env_last_value COMPOSE_FILE)"
+  if [ -n "$cf" ]; then
+    IFS=':' read -ra cf_items <<<"$cf"
+    for item in "${cf_items[@]}"; do
+      case "$item" in
+        compose.wal.yml | */compose.wal.yml)
+          if [[ "$item" == /* ]]; then
+            resolved="$item"
+          else
+            resolved="$DEPLOY_DIR/$item"
+          fi
+          [ -f "$resolved" ] || return 2
+          printf '%s' "$resolved"
+          return 0
+          ;;
+      esac
+    done
+  fi
+  if [ -f "$DEPLOY_DIR/compose.wal.yml" ]; then
+    printf '%s' "$DEPLOY_DIR/compose.wal.yml"
+    return 0
+  fi
+  return 1
+}
+
 # Exports release image variables from the active release so compose.host.yml references resolve identically to deploy.sh.
 RELEASE_BUILD=''
 export_release_images() {
@@ -234,7 +265,13 @@ dc_proj() {
   local args=(compose --project-name "$proj" --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml")
   if pilot_layout && [ -f "$DEPLOY_DIR/compose.pilot.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.pilot.yml"); fi
   if [ -f "$DEPLOY_DIR/docker-compose.override.yml" ]; then args+=(-f "$DEPLOY_DIR/docker-compose.override.yml"); fi
-  if [ -f "$DEPLOY_DIR/compose.wal.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.wal.yml"); fi
+  local wal_file='' wal_rc=0
+  wal_file="$(resolve_wal_compose_file)" || wal_rc=$?
+  if ((wal_rc == 2)); then
+    err "COMPOSE_FILE references compose.wal.yml but the file does not exist under $DEPLOY_DIR"
+    return 1
+  fi
+  if [ -n "$wal_file" ]; then args+=(-f "$wal_file"); fi
   if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.host.yml"); fi
   docker "${args[@]}" "$@"
 }
@@ -781,7 +818,12 @@ do_cutover_stack() {
   [ -w "$ENV_FILE" ] && [ -w "$DEPLOY_DIR" ] || die "$EXIT_USAGE" "$ENV_FILE and $DEPLOY_DIR must be writable"
   [ -f "$OVERLAY_DIR/deploy.sh" ] || die "$EXIT_USAGE" "missing $OVERLAY_DIR/deploy.sh"
   [ -f "$OVERLAY_DIR/caddy/Caddyfile" ] && [ -f "$OVERLAY_DIR/caddy/compose.host.yml" ] || die "$EXIT_USAGE" "missing caddy overlays in $OVERLAY_DIR/caddy"
-  if [ -f "$DEPLOY_DIR/compose.wal.yml" ]; then
+  local wal_file='' wal_rc=0
+  wal_file="$(resolve_wal_compose_file)" || wal_rc=$?
+  if ((wal_rc == 2)); then
+    die "$EXIT_USAGE" "COMPOSE_FILE references compose.wal.yml but the file does not exist under $DEPLOY_DIR"
+  fi
+  if [ -n "$wal_file" ]; then
     [ -f "$OVERLAY_DIR/backup/compose.wal.yml" ] || die "$EXIT_USAGE" "missing $OVERLAY_DIR/backup/compose.wal.yml"
   fi
   if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then
@@ -857,8 +899,8 @@ do_cutover_stack() {
   env_tmp="$(umask 077 && mktemp "$(state_dir)/.env.cutover-tmp-XXXXXX")"
   TEMP_FILES+=("$env_tmp")
   rewrite_env_file "$ENV_FILE" "$env_tmp"
-  # Keep pre-switch WAL settings pinned until `switch-wal` builds ludy-db:local and creates stanza `ludy` (#3972).
-  if [ -f "$DEPLOY_DIR/compose.wal.yml" ]; then
+  # Keep pre-switch WAL/S3 settings pinned until `switch-wal` (or operator S3 migration) completes (#3972).
+  if [ -n "$wal_file" ]; then
     local cur_wal_img cur_wal_stanza cur_s3_prefix wal_tmp
     cur_wal_img="$(env_or_default WAL_DB_IMAGE 'crove-db:local')"
     cur_wal_stanza="$(env_or_default WAL_STANZA 'crove')"
@@ -867,8 +909,8 @@ do_cutover_stack() {
     TEMP_FILES+=("$wal_tmp")
     upsert_env_kv_file "$env_tmp" "$wal_tmp" WAL_DB_IMAGE "$cur_wal_img" WAL_STANZA "$cur_wal_stanza" BACKUP_S3_PREFIX "$cur_s3_prefix"
     mv -f "$wal_tmp" "$env_tmp"
-  elif [ -n "$(env_last_value BACKUP_S3_ENDPOINT)" ] || [ -n "$(env_last_value BACKUP_S3_BUCKET)" ]; then
-    # Non-WAL S3 backup stacks also defaulted BACKUP_S3_PREFIX=crove before Stage 7; keep existing runs/blobs reachable (#3972).
+  else
+    # Always preserve the pre-Stage-7 default BACKUP_S3_PREFIX=crove (even when S3 settings live outside .env, e.g. systemd) (#3972).
     local cur_s3_prefix s3_tmp
     cur_s3_prefix="$(env_or_default BACKUP_S3_PREFIX 'crove')"
     s3_tmp="$(umask 077 && mktemp "$(state_dir)/.env.cutover-s3-XXXXXX")"
@@ -992,7 +1034,8 @@ do_switch_wal() {
   [ "$ENV_FILE" = "$DEPLOY_DIR/.env" ] || die "$EXIT_USAGE" "switch-wal requires --env-file to be $DEPLOY_DIR/.env (wal.sh reads LUDY_DIR/.env)"
   [ -w "$ENV_FILE" ] && [ -w "$DEPLOY_DIR" ] || die "$EXIT_USAGE" "$ENV_FILE and $DEPLOY_DIR must be writable"
   env_compose_file_lists compose.wal.yml || die "$EXIT_USAGE" "COMPOSE_FILE in $ENV_FILE does not list compose.wal.yml"
-  [ -f "$DEPLOY_DIR/compose.wal.yml" ] || die "$EXIT_USAGE" "missing $DEPLOY_DIR/compose.wal.yml"
+  local wal_file=''
+  wal_file="$(resolve_wal_compose_file)" || die "$EXIT_USAGE" "compose.wal.yml listed in $ENV_FILE does not exist under $DEPLOY_DIR"
   [ -f "$OVERLAY_DIR/wal/Dockerfile" ] || die "$EXIT_USAGE" "missing $OVERLAY_DIR/wal/Dockerfile"
   [ -f "$OVERLAY_DIR/backup/compose.wal.yml" ] && [ -f "$OVERLAY_DIR/backup/wal.sh" ] || die "$EXIT_USAGE" "missing backup scripts in $OVERLAY_DIR/backup"
 
@@ -1009,17 +1052,25 @@ do_switch_wal() {
     umask 077
     cp "$ENV_FILE" "$backup_env"
     chmod 0600 "$backup_env"
-    cp "$DEPLOY_DIR/compose.wal.yml" "$backup_compose"
+    cp "$wal_file" "$backup_compose"
   )
   stage_overlays "$stamp"
 
   WAL_ROLLBACK_ENV="$backup_env"
-  WAL_ROLLBACK_COMPOSE="$backup_compose"
+  if [ "$wal_file" = "$DEPLOY_DIR/compose.wal.yml" ]; then
+    WAL_ROLLBACK_COMPOSE="$backup_compose"
+  else
+    WAL_ROLLBACK_COMPOSE=''
+  fi
   WAL_ROLLBACK_PROJECT="$proj"
   WAL_ROLLBACK_ARMED=1
 
-  log 'syncing latest compose.wal.yml and building ludy-db:local'
-  copy_into_deploy_dir "$STAGE_DIR/backup/compose.wal.yml" "$DEPLOY_DIR/compose.wal.yml"
+  if [ "$wal_file" = "$DEPLOY_DIR/compose.wal.yml" ]; then
+    log 'syncing latest compose.wal.yml and building ludy-db:local'
+    copy_into_deploy_dir "$STAGE_DIR/backup/compose.wal.yml" "$DEPLOY_DIR/compose.wal.yml"
+  else
+    log "building ludy-db:local (keeping checkout compose file $wal_file)"
+  fi
   docker build -t ludy-db:local "$STAGE_DIR/wal"
 
   env_tmp="$(umask 077 && mktemp "$(state_dir)/.env.wal-tmp-XXXXXX")"
@@ -1106,6 +1157,15 @@ do_prune_old_volumes() {
       existing="$(docker run --rm --network none -v "${dst}:/dst:ro" --entrypoint sh "$VOLUME_COPY_IMAGE" -c 'find /dst -mindepth 1 -maxdepth 1 -print -quit')"
       if [ "$suffix" = db-data ]; then
         [ -n "$existing" ] || die "$EXIT_FAILED" "refusing to prune $v: matching replacement volume $dst ($suffix) is empty"
+        docker run --rm --network none --user 0:0 \
+          -v "${v}:/src:ro" -v "${dst}:/dst:ro" \
+          --entrypoint sh "$VOLUME_COPY_IMAGE" -c '
+            set -eu
+            [ -f /src/PG_VERSION ] && [ -f /dst/PG_VERSION ] || exit 1
+            src_id="$(pg_controldata /src | sed -n "s/^Database system identifier:[[:space:]]*//p" | head -n 1)"
+            dst_id="$(pg_controldata /dst | sed -n "s/^Database system identifier:[[:space:]]*//p" | head -n 1)"
+            [ -n "$src_id" ] && [ "$src_id" = "$dst_id" ]
+          ' >/dev/null 2>&1 || die "$EXIT_FAILED" "refusing to prune $v: $dst does not match $v PostgreSQL cluster system identifier"
       elif [ -z "$existing" ]; then
         src_existing="$(docker run --rm --network none -v "${v}:/dst:ro" --entrypoint sh "$VOLUME_COPY_IMAGE" -c 'find /dst -mindepth 1 -maxdepth 1 -print -quit')"
         if [ -n "$src_existing" ]; then
@@ -1116,7 +1176,7 @@ do_prune_old_volumes() {
   fi
 
   # L1: When WAL archiving is active, refuse to prune without a verified healthy backup under stanza ludy.
-  if [ -f "$DEPLOY_DIR/compose.wal.yml" ] || env_compose_file_lists compose.wal.yml; then
+  if resolve_wal_compose_file >/dev/null 2>&1 || env_compose_file_lists compose.wal.yml; then
     [ "$ENV_FILE" = "$DEPLOY_DIR/.env" ] || die "$EXIT_USAGE" "prune-old-volumes with WAL requires --env-file to be $DEPLOY_DIR/.env (wal.sh reads LUDY_DIR/.env)"
     [ -n "$OVERLAY_DIR" ] && [ -f "$OVERLAY_DIR/backup/wal.sh" ] || die "$EXIT_USAGE" 'prune-old-volumes requires --overlay-dir with backup/wal.sh when compose.wal.yml is active'
     local stanza wal_info wal_backups

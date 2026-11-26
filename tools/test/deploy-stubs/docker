@@ -50,9 +50,11 @@ if [ "${1:-}" = ps ]; then
   done
   for item in ${STUB_ORPHAN_CONTAINERS:-}; do
     key="${item%%=*}"
-    cid="${item#*=}"
+    val="${item#*=}"
+    cid="${val%%:*}"
+    if [ "$val" != "$cid" ]; then oneoff="${val#*:}"; else oneoff='False'; fi
     if [ "$key" = "${proj}:${svc}" ]; then
-      printf '%s\n' "$cid"
+      printf '%s %s\n' "$cid" "$oneoff"
     fi
   done
   exit 0
@@ -156,6 +158,7 @@ case "$sub" in
         exit 0
       elif [ -n "${STUB_COMPOSE_PROJECT:-}" ]; then
         printf 'name: %s\n' "$STUB_COMPOSE_PROJECT"
+        printf 'services:\n  db:\n    volumes:\n      - type: volume\n        source: db-data\n        target: /var/lib/postgresql/data\nvolumes:\n  db-data:\n    name: %s\n' "${STUB_DB_VOLUME:-${STUB_COMPOSE_PROJECT}_db-data}"
       else
         proj="${COMPOSE_PROJECT_NAME:-}"
         if [ -z "$proj" ] && [ -n "$envfile" ] && [ -f "$envfile" ]; then
@@ -170,7 +173,9 @@ case "$sub" in
             if [ -n "$cname" ]; then proj="$cname"; fi
           done
         fi
-        printf 'name: %s\n' "${proj:-ludy}"
+        resolved_proj="${proj:-ludy}"
+        printf 'name: %s\n' "$resolved_proj"
+        printf 'services:\n  db:\n    volumes:\n      - type: volume\n        source: db-data\n        target: /var/lib/postgresql/data\nvolumes:\n  db-data:\n    name: %s\n' "${STUB_DB_VOLUME:-${resolved_proj}_db-data}"
       fi
     fi
     ;;

@@ -299,7 +299,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     writeFileSync(`${root}/compose.pilot.yml`, 'services: {}\n');
     const res = deploy('v0.4.0', 'b', {
       STUB_SERVICES: 'db migrate auth auth-grants ludy-extract ludy-media mailpit api worker',
-      STUB_ORPHAN_CONTAINERS: 'ludy:crove-extract=cid-ext ludy:crove-media=cid-media ludy:crove=cid-app otherproj:crove-extract=cid-other',
+      STUB_ORPHAN_CONTAINERS: 'ludy:crove-extract=cid-ext ludy:crove-media=cid-media ludy:crove=cid-app ludy:crove=cid-backup-run:True otherproj:crove-extract=cid-other',
     });
     expect(res.status, res.out).toBe(0);
     const c = calls();
@@ -310,6 +310,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(indexOf(c, 'docker rm cid-media')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy-extract ludy-media mailpit'));
     expect(indexOf(c, 'docker stop --time 30 cid-app')).toBeLessThan(indexOf(c, 'docker rm cid-app'));
     expect(indexOf(c, 'docker rm cid-app')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps worker'));
+    expect(c.some((l) => l.includes('cid-backup-run'))).toBe(false);
     expect(c.some((l) => l.includes('cid-other'))).toBe(false);
 
     // Stage a v0.3.12-shaped release using legacy service names (`crove`, `crove-extract`, `crove-media`) as previous and roll back to it.
@@ -430,6 +431,22 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1 ludy_db-data=cluster-1',
     });
     expect(populatedVolGuard.status, populatedVolGuard.out).toBe(0);
+
+    // Explicit compose override reusing crove_db-data as db volume is allowed safely without aborting.
+    const reuseCroveVol = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_DB_VOLUME: 'crove_db-data',
+    });
+    expect(reuseCroveVol.status, reuseCroveVol.out).toBe(0);
+
+    // Custom db volume configured on db service is what the cutover guard verifies (not hardcoded ludy_db-data).
+    const customVolMismatch = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data custom_db-data',
+      STUB_DB_VOLUME: 'custom_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1 custom_db-data=c2',
+    });
+    expect(customVolMismatch.status, customVolMismatch.out).toBe(1);
+    expect(customVolMismatch.out).toContain('without a matching copied PostgreSQL cluster in custom_db-data');
   });
 
   // #892: with --build, /version must report the build being deployed, so an old container that still answers fails.

@@ -256,8 +256,9 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
       }
     }
 
-    for (const retiredEnv of [{ CROVE_MODULES: 'kernel' }, { CROVE_MODULES: 'kernel', LUDY_MODULES: ',' }] as const) {
-      const expectedFlag = retiredEnv.LUDY_MODULES ? `CROVE_MODULES:${retiredEnv.LUDY_MODULES}` : 'CROVE_MODULES:';
+    const retiredCases: ReadonlyArray<Record<string, string>> = [{ CROVE_MODULES: 'kernel' }, { CROVE_MODULES: 'kernel', LUDY_MODULES: ',' }];
+    for (const retiredEnv of retiredCases) {
+      const expectedFlag = `CROVE_MODULES:${retiredEnv['LUDY_MODULES'] ?? ''}`;
       const solo = config(['docker-compose.yml'], retiredEnv, ['prober']);
       expect(solo['ludy']?.environment?.['LUDY_RETIRED_MODULES']).toBe(expectedFlag);
       expect(solo['prober']?.environment?.['LUDY_RETIRED_MODULES']).toBe(expectedFlag);

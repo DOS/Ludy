@@ -245,7 +245,7 @@ case "$cmd" in
       case "$1" in
         -v) mounts+=("$2"); shift 2 ;;
         --entrypoint) ep="$2"; shift 2 ;;
-        --network) shift 2 ;;
+        --network | --user) shift 2 ;;
         --rm) shift ;;
         *)
           if [ -z "$img" ]; then img="$1"; shift; else break; fi
@@ -253,6 +253,19 @@ case "$cmd" in
       esac
     done
     if [ "$ep" = sh ]; then
+      if [[ " $* " == *"pg_controldata"* ]]; then
+        src_vol="\${mounts[0]%%:*}"
+        dst_vol="\${mounts[1]%%:*}"
+        if [ -n "\${STUB_CLUSTER_IDS:-}" ]; then
+          src_id=''; dst_id=''
+          for pair in \${STUB_CLUSTER_IDS}; do
+            if [ "\${pair%%=*}" = "$src_vol" ]; then src_id="\${pair#*=}"; fi
+            if [ "\${pair%%=*}" = "$dst_vol" ]; then dst_id="\${pair#*=}"; fi
+          done
+          [ -n "$src_id" ] && [ "$src_id" = "$dst_id" ] && exit 0 || exit 1
+        fi
+        grep -qx "$src_vol" "$STUB_POPULATED_FILE" 2>/dev/null && grep -qx "$dst_vol" "$STUB_POPULATED_FILE" 2>/dev/null && exit 0 || exit 1
+      fi
       target="\${mounts[0]%%:*}"
       if grep -qx "$target" "$STUB_POPULATED_FILE" 2>/dev/null; then
         echo '/dst/PG_VERSION'
@@ -279,15 +292,18 @@ case "$cmd" in
   compose)
     if [ "\${1:-}" = version ]; then echo '2.30.0'; exit 0; fi
     proj=''
+    cfiles=()
     while (($# > 0)); do
       case "$1" in
         --project-name) proj="$2"; shift 2 ;;
-        --project-directory | --env-file | -f) shift 2 ;;
+        --project-directory | --env-file) shift 2 ;;
+        -f) cfiles+=("$2"); shift 2 ;;
         *) break ;;
       esac
     done
     sub="\${1:-}"; shift || true
     printf 'dc %s %s %s\\n' "$proj" "$sub" "$*" >>"$STUB_LOG"
+    printf 'dc-files %s %s\\n' "$proj" "\${cfiles[*]}" >>"$STUB_LOG.files"
     case "$sub" in
       config)
         if [ "\${1:-}" = --services ]; then
@@ -502,12 +518,9 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(updatedEnv).toContain('BACKUP_S3_PREFIX=crove');
   });
 
-  it('cutover-stack preserves BACKUP_S3_PREFIX on non-WAL S3 backup stacks (#3972)', { timeout: 15000 }, () => {
+  it('cutover-stack preserves BACKUP_S3_PREFIX even without S3 keys in .env, resolves checkout WAL paths, and prune-old-volumes verifies cluster ID (#3972)', { timeout: 15000 }, () => {
+    // Minimal non-WAL .env with no BACKUP_S3_ENDPOINT/BUCKET in .env (e.g. systemd/cron S3 env) still pins BACKUP_S3_PREFIX=crove.
     const f = createCutoverFixture();
-    writeFileSync(
-      join(f.deployDir, '.env'),
-      readFileSync(join(f.deployDir, '.env'), 'utf8') + 'BACKUP_S3_ENDPOINT=https://s3.example.com\nBACKUP_S3_BUCKET=ludy-backups\n',
-    );
     const res = runWithStubs(f, ['cutover-stack', '--dir', f.deployDir, '--overlay-dir', f.overlayDir]);
     expect(res.status, res.stderr).toBe(0);
     const updatedEnv = readFileSync(join(f.deployDir, '.env'), 'utf8');
@@ -518,17 +531,48 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     const fExplicit = createCutoverFixture();
     writeFileSync(
       join(fExplicit.deployDir, '.env'),
-      readFileSync(join(fExplicit.deployDir, '.env'), 'utf8') +
-        'BACKUP_S3_ENDPOINT=https://s3.example.com\nBACKUP_S3_BUCKET=ludy-backups\nBACKUP_S3_PREFIX=custom\n',
+      readFileSync(join(fExplicit.deployDir, '.env'), 'utf8') + 'BACKUP_S3_PREFIX=custom\n',
     );
     const resExplicit = runWithStubs(fExplicit, ['cutover-stack', '--dir', fExplicit.deployDir, '--overlay-dir', fExplicit.overlayDir]);
     expect(resExplicit.status, resExplicit.stderr).toBe(0);
     const updatedExplicit = readFileSync(join(fExplicit.deployDir, '.env'), 'utf8');
     expect(updatedExplicit).toContain('BACKUP_S3_PREFIX=custom');
     expect(updatedExplicit).not.toContain('BACKUP_S3_PREFIX=crove');
+
+    // COMPOSE_FILE referencing tools/backup/compose.wal.yml directly resolves WAL overlay and pins WAL_* + BACKUP_S3_PREFIX.
+    const fCheckoutWal = createCutoverFixture();
+    mkdirSync(join(fCheckoutWal.deployDir, 'tools/backup'), { recursive: true });
+    writeFileSync(join(fCheckoutWal.deployDir, 'tools/backup/compose.wal.yml'), 'services:\n  db:\n    image: ${WAL_DB_IMAGE:-ludy-db:local}\n');
+    writeFileSync(
+      join(fCheckoutWal.deployDir, '.env'),
+      readFileSync(join(fCheckoutWal.deployDir, '.env'), 'utf8').replace(
+        'COMPOSE_FILE=docker-compose.yml:compose.pilot.yml:compose.host.yml',
+        'COMPOSE_FILE=docker-compose.yml:compose.pilot.yml:compose.host.yml:tools/backup/compose.wal.yml',
+      ),
+    );
+    const resWal = runWithStubs(fCheckoutWal, ['cutover-stack', '--dir', fCheckoutWal.deployDir, '--overlay-dir', fCheckoutWal.overlayDir]);
+    expect(resWal.status, resWal.stderr).toBe(0);
+    expect(readFileSync(`${fCheckoutWal.stubLog}.files`, 'utf8')).toContain(`${fCheckoutWal.deployDir}/tools/backup/compose.wal.yml`);
+    const walEnv = readFileSync(join(fCheckoutWal.deployDir, '.env'), 'utf8');
+    expect(walEnv).toContain('WAL_DB_IMAGE=crove-db:local');
+    expect(walEnv).toContain('WAL_STANZA=crove');
+    expect(walEnv).toContain('BACKUP_S3_PREFIX=crove');
+
+    // Missing compose.wal.yml referenced in COMPOSE_FILE fails before stopping containers.
+    const fMissingWal = createCutoverFixture();
+    writeFileSync(
+      join(fMissingWal.deployDir, '.env'),
+      readFileSync(join(fMissingWal.deployDir, '.env'), 'utf8').replace(
+        'COMPOSE_FILE=docker-compose.yml:compose.pilot.yml:compose.host.yml',
+        'COMPOSE_FILE=docker-compose.yml:tools/backup/compose.wal.yml',
+      ),
+    );
+    const resMissingWal = runWithStubs(fMissingWal, ['cutover-stack', '--dir', fMissingWal.deployDir, '--overlay-dir', fMissingWal.overlayDir]);
+    expect(resMissingWal.status).toBe(2);
+    expect(resMissingWal.stderr).toContain('COMPOSE_FILE references compose.wal.yml');
   });
 
-  it('prune-old-volumes detects ludy service on Stage 7 non-pilot stacks (#3972)', { timeout: 15000 }, () => {
+  it('prune-old-volumes detects ludy service on Stage 7 non-pilot stacks and refuses mismatched DB cluster IDs (#3972)', { timeout: 15000 }, () => {
     const f = createCutoverFixture();
     writeFileSync(
       join(f.deployDir, '.env'),
@@ -537,8 +581,22 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     writeFileSync(f.volsFile, ['crove_db-data', 'ludy_db-data', ''].join('\n'));
     writeFileSync(f.populatedFile, ['crove_db-data', 'ludy_db-data', ''].join('\n'));
 
+    // Both volumes non-empty but mismatched PostgreSQL system_identifier -> must refuse before removing crove_db-data.
+    const mismatched = runWithStubs(
+      f,
+      ['prune-old-volumes', '--dir', f.deployDir, '--overlay-dir', f.overlayDir],
+      {
+        STUB_SERVICES: 'db migrate auth auth-grants ludy-extract ludy-media ludy',
+        STUB_CLUSTER_IDS: 'crove_db-data=cluster-old ludy_db-data=cluster-fresh',
+      },
+    );
+    expect(mismatched.status).toBe(1);
+    expect(mismatched.stderr).toContain('does not match crove_db-data PostgreSQL cluster system identifier');
+    expect(readFileSync(f.volsFile, 'utf8')).toContain('crove_db-data');
+
     const res = runWithStubs(f, ['prune-old-volumes', '--dir', f.deployDir, '--overlay-dir', f.overlayDir], {
       STUB_SERVICES: 'db migrate auth auth-grants ludy-extract ludy-media ludy',
+      STUB_CLUSTER_IDS: 'crove_db-data=cluster-1 ludy_db-data=cluster-1',
     });
     expect(res.status, res.stderr).toBe(0);
     expect(readFileSync(f.stubLog, 'utf8')).toContain('dc ludy port ludy 8080');

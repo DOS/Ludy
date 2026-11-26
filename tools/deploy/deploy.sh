@@ -864,21 +864,122 @@ compose_project() {
   printf '%s' "$raw"
 }
 
+# Prints the Docker volume name mounted at /var/lib/postgresql/data by service `db` from merged Compose config
+# (empty if bind-mounted), or falls back to `${proj}_db-data` if `db` defines no mount in a minimal compose file.
+# Fails closed (returns 1) if `dc config` fails.
+compose_db_volume() {
+  local proj="$1" config_out line section='' in_db=0 in_db_vols=0 cur_type='' cur_src='' cur_tgt='' mount_type='' mount_src=''
+  config_out="$(dc config 2>/dev/null)" || return 1
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ ^([a-zA-Z0-9_-]+):([[:space:]]*.*)?$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      in_db=0
+      in_db_vols=0
+      continue
+    fi
+    if [ "$section" = services ]; then
+      if [[ "$line" =~ ^[[:space:]]{2}([a-zA-Z0-9._-]+):[[:space:]]*$ ]]; then
+        if [ "${BASH_REMATCH[1]}" = db ]; then in_db=1; else in_db=0; fi
+        in_db_vols=0
+        continue
+      fi
+      if ((in_db)); then
+        if [[ "$line" =~ ^[[:space:]]{4}volumes:[[:space:]]*(\[\][[:space:]]*)?$ ]]; then
+          in_db_vols=1
+          cur_type=''; cur_src=''; cur_tgt=''
+          continue
+        elif [[ "$line" =~ ^[[:space:]]{4}[a-zA-Z0-9._-]+: ]]; then
+          in_db_vols=0
+          continue
+        fi
+        if ((in_db_vols)); then
+          if [[ "$line" =~ ^[[:space:]]*-[[:space:]]+(.*)$ ]]; then
+            local item="${BASH_REMATCH[1]}"
+            cur_type=''; cur_src=''; cur_tgt=''
+            if [[ "$item" =~ ^type:[[:space:]]*(.+)$ ]]; then
+              cur_type="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+            elif [[ "$item" =~ ^source:[[:space:]]*(.+)$ ]]; then
+              cur_src="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+            elif [[ "$item" =~ ^target:[[:space:]]*(.+)$ ]]; then
+              cur_tgt="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+            elif [[ "$item" =~ ^([^:]+):([^:]+)(:[^:]*)?$ ]]; then
+              local s_raw="${BASH_REMATCH[1]}" t_raw="${BASH_REMATCH[2]}"
+              s_raw="$(unquote_compose_scalar "$s_raw")"
+              t_raw="$(unquote_compose_scalar "$t_raw")"
+              if [ "$t_raw" = /var/lib/postgresql/data ]; then
+                mount_src="$s_raw"
+                if [[ "$s_raw" == /* || "$s_raw" == .* ]]; then mount_type=bind; else mount_type=volume; fi
+              fi
+            fi
+          elif [[ "$line" =~ ^[[:space:]]+type:[[:space:]]*(.+)$ ]]; then
+            cur_type="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+          elif [[ "$line" =~ ^[[:space:]]+source:[[:space:]]*(.+)$ ]]; then
+            cur_src="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+          elif [[ "$line" =~ ^[[:space:]]+target:[[:space:]]*(.+)$ ]]; then
+            cur_tgt="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+          fi
+          if [ "$cur_tgt" = /var/lib/postgresql/data ]; then
+            mount_type="${cur_type:-volume}"
+            mount_src="$cur_src"
+          fi
+        fi
+      fi
+    fi
+  done <<<"$config_out"
+
+  if [ "$mount_type" = bind ] || [[ "$mount_src" == /* || "$mount_src" == .* ]]; then
+    printf ''
+    return 0
+  fi
+  if [ -z "$mount_src" ]; then
+    printf '%s_db-data' "$proj"
+    return 0
+  fi
+
+  section=''
+  local vol_key_match=0 resolved_name=''
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ ^([a-zA-Z0-9_-]+):([[:space:]]*.*)?$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      vol_key_match=0
+      continue
+    fi
+    if [ "$section" = volumes ]; then
+      if [[ "$line" =~ ^[[:space:]]{2}([a-zA-Z0-9._-]+):([[:space:]]*.*)?$ ]]; then
+        if [ "${BASH_REMATCH[1]}" = "$mount_src" ]; then vol_key_match=1; else vol_key_match=0; fi
+        continue
+      fi
+      if ((vol_key_match)) && [[ "$line" =~ ^[[:space:]]{4}name:[[:space:]]*(.+)$ ]]; then
+        resolved_name="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+        break
+      fi
+    fi
+  done <<<"$config_out"
+
+  printf '%s' "${resolved_name:-${proj}_${mount_src}}"
+}
+
 # Gracefully stops and removes containers belonging to a renamed service from a prior release (e.g., crove-extract ->
-# ludy-extract across v0.3.12 -> Stage 7), strictly scoped by this stack's merged Compose project label. Fails closed
-# if project discovery, listing, stopping, or removal fails so conflicting old containers never remain alongside new ones.
+# ludy-extract across v0.3.12 -> Stage 7), strictly scoped by this stack's merged Compose project label and excluding
+# oneoff `docker compose run` containers. Fails closed if project discovery, listing, stopping, or removal fails.
 remove_orphan_service() {
-  local svc="$1" proj ps_out id
+  local svc="$1" proj ps_out id oneoff=''
   local -a ids=()
   if ! proj="$(compose_project)"; then
     err "cannot determine Compose project name before removing old $svc container(s)"
     return 1
   fi
-  if ! ps_out="$(docker ps -aq --filter "label=com.docker.compose.project=$proj" --filter "label=com.docker.compose.service=$svc")"; then
+  if ! ps_out="$(docker ps -a \
+    --filter "label=com.docker.compose.project=$proj" \
+    --filter "label=com.docker.compose.service=$svc" \
+    --format '{{.ID}} {{.Label "com.docker.compose.oneoff"}}')"; then
     err "cannot inspect containers for service $svc in project $proj"
     return 1
   fi
-  while IFS= read -r id; do
+  while read -r id oneoff; do
+    [ "${oneoff,,}" = true ] && continue
     if [[ "$id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then ids+=("$id"); fi
   done <<<"$ps_out"
   ((${#ids[@]} > 0)) || return 0
@@ -2001,16 +2102,21 @@ do_deploy() {
     record "deploy $name failed: compose config"
     die "$EXIT_FAILED" 'the compose files do not load with this env file; nothing was changed'
   fi
-  local active_proj=''
+  local active_proj='' db_vol=''
   if ! active_proj="$(compose_project)"; then
     if [ -n "$current" ]; then activate "$current"; fi
     record "deploy $name failed: compose project"
     die "$EXIT_FAILED" 'cannot determine the compose project name; nothing was changed'
   fi
-  if [ "$active_proj" = ludy ] && docker volume inspect crove_db-data >/dev/null 2>&1 && ! volumes_match_pg_cluster crove_db-data ludy_db-data "$image"; then
+  if ! db_vol="$(compose_db_volume "$active_proj")"; then
+    if [ -n "$current" ]; then activate "$current"; fi
+    record "deploy $name failed: db volume"
+    die "$EXIT_FAILED" 'cannot determine the database volume from compose config; nothing was changed'
+  fi
+  if [ -n "$db_vol" ] && [ "$db_vol" != crove_db-data ] && docker volume inspect crove_db-data >/dev/null 2>&1 && ! volumes_match_pg_cluster crove_db-data "$db_vol" "$image"; then
     if [ -n "$current" ]; then activate "$current"; fi
     record "deploy $name failed: crove_db-data not cut over"
-    die "$EXIT_FAILED" "found legacy volume crove_db-data without a matching copied PostgreSQL cluster in ludy_db-data for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or set COMPOSE_PROJECT_NAME=crove in $ENV_FILE, or prune stale crove_db-data after verifying your data) before deploying Stage 7 so Compose does not run against an empty database"
+    die "$EXIT_FAILED" "found legacy volume crove_db-data without a matching copied PostgreSQL cluster in $db_vol for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or set COMPOSE_PROJECT_NAME=crove in $ENV_FILE, or prune stale crove_db-data after verifying your data) before deploying Stage 7 so Compose does not run against an empty database"
   fi
 
   log 'starting the database'

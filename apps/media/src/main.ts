@@ -97,7 +97,7 @@ export function cleanupScratchDir(dir = process.env.TMPDIR || tmpdir()): void {
     if (existsSync(dir)) {
       const entries = readdirSync(dir);
       for (const entry of entries) {
-        if (entry.startsWith('ludy-media-')) {
+        if (entry.startsWith('ludy-media-') || entry.startsWith('crove-media-')) {
           rmSync(join(dir, entry), { recursive: true, force: true });
         }
       }
