@@ -98,8 +98,9 @@ export const noteImportEnex = defineCommand({
     let totalOwnedNotebooks = 0;
     let lastNotebookSortKey: string | null = null;
     if (neededFileNotebookNames.size > 0) {
-      const loadPrivateNotebooks = async () => {
+      const loadPrivateNotebooks = async (): Promise<Map<string, string[]>> => {
         privateNotebookByName.clear();
+        const idsByKey = new Map<string, string[]>();
         const existingNotebooks = await ctx.trx
           .selectFrom('ludy_notes.notebook')
           .select(['id', 'name', 'sort_key'])
@@ -112,24 +113,52 @@ export const noteImportEnex = defineCommand({
         for (const nb of existingNotebooks) {
           const key = nb.name.trim().toLowerCase();
           if (!privateNotebookByName.has(key)) privateNotebookByName.set(key, nb.id);
+          const list = idsByKey.get(key);
+          if (list) list.push(nb.id);
+          else idsByKey.set(key, [nb.id]);
         }
+        return idsByKey;
       };
 
-      // Follow global notebook DAG: notes.erase (S) -> notes.notebook.reorder -> notes.notebook:<id> (S, id ASC)
-      // before locking or creating notebooks, preventing concurrent notebook edits/deletes or erasures from racing reused file notebooks.
-      await lockNotebookReorder(ctx);
-      await loadPrivateNotebooks();
+      // Hold shared notes.erase upfront so concurrent erasure cannot commit over notebooks read below.
+      await lockNotesEraseShared(ctx);
+      let idsByKey = await loadPrivateNotebooks();
+      let heldReorderLock = false;
+      if ([...neededFileNotebookNames].some((key) => !privateNotebookByName.has(key))) {
+        // Only hold the org-wide notebook reorder lock when a missing file notebook must be created,
+        // and acquire it BEFORE any per-notebook lock to match the global notebook lock DAG.
+        await lockNotebookReorder(ctx);
+        heldReorderLock = true;
+        idsByKey = await loadPrivateNotebooks();
+      }
+
+      // Lock every matching existing private notebook key (duplicates included) in canonical id ASC order
+      // so concurrent notebook deletes/renames cannot shift the reused notebook to an unlocked row.
       const matchedExistingIds = [...new Set(
-        [...neededFileNotebookNames]
-          .map((key) => privateNotebookByName.get(key))
-          .filter((id): id is string => id !== undefined),
+        [...neededFileNotebookNames].flatMap((key) => idsByKey.get(key) ?? []),
       )].sort();
+      const lockedExistingSet = new Set(matchedExistingIds.map((id) => id.toLowerCase()));
       if (matchedExistingIds.length > 0) {
         await lockNotebooksSharedInOrder(ctx, matchedExistingIds);
         await loadPrivateNotebooks();
       }
-      const missingAnyFileNotebook = [...neededFileNotebookNames].some((key) => !privateNotebookByName.has(key));
-      if (missingAnyFileNotebook) {
+
+      let missingAfterLock = false;
+      for (const key of neededFileNotebookNames) {
+        const resolvedId = privateNotebookByName.get(key);
+        if (resolvedId !== undefined) {
+          if (!lockedExistingSet.has(resolvedId.toLowerCase())) {
+            throw new DomainError('CONFLICT', 409, 'Danh sách sổ tay vừa thay đổi; vui lòng thử lại');
+          }
+        } else if (!heldReorderLock) {
+          // A reused notebook disappeared during lock acquisition while reorder lock was skipped; retry cleanly instead of inverting lock order.
+          throw new DomainError('CONFLICT', 409, 'Danh sách sổ tay vừa thay đổi; vui lòng thử lại');
+        } else {
+          missingAfterLock = true;
+        }
+      }
+
+      if (missingAfterLock) {
         const existingAllCountRow = await ctx.trx
           .selectFrom('ludy_notes.notebook')
           .select(({ fn }) => fn.countAll<string>().as('n'))

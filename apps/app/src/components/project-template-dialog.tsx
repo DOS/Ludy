@@ -121,9 +121,14 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
     const activeEl = document.activeElement;
     if (!activeEl || activeEl === document.body || activeEl === document.documentElement) return true;
     if ('isConnected' in activeEl && !(activeEl as { isConnected?: boolean }).isConnected) return true;
-    if (activeEl.getAttribute('data-testid') === `template-archive-${archivedId}`) return true;
-    if (includeConfirmDialog && activeEl.closest?.('[data-slot="dialog-content"][data-variant="destructive"]')) return true;
-    return Boolean(radioGroupRef.current?.contains(activeEl));
+    const activeTestId = activeEl.getAttribute('data-testid');
+    if (activeTestId === `template-option-${archivedId}` || activeTestId === `template-archive-${archivedId}`) {
+      return true;
+    }
+    if (includeConfirmDialog && activeEl.closest?.('[data-slot="dialog-content"][data-variant="destructive"]')) {
+      return true;
+    }
+    return false;
   };
 
   const restoreRadioFocus = (archivedId: string, includeConfirmDialog = false, archivedSucceeded = false) => {

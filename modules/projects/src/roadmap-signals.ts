@@ -425,15 +425,15 @@ export const roadmapSignalCreate = defineCommand({
 
     const hydrated = await readRoadmapSignalSource(ctx, input.sourceType, input.sourceId);
 
-    // Canonical lock order: party (FOR KEY SHARE) -> roadmap_item (FOR SHARE) -> roadmap_signal,
-    // matching personalDataErase (party FOR UPDATE -> roadmap_item -> roadmap_signal) without TOCTOU (#4492).
+    // Canonical lock order: party (FOR SHARE) -> roadmap_item (FOR SHARE) -> roadmap_signal,
+    // matching personalDataErase (party FOR NO KEY UPDATE -> roadmap_signal) without TOCTOU (#4492, #5035).
     let hydratedAccountLabel = hydrated.accountLabel;
     let partyErased = false;
     if (hydrated.partyId) {
       const { rows: partyRows } = await sql<{ name: string }>`
         SELECT name FROM ludy_kernel.party
          WHERE org_id = ${ctx.orgId}::uuid AND id = ${hydrated.partyId}::uuid
-         FOR KEY SHARE
+         FOR SHARE
       `.execute(ctx.trx);
       const currentName = partyRows[0]?.name;
       if (currentName !== undefined) {

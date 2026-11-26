@@ -753,4 +753,118 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     expect(ownerLists.length).toBeGreaterThanOrEqual(3);
     expect(new Set(ownerLists.map((r) => r.sort_key)).size).toBe(ownerLists.length);
   });
+
+  it('skips org-wide reorder lock when ENEX only reuses existing notebooks, locks duplicate-named notebooks, and rejects concurrent delete/rename shifts (#5035)', async () => {
+    const ownerHeaders = await asJsonHeaders('owner');
+    const createNb = async (name: string) => {
+      const created = await rpc('notes/notebooks/create', ownerHeaders, { name, visibility: 'private' });
+      expect(created.status, JSON.stringify(created.body)).toBe(200);
+      return String(created.body.notebookId);
+    };
+    const makeEnex = (nbName: string, title: string) => `<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <notebook>${nbName}</notebook>
+  <note>
+    <title>${title}</title>
+    <content><![CDATA[<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note><p>${title}</p></en-note>]]></content>
+  </note>
+</en-export>`;
+
+    const reuseId = await createNb('So Tai Su Dung');
+    expect(reuseId).toBeTruthy();
+
+    // 1. Holding org-wide notes.notebook.reorder must NOT block an ENEX import whose file notebooks already exist.
+    const reorderGate = new pg.Client({ connectionString: adminUrl });
+    await reorderGate.connect();
+    try {
+      await reorderGate.query('BEGIN');
+      await reorderGate.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.notebook.reorder:${orgId.toLowerCase()}`],
+      );
+      const reuseRes = await uploadEnex('owner', makeEnex('So Tai Su Dung', 'Ghi Chu Tai Su Dung'));
+      expect(reuseRes.status, JSON.stringify(reuseRes.body)).toBe(201);
+      expect(reuseRes.body).toMatchObject({ importedNotes: 1, createdNotebooks: 0, reusedNotebooks: 1 });
+    } finally {
+      await reorderGate.query('ROLLBACK').catch(() => undefined);
+      await reorderGate.end().catch(() => undefined);
+    }
+
+    const waitAdvisorySharedWait = async (blockingPid: number, errors: unknown[]): Promise<void> => {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        if (errors.length > 0) throw errors[0];
+        const waits = await admin(async (c) =>
+          (await c.query<{ pid: number }>(
+            `SELECT a.pid
+               FROM pg_catalog.pg_stat_activity a
+              WHERE a.datname = pg_catalog.current_database()
+                AND a.state = 'active'
+                AND a.wait_event_type = 'Lock'
+                AND a.query ILIKE '%pg_advisory_xact_lock_shared%'
+                AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+              LIMIT 1`,
+            [blockingPid],
+          )).rows,
+        );
+        if (waits.length > 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Timed out waiting for shared advisory lock blocked on pid ${blockingPid}`);
+    };
+
+    // 2. Duplicate-named private notebooks: locking the second duplicate notebook still blocks ENEX import on shared advisory lock.
+    await createNb('So Trung Ten');
+    const dupNb2 = await createNb('So Trung Ten');
+    const dupGate = new pg.Client({ connectionString: adminUrl });
+    await dupGate.connect();
+    const dupErrors: unknown[] = [];
+    let importPromise: Promise<{ status: number; body: Record<string, unknown> }> | undefined;
+    try {
+      const dupPid = (await dupGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await dupGate.query('BEGIN');
+      await dupGate.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.notebook:${orgId.toLowerCase()}:${dupNb2.toLowerCase()}`],
+      );
+      importPromise = uploadEnex('owner', makeEnex('So Trung Ten', 'Ghi Chu Trung Ten'));
+      void importPromise.catch((err) => dupErrors.push(err));
+      await waitAdvisorySharedWait(dupPid, dupErrors);
+      await dupGate.query('COMMIT');
+      const dupRes = await importPromise;
+      expect(dupRes.status, JSON.stringify(dupRes.body)).toBe(201);
+      expect(dupRes.body).toMatchObject({ importedNotes: 1, createdNotebooks: 0, reusedNotebooks: 1 });
+    } finally {
+      await dupGate.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(importPromise ? [importPromise] : []);
+      await dupGate.end().catch(() => undefined);
+    }
+
+    // 3. If a reused existing file notebook is deleted concurrently while import waits on its lock, abort cleanly with 409 CONFLICT.
+    const vanishId = await createNb('So Bi Xoa Dong Thoi');
+    const delGate = new pg.Client({ connectionString: adminUrl });
+    await delGate.connect();
+    const delErrors: unknown[] = [];
+    let vanishPromise: Promise<{ status: number; body: Record<string, unknown> }> | undefined;
+    try {
+      const delPid = (await delGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await delGate.query('BEGIN');
+      await delGate.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.notebook:${orgId.toLowerCase()}:${vanishId.toLowerCase()}`],
+      );
+      vanishPromise = uploadEnex('owner', makeEnex('So Bi Xoa Dong Thoi', 'Ghi Chu So Bi Xoa'));
+      void vanishPromise.catch((err) => delErrors.push(err));
+      await waitAdvisorySharedWait(delPid, delErrors);
+      await delGate.query(`DELETE FROM ludy_notes.notebook WHERE org_id = $1 AND id = $2`, [orgId, vanishId]);
+      await delGate.query('COMMIT');
+      const vanishRes = await vanishPromise;
+      expect(vanishRes.status, JSON.stringify(vanishRes.body)).toBe(409);
+      expect(vanishRes.body.code).toBe('CONFLICT');
+    } finally {
+      await delGate.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(vanishPromise ? [vanishPromise] : []);
+      await delGate.end().catch(() => undefined);
+    }
+  });
 });
