@@ -21,7 +21,6 @@ import { assertUsableAccounts } from './accounts.ts';
 import { JOURNAL_VOUCHER_SOURCE, journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
 import { feeClearingProposal, type FeeClearingProposal } from './marketplace-fee-clearing-posting.ts';
-import { WITHHELD_IN_ERROR_MEMO_SUFFIX } from './marketplace-payout-posting.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
 import { booksOn } from './payroll-posting.ts';
@@ -97,10 +96,9 @@ export async function invoiceCleared(ctx: QueryContext, documentId: string): Pro
 }
 
 // The sum of the waiting-fees account's lines (debit minus credit) that name the party, in the entity: a reversal entry takes back what it reverses, so the balance already counts it.
-// Only fee-clearing vouchers (`fee_document_id`) and the fee lines of payout vouchers (`payout_settlement_id`, excluding `withheld_in_error` lines and zero-fee payouts), plus their reversals, are counted;
-// tax withheld by mistake (`otherReceivable` on 1388) and unrelated 1388 entries are never treated as fees awaiting an invoice (#4336).
+// Only fee-clearing vouchers (`fee_document_id`) and the fee debit line (`line_no = 2`, when `payload.fees > 0`) of payout vouchers (`payout_settlement_id`), plus their reversals, are counted;
+// tax withheld by mistake (`otherReceivable` on 1388, which sits after fees on `line_no >= 3` or on a zero-fee payout) and unrelated 1388 entries are never treated as fees awaiting an invoice (#4336).
 export async function balanceOf(ctx: QueryContext, legalEntityId: string, partyId: string, prefix: string): Promise<{ balance: string; lastDate: string | null }> {
-  const withheldMemoSuffix = `%${WITHHELD_IN_ERROR_MEMO_SUFFIX}`;
   const row = await ctx.trx
     .selectFrom('ludy_finance.journal_line as l')
     .innerJoin('ludy_finance.journal_entry as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.entry_id'))
@@ -122,8 +120,10 @@ export async function balanceOf(ctx: QueryContext, legalEntityId: string, partyI
         v.fee_document_id IS NOT NULL
         OR (
           v.payout_settlement_id IS NOT NULL
-          AND coalesce(l.memo, '') NOT LIKE ${withheldMemoSuffix}
-          AND (v.proposal_id IS NULL OR (p.id IS NOT NULL AND (p.payload->>'fees') ~ '^[0-9]+([.][0-9]{1,4})?$' AND (p.payload->>'fees')::numeric > 0))
+          AND l.line_no = 2
+          AND p.id IS NOT NULL
+          AND (p.payload->>'fees') ~ '^[0-9]+([.][0-9]{1,4})?$'
+          AND (p.payload->>'fees')::numeric > 0
         )
       )`,
     )
@@ -165,7 +165,7 @@ export async function resolveInvoiceClearingState(
   const initialRegime = await readRegime(legalEntityId, invoiceDate);
   const initialMap = mapOf(initialRegime);
   const initialPayableCode = initialMap?.feePayable.code ?? '331';
-  let payable = await invoicePayable(ctx, entryId, partyId, initialPayableCode);
+  const payable = await invoicePayable(ctx, entryId, partyId, initialPayableCode);
   if (!money(payable).greaterThan(0)) {
     if (options.requireConfirmed) throw notUsable('NO_PAYABLE');
     return null;
@@ -185,13 +185,6 @@ export async function resolveInvoiceClearingState(
   const map = options.requireConfirmed ? requireConfirmedMarketplaceMap(regime, maps) : mapOf(regime);
   if (!map) return null;
   const waiting = await readBalance(map.feeAwaitingInvoice.code);
-  if (map.feePayable.code !== initialPayableCode) {
-    payable = await invoicePayable(ctx, entryId, partyId, map.feePayable.code);
-    if (!money(payable).greaterThan(0)) {
-      if (options.requireConfirmed) throw notUsable('NO_PAYABLE');
-      return null;
-    }
-  }
   const cleared = await invoiceCleared(ctx, documentId);
   return { date, map, payable, cleared, waiting };
 }
