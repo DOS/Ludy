@@ -672,9 +672,9 @@ export const notebookUpdate = defineCommand({
     }
 
     if (input.reorder) {
-      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId.toLowerCase()}`}, 0))`.execute(ctx.trx);
     }
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId}:${input.notebookId}`}, 0))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId.toLowerCase()}:${input.notebookId.toLowerCase()}`}, 0))`.execute(ctx.trx);
 
     const before = await ctx.trx
       .selectFrom('ludy_notes.notebook')
@@ -772,7 +772,7 @@ export const notebookDelete = defineCommand({
     if (!peek) throw notebookNotFound();
     if (!canManageNotebook(peek, userId, ctx.role, wholeOrg)) throw notebookAuthorOnly();
 
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId}:${input.notebookId}`}, 0))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId.toLowerCase()}:${input.notebookId.toLowerCase()}`}, 0))`.execute(ctx.trx);
 
     const locked = await ctx.trx
       .selectFrom('ludy_notes.notebook')

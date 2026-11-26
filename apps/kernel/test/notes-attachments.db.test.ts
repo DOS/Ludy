@@ -573,6 +573,9 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     await lockClient.connect();
     let eraseOut!: PersonalDataErasure;
     try {
+      const pidRes = await lockClient.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid');
+      const lockPid = pidRes.rows[0]?.pid;
+      expect(lockPid).toBeTypeOf('number');
       await lockClient.query('BEGIN');
       // Hold concurrentNote FOR UPDATE (like notes.link.add before insertRecordLink) so private_erase must wait on it.
       await lockClient.query('SELECT 1 FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, concurrentNote]);
@@ -587,14 +590,13 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
         const waits = await rows<{ n: number }>(
           `SELECT 1 AS n
              FROM pg_catalog.pg_stat_activity a
-             JOIN pg_catalog.pg_locks l ON l.pid = a.pid
             WHERE a.datname = pg_catalog.current_database()
               AND a.state = 'active'
               AND a.wait_event_type = 'Lock'
-              AND NOT l.granted
-              AND l.relation = 'ludy_notes.note'::regclass
               AND a.query LIKE '%ludy_notes.private_erase%'
+              AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
             LIMIT 1`,
+          [lockPid],
         );
         if (waits.length > 0) sawEraseLockWait = true;
         else await new Promise((resolve) => setTimeout(resolve, 10));
@@ -635,5 +637,53 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     const beforeDeleteTs = await noteUpdatedAt(concurrentNote);
     await rt.execute('notes.attachment.delete', { attachmentId: extraAtt.id }, { actor: asUser(o.author.id), orgId: o.orgId });
     expect(await noteUpdatedAt(concurrentNote)).toBeGreaterThanOrEqual(beforeDeleteTs);
+
+    // Uppercase notebookId in notes.note.create must hash the same lowercase advisory lock key as PostgreSQL nb.id::text in private_erase.
+    const privNb = await rt.execute<{ notebookId: string }>(
+      'notes.notebook.create',
+      { name: 'Sổ tay chữ hoa', visibility: 'private' },
+      { actor: asUser(o.author.id), orgId: o.orgId },
+    );
+    const nbLockClient = new pg.Client({ connectionString: adminUrl });
+    await nbLockClient.connect();
+    try {
+      const pidRes = await nbLockClient.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid');
+      const nbLockPid = pidRes.rows[0]?.pid;
+      expect(nbLockPid).toBeTypeOf('number');
+      await nbLockClient.query('BEGIN');
+      await nbLockClient.query(
+        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+        [`notes.notebook:${o.orgId.toLowerCase()}:${privNb.notebookId.toLowerCase()}`],
+      );
+      const upperNotePromise = rt.execute<NoteWritten>(
+        'notes.note.create',
+        { title: 'Ghi chú UUID hoa', body: 'Nội dung', visibility: 'private', notebookId: privNb.notebookId.toUpperCase() },
+        { actor: asUser(o.author.id), orgId: o.orgId },
+      );
+      let sawNbLockWait = false;
+      const nbDeadline = Date.now() + 1500;
+      while (!sawNbLockWait && Date.now() < nbDeadline) {
+        const waits = await rows<{ n: number }>(
+          `SELECT 1 AS n
+             FROM pg_catalog.pg_stat_activity a
+            WHERE a.datname = pg_catalog.current_database()
+              AND a.state = 'active'
+              AND a.wait_event_type = 'Lock'
+              AND a.query LIKE '%pg_advisory_xact_lock_shared%'
+              AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+            LIMIT 1`,
+          [nbLockPid],
+        );
+        if (waits.length > 0) sawNbLockWait = true;
+        else await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(sawNbLockWait).toBe(true);
+      await nbLockClient.query('COMMIT');
+      const upperCreated = await upperNotePromise;
+      expect(upperCreated.noteId).toBeTruthy();
+    } finally {
+      await nbLockClient.query('ROLLBACK').catch(() => undefined);
+      await nbLockClient.end().catch(() => undefined);
+    }
   });
 });

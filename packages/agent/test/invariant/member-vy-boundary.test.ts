@@ -893,9 +893,8 @@ function scanSource(
           value === 'of' &&
           Boolean(topParen?.inForHeader && !topParen.semiSeen && topParen.depthInParen === 0);
         prevAllowsRegex = !prevWasDot && REGEX_PREFIX_KEYWORDS.has(value);
-        prevCouldBeDivision =
-          !prevWasDot &&
-          (value === 'await' || value === 'yield' || (value === 'of' && !isForOfHead) || value === 'void');
+        // void is a reserved unary operator when not preceded by `.`, so following `/` always opens a regex literal.
+        prevCouldBeDivision = !prevWasDot && (value === 'await' || value === 'yield' || (value === 'of' && !isForOfHead));
         prevControlKeyword =
           !prevWasDot && value === 'await' && prevControlKeyword === 'for'
             ? 'for await'
@@ -7778,9 +7777,13 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     ).toBeGreaterThan(0);
     expect(workspaceAdapterLeakViolations('const spread = { ...x };', ['summarize'], 'packages/other/ok.ts')).toEqual([]);
 
-    // Regex literals inside code (including after comparison ops like === and for..of headers) must not trigger false-positive unresolved metered calls while ambiguous division/regex spots still do.
+    // Regex literals inside code (including after comparison ops like ===, unary void, and for..of headers) must not trigger false-positive unresolved metered calls while ambiguous division/regex spots still do.
     expect(disallowedMeteredNotes('other.ts', 'const pattern = /metered(name)/;')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'enabled === /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'void /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'const x = obj.void / metered(dynKey) / 2;')).toEqual([
+      'unresolved metered key (dynKey)',
+    ]);
     expect(disallowedMeteredNotes('other.ts', 'for (const part of /metered(name)/.exec(text) ?? []) {}')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'for await (const part of /metered(name)/.exec(text) ?? []) {}')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'const x = of / metered(dynKey) / 2;')).toEqual([

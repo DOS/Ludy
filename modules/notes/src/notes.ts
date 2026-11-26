@@ -137,19 +137,21 @@ export async function resolveNotebookForNote(
   noteAuthorUserId: string,
   noteVisibility: NoteVisibility,
 ): Promise<{ id: string; visibility: NoteVisibility }> {
+  const normOrgId = ctx.orgId.toLowerCase();
+  const normNotebookId = notebookId.toLowerCase();
   const first = await ctx.trx
     .selectFrom('ludy_notes.notebook')
     .select(['id', 'author_user_id', 'visibility'])
     .where('org_id', '=', ctx.orgId)
-    .where('id', '=', notebookId)
+    .where('id', '=', normNotebookId)
     .executeTakeFirst();
   if (!first) throw notebookNotFound();
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId}:${notebookId}`}, 0))`.execute(ctx.trx);
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${`notes.notebook:${normOrgId}:${normNotebookId}`}, 0))`.execute(ctx.trx);
   const nb = await ctx.trx
     .selectFrom('ludy_notes.notebook')
     .select(['id', 'author_user_id', 'visibility'])
     .where('org_id', '=', ctx.orgId)
-    .where('id', '=', notebookId)
+    .where('id', '=', normNotebookId)
     .executeTakeFirst();
   if (!nb) throw notebookNotFound();
   if (nb.visibility === 'private' && nb.author_user_id !== noteAuthorUserId) throw notebookNotFound();
