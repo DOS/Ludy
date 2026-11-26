@@ -94,24 +94,37 @@ if [ "${1:-}" = run ]; then
       *) shift ;;
     esac
   done
-  ((${#vols[@]} >= 2)) || exit 1
-  expected_cluster=''
-  for vol in "${vols[@]}"; do
-    cluster=''
+  ((${#vols[@]} >= 1)) || exit 1
+  stub_cluster_id() {
+    local target="$1" pair
     for pair in ${STUB_PG_CLUSTER_IDS:-}; do
-      if [ "${pair%%=*}" = "$vol" ]; then
-        cluster="${pair#*=}"
-        break
+      if [ "${pair%%=*}" = "$target" ] && [ -n "${pair#*=}" ]; then
+        printf '%s' "${pair#*=}"
+        return 0
       fi
     done
-    [ -n "$cluster" ] || exit 1
-    if [ -z "$expected_cluster" ]; then
-      expected_cluster="$cluster"
-    elif [ "$cluster" != "$expected_cluster" ]; then
-      exit 1
-    fi
-  done
-  exit 0
+    return 1
+  }
+  stub_is_populated() {
+    local target="$1" m
+    if stub_cluster_id "$target" >/dev/null; then return 0; fi
+    for m in ${STUB_POPULATED_MOUNTS:-}; do
+      if [ "$m" = "$target" ]; then return 0; fi
+    done
+    return 1
+  }
+  if [[ "$*" == *pg_control* ]]; then
+    ((${#vols[@]} >= 2)) || exit 1
+    if ! stub_is_populated "${vols[0]}"; then exit 0; fi
+    c0="$(stub_cluster_id "${vols[0]}" || true)"
+    c1="$(stub_cluster_id "${vols[1]}" || true)"
+    if [ -n "$c0" ] && [ "$c0" = "$c1" ]; then exit 0; fi
+    exit 1
+  fi
+  if ! stub_is_populated "${vols[0]}"; then exit 0; fi
+  ((${#vols[@]} >= 2)) || exit 1
+  stub_is_populated "${vols[1]}"
+  exit $?
 fi
 [ "${1:-}" = compose ] || {
   echo "stub docker: unexpected $*" >&2
@@ -144,8 +157,29 @@ sub="$1"
 shift
 args="$*"
 printf 'compose %s %s\n' "$sub" "$args" >>"$STUB_LOG"
-# The compose files of each call, apart from the log so the order checks stay as they are.
-printf '%s\n' "${files[*]}" >>"$STUB_LOG.files"
+# The compose files of each active call (`config` without flags is read-only YAML resolution before/after activate).
+if [ "$sub" != config ] || [ -n "$args" ]; then
+  printf '%s\n' "${files[*]}" >>"$STUB_LOG.files"
+fi
+
+emit_stub_compose_config() {
+  local p="$1" app_svc='ludy' db_mount_yaml='' files_vol="${1}_files" keys_vol="${1}_keys" archive_vol="${1}_archive" db_vol="${1}_db-data"
+  if [ "$p" = crove ]; then app_svc='crove'; fi
+  case " ${STUB_SERVICES:-} " in *" worker "*) app_svc='worker' ;; esac
+  if [ "$p" != crove ] && [ -n "${STUB_NEW_DB_BIND:-}" ]; then
+    db_mount_yaml="      - type: bind\n        source: ${STUB_NEW_DB_BIND}\n        target: /var/lib/postgresql/data"
+  else
+    db_mount_yaml="      - type: volume\n        source: db-data\n        target: /var/lib/postgresql/data"
+  fi
+  if [ "$p" != crove ] && [ -n "${STUB_NEW_DB_VOLUME:-${STUB_DB_VOLUME:-}}" ]; then
+    db_vol="${STUB_NEW_DB_VOLUME:-${STUB_DB_VOLUME:-}}"
+  fi
+  if [ "$p" != crove ] && [ -n "${STUB_NEW_FILES_VOLUME:-}" ]; then files_vol="$STUB_NEW_FILES_VOLUME"; fi
+  if [ "$p" != crove ] && [ -n "${STUB_NEW_KEYS_VOLUME:-}" ]; then keys_vol="$STUB_NEW_KEYS_VOLUME"; fi
+  if [ "$p" != crove ] && [ -n "${STUB_NEW_ARCHIVE_VOLUME:-}" ]; then archive_vol="$STUB_NEW_ARCHIVE_VOLUME"; fi
+  printf 'name: %s\nservices:\n  db:\n    volumes:\n%b\n  %s:\n    volumes:\n      - type: volume\n        source: files\n        target: /data/files\n      - type: volume\n        source: keys\n        target: /data/keys\n      - type: volume\n        source: archive\n        target: /data/archive\nvolumes:\n  db-data:\n    name: %s\n  files:\n    name: %s\n  keys:\n    name: %s\n  archive:\n    name: %s\n' \
+    "$p" "$db_mount_yaml" "$app_svc" "$db_vol" "$files_vol" "$keys_vol" "$archive_vol"
+}
 
 case "$sub" in
   config)
@@ -157,8 +191,7 @@ case "$sub" in
       if [ "${STUB_COMPOSE_PROJECT:-}" = __empty__ ]; then
         exit 0
       elif [ -n "${STUB_COMPOSE_PROJECT:-}" ]; then
-        printf 'name: %s\n' "$STUB_COMPOSE_PROJECT"
-        printf 'services:\n  db:\n    volumes:\n      - type: volume\n        source: db-data\n        target: /var/lib/postgresql/data\nvolumes:\n  db-data:\n    name: %s\n' "${STUB_DB_VOLUME:-${STUB_COMPOSE_PROJECT}_db-data}"
+        emit_stub_compose_config "$STUB_COMPOSE_PROJECT"
       else
         proj="${COMPOSE_PROJECT_NAME:-}"
         if [ -z "$proj" ] && [ -n "$envfile" ] && [ -f "$envfile" ]; then
@@ -173,9 +206,7 @@ case "$sub" in
             if [ -n "$cname" ]; then proj="$cname"; fi
           done
         fi
-        resolved_proj="${proj:-ludy}"
-        printf 'name: %s\n' "$resolved_proj"
-        printf 'services:\n  db:\n    volumes:\n      - type: volume\n        source: db-data\n        target: /var/lib/postgresql/data\nvolumes:\n  db-data:\n    name: %s\n' "${STUB_DB_VOLUME:-${resolved_proj}_db-data}"
+        emit_stub_compose_config "${proj:-ludy}"
       fi
     fi
     ;;

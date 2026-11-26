@@ -402,51 +402,93 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(envFile()).toBe(beforeMod);
     expect(calls()).toEqual([]);
 
-    // Self-hosted volume cutover guard: crove_db-data without a matching copied ludy_db-data cluster must abort before starting db.
+    // Unrelated crove_db-data on the Docker host when this directory has no prior compose stack must NOT block a fresh deploy.
     writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=valid-key\n`);
-    const volGuard = deploy('v1.0.1', 'b', { STUB_VOLUMES: 'crove_db-data' });
-    expect(volGuard.status, volGuard.out).toBe(1);
-    expect(volGuard.out).toContain('found legacy volume crove_db-data without a matching copied PostgreSQL cluster in ludy_db-data');
-    expect(volGuard.out).toContain('cutover-ludy.sh cutover-stack');
+    const freshWithOtherStack = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=unrelated-cluster',
+    });
+    expect(freshWithOtherStack.status, freshWithOtherStack.out).toBe(0);
 
-    // Empty ludy_db-data (no PG_VERSION / pg_control) alongside crove_db-data must also fail closed.
+    // Simulate a first-time deploy over an existing manual pre-Stage-7 checkout (no .deploy/current yet):
+    // failing the storage guard must abort AND restore the original crove docker-compose.yml without leaving override behind.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    const legacyCompose = 'name: crove\nservices:\n  db:\n  crove:\n';
+    writeFileSync(`${dir}/docker-compose.yml`, legacyCompose);
+    rmSync(`${dir}/docker-compose.override.yml`, { force: true });
+
+    const volGuard = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1',
+    });
+    expect(volGuard.status, volGuard.out).toBe(1);
+    expect(volGuard.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+    expect(volGuard.out).toContain('cutover-ludy.sh cutover-stack');
+    expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toBe(legacyCompose);
+    expect(existsSync(`${dir}/docker-compose.override.yml`)).toBe(false);
+
+    // Empty ludy_db-data (no PG_VERSION / pg_control) alongside populated crove_db-data fails closed and keeps compose intact.
     const emptyVolGuard = deploy('v1.0.1', 'b', {
       STUB_VOLUMES: 'crove_db-data ludy_db-data',
       STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1',
     });
     expect(emptyVolGuard.status, emptyVolGuard.out).toBe(1);
-    expect(emptyVolGuard.out).toContain('found legacy volume crove_db-data without a matching copied PostgreSQL cluster in ludy_db-data');
+    expect(emptyVolGuard.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+    expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toBe(legacyCompose);
 
-    // Freshly initialized empty ludy_db-data (mismatched system_identifier) alongside crove_db-data must fail closed.
+    // Freshly initialized empty ludy_db-data (mismatched system_identifier) alongside crove_db-data fails closed.
     const mismatchedVolGuard = deploy('v1.0.1', 'b', {
       STUB_VOLUMES: 'crove_db-data ludy_db-data',
       STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-old ludy_db-data=cluster-fresh',
     });
     expect(mismatchedVolGuard.status, mismatchedVolGuard.out).toBe(1);
-    expect(mismatchedVolGuard.out).toContain('found legacy volume crove_db-data without a matching copied PostgreSQL cluster in ludy_db-data');
+    expect(mismatchedVolGuard.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
 
-    // Copied ludy_db-data with matching system_identifier passes the cutover guard.
-    const populatedVolGuard = deploy('v1.0.1', 'b', {
-      STUB_VOLUMES: 'crove_db-data ludy_db-data',
-      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1 ludy_db-data=cluster-1',
-    });
-    expect(populatedVolGuard.status, populatedVolGuard.out).toBe(0);
-
-    // Explicit compose override reusing crove_db-data as db volume is allowed safely without aborting.
-    const reuseCroveVol = deploy('v1.0.1', 'b', {
+    // Bind-mounted PostgreSQL target path on host is verified just like named volumes and fails if empty/mismatched.
+    const bindPgDir = `${root}/empty-pg-bind`;
+    mkdirSync(bindPgDir);
+    const bindMismatch = deploy('v1.0.1', 'b', {
       STUB_VOLUMES: 'crove_db-data',
-      STUB_DB_VOLUME: 'crove_db-data',
+      STUB_NEW_DB_BIND: bindPgDir,
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1',
     });
-    expect(reuseCroveVol.status, reuseCroveVol.out).toBe(0);
+    expect(bindMismatch.status, bindMismatch.out).toBe(1);
+    expect(bindMismatch.out).toContain(`without a matching copied PostgreSQL cluster in ${bindPgDir}`);
 
-    // Custom db volume configured on db service is what the cutover guard verifies (not hardcoded ludy_db-data).
+    // Reusing crove_db-data while non-empty crove_files or crove_keys lacks migrated ludy_* data fails closed.
+    const missingFiles = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data crove_files',
+      STUB_NEW_DB_VOLUME: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1',
+      STUB_POPULATED_MOUNTS: 'crove_files',
+    });
+    expect(missingFiles.status, missingFiles.out).toBe(1);
+    expect(missingFiles.out).toContain('found non-empty prior /data/files storage crove_files while destination ludy_files is missing or empty');
+
+    const emptyKeys = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data crove_keys ludy_keys',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1 ludy_db-data=cluster-1',
+      STUB_POPULATED_MOUNTS: 'crove_keys',
+    });
+    expect(emptyKeys.status, emptyKeys.out).toBe(1);
+    expect(emptyKeys.out).toContain('found non-empty prior /data/keys storage crove_keys while destination ludy_keys is missing or empty');
+
+    // Custom db volume configured on db service is checked rather than hardcoded ludy_db-data.
     const customVolMismatch = deploy('v1.0.1', 'b', {
       STUB_VOLUMES: 'crove_db-data ludy_db-data custom_db-data',
-      STUB_DB_VOLUME: 'custom_db-data',
+      STUB_NEW_DB_VOLUME: 'custom_db-data',
       STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1 custom_db-data=c2',
     });
     expect(customVolMismatch.status, customVolMismatch.out).toBe(1);
     expect(customVolMismatch.out).toContain('without a matching copied PostgreSQL cluster in custom_db-data');
+
+    // Fully migrated ludy_* DB + files + keys (while empty crove_archive is skipped cleanly) succeeds.
+    const fullCutover = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data crove_files ludy_files crove_keys ludy_keys crove_archive',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1 ludy_db-data=cluster-1',
+      STUB_POPULATED_MOUNTS: 'crove_files ludy_files crove_keys ludy_keys',
+    });
+    expect(fullCutover.status, fullCutover.out).toBe(0);
   });
 
   // #892: with --build, /version must report the build being deployed, so an old container that still answers fails.

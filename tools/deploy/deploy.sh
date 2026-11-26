@@ -654,11 +654,12 @@ acquire_lock() {
 }
 release_lock() { if [ "$LOCK_HELD" = 1 ]; then rm -rf "$(state_dir)/lock"; fi; }
 
-# The registry login's throwaway Docker config (pull_images); removed on every exit.
-PULL_CONFIG='' APP_BUILD_WORK=''
+# The registry login's throwaway Docker config (pull_images) and pre-activate host snapshot; removed on every exit.
+PULL_CONFIG='' APP_BUILD_WORK='' PRE_ACTIVATE_SNAP=''
 cleanup() {
   if [ -n "$PULL_CONFIG" ]; then rm -rf "$PULL_CONFIG"; fi
   if [ -n "${APP_BUILD_WORK:-}" ]; then rm -rf "$APP_BUILD_WORK"; fi
+  if [ -n "${PRE_ACTIVATE_SNAP:-}" ]; then rm -rf "$PRE_ACTIVATE_SNAP"; fi
   # The copies of the env file made while the context token key is written hold that key (and the old file). Stopped while
   # the env file itself is being overwritten, they are the way back: kept, and named.
   if [ "${KEY_WRITING:-0}" = 1 ]; then
@@ -710,6 +711,48 @@ dc() {
   if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.host.yml"); fi
   # DC_PREFIX: a command to run docker under (the count of plain idempotency rows runs under `timeout`).
   ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker "${args[@]}" "$@"
+}
+
+# Resolves the pre-deploy host Compose config (if $DEPLOY_DIR/docker-compose.yml already exists before activate),
+# passing only Compose files that currently exist on disk (supporting manual checkouts without docker-compose.override.yml).
+dc_prev_config() {
+  [ -f "$DEPLOY_DIR/docker-compose.yml" ] || return 1
+  local args=(compose --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml")
+  local item cf resolved_pilot='' resolved_wal=''
+  local -a cf_items=()
+  cf="$(sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?COMPOSE_FILE[[:space:]]*=[[:space:]]*//p' "$ENV_FILE" | tail -n 1 | sed -E 's/[[:space:]]+#.*$//')"
+  if [ -n "$cf" ]; then
+    IFS=':' read -ra cf_items <<<"$cf"
+  fi
+  if pilot_layout; then
+    if [ -f "$DEPLOY_DIR/compose.pilot.yml" ]; then
+      resolved_pilot="$DEPLOY_DIR/compose.pilot.yml"
+    else
+      for item in "${cf_items[@]+"${cf_items[@]}"}"; do
+        case "$item" in
+          compose.pilot.yml | */compose.pilot.yml)
+            if [[ "$item" == /* ]]; then resolved_pilot="$item"; else resolved_pilot="$DEPLOY_DIR/$item"; fi
+            ;;
+        esac
+      done
+    fi
+    [ -n "$resolved_pilot" ] && [ -f "$resolved_pilot" ] && args+=(-f "$resolved_pilot")
+  fi
+  if [ -f "$DEPLOY_DIR/docker-compose.override.yml" ]; then args+=(-f "$DEPLOY_DIR/docker-compose.override.yml"); fi
+  if [ -f "$DEPLOY_DIR/compose.wal.yml" ]; then
+    resolved_wal="$DEPLOY_DIR/compose.wal.yml"
+  else
+    for item in "${cf_items[@]+"${cf_items[@]}"}"; do
+      case "$item" in
+        compose.wal.yml | */compose.wal.yml)
+          if [[ "$item" == /* ]]; then resolved_wal="$item"; else resolved_wal="$DEPLOY_DIR/$item"; fi
+          ;;
+      esac
+    done
+  fi
+  if [ -n "$resolved_wal" ] && [ -f "$resolved_wal" ]; then args+=(-f "$resolved_wal"); fi
+  if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.host.yml"); fi
+  ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker "${args[@]}" config 2>/dev/null
 }
 
 # Image pins of a release. The images are exported too, so compose.host.yml can use ${LUDY_IMAGE} for services it
@@ -803,6 +846,40 @@ activate() {
   ACTIVE_BUILD="$(release_field "$1" BUILD)"
 }
 
+# Snapshots pre-existing host Compose files before first-time activate so pre-deploy guard failures leave a
+# manually managed checkout untouched (#3972).
+snapshot_pre_activate() {
+  local current_rel="$1" f
+  [ -z "$current_rel" ] || return 0
+  PRE_ACTIVATE_SNAP="$(mktemp -d)" || return 1
+  for f in docker-compose.yml docker-compose.override.yml compose.pilot.yml; do
+    if [ -f "$DEPLOY_DIR/$f" ]; then
+      cp -f "$DEPLOY_DIR/$f" "$PRE_ACTIVATE_SNAP/$f"
+      printf '1\n' >"$PRE_ACTIVATE_SNAP/$f.present"
+    else
+      printf '0\n' >"$PRE_ACTIVATE_SNAP/$f.present"
+    fi
+  done
+}
+
+restore_pre_activate() {
+  local current_rel="$1" f
+  if [ -n "$current_rel" ]; then
+    activate "$current_rel"
+    return 0
+  fi
+  [ -n "${PRE_ACTIVATE_SNAP:-}" ] && [ -d "$PRE_ACTIVATE_SNAP" ] || return 0
+  for f in docker-compose.yml docker-compose.override.yml compose.pilot.yml; do
+    if [ "$(cat "$PRE_ACTIVATE_SNAP/$f.present" 2>/dev/null || echo 0)" = 1 ] && [ -f "$PRE_ACTIVATE_SNAP/$f" ]; then
+      mv -f "$PRE_ACTIVATE_SNAP/$f" "$DEPLOY_DIR/$f"
+    else
+      rm -f "$DEPLOY_DIR/$f"
+    fi
+  done
+  rm -rf "$PRE_ACTIVATE_SNAP"
+  PRE_ACTIVATE_SNAP=''
+}
+
 release_field() { sed -n "s/^$2=//p" "$DEPLOY_DIR/releases/$1/release.env" | head -n 1; }
 
 # Services by role, from the active files and the profiles enabled in the env file (COMPOSE_PROFILES).
@@ -846,11 +923,9 @@ unquote_compose_scalar() {
   fi
 }
 
-# Resolved project name from the merged Compose configuration (honoring COMPOSE_PROJECT_NAME, .env, docker-compose.yml,
-# and overrides such as compose.host.yml). Fails closed if the project name cannot be determined.
-compose_project() {
-  local config_out line raw=''
-  config_out="$(dc config 2>/dev/null)" || return 1
+# Extracts the normalized project name from captured `docker compose config` YAML output.
+compose_project_from_yaml() {
+  local config_out="$1" line raw=''
   while IFS= read -r line; do
     line="${line%$'\r'}"
     if [[ "$line" =~ ^name:[[:space:]]*(.+)$ ]]; then
@@ -864,36 +939,43 @@ compose_project() {
   printf '%s' "$raw"
 }
 
-# Prints the Docker volume name mounted at /var/lib/postgresql/data by service `db` from merged Compose config
-# (empty if bind-mounted), or falls back to `${proj}_db-data` if `db` defines no mount in a minimal compose file.
-# Fails closed (returns 1) if `dc config` fails.
-compose_db_volume() {
-  local proj="$1" config_out line section='' in_db=0 in_db_vols=0 cur_type='' cur_src='' cur_tgt='' mount_type='' mount_src=''
+# Resolved project name from the merged Compose configuration (honoring COMPOSE_PROJECT_NAME, .env, docker-compose.yml,
+# and overrides such as compose.host.yml). Fails closed if the project name cannot be determined.
+compose_project() {
+  local config_out
   config_out="$(dc config 2>/dev/null)" || return 1
+  compose_project_from_yaml "$config_out"
+}
+
+# Prints `volume:<docker_volume>` or `bind:<host_path>` mounted at <target_path> on the first matching service
+# (<service_regex>) in captured `docker compose config` YAML, or empty if no matching service defines that target.
+compose_target_mount() {
+  local config_out="$1" proj="$2" target_path="$3" svc_re="$4"
+  local line section='' in_svc=0 in_vols=0 cur_type='' cur_src='' cur_tgt='' mount_type='' mount_src=''
   while IFS= read -r line; do
     line="${line%$'\r'}"
     if [[ "$line" =~ ^([a-zA-Z0-9_-]+):([[:space:]]*.*)?$ ]]; then
       section="${BASH_REMATCH[1]}"
-      in_db=0
-      in_db_vols=0
+      in_svc=0
+      in_vols=0
       continue
     fi
     if [ "$section" = services ]; then
       if [[ "$line" =~ ^[[:space:]]{2}([a-zA-Z0-9._-]+):[[:space:]]*$ ]]; then
-        if [ "${BASH_REMATCH[1]}" = db ]; then in_db=1; else in_db=0; fi
-        in_db_vols=0
+        if [[ "${BASH_REMATCH[1]}" =~ ^($svc_re)$ ]]; then in_svc=1; else in_svc=0; fi
+        in_vols=0
         continue
       fi
-      if ((in_db)); then
+      if ((in_svc)); then
         if [[ "$line" =~ ^[[:space:]]{4}volumes:[[:space:]]*(\[\][[:space:]]*)?$ ]]; then
-          in_db_vols=1
+          in_vols=1
           cur_type=''; cur_src=''; cur_tgt=''
           continue
         elif [[ "$line" =~ ^[[:space:]]{4}[a-zA-Z0-9._-]+: ]]; then
-          in_db_vols=0
+          in_vols=0
           continue
         fi
-        if ((in_db_vols)); then
+        if ((in_vols)); then
           if [[ "$line" =~ ^[[:space:]]*-[[:space:]]+(.*)$ ]]; then
             local item="${BASH_REMATCH[1]}"
             cur_type=''; cur_src=''; cur_tgt=''
@@ -904,12 +986,13 @@ compose_db_volume() {
             elif [[ "$item" =~ ^target:[[:space:]]*(.+)$ ]]; then
               cur_tgt="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
             elif [[ "$item" =~ ^([^:]+):([^:]+)(:[^:]*)?$ ]]; then
-              local s_raw="${BASH_REMATCH[1]}" t_raw="${BASH_REMATCH[2]}"
-              s_raw="$(unquote_compose_scalar "$s_raw")"
-              t_raw="$(unquote_compose_scalar "$t_raw")"
-              if [ "$t_raw" = /var/lib/postgresql/data ]; then
+              local s_raw t_raw
+              s_raw="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+              t_raw="$(unquote_compose_scalar "${BASH_REMATCH[2]}")"
+              if [ "$t_raw" = "$target_path" ]; then
                 mount_src="$s_raw"
                 if [[ "$s_raw" == /* || "$s_raw" == .* ]]; then mount_type=bind; else mount_type=volume; fi
+                break
               fi
             fi
           elif [[ "$line" =~ ^[[:space:]]+type:[[:space:]]*(.+)$ ]]; then
@@ -919,7 +1002,7 @@ compose_db_volume() {
           elif [[ "$line" =~ ^[[:space:]]+target:[[:space:]]*(.+)$ ]]; then
             cur_tgt="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
           fi
-          if [ "$cur_tgt" = /var/lib/postgresql/data ]; then
+          if [ "$cur_tgt" = "$target_path" ] && [ -n "$cur_src" ]; then
             mount_type="${cur_type:-volume}"
             mount_src="$cur_src"
           fi
@@ -928,12 +1011,13 @@ compose_db_volume() {
     fi
   done <<<"$config_out"
 
+  [ -n "$mount_src" ] || return 0
   if [ "$mount_type" = bind ] || [[ "$mount_src" == /* || "$mount_src" == .* ]]; then
-    printf ''
-    return 0
-  fi
-  if [ -z "$mount_src" ]; then
-    printf '%s_db-data' "$proj"
+    if [[ "$mount_src" == /* ]]; then
+      printf 'bind:%s' "$mount_src"
+    else
+      printf 'bind:%s/%s' "$DEPLOY_DIR" "${mount_src#./}"
+    fi
     return 0
   fi
 
@@ -958,7 +1042,80 @@ compose_db_volume() {
     fi
   done <<<"$config_out"
 
-  printf '%s' "${resolved_name:-${proj}_${mount_src}}"
+  printf 'volume:%s' "${resolved_name:-${proj}_${mount_src}}"
+}
+
+mount_exists() {
+  case "$1" in
+    volume:*) docker volume inspect "${1#volume:}" >/dev/null 2>&1 ;;
+    bind:*) [ -d "${1#bind:}" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+mount_docker_source() {
+  case "$1" in
+    volume:*) printf '%s' "${1#volume:}" ;;
+    bind:*) printf '%s' "${1#bind:}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+mount_label() {
+  mount_docker_source "$1"
+}
+
+# Returns 0 if source mount has no PG data OR destination mount holds the exact same PostgreSQL Database system identifier.
+mounts_match_pg_cluster() {
+  local src_spec="$1" dst_spec="$2" probe_image="$3" src_m dst_m
+  mount_exists "$src_spec" || return 0
+  src_m="$(mount_docker_source "$src_spec")"
+  if ! mount_exists "$dst_spec"; then
+    docker run --rm --network none --user 0:0 \
+      -v "${src_m}:/src:ro" \
+      --entrypoint node "$probe_image" -e '
+        const fs = require("node:fs");
+        process.exit(fs.readdirSync("/src").length === 0 ? 0 : 1);
+      ' >/dev/null 2>&1
+    return $?
+  fi
+  dst_m="$(mount_docker_source "$dst_spec")"
+  docker run --rm --network none --user 0:0 \
+    -v "${src_m}:/src:ro" -v "${dst_m}:/dst:ro" \
+    --entrypoint node "$probe_image" -e '
+      const fs = require("node:fs");
+      if (fs.readdirSync("/src").length === 0) process.exit(0);
+      for (const d of ["/src", "/dst"]) {
+        if (!fs.existsSync(d + "/PG_VERSION")) process.exit(1);
+      }
+      const a = fs.readFileSync("/src/global/pg_control").subarray(0, 8);
+      const b = fs.readFileSync("/dst/global/pg_control").subarray(0, 8);
+      if (a.length !== 8 || b.length !== 8 || a.every((x) => x === 0) || !a.equals(b)) process.exit(1);
+    ' >/dev/null 2>&1
+}
+
+# Returns 0 if source mount has no entries OR destination mount exists and is non-empty (#3972).
+mount_data_migrated() {
+  local src_spec="$1" dst_spec="$2" probe_image="$3" src_m dst_m
+  mount_exists "$src_spec" || return 0
+  src_m="$(mount_docker_source "$src_spec")"
+  if ! mount_exists "$dst_spec"; then
+    docker run --rm --network none --user 0:0 \
+      -v "${src_m}:/src:ro" \
+      --entrypoint node "$probe_image" -e '
+        const fs = require("node:fs");
+        process.exit(fs.readdirSync("/src").length === 0 ? 0 : 1);
+      ' >/dev/null 2>&1
+    return $?
+  fi
+  dst_m="$(mount_docker_source "$dst_spec")"
+  docker run --rm --network none --user 0:0 \
+    -v "${src_m}:/src:ro" -v "${dst_m}:/dst:ro" \
+    --entrypoint node "$probe_image" -e '
+      const fs = require("node:fs");
+      if (fs.readdirSync("/src").length === 0) process.exit(0);
+      process.exit(fs.readdirSync("/dst").length > 0 ? 0 : 1);
+    ' >/dev/null 2>&1
 }
 
 # Gracefully stops and removes containers belonging to a renamed service from a prior release (e.g., crove-extract ->
@@ -998,22 +1155,7 @@ remove_orphan_service() {
 # and share the same 8-byte PostgreSQL Database system identifier (bytes 0..7 of global/pg_control). This rejects an
 # accidentally initdb'd empty ludy_db-data cluster while accepting an offline-copied cluster even after Postgres has run
 # on it. Uses --user 0:0 because PostgreSQL data directories are mode 0700 owned by uid 999 (#3972).
-volumes_match_pg_cluster() {
-  local src_vol="$1" dst_vol="$2" probe_image="$3"
-  docker volume inspect "$src_vol" >/dev/null 2>&1 || return 1
-  docker volume inspect "$dst_vol" >/dev/null 2>&1 || return 1
-  docker run --rm --network none --user 0:0 \
-    -v "${src_vol}:/src:ro" -v "${dst_vol}:/dst:ro" \
-    --entrypoint node "$probe_image" -e '
-      const fs = require("node:fs");
-      for (const d of ["/src", "/dst"]) {
-        if (!fs.existsSync(d + "/PG_VERSION")) process.exit(1);
-      }
-      const a = fs.readFileSync("/src/global/pg_control").subarray(0, 8);
-      const b = fs.readFileSync("/dst/global/pg_control").subarray(0, 8);
-      if (a.length !== 8 || b.length !== 8 || a.every((x) => x === 0) || !a.equals(b)) process.exit(1);
-    ' >/dev/null 2>&1
-}
+# Kept cleanly above via mounts_match_pg_cluster().
 
 local_url() {
   local mapped port
@@ -2095,33 +2237,63 @@ do_deploy() {
   # The build time the image carries, which orders the rolls (#1965).
   printf 'BUILD_EPOCH=%s\n' "$(image_build_epoch "$image")" >>"$dir/release.env"
 
+  local prev_config='' prev_proj=''
+  if [ -f "$DEPLOY_DIR/docker-compose.yml" ]; then
+    prev_config="$(dc_prev_config || true)"
+    if [ -n "$prev_config" ]; then
+      prev_proj="$(compose_project_from_yaml "$prev_config" || true)"
+    fi
+  fi
+  snapshot_pre_activate "$current" || {
+    record "deploy $name failed: snapshot"
+    die "$EXIT_FAILED" 'cannot snapshot pre-deploy compose files; nothing was changed'
+  }
+
   activate "$name"
   # Check the merged files before touching any container.
   if ! dc config --quiet; then
-    if [ -n "$current" ]; then activate "$current"; fi
+    restore_pre_activate "$current"
     record "deploy $name failed: compose config"
     die "$EXIT_FAILED" 'the compose files do not load with this env file; nothing was changed'
   fi
-  local active_proj='' db_vol=''
-  if ! active_proj="$(compose_project)"; then
-    if [ -n "$current" ]; then activate "$current"; fi
+  local new_config='' active_proj=''
+  if ! new_config="$(dc config 2>/dev/null)" || ! active_proj="$(compose_project_from_yaml "$new_config")"; then
+    restore_pre_activate "$current"
     record "deploy $name failed: compose project"
     die "$EXIT_FAILED" 'cannot determine the compose project name; nothing was changed'
   fi
-  if ! db_vol="$(compose_db_volume "$active_proj")"; then
-    if [ -n "$current" ]; then activate "$current"; fi
-    record "deploy $name failed: db volume"
-    die "$EXIT_FAILED" 'cannot determine the database volume from compose config; nothing was changed'
-  fi
-  if [ -n "$db_vol" ] && [ "$db_vol" != crove_db-data ] && docker volume inspect crove_db-data >/dev/null 2>&1 && ! volumes_match_pg_cluster crove_db-data "$db_vol" "$image"; then
-    if [ -n "$current" ]; then activate "$current"; fi
-    record "deploy $name failed: crove_db-data not cut over"
-    die "$EXIT_FAILED" "found legacy volume crove_db-data without a matching copied PostgreSQL cluster in $db_vol for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or set COMPOSE_PROJECT_NAME=crove in $ENV_FILE, or prune stale crove_db-data after verifying your data) before deploying Stage 7 so Compose does not run against an empty database"
+  if [ -n "$prev_config" ] && [ -n "$prev_proj" ]; then
+    local prev_db='' new_db=''
+    prev_db="$(compose_target_mount "$prev_config" "$prev_proj" /var/lib/postgresql/data 'db')"
+    new_db="$(compose_target_mount "$new_config" "$active_proj" /var/lib/postgresql/data 'db')"
+    if [ -n "$prev_db" ] && [ -n "$new_db" ] && [ "$prev_db" != "$new_db" ]; then
+      if ! mounts_match_pg_cluster "$prev_db" "$new_db" "$image"; then
+        restore_pre_activate "$current"
+        record "deploy $name failed: db storage $(mount_label "$prev_db") not cut over"
+        die "$EXIT_FAILED" "found prior database storage $(mount_label "$prev_db") without a matching copied PostgreSQL cluster in $(mount_label "$new_db") for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or keep COMPOSE_PROJECT_NAME=$prev_proj / mount $(mount_label "$prev_db") in $ENV_FILE) before deploying Stage 7"
+      fi
+    fi
+    local target prev_m new_m
+    for target in /data/files /data/keys /data/archive; do
+      prev_m="$(compose_target_mount "$prev_config" "$prev_proj" "$target" 'ludy|crove|worker|api')"
+      new_m="$(compose_target_mount "$new_config" "$active_proj" "$target" 'ludy|crove|worker|api')"
+      if [ -n "$prev_m" ] && [ -n "$new_m" ] && [ "$prev_m" != "$new_m" ]; then
+        if ! mount_data_migrated "$prev_m" "$new_m" "$image"; then
+          restore_pre_activate "$current"
+          record "deploy $name failed: $target storage $(mount_label "$prev_m") not cut over"
+          die "$EXIT_FAILED" "found non-empty prior $target storage $(mount_label "$prev_m") while destination $(mount_label "$new_m") is missing or empty; cut over persistent volumes/paths before deploying Stage 7"
+        fi
+      fi
+    done
   fi
 
   log 'starting the database'
   if ! up db; then
     recover "$current" "deploy $name (database)" "$name"
+  fi
+  if [ -n "${PRE_ACTIVATE_SNAP:-}" ]; then
+    rm -rf "$PRE_ACTIVATE_SNAP"
+    PRE_ACTIVATE_SNAP=''
   fi
   # The production steps of #1822 and #1750 (docs/runbooks/deploy.md), on the host, with the database up and before
   # `migrate`, which installs the key: make the context token key when the env file has none, and count the plain

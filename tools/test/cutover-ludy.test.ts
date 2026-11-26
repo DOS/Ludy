@@ -188,7 +188,21 @@ function createCutoverFixture(): StubFixture {
   writeFileSync(join(overlayDir, 'backup', 'compose.wal.yml'), 'services:\n  db:\n    environment:\n      PGBACKREST_STANZA: ${WAL_STANZA:-crove}\n');
   writeFileSync(
     join(overlayDir, 'backup', 'wal.sh'),
-    ['#!/usr/bin/env bash', 'set -euo pipefail', 'printf "wal.sh %s\\n" "$*" >>"$STUB_LOG"', 'if [ "${1:-}" = info ]; then printf "%b\\n" "${STUB_WAL_INFO:-stanza: ludy\\nstatus: ok\\nfull backup: 20261124-000000F}"; fi', 'exit 0', ''].join('\n'),
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'if [ -n "${STUB_LOG_WAL_STANZA:-}" ]; then',
+      '  printf "wal.sh %s WAL_STANZA=%s\\n" "$*" "${WAL_STANZA:-}" >>"$STUB_LOG"',
+      'else',
+      '  printf "wal.sh %s\\n" "$*" >>"$STUB_LOG"',
+      'fi',
+      'if [ "${1:-}" = info ]; then printf "%b\\n" "${STUB_WAL_INFO:-stanza: ludy\\nstatus: ok\\nfull backup: 20261124-000000F}"; fi',
+      'if [ "${1:-}" = check ] && [ -n "${STUB_FAIL_WAL_CHECK_STANZA:-}" ] && [ "${WAL_STANZA:-}" = "$STUB_FAIL_WAL_CHECK_STANZA" ]; then',
+      '  exit 1',
+      'fi',
+      'exit 0',
+      '',
+    ].join('\n'),
   );
   writeFileSync(join(overlayDir, 'wal', 'Dockerfile'), 'FROM postgres:17\n');
 
@@ -320,6 +334,9 @@ case "$cmd" in
         last="\${*: -1}"
         case "$*" in
           *pg_isready*) exit 0 ;;
+          *printenv*PGBACKREST_STANZA*)
+            if [ -n "\${STUB_PRE_WAL_STANZA:-}" ]; then echo "$STUB_PRE_WAL_STANZA"; fi
+            ;;
           *pg_dump*) printf 'PGDMP-STUB\\n' ;;
           *pg_restore*) cat >/dev/null ;;
           *)
@@ -570,6 +587,50 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     const resMissingWal = runWithStubs(fMissingWal, ['cutover-stack', '--dir', fMissingWal.deployDir, '--overlay-dir', fMissingWal.overlayDir]);
     expect(resMissingWal.status).toBe(2);
     expect(resMissingWal.stderr).toContain('COMPOSE_FILE references compose.wal.yml');
+
+    // COMPOSE_FILE referencing tools/deploy/compose.pilot.yml resolves pilot overlay without root compose.pilot.yml.
+    const fCheckoutPilot = createCutoverFixture();
+    rmSync(join(fCheckoutPilot.deployDir, 'compose.pilot.yml'));
+    mkdirSync(join(fCheckoutPilot.deployDir, 'tools/deploy'), { recursive: true });
+    writeFileSync(join(fCheckoutPilot.deployDir, 'tools/deploy/compose.pilot.yml'), 'services:\n  api:\n    command: ["api"]\n');
+    writeFileSync(
+      join(fCheckoutPilot.deployDir, '.env'),
+      readFileSync(join(fCheckoutPilot.deployDir, '.env'), 'utf8').replace(
+        'COMPOSE_FILE=docker-compose.yml:compose.pilot.yml:compose.host.yml',
+        'COMPOSE_FILE=docker-compose.yml:tools/deploy/compose.pilot.yml:compose.host.yml',
+      ),
+    );
+    const resPilot = runWithStubs(fCheckoutPilot, ['cutover-stack', '--dir', fCheckoutPilot.deployDir, '--overlay-dir', fCheckoutPilot.overlayDir]);
+    expect(resPilot.status, resPilot.stderr).toBe(0);
+    expect(readFileSync(`${fCheckoutPilot.stubLog}.files`, 'utf8')).toContain(`${fCheckoutPilot.deployDir}/tools/deploy/compose.pilot.yml`);
+
+    // Missing compose.pilot.yml referenced in COMPOSE_FILE fails closed before touching containers.
+    const fMissingPilot = createCutoverFixture();
+    rmSync(join(fMissingPilot.deployDir, 'compose.pilot.yml'));
+    const resMissingPilot = runWithStubs(fMissingPilot, ['cutover-stack', '--dir', fMissingPilot.deployDir, '--overlay-dir', fMissingPilot.overlayDir]);
+    expect(resMissingPilot.status).toBe(2);
+    expect(resMissingPilot.stderr).toContain('COMPOSE_FILE lists compose.pilot.yml');
+
+    // switch-wal rollback on a legacy stack without WAL_STANZA in .env restores pre-switch stanza and verifies wal.sh check.
+    const fWalRollback = createCutoverFixture();
+    writeFileSync(
+      join(fWalRollback.deployDir, '.env'),
+      readFileSync(join(fWalRollback.deployDir, '.env'), 'utf8').replace('COMPOSE_FILE=', 'COMPOSE_FILE=compose.wal.yml:'),
+    );
+    writeFileSync(join(fWalRollback.deployDir, 'compose.wal.yml'), 'services:\n  db:\n    environment:\n      PGBACKREST_STANZA: ${WAL_STANZA:-crove}\n');
+    const resWalRollback = runWithStubs(
+      fWalRollback,
+      ['switch-wal', '--dir', fWalRollback.deployDir, '--overlay-dir', fWalRollback.overlayDir],
+      {
+        STUB_LOG_WAL_STANZA: '1',
+        STUB_PRE_WAL_STANZA: 'crove',
+        STUB_FAIL_WAL_CHECK_STANZA: 'ludy',
+      },
+    );
+    expect(resWalRollback.status).not.toBe(0);
+    const walStubLog = readFileSync(fWalRollback.stubLog, 'utf8');
+    expect(walStubLog).toContain('wal.sh setup WAL_STANZA=crove');
+    expect(walStubLog).toContain('wal.sh check WAL_STANZA=crove');
   });
 
   it('prune-old-volumes detects ludy service on Stage 7 non-pilot stacks and refuses mismatched DB cluster IDs (#3972)', { timeout: 15000 }, () => {

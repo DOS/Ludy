@@ -112,6 +112,7 @@ WAL_ROLLBACK_ARMED=0
 WAL_ROLLBACK_ENV=''
 WAL_ROLLBACK_COMPOSE=''
 WAL_ROLLBACK_PROJECT=''
+WAL_ROLLBACK_STANZA=''
 TEMP_FILES=()
 
 cleanup() {
@@ -207,35 +208,41 @@ pilot_layout() {
   env_compose_file_lists compose.pilot.yml
 }
 
-# Prints the active WAL compose file path if enabled (either an explicit path listed in COMPOSE_FILE such as
-# tools/backup/compose.wal.yml, or $DEPLOY_DIR/compose.wal.yml). Returns 1 if WAL is not enabled, or 2 if
-# COMPOSE_FILE names a compose.wal.yml path that does not exist on disk.
-resolve_wal_compose_file() {
-  local cf item resolved=''
+# Resolves an overlay compose file (such as compose.pilot.yml or compose.wal.yml) from COMPOSE_FILE in $ENV_FILE
+# or optionally falls back to $DEPLOY_DIR/<basename>. Returns 1 if not active, or 2 if COMPOSE_FILE names it
+# and the resolved file does not exist on disk.
+resolve_compose_overlay() {
+  local base="$1" fallback="${2:-fallback}" cf item resolved=''
   local -a cf_items=()
   cf="$(env_last_value COMPOSE_FILE)"
   if [ -n "$cf" ]; then
     IFS=':' read -ra cf_items <<<"$cf"
     for item in "${cf_items[@]}"; do
-      case "$item" in
-        compose.wal.yml | */compose.wal.yml)
-          if [[ "$item" == /* ]]; then
-            resolved="$item"
-          else
-            resolved="$DEPLOY_DIR/$item"
-          fi
-          [ -f "$resolved" ] || return 2
-          printf '%s' "$resolved"
-          return 0
-          ;;
-      esac
+      if [ "$item" = "$base" ] || [[ "$item" == */"$base" ]]; then
+        if [[ "$item" == /* ]]; then
+          resolved="$item"
+        else
+          resolved="$DEPLOY_DIR/$item"
+        fi
+        [ -f "$resolved" ] || return 2
+        printf '%s' "$resolved"
+        return 0
+      fi
     done
   fi
-  if [ -f "$DEPLOY_DIR/compose.wal.yml" ]; then
-    printf '%s' "$DEPLOY_DIR/compose.wal.yml"
+  if [ "$fallback" = fallback ] && [ -f "$DEPLOY_DIR/$base" ]; then
+    printf '%s' "$DEPLOY_DIR/$base"
     return 0
   fi
   return 1
+}
+
+resolve_wal_compose_file() {
+  resolve_compose_overlay compose.wal.yml fallback
+}
+
+resolve_pilot_compose_file() {
+  resolve_compose_overlay compose.pilot.yml fallback
 }
 
 # Exports release image variables from the active release so compose.host.yml references resolve identically to deploy.sh.
@@ -263,7 +270,15 @@ dc_proj() {
   local proj="$1"
   shift
   local args=(compose --project-name "$proj" --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml")
-  if pilot_layout && [ -f "$DEPLOY_DIR/compose.pilot.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.pilot.yml"); fi
+  local pilot_file='' pilot_rc=0
+  if pilot_layout; then
+    pilot_file="$(resolve_pilot_compose_file)" || pilot_rc=$?
+    if ((pilot_rc != 0)) || [ -z "$pilot_file" ]; then
+      err "COMPOSE_FILE lists compose.pilot.yml but the file does not exist under $DEPLOY_DIR"
+      return 1
+    fi
+    args+=(-f "$pilot_file")
+  fi
   if [ -f "$DEPLOY_DIR/docker-compose.override.yml" ]; then args+=(-f "$DEPLOY_DIR/docker-compose.override.yml"); fi
   local wal_file='' wal_rc=0
   wal_file="$(resolve_wal_compose_file)" || wal_rc=$?
@@ -272,7 +287,13 @@ dc_proj() {
     return 1
   fi
   if [ -n "$wal_file" ]; then args+=(-f "$wal_file"); fi
-  if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.host.yml"); fi
+  local host_file='' host_rc=0
+  host_file="$(resolve_compose_overlay compose.host.yml fallback)" || host_rc=$?
+  if ((host_rc == 2)); then
+    err "COMPOSE_FILE references compose.host.yml but the file does not exist under $DEPLOY_DIR"
+    return 1
+  fi
+  if [ -n "$host_file" ]; then args+=(-f "$host_file"); fi
   docker "${args[@]}" "$@"
 }
 
@@ -818,6 +839,10 @@ do_cutover_stack() {
   [ -w "$ENV_FILE" ] && [ -w "$DEPLOY_DIR" ] || die "$EXIT_USAGE" "$ENV_FILE and $DEPLOY_DIR must be writable"
   [ -f "$OVERLAY_DIR/deploy.sh" ] || die "$EXIT_USAGE" "missing $OVERLAY_DIR/deploy.sh"
   [ -f "$OVERLAY_DIR/caddy/Caddyfile" ] && [ -f "$OVERLAY_DIR/caddy/compose.host.yml" ] || die "$EXIT_USAGE" "missing caddy overlays in $OVERLAY_DIR/caddy"
+  if pilot_layout; then
+    local pilot_file=''
+    pilot_file="$(resolve_pilot_compose_file)" || die "$EXIT_USAGE" "COMPOSE_FILE lists compose.pilot.yml but the file does not exist under $DEPLOY_DIR"
+  fi
   local wal_file='' wal_rc=0
   wal_file="$(resolve_wal_compose_file)" || wal_rc=$?
   if ((wal_rc == 2)); then
@@ -1014,7 +1039,7 @@ do_cutover_stack() {
 rollback_switch_wal() {
   [ "${WAL_ROLLBACK_ARMED:-0}" = 1 ] || return 0
   WAL_ROLLBACK_ARMED=0
-  err 'switch-wal failed; restoring previous .env, compose.wal.yml, and prior pgBackRest stanza'
+  err "switch-wal failed; restoring previous .env, compose.wal.yml, and prior pgBackRest stanza (${WAL_ROLLBACK_STANZA:-crove})"
   if [ -n "$WAL_ROLLBACK_ENV" ] && [ -f "$WAL_ROLLBACK_ENV" ]; then
     write_env_in_place "$WAL_ROLLBACK_ENV" || true
   fi
@@ -1023,9 +1048,15 @@ rollback_switch_wal() {
   fi
   dc_proj "$WAL_ROLLBACK_PROJECT" up -d --no-build --no-deps db || true
   wait_db_ready "$WAL_ROLLBACK_PROJECT" || true
-  env -u WAL_STANZA -u BACKUP_S3_PREFIX -u WAL_DB_IMAGE -u COMPOSE_PROJECT_NAME \
-    LUDY_DIR="$DEPLOY_DIR" CROVE_DIR="$DEPLOY_DIR" \
-    bash "$STAGE_DIR/backup/wal.sh" setup || true
+  local restore_stanza="${WAL_ROLLBACK_STANZA:-crove}"
+  if ! env -u BACKUP_S3_PREFIX -u WAL_DB_IMAGE -u COMPOSE_PROJECT_NAME \
+    WAL_STANZA="$restore_stanza" LUDY_DIR="$DEPLOY_DIR" CROVE_DIR="$DEPLOY_DIR" \
+    bash "$STAGE_DIR/backup/wal.sh" setup || \
+    ! env -u BACKUP_S3_PREFIX -u WAL_DB_IMAGE -u COMPOSE_PROJECT_NAME \
+    WAL_STANZA="$restore_stanza" LUDY_DIR="$DEPLOY_DIR" CROVE_DIR="$DEPLOY_DIR" \
+    bash "$STAGE_DIR/backup/wal.sh" check; then
+    err "AUTOMATIC WAL ROLLBACK FAILED: restore WAL_STANZA=$restore_stanza manually with wal.sh setup and wal.sh check"
+  fi
 }
 
 do_switch_wal() {
@@ -1043,8 +1074,13 @@ do_switch_wal() {
   trap '' HUP PIPE
   export_release_images
 
-  local proj stamp backup_env backup_compose env_tmp info_out backup_count
+  local proj stamp backup_env backup_compose env_tmp info_out backup_count pre_stanza=''
   proj="$(detect_active_project)"
+  pre_stanza="$(dc_proj "$proj" exec -T db printenv PGBACKREST_STANZA 2>/dev/null | tr -d '\r\n' || true)"
+  if [ -z "$pre_stanza" ]; then
+    pre_stanza="$(env_or_default WAL_STANZA 'crove')"
+  fi
+  WAL_ROLLBACK_STANZA="$pre_stanza"
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   backup_env="$(state_dir)/env.pre-switch-wal-$stamp"
   backup_compose="$(state_dir)/compose.wal.pre-switch-wal-$stamp"
