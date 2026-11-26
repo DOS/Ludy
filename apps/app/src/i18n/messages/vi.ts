@@ -4165,6 +4165,10 @@ export const vi = {
       remove: 'Bỏ gắn',
       removeOf: 'Bỏ gắn {kind}',
       noTargets: 'Chưa có bản ghi phù hợp để gắn.',
+      searchMeetings: 'Tìm cuộc họp',
+      searchMeetingsPlaceholder: 'Lọc theo tên cuộc họp...',
+      noMatchingMeetings: 'Không có cuộc họp nào khớp từ khóa tìm kiếm.',
+      meetingWindowHint: 'Đang hiển thị {limit} cuộc họp gần nhất; các cuộc họp cũ hơn chưa hiển thị tại đây.',
       types: {
         party: 'Khách hàng hoặc nhà cung cấp',
         file: 'Tệp',
@@ -6083,6 +6087,7 @@ export const vi = {
       saveAsNoteConfirmTitle: 'Lưu bản tóm tắt thành ghi chú dùng chung?',
       saveAsNoteConfirmDesc: 'Cuộc họp này chỉ cho người tham gia xem. Lưu thành ghi chú dùng chung sẽ chia sẻ bản tóm tắt này với các thành viên có quyền toàn tổ chức (trừ người chỉ xem và thành viên giới hạn theo pháp nhân).',
       saveAsNoteConfirmAction: 'Lưu thành ghi chú chung',
+      saveAsNoteUnsavedDraft: 'Bản nháp có thay đổi chưa lưu. Hãy bấm Lưu bản nháp trước khi lưu thành ghi chú chung.',
       savedAsNote: 'Đã lưu thành ghi chú dùng chung (đánh dấu cần rà soát cho tới khi bạn sửa).',
       openSavedNote: 'Mở ghi chú',
     },
