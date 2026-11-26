@@ -4167,6 +4167,10 @@ export const en = {
       remove: 'Unlink',
       removeOf: 'Unlink {kind}',
       noTargets: 'No matching records available to link.',
+      searchMeetings: 'Filter meetings',
+      searchMeetingsPlaceholder: 'Filter by meeting title...',
+      noMatchingMeetings: 'No meetings match your filter.',
+      meetingWindowHint: 'Showing the {limit} most recent meetings; older meetings are not listed here yet.',
       types: {
         party: 'Customer or vendor',
         file: 'File',
@@ -6085,6 +6089,7 @@ export const en = {
       saveAsNoteConfirmTitle: 'Save this summary as a shared note?',
       saveAsNoteConfirmDesc: 'This meeting is visible to attendees only. Saving it as a shared note shares this summary with org members who have whole-org scope (excluding viewers and entity-restricted members).',
       saveAsNoteConfirmAction: 'Save as shared note',
+      saveAsNoteUnsavedDraft: 'Your draft has unsaved changes. Click Save draft before saving as a shared note.',
       savedAsNote: 'Saved as a shared note (marked for review until you edit it).',
       openSavedNote: 'Open note',
     },
