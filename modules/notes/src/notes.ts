@@ -209,7 +209,12 @@ const linkTargetFact = (visibility: NoteVisibility, targetType: string, targetId
 // A link added or removed changes the note as others see it; touching the note sends its stream hint (#69), so open
 // apps read the note and the record's panel again.
 async function touch(ctx: CommandContext, noteId: string): Promise<void> {
-  await ctx.trx.updateTable('ludy_notes.note').set({ updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', noteId).execute();
+  await ctx.trx
+    .updateTable('ludy_notes.note')
+    .set({ updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})` })
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', noteId)
+    .execute();
 }
 const target = (input: { noteId: string }) => ({ type: 'notes.note', id: input.noteId });
 
@@ -564,10 +569,21 @@ export const linkAdd = defineCommand({
   target,
   handler: async (ctx, input): Promise<{ noteId: string; linkId: string }> => {
     const userId = userOf(ctx.actor);
-    const peek = await load(ctx, input.noteId, false);
-    assertAuthor(peek, userId);
-    assertNotInTrash(peek);
     if (input.targetType === 'kernel.party') {
+      // Lightweight pre-lock check without loading large note bodies; author/trash are re-verified under lock below.
+      const peek = await ctx.trx
+        .selectFrom('ludy_notes.note')
+        .select(['author_user_id', 'deleted_at'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.noteId)
+        .executeTakeFirst();
+      if (!peek) throw notFound();
+      if (peek.author_user_id !== userId) {
+        throw new DomainError('NOTE_AUTHOR_ONLY', 403, 'Chỉ người viết ghi chú mới làm được việc này');
+      }
+      if (peek.deleted_at !== null) {
+        throw new DomainError('NOTE_IN_TRASH', 409, 'Ghi chú đang ở thùng rác; hãy khôi phục trước');
+      }
       // Match personalDataErase lock order (party -> note) before taking note FOR UPDATE.
       await ctx.trx
         .selectFrom('ludy_kernel.party')

@@ -551,14 +551,23 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [o.orgId]);
       await c.query(`UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [o.orgId]);
-      // Push updated_at ahead of transaction start time so attachment erasure must never move updated_at backward.
-      await c.query(`UPDATE ludy_notes.note SET updated_at = pg_catalog.clock_timestamp() + interval '10 minutes' WHERE org_id = $1 AND id = $2`, [o.orgId, monotonicNote]);
+      // Push updated_at ahead of transaction start time on both notes so neither erasure nor concurrent link touch can regress it.
+      await c.query(
+        `UPDATE ludy_notes.note SET updated_at = pg_catalog.clock_timestamp() + interval '10 minutes' WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+        [o.orgId, [monotonicNote, concurrentNote]],
+      );
       await c.query('COMMIT');
     });
-    const [{ updated_at: beforeEraseTs }] = await rows<{ updated_at: Date | string }>(
-      `SELECT updated_at FROM ludy_notes.note WHERE org_id = $1 AND id = $2`,
-      [o.orgId, monotonicNote],
-    );
+    const noteUpdatedAt = async (noteId: string) => {
+      const result = await rows<{ updated_at: Date | string }>(
+        `SELECT updated_at FROM ludy_notes.note WHERE org_id = $1 AND id = $2`,
+        [o.orgId, noteId],
+      );
+      if (!result[0]) throw new Error(`missing note ${noteId}`);
+      return new Date(result[0].updated_at).getTime();
+    };
+    const beforeMonotonicTs = await noteUpdatedAt(monotonicNote);
+    const beforeConcurrentTs = await noteUpdatedAt(concurrentNote);
 
     const [eraseOut, linkOut] = await Promise.all([
       rt.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() }),
@@ -571,10 +580,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     expect(eraseOut.erased).toContainEqual({ column: 'ludy_kernel.party.email', rows: 1 });
     expect(linkOut.noteId).toBe(concurrentNote);
     expect(await doomed(o)).toEqual([`notes/${o.orgId}/${att1.id}`, `notes/${o.orgId}/${att2.id}`].sort());
-    const [{ updated_at: afterEraseTs }] = await rows<{ updated_at: Date | string }>(
-      `SELECT updated_at FROM ludy_notes.note WHERE org_id = $1 AND id = $2`,
-      [o.orgId, monotonicNote],
-    );
-    expect(new Date(afterEraseTs).getTime()).toBeGreaterThanOrEqual(new Date(beforeEraseTs).getTime());
+    expect(await noteUpdatedAt(monotonicNote)).toBeGreaterThanOrEqual(beforeMonotonicTs);
+    expect(await noteUpdatedAt(concurrentNote)).toBeGreaterThanOrEqual(beforeConcurrentTs);
   });
 });

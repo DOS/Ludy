@@ -25,6 +25,8 @@ export class FakeDomNode {
   disabled = false;
   checked = false;
   selected = false;
+  defaultSelected = false;
+  multiple = false;
   tabIndex = 0;
   type = '';
   name = '';
@@ -64,10 +66,37 @@ export class FakeDomNode {
   }
 
   get value(): string {
+    if (this.tagName === 'OPTION' && !this.attrs.has('value') && !this._value) {
+      return this.textContent;
+    }
+    if (this.tagName === 'SELECT' && this._value === '') {
+      const sel = this.options.find((o) => o.selected) ?? this.options[0];
+      return sel ? sel.value : '';
+    }
     return this._value;
   }
   set value(v: string) {
-    this._value = String(v ?? '');
+    const s = String(v ?? '');
+    this._value = s;
+    if (this.tagName === 'SELECT') {
+      for (const opt of this.options) {
+        opt.selected = opt.value === s;
+      }
+    }
+  }
+  get text(): string {
+    return this.textContent;
+  }
+  get options(): FakeDomNode[] {
+    return this.querySelectorAll('option');
+  }
+  get selectedIndex(): number {
+    return this.options.findIndex((o) => o.selected);
+  }
+  set selectedIndex(idx: number) {
+    this.options.forEach((o, i) => {
+      o.selected = i === idx;
+    });
   }
   get id(): string {
     return this.attrs.get('id') ?? '';
@@ -137,6 +166,7 @@ export class FakeDomNode {
     else if (name === 'name') this.name = s;
     else if (name === 'disabled') this.disabled = s !== 'false';
     else if (name === 'checked') this.checked = true;
+    else if (name === 'selected') this.selected = s !== 'false';
     else if (name === 'tabindex') this.tabIndex = Number(s);
   }
   removeAttribute(name: string): void {
@@ -144,6 +174,7 @@ export class FakeDomNode {
     if (name === 'class') this.className = '';
     else if (name === 'disabled') this.disabled = false;
     else if (name === 'checked') this.checked = false;
+    else if (name === 'selected') this.selected = false;
   }
   getAttribute(name: string): string | null {
     if (name === 'class') return this.className || this.attrs.get('class') || null;
@@ -342,6 +373,9 @@ export function createScopedDomHarness(onTeardown?: () => void) {
     setGlobal('HTMLButtonElement', FakeDomNode);
     setGlobal('HTMLDivElement', FakeDomNode);
     setGlobal('HTMLInputElement', FakeDomNode);
+    setGlobal('HTMLTextAreaElement', FakeDomNode);
+    setGlobal('HTMLSelectElement', FakeDomNode);
+    setGlobal('HTMLOptionElement', FakeDomNode);
     setGlobal('HTMLFormElement', FakeDomNode);
     setGlobal('HTMLIFrameElement', FakeDomNode);
     setGlobal('SVGElement', FakeDomNode);

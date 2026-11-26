@@ -261,7 +261,7 @@ BEGIN
 
   IF COALESCE(pg_catalog.array_length(v_touched_notes, 1), 0) > 0 THEN
     UPDATE ludy_notes.note n
-       SET updated_at = pg_catalog.greatest(n.updated_at, pg_catalog.clock_timestamp())
+       SET updated_at = GREATEST(n.updated_at, pg_catalog.clock_timestamp())
      WHERE n.org_id = v_org AND n.id = ANY (v_touched_notes);
   END IF;
 

@@ -1322,6 +1322,15 @@ function trashCommand(name: string, toTrash: boolean) {
     target,
     handler: async (ctx, input): Promise<TodoWritten> => {
       userOf(ctx.actor);
+      const meta = await ctx.trx
+        .selectFrom('ludy_notes.todo')
+        .select(['series_id', 'recurrence'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.todoId)
+        .executeTakeFirst();
+      if (meta && (meta.series_id !== null || meta.recurrence !== null)) {
+        await lockTodoSeries(ctx, meta.series_id ?? input.todoId);
+      }
       const before = await load(ctx, input.todoId, true);
       if ((before.deleted_at !== null) === toTrash) return written(before);
       await ctx.trx
@@ -1406,7 +1415,12 @@ export const todoHandOver = defineCommand({
 });
 
 async function touchTodo(ctx: CommandContext, todoId: string): Promise<void> {
-  await ctx.trx.updateTable('ludy_notes.todo').set({ updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', todoId).execute();
+  await ctx.trx
+    .updateTable('ludy_notes.todo')
+    .set({ updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})` })
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', todoId)
+    .execute();
 }
 
 export const todoLinkAdd = defineCommand({
@@ -1418,9 +1432,17 @@ export const todoLinkAdd = defineCommand({
   target,
   handler: async (ctx, input): Promise<{ todoId: string; linkId: string }> => {
     const userId = userOf(ctx.actor);
-    const peek = await load(ctx, input.todoId, false);
-    assertNotInTrash(peek);
     if (input.targetType === 'kernel.party') {
+      const peek = await ctx.trx
+        .selectFrom('ludy_notes.todo')
+        .select(['deleted_at'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.todoId)
+        .executeTakeFirst();
+      if (!peek) throw notFound();
+      if (peek.deleted_at !== null) {
+        throw new DomainError('TODO_IN_TRASH', 409, 'Việc này đang ở thùng rác; hãy khôi phục trước');
+      }
       // Match personalDataErase lock order (party -> todo) before taking todo FOR UPDATE.
       await ctx.trx
         .selectFrom('ludy_kernel.party')
