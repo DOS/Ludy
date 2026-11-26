@@ -314,13 +314,19 @@ export async function lockTodoListOrder(ctx: Pick<CommandContext, 'trx' | 'orgId
 // Lock rows in canonical id ASC order before spreading sort keys so multi-row rebalances never deadlock.
 export async function lockTodosInOrder(ctx: Pick<CommandContext, 'trx' | 'orgId'>, ids: readonly string[]): Promise<void> {
   if (ids.length === 0) return;
-  await sql`SELECT id FROM ludy_notes.todo WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${[...ids]}::uuid[]) ORDER BY id FOR UPDATE`.execute(ctx.trx);
+  await sql`WITH locked AS MATERIALIZED (
+    SELECT id FROM ludy_notes.todo WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${[...ids]}::uuid[]) ORDER BY id FOR UPDATE
+  )
+  SELECT pg_catalog.count(*)::int AS n FROM locked`.execute(ctx.trx);
 }
 
 // Lock personal to-do lists in canonical id ASC order before multi-row sort_key updates.
 export async function lockTodoListsInOrder(ctx: Pick<CommandContext, 'trx' | 'orgId'>, ids: readonly string[]): Promise<void> {
   if (ids.length === 0) return;
-  await sql`SELECT id FROM ludy_notes.todo_list WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${[...ids]}::uuid[]) ORDER BY id FOR UPDATE`.execute(ctx.trx);
+  await sql`WITH locked AS MATERIALIZED (
+    SELECT id FROM ludy_notes.todo_list WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${[...ids]}::uuid[]) ORDER BY id FOR UPDATE
+  )
+  SELECT pg_catalog.count(*)::int AS n FROM locked`.execute(ctx.trx);
 }
 
 function assertNotInTrash(row: Pick<SummaryRow, 'deleted_at'>): void {
@@ -788,8 +794,10 @@ export const todoComplete = defineCommand({
   handler: async (ctx, input): Promise<TodoCompleteResult> => {
     const userId = userOf(ctx.actor);
     const todoId = input.todoId.toLowerCase();
-    // Global lock DAG: series advisory lock -> todo_list FOR SHARE -> todo_sort_order advisory lock -> todo FOR UPDATE (ordered by id ASC).
+    // Global lock DAG: notes.erase (S) -> series advisory lock -> todo_list FOR SHARE -> todo_sort_order advisory lock -> todo FOR UPDATE (ordered by id ASC).
+    // Holding shared notes.erase upfront prevents concurrent private_erase from deleting a sibling between preSiblings and spawn (#5035).
     const seriesKey = await seriesLockKey(ctx, todoId);
+    await lockNotesEraseShared(ctx);
     await lockTodoSeries(ctx, seriesKey);
     const stopSeries = input.stopSeries === true;
     let lockedList: { id: string; sections: unknown } | undefined;
