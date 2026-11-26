@@ -149,6 +149,9 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   // The signed-notice loop of the relay (the provider's notice for an account a connection lists, #2045) queues a sync of each connection that lists the account; such a connection
   // exists only through kernel.channel.connect, which declares an external effect. (The relay's own events are checked by the emitter rule: finance.bank_feed.sync_requested.)
   relay: { command: 'kernel.channel.connect' },
+  // Mobile native push sweep (#4883): claims unread conversation_new and approval_waiting notifications with eligible mobile
+  // devices and queues QUEUES.nativePush; each device registration runs through kernel.native_push.register, which declares an external effect.
+  enqueueNativePushes: { command: 'kernel.native_push.register' },
 };
 
 // Reviewed send sites that may be listed before the site exists, so the two steps of an invariant change can land apart (the PENDING_DEPS pattern): each names the issue that adds
@@ -159,6 +162,8 @@ const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'finance-misa-amis-push handler': '#3902',
   // The weekly meetings notice sweep (#4967, step 0 of 2): the site and its command land in the table's own PR, which removes this entry.
   'meetings-weekly handler': '#4967',
+  // Mobile native push (#4883, step 0 of 2): enqueueNativePushes and kernel.native_push.register land in the feature PR, which removes this entry.
+  enqueueNativePushes: '#4883',
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.

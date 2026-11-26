@@ -67,6 +67,7 @@ const MACHINERY = new Set([
   'crove_kernel.extension_auth_code',
   // #2582: scoped extension tokens (one org, one member, 90 days, hashed). Definer-only, no login role grant.
   'crove_kernel.extension_token',
+  'crove_kernel.native_push_sent',
   'crove_kernel.oauth_state',
   'crove_kernel.inbound_drop',
   'crove_kernel.outbox_archive',
@@ -113,7 +114,10 @@ const MACHINERY = new Set([
 // runs main's copy of this file on the PR that adds a table with org_id, so the factory has to be on main first;
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
-const PENDING_TABLES = new Set<string>([]);
+const PENDING_TABLES = new Set<string>([
+  'crove_kernel.native_push_device',
+  'crove_kernel.native_push_sent',
+]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
 // migration cannot skew this oracle through search_path) and writes none of its org's rows, since the worker reaches
@@ -194,6 +198,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_kernel.member_permission_override', () => 'false'], // Read by the member and the admins in a user context.
   ['crove_kernel.member_vy_memory', (m) => `t.member_user_id OPERATOR(pg_catalog.=) '${m}'::uuid`], // Catalog 'read': its own member's entries (the matrix seeds none for it).
   ['crove_kernel.member_vy_result', (m) => `t.member_user_id OPERATOR(pg_catalog.=) '${m}'::uuid`], // Its own member's results (the matrix seeds none for it).
+  ['crove_kernel.native_push_device', () => 'false'], // A member's own mobile native push registrations (#4883): device token bound to session_id, read by that member alone in a user context; an agent context reads none.
   ['crove_kernel.notification', () => 'false'], // Per member.
   ['crove_kernel.notification_mute', () => 'false'], // Per member.
   ['crove_kernel.push_subscription', () => 'false'], // A member's own browser push subscriptions (generic web push, #3736): endpoint and keys, read by that member, a user; an agent context reads none.
@@ -3194,6 +3199,31 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           // Relative to now, with created_at left to its default: the 31-day cap counts from the earlier of the two.
           expires_at: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString(),
         },
+      };
+    },
+  },
+  // #4883 (mobile native push): a member's own APNs/FCM registration bound to their signed-in session_id, under a restrictive policy like push_subscription.
+  // One row per session/token; the device token is sensitive and never returned by member queries or audit rows. Lands in PENDING_TABLES before its migration.
+  'crove_kernel.native_push_device': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        user_id: o.owner,
+        session_id: randomUUID(),
+        platform: 'fcm',
+        token: `fcm-rls-matrix-${randomUUID()}`,
+        label: 'Pixel',
+      },
+    }),
+  },
+  // #4883 (mobile native push): worker-only delivery ledger tracking notifications already handed to QUEUES.nativePush; definer-only MACHINERY (zero login role grants). Lands in PENDING_TABLES before its migration.
+  'crove_kernel.native_push_sent': {
+    make: (o) => {
+      const notification = { org_id: o.id, id: randomUUID(), user_id: o.owner, kind: 'kernel.conversation_new', dedupe_key: `rls-np-${tag()}` };
+      return {
+        setup: [{ table: 'crove_kernel.notification', values: notification }],
+        row: { org_id: o.id, notification_id: notification.id },
       };
     },
   },
