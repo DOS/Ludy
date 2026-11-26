@@ -179,6 +179,13 @@ suite('native push security invariants on PostgreSQL 17 (#4883)', () => {
       code: '42501',
     });
     await expect(
+      inUrl(
+        workerUrl,
+        (c) => c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]),
+        (c) => c.query('SELECT * FROM ludy_kernel.native_push_claim(10, NULL)'),
+      ),
+    ).rejects.toMatchObject({ code: '42501' });
+    await expect(
       asApp(orgId, owner, (c) => c.query('SELECT * FROM ludy_kernel.native_push_targets($1::uuid, false)', [randomUUID()])),
     ).rejects.toMatchObject({ code: '42501' });
     await expect(

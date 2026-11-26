@@ -265,19 +265,27 @@ AS $$
 DECLARE
   v_limit integer := LEAST(GREATEST(coalesce(p_limit, 100), 1), 500);
 BEGIN
-  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'ludy_worker', 'MEMBER') THEN
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'ludy_worker', 'MEMBER')
+     OR ludy_kernel.ctx_org_id() IS NOT NULL
+     OR ludy_kernel.ctx_actor_type() IS NOT NULL THEN
     RAISE EXCEPTION 'NATIVE_PUSH_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
 
-  IF p_org_id IS NULL THEN
+  IF p_org_id IS NOT NULL THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM ludy_kernel.tenant t
+      WHERE t.org_id = p_org_id AND t.status = 'active'
+    ) THEN
+      RETURN;
+    END IF;
     RETURN QUERY
     WITH candidate AS (
       SELECT n.org_id, n.id AS notification_id
       FROM ludy_kernel.notification n
-      JOIN ludy_kernel.tenant t ON t.org_id = n.org_id AND t.status = 'active'
       JOIN ludy_kernel.tenant_member m ON m.org_id = n.org_id AND m.user_id = n.user_id
       JOIN ludy_kernel.user_account u ON u.id = n.user_id AND u.disabled_at IS NULL
-      WHERE n.kind IN ('kernel.conversation_new', 'kernel.approval_waiting')
+      WHERE n.org_id = p_org_id
+        AND n.kind IN ('kernel.conversation_new', 'kernel.approval_waiting')
         AND n.read_at IS NULL
         AND n.created_at >= pg_catalog.now() - interval '24 hours'
         AND m.role <> 'viewer'
@@ -333,8 +341,7 @@ BEGIN
       JOIN ludy_kernel.tenant t ON t.org_id = n.org_id AND t.status = 'active'
       JOIN ludy_kernel.tenant_member m ON m.org_id = n.org_id AND m.user_id = n.user_id
       JOIN ludy_kernel.user_account u ON u.id = n.user_id AND u.disabled_at IS NULL
-      WHERE n.org_id = p_org_id
-        AND n.kind IN ('kernel.conversation_new', 'kernel.approval_waiting')
+      WHERE n.kind IN ('kernel.conversation_new', 'kernel.approval_waiting')
         AND n.read_at IS NULL
         AND n.created_at >= pg_catalog.now() - interval '24 hours'
         AND m.role <> 'viewer'
@@ -500,6 +507,19 @@ BEGIN
     AND n.read_at IS NULL
     AND n.created_at >= pg_catalog.now() - interval '24 hours'
     AND m.role <> 'viewer'
+    AND (
+      m.role IN ('owner', 'admin')
+      OR NOT EXISTS (
+        SELECT 1 FROM ludy_kernel.role_assignment ra
+        WHERE ra.org_id = m.org_id AND ra.user_id = m.user_id
+      )
+      OR EXISTS (
+        SELECT 1 FROM ludy_kernel.role_assignment ra
+        WHERE ra.org_id = m.org_id
+          AND ra.user_id = m.user_id
+          AND (ra.legal_entity_id IS NULL OR ra.legal_entity_id = n.legal_entity_id)
+      )
+    )
     AND d.failure_count < 10
     AND n.created_at >= d.created_at
     AND NOT EXISTS (

@@ -957,4 +957,67 @@ suite('native push end-to-end on PostgreSQL 17 (#4883)', () => {
     ]);
     expect(await rows('SELECT 1 FROM ludy_kernel.native_push_device WHERE id = $1', [revokedDevId])).toHaveLength(0);
   });
+
+  it('enforces legal-entity scope on conversation_new and offAppsOf on approval_waiting', async () => {
+    const o = await org();
+    const ownerDev = await registerDevice(o.orgId, o.owner.userId, randomUUID(), {
+      platform: 'apns',
+      token: `apns-le-owner-${randomUUID()}`,
+      label: 'Owner Phone',
+    });
+    const memberDev = await registerDevice(o.orgId, o.member.userId, randomUUID(), {
+      platform: 'fcm',
+      token: `fcm-le-member-${randomUUID()}`,
+      label: 'Member Phone',
+    });
+    const defaultLe = (
+      await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default = true', [o.orgId])
+    )[0]?.id as string;
+    const secondLe = (
+      await rows<{ id: string }>(
+        "INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Push', 'branch', $2) RETURNING id",
+        [o.orgId, o.owner.userId],
+      )
+    )[0]?.id as string;
+
+    // Limit member to secondLe via an entity-scoped role assignment; defaultLe conversation notices must fail closed.
+    await rows(
+      "INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)",
+      [o.orgId, o.member.userId, secondLe, o.owner.userId],
+    );
+    const outOfScopeNoticeId = randomUUID();
+    const inScopeNoticeId = randomUUID();
+    await rows(
+      `INSERT INTO ludy_kernel.notification (org_id, id, user_id, kind, dedupe_key, subject_type, subject_id, legal_entity_id, created_at)
+       VALUES ($1, $2, $3, 'kernel.conversation_new', $4, NULL, NULL, $5, (SELECT created_at + interval '1 second' FROM ludy_kernel.native_push_device WHERE id = $6))`,
+      [o.orgId, outOfScopeNoticeId, o.member.userId, `conv-le-out:${outOfScopeNoticeId}`, defaultLe, memberDev.id],
+    );
+    await rows(
+      `INSERT INTO ludy_kernel.notification (org_id, id, user_id, kind, dedupe_key, subject_type, subject_id, legal_entity_id, created_at)
+       VALUES ($1, $2, $3, 'kernel.conversation_new', $4, NULL, NULL, $5, (SELECT created_at + interval '1 second' FROM ludy_kernel.native_push_device WHERE id = $6))`,
+      [o.orgId, inScopeNoticeId, o.member.userId, `conv-le-in:${inScopeNoticeId}`, secondLe, memberDev.id],
+    );
+    expect(await targetsOf(o.orgId, outOfScopeNoticeId)).toBeNull();
+    expect(await targetsOf(o.orgId, inScopeNoticeId)).toMatchObject({ kind: 'kernel.conversation_new', targets: [{ deviceId: memberDev.id }] });
+
+    // Switching off an app (ads) suppresses pending approval notices for that app's commands.
+    const adsProposalId = (
+      await rows<{ id: string }>(
+        `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, legal_entity_id, eligible_approvers, authors)
+         VALUES ($1, 'ads.write.enable', 'ads.write.enable', 'pending', 'Ads Off Check', '{}'::jsonb, $2, $3::uuid[], $4::jsonb)
+         RETURNING id`,
+        [o.orgId, defaultLe, [o.owner.userId], JSON.stringify([{ type: 'user', id: o.admin.userId }])],
+      )
+    )[0]?.id as string;
+    const adsNoticeId = randomUUID();
+    await rows(
+      `INSERT INTO ludy_kernel.notification (org_id, id, user_id, kind, dedupe_key, subject_type, subject_id, legal_entity_id, created_at)
+       VALUES ($1, $2, $3, 'kernel.approval_waiting', $4, 'kernel.proposal', $5, $6, (SELECT created_at + interval '1 second' FROM ludy_kernel.native_push_device WHERE id = $7))`,
+      [o.orgId, adsNoticeId, o.owner.userId, `ads-off:${adsNoticeId}`, adsProposalId, defaultLe, ownerDev.id],
+    );
+    expect(await targetsOf(o.orgId, adsNoticeId)).toMatchObject({ kind: 'kernel.approval_waiting', targets: [{ deviceId: ownerDev.id }] });
+
+    await rt.execute('kernel.org.set_app', { module: 'ads', enabled: false }, { actor: asUser(o.owner.userId, randomUUID(), true), orgId: o.orgId });
+    expect(await targetsOf(o.orgId, adsNoticeId)).toBeNull();
+  });
 });

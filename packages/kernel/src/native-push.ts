@@ -14,6 +14,7 @@ import { zId, zNativePushRegister, zNativePushUnregister, type NativePushPlatfor
 import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { acquireAdvisoryXactLock, advisoryLockKey } from './advisory-lock.ts';
 import { decideApproval } from './approval.ts';
+import { offAppsOf } from './org-apps.ts';
 
 const ALL = ['owner', 'admin', 'member', 'viewer'] as const;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -312,6 +313,9 @@ export const nativePushTargets = defineQuery({
         .where('id', '=', first.subject_id)
         .executeTakeFirst();
       if (!proposal) return null;
+      const off = await offAppsOf(ctx.trx, ctx.orgId);
+      const app = proposal.command.split('.', 1)[0] ?? '';
+      if (off.includes(app)) return null;
       const decision = await decideApproval(
         ctx.trx,
         ctx.orgId,
