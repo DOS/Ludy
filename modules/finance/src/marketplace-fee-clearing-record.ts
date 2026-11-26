@@ -96,17 +96,6 @@ export async function invoiceCleared(ctx: QueryContext, documentId: string): Pro
   ).total;
 }
 
-// Whether a line on `feeAwaitingInvoice` (1388) belongs to waiting-fee clearing rather than tax withheld by mistake (`withheld_in_error`, #4303 S4) or an unrelated 1388 posting (#4336).
-export function isFeeWaitingSource(source: { feeDocumentId: string | null; payoutSettlementId: string | null; proposalId: string | null; payoutFees: string | null; memo: string | null }): boolean {
-  if (source.feeDocumentId !== null) return true;
-  if (source.payoutSettlementId === null) return false;
-  if ((source.memo ?? '').endsWith(WITHHELD_IN_ERROR_MEMO_SUFFIX)) return false;
-  if (source.proposalId !== null) {
-    if (source.payoutFees === null || !/^\d+(\.\d{1,4})?$/.test(source.payoutFees) || !money(source.payoutFees).greaterThan(0)) return false;
-  }
-  return true;
-}
-
 // The sum of the waiting-fees account's lines (debit minus credit) that name the party, in the entity: a reversal entry takes back what it reverses, so the balance already counts it.
 // Only fee-clearing vouchers (`fee_document_id`) and the fee lines of payout vouchers (`payout_settlement_id`, excluding `withheld_in_error` lines and zero-fee payouts), plus their reversals, are counted;
 // tax withheld by mistake (`otherReceivable` on 1388) and unrelated 1388 entries are never treated as fees awaiting an invoice (#4336).
@@ -184,11 +173,14 @@ export async function resolveInvoiceClearingState(
   const awaitingCodes = [...new Set(Object.values(maps).map((m) => m.feeAwaitingInvoice.code))];
   if (awaitingCodes.length === 0) awaitingCodes.push(initialMap?.feeAwaitingInvoice.code ?? '1388');
   let latestFeeDate: string | null = null;
+  let anyLastDate: string | null = null;
   for (const code of awaitingCodes) {
     const b = await readBalance(code);
+    if (b.lastDate && (!anyLastDate || b.lastDate > anyLastDate)) anyLastDate = b.lastDate;
     if (b.lastDate && money(b.balance).greaterThan(0) && (!latestFeeDate || b.lastDate > latestFeeDate)) latestFeeDate = b.lastDate;
   }
-  const date = latestFeeDate && latestFeeDate > invoiceDate ? latestFeeDate : invoiceDate;
+  const effectiveLastDate = latestFeeDate ?? anyLastDate;
+  const date = effectiveLastDate && effectiveLastDate > invoiceDate ? effectiveLastDate : invoiceDate;
   const regime = date === invoiceDate ? initialRegime : await readRegime(legalEntityId, date);
   const map = options.requireConfirmed ? requireConfirmedMarketplaceMap(regime, maps) : mapOf(regime);
   if (!map) return null;

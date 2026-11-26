@@ -4,8 +4,7 @@ import { DomainError } from '@ludy/kernel-runtime';
 import type { MarketplaceFeeClearingProposal } from '@ludy/kernel-contract';
 import { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from '../src/marketplace-posting-map.ts';
 import { feeClearingProposal, type FeeClearingInput } from '../src/marketplace-fee-clearing-posting.ts';
-import { WITHHELD_IN_ERROR_MEMO_SUFFIX } from '../src/marketplace-payout-posting.ts';
-import { createMarketplaceFeeClearingCommands, feeClearingProposalMismatch, isFeeWaitingSource } from '../src/marketplace-fee-clearing-record.ts';
+import { createMarketplaceFeeClearingCommands, feeClearingProposalMismatch } from '../src/marketplace-fee-clearing-record.ts';
 
 const confirmed = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133!;
@@ -99,12 +98,14 @@ describe('the fee clearing commands', () => {
 });
 
 describe('separating feeAwaitingInvoice from withheld_in_error on 1388 (#4336)', () => {
-  it('counts only fee-clearing vouchers and non-withheld payout fee lines, never withheld_in_error or unrelated 1388 entries', () => {
-    expect(isFeeWaitingSource({ feeDocumentId: DOC, payoutSettlementId: null, proposalId: DOC, payoutFees: null, memo: 'Shopee hóa đơn 1' })).toBe(true);
-    expect(isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: DOC, proposalId: DOC, payoutFees: '28000', memo: 'Shopee 2026-10-01 đến 2026-10-15' })).toBe(true);
-    expect(isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: DOC, proposalId: DOC, payoutFees: '28000', memo: `Shopee 2026-10-01 đến 2026-10-15${WITHHELD_IN_ERROR_MEMO_SUFFIX}` })).toBe(false);
-    expect(isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: DOC, proposalId: DOC, payoutFees: '0', memo: 'Shopee 2026-10-01 đến 2026-10-15' })).toBe(false);
-    expect(isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: DOC, proposalId: DOC, payoutFees: null, memo: 'Shopee 2026-10-01 đến 2026-10-15' })).toBe(false);
-    expect(isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: null, proposalId: DOC, payoutFees: null, memo: 'Bồi thường mất hàng' })).toBe(false);
+  it('keeps feeAwaitingInvoice commentary-only and refuses clearing when waiting fees are 0 even while otherReceivable shares 1388', () => {
+    for (const regime of ['tt133', 'tt99'] as const) {
+      const map = MARKETPLACE_POSTING_MAPS[regime]!;
+      expect(map.feeAwaitingInvoice.code).toBe('1388');
+      expect(map.feeAwaitingInvoice.status).toBe('commentary');
+      expect(map.otherReceivable.code).toBe('1388');
+      expect(map.otherReceivable.status).toBe('confirmed');
+    }
+    expect(err(() => feeClearingProposal(input({ waiting: '0' }), confirmed()))).toMatchObject({ code: 'MARKETPLACE_FEE_NOTHING_TO_CLEAR', status: 409, reason: 'NOTHING_WAITING' });
   });
 });

@@ -4,7 +4,6 @@ import { DomainError } from '@ludy/kernel-runtime';
 import { money, sum, toMoney } from '@ludy/l10n-vn';
 import type { MarketplacePayoutAdjustment, MarketplacePayoutProposal } from '@ludy/kernel-contract';
 import { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from '../src/marketplace-posting-map.ts';
-import { isFeeWaitingSource } from '../src/marketplace-fee-clearing-record.ts';
 import { WITHHELD_IN_ERROR_MEMO_SUFFIX, payoutPaths, payoutProposal, type PayoutPostingLine, type PayoutProposalInput } from '../src/marketplace-payout-posting.ts';
 import { createMarketplacePayoutCommands, payoutProposalMismatch } from '../src/marketplace-payout-record.ts';
 
@@ -140,7 +139,6 @@ describe('a payout with the lines a person classified (#4303 S4)', () => {
       ['10000', false],
       ['2000', true],
     ]);
-    expect(lines1388.filter((l) => isFeeWaitingSource({ feeDocumentId: null, payoutSettlementId: ID, proposalId: ID, payoutFees: p.fees, memo: l.memo })).map((l) => l.debit)).toEqual(['10000']);
   });
   it('posts a household\'s incentive beside the tax it credited to 3331 and 3335: the two are cleared separately and the entry balances', () => {
     const lines = [lost(1, '5000', '2000')];
