@@ -66,6 +66,14 @@ const listedAccounts = [
   { externalAccountId: 'SBX-002', displayName: 'Tài khoản tiết kiệm', listedAt: at },
 ];
 
+const esc = (text: string): string => text.replace(/&/g, '&amp;').replace(/'/g, '&#x27;');
+const rx = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function controlByLabel(html: string, label: string): string {
+  const id = new RegExp(`<label[^>]*\\bfor="([^"]+)"[^>]*>${rx(esc(label))}</label>`).exec(html)?.[1];
+  expect(id, `visible <label for="..."> missing for "${label}"`).toBeTruthy();
+  return html.match(new RegExp(`<(?:input|select)\\b[^>]*\\bid="${rx(id ?? '')}"[^>]*>`))?.[0] ?? '';
+}
+
 function card(role: Role, seed: Seed = {}, offers?: { sandbox: boolean; tingee: boolean }): string {
   const qc = client.current;
   qc.setQueryData(['bankFeeds', 'accounts'], seed.mapped ?? []);
@@ -199,21 +207,40 @@ describe('BankFeedsCard for a member or viewer', () => {
 describe('BankFeedsCard Tingee connect form', () => {
   beforeEach(() => client.current.clear());
 
-  it('shows the Tingee form with the permission guidance, a hidden secret and 44 px controls, only when offered', () => {
+  it('shows the Tingee form with the permission guidance, visible labels, a hidden secret and 44 px controls, only when offered', () => {
     const html = card('owner', {}, { sandbox: false, tingee: true });
     expect(html).toContain(`aria-label="${en.bankFeeds.tingee.title}"`);
     for (const key of ['guideCreate', 'guideGroups', 'guideNever', 'guideSecret'] as const) expect(html).toContain(en.bankFeeds.tingee[key]);
-    // The secret input itself is the hidden one, and each Tingee control carries the 44 px height.
-    const input = (label: string) => html.match(new RegExp(`<input[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? '';
-    const secret = input(en.bankFeeds.tingee.secretLabel);
+    // The secret input itself is the hidden one, and each Tingee control carries the 44 px height and a visible <label for="...">.
+    const secret = controlByLabel(html, en.bankFeeds.tingee.secretLabel);
     expect(secret).toContain('type="password"');
     expect(secret).toContain('autoComplete="new-password"');
     expect(secret).toContain('min-h-11');
-    expect(input(en.bankFeeds.tingee.clientIdLabel)).not.toContain('type="password"');
-    expect(input(en.bankFeeds.tingee.clientIdLabel)).toContain('min-h-11');
+    const clientId = controlByLabel(html, en.bankFeeds.tingee.clientIdLabel);
+    expect(clientId).not.toContain('type="password"');
+    expect(clientId).toContain('min-h-11');
+    const connectionName = controlByLabel(html, en.bankFeeds.tingee.nameLabel);
+    expect(connectionName).not.toContain('type="password"');
+    expect(connectionName).toContain('min-h-11');
+    expect(html).not.toMatch(/<label[^>]*class="[^"]*sr-only/);
     // The test feed's form is not drawn when it is not offered, and the Tingee one is not drawn when it is not.
     expect(html).not.toContain(`aria-label="${en.bankFeeds.connectTitle}"`);
     expect(card('owner', {}, { sandbox: true, tingee: false })).not.toContain(`aria-label="${en.bankFeeds.tingee.title}"`);
+  });
+
+  it('pairs every input on the test-feed and Tingee connect forms with a visible <label for="..."> in both languages (#4221)', () => {
+    const enSandbox = card('owner', {}, { sandbox: true, tingee: false });
+    const enName = controlByLabel(enSandbox, en.bankFeeds.nameLabel);
+    expect(enName).toContain(`placeholder="${en.bankFeeds.namePlaceholder}"`);
+    expect(enName).toContain('max-md:min-h-11');
+    expect(enName).not.toContain('aria-label=');
+
+    const viBoth = card('owner', { locale: 'vi' }, { sandbox: true, tingee: true });
+    expect(controlByLabel(viBoth, viMessages.bankFeeds.nameLabel)).toContain(`placeholder="${viMessages.bankFeeds.namePlaceholder}"`);
+    expect(controlByLabel(viBoth, viMessages.bankFeeds.tingee.clientIdLabel)).toContain('min-h-11');
+    expect(controlByLabel(viBoth, viMessages.bankFeeds.tingee.secretLabel)).toContain('type="password"');
+    expect(controlByLabel(viBoth, viMessages.bankFeeds.tingee.nameLabel)).toContain('min-h-11');
+    expect(viBoth).not.toMatch(/<label[^>]*class="[^"]*sr-only/);
   });
 
   it('names the permission groups to leave out, in both languages', () => {

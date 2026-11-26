@@ -11,6 +11,7 @@ import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
 import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -124,6 +125,7 @@ function ConnectForm({ providers, entities }: { providers: readonly EInvoiceProv
   const providerKey = useId();
   const entityKey = useId();
   const taxKey = useId();
+  const fieldsPrefix = useId();
   const provider = providers.find((p) => p.id === providerId) ?? providers[0];
   const entity = entities.find((e) => e.id === entityId) ?? defaultEntity;
   const connect = useMutation(
@@ -149,41 +151,62 @@ function ConnectForm({ providers, entities }: { providers: readonly EInvoiceProv
     <form className="mt-4 space-y-2" onSubmit={submit} aria-label={t('connectTitle')} noValidate>
       <p className="text-xs font-medium text-muted-foreground">{t('connectTitle')}</p>
       {provider.offline && <p className="text-xs text-subtle-foreground">{t('offlineNote')}</p>}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-end gap-2">
         {providers.length > 1 && (
-          <NativeSelect id={providerKey} className="min-w-48" aria-label={t('provider')} value={provider.id} onChange={(e) => setProviderId(e.target.value)}>
-            {providers.map((p) => (
-              <NativeSelectOption key={p.id} value={p.id}>
-                {p.offline ? t('providerOffline') : p.id}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={providerKey} className="text-xs font-normal text-muted-foreground">
+              {t('provider')}
+            </Label>
+            <NativeSelect id={providerKey} className="min-w-48" value={provider.id} onChange={(e) => setProviderId(e.target.value)}>
+              {providers.map((p) => (
+                <NativeSelectOption key={p.id} value={p.id}>
+                  {p.offline ? t('providerOffline') : p.id}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
         )}
         {entities.length > 1 && (
-          <NativeSelect id={entityKey} className="min-w-48" aria-label={t('entity')} value={entity?.id ?? ''} onChange={(e) => setEntityId(e.target.value)}>
-            {entities.map((e) => (
-              <NativeSelectOption key={e.id} value={e.id}>
-                {e.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={entityKey} className="text-xs font-normal text-muted-foreground">
+              {t('entity')}
+            </Label>
+            <NativeSelect id={entityKey} className="min-w-48" value={entity?.id ?? ''} onChange={(e) => setEntityId(e.target.value)}>
+              {entities.map((e) => (
+                <NativeSelectOption key={e.id} value={e.id}>
+                  {e.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
         )}
         {entity && !entity.taxCode && (
-          <Input id={taxKey} className="min-w-48" maxLength={20} inputMode="numeric" placeholder={t('taxCodePlaceholder')} aria-label={t('taxCode')} value={taxCode} onChange={(e) => setTaxCode(e.target.value)} />
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={taxKey} className="text-xs font-normal text-muted-foreground">
+              {t('taxCode')}
+            </Label>
+            <Input id={taxKey} className="min-w-48" maxLength={20} inputMode="numeric" value={taxCode} onChange={(e) => setTaxCode(e.target.value)} />
+          </div>
         )}
-        {provider.connectFields.map((name) => (
-          <Input
-            key={name}
-            className="min-w-48"
-            maxLength={500}
-            autoComplete="off"
-            type={fieldIsSecret(name) ? 'password' : 'text'}
-            placeholder={name}
-            aria-label={name}
-            value={fields[name] ?? ''}
-            onChange={(e) => setFields((previous) => ({ ...previous, [name]: e.target.value }))}
-          />
-        ))}
+        {provider.connectFields.map((name, index) => {
+          const fieldId = `${fieldsPrefix}-${index}`;
+          return (
+            <div key={name} className="flex flex-col gap-1">
+              <Label htmlFor={fieldId} className="text-xs font-normal text-muted-foreground">
+                {name}
+              </Label>
+              <Input
+                id={fieldId}
+                className="min-w-48"
+                maxLength={500}
+                autoComplete="off"
+                type={fieldIsSecret(name) ? 'password' : 'text'}
+                value={fields[name] ?? ''}
+                onChange={(e) => setFields((previous) => ({ ...previous, [name]: e.target.value }))}
+              />
+            </div>
+          );
+        })}
         <Button loading={connect.isPending} type="submit" variant="outline" size="sm">
           {t('connect')}
         </Button>

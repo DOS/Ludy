@@ -8,6 +8,7 @@ import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EInvoiceConnection, EInvoiceProviderInfo, EInvoiceSeries, LegalEntity } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
+import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 import { decodeSymbol, fieldIsSecret, seriesOf, templateWord } from '../src/lib/einvoice-connections.ts';
 
@@ -33,6 +34,12 @@ const { EInvoiceConnectionsCard } = await import('../src/routes/einvoice-connect
 type Role = 'owner' | 'admin' | 'member' | 'viewer';
 // The markup escapes an apostrophe.
 const esc = (text: string): string => text.replace(/&/g, '&amp;').replace(/'/g, '&#x27;');
+const rx = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function controlByLabel(html: string, label: string): string {
+  const id = new RegExp(`<label[^>]*\\bfor="([^"]+)"[^>]*>${rx(esc(label))}</label>`).exec(html)?.[1];
+  expect(id, `visible <label for="..."> missing for "${label}"`).toBeTruthy();
+  return html.match(new RegExp(`<(?:input|select)\\b[^>]*\\bid="${rx(id ?? '')}"[^>]*>`))?.[0] ?? '';
+}
 const at = '2026-11-03T00:00:00.000Z';
 const entity = (id: string, name: string, isDefault: boolean, taxCode: string | null = '0100109100'): LegalEntity => ({ id, name, kind: 'company', taxCode, parentId: null, isDefault, createdAt: at, updatedAt: at });
 const sandbox: EInvoiceProviderInfo = { id: 'sandbox', offline: true, connectFields: [] };
@@ -89,9 +96,9 @@ describe('EInvoiceConnectionsCard', () => {
     expect(html).toContain(`aria-label="${en.einvoiceConnections.connectTitle}"`);
     expect(html).toContain(en.einvoiceConnections.offlineNote);
     // One provider and one entity with a tax code: nothing to choose, nothing to type.
-    expect(html).not.toContain(`aria-label="${en.einvoiceConnections.provider}"`);
-    expect(html).not.toContain(`aria-label="${en.einvoiceConnections.entity}"`);
-    expect(html).not.toContain(`aria-label="${en.einvoiceConnections.taxCode}"`);
+    expect(html).not.toContain(`>${en.einvoiceConnections.provider}</label>`);
+    expect(html).not.toContain(`>${en.einvoiceConnections.entity}</label>`);
+    expect(html).not.toContain(`>${en.einvoiceConnections.taxCode}</label>`);
     // No series yet: the card says to make one at the provider's own page.
     expect(html).toContain(esc(en.einvoiceConnections.noSeries));
   });
@@ -134,23 +141,27 @@ describe('EInvoiceConnectionsCard', () => {
 
   it('asks for the entity when the org has several, and for the seller tax code when the chosen entity has none', () => {
     const several = card('owner', { entities: [entity('e1', 'Công ty TNHH Mẫu', true), entity('e2', 'Chi nhánh Hà Nội', false, null)] });
-    expect(several).toContain(`aria-label="${en.einvoiceConnections.entity}"`);
+    expect(controlByLabel(several, en.einvoiceConnections.entity)).toContain('<select');
     expect(several).toContain('Chi nhánh Hà Nội');
     // The default entity (the one the form starts on) has a tax code.
-    expect(several).not.toContain(`aria-label="${en.einvoiceConnections.taxCode}"`);
+    expect(several).not.toContain(`>${en.einvoiceConnections.taxCode}</label>`);
     const bare = card('owner', { entities: [entity('e1', 'Công ty TNHH Mẫu', true, null)] });
-    expect(bare).toContain(`aria-label="${en.einvoiceConnections.taxCode}"`);
+    expect(controlByLabel(bare, en.einvoiceConnections.taxCode)).toMatch(/inputmode="numeric"/i);
     expect(bare).toContain(esc(en.einvoiceConnections.taxCodeHint));
   });
 
-  it('shows a password field for a provider that names its fields, with a word that they are sealed', () => {
-    const html = card('owner', { providers: [{ id: 'misa', offline: false, connectFields: ['user', 'password'] }], connections: [] });
-    expect(html).toContain('aria-label="user"');
-    expect(html).toContain('aria-label="password"');
-    expect(html).toMatch(/type="password"[^>]*aria-label="password"|aria-label="password"[^>]*type="password"/);
-    expect(html).toMatch(/type="text"[^>]*aria-label="user"|aria-label="user"[^>]*type="text"/);
+  it('shows a password field for a provider that names its fields, with visible labels and a word that they are sealed', () => {
+    const html = card('owner', { providers: [{ id: 'misa', offline: false, connectFields: ['user', 'password'] }, sandbox], connections: [] });
+    expect(controlByLabel(html, en.einvoiceConnections.provider)).toContain('<select');
+    expect(controlByLabel(html, 'user')).toContain('type="text"');
+    expect(controlByLabel(html, 'password')).toContain('type="password"');
+    expect(html).not.toMatch(/<label[^>]*class="[^"]*sr-only/);
     expect(html).toContain(en.einvoiceConnections.fieldsNote);
     expect(html).not.toContain(en.einvoiceConnections.offlineNote);
+    const inVi = card('owner', { locale: 'vi', entities: [entity('e1', 'Công ty TNHH Mẫu', true, null), entity('e2', 'Chi nhánh', false)], providers: [{ id: 'misa', offline: false, connectFields: ['user'] }, sandbox], connections: [] });
+    expect(controlByLabel(inVi, viMessages.einvoiceConnections.provider)).toContain('<select');
+    expect(controlByLabel(inVi, viMessages.einvoiceConnections.entity)).toContain('<select');
+    expect(controlByLabel(inVi, viMessages.einvoiceConnections.taxCode)).toContain('<input');
   });
 
   it('draws no card when the deployment offers no provider and nothing is connected, and an empty one for a member', () => {
