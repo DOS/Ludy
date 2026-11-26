@@ -41,8 +41,8 @@ export const LEGAL_PAGES = {
 export type LegalPageKey = keyof typeof LEGAL_PAGES;
 // The version of the privacy page and the day it took effect (ISO date). The copy of both languages shows them, and
 // privacy-page.test.ts checks that they do. Change them in the same commit as any change to what the page says.
-export const PRIVACY_VERSION = '1.2';
-export const PRIVACY_UPDATED = '2026-11-25';
+export const PRIVACY_VERSION = '1.3';
+export const PRIVACY_UPDATED = '2026-11-26';
 // Where a privacy request goes by email (deletion, export, questions): the address the owner gave on 2026-11-13. null hides the
 // contact line, so a deployment of this site with no address shows none. Never invent one.
 export const PRIVACY_CONTACT_EMAIL: string | null = 'hi@ludy.so';

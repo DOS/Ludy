@@ -94,7 +94,7 @@ test('the popup is Vietnamese in a Vietnamese browser and English in an English 
     // The localized manifest: the browser resolves the __MSG_ references from _locales, English here.
     const englishManifest = await worker.evaluate(() => chrome.runtime.getManifest());
     expect(englishManifest.name).toBe('Ludy');
-    expect(englishManifest.description).toBe("Record a browser meeting's tab audio and your microphone into Ludy, and upload it when you stop.");
+    expect(englishManifest.description).toBe('Record browser meeting audio and your mic into Ludy, and optionally save quick notes or clip the active page on click.');
     const page = await english.newPage();
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
     await expect(page.getByText('Connect to Ludy')).toBeVisible();
@@ -105,7 +105,7 @@ test('the popup is Vietnamese in a Vietnamese browser and English in an English 
   }
   const vietnameseManifest = await context.serviceWorkers()[0]!.evaluate(() => chrome.runtime.getManifest());
   expect(vietnameseManifest.name).toBe('Ludy');
-  expect(vietnameseManifest.description).toBe('Ghi lại cuộc họp trên trình duyệt vào Ludy: ghi âm tab họp cùng micro, tải lên khi dừng.');
+  expect(vietnameseManifest.description).toBe('Ghi âm cuộc họp trên trình duyệt vào Ludy (tab họp và micro), và tùy chọn lưu nhanh ghi chú hoặc cắt trang web đang mở.');
   const vietnamese = await context.newPage();
   await vietnamese.goto(`chrome-extension://${extensionId}/popup.html`);
   await expect(vietnamese.getByText('Kết nối với Ludy')).toBeVisible();
