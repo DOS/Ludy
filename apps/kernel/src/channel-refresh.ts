@@ -12,7 +12,7 @@ import { sql } from 'kysely';
 import type { Refresher } from '@ludy/channel';
 import type { Db } from '@ludy/db';
 import { DomainError, type CredentialBroker, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
-import type { SealedChannelCredential } from '@ludy/kernel';
+import { CHANNEL_REFRESH_BACKOFF_THRESHOLD, sanitizeChannelRefreshError, type SealedChannelCredential } from '@ludy/kernel';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.channel.refresh' };
 // Refresh tokens that expire within this window: Zalo's access tokens last 25 hours, so a sweep every 10 minutes
@@ -64,8 +64,9 @@ export async function refreshChannels(deps: RefreshDeps): Promise<RefreshOutcome
         const refresher = deps.refreshers[row.provider];
         if (!refresher) continue;
         const result = await refreshOne(deps, refresher, row).catch((error: unknown) => {
-          console.error(`[channel-refresh] connection ${row.connection_id.slice(0, 8)}`, error instanceof Error ? error.message : error);
-          return 'failed' as const;
+          const code = error instanceof DomainError ? sanitizeChannelRefreshError(error.code) : 'UNEXPECTED_ERROR';
+          console.error(`[channel-refresh] connection=${row.connection_id} org=${row.org_id} provider=${row.provider} code=${code}`);
+          return recordRefreshFailure(deps, row, code);
         });
         outcome[result] += 1;
       }
@@ -76,6 +77,29 @@ export async function refreshChannels(deps: RefreshDeps): Promise<RefreshOutcome
   });
 }
 
+async function recordRefreshFailure(deps: RefreshDeps, row: Due, rawCode: string): Promise<'failed'> {
+  const code = sanitizeChannelRefreshError(rawCode);
+  const options = { actor: ACTOR, orgId: row.org_id };
+  const ifVersion = row.version.toISOString();
+  try {
+    const recorded = await deps.runtime.execute<{ recorded: boolean; failures: number; backoffSeconds: number }>(
+      'kernel.channel.refresh_fail',
+      { connectionId: row.connection_id, ifVersion, code },
+      options,
+    );
+    if (recorded.recorded && recorded.failures === CHANNEL_REFRESH_BACKOFF_THRESHOLD) {
+      console.warn(
+        `[channel-refresh] backoff connection=${row.connection_id} org=${row.org_id} provider=${row.provider} code=${code} failures=${recorded.failures} backoff_seconds=${recorded.backoffSeconds}`,
+      );
+    }
+  } catch (error) {
+    // Do not mask the original failure; log only ids and error code/name, never raw message or tokens.
+    const errCode = error instanceof DomainError ? sanitizeChannelRefreshError(error.code) : error instanceof Error ? error.name : typeof error;
+    console.error(`[channel-refresh] record_fail connection=${row.connection_id} org=${row.org_id} provider=${row.provider} err=${errCode}`);
+  }
+  return 'failed';
+}
+
 async function refreshOne(deps: RefreshDeps, refresher: Refresher, row: Due): Promise<'refreshed' | 'expired' | 'failed'> {
   const options = { actor: ACTOR, orgId: row.org_id };
   const ifVersion = row.version.toISOString();
@@ -84,7 +108,10 @@ async function refreshOne(deps: RefreshDeps, refresher: Refresher, row: Due): Pr
     sealed = await deps.runtime.query<SealedChannelCredential>('kernel.channel.credential', { connectionId: row.connection_id }, options);
   } catch (error) {
     // The member who connected it left, or it is no longer active: the publish path reports it; nothing to renew.
-    if (error instanceof DomainError) return 'failed';
+    if (error instanceof DomainError) {
+      if (error.code === 'CHANNEL_NOT_FOUND' || error.code === 'CHANNEL_NOT_ACTIVE') return 'failed';
+      return recordRefreshFailure(deps, row, error.code);
+    }
     throw error;
   }
   const binding = { orgId: row.org_id, provider: sealed.provider, externalAccountId: sealed.externalAccountId };
@@ -94,7 +121,7 @@ async function refreshOne(deps: RefreshDeps, refresher: Refresher, row: Due): Pr
     await deps.runtime.execute('kernel.channel.mark_expired', { connectionId: row.connection_id, reason: `refresh refused (${result.refused})`.slice(0, 200), ifVersion }, options);
     return 'expired';
   }
-  if ('failed' in result) return 'failed';
+  if ('failed' in result) return recordRefreshFailure(deps, row, result.failed);
   const next = deps.broker.seal(result.secret, binding);
   const command = { connectionId: row.connection_id, ifVersion, expiresAt: result.expiresAt?.toISOString() ?? null, credential: { keyId: next.keyId, envelope: next.envelope.toString('base64') } };
   // The provider has rotated the tokens: this write is the only copy of them, so a passing database error is retried.

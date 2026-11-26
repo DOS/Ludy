@@ -491,6 +491,10 @@ export const zChannelConnection = z.object({
   // The business accounts a Telegram bot is connected to (#3191): the account's name and @username, whether the connection is on, the bot may reply and an
   // owner or admin allowed it, and a `ref` to name it by when allowing or stopping it; never the platform's id.
   chatBusiness: z.array(z.strictObject({ ref: z.string(), name: z.string().nullable(), username: z.string().nullable(), enabled: z.boolean(), canReply: z.boolean(), approved: z.boolean() })).max(10),
+  // Last sanitized refresh failure code, consecutive failure count, and next retry timestamp when in backoff (#4251).
+  refreshError: z.string().nullable(),
+  refreshFailures: z.number().int().min(0),
+  refreshNextAt: z.string().nullable(),
 });
 
 // Providers connected through an OAuth dialog (Social plan S6), and the attempt's state: 32 random bytes, base64url.

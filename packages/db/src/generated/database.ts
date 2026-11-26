@@ -2747,6 +2747,9 @@ export interface KernelChannelConnectionTable {
   chat_displace_pending: Generated<boolean>;
   chat_hook_rekey_after: ColumnType<Date | null, Date | string | null, Date | string | null>;
   chat_business_order: ColumnType<unknown, string | undefined, string>;
+  refresh_failures: Generated<number>;
+  refresh_last_error: string | null;
+  refresh_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** ludy_kernel.conversation_attachment */

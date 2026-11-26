@@ -109,6 +109,9 @@ export const channelConnect = defineCommand({
       history_synced_at: null,
       // ... also a YouTube channel, whose due time is its own interval (#3134): a reconnect after a refused token must not wait out the hold.
       history_next_at: null,
+      refresh_failures: 0,
+      refresh_last_error: null,
+      refresh_next_at: null,
       updated_at: now,
     };
     let id: string;
@@ -204,7 +207,7 @@ export const channelDisconnect = defineCommand({
         .updateTable('ludy_kernel.channel_connection')
         // A Telegram connection that answered chats gives its hook up too (#3132): the webhook at Telegram is left to be removed in BotFather, and a
         // notice that still comes in on it finds no connection and is dropped.
-        .set({ status: 'revoked', status_reason: input.reason ?? 'disconnected', updated_at: updatedAt, chat_state: 'off', chat_hook: null, chat_hook_next: null, chat_bot_id: null, chat_hook_key_id: null, chat_displace_pending: false, chat_hook_rekey_after: null, chat_business: '[]', chat_business_order: '{}' })
+        .set({ status: 'revoked', status_reason: input.reason ?? 'disconnected', refresh_next_at: null, updated_at: updatedAt, chat_state: 'off', chat_hook: null, chat_hook_next: null, chat_bot_id: null, chat_hook_key_id: null, chat_displace_pending: false, chat_hook_rekey_after: null, chat_business: '[]', chat_business_order: '{}' })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
         .execute();
@@ -242,7 +245,7 @@ export const channelMarkExpired = defineCommand({
     if (input.ifVersion && Math.floor(row.updated_at.getTime()) !== Date.parse(input.ifVersion)) return { connectionId: input.connectionId, status: row.status };
     await ctx.trx
       .updateTable('ludy_kernel.channel_connection')
-      .set({ status: 'expired', status_reason: input.reason, updated_at: ctx.now })
+      .set({ status: 'expired', status_reason: input.reason, refresh_next_at: null, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .execute();
@@ -291,7 +294,7 @@ export const channelRevokeByPlatform = defineCommand({
         .updateTable('ludy_kernel.channel_connection')
         // The ad account's name and the permissions its token held go with the token: what a revoked connection keeps is its
         // platform id and the time it closed.
-        .set({ status: 'revoked', status_reason: input.reason ?? 'platform_deletion', display_name: 'Deleted', scopes: [], updated_at: updatedAt })
+        .set({ status: 'revoked', status_reason: input.reason ?? 'platform_deletion', display_name: 'Deleted', scopes: [], refresh_next_at: null, updated_at: updatedAt })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
         .execute();
@@ -331,7 +334,7 @@ export const channelCloseOrphan = defineCommand({
     if (rows[0]?.gone !== true) return { connectionId: input.connectionId, closed: false };
     await ctx.trx
       .updateTable('ludy_kernel.channel_connection')
-      .set({ status: 'revoked', status_reason: 'member_left', updated_at: ctx.now })
+      .set({ status: 'revoked', status_reason: 'member_left', refresh_next_at: null, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .execute();
@@ -406,6 +409,23 @@ export const channelOAuthConsume = defineCommand({
   },
 });
 
+export const CHANNEL_REFRESH_BACKOFF_THRESHOLD = 3;
+export const CHANNEL_REFRESH_BACKOFF_SECONDS = [3600, 6 * 3600, 24 * 3600] as const;
+const SAFE_REFRESH_ERROR_CODE = /^[A-Za-z0-9_.-]{1,64}$/;
+
+/** Sanitizes a channel refresh failure code to a short token-free word, collapsing anything else to 'UNKNOWN'. */
+export function sanitizeChannelRefreshError(raw: string): string {
+  const trimmed = raw.trim();
+  return SAFE_REFRESH_ERROR_CODE.test(trimmed) ? trimmed : 'UNKNOWN';
+}
+
+/** Returns the backoff delay in seconds for a consecutive failure count, 0 before the threshold. */
+export function channelRefreshBackoffSeconds(consecutiveFailures: number): number {
+  if (consecutiveFailures < CHANNEL_REFRESH_BACKOFF_THRESHOLD) return 0;
+  const idx = Math.min(consecutiveFailures - CHANNEL_REFRESH_BACKOFF_THRESHOLD, CHANNEL_REFRESH_BACKOFF_SECONDS.length - 1);
+  return CHANNEL_REFRESH_BACKOFF_SECONDS[idx] ?? 24 * 3600;
+}
+
 // A provider job renewed a connection's tokens (Social plan S6.4): the new credential is sealed in and the expiry
 // moves, in one transaction, so a rotated single-use refresh token is never lost to a half-done write. ifVersion is the
 // connection's updated_at the refresh started from; a connection changed since (reconnected, disconnected, expired) is
@@ -441,12 +461,63 @@ export const channelRefresh = defineCommand({
       .catch(credentialError);
     await ctx.trx
       .updateTable('ludy_kernel.channel_connection')
-      .set({ expires_at: input.expiresAt, updated_at: ctx.now })
+      .set({
+        expires_at: input.expiresAt,
+        updated_at: ctx.now,
+        refresh_failures: 0,
+        refresh_last_error: null,
+        refresh_next_at: null,
+      })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .execute();
     ctx.audit({ connection_id: input.connectionId, provider: row.provider });
     return { connectionId: input.connectionId, refreshed: true };
+  },
+});
+
+// Records a transient or unknown channel token refresh failure (#4251): increments the consecutive failure counter for
+// the same sanitized code, schedules exponential backoff (1h -> 6h -> 24h cap) once consecutiveFailures reaches 3, and
+// leaves updated_at untouched so concurrent authorize/mark_expired ifVersion checks are not disrupted.
+export const channelRefreshFail = defineCommand({
+  name: 'kernel.channel.refresh_fail',
+  input: z.strictObject({
+    connectionId: zId,
+    ifVersion: z.iso.datetime({ offset: true }),
+    code: z.string().regex(SAFE_REFRESH_ERROR_CODE),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
+    const row = await ctx.trx
+      .selectFrom('ludy_kernel.channel_connection')
+      .select(['status', 'provider', 'updated_at', 'refresh_failures', 'refresh_last_error'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    if (row.status !== 'active' || Math.floor(row.updated_at.getTime()) !== Date.parse(input.ifVersion)) {
+      return { connectionId: input.connectionId, recorded: false, failures: row.refresh_failures, backoffSeconds: 0, nextAt: null };
+    }
+    const failures = row.refresh_last_error === input.code ? row.refresh_failures + 1 : 1;
+    const backoffSeconds = channelRefreshBackoffSeconds(failures);
+    const nextAt = backoffSeconds > 0 ? new Date(ctx.now.getTime() + backoffSeconds * 1000).toISOString() : null;
+    await ctx.trx
+      .updateTable('ludy_kernel.channel_connection')
+      .set({
+        refresh_failures: failures,
+        refresh_last_error: input.code,
+        refresh_next_at: nextAt,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .execute();
+    ctx.audit({ connection_id: input.connectionId, provider: row.provider, code: input.code, failures, backoff_seconds: backoffSeconds });
+    return { connectionId: input.connectionId, recorded: true, failures, backoffSeconds, nextAt };
   },
 });
 
@@ -509,6 +580,10 @@ export interface ChannelConnectionView {
   // The business accounts a Telegram bot is connected to (#3191), for the screen to name: `ref` is a short fingerprint a member of the org may name to
   // allow or stop an account, never the platform's id.
   chatBusiness: Array<{ ref: string; name: string | null; username: string | null; enabled: boolean; canReply: boolean; approved: boolean }>;
+  // Last sanitized refresh failure code, consecutive failure count, and next retry timestamp when in backoff (#4251).
+  refreshError: string | null;
+  refreshFailures: number;
+  refreshNextAt: string | null;
 }
 
 const iso = (d: Date | string | null) => (d === null ? null : new Date(d).toISOString());
@@ -521,7 +596,7 @@ export const channelsList = defineQuery({
   handler: async (ctx: QueryContext, input): Promise<ChannelConnectionView[]> => {
     let q = ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
-      .select(['id', 'provider', 'external_account_id', 'display_name', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'chat_state', 'chat_error', 'chat_changed_at', 'chat_business'])
+      .select(['id', 'provider', 'external_account_id', 'display_name', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'chat_state', 'chat_error', 'chat_changed_at', 'chat_business', 'refresh_last_error', 'refresh_failures', 'refresh_next_at'])
       .where('org_id', '=', ctx.orgId)
       // Social and messaging channels only: a bank feed's connection (provider bank_..., ADR-0039) is the finance
       // module's, listed with its accounts by finance.bank_feed.accounts. Left out before the limit, so they never
@@ -562,6 +637,9 @@ export const channelsList = defineQuery({
       chatBusiness: seesBusiness
         ? parseBusinessAccounts(r.chat_business).map((a) => ({ ref: businessRef(a.id), name: a.name, username: a.username, enabled: a.enabled, canReply: a.canReply, approved: a.approved }))
         : [],
+      refreshError: r.refresh_last_error,
+      refreshFailures: r.refresh_failures,
+      refreshNextAt: iso(r.refresh_next_at),
     }));
   },
 });
@@ -1216,5 +1294,5 @@ export const channelTelegramBusinessKnown = defineQuery({
   },
 });
 
-export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelCloseOrphan, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal, channelTelegramChatSet, channelTelegramChatRecord, channelTelegramChatRekeyRecord, channelTelegramChatRekeyRetry, channelTelegramChatDisplaced, channelTelegramChatDisplacedAck, channelTelegramBusinessRecord, channelTelegramBusinessAllow];
+export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelCloseOrphan, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelRefreshFail, channelReseal, channelTelegramChatSet, channelTelegramChatRecord, channelTelegramChatRekeyRecord, channelTelegramChatRekeyRetry, channelTelegramChatDisplaced, channelTelegramChatDisplacedAck, channelTelegramBusinessRecord, channelTelegramBusinessAllow];
 export const channelQueries = [channelsList, channelCredential, channelTelegramChatWork, channelTelegramBusinessKnown];
