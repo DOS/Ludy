@@ -107,7 +107,7 @@ const collapseGroupedSpaces = (normalizedPlain: string): string =>
 const read = (text: string): string => collapseGroupedSpaces(readPlain(text));
 
 // "1.250.000" and "1,250,000" are grouping (groups of exactly three digits); "1.5" and "1,5" are decimals.
-const canon = (n: string): string => (/^\d{1,3}(?:[.,]\d{3})+$/u.test(n) ? n.replace(/[.,]/gu, '') : n.replace(',', '.'));
+const canon = (n: string): string => (/^[1-9]\d{0,2}(?:[.,]\d{3})+$/u.test(n) ? n.replace(/[.,]/gu, '') : n.replace(',', '.'));
 const MULTIPLIER: Record<string, number> = { k: 1e3, nghìn: 1e3, nghin: 1e3, ngàn: 1e3, ngan: 1e3, tr: 1e6, triệu: 1e6, trieu: 1e6, tỷ: 1e9, ty: 1e9 };
 // A number with its magnitude word: "150k", "1tr2" (1.2 million), "2 triệu", "2,5tr". The word must end there ("5 kg" is not 5k).
 const FIGURE = /(\d+(?:[.,]\d+)*)(?:\s*(tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])(\d+)?)?/gu;
@@ -253,7 +253,7 @@ const QTY_PREFIX = /(?<![\p{L}])(?:số\s+lượng|so\s+luong|sl(?![\p{L}])|qty(
 const BARE_UNACCENTED_PRICE_PREFIX = /(?<![\p{L}])gia\s*(?:[:=]\s*)?$/iu;
 const COMPOUND_GIA_BEFORE = /(?<![\p{L}])(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+gia\s*$/iu;
 const DEAL_VALUE_PREFIX = /(?<![\p{L}])(?:giá\s+trị|gia\s+tri)\s*(?:[:=]\s*)?$/iu;
-const PRICE_PREFIX = /(?:(?<![\p{L}])(?:đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|unit\s+price|price)(?:\s+(?:bán|lẻ|sỉ|mới|cũ|chưa\s+thuế|chưa\s+vat|gồm\s+vat|sau\s+thuế|trước\s+thuế|dự\s+kiến|khoảng|tầm))?|@)\s*(?:[:=]\s*)?$/iu;
+const PRICE_PREFIX = /(?:(?<![\p{L}])(?:đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|unit\s+price|price)(?:\s+(?:bán|lẻ|sỉ|mới|cũ|chưa\s+thuế|chưa\s+vat|gồm\s+vat|sau\s+thuế|trước\s+thuế|dự\s+kiến|khoảng|tầm))?(?:\s+(?:là|la|is)(?![\p{L}]))?|@)\s*(?:[:=]\s*)?$/iu;
 const TAX_INCLUSIVE_BEFORE = /(?:^|\s)((?:chưa|không|chua|khong|trước|truoc|not\s+including|excl(?:uding)?\.?)(?:\s+(?:tính|tinh))?\s+)?(?:đã\s+(?:bao\s+)?gồm|gồm|bao\s+gồm|sau|da\s+(?:bao\s+)?gom|gom|bao\s+gom|incl(?:uding)?\.?)\s+(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|tax)(?:\s+\d{1,2}(?:[.,]\d+)?\s*%)?\s*$/iu;
 const TAX_INCLUSIVE_AFTER = /^\s*(?:đồng|dong|vnđ|vnd|đ|₫)?(?:\s*\/\s*(?:1\s+)?[\p{L}][\p{L}\p{N}]*)?\s*(?:[,(-]\s*)?(?:đã\s+(?:bao\s+)?gồm|gồm|bao\s+gồm|sau|da\s+(?:bao\s+)?gom|gom|bao\s+gom|incl(?:uding)?\.?)\s+(?:(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:vat|gtgt|thuế|thue|tax))/iu;
 const TAX_INCLUSIVE_PIECE = /^\s*(?:đã\s+(?:bao\s+)?gồm|gồm|bao\s+gồm|sau|da\s+(?:bao\s+)?gom|gom|bao\s+gom|incl(?:uding)?\.?)\s+(?:(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:vat|gtgt|thuế|thue|tax))/iu;
@@ -274,7 +274,7 @@ const SENTENCE_DELIM = /\r?\n|;|\.(?=\s|$)/gu;
 const SUB_SPLIT = /(?<!\d),|,(?!\d)|\s+(?:và|va|and|\+)\s+|(?<=[\p{L}\d%])\s*\+\s*(?=(?:\d|vat|gtgt|thuế|thue))|\s*[&|]\s*|\s+\/\s+/giu;
 const AMP_RIGHT_CUE = /^\s*(?:\d|vat|gtgt|thuế|thue|số\s+lượng|so\s+luong|sl(?![\p{L}])|qty(?![\p{L}])|đơn\s+giá|don\s+gia|giá(?![\p{L}]))/iu;
 const BUYER_ONLY_PREFIX = /^\s*(?:giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)|giao\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách\s+(?:hàng|lẻ|quen)|công\s+ty|cty)|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách\s+(?:hàng|lẻ|quen|mua)|khach\s+(?:hang|le|quen|mua)|người\s+mua|nguoi\s+mua|công\s+ty|cong\s+ty|cty|bên|ben|đối\s+tác|doi\s+tac)|người\s+mua|nguoi\s+mua|khách\s+(?:hàng|lẻ|quen|tên|là|mua)|khach\s+(?:hang|le|quen|ten|la|mua)|buyer|customer)(?![\p{L}])/iu;
-const EXPLICIT_UNIT_PREFIX = /^\s*(?:đơn\s+vị|don\s+vi|đvt|dvt|unit)\b/iu;
+const EXPLICIT_UNIT_PREFIX = /^\s*(?:đơn\s+vị|don\s+vi|đvt|dvt|unit)(?![\p{L}])/iu;
 const EXPLICIT_UNIT_VALUE = /(?:^|,)\s*(?:đơn\s+vị|don\s+vi|đvt|dvt|unit)\s*(?:[:=]\s*)?([\p{L}][\p{L}\p{N}]*)/giu;
 const SHIPPING_NOTE = /(?<![\p{L}])(?:miễn\s+phí\s+(?:ship|vận\s+chuyển|giao\s+hàng)|mien\s+phi\s+(?:ship|van\s+chuyen|giao\s+hang)|free\s*ship|freeship|bao\s+ship|giao\s+(?:hàng\s+)?(?:miễn\s+phí|tận\s+nơi|nhanh|ngay|hỏa\s+tốc|hôm\s+nay|ngày\s+mai|mai|cuối\s+tuần|tuần\s+tới|sáng|chiều|tối)|giao\s+(?:hang\s+)?(?:mien\s+phi|tan\s+noi|nhanh|ngay|hoa\s+toc|hom\s+nay|ngay\s+mai|cuoi\s+tuan|tuan\s+toi|sang|chieu|toi))(?![\p{L}])/giu;
 
@@ -286,7 +286,7 @@ const BOILERPLATE_EXACT = new Set([
   'cộng', 'thành', 'tiền', 'mỗi', 'per', 'và', 'and', 'của', 'gửi', 'gui',
   'trị', 'giảm', 'chiết', 'khấu', 'ck', 'discount', 'off', 'trừ', 'bớt', 'không', 'chịu',
   'kê', 'khai', 'kct', 'kkknt', 'loại', 'người', 'cơ', 'hội',
-  'đã', 'gồm', 'chưa', 'áp', 'dụng',
+  'đã', 'gồm', 'chưa', 'áp', 'dụng', 'là',
   'invoice', 'sales', 'sale', 'tax', 'order',
 ]);
 const UNIT_ALIASES: Record<string, string> = {
@@ -323,7 +323,7 @@ const STRIP_MONEY_OR_LABELED = new RegExp(
     TIME_OF_DAY.source,
     PERCENT_ANY.source,
     RATE_AFTER_WORD.source,
-    String.raw`(?<![\p{L}])(?:tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền(?:\s+hàng)?|tong\s+tien(?:\s+hang)?|tổng\s+thanh\s+toán|tong\s+thanh\s+toan|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tiền\s+thuế(?:\s+(?:gtgt|vat))?|tien\s+thue(?:\s+(?:gtgt|vat))?|trả\s+trước|tra\s+truoc|đặt\s+cọc|dat\s+coc|cọc|đã\s+trả|da\s+tra|còn\s+lại|con\s+lai|thanh\s+toán|thanh\s+toan|giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết\s+khấu|chiet\s+khau|ck(?![\p{L}])|discount|off|trừ|bớt|đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|(?<!(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+)gia|unit\s+price|price|số\s+lượng|so\s+luong|sl(?![\p{L}])|qty(?![\p{L}])|quantity|tổng|total|amount)\s*(?:[:=]\s*)?\d+(?:[.,]\d+)*(?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*)?(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
+    String.raw`(?<![\p{L}])(?:tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền(?:\s+hàng)?|tong\s+tien(?:\s+hang)?|tổng\s+thanh\s+toán|tong\s+thanh\s+toan|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tiền\s+thuế(?:\s+(?:gtgt|vat))?|tien\s+thue(?:\s+(?:gtgt|vat))?|trả\s+trước|tra\s+truoc|đặt\s+cọc|dat\s+coc|cọc|đã\s+trả|da\s+tra|còn\s+lại|con\s+lai|thanh\s+toán|thanh\s+toan|giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết\s+khấu|chiet\s+khau|ck(?![\p{L}])|discount|off|trừ|bớt|đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|(?<!(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+)gia|unit\s+price|price|số\s+lượng|so\s+luong|sl(?![\p{L}])|qty(?![\p{L}])|quantity|tổng|total|amount)(?:\s+(?:là|la|is)(?![\p{L}]))?\s*(?:[:=]\s*)?\d+(?:[.,]\d+)*(?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*)?(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
     String.raw`(?<![\p{L}])(?:xuất\s+hóa\s+đơn|xuat\s+hoa\s+don|hóa\s+đơn(?:\s+trước)?|hoa\s+don(?:\s+truoc)?|(?:gửi\s+)?cùng\s+khách|gui\s+cung\s+khach|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người\s+mua|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}\s*$|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách(?:\s+(?:hàng|quen|lẻ))?|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,2}|cơ\s+hội|co\s+hoi|đơn\s+vị|don\s+vi|khách\s+(?:hàng|quen|lẻ)|khach\s+(?:hang|quen|le)|người\s+mua|nguoi\s+mua|chiết\s+khấu|chiet\s+khau|giảm\s+giá|giam\s+gia|thuế\s+suất|thue\s+suat|không\s+chịu\s+thuế|khong\s+chiu\s+thue|không\s+kê\s+khai|khong\s+ke\s+khai|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền|tong\s+tien)(?![\p{L}])`,
     String.raw`\d+(?:[.,]\d+)*\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
     String.raw`\d+(?:[.,]\d+)*\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}])`,
@@ -629,16 +629,20 @@ function summarizeSubPiece(rawText: string, afterConjunction = false): SubPiece 
   const { tokens } = chooseClauseTokens(plainText, text);
   const usable = tokens.filter(isUsableToken);
   const rates = ratesInBody(text);
+  const hasTaxIncPhrase = TAX_INCLUSIVE_PIECE.test(text);
+  const taxIncScoped = hasTaxIncPhrase ? text.replace(TAX_INCLUSIVE_PIECE, ' ').replace(INVOICE_VAT_SCOPE, ' ') : text;
+  const isTaxInclusiveNote = tokens.length === 0 && hasTaxIncPhrase && !descriptionTokens(taxIncScoped).hasProduct;
   const scopedText = rates.size > 0 && tokens.length === 0 ? text.replace(INVOICE_VAT_SCOPE, ' ') : text;
   const { exact, hasProduct } = descriptionTokens(scopedText);
   const isInvoiceScopeVat = rates.size > 0 && tokens.length === 0 && !hasProduct && scopedText !== text;
-  const isTaxInclusiveVat = rates.size > 0 && tokens.length === 0 && TAX_INCLUSIVE_PIECE.test(text);
-  const hasNonAttrProductWords = [...exact].some((t) => !UNIT_ONLY_EXACT.has(t) && !ATTRIBUTE_ONLY_EXACT.has(t));
-  const isVatOnly = rates.size > 0 && tokens.length === 0;
-  const isBuyerOnly = tokens.length === 0 && rates.size === 0 && BUYER_ONLY_PREFIX.test(text);
-  const isExplicitUnit = tokens.length === 0 && rates.size === 0 && EXPLICIT_UNIT_PREFIX.test(text);
-  const isExplicitQtyOnly = !hasProduct && usable.length === 1 && usable[0]!.role === 'qty';
-  const isExplicitPriceOnly = !hasProduct && usable.length === 1 && usable[0]!.role === 'price';
+  const isTaxInclusiveVat = isTaxInclusiveNote;
+  const pieceHasProduct = isTaxInclusiveNote ? false : hasProduct;
+  const hasNonAttrProductWords = pieceHasProduct && [...exact].some((t) => !UNIT_ONLY_EXACT.has(t) && !ATTRIBUTE_ONLY_EXACT.has(t));
+  const isVatOnly = (rates.size > 0 && tokens.length === 0) || isTaxInclusiveNote;
+  const isBuyerOnly = tokens.length === 0 && rates.size === 0 && !isTaxInclusiveNote && BUYER_ONLY_PREFIX.test(text);
+  const isExplicitUnit = tokens.length === 0 && rates.size === 0 && !isTaxInclusiveNote && EXPLICIT_UNIT_PREFIX.test(text);
+  const isExplicitQtyOnly = !pieceHasProduct && usable.length === 1 && usable[0]!.role === 'qty';
+  const isExplicitPriceOnly = !pieceHasProduct && usable.length === 1 && usable[0]!.role === 'price';
   const isTotalOnly = usable.length === 0 && tokens.length > 0 && rates.size === 0;
   return {
     plainText,
@@ -654,7 +658,7 @@ function summarizeSubPiece(rawText: string, afterConjunction = false): SubPiece 
     isExplicitQtyOnly,
     isExplicitPriceOnly,
     isTotalOnly,
-    hasProductWords: hasProduct,
+    hasProductWords: pieceHasProduct,
     hasNonAttrProductWords,
     afterConjunction,
   };
@@ -891,38 +895,73 @@ interface TableColSpec {
 const UNSUPPORTED_CELL_CURRENCY = /(?<![\p{L}])(?:usd|eur|gbp|jpy|cny|rmb|aud|cad|sgd|thb|krw|twd|hkd|myr)(?![\p{L}])|[$€£¥₩]/iu;
 const PLAIN_SCALED_PRICE_CELL = /^[\d.,\s]+(?:\s*\/\s*(?:1\s+)?[\p{L}]+)?$/u;
 
+function parseMoneyColumnScale(rawModifier: string): string | null {
+  const norm = foldDiacritics(rawModifier.toLowerCase()).replace(/\s+/gu, ' ').trim();
+  if (/^(?:d|dong|vnd|1)$/u.test(norm)) return '1';
+  if (/^(?:k|nghin|ngan|nghin dong|ngan dong|1[.,]000(?:\s*(?:d|dong|vnd))?)$/u.test(norm)) return '1000';
+  if (/^(?:tr|trieu|trieu dong|1[.,]000[.,]000(?:\s*(?:d|dong|vnd))?)$/u.test(norm)) return '1000000';
+  if (/^(?:ty|ty dong)$/u.test(norm)) return '1000000000';
+  return null;
+}
+
 function parseTableColSpec(rawHeaderCell: string, role: TableColRole): TableColSpec {
-  const suffixMatch = /\(([^()]+)\)\s*$/u.exec(rawHeaderCell) ?? /\/\s*([\p{L}\d.,]+)\s*$/u.exec(rawHeaderCell);
+  const parenMods = [...rawHeaderCell.matchAll(/\(([^()]*)\)/gu)].map((m) => m[1]!.trim());
+  const withoutParens = rawHeaderCell.replace(/\([^)]*\)/gu, ' ');
+  const slashMatch = /\/\s*([\p{L}\d.,%]+(?:\s+[\p{L}\d.,%]+)*)\s*$/u.exec(withoutParens);
+  const slashMod = slashMatch?.[1]?.trim();
+
   if (role === 'qty') {
-    if (!suffixMatch) return { role, scale: '1', unit: undefined };
-    const rawSuffix = suffixMatch[1]!.trim();
-    const norm = foldDiacritics(rawSuffix.toLowerCase()).replace(/\s+/gu, ' ').trim();
-    if (/(?:^|\s)(?:k|nghin|ngan|tr|trieu|ty|\d+)(?:\s|$)/u.test(norm)) {
-      return { role, scale: null, unit: undefined };
+    const mods = slashMod !== undefined && slashMod !== '' ? [...parenMods, slashMod] : parenMods;
+    if (mods.length === 0) return { role, scale: '1', unit: undefined };
+    let unit: string | undefined;
+    for (const rawMod of mods) {
+      if (rawMod === '') return { role, scale: null, unit: undefined };
+      const norm = foldDiacritics(rawMod.toLowerCase()).replace(/\s+/gu, ' ').trim();
+      if (/(?:^|\s)(?:k|nghin|ngan|tr|trieu|ty|\d+)(?:\s|$)/u.test(norm)) {
+        return { role, scale: null, unit: undefined };
+      }
+      const unitWord = /^[\p{L}][\p{L}\p{N}]*$/u.exec(rawMod)?.[0];
+      if (unitWord === undefined) return { role, scale: null, unit: undefined };
+      if (unit !== undefined && canonUnit(unit) !== canonUnit(unitWord)) {
+        return { role, scale: null, unit: undefined };
+      }
+      unit = unit ?? unitWord;
     }
-    const unitWord = /^[\p{L}][\p{L}\p{N}]*$/u.exec(rawSuffix)?.[0];
-    return { role, scale: '1', unit: unitWord };
+    return { role, scale: '1', unit };
   }
   if (role === 'vat') {
-    if (!suffixMatch || suffixMatch[1]!.trim() === '%') return { role: 'vat', scale: '1', unit: undefined };
+    const mods = slashMod !== undefined && slashMod !== '' ? [...parenMods, slashMod] : parenMods;
+    if (mods.length === 0 || (mods.length === 1 && mods[0] === '%')) return { role: 'vat', scale: '1', unit: undefined };
     // A currency/money scale on a VAT column ("Thuế GTGT (nghìn đồng)") holds a tax amount, never a VAT rate.
     return { role: 'total', scale: '1', unit: undefined };
   }
   if (role !== 'price' && role !== 'total' && role !== 'discount') return { role, scale: '1', unit: undefined };
-  if (!suffixMatch) return { role, scale: '1', unit: undefined };
-  const rawSuffix = suffixMatch[1]!.trim();
-  const norm = foldDiacritics(rawSuffix.toLowerCase()).replace(/\s+/gu, ' ').trim();
-  if (/^(?:d|dong|vnd|1)$/u.test(norm)) return { role, scale: '1', unit: undefined };
-  if (/^(?:k|nghin|ngan|nghin dong|ngan dong|1[.,]000(?:\s*(?:d|dong|vnd))?)$/u.test(norm)) return { role, scale: '1000', unit: undefined };
-  if (/^(?:tr|trieu|trieu dong|1[.,]000[.,]000(?:\s*(?:d|dong|vnd))?)$/u.test(norm)) return { role, scale: '1000000', unit: undefined };
-  if (/^(?:ty|ty dong)$/u.test(norm)) return { role, scale: '1000000000', unit: undefined };
-  if (role === 'price' && /\/\s*([\p{L}][\p{L}\p{N}]*)\s*$/u.test(rawHeaderCell)) {
-    const unitWord = /^[\p{L}][\p{L}\p{N}]*$/u.exec(rawSuffix)?.[0];
-    if (unitWord !== undefined && UNIT_ONLY_EXACT.has(readPlain(unitWord))) {
-      return { role: 'price', scale: '1', unit: unitWord };
+
+  let scale: string | undefined;
+  let unit: string | undefined;
+  for (const rawMod of parenMods) {
+    if (rawMod === '') return { role, scale: null, unit: undefined };
+    const modScale = parseMoneyColumnScale(rawMod);
+    if (modScale === null) return { role, scale: null, unit: undefined };
+    if (scale !== undefined && scale !== modScale) return { role, scale: null, unit: undefined };
+    scale = modScale;
+  }
+  if (slashMod !== undefined && slashMod !== '') {
+    const modScale = parseMoneyColumnScale(slashMod);
+    if (modScale !== null) {
+      if (scale !== undefined && scale !== modScale) return { role, scale: null, unit: undefined };
+      scale = modScale;
+    } else if (role === 'price') {
+      const unitWord = /^[\p{L}][\p{L}\p{N}]*$/u.exec(slashMod)?.[0];
+      if (unitWord === undefined || !UNIT_ONLY_EXACT.has(readPlain(unitWord))) {
+        return { role, scale: null, unit: undefined };
+      }
+      unit = unitWord;
+    } else {
+      return { role, scale: null, unit: undefined };
     }
   }
-  return { role, scale: null, unit: undefined };
+  return { role, scale: scale ?? '1', unit };
 }
 
 function detectTableHeader(cells: readonly string[]): TableColSpec[] | null {
@@ -1006,7 +1045,6 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
         const scaledValue = col.scale === '1' ? tok.value : money(tok.value).times(col.scale).toFixed();
         if (col.unit !== undefined) {
           if (tok.priceUnit !== undefined && canonUnit(tok.priceUnit) !== canonUnit(col.unit)) continue;
-          explicitUnits.add(col.unit);
           tokens.push({ ...tok, value: scaledValue, priceUnit: tok.priceUnit ?? col.unit, labeledPrice: true, dealValueOnly: false });
         } else {
           tokens.push({ ...tok, value: scaledValue, labeledPrice: true, dealValueOnly: false });
@@ -1139,13 +1177,18 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
       if (colonMatch) {
         const prefix = colonMatch[1]!.trim();
         const prefixRates = ratesInBody(collapseGroupedSpaces(prefix));
-        const prefixWithoutScope = prefix
+        const prefixHasPriceLabel = /(?<![\p{L}])(?:đơn\s+giá|don\s+gia|giá(?:\s+bán)?|gia(?:\s+ban)?|unit\s+price|price)(?![\p{L}])/iu.test(prefix);
+        const prefixTaxIncMatch = TAX_INCLUSIVE_BEFORE.exec(`${prefix} `);
+        const prefixTaxInclusive = prefixHasPriceLabel && prefixTaxIncMatch !== null && prefixTaxIncMatch[1] === undefined;
+        let prefixWithoutScope = prefix
           .replace(INVOICE_VAT_SCOPE, ' ')
           .replace(INVOICE_HEADER_SCOPE, ' ')
           .replace(PRICE_PREFIX, ' ');
-        const prefixHasPriceLabel = /(?<![\p{L}])(?:đơn\s+giá|don\s+gia|giá(?:\s+bán)?|gia(?:\s+ban)?|unit\s+price|price)\b/iu.test(prefix);
-        const prefixTaxIncMatch = TAX_INCLUSIVE_BEFORE.exec(`${prefix} `);
-        const prefixTaxInclusive = prefixHasPriceLabel && prefixTaxIncMatch !== null && prefixTaxIncMatch[1] === undefined;
+        if (prefixTaxInclusive) {
+          prefixWithoutScope = prefixWithoutScope
+            .replace(/(?<![\p{L}])(?:đơn\s+giá|don\s+gia|giá(?:\s+bán)?|gia(?:\s+ban)?|unit\s+price|price)(?:\s+(?:bán|lẻ|sỉ))?(?![\p{L}])/iu, ' ')
+            .replace(TAX_INCLUSIVE_BEFORE, ' ');
+        }
         if (
           (prefixRates.size > 0 || prefixTaxInclusive) &&
           extractFigureTokens(collapseGroupedSpaces(prefix)).length === 0 &&
@@ -1349,6 +1392,7 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
 }
 
 function clauseAcceptsFigures(clause: SourceClause, quantity: string, unitPrice: string, lineUnit: string | null): boolean {
+  if (clause.taxInclusive) return false;
   const usable = clause.usable;
   if (usable.length < 2) return false;
   const distinctPriceValues = new Set(usable.filter((t) => t.role === 'price').map((t) => t.value));
@@ -1404,8 +1448,15 @@ function clauseAcceptsLineText(clause: SourceClause, description: string, unit: 
     if (draftFiguresOutside(text, scope).length > 0) return false;
     if (!clauseHasScaleWords && hasUngroundedMoneyOrScaleWords(text)) return false;
   }
+  const desc = descriptionTokens(description);
+  const clauseHasProductName = [...clause.exactTokens].some((t) => !UNIT_ONLY_EXACT.has(t) && !ATTRIBUTE_ONLY_EXACT.has(t));
+  if (clauseHasProductName) {
+    for (const tok of desc.exact) {
+      if (UNIT_ONLY_EXACT.has(tok) || ATTRIBUTE_ONLY_EXACT.has(tok)) continue;
+      if (!clause.exactTokens.has(tok) && !clause.foldedTokens.has(foldDiacritics(tok))) return false;
+    }
+  }
   if (clause.conjunctionParts.length > 0) {
-    const desc = descriptionTokens(description);
     for (const part of clause.conjunctionParts) {
       let covered = false;
       for (const tok of desc.exact) {
