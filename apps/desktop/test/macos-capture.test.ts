@@ -461,7 +461,7 @@ describe('macOS Core Audio capture gating, silent-permission warning, and win32 
           token: 'tok',
           meetingsEnabled: true,
           agendaEnabled: false,
-          uploads: 'https://up.example.vn',
+          uploads: 'direct',
         }),
         onTrayState: (patch) => trayStates.push(patch as Record<string, unknown>),
         ui: {
