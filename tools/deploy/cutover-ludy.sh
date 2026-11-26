@@ -869,6 +869,22 @@ do_cutover_stack() {
   dc_proj "$proj" ps --status running --services | grep -x db >/dev/null || die "$EXIT_FAILED" "db is not running under project $proj"
   check_expected_schemas "$proj" || exit "$EXIT_FAILED"
 
+  local live_wal_img='' live_wal_stanza='' live_s3_prefix=''
+  if [ -n "$wal_file" ]; then
+    local db_cid live_repo1_path=''
+    db_cid="$(dc_proj "$proj" ps -q db 2>/dev/null | head -n 1 | tr -d '\r\n')"
+    [ -n "$db_cid" ] || die "$EXIT_FAILED" "cannot find running db container id for project $proj to capture WAL configuration"
+    live_wal_img="$(docker inspect --format '{{.Config.Image}}' "$db_cid" 2>/dev/null | tr -d '\r\n')"
+    live_wal_stanza="$(dc_proj "$proj" exec -T db printenv PGBACKREST_STANZA 2>/dev/null | tr -d '\r\n' || true)"
+    live_repo1_path="$(dc_proj "$proj" exec -T db printenv PGBACKREST_REPO1_PATH 2>/dev/null | tr -d '\r\n' || true)"
+    if [[ "$live_repo1_path" =~ ^/([^/]+)/wal/?$ ]]; then
+      live_s3_prefix="${BASH_REMATCH[1]}"
+    fi
+    if [ -z "$live_wal_img" ] || [ -z "$live_wal_stanza" ] || [ -z "$live_s3_prefix" ]; then
+      die "$EXIT_FAILED" "cannot inspect active WAL configuration on running db container ($proj): image='${live_wal_img}', PGBACKREST_STANZA='${live_wal_stanza}', PGBACKREST_REPO1_PATH='${live_repo1_path}'"
+    fi
+  fi
+
   local src_vols=() vol
   while IFS= read -r vol; do
     [ -n "$vol" ] || continue
@@ -924,15 +940,12 @@ do_cutover_stack() {
   env_tmp="$(umask 077 && mktemp "$(state_dir)/.env.cutover-tmp-XXXXXX")"
   TEMP_FILES+=("$env_tmp")
   rewrite_env_file "$ENV_FILE" "$env_tmp"
-  # Keep pre-switch WAL/S3 settings pinned until `switch-wal` (or operator S3 migration) completes (#3972).
+  # Keep live pre-switch WAL/S3 settings pinned until `switch-wal` (or operator S3 migration) completes (#3972).
   if [ -n "$wal_file" ]; then
-    local cur_wal_img cur_wal_stanza cur_s3_prefix wal_tmp
-    cur_wal_img="$(env_or_default WAL_DB_IMAGE 'crove-db:local')"
-    cur_wal_stanza="$(env_or_default WAL_STANZA 'crove')"
-    cur_s3_prefix="$(env_or_default BACKUP_S3_PREFIX 'crove')"
+    local wal_tmp
     wal_tmp="$(umask 077 && mktemp "$(state_dir)/.env.cutover-wal-XXXXXX")"
     TEMP_FILES+=("$wal_tmp")
-    upsert_env_kv_file "$env_tmp" "$wal_tmp" WAL_DB_IMAGE "$cur_wal_img" WAL_STANZA "$cur_wal_stanza" BACKUP_S3_PREFIX "$cur_s3_prefix"
+    upsert_env_kv_file "$env_tmp" "$wal_tmp" WAL_DB_IMAGE "$live_wal_img" WAL_STANZA "$live_wal_stanza" BACKUP_S3_PREFIX "$live_s3_prefix"
     mv -f "$wal_tmp" "$env_tmp"
   else
     # Always preserve the pre-Stage-7 default BACKUP_S3_PREFIX=crove (even when S3 settings live outside .env, e.g. systemd) (#3972).

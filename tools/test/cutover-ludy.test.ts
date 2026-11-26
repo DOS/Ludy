@@ -223,6 +223,10 @@ case "$cmd" in
     exit 0
     ;;
   inspect)
+    if [[ " $* " == *" {{.Config.Image}} "* ]]; then
+      if [ -n "\${STUB_DB_IMAGE-crove-db:local}" ]; then printf '%s\\n' "\${STUB_DB_IMAGE-crove-db:local}"; fi
+      exit 0
+    fi
     printf '%b' "\${STUB_INSPECT_MOUNTS:-}"
     exit 0
     ;;
@@ -325,7 +329,9 @@ case "$cmd" in
         fi
         ;;
       ps)
-        if [ "$proj" = crove ] || [ "$proj" = ludy ]; then
+        if [ "\${1:-}" = -q ] && [ "\${2:-}" = db ]; then
+          if [ -n "\${STUB_DB_CID-stub-db-cid}" ]; then printf '%s\\n' "\${STUB_DB_CID-stub-db-cid}"; fi
+        elif [ "$proj" = crove ] || [ "$proj" = ludy ]; then
           for s in db worker api; do echo "$s"; done
         fi
         ;;
@@ -335,7 +341,10 @@ case "$cmd" in
         case "$*" in
           *pg_isready*) exit 0 ;;
           *printenv*PGBACKREST_STANZA*)
-            if [ -n "\${STUB_PRE_WAL_STANZA:-}" ]; then echo "$STUB_PRE_WAL_STANZA"; fi
+            if [ -n "\${STUB_PRE_WAL_STANZA-crove}" ]; then echo "\${STUB_PRE_WAL_STANZA-crove}"; fi
+            ;;
+          *printenv*PGBACKREST_REPO1_PATH*)
+            if [ -n "\${STUB_PRE_WAL_REPO1_PATH-/crove/wal}" ]; then echo "\${STUB_PRE_WAL_REPO1_PATH-/crove/wal}"; fi
             ;;
           *pg_dump*) printf 'PGDMP-STUB\\n' ;;
           *pg_restore*) cat >/dev/null ;;
@@ -533,6 +542,30 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(updatedEnv).toContain('WAL_DB_IMAGE=crove-db:local');
     expect(updatedEnv).toContain('WAL_STANZA=crove');
     expect(updatedEnv).toContain('BACKUP_S3_PREFIX=crove');
+  });
+
+  it('cutover-stack captures live db WAL configuration over .env defaults and aborts before stopping if unreadable (#3972)', { timeout: 15000 }, () => {
+    const f = createCutoverFixture();
+    writeFileSync(join(f.deployDir, 'compose.wal.yml'), 'services:\n  db:\n    image: ${WAL_DB_IMAGE:-ludy-db:local}\n');
+    const res = runCutover(['cutover-stack', '--dir', f.deployDir, '--overlay-dir', f.overlayDir], {
+      STUB_DB_IMAGE: 'custom-pg:17',
+      STUB_PRE_WAL_STANZA: 'custom_stanza',
+      STUB_PRE_WAL_REPO1_PATH: '/custom-prefix/wal/',
+    });
+    expect(res.status, res.stderr + res.stdout).toBe(0);
+    const updatedEnv = readFileSync(join(f.deployDir, '.env'), 'utf8');
+    expect(updatedEnv).toContain('WAL_DB_IMAGE=custom-pg:17');
+    expect(updatedEnv).toContain('WAL_STANZA=custom_stanza');
+    expect(updatedEnv).toContain('BACKUP_S3_PREFIX=custom-prefix');
+
+    const fBad = createCutoverFixture();
+    writeFileSync(join(fBad.deployDir, 'compose.wal.yml'), 'services:\n  db:\n    image: ${WAL_DB_IMAGE:-ludy-db:local}\n');
+    const failRes = runCutover(['cutover-stack', '--dir', fBad.deployDir, '--overlay-dir', fBad.overlayDir], {
+      STUB_PRE_WAL_STANZA: '',
+    });
+    expect(failRes.status).toBe(1);
+    expect(failRes.stderr).toContain('cannot inspect active WAL configuration on running db container');
+    expect(readFileSync(fBad.stubLog, 'utf8')).not.toContain('dc crove stop');
   });
 
   it('cutover-stack preserves BACKUP_S3_PREFIX even without S3 keys in .env, resolves checkout WAL paths, and prune-old-volumes verifies cluster ID (#3972)', { timeout: 15000 }, () => {

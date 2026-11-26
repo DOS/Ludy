@@ -33,8 +33,7 @@ if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
   exit 0
 fi
 if [ "${1:-}" = ps ]; then
-  printf 'docker %s\n' "$*" >>"$STUB_LOG.orphans"
-  proj='' svc=''
+  proj='' svc='' status_filter=''
   shift
   while (($# > 0)); do
     case "$1" in
@@ -42,12 +41,18 @@ if [ "${1:-}" = ps ]; then
         case "$2" in
           label=com.docker.compose.project=*) proj="${2#label=com.docker.compose.project=}" ;;
           label=com.docker.compose.service=*) svc="${2#label=com.docker.compose.service=}" ;;
+          status=*) status_filter="${2#status=}" ;;
         esac
         shift 2
         ;;
       *) shift ;;
     esac
   done
+  if [ "$status_filter" = running ]; then
+    for item in ${STUB_RUNNING_CONTAINERS:-}; do printf '%s\n' "$item"; done
+    exit 0
+  fi
+  printf 'docker ps --filter label=com.docker.compose.project=%s --filter label=com.docker.compose.service=%s\n' "$proj" "$svc" >>"$STUB_LOG.orphans"
   for item in ${STUB_ORPHAN_CONTAINERS:-}; do
     key="${item%%=*}"
     val="${item#*=}"
@@ -56,6 +61,31 @@ if [ "${1:-}" = ps ]; then
     if [ "$key" = "${proj}:${svc}" ]; then
       printf '%s %s\n' "$cid" "$oneoff"
     fi
+  done
+  exit 0
+fi
+if [ "${1:-}" = inspect ]; then
+  [ -z "${STUB_INSPECT_FAIL:-}" ] || exit 1
+  shift
+  fmt='' target=''
+  while (($# > 0)); do
+    case "$1" in
+      --format) fmt="$2"; shift 2 ;;
+      *) target="$1"; shift ;;
+    esac
+  done
+  for item in ${STUB_INSPECT_MOUNTS:-}; do
+    IFS='|' read -r icid iproj imtype imname imsrc <<<"$item"
+    [ "$icid" = "$target" ] || continue
+    case "$fmt" in
+      *Labels*)
+        printf '%s\n' "$iproj"
+        exit 0
+        ;;
+      *.Mounts*)
+        printf '%s|%s|%s\n' "$imtype" "$imname" "$imsrc"
+        ;;
+    esac
   done
   exit 0
 fi
@@ -123,8 +153,17 @@ if [ "${1:-}" = run ]; then
   fi
   if ! stub_is_populated "${vols[0]}"; then exit 0; fi
   ((${#vols[@]} >= 2)) || exit 1
-  stub_is_populated "${vols[1]}"
-  exit $?
+  if ! stub_is_populated "${vols[1]}"; then exit 1; fi
+  if [[ "$*" == *lstatSync* ]]; then
+    local_m=''
+    for local_m in ${STUB_PARTIAL_MOUNTS:-}; do
+      if [ "$local_m" = "${vols[1]}" ]; then exit 1; fi
+    done
+    for local_m in ${STUB_REQUIRE_STRICT_MOUNTS:-}; do
+      if [ "$local_m" = "${vols[1]}" ] && [[ " $* " != *" --strict "* ]]; then exit 1; fi
+    done
+  fi
+  exit 0
 fi
 [ "${1:-}" = compose ] || {
   echo "stub docker: unexpected $*" >&2
@@ -188,6 +227,11 @@ case "$sub" in
     if [ "${1:-}" = --services ]; then
       for s in ${STUB_SERVICES:-db migrate auth auth-grants ludy-extract mailpit ludy}; do echo "$s"; done
     elif [ -z "${1:-}" ]; then
+      if [ -n "${STUB_PREV_CONFIG_FAIL:-}" ]; then exit 1; fi
+      if [ -n "${STUB_PREV_CONFIG_REQUIRE_ENV:-}" ] && [ -f "$STUB_DEPLOY_DIR/docker-compose.override.yml" ] && grep -q "${STUB_PREV_IMAGE_MATCH:-__none__}" "$STUB_DEPLOY_DIR/docker-compose.override.yml"; then
+        req_var="$STUB_PREV_CONFIG_REQUIRE_ENV"
+        if [ -z "${!req_var:-}" ]; then exit 1; fi
+      fi
       if [ "${STUB_COMPOSE_PROJECT:-}" = __empty__ ]; then
         exit 0
       elif [ -n "${STUB_COMPOSE_PROJECT:-}" ]; then

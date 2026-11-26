@@ -250,16 +250,19 @@ If you are upgrading from a pre-Stage-7 release (where `docker-compose.yml` used
 
 1. Take a backup while the current stack is running (`tools/backup/backup.sh`).
 2. Prepare the upgrade using either option below:
-   - Stage the Stage 7 helper files from `<new tag>` into a temporary directory while your current stack keeps running, then run `cutover-ludy.sh cutover-stack` to copy volumes into `ludy_*`, preserve WAL/S3 backup settings and rewrite `CROVE_*` keys to `LUDY_*`:
+   - Stage the Stage 7 helper files from `<new tag>` into a temporary directory while your current stack keeps running, then run `cutover-ludy.sh cutover-stack` to copy volumes into `ludy_*`, preserve WAL/S3 backup settings and rewrite `CROVE_*` keys to `LUDY_*` (do not proceed to step 3 unless this command exits `0`):
      ```bash
-     STAGE="$(mktemp -d)"
-     git fetch --tags && git archive "<new tag>" tools/deploy tools/backup tools/wal | tar -xf - -C "$STAGE"
-     cp -R "$STAGE/tools/deploy/"* "$STAGE/tools/backup" "$STAGE/tools/wal" "$STAGE/"
-     bash "$STAGE/cutover-ludy.sh" cutover-stack --dir /opt/ludy --overlay-dir "$STAGE"
-     rm -rf "$STAGE"
+     (
+       set -euo pipefail
+       STAGE="$(mktemp -d)"
+       trap 'rm -rf "$STAGE"' EXIT
+       git fetch --tags && git archive "<new tag>" tools/deploy tools/backup tools/wal | tar -xf - -C "$STAGE"
+       cp -R "$STAGE/tools/deploy/"* "$STAGE/tools/backup" "$STAGE/tools/wal" "$STAGE/"
+       bash "$STAGE/cutover-ludy.sh" cutover-stack --dir /opt/ludy --overlay-dir "$STAGE"
+     )
      ```
    - Or upgrade in place: pin `COMPOSE_PROJECT_NAME=crove` in `.env`, rename any `CROVE_APP_DB_PASSWORD`, `CROVE_WORKER_DB_PASSWORD`, `CROVE_PROBER_DB_PASSWORD`, `CROVE_REPORTER_DB_PASSWORD`, `CROVE_CONTEXT_TOKEN_KEY`, `CROVE_MODULES`, `CROVE_DOMAIN`, `CROVE_UPSTREAM` and `CROVE_DIR` entries to `LUDY_*` (keeping their values), and keep existing backup settings pinned (`BACKUP_S3_PREFIX=crove` if you use S3 backups without an explicit prefix; and if you use `tools/backup/compose.wal.yml`, also pin `WAL_STANZA=crove` and `WAL_DB_IMAGE=crove-db:local` until you run and verify `tools/deploy/cutover-ludy.sh switch-wal` or `tools/backup/wal.sh setup` and `tools/backup/wal.sh check`).
-3. For both options, stop and remove the renamed pre-Stage-7 containers (`crove`, `crove-extract`, `crove-media`) without deleting volumes before moving to the new release, then start Stage 7:
+3. Only after step 2 succeeds (if you used the automated cutover above, wait until `cutover-ludy.sh cutover-stack` exits `0`), stop and remove the renamed pre-Stage-7 containers (`crove`, `crove-extract`, `crove-media`) without deleting volumes before moving to the new release, then start Stage 7:
 
 ```bash
 docker compose down --timeout 30 --remove-orphans     # never pass -v or --volumes

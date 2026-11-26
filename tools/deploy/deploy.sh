@@ -707,7 +707,8 @@ dc() {
   args+=(-f "$DEPLOY_DIR/docker-compose.override.yml")
   # The database image with pgBackRest and the bucket's settings (tools/backup/compose.wal.yml, #2120). The image
   # (ludy-db:local, built from tools/wal) is on the host, never pulled: a deploy starts `db` with --no-build.
-  if [ -f "$DEPLOY_DIR/compose.wal.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.wal.yml"); fi
+  local wal_file=''
+  if wal_file="$(resolve_wal_compose_file 2>/dev/null)" && [ -n "$wal_file" ]; then args+=(-f "$wal_file"); fi
   if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.host.yml"); fi
   # DC_PREFIX: a command to run docker under (the count of plain idempotency rows runs under `timeout`).
   ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker "${args[@]}" "$@"
@@ -718,41 +719,38 @@ dc() {
 dc_prev_config() {
   [ -f "$DEPLOY_DIR/docker-compose.yml" ] || return 1
   local args=(compose --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml")
-  local item cf resolved_pilot='' resolved_wal=''
-  local -a cf_items=()
-  cf="$(sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?COMPOSE_FILE[[:space:]]*=[[:space:]]*//p' "$ENV_FILE" | tail -n 1 | sed -E 's/[[:space:]]+#.*$//')"
-  if [ -n "$cf" ]; then
-    IFS=':' read -ra cf_items <<<"$cf"
-  fi
+  local resolved_pilot='' resolved_wal='' pilot_rc=0 wal_rc=0
   if pilot_layout; then
-    if [ -f "$DEPLOY_DIR/compose.pilot.yml" ]; then
-      resolved_pilot="$DEPLOY_DIR/compose.pilot.yml"
-    else
-      for item in "${cf_items[@]+"${cf_items[@]}"}"; do
-        case "$item" in
-          compose.pilot.yml | */compose.pilot.yml)
-            if [[ "$item" == /* ]]; then resolved_pilot="$item"; else resolved_pilot="$DEPLOY_DIR/$item"; fi
-            ;;
-        esac
-      done
+    resolved_pilot="$(resolve_compose_overlay compose.pilot.yml fallback)" || pilot_rc=$?
+    if ((pilot_rc == 0)) && [ -n "$resolved_pilot" ]; then
+      args+=(-f "$resolved_pilot")
+    elif ((pilot_rc == 2)); then
+      return 1
     fi
-    [ -n "$resolved_pilot" ] && [ -f "$resolved_pilot" ] && args+=(-f "$resolved_pilot")
   fi
   if [ -f "$DEPLOY_DIR/docker-compose.override.yml" ]; then args+=(-f "$DEPLOY_DIR/docker-compose.override.yml"); fi
-  if [ -f "$DEPLOY_DIR/compose.wal.yml" ]; then
-    resolved_wal="$DEPLOY_DIR/compose.wal.yml"
-  else
-    for item in "${cf_items[@]+"${cf_items[@]}"}"; do
-      case "$item" in
-        compose.wal.yml | */compose.wal.yml)
-          if [[ "$item" == /* ]]; then resolved_wal="$item"; else resolved_wal="$DEPLOY_DIR/$item"; fi
-          ;;
-      esac
-    done
+  resolved_wal="$(resolve_wal_compose_file)" || wal_rc=$?
+  if ((wal_rc == 0)) && [ -n "$resolved_wal" ]; then
+    args+=(-f "$resolved_wal")
+  elif ((wal_rc == 2)); then
+    return 1
   fi
-  if [ -n "$resolved_wal" ] && [ -f "$resolved_wal" ]; then args+=(-f "$resolved_wal"); fi
   if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.host.yml"); fi
   ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker "${args[@]}" config 2>/dev/null
+}
+
+# Inspects existing Compose config with prior release images exported in this call only (#3972).
+dc_prev_config_for_release() {
+  local current_rel="$1" prev_img prev_ext prev_med
+  if [ -n "$current_rel" ] && [ -f "$DEPLOY_DIR/releases/$current_rel/release.env" ]; then
+    prev_img="$(release_field "$current_rel" IMAGE || true)"
+    prev_ext="$(release_field "$current_rel" EXTRACT_IMAGE || true)"
+    prev_med="$(release_field "$current_rel" MEDIA_IMAGE || true)"
+    if [ -n "$prev_img" ]; then export LUDY_IMAGE="$prev_img" CROVE_IMAGE="$prev_img"; fi
+    if [ -n "$prev_ext" ]; then export LUDY_EXTRACT_IMAGE="$prev_ext" CROVE_EXTRACT_IMAGE="$prev_ext"; fi
+    if [ -n "$prev_med" ]; then export LUDY_MEDIA_IMAGE="$prev_med" CROVE_MEDIA_IMAGE="$prev_med"; fi
+  fi
+  dc_prev_config
 }
 
 # Image pins of a release. The images are exported too, so compose.host.yml can use ${LUDY_IMAGE} for services it
@@ -780,12 +778,61 @@ pilot_layout() {
   env_compose_file_lists compose.pilot.yml
 }
 
+# Last COMPOSE_FILE assignment in $ENV_FILE (trimmed, matching dotenv/compose semantics).
+env_compose_file_value() {
+  local val
+  val="$(sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?COMPOSE_FILE[[:space:]]*=[[:space:]]*//p' "$ENV_FILE" \
+    | tail -n 1 | sed -E 's/[[:space:]]+#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//')"
+  case "$val" in
+    \"*\") val="${val#\"}"; val="${val%\"}" ;;
+    \'*\') val="${val#\'}"; val="${val%\'}" ;;
+  esac
+  printf '%s' "$val"
+}
+
 # Whether the env file's COMPOSE_FILE names a compose file (the name is matched literally). The last assignment wins, as in a dotenv
 # file: `export` and spaces around `=` are allowed, a trailing ` # comment` is not part of the value, and a commented-out line is not
 # an assignment. The one reading of that line, for the pilot layout and for the WAL overlay (#2162).
 env_compose_file_lists() {
-  sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?COMPOSE_FILE[[:space:]]*=[[:space:]]*//p' "$ENV_FILE" \
-    | tail -n 1 | sed -E 's/[[:space:]]+#.*$//' | grep -q -F -- "$1"
+  env_compose_file_value | grep -q -F -- "$1"
+}
+
+# Resolves an overlay compose file (such as compose.pilot.yml or compose.wal.yml) from COMPOSE_FILE in $ENV_FILE,
+# or falls back to $DEPLOY_DIR/<basename> when fallback=fallback and COMPOSE_FILE does not name it (#3972).
+# Returns 1 when absent/inactive, or 2 when COMPOSE_FILE names it and the referenced file does not exist on disk.
+resolve_compose_overlay() {
+  local base="$1" fallback="${2:-fallback}" cf item resolved='' listed=0
+  local -a cf_items=()
+  cf="$(env_compose_file_value)"
+  if [ -n "$cf" ]; then
+    IFS=':' read -ra cf_items <<<"$cf"
+    for item in "${cf_items[@]+"${cf_items[@]}"}"; do
+      item="${item#"${item%%[![:space:]]*}"}"
+      item="${item%"${item##*[![:space:]]}"}"
+      if [ "$item" = "$base" ] || [[ "$item" == */"$base" ]]; then
+        listed=1
+        if [[ "$item" == /* ]]; then
+          resolved="$item"
+        else
+          resolved="$DEPLOY_DIR/$item"
+        fi
+      fi
+    done
+  fi
+  if ((listed)); then
+    [ -f "$resolved" ] || return 2
+    printf '%s' "$resolved"
+    return 0
+  fi
+  if [ "$fallback" = fallback ] && [ -f "$DEPLOY_DIR/$base" ]; then
+    printf '%s' "$DEPLOY_DIR/$base"
+    return 0
+  fi
+  return 1
+}
+
+resolve_wal_compose_file() {
+  resolve_compose_overlay compose.wal.yml fallback
 }
 
 # In the pilot layout, the same image pins for `api` and `worker`, so a plain `docker compose` in the stack directory
@@ -854,10 +901,10 @@ snapshot_pre_activate() {
   PRE_ACTIVATE_SNAP="$(mktemp -d)" || return 1
   for f in docker-compose.yml docker-compose.override.yml compose.pilot.yml; do
     if [ -f "$DEPLOY_DIR/$f" ]; then
-      cp -f "$DEPLOY_DIR/$f" "$PRE_ACTIVATE_SNAP/$f"
-      printf '1\n' >"$PRE_ACTIVATE_SNAP/$f.present"
+      cp -f "$DEPLOY_DIR/$f" "$PRE_ACTIVATE_SNAP/$f" || { rm -rf "$PRE_ACTIVATE_SNAP"; PRE_ACTIVATE_SNAP=''; return 1; }
+      printf '1\n' >"$PRE_ACTIVATE_SNAP/$f.present" || { rm -rf "$PRE_ACTIVATE_SNAP"; PRE_ACTIVATE_SNAP=''; return 1; }
     else
-      printf '0\n' >"$PRE_ACTIVATE_SNAP/$f.present"
+      printf '0\n' >"$PRE_ACTIVATE_SNAP/$f.present" || { rm -rf "$PRE_ACTIVATE_SNAP"; PRE_ACTIVATE_SNAP=''; return 1; }
     fi
   done
 }
@@ -1094,9 +1141,46 @@ mounts_match_pg_cluster() {
     ' >/dev/null 2>&1
 }
 
-# Returns 0 if source mount has no entries OR destination mount exists and is non-empty (#3972).
+# Returns 0 if a running container from another Compose project (or without a matching project label) currently mounts $dst_spec (#3972).
+db_storage_held_by_other_project() {
+  local dst_spec="$1" active_proj="$2" dst_type dst_src dst_canon cid c_proj m_type m_name m_src
+  local -a cids=()
+  case "$dst_spec" in
+    volume:*) dst_type='volume'; dst_src="${dst_spec#volume:}" ;;
+    bind:*) dst_type='bind'; dst_src="${dst_spec#bind:}" ;;
+    *) return 1 ;;
+  esac
+  dst_src="${dst_src%/}"
+  [ -n "$dst_src" ] || dst_src='/'
+  dst_canon="$dst_src"
+  if [ "$dst_type" = 'bind' ] && [ -d "$dst_src" ]; then
+    dst_canon="$(cd -P "$dst_src" 2>/dev/null && pwd -P || printf '%s' "$dst_src")"
+  fi
+  mapfile -t cids < <(docker ps -q --filter status=running 2>/dev/null || true)
+  ((${#cids[@]} > 0)) || return 1
+  for cid in "${cids[@]}"; do
+    [ -n "$cid" ] || continue
+    c_proj="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$cid" 2>/dev/null || true)"
+    if [ "$c_proj" = "$active_proj" ]; then continue; fi
+    while IFS='|' read -r m_type m_name m_src; do
+      [ -n "$m_type" ] || continue
+      m_src="${m_src%/}"
+      [ -n "$m_src" ] || m_src='/'
+      if [ "$dst_type" = 'volume' ] && [ "$m_type" = 'volume' ] && [ "$m_name" = "$dst_src" ]; then
+        return 0
+      elif [ "$dst_type" = 'bind' ] && [ "$m_type" = 'bind' ] && { [ "$m_src" = "$dst_src" ] || [ "$m_src" = "$dst_canon" ]; }; then
+        return 0
+      fi
+    done < <(docker inspect --format '{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Source}}{{"\n"}}{{end}}' "$cid" 2>/dev/null || true)
+  done
+  return 1
+}
+
+# Returns 0 if source mount has no entries OR destination mount exists with matching directory/symlink/file parity (#3972).
+# Pass 1 as 4th argument for full byte-for-byte comparison on every file (e.g. /data/keys).
 mount_data_migrated() {
-  local src_spec="$1" dst_spec="$2" probe_image="$3" src_m dst_m
+  local src_spec="$1" dst_spec="$2" probe_image="$3" strict_bytes="${4:-0}" src_m dst_m
+  local -a extra_args=()
   mount_exists "$src_spec" || return 0
   src_m="$(mount_docker_source "$src_spec")"
   if ! mount_exists "$dst_spec"; then
@@ -1109,13 +1193,64 @@ mount_data_migrated() {
     return $?
   fi
   dst_m="$(mount_docker_source "$dst_spec")"
+  if [ "$strict_bytes" = 1 ]; then extra_args=(--strict); fi
   docker run --rm --network none --user 0:0 \
     -v "${src_m}:/src:ro" -v "${dst_m}:/dst:ro" \
     --entrypoint node "$probe_image" -e '
       const fs = require("node:fs");
-      if (fs.readdirSync("/src").length === 0) process.exit(0);
-      process.exit(fs.readdirSync("/dst").length > 0 ? 0 : 1);
-    ' >/dev/null 2>&1
+      const path = require("node:path");
+      const strictBytes = process.argv.includes("--strict");
+      const CHUNK = 4096;
+      function filesEqual(a, b, size) {
+        if (size === 0 || (!strictBytes && size > CHUNK)) return true;
+        const fdA = fs.openSync(a, "r");
+        const fdB = fs.openSync(b, "r");
+        try {
+          const bufA = Buffer.allocUnsafe(Math.min(size, 65536));
+          const bufB = Buffer.allocUnsafe(bufA.length);
+          let pos = 0;
+          while (pos < size) {
+            const toRead = Math.min(bufA.length, size - pos);
+            const nA = fs.readSync(fdA, bufA, 0, toRead, pos);
+            const nB = fs.readSync(fdB, bufB, 0, toRead, pos);
+            if (nA !== toRead || nB !== toRead) return false;
+            if (!bufA.subarray(0, toRead).equals(bufB.subarray(0, toRead))) return false;
+            pos += toRead;
+          }
+          return true;
+        } finally {
+          fs.closeSync(fdA);
+          fs.closeSync(fdB);
+        }
+      }
+      function check(rel) {
+        const srcPath = rel ? path.join("/src", rel) : "/src";
+        const entries = fs.readdirSync(srcPath, { withFileTypes: true });
+        for (const ent of entries) {
+          const childRel = rel ? path.join(rel, ent.name) : ent.name;
+          const s = path.join("/src", childRel);
+          const d = path.join("/dst", childRel);
+          let ss, ds;
+          try {
+            ss = fs.lstatSync(s);
+            ds = fs.lstatSync(d);
+          } catch {
+            return false;
+          }
+          if (ss.isDirectory()) {
+            if (!ds.isDirectory() || !check(childRel)) return false;
+          } else if (ss.isSymbolicLink()) {
+            if (!ds.isSymbolicLink() || fs.readlinkSync(s) !== fs.readlinkSync(d)) return false;
+          } else if (ss.isFile()) {
+            if (!ds.isFile() || ss.size !== ds.size || !filesEqual(s, d, ss.size)) return false;
+          } else {
+            return false;
+          }
+        }
+        return true;
+      }
+      process.exit(check("") ? 0 : 1);
+    ' ${extra_args[@]+"${extra_args[@]}"} >/dev/null 2>&1
 }
 
 # Gracefully stops and removes containers belonging to a renamed service from a prior release (e.g., crove-extract ->
@@ -1347,8 +1482,10 @@ preflight() {
   [ -f "$ENV_FILE" ] || die "$EXIT_USAGE" "env file $ENV_FILE not found (copy .env.example there and change every secret)"
   # The WAL archiving overlay (#2120) stays the host's own file: without it the deploy would recreate `db` on the plain PostgreSQL image,
   # while the volume still tells PostgreSQL to push every WAL segment with a command that image does not have.
-  if env_compose_file_lists compose.wal.yml && [ ! -f "$DEPLOY_DIR/compose.wal.yml" ]; then
-    die "$EXIT_USAGE" "COMPOSE_FILE in $ENV_FILE lists compose.wal.yml but $DEPLOY_DIR/compose.wal.yml does not exist: copy tools/backup/compose.wal.yml there (docs/runbooks/backup-and-restore.md, \"Point in time recovery\")"
+  local wal_rc=0
+  resolve_wal_compose_file >/dev/null || wal_rc=$?
+  if ((wal_rc == 2)); then
+    die "$EXIT_USAGE" "COMPOSE_FILE in $ENV_FILE lists compose.wal.yml but the referenced file does not exist under $DEPLOY_DIR: copy tools/backup/compose.wal.yml there (docs/runbooks/backup-and-restore.md, \"Point in time recovery\")"
   fi
   command -v docker >/dev/null || die "$EXIT_USAGE" 'docker is not installed'
   command -v curl >/dev/null || die "$EXIT_USAGE" 'curl is not installed'
@@ -2239,9 +2376,13 @@ do_deploy() {
 
   local prev_config='' prev_proj=''
   if [ -f "$DEPLOY_DIR/docker-compose.yml" ]; then
-    prev_config="$(dc_prev_config || true)"
-    if [ -n "$prev_config" ]; then
-      prev_proj="$(compose_project_from_yaml "$prev_config" || true)"
+    if ! prev_config="$(dc_prev_config_for_release "$current")" || [ -z "$prev_config" ]; then
+      record "deploy $name failed: pre-deploy compose config"
+      die "$EXIT_FAILED" "cannot inspect existing compose configuration in $DEPLOY_DIR before activating $release; nothing was changed"
+    fi
+    if ! prev_proj="$(compose_project_from_yaml "$prev_config")" || [ -z "$prev_proj" ]; then
+      record "deploy $name failed: pre-deploy compose project"
+      die "$EXIT_FAILED" "cannot determine existing compose project name in $DEPLOY_DIR before activating $release; nothing was changed"
     fi
   fi
   snapshot_pre_activate "$current" || {
@@ -2262,10 +2403,11 @@ do_deploy() {
     record "deploy $name failed: compose project"
     die "$EXIT_FAILED" 'cannot determine the compose project name; nothing was changed'
   fi
+  local new_db=''
+  new_db="$(compose_target_mount "$new_config" "$active_proj" /var/lib/postgresql/data 'db')"
   if [ -n "$prev_config" ] && [ -n "$prev_proj" ]; then
-    local prev_db='' new_db=''
+    local prev_db=''
     prev_db="$(compose_target_mount "$prev_config" "$prev_proj" /var/lib/postgresql/data 'db')"
-    new_db="$(compose_target_mount "$new_config" "$active_proj" /var/lib/postgresql/data 'db')"
     if [ -n "$prev_db" ] && [ -n "$new_db" ] && [ "$prev_db" != "$new_db" ]; then
       if ! mounts_match_pg_cluster "$prev_db" "$new_db" "$image"; then
         restore_pre_activate "$current"
@@ -2273,18 +2415,24 @@ do_deploy() {
         die "$EXIT_FAILED" "found prior database storage $(mount_label "$prev_db") without a matching copied PostgreSQL cluster in $(mount_label "$new_db") for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or keep COMPOSE_PROJECT_NAME=$prev_proj / mount $(mount_label "$prev_db") in $ENV_FILE) before deploying Stage 7"
       fi
     fi
-    local target prev_m new_m
+    local target prev_m new_m strict_bytes
     for target in /data/files /data/keys /data/archive; do
       prev_m="$(compose_target_mount "$prev_config" "$prev_proj" "$target" 'ludy|crove|worker|api')"
       new_m="$(compose_target_mount "$new_config" "$active_proj" "$target" 'ludy|crove|worker|api')"
       if [ -n "$prev_m" ] && [ -n "$new_m" ] && [ "$prev_m" != "$new_m" ]; then
-        if ! mount_data_migrated "$prev_m" "$new_m" "$image"; then
+        if [ "$target" = '/data/keys' ]; then strict_bytes=1; else strict_bytes=0; fi
+        if ! mount_data_migrated "$prev_m" "$new_m" "$image" "$strict_bytes"; then
           restore_pre_activate "$current"
           record "deploy $name failed: $target storage $(mount_label "$prev_m") not cut over"
-          die "$EXIT_FAILED" "found non-empty prior $target storage $(mount_label "$prev_m") while destination $(mount_label "$new_m") is missing or empty; cut over persistent volumes/paths before deploying Stage 7"
+          die "$EXIT_FAILED" "found non-empty prior $target storage $(mount_label "$prev_m") while destination $(mount_label "$new_m") does not contain all migrated data; cut over persistent volumes/paths before deploying Stage 7"
         fi
       fi
     done
+  fi
+  if [ -n "$new_db" ] && db_storage_held_by_other_project "$new_db" "$active_proj"; then
+    restore_pre_activate "$current"
+    record "deploy $name failed: db storage $(mount_label "$new_db") held by another project"
+    die "$EXIT_FAILED" "database storage $(mount_label "$new_db") is still mounted by a running container outside project $active_proj; stop the old stack before deploying Stage 7"
   fi
 
   log 'starting the database'

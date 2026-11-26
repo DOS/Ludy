@@ -492,6 +492,82 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   });
 
   // #892: with --build, /version must report the build being deployed, so an old container that still answers fails.
+  it('resolves tools/backup/compose.wal.yml from COMPOSE_FILE in preflight and compose calls (#3972)', () => {
+    mkdirSync(`${dir}/tools/backup`, { recursive: true });
+    writeFileSync(`${dir}/tools/backup/compose.wal.yml`, 'services: {}\n');
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:tools/backup/compose.wal.yml\n');
+    const ok = deploy('v1.0.0', 'a');
+    expect(ok.status, ok.out).toBe(0);
+    expect(readFileSync(`${log}.files`, 'utf8')).toContain(`${dir}/tools/backup/compose.wal.yml`);
+
+    rmSync(`${dir}/tools/backup/compose.wal.yml`);
+    const missing = deploy('v1.0.1', 'b');
+    expect(missing.status, missing.out).toBe(2);
+    expect(missing.out).toContain('lists compose.wal.yml but');
+  });
+
+  it('fails closed before activate when pre-deploy compose inspection fails, and exports prior release images (#3972)', () => {
+    writeFileSync(`${dir}/docker-compose.yml`, '# manual checkout\nname: crove\nservices: {}\n');
+    const blocked = deploy('v1.0.0', 'a', { STUB_PREV_CONFIG_FAIL: '1' });
+    expect(blocked.status, blocked.out).toBe(1);
+    expect(blocked.out).toContain('cannot inspect existing compose configuration');
+    expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toContain('# manual checkout');
+    expect(existsSync(`${dir}/.deploy/current`)).toBe(false);
+
+    rmSync(`${dir}/docker-compose.yml`);
+    expect(deploy('v1.0.0', 'a').status).toBe(0);
+    const upgrade = deploy('v1.1.0', 'b', {
+      STUB_PREV_CONFIG_REQUIRE_ENV: 'CROVE_IMAGE',
+      STUB_PREV_IMAGE_MATCH: digest('a'),
+    });
+    expect(upgrade.status, upgrade.out).toBe(0);
+  });
+
+  it('refuses switching project when another project running container holds shared db storage (#3972)', () => {
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+    const blocked = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_VOLUME: 'crove_db-data',
+      STUB_RUNNING_CONTAINERS: 'crove-db-1',
+      STUB_INSPECT_MOUNTS: 'crove-db-1|crove|volume|crove_db-data|',
+    });
+    expect(blocked.status, blocked.out).toBe(1);
+    expect(blocked.out).toContain('still mounted by a running container outside project ludy');
+    expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toContain('name: crove');
+    expect(existsSync(`${dir}/.deploy/current`)).toBe(false);
+    expect(calls().some((l) => l.startsWith('compose up '))).toBe(false);
+  });
+
+  it('requires recursive file parity for /data/files and strict byte parity for /data/keys (#3972)', () => {
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+
+    const partialFiles = deploy('v1.0.0', 'a', {
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=99 ludy_db-data=99',
+      STUB_VOLUMES: 'crove_db-data ludy_db-data crove_files ludy_files',
+      STUB_POPULATED_MOUNTS: 'crove_files ludy_files',
+      STUB_PARTIAL_MOUNTS: 'ludy_files',
+    });
+    expect(partialFiles.status, partialFiles.out).toBe(1);
+    expect(partialFiles.out).toContain('does not contain all migrated data');
+
+    const partialKeys = deploy('v1.0.0', 'a', {
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=99 ludy_db-data=99',
+      STUB_VOLUMES: 'crove_db-data ludy_db-data crove_keys ludy_keys',
+      STUB_POPULATED_MOUNTS: 'crove_keys ludy_keys',
+      STUB_PARTIAL_MOUNTS: 'ludy_keys',
+      STUB_REQUIRE_STRICT_MOUNTS: 'ludy_keys',
+    });
+    expect(partialKeys.status, partialKeys.out).toBe(1);
+    expect(partialKeys.out).toContain('does not contain all migrated data');
+
+    const okKeys = deploy('v1.0.0', 'a', {
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=99 ludy_db-data=99',
+      STUB_VOLUMES: 'crove_db-data ludy_db-data crove_keys ludy_keys',
+      STUB_POPULATED_MOUNTS: 'crove_keys ludy_keys',
+      STUB_REQUIRE_STRICT_MOUNTS: 'ludy_keys',
+    });
+    expect(okKeys.status, okKeys.out).toBe(0);
+  });
+
   describe('build check', () => {
     const build = (c: string) => digest(c).slice(0, 12);
     const withBuild = (release: string, c: string, env: Record<string, string> = {}) =>
