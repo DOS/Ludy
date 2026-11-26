@@ -12,8 +12,7 @@
 # secret is on one; the sign-in body read from stdin goes to $STUB_LOG.signin, the uploaded file to
 # $STUB_LOG.upload, an RPC body to $STUB_LOG.rpc. STUB_SIGNIN_FAIL refuses the sign-in, STUB_FILE_STATUS sets the
 # uploaded file's status (default proposed), STUB_REJECT_FAIL fails the rejection. A remote identity provider (#2704): its
-# keys at .../.well-known/jwks.json (STUB_JWKS_FAIL: 404, STUB_JWKS_EMPTY, STUB_JWKS_OCT) and its https .../auth/v1/health (STUB_IDP_HEALTH_FAIL: 404, or
-# STUB_IDP_REDIRECT: 301). STUB_IDP_HEALTH_HTML: the Auth URL is this API's address by mistake (its page answers). STUB_NO_PROXY: this deployment has no /auth/v1 proxy (404 anywhere but at https://idp.*). /api/config reports authUrl as <base>/auth/v1, or STUB_AUTH_URL, and modules from CROVE_MODULES in $STUB_DEPLOY_DIR/.env (with kernel), or STUB_CONFIG_MODULES.
+# STUB_IDP_REDIRECT: 301). STUB_IDP_HEALTH_HTML: the Auth URL is this API's address by mistake (its page answers). STUB_NO_PROXY: this deployment has no /auth/v1 proxy (404 anywhere but at https://idp.*). /api/config reports authUrl as <base>/auth/v1, or STUB_AUTH_URL, and modules from LUDY_MODULES in $STUB_DEPLOY_DIR/.env (with kernel), or STUB_CONFIG_MODULES.
 set -euo pipefail
 
 printf '%s\n' "$*" >>"$STUB_LOG.argv"
@@ -91,15 +90,15 @@ case "$url" in
     ;;
   */version)
     build=dev
-    if [[ "$running" =~ /crove@sha256:([0-9a-f]{12}) ]]; then build="${BASH_REMATCH[1]}"; fi
+    if [[ "$running" =~ /(ludy|crove)@sha256:([0-9a-f]{12}) ]]; then build="${BASH_REMATCH[2]}"; fi
     if [ -n "${STUB_VERSION_BUILD:-}" ]; then build="$STUB_VERSION_BUILD"; fi
     if [ -n "${STUB_STALE_DIGEST:-}" ] && [[ "$running" == *"$STUB_STALE_DIGEST"* ]]; then build=stale; fi
     missing='[]'
-    if [ -n "${STUB_MIGRATION_MISSING:-}" ]; then missing='["20990101000000_crove_kernel_next.sql"]'; fi
+    if [ -n "${STUB_MIGRATION_MISSING:-}" ]; then missing='["20990101000000_ludy_kernel_next.sql"]'; fi
     body="{\"build\":\"$build\",\"migrationsMissing\":$missing}"
     ;;
   */api/config)
-    # What the running API reports: the PUBLIC_AUTH_URL and CROVE_MODULES of the host's env file when present (#2704, #3531),
+    # What the running API reports: the PUBLIC_AUTH_URL and LUDY_MODULES of the host's env file when present (#2704, #3531),
     # else the bundled proxy and empty modules; STUB_AUTH_URL and STUB_CONFIG_MODULES override them.
     configured="$(sed -n 's/^PUBLIC_AUTH_URL=//p' "$STUB_DEPLOY_DIR/.env" 2>/dev/null | tail -n 1 | tr -d '\r')"
     modules_json='[]'
@@ -111,9 +110,6 @@ case "$url" in
       fi
     else
       configured_modules="$(sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?LUDY_MODULES[[:space:]]*[=:][[:space:]]*(.*)$/\2/p' "$STUB_DEPLOY_DIR/.env" 2>/dev/null | tail -n 1)"
-      if [ -z "$configured_modules" ]; then
-        configured_modules="$(sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?CROVE_MODULES[[:space:]]*[=:][[:space:]]*(.*)$/\2/p' "$STUB_DEPLOY_DIR/.env" 2>/dev/null | tail -n 1)"
-      fi
       if [ -n "$configured_modules" ]; then
         modules_list='kernel'
         IFS=',' read -r -a stub_mods <<<"$configured_modules"
@@ -172,7 +168,7 @@ case "$url" in
     if [ -n "${STUB_SIGNIN_FAIL:-}" ]; then status=400 body='{"error":"invalid_grant"}'; else body='{"access_token":"stub-access-token","token_type":"bearer"}'; fi
     ;;
   */api/files | */api/rpc/*)
-    if [[ "$headers" != *'authorization: Bearer stub-access-token'* ]] || { [[ "$headers" != *'x-ludy-org: crove-smoke'* ]] && [[ "$headers" != *'x-crove-org: crove-smoke'* ]]; }; then
+    if [[ "$headers" != *'authorization: Bearer stub-access-token'* ]] || [[ "$headers" != *'x-ludy-org: ludy-smoke'* ]]; then
       status=401 body='{"code":"UNAUTHENTICATED"}'
     elif [[ "$url" == */api/files ]]; then
       file="${form#file=@}"

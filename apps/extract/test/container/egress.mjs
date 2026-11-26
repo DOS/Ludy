@@ -104,7 +104,7 @@ for (const [name, probe, flags] of probes) {
 }
 
 if (mode === 'blocked' && reached > 0) {
-  console.error(`crove-extract reached the outside ${reached} time(s); it must have no egress`);
+  console.error(`ludy-extract reached the outside ${reached} time(s); it must have no egress`);
   process.exit(1);
 }
 if (mode === 'control' && reached < expected) {

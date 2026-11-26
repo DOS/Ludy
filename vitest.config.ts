@@ -3,10 +3,10 @@ import { defineConfig } from 'vitest/config';
 // The context token key of the test suites (#1822): public, refused by the kernel's config on a public URL. The
 // migration runner installs it in every test database and runtimes sign their user contexts with it.
 const TEST_CONTEXT_TOKEN_KEY = Buffer.from('test-only-context-token-key-0123456789').toString('base64');
-const env = { LUDY_CONTEXT_TOKEN_KEY: TEST_CONTEXT_TOKEN_KEY, CROVE_CONTEXT_TOKEN_KEY: TEST_CONTEXT_TOKEN_KEY };
+const env = { LUDY_CONTEXT_TOKEN_KEY: TEST_CONTEXT_TOKEN_KEY };
 
 // Database test files a CI part leaves to another part (#1041): comma-separated globs from the repository root.
-const DB_EXCLUDE = (process.env.LUDY_DB_TEST_EXCLUDE ?? process.env.CROVE_DB_TEST_EXCLUDE ?? '').split(',').filter(Boolean);
+const DB_EXCLUDE = (process.env.LUDY_DB_TEST_EXCLUDE ?? '').split(',').filter(Boolean);
 
 export default defineConfig({
   test: {

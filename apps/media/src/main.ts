@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// crove-media entry point (AI Meeting Notes M3, #2577).
+// ludy-media entry point (AI Meeting Notes M3, #2577).
 // Media processing sandbox: ffmpeg, probe, normalize, split, repackage video.
 // Runs with no credentials and an environment allowlist; in its image and anywhere
 // NODE_ENV is not explicitly development or test, it refuses to start with unexpected variables.
@@ -54,12 +54,11 @@ export function unexpectedVariables(env: NodeJS.ProcessEnv): string[] {
 }
 
 export const IMAGE_MARKER = '/etc/ludy-media-image';
-export const LEGACY_IMAGE_MARKER = '/etc/crove-media-image';
 
 const RELAXED_NODE_ENV = new Set(['development', 'test']);
 
 export function enforcesAllowlist(env: NodeJS.ProcessEnv, markerPath?: string): boolean {
-  const hasMarker = markerPath !== undefined ? existsSync(markerPath) : existsSync(IMAGE_MARKER) || existsSync(LEGACY_IMAGE_MARKER);
+  const hasMarker = markerPath !== undefined ? existsSync(markerPath) : existsSync(IMAGE_MARKER);
   return hasMarker || !RELAXED_NODE_ENV.has(env.NODE_ENV ?? '');
 }
 
@@ -75,13 +74,13 @@ export function loadMediaConfig(
   if (enforcesAllowlist(env, options.markerPath)) {
     const unexpected = unexpectedVariables(env);
     if (unexpected.length > 0) {
-      throw new Error(`crove-media runs with its own settings only; remove ${unexpected.join(', ')} from its environment`);
+      throw new Error(`ludy-media runs with its own settings only; remove ${unexpected.join(', ')} from its environment`);
     }
   } else {
     const credentials = credentialVariables(env);
     if (credentials.length > 0) {
       warn(
-        `[media] crove-media must run without credentials; remove ${credentials.join(', ')} from its environment`,
+        `[media] ludy-media must run without credentials; remove ${credentials.join(', ')} from its environment`,
       );
     }
   }
@@ -125,7 +124,7 @@ export function startMediaServer(config: MediaConfig = loadMediaConfig()) {
       port: config.PORT,
     },
     (info) => {
-      console.log(`crove-media listening on http://${info.address}:${info.port}`);
+      console.log(`ludy-media listening on http://${info.address}:${info.port}`);
     },
   );
 

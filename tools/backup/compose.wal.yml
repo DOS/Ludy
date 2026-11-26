@@ -20,10 +20,13 @@ services:
     build:
       # Relative to the project directory (the checkout, where docker-compose.yml is); WAL_BUILD_CONTEXT for any other.
       context: ${WAL_BUILD_CONTEXT:-tools/wal}
-    image: ${WAL_DB_IMAGE:-crove-db:local}
+    # Stage 7 defaults target ludy-db:local, stanza ludy and /ludy/wal. Pre-Stage-7 stacks upgrading in place with
+    # COMPOSE_PROJECT_NAME=crove must pin WAL_DB_IMAGE=crove-db:local, WAL_STANZA=crove and BACKUP_S3_PREFIX=crove
+    # in .env until `tools/deploy/cutover-ludy.sh switch-wal` (or `wal.sh setup && wal.sh check`) completes (#3972).
+    image: ${WAL_DB_IMAGE:-ludy-db:local}
     environment:
-      # Defaults to crove for existing stacks; set WAL_STANZA=ludy (with BACKUP_S3_PREFIX=ludy) during the Phase 3 cutover runbook.
-      PGBACKREST_STANZA: ${WAL_STANZA:-crove}
+      # Defaults to ludy for post-cutover stacks (#3972).
+      PGBACKREST_STANZA: ${WAL_STANZA:-ludy}
       PGBACKREST_PG1_PATH: /var/lib/postgresql/data
       PGBACKREST_REPO1_TYPE: s3
       PGBACKREST_REPO1_S3_BUCKET: ${BACKUP_S3_BUCKET:?set BACKUP_S3_BUCKET to the bucket the WAL goes to}
@@ -40,7 +43,7 @@ services:
       # Scope it to <BACKUP_S3_PREFIX>/wal/* (list, get, put, delete).
       PGBACKREST_REPO1_S3_KEY: ${WAL_S3_ACCESS_KEY_ID:?set WAL_S3_ACCESS_KEY_ID to a key pair scoped to the wal/ prefix, not BACKUP_S3_ACCESS_KEY_ID}
       PGBACKREST_REPO1_S3_KEY_SECRET: ${WAL_S3_SECRET_ACCESS_KEY:?set WAL_S3_SECRET_ACCESS_KEY, the secret of that key pair}
-      PGBACKREST_REPO1_PATH: /${BACKUP_S3_PREFIX:-crove}/wal
+      PGBACKREST_REPO1_PATH: /${BACKUP_S3_PREFIX:-ludy}/wal
       PGBACKREST_REPO1_CIPHER_TYPE: aes-256-cbc
       PGBACKREST_REPO1_CIPHER_PASS: ${WAL_ENCRYPTION_KEY:?set WAL_ENCRYPTION_KEY, which the WAL is sealed with}
       # Full and differential base backups kept; the WAL older than the oldest full one is expired with it.

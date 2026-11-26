@@ -126,7 +126,7 @@ function secretProblem(name: string, secret: string | undefined, minLength: numb
 }
 
 // The compose files a split pilot lists in COMPOSE_FILE (docs/runbooks/deploy.md): compose.pilot.yml moves the all-in-one
-// `crove` service behind the `all-in-one` profile and starts `api` and `worker` apart (tools/deploy/compose.pilot.yml).
+// `ludy` service behind the `all-in-one` profile and starts `api` and `worker` apart (tools/deploy/compose.pilot.yml).
 const PILOT_COMPOSE_FILE = 'compose.pilot.yml';
 
 function list(raw: string | undefined, separator: RegExp): string[] {
@@ -156,7 +156,7 @@ function rolesProblem(env: Env): string | null {
   // LUDY_ROLES is the deployment's own statement, for one without docker compose; it never outvotes a COMPOSE_FILE that
   // says the opposite.
   if (composeFile !== undefined && !listsPilotFile) {
-    return `COMPOSE_FILE does not list ${PILOT_COMPOSE_FILE}: docker compose then starts the all-in-one crove service (command all), with the API on the worker database login and every secret; list ${PILOT_COMPOSE_FILE} (docs/runbooks/deploy.md)`;
+    return `COMPOSE_FILE does not list ${PILOT_COMPOSE_FILE}: docker compose then starts the all-in-one ludy service (command all), with the API on the worker database login and every secret; list ${PILOT_COMPOSE_FILE} (docs/runbooks/deploy.md)`;
   }
   const roles = list(value(env, 'LUDY_ROLES')?.toLowerCase(), /[\s,]+/);
   if (roles.length > 0) {
@@ -164,7 +164,7 @@ function rolesProblem(env: Env): string | null {
     return roles.includes('api') && roles.includes('worker') ? null : 'LUDY_ROLES must name both api and worker, each as its own container or service (docs/runbooks/deploy.md)';
   }
   if (listsPilotFile) return null;
-  return `COMPOSE_FILE and LUDY_ROLES are unset: docker compose then starts the all-in-one crove service (command all), with the API on the worker database login and every secret; list ${PILOT_COMPOSE_FILE} in COMPOSE_FILE (docs/runbooks/deploy.md), or name the roles in LUDY_ROLES for a deployment without docker compose`;
+  return `COMPOSE_FILE and LUDY_ROLES are unset: docker compose then starts the all-in-one ludy service (command all), with the API on the worker database login and every secret; list ${PILOT_COMPOSE_FILE} in COMPOSE_FILE (docs/runbooks/deploy.md), or name the roles in LUDY_ROLES for a deployment without docker compose`;
 }
 
 // LUDY_MODULES names the modules the pilot runs; empty runs every module, Social's public routes included.
@@ -628,14 +628,14 @@ export function checkEnv(env: Env): CheckResult[] {
       message:
         `the worker opens tokens and subject keys sealed under ${credentialKeys.length > 0 ? credentialKeys.join(' and ') : 'no valid key (see Secrets)'}; ` +
         'confirm its log since its last start has no "[credential-reseal] ERROR sealed under a key this worker cannot open" and no "[subject-key-reseal] ERROR" line (docker compose logs worker | grep "cannot open"; ' +
-        'the crove service in the all-in-one layout): the key was lost, or CREDENTIAL_KEY_PREVIOUS removed before every channel token and team chat target was resealed (docs/runbooks/credential-key.md)',
+        'the ludy service in the all-in-one layout): the key was lost, or CREDENTIAL_KEY_PREVIOUS removed before every channel token and team chat target was resealed (docs/runbooks/credential-key.md)',
     },
     ...(publicDeployment
       ? [
           {
             item: 'Roles',
             status: 'manual' as const,
-            message: 'confirm docker compose ps lists api and worker and no crove service, and that the API container has no WORKER_DATABASE_URL (docker compose exec api printenv | cut -d= -f1 | grep -c WORKER_DATABASE_URL prints 0)',
+            message: 'confirm docker compose ps lists api and worker and no ludy service, and that the API container has no WORKER_DATABASE_URL (docker compose exec api printenv | cut -d= -f1 | grep -c WORKER_DATABASE_URL prints 0)',
           },
         ]
       : []),
@@ -651,7 +651,7 @@ export function checkEnv(env: Env): CheckResult[] {
     {
       item: 'Extraction sandbox',
       status: 'manual',
-      message: 'no setting turns it off (the worker refuses to start without EXTRACT_URL); confirm crove-extract is running and healthy: docker compose ps crove-extract',
+      message: 'no setting turns it off (the worker refuses to start without EXTRACT_URL); confirm ludy-extract is running and healthy: docker compose ps ludy-extract',
     },
     {
       item: 'RLS matrix',

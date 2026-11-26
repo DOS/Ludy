@@ -15,7 +15,7 @@
 //   5. wipes the volume again and restores to the end of the archive: both rows are there;
 //   6. tears everything down (containers, volumes, the image, the temporary directory).
 // Plain Node (26+), no dependencies; needs docker with compose v2 and bash. Environment: DRILL_PREFIX (default
-// crove-wal-drill; names the compose project and the image tag), DRILL_BASH (default bash). --keep leaves it running.
+// ludy-wal-drill; names the compose project and the image tag), DRILL_BASH (default bash). --keep leaves it running.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,18 +24,18 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url)).replaceAll('\\', '/');
 const KEEP = process.argv.includes('--keep');
-const PREFIX = process.env.DRILL_PREFIX ?? 'crove-wal-drill';
+const PREFIX = process.env.DRILL_PREFIX ?? 'ludy-wal-drill';
 if (!/^[a-z][a-z0-9-]{0,30}$/.test(PREFIX)) throw new Error('DRILL_PREFIX is lower-case letters, digits and -');
-// The drill removes volumes and containers by this name: a prefix without `drill` (a mistyped `crove`) could be a stack.
+// The drill removes volumes and containers by this name: a prefix without `drill` (a mistyped `ludy`) could be a stack.
 if (!PREFIX.includes('drill')) throw new Error('DRILL_PREFIX must contain "drill", so it can never name a real stack');
 const BASH = process.env.DRILL_BASH ?? 'bash';
 const DIR = mkdtempSync(join(tmpdir(), `${PREFIX}-`)).replaceAll('\\', '/');
 const T0 = Date.now();
 
 const settings = {
-  BACKUP_S3_BUCKET: 'crove-wal-drill',
-  WAL_S3_ACCESS_KEY_ID: 'crove-wal-drill',
-  WAL_S3_SECRET_ACCESS_KEY: 'crove-wal-drill-secret-0123456789',
+  BACKUP_S3_BUCKET: 'ludy-wal-drill',
+  WAL_S3_ACCESS_KEY_ID: 'ludy-wal-drill',
+  WAL_S3_SECRET_ACCESS_KEY: 'ludy-wal-drill-secret-0123456789',
   BACKUP_S3_PREFIX: 'drill',
   WAL_ENCRYPTION_KEY: 'drill-encryption-key-not-a-secret-0123456789',
   WAL_S3_ENDPOINT: 'minio',
@@ -45,10 +45,9 @@ const settings = {
   WAL_ARCHIVE_TIMEOUT: '10',
   BACKUP_ALERT: 'off',
   LUDY_DIR: DIR,
-  CROVE_DIR: DIR,
   WAL_BUILD_CONTEXT: `${ROOT}tools/wal`,
-  // The drill's own image tag: it never builds over, or removes, the crove-db:local of a stack on the same machine.
-  WAL_DB_IMAGE: `crove-db:${PREFIX}`,
+  // The drill's own image tag: it never builds over, or removes, the ludy-db:local of a stack on the same machine.
+  WAL_DB_IMAGE: `ludy-db:${PREFIX}`,
 };
 const env = {
   ...process.env,
@@ -117,7 +116,7 @@ function teardown() {
     console.error('wal-drill: teardown of the project failed', error instanceof Error ? error.message : error);
   }
   try {
-    execFileSync('docker', ['image', 'rm', `crove-db:${PREFIX}`], { stdio: 'ignore' });
+    execFileSync('docker', ['image', 'rm', `ludy-db:${PREFIX}`], { stdio: 'ignore' });
   } catch {
     // already gone
   }
@@ -126,7 +125,7 @@ function teardown() {
 
 async function main() {
   copyFileSync(`${ROOT}tools/backup/wal-drill.compose.yml`, `${DIR}/docker-compose.yml`);
-  writeFileSync(`${DIR}/.env`, Object.entries(settings).filter(([k]) => k !== 'LUDY_DIR' && k !== 'CROVE_DIR').map(([k, v]) => `${k}=${v}`).join('\n') + '\n');
+  writeFileSync(`${DIR}/.env`, Object.entries(settings).filter(([k]) => k !== 'LUDY_DIR').map(([k, v]) => `${k}=${v}`).join('\n') + '\n');
 
   log('starting the database and the bucket');
   compose(['up', '-d', '--build', '--wait', 'db', 'minio']);

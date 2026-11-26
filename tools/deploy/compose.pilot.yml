@@ -1,6 +1,6 @@
 # The pilot's process layout (issue #2118, docs/runbooks/deploy.md, "The pilot layout"): the HTTP API and the worker run
 # as two containers of the same image, and only the finance module runs. docker-compose.yml alone runs both in the one
-# `crove` container (command `all`), where the API holds the worker's all-org database login (WORKER_DATABASE_URL) and
+# `ludy` container (command `all`), where the API holds the worker's all-org database login (WORKER_DATABASE_URL) and
 # every secret, and every module is on, Social's public routes included. That is right for `docker compose up` on a
 # laptop and wrong for a deployment other people reach.
 #
@@ -11,13 +11,13 @@
 #   COMPOSE_FILE=docker-compose.yml:compose.pilot.yml:docker-compose.override.yml:compose.host.yml
 #
 # deploy.sh then passes it on in that order, pins api and worker, and rolls the worker before the API. It extends the
-# release's `crove` service, so every setting of docker-compose.yml reaches both and stays in step. Images: the release's
+# release's `ludy` service, so every setting of docker-compose.yml reaches both and stays in step. Images: the release's
 # digest, which deploy.sh pins for api and worker in docker-compose.override.yml in this layout; a stack built from a checkout
-# runs the locally built crove:local, as `crove` does. The api role refuses to start on a public PUBLIC_URL with
+# runs the locally built ludy:local, as `ludy` does. The api role refuses to start on a public PUBLIC_URL with
 # WORKER_DATABASE_URL set, so the `!reset` below is not the only thing keeping that login out of the API.
 services:
   # Not started unless COMPOSE_PROFILES lists all-in-one; `pnpm pilot:check` fails a public deployment that does.
-  crove:
+  ludy:
     profiles: ['all-in-one']
 
   # The HTTP edge: web app, /api and the /auth/v1 proxy. It never gets the worker's database login, never reaches the
@@ -25,16 +25,16 @@ services:
   api:
     extends:
       file: docker-compose.yml
-      service: crove
+      service: ludy
     command: ['api']
     environment:
-      LUDY_MODULES: ${LUDY_MODULES:-${CROVE_MODULES:-finance}}
+      LUDY_MODULES: ${LUDY_MODULES:-finance}
       MARKETPLACE_PROVIDERS: ${MARKETPLACE_PROVIDERS:-}
       WORKER_DATABASE_URL: !reset null
       EXTRACT_URL: !reset null
       MEDIA_MAX_INPUT_BYTES: ${MEDIA_MAX_INPUT_BYTES:-1000000000}
       # What only the worker reads (#2130; the API's own list is in tools/test/pilot-compose.test.ts, which also fails when a new variable of
-      # `crove` is not sorted into one list). The WORM archive is one group: config refuses ARCHIVE_STORE=s3 without its bucket, so none of it
+      # `ludy` is not sorted into one list). The WORM archive is one group: config refuses ARCHIVE_STORE=s3 without its bucket, so none of it
       # is left behind. The S3 credentials, the channel app secrets and the credential key stay: the API uses them (uploads, webhook
       # signatures, the connect flows, the channel broker).
       ARCHIVE_STORE: !reset null
@@ -71,12 +71,12 @@ services:
   worker:
     extends:
       file: docker-compose.yml
-      service: crove
+      service: ludy
     command: ['worker']
     healthcheck:
       disable: true
     environment:
-      LUDY_MODULES: ${LUDY_MODULES:-${CROVE_MODULES:-finance}}
+      LUDY_MODULES: ${LUDY_MODULES:-finance}
       MARKETPLACE_PROVIDERS: ${MARKETPLACE_PROVIDERS:-}
       # What only the API reads (#2130): the MCP endpoint's authorization server, with its signing key and cookie secrets. One group, because
       # OAUTH_SERVER=on makes config demand the other two.
@@ -93,8 +93,8 @@ services:
   # The pilot host has 8 GB for PostgreSQL, Supabase Auth, the kernel and the sandboxes, so the media sandbox is held to a smaller recording than the
   # default stack takes (#2989): about 1 GB of video (an hour or so at screen-recording rates; audio, 300 MB, always fits). A recording over the cap is
   # refused by the API with 413 FILE_TOO_LARGE before it is read, and the grant of a staged upload is clamped to it. The scratch tmpfs, the memory limit
-  # and the cap move together; the API gets the same cap as crove-media, which is the one that refuses (docs/runbooks/meetings-ai.md, P3b).
-  crove-media:
+  # and the cap move together; the API gets the same cap as ludy-media, which is the one that refuses (docs/runbooks/meetings-ai.md, P3b).
+  ludy-media:
     tmpfs: !override
       - /tmp:size=64m,noexec,nosuid
       - /data/scratch:size=${MEDIA_SCRATCH_SIZE:-1g},mode=0700,uid=1000,gid=1000,noexec,nosuid
@@ -103,9 +103,9 @@ services:
     environment:
       MEDIA_MAX_INPUT_BYTES: ${MEDIA_MAX_INPUT_BYTES:-1000000000}
 
-  # The prober reads the modules the deployment runs and asks Supabase Auth through the API's proxy: `crove` does not run.
+  # The prober reads the modules the deployment runs and asks Supabase Auth through the API's proxy: `ludy` does not run.
   prober:
     environment:
-      LUDY_MODULES: ${LUDY_MODULES:-${CROVE_MODULES:-finance}}
+      LUDY_MODULES: ${LUDY_MODULES:-finance}
       MARKETPLACE_PROVIDERS: ${MARKETPLACE_PROVIDERS:-}
       PROBER_AUTH_URL: ${PROBER_AUTH_URL:-${PUBLIC_AUTH_URL:-http://api:8080/auth/v1}}

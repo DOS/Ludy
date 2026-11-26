@@ -407,8 +407,9 @@ describe('pilot-check settings', () => {
       expect(failing(READY)).toEqual([]);
     });
 
-    it('asks a person to confirm the running roles', () => {
-      expect(checkEnv(READY).find((r) => r.item === 'Roles' && r.status === 'manual')?.message).toMatch(/docker compose ps lists api and worker and no crove service/);
+    it('asks a person to confirm the running roles and extract sandbox', () => {
+      expect(checkEnv(READY).find((r) => r.item === 'Roles' && r.status === 'manual')?.message).toMatch(/docker compose ps lists api and worker and no ludy service/);
+      expect(checkEnv(READY).find((r) => r.item === 'Extraction sandbox' && r.status === 'manual')?.message).toContain('docker compose ps ludy-extract');
     });
   });
 

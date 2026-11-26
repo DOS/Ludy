@@ -2,7 +2,7 @@
 # bucket, behind a self-signed certificate (pgBackRest speaks https only). The real overlay, tools/backup/compose.wal.yml,
 # is listed after this file, so the drill exercises the same settings a deployment uses. Copied by the drill into its own
 # directory with a generated .env; never part of a deployment.
-name: ${DRILL_PROJECT:-crove-wal-drill}
+name: ${DRILL_PROJECT:-ludy-wal-drill}
 
 services:
   db:

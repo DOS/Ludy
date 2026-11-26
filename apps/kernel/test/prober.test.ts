@@ -371,10 +371,14 @@ describe('prober configuration', () => {
   });
 
   // #1894: the modules the deployment runs, which health() counts in the job age whatever the workers record.
-  it('reads the modules the deployment runs from LUDY_MODULES, as the API does, and ignores CROVE_MODULES', async () => {
+  it('reads the modules the deployment runs from LUDY_MODULES, as the API does, and fails closed on retired CROVE_MODULES without LUDY_MODULES', async () => {
     expect(loadProberConfig({}).modules).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
     expect(loadProberConfig({ LUDY_MODULES: '' }).modules).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
-    expect(loadProberConfig({ CROVE_MODULES: 'crm' }).modules).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(() => loadProberConfig({ CROVE_MODULES: 'crm' })).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
+    expect(() => loadProberConfig({ LUDY_RETIRED_MODULES: 'CROVE_MODULES', LUDY_MODULES: 'finance' })).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
+    expect(() => loadProberConfig({ LUDY_RETIRED_MODULES: 'CROVE_MODULES:,', LUDY_MODULES: 'finance' })).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
+    expect(loadProberConfig({ LUDY_RETIRED_MODULES: 'CROVE_MODULES:finance', LUDY_MODULES: 'finance' }).modules).toEqual(['kernel', 'finance']);
+    expect(loadProberConfig({ CROVE_MODULES: 'crm', LUDY_MODULES: 'finance' }).modules).toEqual(['kernel', 'finance']);
     expect(loadProberConfig({ LUDY_MODULES: ' Finance , notes' }).modules).toEqual(['kernel', 'finance', 'notes']);
     expect(loadProberConfig({ LUDY_MODULES: 'crm' }).modules).toEqual(['kernel', 'crm']);
     expect(() => loadProberConfig({ LUDY_MODULES: 'finanse' })).toThrow(/LUDY_MODULES/);

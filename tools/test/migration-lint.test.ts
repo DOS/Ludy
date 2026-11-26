@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { changedMigrations, format, formatWaiver, functionsCreated, lex, lintMigration, moduleOf, parseAllowlist, plan } from '../ci/migration-lint.mjs';
+import { changedMigrations, format, formatWaiver, functionsCreated, lex, lintMigration, moduleOf, parseAllowlist, plan, STAGE7_CUTOVER_VERSION, stage7RulesApply } from '../ci/migration-lint.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const FILE = 'supabase/migrations/20261101000000_crove_social_sample.sql';
@@ -546,5 +546,79 @@ describe('migration lint: ludy_* identifiers, ALTER SET SCHEMA and ALTER SCHEMA 
     expect(
       lintAs(LUDY_FINANCE, '-- migration-lint: cross-module bad rename\nALTER SCHEMA crove_finance RENAME TO public;').map((f: Finding) => `${f.line} ${f.rule}`),
     ).toEqual(['2 module-schema']);
+  });
+});
+
+describe(`post-Stage-7 strict Ludy rules (> ${STAGE7_CUTOVER_VERSION}) (#3972)`, () => {
+  const POST_SOCIAL = 'supabase/migrations/20270329000000_ludy_social_sample.sql';
+  const POST_KERNEL = 'supabase/migrations/20270329010000_ludy_kernel_sample.sql';
+  const adrs = new Set(['0028', '0054']);
+
+  it('enforces Stage 7 cutoff via version and always when added (--since)', () => {
+    expect(stage7RulesApply(`${STAGE7_CUTOVER_VERSION}_ludy_kernel_old.sql`, false)).toBe(false);
+    expect(stage7RulesApply(`${STAGE7_CUTOVER_VERSION}_ludy_kernel_old.sql`, true)).toBe(true);
+    expect(stage7RulesApply(POST_SOCIAL, false)).toBe(true);
+    expect(
+      lintMigration(
+        `supabase/migrations/${STAGE7_CUTOVER_VERSION}_ludy_kernel_old.sql`,
+        '-- crove:concurrent-index\nCREATE INDEX CONCURRENTLY IF NOT EXISTS audit_idx ON ludy_kernel.audit_event (org_id);',
+        { strictLudy: true },
+      ).map((f: Finding) => `${f.line} ${f.rule}`),
+    ).toEqual(['1 concurrent-index', '2 no-concurrently', '2 hot-table-retry']);
+  });
+
+  it('rejects new _crove_ migration filenames and crove_* schemas even with cross-module waivers', () => {
+    const badFile = lintMigration(
+      'supabase/migrations/20270329000000_crove_social_sample.sql',
+      'CREATE TABLE IF NOT EXISTS ludy_social.sample (id int);',
+      { breakingRules: false },
+    );
+    expect(badFile.map((f: Finding) => `${f.line} ${f.rule}`)).toEqual(['1 module-schema']);
+
+    expect(
+      lintMigration(POST_SOCIAL, 'CREATE TABLE IF NOT EXISTS crove_social.sample (id int);', { breakingRules: false }).map(
+        (f: Finding) => `${f.line} ${f.rule}`,
+      ),
+    ).toEqual(['1 module-schema']);
+    expect(
+      lintMigration(
+        POST_SOCIAL,
+        '-- migration-lint: cross-module legacy schema\nALTER TABLE crove_kernel.tenant ADD COLUMN IF NOT EXISTS x text;',
+        { breakingRules: false },
+      ).map((f: Finding) => `${f.line} ${f.rule}`),
+    ).toEqual(['2 module-schema']);
+  });
+
+  it('allows only ludy_* definer owner roles, -- ludy:contract headers, and -- ludy:concurrent-index markers', () => {
+    const ownerBad = lintMigration(
+      POST_SOCIAL,
+      'ALTER FUNCTION ludy_social.f() OWNER TO crove_definer_tenant;',
+      { breakingRules: false },
+    );
+    expect(ownerBad.map((f: Finding) => `${f.line} ${f.rule}`)).toEqual(['1 owner-to']);
+    expect(
+      lintMigration(POST_SOCIAL, 'ALTER FUNCTION ludy_social.f() OWNER TO ludy_definer_tenant;', { breakingRules: false }),
+    ).toEqual([]);
+
+    expect(
+      lintMigration(POST_SOCIAL, '-- crove:contract adr=0028\nDROP TABLE IF EXISTS ludy_social.old;', { adrs }).map(
+        (f: Finding) => `${f.line} ${f.rule}`,
+      ),
+    ).toEqual(['2 contract-header']);
+    expect(
+      lintMigration(POST_SOCIAL, '-- ludy:contract adr=0028\nDROP TABLE IF EXISTS ludy_social.old;', { adrs }),
+    ).toEqual([]);
+
+    const badIdx = lintMigration(
+      POST_KERNEL,
+      '-- crove:concurrent-index\nCREATE INDEX CONCURRENTLY IF NOT EXISTS audit_idx ON ludy_kernel.audit_event (org_id);',
+    );
+    expect(badIdx.map((f: Finding) => `${f.line} ${f.rule}`)).toEqual(['1 concurrent-index', '2 no-concurrently', '2 hot-table-retry']);
+    expect(
+      lintMigration(
+        POST_KERNEL,
+        '-- ludy:concurrent-index\nCREATE INDEX CONCURRENTLY IF NOT EXISTS audit_idx ON ludy_kernel.audit_event (org_id);',
+      ),
+    ).toEqual([]);
   });
 });

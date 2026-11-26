@@ -11,7 +11,7 @@ enough. This guide is for an instance other people use.
 
 | | One firm, up to about 20 client companies |
 |---|---|
-| CPU, memory | 4 vCPU, 8 GB. PostgreSQL, Supabase Auth, the Ludy kernel and `crove-extract` (the file parsing sandbox, up to 1 GB on its own) |
+| CPU, memory | 4 vCPU, 8 GB. PostgreSQL, Supabase Auth, the Ludy kernel and `ludy-extract` (the file parsing sandbox, up to 1 GB on its own) |
 | Disk | 40 GB SSD with files in an S3 bucket, more with local files (`STORAGE=local`): the database, Docker images, logs and local backup runs |
 | OS | any current Linux with Docker Engine 24 or newer and the compose plugin v2.24 or newer (`docker compose version`) |
 | Network | a domain name pointing at the server, ports 80 and 443 open (TLS); every other port stays closed |
@@ -37,7 +37,7 @@ git tag --list 'v*' --sort=-v:refname | head -5      # the newest releases
 git checkout <tag>                                   # for example v0.3.0
 ```
 
-The stack builds its two images (`crove:local` and `crove-extract:local`) from this checkout the first time it starts.
+The stack builds its images (`ludy:local`, `ludy-extract:local` and `ludy-media:local`) from this checkout the first time it starts.
 
 ## 3. Settings (`.env`)
 
@@ -246,11 +246,31 @@ webhook: [secret-rotation.md](../runbooks/secret-rotation.md).
 
 ## 11. Upgrades and migrations
 
-Take a backup, then move the checkout to the new release and start the stack again:
+If you are upgrading from a pre-Stage-7 release (where `docker-compose.yml` used Compose project `name: crove`, `crove_*` Docker volumes and `CROVE_*` settings in `.env`):
+
+1. Take a backup while the current stack is running (`tools/backup/backup.sh`).
+2. Before modifying any overlays, compare your host `compose.host.yml` and `Caddyfile` against `tools/deploy/caddy/` (for example `diff -u`) and back up any host customizations. Then prepare the upgrade using either option below:
+   - Automated volume and `.env` cutover (use only when `compose.host.yml` and `Caddyfile` match the bundled templates without custom services or custom Caddy directives; `cutover-ludy.sh cutover-stack` refuses to overwrite customized host files): stage the Stage 7 helper files from `<new tag>` into a temporary directory while your current stack keeps running, then run `cutover-ludy.sh cutover-stack` to copy volumes into `ludy_*`, preserve WAL/S3 backup settings and rewrite `CROVE_*` keys to `LUDY_*` (do not proceed to step 3 unless this command exits `0`):
+     ```bash
+     (
+       set -euo pipefail
+       STAGE="$(mktemp -d)"
+       trap 'rm -rf "$STAGE"' EXIT
+       git fetch --tags && git archive "<new tag>" tools/deploy tools/backup tools/wal | tar -xf - -C "$STAGE"
+       cp -R "$STAGE/tools/deploy/"* "$STAGE/tools/backup" "$STAGE/tools/wal" "$STAGE/"
+       bash "$STAGE/cutover-ludy.sh" cutover-stack --dir /opt/ludy --overlay-dir "$STAGE"
+     )
+     ```
+   - Or upgrade in place (required if you customized `compose.host.yml` or `Caddyfile`): pin `COMPOSE_PROJECT_NAME=crove` in `.env`, rename any `CROVE_APP_DB_PASSWORD`, `CROVE_WORKER_DB_PASSWORD`, `CROVE_PROBER_DB_PASSWORD`, `CROVE_REPORTER_DB_PASSWORD`, `CROVE_CONTEXT_TOKEN_KEY`, `CROVE_MODULES`, `CROVE_UPSTREAM` and `CROVE_DIR` entries to `LUDY_*` (keeping their values; if `.env` also contains an empty `LUDY_*=` line such as `LUDY_MODULES=` alongside a non-empty `CROVE_*` line, remove the empty `LUDY_*=` line so the active `CROVE_*` setting is preserved). Also update any explicit internal service addresses `EXTRACT_URL=http://crove-extract:8090` to `http://ludy-extract:8090` and `MEDIA_URL=http://crove-media:8095` to `http://ludy-media:8095` (keeping external endpoints unchanged). If your `compose.host.yml` came from the bundled Caddy setup and still references `${CROVE_DOMAIN}`, keep both `CROVE_DOMAIN` and `LUDY_DOMAIN` set to the same hostname for now so `docker compose down` can still parse `compose.host.yml`. Keep existing backup settings pinned (`BACKUP_S3_PREFIX=crove` if you use S3 backups without an explicit prefix; and if you use `tools/backup/compose.wal.yml`, also pin `WAL_STANZA=crove` and `WAL_DB_IMAGE=crove-db:local` until you run and verify `tools/deploy/cutover-ludy.sh switch-wal` or `tools/backup/wal.sh setup` and `tools/backup/wal.sh check`).
+3. Only after step 2 succeeds (if you used the automated cutover above, wait until `cutover-ludy.sh cutover-stack` exits `0`), stop and remove the renamed pre-Stage-7 containers (`crove`, `crove-extract`, `crove-media`) without deleting volumes before moving to the new release, update any root `compose.pilot.yml` (if `COMPOSE_FILE` references `./compose.pilot.yml`) and bundled Caddy files (`compose.host.yml` and `Caddyfile`, preserving any host customizations), verify the merged Compose configuration, remove the transitional `CROVE_DOMAIN` entry once `docker compose config --quiet` succeeds cleanly, and start Stage 7:
 
 ```bash
-tools/backup/backup.sh
+docker compose down --timeout 30 --remove-orphans     # never pass -v or --volumes
 git fetch --tags && git checkout <new tag>
+if [ -f ./compose.pilot.yml ]; then cp tools/deploy/compose.pilot.yml ./compose.pilot.yml; fi
+# If you use the bundled Caddy overlay, update compose.host.yml and Caddyfile from tools/deploy/caddy/ (re-apply any custom host edits).
+docker compose config --quiet
+# After compose.host.yml uses LUDY_DOMAIN and `docker compose config --quiet` passes, remove any transitional CROVE_DOMAIN line from .env.
 docker compose up -d --build
 curl -s http://127.0.0.1:8080/readyz                  # {"ready":true} once the new release serves
 ```
@@ -273,6 +293,6 @@ and publish your own.
 | `/readyz` answers 503 | its body says which part is not ready: a migration missing (`docker compose logs migrate`) or Supabase Auth's grants (`docker compose up auth-grants`) |
 | Nobody receives mail | the `SMTP_*` settings, `docker compose logs auth`, and the provider's sending log |
 | Everyone is rate limited at once | `TRUSTED_PROXY_HOPS` does not count your reverse proxy (section 3) |
-| Uploaded PDFs stay unread | `AI_*` unset or failing (`docker compose logs crove`); XML needs no AI |
+| Uploaded PDFs stay unread | `AI_*` unset or failing (`docker compose logs ludy`); XML needs no AI |
 
 [incidents.md](../runbooks/incidents.md) has the steps for the problems the status page and the prober report.

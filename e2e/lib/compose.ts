@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const FILES = ['../../docker-compose.yml', '../compose.e2e.yml'].map((f) => fileURLToPath(new URL(f, import.meta.url)));
-const DEFAULT_PROJECT = 'crove-e2e';
+const DEFAULT_PROJECT = 'ludy-e2e';
 const DEFAULT_BASE_URL = 'http://localhost:8080';
 
 // Scheme and host are case-insensitive (new URL lowercases them); the path is not, so only a bare origin matches.
@@ -17,7 +17,7 @@ function isDefaultBaseUrl(value: string): boolean {
 }
 
 // The compose project the helpers act on. The browser's target (E2E_BASE_URL) and this project are separate
-// variables, so a run against its own stack that set only E2E_BASE_URL would act on the shared `crove-e2e` stack
+// variables, so a run against its own stack that set only E2E_BASE_URL would act on the shared `ludy-e2e` stack
 // (#496). Fails closed: a non-default base URL needs an explicit project.
 export function resolveComposeProject(env: Record<string, string | undefined> = process.env): string {
   const project = env.E2E_COMPOSE_PROJECT?.trim();

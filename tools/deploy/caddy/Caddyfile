@@ -1,7 +1,7 @@
 # TLS reverse proxy in front of Ludy on one server (issue #306, docs/runbooks/provision-pilot.md). Copy this file
-# and compose.host.yml into the stack directory (/opt/crove).
+# and compose.host.yml into the stack directory (/opt/ludy).
 #
-# - Caddy gets and renews a Let's Encrypt certificate for LUDY_DOMAIN (or legacy CROVE_DOMAIN; the host name of
+# - Caddy gets and renews a Let's Encrypt certificate for LUDY_DOMAIN (the host name of
 #   PUBLIC_URL, whose DNS points at this server) and redirects plain http to https.
 # - It drops any X-Forwarded-For a client sends and sets the address it sees, so the kernel reads the client address
 #   with TRUSTED_PROXY_HOPS=1 (the rate limits on sign-in, sign-up, recovery and email are per client address).

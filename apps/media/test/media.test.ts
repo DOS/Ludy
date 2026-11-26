@@ -2,11 +2,15 @@
 // Unit and integration tests for crove-media (AI Meeting Notes M3, #2577).
 // Tests config allowlist, schemas, HTTP server routes, concurrency limiter,
 // error mappings, and client SDK.
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { serve } from '@hono/node-server';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createMediaClient, MediaClientError } from '../src/client.ts';
 import { MediaExecutionError } from '../src/ffmpeg.ts';
 import {
+  cleanupScratchDir,
   credentialVariables,
   enforcesAllowlist,
   loadMediaConfig,
@@ -134,7 +138,7 @@ describe('crove-media config and allowlist', () => {
       PORT: '8095',
       EXTRA_SETTING: '1',
     };
-    expect(() => loadMediaConfig(env)).toThrow(/crove-media runs with its own settings only; remove EXTRA_SETTING/);
+    expect(() => loadMediaConfig(env)).toThrow(/ludy-media runs with its own settings only; remove EXTRA_SETTING/);
   });
 
   it('refuses to start when image marker exists, even if NODE_ENV=development', () => {
@@ -448,6 +452,28 @@ describe('crove-media HTTP server & client SDK', () => {
       const res = await fetch(`${baseUrl}/extract-audio?bitrate_kbps=32`, { method: 'POST', body: new Uint8Array(8).fill(1) });
       expect(res.status).toBe(200);
       expect(seen).toBe(32);
+    });
+  });
+
+  describe('cleanupScratchDir', () => {
+    it('removes both ludy-media-* and legacy crove-media-* scratch directories while keeping other entries', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'ludy-media-cleanup-test-'));
+      try {
+        const ludyScratch = join(dir, 'ludy-media-abc');
+        const legacyScratch = join(dir, 'crove-media-legacy');
+        const keep = join(dir, 'other-dir');
+        mkdirSync(ludyScratch);
+        mkdirSync(legacyScratch);
+        mkdirSync(keep);
+
+        cleanupScratchDir(dir);
+
+        expect(existsSync(ludyScratch)).toBe(false);
+        expect(existsSync(legacyScratch)).toBe(false);
+        expect(existsSync(keep)).toBe(true);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 });

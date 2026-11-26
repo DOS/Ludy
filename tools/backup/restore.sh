@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Restores a backup made by backup.sh onto a fresh Crove stack and verifies it (issues #307, #351). Runbook:
+# Restores a backup made by backup.sh onto a fresh Ludy stack and verifies it (issues #307, #351). Runbook:
 # docs/runbooks/backup-and-restore.md.
 #
 #   tools/backup/restore.sh <run>      <run> is a run directory, s3:<run id> or s3:latest (from BACKUP_S3_*)
 #
-# The target is the compose stack that CROVE_DIR, COMPOSE_PROJECT_NAME, COMPOSE_FILE and .env name, with an empty
-# database volume: the script refuses a database that already holds Crove, and a STORAGE or S3_BUCKET that differs
+# The target is the compose stack that LUDY_DIR, COMPOSE_PROJECT_NAME, COMPOSE_FILE and .env name, with an empty
+# database volume: the script refuses a database that already holds Ludy, and a STORAGE or S3_BUCKET that differs
 # from what that project resolves. A run downloaded for s3: is deleted once the restore passes. Steps:
 #   1. fetch the run (for s3: its files, opened with BACKUP_ENCRYPTION_KEY when sealed, and the org blobs it lists from
 #      the shared blob store) and check it against SHA256SUMS and files.sha256; a file neither lists is refused;
@@ -32,11 +32,11 @@
 # Exit 0 when everything passed; otherwise `[restore] FAILED: <reason>` and exit 1. The log goes to stdout and to
 # <BACKUP_DIR>/logs/restore-<time>.log.
 #
-# Settings (environment, then $CROVE_DIR/.env, read as docker compose reads it): STORAGE and S3_* of the target
+# Settings (environment, then $LUDY_DIR/.env, read as docker compose reads it): STORAGE and S3_* of the target
 # stack, BACKUP_DIR, BACKUP_S3_* (for s3:<run>), BACKUP_ENCRYPTION_KEY and BACKUP_ENCRYPTION_KEY_PREVIOUS (for a
-# sealed run), RESTORE_PRESTART, RESTORE_SAMPLE, RESTORE_FILES_SERVICE (default crove), BACKUP_NODE_SERVICE (default
-# crove), RESTORE_API_SERVICE (default crove when the stack defines it, else api), RESTORE_WORKER_SERVICE (default
-# crove when the stack defines it, else worker), RESTORE_GENERATIONS (versions, or content; default content on
+# sealed run), RESTORE_PRESTART, RESTORE_SAMPLE, RESTORE_FILES_SERVICE (default ludy), BACKUP_NODE_SERVICE (default
+# ludy), RESTORE_API_SERVICE (default ludy when the stack defines it, else api), RESTORE_WORKER_SERVICE (default
+# ludy when the stack defines it, else worker), RESTORE_GENERATIONS (versions, or content; default content on
 # storage.googleapis.com), RESTORE_READY_TIMEOUT (seconds, default 600), RESTORE_ARCHIVE (check, or skip for a stack
 # that cannot reach the deployment's WORM archive, such as the scratch stack of the monthly test; default check). RESTORE_ALLOW_UNSEALED=yes, set on the
 # command (never read from .env) with an explicit s3:<run id>, restores an unsealed run from the bucket although
@@ -82,11 +82,11 @@ STEP="reading $LUDY_DIR/.env"
 load_env_file "$LUDY_DIR/.env"
 
 BACKUP_DIR="${BACKUP_DIR:-$LUDY_DIR/.data/backups}"
-BACKUP_S3_PREFIX="${BACKUP_S3_PREFIX:-crove}"
+BACKUP_S3_PREFIX="${BACKUP_S3_PREFIX:-ludy}"
 STORAGE="${STORAGE:-local}"
 RESTORE_PRESTART="${RESTORE_PRESTART:-db}"
 RESTORE_SAMPLE="${RESTORE_SAMPLE:-50}"
-RESTORE_FILES_SERVICE="${RESTORE_FILES_SERVICE:-crove}"
+RESTORE_FILES_SERVICE="${RESTORE_FILES_SERVICE:-$(default_app_service)}"
 RESTORE_READY_TIMEOUT="${RESTORE_READY_TIMEOUT:-600}"
 RESTORE_FILES="${RESTORE_FILES:-copy}"
 RESTORE_ARCHIVE="${RESTORE_ARCHIVE:-check}"
@@ -272,19 +272,19 @@ STEP="starting $RESTORE_PRESTART"
 dc up -d --wait $RESTORE_PRESTART
 STEP="checking that the target database is empty"
 [ "$(db_psql -d postgres -tA -c "SELECT pg_catalog.to_regclass('ludy_meta.schema_migrations') IS NULL AND pg_catalog.to_regclass('crove_meta.schema_migrations') IS NULL")" = t ] ||
-  { STEP="the target database already holds Crove: restore needs an empty database volume (a new project or docker compose down -v)"; false; }
+  { STEP="the target database already holds Ludy: restore needs an empty database volume (a new project or docker compose down -v)"; false; }
 STEP="loading the roles"
 # The superuser exists in every cluster; every other role comes from the backup, without a password.
 grep -v '^CREATE ROLE postgres;$' "$RUN/roles.sql" | db_psql -d postgres
 STEP="loading the dump"
-dc exec -T db sh -c 'rm -rf /tmp/crove-restore && mkdir -m 700 /tmp/crove-restore'
-dc exec -T db sh -c 'cat > /tmp/crove-restore/db.dump' <"$RUN/db.dump"
-inside="$(dc exec -T db sha256sum /tmp/crove-restore/db.dump | cut -d' ' -f1)"
+dc exec -T db sh -c 'rm -rf /tmp/ludy-restore && mkdir -m 700 /tmp/ludy-restore'
+dc exec -T db sh -c 'cat > /tmp/ludy-restore/db.dump' <"$RUN/db.dump"
+inside="$(dc exec -T db sha256sum /tmp/ludy-restore/db.dump | cut -d' ' -f1)"
 outside="$(sha256sum <"$RUN/db.dump" | cut -d' ' -f1)"
 [ "$inside" = "$outside" ] || { STEP="loading the dump: the copy in the db container differs"; false; }
 # --create recreates the database with its own settings and grants (TEMPORARY revoked from PUBLIC and the rest).
-dc exec -T db pg_restore -U postgres --clean --if-exists --create --exit-on-error -d template1 /tmp/crove-restore/db.dump
-dc exec -T db rm -rf /tmp/crove-restore
+dc exec -T db pg_restore -U postgres --clean --if-exists --create --exit-on-error -d template1 /tmp/ludy-restore/db.dump
+dc exec -T db rm -rf /tmp/ludy-restore
 phase_done "database restore"
 
 # --- 3. Checks on the restored database ------------------------------------------------------------------------------
@@ -398,11 +398,11 @@ else
 tab=$(printf '\t')
 while IFS="$tab" read -r key sha gen; do
   case "$gen" in
-    s3:*) mc cat --version-id "${gen#s3:}" "src/$S3_BUCKET/$key" >/tmp/crove-blob 2>/dev/null ;;
-    *) mc cat "src/$S3_BUCKET/$key" >/tmp/crove-blob 2>/dev/null ;;
-  esac && sha256sum </tmp/crove-blob | cut -d' ' -f1 || echo MISSING
+    s3:*) mc cat --version-id "${gen#s3:}" "src/$S3_BUCKET/$key" >/tmp/ludy-blob 2>/dev/null ;;
+    *) mc cat "src/$S3_BUCKET/$key" >/tmp/ludy-blob 2>/dev/null ;;
+  esac && sha256sum </tmp/ludy-blob | cut -d' ' -f1 || echo MISSING
 done </work/sample.tsv
-rm -f /tmp/crove-blob
+rm -f /tmp/ludy-blob
 SH
   mc_run "$network" "$WORK" "$sample_script" </dev/null >"$WORK/sample.read"
 fi
@@ -419,9 +419,9 @@ phase_done "blob check"
 STEP="starting the stack"
 services="$(dc config --services)"
 api="${RESTORE_API_SERVICE:-}"
-[ -n "$api" ] || { if grep -qx crove <<<"$services"; then api=crove; else api=api; fi; }
+[ -n "$api" ] || { if grep -qx ludy <<<"$services"; then api=ludy; elif grep -qx crove <<<"$services"; then api=crove; else api=api; fi; }
 worker="${RESTORE_WORKER_SERVICE:-}"
-[ -n "$worker" ] || { if grep -qx crove <<<"$services"; then worker=crove; else worker=worker; fi; }
+[ -n "$worker" ] || { if grep -qx ludy <<<"$services"; then worker=ludy; elif grep -qx crove <<<"$services"; then worker=crove; else worker=worker; fi; }
 deadline=$(($(date +%s) + RESTORE_READY_TIMEOUT))
 # migrate first, alone: the exports below are re-recorded before the worker starts, so no export job the restored
 # queue still holds can record a newer export that the re-record would then shadow.
