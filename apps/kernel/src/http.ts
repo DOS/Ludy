@@ -655,12 +655,16 @@ function body(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-const PDF_STREAM_LEASE_MS = 60_000;
+export const PDF_STREAM_LEASE_MS = 60_000;
+export const PUBLIC_PDF_STREAM_LEASE_MS = 15_000;
+export const PDF_STREAM_MAX_LEASE_MS = 120_000;
+const PDF_STREAM_CHUNK_BYTES = 64 * 1024;
 
 interface OutgoingResponseTarget {
   readonly writableFinished?: boolean;
   readonly closed?: boolean;
   readonly destroyed?: boolean;
+  destroy?: () => unknown;
   on?: (event: string, listener: () => void) => unknown;
   once?: (event: string, listener: () => void) => unknown;
   off?: (event: string, listener: () => void) => unknown;
@@ -670,18 +674,35 @@ interface OutgoingResponseTarget {
 }
 
 // Keep PDF read pool slots held until Node finishes flushing or closes the socket (or until the in-memory Web
-// stream finishes/cancels when no Node outgoing response is attached), bounded by a 60-second lease timer (#4682).
-export function releaseOnResponseClose(bytes: Uint8Array, release: () => void, c?: Context): ReadableStream<Uint8Array> {
+// stream finishes/cancels when no Node outgoing response is attached), bounded by a progress-resetting idle lease
+// (chunk enqueue and outgoing 'drain') plus an absolute max lease cap (#4682, #5024).
+export function releaseOnResponseClose(
+  bytes: Uint8Array,
+  release: () => void,
+  c?: Context,
+  leaseMs: number = PDF_STREAM_LEASE_MS,
+  maxLeaseMs: number = PDF_STREAM_MAX_LEASE_MS,
+): ReadableStream<Uint8Array> {
+  const effectiveMaxLeaseMs = Math.max(leaseMs, maxLeaseMs);
   let released = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let maxTimer: ReturnType<typeof setTimeout> | undefined;
   let detachListeners: (() => void) | undefined;
+  let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let payload: Uint8Array | null = bytes;
+  let streamClosedOrErrored = false;
 
   const finish = () => {
     if (released) return;
     released = true;
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      timer = undefined;
+    payload = null;
+    if (idleTimer !== undefined) {
+      clearTimeout(idleTimer);
+      idleTimer = undefined;
+    }
+    if (maxTimer !== undefined) {
+      clearTimeout(maxTimer);
+      maxTimer = undefined;
     }
     detachListeners?.();
     detachListeners = undefined;
@@ -691,6 +712,42 @@ export function releaseOnResponseClose(bytes: Uint8Array, release: () => void, c
   const outgoing = (c?.env as { outgoing?: OutgoingResponseTarget } | undefined)?.outgoing;
   const signal = c?.req?.raw?.signal;
   let hasOutgoing = false;
+
+  const onLeaseExpired = () => {
+    if (released) return;
+    finish();
+    if (
+      outgoing &&
+      typeof outgoing.destroy === 'function' &&
+      !outgoing.writableFinished &&
+      !outgoing.closed &&
+      !outgoing.destroyed
+    ) {
+      try {
+        outgoing.destroy();
+      } catch {
+        // Ignore errors when aborting a stalled outgoing response target.
+      }
+    }
+    if (streamController && !streamClosedOrErrored) {
+      streamClosedOrErrored = true;
+      try {
+        streamController.error(new Error('PDF response stream lease expired'));
+      } catch {
+        // Stream may already be closed or errored.
+      }
+    }
+  };
+
+  const resetIdleTimer = () => {
+    if (released) return;
+    if (idleTimer !== undefined) {
+      clearTimeout(idleTimer);
+      idleTimer = undefined;
+    }
+    idleTimer = setTimeout(onLeaseExpired, leaseMs);
+    idleTimer.unref?.();
+  };
 
   if (signal?.aborted || outgoing?.writableFinished || outgoing?.closed || outgoing?.destroyed) {
     finish();
@@ -709,24 +766,38 @@ export function releaseOnResponseClose(bytes: Uint8Array, release: () => void, c
             : typeof outgoing.addEventListener === 'function'
               ? (evt: 'finish' | 'close') => outgoing.addEventListener!(evt, finish)
               : null;
+      const attachDrain =
+        typeof outgoing.on === 'function'
+          ? () => outgoing.on!('drain', resetIdleTimer)
+          : typeof outgoing.addEventListener === 'function'
+            ? () => outgoing.addEventListener!('drain', resetIdleTimer)
+            : null;
       if (attach) {
         hasOutgoing = true;
+        let drainAttached = false;
         cleanups.push(() => {
           const detach =
             typeof outgoing.off === 'function'
-              ? (evt: 'finish' | 'close') => outgoing.off!(evt, finish)
+              ? (evt: 'finish' | 'close' | 'drain', fn: () => void) => outgoing.off!(evt, fn)
               : typeof outgoing.removeListener === 'function'
-                ? (evt: 'finish' | 'close') => outgoing.removeListener!(evt, finish)
+                ? (evt: 'finish' | 'close' | 'drain', fn: () => void) => outgoing.removeListener!(evt, fn)
                 : typeof outgoing.removeEventListener === 'function'
-                  ? (evt: 'finish' | 'close') => outgoing.removeEventListener!(evt, finish)
+                  ? (evt: 'finish' | 'close' | 'drain', fn: () => void) => outgoing.removeEventListener!(evt, fn)
                   : null;
           if (detach) {
-            detach('finish');
-            detach('close');
+            detach('finish', finish);
+            detach('close', finish);
+            if (drainAttached) {
+              detach('drain', resetIdleTimer);
+            }
           }
         });
         attach('finish');
         if (!released) attach('close');
+        if (!released && attachDrain) {
+          drainAttached = true;
+          attachDrain();
+        }
       }
     }
 
@@ -738,26 +809,41 @@ export function releaseOnResponseClose(bytes: Uint8Array, release: () => void, c
     }
 
     if (!released) {
-      timer = setTimeout(finish, PDF_STREAM_LEASE_MS);
-      timer.unref?.();
+      resetIdleTimer();
+      maxTimer = setTimeout(onLeaseExpired, effectiveMaxLeaseMs);
+      maxTimer.unref?.();
     }
   }
 
-  let sent = false;
+  let offset = 0;
   return new ReadableStream<Uint8Array>(
     {
+      start(controller) {
+        streamController = controller;
+      },
       pull(controller) {
-        if (!sent) {
-          sent = true;
-          controller.enqueue(bytes);
+        if (streamClosedOrErrored) return;
+        if (payload !== null && offset < payload.byteLength) {
+          const buf = payload;
+          const end = Math.min(offset + PDF_STREAM_CHUNK_BYTES, buf.byteLength);
+          const chunk = offset === 0 && end === buf.byteLength ? buf : buf.subarray(offset, end);
+          offset = end;
+          if (offset >= buf.byteLength) {
+            payload = null;
+          }
+          resetIdleTimer();
+          controller.enqueue(chunk);
           return;
         }
+        payload = null;
+        streamClosedOrErrored = true;
         controller.close();
         if (!hasOutgoing) {
           finish();
         }
       },
       cancel() {
+        streamClosedOrErrored = true;
         finish();
       },
     },
@@ -1922,6 +2008,21 @@ export function createHttpApp(deps: HttpDeps) {
     // limiting public PDF/QR routes to half (4 slots, max 2 per IP / IPv6 /64) so anonymous slow readers
     // never starve the remaining 4 slots reserved for authenticated /api/v1/sign/* downloads (#4682).
     const publicPdfSlots = Math.max(2, Math.floor(SIGN_PDF_READS_MAX / 2));
+    const V1_FAIR_SHARE_PER_ORG = 2;
+    const V1_CROSS_TENANT_HEADROOM = 2;
+    let processPdfInUse = 0;
+    const v1PdfByOrg = new Map<string, number>();
+    const reservedOtherV1Headroom = (): number => {
+      let maxOrg = 0;
+      let totalV1 = 0;
+      for (const n of v1PdfByOrg.values()) {
+        totalV1 += n;
+        if (n > maxOrg) maxOrg = n;
+      }
+      if (maxOrg <= V1_FAIR_SHARE_PER_ORG) return 0;
+      const otherOrgsV1 = totalV1 - maxOrg;
+      return Math.max(0, V1_CROSS_TENANT_HEADROOM - otherOrgsV1);
+    };
     const signProcessPdfPool = new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX, perKey: SIGN_PDF_READS_MAX });
     const signPdfReads = deps.signLimits?.pdfReads ?? new ConcurrencyLimiter({ total: publicPdfSlots, perKey: publicPdfSlots });
     const signPublicPdfPool = new ConcurrencyLimiter({ total: publicPdfSlots, perKey: publicPdfSlots });
@@ -1946,6 +2047,13 @@ export function createHttpApp(deps: HttpDeps) {
         releaseLimiter();
         return null;
       }
+      const reservedHeadroom = reservedOtherV1Headroom();
+      if (reservedHeadroom > 0 && processPdfInUse >= SIGN_PDF_READS_MAX - reservedHeadroom) {
+        releasePublicPool();
+        releaseIp();
+        releaseLimiter();
+        return null;
+      }
       const releaseProcessPool = signProcessPdfPool.tryAcquire('pdf-pool');
       if (!releaseProcessPool) {
         releasePublicPool();
@@ -1953,10 +2061,12 @@ export function createHttpApp(deps: HttpDeps) {
         releaseLimiter();
         return null;
       }
+      processPdfInUse += 1;
       let released = false;
       return () => {
         if (released) return;
         released = true;
+        processPdfInUse -= 1;
         releaseProcessPool();
         releasePublicPool();
         releaseIp();
@@ -2045,7 +2155,7 @@ export function createHttpApp(deps: HttpDeps) {
         let passedToStream = false;
         try {
           const bytes = await readPublicPdfBytes(store, lookup.source);
-          const stream = releaseOnResponseClose(bytes, release, c);
+          const stream = releaseOnResponseClose(bytes, release, c, PUBLIC_PDF_STREAM_LEASE_MS);
           passedToStream = true;
           return new Response(stream, {
             headers: {
@@ -2229,7 +2339,7 @@ export function createHttpApp(deps: HttpDeps) {
         try {
           const bytes = await readPublicDepositQrBytes(store, lookup.source);
           if (!bytes) return signOpaqueNotFound(c);
-          const stream = releaseOnResponseClose(bytes, release, c);
+          const stream = releaseOnResponseClose(bytes, release, c, PUBLIC_PDF_STREAM_LEASE_MS);
           passedToStream = true;
           return new Response(stream, {
             headers: {
@@ -2368,7 +2478,7 @@ export function createHttpApp(deps: HttpDeps) {
         let passedToStream = false;
         try {
           const bytes = await readPublicPdfBytes(store, lookup.source);
-          const stream = releaseOnResponseClose(bytes, release, c);
+          const stream = releaseOnResponseClose(bytes, release, c, PUBLIC_PDF_STREAM_LEASE_MS);
           passedToStream = true;
           return new Response(stream, {
             headers: {
@@ -2467,7 +2577,7 @@ export function createHttpApp(deps: HttpDeps) {
           let passedToStream = false;
           try {
             const bytes = await readPublicPdfBytes(store, lookup.source);
-            const stream = releaseOnResponseClose(bytes, release, c);
+            const stream = releaseOnResponseClose(bytes, release, c, PUBLIC_PDF_STREAM_LEASE_MS);
             passedToStream = true;
             return new Response(stream, {
               headers: {
@@ -2515,15 +2625,35 @@ export function createHttpApp(deps: HttpDeps) {
       const releaseLimiter = signApiV1PdfReads.tryAcquire(orgId);
       if (!releaseLimiter) return null;
       if (!useApiV1PdfPool) return releaseLimiter;
+      const orgInUse = v1PdfByOrg.get(orgId) ?? 0;
+      let otherOrgsV1ForOrg = 0;
+      for (const [otherOrgId, n] of v1PdfByOrg.entries()) {
+        if (otherOrgId !== orgId) otherOrgsV1ForOrg += n;
+      }
+      const neededHeadroom = Math.max(0, V1_CROSS_TENANT_HEADROOM - otherOrgsV1ForOrg);
+      if (
+        orgInUse >= V1_FAIR_SHARE_PER_ORG &&
+        neededHeadroom > 0 &&
+        processPdfInUse >= SIGN_PDF_READS_MAX - neededHeadroom
+      ) {
+        releaseLimiter();
+        return null;
+      }
       const releaseProcessPool = signProcessPdfPool.tryAcquire('pdf-pool');
       if (!releaseProcessPool) {
         releaseLimiter();
         return null;
       }
+      processPdfInUse += 1;
+      v1PdfByOrg.set(orgId, orgInUse + 1);
       let released = false;
       return () => {
         if (released) return;
         released = true;
+        processPdfInUse -= 1;
+        const remaining = (v1PdfByOrg.get(orgId) ?? 1) - 1;
+        if (remaining > 0) v1PdfByOrg.set(orgId, remaining);
+        else v1PdfByOrg.delete(orgId);
         releaseProcessPool();
         releaseLimiter();
       };

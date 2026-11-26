@@ -751,3 +751,42 @@ export const zAvailabilitySet = z.strictObject({ status: zMemberAvailabilityStat
 export const zAvailabilityEntry = z.strictObject({ userId: zId, status: zMemberAvailabilityStatus, until: z.iso.datetime({ offset: true }).nullable() });
 export const zAvailability = z.strictObject({ me: zAvailabilityEntry, members: z.array(zAvailabilityEntry) });
 export type Availability = z.infer<typeof zAvailability>;
+
+// Finding customer conversations for personal-data erasure from Settings > Personal data (#3669): bounded counts and minimal
+// preview per matching identity, with the exact target conversation (and optional message for commenter-only identities)
+// to pass to kernel.conversation.erase_contact.
+export const CONVERSATION_PERSONAL_DATA_MATCH_MAX = 50;
+export const CONVERSATION_PERSONAL_DATA_LINKED_NAMES_MAX = 3;
+export const CONVERSATION_PERSONAL_DATA_MATCH_SOURCES = ['direct', 'linked_contact'] as const;
+export type ConversationPersonalDataMatchSource = (typeof CONVERSATION_PERSONAL_DATA_MATCH_SOURCES)[number];
+
+export const zConversationPersonalDataEraseTarget = z.strictObject({
+  conversationId: zId,
+  messageId: zId.optional(),
+});
+export type ConversationPersonalDataEraseTarget = z.infer<typeof zConversationPersonalDataEraseTarget>;
+
+export const zConversationPersonalDataItem = z.strictObject({
+  identityId: zId,
+  provider: z.string(),
+  channelName: z.string(),
+  displayName: z.string().nullable(),
+  idTail: z.string(),
+  address: z.string().nullable(),
+  matchSource: z.enum(CONVERSATION_PERSONAL_DATA_MATCH_SOURCES),
+  linkedContactNames: z.array(z.string()).max(CONVERSATION_PERSONAL_DATA_LINKED_NAMES_MAX),
+  threads: z.number().int().min(0),
+  messages: z.number().int().min(0),
+  notes: z.number().int().min(0),
+  inComments: z.boolean(),
+  eraseTarget: zConversationPersonalDataEraseTarget,
+});
+export type ConversationPersonalDataItem = z.infer<typeof zConversationPersonalDataItem>;
+
+export const zConversationPersonalDataResult = z.strictObject({
+  kind: z.enum(['email', 'digits']),
+  items: z.array(zConversationPersonalDataItem),
+  totalMessages: z.number().int().min(0),
+  truncated: z.boolean(),
+});
+export type ConversationPersonalDataResult = z.infer<typeof zConversationPersonalDataResult>;

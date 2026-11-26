@@ -265,6 +265,7 @@ import {
   zConversationChannelErased,
   zConversationChannelCounts,
   zConversationErased,
+  zConversationPersonalDataResult,
   zConversationSandboxComment,
   zConversationSandboxQueued,
   zConversationSettle,
@@ -3101,6 +3102,8 @@ export const contract = {
     // Engage's wake rules (#3862): the org's N for the three rules that have one (every member reads, owners and admins set; set in Settings, never on the inbox screen).
     wakeRules: oc.input(z.strictObject({})).output(zEngageWakeRulesView),
     setWakeRules: oc.input(zEngageWakeRules).output(zEngageWakeRulesView),
+    // Finding customer conversation identities matching a typed email or phone (#3669): owners and admins only, every search audited.
+    personalDataFind: oc.input(zPersonalDataQuery).output(zConversationPersonalDataResult),
     eraseContact: oc.input(zConversationEraseContact.extend({ idempotencyKey: zId })).output(zConversationErased),
     // Deleting a disconnected channel's conversations too (#3299): the counts the confirmation names, then the erasure (owners and admins, a fresh
     // second factor; the channel must be disconnected first).

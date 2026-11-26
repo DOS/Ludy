@@ -175,7 +175,7 @@ export class LazadaRefresher implements Refresher {
     this.now = options.now ?? (() => new Date());
   }
 
-  async refresh(secret: string): Promise<{ secret: string; expiresAt: Date } | { refused: string } | { failed: string }> {
+  async refresh(secret: string): Promise<{ secret: string; expiresAt: Date } | { refused: string } | { failed: string } | { skipped: 'recent' }> {
     let old: Record<string, unknown>;
     try {
       const parsed: unknown = JSON.parse(secret);
@@ -193,7 +193,7 @@ export class LazadaRefresher implements Refresher {
     if (!Number.isNaN(oldRefreshExpiry) && oldRefreshExpiry <= now) return { refused: 'REFRESH_TOKEN_EXPIRED' };
     // Renewed a moment ago and due again (a short access life): not asked again yet, so the pair is not rotated at every sweep.
     const lastAt = typeof old.refreshedAt === 'string' ? Date.parse(old.refreshedAt) : Number.NaN;
-    if (!Number.isNaN(lastAt) && now >= lastAt && now - lastAt < MIN_REFRESH_GAP_MS) return { failed: 'RECENT' };
+    if (!Number.isNaN(lastAt) && now >= lastAt && now - lastAt < MIN_REFRESH_GAP_MS) return { skipped: 'recent' };
 
     const called = await postToken(this.fetchImpl, LAZADA_AUTH_HOST, REFRESH_PATH, old.appKey, old.appSecret, { refresh_token: old.refreshToken }, now);
     if ('failed' in called) return called;

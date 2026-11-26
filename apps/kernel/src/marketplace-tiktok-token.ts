@@ -175,7 +175,7 @@ export class TiktokRefresher implements Refresher {
     this.now = options.now ?? (() => new Date());
   }
 
-  async refresh(secret: string): Promise<{ secret: string; expiresAt: Date } | { refused: string } | { failed: string }> {
+  async refresh(secret: string): Promise<{ secret: string; expiresAt: Date } | { refused: string } | { failed: string } | { skipped: 'recent' }> {
     let old: Record<string, unknown>;
     try {
       const parsed: unknown = JSON.parse(secret);
@@ -196,12 +196,12 @@ export class TiktokRefresher implements Refresher {
     const lastAt = typeof old.refreshedAt === 'string' ? Date.parse(old.refreshedAt) : Number.NaN;
     const accessEnd = typeof old.accessExpiresAt === 'string' ? Date.parse(old.accessExpiresAt) : Number.NaN;
     const accessExpired = !Number.isNaN(accessEnd) && accessEnd <= now;
-    if (!accessExpired && !Number.isNaN(lastAt) && now >= lastAt && now - lastAt < MIN_REFRESH_GAP_MS) return { failed: 'RECENT' };
+    if (!accessExpired && !Number.isNaN(lastAt) && now >= lastAt && now - lastAt < MIN_REFRESH_GAP_MS) return { skipped: 'recent' };
 
     // A verdict TikTok gave for this very refresh token a moment ago is not asked again yet (see `verdicts`); old entries are dropped here.
     for (const [seen, at] of this.verdicts) if (now < at || now - at >= MIN_REFRESH_GAP_MS) this.verdicts.delete(seen);
     const key = createHash('sha256').update(`${old.appKey}\n${old.refreshToken}`).digest('hex');
-    if (this.verdicts.has(key)) return { failed: 'RECENT' };
+    if (this.verdicts.has(key)) return { skipped: 'recent' };
 
     const called = await getToken(this.fetchImpl, REFRESH_PATH, { app_key: old.appKey, app_secret: old.appSecret, refresh_token: old.refreshToken, grant_type: 'refresh_token' });
     if ('failed' in called) return called;

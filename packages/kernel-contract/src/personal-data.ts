@@ -8,6 +8,23 @@ export const zPersonalDataQuery = z.strictObject({
 });
 export type PersonalDataQuery = z.infer<typeof zPersonalDataQuery>;
 
+// What the personal-data finder looks for (#923, shared with conversation lookup #3669): an email address (folded to lower
+// case) or 8 to 20 digits (a phone number, tax code, national ID or bank account number).
+export type Probe = { kind: 'email'; email: string } | { kind: 'digits'; digits: string };
+
+export function personalDataProbe(value: string): Probe | null {
+  const trimmed = value.trim();
+  if (/^[^\s@]+@[^\s@]+$/.test(trimmed)) return { kind: 'email', email: trimmed.toLowerCase() };
+  // A phone number (spaces, dots, dashes, brackets and a leading + allowed, as in "(028) 3829 1234"), a tax code (10
+  // digits, or 13 with a branch suffix), a national ID (12 digits) or a bank account number (8 to 20 digits; the 6 and 7 digit
+  // accounts are out of reach, as such a short value also matches amounts written with dots in free text).
+  if (/^[+(\d][\d\s().-]{7,40}$/.test(trimmed)) {
+    const digits = trimmed.replace(/\D/g, '');
+    if (digits.length >= 8 && digits.length <= 20) return { kind: 'digits', digits };
+  }
+  return null;
+}
+
 export const zPersonalDataMatch = z.object({
   // schema.table.column where the value was found.
   column: z.string(),

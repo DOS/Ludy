@@ -217,7 +217,7 @@ describe('TiktokRefresher', () => {
 
   it('does not rotate the pair at every sweep: a connection renewed less than six hours ago is not asked', async () => {
     const { refresher, fake } = setup();
-    expect(await refresher.refresh(secretOf({ refreshedAt: new Date(NOW - HOUR).toISOString() }))).toEqual({ failed: 'RECENT' });
+    expect(await refresher.refresh(secretOf({ refreshedAt: new Date(NOW - HOUR).toISOString() }))).toEqual({ skipped: 'recent' });
     expect(fake.calls).toHaveLength(0);
     expect(await refresher.refresh(secretOf({ refreshedAt: new Date(NOW - 7 * HOUR).toISOString() }))).toHaveProperty('secret');
     expect(fake.calls).toHaveLength(1);
@@ -229,7 +229,7 @@ describe('TiktokRefresher', () => {
     expect(result).toHaveProperty('secret');
     expect(fake.calls).toHaveLength(1);
     // Not yet expired: the gap still holds.
-    expect(await refresher.refresh(secretOf({ refreshedAt: new Date(NOW - HOUR).toISOString(), accessExpiresAt: new Date(NOW + HOUR).toISOString() }))).toEqual({ failed: 'RECENT' });
+    expect(await refresher.refresh(secretOf({ refreshedAt: new Date(NOW - HOUR).toISOString(), accessExpiresAt: new Date(NOW + HOUR).toISOString() }))).toEqual({ skipped: 'recent' });
   });
 
   it('treats every trouble as a failure (no refusal code is documented), and never repeats a call whose answer was lost', async () => {
@@ -265,11 +265,11 @@ describe('TiktokRefresher', () => {
       return answer === 'verdict' ? json({ code: 99999, message: PLANTED }) : json({ code: 0, data: {} });
     });
     const refresher = new TiktokRefresher({ fetch: fetchImpl, now: () => new Date(clock) });
-    // A verdict: asked once, then held back for six hours (every ten-minute sweep in between is a `RECENT` failure with no call).
+    // A verdict: asked once, then held back for six hours (every ten-minute sweep in between is skipped with no call).
     expect(await refresher.refresh(secretOf())).toEqual({ failed: '99999' });
     for (let sweep = 1; sweep <= 35; sweep += 1) {
       clock = NOW + sweep * 10 * 60_000;
-      expect(await refresher.refresh(secretOf())).toEqual({ failed: 'RECENT' });
+      expect(await refresher.refresh(secretOf())).toEqual({ skipped: 'recent' });
     }
     expect(calls).toBe(1);
     clock = NOW + 6 * HOUR + 60_000;
@@ -281,7 +281,7 @@ describe('TiktokRefresher', () => {
     // A success it cannot read is a verdict too.
     answer = 'unreadable';
     expect(await refresher.refresh(secretOf({ refreshToken: 'TTP_R8' }))).toEqual({ failed: 'BAD_ANSWER' });
-    expect(await refresher.refresh(secretOf({ refreshToken: 'TTP_R8' }))).toEqual({ failed: 'RECENT' });
+    expect(await refresher.refresh(secretOf({ refreshToken: 'TTP_R8' }))).toEqual({ skipped: 'recent' });
     expect(calls).toBe(4);
     // A network trouble is not a verdict: the next sweep asks again.
     answer = 'network';

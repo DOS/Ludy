@@ -26,7 +26,7 @@ const suite = ADMIN ? describe : describe.skip;
 const CANARY = 'identity canary phrase';
 const PLACE = 'crove_hr.payroll_employee.national_id';
 const ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader'];
-const DEFINERS = ['subject_key_ensure(uuid, text, text, bytea)', 'subject_key_wrapped(uuid[])', 'subject_key_shred(text[])'];
+const DEFINERS = ['subject_key_ensure(uuid, text, text, bytea)', 'subject_key_wrapped(uuid[])', 'subject_key_shred(text[])', 'subject_key_by_ref(text)'];
 
 suite('per-subject keys on PostgreSQL (#2640)', () => {
   const dbName = `crove_test_subject_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -98,6 +98,28 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
     sensitive: true,
     handler: async (ctx, input) => ctx.open(input.sealed, PLACE, input.ref),
   }) as QueryDef<unknown, unknown>;
+  const SUBJECT_HASH = defineCommand({
+    name: 't2640.subject_hash',
+    input: z.object({ ref: z.string(), purpose: z.string(), value: z.string(), create: z.boolean().optional() }),
+    risk: 'R1',
+    sideEffect: 'none',
+    access: ['owner', 'admin', 'member', 'viewer'],
+    writes: [],
+    handler: async (ctx, input) => ({
+      hash: input.create === false
+        ? await ctx.subjectHash(input.ref, input.purpose, input.value, { create: false })
+        : await ctx.subjectHash(input.ref, input.purpose, input.value),
+    }),
+  }) as CommandDef<unknown, unknown>;
+  const SUBJECT_HASH_AS_SYSTEM = defineCommand({
+    name: 't2640.subject_hash_as_system',
+    input: z.object({ ref: z.string(), purpose: z.string(), value: z.string() }),
+    risk: 'R1',
+    sideEffect: 'none',
+    access: 'system',
+    writes: [],
+    handler: async (ctx, input) => ({ hash: await ctx.subjectHash(input.ref, input.purpose, input.value) }),
+  }) as CommandDef<unknown, unknown>;
 
   async function withAdmin<T>(fn: (admin: pg.Client) => Promise<T>): Promise<T> {
     const admin = createDbClient({ connectionString: adminUrl }, dbIds);
@@ -200,11 +222,11 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
     pool = createDbPool({ connectionString: appUrl, max: 6 }, dbIds);
-    const register = (runtime: Runtime) => runtime.register({ commands: [...kernelCommands, SEAL, OPEN_IN_COMMAND], queries: [...kernelQueries({ inboundDomain: null }), OPEN, OPEN_PLAIN] });
+    const register = (runtime: Runtime) => runtime.register({ commands: [...kernelCommands, SEAL, OPEN_IN_COMMAND, SUBJECT_HASH], queries: [...kernelQueries({ inboundDomain: null }), OPEN, OPEN_PLAIN] });
     rt = register(new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, subjectVault: vaultOf(rootOld) }));
     keylessRt = register(new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }));
     workerPool = createDbPool({ connectionString: workerUrl, max: 2 }, dbIds);
-    workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS, subjectVault: vaultOf(rootOld) }).register({ commands: [...kernelCommands, SEAL_AS_SYSTEM], queries: [...kernelQueries({ inboundDomain: null }), OPEN_AS_SYSTEM] });
+    workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS, subjectVault: vaultOf(rootOld) }).register({ commands: [...kernelCommands, SEAL_AS_SYSTEM, SUBJECT_HASH_AS_SYSTEM], queries: [...kernelQueries({ inboundDomain: null }), OPEN_AS_SYSTEM] });
   }, 120_000);
 
   afterAll(async () => {
@@ -318,6 +340,9 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
     await worker.query('BEGIN');
     await expect(worker.query('SELECT * FROM crove_kernel.subject_key_wrapped($1::uuid[])', [[randomUUID()]])).rejects.toMatchObject({ code: '42501' });
     await worker.query('ROLLBACK');
+    await worker.query('BEGIN');
+    await expect(worker.query("SELECT * FROM crove_kernel.subject_key_by_ref('employee:x')")).rejects.toMatchObject({ code: '42501' });
+    await worker.query('ROLLBACK');
   });
 
   it('answers wrapped keys for the org in context only', async () => {
@@ -415,5 +440,46 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
     expect((await shredding.query<{ n: number }>('SELECT crove_kernel.subject_key_shred($1::text[]) AS n', [[ref]])).rows[0]?.n).toBe(1);
     await shredding.query('COMMIT');
     expect(await subjectRows(o.orgId)).toEqual([]);
+  });
+
+  it('derives ctx.subjectHash from the subject key: survives reseal rotation, returns null when shredded without creating a key, and refuses system and viewer create', async () => {
+    const o = await org();
+    const ref = `supplier:${randomUUID()}`;
+    const purpose = 'supplier_bank_account.number';
+    const hashOf = (who: string, create = true, runtime = rt) =>
+      runtime.execute<{ hash: string | null }>('t2640.subject_hash', { ref, purpose, value: '0123456789', create }, { actor: user(who), orgId: o.orgId, idempotencyKey: randomUUID() });
+    // Before any key exists, create: false returns null and creates no row.
+    expect((await hashOf(o.owner, false)).hash).toBeNull();
+    expect(await subjectRows(o.orgId)).toEqual([]);
+    // Viewer and system cannot create a subject key via subjectHash.
+    await expect(hashOf(o.viewer, true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      workerRt.execute('t2640.subject_hash_as_system', { ref, purpose, value: '0123456789' }, { actor: { type: 'system', component: 't2640-worker' }, orgId: o.orgId, idempotencyKey: randomUUID() }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', details: { rule: 'subject_user_only' } });
+    await expect(hashOf(o.owner, true, keylessRt)).rejects.toMatchObject({ code: 'BROKER_NOT_CONFIGURED', status: 503 });
+    // Create the key and compute the hash.
+    const { hash: first } = await hashOf(o.owner, true);
+    expect(first).toMatch(/^[0-9a-f]{64}$/);
+    expect((await hashOf(o.member, false)).hash).toBe(first);
+    // Reseal the subject key under rootNew and drop rootOld: the hash stays identical.
+    const keyRow = await withAdmin(async (c) => (await c.query<{ id: string; key_id: string; wrapped_key: Buffer }>('SELECT id, key_id, wrapped_key FROM crove_kernel.subject_key WHERE org_id = $1 AND ref = $2', [o.orgId, ref])).rows[0]!);
+    const rotated = vaultOf(rootNew, rootOld);
+    const rewrapped = rotated.rewrap(o.orgId, keyRow.id, keyRow.key_id, keyRow.wrapped_key);
+    await workerRt.execute(
+      'kernel.subject_key.reseal',
+      { items: [{ id: keyRow.id, fromKeyId: keyRow.key_id, fromWrapped: keyRow.wrapped_key.toString('base64'), keyId: rewrapped.keyId, wrapped: rewrapped.wrapped.toString('base64') }] },
+      { actor: { type: 'system', component: 'kernel.subject_key.reseal' }, orgId: o.orgId },
+    );
+    const dropped = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, subjectVault: vaultOf(rootNew) }).register({
+      commands: [...kernelCommands, SUBJECT_HASH],
+      queries: kernelQueries({ inboundDomain: null }),
+    });
+    expect((await hashOf(o.owner, false, dropped)).hash).toBe(first);
+    // Shred the subject key: lookup returns null and leaves no key row; even re-creating gets a new key and a different hash.
+    await inUserContext(o.owner, o.orgId, (c) => c.query('SELECT crove_kernel.subject_key_shred($1::text[])', [[ref]]), true);
+    expect((await hashOf(o.owner, false, dropped)).hash).toBeNull();
+    expect(await subjectRows(o.orgId)).toEqual([]);
+    const { hash: recreated } = await hashOf(o.owner, true, dropped);
+    expect(recreated).not.toBe(first);
   });
 });

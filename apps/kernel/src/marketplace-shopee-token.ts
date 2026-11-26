@@ -158,7 +158,7 @@ export class ShopeeRefresher implements Refresher {
     this.now = options.now ?? (() => new Date());
   }
 
-  async refresh(secret: string): Promise<{ secret: string; expiresAt: Date } | { refused: string } | { failed: string }> {
+  async refresh(secret: string): Promise<{ secret: string; expiresAt: Date } | { refused: string } | { failed: string } | { skipped: 'recent' }> {
     let old: Record<string, unknown>;
     try {
       const parsed: unknown = JSON.parse(secret);
@@ -181,7 +181,7 @@ export class ShopeeRefresher implements Refresher {
     // A verdict Shopee gave for this very refresh token a moment ago is not asked again yet (see `verdicts`); old entries are dropped here.
     for (const [seen, at] of this.verdicts) if (nowMs < at || nowMs - at >= VERDICT_GAP_MS) this.verdicts.delete(seen);
     const key = createHash('sha256').update(`${old.partnerId}\n${old.refreshToken}`).digest('hex');
-    if (this.verdicts.has(key)) return { failed: 'RECENT' };
+    if (this.verdicts.has(key)) return { skipped: 'recent' };
 
     const called = await postToken(this.fetchImpl, old.partnerKey, old.partnerId, REFRESH_PATH, nowMs, { refresh_token: old.refreshToken, shop_id: Number(old.shopId), partner_id: Number(old.partnerId) });
     if ('failed' in called) return called;
