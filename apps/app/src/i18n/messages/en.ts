@@ -19746,6 +19746,7 @@ export const en = {
           latest: "See my Vy's latest run for this item",
           live: 'Check whether my Vy is running for this item',
           start: 'Start a run of Vy working for you',
+          start_daily: 'Start a scheduled daily briefing run of Vy for a member',
         },
         subject_results: {
           drop: 'Remove saved Vy results for an edited or redacted item',

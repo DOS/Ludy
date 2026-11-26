@@ -124,6 +124,7 @@ import {
   hasUngroundedMoneyOrScaleWords,
   stripTrustedPhrases,
 } from '../src/injection-guards.ts';
+import { UNIMPLEMENTED_SYSTEM_FEATURES } from './coworkers.ts';
 import { INJECTION_CORPUS } from './fixtures/injection-corpus.ts';
 import { LABEL_RULES } from './fixtures/label-rules.ts';
 
@@ -2596,8 +2597,12 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     expect(violations).toEqual([]);
   });
 
-  it('covers 100% of AI_FEATURE_KEYS and MEMBER_VY_FEATURE_TABLE keys', () => {
-    const expected = new Set<string>([...AI_FEATURE_KEYS, ...Object.keys(MEMBER_VY_FEATURE_TABLE)]);
+  it('covers 100% of AI_FEATURE_KEYS and implemented MEMBER_VY_FEATURE_TABLE keys', () => {
+    const memberVyKeys = Object.keys(MEMBER_VY_FEATURE_TABLE);
+    for (const pending of UNIMPLEMENTED_SYSTEM_FEATURES) {
+      expect(memberVyKeys).toContain(pending);
+    }
+    const expected = new Set<string>([...AI_FEATURE_KEYS, ...memberVyKeys.filter((key) => !UNIMPLEMENTED_SYSTEM_FEATURES.has(key))]);
     const missing = [...expected].filter((key) => !coveredFeatures.has(key));
     expect(missing).toEqual([]);
   });

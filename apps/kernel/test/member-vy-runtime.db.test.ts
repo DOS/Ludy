@@ -443,6 +443,48 @@ suite("member-scoped agent actor in the runtime", () => {
         ],
       }),
     ).toThrow(/streamed/);
+    expect(() =>
+      make().register({
+        queries: [
+          query("meetings.t_brief_facts", {
+            access: ["owner", "admin", "member"],
+            memberVy: { reads: [] },
+          }),
+        ],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      make().register({
+        queries: [
+          query("crm.t_deal_sys", {
+            access: "system",
+            memberVy: { reads: [] },
+          }),
+        ],
+      }),
+    ).toThrow(/role list/);
+    expect(() =>
+      make().register({
+        queries: [
+          query("meetings.t_brief_sensitive", {
+            access: ["owner", "admin", "member"],
+            sensitive: true,
+            memberVy: { reads: [] },
+          }),
+        ],
+      }),
+    ).toThrow(/sensitive query/);
+    expect(() =>
+      make().register({
+        queries: [
+          query("crm.t_deal_mcp", {
+            access: ["owner", "admin"],
+            mcp: { scope: "ludy.read" },
+            memberVy: { reads: [] },
+          }),
+        ],
+      }),
+    ).toThrow(/MCP grant/);
   });
 
   it("writes the audit row of a member-mode command with ids, enums and numbers, and refuses one with text", async () => {
