@@ -6,7 +6,7 @@ import { useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { OAUTH_CHANNEL_PROVIDERS, SOCIAL_QUEUE_SLOTS_MAX } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
-import { Button } from '@ludy/ui/components/button';
+import { Button, buttonVariants } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
 import { Checkbox } from '@ludy/ui/components/checkbox';
 import { Input } from '@ludy/ui/components/input';
@@ -36,7 +36,6 @@ import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isAdOAuthProvider } from '../lib/ads.ts';
 import { getConfig } from '../lib/auth.ts';
-import { AutoDraftSetting, SavedRepliesManager } from '../components/conversation-drafts.tsx';
 import { YoutubeCommentsPanel } from '../components/youtube-comments-panel.tsx';
 import { CalendarFeedCard } from '../components/social-calendar-feed.tsx';
 import { PlanReviewCard } from '../components/social-plan-review.tsx';
@@ -403,7 +402,7 @@ export function SocialChannelsPage() {
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
   const isAdmin = role === 'owner' || role === 'admin';
-  const canWriteReplies = role === 'owner' || role === 'admin' || role === 'member';
+  const aiOn = getConfig().aiEnabled === true;
   const voices = useQuery(orpc.social.brandVoices.list.queryOptions({ input: {} }));
   const orgVoice = voices.data?.find((v) => v.connectionId === null);
   const channelVoice = new Map((voices.data ?? []).filter((v) => v.connectionId !== null).map((v) => [v.connectionId as string, v]));
@@ -878,9 +877,20 @@ export function SocialChannelsPage() {
             ))
           )}
           <GeneralSettings>
-            <Card className="block space-y-3 p-4" data-testid="conversation-replies-card">
-              <SavedRepliesManager canWrite={canWriteReplies} />
-              <AutoDraftSetting isAdmin={isAdmin} />
+            <Card className="block space-y-2 p-4" data-testid="channels-inbox-settings-card">
+              <div>
+                <p className="text-sm font-medium text-foreground">{t('inboxSettingsCard.title')}</p>
+                <p className="text-xs text-subtle-foreground">{t(aiOn ? 'inboxSettingsCard.hint' : 'inboxSettingsCard.hintNoAi')}</p>
+              </div>
+              <Link
+                to="/o/$slug/social/inbox"
+                params={{ slug }}
+                search={{ settings: true }}
+                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'pointer-coarse:min-h-11')}
+                data-testid="channels-inbox-settings-link"
+              >
+                {t('inboxSettingsCard.link')}
+              </Link>
             </Card>
             <Card className="block space-y-2 p-4">
               <div>

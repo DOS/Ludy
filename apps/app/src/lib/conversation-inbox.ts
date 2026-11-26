@@ -15,13 +15,15 @@ const zInboxSearch = z.object({
   intent: z.enum([...CONVERSATION_INTENTS, 'none']).optional().catch(undefined),
   order: z.literal('intent').optional().catch(undefined),
   q: z.string().trim().min(1).max(100).optional().catch(undefined),
+  settings: z.literal(true).optional().catch(undefined),
 });
 export type InboxSearch = Defined<z.output<typeof zInboxSearch>>;
 
 export function parseConversationInboxSearch(search: Record<string, unknown>): InboxSearch {
   // The router reads a digits-only value as a number: a search for a phone number is still text.
   const q = typeof search.q === 'number' && Number.isSafeInteger(search.q) ? String(search.q) : search.q;
-  return readSearch(zInboxSearch, { ...search, q });
+  const settings = search.settings === true || search.settings === 'true' || search.settings === 1 ? true : undefined;
+  return readSearch(zInboxSearch, { ...search, q, settings });
 }
 
 // What the list asks the server for: the tab and the filters in force (a tab is New unless the address names another).

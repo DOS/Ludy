@@ -99,3 +99,17 @@ export const zLabelSuggestAnswer = z.strictObject({
   dropped: z.number().int().min(0).max(LABEL_SUGGEST_DROPPED_MAX),
 });
 export type LabelSuggestAnswer = z.infer<typeof zLabelSuggestAnswer>;
+
+// Distinct labels currently in use across the non-expired meetings the caller can read, most used first (#5039).
+export const MEETING_LABELS_IN_USE_MAX = 50;
+export const zMeetingLabelsInUseInput = z.strictObject({
+  limit: z.number().int().min(1).max(MEETING_LABELS_IN_USE_MAX).default(30),
+});
+const zMeetingLabelUse = z.strictObject({
+  label: zLabelValue,
+  count: z.number().int().min(1),
+});
+export const zMeetingLabelsInUse = z.strictObject({
+  labels: z.array(zMeetingLabelUse).max(MEETING_LABELS_IN_USE_MAX),
+});
+export type MeetingLabelsInUse = z.infer<typeof zMeetingLabelsInUse>;

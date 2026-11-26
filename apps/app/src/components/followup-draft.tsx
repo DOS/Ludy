@@ -81,9 +81,9 @@ export function FollowupDraftAction({ stepId, dealTitle }: { stepId: string; dea
 
 // In the conversation's contact panel: the open follow-up steps of the customer's deals, each with a button that puts the draft into the reply box for the person to read, edit and send.
 // Where the conversation cannot be answered from here (the platform's window is closed), the email way of the deals screen is the offer.
-export function FollowupReplyInsert({ conversationId, partyId, canReply }: { conversationId: string; partyId: string; canReply: boolean }) {
+export function FollowupReplyInsert({ conversationId, partyId, canReply, paused = false }: { conversationId: string; partyId: string; canReply: boolean; paused?: boolean }) {
   const t = useTranslations('deals.nextSteps.followup');
-  const list = useQuery(orpc.crm.nextSteps.list.queryOptions({ input: { scope: 'all', partyId, limit: 5 } }));
+  const list = useQuery({ ...orpc.crm.nextSteps.list.queryOptions({ input: { scope: 'all', partyId, limit: 5 } }), enabled: !paused });
   const insert = useMutation({
     mutationFn: async (step: NextStep) => {
       const done = await client.crm.nextSteps.draft({ nextStepId: step.id });

@@ -318,4 +318,31 @@ suite('conversations, the worker side, on PostgreSQL (#2303)', () => {
     expect((await detail(o, id)).messages[0]).toMatchObject({ hidden: true, hideRequest: null });
     expect(await rows("SELECT calls, state FROM ludy_kernel.external_call WHERE org_id = $1 AND step = 'hide'", [o.orgId])).toEqual([{ calls: 2, state: 'succeeded' }]);
   });
+
+  it('keeps provider external ids with colons untruncated in external_call.external_ref for non-Telegram providers (#3150 item 8)', async () => {
+    const o = await org();
+    for (const [provider, scopes, fullId] of [
+      ['sandbox', [], 'at://did:plc:ewvi7nxzyoun6zhxrhs64oiz/app.bsky.feed.post/3k2yabc'],
+      ['threads', ['threads_read_replies'], 'urn:li:comment:(urn:li:activity:7123456789012345678,7123456999)'],
+    ] as const) {
+      const accountId = `${provider}-${randomUUID().slice(0, 8)}`;
+      const sealed = vault.seal(JSON.stringify({ accessToken: 'tok' }), { orgId: o.orgId, provider, externalAccountId: accountId });
+      const { connectionId } = await rt.execute<{ connectionId: string }>(
+        'kernel.channel.connect',
+        { provider, externalAccountId: accountId, displayName: 'Kênh', scopes: [...scopes], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+        { actor: asUser(o.owner), orgId: o.orgId },
+      );
+      const threadId = `t-${randomUUID().slice(0, 8)}`;
+      await worker.execute(
+        'kernel.conversation.ingest',
+        { connectionId, events: [event(threadId, 'Xin hỏi', { messageId: `in-${randomUUID().slice(0, 8)}` })] },
+        { actor: { type: 'system', component: 'conversations' }, orgId: o.orgId },
+      );
+      const convId = await threadOf(o, threadId);
+      const { messageId } = await rt.execute<{ messageId: string }>('kernel.conversation.reply', { conversationId: convId, body: 'Cảm ơn bạn', lastSeenSeq: 1 }, { actor: asUser(o.lan), orgId: o.orgId });
+      const begun = await worker.execute<{ callKey: string }>('kernel.conversation.reply_begin', { messageId }, { actor: { type: 'system', component: 'conversations' }, orgId: o.orgId });
+      await worker.execute('kernel.conversation.reply_record', { messageId, callKey: begun.callKey, result: { kind: 'accepted', externalId: fullId } }, { actor: { type: 'system', component: 'conversations' }, orgId: o.orgId });
+      expect(await rows('SELECT external_ref FROM ludy_kernel.external_call WHERE org_id = $1 AND key = $2', [o.orgId, begun.callKey])).toEqual([{ external_ref: fullId }]);
+    }
+  });
 });

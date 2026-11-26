@@ -48,6 +48,9 @@ export const PROJECTS_WEEKLY_STATUS = 'projects.weekly_status';
 // until an owner or admin connects it again. Social tells its own channels' owners apart (its dispatch), so this one is
 // for the ad platforms' connections only.
 export const CHANNEL_EXPIRED = 'kernel.channel_expired';
+// Another org switched customer bot chats on for the same Telegram bot token (#3150): the displaced org's owners and
+// admins are told without revealing which org took the bot. Not muted by members, so admins always see why chats stopped.
+export const TELEGRAM_CHAT_DISPLACED = 'kernel.telegram_chat_displaced';
 // The original e-invoice XML attached to a posted invoice differs from the posting or has a signature that is not verified
 // (#2335): a warning for the person who uploaded it and the one who approved the posting. The ledger is never touched.
 export const ORIGINAL_FLAGGED = 'kernel.original_flagged';

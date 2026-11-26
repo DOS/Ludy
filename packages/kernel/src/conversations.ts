@@ -1818,11 +1818,13 @@ export const conversationReplyBegin = defineCommand({
 });
 
 const zErrorKind = z.enum(['token_expired', 'permission', 'bad_request', 'rate_limited', 'transient']);
-// What a call row keeps of the platform's id of an accepted reply: the part after the last colon. An id may be prefixed with the chat it belongs to (Telegram's
-// is `<chat id>:<message id>`, and a business chat's names the business connection too), which names the customer, and a finished call row never changes (its
-// guard says so) and does not go with the thread when the customer is erased: so only the platform's own message id is kept there. The message itself keeps
-// the whole id (that is how a repeat of it is told), and goes with the thread.
-const callRefOf = (externalId: string): string => externalId.slice(externalId.lastIndexOf(':') + 1) || externalId;
+// What a call row keeps of the platform's id of an accepted reply: only for Telegram, the part after the last colon.
+// Telegram prefixes ids with the chat id (and business connection id), which names the customer, and a finished call
+// row never changes and stays after customer erasure: so only Telegram's message id is kept there. Other providers
+// (such as Bluesky `at://` and LinkedIn `urn:`) keep their full id without truncation (#3150 item 8). The message
+// itself always keeps the whole id (that is how a repeat echo is detected) and goes with the thread.
+const callRefOf = (provider: string | undefined, externalId: string): string =>
+  provider === 'telegram' ? externalId.slice(externalId.lastIndexOf(':') + 1) || externalId : externalId;
 // What a call row is set to once its outcome is known (external_call's own columns).
 interface CallSet {
   state: 'succeeded' | 'failed' | 'ambiguous' | 'started';
@@ -1866,7 +1868,8 @@ export const conversationReplyRecord = defineCommand({
     // A YouTube reply adds to the connection's quota under its row's lock (countYoutubeReplyUnits). The erase of a channel locks the channel's row and
     // then deletes its messages, so this takes the two in the same order (channel, then message) for YouTube: otherwise the two could wait for each other.
     const own = await ctx.trx.selectFrom('ludy_kernel.conversation_message').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', input.messageId).executeTakeFirst();
-    if (own && (await youtubeQuotaRow(ctx, own.channel_connection_id, false))?.provider === 'youtube') await youtubeQuotaRow(ctx, own.channel_connection_id, true);
+    const ownChannel = own ? await youtubeQuotaRow(ctx, own.channel_connection_id, false) : undefined;
+    if (own && ownChannel?.provider === 'youtube') await youtubeQuotaRow(ctx, own.channel_connection_id, true);
     const message = await lockMessage(ctx, input.messageId);
     const current = replyCallKey(message.id, message.send_attempt);
     const { result } = input;
@@ -1875,7 +1878,7 @@ export const conversationReplyRecord = defineCommand({
     if (message.send_state === 'sent') {
       await ctx.trx
         .updateTable('ludy_kernel.external_call')
-        .set({ state: 'succeeded', finished_at: ctx.now, updated_at: ctx.now, ...(result.kind === 'accepted' ? { external_ref: callRefOf(result.externalId) } : {}) })
+        .set({ state: 'succeeded', finished_at: ctx.now, updated_at: ctx.now, ...(result.kind === 'accepted' ? { external_ref: callRefOf(ownChannel?.provider, result.externalId) } : {}) })
         .where('org_id', '=', ctx.orgId)
         .where('key', '=', current)
         .where('state', 'in', ['started', 'ambiguous'])
@@ -1907,7 +1910,7 @@ export const conversationReplyRecord = defineCommand({
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', message.id)
         .execute();
-      await call({ state: 'succeeded', external_ref: callRefOf(result.externalId) });
+      await call({ state: 'succeeded', external_ref: callRefOf(ownChannel?.provider, result.externalId) });
       await countYoutubeReplyUnits(ctx, message.channel_connection_id);
       return { state: 'sent' };
     }

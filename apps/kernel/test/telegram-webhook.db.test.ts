@@ -10,14 +10,14 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { TELEGRAM_CHAT_UPDATES, TELEGRAM_HOOK_KEY_INFO, TELEGRAM_MAX_NOTICE_BYTES, TelegramPublisher, telegramHookSecret, TelegramConversations, type Fetch } from '@ludy/channel';
+import { TELEGRAM_CHAT_UPDATES, TELEGRAM_HOOK_KEY_INFO, TELEGRAM_MAX_NOTICE_BYTES, TelegramPublisher, telegramHookSecret, TelegramConversations, wrapTelegramChatNotice, type Fetch } from '@ludy/channel';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { EXPORT_TABLES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { CredentialVault, Runtime, parseVaultKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
-import { failChatHook, runConversationIntake, runConversationJob, runTelegramChatHook } from '../src/conversations-worker.ts';
+import { failChatHook, reconcileTelegramDisplacements, rekeyTelegramWebhooks, runConversationIntake, runConversationJob, runTelegramChatHook } from '../src/conversations-worker.ts';
 import { TELEGRAM_REPLAY_WINDOW_MS, TelegramReplayCache } from '../src/telegram-webhook.ts';
 import { createHttpApp } from '../src/http.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
@@ -70,6 +70,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
   let api: Runtime;
   let appConfig: ReturnType<typeof loadConfig>;
   let appDb: Db;
+  let vaultKey1: ReturnType<typeof parseVaultKey>;
   let vault: CredentialVault;
   let a: Org;
   let b: Org;
@@ -112,14 +113,25 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
   const commonDeps = () => ({ config: appConfig, runtime: api, store: new MemoryStore(), authenticate: createAuthenticator(appConfig, appDb), pool: pools[0] as pg.Pool, aiEnabled: false });
   const asOwner = (o: Org) => ({ actor: { type: 'user' as const, userId: o.ownerId, aal: 'aal1' as const }, orgId: o.orgId });
 
-  // A Telegram that answers every method with ok and records what it was asked.
+  const liveUrls = new Map<string, string>();
+  // A Telegram that answers every method with ok, tracks each bot's live webhook URL across calls, and records what it was asked.
   function telegram(answers: Record<string, { status?: number; body: unknown }[]> = {}) {
     const calls: Array<{ method: string; token: string; json: Record<string, unknown> }> = [];
     const fetchImpl: Fetch = async (input, init) => {
       const [, tokenPart, method] = new URL(input).pathname.split('/') as [string, string, string];
-      calls.push({ method, token: tokenPart.replace(/^bot/, ''), json: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown> });
-      const answer = answers[method]?.shift() ?? { body: { ok: true, result: method === 'sendMessage' ? { message_id: 9001 } : true } };
-      return new Response(JSON.stringify(answer.body), { status: answer.status ?? 200, headers: { 'content-type': 'application/json' } });
+      const token = tokenPart.replace(/^bot/, '');
+      const json = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      calls.push({ method, token, json });
+      const explicit = answers[method]?.shift();
+      if (explicit) {
+        if ((explicit.status ?? 200) === 200 && method === 'setWebhook') liveUrls.set(token, String(json.url ?? ''));
+        if ((explicit.status ?? 200) === 200 && method === 'deleteWebhook') liveUrls.delete(token);
+        return new Response(JSON.stringify(explicit.body), { status: explicit.status ?? 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (method === 'setWebhook') liveUrls.set(token, String(json.url ?? ''));
+      if (method === 'deleteWebhook') liveUrls.delete(token);
+      const result = method === 'sendMessage' ? { message_id: 9001 } : method === 'getWebhookInfo' ? { url: liveUrls.get(token) ?? '' } : true;
+      return new Response(JSON.stringify({ ok: true, result }), { status: 200, headers: { 'content-type': 'application/json' } });
     };
     return { calls, fetchImpl };
   }
@@ -141,7 +153,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
   // The worker's side of the switch: the Telegram adapter over a recorded Telegram.
   const hookDeps = (fetchImpl: Fetch, baseUrl = APP_URL) => {
     const adapter = new TelegramPublisher(undefined, new TelegramConversations({ fetch: fetchImpl })).conversations;
-    return { runtime: worker, broker: vault, adapter: (provider: string) => (provider === 'telegram' ? adapter : undefined), baseUrl };
+    return { runtime: worker, broker: vault, adapter: (provider: string) => (provider === 'telegram' ? adapter : undefined), baseUrl, workerDb };
   };
 
   // Turns chats on through the command and runs the job the relay would queue, against a recorded Telegram. Returns the hook the connection got.
@@ -172,7 +184,8 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     const db = createDb(pool);
     const registered = { commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] };
     api = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registered);
-    vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
+    vaultKey1 = parseVaultKey(randomBytes(32).toString('base64'));
+    vault = new CredentialVault([vaultKey1]);
     const config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     appConfig = config;
     appDb = db;
@@ -218,8 +231,8 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     hookA = before?.chat_hook_next as string;
     // One setWebhook with this bot's token, the hook in the path, the derived secret as secret_token, and only private messages asked for.
     expect(t.calls).toEqual([{ method: 'setWebhook', token: TOKEN_A, json: { url: `${APP_URL}${BASE}/${hookA}`, secret_token: secretOf(hookA), allowed_updates: [...TELEGRAM_CHAT_UPDATES] } }]);
-    // The hook being set is the live one now, and the connection remembers its bot.
-    expect(await rows('SELECT chat_state, chat_error, chat_bot_id, chat_hook, chat_hook_next FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'on', chat_error: null, chat_bot_id: '111111111', chat_hook: hookA, chat_hook_next: null }]);
+    // The hook being set is the live one now, and the connection remembers its bot and signing key id.
+    expect(await rows('SELECT chat_state, chat_error, chat_bot_id, chat_hook, chat_hook_next, chat_hook_key_id FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'on', chat_error: null, chat_bot_id: '111111111', chat_hook: hookA, chat_hook_next: null, chat_hook_key_id: vault.keyId }]);
     // The same job again finds the connection already on and calls nothing.
     expect(await runTelegramChatHook(hookDeps(t.fetchImpl), { orgId: a.orgId, connectionId: a.connectionId, action: 'chat', on: true })).toBe('none');
     expect(t.calls).toHaveLength(1);
@@ -609,6 +622,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
           first = false;
           await reconnect();
         }
+        liveUrls.set(TOKEN_B, `${APP_URL}${BASE}/${input.hook}`);
         return { kind: 'done' as const, botId: '222222222' };
       },
     };
@@ -714,5 +728,365 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     const row = after.find((c) => c.id === b.connectionId);
     expect(row).toMatchObject({ chatState: 'on', chatError: null });
     expect(JSON.stringify(after)).not.toContain(hookB);
+  });
+
+  it('marks the first org displaced and notifies its owners and admins when a second org enables the same Telegram bot, without cross-org leaks (#3150 item 2)', async () => {
+    const sharedToken = '888888888:HHHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw8';
+    const first = await connectBot('Công ty Thứ Nhất', sharedToken, '-1008888888881');
+    const second = await connectBot('Công ty Thứ Hai', sharedToken, '-1008888888882');
+    const admin1 = (await upsertIdentity(appDb, { issuer: 'test', subject: randomUUID(), email: `admin1-${randomUUID().slice(0, 8)}@telegram.test`, name: null })) as string;
+    const member1 = (await upsertIdentity(appDb, { issuer: 'test', subject: randomUUID(), email: `member1-${randomUUID().slice(0, 8)}@telegram.test`, name: null })) as string;
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [first.orgId, admin1, member1]);
+
+    const { hook: firstHook } = await turnOn(first);
+    await api.execute('kernel.channel.telegram_chat_set', { connectionId: second.connectionId, on: true }, asOwner(second));
+    const t2 = telegram();
+    const adapter2 = new TelegramPublisher(undefined, new TelegramConversations({ fetch: t2.fetchImpl })).conversations;
+    expect(await runTelegramChatHook({ runtime: worker, broker: vault, adapter: () => adapter2, baseUrl: APP_URL, workerDb }, { orgId: second.orgId, connectionId: second.connectionId, action: 'chat', on: true })).toBe('on');
+
+    // Second org gets chats on cleanly without seeing anything about the first org.
+    const secondRow = (await rows<{ chat_state: string; chat_error: string | null }>('SELECT chat_state, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [second.orgId, second.connectionId]))[0];
+    expect(secondRow).toEqual({ chat_state: 'on', chat_error: null });
+    const secondDump = JSON.stringify(await rows('SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1', [second.orgId]));
+    expect(secondDump).not.toContain(first.orgId);
+    expect(secondDump).not.toContain(first.connectionId);
+
+    // First org is displaced cleanly: off, cleared hook/bot/key, BOT_TAKEN_OVER error, and admins/owners notified (not members).
+    expect((await rows('SELECT chat_state, chat_hook, chat_hook_next, chat_bot_id, chat_hook_key_id, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [first.orgId, first.connectionId]))[0]).toEqual({
+      chat_state: 'off',
+      chat_hook: null,
+      chat_hook_next: null,
+      chat_bot_id: null,
+      chat_hook_key_id: null,
+      chat_error: 'BOT_TAKEN_OVER',
+    });
+    const notifs = await rows<{ user_id: string; kind: string; subject_id: string; detail: unknown }>(
+      "SELECT user_id, kind, subject_id, detail FROM ludy_kernel.notification WHERE org_id = $1 AND kind = 'kernel.telegram_chat_displaced' ORDER BY user_id",
+      [first.orgId],
+    );
+    expect(notifs.map((n) => n.user_id).sort()).toEqual([first.ownerId, admin1].sort());
+    expect(notifs[0]?.subject_id).toBe(first.connectionId);
+    expect(JSON.stringify(notifs)).not.toContain(second.orgId);
+    expect(JSON.stringify(notifs)).not.toContain(second.connectionId);
+    expect(JSON.stringify(notifs)).not.toContain(sharedToken);
+
+    // Updates on first org's retired hook store nothing.
+    expect((await post(app, firstHook, update('Gửi cho hook bị chiếm', { chat: 1801, messageId: 161 }), signed(firstHook))).status).toBe(200);
+    expect(await intake()).toEqual({ stored: 0, dropped: 0 });
+
+    // Stale takenAt guard: re-enabling on org 1 cannot be displaced by an older timestamp.
+    await api.execute('kernel.channel.telegram_chat_set', { connectionId: first.connectionId, on: true }, asOwner(first));
+    const t1 = telegram();
+    const adapter1 = new TelegramPublisher(undefined, new TelegramConversations({ fetch: t1.fetchImpl })).conversations;
+    expect(await runTelegramChatHook({ runtime: worker, broker: vault, adapter: () => adapter1, baseUrl: APP_URL, workerDb }, { orgId: first.orgId, connectionId: first.connectionId, action: 'chat', on: true })).toBe('on');
+    expect((await rows<{ chat_state: string }>('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [second.orgId, second.connectionId]))[0]?.chat_state).toBe('off');
+    const staleDisplace = await worker.execute<{ displaced: boolean }>(
+      'kernel.channel.telegram_chat_displaced',
+      { connectionId: first.connectionId, botId: '888888888', takenAt: new Date(Date.now() - 60_000).toISOString() },
+      { actor: { type: 'system', component: 'test' }, orgId: first.orgId },
+    );
+    expect(staleDisplace.displaced).toBe(false);
+    expect((await rows<{ chat_state: string }>('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [first.orgId, first.connectionId]))[0]?.chat_state).toBe('on');
+
+    // Re-enabling and displacing the same connection a second time notifies admins again instead of deduping (#3150).
+    await api.execute('kernel.channel.telegram_chat_set', { connectionId: second.connectionId, on: true }, asOwner(second));
+    const t3 = telegram();
+    const adapter3 = new TelegramPublisher(undefined, new TelegramConversations({ fetch: t3.fetchImpl })).conversations;
+    expect(await runTelegramChatHook({ runtime: worker, broker: vault, adapter: () => adapter3, baseUrl: APP_URL, workerDb }, { orgId: second.orgId, connectionId: second.connectionId, action: 'chat', on: true })).toBe('on');
+    expect((await rows<{ id: string }>("SELECT id FROM ludy_kernel.notification WHERE org_id = $1 AND kind = 'kernel.telegram_chat_displaced'", [first.orgId])).length).toBe(4);
+  });
+
+  it('caps Telegram inbound notices per org at 1,000 so one org flood cannot starve another (#3150 item 3)', async () => {
+    const orgX = await connectBot('Công ty Xả Lũ', '900000001:JJHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw1', '-1009000000001');
+    const orgY = await connectBot('Công ty Bình Thường', '900000002:JJHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw2', '-1009000000002');
+    const { hook: hookX } = await turnOn(orgX);
+    const { hook: hookY } = await turnOn(orgY);
+    await rows('DELETE FROM ludy_kernel.conversation_inbound_pending');
+
+    // Fill 999 notices for orgX using its hashed bucket_key, verify the 1,000th is accepted via webhook and the 1,001st gets 503 BACKLOG.
+    await rows(
+      "INSERT INTO ludy_kernel.conversation_inbound_pending (provider, bucket_key, body) SELECT 'telegram_chat', pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to($1, 'UTF8')), 'hex'), 'x'::bytea FROM generate_series(1, 999)",
+      [orgX.orgId],
+    );
+    const ok1000 = await post(app, hookX, update('Tin 1000', { chat: 1901, messageId: 171 }), signed(hookX));
+    expect(ok1000.status).toBe(200);
+    const over = await post(app, hookX, update('Tin 1001', { chat: 1901, messageId: 172 }), signed(hookX));
+    expect([over.status, await over.text()]).toEqual([503, '{"code":"BACKLOG"}']);
+
+    // Verify bucket_key stores SHA-256 hex rather than raw orgId (ADR-0039).
+    const buckets = await rows<{ bucket_key: string }>('SELECT DISTINCT bucket_key FROM ludy_kernel.conversation_inbound_pending WHERE bucket_key IS NOT NULL');
+    expect(buckets).toHaveLength(1);
+    expect(buckets[0]?.bucket_key).toMatch(/^[0-9a-f]{64}$/);
+    expect(buckets[0]?.bucket_key).not.toBe(orgX.orgId);
+
+    // Org Y is unaffected while org X is capped at 1,000.
+    const okY = await post(app, hookY, update('Tin của Y', { chat: 1902, messageId: 173 }), signed(hookY));
+    expect(okY.status).toBe(200);
+    expect(await waiting()).toBe(1001);
+    await rows('DELETE FROM ludy_kernel.conversation_inbound_pending');
+  });
+
+  it('enforces cross-column chat_hook/chat_hook_next uniqueness, deterministic lookup order, and fail-closed intake (#3150 items 4, 5)', async () => {
+    const o1 = await connectBot('Công ty Trùng Hook 1', '900000003:JJHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw3', '-1009000000003');
+    const o2 = await connectBot('Công ty Trùng Hook 2', '900000004:JJHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw4', '-1009000000004');
+    const { hook: h1 } = await turnOn(o1);
+    await turnOn(o2);
+
+    // DB trigger prevents one connection's chat_hook_next from colliding with another connection's chat_hook (and vice versa).
+    await expect(
+      rows("UPDATE ludy_kernel.channel_connection SET chat_hook_next = $1, chat_state = 'enabling' WHERE org_id = $2 AND id = $3", [h1, o2.orgId, o2.connectionId]),
+    ).rejects.toMatchObject({ code: '23505' });
+
+    // Worker fails closed if multiple connections ever match one hook, and SQL orders deterministically by (org_id, id).
+    await rows('ALTER TABLE ludy_kernel.channel_connection DISABLE TRIGGER channel_connection_chat_hook_unique');
+    try {
+      await rows("UPDATE ludy_kernel.channel_connection SET chat_hook_next = $1, chat_state = 'enabling' WHERE org_id = $2 AND id = $3", [h1, o2.orgId, o2.connectionId]);
+      const matched = await rows<{ org_id: string; connection_id: string }>('SELECT org_id, connection_id FROM ludy_kernel.conversation_chat_hook_connections($1)', [h1]);
+      expect(matched).toEqual([
+        ...[
+          { org_id: o1.orgId, connection_id: o1.connectionId },
+          { org_id: o2.orgId, connection_id: o2.connectionId },
+        ].sort((x, y) => x.org_id.localeCompare(y.org_id) || x.connection_id.localeCompare(y.connection_id)),
+      ]);
+      // Bypass enqueue check by inserting directly into pending with a valid envelope (v: 1), and verify intake refuses to write to either org.
+      const notice = wrapTelegramChatNotice(h1, Buffer.from(update('Trùng hook', { chat: 1955, messageId: 181 }), 'utf8'));
+      await rows('INSERT INTO ludy_kernel.conversation_inbound_pending (provider, body) VALUES ($1, $2)', ['telegram_chat', notice]);
+      const logs: string[] = [];
+      expect(await runConversationIntake({ workerDb, runtime: worker, log: (m) => logs.push(m) })).toEqual({ stored: 0, dropped: 1 });
+      expect(logs.some((m) => m.includes('refused ambiguous hook match'))).toBe(true);
+      expect(await waiting()).toBe(0);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id IN ($1, $2)', [o1.orgId, o2.orgId])).toHaveLength(0);
+    } finally {
+      await rows("UPDATE ludy_kernel.channel_connection SET chat_hook_next = NULL, chat_state = 'on' WHERE org_id = $1 AND id = $2", [o2.orgId, o2.connectionId]);
+      await rows('ALTER TABLE ludy_kernel.channel_connection ENABLE TRIGGER channel_connection_chat_hook_unique');
+    }
+  });
+
+  it('re-registers live Telegram webhooks under the new credential key on rotation, keeping failed rows live (#3150 item 1)', async () => {
+    const token = '777777777:GGHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw7';
+    const rot = await connectBot('Công ty Xoay Khóa', token, '-1007777777770');
+    const { hook: rotHook } = await turnOn(rot);
+    expect((await rows<{ chat_hook_key_id: string }>('SELECT chat_hook_key_id FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [rot.orgId, rot.connectionId]))[0]?.chat_hook_key_id).toBe(vaultKey1.id);
+
+    const vaultKey2 = parseVaultKey(randomBytes(32).toString('base64'));
+    const v12 = new CredentialVault([vaultKey2, vaultKey1]);
+    const v2Only = new CredentialVault([vaultKey2]);
+    const liveCount = (await rows<{ n: string }>("SELECT count(*) AS n FROM ludy_kernel.channel_connection WHERE provider = 'telegram' AND status = 'active' AND chat_state = 'on' AND chat_hook IS NOT NULL"))[0]?.n;
+
+    // Simulate transient Telegram failures during rotation: rows stay chat_state = 'on', keep vaultKey1.id, and record chat_hook_rekey_after so untouched rows sort first.
+    const tFail = telegram({
+      setWebhook: Array.from({ length: Number(liveCount) + 1 }, () => ({ status: 500, body: { ok: false, error_code: 500, description: 'Internal' } })),
+    });
+    const adapterFail = new TelegramPublisher(undefined, new TelegramConversations({ fetch: tFail.fetchImpl })).conversations;
+    const failedOutcome = await rekeyTelegramWebhooks({ runtime: worker, broker: v12, workerDb, adapter: () => adapterFail, baseUrl: APP_URL });
+    expect(failedOutcome.failed).toBe(Number(liveCount));
+    expect((await rows('SELECT chat_state, chat_hook_key_id, chat_hook_rekey_after IS NOT NULL AS retry_marked FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [rot.orgId, rot.connectionId]))[0]).toEqual({ chat_state: 'on', chat_hook_key_id: vaultKey1.id, retry_marked: true });
+
+    // Adding a brand-new untouched connection places it ahead of previously-failed rows in rekey_due ordering.
+    const extraToken = '777777778:GGHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw8';
+    const extra = await connectBot('Công ty Xoay Sau', extraToken, '-1007777777771');
+    await turnOn(extra);
+    const dueOrder = await rows<{ connection_id: string }>('SELECT connection_id FROM ludy_kernel.telegram_chat_hook_rekey_due($1, 200, NULL, NULL, NULL)', [vaultKey2.id]);
+    expect(dueOrder[0]?.connection_id).toBe(extra.connectionId);
+
+    // Clean pass under [vaultKey2, vaultKey1] while another worker task holds 1 of the 2 pool connections (WORKER_DATABASE_POOL_MAX=2 minimum), proving zero lock deadlock.
+    const tRekey = telegram();
+    const adapterRekey = new TelegramPublisher(undefined, new TelegramConversations({ fetch: tRekey.fetchImpl })).conversations;
+    let markHeld!: () => void;
+    const heldReady = new Promise<void>((r) => { markHeld = r; });
+    let releasePeer!: () => void;
+    const peerWait = new Promise<void>((r) => { releasePeer = r; });
+    const peerHolding = workerDb.connection().execute(async () => {
+      markHeld();
+      await peerWait;
+    });
+    await heldReady;
+    const rekeyed = await (async () => {
+      try {
+        return await rekeyTelegramWebhooks({ runtime: worker, broker: v12, workerDb, adapter: () => adapterRekey, baseUrl: APP_URL });
+      } finally {
+        releasePeer();
+        await peerHolding;
+      }
+    })();
+    expect(rekeyed).toEqual({ rekeyed: Number(liveCount) + 1, failed: 0, leftActive: 0, leftInactive: 1, skipped: false });
+    const callRot = tRekey.calls.find((c) => c.token === token && c.method === 'setWebhook');
+    const derivedKey2 = v12.deriveKeys(TELEGRAM_HOOK_KEY_INFO)[0]?.key as Buffer;
+    expect(callRot?.json).toEqual({
+      url: `${APP_URL}${BASE}/${rotHook}`,
+      secret_token: telegramHookSecret(derivedKey2, rotHook),
+      allowed_updates: [...TELEGRAM_CHAT_UPDATES],
+    });
+    expect((await rows('SELECT chat_state, chat_hook_key_id, chat_hook_rekey_after FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [rot.orgId, rot.connectionId]))[0]).toEqual({ chat_state: 'on', chat_hook_key_id: vaultKey2.id, chat_hook_rekey_after: null });
+
+    // Legacy anti-hijack check: if two orgs both hold chat_state='on' (pre-upgrade legacy rows) and getWebhookInfo points to org B,
+    // rekey skips setWebhook for org A, marks org A displaced, and rekeys org B cleanly (#3150 item 1 + review P1).
+    const dupToken = '777777779:GGHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw9';
+    const dupA = await connectBot('Công ty Cũ A', dupToken, '-1007777777772');
+    const dupB = await connectBot('Công ty Cũ B', dupToken, '-1007777777773');
+    const { hook: dupHookA } = await turnOn(dupA);
+    const { hook: dupHookB } = await turnOn(dupB);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = $1, chat_hook_next = NULL, chat_bot_id = '777777779', chat_hook_key_id = NULL, chat_error = NULL WHERE org_id = $2 AND id = $3", [dupHookA, dupA.orgId, dupA.connectionId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_hook_key_id = NULL WHERE org_id = $1 AND id = $2", [dupB.orgId, dupB.connectionId]);
+    liveUrls.set(dupToken, `${APP_URL}${BASE}/${dupHookB}`);
+    const tDup = telegram();
+    const adapterDup = new TelegramPublisher(undefined, new TelegramConversations({ fetch: tDup.fetchImpl })).conversations;
+    const dupRekey = await rekeyTelegramWebhooks({ runtime: worker, broker: v12, workerDb, adapter: () => adapterDup, baseUrl: APP_URL });
+    expect(dupRekey).toMatchObject({ rekeyed: 1, failed: 0, leftActive: 0, skipped: false });
+    const dupSets = tDup.calls.filter((c) => c.token === dupToken && c.method === 'setWebhook');
+    expect(dupSets.map((c) => c.json.url)).toEqual([`${APP_URL}${BASE}/${dupHookB}`]);
+    expect((await rows('SELECT chat_state, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [dupA.orgId, dupA.connectionId]))[0]).toEqual({ chat_state: 'off', chat_error: 'BOT_TAKEN_OVER' });
+    expect((await rows('SELECT chat_state, chat_hook_key_id FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [dupB.orgId, dupB.connectionId]))[0]).toEqual({ chat_state: 'on', chat_hook_key_id: vaultKey2.id });
+
+    // Once CREDENTIAL_KEY_PREVIOUS is dropped (only vaultKey2 remains), webhooks signed under vaultKey2 still pass while vaultKey1 returns 401.
+    const appV2Only = createHttpApp({ ...commonDeps(), telegramWebhook: { keys: () => v2Only.deriveKeys(TELEGRAM_HOOK_KEY_INFO).map((k) => k.key), now: () => NOW } });
+    const msg = update('Sau khi xoay khóa', { chat: 1701, messageId: 151 });
+    expect((await post(appV2Only, rotHook, msg, { 'x-telegram-bot-api-secret-token': telegramHookSecret(derivedKey2, rotHook) })).status).toBe(200);
+    expect((await post(appV2Only, rotHook, msg, { 'x-telegram-bot-api-secret-token': telegramHookSecret(vault.deriveKeys(TELEGRAM_HOOK_KEY_INFO)[0]?.key as Buffer, rotHook) })).status).toBe(401);
+    await rows('DELETE FROM ludy_kernel.conversation_inbound_pending');
+  });
+
+  it('serializes concurrent same-bot enable races and reconciles failed displacements without re-calling setWebhook (#3150)', async () => {
+    const raceToken = '666666667:FFHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw7';
+    const rA = await connectBot('Công ty Đua A', raceToken, '-1006666666667');
+    const rB = await connectBot('Công ty Đua B', raceToken, '-1006666666668');
+    await api.execute('kernel.channel.telegram_chat_set', { connectionId: rA.connectionId, on: true }, asOwner(rA));
+    await api.execute('kernel.channel.telegram_chat_set', { connectionId: rB.connectionId, on: true }, asOwner(rB));
+
+    // Delay the first setWebhook slightly while both orgs run concurrently; per-bot lock serializes them so Telegram webhook and DB winner match.
+    const slowFetch: Fetch = async (input, init) => {
+      const [, tokenPart, method] = new URL(input).pathname.split('/') as [string, string, string];
+      const tok = tokenPart.replace(/^bot/, '');
+      const json = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      if (method === 'setWebhook') {
+        await new Promise((r) => setTimeout(r, 80));
+        liveUrls.set(tok, String(json.url ?? ''));
+      }
+      return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: liveUrls.get(tok) ?? '' } : true }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const [resA, resB] = await Promise.all([
+      runTelegramChatHook(hookDeps(slowFetch), { orgId: rA.orgId, connectionId: rA.connectionId, action: 'chat', on: true }),
+      runTelegramChatHook(hookDeps(slowFetch), { orgId: rB.orgId, connectionId: rB.connectionId, action: 'chat', on: true }),
+    ]);
+    expect([resA, resB]).toEqual(['on', 'on']);
+    const [rowA] = await rows<{ chat_state: string; chat_hook: string | null }>('SELECT chat_state, chat_hook FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [rA.orgId, rA.connectionId]);
+    const [rowB] = await rows<{ chat_state: string; chat_hook: string | null }>('SELECT chat_state, chat_hook FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [rB.orgId, rB.connectionId]);
+    const liveUrl = liveUrls.get(raceToken);
+    if (rowA?.chat_state === 'on') {
+      expect(rowB?.chat_state).toBe('off');
+      expect(liveUrl).toBe(`${APP_URL}${BASE}/${rowA.chat_hook}`);
+    } else {
+      expect(rowB?.chat_state).toBe('on');
+      expect(rowA?.chat_state).toBe('off');
+      expect(liveUrl).toBe(`${APP_URL}${BASE}/${rowB?.chat_hook}`);
+    }
+
+    // Durable displacement recovery: if a stale row missed notification/off and winner has chat_displace_pending=true, reconcileTelegramDisplacements fixes it without Telegram API calls.
+    const winner = rowA?.chat_state === 'on' ? rA : rB;
+    const loser = winner.orgId === rA.orgId ? rB : rA;
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = 'stalehook__________________________________', chat_bot_id = '666666667', chat_error = NULL, chat_changed_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2", [loser.orgId, loser.connectionId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_displace_pending = true WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId]);
+    expect(await reconcileTelegramDisplacements({ workerDb, runtime: worker, force: true })).toBeGreaterThanOrEqual(1);
+    expect((await rows('SELECT chat_state, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [loser.orgId, loser.connectionId]))[0]).toEqual({ chat_state: 'off', chat_error: 'BOT_TAKEN_OVER' });
+    expect((await rows<{ chat_displace_pending: boolean }>('SELECT chat_displace_pending FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]?.chat_displace_pending).toBe(false);
+
+    // Rekey respects takenAt when getWebhookInfo sees a stale mismatch concurrent with a newer re-enable (#3150).
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_hook_key_id = $1 WHERE chat_state = 'on'", [vaultKey1.id]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_hook_key_id = 'stale-key', chat_changed_at = now() - interval '10 seconds' WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId]);
+    const raceInfoFetch: Fetch = async (input) => {
+      const method = new URL(input).pathname.split('/').at(-1);
+      if (method === 'getWebhookInfo') {
+        await rows("UPDATE ludy_kernel.channel_connection SET chat_changed_at = now() + interval '5 seconds' WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId]);
+        return new Response(JSON.stringify({ ok: true, result: { url: `${APP_URL}/stale-other-hook` } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ ok: true, result: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const raceAdapter = new TelegramPublisher(undefined, new TelegramConversations({ fetch: raceInfoFetch })).conversations;
+    await rekeyTelegramWebhooks({ runtime: worker, broker: vault, workerDb, adapter: () => raceAdapter, baseUrl: APP_URL });
+    expect((await rows('SELECT chat_state, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_state: 'on', chat_error: null });
+
+    // Same-hook different origin (e.g. PUBLIC_URL migrated) or unregistered live webhook (url: '') re-registers under current key instead of false BOT_TAKEN_OVER.
+    const [winnerHookRow] = await rows<{ chat_hook: string }>('SELECT chat_hook FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]);
+    const migrateCalls: string[] = [];
+    const migrateFetch: Fetch = async (input) => {
+      const method = new URL(input).pathname.split('/').at(-1) as string;
+      migrateCalls.push(method);
+      if (method === 'getWebhookInfo') {
+        return new Response(JSON.stringify({ ok: true, result: { url: `https://old.example.invalid${BASE}/${winnerHookRow?.chat_hook}` } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ ok: true, result: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const migrateAdapter = new TelegramPublisher(undefined, new TelegramConversations({ fetch: migrateFetch })).conversations;
+    expect(await rekeyTelegramWebhooks({ runtime: worker, broker: vault, workerDb, adapter: () => migrateAdapter, baseUrl: APP_URL })).toMatchObject({ rekeyed: 1, failed: 0, leftActive: 0 });
+    expect(migrateCalls).toEqual(['getWebhookInfo', 'setWebhook']);
+    expect((await rows('SELECT chat_state, chat_hook_key_id, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_state: 'on', chat_hook_key_id: vaultKey1.id, chat_error: null });
+
+    // Disable race guard: if org B holds the bot in DB AND Telegram's live URL points to org B, org A skips deleteWebhook and leaves B's URL untouched.
+    const loserHook = 'orgB_live_hook_____________________________';
+    const loserUrl = `${APP_URL}${BASE}/${loserHook}`;
+    await api.execute('kernel.channel.telegram_chat_set', { connectionId: winner.connectionId, on: false }, asOwner(winner));
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = $3, chat_bot_id = '666666667', chat_error = NULL WHERE org_id = $1 AND id = $2", [loser.orgId, loser.connectionId, loserHook]);
+    liveUrls.set(raceToken, loserUrl);
+    const tTakeover = telegram();
+    expect(await runTelegramChatHook(hookDeps(tTakeover.fetchImpl), { orgId: winner.orgId, connectionId: winner.connectionId, action: 'chat', on: false })).toBe('off');
+    expect(tTakeover.calls.map((c) => c.method)).toEqual(['getWebhookInfo']);
+    expect(liveUrls.get(raceToken)).toBe(loserUrl);
+    expect((await rows('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_state: 'off' });
+    expect((await rows('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [loser.orgId, loser.connectionId]))[0]).toEqual({ chat_state: 'on' });
+
+    // Conversely, when another org has a stale 'on' row in DB but Telegram's live URL still points to the disabling org, disable deletes the webhook cleanly.
+    const winnerUrl = `${APP_URL}${BASE}/${winnerHookRow?.chat_hook}`;
+    liveUrls.set(raceToken, winnerUrl);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'disabling', chat_hook = $3, chat_bot_id = '666666667', chat_error = NULL WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId, winnerHookRow?.chat_hook]);
+    const tStalePeer = telegram();
+    expect(await runTelegramChatHook(hookDeps(tStalePeer.fetchImpl), { orgId: winner.orgId, connectionId: winner.connectionId, action: 'chat', on: false })).toBe('off');
+    expect(tStalePeer.calls.map((c) => c.method)).toEqual(['getWebhookInfo', 'deleteWebhook']);
+    expect(liveUrls.get(raceToken)).toBeUndefined();
+    expect((await rows('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_state: 'off' });
+
+    // Reconcile recovery when another org legitimately holds 'on' with a newer timestamp displaces the older stale connection instead of leaving both 'on' (#3150).
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = $3, chat_hook_next = NULL, chat_bot_id = '666666667', chat_displace_pending = true, chat_error = NULL, chat_changed_at = now() - interval '2 minutes' WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId, winnerHookRow?.chat_hook]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = $3, chat_hook_next = NULL, chat_bot_id = '666666667', chat_displace_pending = false, chat_error = NULL, chat_changed_at = now() WHERE org_id = $1 AND id = $2", [loser.orgId, loser.connectionId, loserHook]);
+    expect(await reconcileTelegramDisplacements({ workerDb, runtime: worker, force: true })).toBeGreaterThanOrEqual(1);
+    expect((await rows('SELECT chat_state, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_state: 'off', chat_error: 'BOT_TAKEN_OVER' });
+    expect((await rows('SELECT chat_state, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [loser.orgId, loser.connectionId]))[0]).toEqual({ chat_state: 'on', chat_error: null });
+
+    // Disabling mid-rotation (chat_hook_next set while peer holds 'on') deletes Telegram's live URL when it points to chat_hook_next (#3150).
+    const altNextHook = 'winner_next_hook___________________________';
+    liveUrls.set(raceToken, `${APP_URL}${BASE}/${altNextHook}`);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'disabling', chat_hook = $3, chat_hook_next = $4, chat_bot_id = '666666667', chat_error = NULL WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId, winnerHookRow?.chat_hook, altNextHook]);
+    const tAltDisable = telegram();
+    expect(await runTelegramChatHook(hookDeps(tAltDisable.fetchImpl), { orgId: winner.orgId, connectionId: winner.connectionId, action: 'chat', on: false })).toBe('off');
+    expect(tAltDisable.calls.map((c) => c.method)).toEqual(['getWebhookInfo', 'deleteWebhook']);
+    expect(liveUrls.get(raceToken)).toBeUndefined();
+    expect((await rows('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_state: 'off' });
+
+    // Reconcile bot-switch race guard: if a connection switches bots between telegram_chat_displace_due and lock acquisition,
+    // reconcileTelegramDisplacements skips the stale bot id so another org live on the old bot is never displaced (#3150).
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = $3, chat_hook_next = NULL, chat_bot_id = '666666667', chat_displace_pending = true, chat_error = NULL WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId, winnerHookRow?.chat_hook]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = $3, chat_hook_next = NULL, chat_bot_id = '666666667', chat_displace_pending = false, chat_error = NULL WHERE org_id = $1 AND id = $2", [loser.orgId, loser.connectionId, loserHook]);
+    let switchedBotDuringLock = false;
+    const switchRacingRuntime = new Proxy(worker, {
+      get(target, prop) {
+        if (prop === 'query') {
+          return async (name: string, ...rest: unknown[]) => {
+            const input = rest[0] as { connectionId?: string } | undefined;
+            if (!switchedBotDuringLock && name === 'kernel.channel.telegram_chat_work' && input?.connectionId === winner.connectionId) {
+              switchedBotDuringLock = true;
+              await rows("UPDATE ludy_kernel.channel_connection SET chat_bot_id = '666666668' WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId]);
+            }
+            return Reflect.apply(target.query, target, [name, ...rest]);
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as Runtime;
+    expect(await reconcileTelegramDisplacements({ workerDb, runtime: switchRacingRuntime, force: true })).toBe(0);
+    expect(switchedBotDuringLock).toBe(true);
+    expect((await rows('SELECT chat_state, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [loser.orgId, loser.connectionId]))[0]).toEqual({ chat_state: 'on', chat_error: null });
+    expect((await rows('SELECT chat_bot_id, chat_displace_pending FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_bot_id: '666666668', chat_displace_pending: true });
+    expect(await reconcileTelegramDisplacements({ workerDb, runtime: worker, force: true })).toBe(1);
+    expect((await rows('SELECT chat_displace_pending FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_displace_pending: false });
   });
 });

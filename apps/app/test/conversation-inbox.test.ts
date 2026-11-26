@@ -34,6 +34,17 @@ describe('the Inbox address', () => {
     expect(parseConversationInboxSearch({ q: 912345678 })).toEqual({ q: '912345678' });
   });
 
+  it('reads the settings drawer flag when true and drops invalid values (#3673)', () => {
+    expect(parseConversationInboxSearch({ settings: true })).toEqual({ settings: true });
+    expect(parseConversationInboxSearch({ settings: 'true' })).toEqual({ settings: true });
+    expect(parseConversationInboxSearch({ settings: 1 })).toEqual({ settings: true });
+    expect(parseConversationInboxSearch({ settings: false })).toEqual({});
+    expect(parseConversationInboxSearch({ settings: 'false' })).toEqual({});
+    expect(parseConversationInboxSearch({ settings: 'open' })).toEqual({});
+    expect(inboxListInput({ settings: true })).toEqual({ status: 'new', limit: 50 });
+    expect(inboxCountsInput({ settings: true })).toEqual({});
+  });
+
   it('asks for the New tab unless another is named, with the filters in force and a page of 50', () => {
     expect(inboxListInput({})).toEqual({ status: 'new', limit: 50 });
     expect(inboxListInput({ status: 'resolved', kind: 'comment_thread', channel: ID, assignee: 'none', intent: 'spam', q: 'hoa' })).toEqual({

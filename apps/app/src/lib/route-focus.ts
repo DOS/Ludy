@@ -6,6 +6,7 @@
 // the live region still names the screen.
 import { useRouterState } from '@tanstack/react-router';
 import { useEffect, useRef, useState, type RefObject } from 'react';
+import { hasOpenModalDialog } from './quick-add.ts';
 import { currentScreenName, subscribeScreenName } from './screen-title.ts';
 
 // How long a screen may take to name itself before the focus goes to <main> without waiting. The announcement keeps
@@ -25,11 +26,13 @@ if (typeof window !== 'undefined') {
   );
 }
 
-/** The focus goes to the screen's heading (or <main>), unless the screen already put it in its own content (#1230). */
+/** The focus goes to the screen's heading (or <main>), unless the screen already put it in its own content (#1230) or opened a modal dialog (#3673). */
 export function moveFocusToScreen(main: HTMLElement | null): void {
   if (!main) return;
-  const active = document.activeElement;
-  if (active && active !== document.body && main.contains(active)) return;
+  const doc = main.ownerDocument;
+  if (hasOpenModalDialog(doc)) return;
+  const active = doc.activeElement;
+  if (active && active !== doc.body && main.contains(active)) return;
   const heading = main.querySelector<HTMLElement>('h1');
   const target = heading ?? main;
   if (target !== main && !target.hasAttribute('tabindex')) target.tabIndex = -1;

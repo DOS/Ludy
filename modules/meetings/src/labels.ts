@@ -14,13 +14,17 @@ import {
   zLabelRemove,
   zLabelRemoved,
   zMeetingLabels,
+  zMeetingLabelsInUse,
+  zMeetingLabelsInUseInput,
   zMeetingRef,
   type LabelAdded,
   type LabelRemoved,
   type MeetingLabels,
+  type MeetingLabelsInUse,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { sql } from 'kysely';
+import { vnDay } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 const PROBLEM_TEXT = {
@@ -150,5 +154,66 @@ export async function labelsOfMeetings(trx: QueryContext['trx'], orgId: string, 
   return byMeeting;
 }
 
+// Most recent readable non-expired meetings scanned when collecting labels in use (matches the former meeting.list(200) window; #5039).
+const LABEL_IN_USE_MEETINGS_MAX = 200;
+
+// Distinct labels in use on the most recent non-expired meetings the caller can read, most used first (#5039):
+// one grouped read under the caller's own row security (meeting and meeting_label RLS) instead of listing 200 full meeting rows.
+export const labelInUse = defineQuery({
+  name: 'meetings.label.in_use',
+  input: zMeetingLabelsInUseInput,
+  access: ROLES,
+  handler: async (ctx, input): Promise<MeetingLabelsInUse> => {
+    userOf(ctx.actor);
+    const today = vnDay(new Date());
+    const { rows } = await sql<{ label: string; uses: number; first_ord: number }>`
+      WITH recent AS (
+        SELECT
+          m.id,
+          pg_catalog.row_number() OVER (ORDER BY m.started_at DESC, m.id DESC) AS meeting_ord
+        FROM ludy_meetings.meeting m
+        WHERE m.org_id = ${ctx.orgId}::uuid
+          AND (m.text_retention_date IS NULL OR m.text_retention_date > ${today}::date)
+        ORDER BY m.started_at DESC, m.id DESC
+        LIMIT ${LABEL_IN_USE_MEETINGS_MAX}::int
+      ),
+      seen AS (
+        SELECT
+          l.label,
+          pg_catalog.row_number() OVER (ORDER BY r.meeting_ord ASC, l.created_at ASC, l.id ASC) AS first_ord
+        FROM recent r
+        INNER JOIN ludy_meetings.meeting_label l
+          ON l.org_id = ${ctx.orgId}::uuid AND l.meeting_id = r.id
+      )
+      SELECT
+        s.label,
+        pg_catalog.count(*)::int AS uses,
+        pg_catalog.min(s.first_ord)::int AS first_ord
+      FROM seen s
+      GROUP BY s.label`.execute(ctx.trx);
+    // Fold case variants in JS with labelKey() so every PostgreSQL locale (C, C.UTF-8, en_US, tr_TR) groups identically
+    // to labelsInUse(), keeping the earliest-seen spelling and appearance order.
+    const byKey = new Map<string, { label: string; count: number; firstOrd: number }>();
+    for (const r of rows) {
+      const key = labelKey(r.label);
+      const seen = byKey.get(key);
+      if (!seen) {
+        byKey.set(key, { label: r.label, count: r.uses, firstOrd: r.first_ord });
+      } else {
+        seen.count += r.uses;
+        if (r.first_ord < seen.firstOrd) {
+          seen.firstOrd = r.first_ord;
+          seen.label = r.label;
+        }
+      }
+    }
+    const labels = [...byKey.values()]
+      .sort((a, b) => b.count - a.count || a.firstOrd - b.firstOrd)
+      .slice(0, input.limit)
+      .map(({ label, count }) => ({ label, count }));
+    return zMeetingLabelsInUse.parse({ labels });
+  },
+});
+
 export const labelsCommands = [labelAdd, labelRemove];
-export const labelsQueries = [labelList];
+export const labelsQueries = [labelList, labelInUse];
