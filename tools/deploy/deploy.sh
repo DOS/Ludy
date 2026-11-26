@@ -732,13 +732,13 @@ deploy_norm_compose_path() {
   [ -n "$dir_norm" ] || dir_norm='/'
   if [[ "$item" == /* ]]; then p="$item"; else p="$dir_norm/$item"; fi
   while [[ "$p" == */./* ]]; do
-    p="${p//\/.\//\/}"
+    p="${p//\/.\///}"
   done
   while [[ "$p" == */. ]]; do
     p="${p%/.}"
   done
-  while [[ "$p" == //* ]]; do
-    p="${p#/}"
+  while [[ "$p" == *//* ]]; do
+    p="${p//\/\///}"
   done
   [ -n "$p" ] || p='/'
   printf '%s' "$p"
@@ -964,15 +964,17 @@ detect_prev_project() {
 # Inspects existing Compose config with prior release images exported in this call only (#3972).
 dc_prev_config_for_release() {
   local current_rel="$1" proj_override="${2:-}" base_compose="${3:-$DEPLOY_DIR/docker-compose.yml}" prev_img prev_ext prev_med
-  if [ -n "$current_rel" ] && [ -f "$DEPLOY_DIR/releases/$current_rel/release.env" ]; then
-    prev_img="$(release_field "$current_rel" IMAGE || true)"
-    prev_ext="$(release_field "$current_rel" EXTRACT_IMAGE || true)"
-    prev_med="$(release_field "$current_rel" MEDIA_IMAGE || true)"
-    if [ -n "$prev_img" ]; then export LUDY_IMAGE="$prev_img" CROVE_IMAGE="$prev_img"; fi
-    if [ -n "$prev_ext" ]; then export LUDY_EXTRACT_IMAGE="$prev_ext" CROVE_EXTRACT_IMAGE="$prev_ext"; fi
-    if [ -n "$prev_med" ]; then export LUDY_MEDIA_IMAGE="$prev_med" CROVE_MEDIA_IMAGE="$prev_med"; fi
-  fi
-  dc_prev_config "$proj_override" "$base_compose"
+  (
+    if [ -n "$current_rel" ] && [ -f "$DEPLOY_DIR/releases/$current_rel/release.env" ]; then
+      prev_img="$(release_field "$current_rel" IMAGE || true)"
+      prev_ext="$(release_field "$current_rel" EXTRACT_IMAGE || true)"
+      prev_med="$(release_field "$current_rel" MEDIA_IMAGE || true)"
+      if [ -n "$prev_img" ]; then export LUDY_IMAGE="$prev_img" CROVE_IMAGE="$prev_img"; fi
+      if [ -n "$prev_ext" ]; then export LUDY_EXTRACT_IMAGE="$prev_ext" CROVE_EXTRACT_IMAGE="$prev_ext"; fi
+      if [ -n "$prev_med" ]; then export LUDY_MEDIA_IMAGE="$prev_med" CROVE_MEDIA_IMAGE="$prev_med"; fi
+    fi
+    dc_prev_config "$proj_override" "$base_compose"
+  )
 }
 
 # Image pins of a release. The images are exported too, so compose.host.yml can use ${LUDY_IMAGE} for services it

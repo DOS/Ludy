@@ -970,7 +970,7 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(readFileSync(f.stubLog, 'utf8')).toContain('probe PG_SUBDIR=pgdata');
     expect(readFileSync(f.volsFile, 'utf8')).not.toContain('crove_');
 
-    const cutoverScript = readFileSync(script, 'utf8');
+    const cutoverScript = readFileSync(scriptPath, 'utf8');
     expect(cutoverScript).toContain('--exclude-table-data=ludy_kernel.context_key --exclude-table-data=crove_kernel.context_key');
   });
 

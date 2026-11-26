@@ -112,7 +112,10 @@ const ADR_DIR = 'docs/adr/';
 // (some break them: they predate the rules). With --since, as CI runs, the cutoff is not used: every file a PR adds
 // gets every rule, so raising it exempts nothing in CI.
 export const BREAKING_RULES_AFTER = '20261103090000';
-export const STAGE7_CUTOVER_VERSION = '20270327180000';
+// Post-Stage-7 strict Ludy naming/contract/concurrent-index rules apply to migrations with a version above this one
+// (the newest on main when Stage 7 infra cutover landed: already-applied files up to it cannot be edited, while
+// --since enforces strict Ludy rules on every migration a PR adds via stage7RulesApply).
+export const STAGE7_CUTOVER_VERSION = '20270328120000';
 const MODULE = /^\d{14}_(crove|ludy)_([a-z0-9]+)_[a-z0-9_]+\.sql$/;
 const BANNED_GRANTEES = new Set(['anon', 'authenticated', 'public']);
 const TRANSACTION_WORDS = new Set(['begin', 'start', 'commit', 'end', 'rollback', 'abort']);
@@ -1252,6 +1255,10 @@ export function hotIndexRuleApplies(name, added) {
   return added || basename(name).slice(0, 14) > HOT_INDEX_RULE_AFTER;
 }
 
+export function stage7RulesApply(name, added) {
+  return added || basename(name).slice(0, 14) > STAGE7_CUTOVER_VERSION;
+}
+
 // Lints one migration. Returns [{ file, line, rule, message }], in file order. `existingFunctions` are the keys of
 // functions earlier migrations created (functionsCreated): CREATE OR REPLACE keeps a function's privileges, so only a
 // new function needs its REVOKE. Matching is by name, so a new overload of an existing function is not caught. Each
@@ -1265,11 +1272,12 @@ export function lintMigration(file, sql, {
   breakingRules = true,
   hotIndexRule = true,
   adrs = /** @type {Set<string> | undefined} */ (undefined),
+  strictLudy: strictLudyOpt = /** @type {boolean | undefined} */ (undefined),
 } = {}) {
   const findings = [];
   const base = basename(file);
   const version = /^(\d{14})_/.exec(base)?.[1];
-  const strictLudy = version !== undefined && version > STAGE7_CUTOVER_VERSION;
+  const strictLudy = strictLudyOpt ?? (version !== undefined && version > STAGE7_CUTOVER_VERSION);
   const activeDefinerRoles = strictLudy ? LUDY_DEFINER_OWNER_ROLES : DEFINER_OWNER_ROLES;
   const activeContract = strictLudy ? LUDY_CONTRACT : CONTRACT;
   const activeContractLabel = strictLudy ? 'ludy:contract' : 'crove:contract';
@@ -1660,6 +1668,7 @@ function main() {
     adrs,
     breakingRules: breakingRulesApply(name, changes !== undefined),
     hotIndexRule: hotIndexRuleApplies(name, changes !== undefined),
+    strictLudy: stage7RulesApply(name, changes !== undefined),
   }));
   findings.push(...(changes?.edited ?? []));
   // Every accepted waiver, so reviewers see each cross-module change: as annotations and in the job summary.

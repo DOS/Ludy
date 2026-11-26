@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { changedMigrations, format, formatWaiver, functionsCreated, lex, lintMigration, moduleOf, parseAllowlist, plan } from '../ci/migration-lint.mjs';
+import { changedMigrations, format, formatWaiver, functionsCreated, lex, lintMigration, moduleOf, parseAllowlist, plan, STAGE7_CUTOVER_VERSION, stage7RulesApply } from '../ci/migration-lint.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const FILE = 'supabase/migrations/20261101000000_crove_social_sample.sql';
@@ -549,14 +549,27 @@ describe('migration lint: ludy_* identifiers, ALTER SET SCHEMA and ALTER SCHEMA 
   });
 });
 
-describe('post-Stage-7 strict Ludy rules (> 20270327180000) (#3972)', () => {
-  const POST_SOCIAL = 'supabase/migrations/20270328000000_ludy_social_sample.sql';
-  const POST_KERNEL = 'supabase/migrations/20270328010000_ludy_kernel_sample.sql';
+describe(`post-Stage-7 strict Ludy rules (> ${STAGE7_CUTOVER_VERSION}) (#3972)`, () => {
+  const POST_SOCIAL = 'supabase/migrations/20270329000000_ludy_social_sample.sql';
+  const POST_KERNEL = 'supabase/migrations/20270329010000_ludy_kernel_sample.sql';
   const adrs = new Set(['0028', '0054']);
+
+  it('enforces Stage 7 cutoff via version and always when added (--since)', () => {
+    expect(stage7RulesApply(`${STAGE7_CUTOVER_VERSION}_ludy_kernel_old.sql`, false)).toBe(false);
+    expect(stage7RulesApply(`${STAGE7_CUTOVER_VERSION}_ludy_kernel_old.sql`, true)).toBe(true);
+    expect(stage7RulesApply(POST_SOCIAL, false)).toBe(true);
+    expect(
+      lintMigration(
+        `supabase/migrations/${STAGE7_CUTOVER_VERSION}_ludy_kernel_old.sql`,
+        '-- crove:concurrent-index\nCREATE INDEX CONCURRENTLY IF NOT EXISTS audit_idx ON ludy_kernel.audit_event (org_id);',
+        { strictLudy: true },
+      ).map((f: Finding) => `${f.line} ${f.rule}`),
+    ).toEqual(['1 concurrent-index', '2 no-concurrently', '2 hot-table-retry']);
+  });
 
   it('rejects new _crove_ migration filenames and crove_* schemas even with cross-module waivers', () => {
     const badFile = lintMigration(
-      'supabase/migrations/20270328000000_crove_social_sample.sql',
+      'supabase/migrations/20270329000000_crove_social_sample.sql',
       'CREATE TABLE IF NOT EXISTS ludy_social.sample (id int);',
       { breakingRules: false },
     );

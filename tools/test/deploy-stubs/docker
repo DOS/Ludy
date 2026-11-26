@@ -398,7 +398,7 @@ if [ "${STUB_LOG_PROJECT:-}" = 1 ]; then
 fi
 # The compose files of each active call (`config` without flags is read-only YAML resolution before/after activate).
 if [ "$sub" != config ] || [ -n "$args" ]; then
-  printf '%s\n' "${files[*]}" >>"$STUB_LOG.files"
+  printf '%s\n' "${files[*]:-}" >>"$STUB_LOG.files"
 fi
 
 emit_stub_compose_config() {

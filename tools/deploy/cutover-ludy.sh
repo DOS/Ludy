@@ -6,7 +6,7 @@
 #   cutover-ludy.sh inspect           [--dir <abs>] [--env-file <abs>] [--overlay-dir <abs>]
 #   cutover-ludy.sh cutover-stack     [--dir <abs>] [--env-file <abs>] --overlay-dir <abs> [--smoke-url <url>]
 #   cutover-ludy.sh switch-wal        [--dir <abs>] [--env-file <abs>] --overlay-dir <abs>
-#   cutover-ludy.sh prune-old-volumes [--dir <abs>] [--env-file <abs>]
+#   cutover-ludy.sh prune-old-volumes [--dir <abs>] [--env-file <abs>] [--overlay-dir <abs>]
 #   cutover-ludy.sh rewrite-env       <input-env> <output-env>
 #
 # Security & compatibility rules:
