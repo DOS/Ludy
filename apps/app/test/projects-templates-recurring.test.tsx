@@ -24,6 +24,10 @@ import { catalog, setActiveLocale } from '../src/i18n/runtime.ts';
 const authState = vi.hoisted(() => ({ modules: ['projects', 'notes'] as string[] }));
 const archiveCalls = vi.hoisted(() => [] as unknown[]);
 const archiveGate = vi.hoisted(() => ({ pending: null as Promise<void> | null }));
+const dialogMockState = vi.hoisted(() => ({
+  deferClose: false,
+  pendingComplete: null as (() => void) | null,
+}));
 const templateFixturesState = vi.hoisted(() => ({ current: null as ProjectTemplateListResult | null }));
 
 vi.mock('../src/lib/auth.ts', () => ({
@@ -88,20 +92,63 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
 });
 
 vi.mock('@ludy/ui/components/dialog', async () => {
-  const { cloneElement, createContext, createElement, isValidElement, useContext, useState } = await import('react');
-  const DialogCtx = createContext<{ open: boolean; setOpen: (next: boolean) => void }>({
+  const { cloneElement, createContext, createElement, isValidElement, useContext, useRef, useState } = await import('react');
+  const DialogCtx = createContext<{
+    open: boolean;
+    setOpen: (next: boolean) => void;
+    finalFocusRef: { current: unknown };
+  }>({
     open: false,
     setOpen: () => undefined,
+    finalFocusRef: { current: undefined },
   });
   return {
-    Dialog: ({ open, onOpenChange, children }: { open?: boolean; onOpenChange?: (next: boolean) => void; children?: ReactNode }) => {
+    Dialog: ({
+      open,
+      onOpenChange,
+      onOpenChangeComplete,
+      children,
+    }: {
+      open?: boolean;
+      onOpenChange?: (next: boolean) => void;
+      onOpenChangeComplete?: (open: boolean) => void;
+      children?: ReactNode;
+    }) => {
       const [internalOpen, setInternalOpen] = useState(false);
+      const [closing, setClosing] = useState(false);
+      const finalFocusRef = useRef<unknown>(undefined);
       const isOpen = open === undefined ? internalOpen : Boolean(open);
+      const runFinalFocus = () => {
+        const ff = finalFocusRef.current;
+        const resolved = typeof ff === 'function' ? (ff as (t: string) => unknown)('keyboard') : ff;
+        if (resolved && typeof resolved === 'object') {
+          const target = 'current' in resolved ? (resolved as { current: unknown }).current : resolved;
+          if (target && typeof target === 'object' && 'focus' in target && typeof (target as { focus?: unknown }).focus === 'function') {
+            (target as { focus: () => void }).focus();
+          }
+        }
+      };
       const setOpen = (next: boolean) => {
+        if (!next && dialogMockState.deferClose) {
+          setClosing(true);
+          onOpenChange?.(false);
+          dialogMockState.pendingComplete = () => {
+            dialogMockState.pendingComplete = null;
+            setClosing(false);
+            if (open === undefined) setInternalOpen(false);
+            runFinalFocus();
+            onOpenChangeComplete?.(false);
+          };
+          return;
+        }
         if (open === undefined) setInternalOpen(next);
         onOpenChange?.(next);
+        if (!next) {
+          runFinalFocus();
+          onOpenChangeComplete?.(false);
+        }
       };
-      return createElement(DialogCtx.Provider, { value: { open: isOpen, setOpen } }, children);
+      return createElement(DialogCtx.Provider, { value: { open: isOpen || closing, setOpen, finalFocusRef } }, children);
     },
     DialogTrigger: ({ render, disabled, children }: { render?: ReactNode; disabled?: boolean; children?: ReactNode }) => {
       const { setOpen } = useContext(DialogCtx);
@@ -122,11 +169,23 @@ vi.mock('@ludy/ui/components/dialog', async () => {
     DialogContent: ({
       children,
       closeLabel: _c,
-      variant: _v,
+      variant,
+      finalFocus,
       ...rest
     }: Record<string, unknown> & { children?: ReactNode }) => {
-      const { open } = useContext(DialogCtx);
-      return open ? createElement('div', rest, children) : null;
+      const { open, finalFocusRef } = useContext(DialogCtx);
+      finalFocusRef.current = finalFocus;
+      return open
+        ? createElement(
+            'div',
+            {
+              'data-slot': 'dialog-content',
+              ...(variant !== undefined ? { 'data-variant': String(variant) } : {}),
+              ...rest,
+            },
+            children,
+          )
+        : null;
     },
     DialogHeader: ({ children, ...rest }: Record<string, unknown> & { children?: ReactNode }) =>
       createElement('div', rest, children),
@@ -584,6 +643,8 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
 
   afterEach(async () => {
     archiveGate.pending = null;
+    dialogMockState.deferClose = false;
+    dialogMockState.pendingComplete = null;
     await domHarness.teardownScopedDom();
   });
 
@@ -802,5 +863,78 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
 
     expect(container.querySelector('[data-testid="template-option-software-project"]')?.getAttribute('aria-checked')).toBe('true');
     expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(nameInput);
+  });
+
+  it('restores focus to fallback radio when fast archive finishes during 100ms ConfirmDialog close animation while focus is on confirm button (#5035)', async () => {
+    setActiveLocale('vi');
+    archiveCalls.length = 0;
+    dialogMockState.deferClose = true;
+
+    const body = domHarness.installScopedDom();
+    const container = new FakeDomNode(1, 'div');
+    body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    domHarness.setMountedRoot(root);
+
+    const qc = queryClientState.current;
+    qc.clear();
+    const customTemplate: ProjectTemplateSummary = {
+      id: '40000000-0000-4000-8000-000000000003',
+      source: 'custom',
+      builtinKey: null,
+      name: 'Mẫu đóng nhanh',
+      description: null,
+      status: 'active',
+      tasks: [{ title: 'Bước 1', dueOffsetDays: 0 }],
+      taskCount: 1,
+      canManage: true,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+    const fixtures = {
+      templates: [...starterFixtures('vi'), customTemplate],
+      canWrite: true,
+    } satisfies ProjectTemplateListResult;
+    templateFixturesState.current = fixtures;
+    qc.setQueryData(['projects', 'listTemplates', { language: 'vi' }], fixtures);
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <I18nProvider>
+            <ProjectTemplateDialog mode="create" open onOpenChange={() => undefined} onCreated={() => undefined} />
+          </I18nProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    const customRadio = container.querySelector(`[data-testid="template-option-${customTemplate.id}"]`)!;
+    await act(async () => {
+      customRadio.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+    });
+    const archiveTrigger = container.querySelector(`[data-testid="template-archive-${customTemplate.id}"]`)!;
+    await act(async () => {
+      archiveTrigger.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+    });
+    const confirmArchiveBtn = container
+      .querySelectorAll('button')
+      .find((b) => b.textContent.trim() === catalog('vi').projects.templates.archiveConfirmBtn)!;
+    // Keyboard confirm leaves focus on the destructive confirm button during the 100ms close transition.
+    confirmArchiveBtn.focus();
+    expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(confirmArchiveBtn);
+
+    await act(async () => {
+      confirmArchiveBtn.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    await act(async () => {
+      dialogMockState.pendingComplete?.();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const fallbackRadio = container.querySelector('[data-testid="template-option-software-project"]');
+    expect(fallbackRadio?.getAttribute('aria-checked')).toBe('true');
+    expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(fallbackRadio);
   });
 });

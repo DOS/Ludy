@@ -75,6 +75,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { insertRecordLink, loadEnrichedLinks } from './links.ts';
+import { lockNote } from './locks.ts';
 import { notesManifest } from './manifest.ts';
 
 // Owners, admins and members keep to-dos; viewers write none (notes.md §3.5). They run the reads, where the row
@@ -501,23 +502,33 @@ export const todoCreate = defineCommand({
   access: WRITERS,
   handler: async (ctx, input): Promise<TodoWritten> => {
     const userId = userOf(ctx.actor);
-    let sourceTainted = false;
-    if (input.sourceNoteId !== undefined) {
-      // Checked under caller RLS with deleted_at IS NULL: missing, trashed, or private to another member all answer
-      // identically with 404 NOTE_NOT_FOUND (no existence oracle). Inherit server-side taint so AI note content stays tainted.
+    const readAccessibleSourceNote = async () => {
       const sourceNote = await ctx.trx
         .selectFrom('ludy_notes.note')
         .select(['id', 'tainted'])
         .where('org_id', '=', ctx.orgId)
-        .where('id', '=', input.sourceNoteId)
+        .where('id', '=', input.sourceNoteId!)
         .where('deleted_at', 'is', null)
         .executeTakeFirst();
       if (!sourceNote) throw new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú này');
+      return sourceNote;
+    };
+    let sourceTainted = false;
+    if (input.sourceNoteId !== undefined) {
+      // Checked under caller RLS with deleted_at IS NULL before any lock: missing, trashed, or private to another
+      // member all answer identically with 404 NOTE_NOT_FOUND (no existence oracle). Inherit server-side taint.
+      const sourceNote = await readAccessibleSourceNote();
       sourceTainted = sourceNote.tainted;
     }
     const listId = normalizeListId(input.listId);
     await validateTodoListAndSection(ctx, listId, input.sectionId, true);
     await lockTodoSortOrder(ctx, userId);
+    if (input.sourceNoteId !== undefined) {
+      // Re-verify under shared note lock after waiting on sort-key order so concurrent trash/taint/visibility changes are seen.
+      await lockNote(ctx, input.sourceNoteId, true);
+      const sourceNote = await readAccessibleSourceNote();
+      sourceTainted = sourceNote.tainted;
+    }
     // A new to-do goes first in the caller's list.
     const rows = await ownKeys(ctx, null);
     const sortKey = await placeBetween(ctx, rows, -1, 0);

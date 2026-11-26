@@ -26,7 +26,8 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT } from './attachments.ts';
-import { lockNotebookReorder, resolveNotebookForNote } from './notes.ts';
+import { lockNotebookReorder } from './locks.ts';
+import { resolveNotebookForNote } from './notes.ts';
 import { detailsOf, due, lockTodoListOrder, lockTodoSortOrder, lockTodosInOrder, ownKeys, parseSections, remindAt } from './todos.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];

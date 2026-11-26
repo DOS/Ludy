@@ -84,6 +84,8 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
   const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
   const radioGroupRef = useRef<HTMLDivElement>(null);
   const focusFrameRef = useRef<number | null>(null);
+  const pendingArchiveFocusRef = useRef<string | null>(null);
+  const archiveDialogVisibleRef = useRef(false);
 
   useEffect(
     () => () => {
@@ -94,24 +96,32 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
     [],
   );
 
-  const shouldRestoreRadioFocus = (archivedId: string): boolean => {
+  const getFallbackRadio = (archivedId: string): HTMLButtonElement | null => {
+    const radios = Array.from(radioGroupRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? []).filter(
+      (el) => el.isConnected !== false && el.getAttribute('data-testid') !== `template-option-${archivedId}`,
+    );
+    return radios.find((el) => el.getAttribute('aria-checked') === 'true') ?? radios[0] ?? null;
+  };
+
+  const shouldRestoreRadioFocus = (archivedId: string, includeConfirmDialog = false): boolean => {
     const activeEl = document.activeElement;
-    if (!activeEl || activeEl === document.body) return true;
+    if (!activeEl || activeEl === document.body || activeEl === document.documentElement) return true;
     if ('isConnected' in activeEl && !(activeEl as { isConnected?: boolean }).isConnected) return true;
     if (activeEl.getAttribute('data-testid') === `template-archive-${archivedId}`) return true;
+    if (includeConfirmDialog && activeEl.closest?.('[data-slot="dialog-content"][data-variant="destructive"]')) return true;
     return Boolean(radioGroupRef.current?.contains(activeEl));
   };
 
-  const restoreRadioFocus = (archivedId: string) => {
+  const restoreRadioFocus = (archivedId: string, includeConfirmDialog = false) => {
     if (focusFrameRef.current !== null) {
       window.cancelAnimationFrame(focusFrameRef.current);
     }
     focusFrameRef.current = window.requestAnimationFrame(() => {
       focusFrameRef.current = null;
-      if (!shouldRestoreRadioFocus(archivedId)) return;
-      const checkedRadio = radioGroupRef.current?.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]');
-      if (checkedRadio?.isConnected) {
-        checkedRadio.focus();
+      if (!open || !shouldRestoreRadioFocus(archivedId, includeConfirmDialog)) return;
+      const fallbackRadio = getFallbackRadio(archivedId);
+      if (fallbackRadio?.isConnected !== false) {
+        fallbackRadio?.focus();
       }
     });
   };
@@ -365,19 +375,49 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                               title={t('templates.archiveConfirmTitle', { name: selectedTemplate.name })}
                               description={t('templates.archiveConfirmDesc')}
                               confirm={t('templates.archiveConfirmBtn')}
+                              onOpenChange={(nextOpen) => {
+                                if (nextOpen) {
+                                  archiveDialogVisibleRef.current = true;
+                                  pendingArchiveFocusRef.current = null;
+                                }
+                              }}
+                              finalFocus={() => {
+                                const archivedId = pendingArchiveFocusRef.current;
+                                if (!archivedId) return true;
+                                return getFallbackRadio(archivedId) ?? radioGroupRef.current ?? true;
+                              }}
+                              onOpenChangeComplete={(nextOpen) => {
+                                archiveDialogVisibleRef.current = nextOpen;
+                                if (nextOpen) return;
+                                const archivedId = pendingArchiveFocusRef.current;
+                                if (!archivedId) return;
+                                if (!archiveTemplate.isPending) {
+                                  pendingArchiveFocusRef.current = null;
+                                }
+                                if (shouldRestoreRadioFocus(archivedId, true)) {
+                                  restoreRadioFocus(archivedId, true);
+                                }
+                              }}
                               onConfirm={() => {
                                 const archivedId = selectedTemplate.id;
-                                // Dialog closes onto a loading/unmounting trigger; move focus to the checked radio unless the user already moved elsewhere.
+                                pendingArchiveFocusRef.current = archivedId;
+                                // Dialog closes onto a loading/unmounting trigger; hand focus to a surviving radio after close/settle unless user moved elsewhere.
                                 restoreRadioFocus(archivedId);
                                 archiveTemplate.mutate(
                                   { templateId: archivedId, idempotencyKey: crypto.randomUUID() },
                                   {
                                     onSuccess: () => {
-                                      const restoreFallbackFocus = shouldRestoreRadioFocus(archivedId);
+                                      const restoreFallbackFocus =
+                                        pendingArchiveFocusRef.current === archivedId && shouldRestoreRadioFocus(archivedId, true);
                                       refreshProjectQueries();
                                       setSelectedId((cur) => (cur === archivedId ? DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY : cur));
                                       if (restoreFallbackFocus) {
-                                        restoreRadioFocus(archivedId);
+                                        restoreRadioFocus(archivedId, true);
+                                      }
+                                    },
+                                    onSettled: () => {
+                                      if (!archiveDialogVisibleRef.current) {
+                                        pendingArchiveFocusRef.current = null;
                                       }
                                     },
                                   },

@@ -25,7 +25,8 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { notesManifest } from './manifest.ts';
-import { NOTE_SUMMARY_COLUMNS, hasWholeOrgScope, lockNotebook, lockNotebookReorder, noteSummaryRow } from './notes.ts';
+import { lockNotebook, lockNotebookReorder } from './locks.ts';
+import { NOTE_SUMMARY_COLUMNS, hasWholeOrgScope, noteSummaryRow } from './notes.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

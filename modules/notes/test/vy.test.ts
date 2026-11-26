@@ -33,6 +33,7 @@ const NOW = new Date('2026-11-25T00:00:00.000Z');
 function createTodoAcceptTrx(opts: {
   note?: { id: string; revision: number; deleted_at: Date | null } | undefined;
   noteOnRecheck?: { id: string; revision: number; deleted_at: Date | null } | undefined;
+  recheckSelectIndex?: number | undefined;
   priorTodoId?: string | undefined;
   uniqueConflictOnInsert?: boolean | undefined;
 }) {
@@ -50,7 +51,8 @@ function createTodoAcceptTrx(opts: {
       }
       if (sqlText.includes('from "ludy_notes"."note"')) {
         noteSelectCount += 1;
-        const selected = noteSelectCount > 1 && opts.noteOnRecheck ? opts.noteOnRecheck : opts.note;
+        const triggerSelect = opts.recheckSelectIndex ?? 3;
+        const selected = noteSelectCount >= triggerSelect && opts.noteOnRecheck ? opts.noteOnRecheck : opts.note;
         return { rows: selected ? [selected] : [] } as QueryResult<R>;
       }
       if (sqlText.startsWith('insert into "ludy_notes"."todo"')) {
@@ -295,8 +297,9 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
       todoIds: [`${TODO_BASE}2`, `${TODO_BASE}1`],
     });
     expect(insertedSeqs).toEqual([0, 1]);
-    expect(queries[0]?.sql).toContain('pg_advisory_xact_lock');
-    expect(queries[0]?.parameters).toEqual([`ludy_notes.todo_accept_run:${ORG_ID}:${USER_ID}:${RUN_ID}`]);
+    expect(queries[0]?.sql.toLowerCase()).toContain('from "ludy_notes"."note"');
+    expect(queries[1]?.sql).toContain('pg_advisory_xact_lock');
+    expect(queries[1]?.parameters).toEqual([`ludy_notes.todo_accept_run:${ORG_ID}:${USER_ID}:${RUN_ID}`]);
     expect(audits).toEqual([
       {
         noteId: NOTE_ID,
@@ -337,7 +340,8 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
       todoAcceptSuggestions.handler(makeTodoCtx(priorTrx.trx).ctx, baseInput),
     ).rejects.toMatchObject({ code: 'VY_RUN_ALREADY_ACCEPTED', status: 409 });
     expect(priorTrx.insertedSeqs).toEqual([]);
-    expect(priorTrx.queries[0]?.sql).toContain('pg_advisory_xact_lock');
+    expect(priorTrx.queries[0]?.sql.toLowerCase()).toContain('from "ludy_notes"."note"');
+    expect(priorTrx.queries[1]?.sql).toContain('pg_advisory_xact_lock');
 
     const conflictTrx = createTodoAcceptTrx({
       note: { id: NOTE_ID, revision: 2, deleted_at: null },
@@ -353,6 +357,7 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
     await expect(
       todoAcceptSuggestions.handler(makeTodoCtx(missing.trx).ctx, baseInput),
     ).rejects.toMatchObject({ code: 'NOTE_NOT_FOUND', status: 404 });
+    expect(missing.queries.some((q) => q.sql.includes('pg_advisory_xact_lock'))).toBe(false);
 
     const trashed = createTodoAcceptTrx({ note: { id: NOTE_ID, revision: 2, deleted_at: NOW } });
     await expect(
@@ -363,6 +368,16 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
     await expect(
       todoAcceptSuggestions.handler(makeTodoCtx(stale.trx).ctx, baseInput),
     ).rejects.toMatchObject({ code: 'NOTE_REVISION_CONFLICT', status: 409, details: { revision: 3 } });
+
+    const staleDuringLockWait = createTodoAcceptTrx({
+      note: { id: NOTE_ID, revision: 2, deleted_at: null },
+      noteOnRecheck: { id: NOTE_ID, revision: 3, deleted_at: null },
+      recheckSelectIndex: 2,
+    });
+    await expect(
+      todoAcceptSuggestions.handler(makeTodoCtx(staleDuringLockWait.trx).ctx, baseInput),
+    ).rejects.toMatchObject({ code: 'NOTE_REVISION_CONFLICT', status: 409, details: { revision: 3 } });
+    expect(staleDuringLockWait.insertedSeqs).toEqual([]);
 
     const staleAfterRebalance = createTodoAcceptTrx({
       note: { id: NOTE_ID, revision: 2, deleted_at: null },

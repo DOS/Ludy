@@ -17,7 +17,8 @@ import {
   type TodoAcceptSuggestionsResult,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
-import { assertAuthor, assertNotInTrash, loadForChange, lockNote, recordNoteVersionSnapshot } from './notes.ts';
+import { lockNote } from './locks.ts';
+import { assertAuthor, assertNotInTrash, loadForChange, recordNoteVersionSnapshot } from './notes.ts';
 import { TODO_SUMMARY_COLUMNS, detailsOf, due, lockTodoSortOrder, placeFrontBatch, remindAt, todoSummaryRow } from './todos.ts';
 
 const MODULE = 'notes';
@@ -298,20 +299,6 @@ export const todoAcceptSuggestions = defineCommand({
   target: (input) => ({ type: 'notes.note', id: input.noteId }),
   handler: async (ctx, input): Promise<TodoAcceptSuggestionsResult> => {
     const userId = userOf(ctx.actor);
-    if (input.runId !== undefined) {
-      // Serialize concurrent accepts per (org, owner, runId) before reading note/prior rows so partial-purged runs
-      // (e.g. source_run_seq = 0 removed while source_run_seq >= 1 survives) cannot race past the prior check.
-      const lockKey = `ludy_notes.todo_accept_run:${ctx.orgId.toLowerCase()}:${userId.toLowerCase()}:${input.runId.toLowerCase()}`;
-      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
-    }
-    let sortKeys: string[] = [];
-    if (input.items.length > 0) {
-      // Serialize sort-key allocation before reading note revision/deleted_at so edits/deletes during a lock wait are caught.
-      await lockTodoSortOrder(ctx, userId);
-    }
-    // Hold a shared per-note advisory lock before reading revision/deleted_at so noteUpdate/noteDelete/noteRestoreVersion
-    // wait until todo inserts commit without hitting note_update RLS on shared org notes read by plain members.
-    await lockNote(ctx, input.noteId, true);
     const assertSourceNoteCurrent = async () => {
       const current = await ctx.trx
         .selectFrom('ludy_notes.note')
@@ -332,7 +319,24 @@ export const todoAcceptSuggestions = defineCommand({
       }
       return current;
     };
+    // Verify note readability and baseline revision under caller RLS before acquiring any lock so probing an
+    // unreadable note returns 404 immediately without lock-wait timing leakage.
     let note = await assertSourceNoteCurrent();
+    if (input.runId !== undefined) {
+      // Serialize concurrent accepts per (org, owner, runId) before reading note/prior rows so partial-purged runs
+      // (e.g. source_run_seq = 0 removed while source_run_seq >= 1 survives) cannot race past the prior check.
+      const lockKey = `ludy_notes.todo_accept_run:${ctx.orgId.toLowerCase()}:${userId.toLowerCase()}:${input.runId.toLowerCase()}`;
+      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
+    }
+    let sortKeys: string[] = [];
+    if (input.items.length > 0) {
+      // Serialize sort-key allocation before re-reading locked note revision/deleted_at so edits/deletes during a lock wait are caught.
+      await lockTodoSortOrder(ctx, userId);
+    }
+    // Hold a shared per-note advisory lock before re-reading revision/deleted_at so noteUpdate/noteDelete/noteRestoreVersion
+    // wait until todo inserts commit without hitting note_update RLS on shared org notes read by plain members.
+    await lockNote(ctx, input.noteId, true);
+    note = await assertSourceNoteCurrent();
     if (input.runId !== undefined) {
       // Any surviving to-do from this run (live or in trash, at any source_run_seq) blocks replay; if every
       // created to-do was permanently purged (which in normal retention happens >= 30 days after deletion, once

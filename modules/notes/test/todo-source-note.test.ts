@@ -110,19 +110,31 @@ describe('todo source notes (#1676)', () => {
     expect(resolved.get(NOTE_2)).toEqual({ id: NOTE_2, title: null, available: false });
   });
 
-  it('validates sourceNoteId in notes.todo.create, audits ID only, and throws 404 NOTE_NOT_FOUND when unreadable', async () => {
+  it('validates sourceNoteId in notes.todo.create, re-verifies under note lock, and throws 404 NOTE_NOT_FOUND without locking when unreadable', async () => {
     let insertedValues: Record<string, unknown> | undefined;
     let auditedFact: Record<string, unknown> | undefined;
+    let recordedLocks: string[] = [];
 
-    const makeCtx = (foundNote: { id: string; tainted: boolean } | undefined) => {
+    const makeCtx = (
+      foundNote: { id: string; tainted: boolean } | undefined,
+      noteOnRecheck?: { id: string; tainted: boolean } | null,
+    ) => {
+      let noteSelectCount = 0;
+      recordedLocks = [];
+      insertedValues = undefined;
+      auditedFact = undefined;
       const conn: DatabaseConnection = {
         executeQuery: async <R>(compiled: CompiledQuery): Promise<QueryResult<R>> => {
           const sqlText = compiled.sql.toLowerCase();
           if (sqlText.includes('pg_advisory_xact_lock')) {
+            recordedLocks.push(String(compiled.parameters[0] ?? ''));
             return { rows: [{ pg_advisory_xact_lock: '' }] } as QueryResult<R>;
           }
           if (sqlText.includes('from "ludy_notes"."note"')) {
-            return { rows: foundNote ? [foundNote] : [] } as QueryResult<R>;
+            noteSelectCount += 1;
+            const selected =
+              noteSelectCount > 1 && noteOnRecheck !== undefined ? noteOnRecheck ?? undefined : foundNote;
+            return { rows: selected ? [selected] : [] } as QueryResult<R>;
           }
           if (sqlText.startsWith('insert into "ludy_notes"."todo"')) {
             const colsMatch = /\(([^)]+)\)\s+values\s*\(([^)]+)\)/i.exec(compiled.sql);
@@ -191,6 +203,49 @@ describe('todo source notes (#1676)', () => {
       }),
     ).rejects.toMatchObject({ code: 'NOTE_NOT_FOUND', status: 404 });
     expect(insertedValues).toBeUndefined();
+    expect(recordedLocks).toEqual([]);
+
+    // Concurrent trash/visibility change while waiting on todo sort lock aborts after re-check under shared note lock.
+    await expect(
+      todoCreate.handler(makeCtx({ id: NOTE_1, tainted: false }, null), {
+        title: 'Gọi khách',
+        details: '',
+        checklist: [],
+        priority: 4,
+        tags: [],
+        listId: null,
+        sectionId: null,
+        dueOn: null,
+        dueTime: null,
+        timeZone: 'Asia/Ho_Chi_Minh',
+        reminder: 'auto',
+        sourceNoteId: NOTE_1,
+      }),
+    ).rejects.toMatchObject({ code: 'NOTE_NOT_FOUND', status: 404 });
+    expect(insertedValues).toBeUndefined();
+    expect(recordedLocks).toEqual([`ludy_notes.todo_sort_order:${ORG}:${USER}`, `notes.note:${ORG}:${NOTE_1}`]);
+
+    // Concurrent Vy summary tainting the source note while waiting on todo sort lock is inherited from the locked re-read.
+    const taintedAfterLock = await todoCreate.handler(
+      makeCtx({ id: NOTE_1, tainted: false }, { id: NOTE_1, tainted: true }),
+      {
+        title: 'Gọi khách',
+        details: '',
+        checklist: [],
+        priority: 4,
+        tags: [],
+        listId: null,
+        sectionId: null,
+        dueOn: null,
+        dueTime: null,
+        timeZone: 'Asia/Ho_Chi_Minh',
+        reminder: 'auto',
+        sourceNoteId: NOTE_1,
+      },
+    );
+    expect(taintedAfterLock).toEqual({ todoId: TODO_1, revision: 1 });
+    expect(insertedValues).toMatchObject({ owner_user_id: USER, source_note_id: NOTE_1, tainted: true });
+    expect(auditedFact).toMatchObject({ todoId: TODO_1, sourceNoteId: NOTE_1, tainted: true });
 
     const written = await todoCreate.handler(makeCtx({ id: NOTE_1, tainted: false }), {
       title: 'Gọi khách',

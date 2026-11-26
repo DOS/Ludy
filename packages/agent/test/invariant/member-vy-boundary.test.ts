@@ -340,6 +340,144 @@ function scanSource(
   let openLtCount = 0;
   let sameLineDivLine = -1;
   let sameLineDivStarts: number[] = [];
+  let asTypeActive = false;
+  let asTypeExpectAtom = false;
+  let asTypeConditionalDepth = 0;
+  let asTypeParen = 0;
+  let asTypeBracket = 0;
+  let asTypeBrace = 0;
+  let asTypeAngle = 0;
+  let lastTokenWasTypeVoid = false;
+
+  const AS_TYPE_PREFIX_IDENTS = new Set([
+    'keyof',
+    'typeof',
+    'readonly',
+    'infer',
+    'unique',
+    'abstract',
+    'new',
+    'asserts',
+  ]);
+
+  const resetAsType = (): void => {
+    asTypeActive = false;
+    asTypeExpectAtom = false;
+    asTypeConditionalDepth = 0;
+    asTypeParen = 0;
+    asTypeBracket = 0;
+    asTypeBrace = 0;
+    asTypeAngle = 0;
+  };
+
+  const trackAsTypeToken = (tok: Token): void => {
+    lastTokenWasTypeVoid = false;
+    if (!asTypeActive) {
+      if (
+        tok.kind === 'ident' &&
+        !tok.escaped &&
+        !prevWasDot &&
+        (!prevAllowsRegex || prevCouldBeDivision) &&
+        (tok.value === 'as' || tok.value === 'satisfies')
+      ) {
+        asTypeActive = true;
+        asTypeExpectAtom = true;
+      }
+      return;
+    }
+    if (asTypeParen > 0 || asTypeBracket > 0 || asTypeBrace > 0 || asTypeAngle > 0) {
+      if (tok.kind === 'punct') {
+        if (tok.value === '(') asTypeParen += 1;
+        else if (tok.value === '[') asTypeBracket += 1;
+        else if (tok.value === '{') asTypeBrace += 1;
+        else if (tok.value === '<' && asTypeParen === 0 && asTypeBracket === 0 && asTypeBrace === 0) asTypeAngle += 1;
+        else if (tok.value === ')') {
+          if (asTypeParen > 0) {
+            asTypeParen -= 1;
+            if (asTypeParen === 0 && asTypeBracket === 0 && asTypeBrace === 0 && asTypeAngle === 0) asTypeExpectAtom = false;
+          } else {
+            resetAsType();
+          }
+        } else if (tok.value === ']') {
+          if (asTypeBracket > 0) {
+            asTypeBracket -= 1;
+            if (asTypeParen === 0 && asTypeBracket === 0 && asTypeBrace === 0 && asTypeAngle === 0) asTypeExpectAtom = false;
+          } else {
+            resetAsType();
+          }
+        } else if (tok.value === '}') {
+          if (asTypeBrace > 0) {
+            asTypeBrace -= 1;
+            if (asTypeParen === 0 && asTypeBracket === 0 && asTypeBrace === 0 && asTypeAngle === 0) asTypeExpectAtom = false;
+          } else {
+            resetAsType();
+          }
+        } else if (tok.value === '>' && asTypeAngle > 0 && asTypeParen === 0 && asTypeBracket === 0 && asTypeBrace === 0) {
+          asTypeAngle -= 1;
+          if (asTypeAngle === 0) asTypeExpectAtom = false;
+        }
+      } else if (tok.kind === 'template' && asTypeBrace === 0 && asTypeParen === 0 && asTypeBracket === 0) {
+        resetAsType();
+      }
+      return;
+    }
+    if (tok.kind === 'ident' && !tok.escaped) {
+      if (prevWasDot) {
+        asTypeExpectAtom = false;
+      } else if (asTypeExpectAtom) {
+        if (tok.value === 'void') {
+          lastTokenWasTypeVoid = true;
+          asTypeExpectAtom = false;
+        } else if (!AS_TYPE_PREFIX_IDENTS.has(tok.value)) {
+          asTypeExpectAtom = false;
+        }
+      } else if (tok.value === 'extends') {
+        asTypeConditionalDepth += 1;
+        asTypeExpectAtom = true;
+      } else if (tok.value === 'is' || tok.value === 'as' || tok.value === 'satisfies') {
+        asTypeExpectAtom = true;
+      } else {
+        resetAsType();
+      }
+      return;
+    }
+    if (tok.kind === 'string' || tok.kind === 'number') {
+      if (asTypeExpectAtom) asTypeExpectAtom = false;
+      else resetAsType();
+      return;
+    }
+    if (tok.kind === 'template') {
+      if (asTypeExpectAtom && !tok.raw.startsWith('}')) asTypeExpectAtom = false;
+      else resetAsType();
+      return;
+    }
+    if (tok.kind === 'punct') {
+      if (tok.value === '(' && asTypeExpectAtom) {
+        asTypeParen += 1;
+      } else if (tok.value === '[') {
+        asTypeBracket += 1;
+      } else if (tok.value === '{' && asTypeExpectAtom) {
+        asTypeBrace += 1;
+      } else if (tok.value === '<' && !asTypeExpectAtom) {
+        asTypeAngle += 1;
+      } else if (tok.value === '|' || tok.value === '&' || tok.value === '=>') {
+        asTypeExpectAtom = true;
+      } else if (tok.value === '.') {
+        asTypeExpectAtom = false;
+      } else if (tok.value === '?' && asTypeConditionalDepth > 0 && !asTypeExpectAtom) {
+        asTypeExpectAtom = true;
+      } else if (tok.value === ':' && asTypeConditionalDepth > 0 && !asTypeExpectAtom) {
+        asTypeConditionalDepth -= 1;
+        asTypeExpectAtom = true;
+      } else if (tok.value === '!' && !asTypeExpectAtom) {
+        asTypeExpectAtom = false;
+      } else {
+        resetAsType();
+      }
+      return;
+    }
+    resetAsType();
+  };
 
   const markCommentOnCurrentLine = (): void => {
     if (sameLineDivLine === line) {
@@ -371,6 +509,7 @@ function scanSource(
   };
 
   const emit = (tok: Token): void => {
+    trackAsTypeToken(tok);
     if (options.emitTokens) tokens.push(tok);
   };
 
@@ -897,9 +1036,9 @@ function scanSource(
           !prevWasDot &&
           value === 'of' &&
           Boolean(topParen?.inForHeader && !topParen.semiSeen && topParen.depthInParen === 0);
-        prevAllowsRegex = !prevWasDot && REGEX_PREFIX_KEYWORDS.has(value);
-        // void is a reserved unary operator when not preceded by `.`, so following `/` always opens a regex literal.
-        prevCouldBeDivision = !prevWasDot && (value === 'await' || value === 'yield' || (value === 'of' && !isForOfHead));
+        prevAllowsRegex = !prevWasDot && !lastTokenWasTypeVoid && REGEX_PREFIX_KEYWORDS.has(value);
+        // Unary `void` opens a regex literal, whereas type `void` in `as ...` / `satisfies ...` ends an expression that `/` divides.
+        prevCouldBeDivision = !prevWasDot && !lastTokenWasTypeVoid && (value === 'await' || value === 'yield' || (value === 'of' && !isForOfHead));
         prevControlKeyword =
           !prevWasDot && value === 'await' && prevControlKeyword === 'for'
             ? 'for await'
@@ -7825,6 +7964,15 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(disallowedMeteredNotes('other.ts', 'a < b && c > /metered(name)/.test(s);')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'if (a < b) { c > /metered(name)/.test(s); }')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'void /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'const x = 1 as number\nvoid /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'const x = 1 as any ? void /metered(name)/ : 0;')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'const x = { as: void /metered(name)/.test(text) };')).toEqual([]);
+    expect(
+      disallowedMeteredNotes('other.ts', 'const x = 1 as any | void / Number(metered(dynKey, fn)) / 2;'),
+    ).toEqual(['unresolved metered key (dynKey)']);
+    expect(
+      disallowedMeteredNotes('other.ts', 'const x = 1 as T extends U ? A : void / Number(metered("notes." + "a", fn)) / 2;'),
+    ).toEqual(['notes.a']);
     expect(disallowedMeteredNotes('other.ts', 'const x = obj.void / metered(dynKey) / 2;')).toEqual([
       'unresolved metered key (dynKey)',
     ]);
