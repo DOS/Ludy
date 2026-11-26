@@ -2093,10 +2093,10 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
-  // #2513: a count of the entity's stock (kiểm kê), a draft until it is confirmed or cancelled. Tenant roles read, insert and move it on (its status, note and who confirmed it), so the
-  // update probes assign the note to itself.
+  // #2513: a count of the entity's stock (kiểm kê), a draft until it is confirmed or cancelled. Tenant roles read, insert and move it on (its status, who confirmed it and the voucher), so the
+  // update probes assign the status to itself (prep for #2682 revoking the unused UPDATE (note) grant).
   'crove_finance.stock_count': {
-    update: { set: 'note = note' },
+    update: { set: 'status = status' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), count_date: '2026-11-03' } }),
   },
   // #2513: what was counted of one item. It takes its count's entity, and the count and the item are seeded with it. Tenant roles read, insert and change the counted quantity while the
@@ -5280,6 +5280,14 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
   }
   // A MEMBER_VY_UNREACHED entry whose statements all reached the guard is stale.
   function expectUnreachedUsed(g: Guarded) {
+    if (
+      g.table === 'crove_finance.stock_count_line' &&
+      g.op === 'update' &&
+      ['crove_app', 'crove_worker', 'crove_definer_tenant'].every((r) => !can(g.table, r, 'UPDATE') && columnsToUpdate(g.table, r).length === 0)
+    ) {
+      // Two-step pending transition for #2682 before moving stock_count_line into APPEND_ONLY in Step 2.
+      return;
+    }
     if (
       (MEMBER_VY_UNREACHED.get(g.table) ?? []).includes(g.op) ||
       (g.table === 'crove_meetings.meeting' && memberVyReadCatalog.has('crove_meetings.meeting'))
