@@ -192,6 +192,7 @@ interface FigureToken {
   afterUnit: boolean;
   countUnit: string | undefined;
   priceUnit: string | undefined;
+  wordAfter: string | undefined;
   start: number;
   end: number;
 }
@@ -287,7 +288,7 @@ const BOILERPLATE_EXACT = new Set([
   'qty', 'quantity', 'unit', 'price', 'vị', 'đvt', 'dvt', 'vat', 'gtgt', 'thuế', 'suất',
   'đồng', 'vnđ', 'vnd', 'triệu', 'tr', 'nghìn', 'ngàn', 'tỷ', 'hàng', 'tổng',
   'cộng', 'thành', 'tiền', 'mỗi', 'per', 'và', 'and', 'của', 'gửi', 'gui',
-  'trị', 'giảm', 'chiết', 'khấu', 'ck', 'discount', 'off', 'trừ', 'bớt', 'không', 'chịu',
+  'trị', 'giảm', 'chiết', 'khấu', 'ck', 'discount', 'off', 'trừ', 'bớt', 'chịu',
   'kê', 'khai', 'kct', 'kkknt', 'loại', 'người', 'cơ', 'hội',
   'đã', 'gồm', 'chưa', 'áp', 'dụng', 'là',
   'invoice', 'sales', 'sale', 'tax', 'order',
@@ -330,7 +331,7 @@ const STRIP_MONEY_OR_LABELED = new RegExp(
     PERCENT_ANY.source,
     RATE_AFTER_WORD.source,
     String.raw`(?<![\p{L}])(?:tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền(?:\s+hàng)?|tong\s+tien(?:\s+hang)?|tổng\s+thanh\s+toán|tong\s+thanh\s+toan|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tiền\s+thuế(?:\s+(?:gtgt|vat))?|tien\s+thue(?:\s+(?:gtgt|vat))?|trả\s+trước|tra\s+truoc|đặt\s+cọc|dat\s+coc|cọc|đã\s+trả|da\s+tra|còn\s+lại|con\s+lai|thanh\s+toán|thanh\s+toan|giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết\s+khấu|chiet\s+khau|ck(?![\p{L}])|discount|off|trừ|bớt|đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|(?<!(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+)gia|unit\s+price|price|số\s+lượng|so\s+luong|sl(?![\p{L}])|qty(?![\p{L}])|quantity|tổng|total|amount)(?:\s+(?:là|la|is)(?![\p{L}]))?\s*(?:[:=]\s*)?\d+(?:[.,]\d+)*(?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*)?(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
-    String.raw`(?<![\p{L}])(?:xuất\s+hóa\s+đơn|xuat\s+hoa\s+don|hóa\s+đơn(?:\s+trước)?|hoa\s+don(?:\s+truoc)?|(?:gửi\s+)?cùng\s+khách|gui\s+cung\s+khach|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người\s+mua|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}\s*$|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách(?:\s+(?:hàng|quen|lẻ))?|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,2}|hôm\s+nay|hom\s+nay|hôm\s+qua|hom\s+qua|ngày\s+mai|ngay\s+mai|sáng\s+nay|sang\s+nay|chiều\s+nay|chieu\s+nay|cơ\s+hội|co\s+hoi|đơn\s+vị|don\s+vi|khách\s+(?:hàng|quen|lẻ)|khach\s+(?:hang|quen|le)|người\s+mua|nguoi\s+mua|chiết\s+khấu|chiet\s+khau|giảm\s+giá|giam\s+gia|thuế\s+suất|thue\s+suat|không\s+chịu\s+thuế|khong\s+chiu\s+thue|không\s+kê\s+khai|khong\s+ke\s+khai|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền|tong\s+tien)(?![\p{L}])`,
+    String.raw`(?<![\p{L}])(?:xuất\s+hóa\s+đơn|xuat\s+hoa\s+don|hóa\s+đơn(?:\s+trước)?|hoa\s+don(?:\s+truoc)?|(?:gửi\s+)?cùng\s+khách|gui\s+cung\s+khach|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người\s+mua|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}\s*$|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách(?:\s+(?:hàng|quen|lẻ))?|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,2}|ngày\s+hôm\s+nay|ngay\s+hom\s+nay|ngày\s+hôm\s+qua|ngay\s+hom\s+qua|hôm\s+nay|hom\s+nay|hôm\s+qua|hom\s+qua|hôm\s+kia|hom\s+kia|ngày\s+mai|ngay\s+mai|sáng\s+nay|sang\s+nay|chiều\s+nay|chieu\s+nay|tuần\s+này|tuan\s+nay|tuần\s+trước|tuan\s+truoc|tháng\s+này|thang\s+nay|tháng\s+trước|thang\s+truoc|today|yesterday|cơ\s+hội|co\s+hoi|đơn\s+vị|don\s+vi|khách\s+(?:hàng|quen|lẻ)|khach\s+(?:hang|quen|le)|người\s+mua|nguoi\s+mua|chiết\s+khấu|chiet\s+khau|giảm\s+giá|giam\s+gia|thuế\s+suất|thue\s+suat|(?:không|khong|chưa|chua)\s+(?:(?:bao\s+)?gồm\s+)?(?:vat|gtgt|thuế|thue|tax)|(?:không|khong)\s+chịu(?:\s+(?:thuế|thue))?|(?:không|khong)\s+kê\s+khai|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền|tong\s+tien)(?![\p{L}])`,
     String.raw`\d+(?:[.,]\d+)*\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
     String.raw`\d+(?:[.,]\d+)*\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}])`,
   ].join('|'),
@@ -581,6 +582,17 @@ function extractFigureTokens(body: string): FigureToken[] {
       !hasPerUnitLabel &&
       !/(?<![\p{L}])(?:đơn\s+giá|don\s+gia|unit\s+price)(?![\p{L}])/iu.test(before);
     const countUnit = afterUnit ? /^\s*([\p{L}][\p{L}\p{N}]*)/u.exec(after)?.[1] : undefined;
+    const afterWordRaw = /^\s*([\p{L}][\p{L}\p{N}]*)/u.exec(after)?.[1];
+    const afterWordPlain = afterWordRaw === undefined ? undefined : readPlain(afterWordRaw);
+    const wordAfter =
+      afterWordRaw !== undefined &&
+      afterWordPlain !== undefined &&
+      afterWordPlain !== 'x' &&
+      !CURRENCY_WORDS_SET.has(afterWordPlain) &&
+      !PURE_SCALE_UNITS.has(afterWordPlain) &&
+      !BOILERPLATE_EXACT.has(afterWordPlain)
+        ? afterWordRaw
+        : undefined;
     let priceUnit: string | undefined;
     if (role === 'price') {
       const perAfterMatch = PER_UNIT_AFTER_WORD.exec(after);
@@ -611,7 +623,7 @@ function extractFigureTokens(body: string): FigureToken[] {
       !hasMultiplyAfter &&
       (packagingSpec || !afterUnit);
 
-    tokens.push({ value, role, embeddedInProduct, packagingSpec, labeledPrice, dealValueOnly, afterUnit, countUnit, priceUnit, start, end });
+    tokens.push({ value, role, embeddedInProduct, packagingSpec, labeledPrice, dealValueOnly, afterUnit, countUnit, priceUnit, wordAfter, start, end });
     lastBoundary = end;
     lastTaxBoundary = end;
   }
@@ -934,6 +946,7 @@ interface TableColSpec {
 
 const UNSUPPORTED_CELL_CURRENCY = /(?<![\p{L}])(?:usd|eur|gbp|jpy|cny|rmb|aud|cad|sgd|thb|krw|twd|hkd|myr)(?![\p{L}])|[$€£¥₩]/iu;
 const PLAIN_SCALED_PRICE_CELL = /^[\d.,\s]+(?:\s*\/\s*(?:1\s+)?[\p{L}]+)?$/u;
+const TAX_EXCLUSIVE_MODIFIER = /^(?:chưa|không|chua|khong|trước|truoc|not\s+including|excl(?:uding)?\.?)(?:\s+(?:tính|bao\s+gồm|gồm|gom))?\s*(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|tax)$/iu;
 
 function parseMoneyColumnScale(rawModifier: string): string | null {
   const norm = foldDiacritics(rawModifier.toLowerCase()).replace(/₫/gu, 'd').replace(/\s+/gu, ' ').trim();
@@ -993,8 +1006,6 @@ function parseTableColSpec(rawHeaderCell: string, role: TableColRole): TableColS
     return { role: 'total', scale: '1', unit: undefined };
   }
   if (role !== 'price' && role !== 'total' && role !== 'discount') return { role, scale: '1', unit: undefined };
-
-const TAX_EXCLUSIVE_MODIFIER = /^(?:chưa|không|chua|khong|trước|truoc|not\s+including|excl(?:uding)?\.?)(?:\s+(?:tính|bao\s+gồm|gồm|gom))?\s*(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|tax)$/iu;
 
   let scale: string | undefined;
   let unit: string | undefined;
@@ -1067,7 +1078,11 @@ function detectTableHeader(cells: readonly string[]): TableColSpec[] | null {
   }
   const hasCoreAnchor = hasItem || hasQty || hasPrice;
   if (unknownCount > 0 && !(recognized >= 3 && hasItem && hasQty && hasPrice)) return null;
-  return recognized >= 2 && hasCoreAnchor ? cols : null;
+  if (!(recognized >= 2 && hasCoreAnchor)) return null;
+  if (cells.some((c) => UNSUPPORTED_CELL_CURRENCY.test(c))) {
+    return cols.map((col) => (col.role === 'price' || col.role === 'total' || col.role === 'discount' ? { ...col, scale: null } : col));
+  }
+  return cols;
 }
 
 const PLAIN_QTY_CELL = /^(?:(?:số\s+lượng|so\s+luong|sl|qty|quantity)\s*(?:[:=]\s*)?)?[\d.,\s]+(?:\s*([\p{L}][\p{L}\p{N}]*))?$/iu;
@@ -1150,11 +1165,19 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
         continue;
       }
       const taxText = /^(?:vat|gtgt|thuế|thue|kct|kkknt|không)/iu.test(strippedVat) ? strippedVat : `vat ${strippedVat}`;
-      for (const r of ratesInBody(collapseGroupedSpaces(taxText))) vatRates.add(r);
+      const extractedRates = ratesInBody(collapseGroupedSpaces(taxText));
+      if (extractedRates.size === 0) {
+        rowAmbiguousLocalVat = true;
+      } else {
+        for (const r of extractedRates) vatRates.add(r);
+      }
     }
     // ignore, total, discount, and note columns never emit usable qty, unitPrice, or VAT tokens.
   }
   if (!rowTextHasContent || itemParts.length === 0) return null;
+  if (rawCells.some((c) => UNSUPPORTED_CELL_CURRENCY.test(c))) {
+    tokens.length = 0;
+  }
   if (dvtUnits.size > 0) {
     const matchesDvt = (u: string) => [...dvtUnits].some((du) => /^[\p{L}][\p{L}\p{N}]*$/u.test(du) && canonUnit(du) === canonUnit(u));
     for (const tok of tokens) {
@@ -1639,7 +1662,8 @@ function clauseAcceptsFigures(clause: SourceClause, quantity: string, unitPrice:
           qTok.countUnit === undefined &&
           clause.explicitUnits.size === 0 &&
           pTok.priceUnit === undefined &&
-          ![...clause.unitTokens].some((cu) => lineUnitMatches(cu))
+          ![...clause.unitTokens].some((cu) => lineUnitMatches(cu)) &&
+          !(qTok.wordAfter !== undefined && !clause.lockedFromTable && lineUnitMatches(qTok.wordAfter))
         ) {
           continue;
         }
@@ -1698,16 +1722,20 @@ function clauseAcceptsLineText(clause: SourceClause, description: string, unit: 
 }
 
 function clauseAcceptsRate(clause: SourceClause, sharedRates: ReadonlySet<string>, vatRate: string | null): boolean {
-  if (clause.hasAmbiguousLocalVat) return false;
-  if (vatRate === null) {
-    return clause.localRates.size === 0 && sharedRates.size === 0;
+  if (clause.hasAmbiguousLocalVat || clause.localRates.size > 1) return false;
+  if (clause.localRates.size === 1) {
+    return vatRate !== null && clause.localRates.has(vatRate);
   }
-  if (clause.localRates.size > 0) return clause.localRates.has(vatRate);
-  return sharedRates.has(vatRate);
+  if (sharedRates.size > 1) return false;
+  if (sharedRates.size === 1) {
+    return vatRate !== null && sharedRates.has(vatRate);
+  }
+  return vatRate === null;
 }
 
 function scoreClauseMatch(description: string, unit: string | null, clause: SourceClause): number {
   const { exact, folded } = descriptionTokens(description);
+  const lineUnitFolded = new Set(unit === null ? [] : (read(unit).match(/[\p{L}\p{N}]+/gu) ?? []).map(foldDiacritics));
   let overlap = 0;
   let productOverlap = 0;
   let matchedCount = 0;
@@ -1723,7 +1751,7 @@ function scoreClauseMatch(description: string, unit: string | null, clause: Sour
   if (overlap === 0 || (clauseHasProductName && productOverlap === 0)) return 0;
   let matchedCoreCount = 0;
   for (const ct of clause.coreExactTokens) {
-    if (tokensAccentCompatible(ct, exact, folded)) {
+    if (tokensAccentCompatible(ct, exact, folded) || lineUnitFolded.has(foldDiacritics(ct))) {
       matchedCoreCount += 1;
     }
   }
@@ -1833,22 +1861,13 @@ export function checkEInvoiceDraft(request: EInvoiceDraftRequest, output: EInvoi
     const full: number[] = [];
     const figs: number[] = [];
     if (maxScore > 0) {
-      const candidates: Array<{ j: number; score: number; acceptRate: boolean }> = [];
       for (let j = 0; j < clauses.length; j += 1) {
-        const score = scores[j] ?? 0;
-        if (score <= 0) continue;
+        if ((scores[j] ?? 0) !== maxScore) continue;
         const clause = clauses[j]!;
         if (!clauseAcceptsFigures(clause, line.quantity, line.unitPrice, line.unit)) continue;
         if (!clauseAcceptsLineText(clause, line.description, line.unit)) continue;
-        candidates.push({ j, score, acceptRate: clauseAcceptsRate(clause, sharedRates, line.vatRate) });
-      }
-      if (candidates.length > 0) {
-        const bestScore = Math.max(...candidates.map((c) => c.score));
-        for (const c of candidates) {
-          if (c.score !== bestScore) continue;
-          figs.push(c.j);
-          if (c.acceptRate) full.push(c.j);
-        }
+        figs.push(j);
+        if (clauseAcceptsRate(clause, sharedRates, line.vatRate)) full.push(j);
       }
     }
     fullEdges.push(full);
