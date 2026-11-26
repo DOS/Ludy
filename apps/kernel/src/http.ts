@@ -657,6 +657,8 @@ function body(bytes: Uint8Array): ArrayBuffer {
 
 export const PDF_STREAM_LEASE_MS = 60_000;
 export const PUBLIC_PDF_STREAM_LEASE_MS = 15_000;
+export const PDF_STREAM_MAX_LEASE_MS = 120_000;
+const PDF_STREAM_CHUNK_BYTES = 64 * 1024;
 
 interface OutgoingResponseTarget {
   readonly writableFinished?: boolean;
@@ -672,15 +674,19 @@ interface OutgoingResponseTarget {
 }
 
 // Keep PDF read pool slots held until Node finishes flushing or closes the socket (or until the in-memory Web
-// stream finishes/cancels when no Node outgoing response is attached), bounded by a lease timer (#4682, #5024).
+// stream finishes/cancels when no Node outgoing response is attached), bounded by a progress-resetting idle lease
+// (chunk enqueue and outgoing 'drain') plus an absolute max lease cap (#4682, #5024).
 export function releaseOnResponseClose(
   bytes: Uint8Array,
   release: () => void,
   c?: Context,
   leaseMs: number = PDF_STREAM_LEASE_MS,
+  maxLeaseMs: number = PDF_STREAM_MAX_LEASE_MS,
 ): ReadableStream<Uint8Array> {
+  const effectiveMaxLeaseMs = Math.max(leaseMs, maxLeaseMs);
   let released = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let maxTimer: ReturnType<typeof setTimeout> | undefined;
   let detachListeners: (() => void) | undefined;
   let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
   let payload: Uint8Array | null = bytes;
@@ -690,9 +696,13 @@ export function releaseOnResponseClose(
     if (released) return;
     released = true;
     payload = null;
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      timer = undefined;
+    if (idleTimer !== undefined) {
+      clearTimeout(idleTimer);
+      idleTimer = undefined;
+    }
+    if (maxTimer !== undefined) {
+      clearTimeout(maxTimer);
+      maxTimer = undefined;
     }
     detachListeners?.();
     detachListeners = undefined;
@@ -729,6 +739,16 @@ export function releaseOnResponseClose(
     }
   };
 
+  const resetIdleTimer = () => {
+    if (released) return;
+    if (idleTimer !== undefined) {
+      clearTimeout(idleTimer);
+      idleTimer = undefined;
+    }
+    idleTimer = setTimeout(onLeaseExpired, leaseMs);
+    idleTimer.unref?.();
+  };
+
   if (signal?.aborted || outgoing?.writableFinished || outgoing?.closed || outgoing?.destroyed) {
     finish();
   } else {
@@ -746,24 +766,38 @@ export function releaseOnResponseClose(
             : typeof outgoing.addEventListener === 'function'
               ? (evt: 'finish' | 'close') => outgoing.addEventListener!(evt, finish)
               : null;
+      const attachDrain =
+        typeof outgoing.on === 'function'
+          ? () => outgoing.on!('drain', resetIdleTimer)
+          : typeof outgoing.addEventListener === 'function'
+            ? () => outgoing.addEventListener!('drain', resetIdleTimer)
+            : null;
       if (attach) {
         hasOutgoing = true;
+        let drainAttached = false;
         cleanups.push(() => {
           const detach =
             typeof outgoing.off === 'function'
-              ? (evt: 'finish' | 'close') => outgoing.off!(evt, finish)
+              ? (evt: 'finish' | 'close' | 'drain', fn: () => void) => outgoing.off!(evt, fn)
               : typeof outgoing.removeListener === 'function'
-                ? (evt: 'finish' | 'close') => outgoing.removeListener!(evt, finish)
+                ? (evt: 'finish' | 'close' | 'drain', fn: () => void) => outgoing.removeListener!(evt, fn)
                 : typeof outgoing.removeEventListener === 'function'
-                  ? (evt: 'finish' | 'close') => outgoing.removeEventListener!(evt, finish)
+                  ? (evt: 'finish' | 'close' | 'drain', fn: () => void) => outgoing.removeEventListener!(evt, fn)
                   : null;
           if (detach) {
-            detach('finish');
-            detach('close');
+            detach('finish', finish);
+            detach('close', finish);
+            if (drainAttached) {
+              detach('drain', resetIdleTimer);
+            }
           }
         });
         attach('finish');
         if (!released) attach('close');
+        if (!released && attachDrain) {
+          drainAttached = true;
+          attachDrain();
+        }
       }
     }
 
@@ -775,12 +809,13 @@ export function releaseOnResponseClose(
     }
 
     if (!released) {
-      timer = setTimeout(onLeaseExpired, leaseMs);
-      timer.unref?.();
+      resetIdleTimer();
+      maxTimer = setTimeout(onLeaseExpired, effectiveMaxLeaseMs);
+      maxTimer.unref?.();
     }
   }
 
-  let sent = false;
+  let offset = 0;
   return new ReadableStream<Uint8Array>(
     {
       start(controller) {
@@ -788,18 +823,19 @@ export function releaseOnResponseClose(
       },
       pull(controller) {
         if (streamClosedOrErrored) return;
-        if (!sent) {
-          sent = true;
-          if (payload !== null) {
-            const chunk = payload;
+        if (payload !== null && offset < payload.byteLength) {
+          const buf = payload;
+          const end = Math.min(offset + PDF_STREAM_CHUNK_BYTES, buf.byteLength);
+          const chunk = offset === 0 && end === buf.byteLength ? buf : buf.subarray(offset, end);
+          offset = end;
+          if (offset >= buf.byteLength) {
             payload = null;
-            controller.enqueue(chunk);
-          } else {
-            streamClosedOrErrored = true;
-            controller.close();
           }
+          resetIdleTimer();
+          controller.enqueue(chunk);
           return;
         }
+        payload = null;
         streamClosedOrErrored = true;
         controller.close();
         if (!hasOutgoing) {

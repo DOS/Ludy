@@ -146,6 +146,7 @@ curl -sS -X POST "$PUBLIC_URL/api/v1/sign/envelopes/from-template" \
 ## Rate limits and error codes
 
 - **Per-IP and per-key rate limits:** Requests default to 120/min per IP, 60/min per key on read routes (`GET`), and 20/min per key on `POST /api/v1/sign/envelopes/from-template` (with a 32 KB JSON body cap and an isolated download concurrency bucket on `/sealed` and `/certificate`). Exceeding any rate limit returns `429 RATE_LIMITED` with `Retry-After`; saturating download concurrency slots returns `503 SIGN_PDF_BUSY` with `Retry-After`.
+- **Download stream leases:** `GET /sealed` and `GET /certificate` abort stalled transfers after 60 s without progress, with a 120 s absolute response cap, freeing the concurrency slot and closing the socket.
 - **Status codes:**
   - `400 SIGN_QUERY_TOKEN_FORBIDDEN`: token sent in a URL query string.
   - `401 UNAUTHENTICATED`: missing, malformed, unknown, expired, or revoked Bearer key (`WWW-Authenticate: Bearer`).
