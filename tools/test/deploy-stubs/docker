@@ -300,6 +300,7 @@ fi
 files=()
 envfile=''
 proj_override=''
+proj_dir=''
 while (($# > 0)); do
   case "$1" in
     -p | --project-name)
@@ -310,7 +311,10 @@ while (($# > 0)); do
       envfile="$2"
       shift 2
       ;;
-    --project-directory) shift 2 ;;
+    --project-directory)
+      proj_dir="$2"
+      shift 2
+      ;;
     -f)
       files+=("$2")
       shift 2
@@ -398,6 +402,36 @@ case "$sub" in
       if [ -n "${STUB_PREV_CONFIG_REQUIRE_ENV:-}" ] && [ -f "$STUB_DEPLOY_DIR/docker-compose.override.yml" ] && grep -q "${STUB_PREV_IMAGE_MATCH:-__none__}" "$STUB_DEPLOY_DIR/docker-compose.override.yml"; then
         req_var="$STUB_PREV_CONFIG_REQUIRE_ENV"
         if [ -z "${!req_var:-}" ]; then exit 1; fi
+      fi
+      if ((${#files[@]} == 0)); then
+        base_dir="${proj_dir:-$PWD}"
+        eff_env="${envfile:-$base_dir/.env}"
+        cf_stub=''
+        if [ -f "$eff_env" ]; then
+          cf_stub="$(sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?COMPOSE_FILE[[:space:]]*[=:][[:space:]]*//p' "$eff_env" | tail -n 1 | sed -E 's/[[:space:]]+#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//')"
+          case "$cf_stub" in
+            \"*\") cf_stub="${cf_stub#\"}"; cf_stub="${cf_stub%\"}" ;;
+            \'*\') cf_stub="${cf_stub#\'}"; cf_stub="${cf_stub%\'}" ;;
+          esac
+        fi
+        if [ -n "$cf_stub" ]; then
+          IFS=':' read -ra cf_arr <<<"$cf_stub"
+          for cf_item in "${cf_arr[@]+"${cf_arr[@]}"}"; do
+            cf_item="${cf_item#"${cf_item%%[![:space:]]*}"}"
+            cf_item="${cf_item%"${cf_item##*[![:space:]]}"}"
+            [ -n "$cf_item" ] || continue
+            if [[ "$cf_item" == /* ]]; then cf_res="$cf_item"; else cf_res="$base_dir/$cf_item"; fi
+            if [ ! -f "$cf_res" ]; then
+              echo "compose file \"$cf_item\" set by COMPOSE_FILE environment variable is invalid: no such file" >&2
+              exit 1
+            fi
+            files+=("$cf_res")
+          done
+        else
+          [ -f "$base_dir/docker-compose.yml" ] || { echo 'no configuration file provided: not found' >&2; exit 1; }
+          files+=("$base_dir/docker-compose.yml")
+          if [ -f "$base_dir/docker-compose.override.yml" ]; then files+=("$base_dir/docker-compose.override.yml"); fi
+        fi
       fi
       if [ "${STUB_COMPOSE_PROJECT:-}" = __empty__ ]; then
         exit 0

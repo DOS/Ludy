@@ -657,9 +657,10 @@ acquire_lock() {
 release_lock() { if [ "$LOCK_HELD" = 1 ]; then rm -rf "$(state_dir)/lock"; fi; }
 
 # The registry login's throwaway Docker config (pull_images) and pre-activate host snapshot; removed on every exit.
-PULL_CONFIG='' APP_BUILD_WORK='' PRE_ACTIVATE_SNAP='' PRE_ACTIVATE_ACTIVE=0 PRE_ACTIVATE_RESTORE_REL=''
+PULL_CONFIG='' APP_BUILD_WORK='' PRE_ACTIVATE_SNAP='' PRE_ACTIVATE_ACTIVE=0 PRE_ACTIVATE_RESTORE_REL='' PRE_ACTIVATE_KEEP_SNAP=0
 clear_pre_activate_snap() {
   PRE_ACTIVATE_ACTIVE=0
+  PRE_ACTIVATE_KEEP_SNAP=0
   PRE_ACTIVATE_RESTORE_REL=''
   if [ -n "${PRE_ACTIVATE_SNAP:-}" ]; then
     rm -rf "$PRE_ACTIVATE_SNAP"
@@ -670,7 +671,9 @@ clear_pre_activate_snap() {
 cleanup() {
   if [ -n "$PULL_CONFIG" ]; then rm -rf "$PULL_CONFIG"; fi
   if [ -n "${APP_BUILD_WORK:-}" ]; then rm -rf "$APP_BUILD_WORK"; fi
-  if [ -n "${PRE_ACTIVATE_SNAP:-}" ] && [ -d "$PRE_ACTIVATE_SNAP" ]; then
+  if [ "${PRE_ACTIVATE_KEEP_SNAP:-0}" = 1 ]; then
+    :
+  elif [ -n "${PRE_ACTIVATE_SNAP:-}" ] && [ -d "$PRE_ACTIVATE_SNAP" ]; then
     if [ "${PRE_ACTIVATE_ACTIVE:-0}" = 1 ]; then
       if restore_pre_activate "${PRE_ACTIVATE_RESTORE_REL:-}"; then
         log 'restored pre-deploy compose files after early exit'
@@ -1040,6 +1043,7 @@ restore_pre_activate() {
       return 0
     fi
     PRE_ACTIVATE_ACTIVE=0
+    PRE_ACTIVATE_KEEP_SNAP=1
     err "could not restore pre-deploy compose files into $DEPLOY_DIR; snapshot kept at $PRE_ACTIVATE_SNAP"
     return 1
   fi
@@ -1529,31 +1533,14 @@ check_rollback_plain_project() {
   return 0
 }
 
-# Resolves the merged Compose configuration as plain `docker compose` (no -p override) sees it in $DEPLOY_DIR (#3972).
+# Resolves the merged Compose configuration as plain `docker compose` (no -p override) actually loads it in $DEPLOY_DIR (#3972).
 plain_compose_config() {
-  local cf_val='' item
-  local -a cf_items=() f_args=()
-  cf_val="$(env_var_last_value COMPOSE_FILE "$ENV_FILE" 2>/dev/null || true)"
-  if [ -n "$cf_val" ]; then
-    IFS=':' read -ra cf_items <<<"$cf_val"
-    for item in "${cf_items[@]+"${cf_items[@]}"}"; do
-      item="${item#"${item%%[![:space:]]*}"}"
-      item="${item%"${item##*[![:space:]]}"}"
-      [ -n "$item" ] || continue
-      if [[ "$item" != /* ]]; then item="$DEPLOY_DIR/$item"; fi
-      if [ -f "$item" ]; then
-        f_args+=(-f "$item")
-      fi
-    done
-  fi
-  if ((${#f_args[@]} == 0)); then
-    if [ -f "$DEPLOY_DIR/docker-compose.yml" ]; then f_args+=(-f "$DEPLOY_DIR/docker-compose.yml"); fi
-    if [ -f "$DEPLOY_DIR/docker-compose.override.yml" ]; then f_args+=(-f "$DEPLOY_DIR/docker-compose.override.yml"); fi
-  fi
-  env -u COMPOSE_PROJECT_NAME -u COMPOSE_FILE \
-    ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker compose \
-    --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" \
-    "${f_args[@]+"${f_args[@]}"}" config 2>/dev/null
+  (
+    cd "$DEPLOY_DIR" && \
+    env -u COMPOSE_PROJECT_NAME -u COMPOSE_FILE \
+      ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker compose \
+      --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" config 2>/dev/null
+  )
 }
 
 # Reads resolved image reference for service $svc from Compose config YAML.
@@ -2005,10 +1992,47 @@ mounts_match_pg_cluster() {
     --entrypoint node "$probe_image" -e "$js" >/dev/null 2>&1
 }
 
+# Canonicalizes an absolute bind path, resolving ancestor symlinks even when leaf directories do not exist yet (#3972).
+canonicalize_bind_path() {
+  local p="${1%/}" suffix='' cur='' parent='' base=''
+  [ -n "$p" ] || { printf '/'; return 0; }
+  cur="$p"
+  while [ ! -d "$cur" ] && [ "$cur" != '/' ] && [ -n "$cur" ]; do
+    base="$(basename -- "$cur")"
+    suffix="${base}${suffix:+/$suffix}"
+    parent="$(dirname -- "$cur")"
+    [ "$parent" != "$cur" ] || break
+    cur="$parent"
+  done
+  if [ -d "$cur" ]; then
+    cur="$(cd -P "$cur" 2>/dev/null && pwd -P || printf '%s' "$cur")"
+  fi
+  cur="${cur%/}"
+  if [ -z "$cur" ]; then
+    printf '/%s' "$suffix"
+  elif [ -n "$suffix" ]; then
+    printf '%s/%s' "$cur" "$suffix"
+  else
+    printf '%s' "$cur"
+  fi
+}
+
+# Returns 0 when two normalized absolute paths are equal or one is a directory ancestor of the other (#3972).
+bind_paths_overlap() {
+  local a="${1%/}" b="${2%/}"
+  [ -n "$a" ] || a='/'
+  [ -n "$b" ] || b='/'
+  [ "$a" = "$b" ] && return 0
+  if [ "$a" = '/' ] || [ "$b" = '/' ]; then return 0; fi
+  case "$a" in "$b"/*) return 0 ;; esac
+  case "$b" in "$a"/*) return 0 ;; esac
+  return 1
+}
+
 # Checks that no running container outside $allowed_proj (or any running container when $allowed_proj is empty)
 # currently mounts $dst_spec. Returns: 0 = verified free, 1 = held by conflicting container, 2 = inspect failed (#3972).
 check_storage_free() {
-  local dst_spec="$1" allowed_proj="${2:-}" dst_type dst_src dst_canon ps_out cid c_proj c_wdir c_wdir_canon deploy_dir_norm canon_deploy_dir mounts_out still_running m_type m_name m_src
+  local dst_spec="$1" allowed_proj="${2:-}" dst_type dst_src dst_canon ps_out cid c_proj c_wdir c_wdir_canon deploy_dir_norm canon_deploy_dir mounts_out still_running m_type m_name m_src m_canon
   local -a cids=()
   case "$dst_spec" in
     volume:*) dst_type='volume'; dst_src="${dst_spec#volume:}" ;;
@@ -2018,12 +2042,12 @@ check_storage_free() {
   dst_src="${dst_src%/}"
   [ -n "$dst_src" ] || dst_src='/'
   dst_canon="$dst_src"
-  if [ "$dst_type" = 'bind' ] && [ -d "$dst_src" ]; then
-    dst_canon="$(cd -P "$dst_src" 2>/dev/null && pwd -P || printf '%s' "$dst_src")"
+  if [ "$dst_type" = 'bind' ]; then
+    dst_canon="$(canonicalize_bind_path "$dst_src")"
   fi
   deploy_dir_norm="${DEPLOY_DIR%/}"
   [ -n "$deploy_dir_norm" ] || deploy_dir_norm='/'
-  canon_deploy_dir="$(cd -P "$DEPLOY_DIR" 2>/dev/null && pwd -P || printf '%s' "$deploy_dir_norm")"
+  canon_deploy_dir="$(canonicalize_bind_path "$deploy_dir_norm")"
   ps_out="$(docker ps -q --filter status=running 2>/dev/null)" || return 2
   [ -n "$ps_out" ] || return 0
   mapfile -t cids <<<"$ps_out"
@@ -2043,10 +2067,7 @@ check_storage_free() {
       if [ -n "$c_wdir" ]; then
         c_wdir="${c_wdir%/}"
         [ -n "$c_wdir" ] || c_wdir='/'
-        c_wdir_canon="$c_wdir"
-        if [ -d "$c_wdir" ]; then
-          c_wdir_canon="$(cd -P "$c_wdir" 2>/dev/null && pwd -P || printf '%s' "$c_wdir")"
-        fi
+        c_wdir_canon="$(canonicalize_bind_path "$c_wdir")"
         if [ "$c_wdir" = "$deploy_dir_norm" ] || [ "$c_wdir" = "$canon_deploy_dir" ] || [ "$c_wdir_canon" = "$canon_deploy_dir" ]; then
           continue
         fi
@@ -2063,8 +2084,11 @@ check_storage_free() {
       [ -n "$m_src" ] || m_src='/'
       if [ "$dst_type" = 'volume' ] && [ "$m_type" = 'volume' ] && [ "$m_name" = "$dst_src" ]; then
         return 1
-      elif [ "$dst_type" = 'bind' ] && [ "$m_type" = 'bind' ] && { [ "$m_src" = "$dst_src" ] || [ "$m_src" = "$dst_canon" ]; }; then
-        return 1
+      elif [ "$dst_type" = 'bind' ] && [ "$m_type" = 'bind' ]; then
+        m_canon="$(canonicalize_bind_path "$m_src")"
+        if bind_paths_overlap "$m_src" "$dst_src" || bind_paths_overlap "$m_canon" "$dst_canon"; then
+          return 1
+        fi
       fi
     done <<<"$mounts_out"
   done
@@ -2289,46 +2313,161 @@ resolve_prev_mount_specs() {
   compose_active_target_mounts "$prev_config" "$prev_proj" "$target" "$svcs"
 }
 
-# Verifies new Compose layout constraints (no nested PGDATA mounts, valid PGDATA, no subpaths, aligned api/worker mounts) (#3972).
-check_new_storage_layout() {
-  local new_config="$1" active_proj="$2" new_db="$3" name="$4" current="$5" nested_db='' new_pgdata_sub='' new_pg_rc=0 target svc m api_has worker_has api_m worker_m is_local=0
-  if nested_db="$(compose_nested_db_mount "$new_config")"; then
-    restore_pre_activate "$current"
-    record "deploy $name failed: nested mount under /var/lib/postgresql/data ($nested_db)"
-    die "$EXIT_FAILED" "unsupported nested mount at $nested_db under /var/lib/postgresql/data; mount a single volume or bind path at /var/lib/postgresql/data before deploying"
+# Validates target Compose layout constraints (no nested PGDATA mounts, valid/inspectable PGDATA, no subpaths, aligned api/worker mounts) (#3972).
+# Returns 0 (setting VALIDATED_PGDATA_SUB) or 1 with STORAGE_LAYOUT_ERR and STORAGE_LAYOUT_SUMMARY on failure.
+VALIDATED_PGDATA_SUB='' STORAGE_LAYOUT_ERR='' STORAGE_LAYOUT_SUMMARY=''
+check_target_storage_layout() {
+  local config_out="$1" proj="$2" db_spec="$3" allow_pull="${4:-1}" nested_db='' pgdata_sub='' pg_rc=0 target svc m api_has worker_has api_m worker_m is_local=0
+  VALIDATED_PGDATA_SUB=''
+  STORAGE_LAYOUT_ERR=''
+  STORAGE_LAYOUT_SUMMARY=''
+  if nested_db="$(compose_nested_db_mount "$config_out")"; then
+    STORAGE_LAYOUT_SUMMARY="nested mount under /var/lib/postgresql/data ($nested_db)"
+    STORAGE_LAYOUT_ERR="unsupported nested mount at $nested_db under /var/lib/postgresql/data; mount a single volume or bind path at /var/lib/postgresql/data before deploying"
+    return 1
   fi
-  new_pgdata_sub="$(compose_service_pgdata_subpath "$new_config" db 1)" || new_pg_rc=$?
-  if ((new_pg_rc == 2)); then
-    restore_pre_activate "$current"
-    record "deploy $name failed: cannot inspect target db image PGDATA"
-    die "$EXIT_FAILED" "cannot inspect target db image metadata to determine PGDATA in project $active_proj; pull the db image or set PGDATA explicitly in compose before deploying"
-  elif ((new_pg_rc != 0)); then
-    restore_pre_activate "$current"
-    record "deploy $name failed: invalid db PGDATA path"
-    die "$EXIT_FAILED" "service db sets an unsupported PGDATA path outside /var/lib/postgresql/data in project $active_proj"
+  pgdata_sub="$(compose_service_pgdata_subpath "$config_out" db "$allow_pull")" || pg_rc=$?
+  if ((pg_rc == 2)); then
+    STORAGE_LAYOUT_SUMMARY='cannot inspect target db image PGDATA'
+    STORAGE_LAYOUT_ERR="cannot inspect target db image metadata to determine PGDATA in project $proj; pull the db image or set PGDATA explicitly in compose before deploying"
+    return 1
+  elif ((pg_rc != 0)); then
+    STORAGE_LAYOUT_SUMMARY='invalid db PGDATA path'
+    STORAGE_LAYOUT_ERR="service db sets an unsupported PGDATA path outside /var/lib/postgresql/data in project $proj"
+    return 1
   fi
-  reject_volume_subpath "$new_db" /var/lib/postgresql/data "$name" "$current"
-  if storage_is_local "$new_config"; then is_local=1; fi
+  case "$db_spec" in
+    volume:*:*)
+      STORAGE_LAYOUT_SUMMARY="unsupported volume subpath on /var/lib/postgresql/data (${db_spec#volume:})"
+      STORAGE_LAYOUT_ERR="unsupported volume subpath mount on /var/lib/postgresql/data (${db_spec#volume:}); use a dedicated volume or bind mount before deploying"
+      return 1
+      ;;
+  esac
+  if storage_is_local "$config_out"; then is_local=1; fi
   for target in /data/files /data/keys /data/archive; do
     api_has=0; worker_has=0; api_m=''; worker_m=''
     for svc in ludy crove api worker; do
-      compose_service_is_enabled "$new_config" "$svc" || continue
-      m="$(compose_target_mount "$new_config" "$active_proj" "$target" "$svc")"
-      reject_volume_subpath "$m" "$target" "$name" "$current"
+      compose_service_is_enabled "$config_out" "$svc" || continue
+      m="$(compose_target_mount "$config_out" "$proj" "$target" "$svc")"
+      case "$m" in
+        volume:*:*)
+          STORAGE_LAYOUT_SUMMARY="unsupported volume subpath on $target (${m#volume:})"
+          STORAGE_LAYOUT_ERR="unsupported volume subpath mount on $target (${m#volume:}); use a dedicated volume or bind mount before deploying"
+          return 1
+          ;;
+      esac
       if [ "$svc" = api ]; then api_has=1; api_m="$m"; fi
       if [ "$svc" = worker ]; then worker_has=1; worker_m="$m"; fi
     done
     if [ -n "$api_m" ] && [ -n "$worker_m" ] && [ "$api_m" != "$worker_m" ]; then
       if [ "$target" != /data/files ] || ((is_local)); then
-        restore_pre_activate "$current"
-        record "deploy $name failed: api and worker mount different $target storage ($(mount_label "$api_m") vs $(mount_label "$worker_m"))"
-        die "$EXIT_FAILED" "services api and worker mount different $target storage ($(mount_label "$api_m") vs $(mount_label "$worker_m")) in project $active_proj; align both services before deploying"
+        STORAGE_LAYOUT_SUMMARY="api and worker mount different $target storage ($(mount_label "$api_m") vs $(mount_label "$worker_m"))"
+        STORAGE_LAYOUT_ERR="services api and worker mount different $target storage ($(mount_label "$api_m") vs $(mount_label "$worker_m")) in project $proj; align both services before deploying"
+        return 1
       fi
     elif ((api_has && worker_has)) && [ "$target" != /data/archive ] && { [ "$target" = /data/keys ] || ((is_local)); } && [ -n "${api_m}${worker_m}" ] && [ "$api_m" != "$worker_m" ]; then
-      restore_pre_activate "$current"
-      record "deploy $name failed: asymmetric $target mount between api and worker"
-      die "$EXIT_FAILED" "services api and worker must share the same persistent $target mount in project $active_proj; refusing to leave one service unmounted"
+      STORAGE_LAYOUT_SUMMARY="asymmetric $target mount between api and worker"
+      STORAGE_LAYOUT_ERR="services api and worker must share the same persistent $target mount in project $proj; refusing to leave one service unmounted"
+      return 1
     fi
+  done
+  VALIDATED_PGDATA_SUB="$pgdata_sub"
+}
+
+# Verifies new Compose layout constraints (no nested PGDATA mounts, valid PGDATA, no subpaths, aligned api/worker mounts) (#3972).
+check_new_storage_layout() {
+  local new_config="$1" active_proj="$2" new_db="$3" name="$4" current="$5"
+  if ! check_target_storage_layout "$new_config" "$active_proj" "$new_db" 1; then
+    restore_pre_activate "$current"
+    record "deploy $name failed: $STORAGE_LAYOUT_SUMMARY"
+    die "$EXIT_FAILED" "$STORAGE_LAYOUT_ERR"
+  fi
+}
+
+# Aborts rollback cleanly: restores host Compose snapshot and .env undo state before failing closed (#3972).
+abort_rollback_pre_services() {
+  local previous="$1" current="$2" summary="$3" msg="$4"
+  restore_pre_activate "$current" || true
+  if ! undo_env_restore; then
+    record "rollback to $previous failed: $summary, and putting $ENV_FILE back failed"
+    die "$EXIT_ROLLBACK_FAILED" "$msg, and putting $ENV_FILE back failed: the instance needs an operator"
+  fi
+  record "rollback to $previous failed: $summary"
+  die "$EXIT_FAILED" "$msg"
+}
+
+# Verifies rollback target preserves DB mount / PGDATA and persistent /data/* continuity (#3972).
+RB_DB='' RB_PGDATA_SUB='' RB_FILES='' RB_KEYS='' RB_ARCHIVE=''
+verify_rollback_storage() {
+  local rb_config="$1" rb_proj="$2" prev_img="$3" previous="$4" current="$5" cur_db_specs="$6" cur_pgdata_sub="$7" cur_files_specs="$8" cur_keys_specs="$9" cur_archive_specs="${10}"
+  local rb_db='' rb_pgdata_sub='' cur_db='' target='' cur_specs='' cur_m='' rb_specs='' rb_m='' src_rc=0 dst_rc=0 migrated=0 dst_labels=''
+  rb_db="$(compose_target_mount "$rb_config" "$rb_proj" /var/lib/postgresql/data 'db')"
+  if ! check_target_storage_layout "$rb_config" "$rb_proj" "$rb_db" 1; then
+    abort_rollback_pre_services "$previous" "$current" "$STORAGE_LAYOUT_SUMMARY" "cannot roll back to $previous: $STORAGE_LAYOUT_ERR"
+  fi
+  rb_pgdata_sub="$VALIDATED_PGDATA_SUB"
+  while IFS= read -r cur_db; do
+    [ -n "$cur_db" ] || continue
+    if [ -z "$rb_db" ] || [ "$cur_db" != "$rb_db" ] || [ "$cur_pgdata_sub" != "$rb_pgdata_sub" ]; then
+      abort_rollback_pre_services "$previous" "$current" \
+        "db storage/PGDATA mismatch ($(mount_label "$cur_db") vs ${rb_db:+$(mount_label "$rb_db")}${rb_db:-none})" \
+        "cannot roll back to $previous safely: active database uses $(mount_label "$cur_db") (PGDATA /var/lib/postgresql/data${cur_pgdata_sub:+/$cur_pgdata_sub}) while release $previous mounts ${rb_db:+$(mount_label "$rb_db")}${rb_db:-no persistent volume} (PGDATA /var/lib/postgresql/data${rb_pgdata_sub:+/$rb_pgdata_sub})"
+    fi
+  done <<<"$cur_db_specs"
+  RB_DB="$rb_db"
+  RB_PGDATA_SUB="$rb_pgdata_sub"
+  RB_FILES="$(compose_active_target_mounts "$rb_config" "$rb_proj" /data/files 'ludy crove api worker')"
+  RB_KEYS="$(compose_active_target_mounts "$rb_config" "$rb_proj" /data/keys 'ludy crove api worker')"
+  RB_ARCHIVE="$(compose_active_target_mounts "$rb_config" "$rb_proj" /data/archive 'ludy crove api worker')"
+  for target in /data/files /data/keys /data/archive; do
+    case "$target" in
+      /data/files) cur_specs="$cur_files_specs"; rb_specs="$RB_FILES" ;;
+      /data/keys) cur_specs="$cur_keys_specs"; rb_specs="$RB_KEYS" ;;
+      /data/archive) cur_specs="$cur_archive_specs"; rb_specs="$RB_ARCHIVE" ;;
+    esac
+    while IFS= read -r cur_m; do
+      [ -n "$cur_m" ] || continue
+      if [ -n "$rb_specs" ] && printf '%s\n' "$rb_specs" | grep -qx -F -- "$cur_m"; then
+        continue
+      fi
+      src_rc=0
+      mount_exists "$cur_m" || src_rc=$?
+      if ((src_rc == 2)); then
+        abort_rollback_pre_services "$previous" "$current" \
+          "cannot inspect active $target storage $(mount_label "$cur_m")" \
+          "cannot inspect active $target storage $(mount_label "$cur_m") before rolling back to $previous; nothing running was changed"
+      fi
+      ((src_rc == 0)) || continue
+      if [ -z "$rb_specs" ]; then
+        if ! mount_is_empty "$cur_m" "$prev_img"; then
+          abort_rollback_pre_services "$previous" "$current" \
+            "rollback drops $target storage $(mount_label "$cur_m")" \
+            "cannot roll back to $previous safely: active non-empty $target storage $(mount_label "$cur_m") has no mount in release $previous"
+        fi
+        continue
+      fi
+      migrated=0
+      dst_labels=''
+      while IFS= read -r rb_m; do
+        [ -n "$rb_m" ] || continue
+        dst_labels="${dst_labels:+${dst_labels}, }$(mount_label "$rb_m")"
+        dst_rc=0
+        mount_exists "$rb_m" || dst_rc=$?
+        if ((dst_rc == 2)); then
+          abort_rollback_pre_services "$previous" "$current" \
+            "cannot inspect rollback $target storage $(mount_label "$rb_m")" \
+            "cannot inspect rollback $target storage $(mount_label "$rb_m") before rolling back to $previous; nothing running was changed"
+        fi
+        if mount_data_migrated "$cur_m" "$rb_m" "$prev_img"; then
+          migrated=1
+        fi
+      done <<<"$rb_specs"
+      if ((migrated == 0)); then
+        abort_rollback_pre_services "$previous" "$current" \
+          "rollback $target storage $(mount_label "$cur_m") != $dst_labels" \
+          "cannot roll back to $previous safely: active $target storage $(mount_label "$cur_m") does not match rollback target $dst_labels (rollback would revert to stale data)"
+      fi
+    done <<<"$cur_specs"
   done
 }
 
@@ -3853,6 +3992,37 @@ do_rollback() {
   if [ -n "$rollback_proj" ] && ! check_rollback_plain_project "$rollback_proj" "$DEPLOY_DIR/releases/$previous/docker-compose.yml" "$previous"; then
     die "$EXIT_USAGE" "$ROLLBACK_PROJ_ERR"
   fi
+  local cur_compose_file='' cur_config='' cur_proj='' cur_pgdata_sub='' cur_pg_rc=0 cur_db_specs='' cur_files_specs='' cur_keys_specs='' cur_archive_specs='' prev_img=''
+  if [ -f "$DEPLOY_DIR/docker-compose.yml" ]; then
+    cur_compose_file="$DEPLOY_DIR/docker-compose.yml"
+  elif [ -n "$current" ] && [ -f "$DEPLOY_DIR/releases/$current/docker-compose.yml" ]; then
+    cur_compose_file="$DEPLOY_DIR/releases/$current/docker-compose.yml"
+  fi
+  if [ -n "$cur_compose_file" ]; then
+    cur_config="$(dc_prev_config_for_release "$current" "$rollback_proj" "$cur_compose_file" 2>/dev/null || true)"
+  fi
+  if ! detect_prev_container_mounts "$rollback_proj"; then
+    record "rollback to $previous failed: container mount inspection"
+    die "$EXIT_FAILED" "cannot inspect mounts on existing Docker containers for $DEPLOY_DIR before rolling back to $previous"
+  fi
+  if [ -n "$PREV_CTR_NESTED_DB" ]; then
+    record "rollback to $previous failed: running container has nested mount under /var/lib/postgresql/data ($PREV_CTR_NESTED_DB)"
+    die "$EXIT_FAILED" "unsupported nested mount at $PREV_CTR_NESTED_DB under /var/lib/postgresql/data on existing container; consolidate onto a single /var/lib/postgresql/data mount before rolling back"
+  fi
+  cur_proj="${rollback_proj:-ludy}"
+  cur_pgdata_sub="$(resolve_prev_pgdata_sub "$cur_config" 1)" || cur_pg_rc=$?
+  if ((cur_pg_rc == 2)); then
+    record "rollback to $previous failed: cannot inspect active db image PGDATA"
+    die "$EXIT_FAILED" "cannot inspect current db image metadata to determine PGDATA in project $cur_proj; pull the db image or set PGDATA explicitly in compose before rolling back"
+  elif ((cur_pg_rc != 0)); then
+    record "rollback to $previous failed: invalid active db PGDATA path"
+    die "$EXIT_FAILED" "current db service sets an unsupported PGDATA path outside /var/lib/postgresql/data in project $cur_proj"
+  fi
+  cur_db_specs="$(resolve_prev_mount_specs "$cur_config" "$cur_proj" /var/lib/postgresql/data 'db' 1)"
+  cur_files_specs="$(resolve_prev_mount_specs "$cur_config" "$cur_proj" /data/files 'ludy crove api worker' 1)"
+  cur_keys_specs="$(resolve_prev_mount_specs "$cur_config" "$cur_proj" /data/keys 'ludy crove api worker' 1)"
+  cur_archive_specs="$(resolve_prev_mount_specs "$cur_config" "$cur_proj" /data/archive 'ludy crove api worker' 1)"
+
   restore_env_of "$current"
   if [ -n "$rollback_proj" ] && ! check_rollback_plain_project "$rollback_proj" "$DEPLOY_DIR/releases/$previous/docker-compose.yml" "$previous"; then
     if ! undo_env_restore; then
@@ -3861,9 +4031,10 @@ do_rollback() {
     fi
     die "$EXIT_USAGE" "$ROLLBACK_PROJ_ERR"
   fi
+  prev_img="$(release_field "$previous" IMAGE)"
   # The images are normally still on the host. Pull them again (by digest, so nothing else can arrive) in case
   # they were pruned; without registry credentials a private image that is gone cannot come back.
-  if ! pull_images "$(release_field "$previous" IMAGE)" "$(release_field "$previous" EXTRACT_IMAGE)" "$(release_field "$previous" MEDIA_IMAGE)" "$REGISTRY" "$REGISTRY_USER" "$REGISTRY_PASSWORD"; then
+  if ! pull_images "$prev_img" "$(release_field "$previous" EXTRACT_IMAGE)" "$(release_field "$previous" MEDIA_IMAGE)" "$REGISTRY" "$REGISTRY_USER" "$REGISTRY_PASSWORD"; then
     log 'pulling the previous images failed; trying with the images on the host'
   fi
   snapshot_pre_activate "$current" || {
@@ -3885,6 +4056,16 @@ do_rollback() {
       die "$EXIT_USAGE" "cannot roll back to $previous on project $rollback_proj: plain docker compose resolves to project '${plain_proj:-unknown}' after activating $previous; align COMPOSE_PROJECT_NAME and COMPOSE_FILE in $ENV_FILE first"
     fi
   fi
+  local rb_config='' rb_proj=''
+  if ! rb_config="$(dc config 2>/dev/null)"; then
+    abort_rollback_pre_services "$previous" "$current" 'compose config' 'cannot load compose configuration for previous release; nothing running was changed'
+  fi
+  rb_proj="$rollback_proj"
+  if [ -z "$rb_proj" ]; then
+    rb_proj="$(compose_project_from_yaml "$rb_config" 2>/dev/null || true)"
+  fi
+  verify_rollback_storage "$rb_config" "${rb_proj:-ludy}" "$prev_img" "$previous" "$current" \
+    "$cur_db_specs" "$cur_pgdata_sub" "$cur_files_specs" "$cur_keys_specs" "$cur_archive_specs"
   clear_pre_activate_snap
   if ! roll_services "$(direction_to "$previous" "$current")"; then
     recover "$current" "rollback to $previous" "$previous"
@@ -3893,6 +4074,7 @@ do_rollback() {
   write_state previous "$current"
   write_state current "$previous"
   if [ -n "$rollback_proj" ]; then write_state project "$rollback_proj"; fi
+  write_saved_mounts "$RB_DB" "$RB_FILES" "$RB_KEYS" "$RB_ARCHIVE" "$RB_PGDATA_SUB"
   # The settings it put back worked: the copy of the file as it was is no longer needed.
   if [ -n "$ENV_UNDO" ]; then rm -f "$ENV_UNDO"; ENV_UNDO=''; ENV_UNDO_KIND=''; fi
   record "rollback to $previous ok"

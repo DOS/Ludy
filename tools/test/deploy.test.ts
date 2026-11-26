@@ -237,7 +237,9 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(running()).not.toContain('api: {');
     expect(running()).not.toContain('worker: {');
     // A rollback to the release with the old pins: stripped on activation, so the active override has none either.
+    writeFileSync(`${dir}/compose.host.yml`, 'services: {}\n');
     expect(run(['rollback']).status).toBe(0);
+    rmSync(`${dir}/compose.host.yml`, { force: true });
     expect(running()).not.toContain('api: {');
     expect(running()).not.toContain('worker: {');
     expect(running()).toContain(`ludy: { image: '${image('b')}', build: !reset null }`);
@@ -969,12 +971,14 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     // Rollback to legacy `name: crove` fails closed when COMPOSE_FILE omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME,
     // and succeeds once COMPOSE_PROJECT_NAME=ludy is set (#3972 Round 11).
+    writeFileSync(`${dir}/compose.host.yml`, 'services: {}\n');
     writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\nCOMPOSE_FILE=docker-compose.yml:compose.host.yml\n');
     const unsafeRollback = run(['rollback']);
     expect(unsafeRollback.status, unsafeRollback.out).toBe(2);
     expect(unsafeRollback.out).toContain('omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME');
     writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\nCOMPOSE_FILE=docker-compose.yml:compose.host.yml\nCOMPOSE_PROJECT_NAME=ludy\n');
     expect(run(['rollback']).status).toBe(0);
+    rmSync(`${dir}/compose.host.yml`, { force: true });
 
     // Nested mount under /var/lib/postgresql/data/pgdata is rejected before up db (#3972 Round 11).
     writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
@@ -1139,6 +1143,131 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toBe(preSignalCompose);
     expect(existsSync(`${dir}/docker-compose.override.yml`)).toBe(false);
     expect(existsSync(`${dir}/.deploy/lock`)).toBe(false);
+
+    // Rollback fails closed on stale/mismatched /data/files volume, PGDATA change, or missing COMPOSE_FILE entry (#3972 Round 14).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+    expect(deploy('v1.0.0', 'a', { STUB_VOLUMES: 'ludy_db-data ludy_files' }).status).toBe(0);
+    expect(
+      deploy('v1.1.0', 'b', {
+        STUB_VOLUMES: 'ludy_db-data ludy_files ludy_files_v2',
+        STUB_POPULATED_MOUNTS: 'ludy_files ludy_files_v2',
+        STUB_NEW_FILES_VOLUME: 'ludy_files_v2',
+      }).status,
+    ).toBe(0);
+    const rbStaleFiles = run(['rollback'], {
+      STUB_VOLUMES: 'ludy_db-data ludy_files ludy_files_v2',
+      STUB_POPULATED_MOUNTS: 'ludy_files ludy_files_v2',
+      STUB_PARTIAL_MOUNTS: 'ludy_files',
+      STUB_NEW_FILES_VOLUME: 'ludy_files',
+    });
+    expect(rbStaleFiles.status, rbStaleFiles.out).toBe(1);
+    expect(rbStaleFiles.out).toContain('rollback would revert to stale data');
+    expect(readFileSync(`${dir}/.deploy/current`, 'utf8').trim()).toBe(releaseDir('v1.1.0', 'b'));
+
+    const rbPgdataChange = run(['rollback'], {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_NEW_DB_PGDATA: '/var/lib/postgresql/data/other',
+    });
+    expect(rbPgdataChange.status, rbPgdataChange.out).toBe(1);
+    expect(rbPgdataChange.out).toContain('PGDATA /var/lib/postgresql/data/other');
+
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:compose.host.yml\n');
+    const rbMissingHostFile = run(['rollback']);
+    expect(rbMissingHostFile.status, rbMissingHostFile.out).toBe(2);
+    expect(rbMissingHostFile.out).toContain('plain docker compose resolves to project');
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+
+    // Parent/child bind paths and symlinked bind mounts collide cleanly in check_storage_free without false-positiving on siblings (#3972 Round 14).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const parentBind = `${root}/srv-db`;
+    const childBind = `${parentBind}/pgdata`;
+    const siblingBind = `${root}/srv-db2`;
+    const linkBind = `${root}/srv-db-link`;
+    mkdirSync(childBind, { recursive: true });
+    mkdirSync(siblingBind, { recursive: true });
+    symlinkSync(parentBind, linkBind);
+    const parentHeld = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_BIND: childBind,
+      STUB_RUNNING_CONTAINERS: 'other-db-1',
+      STUB_INSPECT_WORKDIRS: 'other-db-1|/opt/other',
+      STUB_INSPECT_MOUNTS: `other-db-1|other|bind||${parentBind}|`,
+    });
+    expect(parentHeld.status, parentHeld.out).toBe(1);
+    expect(parentHeld.out).toContain('still mounted by a running container outside project');
+
+    const childHeld = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_BIND: linkBind,
+      STUB_RUNNING_CONTAINERS: 'other-db-1',
+      STUB_INSPECT_WORKDIRS: 'other-db-1|/opt/other',
+      STUB_INSPECT_MOUNTS: `other-db-1|other|bind||${childBind}|`,
+    });
+    expect(childHeld.status, childHeld.out).toBe(1);
+    expect(childHeld.out).toContain('still mounted by a running container outside project');
+
+    const siblingFree = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_BIND: siblingBind,
+      STUB_RUNNING_CONTAINERS: 'other-db-1',
+      STUB_INSPECT_WORKDIRS: 'other-db-1|/opt/other',
+      STUB_INSPECT_MOUNTS: `other-db-1|other|bind||${parentBind}|`,
+    });
+    expect(siblingFree.status, siblingFree.out).toBe(0);
+
+    // Failed restore_pre_activate preserves $PRE_ACTIVATE_SNAP across EXIT cleanup so the reported recovery path remains intact (#3972 Round 14).
+    if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+      rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+      rmSync(`${dir}/docker-compose.yml`, { force: true });
+      writeFileSync(`${dir}/docker-compose.yml`, 'name: ludy\nservices: {}\n');
+      const roBin = `${root}/robin`;
+      mkdirSync(roBin, { recursive: true });
+      writeFileSync(
+        `${roBin}/docker`,
+        [
+          '#!/usr/bin/env bash',
+          'if [ "${1:-}" = ps ] && [[ " $* " == *" status=running "* ]]; then',
+          '  chmod 0555 "${STUB_DEPLOY_DIR}"',
+          '  exit 1',
+          'fi',
+          `exec "${root}/bin/docker" "$@"`,
+          '',
+        ].join('\n'),
+      );
+      chmodSync(`${roBin}/docker`, 0o755);
+      let keptSnapPath: string | undefined;
+      try {
+        const roRes = spawnSync(
+          'bash',
+          [script, 'deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose],
+          {
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              PATH: `${roBin}${delimiter}${join(root, 'bin')}${delimiter}${process.env['PATH'] ?? ''}`,
+              LUDY_DEPLOY_DIR: dir,
+              LUDY_READY_TIMEOUT: '1',
+              LUDY_WORKER_SETTLE: '0',
+              STUB_LOG: log,
+              STUB_DEPLOY_DIR: dir,
+              STUB_OPENSSL_KEY_FILE: `${root}/openssl-key`,
+              SMOKE_EMAIL: '',
+              SMOKE_PASSWORD: '',
+              SMOKE_ORG: '',
+            },
+          },
+        );
+        const roOut = `${roRes.stdout}${roRes.stderr}`;
+        expect(roRes.status, roOut).not.toBe(0);
+        expect(roOut).toContain('snapshot kept at ');
+        keptSnapPath = /snapshot kept at (\S+)/.exec(roOut)?.[1];
+        expect(keptSnapPath).toBeTruthy();
+        expect(existsSync(keptSnapPath!)).toBe(true);
+      } finally {
+        chmodSync(dir, 0o755);
+        if (keptSnapPath) rmSync(keptSnapPath, { recursive: true, force: true });
+      }
+    }
   });
 
   describe('build check', () => {

@@ -905,5 +905,53 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     const rDrift = spawnSync('bash', [scriptPath, 'rewrite-env', emptyToNonEmptyIn, emptyToNonEmptyOut], { encoding: 'utf8' });
     expect(rDrift.status).not.toBe(0);
     expect(rDrift.stderr).toContain('LUDY_MODULES');
+
+    // 8) Single-quoted escaped apostrophes match Compose dotenv semantics (#3972 Round 14).
+    const sqOkIn = join(work, '.env.sq-ok.in');
+    const sqOkOut = join(work, '.env.sq-ok.out');
+    writeFileSync(sqOkIn, "LABEL='org\\'s key'\nESCAPED='a\\\\b'\nMIXED='a\\\\\\'b'\nTRAILING='end\\\\'\nCROVE_DOMAIN=app.example.test\n");
+    const rSqOk = spawnSync('bash', [scriptPath, 'rewrite-env', sqOkIn, sqOkOut], { encoding: 'utf8' });
+    expect(rSqOk.status, rSqOk.stderr).toBe(0);
+    const outSq = readFileSync(sqOkOut, 'utf8');
+    expect(outSq).toContain("LABEL='org\\'s key'");
+    expect(outSq).toContain('LUDY_DOMAIN=app.example.test');
+
+    const sqBadIn = join(work, '.env.sq-bad.in');
+    const sqBadOut = join(work, '.env.sq-bad.out');
+    writeFileSync(sqBadIn, "BROKEN='end\\'\n");
+    const rSqBad = spawnSync('bash', [scriptPath, 'rewrite-env', sqBadIn, sqBadOut], { encoding: 'utf8' });
+    expect(rSqBad.status).not.toBe(0);
+    expect(rSqBad.stderr).toContain('unclosed single quote');
+
+    // 9) cutover-stack honors full COMPOSE_FILE entries in order and resolves effective BACKUP_S3_PREFIX (#3972 Round 14).
+    const fCustom = createCutoverFixture();
+    writeFileSync(join(fCustom.deployDir, 'storage.yml'), 'services:\n  api:\n    volumes:\n      - /srv/files:/data/files\n');
+    writeFileSync(
+      join(fCustom.deployDir, '.env'),
+      [
+        'COMPOSE_FILE=docker-compose.yml:storage.yml:compose.host.yml',
+        'CROVE_DOMAIN=api.example.com',
+        'DATABASE_URL=postgres://crove_app:pw@db:5432/postgres',
+        'BACKUP_S3_PREFIX=${SITE_PREFIX:-}',
+        '',
+      ].join('\n'),
+    );
+    const resCustom = runWithStubs(fCustom, ['cutover-stack', '--dir', fCustom.deployDir, '--overlay-dir', fCustom.overlayDir]);
+    expect(resCustom.status, resCustom.stderr).toBe(0);
+    const filesLog = readFileSync(`${fCustom.stubLog}.files`, 'utf8');
+    expect(filesLog).toContain(`${fCustom.deployDir}/docker-compose.yml ${fCustom.deployDir}/storage.yml ${fCustom.deployDir}/compose.host.yml`);
+    const customEnvOut = readFileSync(join(fCustom.deployDir, '.env'), 'utf8');
+    expect(customEnvOut).toContain('BACKUP_S3_PREFIX=crove');
+    expect(customEnvOut).not.toContain('BACKUP_S3_PREFIX=${SITE_PREFIX:-}');
+
+    const fMissingCustom = createCutoverFixture();
+    writeFileSync(
+      join(fMissingCustom.deployDir, '.env'),
+      'COMPOSE_FILE=docker-compose.yml:missing-storage.yml:compose.host.yml\nCROVE_DOMAIN=api.example.com\nDATABASE_URL=postgres://crove_app:pw@db:5432/postgres\n',
+    );
+    const resMissingCustom = runWithStubs(fMissingCustom, ['cutover-stack', '--dir', fMissingCustom.deployDir, '--overlay-dir', fMissingCustom.overlayDir]);
+    expect(resMissingCustom.status).toBe(2);
+    expect(resMissingCustom.stderr).toContain('missing-storage.yml');
+    expect(readFileSync(fMissingCustom.stubLog, 'utf8')).not.toContain(' stop');
   });
 });
