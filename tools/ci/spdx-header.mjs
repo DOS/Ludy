@@ -2,12 +2,12 @@
 // The license header check for new source files (kernel plan §10, the `license` row; #1953). Ludy is AGPL-3.0-only (the
 // README and every package.json say so; ADR-0022, to be written, will record it with the CLA): every source file a pull
 // request adds names that license in an SPDX line near its top, so a file copied out of the repository keeps it. Only
-// files added from now on are checked; files already on main carry none and are left as they are.
+// files added from now on are checked; files already on dev or main carry none and are left as they are.
 //
 // Usage: node tools/ci/spdx-header.mjs [since-ref]
-//   Checks the source files HEAD adds since <since-ref> (default: the merge base of origin/main and HEAD). CI passes
-//   the merge commit's first parent. A renamed or moved file is not new. Exits 1 and names each file without the line,
-//   with the line to add for its kind.
+//   Checks the source files HEAD adds since <since-ref> (default: the merge base of origin/dev when present, else
+//   origin/main, and HEAD). CI passes the merge commit's first parent. A renamed or moved file is not new. Exits 1 and
+//   names each file without the line, with the line to add for its kind.
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
@@ -78,8 +78,20 @@ export function escapeProperty(text) {
   return escapeData(text).replace(/:/g, '%3A').replace(/,/g, '%2C');
 }
 
+function defaultBase() {
+  for (const ref of ['origin/dev', 'origin/main']) {
+    try {
+      execFileSync('git', ['rev-parse', '--verify', '--quiet', ref], { stdio: 'ignore' });
+      return ref;
+    } catch {
+      // Try next candidate ref when the integration branch is not fetched locally.
+    }
+  }
+  return 'origin/main';
+}
+
 function main() {
-  const since = process.argv[2] ?? execFileSync('git', ['merge-base', 'origin/main', 'HEAD'], { encoding: 'utf8' }).trim();
+  const since = process.argv[2] ?? execFileSync('git', ['merge-base', defaultBase(), 'HEAD'], { encoding: 'utf8' }).trim();
   const added = addedFiles(since);
   const missing = missingHeaders(added, committedText);
   if (missing.length === 0) {
