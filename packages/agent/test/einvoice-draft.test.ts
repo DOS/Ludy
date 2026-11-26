@@ -970,5 +970,70 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: null })], null),
       ).kind,
     ).toBe('proposal');
+
+    // Unit+packaging before product ("2 hộp 850g sữa"), "=" line totals, indented final bullet VAT, "₫" symbol, and "Áp dụng chung VAT ...:".
+    const unitFirstPkg = req('2 hộp 850g sữa giá 100k');
+    expect(
+      checkEInvoiceDraft(
+        unitFirstPkg,
+        answer([line({ description: 'Sữa 850g', unit: 'hộp', quantity: '2', unitPrice: '100000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        unitFirstPkg,
+        answer([line({ description: 'Sữa 850g', unit: 'hộp', quantity: '850', unitPrice: '100000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    const equalsTotal = req('2 áo x 50k = 100k');
+    expect(
+      checkEInvoiceDraft(
+        equalsTotal,
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        equalsTotal,
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    const trailingIndentedVat = req('- 2 sách giá 50k\n- 3 bánh giá 100k\n  VAT 8%');
+    expect(
+      checkEInvoiceDraft(
+        trailingIndentedVat,
+        answer([
+          line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '50000', vatRate: null }),
+          line({ description: 'Bánh', unit: null, quantity: '3', unitPrice: '100000', vatRate: '8%' }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        trailingIndentedVat,
+        answer([
+          line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' }),
+          line({ description: 'Bánh', unit: null, quantity: '3', unitPrice: '100000', vatRate: '8%' }),
+        ], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo 100.000 ₫'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('Áp dụng chung VAT 8%: 2 sách giá 50k; 3 bút giá 10k'),
+        answer([
+          line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' }),
+          line({ description: 'Bút', unit: null, quantity: '3', unitPrice: '10000', vatRate: '8%' }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
   });
 });
