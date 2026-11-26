@@ -657,11 +657,33 @@ acquire_lock() {
 release_lock() { if [ "$LOCK_HELD" = 1 ]; then rm -rf "$(state_dir)/lock"; fi; }
 
 # The registry login's throwaway Docker config (pull_images) and pre-activate host snapshot; removed on every exit.
-PULL_CONFIG='' APP_BUILD_WORK='' PRE_ACTIVATE_SNAP=''
+PULL_CONFIG='' APP_BUILD_WORK='' PRE_ACTIVATE_SNAP='' PRE_ACTIVATE_ACTIVE=0 PRE_ACTIVATE_RESTORE_REL=''
+clear_pre_activate_snap() {
+  PRE_ACTIVATE_ACTIVE=0
+  PRE_ACTIVATE_RESTORE_REL=''
+  if [ -n "${PRE_ACTIVATE_SNAP:-}" ]; then
+    rm -rf "$PRE_ACTIVATE_SNAP"
+    PRE_ACTIVATE_SNAP=''
+  fi
+}
+
 cleanup() {
   if [ -n "$PULL_CONFIG" ]; then rm -rf "$PULL_CONFIG"; fi
   if [ -n "${APP_BUILD_WORK:-}" ]; then rm -rf "$APP_BUILD_WORK"; fi
-  if [ -n "${PRE_ACTIVATE_SNAP:-}" ]; then rm -rf "$PRE_ACTIVATE_SNAP"; fi
+  if [ -n "${PRE_ACTIVATE_SNAP:-}" ] && [ -d "$PRE_ACTIVATE_SNAP" ]; then
+    if [ "${PRE_ACTIVATE_ACTIVE:-0}" = 1 ]; then
+      if restore_pre_activate "${PRE_ACTIVATE_RESTORE_REL:-}"; then
+        log 'restored pre-deploy compose files after early exit'
+      else
+        err "pre-deploy compose snapshot kept at $PRE_ACTIVATE_SNAP"
+      fi
+      if [ -n "${ENV_UNDO:-}" ]; then
+        undo_env_restore || true
+      fi
+    else
+      clear_pre_activate_snap
+    fi
+  fi
   # The copies of the env file made while the context token key is written hold that key (and the old file). Stopped while
   # the env file itself is being overwritten, they are the way back: kept, and named.
   if [ "${KEY_WRITING:-0}" = 1 ]; then
@@ -683,7 +705,11 @@ cleanup() {
 CURRENT_WORK=''
 on_signal() {
   record "${CURRENT_WORK:-run} interrupted by a signal; check the stack (deploy.sh status, docker compose ps)$([ "${ENV_CHANGED:-0}" = 1 ] && echo "; the env file was replaced, the dated copy is $ENV_BACKUP")"
-  err 'interrupted; the stack may be half rolled'
+  if [ "${PRE_ACTIVATE_ACTIVE:-0}" = 1 ] && [ -n "${PRE_ACTIVATE_SNAP:-}" ]; then
+    err 'interrupted before starting services; restoring pre-deploy compose files'
+  else
+    err 'interrupted; the stack may be half rolled'
+  fi
   exit 143
 }
 
@@ -719,23 +745,33 @@ dc() {
   ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker "${args[@]}" "$@"
 }
 
-# Resolves the pre-deploy host Compose config (if $DEPLOY_DIR/docker-compose.yml already exists before activate),
-# passing only Compose files that currently exist on disk (supporting manual checkouts without docker-compose.override.yml).
+# Resolves the pre-deploy host Compose config (from $base_compose or $DEPLOY_DIR/docker-compose.yml before activate),
+# passing only Compose files that currently exist on disk (supporting manual checkouts without docker-compose.override.yml
+# or recovery from a staged release directory when $DEPLOY_DIR/docker-compose.yml was removed).
 # Optional $1 overrides the Compose project name (-p) when inspecting an earlier stack after .env changed.
 dc_prev_config() {
-  local proj_override="${1:-}"
-  [ -f "$DEPLOY_DIR/docker-compose.yml" ] || return 1
+  local proj_override="${1:-}" base_compose="${2:-$DEPLOY_DIR/docker-compose.yml}" rel_dir=''
+  [ -f "$base_compose" ] || return 1
+  if [ "$base_compose" != "$DEPLOY_DIR/docker-compose.yml" ]; then
+    rel_dir="$(dirname "$base_compose")"
+  fi
   local args=(compose)
   if [ -n "$proj_override" ]; then args+=(-p "$proj_override"); fi
-  args+=(--project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml")
+  args+=(--project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$base_compose")
   local resolved_pilot='' resolved_wal='' pilot_rc=0 wal_rc=0
   if pilot_layout; then
     resolved_pilot="$(resolve_compose_overlay compose.pilot.yml fallback)" || pilot_rc=$?
     if ((pilot_rc == 0)) && [ -n "$resolved_pilot" ]; then
       args+=(-f "$resolved_pilot")
+    elif [ -n "$rel_dir" ] && [ -f "$rel_dir/compose.pilot.yml" ]; then
+      args+=(-f "$rel_dir/compose.pilot.yml")
     fi
   fi
-  if [ -f "$DEPLOY_DIR/docker-compose.override.yml" ]; then args+=(-f "$DEPLOY_DIR/docker-compose.override.yml"); fi
+  if [ -f "$DEPLOY_DIR/docker-compose.override.yml" ]; then
+    args+=(-f "$DEPLOY_DIR/docker-compose.override.yml")
+  elif [ -n "$rel_dir" ] && [ -f "$rel_dir/docker-compose.override.yml" ]; then
+    args+=(-f "$rel_dir/docker-compose.override.yml")
+  fi
   resolved_wal="$(resolve_wal_compose_file)" || wal_rc=$?
   if ((wal_rc == 0)) && [ -n "$resolved_wal" ]; then
     args+=(-f "$resolved_wal")
@@ -790,7 +826,7 @@ detect_prev_project() {
 
 # Inspects existing Compose config with prior release images exported in this call only (#3972).
 dc_prev_config_for_release() {
-  local current_rel="$1" proj_override="${2:-}" prev_img prev_ext prev_med
+  local current_rel="$1" proj_override="${2:-}" base_compose="${3:-$DEPLOY_DIR/docker-compose.yml}" prev_img prev_ext prev_med
   if [ -n "$current_rel" ] && [ -f "$DEPLOY_DIR/releases/$current_rel/release.env" ]; then
     prev_img="$(release_field "$current_rel" IMAGE || true)"
     prev_ext="$(release_field "$current_rel" EXTRACT_IMAGE || true)"
@@ -799,7 +835,7 @@ dc_prev_config_for_release() {
     if [ -n "$prev_ext" ]; then export LUDY_EXTRACT_IMAGE="$prev_ext" CROVE_EXTRACT_IMAGE="$prev_ext"; fi
     if [ -n "$prev_med" ]; then export LUDY_MEDIA_IMAGE="$prev_med" CROVE_MEDIA_IMAGE="$prev_med"; fi
   fi
-  dc_prev_config "$proj_override"
+  dc_prev_config "$proj_override" "$base_compose"
 }
 
 # Image pins of a release. The images are exported too, so compose.host.yml can use ${LUDY_IMAGE} for services it
@@ -953,6 +989,7 @@ activate() {
       mv -f "$DEPLOY_DIR/docker-compose.yml.proj" "$DEPLOY_DIR/docker-compose.yml.tmp"
     fi
   fi
+  if [ -n "${PRE_ACTIVATE_SNAP:-}" ]; then PRE_ACTIVATE_ACTIVE=1; fi
   if [ -f "$DEPLOY_DIR/compose.pilot.yml.tmp" ]; then mv -f "$DEPLOY_DIR/compose.pilot.yml.tmp" "$DEPLOY_DIR/compose.pilot.yml"; fi
   mv -f "$DEPLOY_DIR/docker-compose.yml.tmp" "$DEPLOY_DIR/docker-compose.yml"
   mv -f "$DEPLOY_DIR/docker-compose.override.yml.tmp" "$DEPLOY_DIR/docker-compose.override.yml"
@@ -963,32 +1000,50 @@ activate() {
 
 # Snapshots pre-existing host Compose files before activate so aborted pre-up-db deploys restore them verbatim (#3972).
 snapshot_pre_activate() {
-  local f
+  local current_rel="${1:-}" f
+  clear_pre_activate_snap
   PRE_ACTIVATE_SNAP="$(mktemp -d)" || return 1
+  PRE_ACTIVATE_RESTORE_REL="$current_rel"
+  PRE_ACTIVATE_ACTIVE=0
   for f in docker-compose.yml docker-compose.override.yml compose.pilot.yml; do
     if [ -f "$DEPLOY_DIR/$f" ]; then
-      cp -f "$DEPLOY_DIR/$f" "$PRE_ACTIVATE_SNAP/$f" || { rm -rf "$PRE_ACTIVATE_SNAP"; PRE_ACTIVATE_SNAP=''; return 1; }
-      printf '1\n' >"$PRE_ACTIVATE_SNAP/$f.present" || { rm -rf "$PRE_ACTIVATE_SNAP"; PRE_ACTIVATE_SNAP=''; return 1; }
+      cp -f "$DEPLOY_DIR/$f" "$PRE_ACTIVATE_SNAP/$f" || { rm -rf "$PRE_ACTIVATE_SNAP"; PRE_ACTIVATE_SNAP=''; PRE_ACTIVATE_RESTORE_REL=''; return 1; }
+      printf '1\n' >"$PRE_ACTIVATE_SNAP/$f.present" || { rm -rf "$PRE_ACTIVATE_SNAP"; PRE_ACTIVATE_SNAP=''; PRE_ACTIVATE_RESTORE_REL=''; return 1; }
     else
-      printf '0\n' >"$PRE_ACTIVATE_SNAP/$f.present" || { rm -rf "$PRE_ACTIVATE_SNAP"; PRE_ACTIVATE_SNAP=''; return 1; }
+      printf '0\n' >"$PRE_ACTIVATE_SNAP/$f.present" || { rm -rf "$PRE_ACTIVATE_SNAP"; PRE_ACTIVATE_SNAP=''; PRE_ACTIVATE_RESTORE_REL=''; return 1; }
     fi
   done
 }
 
 restore_pre_activate() {
-  local current_rel="$1" f
+  local current_rel="${1:-}" f restore_ok=1
+  rm -f "$DEPLOY_DIR/docker-compose.yml.tmp" "$DEPLOY_DIR/docker-compose.yml.proj" \
+    "$DEPLOY_DIR/docker-compose.override.yml.tmp" "$DEPLOY_DIR/docker-compose.override.yml.pins" \
+    "$DEPLOY_DIR/compose.pilot.yml.tmp" 2>/dev/null || true
   if [ -n "${PRE_ACTIVATE_SNAP:-}" ] && [ -d "$PRE_ACTIVATE_SNAP" ]; then
     for f in docker-compose.yml docker-compose.override.yml compose.pilot.yml; do
       if [ "$(cat "$PRE_ACTIVATE_SNAP/$f.present" 2>/dev/null || echo 0)" = 1 ] && [ -f "$PRE_ACTIVATE_SNAP/$f" ]; then
-        mv -f "$PRE_ACTIVATE_SNAP/$f" "$DEPLOY_DIR/$f"
+        if cp -f "$PRE_ACTIVATE_SNAP/$f" "$DEPLOY_DIR/$f.restore.tmp" && mv -f "$DEPLOY_DIR/$f.restore.tmp" "$DEPLOY_DIR/$f"; then
+          :
+        else
+          rm -f "$DEPLOY_DIR/$f.restore.tmp" 2>/dev/null || true
+          restore_ok=0
+        fi
       else
-        rm -f "$DEPLOY_DIR/$f"
+        if ! rm -f "$DEPLOY_DIR/$f"; then
+          restore_ok=0
+        fi
       fi
     done
-    rm -rf "$PRE_ACTIVATE_SNAP"
-    PRE_ACTIVATE_SNAP=''
-    return 0
+    if ((restore_ok == 1)); then
+      clear_pre_activate_snap
+      return 0
+    fi
+    PRE_ACTIVATE_ACTIVE=0
+    err "could not restore pre-deploy compose files into $DEPLOY_DIR; snapshot kept at $PRE_ACTIVATE_SNAP"
+    return 1
   fi
+  PRE_ACTIVATE_ACTIVE=0
   if [ -n "$current_rel" ]; then
     activate "$current_rel"
   fi
@@ -1037,6 +1092,15 @@ unquote_compose_scalar() {
   fi
 }
 
+# Normalizes a Docker Compose project name to match Compose rules and validates non-empty format (#3972).
+normalize_project_name() {
+  local raw="$1"
+  raw="${raw,,}"
+  raw="${raw//[^a-z0-9_-]/}"
+  [[ "$raw" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || return 1
+  printf '%s' "$raw"
+}
+
 # Extracts the normalized project name from captured `docker compose config` YAML output.
 compose_project_from_yaml() {
   local config_out="$1" line raw=''
@@ -1047,10 +1111,7 @@ compose_project_from_yaml() {
       break
     fi
   done <<<"$config_out"
-  raw="${raw,,}"
-  raw="${raw//[^a-z0-9_-]/}"
-  [[ "$raw" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || return 1
-  printf '%s' "$raw"
+  normalize_project_name "$raw"
 }
 
 # Resolved project name from the merged Compose configuration (honoring COMPOSE_PROJECT_NAME, .env, docker-compose.yml,
@@ -1414,6 +1475,87 @@ plain_compose_omits_override_and_project() {
   [ -n "$cf_val" ] && ! env_compose_file_lists docker-compose.override.yml && ! env_var_is_set COMPOSE_PROJECT_NAME
 }
 
+# Checks whether plain `docker compose` after rollback to $previous_name stays on $rollback_proj (#3972).
+ROLLBACK_PROJ_ERR=''
+check_rollback_plain_project() {
+  local rollback_proj="$1" release_compose="$2" previous_name="$3" env_proj='' norm_env_proj='' cf_val='' resolved_name='' norm_yaml='' item n
+  local -a cf_items=()
+  ROLLBACK_PROJ_ERR=''
+  [ -n "$rollback_proj" ] || return 0
+  if env_proj="$(env_var_last_value COMPOSE_PROJECT_NAME "$ENV_FILE" 2>/dev/null)" && [ -n "$env_proj" ]; then
+    if [[ "$env_proj" != *\$* ]]; then
+      norm_env_proj="$(normalize_project_name "$env_proj" || true)"
+      if [ "$norm_env_proj" != "$rollback_proj" ]; then
+        ROLLBACK_PROJ_ERR="cannot roll back to $previous_name on project $rollback_proj: $ENV_FILE sets COMPOSE_PROJECT_NAME=$env_proj, so plain docker compose would target a different project; update COMPOSE_PROJECT_NAME=$rollback_proj in $ENV_FILE first"
+        return 1
+      fi
+    fi
+    return 0
+  fi
+  if plain_compose_omits_override_and_project; then
+    if [ "$(compose_file_yaml_name "$release_compose")" != "$rollback_proj" ]; then
+      ROLLBACK_PROJ_ERR="cannot roll back to $previous_name on project $rollback_proj: COMPOSE_FILE in $ENV_FILE omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME, so plain docker compose would switch projects after rollback; add docker-compose.override.yml to COMPOSE_FILE or set COMPOSE_PROJECT_NAME=$rollback_proj in $ENV_FILE first"
+      return 1
+    fi
+  fi
+  cf_val="$(env_var_last_value COMPOSE_FILE "$ENV_FILE" 2>/dev/null || true)"
+  if [ -n "$cf_val" ]; then
+    IFS=':' read -ra cf_items <<<"$cf_val"
+    for item in "${cf_items[@]+"${cf_items[@]}"}"; do
+      item="${item#"${item%%[![:space:]]*}"}"
+      item="${item%"${item##*[![:space:]]}"}"
+      [ -n "$item" ] || continue
+      if [ "$item" = docker-compose.yml ] || [[ "$item" == */docker-compose.yml ]]; then
+        n="$(compose_file_yaml_name "$release_compose")"
+        if [ -n "$n" ]; then resolved_name="$n"; fi
+      elif [ "$item" = docker-compose.override.yml ] || [[ "$item" == */docker-compose.override.yml ]]; then
+        resolved_name="$rollback_proj"
+      else
+        if [[ "$item" != /* ]]; then item="$DEPLOY_DIR/$item"; fi
+        if [ -f "$item" ]; then
+          n="$(compose_file_yaml_name "$item")"
+          if [ -n "$n" ]; then resolved_name="$n"; fi
+        fi
+      fi
+    done
+    if [ -n "$resolved_name" ] && [[ "$resolved_name" != *\$* ]]; then
+      norm_yaml="$(normalize_project_name "$resolved_name" || true)"
+      if [ "$norm_yaml" != "$rollback_proj" ]; then
+        ROLLBACK_PROJ_ERR="cannot roll back to $previous_name on project $rollback_proj: COMPOSE_FILE in $ENV_FILE resolves plain docker compose to project '$resolved_name'; set COMPOSE_PROJECT_NAME=$rollback_proj in $ENV_FILE first"
+        return 1
+      fi
+    fi
+  fi
+  return 0
+}
+
+# Resolves the merged Compose configuration as plain `docker compose` (no -p override) sees it in $DEPLOY_DIR (#3972).
+plain_compose_config() {
+  local cf_val='' item
+  local -a cf_items=() f_args=()
+  cf_val="$(env_var_last_value COMPOSE_FILE "$ENV_FILE" 2>/dev/null || true)"
+  if [ -n "$cf_val" ]; then
+    IFS=':' read -ra cf_items <<<"$cf_val"
+    for item in "${cf_items[@]+"${cf_items[@]}"}"; do
+      item="${item#"${item%%[![:space:]]*}"}"
+      item="${item%"${item##*[![:space:]]}"}"
+      [ -n "$item" ] || continue
+      if [[ "$item" != /* ]]; then item="$DEPLOY_DIR/$item"; fi
+      if [ -f "$item" ]; then
+        f_args+=(-f "$item")
+      fi
+    done
+  fi
+  if ((${#f_args[@]} == 0)); then
+    if [ -f "$DEPLOY_DIR/docker-compose.yml" ]; then f_args+=(-f "$DEPLOY_DIR/docker-compose.yml"); fi
+    if [ -f "$DEPLOY_DIR/docker-compose.override.yml" ]; then f_args+=(-f "$DEPLOY_DIR/docker-compose.override.yml"); fi
+  fi
+  env -u COMPOSE_PROJECT_NAME -u COMPOSE_FILE \
+    ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker compose \
+    --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" \
+    "${f_args[@]+"${f_args[@]}"}" config 2>/dev/null
+}
+
 # Reads resolved image reference for service $svc from Compose config YAML.
 compose_service_image() {
   local config_out="$1" target_svc="$2" line section='' in_svc=0 raw=''
@@ -1441,11 +1583,12 @@ compose_service_image() {
   return 1
 }
 
-# Inspects local image metadata for default ENV PGDATA (empty if unavailable or unset).
+# Inspects local image metadata for default ENV PGDATA.
+# Returns: 0 = ENV PGDATA found (prints value), 1 = image inspected without ENV PGDATA, 2 = inspect failed or image absent (#3972).
 image_env_pgdata() {
   local img="$1" env_out line found=0 raw=''
-  [ -n "$img" ] || return 1
-  env_out="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$img" 2>/dev/null)" || return 1
+  [ -n "$img" ] || return 2
+  env_out="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$img" 2>/dev/null)" || return 2
   while IFS= read -r line; do
     line="${line%$'\r'}"
     case "$line" in
@@ -1454,6 +1597,24 @@ image_env_pgdata() {
   done <<<"$env_out"
   ((found)) || return 1
   printf '%s' "$raw"
+}
+
+# Pulls a compose service image into temporary credentials (when configured) so ENV PGDATA can be inspected (#3972).
+pull_image_for_inspect() {
+  local img="$1" rc=0
+  [ -n "$img" ] || return 1
+  if [ -n "${REGISTRY_PASSWORD:-}" ] && [ -n "${REGISTRY:-}" ] && [[ "$img" == "$REGISTRY"/* ]]; then
+    PULL_CONFIG="$(mktemp -d)" || return 1
+    if ! printf '%s' "$REGISTRY_PASSWORD" | DOCKER_CONFIG="$PULL_CONFIG" docker login --username "$REGISTRY_USER" --password-stdin "$REGISTRY" >/dev/null 2>&1; then
+      rc=1
+    elif ! DOCKER_CONFIG="$PULL_CONFIG" docker pull --quiet "$img" >/dev/null 2>&1; then
+      rc=1
+    fi
+    rm -rf "$PULL_CONFIG"
+    PULL_CONFIG=''
+    return "$rc"
+  fi
+  docker pull --quiet "$img" >/dev/null 2>&1
 }
 
 # Returns 0 with the first nested target path under /var/lib/postgresql/data/* mounted on service db (#3972).
@@ -1500,15 +1661,28 @@ compose_nested_db_mount() {
 }
 
 # Resolves normalized PGDATA subpath under /var/lib/postgresql/data from service $svc (or its image ENV PGDATA).
+# Returns 0 on valid path, 1 on invalid PGDATA path outside /var/lib/postgresql/data, 2 when image metadata cannot be inspected (#3972).
 compose_service_pgdata_subpath() {
-  local config_out="$1" svc="$2" pg='' img=''
+  local config_out="$1" svc="$2" allow_pull="${3:-0}" pg='' img='' rc=0
   pg="$(compose_service_env_value "$config_out" "$svc" PGDATA 2>/dev/null || true)"
   if [ -z "$pg" ]; then
     if img="$(compose_service_image "$config_out" "$svc" 2>/dev/null)" && [ -n "$img" ]; then
-      pg="$(image_env_pgdata "$img" 2>/dev/null || true)"
+      rc=0
+      pg="$(image_env_pgdata "$img" 2>/dev/null)" || rc=$?
+      if ((rc == 2)) && [ "$allow_pull" = 1 ]; then
+        if pull_image_for_inspect "$img"; then
+          rc=0
+          pg="$(image_env_pgdata "$img" 2>/dev/null)" || rc=$?
+        fi
+      fi
+      if ((rc == 2)); then
+        return 2
+      elif ((rc == 1)); then
+        pg=''
+      fi
     fi
   fi
-  normalize_pgdata_subpath "$pg"
+  normalize_pgdata_subpath "$pg" || return 1
 }
 
 # Returns 0 if a compose YAML file defines service $svc under top-level services.
@@ -2089,7 +2263,7 @@ resolve_prev_pgdata_sub() {
       return 0
     fi
   fi
-  compose_service_pgdata_subpath "$prev_config" db
+  compose_service_pgdata_subpath "$prev_config" db 0
 }
 
 # Resolves prior mount spec(s) using runtime/persisted overrides (when $use_overrides=1) before per-service compose inspection (#3972).
@@ -2117,13 +2291,18 @@ resolve_prev_mount_specs() {
 
 # Verifies new Compose layout constraints (no nested PGDATA mounts, valid PGDATA, no subpaths, aligned api/worker mounts) (#3972).
 check_new_storage_layout() {
-  local new_config="$1" active_proj="$2" new_db="$3" name="$4" current="$5" nested_db='' new_pgdata_sub='' target svc m api_has worker_has api_m worker_m is_local=0
+  local new_config="$1" active_proj="$2" new_db="$3" name="$4" current="$5" nested_db='' new_pgdata_sub='' new_pg_rc=0 target svc m api_has worker_has api_m worker_m is_local=0
   if nested_db="$(compose_nested_db_mount "$new_config")"; then
     restore_pre_activate "$current"
     record "deploy $name failed: nested mount under /var/lib/postgresql/data ($nested_db)"
     die "$EXIT_FAILED" "unsupported nested mount at $nested_db under /var/lib/postgresql/data; mount a single volume or bind path at /var/lib/postgresql/data before deploying"
   fi
-  if ! new_pgdata_sub="$(compose_service_pgdata_subpath "$new_config" db)"; then
+  new_pgdata_sub="$(compose_service_pgdata_subpath "$new_config" db 1)" || new_pg_rc=$?
+  if ((new_pg_rc == 2)); then
+    restore_pre_activate "$current"
+    record "deploy $name failed: cannot inspect target db image PGDATA"
+    die "$EXIT_FAILED" "cannot inspect target db image metadata to determine PGDATA in project $active_proj; pull the db image or set PGDATA explicitly in compose before deploying"
+  elif ((new_pg_rc != 0)); then
     restore_pre_activate "$current"
     record "deploy $name failed: invalid db PGDATA path"
     die "$EXIT_FAILED" "service db sets an unsupported PGDATA path outside /var/lib/postgresql/data in project $active_proj"
@@ -2156,7 +2335,7 @@ check_new_storage_layout() {
 # Verifies prior DB isolation, cluster parity, and persistent mount parity before starting new DB (#3972).
 verify_storage_cutover() {
   local prev_config="$1" prev_proj="$2" new_config="$3" active_proj="$4" new_db="$5" image="$6" name="$7" current="$8" use_overrides="${9:-1}"
-  local nested_prev_db='' prev_pgdata_sub='' new_pgdata_sub='' cfg_prev_db='' prev_db_specs='' prev_db='' src_rc=0 dst_rc=0 free_rc=0 target svc cfg_prev_m prev_specs prev_m new_specs new_m
+  local nested_prev_db='' prev_pgdata_sub='' new_pgdata_sub='' prev_pg_rc=0 new_pg_rc=0 cfg_prev_db='' prev_db_specs='' prev_db='' src_rc=0 dst_rc=0 free_rc=0 target svc cfg_prev_m prev_specs prev_m new_specs new_m
   if nested_prev_db="$(compose_nested_db_mount "$prev_config")"; then
     restore_pre_activate "$current"
     record "deploy $name failed: prior nested mount under /var/lib/postgresql/data ($nested_prev_db)"
@@ -2167,12 +2346,22 @@ verify_storage_cutover() {
     record "deploy $name failed: running container has nested mount under /var/lib/postgresql/data ($PREV_CTR_NESTED_DB)"
     die "$EXIT_FAILED" "unsupported nested mount at $PREV_CTR_NESTED_DB under /var/lib/postgresql/data on existing container; consolidate onto a single /var/lib/postgresql/data mount before deploying"
   fi
-  if ! prev_pgdata_sub="$(resolve_prev_pgdata_sub "$prev_config" "$use_overrides")"; then
+  prev_pgdata_sub="$(resolve_prev_pgdata_sub "$prev_config" "$use_overrides")" || prev_pg_rc=$?
+  if ((prev_pg_rc == 2)); then
+    restore_pre_activate "$current"
+    record "deploy $name failed: cannot inspect prior db image PGDATA"
+    die "$EXIT_FAILED" "cannot inspect prior db image metadata to determine PGDATA in project $prev_proj; pull the db image or set PGDATA explicitly in compose before deploying"
+  elif ((prev_pg_rc != 0)); then
     restore_pre_activate "$current"
     record "deploy $name failed: invalid prior db PGDATA path"
     die "$EXIT_FAILED" "prior db service sets an unsupported PGDATA path outside /var/lib/postgresql/data in project $prev_proj"
   fi
-  if ! new_pgdata_sub="$(compose_service_pgdata_subpath "$new_config" db)"; then
+  new_pgdata_sub="$(compose_service_pgdata_subpath "$new_config" db 0)" || new_pg_rc=$?
+  if ((new_pg_rc == 2)); then
+    restore_pre_activate "$current"
+    record "deploy $name failed: cannot inspect target db image PGDATA"
+    die "$EXIT_FAILED" "cannot inspect target db image metadata to determine PGDATA in project $active_proj; pull the db image or set PGDATA explicitly in compose before deploying"
+  elif ((new_pg_rc != 0)); then
     restore_pre_activate "$current"
     record "deploy $name failed: invalid new db PGDATA path"
     die "$EXIT_FAILED" "service db sets an unsupported PGDATA path outside /var/lib/postgresql/data in project $active_proj"
@@ -3422,13 +3611,18 @@ do_deploy() {
   # The build time the image carries, which orders the rolls (#1965).
   printf 'BUILD_EPOCH=%s\n' "$(image_build_epoch "$image")" >>"$dir/release.env"
 
-  local prev_config='' prev_proj='' prev_proj_override='' prev_yaml_name='' alt_prev_config=''
+  local prev_config='' prev_proj='' prev_proj_override='' prev_yaml_name='' alt_prev_config='' prev_compose_file='' have_prev_storage=0
   if [ -f "$DEPLOY_DIR/docker-compose.yml" ]; then
-    if ! prev_proj_override="$(detect_prev_project)"; then
-      record "deploy $name failed: pre-deploy container inspection"
-      die "$EXIT_FAILED" "cannot inspect existing Docker containers for $DEPLOY_DIR before activating $release; nothing was changed"
-    fi
-    if ! prev_config="$(dc_prev_config_for_release "$current" "$prev_proj_override")" || [ -z "$prev_config" ]; then
+    prev_compose_file="$DEPLOY_DIR/docker-compose.yml"
+  elif [ -n "$current" ] && [ -f "$DEPLOY_DIR/releases/$current/docker-compose.yml" ]; then
+    prev_compose_file="$DEPLOY_DIR/releases/$current/docker-compose.yml"
+  fi
+  if ! prev_proj_override="$(detect_prev_project)"; then
+    record "deploy $name failed: pre-deploy container inspection"
+    die "$EXIT_FAILED" "cannot inspect existing Docker containers for $DEPLOY_DIR before activating $release; nothing was changed"
+  fi
+  if [ -n "$prev_compose_file" ]; then
+    if ! prev_config="$(dc_prev_config_for_release "$current" "$prev_proj_override" "$prev_compose_file")" || [ -z "$prev_config" ]; then
       record "deploy $name failed: pre-deploy compose config"
       die "$EXIT_FAILED" "cannot inspect existing compose configuration in $DEPLOY_DIR before activating $release; nothing was changed"
     fi
@@ -3440,22 +3634,34 @@ do_deploy() {
       record "deploy $name failed: pre-deploy mount inspection"
       die "$EXIT_FAILED" "cannot inspect mounts on existing Docker containers for $DEPLOY_DIR before activating $release; nothing was changed"
     fi
+    have_prev_storage=1
     if [ -z "$prev_proj_override" ]; then
-      prev_yaml_name="$(sed -n -E 's/\r$//; s/[[:space:]]+#.*$//; s/^name:[[:space:]]*//p' "$DEPLOY_DIR/docker-compose.yml" | head -n 1 || true)"
-      prev_yaml_name="${prev_yaml_name#"${prev_yaml_name%%[![:space:]]*}"}"
-      prev_yaml_name="${prev_yaml_name%"${prev_yaml_name##*[![:space:]]}"}"
-      case "$prev_yaml_name" in
-        \"*\") prev_yaml_name="${prev_yaml_name#\"}"; prev_yaml_name="${prev_yaml_name%\"}" ;;
-        \'*\') prev_yaml_name="${prev_yaml_name#\'}"; prev_yaml_name="${prev_yaml_name%\'}" ;;
-      esac
+      prev_yaml_name="$(compose_file_yaml_name "$prev_compose_file")"
       [[ "$prev_yaml_name" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || prev_yaml_name=''
       if [ -n "$prev_yaml_name" ] && [ "$prev_yaml_name" != "$prev_proj" ]; then
-        if ! alt_prev_config="$(dc_prev_config_for_release "$current" "$prev_yaml_name")" || [ -z "$alt_prev_config" ]; then
+        if ! alt_prev_config="$(dc_prev_config_for_release "$current" "$prev_yaml_name" "$prev_compose_file")" || [ -z "$alt_prev_config" ]; then
           record "deploy $name failed: pre-deploy compose config ($prev_yaml_name)"
           die "$EXIT_FAILED" "cannot inspect existing compose configuration for project $prev_yaml_name in $DEPLOY_DIR before activating $release; nothing was changed"
         fi
       else
         prev_yaml_name=''
+      fi
+    fi
+  else
+    if ! detect_prev_container_mounts "$prev_proj_override"; then
+      record "deploy $name failed: pre-deploy mount inspection"
+      die "$EXIT_FAILED" "cannot inspect mounts on existing Docker containers for $DEPLOY_DIR before activating $release; nothing was changed"
+    fi
+    if [ -n "$current" ] || [ -n "$prev_proj_override" ] || [ -s "$(state_dir)/mounts" ] || [ -n "$PREV_CTR_DB$PREV_CTR_FILES$PREV_CTR_KEYS$PREV_CTR_ARCHIVE$PREV_CTR_NESTED_DB" ]; then
+      if [ -n "$PREV_CTR_NESTED_DB" ]; then
+        record "deploy $name failed: running container has nested mount under /var/lib/postgresql/data ($PREV_CTR_NESTED_DB)"
+        die "$EXIT_FAILED" "unsupported nested mount at $PREV_CTR_NESTED_DB under /var/lib/postgresql/data on existing container; consolidate onto a single /var/lib/postgresql/data mount before deploying"
+      elif [ -n "$PREV_CTR_DB" ] || [ -n "$(saved_mount_for /var/lib/postgresql/data)" ]; then
+        prev_proj="$prev_proj_override"
+        have_prev_storage=1
+      else
+        record "deploy $name failed: missing docker-compose.yml with prior deploy state"
+        die "$EXIT_FAILED" "found prior deploy state in $DEPLOY_DIR without docker-compose.yml or recorded database storage mounts; restore docker-compose.yml before deploying"
       fi
     fi
   fi
@@ -3480,8 +3686,8 @@ do_deploy() {
   local new_db='' new_db_free_rc=0 new_db_exists_rc=0
   new_db="$(compose_target_mount "$new_config" "$active_proj" /var/lib/postgresql/data 'db')"
   check_new_storage_layout "$new_config" "$active_proj" "$new_db" "$name" "$current"
-  if [ -n "$prev_config" ] && [ -n "$prev_proj" ]; then
-    verify_storage_cutover "$prev_config" "$prev_proj" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current" 1
+  if ((have_prev_storage)); then
+    verify_storage_cutover "$prev_config" "${prev_proj:-unknown}" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current" 1
   fi
   if [ -n "$alt_prev_config" ] && [ -n "$prev_yaml_name" ]; then
     verify_storage_cutover "$alt_prev_config" "$prev_yaml_name" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current" 0
@@ -3512,16 +3718,13 @@ do_deploy() {
     fi
   fi
 
+  clear_pre_activate_snap
   log 'starting the database'
   if ! up db; then
     if [ -n "$prev_proj" ]; then COMPOSE_PROJECT_OVERRIDE="$prev_proj"; fi
     recover "$current" "deploy $name (database)" "$name"
   fi
   COMPOSE_PROJECT_OVERRIDE="$active_proj"
-  if [ -n "${PRE_ACTIVATE_SNAP:-}" ]; then
-    rm -rf "$PRE_ACTIVATE_SNAP"
-    PRE_ACTIVATE_SNAP=''
-  fi
   # The production steps of #1822 and #1750 (docs/runbooks/deploy.md), on the host, with the database up and before
   # `migrate`, which installs the key: make the context token key when the env file has none, and count the plain
   # idempotency rows (this one never fails the deploy).
@@ -3587,7 +3790,7 @@ do_deploy() {
   saved_files="$(compose_active_target_mounts "$new_config" "$active_proj" /data/files 'ludy crove api worker')"
   saved_keys="$(compose_active_target_mounts "$new_config" "$active_proj" /data/keys 'ludy crove api worker')"
   saved_archive="$(compose_active_target_mounts "$new_config" "$active_proj" /data/archive 'ludy crove api worker')"
-  new_pgdata_sub="$(compose_service_pgdata_subpath "$new_config" db || true)"
+  new_pgdata_sub="$(compose_service_pgdata_subpath "$new_config" db 0 || true)"
   write_saved_mounts "$new_db" "$saved_files" "$saved_keys" "$saved_archive" "$new_pgdata_sub"
   # A rollback from this release puts the env file back only when this deploy is the one that changed it.
   # (A deploy of the same release again, that changed nothing, keeps the record: that release is still the one that wrote them.)
@@ -3647,19 +3850,42 @@ do_rollback() {
     fi
   fi
   if [ -n "$rollback_proj" ]; then COMPOSE_PROJECT_OVERRIDE="$rollback_proj"; fi
-  if [ -n "$rollback_proj" ] && plain_compose_omits_override_and_project; then
-    if [ "$(compose_file_yaml_name "$DEPLOY_DIR/releases/$previous/docker-compose.yml")" != "$rollback_proj" ]; then
-      die "$EXIT_USAGE" "cannot roll back to $previous on project $rollback_proj: COMPOSE_FILE in $ENV_FILE omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME, so plain docker compose would switch projects after rollback; add docker-compose.override.yml to COMPOSE_FILE or set COMPOSE_PROJECT_NAME=$rollback_proj in $ENV_FILE first"
-    fi
+  if [ -n "$rollback_proj" ] && ! check_rollback_plain_project "$rollback_proj" "$DEPLOY_DIR/releases/$previous/docker-compose.yml" "$previous"; then
+    die "$EXIT_USAGE" "$ROLLBACK_PROJ_ERR"
   fi
   restore_env_of "$current"
+  if [ -n "$rollback_proj" ] && ! check_rollback_plain_project "$rollback_proj" "$DEPLOY_DIR/releases/$previous/docker-compose.yml" "$previous"; then
+    if ! undo_env_restore; then
+      record "rollback to $previous failed: restored env project mismatch, and putting $ENV_FILE back failed"
+      die "$EXIT_ROLLBACK_FAILED" "restored $ENV_FILE conflicts with rollback project $rollback_proj and putting $ENV_FILE back failed: the instance needs an operator"
+    fi
+    die "$EXIT_USAGE" "$ROLLBACK_PROJ_ERR"
+  fi
   # The images are normally still on the host. Pull them again (by digest, so nothing else can arrive) in case
   # they were pruned; without registry credentials a private image that is gone cannot come back.
   if ! pull_images "$(release_field "$previous" IMAGE)" "$(release_field "$previous" EXTRACT_IMAGE)" "$(release_field "$previous" MEDIA_IMAGE)" "$REGISTRY" "$REGISTRY_USER" "$REGISTRY_PASSWORD"; then
     log 'pulling the previous images failed; trying with the images on the host'
   fi
+  snapshot_pre_activate "$current" || {
+    undo_env_restore || die "$EXIT_ROLLBACK_FAILED" "cannot snapshot pre-rollback compose files and putting $ENV_FILE back failed: the instance needs an operator"
+    record "rollback to $previous failed: snapshot"
+    die "$EXIT_FAILED" 'cannot snapshot pre-rollback compose files; nothing running was changed'
+  }
   # Usually toward an older build, the API first; back to a newer one (a second rollback), the worker first (#1965).
   activate "$previous"
+  if [ -n "$rollback_proj" ]; then
+    local plain_cfg='' plain_proj=''
+    if ! plain_cfg="$(plain_compose_config)" || ! plain_proj="$(compose_project_from_yaml "$plain_cfg")" || [ "$plain_proj" != "$rollback_proj" ]; then
+      restore_pre_activate "$current" || true
+      if ! undo_env_restore; then
+        record "rollback to $previous failed: plain project mismatch (${plain_proj:-unknown}), and putting $ENV_FILE back failed"
+        die "$EXIT_ROLLBACK_FAILED" "plain docker compose resolves to '${plain_proj:-unknown}' instead of $rollback_proj and putting $ENV_FILE back failed: the instance needs an operator"
+      fi
+      record "rollback to $previous failed: plain docker compose project '${plain_proj:-unknown}' != '$rollback_proj'"
+      die "$EXIT_USAGE" "cannot roll back to $previous on project $rollback_proj: plain docker compose resolves to project '${plain_proj:-unknown}' after activating $previous; align COMPOSE_PROJECT_NAME and COMPOSE_FILE in $ENV_FILE first"
+    fi
+  fi
+  clear_pre_activate_snap
   if ! roll_services "$(direction_to "$previous" "$current")"; then
     recover "$current" "rollback to $previous" "$previous"
   fi

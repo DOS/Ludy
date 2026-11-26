@@ -605,7 +605,8 @@ eval_dotenv_state() {
     set -euo pipefail
     local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$'
     local lineno=0 line key rhs seen_keys='' i
-    __DE_EXPORTED_NAMES="$(env | sed -n -E 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p')"
+    [ -r "$1" ] || exit 1
+    __DE_EXPORTED_NAMES="$(env | sed -n -E 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p')" || exit 1
     while IFS= read -r line || [ -n "$line" ]; do
       lineno=$((lineno + 1))
       line="${line%$'\r'}"
@@ -613,9 +614,9 @@ eval_dotenv_state() {
       [[ "$line" =~ $assign_re ]] || continue
       key="${BASH_REMATCH[2]}"
       rhs="${BASH_REMATCH[3]}"
-      dotenv_parse_rhs "$rhs" "$src_path" "$lineno" "$key"
-      printf -v "__DE_S_${key}" '%s' 1
-      printf -v "__DE_V_${key}" '%s' "$DOTENV_REPLY"
+      dotenv_parse_rhs "$rhs" "$src_path" "$lineno" "$key" || exit 1
+      printf -v "__DE_S_${key}" '%s' 1 || exit 1
+      printf -v "__DE_V_${key}" '%s' "$DOTENV_REPLY" || exit 1
       if [ "$key" != COMPOSE_PROJECT_NAME ] && ! key_map_index "$key" >/dev/null && ! target_map_index "$key" >/dev/null; then
         case $'\n'"$seen_keys"$'\n' in
           *$'\n'"$key"$'\n'*) ;;
@@ -627,7 +628,7 @@ eval_dotenv_state() {
     for ((i = 0; i < ${#CROVE_NEW_KEYS[@]}; i++)); do
       local new_k="${CROVE_NEW_KEYS[$i]}" old_k="${CROVE_OLD_KEYS[$i]}"
       local ns_ref="__DE_S_${new_k}" nv_ref="__DE_V_${new_k}" os_ref="__DE_S_${old_k}" ov_ref="__DE_V_${old_k}"
-      local n_val='' o_val='' n_eff=0 o_eff=0 eff_nonempty=0 eff_val='' eff_hash
+      local n_val='' o_val='' n_eff=0 o_eff=0 eff_nonempty=0 eff_val='' eff_hash=''
       if [ "${!ns_ref-0}" = 1 ]; then
         n_val="${!nv_ref-}"
         if [ -n "$n_val" ]; then n_eff=1; fi
@@ -643,19 +644,21 @@ eval_dotenv_state() {
         eff_val="$o_val"
         eff_nonempty=1
       fi
-      eff_hash="$(printf '%s' "$eff_val" | hash_stdin_sha256)"
+      eff_hash="$(printf '%s' "$eff_val" | hash_stdin_sha256)" || exit 1
+      [ -n "$eff_hash" ] || exit 1
       printf 'P|%s|%s|%s|%s|%s\n' "$i" "$n_eff" "$o_eff" "$eff_nonempty" "$eff_hash"
     done
 
     while IFS= read -r key; do
       [ -n "$key" ] || continue
-      local kv_ref="__DE_V_${key}" val='' norm_val hash
+      local kv_ref="__DE_V_${key}" val='' norm_val='' hash=''
       val="${!kv_ref-}"
       norm_val="$val"
       if ((normalize_urls)); then
-        norm_val="$(rewrite_db_url_rhs "$key" "$val")"
+        norm_val="$(rewrite_db_url_rhs "$key" "$val")" || exit 1
       fi
-      hash="$(printf '%s' "$norm_val" | hash_stdin_sha256)"
+      hash="$(printf '%s' "$norm_val" | hash_stdin_sha256)" || exit 1
+      [ -n "$hash" ] || exit 1
       printf 'K|%s|%s\n' "$key" "$hash"
     done <<<"$seen_keys"
   )
@@ -772,7 +775,7 @@ rewrite_env_file() {
   while IFS='|' read -r s_kind s_f1 s_f2 s_f3 s_f4 s_f5; do
     case "$s_kind" in
       P)
-        if ((pre_eff_nonempty[s_f1] == 1)) && { ((s_f2 == 0)) || [ "$s_f5" != "${pre_pair_hash[$s_f1]}" ]; }; then
+        if ((s_f2 != pre_eff_nonempty[s_f1])) || ((s_f3 != 0)) || [ "$s_f5" != "${pre_pair_hash[$s_f1]}" ]; then
           die "$EXIT_FAILED" "env rewrite would alter effective Compose value for ${CROVE_NEW_KEYS[$s_f1]} (check variable references to ${CROVE_OLD_KEYS[$s_f1]} or indirect defaults)"
         fi
         ;;

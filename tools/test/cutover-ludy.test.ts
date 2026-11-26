@@ -890,5 +890,20 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(croveSvcMounts).toContain('/data/files=volume:ludy_files');
     expect(croveSvcMounts).toContain('/data/keys=volume:ludy_keys');
     expect(croveSvcMounts).toContain('/data/archive=volume:ludy_archive');
+
+    // 7) Unclosed quote mid-file (followed by valid lines) and empty -> non-empty drift fail closed even under Bash `||` set -e suppression (#3972 Round 13).
+    const unclosedIn = join(work, '.env.unclosed.in');
+    const unclosedOut = join(work, '.env.unclosed.out');
+    writeFileSync(unclosedIn, 'BAD="unclosed\nOK_AFTER=still-valid\n');
+    const rUnclosed = spawnSync('bash', [scriptPath, 'rewrite-env', unclosedIn, unclosedOut], { encoding: 'utf8' });
+    expect(rUnclosed.status).not.toBe(0);
+    expect(rUnclosed.stderr).toContain('unclosed double quote');
+
+    const emptyToNonEmptyIn = join(work, '.env.empty-to-nonempty.in');
+    const emptyToNonEmptyOut = join(work, '.env.empty-to-nonempty.out');
+    writeFileSync(emptyToNonEmptyIn, 'CROVE_DOMAIN=app.example.test\nLUDY_MODULES=${LUDY_DOMAIN:+social}\n');
+    const rDrift = spawnSync('bash', [scriptPath, 'rewrite-env', emptyToNonEmptyIn, emptyToNonEmptyOut], { encoding: 'utf8' });
+    expect(rDrift.status).not.toBe(0);
+    expect(rDrift.stderr).toContain('LUDY_MODULES');
   });
 });

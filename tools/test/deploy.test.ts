@@ -750,8 +750,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     const back = run(['rollback'], { STUB_LOG_PROJECT: '1' });
     expect(back.status, back.out).toBe(0);
     const rollbackProjects = readFileSync(`${log}.project`, 'utf8').split('\n').filter(Boolean);
-    expect(rollbackProjects.length).toBeGreaterThan(0);
-    expect(rollbackProjects.every((l) => l.startsWith('project ludy '))).toBe(true);
+    expect(rollbackProjects.some((l) => l === 'project ludy up' || l === 'project ludy port')).toBe(true);
+    expect(rollbackProjects.filter((l) => l !== 'project  config').every((l) => l.startsWith('project ludy '))).toBe(true);
     expect(running()).toContain('name: ludy');
 
     // Plain `docker compose config` (without -p or COMPOSE_PROJECT_NAME in .env) stays on project ludy after rollback.
@@ -1008,6 +1008,137 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
     expect(imgPgdataOk.status, imgPgdataOk.out).toBe(0);
     expect(readFileSync(`${dir}/.deploy/mounts`, 'utf8')).toContain('PGDATA_SUB=pgdata');
+
+    // Missing $DEPLOY_DIR/docker-compose.yml still verifies prior storage via staged release, .deploy/mounts, or containers (#3972 Round 13).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    expect(deploy('v1.0.0', 'a', { STUB_VOLUMES: 'ludy_db-data' }).status).toBe(0);
+    const croveRelCompose = `${root}/crove-prev.yml`;
+    writeFileSync(croveRelCompose, 'name: crove\nservices: {}\n');
+    const prevRelName = releaseDir('v1.0.0', 'a');
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/.deploy/project`, 'crove\n');
+    writeFileSync(`${dir}/.deploy/mounts`, '/var/lib/postgresql/data=volume:crove_db-data\nPGDATA_SUB=\n');
+    writeFileSync(`${dir}/releases/${prevRelName}/docker-compose.yml`, readFileSync(croveRelCompose, 'utf8'));
+    const missingRootViaRel = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1',
+    });
+    expect(missingRootViaRel.status, missingRootViaRel.out).toBe(1);
+    expect(missingRootViaRel.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    // Missing both root and release compose files still blocks via .deploy/mounts, via containers, or fails closed if mounts missing.
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    rmSync(`${dir}/releases/${prevRelName}/docker-compose.yml`, { force: true });
+    const missingComposeViaMounts = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1',
+    });
+    expect(missingComposeViaMounts.status, missingComposeViaMounts.out).toBe(1);
+    expect(missingComposeViaMounts.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    rmSync(`${dir}/.deploy/mounts`, { force: true });
+    rmSync(`${dir}/.deploy/current`, { force: true });
+    const missingComposeNoMounts = deploy('v1.1.0', 'b');
+    expect(missingComposeNoMounts.status, missingComposeNoMounts.out).toBe(1);
+    expect(missingComposeNoMounts.out).toContain('without docker-compose.yml or recorded database storage mounts');
+
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const missingComposeViaCtr = deploy('v1.0.0', 'a', {
+      STUB_WORKDIR_CONTAINERS: `${dir}|db|crove-db-1`,
+      STUB_INSPECT_MOUNTS: 'crove-db-1|crove|volume|crove_db-data||/var/lib/postgresql/data',
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1',
+    });
+    expect(missingComposeViaCtr.status, missingComposeViaCtr.out).toBe(1);
+    expect(missingComposeViaCtr.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    // Unpulled target db image fails closed when inspect+pull fail, and pulls + reads ENV PGDATA when pull succeeds (#3972 Round 13).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const unpulledFail = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_IMAGE: 'unpulled-pg:17',
+      STUB_IMAGE_INSPECT_FAIL: 'unpulled-pg:17',
+      STUB_PULL_FAIL_IMAGES: 'unpulled-pg:17',
+    });
+    expect(unpulledFail.status, unpulledFail.out).toBe(1);
+    expect(unpulledFail.out).toContain('cannot inspect target db image metadata to determine PGDATA');
+
+    const unpulledPulled = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_IMAGE: 'unpulled-pg:17',
+      STUB_IMAGE_INSPECT_FAIL: 'unpulled-pg:17',
+      STUB_PULL_RESOLVES_IMAGE_INSPECT: '1',
+      STUB_IMAGE_PGDATA: 'unpulled-pg:17=/var/lib/postgresql/data/pg17custom',
+    });
+    expect(unpulledPulled.status, unpulledPulled.out).toBe(0);
+    expect(readFileSync(`${dir}/.deploy/mounts`, 'utf8')).toContain('PGDATA_SUB=pg17custom');
+
+    // Rollback fails closed if .env or an override file sets a conflicting project for plain docker compose (#3972 Round 13).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+    expect(deploy('v1.0.0', 'a').status).toBe(0);
+    expect(deploy('v1.1.0', 'b').status).toBe(0);
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=crove\n');
+    const rbEnvConflict = run(['rollback']);
+    expect(rbEnvConflict.status, rbEnvConflict.out).toBe(2);
+    expect(rbEnvConflict.out).toContain('sets COMPOSE_PROJECT_NAME=crove');
+
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:compose.host.yml\n');
+    writeFileSync(`${dir}/compose.host.yml`, 'name: crove\nservices: {}\n');
+    const rbHostConflict = run(['rollback']);
+    expect(rbHostConflict.status, rbHostConflict.out).toBe(2);
+    expect(rbHostConflict.out).toContain("resolves plain docker compose to project 'crove'");
+    rmSync(`${dir}/compose.host.yml`, { force: true });
+
+    // SIGTERM after activate during pre-up-db checks restores the original compose files via cleanup (#3972 Round 13).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    rmSync(`${dir}/docker-compose.override.yml`, { force: true });
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+    const preSignalCompose = '# pre-deploy sentinel\nname: crove\nservices: {}\n';
+    writeFileSync(`${dir}/docker-compose.yml`, preSignalCompose);
+    const sigBin = `${root}/sigbin`;
+    mkdirSync(sigBin, { recursive: true });
+    writeFileSync(
+      `${sigBin}/docker`,
+      [
+        '#!/usr/bin/env bash',
+        'if [ "${1:-}" = volume ] && [ "${2:-}" = inspect ]; then',
+        '  pid="$(cat "${STUB_DEPLOY_DIR}/.deploy/lock/pid" 2>/dev/null || true)"',
+        '  if [ -n "$pid" ]; then kill -TERM "$pid" 2>/dev/null || true; fi',
+        'fi',
+        `exec "${root}/bin/docker" "$@"`,
+        '',
+      ].join('\n'),
+    );
+    chmodSync(`${sigBin}/docker`, 0o755);
+    const sigRes = spawnSync(
+      'bash',
+      [script, 'deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          PATH: `${sigBin}${delimiter}${join(root, 'bin')}${delimiter}${process.env['PATH'] ?? ''}`,
+          LUDY_DEPLOY_DIR: dir,
+          LUDY_READY_TIMEOUT: '1',
+          LUDY_WORKER_SETTLE: '0',
+          STUB_LOG: log,
+          STUB_DEPLOY_DIR: dir,
+          STUB_OPENSSL_KEY_FILE: `${root}/openssl-key`,
+          STUB_AUTH_ENABLE: '0',
+          STUB_WAIT_TIMEOUT: '1',
+          STUB_VOLUMES: 'crove_db-data',
+        },
+      },
+    );
+    expect(sigRes.status).toBe(143);
+    expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toBe(preSignalCompose);
+    expect(existsSync(`${dir}/docker-compose.override.yml`)).toBe(false);
+    expect(existsSync(`${dir}/.deploy/lock`)).toBe(false);
   });
 
   describe('build check', () => {
@@ -2894,6 +3025,20 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(backEdited.out).toContain('is left as it is');
       expect(envFile()).toBe(edited);
       expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
+
+      // Rollback restores MOD_BEFORE cleanly when restore_env_of would reintroduce a conflicting COMPOSE_PROJECT_NAME (#3972 Round 13).
+      writeFileSync(`${dir}/.env`, MOD_BEFORE);
+      expect(deployModules('v1.3.0', 'd', 'finance,crm,social,sign').status).toBe(0);
+      const beforeConflictEnv = envFile();
+      const backupFields = state('env-backup').split(' ');
+      const backupFilePath = backupFields[1] ?? '';
+      expect(backupFilePath.length).toBeGreaterThan(0);
+      writeFileSync(backupFilePath, `${MOD_BEFORE}COMPOSE_PROJECT_NAME=crove\n`, { mode: 0o600 });
+      const backConflict = run(['rollback']);
+      expect(backConflict.status, backConflict.out).toBe(2);
+      expect(backConflict.out).toContain('sets COMPOSE_PROJECT_NAME=crove');
+      expect(envFile()).toBe(beforeConflictEnv);
+      expect(state('env-backup')).toContain(releaseDir('v1.3.0', 'd'));
     });
 
     it('prunes old env backups when --modules writes .env and stops before pulling if .env is read-only', () => {

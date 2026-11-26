@@ -21,17 +21,37 @@ if [ "${1:-}" = login ]; then
   exit 0
 fi
 if [ "${1:-}" = pull ]; then
-  printf 'pull %s DOCKER_CONFIG=%s\n' "${*: -1}" "${DOCKER_CONFIG:-}" >>"$STUB_LOG"
+  pull_target="${*: -1}"
+  printf 'pull %s DOCKER_CONFIG=%s\n' "$pull_target" "${DOCKER_CONFIG:-}" >>"$STUB_LOG"
   [ -z "${STUB_PULL_FAIL:-}" ] || exit 1
+  for pair in ${STUB_PULL_FAIL_IMAGES:-}; do
+    if [ "$pair" = "$pull_target" ]; then exit 1; fi
+  done
+  printf '%s\n' "$pull_target" >>"$STUB_LOG.pulled"
   exit 0
 fi
 if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
-  printf 'image inspect %s\n' "${*: -1}" >>"$STUB_LOG"
+  inspect_target="${*: -1}"
+  printf 'image inspect %s\n' "$inspect_target" >>"$STUB_LOG"
+  inspect_fail=0
+  for pair in ${STUB_IMAGE_INSPECT_FAIL:-}; do
+    if [ "$pair" = "$inspect_target" ]; then
+      if [ "${STUB_PULL_RESOLVES_IMAGE_INSPECT:-0}" = 1 ] && [ -f "$STUB_LOG.pulled" ] && grep -qx -F -- "$inspect_target" "$STUB_LOG.pulled"; then
+        inspect_fail=0
+      else
+        inspect_fail=1
+      fi
+    fi
+  done
+  if ((inspect_fail)); then
+    echo "Error: No such image: $inspect_target" >&2
+    exit 1
+  fi
   for pair in ${STUB_BUILD_TIMES:-}; do
-    case "${*: -1}" in *"@sha256:${pair%%=*}") printf 'PATH=/usr/bin\nLUDY_BUILD_TIME=%s\n' "${pair#*=}" ;; esac
+    case "$inspect_target" in *"@sha256:${pair%%=*}") printf 'PATH=/usr/bin\nLUDY_BUILD_TIME=%s\n' "${pair#*=}" ;; esac
   done
   for pair in ${STUB_IMAGE_PGDATA:-}; do
-    if [ "${pair%%=*}" = "${*: -1}" ]; then
+    if [ "${pair%%=*}" = "$inspect_target" ]; then
       printf 'PGDATA=%s\n' "${pair#*=}"
     fi
   done
