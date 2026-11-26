@@ -105,11 +105,11 @@ suite('Marketplace push chain (#4364)', () => {
   // the commit. It mirrors that body and does not call it (the send must stay inline in startWorker, where the job-egress invariant has reviewed it), so a change to the loop must be made here too.
   const relay = async () => {
     const tally = { ok: 0, refused: 0, dropped: 0 };
-    const refusedHooks: string[] = [];
+    const refusedHooks: Array<{ hookId: string; generation: number }> = [];
     const adapters = new Set(['tiktok_shop', 'shopee']);
     const claimed = await relayBatch(workerDb, sender, async (trx) => {
       const rows = await claimMarketplaceHookNotices(trx);
-      const verdicts = await verifyMarketplaceHookNotices({ runtime: worker, broker: vault, adapters, reject: async (hookId) => void refusedHooks.push(hookId) }, rows);
+      const verdicts = await verifyMarketplaceHookNotices({ runtime: worker, broker: vault, adapters, reject: async (hookId, generation) => void refusedHooks.push({ hookId, generation }) }, rows);
       const seen = new Set<string>();
       return rows.map((row, i) => {
         const verdict = verdicts[i] ?? 'dropped';
@@ -127,7 +127,7 @@ suite('Marketplace push chain (#4364)', () => {
           });
       });
     });
-    for (const hookId of refusedHooks) await rejectMarketplaceHook(workerDb, hookId);
+    for (const refused of refusedHooks) await rejectMarketplaceHook(workerDb, refused.hookId, refused.generation);
     return { claimed, tally };
   };
   const post = (adapter: string, key: string, body: string, authorization: string, origin = PUBLIC_URL) =>
@@ -307,6 +307,38 @@ suite('Marketplace push chain (#4364)', () => {
     expect(await relay()).toEqual({ claimed: 0, tally: { ok: 0, refused: 0, dropped: 0 } });
     expect(sent).toEqual([]);
     expect(await stored()).toEqual([]);
+  });
+
+  it('binds reject to the hook generation: a bad push claimed before key rotation never counts against the rotated address', async () => {
+    sent.length = 0;
+    // The test above stopped tiktok at generation 1; rotating moves it to generation 2 and accepts pushes again.
+    const gen2 = await api.execute<{ key: string }>('finance.marketplace_connection.push_hook_set', { id: tiktok.connectionId }, { actor: asOwner(), orgId });
+    const badBefore = tiktokBody(300);
+    expect((await post('tiktok_shop', gen2.key, badBefore, tiktokSign(badBefore, 'not-the-secret'))).status).toBe(200);
+    const claimedPreRotation: Array<{ hookId: string; generation: number }> = [];
+    await relayBatch(workerDb, sender, async (trx) => {
+      const batch = await claimMarketplaceHookNotices(trx);
+      const verdicts = await verifyMarketplaceHookNotices(
+        { runtime: worker, broker: vault, adapters: new Set(['tiktok_shop', 'shopee']), reject: async (hookId, generation) => void claimedPreRotation.push({ hookId, generation }) },
+        batch,
+      );
+      expect(verdicts).toEqual(['refused']);
+      return [];
+    });
+    expect(claimedPreRotation).toEqual([{ hookId: tiktok.hookId, generation: 2 }]);
+    // Rotate before the post-commit reject runs: the hook moves to generation 3, and the pre-rotation refusal must not count against it.
+    const gen3 = await api.execute<{ key: string }>('finance.marketplace_connection.push_hook_set', { id: tiktok.connectionId }, { actor: asOwner(), orgId });
+    expect(await rejectMarketplaceHook(workerDb, claimedPreRotation[0]!.hookId, claimedPreRotation[0]!.generation)).toBe(false);
+    expect(await rejected(tiktok.hookId)).toBe(0);
+    // A bad push on the new address IS generation 3 and counts; a good push still polls.
+    const badAfter = tiktokBody(301);
+    expect((await post('tiktok_shop', gen3.key, badAfter, tiktokSign(badAfter, 'not-the-secret'))).status).toBe(200);
+    expect(await relay()).toEqual({ claimed: 1, tally: { ok: 0, refused: 1, dropped: 0 } });
+    expect(await rejected(tiktok.hookId)).toBe(1);
+    const goodAfter = tiktokBody(302);
+    expect((await post('tiktok_shop', gen3.key, goodAfter, tiktokSign(goodAfter))).status).toBe(200);
+    expect(await relay()).toEqual({ claimed: 1, tally: { ok: 1, refused: 0, dropped: 0 } });
+    expect(sent).toHaveLength(1);
   });
 
   // The tests above leave state for the next (rejected counts, the stopped hook, the revoked channel connection), so they run in this order.

@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { kernelCommands, kernelQueries } from '@ludy/kernel';
-import { CredentialVault, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { CredentialVault, mintContextToken, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
@@ -92,6 +92,34 @@ suite('Marketplace push hook (#4316)', () => {
   const rows = <T extends pg.QueryResultRow = Record<string, unknown>>(text: string, values: unknown[] = []) => admin(async (c) => (await c.query<T>(text, values)).rows);
   const asApi = async <T extends pg.QueryResultRow = Record<string, unknown>>(text: string, values: unknown[] = []) => (await pool.query<T>(text, values)).rows;
   const asWorker = async <T extends pg.QueryResultRow = Record<string, unknown>>(text: string, values: unknown[] = []) => (await workerPool.query<T>(text, values)).rows;
+  async function asSealedApp<T extends pg.QueryResultRow = Record<string, unknown>>(
+    who: Account,
+    org: string,
+    text: string,
+    values: unknown[] = [],
+    claims: { aal?: 'aal1' | 'aal2'; mfaAt?: number | null } = {},
+  ) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const ctxToken = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+        userId: who.userId,
+        orgId: org,
+        sessionId: who.session,
+        aal: claims.aal ?? 'aal1',
+        mfaAt: claims.mfaAt ?? null,
+      });
+      await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org, ctxToken]);
+      const res = await client.query<T>(text, values);
+      await client.query('COMMIT');
+      return res.rows;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
   const put = async (hook: string, keyHash: string, dedupe: string, body: Buffer = BODY, requestUrl: string | null = null) =>
     (await asApi<{ put: string }>('SELECT ludy_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5, $6) AS put', [hook, keyHash, dedupe, HEADER, body, requestUrl]))[0]?.put;
   const waiting = async () => rows<{ hook_id: string; dedupe_key: string }>('SELECT hook_id, dedupe_key FROM ludy_finance.marketplace_hook_notice ORDER BY received_at, id');
@@ -219,7 +247,8 @@ suite('Marketplace push hook (#4316)', () => {
       const status = await pushStatus(adminUser);
       expect(status.status).toBe(200);
       for (const secret of [newKey, sha(newKey), address]) expect(JSON.stringify(status.body)).not.toContain(secret);
-      expect(status.body).toMatchObject({ exists: true, stopped: false, rejectedCount: 0 });
+      expect(status.body).toMatchObject({ exists: true, createdAt: expect.any(String), rotatedAt: null, lastSeenAt: null, stopped: false, rejectedCount: 0 });
+      expect((await pushStatus(owner)).status).toBe(200);
       expect((await pushStatus(member)).status).toBe(403);
       // A connection of another org, or one that does not exist, is not found whichever of the two calls asks: the same 404 and code, so an id of another org learns nothing from either.
       for (const id of [otherConnectionId, randomUUID()]) {
@@ -229,17 +258,25 @@ suite('Marketplace push hook (#4316)', () => {
       expect(await pushStatus(outsider)).toMatchObject({ status: 404, body: { code: 'MARKETPLACE_CONNECTION_NOT_FOUND' } });
     });
 
-    it('replaces the address: the old key stops at once, waiting pushes go, and a hook stopped by refused pushes takes pushes again', async () => {
-      const [first] = await rows<{ id: string; key_sha256: string }>('SELECT id, key_sha256 FROM ludy_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
+    it('replaces the address: the old key stops at once, waiting pushes go, stale-generation rejections stay ignored, and a stopped hook takes pushes again', async () => {
+      const [first] = await rows<{ id: string; key_sha256: string; generation: number }>('SELECT id, key_sha256, generation FROM ludy_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
       const hookOfPush = first?.id ?? '';
       const oldHash = first?.key_sha256 ?? '';
+      const gen1 = first?.generation ?? 1;
+      expect(gen1).toBe(1);
       expect(await put(hookOfPush, oldHash, sha('before-rotation'))).toBe('accepted');
-      for (let i = 1; i < 10; i++) expect(await asWorker<{ r: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid) AS r', [hookOfPush])).toEqual([{ r: false }]);
-      expect(await asWorker<{ r: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid) AS r', [hookOfPush])).toEqual([{ r: true }]);
-      expect((await pushStatus(owner)).body).toMatchObject({ stopped: true, rejectedCount: 10 });
+      for (let i = 1; i < 10; i++) expect(await asWorker<{ r: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid, $2::int) AS r', [hookOfPush, gen1])).toEqual([{ r: false }]);
+      expect(await asWorker<{ r: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid, $2::int) AS r', [hookOfPush, gen1])).toEqual([{ r: true }]);
+      expect((await pushStatus(owner)).body).toMatchObject({ stopped: true, rejectedCount: 10, rotatedAt: null });
       const rotated = await pushSet(adminUser);
       expect(rotated.status).toBe(200);
       expect(rotated.body).toMatchObject({ adapter: 'tiktok_shop', created: false });
+      const [afterRotate] = await rows<{ generation: number }>('SELECT generation FROM ludy_finance.marketplace_hook WHERE id = $1', [hookOfPush]);
+      const gen2 = afterRotate?.generation ?? 0;
+      expect(gen2).toBe(gen1 + 1);
+      // A pre-rotation refusal arriving after rotation (generation 1 vs 2) never counts against or stops the rotated address.
+      expect(await asWorker<{ r: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid, $2::int) AS r', [hookOfPush, gen1])).toEqual([{ r: false }]);
+      expect((await pushStatus(owner)).body).toMatchObject({ stopped: false, rejectedCount: 0, rotatedAt: expect.any(String) });
       const newHash = sha(keyOf(String(rotated.body.address)));
       expect(newHash).not.toBe(oldHash);
       expect(await lookupTiktok(oldHash)).toEqual([]);
@@ -248,8 +285,39 @@ suite('Marketplace push hook (#4316)', () => {
       expect((await waiting()).filter((n) => n.hook_id === hookOfPush)).toEqual([]);
       expect(await put(hookOfPush, oldHash, sha('after-rotation'))).toBe('gone');
       expect(await put(hookOfPush, newHash, sha('with-new-key'))).toBe('accepted');
-      expect((await pushStatus(owner)).body).toMatchObject({ stopped: false, rejectedCount: 0 });
+      expect((await pushStatus(owner)).body).toMatchObject({ stopped: false, rejectedCount: 0, rotatedAt: expect.any(String), lastSeenAt: expect.any(String) });
       await rows('DELETE FROM ludy_finance.marketplace_hook_notice WHERE hook_id = $1', [hookOfPush]);
+    });
+
+    it('enforces owner/admin access, cross-org refusal, dates and key-hash exclusion directly on the SQL definers in a sealed context', async () => {
+      const definerKey = randomBytes(16).toString('base64url');
+      const definerHash = sha(definerKey);
+      // Member is refused at the definer boundary too (42501 MARKETPLACE_HOOK_FORBIDDEN).
+      await expect(asSealedApp(member, orgId, 'SELECT ludy_finance.marketplace_hook_set($1::uuid, $2)', [pushConnectionId, definerHash])).rejects.toMatchObject({ code: '42501' });
+      await expect(asSealedApp(member, orgId, 'SELECT * FROM ludy_finance.marketplace_hook_status($1::uuid)', [pushConnectionId])).rejects.toMatchObject({ code: '42501' });
+      // Another org's connection is refused on set and returns no row on status.
+      await expect(asSealedApp(owner, orgId, 'SELECT ludy_finance.marketplace_hook_set($1::uuid, $2)', [otherConnectionId, definerHash])).rejects.toMatchObject({ code: '22023' });
+      expect(await asSealedApp(owner, orgId, 'SELECT * FROM ludy_finance.marketplace_hook_status($1::uuid)', [otherConnectionId])).toEqual([]);
+      // Owner rotates through the definer directly: returns false (rotation), drops waiting pushes and increments generation; status returns dates/counts without key/hash.
+      const [before] = await rows<{ id: string; key_sha256: string; generation: number }>('SELECT id, key_sha256, generation FROM ludy_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
+      expect(await put(before!.id, before!.key_sha256, sha('definer-waiting'))).toBe('accepted');
+      expect(await asSealedApp<{ created: boolean }>(owner, orgId, 'SELECT ludy_finance.marketplace_hook_set($1::uuid, $2) AS created', [pushConnectionId, definerHash])).toEqual([{ created: false }]);
+      expect((await waiting()).filter((n) => n.hook_id === before!.id)).toEqual([]);
+      const [after] = await rows<{ generation: number }>('SELECT generation FROM ludy_finance.marketplace_hook WHERE id = $1', [before!.id]);
+      expect(after?.generation).toBe(before!.generation + 1);
+      const st = await asSealedApp<{ created_at: Date; rotated_at: Date | null; last_seen_at: Date | null; rejected_count: number; stopped: boolean }>(
+        adminUser,
+        orgId,
+        'SELECT * FROM ludy_finance.marketplace_hook_status($1::uuid)',
+        [pushConnectionId],
+      );
+      expect(st).toHaveLength(1);
+      expect(st[0]).toMatchObject({ rejected_count: 0, stopped: false });
+      expect(st[0]?.created_at).toBeTruthy();
+      expect(st[0]?.rotated_at).toBeTruthy();
+      expect(Object.keys(st[0] ?? {}).sort()).toEqual(['created_at', 'last_seen_at', 'rejected_count', 'rotated_at', 'stopped']);
+      expect(JSON.stringify(st)).not.toContain(definerKey);
+      expect(JSON.stringify(st)).not.toContain(definerHash);
     });
 
     it('refuses an adapter that takes no push, and a call that carries an idempotency key (the key would be replayed from the stored answer)', async () => {
@@ -315,36 +383,51 @@ suite('Marketplace push hook (#4316)', () => {
     await expect(workerPool.query("SELECT * FROM ludy_finance.marketplace_hook_lookup('shopee', $1)", ['0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
     await expect(workerPool.query('SELECT ludy_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5, $6)', [randomUUID(), '0'.repeat(64), '0'.repeat(64), 'a', Buffer.from('b'), null])).rejects.toMatchObject({ code: '42501' });
     await expect(pool.query('SELECT * FROM ludy_finance.marketplace_hook_claim(10)')).rejects.toMatchObject({ code: '42501' });
-    await expect(pool.query('SELECT ludy_finance.marketplace_hook_reject($1::uuid)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query('SELECT ludy_finance.marketplace_hook_reject($1::uuid, 1)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
     await expect(pool.query('SELECT ludy_finance.marketplace_hook_sweep()')).rejects.toMatchObject({ code: '42501' });
+    expect(await rows<{ oid: string | null }>("SELECT to_regprocedure('ludy_finance.marketplace_hook_reject(uuid)') AS oid")).toEqual([{ oid: null }]);
     // The owner's side needs a sealed context of an owner or admin: with none, even the API login is refused.
     await expect(pool.query('SELECT ludy_finance.marketplace_hook_set($1::uuid, $2)', [connectionId, '0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
     await expect(pool.query('SELECT * FROM ludy_finance.marketplace_hook_status($1::uuid)', [connectionId])).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query("SELECT ludy_finance.personal_data_erase_marketplace_hook_notice('email', 'x@example.test')")).rejects.toMatchObject({ code: '42501' });
+    await expect(workerPool.query("SELECT ludy_finance.personal_data_erase_marketplace_hook_notice('email', 'x@example.test')")).rejects.toMatchObject({ code: '42501' });
   });
 
-  it('claims the waiting pushes with their bytes and deletes them as it hands them out, one push for each org', async () => {
+  it('claims the waiting pushes with their bytes and deletes them as it hands them out, one push for each org, keeping request_url for Shopee alone', async () => {
     const URL_SIGNED = 'https://example.test/api/marketplace/shopee/webhook/the-key-in-the-address';
-    // A TikTok Shop hook is sent an address too (a wrong or careless caller): it is dropped, because only Shopee signs the address. The Shopee hook keeps its own.
+    const lazadaChannel = randomUUID();
+    const lazadaConnection = randomUUID();
+    const lazadaKey = randomBytes(16).toString('base64url');
+    await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'marketplace_lazada', $3, 'Lazada thử', $4)", [orgId, lazadaChannel, `acct-${randomUUID().slice(0, 8)}`, owner.userId]);
+    await rows("INSERT INTO ludy_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, 'marketplace_lazada', 'lazada')", [orgId, lazadaConnection, lazadaChannel]);
+    const lazadaHook = (await rows<{ id: string }>('INSERT INTO ludy_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [orgId, lazadaConnection, sha(lazadaKey)]))[0]?.id ?? '';
+    // TikTok Shop and Lazada hooks sent an address drop it (only Shopee signs the address); Shopee keeps its own.
     expect(await put(otherHookId, sha(otherKey), sha('other'), BODY, URL_SIGNED)).toBe('accepted');
+    expect(await put(lazadaHook, sha(lazadaKey), sha('lazada-with-address'), BODY, URL_SIGNED)).toBe('accepted');
     expect(await put(hookId, sha(key), sha('shopee-with-address'), BODY, URL_SIGNED)).toBe('accepted');
-    const claimed = await asWorker<{ org_id: string; hook_id: string; marketplace_connection_id: string; adapter: string; platform: string; dedupe_key: string; authorization_header: string; body: Buffer; request_url: string | null }>(
+    const claimed = await asWorker<{ org_id: string; hook_id: string; marketplace_connection_id: string; adapter: string; platform: string; dedupe_key: string; authorization_header: string; body: Buffer; request_url: string | null; generation: number }>(
       'SELECT * FROM ludy_finance.marketplace_hook_claim(10)',
     );
-    expect(claimed.map((c) => [c.org_id, c.hook_id, c.marketplace_connection_id, c.adapter, c.platform, c.dedupe_key]).sort()).toEqual(
+    expect(claimed.map((c) => [c.org_id, c.hook_id, c.marketplace_connection_id, c.adapter, c.platform, c.dedupe_key, c.generation]).sort()).toEqual(
       [
-        [orgId, hookId, connectionId, 'shopee', 'shopee', sha('one')],
-        [orgId, hookId, connectionId, 'shopee', 'shopee', sha('shopee-with-address')],
-        [otherOrgId, otherHookId, otherConnectionId, 'tiktok_shop', 'tiktok_shop', sha('other')],
+        [orgId, hookId, connectionId, 'shopee', 'shopee', sha('one'), 1],
+        [orgId, hookId, connectionId, 'shopee', 'shopee', sha('shopee-with-address'), 1],
+        [orgId, lazadaHook, lazadaConnection, 'lazada', 'lazada', sha('lazada-with-address'), 1],
+        [otherOrgId, otherHookId, otherConnectionId, 'tiktok_shop', 'tiktok_shop', sha('other'), 1],
       ].sort(),
     );
     const mine = claimed.find((c) => c.hook_id === hookId && c.dedupe_key === sha('one'));
-    // The address is kept only for a Shopee hook that was sent one, and comes back with the claim; a TikTok Shop hook never keeps it (20270207100000).
+    // The address is kept only for a Shopee hook that was sent one, and comes back with the claim; TikTok Shop and Lazada hooks never keep it (20270207100000).
     expect(mine?.request_url).toBeNull();
     expect(claimed.find((c) => c.dedupe_key === sha('shopee-with-address'))?.request_url).toBe(URL_SIGNED);
     expect(claimed.find((c) => c.hook_id === otherHookId)?.request_url).toBeNull();
+    expect(claimed.find((c) => c.hook_id === lazadaHook)?.request_url).toBeNull();
     expect(Buffer.compare(mine?.body ?? Buffer.alloc(0), BODY)).toBe(0);
     expect(await waiting()).toEqual([]);
     expect(await asWorker('SELECT * FROM ludy_finance.marketplace_hook_claim(10)')).toEqual([]);
+    await rows('DELETE FROM ludy_finance.marketplace_hook WHERE org_id = $1 AND id = $2', [orgId, lazadaHook]);
+    await rows('DELETE FROM ludy_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, lazadaConnection]);
+    await rows('DELETE FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, lazadaChannel]);
   });
 
   it('sweeps a push older than ten minutes, whatever it holds, with the next claim and with the sweep', async () => {
@@ -393,8 +476,9 @@ suite('Marketplace push hook (#4316)', () => {
   });
 
   it('stops a hook after ten refused pushes in an hour: the lookup says stopped, a push stores nothing, and the claim hands back nothing of it', async () => {
-    for (let n = 1; n < 10; n++) expect((await asWorker<{ stopped: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid) AS stopped', [otherHookId]))[0]?.stopped).toBe(false);
-    expect((await asWorker<{ stopped: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid) AS stopped', [otherHookId]))[0]?.stopped).toBe(true);
+    expect((await asWorker<{ stopped: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid, $2::int) AS stopped', [otherHookId, 2]))[0]?.stopped).toBe(false);
+    for (let n = 1; n < 10; n++) expect((await asWorker<{ stopped: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid, $2::int) AS stopped', [otherHookId, 1]))[0]?.stopped).toBe(false);
+    expect((await asWorker<{ stopped: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid, $2::int) AS stopped', [otherHookId, 1]))[0]?.stopped).toBe(true);
     expect(await asApi('SELECT * FROM ludy_finance.marketplace_hook_lookup($1, $2)', ['tiktok_shop', sha(otherKey)])).toEqual([{ hook_id: otherHookId, standing: 'stopped' }]);
     expect(await put(otherHookId, sha(otherKey), sha('stopped'))).toBe('gone');
     // A push that waited when the hook was stopped is deleted by the claim and not handed out.
@@ -424,6 +508,86 @@ suite('Marketplace push hook (#4316)', () => {
       "SELECT pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'ludy_finance.marketplace_hook_notice' AND pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'ludy_finance.marketplace_hook[^_]' AS ok",
     );
     expect(purge?.ok).toBe(true);
+  });
+
+  describe('personal data erasure and global 10k backlog cap (#4326)', () => {
+    const capKey = randomBytes(16).toString('base64url');
+    const capOtherKey = randomBytes(16).toString('base64url');
+    let capHookId = '';
+    let capOtherHookId = '';
+    const asMfa = (who: Account) => ({ type: 'user' as const, userId: who.userId, aal: 'aal2' as const, sessionId: who.session, mfaAt: Math.floor(Date.now() / 1000) });
+
+    beforeAll(async () => {
+      await rows('DELETE FROM ludy_finance.marketplace_hook WHERE marketplace_connection_id = ANY($1::uuid[])', [[connectionId, otherConnectionId]]);
+      await rows("UPDATE ludy_kernel.channel_connection SET status = 'active' WHERE org_id = ANY($1::uuid[])", [[orgId, otherOrgId]]);
+      capHookId = (await rows<{ id: string }>('INSERT INTO ludy_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [orgId, connectionId, sha(capKey)]))[0]?.id ?? '';
+      capOtherHookId = (await rows<{ id: string }>('INSERT INTO ludy_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [otherOrgId, otherConnectionId, sha(capOtherKey)]))[0]?.id ?? '';
+      await rows('DELETE FROM ludy_finance.marketplace_hook_notice');
+    });
+
+    it('erases waiting pushes mentioning a person (ASCII, non-ASCII UTF-8 and invalid UTF-8 bytes) for owners only, leaving unrelated and cross-org pushes', async () => {
+      const targetEmail = 'buyer.erase@example.test';
+      const targetPhone = '0900000000';
+      const asciiMatch = Buffer.from(JSON.stringify({ buyer: 'Buyer A', email: targetEmail }), 'utf8');
+      const utf8Match = Buffer.from(JSON.stringify({ buyer: 'Nguyễn Thị Hương', note: `Liên hệ ${targetEmail} giao hàng` }), 'utf8');
+      const utf8PhoneMatch = Buffer.from(JSON.stringify({ buyer: 'Trần Văn Đức', phone: 'điện thoại 0900\u00a0000\u00a0000' }), 'utf8');
+      const invalidUtf8Match = Buffer.concat([Buffer.from(`{"note":"${targetEmail}"}`, 'utf8'), Buffer.from([0xff, 0xfe])]);
+      const unrelated = Buffer.concat([Buffer.from('{"buyer":"Lê Văn An","note":"không khớp"}', 'utf8'), Buffer.from([0xff, 0xfe])]);
+      const otherOrgMatch = Buffer.from(JSON.stringify({ buyer: 'Khách khác', email: targetEmail, phone: targetPhone }), 'utf8');
+
+      expect(await put(capHookId, sha(capKey), sha('erase-ascii'), asciiMatch)).toBe('accepted');
+      expect(await put(capHookId, sha(capKey), sha('erase-utf8-email'), utf8Match)).toBe('accepted');
+      expect(await put(capHookId, sha(capKey), sha('erase-utf8-phone'), utf8PhoneMatch)).toBe('accepted');
+      expect(await put(capHookId, sha(capKey), sha('erase-invalid-utf8'), invalidUtf8Match)).toBe('accepted');
+      expect(await put(capHookId, sha(capKey), sha('erase-unrelated'), unrelated)).toBe('accepted');
+      expect(await put(capOtherHookId, sha(capOtherKey), sha('erase-other-org'), otherOrgMatch)).toBe('accepted');
+
+      // Only the org owner may erase personal data; admins and members are refused, and invalid shapes fail before reading rows.
+      await expect(runtime.execute('kernel.personal_data.erase', { value: targetEmail }, { actor: asMfa(adminUser), orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ status: 403 });
+      await expect(runtime.execute('kernel.personal_data.erase', { value: targetEmail }, { actor: asMfa(member), orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ status: 403 });
+      await expect(asSealedApp(adminUser, orgId, "SELECT ludy_finance.personal_data_erase_marketplace_hook_notice('email', $1)", [targetEmail])).rejects.toMatchObject({ code: '42501' });
+      await expect(asSealedApp(member, orgId, "SELECT ludy_finance.personal_data_erase_marketplace_hook_notice('email', $1)", [targetEmail])).rejects.toMatchObject({ code: '42501' });
+      await expect(asSealedApp(owner, orgId, "SELECT ludy_finance.personal_data_erase_marketplace_hook_notice('email', 'not-an-email')")).rejects.toMatchObject({ code: '22023' });
+
+      const erasedByEmail = await runtime.execute<{ erased: Array<{ column: string; rows: number }> }>(
+        'kernel.personal_data.erase',
+        { value: targetEmail },
+        { actor: asMfa(owner), orgId, idempotencyKey: randomUUID() },
+      );
+      expect(erasedByEmail.erased.find((entry) => entry.column === 'ludy_finance.marketplace_hook_notice.body')?.rows).toBe(3);
+
+      // Direct owner call deletes the non-ASCII Vietnamese UTF-8 body mentioning the phone with no-break spaces.
+      const erasedByPhone = await asSealedApp<{ rows: number }>(owner, orgId, "SELECT ludy_finance.personal_data_erase_marketplace_hook_notice('digits', $1) AS rows", [targetPhone]);
+      expect(erasedByPhone).toEqual([{ rows: 1 }]);
+
+      expect(await waiting()).toEqual([
+        { hook_id: capHookId, dedupe_key: sha('erase-unrelated') },
+        { hook_id: capOtherHookId, dedupe_key: sha('erase-other-org') },
+      ]);
+      await rows('DELETE FROM ludy_finance.marketplace_hook_notice');
+    });
+
+    it('enforces the global 10,000-row cap across all hooks: returns busy at 10,000 while retries stay duplicate', async () => {
+      await rows('DELETE FROM ludy_finance.marketplace_hook_notice');
+      await rows(
+        `INSERT INTO ludy_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body)
+         SELECT $1, $2, pg_catalog.lpad(pg_catalog.to_hex(g), 64, '0'), $3, $4
+         FROM pg_catalog.generate_series(1, 9999) AS g`,
+        [otherOrgId, capOtherHookId, HEADER, BODY],
+      );
+      // capHookId has 0 rows (< 20 per-hook limit) and total rows is 9,999: the 10,000th row is accepted.
+      expect(await put(capHookId, sha(capKey), sha('global-10000'))).toBe('accepted');
+      // Now total rows = 10,000 (only 1 on capHookId): a new push hits the global cap and returns busy without inserting.
+      expect(await put(capHookId, sha(capKey), sha('global-10001'))).toBe('busy');
+      expect((await rows<{ n: number }>('SELECT count(*)::int AS n FROM ludy_finance.marketplace_hook_notice'))[0]?.n).toBe(10000);
+      // A retry of a waiting push on capHookId is still acknowledged as duplicate even past the global cap.
+      expect(await put(capHookId, sha(capKey), sha('global-10000'))).toBe('duplicate');
+      // Dropping one row opens room for one more accepted push, and the next hits busy again.
+      await rows('DELETE FROM ludy_finance.marketplace_hook_notice WHERE hook_id = $1 AND dedupe_key = $2', [capOtherHookId, '1'.padStart(64, '0')]);
+      expect(await put(capHookId, sha(capKey), sha('global-after-free'))).toBe('accepted');
+      expect(await put(capHookId, sha(capKey), sha('global-over-again'))).toBe('busy');
+      await rows('DELETE FROM ludy_finance.marketplace_hook_notice');
+    });
   });
 
   // The route (S2, #4346): POST /api/marketplace/<adapter>/webhook/<hookKey> through the real app. The adapters this deployment runs are shopee and tiktok_shop (see the app above); lazada is not run.
