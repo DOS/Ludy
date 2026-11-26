@@ -3,9 +3,10 @@
 // - v1 count-only payloads (`{ lang, org, count, path }`) hold only the count and meetings link, nothing sensitive.
 // - v2 full briefing payloads (`{ lang, org, path, day }`) store metadata only in `mail_message.payload`; `morningMailTemplate.render`
 //   fails closed until Slice A wires `meetings.morning.mail_content`, and `renderMorningBriefingMail` strictly validates both the stored
-//   payload and the render-time briefing content (with matching `day`), strips invisible/control characters and enforces post-NFKC caps,
-//   validates same-org internal paths, formats decimal-string money via `@ludy/l10n-vn`, keeps attributes free of titles/names, and
-//   escapes every dynamic field in HTML.
+//   payload and the render-time briefing content (with matching `day`), uses a fixed non-sensitive subject, strips invisible/control
+//   characters with post-NFKC caps, canonicalizes `publicUrl` and validates same-org internal paths, formats decimal-string money via
+//   `@ludy/l10n-vn`, keeps attributes free of titles/names, keeps HTML under Gmail's 102 KB clip boundary so the opt-out footer stays
+//   visible, and escapes every dynamic field in HTML.
 import {
   MORNING_BRIEFING_CAPS,
   followupClean,
@@ -21,6 +22,8 @@ import type { MailTemplate } from './mail-queue.ts';
 
 const ORG_NAME_MAX = 200;
 const BRAND_NAME_MAX = 200;
+// Keep rendered HTML safely under Gmail's ~102 KB clipping boundary so the footer and opt-out link are never clipped off.
+const BRIEFING_HTML_MAX_BYTES = 96 * 1024;
 
 const COPY = {
   vi: {
@@ -37,6 +40,7 @@ const COPY = {
 
 const BRIEFING_COPY = {
   vi: {
+    subject: 'Lịch họp hôm nay',
     title: (day: string, org: string) => `Lịch họp ngày ${day} tại ${org}`,
     leadNone: 'Hôm nay bạn không có cuộc họp nào trong lịch.',
     leadCount: (total: number) => `Hôm nay bạn có ${total} cuộc họp.`,
@@ -74,6 +78,7 @@ const BRIEFING_COPY = {
     settingsLink: 'Tắt thông báo này trong Cài đặt thông báo',
   },
   en: {
+    subject: "Today's meetings",
     title: (day: string, org: string) => `Meetings for ${day} at ${org}`,
     leadNone: 'You have no meetings scheduled today.',
     leadCount: (total: number) => (total === 1 ? 'You have 1 meeting today.' : `You have ${total} meetings today.`),
@@ -188,15 +193,25 @@ function formatTimeWindow(startAt: string, endAt: string, timeZone: string, cont
   }
   const startDay = `${startParts.year}-${startParts.month}-${startParts.day}`;
   const endDay = `${endParts.year}-${endParts.month}-${endParts.day}`;
-  const showOffsets = startParts.offset !== endParts.offset;
-  const startTime = `${startParts.hour}:${startParts.minute}${showOffsets ? ` (${startParts.offset})` : ''}`;
-  const endTime = `${endParts.hour}:${endParts.minute}${showOffsets ? ` (${endParts.offset})` : ''}`;
+  if (startParts.offset !== endParts.offset) {
+    const startClock = `${startParts.hour}:${startParts.minute} (${startParts.offset})`;
+    const endClock = `${endParts.hour}:${endParts.minute} (${endParts.offset})`;
+    if (startDay === endDay) {
+      return startDay === contentDay
+        ? `${startClock} - ${endClock} (${zone})`
+        : `${formatDay(startDay, lang)} ${startClock} - ${endClock} (${zone})`;
+    }
+    return `${formatDay(startDay, lang)} ${startClock} - ${formatDay(endDay, lang)} ${endClock} (${zone})`;
+  }
+  const startClock = `${startParts.hour}:${startParts.minute}`;
+  const endClock = `${endParts.hour}:${endParts.minute}`;
+  const zoneLabel = `${zone}, ${startParts.offset}`;
   if (startDay === endDay) {
     return startDay === contentDay
-      ? `${startTime} - ${endTime} (${zone})`
-      : `${formatDay(startDay, lang)} ${startTime} - ${endTime} (${zone})`;
+      ? `${startClock} - ${endClock} (${zoneLabel})`
+      : `${formatDay(startDay, lang)} ${startClock} - ${endClock} (${zoneLabel})`;
   }
-  return `${formatDay(startDay, lang)} ${startTime} - ${formatDay(endDay, lang)} ${endTime} (${zone})`;
+  return `${formatDay(startDay, lang)} ${startClock} - ${formatDay(endDay, lang)} ${endClock} (${zoneLabel})`;
 }
 
 // Decimal-string money formatting via decimal.js (`money`), avoiding JS float conversion.
@@ -215,10 +230,13 @@ function normalizePublicRoot(publicUrl: string): string {
   if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(publicUrl)) {
     throw new Error('TEMPLATE_DATA: invalid morning briefing publicUrl');
   }
-  const root = publicUrl.trim().replace(/\/+$/, '');
+  const trimmed = publicUrl.trim();
+  if (!/^https?:\/\//i.test(trimmed)) {
+    throw new Error('TEMPLATE_DATA: invalid morning briefing publicUrl protocol');
+  }
   let parsed: URL;
   try {
-    parsed = new URL(root);
+    parsed = new URL(trimmed);
   } catch {
     throw new Error('TEMPLATE_DATA: invalid morning briefing publicUrl');
   }
@@ -230,12 +248,12 @@ function normalizePublicRoot(publicUrl: string): string {
     parsed.password !== '' ||
     parsed.search !== '' ||
     parsed.hash !== '' ||
-    root.includes('?') ||
-    root.includes('#')
+    trimmed.includes('?') ||
+    trimmed.includes('#')
   ) {
     throw new Error('TEMPLATE_DATA: invalid morning briefing publicUrl credentials or suffix');
   }
-  return root;
+  return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`;
 }
 
 function meetingLinkLabel(path: string | undefined, orgPrefix: string, lang: BriefingLang): string {
@@ -468,9 +486,10 @@ function renderMeetingBlock(
 
 /**
  * Renders the full v2 daily briefing email (`vi` and `en`, plain text and escaped HTML).
- * Returns `null` when `context.subject` is missing or blank after cleaning; throws when
- * `rawMail`, `rawContent`, `context.publicUrl`, or internal paths violate the strict briefing
- * contract or when `content.day !== mail.day`.
+ * Returns `null` when `context.subject` is missing or blank after cleaning; always emits a fixed
+ * language-specific subject (never echoing caller-supplied titles/names); throws when `rawMail`,
+ * `rawContent`, `context.publicUrl`, or internal paths violate the strict briefing contract or when
+ * `content.day !== mail.day`.
  */
 export function renderMorningBriefingMail(
   rawMail: unknown,
@@ -481,8 +500,7 @@ export function renderMorningBriefingMail(
     brand?: string | undefined;
   },
 ): { subject: string; text: string; html: string } | null {
-  const subject = oneLine(context.subject ?? '');
-  if (!subject) return null;
+  if (!oneLine(context.subject ?? '')) return null;
 
   const mail = zMorningBriefingMail.parse(rawMail);
   const content = zMorningBriefingContent.parse(rawContent);
@@ -505,8 +523,6 @@ export function renderMorningBriefingMail(
   const formattedDay = formatDay(content.day, mail.lang);
   const heading = t.title(formattedDay, org);
   const lead = content.totalMeetings === 0 ? t.leadNone : t.leadCount(content.totalMeetings);
-  const truncatedNote =
-    content.totalMeetings > content.meetings.length ? t.truncated(content.meetings.length, content.totalMeetings) : null;
 
   const meetingsUrl = safeUrl(mail.path);
   const dealsUrl = safeUrl(`${orgPrefix}/deals`);
@@ -516,29 +532,43 @@ export function renderMorningBriefingMail(
     renderMeetingBlock(meeting, idx + 1, content.day, mail.lang, orgPrefix, mail.path, dealsUrl, safeUrl),
   );
 
-  const textParts: string[] = [heading, '', lead];
-  if (truncatedNote) textParts.push(truncatedNote);
-  textParts.push('', `${t.openMeetings}: ${meetingsUrl}`);
-  for (const block of renderedMeetings) {
-    textParts.push('', ...block.textLines);
-  }
-  textParts.push('', t.footer(brand, org), `${t.settingsLink}: ${settingsUrl}`);
-
-  const html = `<!doctype html>
+  const buildHtml = (blocks: ReadonlyArray<{ html: string }>, note: string | null): string => `<!doctype html>
 <html lang="${mail.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#1f2328;background:#ffffff;margin:0;padding:16px">
 <div style="max-width:640px">
 <h1 style="margin:0 0 8px;font-size:20px;line-height:1.3">${escapeHtml(heading)}</h1>
 <p style="margin:0 0 8px">${escapeHtml(lead)}</p>
-${truncatedNote ? `<p style="margin:0 0 12px;font-size:14px;color:#57606a">${escapeHtml(truncatedNote)}</p>` : ''}
+${note ? `<p style="margin:0 0 12px;font-size:14px;color:#57606a">${escapeHtml(note)}</p>` : ''}
 <p style="margin:12px 0 20px"><a href="${escapeHtml(meetingsUrl)}" style="display:inline-block;padding:10px 16px;min-height:44px;line-height:24px;box-sizing:border-box;background:#b91c1c;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600">${escapeHtml(t.openMeetings)}</a></p>
-${renderedMeetings.map((block) => block.html).join('\n')}
+${blocks.map((block) => block.html).join('\n')}
 <p style="margin:20px 0 4px;font-size:13px;color:#57606a">${escapeHtml(t.footer(brand, org))}</p>
 <p style="margin:0"><a href="${escapeHtml(settingsUrl)}" style="display:inline-block;padding:10px 0;min-height:44px;line-height:24px;box-sizing:border-box;font-size:13px;color:#57606a;text-decoration:underline">${escapeHtml(t.settingsLink)}</a></p>
 </div>
 </body></html>`;
 
-  return { subject, text: textParts.join('\n'), html };
+  const keptMeetings: Array<{ textLines: string[]; html: string }> = [];
+  for (const block of renderedMeetings) {
+    const candidate = [...keptMeetings, block];
+    const candidateNote =
+      content.totalMeetings > candidate.length ? t.truncated(candidate.length, content.totalMeetings) : null;
+    if (Buffer.byteLength(buildHtml(candidate, candidateNote), 'utf8') > BRIEFING_HTML_MAX_BYTES) {
+      break;
+    }
+    keptMeetings.push(block);
+  }
+
+  const truncatedNote =
+    content.totalMeetings > keptMeetings.length ? t.truncated(keptMeetings.length, content.totalMeetings) : null;
+
+  const textParts: string[] = [heading, '', lead];
+  if (truncatedNote) textParts.push(truncatedNote);
+  textParts.push('', `${t.openMeetings}: ${meetingsUrl}`);
+  for (const block of keptMeetings) {
+    textParts.push('', ...block.textLines);
+  }
+  textParts.push('', t.footer(brand, org), `${t.settingsLink}: ${settingsUrl}`);
+
+  return { subject: t.subject, text: textParts.join('\n'), html: buildHtml(keptMeetings, truncatedNote) };
 }
 
 export const morningMailTemplate: MailTemplate = {

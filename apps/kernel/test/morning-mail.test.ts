@@ -414,13 +414,13 @@ describe('morning briefing contract (#5080)', () => {
     );
 
     expect(out).not.toBeNull();
-    expect(out?.subject).toBe('Họp hôm nay');
+    expect(out?.subject).toBe('Lịch họp hôm nay');
     expect(out?.html).toContain('lang="vi"');
     expect(out?.text).toContain('Lịch họp ngày 26/11/2026 tại Công ty <A>');
     expect(out?.text).toContain('Hôm nay bạn có 1 cuộc họp.');
     expect(out?.text).toContain('Mở trang Cuộc họp: https://ludy.test/o/acme/meetings');
     expect(out?.text).toContain('Cuộc họp 1: Họp giao ban tuần');
-    expect(out?.text).toContain('Thời gian: 09:00 - 09:30 (Asia/Ho_Chi_Minh)');
+    expect(out?.text).toContain('Thời gian: 09:00 - 09:30 (Asia/Ho_Chi_Minh, UTC+07:00)');
     expect(out?.text).toContain(`Mở cuộc họp: https://ludy.test/o/acme/meetings/${ID}`);
     expect(out?.text).toContain(
       'Thành phần:\n  Khách mời: 4 khách mời\n  Người đọc trong tổ chức:\n  - An\n  - Bình\n  - +2 khác',
@@ -437,7 +437,7 @@ describe('morning briefing contract (#5080)', () => {
     expect(out?.text).toContain('Tắt thông báo này trong Cài đặt thông báo: https://ludy.test/o/acme/settings/notifications');
 
     expect(out?.html).toContain('Công ty &lt;A&gt;');
-    expect(out?.html).toContain('09:00 - 09:30 (Asia/Ho_Chi_Minh)');
+    expect(out?.html).toContain('09:00 - 09:30 (Asia/Ho_Chi_Minh, UTC+07:00)');
     expect(out?.html).toContain(`href="https://ludy.test/o/acme/meetings/${ID}"`);
     expect(out?.html).toContain('href="https://ludy.test/o/acme/deals"');
     expect(out?.html).toContain('href="https://ludy.test/o/acme/settings/notifications"');
@@ -496,11 +496,12 @@ describe('morning briefing contract (#5080)', () => {
     );
 
     expect(out).not.toBeNull();
+    expect(out?.subject).toBe("Today's meetings");
     expect(out?.html).toContain('lang="en"');
     expect(out?.text).toContain('Meetings for 2026-11-26 at Acme Co');
     expect(out?.text).toContain('You have 2 meetings today.');
     expect(out?.text).toContain('Meeting 1: Untitled meeting');
-    expect(out?.text).toContain('Time: 09:00 - 10:30 (America/New_York)');
+    expect(out?.text).toContain('Time: 09:00 - 10:30 (America/New_York, UTC-05:00)');
     expect(out?.text).toContain('Open Meetings: https://ludy.test/o/acme/meetings');
     expect(out?.text).toContain('Attendees:\n  Invitees: 1 invitee\n  Org readers:\n  - Alice\n  - +1 more');
     expect(out?.text).toContain('Decisions from previous meeting:\n  - Approve Q4 discount tiers');
@@ -510,12 +511,12 @@ describe('morning briefing contract (#5080)', () => {
     );
     expect(out?.text).toContain('Vy prep lines:\n  - Confirm pricing tier before the call.');
     expect(out?.text).toContain('Meeting 2: Engineering Sync');
-    expect(out?.text).toContain('Time: 16:00 - 16:45 (Asia/Ho_Chi_Minh)');
+    expect(out?.text).toContain('Time: 16:00 - 16:45 (Asia/Ho_Chi_Minh, UTC+07:00)');
     expect(out?.text).toContain('Open meeting recorder: https://ludy.test/o/acme/meetings/record');
     expect(out?.text).toContain('This email contains your meeting content and was sent by Ludy because you asked for it in Acme Co.');
     expect(out?.text).toContain('Turn this notice off in Notification settings: https://ludy.test/o/acme/settings/notifications');
-    expect(out?.html).toContain('09:00 - 10:30 (America/New_York)');
-    expect(out?.html).toContain('16:00 - 16:45 (Asia/Ho_Chi_Minh)');
+    expect(out?.html).toContain('09:00 - 10:30 (America/New_York, UTC-05:00)');
+    expect(out?.html).toContain('16:00 - 16:45 (Asia/Ho_Chi_Minh, UTC+07:00)');
     expect(out?.html).toContain('Open meeting recorder');
     expect(out?.html).toContain('aria-label="Open Meetings (meeting 1)"');
     expect(out?.html).toContain('aria-label="Open meeting recorder (meeting 2)"');
@@ -628,13 +629,16 @@ describe('morning briefing contract (#5080)', () => {
         ],
       }),
       briefingCtx({
-        subject: `Subject\u202e\r\nBcc: evil@example.com`,
+        subject: 'Họp lương bí mật\u202e\r\nBcc: evil@example.com',
         brand: `Brand ${xss} ${bidi}`,
       }),
     );
 
     expect(out).not.toBeNull();
-    expect(out?.subject).toBe('Subject Bcc: evil@example.com');
+    // Fixed language-specific subject never leaks meeting titles, names, or injected headers.
+    expect(out?.subject).toBe('Lịch họp hôm nay');
+    expect(out?.subject).not.toContain('Họp lương bí mật');
+    expect(out?.subject).not.toContain('Bcc:');
     expect(out?.subject).not.toMatch(/[\p{Cc}\p{Cf}\u2028]/u);
     expect(out?.text).not.toMatch(/[\u202e\u200b\u2028]/);
     expect(out?.text).not.toContain('\u0007');
@@ -706,7 +710,9 @@ describe('morning briefing contract (#5080)', () => {
       }),
       briefingCtx(),
     );
-    expect(overnight?.text).toContain('Cuộc họp 1: Họp giao ban tuần\nThời gian: 26/11/2026 23:30 - 27/11/2026 00:30 (Asia/Ho_Chi_Minh)');
+    expect(overnight?.text).toContain(
+      'Cuộc họp 1: Họp giao ban tuần\nThời gian: 26/11/2026 23:30 - 27/11/2026 00:30 (Asia/Ho_Chi_Minh, UTC+07:00)',
+    );
 
     // Fall-back DST transition in America/New_York (2026-11-01): 05:45Z (UTC-04:00) to 06:15Z (UTC-05:00).
     const dst = renderMorningBriefingMail(
@@ -720,12 +726,78 @@ describe('morning briefing contract (#5080)', () => {
             timeZone: 'America/New_York',
             vyLines: undefined,
           }),
+          sampleMeeting({
+            id: '22222222-2222-4222-8222-222222222222',
+            title: 'Earlier DST hour',
+            startAt: '2026-11-01T05:15:00Z',
+            endAt: '2026-11-01T05:45:00Z',
+            timeZone: 'America/New_York',
+            vyLines: undefined,
+          }),
+          sampleMeeting({
+            id: '33333333-3333-4333-8333-333333333333',
+            title: 'Repeated DST hour',
+            startAt: '2026-11-01T06:15:00Z',
+            endAt: '2026-11-01T06:45:00Z',
+            timeZone: 'America/New_York',
+            vyLines: undefined,
+          }),
         ],
+        totalMeetings: 3,
       }),
       briefingCtx({ subject: 'Morning briefing' }),
     );
     expect(dst?.text).toContain('Meeting 1: Họp giao ban tuần\nTime: 01:45 (UTC-04:00) - 01:15 (UTC-05:00) (America/New_York)');
     expect(dst?.html).toContain('01:45 (UTC-04:00) - 01:15 (UTC-05:00) (America/New_York)');
+    expect(dst?.text).toContain('Meeting 2: Earlier DST hour\nTime: 01:15 - 01:45 (America/New_York, UTC-04:00)');
+    expect(dst?.text).toContain('Meeting 3: Repeated DST hour\nTime: 01:15 - 01:45 (America/New_York, UTC-05:00)');
+  });
+
+  it('caps HTML byte length safely below Gmail 102 KB clipping limit while preserving footer and accurate count', () => {
+    const heavyMeetings = Array.from({ length: MORNING_BRIEFING_CAPS.meetingsMax }, (_, idx) =>
+      sampleMeeting({
+        id: `00000000-0000-4000-8000-0000000000${String(idx + 1).padStart(2, '0')}`,
+        title: `Heavy Meeting ${idx + 1} ${'m'.repeat(90)}`,
+        readerNames: Array.from({ length: MORNING_BRIEFING_CAPS.orgNamesMax }, (_, r) => `Reader ${r} ${'r'.repeat(65)}`),
+        previousDecisions: Array.from(
+          { length: MORNING_BRIEFING_CAPS.decisionsPerMeetingMax },
+          (_, d) => `Decision ${d} ${'d'.repeat(220)}`,
+        ),
+        openItems: Array.from({ length: MORNING_BRIEFING_CAPS.actionItemsPerMeetingMax }, (_, i) => ({
+          text: `Item ${i} ${'t"'.repeat(110)}`,
+          dueOn: '2026-11-26',
+          overdue: true,
+          mine: true,
+        })),
+        deals: Array.from({ length: MORNING_BRIEFING_CAPS.dealsPerMeetingMax }, (_, k) => ({
+          id: DEAL_ID,
+          title: `Deal ${k} ${'c'.repeat(100)}`,
+          stage: `Stage ${'s'.repeat(70)}`,
+          amount: '15000000.00',
+          expectedClose: '2026-12-15',
+        })),
+        vyLines:
+          idx < MORNING_BRIEFING_CAPS.vyMeetingsMax
+            ? Array.from({ length: MORNING_BRIEFING_CAPS.vyLinesPerMeetingMax }, (_, v) => `Vy ${v} ${'v'.repeat(230)}`)
+            : undefined,
+      }),
+    );
+
+    const out = renderMorningBriefingMail(
+      briefingMail({ lang: 'en' }),
+      briefingContent({ totalMeetings: MORNING_BRIEFING_CAPS.meetingsMax, meetings: heavyMeetings }),
+      briefingCtx({ subject: 'Morning briefing' }),
+    );
+    expect(out).not.toBeNull();
+    expect(Buffer.byteLength(out?.html ?? '', 'utf8')).toBeLessThanOrEqual(96 * 1024);
+    expect(out?.html).toContain('https://ludy.test/o/acme/settings/notifications');
+    expect(out?.text).toContain('https://ludy.test/o/acme/settings/notifications');
+    const shownMatch = /Showing the first (\d+) of 12 meetings\./.exec(out?.text ?? '');
+    expect(shownMatch).not.toBeNull();
+    const shown = Number.parseInt(shownMatch?.[1] ?? '0', 10);
+    expect(shown).toBeGreaterThan(0);
+    expect(shown).toBeLessThan(MORNING_BRIEFING_CAPS.meetingsMax);
+    expect(out?.text.match(/^Meeting \d+:/gm)).toHaveLength(shown);
   });
 
   it('renders clean zero-meetings state and truncated-day indicator', () => {
@@ -810,6 +882,8 @@ describe('morning briefing contract (#5080)', () => {
     // Invalid publicUrl protocol, credentials, query, fragment, or control chars.
     for (const badUrl of [
       'javascript:alert(1)',
+      'https:ludy.test',
+      'http:localhost:8080',
       'https://ludy.test\n',
       'https://user:pass@ludy.test',
       'https://user@ludy.test',
@@ -822,6 +896,13 @@ describe('morning briefing contract (#5080)', () => {
         renderMorningBriefingMail(briefingMail(), briefingContent(), briefingCtx({ publicUrl: badUrl })),
       ).toThrow();
     }
+    const subPath = renderMorningBriefingMail(
+      briefingMail(),
+      briefingContent({ totalMeetings: 0, meetings: [] }),
+      briefingCtx({ publicUrl: 'https://ludy.test/app/' }),
+    );
+    expect(subPath?.html).toContain('href="https://ludy.test/app/o/acme/meetings"');
+    expect(subPath?.text).toContain('https://ludy.test/app/o/acme/settings/notifications');
     // Day mismatch between stored payload and render-time content.
     expect(() =>
       renderMorningBriefingMail(briefingMail({ day: '2026-11-26' }), briefingContent({ day: '2026-11-27' }), briefingCtx()),
