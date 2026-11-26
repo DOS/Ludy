@@ -293,6 +293,7 @@ const BOILERPLATE_EXACT = new Set([
   'đã', 'gồm', 'chưa', 'áp', 'dụng', 'là',
   'invoice', 'sales', 'sale', 'tax', 'order',
 ]);
+const NEGATION_TOKENS = new Set(['không', 'khong', 'chưa', 'chua', 'phi', 'vô', 'miễn', 'free', 'without', 'no', 'non']);
 const UNIT_ALIASES: Record<string, string> = {
   g: 'gam', gram: 'gam', grams: 'gam', gam: 'gam',
   kg: 'kg', kilogram: 'kg', kilograms: 'kg',
@@ -315,7 +316,7 @@ const UNIT_ONLY_EXACT = new Set([
   'đôi', 'ly', 'cốc', 'coc', 'khối', 'khoi', 'tờ', 'tấm', 'tam',
   'cây', 'cay', 'bịch', 'bich', 'hũ', 'hu', 'lọ', 'lo', 'vỉ', 'vi',
   'ống', 'ong', 'viên', 'vien', 'miếng', 'mieng', 'thanh', 'cặp', 'cap',
-  'chuyến', 'chuyen', 'lượt', 'luot', 'tấn', 'tạ', 'lạng',
+  'chuyến', 'chuyen', 'lượt', 'luot', 'tấn', 'tạ', 'lạng', 'khay', 'ổ',
   ...Object.keys(UNIT_ALIASES),
 ]);
 const ATTRIBUTE_ONLY_EXACT = new Set(['size', 'cỡ', 's', 'm', 'l', 'xl', 'xxl', 'xs']);
@@ -381,9 +382,31 @@ function contextBeforeFigure(segmentBefore: string): { hasProduct: boolean; hasU
   return { hasProduct, hasUnit };
 }
 
-const canonUnit = (u: string): string => {
-  const folded = foldDiacritics(readPlain(u)).trim();
-  return UNIT_ALIASES[folded] ?? folded;
+function unitsAccentCompatible(rawA: string, rawB: string): boolean {
+  const a = collapseGroupedSpaces(readPlain(rawA).normalize('NFKC'));
+  const b = collapseGroupedSpaces(readPlain(rawB).normalize('NFKC'));
+  if (a === b) return true;
+  const fa = foldDiacritics(a);
+  const fb = foldDiacritics(b);
+  if (fa === fb) {
+    // Two accented Vietnamese units with different diacritics ("tá" vs "tạ") are distinct units; allow matching only when at least one side is unaccented ASCII.
+    return a === fa || b === fb;
+  }
+  const aliasA = UNIT_ALIASES[fa];
+  const aliasB = UNIT_ALIASES[fb];
+  if (aliasA !== undefined && aliasA === (aliasB ?? fb)) return true;
+  if (aliasB !== undefined && aliasB === (aliasA ?? fa)) return true;
+  return false;
+}
+
+const hasUnsupportedVatText = (text: string): boolean => {
+  for (const m of text.matchAll(
+    /(?<![\p{L}])(?:vat|gtgt|thuế(?:\s+(?:suất|gtgt|vat))?|thue(?:\s+(?:suat|gtgt|vat))?)\s*(?:[:=]\s*)?(\d{1,2}(?:[.,]\d+)?)\s*%?|(\d{1,2}(?:[.,]\d+)?)\s*%\s*(?:vat|gtgt|thuế|thue)(?![\p{L}])/giu,
+  )) {
+    const rawRate = m[1] ?? m[2];
+    if (rawRate !== undefined && writtenVatRate(canon(rawRate)) === null) return true;
+  }
+  return false;
 };
 
 function startsWithUnitWord(after: string, extraUnits?: ReadonlySet<string>): boolean {
@@ -528,14 +551,25 @@ function extractFigureTokens(body: string): FigureToken[] {
       lastTaxBoundary = end;
       continue;
     }
+    const rawBeforeTax = body.slice(lastTaxBoundary, start);
+    const isNegativeNumber = (prevChar === '-' || prevChar === '−') && (start < 2 || /[\s:=(,;]/u.test(body[start - 2] ?? ''));
+    const hasForeignCurrencyAfter = UNSUPPORTED_CELL_CURRENCY.test(/^\s*(?:[\p{L}]+|[$€£¥₩])/u.exec(after)?.[0] ?? '');
+    const hasForeignCurrencyBefore = /[$€£¥₩]\s*$/u.test(rawBeforeTax);
     let role: FigureRole = 'unknown';
-    if (hasTotalPrefix || hasEqualsResult) role = 'total';
+    if (isNegativeNumber || hasForeignCurrencyAfter || hasForeignCurrencyBefore) role = 'total';
+    else if (hasTotalPrefix || hasEqualsResult) role = 'total';
     else if (hasDiscountPrefix) role = 'discount';
     else if (hasTaxPrefix && !hasPricePrefix) role = 'tax';
     else if (hasPaymentPrefix) role = 'payment';
     else if (hasQtyPrefix && !hasPricePrefix && !hasMoneySuffix && !hasPerUnitLabel) role = 'qty';
-    else if ((hasPricePrefix || hasMoneySuffix || hasPerUnitLabel) && !hasQtyPrefix) role = 'price';
-    else if (hasMultiplyBefore) {
+    else if ((hasPricePrefix || hasMoneySuffix || hasPerUnitLabel) && !hasQtyPrefix) {
+      if (perUnitBeforeMatch !== null && afterUnit && !hasMoneySuffix && !hasPricePrefix && !hasPerUnitSuffix) {
+        // Packaging counts after "mỗi hộp" ("2 hộp bút, mỗi hộp 3 cái") are counts per package, never unit prices.
+        role = 'total';
+      } else {
+        role = 'price';
+      }
+    } else if (hasMultiplyBefore) {
       if (prevToken.role === 'price') role = 'qty';
       else if (prevToken.role === 'qty') role = 'price';
       else if (prevToken.role !== 'unknown') {
@@ -559,7 +593,6 @@ function extractFigureTokens(body: string): FigureToken[] {
         role = 'total';
       }
     }
-    const rawBeforeTax = body.slice(lastTaxBoundary, start);
     const taxIncBeforeMatch = TAX_INCLUSIVE_BEFORE.exec(rawBeforeTax);
     const hasTaxIncBefore = taxIncBeforeMatch !== null && taxIncBeforeMatch[1] === undefined;
     if ((role === 'price' || role === 'unknown') && (hasTaxIncBefore || TAX_INCLUSIVE_AFTER.test(after))) {
@@ -664,9 +697,10 @@ function summarizeSubPiece(rawText: string, afterConjunction = false): SubPiece 
   const isInvoiceScopeTaxInc = isTaxInclusiveNote && text.replace(INVOICE_VAT_SCOPE, ' ') !== text;
   const isInvoiceScopeVat = isInvoiceScopeTaxInc || (rates.size > 0 && tokens.length === 0 && !hasProduct && scopedText !== text);
   const isTaxInclusiveVat = isTaxInclusiveNote;
-  const pieceHasProduct = isTaxInclusiveNote ? false : hasProduct;
+  const isUnsupportedVat = tokens.length === 0 && rates.size === 0 && hasUnsupportedVatText(text);
+  const pieceHasProduct = isTaxInclusiveNote || isUnsupportedVat ? false : hasProduct;
   const hasNonAttrProductWords = pieceHasProduct && [...exact].some((t) => !UNIT_ONLY_EXACT.has(t) && !ATTRIBUTE_ONLY_EXACT.has(t));
-  const isVatOnly = (rates.size > 0 && tokens.length === 0) || isTaxInclusiveNote;
+  const isVatOnly = (rates.size > 0 && tokens.length === 0) || isTaxInclusiveNote || isUnsupportedVat;
   const isBuyerOnly = tokens.length === 0 && rates.size === 0 && !isTaxInclusiveNote && BUYER_ONLY_PREFIX.test(text);
   const isExplicitUnit = tokens.length === 0 && rates.size === 0 && !isTaxInclusiveNote && EXPLICIT_UNIT_PREFIX.test(text);
   const isExplicitQtyOnly = !pieceHasProduct && usable.length === 1 && usable[0]!.role === 'qty';
@@ -748,6 +782,8 @@ function shouldMergePiece(cur: SourceClause, piece: SubPiece): boolean {
     if (piece.isExplicitQtyOnly && !curHasExplicitQty) return true;
     if (piece.isExplicitPriceOnly && !curHasExplicitPrice) return true;
   }
+  const curProduct = descriptionTokens(cur.text).hasProduct;
+  if (!curProduct && piece.usable.length === 0 && piece.hasProductWords && cur.localRates.size === 0) return true;
   if (cur.usable.length >= 2) return false;
   if (piece.usable.length === 0) return true;
   if (piece.usable.length >= 2) return false;
@@ -755,7 +791,6 @@ function shouldMergePiece(cur: SourceClause, piece: SubPiece): boolean {
   const pTok = piece.usable[0]!;
   if (curTok.role !== 'unknown' && curTok.role === pTok.role) return false;
   // Two non-empty product descriptions ("áo thun giá 150k, 2 quần") belong to separate items, whereas ("bánh A giá 120k, sl 10"), ("giá trị 12500000.5 VND, 1 gói"), or one compound product name joined by "và"/"&" ("2 gói dịch vụ thiết kế và in ấn giá 500k") stay together.
-  const curProduct = descriptionTokens(cur.text).hasProduct;
   if (curProduct && piece.hasProductWords) {
     if (piece.afterConjunction && curTok.role !== 'price' && pTok.role === 'price' && !/^\d/u.test(piece.text)) return true;
     const prefixBeforePieceTok = piece.text.slice(0, piece.tokens[0]?.start ?? 0);
@@ -819,7 +854,7 @@ function coreProductTokens(basisText: string, tokens: readonly FigureToken[] = [
     );
   const gluedQtyUnits = tokens
     .filter((t) => (t.role === 'qty' || t.role === 'unknown') && !t.embeddedInProduct && !t.packagingSpec && isUsableToken(t) && t.countUnit !== undefined)
-    .map((t) => ({ value: t.value, unit: canonUnit(t.countUnit!) }));
+    .map((t) => ({ value: t.value, unit: t.countUnit! }));
   const withoutQtyUnits =
     gluedQtyUnits.length === 0
       ? withoutNotes
@@ -829,8 +864,7 @@ function coreProductTokens(basisText: string, tokens: readonly FigureToken[] = [
             if (!UNIT_ONLY_EXACT.has(readPlain(unitStr))) return full;
             const c = canon(numStr);
             const numNorm = /^\d+(?:\.\d+)?$/u.test(c) ? money(c).toFixed() : c;
-            const uCanon = canonUnit(unitStr);
-            return gluedQtyUnits.some((q) => q.value === numNorm && q.unit === uCanon) ? ' ' : full;
+            return gluedQtyUnits.some((q) => q.value === numNorm && unitsAccentCompatible(q.unit, unitStr)) ? ' ' : full;
           },
         );
   return nonAttrProductGroup(descriptionTokens(collapseGroupedSpaces(readPlain(withoutQtyUnits))).exact).exact;
@@ -844,7 +878,8 @@ function makeClause(plainText: string, localRates: Set<string>, conjunctionParts
   const explicitUnits = extractExplicitUnits(plainText);
   for (const u of explicitUnits) unitTokens.add(u);
   const coreExactTokens = coreProductTokens(basisText, tokens);
-  return { plainText, text, tokens, usable, localRates, exactTokens: exact, coreExactTokens, foldedTokens: folded, unitTokens, explicitUnits, conjunctionParts, lockedFromTable: false, taxInclusive: false, hasAmbiguousLocalVat: false };
+  const hasAmbiguousLocalVat = hasUnsupportedVatText(text);
+  return { plainText, text, tokens, usable, localRates, exactTokens: exact, coreExactTokens, foldedTokens: folded, unitTokens, explicitUnits, conjunctionParts, lockedFromTable: false, taxInclusive: false, hasAmbiguousLocalVat };
 }
 
 function appendToClause(cur: SourceClause, piece: SubPiece): SourceClause {
@@ -881,7 +916,7 @@ function buildClause(piece: SubPiece): SourceClause {
     conjunctionParts: [],
     lockedFromTable: false,
     taxInclusive: false,
-    hasAmbiguousLocalVat: false,
+    hasAmbiguousLocalVat: hasUnsupportedVatText(piece.text),
   };
 }
 
@@ -920,7 +955,7 @@ function splitSentenceSegments(body: string): RawSegment[] {
   return out;
 }
 
-type TableColRole = 'item' | 'unit' | 'qty' | 'price' | 'vat' | 'total' | 'discount' | 'note' | 'ignore';
+type TableColRole = 'item' | 'unit' | 'qty' | 'price' | 'vat' | 'currency' | 'total' | 'discount' | 'note' | 'ignore';
 const TABLE_HEADER_ROLE: Record<string, TableColRole> = {
   stt: 'ignore', no: 'ignore', tt: 'ignore', '#': 'ignore',
   ma: 'ignore', 'ma hang': 'ignore', 'ma sp': 'ignore', 'ma san pham': 'ignore', code: 'ignore', sku: 'ignore', barcode: 'ignore',
@@ -932,6 +967,7 @@ const TABLE_HEADER_ROLE: Record<string, TableColRole> = {
   sl: 'qty', 'so luong': 'qty', qty: 'qty', quantity: 'qty', count: 'qty',
   'don gia': 'price', gia: 'price', 'gia ban': 'price', 'unit price': 'price', price: 'price',
   vat: 'vat', gtgt: 'vat', thue: 'vat', 'thue suat': 'vat', 'thue gtgt': 'vat', tax: 'vat', 'tax rate': 'vat', 'vat rate': 'vat',
+  'tien te': 'currency', currency: 'currency', 'loai tien': 'currency', 'ngoai te': 'currency', 'don vi tien te': 'currency', dvtt: 'currency',
   'tien thue': 'total', 'tien thue gtgt': 'total', 'tien thue vat': 'total', 'tax amount': 'total', 'vat amount': 'total',
   'thanh tien': 'total', tong: 'total', 'tong tien': 'total', 'tong cong': 'total', 'tong gia tri': 'total', total: 'total', amount: 'total', subtotal: 'total', 'line total': 'total',
   ck: 'discount', 'chiet khau': 'discount', 'giam gia': 'discount', discount: 'discount',
@@ -944,7 +980,7 @@ interface TableColSpec {
   unit: string | undefined;
 }
 
-const UNSUPPORTED_CELL_CURRENCY = /(?<![\p{L}])(?:usd|eur|gbp|jpy|cny|rmb|aud|cad|sgd|thb|krw|twd|hkd|myr)(?![\p{L}])|[$€£¥₩]/iu;
+const UNSUPPORTED_CELL_CURRENCY = /(?<![\p{L}])(?:usd|eur|gbp|jpy|cny|rmb|aud|cad|sgd|thb|krw|twd|hkd|myr|chf|nzd|inr|php|idr|rub|sek|nok|dkk|pln|aed|sar|bnd|khr|lak|mmk)(?![\p{L}])|[$€£¥₩]/iu;
 const PLAIN_SCALED_PRICE_CELL = /^[\d.,\s]+(?:\s*\/\s*(?:1\s+)?[\p{L}]+)?$/u;
 const TAX_EXCLUSIVE_MODIFIER = /^(?:chưa|không|chua|khong|trước|truoc|not\s+including|excl(?:uding)?\.?)(?:\s+(?:tính|bao\s+gồm|gồm|gom))?\s*(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|tax)$/iu;
 
@@ -992,7 +1028,7 @@ function parseTableColSpec(rawHeaderCell: string, role: TableColRole): TableColS
       }
       const unitWord = /^[\p{L}][\p{L}\p{N}]*$/u.exec(rawMod)?.[0];
       if (unitWord === undefined) return { role, scale: null, unit: undefined };
-      if (unit !== undefined && canonUnit(unit) !== canonUnit(unitWord)) {
+      if (unit !== undefined && !unitsAccentCompatible(unit, unitWord)) {
         return { role, scale: null, unit: undefined };
       }
       unit = unit ?? unitWord;
@@ -1017,7 +1053,7 @@ function parseTableColSpec(rawHeaderCell: string, role: TableColRole): TableColS
     if (scale !== undefined && scale !== modScale) return { role, scale: null, unit: undefined };
     scale = modScale;
     if (modUnit !== undefined) {
-      if (unit !== undefined && canonUnit(unit) !== canonUnit(modUnit)) return { role, scale: null, unit: undefined };
+      if (unit !== undefined && !unitsAccentCompatible(unit, modUnit)) return { role, scale: null, unit: undefined };
       unit = unit ?? modUnit;
     }
   }
@@ -1031,7 +1067,7 @@ function parseTableColSpec(rawHeaderCell: string, role: TableColRole): TableColS
       if (unitWord === undefined || !UNIT_ONLY_EXACT.has(readPlain(unitWord))) {
         return { role, scale: null, unit: undefined };
       }
-      if (unit !== undefined && canonUnit(unit) !== canonUnit(unitWord)) {
+      if (unit !== undefined && !unitsAccentCompatible(unit, unitWord)) {
         return { role, scale: null, unit: undefined };
       }
       unit = unitWord;
@@ -1102,6 +1138,7 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
   let rowTextHasContent = false;
   let rowTaxInclusive = false;
   let rowAmbiguousLocalVat = false;
+  let rowHasForeignCurrency = false;
   for (let i = 0; i < Math.min(rawCells.length, cols.length); i += 1) {
     const cell = rawCells[i] ?? '';
     if (cell === '') continue;
@@ -1110,12 +1147,16 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
     rowTextHasContent = true;
     if (col.role === 'item') {
       itemParts.push(cell);
+    } else if (col.role === 'currency') {
+      const normCur = foldDiacritics(cell.trim().toLowerCase());
+      if (!/^(?:vnd|dong|d|₫)$/u.test(normCur)) rowHasForeignCurrency = true;
     } else if (col.role === 'unit') {
       const unitCell = collapseGroupedSpaces(cell.trim());
       // Preserve compound unit specs ("hộp 10 kg") intact rather than splitting into interchangeable words.
       dvtUnits.add(unitCell);
       explicitUnits.add(unitCell);
     } else if (col.role === 'qty' && /\d/u.test(cell) && col.scale !== null) {
+      if (/^\s*[-−]/u.test(cell)) continue;
       const qtyCellMatch = PLAIN_QTY_CELL.exec(cell.trim());
       if (!qtyCellMatch) continue;
       const cellUnitWord = qtyCellMatch[1];
@@ -1124,7 +1165,7 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
         const tok = qToks[0]!;
         const explicitCellUnit = tok.countUnit ?? cellUnitWord;
         if (col.unit !== undefined) {
-          if (explicitCellUnit !== undefined && canonUnit(explicitCellUnit) !== canonUnit(col.unit)) continue;
+          if (explicitCellUnit !== undefined && !unitsAccentCompatible(explicitCellUnit, col.unit)) continue;
           qtyColUnits.add(col.unit);
           tokens.push({ ...tok, countUnit: explicitCellUnit ?? col.unit });
         } else if (explicitCellUnit !== undefined) {
@@ -1135,7 +1176,7 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
         }
       }
     } else if (col.role === 'price' && /\d/u.test(cell) && col.scale !== null) {
-      if (UNSUPPORTED_CELL_CURRENCY.test(cell)) continue;
+      if (/^\s*[-−]/u.test(cell) || UNSUPPORTED_CELL_CURRENCY.test(cell)) continue;
       if (col.scale !== '1' && !PLAIN_SCALED_PRICE_CELL.test(cell)) continue;
       const pToks = extractFigureTokens(collapseGroupedSpaces(`đơn giá ${cell}`));
       const usablePrice = pToks.filter((t) => t.role === 'price' && !t.embeddedInProduct && !t.packagingSpec);
@@ -1143,13 +1184,13 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
         const tok = usablePrice[0]!;
         const scaledValue = col.scale === '1' ? tok.value : money(tok.value).times(col.scale).toFixed();
         if (col.unit !== undefined) {
-          if (tok.priceUnit !== undefined && canonUnit(tok.priceUnit) !== canonUnit(col.unit)) continue;
+          if (tok.priceUnit !== undefined && !unitsAccentCompatible(tok.priceUnit, col.unit)) continue;
           tokens.push({ ...tok, value: scaledValue, priceUnit: tok.priceUnit ?? col.unit, labeledPrice: true, dealValueOnly: false });
         } else {
           tokens.push({ ...tok, value: scaledValue, labeledPrice: true, dealValueOnly: false });
         }
       }
-    } else if (col.role === 'vat' && /(?:\d|kct|kkknt|không\s+chịu|khong\s+chiu|không\s+kê|khong\s+ke)/iu.test(cell)) {
+    } else if (col.role === 'vat' && /[\p{L}\p{N}%]/u.test(cell)) {
       if (UNSUPPORTED_CELL_CURRENCY.test(cell)) {
         rowAmbiguousLocalVat = true;
         continue;
@@ -1175,11 +1216,11 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
     // ignore, total, discount, and note columns never emit usable qty, unitPrice, or VAT tokens.
   }
   if (!rowTextHasContent || itemParts.length === 0) return null;
-  if (rawCells.some((c) => UNSUPPORTED_CELL_CURRENCY.test(c))) {
+  if (rowHasForeignCurrency || rawCells.some((c) => UNSUPPORTED_CELL_CURRENCY.test(c))) {
     tokens.length = 0;
   }
   if (dvtUnits.size > 0) {
-    const matchesDvt = (u: string) => [...dvtUnits].some((du) => /^[\p{L}][\p{L}\p{N}]*$/u.test(du) && canonUnit(du) === canonUnit(u));
+    const matchesDvt = (u: string) => [...dvtUnits].some((du) => /^[\p{L}][\p{L}\p{N}]*$/u.test(du) && unitsAccentCompatible(du, u));
     for (const tok of tokens) {
       if (tok.role === 'qty' && tok.countUnit !== undefined && !matchesDvt(tok.countUnit)) {
         tokens.length = 0;
@@ -1347,6 +1388,8 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
   let prevWasDiscountHeader = false;
   let leadingPriceTaxInclusive = false;
   let trailingPriceTaxInclusive = false;
+  let leadingUnsupportedVat = false;
+  let trailingUnsupportedVat = false;
   const isSingleBlockDoc = blocks.length === 1;
 
   for (let blockIdx = 0; blockIdx < blocks.length; blockIdx += 1) {
@@ -1391,6 +1434,23 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
             if (preamble.isPriceTaxInclusive) segPriceTaxInclusive = true;
           }
           bodySeg = colonMatch[2]!.trim();
+        } else if (
+          !isBullet &&
+          /^(?:ghi\s+chú|ghi\s+chu|lưu\s+ý|luu\s+y|note|remarks?)$/iu.test(prefix) &&
+          (!anyItemSeen || (isLastBlock && segIdx === rawSegments.length - 1))
+        ) {
+          const noteBody = colonMatch[2]!.replace(/:\s*$/u, '').trim();
+          const notePreamble = noteBody === '' ? null : parsePriceTaxInclusivePreamble(noteBody);
+          if (notePreamble !== null && (notePreamble.isPriceTaxInclusive || notePreamble.rates.size > 0)) {
+            if (!anyItemSeen) {
+              for (const r of notePreamble.rates) leadingShared.add(r);
+              if (notePreamble.isPriceTaxInclusive) leadingPriceTaxInclusive = true;
+            } else {
+              for (const r of notePreamble.rates) trailingShared.add(r);
+              if (notePreamble.isPriceTaxInclusive) trailingPriceTaxInclusive = true;
+            }
+            continue;
+          }
         }
       } else if (!isBullet && (!anyItemSeen || (isLastBlock && segIdx === rawSegments.length - 1))) {
         const standalonePrefix = bodySeg.replace(/:\s*$/u, '').trim();
@@ -1422,6 +1482,18 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
       if (pieces.every((p) => p.isVatOnly && !p.hasProductWords) && !isBullet) {
         const rates = pieces.flatMap((p) => [...p.rates]);
         const prevClause = clauses[clauses.length - 1];
+        const hasUnsupported = pieces.some((p) => p.rates.size === 0 && !p.isTaxInclusiveVat && hasUnsupportedVatText(p.text));
+        if (hasUnsupported) {
+          if (!anyItemSeen) {
+            leadingUnsupportedVat = true;
+          } else if (pieces.some((p) => p.isInvoiceScopeVat) || (isLastBlock && segIdx === rawSegments.length - 1 && !anyLocalVatSeen && !indentedAfterNewline)) {
+            trailingUnsupportedVat = true;
+          } else if (prevClause && prevClause.localRates.size === 0) {
+            prevClause.hasAmbiguousLocalVat = true;
+            anyLocalVatSeen = true;
+          }
+          continue;
+        }
         if (pieces.some((p) => p.isTaxInclusiveVat)) {
           if (pieces.some((p) => p.isInvoiceScopeVat)) {
             if (!anyItemSeen) {
@@ -1496,6 +1568,23 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
               cur = buildClause(piece);
             }
             anyLocalVatSeen = true;
+            continue;
+          }
+          if (piece.rates.size === 0 && !piece.isTaxInclusiveVat && hasUnsupportedVatText(piece.text)) {
+            if (cur !== null && (cur.usable.length > 0 || cur.localRates.size > 0)) {
+              cur.hasAmbiguousLocalVat = true;
+              anyLocalVatSeen = true;
+            } else {
+              const prev = segClauses[segClauses.length - 1];
+              if (prev) {
+                prev.hasAmbiguousLocalVat = true;
+                anyLocalVatSeen = true;
+              } else if (!anyItemSeen) {
+                leadingUnsupportedVat = true;
+              } else {
+                trailingUnsupportedVat = true;
+              }
+            }
             continue;
           }
           if (piece.isInvoiceScopeVat && !isBullet) {
@@ -1612,6 +1701,11 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
       if (!TAX_EXCLUSIVE_NOTE.test(c.plainText)) markPricesTaxInclusive(c);
     }
   }
+  if (leadingUnsupportedVat || trailingUnsupportedVat) {
+    for (const c of clauses) {
+      if (c.localRates.size === 0) c.hasAmbiguousLocalVat = true;
+    }
+  }
   const sharedRates = new Set<string>([...leadingShared, ...trailingShared]);
   return { clauses, sharedRates };
 }
@@ -1628,14 +1722,7 @@ function clauseAcceptsFigures(clause: SourceClause, quantity: string, unitPrice:
   const hasExplicitQty = usable.some((t) => t.role === 'qty');
   const hasExplicitPrice = usable.some((t) => t.role === 'price');
   const hasLabeledPrice = distinctLabeledPrices.size > 0;
-  const normLineUnit = lineUnit === null ? null : foldDiacritics(collapseGroupedSpaces(readPlain(lineUnit))).toLowerCase();
-  const lineUnitIsSingleWord = normLineUnit !== null && /^[\p{L}][\p{L}\p{N}]*$/u.test(normLineUnit);
-  const lineUnitMatches = (expectedUnit: string): boolean => {
-    if (normLineUnit === null) return false;
-    const normExpected = foldDiacritics(collapseGroupedSpaces(readPlain(expectedUnit))).toLowerCase();
-    if (normLineUnit === normExpected) return true;
-    return lineUnitIsSingleWord && /^[\p{L}][\p{L}\p{N}]*$/u.test(normExpected) && canonUnit(normLineUnit) === canonUnit(normExpected);
-  };
+  const lineUnitMatches = (expectedUnit: string): boolean => lineUnit !== null && unitsAccentCompatible(lineUnit, expectedUnit);
   for (let qi = 0; qi < usable.length; qi += 1) {
     const qTok = usable[qi]!;
     if (qTok.value !== quantity || qTok.role === 'price' || qTok.embeddedInProduct || qTok.packagingSpec) continue;
@@ -1646,14 +1733,22 @@ function clauseAcceptsFigures(clause: SourceClause, quantity: string, unitPrice:
       if (pTok.value !== unitPrice || pTok.role === 'qty' || pTok.embeddedInProduct || pTok.packagingSpec) continue;
       if (pTok.dealValueOnly && !money(qTok.value).equals(1)) continue;
       if (pTok.priceUnit !== undefined) {
-        const expectedPriceUnit = canonUnit(pTok.priceUnit);
-        if (qTok.countUnit !== undefined && canonUnit(qTok.countUnit) !== expectedPriceUnit) continue;
-        if (qTok.countUnit === undefined && clause.explicitUnits.size > 0 && ![...clause.explicitUnits].some((u) => canonUnit(u) === expectedPriceUnit)) {
+        if (qTok.countUnit !== undefined && !unitsAccentCompatible(qTok.countUnit, pTok.priceUnit)) continue;
+        if (
+          qTok.countUnit === undefined &&
+          !clause.lockedFromTable &&
+          qTok.wordAfter !== undefined &&
+          clause.coreExactTokens.size > 1 &&
+          !unitsAccentCompatible(qTok.wordAfter, pTok.priceUnit)
+        ) {
           continue;
         }
-        if (normLineUnit !== null && !lineUnitMatches(pTok.priceUnit)) continue;
+        if (qTok.countUnit === undefined && clause.explicitUnits.size > 0 && ![...clause.explicitUnits].some((u) => unitsAccentCompatible(u, pTok.priceUnit!))) {
+          continue;
+        }
+        if (lineUnit !== null && !lineUnitMatches(pTok.priceUnit)) continue;
       }
-      if (normLineUnit !== null) {
+      if (lineUnit !== null) {
         if (qTok.countUnit !== undefined && !lineUnitMatches(qTok.countUnit)) continue;
         if (qTok.countUnit === undefined && clause.explicitUnits.size > 0 && ![...clause.explicitUnits].some((eu) => lineUnitMatches(eu))) {
           continue;
@@ -1704,6 +1799,9 @@ function clauseAcceptsLineText(clause: SourceClause, description: string, unit: 
     for (const tok of desc.exact) {
       if (tok === 'size' || tok === 'cỡ') continue;
       if (!tokensAccentCompatible(tok, clause.exactTokens, clause.foldedTokens)) return false;
+    }
+    for (const ct of clause.exactTokens) {
+      if (NEGATION_TOKENS.has(ct) && !tokensAccentCompatible(ct, desc.exact, desc.folded)) return false;
     }
   }
   if (clause.conjunctionParts.length > 0) {
