@@ -1390,6 +1390,107 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(extRollback.out).toContain('sets COMPOSE_PROJECT_NAME=crove');
     writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
 
+    // Round 18 regressions (#3972 Round 18):
+    // 1) after_db_fail refuses rollback (exit 3) before `up db` if rollback Compose DB volume or PGDATA drifted from pre-deploy state.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(croveBase, 'name: crove\nservices: {}\n');
+    expect(run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', croveBase]).status).toBe(0);
+    writeFileSync(`${log}.project`, '');
+    const driftedDbRec = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data crove_drifted-db ludy_db-data',
+      STUB_CROVE_DB_VOLUME: 'crove_drifted-db',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_UP_DB_FAIL_PROJ: 'ludy',
+      STUB_LOG_PROJECT: '1',
+    });
+    expect(driftedDbRec.status, driftedDbRec.out).toBe(3);
+    expect(driftedDbRec.out).toContain('does not match pre-deploy database storage');
+    expect(readFileSync(`${log}.project`, 'utf8').split('\n')).not.toContain('project crove up');
+
+    const driftedPgRec = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PREV_DB_PGDATA: '/var/lib/postgresql/data/drifted',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_UP_DB_FAIL_PROJ: 'ludy',
+      STUB_LOG_PROJECT: '1',
+    });
+    expect(driftedPgRec.status, driftedPgRec.out).toBe(3);
+    expect(driftedPgRec.out).toContain('does not match pre-deploy database storage');
+    expect(readFileSync(`${log}.project`, 'utf8').split('\n')).not.toContain('project crove up');
+
+    // 2) Cross-type Docker volume Mountpoint vs host bind overlap blocks check_storage_free in both directions.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const volBackingPath = `${root}/docker-vols/ludy_db-data/_data`;
+    mkdirSync(volBackingPath, { recursive: true });
+    const crossVolTarget = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_VOLUME_MOUNTPOINTS: `ludy_db-data=${volBackingPath}`,
+      STUB_RUNNING_CONTAINERS: 'bind-holder-1',
+      STUB_INSPECT_WORKDIRS: 'bind-holder-1|/opt/other',
+      STUB_INSPECT_MOUNTS: `bind-holder-1|other|bind||${volBackingPath}|`,
+    });
+    expect(crossVolTarget.status, crossVolTarget.out).toBe(1);
+    expect(crossVolTarget.out).toContain('still mounted by a running container outside project');
+
+    const crossBindTarget = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_BIND: volBackingPath,
+      STUB_VOLUMES: 'other_db-data',
+      STUB_VOLUME_MOUNTPOINTS: `other_db-data=${volBackingPath}`,
+      STUB_RUNNING_CONTAINERS: 'vol-holder-1',
+      STUB_INSPECT_WORKDIRS: 'vol-holder-1|/opt/other',
+      STUB_INSPECT_MOUNTS: 'vol-holder-1|other|volume|other_db-data||',
+    });
+    expect(crossBindTarget.status, crossBindTarget.out).toBe(1);
+    expect(crossBindTarget.out).toContain('still mounted by a running container outside project');
+
+    // 3) plain_compose_omits_override_and_project inspects each env file in-process without subshell array staleness.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(croveBase, 'name: crove\nservices: {}\n');
+    const inTreeEnv = 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:compose.host.yml\n';
+    const outTreeEnv = 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:docker-compose.override.yml\n';
+    writeFileSync(`${dir}/.env`, inTreeEnv);
+    writeFileSync(extEnv, outTreeEnv);
+    writeFileSync(`${dir}/compose.host.yml`, 'services: {}\n');
+    expect(run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', croveBase, '--env-file', extEnv]).status).toBe(0);
+    const staleArrayGuard = run(['deploy', '--release', 'v1.1.0', '--image', image('b'), '--extract-image', extract('b'), '--media-image', media('b'), '--compose', compose, '--env-file', extEnv]);
+    expect(staleArrayGuard.status, staleArrayGuard.out).toBe(2);
+    expect(staleArrayGuard.out).toContain('COMPOSE_FILE omits docker-compose.override.yml');
+    rmSync(`${dir}/compose.host.yml`, { force: true });
+
+    // 4) --modules changing /data/files via Compose interpolation re-validates storage continuity before rolling and updates .deploy/mounts.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\n');
+    expect(deploy('v1.0.0', 'a', { STUB_VOLUMES: 'ludy_db-data ludy_files' }).status).toBe(0);
+    writeFileSync(log, '');
+    const modSwitchBlocked = run(
+      ['deploy', '--release', 'v1.1.0', '--image', image('b'), '--extract-image', extract('b'), '--media-image', media('b'), '--compose', compose, '--modules', 'finance,crm'],
+      {
+        STUB_VOLUMES: 'ludy_db-data ludy_files ludy_files_mod',
+        STUB_POPULATED_MOUNTS: 'ludy_files',
+        STUB_FILES_VOL_IF_ENV_HAS: 'LUDY_MODULES=finance,crm|ludy_files_mod',
+      },
+    );
+    expect(modSwitchBlocked.status, modSwitchBlocked.out).toBe(1);
+    expect(modSwitchBlocked.out).toContain('storage changed incompatibly');
+    expect(readFileSync(`${dir}/.env`, 'utf8')).not.toContain('LUDY_MODULES=finance,crm');
+    expect(calls().some((l) => l.startsWith('compose up') && l.includes(' ludy'))).toBe(false);
+
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\n');
+    const modSwitchFresh = run(
+      ['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--modules', 'finance,crm'],
+      { STUB_FILES_VOL_IF_ENV_HAS: 'LUDY_MODULES=finance,crm|ludy_files_mod' },
+    );
+    expect(modSwitchFresh.status, modSwitchFresh.out).toBe(0);
+    expect(state('mounts')).toContain('/data/files=volume:ludy_files_mod');
+
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+
     // Failed restore_pre_activate preserves $PRE_ACTIVATE_SNAP across EXIT cleanup so the reported recovery path remains intact (#3972 Round 14).
     if (process.platform !== 'win32' && process.getuid?.() !== 0) {
       rmSync(`${dir}/.deploy`, { recursive: true, force: true });

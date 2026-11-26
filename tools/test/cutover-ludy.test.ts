@@ -342,6 +342,11 @@ case "$cmd" in
     ;;
   image)
     if [ "\${1:-}" = inspect ]; then
+      if [[ " $* " == *"--format"* ]] && [[ " $* " == *".Config.Env"* ]]; then
+        [ -z "\${STUB_IMAGE_INSPECT_FAIL:-}" ] || exit 1
+        printf '%b\\n' "\${STUB_IMAGE_PGDATA-PGDATA=/var/lib/postgresql/data}"
+        exit 0
+      fi
       [ -n "\${STUB_HAS_CROVE_DB_IMAGE:-}" ] && exit 0 || exit 1
     fi
     printf 'docker image %s\\n' "$*" >>"$STUB_LOG"
@@ -1266,7 +1271,12 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(clusterMismatchRes.status).toBe(1);
     expect(clusterMismatchRes.stderr).toContain('system_identifier');
     expect(clusterMismatchRes.stderr).toContain('does not match pre-cutover crove cluster');
-    expect(readFileSync(fClusterMismatch.stubLog, 'utf8')).not.toContain('caddy');
+    const clusterMismatchLog = readFileSync(fClusterMismatch.stubLog, 'utf8');
+    expect(clusterMismatchLog).toContain('dc ludy stop db');
+    expect(clusterMismatchLog).not.toContain('dc ludy run --rm --no-TTY --no-deps migrate');
+    expect(clusterMismatchLog).not.toContain('dc ludy run --rm --no-TTY --no-deps auth-grants');
+    expect(clusterMismatchLog).not.toContain('dc ludy up -d --no-build --no-deps --wait --wait-timeout 60 worker');
+    expect(clusterMismatchLog).not.toContain('caddy');
 
     const conflictIn = join(work, '.env.shell-conflict.in');
     const conflictOut = join(work, '.env.shell-conflict.out');
@@ -1387,5 +1397,103 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     const multilineOut = readFileSync(join(fMultiline.deployDir, '.env'), 'utf8');
     expect(multilineOut).toContain(multilineJwks);
     expect(multilineOut).toContain('LUDY_DOMAIN=api.example.com');
+
+    // 13) Round 18 regressions (#3972 Round 18):
+    // 13a) Target PGDATA image default is inspected even when src and dst share db image name and omit PGDATA.
+    const fPgdataDefaultDiff = createCutoverFixture();
+    const resPgdataImgDefault = runWithStubs(
+      fPgdataDefaultDiff,
+      ['cutover-stack', '--dir', fPgdataDefaultDiff.deployDir, '--overlay-dir', fPgdataDefaultDiff.overlayDir],
+      {
+        STUB_LIVE_PGDATA: '/var/lib/postgresql/data/pgdata',
+        STUB_IMAGE_PGDATA: 'PGDATA=/var/lib/postgresql/data',
+        STUB_CONFIG_YAML: [
+          'name: {proj}',
+          'services:',
+          '  db:',
+          '    image: custom-pg:17',
+          '    volumes:',
+          '      - type: volume',
+          '        source: db-data',
+          '        target: /var/lib/postgresql/data',
+          '  api:',
+          '    volumes:',
+          '      - type: volume',
+          '        source: files',
+          '        target: /data/files',
+          'volumes:',
+          '  db-data:',
+          '    name: {proj}_db-data',
+          '  files:',
+          '    name: {proj}_files',
+          '',
+        ].join('\n'),
+      },
+    );
+    expect(resPgdataImgDefault.status).toBe(1);
+    expect(resPgdataImgDefault.stderr).toContain('cannot switch db PGDATA');
+    expect(resPgdataImgDefault.stderr).toContain('/var/lib/postgresql/data/pgdata');
+    expect(readFileSync(fPgdataDefaultDiff.stubLog, 'utf8')).not.toContain(' stop');
+
+    // 13b) COMPOSE_FILE with ./compose.host.yml and ./compose.wal.yml substitutes staged overlays in pre-cutover config.
+    const fDotSlash = createCutoverFixture();
+    writeFileSync(join(fDotSlash.deployDir, 'compose.wal.yml'), 'services:\n  db:\n    image: ${WAL_DB_IMAGE:-ludy-db:local}\n');
+    writeFileSync(
+      join(fDotSlash.deployDir, '.env'),
+      [
+        'COMPOSE_FILE=docker-compose.yml:compose.pilot.yml:./compose.host.yml:./compose.wal.yml',
+        'CROVE_DOMAIN=api.example.com',
+        'DATABASE_URL=postgres://crove_app:pw@db:5432/postgres',
+        '',
+      ].join('\n'),
+    );
+    const resDotSlash = runWithStubs(fDotSlash, ['cutover-stack', '--dir', fDotSlash.deployDir, '--overlay-dir', fDotSlash.overlayDir]);
+    expect(resDotSlash.status, resDotSlash.stderr).toBe(0);
+    const dotSlashFirstLudy = readFileSync(`${fDotSlash.stubLog}.files`, 'utf8')
+      .split('\n')
+      .find((l) => l.startsWith('dc-files ludy ')) ?? '';
+    expect(dotSlashFirstLudy).toContain('/caddy/compose.host.yml');
+    expect(dotSlashFirstLudy).toContain('/backup/compose.wal.yml');
+
+    // 13c) Retired internal MEDIA_URL=http://crove-media:8095 is rewritten to ludy-media while external/subdomain hosts stay intact,
+    // and active shell/indirect crove-media URLs refuse cleanly before stopping containers.
+    const mediaIn = join(work, '.env.media.in');
+    const mediaOut = join(work, '.env.media.out');
+    writeFileSync(
+      mediaIn,
+      [
+        'CROVE_DOMAIN=api.example.com',
+        'MEDIA_URL=http://crove-media:8095 # internal media',
+        'EXTRACT_URL="http://crove-extract:8090"',
+        '',
+      ].join('\n'),
+    );
+    const mediaRw = spawnSync('bash', [scriptPath, 'rewrite-env', mediaIn, mediaOut], { encoding: 'utf8' });
+    expect(mediaRw.status, mediaRw.stderr).toBe(0);
+    const mediaOutText = readFileSync(mediaOut, 'utf8');
+    expect(mediaOutText).toContain('MEDIA_URL=http://ludy-media:8095 # internal media');
+    expect(mediaOutText).toContain('EXTRACT_URL="http://ludy-extract:8090"');
+
+    const mediaExtIn = join(work, '.env.media-ext.in');
+    const mediaExtOut = join(work, '.env.media-ext.out');
+    writeFileSync(
+      mediaExtIn,
+      [
+        'CROVE_DOMAIN=api.example.com',
+        'MEDIA_URL=https://crove-media.example.com:8095/probe',
+        '',
+      ].join('\n'),
+    );
+    const mediaExtRw = spawnSync('bash', [scriptPath, 'rewrite-env', mediaExtIn, mediaExtOut], { encoding: 'utf8' });
+    expect(mediaExtRw.status, mediaExtRw.stderr).toBe(0);
+    expect(readFileSync(mediaExtOut, 'utf8')).toContain('MEDIA_URL=https://crove-media.example.com:8095/probe');
+
+    const fMediaShell = createCutoverFixture();
+    const mediaShellRes = runWithStubs(fMediaShell, ['cutover-stack', '--dir', fMediaShell.deployDir, '--overlay-dir', fMediaShell.overlayDir], {
+      MEDIA_URL: 'http://crove-media:8095',
+    });
+    expect(mediaShellRes.status).toBe(1);
+    expect(mediaShellRes.stderr).toContain('crove-media');
+    expect(readFileSync(fMediaShell.stubLog, 'utf8')).not.toContain(' stop');
   });
 });

@@ -306,6 +306,18 @@ pilot_layout() {
   env_compose_file_lists compose.pilot.yml
 }
 
+# Normalizes a Compose file path item against $DEPLOY_DIR without collapsing subdirectories into basenames (#3972).
+cutover_norm_compose_path() {
+  local item="$1" dir_norm="${DEPLOY_DIR%/}" p=''
+  [ -n "$dir_norm" ] || dir_norm='/'
+  if [[ "$item" == /* ]]; then p="$item"; else p="$dir_norm/$item"; fi
+  while [[ "$p" == */./* ]]; do p="${p//\/.\///}"; done
+  while [[ "$p" == */. ]]; do p="${p%/.}"; done
+  while [[ "$p" == *//* ]]; do p="${p//\/\///}"; done
+  [ -n "$p" ] || p='/'
+  printf '%s' "$p"
+}
+
 # Resolves an overlay compose file (such as compose.pilot.yml or compose.wal.yml) from COMPOSE_FILE in $ENV_FILE
 # or optionally falls back to $DEPLOY_DIR/<basename>. Returns 1 if not active, or 2 if COMPOSE_FILE parse fails /
 # names it and the resolved file does not exist on disk.
@@ -317,12 +329,8 @@ resolve_compose_overlay() {
   fi
   if [ -n "$COMPOSE_FILE_RAW" ]; then
     for item in "${COMPOSE_FILE_ITEMS[@]+"${COMPOSE_FILE_ITEMS[@]}"}"; do
-      if [ "$item" = "$base" ] || [[ "$item" == */"$base" ]]; then
-        if [[ "$item" == /* ]]; then
-          resolved="$item"
-        else
-          resolved="$DEPLOY_DIR/$item"
-        fi
+      resolved="$(cutover_norm_compose_path "$item")"
+      if [ "$item" = "$base" ] || [ "${resolved##*/}" = "$base" ]; then
         [ -f "$resolved" ] || return 2
         printf '%s' "$resolved"
         return 0
@@ -388,7 +396,7 @@ insert_dc_compose_file_at() {
 # Resolves the ordered Compose file list matching Docker Compose semantics (`COMPOSE_FILE` or standard defaults) (#3972).
 # Returns 0 on success (populating DC_COMPOSE_FILES), or 2 with COMPOSE_FILES_ERR describing the missing/invalid file.
 build_compose_file_args() {
-  local item='' resolved='' has_override=0 has_wal=0 pilot_idx=-1 host_idx=-1 idx=0 ins_idx=0
+  local item='' resolved='' base='' has_override=0 has_wal=0 pilot_idx=-1 host_idx=-1 idx=0 ins_idx=0
   DC_COMPOSE_FILES=()
   COMPOSE_FILES_ERR=''
   if ! parse_compose_file_items; then
@@ -397,17 +405,14 @@ build_compose_file_args() {
   fi
   if [ -n "$COMPOSE_FILE_RAW" ]; then
     for item in "${COMPOSE_FILE_ITEMS[@]+"${COMPOSE_FILE_ITEMS[@]}"}"; do
-      if [[ "$item" == /* ]]; then
-        resolved="$item"
-      else
-        resolved="$DEPLOY_DIR/$item"
-      fi
+      resolved="$(cutover_norm_compose_path "$item")"
+      base="${resolved##*/}"
       if [ ! -f "$resolved" ]; then
-        if [ "$item" = compose.pilot.yml ] || [[ "$item" == */compose.pilot.yml ]]; then
+        if [ "$base" = compose.pilot.yml ]; then
           COMPOSE_FILES_ERR="COMPOSE_FILE lists compose.pilot.yml but the file does not exist under $DEPLOY_DIR"
-        elif [ "$item" = compose.wal.yml ] || [[ "$item" == */compose.wal.yml ]]; then
+        elif [ "$base" = compose.wal.yml ]; then
           COMPOSE_FILES_ERR="COMPOSE_FILE references compose.wal.yml but the file does not exist under $DEPLOY_DIR"
-        elif [ "$item" = compose.host.yml ] || [[ "$item" == */compose.host.yml ]]; then
+        elif [ "$base" = compose.host.yml ]; then
           COMPOSE_FILES_ERR="COMPOSE_FILE references compose.host.yml but the file does not exist under $DEPLOY_DIR"
         else
           COMPOSE_FILES_ERR="COMPOSE_FILE references $item but the file does not exist ($resolved)"
@@ -415,13 +420,13 @@ build_compose_file_args() {
         return 2
       fi
       DC_COMPOSE_FILES+=("$resolved")
-      if [ "$item" = docker-compose.override.yml ] || [[ "$item" == */docker-compose.override.yml ]]; then
+      if [ "$base" = docker-compose.override.yml ]; then
         has_override=1
-      elif [ "$item" = compose.wal.yml ] || [[ "$item" == */compose.wal.yml ]]; then
+      elif [ "$base" = compose.wal.yml ]; then
         has_wal=1
-      elif [ "$item" = compose.pilot.yml ] || [[ "$item" == */compose.pilot.yml ]]; then
+      elif [ "$base" = compose.pilot.yml ]; then
         pilot_idx="$idx"
-      elif [ "$item" = compose.host.yml ] || [[ "$item" == */compose.host.yml ]]; then
+      elif [ "$base" = compose.host.yml ]; then
         host_idx="$idx"
       fi
       idx=$((idx + 1))
@@ -549,24 +554,44 @@ target_map_index() {
   return 1
 }
 
-# Rewrites crove_<role>: in an explicit DB URL assignment RHS without revealing or altering passwords/hosts.
-rewrite_db_url_rhs() {
-  local key="$1" rhs="$2" lead='' trimmed scheme role rest
+# Rewrites crove_<role>: in DB URLs and retired internal service hostnames (crove-media / crove-extract) without altering external URLs or secrets.
+rewrite_legacy_url_rhs() {
+  local key="$1" rhs="$2" lead='' trimmed scheme role svc rest
   local db_url_re='^(["'\'']?(postgres|postgresql)://)crove_(app|worker|prober|reporter|tenant|admin):(.*)$'
-  case "$key" in
-    DATABASE_URL | WORKER_DATABASE_URL | PROBER_DATABASE_URL | REPORTER_DATABASE_URL) ;;
-    *) printf '%s' "$rhs"; return 0 ;;
-  esac
+  local svc_dq_re='^("https?://)crove-(media|extract)((:[0-9]+)?([/?][^"]*)?"([[:space:]]+#.*)?[[:space:]]*)$'
+  local svc_sq_re="^('https?://)crove-(media|extract)((:[0-9]+)?([/?][^']*)?'([[:space:]]+#.*)?[[:space:]]*)$"
+  local svc_uq_re='^(https?://)crove-(media|extract)((:[0-9]+)?([/?][^[:space:]]*)?([[:space:]]+#.*)?[[:space:]]*)$'
   lead="${rhs%%[![:space:]]*}"
   trimmed="${rhs#"$lead"}"
-  if [[ "$trimmed" =~ $db_url_re ]]; then
-    scheme="${BASH_REMATCH[1]}"
-    role="${BASH_REMATCH[3]}"
-    rest="${BASH_REMATCH[4]}"
-    printf '%s%sludy_%s:%s' "$lead" "$scheme" "$role" "$rest"
-  else
-    printf '%s' "$rhs"
-  fi
+  case "$key" in
+    DATABASE_URL | WORKER_DATABASE_URL | PROBER_DATABASE_URL | REPORTER_DATABASE_URL)
+      if [[ "$trimmed" =~ $db_url_re ]]; then
+        scheme="${BASH_REMATCH[1]}"
+        role="${BASH_REMATCH[3]}"
+        rest="${BASH_REMATCH[4]}"
+        printf '%s%sludy_%s:%s' "$lead" "$scheme" "$role" "$rest"
+        return 0
+      fi
+      ;;
+    MEDIA_URL | EXTRACT_URL)
+      local want_svc=''
+      if [ "$key" = MEDIA_URL ]; then want_svc=media; else want_svc=extract; fi
+      if [[ "$trimmed" =~ $svc_dq_re ]] || [[ "$trimmed" =~ $svc_sq_re ]] || [[ "$trimmed" =~ $svc_uq_re ]]; then
+        scheme="${BASH_REMATCH[1]}"
+        svc="${BASH_REMATCH[2]}"
+        rest="${BASH_REMATCH[3]}"
+        if [ "$svc" = "$want_svc" ]; then
+          printf '%s%sludy-%s%s' "$lead" "$scheme" "$svc" "$rest"
+          return 0
+        fi
+      fi
+      ;;
+  esac
+  printf '%s' "$rhs"
+}
+
+rewrite_db_url_rhs() {
+  rewrite_legacy_url_rhs "$1" "$2"
 }
 
 # Normalizes a raw PGDATA path to a validated relative subdir under /var/lib/postgresql/data (empty = mount root) (#3972).
@@ -1363,7 +1388,7 @@ wait_db_ready() {
 }
 
 bring_up_stack() {
-  local proj="$1" start_caddy="${2:-1}" services svc has_auth=0 has_grants=0 has_worker=0 has_api=0 has_crove=0 has_prober=0 has_caddy=0
+  local proj="$1" start_caddy="${2:-1}" expected_cluster_id="${3:-}" expected_prev_proj="${4:-}" services svc has_auth=0 has_grants=0 has_worker=0 has_api=0 has_crove=0 has_prober=0 has_caddy=0
   local infra=()
   services="$(dc_proj "$proj" config --services)" || return 1
   while IFS= read -r svc; do
@@ -1386,6 +1411,16 @@ bring_up_stack() {
   log "starting database on project $proj"
   dc_proj "$proj" up -d --no-build --no-deps --wait --wait-timeout "$WAIT_TIMEOUT" db || return 1
   wait_db_ready "$proj" || return 1
+  if [ -n "$expected_cluster_id" ]; then
+    local post_cluster_id=''
+    post_cluster_id="$(dc_proj "$proj" exec -T db psql -U postgres -d postgres -Atc \
+      'SELECT system_identifier FROM pg_control_system();' | tr -d '\r\n')"
+    if [ -z "$post_cluster_id" ] || [ "$post_cluster_id" != "$expected_cluster_id" ]; then
+      err "refusing to open traffic: $proj db cluster system_identifier ('${post_cluster_id:-unknown}') does not match pre-cutover ${expected_prev_proj:-previous} cluster ('$expected_cluster_id'); stopping db before migrations or services"
+      dc_proj "$proj" stop db >/dev/null 2>&1 || true
+      return 1
+    fi
+  fi
 
   log "verifying migrations on project $proj"
   dc_proj "$proj" run --rm --no-TTY --no-deps migrate || return 1
@@ -2059,11 +2094,14 @@ check_cutover_storage_mounts() {
   build_compose_file_args || die "$EXIT_USAGE" "$COMPOSE_FILES_ERR"
   local src_args=(compose --project-name "$proj" --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE")
   local dst_args=(compose --project-name ludy --project-directory "$DEPLOY_DIR" --env-file "$env_tmp")
+  local dir_norm="${DEPLOY_DIR%/}" f_norm=''
+  [ -n "$dir_norm" ] || dir_norm='/'
   for f in "${DC_COMPOSE_FILES[@]}"; do
     src_args+=(-f "$f")
-    if [ "$f" = "$DEPLOY_DIR/compose.host.yml" ]; then
+    f_norm="$(cutover_norm_compose_path "$f")"
+    if [ "$f_norm" = "$dir_norm/compose.host.yml" ] || { [ -f "$DEPLOY_DIR/compose.host.yml" ] && [ "$f" -ef "$DEPLOY_DIR/compose.host.yml" ]; }; then
       dst_args+=(-f "$STAGE_DIR/caddy/compose.host.yml")
-    elif [ "$f" = "$DEPLOY_DIR/compose.wal.yml" ]; then
+    elif [ "$f_norm" = "$dir_norm/compose.wal.yml" ] || { [ -f "$DEPLOY_DIR/compose.wal.yml" ] && [ "$f" -ef "$DEPLOY_DIR/compose.wal.yml" ]; }; then
       dst_args+=(-f "$STAGE_DIR/backup/compose.wal.yml")
     else
       dst_args+=(-f "$f")
@@ -2075,7 +2113,7 @@ check_cutover_storage_mounts() {
     || die "$EXIT_FAILED" "cannot inspect merged compose configuration for target project ludy before cutover"
 
   local live_pgdata='' live_pg_sub='' src_pg_raw='' src_pg_set=0 src_pg_sub='' dst_pg_raw='' dst_pg_set=0 dst_pg_sub=''
-  local src_db_img='' dst_db_img='' eff_src_pg_sub='' eff_dst_pg_sub='' img_pg='' img_rc=0
+  local dst_db_img='' eff_src_pg_sub='' eff_dst_pg_sub='' img_pg='' img_rc=0
   live_pgdata="$(dc_proj "$proj" exec -T db printenv PGDATA 2>/dev/null | tr -d '\r\n' || true)"
   live_pg_sub="$(normalize_pgdata_subpath "$live_pgdata")" \
     || die "$EXIT_FAILED" "running $proj db container sets unsupported PGDATA path '$live_pgdata'"
@@ -2089,7 +2127,6 @@ check_cutover_storage_mounts() {
     dst_pg_sub="$(normalize_pgdata_subpath "$dst_pg_raw")" \
       || die "$EXIT_FAILED" "target compose configuration (ludy) sets unsupported db PGDATA path '$dst_pg_raw'"
   fi
-  src_db_img="$(cutover_compose_service_image "$src_cfg" db 2>/dev/null || true)"
   dst_db_img="$(cutover_compose_service_image "$dst_cfg" db 2>/dev/null || true)"
   if ((src_pg_set)); then
     eff_src_pg_sub="$src_pg_sub"
@@ -2098,8 +2135,11 @@ check_cutover_storage_mounts() {
   fi
   if ((dst_pg_set)); then
     eff_dst_pg_sub="$dst_pg_sub"
-  elif [ -z "$dst_db_img" ] || { [ "$dst_db_img" = "$src_db_img" ] && ((src_pg_set == 0)); }; then
-    eff_dst_pg_sub="$live_pg_sub"
+  elif [ -z "$dst_db_img" ]; then
+    if [ -n "$live_pg_sub" ]; then
+      die "$EXIT_FAILED" "target compose configuration (ludy) omits both db image and PGDATA while running $proj db uses /var/lib/postgresql/data/$live_pg_sub; set db image or PGDATA explicitly before running cutover-stack"
+    fi
+    eff_dst_pg_sub=''
   else
     img_rc=0
     img_pg="$(cutover_image_env_pgdata "$dst_db_img" 2>/dev/null)" || img_rc=$?
@@ -2393,6 +2433,21 @@ do_cutover_stack() {
   env_tmp="$(umask 077 && mktemp "$(state_dir)/.env.cutover-tmp-XXXXXX")"
   TEMP_FILES+=("$env_tmp")
   rewrite_env_file "$ENV_FILE" "$env_tmp"
+  local eff_svc_url_clean='' eff_svc_url_live='' svc_url_k='' svc_re='' target_svc='' retired_svc=''
+  local media_host_re='^https?://crove-media(:[0-9]+)?([/?].*)?$'
+  local extract_host_re='^https?://crove-extract(:[0-9]+)?([/?].*)?$'
+  for svc_url_k in MEDIA_URL EXTRACT_URL; do
+    eff_svc_url_clean="$(eval_dotenv_key "$env_tmp" "$svc_url_k" 1 0)" || die "$EXIT_FAILED" "cannot evaluate $svc_url_k in $env_tmp"
+    eff_svc_url_live="$(eval_dotenv_key "$env_tmp" "$svc_url_k" 0 1)" || die "$EXIT_FAILED" "cannot evaluate $svc_url_k in $env_tmp"
+    if [ "$svc_url_k" = MEDIA_URL ]; then
+      svc_re="$media_host_re"; retired_svc='crove-media'; target_svc='http://ludy-media:8095'
+    else
+      svc_re="$extract_host_re"; retired_svc='crove-extract'; target_svc='http://ludy-extract:8090'
+    fi
+    if [[ "$eff_svc_url_clean" =~ $svc_re ]] || [[ "$eff_svc_url_live" =~ $svc_re ]]; then
+      die "$EXIT_FAILED" "refusing cutover-stack: effective $svc_url_k still points to retired internal host $retired_svc; update $svc_url_k to $target_svc (or unset conflicting shell exports) before running cutover-stack"
+    fi
+  done
   # Keep live pre-switch WAL/S3 settings pinned until `switch-wal` (or operator S3 migration) completes (#3972).
   if [ -n "$wal_file" ]; then
     local cur_s3_clean='' cur_s3_live='' bad_s3='' eff_wal_stanza='' eff_wal_img='' eff_s3_live='' wal_tmp='' s3_tmp=''
@@ -2540,7 +2595,7 @@ do_cutover_stack() {
   # Point of no return (B1): once project ludy starts containers against ludy_* volumes, rollback must NEVER
   # delete CREATED_LUDY_VOLUMES or restart stale crove volumes. Keep caddy offline until checks pass.
   LUDY_VOLUMES_COMMITTED=1
-  bring_up_stack ludy 0
+  bring_up_stack ludy 0 "$pre_cluster_id" "$proj"
 
   wait_local_ready ludy
   log 'running loopback smoke check on local API'

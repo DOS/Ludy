@@ -1898,10 +1898,10 @@ compose_file_yaml_name() {
 
 # Returns 0 when COMPOSE_FILE omits docker-compose.override.yml and $target_env defines no COMPOSE_PROJECT_NAME (#3972).
 plain_compose_omits_override_and_project() {
-  local target_env="${1:-$ENV_FILE}" cf_val='' dir_norm="${DEPLOY_DIR%/}" item='' has_ov=0
+  local target_env="${1:-$ENV_FILE}" dir_norm="${DEPLOY_DIR%/}" item='' has_ov=0
   [ -n "$dir_norm" ] || dir_norm='/'
-  cf_val="$(env_compose_file_value "$target_env" || true)"
-  [ -n "$cf_val" ] || return 1
+  deploy_parse_compose_file_items "$target_env" || return 1
+  [ -n "$DEPLOY_COMPOSE_FILE_RAW" ] || return 1
   for item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
     if [ "$(deploy_norm_compose_path "$item")" = "$dir_norm/docker-compose.override.yml" ]; then
       has_ov=1
@@ -2279,6 +2279,27 @@ mount_exists() {
   esac
 }
 
+# Resolves a Docker volume's host Mountpoint path.
+# Returns: 0 = printed mountpoint (may be empty), 1 = confirmed absent, 2 = Docker inspect error (#3972).
+volume_mountpoint() {
+  local vol="$1" out='' rc=0
+  out="$(docker volume inspect --format '{{.Mountpoint}}' "$vol" 2>&1)" || rc=$?
+  if ((rc == 0)); then
+    out="${out%$'\r'}"
+    out="${out%%$'\n'*}"
+    if [ -n "$out" ]; then
+      out="${out%/}"
+      [ -n "$out" ] || out='/'
+    fi
+    printf '%s' "$out"
+    return 0
+  fi
+  case "$out" in
+    *'No such volume'* | *'no such volume'* | *'not found'*) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
 mount_docker_source() {
   case "$1" in
     volume:*) printf '%s' "${1#volume:}" ;;
@@ -2473,7 +2494,7 @@ bind_paths_overlap() {
 # $allowed_proj is empty) currently mounts $dst_spec. Returns: 0 = verified free, 1 = held by conflicting container,
 # 2 = inspect failed (#3972).
 check_storage_free() {
-  local dst_spec="$1" allowed_proj="${2:-}" dst_type dst_src dst_canon ps_out cid c_proj c_wdir c_wdir_canon deploy_dir_norm canon_deploy_dir mounts_out still_running m_type m_name m_src m_canon
+  local dst_spec="$1" allowed_proj="${2:-}" dst_type dst_src dst_canon dst_mp='' dst_mp_canon='' mp_rc=0 ps_out cid c_proj c_wdir c_wdir_canon deploy_dir_norm canon_deploy_dir mounts_out still_running m_type m_name m_src m_path m_canon m_mp_rc=0
   local -a cids=()
   case "$dst_spec" in
     volume:*) dst_type='volume'; dst_src="${dst_spec#volume:}" ;;
@@ -2491,6 +2512,16 @@ check_storage_free() {
   canon_deploy_dir="$(canonicalize_bind_path "$deploy_dir_norm")"
   ps_out="$(docker ps -q --filter status=running --filter status=paused --filter status=restarting 2>/dev/null)" || return 2
   [ -n "$ps_out" ] || return 0
+  if [ "$dst_type" = 'volume' ]; then
+    dst_mp="$(volume_mountpoint "$dst_src")" || mp_rc=$?
+    if ((mp_rc == 2)); then
+      return 2
+    elif ((mp_rc == 0)) && [ -n "$dst_mp" ]; then
+      dst_mp_canon="$(canonicalize_bind_path "$dst_mp")"
+    else
+      dst_mp=''
+    fi
+  fi
   mapfile -t cids <<<"$ps_out"
   for cid in "${cids[@]}"; do
     [ -n "$cid" ] || continue
@@ -2521,13 +2552,32 @@ check_storage_free() {
     fi
     while IFS='|' read -r m_type m_name m_src; do
       [ -n "$m_type" ] || continue
-      m_src="${m_src%/}"
-      [ -n "$m_src" ] || m_src='/'
+      m_path=''
+      if [ -n "$m_src" ]; then
+        m_path="${m_src%/}"
+        [ -n "$m_path" ] || m_path='/'
+      elif [ "$m_type" = 'volume' ] && [ -n "$m_name" ]; then
+        m_mp_rc=0
+        m_path="$(volume_mountpoint "$m_name")" || m_mp_rc=$?
+        if ((m_mp_rc == 2)); then
+          return 2
+        elif ((m_mp_rc != 0)); then
+          m_path=''
+        fi
+      fi
+      m_canon=''
+      if [ -n "$m_path" ]; then
+        m_canon="$(canonicalize_bind_path "$m_path")"
+      fi
       if [ "$dst_type" = 'volume' ] && [ "$m_type" = 'volume' ] && [ "$m_name" = "$dst_src" ]; then
         return 1
-      elif [ "$dst_type" = 'bind' ] && [ "$m_type" = 'bind' ]; then
-        m_canon="$(canonicalize_bind_path "$m_src")"
-        if bind_paths_overlap "$m_src" "$dst_src" || bind_paths_overlap "$m_canon" "$dst_canon"; then
+      fi
+      if [ "$dst_type" = 'volume' ] && [ -n "$dst_mp" ] && [ -n "$m_path" ]; then
+        if bind_paths_overlap "$m_path" "$dst_mp" || bind_paths_overlap "$m_canon" "$dst_mp_canon"; then
+          return 1
+        fi
+      elif [ "$dst_type" = 'bind' ] && [ -n "$m_path" ]; then
+        if bind_paths_overlap "$m_path" "$dst_src" || bind_paths_overlap "$m_canon" "$dst_canon"; then
           return 1
         fi
       fi
@@ -4166,7 +4216,7 @@ prune_releases() {
 # storage continuity when mode=services). Exit 1 when serving again, 3 when rollback is unsafe or fails.
 RECOVER_FAILED_CONFIG=''
 recover() {
-  local target="$1" what="$2" failed="$3" mode="${4:-services}" failed_proj="${5:-}" failed_db="${6:-}" prev_db="${7:-}"
+  local target="$1" what="$2" failed="$3" mode="${4:-services}" failed_proj="${5:-}" failed_db="${6:-}" prev_db="${7:-}" prev_pgdata="${8:-}"
   local failed_cfg="${RECOVER_FAILED_CONFIG:-}"
   RECOVER_FAILED_CONFIG=''
   if [ -z "$failed_cfg" ] && [ "$mode" = services ]; then
@@ -4231,6 +4281,11 @@ recover() {
       restore_pre_activate "$failed" || true
       record "$what failed, automatic rollback to $target refused: $STORAGE_LAYOUT_SUMMARY"
       die "$EXIT_ROLLBACK_FAILED" "$what failed and automatic rollback to $target was refused ($STORAGE_LAYOUT_ERR): the instance needs an operator"
+    fi
+    if [ -z "$prev_db" ] || [ -z "$rec_db" ] || [ "$rec_db" != "$prev_db" ] || [ "$VALIDATED_PGDATA_SUB" != "$prev_pgdata" ]; then
+      restore_pre_activate "$failed" || true
+      record "$what failed, automatic rollback to $target refused: previous db storage/PGDATA mismatch (${rec_db:+$(mount_label "$rec_db")}${rec_db:-none} vs ${prev_db:+$(mount_label "$prev_db")}${prev_db:-none})"
+      die "$EXIT_ROLLBACK_FAILED" "$what failed and automatic rollback to $target was refused because rollback database storage (${rec_db:+$(mount_label "$rec_db")}${rec_db:-none}, PGDATA /var/lib/postgresql/data${VALIDATED_PGDATA_SUB:+/$VALIDATED_PGDATA_SUB}) does not match pre-deploy database storage (${prev_db:+$(mount_label "$prev_db")}${prev_db:-none}, PGDATA /var/lib/postgresql/data${prev_pgdata:+/$prev_pgdata}): the instance needs an operator"
     fi
     if [ -n "$rec_db" ]; then
       check_storage_free "$rec_db" "${rec_proj:-ludy}" || rec_db_free_rc=$?
@@ -4329,6 +4384,21 @@ recover() {
   fi
   record "$what failed, rollback to $target FAILED"
   die "$EXIT_ROLLBACK_FAILED" "$what failed and the rollback to $target failed too: the instance needs an operator"
+}
+
+# Reverts a just-written .env change and reactivates $current when post-write Compose or storage validation fails (#3972).
+abort_post_env_change() {
+  local name="$1" current="$2" active_proj="$3" summary="$4" msg="$5"
+  if ! restore_env; then
+    if [ -n "$current" ]; then activate "$current"; fi
+    if [ -n "$active_proj" ]; then write_state project "$active_proj"; fi
+    record "deploy $name failed: $summary, and the env file could not be put back"
+    die "$EXIT_ROLLBACK_FAILED" "$msg and the env file could not be put back: the instance needs an operator"
+  fi
+  if [ -n "$current" ]; then activate "$current"; fi
+  if [ -n "$active_proj" ]; then write_state project "$active_proj"; fi
+  record "deploy $name failed: $summary"
+  die "$EXIT_FAILED" "$msg; the env file was put back and nothing running was changed"
 }
 
 # Options both deploy and rollback take. Sets OPT_SHIFT to the number of arguments used (0: not one of these).
@@ -4548,15 +4618,31 @@ do_deploy() {
     record "deploy $name failed: cannot inspect project ownership ($active_proj)"
     die "$EXIT_FAILED" "cannot inspect existing containers for project '$active_proj'; nothing was changed"
   fi
-  local new_db='' new_db_free_rc=0 new_db_exists_rc=0
+  local new_db='' new_db_free_rc=0 new_db_exists_rc=0 new_pgdata_sub_pre=''
+  local new_files_pre='' new_keys_pre='' new_archive_pre=''
+  local prev_files_all='' prev_keys_all='' prev_archive_all=''
+  local check_files_base='' check_keys_base='' check_archive_base=''
   new_db="$(compose_target_mount "$new_config" "$active_proj" /var/lib/postgresql/data 'db')"
   check_new_storage_layout "$new_config" "$active_proj" "$new_db" "$name" "$current"
+  new_pgdata_sub_pre="$VALIDATED_PGDATA_SUB"
+  new_files_pre="$(compose_active_target_mounts "$new_config" "$active_proj" /data/files 'ludy crove api worker')"
+  new_keys_pre="$(compose_active_target_mounts "$new_config" "$active_proj" /data/keys 'ludy crove api worker')"
+  new_archive_pre="$(compose_active_target_mounts "$new_config" "$active_proj" /data/archive 'ludy crove api worker')"
   if ((have_prev_storage)); then
     verify_storage_cutover "$prev_config" "${prev_proj:-unknown}" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current" 1
+    prev_files_all="$(resolve_prev_mount_specs "$prev_config" "${prev_proj:-}" /data/files 'ludy crove api worker' 1)"
+    prev_keys_all="$(resolve_prev_mount_specs "$prev_config" "${prev_proj:-}" /data/keys 'ludy crove api worker' 1)"
+    prev_archive_all="$(resolve_prev_mount_specs "$prev_config" "${prev_proj:-}" /data/archive 'ludy crove api worker' 1)"
   fi
   if [ -n "$alt_prev_config" ] && [ -n "$prev_yaml_name" ]; then
     verify_storage_cutover "$alt_prev_config" "$prev_yaml_name" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current" 0
+    prev_files_all="$(append_unique_lines "$prev_files_all" "$(resolve_prev_mount_specs "$alt_prev_config" "$prev_yaml_name" /data/files 'ludy crove api worker' 0)")"
+    prev_keys_all="$(append_unique_lines "$prev_keys_all" "$(resolve_prev_mount_specs "$alt_prev_config" "$prev_yaml_name" /data/keys 'ludy crove api worker' 0)")"
+    prev_archive_all="$(append_unique_lines "$prev_archive_all" "$(resolve_prev_mount_specs "$alt_prev_config" "$prev_yaml_name" /data/archive 'ludy crove api worker' 0)")"
   fi
+  check_files_base="$(append_unique_lines "$new_files_pre" "$prev_files_all")"
+  check_keys_base="$(append_unique_lines "$new_keys_pre" "$prev_keys_all")"
+  check_archive_base="$(append_unique_lines "$new_archive_pre" "$prev_archive_all")"
   if [ -n "$current" ] && [ -f "$DEPLOY_DIR/releases/$current/docker-compose.yml" ] && [ -n "$active_proj" ]; then
     if { plain_compose_omits_override_and_project "$ENV_FILE" || { [ -f "$DEPLOY_DIR/.env" ] && ! [ "$ENV_FILE" -ef "$DEPLOY_DIR/.env" ] && plain_compose_omits_override_and_project "$DEPLOY_DIR/.env"; }; } \
       && [ "$(compose_file_yaml_name "$DEPLOY_DIR/releases/$current/docker-compose.yml")" != "$active_proj" ]; then
@@ -4565,9 +4651,11 @@ do_deploy() {
       die "$EXIT_USAGE" "cannot deploy $release safely while previous release $current uses another project name: COMPOSE_FILE omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME, so recovery would switch projects; add docker-compose.override.yml to COMPOSE_FILE or set COMPOSE_PROJECT_NAME=$active_proj first"
     fi
   fi
-  local prev_db_primary=''
+  local prev_db_primary='' prev_pgdata_primary='' prev_pg_primary_rc=0
   if ((have_prev_storage)); then
     prev_db_primary="$(resolve_prev_mount_specs "$prev_config" "${prev_proj:-}" /var/lib/postgresql/data 'db' 1 | head -n 1 || true)"
+    prev_pgdata_primary="$(resolve_prev_pgdata_sub "$prev_config" 1)" || prev_pg_primary_rc=$?
+    if ((prev_pg_primary_rc != 0)); then prev_pgdata_primary='__unverified__'; fi
   fi
   if [ -n "$new_db" ]; then
     mount_exists "$new_db" || new_db_exists_rc=$?
@@ -4593,7 +4681,7 @@ do_deploy() {
   if ! up db; then
     RECOVER_FAILED_CONFIG="$new_config"
     if [ -n "$prev_proj" ]; then COMPOSE_PROJECT_OVERRIDE="$prev_proj"; fi
-    recover "$current" "deploy $name (database)" "$name" after_db_fail "$active_proj" "$new_db" "$prev_db_primary"
+    recover "$current" "deploy $name (database)" "$name" after_db_fail "$active_proj" "$new_db" "$prev_db_primary" "$prev_pgdata_primary"
   fi
   COMPOSE_PROJECT_OVERRIDE="$active_proj"
   # The production steps of #1822 and #1750 (docs/runbooks/deploy.md), on the host, with the database up and before
@@ -4634,17 +4722,49 @@ do_deploy() {
       record "deploy $name failed: $ENV_CHANGE_LABEL"
       die "$EXIT_FAILED" "$ENV_CHANGE_LABEL could not be written into $ENV_FILE; the services were not changed${current:+ ($current still runs)}"
     fi
-    if [ "$ENV_CHANGED" = 1 ] && ! dc config --quiet; then
-      if ! restore_env; then
-        if [ -n "$current" ]; then activate "$current"; fi
-        if [ -n "$active_proj" ]; then write_state project "$active_proj"; fi
-        record "deploy $name failed: compose config with $ENV_CHANGE_LABEL, and the env file could not be put back"
-        die "$EXIT_ROLLBACK_FAILED" "the compose files do not load with $ENV_CHANGE_LABEL and the env file could not be put back: the instance needs an operator"
+    if [ "$ENV_CHANGED" = 1 ]; then
+      if ! dc config --quiet; then
+        abort_post_env_change "$name" "$current" "$active_proj" "compose config with $ENV_CHANGE_LABEL" "the compose files do not load with $ENV_CHANGE_LABEL"
       fi
-      if [ -n "$current" ]; then activate "$current"; fi
-      if [ -n "$active_proj" ]; then write_state project "$active_proj"; fi
-      record "deploy $name failed: compose config with $ENV_CHANGE_LABEL"
-      die "$EXIT_FAILED" "the compose files do not load with $ENV_CHANGE_LABEL; the env file was put back and nothing running was changed"
+      local post_env_config='' post_env_proj='' post_target='' post_base='' post_list='' post_m='' post_m_rc=0 post_free_rc=0
+      if ! post_env_config="$(dc config 2>/dev/null)" || ! post_env_proj="$(compose_project_from_yaml "$post_env_config")" || [ -z "$post_env_proj" ]; then
+        abort_post_env_change "$name" "$current" "$active_proj" "post-env compose inspection ($ENV_CHANGE_LABEL)" "cannot inspect compose configuration after writing $ENV_CHANGE_LABEL"
+      fi
+      if [ "$post_env_proj" != "$active_proj" ]; then
+        abort_post_env_change "$name" "$current" "$active_proj" "post-env compose project drift ($post_env_proj != $active_proj)" "$ENV_CHANGE_LABEL switched Compose project from '$active_proj' to '$post_env_proj'"
+      fi
+      if ! check_rollback_storage_continuity "$post_env_config" "$active_proj" "$image" "$name" \
+        "$new_db" "$new_pgdata_sub_pre" "$check_files_base" "$check_keys_base" "$check_archive_base"; then
+        abort_post_env_change "$name" "$current" "$active_proj" "post-env $ROLLBACK_STORAGE_SUMMARY" "storage changed incompatibly after writing $ENV_CHANGE_LABEL ($ROLLBACK_STORAGE_ERR)"
+      fi
+      for post_target in /data/files /data/keys /data/archive; do
+        case "$post_target" in
+          /data/files) post_base="$check_files_base"; post_list="$RB_FILES" ;;
+          /data/keys) post_base="$check_keys_base"; post_list="$RB_KEYS" ;;
+          /data/archive) post_base="$check_archive_base"; post_list="$RB_ARCHIVE" ;;
+        esac
+        while IFS= read -r post_m; do
+          [ -n "$post_m" ] || continue
+          if [ -n "$post_base" ] && printf '%s\n' "$post_base" | grep -qx -F -- "$post_m"; then
+            continue
+          fi
+          post_m_rc=0
+          mount_exists "$post_m" || post_m_rc=$?
+          if ((post_m_rc == 2)); then
+            abort_post_env_change "$name" "$current" "$active_proj" "cannot inspect post-env $post_target storage $(mount_label "$post_m")" "cannot inspect $post_target storage $(mount_label "$post_m") selected after writing $ENV_CHANGE_LABEL"
+          elif ((post_m_rc == 0)); then
+            post_free_rc=0
+            check_storage_free "$post_m" "$active_proj" || post_free_rc=$?
+            if ((post_free_rc == 1)); then
+              abort_post_env_change "$name" "$current" "$active_proj" "post-env $post_target storage $(mount_label "$post_m") held by another project" "$post_target storage $(mount_label "$post_m") selected after writing $ENV_CHANGE_LABEL is mounted by another project"
+            elif ((post_free_rc != 0)); then
+              abort_post_env_change "$name" "$current" "$active_proj" "cannot inspect containers for post-env $(mount_label "$post_m")" "cannot inspect running containers for $post_target storage $(mount_label "$post_m") selected after writing $ENV_CHANGE_LABEL"
+            fi
+          fi
+        done <<<"$post_list"
+      done
+      new_config="$post_env_config"
+      new_db="$RB_DB"
     fi
   fi
 

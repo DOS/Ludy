@@ -227,10 +227,40 @@ if [ "${1:-}" = volume ] && [ "${2:-}" = inspect ]; then
     echo 'Cannot connect to the Docker daemon' >&2
     exit 1
   fi
-  for v in ${STUB_VOLUMES:-}; do
-    if [ "$v" = "${3:-}" ]; then exit 0; fi
+  shift 2
+  v_fmt='' v_target=''
+  while (($# > 0)); do
+    case "$1" in
+      --format | -f)
+        if (($# >= 2)); then v_fmt="$2"; shift 2; else shift; fi
+        ;;
+      *)
+        v_target="$1"
+        shift
+        ;;
+    esac
   done
-  echo "Error response from daemon: get ${3:-}: No such volume" >&2
+  v_found=0
+  for v in ${STUB_VOLUMES:-}; do
+    if [ "$v" = "$v_target" ]; then v_found=1; break; fi
+  done
+  if ((v_found == 0)) && [ -n "${STUB_VOLUME_MOUNTPOINTS:-}" ]; then
+    for pair in ${STUB_VOLUME_MOUNTPOINTS}; do
+      if [ "${pair%%=*}" = "$v_target" ]; then v_found=1; break; fi
+    done
+  fi
+  if ((v_found)); then
+    if [[ "$v_fmt" == *Mountpoint* ]]; then
+      for pair in ${STUB_VOLUME_MOUNTPOINTS:-}; do
+        if [ "${pair%%=*}" = "$v_target" ]; then
+          printf '%s\n' "${pair#*=}"
+          break
+        fi
+      done
+    fi
+    exit 0
+  fi
+  echo "Error response from daemon: get $v_target: No such volume" >&2
   exit 1
 fi
 if [ "${1:-}" = run ]; then
@@ -397,8 +427,16 @@ emit_stub_compose_config() {
   if [ "$p" != crove ] && [ -n "${STUB_NEW_DB_NESTED_MOUNT:-}" ]; then
     db_mounts_yaml="${db_mounts_yaml}\n      - type: volume\n        source: db-data\n        target: ${STUB_NEW_DB_NESTED_MOUNT}"
   fi
+  if [ "$p" = crove ] && [ -n "${STUB_CROVE_DB_VOLUME:-}" ]; then db_vol="$STUB_CROVE_DB_VOLUME"; fi
   if [ "$p" != crove ] && [ -n "${STUB_NEW_DB_VOLUME:-${STUB_DB_VOLUME:-}}" ]; then
     db_vol="${STUB_NEW_DB_VOLUME:-${STUB_DB_VOLUME:-}}"
+  fi
+  if [ -n "${STUB_DB_VOL_BY_DIGEST:-}" ] && [ -n "${STUB_DEPLOY_DIR:-}" ] && [ -f "$STUB_DEPLOY_DIR/docker-compose.override.yml" ]; then
+    for _dbv_pair in ${STUB_DB_VOL_BY_DIGEST}; do
+      if grep -q -F -- "${_dbv_pair%%=*}" "$STUB_DEPLOY_DIR/docker-compose.override.yml"; then
+        db_vol="${_dbv_pair#*=}"
+      fi
+    done
   fi
   if [ "$p" != crove ] && [ -n "${STUB_NEW_FILES_VOLUME:-}" ]; then files_vol="$STUB_NEW_FILES_VOLUME"; fi
   if [ "$p" != crove ] && [ -n "${STUB_FILES_VOL_BY_DIGEST:-}" ] && [ -n "${STUB_DEPLOY_DIR:-}" ] && [ -f "$STUB_DEPLOY_DIR/docker-compose.override.yml" ]; then
@@ -407,6 +445,16 @@ emit_stub_compose_config() {
         files_vol="${_fv_pair#*=}"
       fi
     done
+  fi
+  if [ "$p" != crove ] && [ -n "${STUB_FILES_VOL_IF_ENV_HAS:-}" ]; then
+    local _cfg_env="${envfile:-${proj_dir:-$PWD}/.env}" _fenv_pair=''
+    if [ -f "$_cfg_env" ]; then
+      for _fenv_pair in ${STUB_FILES_VOL_IF_ENV_HAS}; do
+        if grep -q -F -- "${_fenv_pair%%|*}" "$_cfg_env"; then
+          files_vol="${_fenv_pair#*|}"
+        fi
+      done
+    fi
   fi
   if [ "$p" != crove ] && [ -n "${STUB_NEW_KEYS_VOLUME:-}" ]; then keys_vol="$STUB_NEW_KEYS_VOLUME"; fi
   if [ "$p" != crove ] && [ -n "${STUB_NEW_ARCHIVE_VOLUME:-}" ]; then archive_vol="$STUB_NEW_ARCHIVE_VOLUME"; fi
