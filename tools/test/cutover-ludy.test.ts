@@ -140,6 +140,13 @@ describe('pilot-ludy-cutover workflow and pinned copy image', () => {
     expect(script).toContain('--entrypoint bash "$VOLUME_COPY_IMAGE"');
     expect(script).toContain('copy_into_deploy_dir');
     expect(script).not.toMatch(/^\s*(?:\w+\s+)*cp(?:\s+-\w+)?\s+[^#\n]+\s"\$DEPLOY_DIR\/(?:Caddyfile|compose\.)/m);
+    const deployWorkflow = readFileSync(resolve(repo, '.github/workflows/deploy.yml'), 'utf8');
+    for (const wf of [workflow, deployWorkflow]) {
+      expect(wf).toContain('dir="${DEPLOY_DIR:-/opt/ludy}"');
+      expect(wf).not.toContain('dir="${DEPLOY_DIR:-/opt/crove}"');
+      expect(wf).toContain('host_dir_state=');
+      expect(wf).toContain('legacy_crove');
+    }
     // CodeQL Actions safety: never interpolate inputs directly inside run scripts.
     for (const runBlock of workflow.matchAll(/run:\s*\|\n([\s\S]*?)(?=\n\s*(?:- |env:|if:|name:|uses:|with:|$))/g)) {
       expect(runBlock[1]).not.toMatch(/\$\{\{\s*inputs\./);
@@ -563,6 +570,8 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
         'LUDY_APP_DB_PASSWORD="" # unset placeholder',
         'LUDY_CONTEXT_TOKEN_KEY=   # unset',
         'CROVE_CONTEXT_TOKEN_KEY=real-key',
+        'LUDY_REPORTER_DB_PASSWORD=#abc',
+        'CROVE_REPORTER_DB_PASSWORD=old-pw',
         'LUDY_DIR=/custom/ludy',
         'CROVE_DIR=/stale/crove',
         '',
@@ -578,6 +587,8 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(updatedEnv).not.toContain('CROVE_APP_DB_PASSWORD=');
     expect(updatedEnv).toContain('LUDY_CONTEXT_TOKEN_KEY=real-key');
     expect(updatedEnv).not.toContain('CROVE_CONTEXT_TOKEN_KEY=');
+    expect(updatedEnv).toContain('LUDY_REPORTER_DB_PASSWORD=#abc');
+    expect(updatedEnv).not.toContain('CROVE_REPORTER_DB_PASSWORD=');
     expect(updatedEnv).toContain('LUDY_DIR=/custom/ludy');
     expect(updatedEnv).not.toContain('CROVE_DIR=');
     expect(readFileSync(join(f.deployDir, '.deploy', 'mounts'), 'utf8')).toContain('/var/lib/postgresql/data=volume:ludy_db-data');

@@ -674,6 +674,78 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(volInspectFail.out).toContain('cannot inspect prior database storage crove_db-data');
   });
 
+  it('fails closed on missing new mounts, extra PGDATA files, volume subpaths, and keeps project across recover and rollback (#3972)', () => {
+    const croveCompose = `${root}/docker-compose.crove.yml`;
+    writeFileSync(croveCompose, 'name: crove\nservices: {}\n');
+
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+    const missingNewDb = deploy('v1.0.0', 'a', {
+      STUB_OMIT_NEW_DB_MOUNT: '1',
+      STUB_VOLUMES: 'crove_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1',
+    });
+    expect(missingNewDb.status, missingNewDb.out).toBe(1);
+    expect(missingNewDb.out).toContain('defines no persistent mount at /var/lib/postgresql/data');
+
+    const missingNewFiles = deploy('v1.0.0', 'a', {
+      STUB_OMIT_NEW_FILES_MOUNT: '1',
+      STUB_VOLUMES: 'crove_db-data ludy_db-data crove_files',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_POPULATED_MOUNTS: 'crove_files',
+    });
+    expect(missingNewFiles.status, missingNewFiles.out).toBe(1);
+    expect(missingNewFiles.out).toContain('defines no persistent mount at /data/files');
+
+    const extraPg = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_PG_EXTRA_FILES_MOUNTS: 'ludy_db-data',
+    });
+    expect(extraPg.status, extraPg.out).toBe(1);
+    expect(extraPg.out).toContain('without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    const subpathMount = deploy('v1.0.0', 'a', {
+      STUB_NEW_DB_SUBPATH: 'pg17',
+    });
+    expect(subpathMount.status, subpathMount.out).toBe(1);
+    expect(subpathMount.out).toContain('unsupported volume subpath mount on /var/lib/postgresql/data');
+
+    rmSync(`${dir}/docker-compose.yml`);
+    const v1Crove = run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', croveCompose]);
+    expect(v1Crove.status, v1Crove.out).toBe(0);
+    expect(readFileSync(`${dir}/.deploy/project`, 'utf8').trim()).toBe('crove');
+
+    writeFileSync(`${log}.project`, '');
+    const failedSwitch = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_BAD_DIGEST: digest('b'),
+      STUB_LOG_PROJECT: '1',
+    });
+    expect(failedSwitch.status, failedSwitch.out).toBe(1);
+    const recoverProjects = readFileSync(`${log}.project`, 'utf8').split('\n').filter(Boolean);
+    expect(recoverProjects.some((l) => l === 'project ludy up' || l === 'project ludy port')).toBe(true);
+    expect(recoverProjects.filter((l) => l.startsWith('project  '))).toContain('project  config');
+    expect(readFileSync(`${dir}/.deploy/project`, 'utf8').trim()).toBe('ludy');
+
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    expect(run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', croveCompose]).status).toBe(0);
+    const v2Ludy = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+    });
+    expect(v2Ludy.status, v2Ludy.out).toBe(0);
+    expect(readFileSync(`${dir}/.deploy/project`, 'utf8').trim()).toBe('ludy');
+
+    writeFileSync(`${log}.project`, '');
+    const back = run(['rollback'], { STUB_LOG_PROJECT: '1' });
+    expect(back.status, back.out).toBe(0);
+    const rollbackProjects = readFileSync(`${log}.project`, 'utf8').split('\n').filter(Boolean);
+    expect(rollbackProjects.length).toBeGreaterThan(0);
+    expect(rollbackProjects.every((l) => l.startsWith('project ludy '))).toBe(true);
+  });
+
   describe('build check', () => {
     const build = (c: string) => digest(c).slice(0, 12);
     const withBuild = (release: string, c: string, env: Record<string, string> = {}) =>

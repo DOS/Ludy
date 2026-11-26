@@ -180,6 +180,11 @@ if [ "${1:-}" = run ]; then
     for m in ${STUB_PG_PID_MOUNTS:-} ${STUB_PG_STALE_MOUNTS:-}; do
       if [ "$m" = "${vols[0]}" ] || [ "$m" = "${vols[1]}" ]; then exit 1; fi
     done
+    if [[ "$raw_args" == *dstEntries* ]]; then
+      for m in ${STUB_PG_EXTRA_FILES_MOUNTS:-}; do
+        if [ "$m" = "${vols[1]}" ]; then exit 1; fi
+      done
+    fi
     c0="$(stub_cluster_id "${vols[0]}" || true)"
     c1="$(stub_cluster_id "${vols[1]}" || true)"
     if [ -n "$c0" ] && [ "$c0" = "$c1" ]; then exit 0; fi
@@ -232,19 +237,26 @@ sub="$1"
 shift
 args="$*"
 printf 'compose %s %s\n' "$sub" "$args" >>"$STUB_LOG"
+if [ "${STUB_LOG_PROJECT:-}" = 1 ]; then
+  printf 'project %s %s\n' "${proj_override:-}" "$sub" >>"$STUB_LOG.project"
+fi
 # The compose files of each active call (`config` without flags is read-only YAML resolution before/after activate).
 if [ "$sub" != config ] || [ -n "$args" ]; then
   printf '%s\n' "${files[*]}" >>"$STUB_LOG.files"
 fi
 
 emit_stub_compose_config() {
-  local p="$1" app_svc='ludy' db_mount_yaml='' files_vol="${1}_files" keys_vol="${1}_keys" archive_vol="${1}_archive" db_vol="${1}_db-data"
+  local p="$1" app_svc='ludy' db_mounts_yaml='' files_mount_yaml='' files_vol="${1}_files" keys_vol="${1}_keys" archive_vol="${1}_archive" db_vol="${1}_db-data"
   if [ "$p" = crove ]; then app_svc='crove'; fi
   case " ${STUB_SERVICES:-} " in *" worker "*) app_svc='worker' ;; esac
-  if [ "$p" != crove ] && [ -n "${STUB_NEW_DB_BIND:-}" ]; then
-    db_mount_yaml="      - type: bind\n        source: ${STUB_NEW_DB_BIND}\n        target: /var/lib/postgresql/data"
+  if [ "$p" != crove ] && [ -n "${STUB_OMIT_NEW_DB_MOUNT:-}" ]; then
+    db_mounts_yaml='    volumes: []'
+  elif [ "$p" != crove ] && [ -n "${STUB_NEW_DB_BIND:-}" ]; then
+    db_mounts_yaml="    volumes:\n      - type: bind\n        source: ${STUB_NEW_DB_BIND}\n        target: /var/lib/postgresql/data"
+  elif [ "$p" != crove ] && [ -n "${STUB_NEW_DB_SUBPATH:-}" ]; then
+    db_mounts_yaml="    volumes:\n      - type: volume\n        source: db-data\n        target: /var/lib/postgresql/data\n        volume:\n          subpath: ${STUB_NEW_DB_SUBPATH}"
   else
-    db_mount_yaml="      - type: volume\n        source: db-data\n        target: /var/lib/postgresql/data"
+    db_mounts_yaml="    volumes:\n      - type: volume\n        source: db-data\n        target: /var/lib/postgresql/data"
   fi
   if [ "$p" != crove ] && [ -n "${STUB_NEW_DB_VOLUME:-${STUB_DB_VOLUME:-}}" ]; then
     db_vol="${STUB_NEW_DB_VOLUME:-${STUB_DB_VOLUME:-}}"
@@ -252,8 +264,11 @@ emit_stub_compose_config() {
   if [ "$p" != crove ] && [ -n "${STUB_NEW_FILES_VOLUME:-}" ]; then files_vol="$STUB_NEW_FILES_VOLUME"; fi
   if [ "$p" != crove ] && [ -n "${STUB_NEW_KEYS_VOLUME:-}" ]; then keys_vol="$STUB_NEW_KEYS_VOLUME"; fi
   if [ "$p" != crove ] && [ -n "${STUB_NEW_ARCHIVE_VOLUME:-}" ]; then archive_vol="$STUB_NEW_ARCHIVE_VOLUME"; fi
-  printf 'name: %s\nservices:\n  db:\n    volumes:\n%b\n  %s:\n    volumes:\n      - type: volume\n        source: files\n        target: /data/files\n      - type: volume\n        source: keys\n        target: /data/keys\n      - type: volume\n        source: archive\n        target: /data/archive\nvolumes:\n  db-data:\n    name: %s\n  files:\n    name: %s\n  keys:\n    name: %s\n  archive:\n    name: %s\n' \
-    "$p" "$db_mount_yaml" "$app_svc" "$db_vol" "$files_vol" "$keys_vol" "$archive_vol"
+  if [ "$p" = crove ] || [ -z "${STUB_OMIT_NEW_FILES_MOUNT:-}" ]; then
+    files_mount_yaml="      - type: volume\n        source: files\n        target: /data/files\n"
+  fi
+  printf 'name: %s\nservices:\n  db:\n%b\n  %s:\n    volumes:\n%b      - type: volume\n        source: keys\n        target: /data/keys\n      - type: volume\n        source: archive\n        target: /data/archive\nvolumes:\n  db-data:\n    name: %s\n  files:\n    name: %s\n  keys:\n    name: %s\n  archive:\n    name: %s\n' \
+    "$p" "$db_mounts_yaml" "$app_svc" "$files_mount_yaml" "$db_vol" "$files_vol" "$keys_vol" "$archive_vol"
 }
 
 case "$sub" in

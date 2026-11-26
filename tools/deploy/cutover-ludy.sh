@@ -396,28 +396,23 @@ rewrite_db_url_rhs() {
   fi
 }
 
-# Returns 0 if a dotenv RHS is non-empty under Compose `:-` semantics (quotes preserved, unquoted comments stripped).
+# Returns 0 if a dotenv RHS is non-empty under Compose `:-` semantics (#abc without leading space stays literal).
 env_rhs_is_nonempty() {
-  local v="$1"
-  v="${v#"${v%%[![:space:]]*}"}"
-  case "$v" in
-    \"*)
-      [[ "$v" =~ ^\"\"([[:space:]]*(#.*)?)?$ ]] && return 1
+  local raw="$1" value="$1"
+  if [[ "$raw" =~ ^[[:space:]]+# ]]; then
+    value=''
+  else
+    value="${value#"${value%%[![:space:]]*}"}"
+    if [[ "$value" =~ ^(\"\"|\'\')[[:space:]]*(#.*)?$ ]]; then
+      value=''
+    elif [[ "$value" == \"* ]] || [[ "$value" == \'* ]]; then
       return 0
-      ;;
-    \'*)
-      [[ "$v" =~ ^\'\'([[:space:]]*(#.*)?)?$ ]] && return 1
-      return 0
-      ;;
-    \#* | '')
-      return 1
-      ;;
-    *)
-      v="$(printf '%s' "$v" | sed -E 's/[[:space:]]+#.*$//')"
-      v="${v%"${v##*[![:space:]]}"}"
-      [ -n "$v" ]
-      ;;
-  esac
+    else
+      value="${value%%[[:space:]]#*}"
+      value="${value%"${value##*[![:space:]]}"}"
+    fi
+  fi
+  [ -n "$value" ]
 }
 
 # Pure-bash env rewriter: renames CROVE_* -> LUDY_* preserving Compose `:-` effective values (so a non-empty CROVE_*

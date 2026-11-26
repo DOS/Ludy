@@ -287,6 +287,13 @@ jobs:
             ServerAliveInterval 30
             ServerAliveCountMax 10
           EOF
+          if [ -z "$DEPLOY_DIR" ]; then
+            host_dir_state="$(ssh -F "$ssh_dir/config" ludy-target 'if [ -e /opt/ludy/.env ] || [ -d /opt/ludy/.deploy ]; then echo ludy; elif [ -e /opt/crove/.env ] || [ -d /opt/crove/.deploy ]; then echo legacy_crove; else echo none; fi' < /dev/null)"
+            if [ "$host_dir_state" = legacy_crove ]; then
+              echo '::error::DEPLOY_DIR is not set and the host has /opt/crove without /opt/ludy; set the DEPLOY_DIR environment variable to /opt/crove (or move the stack to /opt/ludy) before running this workflow'
+              exit 1
+            fi
+          fi
           {
             echo 'ready=true'
             echo "ssh_config=$ssh_dir/config"

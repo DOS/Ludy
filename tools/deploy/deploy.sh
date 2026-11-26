@@ -698,8 +698,11 @@ guard_run() {
 # docker compose for the active files in $DEPLOY_DIR. The project name comes from the compose file (`ludy`) or
 # COMPOSE_PROJECT_NAME in the env file, so volumes stay the same from release to release.
 DC_PREFIX=()
+COMPOSE_PROJECT_OVERRIDE=''
 dc() {
-  local args=(compose --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml")
+  local args=(compose)
+  if [ -n "$COMPOSE_PROJECT_OVERRIDE" ]; then args+=(-p "$COMPOSE_PROJECT_OVERRIDE"); fi
+  args+=(--project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml")
   # The pilot's split API and worker (tools/deploy/compose.pilot.yml, #2118) right after the release's file: they extend its
   # `ludy` service, whose image the release's pins (next) must then replace. The host chooses the layout by listing the file
   # in COMPOSE_FILE (#2133); the file itself comes with each release (activate), so it stays in step with docker-compose.yml.
@@ -1032,7 +1035,7 @@ compose_project() {
 # (<service_regex>) in captured `docker compose config` YAML, or empty if no matching service defines that target.
 compose_target_mount() {
   local config_out="$1" proj="$2" target_path="$3" svc_re="$4"
-  local line section='' in_svc=0 in_vols=0 cur_type='' cur_src='' cur_tgt='' mount_type='' mount_src=''
+  local line section='' in_svc=0 in_vols=0 cur_type='' cur_src='' cur_tgt='' cur_subpath='' mount_type='' mount_src='' mount_subpath='' matched_cur=0
   while IFS= read -r line; do
     line="${line%$'\r'}"
     if [[ "$line" =~ ^([a-zA-Z0-9_-]+):([[:space:]]*.*)?$ ]]; then
@@ -1050,7 +1053,7 @@ compose_target_mount() {
       if ((in_svc)); then
         if [[ "$line" =~ ^[[:space:]]{4}volumes:[[:space:]]*(\[\][[:space:]]*)?$ ]]; then
           in_vols=1
-          cur_type=''; cur_src=''; cur_tgt=''
+          cur_type=''; cur_src=''; cur_tgt=''; cur_subpath=''; matched_cur=0
           continue
         elif [[ "$line" =~ ^[[:space:]]{4}[a-zA-Z0-9._-]+: ]]; then
           in_vols=0
@@ -1059,19 +1062,23 @@ compose_target_mount() {
         if ((in_vols)); then
           if [[ "$line" =~ ^[[:space:]]*-[[:space:]]+(.*)$ ]]; then
             local item="${BASH_REMATCH[1]}"
-            cur_type=''; cur_src=''; cur_tgt=''
+            cur_type=''; cur_src=''; cur_tgt=''; cur_subpath=''; matched_cur=0
             if [[ "$item" =~ ^type:[[:space:]]*(.+)$ ]]; then
               cur_type="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
             elif [[ "$item" =~ ^source:[[:space:]]*(.+)$ ]]; then
               cur_src="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
             elif [[ "$item" =~ ^target:[[:space:]]*(.+)$ ]]; then
               cur_tgt="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+            elif [[ "$item" =~ ^subpath:[[:space:]]*(.+)$ ]]; then
+              cur_subpath="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+              cur_subpath="${cur_subpath#/}"; cur_subpath="${cur_subpath%/}"
             elif [[ "$item" =~ ^([^:]+):([^:]+)(:[^:]*)?$ ]]; then
               local s_raw t_raw
               s_raw="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
               t_raw="$(unquote_compose_scalar "${BASH_REMATCH[2]}")"
               if [ "$t_raw" = "$target_path" ]; then
                 mount_src="$s_raw"
+                mount_subpath=''
                 if [[ "$s_raw" == /* || "$s_raw" == .* ]]; then mount_type=bind; else mount_type=volume; fi
                 break
               fi
@@ -1082,10 +1089,16 @@ compose_target_mount() {
             cur_src="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
           elif [[ "$line" =~ ^[[:space:]]+target:[[:space:]]*(.+)$ ]]; then
             cur_tgt="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+          elif [[ "$line" =~ ^[[:space:]]+subpath:[[:space:]]*(.+)$ ]]; then
+            cur_subpath="$(unquote_compose_scalar "${BASH_REMATCH[1]}")"
+            cur_subpath="${cur_subpath#/}"; cur_subpath="${cur_subpath%/}"
+            if ((matched_cur)); then mount_subpath="$cur_subpath"; fi
           fi
           if [ "$cur_tgt" = "$target_path" ] && [ -n "$cur_src" ]; then
             mount_type="${cur_type:-volume}"
             mount_src="$cur_src"
+            mount_subpath="$cur_subpath"
+            matched_cur=1
           fi
         fi
       fi
@@ -1123,7 +1136,23 @@ compose_target_mount() {
     fi
   done <<<"$config_out"
 
-  printf 'volume:%s' "${resolved_name:-${proj}_${mount_src}}"
+  if [ -n "$mount_subpath" ]; then
+    printf 'volume:%s:%s' "${resolved_name:-${proj}_${mount_src}}" "$mount_subpath"
+  else
+    printf 'volume:%s' "${resolved_name:-${proj}_${mount_src}}"
+  fi
+}
+
+# Refuses unsupported Compose volume subpath mounts that share one underlying Docker volume (#3972).
+reject_volume_subpath() {
+  local spec="$1" target="$2" name="$3" current="$4"
+  case "$spec" in
+    volume:*:*)
+      restore_pre_activate "$current"
+      record "deploy $name failed: unsupported volume subpath on $target (${spec#volume:})"
+      die "$EXIT_FAILED" "unsupported volume subpath mount on $target (${spec#volume:}); use a dedicated volume or bind mount before deploying"
+      ;;
+  esac
 }
 
 # Checks whether a volume or bind directory exists.
@@ -1162,7 +1191,23 @@ mount_label() {
   mount_docker_source "$1"
 }
 
+# Returns 0 if mount is confirmed absent or contains zero entries; 1 if non-empty or inspect failed (#3972).
+mount_is_empty() {
+  local src_spec="$1" probe_image="$2" src_m rc=0
+  mount_exists "$src_spec" || rc=$?
+  if ((rc == 1)); then return 0; fi
+  if ((rc != 0)); then return 1; fi
+  src_m="$(mount_docker_source "$src_spec")"
+  docker run --rm --network none --user 0:0 \
+    -v "${src_m}:/src:ro" \
+    --entrypoint node "$probe_image" -e '
+      const fs = require("node:fs");
+      process.exit(fs.readdirSync("/src").length === 0 ? 0 : 1);
+    ' >/dev/null 2>&1
+}
+
 # Emits shared Node helpers verifying exact directory, symlink, and streaming 64 KiB file-content parity (#3972).
+# When exact=true, extra entries present only in dstRoot (e.g. standby.signal) also fail validation.
 node_tree_parity_js() {
   cat <<'EOF'
 const fs = require("node:fs");
@@ -1196,9 +1241,18 @@ function filesEqual(a, b, size) {
     fs.closeSync(fdB);
   }
 }
-function checkTree(srcRoot, dstRoot, rel) {
+function checkTree(srcRoot, dstRoot, rel, exact) {
   const srcPath = rel ? path.join(srcRoot, rel) : srcRoot;
+  const dstPath = rel ? path.join(dstRoot, rel) : dstRoot;
   const entries = fs.readdirSync(srcPath, { withFileTypes: true });
+  if (exact) {
+    const dstEntries = fs.readdirSync(dstPath, { withFileTypes: true });
+    if (dstEntries.length !== entries.length) return false;
+    const srcNames = new Set(entries.map((e) => e.name));
+    for (const de of dstEntries) {
+      if (!srcNames.has(de.name)) return false;
+    }
+  }
   for (const ent of entries) {
     const childRel = rel ? path.join(rel, ent.name) : ent.name;
     const s = path.join(srcRoot, childRel);
@@ -1211,7 +1265,7 @@ function checkTree(srcRoot, dstRoot, rel) {
       return false;
     }
     if (ss.isDirectory()) {
-      if (!ds.isDirectory() || !checkTree(srcRoot, dstRoot, childRel)) return false;
+      if (!ds.isDirectory() || !checkTree(srcRoot, dstRoot, childRel, exact)) return false;
     } else if (ss.isSymbolicLink()) {
       if (!ds.isSymbolicLink() || fs.readlinkSync(s) !== fs.readlinkSync(d)) return false;
     } else if (ss.isFile()) {
@@ -1226,7 +1280,7 @@ EOF
 }
 
 # Returns 0 if source mount has no PG data OR destination mount holds a complete, cleanly-stopped copy
-# (no postmaster.pid, matching PG_VERSION, full global/pg_control equality, and full recursive PGDATA parity).
+# (no postmaster.pid, matching PG_VERSION, full global/pg_control equality, and symmetric exact PGDATA parity).
 mounts_match_pg_cluster() {
   local src_spec="$1" dst_spec="$2" probe_image="$3" src_m dst_m js src_rc=0 dst_rc=0
   mount_exists "$src_spec" || src_rc=$?
@@ -1235,12 +1289,7 @@ mounts_match_pg_cluster() {
   src_m="$(mount_docker_source "$src_spec")"
   mount_exists "$dst_spec" || dst_rc=$?
   if ((dst_rc == 1)); then
-    docker run --rm --network none --user 0:0 \
-      -v "${src_m}:/src:ro" \
-      --entrypoint node "$probe_image" -e '
-        const fs = require("node:fs");
-        process.exit(fs.readdirSync("/src").length === 0 ? 0 : 1);
-      ' >/dev/null 2>&1
+    mount_is_empty "$src_spec" "$probe_image"
     return $?
   elif ((dst_rc != 0)); then
     return 1
@@ -1254,7 +1303,7 @@ mounts_match_pg_cluster() {
   js+=$'const a = fs.readFileSync("/src/global/pg_control");\n'
   js+=$'const b = fs.readFileSync("/dst/global/pg_control");\n'
   js+=$'if (a.length < 8 || a.subarray(0, 8).every((x) => x === 0) || !a.equals(b)) process.exit(1);\n'
-  js+=$'if (!checkTree("/src", "/dst", "")) process.exit(1);\n'
+  js+=$'if (!checkTree("/src", "/dst", "", true)) process.exit(1);\n'
   js+=$'process.exit(0);\n'
   docker run --rm --network none --user 0:0 \
     -v "${src_m}:/src:ro" -v "${dst_m}:/dst:ro" \
@@ -1316,19 +1365,14 @@ mount_data_migrated() {
   src_m="$(mount_docker_source "$src_spec")"
   mount_exists "$dst_spec" || dst_rc=$?
   if ((dst_rc == 1)); then
-    docker run --rm --network none --user 0:0 \
-      -v "${src_m}:/src:ro" \
-      --entrypoint node "$probe_image" -e '
-        const fs = require("node:fs");
-        process.exit(fs.readdirSync("/src").length === 0 ? 0 : 1);
-      ' >/dev/null 2>&1
+    mount_is_empty "$src_spec" "$probe_image"
     return $?
   elif ((dst_rc != 0)); then
     return 1
   fi
   dst_m="$(mount_docker_source "$dst_spec")"
   js="$(node_tree_parity_js)"
-  js+=$'\nprocess.exit(checkTree("/src", "/dst", "") ? 0 : 1);\n'
+  js+=$'\nprocess.exit(checkTree("/src", "/dst", "", false) ? 0 : 1);\n'
   docker run --rm --network none --user 0:0 \
     -v "${src_m}:/src:ro" -v "${dst_m}:/dst:ro" \
     --entrypoint node "$probe_image" -e "$js" >/dev/null 2>&1
@@ -1420,9 +1464,13 @@ resolve_prev_mount_spec() {
 # Verifies prior DB isolation, cluster parity, and persistent mount parity before starting new DB (#3972).
 verify_storage_cutover() {
   local prev_config="$1" prev_proj="$2" new_config="$3" active_proj="$4" new_db="$5" image="$6" name="$7" current="$8" use_overrides="${9:-1}"
-  local prev_db='' src_rc=0 dst_rc=0 free_rc=0 target prev_m new_m
+  local cfg_prev_db='' prev_db='' src_rc=0 dst_rc=0 free_rc=0 target cfg_prev_m prev_m new_m
+  cfg_prev_db="$(compose_target_mount "$prev_config" "$prev_proj" /var/lib/postgresql/data 'db')"
+  reject_volume_subpath "$cfg_prev_db" /var/lib/postgresql/data "$name" "$current"
+  reject_volume_subpath "$new_db" /var/lib/postgresql/data "$name" "$current"
   prev_db="$(resolve_prev_mount_spec "$prev_config" "$prev_proj" /var/lib/postgresql/data 'db' "$use_overrides")"
-  if [ -n "$prev_db" ] && [ -n "$new_db" ] && [ "$prev_db" != "$new_db" ]; then
+  reject_volume_subpath "$prev_db" /var/lib/postgresql/data "$name" "$current"
+  if [ -n "$prev_db" ] && { [ -z "$new_db" ] || [ "$prev_db" != "$new_db" ]; }; then
     src_rc=0
     mount_exists "$prev_db" || src_rc=$?
     if ((src_rc == 2)); then
@@ -1442,6 +1490,11 @@ verify_storage_cutover() {
         record "deploy $name failed: cannot inspect running containers for $(mount_label "$prev_db")"
         die "$EXIT_FAILED" "cannot inspect running containers to verify prior database storage $(mount_label "$prev_db"); nothing running was changed"
       fi
+      if [ -z "$new_db" ]; then
+        restore_pre_activate "$current"
+        record "deploy $name failed: no persistent /var/lib/postgresql/data mount in new config"
+        die "$EXIT_FAILED" "found prior database storage $(mount_label "$prev_db") but the new compose configuration defines no persistent mount at /var/lib/postgresql/data; refusing to start db on an anonymous volume"
+      fi
       dst_rc=0
       mount_exists "$new_db" || dst_rc=$?
       if ((dst_rc == 2)); then
@@ -1457,9 +1510,13 @@ verify_storage_cutover() {
     fi
   fi
   for target in /data/files /data/keys /data/archive; do
-    prev_m="$(resolve_prev_mount_spec "$prev_config" "$prev_proj" "$target" 'ludy|crove|worker|api' "$use_overrides")"
+    cfg_prev_m="$(compose_target_mount "$prev_config" "$prev_proj" "$target" 'ludy|crove|worker|api')"
     new_m="$(compose_target_mount "$new_config" "$active_proj" "$target" 'ludy|crove|worker|api')"
-    if [ -n "$prev_m" ] && [ -n "$new_m" ] && [ "$prev_m" != "$new_m" ]; then
+    reject_volume_subpath "$cfg_prev_m" "$target" "$name" "$current"
+    reject_volume_subpath "$new_m" "$target" "$name" "$current"
+    prev_m="$(resolve_prev_mount_spec "$prev_config" "$prev_proj" "$target" 'ludy|crove|worker|api' "$use_overrides")"
+    reject_volume_subpath "$prev_m" "$target" "$name" "$current"
+    if [ -n "$prev_m" ] && { [ -z "$new_m" ] || [ "$prev_m" != "$new_m" ]; }; then
       src_rc=0
       mount_exists "$prev_m" || src_rc=$?
       if ((src_rc == 2)); then
@@ -1478,6 +1535,14 @@ verify_storage_cutover() {
           restore_pre_activate "$current"
           record "deploy $name failed: cannot inspect running containers for $(mount_label "$prev_m")"
           die "$EXIT_FAILED" "cannot inspect running containers to verify prior $target storage $(mount_label "$prev_m"); nothing running was changed"
+        fi
+        if [ -z "$new_m" ]; then
+          if ! mount_is_empty "$prev_m" "$image"; then
+            restore_pre_activate "$current"
+            record "deploy $name failed: no persistent $target mount in new config"
+            die "$EXIT_FAILED" "found non-empty prior $target storage $(mount_label "$prev_m") but the new compose configuration defines no persistent mount at $target; refusing to drop persistent storage"
+          fi
+          continue
         fi
         dst_rc=0
         mount_exists "$new_m" || dst_rc=$?
@@ -2471,6 +2536,7 @@ recover() {
   log "rolling back to $target"
   activate "$target"
   if roll_services "$(direction_to "$target" "$failed")"; then
+    if [ -n "$COMPOSE_PROJECT_OVERRIDE" ]; then write_state project "$COMPOSE_PROJECT_OVERRIDE"; fi
     record "$what failed, rolled back to $target"
     die "$EXIT_FAILED" "$what failed; rolled back to $target, which serves again"
   fi
@@ -2674,6 +2740,12 @@ do_deploy() {
   if [ -n "$alt_prev_config" ] && [ -n "$prev_yaml_name" ]; then
     verify_storage_cutover "$alt_prev_config" "$prev_yaml_name" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current" 0
   fi
+  reject_volume_subpath "$new_db" /var/lib/postgresql/data "$name" "$current"
+  local chk_target chk_m
+  for chk_target in /data/files /data/keys /data/archive; do
+    chk_m="$(compose_target_mount "$new_config" "$active_proj" "$chk_target" 'ludy|crove|worker|api')"
+    reject_volume_subpath "$chk_m" "$chk_target" "$name" "$current"
+  done
   if [ -n "$new_db" ]; then
     mount_exists "$new_db" || new_db_exists_rc=$?
     if ((new_db_exists_rc == 2)); then
@@ -2697,6 +2769,7 @@ do_deploy() {
   if ! up db; then
     recover "$current" "deploy $name (database)" "$name"
   fi
+  COMPOSE_PROJECT_OVERRIDE="$active_proj"
   if [ -n "${PRE_ACTIVATE_SNAP:-}" ]; then
     rm -rf "$PRE_ACTIVATE_SNAP"
     PRE_ACTIVATE_SNAP=''
@@ -2810,6 +2883,15 @@ do_rollback() {
   [ -n "$previous" ] || die "$EXIT_USAGE" 'no previous release is recorded; deploy a release instead'
   [ -f "$DEPLOY_DIR/releases/$previous/release.env" ] || die "$EXIT_USAGE" "the previous release $previous is no longer on the host"
   log "rolling back from ${current:-nothing} to $previous (images and compose files only; the schema stays)"
+  local rollback_proj=''
+  rollback_proj="$(read_state project)"
+  if [ -z "$rollback_proj" ]; then
+    if ! rollback_proj="$(detect_prev_project)"; then
+      record "rollback to $previous failed: container inspection"
+      die "$EXIT_FAILED" "cannot inspect existing Docker containers for $DEPLOY_DIR before rolling back to $previous"
+    fi
+  fi
+  if [ -n "$rollback_proj" ]; then COMPOSE_PROJECT_OVERRIDE="$rollback_proj"; fi
   restore_env_of "$current"
   # The images are normally still on the host. Pull them again (by digest, so nothing else can arrive) in case
   # they were pruned; without registry credentials a private image that is gone cannot come back.
