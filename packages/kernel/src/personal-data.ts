@@ -18,6 +18,7 @@ import { sql, type RawBuilder } from 'kysely';
 import type { MemberRole } from '@ludy/db';
 import {
   FOLLOWUP_MAIL_SOURCE,
+  TRACKER_ALERT_MAIL_SOURCE,
   NOTE_BODY_MAX,
   NOTE_TEMPLATE_NAME_MAX,
   NOTE_TITLE_MAX,
@@ -2028,6 +2029,9 @@ export const personalDataErase = defineCommand({
     // answers the same retryable PERSONAL_DATA_BUSY as a deadlock in the scan (the whole erasure rolls back, nothing is half done). Only the count reaches the audit row.
     let followupMails = 0;
     let followupDelivered = 0;
+    // The tracked-word alert mails of a meeting whose rows changed (#5012): their payload holds a count of words found in the meeting and its link, so it goes with the meeting's text like the follow-up
+    // mail's. They hold no value an erasure looks for, so only this per-meeting pass applies (not the by-text pass below). Counted apart: the follow-up numbers and the delivered-mail note stay as they were.
+    let trackerAlertMails = 0;
     let projectWeeklyMails = 0;
     let projectWeeklyDelivered = 0;
     for (const r of redaction ?? []) {
@@ -2045,6 +2049,15 @@ export const personalDataErase = defineCommand({
         .execute();
       followupMails += dropped.length;
       followupDelivered += dropped.filter((m) => DELIVERED_MAIL_STATUSES.includes(m.status)).length;
+      const alerts = await ctx.trx
+        .updateTable('ludy_kernel.mail_message')
+        .set({ payload: null, subject: null })
+        .where('org_id', '=', ctx.orgId)
+        .where('source', '=', TRACKER_ALERT_MAIL_SOURCE)
+        .where('source_id', '=', r.meeting_id)
+        .where((eb) => eb.or([eb('payload', 'is not', null), eb('subject', 'is not', null)]))
+        .executeTakeFirst();
+      trackerAlertMails += Number(alerts.numUpdatedRows);
     }
     // The follow-up mails whose OWN text mentions the value (#3025), whether or not the meeting's rows changed: the recorder may have edited the value out of the summary after the send
     // (the meeting then has no hit), or typed it only into the subject. The same matcher (text_mentions) reads the subject and the payload; the rows of the first pass are already dropped
@@ -2643,7 +2656,7 @@ export const personalDataErase = defineCommand({
       kept: [...kept.values()].map((k) => ({ column: k.column, rows: k.rows, reason: k.reason })),
     };
     // Counts and ids only: the value and the text never reach the audit log.
-    ctx.audit({ kind: probe.kind, erased: Object.fromEntries(erased), kept: Object.fromEntries(keptRows), kept_parties: keptParties, follow_up_mails: followupMails, project_weekly_mails: projectWeeklyMails, private_deleted: { notes: privateRows.flatMap((r) => r.note_ids), todos: privateRows.flatMap((r) => r.todo_ids) } });
+    ctx.audit({ kind: probe.kind, erased: Object.fromEntries(erased), kept: Object.fromEntries(keptRows), kept_parties: keptParties, follow_up_mails: followupMails, tracker_alert_mails: trackerAlertMails, project_weekly_mails: projectWeeklyMails, private_deleted: { notes: privateRows.flatMap((r) => r.note_ids), todos: privateRows.flatMap((r) => r.todo_ids) } });
     return result;
   },
 });

@@ -30,6 +30,7 @@ import {
   type TrackerAlertState,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
+import { lockFollowup } from './followup-erase.ts';
 import { ROLES, userOf } from './transcript.ts';
 
 // Members read a page at a time: the definer returns at most this many a call, and the dispatch asks again after the last one until a page comes back short.
@@ -96,6 +97,9 @@ export const trackerAlertNotice = defineCommand({
     const event = await outboxEvent(ctx, input.eventId);
     if (!event || event.type !== TRACKER_ALERT_EVENT) return { notified: 0, mailed: 0 };
     const published = zTrackerAlertEvent.parse(event.payload);
+    // The lock of the meeting's text copies (followup-erase.ts, #5012): a delete or erase running at the same moment either finishes first (the count below is then zero and no mail is queued) or waits for
+    // this run, whose mails it then drops, so no alert mail outlives its meeting with the count in its payload. Held to the end of the transaction.
+    await lockFollowup(ctx, published.meetingId);
     // The words are counted inside the database over the published lines; only term ids and numbers come back (nothing of the transcript reaches the worker). Nothing to count, nobody to ask.
     const counted = await sql<{ term_id: string; hits: number }>`SELECT term_id, hits FROM ludy_meetings.tracker_alert_hits(${ctx.orgId}::uuid, ${published.meetingId}::uuid, pg_catalog.now())`.execute(ctx.trx);
     const hits = topTrackerHits(counted.rows);
