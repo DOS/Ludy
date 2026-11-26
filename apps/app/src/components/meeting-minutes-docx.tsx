@@ -34,7 +34,7 @@ export function saveDocx(file: MinutesDocx): void {
   }
 }
 
-export function MinutesDocxButton({ meetingId, place }: { meetingId: string; place: string }) {
+export function MinutesDocxButton({ meetingId, place, disabled = false }: { meetingId: string; place: string; disabled?: boolean }) {
   const t = useTranslations('meetings.minutes');
   const [failure, setFailure] = useState<string | null>(null);
   const download = useMutation({
@@ -47,7 +47,7 @@ export function MinutesDocxButton({ meetingId, place }: { meetingId: string; pla
   });
   return (
     <div className="space-y-1">
-      <Button type="button" variant="outline" loading={download.isPending} onClick={() => download.mutate()} data-testid="minutes-docx">
+      <Button type="button" variant="outline" loading={download.isPending} disabled={disabled} onClick={() => download.mutate()} data-testid="minutes-docx">
         {t('docx')}
       </Button>
       {failure && <ErrorText>{failure}</ErrorText>}

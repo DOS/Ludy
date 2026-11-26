@@ -5,6 +5,7 @@ import { zCaptureStart } from './meeting-capture.ts';
 import { zMinutesTemplateCopy } from './meeting-minutes-templates.ts';
 import { SECTIONS_MAX, zBuiltInSummaryTemplate, zMeetingSummaryTemplate, zSectionEntry } from './meeting-templates.ts';
 import { MEETING_LABELS_MAX, zLabelValue } from './meeting-labels.ts';
+import { zPlaceValue } from './meeting-place.ts';
 import { zId } from './schemas.ts';
 
 // `in_call_chat`: the recorder pasted the recording notice in the call's chat (Meetings A1, #3159).
@@ -94,7 +95,7 @@ export const zMeetingSummary = z.strictObject({
   // The minutes template the recorder picked (Meetings A4, #3162): a code; its sections live in code (meeting-templates.ts).
   summaryTemplate: zMeetingSummaryTemplate,
   // The place the recorder set for the biên bản (#5013): one line, null when none. Read where the title is.
-  place: z.string().max(200).nullable(),
+  place: zPlaceValue.nullable(),
   audioRetentionDate: z.string(),
   // null: the org keeps text until a person deletes the meeting.
   textRetentionDate: z.string().nullable(),
