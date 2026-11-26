@@ -1096,7 +1096,7 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[styles.scrollContent, { gap: 0 }]}
         ListHeaderComponent={threadHeader}
-        ListFooterComponent={threadFooter}
+        ListFooterComponent={threadFooter ?? undefined}
         ItemSeparatorComponent={MessageRowSeparator}
         refreshControl={
           <RefreshControl

@@ -675,7 +675,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[styles.scrollContent, { gap: 0 }]}
         ListHeaderComponent={listHeader}
-        ListEmptyComponent={listEmpty}
+        ListEmptyComponent={listEmpty ?? undefined}
         ListFooterComponent={listFooter}
         ItemSeparatorComponent={ListRowSeparator}
         refreshControl={
