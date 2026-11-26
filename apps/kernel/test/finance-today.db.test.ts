@@ -408,6 +408,85 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     await admin((c) => c.query(`DELETE FROM ludy_kernel.proposal WHERE org_id = $1 AND command = 'finance.payroll_posting.record'`, [orgId]));
   });
 
+  it('applies the accountant preset and live roles rather than the snapshot for waiting proposals and flags (#2749)', async () => {
+    const chief = await upsertIdentity(createDb(pool), { issuer: 'test', subject: `chief-${randomUUID()}`, email: `chief-${randomUUID().slice(0, 6)}@finance-today.test`, name: null });
+    await admin(async (c) => {
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, chief]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'finance.chief_accountant', NULL, $3)`, [orgId, chief, users.owner]);
+    });
+    const waiting = async (user: string) => (await today(user)).filter((i) => i.kind === 'proposal').reduce((n, i) => n + (i.count ?? 0), 0);
+    const hasFailedFlag = async (user: string) => (await today(user)).some((i) => i.id === `checks-failed:${defaultEntity}`);
+    try {
+      // Under the founder preset, if the third eligible approver in the snapshot is demoted to member, the co-author sees it from live roles.
+      await admin((c) =>
+        c.query(
+          `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, co_authors, legal_entity_id)
+           VALUES ($1, 'finance.journal_voucher', 'finance.payroll_posting.record', 'pending', 'Hạch toán lương', '{"checks":[{"id":"c1","status":"fail","code":"X"}]}', 1, $2::uuid[], $3, $4::uuid[], $5)`,
+          [orgId, [users.owner, users.admin, users.approver], JSON.stringify([{ type: 'user', id: users.admin }]), [users.owner], defaultEntity],
+        ),
+      );
+      const beforeDemote = { owner: await waiting(users.owner), approver: await waiting(users.approver) };
+      await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.approver]));
+      expect(await waiting(users.owner)).toBe(beforeDemote.owner + 1);
+      expect(await waiting(users.approver)).toBe(0);
+      await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, users.approver]));
+
+      // Under the accountant preset, a co-author chief accountant is always refused, so neither the waiting item nor its flag is shown even when nobody else can decide;
+      // the owner without finance.proposal.approve is not shown ledger items either, even when listed in the snapshot.
+      await admin((c) => c.query(`DELETE FROM ludy_kernel.proposal WHERE org_id = $1 AND command = 'finance.payroll_posting.record'`, [orgId]));
+      await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET approval_preset = 'accountant' WHERE org_id = $1`, [orgId]));
+      await admin((c) =>
+        c.query(
+          `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, co_authors, legal_entity_id)
+           VALUES ($1, 'finance.journal_voucher', 'finance.payroll_posting.record', 'pending', 'Hạch toán lương', '{"checks":[{"id":"c1","status":"fail","code":"X"}]}', 1, $2::uuid[], $3, $4::uuid[], $5)`,
+          [orgId, [users.owner, users.admin, chief], JSON.stringify([{ type: 'user', id: users.admin }]), [chief], defaultEntity],
+        ),
+      );
+      expect(await waiting(chief)).toBe(0);
+      expect(await hasFailedFlag(chief)).toBe(false);
+      expect(await waiting(users.owner)).toBe(0);
+      expect(await hasFailedFlag(users.owner)).toBe(false);
+      // Without co-authors under the accountant preset, the chief accountant sees the ledger proposal, while the owner still does not.
+      await admin((c) => c.query(`DELETE FROM ludy_kernel.proposal WHERE org_id = $1 AND command = 'finance.payroll_posting.record'`, [orgId]));
+      await admin((c) =>
+        c.query(
+          `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, co_authors, legal_entity_id)
+           VALUES ($1, 'finance.journal_voucher', 'finance.payroll_posting.record', 'pending', 'Hạch toán lương', '{}', 1, $2::uuid[], $3, NULL, $4)`,
+          [orgId, [users.owner, users.admin, chief], JSON.stringify([{ type: 'user', id: users.admin }]), defaultEntity],
+        ),
+      );
+      expect(await waiting(chief)).toBe(1);
+      expect(await waiting(users.owner)).toBe(0);
+      // Non-ledger live finance commands (finance.supplier_payment.record) remain governed by live base roles even under the accountant preset.
+      await admin((c) =>
+        c.query(
+          `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, legal_entity_id)
+           VALUES ($1, 'finance.supplier_payment', 'finance.supplier_payment.record', 'pending', 'Chi NCC', '{}', 1, $2::uuid[], $3, $4)`,
+          [orgId, [users.admin], JSON.stringify([{ type: 'user', id: users.admin }]), defaultEntity],
+        ),
+      );
+      expect(await waiting(users.owner)).toBe(1);
+      expect(await waiting(chief)).toBe(1);
+      // A proposal with a malformed authors entry (such as a co_author entry inside authors, which parseAuthors refuses)
+      // is excluded from both waiting proposals and flags even for live commands.
+      await admin((c) => c.query(`DELETE FROM ludy_kernel.proposal WHERE org_id = $1 AND command IN ('finance.payroll_posting.record', 'finance.supplier_payment.record')`, [orgId]));
+      await admin((c) =>
+        c.query(
+          `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, legal_entity_id)
+           VALUES ($1, 'finance.supplier_payment', 'finance.supplier_payment.record', 'pending', 'Chi NCC', '{"checks":[{"id":"c1","status":"fail","code":"X"}]}', 1, $2::uuid[], $3, $4)`,
+          [orgId, [users.owner], JSON.stringify([{ type: 'user', id: users.admin }, { type: 'co_author', id: users.owner }]), defaultEntity],
+        ),
+      );
+      expect(await waiting(users.owner)).toBe(0);
+      expect(await hasFailedFlag(users.owner)).toBe(false);
+    } finally {
+      await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET approval_preset = 'founder' WHERE org_id = $1`, [orgId]));
+      await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, users.approver]));
+      await admin((c) => c.query(`DELETE FROM ludy_kernel.proposal WHERE org_id = $1 AND command IN ('finance.payroll_posting.record', 'finance.supplier_payment.record')`, [orgId]));
+      await admin((c) => c.query(`DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgId, chief]));
+    }
+  });
+
   it('reads 1,000 pending proposals in one grouped pass', async () => {
     await admin((c) =>
       c.query(
@@ -431,9 +510,29 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     expect(groups.filter((g) => g.title.params?.party?.toString().startsWith('Nhà cung cấp ')).every((g) => g.count === 25)).toBe(true);
     const waiting = await admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_kernel.proposal WHERE org_id = $1 AND status = 'pending' AND command LIKE 'finance.%' AND eligible_approvers @> ARRAY[$2::uuid]`, [orgId, users.owner])).rows[0]?.n));
     // The owner wrote none of these (the admin did), so all wait for the owner except those the owner wrote with the others.
-    expect(groups.reduce((n, g) => n + (g.count ?? 0), 0)).toBeLessThanOrEqual(waiting);
-    expect(groups.reduce((n, g) => n + (g.count ?? 0), 0)).toBeGreaterThanOrEqual(1000);
+    const total = groups.reduce((n, g) => n + (g.count ?? 0), 0);
+    expect(total).toBeLessThanOrEqual(waiting);
+    expect(total).toBeGreaterThanOrEqual(1000);
     expect(elapsed).toBeLessThan(5000);
+
+    // Repeat with 1,000 payroll_posting co-author proposals: 500 with another independent approver (hidden) and 500 with none (shown).
+    await admin((c) =>
+      c.query(
+        `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, co_authors, legal_entity_id)
+         SELECT $1, 'finance.journal_voucher', 'finance.payroll_posting.record', 'pending', 'Hạch toán ' || g, '{}', 1,
+                CASE WHEN g <= 500 THEN ARRAY[$2::uuid, $3::uuid, $4::uuid] ELSE ARRAY[$2::uuid, $3::uuid] END,
+                jsonb_build_array(jsonb_build_object('type', 'user', 'id', $3::text)),
+                ARRAY[$2::uuid], $5
+         FROM generate_series(1, 1000) g`,
+        [orgId, users.owner, users.admin, users.approver, defaultEntity],
+      ),
+    );
+    const coStarted = Date.now();
+    const coItems = await today(users.owner);
+    const coElapsed = Date.now() - coStarted;
+    expect(coItems.filter((i) => i.kind === 'proposal').reduce((n, g) => n + (g.count ?? 0), 0)).toBe(total + 500);
+    expect(coElapsed).toBeLessThan(5000);
+    await admin((c) => c.query(`DELETE FROM ludy_kernel.proposal WHERE org_id = $1 AND command = 'finance.payroll_posting.record'`, [orgId]));
   });
 
   it('flags the sales e-invoices that need a person (#2502): failed, sent back with a reason, or unanswered for an hour; not a fresh send nor a plain draft', async () => {

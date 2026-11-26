@@ -2,6 +2,7 @@
 // whose name and 12-digit code are a person's) is kept by law, and only the org's default entity is the org's own.
 import { describe, expect, it } from 'vitest';
 import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_PENDING, PERSONAL_DATA_SCHEMAS, SEALED_COLUMNS, personalDataProbe, rowHandling, type PersonalDataColumn } from '@ludy/kernel';
+import { personalDataProbe as contractPersonalDataProbe } from '@ludy/kernel-contract';
 import { hrManifest } from '@ludy/mod-hr';
 import { meetingsManifest } from '@ludy/mod-meetings';
 import { notesManifest } from '@ludy/mod-notes';
@@ -234,5 +235,16 @@ describe('personal-data registry: sign (#3323)', () => {
     expect(entries['ludy_sign.signer.email']).toMatchObject({ kind: 'email', handling: 'keep_record' });
     expect(entries['ludy_sign.signer.phone']).toMatchObject({ kind: 'phone', handling: 'keep_record' });
     expect(entries['ludy_sign.signer.email']?.reason).toContain('unsealed envelope is erased');
+  });
+});
+
+describe('personal-data registry: conversations (#3669)', () => {
+  it('keeps conversation_identity name and external id as keep_record and shares personalDataProbe with kernel-contract', () => {
+    expect(entries['ludy_kernel.conversation_identity.display_name']).toMatchObject({ kind: 'name', handling: 'keep_record' });
+    expect(entries['ludy_kernel.conversation_identity.external_user_id']).toMatchObject({ kind: 'email', handling: 'keep_record' });
+    expect(personalDataProbe).toBe(contractPersonalDataProbe);
+    expect(contractPersonalDataProbe('  Alice@Example.TEST  ')).toEqual({ kind: 'email', email: 'alice@example.test' });
+    expect(contractPersonalDataProbe('+84 912 345 678')).toEqual({ kind: 'digits', digits: '84912345678' });
+    expect(contractPersonalDataProbe('ab')).toBeNull();
   });
 });

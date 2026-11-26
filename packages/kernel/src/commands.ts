@@ -870,6 +870,8 @@ export const approveProposal = defineCommand({
       preset: decision.orgPolicy.preset,
       version: decision.orgPolicy.version,
     });
+    // Record co_author: true when a co-author who did not write the proposal approves because nobody else is eligible (#2749).
+    const coAuthor = !applied.selfApproved && (proposal.co_authors ?? []).includes(ctx.actor.userId);
     ctx.audit({
       revision: proposal.revision,
       aal: ctx.actor.aal,
@@ -880,6 +882,7 @@ export const approveProposal = defineCommand({
       build: ctx.build,
       eligible_approvers: applied.eligibleCount,
       self_approved: applied.selfApproved,
+      ...(coAuthor ? { co_author: true } : {}),
       accept_failed_checks: input.acceptFailedChecks ?? false,
       // An invoice's signature verification and whether the approver confirmed it (#674).
       ...(signature

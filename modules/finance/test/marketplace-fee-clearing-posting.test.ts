@@ -96,3 +96,16 @@ describe('the fee clearing commands', () => {
     expect(record.access).toBe('proposal');
   });
 });
+
+describe('separating feeAwaitingInvoice from withheld_in_error on 1388 (#4336)', () => {
+  it('keeps feeAwaitingInvoice commentary-only and refuses clearing when waiting fees are 0 even while otherReceivable shares 1388', () => {
+    for (const regime of ['tt133', 'tt99'] as const) {
+      const map = MARKETPLACE_POSTING_MAPS[regime]!;
+      expect(map.feeAwaitingInvoice.code).toBe('1388');
+      expect(map.feeAwaitingInvoice.status).toBe('commentary');
+      expect(map.otherReceivable.code).toBe('1388');
+      expect(map.otherReceivable.status).toBe('confirmed');
+    }
+    expect(err(() => feeClearingProposal(input({ waiting: '0' }), confirmed()))).toMatchObject({ code: 'MARKETPLACE_FEE_NOTHING_TO_CLEAR', status: 409, reason: 'NOTHING_WAITING' });
+  });
+});

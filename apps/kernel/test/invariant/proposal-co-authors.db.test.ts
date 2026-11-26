@@ -47,9 +47,11 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
     admin: string;
     admin2: string;
     chief: string;
+    viewer: string;
   }
-  let big: Org; // an owner and two admins
+  let big: Org; // an owner, two admins, a chief accountant and a viewer
   let solo: Org; // an owner alone
+  let outsider = ''; // a user outside both orgs
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const c = createDbClient({ connectionString: adminUrl }, dbIds);
@@ -147,16 +149,18 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
       await admin(async (c) => {
         for (const id of ids.slice(0, admins)) await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, id]);
       });
-      // A chief accountant who is a plain member holding the ledger's approval permission org-wide.
+      // A chief accountant who is a plain member holding the ledger's approval permission org-wide, and a read-only viewer.
       const chief = await person(`${name}-chief`);
+      const viewer = await person(`${name}-viewer`);
       await admin(async (c) => {
-        await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, chief]);
+        await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`, [orgId, chief, viewer]);
         await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'finance.chief_accountant', NULL, $3)`, [orgId, chief, owner]);
       });
-      return { orgId, owner, admin: ids[0] as string, admin2: ids[1] as string, chief };
+      return { orgId, owner, admin: ids[0] as string, admin2: ids[1] as string, chief, viewer };
     };
     big = await make('big', 2);
     solo = await make('solo', 0);
+    outsider = await person('outsider');
   }, 300_000);
 
   afterAll(async () => {
@@ -272,10 +276,27 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
 
   it('decides every co-author case in the database exactly as decideApproval does', { timeout: 300_000 }, async () => {
     const db = createDb(pools[0] as pg.Pool);
-    const everyone = [big.owner, big.admin, big.admin2, big.chief];
-    const snapshots = [everyone, [big.owner, big.admin], [big.owner], [big.chief], [big.admin, big.admin2]];
+    const everyone = [big.owner, big.admin, big.admin2, big.chief, big.viewer, outsider];
+    const snapshots = [
+      [big.owner, big.admin, big.admin2, big.chief],
+      [big.owner, big.admin],
+      [big.owner],
+      [big.chief],
+      [big.admin, big.admin2],
+      [big.owner, big.viewer, outsider],
+      [big.viewer, outsider],
+    ];
     const written: string[][] = [[], [big.owner], [big.admin], [big.admin, big.owner], [big.admin, big.admin2], [big.chief]];
-    const co: string[][] = [[], [big.owner], [big.admin2], [big.owner, big.admin], [big.admin, big.admin2], [big.chief], [big.owner, big.admin, big.admin2, big.chief]];
+    const co: string[][] = [
+      [],
+      [big.owner],
+      [big.admin2],
+      [big.owner, big.admin],
+      [big.admin, big.admin2],
+      [big.chief],
+      [big.owner, big.admin, big.admin2, big.chief],
+      [big.viewer, outsider],
+    ];
     const user = (id: string) => ({ type: 'user' as const, id });
     const a = createDbClient({ connectionString: adminUrl }, dbIds);
     await a.connect();
@@ -287,8 +308,9 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
           for (const w of written) {
             for (const c of co) {
               for (const actor of everyone) {
+                const contextUser = actor === outsider ? big.owner : actor;
                 const ts = await db.transaction().execute(async (trx) => {
-                  await sql`SELECT crove_kernel.enter_user_context(${big.orgId}::uuid, ${contextToken(actor, big.orgId)}::text)`.execute(trx);
+                  await sql`SELECT crove_kernel.enter_user_context(${big.orgId}::uuid, ${contextToken(contextUser, big.orgId)}::text)`.execute(trx);
                   return decideApproval(trx, big.orgId, asUser(actor), { command: COMMAND, status: 'pending', eligible_approvers: snapshot, authors: w.map(user), co_authors: c.length ? c : null }, { lock: false });
                 });
                 const entries = [...w.map(user), ...c.map((id) => ({ type: 'co_author', id }))];
@@ -309,9 +331,105 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
         }
       }
       expect(checked).toBe(2 * snapshots.length * written.length * co.length * everyone.length);
+      // Viewers and non-members cannot approve via the gate either.
+      const sample = await pending(big, big.admin, [big.owner], [big.owner, big.admin, big.viewer, outsider]);
+      expect(await approveAs(big, big.viewer, sample)).toMatchObject({ ok: false, message: 'NOT_ELIGIBLE' });
+      expect(await asUserIn(big, outsider, (c) => c.query('SELECT 1'))).toMatchObject({ ok: false, message: 'NOT_A_MEMBER' });
     } finally {
       await a.query(`UPDATE crove_kernel.tenant SET approval_preset = 'founder' WHERE org_id = $1`, [big.orgId]);
       await a.end();
+    }
+  });
+
+  it('refuses a co_author entry in stored authors in parseAuthors and user inserts, and still holds back in SQL with no granting path (#2749)', async () => {
+    const db = createDb(pools[0] as pg.Pool);
+    const everyone = [big.owner, big.admin, big.admin2, big.chief, big.viewer, outsider];
+    // User contexts cannot insert a co_author entry inside authors.
+    const inAuthors = JSON.stringify([{ type: 'user', id: big.admin }, { type: 'co_author', id: big.owner }]);
+    expect(await asUserIn(big, big.admin, (c) => c.query(insertSql, [big.orgId, COMMAND, inAuthors, null]))).toMatchObject({ ok: false, ...REFUSED });
+
+    // Even if staff stored a co_author entry directly inside the authors column, parseAuthors refuses it (fail closed in TS),
+    // while SQL accepts the entry type as a co-author (restricting only, never unlocking four-eyes or owner override).
+    const insertRawAuthors = async (authors: unknown[], snapshot: string[]): Promise<{ id: string; revision: number } | null> =>
+      admin(async (c) => {
+        const stmt = `INSERT INTO crove_kernel.proposal (org_id, kind, command, status, title, payload, eligible_approvers, authors, co_authors)
+                      VALUES ($1, 'journal_voucher', $2, 'pending', 'T2749', '{}', $3::uuid[], $4::jsonb, NULL) RETURNING id, revision`;
+        try {
+          const r = await c.query<{ id: string; revision: number }>(stmt, [big.orgId, COMMAND, snapshot, JSON.stringify(authors)]);
+          return r.rows[0] as { id: string; revision: number };
+        } catch (error) {
+          // Only tolerate a future CHECK/trigger refusal if replacing authors alone with a valid user entry succeeds.
+          const pg = error as { code?: string };
+          if (pg?.code !== '23514') throw error;
+          await c.query('BEGIN');
+          try {
+            await c.query(stmt, [big.orgId, COMMAND, snapshot, authorsOf(big.admin)]);
+          } finally {
+            await c.query('ROLLBACK').catch(() => {});
+          }
+          return null;
+        }
+      });
+    const tsAndSql = async (authors: unknown[], snapshot: string[], actor: string) => {
+      const contextUser = actor === outsider ? big.owner : actor;
+      const ts = await db.transaction().execute(async (trx) => {
+        await sql`SELECT crove_kernel.enter_user_context(${big.orgId}::uuid, ${contextToken(contextUser, big.orgId)}::text)`.execute(trx);
+        return decideApproval(trx, big.orgId, asUser(actor), { command: COMMAND, status: 'pending', eligible_approvers: snapshot, authors, co_authors: null }, { lock: false });
+      });
+      const sqlDecision = await admin(
+        async (c) =>
+          (
+            await c.query<{ d: { reason: string; selfApproved: boolean; fourEyes: string } }>(
+              'SELECT crove_kernel.proposal_approval_decide($1::uuid, $2, $3, $4::uuid[], $5::jsonb, $6::uuid, false) AS d',
+              [big.orgId, COMMAND, 'pending', snapshot, JSON.stringify(authors), actor],
+            )
+          ).rows[0]?.d,
+      );
+      return { ts, sqlDecision };
+    };
+
+    const storedAuthors = [{ type: 'user', id: big.admin }, { type: 'co_author', id: big.owner }];
+    const snapshot = [big.owner, big.admin, big.admin2];
+    const p1 = await insertRawAuthors(storedAuthors, snapshot);
+    for (const actor of everyone) {
+      const { ts } = await tsAndSql(storedAuthors, snapshot, actor);
+      expect(ts.reason, `TS refuses stored co_author in authors for ${actor}`).toBe('not_eligible');
+    }
+    expect((await tsAndSql(storedAuthors, snapshot, big.owner)).sqlDecision?.reason).toMatch(/^(four_eyes|not_eligible)$/);
+    const admin2Sql = (await tsAndSql(storedAuthors, snapshot, big.admin2)).sqlDecision;
+    // Today SQL accepts co_author inside p_authors; a future tightening to reject it like parseAuthors stays valid.
+    if (admin2Sql?.reason !== 'not_eligible') {
+      expect(admin2Sql).toMatchObject({ reason: 'ok', selfApproved: false, fourEyes: 'pass' });
+    }
+    if (p1) {
+      expect(await approveAs(big, big.owner, p1)).toMatchObject({ ok: false, message: expect.stringMatching(/^(FOUR_EYES_REQUIRED|NOT_ELIGIBLE)$/) });
+      expect(await approveAs(big, big.admin, p1)).toMatchObject({ ok: false, message: expect.stringMatching(/^(FOUR_EYES_REQUIRED|NOT_ELIGIBLE)$/) });
+      expect(await approveAs(big, big.viewer, p1)).toMatchObject({ ok: false, message: 'NOT_ELIGIBLE' });
+      const admin2Gate = await approveAs(big, big.admin2, p1);
+      if (admin2Gate.ok) {
+        expect(admin2Gate.value).toMatchObject({ fourEyes: 'pass', selfApproved: false });
+      } else {
+        expect(admin2Gate).toMatchObject({ message: 'NOT_ELIGIBLE' });
+      }
+    }
+
+    // Owner override is still refused when other approvers appear only as co_author entries inside authors.
+    const forgedInAuthors = [{ type: 'user', id: big.owner }, { type: 'co_author', id: big.admin }, { type: 'co_author', id: big.admin2 }];
+    const p2 = await insertRawAuthors(forgedInAuthors, snapshot);
+    expect((await tsAndSql(forgedInAuthors, snapshot, big.owner)).ts.reason).toBe('not_eligible');
+    expect((await tsAndSql(forgedInAuthors, snapshot, big.owner)).sqlDecision?.reason).toMatch(/^(four_eyes|not_eligible)$/);
+    if (p2) expect(await approveAs(big, big.owner, p2)).toMatchObject({ ok: false, message: expect.stringMatching(/^(FOUR_EYES_REQUIRED|NOT_ELIGIBLE)$/) });
+
+    // Under the accountant preset, a chief accountant listed as co_author inside authors is refused by both TS and SQL.
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET approval_preset = 'accountant' WHERE org_id = $1`, [big.orgId]));
+    try {
+      const chiefInAuthors = [{ type: 'user', id: big.admin }, { type: 'co_author', id: big.chief }];
+      const p3 = await insertRawAuthors(chiefInAuthors, [big.chief]);
+      expect((await tsAndSql(chiefInAuthors, [big.chief], big.chief)).ts.reason).toBe('not_eligible');
+      expect((await tsAndSql(chiefInAuthors, [big.chief], big.chief)).sqlDecision?.reason).toMatch(/^(four_eyes|not_eligible)$/);
+      if (p3) expect(await approveAs(big, big.chief, p3)).toMatchObject({ ok: false, message: expect.stringMatching(/^(FOUR_EYES_REQUIRED|NOT_ELIGIBLE)$/) });
+    } finally {
+      await admin((c) => c.query(`UPDATE crove_kernel.tenant SET approval_preset = 'founder' WHERE org_id = $1`, [big.orgId]));
     }
   });
 
