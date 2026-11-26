@@ -2,7 +2,7 @@
 // catch what they claim to, and the shell's sealed size must agree with seal.mjs.
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -190,5 +190,9 @@ describe.skipIf(!hasBash)('backup lib.sh', { timeout: 120_000 }, () => {
       expect(detected.status, JSON.stringify(env)).toBe(0);
       expect(detected.out, JSON.stringify(env)).toBe(expected);
     }
+
+    const backupScript = readFileSync(resolve(import.meta.dirname, '../backup/backup.sh'), 'utf8');
+    expect(backupScript).toContain('--exclude-table-data=ludy_kernel.context_key');
+    expect(backupScript).toContain('--exclude-table-data=crove_kernel.context_key');
   });
 });

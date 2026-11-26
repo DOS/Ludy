@@ -970,7 +970,7 @@ do_cutover_stack() {
   log 'taking logical PostgreSQL backup before stopping stack'
   (
     umask 077
-    dc_proj "$proj" exec -T db pg_dump -U postgres -d postgres --format=custom --exclude-table-data=ludy_kernel.context_key >"$backup_dir/db.dump"
+    dc_proj "$proj" exec -T db pg_dump -U postgres -d postgres --format=custom --exclude-table-data=ludy_kernel.context_key --exclude-table-data=crove_kernel.context_key >"$backup_dir/db.dump"
     [ -s "$backup_dir/db.dump" ]
   )
   dc_proj "$proj" exec -T db pg_restore --list <"$backup_dir/db.dump" >/dev/null
@@ -1260,13 +1260,35 @@ do_prune_old_volumes() {
       existing="$(docker run --rm --network none -v "${dst}:/dst:ro" --entrypoint sh "$VOLUME_COPY_IMAGE" -c 'find /dst -mindepth 1 -maxdepth 1 -print -quit')"
       if [ "$suffix" = db-data ]; then
         [ -n "$existing" ] || die "$EXIT_FAILED" "refusing to prune $v: matching replacement volume $dst ($suffix) is empty"
+        local pg_data='' pg_sub=''
+        pg_data="$(dc_proj ludy exec -T db printenv PGDATA 2>/dev/null | tr -d '\r\n' || true)"
+        while [[ "$pg_data" == */ && "$pg_data" != / ]]; do pg_data="${pg_data%/}"; done
+        if [ -n "$pg_data" ] && [ "$pg_data" != /var/lib/postgresql/data ]; then
+          case "$pg_data" in
+            /var/lib/postgresql/data/*)
+              pg_sub="${pg_data#/var/lib/postgresql/data/}"
+              while [[ "$pg_sub" == */ ]]; do pg_sub="${pg_sub%/}"; done
+              case "/$pg_sub/" in
+                */../* | */./* | *//* | *[!A-Za-z0-9._/-]*)
+                  die "$EXIT_FAILED" "refusing to prune $v: unsupported db PGDATA path '$pg_data'"
+                  ;;
+              esac
+              ;;
+            *)
+              die "$EXIT_FAILED" "refusing to prune $v: db PGDATA '$pg_data' is outside /var/lib/postgresql/data"
+              ;;
+          esac
+        fi
         docker run --rm --network none --user 0:0 \
+          -e "PG_SUBDIR=$pg_sub" \
           -v "${v}:/src:ro" -v "${dst}:/dst:ro" \
           --entrypoint sh "$VOLUME_COPY_IMAGE" -c '
             set -eu
-            [ -f /src/PG_VERSION ] && [ -f /dst/PG_VERSION ] || exit 1
-            src_id="$(pg_controldata /src | sed -n "s/^Database system identifier:[[:space:]]*//p" | head -n 1)"
-            dst_id="$(pg_controldata /dst | sed -n "s/^Database system identifier:[[:space:]]*//p" | head -n 1)"
+            src_dir="/src${PG_SUBDIR:+/$PG_SUBDIR}"
+            dst_dir="/dst${PG_SUBDIR:+/$PG_SUBDIR}"
+            [ -f "$src_dir/PG_VERSION" ] && [ -f "$dst_dir/PG_VERSION" ] || exit 1
+            src_id="$(pg_controldata "$src_dir" | sed -n "s/^Database system identifier:[[:space:]]*//p" | head -n 1)"
+            dst_id="$(pg_controldata "$dst_dir" | sed -n "s/^Database system identifier:[[:space:]]*//p" | head -n 1)"
             [ -n "$src_id" ] && [ "$src_id" = "$dst_id" ]
           ' >/dev/null 2>&1 || die "$EXIT_FAILED" "refusing to prune $v: $dst does not match $v PostgreSQL cluster system identifier"
       elif [ -z "$existing" ]; then

@@ -177,7 +177,7 @@ db_psql -d postgres <<SQL
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SELECT pg_catalog.pg_export_snapshot() AS snapshot, pg_catalog.to_char(pg_catalog.clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS snapshot_at \gset
 \setenv LUDY_SNAPSHOT :snapshot
-\! pg_dump -U postgres -d postgres --format=custom --snapshot="\$LUDY_SNAPSHOT" --exclude-table-data=ludy_kernel.context_key --file=/tmp/ludy-backup/db.dump && touch /tmp/ludy-backup/dump.ok
+\! pg_dump -U postgres -d postgres --format=custom --snapshot="\$LUDY_SNAPSHOT" --exclude-table-data=ludy_kernel.context_key --exclude-table-data=crove_kernel.context_key --file=/tmp/ludy-backup/db.dump && touch /tmp/ludy-backup/dump.ok
 $COUNTS_SQL \g /tmp/ludy-backup/counts.tsv
 $FILE_REFS_SQL \g /tmp/ludy-backup/file-refs.tsv
 COPY (SELECT (SELECT max(version) FROM ludy_meta.schema_migrations), pg_catalog.current_setting('server_version'), :'snapshot_at') TO STDOUT \g /tmp/ludy-backup/versions.tsv

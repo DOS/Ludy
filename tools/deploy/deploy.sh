@@ -65,6 +65,8 @@ export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 # compose's interpolation, and `migrate` would install a key the file does not hold.
 unset LUDY_CONTEXT_TOKEN_KEY
 
+DIR_FROM_CLI=0
+ENV_FROM_CLI=0
 DEPLOY_DIR="${LUDY_DEPLOY_DIR:-/opt/ludy}"
 ENV_FILE="${LUDY_ENV_FILE:-}"
 # Seconds: `docker compose up --wait` per step (Supabase Auth may migrate for minutes on an upgrade), /readyz, and
@@ -905,8 +907,16 @@ activate() {
   # The pins of `api` and `worker` follow the layout of now, whatever the release was staged under: taken out of a release
   # staged in the pilot layout when the host has gone back to one container (they would define bare services), put in
   # one staged before (#2133).
-  { grep -v -E "^  (api|worker): \{ image:" "$DEPLOY_DIR/docker-compose.override.yml.tmp" || true; } >"$DEPLOY_DIR/docker-compose.override.yml.pins"
-  mv -f "$DEPLOY_DIR/docker-compose.override.yml.pins" "$DEPLOY_DIR/docker-compose.override.yml.tmp"
+  { grep -v -E '^(name:|  (api|worker): \{ image:)' "$DEPLOY_DIR/docker-compose.override.yml.tmp" || true; } >"$DEPLOY_DIR/docker-compose.override.yml.pins"
+  if [ -n "$COMPOSE_PROJECT_OVERRIDE" ]; then
+    {
+      printf 'name: %s\n' "$COMPOSE_PROJECT_OVERRIDE"
+      cat "$DEPLOY_DIR/docker-compose.override.yml.pins"
+    } >"$DEPLOY_DIR/docker-compose.override.yml.tmp"
+    rm -f "$DEPLOY_DIR/docker-compose.override.yml.pins"
+  else
+    mv -f "$DEPLOY_DIR/docker-compose.override.yml.pins" "$DEPLOY_DIR/docker-compose.override.yml.tmp"
+  fi
   pilot_pins "$LUDY_IMAGE" >>"$DEPLOY_DIR/docker-compose.override.yml.tmp"
   # The pilot file ships with the release. A release staged before that (a rollback to it) keeps the host's copy.
   if pilot_layout; then
@@ -1045,7 +1055,7 @@ compose_target_mount() {
       continue
     fi
     if [ "$section" = services ]; then
-      if [[ "$line" =~ ^[[:space:]]{2}([a-zA-Z0-9._-]+):[[:space:]]*$ ]]; then
+      if [[ "$line" =~ ^[[:space:]]{2}([a-zA-Z0-9._-]+):([[:space:]]*(#.*)?)?$ ]]; then
         if [[ "${BASH_REMATCH[1]}" =~ ^($svc_re)$ ]]; then in_svc=1; else in_svc=0; fi
         in_vols=0
         continue
@@ -1141,6 +1151,364 @@ compose_target_mount() {
   else
     printf 'volume:%s' "${resolved_name:-${proj}_${mount_src}}"
   fi
+}
+
+# Appends $item to newline-separated list $cur_lines only when $item is non-empty and not already present.
+append_unique_line() {
+  local cur="$1" item="$2" line
+  [ -n "$item" ] || { printf '%s' "$cur"; return 0; }
+  while IFS= read -r line; do
+    if [ "$line" = "$item" ]; then
+      printf '%s' "$cur"
+      return 0
+    fi
+  done <<<"$cur"
+  if [ -n "$cur" ]; then
+    printf '%s\n%s' "$cur" "$item"
+  else
+    printf '%s' "$item"
+  fi
+}
+
+# Reads the last effective assignment for $target in $file (default $ENV_FILE), trimmed and unquoted like dotenv.
+env_var_last_value() {
+  local target="$1" file="${2:-$ENV_FILE}" line raw val='' found=0
+  [ -n "$file" ] && [ -f "$file" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$ ]] && [ "${BASH_REMATCH[2]}" = "$target" ]; then
+      raw="${BASH_REMATCH[3]}"
+      found=1
+      if [[ "$raw" =~ ^[[:space:]]+# ]]; then
+        val=''
+      else
+        val="${raw#"${raw%%[![:space:]]*}"}"
+        if [[ "$val" =~ ^(\"\"|\'\')[[:space:]]*(#.*)?$ ]]; then
+          val=''
+        else
+          val="${val%%[[:space:]]#*}"
+          val="${val%"${val##*[![:space:]]}"}"
+          case "$val" in
+            \"*\") val="${val#\"}"; val="${val%\"}" ;;
+            \'*\') val="${val#\'}"; val="${val%\'}" ;;
+          esac
+        fi
+      fi
+    fi
+  done <"$file"
+  ((found)) || return 1
+  printf '%s' "$val"
+}
+
+# Returns 0 if resolved Compose config YAML defines service $svc under top-level services.
+compose_has_service() {
+  local config_out="$1" target_svc="$2" line section=''
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ ^([a-zA-Z0-9_-]+):([[:space:]]*.*)?$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      continue
+    fi
+    if [ "$section" = services ] && [[ "$line" =~ ^[[:space:]]{2}([a-zA-Z0-9._-]+):([[:space:]]*(#.*)?)?$ ]]; then
+      if [ "${BASH_REMATCH[1]}" = "$target_svc" ]; then return 0; fi
+    fi
+  done <<<"$config_out"
+  return 1
+}
+
+# Returns 0 if $svc exists in $config_out and is not gated out by inactive Compose profiles.
+compose_service_is_enabled() {
+  local config_out="$1" target_svc="$2" line section='' in_svc=0 in_prof=0 has_prof=0 item p active_csv active_p
+  local -a svc_profs=() active_profs=()
+  compose_has_service "$config_out" "$target_svc" || return 1
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ ^([a-zA-Z0-9_-]+):([[:space:]]*.*)?$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      in_svc=0; in_prof=0
+      continue
+    fi
+    if [ "$section" = services ]; then
+      if [[ "$line" =~ ^[[:space:]]{2}([a-zA-Z0-9._-]+):([[:space:]]*(#.*)?)?$ ]]; then
+        if [ "${BASH_REMATCH[1]}" = "$target_svc" ]; then in_svc=1; else in_svc=0; fi
+        in_prof=0
+        continue
+      fi
+      if ((in_svc)); then
+        if [[ "$line" =~ ^[[:space:]]{4}profiles:[[:space:]]*(.*)$ ]]; then
+          local rest="${BASH_REMATCH[1]}"
+          rest="${rest%%#*}"
+          rest="${rest#"${rest%%[![:space:]]*}"}"
+          rest="${rest%"${rest##*[![:space:]]}"}"
+          has_prof=1
+          if [ -z "$rest" ]; then
+            in_prof=1
+          elif [ "$rest" = '[]' ]; then
+            return 0
+          elif [[ "$rest" =~ ^\[(.*)\]$ ]]; then
+            local inner="${BASH_REMATCH[1]}"
+            IFS=',' read -ra svc_profs <<<"$inner"
+            in_prof=0
+          fi
+          continue
+        elif [[ "$line" =~ ^[[:space:]]{4}[a-zA-Z0-9._-]+: ]]; then
+          in_prof=0
+          continue
+        fi
+        if ((in_prof)) && [[ "$line" =~ ^[[:space:]]*-[[:space:]]*(.+)$ ]]; then
+          svc_profs+=("${BASH_REMATCH[1]}")
+        fi
+      fi
+    fi
+  done <<<"$config_out"
+
+  ((has_prof)) || return 0
+  ((${#svc_profs[@]} > 0)) || return 0
+  active_csv="${COMPOSE_PROFILES:-}"
+  if [ -z "$active_csv" ]; then
+    active_csv="$(env_var_last_value COMPOSE_PROFILES || true)"
+  fi
+  [ -n "$active_csv" ] || return 1
+  IFS=',' read -ra active_profs <<<"$active_csv"
+  for item in "${svc_profs[@]}"; do
+    item="$(unquote_compose_scalar "$item")"
+    for active_p in "${active_profs[@]}"; do
+      active_p="${active_p#"${active_p%%[![:space:]]*}"}"
+      active_p="${active_p%"${active_p##*[![:space:]]}"}"
+      if [ -n "$active_p" ] && { [ "$active_p" = '*' ] || [ "$active_p" = "$item" ]; }; then
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# Reads resolved environment variable $var from service $svc in Compose config YAML.
+compose_service_env_value() {
+  local config_out="$1" target_svc="$2" target_var="$3" line section='' in_svc=0 in_env=0 k raw
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ ^([a-zA-Z0-9_-]+):([[:space:]]*.*)?$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      in_svc=0; in_env=0
+      continue
+    fi
+    if [ "$section" = services ]; then
+      if [[ "$line" =~ ^[[:space:]]{2}([a-zA-Z0-9._-]+):([[:space:]]*(#.*)?)?$ ]]; then
+        if [ "${BASH_REMATCH[1]}" = "$target_svc" ]; then in_svc=1; else in_svc=0; fi
+        in_env=0
+        continue
+      fi
+      if ((in_svc)); then
+        if [[ "$line" =~ ^[[:space:]]{4}environment:[[:space:]]*(\{\}[[:space:]]*|\[\][[:space:]]*)?$ ]]; then
+          in_env=1
+          continue
+        elif [[ "$line" =~ ^[[:space:]]{4}[a-zA-Z0-9._-]+: ]]; then
+          in_env=0
+          continue
+        fi
+        if ((in_env)); then
+          if [[ "$line" =~ ^[[:space:]]{6}([A-Za-z_][A-Za-z0-9_]*):[[:space:]]*(.*)$ ]]; then
+            k="${BASH_REMATCH[1]}"
+            raw="${BASH_REMATCH[2]}"
+          elif [[ "$line" =~ ^[[:space:]]*-[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            k="${BASH_REMATCH[1]}"
+            raw="${BASH_REMATCH[2]}"
+          else
+            continue
+          fi
+          if [ "$k" = "$target_var" ]; then
+            raw="$(unquote_compose_scalar "$raw")"
+            if [ "$raw" = 'null' ]; then raw=''; fi
+            printf '%s' "$raw"
+            return 0
+          fi
+        fi
+      fi
+    fi
+  done <<<"$config_out"
+  return 1
+}
+
+# Returns 0 when configured storage backend is local (default when STORAGE is unset/empty).
+storage_is_local() {
+  local config_out="$1" svc val=''
+  for svc in api worker ludy crove; do
+    compose_service_is_enabled "$config_out" "$svc" || continue
+    if val="$(compose_service_env_value "$config_out" "$svc" STORAGE 2>/dev/null)" && [ -n "$val" ]; then
+      [ "$val" = local ]
+      return $?
+    fi
+  done
+  val="${STORAGE:-}"
+  if [ -z "$val" ]; then
+    val="$(env_var_last_value STORAGE || true)"
+  fi
+  [ -z "$val" ] || [ "$val" = local ]
+}
+
+# Validates a PGDATA relative subdirectory under /var/lib/postgresql/data (empty = mount root).
+validate_pgdata_subpath() {
+  local sub="$1"
+  [ -n "$sub" ] || return 0
+  [[ "$sub" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
+  case "/$sub/" in
+    */../* | */./* | *//* ) return 1 ;;
+  esac
+  return 0
+}
+
+# Resolves normalized PGDATA subpath under /var/lib/postgresql/data from service $svc in Compose config YAML.
+compose_service_pgdata_subpath() {
+  local config_out="$1" svc="$2" pg='' sub=''
+  pg="$(compose_service_env_value "$config_out" "$svc" PGDATA 2>/dev/null || true)"
+  while [[ "$pg" == */ && "$pg" != / ]]; do pg="${pg%/}"; done
+  if [ -z "$pg" ] || [ "$pg" = /var/lib/postgresql/data ]; then
+    return 0
+  fi
+  case "$pg" in
+    /var/lib/postgresql/data/*)
+      sub="${pg#/var/lib/postgresql/data/}"
+      while [[ "$sub" == */ ]]; do sub="${sub%/}"; done
+      validate_pgdata_subpath "$sub" || return 1
+      printf '%s' "$sub"
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# Returns 0 if a compose YAML file defines service $svc under top-level services.
+compose_file_has_service() {
+  local file="$1" target_svc="$2" line in_services=0 indent=''
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+    if [[ "$line" =~ ^([a-zA-Z0-9_-]+):([[:space:]]*(#.*|\{\}[[:space:]]*)?)?$ ]]; then
+      if [ "${BASH_REMATCH[1]}" = services ]; then in_services=1; indent=''; else in_services=0; fi
+      continue
+    fi
+    if ((in_services)) && [[ "$line" =~ ^([[:space:]]+)([a-zA-Z0-9._-]+):([[:space:]]*(#.*)?)?$ ]]; then
+      local cur_indent="${BASH_REMATCH[1]}" cur_svc="${BASH_REMATCH[2]}"
+      if [ -z "$indent" ]; then indent="$cur_indent"; fi
+      if [ "$cur_indent" = "$indent" ] && [ "$cur_svc" = "$target_svc" ]; then
+        return 0
+      fi
+    fi
+  done <"$file"
+  return 1
+}
+
+# Rejects pre-Stage-7 --compose files that define crove / crove-extract / crove-media without Stage 7 replacements (#3972).
+check_release_compose_services() {
+  local compose_file="$1" pair old_svc new_svc
+  for pair in crove:ludy crove-extract:ludy-extract crove-media:ludy-media; do
+    old_svc="${pair%%:*}"
+    new_svc="${pair#*:}"
+    if compose_file_has_service "$compose_file" "$old_svc" && ! compose_file_has_service "$compose_file" "$new_svc"; then
+      die "$EXIT_USAGE" "--compose file $compose_file defines pre-Stage-7 service '$old_svc' without '$new_svc'; deploy with a Stage 7 docker-compose.yml (#3972)"
+    fi
+  done
+}
+
+# Parses `docker inspect --format '{{json .HostConfig.Mounts}}'` and emits `<Target>|<Type>|<Source>|<Subpath>` lines
+# for mounts with non-empty VolumeOptions.Subpath (#3972).
+parse_hostconfig_subpath_mounts() {
+  awk '
+  BEGIN {
+    s = ""
+    while ((getline line) > 0) s = s "\n" line
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+    if (s == "" || s == "null" || s == "[]") exit 0
+    n = length(s)
+    if (substr(s, 1, 1) != "[" || substr(s, n, 1) != "]") exit 1
+    in_str = 0; esc = 0; str_val = ""
+    depth = 0; arr_depth = 0; expect_key = 0; expect_val = 0
+    cur_key = ""; d2_key = ""
+    m_type = ""; m_src = ""; m_tgt = ""; m_sub = ""
+    in_elem = 0
+    for (i = 1; i <= n; i++) {
+      c = substr(s, i, 1)
+      if (in_str) {
+        if (esc) {
+          if (c == "n") str_val = str_val "\n"
+          else if (c == "r") str_val = str_val "\r"
+          else if (c == "t") str_val = str_val "\t"
+          else str_val = str_val c
+          esc = 0
+        } else if (c == "\\") {
+          esc = 1
+        } else if (c == "\"") {
+          in_str = 0
+          if (depth == 1 && arr_depth == 1 && expect_key) {
+            cur_key = str_val
+            expect_key = 0
+          } else if (depth == 1 && arr_depth == 1 && expect_val) {
+            if (cur_key == "Type") m_type = str_val
+            else if (cur_key == "Source") m_src = str_val
+            else if (cur_key == "Target") m_tgt = str_val
+            expect_val = 0
+          } else if (depth == 2 && arr_depth == 1 && cur_key == "VolumeOptions") {
+            if (expect_key) {
+              d2_key = str_val
+              expect_key = 0
+            } else if (expect_val) {
+              if (d2_key == "Subpath") m_sub = str_val
+              expect_val = 0
+            }
+          }
+        } else {
+          str_val = str_val c
+        }
+        continue
+      }
+      if (c == "\"") {
+        in_str = 1; esc = 0; str_val = ""
+        continue
+      }
+      if (c ~ /[[:space:]]/) continue
+      if (c == "{") {
+        depth++
+        if (depth == 1 && arr_depth == 1) {
+          in_elem = 1
+          m_type = ""; m_src = ""; m_tgt = ""; m_sub = ""
+          cur_key = ""; d2_key = ""; expect_key = 1; expect_val = 0
+        } else if (depth == 2 && arr_depth == 1) {
+          d2_key = ""; expect_key = (cur_key == "VolumeOptions") ? 1 : 0; expect_val = 0
+        } else {
+          expect_key = 0; expect_val = 0
+        }
+      } else if (c == "}") {
+        if (depth <= 0) exit 1
+        if (depth == 1 && in_elem) {
+          gsub(/^\/+|\/+$/, "", m_sub)
+          if (m_sub != "" && m_tgt != "" && m_type != "" && m_src != "") {
+            printf "%s|%s|%s|%s\n", m_tgt, m_type, m_src, m_sub
+          }
+          in_elem = 0; cur_key = ""; expect_key = 0; expect_val = 0
+        } else if (depth == 2) {
+          d2_key = ""; expect_val = 0
+        }
+        depth--
+      } else if (c == "[") {
+        arr_depth++
+        expect_val = 0
+      } else if (c == "]") {
+        if (arr_depth <= 0) exit 1
+        arr_depth--
+      } else if (c == ":") {
+        if ((depth == 1 || (depth == 2 && cur_key == "VolumeOptions")) && arr_depth == 1) expect_val = 1
+      } else if (c == ",") {
+        if (depth == 1 && arr_depth == 1) { expect_key = 1; expect_val = 0; cur_key = "" }
+        else if (depth == 2 && arr_depth == 1 && cur_key == "VolumeOptions") { expect_key = 1; expect_val = 0; d2_key = "" }
+      } else {
+        expect_val = 0
+      }
+    }
+    if (in_str || depth != 0 || arr_depth != 0) exit 1
+  }'
 }
 
 # Refuses unsupported Compose volume subpath mounts that share one underlying Docker volume (#3972).
@@ -1279,10 +1647,24 @@ function checkTree(srcRoot, dstRoot, rel, exact) {
 EOF
 }
 
+# Collects unique active target mounts across enabled services matching space-separated list $svcs (#3972).
+compose_active_target_mounts() {
+  local config_out="$1" proj="$2" target="$3" svcs="$4" svc m out=''
+  for svc in $svcs; do
+    if compose_service_is_enabled "$config_out" "$svc"; then
+      m="$(compose_target_mount "$config_out" "$proj" "$target" "$svc")"
+      out="$(append_unique_line "$out" "$m")"
+    fi
+  done
+  printf '%s' "$out"
+}
+
 # Returns 0 if source mount has no PG data OR destination mount holds a complete, cleanly-stopped copy
 # (no postmaster.pid, matching PG_VERSION, full global/pg_control equality, and symmetric exact PGDATA parity).
 mounts_match_pg_cluster() {
-  local src_spec="$1" dst_spec="$2" probe_image="$3" src_m dst_m js src_rc=0 dst_rc=0
+  local src_spec="$1" dst_spec="$2" probe_image="$3" src_sub="${4:-}" dst_sub="${5:-}" src_m dst_m js src_rc=0 dst_rc=0
+  validate_pgdata_subpath "$src_sub" || return 1
+  validate_pgdata_subpath "$dst_sub" || return 1
   mount_exists "$src_spec" || src_rc=$?
   if ((src_rc == 1)); then return 0; fi
   if ((src_rc != 0)); then return 1; fi
@@ -1296,16 +1678,24 @@ mounts_match_pg_cluster() {
   fi
   dst_m="$(mount_docker_source "$dst_spec")"
   js="$(node_tree_parity_js)"
-  js+=$'\nif (fs.readdirSync("/src").length === 0) process.exit(0);\n'
-  js+=$'if (fs.existsSync("/src/postmaster.pid") || fs.existsSync("/dst/postmaster.pid")) process.exit(1);\n'
-  js+=$'for (const d of ["/src", "/dst"]) {\n  if (!fs.existsSync(d + "/PG_VERSION") || !fs.existsSync(d + "/global/pg_control")) process.exit(1);\n}\n'
-  js+=$'if (!fs.readFileSync("/src/PG_VERSION").equals(fs.readFileSync("/dst/PG_VERSION"))) process.exit(1);\n'
-  js+=$'const a = fs.readFileSync("/src/global/pg_control");\n'
-  js+=$'const b = fs.readFileSync("/dst/global/pg_control");\n'
+  js+=$'\nconst srcSub = process.env.SRC_PGDATA_SUB || "";\n'
+  js+=$'const dstSub = process.env.DST_PGDATA_SUB || "";\n'
+  js+=$'const srcPg = srcSub ? "/src/" + srcSub : "/src";\n'
+  js+=$'const dstPg = dstSub ? "/dst/" + dstSub : "/dst";\n'
+  js+=$'if (fs.readdirSync("/src").length === 0) process.exit(0);\n'
+  js+=$'if (srcSub && !fs.existsSync(srcPg)) {\n  if (fs.existsSync("/src/PG_VERSION")) process.exit(1);\n  process.exit(0);\n}\n'
+  js+=$'if (srcSub && fs.readdirSync(srcPg).length === 0 && !fs.existsSync("/src/PG_VERSION")) process.exit(0);\n'
+  js+=$'if (!fs.existsSync(dstPg)) process.exit(1);\n'
+  js+=$'if (fs.existsSync(srcPg + "/postmaster.pid") || fs.existsSync(dstPg + "/postmaster.pid")) process.exit(1);\n'
+  js+=$'for (const d of [srcPg, dstPg]) {\n  if (!fs.existsSync(d + "/PG_VERSION") || !fs.existsSync(d + "/global/pg_control")) process.exit(1);\n}\n'
+  js+=$'if (!fs.readFileSync(srcPg + "/PG_VERSION").equals(fs.readFileSync(dstPg + "/PG_VERSION"))) process.exit(1);\n'
+  js+=$'const a = fs.readFileSync(srcPg + "/global/pg_control");\n'
+  js+=$'const b = fs.readFileSync(dstPg + "/global/pg_control");\n'
   js+=$'if (a.length < 8 || a.subarray(0, 8).every((x) => x === 0) || !a.equals(b)) process.exit(1);\n'
-  js+=$'if (!checkTree("/src", "/dst", "", true)) process.exit(1);\n'
+  js+=$'if (!checkTree(srcPg, dstPg, "", true)) process.exit(1);\n'
   js+=$'process.exit(0);\n'
   docker run --rm --network none --user 0:0 \
+    -e "SRC_PGDATA_SUB=$src_sub" -e "DST_PGDATA_SUB=$dst_sub" \
     -v "${src_m}:/src:ro" -v "${dst_m}:/dst:ro" \
     --entrypoint node "$probe_image" -e "$js" >/dev/null 2>&1
 }
@@ -1381,7 +1771,7 @@ mount_data_migrated() {
 # Inspects existing Docker containers belonging to $DEPLOY_DIR and captures their actual mounted sources (#3972).
 PREV_CTR_DB='' PREV_CTR_FILES='' PREV_CTR_KEYS='' PREV_CTR_ARCHIVE=''
 detect_prev_container_mounts() {
-  local wdir canon_dir ps_out cid mounts_out still_exists m_dst m_type m_name m_src spec
+  local wdir canon_dir ps_out cid mounts_out hc_json hc_subpaths still_exists m_dst m_type m_name m_src spec subpath h_tgt h_type h_src h_sub seen_specs
   local -a dirs=("$DEPLOY_DIR") cids=()
   PREV_CTR_DB='' PREV_CTR_FILES='' PREV_CTR_KEYS='' PREV_CTR_ARCHIVE=''
   canon_dir="$(cd -P "$DEPLOY_DIR" 2>/dev/null && pwd -P || true)"
@@ -1399,13 +1789,35 @@ detect_prev_container_mounts() {
         [ -z "$still_exists" ] || return 1
         continue
       fi
+      if ! hc_json="$(docker inspect --format '{{json .HostConfig.Mounts}}' "$cid" 2>/dev/null)"; then
+        still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 1
+        [ -z "$still_exists" ] || return 1
+        continue
+      fi
+      hc_subpaths="$(parse_hostconfig_subpath_mounts <<<"$hc_json")" || return 1
+      seen_specs=''
       while IFS='|' read -r m_dst m_type m_name m_src; do
         [ -n "$m_dst" ] || continue
         m_dst="${m_dst%/}"
+        subpath=''
+        if [ -n "$hc_subpaths" ]; then
+          while IFS='|' read -r h_tgt h_type h_src h_sub; do
+            [ -n "$h_tgt" ] || continue
+            h_tgt="${h_tgt%/}"
+            if [ "$h_tgt" = "$m_dst" ] && [ "$h_type" = "$m_type" ] && { [ "$m_type" = volume ] && [ "$h_src" = "$m_name" ] || [ "$h_src" = "$m_src" ]; }; then
+              subpath="$h_sub"
+              break
+            fi
+          done <<<"$hc_subpaths"
+        fi
         case "$m_type" in
           volume)
             [ -n "$m_name" ] || continue
-            spec="volume:$m_name"
+            if [ -n "$subpath" ]; then
+              spec="volume:$m_name:$subpath"
+            else
+              spec="volume:$m_name"
+            fi
             ;;
           bind)
             [ -n "$m_src" ] || continue
@@ -1415,13 +1827,29 @@ detect_prev_container_mounts() {
             ;;
           *) continue ;;
         esac
+        seen_specs="$(append_unique_line "$seen_specs" "${m_dst}|${spec}")"
         case "$m_dst" in
-          /var/lib/postgresql/data) if [ -z "$PREV_CTR_DB" ]; then PREV_CTR_DB="$spec"; fi ;;
-          /data/files) if [ -z "$PREV_CTR_FILES" ]; then PREV_CTR_FILES="$spec"; fi ;;
-          /data/keys) if [ -z "$PREV_CTR_KEYS" ]; then PREV_CTR_KEYS="$spec"; fi ;;
-          /data/archive) if [ -z "$PREV_CTR_ARCHIVE" ]; then PREV_CTR_ARCHIVE="$spec"; fi ;;
+          /var/lib/postgresql/data) PREV_CTR_DB="$(append_unique_line "$PREV_CTR_DB" "$spec")" ;;
+          /data/files) PREV_CTR_FILES="$(append_unique_line "$PREV_CTR_FILES" "$spec")" ;;
+          /data/keys) PREV_CTR_KEYS="$(append_unique_line "$PREV_CTR_KEYS" "$spec")" ;;
+          /data/archive) PREV_CTR_ARCHIVE="$(append_unique_line "$PREV_CTR_ARCHIVE" "$spec")" ;;
         esac
       done <<<"$mounts_out"
+      if [ -n "$hc_subpaths" ]; then
+        while IFS='|' read -r h_tgt h_type h_src h_sub; do
+          [ -n "$h_tgt" ] && [ "$h_type" = volume ] && [ -n "$h_src" ] && [ -n "$h_sub" ] || continue
+          h_tgt="${h_tgt%/}"
+          spec="volume:${h_src}:${h_sub}"
+          if ! printf '%s\n' "$seen_specs" | grep -qx -F -- "${h_tgt}|${spec}"; then
+            case "$h_tgt" in
+              /var/lib/postgresql/data) PREV_CTR_DB="$(append_unique_line "$PREV_CTR_DB" "$spec")" ;;
+              /data/files) PREV_CTR_FILES="$(append_unique_line "$PREV_CTR_FILES" "$spec")" ;;
+              /data/keys) PREV_CTR_KEYS="$(append_unique_line "$PREV_CTR_KEYS" "$spec")" ;;
+              /data/archive) PREV_CTR_ARCHIVE="$(append_unique_line "$PREV_CTR_ARCHIVE" "$spec")" ;;
+            esac
+          fi
+        done <<<"$hc_subpaths"
+      fi
     done
   done
   return 0
@@ -1430,16 +1858,25 @@ detect_prev_container_mounts() {
 saved_mount_for() {
   local target="$1"
   [ -f "$(state_dir)/mounts" ] || return 0
-  sed -n -E "s|^${target}=||p" "$(state_dir)/mounts" | head -n 1
+  sed -n -E "s|^${target}=||p" "$(state_dir)/mounts" | grep -v '^$' || true
 }
 
 write_saved_mounts() {
-  local db_spec="$1" files_spec="$2" keys_spec="$3" archive_spec="$4"
-  write_state mounts "$(printf '/var/lib/postgresql/data=%s\n/data/files=%s\n/data/keys=%s\n/data/archive=%s' "$db_spec" "$files_spec" "$keys_spec" "$archive_spec")"
+  local db_spec="$1" files_spec="$2" keys_spec="$3" archive_spec="$4" out='' pair t specs line
+  for pair in "/var/lib/postgresql/data:$db_spec" "/data/files:$files_spec" "/data/keys:$keys_spec" "/data/archive:$archive_spec"; do
+    t="${pair%%:*}"
+    specs="${pair#*:}"
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      if [ -n "$out" ]; then out+=$'\n'; fi
+      out+="${t}=${line}"
+    done <<<"$specs"
+  done
+  write_state mounts "$out"
 }
 
-# Resolves prior mount spec using runtime/persisted overrides (when $use_overrides=1) before compose_target_mount (#3972).
-resolve_prev_mount_spec() {
+# Resolves prior mount spec(s) using runtime/persisted overrides (when $use_overrides=1) before per-service compose inspection (#3972).
+resolve_prev_mount_specs() {
   local prev_config="$1" prev_proj="$2" target="$3" svcs="$4" use_overrides="${5:-1}" ctr_val='' saved_val=''
   if [ "$use_overrides" = 1 ]; then
     case "$target" in
@@ -1458,65 +1895,120 @@ resolve_prev_mount_spec() {
       return 0
     fi
   fi
-  compose_target_mount "$prev_config" "$prev_proj" "$target" "$svcs"
+  compose_active_target_mounts "$prev_config" "$prev_proj" "$target" "$svcs"
+}
+
+# Verifies new Compose layout constraints (valid PGDATA, no subpaths, aligned api/worker persistent mounts) (#3972).
+check_new_storage_layout() {
+  local new_config="$1" active_proj="$2" new_db="$3" name="$4" current="$5" new_pgdata_sub='' target svc m api_has worker_has api_m worker_m is_local=0
+  if ! new_pgdata_sub="$(compose_service_pgdata_subpath "$new_config" db)"; then
+    restore_pre_activate "$current"
+    record "deploy $name failed: invalid db PGDATA path"
+    die "$EXIT_FAILED" "service db sets an unsupported PGDATA path outside /var/lib/postgresql/data in project $active_proj"
+  fi
+  reject_volume_subpath "$new_db" /var/lib/postgresql/data "$name" "$current"
+  if storage_is_local "$new_config"; then is_local=1; fi
+  for target in /data/files /data/keys /data/archive; do
+    api_has=0; worker_has=0; api_m=''; worker_m=''
+    for svc in ludy crove api worker; do
+      compose_service_is_enabled "$new_config" "$svc" || continue
+      m="$(compose_target_mount "$new_config" "$active_proj" "$target" "$svc")"
+      reject_volume_subpath "$m" "$target" "$name" "$current"
+      if [ "$svc" = api ]; then api_has=1; api_m="$m"; fi
+      if [ "$svc" = worker ]; then worker_has=1; worker_m="$m"; fi
+    done
+    if [ -n "$api_m" ] && [ -n "$worker_m" ] && [ "$api_m" != "$worker_m" ]; then
+      if [ "$target" != /data/files ] || ((is_local)); then
+        restore_pre_activate "$current"
+        record "deploy $name failed: api and worker mount different $target storage ($(mount_label "$api_m") vs $(mount_label "$worker_m"))"
+        die "$EXIT_FAILED" "services api and worker mount different $target storage ($(mount_label "$api_m") vs $(mount_label "$worker_m")) in project $active_proj; align both services before deploying"
+      fi
+    elif ((api_has && worker_has)) && [ "$target" != /data/archive ] && { [ "$target" = /data/keys ] || ((is_local)); } && [ -n "${api_m}${worker_m}" ] && [ "$api_m" != "$worker_m" ]; then
+      restore_pre_activate "$current"
+      record "deploy $name failed: asymmetric $target mount between api and worker"
+      die "$EXIT_FAILED" "services api and worker must share the same persistent $target mount in project $active_proj; refusing to leave one service unmounted"
+    fi
+  done
 }
 
 # Verifies prior DB isolation, cluster parity, and persistent mount parity before starting new DB (#3972).
 verify_storage_cutover() {
   local prev_config="$1" prev_proj="$2" new_config="$3" active_proj="$4" new_db="$5" image="$6" name="$7" current="$8" use_overrides="${9:-1}"
-  local cfg_prev_db='' prev_db='' src_rc=0 dst_rc=0 free_rc=0 target cfg_prev_m prev_m new_m
+  local prev_pgdata_sub='' new_pgdata_sub='' cfg_prev_db='' prev_db_specs='' prev_db='' src_rc=0 dst_rc=0 free_rc=0 target svc cfg_prev_m prev_specs prev_m new_specs new_m
+  if ! prev_pgdata_sub="$(compose_service_pgdata_subpath "$prev_config" db)"; then
+    restore_pre_activate "$current"
+    record "deploy $name failed: invalid prior db PGDATA path"
+    die "$EXIT_FAILED" "prior db service sets an unsupported PGDATA path outside /var/lib/postgresql/data in project $prev_proj"
+  fi
+  if ! new_pgdata_sub="$(compose_service_pgdata_subpath "$new_config" db)"; then
+    restore_pre_activate "$current"
+    record "deploy $name failed: invalid new db PGDATA path"
+    die "$EXIT_FAILED" "service db sets an unsupported PGDATA path outside /var/lib/postgresql/data in project $active_proj"
+  fi
   cfg_prev_db="$(compose_target_mount "$prev_config" "$prev_proj" /var/lib/postgresql/data 'db')"
   reject_volume_subpath "$cfg_prev_db" /var/lib/postgresql/data "$name" "$current"
   reject_volume_subpath "$new_db" /var/lib/postgresql/data "$name" "$current"
-  prev_db="$(resolve_prev_mount_spec "$prev_config" "$prev_proj" /var/lib/postgresql/data 'db' "$use_overrides")"
-  reject_volume_subpath "$prev_db" /var/lib/postgresql/data "$name" "$current"
-  if [ -n "$prev_db" ] && { [ -z "$new_db" ] || [ "$prev_db" != "$new_db" ]; }; then
-    src_rc=0
-    mount_exists "$prev_db" || src_rc=$?
-    if ((src_rc == 2)); then
-      restore_pre_activate "$current"
-      record "deploy $name failed: cannot inspect prior db storage $(mount_label "$prev_db")"
-      die "$EXIT_FAILED" "cannot inspect prior database storage $(mount_label "$prev_db"); nothing running was changed"
+  prev_db_specs="$(resolve_prev_mount_specs "$prev_config" "$prev_proj" /var/lib/postgresql/data 'db' "$use_overrides")"
+  while IFS= read -r prev_db; do
+    [ -n "$prev_db" ] || continue
+    reject_volume_subpath "$prev_db" /var/lib/postgresql/data "$name" "$current"
+    if [ -z "$new_db" ] || [ "$prev_db" != "$new_db" ] || [ "$prev_pgdata_sub" != "$new_pgdata_sub" ]; then
+      src_rc=0
+      mount_exists "$prev_db" || src_rc=$?
+      if ((src_rc == 2)); then
+        restore_pre_activate "$current"
+        record "deploy $name failed: cannot inspect prior db storage $(mount_label "$prev_db")"
+        die "$EXIT_FAILED" "cannot inspect prior database storage $(mount_label "$prev_db"); nothing running was changed"
+      fi
+      if ((src_rc == 0)); then
+        free_rc=0
+        check_storage_free "$prev_db" "" || free_rc=$?
+        if ((free_rc == 1)); then
+          restore_pre_activate "$current"
+          record "deploy $name failed: prior db storage $(mount_label "$prev_db") held by running container"
+          die "$EXIT_FAILED" "prior database storage $(mount_label "$prev_db") is still mounted by a running container; stop the old stack and cut over volumes before deploying Stage 7"
+        elif ((free_rc != 0)); then
+          restore_pre_activate "$current"
+          record "deploy $name failed: cannot inspect running containers for $(mount_label "$prev_db")"
+          die "$EXIT_FAILED" "cannot inspect running containers to verify prior database storage $(mount_label "$prev_db"); nothing running was changed"
+        fi
+        if [ -z "$new_db" ]; then
+          restore_pre_activate "$current"
+          record "deploy $name failed: no persistent /var/lib/postgresql/data mount in new config"
+          die "$EXIT_FAILED" "found prior database storage $(mount_label "$prev_db") but the new compose configuration defines no persistent mount at /var/lib/postgresql/data; refusing to start db on an anonymous volume"
+        fi
+        dst_rc=0
+        mount_exists "$new_db" || dst_rc=$?
+        if ((dst_rc == 2)); then
+          restore_pre_activate "$current"
+          record "deploy $name failed: cannot inspect destination db storage $(mount_label "$new_db")"
+          die "$EXIT_FAILED" "cannot inspect destination database storage $(mount_label "$new_db"); nothing running was changed"
+        fi
+        if ! mounts_match_pg_cluster "$prev_db" "$new_db" "$image" "$prev_pgdata_sub" "$new_pgdata_sub"; then
+          restore_pre_activate "$current"
+          record "deploy $name failed: db storage $(mount_label "$prev_db") not cut over"
+          if [ "$prev_db" = "$new_db" ] && [ "$prev_pgdata_sub" != "$new_pgdata_sub" ]; then
+            die "$EXIT_FAILED" "prior PostgreSQL cluster in $(mount_label "$prev_db") uses PGDATA /var/lib/postgresql/data${prev_pgdata_sub:+/$prev_pgdata_sub} while new config uses /var/lib/postgresql/data${new_pgdata_sub:+/$new_pgdata_sub} without a matching cluster copy"
+          fi
+          die "$EXIT_FAILED" "found prior database storage $(mount_label "$prev_db") without a matching copied PostgreSQL cluster in $(mount_label "$new_db") for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or keep COMPOSE_PROJECT_NAME=$prev_proj / mount $(mount_label "$prev_db") in $ENV_FILE) before deploying Stage 7"
+        fi
+      fi
     fi
-    if ((src_rc == 0)); then
-      free_rc=0
-      check_storage_free "$prev_db" "" || free_rc=$?
-      if ((free_rc == 1)); then
-        restore_pre_activate "$current"
-        record "deploy $name failed: prior db storage $(mount_label "$prev_db") held by running container"
-        die "$EXIT_FAILED" "prior database storage $(mount_label "$prev_db") is still mounted by a running container; stop the old stack and cut over volumes before deploying Stage 7"
-      elif ((free_rc != 0)); then
-        restore_pre_activate "$current"
-        record "deploy $name failed: cannot inspect running containers for $(mount_label "$prev_db")"
-        die "$EXIT_FAILED" "cannot inspect running containers to verify prior database storage $(mount_label "$prev_db"); nothing running was changed"
-      fi
-      if [ -z "$new_db" ]; then
-        restore_pre_activate "$current"
-        record "deploy $name failed: no persistent /var/lib/postgresql/data mount in new config"
-        die "$EXIT_FAILED" "found prior database storage $(mount_label "$prev_db") but the new compose configuration defines no persistent mount at /var/lib/postgresql/data; refusing to start db on an anonymous volume"
-      fi
-      dst_rc=0
-      mount_exists "$new_db" || dst_rc=$?
-      if ((dst_rc == 2)); then
-        restore_pre_activate "$current"
-        record "deploy $name failed: cannot inspect destination db storage $(mount_label "$new_db")"
-        die "$EXIT_FAILED" "cannot inspect destination database storage $(mount_label "$new_db"); nothing running was changed"
-      fi
-      if ! mounts_match_pg_cluster "$prev_db" "$new_db" "$image"; then
-        restore_pre_activate "$current"
-        record "deploy $name failed: db storage $(mount_label "$prev_db") not cut over"
-        die "$EXIT_FAILED" "found prior database storage $(mount_label "$prev_db") without a matching copied PostgreSQL cluster in $(mount_label "$new_db") for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or keep COMPOSE_PROJECT_NAME=$prev_proj / mount $(mount_label "$prev_db") in $ENV_FILE) before deploying Stage 7"
-      fi
-    fi
-  fi
+  done <<<"$prev_db_specs"
   for target in /data/files /data/keys /data/archive; do
-    cfg_prev_m="$(compose_target_mount "$prev_config" "$prev_proj" "$target" 'ludy|crove|worker|api')"
-    new_m="$(compose_target_mount "$new_config" "$active_proj" "$target" 'ludy|crove|worker|api')"
-    reject_volume_subpath "$cfg_prev_m" "$target" "$name" "$current"
-    reject_volume_subpath "$new_m" "$target" "$name" "$current"
-    prev_m="$(resolve_prev_mount_spec "$prev_config" "$prev_proj" "$target" 'ludy|crove|worker|api' "$use_overrides")"
-    reject_volume_subpath "$prev_m" "$target" "$name" "$current"
-    if [ -n "$prev_m" ] && { [ -z "$new_m" ] || [ "$prev_m" != "$new_m" ]; }; then
+    for svc in ludy crove api worker; do
+      compose_service_is_enabled "$prev_config" "$svc" || continue
+      cfg_prev_m="$(compose_target_mount "$prev_config" "$prev_proj" "$target" "$svc")"
+      reject_volume_subpath "$cfg_prev_m" "$target" "$name" "$current"
+    done
+    prev_specs="$(resolve_prev_mount_specs "$prev_config" "$prev_proj" "$target" 'ludy crove api worker' "$use_overrides")"
+    new_specs="$(compose_active_target_mounts "$new_config" "$active_proj" "$target" 'ludy crove api worker')"
+    while IFS= read -r prev_m; do
+      [ -n "$prev_m" ] || continue
+      reject_volume_subpath "$prev_m" "$target" "$name" "$current"
+      if [ -n "$new_specs" ] && printf '%s\n' "$new_specs" | grep -qx -F -- "$prev_m"; then
+        continue
+      fi
       src_rc=0
       mount_exists "$prev_m" || src_rc=$?
       if ((src_rc == 2)); then
@@ -1524,26 +2016,31 @@ verify_storage_cutover() {
         record "deploy $name failed: cannot inspect prior $target storage $(mount_label "$prev_m")"
         die "$EXIT_FAILED" "cannot inspect prior $target storage $(mount_label "$prev_m"); nothing running was changed"
       fi
-      if ((src_rc == 0)); then
-        free_rc=0
-        check_storage_free "$prev_m" "" || free_rc=$?
-        if ((free_rc == 1)); then
+      ((src_rc == 0)) || continue
+      free_rc=0
+      check_storage_free "$prev_m" "" || free_rc=$?
+      if ((free_rc == 1)); then
+        restore_pre_activate "$current"
+        record "deploy $name failed: prior $target storage $(mount_label "$prev_m") held by running container"
+        die "$EXIT_FAILED" "prior $target storage $(mount_label "$prev_m") is still mounted by a running container; stop the old stack and cut over persistent storage before deploying Stage 7"
+      elif ((free_rc != 0)); then
+        restore_pre_activate "$current"
+        record "deploy $name failed: cannot inspect running containers for $(mount_label "$prev_m")"
+        die "$EXIT_FAILED" "cannot inspect running containers to verify prior $target storage $(mount_label "$prev_m"); nothing running was changed"
+      fi
+      if [ -z "$new_specs" ]; then
+        if ! mount_is_empty "$prev_m" "$image"; then
           restore_pre_activate "$current"
-          record "deploy $name failed: prior $target storage $(mount_label "$prev_m") held by running container"
-          die "$EXIT_FAILED" "prior $target storage $(mount_label "$prev_m") is still mounted by a running container; stop the old stack and cut over persistent storage before deploying Stage 7"
-        elif ((free_rc != 0)); then
-          restore_pre_activate "$current"
-          record "deploy $name failed: cannot inspect running containers for $(mount_label "$prev_m")"
-          die "$EXIT_FAILED" "cannot inspect running containers to verify prior $target storage $(mount_label "$prev_m"); nothing running was changed"
+          record "deploy $name failed: no persistent $target mount in new config"
+          die "$EXIT_FAILED" "found non-empty prior $target storage $(mount_label "$prev_m") but the new compose configuration defines no persistent mount at $target; refusing to drop persistent storage"
         fi
-        if [ -z "$new_m" ]; then
-          if ! mount_is_empty "$prev_m" "$image"; then
-            restore_pre_activate "$current"
-            record "deploy $name failed: no persistent $target mount in new config"
-            die "$EXIT_FAILED" "found non-empty prior $target storage $(mount_label "$prev_m") but the new compose configuration defines no persistent mount at $target; refusing to drop persistent storage"
-          fi
-          continue
-        fi
+        continue
+      fi
+      local migrated=0 dst_labels=''
+      while IFS= read -r new_m; do
+        [ -n "$new_m" ] || continue
+        reject_volume_subpath "$new_m" "$target" "$name" "$current"
+        dst_labels="${dst_labels:+${dst_labels}, }$(mount_label "$new_m")"
         dst_rc=0
         mount_exists "$new_m" || dst_rc=$?
         if ((dst_rc == 2)); then
@@ -1551,13 +2048,16 @@ verify_storage_cutover() {
           record "deploy $name failed: cannot inspect destination $target storage $(mount_label "$new_m")"
           die "$EXIT_FAILED" "cannot inspect destination $target storage $(mount_label "$new_m"); nothing running was changed"
         fi
-        if ! mount_data_migrated "$prev_m" "$new_m" "$image"; then
-          restore_pre_activate "$current"
-          record "deploy $name failed: $target storage $(mount_label "$prev_m") not cut over"
-          die "$EXIT_FAILED" "found non-empty prior $target storage $(mount_label "$prev_m") while destination $(mount_label "$new_m") does not contain all migrated data; cut over persistent volumes/paths before deploying Stage 7"
+        if mount_data_migrated "$prev_m" "$new_m" "$image"; then
+          migrated=1
         fi
+      done <<<"$new_specs"
+      if ((migrated == 0)); then
+        restore_pre_activate "$current"
+        record "deploy $name failed: $target storage $(mount_label "$prev_m") not cut over"
+        die "$EXIT_FAILED" "found non-empty prior $target storage $(mount_label "$prev_m") while destination $dst_labels does not contain all migrated data; cut over persistent volumes/paths before deploying Stage 7"
       fi
-    fi
+    done <<<"$prev_specs"
   done
 }
 
@@ -1777,7 +2277,19 @@ compose_version_ok() {
   ((major > 2 || (major == 2 && minor >= 24)))
 }
 
+# Refuses retired CROVE_DEPLOY_DIR / CROVE_ENV_FILE CLI environment variables unless replaced or overridden (#3972).
+reject_retired_cli_env() {
+  local check_env="${1:-1}"
+  if [ -n "${CROVE_DEPLOY_DIR:-}" ] && [ -z "${LUDY_DEPLOY_DIR:-}" ] && ((DIR_FROM_CLI == 0)); then
+    die "$EXIT_USAGE" 'CROVE_DEPLOY_DIR is retired; use LUDY_DEPLOY_DIR or --dir (#3972)'
+  fi
+  if ((check_env)) && [ -n "${CROVE_ENV_FILE:-}" ] && [ -z "${LUDY_ENV_FILE:-}" ] && ((ENV_FROM_CLI == 0)); then
+    die "$EXIT_USAGE" 'CROVE_ENV_FILE is retired; use LUDY_ENV_FILE or --env-file (#3972)'
+  fi
+}
+
 preflight() {
+  reject_retired_cli_env 1
   valid_path "$DEPLOY_DIR" || die "$EXIT_USAGE" "--dir must be an absolute path without spaces: $DEPLOY_DIR"
   [ -n "$ENV_FILE" ] || ENV_FILE="$DEPLOY_DIR/.env"
   valid_path "$ENV_FILE" || die "$EXIT_USAGE" "--env-file must be an absolute path without spaces: $ENV_FILE"
@@ -2535,6 +3047,13 @@ recover() {
   fi
   log "rolling back to $target"
   activate "$target"
+  if [ -n "$COMPOSE_PROJECT_OVERRIDE" ]; then
+    local cf_val=''
+    cf_val="$(env_compose_file_value || true)"
+    if [ -n "$cf_val" ] && ! env_compose_file_lists docker-compose.override.yml && ! env_var_is_set COMPOSE_PROJECT_NAME; then
+      log "warning: COMPOSE_FILE in $ENV_FILE omits docker-compose.override.yml and sets no COMPOSE_PROJECT_NAME; plain docker compose may not keep project $COMPOSE_PROJECT_OVERRIDE"
+    fi
+  fi
   if roll_services "$(direction_to "$target" "$failed")"; then
     if [ -n "$COMPOSE_PROJECT_OVERRIDE" ]; then write_state project "$COMPOSE_PROJECT_OVERRIDE"; fi
     record "$what failed, rolled back to $target"
@@ -2549,8 +3068,8 @@ REGISTRY='' REGISTRY_USER='' REGISTRY_PASSWORD='' READ_PASSWORD=0 OPT_SHIFT=0
 common_option() {
   OPT_SHIFT=2
   case "$1" in
-    --dir) DEPLOY_DIR="${2:-}" ;;
-    --env-file) ENV_FILE="${2:-}" ;;
+    --dir) DEPLOY_DIR="${2:-}"; DIR_FROM_CLI=1 ;;
+    --env-file) ENV_FILE="${2:-}"; ENV_FROM_CLI=1 ;;
     --registry) REGISTRY="${2:-}" ;;
     --registry-user) REGISTRY_USER="${2:-}" ;;
     --registry-password-stdin) READ_PASSWORD=1 OPT_SHIFT=1 ;;
@@ -2596,6 +3115,7 @@ do_deploy() {
   valid_image "$extract" || die "$EXIT_USAGE" "--extract-image must be pinned by digest (name@sha256:...): '$extract'"
   valid_image "$media" || die "$EXIT_USAGE" "--media-image must be pinned by digest (name@sha256:...): '$media'"
   [ -f "$compose" ] || die "$EXIT_USAGE" "--compose file not found: '$compose'"
+  check_release_compose_services "$compose"
   ((build_given == 0)) || valid_build "$build" || die "$EXIT_USAGE" "--build must match [A-Za-z0-9._-]{1,64}: '$build'"
   if ((modules_given)); then
     modules_validate "$modules_list" || die "$EXIT_USAGE" '--modules is not valid (see above); nothing was changed'
@@ -2734,18 +3254,13 @@ do_deploy() {
   fi
   local new_db='' new_db_free_rc=0 new_db_exists_rc=0
   new_db="$(compose_target_mount "$new_config" "$active_proj" /var/lib/postgresql/data 'db')"
+  check_new_storage_layout "$new_config" "$active_proj" "$new_db" "$name" "$current"
   if [ -n "$prev_config" ] && [ -n "$prev_proj" ]; then
     verify_storage_cutover "$prev_config" "$prev_proj" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current" 1
   fi
   if [ -n "$alt_prev_config" ] && [ -n "$prev_yaml_name" ]; then
     verify_storage_cutover "$alt_prev_config" "$prev_yaml_name" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current" 0
   fi
-  reject_volume_subpath "$new_db" /var/lib/postgresql/data "$name" "$current"
-  local chk_target chk_m
-  for chk_target in /data/files /data/keys /data/archive; do
-    chk_m="$(compose_target_mount "$new_config" "$active_proj" "$chk_target" 'ludy|crove|worker|api')"
-    reject_volume_subpath "$chk_m" "$chk_target" "$name" "$current"
-  done
   if [ -n "$new_db" ]; then
     mount_exists "$new_db" || new_db_exists_rc=$?
     if ((new_db_exists_rc == 2)); then
@@ -2767,6 +3282,7 @@ do_deploy() {
 
   log 'starting the database'
   if ! up db; then
+    if [ -n "$prev_proj" ]; then COMPOSE_PROJECT_OVERRIDE="$prev_proj"; fi
     recover "$current" "deploy $name (database)" "$name"
   fi
   COMPOSE_PROJECT_OVERRIDE="$active_proj"
@@ -2779,6 +3295,7 @@ do_deploy() {
   # idempotency rows (this one never fails the deploy).
   if ! ensure_context_token_key; then
     if [ -n "$current" ]; then activate "$current"; fi
+    if [ -n "$active_proj" ]; then write_state project "$active_proj"; fi
     record "deploy $name failed: context token key"
     die "$EXIT_FAILED" "the context token key could not be written into $ENV_FILE; the services were not changed${current:+ ($current still runs)}"
   fi
@@ -2788,6 +3305,7 @@ do_deploy() {
   log 'running migrations'
   if ! dc run --rm --no-TTY --no-deps migrate; then
     if [ -n "$current" ]; then activate "$current"; fi
+    if [ -n "$active_proj" ]; then write_state project "$active_proj"; fi
     record "deploy $name failed: migrate"
     die "$EXIT_FAILED" "migrations failed; the services were not changed${current:+ ($current still runs)}. Fix forward with a new migration"
   fi
@@ -2800,21 +3318,25 @@ do_deploy() {
     apply_env_settings "$has_auth" "$modules_given" "$modules_list" || applied=$?
     if ((applied == 2)); then
       if [ -n "$current" ]; then activate "$current"; fi
+      if [ -n "$active_proj" ]; then write_state project "$active_proj"; fi
       record "deploy $name failed: $ENV_CHANGE_LABEL, and the env file could not be put back"
       die "$EXIT_ROLLBACK_FAILED" "writing $ENV_CHANGE_LABEL failed and the env file could not be put back: the instance needs an operator"
     fi
     if ((applied != 0)); then
       if [ -n "$current" ]; then activate "$current"; fi
+      if [ -n "$active_proj" ]; then write_state project "$active_proj"; fi
       record "deploy $name failed: $ENV_CHANGE_LABEL"
       die "$EXIT_FAILED" "$ENV_CHANGE_LABEL could not be written into $ENV_FILE; the services were not changed${current:+ ($current still runs)}"
     fi
     if [ "$ENV_CHANGED" = 1 ] && ! dc config --quiet; then
       if ! restore_env; then
         if [ -n "$current" ]; then activate "$current"; fi
+        if [ -n "$active_proj" ]; then write_state project "$active_proj"; fi
         record "deploy $name failed: compose config with $ENV_CHANGE_LABEL, and the env file could not be put back"
         die "$EXIT_ROLLBACK_FAILED" "the compose files do not load with $ENV_CHANGE_LABEL and the env file could not be put back: the instance needs an operator"
       fi
       if [ -n "$current" ]; then activate "$current"; fi
+      if [ -n "$active_proj" ]; then write_state project "$active_proj"; fi
       record "deploy $name failed: compose config with $ENV_CHANGE_LABEL"
       die "$EXIT_FAILED" "the compose files do not load with $ENV_CHANGE_LABEL; the env file was put back and nothing running was changed"
     fi
@@ -2830,9 +3352,9 @@ do_deploy() {
   fi
   write_state project "$active_proj"
   local saved_files='' saved_keys='' saved_archive=''
-  saved_files="$(compose_target_mount "$new_config" "$active_proj" /data/files 'ludy|crove|worker|api')"
-  saved_keys="$(compose_target_mount "$new_config" "$active_proj" /data/keys 'ludy|crove|worker|api')"
-  saved_archive="$(compose_target_mount "$new_config" "$active_proj" /data/archive 'ludy|crove|worker|api')"
+  saved_files="$(compose_active_target_mounts "$new_config" "$active_proj" /data/files 'ludy crove api worker')"
+  saved_keys="$(compose_active_target_mounts "$new_config" "$active_proj" /data/keys 'ludy crove api worker')"
+  saved_archive="$(compose_active_target_mounts "$new_config" "$active_proj" /data/archive 'ludy crove api worker')"
   write_saved_mounts "$new_db" "$saved_files" "$saved_keys" "$saved_archive"
   # A rollback from this release puts the env file back only when this deploy is the one that changed it.
   # (A deploy of the same release again, that changed nothing, keeps the record: that release is still the one that wrote them.)
@@ -2900,12 +3422,20 @@ do_rollback() {
   fi
   # Usually toward an older build, the API first; back to a newer one (a second rollback), the worker first (#1965).
   activate "$previous"
+  if [ -n "$COMPOSE_PROJECT_OVERRIDE" ]; then
+    local cf_val=''
+    cf_val="$(env_compose_file_value || true)"
+    if [ -n "$cf_val" ] && ! env_compose_file_lists docker-compose.override.yml && ! env_var_is_set COMPOSE_PROJECT_NAME; then
+      log "warning: COMPOSE_FILE in $ENV_FILE omits docker-compose.override.yml and sets no COMPOSE_PROJECT_NAME; plain docker compose may not keep project $COMPOSE_PROJECT_OVERRIDE"
+    fi
+  fi
   if ! roll_services "$(direction_to "$previous" "$current")"; then
     recover "$current" "rollback to $previous" "$previous"
   fi
   # Swap, so a second rollback returns to the release just left.
   write_state previous "$current"
   write_state current "$previous"
+  if [ -n "$rollback_proj" ]; then write_state project "$rollback_proj"; fi
   # The settings it put back worked: the copy of the file as it was is no longer needed.
   if [ -n "$ENV_UNDO" ]; then rm -f "$ENV_UNDO"; ENV_UNDO=''; ENV_UNDO_KIND=''; fi
   record "rollback to $previous ok"
@@ -2916,10 +3446,11 @@ do_rollback() {
 do_status() {
   while (($# > 0)); do
     case "$1" in
-      --dir) DEPLOY_DIR="${2:-}"; shift 2 ;;
+      --dir) DEPLOY_DIR="${2:-}"; DIR_FROM_CLI=1; shift 2 ;;
       *) die "$EXIT_USAGE" "unknown option $1" ;;
     esac
   done
+  reject_retired_cli_env 0
   printf 'current:  %s\nprevious: %s\n' "$(read_state current)" "$(read_state previous)"
   if [ -f "$(state_dir)/history.log" ]; then tail -n 10 "$(state_dir)/history.log"; fi
 }

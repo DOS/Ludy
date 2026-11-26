@@ -270,10 +270,16 @@ case "$cmd" in
     exit 0
     ;;
   run)
-    mounts=(); ep=''; img=''
+    mounts=(); ep=''; img=''; pg_sub=''
     while (($# > 0)); do
       case "$1" in
         -v) mounts+=("$2"); shift 2 ;;
+        -e)
+          case "$2" in
+            PG_SUBDIR=*) pg_sub="\${2#PG_SUBDIR=}" ;;
+          esac
+          shift 2
+          ;;
         --entrypoint) ep="$2"; shift 2 ;;
         --network | --user) shift 2 ;;
         --rm) shift ;;
@@ -284,6 +290,10 @@ case "$cmd" in
     done
     if [ "$ep" = sh ]; then
       if [[ " $* " == *"pg_controldata"* ]]; then
+        printf 'probe PG_SUBDIR=%s\n' "$pg_sub" >>"$STUB_LOG"
+        if [ -n "\${STUB_EXPECT_PG_SUBDIR:-}" ] && [ "$pg_sub" != "\${STUB_EXPECT_PG_SUBDIR}" ]; then
+          exit 1
+        fi
         src_vol="\${mounts[0]%%:*}"
         dst_vol="\${mounts[1]%%:*}"
         if [ -n "\${STUB_CLUSTER_IDS:-}" ]; then
@@ -357,6 +367,9 @@ case "$cmd" in
             ;;
           *printenv*PGBACKREST_REPO1_PATH*)
             if [ -n "\${STUB_PRE_WAL_REPO1_PATH-/crove/wal}" ]; then echo "\${STUB_PRE_WAL_REPO1_PATH-/crove/wal}"; fi
+            ;;
+          *printenv*PGDATA*)
+            if [ -n "\${STUB_LIVE_PGDATA:-}" ]; then echo "\${STUB_LIVE_PGDATA}"; fi
             ;;
           *pg_dump*) printf 'PGDMP-STUB\\n' ;;
           *pg_restore*) cat >/dev/null ;;
@@ -747,5 +760,21 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(res.status, res.stderr).toBe(0);
     expect(readFileSync(f.stubLog, 'utf8')).toContain('dc ludy port ludy 8080');
     expect(readFileSync(f.volsFile, 'utf8')).not.toContain('crove_');
+
+    // Custom PGDATA subdirectory in live db container is forwarded as PG_SUBDIR when probing volumes.
+    writeFileSync(f.volsFile, ['crove_db-data', 'ludy_db-data', ''].join('\n'));
+    writeFileSync(f.stubLog, '');
+    const customPgdata = runWithStubs(f, ['prune-old-volumes', '--dir', f.deployDir, '--overlay-dir', f.overlayDir], {
+      STUB_SERVICES: 'db migrate auth auth-grants ludy-extract ludy-media ludy',
+      STUB_CLUSTER_IDS: 'crove_db-data=cluster-1 ludy_db-data=cluster-1',
+      STUB_LIVE_PGDATA: '/var/lib/postgresql/data/pgdata',
+      STUB_EXPECT_PG_SUBDIR: 'pgdata',
+    });
+    expect(customPgdata.status, customPgdata.stderr).toBe(0);
+    expect(readFileSync(f.stubLog, 'utf8')).toContain('probe PG_SUBDIR=pgdata');
+    expect(readFileSync(f.volsFile, 'utf8')).not.toContain('crove_');
+
+    const cutoverScript = readFileSync(script, 'utf8');
+    expect(cutoverScript).toContain('--exclude-table-data=ludy_kernel.context_key --exclude-table-data=crove_kernel.context_key');
   });
 });
