@@ -743,6 +743,46 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: 'A project triage item decline reason written by a member, which may name a person: mentions are replaced with a redaction marker',
   },
+  // Projects GitHub integration (#5158, ADR-0060): repository slugs are org operational configuration, whereas
+  // external GitHub titles/authors and buffered PAT notices may quote a person and erase when matched.
+  'ludy_projects.github_project_repo.repo_full_name': {
+    kind: 'other',
+    handling: 'not_personal',
+    reason: 'Bound GitHub repository slug (owner/repo) configured for project sync, not a personal-data record',
+  },
+  'ludy_projects.github_task_link.repo_full_name': {
+    kind: 'other',
+    handling: 'not_personal',
+    reason: 'Bound GitHub repository slug (owner/repo) on a linked issue or pull request, not a personal-data record',
+  },
+  'ludy_projects.github_sync_delivery.repo_full_name': {
+    kind: 'other',
+    handling: 'not_personal',
+    machinery: true,
+    reason: 'Definer-only delivery ledger repository slug (owner/repo), not a personal-data record',
+  },
+  'ludy_projects.github_task_link.external_title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Linked GitHub issue or pull request title, which may quote a person: mentions are replaced with a redaction marker',
+  },
+  'ludy_projects.github_task_link.author_login': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'External GitHub handle on a linked issue or pull request; cleared to NULL when matched by an erasure probe',
+  },
+  'ludy_projects.github_webhook_notice.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    machinery: true,
+    reason: 'Transient raw PAT GitHub webhook body deleted on claim and 10m sweep; deleted on erasure via ludy_projects.personal_data_erase_github_notice',
+  },
+  'ludy_projects.github_webhook_pending.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    machinery: true,
+    reason: 'Transient orgless GitHub App webhook payload deleted on worker claim and within 10 minutes by github_webhook_sweep',
+  },
   // eSign (#3323, #3427): unsealed signers (draft, voided, expired, or declined with sealed_file_id IS NULL) are removed on erasure; active, completed, and sealed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
   'ludy_sign.signer.name': {
     kind: 'name',
@@ -1533,6 +1573,8 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'ludy_projects.project_triage_item.title',
   'ludy_projects.project_triage_item.description',
   'ludy_projects.project_triage_item.decline_reason',
+  'ludy_projects.github_task_link.external_title',
+  'ludy_projects.github_task_link.author_login',
   'ludy_hr.candidate.notes',
 ]);
 // The meeting text columns the redaction of ludy_meetings.personal_erase would change, left as they are for a short number (#3064).
@@ -1967,6 +2009,11 @@ export const personalDataErase = defineCommand({
     const { rows: marketplaceNotices } = await sql<{ rows: number }>`
       SELECT ludy_finance.personal_data_erase_marketplace_hook_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
     add('ludy_finance.marketplace_hook_notice.body', Number(marketplaceNotices[0]?.rows ?? 0));
+
+    // Transient raw GitHub webhook notice waiting for worker claim (#5158): deleted when its text mentions the value.
+    const { rows: githubNotices } = await sql<{ rows: number }>`
+      SELECT ludy_projects.personal_data_erase_github_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+    add('ludy_projects.github_webhook_notice.body', Number(githubNotices[0]?.rows ?? 0));
 
     // Sender-side KYC attachment checks (#4443, PDPL Law 91/2025/QH15; summary counts #4510): delete any
     // kyc_check row in the org whose findings_json quotes the value (including 8/9-digit legacy CMND numbers
@@ -2687,6 +2734,24 @@ export const personalDataErase = defineCommand({
          WHERE o.org_id = te.org_id AND o.id = te.id AND te.org_id = ${ctx.orgId}::uuid AND ${timeEntryNote}
          RETURNING ${freeTextMatch(probe, sql.ref('o.note'))} AS note`.execute(ctx.trx);
       add('ludy_projects.time_entry.note', timeEntries.filter((e) => e.note).length);
+
+      const githubLinkTitle = freeTextMatch(probe, sql.ref('gtl.external_title'));
+      const githubLinkAuthor = freeTextMatch(probe, sql.ref('gtl.author_login'));
+      const { rows: githubLinkRows } = await sql<{ external_title: boolean; author_login: boolean }>`
+        UPDATE ludy_projects.github_task_link gtl
+           SET external_title = CASE WHEN ${githubLinkTitle} THEN COALESCE(
+                 NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('gtl.external_title'), REDACTED_MARK)}, 300)), ''),
+                 ${REDACTED_MARK}
+               ) ELSE gtl.external_title END,
+               author_login = CASE WHEN gtl.author_login IS NOT NULL AND ${githubLinkAuthor} THEN NULL ELSE gtl.author_login END,
+               updated_at = ${ctx.now}
+          FROM ludy_projects.github_task_link o
+         WHERE o.org_id = gtl.org_id AND o.id = gtl.id AND gtl.org_id = ${ctx.orgId}::uuid
+           AND (${githubLinkTitle} OR (gtl.author_login IS NOT NULL AND ${githubLinkAuthor}))
+         RETURNING ${freeTextMatch(probe, sql.ref('o.external_title'))} AS external_title,
+                   (o.author_login IS NOT NULL AND ${freeTextMatch(probe, sql.ref('o.author_login'))}) AS author_login`.execute(ctx.trx);
+      add('ludy_projects.github_task_link.external_title', githubLinkRows.filter((r) => r.external_title).length);
+      add('ludy_projects.github_task_link.author_login', githubLinkRows.filter((r) => r.author_login).length);
 
       // Recruiting candidate notes that quote the person (#3425): replace mentions, bounded to 2000 chars.
       const candidateNotes = freeTextMatch(probe, sql.ref('c.notes'));

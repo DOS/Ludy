@@ -35,6 +35,7 @@ import { ProjectTimelineView } from '../components/project-timeline.tsx';
 import { ProjectAcceptanceSignHandoff } from '../components/project-acceptance-sign-handoff.tsx';
 import { ProjectColumnsDialog } from '../components/project-columns-dialog.tsx';
 import { ProjectCyclesPanel } from '../components/project-cycles.tsx';
+import { ProjectGithubSettingsDialog } from '../components/project-github-settings.tsx';
 import { ProjectRoadmapPanel } from '../components/project-roadmap-panel.tsx';
 import { ProjectTriagePanel } from '../components/project-triage-panel.tsx';
 import { ProjectTasksFromSourceDialog } from '../components/project-tasks-from-source-dialog.tsx';
@@ -418,6 +419,7 @@ export function ProjectDetailView({ initialView }: { initialView?: ProjectViewMo
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [githubOpen, setGithubOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ProjectTaskCard | null>(null);
   const [moveError, setMoveError] = useState<unknown>(null);
   const [bar, setBar] = useState<TaskFilterState>(EMPTY_TASK_FILTER);
@@ -445,6 +447,7 @@ export function ProjectDetailView({ initialView }: { initialView?: ProjectViewMo
     setSort(null);
     setMoveError(null);
     setEditingTask(null);
+    setGithubOpen(false);
     setCycleFilter({ mode: 'all' });
     setSelectedMetricsCycleId('');
   }, [slug, id]);
@@ -613,6 +616,9 @@ export function ProjectDetailView({ initialView }: { initialView?: ProjectViewMo
   const board = boardQuery.data;
   const { project, seats, members, tasks, hiddenByEntityCount } = board;
   const currentUserId = me.data?.userId ?? null;
+  const currentOrgRole = members.find((m) => m.userId === currentUserId)?.role;
+  const canConfigureGithub = (currentOrgRole === 'owner' || currentOrgRole === 'admin') && project.status !== 'archived';
+  const githubEnabled = project.githubEnabled === true;
   const otherMemberCount = countOtherProjectMembers(members, currentUserId);
   const projectMemberCount = members.filter((m) => m.onProject).length;
   const openCount = tasks.filter((item) => item.status !== 'done' && item.status !== 'cancelled').length;
@@ -697,6 +703,32 @@ export function ProjectDetailView({ initialView }: { initialView?: ProjectViewMo
             <ProjectIcon name="users" className="size-3" />
             {t('card.membersCount', { count: String(projectMemberCount) })}
           </Badge>
+          {githubEnabled && (
+            canConfigureGithub ? (
+              <button
+                type="button"
+                onClick={() => setGithubOpen(true)}
+                className="inline-flex min-h-11 items-center gap-1 rounded-full border border-border px-2.5 text-xs font-medium text-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:min-h-6"
+                data-testid="project-github-active-pill"
+              >
+                <ProjectIcon name="link" className="size-3" />
+                <span>
+                  {project.taskKeyPrefix
+                    ? `${t('github.detailActivePill')} · ${project.taskKeyPrefix}`
+                    : t('github.detailActivePill')}
+                </span>
+              </button>
+            ) : (
+              <Badge variant="outline" className="gap-1" data-testid="project-github-active-pill">
+                <ProjectIcon name="link" className="size-3" />
+                <span>
+                  {project.taskKeyPrefix
+                    ? `${t('github.detailActivePill')} · ${project.taskKeyPrefix}`
+                    : t('github.detailActivePill')}
+                </span>
+              </Badge>
+            )
+          )}
           <span className="inline-flex items-center gap-1">
             <ProjectIcon name="user" className="size-3.5" />
             <span>{project.ownerName ? t('card.owner', { name: project.ownerName }) : t('card.noOwner')}</span>
@@ -950,6 +982,7 @@ export function ProjectDetailView({ initialView }: { initialView?: ProjectViewMo
             customSortActive={sort !== null}
             cyclesEnabled={cyclesEnabled}
             pointsEnabled={pointsEnabled}
+            githubEnabled={githubEnabled}
             cycleNamesById={new Map((cyclesQuery.data?.cycles ?? []).map((c) => [c.id, `#${c.number} ${c.name}`]))}
             onSetTaskPoints={(taskId, storyPoints) => {
               setTaskPoints.mutate({
@@ -1082,6 +1115,7 @@ export function ProjectDetailView({ initialView }: { initialView?: ProjectViewMo
         seats={seats}
         cyclesEnabled={cyclesEnabled}
         pointsEnabled={pointsEnabled}
+        githubEnabled={githubEnabled}
         cycles={cyclesQuery.data?.cycles ?? []}
         open={editingTask !== null}
         onOpenChange={(next) => {
@@ -1101,6 +1135,17 @@ export function ProjectDetailView({ initialView }: { initialView?: ProjectViewMo
         onOpenChange={setSettingsOpen}
         project={project}
         members={members}
+        canConfigureGithub={canConfigureGithub}
+        onOpenGithubSettings={() => {
+          setSettingsOpen(false);
+          setGithubOpen(true);
+        }}
+      />
+      <ProjectGithubSettingsDialog
+        open={githubOpen}
+        onOpenChange={setGithubOpen}
+        project={project}
+        columns={board.columns ?? []}
       />
       <ProjectColumnsDialog
         open={columnsOpen}

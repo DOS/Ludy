@@ -173,7 +173,7 @@ describe('personal-data registry: projects (#2591)', () => {
   });
 
   it('registers every personal-data column of ludy_projects for erasure', () => {
-    expect(personal.length).toBe(21);
+    expect(personal.length).toBe(25);
     expect(personal).toEqual(
       expect.arrayContaining([
         'ludy_projects.project.name',
@@ -197,6 +197,10 @@ describe('personal-data registry: projects (#2591)', () => {
         'ludy_projects.project_triage_item.title',
         'ludy_projects.project_triage_item.description',
         'ludy_projects.project_triage_item.decline_reason',
+        'ludy_projects.github_task_link.external_title',
+        'ludy_projects.github_task_link.author_login',
+        'ludy_projects.github_webhook_notice.body',
+        'ludy_projects.github_webhook_pending.body',
       ]),
     );
     for (const key of personal) {

@@ -831,6 +831,13 @@ const schema = z.object({
   // With them, the page shows the widget and the kernel checks its token with Cloudflare before recording a request.
   TURNSTILE_SITE_KEY: optional.pipe(z.string().regex(/^[0-9A-Za-z_-]{1,100}$/, 'TURNSTILE_SITE_KEY is a Turnstile site key').optional()),
   TURNSTILE_SECRET: optional,
+  // Projects GitHub Integration (#5158, ADR-0060): optional GitHub App credentials and webhook secrets.
+  // When unset, App installation/webhook routes stay inactive while PAT connections remain usable with a credential key.
+  GITHUB_APP_ID: optional.pipe(z.string().regex(/^[1-9][0-9]{0,19}$/, 'GITHUB_APP_ID is a numeric GitHub App ID').optional()),
+  GITHUB_APP_PRIVATE_KEY: optional.transform((v) => (v ? v.replace(/\\n/g, '\n') : undefined)).pipe(z.string().min(64).max(16_384).optional()),
+  GITHUB_APP_SLUG: optional.pipe(z.string().regex(/^[a-z0-9-]{1,100}$/, 'GITHUB_APP_SLUG is a GitHub App URL slug').optional()),
+  GITHUB_APP_WEBHOOK_SECRET: optional.pipe(z.string().min(16).max(500).optional()),
+  GITHUB_APP_WEBHOOK_SECRET_PREVIOUS: optional.pipe(z.string().min(16).max(500).optional()),
   // Role passwords applied by `migrate` (self-host).
   LUDY_APP_DB_PASSWORD: optional,
   LUDY_WORKER_DB_PASSWORD: optional,
@@ -961,6 +968,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // A widget without the secret could not be checked, and a secret without the widget would refuse every booking.
   if (Boolean(config.TURNSTILE_SITE_KEY) !== Boolean(config.TURNSTILE_SECRET)) {
     throw new Error('set both TURNSTILE_SITE_KEY and TURNSTILE_SECRET, or neither');
+  }
+  if (Boolean(config.GITHUB_APP_ID) !== Boolean(config.GITHUB_APP_PRIVATE_KEY)) {
+    throw new Error('set both GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY, or neither');
+  }
+  if (config.GITHUB_APP_WEBHOOK_SECRET_PREVIOUS && !config.GITHUB_APP_WEBHOOK_SECRET) {
+    throw new Error('GITHUB_APP_WEBHOOK_SECRET_PREVIOUS is set without GITHUB_APP_WEBHOOK_SECRET');
   }
   // A sign-up policy the deployment cannot enforce, or one set only halfway, stops the boot instead of leaving
   // sign-up more open than the operator meant (#350).

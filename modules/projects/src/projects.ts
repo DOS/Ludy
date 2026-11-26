@@ -7,6 +7,7 @@ import {
   PROJECT_LIST_LIMIT,
   PROJECT_UNASSIGNED_LIMIT,
   auditValue,
+  formatProjectTaskKey,
   normalizeFilter,
   parseTaskChecklist,
   tableWrite,
@@ -49,6 +50,7 @@ import { isValidScheduleRange } from './domain/timeline.ts';
 import { projectsManifest } from './manifest.ts';
 import { loadColumnsForProjects, loadProjectColumns, placeProjectTaskBetween, resolveTaskColumnId, type ProjectOrderRow } from './columns.ts';
 import { loadActiveCycleView, loadCycle } from './cycles.ts';
+import { allocateProjectTaskNumber } from './github.ts';
 import { parseStoredRecurrence } from './recurring.ts';
 import {
   MANAGERS,
@@ -486,7 +488,10 @@ export const projectTaskAdd = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'ludy_projects', 'project_task', ['org_id', 'project_id', 'task_id', 'added_by', 'created_at'])],
+  writes: [
+    tableWrite(TABLES, 'ludy_projects', 'project_task', ['org_id', 'project_id', 'task_id', 'task_number', 'added_by', 'created_at']),
+    tableWrite(TABLES, 'ludy_projects', 'github_project_binding', ['next_task_number', 'updated_at']),
+  ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; taskId: string; added: boolean }> => {
     const userId = userOf(ctx.actor);
@@ -516,12 +521,15 @@ export const projectTaskAdd = defineCommand({
       return { projectId: row.id, taskId: input.taskId, added: false };
     }
 
+    const taskNumber = await allocateProjectTaskNumber(ctx.trx, ctx.orgId, row.id, ctx.now);
+
     await ctx.trx
       .insertInto('ludy_projects.project_task')
       .values({
         org_id: ctx.orgId,
         project_id: row.id,
         task_id: input.taskId,
+        task_number: taskNumber,
         added_by: userId,
         created_at: ctx.now,
       })
@@ -551,8 +559,9 @@ export const projectTaskRemove = defineCommand({
     tableWrite(TABLES, 'ludy_projects', 'project_task', ['org_id', 'project_id', 'task_id']),
     // Removing a task from a project closes any open cycle membership interval via trigger on project_task.
     tableWrite(TABLES, 'ludy_projects', 'project_cycle_task_history', ['left_at', 'left_reason']),
-    // Removing a task from a project cascades ON DELETE CASCADE to ludy_projects.task_dependency.
+    // Removing a task from a project cascades ON DELETE CASCADE to ludy_projects.task_dependency and github_task_link.
     tableWrite(TABLES, 'ludy_projects', 'task_dependency', ['org_id', 'project_id', 'id']),
+    tableWrite(TABLES, 'ludy_projects', 'github_task_link', ['org_id', 'project_id', 'task_id']),
     // Removing a task from a project clears task_id via ON DELETE SET NULL (task_id) on ludy_projects.time_entry.
     tableWrite(TABLES, 'ludy_projects', 'time_entry', ['task_id']),
   ],
@@ -732,12 +741,15 @@ export const projectTaskCreate = defineCommand({
       columnId = resolveTaskColumnId(columns, null, effectiveStatus);
     }
 
+    const taskNumber = await allocateProjectTaskNumber(ctx.trx, ctx.orgId, row.id, ctx.now);
+
     await ctx.trx
       .insertInto('ludy_projects.project_task')
       .values({
         org_id: ctx.orgId,
         project_id: row.id,
         task_id: taskId,
+        task_number: taskNumber,
         column_id: columnId,
         start_on: input.startOn ?? null,
         cycle_id: cycleId,
@@ -887,6 +899,13 @@ export const projectGet = defineQuery({
     const userId = userOf(ctx.actor);
     const row = await loadProject(ctx.trx, ctx.orgId, input.id, false);
     const profiles = await memberProfilesMap(ctx.trx, row.owner_user_id ? [row.owner_user_id] : []);
+    const binding = await ctx.trx
+      .selectFrom('ludy_projects.github_project_binding')
+      .select(['github_enabled', 'task_key_prefix'])
+      .where('org_id', '=', ctx.orgId)
+      .where('project_id', '=', row.id)
+      .executeTakeFirst();
+    const githubEnabled = Boolean(binding?.github_enabled);
     return {
       id: row.id,
       name: row.name,
@@ -898,6 +917,8 @@ export const projectGet = defineQuery({
       cyclesEnabled: row.cycles_enabled,
       cycleDurationWeeks: row.cycle_duration_weeks,
       pointsEnabled: row.points_enabled,
+      githubEnabled,
+      taskKeyPrefix: githubEnabled ? (binding?.task_key_prefix ?? null) : null,
       canManage: canManageProject(ctx.role, userId, row.owner_user_id),
       canWrite: canWriteProject(ctx.role, row.status),
       createdAt: new Date(row.created_at).toISOString(),
@@ -942,6 +963,14 @@ export const projectBoard = defineQuery({
 
     const viewerHasSeat = positionRows.some((p) => p.status !== 'archived' && p.holder_user_id === userId);
     const hiddenByEntityCount = await countHiddenProjectTasks(ctx.trx, ctx.orgId, row.id);
+    const binding = await ctx.trx
+      .selectFrom('ludy_projects.github_project_binding')
+      .select(['github_enabled', 'task_key_prefix'])
+      .where('org_id', '=', ctx.orgId)
+      .where('project_id', '=', row.id)
+      .executeTakeFirst();
+    const githubEnabled = Boolean(binding?.github_enabled);
+    const taskKeyPrefix = githubEnabled ? (binding?.task_key_prefix ?? null) : null;
 
     const project: ProjectDetail = {
       id: row.id,
@@ -954,6 +983,8 @@ export const projectBoard = defineQuery({
       cyclesEnabled: row.cycles_enabled,
       cycleDurationWeeks: row.cycle_duration_weeks,
       pointsEnabled: row.points_enabled,
+      githubEnabled,
+      taskKeyPrefix,
       canManage: canManageProject(ctx.role, userId, row.owner_user_id),
       canWrite: canWriteProject(ctx.role, row.status),
       createdAt: new Date(row.created_at).toISOString(),
@@ -1022,6 +1053,7 @@ export const projectBoard = defineQuery({
         'pt.recurrence_last_due',
         'pt.recurrence_next_at',
         'pt.recurrence_source_task_id',
+        'pt.task_number',
         sql<boolean>`(t.checkout_run_id IS NOT NULL AND t.lock_expires_at > pg_catalog.now())`.as('checked_out'),
       ])
       .where('pt.org_id', '=', ctx.orgId)
@@ -1109,9 +1141,23 @@ export const projectBoard = defineQuery({
 
     const taskIds = page.map((t) => t.id);
     const { commentCounts, openBlockerCounts, blockingCounts } = await loadProjectTaskCounts(ctx.trx, ctx.orgId, row.id, taskIds);
+    const githubLinkCounts = new Map<string, number>();
+    if (githubEnabled && taskIds.length > 0) {
+      const { rows: linkRows } = await sql<{ task_id: string; n: string }>`
+        SELECT task_id, pg_catalog.count(*)::text AS n
+          FROM ludy_projects.github_task_link
+         WHERE org_id = ${ctx.orgId}::uuid
+           AND project_id = ${row.id}::uuid
+           AND task_id = ANY(${taskIds}::uuid[])
+         GROUP BY task_id`.execute(ctx.trx);
+      for (const lr of linkRows) {
+        githubLinkCounts.set(lr.task_id, Number(lr.n));
+      }
+    }
 
     const tasks: ProjectTaskCard[] = page.map((t) => {
       const status = t.status as TaskStatus;
+      const taskNumber = githubEnabled ? t.task_number : null;
       return {
         id: t.id,
         title: t.title,
@@ -1137,6 +1183,9 @@ export const projectBoard = defineQuery({
         recurrenceSourceTaskId: t.recurrence_source_task_id,
         openBlockerCount: openBlockerCounts.get(t.id) ?? 0,
         blockingCount: blockingCounts.get(t.id) ?? 0,
+        taskNumber,
+        taskKey: githubEnabled ? formatProjectTaskKey(taskKeyPrefix, taskNumber) : null,
+        githubLinkCount: githubEnabled ? (githubLinkCounts.get(t.id) ?? 0) : 0,
       };
     });
 

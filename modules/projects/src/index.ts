@@ -155,6 +155,38 @@ export {
   type ProjectOrderRow,
 } from './columns.ts';
 import { roadmapCommands, roadmapQueries } from './roadmap.ts';
+import {
+  projectGithubApplyInboundEvent,
+  projectGithubBindingGet,
+  projectGithubBindingSave,
+  projectGithubCommands,
+  projectGithubHookSet,
+  projectGithubHookStatus,
+  projectGithubQueries,
+  projectGithubRepoBind,
+  projectGithubRepoUnbind,
+  projectGithubSyncLog,
+  projectGithubTaskLinkAdd,
+  projectGithubTaskLinkRemove,
+  projectGithubTaskLinks,
+  setProjectsGithubAppInfo,
+  setProjectsGithubBrokerAvailable,
+} from './github.ts';
+export {
+  projectGithubApplyInboundEvent,
+  projectGithubBindingGet,
+  projectGithubBindingSave,
+  projectGithubHookSet,
+  projectGithubHookStatus,
+  projectGithubRepoBind,
+  projectGithubRepoUnbind,
+  projectGithubSyncLog,
+  projectGithubTaskLinkAdd,
+  projectGithubTaskLinkRemove,
+  projectGithubTaskLinks,
+  setProjectsGithubAppInfo,
+  setProjectsGithubBrokerAvailable,
+};
 import { roadmapMcpQueries } from './roadmap-mcp.ts';
 import {
   projectTriageAccept,
@@ -267,6 +299,7 @@ export const projectsCommands = [
   ...roadmapCommands,
   ...projectTriageCommands,
   ...roadmapSignalCommands,
+  ...projectGithubCommands,
   projectTimeStart,
   projectTimeStop,
   projectTimeLog,
@@ -297,6 +330,7 @@ export const projectsQueries = [
   ...roadmapMcpQueries,
   ...projectTriageQueries,
   ...roadmapSignalQueries,
+  ...projectGithubQueries,
   projectTimeSummary,
   projectTimeExportCsv,
 ];

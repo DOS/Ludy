@@ -11,6 +11,13 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.id).toBe('projects');
     expect(projectsManifest.dependsOn).toEqual(['kernel']);
     expect(Object.keys(projectsManifest.tables.ludy_projects).sort()).toEqual([
+      'github_project_binding',
+      'github_project_repo',
+      'github_sync_delivery',
+      'github_task_link',
+      'github_webhook_hook',
+      'github_webhook_notice',
+      'github_webhook_pending',
       'project',
       'project_column',
       'project_cycle',
@@ -81,6 +88,7 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.tables.ludy_projects.project_triage_item.priority).toBe('internal');
     expect(projectsManifest.tables.ludy_projects.project_triage_item.tainted).toBe('internal');
     expect(projectsManifest.entities).toEqual([
+      { type: 'projects.github_task_link', table: 'github_task_link', legalEntityScoped: false, audit: 'command' },
       { type: 'projects.project', table: 'project', legalEntityScoped: false, audit: 'command' },
       { type: 'projects.project_triage_item', table: 'project_triage_item', legalEntityScoped: false, audit: 'command' },
       { type: 'projects.roadmap_announcement', table: 'roadmap_announcement', legalEntityScoped: false, audit: 'command' },
@@ -92,7 +100,7 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 59 commands and 32 queries with consistent module prefix', () => {
+  it('exports all 72 commands and 40 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
       'projects.column.create',
       'projects.column.delete',
@@ -106,6 +114,13 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.cycle.update',
       'projects.dependency.add',
       'projects.dependency.remove',
+      'projects.github.apply_inbound_event',
+      'projects.github.binding.save',
+      'projects.github.hook_set',
+      'projects.github.link.add',
+      'projects.github.link.remove',
+      'projects.github.repo.bind',
+      'projects.github.repo.unbind',
       'projects.member.add',
       'projects.member.remove',
       'projects.project.archive',
@@ -167,6 +182,10 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.cycle.metrics',
       'projects.cycle_summary_source',
       'projects.dependency.list',
+      'projects.github.binding.get',
+      'projects.github.hook_status',
+      'projects.github.sync_log',
+      'projects.github.task_links',
       'projects.mcp.roadmap_demand_summary',
       'projects.mcp.roadmap_ideas',
       'projects.mcp.triage_summary',
@@ -199,7 +218,14 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.weekly_status_source',
     ]);
     for (const command of projectsCommands) {
-      if (command.name === 'projects.weekly_status.send_mail' || command.name === 'projects.roadmap.announcement.send_notifications') {
+      if (
+        command.name === 'projects.weekly_status.send_mail' ||
+        command.name === 'projects.roadmap.announcement.send_notifications' ||
+        command.name === 'projects.github.binding.save' ||
+        command.name === 'projects.github.repo.bind' ||
+        command.name === 'projects.github.hook_set' ||
+        command.name === 'projects.github.link.add'
+      ) {
         expect(command.risk).toBe('R2');
         expect(command.sideEffect).toBe('external');
       } else if (command.name === 'projects.roadmap.board.create' || command.name === 'projects.roadmap.board.update') {
@@ -217,6 +243,8 @@ describe('@ludy/mod-projects (#2591)', () => {
         command.name === 'projects.recurring.advance' ||
         command.name === 'projects.roadmap.item.convert_to_task' ||
         command.name === 'projects.triage.accept' ||
+        command.name === 'projects.github.hook_set' ||
+        command.name === 'projects.github.apply_inbound_event' ||
         command.name.startsWith('projects.tasks_from_note.') ||
         command.name.startsWith('projects.tasks_from_source.') ||
         command.name.startsWith('projects.weekly_status.')

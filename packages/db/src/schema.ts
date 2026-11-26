@@ -1664,6 +1664,21 @@ export type ProjectsProjectTriageItemTable = Refine<
   }
 >;
 
+export const GITHUB_TASK_LINK_KINDS = ['issue', 'pull_request'] as const;
+export type GithubTaskLinkKind = (typeof GITHUB_TASK_LINK_KINDS)[number];
+export const GITHUB_EXTERNAL_STATES = ['open', 'closed', 'merged', 'draft'] as const;
+export type GithubExternalState = (typeof GITHUB_EXTERNAL_STATES)[number];
+export const GITHUB_LINK_SOURCES = ['manual', 'mention', 'branch'] as const;
+export type GithubLinkSource = (typeof GITHUB_LINK_SOURCES)[number];
+export type ProjectsGithubTaskLinkTable = Refine<
+  G.ProjectsGithubTaskLinkTable,
+  {
+    kind: GithubTaskLinkKind;
+    external_state: GithubExternalState;
+    link_source: GithubLinkSource;
+  }
+>;
+
 // Electronic signatures (Sign, #3323): envelope workflow, signers, fields, AI analysis, and hash-chained events.
 export const SIGN_ENVELOPE_STATUSES = ['draft', 'sent', 'in_progress', 'completed', 'declined', 'voided', 'expired'] as const;
 export type SignEnvelopeStatus = (typeof SIGN_ENVELOPE_STATUSES)[number];
@@ -1953,6 +1968,7 @@ type Refined = Tables<{
   'ludy_notes.note_template': NotesNoteTemplateTable;
   'ludy_notes.notebook': NotesNotebookTable;
   'ludy_notes.todo': NotesTodoTable;
+  'ludy_projects.github_task_link': ProjectsGithubTaskLinkTable;
   'ludy_projects.project': ProjectsProjectTable;
   'ludy_projects.project_column': ProjectsProjectColumnTable;
   'ludy_projects.project_cycle': ProjectsProjectCycleTable;

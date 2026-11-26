@@ -725,6 +725,8 @@ export const channelsList = defineQuery({
       .where('provider', 'not like', 'marketplace\\_%')
       // Nor an accounting software connection's (provider accounting_..., #3875): the finance module lists it; the entity it is for is in its external account id.
       .where('provider', 'not like', 'accounting\\_%')
+      // Nor a Projects GitHub App or PAT connection (ADR-0060, #5158): configured under Project Settings -> GitHub, never Social/Inbox.
+      .where('provider', 'not like', 'github\\_%')
       // Nor the Inbox's email connection (#2439): it is made by the first customer mail and is not a place to publish. The screen that limits which
       // channels a member may read (includeEmail) lists it, since reading email is one of those channels.
       .where('provider', input.includeEmail ? 'is not' : '<>', input.includeEmail ? null : 'email')

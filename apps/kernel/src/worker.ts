@@ -26,6 +26,16 @@ import { backfillImageSizes, IMAGE_SIZE_SWEEP_MS } from './image-size-backfill.t
 import { EVIDENCE_HOLD_SWEEP_MS, runEvidenceHolds } from './evidence-hold.ts';
 import { PROJECTS_RECURRING_SWEEP_MS, sweepProjectsRecurring } from './projects-recurring-worker.ts';
 import { ROADMAP_ANNOUNCEMENT_NOTIFY_EVENT, dispatchRoadmapAnnouncementNotifications, sweepRoadmapOtpCleanup } from './projects-roadmap-worker.ts';
+import {
+  PROJECTS_GITHUB_WEBHOOK_SWEEP_CRON,
+  PROJECTS_GITHUB_WEBHOOK_SWEEP_EXPIRE_SECONDS,
+  hasGithubWebhookWork,
+  processGithubWebhookBatch,
+  projectsGithubHydrateJobOptions,
+  runGithubHydrateJob,
+  type ProjectsGithubHydrateJob,
+} from './projects-github-worker.ts';
+import type { GithubClient } from '@ludy/github';
 import { processInboundEmail, type InboundJob } from './inbound.ts';
 import { mailEventJob, processMailEvent, type MailEventJob, type MailEventRow } from './mail-events.ts';
 import { MAIL_BULK_GAP_MS, MAIL_BULK_QUEUE, MAIL_SEND_QUEUE, MAIL_SWEEP_MS, mailErrorCode, purgeMail, runMailJob, sweepMail, type MailJob, type MailQueueDeps } from './mail-queue.ts';
@@ -790,6 +800,8 @@ export interface WorkerDeps {
     calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
     // The meeting platform adapters this deployment offers (C1, #3173), by provider id: the sandbox, then Google Meet, Zoom and Teams (C2 to C4).
     meetingPlatforms?: Readonly<Partial<Record<string, MeetingPlatformAdapter>>>;
+    // GitHub REST client for Projects GitHub Integration hydration (#5158, ADR-0060).
+    github?: GithubClient;
   };
   // PUBLIC_URL, where Social short links (#706) point.
   publicUrl?: string;
@@ -1080,6 +1092,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const sign = deps.runtime.installed('sign');
   const ads = deps.runtime.installed('ads');
   const hr = deps.runtime.installed('hr');
+  const projects = deps.runtime.installed('projects');
   // A cron job of a module left out (#1471): a schedule a run with the module saved stays in pg-boss, which would queue
   // ticks nobody works and the prober would report as stuck. So it is taken off, and the ticks it queued (no data) go.
   const dropCron = async (queue: string) => {
@@ -1931,6 +1944,45 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.signHookSweep, SIGN_HOOK_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: SIGN_HOOK_SWEEP_EXPIRE_SECONDS });
   } else {
     await dropCron(QUEUES.signHookSweep);
+  }
+
+  // Projects GitHub Integration webhooks and hydration (#5158, ADR-0060):
+  // - projects-github-webhook runs with egress 'none' (database/broker only), sweeps expired >10m raw deliveries every 10m, verifies App/PAT HMACs, applies inbound sync, and enqueues projects-github-hydrate when API enrichment is needed.
+  // - projects-github-hydrate opens stored credentials and calls api.github.com via guarded transport ('provider:github').
+  if (projects) {
+    await boss.work(QUEUES.projectsGithubWebhook, { batchSize: 1 }, async () => {
+      const done = await processGithubWebhookBatch({
+        workerDb: deps.workerDb,
+        runtime: deps.runtime,
+        broker: deps.channels?.broker,
+        sendHydrate: (hydrateJob) =>
+          boss.send(QUEUES.projectsGithubHydrate, hydrateJob, projectsGithubHydrateJobOptions(hydrateJob)),
+      });
+      if (done.swept + done.appProcessed + done.patOk + done.patRefused + done.patDropped > 0) {
+        console.log(
+          `[projects-github-webhook] swept=${done.swept} app=${done.appProcessed} patOk=${done.patOk} patRefused=${done.patRefused} patDropped=${done.patDropped}`,
+        );
+      }
+    });
+    await boss.schedule(QUEUES.projectsGithubWebhook, PROJECTS_GITHUB_WEBHOOK_SWEEP_CRON, null, {
+      tz: RETENTION_TZ,
+      missed: 'once',
+      expireInSeconds: PROJECTS_GITHUB_WEBHOOK_SWEEP_EXPIRE_SECONDS,
+    });
+    const hydrateGithub = deps.channels?.github;
+    const hydrateBroker = deps.channels?.broker;
+    if (hydrateGithub && hydrateBroker && hydrateBroker.id !== 'none') {
+      await boss.work<ProjectsGithubHydrateJob>(QUEUES.projectsGithubHydrate, { batchSize: 1 }, async ([job]) => {
+        if (!job) return;
+        const outcome = await runGithubHydrateJob(
+          { runtime: deps.runtime, workerDb: deps.workerDb, broker: hydrateBroker, github: hydrateGithub },
+          job.data,
+        );
+        console.log(`[projects-github-hydrate] ${job.data.mode} ${job.data.projectId.slice(0, 8)}: ${outcome}`);
+      });
+    }
+  } else {
+    await dropCron(QUEUES.projectsGithubWebhook);
   }
 
   // Meeting platform recordings (meetings integrations C1, #3173): a sweep every minute hands over the recordings a member chose to import, lists each due connection's finished recordings as suggestions and
@@ -3917,6 +3969,30 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (row.type === 'projects.recurring.advanced' && typeof row.payload.wakeAgentId === 'string') {
                 return sendAgentWake(boss, row.org_id, row.payload.wakeAgentId);
               }
+              if (
+                projects &&
+                deps.channels?.github &&
+                deps.channels.broker &&
+                deps.channels.broker.id !== 'none' &&
+                row.type === 'projects.github.link_added' &&
+                row.payload.hydrating === true &&
+                typeof row.payload.projectId === 'string' &&
+                typeof row.payload.taskId === 'string' &&
+                typeof row.payload.linkId === 'string' &&
+                (row.payload.kind === 'issue' || row.payload.kind === 'pull_request') &&
+                typeof row.payload.externalNumber === 'number'
+              ) {
+                const hydrateJob: ProjectsGithubHydrateJob = {
+                  mode: 'link_refresh',
+                  orgId: row.org_id,
+                  projectId: row.payload.projectId,
+                  taskId: row.payload.taskId,
+                  linkId: row.payload.linkId,
+                  kind: row.payload.kind,
+                  externalNumber: row.payload.externalNumber,
+                };
+                return boss.send(QUEUES.projectsGithubHydrate, hydrateJob, projectsGithubHydrateJobOptions(hydrateJob));
+              }
               if (Object.hasOwn(AGENT_PROPOSAL_COMMANDS, row.type)) {
                 return boss.send(QUEUES.agentProposal, { orgId: row.org_id, eventId: row.event_id, type: row.type }, {
                   singletonKey: jobKey(row.org_id, QUEUES.agentProposal, row.event_id),
@@ -4123,6 +4199,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       await sweepConversationBlobs({ workerDb: deps.workerDb, store: deps.store });
       // Doomed note attachment blobs across all deletion paths (delete, trash_empty, member_items_purge, PDPL erase, org_purge): swept in every deployment.
       await sweepNoteAttachmentBlobs({ workerDb: deps.workerDb, store: deps.store });
+      if (projects && (await hasGithubWebhookWork(deps.workerDb))) {
+        await boss.send(
+          QUEUES.projectsGithubWebhook,
+          { trigger: 'relay' },
+          { singletonKey: systemJobKey(QUEUES.projectsGithubWebhook, 'drain'), singletonSeconds: 5 },
+        );
+      }
     } catch (error) {
       console.error('[relay]', error);
     } finally {
