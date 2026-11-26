@@ -2988,9 +2988,17 @@ function getAstParseDiagnostics(sf: TsSourceFileWithDiagnostics): readonly tsTyp
   return sf.parseDiagnostics ?? [];
 }
 
+const AST_PARSE_CACHE_MAX = 8;
+const astParseCache = new Map<string, AstParsedResult>();
+
 function parseAstCandidates(text: string, filePath?: string | undefined): AstParsedResult {
   const isExplicitJsxPath = Boolean(filePath && /\.[jt]sx$/i.test(filePath));
   const isExplicitNonJsxPath = Boolean(filePath && /\.(?:[cm]?ts|[cm]?js)$/i.test(filePath));
+  const cacheMode = isExplicitJsxPath ? 'jsx' : isExplicitNonJsxPath ? 'ts' : 'auto';
+  const cacheKey = `${cacheMode}\0${text}`;
+  const cached = astParseCache.get(cacheKey);
+  if (cached) return cached;
+
   const candidates: Array<{ name: string; kind: tsType.ScriptKind }> = isExplicitJsxPath
     ? [{ name: filePath ?? 'input.tsx', kind: ts.ScriptKind.TSX }]
     : isExplicitNonJsxPath
@@ -3005,10 +3013,16 @@ function parseAstCandidates(text: string, filePath?: string | undefined): AstPar
   for (const cand of candidates) {
     try {
       const sf = ts.createSourceFile(cand.name, text, ts.ScriptTarget.Latest, true, cand.kind) as TsSourceFileWithDiagnostics;
-      parsed.push({ sf, diags: getAstParseDiagnostics(sf), isJsx: cand.kind === ts.ScriptKind.TSX });
+      const diags = getAstParseDiagnostics(sf);
+      parsed.push({ sf, diags, isJsx: cand.kind === ts.ScriptKind.TSX });
+      if (diags.length === 0) break;
     } catch (err) {
-      if (err instanceof RangeError) hadRangeError = true;
-      else throw err;
+      if (err instanceof RangeError) {
+        hadRangeError = true;
+        if (!text.includes('<')) break;
+      } else {
+        throw err;
+      }
     }
   }
 
@@ -3022,13 +3036,19 @@ function parseAstCandidates(text: string, filePath?: string | undefined): AstPar
       if (isExplicitJsxPath && item.isJsx && AST_JSX_UNCLOSED_CODES.has(d.code)) hasJsxUnclosed = true;
     }
   }
-  return {
+  const result: AstParsedResult = {
     sources: chosen.map((c) => c.sf),
     hadRangeError,
     hasLexicalUnclosed,
     hasJsxUnclosed,
     hasCleanParse: clean.length > 0,
   };
+  if (astParseCache.size >= AST_PARSE_CACHE_MAX) {
+    const oldest = astParseCache.keys().next();
+    if (!oldest.done) astParseCache.delete(oldest.value);
+  }
+  astParseCache.set(cacheKey, result);
+  return result;
 }
 
 function astVarKey(scope: AstLexScope, name: string): string {
@@ -6917,7 +6937,12 @@ interface PrecomputedNotesAst {
   readonly hadRangeError: boolean;
 }
 
+const NOTES_METER_AST_TRIGGER_RE = /\bmetered\b|['"`]|import|require|Reflect|eval|Function|\\u|\\x|fromCharCode/;
+const NOTES_LITERAL_AST_TRIGGER_RE = /['"`]|fromCharCode|\\u|\\x/;
+const EMPTY_PRECOMPUTED_NOTES_AST: PrecomputedNotesAst = { factsList: [], hadRangeError: false };
+
 function buildPrecomputedNotesAst(text: string): PrecomputedNotesAst {
+  if (!NOTES_METER_AST_TRIGGER_RE.test(text)) return EMPTY_PRECOMPUTED_NOTES_AST;
   const parsed = parseAstCandidates(text);
   const emptySyms = new Set<string>();
   return {
@@ -7075,7 +7100,9 @@ function collectNotesKeyLiterals(text: string, precomputedAst?: PrecomputedNotes
       }
     }
   }
-  const astData = precomputedAst ?? buildPrecomputedNotesAst(text);
+  const astData =
+    precomputedAst ??
+    (NOTES_LITERAL_AST_TRIGGER_RE.test(text) ? buildPrecomputedNotesAst(text) : EMPTY_PRECOMPUTED_NOTES_AST);
   for (const facts of astData.factsList) {
     for (const lit of facts.notesLiterals) found.add(lit);
   }
@@ -8077,11 +8104,15 @@ export function indexReexportViolations(indexText: string, symbols: readonly str
   }
   const symbolSet = new Set(symbols);
   const astOut = new Set<string>();
-  const parsed = parseAstCandidates(indexText);
-  if (parsed.hadRangeError || parsed.hasLexicalUnclosed) {
+  const needsIndexAst =
+    primary.tokens.some((t) => t.kind === 'invalid') ||
+    /\b(?:import|export|require|createRequire|eval|Function|Reflect|globalThis|window|self)\b|['"`\\]|fromCharCode/.test(indexText) ||
+    symbols.some((s) => indexText.includes(s));
+  const parsed = needsIndexAst ? parseAstCandidates(indexText) : null;
+  if (parsed && (parsed.hadRangeError || parsed.hasLexicalUnclosed)) {
     astOut.add('contains invalid or unclosed syntax');
   }
-  for (const sf of parsed.sources) {
+  for (const sf of parsed?.sources ?? []) {
     const facts = extractAstFacts(sf, symbolSet, 'packages/agent/src/index.ts');
     if (facts.hasComputedDynamic) astOut.add('uses computed dynamic import or require inside index.ts');
     if (facts.hasBareRequire) astOut.add('uses require alias or bare require reference inside index.ts');
@@ -10899,7 +10930,8 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       expect(ov, `orgFeature: ${expr}`).toContain('uses require alias or bare require reference');
       expect(ov, `orgFeature: ${expr}`).toContain('uses computed dynamic import or require');
 
-      const wvPkg = workspaceAdapterLeakViolations(expr, DEFAULT_ADAPTER_EXPORTS, 'packages/agent/src/sneaky.ts');
+      const wvPkgPath = expr.includes('<p>') ? 'packages/agent/src/sneaky.tsx' : 'packages/agent/src/sneaky.ts';
+      const wvPkg = workspaceAdapterLeakViolations(expr, DEFAULT_ADAPTER_EXPORTS, wvPkgPath);
       expect(wvPkg, `workspace(agent): ${expr}`).toContain('uses require alias or bare require reference');
       expect(wvPkg, `workspace(agent): ${expr}`).toContain('uses computed dynamic import or require');
 
