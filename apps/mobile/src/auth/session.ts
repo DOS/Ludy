@@ -54,9 +54,10 @@ export interface SessionDeps {
   unlockPrompt: string;
   // Whether this build may sign in to this server address (config.ts serverAllowed).
   serverAllowed: (serverUrl: string) => boolean;
-  // Best effort, on a person's own sign-out only: ends the session on the server before the phone forgets it. Given the access
-  // token and the org; never throws into the sign-out, and is given 3 seconds.
-  revokeOnServer?: (accessToken: string, orgSlug: string | null) => Promise<void>;
+  // Best effort, on a person's own sign-out of an unlocked app only: ends the session on the server before the phone forgets it.
+  // Given the access token; its failure never stops the sign-out, and it is given 3 seconds. A sign-out from the lock screen
+  // does not revoke on the server (there is no access token then): that gap is named in the PR.
+  revokeOnServer?: (accessToken: string) => Promise<void>;
 }
 
 export interface SessionManager {
@@ -135,7 +136,7 @@ export function createSessionManager(deps: SessionDeps): SessionManager {
   async function signOut(notice?: SignOutNotice): Promise<void> {
     // The person's own sign-out ends the session on the server first, while the token is still in hand.
     if (!notice && deps.revokeOnServer && access && state.status === 'active') {
-      const revoke = deps.revokeOnServer(access.accessToken, state.orgSlug).catch(() => undefined);
+      const revoke = deps.revokeOnServer(access.accessToken).catch(() => undefined);
       await Promise.race([revoke, new Promise<void>((resolve) => setTimeout(resolve, 3000))]);
     }
     epoch += 1;

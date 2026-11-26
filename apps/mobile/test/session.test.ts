@@ -15,7 +15,7 @@ const grant = (refresh: string, expiresInSeconds = 3600, tag = refresh) => token
 // Made when the request is answered, so the token's end date follows the clock of that moment.
 const later = (refresh: string) => () => grant(refresh);
 
-function build(options: { revoke?: (token: string, org: string | null) => Promise<void>; script?: Parameters<typeof scriptedFetch>[0]; local?: ReturnType<typeof fakeLocalAuth>; store?: ReturnType<typeof memoryStore>; browserResult?: (url: string) => Promise<{ type: 'success'; url: string } | { type: 'cancel' }> } = {}) {
+function build(options: { revoke?: (token: string) => Promise<void>; script?: Parameters<typeof scriptedFetch>[0]; local?: ReturnType<typeof fakeLocalAuth>; store?: ReturnType<typeof memoryStore>; browserResult?: (url: string) => Promise<{ type: 'success'; url: string } | { type: 'cancel' }> } = {}) {
   clock = 1_800_000_000_000;
   const store = options.store ?? memoryStore();
   const { fn, calls } = scriptedFetch(options.script ?? {});
@@ -288,14 +288,12 @@ describe('sign out and revocation', () => {
   });
 
   it('ends the session on the server on the person\'s own sign-out, but not when the server ended it', async () => {
-    const revoked: Array<[string, string | null]> = [];
-    const ctx = build({ revoke: async (token, org) => void revoked.push([token, org]), script: { [CONFIG_URL]: [config()], [ENDPOINTS.tokenUrl]: [later('refresh-1')] } });
+    const revoked: string[] = [];
+    const ctx = build({ revoke: async (token) => void revoked.push(token), script: { [CONFIG_URL]: [config()], [ENDPOINTS.tokenUrl]: [later('refresh-1')] } });
     await ctx.manager.start();
     await ctx.manager.signIn(SERVER);
-    await ctx.manager.setOrg('acme');
     await ctx.manager.signOut();
     expect(revoked).toHaveLength(1);
-    expect(revoked[0]?.[1]).toBe('acme');
     expect(ctx.store.data.size).toBe(0);
     const again = build({ revoke: async () => Promise.reject(new Error('x')), script: { [CONFIG_URL]: [config()], [ENDPOINTS.tokenUrl]: [later('refresh-1')] } });
     await again.manager.start();

@@ -10,7 +10,7 @@ The Expo (React Native) app of ADR-0059, Phase 2a, first slice ([#4880](https://
 - **Biometric**: the app opens behind Face ID, fingerprint or the phone's passcode, and locks after 60 seconds in the background. `StepUpGate` asks again before a sensitive action. The kernel's second factor for R3 is not done here (screen: approvals, #4881).
 - **Revocation**: a 401 or an org revoke signs the phone out; the home screen asks the server every 5 minutes.
 - **Which server**: a Cloud build sets `EXPO_PUBLIC_LUDY_URL` and signs in to that address only (no field). A build for one self-hosting operator sets `EXPO_PUBLIC_LUDY_CUSTOM_SERVER=1` and shows the address field. With neither the app refuses to sign in. Reason: the redirect URI is shared by every deployment, so a build that accepts any typed address could be pointed at a server that names Cloud's provider and client id and would receive Cloud tokens. A custom build must register its redirect URI on its own operator's OAuth App only.
-- **Sign-out** ends the session on the server first (best effort, `sessions.revoke`), then clears the phone.
+- **Sign-out** from the unlocked app ends the session on the server first (best effort: `me.get` for the kernel's user id, then `sessions.revoke` with no org header, as the web app does), then clears the phone. From the lock screen it only clears the phone (no access token there); the session then stays valid on the server until it is revoked in Settings.
 
 ## Develop
 

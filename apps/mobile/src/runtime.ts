@@ -7,7 +7,7 @@ import { createSessionManager } from './auth/session.ts';
 import { createStepUpGate } from './auth/step-up.ts';
 import { createVault } from './auth/vault.ts';
 import { serverAllowed, serverPolicy } from './config.ts';
-import { jwtClaims } from './auth/oauth.ts';
+import { revokeCurrentSession } from './auth/revoke.ts';
 import { createTranslator, deviceLocale } from './i18n.ts';
 import { systemBrowser } from './platform/browser.ts';
 import { deviceCrypto } from './platform/crypto.ts';
@@ -28,13 +28,10 @@ export const session = createSessionManager({
   now: () => Date.now(),
   unlockPrompt: t('lock.prompt'),
   serverAllowed: (serverUrl) => serverAllowed(SERVER_POLICY, serverUrl),
-  // The org's own revoke of this session, as the web app's sign-out does: the session id and the user are the token's claims.
-  revokeOnServer: async (accessToken, orgSlug) => {
-    const claims = jwtClaims(accessToken);
+  // Ends the session on the server before the phone forgets it (auth/revoke.ts).
+  revokeOnServer: async (accessToken) => {
     const state = session.state();
-    if (!orgSlug || state.status !== 'active' || typeof claims?.['sub'] !== 'string' || typeof claims['session_id'] !== 'string') return;
-    const client = createLudyClient({ origin: state.serverUrl, headers: () => requestHeaders(accessToken, orgSlug) });
-    await client.sessions.revoke({ userId: claims['sub'], sessionId: claims['session_id'] });
+    if (state.status === 'active') await revokeCurrentSession(state.serverUrl, accessToken);
   },
 });
 
