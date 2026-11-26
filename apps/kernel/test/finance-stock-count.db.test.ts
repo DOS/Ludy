@@ -14,6 +14,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import type { StockCount } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -268,18 +269,199 @@ suite('the count of stock (#2513, part b)', () => {
     } finally {
       await c.end();
     }
-    // The failed confirmation left nothing: the count is still a draft, and its line is still the person's to change while it is.
+    // The failed confirmation left nothing: the count is still a draft, and a raw tenant role has no UPDATE privilege on its line or header note (#2682 N3).
     expect((await rows<{ status: string }>('SELECT status FROM ludy_finance.stock_count WHERE org_id = $1 AND id = $2', [o.orgId, countId]))[0]?.status).toBe('draft');
-    await rows('UPDATE ludy_finance.stock_count_line SET counted_quantity = 4 WHERE org_id = $1 AND id = $2', [o.orgId, line?.id]);
+    const asMember = async (fn: (c: pg.PoolClient) => Promise<unknown>) => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await enterUser(client, o.member, o.orgId);
+        return await fn(client);
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    };
+    await expect(
+      asMember((client) => client.query('UPDATE ludy_finance.stock_count_line SET counted_quantity = 4 WHERE org_id = $1 AND id = $2', [o.orgId, line?.id])),
+    ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
+    await expect(
+      asMember((client) => client.query("UPDATE ludy_finance.stock_count SET note = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, countId])),
+    ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
     // A cancelled or confirmed count and its lines are frozen.
+    const otherItem = await makeItem(o, 'D2');
     await execute(o, 'finance.stock_count.cancel', { countId });
-    await expect(rows("UPDATE ludy_finance.stock_count SET note = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, countId])).rejects.toThrow(/STOCK_COUNT_FROZEN/);
-    await expect(rows('UPDATE ludy_finance.stock_count_line SET counted_quantity = 1 WHERE org_id = $1 AND id = $2', [o.orgId, line?.id])).rejects.toThrow(/STOCK_COUNT_FROZEN/);
+    await expect(rows("UPDATE ludy_finance.stock_count SET status = 'draft' WHERE org_id = $1 AND id = $2", [o.orgId, countId])).rejects.toThrow(/STOCK_COUNT_FROZEN/);
+    await expect(
+      rows('INSERT INTO ludy_finance.stock_count_line (org_id, count_id, item_id, counted_quantity) VALUES ($1, $2, $3, 1)', [o.orgId, countId, otherItem]),
+    ).rejects.toThrow(/STOCK_COUNT_FROZEN/);
     // A closed month takes no adjustment either: the stock guard is the same for every source.
     const entity = await entityOf(o);
     await rows('INSERT INTO ludy_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0)', [o.orgId, entity, '2026-09-01']);
     await expect(
       rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, count_line_id, amount) VALUES ($1, $2, '2026-09-20', 1, 'count', $3, 100)", [o.orgId, item, randomUUID()]),
     ).rejects.toThrow(/STOCK_PERIOD_CLOSED/);
+  });
+
+  it('enforces the confirmed count date floor on late non-count moves (#2682 N1)', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'N1A');
+    const unrelated = await makeItem(o, 'N1B');
+    // Confirmed count on 2026-09-10 finds +10 units that had no receipt yet.
+    const countId = await count(o, '2026-09-10', [{ itemId: item, countedQuantity: '10', unitCost: '100' }]);
+    await approve(o, (await ask(o, countId)).proposalId);
+    // Raw SQL inserts for this item on or before the confirmed count date are refused by the database guard; unrelated items still take moves then.
+    await expect(
+      rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, '2026-09-05', 10, 'manual')", [o.orgId, item]),
+    ).rejects.toThrow(/STOCK_COUNT_MOVE_DATE/);
+    await expect(
+      rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, '2026-09-10', 10, 'manual')", [o.orgId, item]),
+    ).rejects.toThrow(/STOCK_COUNT_MOVE_DATE/);
+    await expect(
+      rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, '2026-09-05', 2, 'manual')", [o.orgId, unrelated]),
+    ).resolves.toBeDefined();
+    // Late purchase invoice dated 2026-09-05 assigned after the count is re-dated above the confirmed count floor onto today so September is not double-counted.
+    const [party] = await rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, email) VALUES ($1, 'NCC', 'ncc@n1.test') RETURNING id", [o.orgId]);
+    const entity = await entityOf(o);
+    const documentId = await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      const [doc] = (
+        await c.query<{ id: string }>(
+          `INSERT INTO ludy_finance.purchase_document (org_id, legal_entity_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction)
+           VALUES ($1, $2, $3, 'AA', '000001', '2026-09-05', 1000, 0, 1000, 'purchase') RETURNING id`,
+          [o.orgId, entity, party?.id],
+        )
+      ).rows;
+      await c.query(
+        "INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, unit, quantity, amount, debit_account) VALUES ($1, $2, 1, 'Hàng N1', 'cái', 10, 1000, '156')",
+        [o.orgId, doc?.id],
+      );
+      await c.query('COMMIT');
+      return doc?.id as string;
+    });
+    const { moveId } = await execute<{ moveId: string }>(o, 'finance.stock.assign', { documentId, lineNo: 1, itemId: item, teach: false });
+    const [assigned] = await rows<{ move_date: string; today: string }>(
+      "SELECT move_date::text AS move_date, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS today FROM ludy_finance.stock_move WHERE org_id = $1 AND id = $2",
+      [o.orgId, moveId],
+    );
+    expect((assigned?.move_date ?? '') > '2026-09-10').toBe(true);
+    expect(assigned?.move_date).toBe(assigned?.today);
+    const september = await query<Row[]>(o, 'finance.stock.report', { month: '2026-09' });
+    expect(september.find((r) => r.itemId === item)).toMatchObject({ closingQuantity: '10', closingValue: '1000' });
+    expect(await onHand(o, item)).toBe('20');
+    // When a count is confirmed on today itself, a subsequent backdated assignment is refused rather than pushed into tomorrow.
+    const todayItem = await makeItem(o, 'N1T');
+    const today = assigned?.today ?? '';
+    const todayCount = await count(o, today, [{ itemId: todayItem, countedQuantity: '1', unitCost: '100' }]);
+    await approve(o, (await ask(o, todayCount)).proposalId);
+    const todayDocId = await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      const [doc] = (
+        await c.query<{ id: string }>(
+          `INSERT INTO ludy_finance.purchase_document (org_id, legal_entity_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction)
+           VALUES ($1, $2, $3, 'AA', '000002', $4, 100, 0, 100, 'purchase') RETURNING id`,
+          [o.orgId, entity, party?.id, today],
+        )
+      ).rows;
+      await c.query(
+        "INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, unit, quantity, amount, debit_account) VALUES ($1, $2, 1, 'Hàng hôm nay', 'cái', 1, 100, '156')",
+        [o.orgId, doc?.id],
+      );
+      await c.query('COMMIT');
+      return doc?.id as string;
+    });
+    await expect(execute(o, 'finance.stock.assign', { documentId: todayDocId, lineNo: 1, itemId: todayItem, teach: false })).rejects.toMatchObject({
+      code: 'STOCK_COUNT_MOVE_DATE',
+      status: 409,
+    });
+  });
+
+  it('refuses confirming an earlier-dated count after a later confirmed count for an overlapping item (#2682 N1)', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'N1O');
+    const unrelated = await makeItem(o, 'N1U');
+    await move(o, item, '2026-08-05', '5');
+    await seedClosed(o, '2026-08', item);
+    // Earlier drafts created before the later confirmation: one with a difference (plus an already-prepared proposal) and one with zero difference.
+    const earlyDiff = await count(o, '2026-09-05', [{ itemId: item, countedQuantity: '3' }]);
+    const earlyEmpty = await count(o, '2026-09-05', [{ itemId: item, countedQuantity: '5' }]);
+    const earlyUnrelated = await count(o, '2026-09-05', [{ itemId: unrelated, countedQuantity: '0' }]);
+    const earlyProposal = await ask(o, earlyDiff);
+    // Later count covering `item` is confirmed on 2026-09-20.
+    const later = await count(o, '2026-09-20', [{ itemId: item, countedQuantity: '4' }]);
+    await approve(o, (await ask(o, later)).proposalId);
+    // Preparing, approving an existing proposal, confirming empty, or updating directly in SQL for the earlier date all fail closed on STOCK_COUNT_ORDER.
+    await expect(ask(o, earlyDiff)).rejects.toMatchObject({ code: 'STOCK_COUNT_ORDER', status: 409 });
+    await expect(approve(o, earlyProposal.proposalId)).rejects.toMatchObject({ code: 'STOCK_COUNT_ORDER', status: 409 });
+    await expect(execute(o, 'finance.stock_count.confirm_empty', { countId: earlyEmpty })).rejects.toMatchObject({ code: 'STOCK_COUNT_ORDER', status: 409 });
+    await expect(
+      rows("UPDATE ludy_finance.stock_count SET status = 'confirmed', confirmed_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, earlyEmpty]),
+    ).rejects.toThrow(/STOCK_COUNT_ORDER/);
+    // An earlier count whose items did not overlap the later count still confirms cleanly.
+    await expect(execute(o, 'finance.stock_count.confirm_empty', { countId: earlyUnrelated })).resolves.toEqual({ id: earlyUnrelated });
+  });
+
+  it('guards raw ludy_tenant confirmations: refuses forged confirmed_by, nonzero differences without a voucher, and 0-line counts (#2682 N2)', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'N2');
+    await move(o, item, '2026-09-01', '5');
+    const diffCount = await count(o, '2026-09-10', [{ itemId: item, countedQuantity: '3' }]);
+    const zeroCount = await count(o, '2026-09-10', [{ itemId: item, countedQuantity: '5' }]);
+    const entity = await entityOf(o);
+    const asMemberCommit = async (fn: (c: pg.PoolClient) => Promise<void>) => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await enterUser(client, o.member, o.orgId);
+        await fn(client);
+        await client.query('COMMIT');
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    };
+    // Forging confirmed_by as another member or leaving it null fails immediately.
+    await expect(
+      asMemberCommit(async (client) => {
+        await client.query("UPDATE ludy_finance.stock_count SET status = 'confirmed', confirmed_by = $3, confirmed_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, zeroCount, o.owner]);
+      }),
+    ).rejects.toThrow(/STOCK_COUNT_STATE/);
+    await expect(
+      asMemberCommit(async (client) => {
+        await client.query("UPDATE ludy_finance.stock_count SET status = 'confirmed', confirmed_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, zeroCount]);
+      }),
+    ).rejects.toThrow(/STOCK_COUNT_STATE/);
+    // Even with matching confirmed_by, confirming a count with a nonzero difference and no voucher fails on commit.
+    await expect(
+      asMemberCommit(async (client) => {
+        await client.query("UPDATE ludy_finance.stock_count SET status = 'confirmed', confirmed_by = $3, confirmed_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, diffCount, o.member]);
+      }),
+    ).rejects.toThrow(/STOCK_COUNT_VOUCHER/);
+    expect((await rows<{ status: string }>('SELECT status FROM ludy_finance.stock_count WHERE org_id = $1 AND id = $2', [o.orgId, diffCount]))[0]?.status).toBe('draft');
+    // Confirming a 0-line draft header without a voucher also fails closed.
+    await expect(
+      asMemberCommit(async (client) => {
+        const [empty] = (
+          await client.query<{ id: string }>(
+            "INSERT INTO ludy_finance.stock_count (org_id, legal_entity_id, count_date, created_by) VALUES ($1, $2, '2026-09-10', $3) RETURNING id",
+            [o.orgId, entity, o.member],
+          )
+        ).rows;
+        await client.query("UPDATE ludy_finance.stock_count SET status = 'confirmed', confirmed_by = $3, confirmed_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, empty?.id, o.member]);
+      }),
+    ).rejects.toThrow(/STOCK_COUNT_VOUCHER/);
+    // Confirming a zero-difference count with valid caller identity overwrites client-supplied confirmed_at using pg_catalog.now().
+    await asMemberCommit(async (client) => {
+      await client.query("UPDATE ludy_finance.stock_count SET status = 'confirmed', confirmed_by = $3, confirmed_at = '2020-01-01T00:00:00Z' WHERE org_id = $1 AND id = $2", [o.orgId, zeroCount, o.member]);
+    });
+    const [confirmedZero] = await rows<{ status: string; confirmed_by: string | null; year: number }>(
+      'SELECT status, confirmed_by::text AS confirmed_by, EXTRACT(YEAR FROM confirmed_at)::int AS year FROM ludy_finance.stock_count WHERE org_id = $1 AND id = $2',
+      [o.orgId, zeroCount],
+    );
+    expect(confirmedZero?.status).toBe('confirmed');
+    expect(confirmedZero?.confirmed_by).toBe(o.member);
+    expect(confirmedZero?.year).toBeGreaterThanOrEqual(2026);
   });
 });

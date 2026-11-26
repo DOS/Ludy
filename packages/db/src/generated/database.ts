@@ -1830,7 +1830,7 @@ export interface FinanceStockCountLineTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
   count_id: ColumnType<string, string, NotGranted>;
   item_id: ColumnType<string, string, NotGranted>;
-  counted_quantity: string;
+  counted_quantity: ColumnType<string, string, NotGranted>;
   unit_cost: ColumnType<string | null, string | null, NotGranted>;
 }
 
@@ -1841,7 +1841,7 @@ export interface FinanceStockCountTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
   count_date: ColumnType<string, string, NotGranted>;
   status: Generated<string>;
-  note: string | null;
+  note: ColumnType<string | null, string | null, NotGranted>;
   loss_norm_percent: ColumnType<string, string | undefined, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
