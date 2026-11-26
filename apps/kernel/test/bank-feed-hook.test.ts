@@ -8,11 +8,13 @@ import { Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler, t
 import type pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bankFeedHostedProviders, signTingeeRequest, vietnamStamp, type BankFeedProvider } from '@ludy/bank-feed';
-import { DomainError, type BlobStore, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DomainError, Runtime, type BlobStore, type CredentialBroker } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
-import { MAX_BANK_FEED_HOOK_BYTES, bankFeedHookKeyHash, verifyBankFeedHookNotices, type BankFeedHookNoticeRow } from '../src/bank-feed-hook.ts';
+import { MAX_BANK_FEED_HOOK_BYTES, acceptBankFeedHook, bankFeedHookKeyHash, verifyBankFeedHookNotices, type BankFeedHookNoticeRow } from '../src/bank-feed-hook.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
+import { TEST_MANIFESTS } from './manifests.ts';
 
 const KEY = 'AbCdEfGhIjKlMnOpQrStUv';
 const HOOK = '0192b2c0-0000-7000-8000-00000000aaaa';
@@ -23,12 +25,15 @@ const tingee = bankFeedHostedProviders({ tingee: true, uat: false }).bank_tingee
 
 type Seen = { sql: string; parameters: readonly unknown[] };
 // A Kysely whose driver records each query and answers the two definers by their name.
-function dbOf(seen: Seen[], answers: { lookup: Array<{ hook_id: string; standing: string }>; put: string }) {
+function dbOf(seen: Seen[], answers: { lookup: Array<{ hook_id: string; standing: string }>; put: string; putError?: Error }) {
   const connection: DatabaseConnection = {
     executeQuery: async <R>(query: CompiledQuery): Promise<QueryResult<R>> => {
       seen.push({ sql: query.sql, parameters: query.parameters });
       if (query.sql.includes('bank_feed_hook_lookup')) return { rows: answers.lookup as unknown as R[] };
-      if (query.sql.includes('bank_feed_hook_put_notice')) return { rows: [{ put: answers.put }] as unknown as R[] };
+      if (query.sql.includes('bank_feed_hook_put_notice')) {
+        if (answers.putError) throw answers.putError;
+        return { rows: [{ put: answers.put }] as unknown as R[] };
+      }
       throw new Error(`unexpected SQL: ${query.sql}`);
     },
     streamQuery: async function* () {
@@ -47,9 +52,9 @@ function dbOf(seen: Seen[], answers: { lookup: Array<{ hook_id: string; standing
   return new Kysely<unknown>({ dialect: { createAdapter: () => new PostgresAdapter(), createDriver: () => driver, createIntrospector: (k) => new PostgresIntrospector(k), createQueryCompiler: () => new PostgresQueryCompiler() } });
 }
 
-function fixture(over: Partial<HttpDeps> = {}, answers: { lookup?: Array<{ hook_id: string; standing: string }>; put?: string } = {}, installed: readonly string[] = ['kernel', 'finance']) {
+function fixture(over: Partial<HttpDeps> = {}, answers: { lookup?: Array<{ hook_id: string; standing: string }>; put?: string; putError?: Error } = {}, installed: readonly string[] = ['kernel', 'finance']) {
   const seen: Seen[] = [];
-  const db = dbOf(seen, { lookup: answers.lookup ?? [{ hook_id: HOOK, standing: 'ok' }], put: answers.put ?? 'accepted' });
+  const db = dbOf(seen, { lookup: answers.lookup ?? [{ hook_id: HOOK, standing: 'ok' }], put: answers.put ?? 'accepted', ...(answers.putError ? { putError: answers.putError } : {}) });
   const runtime = {
     installed: (name: string) => installed.includes(name),
     modules: () => [...installed],
@@ -150,6 +155,18 @@ describe('the hook route of a bank feed (Tingee webhook)', () => {
 
   it('answers a hook that is busy 503 and one that is gone 404', async () => {
     expect((await fixture({}, { put: 'busy' }).post()).status).toBe(503);
+    const realRt = (putError: Error) =>
+      new Runtime(dbOf([], { lookup: [{ hook_id: HOOK, standing: 'ok' }], put: 'accepted', putError }) as unknown as Db, {
+        manifests: TEST_MANIFESTS,
+      });
+    const budget = { take: () => ({ allowed: true, retryAfterSeconds: 1 }) };
+    const { headers, body } = fixture();
+    await expect(
+      acceptBankFeedHook(realRt(Object.assign(new Error('BANK_FEED_HOOK_BACKLOG_FULL'), { code: '54000' })), tingee, { key: KEY, headers: headers(), body }, budget),
+    ).resolves.toEqual({ status: 503, code: 'BANK_FEED_HOOK_BUSY' });
+    await expect(
+      acceptBankFeedHook(realRt(Object.assign(new Error('UNRELATED_54000'), { code: '54000' })), tingee, { key: KEY, headers: headers(), body }, budget),
+    ).rejects.toMatchObject({ code: 'INTERNAL' });
     expect((await fixture({}, { put: 'gone' }).post()).status).toBe(404);
   });
 
@@ -217,6 +234,7 @@ describe('the worker verification of claimed notices', () => {
   const row = (over: Partial<BankFeedHookNoticeRow> = {}): BankFeedHookNoticeRow => ({
     orgId: 'org-1',
     hookId: HOOK,
+    generation: 1,
     connectionId: 'conn-1',
     provider: 'bank_tingee',
     requestId: 'req-1',
@@ -228,7 +246,7 @@ describe('the worker verification of claimed notices', () => {
   function deps(over: { credential?: () => Promise<unknown>; secret?: string } = {}) {
     const queries: string[] = [];
     const opened: string[] = [];
-    const rejected: string[] = [];
+    const rejected: Array<{ hookId: string; generation: number }> = [];
     const runtime = {
       query: async (name: string, input: { connectionId: string }) => {
         queries.push(`${name}:${input.connectionId}`);
@@ -243,17 +261,22 @@ describe('the worker verification of claimed notices', () => {
         return over.secret ?? JSON.stringify({ clientId: CLIENT, secretToken: SECRET });
       },
     } as unknown as CredentialBroker;
-    return { queries, opened, rejected, d: { runtime, broker, providers: { bank_tingee: tingee }, reject: async (hookId: string) => void rejected.push(hookId) } };
+    return {
+      queries,
+      opened,
+      rejected,
+      d: { runtime, broker, providers: { bank_tingee: tingee }, reject: async (hookId: string, generation: number) => void rejected.push({ hookId, generation }) },
+    };
   }
 
-  it('verifies a good notice, counts a bad signature and a body naming another client against the hook, and drops what it cannot read', async () => {
+  it('verifies a good notice, counts a bad signature and a body naming another client against the hook generation, and drops what it cannot read', async () => {
     const { d, rejected } = deps();
     const verdicts = await verifyBankFeedHookNotices(d, [
       row(),
-      row({ signature: signTingeeRequest('another-secret', stamp, body), requestId: 'req-2' }),
+      row({ signature: signTingeeRequest('another-secret', stamp, body), requestId: 'req-2', generation: 2 }),
       (() => {
         const other = JSON.stringify({ clientId: 'someone-else' });
-        return row({ body: other, signature: signTingeeRequest(SECRET, stamp, other), requestId: 'req-3' });
+        return row({ body: other, signature: signTingeeRequest(SECRET, stamp, other), requestId: 'req-3', generation: 3 });
       })(),
       (() => {
         const odd = JSON.stringify({ transactionId: 'T9' });
@@ -262,8 +285,11 @@ describe('the worker verification of claimed notices', () => {
       row({ provider: 'bank_nobody', requestId: 'req-5' }),
     ]);
     expect(verdicts).toEqual(['ok', 'refused', 'refused', 'dropped', 'dropped']);
-    // Two refusals are counted on the hook; a signed body the adapter does not read and an adapter that is not there are not.
-    expect(rejected).toEqual([HOOK, HOOK]);
+    // Two refusals are counted on their respective hook generations; a signed body the adapter does not read and an adapter that is not there are not.
+    expect(rejected).toEqual([
+      { hookId: HOOK, generation: 2 },
+      { hookId: HOOK, generation: 3 },
+    ]);
   });
 
   it('opens a connection\'s secret once for the batch', async () => {
