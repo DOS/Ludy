@@ -141,7 +141,7 @@ function buildImportEphemeralPfxScript() {
     "$ErrorActionPreference = 'Stop'",
     '$secure = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force',
     '$col = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection',
-    '$col.Import($env:LUDY_PFX_FILE, $secure, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)',
+    '$col.Import($env:LUDY_PFX_FILE, $env:WINDOWS_CERTIFICATE_PASSWORD, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)',
     '$importedThumbs = @()',
     'try {',
     '  $leaves = @($col | Where-Object { $_.HasPrivateKey })',
@@ -222,7 +222,7 @@ export function removeEphemeralCerts(thumbprints, runPowerShell = defaultRunPowe
   const ps = [
     "$ErrorActionPreference = 'Stop'",
     '$failures = @()',
-    'foreach ($raw in ($env:LUDY_CERT_THUMBRINTS -split ",")) {',
+    'foreach ($raw in ($env:LUDY_CERT_THUMBPRINTS -split ",")) {',
     '  $t = $raw.Trim()',
     '  if ($t -match "^[0-9a-fA-F]{40}$") {',
     '    $storePath = "Cert:\\CurrentUser\\My\\$t"',
@@ -239,7 +239,7 @@ export function removeEphemeralCerts(thumbprints, runPowerShell = defaultRunPowe
     '  throw "Failed deleting temporary signing certificate(s): $($failures -join "; ")"',
     '}',
   ].join('\n');
-  runPowerShell(ps, { LUDY_CERT_THUMBRINTS: valid.join(',') });
+  runPowerShell(ps, { LUDY_CERT_THUMBPRINTS: valid.join(',') });
 }
 
 async function prepareSquirrelVendor(req, stagingParent, signing) {

@@ -144,7 +144,14 @@ describe('desktop-package workflow guardrails', () => {
       expect(src, label).toContain('Remove-Item -LiteralPath');
       expect(src, label).toContain('-DeleteKey');
       expect(src, label).not.toMatch(/New-Object\s+System\.Security\.Cryptography\.X509Certificates\.X509Certificate2\(/);
+      expect(src, label).not.toMatch(/\$col\.Import\([^)]*\$secure/);
     }
+    expect(workflow).toContain(
+      '$col.Import($pfxPath, $env:WINDOWS_CERT_PASSWORD, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)',
+    );
+    expect(packageScript).toContain(
+      '$col.Import($env:LUDY_PFX_FILE, $env:WINDOWS_CERTIFICATE_PASSWORD, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)',
+    );
     expect(workflow).toContain('WINDOWS_CERT_CLEANUP_THUMBS');
     expect(workflow).toContain('if: always()');
 

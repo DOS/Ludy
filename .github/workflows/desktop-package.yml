@@ -330,7 +330,7 @@ jobs:
           try {
             $secure = ConvertTo-SecureString -String $env:WINDOWS_CERT_PASSWORD -AsPlainText -Force
             $col = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
-            $col.Import($pfxPath, $secure, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
+            $col.Import($pfxPath, $env:WINDOWS_CERT_PASSWORD, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
             try {
               $leaves = @($col | Where-Object { $_.HasPrivateKey })
               if ($leaves.Count -ne 1) {

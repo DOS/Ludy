@@ -100,9 +100,11 @@ describe('parseAuthenticodeCheckResults', () => {
     const single = JSON.stringify({
       path: 'ludy-desktop.exe',
       status: 'Valid',
+      signatureType: 'Authenticode',
       thumbprint: THUMB.toUpperCase(),
       hasTimestamp: true,
       fileDigestOid: OID_SHA256,
+      signerDigestOid: OID_SHA256,
       timestampType: 'rfc3161',
       tsDigestOid: OID_SHA256,
     });
@@ -112,18 +114,22 @@ describe('parseAuthenticodeCheckResults', () => {
       {
         path: 'ludy-desktop.exe',
         status: 'Valid',
+        signatureType: 'Authenticode',
         thumbprint: THUMB,
         hasTimestamp: true,
         fileDigestOid: OID_SHA256,
+        signerDigestOid: OID_SHA256,
         timestampType: 'rfc3161',
         tsDigestOid: OID_SHA256,
       },
       {
         path: 'Squirrel.exe',
         status: 'Valid',
+        signatureType: 'Authenticode',
         thumbprint: THUMB.toUpperCase(),
         hasTimestamp: true,
         fileDigestOid: OID_SHA256,
+        signerDigestOid: OID_SHA256,
         timestampType: 'rfc3161',
         tsDigestOid: OID_SHA256,
       },
@@ -131,13 +137,15 @@ describe('parseAuthenticodeCheckResults', () => {
     expect(parseAuthenticodeCheckResults(multi, ['ludy-desktop.exe', 'Squirrel.exe'], null)).toEqual({ thumbprint: THUMB });
   });
 
-  it('fails closed on invalid status, legacy timestamps, SHA-1 digests, or thumbprint mismatch', () => {
+  it('fails closed on invalid status, legacy timestamps, SHA-1 digests, missing metadata, or thumbprint mismatch', () => {
     const okRow = {
       path: 'a.exe',
       status: 'Valid',
+      signatureType: 'Authenticode',
       thumbprint: THUMB,
       hasTimestamp: true,
       fileDigestOid: OID_SHA256,
+      signerDigestOid: OID_SHA256,
       timestampType: 'rfc3161',
       tsDigestOid: OID_SHA256,
     };
@@ -146,10 +154,11 @@ describe('parseAuthenticodeCheckResults', () => {
     expect(() => parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, hasTimestamp: false }]), ['a.exe'])).toThrow(/missing a timestamp/);
     expect(() => parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, timestampType: 'authenticode-legacy' }]), ['a.exe'])).toThrow(/RFC 3161/);
     expect(() => parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, fileDigestOid: SHA1_OID }]), ['a.exe'])).toThrow(/SHA-256/);
+    expect(() => parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, signerDigestOid: undefined }]), ['a.exe'])).toThrow(/SHA-256/);
     expect(() => parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, tsDigestOid: SHA1_OID }]), ['a.exe'])).toThrow(/SHA-256/);
     expect(() => parseAuthenticodeCheckResults(JSON.stringify([okRow, { ...okRow, path: 'b.exe', thumbprint: 'f'.repeat(40) }]), ['a.exe', 'b.exe'])).toThrow(/mismatch/);
     expect(() => parseAuthenticodeCheckResults(JSON.stringify([okRow]), ['a.exe'], 'e'.repeat(40))).toThrow(/does not match expected/);
-    expect(parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, signatureType: 'Embedded' }]), ['a.exe'], THUMB)).toEqual({ thumbprint: THUMB });
+    expect(() => parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, signatureType: undefined }]), ['a.exe'], THUMB)).toThrow(/embedded signature/i);
     expect(() => parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, signatureType: 'Catalog' }]), ['a.exe'], THUMB)).toThrow(/embedded signature/i);
     expect(() => parseAuthenticodeCheckResults(JSON.stringify([{ ...okRow, signatureType: 'None' }]), ['a.exe'], THUMB)).toThrow(/embedded signature/i);
   });
@@ -171,7 +180,7 @@ describe('release-manifest.ps1 formatting, PKCS#7 extraction, and package verifi
     expect(parseSignedReleaseManifestScript(readFileSync(ps1Path, 'utf8')).toString('utf8')).toBe(manifestJson);
 
     const mockPs = async () =>
-      JSON.stringify({ path: ps1Path, status: 'Valid', thumbprint: THUMB, hasTimestamp: true });
+      JSON.stringify({ path: ps1Path, status: 'Valid', signatureType: 'Authenticode', thumbprint: THUMB, hasTimestamp: true });
     await expect(verifyWindowsSignedManifest(ps1Path, Buffer.from(manifestJson), THUMB, mockPs, 'win32')).resolves.toEqual({ thumbprint: THUMB });
   });
 
@@ -195,7 +204,7 @@ describe('release-manifest.ps1 formatting, PKCS#7 extraction, and package verifi
         return '';
       }
       sawStdinPaths = JSON.parse(stdinText ?? '[]') as string[];
-      return JSON.stringify(sawStdinPaths.map((p) => ({ path: p, status: 'Valid', thumbprint: THUMB, hasTimestamp: true })));
+      return JSON.stringify(sawStdinPaths.map((p) => ({ path: p, status: 'Valid', signatureType: 'Authenticode', thumbprint: THUMB, hasTimestamp: true })));
     };
     await verifyWindowsSignedPackage(pkg, THUMB, happyPs, 'win32');
     expect(sawStdinPaths).toHaveLength(3);

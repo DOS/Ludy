@@ -142,6 +142,10 @@ describe('update feed SSRF, origin pinning, and traversal invariants', () => {
       'foo.localhost',
       'foo.localhost.',
       '169.254.169.254',
+      'fe80::1%eth0',
+      'updates.example.vn%00',
+      'bad:host.example.vn',
+      'not-an-ip:1234',
     ]) {
       expect(isDisallowedRemoteHost(host), host).toBe(true);
     }
@@ -471,9 +475,11 @@ describe('update signature and trusted publisher invariants', () => {
           {
             path: 'Setup.exe',
             status: 'Valid',
+            signatureType: 'Authenticode',
             thumbprint: THUMB,
             hasTimestamp: true,
             fileDigestOid: OID_SHA256,
+            signerDigestOid: OID_SHA256,
             timestampType: 'authenticode-legacy',
             tsDigestOid: '1.3.14.3.2.26',
           },
@@ -649,7 +655,7 @@ describe('update signature and trusted publisher invariants', () => {
     // Reject weak /fd SHA-1, weak /fd SignerInfo.digestAlgorithm SHA-1, weak /td SHA-1, and co-existing legacy counter-sign.
     const psValidWinVerify = async (_s: string, _e: Record<string, string>, stdin?: string) => {
       const paths = JSON.parse(stdin ?? '[]') as string[];
-      return JSON.stringify(paths.map((p) => ({ path: p, status: 'Valid', thumbprint: THUMB, hasTimestamp: true })));
+      return JSON.stringify(paths.map((p) => ({ path: p, status: 'Valid', signatureType: 'Authenticode', thumbprint: THUMB, hasTimestamp: true })));
     };
     const work = makeTempDir();
     const mkPs1 = (name: string, manifestStr: string, cmsDer: Buffer): string => {

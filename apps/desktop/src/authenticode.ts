@@ -519,8 +519,10 @@ export function parseAuthenticodeCheckResults(
     if (record.status !== 'Valid') {
       throw new Error(`Authenticode signature invalid for ${target}: status=${String(record.status)}`);
     }
-    if (record.signatureType !== undefined && record.signatureType !== 'Embedded') {
-      throw new Error(`Authenticode check on ${target} must verify an embedded signature (got ${String(record.signatureType)})`);
+    if (record.signatureType !== 'Authenticode') {
+      throw new Error(
+        `Authenticode check on ${target} must verify an embedded signature (SignatureType=Authenticode, got ${String(record.signatureType)})`,
+      );
     }
     if (record.hasTimestamp !== true) {
       throw new Error(`Authenticode signature on ${target} is missing a timestamp`);
@@ -531,7 +533,7 @@ export function parseAuthenticodeCheckResults(
     if (record.fileDigestOid !== OID_SHA256) {
       throw new Error(`Authenticode signature on ${target} must use SHA-256 digest (got ${String(record.fileDigestOid)})`);
     }
-    if (record.signerDigestOid !== undefined && record.signerDigestOid !== OID_SHA256) {
+    if (record.signerDigestOid !== OID_SHA256) {
       throw new Error(`Authenticode SignerInfo on ${target} must use SHA-256 digest (got ${String(record.signerDigestOid)})`);
     }
     if (record.tsDigestOid !== OID_SHA256) {

@@ -175,18 +175,22 @@ describe('parseAuthenticodeResults and createReleaseArtifacts', () => {
       {
         path: 'Setup.exe',
         status: 'Valid',
+        signatureType: 'Authenticode',
         thumbprint: THUMB,
         hasTimestamp: true,
         fileDigestOid: OID_SHA256,
+        signerDigestOid: OID_SHA256,
         timestampType: 'rfc3161',
         tsDigestOid: OID_SHA256,
       },
       {
         path: 'ludy-desktop.exe',
         status: 'Valid',
+        signatureType: 'Authenticode',
         thumbprint: THUMB.toLowerCase(),
         hasTimestamp: true,
         fileDigestOid: OID_SHA256,
+        signerDigestOid: OID_SHA256,
         timestampType: 'rfc3161',
         tsDigestOid: OID_SHA256,
       },
@@ -199,9 +203,11 @@ describe('parseAuthenticodeResults and createReleaseArtifacts', () => {
           {
             path: 'Setup.exe',
             status: 'NotSigned',
+            signatureType: 'None',
             thumbprint: null,
             hasTimestamp: false,
             fileDigestOid: OID_SHA256,
+            signerDigestOid: OID_SHA256,
             timestampType: 'rfc3161',
             tsDigestOid: OID_SHA256,
           },
@@ -216,9 +222,11 @@ describe('parseAuthenticodeResults and createReleaseArtifacts', () => {
           {
             path: 'Setup.exe',
             status: 'Valid',
+            signatureType: 'Authenticode',
             thumbprint: THUMB,
             hasTimestamp: false,
             fileDigestOid: OID_SHA256,
+            signerDigestOid: OID_SHA256,
             timestampType: 'rfc3161',
             tsDigestOid: OID_SHA256,
           },
@@ -233,9 +241,11 @@ describe('parseAuthenticodeResults and createReleaseArtifacts', () => {
           {
             path: 'Setup.exe',
             status: 'Valid',
+            signatureType: 'Authenticode',
             thumbprint: THUMB,
             hasTimestamp: true,
             fileDigestOid: '1.3.14.3.2.26',
+            signerDigestOid: OID_SHA256,
             timestampType: 'rfc3161',
             tsDigestOid: OID_SHA256,
           },
@@ -250,18 +260,22 @@ describe('parseAuthenticodeResults and createReleaseArtifacts', () => {
           {
             path: 'Setup.exe',
             status: 'Valid',
+            signatureType: 'Authenticode',
             thumbprint: THUMB,
             hasTimestamp: true,
             fileDigestOid: OID_SHA256,
+            signerDigestOid: OID_SHA256,
             timestampType: 'rfc3161',
             tsDigestOid: OID_SHA256,
           },
           {
             path: 'ludy-desktop.exe',
             status: 'Valid',
+            signatureType: 'Authenticode',
             thumbprint: 'f'.repeat(40),
             hasTimestamp: true,
             fileDigestOid: OID_SHA256,
+            signerDigestOid: OID_SHA256,
             timestampType: 'rfc3161',
             tsDigestOid: OID_SHA256,
           },
@@ -409,6 +423,10 @@ describe('ephemeral multi-certificate PFX staging and cleanup', () => {
     expect(staged.cleanupThumbprints).toEqual([leaf.toUpperCase(), intermediate.toUpperCase()]);
     expect(seenImportEnv).toEqual({ LUDY_PFX_FILE: 'C:\\tmp\\bundle.pfx', LUDY_CERT_RECORD_FILE: recordFile });
     expect(seenImportScript).toContain('X509Certificate2Collection');
+    expect(seenImportScript).toContain(
+      '$col.Import($env:LUDY_PFX_FILE, $env:WINDOWS_CERTIFICATE_PASSWORD, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)',
+    );
+    expect(seenImportScript).not.toMatch(/\$col\.Import\([^)]*\$secure/);
     expect(seenImportScript).toContain('$_.HasPrivateKey');
     expect(seenImportScript).toContain('$leaves.Count -ne 1');
     expect(seenImportScript).toContain('$preExisting.ContainsKey($leafThumb)');
@@ -425,7 +443,7 @@ describe('ephemeral multi-certificate PFX staging and cleanup', () => {
     expect(seenCleanupScript).toContain('Remove-Item -LiteralPath $storePath -DeleteKey -ErrorAction Stop');
     expect(seenCleanupScript).not.toContain('SilentlyContinue');
     expect(seenCleanupEnv).toEqual({
-      LUDY_CERT_THUMBRINTS: `${leaf.toUpperCase()},${intermediate.toUpperCase()}`,
+      LUDY_CERT_THUMBPRINTS: `${leaf.toUpperCase()},${intermediate.toUpperCase()}`,
     });
     expect(() =>
       removeEphemeralCerts([leaf], () => {

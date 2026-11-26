@@ -204,6 +204,7 @@ export function unwrapIpLiteral(hostname: string): string | null {
 export function isDisallowedRemoteHost(hostname: string): boolean {
   const bare = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
   if (bare === '' || bare === 'localhost') return true;
+  if (bare.includes('%') || (bare.includes(':') && isIP(bare) === 0)) return true;
   if (isIP(bare) !== 0) return isPrivateOrReservedIp(bare);
   if (!bare.includes('.')) return true;
   if (bare.endsWith('.local') || bare.endsWith('.internal') || bare.endsWith('.arpa') || bare.endsWith('.localhost')) {
