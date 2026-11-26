@@ -136,6 +136,17 @@ describe('allocateReceivable', () => {
     expect(foreignTotalsOf(r.open, 'VND')).toEqual([]);
     expect(allForeignAmountsOf(r.open, 'VND')).toBe(false);
   });
+
+  it('treats zero foreign_total (such as "0.0000") as absent so booked amounts are shown instead of 0 USD', () => {
+    const r = allocateReceivable(
+      [{ ...inv('1', '2026-08-01', '25450000', 'USD'), foreignTotal: '0.0000' }],
+      '25450000',
+      today,
+    );
+    expect(r.open[0]).toMatchObject({ amountDue: '25450000', foreignTotal: null, foreignAmountDue: null });
+    expect(foreignTotalsOf(r.open, 'VND')).toEqual([]);
+    expect(allForeignAmountsOf(r.open, 'VND')).toBe(false);
+  });
 });
 
 describe('notice level and language', () => {

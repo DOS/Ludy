@@ -37,7 +37,7 @@ export interface OpenInvoice extends SaleInvoice {
   amountDue: string;
   // Normalized foreign_total when positive, else null.
   foreignTotal: string | null;
-  // What is still owed in the invoice's own foreign currency (exact when unpaid; prorated half-up at the booked ratio when partially paid), or null.
+  // What is still owed in the invoice's own foreign currency (exact when unpaid), or null when partially paid or unrecorded.
   foreignAmountDue: string | null;
   dueDate: string;
   // Whole days past the due date as of today (0 or less: not yet due).
@@ -88,7 +88,7 @@ function allocateForeign(
     return { foreignTotal: null, foreignAmountDue: null };
   }
   const foreign = money(invoice.foreignTotal);
-  if (!foreign.isPositive()) return { foreignTotal: null, foreignAmountDue: null };
+  if (foreign.lessThanOrEqualTo(0)) return { foreignTotal: null, foreignAmountDue: null };
   const foreignTotal = canonical(foreign);
   // Only an unpaid invoice has an exact foreign balance; partial receipts post to 131 in book currency only, so never estimate or assume foreign minor units.
   if (due.equals(total)) return { foreignTotal, foreignAmountDue: foreignTotal };

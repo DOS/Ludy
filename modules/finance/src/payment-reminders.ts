@@ -208,18 +208,16 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
 }
 
 // All party ids belonging to the given kept party ids (including merged duplicates).
-async function partyGroupMap(ctx: QueryContext, partyIds: readonly string[]): Promise<{ keptOf: Map<string, string>; allIds: string[] }> {
-  const keptOf = new Map<string, string>(partyIds.map((id) => [id, id]));
-  if (partyIds.length === 0) return { keptOf, allIds: [] };
+async function partyGroupIds(ctx: QueryContext, partyIds: readonly string[]): Promise<string[]> {
+  if (partyIds.length === 0) return [];
   const ids = [...partyIds];
   const rows = await ctx.trx
     .selectFrom('ludy_kernel.party')
-    .select(['id', sql<string>`coalesce(duplicate_of, id)`.as('kept_id')])
+    .select('id')
     .where('org_id', '=', ctx.orgId)
     .where(sql<boolean>`(id = ANY(${sql.val(ids)}::uuid[]) or duplicate_of = ANY(${sql.val(ids)}::uuid[]))`)
     .execute();
-  for (const r of rows) keptOf.set(r.id, r.kept_id);
-  return { keptOf, allIds: [...new Set(keptOf.keys())] };
+  return [...new Set([...ids, ...rows.map((r) => r.id)])];
 }
 
 // Legacy pre-suffix rows either carry `payload.legalEntityId` or (pre-#2491 un-keyed payload / 30-day purged NULL payload) retain their entity on the immutable activity row.
@@ -232,13 +230,16 @@ const legacyEntityMatch = (entity: string) =>
 async function lastReminders(ctx: QueryContext, entity: string, partyIds: readonly string[], states: readonly string[] = REMINDED_STATES): Promise<Map<string, { at: string; level: NoticeLevel }>> {
   const out = new Map<string, { at: string; level: NoticeLevel }>();
   if (partyIds.length === 0) return out;
-  const { keptOf, allIds } = await partyGroupMap(ctx, partyIds);
+  const allIds = await partyGroupIds(ctx, partyIds);
   const levels = [1, 2, 3] as const;
   const entitySources = levels.map((l) => paymentReminderSource(l, entity));
   const legacySources = levels.map((l) => `${PAYMENT_REMINDER_SOURCE}${l}`);
+  const keptParty = sql<string>`coalesce(p.duplicate_of, p.id)`;
   const rows = await ctx.trx
     .selectFrom('ludy_kernel.mail_message as m')
-    .select(['m.source', 'm.source_id', 'm.created_at'])
+    .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.source_id'))
+    .select([keptParty.as('kept_id'), 'm.source', 'm.created_at'])
+    .distinctOn(keptParty)
     .where('m.org_id', '=', ctx.orgId)
     .where(sql<boolean>`m.source_id = ANY(${sql.val(allIds)}::uuid[])`)
     .where('m.status', 'in', [...states] as Array<(typeof REMINDED_STATES)[number] | 'suppressed'>)
@@ -248,14 +249,13 @@ async function lastReminders(ctx: QueryContext, entity: string, partyIds: readon
         eb.and([eb('m.source', 'in', legacySources), legacyEntityMatch(entity)]),
       ]),
     )
+    .orderBy(keptParty)
     .orderBy('m.created_at', 'desc')
     .orderBy('m.id', 'desc')
     .execute();
   for (const row of rows) {
-    const kept = row.source_id ? keptOf.get(row.source_id) : undefined;
-    if (!kept || out.has(kept)) continue;
     const level = paymentReminderSourceLevel(row.source);
-    if (level !== null) out.set(kept, { at: row.created_at.toISOString(), level });
+    if (level !== null) out.set(row.kept_id, { at: row.created_at.toISOString(), level });
   }
   return out;
 }
@@ -453,7 +453,7 @@ export const paymentReminderSend = defineCommand({
     }
     const source = paymentReminderSource(level, entity);
     const legacySource = `${PAYMENT_REMINDER_SOURCE}${level}`;
-    const { allIds: partyScope } = await partyGroupMap(ctx, [customer.partyId]);
+    const partyScope = await partyGroupIds(ctx, [customer.partyId]);
     const since = new Date(ctx.now.getTime() - REMINDER_REPEAT_DAYS * DAY_MS);
     const recent = await ctx.trx
       .selectFrom('ludy_kernel.mail_message as m')
