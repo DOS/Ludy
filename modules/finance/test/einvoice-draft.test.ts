@@ -273,6 +273,7 @@ describe('rateDate validation (#3682)', () => {
   });
 
   it('allows omitted or null rateDate and valid calendar dates including leap days', () => {
+    expect(codes(draft({ date: '2026-11-03', lines: eight }))).toEqual([]);
     expect(codes(draft({ date: '2026-11-03', rateDate: undefined, lines: eight }))).toEqual([]);
     expect(codes(draft({ date: '2026-11-03', rateDate: null, lines: eight }))).toEqual([]);
     expect(codes(draft({ date: '2027-01-10', rateDate: '2024-02-29', lines: eight }), '2027-01-10')).toEqual([]);

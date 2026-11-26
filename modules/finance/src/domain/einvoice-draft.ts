@@ -41,7 +41,7 @@ export interface DraftInput {
   // The day the VAT rate of the lines is judged on when it is not the draft's own: an adjusting or replacing invoice that keeps the rate of the invoice it corrects is judged on that invoice's date
   // (plan einvoice-issue.md, "VAT 8% ends on 2026-12-31"); one whose rate follows the correction's own date (a change of amount, #3709) leaves it out. Left out, it is the sale date, or the invoice
   // date when there is no sale date.
-  rateDate?: string | null;
+  rateDate?: string | null | undefined;
 }
 
 export interface ComputedLine extends DraftLineInput {
