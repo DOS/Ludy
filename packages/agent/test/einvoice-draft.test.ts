@@ -1119,5 +1119,97 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         answer([line({ description: 'Gói thiết kế', unit: null, quantity: '1', unitPrice: '100000', vatRate: null })], null),
       ).kind,
     ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('số lượng 3\nCơ hội Gói thiết kế của Công ty Hoa Mai, giá trị 100000 VND.'),
+        answer([line({ description: 'Gói thiết kế', unit: null, quantity: '3', unitPrice: '100000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    // Unit-disambiguated multiplication operands, same-name items distinguished by selling unit, advance payments, compound vs distinct items on "và", trailing "% VAT", trailing recipient phrases, and hotel line items starting with "Khách".
+    const unitMul = req('50.000 x 2 hộp trà');
+    expect(
+      checkEInvoiceDraft(
+        unitMul,
+        answer([line({ description: 'Trà', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        unitMul,
+        answer([line({ description: 'Trà', unit: 'hộp', quantity: '50000', unitPrice: '2', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    const unitDistinguished = req('2 hộp bút giá 50k VAT 8%; 3 cái bút giá 5k VAT 5%');
+    expect(
+      checkEInvoiceDraft(
+        unitDistinguished,
+        answer([
+          line({ description: 'Bút', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: '8%' }),
+          line({ description: 'Bút', unit: 'cái', quantity: '3', unitPrice: '5000', vatRate: '5%' }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        unitDistinguished,
+        answer([
+          line({ description: 'Bút', unit: 'cái', quantity: '2', unitPrice: '50000', vatRate: '8%' }),
+          line({ description: 'Bút', unit: 'hộp', quantity: '3', unitPrice: '5000', vatRate: '5%' }),
+        ], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    const advancePayment = req('2 áo 50k trả trước 20k');
+    expect(
+      checkEInvoiceDraft(
+        advancePayment,
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '20000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        advancePayment,
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo 50k phí ship 20k'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '20000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo đỏ và quần xanh đơn giá 100k'),
+        answer([line({ description: 'Áo đỏ', unit: null, quantity: '2', unitPrice: '100000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo giá 50k đã gồm 5% VAT'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '50000', vatRate: '5%' })], null),
+      ).kind,
+    ).toBe('proposal');
+
+    expect(
+      checkEInvoiceDraft(
+        req('2 túi trà giá 20k; 3 túi trà giá 30k giao cho chị Lan'),
+        answer([
+          line({ description: 'Trà', unit: 'túi', quantity: '2', unitPrice: '20000', vatRate: null }),
+          line({ description: 'Trà', unit: 'túi', quantity: '3', unitPrice: '30000', vatRate: null }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+
+    expect(
+      checkEInvoiceDraft(
+        req('giống lần trước\n\nHóa đơn trước gửi cùng khách:\n- Khách sạn, đơn vị đêm, số lượng 2, đơn giá 100000, VAT 8%'),
+        answer([line({ description: 'Khách sạn', unit: 'đêm', quantity: '2', unitPrice: '100000', vatRate: '8%' })], null),
+      ).kind,
+    ).toBe('proposal');
   });
 });
