@@ -9,8 +9,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@ludy/kernel-runtime';
+import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, keyedHash, parseVaultKey } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { resealSubjectKeys } from '../src/subject-key-reseal.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -24,9 +25,11 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
   const dbName = `ludy_test_supplier_payment_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
+  let workerPool: pg.Pool;
   let db: Db;
   let rt: Runtime;
   const root = parseVaultKey(randomBytes(32).toString('base64'));
+  const vaultOf = (...roots: (typeof root)[]) => new SubjectVault(new CredentialVault(roots).deriveKeys(SUBJECT_WRAP_INFO));
   const hashRoot = { id: 'k-test-1', key: randomBytes(32) };
   const user = (userId: string, fresh = true) => ({ type: 'user' as const, userId, aal: 'aal2' as const, mfaAt: fresh ? Math.floor(Date.now() / 1000) : Math.floor(Date.now() / 1000) - 3600 });
 
@@ -113,8 +116,12 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
+    const workerUrl = new URL(adminUrl);
+    workerUrl.username = 'ludy_worker';
+    workerUrl.password = 'test-worker-pw';
+    workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
     db = createDb(pool);
-    const subjectVault = new SubjectVault(new CredentialVault([root]).deriveKeys(SUBJECT_WRAP_INFO));
+    const subjectVault = vaultOf(root);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS, subjectVault, keyedHashRoots: [hashRoot] }).register({
       commands: [...kernelCommands, ...financeCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
@@ -123,6 +130,7 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
 
   afterAll(async () => {
     await pool?.end();
+    await workerPool?.end();
     if (!ADMIN) return;
     const rootClient = new pg.Client({ connectionString: ADMIN });
     await rootClient.connect();
@@ -318,5 +326,64 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     await unguarded((c) => c.query("UPDATE ludy_finance.supplier_payment SET status = 'cancelled', cancelled_at = now(), first_exported_at = NULL WHERE org_id = $1 AND id = $2", [o.orgId, payment.id]));
     await admin((c) => c.query('UPDATE ludy_finance.supplier_payment SET first_exported_at = exported_at WHERE org_id = $1 AND id = $2 AND first_exported_at IS NULL AND exported_at IS NOT NULL', [o.orgId, payment.id]));
     expect(await fileDay(o, payment.id)).toBe(exportedDay);
+  });
+
+  it('matches beneficiary accounts across credential key rotations with older key dropped, supports legacy hashes, and refuses when subject key is shredded (#3751)', async () => {
+    const o = await org(true);
+    await addAccount(o, NUMBER);
+    const payment = await ready(o);
+    await exportFile(o, [payment.id]);
+    const day = await fileDay(o, payment.id);
+    const matchingLine = await bankLine(o, '-110', day, '012345678901');
+    // Rotate credential key and reseal subject keys, then drop the older key completely.
+    const nextRoot = parseVaultKey(randomBytes(32).toString('base64'));
+    const workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS, subjectVault: vaultOf(nextRoot, root) }).register({
+      commands: kernelCommands,
+      queries: kernelQueries({ inboundDomain: null }),
+    });
+    await resealSubjectKeys({ runtime: workerRt, workerDb: createDb(workerPool) });
+    const rotatedRt = new Runtime(db, { manifests: TEST_MANIFESTS, subjectVault: vaultOf(nextRoot) }).register({
+      commands: [...kernelCommands, ...financeCommands],
+      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
+    });
+    const { proposalId } = await rotatedRt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: SETTLE, input: { paymentId: payment.id, bankLineId: matchingLine } },
+      { actor: user(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    await rotatedRt.execute('kernel.proposal.approve', { id: proposalId, revision: 1 }, { actor: user(o.admin as string), orgId: o.orgId, idempotencyKey: randomUUID() });
+    expect((await status(o, payment.id))?.status).toBe('paid');
+
+    // Legacy row (keyedHash with credential key id) keeps working via the dual-check path.
+    const o2 = await org(true);
+    const legacyDigits = '012345678901';
+    const legacyHash = keyedHash(hashRoot.key, o2.orgId, 'supplier_bank_account.number', legacyDigits);
+    const legacyAccId = randomUUID();
+    const sealed = 'ludy:s1:00000000-0000-4000-8000-000000000000:legacy';
+    await unguarded(async (c) => {
+      await c.query(
+        `INSERT INTO ludy_finance.supplier_bank_account (org_id, id, party_id, bank_name, account_holder_sealed, number_sealed, number_hash, hash_key_id, last4)
+         VALUES ($1, $2, $3, 'ACB', $4, $4, $5, $6, '8901')`,
+        [o2.orgId, legacyAccId, o2.supplier, sealed, legacyHash, hashRoot.id],
+      );
+      await c.query(
+        `INSERT INTO ludy_finance.supplier_bank_account_change (org_id, party_id, account_id, kind, new_number_hash, step_up_at)
+         VALUES ($1, $2, $3, 'added', $4, now())`,
+        [o2.orgId, o2.supplier, legacyAccId, legacyHash],
+      );
+    });
+    const legacyPay = await ready(o2);
+    await exportFile(o2, [legacyPay.id]);
+    const legacyLine = await bankLine(o2, '-110', await fileDay(o2, legacyPay.id), legacyDigits);
+    expect(await codeOf(ask(o2, legacyPay.id, legacyLine))).toBe('accepted');
+
+    // Shredding the supplier's subject key makes beneficiary matching impossible (refuses on the safe side).
+    const o3 = await org(true);
+    await addAccount(o3, NUMBER);
+    const p3 = await ready(o3);
+    await exportFile(o3, [p3.id]);
+    const l3 = await bankLine(o3, '-110', await fileDay(o3, p3.id), '012345678901');
+    await unguarded((c) => c.query('DELETE FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2', [o3.orgId, `supplier:${o3.supplier}`]));
+    expect(await codeOf(ask(o3, p3.id, l3))).toBe('SUPPLIER_PAYMENT_ACCOUNT_MISMATCH');
   });
 });

@@ -11,7 +11,7 @@
 //
 // A sealed value is the text `ludy:s1:<subject id>:<base64url(nonce | tag | ciphertext)>` (with legacy `crove:s1:` still decoded on read);
 // a wrapped key is `nonce | tag | wrapped key` (60 bytes).
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes } from 'node:crypto';
 
 const NONCE = 12;
 const TAG = 16;
@@ -22,9 +22,17 @@ const PREFIX = 'ludy:s1:';
 const LEGACY_PREFIX = 'crove:s1:';
 const ACCEPTED_PREFIXES = [PREFIX, LEGACY_PREFIX] as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const HASH_PURPOSE = /^[a-z][a-z0-9_.]{0,63}$/;
 export const WRAPPED_SUBJECT_KEY_BYTES = NONCE + TAG + KEY;
 // A personal value is short (an identity number, a bank account); the column allows more, a seal does not.
 export const MAX_SEALED_VALUE_BYTES = 4096;
+
+/** Validates purpose and value bounds before creating or looking up a subject key for hashing. */
+export function assertSubjectHashInput(purpose: string, value: string): void {
+  if (!HASH_PURPOSE.test(purpose)) throw new SubjectKeyError('subjectHash: the purpose is malformed');
+  const bytes = Buffer.byteLength(value, 'utf8');
+  if (bytes < 1 || bytes > MAX_SEALED_VALUE_BYTES) throw new SubjectKeyError('subjectHash: the value must be 1 byte to 4 KiB');
+}
 
 /** The HKDF info the wrap key of the subject vault is derived with, from each credential key. */
 export const SUBJECT_WRAP_INFO = `${DOMAIN}|wrap`;
@@ -39,7 +47,7 @@ export interface SubjectWrapKey {
   key: Buffer;
 }
 
-function aad(layer: 'wrap' | 'data', orgId: string, subjectId: string, last: string): Buffer {
+function aad(layer: 'wrap' | 'data' | 'hash', orgId: string, subjectId: string, last: string): Buffer {
   for (const part of [orgId, subjectId, last]) {
     if (part.length === 0 || part.includes('\u0000')) throw new SubjectKeyError('invalid subject binding');
   }
@@ -158,6 +166,22 @@ export class SubjectVault {
     } catch (error) {
       if (error instanceof SubjectKeyError) throw error;
       throw new SubjectKeyError('sealed value does not open: damaged, or sealed for another org, subject or place');
+    }
+  }
+
+  /**
+   * The lowercase hex HMAC-SHA256 of `value` under a key derived by HKDF-SHA256 from the subject's `dataKey`, bound to `orgId`, `subjectId` and `purpose`.
+   * Re-wrapping the data key during a credential key rotation preserves the hash; shredding the subject key makes it unverifiable.
+   */
+  hash(dataKey: Buffer, orgId: string, subjectId: string, purpose: string, value: string): string {
+    if (dataKey.length !== KEY) throw new SubjectKeyError('a subject data key must be 32 bytes');
+    if (!UUID.test(orgId) || !UUID.test(subjectId)) throw new SubjectKeyError('invalid subject binding');
+    assertSubjectHashInput(purpose, value);
+    const derived = Buffer.from(hkdfSync('sha256', dataKey, Buffer.alloc(0), aad('hash', orgId, subjectId, purpose), KEY));
+    try {
+      return createHmac('sha256', derived).update(value, 'utf8').digest('hex');
+    } finally {
+      derived.fill(0);
     }
   }
 }

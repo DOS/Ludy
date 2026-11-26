@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A supplier's bank accounts and the history of their changes (#3113 S1; JOY's answers of 2026-11-14 on #3113). V5 rule 3 (a supplier's account changed while a payment to that supplier waits) needs
-// this data. The full number is SEALED under the supplier's own subject key (`supplier:<party_id>`, ADR-0017) with the holder's name, so one shred erases both; a keyed hash of the digits
-// (ctx.keyedHash) tells "the same account" and "the account changed" without the number; the last four digits are for display. A change never edits a number: the old row is retired and a new one
-// added, with one row in the append-only history. Every change needs a fresh second factor (R3) and an owner or an admin; no agent, no MCP tool, no signal ever carries a number.
+// this data. The full number is SEALED under the supplier's own subject key (`supplier:<party_id>`, ADR-0017) with the holder's name, so one shred erases both; a subject-keyed hash of the digits
+// (ctx.subjectHash, #3751) tells "the same account" and "the account changed" without the number (surviving credential key rotations and erased when the subject key is shredded; legacy rows hashed under
+// credential keys keep working via ctx.keyedHash); the last four digits are for display. A change never edits a number: the old row is retired and a new one added, with one row in the append-only history.
+// Every change needs a fresh second factor (R3) and an owner or an admin; no agent, no MCP tool, no signal ever carries a number.
 // - finance.supplier_bank_account.add / .replace / .retire: R3, owners and admins.
 // - finance.supplier_bank_account.erase: R3, owners only; retires the accounts and shreds the supplier's key, so the sealed number and holder can never be opened again.
 // - finance.supplier_bank_account.list: the accounts (bank, last four, status) and the change history of a supplier. Never a number, never a holder.
@@ -38,6 +39,8 @@ export const HOLDER_PLACE = 'crove_finance.supplier_bank_account.account_holder_
 // The subject every sealed value of one supplier is under: one key to shred.
 export const supplierSubject = (partyId: string): string => `supplier:${partyId}`;
 export const HASH_PURPOSE = 'supplier_bank_account.number';
+// Marker stored in `hash_key_id` for rows hashed under the supplier's subject data key (#3751); legacy rows carry the credential key id used by `ctx.keyedHash`.
+export const SUBJECT_HASH_KEY_ID = 'subject:v1';
 
 type Trx = CommandContext['trx'];
 type AccountRow = { id: string; party_id: string; bank_name: string; last4: string; status: string; number_hash: string; hash_key_id: string; created_at: Date | string; retired_at: Date | string | null };
@@ -61,14 +64,23 @@ export function normalizeAccountNumber(text: string): string {
   return digits;
 }
 
-// The keyed hash of the digits and the id of the key it was made under, in one place (a rotation re-makes a hash from the value; see sameAccount).
-function hashNumber(ctx: Pick<CommandContext, 'keyedHash' | 'keyedHashKeyId'>, digits: string): { hash: string; keyId: string } {
-  return { hash: ctx.keyedHash(HASH_PURPOSE, digits), keyId: ctx.keyedHashKeyId() };
+// Computes the subject-keyed hash of the digits (#3751), ensuring the supplier's subject key exists.
+async function hashNumber(ctx: Pick<CommandContext, 'subjectHash'>, partyId: string, digits: string): Promise<{ hash: string; keyId: string }> {
+  return { hash: await ctx.subjectHash(supplierSubject(partyId), HASH_PURPOSE, digits), keyId: SUBJECT_HASH_KEY_ID };
 }
 
-// Whether `digits` is the number of a stored account. A hash made under another credential key id is made again under that key when the deployment still keeps it; a key it no longer keeps
-// answers "not the same" (never an error, never a change by itself).
-function sameAccount(ctx: Pick<CommandContext, 'keyedHash' | 'keyedHashKeyId'>, digits: string, row: Pick<AccountRow, 'number_hash' | 'hash_key_id'>): boolean {
+// Whether `digits` matches a stored account's hash. Subject-keyed rows (`SUBJECT_HASH_KEY_ID`) look up the supplier's subject key without creating one (an erased key answers false);
+// legacy rows hashed under a credential key id check via `ctx.keyedHash` while that key is kept, answering false once retired.
+export async function matchesAccountHash(
+  ctx: Pick<CommandContext, 'keyedHash' | 'subjectHash'>,
+  partyId: string,
+  digits: string,
+  row: Pick<AccountRow, 'number_hash' | 'hash_key_id'>,
+): Promise<boolean> {
+  if (row.hash_key_id === SUBJECT_HASH_KEY_ID) {
+    const hash = await ctx.subjectHash(supplierSubject(partyId), HASH_PURPOSE, digits, { create: false });
+    return hash !== null && hash === row.number_hash;
+  }
   try {
     return ctx.keyedHash(HASH_PURPOSE, digits, row.hash_key_id) === row.number_hash;
   } catch (error) {
@@ -124,12 +136,12 @@ async function insertChange(
     .execute();
 }
 
-// A new active row for a supplier: the number and the holder sealed under the supplier's key, the hash, the last four digits.
+// A new active row for a supplier: the number and the holder sealed under the supplier's key, the subject-keyed hash, the last four digits.
 async function insertAccount(ctx: CommandContext, partyId: string, input: { bankName: string; accountHolder: string; accountNumber: string }): Promise<{ row: AccountRow; hash: string }> {
   const digits = normalizeAccountNumber(input.accountNumber);
-  const { hash, keyId } = hashNumber(ctx, digits);
-  // Each active account is judged under the key its own hash was made under (after a rotation a row can hold a hash under an older key id), so a number already held is refused while the
-  // deployment keeps that older key; the unique index still holds the current-key case. A key the deployment no longer keeps cannot be compared without opening the number (see sameAccount).
+  // Compute the subject-keyed hash once up front; if an active duplicate exists, the transaction rolls back cleanly.
+  const { hash, keyId } = await hashNumber(ctx, partyId, digits);
+  // Each active account is judged under its own hash scheme (subject-keyed rows under the supplier's subject key; legacy rows under their credential key id).
   const active = await ctx.trx
     .selectFrom('ludy_finance.supplier_bank_account')
     .select(['number_hash', 'hash_key_id'])
@@ -137,7 +149,10 @@ async function insertAccount(ctx: CommandContext, partyId: string, input: { bank
     .where('party_id', '=', partyId)
     .where('status', '=', 'active')
     .execute();
-  if (active.some((row) => sameAccount(ctx, digits, row))) throw new DomainError('SUPPLIER_BANK_ACCOUNT_EXISTS', 409, 'Nhà cung cấp này đã có tài khoản với số đó');
+  for (const row of active) {
+    const matched = row.hash_key_id === SUBJECT_HASH_KEY_ID ? hash === row.number_hash : await matchesAccountHash(ctx, partyId, digits, row);
+    if (matched) throw new DomainError('SUPPLIER_BANK_ACCOUNT_EXISTS', 409, 'Nhà cung cấp này đã có tài khoản với số đó');
+  }
   const subject = supplierSubject(partyId);
   const numberSealed = await ctx.seal(subject, NUMBER_PLACE, digits);
   const holderSealed = await ctx.seal(subject, HOLDER_PLACE, input.accountHolder);
@@ -162,6 +177,8 @@ async function insertAccount(ctx: CommandContext, partyId: string, input: { bank
 export const supplierBankAccountAdd = defineCommand({
   name: 'finance.supplier_bank_account.add',
   input: zSupplierBankAccountAdd,
+  // The full number and holder are sealed under the supplier's key; keep them out of audit and idempotency input hashes (#3751).
+  sealedInput: ['accountNumber', 'accountHolder'],
   // A supplier's account is where money goes: a human with a fresh second factor, an owner or an admin; never an agent, never over MCP.
   risk: 'R3',
   sideEffect: 'internal',
@@ -181,6 +198,7 @@ export const supplierBankAccountAdd = defineCommand({
 export const supplierBankAccountReplace = defineCommand({
   name: 'finance.supplier_bank_account.replace',
   input: zSupplierBankAccountReplace,
+  sealedInput: ['accountNumber', 'accountHolder'],
   risk: 'R3',
   sideEffect: 'internal',
   access: MANAGERS,
@@ -188,7 +206,7 @@ export const supplierBankAccountReplace = defineCommand({
   handler: async (ctx, input): Promise<SupplierBankAccount> => {
     const old = await loadAccount(ctx.trx, ctx.orgId, input.accountId);
     if (old.status !== 'active') throw new DomainError('SUPPLIER_BANK_ACCOUNT_NOT_ACTIVE', 409, 'Tài khoản này đã được ngừng dùng');
-    if (sameAccount(ctx, normalizeAccountNumber(input.accountNumber), old)) {
+    if (await matchesAccountHash(ctx, old.party_id, normalizeAccountNumber(input.accountNumber), old)) {
       throw new DomainError('SUPPLIER_BANK_ACCOUNT_SAME', 409, 'Số tài khoản mới trùng với số hiện tại; hãy bỏ qua nếu không đổi');
     }
     await ctx.trx.updateTable('ludy_finance.supplier_bank_account').set({ status: 'retired', retired_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', old.id).execute();
