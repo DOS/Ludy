@@ -11,7 +11,7 @@ import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 import { signCallbackData } from '@ludy/misa-amis';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
-import { MAX_MISA_AMIS_CALLBACK_BYTES } from '../src/misa-amis-callback.ts';
+import { MAX_MISA_AMIS_CALLBACK_BYTES, MISA_AMIS_CALLBACK_UNSIGNED_PER_MINUTE, acceptMisaAmisCallback } from '../src/misa-amis-callback.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
 
 const CLIENT = 'misa-client-id-0001';
@@ -47,7 +47,7 @@ function dbOf(seen: { sql: string; parameters: readonly unknown[] }[], failure?:
   return new Kysely<unknown>({ dialect: { createAdapter: () => new PostgresAdapter(), createDriver: () => driver, createIntrospector: (k) => new PostgresIntrospector(k), createQueryCompiler: () => new PostgresQueryCompiler() } });
 }
 
-function fixture(over: Partial<HttpDeps> = {}, installed: readonly string[] = ['kernel', 'finance'], failure?: unknown) {
+function fixture(over: Partial<HttpDeps> = {}, installed: readonly string[] = ['kernel', 'finance'], failure?: unknown, configOver: Record<string, string> = {}) {
   const sqlSeen: { sql: string; parameters: readonly unknown[] }[] = [];
   const executed: string[] = [];
   const runtime = {
@@ -60,13 +60,14 @@ function fixture(over: Partial<HttpDeps> = {}, installed: readonly string[] = ['
       throw new Error('the API must not execute a command for a callback');
     },
   } as unknown as Runtime;
-  const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent' });
+  const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent', ...configOver });
   const authenticate = vi.fn(async () => {
     throw new Error('the callback must not authenticate a user');
   });
   const http = createHttpApp({ config, runtime, store: {} as BlobStore, authenticate: authenticate as never, pool: {} as pg.Pool, aiEnabled: false, misaAmisCallback: { clientId: CLIENT }, ...over });
   const post = (text: string) => http.request(PATH, { method: 'POST', headers: { 'content-type': 'application/json' }, body: text });
-  return { http, post, sqlSeen, executed, authenticate };
+  const postFrom = (ip: string, text: string) => http.request(PATH, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': ip }, body: text });
+  return { http, runtime, post, postFrom, sqlSeen, executed, authenticate };
 }
 
 type Item = { org_refid: string; voucher_type: number; success: boolean; error_code?: string; error_message?: string };
@@ -282,5 +283,61 @@ describe('the MISA AMIS callback route', () => {
     await fixture({}, ['kernel', 'finance'], new Error(`boom ${REASON_TEXT}`)).post(good);
     const all = logs.join('\n');
     for (const secret of [CLIENT, parsed.signature, REASON_TEXT, REF1, 'another-client-id-2']) expect(all, secret).not.toContain(secret);
+  });
+
+  it('bounds global unverified bodies before JSON/HMAC, refunds verified deliveries, and isolates rate limiters (#4048 I1/I2/I4)', async () => {
+    const nowMs = 1_000_000;
+    const unsignedLimit = new RateLimiter({ perMinute: 2, now: () => nowMs });
+    const appFixture = fixture();
+    const keys = [{ product: 'amis' as const, clientId: CLIENT }];
+
+    // 1. Unverified calls consume the isolated global budget before JSON/HMAC and never reach the DB.
+    expect(await acceptMisaAmisCallback(appFixture.runtime, keys, 'not json', { unsignedLimit })).toEqual({ status: 400, code: 'WEBHOOK_MALFORMED' });
+    expect(await acceptMisaAmisCallback(appFixture.runtime, keys, message([item()], {}, 'another-client-id-2'), { unsignedLimit })).toEqual({ status: 401, code: 'WEBHOOK_SIGNATURE' });
+    await expect(acceptMisaAmisCallback(appFixture.runtime, keys, 'not json', { unsignedLimit })).rejects.toThrow('MISA_AMIS_CALLBACK_OVERLOADED');
+    expect(appFixture.sqlSeen).toEqual([]);
+
+    // 2. Verified signed callbacks refund their global token, so legitimate traffic does not exhaust the unverified budget.
+    const verifiedLimit = new RateLimiter({ perMinute: 2, now: () => nowMs });
+    const good = message([item()]);
+    for (let i = 0; i < 4; i++) expect(await acceptMisaAmisCallback(appFixture.runtime, keys, good, { unsignedLimit: verifiedLimit })).toEqual({ status: 200 });
+    expect(await acceptMisaAmisCallback(appFixture.runtime, keys, 'not json', { unsignedLimit: verifiedLimit })).toEqual({ status: 400, code: 'WEBHOOK_MALFORMED' });
+    expect(await acceptMisaAmisCallback(appFixture.runtime, keys, 'not json', { unsignedLimit: verifiedLimit })).toEqual({ status: 400, code: 'WEBHOOK_MALFORMED' });
+    await expect(acceptMisaAmisCallback(appFixture.runtime, keys, good, { unsignedLimit: verifiedLimit })).rejects.toThrow('MISA_AMIS_CALLBACK_OVERLOADED');
+
+    // 3. Empty key list refuses cleanly without touching DB; oversized bodies fail early.
+    expect(await acceptMisaAmisCallback(appFixture.runtime, [], good, { unsignedLimit: new RateLimiter({ perMinute: 2, now: () => nowMs }) })).toEqual({ status: 401, code: 'WEBHOOK_SIGNATURE' });
+    expect(await acceptMisaAmisCallback(appFixture.runtime, keys, `{"x":"${'a'.repeat(MAX_MISA_AMIS_CALLBACK_BYTES)}"}`, { unsignedLimit: new RateLimiter({ perMinute: 2, now: () => nowMs }) })).toEqual({ status: 400, code: 'WEBHOOK_MALFORMED' });
+
+    // 4. Over HTTP with TRUSTED_PROXY_HOPS=1: exhausting MISA's per-runtime global unverified budget sheds with 503 CALLBACK_UNAVAILABLE,
+    // logs only the fixed code, and leaves another runtime and bank feed limiters unaffected.
+    const bankFeedLimiter = new RateLimiter({ perMinute: 1, now: () => nowMs });
+    const flooded = fixture({ bankFeedWebhookLimit: bankFeedLimiter }, ['kernel', 'finance'], undefined, { TRUSTED_PROXY_HOPS: '1' });
+    const isolated = fixture({ bankFeedWebhookLimit: bankFeedLimiter }, ['kernel', 'finance'], undefined, { TRUSTED_PROXY_HOPS: '1' });
+    const testNetIp = (n: number) => (n < 250 ? `198.51.100.${n + 1}` : n < 500 ? `203.0.113.${n - 249}` : `192.0.2.${n - 499}`);
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(nowMs);
+      for (let i = 0; i < MISA_AMIS_CALLBACK_UNSIGNED_PER_MINUTE; i++) {
+        const res = await flooded.postFrom(testNetIp(i), 'not json');
+        expect(res.status, `req ${i}`).toBe(400);
+      }
+      const shed = await flooded.postFrom('192.0.2.201', `{"secret":"${REASON_TEXT}"}`);
+      expect(shed.status).toBe(503);
+      expect(await bodyOf(shed)).toEqual({ code: 'CALLBACK_UNAVAILABLE' });
+      expect(flooded.sqlSeen).toEqual([]);
+
+      // Another Runtime keeps its own isolated per-runtime global limiter and per-address callbackLimit, and bank feed budget stays intact.
+      expect((await isolated.postFrom('192.0.2.201', good)).status).toBe(200);
+      expect(bankFeedLimiter.size).toBe(0);
+      expect(bankFeedLimiter.take('v4:198.51.100.1').allowed).toBe(true);
+      expect(bankFeedLimiter.take('v4:192.0.2.201').allowed).toBe(true);
+      expect(logs.join('\n')).toContain('CALLBACK_UNAVAILABLE');
+      expect(logs.join('\n')).not.toContain(REASON_TEXT);
+      expect(logs.join('\n')).not.toContain(CLIENT);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

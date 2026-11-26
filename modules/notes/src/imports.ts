@@ -27,7 +27,8 @@ import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT } from './attachments.ts';
 import { lockNotebookReorder, lockNotebooksSharedInOrder, lockNotesEraseShared } from './locks.ts';
-import { resolveNotebookForNote } from './notes.ts';
+import { NOTEBOOK_REBALANCE_AT, rebalanceEditableNotebooksBatch } from './notebooks.ts';
+import { hasWholeOrgScope, resolveNotebookForNote } from './notes.ts';
 import { detailsOf, due, lockTodoListOrder, lockTodoSortOrder, lockTodosInOrder, ownKeys, parseSections, remindAt } from './todos.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -102,6 +103,7 @@ export const noteImportEnex = defineCommand({
     const privateNotebookByName = new Map<string, string>();
     let totalOwnedNotebooks = 0;
     let lastNotebookSortKey: string | null = null;
+    let wholeOrg = false;
     if (neededFileNotebookNames.size > 0) {
       const loadPrivateNotebooks = async (): Promise<Map<string, string[]>> => {
         privateNotebookByName.clear();
@@ -170,6 +172,7 @@ export const noteImportEnex = defineCommand({
       }
 
       if (missingAfterLock) {
+        wholeOrg = await hasWholeOrgScope(ctx.trx);
         const existingAllCountRow = await ctx.trx
           .selectFrom('ludy_notes.notebook')
           .select(({ fn }) => fn.countAll<string>().as('n'))
@@ -219,6 +222,8 @@ export const noteImportEnex = defineCommand({
       updatedAt: Date;
     }> = [];
     let skippedDuplicates = 0;
+    let rebalancedTailKeys: string[] | null = null;
+    let rebalancedTailIdx = 0;
 
     for (const item of input.notes) {
       const titleKey = item.title.trim().toLowerCase();
@@ -245,26 +250,17 @@ export const noteImportEnex = defineCommand({
         if (totalOwnedNotebooks >= NOTEBOOKS_MAX) {
           throw new DomainError('NOTEBOOK_LIMIT_REACHED', 422, `Đã đạt giới hạn ${NOTEBOOKS_MAX} sổ tay; hãy xóa bớt sổ tay không còn dùng`);
         }
-        let nextSortKey = keyBetween(lastNotebookSortKey, null);
-        if (nextSortKey.length > REBALANCE_AT) {
-          const ownNbs = await ctx.trx
-            .selectFrom('ludy_notes.notebook')
-            .select(['id', 'sort_key'])
-            .where('org_id', '=', ctx.orgId)
-            .where('author_user_id', '=', userId)
-            .orderBy('id')
-            .forUpdate()
-            .execute();
-          ownNbs.sort((a, b) => (a.sort_key < b.sort_key ? -1 : a.sort_key > b.sort_key ? 1 : a.id.localeCompare(b.id)));
-          const fresh = spreadKeys(ownNbs.length + 1);
-          if (ownNbs.length > 0) {
-            const ids = ownNbs.map((r) => r.id);
-            const keys = fresh.slice(0, ids.length);
-            await sql`UPDATE ludy_notes.notebook AS n SET sort_key = v.key
-              FROM unnest(${ids}::uuid[], ${keys}::text[]) AS v(id, key)
-              WHERE n.org_id = ${ctx.orgId}::uuid AND n.id = v.id`.execute(ctx.trx);
+        let nextSortKey: string;
+        if (rebalancedTailKeys !== null && rebalancedTailIdx < rebalancedTailKeys.length) {
+          nextSortKey = rebalancedTailKeys[rebalancedTailIdx++] as string;
+        } else {
+          nextSortKey = keyBetween(lastNotebookSortKey, null);
+          if (nextSortKey.length > NOTEBOOK_REBALANCE_AT) {
+            const remainingMissing = [...neededFileNotebookNames].filter((key) => !privateNotebookByName.has(key)).length;
+            rebalancedTailKeys = await rebalanceEditableNotebooksBatch(ctx, userId, wholeOrg, remainingMissing);
+            rebalancedTailIdx = 1;
+            nextSortKey = rebalancedTailKeys[0] as string;
           }
-          nextSortKey = fresh[ownNbs.length] as string;
         }
         const nbRow = await ctx.trx
           .insertInto('ludy_notes.notebook')

@@ -9,17 +9,23 @@ import {
   zProjectTaskCreate,
   zTaskChecklist,
   type ProjectTaskCard,
+  type TaskChecklistStep,
 } from '@ludy/kernel-contract';
-import type { ReactNode } from 'react';
+import { act, useState, type ReactNode } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { FakeDomNode, createScopedDomHarness } from './fake-dom.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { en as enMessages } from '../src/i18n/messages/en.ts';
 
 const queryClientState = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 const authState = vi.hoisted(() => ({ modules: ['kernel', 'projects', 'notes'] as string[] }));
+const mutationState = vi.hoisted(() => ({
+  handler: null as null | ((variables: Record<string, unknown>) => Promise<unknown>),
+}));
 const TASK_ID = '20000000-0000-4000-8000-000000000101';
 const PROJECT_ID = '10000000-0000-4000-8000-000000000001';
 
@@ -30,7 +36,13 @@ vi.mock('../src/lib/api.ts', async () => {
     new Proxy(() => undefined, {
       get: (_t, prop: string) => {
         if (prop === 'queryOptions') return () => ({ queryKey: path, queryFn: async () => null });
-        if (prop === 'mutationOptions') return (opts: Record<string, unknown> = {}) => ({ mutationFn: async () => undefined, ...opts });
+        if (prop === 'mutationOptions') {
+          return (opts: Record<string, unknown> = {}) => ({
+            mutationFn: async (variables: Record<string, unknown>) =>
+              mutationState.handler ? mutationState.handler(variables) : undefined,
+            ...opts,
+          });
+        }
         if (prop === 'key') return () => path;
         return node([...path, prop]);
       },
@@ -99,6 +111,7 @@ function makeCard(overrides: Partial<ProjectTaskCard> = {}): ProjectTaskCard {
 beforeEach(() => {
   queryClientState.current.clear();
   authState.modules = ['kernel', 'projects', 'notes'];
+  mutationState.handler = null;
 });
 
 describe('task checklist contract & helpers (#2606)', () => {
@@ -307,5 +320,232 @@ describe('task checklist UI (#2606)', () => {
       ),
     );
     expect(dialogClosedHtml).toBe('');
+  });
+});
+
+describe('TaskChecklistSection mounted DOM overlapping edits & 44px targets (#4761)', () => {
+  const domHarness = createScopedDomHarness();
+
+  afterEach(async () => {
+    mutationState.handler = null;
+    await domHarness.teardownScopedDom();
+  });
+
+  it('gives checklist move-up, move-down, and remove controls 44px mobile touch targets (max-md:size-11)', async () => {
+    const body = domHarness.installScopedDom();
+    const container = new FakeDomNode(1, 'div');
+    body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    domHarness.setMountedRoot(root);
+
+    await act(async () => {
+      root.render(
+        wrap(
+          <TaskChecklistSection
+            taskId={TASK_ID}
+            checklist={[
+              { text: 'Bước A', done: false },
+              { text: 'Bước B', done: false },
+            ]}
+            revision={1}
+            checkedOut={false}
+          />,
+        ),
+      );
+    });
+
+    const moveUpBtns = container.querySelectorAll(`button[aria-label="${viMessages.tasks.checklistMoveUp}"]`);
+    const moveDownBtns = container.querySelectorAll(`button[aria-label="${viMessages.tasks.checklistMoveDown}"]`);
+    const removeBtns = container.querySelectorAll(`button[aria-label="${viMessages.tasks.checklistRemove}"]`);
+    expect(moveUpBtns).toHaveLength(2);
+    expect(moveDownBtns).toHaveLength(2);
+    expect(removeBtns).toHaveLength(2);
+    for (const btn of [...moveUpBtns, ...moveDownBtns, ...removeBtns]) {
+      expect(btn.className).toContain('size-8');
+      expect(btn.className).toContain('max-md:size-11');
+    }
+  });
+
+  it('syncs savedRef on latest success without reverting or dropping rapid overlapping edits', async () => {
+    const body = domHarness.installScopedDom();
+    const container = new FakeDomNode(1, 'div');
+    body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    domHarness.setMountedRoot(root);
+
+    let serverRevision = 1;
+    const pending: Array<{
+      variables: Record<string, unknown>;
+      resolve: (value: unknown) => void;
+      reject: (err: unknown) => void;
+    }> = [];
+    mutationState.handler = (variables) =>
+      new Promise((resolve, reject) => {
+        if (variables.expectedRevision !== serverRevision) {
+          reject(Object.assign(new Error('stale'), { code: 'TASK_STALE_REVISION' }));
+          return;
+        }
+        pending.push({ variables, resolve, reject });
+      });
+
+    let updateHostProps!: (next: { checklist: TaskChecklistStep[]; revision: number }) => void;
+    function Host() {
+      const [state, setState] = useState<{ checklist: TaskChecklistStep[]; revision: number }>({
+        checklist: [
+          { text: 'Bước 1', done: false },
+          { text: 'Bước 2', done: false },
+        ],
+        revision: 1,
+      });
+      updateHostProps = setState;
+      return wrap(
+        <TaskChecklistSection
+          taskId={TASK_ID}
+          checklist={state.checklist}
+          revision={state.revision}
+          checkedOut={false}
+        />,
+      );
+    }
+
+    await act(async () => {
+      root.render(<Host />);
+    });
+
+    const checkboxes = () => container.querySelectorAll('input').filter((el) => el.type === 'checkbox');
+    const badgeText = () => container.querySelector('[data-testid="task-checklist-badge"]')?.textContent ?? '';
+    expect(checkboxes()).toHaveLength(2);
+    expect(badgeText()).toBe('0/2');
+
+    // 1. Two rapid overlapping edits in the same tick coalesce into one in-flight mutation plus one queued revision.
+    await act(async () => {
+      const cb0 = checkboxes()[0]!;
+      const cb1 = checkboxes()[1]!;
+      cb0.checked = true;
+      cb0.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+      cb1.checked = true;
+      cb1.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+    });
+
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.variables.expectedRevision).toBe(1);
+    expect(pending[0]!.variables.checklist).toEqual([
+      { text: 'Bước 1', done: true },
+      { text: 'Bước 2', done: false },
+    ]);
+    expect(checkboxes().map((cb) => cb.checked)).toEqual([true, true]);
+    expect(badgeText()).toBe('2/2');
+
+    // 2. First mutation settles with intermediate rev=2 prop -> dispatches queued edit with expectedRevision=2 and must NOT revert!
+    await act(async () => {
+      serverRevision = 2;
+      pending[0]!.resolve({ taskId: TASK_ID, revision: 2 });
+      updateHostProps({
+        checklist: [
+          { text: 'Bước 1', done: true },
+          { text: 'Bước 2', done: false },
+        ],
+        revision: 2,
+      });
+    });
+    expect(pending).toHaveLength(2);
+    expect(pending[1]!.variables.expectedRevision).toBe(2);
+    expect(pending[1]!.variables.checklist).toEqual([
+      { text: 'Bước 1', done: true },
+      { text: 'Bước 2', done: true },
+    ]);
+    expect(checkboxes().map((cb) => cb.checked)).toEqual([true, true]);
+    expect(badgeText()).toBe('2/2');
+
+    // 3. Second mutation settles -> savedRef syncs to 2/2 and revisionRef=3; a stale rev=2 prop afterwards must NOT revert!
+    await act(async () => {
+      serverRevision = 3;
+      pending[1]!.resolve({ taskId: TASK_ID, revision: 3 });
+    });
+    await act(async () => {
+      updateHostProps({
+        checklist: [
+          { text: 'Bước 1', done: true },
+          { text: 'Bước 2', done: false },
+        ],
+        revision: 2,
+      });
+    });
+    expect(checkboxes().map((cb) => cb.checked)).toEqual([true, true]);
+    expect(badgeText()).toBe('2/2');
+
+    // 4. Subsequent edit while parent prop still lags at rev=2 uses revisionRef=3 and keeps 1/2 across lagging prop renders.
+    await act(async () => {
+      const cb0 = checkboxes()[0]!;
+      cb0.checked = false;
+      cb0.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+    });
+    expect(pending).toHaveLength(3);
+    expect(pending[2]!.variables.expectedRevision).toBe(3);
+    expect(pending[2]!.variables.checklist).toEqual([
+      { text: 'Bước 1', done: false },
+      { text: 'Bước 2', done: true },
+    ]);
+    await act(async () => {
+      serverRevision = 4;
+      pending[2]!.resolve({ taskId: TASK_ID, revision: 4 });
+    });
+    expect(checkboxes().map((cb) => cb.checked)).toEqual([false, true]);
+    expect(badgeText()).toBe('1/2');
+
+    // 5. Failed save clears the pending queue and reverts to confirmed savedStepsRef (1/2), never stale lagging parent props (rev=2).
+    await act(async () => {
+      const cb0 = checkboxes()[0]!;
+      const cb1 = checkboxes()[1]!;
+      cb0.checked = true;
+      cb0.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+      cb1.checked = false;
+      cb1.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+    });
+    expect(pending).toHaveLength(4);
+    expect(pending[3]!.variables.expectedRevision).toBe(4);
+    expect(checkboxes().map((cb) => cb.checked)).toEqual([true, false]);
+    await act(async () => {
+      serverRevision = 5;
+      pending[3]!.reject(Object.assign(new Error('stale'), { code: 'TASK_STALE_REVISION' }));
+    });
+    expect(pending).toHaveLength(4);
+    expect(checkboxes().map((cb) => cb.checked)).toEqual([false, true]);
+    expect(badgeText()).toBe('1/2');
+
+    // 6. Chained save #1 succeeds then queued save #2 fails with a non-stale error -> still invalidates queries so boards refresh rev=5.
+    const invalidateSpy = vi.spyOn(queryClientState.current, 'invalidateQueries');
+    await act(async () => {
+      updateHostProps({
+        checklist: [
+          { text: 'Bước 1', done: false },
+          { text: 'Bước 2', done: true },
+        ],
+        revision: 5,
+      });
+    });
+    invalidateSpy.mockClear();
+    await act(async () => {
+      const cb0 = checkboxes()[0]!;
+      const cb1 = checkboxes()[1]!;
+      cb0.checked = true;
+      cb0.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+      cb1.checked = false;
+      cb1.dispatchEvent({ type: 'click', bubbles: true, cancelable: true });
+    });
+    expect(pending).toHaveLength(5);
+    await act(async () => {
+      serverRevision = 6;
+      pending[4]!.resolve({ taskId: TASK_ID, revision: 6 });
+    });
+    expect(pending).toHaveLength(6);
+    expect(invalidateSpy).not.toHaveBeenCalled();
+    await act(async () => {
+      pending[5]!.reject(new Error('NETWORK_ERROR'));
+    });
+    expect(invalidateSpy).toHaveBeenCalled();
+    expect(checkboxes().map((cb) => cb.checked)).toEqual([true, true]);
+    expect(badgeText()).toBe('2/2');
+    invalidateSpy.mockRestore();
   });
 });

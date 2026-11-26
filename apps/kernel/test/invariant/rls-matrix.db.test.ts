@@ -289,7 +289,6 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
   ['crove_finance.misa_amis_push', ['update']],
   ['crove_finance.stock_alias', ['delete']],
   ['crove_finance.stock_count', ['update']],
-  ['crove_finance.stock_count_line', ['update']],
   ['crove_finance.stock_item', ['update']],
   ['crove_finance.supplier_bank_account', ['update']],
   ['crove_finance.supplier_payment', ['update']],
@@ -459,6 +458,8 @@ const APPEND_ONLY = new Set<string>([
   'crove_finance.marketplace_connection_file',
   // #4303 S3a: the VAT method and rate of an entity's marketplace sales from a date: a change is a new dated row, never an edit (the books of a closed period keep the rate they were posted with).
   'crove_finance.marketplace_vat_rate',
+  // #2682 N3: count lines are entered once for a draft count; a mistake cancels the draft instead of editing lines.
+  'crove_finance.stock_count_line',
   // #3113 S1: a change of a supplier's bank account is a new row; the history is never edited or deleted.
   'crove_finance.supplier_bank_account_change',
   // #4487 (Stage 5D): append-only candidate stage-entry history for funnel BI (SELECT and INSERT only; no runtime role holds UPDATE or DELETE).
@@ -2093,16 +2094,14 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
-  // #2513: a count of the entity's stock (kiểm kê), a draft until it is confirmed or cancelled. Tenant roles read, insert and move it on (its status, note and who confirmed it), so the
-  // update probes assign the note to itself.
+  // #2513: a count of the entity's stock (kiểm kê), a draft until it is confirmed or cancelled. Tenant roles read, insert and move it on (its status, who confirmed it and the voucher), so the
+  // update probes assign the status to itself (prep for #2682 revoking the unused UPDATE (note) grant).
   'crove_finance.stock_count': {
-    update: { set: 'note = note' },
+    update: { set: 'status = status' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), count_date: '2026-11-03' } }),
   },
-  // #2513: what was counted of one item. It takes its count's entity, and the count and the item are seeded with it. Tenant roles read, insert and change the counted quantity while the
-  // count is a draft, so the update probes assign it to itself.
+  // #2513, #2682: what was counted of one item. It takes its count's entity, and the count and the item are seeded with it. Tenant roles only read and insert lines (UPDATE was revoked in #2682 N3).
   'crove_finance.stock_count_line': {
-    update: { set: 'counted_quantity = counted_quantity' },
     make: (o) => {
       const item = randomUUID();
       const count = randomUUID();

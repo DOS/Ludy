@@ -16,6 +16,7 @@ const suite = ADMIN ? describe : describe.skip;
 const ENQUEUE = 'crove_finance.misa_amis_callback_enqueue(text,uuid[],integer[],boolean[],text[],text[])';
 const CLAIM = 'crove_finance.misa_amis_callback_claim(integer)';
 const DONE = 'crove_finance.misa_amis_callback_done(bigint[])';
+const SWEEP = 'crove_finance.misa_amis_callback_sweep()';
 const TABLE = 'crove_finance.misa_amis_callback_pending';
 
 suite('the MISA AMIS callback definers (#3903)', () => {
@@ -54,7 +55,7 @@ suite('the MISA AMIS callback definers (#3903)', () => {
   }
 
   it('are SECURITY DEFINER pinned to pg_catalog and pg_temp, with no grant to PUBLIC', async () => {
-    for (const fn of [ENQUEUE, CLAIM, DONE]) {
+    for (const fn of [ENQUEUE, CLAIM, DONE, SWEEP]) {
       const got = await one<{ secdef: boolean; config: string[] | null; acl: string | null }>('SELECT prosecdef AS secdef, proconfig AS config, proacl::text AS acl FROM pg_proc WHERE oid = $1::regprocedure', [fn]);
       expect(got?.secdef, fn).toBe(true);
       expect(got?.config, fn).toEqual(['search_path=pg_catalog, pg_temp']);
@@ -62,11 +63,12 @@ suite('the MISA AMIS callback definers (#3903)', () => {
     }
   });
 
-  it('are executable as the design says: the API login runs the enqueue alone, the worker login the claim and done alone', async () => {
+  it('are executable as the design says: the API login runs the enqueue alone, the worker login the claim, done and sweep alone', async () => {
     const matrix: Array<[string, Record<string, boolean>]> = [
       [ENQUEUE, { crove_app: true, crove_worker: false, crove_tenant: false, crove_definer_tenant: false, crove_auth_reader: false }],
       [CLAIM, { crove_app: false, crove_worker: true, crove_tenant: false, crove_definer_tenant: false, crove_auth_reader: false }],
       [DONE, { crove_app: false, crove_worker: true, crove_tenant: false, crove_definer_tenant: false, crove_auth_reader: false }],
+      [SWEEP, { crove_app: false, crove_worker: true, crove_tenant: false, crove_definer_tenant: false, crove_auth_reader: false }],
     ];
     for (const [fn, roles] of matrix) {
       for (const [role, allowed] of Object.entries(roles)) {
@@ -103,6 +105,9 @@ suite('the MISA AMIS callback definers (#3903)', () => {
     expect(claim?.src).toMatch(/crove_kernel\.org_app_on\(x\.org_id, 'finance'\)/);
     // (`FOR UPDATE SKIP LOCKED` is a row lock, not a write: an UPDATE is a statement start, not preceded by FOR.)
     for (const write of claim?.src.matchAll(/(?<!\bfor\s)\b(?:insert\s+into|update|delete\s+from)\s+([a-z_.]+)/gi) ?? []) expect(write[1], write[0]).toBe('crove_finance.misa_amis_callback_pending');
+    const sweep = await one<{ src: string }>('SELECT prosrc AS src FROM pg_proc WHERE oid = $1::regprocedure', [SWEEP]);
+    expect(sweep?.src).not.toMatch(/misa_amis_push|misa_amis_connection|crove_kernel\./);
+    for (const write of sweep?.src.matchAll(/(?<!\bfor\s)\b(?:insert\s+into|update|delete\s+from)\s+([a-z_.]+)/gi) ?? []) expect(write[1], write[0]).toBe('crove_finance.misa_amis_callback_pending');
   });
 
   it('has an index on the push table that leads with org_refid, so the claim does not scan every organisation (the unique key leads with org_id)', async () => {

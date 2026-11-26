@@ -105,9 +105,12 @@ async function endCall(ctx: CommandContext, key: string, end: PushCallEnd): Prom
 // ---------------------------------------------------------------------------------------------------------------
 // The command a person gives
 
+// What the person saw: the preview's digest. A different digest now means the data changed, and nothing is queued.
+// L3 (#4048): zMisaAmisPreviewAsk is a strict object so zMisaAmisPush rejects any client-supplied sourceId or orgRefid;
+// source_id comes only from server-generated purchase_document.id / cash_voucher.id (DEFAULT ludy_kernel.uuid_v7()),
+// and org_refid is derived server-side from sourceId, so no client or import can inject a cross-org colliding org_refid.
 export const zMisaAmisPush = zMisaAmisPreviewAsk.extend({
   connectionId: zId,
-  // What the person saw: the preview's digest. A different digest now means the data changed, and nothing is queued.
   digest: zDigest,
 });
 export interface MisaAmisPushResult {

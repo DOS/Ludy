@@ -32,7 +32,8 @@ const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const NOTEBOOK = notesManifest.tables.ludy_notes.notebook;
-const REBALANCE_AT = 80;
+export const NOTEBOOK_REBALANCE_AT = 80;
+const REBALANCE_AT = NOTEBOOK_REBALANCE_AT;
 const BACKLINK_SCAN_LIMIT = 500;
 const WIKI_TOKEN_MAX = 260;
 
@@ -405,14 +406,13 @@ export function spreadKeysBetween(lo: string | null, hi: string | null, count: n
   return out;
 }
 
-// Rewrites editable sibling sort keys inside their non-editable shared-notebook intervals so fixed neighbors
-// keep their exact sort keys and relative positions, placing `movingId` at `place` relative to `anchorId`.
-export function planNotebookRebalance(
+function planNotebookRebalanceWithCount(
   others: readonly RebalanceRow[],
   movingId: string,
   place: 'before' | 'after',
   anchorId: string,
-): { movingKey: string; updates: Array<{ id: string; sortKey: string }> } {
+  movingCount: number,
+): { movingKey: string; movingKeys: string[]; updates: Array<{ id: string; sortKey: string }> } {
   const anchorIdx = others.findIndex((r) => r.id === anchorId);
   if (anchorIdx === -1) throw notebookNotFound();
 
@@ -485,7 +485,7 @@ export function planNotebookRebalance(
     }
   }
 
-  let movingKey = '';
+  let movingKeys: string[] = [];
   const updates: Array<{ id: string; sortKey: string }> = [];
 
   let i = 0;
@@ -516,21 +516,39 @@ export function planNotebookRebalance(
       );
     if (alreadyClean) continue;
 
-    const fresh = spreadKeysBetween(loKey, hiKey, run.length);
+    const spreadCount = hasMoving ? run.length - 1 + movingCount : run.length;
+    const fresh = spreadKeysBetween(loKey, hiKey, spreadCount);
+    let freshIdx = 0;
     for (let k = 0; k < run.length; k++) {
       const entry = run[k]!;
-      const nextKey = fresh[k] as string;
       if (entry.moving) {
-        movingKey = nextKey;
-      } else if (entry.sortKey !== nextKey) {
-        updates.push({ id: entry.id, sortKey: nextKey });
+        movingKeys = fresh.slice(freshIdx, freshIdx + movingCount);
+        freshIdx += movingCount;
+      } else {
+        const nextKey = fresh[freshIdx++] as string;
+        if (entry.sortKey !== nextKey) {
+          updates.push({ id: entry.id, sortKey: nextKey });
+        }
       }
     }
   }
 
-  if (movingKey === '') {
+  const movingKey = movingKeys[0] ?? '';
+  if (movingKey === '' || movingKeys.length !== movingCount) {
     throw new Error('planNotebookRebalance: failed to assign a non-empty sort key');
   }
+  return { movingKey, movingKeys, updates };
+}
+
+// Rewrites editable sibling sort keys inside their non-editable shared-notebook intervals so fixed neighbors
+// keep their exact sort keys and relative positions, placing `movingId` at `place` relative to `anchorId`.
+export function planNotebookRebalance(
+  others: readonly RebalanceRow[],
+  movingId: string,
+  place: 'before' | 'after',
+  anchorId: string,
+): { movingKey: string; updates: Array<{ id: string; sortKey: string }> } {
+  const { movingKey, updates } = planNotebookRebalanceWithCount(others, movingId, place, anchorId, 1);
   return { movingKey, updates };
 }
 
@@ -544,16 +562,17 @@ async function loadOrderedNotebooks(ctx: CommandContext) {
     .execute();
 }
 
-// Locks editable sibling rows in deterministic id order and spaces keys around non-editable shared notebooks.
-async function rebalanceEditableNotebooks(
+async function rebalanceEditableNotebooksImpl(
   ctx: CommandContext,
   userId: string,
   wholeOrg: boolean,
   movingId: string | null,
   place: 'before' | 'after',
   anchorId: string | null,
+  movingCount: number,
   initialRows?: Awaited<ReturnType<typeof loadOrderedNotebooks>>,
-): Promise<string> {
+): Promise<string[]> {
+  if (movingCount <= 0) return [];
   const lockedIds = new Set<string>();
   let lockedRows = initialRows ?? (await loadOrderedNotebooks(ctx));
   while (true) {
@@ -582,10 +601,10 @@ async function rebalanceEditableNotebooks(
       sortKey: r.sort_key,
     }));
   if (anchorId === null && lockedOthers.length === 0) {
-    return keyBetween(null, null);
+    return spreadKeys(movingCount);
   }
   const targetAnchorId = anchorId ?? lockedOthers[lockedOthers.length - 1]!.id;
-  const plan = planNotebookRebalance(lockedOthers, movingId ?? '__new__', place, targetAnchorId);
+  const plan = planNotebookRebalanceWithCount(lockedOthers, movingId ?? '__new__', place, targetAnchorId, movingCount);
   if (plan.updates.length > 0) {
     const ids = plan.updates.map((u) => u.id);
     const keys = plan.updates.map((u) => u.sortKey);
@@ -593,7 +612,31 @@ async function rebalanceEditableNotebooks(
       FROM unnest(${ids}::uuid[], ${keys}::text[]) AS v(id, key)
       WHERE n.org_id = ${ctx.orgId}::uuid AND n.id = v.id`.execute(ctx.trx);
   }
-  return plan.movingKey;
+  return plan.movingKeys;
+}
+
+// Locks editable sibling rows in deterministic id order and spaces keys around non-editable shared notebooks.
+async function rebalanceEditableNotebooks(
+  ctx: CommandContext,
+  userId: string,
+  wholeOrg: boolean,
+  movingId: string | null,
+  place: 'before' | 'after',
+  anchorId: string | null,
+  initialRows?: Awaited<ReturnType<typeof loadOrderedNotebooks>>,
+): Promise<string> {
+  const keys = await rebalanceEditableNotebooksImpl(ctx, userId, wholeOrg, movingId, place, anchorId, 1, initialRows);
+  return keys[0] as string;
+}
+
+// Rebalances editable notebooks once and returns `newCount` strictly ordered trailing sort keys for batch imports.
+export async function rebalanceEditableNotebooksBatch(
+  ctx: CommandContext,
+  userId: string,
+  wholeOrg: boolean,
+  newCount: number,
+): Promise<string[]> {
+  return rebalanceEditableNotebooksImpl(ctx, userId, wholeOrg, null, 'after', null, newCount);
 }
 
 async function computeReorderedSortKey(

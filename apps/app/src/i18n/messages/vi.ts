@@ -17896,6 +17896,8 @@ export const vi = {
       STOCK_COUNT_NO_DIFFERENCE: 'Lần kiểm kê này không chênh lệch so với sổ nên không có bút toán để duyệt; hãy xác nhận trực tiếp.',
       STOCK_COUNT_HAS_DIFFERENCE: 'Lần kiểm kê này có chênh lệch so với sổ; hãy gửi đề xuất để chủ sở hữu hoặc quản trị viên duyệt.',
       STOCK_COUNT_STALE: 'Số liệu kho đã thay đổi từ khi lập đề xuất; hãy từ chối đề xuất này và lập lại.',
+      STOCK_COUNT_ORDER: 'Đã có lần kiểm kê được xác nhận sau ngày này cho mặt hàng trong phiếu; không thể xác nhận lùi ngày.',
+      STOCK_COUNT_MOVE_DATE: 'Mặt hàng này đã kiểm kê xác nhận đến ngày hôm nay nên chưa thể ghi biến động cùng ngày; hãy ghi vào ngày sau kiểm kê.',
       STOCK_COUNT_UNSUPPORTED: 'Không lập được bút toán chênh lệch kiểm kê: quá nhiều tài khoản hoặc có số tiền lẻ dưới 1 đồng.',
       STOCK_MOVE_COUNT: 'Phát sinh này là điều chỉnh của một lần kiểm kê nên không đảo được; hãy kiểm kê lại.',
       STOCK_MOVE_HAS_RETURN: 'Lần bán này đã có hàng trả lại; hãy đảo các lần trả lại trước.',

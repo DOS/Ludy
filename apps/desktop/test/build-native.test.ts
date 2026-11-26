@@ -182,10 +182,11 @@ describe('CI desktop-build deduplication, CLI flag validation, and binary verifi
   });
 
   it('rejects unknown CLI flags and invalid --version in package.mjs', async () => {
-    expect(parsePackageArgs([])).toEqual({ version: undefined, skipNative: false });
-    expect(parsePackageArgs(['--skip-native'])).toEqual({ version: undefined, skipNative: true });
-    expect(parsePackageArgs(['--version', '0.1.0'])).toEqual({ version: '0.1.0', skipNative: false });
-    expect(parsePackageArgs(['--skip-native', '--version', '1.2.3'])).toEqual({ version: '1.2.3', skipNative: true });
+    expect(parsePackageArgs([])).toEqual({ version: undefined, skipNative: false, sign: false });
+    expect(parsePackageArgs(['--skip-native'])).toEqual({ version: undefined, skipNative: true, sign: false });
+    expect(parsePackageArgs(['--sign'])).toEqual({ version: undefined, skipNative: false, sign: true });
+    expect(parsePackageArgs(['--version', '0.1.0'])).toEqual({ version: '0.1.0', skipNative: false, sign: false });
+    expect(parsePackageArgs(['--skip-native', '--version', '1.2.3', '--sign'])).toEqual({ version: '1.2.3', skipNative: true, sign: true });
 
     for (const badArgs of [['--skip-nativex'], ['--unknown'], ['positional'], ['--skip-native', '--bogus']]) {
       expect(() => parsePackageArgs(badArgs)).toThrow(/Unknown argument for package\.mjs/);
