@@ -103,7 +103,7 @@ export function einvoiceDraftPrompt(request: EInvoiceDraftRequest): string {
 const readPlain = (text: string): string => text.normalize('NFKC').replace(/\p{Cf}/gu, '').toLowerCase();
 // "1 500 000": digits grouped by spaces in threes are one number, unless a magnitude word follows the last group ("2 500k" is a 2 and a 500k).
 const collapseGroupedSpaces = (normalizedPlain: string): string =>
-  normalizedPlain.replace(/(?<=\d)[    ]+(?=\d{3}(?!\d)(?!\s*(?:tr|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])))/gu, '');
+  normalizedPlain.replace(/(?<=\d)[    ]+(?=\d{3}(?!\d)(?!\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])))/gu, '');
 const read = (text: string): string => collapseGroupedSpaces(readPlain(text));
 
 // "1.250.000" and "1,250,000" are grouping (groups of exactly three digits); "1.5" and "1,5" are decimals.
@@ -144,20 +144,17 @@ const MONEY_END_BEFORE_RATE = /(?:\d\s*(?:đồng|dong|vnđ|vnd|đ|₫|tr(?:iệ
 const RATE_BEFORE_SIGN = /(?<!(?:giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết khấu|chiet khau|ck|discount|off)\s{0,3})(?<![\d.,])(\d{1,3}(?:[.,]\d+)?)(?![\d.,]\d)\s*%/gu;
 const RATE_AFTER_WORD = /(?<![\p{L}])(?:vat|gtgt|thuế\s+suất|thuế|thue\s+suat|thue)(?:\s+(?:là|la|is)(?![\p{L}]))?\s*(?:[:=]\s*)?(\d{1,3}(?:[.,]\d+)?)(?![\d.,]\d)(?!\d)(?!\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))/giu;
 const ALT_VAT_NUM = /^\s*(?:hoặc|hoac|hay|or|\/)\s*(\d{1,3}(?:[.,]\d+)?)(?![\d.,])(\s*%)?(?!\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))/iu;
+const EXEMPT_VAT_EXPR = String.raw`(?:không\s+chịu(?:\s+(?:thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|vat|gtgt))?|khong\s+chiu(?:\s+(?:thue(?:\s+(?:gtgt|vat))?|vat|gtgt))?|kct|không\s+kê\s+khai(?:\s+(?:tính\s+)?(?:nộp\s+)?(?:thuế|thue))?|khong\s+ke\s+khai(?:\s+(?:tinh\s+)?(?:nop\s+)?(?:thue))?|kkknt)`;
+const EXEMPT_VAT_RE = new RegExp(String.raw`(?<![\p{L}])${EXEMPT_VAT_EXPR}(?![\p{L}])`, 'giu');
+const EXEMPT_ALT_BEFORE = new RegExp(String.raw`(?:^|\s)${EXEMPT_VAT_EXPR}\s*(?:hoặc|hoac|hay|or|\/)\s*$`, 'iu');
+const EXEMPT_ALT_AFTER = new RegExp(String.raw`^\s*(?:hoặc|hoac|hay|or|\/)\s*${EXEMPT_VAT_EXPR}(?![\p{L}])`, 'iu');
+
 function ratesInBody(rawBody: string): Set<string> {
   const body = stripTaxAmountNotes(rawBody);
   const rates = new Set<string>();
   const boundTaxWordSpans: Span[] = [];
-  for (const match of body.matchAll(RATE_AFTER_WORD)) {
-    const start = match.index ?? 0;
-    let spanEnd = start + match[0].length;
-    const pct = /^\s*%/.exec(body.slice(spanEnd));
-    if (pct !== null) spanEnd += pct[0].length;
-    const written = writtenVatRate(canon(match[1] ?? ''));
-    if (written !== null && VALID_PERCENT_VAT_RATES.has(written)) {
-      rates.add(written);
-      boundTaxWordSpans.push([start, spanEnd]);
-    }
+  const collectAltNums = (startPos: number) => {
+    let spanEnd = startPos;
     let alt = ALT_VAT_NUM.exec(body.slice(spanEnd));
     while (alt !== null) {
       const altStart = spanEnd;
@@ -169,6 +166,21 @@ function ratesInBody(rawBody: string): Set<string> {
       }
       alt = ALT_VAT_NUM.exec(body.slice(spanEnd));
     }
+  };
+  for (const match of body.matchAll(RATE_AFTER_WORD)) {
+    const start = match.index ?? 0;
+    let spanEnd = start + match[0].length;
+    const pct = /^\s*%/.exec(body.slice(spanEnd));
+    if (pct !== null) spanEnd += pct[0].length;
+    const written = writtenVatRate(canon(match[1] ?? ''));
+    if (written !== null && VALID_PERCENT_VAT_RATES.has(written)) {
+      rates.add(written);
+      boundTaxWordSpans.push([start, spanEnd]);
+    }
+    collectAltNums(spanEnd);
+  }
+  for (const exMatch of body.matchAll(EXEMPT_VAT_RE)) {
+    if (exMatch.index !== undefined) collectAltNums(exMatch.index + exMatch[0].length);
   }
   for (const match of body.matchAll(RATE_BEFORE_SIGN)) {
     const written = writtenVatRate(canon(match[1] ?? ''));
@@ -189,7 +201,14 @@ function ratesInBody(rawBody: string): Set<string> {
     const cleanLocal = localBefore.replace(INVOICE_HEADER_SCOPE, ' ');
     const taxAfterMatch = TAX_RATE_AFTER.exec(chainAfter);
     const taxAfterIsFree = taxAfterMatch !== null && !overlaps(chainEnd, chainEnd + taxAfterMatch[0].length, boundTaxWordSpans);
-    if (TAX_RATE_PREFIX.test(localBefore) || taxAfterIsFree || MONEY_END_BEFORE_RATE.test(localBefore) || !descriptionTokens(cleanLocal).hasProduct) {
+    if (
+      TAX_RATE_PREFIX.test(localBefore) ||
+      EXEMPT_ALT_BEFORE.test(localBefore) ||
+      EXEMPT_ALT_AFTER.test(chainAfter) ||
+      taxAfterIsFree ||
+      MONEY_END_BEFORE_RATE.test(localBefore) ||
+      !descriptionTokens(cleanLocal).hasProduct
+    ) {
       rates.add(written);
     }
   }
@@ -462,10 +481,32 @@ function unitsAccentCompatible(rawA: string, rawB: string): boolean {
 
 const ALLOWED_VN_VAT_TEXT = new Set(['0%', '5%', '8%', '10%', 'KCT', 'KKKNT']);
 
-const ALT_VAT_BEFORE = /(\d{1,3}(?:[.,]\d+)?)(?![\d.,])\s*%?\s*(?:hoặc|hoac|hay|or|\/)\s*$/iu;
+const ALT_VAT_BEFORE = /(\d{1,3}(?:[.,]\d+)?)(?![\d.,])(?:\s*%)?\s*(?:hoặc|hoac|hay|or|\/)\s*$/iu;
 
 const hasUnsupportedVatText = (rawText: string): boolean => {
   const text = stripTaxAmountNotes(rawText);
+  const checkForwardAlts = (startPos: number): boolean => {
+    let cursor = startPos;
+    let alt = ALT_VAT_NUM.exec(text.slice(cursor));
+    while (alt !== null) {
+      const altRate = writtenVatRate(canon(alt[1] ?? ''));
+      if (altRate === null || !ALLOWED_VN_VAT_TEXT.has(altRate)) return true;
+      cursor += alt[0].length;
+      alt = ALT_VAT_NUM.exec(text.slice(cursor));
+    }
+    return false;
+  };
+  const checkBackwardAlts = (startPos: number): boolean => {
+    let backEnd = startPos;
+    let prevAlt = ALT_VAT_BEFORE.exec(text.slice(0, backEnd));
+    while (prevAlt !== null) {
+      const prevRate = writtenVatRate(canon(prevAlt[1] ?? ''));
+      if (prevRate === null || !ALLOWED_VN_VAT_TEXT.has(prevRate)) return true;
+      backEnd -= prevAlt[0].length;
+      prevAlt = ALT_VAT_BEFORE.exec(text.slice(0, backEnd));
+    }
+    return false;
+  };
   for (const m of text.matchAll(
     /(?<![\p{L}])(?:thuế(?:\s+(?:suất|gtgt|vat))?|thue(?:\s+(?:suat|gtgt|vat))?|vat|gtgt)(?:\s+(?:là|la|is)(?![\p{L}]))?\s*(?:[:=]\s*)?(?:(\d+(?:[.,]\d+)?)\s*%|(\d{1,3}(?:[.,]\d+)?)(?![\d.,])(?!\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}])))|(?<![\p{L}])(\d+(?:[.,]\d+)?)\s*%\s*(?:vat|gtgt|thuế|thue)(?![\p{L}])/giu,
   )) {
@@ -479,23 +520,14 @@ const hasUnsupportedVatText = (rawText: string): boolean => {
         const pct = /^\s*%/.exec(text.slice(cursor));
         if (pct !== null) cursor += pct[0].length;
       }
-      let alt = ALT_VAT_NUM.exec(text.slice(cursor));
-      while (alt !== null) {
-        const altRate = writtenVatRate(canon(alt[1] ?? ''));
-        if (altRate === null || !ALLOWED_VN_VAT_TEXT.has(altRate)) return true;
-        cursor += alt[0].length;
-        alt = ALT_VAT_NUM.exec(text.slice(cursor));
-      }
+      if (checkForwardAlts(cursor)) return true;
     } else if (m[3] !== undefined && m.index !== undefined) {
-      let backEnd = m.index;
-      let prevAlt = ALT_VAT_BEFORE.exec(text.slice(0, backEnd));
-      while (prevAlt !== null) {
-        const prevRate = writtenVatRate(canon(prevAlt[1] ?? ''));
-        if (prevRate === null || !ALLOWED_VN_VAT_TEXT.has(prevRate)) return true;
-        backEnd -= prevAlt[0].length;
-        prevAlt = ALT_VAT_BEFORE.exec(text.slice(0, backEnd));
-      }
+      if (checkBackwardAlts(m.index)) return true;
     }
+  }
+  for (const exMatch of text.matchAll(EXEMPT_VAT_RE)) {
+    if (exMatch.index === undefined) continue;
+    if (checkBackwardAlts(exMatch.index) || checkForwardAlts(exMatch.index + exMatch[0].length)) return true;
   }
   return false;
 };
@@ -644,7 +676,7 @@ function extractFigureTokens(body: string): FigureToken[] {
     }
     const rawBeforeTax = body.slice(lastTaxBoundary, start);
     const isNegativeNumber = (prevChar === '-' || prevChar === '−') && (start < 2 || /[\s:=(,;]/u.test(body[start - 2] ?? ''));
-    const hasForeignCurrencyAfter = UNSUPPORTED_CELL_CURRENCY.test(/^\s*(?:[\p{L}]+|[$€£¥₩])/u.exec(after)?.[0] ?? '');
+    const hasForeignCurrencyAfter = UNSUPPORTED_CELL_CURRENCY.test(/^\s*(?:[\p{L}]+[$€£¥₩]?|[$€£¥₩])/u.exec(after)?.[0] ?? '');
     const hasForeignCurrencyBefore =
       /(?:(?<![\p{L}])(?:usd|eur|gbp|jpy|cny|rmb|aud|cad|sgd|thb|krw|twd|hkd|myr|chf|nzd|inr|php|idr|rub|sek|nok|dkk|pln|aed|sar|bnd|khr|lak|mmk)|[$€£¥₩])\s*(?:[:=]\s*)?$/iu.test(
         rawBeforeTax,
@@ -789,8 +821,17 @@ function chooseClauseTokens(plainText: string, collapsedText: string): { tokens:
   return { tokens: collapsedTokens, basisText: collapsedText };
 }
 
-const VAT_ALT_SCOPED_STRIP =
-  /(?<![\p{L}])(?:vat|gtgt|thuế(?:\s+(?:suất|gtgt|vat))?|thue(?:\s+(?:suat|gtgt|vat))?)(?:\s+(?:là|la|is))?\s*(?:[:=]\s*)?\d+(?:[.,]\d+)?\s*%?(?:\s*(?:hoặc|hoac|hay|or|\/)\s*(?:\d+(?:[.,]\d+)?\s*%?|(?:không|khong)\s+chịu(?:\s+(?:thuế|thue))?|kct|(?:không|khong)\s+kê\s+khai|kkknt))+|(?<![\p{L}])(?:\d+(?:[.,]\d+)?\s*%?\s*(?:hoặc|hoac|hay|or|\/)\s*)+\d+(?:[.,]\d+)?\s*%\s*(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?)(?![\p{L}])/giu;
+const VAT_ALT_LABEL = String.raw`(?:vat|gtgt|thuế(?:\s+(?:suất|gtgt|vat))?|thue(?:\s+(?:suat|gtgt|vat))?)`;
+const VAT_ALT_OPT_RIGHT = String.raw`(?:${VAT_ALT_LABEL}\s*(?:[:=]\s*)?)?(?:\d+(?:[.,]\d+)?\s*%?|${EXEMPT_VAT_EXPR})`;
+const VAT_ALT_SCOPED_STRIP = new RegExp(
+  [
+    String.raw`(?<![\p{L}])${VAT_ALT_LABEL}(?:\s+(?:là|la|is))?\s*(?:[:=]\s*)?(?:\d+(?:[.,]\d+)?\s*%?|${EXEMPT_VAT_EXPR})(?:\s*(?:hoặc|hoac|hay|or|\/)\s*${VAT_ALT_OPT_RIGHT})+`,
+    String.raw`(?<![\p{L}])${EXEMPT_VAT_EXPR}(?:\s*(?:hoặc|hoac|hay|or|\/)\s*${VAT_ALT_OPT_RIGHT})+(?:\s*${VAT_ALT_LABEL})?(?![\p{L}])`,
+    String.raw`(?<![\p{L}])\d+(?:[.,]\d+)?\s*%\s*(?:hoặc|hoac|hay|or|\/)\s*(?:${VAT_ALT_OPT_RIGHT}\s*(?:hoặc|hoac|hay|or|\/)\s*)*${EXEMPT_VAT_EXPR}(?![\p{L}])`,
+    String.raw`(?<![\p{L}])(?:\d+(?:[.,]\d+)?\s*%?\s*(?:hoặc|hoac|hay|or|\/)\s*)+\d+(?:[.,]\d+)?\s*%\s*${VAT_ALT_LABEL}(?![\p{L}])`,
+  ].join('|'),
+  'giu',
+);
 
 function summarizeSubPiece(rawText: string, afterConjunction = false): SubPiece {
   const plainText = rawText.trim();
@@ -866,7 +907,18 @@ function splitSubPieces(bodySeg: string): SubPiece[] {
       const packDenomAfterPrice =
         /(?:\d\s*(?:k|tr(?:iệu|ieu)?|tỷ|ty|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)|(?:đơn\s+giá|don\s+gia|giá(?:\s+bán)?|gia(?:\s+ban)?|unit\s+price|price)\s*(?:[:=]\s*)?\d+(?:[.,]\d+)?)\s*$/iu.test(left) &&
         /^\s*\d+(?:[.,]\d+)?(?:\s+(?!(?:vat|gtgt|thuế|thue)(?![\p{L}]))[\p{L}]+){0,2}(?=\s*(?:$|,|vat|gtgt|thuế|thue))/iu.test(right);
-      if (packDenomAfterPrice || !/\d/u.test(left) || !(/\d/u.test(right) || AMP_RIGHT_CUE.test(right))) continue;
+      const leftPlain = collapseGroupedSpaces(readPlain(left));
+      const rightPlain = collapseGroupedSpaces(readPlain(right));
+      const vatAltJoin =
+        extractFigureTokens(leftPlain).length === 0 &&
+        (/(?:%|(?:vat|gtgt|thuế|thue|kct|kkknt)|không\s+chịu(?:\s+thuế)?|không\s+kê\s+khai)$/iu.test(leftPlain.trim()) ||
+          ratesInBody(leftPlain).size > 0 ||
+          hasUnsupportedVatText(leftPlain)) &&
+        new RegExp(String.raw`^\s*(?:${VAT_ALT_LABEL}\s*(?:[:=]\s*)?)?(?:\d{1,3}(?:[.,]\d+)?\s*%?|${EXEMPT_VAT_EXPR})`, 'iu').test(
+          rightPlain,
+        ) &&
+        extractFigureTokens(rightPlain.replace(RATE_AFTER_WORD, ' ').replace(PERCENT_ANY, ' ')).length === 0;
+      if (packDenomAfterPrice || vatAltJoin || !/\d/u.test(left) || !(/\d/u.test(right) || AMP_RIGHT_CUE.test(right))) continue;
     }
     const piece = summarizeSubPiece(bodySeg.slice(start, idx), afterConjunction);
     if (piece.text !== '' && !piece.isBuyerOnly) pieces.push(piece);

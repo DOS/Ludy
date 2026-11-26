@@ -2837,5 +2837,65 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         ], null),
       ),
     ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 hộp sữa giá 50k, VAT 8% / 7%'),
+        answer([line({ description: 'Sữa', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: '8%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo giá 50k, 3 quần giá 60k, VAT 8% / 10% cho toàn bộ hóa đơn'),
+        answer([
+          line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '50000', vatRate: '10%' }),
+          line({ description: 'Quần', unit: null, quantity: '3', unitPrice: '60000', vatRate: '8%' }),
+        ], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 sách giá 50k, 3 bánh giá 100k, VAT 8% / 10%'),
+        answer([
+          line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '50000', vatRate: null }),
+          line({ description: 'Bánh', unit: null, quantity: '3', unitPrice: '100000', vatRate: '8%' }),
+        ], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+    expect(
+      checkEInvoiceDraft(
+        req('bán 2 500 triệu, 3 cái bánh'),
+        answer([line({ description: 'Bánh', unit: null, quantity: '2', unitPrice: '2500000000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 hộp sữa giá 50k, VAT KCT hoặc 8%'),
+        answer([line({ description: 'Sữa', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 hộp sữa giá 50k, KCT hoặc VAT 8%'),
+        answer([line({ description: 'Sữa', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 hộp sữa giá 50k, VAT KCT / 8%'),
+        answer([line({ description: 'Sữa', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: 'KCT' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 hộp sữa giá 50k, 7% hoặc KCT'),
+        answer([line({ description: 'Sữa', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: 'KCT' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 cái bút giá 50 US$'),
+        answer([line({ description: 'Bút', unit: 'cái', quantity: '2', unitPrice: '50', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
   });
 });
