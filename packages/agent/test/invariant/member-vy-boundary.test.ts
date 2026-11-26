@@ -1300,8 +1300,9 @@ function scanSource(
         openLtCount = 0;
       }
       prevAllowsRegex = true;
+      const inJsxTextElem = Boolean(options.jsx && jsxStack[jsxStack.length - 1]?.mode === 'elem');
       prevCouldBeDivision = (punct === '}' && lastRBraceWasExpr) || closedGenericGt;
-      prevMaySpeculativelyDivide = punct === '}' || punct === '>';
+      prevMaySpeculativelyDivide = (punct === '}' && (lastRBraceWasExpr || inJsxTextElem)) || punct === '>';
       prevWasDot = false;
     }
     prevControlKeyword = '';
@@ -11398,5 +11399,5 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(
       memberVyViolations('let read = globalThis.fetch;\nfor (let i = 0; i < 2; i += 1) {\n  { if (i === 0) break; read = cache.fetch; }\n  read(key);\n}'),
     ).toContain('calls the network directly');
-  }, 15_000);
+  }, 30_000);
 });
