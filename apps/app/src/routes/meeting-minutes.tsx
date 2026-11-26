@@ -188,7 +188,7 @@ export function MeetingMinutesPage() {
   const place = typed ?? savedPlace;
   // The limit is counted in code points, as the server and the database count it (#5043): an emoji is one, so the field's maxLength is only the loose UTF-16 bound the schemas use (two units a character at most).
   const placeTooLong = [...place.trim()].length > MEETING_PLACE_MAX;
-  const placeError = savePlace.error ? errorMessage(savePlace.error) : placeTooLong ? t('minutes.placeTooLong', { max: MEETING_PLACE_MAX }) : null;
+  const placeError = savePlace.error ? errorMessage(savePlace.error) : placeTooLong ? t('minutes.placeTooLong', { max: String(MEETING_PLACE_MAX) }) : null;
   const model = buildMinutes(meeting.data, results.data, (userId) => memberLabel(members, userId, t('results.unknownMember')));
   return frame(
     <div className="space-y-4">
