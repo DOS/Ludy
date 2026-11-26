@@ -467,6 +467,18 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
       );
       expect(await waiting(users.owner)).toBe(1);
       expect(await waiting(chief)).toBe(1);
+      // A proposal with a malformed authors entry (such as a co_author entry inside authors, which parseAuthors refuses)
+      // is excluded from both waiting proposals and flags even for live commands.
+      await admin((c) => c.query(`DELETE FROM ludy_kernel.proposal WHERE org_id = $1 AND command IN ('finance.payroll_posting.record', 'finance.supplier_payment.record')`, [orgId]));
+      await admin((c) =>
+        c.query(
+          `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, legal_entity_id)
+           VALUES ($1, 'finance.supplier_payment', 'finance.supplier_payment.record', 'pending', 'Chi NCC', '{"checks":[{"id":"c1","status":"fail","code":"X"}]}', 1, $2::uuid[], $3, $4)`,
+          [orgId, [users.owner], JSON.stringify([{ type: 'user', id: users.admin }, { type: 'co_author', id: users.owner }]), defaultEntity],
+        ),
+      );
+      expect(await waiting(users.owner)).toBe(0);
+      expect(await hasFailedFlag(users.owner)).toBe(false);
     } finally {
       await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET approval_preset = 'founder' WHERE org_id = $1`, [orgId]));
       await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, users.approver]));

@@ -431,7 +431,10 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     await expect(approve(o, proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
     await expect(approve(o, proposalId, o.admin)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
     await expect(approve(o, proposalId, o.admin2)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
-    const [otherAudit] = await rows<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve'`, [o.orgId]);
+    const [otherAudit] = await rows<{ detail: Record<string, unknown> }>(
+      `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve' AND outcome = 'ok' AND target_id = $2`,
+      [o.orgId, proposalId],
+    );
     expect(otherAudit?.detail).toMatchObject({ self_approved: false, policy: { P12: 'pass', P10: 'pass' } });
     expect(otherAudit?.detail.co_author).toBeUndefined();
   });
@@ -442,7 +445,10 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const { proposalId } = await ask(o, runId, o.admin);
     // Only the owner (co-author) and the admin (requester) are eligible, so the owner approves under the co-author exception.
     await expect(approve(o, proposalId, o.owner)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
-    const [audit] = await rows<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve'`, [o.orgId]);
+    const [audit] = await rows<{ detail: Record<string, unknown> }>(
+      `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve' AND outcome = 'ok' AND target_id = $2`,
+      [o.orgId, proposalId],
+    );
     expect(audit?.detail).toMatchObject({ self_approved: false, co_author: true, policy: { P12: 'pass', P10: 'pass' } });
   });
 
@@ -451,7 +457,10 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const { runId } = await approvedRun(o);
     const { proposalId } = await ask(o, runId, o.owner);
     await expect(approve(o, proposalId, o.owner)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
-    const [audit] = await rows<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve'`, [o.orgId]);
+    const [audit] = await rows<{ detail: Record<string, unknown> }>(
+      `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve' AND outcome = 'ok' AND target_id = $2`,
+      [o.orgId, proposalId],
+    );
     expect(audit?.detail).toMatchObject({ self_approved: true, policy: { P12: 'pass', P10: 'self_approved' } });
     expect(audit?.detail.co_author).toBeUndefined();
   });
