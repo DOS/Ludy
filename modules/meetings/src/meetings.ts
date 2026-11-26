@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import type { MemberRole } from '@ludy/db';
+import type { Db, MemberRole } from '@ludy/db';
 import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
 import { meetingSearch } from './search.ts';
 import { labelsOfMeetings } from './labels.ts';
@@ -110,6 +110,7 @@ import {
   type MeetingOwnerList,
   type MeetingOwnerListItem,
   type MeetingStatus,
+  type MeetingListInput,
   type MeetingListItem,
   type MeetingSummary,
   type MeetingVisibility,
@@ -201,6 +202,8 @@ interface MeetingRow {
   text_retention_date: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
+  started_at_iso?: string | null;
+  created_at_iso?: string;
 }
 
 function toSummary(
@@ -218,7 +221,7 @@ function toSummary(
     title: r.title,
     language: r.language,
     status: r.status,
-    startedAt: r.started_at ? new Date(r.started_at).toISOString() : null,
+    startedAt: r.started_at_iso ?? (r.started_at ? new Date(r.started_at).toISOString() : null),
     endedAt: r.ended_at ? new Date(r.ended_at).toISOString() : null,
     lengthSeconds: r.length_seconds,
     keepVideo: r.keep_video,
@@ -232,7 +235,7 @@ function toSummary(
     hasTranscript,
     platform,
     readersCount,
-    createdAt: new Date(r.created_at).toISOString(),
+    createdAt: r.created_at_iso ?? new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at).toISOString(),
   };
 }
@@ -661,27 +664,98 @@ function readableAgendaPlatforms(trx: QueryContext['trx'], orgId: string, userId
     .where('c.read_events', '=', true);
 }
 
+// Exact Vietnamese fold map of ludy_kernel.search_fold (migration 20261023060000): preserves symbols like `%`, `_`,
+// CJK, emoji, and regional-indicator flags while folding Vietnamese diacritics and `đ/Đ`.
+const VI_FOLD_FROM =
+  'àáạảãâầấậẩẫăằắặẳẵÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴèéẹẻẽêềếệểễÈÉẸẺẼÊỀẾỆỂỄìíịỉĩÌÍỊỈĨòóọỏõôồốộổỗơờớợởỡÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠùúụủũưừứựửữÙÚỤỦŨƯỪỨỰỬỮỳýỵỷỹỲÝỴỶỸđĐ';
+const VI_FOLD_TO =
+  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaeeeeeeeeeeeeeeeeeeeeeeiiiiiiiiiioooooooooooooooooooooooooooooooooouuuuuuuuuuuuuuuuuuuuuuyyyyyyyyyydd';
+const SEARCH_FOLD_KEPT = new Set(`abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789${VI_FOLD_FROM}`);
+const GRAPHEME_SEGMENTER = new Intl.Segmenter('en', { granularity: 'grapheme' });
+const SEARCH_MEANINGFUL_GRAPHEME = /[\p{L}\p{N}\p{Extended_Pictographic}\p{Regional_Indicator}]/u;
+
+// Maximal runs of meaningful graphemes dropped or altered by search_fold (CJK, Hangul, Cyrillic, emoji,
+// regional-indicator flags, keycap sequences like `1️⃣`/`#️⃣`, non-Vietnamese diacritics) plus whitespace-delimited
+// tokens carrying literal `%` or `_`, so mixed and non-Latin queries enforce those parts consistently (#5052).
+function unfoldedSearchTerms(search: string): string[] {
+  const nfc = search.normalize('NFC');
+  const terms = new Set<string>();
+  let run = '';
+  for (const { segment } of GRAPHEME_SEGMENTER.segment(nfc)) {
+    const isKeycap = segment.includes('\u{20E3}');
+    if (!SEARCH_FOLD_KEPT.has(segment) && (isKeycap || SEARCH_MEANINGFUL_GRAPHEME.test(segment))) {
+      run += segment;
+    } else if (run !== '') {
+      terms.add(run);
+      run = '';
+    }
+  }
+  if (run !== '') terms.add(run);
+  for (const token of nfc.split(/\s+/u)) {
+    if (token !== '' && (token.includes('%') || token.includes('_'))) {
+      terms.add(token);
+    }
+  }
+  return [...terms];
+}
+
+// Builds the exact SELECT query executed by `meetings.meeting.list` so query-plan tests can EXPLAIN the real compiled SQL (#5052).
+export function buildMeetingListQuery(db: Db, orgId: string, today: string, input: MeetingListInput) {
+  let query = db
+    .selectFrom('ludy_meetings.meeting')
+    .selectAll()
+    .select([
+      sql<string | null>`pg_catalog.to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as('started_at_iso'),
+      sql<string>`pg_catalog.to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as('created_at_iso'),
+    ])
+    .where('org_id', '=', orgId)
+    // A meeting past its text date is gone from its day, not from the nightly job's run (#2579).
+    .where((eb) => eb.or([eb('text_retention_date', 'is', null), eb('text_retention_date', '>', today)]));
+
+  if (input.visibility) {
+    query = query.where('visibility', '=', input.visibility);
+  }
+
+  const search = input.search?.trim();
+  if (search) {
+    const normalized = search.normalize('NFC');
+    const extraTerms = unfoldedSearchTerms(normalized);
+    if (extraTerms.length > 0) {
+      query = query.where(
+        sql<boolean>`(ludy_kernel.search_fold(${search}) = '' OR pg_catalog.strpos(ludy_kernel.search_fold(title), ludy_kernel.search_fold(${search})) > 0)`,
+      );
+      query = query.where(
+        sql<boolean>`NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(${extraTerms}::text[]) AS t(term) WHERE pg_catalog.strpos(pg_catalog.lower(pg_catalog.translate(pg_catalog.normalize(title, 'NFC'), ${VI_FOLD_FROM}, ${VI_FOLD_TO})), pg_catalog.lower(pg_catalog.translate(t.term, ${VI_FOLD_FROM}, ${VI_FOLD_TO}))) = 0)`,
+      );
+    } else {
+      query = query.where(
+        sql<boolean>`(CASE WHEN ludy_kernel.search_fold(${search}) = '' THEN pg_catalog.strpos(pg_catalog.lower(pg_catalog.translate(pg_catalog.normalize(title, 'NFC'), ${VI_FOLD_FROM}, ${VI_FOLD_TO})), pg_catalog.lower(pg_catalog.translate(${normalized}, ${VI_FOLD_FROM}, ${VI_FOLD_TO}))) > 0 ELSE pg_catalog.strpos(ludy_kernel.search_fold(title), ludy_kernel.search_fold(${search})) > 0 END)`,
+      );
+    }
+  }
+
+  // Ordered and paged on (COALESCE(started_at, created_at) DESC, id DESC) matching meeting_held_idx (#5052).
+  // startedAt and createdAt carry PostgreSQL microsecond precision (UTC), so keyset cursors stay lossless across
+  // sub-millisecond ties even if the cursor row is deleted, expired, or unshared before the next page.
+  const heldAt = sql`COALESCE(started_at, created_at)`;
+  if (input.afterStartedAt !== undefined && input.afterId !== undefined) {
+    query = query.where(sql<boolean>`(${heldAt}, id) < (${input.afterStartedAt}::timestamptz, ${input.afterId}::uuid)`);
+  }
+
+  return query
+    .orderBy(heldAt, 'desc')
+    .orderBy('id', 'desc')
+    .limit(input.limit ?? 50);
+}
+
 export const meetingList = defineQuery({
   name: 'meetings.meeting.list',
   input: zMeetingListInput,
   access: READERS,
   handler: async (ctx, input): Promise<MeetingListItem[]> => {
     const userId = userOf(ctx.actor);
-    let query = ctx.trx
-      .selectFrom('ludy_meetings.meeting')
-      .selectAll()
-      .where('org_id', '=', ctx.orgId)
-      // A meeting past its text date is gone from its day, not from the nightly job's run (#2579).
-      .where((eb) => eb.or([eb('text_retention_date', 'is', null), eb('text_retention_date', '>', vnDay(new Date()))]));
-
-    if (input.visibility) {
-      query = query.where('visibility', '=', input.visibility);
-    }
-
-    const rows = (await query
-      .orderBy('started_at', 'desc')
-      .limit(input.limit ?? 50)
-      .execute()) as unknown as MeetingRow[];
+    const today = vnDay(new Date());
+    const rows = (await buildMeetingListQuery(ctx.trx, ctx.orgId, today, input).execute()) as unknown as MeetingRow[];
 
     if (rows.length === 0) return [];
 
@@ -757,6 +831,10 @@ export const meetingGet = defineQuery({
     const meeting = (await ctx.trx
       .selectFrom('ludy_meetings.meeting')
       .selectAll()
+      .select([
+        sql<string | null>`pg_catalog.to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as('started_at_iso'),
+        sql<string>`pg_catalog.to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as('created_at_iso'),
+      ])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst()) as unknown as MeetingRow | undefined;
