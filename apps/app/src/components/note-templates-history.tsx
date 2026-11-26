@@ -56,20 +56,56 @@ interface TemplateFormState {
   visibility: NoteVisibility;
 }
 
-function TemplateFormFields({
+export type TemplateOrgScopeState = 'loading' | 'error' | 'whole_org' | 'branch_only';
+
+export function resolveTemplateOrgScope(orgDetail: {
+  data?: { wholeOrgScope?: boolean | undefined } | undefined;
+  isPending?: boolean | undefined;
+  isError?: boolean | undefined;
+}): TemplateOrgScopeState {
+  if (orgDetail.isError) return 'error';
+  if (orgDetail.isPending) return 'loading';
+  if (orgDetail.data?.wholeOrgScope === true) return 'whole_org';
+  if (orgDetail.data?.wholeOrgScope === false) return 'branch_only';
+  return 'error';
+}
+
+export function resolveTemplateInitialVisibility(defaultVisibility: NoteVisibility, orgScope: TemplateOrgScopeState): NoteVisibility {
+  return orgScope === 'whole_org' ? defaultVisibility : 'private';
+}
+
+export function isNoteTemplateVisibilityBlocked(visibility: NoteVisibility, orgScope: TemplateOrgScopeState): boolean {
+  return orgScope !== 'whole_org' && visibility === 'org';
+}
+
+export function isEditNoteTemplateVisibilityBlocked(
+  mine: boolean,
+  visibility: NoteVisibility,
+  orgScope: TemplateOrgScopeState,
+): boolean {
+  return isNoteTemplateVisibilityBlocked(mine ? visibility : 'org', orgScope);
+}
+
+export function TemplateFormFields({
   form,
   onChange,
   canChangeVisibility,
+  orgScope,
+  onRetryOrgScope,
   disabled,
   idPrefix,
 }: {
   form: TemplateFormState;
   onChange: (patch: Partial<TemplateFormState>) => void;
   canChangeVisibility: boolean;
+  orgScope: TemplateOrgScopeState;
+  onRetryOrgScope?: (() => void) | undefined;
   disabled: boolean;
   idPrefix: string;
 }) {
   const t = useTranslations('notes');
+  const common = useTranslations('common');
+  const canShareOrg = orgScope === 'whole_org';
   return (
     <div className="space-y-3">
       <div className="space-y-1">
@@ -86,21 +122,54 @@ function TemplateFormFields({
           data-testid={`${idPrefix}-name`}
         />
       </div>
-      {canChangeVisibility && (
+      {(canChangeVisibility || form.visibility === 'org') && (
         <div className="space-y-1">
-          <label htmlFor={`${idPrefix}-visibility`} className="text-xs font-medium text-muted-foreground">
-            {t('templates.visibilityLabel')}
-          </label>
-          <NativeSelect
-            id={`${idPrefix}-visibility`}
-            value={form.visibility}
-            disabled={disabled}
-            onChange={(e) => onChange({ visibility: e.target.value as NoteVisibility })}
-            data-testid={`${idPrefix}-visibility`}
-          >
-            <NativeSelectOption value="private">{t('templates.visibilityPrivate')}</NativeSelectOption>
-            <NativeSelectOption value="org">{t('templates.visibilityOrg')}</NativeSelectOption>
-          </NativeSelect>
+          {canChangeVisibility && (
+            <>
+              <label htmlFor={`${idPrefix}-visibility`} className="text-xs font-medium text-muted-foreground">
+                {t('templates.visibilityLabel')}
+              </label>
+              <NativeSelect
+                id={`${idPrefix}-visibility`}
+                value={form.visibility}
+                disabled={disabled}
+                onChange={(e) => onChange({ visibility: e.target.value as NoteVisibility })}
+                data-testid={`${idPrefix}-visibility`}
+              >
+                <NativeSelectOption value="private">{t('templates.visibilityPrivate')}</NativeSelectOption>
+                {(canShareOrg || form.visibility === 'org') && (
+                  <NativeSelectOption value="org" disabled={!canShareOrg}>
+                    {t('templates.visibilityOrg')}
+                  </NativeSelectOption>
+                )}
+              </NativeSelect>
+            </>
+          )}
+          {form.visibility === 'org' && orgScope === 'branch_only' && (
+            <p className="text-xs text-warning" role="status" data-testid={`${idPrefix}-visibility-narrowed-hint`}>
+              {canChangeVisibility ? t('templates.visibilityOrgNarrowedHint') : t('templates.visibilityOrgSharedBlockedHint')}
+            </p>
+          )}
+          {orgScope === 'loading' && (
+            <p className="text-xs text-muted-foreground" role="status" data-testid={`${idPrefix}-visibility-scope-loading`}>
+              {common('loading')}
+            </p>
+          )}
+          {orgScope === 'error' && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-warning" role="status" data-testid={`${idPrefix}-visibility-scope-error`}>
+              <span>{t('templates.visibilityOrgScopeError')}</span>
+              {onRetryOrgScope && (
+                <button
+                  type="button"
+                  className="inline-flex min-h-11 items-center underline underline-offset-2 hover:text-foreground md:min-h-0"
+                  onClick={onRetryOrgScope}
+                  data-testid={`${idPrefix}-visibility-scope-retry`}
+                >
+                  {t('templates.visibilityScopeRetryBtn')}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
       <div className="space-y-1">
@@ -174,6 +243,8 @@ export function NewFromTemplateButton({
 
   const writer = role !== undefined && role !== 'viewer';
   const manager = role === 'owner' || role === 'admin';
+  const orgDetail = useQuery(orpc.org.get.queryOptions());
+  const orgScope = resolveTemplateOrgScope(orgDetail);
   const starters = useMemo(() => starterNoteTemplates(locale), [locale]);
   const templatesQuery = useQuery({
     ...orpc.notes.templates.list.queryOptions({ input: {} }),
@@ -413,7 +484,7 @@ export function NewFromTemplateButton({
               className="space-y-4"
               onSubmit={(e) => {
                 e.preventDefault();
-                if (!editForm.name.trim() || updateTemplate.isPending) return;
+                if (!editForm.name.trim() || updateTemplate.isPending || isEditNoteTemplateVisibilityBlocked(editing.mine, editForm.visibility, orgScope)) return;
                 updateTemplate.mutate(editing);
               }}
             >
@@ -421,6 +492,8 @@ export function NewFromTemplateButton({
                 form={editForm}
                 onChange={(patch) => setEditForm((prev) => ({ ...prev, ...patch }))}
                 canChangeVisibility={editing.mine}
+                orgScope={orgScope}
+                onRetryOrgScope={() => void orgDetail.refetch()}
                 disabled={updateTemplate.isPending}
                 idPrefix="note-template-edit"
               />
@@ -432,7 +505,7 @@ export function NewFromTemplateButton({
                 <Button
                   type="submit"
                   loading={updateTemplate.isPending}
-                  disabled={!editForm.name.trim() || updateTemplate.isPending}
+                  disabled={!editForm.name.trim() || updateTemplate.isPending || isEditNoteTemplateVisibilityBlocked(editing.mine, editForm.visibility, orgScope)}
                   data-testid="note-template-edit-submit"
                 >
                   {t('templates.saveSubmitBtn')}
@@ -494,6 +567,8 @@ export function SaveAsTemplateButton({
   const t = useTranslations('notes');
   const common = useTranslations('common');
   const api = useMemo(() => clientForOrg(slug), [slug]);
+  const orgDetail = useQuery(orpc.org.get.queryOptions());
+  const orgScope = resolveTemplateOrgScope(orgDetail);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<TemplateFormState>({
     name: '',
@@ -528,7 +603,7 @@ export function SaveAsTemplateButton({
       title: title.trim(),
       body,
       tags: tags.join(', '),
-      visibility: defaultVisibility,
+      visibility: resolveTemplateInitialVisibility(defaultVisibility, orgScope),
     });
     setOpen(true);
   };
@@ -557,7 +632,7 @@ export function SaveAsTemplateButton({
             className="space-y-4"
             onSubmit={(e) => {
               e.preventDefault();
-              if (!form.name.trim() || saveMutation.isPending) return;
+              if (!form.name.trim() || saveMutation.isPending || isNoteTemplateVisibilityBlocked(form.visibility, orgScope)) return;
               saveMutation.mutate();
             }}
           >
@@ -565,6 +640,8 @@ export function SaveAsTemplateButton({
               form={form}
               onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
               canChangeVisibility
+              orgScope={orgScope}
+              onRetryOrgScope={() => void orgDetail.refetch()}
               disabled={saveMutation.isPending}
               idPrefix="note-template-save"
             />
@@ -576,7 +653,7 @@ export function SaveAsTemplateButton({
               <Button
                 type="submit"
                 loading={saveMutation.isPending}
-                disabled={!form.name.trim() || saveMutation.isPending}
+                disabled={!form.name.trim() || saveMutation.isPending || isNoteTemplateVisibilityBlocked(form.visibility, orgScope)}
                 data-testid="note-template-save-submit"
               >
                 {t('templates.saveSubmitBtn')}

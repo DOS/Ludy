@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type AiMeter } from '@ludy/agent';
 import type { ModelPort } from '@ludy/agent/member-vy';
 import { createDb, createPool, type Db } from '@ludy/db';
@@ -599,5 +599,73 @@ describe.skipIf(!ADMIN)('Projects P7 (#2598): Vy proposes tasks from a note (PG1
         items: [{ title: 'Should fail', assigneePositionId: null, dueOn: null }],
       }),
     ).rejects.toMatchObject({ code: 'MODULE_OFF', details: { module: 'notes' } });
+
+    // Re-enable notes and verify projects.tasks_from_note.start serializes against concurrent hard-delete (#4725).
+    await exec(org.orgId, owner.userId, 'kernel.org.set_app', { module: 'notes', enabled: true });
+    const raceNote = await exec<{ noteId: string }>(org.orgId, owner.userId, 'notes.note.create', {
+      title: 'Ghi chú kiểm tra khóa chéo module',
+      body: 'Nội dung sẽ bị xóa cứng đồng thời.',
+      visibility: 'org',
+    });
+    const delClient = new pg.Client({ connectionString: adminUrl });
+    await delClient.connect();
+    let startSettled = false;
+    let startEarlyError: unknown = null;
+    let hasStartEarlyError = false;
+    let startPromise: Promise<unknown> | null = null;
+    try {
+      const delPidRes = await delClient.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid');
+      const delPid = delPidRes.rows[0]!.pid;
+      await delClient.query('BEGIN');
+      await delClient.query(`DELETE FROM ludy_notes.note WHERE org_id = $1 AND id = $2`, [org.orgId, raceNote.noteId]);
+
+      startPromise = exec(org.orgId, alice.userId, 'projects.tasks_from_note.start', {
+        noteId: raceNote.noteId,
+        projectId,
+      });
+      startPromise.catch((err) => {
+        startEarlyError = err;
+        hasStartEarlyError = true;
+      });
+      void startPromise.then(
+        () => {
+          startSettled = true;
+        },
+        () => {
+          startSettled = true;
+        },
+      );
+
+      await vi.waitFor(
+        async () => {
+          if (hasStartEarlyError) throw startEarlyError;
+          const blocked = await sqlAdmin<{ pid: number }>(
+            `SELECT a.pid
+             FROM pg_catalog.pg_stat_activity AS a
+             JOIN pg_catalog.pg_locks AS l ON l.pid = a.pid
+             WHERE a.datname = current_database()
+               AND l.locktype = 'advisory'
+               AND NOT l.granted
+               AND $1 = ANY(pg_catalog.pg_blocking_pids(a.pid))`,
+            [delPid],
+          );
+          expect(blocked.rows.length).toBeGreaterThan(0);
+        },
+        { timeout: 5_000, interval: 10 },
+      );
+      expect(startSettled, 'projects.tasks_from_note.start blocks on ludy.note_vy lock while DELETE is open').toBe(false);
+
+      await delClient.query('COMMIT');
+      await expect(startPromise).rejects.toMatchObject({ code: 'NOTE_NOT_FOUND', status: 404 });
+    } finally {
+      await delClient.query('ROLLBACK').catch(() => undefined);
+      if (startPromise) await startPromise.catch(() => undefined);
+      await delClient.end();
+    }
+    const orphanRows = await sqlAdmin<{ n: number }>(
+      `SELECT count(*)::int AS n FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`,
+      [org.orgId, raceNote.noteId],
+    );
+    expect(orphanRows.rows[0]?.n).toBe(0);
   });
 });

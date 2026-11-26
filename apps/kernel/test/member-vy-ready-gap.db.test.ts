@@ -30,7 +30,7 @@ suite('a run beside a ready result is closed as succeeded (#3058)', () => {
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
   const exec = <T>(who: string, name: string, input: unknown) => runtime.execute<T>(name, input, { actor: asUser(who), orgId });
   const start = (who: string, feature: string) =>
-    exec<{ runId: string; resultId: string }>(who, 'kernel.member_vy.run.start', { feature, subjectType: feature.startsWith('meetings.') ? 'meeting' : 'note', subjectId: randomUUID() });
+    exec<{ runId: string; resultId: string }>(who, 'kernel.member_vy.run.start', { feature, subjectType: feature.startsWith('meetings.') ? 'meeting' : 'member', subjectId: randomUUID() });
   const finish = (runId: string) => worker.execute<{ closed: boolean }>('kernel.member_vy.run.finish', { runId, errorCode: null }, { actor: { type: 'system', component: 'test.ready-gap' }, orgId });
   const sqlAdmin = async <T extends pg.QueryResultRow>(text: string, values: unknown[] = []) => {
     const c = new pg.Client({ connectionString: adminUrl });
@@ -123,10 +123,10 @@ suite('a run beside a ready result is closed as succeeded (#3058)', () => {
   });
 
   it('a new start still supersedes a run whose result is running, and leaves a stored run of another feature alone', async () => {
-    const stuck = await start(users.bob, 'notes.summary');
+    const stuck = await start(users.bob, 'notes.todo_plan');
     const other = await start(users.bob, 'meetings.summary');
     await storedNotClosed(other.runId);
-    const next = await start(users.bob, 'notes.summary');
+    const next = await start(users.bob, 'notes.todo_plan');
     expect(await run(stuck.runId)).toMatchObject({ status: 'cancelled', error: 'RUN_SUPERSEDED' });
     expect(await run(next.runId)).toMatchObject({ status: 'running' });
     expect(await run(other.runId), 'another feature is not touched').toMatchObject({ status: 'running', error: null });
@@ -134,9 +134,9 @@ suite('a run beside a ready result is closed as succeeded (#3058)', () => {
   });
 
   it('supersedes a run whose result failed, and leaves that result as it was', async () => {
-    const failedRun = await start(users.carol, 'notes.todo_suggest');
+    const failedRun = await start(users.carol, 'notes.organize');
     await sqlAdmin(`UPDATE ludy_kernel.member_vy_result SET status = 'failed', error_code = 'MODEL_FAILED' WHERE org_id = $1 AND run_id = $2`, [orgId, failedRun.runId]);
-    await start(users.carol, 'notes.todo_suggest');
+    await start(users.carol, 'notes.organize');
     expect(await run(failedRun.runId)).toMatchObject({ status: 'cancelled', error: 'RUN_SUPERSEDED' });
     expect(await result(failedRun.runId)).toEqual({ status: 'failed', error_code: 'MODEL_FAILED' });
   });
@@ -146,7 +146,7 @@ suite('a run beside a ready result is closed as succeeded (#3058)', () => {
     const check = async (who: string, trigger: () => Promise<unknown>, wholeMember = true) => {
       const stored = await start(who, 'meetings.transcribe');
       const other = await start(who, 'meetings.summary');
-      const failed = await start(who, 'notes.summary');
+      const failed = await start(who, 'notes.todo_plan');
       await storedNotClosed(stored.runId, true);
       await sqlAdmin(`UPDATE ludy_kernel.member_vy_result SET status = 'failed', error_code = 'MODEL_FAILED' WHERE org_id = $1 AND run_id = $2`, [orgId, failed.runId]);
       await trigger();

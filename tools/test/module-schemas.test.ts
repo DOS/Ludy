@@ -88,8 +88,8 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
     why: 'kernel.meeting_platform.recordings checks crove_meetings.meeting for a single overlapping visible meeting (#4123 Step 3) only when meetings is installed (ctx.installed) and enabled (apps_off), in the caller transaction under meeting_read RLS',
   },
   'packages/kernel/src/member-vy.ts': {
-    modules: ['meetings'],
-    why: "the recorder's own Vy reads the recorder's own recording through the audited kernel.member_vy.meeting_audio.open, which calls the definer crove_meetings.audio_for_member_vy (#2578): a run exists only after meetings.transcript.start (a meetings command, registered only when meetings is installed), and the definer refuses anything but that run's own meeting",
+    modules: ['meetings', 'notes'],
+    why: "the recorder's own Vy reads the recorder's own recording through the audited kernel.member_vy.meeting_audio.open, which calls the definer crove_meetings.audio_for_member_vy (#2578): a run exists only after meetings.transcript.start (a meetings command, registered only when meetings is installed), and the definer refuses anything but that run's own meeting; and kernel.member_vy.run.start (#4725) gates note-bound runs behind ctx.installed('notes') and ctx.appEnabled('notes') before checking existence and deleted_at on ludy_notes.note under RLS and the per-org note_vy advisory lock",
   },
   'packages/kernel/src/offboarding.ts': {
     modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'],

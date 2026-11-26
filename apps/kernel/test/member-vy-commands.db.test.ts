@@ -32,7 +32,7 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
   const exec = <T>(who: string, name: string, input: unknown) => runtime.execute<T>(name, input, { actor: asUser(who), orgId });
   const query = <T>(who: string, name: string, input: unknown) => runtime.query<T>(name, input, { actor: asUser(who), orgId });
-  const start = (who: string, feature = 'notes.summary') => exec<{ runId: string; resultId: string; expiresAt: string }>(who, 'kernel.member_vy.run.start', { feature, subjectType: 'note', subjectId: randomUUID() });
+  const start = (who: string, feature = 'notes.todo_plan') => exec<{ runId: string; resultId: string; expiresAt: string }>(who, 'kernel.member_vy.run.start', { feature, subjectType: 'member', subjectId: randomUUID() });
   const store = (who: string, runId: string, outcome: unknown) => exec<{ stored: boolean; status: string }>(who, 'kernel.member_vy.result.store', { runId, outcome });
   const sqlAdmin = async <T extends pg.QueryResultRow>(text: string, values: unknown[] = []) => {
     const c = new pg.Client({ connectionString: adminUrl });
@@ -90,7 +90,7 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     const got = await query<{ status: string; privateRead: boolean; tainted: boolean }>(users.alice, 'kernel.member_vy.result.get', { runId: second.runId });
     expect(got).toMatchObject({ status: 'running', privateRead: true, tainted: true });
     await expect(query(users.bob, 'kernel.member_vy.result.get', { runId: second.runId }), 'another member reading it').rejects.toMatchObject({ code: 'RESULT_NOT_FOUND' });
-    await expect(exec(users.alice, 'kernel.member_vy.run.start', { feature: 'finance.invoice_extract', subjectType: 'note', subjectId: randomUUID() }), 'a feature that is not a member-Vy feature').rejects.toThrow();
+    await expect(exec(users.alice, 'kernel.member_vy.run.start', { feature: 'finance.invoice_extract', subjectType: 'member', subjectId: randomUUID() }), 'a feature that is not a member-Vy feature').rejects.toThrow();
   });
 
   it('stores the text through the one command, tainted and private, with nothing of it in the audit trail', async () => {
@@ -250,29 +250,29 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
   // #2941: a feature that must not cut off a paid run, or that shows a run's state, asks the kernel instead of reading the private result rows. Both read the caller's own rows.
   it('answers whether the caller has a live run, from their own rows only', async () => {
     const subjectId = randomUUID();
-    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest' }), 'nothing yet').toEqual({ live: false });
-    const run = await exec<{ runId: string }>(users.admin, 'kernel.member_vy.run.start', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId });
-    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest' })).toEqual({ live: true });
-    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest', subjectId })).toEqual({ live: true });
-    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest', subjectId: randomUUID() }), 'another subject').toEqual({ live: false });
-    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.summary' }), 'another feature').toEqual({ live: false });
-    expect(await query(users.owner, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest', subjectId }), 'another member\'s run is invisible').toEqual({ live: false });
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.organize' }), 'nothing yet').toEqual({ live: false });
+    const run = await exec<{ runId: string }>(users.admin, 'kernel.member_vy.run.start', { feature: 'notes.organize', subjectType: 'member', subjectId });
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.organize' })).toEqual({ live: true });
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.organize', subjectId })).toEqual({ live: true });
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.organize', subjectId: randomUUID() }), 'another subject').toEqual({ live: false });
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_plan' }), 'another feature').toEqual({ live: false });
+    expect(await query(users.owner, 'kernel.member_vy.run.live', { feature: 'notes.organize', subjectId }), 'another member\'s run is invisible').toEqual({ live: false });
     await sqlAdmin(`UPDATE ludy_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'RUN_CANCELLED' WHERE org_id = $1 AND id = $2`, [orgId, run.runId]);
-    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest' }), 'a run that ended').toEqual({ live: false });
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.organize' }), 'a run that ended').toEqual({ live: false });
   });
 
   it('answers the state of the caller\'s latest run for a subject, and nothing else of it', async () => {
     const subjectId = randomUUID();
-    expect(await query(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId }), 'no run').toBeNull();
-    const run = await exec<{ runId: string }>(users.admin, 'kernel.member_vy.run.start', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId });
-    const latest = await query<Record<string, unknown>>(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId });
+    expect(await query(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.organize', subjectType: 'member', subjectId }), 'no run').toBeNull();
+    const run = await exec<{ runId: string }>(users.admin, 'kernel.member_vy.run.start', { feature: 'notes.organize', subjectType: 'member', subjectId });
+    const latest = await query<Record<string, unknown>>(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.organize', subjectType: 'member', subjectId });
     expect(Object.keys(latest ?? {}).sort(), 'only the run id, the state, the error word and the expiry').toEqual(['errorCode', 'expiresAt', 'runId', 'state']);
     expect(latest).toMatchObject({ runId: run.runId, state: 'running', errorCode: null });
-    expect(await query(users.owner, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId }), 'another member sees nothing of it').toBeNull();
-    expect(await query(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId: randomUUID() }), 'another subject').toBeNull();
+    expect(await query(users.owner, 'kernel.member_vy.run.latest', { feature: 'notes.organize', subjectType: 'member', subjectId }), 'another member sees nothing of it').toBeNull();
+    expect(await query(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.organize', subjectType: 'member', subjectId: randomUUID() }), 'another subject').toBeNull();
     // A run that ended while its result stayed running shows as failed with the fixed word RUN_ENDED, never as running for ever.
     await sqlAdmin(`UPDATE ludy_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'RUN_CANCELLED' WHERE org_id = $1 AND id = $2`, [orgId, run.runId]);
-    const ended = await query<Record<string, unknown>>(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId });
+    const ended = await query<Record<string, unknown>>(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.organize', subjectType: 'member', subjectId });
     expect(ended).toMatchObject({ runId: run.runId, state: 'failed', errorCode: 'RUN_ENDED' });
   });
 
@@ -281,8 +281,8 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     const system = { type: 'system' as const, component: 'kernel.member_vy' };
     const refusals: unknown[] = [];
     for (const [name, input] of [
-      ['kernel.member_vy.run.live', { feature: 'notes.todo_suggest' }],
-      ['kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId: randomUUID() }],
+      ['kernel.member_vy.run.live', { feature: 'notes.organize' }],
+      ['kernel.member_vy.run.latest', { feature: 'notes.organize', subjectType: 'member', subjectId: randomUUID() }],
     ] as const) {
       refusals.push(await runtime.query(name, input, { actor: system, orgId }).then(() => 'ANSWERED', (error: { code?: string }) => error.code));
     }

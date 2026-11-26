@@ -12,6 +12,10 @@ chrome.runtime.onMessage.addListener((raw, sender, respond) => {
   if (!isOwnSender(sender, chrome.runtime.id)) return undefined;
   const message = raw as Partial<OffscreenMessage> & { type?: string };
   if (message.target !== 'offscreen') return undefined;
+  if (message.type === 'capture-status') {
+    respond({ active: current !== null, ...(current ? { meetingId: current.meetingId } : {}) });
+    return undefined;
+  }
   if (message.type === 'capture-start') {
     const command = parseCaptureStart(raw);
     if (!command) {
@@ -45,11 +49,15 @@ chrome.runtime.onMessage.addListener((raw, sender, respond) => {
     void (async (): Promise<StopReply> => {
       const running = current;
       if (!running) return { ok: false, reason: 'idle' };
-      current = null;
-      clearInterval(ticker);
-      const done = await running.stop();
-      return { ok: true, ...done };
-    })().then(respond);
+      try {
+        const done = await running.stop();
+        current = null;
+        clearInterval(ticker);
+        return { ok: true, ...done };
+      } catch {
+        return { ok: false, reason: 'error' };
+      }
+    })().then(respond, () => respond({ ok: false, reason: 'error' } satisfies StopReply));
     return true;
   }
   return undefined;

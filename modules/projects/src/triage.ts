@@ -800,7 +800,7 @@ export const projectTriageAccept = defineCommand({
       .where('id', '=', item.id)
       .execute();
 
-    if (item.source_type === 'roadmap.item' && item.source_id && lockedProject.visibility !== 'private') {
+    if (item.source_type === 'roadmap.item' && item.source_id && lockedProject.visibility === 'org') {
       await ctx.trx
         .updateTable('ludy_projects.roadmap_item')
         .set({

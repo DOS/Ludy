@@ -478,6 +478,8 @@ export interface QueryContext {
   memberVy: MemberVyGrant | null;
   // Whether this runtime registered the module (CROVE_MODULES, ADR-0031), as Runtime.installed().
   installed(module: string): boolean;
+  // Whether this runtime registered `module` and the org has it enabled and entitled (ADR-0053).
+  appEnabled?(module: string): Promise<boolean>;
   // A registered command's risk, access and agent approvers, or null when none is registered under that name.
   command(name: string): CommandInfo | null;
   // Opens a personal value sealed under its subject's key (ctx.seal, ADR-0017): the value, or { erased: true } when the subject's key was
@@ -2154,6 +2156,9 @@ export class Runtime {
       query: (name, input) => this.lookup(trx, orgId, actor, entered, name, input),
       reviserOf: (command) => this.reviserOf(command),
       installed: (module) => this.installed(module),
+      appEnabled: async (module) =>
+        (module === 'kernel' || this.installed(module)) &&
+        !(await this.appIsOff(trx, orgId, entered, actor, { name: `${module}._app_check` })),
       command: (name) => this.commandInfo(name),
       open: async (sealed, place, ref) => (await this.openSealed(trx, orgId, actor, [{ sealed, place, ref }], canOpen))[0] as string | ErasedValue,
       openMany: (items) => this.openSealed(trx, orgId, actor, items, canOpen),

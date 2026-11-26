@@ -11,6 +11,7 @@ import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { MEMBER_VY_FEATURES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
+import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -23,13 +24,24 @@ suite('one live Vy run per member per feature (#3029)', () => {
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';
+  let sharedNoteId = '';
   let runtime: Runtime;
   const users = { owner: '', alice: '', bob: '', carol: '', dave: '', erin: '' };
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
   const exec = <T>(who: string, name: string, input: unknown) => runtime.execute<T>(name, input, { actor: asUser(who), orgId });
-  const start = (who: string, feature: string, subjectId = randomUUID()) =>
-    exec<{ runId: string; resultId: string; expiresAt: string }>(who, 'kernel.member_vy.run.start', { feature, subjectType: feature.startsWith('meetings.') ? 'meeting' : 'note', subjectId });
+  const start = (who: string, feature: string, subjectId?: string) => {
+    const isNoteFeature =
+      feature === 'notes.summary' ||
+      feature === 'notes.todo_suggest' ||
+      feature === 'projects.tasks_from_note' ||
+      feature === 'projects.tasks_from_source';
+    return exec<{ runId: string; resultId: string; expiresAt: string }>(who, 'kernel.member_vy.run.start', {
+      feature,
+      subjectType: feature.startsWith('meetings.') ? 'meeting' : isNoteFeature ? 'notes.note' : 'member',
+      subjectId: subjectId ?? (isNoteFeature ? sharedNoteId : randomUUID()),
+    });
+  };
   const store = (who: string, runId: string, outcome: unknown) => exec<{ stored: boolean; status: string }>(who, 'kernel.member_vy.result.store', { runId, outcome });
   const sqlAdmin = async <T extends pg.QueryResultRow>(text: string, values: unknown[] = []) => {
     const c = new pg.Client({ connectionString: adminUrl });
@@ -64,7 +76,10 @@ suite('one live Vy run per member per feature (#3029)', () => {
     const pool = createPool({ connectionString: url.toString(), max: 12 });
     pools.push(pool);
     const db = createDb(pool);
-    runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' })] });
+    runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
+      commands: [...kernelCommands, ...notesCommands],
+      queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...notesQueries],
+    });
     for (const key of Object.keys(users) as Array<keyof typeof users>) {
       users[key] = await upsertIdentity(db, { issuer: 'vy-per-feature', subject: key, email: `${key}@vy-per-feature.test`, name: null });
     }
@@ -77,6 +92,13 @@ suite('one live Vy run per member per feature (#3029)', () => {
       users.dave,
       users.erin,
     ]);
+    sharedNoteId = (
+      await exec<{ noteId: string }>(users.owner, 'notes.note.create', {
+        title: 'Ghi chú chia sẻ cho kiểm thử Vy theo tính năng',
+        body: 'Nội dung ghi chú hợp lệ để chạy các tính năng Vy gắn với ghi chú.',
+        visibility: 'org',
+      })
+    ).noteId;
   }, 300_000);
 
   afterAll(async () => {

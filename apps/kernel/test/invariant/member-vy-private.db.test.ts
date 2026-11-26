@@ -10,17 +10,20 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDb } from "@ludy/db";
 import { migrate } from "@ludy/db/migrate";
 import {
+  acquireNoteVyLock,
   createOrg,
   kernelCommands,
   upsertIdentity,
   kernelQueries,
 } from "@ludy/kernel";
-import { Runtime } from "@ludy/kernel-runtime";
+import { Runtime, defineCommand } from "@ludy/kernel-runtime";
 import { financeCommands, financeQueries } from "@ludy/mod-finance";
+import { notesCommands, notesQueries } from "@ludy/mod-notes";
+import { z } from "zod";
 import { TEST_MANIFESTS } from "./fixtures/manifests.ts";
 import { contextToken } from "./fixtures/context-token.ts";
 import { aiRunFeature, type AiRunFeature } from "./fixtures/ai-run-feature.ts";
@@ -411,6 +414,39 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
           `${f.fn} is not executable by the tenant role`,
         ).toBe(false);
     }
+
+    // Trigger-only note-discard Vy cleanup (#3453, #4725): must stay SECURITY DEFINER, search_path pinned, and out of every runtime role's EXECUTE reach.
+    const { rows: discardRows } = await admin((c) =>
+      c.query<{
+        definer: boolean;
+        config: string[] | null;
+        public_exec: boolean;
+        tenant_exec: boolean;
+        app_exec: boolean;
+        worker_exec: boolean;
+        definer_tenant_exec: boolean;
+      }>(
+        `SELECT p.prosecdef AS definer,
+                p.proconfig AS config,
+                pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec,
+                pg_catalog.has_function_privilege('crove_tenant', p.oid, 'EXECUTE') AS tenant_exec,
+                pg_catalog.has_function_privilege('crove_app', p.oid, 'EXECUTE') AS app_exec,
+                pg_catalog.has_function_privilege('crove_worker', p.oid, 'EXECUTE') AS worker_exec,
+                pg_catalog.has_function_privilege('crove_definer_tenant', p.oid, 'EXECUTE') AS definer_tenant_exec
+           FROM pg_catalog.pg_proc p
+          WHERE p.oid = pg_catalog.to_regprocedure('crove_notes.note_discard_vy()')`,
+      ),
+    );
+    expect(discardRows, 'crove_notes.note_discard_vy() exists').toHaveLength(1);
+    expect(discardRows[0]).toEqual({
+      definer: true,
+      config: ['search_path=pg_catalog, pg_temp'],
+      public_exec: false,
+      tenant_exec: false,
+      app_exec: false,
+      worker_exec: false,
+      definer_tenant_exec: false,
+    });
   });
 
   // From here on, only what exists: the member's rows. Seeded as the superuser (RLS and the binding triggers are set aside for the setup).
@@ -1519,5 +1555,628 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
       memberMode.filter((n) => !allowed.includes(n)),
       "commands that declare memberVy outside the allowed list",
     ).toEqual([]);
+  });
+
+  it("serializes concurrent note hard-delete against kernel.member_vy.run.start without orphaned Vy rows (#4725)", async () => {
+    const deferred = <T = void>() => {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    };
+    const notesPool = createDbPool({ connectionString: appUrl, max: 4 }, dbIds);
+    const holdPool = createDbPool({ connectionString: appUrl, max: 2 }, dbIds);
+    try {
+      const notesDb = createDb(notesPool);
+      const notesRt = new Runtime(notesDb, { manifests: TEST_MANIFESTS }).register({
+        commands: [...kernelCommands, ...notesCommands],
+        queries: [...kernelQueries({ inboundDomain: "in.test" }), ...notesQueries],
+      });
+      const lockMember = await upsertIdentity(notesDb, {
+        issuer: "member-vy",
+        subject: `lock-${randomUUID()}`,
+        email: `lock-${randomUUID()}@member-vy.test`,
+        name: null,
+      });
+      await admin((c) =>
+        c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [
+          orgId,
+          lockMember,
+        ]),
+      );
+
+      // Private note of owner stays unreadable to another member calling kernel.member_vy.run.start directly (RLS).
+      const ownerPrivateNote = await notesRt.execute<{ noteId: string }>(
+        "notes.note.create",
+        { title: "Ghi chú riêng tư của chủ sở hữu", body: "Chỉ chủ sở hữu đọc được.", visibility: "private" },
+        { actor: asUser(users.owner), orgId },
+      );
+      await expect(
+        notesRt.execute(
+          "kernel.member_vy.run.start",
+          { feature: "notes.summary", subjectType: "notes.note", subjectId: ownerPrivateNote.noteId },
+          { actor: asUser(lockMember), orgId },
+        ),
+      ).rejects.toMatchObject({ code: "NOTE_NOT_FOUND", status: 404 });
+      await expect(
+        notesRt.execute(
+          "kernel.member_vy.run.start",
+          { feature: "notes.summary", subjectType: "member", subjectId: ownerPrivateNote.noteId },
+          { actor: asUser(lockMember), orgId },
+        ),
+      ).rejects.toMatchObject({ code: "VALIDATION", status: 422 });
+      await expect(
+        notesRt.execute(
+          "kernel.member_vy.run.start",
+          { feature: "projects.tasks_from_source", subjectType: "member", subjectId: ownerPrivateNote.noteId },
+          { actor: asUser(lockMember), orgId },
+        ),
+      ).rejects.toMatchObject({ code: "VALIDATION", status: 422 });
+
+      const observeRejection = (promise: Promise<unknown>) => {
+        let error: unknown = null;
+        let hasError = false;
+        void promise.catch((err) => {
+          error = err;
+          hasError = true;
+        });
+        return () => {
+          if (hasError) throw error;
+        };
+      };
+
+      // Case A: hard DELETE acquires exclusive note_vy lock first; concurrent run.start waits until commit, then fails NOTE_NOT_FOUND.
+      const deleteFirstNote = await notesRt.execute<{ noteId: string }>(
+        "notes.note.create",
+        { title: "Ghi chú khóa xóa trước (invariant)", body: "Nội dung dùng chung.", visibility: "org" },
+        { actor: asUser(users.owner), orgId },
+      );
+      const delClientA = createDbClient({ connectionString: adminUrl }, dbIds);
+      await delClientA.connect();
+      let runStartSettled = false;
+      let startPromise: Promise<unknown> | null = null;
+      try {
+        const delPidA = (await delClientA.query<{ pid: number }>("SELECT pg_catalog.pg_backend_pid() AS pid")).rows[0]!.pid;
+        await delClientA.query("BEGIN");
+        await delClientA.query("DELETE FROM crove_notes.note WHERE org_id = $1 AND id = $2", [orgId, deleteFirstNote.noteId]);
+
+        startPromise = notesRt.execute(
+          "kernel.member_vy.run.start",
+          { feature: "notes.summary", subjectType: "notes.note", subjectId: deleteFirstNote.noteId },
+          { actor: asUser(lockMember), orgId },
+        );
+        const throwIfStartA = observeRejection(startPromise);
+        void startPromise.then(
+          () => {
+            runStartSettled = true;
+          },
+          () => {
+            runStartSettled = true;
+          },
+        );
+
+        await vi.waitFor(
+          async () => {
+            throwIfStartA();
+            const blocked = await admin((c) =>
+              c.query<{ pid: number }>(
+                `SELECT a.pid
+                 FROM pg_catalog.pg_stat_activity AS a
+                 JOIN pg_catalog.pg_locks AS l ON l.pid = a.pid
+                 WHERE a.datname = current_database()
+                   AND l.locktype = 'advisory'
+                   AND NOT l.granted
+                   AND $1 = ANY(pg_catalog.pg_blocking_pids(a.pid))`,
+                [delPidA],
+              ),
+            );
+            expect(blocked.rows.length).toBeGreaterThan(0);
+          },
+          { timeout: 5_000, interval: 10 },
+        );
+        expect(runStartSettled, "run.start waits on ludy.note_vy advisory lock while DELETE is open").toBe(false);
+
+        await delClientA.query("COMMIT");
+        await expect(startPromise).rejects.toMatchObject({ code: "NOTE_NOT_FOUND", status: 404 });
+      } finally {
+        await delClientA.query("ROLLBACK").catch(() => undefined);
+        if (startPromise) await startPromise.catch(() => undefined);
+        await delClientA.end().catch(() => undefined);
+      }
+
+      const orphanResultsA = await admin((c) =>
+        c.query<{ n: number }>(
+          "SELECT count(*)::int AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2",
+          [orgId, deleteFirstNote.noteId],
+        ),
+      );
+      expect(orphanResultsA.rows[0]?.n).toBe(0);
+
+      // Case B: run.start acquires shared note_vy lock first; concurrent DELETE blocks until commit, then cancels, audits, and purges.
+      const startFirstNote = await notesRt.execute<{ noteId: string }>(
+        "notes.note.create",
+        { title: "Ghi chú khóa start trước (invariant)", body: "Khởi chạy Vy trước khi xóa cứng.", visibility: "org" },
+        { actor: asUser(users.owner), orgId },
+      );
+      const startedInTx = deferred<string>();
+      const allowCommit = deferred<void>();
+      const holdStartCmd = defineCommand({
+        name: "kernel.test_invariant_hold_note_vy_start",
+        input: z.object({ noteId: z.string().uuid() }),
+        risk: "R1",
+        sideEffect: "internal",
+        access: ["owner", "admin", "member"],
+        handler: async (ctx, input): Promise<{ runId: string }> => {
+          const started = await ctx.run<{ runId: string }>("kernel.member_vy.run.start", {
+            feature: "notes.todo_suggest",
+            subjectType: "notes.note",
+            subjectId: input.noteId,
+          });
+          startedInTx.resolve(started.runId);
+          await allowCommit.promise;
+          return { runId: started.runId };
+        },
+      });
+      const holdRt = new Runtime(createDb(holdPool), { manifests: TEST_MANIFESTS }).register({
+        commands: [...kernelCommands, ...notesCommands, holdStartCmd],
+        queries: [...kernelQueries({ inboundDomain: "in.test" }), ...notesQueries],
+      });
+
+      const delClientB = createDbClient({ connectionString: adminUrl }, dbIds);
+      await delClientB.connect();
+      const holdPromise = holdRt.execute<{ runId: string }>(
+        "kernel.test_invariant_hold_note_vy_start",
+        { noteId: startFirstNote.noteId },
+        { actor: asUser(lockMember), orgId },
+      );
+      const throwIfHoldB = observeRejection(holdPromise);
+      let deleteSettled = false;
+      let deletePromise: Promise<unknown> | null = null;
+      let throwIfDeleteB: () => void = () => undefined;
+      let startedRunId = "";
+      try {
+        const delPidB = (await delClientB.query<{ pid: number }>("SELECT pg_catalog.pg_backend_pid() AS pid")).rows[0]!.pid;
+        startedRunId = await Promise.race([startedInTx.promise, holdPromise.then((r) => r.runId)]);
+
+        deletePromise = delClientB
+          .query("DELETE FROM crove_notes.note WHERE org_id = $1 AND id = $2", [orgId, startFirstNote.noteId])
+          .finally(() => {
+            deleteSettled = true;
+          });
+        throwIfDeleteB = observeRejection(deletePromise);
+
+        await vi.waitFor(
+          async () => {
+            throwIfHoldB();
+            throwIfDeleteB();
+            const blocked = await admin((c) =>
+              c.query<{ pid: number }>(
+                `SELECT l.pid
+                 FROM pg_catalog.pg_locks AS l
+                 WHERE l.pid = $1
+                   AND l.locktype = 'advisory'
+                   AND NOT l.granted
+                   AND cardinality(pg_catalog.pg_blocking_pids(l.pid)) > 0`,
+                [delPidB],
+              ),
+            );
+            expect(blocked.rows.length).toBeGreaterThan(0);
+          },
+          { timeout: 5_000, interval: 10 },
+        );
+        expect(deleteSettled, "DELETE waits on ludy.note_vy lock held by run.start").toBe(false);
+
+        allowCommit.resolve();
+        await expect(holdPromise).resolves.toEqual({ runId: startedRunId });
+        await deletePromise;
+      } finally {
+        allowCommit.resolve();
+        await holdPromise.catch(() => undefined);
+        if (deletePromise) await deletePromise.catch(() => undefined);
+        await delClientB.end().catch(() => undefined);
+      }
+
+      const orphanResultsB = await admin((c) =>
+        c.query<{ n: number }>(
+          "SELECT count(*)::int AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2",
+          [orgId, startFirstNote.noteId],
+        ),
+      );
+      expect(orphanResultsB.rows[0]?.n).toBe(0);
+      const cancelledRunB = await admin((c) =>
+        c.query<{ status: string; error: string | null }>(
+          "SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2",
+          [orgId, startedRunId],
+        ),
+      );
+      expect(cancelledRunB.rows[0]).toEqual({ status: "cancelled", error: "NOTE_REMOVED" });
+      const auditB = await admin((c) =>
+        c.query<{ command: string; detail: Record<string, unknown> }>(
+          "SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'notes.vy.run_cancelled' AND target_id = $2",
+          [orgId, startedRunId],
+        ),
+      );
+      expect(auditB.rows).toEqual([
+        {
+          command: "notes.vy.run_cancelled",
+          detail: {
+            runId: startedRunId,
+            noteId: startFirstNote.noteId,
+            feature: "notes.todo_suggest",
+            reason: "NOTE_REMOVED",
+          },
+        },
+      ]);
+
+      // Non-READ-COMMITTED isolation fails closed on both lock holders when rows are deleted, while empty DELETE stays a no-op.
+      const isoNote = await notesRt.execute<{ noteId: string }>(
+        "notes.note.create",
+        { title: "Ghi chú kiểm tra mức cô lập", body: "Không được phép xóa dưới REPEATABLE READ.", visibility: "org" },
+        { actor: asUser(users.owner), orgId },
+      );
+      await admin(async (c) => {
+        await c.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+        await c.query("DELETE FROM crove_notes.note WHERE org_id = $1 AND id = $2", [orgId, randomUUID()]);
+        await c.query("COMMIT");
+      });
+      await expect(
+        admin(async (c) => {
+          await c.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+          try {
+            await c.query("DELETE FROM crove_notes.note WHERE org_id = $1 AND id = $2", [orgId, isoNote.noteId]);
+            await c.query("COMMIT");
+          } catch (error) {
+            await c.query("ROLLBACK");
+            throw error;
+          }
+        }),
+      ).rejects.toMatchObject({ code: "25001" });
+      const stillLive = await admin((c) =>
+        c.query<{ n: number }>("SELECT count(*)::int AS n FROM crove_notes.note WHERE org_id = $1 AND id = $2", [orgId, isoNote.noteId]),
+      );
+      expect(stillLive.rows[0]?.n).toBe(1);
+      await expect(
+        notesDb.transaction().setIsolationLevel("repeatable read").execute((trx) => acquireNoteVyLock(trx, orgId)),
+      ).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
+
+      // Mixed-version rollout & rollback guard (#4725): simulate an older kernel binary inserting ai_run + member_vy_result
+      // WITHOUT calling acquireNoteVyLock(); DB trigger note_member_vy_guard still prevents orphans & lock-order deadlocks.
+      const oldStartedInTx = deferred<string>();
+      const allowOldCommit = deferred<void>();
+      const oldLockedSupersedeInTx = deferred<void>();
+      const allowOldInsertAfterSupersede = deferred<void>();
+      const oldKernelStartCmd = defineCommand({
+        name: "kernel.test_invariant_old_note_vy_start",
+        input: z.object({ noteId: z.string().uuid(), hold: z.boolean(), supersedeRunId: z.string().uuid().optional() }),
+        risk: "R1",
+        sideEffect: "internal",
+        access: ["owner", "admin", "member"],
+        handler: async (ctx, input): Promise<{ runId: string }> => {
+          const memberUserId = ctx.actor.type === "user" ? ctx.actor.userId : "";
+          const agentRow = await ctx.trx
+            .selectFrom("ludy_kernel.agent")
+            .select("id")
+            .where("org_id", "=", ctx.orgId)
+            .where("kind", "=", "member_vy")
+            .where("member_user_id", "=", memberUserId)
+            .executeTakeFirstOrThrow();
+          if (input.supersedeRunId) {
+            await ctx.trx
+              .updateTable("ludy_kernel.ai_run")
+              .set({ status: "cancelled", finished_at: ctx.now, error: "RUN_SUPERSEDED" })
+              .where("org_id", "=", ctx.orgId)
+              .where("id", "=", input.supersedeRunId)
+              .execute();
+            oldLockedSupersedeInTx.resolve();
+            await allowOldInsertAfterSupersede.promise;
+          }
+          const run = await ctx.trx
+            .insertInto("ludy_kernel.ai_run")
+            .values({
+              org_id: ctx.orgId,
+              agent_id: agentRow.id,
+              module: "notes",
+              feature: "notes.summary",
+              status: "running",
+              tainted: true,
+              started_at: ctx.now,
+              expires_at: new Date(ctx.now.getTime() + 30 * 60_000),
+            })
+            .returning("id")
+            .executeTakeFirstOrThrow();
+          await ctx.trx
+            .insertInto("ludy_kernel.member_vy_result")
+            .values({
+              org_id: ctx.orgId,
+              member_user_id: memberUserId,
+              run_id: run.id,
+              feature: "notes.summary",
+              subject_type: "notes.note",
+              subject_id: input.noteId,
+              status: "running",
+              expires_at: new Date(ctx.now.getTime() + 30 * 86_400_000),
+              created_at: ctx.now,
+            })
+            .execute();
+          if (input.hold) {
+            oldStartedInTx.resolve(run.id);
+            await allowOldCommit.promise;
+          }
+          return { runId: run.id };
+        },
+      });
+      const oldKernelPool = createDbPool({ connectionString: appUrl, max: 2 }, dbIds);
+      try {
+        const oldRt = new Runtime(createDb(oldKernelPool), { manifests: TEST_MANIFESTS }).register({
+          commands: [...kernelCommands, ...notesCommands, oldKernelStartCmd],
+          queries: [...kernelQueries({ inboundDomain: "in.test" }), ...notesQueries],
+        });
+
+        // Old-kernel C1a: old-kernel supersedes ai_run first (locking ai_run row) while DELETE acquires note_vy exclusive lock
+        // and waits on that ai_run row; blocking note_member_vy_guard creates a 2-session lock cycle that PG resolves cleanly via deadlock detector (40P01) with zero orphans.
+        const oldSupersededNote = await notesRt.execute<{ noteId: string }>(
+          "notes.note.create",
+          { title: "Ghi chú kiểm tra tránh deadlock kernel cũ", body: "Deadlock detector vẫn xử lý gọn khi kernel cũ đảo thứ tự khóa.", visibility: "org" },
+          { actor: asUser(users.owner), orgId },
+        );
+        const { runId: oldPriorRunId } = await oldRt.execute<{ runId: string }>(
+          "kernel.test_invariant_old_note_vy_start",
+          { noteId: oldSupersededNote.noteId, hold: false },
+          { actor: asUser(lockMember), orgId },
+        );
+        const delClientC1a = createDbClient({ connectionString: adminUrl }, dbIds);
+        await delClientC1a.connect();
+        let oldSupersedePromise: Promise<{ runId: string }> | null = null;
+        let delPromiseC1a: Promise<unknown> | null = null;
+        let throwIfOldSupersedeC1a: () => void = () => undefined;
+        let throwIfDelC1a: () => void = () => undefined;
+        try {
+          const delPidC1a = (await delClientC1a.query<{ pid: number }>("SELECT pg_catalog.pg_backend_pid() AS pid")).rows[0]!.pid;
+          oldSupersedePromise = oldRt.execute<{ runId: string }>(
+            "kernel.test_invariant_old_note_vy_start",
+            { noteId: oldSupersededNote.noteId, hold: false, supersedeRunId: oldPriorRunId },
+            { actor: asUser(lockMember), orgId },
+          );
+          throwIfOldSupersedeC1a = observeRejection(oldSupersedePromise);
+          await Promise.race([oldLockedSupersedeInTx.promise, oldSupersedePromise]);
+
+          delPromiseC1a = delClientC1a.query("DELETE FROM crove_notes.note WHERE org_id = $1 AND id = $2", [
+            orgId,
+            oldSupersededNote.noteId,
+          ]);
+          throwIfDelC1a = observeRejection(delPromiseC1a);
+          await vi.waitFor(
+            async () => {
+              throwIfOldSupersedeC1a();
+              throwIfDelC1a();
+              const blocked = await admin((c) =>
+                c.query<{ pid: number }>(
+                  `SELECT pid
+                   FROM pg_catalog.pg_stat_activity
+                   WHERE datname = current_database()
+                     AND pid = $1
+                     AND cardinality(pg_catalog.pg_blocking_pids(pid)) > 0`,
+                  [delPidC1a],
+                ),
+              );
+              expect(blocked.rows.length).toBeGreaterThan(0);
+            },
+            { timeout: 5_000, interval: 10 },
+          );
+
+          allowOldInsertAfterSupersede.resolve();
+          const [supRes, delRes] = await Promise.allSettled([oldSupersedePromise, delPromiseC1a]);
+          expect(supRes.status === "rejected" || delRes.status === "rejected", "PG breaks 2-session cycle without hanging").toBe(true);
+          if (supRes.status === "rejected") {
+            expect(supRes.reason).toMatchObject({ code: "RETRY", status: 409 });
+            expect(delRes.status).toBe("fulfilled");
+          } else {
+            expect(delRes.status).toBe("rejected");
+            if (delRes.status === "rejected") expect(delRes.reason).toMatchObject({ code: "40P01" });
+          }
+        } finally {
+          allowOldInsertAfterSupersede.resolve();
+          if (oldSupersedePromise) await oldSupersedePromise.catch(() => undefined);
+          if (delPromiseC1a) await delPromiseC1a.catch(() => undefined);
+          await delClientC1a.end().catch(() => undefined);
+        }
+        const liveNoteC1a = await admin((c) =>
+          c.query<{ n: number }>("SELECT count(*)::int AS n FROM crove_notes.note WHERE org_id = $1 AND id = $2", [
+            orgId,
+            oldSupersededNote.noteId,
+          ]),
+        );
+        const orphanC1a = await admin((c) =>
+          c.query<{ n: number }>("SELECT count(*)::int AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2", [
+            orgId,
+            oldSupersededNote.noteId,
+          ]),
+        );
+        const priorRunRowC1a = await admin((c) =>
+          c.query<{ status: string; error: string | null }>("SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2", [
+            orgId,
+            oldPriorRunId,
+          ]),
+        );
+        if (liveNoteC1a.rows[0]?.n === 0) {
+          expect(orphanC1a.rows[0]?.n).toBe(0);
+          expect(priorRunRowC1a.rows[0]).toEqual({ status: "cancelled", error: "NOTE_REMOVED" });
+          const auditPrior = await admin((c) =>
+            c.query<{ command: string; detail: unknown }>(
+              "SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'notes.vy.run_cancelled' AND target_id = $2",
+              [orgId, oldPriorRunId],
+            ),
+          );
+          expect(auditPrior.rows).toHaveLength(1);
+          expect(auditPrior.rows[0]?.detail).toMatchObject({
+            runId: oldPriorRunId,
+            noteId: oldSupersededNote.noteId,
+            feature: "notes.summary",
+            reason: "NOTE_REMOVED",
+          });
+        } else {
+          expect(priorRunRowC1a.rows[0]).toEqual({ status: "cancelled", error: "RUN_SUPERSEDED" });
+        }
+        // Clear any remaining running notes.summary run from C1a before C1b runs on the same member (#4725).
+        await admin((c) =>
+          c.query(
+            `UPDATE ludy_kernel.ai_run
+             SET status = 'cancelled', finished_at = pg_catalog.now(), error = 'TEST_CLEANUP'
+             WHERE org_id = $1
+               AND status = 'running'
+               AND feature = 'notes.summary'
+               AND agent_id IN (SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND member_user_id = $2)`,
+            [orgId, lockMember],
+          ),
+        );
+
+        // Old-kernel C1b: uncommitted DELETE blocks old-kernel insert on blocking note_vy advisory lock; committed DELETE maps P0002 NOTE_NOT_FOUND to 404.
+        const oldDelNote = await notesRt.execute<{ noteId: string }>(
+          "notes.note.create",
+          { title: "Ghi chú kiểm tra kernel cũ xóa trước", body: "Trigger DB phải chặn.", visibility: "org" },
+          { actor: asUser(users.owner), orgId },
+        );
+        const delClientC1b = createDbClient({ connectionString: adminUrl }, dbIds);
+        await delClientC1b.connect();
+        let oldStartSettledC1b = false;
+        let oldStartPromiseC1b: Promise<unknown> | null = null;
+        try {
+          const delPidC1b = (await delClientC1b.query<{ pid: number }>("SELECT pg_catalog.pg_backend_pid() AS pid")).rows[0]!.pid;
+          await delClientC1b.query("BEGIN");
+          await delClientC1b.query("DELETE FROM crove_notes.note WHERE org_id = $1 AND id = $2", [orgId, oldDelNote.noteId]);
+
+          oldStartPromiseC1b = oldRt.execute(
+            "kernel.test_invariant_old_note_vy_start",
+            { noteId: oldDelNote.noteId, hold: false },
+            { actor: asUser(lockMember), orgId },
+          );
+          const throwIfOldStartC1b = observeRejection(oldStartPromiseC1b);
+          void oldStartPromiseC1b.then(
+            () => {
+              oldStartSettledC1b = true;
+            },
+            () => {
+              oldStartSettledC1b = true;
+            },
+          );
+
+          await vi.waitFor(
+            async () => {
+              throwIfOldStartC1b();
+              const blocked = await admin((c) =>
+                c.query<{ pid: number }>(
+                  `SELECT a.pid
+                   FROM pg_catalog.pg_stat_activity AS a
+                   JOIN pg_catalog.pg_locks AS l ON l.pid = a.pid
+                   WHERE a.datname = current_database()
+                     AND l.locktype = 'advisory'
+                     AND NOT l.granted
+                     AND $1 = ANY(pg_catalog.pg_blocking_pids(a.pid))`,
+                  [delPidC1b],
+                ),
+              );
+              expect(blocked.rows.length).toBeGreaterThan(0);
+            },
+            { timeout: 5_000, interval: 10 },
+          );
+          expect(oldStartSettledC1b, "old-kernel insert blocks on ludy.note_vy lock while DELETE is uncommitted").toBe(false);
+
+          await delClientC1b.query("COMMIT");
+
+          await expect(oldStartPromiseC1b).rejects.toMatchObject({ code: "NOTE_NOT_FOUND", status: 404 });
+        } finally {
+          await delClientC1b.query("ROLLBACK").catch(() => undefined);
+          if (oldStartPromiseC1b) await oldStartPromiseC1b.catch(() => undefined);
+          await delClientC1b.end().catch(() => undefined);
+        }
+        const orphanC1b = await admin((c) =>
+          c.query<{ n: number }>("SELECT count(*)::int AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2", [
+            orgId,
+            oldDelNote.noteId,
+          ]),
+        );
+        expect(orphanC1b.rows[0]?.n).toBe(0);
+
+        // Old-kernel C2: old-kernel insert acquires shared lock in DB trigger first; DELETE blocks until commit then cancels & purges.
+        const oldStartFirstNote = await notesRt.execute<{ noteId: string }>(
+          "notes.note.create",
+          { title: "Ghi chú kiểm tra kernel cũ chạy trước", body: "Trigger DB phải giữ khóa đến commit.", visibility: "org" },
+          { actor: asUser(users.owner), orgId },
+        );
+        const delClientC2 = createDbClient({ connectionString: adminUrl }, dbIds);
+        await delClientC2.connect();
+        const oldHoldPromise = oldRt.execute<{ runId: string }>(
+          "kernel.test_invariant_old_note_vy_start",
+          { noteId: oldStartFirstNote.noteId, hold: true },
+          { actor: asUser(lockMember), orgId },
+        );
+        const throwIfOldHoldC2 = observeRejection(oldHoldPromise);
+        let oldDelSettled = false;
+        let oldDelPromise: Promise<unknown> | null = null;
+        let throwIfOldDelC2: () => void = () => undefined;
+        let oldRunId = "";
+        try {
+          const delPidC2 = (await delClientC2.query<{ pid: number }>("SELECT pg_catalog.pg_backend_pid() AS pid")).rows[0]!.pid;
+          oldRunId = await Promise.race([oldStartedInTx.promise, oldHoldPromise.then((r) => r.runId)]);
+
+          oldDelPromise = delClientC2
+            .query("DELETE FROM crove_notes.note WHERE org_id = $1 AND id = $2", [orgId, oldStartFirstNote.noteId])
+            .finally(() => {
+              oldDelSettled = true;
+            });
+          throwIfOldDelC2 = observeRejection(oldDelPromise);
+
+          await vi.waitFor(
+            async () => {
+              throwIfOldHoldC2();
+              throwIfOldDelC2();
+              const blocked = await admin((c) =>
+                c.query<{ pid: number }>(
+                  `SELECT l.pid
+                   FROM pg_catalog.pg_locks AS l
+                   WHERE l.pid = $1
+                     AND l.locktype = 'advisory'
+                     AND NOT l.granted
+                     AND cardinality(pg_catalog.pg_blocking_pids(l.pid)) > 0`,
+                  [delPidC2],
+                ),
+              );
+              expect(blocked.rows.length).toBeGreaterThan(0);
+            },
+            { timeout: 5_000, interval: 10 },
+          );
+          expect(oldDelSettled, "DELETE waits on shared lock taken by note_member_vy_guard").toBe(false);
+
+          allowOldCommit.resolve();
+          await expect(oldHoldPromise).resolves.toEqual({ runId: oldRunId });
+          await oldDelPromise;
+        } finally {
+          allowOldCommit.resolve();
+          await oldHoldPromise.catch(() => undefined);
+          if (oldDelPromise) await oldDelPromise.catch(() => undefined);
+          await delClientC2.end().catch(() => undefined);
+        }
+        const orphanC2 = await admin((c) =>
+          c.query<{ n: number }>("SELECT count(*)::int AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2", [
+            orgId,
+            oldStartFirstNote.noteId,
+          ]),
+        );
+        expect(orphanC2.rows[0]?.n).toBe(0);
+        const cancelledOld = await admin((c) =>
+          c.query<{ status: string; error: string | null }>("SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2", [
+            orgId,
+            oldRunId,
+          ]),
+        );
+        expect(cancelledOld.rows[0]).toEqual({ status: "cancelled", error: "NOTE_REMOVED" });
+      } finally {
+        await oldKernelPool.end().catch(() => undefined);
+      }
+    } finally {
+      await holdPool.end().catch(() => undefined);
+      await notesPool.end().catch(() => undefined);
+    }
   });
 });

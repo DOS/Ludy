@@ -347,6 +347,9 @@ export const zOrgDetail = z.object({
   // ledger's proposals), and the version of the org's choice. Only an owner changes it.
   approvalPreset: z.string(),
   approvalPolicyVersion: z.number().int().positive(),
+  // True when the caller's sealed context covers every legal entity of the org ('*'). Screens use it to hide
+  // org-wide authoring controls (for example org note templates) for branch-scoped writers; the server enforces it too.
+  wholeOrgScope: z.boolean().optional(),
 });
 
 // An org's Social figures on the multi-client home (#1261), read as the member in that org, each as the Social screen it

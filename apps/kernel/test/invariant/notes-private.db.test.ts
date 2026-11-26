@@ -532,6 +532,60 @@ suite('private notes on PostgreSQL (#1671, ADR-0037)', () => {
           actor.name,
         ).toMatchObject({ ok: false, code: '42501' });
       }
+      // Entity-limited non-managers cannot delete a shared template.
+      const delSharedByLimited = await outcome(
+        run(member('an entity-limited member', () => users.limited), (c) => c.query('DELETE FROM crove_notes.note_template WHERE id = $1', [sharedTpl])),
+      );
+      if (delSharedByLimited.ok) expect(delSharedByLimited.value.rowCount, 'entity-limited member deleting shared template').toBe(0);
+      else expect(delSharedByLimited, 'entity-limited member deleting shared template').toMatchObject({ code: '42501' });
+
+      // Narrowed author cannot insert or keep/promote 'org' templates, but can demote to 'private' or delete own template.
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        try {
+          await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+            orgId,
+            users.author,
+            branch,
+            users.owner,
+          ]);
+          await c.query('COMMIT');
+        } catch (error) {
+          await c.query('ROLLBACK');
+          throw error;
+        }
+        try {
+          expect(
+            await outcome(
+              run(author, (a) =>
+                a.query(`INSERT INTO crove_notes.note_template (org_id, author_user_id, visibility, name) VALUES ($1, $2, 'org', 'Tạm nhánh')`, [
+                  orgId,
+                  users.author,
+                ]),
+              ),
+            ),
+            'narrowed author inserting org template',
+          ).toMatchObject({ ok: false, code: '42501' });
+          expect(
+            await outcome(run(author, (a) => a.query(`UPDATE crove_notes.note_template SET visibility = 'org' WHERE id = $1`, [privateTpl]))),
+            'narrowed author promoting private template to org',
+          ).toMatchObject({ ok: false, code: '42501' });
+          expect(
+            await outcome(run(author, (a) => a.query(`UPDATE crove_notes.note_template SET name = 'Đổi tên' WHERE id = $1`, [sharedTpl]))),
+            'narrowed author updating shared template while keeping org visibility',
+          ).toMatchObject({ ok: false, code: '42501' });
+          expect(
+            await outcome(run(author, (a) => a.query(`UPDATE crove_notes.note_template SET visibility = 'private' WHERE id = $1`, [sharedTpl]))),
+            'narrowed author demoting own org template to private',
+          ).toMatchObject({ ok: true, value: { rowCount: 1 } });
+          expect(
+            await outcome(run(author, (a) => a.query('DELETE FROM crove_notes.note_template WHERE id = $1', [sharedTpl]))),
+            'narrowed author deleting own shared template',
+          ).toMatchObject({ ok: true, value: { rowCount: 1 } });
+        } finally {
+          await c.query(`DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND user_id = $2`, [orgId, users.author]);
+        }
+      });
 
       // private_template_counts() returns counts only for owners, admins, and the system context.
       const tplCounts = (actor: Actor) => outcome(run(actor, (c) => c.query('SELECT * FROM crove_notes.private_template_counts()')));
