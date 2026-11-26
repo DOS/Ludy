@@ -435,7 +435,7 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     expect(await refuses(runtime.execute('test.weekly_tracked_probe', { org: orgId, userId: users.tracky, at: AT }, { actor: asUser('tracky'), orgId }))).not.toBeNull();
     await expect(sql`SELECT ludy_meetings.weekly_tracked_hits(${orgId}::uuid, ${users.tracky}::uuid, ${AT}::timestamptz)`.execute(workerDb)).rejects.toThrow(/NO_CONTEXT/);
     // Alone it checks, as the alert's definer does, that Meetings is on for the org and the member's account is enabled: no count (null, not an error) otherwise, and the count is back after. (The org being active is
-    // checked too, but the runtime's own context entry already refuses a closing org before any command runs, so no probe can reach the definer for one.)
+    // checked too: a closing org, status 'offboarding', still enters a system context, so that guard is reached; it is asserted in the closing org test below.)
     const appsOffBefore = (await sqlAdmin<{ apps_off: string[] }>(`SELECT apps_off FROM ludy_kernel.tenant WHERE org_id = $1`, [orgId])).rows[0]?.apps_off ?? [];
     const setAppsOff = (appsOff: string[]) =>
       admin(async (c) => {
@@ -516,6 +516,8 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
       await c.query('COMMIT');
     });
     expect(await due('quiet')).toBeNull();
+    // The tracked-word definer says no count for it either (not 0): the org is not active, and the org keeps tracked words from the test above.
+    expect(await trackedOf('quiet')).toBeNull();
     expect(await runMeetingsWeeklySweep({ runtime: worker, workerDb, at: AT })).toMatchObject({ found: 0, sent: 0 });
   });
 });
