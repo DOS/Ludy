@@ -510,17 +510,29 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     expect(groups.filter((g) => g.title.params?.party?.toString().startsWith('Nhà cung cấp ')).every((g) => g.count === 25)).toBe(true);
     const waiting = await admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_kernel.proposal WHERE org_id = $1 AND status = 'pending' AND command LIKE 'finance.%' AND eligible_approvers @> ARRAY[$2::uuid]`, [orgId, users.owner])).rows[0]?.n));
     // The owner wrote none of these (the admin did), so all wait for the owner except those the owner wrote with the others.
-    expect(groups.reduce((n, g) => n + (g.count ?? 0), 0)).toBeLessThanOrEqual(waiting);
-    expect(groups.reduce((n, g) => n + (g.count ?? 0), 0)).toBeGreaterThanOrEqual(1000);
+    const total = groups.reduce((n, g) => n + (g.count ?? 0), 0);
+    expect(total).toBeLessThanOrEqual(waiting);
+    expect(total).toBeGreaterThanOrEqual(1000);
     expect(elapsed).toBeLessThan(5000);
 
-    // Repeat with the caller listed as a co-author on those 1,000 proposals so the co-author branch stays bounded too.
-    await admin((c) => c.query(`UPDATE ludy_kernel.proposal SET co_authors = ARRAY[$2::uuid] WHERE org_id = $1 AND title LIKE 'HĐ %'`, [orgId, users.owner]));
+    // Repeat with 1,000 payroll_posting co-author proposals: 500 with another independent approver (hidden) and 500 with none (shown).
+    await admin((c) =>
+      c.query(
+        `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, co_authors, legal_entity_id)
+         SELECT $1, 'finance.journal_voucher', 'finance.payroll_posting.record', 'pending', 'Hạch toán ' || g, '{}', 1,
+                CASE WHEN g <= 500 THEN ARRAY[$2::uuid, $3::uuid, $4::uuid] ELSE ARRAY[$2::uuid, $3::uuid] END,
+                jsonb_build_array(jsonb_build_object('type', 'user', 'id', $3::text)),
+                ARRAY[$2::uuid], $5
+         FROM generate_series(1, 1000) g`,
+        [orgId, users.owner, users.admin, users.approver, defaultEntity],
+      ),
+    );
     const coStarted = Date.now();
     const coItems = await today(users.owner);
     const coElapsed = Date.now() - coStarted;
-    expect(coItems.filter((i) => i.kind === 'proposal').reduce((n, g) => n + (g.count ?? 0), 0)).toBeGreaterThanOrEqual(1000);
+    expect(coItems.filter((i) => i.kind === 'proposal').reduce((n, g) => n + (g.count ?? 0), 0)).toBe(total + 500);
     expect(coElapsed).toBeLessThan(5000);
+    await admin((c) => c.query(`DELETE FROM ludy_kernel.proposal WHERE org_id = $1 AND command = 'finance.payroll_posting.record'`, [orgId]));
   });
 
   it('flags the sales e-invoices that need a person (#2502): failed, sent back with a reason, or unanswered for an hour; not a fresh send nor a plain draft', async () => {
