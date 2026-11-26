@@ -244,6 +244,7 @@ export const supplierBankAccountRetire = defineCommand({
 // for byte, can never be opened again. The history keeps only keyed hashes. R3 for owners: it cannot be undone.
 export const supplierBankAccountErase = defineCommand({
   name: 'finance.supplier_bank_account.erase',
+  runsWhenOff: "erases a supplier's sealed bank account data and shreds its subject key while Finance is off",
   input: zSupplierBankAccountErase,
   risk: 'R3',
   sideEffect: 'irreversible',

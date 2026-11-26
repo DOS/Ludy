@@ -6,8 +6,7 @@
 // The list is strict: the 11 commands that RECORD the outcome of an irreversible call a job already made (#3310; a switch-off between the call
 // and its record would lose the outcome and a later retry could do the call twice), the 2 eSign keeping commands (#3406 / #3323), and the 3
 // Social takedown commands (#3310, C3c) that are not records: a takedown stops the exposure of a post, so it still goes out while Social is off
-// (the record of an outcome is kept; the notice of a failed one runs through social.notification.dispatch_removal, #3456). `PENDING_FINANCE_ERASE` (#3744,
-// step 1 of 2) stages the two-step runsWhenOff allowance for `finance.supplier_bank_account.erase` before the module command declares it in step 2.
+// (the record of an outcome is kept; the notice of a failed one runs through social.notification.dispatch_removal, #3456).
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md).
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../../src/config.ts';
@@ -44,9 +43,6 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
   // so the owners and admins are told by mail instead of waiting for the app.
   const TAKEDOWN_NOTICE = ['social.notification.dispatch_removal'];
 
-  // Step 1 of 2 (#3744): pending runsWhenOff allowance for supplier bank account erasure while Finance is off.
-  const PENDING_FINANCE_ERASE = ['finance.supplier_bank_account.erase'];
-
   it('are exactly these commands', () => {
     const current = [
       'ads.account.delete_history',
@@ -66,6 +62,7 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
       'crm.import.expire',
       'crm.quote.revoke_link',
       'finance.marketplace_retention.apply',
+      'finance.supplier_bank_account.erase',
       'hr.payroll.employee.erase',
       'hr.recruiting.candidate.erase',
       'meetings.chat.reseal',
@@ -83,8 +80,7 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
       'social.report_link.revoke',
       'social.review_link.revoke',
     ].sort();
-    const base = [...current, ...RECORDS, ...SIGN_KEEPING, ...TAKEDOWN, ...TAKEDOWN_NOTICE].sort();
-    expect([base, [...base, ...PENDING_FINANCE_ERASE].sort()]).toContainEqual(named(commands));
+    expect(named(commands)).toEqual([...current, ...RECORDS, ...SIGN_KEEPING, ...TAKEDOWN, ...TAKEDOWN_NOTICE].sort());
   });
 
   it('are exactly these queries', () => {
