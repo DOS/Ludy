@@ -17,8 +17,9 @@ import {
   type TodoAcceptSuggestionsResult,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { lockNote, lockNotesEraseShared } from './locks.ts';
 import { assertAuthor, assertNotInTrash, loadForChange, recordNoteVersionSnapshot } from './notes.ts';
-import { TODO_SUMMARY_COLUMNS, detailsOf, due, ownKeys, placeBetween, remindAt, todoSummaryRow } from './todos.ts';
+import { TODO_SUMMARY_COLUMNS, detailsOf, due, lockTodoSortOrder, placeFrontBatch, remindAt, todoSummaryRow } from './todos.ts';
 
 const MODULE = 'notes';
 const ALL_MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -267,7 +268,7 @@ export const noteAcceptSummary = defineCommand({
             }
           : {}),
         revision: before.revision + 1,
-        updated_at: ctx.now,
+        updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})`,
       })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)
@@ -298,29 +299,47 @@ export const todoAcceptSuggestions = defineCommand({
   target: (input) => ({ type: 'notes.note', id: input.noteId }),
   handler: async (ctx, input): Promise<TodoAcceptSuggestionsResult> => {
     const userId = userOf(ctx.actor);
+    const assertSourceNoteCurrent = async () => {
+      const current = await ctx.trx
+        .selectFrom('ludy_notes.note')
+        .select(['id', 'revision', 'deleted_at'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.noteId)
+        .executeTakeFirst();
+      if (!current) {
+        throw new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú');
+      }
+      if (current.deleted_at !== null) {
+        throw new DomainError('NOTE_IN_TRASH', 409, 'Ghi chú đang ở thùng rác; hãy khôi phục trước');
+      }
+      if (current.revision !== input.noteRevision) {
+        throw new DomainError('NOTE_REVISION_CONFLICT', 409, 'Ghi chú vừa được sửa ở nơi khác; hãy tải lại trước khi lưu', {
+          revision: current.revision,
+        });
+      }
+      return current;
+    };
+    // Verify note readability and baseline revision under caller RLS before acquiring any lock so probing an
+    // unreadable note returns 404 immediately without lock-wait timing leakage.
+    let note = await assertSourceNoteCurrent();
+    // Hold shared notes.erase before reading committed note revision / acquiring todo_accept_run / todo_sort_order /
+    // notes.note so personalDataErase shared-note redactions cannot commit or race past stale MVCC revision reads.
+    await lockNotesEraseShared(ctx);
     if (input.runId !== undefined) {
       // Serialize concurrent accepts per (org, owner, runId) before reading note/prior rows so partial-purged runs
       // (e.g. source_run_seq = 0 removed while source_run_seq >= 1 survives) cannot race past the prior check.
       const lockKey = `ludy_notes.todo_accept_run:${ctx.orgId.toLowerCase()}:${userId.toLowerCase()}:${input.runId.toLowerCase()}`;
       await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
     }
-    const note = await ctx.trx
-      .selectFrom('ludy_notes.note')
-      .select(['id', 'revision', 'deleted_at'])
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.noteId)
-      .executeTakeFirst();
-    if (!note) {
-      throw new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú');
+    let sortKeys: string[] = [];
+    if (input.items.length > 0) {
+      // Serialize sort-key allocation before re-reading locked note revision/deleted_at so edits/deletes during a lock wait are caught.
+      await lockTodoSortOrder(ctx, userId);
     }
-    if (note.deleted_at !== null) {
-      throw new DomainError('NOTE_IN_TRASH', 409, 'Ghi chú đang ở thùng rác; hãy khôi phục trước');
-    }
-    if (note.revision !== input.noteRevision) {
-      throw new DomainError('NOTE_REVISION_CONFLICT', 409, 'Ghi chú vừa được sửa ở nơi khác; hãy tải lại trước khi lưu', {
-        revision: note.revision,
-      });
-    }
+    // Hold a shared per-note advisory lock before re-reading revision/deleted_at so noteUpdate/noteDelete/noteRestoreVersion
+    // wait until todo inserts commit without hitting note_update RLS on shared org notes read by plain members.
+    await lockNote(ctx, input.noteId, true);
+    note = await assertSourceNoteCurrent();
     if (input.runId !== undefined) {
       // Any surviving to-do from this run (live or in trash, at any source_run_seq) blocks replay; if every
       // created to-do was permanently purged (which in normal retention happens >= 30 days after deletion, once
@@ -339,10 +358,14 @@ export const todoAcceptSuggestions = defineCommand({
     }
 
     const createdReversed: string[] = [];
+    if (input.items.length > 0) {
+      sortKeys = await placeFrontBatch(ctx, input.items.length);
+      // Re-verify right before inserts so concurrent edits/trashes while rebalancing abort before writing todos.
+      note = await assertSourceNoteCurrent();
+    }
     for (let i = input.items.length - 1; i >= 0; i -= 1) {
       const item = input.items[i]!;
-      const rows = await ownKeys(ctx, null);
-      const sortKey = await placeBetween(ctx, rows, -1, 0);
+      const sortKey = sortKeys[i]!;
       const when = due({ dueOn: item.dueOn, dueTime: item.dueTime, timeZone: item.timeZone });
       const remind = remindAt(item.reminder, when, ctx.now);
       const seq = input.runId !== undefined ? input.items.length - 1 - i : null;

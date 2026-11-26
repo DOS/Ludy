@@ -1,4 +1,4 @@
-import type { ReactElement, ReactNode } from 'react';
+import type { ComponentProps, ReactElement, ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { Button } from '@ludy/ui/components/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@ludy/ui/components/dialog';
@@ -15,6 +15,8 @@ export function ConfirmDialog({
   disabled = false,
   open,
   onOpenChange,
+  onOpenChangeComplete,
+  finalFocus,
   title,
   description,
   confirm,
@@ -27,6 +29,8 @@ export function ConfirmDialog({
   disabled?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  onOpenChangeComplete?: ComponentProps<typeof Dialog>['onOpenChangeComplete'];
+  finalFocus?: ComponentProps<typeof DialogContent>['finalFocus'];
   title: string;
   description: string;
   confirm: string;
@@ -36,13 +40,21 @@ export function ConfirmDialog({
 }) {
   const common = useTranslations('common');
   return (
-    <Dialog {...(open === undefined ? {} : { open })} {...(onOpenChange ? { onOpenChange: (next: boolean) => onOpenChange(next) } : {})}>
+    <Dialog
+      {...(open === undefined ? {} : { open })}
+      {...(onOpenChange ? { onOpenChange: (next: boolean) => onOpenChange(next) } : {})}
+      {...(onOpenChangeComplete === undefined ? {} : { onOpenChangeComplete })}
+    >
       {render ? (
         <DialogTrigger render={render} disabled={disabled}>
           {children}
         </DialogTrigger>
       ) : null}
-      <DialogContent variant={destructive ? 'destructive' : 'default'} closeLabel={common('close')}>
+      <DialogContent
+        variant={destructive ? 'destructive' : 'default'}
+        closeLabel={common('close')}
+        {...(finalFocus === undefined ? {} : { finalFocus })}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>

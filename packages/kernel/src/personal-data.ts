@@ -1331,6 +1331,10 @@ export const personalDataFind = defineCommand({
 
 // What an erasure says of meeting text it left or could not search (#2594).
 export const MEETING_TEXT_SKIPPED_REASON = 'The meeting text of this organization was too large to search in time, so it was not searched: search again, or ask support, before relying on this erasure for meeting text';
+export const PENDING_NOTE_ATTACHMENT_REASON =
+  'Text extraction is still pending for shared note attachments, so their extracted text could not be searched yet: search or erase again once extraction completes';
+export const PENDING_PRIVATE_NOTE_ATTACHMENT_REASON =
+  'Text extraction is still pending for private note attachments, so their extracted text could not be searched yet (no filenames or notes are disclosed): run find, notify, and erase again once extraction completes';
 export const UNTOLD_MEETING_REASON =
   'Text of a meeting the owner cannot read, where no notice covers its recorder and its text as it is now (not sent, the recorder not told 24 hours ago, or the text changed since): send the notice, wait 24 hours, then erase again; the recorder or an owner can also delete the meeting';
 // The statuses of a mail that has left Ludy or may have (the mail table's own set): handed to the worker (sending), outcome unknown (ambiguous), or sent on to its recipient (sent,
@@ -1570,7 +1574,8 @@ export const personalDataErase = defineCommand({
               OR EXISTS (SELECT 1 FROM ludy_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)) AS documented
         FROM ludy_kernel.party p
        WHERE p.org_id = ${ctx.orgId}::uuid AND ${partyMatch}
-       FOR UPDATE OF p`.execute(ctx.trx);
+       -- personalDataErase never changes party PK (org_id, id) or deletes party rows; FOR NO KEY UPDATE blocks concurrent party edits without conflicting with FK FOR KEY SHARE inserts (e.g. notes.link.add -> private_erase).
+       FOR NO KEY UPDATE OF p`.execute(ctx.trx);
     let keptParties = 0;
     const forgottenPartyIds: string[] = [];
     const documentedPartyIds: string[] = [];
@@ -1863,26 +1868,57 @@ export const personalDataErase = defineCommand({
     const tagsOf = (alias: string) => sql`pg_catalog.array_to_string(${sql.ref(`${alias}.tags`)}, ' ')`;
     const keptTags = sql`ARRAY(SELECT g.v FROM pg_catalog.unnest(t.tags) WITH ORDINALITY AS g(v, i) WHERE NOT ${freeTextMatch(probe, sql.ref('g.v'))} ORDER BY g.i)`;
     const stillAcross = freeTextMatch(probe, sql`pg_catalog.array_to_string(${keptTags}, ' ')`);
-    // Lock every shared note whose text or any snapshot names the value first, in id order (#3562). A restore of a
-    // snapshot (notes.note.restore_version) locks its note before it reads the snapshot, so it either lands before
-    // these statements, whose fresh reads then see and edit out what it wrote back, or waits and finds the snapshot
-    // gone: an erased value never comes back from the version history.
+    // Acquire the single bounded org erasure barrier before any ludy_notes lock/update and update shared notebooks
+    // before shared/private notes so concurrent notebook-referencing writes (noteUpdate/noteSetVisibility/notebookUpdate)
+    // stay strictly deadlock-free in canonical notes.erase -> notebook[id ASC] -> note[id ASC] order.
+    const notesEraseLockKey = `notes.erase:${ctx.orgId.toLowerCase()}`;
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${notesEraseLockKey}, 0))`.execute(ctx.trx);
     await sql`
+      SELECT b.id FROM ludy_notes.notebook b
+       WHERE b.org_id = ${ctx.orgId}::uuid AND b.visibility = 'org'
+         AND (${mentions('b.name')} OR (b.stack_name IS NOT NULL AND ${mentions('b.stack_name')}))
+       ORDER BY b.id
+       FOR NO KEY UPDATE OF b`.execute(ctx.trx);
+    const { rows: notebooks } = await sql<{ name: boolean; stack_name: boolean }>`
+      UPDATE ludy_notes.notebook t
+         SET name = COALESCE(NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.name'), ERASED_TEXT_MARK)}, ${NOTEBOOK_NAME_MAX}::int)), ''), ${ERASED_TEXT_MARK}),
+             stack_name = CASE
+               WHEN t.stack_name IS NOT NULL AND ${mentions('t.stack_name')}
+                 THEN COALESCE(NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.stack_name'), ERASED_TEXT_MARK)}, ${NOTEBOOK_STACK_MAX}::int)), ''), ${ERASED_TEXT_MARK})
+               ELSE t.stack_name
+             END,
+             revision = t.revision + 1, updated_at = GREATEST(t.updated_at, pg_catalog.clock_timestamp(), ${ctx.now})
+        FROM ludy_notes.notebook o
+       WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
+         AND (${mentions('t.name')} OR (t.stack_name IS NOT NULL AND ${mentions('t.stack_name')}))
+       RETURNING ${mentions('o.name')} AS name, (o.stack_name IS NOT NULL AND ${mentions('o.stack_name')}) AS stack_name`.execute(ctx.trx);
+    add('ludy_notes.notebook.name', notebooks.filter((b) => b.name).length);
+    add('ludy_notes.notebook.stack_name', notebooks.filter((b) => b.stack_name).length);
+    // Lock every shared note whose text, snapshot, or attachment names the value first, in id order (#3562, #5035).
+    // Including attachments here ensures personalDataErase locks note -> attachment in the same order as
+    // noteAttachmentDelete, preventing AB-BA deadlocks when only a shared attachment matches.
+    const { rows: lockedSharedNotes } = await sql<{ id: string }>`
       SELECT n.id FROM ludy_notes.note n
        WHERE n.org_id = ${ctx.orgId}::uuid AND n.visibility = 'org'
          AND (${mentions('n.title')} OR ${mentions('n.body')} OR ${freeTextMatch(probe, tagsOf('n'))}
               OR EXISTS (
                 SELECT 1 FROM ludy_notes.note_version v
                  WHERE v.org_id = n.org_id AND v.note_id = n.id
-                   AND (${mentions('v.title')} OR ${mentions('v.body')} OR ${freeTextMatch(probe, tagsOf('v'))})))
+                   AND (${mentions('v.title')} OR ${mentions('v.body')} OR ${freeTextMatch(probe, tagsOf('v'))}))
+              OR EXISTS (
+                SELECT 1 FROM ludy_notes.attachment a
+                 WHERE a.org_id = n.org_id AND a.note_id = n.id
+                   AND (${mentions('a.filename')} OR ${mentions('a.extracted_text')})))
        ORDER BY n.id
-       FOR UPDATE OF n`.execute(ctx.trx);
+       -- personalDataErase only redacts non-key text columns on shared notes; FOR NO KEY UPDATE blocks concurrent edits without conflicting with FK FOR KEY SHARE inserts (e.g. todoCreate/todoAcceptSuggestions).
+       FOR NO KEY UPDATE OF n`.execute(ctx.trx);
+    const lockedSharedNoteIds = lockedSharedNotes.map((n) => n.id);
     const { rows: notes } = await sql<{ title: boolean; body: boolean; tags: boolean }>`
       UPDATE ludy_notes.note t
          SET title = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), ERASED_TEXT_MARK)}, ${NOTE_TITLE_MAX}::int),
              body = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.body'), ERASED_TEXT_MARK)}, ${NOTE_BODY_MAX}::int),
              tags = CASE WHEN ${stillAcross} THEN '{}'::text[] ELSE ${keptTags} END,
-             revision = t.revision + 1, updated_at = ${ctx.now}
+             revision = t.revision + 1, updated_at = GREATEST(t.updated_at, pg_catalog.clock_timestamp(), ${ctx.now})
         FROM ludy_notes.note o
        WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
          AND (${mentions('t.title')} OR ${mentions('t.body')} OR ${freeTextMatch(probe, tagsOf('t'))})
@@ -1919,43 +1955,40 @@ export const personalDataErase = defineCommand({
     add('ludy_notes.note_version.title', noteVersions.filter((n) => n.title).length);
     add('ludy_notes.note_version.body', noteVersions.filter((n) => n.body).length);
     add('ludy_notes.note_version.tags', noteVersions.filter((n) => n.tags).length);
-    const { rows: sharedNoteAttachments } = await sql<{ note_id: string; filename: boolean; extracted_text: boolean }>`
-      DELETE FROM ludy_notes.attachment a
-       WHERE a.org_id = ${ctx.orgId}::uuid
-         AND EXISTS (
-           SELECT 1 FROM ludy_notes.note n
-            WHERE n.org_id = a.org_id AND n.id = a.note_id AND n.visibility = 'org'
-         )
-         AND (${mentions('a.filename')} OR ${mentions('a.extracted_text')})
-       RETURNING a.note_id, ${mentions('a.filename')} AS filename, ${mentions('a.extracted_text')} AS extracted_text`.execute(ctx.trx);
+    const { rows: sharedNoteAttachments } =
+      lockedSharedNoteIds.length === 0
+        ? { rows: [] }
+        : await sql<{ note_id: string; filename: boolean; extracted_text: boolean }>`
+            DELETE FROM ludy_notes.attachment a
+             WHERE a.org_id = ${ctx.orgId}::uuid
+               AND a.note_id = ANY(${lockedSharedNoteIds}::uuid[])
+               AND (${mentions('a.filename')} OR ${mentions('a.extracted_text')})
+             RETURNING a.note_id, ${mentions('a.filename')} AS filename, ${mentions('a.extracted_text')} AS extracted_text`.execute(ctx.trx);
     add('ludy_notes.attachment.filename', sharedNoteAttachments.filter((a) => a.filename).length);
     add('ludy_notes.attachment.extracted_text', sharedNoteAttachments.filter((a) => a.extracted_text).length);
     const touchedSharedNoteIds = [...new Set(sharedNoteAttachments.map((a) => a.note_id))];
     if (touchedSharedNoteIds.length > 0) {
       await ctx.trx
         .updateTable('ludy_notes.note')
-        .set({ updated_at: ctx.now })
+        .set({ updated_at: sql<Date>`GREATEST(updated_at, pg_catalog.clock_timestamp(), ${ctx.now})` })
         .where('org_id', '=', ctx.orgId)
         .where('id', 'in', touchedSharedNoteIds)
         .execute();
     }
-    const { rows: notebooks } = await sql<{ name: boolean; stack_name: boolean }>`
-      UPDATE ludy_notes.notebook t
-         SET name = COALESCE(NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.name'), ERASED_TEXT_MARK)}, ${NOTEBOOK_NAME_MAX}::int)), ''), ${ERASED_TEXT_MARK}),
-             stack_name = CASE
-               WHEN t.stack_name IS NOT NULL AND ${mentions('t.stack_name')}
-                 THEN COALESCE(NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.stack_name'), ERASED_TEXT_MARK)}, ${NOTEBOOK_STACK_MAX}::int)), ''), ${ERASED_TEXT_MARK})
-               ELSE t.stack_name
-             END,
-             revision = t.revision + 1, updated_at = ${ctx.now}
-        FROM ludy_notes.notebook o
-       WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
-         AND (${mentions('t.name')} OR (t.stack_name IS NOT NULL AND ${mentions('t.stack_name')}))
-       RETURNING ${mentions('o.name')} AS name, (o.stack_name IS NOT NULL AND ${mentions('o.stack_name')}) AS stack_name`.execute(ctx.trx);
-    add('ludy_notes.notebook.name', notebooks.filter((b) => b.name).length);
-    add('ludy_notes.notebook.stack_name', notebooks.filter((b) => b.stack_name).length);
+    const { rows: pendingSharedAttRows } = await sql<{ pending: string }>`
+      SELECT pg_catalog.count(*)::text AS pending
+        FROM ludy_notes.attachment a
+        JOIN ludy_notes.note n ON n.org_id = a.org_id AND n.id = a.note_id
+       WHERE a.org_id = ${ctx.orgId}::uuid
+         AND n.visibility = 'org'
+         AND a.extract_status = 'pending'`.execute(ctx.trx);
+    const pendingSharedAttachments = Number(pendingSharedAttRows[0]?.pending ?? 0);
     const { rows: privateRows } = await sql<{ notes: string; todos: string; untold_notes: string; untold_todos: string; note_ids: string[]; todo_ids: string[] }>`
       SELECT notes, todos, untold_notes, untold_todos, note_ids, todo_ids FROM ludy_notes.private_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
+    // Count still-pending private attachments after private_erase so erased pending rows are not falsely reported in kept[].
+    const { rows: pendingPrivateAttRows } = await sql<{ pending: string }>`
+      SELECT ludy_notes.private_pending_attachment_count()::text AS pending`.execute(ctx.trx);
+    const pendingPrivateAttachments = Number(pendingPrivateAttRows[0]?.pending ?? 0);
     const sum = (key: 'notes' | 'todos' | 'untold_notes' | 'untold_todos') => privateRows.reduce((n, r) => n + Number(r[key]), 0);
     const privateDeleted = { notes: sum('notes'), todos: sum('todos') };
     const untold = { notes: sum('untold_notes'), todos: sum('untold_todos') };
@@ -2637,6 +2670,20 @@ export const personalDataErase = defineCommand({
     if (untold.todos > 0) kept.set('ludy_notes.todo', { column: 'ludy_notes.todo', rows: untold.todos, reason: UNTOLD_PRIVATE_REASON });
     // Meeting text the search could not read in time: said in the answer, never left out silently (#2594).
     if (after.meetingTextSkipped) kept.set('ludy_meetings', { column: 'ludy_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
+    if (pendingSharedAttachments > 0) {
+      kept.set('ludy_notes.attachment.extracted_text', {
+        column: 'ludy_notes.attachment.extracted_text',
+        rows: pendingSharedAttachments,
+        reason: PENDING_NOTE_ATTACHMENT_REASON,
+      });
+    }
+    if (pendingPrivateAttachments > 0) {
+      kept.set('ludy_notes.attachment', {
+        column: 'ludy_notes.attachment',
+        rows: pendingPrivateAttachments,
+        reason: PENDING_PRIVATE_NOTE_ATTACHMENT_REASON,
+      });
+    }
     const keptRows = new Map<string, number>();
     for (const k of kept.values()) keptRows.set(k.column, (keptRows.get(k.column) ?? 0) + k.rows);
     const result: PersonalDataErasure = {

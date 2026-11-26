@@ -2,13 +2,15 @@
 // The tabs of saved views (CRM K3 and K4, #2227, #2228), rendered on the server with the list answered from a seeded cache:
 // "Tất cả" first, the member's own views, then the org's shared ones with their badge; what the tabs offer depends on
 // whether the screen's filter moved away from the picked view and on who may change it.
-import { QueryClientProvider } from '@tanstack/react-query';
-import { isValidElement, type ReactElement, type ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, isValidElement, useState, type ReactElement, type ReactNode } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider, createTranslator } from 'use-intl';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FilterAst, SavedViewSort } from '@ludy/kernel-contract';
 import type { ViewState } from '../src/components/view-tabs.tsx';
+import { FakeDomNode, createScopedDomHarness } from './fake-dom.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 import { EMPTY_TASK_FILTER, astToTaskFilter, selectTaskDue, selectTaskStatus, taskFilterToAst } from '../src/lib/task-filter.ts';
@@ -98,7 +100,7 @@ function render(role: 'owner' | 'member' | 'viewer', filters: FilterAst = none):
   qc.setQueryData(['savedViews', 'list', { scope: 'crm.party' }], views);
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
-      <IntlProvider locale="vi" messages={catalog('vi')}>
+      <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
         <ViewTabs scope="crm.party" filters={filters} sort={null} onApply={() => undefined} />
       </IntlProvider>
     </QueryClientProvider>,
@@ -139,7 +141,7 @@ describe('ViewTabs', () => {
     qc.setQueryData(['savedViews', 'list', { scope: 'crm.party' }], []);
     const html = renderToStaticMarkup(
       <QueryClientProvider client={qc}>
-        <IntlProvider locale="vi" messages={catalog('vi')}>
+        <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
           <ViewTabs scope="crm.party" filters={none} sort={null} onApply={() => undefined} />
         </IntlProvider>
       </QueryClientProvider>,
@@ -153,7 +155,7 @@ describe('ViewTabs', () => {
     qc.setQueryData(['savedViews', 'list', { scope: 'crm.party' }], []);
     const html = renderToStaticMarkup(
       <QueryClientProvider client={qc}>
-        <IntlProvider locale="vi" messages={catalog('vi')}>
+        <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
           <ViewTabs scope="crm.party" filters={{ v: 1, all: [{ field: 'kind', op: 'is', value: 'person' }] }} sort={null} onApply={() => undefined} />
         </IntlProvider>
       </QueryClientProvider>,
@@ -336,5 +338,106 @@ describe('ViewTabs', () => {
 
     bar = selectTaskStatus(bar, 'done');
     expect(renderProbe()).toContain(multiUpdateLabel);
+  });
+});
+
+describe('ViewTabs mounted DOM interactions and useEffect lifecycle (#3457)', () => {
+  let prevClient: QueryClient | null = null;
+  let hasPrevClient = false;
+  const domHarness = createScopedDomHarness(() => {
+    if (hasPrevClient) {
+      client.current = prevClient as QueryClient;
+      prevClient = null;
+      hasPrevClient = false;
+    }
+  });
+
+  afterEach(async () => {
+    await domHarness.teardownScopedDom();
+  });
+
+  it('mounts ViewTabs with real useEffect, picks tabs via click, and resets active view + onApply when picked view disappears', async () => {
+    hookDriver.active = false;
+    const body = domHarness.installScopedDom();
+    const container = new FakeDomNode(1, 'div');
+    body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    domHarness.setMountedRoot(root);
+
+    prevClient = client.current;
+    hasPrevClient = true;
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } } });
+    client.current = qc;
+    qc.setQueryData(['org', 'get', null], { role: 'member' });
+    qc.setQueryData(['savedViews', 'list', { scope: 'crm.party' }], views);
+
+    const appliedStates: ViewState[] = [];
+    function MountedHost() {
+      const [filters, setFilters] = useState<FilterAst>(none);
+      const [sort, setSort] = useState<SavedViewSort | null>(null);
+      return (
+        <ViewTabs
+          scope="crm.party"
+          filters={filters}
+          sort={sort}
+          onApply={(next) => {
+            appliedStates.push(next);
+            setFilters(next.filters);
+            setSort(next.sort);
+          }}
+        />
+      );
+    }
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
+            <MountedHost />
+          </IntlProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    const tabsOf = () => container.querySelectorAll('[role="tab"]');
+    expect(tabsOf().map((t) => t.textContent)).toHaveLength(3);
+
+    // 1. Click "Công ty có email" (editable private view) -> updates filters/sort and surfaces Rename/Delete actions.
+    const firstSavedTab = tabsOf().find((t) => t.textContent.includes('Công ty có email'))!;
+    await act(async () => {
+      firstSavedTab.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+    });
+    expect(appliedStates.at(-1)).toEqual({ filters: views[0]!.filters, sort: views[0]!.sort });
+    expect(tabsOf().find((t) => t.textContent.includes('Công ty có email'))?.getAttribute('aria-selected')).toBe('true');
+    expect(container.querySelectorAll('button').some((b) => b.textContent === viMessages.savedViews.rename)).toBe(true);
+
+    // 2. Switch to "Của nhóm" (shared read-only view) -> applies sort and hides Rename.
+    const sharedTab = tabsOf().find((t) => t.textContent.includes('Của nhóm'))!;
+    await act(async () => {
+      sharedTab.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+    });
+    expect(appliedStates.at(-1)).toEqual({ filters: views[1]!.filters, sort: views[1]!.sort });
+    expect(tabsOf().find((t) => t.textContent.includes('Của nhóm'))?.getAttribute('aria-selected')).toBe('true');
+    expect(container.querySelectorAll('button').some((b) => b.textContent === viMessages.savedViews.rename)).toBe(false);
+
+    // 3. Disappearance of the picked view (`gone === true`) triggers real useEffect -> clears active tab back to "Tất cả" & resets filters.
+    await act(async () => {
+      qc.setQueryData(['savedViews', 'list', { scope: 'crm.party' }], [views[0]!]);
+    });
+    const waitUntil = async (predicate: () => boolean, maxAttempts = 20) => {
+      for (let i = 0; i < maxAttempts; i += 1) {
+        if (predicate()) return;
+        await act(async () => {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      throw new Error('Timed out waiting for ViewTabs query update');
+    };
+    await waitUntil(
+      () =>
+        tabsOf().length === 2 &&
+        tabsOf().find((t) => t.textContent.includes(viMessages.savedViews.all))?.getAttribute('aria-selected') === 'true',
+    );
+    expect(appliedStates.at(-1)).toEqual({ filters: { v: 1, all: [] }, sort: null });
   });
 });

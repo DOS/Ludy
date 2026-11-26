@@ -2124,4 +2124,195 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
     expect(privIdemAfterErase.rows[0]?.resp_text).not.toContain(privQuoteEmail);
     expect(privIdemAfterErase.rows[0]?.resp_text).not.toContain('SECRET_ATTENDEES_QUOTE');
   }, 60_000);
+
+  it('serializes concurrent projects.roadmap.signal.create (FOR SHARE) against kernel.personal_data.erase (FOR NO KEY UPDATE) on ludy_kernel.party (#5035)', async () => {
+    const owner6 = await person('owner-party-race');
+    const org6 = await createOrg(rt, asUser(owner6.userId), 'Cong ty Khoa Party 5035');
+    const exec6 = <T>(userId: string, cmd: string, input: unknown, idempotencyKey?: string) =>
+      rt.execute<T>(cmd, input, {
+        actor: asUser(userId),
+        orgId: org6.orgId,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+      });
+
+    const { board: board6 } = await exec6<{ board: RoadmapBoardSummary }>(owner6.userId, 'projects.roadmap.board.create', {
+      title: 'Lo trinh Dong bo Party',
+      slug: 'roadmap-party-race',
+    });
+    const { item: item6 } = await exec6<{ item: RoadmapAdminItem }>(owner6.userId, 'projects.roadmap.item.create', {
+      boardId: board6.id,
+      publicTitle: 'Lien ket khach hang',
+      publicSummary: null,
+      category: null,
+    });
+    const { item: item6b } = await exec6<{ item: RoadmapAdminItem }>(owner6.userId, 'projects.roadmap.item.create', {
+      boardId: board6.id,
+      publicTitle: 'Tin hieu phu',
+      publicSummary: null,
+      category: null,
+    });
+    await exec6(owner6.userId, 'crm.pipeline.setup', {});
+
+    const email1 = 'party-race-1@p5035.test';
+    const name1 = 'Khach Hang Tranh Chap 1';
+    const party1 = (
+      await sqlAdmin<{ id: string }>(
+        `INSERT INTO ludy_kernel.party (org_id, name, kind, email) VALUES ($1, $2, 'person', $3) RETURNING id`,
+        [org6.orgId, name1, email1],
+      )
+    ).rows[0]!.id;
+    const deal1 = await exec6<Deal>(owner6.userId, 'crm.deal.create', {
+      partyId: party1,
+      title: 'Co hoi Tranh Chap 1',
+      amount: '1000000',
+      expectedClose: null,
+    });
+
+    const email2 = 'party-race-2@p5035.test';
+    const name2 = 'Khach Hang Tranh Chap 2';
+    const party2 = (
+      await sqlAdmin<{ id: string }>(
+        `INSERT INTO ludy_kernel.party (org_id, name, kind, email) VALUES ($1, $2, 'person', $3) RETURNING id`,
+        [org6.orgId, name2, email2],
+      )
+    ).rows[0]!.id;
+    const deal2 = await exec6<Deal>(owner6.userId, 'crm.deal.create', {
+      partyId: party2,
+      title: 'Co hoi Tranh Chap 2',
+      amount: '2000000',
+      expectedClose: null,
+    });
+    const existingSig2 = await exec6<RoadmapSignalCreateResult>(owner6.userId, 'projects.roadmap.signal.create', {
+      boardId: board6.id,
+      roadmapItemId: item6b.id,
+      sourceType: 'crm.deal',
+      sourceId: deal2.id,
+    });
+    expect(existingSig2.signal.accountLabel).toBe(name2);
+
+    const track = <T,>(promise: Promise<T>, errors: unknown[], all: Array<Promise<unknown>>): Promise<T> => {
+      void promise.catch((err) => {
+        errors.push(err);
+      });
+      all.push(promise);
+      return promise;
+    };
+
+    const waitBlocked = async (blockingPid: number, queryPattern: string, errors: unknown[]): Promise<number> => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        if (errors.length > 0) throw errors[0];
+        const res = await sqlAdmin<{ pid: number }>(
+          `SELECT a.pid
+             FROM pg_catalog.pg_stat_activity a
+            WHERE a.datname = pg_catalog.current_database()
+              AND a.state = 'active'
+              AND a.wait_event_type = 'Lock'
+              AND a.query ILIKE $2
+              AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+            LIMIT 1`,
+          [blockingPid, queryPattern],
+        );
+        if (res.rows[0]) return res.rows[0].pid;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Timed out waiting for ${queryPattern} to block on pid ${blockingPid}`);
+    };
+
+    // Direction 1: signal.create acquires party FOR SHARE first and pauses on roadmap_item; erase blocks on party FOR NO KEY UPDATE until commit, then erases the new signal.
+    const gate1 = new pg.Client({ connectionString: adminUrl });
+    await gate1.connect();
+    const d1Errors: unknown[] = [];
+    const d1Started: Array<Promise<unknown>> = [];
+    const idem1 = randomUUID();
+    try {
+      const gate1Pid = (await gate1.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await gate1.query('BEGIN');
+      await gate1.query('SELECT 1 FROM ludy_projects.roadmap_item WHERE org_id = $1 AND id = $2 FOR UPDATE', [org6.orgId, item6.id]);
+      const sigPromise1 = track(
+        exec6<RoadmapSignalCreateResult>(
+          owner6.userId,
+          'projects.roadmap.signal.create',
+          { boardId: board6.id, roadmapItemId: item6.id, sourceType: 'crm.deal', sourceId: deal1.id },
+          idem1,
+        ),
+        d1Errors,
+        d1Started,
+      );
+      const sigPid1 = await waitBlocked(gate1Pid, '%ludy_projects%roadmap_item%for share%', d1Errors);
+      const erasePromise1 = track(
+        rt.execute<PersonalDataErasure>(
+          'kernel.personal_data.erase',
+          { value: email1 },
+          { actor: asMfa(owner6.userId), orgId: org6.orgId, idempotencyKey: randomUUID() },
+        ),
+        d1Errors,
+        d1Started,
+      );
+      await waitBlocked(sigPid1, '%ludy_kernel.party%for no key update%', d1Errors);
+      await gate1.query('COMMIT');
+      const [sig1, erase1] = await Promise.all([sigPromise1, erasePromise1]);
+      expect(sig1.signal.id).toBeTruthy();
+      expect(erase1.erased).toContainEqual({ column: 'ludy_kernel.party.name', rows: 1 });
+    } finally {
+      await gate1.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(d1Started);
+      await gate1.end().catch(() => undefined);
+    }
+    const dbSig1 = await sqlAdmin<{ account_label: string | null; source_party_id: string | null }>(
+      `SELECT account_label, source_party_id FROM ludy_projects.roadmap_signal
+        WHERE org_id = $1 AND roadmap_item_id = $2 AND source_type = 'crm.deal' AND source_id = $3`,
+      [org6.orgId, item6.id, deal1.id],
+    );
+    expect(dbSig1.rows[0]).toEqual({ account_label: null, source_party_id: null });
+
+    // Direction 2: personalDataErase acquires party FOR NO KEY UPDATE first and pauses on existingSig2 UPDATE; concurrent signal.create blocks on party FOR SHARE instead of reading stale name.
+    const gate2 = new pg.Client({ connectionString: adminUrl });
+    await gate2.connect();
+    const d2Errors: unknown[] = [];
+    const d2Started: Array<Promise<unknown>> = [];
+    try {
+      const gate2Pid = (await gate2.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await gate2.query('BEGIN');
+      await gate2.query('SELECT 1 FROM ludy_projects.roadmap_signal WHERE org_id = $1 AND id = $2 FOR UPDATE', [
+        org6.orgId,
+        existingSig2.signal.id,
+      ]);
+      const erasePromise2 = track(
+        rt.execute<PersonalDataErasure>(
+          'kernel.personal_data.erase',
+          { value: email2 },
+          { actor: asMfa(owner6.userId), orgId: org6.orgId, idempotencyKey: randomUUID() },
+        ),
+        d2Errors,
+        d2Started,
+      );
+      const erasePid2 = await waitBlocked(gate2Pid, '%update ludy_projects.roadmap_signal%', d2Errors);
+      const sigPromise2 = track(
+        exec6<RoadmapSignalCreateResult>(
+          owner6.userId,
+          'projects.roadmap.signal.create',
+          { boardId: board6.id, roadmapItemId: item6.id, sourceType: 'crm.deal', sourceId: deal2.id },
+          randomUUID(),
+        ),
+        d2Errors,
+        d2Started,
+      );
+      await waitBlocked(erasePid2, '%ludy_kernel.party%for share%', d2Errors);
+      await gate2.query('COMMIT');
+      const [erase2, sig2] = await Promise.all([erasePromise2, sigPromise2]);
+      expect(erase2.erased).toContainEqual({ column: 'ludy_kernel.party.name', rows: 1 });
+      expect(sig2.signal.accountLabel).toBeNull();
+    } finally {
+      await gate2.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(d2Started);
+      await gate2.end().catch(() => undefined);
+    }
+    const dbSig2 = await sqlAdmin<{ account_label: string | null; source_party_id: string | null }>(
+      `SELECT account_label, source_party_id FROM ludy_projects.roadmap_signal
+        WHERE org_id = $1 AND roadmap_item_id = $2 AND source_type = 'crm.deal' AND source_id = $3`,
+      [org6.orgId, item6.id, deal2.id],
+    );
+    expect(dbSig2.rows[0]).toEqual({ account_label: null, source_party_id: null });
+  }, 60_000);
 });

@@ -9,6 +9,7 @@ import { notifyMembers, uploaderEntity } from '@ludy/kernel';
 import { auditValue, NOTE_ATTACHMENT_EXTRACTED_TEXT_MAX, NOTE_TRASH_DAYS, zId } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { notesManifest } from './manifest.ts';
+import { lockNotesEraseShared } from './locks.ts';
 
 function assertSystem(ctx: Pick<CommandContext | QueryContext, 'actor'>): void {
   if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
@@ -146,6 +147,8 @@ export const attachmentExtractRecord = defineCommand({
   target: (input) => ({ type: 'notes.attachment', id: input.attachmentId }),
   handler: async (ctx, input): Promise<{ updated: boolean }> => {
     assertSystem(ctx);
+    // Hold shared notes.erase so worker extraction cannot write matching text mid-erasure after personalDataErase locked parent notes.
+    await lockNotesEraseShared(ctx);
     const { rows } = await sql<{ updated: boolean }>`
       SELECT ludy_notes.attachment_record_extract(
         ${input.attachmentId}::uuid,

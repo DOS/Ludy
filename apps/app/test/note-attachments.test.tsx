@@ -36,7 +36,7 @@ const hookDriver = vi.hoisted(
   }),
 );
 
-const mockRefreshNotes = vi.hoisted(() => vi.fn(async () => undefined));
+const mockRefreshNotes = vi.hoisted(() => vi.fn<() => Promise<void>>(async () => undefined));
 const mockToast = vi.hoisted(() => vi.fn());
 const mockDeleteMutation = vi.hoisted(() => vi.fn(async (_id: string) => ({ deleted: true })));
 
@@ -477,5 +477,58 @@ describe('NoteAttachments bounded polling lifecycle and accessible retry recover
     expect(newPendingHtml).toContain('data-testid="note-attachment-poll-active"');
     await vi.advanceTimersByTimeAsync(2_000);
     expect(mockRefreshNotes).toHaveBeenCalledTimes(NOTE_ATTACHMENT_POLL_MAX_ATTEMPTS + 1);
+  });
+
+  it('skips post-await state updates in handleRetryPoll when unmounted mid-flight', async () => {
+    const pending = [makeAttachment({ id: 'att-unmount', extractStatus: 'pending' })];
+    const { renderProbe, tree } = createProbe('vi');
+
+    renderProbe(pending);
+    await vi.advanceTimersByTimeAsync(210_000);
+    expect(renderProbe(pending)).toContain('data-testid="note-attachment-poll-paused"');
+
+    let resolveRetry!: () => void;
+    mockRefreshNotes.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRetry = resolve;
+        }),
+    );
+
+    const retryBtn = findElements(tree(), (el) => el.props['data-testid'] === 'note-attachment-poll-retry')[0];
+    const pendingPromise = (retryBtn!.props.onClick as () => Promise<void>)();
+
+    // Unmount while refreshNotes() is in flight: run effect cleanups without clearing state slots.
+    for (const entry of hookDriver.effects) entry.cleanup?.();
+    const stateSnapshot = [...hookDriver.states];
+
+    resolveRetry();
+    await pendingPromise;
+    expect(hookDriver.states).toEqual(stateSnapshot);
+
+    // Also verify rejected mid-flight retry after unmount does not write actionError or toggling state.
+    resetHooks();
+    mockRefreshNotes.mockResolvedValue(undefined);
+    const secondProbe = createProbe('vi');
+    secondProbe.renderProbe(pending);
+    await vi.advanceTimersByTimeAsync(210_000);
+    expect(secondProbe.renderProbe(pending)).toContain('data-testid="note-attachment-poll-paused"');
+
+    let rejectRetry!: (err: Error) => void;
+    mockRefreshNotes.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRetry = reject;
+        }),
+    );
+    const secondRetryBtn = findElements(secondProbe.tree(), (el) => el.props['data-testid'] === 'note-attachment-poll-retry')[0];
+    const rejectedPromise = (secondRetryBtn!.props.onClick as () => Promise<void>)();
+
+    for (const entry of hookDriver.effects) entry.cleanup?.();
+    const rejectSnapshot = [...hookDriver.states];
+
+    rejectRetry(new Error('Post-unmount failure'));
+    await rejectedPromise;
+    expect(hookDriver.states).toEqual(rejectSnapshot);
   });
 });

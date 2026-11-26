@@ -25,6 +25,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { notesManifest } from './manifest.ts';
+import { lockNotebook, lockNotebookReorder } from './locks.ts';
 import { NOTE_SUMMARY_COLUMNS, hasWholeOrgScope, noteSummaryRow } from './notes.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -309,6 +310,8 @@ export const notebookCreate = defineCommand({
       throw new DomainError('FORBIDDEN', 403, 'Thành viên giới hạn theo pháp nhân không tạo được sổ tay dùng chung');
     }
 
+    await lockNotebookReorder(ctx);
+
     const existing = await ctx.trx
       .selectFrom('ludy_notes.notebook')
       .select(['id', 'author_user_id', 'sort_key'])
@@ -325,7 +328,6 @@ export const notebookCreate = defineCommand({
       SELECT pg_catalog.max(sort_key) AS last FROM ludy_notes.notebook WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
     let sortKey = keyBetween(lastRows[0]?.last ?? null, null);
     if (sortKey.length > REBALANCE_AT) {
-      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId}`}, 0))`.execute(ctx.trx);
       sortKey = await rebalanceEditableNotebooks(ctx, userId, wholeOrg, null, 'after', null);
     }
 
@@ -671,9 +673,9 @@ export const notebookUpdate = defineCommand({
     }
 
     if (input.reorder) {
-      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+      await lockNotebookReorder(ctx);
     }
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId}:${input.notebookId}`}, 0))`.execute(ctx.trx);
+    await lockNotebook(ctx, input.notebookId);
 
     const before = await ctx.trx
       .selectFrom('ludy_notes.notebook')
@@ -724,7 +726,7 @@ export const notebookUpdate = defineCommand({
           pinned: nextPinned,
           sort_key: nextSortKey,
           revision: before.revision + 1,
-          updated_at: ctx.now,
+          updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})`,
         })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', before.id)
@@ -771,7 +773,7 @@ export const notebookDelete = defineCommand({
     if (!peek) throw notebookNotFound();
     if (!canManageNotebook(peek, userId, ctx.role, wholeOrg)) throw notebookAuthorOnly();
 
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId}:${input.notebookId}`}, 0))`.execute(ctx.trx);
+    await lockNotebook(ctx, input.notebookId);
 
     const locked = await ctx.trx
       .selectFrom('ludy_notes.notebook')

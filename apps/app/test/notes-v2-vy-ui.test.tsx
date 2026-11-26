@@ -30,6 +30,8 @@ const hookDriver = vi.hoisted(() => ({
 
 const apiMocks = vi.hoisted(() => ({
   notesUpdate: vi.fn(async () => ({ noteId: '20000000-0000-4000-8000-000000000021', revision: 2 })),
+  notesOrganize: vi.fn(),
+  notesTodoPlan: vi.fn(),
   todosReschedule: vi.fn(async (input: { todoIds: string[]; dueOn: string; expectedRevision?: number }) => ({
     updated: input.todoIds.length,
     todoIds: input.todoIds,
@@ -83,6 +85,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
       };
     }) as typeof actual.useQuery,
     useMutation: ((options: {
+      onMutate?: (variables: unknown) => Promise<unknown> | unknown;
       mutationFn?: (variables: unknown) => Promise<unknown>;
       onSuccess?: (data: unknown, variables: unknown) => Promise<unknown> | unknown;
       onError?: (err: unknown, variables: unknown) => Promise<unknown> | unknown;
@@ -110,6 +113,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
           slot.variables = variables;
           slot.inFlight = (async () => {
             try {
+              await options.onMutate?.(variables);
               const data = await options.mutationFn?.(variables);
               await options.onSuccess?.(data, variables);
               slot.isPending = false;
@@ -166,8 +170,8 @@ vi.mock('../src/lib/api.ts', async () => {
   const orgClient = {
     notes: {
       update: apiMocks.notesUpdate,
-      todoPlan: vi.fn(),
-      organize: vi.fn(),
+      todoPlan: apiMocks.notesTodoPlan,
+      organize: apiMocks.notesOrganize,
       todos: {
         reschedule: apiMocks.todosReschedule,
         get: apiMocks.todosGet,
@@ -189,6 +193,7 @@ import {
   NotesVyOrganizerPanel,
   NotesVyOrganizerTrigger,
   buildOrganizeDrafts,
+  computeOrganizeApplyPatch,
   parseOrganizerTags,
 } from '../src/components/notes-vy-organizer.tsx';
 import { orpc } from '../src/lib/api.ts';
@@ -464,6 +469,8 @@ describe('Notes v2 Vy polish & validation (#4322)', () => {
     queryClientState.current.clear();
     apiMocks.notesUpdate.mockReset();
     apiMocks.notesUpdate.mockResolvedValue({ noteId: '20000000-0000-4000-8000-000000000021', revision: 2 });
+    apiMocks.notesOrganize.mockReset();
+    apiMocks.notesTodoPlan.mockReset();
     apiMocks.todosReschedule.mockReset();
     apiMocks.todosReschedule.mockImplementation(async (input) => ({
       updated: input.todoIds.length,
@@ -863,5 +870,344 @@ describe('Notes v2 Vy polish & validation (#4322)', () => {
     expect(afterAllHtml).toContain(`data-testid="my-work-vy-reschedule-applied-badge-${reschedA}"`);
     expect(afterAllHtml).not.toContain(`data-testid="my-work-vy-reschedule-applied-badge-${reschedB}"`);
     expect(afterAllHtml).toContain(catalog('vi').notes.vy.errors.TODO_REVISION_CONFLICT);
+  });
+
+  it('prevents no-op apply at NOTE_TAGS_MAX/duplicates, clears organizer draft errors before rerun, and disables rerun while apply runs (#5035)', async () => {
+    const maxTags = Array.from({ length: 20 }, (_, i) => `tag-${String(i + 1).padStart(2, '0')}`);
+    const noteCapped = '20000000-0000-4000-8000-000000000031';
+    const noteDup = '20000000-0000-4000-8000-000000000032';
+    const noteActionable = '20000000-0000-4000-8000-000000000033';
+    const nbId = '10000000-0000-4000-8000-000000000001';
+
+    expect(
+      computeOrganizeApplyPatch(
+        { canEditTags: true, existingTags: maxTags },
+        { notebookId: '', tagsInput: 'new-extra-tag' },
+      ),
+    ).toEqual({
+      parsedAddedTags: ['new-extra-tag'],
+      hasTagChange: false,
+      canApply: false,
+    });
+    expect(
+      computeOrganizeApplyPatch(
+        { canEditTags: true, existingTags: maxTags },
+        { notebookId: nbId, tagsInput: 'new-extra-tag' },
+      ),
+    ).toEqual({
+      notebookId: nbId,
+      parsedAddedTags: ['new-extra-tag'],
+      hasTagChange: false,
+      canApply: true,
+    });
+    expect(
+      computeOrganizeApplyPatch(
+        { canEditTags: true, existingTags: ['evn'] },
+        { notebookId: '', tagsInput: '#EVN' },
+      ),
+    ).toEqual({
+      parsedAddedTags: ['evn'],
+      hasTagChange: false,
+      canApply: false,
+    });
+
+    const qc = queryClientState.current;
+    qc.setQueryData(orpc.notes.vyStatus.queryOptions({ input: {} }).queryKey, {
+      available: true,
+      reason: null,
+      resetOn: null,
+    });
+    qc.setQueryData(orpc.ai.meter.queryOptions({ input: { module: 'notes' } }).queryKey, OK_METER);
+
+    const notebooks: NotebookSummary[] = [
+      {
+        id: nbId,
+        authorUserId: 'u1',
+        visibility: 'private',
+        name: 'Sổ chính',
+        stackName: null,
+        pinned: false,
+        sortKey: '000001',
+        noteCount: 0,
+        mine: true,
+        editable: true,
+        revision: 1,
+        createdAt: '2026-11-21T00:00:00Z',
+        updatedAt: '2026-11-21T00:00:00Z',
+      },
+    ];
+    const initialResult: NoteOrganizeResult = {
+      state: 'ready',
+      runId: '40000000-0000-4000-8000-000000000030',
+      suggestions: [
+        {
+          noteId: noteCapped,
+          title: 'Ghi chú đủ 20 thẻ',
+          visibility: 'private',
+          revision: 1,
+          existingTags: maxTags,
+          notebookId: null,
+          notebookName: null,
+          tags: ['extra-ignored'],
+          reason: 'Đã đủ giới hạn thẻ',
+          canEditTags: true,
+        },
+        {
+          noteId: noteDup,
+          title: 'Ghi chú trùng thẻ',
+          visibility: 'private',
+          revision: 1,
+          existingTags: ['evn'],
+          notebookId: null,
+          notebookName: null,
+          tags: ['evn'],
+          reason: 'Thẻ đã có sẵn',
+          canEditTags: true,
+        },
+        {
+          noteId: noteActionable,
+          title: 'Ghi chú cần chuyển sổ',
+          visibility: 'private',
+          revision: 2,
+          existingTags: maxTags,
+          notebookId: nbId,
+          notebookName: 'Sổ chính',
+          tags: ['ignored-too'],
+          reason: 'Chuyển về sổ chính',
+          canEditTags: true,
+        },
+      ],
+      dropped: 0,
+      errorCode: null,
+    };
+
+    const ref = createRef<HTMLButtonElement>();
+    let capturedTree: ReactNode = null;
+    function Probe(props: Parameters<typeof NotesVyOrganizerPanel>[0]) {
+      hookDriver.inTargetComponent = true;
+      hookDriver.stateCursor = 0;
+      hookDriver.refCursor = 0;
+      hookDriver.mutationCursor = 0;
+      try {
+        const rendered = NotesVyOrganizerPanel(props);
+        capturedTree = rendered;
+        return rendered;
+      } finally {
+        hookDriver.inTargetComponent = false;
+      }
+    }
+    const renderProbe = () =>
+      renderToStaticMarkup(
+        wrap(
+          'vi',
+          <Probe
+            slug="demo-org"
+            open
+            notebooks={notebooks}
+            triggerRef={ref}
+            onClose={() => {}}
+            initialResult={initialResult}
+          />,
+        ),
+      );
+
+    const html = renderProbe();
+    expect(requireByTestId(capturedTree, `notes-vy-organize-apply-${noteCapped}`).props.disabled).toBe(true);
+    expect(requireByTestId(capturedTree, `notes-vy-organize-apply-${noteDup}`).props.disabled).toBe(true);
+    expect(requireByTestId(capturedTree, `notes-vy-organize-apply-${noteActionable}`).props.disabled).toBe(false);
+    // Only 1 actionable suggestion (noteActionable) -> Apply All stays hidden.
+    expect(html).not.toContain('notes-vy-organize-apply-all');
+
+    // While applyOne is pending, rerun button is disabled.
+    let resolveApply!: (value: { noteId: string; revision: number }) => void;
+    let markApplyStarted!: () => void;
+    const applyStarted = new Promise<void>((resolve) => {
+      markApplyStarted = resolve;
+    });
+    apiMocks.notesUpdate.mockImplementationOnce(
+      () => {
+        markApplyStarted();
+        return new Promise((resolve) => {
+          resolveApply = resolve;
+        });
+      },
+    );
+    (requireByTestId(capturedTree, `notes-vy-organize-apply-${noteActionable}`).props.onClick as () => void)();
+    await applyStarted;
+    renderProbe();
+    expect(requireByTestId(capturedTree, 'notes-vy-organize-rerun-btn').props.disabled).toBe(true);
+    expect(apiMocks.notesUpdate).toHaveBeenCalledWith({
+      noteId: noteActionable,
+      revision: 2,
+      notebookId: nbId,
+    });
+    resolveApply({ noteId: noteActionable, revision: 3 });
+    await hookDriver.mutations[1]!.inFlight;
+    renderProbe();
+    expect(requireByTestId(capturedTree, 'notes-vy-organize-rerun-btn').props.disabled).toBe(false);
+
+    // Selecting a notebook on noteCapped makes it actionable; a failed apply records draft.error,
+    // and clicking Rerun clears draft.error immediately before organize resolves (even if rerun fails).
+    (requireByTestId(capturedTree, `notes-vy-organize-notebook-${noteCapped}`).props.onChange as (e: {
+      target: { value: string };
+    }) => void)({ target: { value: nbId } });
+    renderProbe();
+    apiMocks.notesUpdate.mockRejectedValueOnce(Object.assign(new Error('Conflict'), { code: 'NOTE_REVISION_CONFLICT' }));
+    (requireByTestId(capturedTree, `notes-vy-organize-apply-${noteCapped}`).props.onClick as () => void)();
+    await hookDriver.mutations[1]!.inFlight;
+    expect(renderProbe()).toContain(catalog('vi').notes.vy.errors.NOTE_REVISION_CONFLICT);
+
+    let rejectRerun!: (err: Error) => void;
+    let markRerunStarted!: () => void;
+    const rerunStarted = new Promise<void>((resolve) => {
+      markRerunStarted = resolve;
+    });
+    apiMocks.notesOrganize.mockImplementationOnce(
+      () => {
+        markRerunStarted();
+        return new Promise((_resolve, reject) => {
+          rejectRerun = reject;
+        });
+      },
+    );
+    (requireByTestId(capturedTree, 'notes-vy-organize-rerun-btn').props.onClick as () => void)();
+    await rerunStarted;
+    const duringRerunHtml = renderProbe();
+    expect(duringRerunHtml).not.toContain(catalog('vi').notes.vy.errors.NOTE_REVISION_CONFLICT);
+    rejectRerun(Object.assign(new Error('Busy'), { code: 'AI_BUSY' }));
+    await hookDriver.mutations[0]!.inFlight;
+    const afterFailedRerunHtml = renderProbe();
+    expect(afterFailedRerunHtml).not.toContain(catalog('vi').notes.vy.errors.NOTE_REVISION_CONFLICT);
+  });
+
+  it('clears planner draft errors before rerun and disables rerun while apply mutations are pending (#5035)', async () => {
+    const qc = queryClientState.current;
+    qc.setQueryData(orpc.me.get.queryOptions().queryKey, {
+      userId: 'u1',
+      email: 'u1@example.com',
+      displayName: null,
+      orgs: [{ orgId: 'o1', slug: 'demo-org', name: 'Demo', role: 'member' }],
+    });
+    qc.setQueryData(orpc.notes.vyStatus.queryOptions({ input: {} }).queryKey, {
+      available: true,
+      reason: null,
+      resetOn: null,
+    });
+    qc.setQueryData(orpc.ai.meter.queryOptions({ input: { module: 'notes' } }).queryKey, OK_METER);
+
+    const focusId = '30000000-0000-4000-8000-000000000041';
+    const reschedId = '30000000-0000-4000-8000-000000000042';
+    const initialPlan: TodoPlanResult = {
+      state: 'ready',
+      runId: '40000000-0000-4000-8000-000000000040',
+      today: '2026-11-21',
+      focus: [
+        {
+          todoId: focusId,
+          title: 'Kiểm tra công nợ',
+          priority: 1,
+          dueOn: '2026-11-21',
+          dueTime: null,
+          overdue: false,
+          reason: 'Quan trọng',
+          revision: 3,
+        },
+      ],
+      reschedules: [
+        {
+          todoId: reschedId,
+          title: 'Chốt báo cáo tuần',
+          currentDueOn: '2026-11-20',
+          dueOn: '2026-11-22',
+          reason: 'Dời sang mai',
+          revision: 4,
+        },
+      ],
+      dropped: 0,
+      errorCode: null,
+    };
+
+    const ref = createRef<HTMLButtonElement>();
+    let capturedTree: ReactNode = null;
+    function Probe(props: Parameters<typeof MyWorkVyPlannerPanel>[0]) {
+      hookDriver.inTargetComponent = true;
+      hookDriver.stateCursor = 0;
+      hookDriver.refCursor = 0;
+      hookDriver.mutationCursor = 0;
+      try {
+        const rendered = MyWorkVyPlannerPanel(props);
+        capturedTree = rendered;
+        return rendered;
+      } finally {
+        hookDriver.inTargetComponent = false;
+      }
+    }
+    const renderProbe = () =>
+      renderToStaticMarkup(
+        wrap(
+          'vi',
+          <Probe
+            slug="demo-org"
+            open
+            viewerTz="Asia/Ho_Chi_Minh"
+            triggerRef={ref}
+            onClose={() => {}}
+            initialResult={initialPlan}
+          />,
+        ),
+      );
+
+    renderProbe();
+
+    // 1. Trigger a failed focus reschedule (records focusDraft.error) and check rerun disables while apply is pending.
+    (collectElements(capturedTree, (el) => el.type === DateInput)[0]!.props.onChange as (v: string) => void)('2026-11-24');
+    renderProbe();
+    let rejectFocus!: (err: Error) => void;
+    let markFocusStarted!: () => void;
+    const focusStarted = new Promise<void>((resolve) => {
+      markFocusStarted = resolve;
+    });
+    apiMocks.todosReschedule.mockImplementationOnce(
+      () => {
+        markFocusStarted();
+        return new Promise((_resolve, reject) => {
+          rejectFocus = reject;
+        });
+      },
+    );
+    (requireByTestId(capturedTree, `my-work-vy-focus-apply-${focusId}`).props.onClick as () => void)();
+    await focusStarted;
+    renderProbe();
+    expect(requireByTestId(capturedTree, 'my-work-vy-rerun-btn').props.disabled).toBe(true);
+    rejectFocus(Object.assign(new Error('Conflict'), { code: 'TODO_REVISION_CONFLICT' }));
+    await hookDriver.mutations[1]!.inFlight;
+
+    // 2. Also record a rescheduleDraft.error.
+    apiMocks.todosReschedule.mockRejectedValueOnce(Object.assign(new Error('Conflict'), { code: 'TODO_REVISION_CONFLICT' }));
+    (requireByTestId(capturedTree, `my-work-vy-reschedule-apply-${reschedId}`).props.onClick as () => void)();
+    await hookDriver.mutations[2]!.inFlight;
+    const withErrorsHtml = renderProbe();
+    expect(withErrorsHtml.split(catalog('vi').notes.vy.errors.TODO_REVISION_CONFLICT).length - 1).toBe(2);
+
+    // 3. Clicking Rerun clears both focus and reschedule inline errors before todoPlan finishes (even on rejection).
+    let rejectPlan!: (err: Error) => void;
+    let markPlanStarted!: () => void;
+    const planStarted = new Promise<void>((resolve) => {
+      markPlanStarted = resolve;
+    });
+    apiMocks.notesTodoPlan.mockImplementationOnce(
+      () => {
+        markPlanStarted();
+        return new Promise((_resolve, reject) => {
+          rejectPlan = reject;
+        });
+      },
+    );
+    (requireByTestId(capturedTree, 'my-work-vy-rerun-btn').props.onClick as () => void)();
+    await planStarted;
+    expect(renderProbe()).not.toContain(catalog('vi').notes.vy.errors.TODO_REVISION_CONFLICT);
+    rejectPlan(Object.assign(new Error('Busy'), { code: 'AI_BUSY' }));
+    await hookDriver.mutations[0]!.inFlight;
+    expect(renderProbe()).not.toContain(catalog('vi').notes.vy.errors.TODO_REVISION_CONFLICT);
   });
 });
