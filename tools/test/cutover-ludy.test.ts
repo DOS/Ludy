@@ -1089,7 +1089,7 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', { timeout:
     writeFileSync(unclosedIn, 'BAD="unclosed\nOK_AFTER=still-valid\n');
     const rUnclosed = spawnSync('bash', [scriptPath, 'rewrite-env', unclosedIn, unclosedOut], { encoding: 'utf8' });
     expect(rUnclosed.status).not.toBe(0);
-    expect(rUnclosed.stderr).toContain('unclosed double quote');
+    expect(rUnclosed.stderr).toContain('unclosed quoted value');
 
     const emptyToNonEmptyIn = join(work, '.env.empty-to-nonempty.in');
     const emptyToNonEmptyOut = join(work, '.env.empty-to-nonempty.out');
@@ -1113,7 +1113,7 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', { timeout:
     writeFileSync(sqBadIn, "BROKEN='end\\'\n");
     const rSqBad = spawnSync('bash', [scriptPath, 'rewrite-env', sqBadIn, sqBadOut], { encoding: 'utf8' });
     expect(rSqBad.status).not.toBe(0);
-    expect(rSqBad.stderr).toContain('unclosed single quote');
+    expect(rSqBad.stderr).toContain('unclosed quoted value');
 
     // 9) cutover-stack honors full COMPOSE_FILE entries in order and resolves effective BACKUP_S3_PREFIX (#3972 Round 14).
     const fCustom = createCutoverFixture();

@@ -1232,7 +1232,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:compose.host.yml\n');
     const rbMissingHostFile = run(['rollback']);
     expect(rbMissingHostFile.status, rbMissingHostFile.out).toBe(2);
-    expect(rbMissingHostFile.out).toContain('plain docker compose resolves to project');
+    expect(rbMissingHostFile.out).toContain(`plain docker compose in ${dir} resolves to project`);
     writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
 
     // Parent/child bind paths and symlinked bind mounts collide cleanly in check_storage_free without false-positiving on siblings (#3972 Round 14).
