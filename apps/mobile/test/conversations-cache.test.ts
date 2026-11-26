@@ -136,7 +136,11 @@ describe('conversations persisted KeyValue read cache', () => {
       salesCoworkerName: 'Dy',
       counts: { new: 30, pending: 0, resolved: 0, unread: 10 },
       lists: {
-        new: Array.from({ length: 30 }, (_, i) => makeSummary(i, hugePad)),
+        new: [
+          ...Array.from({ length: 20 }, (_, i) => makeSummary(i, hugePad)),
+          makeSummary(99, hugePad),
+          ...Array.from({ length: 9 }, (_, i) => makeSummary(i + 21, hugePad)),
+        ],
       },
       threads: {
         'conv-1': { conversationId: 'conv-1', cachedAt: 1_000_000, detail: makeDetail(1, hugePad) },
@@ -147,11 +151,12 @@ describe('conversations persisted KeyValue read cache', () => {
     const loaded = await cache.load(SERVER, 'acme-vn', 'user-a');
     expect(loaded).not.toBeNull();
     expect(loaded?.salesCoworkerName).toBe('Dy');
-    // Newest thread's latest messages remain readable even after shrinkage.
+    // Newest thread's latest messages and its inbox list entry remain reachable even after shrinkage.
     const cachedNewest = loaded?.threads['conv-99'];
     expect(cachedNewest).toBeDefined();
     expect(cachedNewest?.detail.messages.length).toBeGreaterThan(0);
     expect(cachedNewest?.detail.messages.at(-1)?.seq).toBe(40);
+    expect(loaded?.lists.new?.some((item) => item.id === 'conv-99')).toBe(true);
 
     // Simulate an interrupted cleanup after META_KEY flipped in a later generation.
     store.data.set('ludy.conversations.cache.v1.999.0', 'stale-pii-chunk');
@@ -332,5 +337,57 @@ describe('conversations persisted KeyValue read cache', () => {
 
     store.data.set('ludy.conversations.cache.meta.v1', '{broken-json');
     expect(await cache.load(SERVER, 'org-a', 'user-a')).toBeNull();
+  });
+
+  it('persists CLEANUP_KEY before deleting META_KEY on clear() and scopes clearScope() cleanly', async () => {
+    const base = memoryStore();
+    let failChunkRemove = true;
+    const store = {
+      ...base,
+      async remove(key: string) {
+        if (failChunkRemove && key.startsWith('ludy.conversations.cache.v1.')) {
+          throw new Error('interrupted clear');
+        }
+        return base.remove(key);
+      },
+    };
+    const cache = createConversationsCache(store);
+    await cache.save({
+      serverUrl: SERVER,
+      orgSlug: 'org-a',
+      userId: 'user-a',
+      savedAt: 1000,
+      salesCoworkerName: 'Dy',
+      counts: null,
+      lists: { new: [makeSummary(1)] },
+      threads: {},
+    });
+
+    await expect(cache.clear()).rejects.toThrow('interrupted clear');
+    expect(base.data.has('ludy.conversations.cache.meta.v1')).toBe(false);
+    expect(base.data.has('ludy.conversations.cache.cleanup.v1')).toBe(true);
+    expect(base.data.has('ludy.conversations.cache.v1.1.0')).toBe(true);
+
+    failChunkRemove = false;
+    await cache.clear();
+    expect(base.data.size).toBe(0);
+
+    await cache.save({
+      serverUrl: SERVER,
+      orgSlug: 'org-a',
+      userId: 'user-a',
+      savedAt: 2000,
+      salesCoworkerName: 'Dy',
+      counts: null,
+      lists: { new: [makeSummary(2)] },
+      threads: {},
+    });
+    // Another org's clearScope does not discard org-a's cached snapshot.
+    await cache.clearScope({ serverUrl: SERVER, orgSlug: 'org-b', userId: 'user-a' });
+    expect(await cache.load(SERVER, 'org-a', 'user-a')).not.toBeNull();
+
+    await cache.clearScope({ serverUrl: SERVER, orgSlug: 'org-a', userId: 'user-a' });
+    expect(await cache.load(SERVER, 'org-a', 'user-a')).toBeNull();
+    expect(base.data.size).toBe(0);
   });
 });

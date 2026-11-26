@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The screens of the mobile client: sign in, unlock, and home workspace with Approvals and Conversations tabs (issues #4880, #4881, #4882).
-import { useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, AppState, Pressable, Text, TextInput, View } from 'react-native';
 import { isMfaRequired } from '@ludy/client';
 import type { MessageKey } from '../i18n.ts';
-import { SERVER_POLICY, clientFor, locale, session, t } from '../runtime.ts';
+import { SERVER_POLICY, clientFor, conversationsCache, locale, session, t } from '../runtime.ts';
 import { ApprovalsQueueScreen } from '../screens/approvals/ApprovalsQueueScreen.tsx';
 import { isLikelyNetworkError } from '../screens/approvals/model.ts';
 import { ConversationsInboxScreen } from '../screens/conversations/ConversationsInboxScreen.tsx';
+import { isAuthBlockingError } from '../screens/conversations/model.ts';
 import { Body, LinkButton, PrimaryButton, Screen, Title } from './parts.tsx';
 import { styles, usePalette } from './theme.ts';
 import type { SessionState } from '../auth/session.ts';
@@ -107,14 +108,23 @@ export function HomeScreen(props: {
 }) {
   const { serverUrl, orgSlug } = props.state;
   const palette = usePalette();
+  const qc = useQueryClient();
   const client = useMemo(() => clientFor(serverUrl), [serverUrl]);
   const [pickingOrg, setPickingOrg] = useState(false);
+  const [isAppActive, setIsAppActive] = useState(() => AppState.currentState === 'active');
   const [activeTab, setActiveTab] = useState<'approvals' | 'conversations'>(() =>
     props.initialConversationId ? 'conversations' : (props.initialTab ?? 'approvals'),
   );
   const [pendingConversationId, setPendingConversationId] = useState<string | null>(
     props.initialConversationId ?? null,
   );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next) => {
+      setIsAppActive(next === 'active');
+    });
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     if (props.initialConversationId) {
@@ -130,14 +140,66 @@ export function HomeScreen(props: {
   });
   const orgs = me.data?.orgs ?? [];
   const org = orgs.find((o) => o.slug === orgSlug) ?? null;
+  const currentOrgSlug = org?.slug ?? '';
+  const currentUserId = me.data?.userId ?? '';
+
+  const countsQueryKey = useMemo(
+    () => ['conversations', 'counts', serverUrl, currentOrgSlug, currentUserId] as const,
+    [serverUrl, currentOrgSlug, currentUserId],
+  );
 
   const countsQuery = useQuery({
-    queryKey: ['home-conversations-unread', serverUrl, org?.slug ?? ''],
-    queryFn: () => client.conversations.counts({}),
+    queryKey: countsQueryKey,
+    queryFn: async () => {
+      const startEpoch = conversationsCache.epoch();
+      const counts = await client.conversations.counts({});
+      const cur = session.state();
+      if (
+        cur.status !== 'active' ||
+        cur.serverUrl !== serverUrl ||
+        cur.orgSlug !== currentOrgSlug ||
+        conversationsCache.epoch() !== startEpoch
+      ) {
+        throw new Error('stale-session');
+      }
+      return counts;
+    },
     enabled: Boolean(org && !pickingOrg),
     retry: false,
     staleTime: 30_000,
+    refetchInterval: (query) => {
+      if (!isAppActive || !org || pickingOrg) return false;
+      if (query.state.error && !isLikelyNetworkError(query.state.error)) return false;
+      return 30_000;
+    },
   });
+
+  const wasAppActiveRef = useRef(isAppActive);
+  useEffect(() => {
+    const wasActive = wasAppActiveRef.current;
+    wasAppActiveRef.current = isAppActive;
+    if (!wasActive && isAppActive && org && !pickingOrg) {
+      if (!countsQuery.isError || isLikelyNetworkError(countsQuery.error)) {
+        void qc.invalidateQueries({ queryKey: countsQueryKey, exact: true });
+      }
+    }
+  }, [isAppActive, org, pickingOrg, countsQuery.isError, countsQuery.error, qc, countsQueryKey]);
+
+  useEffect(() => {
+    if (!countsQuery.isError || isLikelyNetworkError(countsQuery.error)) return;
+    if (isAuthBlockingError(countsQuery.error)) {
+      void session.reportKernelError(countsQuery.error);
+    }
+    if (org) {
+      void conversationsCache.clearScope({
+        serverUrl,
+        orgSlug: org.slug,
+        userId: me.data?.userId ?? null,
+      });
+      qc.removeQueries({ queryKey: ['conversations', 'list', serverUrl, org.slug] });
+      qc.removeQueries({ queryKey: ['conversations', 'detail', serverUrl, org.slug] });
+    }
+  }, [countsQuery.isError, countsQuery.error, org, me.data?.userId, qc, serverUrl]);
 
   // One org: used without asking. Several: the person picks once, and the choice is kept.
   useEffect(() => {

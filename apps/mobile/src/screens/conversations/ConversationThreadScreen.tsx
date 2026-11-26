@@ -6,9 +6,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   Pressable,
   RefreshControl,
-  ScrollView,
   Text,
   TextInput,
   View,
@@ -43,6 +43,7 @@ import {
   formatWindowDuration,
   getContactDisplayName,
   hasNamePlaceholder,
+  isAuthBlockingError,
   isConversationForbiddenOrMissing,
   isLikelyNetworkError,
   replyTextFor,
@@ -73,6 +74,10 @@ interface ConversationThreadScreenProps {
 
 const WINDOW_TICK_MS = 30_000;
 const DRAFT_POLL_MS = 3_000;
+
+function MessageRowSeparator() {
+  return <View style={{ height: 10 }} />;
+}
 
 function sendStateLabelKey(
   sendState: NonNullable<ConversationMessage['sendState']>,
@@ -220,11 +225,16 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
             signal,
             isSessionStillActive: () => {
               const after = session.state();
-              return after.status === 'active' && after.serverUrl === serverUrl && after.orgSlug === orgSlug;
+              return (
+                after.status === 'active' &&
+                after.serverUrl === serverUrl &&
+                after.orgSlug === orgSlug &&
+                conversationsCache.epoch() === startEpoch
+              );
             },
           })
           .then((saved) => {
-            if (!saved || signal.aborted) return;
+            if (!saved || signal.aborted || conversationsCache.epoch() !== startEpoch) return;
             setCachedThread(saved.threads[conversationId] ?? null);
           })
           .catch(() => undefined);
@@ -244,18 +254,25 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
     },
   });
 
-  // Clear latched access denial once a fresh live read succeeds; purge caches permanently on 403/404.
+  // Clear latched access denial once a fresh live read succeeds; purge caches cleanly on 403/404 or auth refusal.
   useEffect(() => {
     if (!detailQuery.isError && detailQuery.data) {
       setAccessDeniedError(null);
       return;
     }
-    if (
-      detailQuery.isError &&
-      !isLikelyNetworkError(detailQuery.error) &&
-      isConversationForbiddenOrMissing(detailQuery.error)
-    ) {
-      const err = detailQuery.error;
+    if (!detailQuery.isError || isLikelyNetworkError(detailQuery.error)) return;
+    const err = detailQuery.error;
+    if (isAuthBlockingError(err)) {
+      void session.reportKernelError(err);
+      setAccessDeniedError(err);
+      setCachedThread(null);
+      void conversationsCache.clearScope({ serverUrl, orgSlug, userId });
+      qc.removeQueries({ queryKey: ['conversations', 'list', serverUrl, orgSlug] });
+      qc.removeQueries({ queryKey: ['conversations', 'detail', serverUrl, orgSlug] });
+      qc.removeQueries({ queryKey: ['conversations', 'counts', serverUrl, orgSlug] });
+      return;
+    }
+    if (isConversationForbiddenOrMissing(err)) {
       setAccessDeniedError(err);
       setCachedThread(null);
       void conversationsCache.evictThread({
@@ -264,6 +281,10 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
         userId,
         conversationId,
         expectedEpoch: conversationsCache.epoch(),
+        isSessionStillActive: () => {
+          const after = session.state();
+          return after.status === 'active' && after.serverUrl === serverUrl && after.orgSlug === orgSlug;
+        },
       });
       qc.removeQueries({ queryKey: detailQueryKey, exact: true });
       onRefreshListRef.current();
@@ -558,6 +579,11 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
     return [...activeDetail.messages].sort((a, b) => a.seq - b.seq);
   }, [activeDetail]);
 
+  const memberById = useMemo(
+    () => new Map(members.map((m) => [m.userId, m])),
+    [members],
+  );
+
   const lastMessage = sortedMessages.at(-1);
   const canRequestAiDraft = Boolean(
     effectiveAiEnabled &&
@@ -579,10 +605,413 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
       )
     : '';
 
+  const feedbackBanner = feedback ? (
+    <Banner tone={feedback.tone}>
+      <Body
+        tone={
+          feedback.tone === 'danger'
+            ? 'danger'
+            : feedback.tone === 'warn'
+              ? 'warning'
+              : 'normal'
+        }
+      >
+        {feedback.text}
+      </Body>
+      {feedback.showWeb ? (
+        <SecondaryButton label={t('conversations.openWeb')} onPress={() => void handleOpenWeb()} />
+      ) : null}
+    </Banner>
+  ) : null;
+
+  const threadData = activeDetail ? sortedMessages : [];
+
+  const threadHeader = (
+    <View style={{ gap: 12, marginBottom: threadData.length > 0 ? 12 : 0 }}>
+      <View style={styles.row}>
+        <LinkButton
+          label={t('conversations.back')}
+          onPress={props.onBack}
+          disabled={busyAction !== null}
+        />
+        <LinkButton
+          label={t('conversations.openWeb')}
+          accessibilityHint={t('conversations.openWebHint')}
+          onPress={() => void handleOpenWeb()}
+        />
+      </View>
+
+      {isNonNetworkError ? (
+        <Banner tone="danger">
+          <Body tone="danger">
+            {isMfaRequired(rawError)
+              ? t('home.error.mfa')
+              : isConversationForbiddenOrMissing(rawError)
+                ? t('conversations.thread.refused')
+                : t('home.error.generic')}
+          </Body>
+          <SecondaryButton
+            label={t('home.retry')}
+            onPress={() => {
+              setAccessDeniedError(null);
+              void detailQuery.refetch();
+            }}
+          />
+        </Banner>
+      ) : null}
+
+      {isNetworkOffline && activeDetail && cachedThread ? (
+        <Banner tone="warn">
+          <Body tone="warning">
+            {t('conversations.offlineBanner', {
+              time: formatDateTimeShort(cachedThread.cachedAt, locale),
+            })}
+          </Body>
+        </Banner>
+      ) : isNetworkOffline && !activeDetail ? (
+        <Banner tone="warn">
+          <Body tone="warning">{t('conversations.thread.offlineError')}</Body>
+          <SecondaryButton label={t('home.retry')} onPress={() => void detailQuery.refetch()} />
+        </Banner>
+      ) : null}
+
+      {!activeDetail ? feedbackBanner : null}
+
+      {detailQuery.isPending && !activeDetail && !isNonNetworkError ? (
+        <View style={{ paddingVertical: 24, alignItems: 'center', gap: 10 }}>
+          <ActivityIndicator accessibilityLabel={t('conversations.thread.loading')} />
+          <Body tone="muted">{t('conversations.thread.loading')}</Body>
+        </View>
+      ) : null}
+
+      {activeDetail ? (
+        <>
+          <View style={{ gap: 6 }}>
+            <Title>{contactDisplayName}</Title>
+            <View style={styles.actionsRow}>
+              <Badge label={channelLabel} tone="info" />
+              {activeDetail.conversation.channel.displayName ? (
+                <Badge label={activeDetail.conversation.channel.displayName} tone="info" />
+              ) : null}
+              <Badge
+                label={t(`conversations.status.${activeDetail.conversation.status}`)}
+                tone={activeDetail.conversation.status === 'new' ? 'warn' : 'info'}
+              />
+            </View>
+            {activeDetail.conversation.kind === 'email' && activeDetail.conversation.contact.address ? (
+              <Text style={[styles.meta, { color: palette.muted }]}>
+                {activeDetail.conversation.contact.address}
+              </Text>
+            ) : null}
+            {activeDetail.conversation.kind === 'email' && activeDetail.conversation.subject ? (
+              <Text style={[styles.cardTitle, { color: palette.text }]}>
+                {activeDetail.conversation.subject}
+              </Text>
+            ) : null}
+            {activeDetail.conversation.kind === 'email' && activeDetail.conversation.senderUnverified ? (
+              <Banner tone="warn">
+                <Body tone="warning">{t('conversations.thread.unverifiedEmail')}</Body>
+              </Banner>
+            ) : null}
+          </View>
+
+          {windowState && !windowState.allowed ? (
+            <Banner tone="danger">
+              <Body tone="danger">
+                {blockReasonText(
+                  activeDetail.conversation.channel.provider,
+                  windowState.blockReason ?? 'not_supported',
+                )}
+              </Body>
+            </Banner>
+          ) : windowState && windowState.hasWindow && windowState.remainingMs !== null ? (
+            <Banner tone={windowState.urgent ? 'warn' : 'info'}>
+              <Body tone={windowState.urgent ? 'warning' : 'normal'}>
+                {activeDetail.conversation.channel.provider === 'zalo_oa'
+                  ? t('conversations.window.openZalo', {
+                      remaining: formatWindowDuration(windowState.remainingMs, locale),
+                    })
+                  : t('conversations.window.openChannel', {
+                      channel: channelLabel,
+                      remaining: formatWindowDuration(windowState.remainingMs, locale),
+                    })}
+              </Body>
+            </Banner>
+          ) : null}
+
+          {activeDetail.gap ? (
+            <Banner tone="info">
+              <Body tone="muted">
+                {t('conversations.thread.gap', {
+                  from: formatDateTimeShort(activeDetail.gap.from, locale),
+                  to: formatDateTimeShort(activeDetail.gap.to, locale),
+                })}
+              </Body>
+            </Banner>
+          ) : null}
+
+          {!canWrite ? (
+            <Banner tone="info">
+              <Body tone="muted">{t('conversations.viewerReadOnly')}</Body>
+            </Banner>
+          ) : null}
+        </>
+      ) : null}
+    </View>
+  );
+
+  const threadFooter = activeDetail ? (
+    <View style={{ gap: 12, marginTop: threadData.length > 0 ? 12 : 0 }}>
+      {feedbackBanner}
+
+      {movedNotice ? (
+        <Banner tone="warn">
+          <Body tone="warning">{t('conversations.composer.moved')}</Body>
+          {hasNewerUnseen && liveDetail ? (
+            <SecondaryButton
+              label={t('conversations.thread.seenIt')}
+              onPress={() => {
+                setSeenSeq(liveDetail.conversation.lastSeq);
+                setMovedNotice(false);
+              }}
+            />
+          ) : null}
+        </Banner>
+      ) : hasNewerUnseen && liveDetail ? (
+        <Banner tone="info">
+          <Body>{t('conversations.thread.newerBanner')}</Body>
+          <SecondaryButton
+            label={t('conversations.thread.seenIt')}
+            onPress={() => setSeenSeq(liveDetail.conversation.lastSeq)}
+          />
+        </Banner>
+      ) : null}
+
+      {canWrite && windowState?.allowed ? (
+        <View style={{ gap: 12, marginTop: 4 }}>
+          {effectiveAiEnabled && (activeDetail.draft || canRequestAiDraft) ? (
+            <Text style={[styles.meta, { color: palette.muted }]}>
+              {t('conversations.draft.intro', { sales: salesCoworkerName })}
+            </Text>
+          ) : null}
+
+          {activeDetail.draft?.state === 'requested' ? (
+            <Banner tone="info">
+              {isNetworkOffline ? (
+                <Body tone="muted">{t('conversations.draft.pendingOffline')}</Body>
+              ) : (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <ActivityIndicator accessibilityLabel={t('conversations.draft.writing')} />
+                  <Body tone="muted">{t('conversations.draft.writing')}</Body>
+                </View>
+              )}
+            </Banner>
+          ) : null}
+
+          {activeDetail.draft?.state === 'live' && activeDetail.draft.body !== null ? (
+            <View
+              accessibilityRole="summary"
+              style={[
+                styles.card,
+                {
+                  borderColor: palette.primary,
+                  borderStyle: 'dashed',
+                  borderWidth: 1.5,
+                  backgroundColor: palette.surface,
+                },
+              ]}
+            >
+              <Badge
+                label={t('conversations.draft.title', { sales: salesCoworkerName })}
+                tone="info"
+              />
+              <Text style={[styles.meta, { color: palette.muted }]}>
+                {t('conversations.draft.taintedNotice')}
+              </Text>
+              <Text style={[styles.body, { color: palette.text }]}>{activeDetail.draft.body}</Text>
+              {!liveDetail || isNetworkOffline ? (
+                <Text style={[styles.meta, { color: palette.muted }]}>
+                  {t('conversations.draft.liveRequired')}
+                </Text>
+              ) : null}
+              <View style={styles.actionsRow}>
+                <SecondaryButton
+                  label={t('conversations.draft.use')}
+                  disabled={busyAction !== null || !liveDetail || isNetworkOffline}
+                  onPress={() => {
+                    if (!liveDetail || !liveDetail.draft || liveDetail.draft.body === null) return;
+                    setComposerText(replyTextFor(liveDetail.draft.body, liveDetail));
+                    setReplySource({ draftId: liveDetail.draft.id });
+                    setFeedback(null);
+                  }}
+                />
+                <LinkButton
+                  label={t('conversations.draft.discard')}
+                  disabled={busyAction !== null || !liveDetail || isNetworkOffline}
+                  onPress={() => {
+                    if (liveDetail?.draft) void onDiscardDraft(liveDetail.draft.id);
+                  }}
+                />
+              </View>
+            </View>
+          ) : null}
+
+          {canRequestAiDraft ? (
+            <SecondaryButton
+              label={t('conversations.draft.ask')}
+              busy={busyAction === 'draft_ask'}
+              disabled={busyAction !== null || isNetworkOffline}
+              onPress={() => void onRequestDraft()}
+            />
+          ) : null}
+
+          {activeDetail.suggestions.length > 0 ? (
+            <View style={{ gap: 8 }}>
+              <Text style={[styles.meta, { color: palette.muted }]}>
+                {t('conversations.draft.suggestions')}
+              </Text>
+              <View style={styles.actionsRow}>
+                {activeDetail.suggestions.map((s) => {
+                  const chipDisabled = busyAction !== null || !liveDetail || isNetworkOffline;
+                  return (
+                    <Pressable
+                      key={s.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={s.title}
+                      accessibilityState={{ disabled: chipDisabled }}
+                      disabled={chipDisabled}
+                      onPress={() => {
+                        const liveSuggestion = liveDetail?.suggestions.find((item) => item.id === s.id);
+                        if (!liveDetail || !liveSuggestion) return;
+                        setComposerText(replyTextFor(liveSuggestion.body, liveDetail));
+                        setReplySource({ savedReplyId: liveSuggestion.id });
+                        setFeedback(null);
+                      }}
+                      style={{
+                        minHeight: 48,
+                        paddingHorizontal: 14,
+                        paddingVertical: 10,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: palette.border,
+                        backgroundColor: palette.surface,
+                        opacity: chipDisabled ? 0.55 : 1,
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Text style={{ fontSize: 14, fontWeight: '600', color: palette.text }}>
+                        {s.title}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
+
+          <View style={{ gap: 8 }}>
+            <SectionHeading>{t('conversations.composer.label')}</SectionHeading>
+            <Text style={[styles.meta, { color: palette.muted }]}>
+              {activeDetail.conversation.kind === 'email'
+                ? activeDetail.conversation.contact.address
+                  ? t('conversations.replyContext.email', {
+                      address: activeDetail.conversation.contact.address,
+                    })
+                  : t('conversations.replyContext.emailGeneric')
+                : t(
+                    activeDetail.conversation.kind === 'direct'
+                      ? 'conversations.replyContext.private'
+                      : 'conversations.replyContext.public',
+                    { channel: channelLabel },
+                  )}
+            </Text>
+            <TextInput
+              accessibilityLabel={t('conversations.composer.label')}
+              multiline
+              value={composerText}
+              onChangeText={(next) => {
+                setComposerText(next);
+                if (next === '') setReplySource({});
+              }}
+              placeholder={t('conversations.composer.placeholder')}
+              placeholderTextColor={palette.muted}
+              editable={busyAction !== 'send'}
+              style={[
+                styles.input,
+                {
+                  minHeight: 96,
+                  textAlignVertical: 'top',
+                  borderColor:
+                    hasPlaceholderWarning || hasInvalidChar || isTooLong
+                      ? palette.danger
+                      : palette.border,
+                  color: palette.text,
+                  backgroundColor: palette.surface,
+                },
+              ]}
+            />
+            <Text
+              style={[
+                styles.meta,
+                { color: isTooLong ? palette.danger : palette.muted },
+              ]}
+            >
+              {t('conversations.composer.count', {
+                left: String(Math.max(0, replyMax - trimmedBody.length)),
+                max: String(replyMax),
+              })}
+            </Text>
+            {hasPlaceholderWarning ? (
+              <Text style={[styles.meta, { color: palette.danger }]}>
+                {t('conversations.composer.placeholderWarning', {
+                  placeholder: SAVED_REPLY_NAME_PLACEHOLDER,
+                })}
+              </Text>
+            ) : null}
+            {hasInvalidChar ? (
+              <Text style={[styles.meta, { color: palette.danger }]}>
+                {t('conversations.composer.invalidChar')}
+              </Text>
+            ) : null}
+            {isTooLong ? (
+              <Text style={[styles.meta, { color: palette.danger }]}>
+                {t('conversations.composer.tooLong', { max: String(replyMax) })}
+              </Text>
+            ) : null}
+
+            <PrimaryButton
+              label={
+                busyAction === 'send'
+                  ? t('conversations.composer.sending')
+                  : activeDetail.conversation.kind === 'email'
+                    ? t('conversations.composer.sendEmail')
+                    : activeDetail.conversation.kind === 'direct'
+                      ? t('conversations.composer.sendPrivate')
+                      : t('conversations.composer.sendPublic')
+              }
+              busy={busyAction === 'send'}
+              disabled={!canSendNow}
+              onPress={() => void onSendReply()}
+            />
+          </View>
+        </View>
+      ) : null}
+    </View>
+  ) : null;
+
   return (
     <View style={[styles.scrollContainer, { backgroundColor: palette.background }]}>
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
+      <FlatList
+        data={threadData}
+        keyExtractor={(msg) => msg.id}
+        initialNumToRender={20}
+        maxToRenderPerBatch={20}
+        windowSize={7}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={[styles.scrollContent, { gap: 0 }]}
+        ListHeaderComponent={threadHeader}
+        ListFooterComponent={threadFooter}
+        ItemSeparatorComponent={MessageRowSeparator}
         refreshControl={
           <RefreshControl
             onRefresh={() => {
@@ -593,501 +1022,115 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
             refreshing={detailQuery.isRefetching}
           />
         }
-      >
-        <View style={styles.row}>
-          <LinkButton
-            label={t('conversations.back')}
-            onPress={props.onBack}
-            disabled={busyAction !== null}
-          />
-          <LinkButton
-            label={t('conversations.openWeb')}
-            accessibilityHint={t('conversations.openWebHint')}
-            onPress={() => void handleOpenWeb()}
-          />
-        </View>
+        renderItem={({ item: msg }) => {
+          const isOutbound = msg.direction === 'out';
+          const member = msg.authorUserId ? memberById.get(msg.authorUserId) : undefined;
+          const authorLabel = isOutbound
+            ? msg.authorKind === 'member'
+              ? msg.authorUserId && msg.authorUserId === userId
+                ? t('conversations.message.you')
+                : member?.displayName || member?.email || t('conversations.message.member')
+              : t('conversations.message.platform')
+            : msg.authorName ||
+              (msg.authorTail
+                ? t('conversations.anonymous', { tail: msg.authorTail })
+                : contactDisplayName);
 
-        {isNonNetworkError ? (
-          <Banner tone="danger">
-            <Body tone="danger">
-              {isMfaRequired(rawError)
-                ? t('home.error.mfa')
-                : isConversationForbiddenOrMissing(rawError)
-                  ? t('conversations.thread.refused')
-                  : t('home.error.generic')}
-            </Body>
-            <SecondaryButton
-              label={t('home.retry')}
-              onPress={() => {
-                setAccessDeniedError(null);
-                void detailQuery.refetch();
-              }}
-            />
-          </Banner>
-        ) : null}
-
-        {isNetworkOffline && activeDetail && cachedThread ? (
-          <Banner tone="warn">
-            <Body tone="warning">
-              {t('conversations.offlineBanner', {
-                time: formatDateTimeShort(cachedThread.cachedAt, locale),
-              })}
-            </Body>
-          </Banner>
-        ) : isNetworkOffline && !activeDetail ? (
-          <Banner tone="warn">
-            <Body tone="warning">{t('conversations.thread.offlineError')}</Body>
-            <SecondaryButton label={t('home.retry')} onPress={() => void detailQuery.refetch()} />
-          </Banner>
-        ) : null}
-
-        {detailQuery.isPending && !activeDetail && !isNonNetworkError ? (
-          <View style={{ paddingVertical: 24, alignItems: 'center', gap: 10 }}>
-            <ActivityIndicator accessibilityLabel={t('conversations.thread.loading')} />
-            <Body tone="muted">{t('conversations.thread.loading')}</Body>
-          </View>
-        ) : null}
-
-        {activeDetail ? (
-          <>
-            <View style={{ gap: 6 }}>
-              <Title>{contactDisplayName}</Title>
-              <View style={styles.actionsRow}>
-                <Badge label={channelLabel} tone="info" />
-                {activeDetail.conversation.channel.displayName ? (
-                  <Badge label={activeDetail.conversation.channel.displayName} tone="info" />
-                ) : null}
-                <Badge
-                  label={t(`conversations.status.${activeDetail.conversation.status}`)}
-                  tone={activeDetail.conversation.status === 'new' ? 'warn' : 'info'}
-                />
-              </View>
-              {activeDetail.conversation.kind === 'email' && activeDetail.conversation.contact.address ? (
-                <Text style={[styles.meta, { color: palette.muted }]}>
-                  {activeDetail.conversation.contact.address}
-                </Text>
-              ) : null}
-              {activeDetail.conversation.kind === 'email' && activeDetail.conversation.subject ? (
-                <Text style={[styles.cardTitle, { color: palette.text }]}>
-                  {activeDetail.conversation.subject}
-                </Text>
-              ) : null}
-              {activeDetail.conversation.kind === 'email' && activeDetail.conversation.senderUnverified ? (
-                <Banner tone="warn">
-                  <Body tone="warning">{t('conversations.thread.unverifiedEmail')}</Body>
-                </Banner>
-              ) : null}
-            </View>
-
-            {windowState && !windowState.allowed ? (
-              <Banner tone="danger">
-                <Body tone="danger">
-                  {blockReasonText(
-                    activeDetail.conversation.channel.provider,
-                    windowState.blockReason ?? 'not_supported',
-                  )}
-                </Body>
-              </Banner>
-            ) : windowState && windowState.hasWindow && windowState.remainingMs !== null ? (
-              <Banner tone={windowState.urgent ? 'warn' : 'info'}>
-                <Body tone={windowState.urgent ? 'warning' : 'normal'}>
-                  {activeDetail.conversation.channel.provider === 'zalo_oa'
-                    ? t('conversations.window.openZalo', {
-                        remaining: formatWindowDuration(windowState.remainingMs, locale),
-                      })
-                    : t('conversations.window.openChannel', {
-                        channel: channelLabel,
-                        remaining: formatWindowDuration(windowState.remainingMs, locale),
-                      })}
-                </Body>
-              </Banner>
-            ) : null}
-
-            {activeDetail.gap ? (
-              <Banner tone="info">
-                <Body tone="muted">
-                  {t('conversations.thread.gap', {
-                    from: formatDateTimeShort(activeDetail.gap.from, locale),
-                    to: formatDateTimeShort(activeDetail.gap.to, locale),
-                  })}
-                </Body>
-              </Banner>
-            ) : null}
-
-            {!canWrite ? (
-              <Banner tone="info">
-                <Body tone="muted">{t('conversations.viewerReadOnly')}</Body>
-              </Banner>
-            ) : null}
-
-            {feedback ? (
-              <Banner tone={feedback.tone}>
-                <Body
-                  tone={
-                    feedback.tone === 'danger'
-                      ? 'danger'
-                      : feedback.tone === 'warn'
-                        ? 'warning'
-                        : 'normal'
-                  }
+          return (
+            <View
+              style={[
+                styles.card,
+                {
+                  alignSelf: isOutbound ? 'flex-end' : 'flex-start',
+                  width: '90%',
+                  borderColor: isOutbound ? palette.primary : palette.border,
+                  borderWidth: isOutbound ? 1.5 : 1,
+                  backgroundColor: palette.surface,
+                  opacity: msg.hidden ? 0.72 : 1,
+                },
+              ]}
+            >
+              <View style={styles.row}>
+                <Text
+                  style={[
+                    styles.meta,
+                    { color: isOutbound ? palette.primary : palette.muted, fontWeight: '600' },
+                  ]}
                 >
-                  {feedback.text}
-                </Body>
-                {feedback.showWeb ? (
-                  <SecondaryButton label={t('conversations.openWeb')} onPress={() => void handleOpenWeb()} />
-                ) : null}
-              </Banner>
-            ) : null}
+                  {authorLabel}
+                </Text>
+                <Text style={[styles.meta, { color: palette.muted }]}>
+                  {formatDateTimeShort(msg.sentAt, locale)}
+                </Text>
+              </View>
 
-            <View style={{ gap: 10 }}>
-              {sortedMessages.map((msg) => {
-                const isOutbound = msg.direction === 'out';
-                const member = msg.authorUserId
-                  ? members.find((m) => m.userId === msg.authorUserId)
-                  : undefined;
-                const authorLabel = isOutbound
-                  ? msg.authorKind === 'member'
-                    ? msg.authorUserId && msg.authorUserId === userId
-                      ? t('conversations.message.you')
-                      : member?.displayName || member?.email || t('conversations.message.member')
-                    : t('conversations.message.platform')
-                  : msg.authorName ||
-                    (msg.authorTail
-                      ? t('conversations.anonymous', { tail: msg.authorTail })
-                      : contactDisplayName);
+              {msg.removed ? (
+                <Text style={[styles.body, { color: palette.muted, fontStyle: 'italic' }]}>
+                  {t('conversations.message.removed')}
+                </Text>
+              ) : msg.body ? (
+                <Text style={[styles.body, { color: palette.text }]}>{msg.body}</Text>
+              ) : null}
 
-                return (
-                  <View
-                    key={msg.id}
-                    style={[
-                      styles.card,
-                      {
-                        alignSelf: isOutbound ? 'flex-end' : 'flex-start',
-                        width: '90%',
-                        borderColor: isOutbound ? palette.primary : palette.border,
-                        borderWidth: isOutbound ? 1.5 : 1,
-                        backgroundColor: palette.surface,
-                        opacity: msg.hidden ? 0.72 : 1,
-                      },
-                    ]}
-                  >
-                    <View style={styles.row}>
+              {!msg.removed && msg.attachments.length > 0 ? (
+                <Text style={[styles.meta, { color: palette.muted }]}>
+                  {t('conversations.message.attachments', { count: String(msg.attachments.length) })}
+                </Text>
+              ) : null}
+
+              {(isOutbound && msg.sendState) || msg.hidden ? (
+                <View style={styles.actionsRow}>
+                  {isOutbound && msg.sendState ? (
+                    <Badge
+                      label={t(sendStateLabelKey(msg.sendState))}
+                      tone={
+                        msg.sendState === 'failed'
+                          ? 'danger'
+                          : msg.sendState === 'unknown'
+                            ? 'warn'
+                            : msg.sendState === 'sent'
+                              ? 'success'
+                              : 'info'
+                      }
+                    />
+                  ) : null}
+                  {msg.hidden ? (
+                    <Badge label={t('conversations.message.hidden')} tone="warn" />
+                  ) : null}
+                </View>
+              ) : null}
+
+              {isOutbound && (msg.sendState === 'failed' || msg.sendState === 'unknown') ? (
+                <View style={{ gap: 2 }}>
+                  {(() => {
+                    const knownCode = resolveKnownSendErrorCode(msg.sendErrorCode);
+                    const messageText = knownCode
+                      ? t(`conversations.sendError.${knownCode}`)
+                      : msg.sendState === 'unknown'
+                        ? t('conversations.sendError.unknown')
+                        : t('conversations.sendError.generic');
+                    return (
                       <Text
                         style={[
                           styles.meta,
-                          { color: isOutbound ? palette.primary : palette.muted, fontWeight: '600' },
+                          { color: msg.sendState === 'failed' ? palette.danger : palette.warning },
                         ]}
                       >
-                        {authorLabel}
+                        {messageText}
                       </Text>
-                      <Text style={[styles.meta, { color: palette.muted }]}>
-                        {formatDateTimeShort(msg.sentAt, locale)}
-                      </Text>
-                    </View>
-
-                    {msg.removed ? (
-                      <Text style={[styles.body, { color: palette.muted, fontStyle: 'italic' }]}>
-                        {t('conversations.message.removed')}
-                      </Text>
-                    ) : msg.body ? (
-                      <Text style={[styles.body, { color: palette.text }]}>{msg.body}</Text>
-                    ) : null}
-
-                    {!msg.removed && msg.attachments.length > 0 ? (
-                      <Text style={[styles.meta, { color: palette.muted }]}>
-                        {t('conversations.message.attachments', { count: String(msg.attachments.length) })}
-                      </Text>
-                    ) : null}
-
-                    {(isOutbound && msg.sendState) || msg.hidden ? (
-                      <View style={styles.actionsRow}>
-                        {isOutbound && msg.sendState ? (
-                          <Badge
-                            label={t(sendStateLabelKey(msg.sendState))}
-                            tone={
-                              msg.sendState === 'failed'
-                                ? 'danger'
-                                : msg.sendState === 'unknown'
-                                  ? 'warn'
-                                  : msg.sendState === 'sent'
-                                    ? 'success'
-                                    : 'info'
-                            }
-                          />
-                        ) : null}
-                        {msg.hidden ? (
-                          <Badge label={t('conversations.message.hidden')} tone="warn" />
-                        ) : null}
-                      </View>
-                    ) : null}
-
-                    {isOutbound && (msg.sendState === 'failed' || msg.sendState === 'unknown') ? (
-                      <View style={{ gap: 2 }}>
-                        {(() => {
-                          const knownCode = resolveKnownSendErrorCode(msg.sendErrorCode);
-                          const messageText = knownCode
-                            ? t(`conversations.sendError.${knownCode}`)
-                            : msg.sendState === 'unknown'
-                              ? t('conversations.sendError.unknown')
-                              : t('conversations.sendError.generic');
-                          return (
-                            <Text
-                              style={[
-                                styles.meta,
-                                { color: msg.sendState === 'failed' ? palette.danger : palette.warning },
-                              ]}
-                            >
-                              {messageText}
-                            </Text>
-                          );
-                        })()}
-                        {msg.sendErrorCode ? (
-                          <Text style={[styles.meta, { color: palette.muted }]}>
-                            {t('conversations.sendError.code', { code: msg.sendErrorCode })}
-                          </Text>
-                        ) : null}
-                      </View>
-                    ) : null}
-                  </View>
-                );
-              })}
-            </View>
-
-            {movedNotice ? (
-              <Banner tone="warn">
-                <Body tone="warning">{t('conversations.composer.moved')}</Body>
-                {hasNewerUnseen && liveDetail ? (
-                  <SecondaryButton
-                    label={t('conversations.thread.seenIt')}
-                    onPress={() => {
-                      setSeenSeq(liveDetail.conversation.lastSeq);
-                      setMovedNotice(false);
-                    }}
-                  />
-                ) : null}
-              </Banner>
-            ) : hasNewerUnseen && liveDetail ? (
-              <Banner tone="info">
-                <Body>{t('conversations.thread.newerBanner')}</Body>
-                <SecondaryButton
-                  label={t('conversations.thread.seenIt')}
-                  onPress={() => setSeenSeq(liveDetail.conversation.lastSeq)}
-                />
-              </Banner>
-            ) : null}
-
-            {canWrite && windowState?.allowed ? (
-              <View style={{ gap: 12, marginTop: 4 }}>
-                {effectiveAiEnabled && (activeDetail.draft || canRequestAiDraft) ? (
-                  <Text style={[styles.meta, { color: palette.muted }]}>
-                    {t('conversations.draft.intro', { sales: salesCoworkerName })}
-                  </Text>
-                ) : null}
-
-                {activeDetail.draft?.state === 'requested' ? (
-                  <Banner tone="info">
-                    {isNetworkOffline ? (
-                      <Body tone="muted">{t('conversations.draft.pendingOffline')}</Body>
-                    ) : (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                        <ActivityIndicator accessibilityLabel={t('conversations.draft.writing')} />
-                        <Body tone="muted">{t('conversations.draft.writing')}</Body>
-                      </View>
-                    )}
-                  </Banner>
-                ) : null}
-
-                {activeDetail.draft?.state === 'live' && activeDetail.draft.body !== null ? (
-                  <View
-                    accessibilityRole="summary"
-                    style={[
-                      styles.card,
-                      {
-                        borderColor: palette.primary,
-                        borderStyle: 'dashed',
-                        borderWidth: 1.5,
-                        backgroundColor: palette.surface,
-                      },
-                    ]}
-                  >
-                    <Badge
-                      label={t('conversations.draft.title', { sales: salesCoworkerName })}
-                      tone="info"
-                    />
+                    );
+                  })()}
+                  {msg.sendErrorCode ? (
                     <Text style={[styles.meta, { color: palette.muted }]}>
-                      {t('conversations.draft.taintedNotice')}
-                    </Text>
-                    <Text style={[styles.body, { color: palette.text }]}>{activeDetail.draft.body}</Text>
-                    {!liveDetail || isNetworkOffline ? (
-                      <Text style={[styles.meta, { color: palette.muted }]}>
-                        {t('conversations.draft.liveRequired')}
-                      </Text>
-                    ) : null}
-                    <View style={styles.actionsRow}>
-                      <SecondaryButton
-                        label={t('conversations.draft.use')}
-                        disabled={busyAction !== null || !liveDetail || isNetworkOffline}
-                        onPress={() => {
-                          if (!liveDetail || !liveDetail.draft || liveDetail.draft.body === null) return;
-                          setComposerText(replyTextFor(liveDetail.draft.body, liveDetail));
-                          setReplySource({ draftId: liveDetail.draft.id });
-                          setFeedback(null);
-                        }}
-                      />
-                      <LinkButton
-                        label={t('conversations.draft.discard')}
-                        disabled={busyAction !== null || !liveDetail || isNetworkOffline}
-                        onPress={() => {
-                          if (liveDetail?.draft) void onDiscardDraft(liveDetail.draft.id);
-                        }}
-                      />
-                    </View>
-                  </View>
-                ) : null}
-
-                {canRequestAiDraft ? (
-                  <SecondaryButton
-                    label={t('conversations.draft.ask')}
-                    busy={busyAction === 'draft_ask'}
-                    disabled={busyAction !== null || isNetworkOffline}
-                    onPress={() => void onRequestDraft()}
-                  />
-                ) : null}
-
-                {activeDetail.suggestions.length > 0 ? (
-                  <View style={{ gap: 8 }}>
-                    <Text style={[styles.meta, { color: palette.muted }]}>
-                      {t('conversations.draft.suggestions')}
-                    </Text>
-                    <View style={styles.actionsRow}>
-                      {activeDetail.suggestions.map((s) => {
-                        const chipDisabled = busyAction !== null || !liveDetail || isNetworkOffline;
-                        return (
-                          <Pressable
-                            key={s.id}
-                            accessibilityRole="button"
-                            accessibilityLabel={s.title}
-                            accessibilityState={{ disabled: chipDisabled }}
-                            disabled={chipDisabled}
-                            onPress={() => {
-                              const liveSuggestion = liveDetail?.suggestions.find((item) => item.id === s.id);
-                              if (!liveDetail || !liveSuggestion) return;
-                              setComposerText(replyTextFor(liveSuggestion.body, liveDetail));
-                              setReplySource({ savedReplyId: liveSuggestion.id });
-                              setFeedback(null);
-                            }}
-                            style={{
-                              minHeight: 48,
-                              paddingHorizontal: 14,
-                              paddingVertical: 10,
-                              borderRadius: 10,
-                              borderWidth: 1,
-                              borderColor: palette.border,
-                              backgroundColor: palette.surface,
-                              opacity: chipDisabled ? 0.55 : 1,
-                              justifyContent: 'center',
-                            }}
-                          >
-                            <Text style={{ fontSize: 14, fontWeight: '600', color: palette.text }}>
-                              {s.title}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                  </View>
-                ) : null}
-
-                <View style={{ gap: 8 }}>
-                  <SectionHeading>{t('conversations.composer.label')}</SectionHeading>
-                  <Text style={[styles.meta, { color: palette.muted }]}>
-                    {activeDetail.conversation.kind === 'email'
-                      ? activeDetail.conversation.contact.address
-                        ? t('conversations.replyContext.email', {
-                            address: activeDetail.conversation.contact.address,
-                          })
-                        : t('conversations.replyContext.emailGeneric')
-                      : t(
-                          activeDetail.conversation.kind === 'direct'
-                            ? 'conversations.replyContext.private'
-                            : 'conversations.replyContext.public',
-                          { channel: channelLabel },
-                        )}
-                  </Text>
-                  <TextInput
-                    accessibilityLabel={t('conversations.composer.label')}
-                    multiline
-                    value={composerText}
-                    onChangeText={(next) => {
-                      setComposerText(next);
-                      if (next === '') setReplySource({});
-                    }}
-                    placeholder={t('conversations.composer.placeholder')}
-                    placeholderTextColor={palette.muted}
-                    editable={busyAction !== 'send'}
-                    style={[
-                      styles.input,
-                      {
-                        minHeight: 96,
-                        textAlignVertical: 'top',
-                        borderColor:
-                          hasPlaceholderWarning || hasInvalidChar || isTooLong
-                            ? palette.danger
-                            : palette.border,
-                        color: palette.text,
-                        backgroundColor: palette.surface,
-                      },
-                    ]}
-                  />
-                  <Text
-                    style={[
-                      styles.meta,
-                      { color: isTooLong ? palette.danger : palette.muted },
-                    ]}
-                  >
-                    {t('conversations.composer.count', {
-                      left: String(Math.max(0, replyMax - trimmedBody.length)),
-                      max: String(replyMax),
-                    })}
-                  </Text>
-                  {hasPlaceholderWarning ? (
-                    <Text style={[styles.meta, { color: palette.danger }]}>
-                      {t('conversations.composer.placeholderWarning', {
-                        placeholder: SAVED_REPLY_NAME_PLACEHOLDER,
-                      })}
+                      {t('conversations.sendError.code', { code: msg.sendErrorCode })}
                     </Text>
                   ) : null}
-                  {hasInvalidChar ? (
-                    <Text style={[styles.meta, { color: palette.danger }]}>
-                      {t('conversations.composer.invalidChar')}
-                    </Text>
-                  ) : null}
-                  {isTooLong ? (
-                    <Text style={[styles.meta, { color: palette.danger }]}>
-                      {t('conversations.composer.tooLong', { max: String(replyMax) })}
-                    </Text>
-                  ) : null}
-
-                  <PrimaryButton
-                    label={
-                      busyAction === 'send'
-                        ? t('conversations.composer.sending')
-                        : activeDetail.conversation.kind === 'email'
-                          ? t('conversations.composer.sendEmail')
-                          : activeDetail.conversation.kind === 'direct'
-                            ? t('conversations.composer.sendPrivate')
-                            : t('conversations.composer.sendPublic')
-                    }
-                    busy={busyAction === 'send'}
-                    disabled={!canSendNow}
-                    onPress={() => void onSendReply()}
-                  />
                 </View>
-              </View>
-            ) : null}
-          </>
-        ) : null}
-      </ScrollView>
+              ) : null}
+            </View>
+          );
+        }}
+      />
     </View>
   );
 }

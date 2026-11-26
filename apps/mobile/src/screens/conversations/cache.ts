@@ -84,6 +84,7 @@ export interface ConversationsCache {
       conversationId: string;
     } & CacheWriteOptions,
   ): Promise<void>;
+  clearScope(params: { serverUrl: string; orgSlug: string; userId?: string | null }): Promise<void>;
   clear(): Promise<void>;
 }
 
@@ -311,10 +312,28 @@ function fitSnapshotChunks(snapshot: CachedConversationsSnapshot): {
         boundedThreads[t.conversationId] = t;
       }
     }
+    const retainedIds = new Set(threadEntries.map((t) => t.conversationId));
     const boundedLists: Partial<Record<ConversationFilterTab, ConversationSummary[]>> = {};
     for (const tab of ['new', 'pending', 'all'] as const) {
       const arr = snapshot.lists[tab];
-      if (arr) boundedLists[tab] = arr.slice(0, listLimit);
+      if (!arr) continue;
+      if (listLimit <= 0) {
+        boundedLists[tab] = [];
+        continue;
+      }
+      if (retainedIds.size === 0 || arr.length <= listLimit) {
+        boundedLists[tab] = arr.slice(0, listLimit);
+        continue;
+      }
+      const chosen = new Set<number>();
+      for (let i = 0; i < arr.length && chosen.size < listLimit; i++) {
+        const item = arr[i];
+        if (item && retainedIds.has(item.id)) chosen.add(i);
+      }
+      for (let i = 0; i < arr.length && chosen.size < listLimit; i++) {
+        chosen.add(i);
+      }
+      boundedLists[tab] = arr.filter((_, i) => chosen.has(i));
     }
     const bodyJson = JSON.stringify({
       salesCoworkerName: snapshot.salesCoworkerName,
@@ -333,13 +352,14 @@ function fitSnapshotChunks(snapshot: CachedConversationsSnapshot): {
         },
       };
     }
-    // Preserve the newest thread's latest messages first: drop older threads down to 1, then shrink list items, then trim older messages.
+    // Preserve inbox list reachability for retained threads: shrink extra threads first, keep >= 1 list item while threads exist, then trim thread payload before dropping threads/lists.
     if (threadEntries.length > 1) {
       threadEntries = threadEntries.slice(0, Math.max(1, Math.floor(threadEntries.length / 2)));
       continue;
     }
-    if (listLimit > 0) {
-      listLimit = Math.floor(listLimit / 2);
+    const minListLimit = threadEntries.length > 0 ? 1 : 0;
+    if (listLimit > minListLimit) {
+      listLimit = Math.max(minListLimit, Math.floor(listLimit / 2));
       continue;
     }
     if (threadEntries.length === 1 && !dropExtras) {
@@ -542,6 +562,46 @@ export function createConversationsCache(store: KeyValue): ConversationsCache {
     return fitted;
   }
 
+  async function clearStoredUnlocked(scope?: {
+    serverUrl: string;
+    orgSlug: string;
+    userId?: string | null;
+  }): Promise<void> {
+    const meta = await readMeta();
+    const staged = await readStage();
+    const pendingCleanup = await readCleanup();
+    const metaMatchesScope =
+      !scope ||
+      !meta ||
+      (meta.serverUrl === scope.serverUrl &&
+        meta.orgSlug === scope.orgSlug &&
+        (!scope.userId || meta.userId === scope.userId));
+
+    const toClean: PendingCleanupEntry[] = [...pendingCleanup];
+    if (metaMatchesScope && meta && !toClean.some((e) => e.gen === meta.gen)) {
+      toClean.push({ gen: meta.gen, chunks: meta.chunks });
+    }
+    if (staged && (!meta || metaMatchesScope || staged.gen !== meta.gen) && !toClean.some((e) => e.gen === staged.gen)) {
+      toClean.push({ gen: staged.gen, chunks: staged.chunks });
+    }
+    if (toClean.length > 0) {
+      // Persist chunk cleanup manifest BEFORE removing META_KEY so an interrupted clear() never strands PII chunks.
+      await store.set(CLEANUP_KEY, JSON.stringify(toClean));
+    }
+    if (metaMatchesScope) {
+      await store.remove(META_KEY);
+    }
+    const keepGen = !metaMatchesScope && meta ? meta.gen : undefined;
+    for (const entry of toClean) {
+      highestGen = Math.max(highestGen, entry.gen);
+      if (keepGen !== undefined && entry.gen === keepGen) continue;
+      await removeChunks(entry.gen, entry.chunks);
+    }
+    await store.remove(CLEANUP_KEY);
+    // Remove STAGE_KEY strictly last after all chunks are cleaned up.
+    await store.remove(STAGE_KEY);
+  }
+
   return {
     epoch() {
       return clearEpoch;
@@ -654,31 +714,14 @@ export function createConversationsCache(store: KeyValue): ConversationsCache {
       });
     },
 
+    clearScope(params) {
+      clearEpoch += 1;
+      return serialize(() => clearStoredUnlocked(params));
+    },
+
     clear() {
       clearEpoch += 1;
-      return serialize(async () => {
-        const meta = await readMeta();
-        const staged = await readStage();
-        const pendingCleanup = await readCleanup();
-        await store.remove(META_KEY);
-        if (meta) {
-          highestGen = Math.max(highestGen, meta.gen);
-          await removeChunks(meta.gen, meta.chunks);
-        }
-        if (staged) {
-          highestGen = Math.max(highestGen, staged.gen);
-          if (!meta || staged.gen !== meta.gen) {
-            await removeChunks(staged.gen, staged.chunks);
-          }
-        }
-        for (const entry of pendingCleanup) {
-          highestGen = Math.max(highestGen, entry.gen);
-          await removeChunks(entry.gen, entry.chunks);
-        }
-        await store.remove(CLEANUP_KEY);
-        // Remove STAGE_KEY strictly last after all chunks are cleaned up.
-        await store.remove(STAGE_KEY);
-      });
+      return serialize(() => clearStoredUnlocked());
     },
   };
 }

@@ -30,6 +30,7 @@ import {
   formatWindowDuration,
   getContactDisplayName,
   getSummaryWindowBadge,
+  isAuthBlockingError,
   isLikelyNetworkError,
   mergeConversationPages,
   resolveSalesCoworkerName,
@@ -82,6 +83,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
   );
   const [cachedSnapshot, setCachedSnapshot] = useState<CachedConversationsSnapshot | null>(null);
   const [cacheLoaded, setCacheLoaded] = useState(false);
+  const [refusalError, setRefusalError] = useState<unknown>(null);
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -101,6 +103,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
     let cancelled = false;
     setCachedSnapshot(null);
     setCacheLoaded(false);
+    setRefusalError(null);
     setBannerMessage(null);
     setFilter('new');
 
@@ -141,6 +144,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
   const orgQuery = useQuery<OrgDetail>({
     queryKey: ['conversations', 'org', serverUrl, orgSlug],
     queryFn: () => client.org.get(),
+    enabled: cacheLoaded && refusalError === null,
     staleTime: 60_000,
   });
 
@@ -152,8 +156,22 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
 
   const countsQuery = useQuery<ConversationCounts>({
     queryKey: ['conversations', 'counts', serverUrl, orgSlug, userId ?? ''],
-    queryFn: () => client.conversations.counts({}),
-    enabled: cacheLoaded,
+    queryFn: async () => {
+      const startEpoch = conversationsCache.epoch();
+      const counts = await client.conversations.counts({});
+      const cur = session.state();
+      if (
+        cur.status !== 'active' ||
+        cur.serverUrl !== serverUrl ||
+        cur.orgSlug !== orgSlug ||
+        conversationsCache.epoch() !== startEpoch
+      ) {
+        throw new Error('stale-session');
+      }
+      return counts;
+    },
+    enabled: cacheLoaded && refusalError === null,
+    staleTime: 30_000,
   });
 
   const salesCoworkerName =
@@ -202,11 +220,16 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
             signal,
             isSessionStillActive: () => {
               const after = session.state();
-              return after.status === 'active' && after.serverUrl === serverUrl && after.orgSlug === orgSlug;
+              return (
+                after.status === 'active' &&
+                after.serverUrl === serverUrl &&
+                after.orgSlug === orgSlug &&
+                conversationsCache.epoch() === startEpoch
+              );
             },
           })
           .then((saved) => {
-            if (!saved || signal.aborted) return;
+            if (!saved || signal.aborted || conversationsCache.epoch() !== startEpoch) return;
             setCachedSnapshot(saved);
           })
           .catch(() => undefined);
@@ -214,32 +237,37 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
 
       return listed;
     },
-    enabled: cacheLoaded,
+    enabled: cacheLoaded && refusalError === null,
   });
 
-  const isNetworkOffline = Boolean(
-    (listQuery.isError && isLikelyNetworkError(listQuery.error)) ||
-      (countsQuery.isError && isLikelyNetworkError(countsQuery.error)),
-  );
-  const isNonNetworkError = Boolean(
-    (listQuery.isError && !isLikelyNetworkError(listQuery.error)) ||
-      (countsQuery.isError && !isLikelyNetworkError(countsQuery.error)) ||
-      (orgQuery.isError && !isLikelyNetworkError(orgQuery.error)),
-  );
+  const liveNonNetworkError =
+    (listQuery.isError && !isLikelyNetworkError(listQuery.error) ? listQuery.error : null) ??
+    (countsQuery.isError && !isLikelyNetworkError(countsQuery.error) ? countsQuery.error : null) ??
+    (orgQuery.isError && !isLikelyNetworkError(orgQuery.error) ? orgQuery.error : null);
 
-  // Sync live counts to HomeScreen badge cache and clear cached list preview on non-network refusal.
+  // Purge both persisted disk cache and React Query caches immediately on non-network refusal (403/re-auth) and abort pending writes via epoch bump.
   useEffect(() => {
-    if (isNonNetworkError) {
-      setCachedSnapshot(null);
-      qc.removeQueries({ queryKey: ['home-conversations-unread', serverUrl, orgSlug], exact: true });
-      return;
+    if (!liveNonNetworkError) return;
+    if (isAuthBlockingError(liveNonNetworkError)) {
+      void session.reportKernelError(liveNonNetworkError);
     }
-    if (countsQuery.data) {
-      qc.setQueryData(['home-conversations-unread', serverUrl, orgSlug], countsQuery.data);
-    }
-  }, [isNonNetworkError, countsQuery.data, qc, serverUrl, orgSlug]);
+    setRefusalError(liveNonNetworkError);
+    setCachedSnapshot(null);
+    setSelectedConversationId(null);
+    void conversationsCache.clearScope({ serverUrl, orgSlug, userId });
+    qc.removeQueries({ queryKey: ['conversations', 'list', serverUrl, orgSlug] });
+    qc.removeQueries({ queryKey: ['conversations', 'detail', serverUrl, orgSlug] });
+    qc.removeQueries({ queryKey: ['conversations', 'counts', serverUrl, orgSlug] });
+  }, [liveNonNetworkError, qc, serverUrl, orgSlug, userId]);
 
-  const liveCounts = isNonNetworkError ? undefined : countsQuery.data;
+  const nonNetworkErrorObj = refusalError ?? liveNonNetworkError;
+  const isNonNetworkError = nonNetworkErrorObj !== null;
+  const isListNetworkOffline =
+    !isNonNetworkError && Boolean(listQuery.isError && isLikelyNetworkError(listQuery.error));
+  const isCountsNetworkOffline =
+    !isNonNetworkError && Boolean(countsQuery.isError && isLikelyNetworkError(countsQuery.error));
+
+  const liveCounts = isNonNetworkError || isCountsNetworkOffline ? undefined : countsQuery.data;
   const activeCounts = isNonNetworkError ? null : (liveCounts ?? cachedSnapshot?.counts ?? null);
 
   const liveItems = useMemo(() => {
@@ -249,16 +277,15 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
 
   const cachedItemsForTab = isNonNetworkError ? null : (cachedSnapshot?.lists[filter] ?? null);
   const activeItems = isNonNetworkError ? null : (liveItems ?? cachedItemsForTab);
-  const isShowingOfflineBanner = Boolean(isNetworkOffline && cachedSnapshot !== null);
+  const isShowingOfflineBanner = Boolean(isListNetworkOffline && (cachedSnapshot !== null || liveItems !== null));
 
   const effectiveRole = orgQuery.data?.role ?? role;
   const members = orgQuery.data?.members ?? [];
-  const aiEnabled = !isNetworkOffline && aiEnabledQuery.data === true;
+  const aiEnabled = !isListNetworkOffline && aiEnabledQuery.data === true;
 
   function refreshAll() {
     void qc.invalidateQueries({ queryKey: ['conversations', 'list', serverUrl, orgSlug] });
     void qc.invalidateQueries({ queryKey: ['conversations', 'counts', serverUrl, orgSlug] });
-    void qc.invalidateQueries({ queryKey: ['home-conversations-unread', serverUrl, orgSlug] });
   }
 
   async function handleOpenWebInbox() {
@@ -277,7 +304,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
       <ConversationThreadScreen
         aiEnabled={aiEnabled}
         conversationId={selectedConversationId}
-        isListOffline={isNetworkOffline}
+        isListOffline={isListNetworkOffline}
         locale={locale}
         members={members}
         onBack={() => setSelectedConversationId(null)}
@@ -309,11 +336,19 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
     },
   ];
 
-  const nonNetworkErrorObj = listQuery.error ?? countsQuery.error ?? orgQuery.error;
-  const canShowListContent = !isNonNetworkError && !(isNetworkOffline && !cachedSnapshot);
+  const canShowListContent =
+    !isNonNetworkError && (liveItems !== null || !(isListNetworkOffline && !cachedSnapshot));
   const listData: ConversationSummary[] = canShowListContent ? (activeItems ?? []) : [];
 
   function handlePullRefresh() {
+    if (refusalError !== null) {
+      setRefusalError(null);
+      void qc.invalidateQueries({ queryKey: ['conversations', 'list', serverUrl, orgSlug] });
+      void qc.invalidateQueries({ queryKey: ['conversations', 'counts', serverUrl, orgSlug] });
+      void qc.invalidateQueries({ queryKey: ['conversations', 'org', serverUrl, orgSlug] });
+      void aiEnabledQuery.refetch();
+      return;
+    }
     void listQuery.refetch();
     void countsQuery.refetch();
     void aiEnabledQuery.refetch();
@@ -356,11 +391,11 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
         </Banner>
       ) : null}
 
-      {isShowingOfflineBanner && cachedSnapshot ? (
+      {isShowingOfflineBanner ? (
         <Banner tone="warn">
           <Body tone="warning">
             {t('conversations.offlineBanner', {
-              time: formatDateTimeShort(cachedSnapshot.savedAt, locale),
+              time: formatDateTimeShort(cachedSnapshot?.savedAt ?? nowMs, locale),
             })}
           </Body>
         </Banner>
@@ -372,7 +407,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
         </Text>
       ) : null}
 
-      {isNetworkOffline && !cachedSnapshot ? (
+      {isListNetworkOffline && liveItems === null && !cachedSnapshot ? (
         <Banner tone="danger">
           <Body tone="danger">{t('conversations.offlineNoCache')}</Body>
           <PrimaryButton label={t('home.retry')} onPress={handlePullRefresh} />
@@ -383,6 +418,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
         <ScrollView
           accessibilityRole="tablist"
           horizontal
+          keyboardShouldPersistTaps="handled"
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ gap: 8 }}
         >
@@ -438,7 +474,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
 
   const listFooter = (
     <View style={{ gap: 12, marginTop: 12 }}>
-      {canShowListContent && listQuery.hasNextPage && !isNetworkOffline ? (
+      {canShowListContent && listQuery.hasNextPage && !isListNetworkOffline ? (
         <SecondaryButton
           label={
             listQuery.isFetchingNextPage
@@ -466,6 +502,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
         keyExtractor={(conv) => conv.id}
         initialNumToRender={12}
         windowSize={7}
+        keyboardShouldPersistTaps="handled"
         contentContainerStyle={[styles.scrollContent, { gap: 0 }]}
         ListHeaderComponent={listHeader}
         ListEmptyComponent={listEmpty}
