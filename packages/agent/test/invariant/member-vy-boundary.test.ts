@@ -3769,6 +3769,31 @@ function extractAstFacts(
     return false;
   };
 
+  const extractReflectGetTargetAndKey = (
+    expr: tsType.Expression,
+    scope: AstLexScope,
+  ): { host: tsType.Expression; propName: string | null; isComputedBracket: boolean } | null => {
+    const direct = unwrapAstExpr(expr, true);
+    if (!ts.isCallExpression(direct)) return null;
+    const fnExpr = unwrapAstExpr(direct.expression, true);
+    if (!ts.isPropertyAccessExpression(fnExpr) && !ts.isElementAccessExpression(fnExpr)) return null;
+    const mem = extractAstMemberName(fnExpr, scope);
+    if (mem.memberName !== 'get') return null;
+    const recv = unwrapAstExpr(mem.host, true);
+    let isReflectRecv = ts.isIdentifier(recv) && recv.text === 'Reflect';
+    if (!isReflectRecv && (ts.isPropertyAccessExpression(recv) || ts.isElementAccessExpression(recv))) {
+      const recvMem = extractAstMemberName(recv, scope);
+      const recvHost = unwrapAstExpr(recvMem.host, true);
+      isReflectRecv = recvMem.memberName === 'Reflect' && ts.isIdentifier(recvHost) && AST_REQUIRE_HOSTS.has(recvHost.text);
+    }
+    if (!isReflectRecv) return null;
+    const tgt = direct.arguments[0] ? unwrapAstExpr(direct.arguments[0], false) : null;
+    if (!tgt) return null;
+    const key = direct.arguments[1] ? unwrapAstExpr(direct.arguments[1], false) : null;
+    const propName = key ? resolveAstConstString(key, scope, 'full_const') : null;
+    return { host: unwrapAstExpr(tgt, true), propName, isComputedBracket: true };
+  };
+
   const addFetchTaintEvent = (varKey: string, ev: FetchTaintEvent): boolean => {
     if (ev.fnNode === null) {
       if (fetchGlobalVars.has(varKey)) return false;
@@ -4033,28 +4058,35 @@ function extractAstFacts(
           if (!tk.startsWith('prop:')) seedNonSafeKillBases.add(tk);
         }
       }
+      const memberAccess =
+        targetKeys.length > 0 && (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur))
+          ? (() => {
+              const mem = extractAstMemberName(cur, evalScope);
+              return { host: unwrapAstExpr(mem.host, true), propName: mem.memberName, isComputedBracket: mem.isComputedBracket };
+            })()
+          : targetKeys.length > 0
+            ? extractReflectGetTargetAndKey(cur, evalScope)
+            : null;
       if (targetKeys.length === 1 && ts.isIdentifier(cur)) {
         const fromKey = astVarKey(evalScope, cur.text);
         const toKey = targetKeys[0]!;
         addAliasEdge(aliasEdges, fromKey, toKey);
         addPositionalEdge(fromKey, toKey, assignEndPos ?? cur.getStart(sf), cur);
-      } else if (targetKeys.length > 0 && (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur))) {
-        const mem = extractAstMemberName(cur, evalScope);
-        const memHost = unwrapAstExpr(mem.host, true);
+      } else if (memberAccess) {
         memberBindCandidates.push({
-          host: memHost,
-          propName: mem.memberName,
-          isComputedBracket: mem.isComputedBracket,
+          host: memberAccess.host,
+          propName: memberAccess.propName,
+          isComputedBracket: memberAccess.isComputedBracket,
           targets: targetKeys,
           scope: evalScope,
           rhsExpr: cur,
         });
-        if (targetKeys.length === 1 && mem.memberName !== null) {
+        if (targetKeys.length === 1 && memberAccess.propName !== null) {
           const toKey = targetKeys[0]!;
           const rawPos = assignEndPos ?? cur.getStart(sf);
-          for (const br of expandAstBranchExprs(memHost)) {
+          for (const br of expandAstBranchExprs(memberAccess.host)) {
             if (ts.isIdentifier(br)) {
-              const propKey = `prop:${astVarKey(evalScope, br.text)}\0${mem.memberName}`;
+              const propKey = `prop:${astVarKey(evalScope, br.text)}\0${memberAccess.propName}`;
               addAliasEdge(aliasEdges, propKey, toKey);
               addPositionalEdge(propKey, toKey, rawPos, cur);
             }
@@ -4927,89 +4959,112 @@ function extractAstFacts(
     const callee = site.calleeExpr;
     let dynKind: 'import' | 'require' | null = null;
     let isIndirectRequire = false;
+    let isMeterCall = false;
 
-    if (callee.kind === ts.SyntaxKind.ImportKeyword) {
-      dynKind = 'import';
-    } else if (ts.isIdentifier(callee)) {
-      const calleeKey = astVarKey(site.scope, callee.text);
-      if (callee.text === 'require' && calleeKey === 'global:require') {
-        dynKind = 'require';
-        isIndirectRequire = site.isIndirect;
-      } else if (requireAliases.has(calleeKey)) {
-        dynKind = 'require';
-        isIndirectRequire = true;
-      }
-      if (executeAliases.has(calleeKey)) callsExecute = true;
-      if (isFetchTaintedAtCall(calleeKey, callee)) callsFetch = true;
-    } else if (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) {
-      const mem = extractAstMemberName(callee, site.scope);
-      const h = unwrapAstExpr(mem.host, true);
-      if (mem.memberName === 'require' && anyAstBranchMatchesSet(h, site.scope, requireHosts)) {
-        dynKind = 'require';
-        isIndirectRequire = true;
-      } else if (mem.memberName === 'execute') {
-        callsExecute = true;
-      } else if (mem.memberName === 'fetch') {
-        if (anyAstBranchMatchesSet(h, site.scope, requireHosts)) {
-          callsFetch = true;
-        } else {
-          for (const br of expandAstBranchExprs(h)) {
-            if (ts.isIdentifier(br) && isFetchTaintedAtCall(`prop:${astVarKey(site.scope, br.text)}\0fetch`, callee)) {
-              callsFetch = true;
-            }
-          }
+    const calleeBranches = expandAstBranchExprs(callee);
+    for (const brCallee of calleeBranches) {
+      if (brCallee.kind === ts.SyntaxKind.ImportKeyword) {
+        dynKind = 'import';
+      } else if (ts.isIdentifier(brCallee)) {
+        const calleeKey = astVarKey(site.scope, brCallee.text);
+        if (brCallee.text === 'require' && calleeKey === 'global:require') {
+          dynKind = 'require';
+          isIndirectRequire = site.isIndirect || calleeBranches.length > 1;
+        } else if (requireAliases.has(calleeKey)) {
+          dynKind = 'require';
+          isIndirectRequire = true;
         }
-      } else if (mem.memberName !== null) {
-        for (const br of expandAstBranchExprs(h)) {
-          if (ts.isIdentifier(br) && isFetchTaintedAtCall(`prop:${astVarKey(site.scope, br.text)}\0${mem.memberName}`, callee)) {
-            callsFetch = true;
-          }
-        }
-        if (mem.memberName === 'get' && ts.isIdentifier(h) && h.text === 'Reflect') {
-          const tgt = site.call.arguments[0] ? unwrapAstExpr(site.call.arguments[0], false) : null;
-          const key = site.call.arguments[1] ? unwrapAstExpr(site.call.arguments[1], false) : null;
-          const keyStr = key ? resolveAstConstString(key, site.scope, 'full_const') : null;
-          if (tgt && anyAstBranchMatchesSet(tgt, site.scope, requireHosts) && keyStr === 'require') {
-            hasBareRequire = true;
-          }
-        }
-      }
-    } else if (ts.isCallExpression(callee)) {
-      const innerUnwrapped = unwrapAstCall(callee, site.scope);
-      let isCrCallee = false;
-      if (ts.isIdentifier(innerUnwrapped.calleeExpr) && createRequireAliases.has(astVarKey(site.scope, innerUnwrapped.calleeExpr.text))) {
-        isCrCallee = true;
-      } else if (ts.isPropertyAccessExpression(innerUnwrapped.calleeExpr) || ts.isElementAccessExpression(innerUnwrapped.calleeExpr)) {
-        const mem = extractAstMemberName(innerUnwrapped.calleeExpr, site.scope);
+        if (executeAliases.has(calleeKey)) callsExecute = true;
+        if (isFetchTaintedAtCall(calleeKey, brCallee)) callsFetch = true;
+        if (meterAliases.has(calleeKey)) isMeterCall = true;
+      } else if (ts.isPropertyAccessExpression(brCallee) || ts.isElementAccessExpression(brCallee)) {
+        const mem = extractAstMemberName(brCallee, site.scope);
         const h = unwrapAstExpr(mem.host, true);
-        if (mem.memberName === 'createRequire') {
-          if (anyAstBranchMatchesSet(h, site.scope, nodeModuleNamespaces) || anyBranchMatchesModuleSpec(h, site.scope, isNodeModuleSpecifier)) {
-            isCrCallee = true;
-          }
-        }
-      }
-      if (isCrCallee) {
-        dynKind = 'require';
-        isIndirectRequire = true;
-      } else {
-        const innerDirect = unwrapAstExpr(callee.expression, true);
-        if (ts.isPropertyAccessExpression(innerDirect) || ts.isElementAccessExpression(innerDirect)) {
-          const mem = extractAstMemberName(innerDirect, site.scope);
-          const h = unwrapAstExpr(mem.host, true);
-          if (mem.memberName === 'get' && ts.isIdentifier(h) && h.text === 'Reflect') {
-            const tgt = callee.arguments[0] ? unwrapAstExpr(callee.arguments[0], false) : null;
-            const key = callee.arguments[1] ? unwrapAstExpr(callee.arguments[1], false) : null;
-            const keyStr = key ? resolveAstConstString(key, site.scope, 'full_const') : null;
-            if (tgt && anyAstBranchMatchesSet(tgt, site.scope, requireHosts)) {
-              if (keyStr === 'require') {
-                dynKind = 'require';
-                isIndirectRequire = true;
-              } else if (keyStr === 'fetch') {
+        if (mem.memberName === 'require' && anyAstBranchMatchesSet(h, site.scope, requireHosts)) {
+          dynKind = 'require';
+          isIndirectRequire = true;
+        } else if (mem.memberName === 'execute') {
+          callsExecute = true;
+        } else if (mem.memberName === 'fetch') {
+          if (anyAstBranchMatchesSet(h, site.scope, requireHosts)) {
+            callsFetch = true;
+          } else {
+            for (const br of expandAstBranchExprs(h)) {
+              if (ts.isIdentifier(br) && isFetchTaintedAtCall(`prop:${astVarKey(site.scope, br.text)}\0fetch`, brCallee)) {
                 callsFetch = true;
               }
             }
-            if (keyStr === 'execute') {
+          }
+        } else if (mem.memberName === 'metered') {
+          if (
+            anyAstBranchMatchesSet(h, site.scope, meterNamespaces) ||
+            anyBranchMatchesModuleSpec(h, site.scope, isMeterModuleSpecifier)
+          ) {
+            isMeterCall = true;
+          }
+        } else if (mem.memberName !== null) {
+          for (const br of expandAstBranchExprs(h)) {
+            if (ts.isIdentifier(br) && isFetchTaintedAtCall(`prop:${astVarKey(site.scope, br.text)}\0${mem.memberName}`, brCallee)) {
+              callsFetch = true;
+            }
+          }
+          if (mem.memberName === 'get' && ts.isIdentifier(h) && h.text === 'Reflect') {
+            const tgt = site.call.arguments[0] ? unwrapAstExpr(site.call.arguments[0], false) : null;
+            const key = site.call.arguments[1] ? unwrapAstExpr(site.call.arguments[1], false) : null;
+            const keyStr = key ? resolveAstConstString(key, site.scope, 'full_const') : null;
+            if (tgt && anyAstBranchMatchesSet(tgt, site.scope, requireHosts) && keyStr === 'require') {
+              hasBareRequire = true;
+            }
+          }
+        }
+      } else if (ts.isCallExpression(brCallee)) {
+        const innerUnwrapped = unwrapAstCall(brCallee, site.scope);
+        let isCrCallee = false;
+        if (ts.isIdentifier(innerUnwrapped.calleeExpr) && createRequireAliases.has(astVarKey(site.scope, innerUnwrapped.calleeExpr.text))) {
+          isCrCallee = true;
+        } else if (ts.isPropertyAccessExpression(innerUnwrapped.calleeExpr) || ts.isElementAccessExpression(innerUnwrapped.calleeExpr)) {
+          const mem = extractAstMemberName(innerUnwrapped.calleeExpr, site.scope);
+          const h = unwrapAstExpr(mem.host, true);
+          if (mem.memberName === 'createRequire') {
+            if (anyAstBranchMatchesSet(h, site.scope, nodeModuleNamespaces) || anyBranchMatchesModuleSpec(h, site.scope, isNodeModuleSpecifier)) {
+              isCrCallee = true;
+            }
+          }
+        } else {
+          const innerRg = extractReflectGetTargetAndKey(innerUnwrapped.calleeExpr, site.scope);
+          if (
+            innerRg &&
+            innerRg.propName === 'createRequire' &&
+            (anyAstBranchMatchesSet(innerRg.host, site.scope, nodeModuleNamespaces) ||
+              anyAstBranchMatchesSet(innerRg.host, site.scope, requireHosts) ||
+              anyBranchMatchesModuleSpec(innerRg.host, site.scope, isNodeModuleSpecifier))
+          ) {
+            isCrCallee = true;
+          }
+        }
+        if (isCrCallee) {
+          dynKind = 'require';
+          isIndirectRequire = true;
+        } else {
+          const rg = extractReflectGetTargetAndKey(brCallee, site.scope);
+          if (rg) {
+            if (anyAstBranchMatchesSet(rg.host, site.scope, requireHosts)) {
+              if (rg.propName === 'require') {
+                dynKind = 'require';
+                isIndirectRequire = true;
+              } else if (rg.propName === 'fetch') {
+                callsFetch = true;
+              }
+            }
+            if (rg.propName === 'execute') {
               callsExecute = true;
+            }
+            if (
+              rg.propName === 'metered' &&
+              (anyAstBranchMatchesSet(rg.host, site.scope, meterNamespaces) ||
+                anyBranchMatchesModuleSpec(rg.host, site.scope, isMeterModuleSpecifier))
+            ) {
+              isMeterCall = true;
             }
           }
         }
@@ -5047,18 +5102,6 @@ function extractAstFacts(
       });
     }
 
-    let isMeterCall = false;
-    if (ts.isIdentifier(callee) && meterAliases.has(astVarKey(site.scope, callee.text))) {
-      isMeterCall = true;
-    } else if (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) {
-      const mem = extractAstMemberName(callee, site.scope);
-      const h = unwrapAstExpr(mem.host, true);
-      if (mem.memberName === 'metered') {
-        if (anyAstBranchMatchesSet(h, site.scope, meterNamespaces) || anyBranchMatchesModuleSpec(h, site.scope, isMeterModuleSpecifier)) {
-          isMeterCall = true;
-        }
-      }
-    }
     if (isMeterCall && (site.firstArgExpr !== null || site.missingApplyFirstArg)) {
       const resolvedKeys: string[] = [];
       const templateSpans: string[] = [];
@@ -11614,6 +11657,15 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     // B1: TS/TSX <T>...</T> / + 1 polyglots across all scanners
     expect(
       disallowedMeteredNotes('other.ts', 'import * as m from "./meter.ts"; const a = <T>Reflect.get(m, "metered")(dynKey, fn) </T> / + 1;'),
+    ).toEqual(['unresolved metered key (dynKey)']);
+    expect(
+      disallowedMeteredNotes('other', 'import * as m from "./meter.ts"; const a = <T>Reflect.get(m, "metered")(dynKey, fn) </T> / + 1;'),
+    ).toEqual(['unresolved metered key (dynKey)']);
+    expect(
+      disallowedMeteredNotes('other.ts', "import * as m from './meter.ts'; (cond ? Reflect.get(m, 'metered') : other)('notes.summary', fn);"),
+    ).toEqual(['notes.summary']);
+    expect(
+      disallowedMeteredNotes('other.ts', "const m = require('./meter.ts'); const fn = Reflect.get(m, 'metered'); fn(dynKey, cb);"),
     ).toEqual(['unresolved metered key (dynKey)']);
     expect(
       indexReexportViolations(
