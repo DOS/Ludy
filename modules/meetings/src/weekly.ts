@@ -103,13 +103,18 @@ export const weeklyNotice = defineCommand({
     // Nothing due any more (a week with nothing to show, turned off, muted, left, told already): the handler writes nothing and calls no ctx.audit; the runtime still records its own ok audit row of the command (no day, no count).
     if (!due) return { notified: false, mailed: false };
     // The numbers are parsed against the card's own limits before anything is written, so a definer that ever returned more would roll the dispatch back instead of storing a number the mail refuses.
-    const counts = zWeeklyCounts.parse({ meetings: due.meetings, decisions: due.decisions, open: due.open_items, overdue: due.overdue, cut: due.cut });
+    // The tracked-word number comes from its own worker definer, asked for this one member only (never the sweep's listing, which would pay for it for every due member). It is left out when the org keeps no tracked word (null)
+    // and when none came up (0): a line is not shown as 0.
+    const { rows: trackedRows } = await sql<{ tracked: number | null }>`
+      SELECT ludy_meetings.weekly_tracked_hits(${ctx.orgId}::uuid, ${input.userId}::uuid, ${input.at ?? null}::timestamptz) AS tracked`.execute(ctx.trx);
+    const tracked = trackedRows[0]?.tracked ?? null;
+    const counts = zWeeklyCounts.parse({ meetings: due.meetings, decisions: due.decisions, open: due.open_items, overdue: due.overdue, cut: due.cut, ...(tracked !== null && tracked > 0 ? { tracked } : {}) });
     const sent = await notifyMembers(ctx, {
       kind: WEEKLY_KIND,
       users: [input.userId],
       key: `weekly:${input.day}`,
       // Numbers and a flag: no title, no meeting, no subject (the line opens the meetings page on the "this week" card).
-      detail: { meetings: String(counts.meetings), decisions: String(counts.decisions), open: String(counts.open), overdue: String(counts.overdue), cut: counts.cut ? '1' : '0' },
+      detail: { meetings: String(counts.meetings), decisions: String(counts.decisions), open: String(counts.open), overdue: String(counts.overdue), cut: counts.cut ? '1' : '0', ...(counts.tracked === undefined ? {} : { tracked: String(counts.tracked) }) },
       legalEntityId: await uploaderEntity(ctx, input.userId),
     });
     // Turned off, left the org, or told already for this Monday: no in-app line, so no mail either.
@@ -142,7 +147,7 @@ export const weeklyNotice = defineCommand({
       : null;
     const mailed = mail?.status === 'queued';
     // The Monday and nothing else, the same shape every time: no count, no address, not even whether a mail was queued (an owner or admin reads the audit log and could probe what a member reads by anything that varies;
-    // the numbers are the member's own notice and mail only). The row is written only when a notice was, and nothing is written when none is due.
+    // the numbers are the member's own notice and mail only). The { day } detail is added only when a notice was written; a dispatch with nothing due adds no detail (the runtime still records its own ok audit row).
     ctx.audit({ day: input.day });
     return { notified: true, mailed, notificationId: notice?.id ?? null };
   },

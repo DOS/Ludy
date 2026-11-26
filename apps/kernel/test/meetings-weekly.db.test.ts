@@ -7,14 +7,15 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { WEEKLY_KIND, briefItemDue, vnDateOf, zWeeklyMail, type DigestFacts, type WeeklyState } from '@ludy/kernel-contract';
-import { Runtime } from '@ludy/kernel-runtime';
+import { Runtime, defineCommand } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { sql } from 'kysely';
+import { z } from 'zod';
 import { runMeetingsWeeklySweep } from '../src/meetings-weekly.ts';
 import { weeklyMailTemplate } from '../src/weekly-mail.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -24,6 +25,15 @@ const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'test.weekly' };
 const ZONE = 'Asia/Ho_Chi_Minh';
+// The system's own command that asks the worker-only definer for a member's tracked-word number, from the org context the runtime sets for the call (what the notice command does).
+const trackedProbe = defineCommand({
+  name: 'test.weekly_tracked_probe',
+  input: z.strictObject({ org: z.string(), userId: z.string(), at: z.string() }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input) => (await sql<{ tracked: number | null }>`SELECT ludy_meetings.weekly_tracked_hits(${input.org}::uuid, ${input.userId}::uuid, ${input.at}::timestamptz) AS tracked`.execute(ctx.trx)).rows[0]?.tracked ?? null,
+});
 // Words that must never reach a notice, a mail or an audit row.
 const CANARY = /Á Châu|hợp đồng 15|Họp kín|Tuấn|Quyết định bí mật|Việc bí mật/u;
 
@@ -98,6 +108,14 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
   }
   const result = (meetingId: string, decisions: string[], stage: 'draft' | 'published') =>
     sqlAdmin(`INSERT INTO ludy_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, 'Tóm tắt', $3::jsonb, 'manual', $4)`, [orgId, meetingId, JSON.stringify(decisions), stage]);
+  // A transcript line of a meeting (the tracked-word number counts the published ones).
+  const line = (meetingId: string, text: string, stage: 'draft' | 'published' = 'published') =>
+    sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 5, 'Người nói 1', $4, $5)`, [orgId, randomUUID(), meetingId, text, stage]);
+  // The tracked-word number the worker definer says for a member at the Monday: a number, or null when the org keeps no tracked word.
+  // It is asked from the system's own command in the org's context, as the notice command does.
+  const trackedIn = (ctxOrg: string, org: string, who: string) =>
+    worker.execute<number | null>('test.weekly_tracked_probe', { org, userId: users[who], at: AT }, { actor: SYSTEM, orgId: ctxOrg });
+  const trackedOf = (who: string) => trackedIn(orgId, orgId, who);
   async function item(meetingId: string, title: string, over: { task?: string; due?: string; stage?: 'draft' | 'published' } = {}): Promise<void> {
     let taskId: string | null = null;
     if (over.task !== undefined) {
@@ -131,14 +149,14 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     workerDb = createDb(workerPool);
-    const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
+    const registry = { commands: [...kernelCommands, ...meetingsCommands, trackedProbe], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registry);
-    for (const key of ['owner', 'rec', 'lan', 'ltd', 'other', 'muted', 'odd', 'gone', 'disabled', 'late', 'early', 'sunday', 'sweepy', 'big', 'quiet', 'hid', 'hidltd']) {
+    for (const key of ['owner', 'rec', 'lan', 'ltd', 'other', 'muted', 'odd', 'gone', 'disabled', 'late', 'early', 'sunday', 'sweepy', 'big', 'quiet', 'hid', 'hidltd', 'tracky', 'trackblind']) {
       users[key] = await upsertIdentity(createDb(appPool), { issuer: 'weekly', subject: key, email: `${key}@weekly.test`, name: key });
     }
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Tổng Kết Tuần')).orgId;
-    const members = ['rec', 'lan', 'ltd', 'other', 'muted', 'odd', 'gone', 'disabled', 'late', 'early', 'sunday', 'sweepy', 'big', 'quiet', 'hid', 'hidltd'];
+    const members = ['rec', 'lan', 'ltd', 'other', 'muted', 'odd', 'gone', 'disabled', 'late', 'early', 'sunday', 'sweepy', 'big', 'quiet', 'hid', 'hidltd', 'tracky', 'trackblind'];
     await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) SELECT $1, u, 'member' FROM unnest($2::uuid[]) u`, [orgId, members.map((m) => users[m])]);
     // ltd reads one legal entity only (the scope enter_context seals for a member whose only assignments name an entity), so an org-visible meeting is not theirs.
     const branch = (await sqlAdmin<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, users.owner])).rows[0]?.id;
@@ -385,6 +403,82 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     }
     expect(numbersOf((await due('hid'))!)).toMatchObject({ meetings: 1, decisions: 1, open: 2 });
     expect(numbersOf((await due('hidltd'))!)).toMatchObject({ meetings: 1, decisions: 1, open: 3 });
+  });
+
+  it('says how often the org\'s tracked words came up in the meetings the member reads, a number and never a word, and leaves the line out when the org keeps none or none came up (#5019)', async () => {
+    const WORD = 'kỳ lân xanh';
+    const TRACKED = /kỳ lân|Khách hỏi/u;
+    const mine = await meeting('Họp thường kỳ của tracky', 1, 'rec', ['tracky']);
+    const calm = await meeting('Họp không nhắc từ khóa', 2, 'rec', ['trackblind']);
+    const hidden = await meeting('Họp riêng của người ghi', 1, 'rec', []);
+    const old = await meeting('Họp từ lâu rồi', 30, 'rec', ['tracky', 'trackblind']);
+    const expired = await meeting('Họp đã hết hạn lưu', 2, 'rec', ['tracky', 'trackblind'], { textDay: `date '${AT_DAY}' - 1` });
+    for (const m of [mine, calm, hidden, old, expired]) await result(m, ['Một quyết định bình thường'], 'published');
+    // 2 + 1 in the meeting tracky reads; a draft line, a meeting they do not read, one older than 7 days and one past its text date say the word too, and none of it is theirs to count.
+    await line(mine, `Khách hỏi về ${WORD}, ${WORD} nữa`);
+    await line(mine, `Giá ${WORD}`);
+    await line(mine, `Một dòng nháp có ${WORD}`, 'draft');
+    await line(calm, 'Chào mọi người, hẹn gặp lại');
+    for (const m of [hidden, old, expired]) await line(m, `${WORD} ${WORD} ${WORD}`);
+    for (const who of ['tracky', 'trackblind']) await sqlAdmin(`INSERT INTO ludy_meetings.weekly_notice (org_id, user_id, send_minute, time_zone, language) VALUES ($1, $2, 480, $3, 'vi')`, [orgId, users[who], ZONE]);
+    // No tracked word kept: no number at all (not 0), for anyone.
+    expect(await trackedOf('tracky')).toBeNull();
+    expect(await trackedOf('trackblind')).toBeNull();
+    await sqlAdmin('INSERT INTO ludy_meetings.tracker_term (org_id, term, created_by) VALUES ($1, $2, $3)', [orgId, WORD, users.owner]);
+    // The words kept: 3 for the one who reads the meeting that says it, 0 for the one who reads none that does (a word said where they cannot read adds nothing).
+    expect(await trackedOf('tracky')).toBe(3);
+    expect(await trackedOf('trackblind')).toBe(0);
+    // The definer keeps the context gate of the alert's: asked for this org from another org's system context, from a member's context or from none, it refuses and says no count.
+    const elsewhere = (await createOrg(runtime, asUser('hid'), 'Công ty Khác Tuần')).orgId;
+    expect(await refuses(trackedIn(elsewhere, orgId, 'tracky'))).not.toBeNull();
+    expect(await refuses(trackedIn(orgId, elsewhere, 'tracky'))).not.toBeNull();
+    expect(await refuses(runtime.execute('test.weekly_tracked_probe', { org: orgId, userId: users.tracky, at: AT }, { actor: asUser('tracky'), orgId }))).not.toBeNull();
+    await expect(sql`SELECT ludy_meetings.weekly_tracked_hits(${orgId}::uuid, ${users.tracky}::uuid, ${AT}::timestamptz)`.execute(workerDb)).rejects.toThrow(/NO_CONTEXT/);
+    // The due definer (the sweep's listing too) is the one it was: it has no tracked column, so the pass never pays for the number; only the command asks for it, for the one member.
+    const listingColumns = Object.keys((await sql<Record<string, unknown>>`SELECT * FROM ludy_meetings.weekly_notices_due(500, ${orgId}::uuid, NULL::uuid, NULL::date, ${AT}::timestamptz)`.execute(workerDb)).rows[0] ?? {});
+    expect(listingColumns).not.toContain('tracked');
+    // The four other numbers are still the card's.
+    for (const who of ['tracky', 'trackblind']) {
+      const row = await due(who);
+      expect(row, who).not.toBeNull();
+      expect(row && numbersOf(row), who).toEqual(await cardNumbers(who));
+      // The row is numbers, a day and flags: the word is nowhere in it.
+      expect(JSON.stringify(row), who).not.toMatch(TRACKED);
+    }
+    // The dispatch: the number is in the member's own notice and mail, and the word, a line or a meeting is in none of the notice, the mail (data and rendered), the audit rows or the logs.
+    const spies = (['log', 'info', 'warn', 'error'] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => undefined));
+    let logged = '';
+    try {
+      expect(await notice('tracky')).toMatchObject({ notified: true, mailed: true });
+      expect(await notice('trackblind')).toMatchObject({ notified: true, mailed: true });
+      logged = JSON.stringify(spies.flatMap((spy) => spy.mock.calls));
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+    const tracky = (await notices('tracky'))[0];
+    expect(tracky?.detail).toMatchObject({ tracked: '3' });
+    // Exactly the card's numbers and the tracked number: an extra key (a meeting, a term, a per-term count) fails here.
+    expect(Object.keys((tracky?.detail ?? {}) as Record<string, unknown>).sort()).toEqual(['cut', 'decisions', 'meetings', 'open', 'overdue', 'tracked']);
+    const sent = (await mails()).find((m) => m.to_address === 'tracky@weekly.test');
+    expect(sent?.payload).toMatchObject({ tracked: 3 });
+    expect(Object.keys((sent?.payload ?? {}) as Record<string, unknown>).sort()).toEqual(['cut', 'decisions', 'lang', 'meetings', 'open', 'org', 'overdue', 'path', 'tracked']);
+    const rendered = await weeklyMailTemplate.render({ messageId: randomUUID(), subject: 'x', payload: zWeeklyMail.parse(sent?.payload), publicUrl: 'https://ludy.test', inboundAddress: null, brand: 'Ludy', execute: async () => undefined as never });
+    expect(rendered?.text).toContain('xuất hiện 3 lần');
+    const audit = (await sqlAdmin<{ detail: unknown; outcome: string }>(`SELECT detail, outcome FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.weekly.notice'`, [orgId])).rows;
+    for (const text of [JSON.stringify(await notices('tracky')), JSON.stringify(sent), JSON.stringify(rendered), JSON.stringify(audit), logged]) {
+      expect(text).not.toMatch(TRACKED);
+      // No seeded meeting id either (the notice names no meeting).
+      for (const id of [mine, calm, hidden, old, expired]) expect(text).not.toContain(id);
+    }
+    // The audit detail is still the Monday and nothing else (no number, not whether a word was found).
+    for (const row of audit.filter((r) => r.outcome === 'ok' && (r.detail as Record<string, unknown> | null)?.day !== undefined)) {
+      const { workerInstance: _worker, component: _component, ...rest } = (row.detail ?? {}) as Record<string, unknown>;
+      expect(rest).toEqual({ day: AT_DAY });
+    }
+    // Words kept but none came up in what they read (0): no line, not "0".
+    const blind = (await notices('trackblind'))[0];
+    expect(blind?.detail).not.toHaveProperty('tracked');
+    expect((await mails()).find((m) => m.to_address === 'trackblind@weekly.test')?.payload).not.toHaveProperty('tracked');
   });
 
   it('sends nothing for an org that is closing', async () => {

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The weekly mail of the week's meetings (#4967, template meetings.weekly): a fixed few lines with the four numbers of the "this week" card and the link that opens it, nothing else. No title, name or word of a
+// The weekly mail of the week's meetings (#4967, template meetings.weekly): a fixed few lines with the numbers of the "this week" card and the link that opens it, nothing else. No title, name or word of a
 // decision is in the merge data (meetings.weekly.notice stores none), so none can be in the mail, and none is left to erase; the merge data is parsed strictly, so a stored extra key is refused rather than
-// rendered. A number that a limit cut is written "at least".
-import { zWeeklyMail, type WeeklyMail } from '@ludy/kernel-contract';
+// rendered. A number that a limit cut is written "at least". A fifth line (#5019) says how often the org's tracked words came up, only when some did: a number, never a word.
+import { WEEKLY_TRACKED_MAX, zWeeklyMail, type WeeklyMail } from '@ludy/kernel-contract';
 import type { MailTemplate } from './mail-queue.ts';
 
 const COPY = {
@@ -11,6 +11,7 @@ const COPY = {
     meetings: (n: number, cut: boolean) => `${cut ? 'Ít nhất ' : ''}${n} cuộc họp có kết quả đã công bố`,
     decisions: (n: number, cut: boolean) => `${cut ? 'Ít nhất ' : ''}${n} quyết định đã công bố`,
     open: (n: number, od: number, cut: boolean) => `${cut ? 'Ít nhất ' : ''}${n} việc còn mở${od > 0 ? `, ${od} việc đã quá hạn` : ''}`,
+    tracked: (n: number, cut: boolean) => `Từ khóa theo dõi của tổ chức xuất hiện ${cut ? 'ít nhất ' : ''}${n}${n >= WEEKLY_TRACKED_MAX ? '+' : ''} lần`,
     open_link: 'Xem tuần này',
     footer: (brand: string, org: string) => `Thư này do ${brand} gửi theo lựa chọn của bạn ở ${org}. Tắt thông báo này trong phần thông báo của Cài đặt.`,
   },
@@ -19,6 +20,7 @@ const COPY = {
     meetings: (n: number, cut: boolean) => `${cut ? 'At least ' : ''}${n} ${n === 1 ? 'meeting' : 'meetings'} with a published result`,
     decisions: (n: number, cut: boolean) => `${cut ? 'At least ' : ''}${n} ${n === 1 ? 'decision' : 'decisions'} published`,
     open: (n: number, od: number, cut: boolean) => `${cut ? 'At least ' : ''}${n} open action ${n === 1 ? 'item' : 'items'}${od > 0 ? `, ${od} overdue` : ''}`,
+    tracked: (n: number, cut: boolean) => `The organization's tracked words came up ${cut ? 'at least ' : ''}${n}${n >= WEEKLY_TRACKED_MAX ? '+' : ''} ${n === 1 ? 'time' : 'times'}`,
     open_link: 'See this week',
     footer: (brand: string, org: string) => `${brand} sent this because you asked for it in ${org}. Turn this notice off in the notification settings.`,
   },
@@ -29,7 +31,9 @@ const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (c) => (
 // The lines of the body, in order (pure: the tests compare them to the numbers the card shows).
 export function weeklyLines(mail: WeeklyMail): string[] {
   const t = COPY[mail.lang];
-  return [t.meetings(mail.meetings, mail.cut), t.decisions(mail.decisions, mail.cut), t.open(mail.open, mail.overdue, mail.cut)];
+  const lines = [t.meetings(mail.meetings, mail.cut), t.decisions(mail.decisions, mail.cut), t.open(mail.open, mail.overdue, mail.cut)];
+  // The tracked-word line only when the org keeps tracked words and some came up (#5019): a number, never a word.
+  return mail.tracked === undefined ? lines : [...lines, t.tracked(mail.tracked, mail.cut)];
 }
 
 export const weeklyMailTemplate: MailTemplate = {
