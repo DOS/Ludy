@@ -91,6 +91,7 @@ export const kernelManifest = defineModule({
       member_permission_override: columns(['org_id', 'id', 'user_id', 'permission', 'allowed', 'set_by', 'set_by_owner', 'set_at']),
       member_vy_memory: columns(['org_id', 'id', 'member_user_id', 'created_at', 'updated_at'], { body: 'pii' }),
       member_vy_result: columns(['org_id', 'id', 'member_user_id', 'run_id', 'feature', 'subject_type', 'subject_id', 'status', 'error_code', 'source_revision', 'tainted', 'private_read', 'created_at', 'expires_at'], { body: 'pii' }),
+      member_vy_system_feature: columns(['feature', 'module', 'adr', 'created_at']),
       member_vy_table: columns(['table_name', 'mode', 'adr']),
       native_push_device: columns(['org_id', 'id', 'user_id', 'session_id', 'platform', 'failure_count', 'generation', 'created_at', 'refreshed_at', 'last_used_at'], { token: 'sensitive', token_sha256: 'sensitive', label: 'pii' }),
       native_push_sent: columns(['org_id', 'id', 'notification_id', 'dispatched_at']),

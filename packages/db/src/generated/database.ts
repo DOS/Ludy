@@ -192,6 +192,7 @@ export interface LudyKernelSchema {
   'ludy_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
   'ludy_kernel.member_vy_memory': KernelMemberVyMemoryTable;
   'ludy_kernel.member_vy_result': KernelMemberVyResultTable;
+  'ludy_kernel.member_vy_system_feature': KernelMemberVySystemFeatureTable;
   'ludy_kernel.member_vy_table': KernelMemberVyTableTable;
   'ludy_kernel.native_push_device': KernelNativePushDeviceTable;
   'ludy_kernel.notification': KernelNotificationTable;
@@ -3267,6 +3268,14 @@ export interface KernelMemberVyResultTable {
   private_read: Generated<boolean>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   expires_at: ColumnType<Date, Date | string, NotGranted>;
+}
+
+/** ludy_kernel.member_vy_system_feature */
+export interface KernelMemberVySystemFeatureTable {
+  feature: ColumnType<string, NotGranted, NotGranted>;
+  module: ColumnType<string, NotGranted, NotGranted>;
+  adr: ColumnType<string, NotGranted, NotGranted>;
+  created_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
 /** ludy_kernel.member_vy_table */

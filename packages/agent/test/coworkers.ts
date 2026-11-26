@@ -197,10 +197,14 @@ export interface CoworkerEvalSummary {
   perModule: CoworkerModuleMetrics[];
 }
 
+// System-started features whose prompt/validator lands in #5073 Step 2 (Meetings slice);
+// remove entries here once their real coworker prompt and eval cases land.
+export const UNIMPLEMENTED_SYSTEM_FEATURES = new Set<string>(['meetings.brief_daily']);
+
 export const ALL_COWORKER_FEATURE_KEYS: readonly CoworkerFeatureKey[] = [
   ...new Set<CoworkerFeatureKey>([
     ...AI_FEATURE_KEYS,
-    ...(Object.keys(MEMBER_VY_FEATURE_TABLE) as Array<keyof typeof MEMBER_VY_FEATURE_TABLE>),
+    ...(Object.keys(MEMBER_VY_FEATURE_TABLE).filter((key) => !UNIMPLEMENTED_SYSTEM_FEATURES.has(key)) as Array<CoworkerFeatureKey>),
   ]),
 ];
 
