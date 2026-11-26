@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The three screens of the mobile client: sign in, unlock, and home approvals queue (issues #4880, #4881).
+// The screens of the mobile client: sign in, unlock, and home workspace with Approvals and Conversations tabs (issues #4880, #4881, #4882).
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Text, TextInput } from 'react-native';
+import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 import { isMfaRequired } from '@ludy/client';
 import type { MessageKey } from '../i18n.ts';
 import { SERVER_POLICY, clientFor, locale, session, t } from '../runtime.ts';
 import { ApprovalsQueueScreen } from '../screens/approvals/ApprovalsQueueScreen.tsx';
 import { isLikelyNetworkError } from '../screens/approvals/model.ts';
+import { ConversationsInboxScreen } from '../screens/conversations/ConversationsInboxScreen.tsx';
 import { Body, LinkButton, PrimaryButton, Screen, Title } from './parts.tsx';
 import { styles, usePalette } from './theme.ts';
 import type { SessionState } from '../auth/session.ts';
@@ -99,10 +100,33 @@ export function LockScreen() {
 // that says so: the phone is signed out within this time, or at once on the next tap.
 export const SESSION_CHECK_MS = 5 * 60_000;
 
-export function HomeScreen(props: { state: Extract<SessionState, { status: 'active' }> }) {
+export function HomeScreen(props: {
+  state: Extract<SessionState, { status: 'active' }>;
+  initialTab?: 'approvals' | 'conversations';
+  initialConversationId?: string | null;
+}) {
   const { serverUrl, orgSlug } = props.state;
+  const palette = usePalette();
   const client = useMemo(() => clientFor(serverUrl), [serverUrl]);
   const [pickingOrg, setPickingOrg] = useState(false);
+  const [activeTab, setActiveTab] = useState<'approvals' | 'conversations'>(() =>
+    props.initialConversationId ? 'conversations' : (props.initialTab ?? 'approvals'),
+  );
+  const [pendingConversationId, setPendingConversationId] = useState<string | null>(
+    props.initialConversationId ?? null,
+  );
+  const [unreadCount, setUnreadCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (props.initialConversationId) {
+      setActiveTab('conversations');
+      setPendingConversationId(props.initialConversationId);
+    }
+  }, [props.initialConversationId]);
+
+  useEffect(() => {
+    setUnreadCount(null);
+  }, [serverUrl, orgSlug]);
 
   const me = useQuery({
     queryKey: ['me', serverUrl],
@@ -112,41 +136,175 @@ export function HomeScreen(props: { state: Extract<SessionState, { status: 'acti
   const orgs = me.data?.orgs ?? [];
   const org = orgs.find((o) => o.slug === orgSlug) ?? null;
 
+  const countsQuery = useQuery({
+    queryKey: ['home-conversations-unread', serverUrl, org?.slug ?? ''],
+    queryFn: () => client.conversations.counts({}),
+    enabled: Boolean(org && !pickingOrg),
+    retry: false,
+    staleTime: 30_000,
+  });
+
   // One org: used without asking. Several: the person picks once, and the choice is kept.
   useEffect(() => {
     if (!orgSlug && orgs.length === 1 && orgs[0]) void session.setOrg(orgs[0].slug);
   }, [orgSlug, orgs]);
 
-  if (org && !pickingOrg) {
-    return (
-      <ApprovalsQueueScreen
-        key={`${serverUrl}:${org.slug}`}
-        canSwitchOrg={orgs.length > 1}
-        locale={locale}
-        onSwitchOrg={() => setPickingOrg(true)}
-        orgName={org.name}
-        orgSlug={org.slug}
-        role={org.role}
-        serverUrl={serverUrl}
-        userId={me.data?.userId ?? null}
-      />
-    );
-  }
-
   // Network failure fetching user identity before me.get() resolves: show offline error/retry view (user-bound local cache stays locked until userId is confirmed).
-  if (me.isError && !isMfaRequired(me.error) && isLikelyNetworkError(me.error) && orgSlug && !pickingOrg) {
+  const offlineFallback =
+    !org && !pickingOrg && me.isError && !isMfaRequired(me.error) && isLikelyNetworkError(me.error) && orgSlug;
+
+  const activeWorkspace =
+    org && !pickingOrg
+      ? {
+          orgName: org.name,
+          orgSlug: org.slug,
+          role: org.role,
+          canSwitchOrg: orgs.length > 1,
+          onSwitchOrg: () => setPickingOrg(true),
+          userId: me.data?.userId ?? null,
+        }
+      : offlineFallback
+        ? {
+            orgName: orgSlug,
+            orgSlug,
+            role: 'member' as const,
+            canSwitchOrg: false,
+            onSwitchOrg: () => setPickingOrg(false),
+            userId: null,
+          }
+        : null;
+
+  if (activeWorkspace) {
+    const badgeCount = unreadCount ?? countsQuery.data?.unread ?? 0;
+    const conversationsA11y =
+      badgeCount > 0
+        ? t('tabs.conversationsUnreadA11y', { count: String(badgeCount) })
+        : t('tabs.conversations');
+
     return (
-      <ApprovalsQueueScreen
-        key={`${serverUrl}:${orgSlug}`}
-        canSwitchOrg={false}
-        locale={locale}
-        onSwitchOrg={() => setPickingOrg(false)}
-        orgName={orgSlug}
-        orgSlug={orgSlug}
-        role="member"
-        serverUrl={serverUrl}
-        userId={null}
-      />
+      <View style={{ flex: 1, backgroundColor: palette.background, paddingTop: 12 }}>
+        <View
+          accessibilityRole="tablist"
+          style={{
+            flexDirection: 'row',
+            gap: 8,
+            paddingHorizontal: 16,
+            paddingBottom: 4,
+          }}
+        >
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityLabel={t('tabs.approvals')}
+            accessibilityState={{ selected: activeTab === 'approvals' }}
+            onPress={() => setActiveTab('approvals')}
+            style={{
+              flex: 1,
+              minHeight: 48,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: activeTab === 'approvals' ? palette.primary : palette.border,
+              backgroundColor: activeTab === 'approvals' ? palette.primary : palette.surface,
+              alignItems: 'center',
+              justifyContent: 'center',
+              paddingHorizontal: 12,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 15,
+                fontWeight: '700',
+                color: activeTab === 'approvals' ? palette.primaryText : palette.text,
+              }}
+            >
+              {t('tabs.approvals')}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityLabel={conversationsA11y}
+            accessibilityState={{ selected: activeTab === 'conversations' }}
+            onPress={() => setActiveTab('conversations')}
+            style={{
+              flex: 1,
+              minHeight: 48,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: activeTab === 'conversations' ? palette.primary : palette.border,
+              backgroundColor: activeTab === 'conversations' ? palette.primary : palette.surface,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              paddingHorizontal: 12,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 15,
+                fontWeight: '700',
+                color: activeTab === 'conversations' ? palette.primaryText : palette.text,
+              }}
+            >
+              {t('tabs.conversations')}
+            </Text>
+            {badgeCount > 0 ? (
+              <View
+                style={{
+                  minWidth: 22,
+                  height: 22,
+                  borderRadius: 11,
+                  paddingHorizontal: 6,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor:
+                    activeTab === 'conversations' ? palette.primaryText : palette.primary,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 12,
+                    fontWeight: '700',
+                    color:
+                      activeTab === 'conversations' ? palette.primary : palette.primaryText,
+                  }}
+                >
+                  {badgeCount > 99 ? '99+' : String(badgeCount)}
+                </Text>
+              </View>
+            ) : null}
+          </Pressable>
+        </View>
+
+        {activeTab === 'approvals' ? (
+          <ApprovalsQueueScreen
+            key={`approvals:${serverUrl}:${activeWorkspace.orgSlug}`}
+            canSwitchOrg={activeWorkspace.canSwitchOrg}
+            locale={locale}
+            onSwitchOrg={activeWorkspace.onSwitchOrg}
+            orgName={activeWorkspace.orgName}
+            orgSlug={activeWorkspace.orgSlug}
+            role={activeWorkspace.role}
+            serverUrl={serverUrl}
+            userId={activeWorkspace.userId}
+          />
+        ) : (
+          <ConversationsInboxScreen
+            key={`conversations:${serverUrl}:${activeWorkspace.orgSlug}`}
+            canSwitchOrg={activeWorkspace.canSwitchOrg}
+            initialConversationId={pendingConversationId}
+            locale={locale}
+            onInitialConversationConsumed={() => setPendingConversationId(null)}
+            onSwitchOrg={activeWorkspace.onSwitchOrg}
+            onUnreadCountChange={(count) => setUnreadCount(count)}
+            orgName={activeWorkspace.orgName}
+            orgSlug={activeWorkspace.orgSlug}
+            role={activeWorkspace.role}
+            serverUrl={serverUrl}
+            userId={activeWorkspace.userId}
+          />
+        )}
+      </View>
     );
   }
 
