@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Ludy kernel (#5028, follow-ups from #4998 / #3150): enforce object shape and 8 KiB serialized text size cap on
 -- channel_connection.chat_business_order. Added NOT VALID here without scanning existing rows under ACCESS EXCLUSIVE;
--- validated under SHARE UPDATE EXCLUSIVE in 20270328040000 and paired with concurrent partial indexes in 20270328050000.
+-- validated under SHARE UPDATE EXCLUSIVE in 20270328080000 and paired with concurrent partial indexes in 20270328090000.
 -- Idempotent; applied files stay untouched.
 SET LOCAL lock_timeout = '2s';
 
