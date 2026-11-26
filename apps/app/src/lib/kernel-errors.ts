@@ -852,6 +852,7 @@ export const KERNEL_ERROR_CODES = [
   'PAY_TO_NOT_FOUND',
   'CUSTOMER_PAUSED',
   'REMINDER_INVALID',
+  'REMINDER_AI_TEXT_INVALID',
   // Non-cash payment marks on input invoices (#917).
   'NOT_FLAGGED',
   'VOUCHER_NOT_BANK',

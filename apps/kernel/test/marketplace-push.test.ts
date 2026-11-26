@@ -114,6 +114,7 @@ describe('the worker\'s batch', () => {
     return {
       orgId: 'org-1',
       hookId: 'hook-1',
+      generation: 1,
       marketplaceConnectionId: 'mc-1',
       channelConnectionId: 'cc-1',
       adapter: 'lazada',
@@ -134,19 +135,19 @@ describe('the worker\'s batch', () => {
       }),
     } as unknown as Runtime;
     const broker = { open: (sealed: { envelope: Buffer }) => (opened.push('open'), sealed.envelope.toString('utf8')) } as unknown as CredentialBroker;
-    const rejected: string[] = [];
-    const deps = { runtime, broker, adapters: new Set(['lazada', 'shopee']), reject: async (hookId: string) => void rejected.push(hookId), now: () => NOW };
+    const rejected: Array<{ hookId: string; generation: number }> = [];
+    const deps = { runtime, broker, adapters: new Set(['lazada', 'shopee']), reject: async (hookId: string, generation: number) => void rejected.push({ hookId, generation }), now: () => NOW };
     return { deps, rejected, opened, runtime };
   }
 
-  it('opens a connection\'s secret once for the batch, counts only the refused push on its hook, and gives a verdict for each in order', async () => {
+  it('opens a connection\'s secret once for the batch, counts only the refused push on its hook with its generation, and gives a verdict for each in order', async () => {
     const { deps, rejected, opened } = setup({ 'cc-1': LAZADA_SECRET });
     const good = row();
-    const bad = row({ authorization: 'a'.repeat(64) });
+    const bad = row({ authorization: 'a'.repeat(64), generation: 4 });
     const other = row({ body: lazadaPush({ seller_id: '7654321' }) });
     const verdicts = await verifyMarketplaceHookNotices(deps, [good, bad, other, row()]);
     expect(verdicts).toEqual(['ok', 'refused', 'dropped', 'ok']);
-    expect(rejected).toEqual(['hook-1']);
+    expect(rejected).toEqual([{ hookId: 'hook-1', generation: 4 }]);
     expect(opened).toHaveLength(1);
   });
 

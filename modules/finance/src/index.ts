@@ -406,6 +406,8 @@ export {
   PAYMENT_REMINDER_INVOICES_MAX,
   PAYMENT_REMINDER_SOURCE,
   PAYMENT_REMINDER_TEMPLATE,
+  paymentReminderSource,
+  paymentReminderSourceLevel,
   renderPaymentReminderMail,
   zPaymentReminderMail,
   type PaymentReminderMail,
