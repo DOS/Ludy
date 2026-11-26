@@ -297,4 +297,83 @@ describe('updater', () => {
     await waitUntil(() => sameCtrl.state().kind === 'idle');
     expect(sameVer.calls).toEqual([]);
   });
+
+  it('stages verified macOS updates and serves Squirrel.Mac feed.json over 127.0.0.1', async () => {
+    const payload = Buffer.from('verified-macos-zip-payload');
+    const sha256 = createHash('sha256').update(payload).digest('hex');
+    const teamId = 'AB12CD34EF';
+    const feed = 'https://updates.example.vn/darwin-arm64';
+    const stagingDir = mkdtempSync(join(tmpdir(), 'ludy-updater-mac-'));
+    tempDirs.push(stagingDir);
+
+    const fetchFeed: FetchLike = async (url) => {
+      const s = String(url);
+      if (s.endsWith('/release-manifest.json')) {
+        return new Response(
+          JSON.stringify({
+            schemaVersion: 1,
+            product: 'ludy-desktop',
+            platform: 'darwin',
+            arch: 'arm64',
+            version: '0.1.2',
+            signed: true,
+            signing: {
+              algorithm: 'sha256',
+              teamId,
+              bundleId: 'vn.ludy.desktop',
+              hardenedRuntime: true,
+              notarized: true,
+            },
+            installer: { file: 'LudyDesktop-0.1.2-darwin-arm64.dmg', sha256: 'e'.repeat(64), size: 2048 },
+            packages: [{ file: 'LudyDesktop-0.1.2-darwin-arm64.zip', kind: 'full', version: '0.1.2', sha256, size: payload.length }],
+          }),
+          { status: 200 },
+        );
+      }
+      if (s.endsWith('/LudyDesktop-0.1.2-darwin-arm64.zip')) {
+        return new Response(payload, { status: 200 });
+      }
+      return new Response('Not found', { status: 404 });
+    };
+
+    const f = fake();
+    const controller = createUpdater({
+      updater: f.updater,
+      feedUrl: feed,
+      supported: true,
+      platform: 'darwin',
+      arch: 'arm64',
+      fetch: fetchFeed,
+      allowedOrigin: 'https://updates.example.vn',
+      expectedTeamId: teamId,
+      currentVersion: '0.1.1',
+      stagingDir,
+      verifySignedPackage: async () => undefined,
+      setInterval: () => 0,
+      clearInterval: () => undefined,
+    });
+
+    controller.start();
+    await waitUntil(() => f.calls.includes('check'));
+    const setFeedCall = f.calls.find((c) => c.startsWith('feed:'));
+    expect(setFeedCall).toMatch(/^feed:http:\/\/127\.0\.0\.1:\d+\/feed\.json$/);
+    const feedJsonUrl = setFeedCall!.slice('feed:'.length);
+
+    const feedRes = await fetch(feedJsonUrl);
+    expect(feedRes.status).toBe(200);
+    const feedJson = (await feedRes.json()) as { url: string; name: string; sha256: string; size: number };
+    expect(feedJson.name).toBe('0.1.2');
+    expect(feedJson.sha256).toBe(sha256);
+    expect(feedJson.size).toBe(payload.length);
+    expect(feedJson.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/LudyDesktop-0\.1\.2-darwin-arm64\.zip$/);
+
+    const pkgRes = await fetch(feedJson.url);
+    expect(pkgRes.status).toBe(200);
+    expect(Buffer.from(await pkgRes.arrayBuffer()).equals(payload)).toBe(true);
+
+    f.events().downloaded('0.1.2');
+    expect(controller.state()).toEqual({ kind: 'ready', version: '0.1.2' });
+    await waitUntil(() => !existsSync(stagingDir));
+    controller.stop();
+  });
 });

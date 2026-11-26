@@ -105,6 +105,12 @@ export type TaxProfileTable = Refine<
 export const TODAY_MAIL_LANGUAGES = ['vi', 'en'] as const;
 export type TodayMailTable = Refine<G.KernelTodayMailTable, { language: ColumnType<(typeof TODAY_MAIL_LANGUAGES)[number] | null, (typeof TODAY_MAIL_LANGUAGES)[number] | null, never> }>;
 
+export const NATIVE_PUSH_PLATFORMS = ['apns', 'fcm'] as const;
+export type NativePushDeviceTable = Refine<
+  G.KernelNativePushDeviceTable,
+  { platform: ColumnType<(typeof NATIVE_PUSH_PLATFORMS)[number], (typeof NATIVE_PUSH_PLATFORMS)[number], never> }
+>;
+
 export const RECORD_LE_TYPES = ['kernel.party'] as const;
 export type RecordLeTable = Refine<G.KernelRecordLeTable, { record_type: ColumnType<(typeof RECORD_LE_TYPES)[number], (typeof RECORD_LE_TYPES)[number], never> }>;
 
@@ -2025,6 +2031,7 @@ type Refined = Tables<{
   'ludy_kernel.mail_message': MailMessageTable;
   'ludy_kernel.mail_suppression': MailSuppressionTable;
   'ludy_kernel.mail_event': MailEventTable;
+  'ludy_kernel.native_push_device': NativePushDeviceTable;
   'ludy_kernel.org_usage': OrgUsageTable;
   'ludy_kernel.today_mail': TodayMailTable;
   'ludy_kernel.usage_deferral': UsageDeferralTable;

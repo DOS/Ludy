@@ -234,4 +234,99 @@ describe('prepareVerifiedUpdate', () => {
     ).rejects.toThrow(/checksum verification/i);
     expect(verifierCalled).toBe(false);
   });
+
+  it('validates and stages macOS darwin-arm64 updates via release-manifest.json and Team ID pin', async () => {
+    const zipBytes = Buffer.from('signed-notarized-macos-zip-payload');
+    const sha256 = createHash('sha256').update(zipBytes).digest('hex');
+    const teamId = 'AB12CD34EF';
+    const macFeed = 'https://updates.example.vn/ludy-desktop/darwin-arm64';
+    const macManifest = JSON.stringify({
+      schemaVersion: 1,
+      product: 'ludy-desktop',
+      platform: 'darwin',
+      arch: 'arm64',
+      version: '0.1.2',
+      signed: true,
+      signing: {
+        algorithm: 'sha256',
+        teamId,
+        bundleId: 'vn.ludy.desktop',
+        hardenedRuntime: true,
+        notarized: true,
+      },
+      installer: {
+        file: 'LudyDesktop-0.1.2-darwin-arm64.dmg',
+        sha256: 'e'.repeat(64),
+        size: 1024000,
+      },
+      packages: [
+        {
+          file: 'LudyDesktop-0.1.2-darwin-arm64.zip',
+          kind: 'full',
+          version: '0.1.2',
+          sha256,
+          size: zipBytes.length,
+        },
+      ],
+    });
+
+    const verifiedTeams: Array<string | null> = [];
+    const staged = await prepareVerifiedUpdate({
+      feedUrl: macFeed,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.1.1',
+      expectedTeamId: teamId.toLowerCase(),
+      stagingDir: join(makeTempDir(), 'stage-mac'),
+      fetch: mockFeedFetch({
+        [`${macFeed}/release-manifest.json`]: new Response(macManifest, { status: 200 }),
+        [`${macFeed}/LudyDesktop-0.1.2-darwin-arm64.zip`]: new Response(zipBytes, { status: 200 }),
+      }),
+      verifySignedPackage: async (_pkgPath, expected) => {
+        verifiedTeams.push(expected);
+      },
+    });
+    expect(verifiedTeams).toEqual([teamId]);
+    expect(staged).toMatchObject({
+      status: 'staged',
+      version: '0.1.2',
+      packageFile: 'LudyDesktop-0.1.2-darwin-arm64.zip',
+      sha256,
+      size: zipBytes.length,
+    });
+    expect(readFileSync(join(staged.status === 'staged' ? staged.stagingDir : '', 'LudyDesktop-0.1.2-darwin-arm64.zip')).equals(zipBytes)).toBe(true);
+
+    const upToDate = await prepareVerifiedUpdate({
+      feedUrl: macFeed,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.1.2',
+      expectedTeamId: teamId,
+      stagingDir: join(makeTempDir(), 'stage-mac-current'),
+      fetch: mockFeedFetch({
+        [`${macFeed}/release-manifest.json`]: new Response(macManifest, { status: 200 }),
+      }),
+      verifySignedPackage: async () => undefined,
+    });
+    expect(upToDate).toEqual({ status: 'up-to-date', version: '0.1.2' });
+
+    const twoPackagesManifest = JSON.stringify({
+      ...JSON.parse(macManifest),
+      packages: [
+        JSON.parse(macManifest).packages[0],
+        JSON.parse(macManifest).packages[0],
+      ],
+    });
+    await expect(
+      validateUpdateFeed({
+        feedUrl: macFeed,
+        platform: 'darwin',
+        arch: 'arm64',
+        expectedTeamId: teamId,
+        fetch: mockFeedFetch({
+          [`${macFeed}/release-manifest.json`]: new Response(twoPackagesManifest, { status: 200 }),
+        }),
+      }),
+    ).rejects.toThrow(/exactly 1 package entry/);
+  });
 });

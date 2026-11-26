@@ -1947,8 +1947,11 @@ export class Runtime {
       if (q.memberVy !== undefined && q.stream === true) {
         throw new Error(`query ${q.name}: Vy in member mode reads no streamed query (a stream is not a bounded read of the member's own rows)`);
       }
-      if (q.memberVy !== undefined && (!Array.isArray(q.access) || !q.name.startsWith('kernel.member_vy.'))) {
-        throw new Error(`query ${q.name}: Vy in member mode reads only a kernel.member_vy.* query with a role list as access (the member's role must be in it)`);
+      if (q.memberVy !== undefined && q.sensitive === true) {
+        throw new Error(`query ${q.name}: Vy in member mode reads no sensitive query (sensitive reads are user-only and audited before reading)`);
+      }
+      if (q.memberVy !== undefined && !Array.isArray(q.access)) {
+        throw new Error(`query ${q.name}: Vy in member mode reads only a query with a role list as access (the member's role must be in it)`);
       }
       if (q.mcp !== undefined && (!Array.isArray(q.access) || q.stream === true || q.sensitive === true || q.memberVy !== undefined || q.extension !== undefined)) {
         throw new Error(`query ${q.name}: an MCP grant reaches only a query with a role list as access that is neither streamed, sensitive, nor open to member mode or an extension token (ADR-0051 decision 2)`);

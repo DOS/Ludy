@@ -2612,18 +2612,31 @@ export const personalDataErase = defineCommand({
         reason: ACTIVITY_SHORT_NUMBER_REASON,
       });
     }
-    // The original files behind posted entries that name these parties (issue #1009): accounting evidence the erasure
-    // never deletes, held in the bucket for the legal period. Reported with the date the hold runs to, when it is set.
+    // The original files behind posted entries that name these parties (issue #1009, #2334): accounting evidence the
+    // erasure never deletes, held in the bucket for the legal period, including attached original e-invoice XMLs.
     const partyIds = parties.map((p) => p.id);
     if (partyIds.length > 0) {
       const { rows: held } = await sql<{ files: string; until: Date | null }>`
-        SELECT count(DISTINCT f.id) AS files,
+        WITH party_docs AS (
+          SELECT d.org_id, d.source_file_id, d.proposal_id
+            FROM ludy_finance.purchase_document d
+            JOIN ludy_finance.journal_entry e ON e.org_id = d.org_id AND e.source_type = 'finance.purchase_document' AND e.source_id = d.id
+           WHERE d.org_id = ${ctx.orgId}::uuid AND d.party_id = ANY(${partyIds}::uuid[])
+        ), doc_files AS (
+          SELECT pd.org_id, pd.source_file_id AS file_id
+            FROM party_docs pd
+           WHERE pd.source_file_id IS NOT NULL
+          UNION
+          SELECT pd.org_id, x.file_id
+            FROM party_docs pd
+            JOIN ludy_kernel.extraction x ON x.org_id = pd.org_id AND x.original_of_proposal_id = pd.proposal_id
+           WHERE pd.proposal_id IS NOT NULL
+        )
+        SELECT count(*) AS files,
                -- A date only when every file has a recorded hold, and then the earliest: never a date one file lacks.
                CASE WHEN bool_and(f.held_until IS NOT NULL) THEN min(f.held_until) END AS until
-          FROM ludy_finance.purchase_document d
-          JOIN ludy_finance.journal_entry e ON e.org_id = d.org_id AND e.source_type = 'finance.purchase_document' AND e.source_id = d.id
-          JOIN ludy_kernel.file f ON f.org_id = d.org_id AND f.id = d.source_file_id
-         WHERE d.org_id = ${ctx.orgId}::uuid AND d.party_id = ANY(${partyIds}::uuid[])`.execute(ctx.trx);
+          FROM doc_files df
+          JOIN ludy_kernel.file f ON f.org_id = df.org_id AND f.id = df.file_id`.execute(ctx.trx);
       const files = Number(held[0]?.files ?? 0);
       if (files > 0) kept.set('ludy_kernel.file', { column: 'ludy_kernel.file', rows: files, reason: heldFilesReason(held[0]?.until ?? null) });
     }

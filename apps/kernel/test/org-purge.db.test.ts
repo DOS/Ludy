@@ -12,6 +12,8 @@ import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import type { ExtractClient } from '@ludy/extract-contract';
+import type { ParsedInvoice } from '@ludy/l10n-vn';
 import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { orgPurgeCommand, parseOrgPurgeArgs, runOrgPurge, type HeldCheck } from '../src/org-purge.ts';
 import { inProcessExtract } from './extract-service.ts';
@@ -21,6 +23,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
+const PARSED = JSON.parse(readFileSync(new URL('../../../packages/l10n-vn/test/fixtures/einvoice-basic.parsed.json', import.meta.url), 'utf8')) as ParsedInvoice;
 const DAY = 24 * 60 * 60 * 1000;
 
 class MemoryStore implements BlobStore {
@@ -277,6 +280,21 @@ suite('org purge on PostgreSQL (#1024)', () => {
         Buffer.concat([Buffer.from([4]), Buffer.alloc(64, 7)]).toString('base64url'),
         Buffer.alloc(16, 9).toString('base64url'),
       ]);
+      // The owner's mobile native push device and dispatch ledger (#4883): deleted with the org's other kernel rows.
+      await c.query(
+        `INSERT INTO ludy_kernel.native_push_device (org_id, user_id, session_id, platform, token, label) VALUES ($1, $2, $3, 'fcm', $4, 'Phone')`,
+        [org.orgId, owner, randomUUID(), `fcm-purge-token-${tag}`],
+      );
+      const nativePushNotice = (
+        await c.query<{ id: string }>(
+          `INSERT INTO ludy_kernel.notification (org_id, user_id, kind, dedupe_key) VALUES ($1, $2, 'kernel.conversation_new', $3) RETURNING id`,
+          [org.orgId, owner, `purge-native-push-${tag}`],
+        )
+      ).rows[0]?.id;
+      await c.query(
+        `INSERT INTO ludy_kernel.native_push_sent (org_id, notification_id) VALUES ($1, $2)`,
+        [org.orgId, nativePushNotice],
+      );
       // The owner's saved view of the posts, shared with the org (#1300): deleted with the org's other Social rows.
       await c.query(`INSERT INTO ludy_social.saved_view (org_id, user_id, name, filters, shared) VALUES ($1, $2, 'Tuần này', '{"tab":"calendar"}', true)`, [org.orgId, owner]);
       // The owner's saved view of the deals (CRM K3, #2227), private: deleted before the members it names.
@@ -595,6 +613,8 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(before['ludy_kernel.proposal']).toBe(2);
     expect(before['ludy_social.push_subscription']).toBe(1);
     expect(before['ludy_kernel.push_subscription']).toBe(1);
+    expect(before['ludy_kernel.native_push_device']).toBe(1);
+    expect(before['ludy_kernel.native_push_sent']).toBe(1);
     expect(before['ludy_social.saved_view']).toBe(1);
     expect(before['ludy_kernel.saved_view']).toBe(1);
     expect(before['ludy_social.media_archive']).toBe(2);
@@ -638,6 +658,8 @@ suite('org purge on PostgreSQL (#1024)', () => {
             'ludy_finance.bank_account_number': 1,
             'ludy_social.push_subscription': 1,
             'ludy_kernel.push_subscription': 1,
+            'ludy_kernel.native_push_device': 1,
+            'ludy_kernel.native_push_sent': 1,
             'ludy_social.saved_view': 1,
             'ludy_kernel.saved_view': 1,
             'ludy_social.media_archive': 2,
@@ -826,5 +848,67 @@ suite('org purge on PostgreSQL (#1024)', () => {
     }
     expect(store.blobs.has(s.loose.storageKey)).toBe(true);
     expect((await purgeAudits(s.org.orgId))[0]?.detail).toMatchObject({ blobs: { deleted: 2, held: 1 } });
+  });
+
+  it('keeps an attached original XML file and its blob when the org is purged (#2334)', async () => {
+    const tag = randomUUID().slice(0, 8);
+    const owner = await upsertIdentity(db, { issuer: 'test', subject: `owner-${tag}`, email: `owner-${tag}@purge.test`, name: null });
+    const member = await upsertIdentity(db, { issuer: 'test', subject: `member-${tag}`, email: `member-${tag}@purge.test`, name: null });
+    const org = await createOrg(rt, asUser(owner), `Công ty Lưu bản XML gốc ${tag}`);
+    const { acceptPath } = await rt.execute<{ acceptPath: string }>('kernel.member.invite.create', { email: `member-${tag}@purge.test`, role: 'admin' }, { actor: asMfa(owner), orgId: org.orgId });
+    await rt.executeOrgless('kernel.member.invite.accept', { token: acceptPath.split('#')[1] }, { actor: asUser(member) });
+
+    const pdfExtract: ExtractClient = {
+      extract: async (kind, bytes) => (kind === 'pdf_text' ? ({ ok: true, kind: 'pdf_text', text: 'x'.repeat(100), pages: 1 } as never) : extract.extract(kind, bytes)),
+    };
+    const reader = {
+      fromText: async () => ({ ...structuredClone(PARSED), source: 'ai' as const, number: '9334' }),
+      fromImage: async () => null,
+    };
+    const pdfBytes = new TextEncoder().encode(`%PDF-1.4 hoa don 9334 ${tag}`);
+    const pdfSha = sha256Hex(pdfBytes);
+    const pdfKey = fileKey(org.orgId, pdfSha);
+    const pdfGen = await store.put(pdfKey, pdfBytes);
+    const { fileId: pdfFileId } = await rt.execute<{ fileId: string }>(
+      'kernel.file.ingest',
+      { filename: 'hd-9334.pdf', contentType: 'application/pdf', sizeBytes: pdfBytes.byteLength, sha256: pdfSha, storageKey: pdfKey, generation: pdfGen, source: 'upload' },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const proposed = await extractAndPropose({ runtime: worker, store, extractor: reader as never, extract: pdfExtract, today: () => '2026-10-13' }, org.orgId, pdfFileId);
+    const proposalId = String(proposed.proposalId);
+    expect(proposed.proposalId).toEqual(expect.any(String));
+    const read = await rt.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(owner), orgId: org.orgId });
+    await rt.execute('kernel.proposal.edit', { id: proposalId, revision: read.revision, lineAccounts: [{ lineNo: 3, debitAccount: '6421' }] }, { actor: asUser(owner), orgId: org.orgId });
+    const detail = await rt.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(member), orgId: org.orgId });
+    await rt.execute(
+      'kernel.proposal.approve',
+      { acceptFailedChecks: true, acceptUnverifiedSignature: true, id: proposalId, revision: detail.revision },
+      { actor: asMfa(member), orgId: org.orgId },
+    );
+
+    // Attach the original XML after posting, plus an extracted unposted XML and a loose file that should both purge.
+    const xmlBytes = new TextEncoder().encode(FIXTURE.toString('utf8').replace('<SHDon>1234</SHDon>', '<SHDon>9334</SHDon>'));
+    const attachedXml = await ingest(org.orgId, owner, xmlBytes, 'hd-9334.xml');
+    const attached = await extractAndPropose({ runtime: worker, store, extractor: null, extract, today: () => '2026-10-13' }, org.orgId, attachedXml.fileId);
+    expect(attached.proposalId).toBeNull();
+    const unpostedXml = await ingest(org.orgId, owner, new TextEncoder().encode(FIXTURE.toString('utf8').replace('<SHDon>1234</SHDon>', '<SHDon>9335</SHDon>')), 'unposted-9335.xml');
+    const unposted = await extractAndPropose({ runtime: worker, store, extractor: null, extract, today: () => '2026-10-13' }, org.orgId, unpostedXml.fileId);
+    expect(unposted.proposalId).toEqual(expect.any(String));
+    const loose = await ingest(org.orgId, owner, new TextEncoder().encode(`<loose>${tag}</loose>`), 'loose.xml');
+
+    await offboard(org.orgId);
+    const { code } = await run(org.slug);
+    expect(code).toBe(0);
+    expect(await status(org.orgId)).toBe('closed');
+
+    // Both the posted PDF and the attached original XML stay (rows and blobs), while the extraction row, unposted XML, and loose file are purged.
+    const keptFiles = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.file WHERE org_id = $1 ORDER BY id', [org.orgId])).rows.map((r) => r.id));
+    expect(keptFiles.sort()).toEqual([pdfFileId, attachedXml.fileId].sort());
+    expect(await count('ludy_kernel.extraction', org.orgId)).toBe(0);
+    expect(store.blobs.has(pdfKey)).toBe(true);
+    expect(store.blobs.has(attachedXml.storageKey)).toBe(true);
+    expect(store.blobs.has(unpostedXml.storageKey)).toBe(false);
+    expect(store.blobs.has(loose.storageKey)).toBe(false);
+    expect((await purgeAudits(org.orgId))[0]?.detail).toMatchObject({ blobs: { deleted: 2, held: 0 }, counts: { keptFiles: 2 } });
   });
 });

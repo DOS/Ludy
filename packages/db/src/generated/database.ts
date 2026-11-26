@@ -192,7 +192,9 @@ export interface LudyKernelSchema {
   'ludy_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
   'ludy_kernel.member_vy_memory': KernelMemberVyMemoryTable;
   'ludy_kernel.member_vy_result': KernelMemberVyResultTable;
+  'ludy_kernel.member_vy_system_feature': KernelMemberVySystemFeatureTable;
   'ludy_kernel.member_vy_table': KernelMemberVyTableTable;
+  'ludy_kernel.native_push_device': KernelNativePushDeviceTable;
   'ludy_kernel.notification': KernelNotificationTable;
   'ludy_kernel.notification_mute': KernelNotificationMuteTable;
   'ludy_kernel.number_allocation': KernelNumberAllocationTable;
@@ -3268,11 +3270,36 @@ export interface KernelMemberVyResultTable {
   expires_at: ColumnType<Date, Date | string, NotGranted>;
 }
 
+/** ludy_kernel.member_vy_system_feature */
+export interface KernelMemberVySystemFeatureTable {
+  feature: ColumnType<string, NotGranted, NotGranted>;
+  module: ColumnType<string, NotGranted, NotGranted>;
+  adr: ColumnType<string, NotGranted, NotGranted>;
+  created_at: ColumnType<Date, NotGranted, NotGranted>;
+}
+
 /** ludy_kernel.member_vy_table */
 export interface KernelMemberVyTableTable {
   table_name: ColumnType<string, NotGranted, NotGranted>;
   mode: ColumnType<string, NotGranted, NotGranted>;
   adr: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** ludy_kernel.native_push_device */
+export interface KernelNativePushDeviceTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  session_id: ColumnType<string, string, NotGranted>;
+  platform: ColumnType<string, string, NotGranted>;
+  token: string;
+  token_sha256: ColumnType<string, string | undefined, NotGranted>;
+  label: string | null;
+  failure_count: Generated<number>;
+  generation: Generated<number>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  refreshed_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  last_used_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** ludy_kernel.notification_mute */

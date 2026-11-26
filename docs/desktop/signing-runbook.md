@@ -1,6 +1,6 @@
 # Runbook: signing, update hosting and publishing Ludy Desktop
 
-**Status: CI wiring and code ready; live signing and publishing run only on owner approval.** Per [AGENTS.md](../../AGENTS.md), no worker or team lead executes Production or credential steps. The coordinator runs the exact approved steps and stops at the first failure.
+**Status: CI wiring and code ready; live signing and publishing run only on owner approval.** Per [AGENTS.md](../../AGENTS.md), no worker or team lead executes Production or credential steps. The coordinator runs the exact approved steps and stops at the first failure. For macOS Developer ID signing and Apple notarization, see [mac-signing-runbook.md](mac-signing-runbook.md).
 
 ## What is built vs what requires owner approval
 

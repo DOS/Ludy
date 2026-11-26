@@ -16833,7 +16833,11 @@ export const en = {
       UNAUTHENTICATED: 'Your session has ended. Sign in again.',
       OAUTH_CLIENT_TOKEN_REFUSED: 'This access token was issued to a third-party app and cannot be used to sign in to {brand}.',
       MFA_REQUIRED: 'This account uses two-factor authentication (MFA): enter your code to continue.',
+      SESSION_REQUIRED: 'A valid sign-in session is required for this action. Sign in again.',
+      SESSION_REVOKED: 'This session has been revoked. Sign in again.',
       SESSION_REVOKED_IN_ORG: 'This session was revoked in this organization.',
+      NATIVE_PUSH_DISABLED: 'Mobile push notifications are not enabled on this server.',
+      NATIVE_PUSH_DEVICE_LIMIT: 'Each account can register at most 10 notification devices per organization.',
       STEP_UP_REQUIRED: 'This needs two-factor authentication (MFA) in the last 5 minutes.',
       NOT_A_MEMBER: 'You are not a member of this organization.',
       USER_DISABLED: 'Your account is disabled.',
@@ -19747,6 +19751,7 @@ export const en = {
           latest: "See my Vy's latest run for this item",
           live: 'Check whether my Vy is running for this item',
           start: 'Start a run of Vy working for you',
+          start_daily: 'Start a scheduled daily briefing run of Vy for a member',
         },
         subject_results: {
           drop: 'Remove saved Vy results for an edited or redacted item',
@@ -19786,6 +19791,13 @@ export const en = {
         roles: {
           list: 'List member roles',
         },
+      },
+      native_push: {
+        devices: 'List mobile native push devices',
+        record: 'Record mobile native push delivery outcome',
+        register: 'Register a mobile device for native push notifications',
+        targets: 'Read mobile native push targets of a notification',
+        unregister: 'Unregister a mobile device from native push notifications',
       },
       notification: {
         dispatch: 'Send notifications',

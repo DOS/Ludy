@@ -419,6 +419,8 @@ export interface RpcChannels {
   // Browser push for Social notifications (#1238, VAPID_*): the public key browsers subscribe with; unset: no push is
   // offered. Rides here for the same reason.
   push?: { publicKey: string };
+  // Mobile native push (#4883): true when the deployment configures a NativePushSender adapter; unset keeps native push disabled.
+  nativePush?: boolean;
 }
 
 // A meeting platform's refusal or failure during the connect step, as the answer the user sees: a fixed text, never the platform's words (the adapter's error carries only a short code).
@@ -3584,6 +3586,31 @@ export function createRpcHandler(
         ),
         // Turning a device off works whatever the keys, so a member can always clean up.
         unsubscribe: os.notifications.push.unsubscribe.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.push.unsubscribe', input, { actor, orgId }))),
+      },
+      // Mobile native push (#4883): scoped APNs/FCM token registration bound to the signed-in session.
+      nativePush: {
+        status: os.notifications.nativePush.status.handler(({ context }) =>
+          inOrg(context, async (orgId, actor) => {
+            // Query kernel first so org-scoped session revocation (401 SESSION_REVOKED_IN_ORG) still fires when push is disabled.
+            const own = await runtime.query<{
+              registered: boolean;
+              devices: { id: string; platform: 'apns' | 'fcm'; label: string | null; createdAt: string; lastUsedAt: string | null; current: boolean }[];
+            }>('kernel.native_push.devices', {}, { actor, orgId });
+            if (!channels?.nativePush) {
+              return { enabled: false, registered: false, devices: [] };
+            }
+            return { enabled: true, ...own };
+          }),
+        ),
+        register: os.notifications.nativePush.register.handler(({ context, input }) =>
+          inOrg(context, (orgId, actor) => {
+            if (!channels?.nativePush) throw new DomainError('NATIVE_PUSH_DISABLED', 404, 'Máy chủ này chưa bật thông báo đẩy cho ứng dụng di động');
+            return runtime.execute<{ id: string }>('kernel.native_push.register', input, { actor, orgId });
+          }),
+        ),
+        unregister: os.notifications.nativePush.unregister.handler(({ context, input }) =>
+          inOrg(context, (orgId, actor) => runtime.execute('kernel.native_push.unregister', input, { actor, orgId })),
+        ),
       },
     },
     conversations: {
