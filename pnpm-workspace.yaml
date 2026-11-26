@@ -54,7 +54,7 @@ catalog:
   knip: 6.43.0
   kysely: 0.29.6
   lucide-react: 1.56.0
-  next: 16.4.3
+  next: 16.4.5
   nodemailer: 10.1.4
   oxlint: 1.88.0
   pdf-lib: 1.17.1
