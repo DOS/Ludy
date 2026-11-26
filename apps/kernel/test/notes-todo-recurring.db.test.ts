@@ -987,4 +987,60 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
       await eraseGate.end().catch(() => undefined);
     }
   });
+
+  it('touchTodo strictly advances updated_at by >= 1 ms when ctx.now trails stopSeries so todoReopen without restoreSiblings skips link-edited siblings (#5035)', async () => {
+    const o = await setupOrg();
+    const targetTask = await admin(async (c) =>
+      (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Ref task clock skew', 'human', 'user') RETURNING id`, [o.orgId])).rows[0] as { id: string },
+    );
+    const t1 = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Chuoi lien ket lech clock',
+      dueOn: '2027-09-10',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const first = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: t1.todoId });
+    const t2Id = first.nextTodoId as string;
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: t1.todoId });
+
+    const stopped = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: t1.todoId, stopSeries: true });
+    expect(stopped.stoppedSiblings).toEqual([{ todoId: t2Id, recurrence: { freq: 'daily', interval: 1 } }]);
+
+    // Simulate stopSeries having finished with a newer ctx.now than an already-started todoLinkAdd/todoLinkRemove call.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL session_replication_role = 'replica'");
+      await c.query(
+        `UPDATE ludy_notes.todo
+            SET done_at = CASE WHEN done_at IS NOT NULL THEN done_at + interval '10 seconds' ELSE NULL END,
+                updated_at = updated_at + interval '10 seconds'
+          WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+        [o.orgId, [t1.todoId, t2Id]],
+      );
+      await c.query('COMMIT');
+    });
+    const shiftedT2 = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: t2Id });
+    const stoppedMs = new Date(shiftedT2.updatedAt).getTime();
+
+    const added = await o.exec<{ todoId: string; linkId: string }>(o.mine, 'notes.todo.link_add', {
+      todoId: t2Id,
+      targetType: 'kernel.task',
+      targetId: targetTask.id,
+    });
+    const afterAdd = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: t2Id });
+    const afterAddMs = new Date(afterAdd.updatedAt).getTime();
+    expect(afterAddMs).toBeGreaterThan(stoppedMs);
+
+    const removed = await o.exec<{ todoId: string; linkId: string }>(o.mine, 'notes.todo.link_remove', { linkId: added.linkId });
+    expect(removed.todoId).toBe(t2Id);
+    const afterRemove = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: t2Id });
+    expect(new Date(afterRemove.updatedAt).getTime()).toBeGreaterThan(afterAddMs);
+
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', {
+      todoId: t1.todoId,
+      expectedRevision: stopped.revision,
+      restoreRecurrence: stopped.stoppedRecurrence,
+    });
+    expect((await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: t2Id })).recurrence).toBeNull();
+  });
 });

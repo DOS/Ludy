@@ -1487,7 +1487,8 @@ export const todoHandOver = defineCommand({
 async function touchTodo(ctx: CommandContext, todoId: string): Promise<void> {
   await ctx.trx
     .updateTable('ludy_notes.todo')
-    .set({ updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})` })
+    // Always advance by at least 1 ms (matching JS millisecond comparisons in todoReopen) even if ctx.now trails updated_at.
+    .set({ updated_at: sql<Date>`GREATEST(updated_at + interval '1 millisecond', ${ctx.now})` })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', todoId)
     .execute();

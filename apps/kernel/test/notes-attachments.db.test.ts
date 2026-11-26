@@ -14,7 +14,14 @@ import { PgBoss } from 'pg-boss';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, PENDING_NOTE_ATTACHMENT_REASON, upsertIdentity } from '@ludy/kernel';
+import {
+  createOrg,
+  kernelCommands,
+  kernelQueries,
+  PENDING_NOTE_ATTACHMENT_REASON,
+  PENDING_PRIVATE_NOTE_ATTACHMENT_REASON,
+  upsertIdentity,
+} from '@ludy/kernel';
 import type { ExtractClient, ExtractKind, ExtractResult } from '@ludy/extract-contract';
 import type { PersonalDataErasure, PersonalDataNotice, PersonalDataResult } from '@ludy/kernel-contract';
 import { NOTE_ATTACHMENT_MAX_BYTES, type Note, type NoteAttachment, type NoteSummary, type NoteWritten } from '@ludy/kernel-contract';
@@ -1053,5 +1060,78 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
       await extractTracker.drain();
       await extractGate.end().catch(() => undefined);
     }
+  });
+
+  it('reports private pending attachments under kept during erasure without disclosing note/filename metadata, and clears on follow-up erase (#5035)', async () => {
+    const o = await org();
+    const privEmail = 'private-pending-race@example.com';
+    const privCleanNote = await createNote(o, o.author, 'private', 'Ghi chú riêng sạch chờ extract');
+    const privPendingAtt = await attached(o, o.author, privCleanNote, pdf('private-pending'), 'bi-mat-cho-extract.pdf');
+
+    // Direct calls without owner user context are refused by the SECURITY DEFINER count helper.
+    await expect(rows('SELECT ludy_notes.private_pending_attachment_count()')).rejects.toThrow();
+    await expect(workerPool.query('SELECT ludy_notes.private_pending_attachment_count()')).rejects.toThrow();
+
+    const firstErase = await rt.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: privEmail },
+      { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(firstErase.kept).toContainEqual({
+      column: 'ludy_notes.attachment',
+      rows: 1,
+      reason: PENDING_PRIVATE_NOTE_ATTACHMENT_REASON,
+    });
+    const firstJson = JSON.stringify(firstErase);
+    expect(firstJson).not.toContain('bi-mat-cho-extract');
+    expect(firstJson).not.toContain(privCleanNote);
+    expect(firstJson).not.toContain(privPendingAtt.id);
+    expect(firstJson).not.toContain(o.author.id);
+
+    // Worker finishes extraction with matching PII, then follow-up find/notify/erase deletes the private note and clears kept[].
+    const recorded = await worker.execute<{ updated: boolean }>(
+      'notes.attachment.extract_record',
+      { attachmentId: privPendingAtt.id, status: 'done', extractedText: `Private ${privEmail}` },
+      { actor: { type: 'system', component: 'notes' }, orgId: o.orgId },
+    );
+    expect(recorded).toEqual({ updated: true });
+
+    await rt.execute<PersonalDataNotice>(
+      'kernel.personal_data.notify',
+      { value: privEmail },
+      { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    const [notifiedEvent] = await rows<{ id: string }>(
+      `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`,
+      [o.orgId],
+    );
+    await worker.execute('kernel.notification.dispatch', { eventId: notifiedEvent?.id }, { actor: SYSTEM, orgId: o.orgId });
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`,
+        [o.orgId],
+      );
+      await c.query(
+        `UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`,
+        [o.orgId],
+      );
+      await c.query('COMMIT');
+    });
+
+    const secondErase = await rt.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: privEmail },
+      { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(secondErase.erased).toContainEqual({ column: 'ludy_notes.note', rows: 1 });
+    expect(secondErase.kept).toEqual([]);
+    const remaining = await rows<{ id: string }>(
+      'SELECT id FROM ludy_notes.attachment WHERE org_id = $1 AND id = $2',
+      [o.orgId, privPendingAtt.id],
+    );
+    expect(remaining).toEqual([]);
+    expect(await doomed(o)).toContain(`notes/${o.orgId}/${privPendingAtt.id}`);
   });
 });

@@ -1333,6 +1333,8 @@ export const personalDataFind = defineCommand({
 export const MEETING_TEXT_SKIPPED_REASON = 'The meeting text of this organization was too large to search in time, so it was not searched: search again, or ask support, before relying on this erasure for meeting text';
 export const PENDING_NOTE_ATTACHMENT_REASON =
   'Text extraction is still pending for shared note attachments, so their extracted text could not be searched yet: search or erase again once extraction completes';
+export const PENDING_PRIVATE_NOTE_ATTACHMENT_REASON =
+  'Text extraction is still pending for private note attachments, so their extracted text could not be searched yet (no filenames or notes are disclosed): run find, notify, and erase again once extraction completes';
 export const UNTOLD_MEETING_REASON =
   'Text of a meeting the owner cannot read, where no notice covers its recorder and its text as it is now (not sent, the recorder not told 24 hours ago, or the text changed since): send the notice, wait 24 hours, then erase again; the recorder or an owner can also delete the meeting';
 // The statuses of a mail that has left Ludy or may have (the mail table's own set): handed to the worker (sending), outcome unknown (ambiguous), or sent on to its recipient (sent,
@@ -1981,6 +1983,9 @@ export const personalDataErase = defineCommand({
          AND n.visibility = 'org'
          AND a.extract_status = 'pending'`.execute(ctx.trx);
     const pendingSharedAttachments = Number(pendingSharedAttRows[0]?.pending ?? 0);
+    const { rows: pendingPrivateAttRows } = await sql<{ pending: string }>`
+      SELECT ludy_notes.private_pending_attachment_count()::text AS pending`.execute(ctx.trx);
+    const pendingPrivateAttachments = Number(pendingPrivateAttRows[0]?.pending ?? 0);
     const { rows: privateRows } = await sql<{ notes: string; todos: string; untold_notes: string; untold_todos: string; note_ids: string[]; todo_ids: string[] }>`
       SELECT notes, todos, untold_notes, untold_todos, note_ids, todo_ids FROM ludy_notes.private_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
     const sum = (key: 'notes' | 'todos' | 'untold_notes' | 'untold_todos') => privateRows.reduce((n, r) => n + Number(r[key]), 0);
@@ -2669,6 +2674,13 @@ export const personalDataErase = defineCommand({
         column: 'ludy_notes.attachment.extracted_text',
         rows: pendingSharedAttachments,
         reason: PENDING_NOTE_ATTACHMENT_REASON,
+      });
+    }
+    if (pendingPrivateAttachments > 0) {
+      kept.set('ludy_notes.attachment', {
+        column: 'ludy_notes.attachment',
+        rows: pendingPrivateAttachments,
+        reason: PENDING_PRIVATE_NOTE_ATTACHMENT_REASON,
       });
     }
     const keptRows = new Map<string, number>();
