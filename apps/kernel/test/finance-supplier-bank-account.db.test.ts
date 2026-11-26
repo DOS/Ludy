@@ -351,4 +351,54 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     const readdedHash = (await rows<{ number_hash: string }>('SELECT number_hash FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND id = $2', [o.orgId, readded.id]))[0]?.number_hash;
     expect(readdedHash).not.toBe(stored.number_hash);
   });
+
+  it('lets the owner erase a supplier while Finance is switched off, while refusing every other supplier bank command and read (#3744)', async () => {
+    const o = await org();
+    const account = await add(o);
+    const stored = (await rows<{ number_sealed: string; number_hash: string }>('SELECT number_sealed, number_hash FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND id = $2', [o.orgId, account.id]))[0] as {
+      number_sealed: string;
+      number_hash: string;
+    };
+    const subject = `supplier:${o.supplier}`;
+    expect(await execute<{ hash: string | null }>(o, 'ts3113.check_hash', { ref: subject, value: DIGITS })).toEqual({ hash: stored.number_hash });
+
+    // Switch Finance off for the org via the per-org app gate (ADR-0053).
+    await execute(o, 'kernel.org.set_app', { module: 'finance', enabled: false });
+    const moduleOff = { code: 'MODULE_OFF', status: 404, details: { module: 'finance' } };
+
+    // Every other supplier bank command and query is refused while Finance is off.
+    await expect(add(o, { accountNumber: OTHER })).rejects.toMatchObject(moduleOff);
+    await expect(execute(o, 'finance.supplier_bank_account.replace', { accountId: account.id, bankName: 'ACB', accountHolder: HOLDER, accountNumber: OTHER })).rejects.toMatchObject(moduleOff);
+    await expect(execute(o, 'finance.supplier_bank_account.retire', { accountId: account.id })).rejects.toMatchObject(moduleOff);
+    await expect(query(o, 'finance.supplier_bank_account.list', { partyId: o.supplier })).rejects.toMatchObject(moduleOff);
+    await expect(query(o, 'finance.signals.supplier_bank_changes', {}, o.member)).rejects.toMatchObject(moduleOff);
+
+    // Erasure still requires an owner with a fresh second factor (R3).
+    expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.admin))).toBe('FORBIDDEN');
+    expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.owner, false))).toBe('STEP_UP_REQUIRED');
+
+    // Owner with fresh second factor erases while Finance is off: retires active accounts and shreds the supplier's subject key.
+    const erased = await execute<{ partyId: string; shreddedKeys: number; retired: number }>(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier });
+    expect(erased).toEqual({ partyId: o.supplier, shreddedKeys: 1, retired: 1 });
+
+    const accountRow = (await rows<{ status: string; retired_at: Date | null; number_sealed: string }>('SELECT status, retired_at, number_sealed FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND id = $2', [o.orgId, account.id]))[0];
+    expect(accountRow?.status).toBe('retired');
+    expect(accountRow?.retired_at).not.toBeNull();
+    expect(accountRow?.number_sealed).toBe(stored.number_sealed);
+    expect((await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2', [o.orgId, subject]))[0]?.n).toBe('0');
+    expect(await query(o, 'ts3113.open', { sealed: stored.number_sealed, ref: subject })).toEqual({ erased: true });
+    expect(await execute<{ hash: string | null }>(o, 'ts3113.check_hash', { ref: subject, value: DIGITS })).toEqual({ hash: null });
+    expect((await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2', [o.orgId, subject]))[0]?.n).toBe('0');
+    const kinds = await rows<{ kind: string }>('SELECT kind FROM ludy_finance.supplier_bank_account_change WHERE org_id = $1 ORDER BY changed_at, id', [o.orgId]);
+    expect(kinds.map((k) => k.kind)).toEqual(['added', 'retired']);
+    const eraseAudits = await rows<{ outcome: string; detail: Record<string, unknown> }>("SELECT outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.supplier_bank_account.erase' AND outcome = 'ok'", [o.orgId]);
+    expect(eraseAudits).toHaveLength(1);
+    expect(eraseAudits[0]?.detail).toMatchObject({ partyId: o.supplier, shreddedKeys: 1, retired: 1 });
+
+    // Switching Finance back on lets managers read the retired history again; the erased key remains shredded.
+    await execute(o, 'kernel.org.set_app', { module: 'finance', enabled: true });
+    const listed = await query<{ accounts: Array<{ id: string; status: string }>; changes: Array<{ kind: string }> }>(o, 'finance.supplier_bank_account.list', { partyId: o.supplier });
+    expect(listed.accounts.map((a) => [a.id, a.status])).toEqual([[account.id, 'retired']]);
+    expect(listed.changes.map((c) => c.kind).sort()).toEqual(['added', 'retired']);
+  });
 });
