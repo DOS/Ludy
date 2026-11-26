@@ -3,7 +3,7 @@
 import { PostgresQueryCompiler, sql, type KyselyPlugin, type RawBuilder, type Transaction } from 'kysely';
 import { createHmac, randomUUID } from 'node:crypto';
 import { v7 as uuidv7 } from 'uuid';
-import { SubjectKeyError, SubjectVault, parseSealed } from './subject-vault.ts';
+import { SubjectKeyError, SubjectVault, assertSubjectHashInput, parseSealed } from './subject-vault.ts';
 import { keyedHash } from './keyed-hash.ts';
 import type { z } from 'zod';
 import { contextTaint, singleCell, type CellResolver, type Database, type Db, type MemberRole } from '@ludy/db';
@@ -524,6 +524,12 @@ export interface CommandContext extends QueryContext {
   // none, and answers the text to store in the column at `place` (ADR-0017). Only a user's command seals (never an agent, the system or the worker); the
   // value is 1 byte to 4 KiB. Sealing is the command's own step, before its insert: no other path writes a sealed column.
   seal(ref: string, place: string, value: string): Promise<string>;
+  // Computes HMAC-SHA256 hex of `value` under a purpose-derived key from the subject `ref`'s data key (`subject_key`).
+  // By default (`create: true`), creates the subject's key if missing (user owner/admin/member only). With `{ create: false }`,
+  // looks up an existing key without creating one and returns null when absent or shredded.
+  subjectHash(ref: string, purpose: string, value: string): Promise<string>;
+  subjectHash(ref: string, purpose: string, value: string, options: { create: false }): Promise<string | null>;
+  subjectHash(ref: string, purpose: string, value: string, options?: { create?: boolean }): Promise<string | null>;
   // A keyed hash (HMAC-SHA256 hex) of a short value, for comparing it later without reading it back (a bank account number: is it the same account, did it change). The key derives from
   // the deployment's key material for this purpose (a lowercase name, such as `supplier_bank_account.number`) and this org, so the same value gives other hashes elsewhere; it never leaves
   // the runtime. 1 byte to 4 KiB. `keyId` names an older credential key still kept (CREDENTIAL_KEY_PREVIOUS); omitted, the newest; a key the deployment no longer keeps answers 409
@@ -2863,6 +2869,14 @@ export class Runtime {
           refuseSealed('ctx.seal reference', ref);
           return aside(() => this.sealSubject(trx, base.orgId, base.actor, ref, place, value));
         }),
+      subjectHash: ((ref: string, purpose: string, value: string, options?: { create?: boolean }) =>
+        pending(async () => {
+          refuseClosed('ctx.subjectHash');
+          // The reference and purpose are checked like ctx.seal: a sealed value never reaches a clear field.
+          refuseSealed('ctx.subjectHash reference', ref);
+          refuseSealed('ctx.subjectHash purpose', purpose);
+          return aside(() => this.hashSubject(trx, base.orgId, base.actor, ref, purpose, value, options?.create !== false));
+        })) as CommandContext['subjectHash'],
       keyedHash: (purpose, value, keyId) => {
         refuseClosed('ctx.keyedHash');
         if (this.#keyedHashRoots.length === 0) throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa (CREDENTIAL_KEY)');
@@ -3500,12 +3514,8 @@ export class Runtime {
     return this.#subjectVault;
   }
 
-  // ctx.seal: the subject's key (created from a fresh data key when the org has none under the ref; two concurrent seals converge on the stored one), then the value.
-  // Messages never carry the ref or the value: a ref can name a person.
-  private async sealSubject(trx: Transaction<Database>, orgId: string, actor: Actor, ref: string, place: string, value: string): Promise<string> {
-    const vault = this.subjectVaultFor(actor);
-    if (!SUBJECT_REF.test(ref)) throw new Error('ctx.seal: the subject reference is malformed');
-    if (!SEAL_PLACE.test(place)) throw new Error(`ctx.seal: ${place} is not a place`);
+  // Ensures the subject's data key (created when the org has none under the ref; two concurrent callers converge on the stored one), runs `fn`, and wipes the data key.
+  private async withEnsuredSubjectKey<T>(vault: SubjectVault, trx: Transaction<Database>, orgId: string, ref: string, fn: (dataKey: Buffer, subjectId: string) => T): Promise<T> {
     const subjectId = uuidv7();
     const fresh = vault.newDataKey(orgId, subjectId);
     let dataKey = fresh.dataKey;
@@ -3518,7 +3528,37 @@ export class Runtime {
         dataKey.fill(0);
         dataKey = vault.unwrap(orgId, stored.id, stored.key_id, stored.wrapped_key);
       }
-      return vault.seal(dataKey, orgId, stored.id, place, value);
+      return fn(dataKey, stored.id);
+    } finally {
+      dataKey.fill(0);
+    }
+  }
+
+  // ctx.seal: the subject's key (created from a fresh data key when the org has none under the ref; two concurrent seals converge on the stored one), then the value.
+  // Messages never carry the ref or the value: a ref can name a person.
+  private async sealSubject(trx: Transaction<Database>, orgId: string, actor: Actor, ref: string, place: string, value: string): Promise<string> {
+    const vault = this.subjectVaultFor(actor);
+    if (!SUBJECT_REF.test(ref)) throw new Error('ctx.seal: the subject reference is malformed');
+    if (!SEAL_PLACE.test(place)) throw new Error(`ctx.seal: ${place} is not a place`);
+    return this.withEnsuredSubjectKey(vault, trx, orgId, ref, (dataKey, subjectId) => vault.seal(dataKey, orgId, subjectId, place, value));
+  }
+
+  // ctx.subjectHash: computes HMAC-SHA256 under a purpose-derived key from the subject's data key.
+  // When `create` is true, creates the subject key if missing; when false, looks up an existing key and returns null if absent or shredded.
+  private async hashSubject(trx: Transaction<Database>, orgId: string, actor: Actor, ref: string, purpose: string, value: string, create: boolean): Promise<string | null> {
+    const vault = this.subjectVaultFor(actor);
+    if (!SUBJECT_REF.test(ref)) throw new Error('ctx.subjectHash: the subject reference is malformed');
+    assertSubjectHashInput(purpose, value);
+    if (create) {
+      return this.withEnsuredSubjectKey(vault, trx, orgId, ref, (dataKey, subjectId) => vault.hash(dataKey, orgId, subjectId, purpose, value));
+    }
+    const { rows } = await sql<{ id: string; key_id: string; wrapped_key: Buffer }>`
+      SELECT id, key_id, wrapped_key FROM ludy_kernel.subject_key_by_ref(${ref})`.execute(trx);
+    const stored = rows[0];
+    if (!stored) return null;
+    const dataKey = vault.unwrap(orgId, stored.id, stored.key_id, stored.wrapped_key);
+    try {
+      return vault.hash(dataKey, orgId, stored.id, purpose, value);
     } finally {
       dataKey.fill(0);
     }

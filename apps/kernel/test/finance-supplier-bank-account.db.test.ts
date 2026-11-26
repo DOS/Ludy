@@ -10,8 +10,9 @@ import { z } from 'zod';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineQuery, parseVaultKey, type QueryDef } from '@ludy/kernel-runtime';
+import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, keyedHash, parseVaultKey, type CommandDef, type QueryDef } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { resealSubjectKeys } from '../src/subject-key-reseal.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -30,11 +31,13 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
   const dbName = `ludy_test_supplier_bank_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
+  let workerPool: pg.Pool;
   let db: Db;
   let rt: Runtime;
   let keyless: Runtime;
-  let build: (roots: { id: string; key: Buffer }[]) => Runtime;
+  let build: (roots: { id: string; key: Buffer }[], vault?: SubjectVault | null) => Runtime;
   const root = parseVaultKey(randomBytes(32).toString('base64'));
+  const vaultOf = (...roots: (typeof root)[]) => new SubjectVault(new CredentialVault(roots).deriveKeys(SUBJECT_WRAP_INFO));
   const hashRoot = { id: 'k-test-1', key: randomBytes(32) };
   const user = (userId: string, fresh = true) => ({ type: 'user' as const, userId, aal: 'aal2' as const, mfaAt: fresh ? Math.floor(Date.now() / 1000) : Math.floor(Date.now() / 1000) - 3600 });
 
@@ -45,6 +48,15 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     sensitive: true,
     handler: async (ctx, input) => ctx.open(input.sealed, PLACE, input.ref),
   }) as QueryDef<unknown, unknown>;
+  const CHECK_HASH = defineCommand({
+    name: 'ts3113.check_hash',
+    input: z.object({ ref: z.string(), value: z.string() }),
+    risk: 'R1',
+    sideEffect: 'none',
+    access: ['owner', 'admin'],
+    writes: [],
+    handler: async (ctx, input) => ({ hash: await ctx.subjectHash(input.ref, 'supplier_bank_account.number', input.value, { create: false }) }),
+  }) as CommandDef<unknown, unknown>;
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
     const client = new pg.Client({ connectionString: adminUrl });
@@ -91,20 +103,25 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
+    const workerUrl = new URL(adminUrl);
+    workerUrl.username = 'ludy_worker';
+    workerUrl.password = 'test-worker-pw';
+    workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
     db = createDb(pool);
-    const subjectVault = new SubjectVault(new CredentialVault([root]).deriveKeys(SUBJECT_WRAP_INFO));
-    const register = (options: { keyedHashRoots?: { id: string; key: Buffer }[] }) =>
+    const subjectVault = vaultOf(root);
+    const register = (options: { keyedHashRoots?: { id: string; key: Buffer }[]; subjectVault?: SubjectVault | null }) =>
       new Runtime(db, { manifests: TEST_MANIFESTS, subjectVault, ...options }).register({
-        commands: [...kernelCommands, ...financeCommands],
+        commands: [...kernelCommands, ...financeCommands, CHECK_HASH],
         queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, OPEN],
       });
-    build = (roots) => register({ keyedHashRoots: roots });
+    build = (roots, vault = subjectVault) => register({ keyedHashRoots: roots, subjectVault: vault });
     rt = register({ keyedHashRoots: [hashRoot] });
-    keyless = register({});
+    keyless = register({ subjectVault: null });
   }, 120_000);
 
   afterAll(async () => {
     await pool?.end();
+    await workerPool?.end();
     if (!ADMIN) return;
     const rootClient = new pg.Client({ connectionString: ADMIN });
     await rootClient.connect();
@@ -121,7 +138,7 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     expect(stored?.number_sealed.startsWith('ludy:s1:')).toBe(true);
     expect(stored?.account_holder_sealed.startsWith('ludy:s1:')).toBe(true);
     expect(stored?.number_hash).toMatch(/^[0-9a-f]{64}$/);
-    expect(stored?.hash_key_id).toBe('k-test-1');
+    expect(stored?.hash_key_id).toBe('subject:v1');
     // The whole of the org's finance rows and audit facts: no digits, no holder.
     const dump = JSON.stringify([
       await rows('SELECT * FROM ludy_finance.supplier_bank_account WHERE org_id = $1', [o.orgId]),
@@ -166,20 +183,64 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     expect(await refusal(execute(o, 'finance.supplier_bank_account.replace', { accountId: randomUUID(), bankName: 'ACB', accountHolder: HOLDER, accountNumber: '1111222233' }))).toBe('SUPPLIER_BANK_ACCOUNT_NOT_FOUND');
   });
 
-  it('after a credential key rotation tells the same account by the older key, and without that key neither fails nor counts as a change by itself', async () => {
+  it('keeps comparing the same number after a credential key rotation even with the older key gone (#3751)', async () => {
+    const oldVaultRoot = parseVaultKey(randomBytes(32).toString('base64'));
+    const newVaultRoot = parseVaultKey(randomBytes(32).toString('base64'));
+    const o = await org();
+    const first = await execute<{ id: string }>(
+      o,
+      'finance.supplier_bank_account.add',
+      { partyId: o.supplier, bankName: 'ACB', accountHolder: HOLDER, accountNumber: NUMBER },
+      o.owner,
+      true,
+      build([], vaultOf(oldVaultRoot)),
+    );
+    const beforeHash = (await rows<{ number_hash: string; hash_key_id: string }>('SELECT number_hash, hash_key_id FROM ludy_finance.supplier_bank_account WHERE org_id = $1', [o.orgId]))[0];
+    expect(beforeHash?.hash_key_id).toBe('subject:v1');
+    // Rotate credential key and run the subject-key reseal pass, then drop the older key completely.
+    const workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS, subjectVault: vaultOf(newVaultRoot, oldVaultRoot) }).register({
+      commands: kernelCommands,
+      queries: kernelQueries({ inboundDomain: null }),
+    });
+    await resealSubjectKeys({ runtime: workerRt, workerDb: createDb(workerPool) });
+    const afterRt = build([], vaultOf(newVaultRoot));
+    const same = { accountId: first.id, bankName: 'ACB', accountHolder: HOLDER, accountNumber: DIGITS };
+    expect(await refusal(execute(o, 'finance.supplier_bank_account.replace', same, o.owner, true, afterRt))).toBe('SUPPLIER_BANK_ACCOUNT_SAME');
+    expect(await refusal(execute(o, 'finance.supplier_bank_account.add', { partyId: o.supplier, bankName: 'ACB', accountHolder: HOLDER, accountNumber: NUMBER }, o.owner, true, afterRt))).toBe(
+      'SUPPLIER_BANK_ACCOUNT_EXISTS',
+    );
+  });
+
+  it('keeps working for existing legacy keyed-hash rows while their credential key is kept, and upgrades cleanly on replace (#3751)', async () => {
     const oldRoot = { id: 'k-old', key: randomBytes(32) };
     const newRoot = { id: 'k-new', key: randomBytes(32) };
     const o = await org();
-    const first = await execute<{ id: string }>(o, 'finance.supplier_bank_account.add', { partyId: o.supplier, bankName: 'ACB', accountHolder: HOLDER, accountNumber: NUMBER }, o.owner, true, build([oldRoot]));
-    expect((await rows<{ hash_key_id: string }>('SELECT hash_key_id FROM ludy_finance.supplier_bank_account WHERE org_id = $1', [o.orgId]))[0]?.hash_key_id).toBe('k-old');
-    const same = { accountId: first.id, bankName: 'ACB', accountHolder: HOLDER, accountNumber: DIGITS };
-    // The older key is still kept: the same number is the same account.
+    const legacyHash = keyedHash(oldRoot.key, o.orgId, 'supplier_bank_account.number', DIGITS);
+    const accountId = randomUUID();
+    const sealed = 'ludy:s1:00000000-0000-4000-8000-000000000000:legacy';
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query(
+        `INSERT INTO ludy_finance.supplier_bank_account (org_id, id, party_id, bank_name, account_holder_sealed, number_sealed, number_hash, hash_key_id, last4)
+         VALUES ($1, $2, $3, 'ACB', $4, $4, $5, 'k-old', $6)`,
+        [o.orgId, accountId, o.supplier, sealed, legacyHash, LAST4],
+      );
+      await c.query(
+        `INSERT INTO ludy_finance.supplier_bank_account_change (org_id, party_id, account_id, kind, new_number_hash, step_up_at)
+         VALUES ($1, $2, $3, 'added', $4, now())`,
+        [o.orgId, o.supplier, accountId, legacyHash],
+      );
+      await c.query('COMMIT');
+    });
+    const same = { accountId, bankName: 'ACB', accountHolder: HOLDER, accountNumber: DIGITS };
+    // The older credential key is still kept: legacy comparison still recognizes the same number.
     expect(await refusal(execute(o, 'finance.supplier_bank_account.replace', same, o.owner, true, build([newRoot, oldRoot])))).toBe('SUPPLIER_BANK_ACCOUNT_SAME');
-    // Adding the same number again is refused too: the row made under the older key is judged under that key, not under the newest one only (#3699).
-    expect(await refusal(execute(o, 'finance.supplier_bank_account.add', { partyId: o.supplier, bankName: 'ACB', accountHolder: HOLDER, accountNumber: NUMBER }, o.owner, true, build([newRoot, oldRoot])))).toBe('SUPPLIER_BANK_ACCOUNT_EXISTS');
-    // The older key is gone: the account is not told apart by hash (no error, no hard refusal), and the new row carries the newest key id.
+    expect(await refusal(execute(o, 'finance.supplier_bank_account.add', { partyId: o.supplier, bankName: 'ACB', accountHolder: HOLDER, accountNumber: NUMBER }, o.owner, true, build([newRoot, oldRoot])))).toBe(
+      'SUPPLIER_BANK_ACCOUNT_EXISTS',
+    );
+    // Once the older key is gone, replace does not fail and upgrades the new active row to subject:v1.
     expect(await refusal(execute(o, 'finance.supplier_bank_account.replace', same, o.owner, true, build([newRoot])))).toBe('accepted');
-    expect((await rows<{ hash_key_id: string }>("SELECT hash_key_id FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND status = 'active'", [o.orgId]))[0]?.hash_key_id).toBe('k-new');
+    expect((await rows<{ hash_key_id: string }>("SELECT hash_key_id FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND status = 'active'", [o.orgId]))[0]?.hash_key_id).toBe('subject:v1');
   });
 
   it('retires an account once and lists accounts and history without a number or a holder', async () => {
@@ -252,22 +313,32 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND status = 'active'", [o.orgId]))[0]?.n).toBe('1');
   });
 
-  it('erases a supplier for an owner only: the accounts are retired, the key is shredded and a sealed number can never be opened again', async () => {
+  it('erases a supplier for an owner only: the accounts are retired, the key is shredded, a sealed number cannot open, and numbers cannot be tested against stored hashes', async () => {
     const o = await org();
     await add(o);
-    const stored = (await rows<{ number_sealed: string }>('SELECT number_sealed FROM ludy_finance.supplier_bank_account WHERE org_id = $1', [o.orgId]))[0] as { number_sealed: string };
+    const stored = (await rows<{ number_sealed: string; number_hash: string }>('SELECT number_sealed, number_hash FROM ludy_finance.supplier_bank_account WHERE org_id = $1', [o.orgId]))[0] as {
+      number_sealed: string;
+      number_hash: string;
+    };
     const subject = `supplier:${o.supplier}`;
-    // Before the erasure the number opens, for a manager, in an audited sensitive read.
+    // Before the erasure the number opens, for a manager, in an audited sensitive read, and the subject hash matches.
     expect(await query(o, 'ts3113.open', { sealed: stored.number_sealed, ref: subject })).toBe(DIGITS);
+    expect(await execute<{ hash: string | null }>(o, 'ts3113.check_hash', { ref: subject, value: DIGITS })).toEqual({ hash: stored.number_hash });
     expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.admin))).toBe('FORBIDDEN');
     expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.owner, false))).toBe('STEP_UP_REQUIRED');
     const erased = await execute<{ shreddedKeys: number; retired: number }>(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier });
     expect(erased).toMatchObject({ shreddedKeys: 1, retired: 1 });
     expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2", [o.orgId, subject]))[0]?.n).toBe('0');
-    // The sealed text stays in its row byte for byte, and reads as erased.
+    // The sealed text stays in its row byte for byte, reads as erased, and candidate numbers can no longer be tested against the stored hash.
     expect((await rows<{ number_sealed: string }>('SELECT number_sealed FROM ludy_finance.supplier_bank_account WHERE org_id = $1', [o.orgId]))[0]?.number_sealed).toBe(stored.number_sealed);
     expect(await query(o, 'ts3113.open', { sealed: stored.number_sealed, ref: subject })).toEqual({ erased: true });
+    expect(await execute<{ hash: string | null }>(o, 'ts3113.check_hash', { ref: subject, value: DIGITS })).toEqual({ hash: null });
+    expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2", [o.orgId, subject]))[0]?.n).toBe('0');
     const kinds = await rows<{ kind: string }>('SELECT kind FROM ludy_finance.supplier_bank_account_change WHERE org_id = $1', [o.orgId]);
     expect(kinds.map((k) => k.kind).sort()).toEqual(['added', 'retired']);
+    // Even adding the same digits again uses a fresh random subject key and produces an unrelated hash.
+    const readded = await add(o);
+    const readdedHash = (await rows<{ number_hash: string }>('SELECT number_hash FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND id = $2', [o.orgId, readded.id]))[0]?.number_hash;
+    expect(readdedHash).not.toBe(stored.number_hash);
   });
 });

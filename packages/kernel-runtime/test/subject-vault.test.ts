@@ -2,7 +2,7 @@
 // The subject vault (ADR-0017, #2640): a data key per person wrapped under a key derived from the credential key, values sealed under it.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { CredentialVault, SUBJECT_WRAP_INFO, SubjectKeyError, SubjectVault, WRAPPED_SUBJECT_KEY_BYTES, parseSealed, parseVaultKey } from '../src/index.ts';
+import { CredentialVault, SUBJECT_WRAP_INFO, SubjectKeyError, SubjectVault, WRAPPED_SUBJECT_KEY_BYTES, keyedHash, parseSealed, parseVaultKey } from '../src/index.ts';
 
 const root = () => parseVaultKey(randomBytes(32).toString('base64'));
 const vaultOf = (...roots: ReturnType<typeof root>[]) => new SubjectVault(new CredentialVault(roots).deriveKeys(SUBJECT_WRAP_INFO));
@@ -145,5 +145,37 @@ describe('SubjectVault', () => {
     const damaged = Buffer.from(wrapped);
     damaged[damaged.length - 1] = (damaged[damaged.length - 1] ?? 0) ^ 1;
     expect(() => rotated.rewrap(org, subject, keyId, damaged)).toThrow(SubjectKeyError);
+  });
+
+  it('derives a domain-separated HMAC from the subject data key that survives credential key rotation after rewrap', () => {
+    const [oldRoot, newRoot] = [root(), root()];
+    const before = vaultOf(oldRoot);
+    const { dataKey, keyId, wrapped } = before.newDataKey(org, subject);
+    const h1 = before.hash(dataKey, org, subject, 'supplier_bank_account.number', '0123456789');
+    expect(h1).toMatch(/^[0-9a-f]{64}$/);
+    expect(before.hash(dataKey, org, subject, 'supplier_bank_account.number', '0123456789')).toBe(h1);
+    // Domain separation: org, subject, purpose, value, data key, and legacy keyedHash all differ.
+    expect(before.hash(dataKey, randomUUID(), subject, 'supplier_bank_account.number', '0123456789')).not.toBe(h1);
+    expect(before.hash(dataKey, org, randomUUID(), 'supplier_bank_account.number', '0123456789')).not.toBe(h1);
+    expect(before.hash(dataKey, org, subject, 'other.purpose', '0123456789')).not.toBe(h1);
+    expect(before.hash(dataKey, org, subject, 'supplier_bank_account.number', '0123456780')).not.toBe(h1);
+    expect(before.hash(randomBytes(32), org, subject, 'supplier_bank_account.number', '0123456789')).not.toBe(h1);
+    expect(keyedHash(oldRoot.key, org, 'supplier_bank_account.number', '0123456789')).not.toBe(h1);
+    // Rewrap under newRoot and drop oldRoot completely: the hash stays identical.
+    const next = vaultOf(newRoot, oldRoot).rewrap(org, subject, keyId, wrapped);
+    const after = vaultOf(newRoot);
+    const reopened = after.unwrap(org, subject, next.keyId, next.wrapped);
+    expect(after.hash(reopened, org, subject, 'supplier_bank_account.number', '0123456789')).toBe(h1);
+  });
+
+  it('rejects malformed hash inputs and wrong data key lengths', () => {
+    const vault = vaultOf(root());
+    const { dataKey } = vault.newDataKey(org, subject);
+    expect(() => vault.hash(dataKey.subarray(0, 16), org, subject, 'p', 'x')).toThrow(SubjectKeyError);
+    expect(() => vault.hash(dataKey, 'not-an-org', subject, 'p', 'x')).toThrow(SubjectKeyError);
+    expect(() => vault.hash(dataKey, org, 'not-a-subject', 'p', 'x')).toThrow(SubjectKeyError);
+    expect(() => vault.hash(dataKey, org, subject, 'Bad Purpose', 'x')).toThrow(SubjectKeyError);
+    expect(() => vault.hash(dataKey, org, subject, 'p', '')).toThrow(SubjectKeyError);
+    expect(() => vault.hash(dataKey, org, subject, 'p', 'x'.repeat(4097))).toThrow(SubjectKeyError);
   });
 });

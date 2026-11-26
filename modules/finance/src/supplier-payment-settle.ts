@@ -32,7 +32,7 @@ import { Decimal, money } from '@ludy/l10n-vn';
 import { bankLineStates, findBankLine, type StoredBankLine } from './bank-match.ts';
 import { buildVoucherProposal, recordVoucherPayload } from './cash-voucher.ts';
 import { voucherTitle } from './domain/cash-voucher.ts';
-import { HASH_PURPOSE } from './supplier-bank-account.ts';
+import { matchesAccountHash } from './supplier-bank-account.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const SETTLE_ACCOUNT = '331';
@@ -83,7 +83,7 @@ const clean = (text: string): string => text.replace(/[\p{Cc}\s]+/gu, ' ').trim(
 const settleDescription = (invoiceNumber: string | null): string => `Thanh toan hoa don ${clean(invoiceNumber ?? '')}`.trim().slice(0, 300);
 
 // Every rule of condition 1 and 2 for a payment and a line, in the order a person would fix them. Used when the settlement is asked for and again when it is approved.
-function checkSettleable(ctx: CommandContext, p: PaymentRow, line: StoredBankLine): void {
+async function checkSettleable(ctx: CommandContext, p: PaymentRow, line: StoredBankLine): Promise<void> {
   if (p.status !== 'approved') throw new DomainError('SUPPLIER_PAYMENT_NOT_APPROVED', 409, 'Khoản chi này không còn ở trạng thái đã duyệt', { paymentId: p.id });
   if (!p.ready) throw new DomainError('SUPPLIER_PAYMENT_HELD', 409, 'Khoản chi này còn trong thời gian giữ 24 giờ', { paymentId: p.id });
   if (!p.account_ok) throw new DomainError('SUPPLIER_PAYMENT_ACCOUNT_CHANGED', 409, 'Tài khoản ngân hàng của nhà cung cấp đã thay đổi từ lúc duyệt; hãy tạo đề xuất chi mới', { paymentId: p.id });
@@ -104,21 +104,17 @@ function checkSettleable(ctx: CommandContext, p: PaymentRow, line: StoredBankLin
   if (line.date < localDay(p.first_exported_at)) {
     throw new DomainError('SUPPLIER_PAYMENT_LINE_BEFORE_FILE', 422, 'Dòng sao kê có ngày trước ngày xuất file chuyển khoản nên không phải khoản chi này', { paymentId: p.id });
   }
-  beneficiaryIsApproved(ctx, p, line);
+  await beneficiaryIsApproved(ctx, p, line);
 }
 
-// Condition 2: the account the money went to is the account that was approved. The statement's number, when it has a whole one, is hashed under the key of the pinned account and compared; the number
-// is never stored, shown or logged. A line with no usable number says nothing either way. A key the deployment no longer keeps cannot compare, which refuses (the safe side).
-function beneficiaryIsApproved(ctx: CommandContext, p: PaymentRow, line: StoredBankLine): void {
+// Condition 2: the account the money went to is the account that was approved. The statement's number, when it has a whole one, is hashed under the pinned account's hash scheme (the supplier's
+// subject key for new accounts, or the legacy credential key id) and compared; the number is never stored, shown or logged. A line with no usable number says nothing either way. A shredded subject key
+// or retired legacy credential key cannot compare, which refuses (the safe side).
+async function beneficiaryIsApproved(ctx: CommandContext, p: PaymentRow, line: StoredBankLine): Promise<void> {
   if (line.counterpartyAccount === null) return;
   const digits = line.counterpartyAccount.replace(/[\s.-]/g, '');
   // A number that is there but not a whole one cannot be compared: it refuses (the statement's own check keeps it to 6 to 20 digits, so this is the safe side, not a case).
-  let same = false;
-  try {
-    same = /^[0-9]{6,20}$/.test(digits) && ctx.keyedHash(HASH_PURPOSE, digits, p.hash_key_id) === p.number_hash;
-  } catch (error) {
-    if (!(error instanceof DomainError && error.code === 'KEYED_HASH_KEY_RETIRED')) throw error;
-  }
+  const same = /^[0-9]{6,20}$/.test(digits) && (await matchesAccountHash(ctx, p.party_id, digits, p));
   if (!same) {
     throw new DomainError('SUPPLIER_PAYMENT_ACCOUNT_MISMATCH', 409, 'Tài khoản trên sao kê không khớp được với tài khoản đã duyệt (khác tài khoản, hoặc không đối chiếu được); không tự ghi sổ. Hãy kiểm tra với ngân hàng và nhà cung cấp', { paymentId: p.id });
   }
@@ -148,7 +144,7 @@ export const supplierPaymentSettlePrepare = defineCommand({
     const line = await findBankLine(ctx, input.bankLineId);
     if (!line) throw new DomainError('BANK_LINE_NOT_FOUND', 422, 'Không tìm thấy dòng sao kê; hãy tải lại trang ngân hàng');
     const payment = await loadPayment(ctx, paymentId);
-    checkSettleable(ctx, payment, line);
+    await checkSettleable(ctx, payment, line);
     const draft = await buildVoucherProposal(ctx, {
       type: 'bank_debit',
       date: line.date,
@@ -195,7 +191,7 @@ export const supplierPaymentSettleRecord = defineCommand({
     if (!same) throw new DomainError('SUPPLIER_PAYMENT_SETTLE_MISMATCH', 422, 'Đề xuất ghi sổ không khớp khoản chi đã duyệt; hãy lập lại đề xuất', { paymentId });
     const line = await findBankLine(ctx, payload.bankLineId as string);
     if (!line) throw new DomainError('BANK_LINE_NOT_FOUND', 422, 'Không tìm thấy dòng sao kê; hãy tải lại trang ngân hàng');
-    checkSettleable(ctx, payment, line);
+    await checkSettleable(ctx, payment, line);
     const recorded = await recordVoucherPayload(ctx, payload, null, paymentId);
     // The payment is paid by this voucher; the guard checks the hold, the account, the invoice, the file and the voucher once more, and a payment that moved since is refused, not forced.
     const moved = await ctx.trx
