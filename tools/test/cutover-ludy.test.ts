@@ -237,18 +237,32 @@ case "$cmd" in
     fi
     ps_proj=''
     ps_svc=''
+    ps_id=''
     while (($# > 0)); do
       case "$1" in
         --filter)
           case "\${2:-}" in
             label=com.docker.compose.project=*) ps_proj="\${2#label=com.docker.compose.project=}" ;;
             label=com.docker.compose.service=*) ps_svc="\${2#label=com.docker.compose.service=}" ;;
+            id=*) ps_id="\${2#id=}" ;;
           esac
           shift 2
           ;;
         *) shift ;;
       esac
     done
+    if [ -n "$ps_id" ]; then
+      for item in \${STUB_PROJECT_CONTAINERS:-}; do
+        if [ "\${item#*|}" = "$ps_id" ]; then printf '%s\\n' "$ps_id"; exit 0; fi
+      done
+      exit 0
+    fi
+    if [ -n "$ps_proj" ] && [ -z "$ps_svc" ]; then
+      for item in \${STUB_PROJECT_CONTAINERS:-}; do
+        if [ "\${item%%|*}" = "$ps_proj" ]; then printf '%s\\n' "\${item#*|}"; fi
+      done
+      exit 0
+    fi
     if [ -n "$ps_proj" ] || [ -n "$ps_svc" ]; then
       if [ -n "\${STUB_SERVICE_CIDS:-}" ]; then
         for item in \${STUB_SERVICE_CIDS}; do
@@ -277,6 +291,16 @@ case "$cmd" in
     exit 0
     ;;
   inspect)
+    if [[ " $* " == *working_dir* ]]; then
+      cid="\${@: -1}"
+      for line in \${STUB_INSPECT_WORKDIRS:-}; do
+        if [ "\${line%%|*}" = "$cid" ]; then
+          printf '%s\\n' "\${line#*|}"
+          exit 0
+        fi
+      done
+      exit 0
+    fi
     if [[ " $* " == *" {{.Config.Image}} "* ]]; then
       if [ -n "\${STUB_DB_IMAGE-crove-db:local}" ]; then printf '%s\\n' "\${STUB_DB_IMAGE-crove-db:local}"; fi
       exit 0
@@ -1495,5 +1519,103 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(mediaShellRes.status).toBe(1);
     expect(mediaShellRes.stderr).toContain('crove-media');
     expect(readFileSync(fMediaShell.stubLog, 'utf8')).not.toContain(' stop');
+
+    // 14) Round 19 regressions (#3972 Round 19):
+    // 14a) Foreign project ownership under target `ludy` (or source `crove`) blocks cutover-stack before stopping services.
+    const fForeignLudy = createCutoverFixture();
+    const foreignLudyRes = runWithStubs(fForeignLudy, ['cutover-stack', '--dir', fForeignLudy.deployDir, '--overlay-dir', fForeignLudy.overlayDir], {
+      STUB_PROJECT_CONTAINERS: 'ludy|other-ludy-db',
+      STUB_INSPECT_WORKDIRS: 'other-ludy-db|/opt/other-ludy',
+    });
+    expect(foreignLudyRes.status).toBe(1);
+    expect(foreignLudyRes.stderr).toContain("Compose project 'ludy' is already owned by another installation at /opt/other-ludy");
+    expect(readFileSync(fForeignLudy.stubLog, 'utf8')).not.toContain(' stop');
+
+    const fForeignCrove = createCutoverFixture();
+    const foreignCroveRes = runWithStubs(fForeignCrove, ['cutover-stack', '--dir', fForeignCrove.deployDir, '--overlay-dir', fForeignCrove.overlayDir], {
+      STUB_PROJECT_CONTAINERS: 'crove|other-crove-db',
+      STUB_INSPECT_WORKDIRS: 'other-crove-db|/opt/other-crove',
+    });
+    expect(foreignCroveRes.status).toBe(1);
+    expect(foreignCroveRes.stderr).toContain("Compose project 'crove' is already owned by another installation at /opt/other-crove");
+    expect(readFileSync(fForeignCrove.stubLog, 'utf8')).not.toContain(' stop');
+
+    // 14b) Effective object storage (STORAGE=s3 + S3_BUCKET) changing from `crove-files` -> `ludy-files` blocks cutover-stack before stopping services;
+    // project-independent S3_BUCKET passes cleanly.
+    const s3Yaml = [
+      'name: {proj}',
+      'services:',
+      '  db:',
+      '    volumes:',
+      '      - type: volume',
+      '        source: db-data',
+      '        target: /var/lib/postgresql/data',
+      '  api:',
+      '    environment:',
+      '      STORAGE: s3',
+      '      S3_ENDPOINT: https://s3.example.com',
+      '      S3_BUCKET: {bucket}',
+      '    volumes:',
+      '      - type: volume',
+      '        source: files',
+      '        target: /data/files',
+      '      - type: volume',
+      '        source: keys',
+      '        target: /data/keys',
+      '      - type: volume',
+      '        source: archive',
+      '        target: /data/archive',
+      '  worker:',
+      '    environment:',
+      '      STORAGE: s3',
+      '      S3_ENDPOINT: https://s3.example.com',
+      '      S3_BUCKET: {bucket}',
+      '    volumes:',
+      '      - type: volume',
+      '        source: files',
+      '        target: /data/files',
+      '      - type: volume',
+      '        source: keys',
+      '        target: /data/keys',
+      '      - type: volume',
+      '        source: archive',
+      '        target: /data/archive',
+      'volumes:',
+      '  db-data:',
+      '    name: {proj}_db-data',
+      '  files:',
+      '    name: {proj}_files',
+      '  keys:',
+      '    name: {proj}_keys',
+      '  archive:',
+      '    name: {proj}_archive',
+      '',
+    ].join('\n');
+    const fS3Drift = createCutoverFixture();
+    const s3DriftRes = runWithStubs(fS3Drift, ['cutover-stack', '--dir', fS3Drift.deployDir, '--overlay-dir', fS3Drift.overlayDir], {
+      STUB_CONFIG_YAML: s3Yaml.replaceAll('{bucket}', '{proj}-files'),
+    });
+    expect(s3DriftRes.status).toBe(1);
+    expect(s3DriftRes.stderr).toContain('S3_BUCKET');
+    expect(s3DriftRes.stderr).toContain('crove-files');
+    expect(s3DriftRes.stderr).toContain('ludy-files');
+    expect(readFileSync(fS3Drift.stubLog, 'utf8')).not.toContain(' stop');
+
+    const fS3Static = createCutoverFixture();
+    const s3StaticRes = runWithStubs(fS3Static, ['cutover-stack', '--dir', fS3Static.deployDir, '--overlay-dir', fS3Static.overlayDir], {
+      STUB_CONFIG_YAML: s3Yaml.replaceAll('{bucket}', 'shared-files'),
+    });
+    expect(s3StaticRes.status, s3StaticRes.stderr).toBe(0);
+
+    // 14c) Customized Caddyfile is refused before stopping services so host routing/access controls are never overwritten.
+    const fCustomCaddy = createCutoverFixture();
+    writeFileSync(
+      join(fCustomCaddy.deployDir, 'Caddyfile'),
+      '{ admin off }\n{$CROVE_DOMAIN} {\n  handle /admin* { respond 403 }\n  reverse_proxy 127.0.0.1:8080\n}\n',
+    );
+    const customCaddyRes = runWithStubs(fCustomCaddy, ['cutover-stack', '--dir', fCustomCaddy.deployDir, '--overlay-dir', fCustomCaddy.overlayDir]);
+    expect(customCaddyRes.status).toBe(1);
+    expect(customCaddyRes.stderr).toContain('refusing to overwrite customized');
+    expect(readFileSync(fCustomCaddy.stubLog, 'utf8')).not.toContain(' stop');
   });
 });

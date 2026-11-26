@@ -1603,6 +1603,25 @@ check_host_compose_safe() {
   done <"$file"
 }
 
+# Refuses to overwrite a Caddyfile that carries host customizations outside the bundled Caddy templates (#3972).
+check_caddyfile_safe() {
+  local file="$1" canon=''
+  [ -f "$file" ] || return 0
+  canon="$(sed -E '/^[[:space:]]*#/d' "$file" | tr '\r\n\t' '   ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+  case "$canon" in
+    '{ admin off } {$CROVE_DOMAIN} { reverse_proxy {$CROVE_UPSTREAM:127.0.0.1:8080} }' | \
+    '{ admin off } {$CROVE_DOMAIN} { reverse_proxy 127.0.0.1:8080 }' | \
+    '{ admin off } {$LUDY_DOMAIN} { reverse_proxy {$LUDY_UPSTREAM:127.0.0.1:8080} }' | \
+    '{ admin off } {$LUDY_DOMAIN} { reverse_proxy 127.0.0.1:8080 }')
+      return 0
+      ;;
+    *)
+      err "refusing to overwrite customized $file: back up and migrate custom Caddyfile directives manually (or use the in-place upgrade path in docs/self-host/README.md) before running cutover-stack"
+      return 1
+      ;;
+  esac
+}
+
 cutover_unquote_scalar() {
   local line="$1" dq_re sq_re
   dq_re='^"([^"]*)"[[:space:]]*(#.*)?$'
@@ -2084,6 +2103,71 @@ cutover_image_env_pgdata() {
   printf '%s' "$raw"
 }
 
+# Verifies effective object-storage/S3 config parity between $proj and ludy before stopping any container (#3972).
+check_cutover_object_storage() {
+  local src_cfg="$1" dst_cfg="$2" proj="$3" env_tmp="$4" pair='' s_svc='' d_svc='' keys='' k='' s_val='' d_val=''
+  for pair in api:api worker:worker crove:ludy ludy:ludy prober:prober; do
+    s_svc="${pair%%:*}"
+    d_svc="${pair#*:}"
+    cutover_compose_service_enabled "$src_cfg" "$s_svc" "$ENV_FILE" || continue
+    cutover_compose_service_enabled "$dst_cfg" "$d_svc" "$env_tmp" || continue
+    if [ "$d_svc" = prober ]; then
+      keys='ARCHIVE_STORE ARCHIVE_S3_BUCKET S3_ENDPOINT S3_REGION S3_FORCE_PATH_STYLE'
+    else
+      keys='STORAGE S3_ENDPOINT S3_BUCKET S3_REGION S3_PUBLIC_ENDPOINT S3_FORCE_PATH_STYLE ARCHIVE_STORE ARCHIVE_S3_BUCKET'
+    fi
+    for k in $keys; do
+      s_val="$(cutover_compose_service_env_value "$src_cfg" "$s_svc" "$k" 2>/dev/null || true)"
+      d_val="$(cutover_compose_service_env_value "$dst_cfg" "$d_svc" "$k" 2>/dev/null || true)"
+      if [ "$k" = STORAGE ]; then
+        [ -n "$s_val" ] || s_val='local'
+        [ -n "$d_val" ] || d_val='local'
+      elif [ "$k" = S3_FORCE_PATH_STYLE ]; then
+        [ -n "$s_val" ] || s_val='false'
+        [ -n "$d_val" ] || d_val='false'
+      fi
+      if [ "$s_val" != "$d_val" ]; then
+        die "$EXIT_FAILED" "cutover-stack cannot change $k on service $d_svc from '${s_val:-<unset>}' ($proj) to '${d_val:-<unset>}' (ludy); keep a project-independent object storage configuration (or migrate bucket data explicitly) before running cutover-stack"
+      fi
+    done
+  done
+}
+
+# Ensures all containers of Compose project $target_proj belong to $DEPLOY_DIR (Bash 3.2-safe) (#3972).
+CUTOVER_CONFLICT_WDIR='' CUTOVER_CONFLICT_CID=''
+check_cutover_project_ownership() {
+  local target_proj="$1" deploy_dir_norm='' canon_deploy_dir='' ps_out='' cid='' c_wdir='' c_wdir_canon='' still_exists=''
+  CUTOVER_CONFLICT_WDIR=''
+  CUTOVER_CONFLICT_CID=''
+  [ -n "$target_proj" ] || return 0
+  deploy_dir_norm="$(cutover_norm_bind_path "$DEPLOY_DIR")"
+  canon_deploy_dir="$(cutover_norm_bind_path "$deploy_dir_norm")"
+  ps_out="$(docker ps -a -q --filter "label=com.docker.compose.project=$target_proj" 2>/dev/null)" || return 2
+  [ -n "$ps_out" ] || return 0
+  while IFS= read -r cid; do
+    cid="${cid%$'\r'}"
+    [ -n "$cid" ] || continue
+    if ! c_wdir="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$cid" 2>/dev/null)"; then
+      still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 2
+      [ -z "$still_exists" ] || return 2
+      continue
+    fi
+    c_wdir="${c_wdir%$'\r'}"
+    if [ -n "$c_wdir" ]; then
+      c_wdir="${c_wdir%/}"
+      [ -n "$c_wdir" ] || c_wdir='/'
+      c_wdir_canon="$(cutover_norm_bind_path "$c_wdir")"
+      if [ "$c_wdir" = "$deploy_dir_norm" ] || [ "$c_wdir" = "$canon_deploy_dir" ] || [ "$c_wdir_canon" = "$canon_deploy_dir" ]; then
+        continue
+      fi
+    fi
+    CUTOVER_CONFLICT_WDIR="${c_wdir:-unknown}"
+    CUTOVER_CONFLICT_CID="$cid"
+    return 1
+  done <<<"$ps_out"
+  return 0
+}
+
 # Refuses cutover-stack BEFORE stopping containers if any bind mount, external volume, non-${proj}_* volume,
 # live HostConfig.Mounts subpath, or effective db PGDATA path changes across COMPOSE_PROJECT_NAME=$proj -> ludy (#3972).
 check_cutover_storage_mounts() {
@@ -2155,6 +2239,7 @@ check_cutover_storage_mounts() {
     die "$EXIT_FAILED" "cutover-stack cannot switch db PGDATA from /var/lib/postgresql/data${live_pg_sub:+/$live_pg_sub} (source config: /var/lib/postgresql/data${eff_src_pg_sub:+/$eff_src_pg_sub}) to /var/lib/postgresql/data${eff_dst_pg_sub:+/$eff_dst_pg_sub}; keep a project-independent PGDATA path before running cutover-stack"
   fi
 
+  check_cutover_object_storage "$src_cfg" "$dst_cfg" "$proj" "$env_tmp"
   src_mounts="$(cutover_compose_storage_mounts "$src_cfg" "$proj" "$ENV_FILE")"
   dst_mounts="$(cutover_compose_storage_mounts "$dst_cfg" ludy "$env_tmp")"
 
@@ -2215,6 +2300,17 @@ check_cutover_storage_mounts() {
         esac
       done <<<"$m_lines"
     done <<<"$ps_lines"
+  done
+
+  local own_p='' own_rc=0
+  for own_p in "$proj" ludy; do
+    own_rc=0
+    check_cutover_project_ownership "$own_p" || own_rc=$?
+    if ((own_rc == 1)); then
+      die "$EXIT_FAILED" "refusing cutover-stack: Compose project '$own_p' is already owned by another installation at $CUTOVER_CONFLICT_WDIR (container $CUTOVER_CONFLICT_CID); target that directory or choose a distinct project"
+    elif ((own_rc != 0)); then
+      die "$EXIT_FAILED" "cannot inspect existing containers for Compose project '$own_p' before cutover"
+    fi
   done
 
   local d_svc='' d_tgt='' d_spec='' dst_has_db=0
@@ -2373,6 +2469,7 @@ do_cutover_stack() {
   fi
   if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then
     check_host_compose_safe "$DEPLOY_DIR/compose.host.yml" || exit "$EXIT_FAILED"
+    check_caddyfile_safe "$DEPLOY_DIR/Caddyfile" || exit "$EXIT_FAILED"
   fi
 
   acquire_lock
@@ -2576,6 +2673,7 @@ do_cutover_stack() {
 
   if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then
     check_host_compose_safe "$DEPLOY_DIR/compose.host.yml" || return 1
+    check_caddyfile_safe "$DEPLOY_DIR/Caddyfile" || return 1
     log 'updating Caddyfile and compose.host.yml from staged overlays'
     copy_into_deploy_dir "$STAGE_DIR/caddy/Caddyfile" "$DEPLOY_DIR/Caddyfile"
     copy_into_deploy_dir "$STAGE_DIR/caddy/compose.host.yml" "$DEPLOY_DIR/compose.host.yml"

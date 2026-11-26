@@ -1489,6 +1489,43 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(modSwitchFresh.status, modSwitchFresh.out).toBe(0);
     expect(state('mounts')).toContain('/data/files=volume:ludy_files_mod');
 
+    // Round 19 regressions (#3972 Round 19):
+    // 1) Distinct DB storage still refuses deploy before `up db` when destination /data/keys or /data/files is held by another project.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+    writeFileSync(log, '');
+    const heldAppMount = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'ludy_db-data ludy_keys',
+      STUB_RUNNING_CONTAINERS: 'other-app-1',
+      STUB_INSPECT_WORKDIRS: 'other-app-1|/opt/other-app',
+      STUB_INSPECT_MOUNTS: 'other-app-1|other|volume|ludy_keys||',
+    });
+    expect(heldAppMount.status, heldAppMount.out).toBe(1);
+    expect(heldAppMount.out).toContain('/data/keys storage ludy_keys is still mounted by a running container outside project');
+    expect(calls().some((l) => l.startsWith('compose up'))).toBe(false);
+
+    // 2) COMPOSE_FILE omitting compose.host.yml while $DEPLOY_DIR/compose.host.yml exists still includes compose.host.yml in dc().
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/compose.host.yml`, 'services: {}\n');
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:docker-compose.override.yml\n');
+    rmSync(`${log}.files`, { force: true });
+    const hostFallback = deploy('v1.0.0', 'a');
+    expect(hostFallback.status, hostFallback.out).toBe(0);
+    for (const files of readFileSync(`${log}.files`, 'utf8').split('\n').filter(Boolean)) {
+      expect(files).toBe(`${dir}/docker-compose.yml ${dir}/docker-compose.override.yml ${dir}/compose.host.yml`);
+    }
+    rmSync(`${dir}/compose.host.yml`, { force: true });
+
+    // 3) Both deploy workflows reject ambiguous dual /opt/ludy + /opt/crove hosts when DEPLOY_DIR is unset.
+    for (const wfRel of ['.github/workflows/deploy.yml', '.github/workflows/pilot-ludy-cutover.yml']) {
+      const wfText = readFileSync(join(repo, wfRel), 'utf8');
+      expect(wfText, wfRel).toContain('both_distinct');
+      expect(wfText, wfRel).toContain('cd -P /opt/ludy');
+      expect(wfText, wfRel).toContain('cd -P /opt/crove');
+    }
+
     writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
 
     // Failed restore_pre_activate preserves $PRE_ACTIVATE_SNAP across EXIT cleanup so the reported recovery path remains intact (#3972 Round 14).

@@ -766,7 +766,7 @@ deploy_insert_compose_file_at() {
 deploy_build_compose_files() {
   local mode="$1" base_compose="${2:-$DEPLOY_DIR/docker-compose.yml}" target_env="${3:-$ENV_FILE}"
   local dir_norm="${DEPLOY_DIR%/}" rel_dir='' item='' resolved='' base='' ov_path='' ins_idx=0
-  local has_base=0 has_override=0 has_wal=0 base_idx=0 pilot_idx=-1 host_idx=-1 idx=0
+  local has_base=0 has_override=0 has_wal=0 has_host=0 base_idx=0 pilot_idx=-1 host_idx=-1 idx=0
   [ -n "$dir_norm" ] || dir_norm='/'
   DEPLOY_DC_FILES=()
   deploy_parse_compose_file_items "$target_env" || return 1
@@ -828,6 +828,7 @@ deploy_build_compose_files() {
         idx=$((idx + 1))
       fi
     elif [ "$resolved" = "$dir_norm/compose.host.yml" ]; then
+      has_host=1
       if [ -f "$resolved" ]; then
         DEPLOY_DC_FILES+=("$resolved")
         host_idx="$idx"
@@ -840,6 +841,9 @@ deploy_build_compose_files() {
         pilot_idx="$idx"
       elif [ "$base" = compose.wal.yml ]; then
         has_wal=1
+      elif [ "$base" = compose.host.yml ]; then
+        has_host=1
+        host_idx="$idx"
       fi
       idx=$((idx + 1))
     fi
@@ -875,6 +879,9 @@ deploy_build_compose_files() {
     else
       DEPLOY_DC_FILES+=("$dir_norm/compose.wal.yml")
     fi
+  fi
+  if ((has_host == 0)) && [ -f "$dir_norm/compose.host.yml" ]; then
+    DEPLOY_DC_FILES+=("$dir_norm/compose.host.yml")
   fi
   return 0
 }
@@ -4675,6 +4682,37 @@ do_deploy() {
       die "$EXIT_FAILED" "cannot inspect running containers to verify database storage $(mount_label "$new_db"); nothing running was changed"
     fi
   fi
+  local app_target='' app_specs='' app_m='' app_exists_rc=0 app_free_rc=0
+  for app_target in /data/files /data/keys /data/archive; do
+    case "$app_target" in
+      /data/files) app_specs="$new_files_pre" ;;
+      /data/keys) app_specs="$new_keys_pre" ;;
+      /data/archive) app_specs="$new_archive_pre" ;;
+    esac
+    while IFS= read -r app_m; do
+      [ -n "$app_m" ] || continue
+      app_exists_rc=0
+      mount_exists "$app_m" || app_exists_rc=$?
+      if ((app_exists_rc == 2)); then
+        restore_pre_activate "$current"
+        record "deploy $name failed: cannot inspect $app_target storage $(mount_label "$app_m")"
+        die "$EXIT_FAILED" "cannot inspect destination $app_target storage $(mount_label "$app_m"); nothing running was changed"
+      fi
+      if ((app_exists_rc == 0)); then
+        app_free_rc=0
+        check_storage_free "$app_m" "$active_proj" || app_free_rc=$?
+        if ((app_free_rc == 1)); then
+          restore_pre_activate "$current"
+          record "deploy $name failed: $app_target storage $(mount_label "$app_m") held by another project"
+          die "$EXIT_FAILED" "$app_target storage $(mount_label "$app_m") is still mounted by a running container outside project $active_proj ($DEPLOY_DIR); stop the conflicting stack before deploying"
+        elif ((app_free_rc != 0)); then
+          restore_pre_activate "$current"
+          record "deploy $name failed: cannot inspect running containers for $(mount_label "$app_m")"
+          die "$EXIT_FAILED" "cannot inspect running containers to verify $app_target storage $(mount_label "$app_m"); nothing running was changed"
+        fi
+      fi
+    done <<<"$app_specs"
+  done
 
   clear_pre_activate_snap
   log 'starting the database'
