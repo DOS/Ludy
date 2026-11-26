@@ -2,6 +2,7 @@
 // Isolated note attachments (#3561, docs/plan/notes-v2.md V2-5, owner decision A3, ADR-0037):
 // <= 25 MiB files and clipboard screenshots attached directly to a note under ludy_notes.attachment
 // and private BlobStore keys notes/<org_id>/<attachment_id>, never touching ludy_kernel.file.
+import { sql } from 'kysely';
 import {
   auditValue,
   NOTE_ATTACHMENTS_PER_NOTE_MAX,
@@ -173,7 +174,7 @@ export const noteAttachmentCreate = defineCommand({
 
     await ctx.trx
       .updateTable('ludy_notes.note')
-      .set({ updated_at: ctx.now })
+      .set({ updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})` })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)
       .execute();
@@ -238,7 +239,7 @@ export const noteAttachmentDelete = defineCommand({
 
     await ctx.trx
       .updateTable('ludy_notes.note')
-      .set({ updated_at: ctx.now })
+      .set({ updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})` })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', att.note_id)
       .execute();

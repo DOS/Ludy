@@ -18,7 +18,7 @@ import {
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { assertAuthor, assertNotInTrash, loadForChange, recordNoteVersionSnapshot } from './notes.ts';
-import { TODO_SUMMARY_COLUMNS, detailsOf, due, lockTodoSortOrder, ownKeys, placeBetween, remindAt, todoSummaryRow } from './todos.ts';
+import { TODO_SUMMARY_COLUMNS, detailsOf, due, lockTodoSortOrder, placeFrontBatch, remindAt, todoSummaryRow } from './todos.ts';
 
 const MODULE = 'notes';
 const ALL_MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -339,13 +339,14 @@ export const todoAcceptSuggestions = defineCommand({
     }
 
     const createdReversed: string[] = [];
+    let sortKeys: string[] = [];
     if (input.items.length > 0) {
       await lockTodoSortOrder(ctx, userId);
+      sortKeys = await placeFrontBatch(ctx, input.items.length);
     }
     for (let i = input.items.length - 1; i >= 0; i -= 1) {
       const item = input.items[i]!;
-      const rows = await ownKeys(ctx, null);
-      const sortKey = await placeBetween(ctx, rows, -1, 0);
+      const sortKey = sortKeys[i]!;
       const when = due({ dueOn: item.dueOn, dueTime: item.dueTime, timeZone: item.timeZone });
       const remind = remindAt(item.reminder, when, ctx.now);
       const seq = input.runId !== undefined ? input.items.length - 1 - i : null;

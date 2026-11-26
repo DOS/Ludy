@@ -585,6 +585,7 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
   });
 
   it('exercises keyboard .focus() in radiogroup, keeps custom archive ConfirmDialog outside radiogroup, and resets via useEffect on reopen', async () => {
+    setActiveLocale('vi');
     archiveCalls.length = 0;
     const body = domHarness.installScopedDom();
     const container = new FakeDomNode(1, 'div');

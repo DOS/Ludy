@@ -686,6 +686,14 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
   it('serializes concurrent Todoist import, list creation, and todo creation without sort_key collisions or deadlocks (#5035)', async () => {
     const ownerHeaders = await asJsonHeaders('owner');
     const authHdrs = await asAuthHeaders('owner');
+    const seedRes = await rpc('notes/todos/create', ownerHeaders, { title: 'Seed Rebalance Tail' });
+    expect(seedRes.status, JSON.stringify(seedRes.body)).toBe(200);
+    const seedTodoId = String(seedRes.body.todoId);
+    const tightKey = 'z'.repeat(48);
+    await admin((c) =>
+      c.query(`UPDATE ludy_notes.todo SET sort_key = $1 WHERE org_id = $2 AND id = $3`, [tightKey, orgId, seedTodoId]),
+    );
+
     const concurrentRows = Array.from({ length: 260 }, (_, idx) => `task,Concurrent Task ${String(idx).padStart(3, '0')},,${(idx % 4) + 1},1,,,`).join('\n');
     const concurrentCsv = `TYPE,CONTENT,DESCRIPTION,PRIORITY,INDENT,DATE,TIMEZONE,LABELS\n${concurrentRows}\n`;
 
@@ -720,17 +728,21 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     ];
     expect(createdTodoIds).toHaveLength(266);
 
+    const allIds = [seedTodoId, ...createdTodoIds];
     const ownerTodos = await admin(async (c) =>
       (await c.query<{ id: string; owner_user_id: string; sort_key: string }>(
         `SELECT id, owner_user_id, sort_key FROM ludy_notes.todo WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY sort_key ASC, id ASC`,
-        [orgId, createdTodoIds],
+        [orgId, allIds],
       )).rows,
     );
-    expect(ownerTodos).toHaveLength(266);
+    expect(ownerTodos).toHaveLength(267);
     const ownerUserId = ownerTodos[0]!.owner_user_id;
     expect(ownerTodos.every((r) => r.owner_user_id === ownerUserId)).toBe(true);
-    expect(new Set(ownerTodos.map((r) => r.sort_key)).size).toBe(266);
+    expect(new Set(ownerTodos.map((r) => r.sort_key)).size).toBe(267);
     expect(ownerTodos.every((r) => r.sort_key.length <= 48)).toBe(true);
+    const rebalancedSeed = ownerTodos.find((r) => r.id === seedTodoId);
+    expect(rebalancedSeed).toBeDefined();
+    expect(rebalancedSeed!.sort_key).not.toBe(tightKey);
 
     const ownerLists = await admin(async (c) =>
       (await c.query<{ id: string; sort_key: string }>(

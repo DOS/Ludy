@@ -582,5 +582,17 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     expect(await doomed(o)).toEqual([`notes/${o.orgId}/${att1.id}`, `notes/${o.orgId}/${att2.id}`].sort());
     expect(await noteUpdatedAt(monotonicNote)).toBeGreaterThanOrEqual(beforeMonotonicTs);
     expect(await noteUpdatedAt(concurrentNote)).toBeGreaterThanOrEqual(beforeConcurrentTs);
+
+    // Attachment delete on a note whose updated_at is ahead of transaction time must also keep updated_at monotonic.
+    const extraAtt = await attached(o, o.author, concurrentNote, pdf('extra'), 'bo-sung.pdf');
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_notes.note SET updated_at = pg_catalog.clock_timestamp() + interval '10 minutes' WHERE org_id = $1 AND id = $2`, [o.orgId, concurrentNote]);
+      await c.query('COMMIT');
+    });
+    const beforeDeleteTs = await noteUpdatedAt(concurrentNote);
+    await rt.execute('notes.attachment.delete', { attachmentId: extraAtt.id }, { actor: asUser(o.author.id), orgId: o.orgId });
+    expect(await noteUpdatedAt(concurrentNote)).toBeGreaterThanOrEqual(beforeDeleteTs);
   });
 });

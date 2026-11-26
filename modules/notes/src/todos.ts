@@ -462,6 +462,36 @@ export async function placeBetween(
   return keyBetween(freshAt(lo), freshAt(hi));
 }
 
+export async function placeFrontBatch(ctx: CommandContext, count: number): Promise<string[]> {
+  if (count <= 0) return [];
+  const rows = await ownKeys(ctx, null);
+  if (count === 1) return [await placeBetween(ctx, rows, -1, 0)];
+  let nextKey = rows[0]?.sort_key ?? null;
+  const prependedReversed: string[] = [];
+  let fits = true;
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const key = keyBetween(null, nextKey);
+    if (key.length > REBALANCE_AT || (nextKey !== null && key >= nextKey)) {
+      fits = false;
+      break;
+    }
+    prependedReversed.push(key);
+    nextKey = key;
+  }
+  if (fits) return prependedReversed.reverse();
+
+  const fresh = spreadKeys(rows.length + count);
+  if (rows.length > 0) {
+    const ids = rows.map((r) => r.id);
+    const tailKeys = fresh.slice(count);
+    await lockTodosInOrder(ctx, ids);
+    await sql`UPDATE ludy_notes.todo AS t SET sort_key = v.key
+      FROM unnest(${ids}::uuid[], ${tailKeys}::text[]) AS v(id, key)
+      WHERE t.org_id = ${ctx.orgId}::uuid AND t.id = v.id`.execute(ctx.trx);
+  }
+  return fresh.slice(0, count);
+}
+
 export const todoCreate = defineCommand({
   name: 'notes.todo.create',
   input: zTodoCreate,
@@ -483,6 +513,16 @@ export const todoCreate = defineCommand({
         .executeTakeFirst();
       if (!sourceNote) throw new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú này');
       sourceTainted = sourceNote.tainted;
+    }
+    if (input.link?.targetType === 'kernel.party') {
+      // Match personalDataErase lock order (party -> todo_list -> note) before acquiring list/sort locks or inserting.
+      await ctx.trx
+        .selectFrom('ludy_kernel.party')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.link.targetId)
+        .forKeyShare()
+        .executeTakeFirst();
     }
     const listId = normalizeListId(input.listId);
     await validateTodoListAndSection(ctx, listId, input.sectionId, true);
@@ -1324,12 +1364,12 @@ function trashCommand(name: string, toTrash: boolean) {
       userOf(ctx.actor);
       const meta = await ctx.trx
         .selectFrom('ludy_notes.todo')
-        .select(['series_id', 'recurrence'])
+        .select(['id', 'series_id', 'recurrence'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.todoId)
         .executeTakeFirst();
       if (meta && (meta.series_id !== null || meta.recurrence !== null)) {
-        await lockTodoSeries(ctx, meta.series_id ?? input.todoId);
+        await lockTodoSeries(ctx, meta.series_id ?? meta.id);
       }
       const before = await load(ctx, input.todoId, true);
       if ((before.deleted_at !== null) === toTrash) return written(before);
