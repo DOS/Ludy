@@ -57,6 +57,7 @@ export const en = {
       inspect: 'Inspect',
       position: '{index} / {total}',
     },
+    phoneActions: 'Quick actions',
   },
   roles: {
     owner: 'Owner',
@@ -230,6 +231,7 @@ export const en = {
     quickCreate: {
       trigger: 'Quick create',
       menuLabel: 'Quick create menu',
+      homeRow: 'Common jobs',
       uploadDocument: 'Upload document',
       recordExpense: 'Record expense',
       createSalesInvoice: 'Create sales invoice',

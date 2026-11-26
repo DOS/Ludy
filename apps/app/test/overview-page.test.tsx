@@ -750,6 +750,20 @@ describe('OverviewPage Role x Enabled-App Global Home (#4644, #4928)', () => {
     expect(renderOverview({ overview: EMPTY_OVERVIEW, todayItems: [] })).not.toContain('data-testid="overview-quickstart"');
   });
 
+  it('puts the create jobs in a thumb row at the foot of Home for a member, by the apps that are on, and none for a viewer (#4784)', () => {
+    const member = renderOverview({ role: 'member', overview: EMPTY_OVERVIEW, todayItems: [] });
+    expect(member).toContain('data-testid="home-create-bar"');
+    expect(member).toContain('data-testid="home-create-uploadDocument"');
+    expect(member).toContain('href="/o/acme/inbox"');
+    // The bar is the last thing on Home, after the app status links.
+    expect(member.indexOf('data-testid="home-create-bar"')).toBeGreaterThan(member.indexOf('data-testid="home-vy-bar"'));
+    expect(renderOverview({ role: 'viewer', overview: EMPTY_OVERVIEW, todayItems: [] })).not.toContain('data-testid="home-create-bar"');
+    state.modules = ['kernel', 'crm'];
+    const crmOnly = renderOverview({ role: 'member', overview: EMPTY_OVERVIEW, todayItems: [] });
+    expect(crmOnly).toContain('data-testid="home-create-newContact"');
+    expect(crmOnly).not.toContain('data-testid="home-create-uploadDocument"');
+  });
+
   it('does not show the start card before the invoice read answers, so it never flashes', () => {
     vi.setSystemTime(MONDAY);
     const qc = state.client;
