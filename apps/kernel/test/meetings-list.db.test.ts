@@ -7,12 +7,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
+import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import type { MeetingDetail, MeetingListInput, MeetingListItem } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
-import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
+import { buildMeetingListQuery, meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
@@ -24,6 +24,7 @@ suite('meetings.meeting.list search and cursor pagination (#5052)', () => {
   const dbName = `ludy_test_meeting_list_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
+  let db: Db;
   const pools: pg.Pool[] = [];
   let orgId = '';
   let runtime: Runtime;
@@ -83,7 +84,7 @@ suite('meetings.meeting.list search and cursor pagination (#5052)', () => {
     url.password = 'test-app-pw';
     appPool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(appPool);
-    const db = createDb(appPool);
+    db = createDb(appPool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...meetingsCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries],
@@ -165,22 +166,25 @@ suite('meetings.meeting.list search and cursor pagination (#5052)', () => {
     await seedMeeting('Họp Hà Nội 2026', { startedAt: '2026-11-25T02:30:00Z' });
     const pct = await seedMeeting('Tăng 50% quý 4', { startedAt: '2026-11-25T02:00:00Z' });
     await seedMeeting('50 người tham dự', { startedAt: '2026-11-25T01:45:00Z' });
-    const under = await seedMeeting('Mã ma_01 nội bộ', { startedAt: '2026-11-25T01:30:00Z' });
-    await seedMeeting('Mã ma-01 nội bộ', { startedAt: '2026-11-25T01:15:00Z' });
+    const under = await seedMeeting('Mã_01 nội bộ', { startedAt: '2026-11-25T01:30:00Z' });
+    await seedMeeting('Mã-01 nội bộ', { startedAt: '2026-11-25T01:15:00Z' });
     const emojiQ4 = await seedMeeting('🎯 Kế hoạch Q4', { startedAt: '2026-11-25T01:00:00Z' });
+    const vnFlagQ4 = await seedMeeting('🇻🇳 Kế hoạch Q4', { startedAt: '2026-11-25T00:45:00Z' });
     await seedMeeting('Kế hoạch Q4 chung', { startedAt: '2026-11-25T00:30:00Z' });
 
     expect((await listMeetings('solo', { search: 'dien thoai' })).map((m) => m.id)).toEqual([phone]);
     expect((await listMeetings('solo', { search: 'HOA SEN' })).map((m) => m.id)).toEqual([lotusNew, lotusOld]);
     expect((await listMeetings('solo', { search: '東京 2026' })).map((m) => m.id)).toEqual([tokyo]);
     expect((await listMeetings('solo', { search: '🎯 Q4' })).map((m) => m.id)).toEqual([emojiQ4]);
+    expect((await listMeetings('solo', { search: '🇻🇳 Q4' })).map((m) => m.id)).toEqual([vnFlagQ4]);
     expect((await listMeetings('solo', { search: '50%' })).map((m) => m.id)).toEqual([pct]);
     expect((await listMeetings('solo', { search: 'tang 50%' })).map((m) => m.id)).toEqual([pct]);
     expect((await listMeetings('solo', { search: 'ma_01' })).map((m) => m.id)).toEqual([under]);
+    expect((await listMeetings('solo', { search: 'mã_01' })).map((m) => m.id)).toEqual([under]);
     expect((await listMeetings('solo', { search: '%' })).map((m) => m.id)).toEqual([pct]);
     expect((await listMeetings('solo', { search: '_' })).map((m) => m.id)).toEqual([under]);
     expect((await listMeetings('solo', { search: '🎯' })).map((m) => m.id)).toEqual([emojiQ4]);
-    expect(await listMeetings('solo', { search: '   ' })).toHaveLength(11);
+    expect(await listMeetings('solo', { search: '   ' })).toHaveLength(12);
 
     const searchPage1 = await listMeetings('solo', { search: 'hoa sen', limit: 1 });
     expect(searchPage1.map((m) => m.id)).toEqual([lotusNew]);
@@ -246,48 +250,16 @@ suite('meetings.meeting.list search and cursor pagination (#5052)', () => {
       ).rows[0];
       expect(roleRow).toEqual({ cur: 'ludy_app', sess: 'ludy_app', rls: 'on' });
       await c.query('SET LOCAL enable_seqscan = off');
-      const p1 = await c.query<{ 'QUERY PLAN': string }>(
-        `EXPLAIN (COSTS OFF)
-         SELECT *,
-           pg_catalog.to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at_iso,
-           pg_catalog.to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_iso
-         FROM ludy_meetings.meeting
-         WHERE org_id = $1::uuid
-           AND (text_retention_date IS NULL OR text_retention_date > current_date)
-         ORDER BY COALESCE(started_at, created_at) DESC, id DESC
-         LIMIT 100`,
-        [orgId],
-      );
-      const p2 = await c.query<{ 'QUERY PLAN': string }>(
-        `EXPLAIN (COSTS OFF)
-         SELECT *,
-           pg_catalog.to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at_iso,
-           pg_catalog.to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_iso
-         FROM ludy_meetings.meeting
-         WHERE org_id = $1::uuid
-           AND (text_retention_date IS NULL OR text_retention_date > current_date)
-           AND (COALESCE(started_at, created_at), id) < ($2::timestamptz, $3::uuid)
-         ORDER BY COALESCE(started_at, created_at) DESC, id DESC
-         LIMIT 100`,
-        [orgId, tail.startedAt ?? tail.createdAt, tail.id],
-      );
-      const p3 = await c.query<{ 'QUERY PLAN': string }>(
-        `EXPLAIN (COSTS OFF)
-         SELECT *,
-           pg_catalog.to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at_iso,
-           pg_catalog.to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_iso
-         FROM ludy_meetings.meeting
-         WHERE org_id = $1::uuid
-           AND (text_retention_date IS NULL OR text_retention_date > current_date)
-           AND (CASE WHEN ludy_kernel.search_fold($2::text) = '' THEN pg_catalog.strpos(pg_catalog.lower(pg_catalog.normalize(title, 'NFC')), pg_catalog.lower($2::text)) > 0 ELSE pg_catalog.strpos(ludy_kernel.search_fold(title), ludy_kernel.search_fold($2::text)) > 0 END)
-         ORDER BY COALESCE(started_at, created_at) DESC, id DESC
-         LIMIT 100`,
-        [orgId, 'hoa sen'],
-      );
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
+      const explain = async (input: MeetingListInput) => {
+        const compiled = buildMeetingListQuery(db, orgId, today, input).compile();
+        const res = await c.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${compiled.sql}`, [...compiled.parameters]);
+        return res.rows.map((r) => r['QUERY PLAN']).join('\n');
+      };
       plans = {
-        p1: p1.rows.map((r) => r['QUERY PLAN']).join('\n'),
-        p2: p2.rows.map((r) => r['QUERY PLAN']).join('\n'),
-        p3: p3.rows.map((r) => r['QUERY PLAN']).join('\n'),
+        p1: await explain({ limit: 100 }),
+        p2: await explain({ limit: 100, afterStartedAt: tail.startedAt ?? tail.createdAt, afterId: tail.id }),
+        p3: await explain({ limit: 100, search: 'hoa sen' }),
       };
     } finally {
       await c.query('ROLLBACK').catch(() => {});

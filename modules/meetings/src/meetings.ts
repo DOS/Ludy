@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import type { MemberRole } from '@ludy/db';
+import type { Db, MemberRole } from '@ludy/db';
 import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
 import { meetingSearch } from './search.ts';
 import { labelsOfMeetings } from './labels.ts';
@@ -110,6 +110,7 @@ import {
   type MeetingOwnerList,
   type MeetingOwnerListItem,
   type MeetingStatus,
+  type MeetingListInput,
   type MeetingListItem,
   type MeetingSummary,
   type MeetingVisibility,
@@ -663,21 +664,27 @@ function readableAgendaPlatforms(trx: QueryContext['trx'], orgId: string, userId
     .where('c.read_events', '=', true);
 }
 
-// Exact character set preserved by ludy_kernel.search_fold (migration 20261023060000): ASCII letters/digits plus Vietnamese letters and đ/Đ.
-const SEARCH_FOLD_KEPT = new Set(
-  'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789àáạảãâầấậẩẫăằắặẳẵÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴèéẹẻẽêềếệểễÈÉẸẺẼÊỀẾỆỂỄìíịỉĩÌÍỊỈĨòóọỏõôồốộổỗơờớợởỡÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠùúụủũưừứựửữÙÚỤỦŨƯỪỨỰỬỮỳýỵỷỹỲÝỴỶỸđĐ',
-);
-const SEARCH_MEANINGFUL_CHAR = /[\p{L}\p{N}\p{Extended_Pictographic}]/u;
+// Exact Vietnamese fold map of ludy_kernel.search_fold (migration 20261023060000): preserves symbols like `%`, `_`,
+// CJK, emoji, and regional-indicator flags while folding Vietnamese diacritics and `đ/Đ`.
+const VI_FOLD_FROM =
+  'àáạảãâầấậẩẫăằắặẳẵÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴèéẹẻẽêềếệểễÈÉẸẺẼÊỀẾỆỂỄìíịỉĩÌÍỊỈĨòóọỏõôồốộổỗơờớợởỡÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠùúụủũưừứựửữÙÚỤỦŨƯỪỨỰỬỮỳýỵỷỹỲÝỴỶỸđĐ';
+const VI_FOLD_TO =
+  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaeeeeeeeeeeeeeeeeeeeeeeiiiiiiiiiioooooooooooooooooooooooooooooooooouuuuuuuuuuuuuuuuuuuuuuyyyyyyyyyydd';
+const SEARCH_FOLD_KEPT = new Set(`abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789${VI_FOLD_FROM}`);
+const SEARCH_MEANINGFUL_BASE = /[\p{L}\p{N}\p{Extended_Pictographic}\p{Regional_Indicator}]/u;
+const SEARCH_EMOJI_MODIFIER = /\p{Emoji_Modifier}/u;
+const SEARCH_EMOJI_JOIN_CODEPOINTS = new Set(['\u{200D}', '\u{FE0F}', '\u{20E3}']);
 
-// Maximal runs of meaningful characters dropped by search_fold (e.g. CJK, Hangul, Cyrillic, emoji, non-Vietnamese diacritics)
-// plus whitespace-delimited tokens carrying literal `%` or `_`, so mixed queries like "東京 2026", "🎯 Q4", "50%", or "ma_01"
-// still require those literal parts alongside the Vietnamese-folded match (#5052).
+// Maximal runs of meaningful characters dropped by search_fold (CJK, Hangul, Cyrillic, emoji, regional-indicator flags,
+// non-Vietnamese diacritics) plus whitespace-delimited tokens carrying literal `%` or `_`, so mixed queries like
+// "東京 2026", "🎯 Q4", "🇻🇳 Q4", "50%", or "ma_01" require those parts alongside the Vietnamese-folded match (#5052).
 function unfoldedSearchTerms(search: string): string[] {
   const nfc = search.normalize('NFC');
   const terms = new Set<string>();
   let run = '';
   for (const ch of nfc) {
-    if (!SEARCH_FOLD_KEPT.has(ch) && SEARCH_MEANINGFUL_CHAR.test(ch)) {
+    const isEmojiJoin = run !== '' && (SEARCH_EMOJI_JOIN_CODEPOINTS.has(ch) || SEARCH_EMOJI_MODIFIER.test(ch));
+    if (!SEARCH_FOLD_KEPT.has(ch) && (SEARCH_MEANINGFUL_BASE.test(ch) || isEmojiJoin)) {
       run += ch;
     } else if (run !== '') {
       terms.add(run);
@@ -693,6 +700,51 @@ function unfoldedSearchTerms(search: string): string[] {
   return [...terms];
 }
 
+// Builds the exact SELECT query executed by `meetings.meeting.list` so query-plan tests can EXPLAIN the real compiled SQL (#5052).
+export function buildMeetingListQuery(db: Db, orgId: string, today: string, input: MeetingListInput) {
+  let query = db
+    .selectFrom('ludy_meetings.meeting')
+    .selectAll()
+    .select([
+      sql<string | null>`pg_catalog.to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as('started_at_iso'),
+      sql<string>`pg_catalog.to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as('created_at_iso'),
+    ])
+    .where('org_id', '=', orgId)
+    // A meeting past its text date is gone from its day, not from the nightly job's run (#2579).
+    .where((eb) => eb.or([eb('text_retention_date', 'is', null), eb('text_retention_date', '>', today)]));
+
+  if (input.visibility) {
+    query = query.where('visibility', '=', input.visibility);
+  }
+
+  const search = input.search?.trim();
+  if (search) {
+    const normalized = search.normalize('NFC');
+    query = query.where(
+      sql<boolean>`(CASE WHEN ludy_kernel.search_fold(${search}) = '' THEN pg_catalog.strpos(pg_catalog.lower(pg_catalog.translate(pg_catalog.normalize(title, 'NFC'), ${VI_FOLD_FROM}, ${VI_FOLD_TO})), pg_catalog.lower(pg_catalog.translate(${normalized}, ${VI_FOLD_FROM}, ${VI_FOLD_TO}))) > 0 ELSE pg_catalog.strpos(ludy_kernel.search_fold(title), ludy_kernel.search_fold(${search})) > 0 END)`,
+    );
+    const extraTerms = unfoldedSearchTerms(normalized);
+    if (extraTerms.length > 0) {
+      query = query.where(
+        sql<boolean>`NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(${extraTerms}::text[]) AS t(term) WHERE pg_catalog.strpos(pg_catalog.lower(pg_catalog.translate(pg_catalog.normalize(title, 'NFC'), ${VI_FOLD_FROM}, ${VI_FOLD_TO})), pg_catalog.lower(pg_catalog.translate(t.term, ${VI_FOLD_FROM}, ${VI_FOLD_TO}))) = 0)`,
+      );
+    }
+  }
+
+  // Ordered and paged on (COALESCE(started_at, created_at) DESC, id DESC) matching meeting_held_idx (#5052).
+  // startedAt and createdAt carry PostgreSQL microsecond precision (UTC), so keyset cursors stay lossless across
+  // sub-millisecond ties even if the cursor row is deleted, expired, or unshared before the next page.
+  const heldAt = sql`COALESCE(started_at, created_at)`;
+  if (input.afterStartedAt !== undefined && input.afterId !== undefined) {
+    query = query.where(sql<boolean>`(${heldAt}, id) < (${input.afterStartedAt}::timestamptz, ${input.afterId}::uuid)`);
+  }
+
+  return query
+    .orderBy(heldAt, 'desc')
+    .orderBy('id', 'desc')
+    .limit(input.limit ?? 50);
+}
+
 export const meetingList = defineQuery({
   name: 'meetings.meeting.list',
   input: zMeetingListInput,
@@ -700,48 +752,7 @@ export const meetingList = defineQuery({
   handler: async (ctx, input): Promise<MeetingListItem[]> => {
     const userId = userOf(ctx.actor);
     const today = vnDay(new Date());
-    let query = ctx.trx
-      .selectFrom('ludy_meetings.meeting')
-      .selectAll()
-      .select([
-        sql<string | null>`pg_catalog.to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as('started_at_iso'),
-        sql<string>`pg_catalog.to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as('created_at_iso'),
-      ])
-      .where('org_id', '=', ctx.orgId)
-      // A meeting past its text date is gone from its day, not from the nightly job's run (#2579).
-      .where((eb) => eb.or([eb('text_retention_date', 'is', null), eb('text_retention_date', '>', today)]));
-
-    if (input.visibility) {
-      query = query.where('visibility', '=', input.visibility);
-    }
-
-    const search = input.search?.trim();
-    if (search) {
-      const normalized = search.normalize('NFC');
-      query = query.where(
-        sql<boolean>`(CASE WHEN ludy_kernel.search_fold(${search}) = '' THEN pg_catalog.strpos(pg_catalog.lower(pg_catalog.normalize(title, 'NFC')), pg_catalog.lower(${normalized})) > 0 ELSE pg_catalog.strpos(ludy_kernel.search_fold(title), ludy_kernel.search_fold(${search})) > 0 END)`,
-      );
-      const extraTerms = unfoldedSearchTerms(normalized);
-      if (extraTerms.length > 0) {
-        query = query.where(
-          sql<boolean>`NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(${extraTerms}::text[]) AS t(term) WHERE pg_catalog.strpos(pg_catalog.lower(pg_catalog.normalize(title, 'NFC')), pg_catalog.lower(t.term)) = 0)`,
-        );
-      }
-    }
-
-    // Ordered and paged on (COALESCE(started_at, created_at) DESC, id DESC) matching meeting_held_idx (#5052).
-    // startedAt and createdAt carry PostgreSQL microsecond precision (UTC), so keyset cursors stay lossless across
-    // sub-millisecond ties even if the cursor row is deleted, expired, or unshared before the next page.
-    const heldAt = sql`COALESCE(started_at, created_at)`;
-    if (input.afterStartedAt !== undefined && input.afterId !== undefined) {
-      query = query.where(sql<boolean>`(${heldAt}, id) < (${input.afterStartedAt}::timestamptz, ${input.afterId}::uuid)`);
-    }
-
-    const rows = (await query
-      .orderBy(heldAt, 'desc')
-      .orderBy('id', 'desc')
-      .limit(input.limit ?? 50)
-      .execute()) as unknown as MeetingRow[];
+    const rows = (await buildMeetingListQuery(ctx.trx, ctx.orgId, today, input).execute()) as unknown as MeetingRow[];
 
     if (rows.length === 0) return [];
 

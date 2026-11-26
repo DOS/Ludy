@@ -56,6 +56,7 @@ describe('zMeetingListInput (#5052)', () => {
     expect(zMeetingListInput.safeParse({ afterStartedAt: '2026-11-25T03:00:00+23:59', afterId: ID }).success).toBe(false);
     expect(zMeetingListInput.safeParse({ afterStartedAt: '2026-11-25T03:00:00-23:59', afterId: ID }).success).toBe(false);
     expect(zMeetingListInput.safeParse({ afterStartedAt: '0000-01-01T00:00:00Z', afterId: ID }).success).toBe(false);
+    expect(zMeetingListInput.safeParse({ afterStartedAt: `2026-11-25T03:00:00.${'0'.repeat(100)}Z`, afterId: ID }).success).toBe(false);
     expect(zMeetingListInput.safeParse({ afterStartedAt: '2026-11-25T03:00:00Z', afterId: 'not-a-uuid' }).success).toBe(false);
     expect(zMeetingListInput.safeParse({ search: 'a'.repeat(201) }).success).toBe(false);
     expect(zMeetingListInput.safeParse({ search: 'abc\u0000def' }).success).toBe(false);

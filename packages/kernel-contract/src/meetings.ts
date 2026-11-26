@@ -149,6 +149,7 @@ export const zMeetingListInput = z
     // Keyset cursor (#5052): held time (`startedAt ?? createdAt`) and `id` of the last item of the previous page, both or neither.
     afterStartedAt: z.iso
       .datetime({ offset: true })
+      .max(64)
       .refine((v) => PG_TIMESTAMPTZ_RANGE.test(v), 'Timestamp must be within PostgreSQL timestamptz range (year >= 0001, offset within +/-15:59)')
       .optional(),
     afterId: zId.optional(),
