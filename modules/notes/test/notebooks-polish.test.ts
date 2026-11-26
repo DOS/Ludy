@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 import type { Database, MemberRole } from '@ludy/db';
 import type { CommandContext } from '@ludy/kernel-runtime';
 import { notebookCreate, notebookUpdate, planNotebookRebalance, spreadKeysBetween } from '../src/notebooks.ts';
-import { noteUpdate } from '../src/notes.ts';
+import { noteCreate, noteUpdate } from '../src/notes.ts';
 
 const ORG = '00000000-0000-4000-8000-000000000001';
 const USER = '00000000-0000-4000-8000-000000000002';
@@ -148,6 +148,34 @@ describe('noteUpdate canonical pre-load lock order & error handling (#4211)', ()
         noteUpdate.handler(makeCtx(trx, USER, 'member'), {
           noteId: NOTE_ID,
           revision: 1,
+          notebookId: NB_1,
+        }),
+      ).rejects.toMatchObject({ code: pgErr.expectedCode, status: pgErr.expectedStatus });
+    }
+  });
+
+  it('maps 23514 NOTES_SHARED_NOTE_PRIVATE_NOTEBOOK and 42501 NOTES_NOTEBOOK_NOT_ACCESSIBLE from INSERT in noteCreate (#4761)', async () => {
+    for (const pgErr of [
+      { code: '23514', message: 'NOTES_SHARED_NOTE_PRIVATE_NOTEBOOK', expectedCode: 'NOTES_SHARED_NOTE_PRIVATE_NOTEBOOK', expectedStatus: 422 },
+      { code: '42501', message: 'NOTES_NOTEBOOK_NOT_ACCESSIBLE', expectedCode: 'NOTEBOOK_NOT_FOUND', expectedStatus: 404 },
+    ]) {
+      const { trx } = createMockTrx((compiled) => {
+        const sqlLower = compiled.sql.toLowerCase();
+        if (sqlLower.includes('from "ludy_notes"."notebook"')) {
+          return { rows: [{ id: NB_1, author_user_id: USER, visibility: 'org' }] };
+        }
+        if (sqlLower.startsWith('insert into "ludy_notes"."note"')) {
+          throw Object.assign(new Error(pgErr.message), { code: pgErr.code });
+        }
+        return { rows: [] };
+      });
+
+      await expect(
+        noteCreate.handler(makeCtx(trx, USER, 'member'), {
+          title: 'Ghi chu dong bo',
+          body: '',
+          visibility: 'private',
+          tags: [],
           notebookId: NB_1,
         }),
       ).rejects.toMatchObject({ code: pgErr.expectedCode, status: pgErr.expectedStatus });

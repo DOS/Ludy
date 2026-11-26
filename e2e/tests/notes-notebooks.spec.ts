@@ -126,4 +126,45 @@ test('notebooks and 2-level stacks, interactive preview checkboxes, and RLS-safe
       await otherContext.close();
     }
   });
+
+  await test.step('clicking [[Link]] inside a - [ ] task item in Preview navigates without toggling completion', async () => {
+    const taskLinkTitle = 'Kiểm tra link trong việc cần làm';
+    const taskLinkBody = '- [ ] Đối chiếu [[Kế hoạch quý 4]]';
+
+    await page.getByRole('button', { name: 'Ghi chú mới' }).first().click();
+    const titleInput = page.getByRole('textbox', { name: 'Tiêu đề' });
+    const body = page.getByRole('textbox', { name: 'Nội dung' });
+    await expect(titleInput).toHaveValue('Ghi chú mới');
+    await expect(body).toHaveValue('');
+
+    await titleInput.fill(taskLinkTitle);
+    await body.fill(taskLinkBody);
+    await expect(page.getByRole('status').filter({ hasText: 'Đã lưu' })).toBeVisible({ timeout: 10_000 });
+    await expect(rows.filter({ hasText: taskLinkTitle })).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole('button', { name: 'Xem trước' }).click();
+    const taskCheckbox = page.getByTestId('note-task-checkbox').first();
+    await expect(taskCheckbox).not.toBeChecked();
+
+    await page.getByTestId('note-wiki-link').filter({ hasText: 'Kế hoạch quý 4' }).click();
+    await expect(page.getByRole('textbox', { name: 'Tiêu đề' })).toHaveValue('Kế hoạch quý 4');
+    await expect(page.getByTestId('note-backlinks')).toContainText(taskLinkTitle);
+
+    await page.getByTestId('note-backlink-item').filter({ hasText: taskLinkTitle }).click();
+    await expect(page.getByRole('textbox', { name: 'Tiêu đề' })).toHaveValue(taskLinkTitle);
+    await expect(page.getByRole('textbox', { name: 'Nội dung' })).toHaveValue(taskLinkBody);
+
+    await page.reload();
+    await expect(page.getByRole('textbox', { name: 'Nội dung' })).toHaveValue(taskLinkBody);
+    await page.getByRole('button', { name: 'Xem trước' }).click();
+    await expect(page.getByTestId('note-task-checkbox').first()).not.toBeChecked();
+
+    const stored = sql<{ body: string }>(
+      `SELECT n.body FROM ludy_notes.note n
+       JOIN ludy_kernel.tenant t ON t.org_id = n.org_id
+       WHERE t.slug = :'slug' AND n.title = :'taskLinkTitle'`,
+      { slug, taskLinkTitle },
+    );
+    expect(stored).toEqual([{ body: taskLinkBody }]);
+  });
 });

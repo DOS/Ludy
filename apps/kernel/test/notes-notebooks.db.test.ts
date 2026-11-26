@@ -807,4 +807,61 @@ suite('Notes v2 E1 (#3559): notebooks, 2-level stacks, checkbox updates, [[Note]
     expect(compactedPrev > 'V').toBe(true);
     expect(compactedNew > compactedPrev).toBe(true);
   });
+
+  it('answers 404 NOTEBOOK_NOT_FOUND cleanly when notes.note.create races against concurrent private notebook deletion (#4761)', async () => {
+    const privNb = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'So rieng xoa dong bo', visibility: 'private' },
+      { actor: asUser(users.alice), orgId },
+    );
+
+    const gate = new pg.Client({ connectionString: adminUrl });
+    await gate.connect();
+    const errors: unknown[] = [];
+    let createPromise: Promise<NoteWritten> | undefined;
+    try {
+      const gatePid = (await gate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await gate.query('BEGIN');
+      // Lock only the notebook row FOR UPDATE so resolveNotebookForNote completes and BEFORE INSERT blocks on trigger FOR SHARE.
+      await gate.query('SELECT 1 FROM ludy_notes.notebook WHERE org_id = $1 AND id = $2 FOR UPDATE', [orgId, privNb.notebookId]);
+      createPromise = runtime.execute<NoteWritten>(
+        'notes.note.create',
+        { title: 'Ghi chu tao song song', body: 'ok', visibility: 'private', notebookId: privNb.notebookId },
+        { actor: asUser(users.alice), orgId },
+      );
+      void createPromise.catch((err) => errors.push(err));
+
+      const deadline = Date.now() + 3000;
+      let sawWait = false;
+      while (!sawWait && Date.now() < deadline) {
+        if (errors.length > 0) throw errors[0];
+        const waits = await admin(async (c) =>
+          (await c.query<{ pid: number }>(
+            `SELECT a.pid
+               FROM pg_catalog.pg_stat_activity a
+              WHERE a.datname = pg_catalog.current_database()
+                AND a.state = 'active'
+                AND a.wait_event_type = 'Lock'
+                AND a.query ILIKE '%insert into%ludy_notes%note%'
+                AND $1::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+              LIMIT 1`,
+            [gatePid],
+          )).rows,
+        );
+        if (waits.length > 0) sawWait = true;
+        else await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(sawWait).toBe(true);
+
+      await gate.query(`DELETE FROM ludy_notes.notebook WHERE org_id = $1 AND id = $2`, [orgId, privNb.notebookId]);
+      await gate.query('COMMIT');
+
+      const rejected = await catchDomain(() => createPromise!);
+      expect(rejected).toMatchObject({ code: 'NOTEBOOK_NOT_FOUND', status: 404 });
+    } finally {
+      await gate.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(createPromise ? [createPromise] : []);
+      await gate.end().catch(() => undefined);
+    }
+  });
 });

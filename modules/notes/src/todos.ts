@@ -368,44 +368,171 @@ interface SeriesTimeRow {
   due_at: Date | string | null;
   time_zone: string;
   created_at: Date | string;
+  created_at_us?: string;
 }
 
-function priorSeriesOccurrences(
-  current: { id: string; created_at: Date | string },
-  rows: ReadonlyArray<SeriesTimeRow>,
-): Array<{ dueOn: string | null; dueAt: Date | null; timeZone: string }> {
-  const currentCreatedMs = new Date(current.created_at).getTime();
-  return rows
-    .filter((r) => {
-      if (r.id === current.id) return false;
-      const createdMs = new Date(r.created_at).getTime();
-      return createdMs < currentCreatedMs || (createdMs === currentCreatedMs && r.id < current.id);
-    })
-    .sort((a, b) => {
-      const diff = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-      return diff !== 0 ? diff : b.id < a.id ? -1 : b.id > a.id ? 1 : 0;
-    })
-    .map((r) => ({ dueOn: r.due_on, dueAt: r.due_at === null ? null : new Date(r.due_at), timeZone: r.time_zone }));
+const SPRING_FORWARD_SIBLING_LIMIT = 64;
+const CREATED_AT_US_SQL = sql<string>`pg_catalog.to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+function compareRowOrderDesc(
+  a: Pick<SeriesTimeRow, 'id' | 'created_at' | 'created_at_us'>,
+  b: Pick<SeriesTimeRow, 'id' | 'created_at' | 'created_at_us'>,
+): number {
+  if (a.created_at_us !== undefined && b.created_at_us !== undefined) {
+    if (a.created_at_us !== b.created_at_us) return a.created_at_us > b.created_at_us ? -1 : 1;
+  } else {
+    const diff = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    if (diff !== 0) return diff;
+  }
+  return b.id < a.id ? -1 : b.id > a.id ? 1 : 0;
+}
+
+function isPriorRow(
+  r: Pick<SeriesTimeRow, 'id' | 'created_at' | 'created_at_us'>,
+  cursor: Pick<SeriesTimeRow, 'id' | 'created_at' | 'created_at_us'>,
+): boolean {
+  return compareRowOrderDesc(r, cursor) > 0;
+}
+
+function isDecisiveSpringForwardPrior(
+  actualLocal: string,
+  timeZone: string,
+  candidate: SeriesTimeRow,
+): boolean {
+  if (candidate.due_on === null || candidate.due_at === null || candidate.time_zone !== timeZone) {
+    return false;
+  }
+  return todoLocalTime(new Date(candidate.due_at), timeZone) !== actualLocal || !isSpringForwardDate(candidate.due_on, timeZone);
+}
+
+function findFirstDecisiveDescending(
+  sortedDescRows: ReadonlyArray<SeriesTimeRow>,
+  actualLocal: string,
+  timeZone: string,
+  priorTo?: Pick<SeriesTimeRow, 'id' | 'created_at' | 'created_at_us'>,
+): SeriesTimeRow | null {
+  for (const row of sortedDescRows) {
+    if (priorTo && !isPriorRow(row, priorTo)) continue;
+    if (isDecisiveSpringForwardPrior(actualLocal, timeZone, row)) return row;
+  }
+  return null;
+}
+
+function toSeriesOccurrence(row: SeriesTimeRow): { dueOn: string | null; dueAt: Date | null; timeZone: string } {
+  return { dueOn: row.due_on, dueAt: row.due_at === null ? null : new Date(row.due_at), timeZone: row.time_zone };
+}
+
+async function resolveCreatedAtUs(
+  ctx: Pick<CommandContext, 'trx' | 'orgId'>,
+  row: Pick<SeriesTimeRow, 'id' | 'created_at' | 'created_at_us'>,
+): Promise<string> {
+  if (row.created_at_us !== undefined) return row.created_at_us;
+  const found = await ctx.trx
+    .selectFrom('ludy_notes.todo')
+    .select(CREATED_AT_US_SQL.as('created_at_us'))
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', row.id)
+    .executeTakeFirst();
+  return found?.created_at_us ?? new Date(row.created_at).toISOString();
+}
+
+async function fetchSpringForwardSiblings(
+  ctx: Pick<CommandContext, 'trx' | 'orgId'>,
+  userId: string,
+  current: {
+    id: string;
+    due_on: string;
+    due_at: Date;
+    time_zone: string;
+    series_id: string;
+    created_at: Date | string;
+    created_at_us?: string;
+  },
+  options: {
+    trashedOnly: boolean;
+    activeSiblings?: ReadonlyArray<SeriesTimeRow>;
+    startCursor?: Pick<SeriesTimeRow, 'id' | 'created_at' | 'created_at_us'>;
+  },
+): Promise<SeriesTimeRow | null> {
+  const actualLocal = todoLocalTime(current.due_at, current.time_zone);
+  const currentCreatedAtUs = await resolveCreatedAtUs(ctx, current);
+  const currentWithUs = { ...current, created_at_us: currentCreatedAtUs };
+
+  let activeDecisive: SeriesTimeRow | null = null;
+  if (options.activeSiblings && options.activeSiblings.length > 0) {
+    const priorActive = options.activeSiblings.filter((r) => isPriorRow(r, currentWithUs)).sort(compareRowOrderDesc);
+    activeDecisive = findFirstDecisiveDescending(priorActive, actualLocal, current.time_zone);
+  }
+
+  let cursor: Pick<SeriesTimeRow, 'id' | 'created_at' | 'created_at_us'> = options.startCursor
+    ? { ...options.startCursor, created_at_us: await resolveCreatedAtUs(ctx, options.startCursor) }
+    : currentWithUs;
+
+  while (true) {
+    const cursorCreatedAtUs = await resolveCreatedAtUs(ctx, cursor);
+    let q = ctx.trx
+      .selectFrom('ludy_notes.todo')
+      .select(['id', 'due_on', 'due_at', 'time_zone', 'created_at', CREATED_AT_US_SQL.as('created_at_us')])
+      .where('org_id', '=', ctx.orgId)
+      .where('owner_user_id', '=', userId)
+      .where('series_id', '=', current.series_id)
+      .where('due_on', 'is not', null)
+      .where('due_at', 'is not', null)
+      .where('time_zone', '=', current.time_zone)
+      .where(sql<boolean>`(created_at, id) < (${cursorCreatedAtUs}::timestamptz, ${cursor.id}::uuid)`);
+    if (options.trashedOnly) {
+      q = q.where('deleted_at', 'is not', null);
+    }
+    const page = await q
+      .orderBy('created_at', 'desc')
+      .orderBy('id', 'desc')
+      .limit(SPRING_FORWARD_SIBLING_LIMIT)
+      .execute();
+
+    for (const row of page) {
+      if (activeDecisive && isPriorRow(row, activeDecisive)) return activeDecisive;
+      if (isDecisiveSpringForwardPrior(actualLocal, current.time_zone, row)) return row;
+    }
+    if (page.length < SPRING_FORWARD_SIBLING_LIMIT) break;
+    cursor = page[page.length - 1]!;
+  }
+  return activeDecisive;
 }
 
 async function resolveSeriesDueTime(
   ctx: Pick<CommandContext, 'trx' | 'orgId'>,
-  current: { id: string; due_on: string | null; due_at: Date | string | null; time_zone: string; series_id: string | null; created_at: Date | string },
+  userId: string,
+  current: {
+    id: string;
+    due_on: string | null;
+    due_at: Date | string | null;
+    time_zone: string;
+    series_id: string | null;
+    created_at: Date | string;
+    created_at_us?: string;
+  },
   activeSiblings: ReadonlyArray<SeriesTimeRow>,
 ): Promise<string | null> {
   if (current.due_on === null || current.due_at === null || current.series_id === null) return null;
   if (!isSpringForwardDate(current.due_on, current.time_zone)) return null;
-  const trashedSiblings = await ctx.trx
-    .selectFrom('ludy_notes.todo')
-    .select(['id', 'due_on', 'due_at', 'time_zone', 'created_at'])
-    .where('org_id', '=', ctx.orgId)
-    .where('series_id', '=', current.series_id)
-    .where('id', '<>', current.id)
-    .where('deleted_at', 'is not', null)
-    .execute();
+  const dueAt = new Date(current.due_at);
+  const winner = await fetchSpringForwardSiblings(
+    ctx,
+    userId,
+    {
+      id: current.id,
+      due_on: current.due_on,
+      due_at: dueAt,
+      time_zone: current.time_zone,
+      series_id: current.series_id,
+      created_at: current.created_at,
+      ...(current.created_at_us !== undefined ? { created_at_us: current.created_at_us } : {}),
+    },
+    { trashedOnly: true, activeSiblings },
+  );
   return recoverSpringForwardDueTime(
-    { dueOn: current.due_on, dueAt: new Date(current.due_at), timeZone: current.time_zone },
-    priorSeriesOccurrences(current, [...activeSiblings, ...trashedSiblings]),
+    { dueOn: current.due_on, dueAt, timeZone: current.time_zone },
+    winner ? [toSeriesOccurrence(winner)] : [],
   );
 }
 
@@ -802,17 +929,12 @@ export const todoComplete = defineCommand({
     const stopSeries = input.stopSeries === true;
     let lockedList: { id: string; sections: unknown } | undefined;
     let precomputedSortKey: string | null = null;
-    let preSiblings: Array<{
-      id: string;
-      due_on: string | null;
-      due_at: Date | string | null;
-      time_zone: string;
-      created_at: Date | string;
-    }> | null = null;
+    let preSiblings: SeriesTimeRow[] | null = null;
+    let peekCreatedAtUs: string | undefined;
     if (!stopSeries) {
       const peek = await ctx.trx
         .selectFrom('ludy_notes.todo')
-        .select(['id', 'revision', 'status', 'deleted_at', 'list_id', 'recurrence', 'series_id', 'created_at'])
+        .select(['id', 'revision', 'status', 'deleted_at', 'list_id', 'recurrence', 'series_id', 'created_at', CREATED_AT_US_SQL.as('created_at_us')])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', todoId)
         .executeTakeFirst();
@@ -820,24 +942,21 @@ export const todoComplete = defineCommand({
       assertNotInTrash(peek);
       if (peek.status === 'done') return written(peek);
       if (peek.status !== 'open') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Việc này đã được giao hoặc đã hủy');
+      peekCreatedAtUs = peek.created_at_us;
       if (peek.recurrence !== null) {
         // Read the series siblings once under lockTodoSeries and reuse them both to skip ownKeys when a newer
         // sibling already exists and to compute the next occurrence date/time if spawning. Precompute only after
         // verifying the locked series row is actually open and non-trashed so no-op retries never rebalance sort keys.
         const peekSeriesId = peek.series_id ?? todoId;
-        const peekCreatedAt = new Date(peek.created_at).getTime();
         preSiblings = await ctx.trx
           .selectFrom('ludy_notes.todo')
-          .select(['id', 'due_on', 'due_at', 'time_zone', 'created_at'])
+          .select(['id', 'due_on', 'due_at', 'time_zone', 'created_at', CREATED_AT_US_SQL.as('created_at_us')])
           .where('org_id', '=', ctx.orgId)
           .where('series_id', '=', peekSeriesId)
           .where('id', '<>', todoId)
           .where('deleted_at', 'is', null)
           .execute();
-        const peekHasNewerSibling = preSiblings.some((r) => {
-          const createdMs = new Date(r.created_at).getTime();
-          return createdMs > peekCreatedAt || (createdMs === peekCreatedAt && r.id > todoId);
-        });
+        const peekHasNewerSibling = preSiblings.some((r) => isPriorRow(peek, r));
         if (!peekHasNewerSibling) {
           if (peek.list_id !== null) {
             lockedList = await ctx.trx
@@ -950,12 +1069,16 @@ export const todoComplete = defineCommand({
     let nextDueOn: string | null = null;
     if (rule !== null && !stopSeries && seriesId !== null) {
       const anchorDate = before.due_on ?? zonedDate(before.time_zone, ctx.now.getTime());
-      const beforeCreatedAt = new Date(before.created_at).getTime();
+      const beforeCursor = {
+        id: before.id,
+        created_at: before.created_at,
+        ...(peekCreatedAtUs !== undefined ? { created_at_us: peekCreatedAtUs } : {}),
+      };
       const siblings =
         preSiblings ??
         (await ctx.trx
           .selectFrom('ludy_notes.todo')
-          .select(['id', 'due_on', 'due_at', 'time_zone', 'created_at'])
+          .select(['id', 'due_on', 'due_at', 'time_zone', 'created_at', CREATED_AT_US_SQL.as('created_at_us')])
           .where('org_id', '=', ctx.orgId)
           .where('series_id', '=', seriesId)
           .where('id', '<>', before.id)
@@ -964,10 +1087,7 @@ export const todoComplete = defineCommand({
 
       // Do not spawn if a newer non-deleted occurrence already exists in the series (reopened old rows must not
       // duplicate the series, whereas older reopened rows do not block a newer occurrence from spawning ahead).
-      const hasNewerSibling = siblings.some((r) => {
-        const createdMs = new Date(r.created_at).getTime();
-        return createdMs > beforeCreatedAt || (createdMs === beforeCreatedAt && r.id > before.id);
-      });
+      const hasNewerSibling = siblings.some((r) => isPriorRow(beforeCursor, r));
 
       if (!hasNewerSibling) {
         const occupied = new Set(siblings.map((r) => r.due_on).filter((d): d is string => d !== null));
@@ -995,7 +1115,16 @@ export const todoComplete = defineCommand({
             stepRule.freq === 'monthly' && stepRule.byMonthDay === undefined && anchorDay > candidateDay
               ? { ...stepRule, byMonthDay: anchorDay }
               : stepRule;
-          const dueTime = await resolveSeriesDueTime(ctx, { ...before, series_id: seriesId }, siblings);
+          const dueTime = await resolveSeriesDueTime(
+            ctx,
+            userId,
+            {
+              ...before,
+              series_id: seriesId,
+              ...(peekCreatedAtUs !== undefined ? { created_at_us: peekCreatedAtUs } : {}),
+            },
+            siblings,
+          );
           const shifted = shiftTodoSchedule(
             {
               dueOn: before.due_on,
@@ -1263,7 +1392,7 @@ export const todoReschedule = defineCommand({
   access: WRITERS,
   target: (input) => ({ type: 'notes.todo', id: input.todoIds[0] ?? '' }),
   handler: async (ctx, input): Promise<TodoRescheduled> => {
-    userOf(ctx.actor);
+    const userId = userOf(ctx.actor);
     // Acquire series advisory locks in canonical order before FOR UPDATE so bulk reschedule and stopSeries never deadlock.
     const metaRows = await ctx.trx
       .selectFrom('ludy_notes.todo')
@@ -1278,7 +1407,19 @@ export const todoReschedule = defineCommand({
     }
     const rows = await ctx.trx
       .selectFrom('ludy_notes.todo')
-      .select(['id', 'status', 'due_on', 'due_at', 'time_zone', 'remind_at', 'revision', 'deleted_at', 'series_id', 'created_at'])
+      .select([
+        'id',
+        'status',
+        'due_on',
+        'due_at',
+        'time_zone',
+        'remind_at',
+        'revision',
+        'deleted_at',
+        'series_id',
+        'created_at',
+        CREATED_AT_US_SQL.as('created_at_us'),
+      ])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', input.todoIds)
       .orderBy('id')
@@ -1292,36 +1433,101 @@ export const todoReschedule = defineCommand({
       }
       if (row.status !== 'open') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Chỉ đổi lịch được việc chưa xong');
     }
-    const springSeriesIds = [
-      ...new Set(
-        rows
-          .filter((r) => r.series_id !== null && r.due_on !== null && r.due_at !== null && isSpringForwardDate(r.due_on, r.time_zone))
-          .map((r) => r.series_id as string),
-      ),
-    ];
-    const seriesSiblingsById = new Map<string, SeriesTimeRow[]>();
-    if (springSeriesIds.length > 0) {
-      const fetched = await ctx.trx
-        .selectFrom('ludy_notes.todo')
-        .select(['id', 'series_id', 'due_on', 'due_at', 'time_zone', 'created_at'])
-        .where('org_id', '=', ctx.orgId)
-        .where('series_id', 'in', springSeriesIds)
-        .execute();
+    const springTargets = rows.filter(
+      (r): r is typeof r & { series_id: string; due_on: string; due_at: Date | string } =>
+        r.series_id !== null && r.due_on !== null && r.due_at !== null && isSpringForwardDate(r.due_on, r.time_zone),
+    );
+    const siblingsByPair = new Map<string, SeriesTimeRow[]>();
+    if (springTargets.length > 0) {
+      const pairMax = new Map<string, { id: string; seriesId: string; timeZone: string; created_at: Date | string; created_at_us: string }>();
+      for (const targetRow of springTargets) {
+        const pairKey = `${targetRow.series_id}:${targetRow.time_zone}`;
+        const existing = pairMax.get(pairKey);
+        if (!existing || compareRowOrderDesc(targetRow, existing) < 0) {
+          pairMax.set(pairKey, {
+            id: targetRow.id,
+            seriesId: targetRow.series_id,
+            timeZone: targetRow.time_zone,
+            created_at: targetRow.created_at,
+            created_at_us: targetRow.created_at_us,
+          });
+        }
+      }
+      const pairs = [...pairMax.values()];
+      const pairSeriesIds = pairs.map((p) => p.seriesId);
+      const pairTimeZones = pairs.map((p) => p.timeZone);
+      const pairCreatedAtsUs = pairs.map((p) => p.created_at_us);
+      const pairMaxIds = pairs.map((p) => p.id);
+      const { rows: fetched } = await sql<SeriesTimeRow & { series_id: string }>`
+        SELECT t.series_id, p.id, p.due_on, p.due_at, p.time_zone, p.created_at, p.created_at_us
+        FROM ROWS FROM (
+          pg_catalog.unnest(${pairSeriesIds}::uuid[]),
+          pg_catalog.unnest(${pairTimeZones}::text[]),
+          pg_catalog.unnest(${pairCreatedAtsUs}::timestamptz[]),
+          pg_catalog.unnest(${pairMaxIds}::uuid[])
+        ) AS t(series_id, time_zone, created_at, max_id)
+        CROSS JOIN LATERAL (
+          SELECT
+            s.id,
+            s.due_on,
+            s.due_at,
+            s.time_zone,
+            s.created_at,
+            pg_catalog.to_char(s.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_us
+          FROM ludy_notes.todo s
+          WHERE s.org_id = ${ctx.orgId}::uuid
+            AND s.owner_user_id = ${userId}::uuid
+            AND s.series_id = t.series_id
+            AND s.due_on IS NOT NULL
+            AND s.due_at IS NOT NULL
+            AND s.time_zone = t.time_zone
+            AND (s.created_at, s.id) < (t.created_at, t.max_id)
+          ORDER BY s.created_at DESC, s.id DESC
+          LIMIT ${SPRING_FORWARD_SIBLING_LIMIT}
+        ) AS p`.execute(ctx.trx);
       for (const item of fetched) {
-        if (item.series_id === null) continue;
-        const list = seriesSiblingsById.get(item.series_id) ?? [];
+        const pairKey = `${item.series_id}:${item.time_zone}`;
+        const list = siblingsByPair.get(pairKey) ?? [];
         list.push(item);
-        seriesSiblingsById.set(item.series_id, list);
+        siblingsByPair.set(pairKey, list);
+      }
+      for (const list of siblingsByPair.values()) {
+        list.sort(compareRowOrderDesc);
       }
     }
+    // Compute every shifted schedule against the pre-update series snapshot so earlier writes in the batch never alter later rows' lookups.
+    const plannedUpdates: Array<{ row: (typeof rows)[number]; shifted: ReturnType<typeof shiftTodoSchedule> }> = [];
     for (const row of rows) {
-      const dueTime =
-        row.series_id !== null && row.due_on !== null && row.due_at !== null && isSpringForwardDate(row.due_on, row.time_zone)
-          ? recoverSpringForwardDueTime(
-              { dueOn: row.due_on, dueAt: new Date(row.due_at), timeZone: row.time_zone },
-              priorSeriesOccurrences(row, seriesSiblingsById.get(row.series_id) ?? []),
-            )
-          : null;
+      let dueTime: string | null = null;
+      if (row.series_id !== null && row.due_on !== null && row.due_at !== null && isSpringForwardDate(row.due_on, row.time_zone)) {
+        const dueAt = new Date(row.due_at);
+        const actualLocal = todoLocalTime(dueAt, row.time_zone);
+        const pairKey = `${row.series_id}:${row.time_zone}`;
+        const windowRows = siblingsByPair.get(pairKey) ?? [];
+        let winner = findFirstDecisiveDescending(windowRows, actualLocal, row.time_zone, row);
+        if (!winner && windowRows.length >= SPRING_FORWARD_SIBLING_LIMIT) {
+          const tail = windowRows[windowRows.length - 1]!;
+          const startCursor = !isPriorRow(row, tail) ? tail : row;
+          winner = await fetchSpringForwardSiblings(
+            ctx,
+            userId,
+            {
+              id: row.id,
+              due_on: row.due_on,
+              due_at: dueAt,
+              time_zone: row.time_zone,
+              series_id: row.series_id,
+              created_at: row.created_at,
+              created_at_us: row.created_at_us,
+            },
+            { trashedOnly: false, startCursor },
+          );
+        }
+        dueTime = recoverSpringForwardDueTime(
+          { dueOn: row.due_on, dueAt, timeZone: row.time_zone },
+          winner ? [toSeriesOccurrence(winner)] : [],
+        );
+      }
       const shifted = shiftTodoSchedule(
         {
           dueOn: row.due_on,
@@ -1332,6 +1538,9 @@ export const todoReschedule = defineCommand({
         },
         input.dueOn,
       );
+      plannedUpdates.push({ row, shifted });
+    }
+    for (const { row, shifted } of plannedUpdates) {
       await ctx.trx
         .updateTable('ludy_notes.todo')
         .set({

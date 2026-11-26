@@ -1043,4 +1043,249 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     });
     expect((await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: t2Id })).recurrence).toBeNull();
   });
+
+  it('bounds spring-forward sibling reads in resolveSeriesDueTime and todoReschedule without truncating occupied dates or starving batched series (#4761)', async () => {
+    const o = await setupOrg();
+
+    const nyRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'NY DST bounded lookup',
+      dueOn: '2026-03-07',
+      dueTime: '02:30',
+      timeZone: 'America/New_York',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const nyDay2Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: nyRoot.todoId });
+    const nyDay2Id = nyDay2Res.nextTodoId as string;
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.delete', { todoId: nyRoot.todoId });
+
+    // Seed (placing nyRoot 4h before nyDay2 so every intermediate row sits strictly at created_at <= nyDay2.created_at):
+    // 1) 70 active historical siblings (incl. row 1 with an older non-DST 03:30 due_at) + 1 active sibling occupying 2026-03-09 (trashed nyRoot at 02:30 is newer so must beat older active 03:30!)
+    // 2) 70 older trashed siblings before nyRoot + 70 unusable newer rows (NULL due_on/due_at or other tz) + 70 newer spring-forward rows between nyRoot and nyDay2 (forcing >64 keyset pagination without crowding out nyRoot)
+    await admin(async (c) => {
+      await c.query(
+        `UPDATE ludy_notes.todo SET created_at = created_at - interval '4 hours' WHERE org_id = $1 AND id = $2`,
+        [o.orgId, nyRoot.todoId],
+      );
+      await c.query(
+        `INSERT INTO ludy_notes.todo (
+           org_id, id, owner_user_id, title, details, checklist, status, priority, tags,
+           due_on, due_at, time_zone, sort_key, series_id, tainted, created_at, updated_at, done_at, deleted_at
+         )
+         SELECT
+           t.org_id, gen_random_uuid(), t.owner_user_id, t.title, t.details, t.checklist, 'done', t.priority, t.tags,
+           CASE WHEN g.n = 71 THEN DATE '2026-03-09' WHEN g.n = 1 THEN DATE '2026-03-06' ELSE (DATE '2025-01-01' + g.n)::date END,
+           CASE WHEN g.n = 1 THEN TIMESTAMPTZ '2026-03-06T08:30:00Z' ELSE NULL END,
+           t.time_zone, t.sort_key, t.series_id, t.tainted,
+           t.created_at - ((1000 - g.n) * interval '1 minute'),
+           t.created_at - ((1000 - g.n) * interval '1 minute'),
+           t.created_at - ((1000 - g.n) * interval '1 minute'),
+           NULL
+         FROM ludy_notes.todo t
+         CROSS JOIN pg_catalog.generate_series(1, 71) AS g(n)
+         WHERE t.org_id = $1 AND t.id = $2`,
+        [o.orgId, nyRoot.todoId],
+      );
+      await c.query(
+        `INSERT INTO ludy_notes.todo (
+           org_id, id, owner_user_id, title, details, checklist, status, priority, tags,
+           due_on, due_at, time_zone, sort_key, series_id, tainted, created_at, updated_at, done_at, deleted_at
+         )
+         SELECT
+           t.org_id, gen_random_uuid(), t.owner_user_id, t.title, t.details, t.checklist, 'open', t.priority, t.tags,
+           CASE
+             WHEN g.n <= 70 THEN DATE '2026-03-06'
+             WHEN g.n <= 140 AND (g.n % 3) = 0 THEN NULL
+             ELSE d2.due_on
+           END,
+           CASE
+             WHEN g.n <= 70 THEN TIMESTAMPTZ '2026-03-06T06:15:00Z'
+             WHEN g.n <= 140 AND (g.n % 3) IN (0, 1) THEN NULL
+             ELSE d2.due_at
+           END,
+           CASE
+             WHEN g.n > 70 AND g.n <= 140 AND (g.n % 3) = 2 THEN 'Europe/London'
+             ELSE t.time_zone
+           END,
+           t.sort_key, t.series_id, t.tainted,
+           CASE
+             WHEN g.n <= 70 THEN t.created_at - (g.n * interval '1 minute')
+             ELSE t.created_at + ((g.n - 70) * interval '1 minute')
+           END,
+           d2.created_at,
+           NULL,
+           d2.created_at
+         FROM ludy_notes.todo t
+         JOIN ludy_notes.todo d2 ON d2.org_id = t.org_id AND d2.id = $3
+         CROSS JOIN pg_catalog.generate_series(1, 210) AS g(n)
+         WHERE t.org_id = $1 AND t.id = $2`,
+        [o.orgId, nyRoot.todoId, nyDay2Id],
+      );
+    });
+
+    const nyDay3Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: nyDay2Id });
+    const nyDay3 = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: nyDay3Res.nextTodoId as string });
+    // Occupied 2026-03-09 was still seen (skipped -> 2026-03-10), and 02:30 was recovered from trashed nyRoot!
+    expect(nyDay3.dueOn).toBe('2026-03-10');
+    expect(nyDay3.dueTime).toBe('02:30');
+    expect(nyDay3.dueAt).toBe('2026-03-10T06:30:00.000Z');
+
+    // Reopen nyDay2 and batch-reschedule alongside a second Europe/London spring-forward series also carrying >64 newer rows before ukDay2.
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: nyDay2Id, undoNextTodoId: nyDay3.id });
+    const ukRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'UK DST bounded lookup',
+      dueOn: '2026-03-28',
+      dueTime: '01:30',
+      timeZone: 'Europe/London',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const ukDay2Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: ukRoot.todoId });
+    const ukDay2Id = ukDay2Res.nextTodoId as string;
+    await admin(async (c) => {
+      await c.query(
+        `UPDATE ludy_notes.todo SET created_at = created_at - interval '3 hours' WHERE org_id = $1 AND id = $2`,
+        [o.orgId, ukRoot.todoId],
+      );
+      await c.query(
+        `INSERT INTO ludy_notes.todo (
+           org_id, id, owner_user_id, title, details, checklist, status, priority, tags,
+           due_on, due_at, time_zone, sort_key, series_id, tainted, created_at, updated_at, done_at, deleted_at
+         )
+         SELECT
+           d2.org_id, gen_random_uuid(), d2.owner_user_id, d2.title, d2.details, d2.checklist, 'open', d2.priority, d2.tags,
+           d2.due_on, d2.due_at, d2.time_zone, d2.sort_key, d2.series_id, d2.tainted,
+           r.created_at + (g.n * interval '1 minute'),
+           d2.created_at,
+           NULL,
+           d2.created_at
+         FROM ludy_notes.todo d2
+         JOIN ludy_notes.todo r ON r.org_id = d2.org_id AND r.id = $3
+         CROSS JOIN pg_catalog.generate_series(1, 70) AS g(n)
+         WHERE d2.org_id = $1 AND d2.id = $2`,
+        [o.orgId, ukDay2Id, ukRoot.todoId],
+      );
+    });
+
+    const rescheduled = await o.exec<TodoRescheduled>(o.mine, 'notes.todo.reschedule', {
+      todoIds: [nyDay2Id, ukDay2Id],
+      dueOn: '2026-03-31',
+    });
+    expect(rescheduled.updated).toBe(2);
+    const nyAfter = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: nyDay2Id });
+    const ukAfter = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: ukDay2Id });
+    expect(nyAfter.dueOn).toBe('2026-03-31');
+    expect(nyAfter.dueTime).toBe('02:30');
+    expect(ukAfter.dueOn).toBe('2026-03-31');
+    expect(ukAfter.dueTime).toBe('01:30');
+
+    // Verify reverse active-vs-trashed order (newer active beats older trashed) AND two-row same-series reschedule pre-update snapshot!
+    const pairRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'NY same-series DST batch',
+      dueOn: '2026-03-07',
+      dueTime: '02:30',
+      timeZone: 'America/New_York',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const pairDay2Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: pairRoot.todoId });
+    const pairDay2Id = pairDay2Res.nextTodoId as string;
+    const pairDay2B = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'NY same-series DST peer',
+      dueOn: '2026-03-08',
+      dueTime: '03:30',
+      timeZone: 'America/New_York',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    await admin(async (c) => {
+      await c.query(
+        `UPDATE ludy_notes.todo SET created_at = created_at - interval '4 hours' WHERE org_id = $1 AND id = $2`,
+        [o.orgId, pairRoot.todoId],
+      );
+      await c.query(
+        `UPDATE ludy_notes.todo r
+            SET series_id = d2.series_id
+           FROM ludy_notes.todo d2
+          WHERE r.org_id = $1 AND r.id = $2 AND d2.org_id = $1 AND d2.id = $3`,
+        [o.orgId, pairDay2B.todoId, pairDay2Id],
+      );
+      // Insert 70 spring-forward trashed rows between pairRoot (02:30) and pairDay2, plus an active 02:45 row for completion check.
+      await c.query(
+        `INSERT INTO ludy_notes.todo (
+           org_id, id, owner_user_id, title, details, checklist, status, priority, tags,
+           due_on, due_at, time_zone, sort_key, series_id, tainted, created_at, updated_at, done_at, deleted_at
+         )
+         SELECT
+           d2.org_id, gen_random_uuid(), d2.owner_user_id, d2.title, d2.details, d2.checklist, 'open', d2.priority, d2.tags,
+           d2.due_on, d2.due_at, d2.time_zone, d2.sort_key, d2.series_id, d2.tainted,
+           r.created_at + (g.n * interval '1 minute'),
+           d2.created_at,
+           NULL,
+           d2.created_at
+         FROM ludy_notes.todo d2
+         JOIN ludy_notes.todo r ON r.org_id = d2.org_id AND r.id = $3
+         CROSS JOIN pg_catalog.generate_series(1, 70) AS g(n)
+         WHERE d2.org_id = $1 AND d2.id = $2`,
+        [o.orgId, pairDay2Id, pairRoot.todoId],
+      );
+    });
+    const pairBatch = await o.exec<TodoRescheduled>(o.mine, 'notes.todo.reschedule', {
+      todoIds: [pairDay2Id, pairDay2B.todoId],
+      dueOn: '2026-03-31',
+    });
+    expect(pairBatch.updated).toBe(2);
+    const pairA = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: pairDay2Id });
+    const pairB = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: pairDay2B.todoId });
+    expect(pairA.dueTime).toBe('02:30');
+    expect(pairB.dueTime).toBe('02:30');
+
+    // Newer active non-DST 03:30 row beats an older trashed 02:30 row on spring-forward completion (keeping 03:30 rather than reverting to 02:30).
+    const revRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'NY active beats older trash',
+      dueOn: '2026-03-07',
+      dueTime: '02:30',
+      timeZone: 'America/New_York',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const revDay2 = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: revRoot.todoId });
+    const revDay2Id = revDay2.nextTodoId as string;
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.delete', { todoId: revRoot.todoId });
+    await admin(async (c) => {
+      await c.query(
+        `UPDATE ludy_notes.todo SET created_at = created_at - interval '4 hours' WHERE org_id = $1 AND id = $2`,
+        [o.orgId, revRoot.todoId],
+      );
+      await c.query(
+        `INSERT INTO ludy_notes.todo (
+           org_id, id, owner_user_id, title, details, checklist, status, priority, tags,
+           due_on, due_at, time_zone, sort_key, series_id, tainted, created_at, updated_at, done_at, deleted_at
+         )
+         SELECT
+           r.org_id, gen_random_uuid(), r.owner_user_id, r.title, r.details, r.checklist, 'done', r.priority, r.tags,
+           DATE '2026-03-06', TIMESTAMPTZ '2026-03-06T08:30:00Z', r.time_zone, r.sort_key, r.series_id, r.tainted,
+           r.created_at + interval '1 hour', r.created_at + interval '1 hour', r.created_at + interval '1 hour', NULL
+         FROM ludy_notes.todo r
+         WHERE r.org_id = $1 AND r.id = $2`,
+        [o.orgId, revRoot.todoId],
+      );
+      await c.query(
+        `INSERT INTO ludy_notes.todo (
+           org_id, id, owner_user_id, title, details, checklist, status, priority, tags,
+           due_on, due_at, time_zone, sort_key, series_id, tainted, created_at, updated_at, done_at, deleted_at
+         )
+         SELECT
+           d2.org_id, gen_random_uuid(), d2.owner_user_id, d2.title, d2.details, d2.checklist, 'open', d2.priority, d2.tags,
+           d2.due_on, d2.due_at, d2.time_zone, d2.sort_key, d2.series_id, d2.tainted,
+           r.created_at + ((90 + g.n) * interval '1 minute'),
+           d2.created_at,
+           NULL,
+           d2.created_at
+         FROM ludy_notes.todo d2
+         JOIN ludy_notes.todo r ON r.org_id = d2.org_id AND r.id = $3
+         CROSS JOIN pg_catalog.generate_series(1, 70) AS g(n)
+         WHERE d2.org_id = $1 AND d2.id = $2`,
+        [o.orgId, revDay2Id, revRoot.todoId],
+      );
+    });
+    const revDay3Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: revDay2Id });
+    const revDay3 = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: revDay3Res.nextTodoId as string });
+    expect(revDay3.dueTime).toBe('03:30');
+  });
 });
