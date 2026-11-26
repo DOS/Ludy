@@ -434,6 +434,29 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     expect(await refuses(trackedIn(orgId, elsewhere, 'tracky'))).not.toBeNull();
     expect(await refuses(runtime.execute('test.weekly_tracked_probe', { org: orgId, userId: users.tracky, at: AT }, { actor: asUser('tracky'), orgId }))).not.toBeNull();
     await expect(sql`SELECT ludy_meetings.weekly_tracked_hits(${orgId}::uuid, ${users.tracky}::uuid, ${AT}::timestamptz)`.execute(workerDb)).rejects.toThrow(/NO_CONTEXT/);
+    // Alone it checks, as the alert's definer does, that Meetings is on for the org and the member's account is enabled: no count (null, not an error) otherwise, and the count is back after. (The org being active is
+    // checked too, but the runtime's own context entry already refuses a closing org before any command runs, so no probe can reach the definer for one.)
+    const appsOffBefore = (await sqlAdmin<{ apps_off: string[] }>(`SELECT apps_off FROM ludy_kernel.tenant WHERE org_id = $1`, [orgId])).rows[0]?.apps_off ?? [];
+    const setAppsOff = (appsOff: string[]) =>
+      admin(async (c) => {
+        await c.query('BEGIN');
+        await c.query('SET LOCAL session_replication_role = replica');
+        await c.query(`UPDATE ludy_kernel.tenant SET apps_off = $2::text[] WHERE org_id = $1`, [orgId, appsOff]);
+        await c.query('COMMIT');
+      });
+    try {
+      await setAppsOff(['meetings']);
+      expect(await trackedOf('tracky')).toBeNull();
+    } finally {
+      await setAppsOff(appsOffBefore);
+    }
+    await sqlAdmin(`UPDATE ludy_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.tracky]);
+    try {
+      expect(await trackedOf('tracky')).toBeNull();
+    } finally {
+      await sqlAdmin(`UPDATE ludy_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [users.tracky]);
+    }
+    expect(await trackedOf('tracky')).toBe(3);
     // The due definer (the sweep's listing too) is the one it was: it has no tracked column, so the pass never pays for the number; only the command asks for it, for the one member.
     const listingColumns = Object.keys((await sql<Record<string, unknown>>`SELECT * FROM ludy_meetings.weekly_notices_due(500, ${orgId}::uuid, NULL::uuid, NULL::date, ${AT}::timestamptz)`.execute(workerDb)).rows[0] ?? {});
     expect(listingColumns).not.toContain('tracked');

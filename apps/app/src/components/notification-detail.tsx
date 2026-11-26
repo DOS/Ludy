@@ -100,9 +100,9 @@ export function useNotificationLine(wantsTrackerWords = false) {
           open: Number(n.detail.open ?? 0),
           overdue: Number(n.detail.overdue ?? 0),
           cut: n.detail.cut === '1' ? 'yes' : 'no',
-          // The tracked-word number (#5019), only when the notice holds one (0 drops the clause); 999 is the most the definer says, written "999+".
+          // The tracked-word number (#5019), only when the notice holds one (0 drops the clause). 999 is the most the definer says, written "999+" and nothing more; below it, a number the 50 meeting limit cut is written "at least".
           tracked: Math.min(Number(n.detail.tracked ?? 0), WEEKLY_TRACKED_MAX),
-          trackedMore: Number(n.detail.tracked ?? 0) >= WEEKLY_TRACKED_MAX ? 'yes' : 'no',
+          trackedMore: Number(n.detail.tracked ?? 0) >= WEEKLY_TRACKED_MAX ? 'max' : n.detail.cut === '1' ? 'atleast' : 'no',
         });
       case 'meetings.tracker_alert': {
         const names = new Map((trackerList.data?.terms ?? []).map((w) => [w.id, w.term]));

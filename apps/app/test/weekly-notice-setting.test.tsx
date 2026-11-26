@@ -97,11 +97,15 @@ describe('the weekly notice text in the app (#4967)', () => {
     const base = { meetings: 3, decisions: 4, open: 5, overdue: 2, cut: 'no' };
     expect(text('en', { ...base, tracked: 12, trackedMore: 'no' })).toContain('2 overdue, tracked word mentions: 12. Open the meetings page');
     expect(text('en', { ...base, tracked: 1, trackedMore: 'no' })).toContain('tracked word mentions: 1.');
-    expect(text('en', { ...base, tracked: 999, trackedMore: 'yes' })).toContain('tracked word mentions: 999+.');
-    expect(text('en', { ...base, cut: 'yes', tracked: 12, trackedMore: 'no' })).toContain('tracked word mentions: at least 12.');
+    expect(text('en', { ...base, tracked: 999, trackedMore: 'max' })).toContain('tracked word mentions: 999+.');
+    expect(text('en', { ...base, cut: 'yes', tracked: 12, trackedMore: 'atleast' })).toContain('tracked word mentions: at least 12.');
     expect(text('vi', { ...base, tracked: 12, trackedMore: 'no' })).toContain('2 việc quá hạn, số lần từ khóa theo dõi xuất hiện: 12. Mở trang Cuộc họp');
-    expect(text('vi', { ...base, tracked: 999, trackedMore: 'yes' })).toContain('số lần từ khóa theo dõi xuất hiện: 999+.');
-    expect(text('vi', { ...base, cut: 'yes', tracked: 12, trackedMore: 'no' })).toContain('số lần từ khóa theo dõi xuất hiện: ít nhất 12.');
+    expect(text('vi', { ...base, tracked: 999, trackedMore: 'max' })).toContain('số lần từ khóa theo dõi xuất hiện: 999+.');
+    expect(text('vi', { ...base, cut: 'yes', tracked: 12, trackedMore: 'atleast' })).toContain('số lần từ khóa theo dõi xuất hiện: ít nhất 12.');
+    // A number that is both cut and at the most is "999+" alone, never "at least 999+".
+    expect(text('en', { ...base, cut: 'yes', tracked: 999, trackedMore: 'max' })).toContain('tracked word mentions: 999+.');
+    expect(text('en', { ...base, cut: 'yes', tracked: 999, trackedMore: 'max' })).not.toContain('at least 999');
+    expect(text('vi', { ...base, cut: 'yes', tracked: 999, trackedMore: 'max' })).not.toContain('ít nhất 999');
     expect(text('vi', { ...base, tracked: 0, trackedMore: 'no' })).not.toContain('từ khóa');
     expect(text('en', { ...base, tracked: 0, trackedMore: 'no' })).not.toContain('tracked word');
   });
