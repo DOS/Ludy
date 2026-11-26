@@ -33,6 +33,7 @@ export type ConversationActionOutcome<T> =
         | 'placeholder'
         | 'moved'
         | 'not-found'
+        | 'uncertain'
         | 'rate-limited'
         | 'ai-off'
         | 'kernel-step-up'
@@ -156,7 +157,17 @@ export async function sendConversationReply(
     });
     return { ok: true, value };
   } catch (error) {
-    return mapActionError(error, deps.onKernelError);
+    const mapped = mapActionError<Awaited<ReturnType<LudyClient['conversations']['reply']>>>(
+      error,
+      deps.onKernelError,
+    );
+    if (!mapped.ok) {
+      const { code, status, message } = readErrorCodeAndStatus(error);
+      if (mapped.reason === 'offline' || (status !== null && status >= 500)) {
+        return { ok: false, reason: 'uncertain', code, message };
+      }
+    }
+    return mapped;
   }
 }
 

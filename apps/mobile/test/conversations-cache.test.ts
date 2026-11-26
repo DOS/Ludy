@@ -390,4 +390,30 @@ describe('conversations persisted KeyValue read cache', () => {
     expect(await cache.load(SERVER, 'org-a', 'user-a')).toBeNull();
     expect(base.data.size).toBe(0);
   });
+
+  it('retains a reachable inbox entry when upsertThread caches a page-2 conversation', async () => {
+    const store = memoryStore();
+    const cache = createConversationsCache(store);
+    await cache.upsertList({
+      serverUrl: SERVER,
+      orgSlug: 'org-a',
+      userId: 'user-a',
+      savedAt: 1000,
+      filter: 'new',
+      items: Array.from({ length: 30 }, (_, i) => makeSummary(i)),
+    });
+    const page2Detail = makeDetail(45);
+    await cache.upsertThread({
+      serverUrl: SERVER,
+      orgSlug: 'org-a',
+      userId: 'user-a',
+      savedAt: 2000,
+      detail: page2Detail,
+    });
+
+    const loaded = await cache.load(SERVER, 'org-a', 'user-a');
+    expect(loaded?.threads['conv-45']).toBeDefined();
+    expect(loaded?.lists.new?.some((item) => item.id === 'conv-45')).toBe(true);
+    expect(loaded?.lists.all?.some((item) => item.id === 'conv-45')).toBe(true);
+  });
 });

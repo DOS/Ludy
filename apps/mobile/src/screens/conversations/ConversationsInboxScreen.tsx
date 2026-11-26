@@ -2,7 +2,7 @@
 // Mobile Engage conversations inbox screen: New/Pending/All filters, offline read cache, web hand-off, and thread navigation (issue #4882).
 
 import { isMfaRequired } from '@ludy/client';
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type InfiniteData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -93,6 +93,8 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [isAppActive, setIsAppActive] = useState(() => AppState.currentState === 'active');
   const prevCountsSigRef = useRef<string | null>(null);
+  const activeInboxKeyRef = useRef(`${serverUrl}:${orgSlug}:${userId ?? ''}:${filter}`);
+  activeInboxKeyRef.current = `${serverUrl}:${orgSlug}:${userId ?? ''}:${filter}`;
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
@@ -193,8 +195,13 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
   const salesCoworkerName =
     salesCoworkerQuery.data ?? cachedSnapshot?.salesCoworkerName ?? DEFAULT_SALES_COWORKER;
 
+  const listQueryKey = useMemo(
+    () => ['conversations', 'list', serverUrl, orgSlug, userId ?? '', filter] as const,
+    [serverUrl, orgSlug, userId, filter],
+  );
+
   const listQuery = useInfiniteQuery({
-    queryKey: ['conversations', 'list', serverUrl, orgSlug, userId ?? '', filter] as const,
+    queryKey: listQueryKey,
     initialPageParam: undefined as { at: string | null; id: string } | undefined,
     getNextPageParam: (lastPage: ConversationListed) => {
       if (!lastPage.more) return undefined;
@@ -255,21 +262,115 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
     },
     enabled: cacheLoaded && refusalError === null,
     retry: false,
-    refetchInterval: (query) => {
-      if (!isActiveTab || !isAppActive || selectedConversationId || refusalError !== null) {
-        return false;
-      }
-      if (query.state.error && isAccessRefusalError(query.state.error)) {
-        return false;
-      }
-      return INBOX_POLL_MS;
-    },
   });
 
   const refetchListRef = useRef(listQuery.refetch);
   refetchListRef.current = listQuery.refetch;
   const isListFetchingRef = useRef(listQuery.isFetching);
   isListFetchingRef.current = listQuery.isFetching;
+  const pageCountRef = useRef(0);
+  pageCountRef.current = listQuery.data?.pages.length ?? 0;
+
+  // Refresh strictly page 1 during periodic/count-driven updates so pagination history never amplifies polling cost.
+  async function refreshFirstPage() {
+    if (refusalError !== null || isListFetchingRef.current) return;
+    if (pageCountRef.current <= 1) {
+      await refetchListRef.current();
+      return;
+    }
+    const startEpoch = conversationsCache.epoch();
+    const startedScope = activeInboxKeyRef.current;
+    try {
+      const listed = await client.conversations.list({
+        ...(filter === 'all' ? {} : { status: filter }),
+        limit: PAGE_LIMIT,
+      });
+      const cur = session.state();
+      if (
+        cur.status !== 'active' ||
+        cur.serverUrl !== serverUrl ||
+        cur.orgSlug !== orgSlug ||
+        conversationsCache.epoch() !== startEpoch ||
+        activeInboxKeyRef.current !== startedScope
+      ) {
+        return;
+      }
+      qc.setQueryData<InfiniteData<ConversationListed>>(listQueryKey, (old) => {
+        if (!old || old.pages.length <= 1) {
+          return { pages: [listed], pageParams: [undefined] };
+        }
+        return {
+          pages: [listed, ...old.pages.slice(1)],
+          pageParams: old.pageParams,
+        };
+      });
+      if (userId) {
+        void conversationsCache
+          .upsertList({
+            serverUrl,
+            orgSlug,
+            userId,
+            savedAt: Date.now(),
+            filter,
+            items: listed.conversations,
+            counts: countsQuery.data,
+            salesCoworkerName,
+            expectedEpoch: startEpoch,
+            isSessionStillActive: () => {
+              const after = session.state();
+              return (
+                after.status === 'active' &&
+                after.serverUrl === serverUrl &&
+                after.orgSlug === orgSlug &&
+                conversationsCache.epoch() === startEpoch
+              );
+            },
+          })
+          .then((saved) => {
+            if (!saved || conversationsCache.epoch() !== startEpoch || activeInboxKeyRef.current !== startedScope) {
+              return;
+            }
+            setCachedSnapshot(saved);
+          })
+          .catch(() => undefined);
+      }
+    } catch (error) {
+      if (activeInboxKeyRef.current !== startedScope) return;
+      if (isAccessRefusalError(error)) {
+        if (isAuthBlockingError(error)) {
+          void session.reportKernelError(error);
+        }
+        setRefusalError(error);
+        setCachedSnapshot(null);
+        setSelectedConversationId(null);
+        void conversationsCache.clearScope({ serverUrl, orgSlug, userId });
+        qc.removeQueries({ queryKey: ['conversations', 'list', serverUrl, orgSlug] });
+        qc.removeQueries({ queryKey: ['conversations', 'detail', serverUrl, orgSlug] });
+        qc.removeQueries({ queryKey: ['conversations', 'counts', serverUrl, orgSlug] });
+      }
+    }
+  }
+  const refreshFirstPageRef = useRef(refreshFirstPage);
+  refreshFirstPageRef.current = refreshFirstPage;
+
+  useEffect(() => {
+    if (!cacheLoaded || !isActiveTab || !isAppActive || selectedConversationId || refusalError !== null) {
+      return;
+    }
+    const timer = setInterval(() => {
+      void refreshFirstPageRef.current();
+    }, INBOX_POLL_MS);
+    return () => clearInterval(timer);
+  }, [cacheLoaded, isActiveTab, isAppActive, selectedConversationId, refusalError]);
+
+  const wasActiveTabRef = useRef(isActiveTab);
+  useEffect(() => {
+    const wasActive = wasActiveTabRef.current;
+    wasActiveTabRef.current = isActiveTab;
+    if (!wasActive && isActiveTab && cacheLoaded && !selectedConversationId && refusalError === null) {
+      void refreshFirstPageRef.current();
+    }
+  }, [isActiveTab, cacheLoaded, selectedConversationId, refusalError]);
 
   const countsSignature = countsQuery.data
     ? `${countsQuery.data.new}|${countsQuery.data.pending}|${countsQuery.data.resolved}|${countsQuery.data.unread}`
@@ -287,10 +388,9 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
       isActiveTab &&
       isAppActive &&
       !selectedConversationId &&
-      refusalError === null &&
-      !isListFetchingRef.current
+      refusalError === null
     ) {
-      void refetchListRef.current();
+      void refreshFirstPageRef.current();
     }
   }, [countsSignature, cacheLoaded, isActiveTab, isAppActive, selectedConversationId, refusalError]);
 
@@ -334,16 +434,21 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
   const isCountsUnavailable = countsQuery.isError;
 
   const liveCounts = isAccessDenied || isCountsUnavailable ? undefined : countsQuery.data;
-  const activeCounts = isAccessDenied ? null : (liveCounts ?? cachedSnapshot?.counts ?? null);
-
   const liveItems = useMemo(() => {
-    if (isNonNetworkError || !listQuery.data) return null;
+    if (isNonNetworkError || isListNetworkOffline || !listQuery.data) return null;
     return mergeConversationPages(listQuery.data.pages);
-  }, [isNonNetworkError, listQuery.data]);
+  }, [isNonNetworkError, isListNetworkOffline, listQuery.data]);
 
+  // Wait for server read verification before revealing cached inbox rows; fall back only once offline error is confirmed.
+  const activeCounts = isAccessDenied
+    ? null
+    : (liveCounts ??
+        (isListNetworkOffline || (liveItems !== null && isCountsUnavailable)
+          ? (cachedSnapshot?.counts ?? null)
+          : null));
   const cachedItemsForTab = isAccessDenied ? null : (cachedSnapshot?.lists[filter] ?? null);
-  const activeItems = isAccessDenied ? null : (liveItems ?? (isNonNetworkError ? null : cachedItemsForTab));
-  const isShowingOfflineBanner = Boolean(isListNetworkOffline && (cachedSnapshot !== null || liveItems !== null));
+  const activeItems = isAccessDenied ? null : (liveItems ?? (isListNetworkOffline ? cachedItemsForTab : null));
+  const isShowingOfflineBanner = Boolean(isListNetworkOffline && cachedSnapshot !== null);
 
   const effectiveRole = orgQuery.data?.role ?? role;
   const members = orgQuery.data?.members ?? [];
@@ -369,6 +474,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
       <ConversationThreadScreen
         aiEnabled={aiEnabledQuery.data === true}
         conversationId={selectedConversationId}
+        isVisible={isActiveTab}
         locale={locale}
         members={members}
         onBack={() => setSelectedConversationId(null)}

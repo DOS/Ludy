@@ -328,7 +328,7 @@ describe('AI draft request/discard and markRead executors', () => {
       await sendConversationReply(
         { client: missingClient, now: () => Date.parse('2026-11-26T10:00:00.000Z') },
         {
-          detail: makeDetail(),
+          detail: fakeDetail(),
           body: 'Xin chào',
           lastSeenSeq: 1,
           role: 'member',
@@ -339,6 +339,40 @@ describe('AI draft request/discard and markRead executors', () => {
       reason: 'refused',
       code: 'FORBIDDEN',
       message: 'Write forbidden',
+    });
+
+    // Network drop or 5xx after calling non-idempotent reply() reports 'uncertain' instead of 'offline'.
+    const uncertainNetworkClient = {
+      conversations: {
+        reply: async () => {
+          throw new TypeError('Network request failed');
+        },
+      },
+    } as unknown as LudyClient;
+    expect(
+      await sendConversationReply(
+        { client: uncertainNetworkClient, now: () => Date.parse('2026-11-26T10:00:00.000Z') },
+        { detail: fakeDetail(), body: 'Xin chào', lastSeenSeq: 1, role: 'member' },
+      ),
+    ).toMatchObject({ ok: false, reason: 'uncertain' });
+
+    const uncertainServerClient = {
+      conversations: {
+        reply: async () => {
+          throw Object.assign(new Error('Upstream timeout'), { status: 504 });
+        },
+      },
+    } as unknown as LudyClient;
+    expect(
+      await sendConversationReply(
+        { client: uncertainServerClient, now: () => Date.parse('2026-11-26T10:00:00.000Z') },
+        { detail: fakeDetail(), body: 'Xin chào', lastSeenSeq: 1, role: 'member' },
+      ),
+    ).toEqual({
+      ok: false,
+      reason: 'uncertain',
+      code: null,
+      message: 'Upstream timeout',
     });
   });
 });

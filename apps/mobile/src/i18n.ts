@@ -263,6 +263,7 @@ const vi = {
   'conversations.composer.invalidChar': 'Nội dung chứa ký tự điều khiển không hợp lệ.',
   'conversations.composer.moved': 'Hội thoại vừa có tin mới nên chưa gửi (nội dung bạn viết vẫn được giữ nguyên). Hãy xem tin mới bên trên rồi bấm Gửi lại.',
   'conversations.composer.sent': 'Đã đưa câu trả lời vào hàng đợi gửi.',
+  'conversations.composer.uncertain': 'Mất kết nối hoặc hết thời gian chờ sau khi gửi (tin có thể đã được ghi nhận). Hãy xem lại các tin nhắn ở trên trước khi gửi lại.',
   'conversations.composer.refused': 'Không gửi được: {detail}',
 } as const;
 
@@ -526,6 +527,7 @@ const en: Record<MessageKey, string> = {
   'conversations.composer.invalidChar': 'Message contains an invalid control character.',
   'conversations.composer.moved': 'A new customer message arrived before sending (your composed text was preserved). Review the new message above, then tap Send again.',
   'conversations.composer.sent': 'Reply queued for delivery.',
+  'conversations.composer.uncertain': 'Connection dropped or timed out after sending (the reply may already be queued). Review the messages above before sending again.',
   'conversations.composer.refused': 'Could not send: {detail}',
 };
 

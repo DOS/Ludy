@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
   Pressable,
   RefreshControl,
@@ -44,6 +45,7 @@ import {
   formatWindowDuration,
   getContactDisplayName,
   hasNamePlaceholder,
+  isAccessRefusalError,
   isAuthBlockingError,
   isConversationForbiddenOrMissing,
   isLikelyNetworkError,
@@ -68,12 +70,14 @@ interface ConversationThreadScreenProps {
   aiEnabled: boolean;
   salesCoworkerName: string;
   members: readonly OrgMember[];
+  isVisible?: boolean;
   onBack: () => void;
   onRefreshList: () => void;
 }
 
 const WINDOW_TICK_MS = 30_000;
 const DRAFT_POLL_MS = 3_000;
+const THREAD_POLL_MS = 30_000;
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
 function MessageRowSeparator() {
@@ -118,6 +122,7 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
     aiEnabled,
     salesCoworkerName,
     members,
+    isVisible = true,
   } = props;
   const palette = usePalette();
   const qc = useQueryClient();
@@ -126,6 +131,15 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
   const [cachedThread, setCachedThread] = useState<CachedConversationThread | null>(null);
   const [cacheLoaded, setCacheLoaded] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [isAppActive, setIsAppActive] = useState(() => AppState.currentState === 'active');
+  const isThreadShown = isVisible && isAppActive;
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next) => {
+      setIsAppActive(next === 'active');
+    });
+    return () => subscription.remove();
+  }, []);
   const [seenSeq, setSeenSeq] = useState<number | null>(null);
   const [composerText, setComposerText] = useState('');
   const [replySource, setReplySource] = useState<{ draftId?: string; savedReplyId?: string }>({});
@@ -245,15 +259,30 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
     },
     enabled: cacheLoaded && accessDeniedError === null,
     refetchInterval: (query) => {
+      if (!isThreadShown || accessDeniedError !== null) return false;
+      if (query.state.status === 'error') {
+        return isAccessRefusalError(query.state.error) ? false : THREAD_POLL_MS;
+      }
       const data = query.state.data;
-      if (!data || query.state.status === 'error') return false;
+      if (!data) return false;
       const hasPendingDraft = data.draft?.state === 'requested';
       const hasPendingSend = data.messages.some(
         (m) => m.direction === 'out' && (m.sendState === 'queued' || m.sendState === 'sending'),
       );
-      return hasPendingDraft || hasPendingSend ? DRAFT_POLL_MS : false;
+      return hasPendingDraft || hasPendingSend ? DRAFT_POLL_MS : THREAD_POLL_MS;
     },
   });
+
+  const refetchDetailRef = useRef(detailQuery.refetch);
+  refetchDetailRef.current = detailQuery.refetch;
+  const wasThreadShownRef = useRef(isThreadShown);
+  useEffect(() => {
+    const wasShown = wasThreadShownRef.current;
+    wasThreadShownRef.current = isThreadShown;
+    if (!wasShown && isThreadShown && cacheLoaded && accessDeniedError === null) {
+      void refetchDetailRef.current();
+    }
+  }, [isThreadShown, cacheLoaded, accessDeniedError]);
 
   // Clear latched access denial once a fresh live read succeeds; purge caches cleanly on 403/404 or auth refusal.
   useEffect(() => {
@@ -346,12 +375,12 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
     };
   }, [activeReplyWindowUntil]);
 
-  // Initialize `seenSeq` from the first live thread load.
+  // Initialize `seenSeq` only when the thread is actually visible to the person.
   useEffect(() => {
-    if (liveDetail && seenSeq === null) {
+    if (isThreadShown && liveDetail && seenSeq === null) {
       setSeenSeq(liveDetail.conversation.lastSeq);
     }
-  }, [liveDetail, seenSeq]);
+  }, [isThreadShown, liveDetail, seenSeq]);
 
   function handleConversationNotFound(code?: string | null, message?: string) {
     const err = Object.assign(new Error(message || 'Conversation not found'), {
@@ -377,9 +406,10 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
   const handleConversationNotFoundRef = useRef(handleConversationNotFound);
   handleConversationNotFoundRef.current = handleConversationNotFound;
 
-  // Best-effort markRead once `seenSeq` is initialized, guarded by active scope ref so polling refetches never drop completion.
+  // Best-effort markRead once `seenSeq` is initialized while visible, guarded by active scope ref.
   useEffect(() => {
     if (
+      !isThreadShown ||
       isNonNetworkError ||
       isNetworkOffline ||
       !liveDetail ||
@@ -424,6 +454,7 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
         }
       });
   }, [
+    isThreadShown,
     isNonNetworkError,
     isNetworkOffline,
     liveDetail,
@@ -536,6 +567,13 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
           // Keep user's composed text and source intact, refetch so the newly arrived message is visible.
           setMovedNotice(true);
           await detailQuery.refetch();
+          return;
+        }
+        if (outcome.reason === 'uncertain') {
+          // Reply may have been queued before connection dropped; reconcile thread state so the person sees whether it landed.
+          setFeedback({ tone: 'warn', text: t('conversations.composer.uncertain') });
+          await detailQuery.refetch();
+          onRefreshListRef.current();
           return;
         }
         applyOutcomeFailure(outcome);

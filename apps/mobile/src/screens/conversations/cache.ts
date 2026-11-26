@@ -647,12 +647,22 @@ export function createConversationsCache(store: KeyValue): ConversationsCache {
         if (isWriteStale(params)) return null;
         const existing = await loadUnlocked(params.serverUrl, params.orgSlug, userId);
         const conv = params.detail.conversation;
+        const statusTab: ConversationFilterTab | null =
+          conv.status === 'new' || conv.status === 'pending' ? conv.status : null;
         const nextLists: Partial<Record<ConversationFilterTab, ConversationSummary[]>> = {};
-        if (existing?.lists) {
-          for (const tab of ['new', 'pending', 'all'] as const) {
-            const arr = existing.lists[tab];
-            if (!arr) continue;
+        for (const tab of ['new', 'pending', 'all'] as const) {
+          const arr = existing?.lists[tab];
+          const shouldContain = tab === 'all' || tab === statusTab;
+          if (!arr) {
+            if (shouldContain) nextLists[tab] = [conv];
+            continue;
+          }
+          if (!shouldContain) {
+            nextLists[tab] = arr.filter((item) => item.id !== conv.id);
+          } else if (arr.some((item) => item.id === conv.id)) {
             nextLists[tab] = arr.map((item) => (item.id === conv.id ? conv : item));
+          } else {
+            nextLists[tab] = [...arr.slice(0, Math.max(0, MAX_LIST_ITEMS - 1)), conv];
           }
         }
         const next: Omit<CachedConversationsSnapshot, 'v'> = {
