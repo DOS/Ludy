@@ -45,6 +45,25 @@ WHERE rotated_at IS NOT NULL AND reject_token IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS marketplace_hook_reject_token_uq
   ON ludy_finance.marketplace_hook ((COALESCE(reject_token, id)));
 
+-- Guard any concurrent/in-flight rotation (including a pre-migration
+-- marketplace_hook_set body resuming after ALTER TABLE) so key_sha256 or
+-- rotated_at updates always advance generation and mint a fresh reject_token.
+CREATE OR REPLACE FUNCTION ludy_finance.marketplace_hook_rotate_guard()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF NEW.key_sha256 IS DISTINCT FROM OLD.key_sha256 OR NEW.rotated_at IS DISTINCT FROM OLD.rotated_at THEN
+    NEW.generation := OLD.generation + 1;
+    NEW.reject_token := pg_catalog.gen_random_uuid();
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS marketplace_hook_rotate_guard_trg ON ludy_finance.marketplace_hook;
+CREATE TRIGGER marketplace_hook_rotate_guard_trg
+  BEFORE UPDATE ON ludy_finance.marketplace_hook
+  FOR EACH ROW
+  EXECUTE FUNCTION ludy_finance.marketplace_hook_rotate_guard();
+
 -- ---------------------------------------------------------------------------
 -- 2. Increment generation on rotation in ludy_finance.marketplace_hook_set
 -- ---------------------------------------------------------------------------
@@ -166,6 +185,7 @@ BEGIN
 END $$;
 
 REVOKE ALL ON FUNCTION
+  ludy_finance.marketplace_hook_rotate_guard(),
   ludy_finance.marketplace_hook_set(uuid, text),
   ludy_finance.marketplace_hook_claim(integer),
   ludy_finance.marketplace_hook_reject(uuid, integer),
@@ -180,7 +200,7 @@ BEGIN
     WHERE (rolname LIKE 'ludy\_%' OR rolname LIKE 'crove\_%') AND rolname <> current_user
   LOOP
     EXECUTE pg_catalog.format(
-      'REVOKE ALL ON FUNCTION ludy_finance.marketplace_hook_set(uuid, text), ludy_finance.marketplace_hook_claim(integer), ludy_finance.marketplace_hook_reject(uuid, integer), ludy_finance.marketplace_hook_reject(uuid) FROM %I',
+      'REVOKE ALL ON FUNCTION ludy_finance.marketplace_hook_rotate_guard(), ludy_finance.marketplace_hook_set(uuid, text), ludy_finance.marketplace_hook_claim(integer), ludy_finance.marketplace_hook_reject(uuid, integer), ludy_finance.marketplace_hook_reject(uuid) FROM %I',
       r.rolname
     );
   END LOOP;

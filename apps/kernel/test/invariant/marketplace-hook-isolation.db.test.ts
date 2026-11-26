@@ -46,6 +46,7 @@ const DEFINERS: ReadonlyArray<{ sig: string; roles: readonly string[] }> = [
   { sig: 'crove_finance.marketplace_hook_claim(integer)', roles: ['crove_worker'] },
   { sig: 'crove_finance.marketplace_hook_reject(uuid,integer)', roles: ['crove_worker'] },
   { sig: 'crove_finance.marketplace_hook_reject(uuid)', roles: ['crove_worker'] },
+  { sig: 'crove_finance.marketplace_hook_rotate_guard()', roles: [] },
 ];
 
 suite('marketplace push hook security invariants (#4326)', () => {
@@ -279,6 +280,11 @@ suite('marketplace push hook security invariants (#4326)', () => {
         [dbIds!.table('crove_finance.marketplace_hook')],
       );
       expect(idx.rows[0]?.indexdef).toContain('COALESCE(reject_token, id)');
+      const trg = await c.query<{ tgenabled: string }>(
+        "SELECT t.tgenabled FROM pg_catalog.pg_trigger t WHERE t.tgrelid = pg_catalog.to_regclass($1) AND t.tgname = 'marketplace_hook_rotate_guard_trg' AND NOT t.tgisinternal",
+        [dbIds!.table('crove_finance.marketplace_hook')],
+      );
+      expect(trg.rows).toEqual([{ tgenabled: 'O' }]);
     });
     for (const table of ['crove_finance.marketplace_hook', 'crove_finance.marketplace_hook_notice']) {
       await expect(appPool.query(`SELECT 1 FROM ${table}`)).rejects.toMatchObject({ code: '42501' });
@@ -536,6 +542,17 @@ suite('marketplace push hook security invariants (#4326)', () => {
     expect(postRotation?.generation).toBe(oldGeneration + 1);
     expect(postRotation?.hookId).not.toBe(shopeeHookId);
 
+    // Passing the current token with an older generation is ignored so h.generation = p_generation is enforced independently.
+    expect(await rejectMarketplaceHook(workerDb, postRotation!.hookId, oldGeneration)).toBe(false);
+    expect(
+      await withSealedApp<{ rejected_count: number; stopped: boolean }>(
+        users.owner,
+        orgId,
+        'SELECT rejected_count, stopped FROM crove_finance.marketplace_hook_status($1::uuid)',
+        [shopeeConnId],
+      ),
+    ).toEqual([{ rejected_count: 0, stopped: false }]);
+
     // 1st refusal via 2-arg worker, then 2nd..10th via rolled-back 1-arg worker stop the rotated address on the 10th.
     expect(await rejectMarketplaceHook(workerDb, postRotation!.hookId, postRotation!.generation)).toBe(false);
     for (let n = 2; n < 10; n++) {
@@ -582,6 +599,21 @@ suite('marketplace push hook security invariants (#4326)', () => {
     expect(gen3Claim?.generation).toBe(oldGeneration + 2);
     expect(gen3Claim?.hookId).not.toBe(shopeeHookId);
     expect(gen3Claim?.hookId).not.toBe(postRotation!.hookId);
+
+    // Even a legacy UPDATE changing key_sha256/rotated_at without mentioning generation/reject_token (pre-migration set) triggers rotation guard.
+    const guardKey = randomBytes(16).toString('base64url');
+    await withAdmin((c) =>
+      c.query(
+        'UPDATE crove_finance.marketplace_hook SET key_sha256 = $2, rotated_at = pg_catalog.clock_timestamp(), rejected_count = 0, rejected_window_start = NULL, stopped_at = NULL WHERE org_id = $1 AND id = $3',
+        [orgId, sha(guardKey), shopeeHookId],
+      ),
+    );
+    expect(await rejectMarketplaceHook(workerDb, gen3Claim!.hookId, gen3Claim!.generation)).toBe(false);
+    expect((await workerPool.query<{ stopped: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS stopped', [gen3Claim!.hookId])).rows[0]?.stopped).toBe(false);
+    expect(await acceptMarketplacePush(apiRuntime, 'shopee', { key: guardKey, authorization: HEADER, body: BODY }, budget, PUBLIC_URL)).toEqual({ status: 200 });
+    const [guardClaim] = await workerDb.transaction().execute((trx) => claimMarketplaceHookNotices(trx));
+    expect(guardClaim?.generation).toBe(oldGeneration + 3);
+    expect(guardClaim?.hookId).not.toBe(gen3Claim!.hookId);
   });
 
   it('scopes personal_data_erase_marketplace_hook_notice strictly to the caller org when erasing matching notices', async () => {
