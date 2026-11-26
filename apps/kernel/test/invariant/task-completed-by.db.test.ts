@@ -308,18 +308,56 @@ suite('task.completed_by security invariants (#4821)', () => {
       expect(rows[0]?.done_at).not.toBeNull();
     });
 
-    // 4. projects.member_completed_tasks enforces MANAGERS RBAC (owner/admin only) and org isolation.
+    // 4. NULL-context / definer / superuser immutability on already-done rows (#4821):
+    // neither completed_by nor done_at can be rewritten when OLD.status = 'done' and NEW.status = 'done'.
     const runDateStart = vietnamToday();
     const { projectId } = await appRt.execute<{ projectId: string }>(
       'projects.project.create',
       { name: 'Du an Invariant RBAC', visibility: 'org' },
       { actor: asUser(owner), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
-    await appRt.execute(
+    const { taskId: tDoneImmutable } = await appRt.execute<{ taskId: string }>(
       'projects.task.create',
       { projectId, title: 'Completed in org', assigneePositionId: null, status: 'done' },
       { actor: asUser(staffA), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
+
+    const noCtxClient = await appPool.connect();
+    try {
+      const noCtxUpd = await noCtxClient.query(
+        `UPDATE crove_kernel.task
+            SET completed_by = $1, done_at = '2026-01-01T00:00:00.000Z'
+          WHERE org_id = $2 AND id = $3`,
+        [staffB, org.orgId, tDoneImmutable],
+      );
+      expect(noCtxUpd.rowCount).toBe(0);
+    } finally {
+      noCtxClient.release();
+    }
+
+    await withAdmin(async (c) => {
+      const before = (
+        await c.query<{ completed_by: string | null; done_at: Date }>(
+          'SELECT completed_by, done_at FROM crove_kernel.task WHERE org_id = $1 AND id = $2',
+          [org.orgId, tDoneImmutable],
+        )
+      ).rows[0]!;
+      expect(before.completed_by).toBe(staffA);
+
+      const after = (
+        await c.query<{ completed_by: string | null; done_at: Date }>(
+          `UPDATE crove_kernel.task
+              SET completed_by = $1, done_at = '2026-01-01T00:00:00.000Z'
+            WHERE org_id = $2 AND id = $3
+            RETURNING completed_by, done_at`,
+          [staffB, org.orgId, tDoneImmutable],
+        )
+      ).rows[0]!;
+      expect(after.completed_by).toBe(staffA);
+      expect(after.done_at.getTime()).toBe(before.done_at.getTime());
+    });
+
+    // 5. projects.member_completed_tasks enforces MANAGERS RBAC (owner/admin only) and org isolation.
 
     const runWindow = { from: runDateStart, to: vietnamToday() };
     const managerRead = await appRt.query<ProjectMemberCompletedTasksResult>(

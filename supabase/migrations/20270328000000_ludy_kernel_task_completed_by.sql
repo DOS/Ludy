@@ -129,16 +129,8 @@ BEGIN
           NEW.completed_by := CASE WHEN v_ctx ->> 'actor' = 'user' THEN (v_ctx ->> 'user')::uuid ELSE NULL END;
         END IF;
       ELSE
-        IF v_ctx IS NULL AND NEW.done_at IS DISTINCT FROM OLD.done_at AND NEW.done_at IS NOT NULL THEN
-          NEW.done_at := NEW.done_at;
-        ELSE
-          NEW.done_at := COALESCE(OLD.done_at, pg_catalog.now());
-        END IF;
-        IF v_ctx IS NULL AND NEW.completed_by IS DISTINCT FROM OLD.completed_by THEN
-          NEW.completed_by := NEW.completed_by;
-        ELSE
-          NEW.completed_by := OLD.completed_by;
-        END IF;
+        NEW.done_at := COALESCE(OLD.done_at, pg_catalog.now());
+        NEW.completed_by := OLD.completed_by;
       END IF;
     ELSE
       NEW.done_at := NULL;

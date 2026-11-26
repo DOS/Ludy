@@ -360,31 +360,39 @@ suite('projects.member_completed_tasks completed_by and done_at (#4821)', () => 
       projectId,
       title: 'Moc 00:00 VN ngay 10/10',
       assigneePositionId: null,
-      status: 'done',
     });
     const { taskId: tOct10End } = await exec<{ taskId: string }>(staffA.userId, org.orgId, 'projects.task.create', {
       projectId,
       title: 'Moc 23:59 VN ngay 10/10',
       assigneePositionId: null,
-      status: 'done',
     });
     const { taskId: tOct09Late } = await exec<{ taskId: string }>(staffA.userId, org.orgId, 'projects.task.create', {
       projectId,
       title: 'Moc 23:59 VN ngay 09/10',
       assigneePositionId: null,
-      status: 'done',
     });
     const { taskId: tOct11Start } = await exec<{ taskId: string }>(staffA.userId, org.orgId, 'projects.task.create', {
       projectId,
       title: 'Moc 00:00 VN ngay 11/10',
       assigneePositionId: null,
-      status: 'done',
     });
     await withAdmin(async (c) => {
-      await c.query(`UPDATE ludy_kernel.task SET done_at = '2026-10-09T17:00:00.000Z' WHERE org_id = $1 AND id = $2`, [org.orgId, tOct10Start]);
-      await c.query(`UPDATE ludy_kernel.task SET done_at = '2026-10-10T16:59:59.999Z' WHERE org_id = $1 AND id = $2`, [org.orgId, tOct10End]);
-      await c.query(`UPDATE ludy_kernel.task SET done_at = '2026-10-09T16:59:59.999Z' WHERE org_id = $1 AND id = $2`, [org.orgId, tOct09Late]);
-      await c.query(`UPDATE ludy_kernel.task SET done_at = '2026-10-10T17:00:00.000Z' WHERE org_id = $1 AND id = $2`, [org.orgId, tOct11Start]);
+      await c.query(
+        `UPDATE ludy_kernel.task SET status = 'done', done_at = '2026-10-09T17:00:00.000Z', completed_by = $3 WHERE org_id = $1 AND id = $2`,
+        [org.orgId, tOct10Start, staffA.userId],
+      );
+      await c.query(
+        `UPDATE ludy_kernel.task SET status = 'done', done_at = '2026-10-10T16:59:59.999Z', completed_by = $3 WHERE org_id = $1 AND id = $2`,
+        [org.orgId, tOct10End, staffA.userId],
+      );
+      await c.query(
+        `UPDATE ludy_kernel.task SET status = 'done', done_at = '2026-10-09T16:59:59.999Z', completed_by = $3 WHERE org_id = $1 AND id = $2`,
+        [org.orgId, tOct09Late, staffA.userId],
+      );
+      await c.query(
+        `UPDATE ludy_kernel.task SET status = 'done', done_at = '2026-10-10T17:00:00.000Z', completed_by = $3 WHERE org_id = $1 AND id = $2`,
+        [org.orgId, tOct11Start, staffA.userId],
+      );
     });
 
     // Bump updated_at to NOW on historical tasks; today's range must not include them, 2026-10-10 must keep only exact window.
