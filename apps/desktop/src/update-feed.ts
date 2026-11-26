@@ -10,6 +10,7 @@ import { isIP } from 'node:net';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { RELEASE_MANIFEST_SCRIPT_FILENAME } from './authenticode.ts';
+import { APPLE_BUNDLE_ID, APPLE_TEAM_ID_PATTERN, normalizeAppleTeamId } from './codesign.ts';
 import type { FetchLike } from './exchange.ts';
 
 export const RELEASE_MANIFEST_FILENAME = 'release-manifest.json';
@@ -44,7 +45,10 @@ export interface ParsedReleasesManifest {
   latestFull: ReleaseEntry;
 }
 
-export interface DesktopReleasePackage {
+export type DesktopTargetPlatform = 'win32' | 'darwin';
+export type DesktopMacArch = 'arm64' | 'x64';
+
+export interface WindowsReleasePackage {
   file: string;
   kind: 'full' | 'delta';
   version: string;
@@ -53,7 +57,15 @@ export interface DesktopReleasePackage {
   size: number;
 }
 
-export interface DesktopReleaseManifest {
+export interface DarwinReleasePackage {
+  file: string;
+  kind: 'full';
+  version: string;
+  sha256: string;
+  size: number;
+}
+
+export interface WindowsReleaseManifest {
   schemaVersion: 1;
   product: 'ludy-desktop';
   platform: 'win32';
@@ -70,15 +82,51 @@ export interface DesktopReleaseManifest {
     sha256: string;
     size: number;
   };
-  packages: DesktopReleasePackage[];
+  packages: WindowsReleasePackage[];
 }
 
-export interface ValidatedUpdateFeed {
+export interface DarwinReleaseManifest {
+  schemaVersion: 1;
+  product: 'ludy-desktop';
+  platform: 'darwin';
+  arch: DesktopMacArch;
+  version: string;
+  signed: boolean;
+  signing: {
+    algorithm: 'sha256';
+    teamId: string | null;
+    bundleId: typeof APPLE_BUNDLE_ID;
+    hardenedRuntime: boolean;
+    notarized: boolean;
+  };
+  installer: {
+    file: string;
+    sha256: string;
+    size: number;
+  };
+  packages: DarwinReleasePackage[];
+}
+
+export type DesktopReleaseManifest = WindowsReleaseManifest | DarwinReleaseManifest;
+
+export interface ValidatedWindowsUpdateFeed {
   feedUrl: string;
+  platform?: 'win32';
   releases: ParsedReleasesManifest;
-  manifest: DesktopReleaseManifest | null;
+  manifest: WindowsReleaseManifest | null;
   rawManifestBytes?: Buffer | null | undefined;
 }
+
+export interface ValidatedDarwinUpdateFeed {
+  feedUrl: string;
+  platform: 'darwin';
+  releases: null;
+  manifest: DarwinReleaseManifest;
+  latestPackage: DarwinReleasePackage & { downloadUrl: string };
+  rawManifestBytes?: Buffer | null | undefined;
+}
+
+export type ValidatedUpdateFeed = ValidatedWindowsUpdateFeed | ValidatedDarwinUpdateFeed;
 
 export type PreparedUpdateResult =
   | { status: 'up-to-date'; version: string }
@@ -466,7 +514,10 @@ function parseOptionalTimestampUrl(value: unknown): string | null {
   return url.toString();
 }
 
-export function parseDesktopReleaseManifest(rawText: string): DesktopReleaseManifest {
+export function parseDesktopReleaseManifest(
+  rawText: string,
+  expectedTarget?: { platform?: DesktopTargetPlatform | undefined; arch?: DesktopMacArch | 'x64' | undefined },
+): DesktopReleaseManifest {
   if (rawText.length === 0 || Buffer.byteLength(rawText, 'utf8') > MAX_MANIFEST_BYTES) {
     throw new UpdateFeedError('INVALID_MANIFEST', 'Release manifest is empty or too large');
   }
@@ -479,8 +530,14 @@ export function parseDesktopReleaseManifest(rawText: string): DesktopReleaseMani
   if (!isPlainRecord(parsed)) {
     throw new UpdateFeedError('INVALID_MANIFEST', 'Release manifest must be a JSON object');
   }
-  if (parsed.schemaVersion !== 1 || parsed.product !== 'ludy-desktop' || parsed.platform !== 'win32' || parsed.arch !== 'x64') {
+  if (parsed.schemaVersion !== 1 || parsed.product !== 'ludy-desktop') {
     throw new UpdateFeedError('INVALID_MANIFEST', 'Release manifest target or schemaVersion is unsupported');
+  }
+  if (expectedTarget?.platform && parsed.platform !== expectedTarget.platform) {
+    throw new UpdateFeedError('INVALID_MANIFEST', `Release manifest platform ${String(parsed.platform)} does not match ${expectedTarget.platform}`);
+  }
+  if (expectedTarget?.arch && parsed.arch !== expectedTarget.arch) {
+    throw new UpdateFeedError('INVALID_MANIFEST', `Release manifest arch ${String(parsed.arch)} does not match ${expectedTarget.arch}`);
   }
   if (typeof parsed.version !== 'string' || !SEMVER_CORE.test(parsed.version)) {
     throw new UpdateFeedError('INVALID_MANIFEST', 'Release manifest version must be X.Y.Z');
@@ -491,6 +548,97 @@ export function parseDesktopReleaseManifest(rawText: string): DesktopReleaseMani
   if (!isPlainRecord(parsed.signing) || parsed.signing.algorithm !== 'sha256') {
     throw new UpdateFeedError('INVALID_MANIFEST', 'Release manifest signing metadata must use sha256');
   }
+  if (!isPlainRecord(parsed.installer)) {
+    throw new UpdateFeedError('INVALID_MANIFEST', 'Release manifest missing installer metadata');
+  }
+  if (!Array.isArray(parsed.packages) || parsed.packages.length === 0) {
+    throw new UpdateFeedError('INVALID_MANIFEST', 'Release manifest packages list must be non-empty');
+  }
+
+  if (parsed.platform === 'darwin') {
+    if (parsed.packages.length !== 1) {
+      throw new UpdateFeedError('INVALID_MANIFEST', 'macOS release manifest must contain exactly 1 package entry');
+    }
+    if (parsed.arch !== 'arm64' && parsed.arch !== 'x64') {
+      throw new UpdateFeedError('INVALID_MANIFEST', 'macOS release manifest arch must be arm64 or x64');
+    }
+    if (parsed.signing.bundleId !== APPLE_BUNDLE_ID) {
+      throw new UpdateFeedError('INVALID_MANIFEST', 'macOS release manifest bundleId is invalid');
+    }
+    if (typeof parsed.signing.hardenedRuntime !== 'boolean' || typeof parsed.signing.notarized !== 'boolean') {
+      throw new UpdateFeedError('INVALID_MANIFEST', 'macOS release manifest missing hardenedRuntime/notarized booleans');
+    }
+    let teamId: string | null = null;
+    if (parsed.signing.teamId !== null && parsed.signing.teamId !== undefined) {
+      if (typeof parsed.signing.teamId !== 'string' || !APPLE_TEAM_ID_PATTERN.test(parsed.signing.teamId.trim().toUpperCase())) {
+        throw new UpdateFeedError('INVALID_MANIFEST', 'macOS release manifest teamId must be 10 alphanumeric characters');
+      }
+      teamId = parsed.signing.teamId.trim().toUpperCase();
+    }
+    const expectedDmg = `LudyDesktop-${parsed.version}-darwin-${parsed.arch}.dmg`;
+    const expectedZip = `LudyDesktop-${parsed.version}-darwin-${parsed.arch}.zip`;
+    if (
+      parsed.installer.file !== expectedDmg ||
+      typeof parsed.installer.sha256 !== 'string' ||
+      !SHA256_HEX.test(parsed.installer.sha256) ||
+      typeof parsed.installer.size !== 'number' ||
+      !Number.isSafeInteger(parsed.installer.size) ||
+      parsed.installer.size <= 0 ||
+      parsed.installer.size > MAX_PACKAGE_BYTES
+    ) {
+      throw new UpdateFeedError('INVALID_MANIFEST', 'macOS release manifest installer metadata is invalid');
+    }
+    const packages: DarwinReleasePackage[] = [];
+    for (const item of parsed.packages) {
+      if (!isPlainRecord(item)) throw new UpdateFeedError('INVALID_MANIFEST', 'Release manifest package entry is not an object');
+      if (
+        item.file !== expectedZip ||
+        item.kind !== 'full' ||
+        item.version !== parsed.version ||
+        typeof item.sha256 !== 'string' ||
+        !SHA256_HEX.test(item.sha256) ||
+        typeof item.size !== 'number' ||
+        !Number.isSafeInteger(item.size) ||
+        item.size <= 0 ||
+        item.size > MAX_PACKAGE_BYTES
+      ) {
+        throw new UpdateFeedError('INVALID_MANIFEST', 'macOS release manifest package entry is invalid');
+      }
+      packages.push({
+        file: item.file,
+        kind: 'full',
+        version: item.version,
+        sha256: item.sha256.toLowerCase(),
+        size: item.size,
+      });
+    }
+    return {
+      schemaVersion: 1,
+      product: 'ludy-desktop',
+      platform: 'darwin',
+      arch: parsed.arch,
+      version: parsed.version,
+      signed: parsed.signed,
+      signing: {
+        algorithm: 'sha256',
+        teamId,
+        bundleId: APPLE_BUNDLE_ID,
+        hardenedRuntime: parsed.signing.hardenedRuntime,
+        notarized: parsed.signing.notarized,
+      },
+      installer: {
+        file: parsed.installer.file,
+        sha256: parsed.installer.sha256.toLowerCase(),
+        size: parsed.installer.size,
+      },
+      packages,
+    };
+  }
+
+  if (parsed.platform !== 'win32' || parsed.arch !== 'x64') {
+    throw new UpdateFeedError('INVALID_MANIFEST', 'Release manifest target or schemaVersion is unsupported');
+  }
+
   const timestampServer = parseOptionalTimestampUrl(parsed.signing.timestampServer);
   const rawThumbprint = parsed.signing.publisherThumbprint;
   let publisherThumbprint: string | null = null;
@@ -501,9 +649,6 @@ export function parseDesktopReleaseManifest(rawText: string): DesktopReleaseMani
     publisherThumbprint = rawThumbprint.toLowerCase();
   }
 
-  if (!isPlainRecord(parsed.installer)) {
-    throw new UpdateFeedError('INVALID_MANIFEST', 'Release manifest missing installer metadata');
-  }
   if (
     parsed.installer.file !== 'LudyDesktop-Setup.exe' ||
     typeof parsed.installer.sha256 !== 'string' ||
@@ -515,10 +660,7 @@ export function parseDesktopReleaseManifest(rawText: string): DesktopReleaseMani
     throw new UpdateFeedError('INVALID_MANIFEST', 'Release manifest installer metadata is invalid');
   }
 
-  if (!Array.isArray(parsed.packages) || parsed.packages.length === 0) {
-    throw new UpdateFeedError('INVALID_MANIFEST', 'Release manifest packages list must be non-empty');
-  }
-  const packages: DesktopReleasePackage[] = [];
+  const packages: WindowsReleasePackage[] = [];
   for (const item of parsed.packages) {
     if (!isPlainRecord(item)) throw new UpdateFeedError('INVALID_MANIFEST', 'Release manifest package entry is not an object');
     if (
@@ -570,11 +712,40 @@ export function parseDesktopReleaseManifest(rawText: string): DesktopReleaseMani
   };
 }
 
+export function verifyDarwinReleaseManifest(
+  manifest: DarwinReleaseManifest,
+  options: { requireSigned: boolean; expectedTeamId?: string | null | undefined },
+): void {
+  if (options.requireSigned) {
+    if (!manifest.signed) {
+      throw new UpdateFeedError('UNSIGNED_FEED', 'Refused unsigned macOS release manifest on a production update feed');
+    }
+    if (manifest.signing.algorithm !== 'sha256') {
+      throw new UpdateFeedError('UNSIGNED_FEED', 'macOS update feed signing metadata must specify sha256');
+    }
+    if (!manifest.signing.hardenedRuntime || !manifest.signing.notarized) {
+      throw new UpdateFeedError('UNSIGNED_FEED', 'macOS update feed must report Hardened Runtime and notarization');
+    }
+    if (!manifest.signing.teamId) {
+      throw new UpdateFeedError('UNSIGNED_FEED', 'Signed macOS update feed is missing Apple Team ID');
+    }
+  }
+  if (options.expectedTeamId) {
+    const expected = normalizeAppleTeamId(options.expectedTeamId);
+    if (!expected || !manifest.signed || manifest.signing.teamId !== expected) {
+      throw new UpdateFeedError('PUBLISHER_MISMATCH', 'Update feed Apple Team ID does not match expected Team ID');
+    }
+  }
+}
+
 export function verifyReleaseManifestAgainstReleases(
   releases: ParsedReleasesManifest,
   manifest: DesktopReleaseManifest,
   options: { requireSigned: boolean; expectedPublisherThumbprint?: string | null },
 ): void {
+  if (manifest.platform !== 'win32') {
+    throw new UpdateFeedError('INVALID_MANIFEST', 'RELEASES verification applies only to Windows manifests');
+  }
   if (releases.latestFull.version !== manifest.version) {
     throw new UpdateFeedError('MANIFEST_MISMATCH', `RELEASES version (${releases.latestFull.version}) does not match release manifest (${manifest.version})`);
   }
@@ -814,24 +985,60 @@ export function verifyEd25519ManifestSignature(rawManifestBytes: Buffer, signatu
 export interface ValidateUpdateFeedOptions {
   feedUrl: string;
   fetch: FetchLike;
+  platform?: DesktopTargetPlatform | undefined;
+  arch?: DesktopMacArch | 'x64' | undefined;
   allowedOrigin?: string | null | undefined;
   requireSigned?: boolean | undefined;
   allowUnsigned?: boolean | undefined;
   expectedPublisherThumbprint?: string | null | undefined;
+  expectedTeamId?: string | null | undefined;
   expectedManifestPublicKey?: string | null | undefined;
   lookupHost?: HostLookup | undefined;
 }
 
 function shouldRequireSignedFeed(
   feedHostname: string,
-  options: Pick<ValidateUpdateFeedOptions, 'requireSigned' | 'allowUnsigned' | 'expectedPublisherThumbprint' | 'expectedManifestPublicKey'>,
+  options: Pick<
+    ValidateUpdateFeedOptions,
+    'requireSigned' | 'allowUnsigned' | 'expectedPublisherThumbprint' | 'expectedTeamId' | 'expectedManifestPublicKey'
+  >,
 ): boolean {
   if (options.requireSigned !== undefined) return options.requireSigned;
-  if (options.expectedPublisherThumbprint || options.expectedManifestPublicKey) return true;
+  if (options.expectedPublisherThumbprint || options.expectedTeamId || options.expectedManifestPublicKey) return true;
   if (options.allowUnsigned === true && isLiteralLoopbackHost(feedHostname)) return false;
   return true;
 }
 
+async function fetchAndVerifyManifestSignature(
+  feedUrl: string,
+  manifestBuf: Buffer,
+  expectedManifestPublicKey: string,
+  fetchImpl: FetchLike,
+): Promise<void> {
+  let sigRes: Response;
+  try {
+    sigRes = await fetchImpl(`${feedUrl}/${RELEASE_MANIFEST_SIG_FILENAME}`, {
+      method: 'GET',
+      headers: { accept: 'text/plain' },
+      redirect: 'error',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof UpdateFeedError) throw error;
+    throw new UpdateFeedError('FETCH_FAILED', `Failed fetching ${RELEASE_MANIFEST_SIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!sigRes.ok) {
+    throw new UpdateFeedError('MISSING_MANIFEST_SIGNATURE', `Update feed ${RELEASE_MANIFEST_SIG_FILENAME} returned HTTP ${sigRes.status}`);
+  }
+  const sigText = (await readBoundedResponseBytes(sigRes, 4096, true)).toString('utf8');
+  if (!verifyEd25519ManifestSignature(manifestBuf, sigText, expectedManifestPublicKey)) {
+    throw new UpdateFeedError('INVALID_MANIFEST_SIGNATURE', 'Manifest Ed25519 cryptographic signature failed verification');
+  }
+}
+
+export function validateUpdateFeed(options: ValidateUpdateFeedOptions & { platform: 'darwin' }): Promise<ValidatedDarwinUpdateFeed>;
+export function validateUpdateFeed(options: ValidateUpdateFeedOptions & { platform?: 'win32' | undefined }): Promise<ValidatedWindowsUpdateFeed>;
+export function validateUpdateFeed(options: ValidateUpdateFeedOptions): Promise<ValidatedUpdateFeed>;
 export async function validateUpdateFeed(options: ValidateUpdateFeedOptions): Promise<ValidatedUpdateFeed> {
   const checkedFeed = resolveFeedUrl(options.feedUrl, options.allowedOrigin ? { allowedOrigin: options.allowedOrigin } : {});
   if (!checkedFeed.ok) {
@@ -841,6 +1048,7 @@ export async function validateUpdateFeed(options: ValidateUpdateFeedOptions): Pr
   const isLoopback = isLiteralLoopbackHost(feedParsed.hostname);
   const literalIp = unwrapIpLiteral(feedParsed.hostname);
   const requireSigned = shouldRequireSignedFeed(feedParsed.hostname, options);
+  const targetPlatform: DesktopTargetPlatform = options.platform ?? 'win32';
 
   if (!isLoopback) {
     if (literalIp !== null) {
@@ -855,23 +1063,26 @@ export async function validateUpdateFeed(options: ValidateUpdateFeedOptions): Pr
     }
   }
 
-  let releasesRes: Response;
-  try {
-    releasesRes = await options.fetch(`${checkedFeed.url}/RELEASES`, {
-      method: 'GET',
-      headers: { accept: 'text/plain, */*' },
-      redirect: 'error',
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch (error) {
-    if (error instanceof UpdateFeedError) throw error;
-    throw new UpdateFeedError('FETCH_FAILED', `Failed fetching RELEASES: ${error instanceof Error ? error.message : String(error)}`);
+  let releases: ParsedReleasesManifest | null = null;
+  if (targetPlatform === 'win32') {
+    let releasesRes: Response;
+    try {
+      releasesRes = await options.fetch(`${checkedFeed.url}/RELEASES`, {
+        method: 'GET',
+        headers: { accept: 'text/plain, */*' },
+        redirect: 'error',
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      if (error instanceof UpdateFeedError) throw error;
+      throw new UpdateFeedError('FETCH_FAILED', `Failed fetching RELEASES: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (!releasesRes.ok) {
+      throw new UpdateFeedError('RELEASES_HTTP_ERROR', `Update feed RELEASES returned HTTP ${releasesRes.status}`);
+    }
+    const releasesBuf = await readBoundedResponseBytes(releasesRes, MAX_MANIFEST_BYTES, true);
+    releases = parseReleasesManifest(releasesBuf.toString('utf8'), checkedFeed.url);
   }
-  if (!releasesRes.ok) {
-    throw new UpdateFeedError('RELEASES_HTTP_ERROR', `Update feed RELEASES returned HTTP ${releasesRes.status}`);
-  }
-  const releasesBuf = await readBoundedResponseBytes(releasesRes, MAX_MANIFEST_BYTES, true);
-  const releases = parseReleasesManifest(releasesBuf.toString('utf8'), checkedFeed.url);
 
   let manifestRes: Response;
   try {
@@ -887,10 +1098,16 @@ export async function validateUpdateFeed(options: ValidateUpdateFeedOptions): Pr
   }
 
   if (manifestRes.status === 404) {
-    if (requireSigned || options.expectedPublisherThumbprint || options.expectedManifestPublicKey) {
+    if (
+      targetPlatform === 'darwin' ||
+      requireSigned ||
+      options.expectedPublisherThumbprint ||
+      options.expectedTeamId ||
+      options.expectedManifestPublicKey
+    ) {
       throw new UpdateFeedError('MISSING_MANIFEST', `Update feed is missing ${RELEASE_MANIFEST_FILENAME}`);
     }
-    return { feedUrl: checkedFeed.url, releases, manifest: null, rawManifestBytes: null };
+    return { feedUrl: checkedFeed.url, platform: 'win32', releases: releases!, manifest: null, rawManifestBytes: null };
   }
   if (!manifestRes.ok) {
     throw new UpdateFeedError('MANIFEST_HTTP_ERROR', `Update feed ${RELEASE_MANIFEST_FILENAME} returned HTTP ${manifestRes.status}`);
@@ -898,37 +1115,49 @@ export async function validateUpdateFeed(options: ValidateUpdateFeedOptions): Pr
 
   const manifestBuf = await readBoundedResponseBytes(manifestRes, MAX_MANIFEST_BYTES, true);
   if (options.expectedManifestPublicKey) {
-    let sigRes: Response;
-    try {
-      sigRes = await options.fetch(`${checkedFeed.url}/${RELEASE_MANIFEST_SIG_FILENAME}`, {
-        method: 'GET',
-        headers: { accept: 'text/plain' },
-        redirect: 'error',
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-    } catch (error) {
-      if (error instanceof UpdateFeedError) throw error;
-      throw new UpdateFeedError('FETCH_FAILED', `Failed fetching ${RELEASE_MANIFEST_SIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    if (!sigRes.ok) {
-      throw new UpdateFeedError('MISSING_MANIFEST_SIGNATURE', `Update feed ${RELEASE_MANIFEST_SIG_FILENAME} returned HTTP ${sigRes.status}`);
-    }
-    const sigText = (await readBoundedResponseBytes(sigRes, 4096, true)).toString('utf8');
-    if (!verifyEd25519ManifestSignature(manifestBuf, sigText, options.expectedManifestPublicKey)) {
-      throw new UpdateFeedError('INVALID_MANIFEST_SIGNATURE', 'Manifest Ed25519 cryptographic signature failed verification');
-    }
+    await fetchAndVerifyManifestSignature(checkedFeed.url, manifestBuf, options.expectedManifestPublicKey, options.fetch);
   }
 
-  const manifest = parseDesktopReleaseManifest(manifestBuf.toString('utf8'));
-  verifyReleaseManifestAgainstReleases(releases, manifest, {
+  if (targetPlatform === 'darwin') {
+    const manifest = parseDesktopReleaseManifest(manifestBuf.toString('utf8'), {
+      platform: 'darwin',
+      arch: options.arch,
+    });
+    if (manifest.platform !== 'darwin') {
+      throw new UpdateFeedError('INVALID_MANIFEST', 'Expected macOS release manifest');
+    }
+    verifyDarwinReleaseManifest(manifest, {
+      requireSigned,
+      expectedTeamId: options.expectedTeamId ?? null,
+    });
+    const pkg = manifest.packages[0]!;
+    return {
+      feedUrl: checkedFeed.url,
+      platform: 'darwin',
+      releases: null,
+      manifest,
+      latestPackage: { ...pkg, downloadUrl: `${checkedFeed.url}/${pkg.file}` },
+      rawManifestBytes: manifestBuf,
+    };
+  }
+
+  const manifest = parseDesktopReleaseManifest(manifestBuf.toString('utf8'), { platform: 'win32', arch: 'x64' });
+  if (manifest.platform !== 'win32') {
+    throw new UpdateFeedError('INVALID_MANIFEST', 'Expected Windows release manifest');
+  }
+  verifyReleaseManifestAgainstReleases(releases!, manifest, {
     requireSigned,
     expectedPublisherThumbprint: options.expectedPublisherThumbprint ?? null,
   });
 
-  return { feedUrl: checkedFeed.url, releases, manifest, rawManifestBytes: manifestBuf };
+  return { feedUrl: checkedFeed.url, platform: 'win32', releases: releases!, manifest, rawManifestBytes: manifestBuf };
 }
 
-export type SignedPackageVerifier = (packagePath: string, expectedThumbprint: string | null) => Promise<void>;
+export type SignedPackageVerifier = (
+  packagePath: string,
+  expectedPublisher: string | null,
+  target?: { version?: string | undefined; arch?: DesktopMacArch | 'x64' | undefined },
+) => Promise<unknown>;
 export type SignedManifestVerifier = (
   manifestScriptPath: string,
   expectedJsonBytes: Buffer,
@@ -939,16 +1168,227 @@ export interface PrepareVerifiedUpdateOptions extends ValidateUpdateFeedOptions 
   currentVersion?: string | null | undefined;
   stagingDir: string;
   resolveTrustedThumbprint?: (() => Promise<string | null>) | undefined;
+  resolveTrustedTeamId?: (() => Promise<string | null>) | undefined;
   verifySignedManifest?: SignedManifestVerifier | undefined;
   verifySignedPackage?: SignedPackageVerifier | undefined;
 }
 
+async function downloadStagedPackage(options: {
+  downloadUrl: string;
+  expectedSize: number;
+  tempPath: string;
+  fetchImpl: FetchLike;
+}): Promise<{ received: number; sha1: string; sha256: string }> {
+  const downloadAc = new AbortController();
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const totalTimer = setTimeout(() => downloadAc.abort(new Error('Update download exceeded maximum duration')), DOWNLOAD_MAX_TOTAL_MS);
+  const resetIdleTimer = (): void => {
+    if (idleTimer !== null) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => downloadAc.abort(new Error('Update download stalled without progress')), DOWNLOAD_IDLE_TIMEOUT_MS);
+  };
+  resetIdleTimer();
+
+  const sha1Hash = createHash('sha1');
+  const sha256Hash = createHash('sha256');
+  let received = 0;
+
+  try {
+    const res = await options.fetchImpl(options.downloadUrl, {
+      method: 'GET',
+      headers: { accept: 'application/octet-stream' },
+      redirect: 'error',
+      signal: downloadAc.signal,
+    });
+    resetIdleTimer();
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new UpdateFeedError('DOWNLOAD_HTTP_ERROR', `Failed downloading update package: HTTP ${res.status}`);
+    }
+    const contentLengthHeader = res.headers.get('content-length');
+    if (contentLengthHeader !== null) {
+      const declared = Number(contentLengthHeader);
+      if (Number.isFinite(declared) && (declared > MAX_PACKAGE_BYTES || declared !== options.expectedSize)) {
+        await res.body?.cancel().catch(() => undefined);
+        throw new UpdateFeedError('CHECKSUM_FAILED', 'Downloaded update package failed checksum verification (size mismatch)');
+      }
+    }
+
+    if (!res.body) {
+      const buf = Buffer.from(await res.arrayBuffer());
+      resetIdleTimer();
+      received = buf.byteLength;
+      if (received > MAX_PACKAGE_BYTES || received !== options.expectedSize) {
+        throw new UpdateFeedError('CHECKSUM_FAILED', 'Downloaded update package failed checksum verification (size mismatch)');
+      }
+      sha1Hash.update(buf);
+      sha256Hash.update(buf);
+      writeFileSync(options.tempPath, buf, { mode: 0o600 });
+    } else {
+      const reader = res.body.getReader();
+      const ws = createWriteStream(options.tempPath, { mode: 0o600 });
+      let streamErr: Error | null = null;
+      const getStreamErr = (): Error | null => streamErr;
+      let pendingErrReject: ((err: Error) => void) | null = null;
+      const onStreamError = (err: Error): void => {
+        streamErr = err;
+        if (pendingErrReject) {
+          const r = pendingErrReject;
+          pendingErrReject = null;
+          r(err);
+        }
+      };
+      ws.on('error', onStreamError);
+      try {
+        for (;;) {
+          const errNow = getStreamErr();
+          if (errNow) throw errNow;
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!value) continue;
+          resetIdleTimer();
+          received += value.byteLength;
+          if (received > MAX_PACKAGE_BYTES || received > options.expectedSize) {
+            await reader.cancel().catch(() => undefined);
+            throw new UpdateFeedError('CHECKSUM_FAILED', 'Downloaded update package failed checksum verification (size exceeded)');
+          }
+          sha1Hash.update(value);
+          sha256Hash.update(value);
+          const writeErrNow = getStreamErr();
+          if (writeErrNow) throw writeErrNow;
+          if (!ws.write(value)) {
+            await new Promise<void>((resolve, reject) => {
+              const immediateErr = getStreamErr();
+              if (immediateErr) {
+                reject(immediateErr);
+                return;
+              }
+              const onDrain = (): void => {
+                pendingErrReject = null;
+                resolve();
+              };
+              pendingErrReject = (err) => {
+                ws.removeListener('drain', onDrain);
+                reject(err);
+              };
+              ws.once('drain', onDrain);
+            });
+          }
+        }
+        const finishErrNow = getStreamErr();
+        if (finishErrNow) throw finishErrNow;
+        await new Promise<void>((resolve, reject) => {
+          const onFinish = (): void => {
+            pendingErrReject = null;
+            resolve();
+          };
+          pendingErrReject = (err) => {
+            ws.removeListener('finish', onFinish);
+            reject(err);
+          };
+          ws.once('finish', onFinish);
+          ws.end();
+        });
+      } catch (err) {
+        ws.destroy();
+        throw err;
+      } finally {
+        ws.removeListener('error', onStreamError);
+        reader.releaseLock();
+      }
+    }
+  } catch (err) {
+    downloadAc.abort(err instanceof Error ? err : new Error(String(err)));
+    throw err;
+  } finally {
+    if (idleTimer !== null) clearTimeout(idleTimer);
+    clearTimeout(totalTimer);
+  }
+
+  return {
+    received,
+    sha1: sha1Hash.digest('hex').toLowerCase(),
+    sha256: sha256Hash.digest('hex').toLowerCase(),
+  };
+}
+
 export async function prepareVerifiedUpdate(options: PrepareVerifiedUpdateOptions): Promise<PreparedUpdateResult> {
   const validated = await validateUpdateFeed(options);
-  const target = validated.releases.latestFull;
-  const manifestPkg = validated.manifest?.packages.find((p) => p.file === target.file) ?? null;
   const feedHost = new URL(validated.feedUrl).hostname;
   const requireSigned = shouldRequireSignedFeed(feedHost, options);
+
+  if (validated.platform === 'darwin') {
+    const target = validated.latestPackage;
+    let trustedTeamId: string | null = null;
+    if (options.expectedTeamId) {
+      trustedTeamId = normalizeAppleTeamId(options.expectedTeamId);
+      if (!trustedTeamId) {
+        throw new UpdateFeedError('PUBLISHER_MISMATCH', 'Configured Apple Team ID pin is invalid');
+      }
+    } else if (requireSigned && options.resolveTrustedTeamId) {
+      const resolved = await options.resolveTrustedTeamId();
+      trustedTeamId = resolved ? normalizeAppleTeamId(resolved) : null;
+    }
+
+    if (requireSigned) {
+      if (!trustedTeamId && !options.expectedManifestPublicKey) {
+        throw new UpdateFeedError('UNTRUSTED_PUBLISHER', 'Refused macOS update without a trusted Apple Team ID or public key');
+      }
+      if (trustedTeamId && validated.manifest.signing.teamId !== trustedTeamId) {
+        throw new UpdateFeedError('PUBLISHER_MISMATCH', 'Update feed Apple Team ID does not match trusted publisher');
+      }
+      if (!options.verifySignedPackage) {
+        throw new UpdateFeedError('MISSING_VERIFIER', 'Refused signed macOS update without a codesign package verifier');
+      }
+    }
+
+    if (options.currentVersion && compareSemver(target.version, options.currentVersion) <= 0) {
+      return { status: 'up-to-date', version: target.version };
+    }
+
+    rmSync(options.stagingDir, { recursive: true, force: true });
+    mkdirSync(options.stagingDir, { recursive: true, mode: 0o700 });
+    const tempPath = join(options.stagingDir, `${target.file}.part`);
+    const finalPath = join(options.stagingDir, target.file);
+
+    try {
+      const { received, sha1, sha256 } = await downloadStagedPackage({
+        downloadUrl: target.downloadUrl,
+        expectedSize: target.size,
+        tempPath,
+        fetchImpl: options.fetch,
+      });
+
+      if (received !== target.size || sha256 !== target.sha256) {
+        throw new UpdateFeedError('CHECKSUM_FAILED', 'Downloaded macOS update package failed checksum verification (SHA-256 or size mismatch)');
+      }
+
+      if (requireSigned && options.verifySignedPackage) {
+        const expectedVerifierTeam = trustedTeamId ?? validated.manifest.signing.teamId;
+        await options.verifySignedPackage(tempPath, expectedVerifierTeam, {
+          version: target.version,
+          arch: validated.manifest.arch,
+        });
+      }
+
+      rmSync(finalPath, { force: true });
+      renameSync(tempPath, finalPath);
+      return {
+        status: 'staged',
+        version: target.version,
+        stagingDir: options.stagingDir,
+        packageFile: target.file,
+        sha1,
+        sha256,
+        size: received,
+      };
+    } catch (error) {
+      rmSync(tempPath, { force: true });
+      throw error;
+    }
+  }
+
+  const target = validated.releases.latestFull;
+  const manifestPkg = validated.manifest?.packages.find((p) => p.file === target.file) ?? null;
 
   let trustedThumbprint: string | null = options.expectedPublisherThumbprint?.trim().toLowerCase() ?? null;
   if (requireSigned && !trustedThumbprint && options.resolveTrustedThumbprint) {
@@ -979,7 +1419,7 @@ export async function prepareVerifiedUpdate(options: PrepareVerifiedUpdateOption
         throw new UpdateFeedError('MISSING_SIGNED_MANIFEST', `Update feed ${RELEASE_MANIFEST_SCRIPT_FILENAME} returned HTTP ${scriptRes.status}`);
       }
       const scriptBytes = await readBoundedResponseBytes(scriptRes, MAX_MANIFEST_BYTES, true);
-      mkdirSync(options.stagingDir, { recursive: true });
+      mkdirSync(options.stagingDir, { recursive: true, mode: 0o700 });
       const tempScriptPath = join(options.stagingDir, `verify-${randomUUID()}.ps1`);
       writeFileSync(tempScriptPath, scriptBytes, { mode: 0o600 });
       try {
@@ -995,138 +1435,18 @@ export async function prepareVerifiedUpdate(options: PrepareVerifiedUpdateOption
   }
 
   rmSync(options.stagingDir, { recursive: true, force: true });
-  mkdirSync(options.stagingDir, { recursive: true });
+  mkdirSync(options.stagingDir, { recursive: true, mode: 0o700 });
   const tempPath = join(options.stagingDir, `${target.file}.part`);
   const finalPath = join(options.stagingDir, target.file);
 
-  const downloadAc = new AbortController();
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  const totalTimer = setTimeout(() => downloadAc.abort(new Error('Update download exceeded maximum duration')), DOWNLOAD_MAX_TOTAL_MS);
-  const resetIdleTimer = (): void => {
-    if (idleTimer !== null) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => downloadAc.abort(new Error('Update download stalled without progress')), DOWNLOAD_IDLE_TIMEOUT_MS);
-  };
-  resetIdleTimer();
-
-  const sha1Hash = createHash('sha1');
-  const sha256Hash = createHash('sha256');
-  let received = 0;
-
   try {
-    try {
-      const res = await options.fetch(target.downloadUrl, {
-        method: 'GET',
-        headers: { accept: 'application/octet-stream' },
-        redirect: 'error',
-        signal: downloadAc.signal,
-      });
-      resetIdleTimer();
-      if (!res.ok) {
-        await res.body?.cancel().catch(() => undefined);
-        throw new UpdateFeedError('DOWNLOAD_HTTP_ERROR', `Failed downloading update package: HTTP ${res.status}`);
-      }
-      const contentLengthHeader = res.headers.get('content-length');
-      if (contentLengthHeader !== null) {
-        const declared = Number(contentLengthHeader);
-        if (Number.isFinite(declared) && (declared > MAX_PACKAGE_BYTES || declared !== target.size)) {
-          await res.body?.cancel().catch(() => undefined);
-          throw new UpdateFeedError('CHECKSUM_FAILED', 'Downloaded update package failed checksum verification (size mismatch)');
-        }
-      }
+    const { received, sha1: actualSha1, sha256: actualSha256 } = await downloadStagedPackage({
+      downloadUrl: target.downloadUrl,
+      expectedSize: target.size,
+      tempPath,
+      fetchImpl: options.fetch,
+    });
 
-      if (!res.body) {
-        const buf = Buffer.from(await res.arrayBuffer());
-        resetIdleTimer();
-        received = buf.byteLength;
-        if (received > MAX_PACKAGE_BYTES || received !== target.size) {
-          throw new UpdateFeedError('CHECKSUM_FAILED', 'Downloaded update package failed checksum verification (size mismatch)');
-        }
-        sha1Hash.update(buf);
-        sha256Hash.update(buf);
-        writeFileSync(tempPath, buf);
-      } else {
-        const reader = res.body.getReader();
-        const ws = createWriteStream(tempPath, { mode: 0o600 });
-        let streamErr: Error | null = null;
-        const getStreamErr = (): Error | null => streamErr;
-        let pendingErrReject: ((err: Error) => void) | null = null;
-        const onStreamError = (err: Error): void => {
-          streamErr = err;
-          if (pendingErrReject) {
-            const r = pendingErrReject;
-            pendingErrReject = null;
-            r(err);
-          }
-        };
-        ws.on('error', onStreamError);
-        try {
-          for (;;) {
-            const errNow = getStreamErr();
-            if (errNow) throw errNow;
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (!value) continue;
-            resetIdleTimer();
-            received += value.byteLength;
-            if (received > MAX_PACKAGE_BYTES || received > target.size) {
-              await reader.cancel().catch(() => undefined);
-              throw new UpdateFeedError('CHECKSUM_FAILED', 'Downloaded update package failed checksum verification (size exceeded)');
-            }
-            sha1Hash.update(value);
-            sha256Hash.update(value);
-            const writeErrNow = getStreamErr();
-            if (writeErrNow) throw writeErrNow;
-            if (!ws.write(value)) {
-              await new Promise<void>((resolve, reject) => {
-                const immediateErr = getStreamErr();
-                if (immediateErr) {
-                  reject(immediateErr);
-                  return;
-                }
-                const onDrain = (): void => {
-                  pendingErrReject = null;
-                  resolve();
-                };
-                pendingErrReject = (err) => {
-                  ws.removeListener('drain', onDrain);
-                  reject(err);
-                };
-                ws.once('drain', onDrain);
-              });
-            }
-          }
-          const finishErrNow = getStreamErr();
-          if (finishErrNow) throw finishErrNow;
-          await new Promise<void>((resolve, reject) => {
-            const onFinish = (): void => {
-              pendingErrReject = null;
-              resolve();
-            };
-            pendingErrReject = (err) => {
-              ws.removeListener('finish', onFinish);
-              reject(err);
-            };
-            ws.once('finish', onFinish);
-            ws.end();
-          });
-        } catch (err) {
-          ws.destroy();
-          throw err;
-        } finally {
-          ws.removeListener('error', onStreamError);
-          reader.releaseLock();
-        }
-      }
-    } catch (err) {
-      downloadAc.abort(err instanceof Error ? err : new Error(String(err)));
-      throw err;
-    } finally {
-      if (idleTimer !== null) clearTimeout(idleTimer);
-      clearTimeout(totalTimer);
-    }
-
-    const actualSha1 = sha1Hash.digest('hex').toLowerCase();
-    const actualSha256 = sha256Hash.digest('hex').toLowerCase();
     if (received !== target.size || actualSha1 !== target.sha1) {
       throw new UpdateFeedError('CHECKSUM_FAILED', 'Downloaded update package failed checksum verification (SHA-1 or size mismatch)');
     }

@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Electron session permission & fallback display-media handlers for Ludy Desktop capture (isolated under src/capture/).
-import { desktopCapturer, webContents as electronWebContents, type Session } from 'electron';
+import { desktopCapturer, systemPreferences, webContents as electronWebContents, type Session } from 'electron';
 import { isExpectedUiOrigin } from './ui-bundle.ts';
+
+export async function requestMacMicrophoneAccess(): Promise<boolean> {
+  const status = systemPreferences.getMediaAccessStatus('microphone');
+  if (status === 'granted') return true;
+  if (status === 'not-determined') return systemPreferences.askForMediaAccess('microphone');
+  return false;
+}
 
 export function installCaptureSessionHandlers(
   ses: Session,

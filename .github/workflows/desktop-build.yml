@@ -1,11 +1,11 @@
 name: desktop-build
 
-# Ludy Desktop (ADR-0055 slice 2, #4515): builds the UNSIGNED Windows installer on a Windows runner, runs the shell's tests and keeps the result as a
-# workflow artifact for 7 days. The first build also measures size and idle memory (ADR-0055 section 4 asks for numbers, not blog figures); they
-# are printed in the job summary.
+# Ludy Desktop (ADR-0055 slices 2 and 3, #4515/#4884/#4885): builds the UNSIGNED Windows installer and macOS .dmg/.zip
+# packages (arm64 and x64), runs the shell's tests, and keeps the results as workflow artifacts for 7 days.
 #
-# NOTHING is signed or published from here, and no secret or certificate is used anywhere: the output is a development build, and Windows will warn
-# about it (docs/desktop/install.md). Signed installers and an update server are the owner's steps (docs/desktop/signing-runbook.md).
+# NOTHING is signed or published from here, and no secret or certificate is used anywhere: the outputs are development builds, and Windows
+# SmartScreen / macOS Gatekeeper will warn about them (docs/desktop/install.md). Signed installers and update feeds are the owner's steps
+# (docs/desktop/signing-runbook.md and docs/desktop/mac-signing-runbook.md).
 # The jobs have read access to the repository only. No pull_request_target.
 #
 # Job 2, "windows-install-smoke" (#4566): installs the unsigned Squirrel build on the runner and proves what unit tests and fakes cannot: the tray
@@ -28,7 +28,7 @@ on:
       - 'vitest.config.ts'
       - 'vitest.invariant.config.ts'
   push:
-    branches: [main]
+    branches: [main, dev]
     paths:
       - 'apps/desktop/**'
       - '.github/workflows/desktop-build.yml'
@@ -206,3 +206,201 @@ jobs:
           path: ${{ runner.temp }}/ludy-smoke-logs/
           retention-days: 7
           if-no-files-found: warn
+
+  macos:
+    name: macOS build (unsigned, arm64 & x64), tests and size
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@ludy/desktop" --filter "ludy-monorepo"
+
+      - name: Typecheck
+        run: pnpm --filter "@ludy/desktop" typecheck
+
+      - name: Unit tests
+        run: pnpm exec vitest run --project unit apps/desktop
+
+      - name: Build unsigned macOS .dmg and .zip (arm64 and x64)
+        run: node apps/desktop/scripts/package-mac.mjs --arch all
+
+      - name: Verify macOS outputs, Info.plist, checksums, and build size
+        run: |
+          set -euo pipefail
+          pkg_version="$(node -p "JSON.parse(require('fs').readFileSync('apps/desktop/package.json', 'utf8')).version")"
+          {
+            echo "### Ludy Desktop build size (unsigned, macOS)"
+            echo ""
+            echo "| arch | file | size |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for arch in arm64 x64; do
+            arch_dir="apps/desktop/out/mac/darwin-$arch"
+            dmg="LudyDesktop-${pkg_version}-darwin-${arch}.dmg"
+            zip="LudyDesktop-${pkg_version}-darwin-${arch}.zip"
+            [ -s "$arch_dir/$dmg" ] || { echo "::error::missing $arch_dir/$dmg"; exit 1; }
+            [ -s "$arch_dir/$zip" ] || { echo "::error::missing $arch_dir/$zip"; exit 1; }
+            [ -s "$arch_dir/release-manifest.json" ] || { echo "::error::missing $arch_dir/release-manifest.json"; exit 1; }
+            [ -s "$arch_dir/SHA256SUMS.txt" ] || { echo "::error::missing $arch_dir/SHA256SUMS.txt"; exit 1; }
+
+            (cd "$arch_dir" && shasum -a 256 -c SHA256SUMS.txt)
+            hdiutil verify "$arch_dir/$dmg"
+            node --input-type=module -e '
+              import fs from "node:fs";
+              import os from "node:os";
+              import path from "node:path";
+              import { execFileSync } from "node:child_process";
+              import {
+                inspectZipCentralDirectory,
+                verifyExtractedDirectorySymlinks,
+                verifyZipDecompressedSizeBounds,
+              } from "./apps/desktop/src/codesign.ts";
+              inspectZipCentralDirectory(process.argv[1]);
+              await verifyZipDecompressedSizeBounds(process.argv[1]);
+              const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ludy-ci-zip-"));
+              try {
+                execFileSync("ditto", ["-x", "-k", process.argv[1], tmp]);
+                const top = fs.readdirSync(tmp);
+                if (top.length !== 1 || top[0] !== "Ludy Desktop.app") {
+                  throw new Error("Unexpected extracted top entries: " + JSON.stringify(top));
+                }
+                verifyExtractedDirectorySymlinks(path.join(tmp, top[0]));
+              } finally {
+                fs.rmSync(tmp, { recursive: true, force: true });
+              }
+            ' "$arch_dir/$zip"
+            node -e '
+              const fs = require("node:fs");
+              const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              if (m.platform !== "darwin" || m.arch !== process.argv[2] || m.version !== process.argv[3] || m.signed !== false) {
+                throw new Error("Invalid unsigned macOS release manifest: " + JSON.stringify(m));
+              }
+              if (m.signing.bundleId !== "vn.ludy.desktop" || m.signing.teamId !== null) {
+                throw new Error("Unexpected signing metadata in unsigned manifest");
+              }
+            ' "$arch_dir/release-manifest.json" "$arch" "$pkg_version"
+
+            app_plist="apps/desktop/out/pkg-mac/${arch}/Ludy Desktop-darwin-${arch}/Ludy Desktop.app/Contents/Info.plist"
+            plutil -lint "$app_plist"
+            plutil -convert json -o - "$app_plist" | node -e '
+              const fs = require("node:fs");
+              const info = JSON.parse(fs.readFileSync(0, "utf8"));
+              if (info.CFBundleIdentifier !== "vn.ludy.desktop") throw new Error("CFBundleIdentifier mismatch: " + info.CFBundleIdentifier);
+              if (!info.NSAudioCaptureUsageDescription || !info.NSMicrophoneUsageDescription) {
+                throw new Error("Missing macOS audio capture usage descriptions in Info.plist");
+              }
+            '
+
+            for f in "$dmg" "$zip" release-manifest.json; do
+              bytes="$(stat -f%z "$arch_dir/$f")"
+              mb="$(node -p "($bytes / (1024 * 1024)).toFixed(1)")"
+              echo "| $arch | $f | ${mb} MB |" >> "$GITHUB_STEP_SUMMARY"
+            done
+          done
+
+      - name: Smoke-start packaged macOS app and capture RSS snapshot
+        env:
+          LUDY_URL: http://127.0.0.1:9
+          LUDY_DESKTOP_USER_DATA: ${{ runner.temp }}/ludy-desktop-profile
+        run: |
+          set -euo pipefail
+          bin="apps/desktop/out/pkg-mac/arm64/Ludy Desktop-darwin-arm64/Ludy Desktop.app/Contents/MacOS/Ludy Desktop"
+          "$bin" >/dev/null 2>&1 &
+          app_pid=$!
+          cleanup_tree() {
+            local pids
+            pids="$(ps -axo pid=,ppid= | node -e '
+              const fs = require("node:fs");
+              const root = Number(process.argv[1]);
+              const rows = fs.readFileSync(0, "utf8").trim().split("\n").map((line) => {
+                const m = /^\s*(\d+)\s+(\d+)/.exec(line);
+                return m ? { pid: Number(m[1]), ppid: Number(m[2]) } : null;
+              }).filter(Boolean);
+              const tree = new Set([root]);
+              let changed = true;
+              while (changed) {
+                changed = false;
+                for (const row of rows) {
+                  if (tree.has(row.ppid) && !tree.has(row.pid)) {
+                    tree.add(row.pid);
+                    changed = true;
+                  }
+                }
+              }
+              console.log([...tree].join(" "));
+            ' "$app_pid" 2>/dev/null || echo "$app_pid")"
+            for p in $pids; do
+              kill "$p" 2>/dev/null || true
+            done
+          }
+          trap cleanup_tree EXIT
+          sleep 15
+          if ! kill -0 "$app_pid" 2>/dev/null; then
+            echo "::error::The packaged macOS app exited before 15 s."
+            exit 1
+          fi
+          ps -axo pid=,ppid=,rss= | node -e '
+            const fs = require("node:fs");
+            const root = Number(process.argv[1]);
+            const outPath = process.argv[2];
+            const rows = fs.readFileSync(0, "utf8").trim().split("\n").map((line) => {
+              const m = /^\s*(\d+)\s+(\d+)\s+(\d+)/.exec(line);
+              return m ? { pid: Number(m[1]), ppid: Number(m[2]), rssKb: Number(m[3]) } : null;
+            }).filter(Boolean);
+            const treePids = new Set([root]);
+            let changed = true;
+            while (changed) {
+              changed = false;
+              for (const row of rows) {
+                if (treePids.has(row.ppid) && !treePids.has(row.pid)) {
+                  treePids.add(row.pid);
+                  changed = true;
+                }
+              }
+            }
+            const matched = rows.filter((row) => treePids.has(row.pid));
+            const totalKb = matched.reduce((sum, row) => sum + row.rssKb, 0);
+            fs.writeFileSync(outPath, JSON.stringify({
+              count: matched.length,
+              totalMb: Math.round(totalKb / 1024),
+            }), "utf8");
+          ' "$app_pid" "$RUNNER_TEMP/mac-idle-rss.json" || true
+
+      - name: Idle memory report for packaged macOS app
+        if: always()
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          {
+            echo "### Ludy Desktop idle memory (15 s after start, macOS arm64, tray only)"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -s "$RUNNER_TEMP/mac-idle-rss.json" ]; then
+            proc_count="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).count" "$RUNNER_TEMP/mac-idle-rss.json")"
+            rss_mb="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).totalMb" "$RUNNER_TEMP/mac-idle-rss.json")"
+            echo "| processes | RSS (all app processes) |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+            echo "| $proc_count | ${rss_mb} MB |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Idle RSS snapshot unavailable." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep the unsigned macOS installers for 7 days
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ludy-desktop-unsigned-darwin
+          path: apps/desktop/out/mac/
+          retention-days: 7
+          if-no-files-found: error
