@@ -72,6 +72,11 @@ describe('checkReminderWords', () => {
     ['Vietnamese days in words', 'Hóa đơn đã quá hạn ba mươi ngày.'],
     ['a day of the month in words', 'Hạn là mùng năm tháng sau.'],
     ['a currency in words', 'The balance is a few dollars.'],
+    ['a superscript digit', 'Quý khách còn nợ ² triệu.'],
+    ['a circled digit', 'Hóa đơn ① đã quá hạn.'],
+    ['a yen currency symbol', 'Số tiền là ¥ trên hóa đơn.'],
+    ['a dong currency symbol', 'Số tiền là ₫ trên hóa đơn.'],
+    ['a stealth invisible filler', 'Xin nhắc\u2800Quý khách thanh toán.'],
   ])('refuses a text with %s', (_, text) => {
     expect(checkReminderWords(REQUEST, { lead: text, closing: GOOD.closing })).toEqual({ kind: 'none', code: 'FIGURES' });
     expect(checkReminderWords(REQUEST, { lead: GOOD.lead, closing: text })).toEqual({ kind: 'none', code: 'FIGURES' });
@@ -108,6 +113,11 @@ describe('checkReminderWords', () => {
     expect(checkReminderWords(named, { lead: 'Acme 2026 would like to remind you about the invoices below.', closing: 'Thank you.' })).toMatchObject({ kind: 'words' });
     expect(checkReminderWords(named, { lead: 'Please pay before 2026 for the invoices below.', closing: 'Thank you.' })).toEqual({ kind: 'none', code: 'FIGURES' });
     expect(checkReminderWords(named, { lead: 'Acme 2026 asks you to pay before 2026.', closing: 'Thank you.' })).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+
+  it('does not let a short org name split a link or numeric token', () => {
+    expect(checkReminderWords({ ...REQUEST, language: 'en', orgName: 'com' }, { lead: 'Visit evil.com today.', closing: 'Thank you.' })).toEqual({ kind: 'none', code: 'LINK' });
+    expect(checkReminderWords({ ...REQUEST, orgName: '3T' }, { lead: 'Vui lòng xem evil3T.vn nhé.', closing: GOOD.closing })).toEqual({ kind: 'none', code: 'FIGURES' });
   });
 
   it('refuses empty and over-long text, and nothing from a model that answered nothing', () => {

@@ -17,6 +17,8 @@ export const zReminderLang = z.enum(['vi', 'en']);
 // The last reminder sent to the customer, and the notice level it was at.
 export const zLastReminder = z.object({ at: z.string(), level: zNoticeLevel });
 
+const zReminderForeignAmount = z.object({ currency: z.string(), amountDue: z.string() });
+
 export const zPaymentReminderCustomer = z.object({
   partyId: zId,
   name: z.string(),
@@ -27,8 +29,10 @@ export const zPaymentReminderCustomer = z.object({
   invoiceCount: z.number().int(),
   // The most days any of the overdue invoices is late.
   daysOverdue: z.number().int(),
-  // What the overdue invoices still owe, and the balance on 131 no invoice covers (shown, never worded into a reminder).
+  // What the overdue invoices still owe in the book currency, and the balance on 131 no invoice covers (shown, never worded into a reminder).
   total: z.string(),
+  foreignTotals: z.array(zReminderForeignAmount),
+  hasForeignCurrency: z.boolean(),
   other: z.string(),
   lastReminder: zLastReminder.nullable(),
 });
@@ -42,6 +46,8 @@ export const zPausedCustomer = z.object({
   ownTermsDays: z.number().int().nullable(),
   invoiceCount: z.number().int(),
   total: z.string(),
+  foreignTotals: z.array(zReminderForeignAmount),
+  hasForeignCurrency: z.boolean(),
 });
 
 export type PausedCustomer = z.infer<typeof zPausedCustomer>;
@@ -66,6 +72,9 @@ export const zReminderInvoiceView = z.object({
   dueDate: z.string(),
   daysOverdue: z.number().int(),
   amountDue: z.string(),
+  currency: z.string(),
+  foreignTotal: z.string().nullable(),
+  foreignAmountDue: z.string().nullable(),
 });
 // A bank account of the org with a number recorded (#2183) the reminder can ask to be paid into, with the holder's name.
 export const zReminderPayTo = z.object({ id: zId, bank: z.string(), number: z.string(), holder: z.string() });
@@ -96,6 +105,8 @@ export const zPaymentReminderDraft = z.object({
   lang: zReminderLang,
   invoices: z.array(zReminderInvoiceView),
   total: z.string(),
+  foreignTotals: z.array(zReminderForeignAmount),
+  hasForeignCurrency: z.boolean(),
   other: z.string(),
   lastReminder: zLastReminder.nullable(),
   // The fixed template words for this level and language; a drafted text replaces them only when it passes the same checks.
@@ -122,6 +133,8 @@ export const zPaymentReminderSend = z.object({
   payToId: zId.nullable(),
   // Sent anyway although a reminder of this level went out within the last days.
   confirm: z.boolean().optional(),
+  // True when lead/closing are AI-drafted wording; deterministic no-digit/no-link check is enforced on send as well.
+  aiWorded: z.boolean().optional(),
 });
 export type PaymentReminderSend = z.infer<typeof zPaymentReminderSend>;
 

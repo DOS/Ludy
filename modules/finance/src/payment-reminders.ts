@@ -14,6 +14,7 @@
 // No due date is stored on a sale and no receipt is linked to an invoice, so both are derived (domain/payment-reminder.ts).
 import { sql } from 'kysely';
 import { z } from 'zod';
+import { checkReminderWords } from '@ludy/agent';
 import {
   PAYMENT_REMINDER_CUSTOMERS_MAX,
   PAYMENT_REMINDER_SUBJECT_MAX,
@@ -30,12 +31,14 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { createMailMessage } from '@ludy/kernel';
 import { DomainError, defineCommand, defineQuery, sha256Hex, type QueryContext } from '@ludy/kernel-runtime';
-import { RECEIVABLE_ACCOUNT } from '@ludy/l10n-vn';
+import { RECEIVABLE_ACCOUNT, money } from '@ludy/l10n-vn';
 import { chartAccounts } from './accounts.ts';
+import { canonical } from './domain/money.ts';
 import {
   REMINDER_REPEAT_DAYS,
   addDays,
   allocateReceivable,
+  foreignTotalsOf,
   noticeLevel,
   overdueOf,
   reminderLang,
@@ -49,7 +52,15 @@ import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
 import { mergeGroupRows, readCollectionSetting } from './collection-settings.ts';
 import { oneLine } from './missing-invoices.ts';
-import { PAYMENT_REMINDER_INVOICES_MAX, PAYMENT_REMINDER_SOURCE, PAYMENT_REMINDER_TEMPLATE, zPaymentReminderMail, type PaymentReminderMail } from './payment-reminder-mail.ts';
+import {
+  PAYMENT_REMINDER_INVOICES_MAX,
+  PAYMENT_REMINDER_SOURCE,
+  PAYMENT_REMINDER_TEMPLATE,
+  paymentReminderSource,
+  paymentReminderSourceLevel,
+  zPaymentReminderMail,
+  type PaymentReminderMail,
+} from './payment-reminder-mail.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -125,7 +136,7 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
     .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.id', '=', 'd.party_id'))
     .leftJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
     .select(kept.as('party_id'))
-    .select(['d.id', 'd.invoice_series', 'd.invoice_number', 'd.invoice_date', 'd.total', 'd.currency'])
+    .select(['d.id', 'd.invoice_series', 'd.invoice_number', 'd.invoice_date', 'd.total', 'd.currency', 'd.foreign_total'])
     .where('d.org_id', '=', ctx.orgId)
     .where('d.legal_entity_id', '=', entity)
     .where('d.direction', '=', 'sale')
@@ -174,7 +185,15 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
     const set = own.get(o.party_id);
     const termsDays = set?.terms_days ?? org.termsDays;
     const receivable = allocateReceivable(
-      (invoices.get(o.party_id) ?? []).map((i) => ({ id: i.id, series: i.invoice_series, number: i.invoice_number, date: i.invoice_date, total: i.total, currency: i.currency })),
+      (invoices.get(o.party_id) ?? []).map((i) => ({
+        id: i.id,
+        series: i.invoice_series,
+        number: i.invoice_number,
+        date: i.invoice_date,
+        total: i.total,
+        currency: i.currency,
+        foreignTotal: i.foreign_total === null ? null : canonical(money(i.foreign_total)),
+      })),
       o.balance,
       today,
       termsDays,
@@ -184,25 +203,50 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
   });
 }
 
-// The last reminder each customer was sent: the newest mail of any notice level that went (or is going) out, read from the mail log.
+// All party ids belonging to the given kept party ids (including merged duplicates).
+async function partyGroupMap(ctx: QueryContext, partyIds: readonly string[]): Promise<{ keptOf: Map<string, string>; allIds: string[] }> {
+  const keptOf = new Map<string, string>(partyIds.map((id) => [id, id]));
+  if (partyIds.length === 0) return { keptOf, allIds: [] };
+  const rows = await ctx.trx
+    .selectFrom('ludy_kernel.party')
+    .select(['id', sql<string>`coalesce(duplicate_of, id)`.as('kept_id')])
+    .where('org_id', '=', ctx.orgId)
+    .where(sql<boolean>`coalesce(duplicate_of, id) IN (${sql.join([...partyIds])})`)
+    .execute();
+  for (const r of rows) keptOf.set(r.id, r.kept_id);
+  return { keptOf, allIds: [...new Set(keptOf.keys())] };
+}
+
+// The last reminder each customer was sent in `entity`: the newest mail of any notice level that went (or is going) out, read from the mail log.
+// Strictly scoped per legal entity via the immutable `.e<entityHex>` suffix on `source` (or explicit `payload.legalEntityId` for pre-suffix rows), so
+// a reminder from another entity never leaks even after 30-day payload retention purge.
 async function lastReminders(ctx: QueryContext, entity: string, partyIds: readonly string[], states: readonly string[] = REMINDED_STATES): Promise<Map<string, { at: string; level: NoticeLevel }>> {
   const out = new Map<string, { at: string; level: NoticeLevel }>();
   if (partyIds.length === 0) return out;
+  const { keptOf, allIds } = await partyGroupMap(ctx, partyIds);
+  const levels = [1, 2, 3] as const;
+  const entitySources = levels.map((l) => paymentReminderSource(l, entity));
+  const legacySources = levels.map((l) => `${PAYMENT_REMINDER_SOURCE}${l}`);
   const rows = await ctx.trx
     .selectFrom('ludy_kernel.mail_message')
     .select(['source', 'source_id', 'created_at'])
     .where('org_id', '=', ctx.orgId)
-    .where('source', 'like', `${PAYMENT_REMINDER_SOURCE}%`)
-    .where('source_id', 'in', [...partyIds])
+    .where('source_id', 'in', allIds)
     .where('status', 'in', [...states] as Array<(typeof REMINDED_STATES)[number] | 'suppressed'>)
-    // Of this entity's invoices (a customer can owe in several); a mail with no entity on it counts for each.
-    .where(sql<boolean>`coalesce(payload ->> 'legalEntityId', ${entity}) = ${entity}`)
+    .where((eb) =>
+      eb.or([
+        eb('source', 'in', entitySources),
+        eb.and([eb('source', 'in', legacySources), sql<boolean>`payload ->> 'legalEntityId' = ${entity}`]),
+      ]),
+    )
     .orderBy('created_at', 'desc')
+    .orderBy('id', 'desc')
     .execute();
   for (const row of rows) {
-    if (!row.source_id || out.has(row.source_id)) continue;
-    const level = Number(row.source.slice(PAYMENT_REMINDER_SOURCE.length));
-    if (level === 1 || level === 2 || level === 3) out.set(row.source_id, { at: row.created_at.toISOString(), level });
+    const kept = row.source_id ? keptOf.get(row.source_id) : undefined;
+    if (!kept || out.has(kept)) continue;
+    const level = paymentReminderSourceLevel(row.source);
+    if (level !== null) out.set(kept, { at: row.created_at.toISOString(), level });
   }
   return out;
 }
@@ -213,8 +257,9 @@ export async function bookCurrency(ctx: QueryContext): Promise<string> {
   return row.base_currency;
 }
 
-function summary(customer: Customer, last: { at: string; level: NoticeLevel } | undefined): PaymentReminderCustomer {
+function summary(customer: Customer, currency: string, last: { at: string; level: NoticeLevel } | undefined): PaymentReminderCustomer {
   const level = noticeLevel(customer.overdue) as NoticeLevel;
+  const book = currency.trim().toUpperCase();
   return {
     partyId: customer.partyId,
     name: customer.name,
@@ -224,6 +269,8 @@ function summary(customer: Customer, last: { at: string; level: NoticeLevel } | 
     invoiceCount: customer.overdue.length,
     daysOverdue: Math.max(...customer.overdue.map((i) => i.daysOverdue)),
     total: totalOf(customer.overdue),
+    foreignTotals: foreignTotalsOf(customer.overdue, book),
+    hasForeignCurrency: customer.overdue.some((i) => i.currency.trim().toUpperCase() !== book),
     other: customer.receivable.other,
     lastReminder: last ?? null,
   };
@@ -241,16 +288,27 @@ export const paymentRemindersList = defineQuery({
     const paused = everyone.filter((c) => c.paused);
     customers.sort((a, b) => Math.max(...b.overdue.map((i) => i.daysOverdue)) - Math.max(...a.overdue.map((i) => i.daysOverdue)) || a.name.localeCompare(b.name, 'vi') || a.partyId.localeCompare(b.partyId));
     const shown = customers.slice(0, PAYMENT_REMINDER_CUSTOMERS_MAX);
+    const currency = await bookCurrency(ctx);
+    const book = currency.trim().toUpperCase();
     const last = await lastReminders(ctx, entity, shown.map((c) => c.partyId));
     return zPaymentReminderList.parse({
-      currency: await bookCurrency(ctx),
-      customers: shown.map((c) => summary(c, last.get(c.partyId))),
+      currency,
+      customers: shown.map((c) => summary(c, currency, last.get(c.partyId))),
       more: customers.length > shown.length,
       termsDays: (await readCollectionSetting(ctx)).termsDays,
       paused: paused
         .sort((a, b) => (a.pausedUntil ?? '').localeCompare(b.pausedUntil ?? '') || a.name.localeCompare(b.name, 'vi') || a.partyId.localeCompare(b.partyId))
         .slice(0, PAYMENT_REMINDER_CUSTOMERS_MAX)
-        .map((c) => ({ partyId: c.partyId, name: c.name, pausedUntil: c.pausedUntil as string, ownTermsDays: c.ownTermsDays, invoiceCount: c.overdue.length, total: totalOf(c.overdue) })),
+        .map((c) => ({
+          partyId: c.partyId,
+          name: c.name,
+          pausedUntil: c.pausedUntil as string,
+          ownTermsDays: c.ownTermsDays,
+          invoiceCount: c.overdue.length,
+          total: totalOf(c.overdue),
+          foreignTotals: foreignTotalsOf(c.overdue, book),
+          hasForeignCurrency: c.overdue.some((i) => i.currency.trim().toUpperCase() !== book),
+        })),
     });
   },
 });
@@ -285,7 +343,12 @@ const PLAIN_ADDRESS = /^[^\s,;<>@"()[\]\\]+@[^\s,;<>@"()[\]\\]+\.[^\s,;<>@"()[\]
 // A digest of the very invoices of a draft (their ids, sorted): the draft carries it, the send recomputes it, so a customer with any number of invoices is held to the
 // set the person reviewed without sending the ids back.
 function invoiceKey(invoices: readonly OpenInvoice[]): string {
-  return sha256Hex(invoices.map((i) => `${i.id}:${i.dueDate}:${i.amountDue}`).sort().join(','));
+  return sha256Hex(
+    invoices
+      .map((i) => `${i.id}:${i.dueDate}:${i.amountDue}:${i.currency.trim().toUpperCase()}:${i.foreignAmountDue ?? ''}`)
+      .sort()
+      .join(','),
+  );
 }
 
 export const customerPaused = () => new DomainError('CUSTOMER_PAUSED', 409, 'Đang tạm dừng nhắc khách hàng này; bỏ tạm dừng rồi gửi lại');
@@ -300,24 +363,39 @@ export const paymentReminderDraft = defineQuery({
     const [customer] = await loadCustomers(ctx, entity, await databaseToday(ctx.trx), input.partyId);
     if (!customer || customer.overdue.length === 0) throw nothingOverdue();
     if (customer.paused) throw customerPaused();
-    const row = summary(customer, (await lastReminders(ctx, entity, [customer.partyId])).get(customer.partyId));
+    const currency = await bookCurrency(ctx);
+    const org = await orgName(ctx, entity);
+    const row = summary(customer, currency, (await lastReminders(ctx, entity, [customer.partyId])).get(customer.partyId));
     return zPaymentReminderDraft.parse({
       partyId: customer.partyId,
       name: customer.name,
       email: customer.email,
-      currency: await bookCurrency(ctx),
-      org: await orgName(ctx, entity),
+      currency,
+      org,
       termsDays: customer.termsDays,
       orgTermsDays: (await readCollectionSetting(ctx)).termsDays,
       ownTermsDays: customer.ownTermsDays,
       invoiceKey: invoiceKey(customer.overdue),
       level: row.level,
       lang: row.lang,
-      invoices: customer.overdue.map((i) => ({ id: i.id, series: i.series, number: i.number, date: i.date, dueDate: i.dueDate, daysOverdue: i.daysOverdue, amountDue: i.amountDue })),
+      invoices: customer.overdue.map((i) => ({
+        id: i.id,
+        series: i.series,
+        number: i.number,
+        date: i.date,
+        dueDate: i.dueDate,
+        daysOverdue: i.daysOverdue,
+        amountDue: i.amountDue,
+        currency: i.currency.trim().toUpperCase(),
+        foreignTotal: i.foreignTotal,
+        foreignAmountDue: i.foreignAmountDue,
+      })),
       total: row.total,
+      foreignTotals: row.foreignTotals,
+      hasForeignCurrency: row.hasForeignCurrency,
       other: row.other,
       lastReminder: row.lastReminder,
-      words: templateWords({ level: row.level, lang: row.lang, customer: oneLine(customer.name), org: await orgName(ctx, entity) }),
+      words: templateWords({ level: row.level, lang: row.lang, customer: oneLine(customer.name), org }),
       payTo: await payToOptions(ctx, entity),
     });
   },
@@ -332,8 +410,15 @@ export const paymentReminderSend = defineCommand({
   access: EDITORS,
   handler: async (ctx, input): Promise<PaymentReminderSent> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
-    // One reminder per customer at a time: a double click waits here and then meets the first one's mail.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.payment_reminder:${ctx.orgId}:${input.partyId}`}, 0))`.execute(ctx.trx);
+    const askedParty = await ctx.trx
+      .selectFrom('ludy_kernel.party')
+      .select(sql<string>`coalesce(duplicate_of, id)`.as('kept'))
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.partyId)
+      .executeTakeFirst();
+    const lockPartyId = askedParty?.kept ?? input.partyId;
+    // One reminder per customer per entity at a time: a double click waits here and then meets the first one's mail.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.payment_reminder:${ctx.orgId}:${entity}:${lockPartyId}`}, 0))`.execute(ctx.trx);
     const [customer] = await loadCustomers(ctx, entity, await databaseToday(ctx.trx), input.partyId);
     if (!customer || customer.overdue.length === 0) throw nothingOverdue();
     if (customer.paused) throw customerPaused();
@@ -345,16 +430,31 @@ export const paymentReminderSend = defineCommand({
     }
     const email = customer.email?.trim() ?? '';
     if (!PLAIN_ADDRESS.test(email)) throw new DomainError('CUSTOMER_EMAIL_REQUIRED', 409, 'Khách hàng này chưa có email; hãy nhập email trong hồ sơ khách hàng rồi gửi lại');
-    const source = `${PAYMENT_REMINDER_SOURCE}${level}`;
+    const lang = reminderLang(customer.overdue);
+    const org = await orgName(ctx, entity);
+    if (input.aiWorded === true) {
+      // Deterministic enforcement on AI-drafted wording (#2491): no digits, number words, currencies, links, or stealth controls.
+      const checked = checkReminderWords({ level, language: lang, orgName: org }, { lead: input.lead, closing: input.closing });
+      if (checked.kind === 'none') {
+        throw new DomainError('REMINDER_AI_TEXT_INVALID', 422, 'Nội dung do AI soạn không hợp lệ (chứa số liệu, đường dẫn hoặc quá giới hạn); hãy kiểm tra hoặc dùng lời mẫu');
+      }
+    }
+    const source = paymentReminderSource(level, entity);
+    const legacySource = `${PAYMENT_REMINDER_SOURCE}${level}`;
+    const { allIds: partyScope } = await partyGroupMap(ctx, [customer.partyId]);
     const since = new Date(ctx.now.getTime() - REMINDER_REPEAT_DAYS * DAY_MS);
     const recent = await ctx.trx
       .selectFrom('ludy_kernel.mail_message')
       .select('created_at')
       .where('org_id', '=', ctx.orgId)
-      .where('source', '=', source)
-      .where('source_id', '=', customer.partyId)
+      .where('source_id', 'in', partyScope)
       .where('status', 'in', [...REMINDED_STATES])
-      .where(sql<boolean>`coalesce(payload ->> 'legalEntityId', ${entity}) = ${entity}`)
+      .where((eb) =>
+        eb.or([
+          eb('source', '=', source),
+          eb.and([eb('source', '=', legacySource), sql<boolean>`payload ->> 'legalEntityId' = ${entity}`]),
+        ]),
+      )
       .where('created_at', '>', since)
       .limit(1)
       .executeTakeFirst();
@@ -368,19 +468,34 @@ export const paymentReminderSend = defineCommand({
       payTo = { bank: chosen.bank, number: chosen.number, holder: chosen.holder };
     }
     const currency = await bookCurrency(ctx);
+    const book = currency.trim().toUpperCase();
+    const foreignTotals = foreignTotalsOf(customer.overdue, book);
     const shown = customer.overdue.slice(0, PAYMENT_REMINDER_INVOICES_MAX);
     const payload: PaymentReminderMail = {
       legalEntityId: entity,
-      lang: reminderLang(customer.overdue),
+      lang,
       level,
-      org: await orgName(ctx, entity),
+      org,
       greeting: oneLine(input.greeting, PAYMENT_REMINDER_TEXT_MAX),
       lead: paragraph(input.lead),
       closing: paragraph(input.closing),
-      invoices: shown.map((i) => ({ series: oneLine(i.series, 50), number: oneLine(i.number, 50), date: i.date, dueDate: i.dueDate, daysOverdue: i.daysOverdue, amountDue: i.amountDue, currency })),
+      invoices: shown.map((i) => {
+        const invCurrency = i.currency.trim().toUpperCase();
+        return {
+          series: oneLine(i.series, 50),
+          number: oneLine(i.number, 50),
+          date: i.date,
+          dueDate: i.dueDate,
+          daysOverdue: i.daysOverdue,
+          amountDue: i.amountDue,
+          currency,
+          ...(invCurrency !== book ? { invoiceCurrency: invCurrency, foreignTotal: i.foreignTotal, foreignAmountDue: i.foreignAmountDue } : {}),
+        };
+      }),
       count: customer.overdue.length,
       total,
       currency,
+      ...(foreignTotals.length > 0 ? { foreignTotals } : {}),
       payTo,
     };
     // The worker validates this at render; a mail it would refuse is refused here, before anything is queued or audited as sent.

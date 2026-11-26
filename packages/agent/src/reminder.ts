@@ -13,10 +13,11 @@ import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import {
   hasAddress,
   hasAutonomousActionDirective,
+  hasInvisibleFormat,
   hasNumberWords,
   hasObfuscatedContactOrLink,
   hasPromptMarkupLeak,
-  hasStealthControls,
+  stripTrustedPhrases,
 } from './injection-guards.ts';
 
 export { hasAddress, hasNumberWords };
@@ -75,15 +76,16 @@ export function reminderPrompt(request: ReminderWordsRequest): string {
   return parts.join('\n\n');
 }
 
-const CURRENCY_SIGN = /[$€£]/u;
+const CURRENCY_SIGN = /\p{Sc}/u;
 
 // What a text may hold: no figure, number word, currency or address, except the org's own name as a whole (a name such as "Công ty 3T" or "shop.vn" is the sender's
-// own). The name is cut out of the text first, so a number the name happens to hold ("Acme 2026") cannot be reused on its own ("pay before 2026").
+// own). The name is stripped only at token boundaries, so a short name cannot split a link/domain, and a number the name happens to hold ("Acme 2026") cannot be reused on its own ("pay before 2026").
 export function reminderTextProblem(text: string, orgName: string): 'FIGURES' | 'LINK' | null {
-  if (hasStealthControls(text)) return 'FIGURES';
-  const name = orgName.trim();
-  const rest = (name === '' ? text : text.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'), ' ')).normalize('NFKC').replace(/\p{Cf}/gu, '');
-  if (draftFiguresOutside(rest, []).length > 0 || hasNumberWords(rest) || CURRENCY_SIGN.test(rest)) return 'FIGURES';
+  if (hasInvisibleFormat(text)) return 'FIGURES';
+  const name = orgName.trim().normalize('NFKC');
+  const normalized = text.normalize('NFKC');
+  const rest = name === '' ? normalized : stripTrustedPhrases(normalized, [name]);
+  if (draftFiguresOutside(rest, []).length > 0 || /\p{N}/u.test(rest) || hasNumberWords(rest) || CURRENCY_SIGN.test(rest)) return 'FIGURES';
   if (hasAddress(rest) || draftLinksOutside(rest, []).length > 0 || hasPromptMarkupLeak(text) || hasObfuscatedContactOrLink(rest) || hasAutonomousActionDirective(rest)) return 'LINK';
   return null;
 }

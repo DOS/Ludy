@@ -7,8 +7,11 @@ import {
   addDays,
   allocateReceivable,
   daysBetween,
+  foreignTotalsOf,
   noticeLevel,
   overdueOf,
+  paymentReminderSource,
+  paymentReminderSourceLevel,
   reminderLang,
   renderPaymentReminderMail,
   templateWords,
@@ -83,6 +86,40 @@ describe('allocateReceivable', () => {
 
   it('skips invoices with no amount', () => {
     expect(allocateReceivable([inv('1', '2026-09-01', '0'), inv('2', '2026-09-02', '-5')], '10', today)).toEqual({ open: [], other: '10' });
+  });
+
+  it('tracks foreign totals and prorates partial foreign amounts with decimal.js', () => {
+    const r = allocateReceivable(
+      [
+        { ...inv('1', '2026-08-01', '25450000', 'USD'), foreignTotal: '1000.0000' },
+        { ...inv('2', '2026-09-01', '5090000', 'USD'), foreignTotal: '200.0000' },
+        inv('3', '2026-09-15', '1000000', 'VND'),
+      ],
+      '18815000',
+      today,
+    );
+    expect(r.open.map((i) => [i.number, i.amountDue, i.foreignTotal, i.foreignAmountDue])).toEqual([
+      ['1', '12725000', '1000', '500'],
+      ['2', '5090000', '200', '200'],
+      ['3', '1000000', null, null],
+    ]);
+    expect(foreignTotalsOf(r.open, 'VND')).toEqual([{ currency: 'USD', amountDue: '700' }]);
+  });
+
+  it('sums foreign totals per currency accurately and sorts deterministically', () => {
+    const r = allocateReceivable(
+      [
+        { ...inv('1', '2026-08-01', '2545000', 'USD'), foreignTotal: '0.1' },
+        { ...inv('2', '2026-08-02', '5090000', 'USD'), foreignTotal: '0.2' },
+        { ...inv('3', '2026-08-03', '2800000', 'EUR'), foreignTotal: '100.50' },
+      ],
+      '10435000',
+      today,
+    );
+    expect(foreignTotalsOf(r.open, 'VND')).toEqual([
+      { currency: 'EUR', amountDue: '100.5' },
+      { currency: 'USD', amountDue: '0.3' },
+    ]);
   });
 });
 
@@ -190,5 +227,134 @@ describe('renderPaymentReminderMail', () => {
   it('refuses merge data that is not what the template needs', () => {
     expect(() => renderPaymentReminderMail({ ...base, invoices: [] }, { replyTo: null })).toThrow();
     expect(() => renderPaymentReminderMail({ lang: 'fr' }, { replyTo: null })).toThrow();
+  });
+
+  it('shows foreign currency amounts alongside booked book-currency amounts in English mail', () => {
+    const mail = renderPaymentReminderMail(
+      {
+        ...base,
+        lang: 'en',
+        invoices: [
+          {
+            series: 'C26TAA',
+            number: '12',
+            date: '2026-09-01',
+            dueDate: '2026-10-01',
+            daysOverdue: 33,
+            amountDue: '25450000',
+            currency: 'VND',
+            invoiceCurrency: 'USD',
+            foreignTotal: '1000',
+            foreignAmountDue: '1000',
+          },
+          {
+            series: 'C26TAA',
+            number: '14',
+            date: '2026-09-10',
+            dueDate: '2026-10-10',
+            daysOverdue: 24,
+            amountDue: '12725000',
+            currency: 'VND',
+            invoiceCurrency: 'USD',
+            foreignTotal: '1000',
+            foreignAmountDue: '500',
+          },
+        ],
+        count: 2,
+        total: '38175000',
+        currency: 'VND',
+        foreignTotals: [{ currency: 'USD', amountDue: '1500' }],
+      },
+      { replyTo: null },
+    );
+    expect(mail.text).toContain('1.000 USD (booked: 25.450.000 VND)');
+    expect(mail.text).toContain('500 USD (invoice 1.000 USD; booked: 12.725.000 VND)');
+    expect(mail.text).toContain('Total: 1.500 USD (booked: 38.175.000 VND)');
+    expect(mail.html).toContain('1.000 USD<br><span');
+    expect(mail.html).toContain('booked: 25.450.000 VND');
+  });
+
+  it('clearly labels booked amounts when a foreign-currency invoice has no foreign total', () => {
+    const mail = renderPaymentReminderMail(
+      {
+        ...base,
+        lang: 'en',
+        invoices: [
+          {
+            series: 'C26TAA',
+            number: '15',
+            date: '2026-09-01',
+            dueDate: '2026-10-01',
+            daysOverdue: 33,
+            amountDue: '25450000',
+            currency: 'VND',
+            invoiceCurrency: 'USD',
+            foreignTotal: null,
+            foreignAmountDue: null,
+          },
+        ],
+        count: 1,
+        total: '25450000',
+        currency: 'VND',
+      },
+      { replyTo: null },
+    );
+    expect(mail.text).toContain('25.450.000 VND (booked; USD invoice)');
+    expect(mail.text).toContain('Total (booked): 25.450.000 VND');
+  });
+
+  it('labels booked total and includes foreign summary when a customer owes mixed VND and foreign invoices', () => {
+    const mail = renderPaymentReminderMail(
+      {
+        ...base,
+        lang: 'vi',
+        invoices: [
+          {
+            series: 'C26TAA',
+            number: '16',
+            date: '2026-09-01',
+            dueDate: '2026-10-01',
+            daysOverdue: 33,
+            amountDue: '25450000',
+            currency: 'VND',
+            invoiceCurrency: 'USD',
+            foreignTotal: '1000',
+            foreignAmountDue: '1000',
+          },
+          {
+            series: 'C26TAA',
+            number: '17',
+            date: '2026-09-05',
+            dueDate: '2026-10-05',
+            daysOverdue: 29,
+            amountDue: '500000',
+            currency: 'VND',
+            invoiceCurrency: 'VND',
+            foreignTotal: null,
+            foreignAmountDue: null,
+          },
+        ],
+        count: 2,
+        total: '25950000',
+        currency: 'VND',
+        foreignTotals: [{ currency: 'USD', amountDue: '1000' }],
+      },
+      { replyTo: null },
+    );
+    expect(mail.text).toContain('1.000 USD (ghi sổ: 25.450.000 đồng)');
+    expect(mail.text).toContain('500.000 đồng');
+    expect(mail.text).toContain('Tổng cộng (ghi sổ): 25.950.000 đồng (gồm 1.000 USD)');
+  });
+});
+
+describe('paymentReminderSource', () => {
+  it('encodes notice level and legal entity id safely for mail_message.source and parses both scoped and legacy forms', () => {
+    const source = paymentReminderSource(2, '0195a1b2-c3d4-7000-8000-1234567890ab');
+    expect(source).toBe('finance.payment_reminder.notice2.e0195a1b2c3d4700080001234567890ab');
+    expect(source.length).toBeLessThanOrEqual(100);
+    expect(source).toMatch(/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/);
+    expect(paymentReminderSourceLevel(source)).toBe(2);
+    expect(paymentReminderSourceLevel('finance.payment_reminder.notice1')).toBe(1);
+    expect(paymentReminderSourceLevel('finance.payment_reminder.notice4')).toBeNull();
   });
 });

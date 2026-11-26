@@ -9,11 +9,21 @@ import { PAYMENT_REMINDER_TEXT_MAX, zId } from '@ludy/kernel-contract';
 import { formatAmount, formatDate, escapeHtml, oneLine, type RenderedMail } from './missing-invoices.ts';
 
 export const PAYMENT_REMINDER_TEMPLATE = 'finance.payment_reminder';
-// The mail's `source` is this plus the notice level: the level a customer was last reminded at is read back from it, and from the
-// row's own date, so the reminder history needs no table of its own.
+// The mail's `source` is this plus the notice level and `.e<entityHex>`: both the level and the legal entity sit on the
+// immutable `source` column so reminder history and 3-day repeat checks remain scoped per entity even after 30-day payload retention purge.
 export const PAYMENT_REMINDER_SOURCE = 'finance.payment_reminder.notice';
 // Invoices listed in one mail; the mail says how many more there are. The total always covers all of them.
 export const PAYMENT_REMINDER_INVOICES_MAX = 60;
+
+export function paymentReminderSource(level: 1 | 2 | 3, legalEntityId: string): string {
+  return `${PAYMENT_REMINDER_SOURCE}${level}.e${legalEntityId.replace(/-/g, '').toLowerCase()}`;
+}
+
+export function paymentReminderSourceLevel(source: string): 1 | 2 | 3 | null {
+  const match = /^finance\.payment_reminder\.notice([123])(?:\.e[0-9a-f]{32})?$/.exec(source);
+  if (!match) return null;
+  return Number(match[1]) as 1 | 2 | 3;
+}
 
 export const zPaymentReminderInvoice = z.object({
   series: z.string().max(50),
@@ -23,13 +33,20 @@ export const zPaymentReminderInvoice = z.object({
   daysOverdue: z.number().int().min(1).max(36500),
   amountDue: z.string().max(40),
   currency: z.string().regex(/^[A-Z]{3}$/),
+  // Foreign currency metadata when the invoice is not in the book currency (#2491).
+  invoiceCurrency: z.string().regex(/^[A-Z]{3}$/).optional(),
+  foreignTotal: z.string().max(40).nullable().optional(),
+  foreignAmountDue: z.string().max(40).nullable().optional(),
+});
+const zPaymentReminderForeignTotal = z.object({
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  amountDue: z.string().max(40),
 });
 export const zPaymentReminderPayTo = z.object({ bank: z.string().max(200), number: z.string().max(40), holder: z.string().max(200) });
 
 // The merge data of the mail, as stored on its row (mail_message.payload).
 export const zPaymentReminderMail = z.object({
-  // The legal entity whose invoices the mail is about: the reminder history is read per entity. A mail made before this field, or whose merge data is gone, counts for
-  // every entity.
+  // The legal entity whose invoices the mail is about: the reminder history is read per entity.
   legalEntityId: zId.optional(),
   lang: z.enum(['vi', 'en']),
   level: z.union([z.literal(1), z.literal(2), z.literal(3)]),
@@ -42,6 +59,7 @@ export const zPaymentReminderMail = z.object({
   count: z.number().int().min(1),
   total: z.string().max(40),
   currency: z.string().regex(/^[A-Z]{3}$/),
+  foreignTotals: z.array(zPaymentReminderForeignTotal).max(100).optional(),
   payTo: zPaymentReminderPayTo.nullable(),
 });
 export type PaymentReminderMail = z.infer<typeof zPaymentReminderMail>;
@@ -53,6 +71,11 @@ const LABELS = {
     days: (n: number) => `${n} ngày`,
     invoice: (symbol: string, number: string) => `số ${number}, ký hiệu ${symbol}`,
     total: 'Tổng cộng',
+    totalBooked: 'Tổng cộng (ghi sổ)',
+    booked: (bookAmount: string) => `ghi sổ: ${bookAmount}`,
+    bookedOnlyNote: (invCurrency: string) => `ghi sổ; hóa đơn ${invCurrency}`,
+    partialOfInvoice: (invTotal: string, bookAmount: string) => `hóa đơn ${invTotal}; ghi sổ: ${bookAmount}`,
+    includesForeign: (foreignText: string) => `gồm ${foreignText}`,
     more: (n: number) => `Và ${n} hóa đơn quá hạn khác, đã nằm trong tổng cộng trên.`,
     payTo: 'Thông tin chuyển khoản',
     bank: 'Ngân hàng',
@@ -66,6 +89,11 @@ const LABELS = {
     days: (n: number) => `${n} day${n === 1 ? '' : 's'}`,
     invoice: (symbol: string, number: string) => `no. ${number}, series ${symbol}`,
     total: 'Total',
+    totalBooked: 'Total (booked)',
+    booked: (bookAmount: string) => `booked: ${bookAmount}`,
+    bookedOnlyNote: (invCurrency: string) => `booked; ${invCurrency} invoice`,
+    partialOfInvoice: (invTotal: string, bookAmount: string) => `invoice ${invTotal}; booked: ${bookAmount}`,
+    includesForeign: (foreignText: string) => `includes ${foreignText}`,
     more: (n: number) => `And ${n} more overdue invoice${n === 1 ? '' : 's'}, already counted in the total above.`,
     payTo: 'Payment details',
     bank: 'Bank',
@@ -88,6 +116,26 @@ function amount(value: string, currency: string, lang: 'vi' | 'en'): string {
   return lang === 'en' && currency === 'VND' ? text.replace(/ đồng$/, ' VND') : text;
 }
 
+function invoiceAmountDisplay(
+  invoice: PaymentReminderInvoice,
+  bookCurrency: string,
+  lang: 'vi' | 'en',
+): { primary: string; note: string | null } {
+  const t = LABELS[lang];
+  const book = bookCurrency.toUpperCase();
+  const invCurrency = (invoice.invoiceCurrency ?? invoice.currency).toUpperCase();
+  const bookedText = amount(invoice.amountDue, book, lang);
+  if (invCurrency === book) return { primary: bookedText, note: null };
+  if (invoice.foreignAmountDue) {
+    const foreignText = amount(invoice.foreignAmountDue, invCurrency, lang);
+    if (invoice.foreignTotal && invoice.foreignTotal !== invoice.foreignAmountDue) {
+      return { primary: foreignText, note: t.partialOfInvoice(amount(invoice.foreignTotal, invCurrency, lang), bookedText) };
+    }
+    return { primary: foreignText, note: t.booked(bookedText) };
+  }
+  return { primary: bookedText, note: t.bookedOnlyNote(invCurrency) };
+}
+
 // The mail from its stored merge data. replyTo: the org's inbound address when the deployment receives mail. brand: the product name users
 // see (BRAND_NAME, #1040).
 export function renderPaymentReminderMail(raw: unknown, context: { replyTo: string | null; brand?: string }): RenderedMail {
@@ -96,14 +144,29 @@ export function renderPaymentReminderMail(raw: unknown, context: { replyTo: stri
   const brand = context.brand ?? 'Ludy';
   const org = oneLine(mail.org);
   const more = mail.count - mail.invoices.length;
-  const rows = mail.invoices.map((i) => [
-    invoiceName(i, mail.lang),
-    formatDate(i.date),
-    formatDate(i.dueDate),
-    t.days(i.daysOverdue),
-    amount(i.amountDue, i.currency, mail.lang),
-  ]);
+  const book = mail.currency.toUpperCase();
+  const amounts = mail.invoices.map((i) => invoiceAmountDisplay(i, book, mail.lang));
+  const rows = mail.invoices.map((i, idx) => {
+    const disp = amounts[idx]!;
+    return [
+      invoiceName(i, mail.lang),
+      formatDate(i.date),
+      formatDate(i.dueDate),
+      t.days(i.daysOverdue),
+      disp.note ? `${disp.primary} (${disp.note})` : disp.primary,
+    ];
+  });
   const totalText = amount(mail.total, mail.currency, mail.lang);
+  const anyForeign = mail.invoices.some((i) => (i.invoiceCurrency ?? i.currency).toUpperCase() !== book) || (mail.foreignTotals?.length ?? 0) > 0;
+  const allShownForeignWithAmount = mail.invoices.every((i) => (i.invoiceCurrency ?? i.currency).toUpperCase() !== book && Boolean(i.foreignAmountDue));
+  const foreignSummary = (mail.foreignTotals ?? []).map((ft) => amount(ft.amountDue, ft.currency, mail.lang)).join(' + ');
+  const totalLine = !anyForeign
+    ? `${t.total}: ${totalText}`
+    : mail.lang === 'en' && allShownForeignWithAmount && foreignSummary
+      ? `${t.total}: ${foreignSummary} (${t.booked(totalText)})`
+      : foreignSummary
+        ? `${t.totalBooked}: ${totalText} (${t.includesForeign(foreignSummary)})`
+        : `${t.totalBooked}: ${totalText}`;
   const payLines = mail.payTo ? [`${t.bank}: ${oneLine(mail.payTo.bank)}`, `${t.number}: ${oneLine(mail.payTo.number, 40)}`, `${t.holder}: ${oneLine(mail.payTo.holder)}`] : [];
 
   const text = [
@@ -114,7 +177,7 @@ export function renderPaymentReminderMail(raw: unknown, context: { replyTo: stri
     ...rows.map((r, i) => `${i + 1}. ${r[0]}, ${t.columns[1]?.toLowerCase()} ${r[1]}, ${t.columns[2]?.toLowerCase()} ${r[2]}, ${t.columns[3]?.toLowerCase()} ${r[3]}: ${r[4]}`),
     ...(more > 0 ? ['', t.more(more)] : []),
     '',
-    `${t.total}: ${totalText}`,
+    totalLine,
     ...(payLines.length > 0 ? ['', `${t.payTo}:`, ...payLines] : []),
     '',
     mail.closing,
@@ -128,7 +191,18 @@ export function renderPaymentReminderMail(raw: unknown, context: { replyTo: stri
   const cell = 'padding:6px 8px;border-bottom:1px solid #d0d7de';
   const head = t.columns.map((h, i) => `<th style="padding:6px 8px;border-bottom:2px solid #d0d7de;text-align:${i === 4 ? 'right' : 'left'}">${escapeHtml(h)}</th>`).join('');
   const body = rows
-    .map((r) => `<tr>${r.map((c, i) => `<td style="${cell};${i === 4 ? 'text-align:right;' : ''}white-space:nowrap">${escapeHtml(c)}</td>`).join('')}</tr>`)
+    .map((r, idx) => {
+      const disp = amounts[idx]!;
+      return `<tr>${r
+        .map((c, i) => {
+          if (i !== 4) return `<td style="${cell};white-space:nowrap">${escapeHtml(c)}</td>`;
+          const htmlAmount = disp.note
+            ? `${escapeHtml(disp.primary)}<br><span style="color:#57606a;font-size:12px">(${escapeHtml(disp.note)})</span>`
+            : escapeHtml(disp.primary);
+          return `<td style="${cell};text-align:right;white-space:nowrap">${htmlAmount}</td>`;
+        })
+        .join('')}</tr>`;
+    })
     .join('');
   const html = `<!doctype html>
 <html lang="${mail.lang}"><body style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#1f2328">
@@ -136,7 +210,7 @@ export function renderPaymentReminderMail(raw: unknown, context: { replyTo: stri
 <p>${escapeHtml(mail.lead)}</p>
 <table style="border-collapse:collapse;width:100%;font-size:14px"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
 ${more > 0 ? `<p>${escapeHtml(t.more(more))}</p>` : ''}
-<p><strong>${escapeHtml(t.total)}: ${escapeHtml(totalText)}</strong></p>
+<p><strong>${escapeHtml(totalLine)}</strong></p>
 ${payLines.length > 0 ? `<p>${escapeHtml(t.payTo)}:<br>${payLines.map(escapeHtml).join('<br>')}</p>` : ''}
 <p>${escapeHtml(mail.closing)}</p>
 <p>${escapeHtml(t.signoff)}<br>${escapeHtml(org)}</p>
