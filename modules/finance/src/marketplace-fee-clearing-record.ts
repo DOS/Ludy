@@ -163,7 +163,14 @@ export async function resolveInvoiceClearingState(
   cleared: string;
   waiting: { balance: string; lastDate: string | null };
 } | null> {
-  const readBalance = options.readBalance ?? ((code: string) => balanceOf(ctx, legalEntityId, partyId, code));
+  const balances = new Map<string, { balance: string; lastDate: string | null }>();
+  const readBalance = async (code: string) => {
+    const cached = balances.get(code);
+    if (cached) return cached;
+    const loaded = options.readBalance ? await options.readBalance(code) : await balanceOf(ctx, legalEntityId, partyId, code);
+    balances.set(code, loaded);
+    return loaded;
+  };
   const readRegime = options.readRegime ?? (async (entityId: string, date: string) => (await booksOn(ctx, entityId, date)).regime);
   const mapOf = (regime: string) => (Object.hasOwn(maps, regime) ? maps[regime] : undefined) ?? MARKETPLACE_POSTING_MAPS.tt133;
   const initialRegime = await readRegime(legalEntityId, invoiceDate);

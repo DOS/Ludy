@@ -427,20 +427,25 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     const extra = await invoice(o2, party2, { total: 5000, vat: 0 });
     await expect(askFee(o2, extra)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_NOTHING_TO_CLEAR', status: 409, details: { reason: 'NOTHING_WAITING' } });
 
-    // 4) Reversing a zero-fee payout that debited 1388 only for withheld_in_error keeps waiting fees at 0.
+    // 4) Reversing a payout that debited 1388 only for withheld_in_error neither adds to nor subtracts from real waiting fees on the same platform.
     const o3 = await org('tt133', false);
-    const s3 = await seed(o3, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', tax: '2000' }]);
-    await approve(o3, (await askSettlement(o3, s3, o3.admin, rtPayout331)).proposalId, o3.owner, rtPayout331);
-    const b3 = await bankLine(o3, '2026-10-20', '98000');
-    const [line3] = await rows<{ id: string }>('SELECT id FROM ludy_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [o3.orgId, s3]);
-    const payout3 = await approve(o3, (await ask(o3, s3, b3, o3.admin, rtPayout331, [{ kind: 'withheld_in_error', lineId: line3?.id as string, amount: '2000' }])).proposalId, o3.owner, rtPayout331);
+    const sFee = await seed(o3, 'shopee', '2026-10-01', '2026-10-10', [{ sales: '100000', commission: '10000' }]);
+    await post(o3, sFee);
+    const bFee = await bankLine(o3, '2026-10-12', '90000');
+    await approve(o3, (await ask(o3, sFee, bFee, o3.admin, rt)).proposalId);
+    const sTax = await seed(o3, 'shopee', '2026-10-15', '2026-10-20', [{ sales: '100000', tax: '2000' }]);
+    await post(o3, sTax);
+    const bTax = await bankLine(o3, '2026-10-22', '98000');
+    const [lineTax] = await rows<{ id: string }>('SELECT id FROM ludy_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [o3.orgId, sTax]);
+    const payoutTax = await approve(o3, (await ask(o3, sTax, bTax, o3.admin, rt, [{ kind: 'withheld_in_error', lineId: lineTax?.id as string, amount: '2000' }])).proposalId);
+    expect(await fees1388(o3)).toBe('12000');
+    const rev = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: payoutTax.journalEntryId, entryDate: '2026-10-26', reason: 'Hủy chi trả' } }, { actor: asUser(o3.admin), orgId: o3.orgId, idempotencyKey: randomUUID() });
+    await approve(o3, rev.proposalId);
+    expect(await fees1388(o3)).toBe('10000');
     const party3 = (await partyOf(o3, 'shopee')) as string;
     const doc3 = await invoice(o3, party3);
-    await expect(askFee(o3, doc3, o3.admin, rtPayout331)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_NOTHING_TO_CLEAR', status: 409, details: { reason: 'NOTHING_WAITING' } });
-    const rev = await rtPayout331.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: payout3.journalEntryId, entryDate: '2026-10-26', reason: 'Hủy chi trả' } }, { actor: asUser(o3.admin), orgId: o3.orgId, idempotencyKey: randomUUID() });
-    await approve(o3, rev.proposalId, o3.owner, rtPayout331);
-    expect(await fees1388(o3)).toBe('0');
-    await expect(askFee(o3, doc3, o3.admin, rtPayout331)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_NOTHING_TO_CLEAR', status: 409, details: { reason: 'NOTHING_WAITING' } });
+    const afterRev = await askFee(o3, doc3);
+    expect(await payloadOf(o3, afterRev.proposalId)).toMatchObject({ waiting: '10000', amount: '10000' });
     expect(payout2.journalEntryId).toEqual(expect.any(String));
   });
 });

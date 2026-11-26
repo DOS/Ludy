@@ -200,15 +200,22 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
       const invoices: MarketplaceWorklist['invoices'] = [];
       const awaitingCodes = [...new Set(Object.values(maps).map((m) => m.feeAwaitingInvoice.code))];
       if (awaitingCodes.length === 0) awaitingCodes.push(MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388');
-      const regimes = new Map<string, Promise<string>>();
-      const readRegime = (entityId: string, date: string) => {
-        const key = `${entityId}:${date}`;
-        let p = regimes.get(key);
+      const booksCache = new Map<string, Promise<Array<{ effectiveFrom: string; regime: string }>>>();
+      const readRegime = async (entityId: string, date: string) => {
+        let p = booksCache.get(entityId);
         if (!p) {
-          p = booksOn(ctx, entityId, date).then((b) => b.regime);
-          regimes.set(key, p);
+          p = ctx.trx
+            .selectFrom('ludy_finance.legal_entity_books')
+            .select(['effective_from', 'regime'])
+            .where('org_id', '=', ctx.orgId)
+            .where('legal_entity_id', '=', entityId)
+            .orderBy('effective_from', 'desc')
+            .execute()
+            .then((rows) => rows.map((r) => ({ effectiveFrom: String(r.effective_from).slice(0, 10), regime: r.regime })));
+          booksCache.set(entityId, p);
         }
-        return p;
+        const rows = await p;
+        return rows.find((r) => r.effectiveFrom <= date)?.regime ?? 'tt133';
       };
       for (const link of options.feeClearing === true ? await links.orderBy('m.platform').execute() : []) {
         const balances = new Map<string, Promise<{ balance: string; lastDate: string | null }>>();
