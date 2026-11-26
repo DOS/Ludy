@@ -222,9 +222,9 @@ const RAW_CTX_GUC_RE =
 const MCP_HELPER_RE = /\b(ctx_mcp_member_id|conversation_access_mcp_member|ctx_mcp_engage_write)\b/i;
 const BRIEFING_HELPER_RE = /\bctx_briefing_user_id\b/i;
 const BRIEFING_HELPER_GLOBAL_RE =
-  /(?<![A-Za-z0-9_.]|\.\s+)(?:(?:crove|ludy)_kernel\.)?ctx_briefing_user_id\(\)/gi;
+  /(?:\(\s*SELECT\s+(?:(?:crove|ludy)_kernel\.ctx_briefing_user_id\(\)|\(\s*(?:crove|ludy)_kernel\.ctx_briefing_user_id\(\)\s*\))(?:\s+AS\s+ctx_briefing_user_id)?\s*\)|(?<![A-Za-z0-9_.]|\.\s+)(?:crove|ludy)_kernel\.ctx_briefing_user_id\(\))/gi;
 const BRIEFING_LOOKUP_ORG_BIND_RE =
-  /(?<![A-Za-z0-9_.]|\.\s+)(?:(?:crove|ludy)_kernel\.)?ctx_org_id\s*\(/i;
+  /(?<![A-Za-z0-9_.]|\.\s+)(?:crove|ludy)_kernel\.ctx_org_id\s*\(\s*\)/i;
 const STANDARD_CTX_ACCESSORS = new Set([
   "ctx_org_id()",
   "ctx_user_id()",
@@ -486,6 +486,8 @@ type BriefingLookupViewInput = {
   reloptions: readonly string[] | null;
   taintedViewDeps?: readonly string[];
   taintedFnDeps?: readonly string[];
+  hasActiveOrgBindDep?: boolean;
+  activeKernelSchema?: string;
 };
 
 function isAllowedBriefingLookupView(input: BriefingLookupViewInput): boolean {
@@ -509,7 +511,15 @@ function isAllowedBriefingLookupView(input: BriefingLookupViewInput): boolean {
   const hasInvoker = opts.includes("security_invoker=true");
   if (!hasInvoker) {
     if (!opts.includes("security_barrier=true")) return false;
+    if (input.hasActiveOrgBindDep !== true) return false;
+    if (!(input.taintedFnDeps ?? []).includes("crove_kernel.ctx_briefing_user_id()")) return false;
     if (!BRIEFING_LOOKUP_ORG_BIND_RE.test(cleanDef) || !BRIEFING_HELPER_RE.test(cleanDef)) return false;
+    if (input.activeKernelSchema) {
+      const schemaPrefix = `${escapeRe(input.activeKernelSchema)}\\.`;
+      const activeOrgRe = new RegExp(`(?<![A-Za-z0-9_.]|\\.\\s+)${schemaPrefix}ctx_org_id\\s*\\(\\s*\\)`, "i");
+      const activeBriefingRe = new RegExp(`(?<![A-Za-z0-9_.]|\\.\\s+)${schemaPrefix}ctx_briefing_user_id\\(\\)`, "i");
+      if (!activeOrgRe.test(cleanDef) || !activeBriefingRe.test(cleanDef)) return false;
+    }
   }
   return true;
 }
@@ -663,6 +673,7 @@ async function scanPolicyContextReads(
   scannedViews: Array<{
     name: string;
     def: string;
+    hasActiveOrgBindDep: boolean;
     taintedViewDeps: string[];
     taintedFnDeps: string[];
   }>;
@@ -861,6 +872,9 @@ async function scanPolicyContextReads(
     return {
       name: toCanonTable(v.name),
       def: v.def,
+      hasActiveOrgBindDep: deps.some(
+        (d) => d.refclass === "pg_proc" && procByOid.get(d.ref_oid)?.sig === `${activeKernelSchema}.ctx_org_id()`,
+      ),
       taintedViewDeps: deps
         .filter((d) => d.refclass === "pg_class" && taintedViewOids.has(d.ref_oid))
         .map((d) => toCanonTable(viewByOid.get(d.ref_oid)!.name)),
@@ -1371,6 +1385,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             ).toBe(true);
           }
           if (meta?.relkind === "v") {
+            const activeKernelSchema = dbIds ? dbIds.schema("kernel") : "crove_kernel";
             const scanResult = preScan ?? (await runQuery((c) => scanPolicyContextReads(c, dbIds)));
             const scannedView = scanResult.scannedViews.find((v) => v.name === lookupCanon);
             expect(scannedView, `cataloged lookup view ${lookupCanon} must appear in scanned views`).toBeDefined();
@@ -1379,12 +1394,16 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
               reloptions: meta.reloptions,
               taintedViewDeps: scannedView?.taintedViewDeps,
               taintedFnDeps: scannedView?.taintedFnDeps,
+              hasActiveOrgBindDep: scannedView?.hasActiveOrgBindDep,
+              activeKernelSchema,
             });
             const unprettyOk = isAllowedBriefingLookupView({
               viewDef: scannedView?.def ?? "",
               reloptions: meta.reloptions,
               taintedViewDeps: scannedView?.taintedViewDeps,
               taintedFnDeps: scannedView?.taintedFnDeps,
+              hasActiveOrgBindDep: scannedView?.hasActiveOrgBindDep,
+              activeKernelSchema,
             });
             const viewOk = Boolean(scannedView && meta.view_def && prettyOk && unprettyOk);
             expect(
@@ -1777,12 +1796,22 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     };
     expect(readsSealedMember([validStandaloneBriefing], undefined, briefingAllowed)).toEqual([]);
     expect(hasForbiddenSealedRead(validStandaloneBriefing, new Set(), undefined, briefingAllowed)).toBe(false);
+    for (const [label, expr] of [
+      ["crove-initplan", "(user_id = ( SELECT crove_kernel.ctx_briefing_user_id() AS ctx_briefing_user_id))"],
+      ["ludy-initplan", "(user_id = ( SELECT ludy_kernel.ctx_briefing_user_id() AS ctx_briefing_user_id))"],
+      ["crove-initplan-parens", "(( SELECT crove_kernel.ctx_briefing_user_id() AS ctx_briefing_user_id))"],
+      ["ludy-initplan-parens", "(( SELECT ludy_kernel.ctx_briefing_user_id() AS ctx_briefing_user_id))"],
+    ] as const) {
+      const p = { ...validStandaloneBriefing, text: expr };
+      expect(readsSealedMember([p], undefined, briefingAllowed), `readsSealedMember:${label}`).toEqual([]);
+      expect(hasForbiddenSealedRead(p, new Set(), undefined, briefingAllowed), `hasForbiddenSealedRead:${label}`).toBe(false);
+    }
     const validLookupBriefing = {
       t: "crove_kernel.member_briefing_directory",
       n: "member_briefing_directory_read",
       cmd: "r",
       perm: false,
-      text: "(crove_kernel.ctx_briefing_user_id() IS NOT NULL)",
+      text: "(( SELECT crove_kernel.ctx_briefing_user_id() AS ctx_briefing_user_id) IS NOT NULL)",
       taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
     };
     expect(readsSealedMember([validLookupBriefing], undefined, briefingAllowed)).toEqual([]);
@@ -1792,7 +1821,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       n: "meeting_read",
       cmd: "r",
       perm: false,
-      text: `(${roles}) OR ${compare} OR (crove_kernel.ctx_briefing_user_id() IS NOT NULL)`,
+      text: `(${roles}) OR ${compare} OR (( SELECT crove_kernel.ctx_briefing_user_id() AS ctx_briefing_user_id) IS NOT NULL)`,
       taintedFnDeps: ["crove_kernel.ctx_verified()", "crove_kernel.ctx_briefing_user_id()"],
     };
     expect(readsSealedMember([validCombinedCompanyBriefing], undefined, briefingAllowed)).toEqual([]);
@@ -1803,7 +1832,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       n: "meeting_read",
       cmd: "r",
       perm: false,
-      text: `(${roles}) OR ${compare} OR (crove_kernel.ctx_acting_user_id() IS NOT NULL) OR (crove_kernel.ctx_briefing_user_id() IS NOT NULL)`,
+      text: `(${roles}) OR ${compare} OR (crove_kernel.ctx_acting_user_id() IS NOT NULL) OR (( SELECT crove_kernel.ctx_briefing_user_id() AS ctx_briefing_user_id) IS NOT NULL)`,
       taintedFnDeps: ["crove_kernel.ctx_verified()", "crove_kernel.ctx_acting_user_id()", "crove_kernel.ctx_briefing_user_id()"],
     };
     expect(readsSealedMember([combinedMemberAndBriefing], undefined, briefingAllowed)).toEqual([
@@ -1812,7 +1841,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     expect(
       hasForbiddenSealedRead(combinedMemberAndBriefing, new Set(["crove_meetings.meeting.meeting_read"]), undefined, briefingAllowed),
     ).toBe(false);
-    // Rejected ctx_briefing_user_id() shapes: absent allowance, perm=true, write cmd, omitted cmd/perm, unlisted table, wrapper, or nonkernel shadow.
+    // Rejected ctx_briefing_user_id() shapes: absent allowance, perm=true, write cmd, omitted cmd/perm, unlisted table, wrapper, unqualified bare calls, or nonkernel shadows/aliases.
     expect(readsSealedMember([validStandaloneBriefing], undefined, new Set())).toHaveLength(1);
     expect(hasForbiddenSealedRead(validStandaloneBriefing, new Set(), undefined, new Set())).toBe(true);
     const tamperedBriefingPolicies = [
@@ -1843,6 +1872,22 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         },
       },
       {
+        label: "unqualified bare call",
+        p: {
+          ...validStandaloneBriefing,
+          text: "(user_id = ctx_briefing_user_id())",
+          taintedFnDeps: [],
+        },
+      },
+      {
+        label: "unqualified bare initPlan",
+        p: {
+          ...validStandaloneBriefing,
+          text: "(user_id = ( SELECT ctx_briefing_user_id() AS ctx_briefing_user_id))",
+          taintedFnDeps: [],
+        },
+      },
+      {
         label: "nonkernel shadow dep",
         p: {
           ...validStandaloneBriefing,
@@ -1855,6 +1900,22 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         p: {
           ...validStandaloneBriefing,
           text: "(other_schema.ctx_briefing_user_id() IS NOT NULL)",
+          taintedFnDeps: [],
+        },
+      },
+      {
+        label: "initPlan nonkernel shadow",
+        p: {
+          ...validStandaloneBriefing,
+          text: "(user_id = ( SELECT other_schema.ctx_briefing_user_id() AS ctx_briefing_user_id))",
+          taintedFnDeps: [],
+        },
+      },
+      {
+        label: "initPlan alias hiding other call",
+        p: {
+          ...validStandaloneBriefing,
+          text: "(user_id = ( SELECT other_schema.fake() AS ctx_briefing_user_id))",
           taintedFnDeps: [],
         },
       },
@@ -1975,37 +2036,80 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     };
     expect(readsSealedMember([briefingViewPolicy], briefingTainted, briefingAllowed)).toHaveLength(1);
     expect(hasForbiddenSealedRead(briefingViewPolicy, new Set(), briefingTainted, briefingAllowed)).toBe(true);
-    // Lookup view audit rejects sealed-context escapes, tainted deps, missing barrier/binding, and nonkernel shadows while admitting clean barrier/invoker views.
-    expect(
-      isAllowedBriefingLookupView({
-        viewDef:
-          "SELECT tm.org_id, tm.user_id, u.display_name FROM tenant_member tm WHERE tm.org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
-        reloptions: ["security_barrier=true"],
-        taintedViewDeps: [],
-        taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
-      }),
-    ).toBe(true);
-    expect(
-      isAllowedBriefingLookupView({
-        viewDef:
-          "SELECT tm.org_id, tm.user_id, u.display_name FROM tenant_member tm WHERE tm.org_id = ludy_kernel.ctx_org_id() AND ludy_kernel.ctx_briefing_user_id() IS NOT NULL",
-        reloptions: ["security_barrier=true"],
-        taintedViewDeps: [],
-        taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
-      }),
-    ).toBe(true);
-    expect(
-      isAllowedBriefingLookupView({
-        viewDef: "SELECT org_id, user_id, display_name FROM crove_kernel.member_display_name",
-        reloptions: ["security_invoker=true"],
-        taintedViewDeps: [],
-        taintedFnDeps: [],
-      }),
-    ).toBe(true);
+    // Lookup view audit rejects sealed-context escapes, tainted deps, missing barrier/binding/pg_depend, and nonkernel shadows while admitting clean barrier/invoker views.
+    for (const [label, input] of [
+      [
+        "crove barrier direct",
+        {
+          viewDef:
+            "SELECT tm.org_id, tm.user_id, u.display_name FROM tenant_member tm WHERE tm.org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+          taintedViewDeps: [],
+          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
+          hasActiveOrgBindDep: true,
+          activeKernelSchema: "crove_kernel",
+        },
+      ],
+      [
+        "ludy barrier direct",
+        {
+          viewDef:
+            "SELECT tm.org_id, tm.user_id, u.display_name FROM tenant_member tm WHERE tm.org_id = ludy_kernel.ctx_org_id() AND ludy_kernel.ctx_briefing_user_id() IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+          taintedViewDeps: [],
+          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
+          hasActiveOrgBindDep: true,
+          activeKernelSchema: "ludy_kernel",
+        },
+      ],
+      [
+        "crove barrier initPlan",
+        {
+          viewDef:
+            "SELECT tm.org_id, tm.user_id, u.display_name FROM tenant_member tm WHERE tm.org_id = ( SELECT crove_kernel.ctx_org_id() AS ctx_org_id) AND ( SELECT crove_kernel.ctx_briefing_user_id() AS ctx_briefing_user_id) IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+          taintedViewDeps: [],
+          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
+          hasActiveOrgBindDep: true,
+          activeKernelSchema: "crove_kernel",
+        },
+      ],
+      [
+        "ludy barrier initPlan",
+        {
+          viewDef:
+            "SELECT tm.org_id, tm.user_id, u.display_name FROM tenant_member tm WHERE tm.org_id = ( SELECT ludy_kernel.ctx_org_id() AS ctx_org_id) AND ( SELECT ludy_kernel.ctx_briefing_user_id() AS ctx_briefing_user_id) IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+          taintedViewDeps: [],
+          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
+          hasActiveOrgBindDep: true,
+          activeKernelSchema: "ludy_kernel",
+        },
+      ],
+      [
+        "clean invoker view",
+        {
+          viewDef: "SELECT org_id, user_id, display_name FROM crove_kernel.member_display_name",
+          reloptions: ["security_invoker=true"],
+          taintedViewDeps: [],
+          taintedFnDeps: [],
+          hasActiveOrgBindDep: false,
+          activeKernelSchema: "crove_kernel",
+        },
+      ],
+    ] as const) {
+      expect(isAllowedBriefingLookupView(input), label).toBe(true);
+    }
+    const validBarrierDeps = {
+      taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
+      hasActiveOrgBindDep: true,
+      activeKernelSchema: "crove_kernel",
+    };
     for (const [label, input] of [
       [
         "barrier view reading ctx_verified",
         {
+          ...validBarrierDeps,
           viewDef:
             "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND (crove_kernel.ctx_verified() ->> 'kind') = 'user'",
           reloptions: ["security_barrier=true"],
@@ -2018,11 +2122,13 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE (crove_kernel.ctx_verified() ->> 'kind') = 'member_briefing'",
           reloptions: ["security_invoker=true"],
           taintedFnDeps: ["crove_kernel.ctx_verified()"],
+          activeKernelSchema: "crove_kernel",
         },
       ],
       [
         "barrier view reading ctx_acting_user_id",
         {
+          ...validBarrierDeps,
           viewDef:
             "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND crove_kernel.ctx_acting_user_id() IS NOT NULL",
           reloptions: ["security_barrier=true"],
@@ -2032,6 +2138,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       [
         "barrier view reading raw GUC",
         {
+          ...validBarrierDeps,
           viewDef:
             "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND current_setting('ludy.ctx', true) IS NOT NULL",
           reloptions: ["security_barrier=true"],
@@ -2040,6 +2147,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       [
         "barrier view reading ctx_mcp_member_id",
         {
+          ...validBarrierDeps,
           viewDef:
             "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND crove_kernel.ctx_mcp_member_id() IS NOT NULL",
           reloptions: ["security_barrier=true"],
@@ -2048,6 +2156,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       [
         "view with tainted wrapper fn dep",
         {
+          ...validBarrierDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
           reloptions: ["security_barrier=true"],
           taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()", "crove_kernel.wrap_ctx()"],
@@ -2056,26 +2165,71 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       [
         "view depending on tainted view",
         {
+          ...validBarrierDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM v_inner WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
           reloptions: ["security_barrier=true"],
           taintedViewDeps: ["crove_kernel.v_ctx"],
-          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
         },
       ],
       [
         "barrier view missing ctx_org_id binding",
         {
+          ...validBarrierDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE crove_kernel.ctx_briefing_user_id() IS NOT NULL",
           reloptions: ["security_barrier=true"],
-          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
+          hasActiveOrgBindDep: false,
+        },
+      ],
+      [
+        "barrier view with public.ctx_org_id shadow",
+        {
+          ...validBarrierDeps,
+          viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = public.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+        },
+      ],
+      [
+        "barrier view with unqualified bare ctx_org_id",
+        {
+          ...validBarrierDeps,
+          viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
+          reloptions: ["security_barrier=true"],
         },
       ],
       [
         "barrier view with nonkernel ctx_org_id",
         {
+          ...validBarrierDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = evil.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
           reloptions: ["security_barrier=true"],
-          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
+        },
+      ],
+      [
+        "barrier view missing pg_depend for ctx_org_id (string spoof)",
+        {
+          ...validBarrierDeps,
+          viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE 'crove_kernel.ctx_org_id()' <> '' AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+          hasActiveOrgBindDep: false,
+        },
+      ],
+      [
+        "barrier view missing pg_depend for ctx_briefing_user_id (string spoof)",
+        {
+          ...validBarrierDeps,
+          viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND 'crove_kernel.ctx_briefing_user_id()' <> ''",
+          reloptions: ["security_barrier=true"],
+          taintedFnDeps: [],
+        },
+      ],
+      [
+        "barrier view using crove_kernel decoy under ludy_kernel active schema",
+        {
+          viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+          taintedFnDeps: ["nonkernel:crove_kernel.ctx_briefing_user_id()"],
+          hasActiveOrgBindDep: false,
+          activeKernelSchema: "ludy_kernel",
         },
       ],
       [
@@ -2083,26 +2237,58 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         {
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id()",
           reloptions: ["security_barrier=true"],
+          taintedFnDeps: [],
+          hasActiveOrgBindDep: true,
+          activeKernelSchema: "crove_kernel",
         },
       ],
       [
         "view with neither security_barrier nor security_invoker",
         {
+          ...validBarrierDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
           reloptions: null,
-          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
         },
       ],
       [
         "barrier view with spaced nonkernel ctx_briefing_user_id",
         {
+          ...validBarrierDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND other_schema . ctx_briefing_user_id() IS NOT NULL",
           reloptions: ["security_barrier=true"],
         },
       ],
       [
+        "barrier view with initPlan other_schema.ctx_briefing_user_id",
+        {
+          ...validBarrierDeps,
+          viewDef:
+            "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND ( SELECT other_schema.ctx_briefing_user_id() AS ctx_briefing_user_id) IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+        },
+      ],
+      [
+        "barrier view with initPlan alias hiding fake call",
+        {
+          ...validBarrierDeps,
+          viewDef:
+            "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND ( SELECT other_schema.fake() AS ctx_briefing_user_id) IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+        },
+      ],
+      [
+        "barrier view with unqualified bare ctx_briefing_user_id",
+        {
+          ...validBarrierDeps,
+          viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND ( SELECT ctx_briefing_user_id() AS ctx_briefing_user_id) IS NOT NULL",
+          reloptions: ["security_barrier=true"],
+          taintedFnDeps: [],
+        },
+      ],
+      [
         "view with comment-obfuscated ctx_verified",
         {
+          ...validBarrierDeps,
           viewDef:
             "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND ctx_verified /* c */ () IS NOT NULL",
           reloptions: ["security_barrier=true"],
