@@ -46,7 +46,7 @@ const BRIEFING_COPY = {
     leadCount: (day: string, total: number) => `Ngày ${day} bạn có ${total} cuộc họp.`,
     truncated: (shown: number, total: number, day: string) =>
       shown === 0
-        ? `Mở trang Cuộc họp để xem chi tiết ${total} cuộc họp ngày ${day}.`
+        ? `Thư này không kèm chi tiết ${total} cuộc họp ngày ${day}.`
         : `Đang hiển thị ${shown} cuộc họp đầu tiên trong tổng số ${total} cuộc họp ngày ${day}.`,
     openMeetings: 'Mở trang Cuộc họp',
     meetingLabel: (index: number) => `Cuộc họp ${index}`,
@@ -85,7 +85,7 @@ const BRIEFING_COPY = {
       total === 1 ? `You have 1 meeting scheduled for ${day}.` : `You have ${total} meetings scheduled for ${day}.`,
     truncated: (shown: number, total: number, day: string) =>
       shown === 0
-        ? `Open Meetings to see all ${total} meetings for ${day}.`
+        ? `Meeting details for the ${total} ${total === 1 ? 'meeting' : 'meetings'} on ${day} are omitted from this email.`
         : `Showing the first ${shown} of ${total} meetings for ${day}.`,
     openMeetings: 'Open Meetings',
     meetingLabel: (index: number) => `Meeting ${index}`,
@@ -427,7 +427,7 @@ function renderMeetingBlock(
   if (items.length > 0) {
     const itemLis = items
       .map((item) => {
-        const badges = [
+        const badgeList = [
           ...(item.raw.mine
             ? [
                 `<span style="display:inline-block;padding:1px 6px;margin-right:6px;border-radius:4px;font-size:12px;font-weight:600;background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe">${escapeHtml(t.mine)}</span>`,
@@ -438,7 +438,8 @@ function renderMeetingBlock(
                 `<span style="display:inline-block;padding:1px 6px;margin-right:6px;border-radius:4px;font-size:12px;font-weight:600;background:#fef2f2;color:#991b1b;border:1px solid #fecaca">${escapeHtml(t.overdue)}</span>`,
               ]
             : []),
-        ].join('');
+        ];
+        const badges = badgeList.length > 0 ? `${badgeList.join(' ')} ` : '';
         const dueHtml = item.dueText ? ` <span style="font-size:13px;color:#57606a">(${escapeHtml(item.dueText)})</span>` : '';
         return `<li style="margin:4px 0">${badges}${escapeHtml(item.text)}${dueHtml}</li>`;
       })
