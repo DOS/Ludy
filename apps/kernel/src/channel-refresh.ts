@@ -68,7 +68,7 @@ export async function refreshChannels(deps: RefreshDeps): Promise<RefreshOutcome
           console.error(`[channel-refresh] connection=${row.connection_id} org=${row.org_id} provider=${row.provider} code=${code}`);
           return recordRefreshFailure(deps, row, code);
         });
-        outcome[result] += 1;
+        if (result !== 'skipped') outcome[result] += 1;
       }
       return outcome;
     } finally {
@@ -100,7 +100,7 @@ async function recordRefreshFailure(deps: RefreshDeps, row: Due, rawCode: string
   return 'failed';
 }
 
-async function refreshOne(deps: RefreshDeps, refresher: Refresher, row: Due): Promise<'refreshed' | 'expired' | 'failed'> {
+async function refreshOne(deps: RefreshDeps, refresher: Refresher, row: Due): Promise<'refreshed' | 'expired' | 'failed' | 'skipped'> {
   const options = { actor: ACTOR, orgId: row.org_id };
   const ifVersion = row.version.toISOString();
   let sealed: SealedChannelCredential;
@@ -121,12 +121,8 @@ async function refreshOne(deps: RefreshDeps, refresher: Refresher, row: Due): Pr
     await deps.runtime.execute('kernel.channel.mark_expired', { connectionId: row.connection_id, reason: `refresh refused (${result.refused})`.slice(0, 200), ifVersion }, options);
     return 'expired';
   }
-  if ('failed' in result) {
-    // Lazada/TikTok/Shopee return 'RECENT' when skipping a refresh inside their own cooldown gap: never record it as a
-    // failure, increment the failure counter, or back off past an imminent access-token expiry.
-    if (result.failed === 'RECENT') return 'failed';
-    return recordRefreshFailure(deps, row, result.failed);
-  }
+  if ('skipped' in result) return 'skipped';
+  if ('failed' in result) return recordRefreshFailure(deps, row, result.failed);
   const next = deps.broker.seal(result.secret, binding);
   const command = { connectionId: row.connection_id, ifVersion, expiresAt: result.expiresAt?.toISOString() ?? null, credential: { keyId: next.keyId, envelope: next.envelope.toString('base64') } };
   // The provider has rotated the tokens: this write is the only copy of them, so a passing database error is retried.

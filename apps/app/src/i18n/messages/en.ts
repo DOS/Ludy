@@ -19446,6 +19446,7 @@ export const en = {
         oauth_begin: 'Start connecting a channel by sign-in',
         oauth_consume: 'Finish connecting a channel by sign-in',
         refresh: "Refresh a channel's credential",
+        refresh_fail: 'Record a channel credential refresh failure and backoff',
         reseal: "Re-encrypt a channel's credential",
         telegram_business_allow: 'Allow or stop the chats of a Telegram Business account',
         telegram_business_known: 'Check whether a Telegram Business account is already recorded',

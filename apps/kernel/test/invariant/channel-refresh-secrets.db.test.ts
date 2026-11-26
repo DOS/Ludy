@@ -105,6 +105,7 @@ suite('channel refresh failure secrets invariant (#4251)', () => {
   it('keeps tokens, secrets, and raw platform text out of logs, stored rows, audit events, and query answers', async () => {
     const accessSecret = `tok_access_${randomBytes(16).toString('hex')}`;
     const refreshSecret = `tok_refresh_${randomBytes(16).toString('hex')}`;
+    const numericSecret = '987654321';
     const appSecret = `app_sec_${randomBytes(12).toString('hex')}`;
     const rawPlatformPhrase = `Bearer ${refreshSecret} {"access_token":"${accessSecret}","app_secret":"${appSecret}"}`;
     const secretPayload = JSON.stringify({ accessToken: accessSecret, refreshToken: refreshSecret, appSecret });
@@ -112,6 +113,7 @@ suite('channel refresh failure secrets invariant (#4251)', () => {
     const { orgId, owner, connectionId } = await orgWithConnection('zalo_oa', secretPayload);
     const { orgId: otherOrgId, owner: otherOwner, connectionId: otherConnId } = await orgWithConnection('threads', secretPayload);
     const { orgId: bareOrgId, owner: bareOwner, connectionId: bareConnId } = await orgWithConnection('x', secretPayload);
+    const { orgId: numOrgId, owner: numOwner, connectionId: numConnId } = await orgWithConnection('pinterest', secretPayload);
 
     const logs: string[] = [];
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation((...args) => logs.push(args.map(String).join(' ')));
@@ -147,12 +149,23 @@ suite('channel refresh failure secrets invariant (#4251)', () => {
         expect(res.failed).toBeGreaterThanOrEqual(1);
       }
 
+      // 4) Provider echoes a numeric-only secret/OTP 3 times -> collapsed to UNKNOWN, never stored or logged.
+      const numericFailer: Refresher = {
+        provider: 'pinterest',
+        refresh: async () => ({ failed: numericSecret }),
+      };
+      for (let i = 0; i < 3; i += 1) {
+        const res = await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { pinterest: numericFailer } });
+        expect(res.failed).toBeGreaterThanOrEqual(1);
+      }
+
       const allLogs = logs.join('\n');
       expect(allLogs).toContain(connectionId);
       expect(allLogs).toContain(bareConnId);
+      expect(allLogs).toContain(numConnId);
       expect(allLogs).toContain('code=UNKNOWN');
       expect(allLogs).toContain('code=UNEXPECTED_ERROR');
-      for (const secret of [accessSecret, refreshSecret, appSecret, 'Bearer', 'access_token', 'upstream rejected']) {
+      for (const secret of [accessSecret, refreshSecret, numericSecret, appSecret, 'Bearer', 'access_token', 'upstream rejected']) {
         expect(allLogs).not.toContain(secret);
       }
 
@@ -160,10 +173,11 @@ suite('channel refresh failure secrets invariant (#4251)', () => {
         { orgId, owner, connectionId },
         { orgId: otherOrgId, owner: otherOwner, connectionId: otherConnId },
         { orgId: bareOrgId, owner: bareOwner, connectionId: bareConnId },
+        { orgId: numOrgId, owner: numOwner, connectionId: numConnId },
       ]) {
         const listed = await api.query('kernel.channel.list', { includeRevoked: true }, { actor: asUser(o.owner), orgId: o.orgId });
         const serializedList = JSON.stringify(listed);
-        for (const secret of [accessSecret, refreshSecret, appSecret, 'Bearer', 'upstream rejected']) {
+        for (const secret of [accessSecret, refreshSecret, numericSecret, appSecret, 'Bearer', 'upstream rejected']) {
           expect(serializedList).not.toContain(secret);
         }
 
@@ -181,7 +195,7 @@ suite('channel refresh failure secrets invariant (#4251)', () => {
           return parts.join('\n');
         });
         expect(dump.length).toBeGreaterThan(0);
-        for (const secret of [accessSecret, refreshSecret, appSecret, 'Bearer', 'upstream rejected']) {
+        for (const secret of [accessSecret, refreshSecret, numericSecret, appSecret, 'Bearer', 'upstream rejected']) {
           expect(dump).not.toContain(secret);
         }
       }
@@ -220,8 +234,8 @@ suite('channel refresh failure secrets invariant (#4251)', () => {
       ),
     ).rejects.toMatchObject({ code: 'CHANNEL_NOT_FOUND' });
 
-    // Command input rejects raw platform text, whitespace, un-allowlisted bare strings/tokens, and overly long values.
-    for (const badCode of ['Bearer secret', 'https://x.test?a=1', '{"a":1}', 'tok_short_secret', 'x'.repeat(65), '']) {
+    // Command input rejects raw platform text, whitespace, un-allowlisted bare strings/tokens, numeric secrets, and overly long values.
+    for (const badCode of ['Bearer secret', 'https://x.test?a=1', '{"a":1}', 'tok_short_secret', '987654321', 'x'.repeat(65), '']) {
       await expect(
         worker.execute(
           'kernel.channel.refresh_fail',

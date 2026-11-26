@@ -109,7 +109,7 @@ describe('a refresh that works', () => {
 
   it('is not asked again within six hours of the last renewal (a short access life is due at every sweep), and is again after', async () => {
     const recent = setup();
-    expect(await recent.refresher.refresh(secretOf({ refreshedAt: new Date(NOW - HOUR).toISOString() }))).toEqual({ failed: 'RECENT' });
+    expect(await recent.refresher.refresh(secretOf({ refreshedAt: new Date(NOW - HOUR).toISOString() }))).toEqual({ skipped: 'recent' });
     expect(recent.fake.calls).toHaveLength(0);
     for (const at of [new Date(NOW - 7 * HOUR).toISOString(), new Date(NOW + HOUR).toISOString(), 'never', undefined]) {
       const again = setup();
@@ -235,7 +235,7 @@ describe('createLazadaToken, the authorization code traded for a pair', () => {
     expect(fake.calls[0]).toMatchObject({ method: 'POST', host: LAZADA_AUTH_HOST, path: '/auth/token/create', form: { code: 'auth-code-1' } });
     expect(Object.keys(fake.calls[0]!.query).sort()).toEqual(['app_key', 'sign', 'sign_method', 'timestamp']);
     expect(fake.calls[0]!.url).not.toContain('auth-code-1');
-    expect(await new LazadaRefresher({ fetch: hostBoundFetch(LAZADA_TOKEN_HOSTS, fake.fetch), now: () => new Date(NOW) }).refresh(grant.secret)).toEqual({ failed: 'RECENT' });
+    expect(await new LazadaRefresher({ fetch: hostBoundFetch(LAZADA_TOKEN_HOSTS, fake.fetch), now: () => new Date(NOW) }).refresh(grant.secret)).toEqual({ skipped: 'recent' });
     const later = await new LazadaRefresher({ fetch: hostBoundFetch(LAZADA_TOKEN_HOSTS, fake.fetch), now: () => new Date(NOW + 7 * HOUR) }).refresh(grant.secret);
     expect(later).toHaveProperty('secret');
   });

@@ -586,11 +586,31 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
       );
       expect(await row(id)).toMatchObject({ refresh_failures: 0, refresh_last_error: null, refresh_next_at: null });
 
-      // Cooldown skips ('RECENT') do not increment failures, overwrite refresh_last_error, or schedule backoff.
-      code = 'RECENT';
+      // Cooldown skips ({ skipped: 'recent' }) do not increment failures, overwrite refresh_last_error, or schedule backoff.
+      const cooldownRefresher: Refresher = {
+        provider: 'zalo_oa',
+        refresh: async () => ({ skipped: 'recent' }),
+      };
       await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET expires_at = now() + interval '1 hour' WHERE id = $1", [id]));
-      for (let i = 0; i < 4; i += 1) expect(await sweep()).toMatchObject({ failed: 1 });
+      for (let i = 0; i < 4; i += 1) {
+        expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { zalo_oa: cooldownRefresher } })).toMatchObject({ refreshed: 0, expired: 0, failed: 0 });
+      }
       expect(await row(id)).toMatchObject({ refresh_failures: 0, refresh_last_error: null, refresh_next_at: null });
+
+      // Threads refreshes using its access token itself: when expiry is imminent (e.g. 50 minutes left), the 3rd failure clamps backoff before expiry.
+      const threadsConn = await connect(o, 50 * 60_000, JSON.stringify({ accessToken: 't-soon' }), 'threads');
+      const threadsFailer: Refresher = {
+        provider: 'threads',
+        horizonSeconds: 7 * 24 * 3600,
+        refresh: async () => ({ failed: '503' }),
+      };
+      for (let i = 0; i < 3; i += 1) {
+        expect(await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { threads: threadsFailer } })).toMatchObject({ failed: 1 });
+      }
+      const tr = await row(threadsConn);
+      expect(tr).toMatchObject({ refresh_failures: 3, refresh_last_error: '503' });
+      expect(tr?.refresh_next_at).not.toBeNull();
+      expect(tr?.refresh_next_at?.getTime() ?? Infinity).toBeLessThan(tr?.expires_at.getTime() ?? 0);
     } finally {
       warnSpy.mockRestore();
     }

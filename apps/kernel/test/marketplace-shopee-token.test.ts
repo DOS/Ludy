@@ -180,7 +180,7 @@ describe('ShopeeRefresher', () => {
     expect(await refresher.refresh(stale)).toEqual({ failed: 'error_auth' });
     expect(fake.calls).toHaveLength(1);
     at += 10 * 60_000;
-    expect(await refresher.refresh(stale)).toEqual({ failed: 'RECENT' });
+    expect(await refresher.refresh(stale)).toEqual({ skipped: 'recent' });
     expect(fake.calls).toHaveLength(1);
     at += 30 * 60_000;
     expect(await refresher.refresh(stale)).toEqual({ failed: 'error_auth' });

@@ -411,7 +411,7 @@ export const channelOAuthConsume = defineCommand({
 
 export const CHANNEL_REFRESH_BACKOFF_THRESHOLD = 3;
 export const CHANNEL_REFRESH_BACKOFF_SECONDS = [3600, 6 * 3600, 24 * 3600] as const;
-const NUMERIC_OR_HTTP_ERROR_CODE = /^(?:-?\d{1,10}|HTTP_\d{3})$/;
+const HTTP_STATUS_ERROR_CODE = /^(?:[45]\d{2}|HTTP_[45]\d{2})$/;
 const KNOWN_REFRESH_ERROR_CODES = new Set([
   'NETWORK',
   'BAD_ANSWER',
@@ -419,6 +419,28 @@ const KNOWN_REFRESH_ERROR_CODES = new Set([
   'UNEXPECTED_ERROR',
   'NO_ACCESS_TOKEN',
   'CHANNEL_OWNER_LEFT',
+  '-32',
+  '-124',
+  '-201',
+  '-216',
+  '-230',
+  '-9999',
+  '-14001',
+  '-14005',
+  '-14014',
+  '-14020',
+  '1',
+  '2',
+  '4',
+  '17',
+  '32',
+  '613',
+  '10000',
+  '10002',
+  '99999',
+  '105001',
+  '105002',
+  '36004004',
   'invalid_client',
   'invalid_request',
   'unauthorized_client',
@@ -460,10 +482,10 @@ const KNOWN_REFRESH_ERROR_CODES = new Set([
   'error_too_many_requests',
 ]);
 
-/** Maps known channel refresh failure codes (and numeric/HTTP codes) to themselves, collapsing anything unknown to 'UNKNOWN' so provider payloads or tokens cannot leak. */
+/** Maps HTTP 4xx/5xx and known provider/internal failure codes to themselves, collapsing anything else to 'UNKNOWN' so provider payloads or tokens cannot leak. */
 export function sanitizeChannelRefreshError(raw: string): string {
   const trimmed = raw.trim();
-  if (NUMERIC_OR_HTTP_ERROR_CODE.test(trimmed) || KNOWN_REFRESH_ERROR_CODES.has(trimmed)) return trimmed;
+  if (HTTP_STATUS_ERROR_CODE.test(trimmed) || KNOWN_REFRESH_ERROR_CODES.has(trimmed)) return trimmed;
   return 'UNKNOWN';
 }
 
@@ -542,7 +564,7 @@ export const channelRefreshFail = defineCommand({
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const row = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
-      .select(['status', 'provider', 'updated_at', 'refresh_failures', 'refresh_last_error'])
+      .select(['status', 'provider', 'updated_at', 'expires_at', 'refresh_failures', 'refresh_last_error'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .forUpdate()
@@ -552,8 +574,25 @@ export const channelRefreshFail = defineCommand({
       return { connectionId: input.connectionId, recorded: false, failures: row.refresh_failures, backoffSeconds: 0, nextAt: null };
     }
     const failures = row.refresh_last_error === input.code ? row.refresh_failures + 1 : 1;
-    const backoffSeconds = channelRefreshBackoffSeconds(failures);
-    const nextAt = backoffSeconds > 0 ? new Date(ctx.now.getTime() + backoffSeconds * 1000).toISOString() : null;
+    let backoffSeconds = channelRefreshBackoffSeconds(failures);
+    let nextAt: string | null = null;
+    if (backoffSeconds > 0) {
+      const nowMs = ctx.now.getTime();
+      let nextMs = nowMs + backoffSeconds * 1000;
+      // Threads refreshes with its access token itself (no separate refresh token): keep one final try 15 minutes
+      // before expiry when the backoff would otherwise jump past a still-recoverable token's end.
+      if (row.provider === 'threads' && row.expires_at !== null) {
+        const expMs = new Date(row.expires_at).getTime();
+        if (expMs - 15 * 60_000 > nowMs) {
+          const lastChanceMs = Math.max(nowMs + 10 * 60_000, expMs - 15 * 60_000);
+          if (nextMs > lastChanceMs) {
+            nextMs = lastChanceMs;
+            backoffSeconds = Math.max(1, Math.round((nextMs - nowMs) / 1000));
+          }
+        }
+      }
+      nextAt = new Date(nextMs).toISOString();
+    }
     await ctx.trx
       .updateTable('ludy_kernel.channel_connection')
       .set({
