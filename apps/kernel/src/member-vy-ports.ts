@@ -82,24 +82,24 @@ async function invokeNoteAiModel(
     throw new NoteAiModelError('failed');
   }
   // Single-read destructure before validation so getter-backed prompt objects cannot mutate between checks and the call.
-  let safePrompt: { system: string; user: string };
+  let system: unknown;
+  let user: unknown;
   try {
-    const { system, user } = prompt;
-    if (
-      typeof system !== 'string' ||
-      system.length === 0 ||
-      system.length > NOTE_AI_MAX_SYSTEM_CHARS ||
-      typeof user !== 'string' ||
-      user.length === 0 ||
-      user.length > NOTE_AI_MAX_PROMPT_CHARS
-    ) {
-      throw new NoteAiModelError('failed');
-    }
-    safePrompt = { system, user };
-  } catch (error: unknown) {
-    if (error instanceof NoteAiModelError) throw error;
+    ({ system, user } = prompt);
+  } catch {
     throw new NoteAiModelError('failed');
   }
+  if (
+    typeof system !== 'string' ||
+    system.length === 0 ||
+    system.length > NOTE_AI_MAX_SYSTEM_CHARS ||
+    typeof user !== 'string' ||
+    user.length === 0 ||
+    user.length > NOTE_AI_MAX_PROMPT_CHARS
+  ) {
+    throw new NoteAiModelError('failed');
+  }
+  const safePrompt = { system, user };
   const signal = AbortSignal.timeout(Math.min(timeoutMs, NOTE_AI_TIMEOUT_MS));
   try {
     const result = await call(safePrompt, signal);

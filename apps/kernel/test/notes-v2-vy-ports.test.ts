@@ -5,7 +5,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import { AiBudgetExhaustedError, AiMeterMissingError, withAiScope, type AiConfig, type AiMeter } from '@ludy/agent';
-import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, NoteAiModelError } from '@ludy/agent/member-vy';
+import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, NoteAiModelError, type ModelPrompt } from '@ludy/agent/member-vy';
 import { summaryModelPort } from '../src/member-vy-ports.ts';
 
 async function withStubServer(
@@ -139,6 +139,34 @@ describe('summaryModelPort Notes v2 Vy routing (#3563)', () => {
           await expect(
             validPort.generate(WHO, { feature: 'notes.todo_plan', system: 'sys', user: 'u' }),
           ).rejects.toThrowError(AiBudgetExhaustedError);
+        });
+
+        // Hostile prompt getters throwing explicit NoteAiModelError('timeout') must be normalized to 'failed'.
+        const hostileSystemPrompt: ModelPrompt = {
+          feature: 'notes.todo_plan',
+          get system(): string {
+            throw new NoteAiModelError('timeout');
+          },
+          user: 'u',
+        };
+        const hostileUserPrompt: ModelPrompt = {
+          feature: 'notes.organize',
+          system: 'sys',
+          get user(): string {
+            throw new NoteAiModelError('timeout');
+          },
+        };
+        await withAiScope({ orgId: 'org-1', memberRunId: 'run-hostile', meter: okMeter }, async () => {
+          await expect(validPort.generate(WHO, hostileSystemPrompt)).rejects.toMatchObject({
+            name: 'NoteAiModelError',
+            kind: 'failed',
+            message: 'NOTE_AI_FAILED',
+          });
+          await expect(validPort.generate(WHO, hostileUserPrompt)).rejects.toMatchObject({
+            name: 'NoteAiModelError',
+            kind: 'failed',
+            message: 'NOTE_AI_FAILED',
+          });
         });
       },
     );

@@ -267,22 +267,27 @@ export const noteCreate = defineCommand({
     if (notebookId !== null) {
       await resolveNotebookForNote(ctx, notebookId, userId, input.visibility);
     }
-    const row = await ctx.trx
-      .insertInto('ludy_notes.note')
-      .values({
-        org_id: ctx.orgId,
-        author_user_id: userId,
-        notebook_id: notebookId,
-        visibility: input.visibility,
-        title: input.title,
-        body: input.body,
-        tags: input.tags,
-        tainted: input.tainted ?? false,
-        created_at: ctx.now,
-        updated_at: ctx.now,
-      })
-      .returning(['id', 'visibility', 'revision'])
-      .executeTakeFirstOrThrow();
+    let row: { id: string; visibility: NoteVisibility; revision: number };
+    try {
+      row = await ctx.trx
+        .insertInto('ludy_notes.note')
+        .values({
+          org_id: ctx.orgId,
+          author_user_id: userId,
+          notebook_id: notebookId,
+          visibility: input.visibility,
+          title: input.title,
+          body: input.body,
+          tags: input.tags,
+          tainted: input.tainted ?? false,
+          created_at: ctx.now,
+          updated_at: ctx.now,
+        })
+        .returning(['id', 'visibility', 'revision'])
+        .executeTakeFirstOrThrow();
+    } catch (err) {
+      rethrowNotebookConstraintError(err);
+    }
     const linkId = input.link ? await addLink(ctx, row, userId, input.link.targetType, input.link.targetId) : null;
     ctx.audit({
       noteId: row.id,

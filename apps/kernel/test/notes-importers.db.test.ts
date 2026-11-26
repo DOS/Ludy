@@ -954,4 +954,55 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
       await eraseGate.end().catch(() => undefined);
     }
   });
+
+  it('aligns ENEX notebook rebalance with rebalanceEditableNotebooks so non-editable shared org notebooks stay untouched (#4761)', async () => {
+    const ownerHeaders = await asJsonHeaders('owner');
+    const memberHeaders = await asJsonHeaders('member');
+
+    const sharedOrg = await rpc('notes/notebooks/create', ownerHeaders, { name: 'Shared Deep Boundary', visibility: 'org' });
+    expect(sharedOrg.status, JSON.stringify(sharedOrg.body)).toBe(200);
+    const sharedOrgId = String(sharedOrg.body.notebookId);
+
+    const memberPrev = await rpc('notes/notebooks/create', memberHeaders, { name: 'Member Earlier Book', visibility: 'private' });
+    expect(memberPrev.status, JSON.stringify(memberPrev.body)).toBe(200);
+    const memberPrevId = String(memberPrev.body.notebookId);
+
+    const deepKey = 'z'.repeat(80);
+    await admin(async (c) => {
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = '5' WHERE org_id = $1 AND id = $2`, [orgId, memberPrevId]);
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = $3 WHERE org_id = $1 AND id = $2`, [orgId, sharedOrgId, deepKey]);
+    });
+
+    const enexMulti = `<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>ENEX Multi 1</title>
+    <notebook>ENEX Book Alpha</notebook>
+    <content><![CDATA[<en-note><p>Alpha</p></en-note>]]></content>
+  </note>
+  <note>
+    <title>ENEX Multi 2</title>
+    <notebook>ENEX Book Beta</notebook>
+    <content><![CDATA[<en-note><p>Beta</p></en-note>]]></content>
+  </note>
+</en-export>`;
+    const importRes = await uploadEnex('member', enexMulti);
+    expect(importRes.status, JSON.stringify(importRes.body)).toBe(201);
+    expect(importRes.body).toMatchObject({ importedNotes: 2, createdNotebooks: 2 });
+
+    const listed = await rpc('notes/notebooks/list', memberHeaders, {});
+    expect(listed.status).toBe(200);
+    const notebooks = (listed.body as { notebooks: Array<{ id: string; name: string; sortKey: string; revision: number }> }).notebooks;
+    const byName = new Map(notebooks.map((nb) => [nb.name, nb]));
+
+    // Non-editable shared org notebook stays untouched; member's prior book stays before it; both new ENEX books sit strictly after it in order.
+    expect(byName.get('Shared Deep Boundary')?.sortKey).toBe(deepKey);
+    expect(byName.get('Shared Deep Boundary')?.revision).toBe(1);
+    expect(byName.get('Member Earlier Book')!.sortKey < deepKey).toBe(true);
+    const alphaKey = byName.get('ENEX Book Alpha')!.sortKey;
+    const betaKey = byName.get('ENEX Book Beta')!.sortKey;
+    expect(alphaKey > deepKey).toBe(true);
+    expect(betaKey > alphaKey).toBe(true);
+    expect(betaKey.length).toBeLessThanOrEqual(128);
+  });
 });

@@ -113,7 +113,7 @@ function ChecklistRows({
               type="button"
               size="icon"
               variant="ghost"
-              className="size-8 shrink-0"
+              className="size-8 shrink-0 max-md:size-11"
               disabled={disabled || index === 0}
               aria-label={t('checklistMoveUp')}
               title={t('checklistMoveUp')}
@@ -128,7 +128,7 @@ function ChecklistRows({
               type="button"
               size="icon"
               variant="ghost"
-              className="size-8 shrink-0"
+              className="size-8 shrink-0 max-md:size-11"
               disabled={disabled || index === steps.length - 1}
               aria-label={t('checklistMoveDown')}
               title={t('checklistMoveDown')}
@@ -143,7 +143,7 @@ function ChecklistRows({
               type="button"
               size="icon"
               variant="ghost"
-              className="size-8 shrink-0"
+              className="size-8 shrink-0 max-md:size-11"
               disabled={disabled}
               aria-label={t('checklistRemove')}
               title={t('checklistRemove')}
@@ -284,11 +284,24 @@ export function TaskChecklistSection({
   readOnly?: boolean;
 }) {
   const t = useTranslations('tasks');
-  const [steps, setSteps] = useState<TaskChecklistStep[]>(() => [...checklist]);
+  const [steps, setSteps] = useState<TaskChecklistStep[]>(() => checklist.map((step) => ({ ...step })));
   const [draft, setDraft] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const stepsRef = useRef<TaskChecklistStep[]>(steps);
+  const savedStepsRef = useRef<TaskChecklistStep[]>(checklist.map((step) => ({ ...step })));
   const savedRef = useRef(serializeTaskChecklist(checklist));
+  const prevPropChecklistRef = useRef(serializeTaskChecklist(checklist));
   const revisionRef = useRef<number | undefined>(revision);
   const prevPropRevisionRef = useRef<number | undefined>(revision);
+  const inFlightRef = useRef(false);
+  const activeKeyRef = useRef<string | null>(null);
+  const queuedStepsRef = useRef<TaskChecklistStep[] | null>(null);
+  const needsInvalidateRef = useRef(false);
+
+  const setStepsSynced = (next: TaskChecklistStep[]) => {
+    stepsRef.current = next;
+    setSteps(next);
+  };
 
   const invalidateTaskQueries = () =>
     Promise.all([
@@ -297,55 +310,116 @@ export function TaskChecklistSection({
       queryClient.invalidateQueries({ queryKey: orpc.notes.key() }),
     ]);
 
+  let startSave!: (normalized: TaskChecklistStep[]) => void;
+
   const update = useMutation(
     orpc.tasks.update.mutationOptions({
-      onSuccess: (result) => {
-        if (typeof result?.revision === 'number') {
+      onSuccess: (result, variables) => {
+        if (typeof result?.revision === 'number' && (revisionRef.current === undefined || result.revision > revisionRef.current)) {
           revisionRef.current = result.revision;
         }
+        if (variables.checklist !== undefined) {
+          const confirmed = variables.checklist.map((step) => ({ ...step }));
+          savedStepsRef.current = confirmed;
+          savedRef.current = serializeTaskChecklist(confirmed);
+        }
+        needsInvalidateRef.current = true;
+        const queued = queuedStepsRef.current;
+        if (queued !== null) {
+          queuedStepsRef.current = null;
+          if (serializeTaskChecklist(queued) !== savedRef.current) {
+            startSave(queued);
+            return;
+          }
+        }
+        if (variables.idempotencyKey === activeKeyRef.current) {
+          activeKeyRef.current = null;
+          inFlightRef.current = false;
+          setIsSaving(false);
+        }
+        needsInvalidateRef.current = false;
         return invalidateTaskQueries();
       },
-      onError: (err) => {
-        savedRef.current = serializeTaskChecklist(checklist);
-        setSteps(checklist.map((step) => ({ ...step })));
-        if (isTaskStaleRevision(err)) {
+      onError: (err, variables) => {
+        if (variables.idempotencyKey === activeKeyRef.current) {
+          queuedStepsRef.current = null;
+          activeKeyRef.current = null;
+          inFlightRef.current = false;
+          setIsSaving(false);
+          const fallback = savedStepsRef.current.map((step) => ({ ...step }));
+          savedRef.current = serializeTaskChecklist(fallback);
+          setStepsSynced(fallback);
+        }
+        if (isTaskStaleRevision(err) || needsInvalidateRef.current) {
+          needsInvalidateRef.current = false;
           void invalidateTaskQueries();
+        }
+      },
+      onSettled: (_data, _err, variables) => {
+        if (variables.idempotencyKey === activeKeyRef.current) {
+          queuedStepsRef.current = null;
+          activeKeyRef.current = null;
+          inFlightRef.current = false;
+          setIsSaving(false);
         }
       },
     }),
   );
 
-  useEffect(() => {
-    const incoming = serializeTaskChecklist(checklist);
-    if (incoming !== savedRef.current && !update.isPending) {
-      savedRef.current = incoming;
-      setSteps(checklist.map((step) => ({ ...step })));
-    }
-    if (revision !== prevPropRevisionRef.current && !update.isPending) {
-      prevPropRevisionRef.current = revision;
-      if (revision === undefined || revisionRef.current === undefined || revision > revisionRef.current) {
-        revisionRef.current = revision;
-      }
-    }
-  }, [checklist, revision, update.isPending]);
-
-  const commit = (next: TaskChecklistStep[]) => {
-    if (readOnly) return;
-    if (hasBlankChecklistStep(next)) {
-      setSteps(checklist.map((step) => ({ ...step })));
-      return;
-    }
-    const normalized = normalizeChecklistSteps(next);
-    setSteps(normalized);
+  startSave = (normalized: TaskChecklistStep[]) => {
+    const idempotencyKey = crypto.randomUUID();
+    activeKeyRef.current = idempotencyKey;
+    inFlightRef.current = true;
+    setIsSaving(true);
     update.mutate({
       id: taskId,
       checklist: normalized,
       ...taskRevisionPrecondition(revisionRef.current),
-      idempotencyKey: crypto.randomUUID(),
+      idempotencyKey,
     });
   };
 
-  const disabled = checkedOut || readOnly || update.isPending;
+  useEffect(() => {
+    const incoming = serializeTaskChecklist(checklist);
+    const hasPending = update.isPending || isSaving;
+    if (!hasPending) {
+      const revisionAdvanced =
+        typeof revision === 'number' && typeof revisionRef.current === 'number' && revision > revisionRef.current;
+      const isStalePropRevision =
+        typeof revision === 'number' && typeof revisionRef.current === 'number' && revision < revisionRef.current;
+      const propChanged = incoming !== prevPropChecklistRef.current || revisionAdvanced;
+      prevPropChecklistRef.current = incoming;
+      if (propChanged && incoming !== savedRef.current && !isStalePropRevision) {
+        const synced = checklist.map((step) => ({ ...step }));
+        savedStepsRef.current = synced;
+        savedRef.current = incoming;
+        setStepsSynced(synced);
+      }
+      if (revision !== prevPropRevisionRef.current) {
+        prevPropRevisionRef.current = revision;
+        if (revision === undefined || revisionRef.current === undefined || revision > revisionRef.current) {
+          revisionRef.current = revision;
+        }
+      }
+    }
+  }, [checklist, revision, update.isPending, isSaving]);
+
+  const commit = (next: TaskChecklistStep[]) => {
+    if (readOnly) return;
+    if (hasBlankChecklistStep(next)) {
+      setStepsSynced(savedStepsRef.current.map((step) => ({ ...step })));
+      return;
+    }
+    const normalized = normalizeChecklistSteps(next);
+    setStepsSynced(normalized);
+    if (inFlightRef.current) {
+      queuedStepsRef.current = normalized;
+      return;
+    }
+    startSave(normalized);
+  };
+
+  const disabled = checkedOut || readOnly || update.isPending || isSaving;
   const { done, total } = countTaskChecklistSteps(steps);
   const atLimit = steps.length >= TASK_CHECKLIST_STEPS_MAX;
 
@@ -353,20 +427,25 @@ export function TaskChecklistSection({
     const trimmed = draft.trim();
     if (!trimmed || atLimit || disabled) return;
     setDraft('');
-    commit([...steps, { text: trimmed.slice(0, TASK_CHECKLIST_STEP_MAX), done: false }]);
+    commit([...stepsRef.current, { text: trimmed.slice(0, TASK_CHECKLIST_STEP_MAX), done: false }]);
   };
 
   const commitTextAt = (index: number) => {
-    const current = steps[index];
-    const saved = checklist[index];
+    const current = stepsRef.current[index];
+    const saved = savedStepsRef.current[index];
     if (!current) return;
     const trimmed = current.text.trim();
     if (!trimmed) {
-      setSteps(checklist.map((step) => ({ ...step })));
+      setStepsSynced(savedStepsRef.current.map((step) => ({ ...step })));
       return;
     }
-    if (saved && saved.text === trimmed && saved.done === current.done) return;
-    commit(steps.map((item, idx) => (idx === index ? { ...item, text: trimmed } : item)));
+    if (saved && saved.text === trimmed && saved.done === current.done) {
+      if (current.text !== trimmed) {
+        setStepsSynced(stepsRef.current.map((item, idx) => (idx === index ? { ...item, text: trimmed } : item)));
+      }
+      return;
+    }
+    commit(stepsRef.current.map((item, idx) => (idx === index ? { ...item, text: trimmed } : item)));
   };
 
   return (
@@ -376,7 +455,7 @@ export function TaskChecklistSection({
           <h2 className="text-xs text-subtle-foreground">{t('checklist')}</h2>
           {total > 0 && <TaskChecklistBadge steps={{ done, total }} />}
         </div>
-        {update.isPending && <span className="text-xs text-muted-foreground">{t('checklistSaving')}</span>}
+        {(update.isPending || isSaving) && <span className="text-xs text-muted-foreground">{t('checklistSaving')}</span>}
       </div>
 
       {update.error && <ErrorText>{errorMessage(update.error)}</ErrorText>}
@@ -388,11 +467,11 @@ export function TaskChecklistSection({
           steps={steps}
           idPrefix="detail"
           disabled={disabled}
-          onToggle={(index, doneValue) => commit(steps.map((item, idx) => (idx === index ? { ...item, done: doneValue } : item)))}
-          onChangeText={(index, text) => setSteps((prev) => prev.map((item, idx) => (idx === index ? { ...item, text } : item)))}
+          onToggle={(index, doneValue) => commit(stepsRef.current.map((item, idx) => (idx === index ? { ...item, done: doneValue } : item)))}
+          onChangeText={(index, text) => setStepsSynced(stepsRef.current.map((item, idx) => (idx === index ? { ...item, text } : item)))}
           onCommitText={commitTextAt}
-          onMove={(from, to) => commit(moveStep(steps, from, to))}
-          onRemove={(index) => commit(steps.filter((_, idx) => idx !== index))}
+          onMove={(from, to) => commit(moveStep(stepsRef.current, from, to))}
+          onRemove={(index) => commit(stepsRef.current.filter((_, idx) => idx !== index))}
         />
       )}
 
