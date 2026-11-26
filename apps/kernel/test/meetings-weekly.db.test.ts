@@ -12,9 +12,10 @@ import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { WEEKLY_KIND, briefItemDue, vnDateOf, zWeeklyMail, type DigestFacts, type WeeklyState } from '@ludy/kernel-contract';
-import { Runtime } from '@ludy/kernel-runtime';
+import { Runtime, defineCommand } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { sql } from 'kysely';
+import { z } from 'zod';
 import { runMeetingsWeeklySweep } from '../src/meetings-weekly.ts';
 import { weeklyMailTemplate } from '../src/weekly-mail.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -24,6 +25,15 @@ const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'test.weekly' };
 const ZONE = 'Asia/Ho_Chi_Minh';
+// The system's own command that asks the worker-only definer for a member's tracked-word number, from the org context the runtime sets for the call (what the notice command does).
+const trackedProbe = defineCommand({
+  name: 'test.weekly_tracked_probe',
+  input: z.strictObject({ org: z.string(), userId: z.string(), at: z.string() }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input) => (await sql<{ tracked: number | null }>`SELECT ludy_meetings.weekly_tracked_hits(${input.org}::uuid, ${input.userId}::uuid, ${input.at}::timestamptz) AS tracked`.execute(ctx.trx)).rows[0]?.tracked ?? null,
+});
 // Words that must never reach a notice, a mail or an audit row.
 const CANARY = /Á Châu|hợp đồng 15|Họp kín|Tuấn|Quyết định bí mật|Việc bí mật/u;
 
@@ -102,8 +112,10 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
   const line = (meetingId: string, text: string, stage: 'draft' | 'published' = 'published') =>
     sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 5, 'Người nói 1', $4, $5)`, [orgId, randomUUID(), meetingId, text, stage]);
   // The tracked-word number the worker definer says for a member at the Monday: a number, or null when the org keeps no tracked word.
-  const trackedOf = async (who: string) =>
-    (await sql<{ tracked: number | null }>`SELECT ludy_meetings.weekly_tracked_hits(${orgId}::uuid, ${users[who]}::uuid, ${AT}::timestamptz) AS tracked`.execute(workerDb)).rows[0]?.tracked;
+  // It is asked from the system's own command in the org's context, as the notice command does.
+  const trackedIn = (ctxOrg: string, org: string, who: string) =>
+    worker.execute<number | null>('test.weekly_tracked_probe', { org, userId: users[who], at: AT }, { actor: SYSTEM, orgId: ctxOrg });
+  const trackedOf = (who: string) => trackedIn(orgId, orgId, who);
   async function item(meetingId: string, title: string, over: { task?: string; due?: string; stage?: 'draft' | 'published' } = {}): Promise<void> {
     let taskId: string | null = null;
     if (over.task !== undefined) {
@@ -137,7 +149,7 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     workerDb = createDb(workerPool);
-    const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
+    const registry = { commands: [...kernelCommands, ...meetingsCommands, trackedProbe], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registry);
     for (const key of ['owner', 'rec', 'lan', 'ltd', 'other', 'muted', 'odd', 'gone', 'disabled', 'late', 'early', 'sunday', 'sweepy', 'big', 'quiet', 'hid', 'hidltd', 'tracky', 'trackblind']) {
@@ -416,6 +428,12 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     // The words kept: 3 for the one who reads the meeting that says it, 0 for the one who reads none that does (a word said where they cannot read adds nothing).
     expect(await trackedOf('tracky')).toBe(3);
     expect(await trackedOf('trackblind')).toBe(0);
+    // The definer keeps the context gate of the alert's: asked for this org from another org's system context, from a member's context or from none, it refuses and says no count.
+    const elsewhere = (await createOrg(runtime, asUser('hid'), 'Công ty Khác Tuần')).orgId;
+    expect(await refuses(trackedIn(elsewhere, orgId, 'tracky'))).not.toBeNull();
+    expect(await refuses(trackedIn(orgId, elsewhere, 'tracky'))).not.toBeNull();
+    expect(await refuses(runtime.execute('test.weekly_tracked_probe', { org: orgId, userId: users.tracky, at: AT }, { actor: asUser('tracky'), orgId }))).not.toBeNull();
+    await expect(sql`SELECT ludy_meetings.weekly_tracked_hits(${orgId}::uuid, ${users.tracky}::uuid, ${AT}::timestamptz)`.execute(workerDb)).rejects.toThrow(/NO_CONTEXT/);
     // The due definer (the sweep's listing too) is the one it was: it has no tracked column, so the pass never pays for the number; only the command asks for it, for the one member.
     const listingColumns = Object.keys((await sql<Record<string, unknown>>`SELECT * FROM ludy_meetings.weekly_notices_due(500, ${orgId}::uuid, NULL::uuid, NULL::date, ${AT}::timestamptz)`.execute(workerDb)).rows[0] ?? {});
     expect(listingColumns).not.toContain('tracked');

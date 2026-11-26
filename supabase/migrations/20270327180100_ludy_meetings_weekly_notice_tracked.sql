@@ -4,7 +4,8 @@
 -- (20270327100000) is left exactly as it is: a function cannot gain an output column in place, and a dropped and recreated one cannot be replayed by the migration replay (each file must re-apply on its own).
 -- The command calls it for the one member the due definer just returned, never the sweep's listing, because up to 50 meetings x 20000 lines x 20 terms for each of 200 members could outrun the worker's statement
 -- timeout and keep every org from its notice. The counting is ludy_meetings.tracker_hits_in (20270327180000), the one statement of the matching rule shared with the tracker alert. It returns a number only
--- (no text, no jsonb, no id): NULL when the org keeps no tracked word or the member is not an active member, else at most 999. Grants as the other worker definers: EXECUTE to ludy_worker only.
+-- (no text, no jsonb, no id): NULL when the org keeps no tracked word or the member is not an active member, else at most 999. Grants as the other worker definers: EXECUTE to ludy_worker only, and the same
+-- context gate as tracker_alert_hits (NO_CONTEXT unless the actor is the system and p_org_id is the context's org).
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION ludy_meetings.weekly_tracked_hits(
@@ -13,7 +14,13 @@ CREATE OR REPLACE FUNCTION ludy_meetings.weekly_tracked_hits(
   p_now timestamptz DEFAULT NULL
 )
 RETURNS integer
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  -- The context gate of tracker_alert_hits and minutes_wake_open: only the system's own command, in the org it asks about. A worker context of another org (or none) cannot ask for a member's count.
+  IF ludy_kernel.ctx_org_id() IS NULL OR ludy_kernel.ctx_actor_type() IS DISTINCT FROM 'system' OR p_org_id IS DISTINCT FROM ludy_kernel.ctx_org_id() THEN
+    RAISE EXCEPTION 'NO_CONTEXT' USING ERRCODE = '42501';
+  END IF;
+  RETURN (
   WITH scoped AS (
     -- The member's scope as enter_context seals it (the same rule as the due definer): the whole org for an owner or an admin, for a member with an org-wide role assignment and for one with no assignment at all;
     -- a member limited to some legal entities reads an org-visible meeting only through a reader row (the policy's '*' branch).
@@ -50,6 +57,8 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
              WHERE r.rn <= 50
            ), 0))::integer
          END
+  );
+END;
 $$;
 REVOKE ALL ON FUNCTION ludy_meetings.weekly_tracked_hits(uuid, uuid, timestamptz) FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 GRANT EXECUTE ON FUNCTION ludy_meetings.weekly_tracked_hits(uuid, uuid, timestamptz) TO ludy_worker;
