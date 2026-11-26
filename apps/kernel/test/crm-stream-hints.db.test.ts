@@ -208,8 +208,16 @@ suite('stream hints of deals and contacts (#3293)', () => {
     expect(renamedWithId).toEqual([`${orgId} crm_party ${replacementId}`]);
   });
 
+  const top20InTriggerOrder = (ids: readonly string[]): string[] =>
+    [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).slice(0, 20);
+
   // #3423: a transaction that writes >20 distinct contacts or deals from a fresh budget sends 21 hints (20 distinct row ids + 1 nil id sentinel), not one NOTIFY per row.
-  const bounded = (payloads: string[], orgId: string, type: 'crm_party' | 'crm_deal') => {
+  const bounded = (
+    payloads: string[],
+    orgId: string,
+    type: 'crm_party' | 'crm_deal',
+    expected?: { exactOrder?: readonly string[]; memberOf?: ReadonlySet<string> },
+  ) => {
     expect(payloads).toHaveLength(21);
     expect(payloads.every((p) => p.startsWith(`${orgId} ${type} `))).toBe(true);
     expect(payloads.filter((p) => p.endsWith(` ${STREAM_HINT_MANY_ID}`))).toHaveLength(1);
@@ -221,6 +229,10 @@ suite('stream hints of deals and contacts (#3293)', () => {
       return parsed!.hint.id;
     });
     expect(new Set(namedIds).size).toBe(20);
+    if (expected?.exactOrder) expect(namedIds).toEqual(expected.exactOrder);
+    if (expected?.memberOf) {
+      for (const id of namedIds) expect(expected.memberOf.has(id)).toBe(true);
+    }
     expect(parseHint(payloads[20]!)).toMatchObject({ orgId, hint: { type, id: STREAM_HINT_MANY_ID } });
   };
 
@@ -246,16 +258,19 @@ suite('stream hints of deals and contacts (#3293)', () => {
 
   it('bounds the hints of a large contact import: 2000 parties one by one, each with a company link, send at most 21 (#3423)', async () => {
     const orgId = await org();
+    const expectedFirst20: string[] = [];
     const payloads = await hintsOf(async (c) => {
       await c.query('BEGIN');
       const company = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'organization', 'Công ty nhập') RETURNING id`, [orgId])).rows[0]!.id;
+      expectedFirst20.push(company);
       for (let i = 0; i < 2000; i++) {
         const id = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name, email) VALUES ($1, 'person', $2, $3) RETURNING id`, [orgId, `Khách ${i}`, `k${i}@nhap.test`])).rows[0]!.id;
+        if (expectedFirst20.length < 20) expectedFirst20.push(id);
         await c.query('UPDATE ludy_kernel.party SET company_id = $3 WHERE org_id = $1 AND id = $2', [orgId, id, company]);
       }
       await c.query('COMMIT');
     });
-    bounded(payloads, orgId, 'crm_party');
+    bounded(payloads, orgId, 'crm_party', { exactOrder: expectedFirst20 });
     // The first 20 distinct parties name themselves (the insert and link update of one party count once); the 21st sends the one nil hint. No name, email or phone anywhere.
     expect(payloads).toHaveLength(21);
     expect(new Set(payloads).size).toBe(payloads.length);
@@ -264,11 +279,23 @@ suite('stream hints of deals and contacts (#3293)', () => {
 
   it('bounds one statement that writes 2000 parties, and bulk purge updates while skipping unwatched columns (#3423)', async () => {
     const orgId = await org();
-    const inserted = await hintsOf((c) => c.query(`INSERT INTO ludy_kernel.party (org_id, kind, name) SELECT $1::uuid, 'person', 'Khách ' || i FROM generate_series(1, 2000) i`, [orgId]));
-    bounded(inserted, orgId, 'crm_party');
+    let insertedIds: string[] = [];
+    const inserted = await hintsOf(async (c) => {
+      insertedIds = (
+        await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name) SELECT $1::uuid, 'person', 'Khách ' || i FROM generate_series(1, 2000) i RETURNING id`, [orgId])
+      ).rows.map((r) => r.id);
+    });
+    expect(insertedIds).toHaveLength(2000);
+    bounded(inserted, orgId, 'crm_party', { exactOrder: top20InTriggerOrder(insertedIds) });
     // Bulk contact-field erase and duplicate_of reset.
-    const erased = await hintsOf((c) => c.query(`UPDATE ludy_kernel.party SET email = NULL, phone = NULL, address = NULL, name = 'Đã xóa' WHERE org_id = $1`, [orgId]));
-    bounded(erased, orgId, 'crm_party');
+    let erasedIds: string[] = [];
+    const erased = await hintsOf(async (c) => {
+      erasedIds = (
+        await c.query<{ id: string }>(`UPDATE ludy_kernel.party SET email = NULL, phone = NULL, address = NULL, name = 'Đã xóa' WHERE org_id = $1 RETURNING id`, [orgId])
+      ).rows.map((r) => r.id);
+    });
+    expect(erasedIds).toHaveLength(2000);
+    bounded(erased, orgId, 'crm_party', { exactOrder: top20InTriggerOrder(erasedIds) });
     // A statement that changes nothing a screen shows sends nothing, however many rows it touches.
     expect(await hintsOf((c) => c.query(`UPDATE ludy_kernel.party SET verified_at = now() WHERE org_id = $1`, [orgId]))).toEqual([]);
   });
@@ -278,6 +305,7 @@ suite('stream hints of deals and contacts (#3293)', () => {
     const defaultEntity = await admin(
       async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]!.id,
     );
+    const keptPartyIds: string[] = [];
     await admin(async (c) => {
       const bookPartyDoc = async (partyId: string, invoiceNo: string) => {
         const docId = (
@@ -308,6 +336,7 @@ suite('stream hints of deals and contacts (#3293)', () => {
           [orgId, company],
         )
       ).rows[0]!.id;
+      keptPartyIds.push(primary);
       await bookPartyDoc(primary, '00000001');
       for (let i = 2; i <= 30; i++) {
         const kept = (
@@ -317,6 +346,7 @@ suite('stream hints of deals and contacts (#3293)', () => {
             [orgId, `Khách giữ ${i}`, `giu${i}@purge.test`, company, primary],
           )
         ).rows[0]!.id;
+        keptPartyIds.push(kept);
         await bookPartyDoc(kept, String(i).padStart(8, '0'));
       }
       await c.query('COMMIT');
@@ -334,7 +364,7 @@ suite('stream hints of deals and contacts (#3293)', () => {
     const payloads = await hintsOf(() =>
       workerApp.execute('kernel.org.purge', { minDays: 30, reason: 'test bounded stream hints' }, { actor: { type: 'system', component: 'operator' }, orgId }),
     );
-    bounded(payloads, orgId, 'crm_party');
+    bounded(payloads, orgId, 'crm_party', { memberOf: new Set(keptPartyIds) });
     expect(payloads).toHaveLength(21);
     for (const p of payloads) expect(p).not.toMatch(/Khách|purge\.test|Công ty/);
     const keptAfter = await admin(
@@ -400,22 +430,32 @@ suite('stream hints of deals and contacts (#3293)', () => {
     let gucDuringTx: string | null = null;
     let perOrgValues: (string | null)[] = [];
     let gucAfterTx: string | null = null;
+    const partyIdsByOrg = new Map<string, string[]>();
+    let dealIdsA: string[] = [];
+    let dealIdsB: string[] = [];
 
     const payloads = await hintsOf(async (c) => {
       await c.query('BEGIN');
       for (const o of [first, second]) {
-        await c.query(`INSERT INTO ludy_kernel.party (org_id, kind, name) SELECT $1::uuid, 'person', 'Khách ' || i FROM generate_series(1, 100) i`, [o]);
+        const ids = (
+          await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name) SELECT $1::uuid, 'person', 'Khách ' || i FROM generate_series(1, 100) i RETURNING id`, [o])
+        ).rows.map((r) => r.id);
+        partyIdsByOrg.set(o, ids);
       }
-      await c.query(
-        `INSERT INTO ludy_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, created_by)
-         SELECT $1::uuid, $2::uuid, 'Hợp đồng A ' || i, 1000, $3::uuid, 'A' || i, $4::uuid FROM generate_series(1, 60) i`,
-        [first, partyA, stageA, randomUUID()],
-      );
-      await c.query(
-        `INSERT INTO ludy_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, created_by)
-         SELECT $1::uuid, $2::uuid, 'Hợp đồng B ' || i, 1000, $3::uuid, 'B' || i, $4::uuid FROM generate_series(1, 60) i`,
-        [second, partyB, stageB, randomUUID()],
-      );
+      dealIdsA = (
+        await c.query<{ id: string }>(
+          `INSERT INTO ludy_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, created_by)
+           SELECT $1::uuid, $2::uuid, 'Hợp đồng A ' || i, 1000, $3::uuid, 'A' || i, $4::uuid FROM generate_series(1, 60) i RETURNING id`,
+          [first, partyA, stageA, randomUUID()],
+        )
+      ).rows.map((r) => r.id);
+      dealIdsB = (
+        await c.query<{ id: string }>(
+          `INSERT INTO ludy_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, created_by)
+           SELECT $1::uuid, $2::uuid, 'Hợp đồng B ' || i, 1000, $3::uuid, 'B' || i, $4::uuid FROM generate_series(1, 60) i RETURNING id`,
+          [second, partyB, stageB, randomUUID()],
+        )
+      ).rows.map((r) => r.id);
       gucDuringTx = (await c.query<{ val: string | null }>(`SELECT pg_catalog.current_setting('ludy.stream_hint_counts', true) AS val`)).rows[0]?.val ?? null;
       const legacyNames = [first, second].flatMap((o) => {
         const hex = o.replaceAll('-', '');
@@ -428,10 +468,10 @@ suite('stream hints of deals and contacts (#3293)', () => {
       gucAfterTx = (await c.query<{ val: string | null }>(`SELECT pg_catalog.current_setting('ludy.stream_hint_counts', true) AS val`)).rows[0]?.val ?? null;
     });
 
-    bounded(payloads.filter((p) => p.startsWith(`${first} crm_party `)), first, 'crm_party');
-    bounded(payloads.filter((p) => p.startsWith(`${second} crm_party `)), second, 'crm_party');
-    bounded(payloads.filter((p) => p.startsWith(`${first} crm_deal `)), first, 'crm_deal');
-    bounded(payloads.filter((p) => p.startsWith(`${second} crm_deal `)), second, 'crm_deal');
+    bounded(payloads.filter((p) => p.startsWith(`${first} crm_party `)), first, 'crm_party', { exactOrder: top20InTriggerOrder(partyIdsByOrg.get(first)!) });
+    bounded(payloads.filter((p) => p.startsWith(`${second} crm_party `)), second, 'crm_party', { exactOrder: top20InTriggerOrder(partyIdsByOrg.get(second)!) });
+    bounded(payloads.filter((p) => p.startsWith(`${first} crm_deal `)), first, 'crm_deal', { exactOrder: top20InTriggerOrder(dealIdsA) });
+    bounded(payloads.filter((p) => p.startsWith(`${second} crm_deal `)), second, 'crm_deal', { exactOrder: top20InTriggerOrder(dealIdsB) });
     expect(payloads).toHaveLength(84);
     expect(perOrgValues.every((v) => v === null || v === '')).toBe(true);
     expect(JSON.parse(gucDuringTx!)).toEqual({
@@ -500,17 +540,24 @@ suite('stream hints of deals and contacts (#3293)', () => {
           await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name) SELECT $1::uuid, 'person', 'Sẵn ' || i FROM generate_series(1, 20) i RETURNING id`, [orgId])
         ).rows.map((r) => r.id),
     );
+    let seededTx = '';
+    let gucAfterUpdate: string | null = null;
+    let gucAfterInsert: string | null = null;
     let newIds: string[] = [];
     const seeded = await hintsOf(async (c) => {
       await c.query('BEGIN');
-      const tx = (await c.query<{ tx: string }>('SELECT pg_catalog.pg_current_xact_id()::text AS tx')).rows[0]!.tx;
-      await c.query(`SELECT pg_catalog.set_config('ludy.stream_hint_counts', $1, true)`, [JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: seen } })]);
+      seededTx = (await c.query<{ tx: string }>('SELECT pg_catalog.pg_current_xact_id()::text AS tx')).rows[0]!.tx;
+      await c.query(`SELECT pg_catalog.set_config('ludy.stream_hint_counts', $1, true)`, [JSON.stringify({ tx: seededTx, counts: { [`crm_party:${orgId}`]: seen } })]);
       await c.query(`UPDATE ludy_kernel.party SET name = 'Sửa lại' WHERE org_id = $1 AND id = $2`, [orgId, seen[0]]);
+      gucAfterUpdate = (await c.query<{ val: string | null }>(`SELECT pg_catalog.current_setting('ludy.stream_hint_counts', true) AS val`)).rows[0]?.val ?? null;
       newIds = (
         await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name) SELECT $1::uuid, 'person', 'Mới ' || i FROM generate_series(1, 5) i RETURNING id`, [orgId])
       ).rows.map((r) => r.id);
+      gucAfterInsert = (await c.query<{ val: string | null }>(`SELECT pg_catalog.current_setting('ludy.stream_hint_counts', true) AS val`)).rows[0]?.val ?? null;
       await c.query('COMMIT');
     });
+    expect(JSON.parse(gucAfterUpdate!)).toEqual({ tx: seededTx, counts: { [`crm_party:${orgId}`]: seen } });
+    expect(JSON.parse(gucAfterInsert!)).toEqual({ tx: seededTx, counts: { [`crm_party:${orgId}`]: 'many' } });
     expect(newIds).toHaveLength(5);
     expect(seeded).toEqual([`${orgId} crm_party ${STREAM_HINT_MANY_ID}`]);
   });
@@ -543,17 +590,22 @@ suite('stream hints of deals and contacts (#3293)', () => {
     }
 
     const three = orgs.slice(0, 3);
-    const bulkMulti = await hintsOf((c) =>
-      c.query(
-        `INSERT INTO ludy_kernel.party (org_id, kind, name)
-         SELECT o, 'person', 'Lô ' || i
-         FROM unnest($1::uuid[]) AS o, generate_series(1, 25) AS i`,
-        [three],
-      ),
-    );
+    let bulkRows: Array<{ org_id: string; id: string }> = [];
+    const bulkMulti = await hintsOf(async (c) => {
+      bulkRows = (
+        await c.query<{ org_id: string; id: string }>(
+          `INSERT INTO ludy_kernel.party (org_id, kind, name)
+           SELECT o, 'person', 'Lô ' || i
+           FROM unnest($1::uuid[]) AS o, generate_series(1, 25) AS i
+           RETURNING org_id, id`,
+          [three],
+        )
+      ).rows;
+    });
     expect(bulkMulti).toHaveLength(63);
     for (const o of three) {
-      bounded(bulkMulti.filter((p) => p.startsWith(`${o} crm_party `)), o, 'crm_party');
+      const expected = top20InTriggerOrder(bulkRows.filter((r) => r.org_id === o).map((r) => r.id));
+      bounded(bulkMulti.filter((p) => p.startsWith(`${o} crm_party `)), o, 'crm_party', { exactOrder: expected });
     }
   });
 
@@ -567,23 +619,34 @@ suite('stream hints of deals and contacts (#3293)', () => {
     await app.executeOrgless('kernel.member.invite.accept', { token: acceptPath.split('#')[1] }, { actor: { type: 'user', userId: member, aal: 'aal1' } });
 
     const [partyId, stageId] = [await party(orgId), await stage(orgId)];
-    const created = await hintsOf((c) =>
-      c.query(
-        `INSERT INTO ludy_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, owner_user_id, created_by)
-         SELECT $1::uuid, $2::uuid, 'Hợp đồng bí mật ' || i, 987654321, $3::uuid, 'V' || i, $4::uuid, $5::uuid
-         FROM generate_series(1, 60) i`,
-        [orgId, partyId, stageId, member, owner],
-      ),
-    );
-    bounded(created, orgId, 'crm_deal');
+    let createdDealIds: string[] = [];
+    const created = await hintsOf(async (c) => {
+      createdDealIds = (
+        await c.query<{ id: string }>(
+          `INSERT INTO ludy_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, owner_user_id, created_by)
+           SELECT $1::uuid, $2::uuid, 'Hợp đồng bí mật ' || i, 987654321, $3::uuid, 'V' || i, $4::uuid, $5::uuid
+           FROM generate_series(1, 60) i
+           RETURNING id`,
+          [orgId, partyId, stageId, member, owner],
+        )
+      ).rows.map((r) => r.id);
+    });
+    expect(createdDealIds).toHaveLength(60);
+    bounded(created, orgId, 'crm_deal', { exactOrder: top20InTriggerOrder(createdDealIds) });
 
     // Removing the member clears owner_user_id on all 60 deals via deal_owner_fk ON DELETE SET NULL.
     const onRemoval = await hintsOf(() => app.execute('kernel.member.remove', { userId: member }, { actor: asMfa, orgId }));
-    bounded(onRemoval, orgId, 'crm_deal');
+    bounded(onRemoval, orgId, 'crm_deal', { memberOf: new Set(createdDealIds) });
     expect(onRemoval).toHaveLength(21);
 
-    const updated = await hintsOf((c) => c.query(`UPDATE ludy_crm.deal SET sort_key = sort_key || 'x' WHERE org_id = $1`, [orgId]));
-    bounded(updated, orgId, 'crm_deal');
+    let updatedDealIds: string[] = [];
+    const updated = await hintsOf(async (c) => {
+      updatedDealIds = (
+        await c.query<{ id: string }>(`UPDATE ludy_crm.deal SET sort_key = sort_key || 'x' WHERE org_id = $1 RETURNING id`, [orgId])
+      ).rows.map((r) => r.id);
+    });
+    expect(updatedDealIds).toHaveLength(60);
+    bounded(updated, orgId, 'crm_deal', { exactOrder: top20InTriggerOrder(updatedDealIds) });
     const [one] = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_crm.deal WHERE org_id = $1 LIMIT 1', [orgId])).rows);
     const single = await hintsOf((c) => c.query(`UPDATE ludy_crm.deal SET amount = 7 WHERE org_id = $1 AND id = $2`, [orgId, one!.id]));
     expect(single).toEqual([`${orgId} crm_deal ${one!.id}`]);
