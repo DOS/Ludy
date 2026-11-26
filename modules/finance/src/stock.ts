@@ -48,25 +48,55 @@ export interface StockMoveWrite {
     | { type: 'sale_return'; returnOfMoveId: string };
 }
 
-// The date a move is written with. A month the entity has closed takes no move (the database refuses one, 20261124020000), so a move whose own date falls in one is written on today, in the
-// open month, whatever its source: a correction is a move of the open month, never back-dated, and the two halves of a replacement (the reversal of the old document's moves and the moves of
-// the new one) land on the same day. The entity's lock is taken shared first, so this read cannot miss a close that is running: it waits for it and then sees the month closed.
-async function openMoveDate(ctx: CommandContext, itemId: string, date: string): Promise<string> {
+// The date a move is written with. A month the entity has closed takes no move (the database refuses one, 20261124020000), and a non-count move dated on or before an item's latest
+// confirmed stock count would count stock twice (the database refuses one, 20270328240000), so a move before that floor is written on today (or refused when the count itself is dated
+// today, rather than pushing a move into the future), whatever its source: a correction is a move of the open month after the count, never back-dated, and a reversal never precedes the
+// move it reverses. The entity's lock is taken shared first, so this read cannot miss a close or a count confirmation that is running.
+async function openMoveDate(ctx: CommandContext, itemId: string, date: string, source: StockMoveWrite['source']): Promise<string> {
   const item = await ctx.trx.selectFrom('ludy_finance.stock_item').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', itemId).executeTakeFirst();
   // An item that is not there is refused by the insert, with the foreign key's own error.
   if (!item) return date;
   await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${stockMoveLockKey(ctx.orgId, item.legal_entity_id)}, 0))`.execute(ctx.trx);
-  const { rows } = await sql<{ first_open: string | null }>`
-    SELECT (pg_catalog.max(p.period_month) + interval '1 month')::date::text AS first_open FROM ludy_finance.stock_period p
-    WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${item.legal_entity_id}::uuid`.execute(ctx.trx);
+  const reversesId = source.type === 'reversal' ? source.reversesMoveId : null;
+  const { rows } = await sql<{ first_open: string | null; after_count: string | null; reversed_date: string | null }>`
+    SELECT
+      (SELECT (pg_catalog.max(p.period_month) + interval '1 month')::date::text
+       FROM ludy_finance.stock_period p
+       WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${item.legal_entity_id}::uuid) AS first_open,
+      CASE WHEN ${source.type}::text = 'count' THEN NULL ELSE (
+        SELECT (pg_catalog.max(c.count_date) + 1)::date::text
+        FROM ludy_finance.stock_count_line l
+        JOIN ludy_finance.stock_count c ON c.org_id = l.org_id AND c.id = l.count_id
+        WHERE l.org_id = ${ctx.orgId}::uuid
+          AND l.legal_entity_id = ${item.legal_entity_id}::uuid
+          AND l.item_id = ${itemId}::uuid
+          AND c.legal_entity_id = ${item.legal_entity_id}::uuid
+          AND c.status = 'confirmed'
+      ) END AS after_count,
+      CASE WHEN ${reversesId}::uuid IS NULL THEN NULL ELSE (
+        SELECT m.move_date::text
+        FROM ludy_finance.stock_move m
+        WHERE m.org_id = ${ctx.orgId}::uuid AND m.id = ${reversesId}::uuid
+      ) END AS reversed_date`.execute(ctx.trx);
   const firstOpen = rows[0]?.first_open ?? null;
-  if (firstOpen === null || date >= firstOpen) return date;
-  return databaseToday(ctx.trx);
+  const afterCount = rows[0]?.after_count ?? null;
+  const reversedDate = rows[0]?.reversed_date ?? null;
+  const floor = [firstOpen, afterCount, reversedDate].filter((v): v is string => v !== null).sort().at(-1) ?? null;
+  if (floor === null || date >= floor) return date;
+  const today = await databaseToday(ctx.trx);
+  if (afterCount !== null && today < afterCount) {
+    throw new DomainError(
+      'STOCK_COUNT_MOVE_DATE',
+      409,
+      'Mặt hàng này đã kiểm kê xác nhận đến ngày hôm nay nên chưa thể ghi biến động cùng ngày; hãy ghi vào ngày sau kiểm kê',
+    );
+  }
+  return today >= floor ? today : floor;
 }
 
 export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite): Promise<string> {
   const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
-  const date = await openMoveDate(ctx, move.itemId, move.date);
+  const date = await openMoveDate(ctx, move.itemId, move.date, move.source);
   // The try of a line: one more than the moves it already made (the database accepts it only when the one before was reversed, and keeps two writers from taking the same).
   const attempt =
     move.source.type === 'document_line'

@@ -130,6 +130,31 @@ async function assertOpenDate(ctx: Ctx, legalEntityId: string, countDate: string
   if (rows[0]) throw new DomainError('STOCK_COUNT_CLOSED', 409, `Tháng của ngày ${dateLabel(countDate)} đã đóng sổ kho nên không kiểm kê được; hãy kiểm kê vào một ngày của tháng đang mở`);
 }
 
+// A count dated earlier than an already-confirmed count of any overlapping item would adjust and re-count the same difference (#2682 N1).
+async function assertCountOrder(ctx: Ctx, legalEntityId: string, countId: string, countDate: string) {
+  const { rows } = await sql<{ count_date: string }>`
+    SELECT c2.count_date::text AS count_date
+    FROM ludy_finance.stock_count_line l
+    JOIN ludy_finance.stock_count_line l2 ON l2.org_id = l.org_id AND l2.legal_entity_id = l.legal_entity_id AND l2.item_id = l.item_id
+    JOIN ludy_finance.stock_count c2 ON c2.org_id = l2.org_id AND c2.id = l2.count_id
+    WHERE l.org_id = ${ctx.orgId}::uuid
+      AND l.legal_entity_id = ${legalEntityId}::uuid
+      AND l.count_id = ${countId}::uuid
+      AND c2.id <> ${countId}::uuid
+      AND c2.legal_entity_id = ${legalEntityId}::uuid
+      AND c2.status = 'confirmed'
+      AND c2.count_date > ${countDate}::date
+    ORDER BY c2.count_date DESC
+    LIMIT 1`.execute(ctx.trx);
+  if (rows[0]) {
+    throw new DomainError(
+      'STOCK_COUNT_ORDER',
+      409,
+      `Đã có lần kiểm kê ngày ${dateLabel(rows[0].count_date)} được xác nhận sau ngày ${dateLabel(countDate)} cho mặt hàng trong phiếu này`,
+    );
+  }
+}
+
 // What the books hold of each item of the entity on `countDate`: the quantity (the last closed month's closing, then every move up to the day) and the month's provisional average up to the
 // day. An item with no move and no balance is not in the map (it holds nothing).
 async function bookFigures(ctx: Ctx, legalEntityId: string, countDate: string): Promise<Map<string, { bookQuantity: string; averageCost: string | null }>> {
@@ -311,6 +336,7 @@ export const confirmEmptyStockCount = defineCommand({
     requireDraft(head);
     await lockEntityMoves(ctx, head.legal_entity_id);
     await assertOpenDate(ctx, head.legal_entity_id, head.count_date);
+    await assertCountOrder(ctx, head.legal_entity_id, head.id, head.count_date);
     const built = await buildCount(ctx, head, lines);
     if (built.worked.lines.some((l) => !money(l.difference).isZero())) {
       throw new DomainError('STOCK_COUNT_HAS_DIFFERENCE', 409, 'Lần kiểm kê này có chênh lệch so với sổ; hãy gửi đề xuất xác nhận để chủ sở hữu hoặc quản trị viên duyệt');
@@ -336,6 +362,7 @@ export const prepareStockCount = defineCommand({
     const { head, lines } = await loadCount(ctx, countId);
     requireDraft(head);
     await assertOpenDate(ctx, head.legal_entity_id, head.count_date);
+    await assertCountOrder(ctx, head.legal_entity_id, head.id, head.count_date);
     const built = await buildCount(ctx, head, lines);
     if (built.worked.unpriced.length > 0) {
       const named = built.worked.unpriced.slice(0, 5).map((u) => u.code).join(', ');
@@ -371,6 +398,7 @@ export const confirmStockCount = defineCommand({
     if (legalEntityId !== head.legal_entity_id) throw new DomainError('STOCK_COUNT_STALE', 409, 'Đề xuất không còn khớp lần kiểm kê; hãy từ chối đề xuất này và lập lại');
     await lockEntityMoves(ctx, legalEntityId);
     await assertOpenDate(ctx, legalEntityId, head.count_date);
+    await assertCountOrder(ctx, legalEntityId, head.id, head.count_date);
     const built = await buildCount(ctx, head, lines);
     await assertLedgerOpen(ctx, head.count_date, legalEntityId);
     await assertPostable(ctx, built);

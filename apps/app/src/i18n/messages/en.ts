@@ -17882,6 +17882,8 @@ export const en = {
       STOCK_COUNT_NO_DIFFERENCE: 'This count matches the books, so there is no entry to approve; confirm it directly.',
       STOCK_COUNT_HAS_DIFFERENCE: 'This count differs from the books; send it for approval so an owner or an admin approves it.',
       STOCK_COUNT_STALE: 'The stock changed since the proposal was made; reject it and ask again.',
+      STOCK_COUNT_ORDER: 'A later stock count has already been confirmed for an item in this count; cannot confirm an earlier date.',
+      STOCK_COUNT_MOVE_DATE: 'This item has a confirmed stock count dated today, so moves cannot be recorded on the same day; record them after today.',
       STOCK_COUNT_UNSUPPORTED: 'The entry for the count cannot be made: too many accounts or an amount with a fraction of a dong.',
       STOCK_MOVE_COUNT: 'This move is the adjustment of a count, so it cannot be reversed; count again.',
       STOCK_MOVE_HAS_RETURN: 'This sale already has goods returned against it; undo the returns first.',
