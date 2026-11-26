@@ -1,6 +1,6 @@
 # Kế hoạch Ludy eSign (`Ký kết` / `sign`)
 
-- **Trạng thái:** Bản kế hoạch nháp (2026-11-15; cập nhật quyết định Giai đoạn 2 ngày 2026-11-17; cập nhật quyết định Giai đoạn 3 & 4 ngày 2026-11-19; cập nhật quyết định Giai đoạn 5 ngày 2026-11-22)
+- **Trạng thái:** Đã hợp nhất vào `main` trọn bộ Giai đoạn 1 đến 6d và đợt gia cố Wave A1 (2026-11-15; Giai đoạn 2 ngày 2026-11-17; Giai đoạn 3-4 ngày 2026-11-19; Giai đoạn 5 ngày 2026-11-22; Giai đoạn 6a-6d ngày 2026-11-25; gia cố Wave A1 + đối sánh v3 ngày 2026-11-26; tạm hoãn `6e` / `#62` và `#2535`)
 - **Epic:** https://github.com/DOS/Ludy/issues/3318
 - **Issue kế hoạch:** https://github.com/DOS/Ludy/issues/3319
 - **Mốc triển khai / Mức ưu tiên:** `M3 Paid pilot` / `priority:P2`
@@ -70,14 +70,17 @@ Một công ty một thành viên (OPC) hoặc doanh nghiệp vừa và nhỏ (S
 - **Lát cắt nhỏ nhất dùng được ngay:** chạy `docker compose up` là dùng được luôn, không cần tài khoản bên thứ ba. Một người chỉ cần tải PDF lên, đặt 1 khung chữ ký, sao chép link dán sang Zalo để đối tác ký trên điện thoại và tải về bản niêm phong kèm chứng nhận.
 - **AI rõ vai trò và không bắt buộc:** Vy gợi ý vị trí khung và lọc điều khoản đáng chú ý dưới dạng `"Đề xuất"` qua đồng hồ đo chi phí; mọi thao tác thủ công đều chạy đầy đủ ngay cả khi tắt AI.
 
-### 1.3 So sánh nhanh với thị trường ([competitors.md](../product/competitors.md))
+### 1.3 So sánh nhanh với thị trường ([competitors.md](../product/competitors.md), bảng 14 nền tảng: [esign-competitors-and-ai-2026.md](../research/esign-competitors-and-ai-2026.md))
 
-| Tiêu chí | Documenso (Mã nguồn mở) | Docusign | MISA WeSign (VN) | Ludy Ký kết (`sign`) |
-| :--- | :--- | :--- | :--- | :--- |
-| **Tự chạy bằng `docker compose up`** | Có (cần tự cấu hình SMTP/đăng nhập) | Không (chỉ có bản cloud trả phí) | Không (cloud theo tài khoản MISA) | **Có sẵn 100%**, dùng chung hệ thống email và lưu trữ của Ludy |
-| **Gửi link qua Zalo / chat** | Thiên về email | Thiên về email | Email / SMS / thông báo app | **Ưu tiên sao chép link Zalo** ngang hàng với gửi email, mở mượt trên điện thoại (`375px`+) |
-| **Chống sửa & chữ ký số VN** | Đóng khung PDF, có tùy chọn chứng thư số | Chứng nhận cloud riêng | Chữ ký số công cộng VN | **Slice 1:** Niêm phong băm `SHA-256` + chứng nhận kiểm toán nối chuỗi; **Slice 2:** Cổng VNPT SmartCA, Viettel MySign, MISA WeSign |
-| **Trợ lý đọc hợp đồng** | Chưa có sẵn | Gói doanh nghiệp tốn phí thêm | Chưa có ở gói cơ bản | **Vy** gợi ý ô ký và cảnh báo điều khoản rủi ro qua đồng hồ đo ngân sách |
+| Tiêu chí | Documenso (Mã nguồn mở) | DocuSign (+ IAM) | PandaDoc | MISA WeSign (VN) | Ludy eSign (`main`, Giai đoạn 1-6d) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Tự chạy bằng `docker compose up`** | Có (`AGPL-3.0` bản cộng đồng) | Không (cloud trả phí) | Không (cloud trả phí) | Không (cloud theo tài khoản MISA) | **Có sẵn 100%** (`AGPL-3.0`), dùng chung kho email & lưu trữ Ludy, `0` phí theo người dùng |
+| **Gửi link Zalo / Quét QR** | Thiên về email, có link trực tiếp | Thiên về email / SMS | Email / SMS + biểu mẫu | Email / Zalo ZNS / SMS | **Ưu tiên link `#fragment` Zalo**, mở bằng **mã QR sang điện thoại** & chèn vào **Zalo OA Engage (`6a`)**, không CAPTCHA |
+| **File Word `.docx` & Gói nhiều tài liệu** | Có (dùng LibreOffice + nhiều file) | Có (`.docx` + nhiều file) | Có (`.docx` + nhiều file + bảng giá) | Có (Word -> PDF + ký lô/gói) | **Có (`6b`/`6c`):** chuyển `.docx` thuần JS trong hộp cát (`Be Vietnam Pro`), ký gói `1-5` PDF (`<= 200` trang), 1 chứng nhận `SHA-256` |
+| **Thu tiền / Đặt cọc ngay khi ký** | Không | Gói Business Pro có thu hộ | Thu tiền & báo giá đi kèm | Không (nối phần mềm kế toán riêng) | **Có (`6d`):** tạo mã **VietQR NAPAS đặt cọc** (`CK-<code>`, khóa thông tin người nhận) & gợi ý khớp bên `Ludy Kế toán` (không giữ tiền hộ) |
+| **Chống sửa, nghiệp vụ VN & chữ ký số** | Đóng khung PDF, có tùy chọn chứng thư | Chứng nhận cloud + PAdES | Nhật ký cloud + chứng thư tùy chọn | Chữ ký số công cộng VN, `ký nháy`, con dấu | Niêm phong `SHA-256` + `ký nháy` 1 chạm + con dấu đỏ + rà `KYC` (`4a`/`4b`/`5e`); sẵn cổng VNPT/Viettel/MISA (`2c`, bản thật chờ [#62](https://github.com/DOS/Ludy/issues/62)) |
+| **Trợ lý AI đọc & rà hợp đồng** | Gợi ý ô cơ bản | Gói Iris/IAM tốn phí cao (`~$45-$80+/tháng`) | AI Document Assistant (cloud) | Hạn chế ở gói cơ bản | **10 tính năng `Vy` có đồng hồ chi phí** (ô ký, điều khoản, nghiệm thu, nghĩa vụ & gia hạn, so sánh bản sửa, soạn mẫu, hỏi kho, Playbook, KYC, đối chiếu gói), tắt AI vẫn chạy `100%` |
+| **Liên thông nội bộ & API / MCP** | Webhook + REST API | Maestro + cổng nối trả phí | CPQ/CRM + MCP thử nghiệm | Chặt trong hệ sinh thái AMIS | Nối Báo giá / HR / Biên bản họp / Dự án -> Hóa đơn Kế toán; `6` API REST (`5c`), `4` công cụ MCP (`5c`), Webhook HMAC (`5b`) |
 
 ---
 
