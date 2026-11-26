@@ -421,4 +421,26 @@ describe('ephemeral multi-certificate PFX staging and cleanup', () => {
       LUDY_CERT_THUMBRINTS: `${leaf.toUpperCase()},${intermediate.toUpperCase()}`,
     });
   });
+
+  it('reconciles effective timestamp server from WINDOWS_SIGN_WITH_PARAMS /tr and rejects conflicts with WINDOWS_TIMESTAMP_SERVER', () => {
+    const customTs = 'https://timestamp.sectigo.com';
+    const fromParamsOnly = resolveSigningConfig({
+      sign: true,
+      env: { WINDOWS_SIGN_WITH_PARAMS: `/csp "Test KSP" /tr ${customTs}` },
+    });
+    expect(fromParamsOnly.enabled && fromParamsOnly.timestampServer).toBe(customTs);
+
+    const matchingEnv = resolveSigningConfig({
+      sign: true,
+      env: { WINDOWS_SIGN_WITH_PARAMS: `/csp "Test KSP" /tr ${customTs}`, WINDOWS_TIMESTAMP_SERVER: customTs },
+    });
+    expect(matchingEnv.enabled && matchingEnv.timestampServer).toBe(customTs);
+
+    expect(() =>
+      resolveSigningConfig({
+        sign: true,
+        env: { WINDOWS_SIGN_WITH_PARAMS: `/csp "Test KSP" /tr ${customTs}`, WINDOWS_TIMESTAMP_SERVER: DEFAULT_TIMESTAMP_SERVER },
+      }),
+    ).toThrow(/Conflicting timestamp servers/);
+  });
 });

@@ -644,8 +644,103 @@ export async function readBoundedResponseBytes(response: Response, maxBytes: num
   return Buffer.concat(chunks, total);
 }
 
+async function sendPinnedHttpRequest(
+  url: URL,
+  init: RequestInit | undefined,
+  headers: Record<string, string>,
+  pinnedAddress: { address: string; family: 4 | 6 } | null,
+): Promise<Response> {
+  return new Promise<Response>((resolve, reject) => {
+    let settled = false;
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+    const requester = url.protocol === 'https:' ? httpsRequest : httpRequest;
+    const req = requester(
+      url,
+      {
+        method: init?.method ?? 'GET',
+        headers,
+        ...(pinnedAddress
+          ? {
+              autoSelectFamily: false,
+              lookup: (_hostname, opts, callback) => {
+                const wantAll = typeof opts === 'object' && opts !== null && opts.all === true;
+                if (wantAll) {
+                  (callback as (err: NodeJS.ErrnoException | null, addresses: Array<{ address: string; family: number }>) => void)(
+                    null,
+                    [{ address: pinnedAddress.address, family: pinnedAddress.family }],
+                  );
+                } else {
+                  (callback as (err: NodeJS.ErrnoException | null, address: string, family: number) => void)(
+                    null,
+                    pinnedAddress.address,
+                    pinnedAddress.family,
+                  );
+                }
+              },
+            }
+          : {}),
+      },
+      (res) => {
+        const status = res.statusCode ?? 500;
+        if (status >= 300 && status < 400) {
+          res.resume();
+          finish(() => reject(new UpdateFeedError('REDIRECT_REFUSED', `Refused HTTP redirect (${status}) from update feed`)));
+          return;
+        }
+        const resHeaders = new Headers();
+        for (const [key, val] of Object.entries(res.headers)) {
+          if (Array.isArray(val)) {
+            for (const item of val) resHeaders.append(key, item);
+          } else if (val !== undefined) {
+            resHeaders.set(key, val);
+          }
+        }
+        if (status === 204 || status === 205 || status === 304) {
+          res.resume();
+          finish(() => resolve(new Response(null, { status, headers: resHeaders })));
+          return;
+        }
+        try {
+          const webStream = Readable.toWeb(res) as ReadableStream<Uint8Array>;
+          finish(() => resolve(new Response(webStream, { status, headers: resHeaders })));
+        } catch (err) {
+          res.resume();
+          finish(() => reject(err instanceof Error ? err : new Error(String(err))));
+        }
+      },
+    );
+    req.on('error', (err) => finish(() => reject(err)));
+    if (init?.signal) {
+      if (init.signal.aborted) {
+        const abortErr = init.signal.reason instanceof Error ? init.signal.reason : new Error('Aborted');
+        req.destroy(abortErr);
+        finish(() => reject(abortErr));
+        return;
+      }
+      const onAbort = (): void => {
+        const abortErr = init.signal?.reason instanceof Error ? init.signal.reason : new Error('Aborted');
+        req.destroy(abortErr);
+        finish(() => reject(abortErr));
+      };
+      init.signal.addEventListener('abort', onAbort, { once: true });
+      req.on('close', () => init.signal?.removeEventListener('abort', onAbort));
+    }
+    req.end();
+  });
+}
+
 export function createPinnedFetch(
   lookupHost: HostLookup = (hostname) => dnsLookup(hostname, { all: true }),
+  sendRequest: (
+    url: URL,
+    init: RequestInit | undefined,
+    headers: Record<string, string>,
+    pinnedAddress: { address: string; family: 4 | 6 } | null,
+  ) => Promise<Response> = sendPinnedHttpRequest,
 ): FetchLike {
   return async (input, init) => {
     const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -656,7 +751,7 @@ export function createPinnedFetch(
     const url = new URL(rawUrl);
     const isLoopback = isLiteralLoopbackHost(url.hostname);
     const literalIp = unwrapIpLiteral(url.hostname);
-    let pinnedAddress: { address: string; family: 4 | 6 } | null = null;
+    let candidates: Array<{ address: string; family: 4 | 6 }> | null = null;
     if (!isLoopback) {
       if (literalIp !== null) {
         if (isPrivateOrReservedIp(literalIp)) {
@@ -667,91 +762,39 @@ export function createPinnedFetch(
         if (resolved.length === 0 || resolved.some((entry) => isPrivateOrReservedIp(entry.address))) {
           throw new UpdateFeedError('SSRF_BLOCKED', 'Refused update feed host resolving to a private or reserved IP address');
         }
-        const chosen = resolved[0]!;
-        const family = isIP(chosen.address);
-        if (family !== 4 && family !== 6) {
-          throw new UpdateFeedError('SSRF_BLOCKED', 'Invalid resolved IP family for update feed host');
-        }
-        pinnedAddress = { address: chosen.address, family };
+        candidates = resolved.map((entry) => {
+          const family = isIP(entry.address);
+          if (family !== 4 && family !== 6) {
+            throw new UpdateFeedError('SSRF_BLOCKED', 'Invalid resolved IP family for update feed host');
+          }
+          return { address: entry.address, family };
+        });
       }
     }
 
-    return new Promise<Response>((resolve, reject) => {
-      const headers: Record<string, string> = {};
-      if (init?.headers) {
-        const h = new Headers(init.headers);
-        h.forEach((v, k) => {
-          headers[k] = v;
-        });
+    const headers: Record<string, string> = {};
+    if (init?.headers) {
+      const h = new Headers(init.headers);
+      h.forEach((v, k) => {
+        headers[k] = v;
+      });
+    }
+    const attempts: Array<{ address: string; family: 4 | 6 } | null> = candidates ?? [null];
+    let lastError: unknown;
+    for (let i = 0; i < attempts.length; i++) {
+      if (init?.signal?.aborted) {
+        throw init.signal.reason instanceof Error ? init.signal.reason : new Error('Aborted');
       }
-      const requester = url.protocol === 'https:' ? httpsRequest : httpRequest;
-      const req = requester(
-        url,
-        {
-          method: init?.method ?? 'GET',
-          headers,
-          ...(pinnedAddress
-            ? {
-                autoSelectFamily: false,
-                lookup: (_hostname, opts, callback) => {
-                  const wantAll = typeof opts === 'object' && opts !== null && opts.all === true;
-                  if (wantAll) {
-                    (callback as (err: NodeJS.ErrnoException | null, addresses: Array<{ address: string; family: number }>) => void)(
-                      null,
-                      [{ address: pinnedAddress.address, family: pinnedAddress.family }],
-                    );
-                  } else {
-                    (callback as (err: NodeJS.ErrnoException | null, address: string, family: number) => void)(
-                      null,
-                      pinnedAddress.address,
-                      pinnedAddress.family,
-                    );
-                  }
-                },
-              }
-            : {}),
-        },
-        (res) => {
-          const status = res.statusCode ?? 500;
-          if (status >= 300 && status < 400) {
-            res.resume();
-            reject(new UpdateFeedError('REDIRECT_REFUSED', `Refused HTTP redirect (${status}) from update feed`));
-            return;
-          }
-          const resHeaders = new Headers();
-          for (const [key, val] of Object.entries(res.headers)) {
-            if (Array.isArray(val)) {
-              for (const item of val) resHeaders.append(key, item);
-            } else if (val !== undefined) {
-              resHeaders.set(key, val);
-            }
-          }
-          if (status === 204 || status === 205 || status === 304) {
-            res.resume();
-            resolve(new Response(null, { status, headers: resHeaders }));
-            return;
-          }
-          try {
-            const webStream = Readable.toWeb(res) as ReadableStream<Uint8Array>;
-            resolve(new Response(webStream, { status, headers: resHeaders }));
-          } catch (err) {
-            res.resume();
-            reject(err instanceof Error ? err : new Error(String(err)));
-          }
-        },
-      );
-      req.on('error', (err) => reject(err));
-      if (init?.signal) {
-        if (init.signal.aborted) {
-          req.destroy(new Error('Aborted'));
-          return;
+      try {
+        return await sendRequest(url, init, headers, attempts[i]!);
+      } catch (err) {
+        lastError = err;
+        if (err instanceof UpdateFeedError || init?.signal?.aborted) {
+          throw err;
         }
-        const onAbort = () => req.destroy(new Error('Aborted'));
-        init.signal.addEventListener('abort', onAbort, { once: true });
-        req.on('close', () => init.signal?.removeEventListener('abort', onAbort));
       }
-      req.end();
-    });
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   };
 }
 

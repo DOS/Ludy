@@ -20,16 +20,26 @@ on:
       - 'apps/desktop/**'
       - '.github/workflows/desktop-build.yml'
       - '.github/workflows/desktop-package.yml'
+      - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
+      - 'tsconfig.base.json'
+      - 'tsconfig.lib.json'
+      - 'vitest.config.ts'
+      - 'vitest.invariant.config.ts'
   push:
     branches: [main]
     paths:
       - 'apps/desktop/**'
       - '.github/workflows/desktop-build.yml'
       - '.github/workflows/desktop-package.yml'
+      - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
+      - 'tsconfig.base.json'
+      - 'tsconfig.lib.json'
+      - 'vitest.config.ts'
+      - 'vitest.invariant.config.ts'
   workflow_dispatch:
 
 permissions:

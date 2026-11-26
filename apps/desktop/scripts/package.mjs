@@ -87,8 +87,13 @@ export function resolveBundledModernSigntool(req = createRequire(import.meta.url
   return join(dirname(dirname(windowsSignEntry)), 'vendor', 'signtool.exe');
 }
 
+function resolveSystemPowerShellPath(env = process.env) {
+  const systemRoot = env.SystemRoot?.trim() || env.WINDIR?.trim() || 'C:\\Windows';
+  return join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
+
 function defaultRunPowerShell(psScript, env) {
-  return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psScript], {
+  return execFileSync(resolveSystemPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', psScript], {
     encoding: 'utf8',
     maxBuffer: 1024 * 1024,
     env: { ...process.env, ...env },

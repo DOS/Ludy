@@ -14,7 +14,6 @@ import type { FetchLike } from './exchange.ts';
 import {
   prepareVerifiedUpdate,
   resolveFeedUrl,
-  validateUpdateFeed,
   type HostLookup,
   type SignedManifestVerifier,
   type SignedPackageVerifier,
@@ -277,16 +276,7 @@ export function createUpdater(options: UpdaterOptions): UpdaterController {
         localFeedServer = server;
         targetFeedUrl = server.url;
       } else if (options.fetch) {
-        await validateUpdateFeed({
-          feedUrl,
-          fetch: options.fetch,
-          allowedOrigin: options.allowedOrigin ?? null,
-          requireSigned: options.requireSigned,
-          allowUnsigned: options.allowUnsigned,
-          expectedPublisherThumbprint: options.expectedPublisherThumbprint ?? null,
-          expectedManifestPublicKey: options.expectedManifestPublicKey ?? null,
-          lookupHost: options.lookupHost,
-        });
+        throw new Error('Update staging directory is required when feed verification fetch is enabled');
       }
       if (isHalted()) {
         await closeLocalFeed(true);

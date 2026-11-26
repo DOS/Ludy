@@ -305,7 +305,8 @@ export function resolveSigningConfig({ sign = false, env = process.env, exists =
   const rawParams = env.WINDOWS_SIGN_WITH_PARAMS?.trim() ?? '';
   const hookModulePath = env.WINDOWS_SIGN_HOOK_MODULE_PATH?.trim() ?? '';
   const rawSigntoolPath = env.WINDOWS_SIGNTOOL_PATH?.trim() ?? '';
-  const timestampServer = validateTimestampServer(env.WINDOWS_TIMESTAMP_SERVER?.trim() || DEFAULT_TIMESTAMP_SERVER);
+  const rawTimestampServer = env.WINDOWS_TIMESTAMP_SERVER?.trim() ?? '';
+  let timestampServer = validateTimestampServer(rawTimestampServer || DEFAULT_TIMESTAMP_SERVER);
 
   if ((certFile !== '' && certPassword === '') || (certFile === '' && certPassword !== '')) {
     throw new Error('WINDOWS_CERTIFICATE_FILE and WINDOWS_CERTIFICATE_PASSWORD must both be set when signing with a PFX file');
@@ -346,6 +347,25 @@ export function resolveSigningConfig({ sign = false, env = process.env, exists =
   if (hasParams) {
     const tokens = parseSignWithParamsTokens(rawParams);
     const hasFlag = (name) => tokens.includes(`/${name}`);
+    let paramTimestampServer = null;
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i] === '/tr') {
+        const nextTr = validateTimestampServer(tokens[i + 1] ?? '');
+        if (paramTimestampServer !== null && paramTimestampServer !== nextTr) {
+          throw new Error('Refused WINDOWS_SIGN_WITH_PARAMS: multiple conflicting /tr timestamp server flags');
+        }
+        paramTimestampServer = nextTr;
+        i += 1;
+      }
+    }
+    if (paramTimestampServer !== null) {
+      if (rawTimestampServer !== '' && paramTimestampServer !== timestampServer) {
+        throw new Error(
+          `Conflicting timestamp servers: WINDOWS_TIMESTAMP_SERVER (${timestampServer}) does not match /tr (${paramTimestampServer}) in WINDOWS_SIGN_WITH_PARAMS`,
+        );
+      }
+      timestampServer = paramTimestampServer;
+    }
     const finalTokens = [...tokens];
     if (!hasFlag('fd')) finalTokens.push('/fd', 'sha256');
     if (!hasFlag('tr')) finalTokens.push('/tr', timestampServer);

@@ -13,9 +13,9 @@ import { join, resolve } from 'node:path';
 import { startFakeLudy } from '../test/support/fake-ludy.ts';
 import {
   RELEASE_MANIFEST_SCRIPT_FILENAME,
+  resolveSystemPowerShellPath,
   verifyWindowsAuthenticodeFiles,
 } from '../src/authenticode.ts';
-import { resolveBundledModernSigntool } from './package.mjs';
 import { extractSigntoolDigestAlgorithm, RELEASE_MANIFEST_FILENAME } from './signing.mjs';
 
 if (process.platform !== 'win32') {
@@ -68,10 +68,11 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function resolveSmokeSigntoolPath() {
+async function resolveSmokeSigntoolPath() {
   const configured = process.env.WINDOWS_SIGNTOOL_PATH?.trim();
   if (configured) return configured;
   try {
+    const { resolveBundledModernSigntool } = await import('./package.mjs');
     const bundled = resolveBundledModernSigntool();
     if (existsSync(bundled)) return bundled;
   } catch {
@@ -84,7 +85,7 @@ async function verifyAuthenticode(filePaths) {
   const verified = await verifyWindowsAuthenticodeFiles(filePaths);
   const peTargets = filePaths.filter((p) => !p.toLowerCase().endsWith('.ps1'));
   if (peTargets.length > 0) {
-    const signtoolExe = resolveSmokeSigntoolPath();
+    const signtoolExe = await resolveSmokeSigntoolPath();
     for (const target of peTargets) {
       const signtoolOut = execFileSync(signtoolExe, ['verify', '/pa', '/v', target], {
         encoding: 'utf8',
@@ -136,7 +137,7 @@ log(`fake Ludy on ${fake.url}`);
 
 async function ludyProcesses() {
   const ps = `Get-CimInstance Win32_Process -Filter "Name='${EXE}'" | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress`;
-  const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeoutMs: 60_000 });
+  const { stdout } = await run(resolveSystemPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', ps], { timeoutMs: 60_000 });
   const text = stdout.trim();
   if (!text) return [];
   const parsed = JSON.parse(text);
@@ -197,7 +198,7 @@ function findShortcuts() {
 // The "Apps and features" entries Squirrel wrote for the user (HKCU Uninstall), by display name.
 async function uninstallEntries() {
   const ps = "Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' -ErrorAction SilentlyContinue | Get-ItemProperty | Where-Object { $_.DisplayName -like '*Ludy*' } | ForEach-Object { $_.DisplayName }";
-  const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeoutMs: 60_000 });
+  const { stdout } = await run(resolveSystemPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', ps], { timeoutMs: 60_000 });
   return stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 }
 

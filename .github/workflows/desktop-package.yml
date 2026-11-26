@@ -122,23 +122,30 @@ jobs:
           SHA: ${{ steps.target.outputs.sha }}
         run: |
           set -euo pipefail
-          desktop_sha="$(git log -n 1 --format=%H "$SHA" -- apps/desktop/ .github/workflows/desktop-build.yml .github/workflows/desktop-package.yml pnpm-lock.yaml pnpm-workspace.yaml)"
-          if [ -z "$desktop_sha" ]; then
-            echo "::error::could not determine latest commit modifying desktop build inputs at $SHA"
-            exit 1
-          fi
-
           check_workflow_jobs() {
             local target_sha="$1"
             local workflow_path="$2"
             shift 2
-            local run_id jobs name row status conclusion
-            run_id="$(WF_PATH="$workflow_path" gh api "repos/$REPO/actions/runs?head_sha=$target_sha&per_page=100" --paginate --slurp \
-              --jq '[.[].workflow_runs[] | select(.path == env.WF_PATH and .head_branch == "main" and (.event == "push" or .event == "workflow_dispatch") and .head_repository.full_name == env.REPO and .status == "completed" and .conclusion == "success")] | sort_by(.created_at) | last | .id // empty')"
-            if [ -z "$run_id" ]; then
+            local run_row run_id run_status run_conclusion jobs name row status conclusion
+            run_row="$(WF_PATH="$workflow_path" gh api "repos/$REPO/actions/runs?head_sha=$target_sha&per_page=100" --paginate --slurp \
+              --jq '[.[].workflow_runs[] | select(.path == env.WF_PATH and .head_branch == "main" and (.event == "push" or .event == "workflow_dispatch") and .head_repository.full_name == env.REPO)] | sort_by(.created_at) | last | if . == null then empty else [.id, .status, (.conclusion // "")] | @tsv end')"
+            if [ -z "$run_row" ]; then
               for name in "$@"; do
                 pending+=("$name@$target_sha")
               done
+              return
+            fi
+            run_id="$(cut -f1 <<<"$run_row")"
+            run_status="$(cut -f2 <<<"$run_row")"
+            run_conclusion="$(cut -f3 <<<"$run_row")"
+            if [ "$run_status" != 'completed' ]; then
+              for name in "$@"; do
+                pending+=("$name@$target_sha")
+              done
+              return
+            fi
+            if [ "$run_conclusion" != 'success' ]; then
+              failed+=("workflow:$workflow_path@$target_sha: $run_conclusion")
               return
             fi
             jobs="$(gh api "repos/$REPO/actions/runs/$run_id/jobs?per_page=100" --paginate --slurp \
@@ -160,7 +167,7 @@ jobs:
             pending=()
             failed=()
             check_workflow_jobs "$SHA" '.github/workflows/ci.yml' 'Lint, typecheck, test'
-            check_workflow_jobs "$desktop_sha" '.github/workflows/desktop-build.yml' \
+            check_workflow_jobs "$SHA" '.github/workflows/desktop-build.yml' \
               'Windows build (unsigned), tests, size and memory' \
               'Windows install smoke (tray, sign-in, update A to B, uninstall)'
             if ((${#failed[@]} > 0)); then
@@ -168,7 +175,7 @@ jobs:
               exit 1
             fi
             if ((${#pending[@]} == 0)); then
-              echo "All required checks succeeded (CI on $SHA, Windows desktop checks on $desktop_sha)"
+              echo "All required CI and Windows desktop checks succeeded on release commit $SHA"
               break
             fi
             if ((SECONDS >= deadline)); then

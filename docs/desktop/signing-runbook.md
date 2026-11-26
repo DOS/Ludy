@@ -62,7 +62,7 @@ Before touching secrets or tagging a release, verify packaging and manifest gene
 
 ## Step 4. Cut and verify a signed release (owner-approved run)
 
-1. Bump `"version"` in `apps/desktop/package.json` on `main` via a merged PR and confirm `Lint, typecheck, test`, `Windows build (unsigned), tests, size and memory`, and `Windows install smoke` are green on that commit.
+1. Bump `"version"` in `apps/desktop/package.json` on `main` via a merged PR and confirm `Lint, typecheck, test`, `Windows build (unsigned), tests, size and memory`, and `Windows install smoke` are green on that commit (if the tagged commit did not change path-filtered desktop inputs, trigger the `desktop-build` workflow manually on that commit before running `desktop-package.yml`).
 2. Create and push tag `desktop-vX.Y.Z` on that commit of `main`, then trigger **desktop-package** (`desktop-package.yml`) via **Run workflow** on branch `main` with `mode=signed` and `tag=desktop-vX.Y.Z`. (`desktop-package.yml` runs strictly on `refs/heads/main`, verifies the tag points to an ancestor of `origin/main` matching `apps/desktop/package.json`, confirms green CI check-runs on that commit, and re-verifies the live tag commit SHA before creating the draft release.)
 3. Approve the pending `desktop-release` environment gate in GitHub Actions.
 4. Confirm `build-signed` passes all checks:
@@ -91,7 +91,7 @@ Stop if the feed returns 404/HTML for `RELEASES` or `release-manifest.json`, if 
 
 ### Roll back a bad desktop release
 
-1. **Immediate halt:** remove `RELEASES` and `release-manifest.json` from the HTTPS feed host (or restore the previous known-good version's `RELEASES`, `release-manifest.json`, `SHA256SUMS.txt`, and `.nupkg` files). Clients already on the previous version stop seeing an update; clients on the bad version stay running until a newer fixed version is published.
+1. **Immediate halt:** remove `RELEASES`, `release-manifest.json`, and `release-manifest.ps1` from the HTTPS feed host (or atomically restore the previous known-good version's `RELEASES`, `release-manifest.json`, `release-manifest.ps1`, `SHA256SUMS.txt`, and `.nupkg` files together so `release-manifest.ps1` always matches `release-manifest.json`). Clients already on the previous version stop seeing an update; clients on the bad version stay running until a newer fixed version is published.
 2. **Forward fix:** Squirrel.Windows only upgrades forward in semver (`X.Y.Z`). To roll members back from `0.1.2` to `0.1.1` automatically, rebuild and sign the fixed source as `0.1.3`, verify it, and publish `0.1.3` to the feed.
 3. Unpublish or mark the bad GitHub release as superseded so new downloads do not pick it up.
 

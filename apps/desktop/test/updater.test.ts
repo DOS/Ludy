@@ -138,7 +138,7 @@ describe('updater', () => {
     expect(u.controller.state()).toEqual({ kind: 'failed', message: 'No Update.exe' });
   });
 
-  it('fails closed during preflight on HTTP download URLs or unsigned HTTPS feeds without calling Squirrel', async () => {
+  it('fails closed during preflight on HTTP download URLs or missing staging directory without calling Squirrel', async () => {
     const sha1 = '1'.repeat(40);
     const badFetch: FetchLike = async (url) => {
       if (String(url).endsWith('/RELEASES')) {
@@ -146,11 +146,22 @@ describe('updater', () => {
       }
       return new Response('Not found', { status: 404 });
     };
-    const bad = make({ fetch: badFetch });
-    bad.controller.start();
-    expect(bad.controller.state()).toEqual({ kind: 'checking' });
-    await waitUntil(() => bad.controller.state().kind === 'failed');
-    expect(bad.calls).toEqual([]);
+    const badStaging = mkdtempSync(join(tmpdir(), 'ludy-updater-bad-stage-'));
+    tempDirs.push(badStaging);
+    const badF = fake();
+    const badCtrl = createUpdater({
+      updater: badF.updater,
+      feedUrl: 'https://updates.example.vn/feed',
+      supported: true,
+      fetch: badFetch,
+      stagingDir: badStaging,
+      setInterval: () => 0,
+      clearInterval: () => undefined,
+    });
+    badCtrl.start();
+    expect(badCtrl.state()).toEqual({ kind: 'checking' });
+    await waitUntil(() => badCtrl.state().kind === 'failed');
+    expect(badF.calls).toEqual([]);
 
     const thumb = 'a'.repeat(40);
     const validFetch: FetchLike = async (url) => {
@@ -172,21 +183,18 @@ describe('updater', () => {
         { status: 200 },
       );
     };
-    const good = make({
+    const noStage = make({
       fetch: validFetch,
       allowedOrigin: 'https://updates.example.vn',
       expectedPublisherThumbprint: thumb,
     });
-    good.controller.start();
-    // Overlapping checkNow while preflight is in flight is ignored.
-    good.controller.checkNow();
-    await waitUntil(() => good.calls.length === 2);
-    expect(good.calls).toEqual(['feed:https://updates.example.vn/feed', 'check']);
-    good.events().available();
-    good.events().downloaded('0.1.1');
-    expect(good.controller.state()).toEqual({ kind: 'ready', version: '0.1.1' });
-    expect(good.controller.restart()).toBe(true);
-    expect(good.calls.at(-1)).toBe('quitAndInstall');
+    noStage.controller.start();
+    await waitUntil(() => noStage.controller.state().kind === 'failed');
+    expect(noStage.controller.state()).toEqual({
+      kind: 'failed',
+      message: 'Update staging directory is required when feed verification fetch is enabled',
+    });
+    expect(noStage.calls).toEqual([]);
   });
 
   it('stages verified update once and serves Squirrel strictly over an ephemeral 127.0.0.1 local feed', async () => {

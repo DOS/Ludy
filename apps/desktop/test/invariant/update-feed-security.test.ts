@@ -220,6 +220,39 @@ describe('update feed SSRF, origin pinning, and traversal invariants', () => {
     const bigRes = new Response(stream, { status: 200, headers: { 'content-type': 'text/plain' } });
     await expect(readBoundedResponseBytes(bigRes, MAX_MANIFEST_BYTES, true)).rejects.toThrow(/exceeded size limit/);
     expect(emitted).toBeLessThan(10);
+
+    // Multi-IP DNS fallback tries validated addresses in sequence without re-resolving DNS, but stops on redirects or private entries.
+    let lookupCalls = 0;
+    const triedIps: string[] = [];
+    const multiIpFetch = createPinnedFetch(
+      async () => {
+        lookupCalls += 1;
+        return [{ address: '2606:4700:4700::1111' }, { address: '93.184.216.34' }];
+      },
+      async (url, _init, _headers, pinned) => {
+        expect(url.hostname).toBe('updates.example.vn');
+        triedIps.push(pinned!.address);
+        if (pinned!.address === '2606:4700:4700::1111') {
+          throw new Error('connect ENETUNREACH');
+        }
+        return new Response('ok', { status: 200 });
+      },
+    );
+    const fallbackRes = await multiIpFetch(`${FEED}/RELEASES`);
+    expect(fallbackRes.status).toBe(200);
+    expect(lookupCalls).toBe(1);
+    expect(triedIps).toEqual(['2606:4700:4700::1111', '93.184.216.34']);
+
+    const redirectTried: string[] = [];
+    const noRedirectRetryFetch = createPinnedFetch(
+      async () => [{ address: '93.184.216.34' }, { address: '93.184.216.35' }],
+      async (_url, _init, _headers, pinned) => {
+        redirectTried.push(pinned!.address);
+        throw new UpdateFeedError('REDIRECT_REFUSED', 'Refused HTTP redirect (302) from update feed');
+      },
+    );
+    await expect(noRedirectRetryFetch(`${FEED}/RELEASES`)).rejects.toThrow(/Refused HTTP redirect/);
+    expect(redirectTried).toEqual(['93.184.216.34']);
   });
 });
 
@@ -610,7 +643,8 @@ describe('update signature and trusted publisher invariants', () => {
       inspectAuthenticodePkcs7Der(
         buildCms({ fileDigestOid: OID_SHA256, signerAlgOid: OID_SHA256, timestampMode: 'rfc3161', truncatedExplicit: true }),
       ),
-    ).toThrow(/Truncated ASN\.1 DER TLV/);
+    ).toThrow(/extends past parent container/);
+    expect(() => inspectAuthenticodePkcs7Der(Buffer.from([0x30, 0x7f]))).toThrow(/extends past buffer end/);
 
     // Reject weak /fd SHA-1, weak /fd SignerInfo.digestAlgorithm SHA-1, weak /td SHA-1, and co-existing legacy counter-sign.
     const psValidWinVerify = async (_s: string, _e: Record<string, string>, stdin?: string) => {

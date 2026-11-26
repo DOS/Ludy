@@ -555,10 +555,15 @@ export function parseAuthenticodeCheckResults(
   return { thumbprint: commonThumbprint };
 }
 
+export function resolveSystemPowerShellPath(env: Readonly<Record<string, string | undefined>> = process.env): string {
+  const systemRoot = env.SystemRoot?.trim() || env.WINDIR?.trim() || 'C:\\Windows';
+  return join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
+
 function execPowerShellAsync(script: string, extraEnv: Record<string, string>, stdinText?: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = execFile(
-      'powershell.exe',
+      resolveSystemPowerShellPath(),
       ['-NoProfile', '-NonInteractive', '-Command', script],
       {
         encoding: 'utf8',

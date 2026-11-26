@@ -10,6 +10,7 @@ import {
   OID_SHA256,
   parseAuthenticodeCheckResults,
   parseSignedReleaseManifestScript,
+  resolveSystemPowerShellPath,
   verifyWindowsSignedManifest,
   verifyWindowsSignedPackage,
 } from '../src/authenticode.ts';
@@ -237,5 +238,9 @@ describe('release-manifest.ps1 formatting, PKCS#7 extraction, and package verifi
     oversizedPe.writeUInt32LE(16 * 1024 * 1024 + 1, 0x80 + 24 + 112 + 4 * 8 + 4);
     writeFileSync(oversizedSecPe, oversizedPe);
     expect(() => extractEmbeddedPkcs7Der(oversizedSecPe)).toThrow(/security directory/);
+
+    expect(resolveSystemPowerShellPath({ SystemRoot: 'C:\\Windows' })).toBe(
+      join('C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    );
   });
 });

@@ -18,14 +18,16 @@ describe('desktop-package workflow guardrails', () => {
     expect(workflow).not.toMatch(/on:[\s\S]*?\n\s*push:/);
     expect(workflow).not.toContain('pull_request_target');
 
-    // Prepare job needs actions: read (not checks: read) and paginates with --slurp + event/head_repository filters.
+    // Prepare job needs actions: read (not checks: read) and selects the latest matching run on release SHA before checking completion/conclusion.
     expect(workflow).toMatch(/prepare:[\s\S]*?permissions:\s*\n\s*contents:\s*read\s*\n\s*actions:\s*read/);
     expect(workflow).not.toContain('checks: read');
     expect(workflow).toContain('--paginate --slurp');
     expect(workflow).toContain('.[].workflow_runs[]');
     expect(workflow).toContain('(.event == "push" or .event == "workflow_dispatch")');
     expect(workflow).toContain('.head_repository.full_name == env.REPO');
-    expect(workflow).toContain('.status == "completed" and .conclusion == "success"');
+    expect(workflow).toContain('[ "$run_status" != \'completed\' ]');
+    expect(workflow).toContain('[ "$run_conclusion" != \'success\' ]');
+    expect(workflow).toContain("check_workflow_jobs \"$SHA\" '.github/workflows/desktop-build.yml'");
 
     // Every job must gate on refs/heads/main.
     const mainGates = workflow.match(/github\.ref == 'refs\/heads\/main'/g) ?? [];
