@@ -2460,10 +2460,16 @@ export function orgFeatureViolations(text: string): string[] {
 // The member-Vy names a file outside member-vy/ must not carry, and the notes feature keys (N8) it must not meter
 // outside the dedicated Stage A ModelPort adapter (note-ai-model.ts).
 export const MODEL_ADAPTERS = new Set(['note-ai-model.ts']);
-const ADAPTER_NOTES_KEYS = new Set(['notes.summary', 'notes.todo_suggest', 'notes.todo_plan', 'notes.organize']);
+const ADAPTER_FUNCTION_NOTES_KEYS = new Map<string, string>([
+  ['generateNoteSummaryText', 'notes.summary'],
+  ['generateTodoSuggestText', 'notes.todo_suggest'],
+  ['generateTodoPlanText', 'notes.todo_plan'],
+  ['generateNoteOrganizeText', 'notes.organize'],
+]);
+const ADAPTER_NOTES_KEYS = new Set(ADAPTER_FUNCTION_NOTES_KEYS.values());
 const ADAPTER_NOTE_IMPORT_RE = /(?:^|\/)note-ai-model(?:\.[cm]?[jt]s)?$/;
 const isNoteAiModelSpecifier = (spec: string): boolean => ADAPTER_NOTE_IMPORT_RE.test(normalizeModuleSpecifier(spec));
-const DEFAULT_ADAPTER_EXPORTS = ['generateNoteSummaryText', 'generateTodoSuggestText'] as const;
+const DEFAULT_ADAPTER_EXPORTS: readonly string[] = [...ADAPTER_FUNCTION_NOTES_KEYS.keys()];
 
 export function memberVyNames(text: string): string[] {
   const names = new Set(['memberVy', 'member_vy', 'PrivateText']);
@@ -4248,6 +4254,8 @@ export function modelAdapterViolations(text: string): string[] {
   };
 
   const importedValues = new Set<string>();
+  const seenFunctions = new Set<string>();
+  const seenMeteredKeys = new Set<string>();
 
   const parseImportDecl = (): boolean => {
     consume(); // 'import'
@@ -4583,6 +4591,16 @@ export function modelAdapterViolations(text: string): string[] {
       out.add('uses invalid exported function name');
       return false;
     }
+    const expectedNotesKey = ADAPTER_FUNCTION_NOTES_KEYS.get(fnName.value);
+    if (expectedNotesKey === undefined) {
+      out.add(`uses unmapped exported adapter function ${fnName.value}`);
+      return false;
+    }
+    if (seenFunctions.has(fnName.value)) {
+      out.add(`exports duplicate adapter function ${fnName.value}`);
+      return false;
+    }
+    seenFunctions.add(fnName.value);
     if (!isPunct(peek(), '(')) {
       out.add('uses malformed parameter list');
       return false;
@@ -4663,6 +4681,11 @@ export function modelAdapterViolations(text: string): string[] {
       out.add('metered() call must use an allowed notes adapter literal key');
       return false;
     }
+    if (keyTok.value !== expectedNotesKey || seenMeteredKeys.has(keyTok.value)) {
+      out.add(`metered() call in ${fnName.value} must use ${expectedNotesKey}`);
+      return false;
+    }
+    seenMeteredKeys.add(keyTok.value);
     if (!isPunct(peek(), ',')) {
       out.add('uses malformed metered() arguments');
       return false;
@@ -5756,7 +5779,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
         `import { generateText } from 'ai';`,
         `import { chatModel, type AiConfig } from './index.ts';`,
         `import { metered } from './meter.ts';`,
-        `export function run(config: AiConfig, prompt: { system: string; user: string }, opts: Record<string, unknown>) {`,
+        `export function generateNoteSummaryText(config: AiConfig, prompt: { system: string; user: string }, opts: Record<string, unknown>) {`,
         `  return metered('notes.summary', () => generateText({ ${optionsSnippet} }));`,
         `}`,
       ].join('\n');
@@ -5807,9 +5830,61 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(modelAdapterViolations('')).toEqual(['requires at least one exported function declaration']);
     expect(
       modelAdapterViolations(
-        `import { generateText } from 'ai';\nimport { chatModel, type AiConfig } from './index.ts';\nimport { metered } from './meter.ts';\nexport function run(config: typeof import('@ludy/db'), prompt: { system: string; user: string }) { return metered('notes.summary', () => generateText({ model: chatModel(config), system: prompt.system, prompt: prompt.user, maxOutputTokens: 2000 })); }`,
+        `import { generateText } from 'ai';\nimport { chatModel, type AiConfig } from './index.ts';\nimport { metered } from './meter.ts';\nexport function generateNoteSummaryText(config: typeof import('@ludy/db'), prompt: { system: string; user: string }) { return metered('notes.summary', () => generateText({ model: chatModel(config), system: prompt.system, prompt: prompt.user, maxOutputTokens: 2000 })); }`,
       ),
     ).not.toEqual([]);
+
+    // 1:1 per-function metered('notes.*') binding enforcement (#3581).
+    expect(ADAPTER_NOTES_KEYS.size).toBe(ADAPTER_FUNCTION_NOTES_KEYS.size);
+    const makeAdapterFn = (fnName: string, key: string): string =>
+      [
+        `export function ${fnName}(`,
+        `  config: AiConfig,`,
+        `  prompt: { system: string; user: string },`,
+        `  abortSignal: AbortSignal,`,
+        `): Promise<{ text: string; usage: { inputTokens?: number | undefined; outputTokens?: number | undefined } }> {`,
+        `  return metered('${key}', () =>`,
+        `    generateText({`,
+        `      model: chatModel(config),`,
+        `      system: prompt.system,`,
+        `      prompt: prompt.user,`,
+        `      maxOutputTokens: 2000,`,
+        `      maxRetries: 0,`,
+        `      abortSignal,`,
+        `    }),`,
+        `  );`,
+        `}`,
+      ].join('\n');
+    const adapterImports = [
+      `import { generateText } from 'ai';`,
+      `import { chatModel, type AiConfig } from './index.ts';`,
+      `import { metered } from './meter.ts';`,
+    ].join('\n');
+    const fullValidAdapter = [
+      adapterImports,
+      ...[...ADAPTER_FUNCTION_NOTES_KEYS.entries()].map(([fn, key]) => makeAdapterFn(fn, key)),
+    ].join('\n');
+    expect(modelAdapterViolations(fullValidAdapter)).toEqual([]);
+    expect(modelAdapterViolations(`${adapterImports}\n${makeAdapterFn('generateNoteSummaryText', 'notes.todo_suggest')}`)).toEqual([
+      'metered() call in generateNoteSummaryText must use notes.summary',
+    ]);
+    expect(modelAdapterViolations(`${adapterImports}\n${makeAdapterFn('generateTodoSuggestText', 'notes.summary')}`)).toEqual([
+      'metered() call in generateTodoSuggestText must use notes.todo_suggest',
+    ]);
+    expect(modelAdapterViolations(`${adapterImports}\n${makeAdapterFn('generateTodoPlanText', 'notes.summary')}`)).toEqual([
+      'metered() call in generateTodoPlanText must use notes.todo_plan',
+    ]);
+    expect(modelAdapterViolations(`${adapterImports}\n${makeAdapterFn('generateNoteOrganizeText', 'notes.todo_plan')}`)).toEqual([
+      'metered() call in generateNoteOrganizeText must use notes.organize',
+    ]);
+    expect(modelAdapterViolations(`${adapterImports}\n${makeAdapterFn('generateExtraText', 'notes.summary')}`)).toEqual([
+      'uses unmapped exported adapter function generateExtraText',
+    ]);
+    expect(
+      modelAdapterViolations(
+        `${adapterImports}\n${makeAdapterFn('generateNoteSummaryText', 'notes.summary')}\n${makeAdapterFn('generateNoteSummaryText', 'notes.summary')}`,
+      ),
+    ).toEqual(['exports duplicate adapter function generateNoteSummaryText']);
 
     // Direct re-export & export symbol scanning
     expect(importsNoteAiModel(`import { z } from 'zod'; import { fn } from './note-ai-model.js';`)).toBe(true);
@@ -7077,10 +7152,11 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     );
     expect(keys, 'a notes feature (N8) metered outside member-vy/ or note-ai-model.ts').toEqual([]);
     // Every notes ModelPort adapter stays thin (allowed imports only, no tools, no DB/commands/direct fetch) and is exported only via index.ts.
-    const adapterBad = [...MODEL_ADAPTERS]
-      .map((rel) => join(SRC, rel))
-      .filter((file) => existsSync(file))
-      .flatMap((file) => modelAdapterViolations(readText(file)).map((v) => `${relative(ROOT, file)}: ${v}`));
+    const adapterBad = [...MODEL_ADAPTERS].flatMap((rel) => {
+      const file = join(SRC, rel);
+      if (!existsSync(file)) return [`${relative(ROOT, file)}: missing required adapter file`];
+      return modelAdapterViolations(readText(file)).map((v) => `${relative(ROOT, file)}: ${v}`);
+    });
     expect(adapterBad, 'notes ModelPort adapter violates thin-adapter rules').toEqual([]);
     const adapterImporters = srcFiles
       .filter((file) => relFromSrc(file) !== 'index.ts' && relFromSrc(file) !== 'note-ai-model.ts')
@@ -7089,10 +7165,13 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(adapterImporters, 'only packages/agent/src/index.ts may import note-ai-model').toEqual([]);
 
     const adapterPath = join(SRC, 'note-ai-model.ts');
-    const adapterDeclaredExports = existsSync(adapterPath) ? adapterExports(readText(adapterPath)) : [];
-    if (existsSync(adapterPath)) {
-      expect(adapterDeclaredExports.length, 'note-ai-model.ts must export its runtime helpers directly').toBeGreaterThan(0);
-    }
+    expect(existsSync(adapterPath), 'packages/agent/src/note-ai-model.ts must exist').toBe(true);
+    const adapterDeclaredExports = adapterExports(readText(adapterPath));
+    expect(adapterDeclaredExports.length, 'note-ai-model.ts must export its runtime helpers directly').toBeGreaterThan(0);
+    expect(ADAPTER_NOTES_KEYS.size, 'ADAPTER_FUNCTION_NOTES_KEYS must remain 1:1').toBe(ADAPTER_FUNCTION_NOTES_KEYS.size);
+    expect([...adapterDeclaredExports].sort(), 'note-ai-model.ts exports must match ADAPTER_FUNCTION_NOTES_KEYS 1:1').toEqual(
+      [...ADAPTER_FUNCTION_NOTES_KEYS.keys()].sort(),
+    );
     const seededExports = [...new Set([...DEFAULT_ADAPTER_EXPORTS, ...adapterDeclaredExports])];
 
     const indexPath = join(SRC, 'index.ts');
