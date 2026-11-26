@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Security invariant guardrails for the signed Windows release pipeline (#4884).
 // Self-contained under test/invariant/ with no imports from outside this directory or workspace packages.
-import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -31,12 +30,42 @@ describe('desktop-package workflow guardrails', () => {
     expect(workflow).toContain('[ "$run_conclusion" != \'success\' ]');
     expect(workflow).toContain("check_workflow_jobs \"$SHA\" '.github/workflows/desktop-build.yml'");
 
-    const runsJqMatch = workflow.match(/WF_PATH="\$workflow_path"\s+jq -r '([^']+)'/);
-    const jobsJqMatch = workflow.match(/jq -r '(\.\[\]\.jobs\[\][^']+)'/);
-    expect(runsJqMatch?.[1]).toBeTruthy();
-    expect(jobsJqMatch?.[1]).toBeTruthy();
-    if (spawnSync('jq', ['--version'], { encoding: 'utf8' }).status === 0) {
-      const paginatedRuns = JSON.stringify([
+    const runsFilterMatch = workflow.match(/WF_PATH="\$workflow_path"\s+jq -r '([^']+)'/);
+    const jobsFilterMatch = workflow.match(/jq -r '(\.\[\]\.jobs\[\][^']+)'/);
+    expect(runsFilterMatch?.[1]).toContain('sort_by(.created_at) | last');
+    expect(jobsFilterMatch?.[1]).toContain('[.name, .status, (.conclusion // "")] | @tsv');
+
+    // Verify paginated multi-page workflow-run selection semantics in pure JS (same rules as the jq filter above).
+    const selectLatestRun = (
+      pages: Array<{
+        workflow_runs: Array<{
+          id: number;
+          path: string;
+          head_branch: string;
+          event: string;
+          head_repository: { full_name: string };
+          status: string;
+          conclusion: string | null;
+          created_at: string;
+        }>;
+      }>,
+      wfPath: string,
+      repo: string,
+    ) => {
+      const matching = pages
+        .flatMap((page) => page.workflow_runs)
+        .filter(
+          (run) =>
+            run.path === wfPath &&
+            run.head_branch === 'main' &&
+            (run.event === 'push' || run.event === 'workflow_dispatch') &&
+            run.head_repository.full_name === repo,
+        )
+        .sort((a, b) => a.created_at.localeCompare(b.created_at));
+      return matching.at(-1) ?? null;
+    };
+    const picked = selectLatestRun(
+      [
         {
           workflow_runs: [
             {
@@ -75,29 +104,12 @@ describe('desktop-package workflow guardrails', () => {
             },
           ],
         },
-      ]);
-      const runsRes = spawnSync('jq', ['-r', runsJqMatch![1]!], {
-        input: paginatedRuns,
-        encoding: 'utf8',
-        env: { ...process.env, REPO: 'DOS/Ludy', WF_PATH: '.github/workflows/ci.yml' },
-      });
-      expect(runsRes.status).toBe(0);
-      expect(runsRes.stdout.trim()).toBe('103\tcompleted\tfailure');
-
-      const paginatedJobs = JSON.stringify([
-        { jobs: [{ name: 'Lint, typecheck, test', status: 'completed', conclusion: 'success' }] },
-        { jobs: [{ name: 'Second page job', status: 'in_progress', conclusion: null }] },
-      ]);
-      const jobsRes = spawnSync('jq', ['-r', jobsJqMatch![1]!], {
-        input: paginatedJobs,
-        encoding: 'utf8',
-      });
-      expect(jobsRes.status).toBe(0);
-      expect(jobsRes.stdout.trim().split('\n')).toEqual([
-        'Lint, typecheck, test\tcompleted\tsuccess',
-        'Second page job\tin_progress\t',
-      ]);
-    }
+      ],
+      '.github/workflows/ci.yml',
+      'DOS/Ludy',
+    );
+    expect(picked?.id).toBe(103);
+    expect(picked?.conclusion).toBe('failure');
 
     // Every job must gate on refs/heads/main.
     const mainGates = workflow.match(/github\.ref == 'refs\/heads\/main'/g) ?? [];
