@@ -27,7 +27,7 @@ import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT } from './attachments.ts';
 import { resolveNotebookForNote } from './notes.ts';
-import { detailsOf, due, ownKeys, parseSections, remindAt } from './todos.ts';
+import { detailsOf, due, lockTodoListOrder, lockTodoSortOrder, lockTodosInOrder, ownKeys, parseSections, remindAt } from './todos.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const INSERT_BATCH_SIZE = 200;
@@ -75,38 +75,55 @@ export const noteImportEnex = defineCommand({
   handler: async (ctx, input): Promise<EnexImportResult> => {
     const userId = requireHumanUser(ctx.actor);
 
+    if (input.skipDuplicates) {
+      // Serialize duplicate checks per user before acquiring any org-wide notebook lock.
+      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.note.import_enex:${ctx.orgId}:${userId}`}, 0))`.execute(ctx.trx);
+    }
+
     const targetNotebookId = input.targetNotebookId ? input.targetNotebookId.toLowerCase() : null;
     if (targetNotebookId !== null) {
       await resolveNotebookForNote(ctx, targetNotebookId, userId, 'private');
     }
 
-    const existingNotebooks = await ctx.trx
-      .selectFrom('ludy_notes.notebook')
-      .select(['id', 'name', 'sort_key'])
-      .where('org_id', '=', ctx.orgId)
-      .where('author_user_id', '=', userId)
-      .where('visibility', '=', 'private')
-      .orderBy('sort_key')
-      .orderBy('id')
-      .execute();
+    const mightCreateFileNotebooks =
+      targetNotebookId === null &&
+      !input.ignoreFileNotebooks &&
+      input.notes.some((item) => Boolean(item.notebookName));
 
     const privateNotebookByName = new Map<string, string>();
-    for (const nb of existingNotebooks) {
-      const key = nb.name.trim().toLowerCase();
-      if (!privateNotebookByName.has(key)) privateNotebookByName.set(key, nb.id);
+    let totalOwnedNotebooks = 0;
+    let lastNotebookSortKey: string | null = null;
+    if (mightCreateFileNotebooks) {
+      // Match notebookCreate/notebookUpdate lock order before reading existing notebooks and max(sort_key).
+      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+
+      const existingNotebooks = await ctx.trx
+        .selectFrom('ludy_notes.notebook')
+        .select(['id', 'name', 'sort_key'])
+        .where('org_id', '=', ctx.orgId)
+        .where('author_user_id', '=', userId)
+        .where('visibility', '=', 'private')
+        .orderBy('sort_key')
+        .orderBy('id')
+        .execute();
+
+      for (const nb of existingNotebooks) {
+        const key = nb.name.trim().toLowerCase();
+        if (!privateNotebookByName.has(key)) privateNotebookByName.set(key, nb.id);
+      }
+
+      const existingAllCountRow = await ctx.trx
+        .selectFrom('ludy_notes.notebook')
+        .select(({ fn }) => fn.countAll<string>().as('n'))
+        .where('org_id', '=', ctx.orgId)
+        .where('author_user_id', '=', userId)
+        .executeTakeFirst();
+      totalOwnedNotebooks = Number(existingAllCountRow?.n ?? 0);
+
+      const { rows: lastNbRows } = await sql<{ last: string | null }>`
+        SELECT pg_catalog.max(sort_key) AS last FROM ludy_notes.notebook WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
+      lastNotebookSortKey = lastNbRows[0]?.last ?? null;
     }
-
-    const existingAllCountRow = await ctx.trx
-      .selectFrom('ludy_notes.notebook')
-      .select(({ fn }) => fn.countAll<string>().as('n'))
-      .where('org_id', '=', ctx.orgId)
-      .where('author_user_id', '=', userId)
-      .executeTakeFirst();
-    let totalOwnedNotebooks = Number(existingAllCountRow?.n ?? 0);
-
-    const { rows: lastNbRows } = await sql<{ last: string | null }>`
-      SELECT pg_catalog.max(sort_key) AS last FROM ludy_notes.notebook WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
-    let lastNotebookSortKey = lastNbRows[0]?.last ?? null;
 
     const seenNoteKeys = new Set<string>();
     if (input.skipDuplicates) {
@@ -173,20 +190,20 @@ export const noteImportEnex = defineCommand({
         if (nextSortKey.length > REBALANCE_AT) {
           const ownNbs = await ctx.trx
             .selectFrom('ludy_notes.notebook')
-            .select('id')
+            .select(['id', 'sort_key'])
             .where('org_id', '=', ctx.orgId)
             .where('author_user_id', '=', userId)
-            .orderBy('sort_key')
             .orderBy('id')
+            .forUpdate()
             .execute();
+          ownNbs.sort((a, b) => (a.sort_key < b.sort_key ? -1 : a.sort_key > b.sort_key ? 1 : a.id.localeCompare(b.id)));
           const fresh = spreadKeys(ownNbs.length + 1);
-          for (let i = 0; i < ownNbs.length; i += 1) {
-            await ctx.trx
-              .updateTable('ludy_notes.notebook')
-              .set({ sort_key: fresh[i] as string })
-              .where('org_id', '=', ctx.orgId)
-              .where('id', '=', ownNbs[i]!.id)
-              .execute();
+          if (ownNbs.length > 0) {
+            const ids = ownNbs.map((r) => r.id);
+            const keys = fresh.slice(0, ids.length);
+            await sql`UPDATE ludy_notes.notebook AS n SET sort_key = v.key
+              FROM unnest(${ids}::uuid[], ${keys}::text[]) AS v(id, key)
+              WHERE n.org_id = ${ctx.orgId}::uuid AND n.id = v.id`.execute(ctx.trx);
           }
           nextSortKey = fresh[ownNbs.length] as string;
         }
@@ -338,16 +355,18 @@ export const todoImportTodoist = defineCommand({
       throwImportFailure(parsed);
     }
 
+    await lockTodoListOrder(ctx, userId);
+
     const existingLists = await ctx.trx
       .selectFrom('ludy_notes.todo_list')
       .select(['id', 'name', 'sections', 'sort_key', 'revision'])
       .where('org_id', '=', ctx.orgId)
       .where('owner_user_id', '=', userId)
       .where('deleted_at', 'is', null)
-      .orderBy('sort_key')
       .orderBy('id')
       .forUpdate()
       .execute();
+    existingLists.sort((a, b) => (a.sort_key < b.sort_key ? -1 : a.sort_key > b.sort_key ? 1 : a.id.localeCompare(b.id)));
 
     const targetListId = input.targetListId ? input.targetListId.toLowerCase() : null;
     const targetListRow = targetListId !== null ? existingLists.find((l) => l.id === targetListId) : undefined;
@@ -366,34 +385,16 @@ export const todoImportTodoist = defineCommand({
       if (!listByName.has(key)) listByName.set(key, entry);
     }
 
-    const seenTodoKeys = new Set<string>();
-    if (input.skipDuplicates) {
-      const existingTodos = await ctx.trx
-        .selectFrom('ludy_notes.todo')
-        .select(['list_id', 'title'])
-        .where('org_id', '=', ctx.orgId)
-        .where('owner_user_id', '=', userId)
-        .where('deleted_at', 'is', null)
-        .execute();
-      for (const t of existingTodos) {
-        seenTodoKeys.add(`${t.list_id ?? 'inbox'}:${t.title.trim().toLowerCase()}`);
-      }
-    }
-
-    const ownSortRows = await ownKeys(ctx, null);
-    let lastTodoSortKey = ownSortRows.at(-1)?.sort_key ?? null;
-
     const createdListIds: string[] = [];
     const updatedListIds = new Set<string>();
     const createdTodoIds: string[] = [];
-    const pendingTodos: Array<{
+    const pendingTodoCandidates: Array<{
       task: ParsedTodoistTask;
       listId: string | null;
       sectionId: string | null;
     }> = [];
     let createdSections = 0;
     let checklistSteps = 0;
-    let skippedDuplicates = 0;
 
     for (const parsedList of parsed.lists) {
       let resolvedListId: string | null = null;
@@ -474,22 +475,21 @@ export const todoImportTodoist = defineCommand({
           if (sortKey.length > REBALANCE_AT) {
             const currentActive = await ctx.trx
               .selectFrom('ludy_notes.todo_list')
-              .select('id')
+              .select(['id', 'sort_key'])
               .where('org_id', '=', ctx.orgId)
               .where('owner_user_id', '=', userId)
               .where('deleted_at', 'is', null)
-              .orderBy('sort_key')
               .orderBy('id')
+              .forUpdate()
               .execute();
+            currentActive.sort((a, b) => (a.sort_key < b.sort_key ? -1 : a.sort_key > b.sort_key ? 1 : a.id.localeCompare(b.id)));
             const fresh = spreadKeys(currentActive.length + 1);
-            for (let i = 0; i < currentActive.length; i += 1) {
-              await ctx.trx
-                .updateTable('ludy_notes.todo_list')
-                .set({ sort_key: fresh[i] as string })
-                .where('org_id', '=', ctx.orgId)
-                .where('owner_user_id', '=', userId)
-                .where('id', '=', currentActive[i]!.id)
-                .execute();
+            if (currentActive.length > 0) {
+              const ids = currentActive.map((r) => r.id);
+              const keys = fresh.slice(0, ids.length);
+              await sql`UPDATE ludy_notes.todo_list AS l SET sort_key = v.key
+                FROM unnest(${ids}::uuid[], ${keys}::text[]) AS v(id, key)
+                WHERE l.org_id = ${ctx.orgId}::uuid AND l.owner_user_id = ${userId}::uuid AND l.id = v.id`.execute(ctx.trx);
             }
             sortKey = fresh[currentActive.length] as string;
           }
@@ -522,18 +522,51 @@ export const todoImportTodoist = defineCommand({
       }
 
       for (const task of parsedList.tasks) {
-        const dupKey = `${resolvedListId ?? 'inbox'}:${task.title.trim().toLowerCase()}`;
+        const sectionId = task.sectionName ? (sectionIdByName.get(task.sectionName.trim().toLowerCase()) ?? null) : null;
+        pendingTodoCandidates.push({ task, listId: resolvedListId, sectionId });
+      }
+    }
+
+    const pendingTodos: Array<{
+      task: ParsedTodoistTask;
+      listId: string | null;
+      sectionId: string | null;
+    }> = [];
+    let skippedDuplicates = 0;
+
+    if (pendingTodoCandidates.length > 0) {
+      // Lock per-(org, user) todo sort_key order strictly after todo_list updates finish so concurrent
+      // todoCreate/todoComplete/todoQuickCapture/imports share the same lock DAG and never read stale keys.
+      await lockTodoSortOrder(ctx, userId);
+
+      const seenTodoKeys = new Set<string>();
+      if (input.skipDuplicates) {
+        const existingTodos = await ctx.trx
+          .selectFrom('ludy_notes.todo')
+          .select(['list_id', 'title'])
+          .where('org_id', '=', ctx.orgId)
+          .where('owner_user_id', '=', userId)
+          .where('deleted_at', 'is', null)
+          .execute();
+        for (const t of existingTodos) {
+          seenTodoKeys.add(`${t.list_id ?? 'inbox'}:${t.title.trim().toLowerCase()}`);
+        }
+      }
+
+      for (const candidate of pendingTodoCandidates) {
+        const dupKey = `${candidate.listId ?? 'inbox'}:${candidate.task.title.trim().toLowerCase()}`;
         if (input.skipDuplicates && seenTodoKeys.has(dupKey)) {
           skippedDuplicates += 1;
           continue;
         }
         seenTodoKeys.add(dupKey);
-        const sectionId = task.sectionName ? (sectionIdByName.get(task.sectionName.trim().toLowerCase()) ?? null) : null;
-        pendingTodos.push({ task, listId: resolvedListId, sectionId });
+        pendingTodos.push(candidate);
       }
     }
 
     if (pendingTodos.length > 0) {
+      const ownSortRows = await ownKeys(ctx, null);
+      let lastTodoSortKey = ownSortRows.at(-1)?.sort_key ?? null;
       const pendingSortKeys: string[] = [];
       for (let i = 0; i < pendingTodos.length; i += 1) {
         const nextKey = keyBetween(lastTodoSortKey, null);
@@ -542,6 +575,7 @@ export const todoImportTodoist = defineCommand({
           if (ownSortRows.length > 0) {
             const ids = ownSortRows.map((r) => r.id);
             const keys = fresh.slice(0, ownSortRows.length);
+            await lockTodosInOrder(ctx, ids);
             await sql`UPDATE ludy_notes.todo AS t SET sort_key = v.key
               FROM unnest(${ids}::uuid[], ${keys}::text[]) AS v(id, key)
               WHERE t.org_id = ${ctx.orgId}::uuid AND t.id = v.id`.execute(ctx.trx);

@@ -464,12 +464,32 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     expect(found.privateItems).toEqual([{ authorUserId: o.author.id, notes: 1, todos: 0 }]);
     expect(JSON.stringify(found)).not.toContain('ho-so-');
 
+    // Backdate both notes' updated_at so we verify shared- and private-note attachment erasure symmetrically bump updated_at.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_notes.note SET updated_at = updated_at - interval '1 hour' WHERE org_id = $1 AND id = ANY($2::uuid[])`, [o.orgId, [privNote, sharedNote]]);
+      await c.query('COMMIT');
+    });
+    const noteTimestamps = async () => {
+      const result = await rows<{ id: string; updated_at: Date | string }>(
+        `SELECT id, updated_at FROM ludy_notes.note WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+        [o.orgId, [privNote, sharedNote]],
+      );
+      const map = new Map(result.map((r) => [r.id, new Date(r.updated_at).getTime()]));
+      return { priv: map.get(privNote) ?? 0, shared: map.get(sharedNote) ?? 0 };
+    };
+    const beforeFirstErase = await noteTimestamps();
+
     // First erase (before notice): removes shared attachment + queues its blob; keeps private attachment.
     const firstErase = await rt.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
     expect(firstErase.erased).toContainEqual({ column: 'ludy_notes.attachment.extracted_text', rows: 1 });
     expect(await doomed(o)).toEqual([`notes/${o.orgId}/${sharedAtt.id}`]);
+    const afterFirstErase = await noteTimestamps();
+    expect(afterFirstErase.shared).toBeGreaterThan(beforeFirstErase.shared);
+    expect(afterFirstErase.priv).toBe(beforeFirstErase.priv);
 
-    // Notify + dispatch + age 25 hours, then second erase removes the private attachment + queues its blob.
+    // Notify + dispatch + age 25 hours, then second erase removes the private attachment + queues its blob and bumps privNote.updated_at.
     await rt.execute<PersonalDataNotice>('kernel.personal_data.notify', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
     const [notifiedEvent] = await rows<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`, [o.orgId]);
     await worker.execute('kernel.notification.dispatch', { eventId: notifiedEvent?.id }, { actor: SYSTEM, orgId: o.orgId });
@@ -482,6 +502,8 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     });
     await rt.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
     expect(await doomed(o)).toEqual([`notes/${o.orgId}/${privAtt.id}`, `notes/${o.orgId}/${sharedAtt.id}`].sort());
+    const afterSecondErase = await noteTimestamps();
+    expect(afterSecondErase.priv).toBeGreaterThan(afterFirstErase.priv);
 
     // Now test member_items.purge cascading a remaining private attachment and keeping shared ones.
     const privTwo = await createNote(o, o.author, 'private', 'Tệp thành viên rời');

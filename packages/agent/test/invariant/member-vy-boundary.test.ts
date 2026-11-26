@@ -301,6 +301,7 @@ interface ScanSourceResult {
   stripped: string;
   suspiciousDivisionStarts: Set<number>;
   suspiciousRegexStarts: Set<number>;
+  unambiguousRegexSpans: Array<{ start: number; end: number }>;
 }
 
 function scanSource(
@@ -323,6 +324,7 @@ function scanSource(
   const jsxStack: Array<{ mode: 'openTag' | 'elem' | 'expr'; braceDepth: number; angleDepth: number }> = [];
   const suspiciousDivisionStarts = new Set<number>();
   const suspiciousRegexStarts = new Set<number>();
+  const unambiguousRegexSpans: Array<{ start: number; end: number }> = [];
 
   let i = 0;
   let line = 1;
@@ -761,6 +763,9 @@ function scanSource(
       if (!forceRegex && prevCouldBeDivision && ((closed && /['"`]/.test(raw)) || (!closed && /['"`;]/.test(raw)))) {
         suspiciousRegexStarts.add(start);
       }
+      if (closed && !forceRegex && !prevCouldBeDivision && options.emitTokens && !options.scanRegexAsDivision) {
+        unambiguousRegexSpans.push({ start, end: j });
+      }
       if (options.stripCommentsMode) chunks.push(raw);
       emit({
         kind: closed ? 'regex' : 'invalid',
@@ -1013,6 +1018,7 @@ function scanSource(
     stripped: options.stripCommentsMode ? chunks.join('') : '',
     suspiciousDivisionStarts,
     suspiciousRegexStarts,
+    unambiguousRegexSpans,
   };
 }
 
@@ -1358,7 +1364,11 @@ function propagateAliases(seeds: Iterable<string>, edges: ReadonlyMap<string, Re
 
 const SKIP_TYPE_KW = new Set(['=', ';', ',', 'in', 'of']);
 
-function skipOptionalTypeForward(tokens: readonly Token[], colonIdx: number, limit = 64): number {
+const TYPE_BRACE_PREV_PUNCTS = new Set([':', '|', '&', '(', '<', ',', '=>', '?']);
+const TYPE_BRACE_PREV_IDENTS = new Set(['readonly', 'keyof', 'infer']);
+const POST_TYPE_CONT_PUNCTS = new Set(['=', ',', ')', ';', '|', '&', '[', '.', '?', '<', '{', '=>']);
+
+function skipOptionalTypeForward(tokens: readonly Token[], colonIdx: number, delims: DelimiterPairs, limit = 64): number {
   if (tokens[colonIdx]?.kind !== 'punct' || tokens[colonIdx]?.value !== ':') return colonIdx;
   let pd = 0;
   let bd = 0;
@@ -1374,8 +1384,30 @@ function skipOptionalTypeForward(tokens: readonly Token[], colonIdx: number, lim
         pd -= 1;
       } else if (tok.value === '[') bd += 1;
       else if (tok.value === ']' && bd > 0) bd -= 1;
-      else if (tok.value === '{') cd += 1;
-      else if (tok.value === '}' && cd > 0) cd -= 1;
+      else if (tok.value === '{') {
+        if (pd === 0 && bd === 0 && cd === 0 && ad === 0) {
+          const prevTok = tokens[p - 1];
+          const isTypeBrace =
+            (prevTok?.kind === 'punct' && TYPE_BRACE_PREV_PUNCTS.has(prevTok.value)) ||
+            (prevTok?.kind === 'ident' && TYPE_BRACE_PREV_IDENTS.has(prevTok.value));
+          if (isTypeBrace) {
+            const closeBrace = delims.brace[p] ?? -1;
+            if (closeBrace > p) {
+              const afterBrace = tokens[closeBrace + 1];
+              if (
+                (afterBrace?.kind === 'punct' && POST_TYPE_CONT_PUNCTS.has(afterBrace.value)) ||
+                (afterBrace?.kind === 'ident' && afterBrace.value === 'extends')
+              ) {
+                p = closeBrace;
+                continue;
+              }
+              return closeBrace + 1;
+            }
+          }
+          return p;
+        }
+        cd += 1;
+      } else if (tok.value === '}' && cd > 0) cd -= 1;
       else if (tok.value === '<') ad += 1;
       else if (tok.value === '>' && ad > 0) ad -= 1;
       else if (pd === 0 && bd === 0 && cd === 0 && ad === 0 && (tok.value === '=' || tok.value === ';' || tok.value === ',' || tok.value === '=>')) {
@@ -1391,6 +1423,25 @@ function skipOptionalTypeForward(tokens: readonly Token[], colonIdx: number, lim
 const NON_PARAM_PARENS = new Set(['if', 'while', 'for', 'with', 'switch']);
 const DESTRUCTURE_FOLLOW_PUNCTS = new Set(['=', ':', ',', ')', ']', '}']);
 
+function findFnDeclHeadBeforeParen(tokens: readonly Token[], openIdx: number): Token | undefined {
+  let fnIdx = openIdx - 1;
+  if (tokens[fnIdx]?.kind === 'punct' && tokens[fnIdx]?.value === '>') {
+    let ad = 1;
+    let q = fnIdx - 1;
+    const minQ = Math.max(0, fnIdx - 48);
+    while (q >= minQ && ad > 0) {
+      const qt = tokens[q]!;
+      if (qt.kind === 'punct') {
+        if (qt.value === '>') ad += 1;
+        else if (qt.value === '<') ad -= 1;
+      }
+      if (ad > 0) q -= 1;
+    }
+    fnIdx = ad === 0 ? q - 1 : -1;
+  }
+  return fnIdx >= 0 ? tokens[fnIdx] : undefined;
+}
+
 function isEnclosingPatternContext(
   tokens: readonly Token[],
   startIdx: number,
@@ -1402,6 +1453,7 @@ function isEnclosingPatternContext(
   let pd = 0;
   let bd = 0;
   let cd = 0;
+  let sawTopComma = false;
   let openIdx = -1;
   let openKind: '(' | '[' | '{' | null = null;
   const minScan = Math.max(0, startIdx - 64);
@@ -1432,8 +1484,9 @@ function isEnclosingPatternContext(
           break;
         }
         if (cd > 0) cd -= 1;
-      } else if (pd === 0 && bd === 0 && cd === 0 && (tk.value === ';' || tk.value === '=')) {
-        return false;
+      } else if (pd === 0 && bd === 0 && cd === 0) {
+        if (tk.value === ',') sawTopComma = true;
+        else if (tk.value === ';' || (tk.value === '=' && !sawTopComma)) return false;
       }
     }
   }
@@ -1442,7 +1495,7 @@ function isEnclosingPatternContext(
     const closeBr = delims.bracket[openIdx] ?? -1;
     if (closeBr <= endIdx) return false;
     const afterBrIdx = tokens[closeBr + 1]?.kind === 'punct' && tokens[closeBr + 1]?.value === ':'
-      ? skipOptionalTypeForward(tokens, closeBr + 1)
+      ? skipOptionalTypeForward(tokens, closeBr + 1, delims)
       : closeBr + 1;
     const afterBr = tokens[afterBrIdx];
     if (afterBr?.kind === 'punct' && afterBr.value === '=') return true;
@@ -1460,13 +1513,17 @@ function isEnclosingPatternContext(
   if (beforeOpen?.kind === 'ident' && beforeOpen.value === 'catch') return true;
   if (beforeOpen?.kind === 'ident' && NON_PARAM_PARENS.has(beforeOpen.value)) return false;
   const afterParenIdx = tokens[closeParen + 1]?.kind === 'punct' && tokens[closeParen + 1]?.value === ':'
-    ? skipOptionalTypeForward(tokens, closeParen + 1)
+    ? skipOptionalTypeForward(tokens, closeParen + 1, delims)
     : closeParen + 1;
   const afterParen = tokens[afterParenIdx];
   if (afterParen?.kind === 'punct' && afterParen.value === '=>') return true;
   if (afterParen?.kind === 'punct' && afterParen.value === '{' && !isMemberPrev(tokens, openIdx)) {
-    const fnBefore = tokens[openIdx - 1];
-    if (fnBefore?.kind === 'ident' || (fnBefore?.kind === 'punct' && fnBefore.value === '*') || (beforeOpen?.kind === 'ident' && beforeOpen.value === 'function')) {
+    const fnBefore = findFnDeclHeadBeforeParen(tokens, openIdx);
+    if (
+      (fnBefore?.kind === 'ident' && !NON_PARAM_PARENS.has(fnBefore.value) && !CONTROL_KEYWORDS.has(fnBefore.value)) ||
+      (fnBefore?.kind === 'punct' && fnBefore.value === '*') ||
+      (beforeOpen?.kind === 'ident' && beforeOpen.value === 'function')
+    ) {
       return true;
     }
   }
@@ -1492,7 +1549,7 @@ function isDestructuringBraceContext(
   }
 
   const afterIdx = follow.kind === 'punct' && follow.value === ':'
-    ? skipOptionalTypeForward(tokens, closeBrace + 1)
+    ? skipOptionalTypeForward(tokens, closeBrace + 1, delims)
     : closeBrace + 1;
   const after = tokens[afterIdx];
   if (after?.kind === 'punct' && after.value === '=') return true;
@@ -1576,6 +1633,168 @@ function extractDestructuredMatches(
 
 const REQUIRE_DESTRUCTURE_KEYS = new Set(['require', 'createRequire']);
 
+function matchNamedMemberSuffix(
+  tokens: readonly Token[],
+  receiverEnd: number,
+  memberNames: readonly string[],
+  delims: DelimiterPairs,
+  resolveStaticStr: (start: number, end: number) => string | null,
+): { endIdx: number; memberName: string } | null {
+  const t1 = tokens[receiverEnd + 1];
+  const t2 = tokens[receiverEnd + 2];
+  if (t1?.kind === 'punct' && (t1.value === '.' || t1.value === '?.')) {
+    if (t2?.kind === 'ident' && memberNames.includes(t2.value)) {
+      return { endIdx: receiverEnd + 2, memberName: t2.value };
+    }
+    if (t1.value === '?.' && t2?.kind === 'punct' && t2.value === '[') {
+      const closeBr = delims.bracket[receiverEnd + 2] ?? -1;
+      if (closeBr > receiverEnd + 3) {
+        const resolved = resolveStaticStr(receiverEnd + 3, closeBr);
+        if (resolved !== null && memberNames.includes(resolved)) {
+          return { endIdx: closeBr, memberName: resolved };
+        }
+      }
+    }
+    return null;
+  }
+  if (t1?.kind === 'punct' && t1.value === '[') {
+    const closeBr = delims.bracket[receiverEnd + 1] ?? -1;
+    if (closeBr > receiverEnd + 2) {
+      const resolved = resolveStaticStr(receiverEnd + 2, closeBr);
+      if (resolved !== null && memberNames.includes(resolved)) {
+        return { endIdx: closeBr, memberName: resolved };
+      }
+    }
+  }
+  return null;
+}
+
+function matchTrailingNamedMember(
+  tokens: readonly Token[],
+  start: number,
+  end: number,
+  memberNames: readonly string[],
+  closeMaps: ClosePairMaps,
+  resolveStaticStr: (start: number, end: number) => string | null,
+): { baseEnd: number; memberName: string } | null {
+  let e = end;
+  while (e > start && tokens[e - 1]?.kind === 'punct' && tokens[e - 1]?.value === '!') e -= 1;
+  if (e - start < 3) return null;
+  const last = tokens[e - 1];
+  if (last?.kind === 'ident' && memberNames.includes(last.value) && isMemberPrev(tokens, e - 1)) {
+    return e - 2 > start ? { baseEnd: e - 2, memberName: last.value } : null;
+  }
+  if (last?.kind === 'punct' && last.value === ']') {
+    const openBr = closeMaps.bracketOpenFromClose[e - 1] ?? -1;
+    if (openBr > start && openBr + 1 < e - 1) {
+      const resolved = resolveStaticStr(openBr + 1, e - 1);
+      if (resolved !== null && memberNames.includes(resolved)) {
+        const optDot = tokens[openBr - 1];
+        const baseEnd = optDot?.kind === 'punct' && optDot.value === '?.' ? openBr - 1 : openBr;
+        return baseEnd > start ? { baseEnd, memberName: resolved } : null;
+      }
+    }
+  }
+  return null;
+}
+
+function isGroupingOpenParen(tokens: readonly Token[], openIdx: number): boolean {
+  if (openIdx <= 0) return true;
+  const prev = tokens[openIdx - 1]!;
+  if (prev.kind === 'ident') return REGEX_PREFIX_KEYWORDS.has(prev.value) || CONTROL_KEYWORDS.has(prev.value);
+  if (prev.kind === 'punct') return prev.value !== ')' && prev.value !== ']' && prev.value !== '!';
+  return false;
+}
+
+function matchInlineModuleMemberCall(
+  tokens: readonly Token[],
+  callIdentIdx: number,
+  specPred: (spec: string) => boolean,
+  memberName: string,
+  delims: DelimiterPairs,
+  resolveStaticStr: (start: number, end: number) => string | null,
+): { spec: string; modCloseEnd: number; memberEndIdx: number | null } | null {
+  const fnTok = tokens[callIdentIdx];
+  if (!fnTok || fnTok.kind !== 'ident' || (fnTok.value !== 'import' && fnTok.value !== 'require') || isMemberPrev(tokens, callIdentIdx)) {
+    return null;
+  }
+  const openParen = tokens[callIdentIdx + 1];
+  if (!openParen || openParen.kind !== 'punct' || openParen.value !== '(') return null;
+  const call = scanBalancedParenArg(tokens, callIdentIdx + 1, delims.paren);
+  const spec = call.singleStringSpec ?? call.foldedStringSpec;
+  if (spec === null || !specPred(spec)) return null;
+  const closeMod = delims.paren[callIdentIdx + 1] ?? -1;
+  if (closeMod <= callIdentIdx + 1) return null;
+
+  let wrapParens = 0;
+  for (let b = callIdentIdx - 1; b >= Math.max(0, callIdentIdx - 8); b -= 1) {
+    const bt = tokens[b]!;
+    if (bt.kind === 'ident' && bt.value === 'await') continue;
+    if (bt.kind === 'punct' && bt.value === '(' && isGroupingOpenParen(tokens, b)) {
+      wrapParens += 1;
+      continue;
+    }
+    break;
+  }
+
+  let afterClose = closeMod + 1;
+  let steps = 0;
+  while (afterClose < tokens.length && steps < 12) {
+    steps += 1;
+    const tk = tokens[afterClose]!;
+    if (tk.kind === 'punct' && tk.value === '!') {
+      afterClose += 1;
+      continue;
+    }
+    if (tk.kind === 'punct' && tk.value === ')' && wrapParens > 0) {
+      wrapParens -= 1;
+      afterClose += 1;
+      continue;
+    }
+    break;
+  }
+
+  const modCloseEnd = afterClose - 1;
+  const memberMatch = matchNamedMemberSuffix(tokens, modCloseEnd, [memberName], delims, resolveStaticStr);
+  return {
+    spec,
+    modCloseEnd,
+    memberEndIdx: memberMatch ? memberMatch.endIdx : null,
+  };
+}
+
+function matchInlineModuleMemberSpan(
+  tokens: readonly Token[],
+  start: number,
+  end: number,
+  specPred: (spec: string) => boolean,
+  memberName: string,
+  delims: DelimiterPairs,
+  resolveStaticStr: (start: number, end: number) => string | null,
+): { kind: 'namespace' | 'member'; spec: string; memberEndIdx: number } | null {
+  let p = start;
+  let steps = 0;
+  while (p < end && steps < 8) {
+    steps += 1;
+    const tk = tokens[p]!;
+    if ((tk.kind === 'ident' && tk.value === 'await') || (tk.kind === 'punct' && tk.value === '(')) {
+      p += 1;
+      continue;
+    }
+    break;
+  }
+  if (p >= end) return null;
+  const matched = matchInlineModuleMemberCall(tokens, p, specPred, memberName, delims, resolveStaticStr);
+  if (!matched) return null;
+  if (matched.memberEndIdx !== null && matched.memberEndIdx + 1 === end) {
+    return { kind: 'member', spec: matched.spec, memberEndIdx: matched.memberEndIdx };
+  }
+  if (matched.modCloseEnd + 1 === end) {
+    return { kind: 'namespace', spec: matched.spec, memberEndIdx: matched.modCloseEnd };
+  }
+  return null;
+}
+
 function matchHostNamedMember(
   tokens: readonly Token[],
   startIdx: number,
@@ -1612,28 +1831,13 @@ function matchHostNamedMember(
     }
     while (tokens[hostEnd + 1]?.kind === 'punct' && tokens[hostEnd + 1]?.value === '!') hostEnd += 1;
   }
-  const t1 = tokens[hostEnd + 1];
-  const t2 = tokens[hostEnd + 2];
-  if (t1?.kind === 'punct' && (t1.value === '.' || t1.value === '?.')) {
-    if (t2?.kind === 'ident' && t2.value === memberName) return { endIdx: hostEnd + 2 };
-    if (t1.value === '?.' && t2?.kind === 'punct' && t2.value === '[') {
-      const closeBr = delims.bracket[hostEnd + 2] ?? -1;
-      if (closeBr > hostEnd + 3 && resolveStaticStr(hostEnd + 3, closeBr) === memberName) {
-        return { endIdx: closeBr };
-      }
-    }
-    return null;
-  }
-  if (t1?.kind === 'punct' && t1.value === '[') {
-    const closeBr = delims.bracket[hostEnd + 1] ?? -1;
-    if (closeBr > hostEnd + 2 && resolveStaticStr(hostEnd + 2, closeBr) === memberName) {
-      return { endIdx: closeBr };
-    }
-  }
-  return null;
+  const suffix = matchNamedMemberSuffix(tokens, hostEnd, [memberName], delims, resolveStaticStr);
+  return suffix ? { endIdx: suffix.endIdx } : null;
 }
 
 const NODE_MODULE_SPECIFIERS = new Set(['node:module', 'module']);
+const isNodeModuleSpecifier = (spec: string): boolean =>
+  NODE_MODULE_SPECIFIERS.has(spec) || NODE_MODULE_SPECIFIERS.has(normalizeModuleSpecifier(spec));
 
 function collectNodeModuleImports(
   tokens: readonly Token[],
@@ -1833,6 +2037,13 @@ function analyzeTokenAliases(
       }
     }
 
+    if (t.kind === 'ident' && (t.value === 'import' || t.value === 'require') && !isMemberPrev(tokens, i)) {
+      const inlineCr = matchInlineModuleMemberCall(tokens, i, isNodeModuleSpecifier, 'createRequire', delims, resolveStaticStr);
+      if (inlineCr && inlineCr.memberEndIdx !== null) {
+        hasBareRequire = true;
+      }
+    }
+
     if (t.kind === 'ident' && t.value === 'createRequire' && !isMemberPrev(tokens, i)) {
       const prevPunct = tokens[i - 1]?.kind === 'punct' ? tokens[i - 1]!.value : '';
       const nextPunct = tokens[i + 1]?.kind === 'punct' ? tokens[i + 1]!.value : '';
@@ -1913,48 +2124,11 @@ function analyzeTokenAliases(
       (afterRhs.kind === 'ident' && (afterRhs.value === 'as' || afterRhs.value === 'satisfies'));
 
     if ((rhsTok.value === 'import' || rhsTok.value === 'require') && afterRhs?.kind === 'punct' && afterRhs.value === '(') {
-      const call = scanBalancedParenArg(tokens, afterRhsIdx, delims.paren);
-      const modSpec = call.singleStringSpec ?? call.foldedStringSpec;
-      if (
-        modSpec !== null &&
-        (NODE_MODULE_SPECIFIERS.has(modSpec) || NODE_MODULE_SPECIFIERS.has(normalizeModuleSpecifier(modSpec)))
-      ) {
-        const closeMod = delims.paren[afterRhsIdx] ?? -1;
-        let directCrEnd = -1;
-        if (closeMod > afterRhsIdx) {
-          let afterCloseIdx = closeMod + 1;
-          while (tokens[afterCloseIdx]?.kind === 'punct' && (tokens[afterCloseIdx]?.value === ')' || tokens[afterCloseIdx]?.value === '!')) {
-            afterCloseIdx += 1;
-          }
-          const followMod = tokens[afterCloseIdx];
-          if (
-            followMod?.kind === 'punct' &&
-            (followMod.value === '.' || followMod.value === '?.') &&
-            tokens[afterCloseIdx + 1]?.kind === 'ident' &&
-            tokens[afterCloseIdx + 1]?.value === 'createRequire'
-          ) {
-            directCrEnd = afterCloseIdx + 1;
-          } else if (
-            followMod?.kind === 'punct' &&
-            followMod.value === '[' &&
-            (delims.bracket[afterCloseIdx] ?? -1) > afterCloseIdx + 1 &&
-            resolveStaticStr(afterCloseIdx + 1, delims.bracket[afterCloseIdx]!) === 'createRequire'
-          ) {
-            directCrEnd = delims.bracket[afterCloseIdx]!;
-          } else if (
-            followMod?.kind === 'punct' &&
-            followMod.value === '?.' &&
-            tokens[afterCloseIdx + 1]?.kind === 'punct' &&
-            tokens[afterCloseIdx + 1]?.value === '[' &&
-            (delims.bracket[afterCloseIdx + 1] ?? -1) > afterCloseIdx + 2 &&
-            resolveStaticStr(afterCloseIdx + 2, delims.bracket[afterCloseIdx + 1]!) === 'createRequire'
-          ) {
-            directCrEnd = delims.bracket[afterCloseIdx + 1]!;
-          }
-        }
-        if (directCrEnd >= 0) {
+      const inlineMatch = matchInlineModuleMemberCall(tokens, rhs, isNodeModuleSpecifier, 'createRequire', delims, resolveStaticStr);
+      if (inlineMatch) {
+        if (inlineMatch.memberEndIdx !== null) {
           hasBareRequire = true;
-          recordMemberRhs(lhsIdent, directCrEnd, true);
+          recordMemberRhs(lhsIdent, inlineMatch.memberEndIdx, true);
         } else {
           dynamicNodeModuleNamespaces.add(lhsIdent);
         }
@@ -2183,6 +2357,15 @@ function scanModuleTokens(tokens: readonly Token[], delimsInput?: DelimiterPairs
           if (open1 >= 0) recordCreateRequireDirectCall(open1);
           continue;
         }
+      }
+    }
+
+    if (t.kind === 'ident' && !isMemberPrev(tokens, i) && (t.value === 'import' || t.value === 'require')) {
+      const inlineModCr = matchInlineModuleMemberCall(tokens, i, isNodeModuleSpecifier, 'createRequire', delims, resolveStaticStr);
+      if (inlineModCr && inlineModCr.memberEndIdx !== null) {
+        hasBareRequire = true;
+        const open1 = findCallParenAfter(inlineModCr.memberEndIdx + 1);
+        if (open1 >= 0) recordCreateRequireDirectCall(open1);
       }
     }
 
@@ -3045,40 +3228,9 @@ function findFnParamBodyTarget(
       : null;
   }
   if (prev?.kind === 'ident' && NON_PARAM_PARENS.has(prev.value)) return null;
-  let p = closeParen + 1;
-  if (tokens[p]?.kind === 'punct' && tokens[p]?.value === ':') {
-    p += 1;
-    let pd = 0;
-    let bd = 0;
-    let cd = 0;
-    let ad = 0;
-    const limit = Math.min(tokens.length, closeParen + 65);
-    while (p < limit) {
-      const cur = tokens[p]!;
-      if (cur.kind === 'punct') {
-        if (cur.value === '=>' && pd === 0 && bd === 0 && cd === 0 && ad === 0) break;
-        if (cur.value === ';' && pd === 0 && bd === 0 && cd === 0 && ad === 0) return null;
-        if (cur.value === '{' && pd === 0 && bd === 0 && cd === 0 && ad === 0) {
-          // Distinguishes TS inline object return `: { a: number } { body }` from function body `{ body }`:
-          // if the token after `{...}` is `{`, skip the return type literal first.
-          const retClose = delims.brace[p] ?? -1;
-          if (retClose > p && tokens[retClose + 1]?.kind === 'punct' && tokens[retClose + 1]?.value === '{') {
-            p = retClose + 1;
-          }
-          break;
-        }
-        if (cur.value === '(') pd += 1;
-        else if (cur.value === ')' && pd > 0) pd -= 1;
-        else if (cur.value === '[') bd += 1;
-        else if (cur.value === ']' && bd > 0) bd -= 1;
-        else if (cur.value === '{') cd += 1;
-        else if (cur.value === '}' && cd > 0) cd -= 1;
-        else if (cur.value === '<') ad += 1;
-        else if (cur.value === '>' && ad > 0) ad -= 1;
-      }
-      p += 1;
-    }
-  }
+  const p = tokens[closeParen + 1]?.kind === 'punct' && tokens[closeParen + 1]?.value === ':'
+    ? skipOptionalTypeForward(tokens, closeParen + 1, delims)
+    : closeParen + 1;
   const next = tokens[p];
   if (next?.kind === 'punct' && next.value === '=>') {
     const body = tokens[p + 1];
@@ -3086,12 +3238,84 @@ function findFnParamBodyTarget(
     return { targetKind: 'concise', targetIdx: p + 1 };
   }
   if (next?.kind === 'punct' && next.value === '{' && !isMemberPrev(tokens, openParen)) {
-    const fnBefore = tokens[openParen - 1];
-    if (fnBefore?.kind === 'ident' || (fnBefore?.kind === 'punct' && fnBefore.value === '*')) {
+    const fnBefore = findFnDeclHeadBeforeParen(tokens, openParen);
+    if (
+      (fnBefore?.kind === 'ident' && !NON_PARAM_PARENS.has(fnBefore.value) && !CONTROL_KEYWORDS.has(fnBefore.value)) ||
+      (fnBefore?.kind === 'punct' && fnBefore.value === '*')
+    ) {
       return { targetKind: 'brace', targetIdx: p };
     }
   }
   return null;
+}
+
+const STMT_PREV_OPENERS = new Set(['(', '[', ',', '.', '?.', ':', '?', '=', '+', '-', '*', '/', '%', '&&', '||', '??', '=>', '!']);
+const STMT_NEXT_CONT = new Set(['.', '?.', '(', '[', ',', '?', ':', '&&', '||', '??', '+', '-', '*', '/', '%', '===', '!==', '==', '!=']);
+const STMT_HEADER_KW = new Set(['if', 'else', 'for', 'while', 'do', 'await']);
+
+function findBracelessStatementEnd(
+  tokens: readonly Token[],
+  startIdx: number,
+  delims: DelimiterPairs,
+  templateTail?: Int32Array,
+): number {
+  let pd = 0;
+  let bd = 0;
+  let cd = 0;
+  let td = 0;
+  const limit = Math.min(tokens.length, startIdx + 256);
+  for (let p = startIdx; p < limit; p += 1) {
+    const tk = tokens[p]!;
+    if (pd === 0 && bd === 0 && cd === 0 && td === 0 && p > startIdx) {
+      const prev = tokens[p - 1]!;
+      const prevContinues =
+        (prev.kind === 'punct' && STMT_PREV_OPENERS.has(prev.value)) ||
+        (prev.kind === 'ident' && STMT_HEADER_KW.has(prev.value));
+      const nextContinues = tk.kind === 'punct' && STMT_NEXT_CONT.has(tk.value);
+      if (tk.line > prev.line && !prevContinues && !nextContinues && !(tk.kind === 'ident' && tk.value === 'else')) {
+        return p;
+      }
+    }
+    if (tk.kind === 'template_head') {
+      const tail = templateTail?.[p] ?? -1;
+      if (tail > p && tail < limit) {
+        p = tail;
+        continue;
+      }
+      td += 1;
+    } else if (tk.kind === 'template_tail' && td > 0) {
+      td -= 1;
+    } else if (tk.kind === 'punct') {
+      if (tk.value === '(') pd += 1;
+      else if (tk.value === ')') {
+        if (pd === 0 && bd === 0 && cd === 0 && td === 0) return p;
+        if (pd > 0) pd -= 1;
+      } else if (tk.value === '[') bd += 1;
+      else if (tk.value === ']') {
+        if (pd === 0 && bd === 0 && cd === 0 && td === 0) return p;
+        if (bd > 0) bd -= 1;
+      } else if (tk.value === '{') {
+        if (pd === 0 && bd === 0 && cd === 0 && td === 0) {
+          const closeBrace = delims.brace[p] ?? -1;
+          if (closeBrace > p) {
+            const after = tokens[closeBrace + 1];
+            if (after?.kind === 'ident' && after.value === 'else') {
+              p = closeBrace;
+              continue;
+            }
+            return closeBrace + 1;
+          }
+        }
+        cd += 1;
+      } else if (tk.value === '}') {
+        if (pd === 0 && bd === 0 && cd === 0 && td === 0) return p;
+        if (cd > 0) cd -= 1;
+      } else if (tk.value === ';' && pd === 0 && bd === 0 && cd === 0 && td === 0) {
+        return p;
+      }
+    }
+  }
+  return limit;
 }
 
 function findConciseArrowEnd(tokens: readonly Token[], bodyStart: number): number {
@@ -3212,8 +3436,13 @@ function collectScopedConstBindings(
       const forIdx = forParenCloseToScope.get(i)!;
       if (tokens[i + 1]?.kind === 'punct' && tokens[i + 1]?.value === '{' && (delims.brace[i + 1] ?? -1) > i + 1) {
         braceReuseScope.set(i + 1, forIdx);
+        if (scopeStack.length > 1) scopeStack.pop();
+      } else if (i + 1 < tokens.length) {
+        const endIdx = findBracelessStatementEnd(tokens, i + 1, delims, templateTail);
+        scopePopAt.set(endIdx, (scopePopAt.get(endIdx) ?? 0) + 1);
+      } else if (scopeStack.length > 1) {
+        scopeStack.pop();
       }
-      if (scopeStack.length > 1) scopeStack.pop();
     }
 
     const curScopeIdx = scopeStack[scopeStack.length - 1]!;
@@ -3503,6 +3732,8 @@ function collectMeterAliasInfo(
   const aliasEdges = new Map<string, Set<string>>();
   const memberMeterCandidates: Array<{ host: string; target: string }> = [];
   const constLookup: ConstLookupFn = (n, idx) => lookupScopedConst(scopes, tokenScope[idx] ?? 0, n);
+  const resolveStaticStr = (s: number, e: number) =>
+    tryResolveConstantStringExpr(tokens, s, e, delims, templateNext, constLookup, 0, templateTail);
 
   for (let i = 0; i < tokens.length; i += 1) {
     const t = tokens[i]!;
@@ -3515,7 +3746,7 @@ function collectMeterAliasInfo(
           closeBrace,
           delims,
           METER_DESTRUCTURE_KEYS,
-          (s, e) => tryResolveConstantStringExpr(tokens, s, e, delims, templateNext, constLookup, 0, templateTail),
+          resolveStaticStr,
           templateTail,
         );
         for (const m of matches) {
@@ -3545,26 +3776,16 @@ function collectMeterAliasInfo(
         continue;
       }
 
+      const inlineMeterMod = matchInlineModuleMemberSpan(tokens, ns, ne, isMeterModuleSpecifier, 'metered', delims, resolveStaticStr);
+      if (inlineMeterMod) {
+        if (inlineMeterMod.kind === 'namespace') seedNamespaces.add(lhsIdent);
+        else seedAliases.add(lhsIdent);
+        continue;
+      }
+
       if (rhsTok.kind === 'ident' && !isMemberPrev(tokens, ns)) {
-        const afterHost = tokens[ns + 1];
-        if (afterHost?.kind === 'punct' && (afterHost.value === '.' || afterHost.value === '?.')) {
-          if (ne === ns + 3 && tokens[ns + 2]?.kind === 'ident' && tokens[ns + 2]?.value === 'metered') {
-            memberMeterCandidates.push({ host: rhsTok.value, target: lhsIdent });
-          } else if (
-            afterHost.value === '?.' &&
-            tokens[ns + 2]?.kind === 'punct' &&
-            tokens[ns + 2]?.value === '[' &&
-            (delims.bracket[ns + 2] ?? -1) === ne - 1 &&
-            tryResolveConstantStringExpr(tokens, ns + 3, ne - 1, delims, templateNext, constLookup, 0, templateTail) === 'metered'
-          ) {
-            memberMeterCandidates.push({ host: rhsTok.value, target: lhsIdent });
-          }
-        } else if (
-          afterHost?.kind === 'punct' &&
-          afterHost.value === '[' &&
-          (delims.bracket[ns + 1] ?? -1) === ne - 1 &&
-          tryResolveConstantStringExpr(tokens, ns + 2, ne - 1, delims, templateNext, constLookup, 0, templateTail) === 'metered'
-        ) {
+        const suffix = matchNamedMemberSuffix(tokens, ns, ['metered'], delims, resolveStaticStr);
+        if (suffix && suffix.endIdx + 1 === ne) {
           memberMeterCandidates.push({ host: rhsTok.value, target: lhsIdent });
         }
       }
@@ -3684,17 +3905,14 @@ function matchesMeteredCalleeSpan(
     const tk = tokens[s]!;
     return tk.kind === 'ident' && meterAliases.has(tk.value) && !isMemberPrev(tokens, s) && !isMeteredFnDeclaration(tokens, s);
   }
+  const resolveStaticStr = (a: number, b: number) =>
+    tryResolveConstantStringExpr(tokens, a, b, delims, templateNext, constLookup, 0, templateTail);
+  const inlineMod = matchInlineModuleMemberSpan(tokens, s, e, isMeterModuleSpecifier, 'metered', delims, resolveStaticStr);
+  if (inlineMod?.kind === 'member') return true;
   const host = tokens[s]!;
   if (host.kind === 'ident' && !isMemberPrev(tokens, s) && meterNamespaces.has(host.value)) {
-    const op = tokens[s + 1];
-    if (op?.kind === 'punct' && (op.value === '.' || op.value === '?.')) {
-      if (e === s + 3 && tokens[s + 2]?.kind === 'ident' && tokens[s + 2]?.value === 'metered') return true;
-      if (op.value === '?.' && tokens[s + 2]?.kind === 'punct' && tokens[s + 2]?.value === '[' && (delims.bracket[s + 2] ?? -1) === e - 1) {
-        return tryResolveConstantStringExpr(tokens, s + 3, e - 1, delims, templateNext, constLookup, 0, templateTail) === 'metered';
-      }
-    } else if (op?.kind === 'punct' && op.value === '[' && (delims.bracket[s + 1] ?? -1) === e - 1) {
-      return tryResolveConstantStringExpr(tokens, s + 2, e - 1, delims, templateNext, constLookup, 0, templateTail) === 'metered';
-    }
+    const suffix = matchNamedMemberSuffix(tokens, s, ['metered'], delims, resolveStaticStr);
+    if (suffix && suffix.endIdx + 1 === e) return true;
   }
   return false;
 }
@@ -3772,11 +3990,14 @@ function unwrapMeteredCallKeySpan(
         const openBr = closeMaps.bracketOpenFromClose[cur] ?? -1;
         if (openBr < 1) return -1;
         cur = openBr - 1;
+        if (tokens[cur]?.kind === 'punct' && tokens[cur]?.value === '?.') cur -= 1;
+        while (cur >= 0 && tokens[cur]?.kind === 'punct' && tokens[cur]?.value === '!') cur -= 1;
         continue;
       }
       if (tk.kind === 'ident') {
         if (isMemberPrev(tokens, cur)) {
           cur -= 2;
+          while (cur >= 0 && tokens[cur]?.kind === 'punct' && tokens[cur]?.value === '!') cur -= 1;
           continue;
         }
         return cur;
@@ -3786,40 +4007,44 @@ function unwrapMeteredCallKeySpan(
     return -1;
   };
 
-  // Detect Reflect.apply(m, thisArg, [key, ...])
-  if (
-    calleeEnd >= 3 &&
-    tokens[calleeEnd - 1]?.kind === 'ident' &&
-    tokens[calleeEnd - 1]?.value === 'apply' &&
-    tokens[calleeEnd - 2]?.kind === 'punct' &&
-    tokens[calleeEnd - 2]?.value === '.' &&
-    tokens[calleeEnd - 3]?.kind === 'ident' &&
-    tokens[calleeEnd - 3]?.value === 'Reflect' &&
-    !isMemberPrev(tokens, calleeEnd - 3)
-  ) {
-    const parsed = splitCallArgsBounded(tokens, openParenIdx, 3);
-    const fnArg = parsed.args[0];
-    if (fnArg && matchesMeteredCalleeSpan(tokens, fnArg.start, fnArg.end, delims, closeMaps, templateTail, templateNext, constLookup, meterAliases, meterNamespaces)) {
-      const arrArg = parsed.args[2];
-      if (!arrArg) return null;
-      return extractFirstArrayArgSpan(tokens, arrArg, delims, templateTail, parsed.truncated);
+  const resolveStaticStr = (a: number, b: number) =>
+    tryResolveConstantStringExpr(tokens, a, b, delims, templateNext, constLookup, 0, templateTail);
+
+  // Detect Reflect.apply / Reflect['apply'] / Reflect?.['apply'](m, thisArg, [key, ...])
+  const reflectMatch = matchTrailingNamedMember(tokens, 0, calleeEnd, ['apply'], closeMaps, resolveStaticStr);
+  if (reflectMatch) {
+    let rEnd = reflectMatch.baseEnd;
+    while (rEnd > 0 && tokens[rEnd - 1]?.kind === 'punct' && tokens[rEnd - 1]?.value === '!') rEnd -= 1;
+    const rStart = findReceiverStart(rEnd);
+    if (rStart >= 0) {
+      const normReflect = normalizeValueExprSpan(tokens, rStart, rEnd, delims, templateTail);
+      if (
+        normReflect.end - normReflect.start === 1 &&
+        tokens[normReflect.start]?.kind === 'ident' &&
+        tokens[normReflect.start]?.value === 'Reflect' &&
+        !isMemberPrev(tokens, normReflect.start)
+      ) {
+        const parsed = splitCallArgsBounded(tokens, openParenIdx, 3);
+        const fnArg = parsed.args[0];
+        if (fnArg && matchesMeteredCalleeSpan(tokens, fnArg.start, fnArg.end, delims, closeMaps, templateTail, templateNext, constLookup, meterAliases, meterNamespaces)) {
+          const arrArg = parsed.args[2];
+          if (!arrArg) return null;
+          return extractFirstArrayArgSpan(tokens, arrArg, delims, templateTail, parsed.truncated);
+        }
+        return null;
+      }
     }
-    return null;
   }
 
-  // Detect `.call(...)`, `.apply(...)`, or `.bind(...)()` suffix
+  // Detect `.call(...)`, `['call'](...)`, `.apply(...)`, `['apply'](...)`, or `.bind(...)()` suffix
   let targetArgIdx = 0;
   let isApplyArr = false;
   let baseEnd = calleeEnd;
-  if (
-    baseEnd >= 3 &&
-    tokens[baseEnd - 1]?.kind === 'ident' &&
-    (tokens[baseEnd - 1]!.value === 'call' || tokens[baseEnd - 1]!.value === 'apply') &&
-    isMemberPrev(tokens, baseEnd - 1)
-  ) {
+  const callMatch = matchTrailingNamedMember(tokens, 0, baseEnd, ['call', 'apply'], closeMaps, resolveStaticStr);
+  if (callMatch) {
     targetArgIdx = 1;
-    isApplyArr = tokens[baseEnd - 1]!.value === 'apply';
-    baseEnd -= 2;
+    isApplyArr = callMatch.memberName === 'apply';
+    baseEnd = callMatch.baseEnd;
   } else {
     const unboundEnd = stripTrailingBindSuffix(tokens, 0, baseEnd, delims, closeMaps, templateNext, constLookup, templateTail);
     if (unboundEnd < baseEnd) baseEnd = unboundEnd;
@@ -3855,16 +4080,16 @@ function analyzeMeteredKeyExpr(
   includeUnresolved: boolean,
   out: string[],
   depth = 0,
-): void {
+): boolean {
   if (depth > 8 || start >= end) {
     if (includeUnresolved && start < end) {
       const snippet = tokens.slice(start, Math.min(end, start + 16)).map((tk) => tk.raw).join('').slice(0, 64);
       out.push(`unresolved metered key (${snippet})`);
     }
-    return;
+    return false;
   }
   const { start: s, end: e } = normalizeValueExprSpan(tokens, start, end, delims, templateTail);
-  if (s >= e) return;
+  if (s >= e) return false;
 
   // Split lowest-precedence comma `,` first, then ternary `? :` at depth 0 (never return the condition).
   let lastComma = -1;
@@ -3903,17 +4128,18 @@ function analyzeMeteredKeyExpr(
   }
   if (lastComma >= s) {
     if (lastComma + 1 < e) {
-      analyzeMeteredKeyExpr(tokens, lastComma + 1, e, delims, templateTail, templateNext, text, constLookup, includeUnresolved, out, depth + 1);
-    } else if (includeUnresolved) {
+      return analyzeMeteredKeyExpr(tokens, lastComma + 1, e, delims, templateTail, templateNext, text, constLookup, includeUnresolved, out, depth + 1);
+    }
+    if (includeUnresolved) {
       const snippet = tokens.slice(s, Math.min(e, s + 16)).map((tk) => tk.raw).join('').slice(0, 64);
       out.push(`unresolved metered key (${snippet})`);
     }
-    return;
+    return false;
   }
   if (qMarkIdx > s && colonIdx > qMarkIdx) {
-    analyzeMeteredKeyExpr(tokens, qMarkIdx + 1, colonIdx, delims, templateTail, templateNext, text, constLookup, includeUnresolved, out, depth + 1);
-    analyzeMeteredKeyExpr(tokens, colonIdx + 1, e, delims, templateTail, templateNext, text, constLookup, includeUnresolved, out, depth + 1);
-    return;
+    const leftOk = analyzeMeteredKeyExpr(tokens, qMarkIdx + 1, colonIdx, delims, templateTail, templateNext, text, constLookup, includeUnresolved, out, depth + 1);
+    const rightOk = analyzeMeteredKeyExpr(tokens, colonIdx + 1, e, delims, templateTail, templateNext, text, constLookup, includeUnresolved, out, depth + 1);
+    return leftOk && rightOk;
   }
 
   // Split logical short-circuit operators `&&`, `||`, `??` at depth 0.
@@ -3942,10 +4168,13 @@ function analyzeMeteredKeyExpr(
   }
   if (logicalSpans.length > 0 && logicalSpans.length < 16) {
     if (spanStart < e) logicalSpans.push({ start: spanStart, end: e });
+    let allOk = true;
     for (const sp of logicalSpans) {
-      analyzeMeteredKeyExpr(tokens, sp.start, sp.end, delims, templateTail, templateNext, text, constLookup, includeUnresolved, out, depth + 1);
+      if (!analyzeMeteredKeyExpr(tokens, sp.start, sp.end, delims, templateTail, templateNext, text, constLookup, includeUnresolved, out, depth + 1)) {
+        allOk = false;
+      }
     }
-    return;
+    return allOk;
   }
 
   const headTok = tokens[s]!;
@@ -3954,16 +4183,16 @@ function analyzeMeteredKeyExpr(
     const resolvedTpl = tryResolveConstantStringExpr(tokens, s, tailIdx + 1, delims, templateNext, constLookup, 0, templateTail);
     if (resolvedTpl !== null) {
       if (resolvedTpl.startsWith('notes.')) out.push(resolvedTpl);
-    } else {
-      out.push(formatNotesTemplateSpan(text, headTok, tokens[tailIdx]!));
+      return true;
     }
-    return;
+    out.push(formatNotesTemplateSpan(text, headTok, tokens[tailIdx]!));
+    return false;
   }
 
   const resolved = e - s <= 128 ? tryResolveConstantStringExpr(tokens, s, e, delims, templateNext, constLookup, 0, templateTail) : null;
   if (resolved !== null) {
     if (resolved.startsWith('notes.')) out.push(resolved);
-    return;
+    return true;
   }
 
   if (includeUnresolved) {
@@ -3974,12 +4203,17 @@ function analyzeMeteredKeyExpr(
       out.push(`unresolved metered key (${snippet})`);
     }
   }
+  return false;
 }
 
 function collectMeteredNotesFromTokens(
   tokens: readonly Token[],
   text: string,
-  options?: { includeUnresolved?: boolean },
+  options?: {
+    includeUnresolved?: boolean;
+    ignoreUnresolvedInRanges?: ReadonlyArray<{ start: number; end: number }>;
+    resolvedParenStarts?: Set<number>;
+  },
 ): string[] {
   const out: string[] = [];
   const delims = pairDelimiters(tokens);
@@ -4005,6 +4239,9 @@ function collectMeteredNotesFromTokens(
     }
   }
 
+  const ignoreRanges = options?.ignoreUnresolvedInRanges ?? [];
+  let ignoreCursor = 0;
+
   for (let i = 0; i < tokens.length; i += 1) {
     const t = tokens[i]!;
     if (t.kind !== 'punct' || t.value !== '(' || i === 0) continue;
@@ -4021,8 +4258,14 @@ function collectMeteredNotesFromTokens(
       meterNamespaces,
     );
     if (!callArg) continue;
+    while (ignoreCursor < ignoreRanges.length && ignoreRanges[ignoreCursor]!.end <= t.start) {
+      ignoreCursor += 1;
+    }
+    const curRange = ignoreRanges[ignoreCursor];
+    const insideUnambiguousRegex = Boolean(curRange && t.start >= curRange.start && t.end <= curRange.end);
+    const includeUnresolvedHere = Boolean(options?.includeUnresolved) && !insideUnambiguousRegex;
     if (callArg.truncated) {
-      if (options?.includeUnresolved) {
+      if (includeUnresolvedHere) {
         const snippet = tokens.slice(callArg.start, Math.min(callArg.end, callArg.start + 16)).map((tk) => tk.raw).join('').slice(0, 64);
         out.push(`unresolved metered key (${snippet})`);
       } else if (tokens[callArg.start]?.kind === 'template_head' && tokens[callArg.start]!.value.startsWith('notes.')) {
@@ -4030,7 +4273,7 @@ function collectMeteredNotesFromTokens(
       }
       continue;
     }
-    analyzeMeteredKeyExpr(
+    const resolvedHere = analyzeMeteredKeyExpr(
       tokens,
       callArg.start,
       callArg.end,
@@ -4039,14 +4282,47 @@ function collectMeteredNotesFromTokens(
       templateNext,
       text,
       constLookup,
-      Boolean(options?.includeUnresolved),
+      includeUnresolvedHere,
       out,
     );
+    if (resolvedHere && options?.resolvedParenStarts) {
+      options.resolvedParenStarts.add(t.start);
+    }
   }
   return out;
 }
 
-function collectRawMeteredNotes(text: string): string[] {
+function skipRawWsAndComments(text: string, startIdx: number, maxChars = 256): number {
+  const limit = Math.min(text.length, startIdx + maxChars);
+  let p = startIdx;
+  while (p < limit) {
+    if (isWhitespaceCode(text.charCodeAt(p))) {
+      p += 1;
+      continue;
+    }
+    if (text[p] === '/' && text[p + 1] === '/') {
+      p += 2;
+      while (p < limit && text[p] !== '\n' && text[p] !== '\r') p += 1;
+      continue;
+    }
+    if (text[p] === '/' && text[p + 1] === '*') {
+      let end = -1;
+      for (let k = p + 2; k + 1 < limit; k += 1) {
+        if (text[k] === '*' && text[k + 1] === '/') {
+          end = k;
+          break;
+        }
+      }
+      if (end < 0) return limit;
+      p = end + 2;
+      continue;
+    }
+    break;
+  }
+  return p;
+}
+
+function collectRawMeteredNotes(text: string, skipParenStarts?: ReadonlySet<number>): string[] {
   const out: string[] = [];
   let pos = 0;
   while ((pos = text.indexOf('metered', pos)) >= 0) {
@@ -4054,38 +4330,69 @@ function collectRawMeteredNotes(text: string): string[] {
     let j = pos + 'metered'.length;
     pos = j;
     if (/[\w$]/.test(before) || /[\w$]/.test(text[j] ?? '')) continue;
-    while (j < text.length && isWhitespaceCode(text.charCodeAt(j))) j += 1;
-    if (text[j] !== '(') continue;
+    j = skipRawWsAndComments(text, j, 256);
+    if (text[j] !== '(' || skipParenStarts?.has(j)) continue;
     j += 1;
-    while (j < text.length && isWhitespaceCode(text.charCodeAt(j))) j += 1;
-    const q = text[j];
-    if (q !== "'" && q !== '"' && q !== '`') continue;
-    const bodyStart = j + 1;
-    const scanLimit = Math.min(text.length, bodyStart + 256);
-    let end = bodyStart;
-    let valid = true;
-    while (end < scanLimit && text[end] !== q) {
-      if (q !== '`' && (text[end] === '\n' || text[end] === '\r')) {
-        valid = false;
+
+    let acc = '';
+    let parts = 0;
+    let hadTrailingDynamic = false;
+    let handledTruncated = false;
+
+    while (parts < 16) {
+      j = skipRawWsAndComments(text, j, 256);
+      const q = text[j];
+      if (q !== "'" && q !== '"' && q !== '`') {
+        if (parts > 0) hadTrailingDynamic = true;
         break;
       }
-      end += text[end] === '\\' ? 2 : 1;
+      const bodyStart = j + 1;
+      const scanLimit = Math.min(text.length, bodyStart + 256);
+      let end = bodyStart;
+      let valid = true;
+      while (end < scanLimit && text[end] !== q) {
+        if (q !== '`' && (text[end] === '\n' || text[end] === '\r')) {
+          valid = false;
+          break;
+        }
+        end += text[end] === '\\' ? 2 : 1;
+      }
+      if (!valid) {
+        if (parts > 0) hadTrailingDynamic = true;
+        break;
+      }
+      if (text[end] !== q) {
+        // Bound raw literal inspection to 256 chars so O(N) scaling holds on huge or nested literals.
+        const headRaw = text.slice(bodyStart, Math.min(bodyStart + 64, text.length));
+        const headDecoded = decodeRawStringContent(headRaw) ?? headRaw;
+        const combined = acc + headDecoded;
+        if (combined.startsWith('notes.')) out.push(`${combined.slice(0, 64)}...`);
+        handledTruncated = true;
+        break;
+      }
+      const rawInner = text.slice(bodyStart, end);
+      if (q === '`' && rawInner.includes('${')) {
+        if (parts > 0) hadTrailingDynamic = true;
+        break;
+      }
+      acc += decodeRawStringContent(rawInner) ?? rawInner;
+      parts += 1;
+      if (acc.length > 256) {
+        if (acc.startsWith('notes.')) out.push(`${acc.slice(0, 64)}...`);
+        handledTruncated = true;
+        break;
+      }
+      const afterQ = skipRawWsAndComments(text, end + 1, 256);
+      if (text[afterQ] === '+') {
+        j = afterQ + 1;
+        continue;
+      }
+      break;
     }
-    if (!valid) continue;
-    if (text[end] !== q) {
-      // Bound raw literal inspection to 256 chars so O(N) scaling holds on huge or nested literals.
-      const headRaw = text.slice(bodyStart, Math.min(bodyStart + 64, text.length));
-      const headDecoded = decodeRawStringContent(headRaw) ?? headRaw;
-      if (headDecoded.startsWith('notes.')) out.push(`${headDecoded}...`);
-      continue;
+
+    if (!handledTruncated && parts > 0 && acc.startsWith('notes.')) {
+      out.push(hadTrailingDynamic ? `${acc}...` : acc);
     }
-    const rawInner = text.slice(bodyStart, end);
-    if (q === '`' && rawInner.includes('${')) continue;
-    let afterQ = end + 1;
-    while (afterQ < text.length && isWhitespaceCode(text.charCodeAt(afterQ))) afterQ += 1;
-    if (text[afterQ] === '+') continue;
-    const decoded = decodeRawStringContent(rawInner) ?? rawInner;
-    if (decoded.startsWith('notes.')) out.push(decoded);
   }
   return out;
 }
@@ -4094,11 +4401,16 @@ export function meteredNotes(text: string, options?: { includeUnresolved?: boole
   const primary = scanSource(text, { emitTokens: true, stripCommentsMode: false, stripStrings: false });
   const extraTokens = speculativeRescan(text, primary);
   const resolvedOpts = { includeUnresolved: Boolean(options?.includeUnresolved) };
+  const resolvedParenStarts = new Set<number>();
+  const ignoreUnresolvedInRanges = resolvedOpts.includeUnresolved ? primary.unambiguousRegexSpans : [];
   const found = new Set<string>([
-    ...collectMeteredNotesFromTokens(primary.tokens, text, resolvedOpts),
-    ...collectMeteredNotesFromTokens(tokenize(text, { scanRegexAsDivision: true }), text, { includeUnresolved: false }),
-    ...(extraTokens ? collectMeteredNotesFromTokens(extraTokens, text, resolvedOpts) : []),
-    ...collectRawMeteredNotes(text),
+    ...collectMeteredNotesFromTokens(primary.tokens, text, { ...resolvedOpts, resolvedParenStarts }),
+    ...collectMeteredNotesFromTokens(tokenize(text, { scanRegexAsDivision: true }), text, {
+      ...resolvedOpts,
+      ignoreUnresolvedInRanges,
+    }),
+    ...(extraTokens ? collectMeteredNotesFromTokens(extraTokens, text, { ...resolvedOpts, resolvedParenStarts }) : []),
+    ...collectRawMeteredNotes(text, resolvedParenStarts),
     ...[...text.matchAll(/\bmetered\(\s*['"`](notes\.[a-z0-9_]+)['"`]/g)].map((m) => m[1]!),
   ]);
   return [...found];
@@ -5189,9 +5501,44 @@ function decodeRawForScopeCheck(text: string): string {
 }
 
 const COMPACT_AGENT_OR_ADAPTER_RE = /@(?:ludy|crove)\/?agent|note-?ai-?model|packages\/?agent/;
-const RELATIVE_SEGMENT_RE = /\.\.?\/[^\s'"`)]+/g;
+const RELATIVE_SEGMENT_RE = /(?<![.\w$])\.\.?(?=$|[\s'"`),;:+/])(?:\/[^\s'"`)]*)?/g;
 const AGENT_PATH_SEGMENT_RE = /(?:^|\/)agent(?:$|\/)/;
 const PACKAGES_DIR_RE = /(?:^|\/)packages\/?$/;
+
+function compactSplitConcatForLeakCheck(raw: string): { compact: string; quotedJoined: string } {
+  const chunks: string[] = [];
+  const quotePieces: string[] = [];
+  let flushStart = 0;
+  let i = 0;
+  while (i < raw.length) {
+    const ch = raw[i]!;
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const gap = skipRawWsAndComments(raw, i + 1, 256);
+      if (raw[gap] === '+') {
+        const rhsStart = skipRawWsAndComments(raw, gap + 1, 256);
+        const rhsCh = raw[rhsStart];
+        if (rhsCh === "'" || rhsCh === '"' || rhsCh === '`') {
+          chunks.push(raw.slice(flushStart, i));
+          i = rhsStart + 1;
+          flushStart = i;
+          continue;
+        }
+      }
+      // Capture bounded raw short literals separated across statements after syntax errors.
+      const scanEnd = Math.min(raw.length, i + 1 + 128);
+      let j = i + 1;
+      while (j < scanEnd && raw[j] !== ch && raw[j] !== '\n' && raw[j] !== '\r') {
+        j += raw[j] === '\\' ? 2 : 1;
+      }
+      if (j < scanEnd && raw[j] === ch && j > i + 1) {
+        quotePieces.push(raw.slice(i + 1, j));
+      }
+    }
+    i += 1;
+  }
+  if (flushStart < raw.length) chunks.push(raw.slice(flushStart));
+  return { compact: chunks.join(''), quotedJoined: quotePieces.join('') };
+}
 
 const isAgentOrAdapterTextValue = (val: string, fromRelPath?: string): boolean => {
   const candidates = [val, decodeRawModulePreCollapse(val), normalizeModuleSpecifier(val)];
@@ -5329,7 +5676,8 @@ function isWorkspaceAdapterLeakRelevant(
 
   if (scan.hasInvalidSyntax) {
     const decodedRaw = decodeRawForScopeCheck(fileText);
-    const decodedCompact = decodedRaw.replace(/['"`]\s*\+\s*['"`]/g, '');
+    const { compact: decodedCompact, quotedJoined: rawQuotedJoined } = compactSplitConcatForLeakCheck(decodedRaw);
+    const decodedCandidates = [decodedRaw, decodedCompact, rawQuotedJoined].filter(Boolean);
     const matchesDecoded = (candidate: string): boolean =>
       candidate.includes('@ludy/agent') ||
       candidate.includes('@crove/agent') ||
@@ -5339,10 +5687,10 @@ function isWorkspaceAdapterLeakRelevant(
       COMPACT_AGENT_OR_ADAPTER_RE.test(candidate) ||
       ((candidate.includes('@ludy') || candidate.includes('@crove') || candidate.includes('packages')) && /\bagent\b/.test(candidate)) ||
       ((candidate.includes('note-ai') || (/\bnote\b/.test(candidate) && /\bai\b/.test(candidate))) && /\bmodel\b/.test(candidate));
-    if (matchesDecoded(decodedRaw) || matchesDecoded(decodedCompact)) {
+    if (decodedCandidates.some(matchesDecoded)) {
       return true;
     }
-    for (const rawStr of [decodedRaw, decodedCompact]) {
+    for (const rawStr of decodedCandidates) {
       if (fromRelPath) {
         const hasAgentWordInRaw = /\bagent\b/.test(rawStr);
         for (const m of rawStr.matchAll(RELATIVE_SEGMENT_RE)) {
@@ -7211,5 +7559,120 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     const stores = sources(kernelSrc).some((file) => readFileSync(file, 'utf8').includes('kernel.member_vy.result.store'));
     if (stores) expect(sources(MEMBER_VY).length, 'the store command exists but no feature module is under packages/agent/src/member-vy').toBeGreaterThan(0);
     else expect(sources(MEMBER_VY).length, 'member-vy modules before the store command exists').toBe(0);
+  });
+
+  it('closes parser P3 gaps without relaxing rules or degrading O(N) scaling (#3518, #5035)', () => {
+    // 1. scanRegexAsDivision preserves includeUnresolved consistency.
+    expect(meteredNotes('x / metered(dynKey, fn) / 2', { includeUnresolved: true })).toEqual([
+      'unresolved metered key (dynKey)',
+    ]);
+    expect(disallowedMeteredNotes('other.ts', 'x / metered(dynKey, fn) / 2')).toEqual([
+      'unresolved metered key (dynKey)',
+    ]);
+
+    // 2. Unassigned inline (await import('node:module')).createRequire(...) and require('node:module').createRequire(...) are caught.
+    for (const inlineCreateReq of [
+      "(await import('node:module')).createRequire(import.meta.url)('@ludy/db');",
+      "require('node:module').createRequire(import.meta.url)('@ludy/db');",
+      "(await import('module'))?.['createRequire'](import.meta.url)('@ludy/db');",
+    ]) {
+      const violations = memberVyViolations(inlineCreateReq);
+      expect(violations, inlineCreateReq).toContain('imports @ludy/db');
+      expect(violations, inlineCreateReq).toContain('uses require alias or bare require reference');
+    }
+
+    // 3. collectScopedConstBindings handles generic block fns, inline object-union return types, and braceless for loops.
+    expect(
+      disallowedMeteredNotes('other.ts', "const k = 'finance.a'; function run<T>(k: T) { metered(k, fn); }"),
+    ).toEqual(['unresolved metered key (k)']);
+    expect(
+      disallowedMeteredNotes(
+        'other.ts',
+        "const k = 'finance.a'; function run(k: string): { a: number } | { b: string } { metered(k, fn); return { a: 1 }; }",
+      ),
+    ).toEqual(['unresolved metered key (k)']);
+    expect(
+      disallowedMeteredNotes(
+        'other.ts',
+        "const k = 'finance.a'; for (const k of items) metered(k, fn); metered(k, fn);",
+      ),
+    ).toEqual(['unresolved metered key (k)']);
+
+    // 4. Indirect require/import('./meter.ts').metered and bracketed call/apply/Reflect['apply'] extract note keys.
+    expect(disallowedMeteredNotes('other.ts', "require('./meter.ts').metered('notes.secret', fn);")).toContain(
+      'notes.secret',
+    );
+    expect(
+      disallowedMeteredNotes('other.ts', "const f = (await import('./meter.ts')).metered; f('notes.secret', fn);"),
+    ).toContain('notes.secret');
+    expect(disallowedMeteredNotes('other.ts', "const m = require('./meter.ts'); m.metered('notes.secret', fn);")).toContain(
+      'notes.secret',
+    );
+    expect(disallowedMeteredNotes('other.ts', "metered['call'](null, 'notes.secret', fn);")).toContain('notes.secret');
+    expect(disallowedMeteredNotes('other.ts', "metered?.['apply'](null, ['notes.secret', fn]);")).toContain(
+      'notes.secret',
+    );
+    expect(disallowedMeteredNotes('other.ts', "Reflect['apply'](metered, null, ['notes.secret', fn]);")).toContain(
+      'notes.secret',
+    );
+    expect(disallowedMeteredNotes('other.ts', "Reflect?.['apply'](metered, null, ['notes.secret', fn]);")).toContain(
+      'notes.secret',
+    );
+
+    // 5. isEnclosingPatternContext + skipOptionalTypeForward handle default params, generics, and benign if(fn({ require: true })).
+    expect(memberVyViolations('if (fn({ require: true })) { return 1; }')).toEqual([]);
+    expect(
+      memberVyViolations('function run<T>(a = 1, { require: req }: T): { ok: boolean } { return req; }'),
+    ).toContain('uses require alias or bare require reference');
+    expect(memberVyViolations('const [a = 1, { require: req }] = items;')).toContain(
+      'uses require alias or bare require reference',
+    );
+
+    // 6. collectRawMeteredNotes folds comments before '(' / quotes / '+' and 3-way literal splits; leak check handles unclosed backticks + comments + 3-way splits.
+    expect(meteredNotes("metered /* c */ ( /* q */ 'no' /* c1 */ + 't' + 'es.summary', fn)")).toContain(
+      'notes.summary',
+    );
+    expect(
+      workspaceAdapterLeakViolations(
+        "const bad = `unclosed;\nrequire('@lu' /* c */ + 'dy/' /* c2 */ + 'agent');",
+        ['summarize'],
+        'apps/kernel/src/foo.ts',
+      ).length,
+    ).toBeGreaterThan(0);
+
+    // 7. RELATIVE_SEGMENT_RE catches bare '.' and '..' (including unclosed backtick context) without matching spread '...'.
+    expect(
+      workspaceAdapterLeakViolations(
+        "const bad = `unclosed;\n// agent\nrequire('..');",
+        ['summarize'],
+        'packages/other/leak.ts',
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(workspaceAdapterLeakViolations('const spread = { ...x };', ['summarize'], 'packages/other/ok.ts')).toEqual([]);
+
+    // Regex literals inside code (including after comparison ops like ===) must not trigger false-positive unresolved metered calls while ambiguous division/regex spots still do.
+    expect(disallowedMeteredNotes('other.ts', 'const pattern = /metered(name)/;')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'enabled === /metered(name)/.test(text);')).toEqual([]);
+    expect(
+      disallowedMeteredNotes('other.ts', "const suffix = 'summary'; metered('notes.' + suffix, fn);"),
+    ).toEqual(['notes.summary']);
+    expect(disallowedMeteredNotes('other.ts', '(a as Foo<number>) / metered(dynKey) / 2')).toEqual([
+      'unresolved metered key (dynKey)',
+    ]);
+    expect(disallowedMeteredNotes('other.ts', 'a as Foo<number> / metered(dynKey) / 2')).toEqual([
+      'unresolved metered key (dynKey)',
+    ]);
+    expect(
+      meteredNotes("const broken = `unclosed;\nmetered('notes.' + dynVar, fn);"),
+    ).toContain('notes....');
+
+    // Worst-case 500 KB unclosed-backtick / unclosed '/*' comment+quote input stays strictly O(N).
+    const tStart = performance.now();
+    const largeRaw = `\`unclosed; ${"'x' /* c */ + ".repeat(40_000)}'y'`;
+    expect(workspaceAdapterLeakViolations(largeRaw, ['summarize'], 'packages/other/ok.ts')).toEqual([]);
+    expect(workspaceAdapterLeakViolations(`\`unclosed; ${"'/*".repeat(100_000)}`, ['summarize'], 'packages/other/ok.ts')).toEqual([]);
+    expect(meteredNotes("metered(/* ".repeat(40_000))).toEqual([]);
+    expect(meteredNotes("metered(/* c */ ".repeat(30_000))).toEqual([]);
+    expect(performance.now() - tStart).toBeLessThan(10_000);
   });
 });

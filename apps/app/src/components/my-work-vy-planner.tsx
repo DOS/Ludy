@@ -157,6 +157,23 @@ export function MyWorkVyPlannerPanel({
 
   const planMutation = useMutation({
     mutationFn: () => api.notes.todoPlan({ timeZone: viewerTz, language: locale }),
+    onMutate: () => {
+      const clearErrors = <T extends { error: string | null }>(prev: Record<string, T>) => {
+        let changed = false;
+        const next: Record<string, T> = {};
+        for (const [id, d] of Object.entries(prev)) {
+          if (d.error !== null) {
+            changed = true;
+            next[id] = { ...d, error: null };
+          } else {
+            next[id] = d;
+          }
+        }
+        return changed ? next : prev;
+      };
+      setFocusDrafts(clearErrors);
+      setRescheduleDrafts(clearErrors);
+    },
     onSuccess: (data) => {
       setResult(data);
       syncDrafts(data);
@@ -469,7 +486,7 @@ export function MyWorkVyPlannerPanel({
                                     aria-label={t('focusDateLabel', { title: item.title })}
                                     value={draft.dueOn}
                                     min={result.today}
-                                    disabled={draft.applied || applyFocus.isPending}
+                                    disabled={draft.applied || planMutation.isPending || applyFocus.isPending}
                                     inputClassName="text-xs max-md:min-h-11"
                                     onChange={(nextDueOn) =>
                                       setFocusDrafts((prev) => ({
@@ -483,7 +500,7 @@ export function MyWorkVyPlannerPanel({
                                     size="sm"
                                     variant={draft.applied ? 'outline' : 'default'}
                                     className="ml-auto max-md:min-h-11"
-                                    disabled={draft.applied || isPastDate || applyFocus.isPending}
+                                    disabled={draft.applied || isPastDate || planMutation.isPending || applyFocus.isPending}
                                     loading={applyFocus.isPending && applyFocus.variables?.todoId === item.todoId}
                                     onClick={() => applyFocus.mutate(item)}
                                     data-testid={`my-work-vy-focus-apply-${item.todoId}`}
@@ -508,7 +525,7 @@ export function MyWorkVyPlannerPanel({
                             size="sm"
                             className="max-md:min-h-11"
                             loading={applyAllReschedules.isPending}
-                            disabled={applyAllReschedules.isPending || applyOneReschedule.isPending}
+                            disabled={planMutation.isPending || applyAllReschedules.isPending || applyOneReschedule.isPending}
                             onClick={() => applyAllReschedules.mutate()}
                             data-testid="my-work-vy-reschedule-apply-all"
                           >
@@ -575,6 +592,7 @@ export function MyWorkVyPlannerPanel({
                                       draft.applied ||
                                       !draft.dueOn ||
                                       draft.dueOn < result.today ||
+                                      planMutation.isPending ||
                                       applyOneReschedule.isPending ||
                                       applyAllReschedules.isPending
                                     }
@@ -618,7 +636,12 @@ export function MyWorkVyPlannerPanel({
               variant="outline"
               className="max-md:min-h-11"
               loading={planMutation.isPending}
-              disabled={planMutation.isPending}
+              disabled={
+                planMutation.isPending ||
+                applyFocus.isPending ||
+                applyOneReschedule.isPending ||
+                applyAllReschedules.isPending
+              }
               onClick={() => planMutation.mutate()}
               data-testid="my-work-vy-rerun-btn"
             >

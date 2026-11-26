@@ -304,7 +304,7 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
     ]);
   });
 
-  it('skips the advisory lock when runId is omitted', async () => {
+  it('skips the per-run advisory lock when runId is omitted while still acquiring todo_sort_order', async () => {
     const { trx, queries, insertedSeqs } = createTodoAcceptTrx({
       note: { id: NOTE_ID, revision: 2, deleted_at: null },
     });
@@ -318,7 +318,9 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
     const out = await todoAcceptSuggestions.handler(ctx, noRunInput);
     expect(out.created).toBe(1);
     expect(insertedSeqs).toEqual([null]);
-    expect(queries.some((q) => q.sql.includes('pg_advisory_xact_lock'))).toBe(false);
+    const lockParams = queries.filter((q) => q.sql.includes('pg_advisory_xact_lock')).flatMap((q) => q.parameters);
+    expect(lockParams.some((p) => String(p).includes('todo_accept_run'))).toBe(false);
+    expect(lockParams).toContain(`ludy_notes.todo_sort_order:${ORG_ID}:${USER_ID}`);
   });
 
   it('rejects replay when any prior row exists or todo_source_run_once_uq conflicts', async () => {

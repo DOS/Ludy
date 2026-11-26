@@ -205,6 +205,7 @@ export function classifyNoteAttachment(
     if (
       trimmedLower.includes('<svg') ||
       markupStart.startsWith('<!doctype svg') ||
+      /<!doctype\s+svg(?=[\s>]|$)/.test(trimmedLower) ||
       ext === 'svg' ||
       declared === 'image/svg+xml'
     ) {

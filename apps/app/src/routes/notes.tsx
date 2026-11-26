@@ -860,7 +860,8 @@ export function NotesPage() {
   const found = useQuery({ ...orpc.notes.search.queryOptions({ input: { q: search.q ?? '' } }), enabled: Boolean(search.q) });
   const notes = search.q ? found : list;
   const open = useQuery({ ...orpc.notes.get.queryOptions({ input: { noteId: search.note ?? '' } }), enabled: Boolean(search.note) });
-  const mineLinkable = useQuery({ ...orpc.notes.list.queryOptions({ input: { view: 'mine' } }), enabled: (Boolean(search.note) || importOpen) && role !== undefined });
+  const mineLinkable = useQuery({ ...orpc.notes.list.queryOptions({ input: { view: 'mine' } }), enabled: Boolean(search.note) && role !== undefined });
+  // Preview-only duplicate estimates capped at the notes.list schema max (200); the server import command checks all rows under lock.
   const importMineNotes = useQuery({
     ...orpc.notes.list.queryOptions({ input: { view: 'mine', limit: 200 } }),
     enabled: writer && importOpen,

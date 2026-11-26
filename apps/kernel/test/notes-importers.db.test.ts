@@ -682,4 +682,63 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     expect(rawBadUtf8.status).toBe(400);
     expect(((await rawBadUtf8.json()) as { code?: string }).code).toBe('NOTE_IMPORT_INVALID');
   });
+
+  it('serializes concurrent Todoist import, list creation, and todo creation without sort_key collisions or deadlocks (#5035)', async () => {
+    const ownerHeaders = await asJsonHeaders('owner');
+    const authHdrs = await asAuthHeaders('owner');
+    const concurrentRows = Array.from({ length: 260 }, (_, idx) => `task,Concurrent Task ${String(idx).padStart(3, '0')},,${(idx % 4) + 1},1,,,`).join('\n');
+    const concurrentCsv = `TYPE,CONTENT,DESCRIPTION,PRIORITY,INDENT,DATE,TIMEZONE,LABELS\n${concurrentRows}\n`;
+
+    const importReq = async () => {
+      const form = new FormData();
+      form.append('file', new Blob([new TextEncoder().encode(concurrentCsv)], { type: 'text/csv' }), 'Concurrent Import.csv');
+      const res = await app.request('/api/notes/import/todoist', {
+        method: 'POST',
+        headers: authHdrs,
+        body: form,
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+
+    const [importRes, listRes1, listRes2, ...createResults] = await Promise.all([
+      importReq(),
+      rpc('notes/todos/lists/create', ownerHeaders, { name: 'Concurrent List A', color: 'blue', sections: [] }),
+      rpc('notes/todos/lists/create', ownerHeaders, { name: 'Concurrent List B', color: 'emerald', sections: [] }),
+      ...Array.from({ length: 6 }, (_, i) => rpc('notes/todos/create', ownerHeaders, { title: `Manual Concurrent ${i}` })),
+    ]);
+
+    expect(importRes.status, JSON.stringify(importRes.body)).toBe(201);
+    expect(listRes1.status, JSON.stringify(listRes1.body)).toBe(200);
+    expect(listRes2.status, JSON.stringify(listRes2.body)).toBe(200);
+    for (const cr of createResults) {
+      expect(cr.status, JSON.stringify(cr.body)).toBe(200);
+    }
+
+    const createdTodoIds = [
+      ...((importRes.body as unknown as TodoistImportResult).todoIds ?? []),
+      ...createResults.map((r) => String(r.body.todoId)),
+    ];
+    expect(createdTodoIds).toHaveLength(266);
+
+    const ownerTodos = await admin(async (c) =>
+      (await c.query<{ id: string; owner_user_id: string; sort_key: string }>(
+        `SELECT id, owner_user_id, sort_key FROM ludy_notes.todo WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY sort_key ASC, id ASC`,
+        [orgId, createdTodoIds],
+      )).rows,
+    );
+    expect(ownerTodos).toHaveLength(266);
+    const ownerUserId = ownerTodos[0]!.owner_user_id;
+    expect(ownerTodos.every((r) => r.owner_user_id === ownerUserId)).toBe(true);
+    expect(new Set(ownerTodos.map((r) => r.sort_key)).size).toBe(266);
+    expect(ownerTodos.every((r) => r.sort_key.length <= 48)).toBe(true);
+
+    const ownerLists = await admin(async (c) =>
+      (await c.query<{ id: string; sort_key: string }>(
+        `SELECT id, sort_key FROM ludy_notes.todo_list WHERE org_id = $1 AND owner_user_id = $2 AND deleted_at IS NULL ORDER BY sort_key ASC, id ASC`,
+        [orgId, ownerUserId],
+      )).rows,
+    );
+    expect(ownerLists.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(ownerLists.map((r) => r.sort_key)).size).toBe(ownerLists.length);
+  });
 });

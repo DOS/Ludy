@@ -66,6 +66,40 @@ export function buildOrganizeDrafts(data: NoteOrganizeResult | null): Record<str
   return next;
 }
 
+export function computeOrganizeApplyPatch(
+  item: Pick<NoteOrganizeResult['suggestions'][number], 'canEditTags' | 'existingTags'>,
+  draft: Pick<OrganizeRowDraft, 'notebookId' | 'tagsInput'>,
+): {
+  notebookId?: string;
+  tags?: string[];
+  parsedAddedTags: string[];
+  hasTagChange: boolean;
+  canApply: boolean;
+} {
+  const notebookId = draft.notebookId || undefined;
+  const normalizedExisting = [
+    ...new Set(
+      item.existingTags
+        .map((tag) => tag.trim().toLowerCase().slice(0, NOTE_TAG_MAX))
+        .filter(Boolean),
+    ),
+  ].slice(0, NOTE_TAGS_MAX);
+  const existingSet = new Set(normalizedExisting);
+  const parsedAddedTags = item.canEditTags ? parseOrganizerTags(draft.tagsInput) : [];
+  const addedNewTags = parsedAddedTags.filter((tag) => !existingSet.has(tag));
+  const mergedTags = item.canEditTags
+    ? [...normalizedExisting, ...addedNewTags].slice(0, NOTE_TAGS_MAX)
+    : undefined;
+  const hasTagChange = Boolean(item.canEditTags && mergedTags && mergedTags.length > normalizedExisting.length);
+  return {
+    ...(notebookId ? { notebookId } : {}),
+    ...(hasTagChange && mergedTags ? { tags: mergedTags } : {}),
+    parsedAddedTags,
+    hasTagChange,
+    canApply: Boolean(notebookId) || hasTagChange,
+  };
+}
+
 export function NotesVyOrganizerTrigger({
   open,
   onToggle,
@@ -137,6 +171,21 @@ export function NotesVyOrganizerPanel({
 
   const organizeMutation = useMutation({
     mutationFn: () => api.notes.organize({ language: locale }),
+    onMutate: () => {
+      setDrafts((prev) => {
+        let changed = false;
+        const next: Record<string, OrganizeRowDraft> = {};
+        for (const [id, d] of Object.entries(prev)) {
+          if (d.error !== null) {
+            changed = true;
+            next[id] = { ...d, error: null };
+          } else {
+            next[id] = d;
+          }
+        }
+        return changed ? next : prev;
+      });
+    },
     onSuccess: (data) => {
       setResult(data);
       syncDrafts(data);
@@ -162,23 +211,13 @@ export function NotesVyOrganizerPanel({
   };
 
   const applySuggestion = async (item: NoteOrganizeResult['suggestions'][number], draft: OrganizeRowDraft) => {
-    const nextNotebookId = draft.notebookId || undefined;
-    const addedTags = item.canEditTags ? parseOrganizerTags(draft.tagsInput) : [];
-    const mergedTags = item.canEditTags
-      ? [
-          ...new Set([
-            ...item.existingTags.map((tag) => tag.trim().toLowerCase().slice(0, NOTE_TAG_MAX)).filter(Boolean),
-            ...addedTags,
-          ]),
-        ].slice(0, NOTE_TAGS_MAX)
-      : undefined;
-    const hasTagChange = item.canEditTags && addedTags.length > 0;
-    if (!nextNotebookId && !hasTagChange) return false;
+    const patch = computeOrganizeApplyPatch(item, draft);
+    if (!patch.canApply) return false;
     await api.notes.update({
       noteId: item.noteId,
       revision: item.revision,
-      ...(nextNotebookId ? { notebookId: nextNotebookId } : {}),
-      ...(hasTagChange && mergedTags ? { tags: mergedTags } : {}),
+      ...(patch.notebookId ? { notebookId: patch.notebookId } : {}),
+      ...(patch.hasTagChange && patch.tags ? { tags: patch.tags } : {}),
     });
     return true;
   };
@@ -192,10 +231,11 @@ export function NotesVyOrganizerPanel({
         applied: false,
         error: null,
       };
-      await applySuggestion(item, draft);
-      return item.noteId;
+      const updated = await applySuggestion(item, draft);
+      return updated ? item.noteId : null;
     },
     onSuccess: (noteId) => {
+      if (!noteId) return;
       setDrafts((prev) => {
         const cur = prev[noteId];
         return cur ? { ...prev, [noteId]: { ...cur, applied: true, error: null } } : prev;
@@ -269,7 +309,7 @@ export function NotesVyOrganizerPanel({
     ? result.suggestions.filter((s) => {
         const draft = drafts[s.noteId];
         if (!draft || draft.applied) return false;
-        return Boolean(draft.notebookId) || (s.canEditTags && parseOrganizerTags(draft.tagsInput).length > 0);
+        return computeOrganizeApplyPatch(s, draft).canApply;
       }).length
     : 0;
 
@@ -337,8 +377,8 @@ export function NotesVyOrganizerPanel({
                       const compatibleNotebooks = notebooks.filter(
                         (nb) => item.visibility !== 'org' || nb.visibility === 'org',
                       );
-                      const parsedAddedTags = item.canEditTags ? parseOrganizerTags(draft.tagsInput) : [];
-                      const canApply = Boolean(draft.notebookId) || parsedAddedTags.length > 0;
+                      const { parsedAddedTags, canApply } = computeOrganizeApplyPatch(item, draft);
+                      const rowBusy = organizeMutation.isPending || applyOne.isPending || applyAll.isPending;
                       return (
                         <ProposalSurface
                           as="li"
@@ -370,7 +410,7 @@ export function NotesVyOrganizerPanel({
                               size="sm"
                               aria-label={t('notebookLabel', { title: item.title })}
                               value={draft.notebookId}
-                              disabled={draft.applied || applyOne.isPending || applyAll.isPending}
+                              disabled={draft.applied || rowBusy}
                               onChange={(e) =>
                                 setDrafts((prev) => ({
                                   ...prev,
@@ -401,7 +441,7 @@ export function NotesVyOrganizerPanel({
                                       aria-label={t('tagsLabel', { title: item.title })}
                                       value={draft.tagsInput}
                                       placeholder={t('tagsPlaceholder')}
-                                      disabled={draft.applied || applyOne.isPending || applyAll.isPending}
+                                      disabled={draft.applied || rowBusy}
                                       className="text-xs max-md:min-h-11"
                                       onChange={(e) =>
                                         setDrafts((prev) => ({
@@ -431,7 +471,7 @@ export function NotesVyOrganizerPanel({
                                 size="sm"
                                 variant={draft.applied ? 'outline' : 'default'}
                                 className="shrink-0 max-md:min-h-11"
-                                disabled={draft.applied || !canApply || applyOne.isPending || applyAll.isPending}
+                                disabled={draft.applied || !canApply || rowBusy}
                                 loading={applyOne.isPending && applyOne.variables?.noteId === item.noteId}
                                 onClick={() => applyOne.mutate(item)}
                                 data-testid={`notes-vy-organize-apply-${item.noteId}`}
@@ -470,7 +510,7 @@ export function NotesVyOrganizerPanel({
               variant="outline"
               className="max-md:min-h-11"
               loading={organizeMutation.isPending}
-              disabled={organizeMutation.isPending}
+              disabled={organizeMutation.isPending || applyOne.isPending || applyAll.isPending}
               onClick={() => organizeMutation.mutate()}
               data-testid="notes-vy-organize-rerun-btn"
             >
@@ -483,7 +523,7 @@ export function NotesVyOrganizerPanel({
               size="sm"
               className="max-md:min-h-11"
               loading={applyAll.isPending}
-              disabled={applyAll.isPending || applyOne.isPending}
+              disabled={organizeMutation.isPending || applyAll.isPending || applyOne.isPending}
               onClick={() => applyAll.mutate()}
               data-testid="notes-vy-organize-apply-all"
             >

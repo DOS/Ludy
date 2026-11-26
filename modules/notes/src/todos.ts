@@ -296,6 +296,31 @@ async function lockTodoSeries(ctx: Pick<QueryContext, 'trx' | 'orgId'>, seriesKe
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_notes.todo_series:${ctx.orgId}:${seriesKey}`}, 0))`.execute(ctx.trx);
 }
 
+// Serializes per-(org, user) personal to-do sort_key reads and REBALANCE_AT key spreading so
+// concurrent creates, imports, reorders, and recurring spawns never compute colliding keys.
+export async function lockTodoSortOrder(ctx: Pick<CommandContext, 'trx' | 'orgId'>, userId: string): Promise<void> {
+  const lockKey = `ludy_notes.todo_sort_order:${ctx.orgId.toLowerCase()}:${userId.toLowerCase()}`;
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
+}
+
+// Serializes per-(org, user) personal to-do list creation and sort_key rebalancing.
+export async function lockTodoListOrder(ctx: Pick<CommandContext, 'trx' | 'orgId'>, userId: string): Promise<void> {
+  const lockKey = `ludy_notes.todo_list_order:${ctx.orgId.toLowerCase()}:${userId.toLowerCase()}`;
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
+}
+
+// Lock rows in canonical id ASC order before spreading sort keys so multi-row rebalances never deadlock.
+export async function lockTodosInOrder(ctx: Pick<CommandContext, 'trx' | 'orgId'>, ids: readonly string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await sql`SELECT id FROM ludy_notes.todo WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${[...ids]}::uuid[]) ORDER BY id FOR UPDATE`.execute(ctx.trx);
+}
+
+// Lock personal to-do lists in canonical id ASC order before multi-row sort_key updates.
+export async function lockTodoListsInOrder(ctx: Pick<CommandContext, 'trx' | 'orgId'>, ids: readonly string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await sql`SELECT id FROM ludy_notes.todo_list WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${[...ids]}::uuid[]) ORDER BY id FOR UPDATE`.execute(ctx.trx);
+}
+
 function assertNotInTrash(row: Pick<SummaryRow, 'deleted_at'>): void {
   if (row.deleted_at !== null) throw new DomainError('TODO_IN_TRASH', 409, 'Việc này đang ở thùng rác; hãy khôi phục trước');
 }
@@ -394,9 +419,18 @@ export async function ownKeys(ctx: CommandContext, except: string | null): Promi
 }
 
 // Fresh, evenly spread keys for the caller's whole list, in its current order (keys grown long, or two equal).
-async function rebalance(ctx: CommandContext, rows: ReadonlyArray<{ id: string }>): Promise<Map<string, string>> {
+async function rebalance(
+  ctx: CommandContext,
+  rows: ReadonlyArray<{ id: string }>,
+  includeId: string | null = null,
+): Promise<Map<string, string>> {
   const keys = spreadKeys(rows.length);
   const ids = rows.map((r) => r.id);
+  const lockIds = includeId !== null && !ids.includes(includeId) ? [...ids, includeId] : ids;
+  if (lockIds.length > 0) {
+    // Lock all affected rows (and moved row if unlocked) in canonical id ASC order first so multi-row rebalance never deadlocks.
+    await lockTodosInOrder(ctx, lockIds);
+  }
   if (ids.length > 0) {
     // One statement for the whole list; the update policy still limits it to the caller's own rows.
     await sql`UPDATE ludy_notes.todo AS t SET sort_key = v.key
@@ -408,7 +442,13 @@ async function rebalance(ctx: CommandContext, rows: ReadonlyArray<{ id: string }
 
 // A key between two neighbors of the caller's list (by index in `rows`, -1 or rows.length for an end), giving the list
 // fresh keys first when the two are equal or the new key would grow long.
-export async function placeBetween(ctx: CommandContext, rows: Array<{ id: string; sort_key: string }>, lo: number, hi: number): Promise<string> {
+export async function placeBetween(
+  ctx: CommandContext,
+  rows: Array<{ id: string; sort_key: string }>,
+  lo: number,
+  hi: number,
+  includeId: string | null = null,
+): Promise<string> {
   const keyAt = (i: number) => (i < 0 || i >= rows.length ? null : (rows[i] as { sort_key: string }).sort_key);
   const a = keyAt(lo);
   const b = keyAt(hi);
@@ -417,7 +457,7 @@ export async function placeBetween(ctx: CommandContext, rows: Array<{ id: string
     // A key that ends in '0' from elsewhere can leave no room the byte order agrees with; fresh keys then.
     if (key.length <= REBALANCE_AT && (a === null || a < key) && (b === null || key < b)) return key;
   }
-  const fresh = await rebalance(ctx, rows);
+  const fresh = await rebalance(ctx, rows, includeId);
   const freshAt = (i: number) => (i < 0 || i >= rows.length ? null : (fresh.get((rows[i] as { id: string }).id) as string));
   return keyBetween(freshAt(lo), freshAt(hi));
 }
@@ -446,6 +486,7 @@ export const todoCreate = defineCommand({
     }
     const listId = normalizeListId(input.listId);
     await validateTodoListAndSection(ctx, listId, input.sectionId, true);
+    await lockTodoSortOrder(ctx, userId);
     // A new to-do goes first in the caller's list.
     const rows = await ownKeys(ctx, null);
     const sortKey = await placeBetween(ctx, rows, -1, 0);
@@ -519,6 +560,7 @@ export const todoQuickCapture = defineCommand({
   extension: { scope: 'notes' },
   handler: async (ctx, input): Promise<TodoWritten> => {
     const userId = userOf(ctx.actor);
+    await lockTodoSortOrder(ctx, userId);
     const rows = await ownKeys(ctx, null);
     const sortKey = await placeBetween(ctx, rows, -1, 0);
     const when = due(input);
@@ -699,27 +741,59 @@ export const todoComplete = defineCommand({
   handler: async (ctx, input): Promise<TodoCompleteResult> => {
     const userId = userOf(ctx.actor);
     const todoId = input.todoId.toLowerCase();
-    // Global lock DAG: series advisory lock -> todo_list FOR SHARE -> todo FOR UPDATE (ordered by id ASC).
+    // Global lock DAG: series advisory lock -> todo_list FOR SHARE -> todo_sort_order advisory lock -> todo FOR UPDATE (ordered by id ASC).
     const seriesKey = await seriesLockKey(ctx, todoId);
     await lockTodoSeries(ctx, seriesKey);
     const stopSeries = input.stopSeries === true;
     let lockedList: { id: string; sections: unknown } | undefined;
+    let precomputedSortKey: string | null = null;
     if (!stopSeries) {
       const peek = await ctx.trx
         .selectFrom('ludy_notes.todo')
-        .select(['list_id', 'recurrence'])
+        .select(['list_id', 'recurrence', 'status', 'deleted_at', 'series_id', 'created_at'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', todoId)
         .executeTakeFirst();
-      if (peek && peek.recurrence !== null && peek.list_id !== null) {
-        lockedList = await ctx.trx
-          .selectFrom('ludy_notes.todo_list')
-          .select(['id', 'sections'])
+      if (peek && peek.recurrence !== null && peek.status === 'open' && peek.deleted_at === null) {
+        // Check in O(1) whether a newer sibling already suppresses spawning under seriesLock before reading ownKeys / rebalancing.
+        const peekSeriesId = peek.series_id ?? todoId;
+        const peekCreatedAt = new Date(peek.created_at).getTime();
+        const sameMsStart = new Date(peekCreatedAt);
+        const nextMsStart = new Date(peekCreatedAt + 1);
+        const newerSibling = await ctx.trx
+          .selectFrom('ludy_notes.todo')
+          .select('id')
           .where('org_id', '=', ctx.orgId)
-          .where('id', '=', peek.list_id)
+          .where('series_id', '=', peekSeriesId)
+          .where('id', '<>', todoId)
           .where('deleted_at', 'is', null)
-          .forShare()
+          .where((eb) =>
+            eb.or([
+              eb('created_at', '>=', nextMsStart),
+              eb.and([eb('created_at', '>=', sameMsStart), eb('id', '>', todoId)]),
+            ]),
+          )
+          .limit(1)
           .executeTakeFirst();
+        if (!newerSibling) {
+          if (peek.list_id !== null) {
+            lockedList = await ctx.trx
+              .selectFrom('ludy_notes.todo_list')
+              .select(['id', 'sections'])
+              .where('org_id', '=', ctx.orgId)
+              .where('id', '=', peek.list_id)
+              .where('deleted_at', 'is', null)
+              .forShare()
+              .executeTakeFirst();
+          }
+          await lockTodoSortOrder(ctx, userId);
+          const preRows = await ownKeys(ctx, null);
+          const at = preRows.findIndex((r) => r.id === todoId);
+          precomputedSortKey =
+            at >= 0
+              ? await placeBetween(ctx, preRows, at, at + 1, todoId)
+              : await placeBetween(ctx, preRows, -1, 0, todoId);
+        }
       }
     }
     let lockedOpenSiblings: Array<{ id: string; recurrence: unknown }> = [];
@@ -868,9 +942,10 @@ export const todoComplete = defineCommand({
               .executeTakeFirst();
             readableSourceNoteId = noteRow?.id ?? null;
           }
-          const rows = await ownKeys(ctx, null);
-          const at = rows.findIndex((r) => r.id === before.id);
-          const sortKey = at >= 0 ? await placeBetween(ctx, rows, at, at + 1) : await placeBetween(ctx, rows, -1, 0);
+          if (precomputedSortKey === null) {
+            throw new DomainError('CONFLICT', 409, 'Chuỗi việc lặp vừa thay đổi; vui lòng thử lại');
+          }
+          const sortKey = precomputedSortKey;
           let nextListId: string | null = before.list_id;
           let nextSectionId: string | null = before.section_id;
           if (nextListId !== null) {
@@ -1212,13 +1287,19 @@ export const todoReorder = defineCommand({
   access: WRITERS,
   target,
   handler: async (ctx, input): Promise<TodoWritten> => {
-    userOf(ctx.actor);
-    const moved = await load(ctx, input.todoId, true);
-    assertNotInTrash(moved);
+    const userId = userOf(ctx.actor);
+    await lockTodoSortOrder(ctx, userId);
+    const peek = await load(ctx, input.todoId, false);
+    assertNotInTrash(peek);
     const rows = await ownKeys(ctx, input.todoId);
     const at = rows.findIndex((r) => r.id === input.anchorId);
     if (at < 0) throw notFound();
-    const key = input.place === 'before' ? await placeBetween(ctx, rows, at - 1, at) : await placeBetween(ctx, rows, at, at + 1);
+    const key =
+      input.place === 'before'
+        ? await placeBetween(ctx, rows, at - 1, at, input.todoId)
+        : await placeBetween(ctx, rows, at, at + 1, input.todoId);
+    const moved = await load(ctx, input.todoId, true);
+    assertNotInTrash(moved);
     await ctx.trx.updateTable('ludy_notes.todo').set({ sort_key: key }).where('org_id', '=', ctx.orgId).where('id', '=', input.todoId).execute();
     ctx.audit({ todoId: input.todoId, place: input.place, anchorId: input.anchorId });
     return written(moved);
@@ -1575,6 +1656,7 @@ export const todoListCreate = defineCommand({
   access: WRITERS,
   handler: async (ctx, input): Promise<TodoListWritten> => {
     const userId = userOf(ctx.actor);
+    await lockTodoListOrder(ctx, userId);
     const existing = await ctx.trx
       .selectFrom('ludy_notes.todo_list')
       .select(['id', 'sort_key'])
@@ -1587,13 +1669,13 @@ export const todoListCreate = defineCommand({
     let sortKey = keyBetween(existing.at(-1)?.sort_key ?? null, null);
     if (sortKey.length > REBALANCE_AT) {
       const fresh = spreadKeys(existing.length + 1);
-      for (let i = 0; i < existing.length; i++) {
-        await ctx.trx
-          .updateTable('ludy_notes.todo_list')
-          .set({ sort_key: fresh[i] as string })
-          .where('org_id', '=', ctx.orgId)
-          .where('id', '=', existing[i]!.id)
-          .execute();
+      const ids = existing.map((r) => r.id);
+      if (ids.length > 0) {
+        const keys = fresh.slice(0, ids.length);
+        await lockTodoListsInOrder(ctx, ids);
+        await sql`UPDATE ludy_notes.todo_list AS l SET sort_key = v.key
+          FROM unnest(${ids}::uuid[], ${keys}::text[]) AS v(id, key)
+          WHERE l.org_id = ${ctx.orgId}::uuid AND l.id = v.id`.execute(ctx.trx);
       }
       sortKey = fresh[existing.length] as string;
     }

@@ -1,6 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Unit tests for sourceNoteId validation, batch loading, and audit behavior (#1676, notes plan step N7).
+import {
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+  type CompiledQuery,
+  type DatabaseConnection,
+  type Driver,
+  type QueryResult,
+  type Transaction,
+} from 'kysely';
 import { describe, expect, it } from 'vitest';
+import type { Database } from '@ludy/db';
 import { zTodoSourceNote, zTodoSummary, type TodoSourceNote } from '@ludy/kernel-contract';
 import type { CommandContext, Lookup, QueryContext } from '@ludy/kernel-runtime';
 import { TODO_SUMMARY_COLUMNS, loadSourceNotes, myWork, todoCreate, todoGet, todoList, todoSummaryRow } from '../src/todos.ts';
@@ -102,37 +114,65 @@ describe('todo source notes (#1676)', () => {
     let insertedValues: Record<string, unknown> | undefined;
     let auditedFact: Record<string, unknown> | undefined;
 
-    const makeCtx = (foundNote: { id: string; tainted: boolean } | undefined) =>
-      ({
+    const makeCtx = (foundNote: { id: string; tainted: boolean } | undefined) => {
+      const conn: DatabaseConnection = {
+        executeQuery: async <R>(compiled: CompiledQuery): Promise<QueryResult<R>> => {
+          const sqlText = compiled.sql.toLowerCase();
+          if (sqlText.includes('pg_advisory_xact_lock')) {
+            return { rows: [{ pg_advisory_xact_lock: '' }] } as QueryResult<R>;
+          }
+          if (sqlText.includes('from "ludy_notes"."note"')) {
+            return { rows: foundNote ? [foundNote] : [] } as QueryResult<R>;
+          }
+          if (sqlText.startsWith('insert into "ludy_notes"."todo"')) {
+            const colsMatch = /\(([^)]+)\)\s+values\s*\(([^)]+)\)/i.exec(compiled.sql);
+            if (colsMatch) {
+              const cols = colsMatch[1]!.split(',').map((c) => c.replaceAll('"', '').trim());
+              const vals = colsMatch[2]!.split(',').map((v) => v.trim());
+              const captured: Record<string, unknown> = {};
+              cols.forEach((col, idx) => {
+                const tok = vals[idx] ?? '';
+                if (/^\$\d+$/.test(tok)) {
+                  captured[col] = compiled.parameters[Number(tok.slice(1)) - 1];
+                }
+              });
+              insertedValues = captured;
+            }
+            return { rows: [{ id: TODO_1, revision: 1 }] } as QueryResult<R>;
+          }
+          return { rows: [] } as QueryResult<R>;
+        },
+        streamQuery: (() => {
+          throw new Error('streamQuery not implemented');
+        }) as DatabaseConnection['streamQuery'],
+      };
+      const driver: Driver = {
+        init: async () => {},
+        acquireConnection: async () => conn,
+        beginTransaction: async () => {},
+        commitTransaction: async () => {},
+        rollbackTransaction: async () => {},
+        releaseConnection: async () => {},
+        destroy: async () => {},
+      };
+      const db = new Kysely<Database>({
+        dialect: {
+          createAdapter: () => new PostgresAdapter(),
+          createDriver: () => driver,
+          createIntrospector: (inst) => new PostgresIntrospector(inst),
+          createQueryCompiler: () => new PostgresQueryCompiler(),
+        },
+      });
+      return {
         orgId: ORG,
         now: NOW,
         actor: { type: 'user', userId: USER, sessionId: SESSION },
         audit: (fact: Record<string, unknown>) => {
           auditedFact = fact;
         },
-        trx: {
-          selectFrom: (table: string) => {
-            const chain = {
-              select: () => chain,
-              where: () => chain,
-              orderBy: () => chain,
-              execute: async () => [],
-              executeTakeFirst: async () => (table === 'ludy_notes.note' ? foundNote : undefined),
-            };
-            return chain;
-          },
-          insertInto: () => ({
-            values: (v: Record<string, unknown>) => {
-              insertedValues = v;
-              return {
-                returning: () => ({
-                  executeTakeFirstOrThrow: async () => ({ id: TODO_1, revision: 1 }),
-                }),
-              };
-            },
-          }),
-        },
-      }) as unknown as CommandContext;
+        trx: db as unknown as Transaction<Database>,
+      } as unknown as CommandContext;
+    };
 
     await expect(
       todoCreate.handler(makeCtx(undefined), {

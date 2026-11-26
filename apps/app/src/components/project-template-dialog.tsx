@@ -284,79 +284,83 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                           {t('templates.customEmpty')}
                         </p>
                       ) : (
-                        <ul className="max-h-40 divide-y overflow-y-auto rounded-lg border">
+                        <div className="max-h-40 divide-y overflow-y-auto rounded-lg border">
                           {customs.map((tpl, idx) => {
                             const flatIndex = builtins.length + idx;
                             const chosen = selectedTemplate?.id === tpl.id;
                             const focusable = chosen || (!selectedTemplate && flatIndex === 0);
                             return (
-                              <li
+                              <button
                                 key={tpl.id}
-                                className={`flex items-center justify-between gap-2 px-3 py-1.5 ${
-                                  chosen ? 'bg-primary/5' : ''
+                                type="button"
+                                role="radio"
+                                aria-checked={chosen}
+                                tabIndex={focusable ? 0 : -1}
+                                data-template-radio-index={flatIndex}
+                                data-testid={`template-option-${tpl.id}`}
+                                onClick={() => handleSelectTemplate(tpl)}
+                                onKeyDown={(e) => handleRadioKeyDown(e, flatIndex)}
+                                className={`flex min-h-11 w-full flex-col justify-center px-3 py-2 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
+                                  chosen ? 'bg-primary/5 ring-1 ring-inset ring-primary' : 'hover:bg-muted/40'
                                 }`}
                               >
-                                <button
-                                  type="button"
-                                  role="radio"
-                                  aria-checked={chosen}
-                                  tabIndex={focusable ? 0 : -1}
-                                  data-template-radio-index={flatIndex}
-                                  data-testid={`template-option-${tpl.id}`}
-                                  onClick={() => handleSelectTemplate(tpl)}
-                                  onKeyDown={(e) => handleRadioKeyDown(e, flatIndex)}
-                                  className="flex min-h-11 min-w-0 flex-1 flex-col justify-center rounded-md py-1 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                                >
-                                  <p className="truncate text-sm font-medium text-foreground">{tpl.name}</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    {t('templates.taskCount', { count: tpl.taskCount })}
-                                  </p>
-                                </button>
-                                {tpl.canManage && (
-                                  <ConfirmDialog
-                                    destructive
-                                    title={t('templates.archiveConfirmTitle', { name: tpl.name })}
-                                    description={t('templates.archiveConfirmDesc')}
-                                    confirm={t('templates.archiveConfirmBtn')}
-                                    onConfirm={() =>
-                                      archiveTemplate.mutate(
-                                        { templateId: tpl.id, idempotencyKey: crypto.randomUUID() },
-                                        {
-                                          onSuccess: () => {
-                                            refreshProjectQueries();
-                                            if (selectedId === tpl.id) setSelectedId(DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY);
-                                          },
-                                        },
-                                      )
-                                    }
-                                    render={
-                                      <Button
-                                        type="button"
-                                        size="icon-sm"
-                                        variant="ghost"
-                                        loading={archiveTemplate.isPending}
-                                        aria-label={t('templates.archiveBtn', { name: tpl.name })}
-                                      />
-                                    }
-                                  >
-                                    <ProjectIcon name="archive" className="size-3.5" />
-                                  </ConfirmDialog>
-                                )}
-                              </li>
+                                <span className="truncate text-sm font-medium text-foreground">{tpl.name}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {t('templates.taskCount', { count: tpl.taskCount })}
+                                </span>
+                              </button>
                             );
                           })}
-                        </ul>
+                        </div>
                       )}
                     </div>
                   </div>
 
                   {selectedTemplate && (
-                    <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+                    <div data-testid="template-preview" className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs font-medium text-foreground">{t('templates.previewTitle')}</p>
-                        <Badge variant="outline" className="h-5 px-1.5 text-[11px] tabular-nums">
-                          {t('templates.taskCount', { count: selectedTemplate.taskCount })}
-                        </Badge>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <p className="text-xs font-medium text-foreground">{t('templates.previewTitle')}</p>
+                          <span className="truncate text-xs text-muted-foreground">{selectedTemplate.name}</span>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <Badge variant="outline" className="h-5 px-1.5 text-[11px] tabular-nums">
+                            {t('templates.taskCount', { count: selectedTemplate.taskCount })}
+                          </Badge>
+                          {selectedTemplate.source === 'custom' && selectedTemplate.canManage && (
+                            <ConfirmDialog
+                              destructive
+                              title={t('templates.archiveConfirmTitle', { name: selectedTemplate.name })}
+                              description={t('templates.archiveConfirmDesc')}
+                              confirm={t('templates.archiveConfirmBtn')}
+                              onConfirm={() => {
+                                const archivedId = selectedTemplate.id;
+                                archiveTemplate.mutate(
+                                  { templateId: archivedId, idempotencyKey: crypto.randomUUID() },
+                                  {
+                                    onSuccess: () => {
+                                      refreshProjectQueries();
+                                      setSelectedId((cur) => (cur === archivedId ? DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY : cur));
+                                    },
+                                  },
+                                );
+                              }}
+                              render={
+                                <Button
+                                  type="button"
+                                  size="icon-sm"
+                                  variant="ghost"
+                                  className="max-md:min-h-11 max-md:min-w-11"
+                                  loading={archiveTemplate.isPending}
+                                  aria-label={t('templates.archiveBtn', { name: selectedTemplate.name })}
+                                  data-testid={`template-archive-${selectedTemplate.id}`}
+                                />
+                              }
+                            >
+                              <ProjectIcon name="archive" className="size-3.5" />
+                            </ConfirmDialog>
+                          )}
+                        </div>
                       </div>
                       {selectedTemplate.tasks.length === 0 ? (
                         <p className="text-xs text-muted-foreground">{t('templates.emptyTasks')}</p>

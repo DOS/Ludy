@@ -18,7 +18,7 @@ import {
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { assertAuthor, assertNotInTrash, loadForChange, recordNoteVersionSnapshot } from './notes.ts';
-import { TODO_SUMMARY_COLUMNS, detailsOf, due, ownKeys, placeBetween, remindAt, todoSummaryRow } from './todos.ts';
+import { TODO_SUMMARY_COLUMNS, detailsOf, due, lockTodoSortOrder, ownKeys, placeBetween, remindAt, todoSummaryRow } from './todos.ts';
 
 const MODULE = 'notes';
 const ALL_MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -339,6 +339,9 @@ export const todoAcceptSuggestions = defineCommand({
     }
 
     const createdReversed: string[] = [];
+    if (input.items.length > 0) {
+      await lockTodoSortOrder(ctx, userId);
+    }
     for (let i = input.items.length - 1; i >= 0; i -= 1) {
       const item = input.items[i]!;
       const rows = await ownKeys(ctx, null);

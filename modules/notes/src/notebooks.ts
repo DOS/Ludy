@@ -309,6 +309,8 @@ export const notebookCreate = defineCommand({
       throw new DomainError('FORBIDDEN', 403, 'Thành viên giới hạn theo pháp nhân không tạo được sổ tay dùng chung');
     }
 
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+
     const existing = await ctx.trx
       .selectFrom('ludy_notes.notebook')
       .select(['id', 'author_user_id', 'sort_key'])
@@ -325,7 +327,6 @@ export const notebookCreate = defineCommand({
       SELECT pg_catalog.max(sort_key) AS last FROM ludy_notes.notebook WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
     let sortKey = keyBetween(lastRows[0]?.last ?? null, null);
     if (sortKey.length > REBALANCE_AT) {
-      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId}`}, 0))`.execute(ctx.trx);
       sortKey = await rebalanceEditableNotebooks(ctx, userId, wholeOrg, null, 'after', null);
     }
 

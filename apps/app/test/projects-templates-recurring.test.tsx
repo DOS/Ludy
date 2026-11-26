@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // UI tests for ProjectTemplateDialog, TaskRecurrenceControl, repeat badges, and Projects/Tasks pages (#2607, #4908).
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { act, type ReactNode } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { FakeDomNode, createScopedDomHarness } from './fake-dom.ts';
 import {
   BUILTIN_PROJECT_TEMPLATE_KEYS,
   type BuiltinProjectTemplateKey,
@@ -20,6 +22,8 @@ import { I18nProvider } from '../src/i18n/provider.tsx';
 import { catalog, setActiveLocale } from '../src/i18n/runtime.ts';
 
 const authState = vi.hoisted(() => ({ modules: ['projects', 'notes'] as string[] }));
+const archiveCalls = vi.hoisted(() => [] as unknown[]);
+const templateFixturesState = vi.hoisted(() => ({ current: null as ProjectTemplateListResult | null }));
 
 vi.mock('../src/lib/auth.ts', () => ({
   getConfig: () => ({ modules: authState.modules }),
@@ -29,17 +33,39 @@ const queryClientState = vi.hoisted(() => ({ current: null as unknown as QueryCl
 
 vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
-  queryClientState.current = new QC();
+  queryClientState.current = new QC({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
   const node = (path: string[]): unknown =>
     new Proxy(() => undefined, {
       get: (_t, prop: string) => {
         if (prop === 'queryOptions') {
-          return (args?: { input?: unknown }) => ({
-            queryKey: [...path, args?.input ?? {}],
-            queryFn: () => Promise.reject(new Error('not fetched in unit test')),
+          return (args?: { input?: unknown }) => {
+            const key = [...path, args?.input ?? {}];
+            return {
+              queryKey: key,
+              queryFn: () => {
+                if (path.join('.') === 'projects.listTemplates' && templateFixturesState.current) {
+                  return Promise.resolve(templateFixturesState.current);
+                }
+                const cached = queryClientState.current.getQueryData(key);
+                if (cached !== undefined) return Promise.resolve(cached);
+                return Promise.reject(new Error('not fetched in unit test'));
+              },
+            };
+          };
+        }
+        if (prop === 'mutationOptions') {
+          return () => ({
+            mutationFn: async (input: unknown) => {
+              if (path.join('.') === 'projects.archiveTemplate') {
+                archiveCalls.push(input);
+                return { archived: true };
+              }
+              return {};
+            },
           });
         }
-        if (prop === 'mutationOptions') return () => ({ mutationFn: () => Promise.resolve({}) });
         if (prop === 'call') return () => Promise.resolve({});
         if (prop === 'key') return () => path;
         return node([...path, prop]);
@@ -60,23 +86,45 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
 });
 
 vi.mock('@ludy/ui/components/dialog', async () => {
-  const { cloneElement, createContext, createElement, isValidElement, useContext } = await import('react');
-  const OpenCtx = createContext(false);
+  const { cloneElement, createContext, createElement, isValidElement, useContext, useState } = await import('react');
+  const DialogCtx = createContext<{ open: boolean; setOpen: (next: boolean) => void }>({
+    open: false,
+    setOpen: () => undefined,
+  });
   return {
-    Dialog: ({ open = false, children }: { open?: boolean; children?: ReactNode }) =>
-      createElement(OpenCtx.Provider, { value: Boolean(open) }, children),
-    DialogTrigger: ({ render, children }: { render?: ReactNode; children?: ReactNode }) =>
-      isValidElement(render)
-        ? cloneElement(render as React.ReactElement<{ children?: ReactNode }>, {}, children)
-        : createElement('button', { type: 'button' }, children),
+    Dialog: ({ open, onOpenChange, children }: { open?: boolean; onOpenChange?: (next: boolean) => void; children?: ReactNode }) => {
+      const [internalOpen, setInternalOpen] = useState(false);
+      const isOpen = open === undefined ? internalOpen : Boolean(open);
+      const setOpen = (next: boolean) => {
+        if (open === undefined) setInternalOpen(next);
+        onOpenChange?.(next);
+      };
+      return createElement(DialogCtx.Provider, { value: { open: isOpen, setOpen } }, children);
+    },
+    DialogTrigger: ({ render, disabled, children }: { render?: ReactNode; disabled?: boolean; children?: ReactNode }) => {
+      const { setOpen } = useContext(DialogCtx);
+      if (isValidElement(render)) {
+        const typedRender = render as React.ReactElement<{ onClick?: (e: unknown) => void; disabled?: boolean; children?: ReactNode }>;
+        const prevClick = typedRender.props.onClick;
+        const nextProps = {
+          disabled: Boolean(disabled),
+          onClick: (e: unknown) => {
+            prevClick?.(e);
+            if (!disabled) setOpen(true);
+          },
+        };
+        return children !== undefined ? cloneElement(typedRender, nextProps, children) : cloneElement(typedRender, nextProps);
+      }
+      return createElement('button', { type: 'button', disabled: Boolean(disabled), onClick: () => setOpen(true) }, children);
+    },
     DialogContent: ({
       children,
       closeLabel: _c,
       variant: _v,
       ...rest
     }: Record<string, unknown> & { children?: ReactNode }) => {
-      const isOpen = useContext(OpenCtx);
-      return isOpen ? createElement('div', rest, children) : null;
+      const { open } = useContext(DialogCtx);
+      return open ? createElement('div', rest, children) : null;
     },
     DialogHeader: ({ children, ...rest }: Record<string, unknown> & { children?: ReactNode }) =>
       createElement('div', rest, children),
@@ -86,10 +134,26 @@ vi.mock('@ludy/ui/components/dialog', async () => {
       createElement('p', rest, children),
     DialogFooter: ({ children, ...rest }: Record<string, unknown> & { children?: ReactNode }) =>
       createElement('div', rest, children),
-    DialogClose: ({ render, children, ...rest }: Record<string, unknown> & { render?: ReactNode; children?: ReactNode }) =>
-      isValidElement(render)
-        ? cloneElement(render as React.ReactElement<{ children?: ReactNode }>, rest, children)
-        : createElement('span', rest, children),
+    DialogClose: ({ render, onClick, children, ...rest }: Record<string, unknown> & { render?: ReactNode; onClick?: (e: unknown) => void; children?: ReactNode }) => {
+      const { setOpen } = useContext(DialogCtx);
+      const handleClick = (e: unknown) => {
+        onClick?.(e);
+        setOpen(false);
+      };
+      if (isValidElement(render)) {
+        const typedRender = render as React.ReactElement<{ onClick?: (e: unknown) => void; children?: ReactNode }>;
+        const prevClick = typedRender.props.onClick;
+        const nextProps = {
+          ...rest,
+          onClick: (e: unknown) => {
+            prevClick?.(e);
+            handleClick(e);
+          },
+        };
+        return children !== undefined ? cloneElement(typedRender, nextProps, children) : cloneElement(typedRender, nextProps);
+      }
+      return createElement('span', { ...rest, onClick: handleClick }, children);
+    },
   };
 });
 
@@ -490,17 +554,170 @@ describe('projects templates & recurring UI (#2607)', () => {
       expect(html, locale).toContain('border-primary bg-primary/5 ring-1 ring-primary');
       expect(html, locale).toContain('text-foreground');
 
-      // 44px mobile touch targets on every radio button (5 built-in + 1 custom) and distinct archive icon label.
-      const radioButtons = html.match(/<button[^>]*role="radio"[^>]*>/g) ?? [];
+      // 44px mobile touch targets on every radio button (5 built-in + 1 custom), and zero archive buttons or lists inside role="radiogroup".
+      const previewStart = html.indexOf('data-testid="template-preview"');
+      const radiogroupHtml = html.slice(html.indexOf('role="radiogroup"'), previewStart);
+      expect(previewStart, locale).toBeGreaterThan(-1);
+      const radioButtons = radiogroupHtml.match(/<button[^>]*role="radio"[^>]*>/g) ?? [];
       expect(radioButtons, locale).toHaveLength(6);
       for (const radioButton of radioButtons) {
         expect(radioButton, locale).toContain('min-h-11');
       }
+      const radiogroupButtons = radiogroupHtml.match(/<button\b[^>]*>/g) ?? [];
+      expect(radiogroupButtons, locale).toHaveLength(6);
+      expect(radiogroupHtml, locale).not.toContain('<ul');
+      expect(radiogroupHtml, locale).not.toContain('<li');
       const archiveLabel =
         locale === 'en' ? `Archive template ${customTemplate.name}` : `Lưu trữ mẫu ${customTemplate.name}`;
-      const archiveButton = html.match(new RegExp(`<button[^>]*aria-label="${archiveLabel}"[^>]*>`))?.[0];
-      expect(archiveButton, locale).toBeDefined();
-      expect(archiveButton, locale).toContain('max-md:min-h-11 max-md:min-w-11');
+      expect(radiogroupHtml, locale).not.toContain(archiveLabel);
     }
+  });
+});
+
+describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
+  const domHarness = createScopedDomHarness(() => {
+    templateFixturesState.current = null;
+    setActiveLocale('vi');
+  });
+
+  afterEach(async () => {
+    await domHarness.teardownScopedDom();
+  });
+
+  it('exercises keyboard .focus() in radiogroup, keeps custom archive ConfirmDialog outside radiogroup, and resets via useEffect on reopen', async () => {
+    archiveCalls.length = 0;
+    const body = domHarness.installScopedDom();
+    const container = new FakeDomNode(1, 'div');
+    body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    domHarness.setMountedRoot(root);
+
+    const qc = queryClientState.current;
+    qc.clear();
+    const customTemplate: ProjectTemplateSummary = {
+      id: '40000000-0000-4000-8000-000000000001',
+      source: 'custom',
+      builtinKey: null,
+      name: 'Mẫu sprint riêng',
+      description: 'Mô tả mẫu riêng',
+      status: 'active',
+      tasks: [{ title: 'Khởi động', dueOffsetDays: 0 }],
+      taskCount: 1,
+      canManage: true,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+    const fixtures = {
+      templates: [...starterFixtures('vi'), customTemplate],
+      canWrite: true,
+    } satisfies ProjectTemplateListResult;
+    templateFixturesState.current = fixtures;
+    qc.setQueryData(['projects', 'listTemplates', { language: 'vi' }], fixtures);
+
+    const renderCreateDialog = async (open: boolean) => {
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={qc}>
+            <I18nProvider>
+              <ProjectTemplateDialog mode="create" open={open} onOpenChange={() => undefined} onCreated={() => undefined} />
+            </I18nProvider>
+          </QueryClientProvider>,
+        );
+      });
+    };
+
+    await renderCreateDialog(true);
+    const radioGroup = container.querySelector('[role="radiogroup"]')!;
+    expect(radioGroup).not.toBeNull();
+    expect(radioGroup.querySelectorAll('ul')).toHaveLength(0);
+    expect(radioGroup.querySelectorAll('li')).toHaveLength(0);
+    expect(container.querySelector(`[data-testid="template-archive-${customTemplate.id}"]`)).toBeNull();
+
+    // Keyboard End moves selection to customTemplate and moves DOM focus onto its radio option.
+    const firstRadio = container.querySelector('[data-testid="template-option-software-project"]')!;
+    expect(firstRadio.getAttribute('aria-checked')).toBe('true');
+    await act(async () => {
+      firstRadio.dispatchEvent({ type: 'keydown', key: 'End', bubbles: true, cancelable: true });
+    });
+
+    const customRadio = container.querySelector(`[data-testid="template-option-${customTemplate.id}"]`)!;
+    expect(customRadio.getAttribute('aria-checked')).toBe('true');
+    expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(customRadio);
+
+    // Selecting customTemplate exposes its archive ConfirmDialog trigger cleanly OUTSIDE role="radiogroup" with 44px target.
+    const archiveTrigger = container.querySelector(`[data-testid="template-archive-${customTemplate.id}"]`)!;
+    expect(archiveTrigger).not.toBeNull();
+    expect(radioGroup.contains(archiveTrigger)).toBe(false);
+    expect(archiveTrigger.getAttribute('aria-label')).toBe('Lưu trữ mẫu Mẫu sprint riêng');
+    expect(archiveTrigger.className).toContain('max-md:min-h-11');
+    expect(archiveTrigger.className).toContain('max-md:min-w-11');
+
+    // Keyboard ArrowLeft moves focus back to the previous built-in radio, then click custom radio again and archive it.
+    await act(async () => {
+      customRadio.dispatchEvent({ type: 'keydown', key: 'ArrowLeft', bubbles: true, cancelable: true });
+    });
+    const prevRadio = container.querySelector('[data-testid="template-option-campaign-launch"]')!;
+    expect(prevRadio.getAttribute('aria-checked')).toBe('true');
+    expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(prevRadio);
+
+    await act(async () => {
+      customRadio.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+    });
+    const visibleArchive = container.querySelector(`[data-testid="template-archive-${customTemplate.id}"]`)!;
+    await act(async () => {
+      visibleArchive.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+    });
+    const confirmArchiveBtn = container
+      .querySelectorAll('button')
+      .find((b) => b.textContent.trim() === catalog('vi').projects.templates.archiveConfirmBtn)!;
+    expect(confirmArchiveBtn).toBeDefined();
+    await act(async () => {
+      confirmArchiveBtn.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    expect(archiveCalls).toHaveLength(1);
+    expect((archiveCalls[0] as { templateId: string }).templateId).toBe(customTemplate.id);
+    // Archiving the selected custom template falls back to DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY.
+    expect(container.querySelector('[data-testid="template-option-software-project"]')?.getAttribute('aria-checked')).toBe('true');
+
+    // Reopening create dialog resets selection via useEffect back to software-project.
+    await act(async () => {
+      customRadio.dispatchEvent({ type: 'click', button: 0, bubbles: true, cancelable: true });
+    });
+    expect(customRadio.getAttribute('aria-checked')).toBe('true');
+    await renderCreateDialog(false);
+    await renderCreateDialog(true);
+    expect(container.querySelector('[data-testid="template-option-software-project"]')?.getAttribute('aria-checked')).toBe('true');
+
+    // Reopening save dialog resets nameError and restores initialName via useEffect.
+    const renderSaveDialog = async (open: boolean, initialName: string) => {
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={qc}>
+            <I18nProvider>
+              <ProjectTemplateDialog
+                mode="save"
+                open={open}
+                projectId="00000000-0000-4000-8000-000000000001"
+                initialName={initialName}
+                initialDescription={null}
+                onOpenChange={() => undefined}
+              />
+            </I18nProvider>
+          </QueryClientProvider>,
+        );
+      });
+    };
+    await renderSaveDialog(true, '');
+    const form = container.querySelector('form')!;
+    await act(async () => {
+      form.dispatchEvent({ type: 'submit', bubbles: true, cancelable: true });
+    });
+    expect(container.querySelector('input[id="template-dialog-name-save"]')?.getAttribute('aria-invalid')).toBe('true');
+    await renderSaveDialog(false, 'Tên mới từ dự án');
+    await renderSaveDialog(true, 'Tên mới từ dự án');
+    const resetInput = container.querySelector('input[id="template-dialog-name-save"]')!;
+    expect(resetInput.getAttribute('aria-invalid')).not.toBe('true');
+    expect(resetInput.value).toBe('Tên mới từ dự án');
   });
 });
