@@ -514,6 +514,8 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
         o2.connectionId,
       ]);
       const notice = wrapTelegramChatNotice(h1, Buffer.from(update('Trùng hook bất biến', 4201, 1), 'utf8'));
+      await expect(rows('SELECT crove_kernel.telegram_inbound_enqueue($1, $2::bytea)', [h1, notice])).rejects.toMatchObject({ code: '23505' });
+      expect(await rows('SELECT 1 FROM crove_kernel.conversation_inbound_pending')).toHaveLength(0);
       await rows('INSERT INTO crove_kernel.conversation_inbound_pending (provider, body) VALUES ($1, $2)', ['telegram_chat', notice]);
       const logs: string[] = [];
       expect(await runConversationIntake({ workerDb, runtime: worker, log: (m) => logs.push(m) })).toEqual({ stored: 0, dropped: 1 });
@@ -638,6 +640,13 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
     await expect(
       rows('UPDATE crove_kernel.channel_connection SET chat_business_order = $1::jsonb WHERE org_id = $2 AND id = $3', [
         JSON.stringify({ overflow: 'x'.repeat(9000) }),
+        org.orgId,
+        org.connectionId,
+      ]),
+    ).rejects.toMatchObject({ code: '23514' });
+    await expect(
+      rows('UPDATE crove_kernel.channel_connection SET chat_business_order = $1::jsonb WHERE org_id = $2 AND id = $3', [
+        JSON.stringify({ overflow: 'ế'.repeat(3000) }),
         org.orgId,
         org.connectionId,
       ]),

@@ -1261,6 +1261,13 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
         tGuard.connectionId,
       ]),
     ).rejects.toMatchObject({ code: '23514' });
+    await expect(
+      rows('UPDATE ludy_kernel.channel_connection SET chat_business_order = $1::jsonb WHERE org_id = $2 AND id = $3', [
+        JSON.stringify({ big: 'ế'.repeat(3000) }),
+        tGuard.orgId,
+        tGuard.connectionId,
+      ]),
+    ).rejects.toMatchObject({ code: '23514' });
     const idxs = await rows<{ relname: string; indisvalid: boolean }>(
       `SELECT c.relname, i.indisvalid
          FROM pg_catalog.pg_index i
