@@ -26,13 +26,12 @@ const HASH_PURPOSE = /^[a-z][a-z0-9_.]{0,63}$/;
 export const WRAPPED_SUBJECT_KEY_BYTES = NONCE + TAG + KEY;
 // A personal value is short (an identity number, a bank account); the column allows more, a seal does not.
 export const MAX_SEALED_VALUE_BYTES = 4096;
-export const SUBJECT_HASH_MAX_VALUE_BYTES = MAX_SEALED_VALUE_BYTES;
 
 /** Validates purpose and value bounds before creating or looking up a subject key for hashing. */
 export function assertSubjectHashInput(purpose: string, value: string): void {
   if (!HASH_PURPOSE.test(purpose)) throw new SubjectKeyError('subjectHash: the purpose is malformed');
   const bytes = Buffer.byteLength(value, 'utf8');
-  if (bytes < 1 || bytes > SUBJECT_HASH_MAX_VALUE_BYTES) throw new SubjectKeyError('subjectHash: the value must be 1 byte to 4 KiB');
+  if (bytes < 1 || bytes > MAX_SEALED_VALUE_BYTES) throw new SubjectKeyError('subjectHash: the value must be 1 byte to 4 KiB');
 }
 
 /** The HKDF info the wrap key of the subject vault is derived with, from each credential key. */
