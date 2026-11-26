@@ -177,8 +177,8 @@ services:
       AUTH_UPSTREAM_URL: ${AUTH_UPSTREAM_URL-http://auth:9999}
       # Modules to run (ADR-0031); empty runs every module.
       LUDY_MODULES: ${LUDY_MODULES:-}
-      # Presence-only flag when retired CROVE_MODULES is set without LUDY_MODULES so kernel/prober fail closed instead of exposing all modules (#3972).
-      LUDY_RETIRED_MODULES: "${CROVE_MODULES:+${LUDY_MODULES:-CROVE_MODULES}}"
+      # Presence-only flag carrying raw LUDY_MODULES when retired CROVE_MODULES is set so kernel/prober fail closed even on separator-only LUDY_MODULES (#3972).
+      LUDY_RETIRED_MODULES: "${CROVE_MODULES:+CROVE_MODULES:${LUDY_MODULES:-}}"
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_API_KEY: ${AI_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-}
@@ -543,8 +543,8 @@ services:
       PROBER_DEAD_LETTER_WINDOW_SECONDS: ${PROBER_DEAD_LETTER_WINDOW_SECONDS:-}
       # The modules the deployment runs, as for the API and the worker: their queued jobs count in job_age (#1894).
       LUDY_MODULES: ${LUDY_MODULES:-}
-      # Presence-only flag when retired CROVE_MODULES is set without LUDY_MODULES so prober fails closed instead of watching all modules (#3972).
-      LUDY_RETIRED_MODULES: "${CROVE_MODULES:+${LUDY_MODULES:-CROVE_MODULES}}"
+      # Presence-only flag carrying raw LUDY_MODULES when retired CROVE_MODULES is set so prober fails closed even on separator-only LUDY_MODULES (#3972).
+      LUDY_RETIRED_MODULES: "${CROVE_MODULES:+CROVE_MODULES:${LUDY_MODULES:-}}"
       # Supabase Auth through the kernel's /auth/v1 proxy, inside the Compose network (#1994). Auth hosted elsewhere:
       # set PROBER_AUTH_URL to its /auth/v1 URL (and PUBLIC_AUTH_ANON_KEY for hosted Supabase). PROBER_AUTH_MISSES=0
       # turns the check off.

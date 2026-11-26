@@ -376,6 +376,8 @@ describe('prober configuration', () => {
     expect(loadProberConfig({ LUDY_MODULES: '' }).modules).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
     expect(() => loadProberConfig({ CROVE_MODULES: 'crm' })).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
     expect(() => loadProberConfig({ LUDY_RETIRED_MODULES: 'CROVE_MODULES', LUDY_MODULES: 'finance' })).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
+    expect(() => loadProberConfig({ LUDY_RETIRED_MODULES: 'CROVE_MODULES:,', LUDY_MODULES: 'finance' })).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
+    expect(loadProberConfig({ LUDY_RETIRED_MODULES: 'CROVE_MODULES:finance', LUDY_MODULES: 'finance' }).modules).toEqual(['kernel', 'finance']);
     expect(loadProberConfig({ CROVE_MODULES: 'crm', LUDY_MODULES: 'finance' }).modules).toEqual(['kernel', 'finance']);
     expect(loadProberConfig({ LUDY_MODULES: ' Finance , notes' }).modules).toEqual(['kernel', 'finance', 'notes']);
     expect(loadProberConfig({ LUDY_MODULES: 'crm' }).modules).toEqual(['kernel', 'crm']);

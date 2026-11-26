@@ -496,13 +496,25 @@ copy_into_deploy_dir() {
   cat "$src" >"$tmp" && chmod 0644 "$tmp" && mv -f "$tmp" "$dst"
 }
 
+detect_api_service() {
+  local proj="$1" services svc
+  services="$(dc_proj "$proj" config --services 2>/dev/null || true)"
+  for svc in api ludy crove; do
+    if grep -qx "$svc" <<<"$services"; then
+      printf '%s' "$svc"
+      return 0
+    fi
+  done
+  if pilot_layout; then printf 'api'; else printf 'ludy'; fi
+}
+
 wait_local_ready() {
   local proj="$1" api_svc mapped port url deadline=$((SECONDS + READY_TIMEOUT)) num_re='^[0-9]+$'
   READY_URL=''
   if [ -n "$SMOKE_URL" ]; then
     url="${SMOKE_URL%/}"
   else
-    if pilot_layout; then api_svc=api; else api_svc=crove; fi
+    api_svc="$(detect_api_service "$proj")"
     mapped="$(dc_proj "$proj" port "$api_svc" 8080 | head -n 1)" || return 1
     port="${mapped##*:}"
     [[ "$port" =~ $num_re ]] || return 1

@@ -893,14 +893,25 @@ remove_orphan_service() {
   fi
 }
 
-# Returns 0 when Docker volume $1 exists and holds an initialized PostgreSQL cluster (PG_VERSION and global/pg_control).
-# Used with --user 0:0 because PostgreSQL volume directories are mode 0700 owned by postgres (uid 999) while app images
-# run non-root; only invoked when both crove_db-data and ludy_db-data exist on the host (#3972).
-volume_has_pg_cluster() {
-  local vol="$1" probe_image="$2"
-  docker volume inspect "$vol" >/dev/null 2>&1 || return 1
-  docker run --rm --network none --user 0:0 -v "${vol}:/d:ro" --entrypoint /bin/sh "$probe_image" \
-    -c 'test -f /d/PG_VERSION && test -f /d/global/pg_control' >/dev/null 2>&1
+# Returns 0 when both Docker volumes exist, hold initialized PostgreSQL clusters (PG_VERSION and global/pg_control),
+# and share the same 8-byte PostgreSQL Database system identifier (bytes 0..7 of global/pg_control). This rejects an
+# accidentally initdb'd empty ludy_db-data cluster while accepting an offline-copied cluster even after Postgres has run
+# on it. Uses --user 0:0 because PostgreSQL data directories are mode 0700 owned by uid 999 (#3972).
+volumes_match_pg_cluster() {
+  local src_vol="$1" dst_vol="$2" probe_image="$3"
+  docker volume inspect "$src_vol" >/dev/null 2>&1 || return 1
+  docker volume inspect "$dst_vol" >/dev/null 2>&1 || return 1
+  docker run --rm --network none --user 0:0 \
+    -v "${src_vol}:/src:ro" -v "${dst_vol}:/dst:ro" \
+    --entrypoint node "$probe_image" -e '
+      const fs = require("node:fs");
+      for (const d of ["/src", "/dst"]) {
+        if (!fs.existsSync(d + "/PG_VERSION")) process.exit(1);
+      }
+      const a = fs.readFileSync("/src/global/pg_control").subarray(0, 8);
+      const b = fs.readFileSync("/dst/global/pg_control").subarray(0, 8);
+      if (a.length !== 8 || b.length !== 8 || a.every((x) => x === 0) || !a.equals(b)) process.exit(1);
+    ' >/dev/null 2>&1
 }
 
 local_url() {
@@ -1996,10 +2007,10 @@ do_deploy() {
     record "deploy $name failed: compose project"
     die "$EXIT_FAILED" 'cannot determine the compose project name; nothing was changed'
   fi
-  if [ "$active_proj" = ludy ] && docker volume inspect crove_db-data >/dev/null 2>&1 && ! volume_has_pg_cluster ludy_db-data "$image"; then
+  if [ "$active_proj" = ludy ] && docker volume inspect crove_db-data >/dev/null 2>&1 && ! volumes_match_pg_cluster crove_db-data ludy_db-data "$image"; then
     if [ -n "$current" ]; then activate "$current"; fi
     record "deploy $name failed: crove_db-data not cut over"
-    die "$EXIT_FAILED" "found legacy volume crove_db-data without a populated PostgreSQL cluster in ludy_db-data for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or set COMPOSE_PROJECT_NAME=crove in $ENV_FILE) before deploying Stage 7 so Compose does not initialize an empty database"
+    die "$EXIT_FAILED" "found legacy volume crove_db-data without a matching copied PostgreSQL cluster in ludy_db-data for project $active_proj; run tools/deploy/cutover-ludy.sh cutover-stack (or set COMPOSE_PROJECT_NAME=crove in $ENV_FILE, or prune stale crove_db-data after verifying your data) before deploying Stage 7 so Compose does not run against an empty database"
   fi
 
   log 'starting the database'

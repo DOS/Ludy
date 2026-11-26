@@ -291,7 +291,7 @@ case "$cmd" in
     case "$sub" in
       config)
         if [ "\${1:-}" = --services ]; then
-          for s in db migrate auth auth-grants worker api caddy prober; do echo "$s"; done
+          for s in \${STUB_SERVICES:-db migrate auth auth-grants worker api caddy prober}; do echo "$s"; done
         fi
         ;;
       ps)
@@ -526,5 +526,22 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     const updatedExplicit = readFileSync(join(fExplicit.deployDir, '.env'), 'utf8');
     expect(updatedExplicit).toContain('BACKUP_S3_PREFIX=custom');
     expect(updatedExplicit).not.toContain('BACKUP_S3_PREFIX=crove');
+  });
+
+  it('prune-old-volumes detects ludy service on Stage 7 non-pilot stacks (#3972)', { timeout: 15000 }, () => {
+    const f = createCutoverFixture();
+    writeFileSync(
+      join(f.deployDir, '.env'),
+      ['COMPOSE_PROJECT_NAME=ludy', 'COMPOSE_FILE=docker-compose.yml', 'LUDY_DOMAIN=api.example.com', ''].join('\n'),
+    );
+    writeFileSync(f.volsFile, ['crove_db-data', 'ludy_db-data', ''].join('\n'));
+    writeFileSync(f.populatedFile, ['crove_db-data', 'ludy_db-data', ''].join('\n'));
+
+    const res = runWithStubs(f, ['prune-old-volumes', '--dir', f.deployDir, '--overlay-dir', f.overlayDir], {
+      STUB_SERVICES: 'db migrate auth auth-grants ludy-extract ludy-media ludy',
+    });
+    expect(res.status, res.stderr).toBe(0);
+    expect(readFileSync(f.stubLog, 'utf8')).toContain('dc ludy port ludy 8080');
+    expect(readFileSync(f.volsFile, 'utf8')).not.toContain('crove_');
   });
 });

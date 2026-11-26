@@ -401,20 +401,34 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(envFile()).toBe(beforeMod);
     expect(calls()).toEqual([]);
 
-    // Self-hosted volume cutover guard: crove_db-data without a populated ludy_db-data under project ludy must abort before starting db.
+    // Self-hosted volume cutover guard: crove_db-data without a matching copied ludy_db-data cluster must abort before starting db.
     writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=valid-key\n`);
     const volGuard = deploy('v1.0.1', 'b', { STUB_VOLUMES: 'crove_db-data' });
     expect(volGuard.status, volGuard.out).toBe(1);
-    expect(volGuard.out).toContain('found legacy volume crove_db-data without a populated PostgreSQL cluster in ludy_db-data');
+    expect(volGuard.out).toContain('found legacy volume crove_db-data without a matching copied PostgreSQL cluster in ludy_db-data');
     expect(volGuard.out).toContain('cutover-ludy.sh cutover-stack');
 
     // Empty ludy_db-data (no PG_VERSION / pg_control) alongside crove_db-data must also fail closed.
-    const emptyVolGuard = deploy('v1.0.1', 'b', { STUB_VOLUMES: 'crove_db-data ludy_db-data' });
+    const emptyVolGuard = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1',
+    });
     expect(emptyVolGuard.status, emptyVolGuard.out).toBe(1);
-    expect(emptyVolGuard.out).toContain('found legacy volume crove_db-data without a populated PostgreSQL cluster in ludy_db-data');
+    expect(emptyVolGuard.out).toContain('found legacy volume crove_db-data without a matching copied PostgreSQL cluster in ludy_db-data');
 
-    // Populated ludy_db-data passes the cutover guard.
-    const populatedVolGuard = deploy('v1.0.1', 'b', { STUB_VOLUMES: 'crove_db-data ludy_db-data', STUB_PG_VOLUMES: 'ludy_db-data' });
+    // Freshly initialized empty ludy_db-data (mismatched system_identifier) alongside crove_db-data must fail closed.
+    const mismatchedVolGuard = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-old ludy_db-data=cluster-fresh',
+    });
+    expect(mismatchedVolGuard.status, mismatchedVolGuard.out).toBe(1);
+    expect(mismatchedVolGuard.out).toContain('found legacy volume crove_db-data without a matching copied PostgreSQL cluster in ludy_db-data');
+
+    // Copied ludy_db-data with matching system_identifier passes the cutover guard.
+    const populatedVolGuard = deploy('v1.0.1', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=cluster-1 ludy_db-data=cluster-1',
+    });
     expect(populatedVolGuard.status, populatedVolGuard.out).toBe(0);
   });
 

@@ -20,6 +20,9 @@ services:
     build:
       # Relative to the project directory (the checkout, where docker-compose.yml is); WAL_BUILD_CONTEXT for any other.
       context: ${WAL_BUILD_CONTEXT:-tools/wal}
+    # Stage 7 defaults target ludy-db:local, stanza ludy and /ludy/wal. Pre-Stage-7 stacks upgrading in place with
+    # COMPOSE_PROJECT_NAME=crove must pin WAL_DB_IMAGE=crove-db:local, WAL_STANZA=crove and BACKUP_S3_PREFIX=crove
+    # in .env until `tools/deploy/cutover-ludy.sh switch-wal` (or `wal.sh setup && wal.sh check`) completes (#3972).
     image: ${WAL_DB_IMAGE:-ludy-db:local}
     environment:
       # Defaults to ludy for post-cutover stacks (#3972).

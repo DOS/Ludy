@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { assertSplitRoles, loadConfig } from '../../apps/kernel/src/config.ts';
+import { loadProberConfig } from '../../apps/kernel/src/prober.ts';
 
 const repo = resolve(import.meta.dirname, '../..');
 // `!reset` and `!override` need compose v2.24; a runner without docker compose skips the file, as deploy.test.ts does.
@@ -241,6 +242,8 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
 
   it('runs the finance module by default for api, worker and prober, follows LUDY_MODULES, and flags retired CROVE_MODULES without LUDY_MODULES', () => {
     const files = ['docker-compose.yml', 'compose.pilot.yml'];
+    const envStrings = (svc: Service | undefined): Record<string, string> =>
+      Object.fromEntries(Object.entries(svc?.environment ?? {}).filter((e): e is [string, string] => typeof e[1] === 'string'));
     for (const [env, expected] of [
       [{}, 'finance'],
       [{ LUDY_MODULES: '' }, 'finance'],
@@ -252,11 +255,31 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
         expect(services[name]?.environment?.['LUDY_RETIRED_MODULES'], `${name} ${JSON.stringify(env)}`).toBe('');
       }
     }
-    expect(config(['docker-compose.yml'], { CROVE_MODULES: 'kernel' })['ludy']?.environment?.['LUDY_RETIRED_MODULES']).toBe('CROVE_MODULES');
-    const retiredPilot = config(files, { CROVE_MODULES: 'kernel' }, ['prober']);
-    for (const name of ['api', 'worker', 'prober']) expect(retiredPilot[name]?.environment?.['LUDY_RETIRED_MODULES'], name).toBe('CROVE_MODULES');
+
+    for (const retiredEnv of [{ CROVE_MODULES: 'kernel' }, { CROVE_MODULES: 'kernel', LUDY_MODULES: ',' }] as const) {
+      const expectedFlag = retiredEnv.LUDY_MODULES ? `CROVE_MODULES:${retiredEnv.LUDY_MODULES}` : 'CROVE_MODULES:';
+      const solo = config(['docker-compose.yml'], retiredEnv, ['prober']);
+      expect(solo['ludy']?.environment?.['LUDY_RETIRED_MODULES']).toBe(expectedFlag);
+      expect(solo['prober']?.environment?.['LUDY_RETIRED_MODULES']).toBe(expectedFlag);
+      expect(() => loadConfig(envStrings(solo['ludy']))).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
+      expect(() => loadProberConfig(envStrings(solo['prober']))).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
+
+      const retiredPilot = config(files, retiredEnv, ['prober']);
+      for (const name of ['api', 'worker', 'prober']) {
+        expect(retiredPilot[name]?.environment?.['LUDY_RETIRED_MODULES'], name).toBe(expectedFlag);
+      }
+      expect(() => loadConfig(envStrings(retiredPilot['api']))).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
+      expect(() => loadConfig(envStrings(retiredPilot['worker']))).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
+      expect(() => loadProberConfig(envStrings(retiredPilot['prober']))).toThrow(/CROVE_MODULES.*LUDY_MODULES/);
+    }
+
     const replacedPilot = config(files, { CROVE_MODULES: 'kernel', LUDY_MODULES: 'finance,crm' }, ['prober']);
-    for (const name of ['api', 'worker', 'prober']) expect(replacedPilot[name]?.environment?.['LUDY_RETIRED_MODULES'], name).toBe('finance,crm');
+    for (const name of ['api', 'worker', 'prober']) {
+      expect(replacedPilot[name]?.environment?.['LUDY_RETIRED_MODULES'], name).toBe('CROVE_MODULES:finance,crm');
+    }
+    expect(loadConfig(envStrings(replacedPilot['api'])).LUDY_MODULES).toEqual(['kernel', 'finance', 'crm']);
+    expect(loadConfig(envStrings(replacedPilot['worker'])).LUDY_MODULES).toEqual(['kernel', 'finance', 'crm']);
+    expect(loadProberConfig(envStrings(replacedPilot['prober'])).modules).toEqual(['kernel', 'finance', 'crm']);
   });
 
   it('points the prober at the API, since ludy does not run', () => {

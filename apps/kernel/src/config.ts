@@ -871,6 +871,23 @@ export function assertNoRetiredMigrateCredentials(env: NodeJS.ProcessEnv = proce
   }
 }
 
+function hasExplicitModulesList(raw: string | undefined): boolean {
+  return Boolean(raw?.split(',').some((m) => m.trim().length > 0));
+}
+
+// Fails closed if retired CROVE_MODULES was configured without an explicit non-empty LUDY_MODULES list,
+// including Compose's encoded `CROVE_MODULES:<raw LUDY_MODULES>` sentinel (#3972).
+export function hasRetiredModulesWithoutReplacement(env: NodeJS.ProcessEnv): boolean {
+  const retired = env.LUDY_RETIRED_MODULES?.trim();
+  if (retired) {
+    if (retired === 'CROVE_MODULES') return true;
+    if (retired.startsWith('CROVE_MODULES:')) {
+      return !hasExplicitModulesList(retired.slice('CROVE_MODULES:'.length));
+    }
+  }
+  return Boolean(env.CROVE_MODULES?.trim()) && !hasExplicitModulesList(env.LUDY_MODULES);
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (env.CROVE_SHARED_DATABASE?.trim()) {
     throw new Error('Invalid configuration: CROVE_SHARED_DATABASE has been retired; rename it to LUDY_SHARED_DATABASE');
@@ -878,8 +895,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (env.CROVE_SHARED_DATABASE_SWITCH?.trim()) {
     throw new Error('Invalid configuration: CROVE_SHARED_DATABASE_SWITCH has been retired; rename it to LUDY_SHARED_DATABASE_SWITCH');
   }
-  const hasExplicitLudyModules = Boolean(env.LUDY_MODULES?.split(',').some((m) => m.trim().length > 0));
-  if (env.LUDY_RETIRED_MODULES?.trim() === 'CROVE_MODULES' || (Boolean(env.CROVE_MODULES?.trim()) && !hasExplicitLudyModules)) {
+  if (hasRetiredModulesWithoutReplacement(env)) {
     throw new Error('Invalid configuration: CROVE_MODULES has been retired; rename it to LUDY_MODULES');
   }
   const parsed = schema.safeParse(env);
