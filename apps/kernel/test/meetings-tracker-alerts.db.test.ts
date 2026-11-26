@@ -357,8 +357,8 @@ suite('Tracker alerts (#4873)', () => {
     for (const role of ['ludy_app', 'ludy_tenant', 'ludy_worker', 'ludy_definer_tenant']) {
       expect((await sqlAdmin<{ ok: boolean }>('SELECT pg_catalog.has_function_privilege($1, $2::regprocedure, \'EXECUTE\') AS ok', [role, fn])).rows[0]?.ok, `${role} calls the helper`).toBe(false);
     }
-    // The two definers that use it stay worker-only: ludy_worker may call them, the other roles may not.
-    for (const definer of ['ludy_meetings.tracker_alert_hits(uuid, uuid, timestamptz)', 'ludy_meetings.weekly_notices_due(integer, uuid, uuid, date, timestamptz)']) {
+    // The two definers that use it (the alert's and the weekly notice's tracked number) stay worker-only: ludy_worker may call them, the other roles may not.
+    for (const definer of ['ludy_meetings.tracker_alert_hits(uuid, uuid, timestamptz)', 'ludy_meetings.weekly_tracked_hits(uuid, uuid, timestamptz)']) {
       expect((await sqlAdmin<{ ok: boolean }>('SELECT pg_catalog.has_function_privilege(\'ludy_worker\', $1::regprocedure, \'EXECUTE\') AS ok', [definer])).rows[0]?.ok, definer).toBe(true);
       for (const role of ['ludy_app', 'ludy_tenant', 'ludy_definer_tenant']) {
         expect((await sqlAdmin<{ ok: boolean }>('SELECT pg_catalog.has_function_privilege($1, $2::regprocedure, \'EXECUTE\') AS ok', [role, definer])).rows[0]?.ok, `${role} calls ${definer}`).toBe(false);

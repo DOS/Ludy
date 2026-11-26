@@ -101,9 +101,9 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
   // A transcript line of a meeting (the tracked-word number counts the published ones).
   const line = (meetingId: string, text: string, stage: 'draft' | 'published' = 'published') =>
     sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 5, 'Người nói 1', $4, $5)`, [orgId, randomUUID(), meetingId, text, stage]);
-  // The tracked-word number the definer says for a member at the Monday: a number, or null when the org keeps no tracked word.
+  // The tracked-word number the worker definer says for a member at the Monday: a number, or null when the org keeps no tracked word.
   const trackedOf = async (who: string) =>
-    (await sql<{ tracked: number | null }>`SELECT tracked FROM ludy_meetings.weekly_notices_due(500, ${orgId}::uuid, ${users[who]}::uuid, NULL::date, ${AT}::timestamptz)`.execute(workerDb)).rows[0]?.tracked;
+    (await sql<{ tracked: number | null }>`SELECT ludy_meetings.weekly_tracked_hits(${orgId}::uuid, ${users[who]}::uuid, ${AT}::timestamptz) AS tracked`.execute(workerDb)).rows[0]?.tracked;
   async function item(meetingId: string, title: string, over: { task?: string; due?: string; stage?: 'draft' | 'published' } = {}): Promise<void> {
     let taskId: string | null = null;
     if (over.task !== undefined) {
@@ -416,12 +416,9 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     // The words kept: 3 for the one who reads the meeting that says it, 0 for the one who reads none that does (a word said where they cannot read adds nothing).
     expect(await trackedOf('tracky')).toBe(3);
     expect(await trackedOf('trackblind')).toBe(0);
-    // The number is for one member only: the sweep's listing of every due member (no user given, one org or none) leaves it NULL even though the org keeps tracked words, so the pass never pays for it.
-    for (const org of [orgId, null]) {
-      const listing = (await sql<{ user_id: string; tracked: number | null }>`SELECT user_id, tracked FROM ludy_meetings.weekly_notices_due(500, ${org}::uuid, NULL::uuid, NULL::date, ${AT}::timestamptz)`.execute(workerDb)).rows;
-      expect(listing.map((r) => r.user_id)).toEqual(expect.arrayContaining([users.tracky as string, users.trackblind as string]));
-      for (const row of listing) expect(row.tracked, `${row.user_id} in the listing`).toBeNull();
-    }
+    // The due definer (the sweep's listing too) is the one it was: it has no tracked column, so the pass never pays for the number; only the command asks for it, for the one member.
+    const listingColumns = Object.keys((await sql<Record<string, unknown>>`SELECT * FROM ludy_meetings.weekly_notices_due(500, ${orgId}::uuid, NULL::uuid, NULL::date, ${AT}::timestamptz)`.execute(workerDb)).rows[0] ?? {});
+    expect(listingColumns).not.toContain('tracked');
     // The four other numbers are still the card's.
     for (const who of ['tracky', 'trackblind']) {
       const row = await due(who);

@@ -96,15 +96,19 @@ export const weeklyNotice = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<{ notified: boolean; mailed: boolean; notificationId?: string | null }> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới báo các cuộc họp trong tuần');
-    const { rows: found } = await sql<{ meetings: number; decisions: number; open_items: number; overdue: number; cut: boolean; english: boolean; tracked: number | null }>`
-      SELECT meetings, decisions, open_items, overdue, cut, english, tracked
+    const { rows: found } = await sql<{ meetings: number; decisions: number; open_items: number; overdue: number; cut: boolean; english: boolean }>`
+      SELECT meetings, decisions, open_items, overdue, cut, english
       FROM ludy_meetings.weekly_notices_due(1::int, ${ctx.orgId}::uuid, ${input.userId}::uuid, ${input.day}::date, ${input.at ?? null}::timestamptz)`.execute(ctx.trx);
     const due = found[0];
     // Nothing due any more (a week with nothing to show, turned off, muted, left, told already): the handler writes nothing and calls no ctx.audit; the runtime still records its own ok audit row of the command (no day, no count).
     if (!due) return { notified: false, mailed: false };
     // The numbers are parsed against the card's own limits before anything is written, so a definer that ever returned more would roll the dispatch back instead of storing a number the mail refuses.
-    // The tracked-word number (the definer computes it for this one-member call only, never for the sweep's listing) is left out when the org keeps no tracked word (null) and when none came up (0): a line is not shown as 0.
-    const counts = zWeeklyCounts.parse({ meetings: due.meetings, decisions: due.decisions, open: due.open_items, overdue: due.overdue, cut: due.cut, ...(due.tracked !== null && due.tracked > 0 ? { tracked: due.tracked } : {}) });
+    // The tracked-word number comes from its own worker definer, asked for this one member only (never the sweep's listing, which would pay for it for every due member). It is left out when the org keeps no tracked word (null)
+    // and when none came up (0): a line is not shown as 0.
+    const { rows: trackedRows } = await sql<{ tracked: number | null }>`
+      SELECT ludy_meetings.weekly_tracked_hits(${ctx.orgId}::uuid, ${input.userId}::uuid, ${input.at ?? null}::timestamptz) AS tracked`.execute(ctx.trx);
+    const tracked = trackedRows[0]?.tracked ?? null;
+    const counts = zWeeklyCounts.parse({ meetings: due.meetings, decisions: due.decisions, open: due.open_items, overdue: due.overdue, cut: due.cut, ...(tracked !== null && tracked > 0 ? { tracked } : {}) });
     const sent = await notifyMembers(ctx, {
       kind: WEEKLY_KIND,
       users: [input.userId],
