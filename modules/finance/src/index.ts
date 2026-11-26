@@ -48,7 +48,8 @@ import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoic
 import { marketplaceColumnsCommands, marketplaceColumnsQueries } from './marketplace-columns.ts';
 import { marketplaceConnectionCommands, marketplaceConnectionQueries } from './marketplace-connections.ts';
 import { marketplaceVatRateCommands, marketplaceVatRateQueries } from './marketplace-vat-rate.ts';
-export { marketplaceVatRateAt } from './marketplace-vat-rate.ts';
+export { marketplaceVatRateAt, marketplaceVatRateEntries, pickMarketplaceVatRate } from './marketplace-vat-rate.ts';
+export { resolveVatRates } from './marketplace-settlement-vat.ts';
 import { misaAmisConnectionCommands, misaAmisConnectionQueries } from './misa-amis-connections.ts';
 import { misaAmisMatchCommands, misaAmisMatchQueries } from './misa-amis-match.ts';
 import { misaAmisPushCommands, misaAmisPushQueries } from './misa-amis-push.ts';
