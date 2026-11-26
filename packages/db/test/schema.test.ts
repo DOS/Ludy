@@ -17,6 +17,10 @@ describe('Database', () => {
     expectTypeOf<Updateable<Database['ludy_kernel.tenant_member']>['role']>().toEqualTypeOf<MemberRole | undefined>();
     // A refinement's never (accepted_at is written only by invite_accept()) becomes NotGranted as well.
     expectTypeOf<Insertable<Database['ludy_kernel.member_invite']>['accepted_at']>().toEqualTypeOf<undefined>();
+    // Trigger-managed task.completed_by is readable but never inserted or updated directly by tenant code.
+    expectTypeOf<Selectable<Database['ludy_kernel.task']>['completed_by']>().toEqualTypeOf<string | null>();
+    expectTypeOf<Insertable<Database['ludy_kernel.task']>['completed_by']>().toEqualTypeOf<undefined>();
+    expectTypeOf<Updateable<Database['ludy_kernel.task']>['completed_by']>().toEqualTypeOf<undefined>();
     // A table without a refinement is the generated type as is.
     expectTypeOf<Database['ludy_kernel.idempotency_key']>().toEqualTypeOf<G.KernelIdempotencyKeyTable>();
   });
@@ -103,5 +107,7 @@ describe('Database', () => {
     db.insertInto('ludy_kernel.outbox_event').values({ org_id: 'o', type: 'x', payload: '{}' }).compile();
     // @ts-expect-error purchase documents are append-only
     db.updateTable('ludy_finance.purchase_document').set({ total: '1' }).compile();
+    // @ts-expect-error completed_by is trigger-managed; tenant updates are rejected
+    db.updateTable('ludy_kernel.task').set({ completed_by: 'u' }).compile();
   });
 });

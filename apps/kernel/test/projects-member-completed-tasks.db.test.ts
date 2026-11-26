@@ -591,6 +591,68 @@ suite('projects.member_completed_tasks completed_by and done_at (#4821)', () => 
       expect(rows[0]?.done_at.toISOString()).toBe(txBNowIso);
     });
 
+    // 7b (#5128): Context-less task_before_update() transitions into 'done' clear completed_by to NULL when not
+    // explicitly supplied (even after prior user completion and context-less reopen trying to pass a stale actor),
+    // while preserving an explicit context-less completed_by backfill and keeping already-done completed_by immutable.
+    // Run before Section 8's 20270328000000 replay so the test exercises 20270329060000's trigger definition.
+    const { taskId: tReopenNoCtx } = await exec<{ taskId: string }>(owner.userId, org.orgId, 'projects.task.create', {
+      projectId,
+      title: 'Mo lai va hoan thanh khong ngu canh',
+      assigneePositionId: seatA,
+    });
+    await exec(staffA.userId, org.orgId, 'kernel.task.set_status', { id: tReopenNoCtx, status: 'done' });
+    await withAdmin(async (c) => {
+      const doneAsUser = await c.query<{ completed_by: string | null; done_at: Date | null }>(
+        'SELECT completed_by, done_at FROM ludy_kernel.task WHERE org_id = $1 AND id = $2',
+        [org.orgId, tReopenNoCtx],
+      );
+      expect(doneAsUser.rows[0]?.completed_by).toBe(staffA.userId);
+      expect(doneAsUser.rows[0]?.done_at).not.toBeNull();
+
+      // Context-less reopen attempting to retain stale completed_by clears both completed_by and done_at.
+      const reopenedNoCtx = await c.query<{ completed_by: string | null; done_at: Date | null }>(
+        `UPDATE ludy_kernel.task
+            SET status = 'todo', completed_by = $3
+          WHERE org_id = $1 AND id = $2
+          RETURNING completed_by, done_at`,
+        [org.orgId, tReopenNoCtx, staffA.userId],
+      );
+      expect(reopenedNoCtx.rows[0]).toEqual({ completed_by: null, done_at: null });
+
+      // Context-less re-completion without supplying completed_by keeps completed_by = NULL and stamps done_at.
+      const redoneImplicit = await c.query<{ completed_by: string | null; done_at: Date | null }>(
+        `UPDATE ludy_kernel.task
+            SET status = 'done'
+          WHERE org_id = $1 AND id = $2
+          RETURNING completed_by, done_at`,
+        [org.orgId, tReopenNoCtx],
+      );
+      expect(redoneImplicit.rows[0]?.completed_by).toBeNull();
+      expect(redoneImplicit.rows[0]?.done_at).not.toBeNull();
+
+      // Reopen and re-complete via context-less SQL with explicit completed_by preserves the supplied actor.
+      await c.query(`UPDATE ludy_kernel.task SET status = 'todo' WHERE org_id = $1 AND id = $2`, [org.orgId, tReopenNoCtx]);
+      const redoneExplicit = await c.query<{ completed_by: string | null; done_at: Date | null }>(
+        `UPDATE ludy_kernel.task
+            SET status = 'done', completed_by = $3
+          WHERE org_id = $1 AND id = $2
+          RETURNING completed_by, done_at`,
+        [org.orgId, tReopenNoCtx, staffB.userId],
+      );
+      expect(redoneExplicit.rows[0]?.completed_by).toBe(staffB.userId);
+      expect(redoneExplicit.rows[0]?.done_at).not.toBeNull();
+
+      // Already-done row remains immutable under context-less UPDATE trying to overwrite completed_by.
+      const stillDone = await c.query<{ completed_by: string | null }>(
+        `UPDATE ludy_kernel.task
+            SET completed_by = $3
+          WHERE org_id = $1 AND id = $2
+          RETURNING completed_by`,
+        [org.orgId, tReopenNoCtx, staffA.userId],
+      );
+      expect(stillDone.rows[0]?.completed_by).toBe(staffB.userId);
+    });
+
     const ddlMigrationSql = readFileSync(
       fileURLToPath(new URL('../../../supabase/migrations/20270328000000_ludy_kernel_task_completed_by.sql', import.meta.url)),
       'utf8',
