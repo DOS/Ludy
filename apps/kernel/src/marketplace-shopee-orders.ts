@@ -331,6 +331,7 @@ export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller =
 
       let ordersEnd = ordersStart;
       let ordersWidth = cursor?.width ?? 0;
+      let ordersPolled = false;
       let read: { numbers: string[]; more: boolean } = { numbers: [], more: false };
       let returnsFrom = ordersFrom;
       let returnsEnd = ordersStart;
@@ -355,6 +356,7 @@ export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller =
           return { ordersRead, returnsFound, picked, more: picked === null };
         });
         if (synced === null) return { orders: [], nextCursor: since };
+        ordersPolled = true;
         ordersEnd = synced.endMs;
         ordersWidth = synced.width;
         read = synced.result.ordersRead;
@@ -363,12 +365,14 @@ export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller =
         found = synced.result.returnsFound;
         selected = synced.result.picked!;
       } else {
-        returnsFrom = Math.max(cursor.returnsAt, floor);
+        // Keep a held returns cursor even if the 15-day orders floor crept past it between polls (bounded to one window behind floor); Shopee limits span, not lookback.
+        returnsFrom = Math.max(cursor.returnsAt, floor - WINDOW_DAYS * DAY_MS);
         returnsWidth = cursor.returnsWidth;
         // Catch up held returns before reading a newer 100-order overlap so steady order volume cannot starve returns.
         if (Math.floor(returnsFrom / 1000) >= Math.floor(ordersStart / 1000) && ordersStart < nowMs) {
           const ordersSliced = await readSlicedWindow(ordersStart, ordersFrom, nowMs, ordersWidth, (endMs) => listWindow(credential, ordersFrom, endMs));
           if (ordersSliced !== null) {
+            ordersPolled = true;
             ordersEnd = ordersSliced.endMs;
             ordersWidth = ordersSliced.width;
             read = ordersSliced.result;
@@ -401,7 +405,7 @@ export function shopeeMarketplace(options: ShopeeOptions, caller: ShopeeCaller =
         nextReturnsAt = returnsEnd;
         nextReturnsWidth = returnsSkipped ? returnsWidth : found.returns.length === 0 ? Math.max(0, returnsWidth - 1) : returnsWidth;
       }
-      const nextOrdersWidth = ordersEnd < nowMs && read.numbers.length === 0 ? Math.max(0, ordersWidth - 1) : ordersWidth;
+      const nextOrdersWidth = ordersPolled && ordersEnd < nowMs && read.numbers.length === 0 ? Math.max(0, ordersWidth - 1) : ordersWidth;
       const nextCursor = writeCursor(ordersEnd, nextOrdersWidth, nextReturnsAt, nextReturnsWidth);
       const hasMore = ordersEnd < nowMs || (nextReturnsAt !== null && Math.floor(ordersEnd / 1000) > Math.floor(nextReturnsAt / 1000));
 

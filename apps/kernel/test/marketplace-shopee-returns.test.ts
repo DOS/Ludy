@@ -388,8 +388,8 @@ describe('overlap and cursor advance over the detail cap (#4287)', () => {
 
   it('narrows and widens the held returns slice width (`;rs:`) when catch-up returns span over 150 entries', async () => {
     const orders = [order('A1', { updatedMs: NOW - 10 * DAY })];
-    // 160 REQUESTED returns spread over 10 days, plus 1 accepted return at the end.
-    const many = Array.from({ length: 160 }, (_, i) => ret(`RQ${String(i).padStart(3, '0')}`, 'A1', { status: 'REQUESTED', updatedMs: NOW - 10 * DAY + i * HOUR }));
+    // 160 REQUESTED returns inside [NOW - 10d, NOW - 7d], then an empty [NOW - 5d, NOW - 2d] slice that widens `;rs:1` back to 0, and 1 accepted return at NOW - DAY.
+    const many = Array.from({ length: 160 }, (_, i) => ret(`RQ${String(i).padStart(3, '0')}`, 'A1', { status: 'REQUESTED', updatedMs: NOW - 10 * DAY + i * 20 * MIN }));
     const accepted = ret('RA1', 'A1', { updatedMs: NOW - DAY });
     const s = setup(orders, [...many, accepted]);
     const held = `o:${new Date(NOW).toISOString()};r:${new Date(NOW - 11 * DAY).toISOString()}`;
@@ -404,12 +404,27 @@ describe('overlap and cursor advance over the detail cap (#4287)', () => {
 
     const p3 = await s.provider.listOrders(SECRET, 'shopee', p2.nextCursor);
     expect(p3.more).toBe(true);
-    expect(p3.nextCursor).toBe(`o:${new Date(NOW).toISOString()};r:${new Date(NOW - 2 * DAY).toISOString()};rs:1`);
+    expect(p3.nextCursor).toBe(`o:${new Date(NOW).toISOString()};r:${new Date(NOW - 2 * DAY).toISOString()}`);
 
     const p4 = await s.provider.listOrders(SECRET, 'shopee', p3.nextCursor);
     expect(stagesOf(p4, 'A1')).toEqual(['returned:AT-MAU-DL', 'completed:MU-MAU']);
     expect(p4.more).toBe(false);
     expect(p4.nextCursor).toBe(`o:${new Date(NOW).toISOString()}`);
+  });
+
+  it('does not skip a held return when the 15-day floor creeps past it between polls', async () => {
+    const oldOrder = order('OLD1', { updatedMs: NOW - 16 * DAY });
+    const floorReturn = ret('RF1', 'OLD1', { updatedMs: NOW - 15 * DAY + 1000 });
+    let clock = NOW + 5 * MIN;
+    const fake = fakeShopee({ ...CRED, raws: [oldOrder], returns: [floorReturn], now: () => clock });
+    const options = { fetch: hostBoundFetch(SHOPEE_HOSTS, fake.fetch), now: () => new Date(clock), spacingMs: 0 };
+    const provider = shopeeMarketplace(options, shopeeCaller(options));
+
+    const held = `o:${new Date(NOW).toISOString()};r:${new Date(NOW - 15 * DAY + 1000).toISOString()}`;
+    const page = await provider.listOrders(SECRET, 'shopee', held);
+    expect(stagesOf(page, 'OLD1')).toEqual(['returned:AT-MAU-DL', 'completed:MU-MAU']);
+    expect(page.nextCursor).toBe(`o:${new Date(NOW).toISOString()}`);
+    expect(page.more).toBe(true);
   });
 
   it('refuses a return list entry without update_time and ignores a held returns cursor ahead of the orders cursor', async () => {
