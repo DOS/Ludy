@@ -726,49 +726,171 @@ guard_run() {
   trap on_signal TERM INT
 }
 
+# Normalizes a Compose file path item against $DEPLOY_DIR without collapsing subdirectories into basenames (#3972).
+deploy_norm_compose_path() {
+  local item="$1" dir_norm="${DEPLOY_DIR%/}" p=''
+  [ -n "$dir_norm" ] || dir_norm='/'
+  if [[ "$item" == /* ]]; then p="$item"; else p="$dir_norm/$item"; fi
+  while [[ "$p" == */./* ]]; do
+    p="${p//\/.\//\/}"
+  done
+  while [[ "$p" == */. ]]; do
+    p="${p%/.}"
+  done
+  while [[ "$p" == //* ]]; do
+    p="${p#/}"
+  done
+  [ -n "$p" ] || p='/'
+  printf '%s' "$p"
+}
+
+DEPLOY_DC_FILES=()
+deploy_insert_compose_file_at() {
+  local ins_idx="$1" new_path="$2" i=0 inserted=0
+  local -a updated=()
+  for ((i = 0; i < ${#DEPLOY_DC_FILES[@]}; i++)); do
+    if ((inserted == 0 && i == ins_idx)); then
+      updated+=("$new_path")
+      inserted=1
+    fi
+    updated+=("${DEPLOY_DC_FILES[$i]}")
+  done
+  if ((inserted == 0)); then
+    updated+=("$new_path")
+  fi
+  DEPLOY_DC_FILES=("${updated[@]}")
+}
+
+# Builds the ordered -f Compose file list matching Docker Compose COMPOSE_FILE semantics without reordering host overrides (#3972).
+# mode: active (uses $DEPLOY_DIR/docker-compose.yml and requires active override/pilot files) | prev (inspects prior stack config).
+deploy_build_compose_files() {
+  local mode="$1" base_compose="${2:-$DEPLOY_DIR/docker-compose.yml}" target_env="${3:-$ENV_FILE}"
+  local dir_norm="${DEPLOY_DIR%/}" rel_dir='' item='' resolved='' base='' ov_path='' ins_idx=0
+  local has_base=0 has_override=0 has_wal=0 base_idx=0 pilot_idx=-1 host_idx=-1 idx=0
+  [ -n "$dir_norm" ] || dir_norm='/'
+  DEPLOY_DC_FILES=()
+  deploy_parse_compose_file_items "$target_env" || return 1
+  if [ "$base_compose" != "$dir_norm/docker-compose.yml" ] && [ "$base_compose" != "$DEPLOY_DIR/docker-compose.yml" ]; then
+    rel_dir="$(dirname "$base_compose")"
+  fi
+
+  if [ -z "$DEPLOY_COMPOSE_FILE_RAW" ]; then
+    DEPLOY_DC_FILES+=("$base_compose")
+    if [ "$mode" = active ]; then
+      DEPLOY_DC_FILES+=("$dir_norm/docker-compose.override.yml")
+    elif [ -f "$dir_norm/docker-compose.override.yml" ]; then
+      DEPLOY_DC_FILES+=("$dir_norm/docker-compose.override.yml")
+    elif [ -n "$rel_dir" ] && [ -f "$rel_dir/docker-compose.override.yml" ]; then
+      DEPLOY_DC_FILES+=("$rel_dir/docker-compose.override.yml")
+    fi
+    if [ -f "$dir_norm/compose.wal.yml" ]; then DEPLOY_DC_FILES+=("$dir_norm/compose.wal.yml"); fi
+    if [ -f "$dir_norm/compose.host.yml" ]; then DEPLOY_DC_FILES+=("$dir_norm/compose.host.yml"); fi
+    return 0
+  fi
+
+  for item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
+    resolved="$(deploy_norm_compose_path "$item")"
+    base="${resolved##*/}"
+    if [ "$resolved" = "$dir_norm/docker-compose.yml" ]; then
+      DEPLOY_DC_FILES+=("$base_compose")
+      if ((has_base == 0)); then base_idx="$idx"; fi
+      has_base=1
+      idx=$((idx + 1))
+    elif [ "$resolved" = "$dir_norm/compose.pilot.yml" ]; then
+      if [ "$mode" = active ]; then
+        [ -f "$resolved" ] || return 1
+        DEPLOY_DC_FILES+=("$resolved")
+        pilot_idx="$idx"
+        idx=$((idx + 1))
+      else
+        if [ -f "$resolved" ]; then
+          DEPLOY_DC_FILES+=("$resolved")
+          pilot_idx="$idx"
+          idx=$((idx + 1))
+        elif [ -n "$rel_dir" ] && [ -f "$rel_dir/compose.pilot.yml" ]; then
+          DEPLOY_DC_FILES+=("$rel_dir/compose.pilot.yml")
+          pilot_idx="$idx"
+          idx=$((idx + 1))
+        fi
+      fi
+    elif [ "$resolved" = "$dir_norm/docker-compose.override.yml" ]; then
+      if [ "$mode" = active ]; then
+        DEPLOY_DC_FILES+=("$resolved")
+        has_override=1
+        idx=$((idx + 1))
+      elif [ -f "$resolved" ]; then
+        DEPLOY_DC_FILES+=("$resolved")
+        has_override=1
+        idx=$((idx + 1))
+      elif [ -n "$rel_dir" ] && [ -f "$rel_dir/docker-compose.override.yml" ]; then
+        DEPLOY_DC_FILES+=("$rel_dir/docker-compose.override.yml")
+        has_override=1
+        idx=$((idx + 1))
+      fi
+    elif [ "$resolved" = "$dir_norm/compose.host.yml" ]; then
+      if [ -f "$resolved" ]; then
+        DEPLOY_DC_FILES+=("$resolved")
+        host_idx="$idx"
+        idx=$((idx + 1))
+      fi
+    else
+      [ -f "$resolved" ] || return 1
+      DEPLOY_DC_FILES+=("$resolved")
+      if [ "$base" = compose.pilot.yml ]; then
+        pilot_idx="$idx"
+      elif [ "$base" = compose.wal.yml ]; then
+        has_wal=1
+      fi
+      idx=$((idx + 1))
+    fi
+  done
+
+  if ((${#DEPLOY_DC_FILES[@]} == 0)); then
+    return 1
+  fi
+  if ((has_base == 0)); then
+    deploy_insert_compose_file_at 0 "$base_compose"
+    base_idx=0
+    if ((pilot_idx >= 0)); then pilot_idx=$((pilot_idx + 1)); fi
+    if ((host_idx >= 0)); then host_idx=$((host_idx + 1)); fi
+  fi
+  if ((has_override == 0)); then
+    ov_path=''
+    if [ "$mode" = active ]; then
+      ov_path="$dir_norm/docker-compose.override.yml"
+    elif [ -f "$dir_norm/docker-compose.override.yml" ]; then
+      ov_path="$dir_norm/docker-compose.override.yml"
+    elif [ -n "$rel_dir" ] && [ -f "$rel_dir/docker-compose.override.yml" ]; then
+      ov_path="$rel_dir/docker-compose.override.yml"
+    fi
+    if [ -n "$ov_path" ]; then
+      if ((pilot_idx >= 0)); then ins_idx=$((pilot_idx + 1)); else ins_idx=$((base_idx + 1)); fi
+      deploy_insert_compose_file_at "$ins_idx" "$ov_path"
+      if ((host_idx >= 0 && host_idx >= ins_idx)); then host_idx=$((host_idx + 1)); fi
+    fi
+  fi
+  if ((has_wal == 0)) && [ -f "$dir_norm/compose.wal.yml" ]; then
+    if ((host_idx >= 0)); then
+      deploy_insert_compose_file_at "$host_idx" "$dir_norm/compose.wal.yml"
+    else
+      DEPLOY_DC_FILES+=("$dir_norm/compose.wal.yml")
+    fi
+  fi
+  return 0
+}
+
 # docker compose for the active files in $DEPLOY_DIR. The project name comes from the compose file (`ludy`) or
 # COMPOSE_PROJECT_NAME in the env file, so volumes stay the same from release to release.
 DC_PREFIX=()
 COMPOSE_PROJECT_OVERRIDE=''
 dc() {
-  local args=(compose) wal_file='' wal_rc=0 resolved_pilot='' pilot_rc=0 item='' resolved='' base=''
-  deploy_parse_compose_file_items || return 1
+  local args=(compose) f=''
+  deploy_build_compose_files active "$DEPLOY_DIR/docker-compose.yml" "$ENV_FILE" || return 1
   if [ -n "$COMPOSE_PROJECT_OVERRIDE" ]; then args+=(-p "$COMPOSE_PROJECT_OVERRIDE"); fi
-  args+=(--project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml")
-  # The pilot's split API and worker (tools/deploy/compose.pilot.yml, #2118) right after the release's file: they extend its
-  # `ludy` service, whose image the release's pins (next) must then replace. The host chooses the layout by listing the file
-  # in COMPOSE_FILE (#2133); the file itself comes with each release (activate), so it stays in step with docker-compose.yml.
-  if pilot_layout; then
-    if [ -f "$DEPLOY_DIR/compose.pilot.yml" ]; then
-      args+=(-f "$DEPLOY_DIR/compose.pilot.yml")
-    else
-      resolved_pilot="$(resolve_compose_overlay compose.pilot.yml nofallback 2>/dev/null)" || pilot_rc=$?
-      if ((pilot_rc == 0)) && [ -n "$resolved_pilot" ]; then
-        args+=(-f "$resolved_pilot")
-      elif ((pilot_rc == 2)); then
-        return 1
-      fi
-    fi
-  fi
-  args+=(-f "$DEPLOY_DIR/docker-compose.override.yml")
-  # The database image with pgBackRest and the bucket's settings (tools/backup/compose.wal.yml, #2120). The image
-  # (ludy-db:local, built from tools/wal) is on the host, never pulled: a deploy starts `db` with --no-build.
-  wal_file="$(resolve_wal_compose_file)" || wal_rc=$?
-  if ((wal_rc == 2)); then
-    return 1
-  elif ((wal_rc == 0)) && [ -n "$wal_file" ]; then
-    args+=(-f "$wal_file")
-  fi
-  for item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
-    base="${item##*/}"
-    case "$base" in
-      docker-compose.yml | compose.pilot.yml | docker-compose.override.yml | compose.wal.yml | compose.host.yml) continue ;;
-    esac
-    if [[ "$item" == /* ]]; then resolved="$item"; else resolved="$DEPLOY_DIR/$item"; fi
-    [ -f "$resolved" ] || return 1
-    args+=(-f "$resolved")
+  args+=(--project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE")
+  for f in "${DEPLOY_DC_FILES[@]}"; do
+    args+=(-f "$f")
   done
-  if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.host.yml"); fi
   # DC_PREFIX: a command to run docker under (the count of plain idempotency rows runs under `timeout`).
   ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker "${args[@]}" "$@"
 }
@@ -778,47 +900,15 @@ dc() {
 # or recovery from a staged release directory when $DEPLOY_DIR/docker-compose.yml was removed).
 # Optional $1 overrides the Compose project name (-p) when inspecting an earlier stack after .env changed.
 dc_prev_config() {
-  local proj_override="${1:-}" base_compose="${2:-$DEPLOY_DIR/docker-compose.yml}" rel_dir='' item='' resolved='' base=''
+  local proj_override="${1:-}" base_compose="${2:-$DEPLOY_DIR/docker-compose.yml}" f=''
   [ -f "$base_compose" ] || return 1
-  deploy_parse_compose_file_items || return 1
-  if [ "$base_compose" != "$DEPLOY_DIR/docker-compose.yml" ]; then
-    rel_dir="$(dirname "$base_compose")"
-  fi
+  deploy_build_compose_files prev "$base_compose" "$ENV_FILE" || return 1
   local args=(compose)
   if [ -n "$proj_override" ]; then args+=(-p "$proj_override"); fi
-  args+=(--project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$base_compose")
-  local resolved_pilot='' resolved_wal='' pilot_rc=0 wal_rc=0
-  if pilot_layout; then
-    resolved_pilot="$(resolve_compose_overlay compose.pilot.yml fallback)" || pilot_rc=$?
-    if ((pilot_rc == 0)) && [ -n "$resolved_pilot" ]; then
-      args+=(-f "$resolved_pilot")
-    elif [ -n "$rel_dir" ] && [ -f "$rel_dir/compose.pilot.yml" ]; then
-      args+=(-f "$rel_dir/compose.pilot.yml")
-    elif ((pilot_rc == 2)); then
-      return 1
-    fi
-  fi
-  if [ -f "$DEPLOY_DIR/docker-compose.override.yml" ]; then
-    args+=(-f "$DEPLOY_DIR/docker-compose.override.yml")
-  elif [ -n "$rel_dir" ] && [ -f "$rel_dir/docker-compose.override.yml" ]; then
-    args+=(-f "$rel_dir/docker-compose.override.yml")
-  fi
-  resolved_wal="$(resolve_wal_compose_file)" || wal_rc=$?
-  if ((wal_rc == 0)) && [ -n "$resolved_wal" ]; then
-    args+=(-f "$resolved_wal")
-  elif ((wal_rc == 2)); then
-    return 1
-  fi
-  for item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
-    base="${item##*/}"
-    case "$base" in
-      docker-compose.yml | compose.pilot.yml | docker-compose.override.yml | compose.wal.yml | compose.host.yml) continue ;;
-    esac
-    if [[ "$item" == /* ]]; then resolved="$item"; else resolved="$DEPLOY_DIR/$item"; fi
-    [ -f "$resolved" ] || return 1
-    args+=(-f "$resolved")
+  args+=(--project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE")
+  for f in "${DEPLOY_DC_FILES[@]}"; do
+    args+=(-f "$f")
   done
-  if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.host.yml"); fi
   ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker "${args[@]}" config 2>/dev/null
 }
 
@@ -986,6 +1076,48 @@ deploy_dotenv_interpolate() {
   DEPLOY_DOTENV_REPLY="$out"
 }
 
+# Multiline quote tracking helpers for dotenv scanning passes (#3972).
+DEPLOY_OPEN_QUOTE=''
+deploy_dotenv_rhs_open_quote() {
+  local value="${1#"${1%%[![:space:]]*}"}" q='' len=0 i=1 c='' bs=''
+  DEPLOY_OPEN_QUOTE=''
+  case "$value" in
+    \'*) q="'" ;;
+    \"*) q='"' ;;
+    *) return 1 ;;
+  esac
+  printf -v bs '%b' '\134'
+  len="${#value}"
+  while ((i < len)); do
+    c="${value:i:1}"
+    if [ "$c" = "$bs" ]; then
+      i=$((i + 2))
+      continue
+    elif [ "$c" = "$q" ]; then
+      return 1
+    fi
+    i=$((i + 1))
+  done
+  DEPLOY_OPEN_QUOTE="$q"
+  return 0
+}
+
+deploy_dotenv_line_closes_quote() {
+  local q="$1" line="$2" len="${#2}" i=0 c='' bs=''
+  printf -v bs '%b' '\134'
+  while ((i < len)); do
+    c="${line:i:1}"
+    if [ "$c" = "$bs" ]; then
+      i=$((i + 2))
+      continue
+    elif [ "$c" = "$q" ]; then
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
 deploy_dotenv_parse_rhs() {
   local raw="$1" file="$2" lineno="$3" cur_key="$4"
   local value='' trail='' out='' i=0 c='' nc='' len=0 bs=''
@@ -1012,7 +1144,7 @@ deploy_dotenv_parse_rhs() {
           out+="$c"
         fi
       done
-      [ "$i" -lt "$len" ] || return 1
+      [ "$i" -lt "$len" ] || return 2
       ;;
     \"*)
       len="${#value}"
@@ -1039,7 +1171,7 @@ deploy_dotenv_parse_rhs() {
           out+="$c"
         fi
       done
-      [ "$i" -lt "$len" ] || return 1
+      [ "$i" -lt "$len" ] || return 2
       deploy_dotenv_interpolate "$out" "$file" "$lineno" "$cur_key" || return 1
       out="$DEPLOY_DOTENV_REPLY"
       ;;
@@ -1061,7 +1193,7 @@ deploy_dotenv_eval_key() {
     set -euo pipefail
     local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$'
     local blank_re='^[[:space:]]*(#.*)?$'
-    local lineno=0 line='' key='' rhs=''
+    local lineno=0 start_lineno=0 parse_rc=0 line='' next_line='' key='' rhs=''
     [ -r "$1" ] || exit 1
     if [ "$ignore_os_target" = 1 ]; then
       unset "$target_key" 2>/dev/null || true
@@ -1072,9 +1204,25 @@ deploy_dotenv_eval_key() {
       line="${line%$'\r'}"
       [[ "$line" =~ $blank_re ]] && continue
       [[ "$line" =~ $assign_re ]] || continue
+      start_lineno="$lineno"
       key="${BASH_REMATCH[2]}"
       rhs="${BASH_REMATCH[3]}"
-      deploy_dotenv_parse_rhs "$rhs" "$src_path" "$lineno" "$key" || exit 1
+      while :; do
+        parse_rc=0
+        deploy_dotenv_parse_rhs "$rhs" "$src_path" "$start_lineno" "$key" || parse_rc=$?
+        if ((parse_rc == 0)); then
+          break
+        elif ((parse_rc == 2)); then
+          if ! IFS= read -r next_line && [ -z "$next_line" ]; then
+            exit 1
+          fi
+          lineno=$((lineno + 1))
+          next_line="${next_line%$'\r'}"
+          rhs="${rhs}"$'\n'"${next_line}"
+        else
+          exit 1
+        fi
+      done
       printf -v "__DEPLOY_DE_S_${key}" '%s' 1 || exit 1
       printf -v "__DEPLOY_DE_V_${key}" '%s' "$DEPLOY_DOTENV_REPLY" || exit 1
     done <"$1"
@@ -1088,15 +1236,15 @@ deploy_dotenv_eval_key() {
 DEPLOY_COMPOSE_FILE_ITEMS=()
 DEPLOY_COMPOSE_FILE_RAW=''
 deploy_parse_compose_file_items() {
-  local cf='' sep='' rest_cf='' item='' done_split=0
+  local target_env="${1:-$ENV_FILE}" cf='' sep='' rest_cf='' item='' done_split=0
   DEPLOY_COMPOSE_FILE_ITEMS=()
   DEPLOY_COMPOSE_FILE_RAW=''
-  [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] || return 0
-  if ! cf="$(deploy_dotenv_eval_key "$ENV_FILE" COMPOSE_FILE 1 2>/dev/null)"; then
+  [ -n "$target_env" ] && [ -f "$target_env" ] || return 0
+  if ! cf="$(deploy_dotenv_eval_key "$target_env" COMPOSE_FILE 1 2>/dev/null)"; then
     return 2
   fi
   DEPLOY_COMPOSE_FILE_RAW="$cf"
-  if ! sep="$(deploy_dotenv_eval_key "$ENV_FILE" COMPOSE_PATH_SEPARATOR 1 2>/dev/null)"; then
+  if ! sep="$(deploy_dotenv_eval_key "$target_env" COMPOSE_PATH_SEPARATOR 1 2>/dev/null)"; then
     return 2
   fi
   [ -n "$sep" ] || sep="${COMPOSE_PATH_SEPARATOR:-:}"
@@ -1121,17 +1269,18 @@ deploy_parse_compose_file_items() {
   return 0
 }
 
-# Resolved COMPOSE_FILE assignment in $ENV_FILE (trimmed and interpolated matching dotenv/compose semantics).
+# Resolved COMPOSE_FILE assignment in $target_env (default $ENV_FILE), trimmed and interpolated matching dotenv/compose semantics.
 env_compose_file_value() {
-  deploy_parse_compose_file_items || return 1
+  local target_env="${1:-$ENV_FILE}"
+  deploy_parse_compose_file_items "$target_env" || return 1
   printf '%s' "$DEPLOY_COMPOSE_FILE_RAW"
 }
 
 # Whether the env file's COMPOSE_FILE lists a compose file basename (matching exact entry or */basename after
 # variable interpolation and COMPOSE_PATH_SEPARATOR splitting) (#2162, #3972).
 env_compose_file_lists() {
-  local base="$1" item=''
-  deploy_parse_compose_file_items || return 1
+  local base="$1" target_env="${2:-$ENV_FILE}" item=''
+  deploy_parse_compose_file_items "$target_env" || return 1
   [ -n "$DEPLOY_COMPOSE_FILE_RAW" ] || return 1
   for item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
     if [ "$item" = "$base" ] || [[ "$item" == */"$base" ]]; then
@@ -1145,7 +1294,7 @@ env_compose_file_lists() {
 # or falls back to $DEPLOY_DIR/<basename> when fallback=fallback and COMPOSE_FILE does not name it (#3972).
 # Returns 1 when absent/inactive, or 2 when COMPOSE_FILE cannot be parsed or names a missing file.
 resolve_compose_overlay() {
-  local base="$1" fallback="${2:-fallback}" item='' resolved='' listed=0 rc=0
+  local base="$1" fallback="${2:-fallback}" item='' resolved='' cand='' listed=0 rc=0
   deploy_parse_compose_file_items || rc=$?
   if ((rc == 2)); then
     return 2
@@ -1154,16 +1303,13 @@ resolve_compose_overlay() {
     for item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
       if [ "$item" = "$base" ] || [[ "$item" == */"$base" ]]; then
         listed=1
-        if [[ "$item" == /* ]]; then
-          resolved="$item"
-        else
-          resolved="$DEPLOY_DIR/$item"
-        fi
+        cand="$(deploy_norm_compose_path "$item")"
+        [ -f "$cand" ] || return 2
+        resolved="$cand"
       fi
     done
   fi
   if ((listed)); then
-    [ -f "$resolved" ] || return 2
     printf '%s' "$resolved"
     return 0
   fi
@@ -1236,7 +1382,7 @@ activate() {
     fi
   fi
   # The three files are moved in a row, so a plain `docker compose` (the backup cron) sees them together as nearly as it can.
-  if [ -n "$COMPOSE_PROJECT_OVERRIDE" ] && plain_compose_omits_override_and_project; then
+  if [ -n "$COMPOSE_PROJECT_OVERRIDE" ] && { plain_compose_omits_override_and_project "$ENV_FILE" || { [ -f "$DEPLOY_DIR/.env" ] && ! [ "$ENV_FILE" -ef "$DEPLOY_DIR/.env" ] && plain_compose_omits_override_and_project "$DEPLOY_DIR/.env"; }; }; then
     local base_yaml_name=''
     base_yaml_name="$(compose_file_yaml_name "$DEPLOY_DIR/docker-compose.yml.tmp")"
     if [ "$base_yaml_name" != "$COMPOSE_PROJECT_OVERRIDE" ]; then
@@ -1510,29 +1656,52 @@ append_unique_line() {
   fi
 }
 
+# Appends all unique non-empty lines from $add onto newline-separated list $cur.
+append_unique_lines() {
+  local cur="$1" add="$2" line=''
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    cur="$(append_unique_line "$cur" "$line")"
+  done <<<"$add"
+  printf '%s' "$cur"
+}
+
 # Reads the last effective assignment for $target in $file (default $ENV_FILE), trimmed and unquoted like dotenv.
 env_var_last_value() {
-  local target="$1" file="${2:-$ENV_FILE}" line raw val='' found=0
+  local target="$1" file="${2:-$ENV_FILE}" line raw val='' found=0 in_quote=''
   [ -n "$file" ] && [ -f "$file" ] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
-    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$ ]] && [ "${BASH_REMATCH[2]}" = "$target" ]; then
-      raw="${BASH_REMATCH[3]}"
-      found=1
-      if [[ "$raw" =~ ^[[:space:]]+# ]]; then
-        val=''
-      else
-        val="${raw#"${raw%%[![:space:]]*}"}"
-        if [[ "$val" =~ ^(\"\"|\'\')[[:space:]]*(#.*)?$ ]]; then
+    if [ -n "$in_quote" ]; then
+      if deploy_dotenv_line_closes_quote "$in_quote" "$line"; then in_quote=''; fi
+      continue
+    fi
+    [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$ ]]; then
+      if [ "${BASH_REMATCH[2]}" = "$target" ]; then
+        raw="${BASH_REMATCH[3]}"
+        found=1
+        if deploy_dotenv_rhs_open_quote "$raw"; then
+          in_quote="$DEPLOY_OPEN_QUOTE"
+          continue
+        fi
+        if [[ "$raw" =~ ^[[:space:]]+# ]]; then
           val=''
         else
-          val="${val%%[[:space:]]#*}"
-          val="${val%"${val##*[![:space:]]}"}"
-          case "$val" in
-            \"*\") val="${val#\"}"; val="${val%\"}" ;;
-            \'*\') val="${val#\'}"; val="${val%\'}" ;;
-          esac
+          val="${raw#"${raw%%[![:space:]]*}"}"
+          if [[ "$val" =~ ^(\"\"|\'\')[[:space:]]*(#.*)?$ ]]; then
+            val=''
+          else
+            val="${val%%[[:space:]]#*}"
+            val="${val%"${val##*[![:space:]]}"}"
+            case "$val" in
+              \"*\") val="${val#\"}"; val="${val%\"}" ;;
+              \'*\') val="${val#\'}"; val="${val%\'}" ;;
+            esac
+          fi
         fi
+      elif deploy_dotenv_rhs_open_quote "${BASH_REMATCH[3]}"; then
+        in_quote="$DEPLOY_OPEN_QUOTE"
       fi
     fi
   done <"$file"
@@ -1727,50 +1896,62 @@ compose_file_yaml_name() {
   unquote_compose_scalar "$val"
 }
 
-# Returns 0 when COMPOSE_FILE omits docker-compose.override.yml and .env defines no COMPOSE_PROJECT_NAME (#3972).
+# Returns 0 when COMPOSE_FILE omits docker-compose.override.yml and $target_env defines no COMPOSE_PROJECT_NAME (#3972).
 plain_compose_omits_override_and_project() {
-  local cf_val=''
-  cf_val="$(env_compose_file_value || true)"
-  [ -n "$cf_val" ] && ! env_compose_file_lists docker-compose.override.yml && ! env_var_is_set COMPOSE_PROJECT_NAME
+  local target_env="${1:-$ENV_FILE}" cf_val='' dir_norm="${DEPLOY_DIR%/}" item='' has_ov=0
+  [ -n "$dir_norm" ] || dir_norm='/'
+  cf_val="$(env_compose_file_value "$target_env" || true)"
+  [ -n "$cf_val" ] || return 1
+  for item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
+    if [ "$(deploy_norm_compose_path "$item")" = "$dir_norm/docker-compose.override.yml" ]; then
+      has_ov=1
+      break
+    fi
+  done
+  ((has_ov == 0)) && ! env_var_is_set COMPOSE_PROJECT_NAME "$target_env"
 }
 
 # Checks whether plain `docker compose` after rollback to $previous_name stays on $rollback_proj (#3972).
 ROLLBACK_PROJ_ERR=''
 check_rollback_plain_project() {
-  local rollback_proj="$1" release_compose="$2" previous_name="$3" env_proj='' norm_env_proj='' resolved_name='' norm_yaml='' item n
+  local rollback_proj="$1" release_compose="$2" previous_name="$3" check_env="${4:-$ENV_FILE}"
+  local env_proj='' norm_env_proj='' resolved_name='' norm_yaml='' item='' resolved='' n='' dir_norm="${DEPLOY_DIR%/}"
+  [ -n "$dir_norm" ] || dir_norm='/'
   ROLLBACK_PROJ_ERR=''
   [ -n "$rollback_proj" ] || return 0
-  if env_proj="$(env_var_last_value COMPOSE_PROJECT_NAME "$ENV_FILE" 2>/dev/null)" && [ -n "$env_proj" ]; then
-    if [[ "$env_proj" != *\$* ]]; then
-      norm_env_proj="$(normalize_project_name "$env_proj" || true)"
-      if [ "$norm_env_proj" != "$rollback_proj" ]; then
-        ROLLBACK_PROJ_ERR="cannot roll back to $previous_name on project $rollback_proj: $ENV_FILE sets COMPOSE_PROJECT_NAME=$env_proj, so plain docker compose would target a different project; update COMPOSE_PROJECT_NAME=$rollback_proj in $ENV_FILE first"
-        return 1
-      fi
+  if ! env_proj="$(deploy_dotenv_eval_key "$check_env" COMPOSE_PROJECT_NAME 1 2>/dev/null)"; then
+    ROLLBACK_PROJ_ERR="cannot roll back to $previous_name on project $rollback_proj: cannot parse COMPOSE_PROJECT_NAME in $check_env"
+    return 1
+  fi
+  if [ -n "$env_proj" ]; then
+    norm_env_proj="$(normalize_project_name "$env_proj" || true)"
+    if [ "$norm_env_proj" != "$rollback_proj" ]; then
+      ROLLBACK_PROJ_ERR="cannot roll back to $previous_name on project $rollback_proj: $check_env sets COMPOSE_PROJECT_NAME=$env_proj, so plain docker compose would target a different project; update COMPOSE_PROJECT_NAME=$rollback_proj in $check_env first"
+      return 1
     fi
     return 0
   fi
-  if plain_compose_omits_override_and_project; then
+  if plain_compose_omits_override_and_project "$check_env"; then
     if [ "$(compose_file_yaml_name "$release_compose")" != "$rollback_proj" ]; then
-      ROLLBACK_PROJ_ERR="cannot roll back to $previous_name on project $rollback_proj: COMPOSE_FILE in $ENV_FILE omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME, so plain docker compose would switch projects after rollback; add docker-compose.override.yml to COMPOSE_FILE or set COMPOSE_PROJECT_NAME=$rollback_proj in $ENV_FILE first"
+      ROLLBACK_PROJ_ERR="cannot roll back to $previous_name on project $rollback_proj: COMPOSE_FILE in $check_env omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME, so plain docker compose would switch projects after rollback; add docker-compose.override.yml to COMPOSE_FILE or set COMPOSE_PROJECT_NAME=$rollback_proj in $check_env first"
       return 1
     fi
   fi
-  if ! deploy_parse_compose_file_items; then
-    ROLLBACK_PROJ_ERR="cannot roll back to $previous_name on project $rollback_proj: cannot parse COMPOSE_FILE or COMPOSE_PATH_SEPARATOR in $ENV_FILE"
+  if ! deploy_parse_compose_file_items "$check_env"; then
+    ROLLBACK_PROJ_ERR="cannot roll back to $previous_name on project $rollback_proj: cannot parse COMPOSE_FILE or COMPOSE_PATH_SEPARATOR in $check_env"
     return 1
   fi
   if [ -n "$DEPLOY_COMPOSE_FILE_RAW" ]; then
     for item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
-      if [ "$item" = docker-compose.yml ] || [[ "$item" == */docker-compose.yml ]]; then
+      resolved="$(deploy_norm_compose_path "$item")"
+      if [ "$resolved" = "$dir_norm/docker-compose.yml" ]; then
         n="$(compose_file_yaml_name "$release_compose")"
         if [ -n "$n" ]; then resolved_name="$n"; fi
-      elif [ "$item" = docker-compose.override.yml ] || [[ "$item" == */docker-compose.override.yml ]]; then
+      elif [ "$resolved" = "$dir_norm/docker-compose.override.yml" ]; then
         resolved_name="$rollback_proj"
       else
-        if [[ "$item" != /* ]]; then item="$DEPLOY_DIR/$item"; fi
-        if [ -f "$item" ]; then
-          n="$(compose_file_yaml_name "$item")"
+        if [ -f "$resolved" ]; then
+          n="$(compose_file_yaml_name "$resolved")"
           if [ -n "$n" ]; then resolved_name="$n"; fi
         fi
       fi
@@ -1778,7 +1959,7 @@ check_rollback_plain_project() {
     if [ -n "$resolved_name" ] && [[ "$resolved_name" != *\$* ]]; then
       norm_yaml="$(normalize_project_name "$resolved_name" || true)"
       if [ "$norm_yaml" != "$rollback_proj" ]; then
-        ROLLBACK_PROJ_ERR="cannot roll back to $previous_name on project $rollback_proj: COMPOSE_FILE in $ENV_FILE resolves plain docker compose to project '$resolved_name'; set COMPOSE_PROJECT_NAME=$rollback_proj in $ENV_FILE first"
+        ROLLBACK_PROJ_ERR="cannot roll back to $previous_name on project $rollback_proj: COMPOSE_FILE in $check_env resolves plain docker compose to project '$resolved_name'; set COMPOSE_PROJECT_NAME=$rollback_proj in $check_env first"
         return 1
       fi
     fi
@@ -1786,13 +1967,19 @@ check_rollback_plain_project() {
   return 0
 }
 
-# Resolves the merged Compose configuration as plain `docker compose` (no -p override) actually loads it in $DEPLOY_DIR (#3972).
+# Resolves merged Compose configuration as plain `docker compose` (no -p override) loads it in $DEPLOY_DIR.
+# When $1 is empty, omits --env-file so Compose reads $DEPLOY_DIR/.env identically to tools/backup/lib.sh (#3972).
 plain_compose_config() {
+  local env_opt="${1:-}"
+  local -a env_args=()
+  if [ -n "$env_opt" ]; then
+    env_args=(--env-file "$env_opt")
+  fi
   (
     cd "$DEPLOY_DIR" && \
-    env -u COMPOSE_PROJECT_NAME -u COMPOSE_FILE \
+    env -u COMPOSE_PROJECT_NAME -u COMPOSE_FILE -u COMPOSE_PATH_SEPARATOR \
       ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker compose \
-      --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" config 2>/dev/null
+      --project-directory "$DEPLOY_DIR" "${env_args[@]+"${env_args[@]}"}" config 2>/dev/null
   )
 }
 
@@ -2688,22 +2875,28 @@ abort_rollback_pre_services() {
   die "$EXIT_FAILED" "$msg"
 }
 
-# Verifies rollback target preserves DB mount / PGDATA and persistent /data/* continuity (#3972).
+# Checks rollback target preserves DB mount / PGDATA and persistent /data/* continuity without exiting on failure (#3972).
+# Sets RB_DB, RB_PGDATA_SUB, RB_FILES, RB_KEYS, RB_ARCHIVE and ROLLBACK_STORAGE_SUMMARY / ROLLBACK_STORAGE_ERR.
 RB_DB='' RB_PGDATA_SUB='' RB_FILES='' RB_KEYS='' RB_ARCHIVE=''
-verify_rollback_storage() {
-  local rb_config="$1" rb_proj="$2" prev_img="$3" previous="$4" current="$5" cur_db_specs="$6" cur_pgdata_sub="$7" cur_files_specs="$8" cur_keys_specs="$9" cur_archive_specs="${10}"
+ROLLBACK_STORAGE_SUMMARY='' ROLLBACK_STORAGE_ERR=''
+check_rollback_storage_continuity() {
+  local rb_config="$1" rb_proj="$2" prev_img="$3" target_label="$4" cur_db_specs="$5" cur_pgdata_sub="$6" cur_files_specs="$7" cur_keys_specs="$8" cur_archive_specs="$9"
   local rb_db='' rb_pgdata_sub='' cur_db='' target='' cur_specs='' cur_m='' rb_specs='' rb_m='' src_rc=0 dst_rc=0 free_rc=0 migrated=0 dst_labels=''
+  ROLLBACK_STORAGE_SUMMARY=''
+  ROLLBACK_STORAGE_ERR=''
   rb_db="$(compose_target_mount "$rb_config" "$rb_proj" /var/lib/postgresql/data 'db')"
   if ! check_target_storage_layout "$rb_config" "$rb_proj" "$rb_db" 1; then
-    abort_rollback_pre_services "$previous" "$current" "$STORAGE_LAYOUT_SUMMARY" "cannot roll back to $previous: $STORAGE_LAYOUT_ERR"
+    ROLLBACK_STORAGE_SUMMARY="$STORAGE_LAYOUT_SUMMARY"
+    ROLLBACK_STORAGE_ERR="cannot roll back to $target_label: $STORAGE_LAYOUT_ERR"
+    return 1
   fi
   rb_pgdata_sub="$VALIDATED_PGDATA_SUB"
   while IFS= read -r cur_db; do
     [ -n "$cur_db" ] || continue
     if [ -z "$rb_db" ] || [ "$cur_db" != "$rb_db" ] || [ "$cur_pgdata_sub" != "$rb_pgdata_sub" ]; then
-      abort_rollback_pre_services "$previous" "$current" \
-        "db storage/PGDATA mismatch ($(mount_label "$cur_db") vs ${rb_db:+$(mount_label "$rb_db")}${rb_db:-none})" \
-        "cannot roll back to $previous safely: active database uses $(mount_label "$cur_db") (PGDATA /var/lib/postgresql/data${cur_pgdata_sub:+/$cur_pgdata_sub}) while release $previous mounts ${rb_db:+$(mount_label "$rb_db")}${rb_db:-no persistent volume} (PGDATA /var/lib/postgresql/data${rb_pgdata_sub:+/$rb_pgdata_sub})"
+      ROLLBACK_STORAGE_SUMMARY="db storage/PGDATA mismatch ($(mount_label "$cur_db") vs ${rb_db:+$(mount_label "$rb_db")}${rb_db:-none})"
+      ROLLBACK_STORAGE_ERR="cannot roll back to $target_label safely: active database uses $(mount_label "$cur_db") (PGDATA /var/lib/postgresql/data${cur_pgdata_sub:+/$cur_pgdata_sub}) while release $target_label mounts ${rb_db:+$(mount_label "$rb_db")}${rb_db:-no persistent volume} (PGDATA /var/lib/postgresql/data${rb_pgdata_sub:+/$rb_pgdata_sub})"
+      return 1
     fi
   done <<<"$cur_db_specs"
   RB_DB="$rb_db"
@@ -2725,27 +2918,27 @@ verify_rollback_storage() {
       src_rc=0
       mount_exists "$cur_m" || src_rc=$?
       if ((src_rc == 2)); then
-        abort_rollback_pre_services "$previous" "$current" \
-          "cannot inspect active $target storage $(mount_label "$cur_m")" \
-          "cannot inspect active $target storage $(mount_label "$cur_m") before rolling back to $previous; nothing running was changed"
+        ROLLBACK_STORAGE_SUMMARY="cannot inspect active $target storage $(mount_label "$cur_m")"
+        ROLLBACK_STORAGE_ERR="cannot inspect active $target storage $(mount_label "$cur_m") before rolling back to $target_label; nothing running was changed"
+        return 1
       fi
       ((src_rc == 0)) || continue
       free_rc=0
       check_storage_free "$cur_m" "" || free_rc=$?
       if ((free_rc == 1)); then
-        abort_rollback_pre_services "$previous" "$current" \
-          "active $target storage $(mount_label "$cur_m") held by running container" \
-          "cannot roll back to $previous safely: active $target storage $(mount_label "$cur_m") is still mounted by a running, paused, or restarting container; stop the stack and sync data before switching storage mounts on rollback"
+        ROLLBACK_STORAGE_SUMMARY="active $target storage $(mount_label "$cur_m") held by running container"
+        ROLLBACK_STORAGE_ERR="cannot roll back to $target_label safely: active $target storage $(mount_label "$cur_m") is still mounted by a running, paused, or restarting container; stop the stack and sync data before switching storage mounts on rollback"
+        return 1
       elif ((free_rc != 0)); then
-        abort_rollback_pre_services "$previous" "$current" \
-          "cannot inspect containers for $(mount_label "$cur_m")" \
-          "cannot inspect active containers to verify $target storage $(mount_label "$cur_m") before rolling back to $previous; nothing running was changed"
+        ROLLBACK_STORAGE_SUMMARY="cannot inspect containers for $(mount_label "$cur_m")"
+        ROLLBACK_STORAGE_ERR="cannot inspect active containers to verify $target storage $(mount_label "$cur_m") before rolling back to $target_label; nothing running was changed"
+        return 1
       fi
       if [ -z "$rb_specs" ]; then
         if ! mount_is_empty "$cur_m" "$prev_img"; then
-          abort_rollback_pre_services "$previous" "$current" \
-            "rollback drops $target storage $(mount_label "$cur_m")" \
-            "cannot roll back to $previous safely: active non-empty $target storage $(mount_label "$cur_m") has no mount in release $previous"
+          ROLLBACK_STORAGE_SUMMARY="rollback drops $target storage $(mount_label "$cur_m")"
+          ROLLBACK_STORAGE_ERR="cannot roll back to $target_label safely: active non-empty $target storage $(mount_label "$cur_m") has no mount in release $target_label"
+          return 1
         fi
         continue
       fi
@@ -2757,21 +2950,30 @@ verify_rollback_storage() {
         dst_rc=0
         mount_exists "$rb_m" || dst_rc=$?
         if ((dst_rc == 2)); then
-          abort_rollback_pre_services "$previous" "$current" \
-            "cannot inspect rollback $target storage $(mount_label "$rb_m")" \
-            "cannot inspect rollback $target storage $(mount_label "$rb_m") before rolling back to $previous; nothing running was changed"
+          ROLLBACK_STORAGE_SUMMARY="cannot inspect rollback $target storage $(mount_label "$rb_m")"
+          ROLLBACK_STORAGE_ERR="cannot inspect rollback $target storage $(mount_label "$rb_m") before rolling back to $target_label; nothing running was changed"
+          return 1
         fi
         if mount_data_migrated "$cur_m" "$rb_m" "$prev_img"; then
           migrated=1
         fi
       done <<<"$rb_specs"
       if ((migrated == 0)); then
-        abort_rollback_pre_services "$previous" "$current" \
-          "rollback $target storage $(mount_label "$cur_m") != $dst_labels" \
-          "cannot roll back to $previous safely: active $target storage $(mount_label "$cur_m") does not match rollback target $dst_labels (rollback would revert to stale data)"
+        ROLLBACK_STORAGE_SUMMARY="rollback $target storage $(mount_label "$cur_m") != $dst_labels"
+        ROLLBACK_STORAGE_ERR="cannot roll back to $target_label safely: active $target storage $(mount_label "$cur_m") does not match rollback target $dst_labels (rollback would revert to stale data)"
+        return 1
       fi
     done <<<"$cur_specs"
   done
+  return 0
+}
+
+# Verifies rollback target preserves DB mount / PGDATA and persistent /data/* continuity (#3972).
+verify_rollback_storage() {
+  local rb_config="$1" rb_proj="$2" prev_img="$3" previous="$4" current="$5" cur_db_specs="$6" cur_pgdata_sub="$7" cur_files_specs="$8" cur_keys_specs="$9" cur_archive_specs="${10}"
+  if ! check_rollback_storage_continuity "$rb_config" "$rb_proj" "$prev_img" "$previous" "$cur_db_specs" "$cur_pgdata_sub" "$cur_files_specs" "$cur_keys_specs" "$cur_archive_specs"; then
+    abort_rollback_pre_services "$previous" "$current" "$ROLLBACK_STORAGE_SUMMARY" "$ROLLBACK_STORAGE_ERR"
+  fi
 }
 
 # Verifies prior DB isolation, cluster parity, and persistent mount parity before starting new DB (#3972).
@@ -3016,8 +3218,9 @@ direction_to() {
 
 # Whether the env file assigns a non-empty AUTH_ALLOWED_EMAILS (names a setting only; nothing of the file is printed).
 env_lists_allowed_emails() {
-  [ -n "${ENV_FILE:-}" ] && [ -f "$ENV_FILE" ] || return 1
-  grep -q -E '^[[:space:]]*(export[[:space:]]+)?AUTH_ALLOWED_EMAILS[[:space:]]*[=:][[:space:]]*[^[:space:]#]' "$ENV_FILE"
+  local val=''
+  val="$(env_var_last_value AUTH_ALLOWED_EMAILS "$ENV_FILE" 2>/dev/null || true)"
+  [ -n "$val" ]
 }
 
 # Rolls the worker of the active release when it runs as its own service, and checks it stays up.
@@ -3160,17 +3363,18 @@ preflight() {
   # The WAL archiving overlay (#2120) stays the host's own file: without it the deploy would recreate `db` on the plain PostgreSQL image,
   # while the volume still tells PostgreSQL to push every WAL segment with a command that image does not have.
   deploy_parse_compose_file_items || die "$EXIT_USAGE" "cannot parse COMPOSE_FILE or COMPOSE_PATH_SEPARATOR in $ENV_FILE"
-  local wal_rc=0 extra_item='' extra_base='' extra_resolved=''
+  local wal_rc=0 dir_norm="${DEPLOY_DIR%/}" extra_item='' extra_resolved=''
+  [ -n "$dir_norm" ] || dir_norm='/'
   resolve_wal_compose_file >/dev/null || wal_rc=$?
   if ((wal_rc == 2)); then
     die "$EXIT_USAGE" "COMPOSE_FILE in $ENV_FILE lists compose.wal.yml but the referenced file does not exist under $DEPLOY_DIR: copy tools/backup/compose.wal.yml there (docs/runbooks/backup-and-restore.md, \"Point in time recovery\")"
   fi
   for extra_item in "${DEPLOY_COMPOSE_FILE_ITEMS[@]+"${DEPLOY_COMPOSE_FILE_ITEMS[@]}"}"; do
-    extra_base="${extra_item##*/}"
-    case "$extra_base" in
-      docker-compose.yml | compose.pilot.yml | docker-compose.override.yml | compose.wal.yml | compose.host.yml) continue ;;
+    extra_resolved="$(deploy_norm_compose_path "$extra_item")"
+    case "$extra_resolved" in
+      "$dir_norm/docker-compose.yml" | "$dir_norm/compose.pilot.yml" | "$dir_norm/docker-compose.override.yml" | "$dir_norm/compose.host.yml") continue ;;
     esac
-    if [[ "$extra_item" == /* ]]; then extra_resolved="$extra_item"; else extra_resolved="$DEPLOY_DIR/$extra_item"; fi
+    if [ "${extra_resolved##*/}" = compose.wal.yml ]; then continue; fi
     [ -f "$extra_resolved" ] || die "$EXIT_USAGE" "COMPOSE_FILE in $ENV_FILE lists $extra_item but the file does not exist ($extra_resolved)"
   done
   command -v docker >/dev/null || die "$EXIT_USAGE" 'docker is not installed'
@@ -3208,12 +3412,24 @@ env_var_effective() {
 }
 
 env_var_is_set() {
-  local target="$1" file="${2:-$ENV_FILE}" line set_flag=0
+  local target="$1" file="${2:-$ENV_FILE}" line set_flag=0 in_quote='' raw=''
   [ -f "$file" ] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
-    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$ ]] && [ "${BASH_REMATCH[2]}" = "$target" ]; then
-      if env_var_effective "${BASH_REMATCH[3]}"; then set_flag=1; else set_flag=0; fi
+    if [ -n "$in_quote" ]; then
+      if deploy_dotenv_line_closes_quote "$in_quote" "$line"; then in_quote=''; fi
+      continue
+    fi
+    [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$ ]]; then
+      raw="${BASH_REMATCH[3]}"
+      if [ "${BASH_REMATCH[2]}" = "$target" ]; then
+        if env_var_effective "$raw"; then set_flag=1; else set_flag=0; fi
+      fi
+      if deploy_dotenv_rhs_open_quote "$raw"; then
+        in_quote="$DEPLOY_OPEN_QUOTE"
+        if [ "${BASH_REMATCH[2]}" = "$target" ]; then set_flag=1; fi
+      fi
     fi
   done <"$file"
   ((set_flag == 1))
@@ -3243,18 +3459,27 @@ retired_env_preflight() {
 }
 
 env_key_scan() {
-  local file="${1:-$ENV_FILE}" line n=0 val_set=0 legacy_set=0
+  local file="${1:-$ENV_FILE}" line n=0 val_set=0 legacy_set=0 in_quote='' raw=''
   KEY_LINE=0 KEY_SET=0 LEGACY_KEY_SET=0
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
     line="${line%$'\r'}"
-    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?LUDY_CONTEXT_TOKEN_KEY[[:space:]]*[=:](.*)$ ]]; then
-      if env_var_effective "${BASH_REMATCH[2]}"; then val_set=1; else val_set=0; fi
-      KEY_LINE=$n
-      KEY_SET=$val_set
-    elif [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?CROVE_CONTEXT_TOKEN_KEY[[:space:]]*[=:](.*)$ ]]; then
-      if env_var_effective "${BASH_REMATCH[2]}"; then legacy_set=1; else legacy_set=0; fi
-      LEGACY_KEY_SET=$legacy_set
+    if [ -n "$in_quote" ]; then
+      if deploy_dotenv_line_closes_quote "$in_quote" "$line"; then in_quote=''; fi
+      continue
+    fi
+    [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$ ]]; then
+      raw="${BASH_REMATCH[3]}"
+      if [ "${BASH_REMATCH[2]}" = LUDY_CONTEXT_TOKEN_KEY ]; then
+        if env_var_effective "$raw"; then val_set=1; else val_set=0; fi
+        KEY_LINE=$n
+        KEY_SET=$val_set
+      elif [ "${BASH_REMATCH[2]}" = CROVE_CONTEXT_TOKEN_KEY ]; then
+        if env_var_effective "$raw"; then legacy_set=1; else legacy_set=0; fi
+        LEGACY_KEY_SET=$legacy_set
+      fi
+      if deploy_dotenv_rhs_open_quote "$raw"; then in_quote="$DEPLOY_OPEN_QUOTE"; fi
     fi
   done <"$file"
 }
@@ -3740,21 +3965,49 @@ apply_env_settings() {
     for key in "${AUTH_SETTING_DROPPED[@]}"; do dropped[$key]=1; done
   fi
   # Pre-scan for CRLF endings across the whole file and the last LUDY_MODULES assignment line.
+  local in_quote='' skip_cont=0 opens_q='' rhs_raw=''
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
     if [ "${line: -1}" = $'\r' ]; then cr=$'\r'; fi
-    if ((has_modules)) && [[ "${line%$'\r'}" =~ ^[[:space:]]*(export[[:space:]]+)?LUDY_MODULES[[:space:]]*[=:] ]]; then
-      mod_line=$n
+    local clean_l="${line%$'\r'}"
+    if [ -n "$in_quote" ]; then
+      if deploy_dotenv_line_closes_quote "$in_quote" "$clean_l"; then in_quote=''; fi
+      continue
+    fi
+    [[ "$clean_l" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+    if [[ "$clean_l" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$ ]]; then
+      if ((has_modules)) && [ "${BASH_REMATCH[2]}" = LUDY_MODULES ]; then
+        mod_line=$n
+      fi
+      if deploy_dotenv_rhs_open_quote "${BASH_REMATCH[3]}"; then in_quote="$DEPLOY_OPEN_QUOTE"; fi
     fi
   done <"$ENV_FILE"
   n=0
+  in_quote=''
+  skip_cont=0
   {
     while IFS= read -r line || [ -n "$line" ]; do
       n=$((n + 1))
-      if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:] ]]; then
+      local clean_w="${line%$'\r'}"
+      if [ -n "$in_quote" ]; then
+        if ((skip_cont == 0)); then
+          printf '%s\n' "$line"
+          written_count=$((written_count + 1))
+        fi
+        if deploy_dotenv_line_closes_quote "$in_quote" "$clean_w"; then
+          in_quote=''
+          skip_cont=0
+        fi
+        continue
+      fi
+      if [[ ! "$clean_w" =~ ^[[:space:]]*(#.*)?$ ]] && [[ "$clean_w" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$ ]]; then
         key="${BASH_REMATCH[2]}"
+        rhs_raw="${BASH_REMATCH[3]}"
+        opens_q=''
+        if deploy_dotenv_rhs_open_quote "$rhs_raw"; then opens_q="$DEPLOY_OPEN_QUOTE"; fi
         if ((has_auth)) && [ -n "${managed[$key]:-}" ]; then
           if [ -n "${dropped[$key]:-}" ]; then gone+=("$key"); fi
+          if [ -n "$opens_q" ]; then in_quote="$opens_q"; skip_cont=1; fi
           continue
         fi
         if ((has_modules)) && [ "$key" = LUDY_MODULES ]; then
@@ -3762,8 +4015,10 @@ apply_env_settings() {
             printf 'LUDY_MODULES=%s%s\n' "$modules_list" "$cr"
             written_count=$((written_count + 1))
           fi
+          if [ -n "$opens_q" ]; then in_quote="$opens_q"; skip_cont=1; fi
           continue
         fi
+        if [ -n "$opens_q" ]; then in_quote="$opens_q"; skip_cont=0; fi
       fi
       printf '%s\n' "$line"
       written_count=$((written_count + 1))
@@ -3791,12 +4046,20 @@ apply_env_settings() {
   # With builtins only: a settings line (the allowed addresses are a secret) is never an argument of another process.
   mapfile -t written <"$ENV_TMP"
   if ((has_modules)); then
+    local chk_q=''
     for key in "${written[@]}"; do
+      local key_c="${key%$'\r'}"
+      if [ -n "$chk_q" ]; then
+        if deploy_dotenv_line_closes_quote "$chk_q" "$key_c"; then chk_q=''; fi
+        continue
+      fi
       if [ "$key" = "LUDY_MODULES=$modules_list$cr" ]; then
         mod_seen=$((mod_seen + 1))
-      elif [[ "${key%$'\r'}" =~ ^[[:space:]]*(export[[:space:]]+)?LUDY_MODULES[[:space:]]*[=:] ]]; then
+      elif [[ "$key_c" =~ ^[[:space:]]*(export[[:space:]]+)?LUDY_MODULES[[:space:]]*[=:] ]]; then
         err 'the new env file has an unexpected LUDY_MODULES line; the env file was not touched'
         return 1
+      elif [[ ! "$key_c" =~ ^[[:space:]]*(#.*)?$ ]] && [[ "$key_c" =~ ^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*[=:](.*)$ ]]; then
+        if deploy_dotenv_rhs_open_quote "${BASH_REMATCH[2]}"; then chk_q="$DEPLOY_OPEN_QUOTE"; fi
       fi
     done
     if [ "$mod_seen" != 1 ]; then
@@ -3898,10 +4161,17 @@ prune_releases() {
   done < <(for d in "$DEPLOY_DIR"/releases/*/; do if [ -f "$d/release.env" ]; then printf '%s %s\n' "$(sed -n 's/^STAGED_AT=//p' "$d/release.env")" "${d%/}"; fi; done | sort -r | cut -d' ' -f2-)
 }
 
-# recover <release> <what> <failed release>: rolls back to a release after a failed deploy or rollback, in the order
-# its build needs against the failed one (direction_to). Exit 1 when it is serving again, 3 when not.
+# recover <release> <what> <failed release> [mode=services] [failed_proj] [failed_db] [prev_db]:
+# rolls back safely after a failed deploy or rollback (restarting old db when mode=after_db_fail and verifying
+# storage continuity when mode=services). Exit 1 when serving again, 3 when rollback is unsafe or fails.
+RECOVER_FAILED_CONFIG=''
 recover() {
-  local target="$1" what="$2" failed="$3"
+  local target="$1" what="$2" failed="$3" mode="${4:-services}" failed_proj="${5:-}" failed_db="${6:-}" prev_db="${7:-}"
+  local failed_cfg="${RECOVER_FAILED_CONFIG:-}"
+  RECOVER_FAILED_CONFIG=''
+  if [ -z "$failed_cfg" ] && [ "$mode" = services ]; then
+    failed_cfg="$(dc config 2>/dev/null || true)"
+  fi
   # The settings of this deploy go out first, so the older release runs with the env file it ran with.
   if ! restore_env; then
     record "$what failed, and so did putting the env file back"
@@ -3917,8 +4187,141 @@ recover() {
     record "$what failed, nothing to roll back to"
     die "$EXIT_FAILED" "$what failed and there is no earlier release to roll back to; the failed release is left as it is"
   fi
-  log "rolling back to $target"
-  activate "$target"
+
+  local rec_config='' rec_proj='' rec_db='' target_img=''
+  if [ "$mode" = after_db_fail ]; then
+    if [ -n "$failed_db" ]; then
+      local allowed_failed_db_proj='' failed_free_rc=0
+      if [ -n "$COMPOSE_PROJECT_OVERRIDE" ] && [ "$COMPOSE_PROJECT_OVERRIDE" = "$failed_proj" ] && [ -n "$prev_db" ] && [ "$prev_db" = "$failed_db" ]; then
+        allowed_failed_db_proj="$COMPOSE_PROJECT_OVERRIDE"
+      fi
+      check_storage_free "$failed_db" "$allowed_failed_db_proj" || failed_free_rc=$?
+      if ((failed_free_rc == 1)); then
+        record "$what failed, automatic rollback to $target refused: failed db storage $(mount_label "$failed_db") still held"
+        die "$EXIT_ROLLBACK_FAILED" "$what failed and automatic rollback to $target was refused because failed database storage $(mount_label "$failed_db") is still mounted by a running, paused, or restarting container: the instance needs an operator"
+      elif ((failed_free_rc != 0)); then
+        record "$what failed, automatic rollback to $target refused: cannot inspect containers for $(mount_label "$failed_db")"
+        die "$EXIT_ROLLBACK_FAILED" "$what failed and automatic rollback to $target was refused because container storage for $(mount_label "$failed_db") could not be verified: the instance needs an operator"
+      fi
+    fi
+    log "rolling back to $target (restarting previous database)"
+    snapshot_pre_activate "$failed" || {
+      record "$what failed, rollback to $target FAILED (snapshot)"
+      die "$EXIT_ROLLBACK_FAILED" "$what failed and pre-recovery snapshot failed: the instance needs an operator"
+    }
+    activate "$target"
+    if ! rec_config="$(dc config 2>/dev/null)"; then
+      restore_pre_activate "$failed" || true
+      record "$what failed, automatic rollback to $target refused: compose config"
+      die "$EXIT_ROLLBACK_FAILED" "$what failed and automatic rollback compose config for $target could not be loaded: the instance needs an operator"
+    fi
+    rec_proj="$COMPOSE_PROJECT_OVERRIDE"
+    if [ -z "$rec_proj" ]; then
+      rec_proj="$(compose_project_from_yaml "$rec_config" 2>/dev/null || true)"
+    fi
+    local rec_own_rc=0 rec_db_free_rc=0
+    check_project_ownership "${rec_proj:-ludy}" || rec_own_rc=$?
+    if ((rec_own_rc != 0)); then
+      restore_pre_activate "$failed" || true
+      record "$what failed, automatic rollback to $target refused: project ownership (${rec_proj:-ludy})"
+      die "$EXIT_ROLLBACK_FAILED" "$what failed and automatic rollback to $target was refused due to project ownership check on '${rec_proj:-ludy}': the instance needs an operator"
+    fi
+    rec_db="$(compose_target_mount "$rec_config" "${rec_proj:-ludy}" /var/lib/postgresql/data 'db')"
+    if ! check_target_storage_layout "$rec_config" "${rec_proj:-ludy}" "$rec_db" 1; then
+      restore_pre_activate "$failed" || true
+      record "$what failed, automatic rollback to $target refused: $STORAGE_LAYOUT_SUMMARY"
+      die "$EXIT_ROLLBACK_FAILED" "$what failed and automatic rollback to $target was refused ($STORAGE_LAYOUT_ERR): the instance needs an operator"
+    fi
+    if [ -n "$rec_db" ]; then
+      check_storage_free "$rec_db" "${rec_proj:-ludy}" || rec_db_free_rc=$?
+      if ((rec_db_free_rc != 0)); then
+        restore_pre_activate "$failed" || true
+        record "$what failed, automatic rollback to $target refused: previous db storage $(mount_label "$rec_db") unavailable"
+        die "$EXIT_ROLLBACK_FAILED" "$what failed and previous database storage $(mount_label "$rec_db") could not be verified free for $target: the instance needs an operator"
+      fi
+    fi
+    clear_pre_activate_snap
+    log "starting previous database for $target"
+    if ! up db; then
+      record "$what failed, rollback to $target FAILED (database)"
+      die "$EXIT_ROLLBACK_FAILED" "$what failed and starting the previous database for $target failed too: the instance needs an operator"
+    fi
+  else
+    local cur_p="${failed_proj:-${COMPOSE_PROJECT_OVERRIDE:-}}" cur_pgdata_sub='' cur_pg_rc=0
+    local cur_db_specs='' cur_files_specs='' cur_keys_specs='' cur_archive_specs='' cfg_specs=''
+    if [ -z "$cur_p" ] && [ -n "$failed_cfg" ]; then
+      cur_p="$(compose_project_from_yaml "$failed_cfg" 2>/dev/null || true)"
+    fi
+    if ! detect_prev_container_mounts "$cur_p"; then
+      record "$what failed, automatic rollback to $target refused: container mount inspection"
+      die "$EXIT_ROLLBACK_FAILED" "$what failed and active container mounts could not be inspected before rolling back to $target: the instance needs an operator"
+    fi
+    if [ -n "$PREV_CTR_NESTED_DB" ]; then
+      record "$what failed, automatic rollback to $target refused: nested db mount ($PREV_CTR_NESTED_DB)"
+      die "$EXIT_ROLLBACK_FAILED" "$what failed and container has unsupported nested mount at $PREV_CTR_NESTED_DB before rolling back to $target: the instance needs an operator"
+    fi
+    if ((PREV_CTR_PGDATA_SET)); then
+      case "$PREV_CTR_PGDATA" in
+        __invalid__:*)
+          record "$what failed, automatic rollback to $target refused: invalid container PGDATA"
+          die "$EXIT_ROLLBACK_FAILED" "$what failed and running container sets unsupported PGDATA before rolling back to $target: the instance needs an operator"
+          ;;
+      esac
+      cur_pgdata_sub="$PREV_CTR_PGDATA"
+    elif [ -n "$failed_cfg" ]; then
+      cur_pgdata_sub="$(compose_service_pgdata_subpath "$failed_cfg" db 0)" || cur_pg_rc=$?
+      if ((cur_pg_rc != 0)); then
+        record "$what failed, automatic rollback to $target refused: cannot verify PGDATA"
+        die "$EXIT_ROLLBACK_FAILED" "$what failed and active PGDATA could not be verified before rolling back to $target: the instance needs an operator"
+      fi
+    fi
+    cur_db_specs="$PREV_CTR_DB"
+    cur_files_specs="$PREV_CTR_FILES"
+    cur_keys_specs="$PREV_CTR_KEYS"
+    cur_archive_specs="$PREV_CTR_ARCHIVE"
+    if [ -n "$failed_cfg" ]; then
+      cfg_specs="$(compose_active_target_mounts "$failed_cfg" "${cur_p:-ludy}" /var/lib/postgresql/data 'db')"
+      cur_db_specs="$(append_unique_lines "$cur_db_specs" "$cfg_specs")"
+      cfg_specs="$(compose_active_target_mounts "$failed_cfg" "${cur_p:-ludy}" /data/files 'ludy crove api worker')"
+      cur_files_specs="$(append_unique_lines "$cur_files_specs" "$cfg_specs")"
+      cfg_specs="$(compose_active_target_mounts "$failed_cfg" "${cur_p:-ludy}" /data/keys 'ludy crove api worker')"
+      cur_keys_specs="$(append_unique_lines "$cur_keys_specs" "$cfg_specs")"
+      cfg_specs="$(compose_active_target_mounts "$failed_cfg" "${cur_p:-ludy}" /data/archive 'ludy crove api worker')"
+      cur_archive_specs="$(append_unique_lines "$cur_archive_specs" "$cfg_specs")"
+    fi
+
+    log "rolling back to $target"
+    snapshot_pre_activate "$failed" || {
+      record "$what failed, rollback to $target FAILED (snapshot)"
+      die "$EXIT_ROLLBACK_FAILED" "$what failed and pre-recovery snapshot failed: the instance needs an operator"
+    }
+    activate "$target"
+    if ! rec_config="$(dc config 2>/dev/null)"; then
+      restore_pre_activate "$failed" || true
+      record "$what failed, automatic rollback to $target refused: compose config"
+      die "$EXIT_ROLLBACK_FAILED" "$what failed and automatic rollback compose config for $target could not be loaded: the instance needs an operator"
+    fi
+    rec_proj="$COMPOSE_PROJECT_OVERRIDE"
+    if [ -z "$rec_proj" ]; then
+      rec_proj="$(compose_project_from_yaml "$rec_config" 2>/dev/null || true)"
+    fi
+    local rec_own_rc=0
+    check_project_ownership "${rec_proj:-ludy}" || rec_own_rc=$?
+    if ((rec_own_rc != 0)); then
+      restore_pre_activate "$failed" || true
+      record "$what failed, automatic rollback to $target refused: project ownership (${rec_proj:-ludy})"
+      die "$EXIT_ROLLBACK_FAILED" "$what failed and automatic rollback to $target was refused due to project ownership check on '${rec_proj:-ludy}': the instance needs an operator"
+    fi
+    target_img="$(release_field "$target" IMAGE)"
+    if ! check_rollback_storage_continuity "$rec_config" "${rec_proj:-ludy}" "$target_img" "$target" \
+      "$cur_db_specs" "$cur_pgdata_sub" "$cur_files_specs" "$cur_keys_specs" "$cur_archive_specs"; then
+      restore_pre_activate "$failed" || true
+      record "$what failed, automatic rollback to $target refused: $ROLLBACK_STORAGE_SUMMARY"
+      die "$EXIT_ROLLBACK_FAILED" "$what failed and automatic rollback to $target was refused ($ROLLBACK_STORAGE_ERR): the instance needs an operator"
+    fi
+    clear_pre_activate_snap
+  fi
+
   if roll_services "$(direction_to "$target" "$failed")"; then
     if [ -n "$COMPOSE_PROJECT_OVERRIDE" ]; then write_state project "$COMPOSE_PROJECT_OVERRIDE"; fi
     record "$what failed, rolled back to $target"
@@ -4155,11 +4558,16 @@ do_deploy() {
     verify_storage_cutover "$alt_prev_config" "$prev_yaml_name" "$new_config" "$active_proj" "$new_db" "$image" "$name" "$current" 0
   fi
   if [ -n "$current" ] && [ -f "$DEPLOY_DIR/releases/$current/docker-compose.yml" ] && [ -n "$active_proj" ]; then
-    if plain_compose_omits_override_and_project && [ "$(compose_file_yaml_name "$DEPLOY_DIR/releases/$current/docker-compose.yml")" != "$active_proj" ]; then
+    if { plain_compose_omits_override_and_project "$ENV_FILE" || { [ -f "$DEPLOY_DIR/.env" ] && ! [ "$ENV_FILE" -ef "$DEPLOY_DIR/.env" ] && plain_compose_omits_override_and_project "$DEPLOY_DIR/.env"; }; } \
+      && [ "$(compose_file_yaml_name "$DEPLOY_DIR/releases/$current/docker-compose.yml")" != "$active_proj" ]; then
       restore_pre_activate "$current"
       record "deploy $name failed: COMPOSE_FILE omits docker-compose.override.yml without COMPOSE_PROJECT_NAME"
-      die "$EXIT_USAGE" "cannot deploy $release safely while previous release $current uses another project name: COMPOSE_FILE in $ENV_FILE omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME, so recovery would switch projects; add docker-compose.override.yml to COMPOSE_FILE or set COMPOSE_PROJECT_NAME=$active_proj in $ENV_FILE first"
+      die "$EXIT_USAGE" "cannot deploy $release safely while previous release $current uses another project name: COMPOSE_FILE omits docker-compose.override.yml and defines no COMPOSE_PROJECT_NAME, so recovery would switch projects; add docker-compose.override.yml to COMPOSE_FILE or set COMPOSE_PROJECT_NAME=$active_proj first"
     fi
+  fi
+  local prev_db_primary=''
+  if ((have_prev_storage)); then
+    prev_db_primary="$(resolve_prev_mount_specs "$prev_config" "${prev_proj:-}" /var/lib/postgresql/data 'db' 1 | head -n 1 || true)"
   fi
   if [ -n "$new_db" ]; then
     mount_exists "$new_db" || new_db_exists_rc=$?
@@ -4183,8 +4591,9 @@ do_deploy() {
   clear_pre_activate_snap
   log 'starting the database'
   if ! up db; then
+    RECOVER_FAILED_CONFIG="$new_config"
     if [ -n "$prev_proj" ]; then COMPOSE_PROJECT_OVERRIDE="$prev_proj"; fi
-    recover "$current" "deploy $name (database)" "$name"
+    recover "$current" "deploy $name (database)" "$name" after_db_fail "$active_proj" "$new_db" "$prev_db_primary"
   fi
   COMPOSE_PROJECT_OVERRIDE="$active_proj"
   # The production steps of #1822 and #1750 (docs/runbooks/deploy.md), on the host, with the database up and before
@@ -4240,7 +4649,8 @@ do_deploy() {
   fi
 
   if ! roll_services "$(direction_to "$name" "$current")"; then
-    recover "$current" "deploy $name" "$name"
+    RECOVER_FAILED_CONFIG="$new_config"
+    recover "$current" "deploy $name" "$name" services "$active_proj"
   fi
 
   if [ "$current" != "$name" ]; then
@@ -4312,8 +4722,14 @@ do_rollback() {
     fi
   fi
   if [ -n "$rollback_proj" ]; then COMPOSE_PROJECT_OVERRIDE="$rollback_proj"; fi
-  if [ -n "$rollback_proj" ] && ! check_rollback_plain_project "$rollback_proj" "$DEPLOY_DIR/releases/$previous/docker-compose.yml" "$previous"; then
-    die "$EXIT_USAGE" "$ROLLBACK_PROJ_ERR"
+  if [ -n "$rollback_proj" ]; then
+    if ! check_rollback_plain_project "$rollback_proj" "$DEPLOY_DIR/releases/$previous/docker-compose.yml" "$previous" "$ENV_FILE"; then
+      die "$EXIT_USAGE" "$ROLLBACK_PROJ_ERR"
+    fi
+    if [ -f "$DEPLOY_DIR/.env" ] && ! [ "$ENV_FILE" -ef "$DEPLOY_DIR/.env" ] \
+      && ! check_rollback_plain_project "$rollback_proj" "$DEPLOY_DIR/releases/$previous/docker-compose.yml" "$previous" "$DEPLOY_DIR/.env"; then
+      die "$EXIT_USAGE" "$ROLLBACK_PROJ_ERR"
+    fi
   fi
   local cur_compose_file='' cur_config='' cur_proj='' cur_pgdata_sub='' cur_pg_rc=0 cur_db_specs='' cur_files_specs='' cur_keys_specs='' cur_archive_specs='' prev_img=''
   if [ -f "$DEPLOY_DIR/docker-compose.yml" ]; then
@@ -4347,12 +4763,21 @@ do_rollback() {
   cur_archive_specs="$(resolve_prev_mount_specs "$cur_config" "$cur_proj" /data/archive 'ludy crove api worker' 1)"
 
   restore_env_of "$current"
-  if [ -n "$rollback_proj" ] && ! check_rollback_plain_project "$rollback_proj" "$DEPLOY_DIR/releases/$previous/docker-compose.yml" "$previous"; then
-    if ! undo_env_restore; then
-      record "rollback to $previous failed: restored env project mismatch, and putting $ENV_FILE back failed"
-      die "$EXIT_ROLLBACK_FAILED" "restored $ENV_FILE conflicts with rollback project $rollback_proj and putting $ENV_FILE back failed: the instance needs an operator"
+  if [ -n "$rollback_proj" ]; then
+    local plain_pre_ok=1
+    if ! check_rollback_plain_project "$rollback_proj" "$DEPLOY_DIR/releases/$previous/docker-compose.yml" "$previous" "$ENV_FILE"; then
+      plain_pre_ok=0
+    elif [ -f "$DEPLOY_DIR/.env" ] && ! [ "$ENV_FILE" -ef "$DEPLOY_DIR/.env" ] \
+      && ! check_rollback_plain_project "$rollback_proj" "$DEPLOY_DIR/releases/$previous/docker-compose.yml" "$previous" "$DEPLOY_DIR/.env"; then
+      plain_pre_ok=0
     fi
-    die "$EXIT_USAGE" "$ROLLBACK_PROJ_ERR"
+    if ((plain_pre_ok == 0)); then
+      if ! undo_env_restore; then
+        record "rollback to $previous failed: restored env project mismatch, and putting $ENV_FILE back failed"
+        die "$EXIT_ROLLBACK_FAILED" "restored $ENV_FILE conflicts with rollback project $rollback_proj and putting $ENV_FILE back failed: the instance needs an operator"
+      fi
+      die "$EXIT_USAGE" "$ROLLBACK_PROJ_ERR"
+    fi
   fi
   prev_img="$(release_field "$previous" IMAGE)"
   # The images are normally still on the host. Pull them again (by digest, so nothing else can arrive) in case
@@ -4368,7 +4793,7 @@ do_rollback() {
   # Usually toward an older build, the API first; back to a newer one (a second rollback), the worker first (#1965).
   activate "$previous"
   if [ -n "$rollback_proj" ]; then
-    local plain_cfg='' plain_proj=''
+    local plain_cfg='' plain_proj='' env_plain_cfg='' env_plain_proj=''
     if ! plain_cfg="$(plain_compose_config)" || ! plain_proj="$(compose_project_from_yaml "$plain_cfg")" || [ "$plain_proj" != "$rollback_proj" ]; then
       restore_pre_activate "$current" || true
       if ! undo_env_restore; then
@@ -4376,7 +4801,18 @@ do_rollback() {
         die "$EXIT_ROLLBACK_FAILED" "plain docker compose resolves to '${plain_proj:-unknown}' instead of $rollback_proj and putting $ENV_FILE back failed: the instance needs an operator"
       fi
       record "rollback to $previous failed: plain docker compose project '${plain_proj:-unknown}' != '$rollback_proj'"
-      die "$EXIT_USAGE" "cannot roll back to $previous on project $rollback_proj: plain docker compose resolves to project '${plain_proj:-unknown}' after activating $previous; align COMPOSE_PROJECT_NAME and COMPOSE_FILE in $ENV_FILE first"
+      die "$EXIT_USAGE" "cannot roll back to $previous on project $rollback_proj: plain docker compose in $DEPLOY_DIR resolves to project '${plain_proj:-unknown}' after activating $previous; align COMPOSE_PROJECT_NAME and COMPOSE_FILE in $DEPLOY_DIR/.env first"
+    fi
+    if ! [ "$ENV_FILE" -ef "$DEPLOY_DIR/.env" ]; then
+      if ! env_plain_cfg="$(plain_compose_config "$ENV_FILE")" || ! env_plain_proj="$(compose_project_from_yaml "$env_plain_cfg")" || [ "$env_plain_proj" != "$rollback_proj" ]; then
+        restore_pre_activate "$current" || true
+        if ! undo_env_restore; then
+          record "rollback to $previous failed: plain project mismatch for $ENV_FILE (${env_plain_proj:-unknown}), and putting $ENV_FILE back failed"
+          die "$EXIT_ROLLBACK_FAILED" "plain docker compose with $ENV_FILE resolves to '${env_plain_proj:-unknown}' instead of $rollback_proj and putting $ENV_FILE back failed: the instance needs an operator"
+        fi
+        record "rollback to $previous failed: plain docker compose ($ENV_FILE) project '${env_plain_proj:-unknown}' != '$rollback_proj'"
+        die "$EXIT_USAGE" "cannot roll back to $previous on project $rollback_proj: plain docker compose with $ENV_FILE resolves to project '${env_plain_proj:-unknown}' after activating $previous; align COMPOSE_PROJECT_NAME and COMPOSE_FILE in $ENV_FILE first"
+      fi
     fi
   fi
   local rb_config='' rb_proj=''
@@ -4402,7 +4838,8 @@ do_rollback() {
     "$cur_db_specs" "$cur_pgdata_sub" "$cur_files_specs" "$cur_keys_specs" "$cur_archive_specs"
   clear_pre_activate_snap
   if ! roll_services "$(direction_to "$previous" "$current")"; then
-    recover "$current" "rollback to $previous" "$previous"
+    RECOVER_FAILED_CONFIG="$rb_config"
+    recover "$current" "rollback to $previous" "$previous" services "${rb_proj:-ludy}"
   fi
   # Swap, so a second rollback returns to the release just left.
   write_state previous "$current"

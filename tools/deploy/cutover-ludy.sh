@@ -167,17 +167,69 @@ acquire_lock() {
   LOCK_HELD=1
 }
 
+# Parses multiline quoted values reliably across .env scanning passes (#3972).
+CUTOVER_OPEN_QUOTE=''
+dotenv_rhs_open_quote() {
+  local value="${1#"${1%%[![:space:]]*}"}"
+  local q='' len=0 i=1 c='' bs=''
+  CUTOVER_OPEN_QUOTE=''
+  case "$value" in
+    \'*) q="'" ;;
+    \"*) q='"' ;;
+    *) return 1 ;;
+  esac
+  printf -v bs '%b' '\134'
+  len="${#value}"
+  while ((i < len)); do
+    c="${value:i:1}"
+    if [ "$c" = "$bs" ]; then
+      i=$((i + 2))
+      continue
+    elif [ "$c" = "$q" ]; then
+      return 1
+    fi
+    i=$((i + 1))
+  done
+  CUTOVER_OPEN_QUOTE="$q"
+  return 0
+}
+
+dotenv_line_closes_quote() {
+  local q="$1" line="$2" len="${#2}" i=0 c='' bs=''
+  printf -v bs '%b' '\134'
+  while ((i < len)); do
+    c="${line:i:1}"
+    if [ "$c" = "$bs" ]; then
+      i=$((i + 2))
+      continue
+    elif [ "$c" = "$q" ]; then
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
 # Reads the effective last non-comment assignment for an environment variable key (names allowlisted only).
 env_last_value() {
-  local key="$1" file="${2:-$ENV_FILE}" line raw val=''
+  local key="$1" file="${2:-$ENV_FILE}" line raw val='' in_quote=''
   local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$'
   [ -f "$file" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
+    if [ -n "$in_quote" ]; then
+      if dotenv_line_closes_quote "$in_quote" "$line"; then in_quote=''; fi
+      continue
+    fi
+    [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
     if [[ "$line" =~ $assign_re ]]; then
       if [ "${BASH_REMATCH[2]}" = "$key" ]; then
         raw="${BASH_REMATCH[3]}"
         raw="${raw#"${raw%%[![:space:]]*}"}"
+        if dotenv_rhs_open_quote "$raw"; then
+          in_quote="$CUTOVER_OPEN_QUOTE"
+          continue
+        fi
         case "$raw" in
           \'*) raw="${raw#\'}"; val="${raw%%\'*}" ;;
           \"*) raw="${raw#\"}"; val="${raw%%\"*}" ;;
@@ -186,6 +238,8 @@ env_last_value() {
             val="${raw%"${raw##*[![:space:]]}"}"
             ;;
         esac
+      elif dotenv_rhs_open_quote "${BASH_REMATCH[3]}"; then
+        in_quote="$CUTOVER_OPEN_QUOTE"
       fi
     fi
   done <"$file"
@@ -681,8 +735,7 @@ dotenv_parse_rhs() {
         fi
       done
       if [ "$i" -ge "$len" ]; then
-        err "$file line $lineno ($cur_key): unclosed single quote"
-        return 1
+        return 2
       fi
       ;;
     \"*)
@@ -716,8 +769,7 @@ dotenv_parse_rhs() {
         fi
       done
       if [ "$i" -ge "$len" ]; then
-        err "$file line $lineno ($cur_key): unclosed double quote"
-        return 1
+        return 2
       fi
       dotenv_interpolate "$out" "$file" "$lineno" "$cur_key" || return 1
       out="$DOTENV_REPLY"
@@ -745,7 +797,7 @@ eval_dotenv_state() {
   (
     set -euo pipefail
     local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$'
-    local lineno=0 line key rhs seen_keys='' i
+    local lineno=0 start_lineno=0 parse_rc=0 line next_line key rhs seen_keys='' i
     [ -r "$1" ] || exit 1
     if [ "$use_os_env" = 1 ]; then
       __DE_EXPORTED_NAMES="$(env | sed -n -E 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p')" || exit 1
@@ -757,9 +809,26 @@ eval_dotenv_state() {
       line="${line%$'\r'}"
       [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
       [[ "$line" =~ $assign_re ]] || continue
+      start_lineno="$lineno"
       key="${BASH_REMATCH[2]}"
       rhs="${BASH_REMATCH[3]}"
-      dotenv_parse_rhs "$rhs" "$src_path" "$lineno" "$key" || exit 1
+      while :; do
+        parse_rc=0
+        dotenv_parse_rhs "$rhs" "$src_path" "$start_lineno" "$key" || parse_rc=$?
+        if ((parse_rc == 0)); then
+          break
+        elif ((parse_rc == 2)); then
+          if ! IFS= read -r next_line && [ -z "$next_line" ]; then
+            err "$src_path line $start_lineno ($key): unclosed quoted value"
+            exit 1
+          fi
+          lineno=$((lineno + 1))
+          next_line="${next_line%$'\r'}"
+          rhs="${rhs}"$'\n'"${next_line}"
+        else
+          exit 1
+        fi
+      done
       printf -v "__DE_S_${key}" '%s' 1 || exit 1
       printf -v "__DE_V_${key}" '%s' "$DOTENV_REPLY" || exit 1
       if [ "$key" != COMPOSE_PROJECT_NAME ] && ! key_map_index "$key" >/dev/null && ! target_map_index "$key" >/dev/null; then
@@ -825,7 +894,7 @@ eval_dotenv_key() {
   (
     set -euo pipefail
     local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$'
-    local lineno=0 line key rhs
+    local lineno=0 start_lineno=0 parse_rc=0 line next_line key rhs
     [ -r "$1" ] || exit 1
     if [ "$ignore_os_target" = 1 ]; then
       unset "$target_key" 2>/dev/null || true
@@ -840,9 +909,26 @@ eval_dotenv_key() {
       line="${line%$'\r'}"
       [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
       [[ "$line" =~ $assign_re ]] || continue
+      start_lineno="$lineno"
       key="${BASH_REMATCH[2]}"
       rhs="${BASH_REMATCH[3]}"
-      dotenv_parse_rhs "$rhs" "$src_path" "$lineno" "$key" || exit 1
+      while :; do
+        parse_rc=0
+        dotenv_parse_rhs "$rhs" "$src_path" "$start_lineno" "$key" || parse_rc=$?
+        if ((parse_rc == 0)); then
+          break
+        elif ((parse_rc == 2)); then
+          if ! IFS= read -r next_line && [ -z "$next_line" ]; then
+            err "$src_path line $start_lineno ($key): unclosed quoted value"
+            exit 1
+          fi
+          lineno=$((lineno + 1))
+          next_line="${next_line%$'\r'}"
+          rhs="${rhs}"$'\n'"${next_line}"
+        else
+          exit 1
+        fi
+      done
       printf -v "__DE_S_${key}" '%s' 1 || exit 1
       printf -v "__DE_V_${key}" '%s' "$DOTENV_REPLY" || exit 1
     done <"$1"
@@ -905,6 +991,7 @@ rewrite_env_file() {
     esac
   done <<<"$pre_clean"
 
+  local in_quote=''
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
     if [[ "$line" == *$'\r' ]]; then
@@ -913,8 +1000,16 @@ rewrite_env_file() {
     else
       lf_seen=$((lf_seen + 1))
     fi
+    if [ -n "$in_quote" ]; then
+      if dotenv_line_closes_quote "$in_quote" "$line"; then in_quote=''; fi
+      continue
+    fi
+    [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
     if [[ "$line" =~ $split_re ]]; then
-      local key="${BASH_REMATCH[3]}" idx
+      local key="${BASH_REMATCH[3]}" rhs="${BASH_REMATCH[5]}" idx
+      if dotenv_rhs_open_quote "$rhs"; then
+        in_quote="$CUTOVER_OPEN_QUOTE"
+      fi
       if [ "$key" = COMPOSE_PROJECT_NAME ]; then
         last_compose=$lineno
       elif idx="$(target_map_index "$key")"; then
@@ -929,7 +1024,8 @@ rewrite_env_file() {
   if ((cr_seen > 0 && lf_seen == 0)); then default_cr=$'\r'; fi
 
   lineno=0
-  local wrote_compose=0
+  local wrote_compose=0 skip_cont=0
+  in_quote=''
   : >"$dst"
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
@@ -939,34 +1035,55 @@ rewrite_env_file() {
     else
       line_cr=''
     fi
-    if [[ "$line" =~ $split_re ]]; then
+    if [ -n "$in_quote" ]; then
+      if ((skip_cont == 0)); then
+        printf '%s%s\n' "$line" "$line_cr" >>"$dst"
+      fi
+      if dotenv_line_closes_quote "$in_quote" "$line"; then
+        in_quote=''
+        skip_cont=0
+      fi
+      continue
+    fi
+    if [[ ! "$line" =~ ^[[:space:]]*(#.*)?$ ]] && [[ "$line" =~ $split_re ]]; then
       local prefix="${BASH_REMATCH[1]}" key="${BASH_REMATCH[3]}" sep="${BASH_REMATCH[4]}" rhs="${BASH_REMATCH[5]}" idx
+      local opens_q=''
+      if dotenv_rhs_open_quote "$rhs"; then opens_q="$CUTOVER_OPEN_QUOTE"; fi
       if [ "$key" = COMPOSE_PROJECT_NAME ]; then
         if ((lineno == last_compose)); then
           printf '%sCOMPOSE_PROJECT_NAME=ludy%s\n' "$prefix" "$line_cr" >>"$dst"
           wrote_compose=1
         fi
+        if [ -n "$opens_q" ]; then in_quote="$opens_q"; skip_cont=1; fi
         continue
       fi
       if idx="$(target_map_index "$key")"; then
         if ((ludy_effective[idx] == 0 && crove_effective[idx] == 1)); then
+          if [ -n "$opens_q" ]; then in_quote="$opens_q"; skip_cont=1; fi
           continue
         fi
       fi
       if idx="$(key_map_index "$key")"; then
         if ((ludy_effective[idx] == 1)); then
+          if [ -n "$opens_q" ]; then in_quote="$opens_q"; skip_cont=1; fi
           continue
         elif ((crove_effective[idx] == 1)); then
-          if ((lineno != crove_last[idx])); then continue; fi
+          if ((lineno != crove_last[idx])); then
+            if [ -n "$opens_q" ]; then in_quote="$opens_q"; skip_cont=1; fi
+            continue
+          fi
         elif ((ludy_last[idx] > 0)) || ((lineno != crove_last[idx])); then
+          if [ -n "$opens_q" ]; then in_quote="$opens_q"; skip_cont=1; fi
           continue
         fi
         printf '%s%s%s%s%s\n' "$prefix" "${CROVE_NEW_KEYS[$idx]}" "$sep" "$rhs" "$line_cr" >>"$dst"
+        if [ -n "$opens_q" ]; then in_quote="$opens_q"; skip_cont=0; fi
         continue
       fi
       local new_rhs
       new_rhs="$(rewrite_db_url_rhs "$key" "$rhs")"
       printf '%s%s%s%s%s\n' "$prefix" "$key" "$sep" "$new_rhs" "$line_cr" >>"$dst"
+      if [ -n "$opens_q" ]; then in_quote="$opens_q"; skip_cont=0; fi
     else
       printf '%s%s\n' "$line" "$line_cr" >>"$dst"
     fi
@@ -1023,23 +1140,34 @@ write_env_in_place() {
 
 upsert_env_kv_file() {
   local src="$1" dst="$2" k1="${3:-}" v1="${4:-}" k2="${5:-}" v2="${6:-}" k3="${7:-}" v3="${8:-}"
-  local split_re='^([[:space:]]*(export[[:space:]]+)?)([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:]'
-  local line line_cr cr_seen=0 lf_seen=0 s1=0 s2=0 s3=0
+  local split_re='^([[:space:]]*(export[[:space:]]+)?)([A-Za-z_][A-Za-z0-9_]*)([[:space:]]*[=:])(.*)$'
+  local line line_cr cr_seen=0 lf_seen=0 s1=0 s2=0 s3=0 in_quote='' skip_cont=0 opens_q=''
   : >"$dst"
   while IFS= read -r line || [ -n "$line" ]; do
     if [[ "$line" == *$'\r' ]]; then line="${line%$'\r'}"; line_cr=$'\r'; cr_seen=$((cr_seen + 1)); else line_cr=''; lf_seen=$((lf_seen + 1)); fi
-    if [[ "$line" =~ $split_re ]]; then
-      local key="${BASH_REMATCH[3]}" prefix="${BASH_REMATCH[1]}"
+    if [ -n "$in_quote" ]; then
+      if ((skip_cont == 0)); then printf '%s%s\n' "$line" "$line_cr" >>"$dst"; fi
+      if dotenv_line_closes_quote "$in_quote" "$line"; then in_quote=''; skip_cont=0; fi
+      continue
+    fi
+    if [[ ! "$line" =~ ^[[:space:]]*(#.*)?$ ]] && [[ "$line" =~ $split_re ]]; then
+      local key="${BASH_REMATCH[3]}" prefix="${BASH_REMATCH[1]}" rhs="${BASH_REMATCH[5]}"
+      opens_q=''
+      if dotenv_rhs_open_quote "$rhs"; then opens_q="$CUTOVER_OPEN_QUOTE"; fi
       if [ -n "$k1" ] && [ "$key" = "$k1" ]; then
         if ((s1 == 0)); then printf '%s%s=%s%s\n' "$prefix" "$k1" "$v1" "$line_cr" >>"$dst"; s1=1; fi
+        if [ -n "$opens_q" ]; then in_quote="$opens_q"; skip_cont=1; fi
         continue
       elif [ -n "$k2" ] && [ "$key" = "$k2" ]; then
         if ((s2 == 0)); then printf '%s%s=%s%s\n' "$prefix" "$k2" "$v2" "$line_cr" >>"$dst"; s2=1; fi
+        if [ -n "$opens_q" ]; then in_quote="$opens_q"; skip_cont=1; fi
         continue
       elif [ -n "$k3" ] && [ "$key" = "$k3" ]; then
         if ((s3 == 0)); then printf '%s%s=%s%s\n' "$prefix" "$k3" "$v3" "$line_cr" >>"$dst"; s3=1; fi
+        if [ -n "$opens_q" ]; then in_quote="$opens_q"; skip_cont=1; fi
         continue
       fi
+      if [ -n "$opens_q" ]; then in_quote="$opens_q"; skip_cont=0; fi
     fi
     printf '%s%s\n' "$line" "$line_cr" >>"$dst"
   done <"$src"
@@ -1055,12 +1183,20 @@ upsert_env_kv_file() {
 preserve_s3_prefix_default() {
   local src="$1" dst="$2" fallback="$3"
   local split_re='^([[:space:]]*(export[[:space:]]+)?)([A-Za-z_][A-Za-z0-9_]*)([[:space:]]*[=:])(.*)$'
-  local lineno=0 last_line=0 line cr_seen=0 lf_seen=0 line_cr=''
+  local lineno=0 last_line=0 line cr_seen=0 lf_seen=0 line_cr='' in_quote=''
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
     if [[ "$line" == *$'\r' ]]; then line="${line%$'\r'}"; cr_seen=$((cr_seen + 1)); else lf_seen=$((lf_seen + 1)); fi
-    if [[ "$line" =~ $split_re ]] && [ "${BASH_REMATCH[3]}" = BACKUP_S3_PREFIX ]; then
-      last_line="$lineno"
+    if [ -n "$in_quote" ]; then
+      if dotenv_line_closes_quote "$in_quote" "$line"; then in_quote=''; fi
+      continue
+    fi
+    [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+    if [[ "$line" =~ $split_re ]]; then
+      if [ "${BASH_REMATCH[3]}" = BACKUP_S3_PREFIX ]; then
+        last_line="$lineno"
+      fi
+      if dotenv_rhs_open_quote "${BASH_REMATCH[5]}"; then in_quote="$CUTOVER_OPEN_QUOTE"; fi
     fi
   done <"$src"
 
@@ -1982,31 +2118,39 @@ check_cutover_storage_mounts() {
   src_mounts="$(cutover_compose_storage_mounts "$src_cfg" "$proj" "$ENV_FILE")"
   dst_mounts="$(cutover_compose_storage_mounts "$dst_cfg" ludy "$env_tmp")"
 
-  local svc cids cid m_lines hc_json='' hc_subpaths='' h_tgt='' h_src='' h_sub='' m_dst m_type m_name m_src live_spec entry
+  local svc ps_lines='' cid='' oneoff='' m_lines hc_json='' hc_subpaths='' h_tgt='' h_src='' h_sub='' m_dst m_type m_name m_src live_spec entry
   for svc in db crove ludy api worker; do
-    cids="$(dc_proj "$proj" ps -q "$svc" 2>/dev/null || true)"
-    [ -n "$cids" ] || continue
-    while IFS= read -r cid; do
+    ps_lines="$(docker ps -a \
+      --filter "label=com.docker.compose.project=$proj" \
+      --filter "label=com.docker.compose.service=$svc" \
+      --format '{{.ID}} {{.Label "com.docker.compose.oneoff"}}')" \
+      || die "$EXIT_FAILED" "cannot inspect existing $svc containers for project $proj before cutover"
+    [ -n "$ps_lines" ] || continue
+    while read -r cid oneoff; do
       cid="${cid%$'\r'}"
+      oneoff="${oneoff%$'\r'}"
       [ -n "$cid" ] || continue
+      case "$oneoff" in
+        [Tt][Rr][Uu][Ee]) continue ;;
+      esac
       hc_json="$(docker inspect --format '{{json .HostConfig.Mounts}}' "$cid" 2>/dev/null)" \
-        || die "$EXIT_FAILED" "cannot inspect HostConfig.Mounts of running $svc container ($cid) before cutover"
+        || die "$EXIT_FAILED" "cannot inspect HostConfig.Mounts of existing $svc container ($cid) before cutover"
       hc_subpaths="$(cutover_parse_hostconfig_subpath_mounts <<<"$hc_json")" \
-        || die "$EXIT_FAILED" "cannot parse HostConfig.Mounts of running $svc container ($cid) before cutover"
+        || die "$EXIT_FAILED" "cannot parse HostConfig.Mounts of existing $svc container ($cid) before cutover"
       if [ -n "$hc_subpaths" ]; then
         while IFS='|' read -r h_tgt _ h_src h_sub; do
           [ -n "$h_tgt" ] || continue
           while [[ "$h_tgt" == */ && "$h_tgt" != / ]]; do h_tgt="${h_tgt%/}"; done
-          die "$EXIT_FAILED" "running $svc container ($cid) mounts unsupported volume subpath ${h_src}:${h_sub} at $h_tgt; consolidate onto a dedicated volume or bind mount before running cutover-stack"
+          die "$EXIT_FAILED" "existing $svc container ($cid) mounts unsupported volume subpath ${h_src}:${h_sub} at $h_tgt; consolidate onto a dedicated volume or bind mount before running cutover-stack"
         done <<<"$hc_subpaths"
       fi
       m_lines="$(docker inspect --format '{{range .Mounts}}{{.Destination}}|{{.Type}}|{{.Name}}|{{.Source}}{{"\n"}}{{end}}' "$cid")" \
-        || die "$EXIT_FAILED" "cannot inspect mounts of running $svc container ($cid) before cutover"
+        || die "$EXIT_FAILED" "cannot inspect mounts of existing $svc container ($cid) before cutover"
       while IFS='|' read -r m_dst m_type m_name m_src; do
         [ -n "$m_dst" ] || continue
         while [[ "$m_dst" == */ && "$m_dst" != / ]]; do m_dst="${m_dst%/}"; done
         if [ "$svc" = db ] && [[ "$m_dst" == /var/lib/postgresql/data/* ]]; then
-          die "$EXIT_FAILED" "running db container ($cid) has unsupported nested mount at $m_dst under /var/lib/postgresql/data; consolidate onto one /var/lib/postgresql/data mount before cutover"
+          die "$EXIT_FAILED" "existing db container ($cid) has unsupported nested mount at $m_dst under /var/lib/postgresql/data; consolidate onto one /var/lib/postgresql/data mount before cutover"
         fi
         case "$m_dst" in
           /var/lib/postgresql/data | /data/files | /data/keys | /data/archive) ;;
@@ -2030,7 +2174,7 @@ check_cutover_storage_mounts() {
           *) src_mounts="${src_mounts:+$src_mounts$'\n'}$entry" ;;
         esac
       done <<<"$m_lines"
-    done <<<"$cids"
+    done <<<"$ps_lines"
   done
 
   local d_svc='' d_tgt='' d_spec='' dst_has_db=0
@@ -2251,12 +2395,16 @@ do_cutover_stack() {
   rewrite_env_file "$ENV_FILE" "$env_tmp"
   # Keep live pre-switch WAL/S3 settings pinned until `switch-wal` (or operator S3 migration) completes (#3972).
   if [ -n "$wal_file" ]; then
-    local cur_s3_clean='' cur_s3_live='' wal_tmp='' s3_tmp=''
+    local cur_s3_clean='' cur_s3_live='' bad_s3='' eff_wal_stanza='' eff_wal_img='' eff_s3_live='' wal_tmp='' s3_tmp=''
     cur_s3_clean="$(eval_dotenv_key "$env_tmp" BACKUP_S3_PREFIX 1 0)" || die "$EXIT_FAILED" "cannot evaluate BACKUP_S3_PREFIX in $env_tmp"
-    cur_s3_live="$(eval_dotenv_key "$env_tmp" BACKUP_S3_PREFIX 1 1)" || die "$EXIT_FAILED" "cannot evaluate BACKUP_S3_PREFIX in $env_tmp"
-    if { [ -n "$cur_s3_clean" ] && [ "$cur_s3_clean" != "$live_s3_prefix" ]; } \
-      || { [ -n "$cur_s3_live" ] && [ "$cur_s3_live" != "$live_s3_prefix" ]; }; then
-      die "$EXIT_FAILED" "refusing cutover-stack: $ENV_FILE configures BACKUP_S3_PREFIX='${cur_s3_clean:-$cur_s3_live}' for nightly backups while running db container archives WAL under '/$live_s3_prefix/wal'; align BACKUP_S3_PREFIX before running cutover-stack"
+    cur_s3_live="$(eval_dotenv_key "$env_tmp" BACKUP_S3_PREFIX 0 1)" || die "$EXIT_FAILED" "cannot evaluate BACKUP_S3_PREFIX in $env_tmp"
+    if [ -n "$cur_s3_clean" ] && [ "$cur_s3_clean" != "$live_s3_prefix" ]; then
+      bad_s3="$cur_s3_clean"
+    elif [ -n "$cur_s3_live" ] && [ "$cur_s3_live" != "$live_s3_prefix" ]; then
+      bad_s3="$cur_s3_live"
+    fi
+    if [ -n "$bad_s3" ]; then
+      die "$EXIT_FAILED" "refusing cutover-stack: $ENV_FILE / shell configures BACKUP_S3_PREFIX='$bad_s3' for nightly backups while running db container archives WAL under '/$live_s3_prefix/wal'; align BACKUP_S3_PREFIX (and unset conflicting shell exports) before running cutover-stack"
     fi
     wal_tmp="$(umask 077 && mktemp "$(state_dir)/.env.cutover-wal-XXXXXX")"
     TEMP_FILES+=("$wal_tmp")
@@ -2267,6 +2415,12 @@ do_cutover_stack() {
       TEMP_FILES+=("$s3_tmp")
       preserve_s3_prefix_default "$env_tmp" "$s3_tmp" "$live_s3_prefix"
       mv -f "$s3_tmp" "$env_tmp"
+    fi
+    eff_wal_stanza="$(eval_dotenv_key "$env_tmp" WAL_STANZA 0 1)" || die "$EXIT_FAILED" "cannot evaluate effective WAL_STANZA in $env_tmp"
+    eff_wal_img="$(eval_dotenv_key "$env_tmp" WAL_DB_IMAGE 0 1)" || die "$EXIT_FAILED" "cannot evaluate effective WAL_DB_IMAGE in $env_tmp"
+    eff_s3_live="$(eval_dotenv_key "$env_tmp" BACKUP_S3_PREFIX 0 1)" || die "$EXIT_FAILED" "cannot evaluate effective BACKUP_S3_PREFIX in $env_tmp"
+    if [ "$eff_wal_stanza" != "$live_wal_stanza" ] || [ "$eff_wal_img" != "$live_wal_img" ] || [ "$eff_s3_live" != "$live_s3_prefix" ]; then
+      die "$EXIT_FAILED" "refusing cutover-stack: active shell environment overrides WAL_STANZA, WAL_DB_IMAGE, or BACKUP_S3_PREFIX (effective stanza='$eff_wal_stanza', image='$eff_wal_img', s3_prefix='$eff_s3_live'; expected '$live_wal_stanza', '$live_wal_img', '$live_s3_prefix'); unset conflicting environment exports before running cutover-stack"
     fi
   else
     # Preserve dynamic BACKUP_S3_PREFIX expressions (updating empty defaults to `crove`), or pin literal `crove` (#3972).

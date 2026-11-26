@@ -401,6 +401,13 @@ emit_stub_compose_config() {
     db_vol="${STUB_NEW_DB_VOLUME:-${STUB_DB_VOLUME:-}}"
   fi
   if [ "$p" != crove ] && [ -n "${STUB_NEW_FILES_VOLUME:-}" ]; then files_vol="$STUB_NEW_FILES_VOLUME"; fi
+  if [ "$p" != crove ] && [ -n "${STUB_FILES_VOL_BY_DIGEST:-}" ] && [ -n "${STUB_DEPLOY_DIR:-}" ] && [ -f "$STUB_DEPLOY_DIR/docker-compose.override.yml" ]; then
+    for _fv_pair in ${STUB_FILES_VOL_BY_DIGEST}; do
+      if grep -q -F -- "${_fv_pair%%=*}" "$STUB_DEPLOY_DIR/docker-compose.override.yml"; then
+        files_vol="${_fv_pair#*=}"
+      fi
+    done
+  fi
   if [ "$p" != crove ] && [ -n "${STUB_NEW_KEYS_VOLUME:-}" ]; then keys_vol="$STUB_NEW_KEYS_VOLUME"; fi
   if [ "$p" != crove ] && [ -n "${STUB_NEW_ARCHIVE_VOLUME:-}" ]; then archive_vol="$STUB_NEW_ARCHIVE_VOLUME"; fi
   if [ "$p" != crove ] && [ "${STUB_SPLIT_PILOT_SERVICES:-0}" = 1 ]; then
@@ -428,6 +435,113 @@ emit_stub_compose_config() {
     "$p" "$db_env_yaml" "$db_mounts_yaml" "$app_svc" "$files_mount_yaml" "$db_vol" "$files_vol" "$keys_vol" "$archive_vol"
 }
 
+stub_load_env_vars() {
+  local eff_env="${envfile:-${proj_dir:-$PWD}/.env}"
+  [ -f "$eff_env" ] || return 0
+  local _in_q='' _bs='' _el='' _qi=0 _qc='' _ek='' _ev='' _eq='' _closed=0
+  printf -v _bs '%b' '\134'
+  while IFS= read -r _el || [ -n "$_el" ]; do
+    _el="${_el%$'\r'}"
+    if [ -n "$_in_q" ]; then
+      _qi=0
+      while ((_qi < ${#_el})); do
+        _qc="${_el:_qi:1}"
+        if [ "$_qc" = "$_bs" ]; then
+          _qi=$((_qi + 2))
+          continue
+        elif [ "$_qc" = "$_in_q" ]; then
+          _in_q=''
+          break
+        fi
+        _qi=$((_qi + 1))
+      done
+      continue
+    fi
+    [[ "$_el" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+    [[ "$_el" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$ ]] || continue
+    _ek="${BASH_REMATCH[2]}"
+    _ev="${BASH_REMATCH[3]#"${BASH_REMATCH[3]%%[![:space:]]*}"}"
+    if [[ "$_ev" == \'* ]] || [[ "$_ev" == \"* ]]; then
+      _eq="${_ev:0:1}"
+      _qi=1
+      _closed=0
+      while ((_qi < ${#_ev})); do
+        _qc="${_ev:_qi:1}"
+        if [ "$_qc" = "$_bs" ]; then
+          _qi=$((_qi + 2))
+          continue
+        elif [ "$_qc" = "$_eq" ]; then
+          _closed=1
+          break
+        fi
+        _qi=$((_qi + 1))
+      done
+      if ((_closed == 0)); then
+        _in_q="$_eq"
+        continue
+      fi
+    fi
+    _ev="${_ev%%[[:space:]]#*}"
+    _ev="${_ev%"${_ev##*[![:space:]]}"}"
+    case "$_ev" in
+      \"*\") _ev="${_ev#\"}"; _ev="${_ev%\"}" ;;
+      \'*\') _ev="${_ev#\'}"; _ev="${_ev%\'}" ;;
+    esac
+    printf -v "_STUB_ENV_${_ek}" '%s' "$_ev"
+  done <"$eff_env"
+}
+
+stub_resolve_compose_files() {
+  ((${#files[@]} == 0)) || return 0
+  local base_dir="${proj_dir:-$PWD}" eff_env="${envfile:-${proj_dir:-$PWD}/.env}"
+  local cf_stub='' sep_stub="${COMPOSE_PATH_SEPARATOR:-:}" _var_re='\$\{([A-Za-z_][A-Za-z0-9_]*)\}'
+  local _vk='' _vref='' _vv='' cf_item='' cf_res=''
+  local -a cf_arr=()
+  if [ -f "$eff_env" ]; then
+    if [ -n "${_STUB_ENV_COMPOSE_PATH_SEPARATOR:-}" ]; then
+      sep_stub="${_STUB_ENV_COMPOSE_PATH_SEPARATOR}"
+    fi
+    cf_stub="${_STUB_ENV_COMPOSE_FILE:-}"
+    while [[ "$cf_stub" =~ $_var_re ]]; do
+      _vk="${BASH_REMATCH[1]}"
+      _vref="_STUB_ENV_${_vk}"
+      _vv="${!_vk:-${!_vref:-}}"
+      cf_stub="${cf_stub//\$\{$_vk\}/$_vv}"
+    done
+  fi
+  if [ -n "$cf_stub" ]; then
+    IFS="$sep_stub" read -ra cf_arr <<<"$cf_stub"
+    for cf_item in "${cf_arr[@]+"${cf_arr[@]}"}"; do
+      cf_item="${cf_item#"${cf_item%%[![:space:]]*}"}"
+      cf_item="${cf_item%"${cf_item##*[![:space:]]}"}"
+      [ -n "$cf_item" ] || continue
+      if [[ "$cf_item" == /* ]]; then cf_res="$cf_item"; else cf_res="$base_dir/$cf_item"; fi
+      if [ ! -f "$cf_res" ]; then
+        echo "compose file \"$cf_item\" set by COMPOSE_FILE environment variable is invalid: no such file" >&2
+        return 1
+      fi
+      files+=("$cf_res")
+    done
+  else
+    [ -f "$base_dir/docker-compose.yml" ] || { echo 'no configuration file provided: not found' >&2; return 1; }
+    files+=("$base_dir/docker-compose.yml")
+    if [ -f "$base_dir/docker-compose.override.yml" ]; then files+=("$base_dir/docker-compose.override.yml"); fi
+  fi
+}
+
+stub_effective_project() {
+  local proj="${proj_override:-${COMPOSE_PROJECT_NAME:-${_STUB_ENV_COMPOSE_PROJECT_NAME:-}}}" cf='' cname=''
+  if [ -z "$proj" ]; then
+    for cf in ${files[@]+"${files[@]}"}; do
+      [ -f "$cf" ] || continue
+      cname="$(sed -n -E 's/^name:[[:space:]]*(.*)$/\1/p' "$cf" | head -n 1)"
+      cname="${cname%$'\r'}"
+      if [ -n "$cname" ]; then proj="$cname"; fi
+    done
+  fi
+  printf '%s' "${proj:-ludy}"
+}
+
 case "$sub" in
   config)
     # STUB_CONFIG_FAIL_IF_ENV_HAS: the compose files do not load while the env file holds this text (#2704).
@@ -440,75 +554,14 @@ case "$sub" in
         req_var="$STUB_PREV_CONFIG_REQUIRE_ENV"
         if [ -z "${!req_var:-}" ]; then exit 1; fi
       fi
-      if ((${#files[@]} == 0)); then
-        base_dir="${proj_dir:-$PWD}"
-        eff_env="${envfile:-$base_dir/.env}"
-        cf_stub=''
-        sep_stub="${COMPOSE_PATH_SEPARATOR:-:}"
-        if [ -f "$eff_env" ]; then
-          while IFS= read -r _el || [ -n "$_el" ]; do
-            _el="${_el%$'\r'}"
-            [[ "$_el" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$ ]] || continue
-            _ek="${BASH_REMATCH[2]}"
-            _ev="${BASH_REMATCH[3]#"${BASH_REMATCH[3]%%[![:space:]]*}"}"
-            _ev="${_ev%%[[:space:]]#*}"
-            _ev="${_ev%"${_ev##*[![:space:]]}"}"
-            case "$_ev" in
-              \"*\") _ev="${_ev#\"}"; _ev="${_ev%\"}" ;;
-              \'*\') _ev="${_ev#\'}"; _ev="${_ev%\'}" ;;
-            esac
-            printf -v "_STUB_ENV_${_ek}" '%s' "$_ev"
-          done <"$eff_env"
-          if [ -n "${_STUB_ENV_COMPOSE_PATH_SEPARATOR:-}" ]; then
-            sep_stub="${_STUB_ENV_COMPOSE_PATH_SEPARATOR}"
-          fi
-          cf_stub="${_STUB_ENV_COMPOSE_FILE:-}"
-          _var_re='\$\{([A-Za-z_][A-Za-z0-9_]*)\}'
-          while [[ "$cf_stub" =~ $_var_re ]]; do
-            _vk="${BASH_REMATCH[1]}"
-            _vref="_STUB_ENV_${_vk}"
-            _vv="${!_vk:-${!_vref:-}}"
-            cf_stub="${cf_stub//\$\{$_vk\}/$_vv}"
-          done
-        fi
-        if [ -n "$cf_stub" ]; then
-          IFS="$sep_stub" read -ra cf_arr <<<"$cf_stub"
-          for cf_item in "${cf_arr[@]+"${cf_arr[@]}"}"; do
-            cf_item="${cf_item#"${cf_item%%[![:space:]]*}"}"
-            cf_item="${cf_item%"${cf_item##*[![:space:]]}"}"
-            [ -n "$cf_item" ] || continue
-            if [[ "$cf_item" == /* ]]; then cf_res="$cf_item"; else cf_res="$base_dir/$cf_item"; fi
-            if [ ! -f "$cf_res" ]; then
-              echo "compose file \"$cf_item\" set by COMPOSE_FILE environment variable is invalid: no such file" >&2
-              exit 1
-            fi
-            files+=("$cf_res")
-          done
-        else
-          [ -f "$base_dir/docker-compose.yml" ] || { echo 'no configuration file provided: not found' >&2; exit 1; }
-          files+=("$base_dir/docker-compose.yml")
-          if [ -f "$base_dir/docker-compose.override.yml" ]; then files+=("$base_dir/docker-compose.override.yml"); fi
-        fi
-      fi
+      stub_load_env_vars
+      stub_resolve_compose_files || exit 1
       if [ "${STUB_COMPOSE_PROJECT:-}" = __empty__ ]; then
         exit 0
       elif [ -n "${STUB_COMPOSE_PROJECT:-}" ]; then
         emit_stub_compose_config "$STUB_COMPOSE_PROJECT"
       else
-        proj="${proj_override:-${COMPOSE_PROJECT_NAME:-}}"
-        if [ -z "$proj" ] && [ -n "$envfile" ] && [ -f "$envfile" ]; then
-          proj="$(sed -n -E 's/^[[:space:]]*(export[[:space:]]+)?COMPOSE_PROJECT_NAME[[:space:]]*[=:][[:space:]]*(.*)$/\2/p' "$envfile" | tail -n 1)"
-          proj="${proj%$'\r'}"
-        fi
-        if [ -z "$proj" ]; then
-          for cf in ${files[@]+"${files[@]}"}; do
-            [ -f "$cf" ] || continue
-            cname="$(sed -n -E 's/^name:[[:space:]]*(.*)$/\1/p' "$cf" | head -n 1)"
-            cname="${cname%$'\r'}"
-            if [ -n "$cname" ]; then proj="$cname"; fi
-          done
-        fi
-        emit_stub_compose_config "${proj:-ludy}"
+        emit_stub_compose_config "$(stub_effective_project)"
       fi
     fi
     ;;
@@ -546,6 +599,15 @@ case "$sub" in
     ;;
   up)
     { [ -z "${LUDY_CONTEXT_TOKEN_KEY+x}" ] && [ -z "${CROVE_CONTEXT_TOKEN_KEY+x}" ]; } || echo seen >"$STUB_LOG.envvar"
+    if [ -n "${STUB_UP_DB_FAIL_PROJ:-}" ]; then
+      stub_load_env_vars
+      if ((${#files[@]} == 0)); then stub_resolve_compose_files || true; fi
+      if [ "$(stub_effective_project)" = "$STUB_UP_DB_FAIL_PROJ" ]; then
+        case " $args " in
+          *" db "*) exit 1 ;;
+        esac
+      fi
+    fi
     ;;
   logs) [ -z "${STUB_WORKER_LOG:-}" ] || echo "$STUB_WORKER_LOG" ;;
   rm) [ -z "${STUB_RM_FAIL:-}" ] || { echo 'rm: stub failure' >&2; exit 1; } ;;

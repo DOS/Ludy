@@ -521,6 +521,36 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     const missingInterp = deploy('v1.0.3', 'd');
     expect(missingInterp.status, missingInterp.out).toBe(2);
     expect(missingInterp.out).toContain('lists compose.wal.yml but');
+
+    // Exact Compose path & declared order preserved for site.yml after compose.host.yml and nested site/compose.host.yml (#3972 Round 17).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/compose.host.yml`, 'services: {}\n');
+    writeFileSync(`${dir}/site.yml`, 'services: {}\n');
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:compose.host.yml:site.yml\n');
+    rmSync(`${log}.files`, { force: true });
+    const siteAfterHost = deploy('v1.0.4', 'e');
+    expect(siteAfterHost.status, siteAfterHost.out).toBe(0);
+    for (const files of readFileSync(`${log}.files`, 'utf8').split('\n').filter(Boolean)) {
+      expect(files).toBe(`${dir}/docker-compose.yml ${dir}/docker-compose.override.yml ${dir}/compose.host.yml ${dir}/site.yml`);
+    }
+
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:site/compose.host.yml\n');
+    const missingNestedHost = deploy('v1.0.5', 'f');
+    expect(missingNestedHost.status, missingNestedHost.out).toBe(2);
+    expect(missingNestedHost.out).toContain('lists site/compose.host.yml but the file does not exist');
+
+    mkdirSync(`${dir}/site`, { recursive: true });
+    writeFileSync(`${dir}/site/compose.host.yml`, 'services: {}\n');
+    rmSync(`${log}.files`, { force: true });
+    const nestedHost = deploy('v1.0.6', '1');
+    expect(nestedHost.status, nestedHost.out).toBe(0);
+    for (const files of readFileSync(`${log}.files`, 'utf8').split('\n').filter(Boolean)) {
+      expect(files).toBe(`${dir}/docker-compose.yml ${dir}/docker-compose.override.yml ${dir}/site/compose.host.yml`);
+    }
+    rmSync(`${dir}/compose.host.yml`, { force: true });
+    rmSync(`${dir}/site.yml`, { force: true });
+    rmSync(`${dir}/site`, { recursive: true, force: true });
   });
 
   it('fails closed before activate when pre-deploy compose inspection fails, and exports prior release images (#3972)', () => {
@@ -1275,6 +1305,90 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
     expect(foreignRollback.status, foreignRollback.out).toBe(1);
     expect(foreignRollback.out).toContain("Compose project 'ludy' is already owned by another installation at /opt/other-ludy");
+
+    // Round 17 regressions (#3972 Round 17):
+    // 1) Auto-recover refuses to revert to an older release when the failed deploy used a copied /data/files volume with unmigrated data.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
+    const filesMapEnv = `${digest('a')}=ludy_files ${digest('b')}=ludy_files_v2`;
+    expect(deploy('v1.0.0', 'a', { STUB_VOLUMES: 'ludy_db-data ludy_files', STUB_FILES_VOL_BY_DIGEST: filesMapEnv }).status).toBe(0);
+    const autoRecBlocked = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'ludy_db-data ludy_files ludy_files_v2',
+      STUB_POPULATED_MOUNTS: 'ludy_files ludy_files_v2',
+      STUB_PARTIAL_MOUNTS: 'ludy_files',
+      STUB_FILES_VOL_BY_DIGEST: filesMapEnv,
+      STUB_BAD_DIGEST: digest('b'),
+    });
+    expect(autoRecBlocked.status, autoRecBlocked.out).toBe(3);
+    expect(autoRecBlocked.out).toContain('automatic rollback');
+    expect(autoRecBlocked.out).toContain('rollback would revert to stale data');
+    expect(running()).toContain(image('b'));
+    expect(state('current')).toBe(releaseDir('v1.0.0', 'a'));
+
+    // 2) Cross-project/cross-volume `up db` failure restarts previous `db` before rolling services when new db storage is free,
+    // and refuses with exit 3 when the failed new db container still holds the copied storage.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const croveBase = `${root}/crove-after-db-fail.yml`;
+    writeFileSync(croveBase, 'name: crove\nservices: {}\n');
+    expect(run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', croveBase]).status).toBe(0);
+    writeFileSync(`${log}.project`, '');
+    writeFileSync(log, '');
+    const afterDbRec = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_UP_DB_FAIL_PROJ: 'ludy',
+      STUB_LOG_PROJECT: '1',
+    });
+    expect(afterDbRec.status, afterDbRec.out).toBe(1);
+    expect(afterDbRec.out).toContain(`rolled back to ${releaseDir('v1.0.0', 'a')}, which serves again`);
+    const dbRecCalls = readFileSync(`${log}.project`, 'utf8').split('\n').filter(Boolean);
+    const oldDbUpIdx = dbRecCalls.findIndex((l) => l === 'project crove up');
+    const firstOldPortIdx = dbRecCalls.findIndex((l) => l === 'project crove port');
+    expect(oldDbUpIdx).toBeGreaterThan(-1);
+    expect(firstOldPortIdx).toBeGreaterThan(oldDbUpIdx);
+
+    const afterDbHeld = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'crove_db-data ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1',
+      STUB_UP_DB_FAIL_PROJ: 'ludy',
+      STUB_RESTARTING_CONTAINERS: 'ludy-restarting-db',
+      STUB_INSPECT_WORKDIRS: `ludy-restarting-db|${dir}`,
+      STUB_INSPECT_MOUNTS: 'ludy-restarting-db|ludy|volume|ludy_db-data||',
+    });
+    expect(afterDbHeld.status, afterDbHeld.out).toBe(3);
+    expect(afterDbHeld.out).toContain('failed database storage ludy_db-data is still mounted');
+
+    // 3) Valid multiline single-quoted OAUTH_JWKS works in both deploy and rollback.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const mlEnv = [
+      'POSTGRES_PASSWORD=x',
+      "OAUTH_JWKS='{\n  \"keys\": [\n    {\"kty\": \"RSA\", \"use\": \"sig\"}\n  ]\n}' # inline comment",
+      'COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml',
+      '',
+    ].join('\n');
+    writeFileSync(`${dir}/.env`, mlEnv);
+    expect(deploy('v1.0.0', 'a').status).toBe(0);
+    expect(deploy('v1.1.0', 'b').status).toBe(0);
+    const mlRollback = run(['rollback']);
+    expect(mlRollback.status, mlRollback.out).toBe(0);
+    expect(readFileSync(`${dir}/.env`, 'utf8')).toBe(mlEnv);
+
+    // 4) Out-of-tree --env-file rollback still checks plain docker compose in $DEPLOY_DIR ($dir/.env) as tools/backup/lib.sh loads it.
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const extEnv = `${root}/external.env`;
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=ludy\n');
+    writeFileSync(extEnv, 'POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=ludy\n');
+    expect(run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--env-file', extEnv]).status).toBe(0);
+    expect(run(['deploy', '--release', 'v1.1.0', '--image', image('b'), '--extract-image', extract('b'), '--media-image', media('b'), '--compose', compose, '--env-file', extEnv]).status).toBe(0);
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=crove\n');
+    const extRollback = run(['rollback', '--env-file', extEnv]);
+    expect(extRollback.status, extRollback.out).toBe(2);
+    expect(extRollback.out).toContain('sets COMPOSE_PROJECT_NAME=crove');
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
 
     // Failed restore_pre_activate preserves $PRE_ACTIVATE_SNAP across EXIT cleanup so the reported recovery path remains intact (#3972 Round 14).
     if (process.platform !== 'win32' && process.getuid?.() !== 0) {

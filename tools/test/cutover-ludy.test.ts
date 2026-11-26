@@ -228,7 +228,49 @@ case "$cmd" in
     exit 0
     ;;
   ps)
+    if [ -n "\${STUB_DOCKER_PS_FAIL:-}" ]; then
+      echo 'Cannot connect to the Docker daemon' >&2
+      exit 1
+    fi
     if [[ " $* " == *" --filter ancestor=crove-db:local "* ]]; then
+      exit 0
+    fi
+    ps_proj=''
+    ps_svc=''
+    while (($# > 0)); do
+      case "$1" in
+        --filter)
+          case "\${2:-}" in
+            label=com.docker.compose.project=*) ps_proj="\${2#label=com.docker.compose.project=}" ;;
+            label=com.docker.compose.service=*) ps_svc="\${2#label=com.docker.compose.service=}" ;;
+          esac
+          shift 2
+          ;;
+        *) shift ;;
+      esac
+    done
+    if [ -n "$ps_proj" ] || [ -n "$ps_svc" ]; then
+      if [ -n "\${STUB_SERVICE_CIDS:-}" ]; then
+        for item in \${STUB_SERVICE_CIDS}; do
+          key="\${item%%=*}"
+          val="\${item#*=}"
+          cid="\${val%%:*}"
+          if [ "$val" != "$cid" ]; then oneoff="\${val#*:}"; else oneoff='False'; fi
+          if [ "$key" = "\${ps_proj}:\${ps_svc}" ]; then
+            printf '%s %s\\n' "$cid" "$oneoff"
+          fi
+        done
+      else
+        case " \${STUB_SERVICES:-db migrate auth auth-grants worker api caddy prober} " in
+          *" $ps_svc "*)
+            if [ "$ps_proj" = ludy ]; then
+              printf 'stub-%s-cid False\\n' "$ps_svc"
+            else
+              printf 'stub-%s-%s-cid False\\n' "$ps_proj" "$ps_svc"
+            fi
+            ;;
+        esac
+      fi
       exit 0
     fi
     printf '%b' "\${STUB_PS_CONTAINERS:-}"
@@ -1283,5 +1325,67 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     const resStaticEmpty = runWithStubs(fStaticEmptyS3, ['cutover-stack', '--dir', fStaticEmptyS3.deployDir, '--overlay-dir', fStaticEmptyS3.overlayDir]);
     expect(resStaticEmpty.status, resStaticEmpty.stderr).toBe(0);
     expect(readFileSync(join(fStaticEmptyS3.deployDir, '.env'), 'utf8')).toContain('BACKUP_S3_PREFIX=crove # static empty');
+
+    // 12) Round 17 hardening regressions (#3972 Round 17):
+    // 12a) Caller shell BACKUP_S3_PREFIX / WAL_STANZA override is caught before stopping services in WAL mode.
+    const fWalEnvOverride = createCutoverFixture();
+    writeFileSync(join(fWalEnvOverride.deployDir, 'compose.wal.yml'), 'services:\n  db:\n    image: ${WAL_DB_IMAGE:-ludy-db:local}\n');
+    const walEnvRes = runWithStubs(fWalEnvOverride, ['cutover-stack', '--dir', fWalEnvOverride.deployDir, '--overlay-dir', fWalEnvOverride.overlayDir], {
+      BACKUP_S3_PREFIX: 'other',
+      STUB_PRE_WAL_REPO1_PATH: '/crove/wal',
+    });
+    expect(walEnvRes.status).toBe(1);
+    expect(walEnvRes.stderr).toContain("BACKUP_S3_PREFIX='other'");
+    expect(readFileSync(fWalEnvOverride.stubLog, 'utf8')).not.toContain(' stop');
+
+    const fWalEmptyExport = createCutoverFixture();
+    writeFileSync(join(fWalEmptyExport.deployDir, 'compose.wal.yml'), 'services:\n  db:\n    image: ${WAL_DB_IMAGE:-ludy-db:local}\n');
+    writeFileSync(
+      join(fWalEmptyExport.deployDir, '.env'),
+      'COMPOSE_FILE=docker-compose.yml:compose.pilot.yml:compose.host.yml\nCROVE_DOMAIN=api.example.com\nDATABASE_URL=postgres://crove_app:pw@db:5432/postgres\nBACKUP_S3_PREFIX=crove\n',
+    );
+    const walEmptyExportRes = runWithStubs(fWalEmptyExport, ['cutover-stack', '--dir', fWalEmptyExport.deployDir, '--overlay-dir', fWalEmptyExport.overlayDir], {
+      BACKUP_S3_PREFIX: '',
+      STUB_PRE_WAL_REPO1_PATH: '/crove/wal',
+    });
+    expect(walEmptyExportRes.status).toBe(1);
+    expect(walEmptyExportRes.stderr).toContain('active shell environment overrides');
+    expect(readFileSync(fWalEmptyExport.stubLog, 'utf8')).not.toContain(' stop');
+
+    // 12b) Stopped worker container with stale /data/files bind mount and failed docker ps query fail closed before stop.
+    const fStoppedWorker = createCutoverFixture();
+    const stoppedWorkerRes = runWithStubs(fStoppedWorker, ['cutover-stack', '--dir', fStoppedWorker.deployDir, '--overlay-dir', fStoppedWorker.overlayDir], {
+      STUB_SERVICE_CIDS: 'crove:db=stub-crove-db-cid crove:worker=stub-stopped-worker-cid crove:api=stub-crove-api-cid',
+      STUB_CONTAINER_MOUNTS: 'stub-stopped-worker-cid|/data/files|bind||/srv/stopped-worker-files',
+    });
+    expect(stoppedWorkerRes.status).toBe(1);
+    expect(stoppedWorkerRes.stderr).toContain('bind:/srv/stopped-worker-files');
+    expect(readFileSync(fStoppedWorker.stubLog, 'utf8')).not.toContain(' stop');
+
+    const fDockerPsFail = createCutoverFixture();
+    const dockerPsFailRes = runWithStubs(fDockerPsFail, ['cutover-stack', '--dir', fDockerPsFail.deployDir, '--overlay-dir', fDockerPsFail.overlayDir], {
+      STUB_DOCKER_PS_FAIL: '1',
+    });
+    expect(dockerPsFailRes.status).toBe(1);
+    expect(dockerPsFailRes.stderr).toContain('cannot inspect existing db containers');
+    expect(readFileSync(fDockerPsFail.stubLog, 'utf8')).not.toContain(' stop');
+
+    // 12c) Valid multiline quoted OAUTH_JWKS in .env passes rewrite-env and cutover-stack intact.
+    const fMultiline = createCutoverFixture();
+    const multilineJwks = "OAUTH_JWKS='{\n  \"keys\": [\n    {\"kty\": \"RSA\", \"CROVE_DOMAIN\": \"ignored\"}\n  ]\n}' # jwks\n";
+    writeFileSync(
+      join(fMultiline.deployDir, '.env'),
+      [
+        'COMPOSE_FILE=docker-compose.yml:compose.pilot.yml:compose.host.yml',
+        `${multilineJwks}CROVE_DOMAIN=api.example.com`,
+        'DATABASE_URL=postgres://crove_app:pw@db:5432/postgres',
+        '',
+      ].join('\n'),
+    );
+    const resMultiline = runWithStubs(fMultiline, ['cutover-stack', '--dir', fMultiline.deployDir, '--overlay-dir', fMultiline.overlayDir]);
+    expect(resMultiline.status, resMultiline.stderr).toBe(0);
+    const multilineOut = readFileSync(join(fMultiline.deployDir, '.env'), 'utf8');
+    expect(multilineOut).toContain(multilineJwks);
+    expect(multilineOut).toContain('LUDY_DOMAIN=api.example.com');
   });
 });
