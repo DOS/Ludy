@@ -812,8 +812,8 @@ suite('eSign Slice 4d in-person & public hub security invariants (#3820, #4278)'
       requireEmailOtp: false,
       listedOnPublicHub: true,
     });
-    async function waitForPublicSubmitFieldLock(): Promise<void> {
-      const waitUntil = Date.now() + 5000;
+    async function waitForPublicSubmitFieldLock(deadlineMs: number): Promise<void> {
+      const waitUntil = Math.min(Date.now() + 5000, deadlineMs);
       while (Date.now() < waitUntil) {
         const waiting = await admin(async (c) => {
           const r = await c.query<{ cnt: number }>(
@@ -827,10 +827,13 @@ suite('eSign Slice 4d in-person & public hub security invariants (#3820, #4278)'
           );
           return r.rows[0]?.cnt ?? 0;
         });
-        if (waiting > 0) return;
+        if (waiting > 0) {
+          expect(Date.now()).toBeLessThan(deadlineMs);
+          return;
+        }
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
-      throw new Error('public_submit did not block on field lock within 5000ms');
+      throw new Error(`public_submit did not block on field lock before deadline ${deadlineMs}`);
     }
 
     // Case 1: Enter public_submit while valid, block on ludy_sign.field lock until past deadline, then release -> 404 + used_at IS NULL.
@@ -879,7 +882,7 @@ suite('eSign Slice 4d in-person & public hub security invariants (#3820, #4278)'
         },
         '198.51.100.71',
       );
-      await waitForPublicSubmitFieldLock();
+      await waitForPublicSubmitFieldLock(expDeadlineMs);
       const remainingMs = expDeadlineMs + 300 - Date.now();
       if (remainingMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, remainingMs));
@@ -947,7 +950,7 @@ suite('eSign Slice 4d in-person & public hub security invariants (#3820, #4278)'
         },
         '198.51.100.72',
       );
-      await waitForPublicSubmitFieldLock();
+      await waitForPublicSubmitFieldLock(ctrlDeadlineMs);
       expect(Date.now()).toBeLessThan(ctrlDeadlineMs - 1000);
       await ctrlLockClient.query('COMMIT');
     } finally {
