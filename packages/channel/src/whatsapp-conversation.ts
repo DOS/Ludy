@@ -255,6 +255,8 @@ export function parseWhatsAppNotices(body: Uint8Array, now: number = Date.now())
 }
 
 // The sealed credential of a connection: the system user token and the WABA id [M].
+// Note (#3152): wabaId is retained only inside the sealed secret for operator/future WABA parity and is never used for routing:
+// parseWhatsAppNotices routes webhooks solely by metadata.phone_number_id (externalAccountId).
 export interface WhatsAppSecret {
   accessToken: string;
   wabaId: string;
