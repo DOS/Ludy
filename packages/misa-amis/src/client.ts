@@ -96,7 +96,11 @@ export interface AmisClient {
   saveDictionary(connection: AmisConnection, dataType: AmisDictionaryType, rows: readonly AmisRecord[]): Promise<void>;
   /** Pushes vouchers as requests to generate a voucher. Success means MISA queued them; the results come by callback or by `callbackResults`. */
   save(connection: AmisConnection, vouchers: readonly AmisVoucher[]): Promise<void>;
-  /** Removes requests not yet turned into vouchers. */
+  /**
+   * Removes requests not yet turned into vouchers.
+   * Unused in production today; any future delete slice using remove() must isolate delete calls from save push rows
+   * (never relying on the unsigned callback `data_type`) so a delete success cannot settle a sent/ambiguous save as accepted (L4/F3, #4048).
+   */
   remove(connection: AmisConnection, vouchers: readonly { voucher_type: number; org_refid: string }[]): Promise<void>;
   /** The results of earlier saves and deletes, when the callback could not reach us (dates are YYYY-MM-DD). The shape of MISA's answer is unconfirmed until the live sandbox check. */
   callbackResults(connection: AmisConnection, range: { from: string; to: string; skip: number; take: number }): Promise<AmisCallbackResult[]>;

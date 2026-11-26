@@ -4,16 +4,49 @@
 // nothing about a voucher: after the signature is good it hands the signed results to a machinery table through one orgless definer (ludy_finance.misa_amis_callback_enqueue, as a bank feed notice does,
 // ADR-0039), and the worker relay (misa-amis-callback-relay.ts) finds the organisation from our own stored push row and records through the one write path.
 //
-// Order of work, which is the point: the client address is limited and the body capped before the body is read (http.ts); readCallback parses only the signature and `data`, compares in constant time and only
-// then reads the rest; only a verified message reaches the database. A refusal is a fixed code and nothing else: the body, the signature, MISA's text and the ClientID are never logged, stored or echoed (MISA's
-// own capped text for a refusal is the one thing stored, in the machinery table, until the relay is done with it). A verified message is answered 200 whatever its results are, so the answer never tells a caller
-// whether an org_refid exists; the API reads no tenant row at all. `batchError` and every other unsigned field are not passed on.
+// Order of work, which is the point: the client address is limited (with its own RateLimiter in http.ts) and the body capped before the body is read (http.ts); acceptMisaAmisCallback then checks an isolated
+// per-runtime global budget for unverified bodies before JSON parsing or HMAC, bounds rawBody size, and runs readCallbackAny (constant-time HMAC and app_id); valid signed messages refund their token, while
+// an unverified flood is shed with 503 CALLBACK_UNAVAILABLE so MISA retries without starving JSON/HMAC CPU or sharing mutable limiter state with bank feeds. Only a verified message reaches the database.
+// A refusal is a fixed code and nothing else: the body, the signature, MISA's text and the ClientID are never logged, stored or echoed (MISA's own capped text for a refusal is the one thing stored, in the
+// machinery table, until the relay is done with it). A verified message is answered 200 whatever its results are, so the answer never tells a caller whether an org_refid exists; the API reads no tenant row
+// at all. `batchError` and every other unsigned field (including `data_type`, as client.remove() is unused today; L4/F3) are not passed on.
 import { sql } from 'kysely';
 import { readCallbackAny, type AmisCallbackKey } from '@ludy/misa-amis';
 import type { Runtime } from '@ludy/kernel-runtime';
+import { RateLimiter } from './rate-limit.ts';
 
 // 1000 results of about 300 bytes each, with the envelope and MISA's error texts (each cut at 500 characters): well inside this.
 export const MAX_MISA_AMIS_CALLBACK_BYTES = 1024 * 1024;
+// Global per-runtime budget for unverified/unsigned callback bodies before JSON parsing and HMAC verification (I2 of #4048).
+export const MISA_AMIS_CALLBACK_UNSIGNED_PER_MINUTE = 600;
+
+const unsignedLimiters = new WeakMap<object, RateLimiter>();
+
+function unsignedLimiterFor(runtime: Runtime): RateLimiter {
+  let limiter = unsignedLimiters.get(runtime);
+  if (!limiter) {
+    limiter = new RateLimiter({ perMinute: MISA_AMIS_CALLBACK_UNSIGNED_PER_MINUTE });
+    unsignedLimiters.set(runtime, limiter);
+  }
+  return limiter;
+}
+
+function startsWithJsonObject(raw: string): boolean {
+  let i = 0;
+  while (i < raw.length) {
+    const ch = raw.charCodeAt(i);
+    if (ch === 0x20 || ch === 0x09 || ch === 0x0a || ch === 0x0d) {
+      i += 1;
+      continue;
+    }
+    return ch === 0x7b;
+  }
+  return false;
+}
+
+interface AcceptMisaAmisCallbackOptions {
+  unsignedLimit?: RateLimiter;
+}
 
 export type MisaAmisCallbackOutcome =
   | { status: 200 }
@@ -23,9 +56,21 @@ export type MisaAmisCallbackOutcome =
 // `keys` are the ClientIDs the deployment holds, one per product (MISA AMIS and MISA ASP post to the one address, #4103): the signature must verify under one of them and the envelope's `app_id` must be that one.
 // The product of the key that verified travels with the results (the enqueue of that product), so the relay can settle a voucher only for the product that signed. Nothing here, and nothing the route logs, says
 // which key matched or which failed.
-export async function acceptMisaAmisCallback(runtime: Runtime, keys: readonly AmisCallbackKey[], rawBody: string): Promise<MisaAmisCallbackOutcome> {
+export async function acceptMisaAmisCallback(
+  runtime: Runtime,
+  keys: readonly AmisCallbackKey[],
+  rawBody: string,
+  options?: AcceptMisaAmisCallbackOptions,
+): Promise<MisaAmisCallbackOutcome> {
+  const limiter = options?.unsignedLimit ?? unsignedLimiterFor(runtime);
+  if (!limiter.take('global').allowed) throw new Error('MISA_AMIS_CALLBACK_OVERLOADED');
+  if (rawBody.length > MAX_MISA_AMIS_CALLBACK_BYTES || Buffer.byteLength(rawBody, 'utf8') > MAX_MISA_AMIS_CALLBACK_BYTES || !startsWithJsonObject(rawBody)) {
+    return { status: 400, code: 'WEBHOOK_MALFORMED' };
+  }
+  if (keys.length === 0) return { status: 401, code: 'WEBHOOK_SIGNATURE' };
   const read = readCallbackAny(rawBody, keys);
   if (!read.ok) return read.reason === 'signature' || read.reason === 'app_id' ? { status: 401, code: 'WEBHOOK_SIGNATURE' } : { status: 400, code: 'WEBHOOK_MALFORMED' };
+  limiter.refund('global');
   const { callback } = read;
   // A message that repeats a refid keeps its last result, as polling does; the relay records forward only, whatever the order.
   // A result whose voucher type is not one AMIS has (1 to 99) is dropped on its own: it would fail the integer cast of the whole list and make MISA retry the message for ever.
