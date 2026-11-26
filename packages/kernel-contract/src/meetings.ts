@@ -131,10 +131,33 @@ export const zMeetingDetail = zMeetingSummary.extend({
 });
 export type MeetingDetail = z.infer<typeof zMeetingDetail>;
 
-export const zMeetingListInput = z.strictObject({
-  visibility: zMeetingVisibility.optional(),
-  limit: z.number().int().min(1).max(200).optional(),
-});
+// PostgreSQL timestamptz rejects year 0000 (SQLSTATE 22008) and UTC offsets beyond +/-15:59 (SQLSTATE 22009),
+// while Zod's iso.datetime accepts year 0000 and offsets up to +/-23:59.
+const PG_TIMESTAMPTZ_RANGE = /^(?!0000-)\d{4}-.+(?:Z|[+-](?:0\d|1[0-5])(?::?[0-5]\d)?)$/i;
+
+export const zMeetingListInput = z
+  .strictObject({
+    visibility: zMeetingVisibility.optional(),
+    limit: z.number().int().min(1).max(200).optional(),
+    // Plain-text title search (Vietnamese diacritics and case folded; #5052). Empty or whitespace-only behaves as unset.
+    search: z
+      .string()
+      .trim()
+      .max(200)
+      .refine((v) => !v.includes('\u0000'), 'Control character NUL is not allowed')
+      .optional(),
+    // Keyset cursor (#5052): held time (`startedAt ?? createdAt`) and `id` of the last item of the previous page, both or neither.
+    afterStartedAt: z.iso
+      .datetime({ offset: true })
+      .max(64)
+      .refine((v) => PG_TIMESTAMPTZ_RANGE.test(v), 'Timestamp must be within PostgreSQL timestamptz range (year >= 0001, offset within +/-15:59)')
+      .optional(),
+    afterId: zId.optional(),
+  })
+  .refine((v) => (v.afterStartedAt === undefined) === (v.afterId === undefined), {
+    message: 'afterStartedAt and afterId come together',
+    path: ['afterId'],
+  });
 export type MeetingListInput = z.infer<typeof zMeetingListInput>;
 
 export const zMeetingCreate = z.strictObject({
