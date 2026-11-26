@@ -888,14 +888,86 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
       ).kind,
     ).toBe('proposal');
 
-    // Shipping fee lines ("Giao hàng") from previous invoices keep their item description.
+    // Shipping fee lines ("Giao hàng") and rental items ("Cho thuê ...") from previous invoices keep their item description.
     expect(
       checkEInvoiceDraft(
-        req('giống lần trước\n\nHóa đơn trước gửi cùng khách:\n- Giao hàng, số lượng 1, đơn giá 50000\n- Sách, số lượng 2, đơn giá 100000'),
+        req('giống lần trước\n\nHóa đơn trước gửi cùng khách:\n- Giao hàng, số lượng 1, đơn giá 50000\n- Cho thuê máy in, số lượng 1, đơn giá 500000'),
         answer([
           line({ description: 'Giao hàng', unit: null, quantity: '1', unitPrice: '50000', vatRate: null }),
-          line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '100000', vatRate: null }),
+          line({ description: 'Cho thuê máy in', unit: null, quantity: '1', unitPrice: '500000', vatRate: null }),
         ], null),
+      ).kind,
+    ).toBe('proposal');
+
+    // Indented VAT continuation lines, "&" item boundaries with colon prefixes, unit+volume packaging specs, comma-separated second items with units, and bare unaccented "gia".
+    const indentedVat = req('- 2 sách giá 50k\n  VAT 5%\n- 3 bánh giá 100k\n  VAT 8%');
+    expect(
+      checkEInvoiceDraft(
+        indentedVat,
+        answer([
+          line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '50000', vatRate: '5%' }),
+          line({ description: 'Bánh', unit: null, quantity: '3', unitPrice: '100000', vatRate: '8%' }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        indentedVat,
+        answer([
+          line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' }),
+          line({ description: 'Bánh', unit: null, quantity: '3', unitPrice: '100000', vatRate: '8%' }),
+        ], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+
+    const ampColon = req('Áo: 2 x 100k & Quần: 3 x 200k');
+    expect(
+      checkEInvoiceDraft(
+        ampColon,
+        answer([
+          line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: null }),
+          line({ description: 'Quần', unit: null, quantity: '3', unitPrice: '200000', vatRate: null }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        ampColon,
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '200000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Sữa tắm & dầu gội 2 chai giá 100k'),
+        answer([line({ description: 'Sữa tắm & dầu gội', unit: 'chai', quantity: '2', unitPrice: '100000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+
+    const unitPlusSpec = req('2 chai 500ml nước ép giá 30k');
+    expect(
+      checkEInvoiceDraft(
+        unitPlusSpec,
+        answer([line({ description: 'Nước ép 500ml', unit: 'chai', quantity: '2', unitPrice: '30000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        unitPlusSpec,
+        answer([line({ description: 'Nước ép', unit: 'chai', quantity: '500', unitPrice: '30000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    expect(
+      checkEInvoiceDraft(
+        req('áo đỏ, 3 cái quần xanh giá 100k'),
+        answer([line({ description: 'Áo đỏ', unit: 'cái', quantity: '3', unitPrice: '100000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    expect(
+      checkEInvoiceDraft(
+        req('ban 2 ao gia 100000'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: null })], null),
       ).kind,
     ).toBe('proposal');
   });
