@@ -16,6 +16,7 @@ export const MARKETPLACE_PUSH_SLOT_SECONDS = 30;
 export interface MarketplaceHookNoticeRow {
   orgId: string;
   hookId: string;
+  generation: number;
   marketplaceConnectionId: string;
   channelConnectionId: string;
   adapter: string;
@@ -30,6 +31,7 @@ export async function claimMarketplaceHookNotices(trx: Transaction<Database>): P
   const { rows } = await sql<{
     org_id: string;
     hook_id: string;
+    generation: number;
     marketplace_connection_id: string;
     channel_connection_id: string;
     adapter: string;
@@ -37,10 +39,11 @@ export async function claimMarketplaceHookNotices(trx: Transaction<Database>): P
     authorization_header: string;
     body: Buffer;
     request_url: string | null;
-  }>`SELECT org_id, hook_id, marketplace_connection_id, channel_connection_id, adapter, platform, authorization_header, body, request_url FROM ludy_finance.marketplace_hook_claim(${MARKETPLACE_HOOK_CLAIM}::int)`.execute(trx);
+  }>`SELECT org_id, hook_id, generation, marketplace_connection_id, channel_connection_id, adapter, platform, authorization_header, body, request_url FROM ludy_finance.marketplace_hook_claim(${MARKETPLACE_HOOK_CLAIM}::int)`.execute(trx);
   return rows.map((r) => ({
     orgId: r.org_id,
     hookId: r.hook_id,
+    generation: Number(r.generation),
     marketplaceConnectionId: r.marketplace_connection_id,
     channelConnectionId: r.channel_connection_id,
     adapter: r.adapter,
@@ -57,10 +60,10 @@ export async function sweepMarketplaceHookNotices(workerDb: Db): Promise<number>
   return Number(rows[0]?.swept ?? 0);
 }
 
-// Counts a refused push on its hook; true when the hook is now stopped (ten within an hour). Called AFTER the claim's transaction has committed, never inside it: the claim holds the deleted pushes' row locks, and an API
-// retry that holds the hook's lock would otherwise wait on the claim while the claim waits on the hook.
-export async function rejectMarketplaceHook(db: Db | Transaction<Database>, hookId: string): Promise<boolean> {
-  const { rows } = await sql<{ stopped: boolean }>`SELECT ludy_finance.marketplace_hook_reject(${hookId}::uuid) AS stopped`.execute(db);
+// Counts a refused push on its hook when the hook's generation still matches what the claim saw; true when the hook is now stopped (ten within an hour). Called AFTER the claim's transaction has committed, never inside
+// it: the claim holds the deleted pushes' row locks, and an API retry that holds the hook's lock would otherwise wait on the claim while the claim waits on the hook.
+export async function rejectMarketplaceHook(db: Db | Transaction<Database>, hookId: string, generation: number): Promise<boolean> {
+  const { rows } = await sql<{ stopped: boolean }>`SELECT ludy_finance.marketplace_hook_reject(${hookId}::uuid, ${generation}::int) AS stopped`.execute(db);
   return rows[0]?.stopped === true;
 }
 
@@ -69,7 +72,7 @@ export interface MarketplaceHookDeps {
   broker: CredentialBroker;
   // The adapters this deployment runs (a push for another is dropped).
   adapters: ReadonlySet<string>;
-  reject: (hookId: string) => Promise<unknown>;
+  reject: (hookId: string, generation: number) => Promise<unknown>;
   now?: () => number;
 }
 
@@ -116,7 +119,7 @@ export async function verifyMarketplaceHookNotices(deps: MarketplaceHookDeps, ro
     } catch {
       verdict = 'dropped';
     }
-    if (verdict === 'refused') await deps.reject(row.hookId);
+    if (verdict === 'refused') await deps.reject(row.hookId, row.generation);
     verdicts.push(verdict);
   }
   return verdicts;

@@ -1,6 +1,6 @@
 # Ludy eSign Plan (`sign`)
 
-- **Status:** Draft plan (2026-11-15; Slice 2 decisions updated 2026-11-17; Slice 3 & Slice 4 decisions updated 2026-11-19; Slice 5 decisions updated 2026-11-22)
+- **Status:** Shipped on `main` through Slices 1-6d and Wave A1 hardening (2026-11-15; Slice 2 updated 2026-11-17; Slice 3-4 updated 2026-11-19; Slice 5 updated 2026-11-22; Slice 6a-6d shipped 2026-11-25; Wave A1 + v3 benchmark updated 2026-11-26; `Slice 6e` / `#62` and `#2535` deferred)
 - **Epic:** https://github.com/DOS/Ludy/issues/3318
 - **Plan Issue:** https://github.com/DOS/Ludy/issues/3319
 - **Milestone / Priority:** `M3 Paid pilot` / `priority:P2`
@@ -84,16 +84,17 @@ A one-person company (OPC) or small business (SME) in Vietnam executes recurring
 | **AI part named & gated** | `Vy` (`gm`) reads extracted PDF text, proposes field boxes (`sign.field_propose`), and highlights key/risky clauses (`sign.clause_summary`) inside `packages/agent` (`metered()`, `withAiScope`). Every proposal carries a tainted `"De xuat"` mark; a person approves placement and clicks Send; manual signing works 100% with AI disabled. |
 | **Proportionate security** | Fragment URL tokens (`/-/sign#<token>`) with `Referrer-Policy: no-referrer`, SHA-256 hashed tokens/OTPs, atomic single-use replay rejection, `crove-extract` untrusted PDF isolation ([ADR-0018](../adr/0018-untrusted-content.md)), and per-IP/token rate limiting without CAPTCHA gates that break self-hosting or E2E tests (`#203`). |
 
-### 1.3 Competitor Benchmark ([competitors.md](../product/competitors.md))
+### 1.3 Competitor Benchmark ([competitors.md](../product/competitors.md), full 14-platform matrix: [esign-competitors-and-ai-2026.md](../research/esign-competitors-and-ai-2026.md))
 
-| Dimension | Documenso (AGPL OSS) | Docusign | MISA WeSign (VN) | Ludy eSign (`sign`) |
-| :--- | :--- | :--- | :--- | :--- |
-| **Self-host `docker compose up`** | Yes (needs external SMTP/OIDC setup) | No (SaaS only) | No (SaaS + MISA ID) | **Yes, 100% self-contained** in Ludy stack with [ADR-0034](../adr/0034-outbound-email.md) mail + local disk / S3 [ADR-0013](../adr/0013-evidence-storage-and-integrity.md) |
-| **Zalo / chat link friction** | Email-first, link buried per recipient | Email-first, portal login prompts on some flows | Email / SMS / MISA app notification | **First-class Zalo copy link** (`delivery_mode = 'link'`) alongside email (`'email'`), mobile-first `375px` view |
-| **Routing & field placing** | Draw/type, sequential & parallel | Rich routing, complex enterprise rules | Sequential/parallel, USB token & remote CA | Draw/type + sequential/parallel in Slice 1; normalized `[0,1]` coordinate placer |
-| **Tamper-evident sealing** | PDF flattening + X.509/PKCS12 cert option | Proprietary cloud audit + PAdES | Vietnam public CA (`chu ky so cong cong`) | **Slice 1:** SHA-256 original + flattened PDF + appended certificate + hash-chained event ledger; **Slice 2:** VNPT SmartCA / Viettel MySign / MISA WeSign |
-| **AI contract assistance** | None built-in | Paid IAM add-on | None in basic tier | **Vy** proposes fields & flags risky clauses through `packages/agent` budget meter, zero lock-in |
-| **Cross-module handoff** | External webhooks / REST | Connectors | Tight to MISA AMIS suite | Same kernel, WORM audit trail, and [ADR-0050](../adr/0050-quote-acceptance-sales-order-and-accounting-handoff.md) quote/HR triggers in Slice 2 |
+| Dimension | Documenso (AGPL OSS) | DocuSign (+ IAM) | PandaDoc | MISA WeSign (VN) | Ludy eSign (`main`, Slices 1-6d) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Self-host `docker compose up`** | Yes (`AGPL-3.0` CE; BE/EE paid) | No (SaaS only) | No (SaaS only) | No (SaaS + MISA ID) | **Yes, 100% self-contained** (`AGPL-3.0`, [ADR-0034](../adr/0034-outbound-email.md) mail + [ADR-0013](../adr/0013-evidence-storage-and-integrity.md) SHA-256 storage, `$0` seat fee) |
+| **Zalo / QR / Link friction** | Email-first + Profiles/Direct link | Email-first, portal/SMS | Email/SMS + forms | Email / Zalo ZNS / SMS | **Yes:** `#fragment` copy link (`/-/sign#<token>`), **QR scan-to-sign** + **Zalo OA Engage composer (`6a`)**, zero CAPTCHA |
+| **`.docx` & Multi-doc packets** | Yes (LibreOffice `.docx` + multi-doc) | Yes (`.docx` + multi-doc) | Yes (`.docx` + multi-doc + pricing tables) | Yes (Word -> PDF + batch/packet) | **Yes (`6b`/`6c`):** pure-JS zero-egress `.docx` -> tagged A4 PDF (`Be Vietnam Pro`), `1-5` PDFs (`<= 200` pages) + unified SHA-256 audit |
+| **Deposit / Payment at signing** | No | Business Pro payment collection | Payments + quotes | No (separate ERP/e-invoice) | **Yes (`6d`):** EMVCo **NAPAS VietQR deposit/milestone** (`CK-<code>`, `NUMERIC(20,4)`, immutable payee) + `Ludy Kế toán` bank-match (zero escrow) |
+| **Tamper-evident sealing & VN CA** | PDF flattening + CSC/X.509 | Proprietary cloud audit + PAdES | Cloud audit + optional digital certs | Vietnam public CA (`chu ky so cong cong`) | SHA-256 PDF flatten + `ký nháy`/`stamp`/`KYC` (`4a`/`4b`/`5e`) + hash-chained audit; `@ludy/sign` VN CA adapters (`2c`, live CAs gated [#62](https://github.com/DOS/Ludy/issues/62)) |
+| **AI contract coworker** | Basic field detect | Paid Iris / IAM add-on (`~$45-$80+/mo`) | AI Document Assistant (SaaS) | Limited in basic tier | **`10` metered `Vy` features** (fields, clauses, acceptance, obligations/renewals, diff, drafter, Vault Q&A, SME playbook, KYC, packet check), 100% AI-off parity |
+| **Cross-suite handoffs & API** | Webhooks + REST | Maestro + paid connectors | CPQ/CRM + beta MCP | Tight to MISA AMIS suite | Quotes/HR/Meetings/Projects -> `Ludy Kế toán`, `6` `/api/v1/sign/*` REST routes (`5c`), `4` MCP tools (`5c`), HMAC webhooks (`5b`) |
 
 ---
 

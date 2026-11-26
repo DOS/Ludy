@@ -3928,10 +3928,10 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           const adapters = new Set(Object.keys(pushProviders));
           for (;;) {
             const tally = { ok: 0, refused: 0, dropped: 0 };
-            const refusedHooks: string[] = [];
+            const refusedHooks: Array<{ hookId: string; generation: number }> = [];
             const claimed = await relayBatch(deps.workerDb, boss, async (trx) => {
               const rows = await claimMarketplaceHookNotices(trx);
-              const verdicts = await verifyMarketplaceHookNotices({ runtime: deps.runtime, broker, adapters, reject: async (hookId) => void refusedHooks.push(hookId) }, rows);
+              const verdicts = await verifyMarketplaceHookNotices({ runtime: deps.runtime, broker, adapters, reject: async (hookId, generation) => void refusedHooks.push({ hookId, generation }) }, rows);
               const seen = new Set<string>();
               return rows.map((row, i) => {
                 const verdict = verdicts[i] ?? 'dropped';
@@ -3950,7 +3950,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               });
             });
             // Counted after the commit, as the bank feed relay does (no lock cycle with the claim). A crash here, or a failed count, loses refusals: accepted, a refusal count only slows an attacker down and a push is a hint.
-            for (const hookId of refusedHooks) await rejectMarketplaceHook(deps.workerDb, hookId);
+            for (const refused of refusedHooks) await rejectMarketplaceHook(deps.workerDb, refused.hookId, refused.generation);
             if (claimed > 0) console.log(`[marketplace-push] ${claimed} push(es): ${tally.ok} verified, ${tally.refused} refused, ${tally.dropped} dropped`);
             if (claimed < MARKETPLACE_HOOK_CLAIM) break;
           }

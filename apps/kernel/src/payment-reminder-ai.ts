@@ -8,7 +8,7 @@
 // finance.payment_reminder.send, which rebuilds every fact from the books. When the model is off, the AI budget is spent, the member's calls are too frequent,
 // the call fails or its text is refused, the answer names the state (`ai`) with no words, and the screen keeps the fixed template words. A failure is named,
 // never quoted: neither the org's name, the hint nor the model's answer is logged.
-import { AiBudgetExhaustedError, type InboxReader } from '@ludy/agent';
+import { AiBudgetExhaustedError, checkReminderWords, type InboxReader } from '@ludy/agent';
 import type { PaymentReminderWording } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
@@ -29,12 +29,19 @@ export async function wordReminder(
   const ticket = ai.budget.take(orgId, userId);
   if (!ticket.allowed) return answer('busy');
   try {
-    const result = await ai.reader.reminderWords({ level: facts.level, language: facts.lang, orgName: facts.org, ...(hint ? { hint } : {}) });
+    const request = { level: facts.level, language: facts.lang, orgName: facts.org, ...(hint ? { hint } : {}) };
+    const result = await ai.reader.reminderWords(request);
     if (result.kind === 'none') {
       console.error(`[payment-reminder-ai] wording refused: ${result.code}`);
       return answer('failed');
     }
-    return answer('used', result.words);
+    // Enforce deterministic no-digit, no-link validation at the kernel boundary even if a reader implementation skips it.
+    const checked = checkReminderWords(request, result.words);
+    if (checked.kind === 'none') {
+      console.error(`[payment-reminder-ai] wording refused: ${checked.code}`);
+      return answer('failed');
+    }
+    return answer('used', checked.words);
   } catch (error: unknown) {
     if (error instanceof AiBudgetExhaustedError) return answer('budget');
     console.error('[payment-reminder-ai] wording failed', error instanceof Error ? error.name : typeof error);

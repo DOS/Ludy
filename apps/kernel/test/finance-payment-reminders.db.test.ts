@@ -12,7 +12,7 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { vietnamToday, type PaymentReminderDraft, type PaymentReminderList, type PaymentReminderSent } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
-import { addDays, financeCommands, financeQueries, zPaymentReminderMail } from '@ludy/mod-finance';
+import { addDays, financeCommands, financeQueries, paymentReminderSource, renderPaymentReminderMail, zPaymentReminderMail } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -57,14 +57,40 @@ suite('customer payment reminders (#2488)', () => {
   const customer = async (o: Org, name: string, email: string | null) => (await execute<{ partyId: string }>(o, 'kernel.party.create', { kind: 'organization', name, ...(email ? { email } : {}) })).partyId;
 
   // A sales invoice with its entry (Dr 131, Cr 511), written the way finance.purchase.record writes one, in one transaction.
-  async function sale(o: Org, party: string, number: string, date: string, total: string, adjusts?: { number: string; date: string }, entity: string = o.entity): Promise<string> {
+  async function sale(
+    o: Org,
+    party: string,
+    number: string,
+    date: string,
+    total: string,
+    adjusts?: { number: string; date: string },
+    entity: string = o.entity,
+    foreign?: { currency: string; rate: string; total: string },
+  ): Promise<string> {
     return admin(async (c) => {
       const doc = randomUUID();
       await c.query('BEGIN');
       await c.query(
-        `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id, correction_kind, corrected_series, corrected_number, corrected_date)
-         VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', $6, 0, $6, 'sale', $7, $8, $9, $10, $11)`,
-        [o.orgId, doc, party, number, date, total, entity, adjusts ? 'adjustment' : null, adjusts ? 'C26TAA' : null, adjusts?.number ?? null, adjusts?.date ?? null],
+        `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id, correction_kind, corrected_series, corrected_number, corrected_date, exchange_rate, exchange_rate_source, foreign_subtotal, foreign_vat_amount, foreign_total)
+         VALUES ($1, $2, $3, 'C26TAA', $4, $5, $12, $6, 0, $6, 'sale', $7, $8, $9, $10, $11, $13, $14, $15, $16, $15)`,
+        [
+          o.orgId,
+          doc,
+          party,
+          number,
+          date,
+          total,
+          entity,
+          adjusts ? 'adjustment' : null,
+          adjusts ? 'C26TAA' : null,
+          adjusts?.number ?? null,
+          adjusts?.date ?? null,
+          foreign ? foreign.currency.toUpperCase() : 'VND',
+          foreign ? foreign.rate : null,
+          foreign ? 'invoice' : null,
+          foreign ? foreign.total : null,
+          foreign ? '0' : null,
+        ],
       );
       const entry = randomUUID();
       await c.query(
@@ -81,18 +107,18 @@ suite('customer payment reminders (#2488)', () => {
     });
   }
   // A receipt from the customer: Dr 112, Cr 131 naming it.
-  async function receipt(o: Org, party: string, date: string, amount: string): Promise<void> {
+  async function receipt(o: Org, party: string, date: string, amount: string, entity: string = o.entity): Promise<void> {
     await admin(async (c) => {
       const entry = randomUUID();
       await c.query('BEGIN');
       await c.query(
         `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'Thu tiền khách hàng', 'finance.journal_voucher', $4, $5)`,
-        [o.orgId, entry, date, randomUUID(), o.entity],
+        [o.orgId, entry, date, randomUUID(), entity],
       );
       await c.query(
         `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
          VALUES ($1, $2, 1, '112', $3, 0, NULL, $5), ($1, $2, 2, '131', 0, $3, $4, $5)`,
-        [o.orgId, entry, amount, party, o.entity],
+        [o.orgId, entry, amount, party, entity],
       );
       await c.query('COMMIT');
     });
@@ -246,7 +272,7 @@ suite('customer payment reminders (#2488)', () => {
     const sent = await execute<PaymentReminderSent>(o, 'finance.payment_reminder.send', sendInput(d, { lead: 'Quý khách còn nợ 1 đồng, hạn ngày 1/1.' }), o.member);
     expect(sent).toMatchObject({ status: 'queued', level: 2 });
     const [mail] = await mails(o, p);
-    expect(mail).toMatchObject({ id: sent.messageId, source: 'finance.payment_reminder.notice2', to_address: 'kt@khangthinh.test', status: 'queued' });
+    expect(mail).toMatchObject({ id: sent.messageId, source: paymentReminderSource(2, o.entity), to_address: 'kt@khangthinh.test', status: 'queued' });
     const payload = zPaymentReminderMail.parse(mail?.payload);
     expect(payload.invoices.map((i) => [i.number, i.amountDue, i.daysOverdue])).toEqual([
       ['11', '3000000', 20],
@@ -397,7 +423,7 @@ suite('customer payment reminders (#2488)', () => {
     await execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 25, pausedUntil: until }, o.member);
     const paused = await list(o);
     expect(paused.customers).toEqual([]);
-    expect(paused.paused).toEqual([{ partyId: p, name: 'Công ty Tạm Dừng', pausedUntil: until, ownTermsDays: 25, invoiceCount: 1, total: '900000' }]);
+    expect(paused.paused).toEqual([{ partyId: p, name: 'Công ty Tạm Dừng', pausedUntil: until, ownTermsDays: 25, invoiceCount: 1, total: '900000', foreignTotals: [], hasForeignCurrency: false, allForeignAmounts: false }]);
     await expect(draft(o, p)).rejects.toMatchObject({ code: 'CUSTOMER_PAUSED' });
     await expect(execute(o, 'finance.payment_reminder.send', sendInput(d))).rejects.toMatchObject({ code: 'CUSTOMER_PAUSED' });
     expect(await mails(o, p)).toHaveLength(0);
@@ -508,5 +534,142 @@ suite('customer payment reminders (#2488)', () => {
     expect(await count()).toBe(1);
     await execute(o, 'finance.payment_reminder.send', sendInput(await draft(o, fine)));
     expect(await count()).toBe(0);
+  });
+
+  it('shows foreign currency amounts alongside booked VND amounts across list, draft, send and mail rendering (#2491)', async () => {
+    const o = await org();
+    const p = await customer(o, 'Foreign Buyer Co', 'ap@foreign.test');
+    await sale(o, p, 'FX1', dated(10), '25450000', undefined, o.entity, { currency: 'USD', rate: '25450', total: '1000' });
+    const listed = await list(o);
+    expect(listed.customers[0]).toMatchObject({
+      partyId: p,
+      lang: 'en',
+      total: '25450000',
+      foreignTotals: [{ currency: 'USD', amountDue: '1000' }],
+      hasForeignCurrency: true,
+      allForeignAmounts: true,
+    });
+    const d = await draft(o, p);
+    expect(d).toMatchObject({
+      currency: 'VND',
+      total: '25450000',
+      foreignTotals: [{ currency: 'USD', amountDue: '1000' }],
+      hasForeignCurrency: true,
+      allForeignAmounts: true,
+    });
+    expect(d.invoices[0]).toMatchObject({
+      currency: 'USD',
+      foreignTotal: '1000',
+      foreignAmountDue: '1000',
+      amountDue: '25450000',
+    });
+    const sent = await execute<PaymentReminderSent>(o, 'finance.payment_reminder.send', sendInput(d));
+    const [mail] = await mails(o, p);
+    const rendered = renderPaymentReminderMail(mail?.payload, { replyTo: null });
+    expect(rendered.text).toContain('1,000 USD (booked: 25,450,000 VND)');
+    expect(rendered.text).toContain('Total: 1,000 USD (booked: 25,450,000 VND)');
+    expect(sent.status).toBe('queued');
+
+    // Partial VND receipt leaves the booked balance clearly labelled alongside the original foreign invoice total instead of guessing a prorated foreign balance.
+    await receipt(o, p, TODAY, '12725000');
+    const partial = await draft(o, p);
+    expect(partial.total).toBe('12725000');
+    expect(partial.foreignTotals).toEqual([]);
+    expect(partial.hasForeignCurrency).toBe(true);
+    expect(partial.allForeignAmounts).toBe(false);
+    expect(partial.invoices[0]).toMatchObject({
+      currency: 'USD',
+      foreignTotal: '1000',
+      foreignAmountDue: null,
+      amountDue: '12725000',
+    });
+    await execute<PaymentReminderSent>(o, 'finance.payment_reminder.send', sendInput(partial, { confirm: true }));
+    const sentMails = await mails(o, p);
+    const renderedPartial = renderPaymentReminderMail(sentMails[1]?.payload, { replyTo: null });
+    expect(renderedPartial.text).toContain('12,725,000 VND (booked; 1,000 USD invoice)');
+    expect(renderedPartial.text).toContain('Total (booked): 12,725,000 VND');
+  });
+
+  it('recovers per-entity reminder history after payload purge or missing payload.legalEntityId via source suffix and legacy activity fallback (#2491)', async () => {
+    const o = await org();
+    const branch = (await admin((c) => c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Riêng', 'branch', $2) RETURNING id`, [o.orgId, o.owner]))).rows[0]?.id as string;
+    const suffixParty = await customer(o, 'Công ty Hậu Tố Source', 'suffix@entity.test');
+    const activityParty = await customer(o, 'Công ty Legacy Activity', 'activity@entity.test');
+    const legacyPayloadParty = await customer(o, 'Công ty Payload Cũ', 'legacypayload@entity.test');
+    const unattributedParty = await customer(o, 'Công ty Thiếu Dữ Liệu', 'orphan@entity.test');
+    await sale(o, suffixParty, 'S1', dated(10), '400000', undefined, o.entity);
+    await sale(o, activityParty, 'L1', dated(10), '500000', undefined, o.entity);
+    await sale(o, activityParty, 'L2', dated(10), '600000', undefined, branch);
+    await sale(o, legacyPayloadParty, 'P1', dated(10), '450000', undefined, o.entity);
+    await sale(o, unattributedParty, 'U1', dated(10), '300000', undefined, o.entity);
+
+    // 1. Modern `.e<entityHex>` reminder whose payload is later purged to NULL still tracks Entity A.
+    const draftSuffix = await query<PaymentReminderDraft>(o, 'finance.payment_reminder.draft', { partyId: suffixParty, legalEntityId: o.entity });
+    await execute(o, 'finance.payment_reminder.send', { ...sendInput(draftSuffix), legalEntityId: o.entity });
+    const legacyWithActivityId = randomUUID();
+    const legacyPayloadId = randomUUID();
+    const legacyOrphanId = randomUUID();
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_kernel.mail_message SET payload = NULL WHERE org_id = $1 AND source_id = $2`, [o.orgId, suffixParty]);
+      // 2. Pre-suffix legacy rows: purged NULL payload + non-null legacy payload without `legalEntityId` key, both backed by `activity` for Entity A.
+      await c.query(
+        `INSERT INTO ludy_kernel.mail_message (id, org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status, sent_at)
+         VALUES ($1, $2, 'transactional', 'finance.payment_reminder.notice1', $3, 'finance.payment_reminder', 'activity@entity.test', repeat('a', 64), 'Legacy Null', NULL, $4, 'sent', now()),
+                ($5, $2, 'transactional', 'finance.payment_reminder.notice2', $6, 'finance.payment_reminder', 'legacypayload@entity.test', repeat('c', 64), 'Legacy Unkeyed', '{"lang":"vi"}'::jsonb, $7, 'sent', now()),
+                ($8, $2, 'transactional', 'finance.payment_reminder.notice1', $9, 'finance.payment_reminder', 'orphan@entity.test', repeat('b', 64), 'Legacy Orphan', NULL, $10, 'sent', now())`,
+        [
+          legacyWithActivityId,
+          o.orgId,
+          activityParty,
+          `<legacy-act-${randomUUID()}@entity.test>`,
+          legacyPayloadId,
+          legacyPayloadParty,
+          `<legacy-unkeyed-${randomUUID()}@entity.test>`,
+          legacyOrphanId,
+          unattributedParty,
+          `<legacy-orphan-${randomUUID()}@entity.test>`,
+        ],
+      );
+      await c.query(
+        `INSERT INTO ludy_kernel.activity (org_id, record_type, record_id, kind, summary, actor_id, legal_entity_id)
+         VALUES ($1, 'kernel.mail_message', $2, 'payment_reminder.sent', 'Gửi thư nhắc thu nợ mức 1', $3, $4),
+                ($1, 'kernel.mail_message', $5, 'payment_reminder.sent', 'Gửi thư nhắc thu nợ mức 2', $3, $4)`,
+        [o.orgId, legacyWithActivityId, o.owner, o.entity, legacyPayloadId],
+      );
+      await c.query('COMMIT');
+    });
+
+    const listA = await query<PaymentReminderList>(o, 'finance.payment_reminders.list', { legalEntityId: o.entity });
+    expect(listA.customers.find((c) => c.partyId === suffixParty)?.lastReminder).toMatchObject({ level: 1 });
+    expect(listA.customers.find((c) => c.partyId === activityParty)?.lastReminder).toMatchObject({ level: 1 });
+    expect(listA.customers.find((c) => c.partyId === legacyPayloadParty)?.lastReminder).toMatchObject({ level: 2 });
+    // Legacy row with NULL payload and no matching activity stays fail-closed.
+    expect(listA.customers.find((c) => c.partyId === unattributedParty)?.lastReminder).toBeNull();
+
+    // Entity B never inherits Entity A's legacy-recovered or purged history.
+    const listB = await query<PaymentReminderList>(o, 'finance.payment_reminders.list', { legalEntityId: branch });
+    expect(listB.customers.find((c) => c.partyId === activityParty)?.lastReminder).toBeNull();
+    const draftAB = await query<PaymentReminderDraft>(o, 'finance.payment_reminder.draft', { partyId: activityParty, legalEntityId: branch });
+    expect((await execute<PaymentReminderSent>(o, 'finance.payment_reminder.send', { ...sendInput(draftAB), legalEntityId: branch })).status).toBe('queued');
+  });
+
+  it('allows clean AI-drafted wording and human manual edits when aiLead or aiClosing flags differ (#2491)', async () => {
+    const o = await org();
+    const p = await customer(o, 'Công ty Kiểm Tra AI', 'ai@check.test');
+    await sale(o, p, 'AI1', dated(8), '900000');
+    const d = await draft(o, p);
+    const mixed = await execute<PaymentReminderSent>(
+      o,
+      'finance.payment_reminder.send',
+      sendInput(d, {
+        lead: 'Quý khách còn nợ 900.000 đồng, vui lòng kiểm tra bên dưới.',
+        aiLead: false,
+        closing: 'Rất mong Quý khách kiểm tra và phản hồi giúp chúng tôi.',
+        aiClosing: true,
+      }),
+    );
+    expect(mixed.status).toBe('queued');
   });
 });

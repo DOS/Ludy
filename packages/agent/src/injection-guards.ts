@@ -121,11 +121,25 @@ function isGuardedConnectorMatch(match: string, before: string, after: string): 
 }
 
 /** Strips longest trusted phrases first on token boundaries so short trusted words cannot split adversarial domains, handles, or hyphenated tokens. */
-export function stripTrustedPhrases(text: string, trustedTexts: readonly string[]): string {
-  const ordered = [...new Set(trustedTexts.map((t) => t.normalize('NFC')).filter(Boolean))].sort(
-    (a, b) => b.length - a.length,
-  );
+export function stripTrustedPhrases(
+  text: string,
+  trustedTexts: readonly string[],
+  options?: { caseInsensitive?: boolean },
+): string {
+  const caseInsensitive = options?.caseInsensitive ?? false;
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of trustedTexts) {
+    const normalized = raw.normalize('NFC');
+    if (!normalized) continue;
+    const key = caseInsensitive ? normalized.toLowerCase() : normalized;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(normalized);
+  }
+  const ordered = deduped.sort((a, b) => b.length - a.length);
   let out = text.normalize('NFC');
+  const flags = caseInsensitive ? 'giu' : 'gu';
   for (const t of ordered) {
     const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const chars = Array.from(t);
@@ -135,7 +149,7 @@ export function stripTrustedPhrases(text: string, trustedTexts: readonly string[
     const checkEnd = BOUNDARY_WORD_CHAR_RE.test(lastNfkc) || CONNECTOR_CHAR_RE.test(lastNfkc);
     const startsWord = BOUNDARY_WORD_CHAR_RE.test(chars[0] ?? '');
     const endsWord = BOUNDARY_WORD_CHAR_RE.test(chars[chars.length - 1] ?? '');
-    out = out.replace(new RegExp(escaped, 'gu'), (match, offset: number, full: string) => {
+    out = out.replace(new RegExp(escaped, flags), (match, offset: number, full: string) => {
       const before = full.slice(Math.max(0, offset - 32), offset);
       const after = full.slice(offset + match.length, offset + match.length + 32);
       if (isGuardedConnectorMatch(match, before, after)) return match;

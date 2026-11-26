@@ -4,7 +4,7 @@
 // an account, a phone number, a link or a customer's own words gets no words at all: the caller then keeps the fixed template, and the facts of the mail are the
 // table's, built by code. Nothing is cut or repaired.
 import { describe, expect, it } from 'vitest';
-import { CLOSING_MAX, HINT_MAX, InboxReader, LEAD_MAX, checkReminderWords, reminderInstructions, reminderPrompt, type ReminderGenerator, type ReminderWordsRequest } from '../src/index.ts';
+import { CLOSING_MAX, HINT_MAX, InboxReader, LEAD_MAX, checkReminderField, checkReminderWords, reminderInstructions, reminderPrompt, type ReminderGenerator, type ReminderWordsRequest } from '../src/index.ts';
 
 const CONFIG = { baseURL: 'http://localhost:1/v1', apiKey: null, model: 'test' };
 const REQUEST: ReminderWordsRequest = { level: 2, language: 'vi', orgName: 'Công ty TNHH Ánh Dương' };
@@ -72,6 +72,11 @@ describe('checkReminderWords', () => {
     ['Vietnamese days in words', 'Hóa đơn đã quá hạn ba mươi ngày.'],
     ['a day of the month in words', 'Hạn là mùng năm tháng sau.'],
     ['a currency in words', 'The balance is a few dollars.'],
+    ['a superscript digit', 'Quý khách còn nợ ² triệu.'],
+    ['a circled digit', 'Hóa đơn ① đã quá hạn.'],
+    ['a yen currency symbol', 'Số tiền là ¥ trên hóa đơn.'],
+    ['a dong currency symbol', 'Số tiền là ₫ trên hóa đơn.'],
+    ['a stealth invisible filler', 'Xin nhắc\u2800Quý khách thanh toán.'],
   ])('refuses a text with %s', (_, text) => {
     expect(checkReminderWords(REQUEST, { lead: text, closing: GOOD.closing })).toEqual({ kind: 'none', code: 'FIGURES' });
     expect(checkReminderWords(REQUEST, { lead: GOOD.lead, closing: text })).toEqual({ kind: 'none', code: 'FIGURES' });
@@ -106,8 +111,24 @@ describe('checkReminderWords', () => {
   it('allows the sender\'s name only as a whole: a number the name holds cannot be reused on its own', () => {
     const named: ReminderWordsRequest = { ...REQUEST, language: 'en', orgName: 'Acme 2026' };
     expect(checkReminderWords(named, { lead: 'Acme 2026 would like to remind you about the invoices below.', closing: 'Thank you.' })).toMatchObject({ kind: 'words' });
+    expect(checkReminderWords(named, { lead: 'ACME 2026 would like to remind you about the invoices below.', closing: 'Thank you.' })).toMatchObject({ kind: 'words' });
     expect(checkReminderWords(named, { lead: 'Please pay before 2026 for the invoices below.', closing: 'Thank you.' })).toEqual({ kind: 'none', code: 'FIGURES' });
     expect(checkReminderWords(named, { lead: 'Acme 2026 asks you to pay before 2026.', closing: 'Thank you.' })).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+
+  it('does not let a short org name split a link or numeric token', () => {
+    expect(checkReminderWords({ ...REQUEST, language: 'en', orgName: 'com' }, { lead: 'Visit evil.com today.', closing: 'Thank you.' })).toEqual({ kind: 'none', code: 'LINK' });
+    expect(checkReminderWords({ ...REQUEST, orgName: '3T' }, { lead: 'Vui lòng xem evil3T.vn nhé.', closing: GOOD.closing })).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(checkReminderWords({ ...REQUEST, orgName: '3T' }, { lead: 'Vui lòng xem evil3t.vn nhé.', closing: GOOD.closing })).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+
+  it('validates lead and closing fields independently via checkReminderField', () => {
+    expect(checkReminderField('lead', REQUEST.orgName, `  ${GOOD.lead}  `)).toEqual({ kind: 'ok', text: GOOD.lead });
+    expect(checkReminderField('closing', REQUEST.orgName, GOOD.closing)).toEqual({ kind: 'ok', text: GOOD.closing });
+    expect(checkReminderField('lead', REQUEST.orgName, '   ')).toEqual({ kind: 'none', code: 'EMPTY' });
+    expect(checkReminderField('lead', REQUEST.orgName, 'Quý khách còn nợ 100 đồng.')).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(checkReminderField('closing', REQUEST.orgName, 'Thanh toán tại https://evil.test.')).toEqual({ kind: 'none', code: 'LINK' });
+    expect(checkReminderField('closing', REQUEST.orgName, 'a'.repeat(CLOSING_MAX + 1))).toEqual({ kind: 'none', code: 'TOO_LONG' });
   });
 
   it('refuses empty and over-long text, and nothing from a model that answered nothing', () => {
