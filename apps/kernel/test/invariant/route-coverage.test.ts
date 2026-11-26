@@ -116,7 +116,10 @@ const PUBLIC: Record<string, string> = {
 // Public routes an open PR adds. CI runs the base branch's copy of this suite on a PR, so a new public route is listed
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
+// #5157 Step 0 / #5158 Slice 1 (Projects GitHub Integration, ADR-0060): App raw-byte HMAC intake and PAT :hookKey fallback.
 const PENDING: Record<string, string> = {
+  '/api/projects/github/webhook': 'GitHub App webhook receiver (#5158): checks X-Hub-Signature-256 HMAC over raw bytes before JSON parse, 256 KB body cap, per-IP rate limit, delivery UUID + event allowlist, and drops off/unentitled orgs in worker',
+  '/api/projects/github/webhook/:hookKey': 'GitHub PAT per-connection webhook receiver (#5158): gates 128-bit hookKey hash via definer checking org_app_on + entitlement -> opaque 404 (ADR-0053), 256 KB cap, stores transient notice verified and cleared by worker',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
