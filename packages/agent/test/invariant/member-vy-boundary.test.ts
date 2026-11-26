@@ -332,6 +332,7 @@ function scanSource(
   let line = 1;
   let prevAllowsRegex = true;
   let prevCouldBeDivision = false;
+  let prevMaySpeculativelyDivide = false;
   let prevWasDot = false;
   let prevControlKeyword = '';
   let prevWasLt = false;
@@ -593,6 +594,7 @@ function scanSource(
         i = j + 1;
         prevAllowsRegex = true;
         prevCouldBeDivision = false;
+        prevMaySpeculativelyDivide = false;
         prevWasDot = false;
         prevControlKeyword = '';
         prevWasLt = false;
@@ -618,6 +620,7 @@ function scanSource(
           i = k + 1;
           prevAllowsRegex = false;
           prevCouldBeDivision = false;
+          prevMaySpeculativelyDivide = false;
           prevWasDot = false;
           prevControlKeyword = '';
           prevWasLt = false;
@@ -632,6 +635,7 @@ function scanSource(
         i = Math.min(k + 1, text.length);
         prevAllowsRegex = false;
         prevCouldBeDivision = false;
+        prevMaySpeculativelyDivide = false;
         prevWasDot = false;
         prevControlKeyword = '';
         prevWasLt = false;
@@ -647,6 +651,7 @@ function scanSource(
         i = j + 2;
         prevAllowsRegex = false;
         prevCouldBeDivision = false;
+        prevMaySpeculativelyDivide = false;
         prevWasDot = false;
         prevControlKeyword = '';
         prevWasLt = false;
@@ -661,6 +666,7 @@ function scanSource(
         i = j + 1;
         prevAllowsRegex = false;
         prevCouldBeDivision = false;
+        prevMaySpeculativelyDivide = false;
         prevWasDot = false;
         prevControlKeyword = '';
         prevWasLt = true;
@@ -673,6 +679,7 @@ function scanSource(
       i = j + 1;
       prevAllowsRegex = false;
       prevCouldBeDivision = false;
+      prevMaySpeculativelyDivide = false;
       prevWasDot = false;
       prevControlKeyword = '';
       prevWasLt = false;
@@ -799,6 +806,7 @@ function scanSource(
       i = j;
       prevAllowsRegex = false;
       prevCouldBeDivision = false;
+      prevMaySpeculativelyDivide = false;
       prevWasDot = false;
       prevControlKeyword = '';
       prevWasLt = false;
@@ -894,6 +902,7 @@ function scanSource(
       i = j;
       prevAllowsRegex = hitInterpolation;
       prevCouldBeDivision = false;
+      prevMaySpeculativelyDivide = false;
       prevWasDot = false;
       prevControlKeyword = '';
       prevWasLt = false;
@@ -911,6 +920,7 @@ function scanSource(
       i += 2;
       prevAllowsRegex = false;
       prevCouldBeDivision = false;
+      prevMaySpeculativelyDivide = false;
       prevWasDot = false;
       prevControlKeyword = '';
       prevWasLt = false;
@@ -956,10 +966,24 @@ function scanSource(
         while (j < text.length && isAsciiIdentStart(text.charCodeAt(j))) j += 1;
       }
       const raw = text.slice(start, j);
-      if (!forceRegex && prevCouldBeDivision && ((closed && /['"`]/.test(raw)) || (!closed && /['"`;]/.test(raw)))) {
+      const mayRescanAfterRegex = prevMaySpeculativelyDivide || prevCouldBeDivision;
+      const suspiciousJsxOrQuote = /['"`]|\{(?!\d+(?:,\d*)?\})/;
+      const suspiciousUnclosed = /['"`;]|\{(?!\d+(?:,\d*)?\})/;
+      if (
+        !forceRegex &&
+        mayRescanAfterRegex &&
+        ((closed && suspiciousJsxOrQuote.test(raw)) || (!closed && suspiciousUnclosed.test(raw)))
+      ) {
         suspiciousRegexStarts.add(start);
       }
-      if (closed && !forceRegex && !prevCouldBeDivision && options.emitTokens && !options.scanRegexAsDivision) {
+      if (
+        closed &&
+        !forceRegex &&
+        !prevCouldBeDivision &&
+        !suspiciousRegexStarts.has(start) &&
+        options.emitTokens &&
+        !options.scanRegexAsDivision
+      ) {
         unambiguousRegexSpans.push({ start, end: j });
       }
       if (options.stripCommentsMode) chunks.push(raw);
@@ -975,6 +999,7 @@ function scanSource(
       i = j;
       prevAllowsRegex = false;
       prevCouldBeDivision = false;
+      prevMaySpeculativelyDivide = false;
       prevWasDot = false;
       prevControlKeyword = '';
       prevWasLt = false;
@@ -1012,6 +1037,7 @@ function scanSource(
       i = j;
       prevAllowsRegex = false;
       prevCouldBeDivision = false;
+      prevMaySpeculativelyDivide = false;
       prevWasDot = false;
       prevControlKeyword = '';
       prevWasLt = false;
@@ -1091,6 +1117,7 @@ function scanSource(
         prevAllowsRegex = !prevWasDot && !lastTokenWasTypeVoid && REGEX_PREFIX_KEYWORDS.has(value);
         // Unary `void` opens a regex literal, whereas type `void` in `as ...` / `satisfies ...` ends an expression that `/` divides.
         prevCouldBeDivision = !prevWasDot && !lastTokenWasTypeVoid && (value === 'await' || value === 'yield' || (value === 'of' && !isForOfHead));
+        prevMaySpeculativelyDivide = !prevWasDot && (value === 'await' || value === 'yield' || value === 'of' || value === 'void');
         prevControlKeyword =
           !prevWasDot && value === 'await' && prevControlKeyword === 'for'
             ? 'for await'
@@ -1100,6 +1127,7 @@ function scanSource(
       } else {
         prevAllowsRegex = false;
         prevCouldBeDivision = false;
+        prevMaySpeculativelyDivide = false;
         prevControlKeyword = '';
       }
       prevWasDot = false;
@@ -1126,6 +1154,7 @@ function scanSource(
         i += 2;
         prevAllowsRegex = false;
         prevCouldBeDivision = false;
+        prevMaySpeculativelyDivide = false;
         prevWasDot = false;
         prevControlKeyword = '';
         prevWasLt = false;
@@ -1140,6 +1169,7 @@ function scanSource(
         i += 1;
         prevAllowsRegex = false;
         prevCouldBeDivision = false;
+        prevMaySpeculativelyDivide = false;
         prevWasDot = false;
         prevControlKeyword = '';
         prevWasLt = true;
@@ -1197,6 +1227,7 @@ function scanSource(
       });
       prevAllowsRegex = true;
       prevCouldBeDivision = false;
+      prevMaySpeculativelyDivide = false;
       prevWasDot = false;
     } else if (punct === ')') {
       const poppedParen = parenAllowsRegexStack.pop();
@@ -1206,20 +1237,23 @@ function scanSource(
         parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!.depthInParen -= 1;
       }
       prevCouldBeDivision = false;
+      prevMaySpeculativelyDivide = false;
       prevWasDot = false;
     } else if (punct === '.' || punct === '?.') {
       prevWasDot = true;
       prevAllowsRegex = false;
       prevCouldBeDivision = false;
+      prevMaySpeculativelyDivide = false;
     } else if (punct === ']' || punct === '++' || punct === '--') {
       if (punct === ']' && parenAllowsRegexStack.length > 0 && parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!.depthInParen > 0) {
         parenAllowsRegexStack[parenAllowsRegexStack.length - 1]!.depthInParen -= 1;
       }
       prevAllowsRegex = false;
       prevCouldBeDivision = false;
+      prevMaySpeculativelyDivide = false;
       prevWasDot = false;
     } else if (punct === '!') {
-      // Prefix `!expr` leaves prevAllowsRegex=true; TypeScript postfix `expr!` preserves prevAllowsRegex and prevCouldBeDivision for `/`.
+      // Prefix `!expr` leaves prevAllowsRegex=true; TypeScript postfix `expr!` preserves prevAllowsRegex, prevCouldBeDivision, and prevMaySpeculativelyDivide for `/`.
       prevWasDot = false;
     } else {
       if (punct === '[' || punct === '{') {
@@ -1261,6 +1295,7 @@ function scanSource(
       }
       prevAllowsRegex = true;
       prevCouldBeDivision = (punct === '}' && lastRBraceWasExpr) || closedGenericGt;
+      prevMaySpeculativelyDivide = punct === '}' || punct === '>';
       prevWasDot = false;
     }
     prevControlKeyword = '';
@@ -7583,6 +7618,33 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(disallowedMeteredNotes('other.tsx', 'const j = <a>x{ function () {} / Number(metered("notes." + "a", fn)) / 2 }</a>;')).toEqual(['notes.a']);
     expect(disallowedMeteredNotes('other.tsx', 'const j = <><b/>{ class {} / Number(metered("notes." + "a", fn)) / 2 }</>;')).toEqual(['notes.a']);
     expect(disallowedMeteredNotes('other.tsx', 'const j = <div>{ { default: 1 } / Number(metered("notes." + "a", fn)) / 2 }</div>;')).toEqual(['notes.a']);
+
+    // Control-flow keywords in JSX text and JSX `>` followed by `/{expr}/` must speculatively rescan and expose disallowed payloads (#5035).
+    const elseJsxImport = memberVyViolations("export function C() { return <p>else{}/{Number(import('p' + 'g'))}/</p>; }");
+    expect(elseJsxImport).toContain('imports pg');
+    expect(elseJsxImport).toContain('uses computed dynamic import or require');
+    for (const kwPrefix of ['try{0}', 'if(x){0}', 'while(x){0}', 'for(;;){0}', 'catch{0}', 'catch(e){0}', 'finally{0}']) {
+      expect(memberVyViolations(`export function C() { return <p>${kwPrefix}/{Number(import('p' + 'g'))}/</p>; }`), kwPrefix).toContain('imports pg');
+    }
+    expect(memberVyViolations("export function C() { return <p>else{}/{module.require('pg')}/</p>; }")).toContain(
+      'uses require alias or bare require reference',
+    );
+    const quoteFreeElseJsx = memberVyViolations('export function C(x: string) { return <p>else{}/{module.require(x)}/</p>; }');
+    expect(quoteFreeElseJsx).toContain('uses require alias or bare require reference');
+    expect(quoteFreeElseJsx).toContain('uses computed dynamic import or require');
+    expect(memberVyViolations('export function C() { return <Foo a="1">/{Number(import(\'p\' + \'g\'))}/</Foo>; }')).toContain('imports pg');
+    expect(memberVyViolations('export function C() { return <div x={1 > 0}>/{Number(import(\'p\' + \'g\'))}/</div>; }')).toContain('imports pg');
+    const quoteFreeGtJsx = memberVyViolations('export function C(x: string) { return <p>a>/{module.require(x)}/</p>; }');
+    expect(quoteFreeGtJsx).toContain('uses require alias or bare require reference');
+    expect(quoteFreeGtJsx).toContain('uses computed dynamic import or require');
+    expect(orgFeatureViolations("export function C() { return <p>else{}/{Number(import('./member-vy/' + 'x.ts'))}/</p>; }")).toContain(
+      'imports ./member-vy/x.ts',
+    );
+    expect(orgFeatureViolations('export function C() { return <Foo a="1">/{Number(import(\'./member-vy/\' + \'x.ts\'))}/</Foo>; }')).toContain(
+      'imports ./member-vy/x.ts',
+    );
+    expect(disallowedMeteredNotes('other.tsx', 'export function C() { return <p>else{}/{metered(name)}/</p>; }').length).toBeGreaterThan(0);
+    expect(disallowedMeteredNotes('other.tsx', 'export function C() { return <Foo a="1">/{metered(name)}/</Foo>; }').length).toBeGreaterThan(0);
     expect(
       workspaceAdapterLeakViolations(
         `const bad = 'unclosed; import { x } from "@ludy/\\agent";`,
