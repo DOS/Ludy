@@ -485,6 +485,10 @@ function extractFigureTokens(body: string): FigureToken[] {
       } else if (!afterUnit && prevToken.afterUnit) {
         prevToken.role = 'qty';
         role = 'price';
+      } else if (!prevToken.embeddedInProduct && descriptionTokens(body.slice(prevToken.end, start)).hasProduct) {
+        // When product words sit between the first figure and the multiplication sign ("2 áo x 50.000"), the first figure is the quantity.
+        prevToken.role = 'qty';
+        role = 'price';
       } else {
         // Unanchored "A x B" with no role, money cue, or unit word ("50.000 x 2 áo"): refuse both directions instead of picking one.
         prevToken.role = 'total';
@@ -608,7 +612,6 @@ function splitSubPieces(bodySeg: string): SubPiece[] {
       const right = bodySeg.slice(idx + sep.length);
       const packDenomAfterPrice =
         /(?:\d\s*(?:k|tr(?:iệu|ieu)?|tỷ|ty|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)|(?:đơn\s+giá|don\s+gia|giá(?:\s+bán)?|gia(?:\s+ban)?|unit\s+price|price)\s*(?:[:=]\s*)?\d+(?:[.,]\d+)?)\s*$/iu.test(left) &&
-        !/\d.*\d/u.test(right) &&
         /^\s*\d+(?:[.,]\d+)?(?:\s+[\p{L}]+){0,2}\s*$/u.test(right);
       if (packDenomAfterPrice || !/\d/u.test(left) || !(/\d/u.test(right) || AMP_RIGHT_CUE.test(right))) continue;
     }
@@ -677,7 +680,13 @@ function nonAttrProductGroup(exact: ReadonlySet<string>): ConjunctionGroup {
 }
 
 function coreProductTokens(plainText: string): Set<string> {
-  const withoutNotes = plainText.replace(/\([^()]*\)/gu, ' ').replace(LEADING_TRANSACTION_VERB, '');
+  const withoutNotes = plainText
+    .replace(/\([^()]*\)/gu, ' ')
+    .replace(LEADING_TRANSACTION_VERB, '')
+    .replace(
+      /(\d+(?:[.,]\d+)*(?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*)?(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫|%)(?![\p{L}]))?)\s+(?:cho|tới|toi|đến|den|gửi|gui|to|for)(?![\p{L}])(?:\s+[\p{L}]+){1,4}(?=\s*(?:$|[,;]))/giu,
+      '$1',
+    );
   return nonAttrProductGroup(descriptionTokens(collapseGroupedSpaces(readPlain(withoutNotes))).exact).exact;
 }
 
@@ -804,7 +813,7 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
         for (const r of rates) leadingShared.add(r);
         continue;
       }
-      if (!anyLocalVatSeen && (pieces.some((p) => p.isInvoiceScopeVat) || (segIdx === rawSegments.length - 1 && !indentedAfterNewline))) {
+      if (pieces.some((p) => p.isInvoiceScopeVat) || (segIdx === rawSegments.length - 1 && !anyLocalVatSeen && !indentedAfterNewline)) {
         for (const r of rates) trailingShared.add(r);
         continue;
       }
@@ -867,7 +876,8 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
           segPrefixRates.size > 0 ||
           segClauses.some((c) => c.localRates.size > 0) ||
           (cur !== null && cur.localRates.size > 0);
-        if (isLastPiece && !isBullet && !localVatSeen && cur !== null && cur.localRates.size === 0 && (isSingleSegment || piece.isInvoiceScopeVat)) {
+        const hasClauseScopeOverride = piece.isInvoiceScopeVat && !segPrefixRates.size && !segClauses.some((c) => c.localRates.size > 0);
+        if (isLastPiece && !isBullet && cur !== null && cur.localRates.size === 0 && (hasClauseScopeOverride || (!localVatSeen && isSingleSegment))) {
           for (const r of piece.rates) trailingShared.add(r);
           continue;
         }

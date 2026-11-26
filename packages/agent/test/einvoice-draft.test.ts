@@ -1343,8 +1343,23 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
       ).kind,
     ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo × 50.000'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo × 50.000'),
+        answer([line({ description: 'Áo', unit: null, quantity: '50000', unitPrice: '2', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
 
-    const englishUiExample = req('sold 10 boxes of cake A at 120k to Nam, VAT 8%');
+    const englishUiExample: EInvoiceDraftRequest = {
+      ...REQUEST,
+      text: 'sold 10 boxes of cake A at 120k to Nam, VAT 8%',
+    };
     expect(
       checkEInvoiceDraft(
         englishUiExample,
@@ -1365,6 +1380,15 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
     expect(
       checkEInvoiceDraft(
         req('2 áo giá 100k; 3 áo giá 80k (khuyến mãi)'),
+        answer([
+          line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: null }),
+          line({ description: 'Áo', unit: null, quantity: '3', unitPrice: '80000', vatRate: null }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo giá 100k; 3 áo giá 80k cho Nam'),
         answer([
           line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: null }),
           line({ description: 'Áo', unit: null, quantity: '3', unitPrice: '80000', vatRate: null }),
@@ -1394,6 +1418,16 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         answer([
           line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: '8%' }),
           line({ description: 'Quần', unit: null, quantity: '3', unitPrice: '200000', vatRate: '8%' }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo giá 100k VAT 8%; 3 quần giá 200k; 4 mũ giá 50k, VAT 8% cho toàn bộ hóa đơn'),
+        answer([
+          line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '100000', vatRate: '8%' }),
+          line({ description: 'Quần', unit: null, quantity: '3', unitPrice: '200000', vatRate: '8%' }),
+          line({ description: 'Mũ', unit: null, quantity: '4', unitPrice: '50000', vatRate: '8%' }),
         ], null),
       ).kind,
     ).toBe('proposal');
