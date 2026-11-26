@@ -127,11 +127,14 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
   }
   if (bounds !== undefined) balances = balances.orderBy(sql`sum(l.debit - l.credit)`, 'desc').orderBy(kept).limit(bounds.customers);
   if (typeof only === 'string') balances = balances.where(sql<boolean>`coalesce(x.duplicate_of, x.id) = ${only}`);
-  else if (only !== undefined) balances = balances.where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(only.length > 0 ? only : [''])})`);
+  else if (only !== undefined) {
+    if (only.length === 0) return [];
+    balances = balances.where(sql<boolean>`coalesce(x.duplicate_of, x.id) = ANY(${sql.val([...only])}::uuid[])`);
+  }
   const owed = await balances.execute();
   if (owed.length === 0) return [];
   const ids = owed.map((r) => r.party_id);
-  const parties = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'email']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+  const parties = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'email']).where('org_id', '=', ctx.orgId).where(sql<boolean>`id = ANY(${sql.val(ids)}::uuid[])`).execute();
   const invoiceRows = await ctx.trx
     .selectFrom('ludy_finance.purchase_document as d')
     .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.id', '=', 'd.party_id'))
@@ -142,7 +145,7 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
     .where('d.legal_entity_id', '=', entity)
     .where('d.direction', '=', 'sale')
     .where('v.document_id', 'is', null)
-    .where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(ids)})`)
+    .where(sql<boolean>`coalesce(x.duplicate_of, x.id) = ANY(${sql.val(ids)}::uuid[])`)
     // As of a day: the invoice is dated and its own entry is posted by then, the same boundary the balance above uses.
     .$if(bounds?.entriesTo !== undefined, (q) =>
       q
@@ -171,7 +174,7 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
     .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'c.org_id').onRef('x.id', '=', 'c.party_id'))
     .select([kept.as('group_id'), 'c.party_id', 'c.terms_days', 'c.paused_until'])
     .where('c.org_id', '=', ctx.orgId)
-    .where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(ids)})`)
+    .where(sql<boolean>`coalesce(x.duplicate_of, x.id) = ANY(${sql.val(ids)}::uuid[])`)
     .orderBy('c.party_id')
     .execute();
   const own = new Map<string, { terms_days: number | null; paused_until: string | null }>();
@@ -213,15 +216,15 @@ async function partyGroupMap(ctx: QueryContext, partyIds: readonly string[]): Pr
     .selectFrom('ludy_kernel.party')
     .select(['id', sql<string>`coalesce(duplicate_of, id)`.as('kept_id')])
     .where('org_id', '=', ctx.orgId)
-    .where((eb) => eb.or([eb('id', 'in', ids), eb('duplicate_of', 'in', ids)]))
+    .where(sql<boolean>`(id = ANY(${sql.val(ids)}::uuid[]) or duplicate_of = ANY(${sql.val(ids)}::uuid[]))`)
     .execute();
   for (const r of rows) keptOf.set(r.id, r.kept_id);
   return { keptOf, allIds: [...new Set(keptOf.keys())] };
 }
 
-// Legacy pre-suffix rows either still hold `payload.legalEntityId` or, after 30-day payload purge, retain their entity on the immutable activity row.
+// Legacy pre-suffix rows either carry `payload.legalEntityId` or (pre-#2491 un-keyed payload / 30-day purged NULL payload) retain their entity on the immutable activity row.
 const legacyEntityMatch = (entity: string) =>
-  sql<boolean>`(m.payload ->> 'legalEntityId' = ${entity} or (m.payload is null and exists (select 1 from ludy_kernel.activity a where a.org_id = m.org_id and a.record_type = 'kernel.mail_message' and a.record_id = m.id and a.kind = 'payment_reminder.sent' and a.legal_entity_id = ${entity})))`;
+  sql<boolean>`(m.payload ->> 'legalEntityId' = ${entity} or (m.payload ->> 'legalEntityId' is null and exists (select 1 from ludy_kernel.activity a where a.org_id = m.org_id and a.record_type = 'kernel.mail_message' and a.record_id = m.id and a.kind = 'payment_reminder.sent' and a.legal_entity_id = ${entity})))`;
 
 // The last reminder each customer was sent in `entity`: the newest mail of any notice level that went (or is going) out, read from the mail log.
 // Strictly scoped per legal entity via the immutable `.e<entityHex>` suffix on `source` (or explicit `payload.legalEntityId` / activity record for pre-suffix rows), so
@@ -237,7 +240,7 @@ async function lastReminders(ctx: QueryContext, entity: string, partyIds: readon
     .selectFrom('ludy_kernel.mail_message as m')
     .select(['m.source', 'm.source_id', 'm.created_at'])
     .where('m.org_id', '=', ctx.orgId)
-    .where('m.source_id', 'in', allIds)
+    .where(sql<boolean>`m.source_id = ANY(${sql.val(allIds)}::uuid[])`)
     .where('m.status', 'in', [...states] as Array<(typeof REMINDED_STATES)[number] | 'suppressed'>)
     .where((eb) =>
       eb.or([
@@ -456,7 +459,7 @@ export const paymentReminderSend = defineCommand({
       .selectFrom('ludy_kernel.mail_message as m')
       .select('m.created_at')
       .where('m.org_id', '=', ctx.orgId)
-      .where('m.source_id', 'in', partyScope)
+      .where(sql<boolean>`m.source_id = ANY(${sql.val(partyScope)}::uuid[])`)
       .where('m.status', 'in', [...REMINDED_STATES])
       .where((eb) =>
         eb.or([

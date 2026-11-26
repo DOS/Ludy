@@ -9,7 +9,7 @@
 //   invoices newest first: the oldest invoices are taken as paid first. Whatever balance no invoice covers (an opening balance, a
 //   manual journal) is `other`: shown to the person, never worded into a reminder.
 import { Decimal, money } from '@ludy/l10n-vn';
-import { CURRENCY_MINOR_UNITS, canonical } from './money.ts';
+import { canonical } from './money.ts';
 
 export const PAYMENT_TERMS_DAYS = 30;
 // A customer's notice level by the days its oldest overdue invoice is late: first from the first day, second from the 15th, final from the 30th.
@@ -90,12 +90,9 @@ function allocateForeign(
   const foreign = money(invoice.foreignTotal);
   if (!foreign.isPositive()) return { foreignTotal: null, foreignAmountDue: null };
   const foreignTotal = canonical(foreign);
+  // Only an unpaid invoice has an exact foreign balance; partial receipts post to 131 in book currency only, so never estimate or assume foreign minor units.
   if (due.equals(total)) return { foreignTotal, foreignAmountDue: foreignTotal };
-  const cur = invoice.currency.trim().toUpperCase();
-  const decimals = Math.min(4, Math.max(CURRENCY_MINOR_UNITS[cur] ?? 2, foreign.decimalPlaces()));
-  const prorated = foreign.times(due).div(total).toDecimalPlaces(decimals, Decimal.ROUND_HALF_UP);
-  // If a tiny remaining balance rounds to zero in the invoice's currency, fall back to showing the booked amount instead of "0 USD".
-  return { foreignTotal, foreignAmountDue: prorated.isZero() ? null : canonical(prorated) };
+  return { foreignTotal, foreignAmountDue: null };
 }
 
 // Lays the customer's 131 balance over its invoices, newest first, and dates each against today. A balance at or below zero (a credit,

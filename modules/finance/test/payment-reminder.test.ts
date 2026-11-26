@@ -89,7 +89,7 @@ describe('allocateReceivable', () => {
     expect(allocateReceivable([inv('1', '2026-09-01', '0'), inv('2', '2026-09-02', '-5')], '10', today)).toEqual({ open: [], other: '10' });
   });
 
-  it('tracks foreign totals and prorates partial foreign amounts with decimal.js', () => {
+  it('keeps exact foreign amounts on unpaid invoices and leaves foreignAmountDue null on partially paid invoices', () => {
     const r = allocateReceivable(
       [
         { ...inv('1', '2026-08-01', '25450000', 'USD'), foreignTotal: '1000.0000' },
@@ -100,11 +100,12 @@ describe('allocateReceivable', () => {
       today,
     );
     expect(r.open.map((i) => [i.number, i.amountDue, i.foreignTotal, i.foreignAmountDue])).toEqual([
-      ['1', '12725000', '1000', '500'],
+      ['1', '12725000', '1000', null],
       ['2', '5090000', '200', '200'],
       ['3', '1000000', null, null],
     ]);
-    expect(foreignTotalsOf(r.open, 'VND')).toEqual([{ currency: 'USD', amountDue: '700' }]);
+    expect(foreignTotalsOf(r.open, 'VND')).toEqual([{ currency: 'USD', amountDue: '200' }]);
+    expect(allForeignAmountsOf(r.open, 'VND')).toBe(false);
   });
 
   it('sums foreign totals per currency accurately and sorts deterministically', () => {
@@ -125,13 +126,13 @@ describe('allocateReceivable', () => {
     expect(allForeignAmountsOf([], 'VND')).toBe(false);
   });
 
-  it('falls back to null foreignAmountDue when a tiny remaining balance rounds to zero in the invoice currency', () => {
+  it('never estimates fractional foreign amounts for partially paid zero-decimal currencies such as CLP', () => {
     const r = allocateReceivable(
-      [{ ...inv('1', '2026-08-01', '25450', 'USD'), foreignTotal: '1.00' }],
-      '100',
+      [{ ...inv('1', '2026-08-01', '1000', 'CLP'), foreignTotal: '1' }],
+      '500',
       today,
     );
-    expect(r.open[0]).toMatchObject({ amountDue: '100', foreignTotal: '1', foreignAmountDue: null });
+    expect(r.open[0]).toMatchObject({ amountDue: '500', foreignTotal: '1', foreignAmountDue: null });
     expect(foreignTotalsOf(r.open, 'VND')).toEqual([]);
     expect(allForeignAmountsOf(r.open, 'VND')).toBe(false);
   });
@@ -289,7 +290,7 @@ describe('renderPaymentReminderMail', () => {
     expect(mail.html).toContain('booked: 25,450,000 VND');
   });
 
-  it('clearly labels booked amounts when a foreign-currency invoice has no foreign total or rounds below minor unit', () => {
+  it('clearly labels booked amounts when a foreign-currency invoice has no foreign total or is partially paid', () => {
     const mail = renderPaymentReminderMail(
       {
         ...base,

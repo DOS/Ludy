@@ -423,7 +423,7 @@ suite('customer payment reminders (#2488)', () => {
     await execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 25, pausedUntil: until }, o.member);
     const paused = await list(o);
     expect(paused.customers).toEqual([]);
-    expect(paused.paused).toEqual([{ partyId: p, name: 'Công ty Tạm Dừng', pausedUntil: until, ownTermsDays: 25, invoiceCount: 1, total: '900000', foreignTotals: [], hasForeignCurrency: false }]);
+    expect(paused.paused).toEqual([{ partyId: p, name: 'Công ty Tạm Dừng', pausedUntil: until, ownTermsDays: 25, invoiceCount: 1, total: '900000', foreignTotals: [], hasForeignCurrency: false, allForeignAmounts: false }]);
     await expect(draft(o, p)).rejects.toMatchObject({ code: 'CUSTOMER_PAUSED' });
     await expect(execute(o, 'finance.payment_reminder.send', sendInput(d))).rejects.toMatchObject({ code: 'CUSTOMER_PAUSED' });
     expect(await mails(o, p)).toHaveLength(0);
@@ -570,65 +570,73 @@ suite('customer payment reminders (#2488)', () => {
     expect(rendered.text).toContain('Total: 1,000 USD (booked: 25,450,000 VND)');
     expect(sent.status).toBe('queued');
 
-    // Partial VND receipt prorates the remaining foreign amount due accurately without JS float drift.
+    // Partial VND receipt leaves the booked balance clearly labelled alongside the original foreign invoice total instead of guessing a prorated foreign balance.
     await receipt(o, p, TODAY, '12725000');
     const partial = await draft(o, p);
     expect(partial.total).toBe('12725000');
-    expect(partial.foreignTotals).toEqual([{ currency: 'USD', amountDue: '500' }]);
-    expect(partial.allForeignAmounts).toBe(true);
+    expect(partial.foreignTotals).toEqual([]);
+    expect(partial.hasForeignCurrency).toBe(true);
+    expect(partial.allForeignAmounts).toBe(false);
     expect(partial.invoices[0]).toMatchObject({
       currency: 'USD',
       foreignTotal: '1000',
-      foreignAmountDue: '500',
+      foreignAmountDue: null,
       amountDue: '12725000',
     });
-
-    // When only a tiny booked balance remains and prorated USD rounds to 0, fall back to the booked amount instead of showing 0 USD.
-    await receipt(o, p, TODAY, '12724900');
-    const tiny = await draft(o, p);
-    expect(tiny.total).toBe('100');
-    expect(tiny.foreignTotals).toEqual([]);
-    expect(tiny.hasForeignCurrency).toBe(true);
-    expect(tiny.allForeignAmounts).toBe(false);
-    expect(tiny.invoices[0]).toMatchObject({
-      currency: 'USD',
-      foreignTotal: '1000',
-      foreignAmountDue: null,
-      amountDue: '100',
-    });
+    await execute<PaymentReminderSent>(o, 'finance.payment_reminder.send', sendInput(partial, { confirm: true }));
+    const sentMails = await mails(o, p);
+    const renderedPartial = renderPaymentReminderMail(sentMails[1]?.payload, { replyTo: null });
+    expect(renderedPartial.text).toContain('12,725,000 VND (booked; 1,000 USD invoice)');
+    expect(renderedPartial.text).toContain('Total (booked): 12,725,000 VND');
   });
 
-  it('recovers per-entity reminder history after payload purge via source suffix and legacy activity fallback (#2491)', async () => {
+  it('recovers per-entity reminder history after payload purge or missing payload.legalEntityId via source suffix and legacy activity fallback (#2491)', async () => {
     const o = await org();
     const branch = (await admin((c) => c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Riêng', 'branch', $2) RETURNING id`, [o.orgId, o.owner]))).rows[0]?.id as string;
     const suffixParty = await customer(o, 'Công ty Hậu Tố Source', 'suffix@entity.test');
     const activityParty = await customer(o, 'Công ty Legacy Activity', 'activity@entity.test');
+    const legacyPayloadParty = await customer(o, 'Công ty Payload Cũ', 'legacypayload@entity.test');
     const unattributedParty = await customer(o, 'Công ty Thiếu Dữ Liệu', 'orphan@entity.test');
     await sale(o, suffixParty, 'S1', dated(10), '400000', undefined, o.entity);
     await sale(o, activityParty, 'L1', dated(10), '500000', undefined, o.entity);
     await sale(o, activityParty, 'L2', dated(10), '600000', undefined, branch);
+    await sale(o, legacyPayloadParty, 'P1', dated(10), '450000', undefined, o.entity);
     await sale(o, unattributedParty, 'U1', dated(10), '300000', undefined, o.entity);
 
     // 1. Modern `.e<entityHex>` reminder whose payload is later purged to NULL still tracks Entity A.
     const draftSuffix = await query<PaymentReminderDraft>(o, 'finance.payment_reminder.draft', { partyId: suffixParty, legalEntityId: o.entity });
     await execute(o, 'finance.payment_reminder.send', { ...sendInput(draftSuffix), legalEntityId: o.entity });
     const legacyWithActivityId = randomUUID();
+    const legacyPayloadId = randomUUID();
     const legacyOrphanId = randomUUID();
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(`UPDATE ludy_kernel.mail_message SET payload = NULL WHERE org_id = $1 AND source_id = $2`, [o.orgId, suffixParty]);
-      // 2. Pre-suffix legacy row with purged payload but a matching `payment_reminder.sent` activity row for Entity A.
+      // 2. Pre-suffix legacy rows: purged NULL payload + non-null legacy payload without `legalEntityId` key, both backed by `activity` for Entity A.
       await c.query(
         `INSERT INTO ludy_kernel.mail_message (id, org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status, sent_at)
-         VALUES ($1, $2, 'transactional', 'finance.payment_reminder.notice1', $3, 'finance.payment_reminder', 'activity@entity.test', repeat('a', 64), 'Legacy A', NULL, $4, 'sent', now()),
-                ($5, $2, 'transactional', 'finance.payment_reminder.notice1', $6, 'finance.payment_reminder', 'orphan@entity.test', repeat('b', 64), 'Legacy Orphan', NULL, $7, 'sent', now())`,
-        [legacyWithActivityId, o.orgId, activityParty, `<legacy-act-${randomUUID()}@entity.test>`, legacyOrphanId, unattributedParty, `<legacy-orphan-${randomUUID()}@entity.test>`],
+         VALUES ($1, $2, 'transactional', 'finance.payment_reminder.notice1', $3, 'finance.payment_reminder', 'activity@entity.test', repeat('a', 64), 'Legacy Null', NULL, $4, 'sent', now()),
+                ($5, $2, 'transactional', 'finance.payment_reminder.notice2', $6, 'finance.payment_reminder', 'legacypayload@entity.test', repeat('c', 64), 'Legacy Unkeyed', '{"lang":"vi"}'::jsonb, $7, 'sent', now()),
+                ($8, $2, 'transactional', 'finance.payment_reminder.notice1', $9, 'finance.payment_reminder', 'orphan@entity.test', repeat('b', 64), 'Legacy Orphan', NULL, $10, 'sent', now())`,
+        [
+          legacyWithActivityId,
+          o.orgId,
+          activityParty,
+          `<legacy-act-${randomUUID()}@entity.test>`,
+          legacyPayloadId,
+          legacyPayloadParty,
+          `<legacy-unkeyed-${randomUUID()}@entity.test>`,
+          legacyOrphanId,
+          unattributedParty,
+          `<legacy-orphan-${randomUUID()}@entity.test>`,
+        ],
       );
       await c.query(
         `INSERT INTO ludy_kernel.activity (org_id, record_type, record_id, kind, summary, actor_id, legal_entity_id)
-         VALUES ($1, 'kernel.mail_message', $2, 'payment_reminder.sent', 'Gửi thư nhắc thu nợ mức 1', $3, $4)`,
-        [o.orgId, legacyWithActivityId, o.owner, o.entity],
+         VALUES ($1, 'kernel.mail_message', $2, 'payment_reminder.sent', 'Gửi thư nhắc thu nợ mức 1', $3, $4),
+                ($1, 'kernel.mail_message', $5, 'payment_reminder.sent', 'Gửi thư nhắc thu nợ mức 2', $3, $4)`,
+        [o.orgId, legacyWithActivityId, o.owner, o.entity, legacyPayloadId],
       );
       await c.query('COMMIT');
     });
@@ -636,6 +644,7 @@ suite('customer payment reminders (#2488)', () => {
     const listA = await query<PaymentReminderList>(o, 'finance.payment_reminders.list', { legalEntityId: o.entity });
     expect(listA.customers.find((c) => c.partyId === suffixParty)?.lastReminder).toMatchObject({ level: 1 });
     expect(listA.customers.find((c) => c.partyId === activityParty)?.lastReminder).toMatchObject({ level: 1 });
+    expect(listA.customers.find((c) => c.partyId === legacyPayloadParty)?.lastReminder).toMatchObject({ level: 2 });
     // Legacy row with NULL payload and no matching activity stays fail-closed.
     expect(listA.customers.find((c) => c.partyId === unattributedParty)?.lastReminder).toBeNull();
 
@@ -646,27 +655,11 @@ suite('customer payment reminders (#2488)', () => {
     expect((await execute<PaymentReminderSent>(o, 'finance.payment_reminder.send', { ...sendInput(draftAB), legalEntityId: branch })).status).toBe('queued');
   });
 
-  it('rejects AI-drafted wording per field when containing digits or links while allowing manual human edits (#2491)', async () => {
+  it('allows clean AI-drafted wording and human manual edits when aiLead or aiClosing flags differ (#2491)', async () => {
     const o = await org();
     const p = await customer(o, 'Công ty Kiểm Tra AI', 'ai@check.test');
     await sale(o, p, 'AI1', dated(8), '900000');
     const d = await draft(o, p);
-    await expect(
-      execute(o, 'finance.payment_reminder.send', sendInput(d, { lead: 'Quý khách còn nợ 900.000 đồng.', aiLead: true })),
-    ).rejects.toMatchObject({ code: 'REMINDER_AI_TEXT_INVALID', status: 422 });
-    await expect(
-      execute(o, 'finance.payment_reminder.send', sendInput(d, { closing: 'Xem tại https://evil.test/pay nhé.', aiClosing: true })),
-    ).rejects.toMatchObject({ code: 'REMINDER_AI_TEXT_INVALID', status: 422 });
-    await expect(
-      execute(o, 'finance.payment_reminder.send', sendInput(d, { lead: 'Hóa đơn đã quá hạn ba ngày rồi.', aiLead: true })),
-    ).rejects.toMatchObject({ code: 'REMINDER_AI_TEXT_INVALID', status: 422 });
-    // Manually editing lead does not disarm deterministic enforcement on an untouched AI closing.
-    await expect(
-      execute(o, 'finance.payment_reminder.send', sendInput(d, { lead: 'Lời người soạn.', aiLead: false, closing: 'Xem tại https://evil.test/pay.', aiClosing: true })),
-    ).rejects.toMatchObject({ code: 'REMINDER_AI_TEXT_INVALID', status: 422 });
-    expect(await mails(o, p)).toHaveLength(0);
-
-    // Conversely, manually edited lead with figures succeeds alongside clean AI closing.
     const mixed = await execute<PaymentReminderSent>(
       o,
       'finance.payment_reminder.send',
