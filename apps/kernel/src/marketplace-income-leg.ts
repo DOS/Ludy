@@ -127,9 +127,9 @@ export async function readIncomeDay(options: IncomeDayOptions): Promise<Marketpl
   const defaultFirst = addDays(today, -INCOME_FIRST_DAYS);
   const firstDay = options.minStartDay !== undefined && isoDay(options.minStartDay) && options.minStartDay > defaultFirst ? options.minStartDay : defaultFirst;
   const day = held ? (held[1] as string) : firstDay;
-  // Only a day that has been over for a whole day is read (a grace of one day: a platform may mark a release or a statement paid a little after midnight, and the cursor never goes back); the cursor
-  // is anchored on the first day so the start does not drift with the calendar.
-  if (day >= addDays(today, -1)) return { lines: [], nextCursor: `d:${day}` };
+  // Only a day that has been over for a whole day is read (a grace of one day: a platform may mark a release or a statement paid a little after midnight, and the cursor never goes back).
+  // When no cursor exists yet (`options.since === null`), return `nextCursor: null` so neither the cursor nor `last_settlement_end` is anchored before an eligible closed day exists.
+  if (day >= addDays(today, -1)) return { lines: [], nextCursor: options.since === null ? null : `d:${day}` };
   const read = await options.read({ startDay: addDays(day, -options.lookbackDays), endDay: day });
   if (options.waitPending && read.pending > 0 && day > addDays(today, -INCOME_PENDING_WAIT_DAYS)) return { lines: [], nextCursor: `d:${day}` };
   const next = addDays(day, 1);
@@ -253,14 +253,22 @@ export function withTiktokIncome(provider: MarketplaceProvider, options: TiktokO
             if (missing.length === days.length) {
               income = await finance.income(secret, window, { paidDay: window.endDay, includePayments: false });
               for (const d of days) entry.byDay.set(d, []);
-              for (const statement of income.statements) entry.byDay.get(statement.day)?.push(statement);
+              for (const statement of income.statements) {
+                if (statement.day < window.startDay || statement.day > window.endDay) throw notRecognized();
+                entry.byDay.get(statement.day)?.push(statement);
+              }
             } else {
               if (missing.length > 0) {
                 // `days` spans at most TIKTOK_FINANCE_MAX_DAYS, so any subset `[missing[0], missing.at(-1)]` stays within the platform's 31-day limit.
-                const fetched = await finance.statements(secret, { startDay: missing[0] as string, endDay: missing.at(-1) as string });
+                const missStart = missing[0] as string;
+                const missEnd = missing.at(-1) as string;
+                const fetched = await finance.statements(secret, { startDay: missStart, endDay: missEnd });
                 const missingSet = new Set(missing);
                 for (const d of missing) entry.byDay.set(d, []);
-                for (const statement of fetched) if (missingSet.has(statement.day)) entry.byDay.get(statement.day)?.push(statement);
+                for (const statement of fetched) {
+                  if (statement.day < missStart || statement.day > missEnd) throw notRecognized();
+                  if (missingSet.has(statement.day)) entry.byDay.get(statement.day)?.push(statement);
+                }
               }
               const seenIds = new Set<string>();
               const statements: TiktokStatement[] = [];

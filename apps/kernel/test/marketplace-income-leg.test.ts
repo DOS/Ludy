@@ -91,6 +91,10 @@ describe('one closed payment day', () => {
     reads.length = 0;
     await make('d:2026-11-12', { minStartDay: '2026-11-18' });
     expect(reads).toEqual([{ startDay: '2026-11-12', endDay: '2026-11-12' }]);
+    // Before any closed day exists with null cursor, nextCursor stays null without reading from the platform.
+    reads.length = 0;
+    expect(await make(null, { minStartDay: '2026-11-21' })).toEqual({ lines: [], nextCursor: null });
+    expect(reads).toEqual([]);
   });
 
   it('starts INCOME_FIRST_DAYS back, anchors the cursor on the day it reads and moves it one day', async () => {
@@ -354,6 +358,11 @@ describe('the leg in the worker', () => {
     const noIncome = setup(undefined, { cursor: null, lastSettlementEnd: '2026-11-14' });
     await noIncome.run();
     expect(noIncome.settlementQueries()).toBe(0);
+    // When no closed day exists yet on first poll (nextCursor: null, lines: []), record_poll leaves income state and cursor untouched.
+    const notClosedYet = setup(async () => ({ lines: [], nextCursor: null }), { cursor: null, createdAt: '2026-11-21T00:00:00.000Z' });
+    expect(await notClosedYet.run()).toEqual({ state: 'ok', orders: 0, staged: false });
+    expect(notClosedYet.polls()).toEqual([]);
+    expect(notClosedYet.stored()).toBeNull();
   });
 
   it('refuses a page the port does not name: a broken identity, an extra field, a formula-like order number, too many lines', async () => {
@@ -649,5 +658,16 @@ describe('a TikTok Shop day read end to end (#4306)', () => {
     const dupProvider = withTiktokIncome(tiktokMarketplace(baseOptions), baseOptions, dupFinance);
     await dupProvider.listIncome?.(SECRET, 'tiktok_shop', 'd:2026-11-14', { cache: dupCache });
     await expect(dupProvider.listIncome?.(SECRET, 'tiktok_shop', 'd:2026-11-15', { cache: dupCache })).rejects.toMatchObject({ kind: 'not_recognized' });
+
+    // A statement returned outside the requested [missStart, missEnd] span fails as not_recognized rather than silently dropping it.
+    const outOfRangeCache = new Map<string, unknown>();
+    const outOfRangeFinance = {
+      statements: async () => [{ id: 'oor-2', day: '2026-11-10', payout: '1000', status: 'PAID', paymentId: 'p2', paidDay: '2026-11-15' }],
+      payments: async () => [],
+      income: async () => ({ currency: 'VND' as const, statements: [], payments: null, lines: [], adjustments: [], pendingStatements: 0 }),
+    };
+    const oorProvider = withTiktokIncome(tiktokMarketplace(baseOptions), baseOptions, outOfRangeFinance);
+    await oorProvider.listIncome?.(SECRET, 'tiktok_shop', 'd:2026-11-14', { cache: outOfRangeCache });
+    await expect(oorProvider.listIncome?.(SECRET, 'tiktok_shop', 'd:2026-11-15', { cache: outOfRangeCache })).rejects.toMatchObject({ kind: 'not_recognized' });
   });
 });

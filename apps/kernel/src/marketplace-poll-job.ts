@@ -460,6 +460,10 @@ async function pollIncomePage(ctx: IncomePageContext): Promise<MarketplacePageRe
     }
   }
   if (page.lines.length === 0) {
+    // Nothing eligible to read yet (first run before a closed day exists): leave cursor and income state untouched so the UI does not show a completed pull or anchor past a later manual import.
+    if (parts.income === null && page.nextCursor === null && held.incomeState === null) {
+      return { outcome: { state: 'ok', orders: 0, staged: false }, more: false };
+    }
     await record({ state: 'ok', ...next });
     return { outcome: { state: 'ok', orders: 0, staged: false }, more: page.more === true && next.cursor !== undefined };
   }
