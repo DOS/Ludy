@@ -242,6 +242,35 @@ suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
     );
     expect(sqlTrimCheck.rows[0]?.ok).toBe(true);
 
+    // #5128: length(v_text) NOT BETWEEN 1 AND 300 evaluates before btrim() so 301-char whitespace-padded strings
+    // and whitespace-only Unicode strings are rejected while valid 1..300-char trimmed/padded strings pass.
+    const sqlBoundaryChecks = await withAdmin((c) =>
+      c.query<{
+        padded_301: boolean;
+        trailing_301: boolean;
+        ws_only: boolean;
+        padded_300: boolean;
+        single_char: boolean;
+        exact_300: boolean;
+      }>(
+        `SELECT
+           ludy_kernel.task_checklist_valid(pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('text', ' ' || pg_catalog.repeat('a', 300), 'done', false))) AS padded_301,
+           ludy_kernel.task_checklist_valid(pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('text', pg_catalog.repeat('a', 300) || U&'\\2003', 'done', false))) AS trailing_301,
+           ludy_kernel.task_checklist_valid(pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('text', pg_catalog.repeat(U&'\\2003', 3), 'done', false))) AS ws_only,
+           ludy_kernel.task_checklist_valid(pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('text', ' ' || pg_catalog.repeat('a', 298) || ' ', 'done', false))) AS padded_300,
+           ludy_kernel.task_checklist_valid(pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('text', 'x', 'done', false))) AS single_char,
+           ludy_kernel.task_checklist_valid(pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('text', pg_catalog.repeat('a', 300), 'done', false))) AS exact_300`,
+      ),
+    );
+    expect(sqlBoundaryChecks.rows[0]).toEqual({
+      padded_301: false,
+      trailing_301: false,
+      ws_only: false,
+      padded_300: true,
+      single_char: true,
+      exact_300: true,
+    });
+
     // Create task with checklist via projects.task.create
     const { projectId } = await exec<{ projectId: string }>(owner.userId, org.orgId, 'projects.project.create', {
       name: 'Kỳ khai thuế quý 4',

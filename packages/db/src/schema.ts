@@ -333,6 +333,7 @@ export type TaskTable = Refine<
     created_by_type: ActorType;
     status: Generated<TaskStatus>;
     fence: ColumnType<string, string | number | undefined, string | number>;
+    completed_by: ColumnType<string | null, never, never>;
   }
 >;
 
