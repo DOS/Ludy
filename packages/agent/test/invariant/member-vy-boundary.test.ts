@@ -3123,6 +3123,23 @@ function unwrapAstExpr(node: tsType.Expression, includeComma = false): tsType.Ex
   return cur;
 }
 
+function isAstStringGlobal(expr: tsType.Expression, scope: AstLexScope, depth = 0): boolean {
+  if (depth > 32) return false;
+  const recv = unwrapAstExpr(expr, true);
+  if (ts.isIdentifier(recv)) return recv.text === 'String';
+  if (ts.isPropertyAccessExpression(recv)) {
+    const h = unwrapAstExpr(recv.expression, true);
+    return ts.isIdentifier(h) && AST_REQUIRE_HOSTS.has(h.text) && recv.name.text === 'String';
+  }
+  if (ts.isElementAccessExpression(recv)) {
+    const h = unwrapAstExpr(recv.expression, true);
+    if (!ts.isIdentifier(h) || !AST_REQUIRE_HOSTS.has(h.text)) return false;
+    const prop = resolveAstConstString(recv.argumentExpression, scope, 'full_const', depth + 1);
+    return prop === 'String';
+  }
+  return false;
+}
+
 function resolveAstConstString(
   expr: tsType.Expression,
   scope: AstLexScope,
@@ -3156,11 +3173,10 @@ function resolveAstConstString(
       const callee = unwrapAstExpr(unwrapped.expression, true);
       let fnMethod: 'fromCharCode' | 'fromCodePoint' | null = null;
       if (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) {
-        const recv = unwrapAstExpr(callee.expression, true);
         const prop = ts.isPropertyAccessExpression(callee)
           ? callee.name.text
           : resolveAstConstString(callee.argumentExpression, scope, mode, depth + 1);
-        if (ts.isIdentifier(recv) && recv.text === 'String' && (prop === 'fromCharCode' || prop === 'fromCodePoint')) {
+        if (isAstStringGlobal(callee.expression, scope, depth + 1) && (prop === 'fromCharCode' || prop === 'fromCodePoint')) {
           fnMethod = prop;
         }
       }
@@ -3594,6 +3610,25 @@ function collectDestructuringTargetsAndRefs(
           entries.push({ key: keyInfo.name, isComputedBracket: keyInfo.isComputedBracket, isTopLevel, targets: [init.text] });
         } else if (ts.isObjectLiteralExpression(init)) {
           stack.push({ obj: init, isTopLevel: false });
+        } else if (ts.isArrayLiteralExpression(init)) {
+          const arrIds: string[] = [];
+          const aStack: tsType.Expression[] = [init];
+          while (aStack.length > 0) {
+            const ac = unwrapAstExpr(aStack.pop()!, false);
+            if (ts.isIdentifier(ac)) arrIds.push(ac.text);
+            else if (ts.isObjectLiteralExpression(ac)) stack.push({ obj: ac, isTopLevel: false });
+            else if (ts.isArrayLiteralExpression(ac)) {
+              for (const el of ac.elements) {
+                if (ts.isSpreadElement(el)) aStack.push(el.expression);
+                else if (!ts.isOmittedExpression(el)) aStack.push(el);
+              }
+            } else if (ts.isBinaryExpression(ac) && ac.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+              aStack.push(ac.left);
+            }
+          }
+          if (arrIds.length > 0) {
+            entries.push({ key: keyInfo.name, isComputedBracket: keyInfo.isComputedBracket, isTopLevel, targets: arrIds });
+          }
         } else if (ts.isBinaryExpression(init) && init.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
           const leftTarget = unwrapAstExpr(init.left, false);
           if (ts.isIdentifier(leftTarget)) {
@@ -3755,6 +3790,7 @@ function extractAstFacts(
   const seedRequireHosts = new Set<string>([...AST_REQUIRE_HOSTS].map((h) => `global:${h}`));
   const seedNonSafeKillBases = new Set<string>();
   const seedNonSafeKillValues = new Set<string>();
+  const localWrapperBindTargets: Array<{ hostExpr: tsType.Expression; targets: string[]; scope: AstLexScope }> = [];
   const seedMeterAliases = new Set<string>(['global:metered']);
   const seedMeterNs = new Set<string>();
   const seedAgentBindings = new Set<string>();
@@ -4042,6 +4078,62 @@ function extractAstFacts(
     else positionalEdgesBySource.set(fromKey, [edge]);
   };
 
+  const forwardObjectLiteralTargets = (
+    objLit: tsType.ObjectLiteralExpression,
+    propName: string | null,
+    targetKeys: string[],
+    evalScope: AstLexScope,
+    assignEndPos: number | undefined,
+    objDepth: number,
+  ): void => {
+    if (objDepth >= 4 || targetKeys.length === 0) return;
+    for (const prop of objLit.properties) {
+      if (ts.isPropertyAssignment(prop)) {
+        if (propName === null || resolveAstPropertyName(prop.name, evalScope).name === propName) {
+          recordBindAndMemberTarget(targetKeys, prop.initializer, evalScope, assignEndPos, objDepth + 1);
+        }
+      } else if (ts.isShorthandPropertyAssignment(prop)) {
+        if (propName === null || prop.name.text === propName) {
+          recordBindAndMemberTarget(targetKeys, prop.name, evalScope, assignEndPos, objDepth + 1);
+        }
+      } else if (ts.isSpreadAssignment(prop)) {
+        recordBindAndMemberTarget(targetKeys, prop.expression, evalScope, assignEndPos, objDepth + 1);
+      }
+    }
+  };
+
+  const forwardArrayLiteralTargets = (
+    arrLit: tsType.ArrayLiteralExpression,
+    numIdx: number | null,
+    targetKeys: string[],
+    evalScope: AstLexScope,
+    assignEndPos: number | undefined,
+    objDepth: number,
+  ): void => {
+    if (objDepth >= 4 || targetKeys.length === 0) return;
+    let sawSpreadBefore = false;
+    if (numIdx !== null && Number.isInteger(numIdx) && numIdx >= 0 && numIdx < arrLit.elements.length) {
+      for (let i = 0; i <= numIdx; i += 1) {
+        if (ts.isSpreadElement(arrLit.elements[i]!)) {
+          sawSpreadBefore = true;
+          break;
+        }
+      }
+      if (!sawSpreadBefore) {
+        const picked = arrLit.elements[numIdx]!;
+        if (!ts.isOmittedExpression(picked)) {
+          recordBindAndMemberTarget(targetKeys, picked, evalScope, assignEndPos, objDepth + 1);
+        }
+        return;
+      }
+    }
+    for (const el of arrLit.elements) {
+      if (ts.isOmittedExpression(el)) continue;
+      const valExpr = ts.isSpreadElement(el) ? el.expression : el;
+      recordBindAndMemberTarget(targetKeys, valExpr, evalScope, assignEndPos, objDepth + 1);
+    }
+  };
+
   const recordBindAndMemberTarget = (
     targetKeys: string[],
     rhsExpr: tsType.Expression,
@@ -4112,15 +4204,29 @@ function extractAstFacts(
           scope: evalScope,
           rhsExpr: cur,
         });
-        if (targetKeys.length === 1 && memberAccess.propName !== null) {
-          const toKey = targetKeys[0]!;
-          const rawPos = assignEndPos ?? cur.getStart(sf);
-          for (const br of expandAstBranchExprs(memberAccess.host)) {
-            if (ts.isIdentifier(br)) {
-              const propKey = `prop:${astVarKey(evalScope, br.text)}\0${memberAccess.propName}`;
-              addAliasEdge(aliasEdges, propKey, toKey);
-              addPositionalEdge(propKey, toKey, rawPos, cur);
+        const rawPos = assignEndPos ?? cur.getStart(sf);
+        const elemIdxArg = ts.isElementAccessExpression(cur) ? unwrapAstExpr(cur.argumentExpression, false) : null;
+        const elemNumIdx = elemIdxArg && ts.isNumericLiteral(elemIdxArg) ? Number(elemIdxArg.text) : null;
+        for (const br of expandAstBranchExprs(memberAccess.host)) {
+          if (ts.isIdentifier(br)) {
+            if (targetKeys.length === 1) {
+              const effectiveProp =
+                memberAccess.propName !== null
+                  ? memberAccess.propName
+                  : elemNumIdx !== null && Number.isInteger(elemNumIdx)
+                    ? String(elemNumIdx)
+                    : null;
+              if (effectiveProp !== null) {
+                const propKey = `prop:${astVarKey(evalScope, br.text)}\0${effectiveProp}`;
+                const toKey = targetKeys[0]!;
+                addAliasEdge(aliasEdges, propKey, toKey);
+                addPositionalEdge(propKey, toKey, rawPos, cur);
+              }
             }
+          } else if (ts.isObjectLiteralExpression(br)) {
+            forwardObjectLiteralTargets(br, memberAccess.propName, targetKeys, evalScope, assignEndPos, objDepth);
+          } else if (ts.isArrayLiteralExpression(br)) {
+            forwardArrayLiteralTargets(br, elemNumIdx, targetKeys, evalScope, assignEndPos, objDepth);
           }
         }
       } else if (targetKeys.length === 1 && ts.isObjectLiteralExpression(cur) && objDepth < 4) {
@@ -4147,6 +4253,14 @@ function extractAstFacts(
             );
           }
         }
+      } else if (targetKeys.length === 1 && ts.isArrayLiteralExpression(cur) && objDepth < 4) {
+        const baseKey = targetKeys[0]!;
+        for (let idx = 0; idx < cur.elements.length; idx += 1) {
+          const el = cur.elements[idx]!;
+          if (ts.isOmittedExpression(el)) continue;
+          const valExpr = ts.isSpreadElement(el) ? el.expression : el;
+          recordBindAndMemberTarget([`prop:${baseKey}\0${idx}`], valExpr, evalScope, assignEndPos, objDepth + 1);
+        }
       }
     }
     return firstUnwrapped ?? unwrapAstExpr(rhsExpr, true);
@@ -4157,7 +4271,9 @@ function extractAstFacts(
     rhsExpr: tsType.Expression,
     evalScope: AstLexScope,
     scopeForTargets: AstLexScope | null,
+    assignEndPos?: number,
   ): void => {
+    const rhsBranches = expandAstBranchExprs(rhsExpr);
     for (const entry of entries) {
       const scopedTargets = scopeForTargets
         ? entry.targets.map((n) => astVarKey(scopeForTargets, n))
@@ -4184,6 +4300,118 @@ function extractAstFacts(
           scope: evalScope,
           rhsExpr,
         });
+      }
+      if (scopedTargets.length > 0) {
+        if (!entry.isTopLevel) {
+          localWrapperBindTargets.push({ hostExpr: rhsExpr, targets: scopedTargets, scope: evalScope });
+        } else {
+          for (const br of rhsBranches) {
+            if (ts.isObjectLiteralExpression(br)) {
+              forwardObjectLiteralTargets(br, entry.key, scopedTargets, evalScope, assignEndPos, 0);
+            }
+          }
+        }
+      }
+    }
+  };
+
+  const collectAssignTargetIdentifiers = (
+    target: tsType.BindingName | tsType.Expression,
+    targetScope: AstLexScope,
+  ): string[] => {
+    if (ts.isIdentifier(target)) return [astVarKey(targetScope, target.text)];
+    if (ts.isObjectBindingPattern(target) || ts.isArrayBindingPattern(target)) {
+      return collectAstBindingIdentifiers(target).map((n) => astVarKey(targetScope, n));
+    }
+    const out: string[] = [];
+    const stack: tsType.Expression[] = [target];
+    while (stack.length > 0) {
+      const cur = unwrapAstExpr(stack.pop()!, false);
+      if (ts.isIdentifier(cur)) out.push(astVarKey(targetScope, cur.text));
+      else if (ts.isObjectLiteralExpression(cur)) {
+        for (const e of collectDestructuringTargetsAndRefs(cur, targetScope).entries) {
+          for (const n of e.targets) out.push(astVarKey(targetScope, n));
+        }
+      } else if (ts.isArrayLiteralExpression(cur)) {
+        for (const el of cur.elements) {
+          if (ts.isSpreadElement(el)) stack.push(el.expression);
+          else if (!ts.isOmittedExpression(el)) stack.push(el);
+        }
+      } else if (ts.isBinaryExpression(cur) && cur.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        stack.push(cur.left);
+      }
+    }
+    return out;
+  };
+
+  const recordArrayDestructure = (
+    pattern: tsType.ArrayBindingPattern | tsType.ArrayLiteralExpression,
+    rhsExpr: tsType.Expression,
+    evalScope: AstLexScope,
+    targetScope: AstLexScope,
+    assignEndPos: number | undefined,
+    depth = 0,
+  ): void => {
+    const allTargets = collectAssignTargetIdentifiers(pattern, targetScope);
+    if (allTargets.length > 0) {
+      localWrapperBindTargets.push({ hostExpr: rhsExpr, targets: allTargets, scope: evalScope });
+    }
+    if (depth >= 4) return;
+    const elements: Array<{ isRest: boolean; node: tsType.BindingName | tsType.Expression } | null> = [];
+    if (ts.isArrayBindingPattern(pattern)) {
+      for (const el of pattern.elements) {
+        if (ts.isOmittedExpression(el)) elements.push(null);
+        else elements.push({ isRest: Boolean(el.dotDotDotToken), node: el.name });
+      }
+    } else {
+      for (const el of pattern.elements) {
+        if (ts.isOmittedExpression(el)) elements.push(null);
+        else if (ts.isSpreadElement(el)) elements.push({ isRest: true, node: unwrapAstExpr(el.expression, false) });
+        else {
+          const u = unwrapAstExpr(el, false);
+          const lhsTarget = ts.isBinaryExpression(u) && u.operatorToken.kind === ts.SyntaxKind.EqualsToken ? unwrapAstExpr(u.left, false) : u;
+          elements.push({ isRest: false, node: lhsTarget });
+        }
+      }
+    }
+    for (const br of expandAstBranchExprs(rhsExpr)) {
+      if (!ts.isArrayLiteralExpression(br)) continue;
+      let sawLhsRest = false;
+      for (let idx = 0; idx < elements.length; idx += 1) {
+        const item = elements[idx];
+        if (!item) continue;
+        if (item.isRest) sawLhsRest = true;
+        let sawRhsSpread = false;
+        const limit = Math.min(idx + 1, br.elements.length);
+        for (let j = 0; j < limit; j += 1) {
+          if (ts.isSpreadElement(br.elements[j]!)) {
+            sawRhsSpread = true;
+            break;
+          }
+        }
+        const rhsItems: tsType.Expression[] = [];
+        if (!sawLhsRest && !sawRhsSpread) {
+          if (idx < br.elements.length && !ts.isOmittedExpression(br.elements[idx]!)) {
+            rhsItems.push(br.elements[idx]!);
+          }
+        } else {
+          for (let j = sawRhsSpread ? 0 : idx; j < br.elements.length; j += 1) {
+            const rawEl = br.elements[j]!;
+            if (ts.isOmittedExpression(rawEl)) continue;
+            rhsItems.push(ts.isSpreadElement(rawEl) ? rawEl.expression : rawEl);
+          }
+        }
+        for (const rhsItem of rhsItems) {
+          if (ts.isIdentifier(item.node)) {
+            recordBindAndMemberTarget([astVarKey(targetScope, item.node.text)], rhsItem, evalScope, assignEndPos);
+          } else if (ts.isObjectBindingPattern(item.node)) {
+            recordDestructuredEntries(extractObjectBindingDestructurePairs(item.node, targetScope), rhsItem, evalScope, null, assignEndPos);
+          } else if (ts.isObjectLiteralExpression(item.node)) {
+            recordDestructuredEntries(collectDestructuringTargetsAndRefs(item.node, targetScope).entries, rhsItem, evalScope, targetScope, assignEndPos);
+          } else if (ts.isArrayBindingPattern(item.node) || ts.isArrayLiteralExpression(item.node)) {
+            recordArrayDestructure(item.node, rhsItem, evalScope, targetScope, assignEndPos, depth + 1);
+          }
+        }
       }
     }
   };
@@ -4527,7 +4755,9 @@ function extractAstFacts(
           });
         }
         if (ts.isObjectBindingPattern(node.name)) {
-          recordDestructuredEntries(getDestructurePairsForRhs(node.initializer, nextScope), rhsExpr, nextScope, null);
+          recordDestructuredEntries(getDestructurePairsForRhs(node.initializer, nextScope), rhsExpr, nextScope, null, node.end);
+        } else if (ts.isArrayBindingPattern(node.name)) {
+          recordArrayDestructure(node.name, rhsExpr, nextScope, varDeclScope, node.end);
         }
       }
     }
@@ -4536,7 +4766,9 @@ function extractAstFacts(
       const rhsTarget = ts.isIdentifier(node.name) ? [astVarKey(nextScope, node.name.text)] : [];
       const rhsExpr = recordBindAndMemberTarget(rhsTarget, node.initializer, nextScope, node.end);
       if (ts.isObjectBindingPattern(node.name)) {
-        recordDestructuredEntries(getDestructurePairsForRhs(node.initializer, nextScope), rhsExpr, nextScope, null);
+        recordDestructuredEntries(getDestructurePairsForRhs(node.initializer, nextScope), rhsExpr, nextScope, null, node.end);
+      } else if (ts.isArrayBindingPattern(node.name)) {
+        recordArrayDestructure(node.name, rhsExpr, nextScope, nextScope, node.end);
       }
     }
 
@@ -4577,7 +4809,10 @@ function extractAstFacts(
           rhsExpr,
           nextScope,
           nextScope,
+          node.end,
         );
+      } else if (ts.isArrayLiteralExpression(lhsExpr)) {
+        recordArrayDestructure(lhsExpr, rhsExpr, nextScope, nextScope, node.end);
       }
     }
 
@@ -4688,16 +4923,16 @@ function extractAstFacts(
       }
     } else if (ts.isCallExpression(node)) {
       const strCallee = unwrapAstExpr(node.expression, true);
-      if (ts.isPropertyAccessExpression(strCallee) || ts.isElementAccessExpression(strCallee)) {
-        const strRecv = unwrapAstExpr(strCallee.expression, true);
-        if (ts.isIdentifier(strRecv) && strRecv.text === 'String') {
-          const resolved = resolveAstConstString(node, nextScope, 'full_const');
-          if (resolved !== null) {
-            checkStringOrIdentValue(resolved, true);
-            if (!nextSuppressNotesLit && resolved.startsWith('notes.')) {
-              notesLiterals.push(resolved);
-              nextSuppressNotesLit = true;
-            }
+      if (
+        (ts.isPropertyAccessExpression(strCallee) || ts.isElementAccessExpression(strCallee)) &&
+        isAstStringGlobal(strCallee.expression, nextScope)
+      ) {
+        const resolved = resolveAstConstString(node, nextScope, 'full_const');
+        if (resolved !== null) {
+          checkStringOrIdentValue(resolved, true);
+          if (!nextSuppressNotesLit && resolved.startsWith('notes.')) {
+            notesLiterals.push(resolved);
+            nextSuppressNotesLit = true;
           }
         }
       }
@@ -4895,11 +5130,41 @@ function extractAstFacts(
   const meterAliases = propagateAliases(seedMeterAliases, aliasEdges);
   const agentBindings = propagateAliases(seedAgentBindings, aliasEdges);
   const executeAliases = propagateAliases(seedExecuteAliases, aliasEdges);
-  const nonSafeKillBases = propagateAliases(seedNonSafeKillBases, aliasEdges);
-  for (const cand of memberBindCandidates) {
-    if (anyAstBranchMatchesSet(cand.host, cand.scope, nonSafeKillBases) || anyAstBranchMatchesSet(cand.host, cand.scope, requireHosts)) {
-      for (const t of cand.targets) seedNonSafeKillValues.add(t);
+  let nonSafeKillBases = propagateAliases(seedNonSafeKillBases, aliasEdges);
+  const isExprNonSafeKillSource = (expr: tsType.Expression, scope: AstLexScope): boolean => {
+    for (const br of expandAstBranchExprs(expr)) {
+      if (!ts.isIdentifier(br)) return true;
+      const k = astVarKey(scope, br.text);
+      if (requireHosts.has(k) || nonSafeKillBases.has(k)) return true;
     }
+    return false;
+  };
+  let changedNonSafe = true;
+  let nsPass = 0;
+  while (changedNonSafe && nsPass < 8) {
+    changedNonSafe = false;
+    nsPass += 1;
+    for (const cand of memberBindCandidates) {
+      if (!isExprNonSafeKillSource(cand.host, cand.scope)) continue;
+      for (const t of cand.targets) {
+        if (!seedNonSafeKillBases.has(t)) {
+          seedNonSafeKillBases.add(t);
+          changedNonSafe = true;
+        }
+        seedNonSafeKillValues.add(t);
+      }
+    }
+    for (const wrapCand of localWrapperBindTargets) {
+      if (!isExprNonSafeKillSource(wrapCand.hostExpr, wrapCand.scope)) continue;
+      for (const t of wrapCand.targets) {
+        if (!seedNonSafeKillBases.has(t)) {
+          seedNonSafeKillBases.add(t);
+          changedNonSafe = true;
+        }
+        seedNonSafeKillValues.add(t);
+      }
+    }
+    if (changedNonSafe) nonSafeKillBases = propagateAliases(seedNonSafeKillBases, aliasEdges);
   }
   const nonSafeKillValues = propagateAliases(seedNonSafeKillValues, aliasEdges);
   for (const k of fetchKillCandidates) {
@@ -7165,8 +7430,9 @@ interface PrecomputedNotesAst {
 }
 
 const NOTES_METER_AST_TRIGGER_RE =
-  /['"`]|import|require|Reflect|eval|Function|globalThis|window|self|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}|fromCharCode/;
-const NOTES_LITERAL_AST_TRIGGER_RE = /['"`]|fromCharCode|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}/;
+  /['"`]|import|require|Reflect|eval|Function|globalThis|window|self|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}|from(?:CharCode|CodePoint)|\bString(?:\s*\?\.)?\s*\[/;
+const NOTES_LITERAL_AST_TRIGGER_RE =
+  /['"`]|from(?:CharCode|CodePoint)|\bString(?:\s*\?\.)?\s*\[|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}/;
 const EMPTY_PRECOMPUTED_NOTES_AST: PrecomputedNotesAst = { factsList: [], hadRangeError: false };
 
 function hasNotesMeterTrigger(text: string): boolean {
@@ -8338,7 +8604,7 @@ export function indexReexportViolations(indexText: string, symbols: readonly str
   const astOut = new Set<string>();
   const needsIndexAst =
     primary.tokens.some((t) => t.kind === 'invalid') ||
-    /\b(?:import|export|require|createRequire|eval|Function|Reflect|globalThis|window|self)\b|['"`\\]|fromCharCode|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}/.test(
+    /\b(?:import|export|require|createRequire|eval|Function|Reflect|globalThis|window|self)\b|['"`\\]|from(?:CharCode|CodePoint)|\bString(?:\s*\?\.)?\s*\[|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\})|\\x[0-9a-fA-F]{2}/.test(
       indexText,
     ) ||
     symbols.some((s) => indexText.includes(s));
@@ -9028,7 +9294,7 @@ function shouldParseWorkspaceAst(
   if (relFromRoot && relFromRoot.startsWith('packages/agent/')) return true;
   if (fromRelPath === undefined && fileText.length < 30_000) return true;
   const hasRelevantKeywordHint =
-    /@(?:ludy|crove)|agent|note-ai|packages|\bimport(?=\s*(?:\(|\/\*))|\b(?:export|require|createRequire|eval|Function|Reflect)\b|generate|Summary|Todo|fromCharCode|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|await\s+['"`]/.test(
+    /@(?:ludy|crove)|agent|note-ai|packages|\bimport(?=\s*(?:\(|\/\*))|\b(?:export|require|createRequire|eval|Function|Reflect)\b|generate|Summary|Todo|from(?:CharCode|CodePoint)|\bString(?:\s*\?\.)?\s*\[|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|await\s+['"`]/.test(
       fileText,
     );
   if (
@@ -9037,7 +9303,7 @@ function shouldParseWorkspaceAst(
         (t) =>
           (t.kind === 'invalid' && (fromRelPath !== undefined || hasRelevantKeywordHint)) ||
           (t.kind === 'regex' &&
-            (/\bimport(?=\s*(?:\(|\/\*))|\b(?:require|createRequire|eval|Function|Reflect|agent|note-ai|generate|Todo|Summary|Note|fromCharCode)\b|@ludy|@crove|packages\/agent|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]/.test(
+            (/\bimport(?=\s*(?:\(|\/\*))|\b(?:require|createRequire|eval|Function|Reflect|agent|note-ai|generate|Todo|Summary|Note)|from(?:CharCode|CodePoint)|\bString(?:\s*\?\.)?\s*\[|@ludy|@crove|packages\/agent|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]/.test(
               t.raw,
             ) ||
               (/\{/.test(t.raw) && /['"`]/.test(t.raw)))),
@@ -9047,7 +9313,7 @@ function shouldParseWorkspaceAst(
     return true;
   }
   if (
-    /(?:@(?:ludy|crove)(?:$|[^a-zA-Z0-9_/]|\/(?:$|[^a-zA-Z0-9_]|a(?:$|g|[^a-zA-Z0-9_-])))|note-ai|packages\/agent|generate(?:Note|Todo)|SummaryText|TodoSuggest|TodoPlan|NoteOrganize|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|fromCharCode|globalThis|createRequire|module\.require|window\.require|self\.require|\bimport(?=\s*(?:\(|\/\*))|\b(?:Reflect|eval|Function)\b|await\s+['"`])/.test(
+    /(?:@(?:ludy|crove)(?:$|[^a-zA-Z0-9_/]|\/(?:$|[^a-zA-Z0-9_]|a(?:$|g|[^a-zA-Z0-9_-])))|note-ai|packages\/agent|generate(?:Note|Todo)|SummaryText|TodoSuggest|TodoPlan|NoteOrganize|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|from(?:CharCode|CodePoint)|\bString(?:\s*\?\.)?\s*\[|globalThis|createRequire|module\.require|window\.require|self\.require|\bimport(?=\s*(?:\(|\/\*))|\b(?:Reflect|eval|Function)\b|await\s+['"`])/.test(
       fileText,
     )
   ) {
@@ -9068,9 +9334,10 @@ function shouldParseWorkspaceAst(
     fileText.length < 30_000 &&
     /\b(?:import|export|require)\b/.test(fileText) &&
     /(?:^|\W)\.\.?(?:\/|['"`])/.test(fileText) &&
-    (/(?:agent|note-ai|packages|fromCharCode|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|\\\r?\n)/i.test(
+    (/(?:agent|note-ai|packages|from(?:CharCode|CodePoint)|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|\\\r?\n)/i.test(
       fileText,
     ) ||
+      /\bString(?:\s*\?\.)?\s*\[/.test(fileText) ||
       /(?:import|require)\s*\([^)]*(?:\+|`|\$\{)/.test(fileText))
   ) {
     return true;
@@ -11786,6 +12053,24 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(
       memberVyViolations("let read = cache.fetch;\nconst wrap = { fetch: globalThis.fetch };\nread = wrap.fetch;\nread('https://x.test');"),
     ).toContain('calls the network directly');
+    expect(
+      memberVyViolations("let read = globalThis.fetch;\nconst { go: fn } = { go: read };\nread = fn;\nread('https://x.test');"),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations("let read = globalThis.fetch;\nconst fn = { go: read }.go;\nread = fn;\nread('https://x.test');"),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations("let read = globalThis.fetch;\nconst [fn] = [read];\nread = fn;\nread('https://x.test');"),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations("let read = globalThis.fetch;\nlet fn;\n[fn] = [read];\nread = fn;\nread('https://x.test');"),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations("let read = globalThis.fetch;\nconst fn = { ['g' + 'o']: read }['go'];\nread = fn;\nread('https://x.test');"),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations("const [fn] = [globalThis.fetch];\nfn('https://x.test');"),
+    ).toContain('calls the network directly');
 
     // B3c: Reflect.get and computed destructuring of WebSocket / XMLHttpRequest
     expect(memberVyViolations("const W = Reflect.get(globalThis, 'Web' + 'Socket'); void W;")).toContain('calls the network directly');
@@ -11837,6 +12122,40 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       ),
     ).toContain('uses computed dynamic import or require');
     expect(memberVyViolations('import(String.fromCharCode(112, 103));')).toContain('imports pg');
+    expect(
+      notesKeyLiterals('export const k = String.fromCodePoint(110,111,116,101,115,46,115,117,109,109,97,114,121);'),
+    ).toEqual(['notes.summary']);
+    expect(
+      disallowedMeteredNotes('other.ts', 'export const k = String.fromCodePoint(110,111,116,101,115,46,115,117,109,109,97,114,121);'),
+    ).toEqual(['notes.summary']);
+    expect(
+      workspaceAdapterLeakViolations(
+        'export const fn = String.fromCodePoint(103,101,110,101,114,97,116,101,78,111,116,101,83,117,109,109,97,114,121,84,101,120,116);',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toEqual(['generateNoteSummaryText']);
+    expect(
+      workspaceAdapterLeakViolations(
+        'export const C = () => { const k = String.fromCodePoint(103,101,110,101,114,97,116,101,78,111,116,101,83,117,109,109,97,114,121,84,101,120,116); return <p>return/{k}/</p>; };',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toEqual(['generateNoteSummaryText']);
+    expect(
+      workspaceAdapterLeakViolations(
+        "export const fn = String['from' + 'CharCode'](103,101,110,101,114,97,116,101,78,111,116,101,83,117,109,109,97,114,121,84,101,120,116);",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toEqual(['generateNoteSummaryText']);
+    expect(
+      workspaceAdapterLeakViolations(
+        'export const fn = globalThis.String.fromCodePoint(103,101,110,101,114,97,116,101,78,111,116,101,83,117,109,109,97,114,121,84,101,120,116);',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toEqual(['generateNoteSummaryText']);
     expect(importsNoteAiModel("const m = import('./\\u006eote-ai-model.ts'); void m;")).toBe(true);
     const n4Mixed = `metered('notes.summary', fn);\n${'<p>'.repeat(15_000)}return/{Number(metered(dynKey, fn))}/${'</p>'.repeat(15_000)}`;
     const n4Out = disallowedMeteredNotes('other.tsx', n4Mixed);
