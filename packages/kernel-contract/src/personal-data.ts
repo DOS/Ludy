@@ -64,6 +64,9 @@ export const zPersonalDataResult = z.object({
   meetingText: z.array(zMeetingTextCount).nullable(),
   // The meeting text could not be searched in time (the org holds too much of it for one search): the other rows are still here (#2594).
   meetingTextSkipped: z.boolean(),
+  // Note attachments still awaiting text extraction (#5127): their extracted text could not be searched yet.
+  // Present only when at least one pending attachment exists in the caller's scope (`private` is null for an admin).
+  pendingNoteAttachments: z.object({ shared: z.number().int(), private: z.number().int().nullable() }).optional(),
   // A column had more matching rows than the finder returns.
   truncated: z.boolean(),
 });

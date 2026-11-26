@@ -1121,9 +1121,108 @@ async function findPersonalData(
   probe: Probe,
   privateCounts: boolean,
   documentedPartyIds: readonly string[] = [],
+  options: { includePendingNoteAttachments?: boolean } = {},
 ): Promise<PersonalDataResult> {
+  const includePendingNoteAttachments = options.includePendingNoteAttachments ?? true;
   const matches: PersonalDataResult['matches'] = [];
   let truncated = false;
+  let pendingSharedAttachments = 0;
+  let privateItems: PersonalDataResult['privateItems'] = null;
+  let pendingPrivateAttachments: number | null = null;
+  type AttachmentColSpec = {
+    key: string;
+    entry: PersonalDataColumn;
+    schema: string;
+    table: string;
+    match: RawBuilder<unknown>;
+    shared: RawBuilder<unknown>;
+    rowExpr: RawBuilder<unknown>;
+  };
+  const attachmentSpecs: AttachmentColSpec[] = [];
+  let attachmentExecuted = false;
+  const runAttachmentSnapshot = async () => {
+    if (!includePendingNoteAttachments || attachmentExecuted) return;
+    attachmentExecuted = true;
+    // Read shared attachment matches (each capped at 201 rows before JSONB projection, streamed without AS MATERIALIZED),
+    // shared/private pending counts, and (for owners) private_matches() in one MVCC snapshot so concurrent worker extraction
+    // or note visibility flips cannot emit contradictory pending warnings and match counts (#5127).
+    const ctes: RawBuilder<unknown>[] = attachmentSpecs.map((spec, i) => {
+      const cteName = sql.raw(`c_${i}`);
+      return sql`${cteName} AS (
+        SELECT ${spec.rowExpr} AS row
+          FROM ${sql.table(`${spec.schema}.${spec.table}`)} AS t
+         WHERE t.org_id = ${orgId}::uuid AND ${spec.match} ${spec.shared}
+         LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}
+      )`;
+    });
+    ctes.push(sql`shared_pending AS (
+      SELECT pg_catalog.count(*)::text AS n
+        FROM ludy_notes.attachment a
+        JOIN ludy_notes.note n ON n.org_id = a.org_id AND n.id = a.note_id
+       WHERE a.org_id = ${orgId}::uuid
+         AND n.visibility = 'org'
+         AND a.extract_status = 'pending'
+    )`);
+    if (privateCounts) {
+      ctes.push(sql`private_pending AS (
+        SELECT ludy_notes.private_pending_attachment_count()::text AS n
+      )`);
+      ctes.push(sql`private_matched AS (
+        SELECT m.author_user_id, m.notes::text AS notes, m.todos::text AS todos
+          FROM ludy_notes.private_matches(${probe.kind}, ${probeValue(probe)}) m
+      )`);
+    }
+    const branches: RawBuilder<unknown>[] = [
+      privateCounts
+        ? sql`SELECT 'counts'::text AS row_kind, NULL::text AS col_key, sp.n AS pending_shared, pp.n AS pending_private, NULL::jsonb AS row, NULL::uuid AS author_user_id, NULL::text AS notes, NULL::text AS todos FROM shared_pending sp, private_pending pp`
+        : sql`SELECT 'counts'::text AS row_kind, NULL::text AS col_key, sp.n AS pending_shared, NULL::text AS pending_private, NULL::jsonb AS row, NULL::uuid AS author_user_id, NULL::text AS notes, NULL::text AS todos FROM shared_pending sp`,
+      ...attachmentSpecs.map((spec, i) => {
+        const cteName = sql.raw(`c_${i}`);
+        return sql`SELECT 'match'::text AS row_kind, ${spec.key}::text AS col_key, NULL::text AS pending_shared, NULL::text AS pending_private, ${cteName}.row AS row, NULL::uuid AS author_user_id, NULL::text AS notes, NULL::text AS todos FROM ${cteName}`;
+      }),
+      ...(privateCounts
+        ? [
+            sql`SELECT 'private_match'::text AS row_kind, NULL::text AS col_key, NULL::text AS pending_shared, NULL::text AS pending_private, NULL::jsonb AS row, pm.author_user_id, pm.notes, pm.todos FROM private_matched pm`,
+          ]
+        : []),
+    ];
+    const { rows } = await sql<{
+      row_kind: 'counts' | 'match' | 'private_match';
+      col_key: string | null;
+      pending_shared: string | null;
+      pending_private: string | null;
+      row: Record<string, unknown> | null;
+      author_user_id: string | null;
+      notes: string | null;
+      todos: string | null;
+    }>`WITH ${sql.join(ctes, sql`, `)} ${sql.join(branches, sql` UNION ALL `)}`.execute(trx);
+    const countsRow = rows.find((r) => r.row_kind === 'counts');
+    pendingSharedAttachments = Number(countsRow?.pending_shared ?? 0);
+    if (privateCounts) pendingPrivateAttachments = Number(countsRow?.pending_private ?? 0);
+    const byCol = new Map<string, Record<string, unknown>[]>();
+    for (const r of rows) {
+      if (r.row_kind !== 'match' || r.col_key === null || r.row === null) continue;
+      const list = byCol.get(r.col_key);
+      if (list) list.push(r.row);
+      else byCol.set(r.col_key, [r.row]);
+    }
+    for (const spec of attachmentSpecs) {
+      const matchedRows = byCol.get(spec.key) ?? [];
+      if (matchedRows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
+      for (const row of matchedRows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
+        const { handling, reason } = rowHandling(spec.entry, row);
+        if (!searchable(handling)) continue;
+        matches.push({ column: spec.key, handling, reason, rowId: typeof row.id === 'string' ? row.id : null, row });
+      }
+    }
+    if (privateCounts) {
+      privateItems = rows.flatMap((r) =>
+        r.row_kind === 'private_match' && r.author_user_id !== null
+          ? [{ authorUserId: r.author_user_id, notes: Number(r.notes), todos: Number(r.todos) }]
+          : [],
+      );
+    }
+  };
   // Meeting text: the ids of the rows that hold the value and that the actor reads, found by the text first (row security would check every row's meeting before testing
   // the text, which costs seconds on a large transcript); the rows are then read by id, still under row security.
   const meetingRows = new Map<string, string[]>();
@@ -1185,6 +1284,10 @@ async function findPersonalData(
                AND e.sealed_file_id IS NULL
           )`
         : sql<boolean>`false`;
+    if (includePendingNoteAttachments && schema === 'ludy_notes' && table === 'attachment') {
+      attachmentSpecs.push({ key, entry, schema, table, match, shared, rowExpr });
+      continue;
+    }
     const { rows } = await sql<{ row: Record<string, unknown>; is_unsealed: boolean }>`
       SELECT ${rowExpr} AS row, ${isUnsealedExpr} AS is_unsealed
         FROM ${sql.table(`${schema}.${table}`)} AS t
@@ -1204,6 +1307,7 @@ async function findPersonalData(
       matches.push({ column: key, handling, reason, rowId: typeof row.id === 'string' ? row.id : null, row });
     }
   }
+  await runAttachmentSnapshot();
   // Project weekly status mails (#2609): summary and subject are free text typed by a manager or seeded by AI; search both for personal data.
   const weeklyMails = await sql<{ id: string; org_id: string; source: string; source_id: string | null; status: string; subject: string | null; created_at: Date }>`
     SELECT m.id, m.org_id, m.source, m.source_id, m.status, m.subject, m.created_at
@@ -1265,12 +1369,6 @@ async function findPersonalData(
       row: r.row,
     });
   }
-  const privateItems = privateCounts
-    ? (
-        await sql<{ author_user_id: string; notes: string; todos: string }>`
-          SELECT author_user_id, notes, todos FROM ludy_notes.private_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx)
-      ).rows.map((p) => ({ authorUserId: p.author_user_id, notes: Number(p.notes), todos: Number(p.todos) }))
-    : null;
   // Meeting text the owner cannot read (an attendees-only meeting, a draft that is not theirs): counted per recorder, never listed (#2594, ADR-0047 points 2 and 7).
   let meetingText: PersonalDataResult['meetingText'] = null;
   if (privateCounts) {
@@ -1296,7 +1394,25 @@ async function findPersonalData(
       else meetingText.push({ recorderUserId: n.recorder_user_id, meetings: 0, lines: 0, results: 0, items: 0, titles: 0, notes: Number(n.notes) });
     }
   }
-  return { kind: probe.kind === 'email' ? 'email' : 'digits', matches, privateItems, meetingText, meetingTextSkipped, truncated };
+  if (privateCounts && privateItems === null) {
+    privateItems = (
+      await sql<{ author_user_id: string; notes: string; todos: string }>`
+        SELECT author_user_id, notes, todos FROM ludy_notes.private_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx)
+    ).rows.map((p) => ({ authorUserId: p.author_user_id, notes: Number(p.notes), todos: Number(p.todos) }));
+  }
+  const hasPendingNoteAttachments =
+    pendingSharedAttachments > 0 || (pendingPrivateAttachments !== null && pendingPrivateAttachments > 0);
+  return {
+    kind: probe.kind === 'email' ? 'email' : 'digits',
+    matches,
+    privateItems,
+    meetingText,
+    meetingTextSkipped,
+    ...(hasPendingNoteAttachments
+      ? { pendingNoteAttachments: { shared: pendingSharedAttachments, private: pendingPrivateAttachments } }
+      : {}),
+    truncated,
+  };
 }
 
 // The finder (#923), a command so that every search leaves an audit row (#1678 review): the counts of private items are
@@ -1324,6 +1440,10 @@ export const personalDataFind = defineCommand({
       meeting_text: result.meetingText === null
         ? null
         : { recorders: result.meetingText.length, meetings: result.meetingText.reduce((n, m) => n + m.meetings, 0), lines: result.meetingText.reduce((n, m) => n + m.lines, 0) },
+      // Never write pending_note_attachments.private (or depend on private existence) in audit_event, which admins can list/export (#5127).
+      ...(result.pendingNoteAttachments && result.pendingNoteAttachments.shared > 0
+        ? { pending_shared_note_attachments: result.pendingNoteAttachments.shared }
+        : {}),
     });
     return result;
   },
@@ -1335,6 +1455,10 @@ export const PENDING_NOTE_ATTACHMENT_REASON =
   'Text extraction is still pending for shared note attachments, so their extracted text could not be searched yet: search or erase again once extraction completes';
 export const PENDING_PRIVATE_NOTE_ATTACHMENT_REASON =
   'Text extraction is still pending for private note attachments, so their extracted text could not be searched yet (no filenames or notes are disclosed): run find, notify, and erase again once extraction completes';
+export const FAILED_NOTE_ATTACHMENT_REASON =
+  'Text extraction failed for shared note attachments, so their extracted text could not be searched (filenames were still scanned): inspect or remove those attachments manually if they may contain personal data';
+export const FAILED_PRIVATE_NOTE_ATTACHMENT_REASON =
+  'Text extraction failed for private note attachments, so their extracted text could not be searched (filenames were still scanned; no filenames or notes are disclosed): ask note owners to review their failed attachments if needed';
 export const UNTOLD_MEETING_REASON =
   'Text of a meeting the owner cannot read, where no notice covers its recorder and its text as it is now (not sent, the recorder not told 24 hours ago, or the text changed since): send the notice, wait 24 hours, then erase again; the recorder or an owner can also delete the meeting';
 // The statuses of a mail that has left Ludy or may have (the mail table's own set): handed to the worker (sending), outcome unknown (ambiguous), or sent on to its recipient (sent,
@@ -1895,8 +2019,14 @@ export const personalDataErase = defineCommand({
     add('ludy_notes.notebook.name', notebooks.filter((b) => b.name).length);
     add('ludy_notes.notebook.stack_name', notebooks.filter((b) => b.stack_name).length);
     // Lock every shared note whose text, snapshot, or attachment names the value first, in id order (#3562, #5035).
-    // Including attachments here ensures personalDataErase locks note -> attachment in the same order as
-    // noteAttachmentDelete, preventing AB-BA deadlocks when only a shared attachment matches.
+    // Keep this two-step explicit query separate from the later DELETE FROM ludy_notes.attachment (#5127):
+    // 1) Locking every matched note upfront in ORDER BY n.id BEFORE updating note/note_template or deleting
+    //    note_version/attachment guarantees canonical notes.erase -> notebook[id ASC] -> note[id ASC] -> attachment
+    //    lock acquisition order (matching noteAttachmentDelete and avoiding AB-BA deadlocks when only a snapshot or
+    //    attachment matches).
+    // 2) Folding this into an un-materialized CTE inside DELETE FROM attachment would let PostgreSQL pipeline/reorder
+    //    joins and lock attachment rows before every parent note is locked, and would skip notes matched only via
+    //    note_version/attachment prior to the note/note_version steps above.
     const { rows: lockedSharedNotes } = await sql<{ id: string }>`
       SELECT n.id FROM ludy_notes.note n
        WHERE n.org_id = ${ctx.orgId}::uuid AND n.visibility = 'org'
@@ -1936,7 +2066,7 @@ export const personalDataErase = defineCommand({
              title = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), ERASED_TEXT_MARK)}, ${NOTE_TITLE_MAX}::int),
              body = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.body'), ERASED_TEXT_MARK)}, ${NOTE_BODY_MAX}::int),
              tags = CASE WHEN ${stillAcross} THEN '{}'::text[] ELSE ${keptTags} END,
-             revision = t.revision + 1, updated_at = ${ctx.now}
+             revision = t.revision + 1, updated_at = GREATEST(t.updated_at, pg_catalog.clock_timestamp(), ${ctx.now})
         FROM ludy_notes.note_template o
        WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
          AND (${mentions('t.name')} OR ${mentions('t.title')} OR ${mentions('t.body')} OR ${freeTextMatch(probe, tagsOf('t'))})
@@ -1975,20 +2105,25 @@ export const personalDataErase = defineCommand({
         .where('id', 'in', touchedSharedNoteIds)
         .execute();
     }
-    const { rows: pendingSharedAttRows } = await sql<{ pending: string }>`
-      SELECT pg_catalog.count(*)::text AS pending
+    const { rows: incompleteSharedAttRows } = await sql<{ pending: string; failed: string }>`
+      SELECT pg_catalog.count(*) FILTER (WHERE a.extract_status = 'pending')::text AS pending,
+             pg_catalog.count(*) FILTER (WHERE a.extract_status = 'failed')::text AS failed
         FROM ludy_notes.attachment a
         JOIN ludy_notes.note n ON n.org_id = a.org_id AND n.id = a.note_id
        WHERE a.org_id = ${ctx.orgId}::uuid
          AND n.visibility = 'org'
-         AND a.extract_status = 'pending'`.execute(ctx.trx);
-    const pendingSharedAttachments = Number(pendingSharedAttRows[0]?.pending ?? 0);
+         AND a.extract_status IN ('pending', 'failed')`.execute(ctx.trx);
+    const pendingSharedAttachments = Number(incompleteSharedAttRows[0]?.pending ?? 0);
+    const failedSharedAttachments = Number(incompleteSharedAttRows[0]?.failed ?? 0);
     const { rows: privateRows } = await sql<{ notes: string; todos: string; untold_notes: string; untold_todos: string; note_ids: string[]; todo_ids: string[] }>`
       SELECT notes, todos, untold_notes, untold_todos, note_ids, todo_ids FROM ludy_notes.private_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
-    // Count still-pending private attachments after private_erase so erased pending rows are not falsely reported in kept[].
+    // Count still-pending and extraction-failed private attachments after private_erase so erased rows are not falsely reported in kept[].
     const { rows: pendingPrivateAttRows } = await sql<{ pending: string }>`
       SELECT ludy_notes.private_pending_attachment_count()::text AS pending`.execute(ctx.trx);
     const pendingPrivateAttachments = Number(pendingPrivateAttRows[0]?.pending ?? 0);
+    const { rows: failedPrivateAttRows } = await sql<{ failed: string }>`
+      SELECT ludy_notes.private_failed_attachment_count()::text AS failed`.execute(ctx.trx);
+    const failedPrivateAttachments = Number(failedPrivateAttRows[0]?.failed ?? 0);
     const sum = (key: 'notes' | 'todos' | 'untold_notes' | 'untold_todos') => privateRows.reduce((n, r) => n + Number(r[key]), 0);
     const privateDeleted = { notes: sum('notes'), todos: sum('todos') };
     const untold = { notes: sum('untold_notes'), todos: sum('untold_todos') };
@@ -2566,8 +2701,11 @@ export const personalDataErase = defineCommand({
       add('ludy_hr.candidate.notes', candidateNoteRows.filter((r) => r.notes).length);
     }
 
-    // What stays, with its reason: the finder's answer after the erasure (the cleared values no longer match).
-    const after = await findPersonalData(ctx.trx, ctx.orgId, probe, false, documentedPartyIds);
+    // What stays, with its reason: the finder's answer after the erasure (the cleared values no longer match);
+    // skip recounting pending note attachments here since erase already queried both pending and failed attachment queues.
+    const after = await findPersonalData(ctx.trx, ctx.orgId, probe, false, documentedPartyIds, {
+      includePendingNoteAttachments: false,
+    });
     // Count all unredacted quote_excerpt rows skipped by shortNumber in one org-scoped aggregate (both readable rows
     // beyond PERSONAL_DATA_ROW_LIMIT and unreadable, expired, or deleted meeting rows omitted by findPersonalData),
     // keeping kept[] accurate and count-only without leaking text or meeting IDs (#4600).
@@ -2690,6 +2828,13 @@ export const personalDataErase = defineCommand({
         reason: PENDING_NOTE_ATTACHMENT_REASON,
       });
     }
+    if (failedSharedAttachments > 0) {
+      kept.set('ludy_notes.attachment.extracted_text.failed', {
+        column: 'ludy_notes.attachment.extracted_text',
+        rows: failedSharedAttachments,
+        reason: FAILED_NOTE_ATTACHMENT_REASON,
+      });
+    }
     if (pendingPrivateAttachments > 0) {
       kept.set('ludy_notes.attachment', {
         column: 'ludy_notes.attachment',
@@ -2697,8 +2842,19 @@ export const personalDataErase = defineCommand({
         reason: PENDING_PRIVATE_NOTE_ATTACHMENT_REASON,
       });
     }
+    if (failedPrivateAttachments > 0) {
+      kept.set('ludy_notes.attachment.failed', {
+        column: 'ludy_notes.attachment',
+        rows: failedPrivateAttachments,
+        reason: FAILED_PRIVATE_NOTE_ATTACHMENT_REASON,
+      });
+    }
     const keptRows = new Map<string, number>();
-    for (const k of kept.values()) keptRows.set(k.column, (keptRows.get(k.column) ?? 0) + k.rows);
+    for (const k of kept.values()) {
+      // Never write private attachment counts (ludy_notes.attachment) to audit_event, which admins can list/export (#5127).
+      if (k.column === 'ludy_notes.attachment') continue;
+      keptRows.set(k.column, (keptRows.get(k.column) ?? 0) + k.rows);
+    }
     const result: PersonalDataErasure = {
       erased: [...erased].map(([column, rows]) => ({ column, rows })),
       ...((noteErase ?? []).length > 0 ? { meetingNotes: noteErase ?? [] } : {}),
