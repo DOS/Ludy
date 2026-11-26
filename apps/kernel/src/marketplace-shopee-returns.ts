@@ -61,6 +61,7 @@ export interface ShopeeReturn {
   orderNo: string;
   status: string;
   solution: number;
+  updatedAt: number;
   items: ShopeeReturnItem[];
 }
 
@@ -81,7 +82,7 @@ function parseItems(raw: unknown): ShopeeReturnItem[] {
   });
 }
 
-function parseReturn(entry: unknown, fields: readonly string[], latestMs: number): { value: ShopeeReturn; record: Record<string, unknown> } {
+function parseReturn(entry: unknown, fields: readonly string[], latestMs: number): { value: Omit<ShopeeReturn, 'updatedAt'> & { updatedAt: number | null }; record: Record<string, unknown> } {
   const r = pickAllowed(entry, fields as readonly (typeof LIST_FIELDS)[number][]) as Record<string, unknown> | null;
   const returnSn = marketplaceIdentifier(r?.return_sn, 40);
   const orderNo = marketplaceIdentifier(r?.order_sn, 40);
@@ -90,11 +91,13 @@ function parseReturn(entry: unknown, fields: readonly string[], latestMs: number
   if (!r || returnSn === null || orderNo === null || !/^[A-Za-z0-9]+$/.test(returnSn) || !/^[A-Za-z0-9]+$/.test(orderNo)) throw notRecognized();
   // A status or a solution word that is not in the closed tables refuses the page: nothing is guessed about stock.
   if (!Object.hasOwn(SHOPEE_RETURN_STATUS, status) || (solution !== RETURN_AND_REFUND && solution !== REFUND_ONLY)) throw notRecognized();
+  let updatedAt: number | null = null;
   if (r.update_time !== undefined) {
     const t = r.update_time;
     if (typeof t !== 'number' || !Number.isSafeInteger(t) || t < 1_000_000_000 || t * 1000 > latestMs) throw notRecognized();
+    updatedAt = t * 1000;
   }
-  return { value: { returnSn, orderNo, status, solution, items: parseItems(r.item) }, record: r };
+  return { value: { returnSn, orderNo, status, solution, updatedAt, items: parseItems(r.item) }, record: r };
 }
 
 export interface ReturnsWindow {
@@ -119,7 +122,12 @@ async function readPage(call: ShopeeCaller, credential: ShopeeCredential, fromMs
     return { more: false, returns: [] };
   }
   if (!Array.isArray(list) || list.length > PAGE_SIZE) throw notRecognized();
-  return { more: data.more, returns: list.map((entry) => parseReturn(entry, LIST_FIELDS, nowMs + FUTURE_SLACK_MS).value) };
+  const returns = list.map((entry): ShopeeReturn => {
+    const { value } = parseReturn(entry, LIST_FIELDS, nowMs + FUTURE_SLACK_MS);
+    if (value.updatedAt === null) throw notRecognized();
+    return { ...value, updatedAt: value.updatedAt };
+  });
+  return { more: data.more, returns };
 }
 
 // The returns whose update time is in [fromMs, toMs]: every page up to MAX_PAGES (the list is not promised in any order, so a window is read whole or not at all). Offset paging has no snapshot: a return

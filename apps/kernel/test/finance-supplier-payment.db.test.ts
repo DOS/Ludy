@@ -386,4 +386,79 @@ suite('payments to a supplier (#3113 S2)', () => {
     expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }))).toBe('SUPPLIER_PAYMENT_WAITING');
     expect(JSON.stringify(waiting)).not.toContain('012345678901');
   });
+
+  it('refuses an owner insert naming an unreadable cross-org proposal while keeping staff count-rule writes and normal approval flows (#3770)', async () => {
+    const o = await org(true);
+    await addAccount(o);
+    const doc = await invoice(o);
+    const account = (
+      await rows<{ id: string; number_hash: string; hash_key_id: string }>(
+        "SELECT id, number_hash, hash_key_id FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND status = 'active'",
+        [o.orgId],
+      )
+    )[0];
+    expect(account).toBeDefined();
+
+    // A second org with a real approved finance.supplier_payment.record proposal authored by o.owner;
+    // from o's context, o.owner cannot read o2's proposal.
+    const o2 = await org(false);
+    await addAccount(o2);
+    const doc2 = await invoice(o2);
+    const account2 = (
+      await rows<{ id: string; number_hash: string; hash_key_id: string }>(
+        "SELECT id, number_hash, hash_key_id FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND status = 'active'",
+        [o2.orgId],
+      )
+    )[0];
+    const otherOrgProposal = randomUUID();
+    await unguarded((c) =>
+      c.query(
+        `INSERT INTO ludy_kernel.proposal (org_id, id, kind, command, status, title, payload, authors, eligible_approvers)
+         VALUES ($1, $2, 'finance.supplier_payment', 'finance.supplier_payment.record', 'approved', 'Chi nhà cung cấp', '{}'::jsonb, $3::jsonb, $4::uuid[])`,
+        [o2.orgId, otherOrgProposal, JSON.stringify([{ type: 'user', id: o.owner }]), [o2.owner]],
+      ),
+    );
+
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await enterUser(c, o.owner, o.orgId);
+      await expect(
+        c.query(
+          `INSERT INTO ludy_finance.supplier_payment (org_id, party_id, purchase_document_id, amount, currency, bank_account_id, number_hash, hash_key_id, proposal_id, approved_by, approver_step_up_at)
+           VALUES ($1, $2, $3, 110, 'VND', $4, $5, $6, $7, $8, now())`,
+          [o.orgId, o.supplier, doc, account?.id, account?.number_hash, account?.hash_key_id, otherOrgProposal, o.owner],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: 'SUPPLIER_PAYMENT_PROPOSAL' });
+    } finally {
+      await c.query('ROLLBACK').catch(() => undefined);
+      c.release();
+    }
+
+    // Staff inserts without a proposal row keep the count rule alone (2-approver org -> no hold; 1-owner org -> 24h hold).
+    const staffMulti = await rows<{ hold_reason: string | null; payable_after: Date | null }>(
+      `INSERT INTO ludy_finance.supplier_payment (org_id, party_id, purchase_document_id, amount, currency, bank_account_id, number_hash, hash_key_id, proposal_id, approved_by, approver_step_up_at)
+       VALUES ($1, $2, $3, 110, 'VND', $4, $5, $6, $7, $8, now()) RETURNING hold_reason, payable_after`,
+      [o.orgId, o.supplier, doc, account?.id, account?.number_hash, account?.hash_key_id, randomUUID(), o.owner],
+    );
+    expect(staffMulti[0]).toEqual({ hold_reason: null, payable_after: null });
+
+    const staffSingle = await rows<{ hold_reason: string | null; payable_after: Date | null }>(
+      `INSERT INTO ludy_finance.supplier_payment (org_id, party_id, purchase_document_id, amount, currency, bank_account_id, number_hash, hash_key_id, proposal_id, approved_by, approver_step_up_at)
+       VALUES ($1, $2, $3, 110, 'VND', $4, $5, $6, $7, $8, now()) RETURNING hold_reason, payable_after`,
+      [o2.orgId, o2.supplier, doc2, account2?.id, account2?.number_hash, account2?.hash_key_id, randomUUID(), o2.owner],
+    );
+    expect(staffSingle[0]?.hold_reason).toBe('new_account');
+    expect(staffSingle[0]?.payable_after).not.toBeNull();
+
+    // Normal command approval flow records a payment specifically for the newly approved invoice (security invariant lives in apps/kernel/test/invariant/supplier-payment-guard.db.test.ts).
+    const freshDoc = await invoice(o);
+    const { proposalId } = await request(o, freshDoc);
+    await approve(o, proposalId, o.admin as string);
+    const freshRows = await rows<{ status: string; purchase_document_id: string }>(
+      'SELECT status, purchase_document_id FROM ludy_finance.supplier_payment WHERE org_id = $1 AND purchase_document_id = $2',
+      [o.orgId, freshDoc],
+    );
+    expect(freshRows).toEqual([{ status: 'approved', purchase_document_id: freshDoc }]);
+  });
 });
