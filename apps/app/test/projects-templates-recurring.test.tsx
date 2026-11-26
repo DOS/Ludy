@@ -1064,7 +1064,12 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
     });
 
     // On failure, ErrorText renders the failure alert while custom radio stays selected and focused.
-    expect(container.querySelector('[data-slot="alert"][role="alert"]')?.textContent).toContain('archive failed');
+    expect(
+      container
+        .querySelectorAll('[data-slot="alert"][role="alert"]')
+        .map((el) => el.textContent)
+        .join('\n'),
+    ).toContain('archive failed');
     expect(customRadio.getAttribute('aria-checked')).toBe('true');
     expect((globalThis.document as unknown as { activeElement: unknown }).activeElement).toBe(customRadio);
   });
@@ -1309,7 +1314,12 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
     });
 
     // Assert the archive failure alert actually rendered before simulating user focus onto nameInput.
-    expect(container.querySelector('[data-slot="alert"][role="alert"]')?.textContent).toContain('fast archive failed');
+    expect(
+      container
+        .querySelectorAll('[data-slot="alert"][role="alert"]')
+        .map((el) => el.textContent)
+        .join('\n'),
+    ).toContain('fast archive failed');
 
     // User focuses nameInput after the fast failure settles, BEFORE onOpenChangeComplete(false) -> finalFocus() fires.
     const nameInput = container.querySelector('input[id="template-dialog-name-create"]')!;

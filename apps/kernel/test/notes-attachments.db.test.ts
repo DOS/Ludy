@@ -1182,7 +1182,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     // A still-pending private attachment deleted by private_erase (via filename match) must not linger in kept[].
     const privNameEmail = 'private-pending-name@example.com';
     const privNameNote = await createNote(o, o.author, 'private', 'Ghi chú giữ lại');
-    const privNameAtt = await attached(o, o.author, privNameNote, pdf('pending-name'), `${privNameEmail}.pdf`);
+    const privNameAtt = await attached(o, o.author, privNameNote, pdf('pending-name'), `${privNameEmail} ho-so.pdf`);
     await rt.execute<PersonalDataNotice>(
       'kernel.personal_data.notify',
       { value: privNameEmail },
