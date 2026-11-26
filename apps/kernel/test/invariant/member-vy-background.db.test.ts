@@ -506,13 +506,13 @@ function isAllowedBriefingLookupView(input: BriefingLookupViewInput): boolean {
     return false;
   }
   if ((input.taintedViewDeps?.length ?? 0) > 0) return false;
-  if ((input.taintedFnDeps ?? []).some((fn) => fn !== "crove_kernel.ctx_briefing_user_id()")) return false;
+  const taintedFns = input.taintedFnDeps ?? [];
+  if (taintedFns.some((fn) => fn !== "crove_kernel.ctx_briefing_user_id()")) return false;
   const opts = input.reloptions ?? [];
-  const hasInvoker = opts.includes("security_invoker=true");
-  if (!hasInvoker) {
-    if (!opts.includes("security_barrier=true")) return false;
+  if (!opts.includes("security_invoker=true")) return false;
+  if (taintedFns.includes("crove_kernel.ctx_briefing_user_id()") || BRIEFING_HELPER_RE.test(cleanDef)) {
     if (input.hasActiveOrgBindDep !== true) return false;
-    if (!(input.taintedFnDeps ?? []).includes("crove_kernel.ctx_briefing_user_id()")) return false;
+    if (!taintedFns.includes("crove_kernel.ctx_briefing_user_id()")) return false;
     if (!BRIEFING_LOOKUP_ORG_BIND_RE.test(cleanDef) || !BRIEFING_HELPER_RE.test(cleanDef)) return false;
     if (input.activeKernelSchema) {
       const schemaPrefix = `${escapeRe(input.activeKernelSchema)}\\.`;
@@ -1410,7 +1410,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             const viewOk = Boolean(meta.view_def && prettyOk && unprettyOk);
             expect(
               viewOk,
-              `cataloged lookup view ${lookupCanon} must stay clean of forbidden sealed reads/deps and enforce security_barrier + org/briefing binding`,
+              `cataloged lookup view ${lookupCanon} must set security_invoker=true, enforce org/briefing binding when using ctx_briefing_user_id, and stay clean of forbidden sealed reads/deps`,
             ).toBe(true);
             if (viewOk) allowedLookupViews.push(lookupCanon);
           } else {
@@ -1556,6 +1556,210 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     });
   });
 
+  async function withSeededBriefingMail<T>(fn: (mailId: string) => Promise<T>): Promise<T> {
+    const mailId = randomUUID();
+    const meetingsSchema = dbIds ? dbIds.schema("meetings") : "crove_meetings";
+    await admin(async (c) => {
+      const emailRow = (
+        await c.query<{ email: string }>(
+          `SELECT lower(email) AS email FROM crove_kernel.user_account WHERE id = $1`,
+          [users.vyUser],
+        )
+      ).rows[0];
+      if (!emailRow?.email) throw new Error("vyUser email not found");
+      const noticeColRes = await c.query<{ column_name: string }>(
+        `SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema = $1 AND table_name = 'morning_notice'`,
+        [meetingsSchema],
+      );
+      const noticeColsSet = new Set(noticeColRes.rows.map((r) => r.column_name));
+      const cols = ["org_id", "user_id", "send_minute", "time_zone", "language"];
+      const placeholders = ["$1", "$2", "420", "'Asia/Ho_Chi_Minh'", "'vi'"];
+      const updates = ["send_minute = EXCLUDED.send_minute", "time_zone = EXCLUDED.time_zone"];
+      const params: unknown[] = [orgId, users.vyUser];
+      if (noticeColsSet.has("enabled")) {
+        cols.push("enabled");
+        params.push(true);
+        placeholders.push(`$${params.length}`);
+        updates.push("enabled = EXCLUDED.enabled");
+      }
+      if (noticeColsSet.has("content")) {
+        cols.push("content");
+        params.push("full");
+        placeholders.push(`$${params.length}`);
+        updates.push("content = EXCLUDED.content");
+      }
+      await c.query(
+        `INSERT INTO crove_meetings.morning_notice (${cols.join(", ")})
+         VALUES (${placeholders.join(", ")})
+         ON CONFLICT (org_id, user_id) DO UPDATE SET ${updates.join(", ")}`,
+        params,
+      );
+      const payload = '{"lang":"vi","org":"Vy nen","path":"/o/vy/meetings","day":"2026-11-27"}';
+      await c.query(
+        `INSERT INTO crove_kernel.mail_message
+           (org_id, id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status, created_by, created_at)
+         VALUES
+           ($1, $2, 'transactional', 'meetings.morning', $3, 'meetings.morning', $4, crove_kernel.mail_address_hash($4),
+            'Daily morning briefing', $5::jsonb, $6, 'queued', NULL, now())`,
+        [orgId, mailId, users.vyUser, emailRow.email, payload, `<${mailId}@ludy.test>`],
+      );
+    });
+    try {
+      return await fn(mailId);
+    } finally {
+      await admin(async (c) => {
+        await c.query(`DELETE FROM crove_kernel.mail_message WHERE org_id = $1 AND id = $2`, [orgId, mailId]);
+        await c.query(`DELETE FROM crove_meetings.morning_notice WHERE org_id = $1 AND user_id = $2`, [
+          orgId,
+          users.vyUser,
+        ]);
+      });
+    }
+  }
+
+  it("pins crove_kernel.enter_member_briefing_context when it exists: worker login alone, pinned search path, no user, R0, tainted, member_briefing kind", async () => {
+    const entry = "crove_kernel.enter_member_briefing_context(uuid,uuid,uuid)";
+    const found = await admin((c) => c.query<{ ok: boolean }>(`SELECT to_regprocedure('${entry}') IS NOT NULL AS ok`));
+    if (found.rows[0]?.ok !== true) return;
+    await admin(async (c) => {
+      const { rows: logins, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, entry, ["crove_worker"], "brand");
+      expect(logins.length).toBeGreaterThan(0);
+      expect(logins.some((r) => r.rolname === activeAllowed[0] && r.ok), `active role ${activeAllowed[0]} execute the briefing entry`).toBe(true);
+      for (const { rolname, ok, expected } of logins) {
+        expect(ok, `${rolname} execute the briefing entry`).toBe(expected);
+      }
+      expect((await c.query<{ ok: boolean }>(`SELECT has_function_privilege('public', '${entry}', 'EXECUTE') AS ok`)).rows[0]?.ok).toBe(false);
+      const row = (
+        await c.query<{ proconfig: string[] | null; secdef: boolean; def: string }>(
+          `SELECT proconfig, prosecdef AS secdef, pg_get_functiondef(oid) AS def FROM pg_proc WHERE oid = '${entry}'::regprocedure`,
+        )
+      ).rows[0];
+      expect(row?.secdef).toBe(true);
+      expect(row?.proconfig, "the briefing entry's settings").toEqual(["search_path=pg_catalog, pg_temp"]);
+      for (const part of [
+        /'actor',\s*'agent'/,
+        /'user',\s*NULL/,
+        /'max_risk',\s*'R0'/,
+        /'tainted',\s*true/,
+        /'kind',\s*'member_briefing'/,
+        /'member',/,
+      ]) {
+        expect(row?.def, String(part)).toMatch(part);
+      }
+      expect(row?.def).not.toMatch(/'max_risk',\s*'R[123]'/);
+    });
+    await withSeededBriefingMail(async (mailId) => {
+      const sealed = await inContext(
+        workerUrl,
+        (c) =>
+          c.query("SELECT crove_kernel.enter_member_briefing_context($1::uuid, $2::uuid, $3::uuid)", [
+            orgId,
+            users.vyUser,
+            mailId,
+          ]),
+        sealOf,
+      );
+      expect(sealed, "the sealed context of the briefing entry").toMatchObject({
+        actor: "agent",
+        user: null,
+        max_risk: "R0",
+        tainted: true,
+        kind: "member_briefing",
+        member: users.vyUser,
+        org: orgId,
+      });
+    });
+  });
+
+  it("pins crove_kernel.ctx_briefing_user_id when it exists: invoker stable with pinned search path, parity grants, and answers member_briefing alone", async () => {
+    const helper = "crove_kernel.ctx_briefing_user_id()";
+    const found = await admin((c) => c.query<{ ok: boolean }>(`SELECT to_regprocedure('${helper}') IS NOT NULL AS ok`));
+    if (found.rows[0]?.ok !== true) return;
+    await admin(async (c) => {
+      const row = (
+        await c.query<{ proconfig: string[] | null; secdef: boolean; provolatile: string; def: string }>(
+          `SELECT proconfig, prosecdef AS secdef, provolatile::text AS provolatile, pg_get_functiondef(oid) AS def
+           FROM pg_proc WHERE oid = '${helper}'::regprocedure`,
+        )
+      ).rows[0];
+      expect(row?.secdef, "ctx_briefing_user_id must not be SECURITY DEFINER").toBe(false);
+      expect(row?.provolatile, "ctx_briefing_user_id must be STABLE").toBe("s");
+      expect(row?.proconfig, "ctx_briefing_user_id settings").toEqual(["search_path=pg_catalog, pg_temp"]);
+      expect((await c.query<{ ok: boolean }>(`SELECT has_function_privilege('public', '${helper}', 'EXECUTE') AS ok`)).rows[0]?.ok).toBe(false);
+      const rolePrivs = await c.query<{ rolname: string; briefing_ok: boolean; acting_ok: boolean }>(
+        `SELECT r.rolname,
+                pg_catalog.has_function_privilege(r.oid, to_regprocedure('crove_kernel.ctx_briefing_user_id()'), 'EXECUTE') AS briefing_ok,
+                pg_catalog.has_function_privilege(r.oid, to_regprocedure('crove_kernel.ctx_acting_user_id()'), 'EXECUTE') AS acting_ok
+         FROM pg_catalog.pg_roles r
+         WHERE NOT r.rolsuper
+           AND r.rolname NOT LIKE 'pg\\_%'
+           AND r.rolname NOT LIKE '%\\_test\\_%'
+           AND r.rolname NOT LIKE 'crove\\_test%'
+           AND r.rolname NOT LIKE 'ludy\\_test%'
+           AND r.rolname <> 'ludy_migrate_test'
+         ORDER BY 1`,
+      );
+      expect(rolePrivs.rows.length).toBeGreaterThan(0);
+      for (const priv of rolePrivs.rows) {
+        expect(priv.briefing_ok, `${priv.rolname} EXECUTE parity with ctx_acting_user_id`).toBe(priv.acting_ok);
+      }
+      for (const part of [/ctx_verified/, /'member_briefing'/, /'member'/]) {
+        expect(row?.def, String(part)).toMatch(part);
+      }
+      for (const forbidden of [/ctx_user_id/, /'member_vy'/, /'mcp_/]) {
+        expect(row?.def, String(forbidden)).not.toMatch(forbidden);
+      }
+    });
+    const briefingUser = (url: string, enter: (c: pg.Client) => Promise<unknown>) =>
+      inContext(
+        url,
+        enter,
+        async (c) =>
+          (
+            await c.query<{ u: string | null }>("SELECT crove_kernel.ctx_briefing_user_id() AS u")
+          ).rows[0]?.u ?? null,
+      );
+    expect(await briefingUser(appUrl, userEnter(users.vyUser)), "a user context").toBeNull();
+    expect(await briefingUser(workerUrl, systemEnter), "the system context").toBeNull();
+    expect(await briefingUser(workerUrl, agentEnter), "an org-chart agent context").toBeNull();
+    const run = await liveRun("vyUser");
+    expect(await briefingUser(workerUrl, memberEnter(run.agentId, run.runId)), "a member_vy context").toBeNull();
+    expect(await briefingUser(appUrl, async () => {}), "no context").toBeNull();
+    const entryExists =
+      (
+        await admin((c) =>
+          c.query<{ ok: boolean }>(
+            `SELECT to_regprocedure('crove_kernel.enter_member_briefing_context(uuid,uuid,uuid)') IS NOT NULL AS ok`,
+          ),
+        )
+      ).rows[0]?.ok === true;
+    if (entryExists) {
+      await withSeededBriefingMail(async (mailId) => {
+        const res = await inContext(
+          workerUrl,
+          (c) =>
+            c.query("SELECT crove_kernel.enter_member_briefing_context($1::uuid, $2::uuid, $3::uuid)", [
+              orgId,
+              users.vyUser,
+              mailId,
+            ]),
+          async (c) =>
+            (
+              await c.query<{ briefing_user: string | null; acting_user: string | null }>(
+                "SELECT crove_kernel.ctx_briefing_user_id() AS briefing_user, crove_kernel.ctx_acting_user_id() AS acting_user",
+              )
+            ).rows[0],
+        );
+        expect(res, "ctx_briefing_user_id vs ctx_acting_user_id inside member_briefing").toEqual({
+          briefing_user: users.vyUser,
+          acting_user: null,
+        });
+      });
+    }
+  });
+
   it("pins the functions that touch the context's key, its seal or its settings: only the writer and the verifier", async () => {
     const { rows } = await admin((c) =>
       c.query<{ n: string }>(
@@ -1664,8 +1868,21 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       );
       expect([p.cmd, p.perm], `${p.t}.${p.n}: exact command and restrictive flag`).toEqual([entry.cmd, entry.perm]);
     }
-    // The named briefing-closed policies, when they exist, read only the exact 'member_briefing' kind exclusion via ctx_verified() ->> 'kind' IS DISTINCT FROM 'member_briefing'.
-    for (const p of found.policies.filter((x) => BRIEFING_SEALED_CLOSED_POLICIES.some((entry) => entry.t === x.t && entry.n === x.n))) {
+    if (briefing.entry.length > 0 || briefing.helper.length > 0) {
+      expect(briefing.entry.length, "enter_member_briefing_context must exist when ctx_briefing_user_id exists").toBe(1);
+      expect(briefing.helper.length, "ctx_briefing_user_id must exist when enter_member_briefing_context exists").toBe(1);
+    }
+    // The named briefing-closed policies, when they exist (and across all pinned tables once briefing primitives exist), read only the exact 'member_briefing' kind exclusion via ctx_verified() ->> 'kind' IS DISTINCT FROM 'member_briefing'.
+    const briefingClosedPolicies = found.policies.filter((x) =>
+      BRIEFING_SEALED_CLOSED_POLICIES.some((entry) => entry.t === x.t && entry.n === x.n),
+    );
+    if (briefing.entry.length > 0 || briefing.helper.length > 0) {
+      expect(
+        briefingClosedPolicies.map((p) => `${p.t}.${p.n}`).sort(),
+        "every BRIEFING_SEALED_CLOSED_POLICIES table must enforce briefing_sealed_closed once member_briefing exists",
+      ).toEqual(BRIEFING_SEALED_CLOSED_POLICIES.map((e) => `${e.t}.${e.n}`).sort());
+    }
+    for (const p of briefingClosedPolicies) {
       const entry = BRIEFING_SEALED_CLOSED_POLICIES.find((e) => e.t === p.t && e.n === p.n)!;
       expect([...p.text.matchAll(BRIEFING_SEALED_CLOSED)].length, `${p.t}.${p.n}: expected briefing_sealed_closed checks`).toBe(entry.expectedCount);
       expect([...p.rawText.matchAll(activeBriefingSealedClosed)].length, `${p.t}.${p.n}: uses active kernel schema ${activeKernelSchema}`).toBe(
@@ -2038,14 +2255,14 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     };
     expect(readsSealedMember([briefingViewPolicy], briefingTainted, briefingAllowed)).toHaveLength(1);
     expect(hasForbiddenSealedRead(briefingViewPolicy, new Set(), briefingTainted, briefingAllowed)).toBe(true);
-    // Lookup view audit rejects sealed-context escapes, tainted deps, missing barrier/binding/pg_depend, and nonkernel shadows while admitting clean barrier/invoker views.
+    // Lookup view audit requires security_invoker=true, rejects sealed-context escapes, tainted deps, missing binding/pg_depend, and nonkernel shadows while admitting clean invoker views.
     for (const [label, input] of [
       [
-        "crove barrier direct",
+        "crove invoker+barrier direct",
         {
           viewDef:
             "SELECT tm.org_id, tm.user_id, u.display_name FROM tenant_member tm WHERE tm.org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
           taintedViewDeps: [],
           taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
           hasActiveOrgBindDep: true,
@@ -2053,11 +2270,11 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         },
       ],
       [
-        "ludy barrier direct",
+        "ludy invoker+barrier direct",
         {
           viewDef:
             "SELECT tm.org_id, tm.user_id, u.display_name FROM tenant_member tm WHERE tm.org_id = ludy_kernel.ctx_org_id() AND ludy_kernel.ctx_briefing_user_id() IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
           taintedViewDeps: [],
           taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
           hasActiveOrgBindDep: true,
@@ -2065,11 +2282,11 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         },
       ],
       [
-        "crove barrier initPlan",
+        "crove invoker+barrier initPlan",
         {
           viewDef:
             "SELECT tm.org_id, tm.user_id, u.display_name FROM tenant_member tm WHERE tm.org_id = ( SELECT crove_kernel.ctx_org_id() AS ctx_org_id) AND ( SELECT crove_kernel.ctx_briefing_user_id() AS ctx_briefing_user_id) IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
           taintedViewDeps: [],
           taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
           hasActiveOrgBindDep: true,
@@ -2077,11 +2294,11 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         },
       ],
       [
-        "ludy barrier initPlan",
+        "ludy invoker+barrier initPlan",
         {
           viewDef:
             "SELECT tm.org_id, tm.user_id, u.display_name FROM tenant_member tm WHERE tm.org_id = ( SELECT ludy_kernel.ctx_org_id() AS ctx_org_id) AND ( SELECT ludy_kernel.ctx_briefing_user_id() AS ctx_briefing_user_id) IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
           taintedViewDeps: [],
           taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
           hasActiveOrgBindDep: true,
@@ -2102,20 +2319,30 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     ] as const) {
       expect(isAllowedBriefingLookupView(input), label).toBe(true);
     }
-    const validBarrierDeps = {
+    const validInvokerDeps = {
       taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()"],
       hasActiveOrgBindDep: true,
       activeKernelSchema: "crove_kernel",
     };
     for (const [label, input] of [
       [
-        "barrier view reading ctx_verified",
+        "security_barrier=true without security_invoker=true (valid bindings and pg_depend)",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef:
-            "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND (crove_kernel.ctx_verified() ->> 'kind') = 'user'",
+            "SELECT tm.org_id, tm.user_id, u.display_name FROM tenant_member tm WHERE tm.org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
           reloptions: ["security_barrier=true"],
-          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()", "crove_kernel.ctx_verified()"],
+        },
+      ],
+      [
+        "security_barrier=true without security_invoker=true (no sealed deps)",
+        {
+          viewDef: "SELECT org_id, user_id, display_name FROM crove_kernel.member_display_name",
+          reloptions: ["security_barrier=true"],
+          taintedViewDeps: [],
+          taintedFnDeps: [],
+          hasActiveOrgBindDep: false,
+          activeKernelSchema: "crove_kernel",
         },
       ],
       [
@@ -2128,172 +2355,172 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         },
       ],
       [
-        "barrier view reading ctx_acting_user_id",
+        "invoker+barrier view reading ctx_verified",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
+          viewDef:
+            "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND (crove_kernel.ctx_verified() ->> 'kind') = 'user'",
+          reloptions: ["security_invoker=true", "security_barrier=true"],
+          taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()", "crove_kernel.ctx_verified()"],
+        },
+      ],
+      [
+        "invoker+barrier view reading ctx_acting_user_id",
+        {
+          ...validInvokerDeps,
           viewDef:
             "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND crove_kernel.ctx_acting_user_id() IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
           taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()", "crove_kernel.ctx_acting_user_id()"],
         },
       ],
       [
-        "barrier view reading raw GUC",
+        "invoker+barrier view reading raw GUC",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef:
             "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND current_setting('ludy.ctx', true) IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
         },
       ],
       [
-        "barrier view reading ctx_mcp_member_id",
+        "invoker+barrier view reading ctx_mcp_member_id",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef:
             "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND crove_kernel.ctx_mcp_member_id() IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
         },
       ],
       [
         "view with tainted wrapper fn dep",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
           taintedFnDeps: ["crove_kernel.ctx_briefing_user_id()", "crove_kernel.wrap_ctx()"],
         },
       ],
       [
         "view depending on tainted view",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM v_inner WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
           taintedViewDeps: ["crove_kernel.v_ctx"],
         },
       ],
       [
-        "barrier view missing ctx_org_id binding",
+        "invoker view with ctx_briefing_user_id missing ctx_org_id binding",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE crove_kernel.ctx_briefing_user_id() IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
           hasActiveOrgBindDep: false,
         },
       ],
       [
-        "barrier view with public.ctx_org_id shadow",
+        "invoker view with public.ctx_org_id shadow",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = public.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
         },
       ],
       [
-        "barrier view with unqualified bare ctx_org_id",
+        "invoker view with unqualified bare ctx_org_id",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
         },
       ],
       [
-        "barrier view with nonkernel ctx_org_id",
+        "invoker view with nonkernel ctx_org_id",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = evil.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
         },
       ],
       [
-        "barrier view missing pg_depend for ctx_org_id (string spoof)",
+        "invoker view missing pg_depend for ctx_org_id (string spoof)",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE 'crove_kernel.ctx_org_id()' <> '' AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
           hasActiveOrgBindDep: false,
         },
       ],
       [
-        "barrier view missing pg_depend for ctx_briefing_user_id (string spoof)",
+        "invoker view missing pg_depend for ctx_briefing_user_id (string spoof)",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND 'crove_kernel.ctx_briefing_user_id()' <> ''",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
           taintedFnDeps: [],
         },
       ],
       [
-        "barrier view using crove_kernel decoy under ludy_kernel active schema",
+        "invoker view using crove_kernel decoy under ludy_kernel active schema",
         {
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
           taintedFnDeps: ["nonkernel:crove_kernel.ctx_briefing_user_id()"],
           hasActiveOrgBindDep: false,
           activeKernelSchema: "ludy_kernel",
         },
       ],
       [
-        "barrier view missing ctx_briefing_user_id binding",
-        {
-          viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id()",
-          reloptions: ["security_barrier=true"],
-          taintedFnDeps: [],
-          hasActiveOrgBindDep: true,
-          activeKernelSchema: "crove_kernel",
-        },
-      ],
-      [
         "view with neither security_barrier nor security_invoker",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL",
           reloptions: null,
         },
       ],
       [
-        "barrier view with spaced nonkernel ctx_briefing_user_id",
+        "invoker view with spaced nonkernel ctx_briefing_user_id",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND other_schema . ctx_briefing_user_id() IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
         },
       ],
       [
-        "barrier view with initPlan other_schema.ctx_briefing_user_id",
+        "invoker view with initPlan other_schema.ctx_briefing_user_id",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef:
             "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND ( SELECT other_schema.ctx_briefing_user_id() AS ctx_briefing_user_id) IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
         },
       ],
       [
-        "barrier view with initPlan alias hiding fake call",
+        "invoker view with initPlan alias hiding fake call",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef:
             "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND ( SELECT other_schema.fake() AS ctx_briefing_user_id) IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
         },
       ],
       [
-        "barrier view with unqualified bare ctx_briefing_user_id",
+        "invoker view with unqualified bare ctx_briefing_user_id",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef: "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND ( SELECT ctx_briefing_user_id() AS ctx_briefing_user_id) IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
           taintedFnDeps: [],
         },
       ],
       [
         "view with comment-obfuscated ctx_verified",
         {
-          ...validBarrierDeps,
+          ...validInvokerDeps,
           viewDef:
             "SELECT org_id, user_id, display_name FROM tm WHERE org_id = crove_kernel.ctx_org_id() AND crove_kernel.ctx_briefing_user_id() IS NOT NULL AND ctx_verified /* c */ () IS NOT NULL",
-          reloptions: ["security_barrier=true"],
+          reloptions: ["security_invoker=true", "security_barrier=true"],
         },
       ],
     ] as const) {
@@ -2566,7 +2793,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     expect(forbiddenFlagged).not.toContain("probe_3771.t.p_ok");
   });
 
-  it("audits real PG17 security_barrier lookup views via rawQuery and pg_depend without canonicalizing active kernel schemas", async () => {
+  it("audits real PG17 security_invoker lookup views via rawQuery and pg_depend without canonicalizing active kernel schemas", async () => {
     const activeKernel = dbIds ? dbIds.schema("kernel") : "crove_kernel";
     await admin(async (c) => {
       await rawQuery(c, "BEGIN");
@@ -2594,7 +2821,12 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           c,
           `CREATE SCHEMA probe_brief;
            CREATE TABLE probe_brief.src (org_id uuid, user_id uuid, display_name text);
-           CREATE VIEW probe_brief.v_clean_lookup WITH (security_barrier = true) AS
+           CREATE VIEW probe_brief.v_clean_lookup WITH (security_invoker = true, security_barrier = true) AS
+             SELECT org_id, user_id, display_name
+             FROM probe_brief.src
+             WHERE org_id = (SELECT ${activeKernel}.ctx_org_id())
+               AND user_id = (SELECT ${activeKernel}.ctx_briefing_user_id());
+           CREATE VIEW probe_brief.v_barrier_only WITH (security_barrier = true) AS
              SELECT org_id, user_id, display_name
              FROM probe_brief.src
              WHERE org_id = (SELECT ${activeKernel}.ctx_org_id())
@@ -2602,7 +2834,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
            CREATE SCHEMA probe_decoy;
            CREATE FUNCTION probe_decoy.ctx_org_id() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT NULL::uuid $$;
            CREATE FUNCTION probe_decoy.ctx_briefing_user_id() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT NULL::uuid $$;
-           CREATE VIEW probe_brief.v_decoy WITH (security_barrier = true) AS
+           CREATE VIEW probe_brief.v_decoy WITH (security_invoker = true, security_barrier = true) AS
              SELECT org_id, user_id, display_name
              FROM probe_brief.src
              WHERE org_id = (SELECT probe_decoy.ctx_org_id())
@@ -2617,7 +2849,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
              CREATE FUNCTION crove_kernel.ctx_briefing_user_id() RETURNS uuid LANGUAGE sql STABLE AS $$
                SELECT (${activeKernel}.ctx_verified() ->> 'member')::uuid
              $$;
-             CREATE VIEW probe_brief.v_crove_decoy WITH (security_barrier = true) AS
+             CREATE VIEW probe_brief.v_crove_decoy WITH (security_invoker = true, security_barrier = true) AS
                SELECT org_id, user_id, display_name
                FROM probe_brief.src
                WHERE org_id = (SELECT crove_kernel.ctx_org_id())
@@ -2680,6 +2912,11 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         }
         expect(clean.prettyOk, "PG17 pretty viewdef passes for active-schema initPlan lookup view").toBe(true);
         expect(clean.unprettyOk, "PG17 canonical viewdef passes for active-schema initPlan lookup view").toBe(true);
+
+        const barrierOnly = await checkView("v_barrier_only");
+        expect(barrierOnly.prettyOk, "barrier-only lookup view without security_invoker rejected on pretty viewdef").toBe(false);
+        expect(barrierOnly.unprettyOk, "barrier-only lookup view without security_invoker rejected on canonical viewdef").toBe(false);
+        expect(scan.taintedViews, "barrier-only lookup view remains in taintedViews").toContain("probe_brief.v_barrier_only");
 
         if (!pre.has_catalog) {
           const briefing = await briefingObjects(scan, c);
