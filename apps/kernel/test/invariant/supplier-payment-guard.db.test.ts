@@ -286,8 +286,11 @@ describe.skipIf(!ADMIN)('supplier_payment_guard fail-closed proposal lookup (#37
          VALUES ($1, $2, $3, 110, 'VND', $4, $5, $6, $7, $8, now()) RETURNING hold_reason, payable_after, approved_at`,
         [o2.orgId, o2.supplier, doc2, accountId2, numberHash2, hashKeyId2, randomUUID(), o2.owner],
       );
-      expect(staffSingle[0]?.hold_reason).toBe('new_account');
-      expect((staffSingle[0]?.payable_after as Date).getTime() - (staffSingle[0]?.approved_at as Date).getTime()).toBe(24 * 3_600_000);
+      const singleRow = staffSingle[0];
+      expect(singleRow?.hold_reason).toBe('new_account');
+      expect(singleRow?.payable_after).toBeInstanceOf(Date);
+      if (!singleRow?.payable_after) throw new Error('expected payable_after');
+      expect(singleRow.payable_after.getTime() - singleRow.approved_at.getTime()).toBe(24 * 3_600_000);
 
       // Staff insert naming a real self-approved proposal in a 2-approver org still applies the N1 24h hold.
       const staffSelf = await rows<{ hold_reason: string | null; payable_after: Date | null }>(
