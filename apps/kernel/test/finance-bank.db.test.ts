@@ -1625,6 +1625,15 @@ suite('bank statement import (#326)', () => {
           ['CFL-CUT-1', 'conflict', { date: conflictDay, amount: '2000000' }],
           ['CFL-CUT-SKIP', 'duplicate', null],
         ]);
+        // Confirming stores the conflict keyless and flagged while skipping the non-conflicting cut-over line.
+        expect(await confirm(cflFileId)).toMatchObject({
+          status: 200,
+          body: { counts: { new: 0, conflict: 1, duplicate: 1 }, feed: { from: cut, leftOut: 1 } },
+        });
+        expect((await stored('1121.CFL')).map((l) => [l.bank_ref, Number(l.amount), l.dedupe_key, l.ambiguous])).toEqual([
+          ['CFL-CUT-1', 2000000, 'ref:CFL-CUT-1', false],
+          ['CFL-CUT-1', 9000000, null, true],
+        ]);
 
         // Staged with no conflict while cut-over is set; then a conflicting feed line arrives -> confirm must refuse with STATEMENT_CONFLICTS_CHANGED both while set and after clearing.
         const deferredRows = [row(conflictDay, '9000000', '', '', 'CFL-SET-CLR', 'Chuyển khoản lạ')];
