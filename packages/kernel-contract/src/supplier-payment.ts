@@ -43,7 +43,8 @@ export const zSupplierPayment = z.strictObject({
   currency: z.string(),
   status: z.enum(SUPPLIER_PAYMENT_STATUSES),
   bankName: z.string(),
-  last4: z.string().regex(/^[0-9]{4}$/),
+  // Four digits on un-erased accounts; `'****'` when a finished payment's supplier had bank data erased (#3738).
+  last4: z.string().regex(/^(?:[0-9]{4}|\*{4})$/),
   approvedAt: z.string(),
   // Set when the 24-hour hold applies: the payment is not exported or paid before this time (the database clock).
   payableAfter: z.string().nullable(),

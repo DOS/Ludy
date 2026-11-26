@@ -63,7 +63,7 @@ export function SupplierPaymentsPanel({ names }: { names: ReadonlyMap<string, st
               <Checkbox checked={picked.has(p.id)} onCheckedChange={(on) => toggle(p.id, on === true)} aria-label={t('pick', { name: names.get(p.partyId) ?? '' })} data-testid="supplier-payment-pick" />
               <span className="min-w-0 flex-1 font-medium">{names.get(p.partyId) ?? p.partyId}</span>
               <span className="text-muted-foreground">
-                {p.bankName} ••••{p.last4}
+                {p.bankName} {p.last4 === '****' ? '••••' : `••••${p.last4}`}
               </span>
               <span className="tabular-nums">{f.money(p.amount, p.currency)}</span>
               {hold(p) && <span className="text-xs text-muted-foreground">{t('heldUntil', { when: f.dateTime(p.payableAfter) })}</span>}

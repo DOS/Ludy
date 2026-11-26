@@ -82,8 +82,8 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     await admin((c) => c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp thử')", [orgId, supplier]));
     return { orgId, owner, admin: adminUser, member, supplier };
   }
-  const execute = <T>(o: Org, name: string, input: unknown, who = o.owner, fresh = true, runtime = rt) =>
-    runtime.execute<T>(name, input, { actor: user(who, fresh), orgId: o.orgId, idempotencyKey: randomUUID() });
+  const execute = <T>(o: Org, name: string, input: unknown, who = o.owner, fresh = true, runtime = rt, idempotencyKey = randomUUID()) =>
+    runtime.execute<T>(name, input, { actor: user(who, fresh), orgId: o.orgId, idempotencyKey });
   const query = <T>(o: Org, name: string, input: unknown, who = o.owner) => rt.query<T>(name, input, { actor: user(who), orgId: o.orgId });
   const refusal = async (promise: Promise<unknown>) => promise.then(() => 'accepted', (error: { code?: string }) => error.code);
   const add = (o: Org, over: Record<string, unknown> = {}, who = o.owner) =>
@@ -323,12 +323,19 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND status = 'active'", [o.orgId]))[0]?.n).toBe('1');
   });
 
-  it('erases a supplier for an owner only: the accounts are retired, the key is shredded, a sealed number cannot open, and numbers cannot be tested against stored hashes', async () => {
+  it('erases a supplier for an owner only: the accounts are retired, the key is shredded, hashes and last4 are tombstoned, and numbers cannot be opened or tested', async () => {
     const o = await org();
     await add(o);
-    const stored = (await rows<{ number_sealed: string; number_hash: string }>('SELECT number_sealed, number_hash FROM ludy_finance.supplier_bank_account WHERE org_id = $1', [o.orgId]))[0] as {
+    const stored = (
+      await rows<{ number_sealed: string; account_holder_sealed: string; number_hash: string; last4: string }>(
+        'SELECT number_sealed, account_holder_sealed, number_hash, last4 FROM ludy_finance.supplier_bank_account WHERE org_id = $1',
+        [o.orgId],
+      )
+    )[0] as {
       number_sealed: string;
+      account_holder_sealed: string;
       number_hash: string;
+      last4: string;
     };
     const subject = `supplier:${o.supplier}`;
     // Before the erasure the number opens, for a manager, in an audited sensitive read, and the subject hash matches.
@@ -338,25 +345,57 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.owner, false))).toBe('STEP_UP_REQUIRED');
     const erased = await execute<{ shreddedKeys: number; retired: number }>(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier });
     expect(erased).toMatchObject({ shreddedKeys: 1, retired: 1 });
-    expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2", [o.orgId, subject]))[0]?.n).toBe('0');
-    // The sealed text stays in its row byte for byte, reads as erased, and candidate numbers can no longer be tested against the stored hash.
-    expect((await rows<{ number_sealed: string }>('SELECT number_sealed FROM ludy_finance.supplier_bank_account WHERE org_id = $1', [o.orgId]))[0]?.number_sealed).toBe(stored.number_sealed);
+    expect((await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2', [o.orgId, subject]))[0]?.n).toBe('0');
+    // Sealed blobs stay in their row byte for byte, while number_hash and last4 are wiped with tombstones so no trailing digits or hashes survive.
+    const afterAccount = (
+      await rows<{ number_sealed: string; account_holder_sealed: string; number_hash: string; last4: string; status: string }>(
+        'SELECT number_sealed, account_holder_sealed, number_hash, last4, status FROM ludy_finance.supplier_bank_account WHERE org_id = $1',
+        [o.orgId],
+      )
+    )[0];
+    expect(afterAccount).toEqual({
+      number_sealed: stored.number_sealed,
+      account_holder_sealed: stored.account_holder_sealed,
+      number_hash: 'erased',
+      last4: '****',
+      status: 'retired',
+    });
     expect(await query(o, 'ts3113.open', { sealed: stored.number_sealed, ref: subject })).toEqual({ erased: true });
     expect(await execute<{ hash: string | null }>(o, 'ts3113.check_hash', { ref: subject, value: DIGITS })).toEqual({ hash: null });
-    expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2", [o.orgId, subject]))[0]?.n).toBe('0');
-    const kinds = await rows<{ kind: string }>('SELECT kind FROM ludy_finance.supplier_bank_account_change WHERE org_id = $1', [o.orgId]);
-    expect(kinds.map((k) => k.kind).sort()).toEqual(['added', 'retired']);
+    expect((await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2', [o.orgId, subject]))[0]?.n).toBe('0');
+    const history = await rows<{ kind: string; old_number_hash: string | null; new_number_hash: string | null }>(
+      'SELECT kind, old_number_hash, new_number_hash FROM ludy_finance.supplier_bank_account_change WHERE org_id = $1 ORDER BY changed_at, id',
+      [o.orgId],
+    );
+    expect(history).toEqual([
+      { kind: 'added', old_number_hash: null, new_number_hash: 'erased' },
+      { kind: 'retired', old_number_hash: 'erased', new_number_hash: null },
+    ]);
+    const listed = await query<{ accounts: Array<{ bankName: string; status: string; last4: string }>; changes: Array<{ kind: string }> }>(o, 'finance.supplier_bank_account.list', { partyId: o.supplier });
+    expect(listed.accounts.map((a) => [a.status, a.last4])).toEqual([['retired', '****']]);
+    const accountFieldsDump = JSON.stringify(listed.accounts.map(({ bankName, status, last4 }) => ({ bankName, status, last4 })));
+    expect(accountFieldsDump).not.toContain(LAST4);
+    expect(accountFieldsDump).not.toContain(DIGITS);
+    expect(accountFieldsDump).not.toContain(HOLDER);
     // Even adding the same digits again uses a fresh random subject key and produces an unrelated hash.
     const readded = await add(o);
+    expect(readded.last4).toBe(LAST4);
     const readdedHash = (await rows<{ number_hash: string }>('SELECT number_hash FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND id = $2', [o.orgId, readded.id]))[0]?.number_hash;
     expect(readdedHash).not.toBe(stored.number_hash);
+    expect(readdedHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('lets the owner erase a supplier while Finance is switched off, while refusing every other supplier bank command and read (#3744)', async () => {
     const o = await org();
     const account = await add(o);
-    const stored = (await rows<{ number_sealed: string; number_hash: string }>('SELECT number_sealed, number_hash FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND id = $2', [o.orgId, account.id]))[0] as {
+    const stored = (
+      await rows<{ number_sealed: string; account_holder_sealed: string; number_hash: string }>(
+        'SELECT number_sealed, account_holder_sealed, number_hash FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND id = $2',
+        [o.orgId, account.id],
+      )
+    )[0] as {
       number_sealed: string;
+      account_holder_sealed: string;
       number_hash: string;
     };
     const subject = `supplier:${o.supplier}`;
@@ -377,28 +416,436 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.admin))).toBe('FORBIDDEN');
     expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.owner, false))).toBe('STEP_UP_REQUIRED');
 
-    // Owner with fresh second factor erases while Finance is off: retires active accounts and shreds the supplier's subject key.
+    // Owner with fresh second factor erases while Finance is off: retires active accounts, shreds the subject key, and tombstones hashes and last4.
     const erased = await execute<{ partyId: string; shreddedKeys: number; retired: number }>(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier });
     expect(erased).toEqual({ partyId: o.supplier, shreddedKeys: 1, retired: 1 });
 
-    const accountRow = (await rows<{ status: string; retired_at: Date | null; number_sealed: string }>('SELECT status, retired_at, number_sealed FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND id = $2', [o.orgId, account.id]))[0];
+    const accountRow = (
+      await rows<{ status: string; retired_at: Date | null; number_sealed: string; account_holder_sealed: string; number_hash: string; last4: string }>(
+        'SELECT status, retired_at, number_sealed, account_holder_sealed, number_hash, last4 FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND id = $2',
+        [o.orgId, account.id],
+      )
+    )[0];
     expect(accountRow?.status).toBe('retired');
     expect(accountRow?.retired_at).not.toBeNull();
     expect(accountRow?.number_sealed).toBe(stored.number_sealed);
+    expect(accountRow?.account_holder_sealed).toBe(stored.account_holder_sealed);
+    expect(accountRow?.number_hash).toBe('erased');
+    expect(accountRow?.last4).toBe('****');
     expect((await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2', [o.orgId, subject]))[0]?.n).toBe('0');
     expect(await query(o, 'ts3113.open', { sealed: stored.number_sealed, ref: subject })).toEqual({ erased: true });
     expect(await execute<{ hash: string | null }>(o, 'ts3113.check_hash', { ref: subject, value: DIGITS })).toEqual({ hash: null });
     expect((await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2', [o.orgId, subject]))[0]?.n).toBe('0');
-    const kinds = await rows<{ kind: string }>('SELECT kind FROM ludy_finance.supplier_bank_account_change WHERE org_id = $1 ORDER BY changed_at, id', [o.orgId]);
-    expect(kinds.map((k) => k.kind)).toEqual(['added', 'retired']);
+    const history = await rows<{ kind: string; old_number_hash: string | null; new_number_hash: string | null }>(
+      'SELECT kind, old_number_hash, new_number_hash FROM ludy_finance.supplier_bank_account_change WHERE org_id = $1 ORDER BY changed_at, id',
+      [o.orgId],
+    );
+    expect(history).toEqual([
+      { kind: 'added', old_number_hash: null, new_number_hash: 'erased' },
+      { kind: 'retired', old_number_hash: 'erased', new_number_hash: null },
+    ]);
     const eraseAudits = await rows<{ outcome: string; detail: Record<string, unknown> }>("SELECT outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.supplier_bank_account.erase' AND outcome = 'ok'", [o.orgId]);
     expect(eraseAudits).toHaveLength(1);
     expect(eraseAudits[0]?.detail).toMatchObject({ partyId: o.supplier, shreddedKeys: 1, retired: 1 });
 
-    // Switching Finance back on lets managers read the retired history again; the erased key remains shredded.
+    // Switching Finance back on lets managers read the retired history again; the erased key and tombstones remain intact.
     await execute(o, 'kernel.org.set_app', { module: 'finance', enabled: true });
-    const listed = await query<{ accounts: Array<{ id: string; status: string }>; changes: Array<{ kind: string }> }>(o, 'finance.supplier_bank_account.list', { partyId: o.supplier });
-    expect(listed.accounts.map((a) => [a.id, a.status])).toEqual([[account.id, 'retired']]);
+    const listed = await query<{ accounts: Array<{ id: string; status: string; last4: string }>; changes: Array<{ kind: string }> }>(o, 'finance.supplier_bank_account.list', { partyId: o.supplier });
+    expect(listed.accounts.map((a) => [a.id, a.status, a.last4])).toEqual([[account.id, 'retired', '****']]);
     expect(listed.changes.map((c) => c.kind).sort()).toEqual(['added', 'retired']);
+  });
+
+  it('wipes legacy keyed-hash accounts (active and already retired), replaced/retired change rows, and finished payments even while legacy keys stay active (#3738)', async () => {
+    const unguarded = <T>(fn: (c: pg.Client) => Promise<T>) =>
+      admin(async (c) => {
+        await c.query('BEGIN');
+        try {
+          await c.query('SET LOCAL session_replication_role = replica');
+          const result = await fn(c);
+          await c.query('COMMIT');
+          return result;
+        } catch (error) {
+          await c.query('ROLLBACK');
+          throw error;
+        }
+      });
+    async function invoice(o: Org, total = '110'): Promise<string> {
+      const doc = randomUUID();
+      const entry = randomUUID();
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        await c.query(
+          "INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-01', $5::numeric - 10, 10, $5)",
+          [o.orgId, doc, o.supplier, `inv-${doc.slice(0, 8)}`, total],
+        );
+        await c.query(
+          "INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'erase test', 'finance.purchase_document', $3)",
+          [o.orgId, entry, doc],
+        );
+        await c.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [o.orgId, entry]);
+        await c.query('COMMIT');
+      });
+      return doc;
+    }
+
+    const oldRoot = { id: 'k-old', key: randomBytes(32) };
+    const legacyRt = build([root, oldRoot]);
+    const o = await org();
+    const otherSupplier = randomUUID();
+    await admin((c) => c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp không xóa')", [o.orgId, otherSupplier]));
+    const otherAccount = await add(o, { partyId: otherSupplier, bankName: 'Techcombank', accountNumber: '5544332211' });
+
+    const legacyHash1 = keyedHash(oldRoot.key, o.orgId, 'supplier_bank_account.number', DIGITS);
+    const legacyHash2 = keyedHash(oldRoot.key, o.orgId, 'supplier_bank_account.number', OTHER);
+    const retiredId = randomUUID();
+    const activeId = randomUUID();
+    const sealed1 = 'ludy:s1:00000000-0000-4000-8000-000000000001:legacy1';
+    const sealed2 = 'ludy:s1:00000000-0000-4000-8000-000000000002:legacy2';
+
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query(
+        `INSERT INTO ludy_finance.supplier_bank_account (org_id, id, party_id, bank_name, account_holder_sealed, number_sealed, number_hash, hash_key_id, last4)
+         VALUES ($1, $2, $3, 'ACB', $4, $4, $5, 'k-old', $6)`,
+        [o.orgId, retiredId, o.supplier, sealed1, legacyHash1, LAST4],
+      );
+      await c.query(
+        `INSERT INTO ludy_finance.supplier_bank_account_change (org_id, party_id, account_id, kind, new_number_hash, step_up_at)
+         VALUES ($1, $2, $3, 'added', $4, now())`,
+        [o.orgId, o.supplier, retiredId, legacyHash1],
+      );
+      await c.query('COMMIT');
+    });
+
+    // While retiredId is still active under k-old, record and approve a payment on it so replacing it naturally marks that payment stale.
+    const docStale = await invoice(o);
+    const reqStale = await execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.supplier_payment.record', input: { purchaseDocumentId: docStale } }, o.owner, true, legacyRt);
+    await execute(o, 'kernel.proposal.approve', { id: reqStale.proposalId, revision: 1 }, o.admin, true, legacyRt);
+
+    // Replace retiredId with a second legacy k-old account in one transaction (matching real replace history).
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query("UPDATE ludy_finance.supplier_bank_account SET status = 'retired', retired_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, retiredId]);
+      await c.query(
+        `INSERT INTO ludy_finance.supplier_bank_account (org_id, id, party_id, bank_name, account_holder_sealed, number_sealed, number_hash, hash_key_id, last4)
+         VALUES ($1, $2, $3, 'BIDV', $4, $4, $5, 'k-old', '6655')`,
+        [o.orgId, activeId, o.supplier, sealed2, legacyHash2],
+      );
+      await c.query(
+        `INSERT INTO ludy_finance.supplier_bank_account_change (org_id, party_id, account_id, kind, old_number_hash, new_number_hash, step_up_at)
+         VALUES ($1, $2, $3, 'replaced', $4, $5, now())`,
+        [o.orgId, o.supplier, activeId, legacyHash1, legacyHash2],
+      );
+      await c.query('COMMIT');
+    });
+
+    // Create a paid payment and an approved payment on activeId; while approved payment waits, erase must refuse SUPPLIER_PAYMENT_WAITING.
+    const docPaid = await invoice(o);
+    const reqPaid = await execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.supplier_payment.record', input: { purchaseDocumentId: docPaid } }, o.owner, true, legacyRt);
+    const approvePaidKey = randomUUID();
+    const approvePaidInput = { id: reqPaid.proposalId, revision: 1 };
+    await execute(o, 'kernel.proposal.approve', approvePaidInput, o.admin, true, legacyRt, approvePaidKey);
+    const paidRow = (await rows<{ id: string }>("SELECT id FROM ludy_finance.supplier_payment WHERE org_id = $1 AND purchase_document_id = $2", [o.orgId, docPaid]))[0]!;
+    await unguarded((c) => c.query("UPDATE ludy_finance.supplier_payment SET status = 'paid', paid_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, paidRow.id]));
+
+    const docCancelled = await invoice(o);
+    const reqCancelled = await execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.supplier_payment.record', input: { purchaseDocumentId: docCancelled } }, o.owner, true, legacyRt);
+    await execute(o, 'kernel.proposal.approve', { id: reqCancelled.proposalId, revision: 1 }, o.admin, true, legacyRt);
+    expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.owner, true, legacyRt))).toBe('SUPPLIER_PAYMENT_WAITING');
+    const cancelledRow = (await rows<{ id: string }>("SELECT id FROM ludy_finance.supplier_payment WHERE org_id = $1 AND purchase_document_id = $2", [o.orgId, docCancelled]))[0]!;
+    const cancelKey = randomUUID();
+    const cancelInput = { paymentId: cancelledRow.id, reason: 'Hủy trước khi xóa' };
+    await execute(o, 'finance.supplier_payment.cancel', cancelInput, o.owner, true, legacyRt, cancelKey);
+
+    // A pending record proposal must also block erase without modifying any row.
+    const docPending = await invoice(o);
+    const reqPending = await execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.supplier_payment.record', input: { purchaseDocumentId: docPending } }, o.owner, true, legacyRt);
+    expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.owner, true, legacyRt))).toBe('SUPPLIER_PAYMENT_WAITING');
+    await execute(o, 'kernel.proposal.reject', { id: reqPending.proposalId, revision: 1, reason: 'Từ chối trước khi xóa' }, o.admin, true, legacyRt);
+
+    // Before erase, oldRoot is live and matches activeId.
+    expect(
+      await refusal(execute(o, 'finance.supplier_bank_account.replace', { accountId: activeId, bankName: 'BIDV', accountHolder: HOLDER, accountNumber: OTHER }, o.owner, true, legacyRt)),
+    ).toBe('SUPPLIER_BANK_ACCOUNT_SAME');
+
+    // Erase on legacyRt (while oldRoot is still present!): active + previously-retired legacy accounts, all changes, and stale/cancelled/paid payments are wiped.
+    const erased = await execute<{ partyId: string; shreddedKeys: number; retired: number }>(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.owner, true, legacyRt);
+    expect(erased).toEqual({ partyId: o.supplier, shreddedKeys: 0, retired: 1 });
+
+    const bankRows = await rows<{ id: string; status: string; number_hash: string; last4: string; number_sealed: string; hash_key_id: string }>(
+      'SELECT id, status, number_hash, last4, number_sealed, hash_key_id FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND party_id = $2 ORDER BY created_at, id',
+      [o.orgId, o.supplier],
+    );
+    expect(bankRows).toEqual([
+      { id: retiredId, status: 'retired', number_hash: 'erased', last4: '****', number_sealed: sealed1, hash_key_id: 'k-old' },
+      { id: activeId, status: 'retired', number_hash: 'erased', last4: '****', number_sealed: sealed2, hash_key_id: 'k-old' },
+    ]);
+
+    const changeRows = await rows<{ kind: string; old_number_hash: string | null; new_number_hash: string | null }>(
+      'SELECT kind, old_number_hash, new_number_hash FROM ludy_finance.supplier_bank_account_change WHERE org_id = $1 AND party_id = $2 ORDER BY changed_at, id',
+      [o.orgId, o.supplier],
+    );
+    expect(changeRows).toEqual([
+      { kind: 'added', old_number_hash: null, new_number_hash: 'erased' },
+      { kind: 'replaced', old_number_hash: 'erased', new_number_hash: 'erased' },
+      { kind: 'retired', old_number_hash: 'erased', new_number_hash: null },
+    ]);
+
+    const paymentRows = await rows<{ status: string; number_hash: string }>(
+      'SELECT status, number_hash FROM ludy_finance.supplier_payment WHERE org_id = $1 AND party_id = $2 ORDER BY status',
+      [o.orgId, o.supplier],
+    );
+    expect(paymentRows).toEqual([
+      { status: 'cancelled', number_hash: 'erased' },
+      { status: 'paid', number_hash: 'erased' },
+      { status: 'stale', number_hash: 'erased' },
+    ]);
+
+    // Terminal finance.supplier_payment.record proposals in ludy_kernel.proposal must also have payload.last4 and result.last4 wiped to '****'.
+    const proposalRows = await rows<{ status: string; payload_last4: string | null; result_last4: string | null }>(
+      `SELECT status, payload ->> 'last4' AS payload_last4, result ->> 'last4' AS result_last4
+       FROM ludy_kernel.proposal
+       WHERE org_id = $1 AND command = 'finance.supplier_payment.record'
+       ORDER BY status, id`,
+      [o.orgId],
+    );
+    expect(proposalRows).toEqual([
+      { status: 'executed', payload_last4: '****', result_last4: '****' },
+      { status: 'executed', payload_last4: '****', result_last4: '****' },
+      { status: 'executed', payload_last4: '****', result_last4: '****' },
+      { status: 'rejected', payload_last4: '****', result_last4: null },
+    ]);
+
+    // Replaying cached idempotency keys after erase returns last4: '****' rather than pre-erase digits.
+    const replayedApprove = await execute<{ last4: string }>(o, 'kernel.proposal.approve', approvePaidInput, o.admin, true, legacyRt, approvePaidKey);
+    expect(replayedApprove.last4).toBe('****');
+    const replayedCancel = await execute<{ last4: string }>(o, 'finance.supplier_payment.cancel', cancelInput, o.owner, true, legacyRt, cancelKey);
+    expect(replayedCancel.last4).toBe('****');
+    const cachedKeys = await rows<{ command: string; last4: string | null }>(
+      `SELECT command, response -> 'value' ->> 'last4' AS last4
+       FROM ludy_kernel.idempotency_key
+       WHERE org_id = $1
+         AND response -> 'value' ? 'last4'
+         AND pg_catalog.lower(response -> 'value' ->> 'partyId') = pg_catalog.lower($2::text)`,
+      [o.orgId, o.supplier],
+    );
+    expect(cachedKeys.length).toBeGreaterThanOrEqual(2);
+    expect(cachedKeys.every((k) => k.last4 === '****')).toBe(true);
+    const otherCached = await rows<{ last4: string | null }>(
+      `SELECT response -> 'value' ->> 'last4' AS last4
+       FROM ludy_kernel.idempotency_key
+       WHERE org_id = $1
+         AND pg_catalog.lower(response -> 'value' ->> 'partyId') = pg_catalog.lower($2::text)`,
+      [o.orgId, otherSupplier],
+    );
+    expect(otherCached.map((k) => k.last4)).toEqual(['2211']);
+
+    // List endpoints succeed with last4 masked as '****' and never leak the old digests or trailing digits.
+    const listedAccounts = await query<{ accounts: Array<{ id: string; last4: string; status: string }> }>(o, 'finance.supplier_bank_account.list', { partyId: o.supplier });
+    expect(listedAccounts.accounts.map((a) => [a.id, a.status, a.last4])).toEqual([
+      [activeId, 'retired', '****'],
+      [retiredId, 'retired', '****'],
+    ]);
+    const listedPayments = await query<Array<{ status: string; last4: string }>>(o, 'finance.supplier_payment.list', {});
+    expect(listedPayments.map((p) => [p.status, p.last4]).sort()).toEqual([
+      ['cancelled', '****'],
+      ['paid', '****'],
+      ['stale', '****'],
+    ]);
+
+    // Dump check on the erased supplier's rows (excluding random UUIDs): neither legacy hashes nor trailing digits remain anywhere.
+    const erasedDump = JSON.stringify({
+      accounts: bankRows.map(({ status, number_hash, last4, hash_key_id }) => ({ status, number_hash, last4, hash_key_id })),
+      changeRows,
+      paymentRows,
+      proposalRows,
+      cachedKeys,
+      listedAccounts: listedAccounts.accounts.map(({ last4, status }) => ({ last4, status })),
+      listedPayments: listedPayments.map(({ status, last4 }) => ({ status, last4 })),
+    });
+    expect(erasedDump).not.toContain(legacyHash1);
+    expect(erasedDump).not.toContain(legacyHash2);
+    expect(erasedDump).not.toContain(LAST4);
+    expect(erasedDump).not.toContain('6655');
+
+    // Another supplier in the same org keeps its account intact.
+    const otherStored = (
+      await rows<{ status: string; number_hash: string; last4: string }>(
+        'SELECT status, number_hash, last4 FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND id = $2',
+        [o.orgId, otherAccount.id],
+      )
+    )[0];
+    expect(otherStored?.status).toBe('active');
+    expect(otherStored?.last4).toBe('2211');
+    expect(otherStored?.number_hash).toMatch(/^[0-9a-f]{64}$/);
+
+    // Repeat erase is idempotent, and adding the same digits again succeeds under a fresh subject:v1 key.
+    expect(await execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.owner, true, legacyRt)).toEqual({
+      partyId: o.supplier,
+      shreddedKeys: 0,
+      retired: 0,
+    });
+    const readded = await add(o, { accountNumber: OTHER });
+    expect(readded.last4).toBe('6655');
+  });
+
+  it('scrubs cached last4 copies from add, replace, retire, and supplier_payment.prepare idempotency replays on erase (#3738)', async () => {
+    const o = await org();
+    const otherSupplier = randomUUID();
+    await admin((c) => c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp khác')", [o.orgId, otherSupplier]));
+    const otherAddKey = randomUUID();
+    const otherAddInput = { partyId: otherSupplier, bankName: 'TPBank', accountHolder: HOLDER, accountNumber: '1122334455' };
+    await execute(o, 'finance.supplier_bank_account.add', otherAddInput, o.owner, true, rt, otherAddKey);
+
+    const addKey = randomUUID();
+    const addInput = { partyId: o.supplier, bankName: 'Vietcombank', accountHolder: HOLDER, accountNumber: NUMBER };
+    const added = await execute<{ id: string; last4: string }>(o, 'finance.supplier_bank_account.add', addInput, o.owner, true, rt, addKey);
+    expect(added.last4).toBe(LAST4);
+
+    const replaceKey = randomUUID();
+    const replaceInput = { accountId: added.id, bankName: 'ACB', accountHolder: HOLDER, accountNumber: OTHER };
+    const replaced = await execute<{ id: string; last4: string }>(o, 'finance.supplier_bank_account.replace', replaceInput, o.owner, true, rt, replaceKey);
+    expect(replaced.last4).toBe('6655');
+
+    // Direct finance.supplier_payment.prepare call stores last4 at response.value.payload.last4.
+    const doc = randomUUID();
+    const entry = randomUUID();
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query(
+        "INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-01', 100, 10, 110)",
+        [o.orgId, doc, o.supplier, `inv-${doc.slice(0, 8)}`],
+      );
+      await c.query(
+        "INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'prepare replay test', 'finance.purchase_document', $3)",
+        [o.orgId, entry, doc],
+      );
+      await c.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [o.orgId, entry]);
+      await c.query('COMMIT');
+    });
+    const prepareKey = randomUUID();
+    const prepareInput = { purchaseDocumentId: doc };
+    const prepared = await execute<{ payload: { last4: string } }>(o, 'finance.supplier_payment.prepare', prepareInput, o.owner, true, rt, prepareKey);
+    expect(prepared.payload.last4).toBe('6655');
+
+    const retireKey = randomUUID();
+    const retireInput = { accountId: replaced.id };
+    const retired = await execute<{ id: string; last4: string }>(o, 'finance.supplier_bank_account.retire', retireInput, o.owner, true, rt, retireKey);
+    expect(retired.last4).toBe('6655');
+
+    await execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.owner);
+
+    expect((await execute<{ last4: string }>(o, 'finance.supplier_bank_account.add', addInput, o.owner, true, rt, addKey)).last4).toBe('****');
+    expect((await execute<{ last4: string }>(o, 'finance.supplier_bank_account.replace', replaceInput, o.owner, true, rt, replaceKey)).last4).toBe('****');
+    expect((await execute<{ payload: { last4: string } }>(o, 'finance.supplier_payment.prepare', prepareInput, o.owner, true, rt, prepareKey)).payload.last4).toBe('****');
+    expect((await execute<{ last4: string }>(o, 'finance.supplier_bank_account.retire', retireInput, o.owner, true, rt, retireKey)).last4).toBe('****');
+    // Unrelated supplier's cached idempotency replay keeps its last4.
+    expect((await execute<{ last4: string }>(o, 'finance.supplier_bank_account.add', otherAddInput, o.owner, true, rt, otherAddKey)).last4).toBe('4455');
+  });
+
+  it('serializes concurrent supplier_payment.prepare and proposal.resubmit against supplier_bank_account.erase without deadlocks (#3738)', async () => {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const o = await org();
+      const account = await add(o);
+      const doc = randomUUID();
+      const entry = randomUUID();
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        await c.query(
+          "INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-01', 100, 10, 110)",
+          [o.orgId, doc, o.supplier, `inv-${doc.slice(0, 8)}`],
+        );
+        await c.query(
+          "INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'concurrent race test', 'finance.purchase_document', $3)",
+          [o.orgId, entry, doc],
+        );
+        await c.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [o.orgId, entry]);
+        await c.query('COMMIT');
+      });
+
+      const runReq = () => execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.supplier_payment.record', input: { purchaseDocumentId: doc } }, o.owner);
+      const runErase = () => execute<{ partyId: string; shreddedKeys: number; retired: number }>(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.owner);
+      const [reqResult, eraseResult] =
+        attempt % 2 === 0
+          ? await Promise.allSettled([runReq(), runErase()])
+          : await (async () => {
+              const [e, r] = await Promise.allSettled([runErase(), runReq()]);
+              return [r, e] as const;
+            })();
+
+      expect(reqResult.status === 'fulfilled').not.toBe(eraseResult.status === 'fulfilled');
+      const [stored] = await rows<{ status: string; number_hash: string; last4: string }>(
+        'SELECT status, number_hash, last4 FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND id = $2',
+        [o.orgId, account.id],
+      );
+      const pendingProposals = await rows<{ id: string }>(
+        "SELECT id FROM ludy_kernel.proposal WHERE org_id = $1 AND command = 'finance.supplier_payment.record' AND status = 'pending'",
+        [o.orgId],
+      );
+
+      if (eraseResult.status === 'fulfilled') {
+        expect((reqResult as PromiseRejectedResult).reason).toMatchObject({ code: 'SUPPLIER_PAYMENT_NO_ACCOUNT' });
+        expect(pendingProposals).toHaveLength(0);
+        expect(stored).toEqual({ status: 'retired', number_hash: 'erased', last4: '****' });
+      } else {
+        expect((eraseResult as PromiseRejectedResult).reason).toMatchObject({ code: 'SUPPLIER_PAYMENT_WAITING' });
+        expect(pendingProposals).toHaveLength(1);
+        expect(stored?.status).toBe('active');
+        expect(stored?.last4).toBe(LAST4);
+        expect(stored?.number_hash).toMatch(/^[0-9a-f]{64}$/);
+      }
+    }
+
+    // Concurrent kernel.proposal.resubmit of an expired payment proposal vs erase also serializes cleanly without deadlock.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const o = await org();
+      const account = await add(o);
+      const doc = randomUUID();
+      const entry = randomUUID();
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        await c.query(
+          "INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-01', 100, 10, 110)",
+          [o.orgId, doc, o.supplier, `inv-${doc.slice(0, 8)}`],
+        );
+        await c.query(
+          "INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'concurrent resubmit race', 'finance.purchase_document', $3)",
+          [o.orgId, entry, doc],
+        );
+        await c.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [o.orgId, entry]);
+        await c.query('COMMIT');
+      });
+      const expiredReq = await execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.supplier_payment.record', input: { purchaseDocumentId: doc } }, o.owner);
+      await admin((c) => c.query("UPDATE ludy_kernel.proposal SET status = 'expired', decided_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, expiredReq.proposalId]));
+
+      const runResubmit = () => execute<{ proposalId: string }>(o, 'kernel.proposal.resubmit', { id: expiredReq.proposalId }, o.owner);
+      const runErase = () => execute<{ partyId: string; shreddedKeys: number; retired: number }>(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }, o.owner);
+      const [resubmitResult, eraseResult] =
+        attempt % 2 === 0
+          ? await Promise.allSettled([runResubmit(), runErase()])
+          : await (async () => {
+              const [e, r] = await Promise.allSettled([runErase(), runResubmit()]);
+              return [r, e] as const;
+            })();
+
+      expect(resubmitResult.status === 'fulfilled').not.toBe(eraseResult.status === 'fulfilled');
+      const [stored] = await rows<{ status: string; number_hash: string; last4: string }>(
+        'SELECT status, number_hash, last4 FROM ludy_finance.supplier_bank_account WHERE org_id = $1 AND id = $2',
+        [o.orgId, account.id],
+      );
+      if (eraseResult.status === 'fulfilled') {
+        expect((resubmitResult as PromiseRejectedResult).reason).toMatchObject({ code: 'SUPPLIER_PAYMENT_NO_ACCOUNT' });
+        expect(stored).toEqual({ status: 'retired', number_hash: 'erased', last4: '****' });
+        const [oldRow] = await rows<{ last4: string | null }>("SELECT payload ->> 'last4' AS last4 FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2", [
+          o.orgId,
+          expiredReq.proposalId,
+        ]);
+        expect(oldRow?.last4).toBe('****');
+      } else {
+        expect((eraseResult as PromiseRejectedResult).reason).toMatchObject({ code: 'SUPPLIER_PAYMENT_WAITING' });
+        expect(stored?.status).toBe('active');
+        expect(stored?.last4).toBe(LAST4);
+      }
+    }
   });
 });

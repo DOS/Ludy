@@ -21,7 +21,8 @@ export const zSupplierBankAccount = z.strictObject({
   id: z.uuid(),
   partyId: z.uuid(),
   bankName: z.string(),
-  last4: z.string().regex(/^[0-9]{4}$/),
+  // Four digits on live/retired accounts; `'****'` once `finance.supplier_bank_account.erase` wipes the supplier's bank data (#3738).
+  last4: z.string().regex(/^(?:[0-9]{4}|\*{4})$/),
   status: z.enum(SUPPLIER_BANK_ACCOUNT_STATUSES),
   createdAt: z.string(),
   retiredAt: z.string().nullable(),

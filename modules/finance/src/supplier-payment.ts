@@ -30,6 +30,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { sql } from 'kysely';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
+import { lockSupplierBank } from './supplier-bank-account.ts';
 import { money } from '@ludy/l10n-vn';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -62,6 +63,7 @@ async function activeAccount(trx: Trx, orgId: string, partyId: string) {
     .where('org_id', '=', orgId)
     .where('party_id', '=', partyId)
     .where('status', '=', 'active')
+    .forShare()
     .execute();
   if (rows.length === 0) throw new DomainError('SUPPLIER_PAYMENT_NO_ACCOUNT', 409, 'Nhà cung cấp này chưa có tài khoản ngân hàng; hãy thêm tài khoản trước');
   if (rows.length > 1) throw new DomainError('SUPPLIER_PAYMENT_ACCOUNT_AMBIGUOUS', 409, 'Nhà cung cấp này có nhiều tài khoản đang dùng; hãy ngừng các tài khoản cũ trước');
@@ -100,6 +102,8 @@ export const supplierPaymentPrepare = defineCommand({
     const invoiceId = input.purchaseDocumentId.toLowerCase();
     await refuseDuplicate(ctx, invoiceId);
     const doc = await loadInvoice(ctx.trx, ctx.orgId, invoiceId);
+    // Serialize with supplier bank erasure before reading the active account so an erase cannot commit without seeing this proposal.
+    await lockSupplierBank(ctx.trx, ctx.orgId, doc.party_id);
     const account = await activeAccount(ctx.trx, ctx.orgId, doc.party_id);
     const amount = money(doc.total).toFixed();
     return {

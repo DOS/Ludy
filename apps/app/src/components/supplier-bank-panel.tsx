@@ -68,7 +68,7 @@ function AccountRow({ account }: { account: SupplierBankAccount }) {
   return (
     <li className="rounded-md border border-border p-3" data-testid="supplier-bank-account">
       <p className="text-sm font-medium">
-        {account.bankName} <span className="font-mono text-muted-foreground">••••{account.last4}</span>
+        {account.bankName} <span className="font-mono text-muted-foreground">{account.last4 === '****' ? '••••' : `••••${account.last4}`}</span>
       </p>
       <p className="text-xs text-subtle-foreground">{account.status === 'active' ? t('activeSince', { date: day(account.createdAt) }) : t('retiredOn', { date: day(account.retiredAt ?? account.createdAt) })}</p>
       {account.status === 'active' && !changing && !retiring && (
