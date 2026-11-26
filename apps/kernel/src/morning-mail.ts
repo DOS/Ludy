@@ -142,10 +142,9 @@ function normalizeUtcOffset(raw: string | undefined): string {
   return cleaned.startsWith('GMT') ? `UTC${cleaned.slice(3)}` : cleaned;
 }
 
-function formatZonedParts(
-  ms: number,
-  timeZone: string,
-): { year: string; month: string; day: string; hour: string; minute: string; offset: string } | null {
+function zonedFormatterFor(timeZone: string, formatters: Map<string, Intl.DateTimeFormat>): Intl.DateTimeFormat | null {
+  const existing = formatters.get(timeZone);
+  if (existing) return existing;
   try {
     const fmt = new Intl.DateTimeFormat('en-GB', {
       timeZone,
@@ -157,6 +156,21 @@ function formatZonedParts(
       hourCycle: 'h23',
       timeZoneName: 'longOffset',
     });
+    formatters.set(timeZone, fmt);
+    return fmt;
+  } catch {
+    return null;
+  }
+}
+
+function formatZonedParts(
+  ms: number,
+  timeZone: string,
+  formatters: Map<string, Intl.DateTimeFormat>,
+): { year: string; month: string; day: string; hour: string; minute: string; offset: string } | null {
+  const fmt = zonedFormatterFor(timeZone, formatters);
+  if (!fmt) return null;
+  try {
     const parts: Record<string, string> = {};
     for (const part of fmt.formatToParts(new Date(ms))) {
       parts[part.type] = part.value;
@@ -175,19 +189,26 @@ function formatZonedParts(
   }
 }
 
-function formatTimeWindow(startAt: string, endAt: string, timeZone: string, contentDay: string, lang: BriefingLang): string {
+function formatTimeWindow(
+  startAt: string,
+  endAt: string,
+  timeZone: string,
+  contentDay: string,
+  lang: BriefingLang,
+  formatters: Map<string, Intl.DateTimeFormat>,
+): string {
   const startMs = Date.parse(startAt);
   const endMs = Date.parse(endAt);
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
     return `${oneLine(startAt)} - ${oneLine(endAt)} (${oneLine(timeZone)})`;
   }
   let zone = timeZone;
-  let startParts = formatZonedParts(startMs, zone);
-  let endParts = startParts ? formatZonedParts(endMs, zone) : null;
+  let startParts = formatZonedParts(startMs, zone, formatters);
+  let endParts = startParts ? formatZonedParts(endMs, zone, formatters) : null;
   if (!startParts || !endParts) {
     zone = 'UTC';
-    startParts = formatZonedParts(startMs, zone);
-    endParts = formatZonedParts(endMs, zone);
+    startParts = formatZonedParts(startMs, zone, formatters);
+    endParts = formatZonedParts(endMs, zone, formatters);
   }
   if (!startParts || !endParts) {
     return `${oneLine(startAt)} - ${oneLine(endAt)} (${oneLine(zone)})`;
@@ -350,9 +371,10 @@ function renderMeetingBlock(
   fallbackPath: string,
   dealsUrl: string,
   safeUrl: (path: string) => string,
+  formatters: Map<string, Intl.DateTimeFormat>,
 ): { textLines: string[]; html: string } {
   const t = BRIEFING_COPY[lang];
-  const timeWindow = formatTimeWindow(meeting.startAt, meeting.endAt, meeting.timeZone, contentDay, lang);
+  const timeWindow = formatTimeWindow(meeting.startAt, meeting.endAt, meeting.timeZone, contentDay, lang, formatters);
   const title = oneLine(meeting.title, MORNING_BRIEFING_CAPS.titleMax) || t.untitled;
   if (
     meeting.path !== undefined &&
@@ -521,8 +543,9 @@ export function renderMorningBriefingMail(
   const dealsUrl = safeUrl(`${orgPrefix}/deals`);
   const settingsUrl = safeUrl(`${orgPrefix}/settings/notifications`);
 
+  const formatters = new Map<string, Intl.DateTimeFormat>();
   const renderedMeetings = content.meetings.map((meeting, idx) =>
-    renderMeetingBlock(meeting, idx + 1, content.day, mail.lang, orgPrefix, mail.path, dealsUrl, safeUrl),
+    renderMeetingBlock(meeting, idx + 1, content.day, mail.lang, orgPrefix, mail.path, dealsUrl, safeUrl, formatters),
   );
 
   const buildHtml = (blocks: ReadonlyArray<{ html: string }>, note: string | null): string => `<!doctype html>
