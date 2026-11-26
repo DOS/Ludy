@@ -3152,6 +3152,37 @@ function resolveAstConstString(
       }
       return parts.join('');
     }
+    if (ts.isCallExpression(unwrapped)) {
+      const callee = unwrapAstExpr(unwrapped.expression, true);
+      let fnMethod: 'fromCharCode' | 'fromCodePoint' | null = null;
+      if (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) {
+        const recv = unwrapAstExpr(callee.expression, true);
+        const prop = ts.isPropertyAccessExpression(callee)
+          ? callee.name.text
+          : resolveAstConstString(callee.argumentExpression, scope, mode, depth + 1);
+        if (ts.isIdentifier(recv) && recv.text === 'String' && (prop === 'fromCharCode' || prop === 'fromCodePoint')) {
+          fnMethod = prop;
+        }
+      }
+      if (fnMethod !== null && unwrapped.arguments.length <= AST_MAX_CONST_STRING_LEN) {
+        const chars: string[] = [];
+        let ok = true;
+        for (const arg of unwrapped.arguments) {
+          const nExpr = unwrapAstExpr(arg, false);
+          if (!ts.isNumericLiteral(nExpr)) {
+            ok = false;
+            break;
+          }
+          const num = Number(nExpr.text);
+          if (!Number.isInteger(num) || num < 0 || (fnMethod === 'fromCodePoint' ? num > 0x10ffff : num > 0xffff)) {
+            ok = false;
+            break;
+          }
+          chars.push(fnMethod === 'fromCodePoint' ? String.fromCodePoint(num) : String.fromCharCode(num));
+        }
+        if (ok) return chars.join('');
+      }
+    }
   }
   if (ts.isBinaryExpression(unwrapped) && unwrapped.operatorToken.kind === ts.SyntaxKind.PlusToken) {
     const operands: tsType.Expression[] = [];
@@ -4653,6 +4684,21 @@ function extractAstFacts(
         if (!nextSuppressNotesLit && resolved.startsWith('notes.')) {
           notesLiterals.push(resolved);
           nextSuppressNotesLit = true;
+        }
+      }
+    } else if (ts.isCallExpression(node)) {
+      const strCallee = unwrapAstExpr(node.expression, true);
+      if (ts.isPropertyAccessExpression(strCallee) || ts.isElementAccessExpression(strCallee)) {
+        const strRecv = unwrapAstExpr(strCallee.expression, true);
+        if (ts.isIdentifier(strRecv) && strRecv.text === 'String') {
+          const resolved = resolveAstConstString(node, nextScope, 'full_const');
+          if (resolved !== null) {
+            checkStringOrIdentValue(resolved, true);
+            if (!nextSuppressNotesLit && resolved.startsWith('notes.')) {
+              notesLiterals.push(resolved);
+              nextSuppressNotesLit = true;
+            }
+          }
         }
       }
     }
@@ -11783,6 +11829,14 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
         'apps/web/src/C.tsx',
       ),
     ).toContain('uses computed dynamic import or require');
+    expect(
+      workspaceAdapterLeakViolations(
+        'const p = String.fromCharCode(64,108,117,100,121,47,97,103,101,110,116); import(p);',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toContain('uses computed dynamic import or require');
+    expect(memberVyViolations('import(String.fromCharCode(112, 103));')).toContain('imports pg');
     expect(importsNoteAiModel("const m = import('./\\u006eote-ai-model.ts'); void m;")).toBe(true);
     const n4Mixed = `metered('notes.summary', fn);\n${'<p>'.repeat(15_000)}return/{Number(metered(dynKey, fn))}/${'</p>'.repeat(15_000)}`;
     const n4Out = disallowedMeteredNotes('other.tsx', n4Mixed);
