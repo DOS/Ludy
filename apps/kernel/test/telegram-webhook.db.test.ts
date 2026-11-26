@@ -1242,7 +1242,15 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
       chat_error: 'BOT_TAKEN_OVER',
     });
 
-    // Forward migration CHECK constraint on chat_business_order and partial indexes.
+    // Forward migration CHECK constraint on chat_business_order (validated, text-length bounded) and concurrent partial indexes.
+    const constraintRow = await rows<{ convalidated: boolean }>(
+      "SELECT convalidated FROM pg_catalog.pg_constraint WHERE conrelid = 'ludy_kernel.channel_connection'::regclass AND conname = 'channel_connection_chat_business_order_check'",
+    );
+    expect(constraintRow).toEqual([{ convalidated: true }]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_business_order = '{\"0123456789ab\":1}'::jsonb WHERE org_id = $1 AND id = $2", [
+      tGuard.orgId,
+      tGuard.connectionId,
+    ]);
     await expect(
       rows("UPDATE ludy_kernel.channel_connection SET chat_business_order = '[]'::jsonb WHERE org_id = $1 AND id = $2", [tGuard.orgId, tGuard.connectionId]),
     ).rejects.toMatchObject({ code: '23514' });
@@ -1253,10 +1261,20 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
         tGuard.connectionId,
       ]),
     ).rejects.toMatchObject({ code: '23514' });
-    const idxs = await rows<{ indexname: string }>(
-      "SELECT indexname FROM pg_catalog.pg_indexes WHERE schemaname = 'ludy_kernel' AND tablename = 'channel_connection' AND indexname = ANY($1::text[]) ORDER BY indexname",
+    const idxs = await rows<{ relname: string; indisvalid: boolean }>(
+      `SELECT c.relname, i.indisvalid
+         FROM pg_catalog.pg_index i
+         JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'ludy_kernel'
+          AND i.indrelid = 'ludy_kernel.channel_connection'::regclass
+          AND c.relname = ANY($1::text[])
+        ORDER BY c.relname`,
       [['channel_connection_chat_bot_id_idx', 'channel_connection_chat_displace_pending_idx']],
     );
-    expect(idxs.map((i) => i.indexname)).toEqual(['channel_connection_chat_bot_id_idx', 'channel_connection_chat_displace_pending_idx']);
+    expect(idxs).toEqual([
+      { relname: 'channel_connection_chat_bot_id_idx', indisvalid: true },
+      { relname: 'channel_connection_chat_displace_pending_idx', indisvalid: true },
+    ]);
   });
 });

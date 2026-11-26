@@ -270,6 +270,44 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
       expect(tablePrivs.length).toBeGreaterThan(0);
       expect(tablePrivs.filter((r) => r.ok)).toEqual([]);
 
+      const colAcl = await c.query<{ attname: string; grantee: string; privilege_type: string }>(
+        `SELECT a.attname, COALESCE(r.rolname, 'PUBLIC') AS grantee, acl.privilege_type
+           FROM pg_catalog.pg_class c
+           JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+           CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl
+           LEFT JOIN pg_catalog.pg_roles r ON r.oid = acl.grantee
+          WHERE c.oid = pg_catalog.to_regclass($1)
+            AND a.attnum > 0
+            AND NOT a.attisdropped
+            AND a.attacl IS NOT NULL
+            AND acl.grantee <> c.relowner
+          ORDER BY 1, 2, 3`,
+        [dbIds.table('crove_kernel.telegram_webhook_lock')],
+      );
+      expect(colAcl.rows).toEqual([]);
+
+      const colPrivs = await c.query<{ rolname: string; privilege: string }>(
+        `SELECT r.rolname, p AS privilege
+           FROM pg_catalog.pg_roles r
+           CROSS JOIN pg_catalog.unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) AS p
+          WHERE r.rolname !~ '^pg_'
+            AND NOT r.rolsuper
+            AND pg_catalog.has_any_column_privilege(r.oid, $1::regclass, p)
+          ORDER BY 1, 2`,
+        [dbIds.table('crove_kernel.telegram_webhook_lock')],
+      );
+      expect(colPrivs.rows).toEqual([]);
+
+      const publicPrivs = await c.query<{ privilege: string }>(
+        `SELECT p AS privilege
+           FROM pg_catalog.unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']) AS p
+          WHERE pg_catalog.has_table_privilege('public', $1::regclass, p)
+             OR (p IN ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES') AND pg_catalog.has_any_column_privilege('public', $1::regclass, p))
+          ORDER BY 1`,
+        [dbIds.table('crove_kernel.telegram_webhook_lock')],
+      );
+      expect(publicPrivs.rows).toEqual([]);
+
       const expectedGrants: Array<[string, readonly string[]]> = [
         ['crove_kernel.conversation_chat_hook_connections(text)', ['crove_worker']],
         ['crove_kernel.telegram_chat_hook_rekey_due(text,integer,timestamptz,uuid,uuid)', ['crove_worker']],
@@ -584,6 +622,10 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
     await expect(
       api.execute('kernel.channel.telegram_business_allow', { connectionId: org.connectionId, ref: businessRef, allow: true, dismiss: true }, { actor: asUser(org.ownerId), orgId: org.orgId }),
     ).rejects.toMatchObject({ status: 422 });
+    const checkRows = await rows<{ convalidated: boolean }>(
+      "SELECT convalidated FROM pg_catalog.pg_constraint WHERE conrelid = 'crove_kernel.channel_connection'::regclass AND conname = 'channel_connection_chat_business_order_check'",
+    );
+    expect(checkRows).toEqual([{ convalidated: true }]);
     await expect(
       rows("UPDATE crove_kernel.channel_connection SET chat_business_order = '[]'::jsonb WHERE org_id = $1 AND id = $2", [org.orgId, org.connectionId]),
     ).rejects.toMatchObject({ code: '23514' });
