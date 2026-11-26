@@ -348,35 +348,6 @@ function scanSource(
   let asTypeBrace = 0;
   let asTypeAngle = 0;
   let lastTokenWasTypeVoid = false;
-  const braceExprStack: boolean[] = [];
-  let nextLBraceCanBeExpr = false;
-  let expectCaseColon = false;
-  let expectDefaultColon = false;
-  let caseExprParenDepth = 0;
-  let caseExprBracketDepth = 0;
-  let caseExprBraceDepth = 0;
-  let caseExprTernaryDepth = 0;
-  let lastRBraceWasExpr = false;
-  let prevWasArrow = false;
-  let prevWasAsyncExpr = false;
-  let prevWasExport = false;
-  let prevWasExportDefault = false;
-  let prevWasAsyncDecl = false;
-  let braceTrackParenDepth = 0;
-  let braceTrackBracketDepth = 0;
-  const fnClassStack: Array<{
-    kind: 'function' | 'class';
-    isExpr: boolean;
-    braceDepth: number;
-    parenDepth: number;
-    bracketDepth: number;
-    angleDepth: number;
-    sawParenOpen: boolean;
-    sawParenClose: boolean;
-    inReturnType: boolean;
-    lastWasTypeConnector: boolean;
-  }> = [];
-
   const AS_TYPE_PREFIX_IDENTS = new Set([
     'keyof',
     'typeof',
@@ -387,303 +358,52 @@ function scanSource(
     'new',
     'asserts',
   ]);
-  const BRACE_EXPR_PREV_KEYWORDS = new Set([
-    'return',
-    'throw',
-    'yield',
-    'await',
-    'typeof',
-    'void',
-    'delete',
-    'in',
-    'instanceof',
-    'of',
-    'new',
-    'as',
-    'satisfies',
-  ]);
-  const BRACE_EXPR_PREV_PUNCTS = new Set([
-    '=',
-    '+=',
-    '-=',
-    '*=',
-    '/=',
-    '%=',
-    '**=',
-    '<<=',
-    '>>=',
-    '>>>=',
-    '&=',
-    '|=',
-    '^=',
-    '&&=',
-    '||=',
-    '??=',
-    '(',
-    '[',
-    ',',
-    '?',
-    ':',
-    '+',
-    '-',
-    '*',
-    '/',
-    '%',
-    '**',
-    '&',
-    '|',
-    '^',
-    '<<',
-    '>>',
-    '>>>',
-    '&&',
-    '||',
-    '??',
-    '==',
-    '===',
-    '!=',
-    '!==',
-    '<',
-    '<=',
-    '>',
-    '>=',
-    '!',
-    '~',
-    '...',
-  ]);
+  // Fail-closed brace classifier (#5035): every `{ ... }` pushes `true` (expression/division-possible on `}`),
+  // matching origin/main strictness, UNLESS its `{` unambiguously begins a JS control-flow statement block.
+  const braceExprStack: boolean[] = [];
+  const controlParenStack: boolean[] = [];
+  let controlStage: 'none' | 'for_head' | 'expect_paren' | 'catch_head' | 'expect_block' = 'none';
+  let lastRBraceWasExpr = false;
 
   const trackBraceExprToken = (tok: Token): void => {
     lastRBraceWasExpr = false;
-    const curWasArrow = prevWasArrow;
-    const curWasAsyncExpr = prevWasAsyncExpr;
-    const curWasExport = prevWasExport;
-    const curWasExportDefault = prevWasExportDefault;
-    const curWasAsyncDecl = prevWasAsyncDecl;
-    prevWasArrow = false;
-    prevWasAsyncExpr = false;
-    prevWasExport = false;
-    prevWasExportDefault = false;
-    prevWasAsyncDecl = false;
-    const curBraceDepth = braceExprStack.length;
-    const curParenDepth = braceTrackParenDepth;
-    const curBracketDepth = braceTrackBracketDepth;
-
-    let hitCaseColon = false;
-    const wasExpectDefaultColon = expectDefaultColon;
-    expectDefaultColon = false;
-    if (wasExpectDefaultColon && tok.kind === 'punct' && tok.value === ':') {
-      hitCaseColon = true;
-    } else if (expectCaseColon) {
-      if (tok.kind === 'punct') {
-        if (tok.value === '(') caseExprParenDepth += 1;
-        else if (tok.value === ')') {
-          if (caseExprParenDepth > 0) caseExprParenDepth -= 1;
-        } else if (tok.value === '[') caseExprBracketDepth += 1;
-        else if (tok.value === ']') {
-          if (caseExprBracketDepth > 0) caseExprBracketDepth -= 1;
-        } else if (tok.value === '{') caseExprBraceDepth += 1;
-        else if (tok.value === '}') {
-          if (caseExprBraceDepth > 0) caseExprBraceDepth -= 1;
-          else expectCaseColon = false;
-        } else if (caseExprParenDepth === 0 && caseExprBracketDepth === 0 && caseExprBraceDepth === 0) {
-          if (tok.value === '?') caseExprTernaryDepth += 1;
-          else if (tok.value === ':') {
-            if (caseExprTernaryDepth > 0) caseExprTernaryDepth -= 1;
-            else {
-              expectCaseColon = false;
-              hitCaseColon = true;
-            }
-          } else if (tok.value === ';') {
-            expectCaseColon = false;
-          }
-        }
-      }
-    }
-
-    const topFnClass = fnClassStack[fnClassStack.length - 1];
     if (tok.kind === 'punct') {
       if (tok.value === '{') {
-        if (
-          topFnClass &&
-          curBraceDepth === topFnClass.braceDepth &&
-          curParenDepth === topFnClass.parenDepth &&
-          curBracketDepth === topFnClass.bracketDepth &&
-          topFnClass.angleDepth === 0
-        ) {
-          if (topFnClass.kind === 'class') {
-            braceExprStack.push(topFnClass.isExpr);
-            fnClassStack.pop();
-            nextLBraceCanBeExpr = false;
-            return;
-          }
-          if (!topFnClass.sawParenOpen || !topFnClass.sawParenClose) {
-            fnClassStack.pop();
-          } else if (topFnClass.inReturnType && topFnClass.lastWasTypeConnector) {
-            topFnClass.lastWasTypeConnector = false;
-          } else {
-            braceExprStack.push(topFnClass.isExpr);
-            fnClassStack.pop();
-            nextLBraceCanBeExpr = false;
-            return;
-          }
-        }
-        braceExprStack.push(nextLBraceCanBeExpr);
-        nextLBraceCanBeExpr = false;
+        const isControlBlock = controlStage === 'expect_block' || controlStage === 'catch_head';
+        braceExprStack.push(!isControlBlock);
+        controlStage = 'none';
         return;
       }
       if (tok.value === '}') {
-        lastRBraceWasExpr = braceExprStack.pop() ?? false;
-        while (fnClassStack.length > 0 && braceExprStack.length < fnClassStack[fnClassStack.length - 1]!.braceDepth) {
-          fnClassStack.pop();
-        }
-        const activeAfterClose = fnClassStack[fnClassStack.length - 1];
-        if (
-          activeAfterClose &&
-          braceExprStack.length === activeAfterClose.braceDepth &&
-          curParenDepth === activeAfterClose.parenDepth &&
-          curBracketDepth === activeAfterClose.bracketDepth
-        ) {
-          activeAfterClose.lastWasTypeConnector = false;
-        }
-        nextLBraceCanBeExpr = false;
+        lastRBraceWasExpr = braceExprStack.pop() ?? true;
+        controlStage = 'none';
         return;
       }
       if (tok.value === '(') {
-        braceTrackParenDepth += 1;
-      } else if (tok.value === ')' && braceTrackParenDepth > 0) {
-        braceTrackParenDepth -= 1;
-      } else if (tok.value === '[') {
-        braceTrackBracketDepth += 1;
-      } else if (tok.value === ']' && braceTrackBracketDepth > 0) {
-        braceTrackBracketDepth -= 1;
-      }
-      if (
-        topFnClass &&
-        curBraceDepth === topFnClass.braceDepth &&
-        curParenDepth === topFnClass.parenDepth &&
-        curBracketDepth === topFnClass.bracketDepth
-      ) {
-        if (tok.value === ';' || (topFnClass.kind === 'class' && topFnClass.angleDepth === 0 && tok.value === ':')) {
-          fnClassStack.pop();
-        } else if (tok.value === '<') {
-          topFnClass.angleDepth += 1;
-          topFnClass.lastWasTypeConnector = true;
-        } else if (tok.value === '>' && topFnClass.angleDepth > 0) {
-          topFnClass.angleDepth -= 1;
-          topFnClass.lastWasTypeConnector = false;
-        } else if (tok.value === '(' && topFnClass.angleDepth === 0) {
-          if (topFnClass.kind === 'function' && !topFnClass.sawParenOpen) topFnClass.sawParenOpen = true;
-          if (topFnClass.inReturnType) topFnClass.lastWasTypeConnector = true;
-        } else if (tok.value === ':' && topFnClass.angleDepth === 0) {
-          if (topFnClass.kind === 'function' && topFnClass.sawParenClose && !topFnClass.inReturnType) {
-            topFnClass.inReturnType = true;
-            topFnClass.lastWasTypeConnector = true;
-          } else if (topFnClass.kind === 'function' && !topFnClass.sawParenOpen) {
-            fnClassStack.pop();
-          } else if (topFnClass.kind === 'function' && topFnClass.inReturnType) {
-            topFnClass.lastWasTypeConnector = true;
-          }
-        } else if (topFnClass.inReturnType && topFnClass.angleDepth === 0) {
-          topFnClass.lastWasTypeConnector =
-            tok.value === '|' ||
-            tok.value === '&' ||
-            tok.value === '=>' ||
-            tok.value === '[' ||
-            tok.value === ',' ||
-            tok.value === '?' ||
-            tok.value === '=';
-        }
-      } else if (
-        topFnClass &&
-        curBraceDepth === topFnClass.braceDepth &&
-        braceTrackParenDepth === topFnClass.parenDepth &&
-        braceTrackBracketDepth === topFnClass.bracketDepth &&
-        topFnClass.angleDepth === 0
-      ) {
-        if (tok.value === ')') {
-          if (topFnClass.kind === 'function' && topFnClass.sawParenOpen && !topFnClass.sawParenClose) {
-            topFnClass.sawParenClose = true;
-          } else if (topFnClass.inReturnType) {
-            topFnClass.lastWasTypeConnector = false;
-          }
-        } else if (tok.value === ']' && topFnClass.inReturnType) {
-          topFnClass.lastWasTypeConnector = false;
-        }
-      }
-      if (hitCaseColon) {
-        nextLBraceCanBeExpr = false;
+        controlParenStack.push(
+          controlStage === 'expect_paren' || controlStage === 'for_head' || controlStage === 'catch_head',
+        );
+        controlStage = 'none';
         return;
       }
-      prevWasArrow = tok.value === '=>';
-      nextLBraceCanBeExpr = BRACE_EXPR_PREV_PUNCTS.has(tok.value);
-      return;
-    }
-    if (tok.kind === 'template_head' || tok.kind === 'template_middle') {
-      nextLBraceCanBeExpr = true;
+      if (tok.value === ')') {
+        const expectBlock = controlParenStack.pop() ?? false;
+        controlStage = expectBlock ? 'expect_block' : 'none';
+        return;
+      }
+      controlStage = 'none';
       return;
     }
     if (tok.kind === 'ident' && !tok.escaped && !prevWasDot) {
-      if (
-        topFnClass &&
-        curBraceDepth === topFnClass.braceDepth &&
-        curParenDepth === topFnClass.parenDepth &&
-        curBracketDepth === topFnClass.bracketDepth &&
-        topFnClass.angleDepth === 0 &&
-        topFnClass.inReturnType
-      ) {
-        topFnClass.lastWasTypeConnector =
-          tok.value === 'is' || tok.value === 'extends' || AS_TYPE_PREFIX_IDENTS.has(tok.value);
-      }
-      if (tok.value === 'case') {
-        if (braceExprStack[braceExprStack.length - 1] !== true) {
-          expectCaseColon = true;
-          caseExprParenDepth = 0;
-          caseExprBracketDepth = 0;
-          caseExprBraceDepth = 0;
-          caseExprTernaryDepth = 0;
-          nextLBraceCanBeExpr = true;
-        } else {
-          nextLBraceCanBeExpr = false;
-        }
-      } else if (tok.value === 'default') {
-        if (curWasExport) {
-          prevWasExportDefault = true;
-          nextLBraceCanBeExpr = true;
-        } else if (braceExprStack[braceExprStack.length - 1] !== true) {
-          expectDefaultColon = true;
-          nextLBraceCanBeExpr = true;
-        } else {
-          nextLBraceCanBeExpr = false;
-        }
-      } else if (tok.value === 'export') {
-        prevWasExport = true;
-        nextLBraceCanBeExpr = false;
-      } else if (tok.value === 'function' || tok.value === 'class') {
-        const isDeclExportDefault = curWasExportDefault || (tok.value === 'function' && curWasAsyncDecl);
-        const isExpr = !isDeclExportDefault && (nextLBraceCanBeExpr || curWasArrow || (tok.value === 'function' && curWasAsyncExpr));
-        fnClassStack.push({
-          kind: tok.value,
-          isExpr,
-          braceDepth: curBraceDepth,
-          parenDepth: curParenDepth,
-          bracketDepth: curBracketDepth,
-          angleDepth: 0,
-          sawParenOpen: false,
-          sawParenClose: tok.value === 'class',
-          inReturnType: false,
-          lastWasTypeConnector: false,
-        });
-        nextLBraceCanBeExpr = false;
-      } else {
-        if (tok.value === 'async') {
-          prevWasAsyncExpr = nextLBraceCanBeExpr || curWasArrow;
-          prevWasAsyncDecl = curWasExportDefault;
-        }
-        nextLBraceCanBeExpr = BRACE_EXPR_PREV_KEYWORDS.has(tok.value);
-      }
+      if (tok.value === 'if' || tok.value === 'while') controlStage = 'expect_paren';
+      else if (tok.value === 'for') controlStage = 'for_head';
+      else if (tok.value === 'await' && controlStage === 'for_head') controlStage = 'expect_paren';
+      else if (tok.value === 'else' || tok.value === 'try' || tok.value === 'finally') controlStage = 'expect_block';
+      else if (tok.value === 'catch') controlStage = 'catch_head';
+      else controlStage = 'none';
       return;
     }
-    nextLBraceCanBeExpr = false;
+    controlStage = 'none';
   };
 
   const resetAsType = (): void => {
@@ -7759,8 +7479,16 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(disallowedMeteredNotes('other.ts', 'const f = function (): (string) {} / Number(metered("notes." + "a", fn)) / 2;')).toEqual(['notes.a']);
     expect(memberVyViolations('const x = { default: {} / Number(import("p" + "g")) / 2 };').length).toBeGreaterThan(0);
     expect(memberVyViolations('const x = { case: {} / Number(import("p" + "g")) / 2 };').length).toBeGreaterThan(0);
-    expect(orgFeatureViolations('const x = { default: {} / Number(import("./member-vy/" + "x.ts")) / 2 };').length).toBeGreaterThan(0);
-    expect(orgFeatureViolations('const x = { case: {} / Number(import("./member-vy/" + "x.ts")) / 2 };').length).toBeGreaterThan(0);
+    expect(memberVyViolations('const x = { a: 1, default: {} / Number(import("p" + "g")) / 2 };').length).toBeGreaterThan(0);
+    expect(memberVyViolations('const x = { [k]: 1, default: {} / Number(import("p" + "g")) / 2 };').length).toBeGreaterThan(0);
+    expect(memberVyViolations('switch (x) { case 1: return { default: {} / Number(import("p" + "g")) / 2 }; }').length).toBeGreaterThan(0);
+    expect(memberVyViolations('export default { a: 1 } / Number(import("p" + "g")) / 2;').length).toBeGreaterThan(0);
+    expect(orgFeatureViolations('const x = { default: {} / Number(import("./member-vy/" + "x.ts")) / 2 };')).toContain('imports ./member-vy/x.ts');
+    expect(orgFeatureViolations('const x = { case: {} / Number(import("./member-vy/" + "x.ts")) / 2 };')).toContain('imports ./member-vy/x.ts');
+    expect(orgFeatureViolations('const x = { a: 1, default: {} / Number(import("./member-vy/" + "x.ts")) / 2 };')).toContain('imports ./member-vy/x.ts');
+    expect(orgFeatureViolations('const x = { [k]: 1, default: {} / Number(import("./member-vy/" + "x.ts")) / 2 };')).toContain('imports ./member-vy/x.ts');
+    expect(orgFeatureViolations('switch (x) { case 1: return { default: {} / Number(import("./member-vy/" + "x.ts")) / 2 }; }')).toContain('imports ./member-vy/x.ts');
+    expect(orgFeatureViolations('export default { a: 1 } / Number(import("./member-vy/" + "x.ts")) / 2;')).toContain('imports ./member-vy/x.ts');
     expect(
       workspaceAdapterLeakViolations(
         'const x = { default: {} / Number(import("@ludy/" + "agent")) / 2 };',
@@ -7768,8 +7496,93 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
         'apps/app/src/sneaky.ts',
       ).length,
     ).toBeGreaterThan(0);
+    expect(
+      workspaceAdapterLeakViolations(
+        'const x = { [k]: 1, default: {} / Number(import("@ludy/" + "agent")) / 2 };',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/app/src/sneaky.ts',
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      workspaceAdapterLeakViolations(
+        'switch (x) { case 1: return { default: {} / Number(import("@ludy/" + "agent")) / 2 }; }',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/app/src/sneaky.ts',
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      workspaceAdapterLeakViolations(
+        'export default { a: 1 } / Number(import("@ludy/" + "agent")) / 2;',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/app/src/sneaky.ts',
+      ).length,
+    ).toBeGreaterThan(0);
     expect(disallowedMeteredNotes('other.ts', 'const x = { case: {} / Number(metered("notes." + "a", fn)) / 2 };')).toEqual(['notes.a']);
+    expect(disallowedMeteredNotes('other.ts', 'const x = { a: 1, default: {} / Number(metered("notes." + "a", fn)) / 2 };')).toEqual(['notes.a']);
+    expect(disallowedMeteredNotes('other.ts', 'const x = { [k]: 1, default: {} / Number(metered("notes." + "a", fn)) / 2 };')).toEqual(['notes.a']);
+    expect(disallowedMeteredNotes('other.ts', 'switch (x) { case 1: return { default: {} / Number(metered("notes." + "a", fn)) / 2 }; }')).toEqual(['notes.a']);
     expect(disallowedMeteredNotes('other.ts', 'export default { a: 1 } / Number(metered("notes." + "a", fn)) / 2;')).toEqual(['notes.a']);
+
+    // JSX expression containers (.tsx / .jsx) must remain fail-closed when `{ ... } / ...` encloses disallowed code (#5035).
+    expect(memberVyViolations('const j = <a>{ {} / Number(import("p" + "g")) / 2 }</a>;')).toContain('imports pg');
+    expect(
+      memberVyViolations("export function C() { return <div>{ {} / ((r) => r('pg'))(module.require) / 2 }</div>; }").length,
+    ).toBeGreaterThan(0);
+    expect(memberVyViolations('const j = <a>x{ function () {} / Number(import("p" + "g")) / 2 }</a>;')).toContain('imports pg');
+    expect(memberVyViolations('const j = <><b/>{ class {} / Number(import("p" + "g")) / 2 }</>;')).toContain('imports pg');
+    expect(memberVyViolations('const j = <div>{ { default: 1 } / Number(import("p" + "g")) / 2 }</div>;')).toContain('imports pg');
+    expect(orgFeatureViolations('const j = <a>{ {} / Number(import("./member-vy/" + "x.ts")) / 2 }</a>;')).toContain('imports ./member-vy/x.ts');
+    expect(
+      orgFeatureViolations("export function C() { return <div>{ {} / ((r) => r('./member-vy/' + 'x.ts'))(module.require) / 2 }</div>; }"),
+    ).toContain('uses require alias or bare require reference');
+    expect(orgFeatureViolations('const j = <a>x{ function () {} / Number(import("./member-vy/" + "x.ts")) / 2 }</a>;')).toContain(
+      'imports ./member-vy/x.ts',
+    );
+    expect(orgFeatureViolations('const j = <><b/>{ class {} / Number(import("./member-vy/" + "x.ts")) / 2 }</>;')).toContain(
+      'imports ./member-vy/x.ts',
+    );
+    expect(orgFeatureViolations('const j = <div>{ { default: 1 } / Number(import("./member-vy/" + "x.ts")) / 2 }</div>;')).toContain(
+      'imports ./member-vy/x.ts',
+    );
+    expect(
+      workspaceAdapterLeakViolations(
+        'const j = <a>{ {} / Number(import("@ludy/" + "agent")) / 2 }</a>;',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/app/src/sneaky.tsx',
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      workspaceAdapterLeakViolations(
+        "export function C() { return <div>{ {} / ((r) => r('@ludy/agent'))(module.require) / 2 }</div>; }",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/app/src/sneaky.jsx',
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      workspaceAdapterLeakViolations(
+        'const j = <a>x{ function () {} / Number(import("@ludy/" + "agent")) / 2 }</a>;',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/app/src/sneaky.tsx',
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      workspaceAdapterLeakViolations(
+        'const j = <><b/>{ class {} / Number(import("@ludy/" + "agent")) / 2 }</>;',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/app/src/sneaky.tsx',
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      workspaceAdapterLeakViolations(
+        'const j = <div>{ { default: 1 } / Number(import("@ludy/" + "agent")) / 2 }</div>;',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/app/src/sneaky.tsx',
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(disallowedMeteredNotes('other.tsx', 'const j = <a>{ {} / Number(metered("notes." + "a", fn)) / 2 }</a>;')).toEqual(['notes.a']);
+    expect(disallowedMeteredNotes('other.tsx', 'const j = <a>x{ function () {} / Number(metered("notes." + "a", fn)) / 2 }</a>;')).toEqual(['notes.a']);
+    expect(disallowedMeteredNotes('other.tsx', 'const j = <><b/>{ class {} / Number(metered("notes." + "a", fn)) / 2 }</>;')).toEqual(['notes.a']);
+    expect(disallowedMeteredNotes('other.tsx', 'const j = <div>{ { default: 1 } / Number(metered("notes." + "a", fn)) / 2 }</div>;')).toEqual(['notes.a']);
     expect(
       workspaceAdapterLeakViolations(
         `const bad = 'unclosed; import { x } from "@ludy/\\agent";`,
@@ -8354,16 +8167,12 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     ]);
     expect(disallowedMeteredNotes('other.ts', 'if (enabled) {} /metered(name)/.test(text);')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'if (enabled) { doWork(); } /metered(name)/.test(text);')).toEqual([]);
-    expect(disallowedMeteredNotes('other.ts', 'function f() {} /metered(name)/.test(text);')).toEqual([]);
-    expect(disallowedMeteredNotes('other.ts', 'export function f(): { a: number } { return { a: 1 }; } /metered(name)/.test(text);')).toEqual([]);
-    expect(disallowedMeteredNotes('other.ts', 'export default function () {} /metered(name)/.test(text);')).toEqual([]);
-    expect(disallowedMeteredNotes('other.ts', 'export default async function () {} /metered(name)/.test(text);')).toEqual([]);
-    expect(disallowedMeteredNotes('other.ts', 'export default class {} /metered(name)/.test(text);')).toEqual([]);
-    expect(disallowedMeteredNotes('other.ts', 'class C {} /metered(name)/.test(text);')).toEqual([]);
-    expect(disallowedMeteredNotes('other.ts', 'switch (x) { case 1: {} /metered(name)/.test(text); case a ? b : c: {} /metered(name)/.test(text); default: {} /metered(name)/.test(text); }')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'if (enabled) { doWork(); } else {} /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'while (enabled) {} /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'for (const item of items) {} /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'for await (const item of items) {} /metered(name)/.test(text);')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'try {} catch {} /metered(name)/.test(text);')).toEqual([]);
-    expect(disallowedMeteredNotes('other.ts', '{ const a = 1; } /metered(name)/.test(text);')).toEqual([]);
-    expect(disallowedMeteredNotes('other.ts', 'const f = () => {} /metered(name)/.test(text);')).toEqual([]);
+    expect(disallowedMeteredNotes('other.ts', 'try {} catch (err) {} finally {} /metered(name)/.test(text);')).toEqual([]);
     expect(disallowedMeteredNotes('other.ts', 'const x = { a: 1 } / Number(metered("notes." + "a", fn)) / 2;')).toEqual([
       'notes.a',
     ]);
