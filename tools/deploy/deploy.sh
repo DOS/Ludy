@@ -940,11 +940,9 @@ activate() {
   ACTIVE_BUILD="$(release_field "$1" BUILD)"
 }
 
-# Snapshots pre-existing host Compose files before first-time activate so pre-deploy guard failures leave a
-# manually managed checkout untouched (#3972).
+# Snapshots pre-existing host Compose files before activate so aborted pre-up-db deploys restore them verbatim (#3972).
 snapshot_pre_activate() {
-  local current_rel="$1" f
-  [ -z "$current_rel" ] || return 0
+  local f
   PRE_ACTIVATE_SNAP="$(mktemp -d)" || return 1
   for f in docker-compose.yml docker-compose.override.yml compose.pilot.yml; do
     if [ -f "$DEPLOY_DIR/$f" ]; then
@@ -958,20 +956,21 @@ snapshot_pre_activate() {
 
 restore_pre_activate() {
   local current_rel="$1" f
-  if [ -n "$current_rel" ]; then
-    activate "$current_rel"
+  if [ -n "${PRE_ACTIVATE_SNAP:-}" ] && [ -d "$PRE_ACTIVATE_SNAP" ]; then
+    for f in docker-compose.yml docker-compose.override.yml compose.pilot.yml; do
+      if [ "$(cat "$PRE_ACTIVATE_SNAP/$f.present" 2>/dev/null || echo 0)" = 1 ] && [ -f "$PRE_ACTIVATE_SNAP/$f" ]; then
+        mv -f "$PRE_ACTIVATE_SNAP/$f" "$DEPLOY_DIR/$f"
+      else
+        rm -f "$DEPLOY_DIR/$f"
+      fi
+    done
+    rm -rf "$PRE_ACTIVATE_SNAP"
+    PRE_ACTIVATE_SNAP=''
     return 0
   fi
-  [ -n "${PRE_ACTIVATE_SNAP:-}" ] && [ -d "$PRE_ACTIVATE_SNAP" ] || return 0
-  for f in docker-compose.yml docker-compose.override.yml compose.pilot.yml; do
-    if [ "$(cat "$PRE_ACTIVATE_SNAP/$f.present" 2>/dev/null || echo 0)" = 1 ] && [ -f "$PRE_ACTIVATE_SNAP/$f" ]; then
-      mv -f "$PRE_ACTIVATE_SNAP/$f" "$DEPLOY_DIR/$f"
-    else
-      rm -f "$DEPLOY_DIR/$f"
-    fi
-  done
-  rm -rf "$PRE_ACTIVATE_SNAP"
-  PRE_ACTIVATE_SNAP=''
+  if [ -n "$current_rel" ]; then
+    activate "$current_rel"
+  fi
 }
 
 release_field() { sed -n "s/^$2=//p" "$DEPLOY_DIR/releases/$1/release.env" | head -n 1; }
@@ -1358,10 +1357,9 @@ validate_pgdata_subpath() {
   return 0
 }
 
-# Resolves normalized PGDATA subpath under /var/lib/postgresql/data from service $svc in Compose config YAML.
-compose_service_pgdata_subpath() {
-  local config_out="$1" svc="$2" pg='' sub=''
-  pg="$(compose_service_env_value "$config_out" "$svc" PGDATA 2>/dev/null || true)"
+# Normalizes a raw PGDATA path to a validated relative subdir under /var/lib/postgresql/data (empty = root) (#3972).
+normalize_pgdata_subpath() {
+  local pg="$1" sub=''
   while [[ "$pg" == */ && "$pg" != / ]]; do pg="${pg%/}"; done
   if [ -z "$pg" ] || [ "$pg" = /var/lib/postgresql/data ]; then
     return 0
@@ -1378,6 +1376,13 @@ compose_service_pgdata_subpath() {
       return 1
       ;;
   esac
+}
+
+# Resolves normalized PGDATA subpath under /var/lib/postgresql/data from service $svc in Compose config YAML.
+compose_service_pgdata_subpath() {
+  local config_out="$1" svc="$2" pg=''
+  pg="$(compose_service_env_value "$config_out" "$svc" PGDATA 2>/dev/null || true)"
+  normalize_pgdata_subpath "$pg"
 }
 
 # Returns 0 if a compose YAML file defines service $svc under top-level services.
@@ -1703,7 +1708,7 @@ mounts_match_pg_cluster() {
 # Checks that no running container outside $allowed_proj (or any running container when $allowed_proj is empty)
 # currently mounts $dst_spec. Returns: 0 = verified free, 1 = held by conflicting container, 2 = inspect failed (#3972).
 check_storage_free() {
-  local dst_spec="$1" allowed_proj="${2:-}" dst_type dst_src dst_canon ps_out cid c_proj mounts_out still_running m_type m_name m_src
+  local dst_spec="$1" allowed_proj="${2:-}" dst_type dst_src dst_canon ps_out cid c_proj c_wdir c_wdir_canon deploy_dir_norm canon_deploy_dir mounts_out still_running m_type m_name m_src
   local -a cids=()
   case "$dst_spec" in
     volume:*) dst_type='volume'; dst_src="${dst_spec#volume:}" ;;
@@ -1716,6 +1721,9 @@ check_storage_free() {
   if [ "$dst_type" = 'bind' ] && [ -d "$dst_src" ]; then
     dst_canon="$(cd -P "$dst_src" 2>/dev/null && pwd -P || printf '%s' "$dst_src")"
   fi
+  deploy_dir_norm="${DEPLOY_DIR%/}"
+  [ -n "$deploy_dir_norm" ] || deploy_dir_norm='/'
+  canon_deploy_dir="$(cd -P "$DEPLOY_DIR" 2>/dev/null && pwd -P || printf '%s' "$deploy_dir_norm")"
   ps_out="$(docker ps -q --filter status=running 2>/dev/null)" || return 2
   [ -n "$ps_out" ] || return 0
   mapfile -t cids <<<"$ps_out"
@@ -1726,7 +1734,24 @@ check_storage_free() {
       [ -z "$still_running" ] || return 2
       continue
     fi
-    if [ -n "$allowed_proj" ] && [ "$c_proj" = "$allowed_proj" ]; then continue; fi
+    if [ -n "$allowed_proj" ] && [ "$c_proj" = "$allowed_proj" ]; then
+      if ! c_wdir="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$cid" 2>/dev/null)"; then
+        still_running="$(docker ps -q --filter status=running --filter "id=$cid" 2>/dev/null)" || return 2
+        [ -z "$still_running" ] || return 2
+        continue
+      fi
+      if [ -n "$c_wdir" ]; then
+        c_wdir="${c_wdir%/}"
+        [ -n "$c_wdir" ] || c_wdir='/'
+        c_wdir_canon="$c_wdir"
+        if [ -d "$c_wdir" ]; then
+          c_wdir_canon="$(cd -P "$c_wdir" 2>/dev/null && pwd -P || printf '%s' "$c_wdir")"
+        fi
+        if [ "$c_wdir" = "$deploy_dir_norm" ] || [ "$c_wdir" = "$canon_deploy_dir" ] || [ "$c_wdir_canon" = "$canon_deploy_dir" ]; then
+          continue
+        fi
+      fi
+    fi
     if ! mounts_out="$(docker inspect --format '{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Source}}{{"\n"}}{{end}}' "$cid" 2>/dev/null)"; then
       still_running="$(docker ps -q --filter status=running --filter "id=$cid" 2>/dev/null)" || return 2
       [ -z "$still_running" ] || return 2
@@ -1768,12 +1793,12 @@ mount_data_migrated() {
     --entrypoint node "$probe_image" -e "$js" >/dev/null 2>&1
 }
 
-# Inspects existing Docker containers belonging to $DEPLOY_DIR and captures their actual mounted sources (#3972).
-PREV_CTR_DB='' PREV_CTR_FILES='' PREV_CTR_KEYS='' PREV_CTR_ARCHIVE=''
+# Inspects existing Docker containers belonging to $DEPLOY_DIR and captures their actual mounted sources and PGDATA (#3972).
+PREV_CTR_DB='' PREV_CTR_FILES='' PREV_CTR_KEYS='' PREV_CTR_ARCHIVE='' PREV_CTR_PGDATA='' PREV_CTR_PGDATA_SET=0
 detect_prev_container_mounts() {
-  local wdir canon_dir ps_out cid mounts_out hc_json hc_subpaths still_exists m_dst m_type m_name m_src spec subpath h_tgt h_type h_src h_sub seen_specs
+  local wdir canon_dir ps_out cid mounts_out hc_json hc_subpaths env_out env_line still_exists m_dst m_type m_name m_src spec subpath h_tgt h_type h_src h_sub seen_specs has_db_mount found_pg raw_pg norm_pg
   local -a dirs=("$DEPLOY_DIR") cids=()
-  PREV_CTR_DB='' PREV_CTR_FILES='' PREV_CTR_KEYS='' PREV_CTR_ARCHIVE=''
+  PREV_CTR_DB='' PREV_CTR_FILES='' PREV_CTR_KEYS='' PREV_CTR_ARCHIVE='' PREV_CTR_PGDATA='' PREV_CTR_PGDATA_SET=0
   canon_dir="$(cd -P "$DEPLOY_DIR" 2>/dev/null && pwd -P || true)"
   if [ -n "$canon_dir" ] && [ "$canon_dir" != "$DEPLOY_DIR" ]; then
     dirs+=("$canon_dir")
@@ -1796,6 +1821,7 @@ detect_prev_container_mounts() {
       fi
       hc_subpaths="$(parse_hostconfig_subpath_mounts <<<"$hc_json")" || return 1
       seen_specs=''
+      has_db_mount=0
       while IFS='|' read -r m_dst m_type m_name m_src; do
         [ -n "$m_dst" ] || continue
         m_dst="${m_dst%/}"
@@ -1829,7 +1855,7 @@ detect_prev_container_mounts() {
         esac
         seen_specs="$(append_unique_line "$seen_specs" "${m_dst}|${spec}")"
         case "$m_dst" in
-          /var/lib/postgresql/data) PREV_CTR_DB="$(append_unique_line "$PREV_CTR_DB" "$spec")" ;;
+          /var/lib/postgresql/data) PREV_CTR_DB="$(append_unique_line "$PREV_CTR_DB" "$spec")"; has_db_mount=1 ;;
           /data/files) PREV_CTR_FILES="$(append_unique_line "$PREV_CTR_FILES" "$spec")" ;;
           /data/keys) PREV_CTR_KEYS="$(append_unique_line "$PREV_CTR_KEYS" "$spec")" ;;
           /data/archive) PREV_CTR_ARCHIVE="$(append_unique_line "$PREV_CTR_ARCHIVE" "$spec")" ;;
@@ -1842,13 +1868,35 @@ detect_prev_container_mounts() {
           spec="volume:${h_src}:${h_sub}"
           if ! printf '%s\n' "$seen_specs" | grep -qx -F -- "${h_tgt}|${spec}"; then
             case "$h_tgt" in
-              /var/lib/postgresql/data) PREV_CTR_DB="$(append_unique_line "$PREV_CTR_DB" "$spec")" ;;
+              /var/lib/postgresql/data) PREV_CTR_DB="$(append_unique_line "$PREV_CTR_DB" "$spec")"; has_db_mount=1 ;;
               /data/files) PREV_CTR_FILES="$(append_unique_line "$PREV_CTR_FILES" "$spec")" ;;
               /data/keys) PREV_CTR_KEYS="$(append_unique_line "$PREV_CTR_KEYS" "$spec")" ;;
               /data/archive) PREV_CTR_ARCHIVE="$(append_unique_line "$PREV_CTR_ARCHIVE" "$spec")" ;;
             esac
           fi
         done <<<"$hc_subpaths"
+      fi
+      if ((has_db_mount)) && ((PREV_CTR_PGDATA_SET == 0)); then
+        if ! env_out="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$cid" 2>/dev/null)"; then
+          still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 1
+          [ -z "$still_exists" ] || return 1
+          continue
+        fi
+        found_pg=0; raw_pg=''
+        while IFS= read -r env_line; do
+          env_line="${env_line%$'\r'}"
+          case "$env_line" in
+            PGDATA=*) found_pg=1; raw_pg="${env_line#PGDATA=}" ;;
+          esac
+        done <<<"$env_out"
+        if ((found_pg)); then
+          if norm_pg="$(normalize_pgdata_subpath "$raw_pg")"; then
+            PREV_CTR_PGDATA="$norm_pg"
+          else
+            PREV_CTR_PGDATA="__invalid__:$raw_pg"
+          fi
+          PREV_CTR_PGDATA_SET=1
+        fi
       fi
     done
   done
@@ -1861,8 +1909,16 @@ saved_mount_for() {
   sed -n -E "s|^${target}=||p" "$(state_dir)/mounts" | grep -v '^$' || true
 }
 
+saved_pgdata_sub() {
+  local raw=''
+  [ -f "$(state_dir)/mounts" ] || return 1
+  grep -q '^PGDATA_SUB=' "$(state_dir)/mounts" 2>/dev/null || return 1
+  raw="$(sed -n -E 's|^PGDATA_SUB=||p' "$(state_dir)/mounts" | head -n 1)"
+  printf '%s' "$raw"
+}
+
 write_saved_mounts() {
-  local db_spec="$1" files_spec="$2" keys_spec="$3" archive_spec="$4" out='' pair t specs line
+  local db_spec="$1" files_spec="$2" keys_spec="$3" archive_spec="$4" pgdata_sub="${5:-}" out='' pair t specs line
   for pair in "/var/lib/postgresql/data:$db_spec" "/data/files:$files_spec" "/data/keys:$keys_spec" "/data/archive:$archive_spec"; do
     t="${pair%%:*}"
     specs="${pair#*:}"
@@ -1872,7 +1928,29 @@ write_saved_mounts() {
       out+="${t}=${line}"
     done <<<"$specs"
   done
+  if [ -n "$out" ]; then out+=$'\n'; fi
+  out+="PGDATA_SUB=${pgdata_sub}"
   write_state mounts "$out"
+}
+
+# Resolves prior PGDATA subpath using container env -> persisted .deploy/mounts -> compose YAML (#3972).
+resolve_prev_pgdata_sub() {
+  local prev_config="$1" use_overrides="${2:-1}" saved_pg=''
+  if [ "$use_overrides" = 1 ]; then
+    if ((PREV_CTR_PGDATA_SET)); then
+      case "$PREV_CTR_PGDATA" in
+        __invalid__:*) return 1 ;;
+      esac
+      printf '%s' "$PREV_CTR_PGDATA"
+      return 0
+    fi
+    if saved_pg="$(saved_pgdata_sub)"; then
+      validate_pgdata_subpath "$saved_pg" || return 1
+      printf '%s' "$saved_pg"
+      return 0
+    fi
+  fi
+  compose_service_pgdata_subpath "$prev_config" db
 }
 
 # Resolves prior mount spec(s) using runtime/persisted overrides (when $use_overrides=1) before per-service compose inspection (#3972).
@@ -1935,7 +2013,7 @@ check_new_storage_layout() {
 verify_storage_cutover() {
   local prev_config="$1" prev_proj="$2" new_config="$3" active_proj="$4" new_db="$5" image="$6" name="$7" current="$8" use_overrides="${9:-1}"
   local prev_pgdata_sub='' new_pgdata_sub='' cfg_prev_db='' prev_db_specs='' prev_db='' src_rc=0 dst_rc=0 free_rc=0 target svc cfg_prev_m prev_specs prev_m new_specs new_m
-  if ! prev_pgdata_sub="$(compose_service_pgdata_subpath "$prev_config" db)"; then
+  if ! prev_pgdata_sub="$(resolve_prev_pgdata_sub "$prev_config" "$use_overrides")"; then
     restore_pre_activate "$current"
     record "deploy $name failed: invalid prior db PGDATA path"
     die "$EXIT_FAILED" "prior db service sets an unsupported PGDATA path outside /var/lib/postgresql/data in project $prev_proj"
@@ -3272,7 +3350,7 @@ do_deploy() {
     if ((new_db_free_rc == 1)); then
       restore_pre_activate "$current"
       record "deploy $name failed: db storage $(mount_label "$new_db") held by another project"
-      die "$EXIT_FAILED" "database storage $(mount_label "$new_db") is still mounted by a running container outside project $active_proj; stop the old stack before deploying Stage 7"
+      die "$EXIT_FAILED" "database storage $(mount_label "$new_db") is still mounted by a running container outside project $active_proj ($DEPLOY_DIR); stop the old stack before deploying Stage 7"
     elif ((new_db_free_rc != 0)); then
       restore_pre_activate "$current"
       record "deploy $name failed: cannot inspect running containers for $(mount_label "$new_db")"
@@ -3351,11 +3429,12 @@ do_deploy() {
     write_state current "$name"
   fi
   write_state project "$active_proj"
-  local saved_files='' saved_keys='' saved_archive=''
+  local saved_files='' saved_keys='' saved_archive='' new_pgdata_sub=''
   saved_files="$(compose_active_target_mounts "$new_config" "$active_proj" /data/files 'ludy crove api worker')"
   saved_keys="$(compose_active_target_mounts "$new_config" "$active_proj" /data/keys 'ludy crove api worker')"
   saved_archive="$(compose_active_target_mounts "$new_config" "$active_proj" /data/archive 'ludy crove api worker')"
-  write_saved_mounts "$new_db" "$saved_files" "$saved_keys" "$saved_archive"
+  new_pgdata_sub="$(compose_service_pgdata_subpath "$new_config" db || true)"
+  write_saved_mounts "$new_db" "$saved_files" "$saved_keys" "$saved_archive" "$new_pgdata_sub"
   # A rollback from this release puts the env file back only when this deploy is the one that changed it.
   # (A deploy of the same release again, that changed nothing, keeps the record: that release is still the one that wrote them.)
   if [ "$ENV_CHANGED" = 1 ]; then

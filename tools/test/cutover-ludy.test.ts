@@ -239,6 +239,26 @@ case "$cmd" in
       if [ -n "\${STUB_DB_IMAGE-crove-db:local}" ]; then printf '%s\\n' "\${STUB_DB_IMAGE-crove-db:local}"; fi
       exit 0
     fi
+    if [[ " $* " == *"{{range .Mounts}}"* ]]; then
+      cid="\${@: -1}"
+      if [ -n "\${STUB_CONTAINER_MOUNTS:-}" ]; then
+        for line in \${STUB_CONTAINER_MOUNTS}; do
+          if [ "\${line%%|*}" = "$cid" ]; then
+            printf '%s\\n' "\${line#*|}"
+          fi
+        done
+      else
+        case "$cid" in
+          stub-db-cid)
+            printf '/var/lib/postgresql/data|volume|ludy_db-data|\\n'
+            ;;
+          stub-ludy-cid | stub-api-cid | stub-worker-cid)
+            printf '/data/files|volume|ludy_files|\\n/data/keys|volume|ludy_keys|\\n/data/archive|volume|ludy_archive|\\n'
+            ;;
+        esac
+      fi
+      exit 0
+    fi
     printf '%b' "\${STUB_INSPECT_MOUNTS:-}"
     exit 0
     ;;
@@ -353,6 +373,11 @@ case "$cmd" in
       ps)
         if [ "\${1:-}" = -q ] && [ "\${2:-}" = db ]; then
           if [ -n "\${STUB_DB_CID-stub-db-cid}" ]; then printf '%s\\n' "\${STUB_DB_CID-stub-db-cid}"; fi
+        elif [ "\${1:-}" = -q ] && [ -n "\${2:-}" ]; then
+          svc="$2"
+          case " \${STUB_SERVICES:-db migrate auth auth-grants worker api caddy prober} " in
+            *" $svc "*) printf 'stub-%s-cid\\n' "$svc" ;;
+          esac
         elif [ "$proj" = crove ] || [ "$proj" = ludy ]; then
           for s in db worker api; do echo "$s"; done
         fi
@@ -776,5 +801,68 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
 
     const cutoverScript = readFileSync(script, 'utf8');
     expect(cutoverScript).toContain('--exclude-table-data=ludy_kernel.context_key --exclude-table-data=crove_kernel.context_key');
+  });
+
+  it('evaluates interpolated LUDY_* / CROVE_* env expressions safely and persists real inspected mounts during cutover-stack (#3972 Round 10)', { timeout: 15000 }, () => {
+    const work = mkdtempSync(join(tmpdir(), 'ludy-cutover-interp-'));
+    tempDirs.push(work);
+
+    // 1) Empty-expanding LUDY_MODULES=${OPTIONAL_MODULES:-} (unset) yields to CROVE_MODULES=finance.
+    const emptyExprIn = join(work, '.env.empty-expr.in');
+    const emptyExprOut = join(work, '.env.empty-expr.out');
+    writeFileSync(emptyExprIn, 'CROVE_MODULES=finance\nLUDY_MODULES=${OPTIONAL_MODULES:-}\nCROVE_DOMAIN=app.example.com\n');
+    const rEmpty = spawnSync('bash', [scriptPath, 'rewrite-env', emptyExprIn, emptyExprOut], { encoding: 'utf8' });
+    expect(rEmpty.status, rEmpty.stderr).toBe(0);
+    const outEmpty = readFileSync(emptyExprOut, 'utf8');
+    expect(outEmpty).toContain('LUDY_MODULES=finance');
+    expect(outEmpty).not.toContain('${OPTIONAL_MODULES:-}');
+    expect(outEmpty).not.toContain('CROVE_MODULES=');
+
+    // 2) Populated OPTIONAL_MODULES=crm above makes LUDY_MODULES=${OPTIONAL_MODULES:-} effective (`crm`), dropping CROVE_MODULES=finance.
+    const setExprIn = join(work, '.env.set-expr.in');
+    const setExprOut = join(work, '.env.set-expr.out');
+    writeFileSync(setExprIn, 'OPTIONAL_MODULES=crm\nCROVE_MODULES=finance\nLUDY_MODULES=${OPTIONAL_MODULES:-}\n');
+    const rSet = spawnSync('bash', [scriptPath, 'rewrite-env', setExprIn, setExprOut], { encoding: 'utf8' });
+    expect(rSet.status, rSet.stderr).toBe(0);
+    const outSet = readFileSync(setExprOut, 'utf8');
+    expect(outSet).toContain('LUDY_MODULES=${OPTIONAL_MODULES:-}');
+    expect(outSet).not.toContain('CROVE_MODULES=');
+
+    // 3) Cross-reference `LUDY_APP_DB_PASSWORD=${CROVE_APP_DB_PASSWORD}` or `PUBLIC_URL=https://${CROVE_DOMAIN}` fails closed without leaking secrets.
+    const refSecretIn = join(work, '.env.ref-secret.in');
+    const refSecretOut = join(work, '.env.ref-secret.out');
+    writeFileSync(refSecretIn, 'CROVE_APP_DB_PASSWORD=top-secret-pw\nLUDY_APP_DB_PASSWORD=${CROVE_APP_DB_PASSWORD}\n');
+    const rRefSecret = spawnSync('bash', [scriptPath, 'rewrite-env', refSecretIn, refSecretOut], { encoding: 'utf8' });
+    expect(rRefSecret.status).not.toBe(0);
+    expect(rRefSecret.stderr).toContain('LUDY_APP_DB_PASSWORD');
+    expect(`${rRefSecret.stdout}${rRefSecret.stderr}`).not.toContain('top-secret-pw');
+
+    const refDomainIn = join(work, '.env.ref-domain.in');
+    const refDomainOut = join(work, '.env.ref-domain.out');
+    writeFileSync(refDomainIn, 'CROVE_DOMAIN=app.example.com\nPUBLIC_URL=https://${CROVE_DOMAIN}\n');
+    const rRefDomain = spawnSync('bash', [scriptPath, 'rewrite-env', refDomainIn, refDomainOut], { encoding: 'utf8' });
+    expect(rRefDomain.status).not.toBe(0);
+    expect(rRefDomain.stderr).toContain('PUBLIC_URL');
+
+    // 4) cutover-stack records actual inspected container bind/volume mounts + live PGDATA_SUB instead of guessing from volume names.
+    const f = createCutoverFixture();
+    writeFileSync(f.volsFile, ['crove_db-data', 'crove_files', ''].join('\n'));
+    writeFileSync(f.populatedFile, ['crove_db-data', 'crove_files', ''].join('\n'));
+    const cutBind = runWithStubs(f, ['cutover-stack', '--dir', f.deployDir, '--overlay-dir', f.overlayDir], {
+      STUB_LIVE_PGDATA: '/var/lib/postgresql/data/pgdata',
+      STUB_CONTAINER_MOUNTS: [
+        'stub-db-cid|/var/lib/postgresql/data|volume|ludy_db-data|',
+        'stub-api-cid|/data/files|bind||/srv/customer-files',
+        'stub-api-cid|/data/keys|volume|custom_keys|',
+        'stub-worker-cid|/data/archive|volume|ludy_archive|',
+      ].join(' '),
+    });
+    expect(cutBind.status, cutBind.stderr).toBe(0);
+    const mountsSaved = readFileSync(join(f.deployDir, '.deploy', 'mounts'), 'utf8');
+    expect(mountsSaved).toContain('/var/lib/postgresql/data=volume:ludy_db-data');
+    expect(mountsSaved).toContain('/data/files=bind:/srv/customer-files');
+    expect(mountsSaved).not.toContain('/data/files=volume:ludy_files');
+    expect(mountsSaved).toContain('/data/keys=volume:custom_keys');
+    expect(mountsSaved).toContain('PGDATA_SUB=pgdata');
   });
 });

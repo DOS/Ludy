@@ -96,6 +96,30 @@ if [ "${1:-}" = inspect ]; then
       *) target="$1"; shift ;;
     esac
   done
+  if [[ "$fmt" == *working_dir* ]]; then
+    for item in ${STUB_INSPECT_WORKDIRS:-}; do
+      if [ "${item%%|*}" = "$target" ]; then
+        printf '%s\n' "${item#*|}"
+        exit 0
+      fi
+    done
+    for item in ${STUB_WORKDIR_CONTAINERS:-}; do
+      IFS='|' read -r iw _ icid <<<"$item"
+      if [ "$icid" = "$target" ]; then
+        printf '%s\n' "$iw"
+        exit 0
+      fi
+    done
+    exit 0
+  fi
+  if [[ "$fmt" == *Config.Env* ]]; then
+    for item in ${STUB_INSPECT_ENV:-}; do
+      if [ "${item%%|*}" = "$target" ]; then
+        printf '%s\n' "${item#*|}"
+      fi
+    done
+    exit 0
+  fi
   if [[ "$fmt" == *HostConfig.Mounts* ]]; then
     for item in ${STUB_INSPECT_HOSTCONFIG_MOUNTS:-}; do
       if [ "${item%%|*}" = "$target" ]; then

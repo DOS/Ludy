@@ -396,38 +396,307 @@ rewrite_db_url_rhs() {
   fi
 }
 
-# Returns 0 if a dotenv RHS is non-empty under Compose `:-` semantics (#abc without leading space stays literal).
-env_rhs_is_nonempty() {
-  local raw="$1" value="$1"
-  if [[ "$raw" =~ ^[[:space:]]+# ]]; then
-    value=''
-  else
-    value="${value#"${value%%[![:space:]]*}"}"
-    if [[ "$value" =~ ^(\"\"|\'\')[[:space:]]*(#.*)?$ ]]; then
-      value=''
-    elif [[ "$value" == \"* ]] || [[ "$value" == \'* ]]; then
-      return 0
-    else
-      value="${value%%[[:space:]]#*}"
-      value="${value%"${value##*[![:space:]]}"}"
-    fi
+# Normalizes a raw PGDATA path to a validated relative subdir under /var/lib/postgresql/data (empty = mount root) (#3972).
+normalize_pgdata_subpath() {
+  local pg="$1" sub=''
+  while [[ "$pg" == */ && "$pg" != / ]]; do pg="${pg%/}"; done
+  if [ -z "$pg" ] || [ "$pg" = /var/lib/postgresql/data ]; then
+    return 0
   fi
-  [ -n "$value" ]
+  case "$pg" in
+    /var/lib/postgresql/data/*)
+      sub="${pg#/var/lib/postgresql/data/}"
+      while [[ "$sub" == */ ]]; do sub="${sub%/}"; done
+      case "/$sub/" in
+        */../* | */./* | *//* | *[!A-Za-z0-9._/-]*)
+          return 1
+          ;;
+      esac
+      printf '%s' "$sub"
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
-# Pure-bash env rewriter: renames CROVE_* -> LUDY_* preserving Compose `:-` effective values (so a non-empty CROVE_*
-# overrides an empty LUDY_*=), sets COMPOSE_PROJECT_NAME=ludy once, rewrites crove_<role>: DB URLs, and keeps CRLF.
+HASH_BIN=''
+hash_stdin_sha256() {
+  if [ -z "$HASH_BIN" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      HASH_BIN=sha256sum
+    elif command -v shasum >/dev/null 2>&1; then
+      HASH_BIN='shasum -a 256'
+    else
+      die "$EXIT_FAILED" 'sha256sum or shasum is required to verify env rewrite safely'
+    fi
+  fi
+  if [ "$HASH_BIN" = sha256sum ]; then
+    sha256sum | cut -d' ' -f1
+  else
+    shasum -a 256 | cut -d' ' -f1
+  fi
+}
+
+dotenv_lookup() {
+  local name="$1"
+  local set_ref="__DE_S_${name}" val_ref="__DE_V_${name}"
+  if [ "${!set_ref-0}" = 1 ]; then
+    DOTENV_LOOKUP_SET=1
+    DOTENV_LOOKUP_VAL="${!val_ref-}"
+    return 0
+  fi
+  if [ "$name" != COMPOSE_PROJECT_NAME ] && ! key_map_index "$name" >/dev/null && ! target_map_index "$name" >/dev/null; then
+    if [ -n "${!name+x}" ]; then
+      DOTENV_LOOKUP_SET=1
+      DOTENV_LOOKUP_VAL="${!name-}"
+      return 0
+    fi
+  fi
+  DOTENV_LOOKUP_SET=0
+  DOTENV_LOOKUP_VAL=''
+}
+
+dotenv_interpolate() {
+  local s="$1" file="$2" lineno="$3" cur_key="$4"
+  local out='' i=0 len="${#1}" rest name op word val depth j body rlen is_set
+  while [ "$i" -lt "$len" ]; do
+    if [ "${s:i:1}" != '$' ]; then
+      out="${out}${s:i:1}"
+      i=$((i + 1))
+      continue
+    fi
+    rest="${s:i+1}"
+    if [[ "$rest" == '$'* ]]; then
+      out="${out}\$"
+      i=$((i + 2))
+    elif [[ "$rest" =~ ^([A-Za-z_][A-Za-z0-9_]*) ]]; then
+      name="${BASH_REMATCH[1]}"
+      dotenv_lookup "$name"
+      out="${out}${DOTENV_LOOKUP_VAL}"
+      i=$((i + 1 + ${#name}))
+    elif [[ "$rest" != '{'* ]]; then
+      out="${out}\$"
+      i=$((i + 1))
+    else
+      depth=0
+      rlen="${#rest}"
+      for ((j = 0; j < rlen; j++)); do
+        case "${rest:j:1}" in
+          '{') depth=$((depth + 1)) ;;
+          '}') depth=$((depth - 1)); [ "$depth" -eq 0 ] && break ;;
+        esac
+      done
+      if [ "$depth" -ne 0 ]; then
+        err "$file line $lineno ($cur_key): unclosed \${ interpolation"
+        return 1
+      fi
+      body="${rest:1:j-1}"
+      local ref_re='^([A-Za-z_][A-Za-z0-9_]*)((:?[-+?])(.*))?$'
+      if ! [[ "$body" =~ $ref_re ]]; then
+        err "$file line $lineno ($cur_key): invalid variable interpolation"
+        return 1
+      fi
+      name="${BASH_REMATCH[1]}"
+      op="${BASH_REMATCH[3]-}"
+      word="${BASH_REMATCH[4]-}"
+      dotenv_lookup "$name"
+      val="$DOTENV_LOOKUP_VAL"
+      is_set="$DOTENV_LOOKUP_SET"
+      case "$op" in
+        ':-') [ -n "$val" ] || { dotenv_interpolate "$word" "$file" "$lineno" "$cur_key" || return 1; val="$DOTENV_REPLY"; } ;;
+        '-') [ "$is_set" = 1 ] || { dotenv_interpolate "$word" "$file" "$lineno" "$cur_key" || return 1; val="$DOTENV_REPLY"; } ;;
+        ':+') if [ -n "$val" ]; then dotenv_interpolate "$word" "$file" "$lineno" "$cur_key" || return 1; val="$DOTENV_REPLY"; fi ;;
+        '+') if [ "$is_set" = 1 ]; then dotenv_interpolate "$word" "$file" "$lineno" "$cur_key" || return 1; val="$DOTENV_REPLY"; else val=''; fi ;;
+        ':?')
+          if [ -z "$val" ]; then
+            err "$file line $lineno ($cur_key): required variable $name is unset or empty"
+            return 1
+          fi
+          ;;
+        '?')
+          if [ "$is_set" != 1 ]; then
+            err "$file line $lineno ($cur_key): required variable $name is unset"
+            return 1
+          fi
+          ;;
+      esac
+      out="${out}${val}"
+      i=$((i + 2 + j))
+    fi
+  done
+  DOTENV_REPLY="$out"
+}
+
+dotenv_parse_rhs() {
+  local raw="$1" file="$2" lineno="$3" cur_key="$4"
+  local value rest trail='' out='' i c nc len bs=''
+  printf -v bs '%b' '\134'
+  if [[ "$raw" =~ ^[[:space:]]+# ]]; then
+    DOTENV_REPLY=''
+    return 0
+  fi
+  value="${raw#"${raw%%[![:space:]]*}"}"
+  case "$value" in
+    \'*)
+      rest="${value:1}"
+      if [[ "$rest" != *\'* ]]; then
+        err "$file line $lineno ($cur_key): unclosed single quote"
+        return 1
+      fi
+      out="${rest%%\'*}"
+      trail="${rest#*\'}"
+      ;;
+    \"*)
+      len="${#value}"
+      out=''
+      for ((i = 1; i < len; i++)); do
+        c="${value:i:1}"
+        if [ "$c" = "$bs" ]; then
+          i=$((i + 1))
+          [ "$i" -lt "$len" ] || break
+          nc="${value:i:1}"
+          case "$nc" in
+            n) out="${out}"$'\n' ;;
+            t) out="${out}"$'\t' ;;
+            r) out="${out}"$'\r' ;;
+            '"') out="${out}\"" ;;
+            '$') out="${out}\$\$" ;;
+            *)
+              if [ "$nc" = "$bs" ]; then
+                out="${out}${bs}"
+              else
+                out="${out}${bs}${nc}"
+              fi
+              ;;
+          esac
+        elif [ "$c" = '"' ]; then
+          trail="${value:i+1}"
+          break
+        else
+          out="${out}${c}"
+        fi
+      done
+      if [ "$i" -ge "$len" ]; then
+        err "$file line $lineno ($cur_key): unclosed double quote"
+        return 1
+      fi
+      dotenv_interpolate "$out" "$file" "$lineno" "$cur_key" || return 1
+      out="$DOTENV_REPLY"
+      ;;
+    *)
+      value="${value%%[[:space:]]#*}"
+      value="${value%"${value##*[![:space:]]}"}"
+      dotenv_interpolate "$value" "$file" "$lineno" "$cur_key" || return 1
+      out="$DOTENV_REPLY"
+      trail=''
+      ;;
+  esac
+  if ! [[ "$trail" =~ ^([[:space:]]+#.*|[[:space:]]*)$ ]]; then
+    err "$file line $lineno ($cur_key): unexpected trailing text after closing quote"
+    return 1
+  fi
+  DOTENV_REPLY="$out"
+}
+
+# Evaluates dotenv assignments top-to-bottom and outputs hashed state summaries (never plaintext values) (#3972).
+eval_dotenv_state() {
+  local src_path="$1" normalize_urls="${2:-0}"
+  (
+    set -euo pipefail
+    local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:](.*)$'
+    local lineno=0 line key rhs seen_keys='' i
+    while IFS= read -r line || [ -n "$line" ]; do
+      lineno=$((lineno + 1))
+      line="${line%$'\r'}"
+      [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+      [[ "$line" =~ $assign_re ]] || continue
+      key="${BASH_REMATCH[2]}"
+      rhs="${BASH_REMATCH[3]}"
+      dotenv_parse_rhs "$rhs" "$src_path" "$lineno" "$key"
+      printf -v "__DE_S_${key}" '%s' 1
+      printf -v "__DE_V_${key}" '%s' "$DOTENV_REPLY"
+      if [ "$key" != COMPOSE_PROJECT_NAME ] && ! key_map_index "$key" >/dev/null && ! target_map_index "$key" >/dev/null; then
+        case $'\n'"$seen_keys"$'\n' in
+          *$'\n'"$key"$'\n'*) ;;
+          *) seen_keys="${seen_keys:+$seen_keys$'\n'}$key" ;;
+        esac
+      fi
+    done <"$1"
+
+    for ((i = 0; i < ${#CROVE_NEW_KEYS[@]}; i++)); do
+      local new_k="${CROVE_NEW_KEYS[$i]}" old_k="${CROVE_OLD_KEYS[$i]}"
+      local ns_ref="__DE_S_${new_k}" nv_ref="__DE_V_${new_k}" os_ref="__DE_S_${old_k}" ov_ref="__DE_V_${old_k}"
+      local n_val='' o_val='' n_eff=0 o_eff=0 eff_nonempty=0 eff_val='' eff_hash
+      if [ "${!ns_ref-0}" = 1 ]; then
+        n_val="${!nv_ref-}"
+        if [ -n "$n_val" ]; then n_eff=1; fi
+      fi
+      if [ "${!os_ref-0}" = 1 ]; then
+        o_val="${!ov_ref-}"
+        if [ -n "$o_val" ]; then o_eff=1; fi
+      fi
+      if ((n_eff)); then
+        eff_val="$n_val"
+        eff_nonempty=1
+      elif ((o_eff)); then
+        eff_val="$o_val"
+        eff_nonempty=1
+      fi
+      eff_hash="$(printf '%s' "$eff_val" | hash_stdin_sha256)"
+      printf 'P|%s|%s|%s|%s|%s\n' "$i" "$n_eff" "$o_eff" "$eff_nonempty" "$eff_hash"
+    done
+
+    while IFS= read -r key; do
+      [ -n "$key" ] || continue
+      local kv_ref="__DE_V_${key}" val='' norm_val hash
+      val="${!kv_ref-}"
+      norm_val="$val"
+      if ((normalize_urls)); then
+        norm_val="$(rewrite_db_url_rhs "$key" "$val")"
+      fi
+      hash="$(printf '%s' "$norm_val" | hash_stdin_sha256)"
+      printf 'K|%s|%s\n' "$key" "$hash"
+    done <<<"$seen_keys"
+  )
+}
+
+# Pure-bash env rewriter: renames CROVE_* -> LUDY_* preserving Compose `:-` effective values after variable
+# interpolation, sets COMPOSE_PROJECT_NAME=ludy once, rewrites crove_<role>: DB URLs, and verifies zero semantic drift.
 rewrite_env_file() {
   local src="$1" dst="$2"
   local split_re='^([[:space:]]*(export[[:space:]]+)?)([A-Za-z_][A-Za-z0-9_]*)([[:space:]]*[=:])(.*)$'
   [ -f "$src" ] || die "$EXIT_USAGE" "env source not found: $src"
-  local ludy_last=() ludy_effective=() crove_last=() crove_effective=() i lineno=0 line line_cr cr_seen=0 lf_seen=0 last_compose=0
+  local pre_state='' post_state=''
+  pre_state="$(eval_dotenv_state "$src" 1)" || die "$EXIT_FAILED" "cannot safely evaluate $src for CROVE_* -> LUDY_* env rewrite"
+
+  local ludy_last=() ludy_effective=() crove_last=() crove_effective=() pre_eff_nonempty=() pre_pair_hash=()
+  local i lineno=0 line line_cr cr_seen=0 lf_seen=0 last_compose=0
   for ((i = 0; i < ${#CROVE_NEW_KEYS[@]}; i++)); do
     ludy_last[i]=0
     ludy_effective[i]=0
     crove_last[i]=0
     crove_effective[i]=0
+    pre_eff_nonempty[i]=0
+    pre_pair_hash[i]=''
   done
+
+  local s_kind s_f1 s_f2 s_f3 s_f4 s_f5 pre_other_keys=() pre_other_hashes=()
+  while IFS='|' read -r s_kind s_f1 s_f2 s_f3 s_f4 s_f5; do
+    case "$s_kind" in
+      P)
+        ludy_effective[s_f1]="$s_f2"
+        crove_effective[s_f1]="$s_f3"
+        pre_eff_nonempty[s_f1]="$s_f4"
+        pre_pair_hash[s_f1]="$s_f5"
+        ;;
+      K)
+        pre_other_keys+=("$s_f1")
+        pre_other_hashes+=("$s_f2")
+        ;;
+    esac
+  done <<<"$pre_state"
 
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
@@ -438,17 +707,13 @@ rewrite_env_file() {
       lf_seen=$((lf_seen + 1))
     fi
     if [[ "$line" =~ $split_re ]]; then
-      local key="${BASH_REMATCH[3]}" rhs="${BASH_REMATCH[5]}" idx eff=0
+      local key="${BASH_REMATCH[3]}" idx
       if [ "$key" = COMPOSE_PROJECT_NAME ]; then
         last_compose=$lineno
       elif idx="$(target_map_index "$key")"; then
         ludy_last[idx]=$lineno
-        if env_rhs_is_nonempty "$rhs"; then eff=1; fi
-        ludy_effective[idx]=$eff
       elif idx="$(key_map_index "$key")"; then
         crove_last[idx]=$lineno
-        if env_rhs_is_nonempty "$rhs"; then eff=1; fi
-        crove_effective[idx]=$eff
       fi
     fi
   done <"$src"
@@ -503,6 +768,25 @@ rewrite_env_file() {
   if ((wrote_compose == 0)); then
     printf 'COMPOSE_PROJECT_NAME=ludy%s\n' "$default_cr" >>"$dst"
   fi
+
+  post_state="$(eval_dotenv_state "$dst" 0)" || die "$EXIT_FAILED" "rewritten env file failed validation (check references to retired CROVE_* variables)"
+  while IFS='|' read -r s_kind s_f1 s_f2 s_f3 s_f4 s_f5; do
+    case "$s_kind" in
+      P)
+        if ((pre_eff_nonempty[s_f1] == 1)) && { ((s_f2 == 0)) || [ "$s_f5" != "${pre_pair_hash[$s_f1]}" ]; }; then
+          die "$EXIT_FAILED" "env rewrite would alter effective Compose value for ${CROVE_NEW_KEYS[$s_f1]} (check variable references to ${CROVE_OLD_KEYS[$s_f1]} or indirect defaults)"
+        fi
+        ;;
+      K)
+        local j
+        for ((j = 0; j < ${#pre_other_keys[@]}; j++)); do
+          if [ "${pre_other_keys[$j]}" = "$s_f1" ] && [ "${pre_other_hashes[$j]}" != "$s_f2" ]; then
+            die "$EXIT_FAILED" "env rewrite would alter effective Compose value for $s_f1 (remove references to retired CROVE_* variables before running cutover-stack)"
+          fi
+        done
+        ;;
+    esac
+  done <<<"$post_state"
 }
 
 write_env_in_place() {
@@ -1084,15 +1368,45 @@ do_cutover_stack() {
     dc_proj ludy restart caddy
   fi
 
-  local mounts_content
-  mounts_content='/var/lib/postgresql/data=volume:ludy_db-data'
-  for vol in "${src_vols[@]}"; do
-    case "${vol#"${proj}_"}" in
-      files) mounts_content+=$'\n/data/files=volume:ludy_files' ;;
-      keys) mounts_content+=$'\n/data/keys=volume:ludy_keys' ;;
-      archive) mounts_content+=$'\n/data/archive=volume:ludy_archive' ;;
-    esac
+  local mounts_content='' db_mount_seen=0 svc cid m_lines m_dst m_type m_name m_src spec seen_mount_lines=''
+  for svc in db ludy api worker; do
+    cid="$(dc_proj ludy ps -q "$svc" 2>/dev/null | head -n 1 || true)"
+    [ -n "$cid" ] || continue
+    m_lines="$(docker inspect --format '{{range .Mounts}}{{.Destination}}|{{.Type}}|{{.Name}}|{{.Source}}{{"\n"}}{{end}}' "$cid")" || die "$EXIT_FAILED" "cannot inspect mounts of running $svc container ($cid)"
+    while IFS='|' read -r m_dst m_type m_name m_src; do
+      [ -n "$m_dst" ] || continue
+      m_dst="${m_dst%/}"
+      case "$m_dst" in
+        /var/lib/postgresql/data | /data/files | /data/keys | /data/archive) ;;
+        *) continue ;;
+      esac
+      case "$m_type" in
+        volume)
+          [ -n "$m_name" ] || continue
+          spec="volume:$m_name"
+          ;;
+        bind)
+          [ -n "$m_src" ] || continue
+          m_src="${m_src%/}"
+          [ -n "$m_src" ] || m_src='/'
+          spec="bind:$m_src"
+          ;;
+        *) continue ;;
+      esac
+      local entry="${m_dst}=${spec}"
+      case $'\n'"$seen_mount_lines"$'\n' in
+        *$'\n'"$entry"$'\n'*) continue ;;
+      esac
+      seen_mount_lines="${seen_mount_lines:+$seen_mount_lines$'\n'}$entry"
+      mounts_content="${mounts_content:+$mounts_content$'\n'}$entry"
+      if [ "$m_dst" = /var/lib/postgresql/data ]; then db_mount_seen=1; fi
+    done <<<"$m_lines"
   done
+  ((db_mount_seen == 1)) || die "$EXIT_FAILED" 'could not inspect /var/lib/postgresql/data mount on running ludy db container'
+  local live_pgdata='' live_pg_sub=''
+  live_pgdata="$(dc_proj ludy exec -T db printenv PGDATA 2>/dev/null | tr -d '\r\n' || true)"
+  live_pg_sub="$(normalize_pgdata_subpath "$live_pgdata")" || die "$EXIT_FAILED" "unsupported live db PGDATA path '$live_pgdata'"
+  mounts_content+=$'\nPGDATA_SUB='"$live_pg_sub"
   (
     umask 077
     mkdir -p "$(state_dir)"
@@ -1262,23 +1576,7 @@ do_prune_old_volumes() {
         [ -n "$existing" ] || die "$EXIT_FAILED" "refusing to prune $v: matching replacement volume $dst ($suffix) is empty"
         local pg_data='' pg_sub=''
         pg_data="$(dc_proj ludy exec -T db printenv PGDATA 2>/dev/null | tr -d '\r\n' || true)"
-        while [[ "$pg_data" == */ && "$pg_data" != / ]]; do pg_data="${pg_data%/}"; done
-        if [ -n "$pg_data" ] && [ "$pg_data" != /var/lib/postgresql/data ]; then
-          case "$pg_data" in
-            /var/lib/postgresql/data/*)
-              pg_sub="${pg_data#/var/lib/postgresql/data/}"
-              while [[ "$pg_sub" == */ ]]; do pg_sub="${pg_sub%/}"; done
-              case "/$pg_sub/" in
-                */../* | */./* | *//* | *[!A-Za-z0-9._/-]*)
-                  die "$EXIT_FAILED" "refusing to prune $v: unsupported db PGDATA path '$pg_data'"
-                  ;;
-              esac
-              ;;
-            *)
-              die "$EXIT_FAILED" "refusing to prune $v: db PGDATA '$pg_data' is outside /var/lib/postgresql/data"
-              ;;
-          esac
-        fi
+        pg_sub="$(normalize_pgdata_subpath "$pg_data")" || die "$EXIT_FAILED" "refusing to prune $v: unsupported db PGDATA path '$pg_data'"
         docker run --rm --network none --user 0:0 \
           -e "PG_SUBDIR=$pg_sub" \
           -v "${v}:/src:ro" -v "${dst}:/dst:ro" \

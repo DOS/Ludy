@@ -891,6 +891,81 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
     expect(badPgdata.status, badPgdata.out).toBe(1);
     expect(badPgdata.out).toContain('unsupported PGDATA path outside /var/lib/postgresql/data');
+
+    // Container PGDATA in .Config.Env catches in-place compose.host.yml PGDATA edit on same volume,
+    // and persists PGDATA_SUB in .deploy/mounts after containers are gone (#3972 Round 10).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    writeFileSync(`${dir}/docker-compose.yml`, 'name: ludy\nservices: {}\n');
+    const ctrPgChanged = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'ludy_db-data=c1',
+      STUB_WORKDIR_CONTAINERS: `${dir}|db|ludy-db-1`,
+      STUB_INSPECT_MOUNTS: 'ludy-db-1|ludy|volume|ludy_db-data||/var/lib/postgresql/data',
+      STUB_INSPECT_ENV: 'ludy-db-1|PGDATA=/var/lib/postgresql/data/a',
+      STUB_NEW_DB_PGDATA: '/var/lib/postgresql/data/b',
+      STUB_PG_SUBDIR_MOUNTS: 'ludy_db-data=a',
+    });
+    expect(ctrPgChanged.status, ctrPgChanged.out).toBe(1);
+    expect(ctrPgChanged.out).toContain('PGDATA /var/lib/postgresql/data/a while new config uses /var/lib/postgresql/data/b');
+
+    rmSync(`${dir}/docker-compose.yml`);
+    const persistedPgOk = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_NEW_DB_PGDATA: '/var/lib/postgresql/data/a',
+    });
+    expect(persistedPgOk.status, persistedPgOk.out).toBe(0);
+    expect(readFileSync(`${dir}/.deploy/mounts`, 'utf8')).toContain('PGDATA_SUB=a');
+
+    const persistedPgChanged = deploy('v1.1.0', 'b', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_PG_CLUSTER_IDS: 'ludy_db-data=c1',
+      STUB_NEW_DB_PGDATA: '/var/lib/postgresql/data/b',
+      STUB_PG_SUBDIR_MOUNTS: 'ludy_db-data=a',
+    });
+    expect(persistedPgChanged.status, persistedPgChanged.out).toBe(1);
+    expect(persistedPgChanged.out).toContain('PGDATA /var/lib/postgresql/data/a while new config uses /var/lib/postgresql/data/b');
+
+    // Same Compose project name (`ludy`) from a different working directory still blocks shared storage (#3972 Round 10).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const otherDirCollision = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_RUNNING_CONTAINERS: 'other-ludy-db-1',
+      STUB_INSPECT_MOUNTS: 'other-ludy-db-1|ludy|volume|ludy_db-data|',
+      STUB_INSPECT_WORKDIRS: 'other-ludy-db-1|/opt/other-ludy',
+    });
+    expect(otherDirCollision.status, otherDirCollision.out).toBe(1);
+    expect(otherDirCollision.out).toContain(`outside project ludy (${dir})`);
+
+    // Same project + matching working_dir IS exempt on normal re-deploy.
+    const sameDirRunningOk = deploy('v1.0.0', 'a', {
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_RUNNING_CONTAINERS: 'ludy-db-1',
+      STUB_INSPECT_MOUNTS: 'ludy-db-1|ludy|volume|ludy_db-data|',
+      STUB_INSPECT_WORKDIRS: `ludy-db-1|${dir}`,
+    });
+    expect(sameDirRunningOk.status, sameDirRunningOk.out).toBe(0);
+
+    // Pre-up-db aborted deploy after rolling back to legacy `name: crove` preserves `name: ludy` in docker-compose.override.yml (#3972 Round 10).
+    rmSync(`${dir}/.deploy`, { recursive: true, force: true });
+    rmSync(`${dir}/docker-compose.yml`, { force: true });
+    const croveLegacy = `${root}/legacy-base.yml`;
+    writeFileSync(croveLegacy, 'name: crove\nservices: {}\n');
+    expect(run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', croveLegacy]).status).toBe(0);
+    expect(deploy('v1.1.0', 'b', { STUB_VOLUMES: 'crove_db-data ludy_db-data', STUB_PG_CLUSTER_IDS: 'crove_db-data=c1 ludy_db-data=c1' }).status).toBe(0);
+    expect(run(['rollback']).status).toBe(0);
+    expect(running()).toContain('name: ludy');
+
+    const abortedNext = deploy('v1.2.0', 'c', { STUB_NEW_DB_SUBPATH: 'pg17' });
+    expect(abortedNext.status).toBe(1);
+    expect(running()).toContain('name: ludy');
+    const afterAbortPlainCfg = spawnSync('docker', ['compose', '--env-file', `${dir}/.env`, '-f', `${dir}/docker-compose.yml`, '-f', `${dir}/docker-compose.override.yml`, 'config'], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${join(root, 'bin')}${delimiter}${process.env['PATH'] ?? ''}`, STUB_LOG: log, STUB_DEPLOY_DIR: dir },
+    });
+    expect(afterAbortPlainCfg.status, afterAbortPlainCfg.stderr).toBe(0);
+    expect(afterAbortPlainCfg.stdout).toMatch(/^name: ludy$/m);
   });
 
   describe('build check', () => {
