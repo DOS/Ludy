@@ -867,11 +867,14 @@ suite('org purge on PostgreSQL (#1024)', () => {
       { actor: asMfa(member), orgId: org.orgId },
     );
 
-    // Attach the original XML after posting, plus an unattached loose XML that should be purged.
+    // Attach the original XML after posting, plus an extracted unposted XML and a loose file that should both purge.
     const xmlBytes = new TextEncoder().encode(FIXTURE.toString('utf8').replace('<SHDon>1234</SHDon>', '<SHDon>9334</SHDon>'));
     const attachedXml = await ingest(org.orgId, owner, xmlBytes, 'hd-9334.xml');
     const attached = await extractAndPropose({ runtime: worker, store, extractor: null, extract, today: () => '2026-10-13' }, org.orgId, attachedXml.fileId);
     expect(attached.proposalId).toBeNull();
+    const unpostedXml = await ingest(org.orgId, owner, new TextEncoder().encode(FIXTURE.toString('utf8').replace('<SHDon>1234</SHDon>', '<SHDon>9335</SHDon>')), 'unposted-9335.xml');
+    const unposted = await extractAndPropose({ runtime: worker, store, extractor: null, extract, today: () => '2026-10-13' }, org.orgId, unpostedXml.fileId);
+    expect(unposted.proposalId).toEqual(expect.any(String));
     const loose = await ingest(org.orgId, owner, new TextEncoder().encode(`<loose>${tag}</loose>`), 'loose.xml');
 
     await offboard(org.orgId);
@@ -879,13 +882,14 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(code).toBe(0);
     expect(await status(org.orgId)).toBe('closed');
 
-    // Both the posted PDF and the attached original XML stay (rows and blobs), while the extraction row and the loose file are purged.
+    // Both the posted PDF and the attached original XML stay (rows and blobs), while the extraction row, unposted XML, and loose file are purged.
     const keptFiles = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.file WHERE org_id = $1 ORDER BY id', [org.orgId])).rows.map((r) => r.id));
     expect(keptFiles.sort()).toEqual([pdfFileId, attachedXml.fileId].sort());
     expect(await count('ludy_kernel.extraction', org.orgId)).toBe(0);
     expect(store.blobs.has(pdfKey)).toBe(true);
     expect(store.blobs.has(attachedXml.storageKey)).toBe(true);
+    expect(store.blobs.has(unpostedXml.storageKey)).toBe(false);
     expect(store.blobs.has(loose.storageKey)).toBe(false);
-    expect((await purgeAudits(org.orgId))[0]?.detail).toMatchObject({ blobs: { deleted: 1, held: 0 }, counts: { keptFiles: 2 } });
+    expect((await purgeAudits(org.orgId))[0]?.detail).toMatchObject({ blobs: { deleted: 2, held: 0 }, counts: { keptFiles: 2 } });
   });
 });

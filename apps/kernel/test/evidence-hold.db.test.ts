@@ -386,7 +386,12 @@ suite('retention holds on evidence files (#1009)', () => {
       await c.query('COMMIT');
     });
     const lateXml = await ingest(new TextEncoder().encode(FIXTURE.replace('<SHDon>1234</SHDon>', `<SHDon>${expiredNum}</SHDon>`)));
-    await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-13' }, orgId, lateXml.fileId);
+    const lateAttached = await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-13' }, orgId, lateXml.fileId);
+    expect(lateAttached.proposalId).toBeNull();
+    const { rows: lateLinks } = await admin((c) =>
+      c.query<{ original_of_proposal_id: string | null }>('SELECT original_of_proposal_id FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2', [orgId, lateXml.fileId]),
+    );
+    expect(lateLinks).toEqual([{ original_of_proposal_id: expiredProposalId }]);
     expect(await run()).toEqual({ held: 0, failed: 0, waiting: 0 });
     expect(await holdRow(lateXml.fileId)).toMatchObject({ held_until: null, hold_attempts: 0, hold_error: null });
   });
