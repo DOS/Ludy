@@ -1893,7 +1893,7 @@ export const personalDataErase = defineCommand({
     // Lock every shared note whose text, snapshot, or attachment names the value first, in id order (#3562, #5035).
     // Including attachments here ensures personalDataErase locks note -> attachment in the same order as
     // noteAttachmentDelete, preventing AB-BA deadlocks when only a shared attachment matches.
-    await sql`
+    const { rows: lockedSharedNotes } = await sql<{ id: string }>`
       SELECT n.id FROM ludy_notes.note n
        WHERE n.org_id = ${ctx.orgId}::uuid AND n.visibility = 'org'
          AND (${mentions('n.title')} OR ${mentions('n.body')} OR ${freeTextMatch(probe, tagsOf('n'))}
@@ -1908,6 +1908,7 @@ export const personalDataErase = defineCommand({
        ORDER BY n.id
        -- personalDataErase only redacts non-key text columns on shared notes; FOR NO KEY UPDATE blocks concurrent edits without conflicting with FK FOR KEY SHARE inserts (e.g. todoCreate/todoAcceptSuggestions).
        FOR NO KEY UPDATE OF n`.execute(ctx.trx);
+    const lockedSharedNoteIds = lockedSharedNotes.map((n) => n.id);
     const { rows: notes } = await sql<{ title: boolean; body: boolean; tags: boolean }>`
       UPDATE ludy_notes.note t
          SET title = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), ERASED_TEXT_MARK)}, ${NOTE_TITLE_MAX}::int),
@@ -1950,15 +1951,15 @@ export const personalDataErase = defineCommand({
     add('ludy_notes.note_version.title', noteVersions.filter((n) => n.title).length);
     add('ludy_notes.note_version.body', noteVersions.filter((n) => n.body).length);
     add('ludy_notes.note_version.tags', noteVersions.filter((n) => n.tags).length);
-    const { rows: sharedNoteAttachments } = await sql<{ note_id: string; filename: boolean; extracted_text: boolean }>`
-      DELETE FROM ludy_notes.attachment a
-       WHERE a.org_id = ${ctx.orgId}::uuid
-         AND EXISTS (
-           SELECT 1 FROM ludy_notes.note n
-            WHERE n.org_id = a.org_id AND n.id = a.note_id AND n.visibility = 'org'
-         )
-         AND (${mentions('a.filename')} OR ${mentions('a.extracted_text')})
-       RETURNING a.note_id, ${mentions('a.filename')} AS filename, ${mentions('a.extracted_text')} AS extracted_text`.execute(ctx.trx);
+    const { rows: sharedNoteAttachments } =
+      lockedSharedNoteIds.length === 0
+        ? { rows: [] }
+        : await sql<{ note_id: string; filename: boolean; extracted_text: boolean }>`
+            DELETE FROM ludy_notes.attachment a
+             WHERE a.org_id = ${ctx.orgId}::uuid
+               AND a.note_id = ANY(${lockedSharedNoteIds}::uuid[])
+               AND (${mentions('a.filename')} OR ${mentions('a.extracted_text')})
+             RETURNING a.note_id, ${mentions('a.filename')} AS filename, ${mentions('a.extracted_text')} AS extracted_text`.execute(ctx.trx);
     add('ludy_notes.attachment.filename', sharedNoteAttachments.filter((a) => a.filename).length);
     add('ludy_notes.attachment.extracted_text', sharedNoteAttachments.filter((a) => a.extracted_text).length);
     const touchedSharedNoteIds = [...new Set(sharedNoteAttachments.map((a) => a.note_id))];

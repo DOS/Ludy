@@ -475,6 +475,16 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     expect(dup.status).toBe(201);
     expect(dup.body).toMatchObject({ importedTodos: 0, skippedDuplicates: 4 });
 
+    // Vietnamese uppercase 'Đ' vs lowercase 'đ' still deduplicates under LC_CTYPE=C PostgreSQL databases (#5035).
+    const viUpperCsv = 'TYPE,CONTENT,PRIORITY\ntask,Đơn hàng cần duyệt,1\n';
+    const viLowerCsv = 'TYPE,CONTENT,PRIORITY\ntask,đơn hàng cần duyệt,1\n';
+    const viFirst = await uploadTodoist('member', viUpperCsv, { skipDuplicates: 'true' });
+    expect(viFirst.status).toBe(201);
+    expect(viFirst.body).toMatchObject({ importedTodos: 1, skippedDuplicates: 0 });
+    const viDup = await uploadTodoist('member', viLowerCsv, { skipDuplicates: 'true' });
+    expect(viDup.status).toBe(201);
+    expect(viDup.body).toMatchObject({ importedTodos: 0, skippedDuplicates: 1 });
+
     // Other member sees zero imported lists or todos.
     const otherLists = await rpc('notes/todos/lists/list', await asJsonHeaders('other'), {});
     expect((otherLists.body as { lists: TodoListSummary[] }).lists).toEqual([]);
@@ -892,13 +902,18 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
   </note>
 </en-export>`;
     await admin((c) =>
-      c.query(`UPDATE ludy_notes.notebook SET sort_key = $1 WHERE org_id = $2 AND id = $3`, ['z'.repeat(48), orgId, revNbB]),
+      c.query(`UPDATE ludy_notes.notebook SET sort_key = $1 WHERE org_id = $2 AND id = $3`, ['z'.repeat(81), orgId, revNbB]),
     );
     const [revRes, rebalanceRes] = await Promise.all([
       uploadEnex('owner', reverseEnex, { skipDuplicates: 'false' }),
-      uploadEnex('owner', makeEnex('So Moi Can Rebalance', 'Ghi Chu Moi Rebalance'), { skipDuplicates: 'false' }),
+      rpc('notes/notebooks/create', await asJsonHeaders('owner'), { name: 'So Moi Can Rebalance', visibility: 'private' }),
     ]);
     expect(revRes.status, JSON.stringify(revRes.body)).toBe(201);
-    expect(rebalanceRes.status, JSON.stringify(rebalanceRes.body)).toBe(201);
+    expect(rebalanceRes.status, JSON.stringify(rebalanceRes.body)).toBe(200);
+    const rebalancedKey = await admin(async (c) =>
+      (await c.query<{ sort_key: string }>(`SELECT sort_key FROM ludy_notes.notebook WHERE org_id = $1 AND id = $2`, [orgId, revNbB])).rows[0]?.sort_key,
+    );
+    expect(rebalancedKey).toBeDefined();
+    expect(rebalancedKey!.length).toBeLessThan(81);
   });
 });

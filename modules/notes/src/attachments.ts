@@ -18,6 +18,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { notesManifest } from './manifest.ts';
+import { lockNotesEraseShared } from './locks.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -137,6 +138,8 @@ export const noteAttachmentCreate = defineCommand({
     if (input.storageKey !== expectedKey) {
       throw new DomainError('INVALID', 400, 'Khóa lưu trữ tệp đính kèm không hợp lệ');
     }
+    // Participate in shared notes.erase barrier before locking/attaching to the note so personalDataErase cannot miss a newly matched filename.
+    await lockNotesEraseShared(ctx);
     const note = await loadParentNoteForWrite(ctx, input.noteId, (row) => {
       if (row.author_user_id !== userId) {
         throw new DomainError('NOTE_AUTHOR_ONLY', 403, 'Chỉ người viết ghi chú mới đính kèm được tệp');

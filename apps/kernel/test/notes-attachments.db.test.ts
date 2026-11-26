@@ -994,5 +994,48 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
 
     expect(await doomed(o)).toEqual([`notes/${o.orgId}/${sharedAtt1.id}`, `notes/${o.orgId}/${sharedAtt2.id}`].sort());
     expect(await noteUpdatedAt()).toBeGreaterThanOrEqual(beforeTs);
+
+    // Concurrent attachmentExtractRecord waits on personalDataErase's shared notes.erase barrier instead of writing matching text mid-erasure (#5035).
+    const raceEmail = 'extract-lock-race@example.com';
+    const cleanNote = await createNote(o, o.author, 'org', 'Ghi chú sạch chờ extract');
+    const pendingAtt = await attached(o, o.author, cleanNote, pdf('pending-extract'), 'sach-cho-extract.pdf');
+    const blockerNote = await createNote(o, o.author, 'org', `Báo cáo ${raceEmail}`);
+    const extractGate = new pg.Client({ connectionString: adminUrl });
+    await extractGate.connect();
+    const extractTracker = createConcurrencyTracker();
+    try {
+      const extractGatePid = (await extractGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
+      await extractGate.query('BEGIN');
+      await extractGate.query('SELECT 1 FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, blockerNote]);
+      const erasePromise2 = extractTracker.track(
+        rt.execute<PersonalDataErasure>(
+          'kernel.personal_data.erase',
+          { value: raceEmail },
+          { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+        ),
+      );
+      const erasePid2 = await waitBlockedOnPid(extractGatePid, '%for no key update of n%', extractTracker);
+      const extractPromise = extractTracker.track(
+        worker.execute<{ updated: boolean }>(
+          'notes.attachment.extract_record',
+          { attachmentId: pendingAtt.id, status: 'done', extractedText: `Contact ${raceEmail}` },
+          { actor: { type: 'system', component: 'notes' }, orgId: o.orgId },
+        ),
+      );
+      await waitBlockedOnPid(erasePid2, '%pg_advisory_xact_lock_shared%', extractTracker);
+      await extractGate.query('COMMIT');
+      const [eraseRes2, extractRes] = await Promise.all([erasePromise2, extractPromise]);
+      expect(eraseRes2.erased).toContainEqual({ column: 'ludy_notes.note.title', rows: 1 });
+      expect(extractRes).toEqual({ updated: true });
+      const storedAtt = await rows<{ extract_status: string; extracted_text: string | null }>(
+        'SELECT extract_status, extracted_text FROM ludy_notes.attachment WHERE org_id = $1 AND id = $2',
+        [o.orgId, pendingAtt.id],
+      );
+      expect(storedAtt[0]).toEqual({ extract_status: 'done', extracted_text: `Contact ${raceEmail}` });
+    } finally {
+      await extractGate.query('ROLLBACK').catch(() => undefined);
+      await extractTracker.drain();
+      await extractGate.end().catch(() => undefined);
+    }
   });
 });

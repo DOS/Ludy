@@ -596,12 +596,13 @@ export const todoImportTodoist = defineCommand({
       await lockTodoSortOrder(ctx, userId);
 
       const seenTodoKeys = new Set<string>();
-      if (input.skipDuplicates) {
-        const candidateTitles = [...new Set(pendingTodoCandidates.map((c) => c.task.title.trim().toLowerCase()))];
+      if (input.skipDuplicates && pendingTodoCandidates.length > 0) {
         const candidateListIds = [
           ...new Set(pendingTodoCandidates.map((c) => c.listId).filter((id): id is string => id !== null)),
         ];
         const hasInboxCandidate = pendingTodoCandidates.some((c) => c.listId === null);
+        // Scope SQL by target list(s) only and normalize titles exclusively in JS (toLowerCase), so Unicode case pairs
+        // such as Vietnamese 'Đ'/'đ' match consistently even when the database runs with LC_CTYPE=C.
         const existingTodos = await ctx.trx
           .selectFrom('ludy_notes.todo')
           .select(['list_id', 'title'])
@@ -615,7 +616,6 @@ export const todoImportTodoist = defineCommand({
                 ? eb('list_id', 'is', null)
                 : eb('list_id', 'in', candidateListIds),
           )
-          .where(sql<boolean>`pg_catalog.lower(pg_catalog.btrim(title)) = ANY(${candidateTitles}::text[])`)
           .execute();
         for (const t of existingTodos) {
           seenTodoKeys.add(`${t.list_id ?? 'inbox'}:${t.title.trim().toLowerCase()}`);
