@@ -6,6 +6,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -35,6 +36,7 @@ import {
   type ConversationCounts,
   type ConversationFilterTab,
   type ConversationListed,
+  type ConversationSummary,
   type OrgDetail,
   type OrgRole,
 } from './model.ts';
@@ -50,11 +52,14 @@ interface ConversationsInboxScreenProps {
   onSwitchOrg: () => void;
   initialConversationId?: string | null;
   onInitialConversationConsumed?: () => void;
-  onUnreadCountChange?: (count: number) => void;
 }
 
 const PAGE_LIMIT = 30;
 const CLOCK_TICK_MS = 60_000;
+
+function ListRowSeparator() {
+  return <View style={{ height: 12 }} />;
+}
 
 export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
   const {
@@ -66,7 +71,6 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
     locale,
     initialConversationId,
     onInitialConversationConsumed,
-    onUnreadCountChange,
   } = props;
   const palette = usePalette();
   const qc = useQueryClient();
@@ -129,7 +133,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
 
   const aiEnabledQuery = useQuery<boolean>({
     queryKey: ['server-config-ai', serverUrl],
-    queryFn: () => fetchDeploymentAiEnabled(serverUrl),
+    queryFn: () => fetchDeploymentAiEnabled(serverUrl, { forceRefresh: true }),
     staleTime: 60_000,
     retry: false,
   });
@@ -192,7 +196,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
             savedAt: Date.now(),
             filter,
             items: listed.conversations,
-            counts: countsQuery.data ?? null,
+            counts: countsQuery.data,
             salesCoworkerName,
             expectedEpoch: startEpoch,
             signal,
@@ -223,14 +227,20 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
       (orgQuery.isError && !isLikelyNetworkError(orgQuery.error)),
   );
 
+  // Sync live counts to HomeScreen badge cache and clear cached list preview on non-network refusal.
+  useEffect(() => {
+    if (isNonNetworkError) {
+      setCachedSnapshot(null);
+      qc.removeQueries({ queryKey: ['home-conversations-unread', serverUrl, orgSlug], exact: true });
+      return;
+    }
+    if (countsQuery.data) {
+      qc.setQueryData(['home-conversations-unread', serverUrl, orgSlug], countsQuery.data);
+    }
+  }, [isNonNetworkError, countsQuery.data, qc, serverUrl, orgSlug]);
+
   const liveCounts = isNonNetworkError ? undefined : countsQuery.data;
   const activeCounts = isNonNetworkError ? null : (liveCounts ?? cachedSnapshot?.counts ?? null);
-
-  useEffect(() => {
-    if (activeCounts && typeof activeCounts.unread === 'number') {
-      onUnreadCountChange?.(activeCounts.unread);
-    }
-  }, [activeCounts, onUnreadCountChange]);
 
   const liveItems = useMemo(() => {
     if (isNonNetworkError || !listQuery.data) return null;
@@ -248,6 +258,7 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
   function refreshAll() {
     void qc.invalidateQueries({ queryKey: ['conversations', 'list', serverUrl, orgSlug] });
     void qc.invalidateQueries({ queryKey: ['conversations', 'counts', serverUrl, orgSlug] });
+    void qc.invalidateQueries({ queryKey: ['home-conversations-unread', serverUrl, orgSlug] });
   }
 
   async function handleOpenWebInbox() {
@@ -299,281 +310,278 @@ export function ConversationsInboxScreen(props: ConversationsInboxScreenProps) {
   ];
 
   const nonNetworkErrorObj = listQuery.error ?? countsQuery.error ?? orgQuery.error;
+  const canShowListContent = !isNonNetworkError && !(isNetworkOffline && !cachedSnapshot);
+  const listData: ConversationSummary[] = canShowListContent ? (activeItems ?? []) : [];
+
+  function handlePullRefresh() {
+    void listQuery.refetch();
+    void countsQuery.refetch();
+    void aiEnabledQuery.refetch();
+    void orgQuery.refetch();
+  }
+
+  const listHeader = (
+    <View style={{ gap: 12, marginBottom: listData.length > 0 ? 12 : 0 }}>
+      <View style={styles.row}>
+        <View style={{ flex: 1 }}>
+          <Title>{t('conversations.title')}</Title>
+          <Text style={[styles.meta, { color: palette.muted }]}>{t('home.org', { org: orgName })}</Text>
+        </View>
+        <View style={styles.actionsRow}>
+          <LinkButton
+            label={t('conversations.openWeb')}
+            accessibilityHint={t('conversations.openWebHint')}
+            onPress={() => void handleOpenWebInbox()}
+          />
+          {props.canSwitchOrg ? (
+            <LinkButton label={t('approvals.orgSwitch')} onPress={props.onSwitchOrg} />
+          ) : null}
+        </View>
+      </View>
+
+      <Body tone="muted">{t('conversations.subtitle')}</Body>
+
+      {bannerMessage ? (
+        <Banner tone="info">
+          <Body>{bannerMessage}</Body>
+        </Banner>
+      ) : null}
+
+      {isNonNetworkError ? (
+        <Banner tone="danger">
+          <Body tone="danger">
+            {isMfaRequired(nonNetworkErrorObj) ? t('home.error.mfa') : t('home.error.generic')}
+          </Body>
+          <PrimaryButton label={t('home.retry')} onPress={handlePullRefresh} />
+        </Banner>
+      ) : null}
+
+      {isShowingOfflineBanner && cachedSnapshot ? (
+        <Banner tone="warn">
+          <Body tone="warning">
+            {t('conversations.offlineBanner', {
+              time: formatDateTimeShort(cachedSnapshot.savedAt, locale),
+            })}
+          </Body>
+        </Banner>
+      ) : cachedSnapshot && liveItems ? (
+        <Text style={[styles.meta, { color: palette.muted }]}>
+          {t('conversations.cachedHint', {
+            time: formatDateTimeShort(cachedSnapshot.savedAt, locale),
+          })}
+        </Text>
+      ) : null}
+
+      {isNetworkOffline && !cachedSnapshot ? (
+        <Banner tone="danger">
+          <Body tone="danger">{t('conversations.offlineNoCache')}</Body>
+          <PrimaryButton label={t('home.retry')} onPress={handlePullRefresh} />
+        </Banner>
+      ) : null}
+
+      {canShowListContent ? (
+        <ScrollView
+          accessibilityRole="tablist"
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ gap: 8 }}
+        >
+          {filterTabs.map((tab) => {
+            const selected = filter === tab.id;
+            const labelText = tab.count !== undefined ? `${tab.label} (${tab.count})` : tab.label;
+            return (
+              <Pressable
+                key={tab.id}
+                accessibilityRole="tab"
+                accessibilityLabel={labelText}
+                accessibilityState={{ selected }}
+                onPress={() => setFilter(tab.id)}
+                style={{
+                  minHeight: 48,
+                  paddingHorizontal: 14,
+                  borderRadius: 24,
+                  borderWidth: 1,
+                  borderColor: selected ? palette.primary : palette.border,
+                  backgroundColor: selected ? palette.primary : palette.surface,
+                  justifyContent: 'center',
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: '600',
+                    color: selected ? palette.primaryText : palette.text,
+                  }}
+                >
+                  {labelText}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+    </View>
+  );
+
+  const listEmpty = !canShowListContent ? null : listQuery.isPending && activeItems === null ? (
+    <View style={{ paddingVertical: 24, alignItems: 'center', gap: 10 }}>
+      <ActivityIndicator accessibilityLabel={t('conversations.loading')} />
+      <Body tone="muted">{t('conversations.loading')}</Body>
+    </View>
+  ) : (
+    <View style={[styles.card, { borderColor: palette.border, backgroundColor: palette.surface, marginTop: 12 }]}>
+      <SectionHeading>{t(`conversations.empty.${filter}`)}</SectionHeading>
+      <Body tone="muted">{t('conversations.openWebHint')}</Body>
+      <PrimaryButton label={t('conversations.refresh')} onPress={handlePullRefresh} />
+    </View>
+  );
+
+  const listFooter = (
+    <View style={{ gap: 12, marginTop: 12 }}>
+      {canShowListContent && listQuery.hasNextPage && !isNetworkOffline ? (
+        <SecondaryButton
+          label={
+            listQuery.isFetchingNextPage
+              ? t('conversations.loadingMore')
+              : t('conversations.loadMore')
+          }
+          busy={listQuery.isFetchingNextPage}
+          onPress={() => void listQuery.fetchNextPage()}
+        />
+      ) : null}
+
+      <View style={{ alignItems: 'center', gap: 4 }}>
+        <LinkButton label={t('home.signOut')} onPress={() => void session.signOut()} />
+        <Text style={[styles.meta, { color: palette.muted, textAlign: 'center' }]}>
+          {t('home.signOutHint')}
+        </Text>
+      </View>
+    </View>
+  );
 
   return (
     <View style={[styles.scrollContainer, { backgroundColor: palette.background }]}>
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
+      <FlatList
+        data={listData}
+        keyExtractor={(conv) => conv.id}
+        initialNumToRender={12}
+        windowSize={7}
+        contentContainerStyle={[styles.scrollContent, { gap: 0 }]}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={listEmpty}
+        ListFooterComponent={listFooter}
+        ItemSeparatorComponent={ListRowSeparator}
         refreshControl={
           <RefreshControl
-            onRefresh={() => {
-              void listQuery.refetch();
-              void countsQuery.refetch();
-            }}
+            onRefresh={handlePullRefresh}
             refreshing={listQuery.isRefetching || countsQuery.isRefetching}
           />
         }
-      >
-        <View style={styles.row}>
-          <View style={{ flex: 1 }}>
-            <Title>{t('conversations.title')}</Title>
-            <Text style={[styles.meta, { color: palette.muted }]}>{t('home.org', { org: orgName })}</Text>
-          </View>
-          <View style={styles.actionsRow}>
-            <LinkButton
-              label={t('conversations.openWeb')}
-              accessibilityHint={t('conversations.openWebHint')}
-              onPress={() => void handleOpenWebInbox()}
-            />
-            {props.canSwitchOrg ? (
-              <LinkButton label={t('approvals.orgSwitch')} onPress={props.onSwitchOrg} />
-            ) : null}
-          </View>
-        </View>
+        renderItem={({ item: conv }) => {
+          const customerName = getContactDisplayName(conv.contact, (tail) =>
+            t('conversations.anonymous', { tail }),
+          );
+          const channelLabel = formatChannelProviderLabel(conv.channel.provider, conv.kind);
+          const kindLabel = t(`conversations.kind.${conv.kind}`);
+          const relTime = formatRelativeTimestamp(conv.lastMessageAt, nowMs, locale);
+          const winBadge = getSummaryWindowBadge(conv, nowMs);
+          const winText = winBadge
+            ? winBadge.expired
+              ? t('conversations.window.badgeClosed')
+              : t('conversations.window.badgeOpen', {
+                  remaining: formatWindowDuration(winBadge.remainingMs, locale),
+                })
+            : null;
 
-        <Body tone="muted">{t('conversations.subtitle')}</Body>
+          const a11ySummary = [
+            customerName,
+            conv.unread ? t('conversations.unread') : null,
+            channelLabel,
+            kindLabel,
+            relTime,
+            winText,
+            conv.preview || t('conversations.noPreview'),
+          ]
+            .filter(Boolean)
+            .join(', ');
 
-        {bannerMessage ? (
-          <Banner tone="info">
-            <Body>{bannerMessage}</Body>
-          </Banner>
-        ) : null}
-
-        {isNonNetworkError ? (
-          <Banner tone="danger">
-            <Body tone="danger">
-              {isMfaRequired(nonNetworkErrorObj) ? t('home.error.mfa') : t('home.error.generic')}
-            </Body>
-            <PrimaryButton
-              label={t('home.retry')}
+          return (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={a11ySummary}
               onPress={() => {
-                void listQuery.refetch();
-                void countsQuery.refetch();
-                void orgQuery.refetch();
+                setBannerMessage(null);
+                setSelectedConversationId(conv.id);
               }}
-            />
-          </Banner>
-        ) : null}
-
-        {isShowingOfflineBanner && cachedSnapshot ? (
-          <Banner tone="warn">
-            <Body tone="warning">
-              {t('conversations.offlineBanner', {
-                time: formatDateTimeShort(cachedSnapshot.savedAt, locale),
-              })}
-            </Body>
-          </Banner>
-        ) : cachedSnapshot && liveItems ? (
-          <Text style={[styles.meta, { color: palette.muted }]}>
-            {t('conversations.cachedHint', {
-              time: formatDateTimeShort(cachedSnapshot.savedAt, locale),
-            })}
-          </Text>
-        ) : null}
-
-        {isNetworkOffline && !cachedSnapshot ? (
-          <Banner tone="danger">
-            <Body tone="danger">{t('conversations.offlineNoCache')}</Body>
-            <PrimaryButton
-              label={t('home.retry')}
-              onPress={() => {
-                void listQuery.refetch();
-                void countsQuery.refetch();
-              }}
-            />
-          </Banner>
-        ) : null}
-
-        {!isNonNetworkError && !(isNetworkOffline && !cachedSnapshot) ? (
-          <>
-            <ScrollView
-              accessibilityRole="tablist"
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ gap: 8 }}
+              style={[
+                styles.card,
+                {
+                  borderColor: conv.unread ? palette.primary : palette.border,
+                  backgroundColor: palette.surface,
+                  minHeight: 72,
+                },
+              ]}
             >
-              {filterTabs.map((tab) => {
-                const selected = filter === tab.id;
-                const labelText =
-                  tab.count !== undefined ? `${tab.label} (${tab.count})` : tab.label;
-                return (
-                  <Pressable
-                    key={tab.id}
-                    accessibilityRole="tab"
-                    accessibilityLabel={labelText}
-                    accessibilityState={{ selected }}
-                    onPress={() => setFilter(tab.id)}
-                    style={{
-                      minHeight: 48,
-                      paddingHorizontal: 14,
-                      borderRadius: 24,
-                      borderWidth: 1,
-                      borderColor: selected ? palette.primary : palette.border,
-                      backgroundColor: selected ? palette.primary : palette.surface,
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Text
+              <View style={styles.row}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                  {conv.unread ? (
+                    <View
+                      accessibilityLabel={t('conversations.unread')}
                       style={{
-                        fontSize: 14,
-                        fontWeight: '600',
-                        color: selected ? palette.primaryText : palette.text,
+                        width: 10,
+                        height: 10,
+                        borderRadius: 5,
+                        backgroundColor: palette.primary,
                       }}
-                    >
-                      {labelText}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-
-            {listQuery.isPending && activeItems === null ? (
-              <View style={{ paddingVertical: 24, alignItems: 'center', gap: 10 }}>
-                <ActivityIndicator accessibilityLabel={t('conversations.loading')} />
-                <Body tone="muted">{t('conversations.loading')}</Body>
+                    />
+                  ) : null}
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.cardTitle,
+                      {
+                        color: palette.text,
+                        fontWeight: conv.unread ? '700' : '600',
+                        flex: 1,
+                      },
+                    ]}
+                  >
+                    {customerName}
+                  </Text>
+                </View>
+                {relTime ? <Text style={[styles.meta, { color: palette.muted }]}>{relTime}</Text> : null}
               </View>
-            ) : !activeItems || activeItems.length === 0 ? (
-              <View style={[styles.card, { borderColor: palette.border, backgroundColor: palette.surface }]}>
-                <SectionHeading>{t(`conversations.empty.${filter}`)}</SectionHeading>
-                <Body tone="muted">{t('conversations.openWebHint')}</Body>
-                <PrimaryButton
-                  label={t('conversations.refresh')}
-                  onPress={() => {
-                    void listQuery.refetch();
-                    void countsQuery.refetch();
-                  }}
-                />
-              </View>
-            ) : (
-              <>
-                {activeItems.map((conv) => {
-                  const customerName = getContactDisplayName(conv.contact, (tail) =>
-                    t('conversations.anonymous', { tail }),
-                  );
-                  const channelLabel = formatChannelProviderLabel(conv.channel.provider, conv.kind);
-                  const relTime = formatRelativeTimestamp(conv.lastMessageAt, nowMs, locale);
-                  const winBadge = getSummaryWindowBadge(conv, nowMs);
-                  const winText = winBadge
-                    ? winBadge.expired
-                      ? t('conversations.window.badgeClosed')
-                      : t('conversations.window.badgeOpen', {
-                          remaining: formatWindowDuration(winBadge.remainingMs, locale),
-                        })
-                    : null;
 
-                  const a11ySummary = [
-                    customerName,
-                    conv.unread ? t('conversations.unread') : null,
-                    channelLabel,
-                    relTime,
-                    winText,
-                    conv.preview || t('conversations.noPreview'),
-                  ]
-                    .filter(Boolean)
-                    .join(', ');
+              <Text
+                numberOfLines={2}
+                style={[styles.body, { color: conv.preview ? palette.text : palette.muted }]}
+              >
+                {conv.preview || t('conversations.noPreview')}
+              </Text>
 
-                  return (
-                    <Pressable
-                      key={conv.id}
-                      accessibilityRole="button"
-                      accessibilityLabel={a11ySummary}
-                      onPress={() => {
-                        setBannerMessage(null);
-                        setSelectedConversationId(conv.id);
-                      }}
-                      style={[
-                        styles.card,
-                        {
-                          borderColor: conv.unread ? palette.primary : palette.border,
-                          backgroundColor: palette.surface,
-                          minHeight: 72,
-                        },
-                      ]}
-                    >
-                      <View style={styles.row}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                          {conv.unread ? (
-                            <View
-                              accessibilityLabel={t('conversations.unread')}
-                              style={{
-                                width: 10,
-                                height: 10,
-                                borderRadius: 5,
-                                backgroundColor: palette.primary,
-                              }}
-                            />
-                          ) : null}
-                          <Text
-                            numberOfLines={1}
-                            style={[
-                              styles.cardTitle,
-                              {
-                                color: palette.text,
-                                fontWeight: conv.unread ? '700' : '600',
-                                flex: 1,
-                              },
-                            ]}
-                          >
-                            {customerName}
-                          </Text>
-                        </View>
-                        {relTime ? (
-                          <Text style={[styles.meta, { color: palette.muted }]}>{relTime}</Text>
-                        ) : null}
-                      </View>
-
-                      <Text
-                        numberOfLines={2}
-                        style={[styles.body, { color: conv.preview ? palette.text : palette.muted }]}
-                      >
-                        {conv.preview || t('conversations.noPreview')}
-                      </Text>
-
-                      <View style={styles.actionsRow}>
-                        <Badge label={channelLabel} tone="info" />
-                        {conv.channel.displayName ? (
-                          <Badge label={conv.channel.displayName} tone="info" />
-                        ) : null}
-                        {filter === 'all' ? (
-                          <Badge
-                            label={t(`conversations.status.${conv.status}`)}
-                            tone={conv.status === 'new' ? 'warn' : 'info'}
-                          />
-                        ) : null}
-                        {winBadge && winText ? (
-                          <Badge
-                            label={winText}
-                            tone={winBadge.expired ? 'danger' : winBadge.urgent ? 'warn' : 'info'}
-                          />
-                        ) : null}
-                      </View>
-                    </Pressable>
-                  );
-                })}
-
-                {listQuery.hasNextPage && !isNetworkOffline ? (
-                  <SecondaryButton
-                    label={
-                      listQuery.isFetchingNextPage
-                        ? t('conversations.loadingMore')
-                        : t('conversations.loadMore')
-                    }
-                    busy={listQuery.isFetchingNextPage}
-                    onPress={() => void listQuery.fetchNextPage()}
+              <View style={styles.actionsRow}>
+                <Badge label={channelLabel} tone="info" />
+                <Badge label={kindLabel} tone="info" />
+                {conv.channel.displayName ? (
+                  <Badge label={conv.channel.displayName} tone="info" />
+                ) : null}
+                {filter === 'all' ? (
+                  <Badge
+                    label={t(`conversations.status.${conv.status}`)}
+                    tone={conv.status === 'new' ? 'warn' : 'info'}
                   />
                 ) : null}
-              </>
-            )}
-          </>
-        ) : null}
-
-        <View style={{ marginTop: 12, alignItems: 'center', gap: 4 }}>
-          <LinkButton label={t('home.signOut')} onPress={() => void session.signOut()} />
-          <Text style={[styles.meta, { color: palette.muted, textAlign: 'center' }]}>
-            {t('home.signOutHint')}
-          </Text>
-        </View>
-      </ScrollView>
+                {winBadge && winText ? (
+                  <Badge
+                    label={winText}
+                    tone={winBadge.expired ? 'danger' : winBadge.urgent ? 'warn' : 'info'}
+                  />
+                ) : null}
+              </View>
+            </Pressable>
+          );
+        }}
+      />
     </View>
   );
 }

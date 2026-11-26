@@ -113,10 +113,20 @@ describe('conversations persisted KeyValue read cache', () => {
     expect(loaded?.threads['conv-17']).toBeDefined();
   });
 
-  it('shrinks oversized payloads cleanly without corrupting JSON', async () => {
+  it('shrinks oversized payloads while preserving newest thread latest messages and recovers interrupted previous-gen cleanup', async () => {
     const store = memoryStore();
     const cache = createConversationsCache(store);
     const hugePad = 'Tin nhắn tiếng Việt rất dài '.repeat(50);
+
+    const longDetail = makeDetail(99, hugePad);
+    const baseMsg = longDetail.messages[0];
+    if (!baseMsg) throw new Error('expected seed message');
+    longDetail.messages = Array.from({ length: 40 }, (_, mIdx) => ({
+      ...baseMsg,
+      id: `msg-99-${mIdx}`,
+      seq: mIdx + 1,
+      body: `Tin nhắn ${mIdx + 1}: ${hugePad}`,
+    }));
 
     await cache.save({
       serverUrl: SERVER,
@@ -128,17 +138,37 @@ describe('conversations persisted KeyValue read cache', () => {
       lists: {
         new: Array.from({ length: 30 }, (_, i) => makeSummary(i, hugePad)),
       },
-      threads: Object.fromEntries(
-        Array.from({ length: 15 }, (_, i) => [
-          `conv-${i}`,
-          { conversationId: `conv-${i}`, cachedAt: 2_000_000 + i, detail: makeDetail(i, hugePad) },
-        ]),
-      ),
+      threads: {
+        'conv-1': { conversationId: 'conv-1', cachedAt: 1_000_000, detail: makeDetail(1, hugePad) },
+        'conv-99': { conversationId: 'conv-99', cachedAt: 2_000_000, detail: longDetail },
+      },
     });
 
     const loaded = await cache.load(SERVER, 'acme-vn', 'user-a');
     expect(loaded).not.toBeNull();
     expect(loaded?.salesCoworkerName).toBe('Dy');
+    // Newest thread's latest messages remain readable even after shrinkage.
+    const cachedNewest = loaded?.threads['conv-99'];
+    expect(cachedNewest).toBeDefined();
+    expect(cachedNewest?.detail.messages.length).toBeGreaterThan(0);
+    expect(cachedNewest?.detail.messages.at(-1)?.seq).toBe(40);
+
+    // Simulate an interrupted cleanup after META_KEY flipped in a later generation.
+    store.data.set('ludy.conversations.cache.v1.999.0', 'stale-pii-chunk');
+    store.data.set(
+      'ludy.conversations.cache.cleanup.v1',
+      JSON.stringify([{ gen: 999, chunks: 1 }]),
+    );
+    await cache.evictThread({
+      serverUrl: SERVER,
+      orgSlug: 'acme-vn',
+      userId: 'user-a',
+      conversationId: 'conv-99',
+    });
+    expect(store.data.has('ludy.conversations.cache.v1.999.0')).toBe(false);
+    expect(store.data.has('ludy.conversations.cache.cleanup.v1')).toBe(false);
+    const afterEvict = await cache.load(SERVER, 'acme-vn', 'user-a');
+    expect(afterEvict?.threads['conv-99']).toBeUndefined();
   });
 
   it('isolates cached data strictly by (serverUrl, orgSlug, userId)', async () => {

@@ -267,7 +267,7 @@ describe('AI draft request/discard and markRead executors', () => {
           throw Object.assign(new Error('Too many draft asks'), {
             code: 'RATE_LIMITED',
             status: 429,
-            retryAfterSeconds: 18,
+            data: { retryAfterSeconds: 18 },
           });
         },
       },

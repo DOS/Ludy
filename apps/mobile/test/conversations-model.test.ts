@@ -251,16 +251,31 @@ describe('deployment aiEnabled flag and sales coworker resolution', () => {
     clearDeploymentAiCache();
   });
 
-  it('reads and caches aiEnabled per origin and fails closed to false on errors', async () => {
+  it('reads and caches aiEnabled per origin with TTL and fails closed to false on errors', async () => {
     let fetchCount = 0;
+    let clockMs = 1_000_000;
     const okFetch = (async () => {
       fetchCount += 1;
       return jsonResponse(200, { aiEnabled: true });
     }) as unknown as typeof fetch;
 
-    expect(await fetchDeploymentAiEnabled(`${SERVER}/`, { fetchFn: okFetch })).toBe(true);
-    expect(await fetchDeploymentAiEnabled(SERVER, { fetchFn: okFetch })).toBe(true);
+    expect(
+      await fetchDeploymentAiEnabled(`${SERVER}/`, { fetchFn: okFetch, now: () => clockMs }),
+    ).toBe(true);
+    expect(
+      await fetchDeploymentAiEnabled(SERVER, { fetchFn: okFetch, now: () => clockMs + 10_000 }),
+    ).toBe(true);
     expect(fetchCount).toBe(1);
+
+    // Expires after 60s TTL so server AI toggles take effect.
+    const offFetch = (async () => {
+      fetchCount += 1;
+      return jsonResponse(200, { aiEnabled: false });
+    }) as unknown as typeof fetch;
+    expect(
+      await fetchDeploymentAiEnabled(SERVER, { fetchFn: offFetch, now: () => clockMs + 61_000 }),
+    ).toBe(false);
+    expect(fetchCount).toBe(2);
 
     clearDeploymentAiCache();
     expect(
@@ -280,28 +295,48 @@ describe('deployment aiEnabled flag and sales coworker resolution', () => {
     expect(await fetchDeploymentAiEnabled('http://evil.example')).toBe(false);
   });
 
-  it('resolves Engage sales coworker name with Dy default fallback and rethrows auth errors', async () => {
-    const customClient = {
+  it('resolves Engage sales coworker name from chart agents, falls back cleanly, and rethrows auth errors', async () => {
+    const chartClient = {
+      chart: {
+        get: async () => ({
+          agents: [
+            { id: 'a0', templateKey: 'sales-old', displayName: 'Old Sales', status: 'retired', maxRisk: 'R1', dailyRunCap: 10 },
+            { id: 'a1', templateKey: 'fin-1', displayName: 'Ly Kế toán', status: 'active', maxRisk: 'R1', dailyRunCap: 10 },
+            { id: 'a2', templateKey: 'sales-1', displayName: 'Dy Tư vấn', status: 'active', maxRisk: 'R1', dailyRunCap: 10 },
+          ],
+        }),
+        templates: async () => [
+          { key: 'sales-old', module: 'conversations' },
+          { key: 'fin-1', module: 'finance' },
+          { key: 'sales-1', module: 'crm' },
+        ],
+      },
+    } as unknown as LudyClient;
+    expect(await resolveSalesCoworkerName(chartClient)).toBe('Dy Tư vấn');
+
+    const todayFallbackClient = {
       today: {
         list: async () => ({ coworkers: { gm: 'Vy', finance: 'Ly', sales: 'Vy Sales', marketing: 'Uy' } }),
       },
     } as unknown as LudyClient;
-    expect(await resolveSalesCoworkerName(customClient)).toBe('Vy Sales');
+    expect(await resolveSalesCoworkerName(todayFallbackClient)).toBe('Vy Sales');
 
     const failingClient = {
-      today: {
-        list: async () => {
+      chart: {
+        get: async () => {
           throw new Error('network down');
         },
+        templates: async () => [],
       },
     } as unknown as LudyClient;
     expect(await resolveSalesCoworkerName(failingClient)).toBe(DEFAULT_SALES_COWORKER);
 
     const authClient = {
-      today: {
-        list: async () => {
+      chart: {
+        get: async () => {
           throw Object.assign(new Error('MFA'), { code: 'MFA_REQUIRED', status: 401 });
         },
+        templates: async () => [],
       },
     } as unknown as LudyClient;
     await expect(resolveSalesCoworkerName(authClient)).rejects.toMatchObject({ code: 'MFA_REQUIRED' });

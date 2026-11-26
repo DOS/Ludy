@@ -12,6 +12,7 @@ import {
 
 const META_KEY = 'ludy.conversations.cache.meta.v1';
 const STAGE_KEY = 'ludy.conversations.cache.stage.v1';
+const CLEANUP_KEY = 'ludy.conversations.cache.cleanup.v1';
 const GEN_CHUNK_PREFIX = 'ludy.conversations.cache.v1.';
 const CACHE_VERSION = 1;
 const MAX_CHUNKS = 32;
@@ -75,6 +76,14 @@ export interface ConversationsCache {
       salesCoworkerName?: string;
     } & CacheWriteOptions,
   ): Promise<CachedConversationsSnapshot | null>;
+  evictThread(
+    params: {
+      serverUrl: string;
+      orgSlug: string;
+      userId: string | null;
+      conversationId: string;
+    } & CacheWriteOptions,
+  ): Promise<void>;
   clear(): Promise<void>;
 }
 
@@ -255,14 +264,52 @@ function chunkKey(gen: number, index: number): string {
   return `${GEN_CHUNK_PREFIX}${gen}.${index}`;
 }
 
-function fitSnapshotChunks(snapshot: CachedConversationsSnapshot): string[] {
+interface PendingCleanupEntry {
+  gen: number;
+  chunks: number;
+}
+
+function isCleanupList(raw: unknown): raw is PendingCleanupEntry[] {
+  if (!Array.isArray(raw)) return false;
+  return raw.every((entry) => {
+    if (!entry || typeof entry !== 'object') return false;
+    const item = entry as Record<string, unknown>;
+    return (
+      typeof item.gen === 'number' &&
+      Number.isInteger(item.gen) &&
+      item.gen >= 1 &&
+      typeof item.chunks === 'number' &&
+      Number.isInteger(item.chunks) &&
+      item.chunks >= 1 &&
+      item.chunks <= MAX_CHUNKS
+    );
+  });
+}
+
+function fitSnapshotChunks(snapshot: CachedConversationsSnapshot): {
+  chunks: string[];
+  fitted: CachedConversationsSnapshot;
+} {
   let threadEntries = Object.values(snapshot.threads).sort((a, b) => b.cachedAt - a.cachedAt);
   let listLimit = MAX_LIST_ITEMS;
+  let newestMsgLimit = MAX_THREAD_MESSAGES;
+  let dropExtras = false;
 
   while (true) {
     const boundedThreads: Record<string, CachedConversationThread> = {};
     for (const t of threadEntries) {
-      boundedThreads[t.conversationId] = t;
+      if (threadEntries.length === 1 && (dropExtras || newestMsgLimit < t.detail.messages.length)) {
+        boundedThreads[t.conversationId] = {
+          ...t,
+          detail: {
+            ...t.detail,
+            messages: t.detail.messages.slice(-newestMsgLimit),
+            ...(dropExtras ? { notes: [], others: [], suggestions: t.detail.suggestions.slice(0, 2) } : {}),
+          },
+        };
+      } else {
+        boundedThreads[t.conversationId] = t;
+      }
     }
     const boundedLists: Partial<Record<ConversationFilterTab, ConversationSummary[]>> = {};
     for (const tab of ['new', 'pending', 'all'] as const) {
@@ -276,24 +323,54 @@ function fitSnapshotChunks(snapshot: CachedConversationsSnapshot): string[] {
       threads: boundedThreads,
     });
     const chunks = splitUtf8Chunks(bodyJson, MAX_CHUNK_BYTES);
-    if (chunks.length <= MAX_CHUNKS) return chunks;
-    if (threadEntries.length > 0) {
-      threadEntries = threadEntries.slice(0, Math.floor(threadEntries.length / 2));
+    if (chunks.length <= MAX_CHUNKS) {
+      return {
+        chunks,
+        fitted: {
+          ...snapshot,
+          lists: boundedLists,
+          threads: boundedThreads,
+        },
+      };
+    }
+    // Preserve the newest thread's latest messages first: drop older threads down to 1, then shrink list items, then trim older messages.
+    if (threadEntries.length > 1) {
+      threadEntries = threadEntries.slice(0, Math.max(1, Math.floor(threadEntries.length / 2)));
       continue;
     }
     if (listLimit > 0) {
       listLimit = Math.floor(listLimit / 2);
       continue;
     }
-    return splitUtf8Chunks(
-      JSON.stringify({
-        salesCoworkerName: snapshot.salesCoworkerName,
-        counts: snapshot.counts,
-        lists: {},
-        threads: {},
-      }),
-      MAX_CHUNK_BYTES,
-    );
+    if (threadEntries.length === 1 && !dropExtras) {
+      dropExtras = true;
+      continue;
+    }
+    if (threadEntries.length === 1 && newestMsgLimit > 1) {
+      newestMsgLimit = Math.max(1, Math.floor(newestMsgLimit / 2));
+      continue;
+    }
+    if (threadEntries.length === 1) {
+      threadEntries = [];
+      continue;
+    }
+    const emptySnapshot: CachedConversationsSnapshot = {
+      ...snapshot,
+      lists: {},
+      threads: {},
+    };
+    return {
+      chunks: splitUtf8Chunks(
+        JSON.stringify({
+          salesCoworkerName: snapshot.salesCoworkerName,
+          counts: snapshot.counts,
+          lists: {},
+          threads: {},
+        }),
+        MAX_CHUNK_BYTES,
+      ),
+      fitted: emptySnapshot,
+    };
   }
 }
 
@@ -340,10 +417,30 @@ export function createConversationsCache(store: KeyValue): ConversationsCache {
     }
   }
 
+  async function readCleanup(): Promise<PendingCleanupEntry[]> {
+    const raw = await store.get(CLEANUP_KEY);
+    if (!raw) return [];
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return isCleanupList(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
   async function removeChunks(gen: number, count: number): Promise<void> {
     for (let i = 0; i < count; i++) {
       await store.remove(chunkKey(gen, i));
     }
+  }
+
+  async function flushPendingCleanups(entries: PendingCleanupEntry[], activeGen?: number): Promise<void> {
+    if (entries.length === 0) return;
+    for (const entry of entries) {
+      if (activeGen !== undefined && entry.gen === activeGen) continue;
+      await removeChunks(entry.gen, entry.chunks);
+    }
+    await store.remove(CLEANUP_KEY);
   }
 
   async function loadUnlocked(
@@ -389,11 +486,13 @@ export function createConversationsCache(store: KeyValue): ConversationsCache {
 
     const previous = await readMeta();
     const staged = await readStage();
-    const nextGen = (Math.max(highestGen, previous?.gen ?? 0, staged?.gen ?? 0) % 1_000_000) + 1;
+    const pendingCleanup = await readCleanup();
+    const maxCleanupGen = pendingCleanup.reduce((acc, e) => Math.max(acc, e.gen), 0);
+    const nextGen = (Math.max(highestGen, previous?.gen ?? 0, staged?.gen ?? 0, maxCleanupGen) % 1_000_000) + 1;
     highestGen = nextGen;
 
     const sanitized = sanitizeSnapshot(snapshot);
-    const chunks = fitSnapshotChunks(sanitized);
+    const { chunks, fitted } = fitSnapshotChunks(sanitized);
 
     if (staged && staged.gen !== previous?.gen) {
       await removeChunks(staged.gen, staged.chunks);
@@ -418,22 +517,29 @@ export function createConversationsCache(store: KeyValue): ConversationsCache {
       return null;
     }
 
+    // Record previous generation in CLEANUP_KEY before overwriting META_KEY so an interrupted cleanup never strands PII chunks.
+    const toClean = [...pendingCleanup];
+    if (previous && previous.gen !== nextGen && !toClean.some((e) => e.gen === previous.gen)) {
+      toClean.push({ gen: previous.gen, chunks: previous.chunks });
+    }
+    if (toClean.length > 0) {
+      await store.set(CLEANUP_KEY, JSON.stringify(toClean));
+    }
+
     const meta: CacheMeta = {
       v: CACHE_VERSION,
       gen: nextGen,
-      serverUrl: sanitized.serverUrl,
-      orgSlug: sanitized.orgSlug,
-      userId: sanitized.userId,
-      savedAt: sanitized.savedAt,
+      serverUrl: fitted.serverUrl,
+      orgSlug: fitted.orgSlug,
+      userId: fitted.userId,
+      savedAt: fitted.savedAt,
       chunks: chunks.length,
     };
     await store.set(META_KEY, JSON.stringify(meta));
     await store.remove(STAGE_KEY);
+    await flushPendingCleanups(toClean, nextGen);
 
-    if (previous && previous.gen !== nextGen) {
-      await removeChunks(previous.gen, previous.chunks);
-    }
-    return sanitized;
+    return fitted;
   }
 
   return {
@@ -510,11 +616,50 @@ export function createConversationsCache(store: KeyValue): ConversationsCache {
       });
     },
 
+    evictThread(params) {
+      if (!params.userId || isWriteStale(params)) return Promise.resolve();
+      const userId = params.userId;
+      return serialize(async () => {
+        if (isWriteStale(params)) return;
+        const existing = await loadUnlocked(params.serverUrl, params.orgSlug, userId);
+        if (!existing) return;
+        const nextThreads = { ...existing.threads };
+        const hadThread = Object.hasOwn(nextThreads, params.conversationId);
+        delete nextThreads[params.conversationId];
+
+        let changedList = false;
+        const nextLists: Partial<Record<ConversationFilterTab, ConversationSummary[]>> = {};
+        for (const tab of ['new', 'pending', 'all'] as const) {
+          const arr = existing.lists[tab];
+          if (!arr) continue;
+          const filtered = arr.filter((item) => item.id !== params.conversationId);
+          if (filtered.length !== arr.length) changedList = true;
+          nextLists[tab] = filtered;
+        }
+        if (!hadThread && !changedList) return;
+
+        await saveUnlocked(
+          {
+            serverUrl: existing.serverUrl,
+            orgSlug: existing.orgSlug,
+            userId: existing.userId,
+            savedAt: existing.savedAt,
+            salesCoworkerName: existing.salesCoworkerName,
+            counts: existing.counts,
+            lists: nextLists,
+            threads: nextThreads,
+          },
+          params,
+        );
+      });
+    },
+
     clear() {
       clearEpoch += 1;
       return serialize(async () => {
         const meta = await readMeta();
         const staged = await readStage();
+        const pendingCleanup = await readCleanup();
         await store.remove(META_KEY);
         if (meta) {
           highestGen = Math.max(highestGen, meta.gen);
@@ -526,6 +671,11 @@ export function createConversationsCache(store: KeyValue): ConversationsCache {
             await removeChunks(staged.gen, staged.chunks);
           }
         }
+        for (const entry of pendingCleanup) {
+          highestGen = Math.max(highestGen, entry.gen);
+          await removeChunks(entry.gen, entry.chunks);
+        }
+        await store.remove(CLEANUP_KEY);
         // Remove STAGE_KEY strictly last after all chunks are cleaned up.
         await store.remove(STAGE_KEY);
       });

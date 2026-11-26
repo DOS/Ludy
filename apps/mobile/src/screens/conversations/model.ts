@@ -65,7 +65,9 @@ export function isRateLimitedError(error: unknown): { rateLimited: boolean; retr
   }
   let retryAfterSeconds: number | null = null;
   if (error && typeof error === 'object') {
-    const raw = (error as { retryAfterSeconds?: unknown }).retryAfterSeconds;
+    const obj = error as { data?: unknown; retryAfterSeconds?: unknown };
+    const data = obj.data && typeof obj.data === 'object' ? (obj.data as { retryAfterSeconds?: unknown }) : null;
+    const raw = data?.retryAfterSeconds ?? obj.retryAfterSeconds;
     if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
       retryAfterSeconds = Math.ceil(raw);
     }
@@ -277,25 +279,28 @@ export function buildConversationWebPath(conversationId: string | null | undefin
   return `/social/inbox?c=${encodeURIComponent(conversationId)}`;
 }
 
-const aiConfigCache = new Map<string, boolean>();
+const AI_CONFIG_TTL_MS = 60_000;
+const aiConfigCache = new Map<string, { enabled: boolean; fetchedAt: number }>();
 
 export function clearDeploymentAiCache(): void {
   aiConfigCache.clear();
 }
 
 /**
- * Reads `GET ${serverUrl}/api/config` (`aiEnabled === true`), cached per origin and failing closed to `false` on error.
+ * Reads `GET ${serverUrl}/api/config` (`aiEnabled === true`), with a 60s TTL cache per origin and failing closed to `false` on error.
  */
 export async function fetchDeploymentAiEnabled(
   serverUrl: string,
-  deps?: { fetchFn?: typeof fetch; forceRefresh?: boolean },
+  deps?: { fetchFn?: typeof fetch; forceRefresh?: boolean; now?: () => number },
 ): Promise<boolean> {
   const origin = normalizeServerUrl(serverUrl);
   if (!origin) return false;
-  if (!deps?.forceRefresh && aiConfigCache.has(origin)) {
-    return aiConfigCache.get(origin) === true;
+  const nowMs = (deps?.now ?? (() => Date.now()))();
+  const cached = aiConfigCache.get(origin);
+  if (!deps?.forceRefresh && cached && nowMs - cached.fetchedAt < AI_CONFIG_TTL_MS) {
+    return cached.enabled;
   }
-  const fetchFn = deps?.fetchFn ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
+  const fetchFn: typeof fetch = deps?.fetchFn ?? ((input, init) => fetch(input, init));
   try {
     const response = await fetchFn(`${origin}/api/config`, {
       method: 'GET',
@@ -309,7 +314,7 @@ export async function fetchDeploymentAiEnabled(
     const enabled = Boolean(
       raw && typeof raw === 'object' && !Array.isArray(raw) && (raw as { aiEnabled?: unknown }).aiEnabled === true,
     );
-    aiConfigCache.set(origin, enabled);
+    aiConfigCache.set(origin, { enabled, fetchedAt: nowMs });
     return enabled;
   } catch {
     return false;
@@ -323,6 +328,34 @@ export async function resolveSalesCoworkerName(
   const orgCandidate = (orgDetail as { coworkers?: { sales?: unknown } } | null | undefined)?.coworkers?.sales;
   if (typeof orgCandidate === 'string' && orgCandidate.trim()) {
     return orgCandidate.trim();
+  }
+  const chartApi = (
+    client as {
+      chart?: {
+        get?: () => Promise<{ agents: ReadonlyArray<{ templateKey: string; displayName: string; status: string }> }>;
+        templates?: () => Promise<ReadonlyArray<{ key: string; module: string }>>;
+      };
+    }
+  ).chart;
+  if (typeof chartApi?.get === 'function' && typeof chartApi?.templates === 'function') {
+    try {
+      const [chart, templates] = await Promise.all([chartApi.get(), chartApi.templates()]);
+      const moduleByKey = new Map(templates.map((tpl) => [tpl.key, tpl.module]));
+      for (const agent of chart.agents) {
+        if (agent.status === 'retired') continue;
+        const mod = moduleByKey.get(agent.templateKey);
+        if (mod === 'crm' || mod === 'conversations') {
+          const name = agent.displayName.trim();
+          if (name) return name;
+        }
+      }
+      return DEFAULT_SALES_COWORKER;
+    } catch (error) {
+      if (isAuthBlockingError(error) || isMfaRequired(error) || isStepUpRequired(error)) {
+        throw error;
+      }
+      return DEFAULT_SALES_COWORKER;
+    }
   }
   const todayApi = (client as { today?: { list?: () => Promise<{ coworkers?: { sales?: string } }> } }).today;
   if (typeof todayApi?.list !== 'function') {

@@ -126,12 +126,23 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
   const [replySource, setReplySource] = useState<{ draftId?: string; savedReplyId?: string }>({});
   const [busyAction, setBusyAction] = useState<'send' | 'draft_ask' | 'draft_discard' | null>(null);
   const [movedNotice, setMovedNotice] = useState(false);
+  const [accessDeniedError, setAccessDeniedError] = useState<unknown>(null);
   const [feedback, setFeedback] = useState<{ tone: 'info' | 'warn' | 'danger'; text: string; showWeb?: boolean } | null>(null);
 
   const lastMarkedSeqRef = useRef<number | null>(null);
   const inFlightMarkSeqRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
+  const activeScopeKeyRef = useRef(`${serverUrl}:${orgSlug}:${conversationId}`);
+  activeScopeKeyRef.current = `${serverUrl}:${orgSlug}:${conversationId}`;
   const onRefreshListRef = useRef(props.onRefreshList);
   onRefreshListRef.current = props.onRefreshList;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,6 +152,7 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
     setComposerText('');
     setReplySource({});
     setMovedNotice(false);
+    setAccessDeniedError(null);
     setFeedback(null);
     lastMarkedSeqRef.current = null;
     inFlightMarkSeqRef.current = null;
@@ -172,8 +184,13 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
     };
   }, [serverUrl, orgSlug, userId, conversationId]);
 
+  const detailQueryKey = useMemo(
+    () => ['conversations', 'detail', serverUrl, orgSlug, userId ?? '', conversationId] as const,
+    [serverUrl, orgSlug, userId, conversationId],
+  );
+
   const detailQuery = useQuery<ConversationDetail>({
-    queryKey: ['conversations', 'detail', serverUrl, orgSlug, userId ?? '', conversationId],
+    queryKey: detailQueryKey,
     queryFn: async ({ signal }) => {
       const startEpoch = conversationsCache.epoch();
       const live = await client.conversations.get({ conversationId });
@@ -215,18 +232,54 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
 
       return live;
     },
-    enabled: cacheLoaded,
+    enabled: cacheLoaded && accessDeniedError === null,
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data || query.state.status === 'error') return false;
-      return data.draft?.state === 'requested' ? DRAFT_POLL_MS : false;
+      const hasPendingDraft = data.draft?.state === 'requested';
+      const hasPendingSend = data.messages.some(
+        (m) => m.direction === 'out' && (m.sendState === 'queued' || m.sendState === 'sending'),
+      );
+      return hasPendingDraft || hasPendingSend ? DRAFT_POLL_MS : false;
     },
   });
 
+  // Clear latched access denial once a fresh live read succeeds; purge caches permanently on 403/404.
+  useEffect(() => {
+    if (!detailQuery.isError && detailQuery.data) {
+      setAccessDeniedError(null);
+      return;
+    }
+    if (
+      detailQuery.isError &&
+      !isLikelyNetworkError(detailQuery.error) &&
+      isConversationForbiddenOrMissing(detailQuery.error)
+    ) {
+      const err = detailQuery.error;
+      setAccessDeniedError(err);
+      setCachedThread(null);
+      void conversationsCache.evictThread({
+        serverUrl,
+        orgSlug,
+        userId,
+        conversationId,
+        expectedEpoch: conversationsCache.epoch(),
+      });
+      qc.removeQueries({ queryKey: detailQueryKey, exact: true });
+      onRefreshListRef.current();
+    }
+  }, [detailQuery.isError, detailQuery.data, detailQuery.error, serverUrl, orgSlug, userId, conversationId, qc, detailQueryKey]);
+
+  // Live thread fetch overrides stale parent list offline state once detailQuery settles online.
   const isNetworkOffline = Boolean(
-    isListOffline || (detailQuery.isError && isLikelyNetworkError(detailQuery.error)),
+    detailQuery.isError
+      ? isLikelyNetworkError(detailQuery.error)
+      : detailQuery.isPending && !detailQuery.data && isListOffline,
   );
-  const isNonNetworkError = Boolean(detailQuery.isError && !isLikelyNetworkError(detailQuery.error));
+  const rawError = detailQuery.error ?? accessDeniedError;
+  const isNonNetworkError = Boolean(
+    accessDeniedError !== null || (detailQuery.isError && !isLikelyNetworkError(detailQuery.error)),
+  );
   const liveDetail = isNonNetworkError ? undefined : detailQuery.data;
   const activeDetail = isNonNetworkError ? null : (liveDetail ?? cachedThread?.detail ?? null);
   const activeReplyWindowUntil = activeDetail?.conversation.replyWindowUntil ?? null;
@@ -261,20 +314,25 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
     }
   }, [liveDetail, seenSeq]);
 
-  // Best-effort markRead when opened online with unread messages, guarded against stale org/session switches.
+  // Best-effort markRead once `seenSeq` is initialized, guarded by active scope ref so polling refetches never drop completion.
   useEffect(() => {
-    if (isNonNetworkError || isNetworkOffline || !liveDetail || !liveDetail.conversation.unread) {
+    if (
+      isNonNetworkError ||
+      isNetworkOffline ||
+      !liveDetail ||
+      !liveDetail.conversation.unread ||
+      seenSeq === null
+    ) {
       return;
     }
-    const targetSeq = seenSeq ?? liveDetail.conversation.lastSeq;
+    const targetSeq = seenSeq;
     const highWater = Math.max(lastMarkedSeqRef.current ?? -1, inFlightMarkSeqRef.current ?? -1);
     if (targetSeq <= highWater) return;
 
-    let cancelled = false;
     inFlightMarkSeqRef.current = targetSeq;
     const startedServer = serverUrl;
     const startedOrg = orgSlug;
-    const startedConv = conversationId;
+    const startedScopeKey = `${serverUrl}:${orgSlug}:${conversationId}`;
 
     void markConversationRead(
       {
@@ -282,10 +340,10 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
         isOffline: isNetworkOffline,
         onKernelError: (err) => void session.reportKernelError(err),
       },
-      { conversationId: startedConv, seq: targetSeq },
+      { conversationId, seq: targetSeq },
     )
       .then((res) => {
-        if (cancelled) return;
+        if (!mountedRef.current || activeScopeKeyRef.current !== startedScopeKey) return;
         const cur = session.state();
         if (cur.status !== 'active' || cur.serverUrl !== startedServer || cur.orgSlug !== startedOrg) {
           return;
@@ -300,10 +358,6 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
           inFlightMarkSeqRef.current = null;
         }
       });
-
-    return () => {
-      cancelled = true;
-    };
   }, [
     isNonNetworkError,
     isNetworkOffline,
@@ -333,7 +387,10 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
     }
   }
 
-  function applyOutcomeFailure(outcome: Extract<ConversationActionOutcome<unknown>, { ok: false }>) {
+  function applyOutcomeFailure(
+    outcome: Extract<ConversationActionOutcome<unknown>, { ok: false }>,
+    actionKind: 'send' | 'draft' = 'send',
+  ) {
     if (outcome.reason === 'auth') return;
     if (outcome.reason === 'kernel-step-up') {
       setFeedback({ tone: 'warn', text: t('stepUp.kernel'), showWeb: true });
@@ -381,7 +438,12 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
       return;
     }
     const detail = outcome.message || outcome.code || t('home.error.generic');
-    setFeedback({ tone: 'danger', text: t('conversations.composer.refused', { detail }) });
+    setFeedback({
+      tone: 'danger',
+      text: t(actionKind === 'draft' ? 'conversations.draft.refused' : 'conversations.composer.refused', {
+        detail,
+      }),
+    });
   }
 
   async function onSendReply() {
@@ -432,7 +494,7 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
         { conversationId: liveDetail.conversation.id, role, aiEnabled: effectiveAiEnabled },
       );
       if (!outcome.ok) {
-        applyOutcomeFailure(outcome);
+        applyOutcomeFailure(outcome, 'draft');
         return;
       }
       await detailQuery.refetch();
@@ -451,7 +513,7 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
         { draftId, role },
       );
       if (!outcome.ok) {
-        applyOutcomeFailure(outcome);
+        applyOutcomeFailure(outcome, 'draft');
         return;
       }
       if (replySource.draftId === draftId) {
@@ -523,7 +585,11 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
         contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl
-            onRefresh={() => void detailQuery.refetch()}
+            onRefresh={() => {
+              setAccessDeniedError(null);
+              void detailQuery.refetch();
+              onRefreshListRef.current();
+            }}
             refreshing={detailQuery.isRefetching}
           />
         }
@@ -544,13 +610,19 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
         {isNonNetworkError ? (
           <Banner tone="danger">
             <Body tone="danger">
-              {isMfaRequired(detailQuery.error)
+              {isMfaRequired(rawError)
                 ? t('home.error.mfa')
-                : isConversationForbiddenOrMissing(detailQuery.error)
+                : isConversationForbiddenOrMissing(rawError)
                   ? t('conversations.thread.refused')
                   : t('home.error.generic')}
             </Body>
-            <SecondaryButton label={t('home.retry')} onPress={() => void detailQuery.refetch()} />
+            <SecondaryButton
+              label={t('home.retry')}
+              onPress={() => {
+                setAccessDeniedError(null);
+                void detailQuery.refetch();
+              }}
+            />
           </Banner>
         ) : null}
 
@@ -693,7 +765,8 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
                         alignSelf: isOutbound ? 'flex-end' : 'flex-start',
                         width: '90%',
                         borderColor: isOutbound ? palette.primary : palette.border,
-                        backgroundColor: isOutbound ? palette.badgeBg : palette.surface,
+                        borderWidth: isOutbound ? 1.5 : 1,
+                        backgroundColor: palette.surface,
                         opacity: msg.hidden ? 0.72 : 1,
                       },
                     ]}
@@ -702,12 +775,12 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
                       <Text
                         style={[
                           styles.meta,
-                          { color: isOutbound ? palette.badgeText : palette.muted, fontWeight: '600' },
+                          { color: isOutbound ? palette.primary : palette.muted, fontWeight: '600' },
                         ]}
                       >
                         {authorLabel}
                       </Text>
-                      <Text style={[styles.meta, { color: isOutbound ? palette.badgeText : palette.muted }]}>
+                      <Text style={[styles.meta, { color: palette.muted }]}>
                         {formatDateTimeShort(msg.sentAt, locale)}
                       </Text>
                     </View>
@@ -813,10 +886,14 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
 
                 {activeDetail.draft?.state === 'requested' ? (
                   <Banner tone="info">
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                      <ActivityIndicator accessibilityLabel={t('conversations.draft.writing')} />
-                      <Body tone="muted">{t('conversations.draft.writing')}</Body>
-                    </View>
+                    {isNetworkOffline ? (
+                      <Body tone="muted">{t('conversations.draft.pendingOffline')}</Body>
+                    ) : (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <ActivityIndicator accessibilityLabel={t('conversations.draft.writing')} />
+                        <Body tone="muted">{t('conversations.draft.writing')}</Body>
+                      </View>
+                    )}
                   </Banner>
                 ) : null}
 
@@ -841,22 +918,27 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
                       {t('conversations.draft.taintedNotice')}
                     </Text>
                     <Text style={[styles.body, { color: palette.text }]}>{activeDetail.draft.body}</Text>
+                    {!liveDetail || isNetworkOffline ? (
+                      <Text style={[styles.meta, { color: palette.muted }]}>
+                        {t('conversations.draft.liveRequired')}
+                      </Text>
+                    ) : null}
                     <View style={styles.actionsRow}>
                       <SecondaryButton
                         label={t('conversations.draft.use')}
-                        disabled={busyAction !== null}
+                        disabled={busyAction !== null || !liveDetail || isNetworkOffline}
                         onPress={() => {
-                          const body = activeDetail.draft?.body ?? '';
-                          setComposerText(replyTextFor(body, activeDetail));
-                          setReplySource(activeDetail.draft ? { draftId: activeDetail.draft.id } : {});
+                          if (!liveDetail || !liveDetail.draft || liveDetail.draft.body === null) return;
+                          setComposerText(replyTextFor(liveDetail.draft.body, liveDetail));
+                          setReplySource({ draftId: liveDetail.draft.id });
                           setFeedback(null);
                         }}
                       />
                       <LinkButton
                         label={t('conversations.draft.discard')}
-                        disabled={busyAction !== null || isNetworkOffline}
+                        disabled={busyAction !== null || !liveDetail || isNetworkOffline}
                         onPress={() => {
-                          if (activeDetail.draft) void onDiscardDraft(activeDetail.draft.id);
+                          if (liveDetail?.draft) void onDiscardDraft(liveDetail.draft.id);
                         }}
                       />
                     </View>
@@ -878,39 +960,60 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
                       {t('conversations.draft.suggestions')}
                     </Text>
                     <View style={styles.actionsRow}>
-                      {activeDetail.suggestions.map((s) => (
-                        <Pressable
-                          key={s.id}
-                          accessibilityRole="button"
-                          accessibilityLabel={s.title}
-                          disabled={busyAction !== null}
-                          onPress={() => {
-                            setComposerText(replyTextFor(s.body, activeDetail));
-                            setReplySource({ savedReplyId: s.id });
-                            setFeedback(null);
-                          }}
-                          style={{
-                            minHeight: 48,
-                            paddingHorizontal: 14,
-                            paddingVertical: 10,
-                            borderRadius: 10,
-                            borderWidth: 1,
-                            borderColor: palette.border,
-                            backgroundColor: palette.surface,
-                            justifyContent: 'center',
-                          }}
-                        >
-                          <Text style={{ fontSize: 14, fontWeight: '600', color: palette.text }}>
-                            {s.title}
-                          </Text>
-                        </Pressable>
-                      ))}
+                      {activeDetail.suggestions.map((s) => {
+                        const chipDisabled = busyAction !== null || !liveDetail || isNetworkOffline;
+                        return (
+                          <Pressable
+                            key={s.id}
+                            accessibilityRole="button"
+                            accessibilityLabel={s.title}
+                            accessibilityState={{ disabled: chipDisabled }}
+                            disabled={chipDisabled}
+                            onPress={() => {
+                              const liveSuggestion = liveDetail?.suggestions.find((item) => item.id === s.id);
+                              if (!liveDetail || !liveSuggestion) return;
+                              setComposerText(replyTextFor(liveSuggestion.body, liveDetail));
+                              setReplySource({ savedReplyId: liveSuggestion.id });
+                              setFeedback(null);
+                            }}
+                            style={{
+                              minHeight: 48,
+                              paddingHorizontal: 14,
+                              paddingVertical: 10,
+                              borderRadius: 10,
+                              borderWidth: 1,
+                              borderColor: palette.border,
+                              backgroundColor: palette.surface,
+                              opacity: chipDisabled ? 0.55 : 1,
+                              justifyContent: 'center',
+                            }}
+                          >
+                            <Text style={{ fontSize: 14, fontWeight: '600', color: palette.text }}>
+                              {s.title}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
                     </View>
                   </View>
                 ) : null}
 
                 <View style={{ gap: 8 }}>
                   <SectionHeading>{t('conversations.composer.label')}</SectionHeading>
+                  <Text style={[styles.meta, { color: palette.muted }]}>
+                    {activeDetail.conversation.kind === 'email'
+                      ? activeDetail.conversation.contact.address
+                        ? t('conversations.replyContext.email', {
+                            address: activeDetail.conversation.contact.address,
+                          })
+                        : t('conversations.replyContext.emailGeneric')
+                      : t(
+                          activeDetail.conversation.kind === 'direct'
+                            ? 'conversations.replyContext.private'
+                            : 'conversations.replyContext.public',
+                          { channel: channelLabel },
+                        )}
+                  </Text>
                   <TextInput
                     accessibilityLabel={t('conversations.composer.label')}
                     multiline
@@ -969,7 +1072,11 @@ export function ConversationThreadScreen(props: ConversationThreadScreenProps) {
                     label={
                       busyAction === 'send'
                         ? t('conversations.composer.sending')
-                        : t('conversations.composer.send')
+                        : activeDetail.conversation.kind === 'email'
+                          ? t('conversations.composer.sendEmail')
+                          : activeDetail.conversation.kind === 'direct'
+                            ? t('conversations.composer.sendPrivate')
+                            : t('conversations.composer.sendPublic')
                     }
                     busy={busyAction === 'send'}
                     disabled={!canSendNow}

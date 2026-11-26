@@ -115,7 +115,6 @@ export function HomeScreen(props: {
   const [pendingConversationId, setPendingConversationId] = useState<string | null>(
     props.initialConversationId ?? null,
   );
-  const [unreadCount, setUnreadCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (props.initialConversationId) {
@@ -123,10 +122,6 @@ export function HomeScreen(props: {
       setPendingConversationId(props.initialConversationId);
     }
   }, [props.initialConversationId]);
-
-  useEffect(() => {
-    setUnreadCount(null);
-  }, [serverUrl, orgSlug]);
 
   const me = useQuery({
     queryKey: ['me', serverUrl],
@@ -175,7 +170,7 @@ export function HomeScreen(props: {
         : null;
 
   if (activeWorkspace) {
-    const badgeCount = unreadCount ?? countsQuery.data?.unread ?? 0;
+    const badgeCount = countsQuery.isError ? 0 : (countsQuery.data?.unread ?? 0);
     const conversationsA11y =
       badgeCount > 0
         ? t('tabs.conversationsUnreadA11y', { count: String(badgeCount) })
@@ -296,7 +291,6 @@ export function HomeScreen(props: {
             locale={locale}
             onInitialConversationConsumed={() => setPendingConversationId(null)}
             onSwitchOrg={activeWorkspace.onSwitchOrg}
-            onUnreadCountChange={(count) => setUnreadCount(count)}
             orgName={activeWorkspace.orgName}
             orgSlug={activeWorkspace.orgSlug}
             role={activeWorkspace.role}
