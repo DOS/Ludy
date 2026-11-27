@@ -27,13 +27,23 @@ import { EVIDENCE_HOLD_SWEEP_MS, runEvidenceHolds } from './evidence-hold.ts';
 import { PROJECTS_RECURRING_SWEEP_MS, sweepProjectsRecurring } from './projects-recurring-worker.ts';
 import { ROADMAP_ANNOUNCEMENT_NOTIFY_EVENT, dispatchRoadmapAnnouncementNotifications, sweepRoadmapOtpCleanup } from './projects-roadmap-worker.ts';
 import {
+  PROJECTS_GITHUB_OUTBOUND_RETRY_LIMIT,
+  PROJECTS_GITHUB_OUTBOUND_SWEEP_CRON,
+  PROJECTS_GITHUB_OUTBOUND_SWEEP_EXPIRE_SECONDS,
   PROJECTS_GITHUB_WEBHOOK_SWEEP_CRON,
   PROJECTS_GITHUB_WEBHOOK_SWEEP_EXPIRE_SECONDS,
+  hasGithubOutboundWork,
   hasGithubWebhookWork,
   processGithubWebhookBatch,
   projectsGithubHydrateJobOptions,
+  projectsGithubOutboundJobOptions,
+  runGithubAgentTransitionEnqueue,
   runGithubHydrateJob,
+  runGithubOutboundJob,
+  runGithubOutboundSweep,
   type ProjectsGithubHydrateJob,
+  type ProjectsGithubOutboundJob,
+  type ProjectsGithubSweepJob,
 } from './projects-github-worker.ts';
 import type { GithubClient } from '@ludy/github';
 import { processInboundEmail, type InboundJob } from './inbound.ts';
@@ -2002,6 +2012,25 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       missed: 'once',
       expireInSeconds: PROJECTS_GITHUB_WEBHOOK_SWEEP_EXPIRE_SECONDS,
     });
+    await boss.work<ProjectsGithubSweepJob | null>(QUEUES.projectsGithubSweep, { batchSize: 1 }, async ([job]) => {
+      if (job?.data?.mode === 'agent_task_transition') {
+        await runGithubAgentTransitionEnqueue({ runtime: deps.runtime }, job.data);
+      }
+      const done = await runGithubOutboundSweep({
+        workerDb: deps.workerDb,
+        runtime: deps.runtime,
+        sendOutbound: (outboundJob) =>
+          boss.send(QUEUES.projectsGithubOutbound, outboundJob, projectsGithubOutboundJobOptions(outboundJob)),
+      });
+      if (done.handedOver + done.skippedOff > 0) {
+        console.log(`[projects-github-sweep] handedOver=${done.handedOver} skippedOff=${done.skippedOff}`);
+      }
+    });
+    await boss.schedule(QUEUES.projectsGithubSweep, PROJECTS_GITHUB_OUTBOUND_SWEEP_CRON, null, {
+      tz: RETENTION_TZ,
+      missed: 'once',
+      expireInSeconds: PROJECTS_GITHUB_OUTBOUND_SWEEP_EXPIRE_SECONDS,
+    });
     const hydrateGithub = deps.channels?.github;
     const hydrateBroker = deps.channels?.broker;
     if (hydrateGithub && hydrateBroker && hydrateBroker.id !== 'none') {
@@ -2013,9 +2042,19 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         );
         console.log(`[projects-github-hydrate] ${job.data.mode} ${job.data.projectId.slice(0, 8)}: ${outcome}`);
       });
+      await boss.work<ProjectsGithubOutboundJob>(QUEUES.projectsGithubOutbound, { batchSize: 1, includeMetadata: true }, async ([job]) => {
+        if (!job) return;
+        const outcome = await runGithubOutboundJob(
+          { runtime: deps.runtime, workerDb: deps.workerDb, broker: hydrateBroker, github: hydrateGithub },
+          job.data,
+          { retryCount: job.retryCount, retryLimit: PROJECTS_GITHUB_OUTBOUND_RETRY_LIMIT },
+        );
+        console.log(`[projects-github-outbound] ${job.data.deliveryId.slice(0, 8)}: ${outcome}`);
+      });
     }
   } else {
     await dropCron(QUEUES.projectsGithubWebhook);
+    await dropCron(QUEUES.projectsGithubSweep);
   }
 
   // Meeting platform recordings (meetings integrations C1, #3173): a sweep every minute hands over the recordings a member chose to import, lists each due connection's finished recordings as suggestions and
@@ -4026,6 +4065,30 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 };
                 return boss.send(QUEUES.projectsGithubHydrate, hydrateJob, projectsGithubHydrateJobOptions(hydrateJob));
               }
+              if (
+                projects &&
+                deps.channels?.github &&
+                deps.channels.broker &&
+                deps.channels.broker.id !== 'none' &&
+                row.type === 'kernel.task.github_transitioned' &&
+                typeof row.payload.taskId === 'string' &&
+                typeof row.payload.previousStatus === 'string' &&
+                typeof row.payload.nextStatus === 'string'
+              ) {
+                const sweepJob: ProjectsGithubSweepJob = {
+                  mode: 'agent_task_transition',
+                  orgId: row.org_id,
+                  taskId: row.payload.taskId,
+                  previousStatus: row.payload.previousStatus,
+                  nextStatus: row.payload.nextStatus,
+                };
+                return boss.send(QUEUES.projectsGithubSweep, sweepJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.projectsGithubSweep, row.event_id),
+                  retryLimit: PROJECTS_GITHUB_OUTBOUND_RETRY_LIMIT,
+                  retryDelay: 10,
+                  retryBackoff: true,
+                });
+              }
               if (Object.hasOwn(AGENT_PROPOSAL_COMMANDS, row.type)) {
                 return boss.send(QUEUES.agentProposal, { orgId: row.org_id, eventId: row.event_id, type: row.type }, {
                   singletonKey: jobKey(row.org_id, QUEUES.agentProposal, row.event_id),
@@ -4239,6 +4302,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           QUEUES.projectsGithubWebhook,
           { trigger: 'relay' },
           { singletonKey: systemJobKey(QUEUES.projectsGithubWebhook, 'drain'), singletonSeconds: 5 },
+        );
+      }
+      if (projects && (await hasGithubOutboundWork(deps.workerDb))) {
+        await boss.send(
+          QUEUES.projectsGithubSweep,
+          { trigger: 'relay' },
+          { singletonKey: systemJobKey(QUEUES.projectsGithubSweep, 'drain'), singletonSeconds: 5 },
         );
       }
     } catch (error) {

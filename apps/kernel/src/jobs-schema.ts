@@ -148,9 +148,11 @@ export const QUEUES = {
   // Created by the eSign webhooks migration (20270316100000): signed HMAC outbound webhook delivery and its minute sweep (#4440).
   signHookDeliver: 'sign-hook-deliver',
   signHookSweep: 'sign-hook-sweep',
-  // Projects GitHub Integration (#5158, ADR-0060): webhook claim ('none') and GitHub API hydration ('provider:github').
+  // Projects GitHub Integration (#5158/#5159, ADR-0060): webhook claim ('none'), inbound hydrate ('provider:github'), outbound sweep ('none'), outbound PATCH ('provider:github').
   projectsGithubWebhook: 'projects-github-webhook',
   projectsGithubHydrate: 'projects-github-hydrate',
+  projectsGithubSweep: 'projects-github-sweep',
+  projectsGithubOutbound: 'projects-github-outbound',
   // Created by the dead letter migration (20261103150000): every other queue's dead letters (#1720, dead-letter.ts).
   deadLetter: 'kernel-job.dlq',
 } as const;
@@ -305,9 +307,11 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // eSign outbound webhooks (#4440): one signed HTTPS POST per delivery to an owner/admin-configured receiver URL through postSigned (egressFetch), and a sweep that reads and updates the database only.
   [QUEUES.signHookDeliver]: ['tenant_url'],
   [QUEUES.signHookSweep]: 'none',
-  // Projects GitHub integration (#5158, ADR-0060): webhook claim reads/writes Postgres only ('none'); hydration calls api.github.com via guarded transport ('provider:github').
+  // Projects GitHub integration (#5158/#5159, ADR-0060): webhook/sweep read/write Postgres only ('none'); hydrate and outbound PATCH call api.github.com via guarded transport ('provider:github').
   [QUEUES.projectsGithubWebhook]: 'none',
   [QUEUES.projectsGithubHydrate]: ['provider:github'],
+  [QUEUES.projectsGithubSweep]: 'none',
+  [QUEUES.projectsGithubOutbound]: ['provider:github'],
   [QUEUES.deadLetter]: 'none',
 };
 
@@ -339,6 +343,7 @@ const QUEUE_POLICIES: Partial<Record<QueueName, 'stately' | 'exclusive'>> = {
   [QUEUES.signCaReconcile]: 'exclusive',
   [QUEUES.signHookDeliver]: 'stately',
   [QUEUES.projectsGithubHydrate]: 'stately',
+  [QUEUES.projectsGithubOutbound]: 'stately',
 };
 
 // The dead letter queue's own options, as 20261103150000_crove_jobs_dead_letter.sql created it: a few retries, in case

@@ -41,10 +41,11 @@ export const SELF_RECOVERING_EVENTS: ReadonlySet<string> = new Set([
   'sign.docx_convert_queued',
 ]);
 
-// The kernel events whose consumer is an app's job: the extraction of an uploaded file is Finance's, so a file stored while Finance is off is read when it is back.
+// The kernel events whose consumer is an app's job: file extraction is Finance's, and agent task GitHub sync is Projects's (#5159).
 const KERNEL_EVENT_APPS: Readonly<Record<string, string>> = {
   'kernel.file.ingested': 'finance',
   'kernel.file.reextract_requested': 'finance',
+  'kernel.task.github_transitioned': 'projects',
 };
 
 // An app's own events carry its id as their prefix (the module that emits them). Meetings is not here: its events are bound to a time (a transcription or live notes

@@ -17,11 +17,14 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { InboxReader } from '@ludy/agent';
 import { createGithubClient, type GithubTransport } from '@ludy/github';
 import { EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import type {
   GithubBindingGetResult,
   GithubHookStatusResult,
+  GithubIssueMatchRpcResult,
+  GithubPrSummaryRpcResult,
   GithubTaskLinksQueryResult,
   PersonalDataErasure,
   PersonalDataResult,
@@ -30,6 +33,7 @@ import type {
 import { CredentialVault, Runtime, parseVaultKey, sha256Hex, type BlobStore, type CredentialBroker } from '@ludy/kernel-runtime';
 import { financeCommands } from '@ludy/mod-finance';
 import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
+import { memberMeter } from '../src/ai-meter.ts';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { ExportSealer, exportAad } from '../src/export-seal.ts';
@@ -42,9 +46,13 @@ import {
   githubHookKeyHash,
 } from '../src/projects-github-webhook.ts';
 import {
+  hasGithubOutboundWork,
   hasGithubWebhookWork,
   processGithubWebhookBatch,
+  runGithubAgentTransitionEnqueue,
   runGithubHydrateJob,
+  runGithubOutboundJob,
+  runGithubOutboundSweep,
   sweepGithubWebhooks,
   type ProjectsGithubHydrateJob,
 } from '../src/projects-github-worker.ts';
@@ -102,6 +110,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
   let sealer: ExportSealer;
   let app: ReturnType<typeof createHttpApp>;
   let appUnentitled: ReturnType<typeof createHttpApp>;
+  let appWithAi: ReturnType<typeof createHttpApp>;
   const store = new MemoryStore();
   const keyPair = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const appPrivateKeyPem = keyPair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
@@ -117,6 +126,9 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
 
   const remoteItems = new Map<string, Record<string, unknown>>();
   const branchPrs = new Map<string, Record<string, unknown>>();
+  const openRepoIssues = new Map<string, Array<Record<string, unknown>>>();
+  const patchedRequests: Array<{ path: string; body: { state?: string } }> = [];
+  let patchUpdatedAtOverride = '2027-02-01T10:00:00Z';
   const githubCalls: string[] = [];
 
   const mockTransport: GithubTransport = async (req) => {
@@ -222,6 +234,36 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
         status: 200,
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(found ? [found] : []),
+      };
+    }
+    const openIssuesMatch = /^\/repos\/([^/]+\/[^/]+)\/issues$/.exec(parsedUrl.pathname);
+    if (req.method === 'GET' && openIssuesMatch) {
+      const repoName = openIssuesMatch[1] ?? '';
+      return {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(openRepoIssues.get(repoName) ?? []),
+      };
+    }
+    if (req.method === 'PATCH' && /^\/repos\/[^/]+\/[^/]+\/issues\/[0-9]+$/.test(parsedUrl.pathname)) {
+      const parsedBody = JSON.parse(req.body ?? '{}') as { state?: string };
+      patchedRequests.push({ path: parsedUrl.pathname, body: parsedBody });
+      const existing = remoteItems.get(parsedUrl.pathname) ?? {
+        number: Number(parsedUrl.pathname.split('/').at(-1)),
+        title: `Issue #${parsedUrl.pathname.split('/').at(-1)}`,
+        html_url: `https://github.com${parsedUrl.pathname.replace(/^\/repos/, '')}`,
+        user: { login: 'octo-author' },
+      };
+      const updated = {
+        ...existing,
+        state: parsedBody.state ?? existing.state ?? 'closed',
+        updated_at: patchUpdatedAtOverride,
+      };
+      remoteItems.set(parsedUrl.pathname, updated);
+      return {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(updated),
       };
     }
     const item = remoteItems.get(parsedUrl.pathname);
@@ -368,6 +410,47 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     };
     app = createHttpApp({ ...commonHttp, billing: { entitlements: async () => ['full'] } });
     appUnentitled = createHttpApp({ ...commonHttp, billing: { entitlements: async () => [] } });
+    const aiReader = new InboxReader(
+      { baseURL: 'http://127.0.0.1:1/v1', apiKey: 'test-key', model: 'gpt-test' },
+      {
+        projectGithubPrSummary: async ({ prompt }) => {
+          // Return unsafe text when poisoned marker appears in external prompt data so RPC tests exercise refusal + fallback parity.
+          if (prompt.includes('INJECT_UNSAFE_URL')) {
+            return { output: { summary: 'Visit https://evil.example/steal for PR details.' }, usage: { inputTokens: 10, outputTokens: 10 } };
+          }
+          return {
+            output: {
+              summary: 'Cong viec dang gan 2 lien ket GitHub: Issue #77 va PR #101 tren kho octo-org/core-api.',
+            },
+            usage: { inputTokens: 45, outputTokens: 16 },
+          };
+        },
+        projectGithubIssueMatch: async ({ prompt }) => {
+          if (prompt.includes('INJECT_UNKNOWN_ID')) {
+            return {
+              output: { matches: [{ candidateId: 'octo-org/core-api#99999', reason: 'Forged ID.' }] },
+              usage: { inputTokens: 10, outputTokens: 10 },
+            };
+          }
+          const matched = /candidateId=([^\s|]+)\s*\|\s*repo="[^"]+"\s*\|\s*issue=#(\d+)/.exec(prompt);
+          return {
+            output: {
+              matches: matched
+                ? [{ candidateId: matched[1]!, reason: `Khop noi dung voi issue #${matched[2]!}.` }]
+                : [],
+            },
+            usage: { inputTokens: 40, outputTokens: 15 },
+          };
+        },
+      },
+    );
+    appWithAi = createHttpApp({
+      ...commonHttp,
+      aiEnabled: true,
+      aiMeter: (actor) => memberMeter(runtime, actor, { defaultMonthlyBudget: '100' }),
+      conversationReader: aiReader,
+      billing: { entitlements: async () => ['full'] },
+    });
 
     owner.userId = await upsertIdentity(appDb, { issuer: ISSUER, subject: owner.subject, email: owner.email, name: 'GH Owner' });
     member.userId = await upsertIdentity(appDb, { issuer: ISSUER, subject: member.subject, email: member.email, name: 'GH Member' });
@@ -1633,5 +1716,1120 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
       body: '{}',
     });
     expect(patNoBrokerRes.status).toBe(401);
+  });
+
+  it('enforces Slice 2 opt-in outbound Done <-> Close/Reopen, PATCH issue-only egress, 3-layer loop-breaker, appOn=false drops, #2604 privacy, and Vy AI helpers (#5159)', async () => {
+    const s2Org = await createOrg(runtime, asUser(owner.userId), 'Cong ty GitHub Slice 2');
+    await rows(
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+       VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`,
+      [s2Org.orgId, member.userId, viewer.userId],
+    );
+
+    const { projectId } = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Slice 2 Sync Project', visibility: 'org' },
+      { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+    const { projectId: privateProjectId } = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Slice 2 Private Project', visibility: 'private' },
+      { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+
+    const { taskId: tMain } = await runtime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId, title: 'Fix billing export race condition', assigneePositionId: null },
+      { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+    const { taskId: tLayer2 } = await runtime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId, title: 'Pre-closed issue skips redundant outbound', assigneePositionId: null },
+      { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+    const { taskId: tPrivate } = await runtime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId: privateProjectId, title: 'Confidential private issue', assigneePositionId: null },
+      { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+
+    // Connect GitHub App (reuse installation 999 for s2Org) and bind octo-org/core-api cleanly.
+    const oauthStart = await rpc(app, 'projects/github/appOAuthStart', owner, { projectId }, s2Org.slug);
+    expect(oauthStart.status).toBe(200);
+    const connected = await rpc(
+      app,
+      'projects/github/connectApp',
+      owner,
+      {
+        projectId,
+        state: String(oauthStart.body?.state ?? ''),
+        code: 'code-other-user',
+        installationId: '999',
+        taskKeyPrefix: 'S2',
+        backfillTaskNumbers: true,
+        idempotencyKey: randomUUID(),
+      },
+      s2Org.slug,
+    );
+    expect(connected.status).toBe(200);
+    expect((connected.body?.binding as { outboundCloseIssueOnDone: boolean })?.outboundCloseIssueOnDone).toBe(false);
+    const connId = String((connected.body as { connectionId: string }).connectionId);
+
+    const bindRepo = await rpc(
+      app,
+      'projects/github/repoBind',
+      owner,
+      {
+        projectId,
+        githubRepoId: '1001',
+        repoFullName: 'octo-org/core-api',
+        defaultBranch: 'main',
+        webhookConfigured: true,
+        idempotencyKey: randomUUID(),
+      },
+      s2Org.slug,
+    );
+    expect(bindRepo.status).toBe(200);
+
+    // Configure privateProject with same connection + bound repo so #2604 checks apply cleanly.
+    await runtime.execute(
+      'projects.github.binding.save',
+      { projectId: privateProjectId, channelConnectionId: connId, githubEnabled: true },
+      { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+    await runtime.execute(
+      'projects.github.repo.bind',
+      {
+        projectId: privateProjectId,
+        githubRepoId: '1001',
+        repoFullName: 'octo-org/core-api',
+        defaultBranch: 'main',
+        webhookConfigured: true,
+      },
+      { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+
+    remoteItems.set('/repos/octo-org/core-api/issues/77', {
+      number: 77,
+      html_url: 'https://github.com/octo-org/core-api/issues/77',
+      title: 'Fix billing export race condition on invoice save',
+      state: 'open',
+      user: { login: 'octo-author' },
+      updated_at: '2027-02-01T08:00:00Z',
+    });
+    remoteItems.set('/repos/octo-org/core-api/pulls/101', {
+      number: 101,
+      html_url: 'https://github.com/octo-org/core-api/pull/101',
+      title: 'WIP billing race fix',
+      state: 'open',
+      draft: false,
+      merged: false,
+      head: { ref: 'feat/S2-1-billing' },
+      user: { login: 'octo-pr-dev' },
+      updated_at: '2027-02-01T08:05:00Z',
+    });
+    remoteItems.set('/repos/octo-org/core-api/issues/78', {
+      number: 78,
+      html_url: 'https://github.com/octo-org/core-api/issues/78',
+      title: 'Already closed upstream issue',
+      state: 'closed',
+      user: { login: 'octo-author' },
+      updated_at: '2027-02-01T08:10:00Z',
+    });
+
+    // Attach BOTH issue #77 and PR #101 to tMain; attach closed issue #78 to tLayer2.
+    const linkIssue = await rpc(
+      app,
+      'projects/github/taskLinkAdd',
+      member,
+      { projectId, taskId: tMain, url: 'https://github.com/octo-org/core-api/issues/77', idempotencyKey: randomUUID() },
+      s2Org.slug,
+    );
+    expect(linkIssue.status).toBe(200);
+    const issueLinkId = String((linkIssue.body?.link as { id?: string } | undefined)?.id ?? '');
+
+    const linkPr = await rpc(
+      app,
+      'projects/github/taskLinkAdd',
+      member,
+      { projectId, taskId: tMain, url: 'https://github.com/octo-org/core-api/pull/101', idempotencyKey: randomUUID() },
+      s2Org.slug,
+    );
+    expect(linkPr.status).toBe(200);
+
+    const linkClosed = await rpc(
+      app,
+      'projects/github/taskLinkAdd',
+      member,
+      { projectId, taskId: tLayer2, url: 'https://github.com/octo-org/core-api/issues/78', idempotencyKey: randomUUID() },
+      s2Org.slug,
+    );
+    expect(linkClosed.status).toBe(200);
+
+    // 1) Default outboundCloseIssueOnDone = false: Done move enqueues 0 outbound deliveries and makes 0 PATCH calls.
+    patchedRequests.length = 0;
+    await runtime.execute('kernel.task.set_status', { id: tMain, status: 'done' }, { actor: asUser(member.userId), orgId: s2Org.orgId });
+    expect(
+      await rows('SELECT id FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND direction = $2', [s2Org.orgId, 'outbound']),
+    ).toEqual([]);
+    await runtime.execute('kernel.task.set_status', { id: tMain, status: 'todo' }, { actor: asUser(member.userId), orgId: s2Org.orgId });
+
+    // Non-admin member cannot turn on outboundCloseIssueOnDone; owner/admin can.
+    const memberSaveDenied = await rpc(
+      app,
+      'projects/github/bindingSave',
+      member,
+      {
+        projectId,
+        channelConnectionId: connId,
+        githubEnabled: true,
+        outboundCloseIssueOnDone: true,
+        idempotencyKey: randomUUID(),
+      },
+      s2Org.slug,
+    );
+    expect(memberSaveDenied.status).toBe(403);
+
+    const ownerSaveOutbound = await rpc(
+      app,
+      'projects/github/bindingSave',
+      owner,
+      {
+        projectId,
+        channelConnectionId: connId,
+        githubEnabled: true,
+        outboundCloseIssueOnDone: true,
+        idempotencyKey: randomUUID(),
+      },
+      s2Org.slug,
+    );
+    expect(ownerSaveOutbound.status).toBe(200);
+    expect((ownerSaveOutbound.body?.binding as { outboundCloseIssueOnDone: boolean })?.outboundCloseIssueOnDone).toBe(true);
+
+    // Materialize default board columns before looking up Done / Todo columns for move_column.
+    const defaults = await runtime.execute<{ columns: Array<{ id: string; taskStatus: string }> }>(
+      'projects.column.init_defaults',
+      { projectId, language: 'en' },
+      { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+
+    // 2) Opt-in Done -> closes 'issue' #77 ONLY via PATCH (never touches 'pull_request' #101).
+    const doneCol = defaults.columns.find((c) => c.taskStatus === 'done');
+    const todoCol = defaults.columns.find((c) => c.taskStatus === 'todo');
+    expect(doneCol && todoCol).toBeTruthy();
+
+    await runtime.execute(
+      'projects.task.move_column',
+      { projectId, taskId: tMain, columnId: doneCol!.id },
+      { actor: asUser(member.userId), orgId: s2Org.orgId },
+    );
+
+    const queuedAfterDone = await rows<{ id: string; external_number: number; target_remote_state: string; status: string }>(
+      `SELECT id, external_number, target_remote_state, status
+         FROM ludy_projects.github_sync_delivery
+        WHERE org_id = $1 AND project_id = $2 AND direction = 'outbound'
+        ORDER BY received_at ASC`,
+      [s2Org.orgId, projectId],
+    );
+    expect(queuedAfterDone).toHaveLength(1);
+    expect(queuedAfterDone[0]).toMatchObject({ external_number: 77, target_remote_state: 'closed', status: 'queued' });
+    expect(await hasGithubOutboundWork(workerDb)).toBe(true);
+
+    patchUpdatedAtOverride = '2027-02-01T10:00:00Z';
+    const handedOutJobs: Array<{ orgId: string; deliveryId: string }> = [];
+    const sweep1 = await runGithubOutboundSweep({
+      workerDb,
+      runtime: workerRuntime,
+      sendOutbound: async (j) => {
+        handedOutJobs.push(j);
+      },
+    });
+    expect(sweep1.handedOver).toBeGreaterThanOrEqual(1);
+    const closeOutcome = await runGithubOutboundJob(
+      { runtime: workerRuntime, workerDb, broker: vault, github: githubClient },
+      handedOutJobs.find((j) => j.deliveryId === queuedAfterDone[0]!.id)!,
+    );
+    expect(closeOutcome).toBe('applied');
+    expect(patchedRequests).toEqual([
+      { path: '/repos/octo-org/core-api/issues/77', body: { state: 'closed' } },
+    ]);
+
+    const linkAfterPatch = await rows<{
+      external_state: string;
+      last_outbound_state: string | null;
+      last_outbound_at: string | null;
+      last_remote_event_at: string | null;
+      updated_at: string;
+    }>(
+      `SELECT external_state, last_outbound_state, last_outbound_at::text, last_remote_event_at::text, updated_at::text
+         FROM ludy_projects.github_task_link
+        WHERE org_id = $1 AND id = $2`,
+      [s2Org.orgId, issueLinkId],
+    );
+    expect(linkAfterPatch[0]?.external_state).toBe('closed');
+    expect(linkAfterPatch[0]?.last_outbound_state).toBe('closed');
+    expect(linkAfterPatch[0]?.last_outbound_at).not.toBeNull();
+    const repoEventTsBeforeEcho = await rows<{ last_event_at: string | null }>(
+      `SELECT last_event_at::text FROM ludy_projects.github_project_repo WHERE org_id = $1 AND project_id = $2`,
+      [s2Org.orgId, projectId],
+    );
+
+    // 3) 3-Layer Echo Loop-Breaker DB checks:
+    // Layer 3: Webhook echo with updated_at <= last_remote_event_at and converged external_state='closed' records 'skipped' with ZERO writes and ZERO outbound re-enqueue.
+    for (const [tag, ts] of [
+      ['same-ts', '2027-02-01T10:00:00Z'],
+      ['older-ts', '2027-02-01T09:59:50Z'],
+      ['already-closed', '2027-02-01T10:00:05Z'],
+    ] as const) {
+      const echoBody = JSON.stringify({
+        action: 'closed',
+        installation: { id: 999 },
+        repository: { id: 1001, full_name: 'octo-org/core-api' },
+        issue: {
+          number: 77,
+          html_url: 'https://github.com/octo-org/core-api/issues/77',
+          title: 'Fix billing export race condition on invoice save',
+          state: 'closed',
+          updated_at: ts,
+          user: { login: 'octo-author' },
+        },
+      });
+      const echoDel = `echo-${tag}-${randomUUID()}`;
+      const whRes = await app.request(GITHUB_WEBHOOK_PATH, {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'issues',
+          'x-github-delivery': echoDel,
+          'x-hub-signature-256': signGithubPayload(echoBody, APP_WEBHOOK_SECRET),
+        },
+        body: echoBody,
+      });
+      expect(whRes.status).toBe(202);
+      await processGithubWebhookBatch({ workerDb, runtime: workerRuntime, broker: vault, appWebhookSecrets: [APP_WEBHOOK_SECRET] });
+      const delRow = await rows<{ status: string }>(
+        `SELECT status FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND delivery_id = $2`,
+        [s2Org.orgId, echoDel],
+      );
+      expect(delRow[0]?.status, `echo ${tag} status`).toBe('skipped');
+    }
+    const linkAfterEcho = await rows<{ updated_at: string }>(
+      `SELECT updated_at::text FROM ludy_projects.github_task_link WHERE org_id = $1 AND id = $2`,
+      [s2Org.orgId, issueLinkId],
+    );
+    const repoAfterEcho = await rows<{ last_event_at: string | null }>(
+      `SELECT last_event_at::text FROM ludy_projects.github_project_repo WHERE org_id = $1 AND project_id = $2`,
+      [s2Org.orgId, projectId],
+    );
+    expect(linkAfterEcho[0]?.updated_at).toBe(linkAfterPatch[0]?.updated_at);
+    expect(repoAfterEcho[0]?.last_event_at).toBe(repoEventTsBeforeEcho[0]?.last_event_at);
+
+    // Layer 2: Moving tLayer2 (already linked to external_state='closed' issue #78) to 'done' enqueues 0 outbound rows!
+    const outboundCountBeforeLayer2 = (
+      await rows(`SELECT id FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND direction = 'outbound'`, [s2Org.orgId])
+    ).length;
+    await runtime.execute('kernel.task.set_status', { id: tLayer2, status: 'done' }, { actor: asUser(member.userId), orgId: s2Org.orgId });
+    const outboundCountAfterLayer2 = (
+      await rows(`SELECT id FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND direction = 'outbound'`, [s2Org.orgId])
+    ).length;
+    expect(outboundCountAfterLayer2).toBe(outboundCountBeforeLayer2);
+
+    // Reopen tMain out of 'done' -> queues 'open' -> PATCH {"state":"open"} succeeds and updates last_outbound_state = 'open'.
+    patchUpdatedAtOverride = '2027-02-01T10:10:00Z';
+    await runtime.execute(
+      'projects.task.move_column',
+      { projectId, taskId: tMain, columnId: todoCol!.id },
+      { actor: asUser(member.userId), orgId: s2Org.orgId },
+    );
+    const reopenJobs: Array<{ orgId: string; deliveryId: string }> = [];
+    await runGithubOutboundSweep({
+      workerDb,
+      runtime: workerRuntime,
+      sendOutbound: async (j) => {
+        reopenJobs.push(j);
+      },
+    });
+    expect(reopenJobs).toHaveLength(1);
+    const reopenOutcome = await runGithubOutboundJob(
+      { runtime: workerRuntime, workerDb, broker: vault, github: githubClient },
+      reopenJobs[0]!,
+    );
+    expect(reopenOutcome).toBe('applied');
+    expect(patchedRequests).toHaveLength(2);
+    expect(patchedRequests[1]).toEqual({ path: '/repos/octo-org/core-api/issues/77', body: { state: 'open' } });
+
+    // Layer 1: Inbound issue closed webhook transitions tMain back to 'done' via sync_external_status -> ZERO outbound deliveries enqueued!
+    const outboundBeforeInboundClose = (
+      await rows(`SELECT id FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND direction = 'outbound'`, [s2Org.orgId])
+    ).length;
+    const inboundCloseBody = JSON.stringify({
+      action: 'closed',
+      installation: { id: 999 },
+      repository: { id: 1001, full_name: 'octo-org/core-api' },
+      issue: {
+        number: 77,
+        html_url: 'https://github.com/octo-org/core-api/issues/77',
+        title: 'Fix billing export race condition on invoice save',
+        state: 'closed',
+        updated_at: '2027-02-01T10:20:00Z',
+        user: { login: 'octo-author' },
+      },
+    });
+    await app.request(GITHUB_WEBHOOK_PATH, {
+      method: 'POST',
+      headers: {
+        'x-github-event': 'issues',
+        'x-github-delivery': `inbound-close-${randomUUID()}`,
+        'x-hub-signature-256': signGithubPayload(inboundCloseBody, APP_WEBHOOK_SECRET),
+      },
+      body: inboundCloseBody,
+    });
+    await processGithubWebhookBatch({ workerDb, runtime: workerRuntime, broker: vault, appWebhookSecrets: [APP_WEBHOOK_SECRET] });
+    const outboundAfterInboundClose = (
+      await rows(`SELECT id FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND direction = 'outbound'`, [s2Org.orgId])
+    ).length;
+    expect(outboundAfterInboundClose).toBe(outboundBeforeInboundClose);
+
+    // 4) appOn = false upfront drop test in BOTH sweep & outbound job: 0 credential reads, 0 DB mutations, 0 PATCH calls!
+    const inboundReopenBody = JSON.stringify({
+      action: 'reopened',
+      installation: { id: 999 },
+      repository: { id: 1001, full_name: 'octo-org/core-api' },
+      issue: {
+        number: 77,
+        html_url: 'https://github.com/octo-org/core-api/issues/77',
+        title: 'Fix billing export race condition on invoice save',
+        state: 'open',
+        updated_at: '2027-02-01T10:25:00Z',
+        user: { login: 'octo-author' },
+      },
+    });
+    await app.request(GITHUB_WEBHOOK_PATH, {
+      method: 'POST',
+      headers: {
+        'x-github-event': 'issues',
+        'x-github-delivery': `inbound-reopen-${randomUUID()}`,
+        'x-hub-signature-256': signGithubPayload(inboundReopenBody, APP_WEBHOOK_SECRET),
+      },
+      body: inboundReopenBody,
+    });
+    await processGithubWebhookBatch({ workerDb, runtime: workerRuntime, broker: vault, appWebhookSecrets: [APP_WEBHOOK_SECRET] });
+    // First move tMain from 'done' -> 'in_progress' (link external_state is already 'open', so Layer 2 skips),
+    // then 'in_progress' -> 'done' to queue 1 outbound 'closed' delivery while projects app is turned off.
+    await runtime.execute('kernel.task.set_status', { id: tMain, status: 'in_progress' }, { actor: asUser(member.userId), orgId: s2Org.orgId });
+    await runtime.execute('kernel.task.set_status', { id: tMain, status: 'done' }, { actor: asUser(member.userId), orgId: s2Org.orgId });
+    const queuedForAppOffTest = await rows<{ id: string }>(
+      `SELECT id FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND direction = 'outbound' AND status = 'queued'`,
+      [s2Org.orgId],
+    );
+    expect(queuedForAppOffTest).toHaveLength(1);
+
+    await runtime.execute('kernel.org.set_app', { module: 'projects', enabled: false }, { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() });
+    expect(await hasGithubOutboundWork(workerDb)).toBe(false);
+    const sentWhenOff: unknown[] = [];
+    const sweepWhenOff = await runGithubOutboundSweep({
+      workerDb,
+      runtime: workerRuntime,
+      sendOutbound: async (j) => {
+        sentWhenOff.push(j);
+      },
+    });
+    expect(sentWhenOff).toEqual([]);
+    expect(sweepWhenOff).toEqual({ handedOver: 0, skippedOff: 0 });
+
+    let brokerOpenCount = 0;
+    const spyBroker: CredentialBroker = {
+      id: vault.id,
+      seal: vault.seal.bind(vault),
+      open: (...args) => {
+        brokerOpenCount += 1;
+        return vault.open(...args);
+      },
+    };
+    const patchesBeforeAppOff = patchedRequests.length;
+    const jobWhenOff = await runGithubOutboundJob(
+      { runtime: workerRuntime, workerDb, broker: spyBroker, github: githubClient },
+      { orgId: s2Org.orgId, deliveryId: queuedForAppOffTest[0]!.id },
+    );
+    expect(jobWhenOff).toBe('skipped');
+    expect(brokerOpenCount).toBe(0);
+    expect(patchedRequests.length).toBe(patchesBeforeAppOff);
+    // When projects app is turned off, human kernel.task.set_status must still succeed without throwing MODULE_OFF!
+    await runtime.execute('kernel.task.set_status', { id: tLayer2, status: 'todo' }, { actor: asUser(member.userId), orgId: s2Org.orgId });
+
+    // Turn projects back ON for agent transition + AI helper RPC tests below.
+    await runtime.execute('kernel.org.set_app', { module: 'projects', enabled: true }, { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() });
+
+    // 4b) Org-chart AI agent moving a linked task to 'done' passes #1710 & agent_write_guard via outbox + SYSTEM sweep enqueue (#5159).
+    const agentInstall = await runtime.execute<{ agentId: string; positionId: string }>(
+      'kernel.agent.template.install',
+      { templateKey: 'finance.chief_accountant' },
+      { actor: asMfa(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+    const { taskId: tAgent } = await runtime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId, title: 'Agent closes issue #79 cleanly', assigneePositionId: agentInstall.positionId },
+      { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+    remoteItems.set('/repos/octo-org/core-api/issues/79', {
+      number: 79,
+      html_url: 'https://github.com/octo-org/core-api/issues/79',
+      title: 'Agent-owned task linked issue',
+      state: 'open',
+      user: { login: 'octo-author' },
+      updated_at: '2027-02-01T10:30:00Z',
+    });
+    const linkAgentIssue = await rpc(
+      app,
+      'projects/github/taskLinkAdd',
+      member,
+      { projectId, taskId: tAgent, url: 'https://github.com/octo-org/core-api/issues/79', idempotencyKey: randomUUID() },
+      s2Org.slug,
+    );
+    expect(linkAgentIssue.status).toBe(200);
+    const agentRunRows = await rows<{ id: string }>(
+      `INSERT INTO ludy_kernel.ai_run (org_id, agent_id, module, status, started_at, expires_at)
+       VALUES ($1::uuid, $2::uuid, 'finance', 'running', now(), now() + interval '15 minutes')
+       RETURNING id`,
+      [s2Org.orgId, agentInstall.agentId],
+    );
+    const agentActor = { type: 'agent' as const, agentId: agentInstall.agentId, runId: agentRunRows[0]!.id };
+    const agentLease = await workerRuntime.execute<{ fence: string }>(
+      'kernel.task.checkout',
+      { id: tAgent },
+      { actor: agentActor, orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+    await workerRuntime.execute(
+      'kernel.task.set_status',
+      { id: tAgent, fence: agentLease.fence, status: 'done' },
+      { actor: agentActor, orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+    const outboxTransition = await rows<{ payload: { taskId: string; previousStatus: string; nextStatus: string } }>(
+      `SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.github_transitioned' ORDER BY id DESC LIMIT 1`,
+      [s2Org.orgId],
+    );
+    expect(outboxTransition[0]?.payload).toEqual({
+      taskId: tAgent,
+      previousStatus: 'in_progress',
+      nextStatus: 'done',
+    });
+    expect(await runGithubAgentTransitionEnqueue({ runtime: workerRuntime }, { mode: 'agent_task_transition', orgId: s2Org.orgId, ...outboxTransition[0]!.payload })).toBe(1);
+    const agentSweepJobs: Array<{ orgId: string; deliveryId: string }> = [];
+    await runGithubOutboundSweep({
+      workerDb,
+      runtime: workerRuntime,
+      sendOutbound: async (j) => {
+        agentSweepJobs.push(j);
+      },
+    });
+    const patchesBeforeAgent = patchedRequests.length;
+    for (const j of agentSweepJobs) {
+      await runGithubOutboundJob({ runtime: workerRuntime, workerDb, broker: vault, github: githubClient }, j);
+    }
+    expect(patchedRequests.slice(patchesBeforeAgent)).toContainEqual({
+      path: '/repos/octo-org/core-api/issues/79',
+      body: { state: 'closed' },
+    });
+
+    // 5) Definer privilege check: app/tenant roles cannot invoke worker-only sweep/has_work/defer/claim definers (42501 / permission denied).
+    await expect(appDb.executeQuery(sql`SELECT ludy_projects.github_outbound_has_work()`.compile(appDb))).rejects.toThrow(/permission denied/);
+    await expect(appDb.executeQuery(sql`SELECT * FROM ludy_projects.github_outbound_sweep(10)`.compile(appDb))).rejects.toThrow(/permission denied/);
+    await expect(
+      appDb.executeQuery(sql`SELECT ludy_projects.github_outbound_defer(${s2Org.orgId}::uuid, NULL::uuid, 60)`.compile(appDb)),
+    ).rejects.toThrow(/permission denied/);
+    await expect(
+      appDb.executeQuery(sql`SELECT * FROM ludy_projects.github_outbound_delivery_claim(${s2Org.orgId}::uuid, ${queuedForAppOffTest[0]!.id}::uuid)`.compile(appDb)),
+    ).rejects.toThrow(/permission denied/);
+    await expect(
+      appDb.executeQuery(sql`SELECT ludy_projects.github_outbound_enqueue_for_task(${tMain}::uuid, 'todo', 'done', now())`.compile(appDb)),
+    ).rejects.toMatchObject({ code: '42501' });
+
+    // 6) Vy AI helpers (projects.github_pr_summary & projects.github_issue_match):
+    // #2604 private project non-member is refused before calling AI or GitHub.
+    const privateAiDenied = await rpc(
+      appWithAi,
+      'projects/github/aiPrSummary',
+      member,
+      { projectId: privateProjectId, taskId: tPrivate, language: 'vi' },
+      s2Org.slug,
+    );
+    expect(privateAiDenied.status).toBe(404);
+    const privateMatchDenied = await rpc(
+      appWithAi,
+      'projects/github/aiIssueMatch',
+      member,
+      { projectId: privateProjectId, taskId: tPrivate, language: 'vi' },
+      s2Org.slug,
+    );
+    expect(privateMatchDenied.status).toBe(404);
+
+    // Read-only viewer cannot spend AI budget or fetch open GitHub issues via aiIssueMatch.
+    const viewerMatchDenied = await rpc(
+      appWithAi,
+      'projects/github/aiIssueMatch',
+      viewer,
+      { projectId, taskId: tMain, language: 'vi' },
+      s2Org.slug,
+    );
+    expect(viewerMatchDenied.status).toBe(403);
+
+    // Populate open candidate issues on octo-org/core-api (mixing 2 issues + 1 PR disguised in /issues endpoint).
+    openRepoIssues.set('octo-org/core-api', [
+      {
+        number: 210,
+        html_url: 'https://github.com/octo-org/core-api/issues/210',
+        title: 'Billing export race condition under concurrent invoice saves',
+        state: 'open',
+        updated_at: '2027-02-01T11:00:00Z',
+        user: { login: 'qa-hoa' },
+      },
+      {
+        number: 211,
+        html_url: 'https://github.com/octo-org/core-api/pull/211',
+        title: 'PR disguised in issues endpoint',
+        state: 'open',
+        pull_request: { url: 'https://api.github.com/repos/octo-org/core-api/pulls/211' },
+      },
+      {
+        number: 212,
+        html_url: 'https://github.com/octo-org/core-api/issues/212',
+        title: 'Update footer copyright year',
+        state: 'open',
+        updated_at: '2027-02-01T11:05:00Z',
+        user: { login: 'dev-minh' },
+      },
+    ]);
+
+    // Deterministic AI-off parity (`app` has no AI reader): returns ai='off' + deterministic fallback summary & ranked candidates.
+    const summaryOff = await rpc(
+      app,
+      'projects/github/aiPrSummary',
+      member,
+      { projectId, taskId: tMain, language: 'vi' },
+      s2Org.slug,
+    );
+    expect(summaryOff.status).toBe(200);
+    const sumOffBody = summaryOff.body as unknown as GithubPrSummaryRpcResult;
+    expect(sumOffBody.ai).toBe('off');
+    expect(sumOffBody.summary).toBeNull();
+    expect(sumOffBody.fallbackSummary).toContain('octo-org/core-api#77');
+
+    const matchOff = await rpc(
+      app,
+      'projects/github/aiIssueMatch',
+      member,
+      { projectId, taskId: tMain, language: 'vi' },
+      s2Org.slug,
+    );
+    expect(matchOff.status).toBe(200);
+    const matchOffBody = matchOff.body as unknown as GithubIssueMatchRpcResult;
+    expect(matchOffBody.ai).toBe('off');
+    expect(matchOffBody.candidates.some((c) => c.externalNumber === 210 && c.deterministic)).toBe(true);
+    expect(matchOffBody.candidates.some((c) => c.externalNumber === 211)).toBe(false);
+
+    // Live AI active (`appWithAi`): transient summary & candidate match work cleanly and nothing is persisted.
+    const summaryUsed = await rpc(
+      appWithAi,
+      'projects/github/aiPrSummary',
+      member,
+      { projectId, taskId: tMain, language: 'vi' },
+      s2Org.slug,
+    );
+    expect(summaryUsed.status).toBe(200);
+    expect(summaryUsed.body).toMatchObject({ ai: 'used', linkCount: 2, tainted: true });
+
+    const matchUsed = await rpc(
+      appWithAi,
+      'projects/github/aiIssueMatch',
+      member,
+      { projectId, taskId: tMain, language: 'vi' },
+      s2Org.slug,
+    );
+    expect(matchUsed.status).toBe(200);
+    expect(matchUsed.body).toMatchObject({ ai: 'used' });
+    expect((matchUsed.body as unknown as GithubIssueMatchRpcResult).candidates[0]).toMatchObject({
+      candidateId: 'octo-org/core-api#210',
+      deterministic: false,
+      tainted: true,
+    });
+
+    // Budget spent gate -> returns ai='budget' with deterministic fallback!
+    await runtime.execute(
+      'kernel.agent.budget.set',
+      { scope: 'module', target: 'projects', monthlyLimit: '0', hardStop: true },
+      { actor: asMfa(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+    const summaryBudget = await rpc(
+      appWithAi,
+      'projects/github/aiPrSummary',
+      member,
+      { projectId, taskId: tMain, language: 'vi' },
+      s2Org.slug,
+    );
+    expect(summaryBudget.status).toBe(200);
+    expect((summaryBudget.body as unknown as GithubPrSummaryRpcResult).ai).toBe('budget');
+    expect((summaryBudget.body as unknown as GithubPrSummaryRpcResult).fallbackSummary).not.toBeNull();
+    expect(patchedRequests.every((r) => !r.path.includes('/pulls/'))).toBe(true);
+    const slice2FnRows = await rows<{ proname: string; prosecdef: boolean; proconfig: string[] | null }>(
+      `SELECT p.proname, p.prosecdef, p.proconfig
+         FROM pg_catalog.pg_proc p
+         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'ludy_projects'
+          AND p.proname IN (
+            'github_outbound_enqueue_for_task',
+            'github_outbound_has_work',
+            'github_outbound_sweep',
+            'github_outbound_defer',
+            'github_outbound_delivery_claim'
+          )
+        ORDER BY p.proname`,
+    );
+    expect(slice2FnRows).toHaveLength(5);
+    for (const fnRow of slice2FnRows) {
+      expect(fnRow.prosecdef).toBe(true);
+      expect(fnRow.proconfig).toContain('search_path=pg_catalog, pg_temp');
+    }
+  });
+
+  it('prevents MODULE_OFF on unentitled org task transitions, avoids cross-tenant starvation across >100 off/unentitled rows, and expires stale rows (#5159)', async () => {
+    const entitledOrgs = new Set<string>();
+    const billingRegistry = {
+      commands: [...kernelCommands, ...projectsCommands, ...financeCommands],
+      queries: [...kernelQueries({ inboundDomain: null }), ...projectsQueries],
+    };
+    const billingRuntime = new Runtime(appDb, {
+      manifests: TEST_MANIFESTS,
+      sessions: createSessionStatusSource('off'),
+      stepUp: 'off',
+      entitlements: async (orgId) => (entitledOrgs.has(orgId) ? ['full'] : ['notes']),
+    }).register(billingRegistry);
+    const billingWorkerRuntime = new Runtime(workerDb, {
+      manifests: TEST_MANIFESTS,
+      entitlements: async (orgId) => (entitledOrgs.has(orgId) ? ['full'] : ['notes']),
+    }).register(billingRegistry);
+
+    const appConnUrl = (() => {
+      const u = new URL(adminUrl);
+      u.username = 'ludy_app';
+      u.password = 'gh-app-pw';
+      return u.toString();
+    })();
+    const billingHttpConfig = loadConfig({
+      DATABASE_URL: appConnUrl,
+      AUTH_JWT_SECRET: SECRET,
+      AUTH_ISSUER: ISSUER,
+      AUTH_SESSION_CHECK: 'off',
+      PUBLIC_URL: 'http://localhost:8080',
+      MIGRATIONS_DIR: MIGRATIONS,
+      WEB_DIST: '/nonexistent',
+    });
+    const billingApp = createHttpApp({
+      config: billingHttpConfig,
+      runtime: billingRuntime,
+      store,
+      authenticate: createAuthenticator(billingHttpConfig, appDb),
+      pool: appPool,
+      aiEnabled: false,
+      billing: { entitlements: async (orgId) => (entitledOrgs.has(orgId) ? ['full'] : ['notes']) },
+      channels: { broker: vault, sandbox: false, github: githubClient, publicUrl: 'http://localhost:8080' },
+      githubWebhook: { appWebhookSecret: APP_WEBHOOK_SECRET, appWebhookSecretPrevious: APP_WEBHOOK_SECRET_PREV },
+      githubWebhookLimits: { address: new RateLimiter({ perMinute: 1000 }), hook: new RateLimiter({ perMinute: 1000 }) },
+    });
+
+    // Clear any deferred queued row left by prior test cases so readiness assertions start from a known empty queue.
+    await rows(
+      `UPDATE ludy_projects.github_sync_delivery
+          SET status = 'skipped', summary = 'Reset before starvation test', processed_at = now()
+        WHERE direction = 'outbound' AND status = 'queued'`,
+    );
+
+    const billingOwner: Person = {
+      subject: `gh-billing-owner-${randomUUID()}`,
+      email: 'gh-billing-owner@ludy.test',
+      session: randomUUID(),
+      userId: '',
+    };
+    billingOwner.userId = await upsertIdentity(appDb, {
+      issuer: ISSUER,
+      subject: billingOwner.subject,
+      email: billingOwner.email,
+      name: 'GH Billing Owner',
+    });
+
+    const unentitledOrg = await createOrg(billingRuntime, asUser(billingOwner.userId), 'Cong ty Unentitled');
+    const activeOrg = await createOrg(billingRuntime, asUser(billingOwner.userId), 'Cong ty Active Sync');
+    const offOrg = await createOrg(billingRuntime, asUser(billingOwner.userId), 'Cong ty Projects Off');
+    entitledOrgs.add(unentitledOrg.orgId);
+    entitledOrgs.add(activeOrg.orgId);
+    entitledOrgs.add(offOrg.orgId);
+
+    for (const orgId of [unentitledOrg.orgId, activeOrg.orgId, offOrg.orgId]) {
+      await rows(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member.userId]);
+    }
+
+    // Seed an opt-in bound project + open issue #301 on unentitledOrg BEFORE dropping its 'projects' entitlement.
+    const { projectId: unentitledProjId } = await billingRuntime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Unentitled Downgraded Project', visibility: 'org' },
+      { actor: asUser(billingOwner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    const unentPat = await rpc(
+      billingApp,
+      'projects/github/connectPat',
+      billingOwner,
+      {
+        projectId: unentitledProjId,
+        accessToken: 'github_pat_fake_unentitled',
+        webhookSecret: PAT_WEBHOOK_SECRET,
+        taskKeyPrefix: 'UN',
+        backfillTaskNumbers: true,
+        idempotencyKey: randomUUID(),
+      },
+      unentitledOrg.slug,
+    );
+    expect(unentPat.status).toBe(200);
+    const unentConnId = String((unentPat.body as { connectionId: string }).connectionId);
+    const unentRepoBind = await rpc(
+      billingApp,
+      'projects/github/repoBind',
+      billingOwner,
+      {
+        projectId: unentitledProjId,
+        githubRepoId: '1001',
+        repoFullName: 'octo-org/core-api',
+        defaultBranch: 'main',
+        webhookConfigured: true,
+        idempotencyKey: randomUUID(),
+      },
+      unentitledOrg.slug,
+    );
+    expect(unentRepoBind.status).toBe(200);
+    const unentBind = await rpc(
+      billingApp,
+      'projects/github/bindingSave',
+      billingOwner,
+      {
+        projectId: unentitledProjId,
+        channelConnectionId: unentConnId,
+        githubEnabled: true,
+        autoSyncInbound: true,
+        inboundDoneOnMerge: true,
+        outboundCloseIssueOnDone: true,
+        idempotencyKey: randomUUID(),
+      },
+      unentitledOrg.slug,
+    );
+    expect(unentBind.status).toBe(200);
+
+    const { taskId: tUnentHuman } = await billingRuntime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId: unentitledProjId, title: 'Human task during unentitled state', assigneePositionId: null },
+      { actor: asUser(billingOwner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    remoteItems.set('/repos/octo-org/core-api/issues/301', {
+      number: 301,
+      html_url: 'https://github.com/octo-org/core-api/issues/301',
+      title: 'Unentitled issue',
+      state: 'open',
+      user: { login: 'octo-author' },
+      updated_at: '2027-02-01T12:00:00Z',
+    });
+    const unentLink = await rpc(
+      billingApp,
+      'projects/github/taskLinkAdd',
+      member,
+      { projectId: unentitledProjId, taskId: tUnentHuman, url: 'https://github.com/octo-org/core-api/issues/301', idempotencyKey: randomUUID() },
+      unentitledOrg.slug,
+    );
+    expect(unentLink.status).toBe(200);
+    expect(
+      await runGithubHydrateJob(
+        { runtime: billingWorkerRuntime, workerDb, broker: vault, github: githubClient },
+        {
+          mode: 'link_refresh',
+          orgId: unentitledOrg.orgId,
+          projectId: unentitledProjId,
+          taskId: tUnentHuman,
+          linkId: String((unentLink.body?.link as { id: string } | undefined)?.id ?? ''),
+          kind: 'issue',
+          externalNumber: 301,
+        },
+      ),
+    ).toBe('hydrated');
+
+    const agentInstallUnent = await billingRuntime.execute<{ agentId: string; positionId: string }>(
+      'kernel.agent.template.install',
+      { templateKey: 'finance.chief_accountant' },
+      { actor: asMfa(billingOwner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    const { taskId: tUnentAgent } = await billingRuntime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId: unentitledProjId, title: 'Agent task while unentitled', assigneePositionId: agentInstallUnent.positionId },
+      { actor: asUser(billingOwner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    const unentRunRows = await rows<{ id: string }>(
+      `INSERT INTO ludy_kernel.ai_run (org_id, agent_id, module, status, started_at, expires_at)
+       VALUES ($1::uuid, $2::uuid, 'finance', 'running', now(), now() + interval '15 minutes')
+       RETURNING id`,
+      [unentitledOrg.orgId, agentInstallUnent.agentId],
+    );
+    const unentAgentActor = { type: 'agent' as const, agentId: agentInstallUnent.agentId, runId: unentRunRows[0]!.id };
+    const unentAgentLease = await billingWorkerRuntime.execute<{ fence: string }>(
+      'kernel.task.checkout',
+      { id: tUnentAgent },
+      { actor: unentAgentActor, orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+
+    // Also create a standalone kernel task on unentitledOrg before removing 'projects' entitlement.
+    const { taskId: tStandalone } = await billingRuntime.execute<{ taskId: string }>(
+      'kernel.task.create',
+      { title: 'Standalone Notes/Finance org task', assigneePositionId: null },
+      { actor: asUser(billingOwner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+
+    // Drop 'projects' from Cloud entitlements (t.apps_off stays empty so SQL org_app_on = true) and use fresh
+    // Runtime instances without stale 60s #entitlementCache entries from setup.
+    entitledOrgs.delete(unentitledOrg.orgId);
+    const postDowngradeRuntime = new Runtime(appDb, {
+      manifests: TEST_MANIFESTS,
+      sessions: createSessionStatusSource('off'),
+      stepUp: 'off',
+      entitlements: async (orgId) => (entitledOrgs.has(orgId) ? ['full'] : ['notes']),
+    }).register(billingRegistry);
+    const postDowngradeWorkerRuntime = new Runtime(workerDb, {
+      manifests: TEST_MANIFESTS,
+      entitlements: async (orgId) => (entitledOrgs.has(orgId) ? ['full'] : ['notes']),
+    }).register(billingRegistry);
+
+    // Blocker 1: BOTH human and org-chart agent Done/reopen transitions succeed without 404 MODULE_OFF or held outbox events.
+    await postDowngradeRuntime.execute(
+      'kernel.task.set_status',
+      { id: tUnentHuman, status: 'done' },
+      { actor: asUser(member.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    await postDowngradeRuntime.execute(
+      'kernel.task.set_status',
+      { id: tUnentHuman, status: 'todo' },
+      { actor: asUser(member.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    await postDowngradeRuntime.execute(
+      'kernel.task.set_status',
+      { id: tStandalone, status: 'done' },
+      { actor: asUser(member.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    await postDowngradeWorkerRuntime.execute(
+      'kernel.task.set_status',
+      { id: tUnentAgent, fence: unentAgentLease.fence, status: 'done' },
+      { actor: unentAgentActor, orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+
+    const unentDeliveries = await rows<{ id: string }>(
+      `SELECT id FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND direction = 'outbound'`,
+      [unentitledOrg.orgId],
+    );
+    expect(unentDeliveries).toEqual([]);
+    const unentOutboxEvents = await rows<{ id: string }>(
+      `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.github_transitioned'`,
+      [unentitledOrg.orgId],
+    );
+    expect(unentOutboxEvents).toEqual([]);
+
+    // Blocker 2a: off-app rows (org_app_on = false) are ignored by has_work & SQL sweep until 8h TTL expiry.
+    const { projectId: offProjId } = await billingRuntime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Off App Project', visibility: 'org' },
+      { actor: asUser(billingOwner.userId), orgId: offOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    await billingRuntime.execute(
+      'kernel.org.set_app',
+      { module: 'projects', enabled: false },
+      { actor: asUser(billingOwner.userId), orgId: offOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    const offDeliveryRows = await rows<{ id: string }>(
+      `INSERT INTO ludy_projects.github_sync_delivery (
+         org_id, project_id, direction, delivery_id, event_type,
+         repo_full_name, external_number, target_remote_state, status, received_at, next_attempt_at
+       )
+       VALUES (
+         $1::uuid, $2::uuid, 'outbound', $3, 'issues.state',
+         'octo-org/core-api', 302, 'closed', 'queued', now() - interval '30 minutes', now() - interval '30 minutes'
+       )
+       RETURNING id`,
+      [offOrg.orgId, offProjId, `outbound:off-${randomUUID()}`],
+    );
+    const offDeliveryId = offDeliveryRows[0]!.id;
+    expect(await hasGithubOutboundWork(workerDb)).toBe(false);
+    const sqlSweepOffOnly = await workerDb.executeQuery(
+      sql<{ id: string }>`SELECT id FROM ludy_projects.github_outbound_sweep(100)`.compile(workerDb),
+    );
+    expect(sqlSweepOffOnly.rows).toEqual([]);
+
+    // Blocker 2b: >100 older unentitled org rows do NOT starve activeOrg behind them; deferred rows keep has_work false.
+    await rows(
+      `INSERT INTO ludy_projects.github_sync_delivery (
+         org_id, project_id, direction, delivery_id, event_type,
+         repo_full_name, external_number, target_remote_state, status, received_at, next_attempt_at
+       )
+       SELECT $1::uuid, $2::uuid, 'outbound', 'outbound:starve-' || g::text || '-' || $3, 'issues.state',
+              'octo-org/core-api', 303, 'closed', 'queued',
+              now() - interval '2 hours' + pg_catalog.make_interval(secs => g),
+              now() - interval '2 hours' + pg_catalog.make_interval(secs => g)
+         FROM pg_catalog.generate_series(1, 120) AS g`,
+      [unentitledOrg.orgId, unentitledProjId, randomUUID()],
+    );
+
+    const { projectId: activeProjId } = await billingRuntime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Active Org Behind Backlog', visibility: 'org' },
+      { actor: asUser(billingOwner.userId), orgId: activeOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    const activePat = await rpc(
+      billingApp,
+      'projects/github/connectPat',
+      billingOwner,
+      {
+        projectId: activeProjId,
+        accessToken: 'github_pat_fake_active',
+        webhookSecret: PAT_WEBHOOK_SECRET,
+        taskKeyPrefix: 'AC',
+        backfillTaskNumbers: true,
+        idempotencyKey: randomUUID(),
+      },
+      activeOrg.slug,
+    );
+    expect(activePat.status).toBe(200);
+    const activeConnId = String((activePat.body as { connectionId: string }).connectionId);
+    const activeRepoBind = await rpc(
+      billingApp,
+      'projects/github/repoBind',
+      billingOwner,
+      {
+        projectId: activeProjId,
+        githubRepoId: '1001',
+        repoFullName: 'octo-org/core-api',
+        defaultBranch: 'main',
+        webhookConfigured: true,
+        idempotencyKey: randomUUID(),
+      },
+      activeOrg.slug,
+    );
+    expect(activeRepoBind.status).toBe(200);
+    const activeBind = await rpc(
+      billingApp,
+      'projects/github/bindingSave',
+      billingOwner,
+      {
+        projectId: activeProjId,
+        channelConnectionId: activeConnId,
+        githubEnabled: true,
+        autoSyncInbound: true,
+        inboundDoneOnMerge: true,
+        outboundCloseIssueOnDone: true,
+        idempotencyKey: randomUUID(),
+      },
+      activeOrg.slug,
+    );
+    expect(activeBind.status).toBe(200);
+
+    const { taskId: tActive } = await billingRuntime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId: activeProjId, title: 'Active org task must sweep immediately', assigneePositionId: null },
+      { actor: asUser(billingOwner.userId), orgId: activeOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    remoteItems.set('/repos/octo-org/core-api/issues/302', {
+      number: 302,
+      html_url: 'https://github.com/octo-org/core-api/issues/302',
+      title: 'Active org issue',
+      state: 'open',
+      user: { login: 'octo-author' },
+      updated_at: '2027-02-01T12:05:00Z',
+    });
+    const activeLink = await rpc(
+      billingApp,
+      'projects/github/taskLinkAdd',
+      member,
+      { projectId: activeProjId, taskId: tActive, url: 'https://github.com/octo-org/core-api/issues/302', idempotencyKey: randomUUID() },
+      activeOrg.slug,
+    );
+    expect(activeLink.status).toBe(200);
+    expect(
+      await runGithubHydrateJob(
+        { runtime: billingWorkerRuntime, workerDb, broker: vault, github: githubClient },
+        {
+          mode: 'link_refresh',
+          orgId: activeOrg.orgId,
+          projectId: activeProjId,
+          taskId: tActive,
+          linkId: String((activeLink.body?.link as { id: string } | undefined)?.id ?? ''),
+          kind: 'issue',
+          externalNumber: 302,
+        },
+      ),
+    ).toBe('hydrated');
+    await billingRuntime.execute(
+      'kernel.task.set_status',
+      { id: tActive, status: 'done' },
+      { actor: asUser(member.userId), orgId: activeOrg.orgId, idempotencyKey: randomUUID() },
+    );
+
+    const activeDeliveryRows = await rows<{ id: string }>(
+      `SELECT id FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND direction = 'outbound' AND status = 'queued'`,
+      [activeOrg.orgId],
+    );
+    expect(activeDeliveryRows).toHaveLength(1);
+    const activeDeliveryId = activeDeliveryRows[0]!.id;
+
+    const activeSweptJobs: Array<{ orgId: string; deliveryId: string }> = [];
+    const starvationSweep = await runGithubOutboundSweep({
+      workerDb,
+      runtime: postDowngradeWorkerRuntime,
+      sendOutbound: async (j) => {
+        activeSweptJobs.push(j);
+      },
+      limit: 100,
+    });
+    expect(starvationSweep.handedOver).toBe(1);
+    // Pass 1 fetches batchLimit=100 rows and per-org defer defers all 120 unentitledOrg rows at once before Pass 2 sweeps activeOrg.
+    expect(starvationSweep.skippedOff).toBe(100);
+    expect(activeSweptJobs).toEqual([{ orgId: activeOrg.orgId, deliveryId: activeDeliveryId }]);
+
+    expect(
+      await runGithubOutboundJob({ runtime: postDowngradeWorkerRuntime, workerDb, broker: vault, github: githubClient }, activeSweptJobs[0]!),
+    ).toBe('applied');
+    expect(remoteItems.get('/repos/octo-org/core-api/issues/302')?.state).toBe('closed');
+
+    // Immediately after activeOrg completes, has_work must return false (120 deferred unentitled + 1 off-app ignored).
+    expect(await hasGithubOutboundWork(workerDb)).toBe(false);
+
+    // Blocker 2c: bounded 8h TTL expires stale off-app and deferred rows once, then stops waking has_work.
+    const oneDeferredRow = await rows<{ id: string }>(
+      `SELECT id FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND direction = 'outbound' AND status = 'queued' LIMIT 1`,
+      [unentitledOrg.orgId],
+    );
+    await rows(
+      `UPDATE ludy_projects.github_sync_delivery
+          SET received_at = now() - interval '9 hours'
+        WHERE id = ANY($1::uuid[])`,
+      [[offDeliveryId, oneDeferredRow[0]!.id]],
+    );
+    expect(await hasGithubOutboundWork(workerDb)).toBe(true);
+    const expiredDispatchJobs: unknown[] = [];
+    await runGithubOutboundSweep({
+      workerDb,
+      runtime: postDowngradeWorkerRuntime,
+      sendOutbound: async (j) => {
+        expiredDispatchJobs.push(j);
+      },
+      limit: 100,
+    });
+    expect(expiredDispatchJobs).toEqual([]);
+    const expiredCheck = await rows<{ status: string; error_code: string | null }>(
+      `SELECT status, error_code FROM ludy_projects.github_sync_delivery WHERE id = ANY($1::uuid[]) ORDER BY id`,
+      [[offDeliveryId, oneDeferredRow[0]!.id]],
+    );
+    expect(expiredCheck).toEqual([
+      { status: 'skipped', error_code: 'EXPIRED' },
+      { status: 'skipped', error_code: 'EXPIRED' },
+    ]);
+    expect(await hasGithubOutboundWork(workerDb)).toBe(false);
   });
 });

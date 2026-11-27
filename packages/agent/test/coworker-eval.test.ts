@@ -300,6 +300,18 @@ function createStubRuntime() {
       },
       usage: zeroUsage,
     }),
+    projectGithubPrSummary: async () => ({
+      output: {
+        summary: 'Cong viec dang gan 1 lien ket GitHub: PR #42 tren kho acme/web dang mo va cho duyet.',
+      },
+      usage: zeroUsage,
+    }),
+    projectGithubIssueMatch: async () => ({
+      output: {
+        matches: [{ candidateId: 'acme/web#42', reason: 'Khop voi cong viec xuat bao cao Excel.' }],
+      },
+      usage: zeroUsage,
+    }),
     recruitingBrief: async () => ({
       output: {
         summary: 'Ung vien C1 co 3 nam kinh nghiem ke toan va khop 1 trong 2 ky nang yeu cau.',

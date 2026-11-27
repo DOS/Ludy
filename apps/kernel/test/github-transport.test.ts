@@ -108,4 +108,56 @@ describe('githubTransport', () => {
       bigTransport({ method: 'GET', url: 'https://api.github.com/user', headers: {} }),
     ).rejects.toMatchObject({ name: 'GithubError', kind: 'invalid_response' });
   });
+
+  it('forwards PATCH to api.github.com with strict egress options and blocks PATCH to non-api hosts', async () => {
+    const seen: Array<{ url: string; method: string; body?: Buffer | undefined; options: Parameters<typeof guardedRequest>[2] }> = [];
+    const transport = githubTransport({
+      request: async (url, req, options) => {
+        seen.push({ url, method: req.method, body: req.body, options });
+        return {
+          url,
+          status: 200,
+          contentType: 'application/json',
+          body: Buffer.from('{"number":42,"state":"closed"}'),
+          truncated: false,
+        };
+      },
+    });
+
+    const res = await transport({
+      method: 'PATCH',
+      url: 'https://api.github.com/repos/acme/web/issues/42',
+      headers: {
+        accept: 'application/vnd.github+json',
+        authorization: 'Bearer ghs_test',
+        'content-type': 'application/json',
+      },
+      body: '{"state":"closed"}',
+    });
+    expect(res.status).toBe(200);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      url: 'https://api.github.com/repos/acme/web/issues/42',
+      method: 'PATCH',
+    });
+    expect(seen[0]!.body?.toString('utf8')).toBe('{"state":"closed"}');
+    expect(seen[0]!.options.httpsOnly).toBe(true);
+    expect(seen[0]!.options.maxRedirects).toBe(0);
+    expect(seen[0]!.options.maxBytes).toBe(512 * 1024);
+    expect(seen[0]!.options.timeoutMs).toBe(10_000);
+    expect(seen[0]!.options.hostAllowed?.('api.github.com')).toBe(true);
+    expect(seen[0]!.options.hostAllowed?.('github.com')).toBe(false);
+
+    for (const badUrl of [
+      'https://github.com/login/oauth/access_token',
+      'https://evil.example/repos/acme/web/issues/42',
+      'http://api.github.com/repos/acme/web/issues/42',
+    ]) {
+      await expect(
+        transport({ method: 'PATCH', url: badUrl, headers: {}, body: '{"state":"closed"}' }),
+        badUrl,
+      ).rejects.toMatchObject({ name: 'GithubError', kind: 'bad_request' });
+    }
+    expect(seen).toHaveLength(1);
+  });
 });

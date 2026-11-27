@@ -106,6 +106,9 @@ export function ProjectGithubSettingsDialog({
   const [autoLinkBranch, setAutoLinkBranch] = useState(true);
   const [inboundInProgressOnPr, setInboundInProgressOnPr] = useState(true);
   const [inboundDoneOnMerge, setInboundDoneOnMerge] = useState(true);
+  const [outboundCloseIssueOnDone, setOutboundCloseIssueOnDone] = useState(false);
+  const [outboundConfirmed, setOutboundConfirmed] = useState(false);
+  const [outboundConfirmError, setOutboundConfirmError] = useState(false);
   const [inboundColInProgress, setInboundColInProgress] = useState('');
   const [inboundColInReview, setInboundColInReview] = useState('');
   const [inboundColDone, setInboundColDone] = useState('');
@@ -134,6 +137,9 @@ export function ProjectGithubSettingsDialog({
     setAutoLinkBranch(binding.autoLinkBranch);
     setInboundInProgressOnPr(binding.inboundInProgressOnPr);
     setInboundDoneOnMerge(binding.inboundDoneOnMerge);
+    setOutboundCloseIssueOnDone(binding.outboundCloseIssueOnDone);
+    setOutboundConfirmed(binding.outboundCloseIssueOnDone);
+    setOutboundConfirmError(false);
     setInboundColInProgress(binding.inboundColInProgress ?? '');
     setInboundColInReview(binding.inboundColInReview ?? '');
     setInboundColDone(binding.inboundColDone ?? '');
@@ -267,6 +273,13 @@ export function ProjectGithubSettingsDialog({
       setPrefixError(t('taskPrefixInvalid'));
       return;
     }
+    const needsOutboundConfirm =
+      outboundCloseIssueOnDone && !binding.outboundCloseIssueOnDone && !outboundConfirmed;
+    if (needsOutboundConfirm) {
+      setOutboundConfirmError(true);
+      return;
+    }
+    setOutboundConfirmError(false);
     setPrefixError(null);
     saveBinding.mutate({
       projectId: project.id,
@@ -279,6 +292,7 @@ export function ProjectGithubSettingsDialog({
       autoLinkBranch,
       inboundInProgressOnPr,
       inboundDoneOnMerge,
+      outboundCloseIssueOnDone,
       inboundColInProgress: inboundColInProgress || null,
       inboundColInReview: inboundColInReview || null,
       inboundColDone: inboundColDone || null,
@@ -585,6 +599,55 @@ export function ProjectGithubSettingsDialog({
                       />
                       <span>{t('inboundMergeLabel')}</span>
                     </label>
+                  </div>
+
+                  <div className="space-y-2 border-t border-border/60 pt-3">
+                    <p className="text-xs font-semibold text-foreground">{t('outboundRulesTitle')}</p>
+                    <label className="flex min-h-11 cursor-pointer items-start gap-2.5 text-xs text-foreground">
+                      <Checkbox
+                        checked={outboundCloseIssueOnDone}
+                        onCheckedChange={(checked) => {
+                          const next = checked === true;
+                          setOutboundCloseIssueOnDone(next);
+                          setOutboundConfirmError(false);
+                          if (!next) {
+                            setOutboundConfirmed(false);
+                          } else if (!binding.outboundCloseIssueOnDone) {
+                            setOutboundConfirmed(false);
+                          }
+                        }}
+                        data-testid="github-outbound-close-checkbox"
+                      />
+                      <span className="space-y-0.5">
+                        <span className="block font-medium">{t('outboundCloseIssueLabel')}</span>
+                        <span className="block text-[11px] text-muted-foreground">{t('outboundCloseIssueHint')}</span>
+                      </span>
+                    </label>
+
+                    {outboundCloseIssueOnDone && !binding.outboundCloseIssueOnDone && (
+                      <Alert className="border-warning/40 bg-warning/10" data-testid="github-outbound-confirm-box">
+                        <AlertDescription className="space-y-2 text-xs text-foreground">
+                          <p className="font-medium">{t('outboundConfirmBoxTitle')}</p>
+                          <p className="text-[11px] text-muted-foreground">{t('outboundConfirmBoxBody')}</p>
+                          <label className="flex min-h-11 cursor-pointer items-start gap-2.5 text-xs text-foreground">
+                            <Checkbox
+                              checked={outboundConfirmed}
+                              onCheckedChange={(checked) => {
+                                setOutboundConfirmed(checked === true);
+                                if (checked === true) setOutboundConfirmError(false);
+                              }}
+                              data-testid="github-outbound-confirm-checkbox"
+                            />
+                            <span>{t('outboundConfirmCheckbox')}</span>
+                          </label>
+                          {outboundConfirmError && (
+                            <p className="text-xs text-destructive" data-testid="github-outbound-confirm-error">
+                              {t('outboundConfirmRequired')}
+                            </p>
+                          )}
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </div>
 
                   {columns.length > 0 && (
