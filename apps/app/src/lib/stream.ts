@@ -100,7 +100,7 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
     // A deal created, changed, moved or deleted by anyone in the org (#3293): the deal board and list, the deal of that id, a contact's deals and timeline (the hint does not name
     // the party, so every contact's panel reads again), the deals' next steps and the contacts list, which counts each contact's open deals.
     case 'crm_deal': {
-      if (path === 'crm.deals.board' || path === 'crm.deals.list' || path === 'crm.deals.byParty' || path === 'crm.contacts.list' || path === 'parties.timeline' || path.startsWith('crm.nextSteps.')) return true;
+      if (path === 'crm.deals.board' || path === 'crm.deals.list' || path === 'crm.deals.byParty' || path === 'crm.contacts.list' || path === 'crm.contacts.attention' || path === 'parties.timeline' || path.startsWith('crm.nextSteps.')) return true;
       const options = query.queryKey[1] as { input?: { dealId?: unknown } } | undefined;
       return path === 'crm.deals.get' && (id === STREAM_HINT_MANY_ID || options?.input?.dealId === id);
     }
@@ -109,7 +109,7 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
     case 'crm_party': {
       if (path === 'crm.contacts' || path === 'crm.contacts.list' || path === 'crm.parties.search' || path === 'crm.deals.board' || path === 'crm.deals.list' || path === 'crm.deals.get') return true;
       const options = query.queryKey[1] as { input?: { partyId?: unknown } } | undefined;
-      return (path === 'crm.deals.byParty' || path === 'parties.timeline') && (id === STREAM_HINT_MANY_ID || options?.input?.partyId === id);
+      return (path === 'crm.deals.byParty' || path === 'crm.contacts.attention' || path === 'parties.timeline') && (id === STREAM_HINT_MANY_ID || options?.input?.partyId === id);
     }
     // A member's Global Home layout changed on another session/device (#4925): refresh only overview.homeLayout.get.
     case 'home_layout':

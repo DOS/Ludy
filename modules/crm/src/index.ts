@@ -14,6 +14,7 @@ import { importCommands, importQueries } from './import.ts';
 import { mcpCrmQueries } from './mcp.ts';
 import { mcpCrmWriteCommands } from './mcp-write.ts';
 import { nextStepCommands, nextStepQueries } from './next-steps.ts';
+import { attentionCommands, attentionQueries } from './attention.ts';
 import { followupQueries } from './followup-source.ts';
 import { meetingBriefQueries } from './meeting-brief.ts';
 import { meetingFactsQueries } from './meeting-facts.ts';
@@ -49,6 +50,7 @@ export { dealHasQuotes, dealQuotes, quoteCommands, quoteDefaults, quoteDeleteDra
 export { QUOTE_MAIL_SOURCE, QUOTE_MAIL_TEMPLATE, renderQuoteMail, zQuoteMail } from './quote-mail.ts';
 
 export { quoteSuggestSource, type QuoteSuggestSource } from './quote-suggest.ts';
+export { attentionCommands, attentionQueries, partyAttention, partyAttentionSeen } from './attention.ts';
 export { followupQueries, followupSource, type FollowupSource } from './followup-source.ts';
 export { meetingBriefQueries, meetingBriefSourceQuery, type MeetingBriefSource } from './meeting-brief.ts';
 export { quoteReport } from './quote-report.ts';
@@ -57,6 +59,6 @@ export { dealSalesOrders, quoteAccept, quoteDecline, salesOrderCancel, salesOrde
 
 export { crmToday } from './today.ts';
 
-export const crmCommands = [...crmEngageProposalCommands, ...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...dealMeetingUpdateCommands, ...stageCommands, ...importCommands, ...nextStepCommands, ...quoteCommands, ...quotePdfCommands, ...salesOrderCommands, ...mcpCrmWriteCommands];
-export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...companySuggestQueries, ...importQueries, ...nextStepQueries, ...quoteQueries, quoteSuggestSource, ...followupQueries, ...meetingBriefQueries, ...meetingFactsQueries, quoteReport, ...quotePdfQueries, ...salesOrderQueries, crmToday, crmWonDealsSignals, crmOpenDealsSignals, ...mcpCrmQueries, ...crmWakeQueries];
+export const crmCommands = [...crmEngageProposalCommands, ...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...dealMeetingUpdateCommands, ...stageCommands, ...importCommands, ...nextStepCommands, ...attentionCommands, ...quoteCommands, ...quotePdfCommands, ...salesOrderCommands, ...mcpCrmWriteCommands];
+export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...companySuggestQueries, ...importQueries, ...nextStepQueries, ...attentionQueries, ...quoteQueries, quoteSuggestSource, ...followupQueries, ...meetingBriefQueries, ...meetingFactsQueries, quoteReport, ...quotePdfQueries, ...salesOrderQueries, crmToday, crmWonDealsSignals, crmOpenDealsSignals, ...mcpCrmQueries, ...crmWakeQueries];
 export { crmManifest } from './manifest.ts';

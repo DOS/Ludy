@@ -6,27 +6,40 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { FollowupDrafted, NextStep } from '@ludy/kernel-contract';
+import type { FollowupDraftInput, FollowupDrafted, NextStep } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
 import { Textarea } from '@ludy/ui/components/textarea';
 import { ErrorText } from './ui.tsx';
 import { REPLY_INSERT_EVENT, refreshQuoteQueries, type ReplyInsert } from './quote-send.tsx';
 import { client, errorMessage, orpc } from '../lib/api.ts';
 
-const REASON = { no_activity: 'noActivity', past_close: 'pastClose', quote_unanswered: 'quoteUnanswered', quote_expiring: 'quoteExpiring' } as const;
+const REASON = {
+  no_activity: 'noActivity',
+  past_close: 'pastClose',
+  quote_unanswered: 'quoteUnanswered',
+  quote_expiring: 'quoteExpiring',
+  quote_viewed: 'quoteViewed',
+  customer_replied: 'customerReplied',
+} as const;
 
 // The mail program's own draft: the contact's address, the subject and the text, as the person has edited it. Nothing is sent by the page.
 export const mailtoOf = (draft: Pick<FollowupDrafted, 'email' | 'subject'>, text: string): string =>
   `mailto:${draft.email ? encodeURIComponent(draft.email).replace(/%40/g, '@') : ''}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(text)}`;
 
-// On a step of the deals screen: the button, and under it the draft in a box the person edits, with copy and "open email".
-export function FollowupDraftAction({ stepId, dealTitle }: { stepId: string; dealTitle: string }) {
+export type FollowupDraftActionProps =
+  | { stepId: string; dealTitle: string; buttonLabel?: string; buttonAriaLabel?: string }
+  | { input: FollowupDraftInput; label: string; buttonLabel?: string; buttonAriaLabel?: string };
+
+// On a step of the deals screen or an attention item on a contact: the button, and under it the draft in a box the person edits, with copy and "open email".
+export function FollowupDraftAction(props: FollowupDraftActionProps) {
   const t = useTranslations('deals.nextSteps.followup');
   const [draft, setDraft] = useState<FollowupDrafted | null>(null);
   const [text, setText] = useState('');
   const [copied, setCopied] = useState(false);
+  const draftInput: FollowupDraftInput = 'input' in props ? props.input : { nextStepId: props.stepId };
+  const label = 'input' in props ? props.label : props.dealTitle;
   const ask = useMutation({
-    mutationFn: () => client.crm.nextSteps.draft({ nextStepId: stepId }),
+    mutationFn: () => client.crm.nextSteps.draft(draftInput),
     onSuccess: (done) => {
       setDraft(done);
       setText(done.text);
@@ -45,8 +58,18 @@ export function FollowupDraftAction({ stepId, dealTitle }: { stepId: string; dea
   };
   return (
     <div className="basis-full space-y-2" data-testid="followup-action">
-      <Button type="button" size="sm" variant="outline" loading={ask.isPending} disabled={ask.isPending} aria-label={t('askOne', { title: dealTitle })} onClick={() => ask.mutate()} data-testid="followup-ask">
-        {t('ask')}
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="max-md:min-h-11"
+        loading={ask.isPending}
+        disabled={ask.isPending}
+        aria-label={props.buttonAriaLabel ?? t('askOne', { title: label })}
+        onClick={() => ask.mutate()}
+        data-testid="followup-ask"
+      >
+        {props.buttonLabel ?? t('ask')}
       </Button>
       {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
       {draft !== null && (
@@ -63,13 +86,13 @@ export function FollowupDraftAction({ stepId, dealTitle }: { stepId: string; dea
           <p className="text-xs text-muted-foreground">{t('sendHint')}</p>
           {draft.email === null && <p className="text-xs text-muted-foreground">{t('noEmail')}</p>}
           <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" onClick={() => void copy()} disabled={text.trim() === ''} data-testid="followup-copy">
+            <Button type="button" size="sm" className="max-md:min-h-11" onClick={() => void copy()} disabled={text.trim() === ''} data-testid="followup-copy">
               {copied ? t('copied') : t('copy')}
             </Button>
-            <Button type="button" size="sm" variant="outline" disabled={text.trim() === ''} onClick={() => window.location.assign(mailtoOf(draft, text))} data-testid="followup-mail">
+            <Button type="button" size="sm" variant="outline" className="max-md:min-h-11" disabled={text.trim() === ''} onClick={() => window.location.assign(mailtoOf(draft, text))} data-testid="followup-mail">
               {t('email')}
             </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setDraft(null)}>
+            <Button type="button" size="sm" variant="ghost" className="max-md:min-h-11" onClick={() => setDraft(null)}>
               {t('close')}
             </Button>
           </div>

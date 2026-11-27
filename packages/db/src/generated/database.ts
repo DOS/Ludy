@@ -36,6 +36,7 @@ export interface LudyCrmSchema {
   'ludy_crm.event_type': CrmEventTypeTable;
   'ludy_crm.import_batch': CrmImportBatchTable;
   'ludy_crm.import_row': CrmImportRowTable;
+  'ludy_crm.party_attention_seen': CrmPartyAttentionSeenTable;
   'ludy_crm.pipeline_stage': CrmPipelineStageTable;
   'ludy_crm.quote': CrmQuoteTable;
   'ludy_crm.quote_line': CrmQuoteLineTable;
@@ -779,6 +780,18 @@ export interface CrmImportRowTable {
   company_name: ColumnType<string | null, string | null, NotGranted>;
   company_state: ColumnType<string, string | undefined, NotGranted>;
   company_party_id: ColumnType<string | null, string | null, NotGranted>;
+}
+
+/** ludy_crm.party_attention_seen */
+export interface CrmPartyAttentionSeenTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  target_id: ColumnType<string, string, NotGranted>;
+  seen_event_at: ColumnType<Date, Date | string, Date | string>;
+  seen_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** ludy_crm.pipeline_stage */

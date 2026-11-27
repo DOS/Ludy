@@ -31,6 +31,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'ludy_kernel.calendar_connection': "private to its member: a member's own connected calendar account is readable by that member alone",
   'ludy_kernel.meeting_platform_connection': "private to its member: a member's own connected meeting platform account is readable by that member alone",
   'ludy_crm.booking_feed': "a member's calendar feed token (hash): a credential",
+  'ludy_crm.party_attention_seen': "private to its member: a member's own seen marks on contact attention items (#4993)",
   'ludy_finance.bank_feed_hook': "a bank feed connection's webhook hook key (hash): a credential, definer-only",
   'ludy_finance.marketplace_hook': "a marketplace connection's push hook key (hash): a credential, definer-only",
   'ludy_finance.marketplace_hook_notice': "a raw marketplace push waiting for the worker (treated as personal data), deleted when the worker claims it and, when older than ten minutes, by the next claim or the nightly sweep: machinery, definer-only",

@@ -318,6 +318,7 @@ import { zMeetingPlatformConnectProvider, zMeetingPlatformConnectionRef, zMeetin
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
 import { zEInvoiceDraftFromOrder, zOrderLineInvoiceStates, zOrderLineInvoiceStatesInput, zStockMoveFromOrderLine, zStockMoveFromOrderLineResult } from './finance-orders.ts';
 import { zQuoteAccept, zQuoteDecided, zQuoteDecline, zSalesOrder, zSalesOrderCancel, zSalesOrderDeliver, zSalesOrderDeliveryChanged, zSalesOrderHandoff, zSalesOrderListQuery, zSalesOrderPage, zSalesOrderRef, zSalesOrderSummary, zSalesOrderUndeliver } from './crm-sales-orders.ts';
+import { zPartyAttentionList, zPartyAttentionMarkSeen, zPartyAttentionQuery, zPartyAttentionSeen } from './crm-attention.ts';
 import { zFollowupDraftInput, zFollowupDrafted } from './crm-followup.ts';
 import { zMeetingBrief, zMeetingBriefInput } from './crm-meeting-brief.ts';
 import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteReport, zQuoteReportQuery, zQuoteLinkCreated, zQuoteLinkRevoke, zQuoteLinkRevoked, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSend, zQuoteSent, zQuoteLogoSet, zQuoteSetting, zQuoteSettingSet, zQuoteSuggestInput, zQuoteSuggested, zQuoteSummary } from './crm-quotes.ts';
@@ -1509,6 +1510,9 @@ export const contract = {
       conversations: oc.input(zPartyDealsQuery).output(z.array(zConversationOther)),
       // Pre-meeting deterministic facts brief for an agenda event, booking, or meeting matched by case-folded attendee email (#4991 PM1, AI-free).
       meetingFacts: oc.input(zMeetingFactsInput).output(zMeetingFactsOutput),
+      // SG1 contact "Can chu y" list and per-member "Da xem" marks (#4993).
+      attention: oc.input(zPartyAttentionQuery).output(zPartyAttentionList),
+      markAttentionSeen: oc.input(zPartyAttentionMarkSeen).output(zPartyAttentionSeen),
     },
     // Contact import (K5, #2229): rows read from a CSV in the browser are staged and classified without writing a party; the
     // person reads the preview, then commits (creating the new parties) or cancels. Owners, admins and members; every

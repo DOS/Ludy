@@ -22,6 +22,17 @@ export function withDealView(search: string, view: DealView): string {
   return `?${params.toString()}`;
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Deep link params (`?deal=` and optional `?quote=`) passed from contact attention cards (#4993).
+export function readDealTarget(search: string): { dealId: string; quoteId: string | null } | null {
+  const params = new URLSearchParams(search);
+  const deal = params.get('deal');
+  if (!deal || !UUID_PATTERN.test(deal)) return null;
+  const quote = params.get('quote');
+  return { dealId: deal.toLowerCase(), quoteId: quote && UUID_PATTERN.test(quote) ? quote.toLowerCase() : null };
+}
+
 // An open deal past its expected close, by the calendar day in Vietnam (#3649): between 00:00 and 07:00 there the UTC date is still yesterday's, and a flag a day late is a deal nobody chased.
 export const isDealOverdue = (deal: Pick<Deal, 'stageKind' | 'expectedClose'>, today: string = vietnamToday()): boolean => deal.stageKind === 'open' && deal.expectedClose !== null && deal.expectedClose < today;
 
