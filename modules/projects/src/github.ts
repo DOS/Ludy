@@ -1504,7 +1504,7 @@ export interface ProjectGithubIssueMatchSource {
 export const projectGithubOutboundContext = defineQuery({
   name: 'projects.github.outbound_context',
   input: zGithubOutboundContextQueryInput,
-  access: READERS,
+  access: 'system',
   handler: async (ctx, input): Promise<GithubOutboundContextResult> => {
     if (ctx.actor.type !== 'system') {
       throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới đọc được ngữ cảnh đồng bộ GitHub ra ngoài');

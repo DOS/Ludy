@@ -1268,13 +1268,10 @@ export const setTaskStatus = defineCommand({
     ) {
       // Check both org apps_off and Cloud billing entitlements via ctx.appEnabled (#5159, ADR-0053)
       // so unentitled orgs do not fail task transitions with 404 MODULE_OFF or emit held outbox events.
+      // Keep the offAppsOf fallback (readable by ludy_tenant) while QueryContext.appEnabled remains optional.
       const projectsEnabled = ctx.appEnabled
         ? await ctx.appEnabled('projects')
-        : (
-            await sql<{ on: boolean }>`SELECT ludy_kernel.org_app_on(${ctx.orgId}::uuid, 'projects') AS "on"`.execute(
-              ctx.trx,
-            )
-          ).rows[0]?.on === true;
+        : !(await offAppsOf(ctx.trx, ctx.orgId)).includes('projects');
       if (projectsEnabled) {
         if (ctx.actor.type === 'user') {
           // Run projects.github.outbound_enqueue in-tx (aside via its own declared writes) (#5159).

@@ -365,7 +365,7 @@ export function ProjectTaskGithubLinks({
                               href={safeHref}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex min-h-11 items-center break-words font-medium text-foreground hover:text-link hover:underline"
+                              className="inline-flex min-h-11 items-center rounded break-words font-medium text-foreground hover:text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                             >
                               {cand.externalTitle}
                             </a>
