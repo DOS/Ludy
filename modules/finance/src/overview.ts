@@ -15,8 +15,8 @@ import { statementsBooks } from './statements-regime.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
-// The accounts B01's cash, receivables and payables lines read; the balances query needs nothing else.
-const BALANCE_PREFIXES = ['111', '112', '131', '331'];
+// The accounts B01's cash, receivables and payables lines read (113, money in transit, is cash under the TT99 map); the balances query needs nothing else.
+const BALANCE_PREFIXES = ['111', '112', '113', '131', '331'];
 
 type Rows = Record<string, BalanceRow[]>;
 

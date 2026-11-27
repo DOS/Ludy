@@ -24,8 +24,8 @@ import { chartAccounts } from './accounts.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { ledgerPeriod, type LedgerPeriod } from './domain/ledger-reports.ts';
 import { comparisonPlan, type ComparisonPlan } from './domain/statement-comparison.ts';
-import { B01_LINES, CLOSING_ACCOUNT, buildB01, buildB02, type ReportEntry, type ReportLine, type ReportLineDef, type UnmappedBalance } from './domain/tt133-reports.ts';
-import { b02LinesFor, type StatementsRegime } from './domain/tt99-reports.ts';
+import { CLOSING_ACCOUNT, buildB01, buildB02, type ReportEntry, type ReportLine, type ReportLineDef, type UnmappedBalance } from './domain/tt133-reports.ts';
+import { b01For, b02LinesFor, type StatementsRegime } from './domain/tt99-reports.ts';
 import { statementsBooks } from './statements-regime.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -193,19 +193,22 @@ async function readStatements(ctx: QueryContext, periodText: string, legalEntity
   const plan = withComparison ? comparisonPlan(period) : null;
   const sums = await statementBalances(ctx, period, legalEntityId, plan);
   // The chart is the entity's books on the period's last day; the period and its comparison columns are read with that one map (a part booked under another chart is flagged, not refused).
+  // B01's start-of-year column is a balance at one day, so its span is that day (#5204).
   const spans = [period, ...(plan?.lastYear ? [plan.lastYear] : []), ...(plan?.previous ? [plan.previous] : [])].map((p) => ({ from: p.from, to: p.to }));
+  if (plan?.startOfYear) spans.push({ from: plan.startOfYear, to: plan.startOfYear });
   const books = await statementsBooks(ctx, legalEntityId, period.to, spans);
   const defs = b02LinesFor(books.regime);
-  const b01 = buildB01(asEntries(sums.b01, period.to, legalEntityId), legalEntityId, period.to);
+  const setup = b01For(books.regime);
+  const b01 = buildB01(asEntries(sums.b01, period.to, legalEntityId), legalEntityId, period.to, 'VND', setup);
   const b02 = buildB02(asEntries(sums.b02, period.from, legalEntityId), legalEntityId, period.from, period.to, 'VND', defs);
   const body: StatementsBody = {
     period,
     regime: books.regime,
     mixedCharts: books.mixedCharts,
-    b01: { asOf: period.to, lines: withTotals(b01.lines, B01_LINES), unmapped: await unmappedRows(ctx, b01.unmapped), balanced: b01.balanced },
+    b01: { asOf: period.to, lines: withTotals(b01.lines, setup.defs), unmapped: await unmappedRows(ctx, b01.unmapped), balanced: b01.balanced },
     b02: { from: period.from, to: period.to, lines: withTotals(b02.lines, defs), unmapped: await unmappedRows(ctx, b02.unmapped) },
   };
-  return { body, sums, plan, regime: books.regime };
+  return { body, sums, plan, regime: books.regime, setup };
 }
 
 // The statements of one legal entity (#1280), without the comparison columns: what the HTKK export reads for the year
@@ -216,9 +219,9 @@ export async function financialStatements(ctx: QueryContext, periodText: string,
 
 // The same with the comparison columns (#2090), for the screen and the workbook.
 export async function comparedStatements(ctx: QueryContext, periodText: string, legalEntityId: string): Promise<FinancialStatements> {
-  const { body, sums, plan, regime } = await readStatements(ctx, periodText, legalEntityId, true);
+  const { body, sums, plan, regime, setup } = await readStatements(ctx, periodText, legalEntityId, true);
   const start = plan?.startOfYear ?? null;
-  const startB01 = start === null ? null : buildB01(asEntries(sums.start, start, legalEntityId), legalEntityId, start);
+  const startB01 = start === null ? null : buildB01(asEntries(sums.start, start, legalEntityId), legalEntityId, start, 'VND', setup);
   return {
     ...body,
     comparison: {

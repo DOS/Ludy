@@ -172,6 +172,22 @@ describe('buildOverview', () => {
     expect(tt133.unmapped).toBe(2);
   });
 
+  it('reads cash under the regime of the books: money in transit (113) is cash under TT99 and not under the TT133 map (#5204)', () => {
+    // 112 400, 111 100 and 113 50 at the period end; 112 300 before it.
+    const balancesNow = [entry('2026-10-20', [['111', '100', '0'], ['112', '400', '0'], ['113', '50', '0'], ['4111', '0', '550']])];
+    const balancesBefore = [entry('2026-09-20', [['112', '300', '0'], ['4111', '0', '300']])];
+    const tt99 = buildOverview({ ...base, regime: 'tt99', balancesNow, balancesBefore });
+    expect(tt99.cash).toMatchObject({ amount: '550', previous: '300', change: '250' });
+    const tt133 = buildOverview({ ...base, balancesNow, balancesBefore });
+    expect(tt133.cash).toMatchObject({ amount: '500', previous: '300', change: '200' });
+    // Receivables and payables are the same lines under both.
+    const open = [entry('2026-10-20', [['131', '700', '0'], ['331', '0', '200'], ['4111', '0', '500']])];
+    for (const regime of ['tt133', 'tt99'] as const) {
+      const view = buildOverview({ ...base, regime, balancesNow: open });
+      expect([view.receivables.amount, view.payables.amount]).toEqual(['700', '200']);
+    }
+  });
+
   it('counts the balances of the period that no B02 line reads', () => {
     expect(buildOverview({ ...base, resultsNow: [entry('2026-10-21', [['8888', '5', '0']])] }).unmapped).toBe(1);
   });
