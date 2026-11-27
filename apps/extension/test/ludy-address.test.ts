@@ -29,6 +29,9 @@ describe('default Ludy Cloud split origins and parseAddress', () => {
     ['https://user:pw@ludy.congty.vn', 'credentials'],
     ['javascript:alert(1)', 'invalid'],
     ['ftp://ludy.congty.vn', 'invalid'],
+    ['https://*', 'invalid'],
+    ['https://*.example.com', 'invalid'],
+    ['https://a*.example.com', 'invalid'],
   ])('refuses %s', (input, problem) => {
     expect(parseAddress(input)).toEqual({ problem });
   });

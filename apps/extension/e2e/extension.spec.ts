@@ -94,8 +94,8 @@ test('the default Cloud build locks to Ludy Cloud split origins and --origin sup
   expect('optional_host_permissions' in cloudManifest).toBe(false);
   expect(cloudManifest.web_accessible_resources).toEqual([{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*'] }]);
   const cloudAddressJs = readFileSync(join(cloudDist, 'ludy-address.js'), 'utf8');
-  expect(cloudAddressJs).toContain("DEFAULT_APP_ADDRESS = 'https://app.ludy.vn'");
-  expect(cloudAddressJs).toContain("DEFAULT_API_ADDRESS = 'https://api.ludy.vn'");
+  expect(cloudAddressJs).toMatch(/DEFAULT_APP_ADDRESS = ['"]https:\/\/app\.ludy\.vn['"]/);
+  expect(cloudAddressJs).toMatch(/DEFAULT_API_ADDRESS = ['"]https:\/\/api\.ludy\.vn['"]/);
 
   const singleManifest = JSON.parse(readFileSync(join(singleDist, 'manifest.json'), 'utf8')) as Record<string, unknown>;
   expect(singleManifest.host_permissions).toEqual(['https://ludy.congty.vn/*']);

@@ -337,7 +337,7 @@ button.btn-primary {
   color: var(--primary-fg);
   border-color: transparent;
   font-weight: 600;
-  min-height: 42px;
+  min-height: 44px;
 }
 
 button.primary:hover:not(:disabled),
@@ -380,12 +380,17 @@ button.btn-danger {
   color: var(--danger-fg);
   border-color: transparent;
   font-weight: 600;
-  min-height: 42px;
+  min-height: 44px;
 }
 
 button.danger:hover:not(:disabled),
 button.btn-danger:hover:not(:disabled) {
   background: var(--danger-hover);
+}
+
+#stop-recording,
+#capture-save {
+  min-height: 44px;
 }
 
 button.btn-block {
@@ -565,7 +570,11 @@ textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   background: var(--card);
-  padding: 6px 8px;
+  padding: 0;
+}
+
+.notice-disclosure[open] {
+  padding-bottom: 8px;
 }
 
 .notice-disclosure summary {
@@ -578,6 +587,9 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
+  min-height: 28px;
+  padding: 6px 8px;
+  border-radius: var(--radius-control);
 }
 
 .notice-disclosure summary::-webkit-details-marker {
@@ -596,7 +608,16 @@ textarea {
 }
 
 .notice-disclosure[open] summary {
-  margin-bottom: 8px;
+  margin-bottom: 4px;
+}
+
+.notice-disclosure > :not(summary) {
+  margin-left: 8px;
+  margin-right: 8px;
+}
+
+.notice-disclosure > :not(summary) + :not(summary) {
+  margin-top: 6px;
 }
 
 .notice {

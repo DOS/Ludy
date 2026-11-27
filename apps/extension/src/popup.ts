@@ -478,19 +478,21 @@ async function signedInView(state: State, onMount: Array<() => void>): Promise<N
   const notesNodes = hasNotes ? await notesView(state, account.orgId, account.token, meetingsNodes.length > 0) : [];
 
   if (meetingsNodes.length > 0 && notesNodes.length > 0) {
-    const meetingsPanel = h('div', { class: 'stack-sm', id: 'panel-meetings', role: 'tabpanel', hidden: activePanelTab !== 'meetings' }, ...meetingsNodes);
-    const notesPanel = h('div', { class: 'stack-sm', id: 'panel-notes', role: 'tabpanel', hidden: activePanelTab !== 'notes' }, ...notesNodes);
+    const meetingsPanel = h('div', { class: 'stack-sm', id: 'panel-meetings', role: 'tabpanel', 'aria-labelledby': 'tab-meetings', hidden: activePanelTab !== 'meetings' }, ...meetingsNodes);
+    const notesPanel = h('div', { class: 'stack-sm', id: 'panel-notes', role: 'tabpanel', 'aria-labelledby': 'tab-notes', hidden: activePanelTab !== 'notes' }, ...notesNodes);
     const tabMeetings = h('button', {
       id: 'tab-meetings',
       role: 'tab',
       class: activePanelTab === 'meetings' ? 'active-tab' : undefined,
       'aria-selected': activePanelTab === 'meetings' ? 'true' : 'false',
+      'aria-controls': 'panel-meetings',
     }, T.meetingsTab);
     const tabNotes = h('button', {
       id: 'tab-notes',
       role: 'tab',
       class: activePanelTab === 'notes' ? 'active-tab' : undefined,
       'aria-selected': activePanelTab === 'notes' ? 'true' : 'false',
+      'aria-controls': 'panel-notes',
     }, T.notesTab);
 
     const selectTab = (nextTab: 'meetings' | 'notes') => {
@@ -531,12 +533,14 @@ async function notesView(state: State, orgId: string, token: string, hideHeading
   const modeNoteBtn = h('button', {
     id: 'mode-note',
     class: isNote ? 'active-tab' : undefined,
+    'aria-pressed': isNote ? 'true' : 'false',
     disabled: notesBusy,
     onclick: () => void ((captureDraft.kind = 'note'), (scopeState.status = ''), (notice = ''), render()),
   }, T.captureModeNote);
   const modeTodoBtn = h('button', {
     id: 'mode-todo',
     class: !isNote ? 'active-tab' : undefined,
+    'aria-pressed': !isNote ? 'true' : 'false',
     disabled: notesBusy,
     onclick: () => void ((captureDraft.kind = 'todo'), (scopeState.status = ''), (notice = ''), render()),
   }, T.captureModeTodo);

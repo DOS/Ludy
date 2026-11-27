@@ -33,6 +33,7 @@ function show(kind: TabSignInResult): HTMLParagraphElement | null {
   let countdown: HTMLParagraphElement | null = null;
   if (kind === 'connected') {
     countdown = document.createElement('p');
+    countdown.id = 'close-countdown';
     countdown.className = 'countdown';
     countdown.setAttribute('role', 'status');
     countdown.textContent = T.connectedCountdown.replace('{seconds}', '2');

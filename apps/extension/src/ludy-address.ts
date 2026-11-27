@@ -26,13 +26,14 @@ export function parseAddress(input: string, options?: { allowLoopbackIp?: boolea
   if (url.username !== '' || url.password !== '') return { problem: 'credentials' };
   const localHttpOk = url.protocol === 'http:' && (isLocalhost(url.hostname) || (options?.allowLoopbackIp === true && isLoopbackIp(url.hostname)));
   if (url.protocol !== 'https:' && !localHttpOk) return { problem: url.protocol === 'http:' ? 'insecure' : 'invalid' };
-  if (url.hostname === '') return { problem: 'invalid' };
+  if (url.hostname === '' || url.hostname.includes('*')) return { problem: 'invalid' };
   return { origin: url.origin };
 }
 
 // The match pattern the browser grants for an origin (host permissions and web_accessible_resources ignore ports).
 export function originPattern(origin: string): string {
   const url = new URL(origin);
+  if (url.hostname === '' || url.hostname.includes('*')) throw new Error(`Refused: ${origin} cannot use a wildcard hostname`);
   return `${url.protocol}//${url.hostname}/*`;
 }
 
