@@ -24,7 +24,9 @@ import { chartAccounts } from './accounts.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { ledgerPeriod, type LedgerPeriod } from './domain/ledger-reports.ts';
 import { comparisonPlan, type ComparisonPlan } from './domain/statement-comparison.ts';
-import { B01_LINES, B02_LINES, CLOSING_ACCOUNT, buildB01, buildB02, type ReportEntry, type ReportLine, type ReportLineDef, type UnmappedBalance } from './domain/tt133-reports.ts';
+import { B01_LINES, CLOSING_ACCOUNT, buildB01, buildB02, type ReportEntry, type ReportLine, type ReportLineDef, type UnmappedBalance } from './domain/tt133-reports.ts';
+import { b02LinesFor, type StatementsRegime } from './domain/tt99-reports.ts';
+import { statementsBooks } from './statements-regime.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
@@ -47,6 +49,10 @@ export interface StatementLine extends ReportLine {
 // What financialStatements() reads, and what the HTKK export builds on (statements-htkk.ts).
 export interface StatementsBody {
   period: LedgerPeriod;
+  // The chart the income statement is read under (the entity's books on the period's last day; TT133 when left out) and whether a part of it was booked under another chart (#5187). B01 keeps the TT133 layout
+  // under both until the TT99 B01-DN map exists (#5204).
+  regime?: StatementsRegime;
+  mixedCharts?: boolean;
   b01: { asOf: string; lines: StatementLine[]; unmapped: UnmappedRow[]; balanced: boolean };
   b02: { from: string; to: string; lines: StatementLine[]; unmapped: UnmappedRow[] };
 }
@@ -158,9 +164,9 @@ async function statementBalances(ctx: QueryContext, period: LedgerPeriod, legalE
 
 const amountsOf = (lines: ReportLine[]): ColumnAmounts => Object.fromEntries(lines.map((line) => [line.code, line.amount]));
 
-function comparedPeriod(period: LedgerPeriod | null, rows: BalanceRow[], legalEntityId: string): ComparedPeriod | null {
+function comparedPeriod(period: LedgerPeriod | null, rows: BalanceRow[], legalEntityId: string, regime: StatementsRegime): ComparedPeriod | null {
   if (!period) return null;
-  const b02 = buildB02(asEntries(rows, period.from, legalEntityId), legalEntityId, period.from, period.to);
+  const b02 = buildB02(asEntries(rows, period.from, legalEntityId), legalEntityId, period.from, period.to, 'VND', b02LinesFor(regime));
   return { period: period.period, from: period.from, to: period.to, amounts: amountsOf(b02.lines), unmapped: b02.unmapped.length };
 }
 
@@ -186,14 +192,20 @@ async function readStatements(ctx: QueryContext, periodText: string, legalEntity
   const period = ledgerPeriod(periodText);
   const plan = withComparison ? comparisonPlan(period) : null;
   const sums = await statementBalances(ctx, period, legalEntityId, plan);
+  // The chart is the entity's books on the period's last day; the period and its comparison columns are read with that one map (a part booked under another chart is flagged, not refused).
+  const spans = [period, ...(plan?.lastYear ? [plan.lastYear] : []), ...(plan?.previous ? [plan.previous] : [])].map((p) => ({ from: p.from, to: p.to }));
+  const books = await statementsBooks(ctx, legalEntityId, period.to, spans);
+  const defs = b02LinesFor(books.regime);
   const b01 = buildB01(asEntries(sums.b01, period.to, legalEntityId), legalEntityId, period.to);
-  const b02 = buildB02(asEntries(sums.b02, period.from, legalEntityId), legalEntityId, period.from, period.to);
+  const b02 = buildB02(asEntries(sums.b02, period.from, legalEntityId), legalEntityId, period.from, period.to, 'VND', defs);
   const body: StatementsBody = {
     period,
+    regime: books.regime,
+    mixedCharts: books.mixedCharts,
     b01: { asOf: period.to, lines: withTotals(b01.lines, B01_LINES), unmapped: await unmappedRows(ctx, b01.unmapped), balanced: b01.balanced },
-    b02: { from: period.from, to: period.to, lines: withTotals(b02.lines, B02_LINES), unmapped: await unmappedRows(ctx, b02.unmapped) },
+    b02: { from: period.from, to: period.to, lines: withTotals(b02.lines, defs), unmapped: await unmappedRows(ctx, b02.unmapped) },
   };
-  return { body, sums, plan };
+  return { body, sums, plan, regime: books.regime };
 }
 
 // The statements of one legal entity (#1280), without the comparison columns: what the HTKK export reads for the year
@@ -204,15 +216,15 @@ export async function financialStatements(ctx: QueryContext, periodText: string,
 
 // The same with the comparison columns (#2090), for the screen and the workbook.
 export async function comparedStatements(ctx: QueryContext, periodText: string, legalEntityId: string): Promise<FinancialStatements> {
-  const { body, sums, plan } = await readStatements(ctx, periodText, legalEntityId, true);
+  const { body, sums, plan, regime } = await readStatements(ctx, periodText, legalEntityId, true);
   const start = plan?.startOfYear ?? null;
   const startB01 = start === null ? null : buildB01(asEntries(sums.start, start, legalEntityId), legalEntityId, start);
   return {
     ...body,
     comparison: {
       startOfYear: start === null || startB01 === null ? null : { asOf: start, amounts: amountsOf(startB01.lines), balanced: startB01.balanced, unmapped: startB01.unmapped.length },
-      lastYear: comparedPeriod(plan?.lastYear ?? null, sums.last_year, legalEntityId),
-      previous: comparedPeriod(plan?.previous ?? null, sums.previous, legalEntityId),
+      lastYear: comparedPeriod(plan?.lastYear ?? null, sums.last_year, legalEntityId, regime),
+      previous: comparedPeriod(plan?.previous ?? null, sums.previous, legalEntityId, regime),
     },
   };
 }

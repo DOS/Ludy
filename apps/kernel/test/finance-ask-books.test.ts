@@ -211,6 +211,36 @@ describe('the eval set', () => {
 describe('the card of each entry', () => {
   const relative = () => resolveRelativePeriod('last_month', today());
 
+  it('profit_loss reads the same four line codes from a statement under the TT99 map, where they keep their meaning (#5187)', async () => {
+    // TT99's B02 renumbers financial revenue (22), financial expense (23) and administration (26), but not 10, 11, 50 and 60, the only codes the card reads.
+    const tt99 = {
+      ...READS,
+      'finance.statements.period': {
+        ...(READS['finance.statements.period'] as object),
+        regime: 'tt99',
+        b02: {
+          from: '2026-10-01',
+          to: '2026-10-31',
+          lines: [
+            { code: '10', label: 'Net revenue', amount: '90000000', total: false },
+            { code: '11', label: 'Cost of goods sold', amount: '50000000', total: false },
+            { code: '22', label: 'Financial revenue', amount: '1000000', total: false },
+            { code: '50', label: 'Profit before tax', amount: '26000000', total: true },
+            { code: '60', label: 'Profit after tax', amount: '20800000', total: true },
+          ],
+          unmapped: [],
+        },
+      },
+    };
+    const card = await runAskBooksEntry(fakeQuery([], tt99), 'profit_loss', relative(), undefined);
+    expect(card.figures).toEqual([
+      { key: 'revenue', amount: '90000000' },
+      { key: 'cost_of_goods', amount: '50000000' },
+      { key: 'profit_before_tax', amount: '26000000' },
+      { key: 'profit_after_tax', amount: '20800000' },
+    ]);
+  });
+
   it('profit_loss shows the four lines of the statement and cash_balance the cash line, as decimal strings', async () => {
     const calls: Call[] = [];
     const profit = await runAskBooksEntry(fakeQuery(calls), 'profit_loss', relative(), undefined);

@@ -269,6 +269,7 @@ export * from './domain/money.ts';
 export * from './domain/ledger.ts';
 export { postJournalEntry, postNewEntry, sourceRevisionError } from './ledger.ts';
 export * from './domain/tt133-reports.ts';
+export * from './domain/tt99-reports.ts';
 export * from './domain/vat-return.ts';
 export * from './domain/number-gaps.ts';
 export * from './domain/vat-01gtgt-xml.ts';

@@ -893,6 +893,8 @@ export const KERNEL_ERROR_CODES = [
   'MONTH_NOT_ENDED',
   // The quarter card sums only a quarter that has ended (#5183).
   'QUARTER_NOT_ENDED',
+  // The year-end filing file (HTKK) exists only for TT133 books (#5187).
+  'STATEMENTS_HTKK_REGIME',
   'LEGAL_ENTITY_MISMATCH',
   'LEGAL_ENTITY_MOVE_REFUSED',
   // A VND invoice with an amount below one dong that was not rounded to the dong (#1308, #2235).

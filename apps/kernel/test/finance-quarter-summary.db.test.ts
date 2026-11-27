@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The quarter in plain words on the Kế toán Tổng quan (#5183) on PostgreSQL 17: known entries are posted and finance.quarter_summary must give the figures the existing reads give for the same entity and dates
 // (the income statement and its comparison columns, the overview's cash, receivables and payables, the VAT working, the 01/CNKD worksheet, the stock report, the reminders' overdue loader), on a TT133 company, a TT99
-// company (whose 641 and 521 the income statement does not read, #5187), a household and an entity with no books; refuse a quarter that has not ended, give a member scoped to another entity the same refusal as the
+// company (whose 641 and 521 the card adds to the TT133 map it reads; the statements screen reads the TT99 map, #5187), a household and an entity with no books; refuse a quarter that has not ended, give a member scoped to another entity the same refusal as the
 // overview, show the period lock, and write nothing. The rules themselves are unit-tested in modules/finance/test/quarter-summary.test.ts.
 // Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database (CI only: a run without it is skipped, not passed).
 import { randomUUID } from 'node:crypto';
@@ -304,10 +304,14 @@ suite('the quarter in plain words (#5183)', () => {
     expect(figure(s, 'revenue')).toMatchObject({ amount: '45000000', previous: '20000000', lastYear: null, vsPrevious: 'rose', vsLastYear: 'none' });
     expect(figure(s, 'costs')).toMatchObject({ amount: '16000000', previous: '4000000', lastYear: null, vsPrevious: 'rose', vsLastYear: 'none' });
     expect(figure(s, 'profit')).toMatchObject({ amount: '29000000', previous: '16000000', lastYear: null, vsPrevious: 'rose', vsLastYear: 'none' });
-    // The statements screen is TT133's map: it lists 521 and 6417 as unmapped and its profit (B02 line 50) leaves them out. The card's profit is that line less what it does not read.
+    // The statements screen reads a TT99 entity under the TT99 map (#5187): 521 is line 02, 641 is line 25 and 642 line 26, nothing is unmapped, and its profit (line 50) is the card's: 50 - 5 - 12 - 4 = 29.
     const q3 = await statements(QUARTER, tt99);
-    expect(line(q3, '50')).toBe('46000000');
-    expect(q3.b02.unmapped.map((u) => [u.accountCode, u.amount]).sort()).toEqual([['521', '5000000'], ['6417', '12000000']]);
+    expect(q3.regime).toBe('tt99');
+    expect(line(q3, '02')).toBe('5000000');
+    expect(line(q3, '25')).toBe('12000000');
+    expect(line(q3, '26')).toBe('4000000');
+    expect(line(q3, '50')).toBe('29000000');
+    expect(q3.b02.unmapped).toEqual([]);
   });
 
   it('counts production cost once when 621 was closed to 154 and 632', async () => {
