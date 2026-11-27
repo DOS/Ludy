@@ -6,19 +6,44 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useRouter } from '@tanstack/react-router';
 import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { IMPORT_MAX_ROWS, type ImportCommitted, type ImportCompanyState, type ImportOnDuplicate, type ImportOutcome, type ImportPreview, type ImportReason } from '@ludy/kernel-contract';
+import {
+  IMPORT_MAX_ROWS,
+  IMPORT_PREVIEW_PAGE,
+  IMPORT_TAX_LOOKUP_MAX_ROWS,
+  type ImportCommitted,
+  type ImportCompanyState,
+  type ImportOnDuplicate,
+  type ImportOutcome,
+  type ImportPreview,
+  type ImportReason,
+  type ImportTaxLookupItem,
+  type ImportTaxLookupResult,
+} from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { NativeSelect } from '@ludy/ui/components/native-select';
 import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
-import { DataTable, ErrorText, Field, PageHeader } from '../components/ui.tsx';
+import { DataTable, ErrorText, Field, PageHeader, Spinner } from '../components/ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { getConfig } from '../lib/auth.ts';
 import { IMPORT_FIELDS, IMPORT_MAX_BYTES, guessMapping, mappedRows, parseContactCsv, rejectsCsv, sheetToTable, type ImportField, type ParsedCsv } from '../lib/contact-csv.ts';
+import { PHONE_TARGET } from '../lib/touch-target.ts';
 import { XlsxError, readFirstSheet, writeWorkbook } from '../lib/xlsx.ts';
 
 type Step = 'choose' | 'map' | 'preview' | 'done';
 const OUTCOMES: readonly (ImportOutcome | 'all')[] = ['all', 'new', 'duplicate', 'conflict', 'invalid'];
+
+interface FillSuggestionRowInput {
+  rowNo: number;
+  name?: string | null;
+  address?: string | null;
+}
+
+function errorCodeOf(error: unknown): string | null {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' ? code : null;
+}
 
 function download(name: string, content: BlobPart, type = 'text/csv;charset=utf-8'): void {
   const url = URL.createObjectURL(new Blob([content], { type }));
@@ -49,33 +74,78 @@ function BackLink({ slug, label }: { slug: string; label: string }) {
   const cameFromApp = ((window.history.state as { __TSR_index?: number } | null)?.__TSR_index ?? 0) > 0;
   if (!cameFromApp) {
     return (
-      <Link to="/o/$slug/contacts" params={{ slug }} className="text-link underline">
+      <Link to="/o/$slug/contacts" params={{ slug }} className={`text-link underline ${PHONE_TARGET}`}>
         {label}
       </Link>
     );
   }
   return (
-    <Button type="button" variant="link" className="h-auto p-0" onClick={() => router.history.back()}>
+    <Button type="button" variant="link" className="h-auto p-0 max-md:min-h-11" onClick={() => router.history.back()}>
       {label}
     </Button>
   );
 }
 
-export function ContactImportPage() {
+export interface ContactImportPreviewProps {
+  staged: ImportPreview;
+  rows: ImportPreview['rows'];
+  outcome: ImportOutcome | 'all';
+  onOutcomeChange: (next: ImportOutcome | 'all') => void;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
+  onDuplicate: ImportOnDuplicate;
+  onDuplicateChange: (next: ImportOnDuplicate) => void;
+  createCompanies: boolean;
+  onCreateCompaniesChange: (next: boolean) => void;
+  newCompanyNames: readonly string[];
+  onCommit: () => void;
+  commitPending: boolean;
+  onCancel: () => void;
+  cancelPending: boolean;
+  actionError: unknown;
+  deploymentTaxLookup: boolean;
+  taxLookupState: {
+    isPending: boolean;
+    data: ImportTaxLookupResult | undefined;
+    error: unknown;
+    onRetry: () => void;
+  };
+  acceptedRowNos: ReadonlySet<number>;
+  fillPendingRowNo: number | 'batch' | null;
+  fillError: unknown;
+  onAcceptRow: (item: FillSuggestionRowInput) => void;
+  onAcceptAll: (items: FillSuggestionRowInput[]) => void;
+}
+
+export function ContactImportPreview({
+  staged,
+  rows,
+  outcome,
+  onOutcomeChange,
+  hasMore,
+  loadingMore,
+  onLoadMore,
+  onDuplicate,
+  onDuplicateChange,
+  createCompanies,
+  onCreateCompaniesChange,
+  newCompanyNames,
+  onCommit,
+  commitPending,
+  onCancel,
+  cancelPending,
+  actionError,
+  deploymentTaxLookup,
+  taxLookupState,
+  acceptedRowNos,
+  fillPendingRowNo,
+  fillError,
+  onAcceptRow,
+  onAcceptAll,
+}: ContactImportPreviewProps) {
   const t = useTranslations('contactImport');
-  const { slug } = useParams({ strict: false }) as { slug: string };
-  const input = useRef<HTMLInputElement>(null);
-  const [step, setStep] = useState<Step>('choose');
-  const [filename, setFilename] = useState('');
-  const [csv, setCsv] = useState<ParsedCsv | null>(null);
-  const [mapping, setMapping] = useState<(ImportField | null)[]>([]);
-  const [readError, setReadError] = useState<string | null>(null);
-  const [staged, setStaged] = useState<ImportPreview | null>(null);
-  const [outcome, setOutcome] = useState<ImportOutcome | 'all'>('all');
-  const [onDuplicate, setOnDuplicate] = useState<ImportOnDuplicate>('skip');
-  // Off until the person ticks it: a company the file names and the org does not have is not made by an import that never said so (#2438).
-  const [createCompanies, setCreateCompanies] = useState(false);
-  const [done, setDone] = useState<ImportCommitted | null>(null);
+  const counts = staged.batch;
   const reasonText = (reason: ImportReason | null) => (reason ? t(`reason.${reason}`) : '');
   // What the preview promises about a row's company: only a new row is imported by default, a duplicate takes a company only when the person chooses to
   // fill in what it lacks, and a conflict or an invalid row takes none.
@@ -88,6 +158,301 @@ export function ContactImportPage() {
     return t(`company.${company.state as Exclude<ImportCompanyState, 'matched'>}`);
   };
 
+  const taxErrorCode = errorCodeOf(taxLookupState.error);
+  const lookupOffForDeployment = !deploymentTaxLookup || taxErrorCode === 'TAX_LOOKUP_DISABLED';
+  const lookupOrgDisabled = deploymentTaxLookup && taxErrorCode === 'TAX_LOOKUP_ORG_DISABLED';
+  const lookupUnavailable = deploymentTaxLookup && Boolean(taxLookupState.error) && !lookupOffForDeployment && !lookupOrgDisabled;
+  const lookupItems: readonly ImportTaxLookupItem[] = lookupOffForDeployment || lookupOrgDisabled ? [] : (taxLookupState.data?.items ?? []);
+  const showTaxLookupColumn = !lookupOffForDeployment && !lookupOrgDisabled && lookupItems.length > 0;
+
+  const lookupByRow = new Map<number, ImportTaxLookupItem>(lookupItems.map((item) => [item.rowNo, item]));
+  const loadedByRow = new Map(rows.map((r) => [r.rowNo, r]));
+
+  const actionableBatch: FillSuggestionRowInput[] = [];
+  for (const item of lookupItems) {
+    if (item.status !== 'suggested' || acceptedRowNos.has(item.rowNo)) continue;
+    const loaded = loadedByRow.get(item.rowNo);
+    const fillName = loaded ? (loaded.name.trim() === '' ? item.suggestedName : null) : item.suggestedName;
+    const fillAddress = loaded ? ((loaded.address ?? '').trim() === '' ? item.suggestedAddress : null) : item.suggestedAddress;
+    if (fillName || fillAddress) {
+      actionableBatch.push({
+        rowNo: item.rowNo,
+        ...(fillName ? { name: fillName } : {}),
+        ...(fillAddress ? { address: fillAddress } : {}),
+      });
+    }
+    if (actionableBatch.length >= IMPORT_TAX_LOOKUP_MAX_ROWS) break;
+  }
+
+  const notLookedUpCount = lookupItems.filter((item) => item.status === 'not_looked_up').length;
+  const stopReason = taxLookupState.data?.stopReason ?? null;
+
+  const head = showTaxLookupColumn
+    ? [t('preview.row'), t('field.name'), t('field.company'), t('field.taxCode'), t('field.address'), t('field.email'), t('field.phone'), t('preview.result'), t('preview.taxLookup.column')]
+    : [t('preview.row'), t('field.name'), t('field.company'), t('field.taxCode'), t('field.email'), t('field.phone'), t('preview.result')];
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">{t('preview.hint')}</p>
+      <ul className="flex flex-wrap gap-2 text-sm" aria-label={t('preview.counts')}>
+        <li><Badge variant="success">{t('preview.new', { count: String(counts.newRows) })}</Badge></li>
+        <li><Badge variant="outline">{t('preview.duplicate', { count: String(counts.duplicateRows) })}</Badge></li>
+        <li><Badge variant="outline">{t('preview.conflict', { count: String(counts.conflictRows) })}</Badge></li>
+        <li><Badge variant="outline">{t('preview.invalid', { count: String(counts.invalidRows) })}</Badge></li>
+      </ul>
+
+      {!lookupOffForDeployment && taxLookupState.isPending && (
+        <div role="status" className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+          <Spinner className="size-4 shrink-0" />
+          <span>{t('preview.taxLookup.loading')}</span>
+        </div>
+      )}
+
+      {lookupOrgDisabled && (
+        <div role="status" className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+          {t('preview.taxLookup.orgDisabled')}
+        </div>
+      )}
+
+      {lookupUnavailable && (
+        <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+          <span>{t('preview.taxLookup.unavailable')}</span>
+          <Button type="button" size="sm" variant="outline" className="max-md:min-h-11" onClick={taxLookupState.onRetry}>
+            {t('preview.taxLookup.retry')}
+          </Button>
+        </div>
+      )}
+
+      {showTaxLookupColumn && (actionableBatch.length > 0 || notLookedUpCount > 0 || taxLookupState.data?.quotaWarning) && (
+        <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 p-3 text-sm" data-testid="tax-lookup-summary">
+          <div className="min-w-0 space-y-1">
+            {actionableBatch.length > 0 && (
+              <p className="font-medium text-foreground">{t('preview.taxLookup.summary', { count: String(actionableBatch.length) })}</p>
+            )}
+            {notLookedUpCount > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {stopReason === 'rate_limit'
+                  ? t('preview.taxLookup.rateLimitSummary', { count: String(notLookedUpCount) })
+                  : stopReason === 'unavailable'
+                    ? t('preview.taxLookup.unavailableSummary', { count: String(notLookedUpCount) })
+                    : t('preview.taxLookup.waitingSummary', { count: String(notLookedUpCount), max: String(IMPORT_TAX_LOOKUP_MAX_ROWS) })}
+              </p>
+            )}
+            {taxLookupState.data?.quotaWarning && (
+              <p className="text-xs text-muted-foreground">{t('preview.taxLookup.quotaWarning')}</p>
+            )}
+          </div>
+          {actionableBatch.length > 0 && (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="shrink-0 max-md:min-h-11"
+              loading={fillPendingRowNo === 'batch'}
+              disabled={fillPendingRowNo !== null}
+              onClick={() => onAcceptAll(actionableBatch)}
+            >
+              {t('preview.taxLookup.fillAll')}
+            </Button>
+          )}
+        </div>
+      )}
+
+      <Tabs value={outcome} onValueChange={(v) => onOutcomeChange(v as ImportOutcome | 'all')}>
+        <TabsList aria-label={t('preview.filter')} className="max-w-full flex-wrap">
+          {OUTCOMES.map((o) => (
+            <TabsTrigger key={o} value={o}>
+              {t(`outcome.${o}`)}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+
+      <DataTable head={head} stacked>
+        {rows.map((r) => {
+          const lookupItem = showTaxLookupColumn ? lookupByRow.get(r.rowNo) : undefined;
+          const isAccepted = acceptedRowNos.has(r.rowNo);
+          const fillName =
+            lookupItem && lookupItem.status === 'suggested' && !isAccepted && r.name.trim() === ''
+              ? lookupItem.suggestedName
+              : null;
+          const fillAddress =
+            lookupItem && lookupItem.status === 'suggested' && !isAccepted && (r.address ?? '').trim() === ''
+              ? lookupItem.suggestedAddress
+              : null;
+          const canAcceptRow = Boolean(fillName || fillAddress);
+
+          return (
+            <TableRow key={r.rowNo} data-testid="import-row">
+              <TableCell data-label={t('preview.row')} className="text-sm tabular-nums">{r.rowNo}</TableCell>
+              <TableCell data-label={t('field.name')} className="text-sm">
+                {r.name}
+                <p className="text-xs text-muted-foreground">{t(`preview.kindOf.${r.kind}`)}</p>
+              </TableCell>
+              <TableCell data-label={t('field.company')} className="text-sm" data-testid="import-company">
+                {r.company && (
+                  <>
+                    {r.company.name}
+                    {companyText(r) && <p className="text-xs text-muted-foreground">{companyText(r)}</p>}
+                  </>
+                )}
+              </TableCell>
+              <TableCell data-label={t('field.taxCode')} className="text-sm">{r.taxCode}</TableCell>
+              {showTaxLookupColumn && (
+                <TableCell data-label={t('field.address')} className="text-sm">{r.address}</TableCell>
+              )}
+              <TableCell data-label={t('field.email')} className="text-sm">{r.email}</TableCell>
+              <TableCell data-label={t('field.phone')} className="text-sm">{r.phone}</TableCell>
+              <TableCell data-label={t('preview.result')} className="text-sm">
+                <Badge variant={r.outcome === 'new' ? 'success' : 'outline'}>{t(`outcome.${r.outcome}`)}</Badge>
+                {r.reason && <p className="text-xs text-muted-foreground">{reasonText(r.reason)}</p>}
+                {r.match && <p className="text-xs text-muted-foreground">{t('preview.matches', { name: r.match.name })}</p>}
+              </TableCell>
+              {showTaxLookupColumn && (
+                <TableCell data-label={t('preview.taxLookup.column')} className="text-sm" data-testid="import-tax-suggestion">
+                  {lookupItem ? (
+                    lookupItem.status === 'not_looked_up' ? (
+                      <Badge variant="outline">{t('preview.taxLookup.notLookedUp')}</Badge>
+                    ) : lookupItem.status === 'not_found' ? (
+                      <span className="text-xs text-muted-foreground">{t('preview.taxLookup.notFound')}</span>
+                    ) : lookupItem.status === 'no_fill' ? (
+                      <span className="text-xs text-muted-foreground">{t('preview.taxLookup.noFill')}</span>
+                    ) : canAcceptRow ? (
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-foreground">{t('preview.taxLookup.suggestionTitle')}</p>
+                        {fillName && (
+                          <p className="text-xs text-muted-foreground">
+                            <span>{`${t('field.name')}: `}</span>
+                            <span className="text-foreground">{fillName}</span>
+                          </p>
+                        )}
+                        {fillAddress && (
+                          <p className="text-xs text-muted-foreground">
+                            <span>{`${t('field.address')}: `}</span>
+                            <span className="text-foreground">{fillAddress}</span>
+                          </p>
+                        )}
+                        {lookupItem.statusText && (
+                          <p className="text-xs text-subtle-foreground">{lookupItem.statusText}</p>
+                        )}
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          className="mt-1 max-md:min-h-11"
+                          aria-label={t('preview.taxLookup.acceptRowAria', { row: String(r.rowNo), code: lookupItem.taxCode })}
+                          loading={fillPendingRowNo === r.rowNo}
+                          disabled={fillPendingRowNo !== null}
+                          onClick={() =>
+                            onAcceptRow({
+                              rowNo: r.rowNo,
+                              ...(fillName ? { name: fillName } : {}),
+                              ...(fillAddress ? { address: fillAddress } : {}),
+                            })
+                          }
+                        >
+                          {t('preview.taxLookup.acceptRow')}
+                        </Button>
+                      </div>
+                    ) : isAccepted ? (
+                      <Badge variant="success">{t('preview.taxLookup.filled')}</Badge>
+                    ) : null
+                  ) : null}
+                </TableCell>
+              )}
+            </TableRow>
+          );
+        })}
+      </DataTable>
+
+      {hasMore && (
+        <Button type="button" variant="outline" size="sm" className="max-md:min-h-11" loading={loadingMore} onClick={onLoadMore}>
+          {t('preview.more')}
+        </Button>
+      )}
+      {counts.duplicateRows > 0 && (
+        <fieldset className="space-y-1 text-sm">
+          <legend className="font-medium">{t('preview.duplicates')}</legend>
+          {(['skip', 'fill_empty'] as const).map((choice) => (
+            <label key={choice} className="flex items-center gap-2 max-md:min-h-11">
+              <input type="radio" name="on-duplicate" checked={onDuplicate === choice} onChange={() => onDuplicateChange(choice)} />
+              {t(`choice.${choice}`)}
+            </label>
+          ))}
+        </fieldset>
+      )}
+      {counts.newCompanies > 0 && (
+        <label className="flex items-start gap-2 text-sm max-md:min-h-11">
+          <input type="checkbox" className="mt-1" checked={createCompanies} onChange={(e) => onCreateCompaniesChange(e.target.checked)} />
+          <span>
+            {t('preview.createCompanies', { count: String(counts.newCompanies) })}
+            {newCompanyNames.length > 0 && (
+              <span className="block text-xs text-muted-foreground">
+                {newCompanyNames.join(', ')}
+                {counts.newCompanies > newCompanyNames.length ? ', …' : ''}
+              </span>
+            )}
+          </span>
+        </label>
+      )}
+      {(actionError || fillError) && <ErrorText>{errorMessage(actionError ?? fillError)}</ErrorText>}
+      {counts.newRows === 0 && !(onDuplicate === 'fill_empty' && counts.duplicateRows > 0) && (
+        <p className="text-xs text-muted-foreground" role="status">
+          {t(counts.duplicateRows > 0 ? 'preview.nothingNewDuplicates' : 'preview.nothingNew')}
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          className="max-md:min-h-11"
+          disabled={counts.newRows === 0 && !(onDuplicate === 'fill_empty' && counts.duplicateRows > 0)}
+          loading={commitPending}
+          onClick={onCommit}
+        >
+          {t('preview.import', { count: String(counts.newRows) })}
+        </Button>
+        <Button type="button" variant="ghost" className="max-md:min-h-11" loading={cancelPending} onClick={onCancel}>
+          {t('cancel')}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+export function ContactImportPage() {
+  const t = useTranslations('contactImport');
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  const deploymentTaxLookup = getConfig().partyTaxLookup === true;
+  const input = useRef<HTMLInputElement>(null);
+  const [step, setStep] = useState<Step>('choose');
+  const [filename, setFilename] = useState('');
+  const [csv, setCsv] = useState<ParsedCsv | null>(null);
+  const [mapping, setMapping] = useState<(ImportField | null)[]>([]);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [staged, setStaged] = useState<ImportPreview | null>(null);
+  const [outcome, setOutcome] = useState<ImportOutcome | 'all'>('all');
+  const [onDuplicate, setOnDuplicate] = useState<ImportOnDuplicate>('skip');
+  // Off until the person ticks it: a company the file names and the org does not have is not made by an import that never said so (#2438).
+  const [createCompanies, setCreateCompanies] = useState(false);
+  const [done, setDone] = useState<ImportCommitted | null>(null);
+  const [acceptedRowNos, setAcceptedRowNos] = useState<Set<number>>(() => new Set());
+  const [fillPendingRowNo, setFillPendingRowNo] = useState<number | 'batch' | null>(null);
+  const reasonText = (reason: ImportReason | null) => (reason ? t(`reason.${reason}`) : '');
+
+  const stagedRef = useRef(staged);
+  stagedRef.current = staged;
+
+  const taxLookup = useMutation({
+    mutationFn: (batchId: string) => client.crm.contactImport.taxLookup({ batchId }),
+    onSuccess: (result) => {
+      const current = stagedRef.current;
+      if (result.expired && current) {
+        setDone({ batch: { ...current.batch, status: 'expired' }, skipped: [] });
+        setStep('done');
+      }
+    },
+  });
+
   const stage = useMutation(
     orpc.crm.contactImport.stage.mutationOptions({
       onSuccess: (preview) => {
@@ -96,10 +461,68 @@ export function ContactImportPage() {
         setMoreHas(null);
         setOutcome('all');
         setCreateCompanies(false);
+        setAcceptedRowNos(new Set());
+        setFillPendingRowNo(null);
+        taxLookup.reset();
         setStep('preview');
+        if (deploymentTaxLookup) taxLookup.mutate(preview.batch.id);
       },
     }),
   );
+
+  const [more, setMore] = useState<ImportPreview['rows']>([]);
+  // Whether the pages loaded after the first one left rows unread; null until one is loaded.
+  const [moreHas, setMoreHas] = useState<boolean | null>(null);
+
+  const fillSuggestions = useMutation({
+    mutationFn: async (vars: { batchId: string; rows: FillSuggestionRowInput[]; scope: number | 'batch' }) =>
+      client.crm.contactImport.fillTaxSuggestions({ batchId: vars.batchId, rows: vars.rows }),
+    onMutate: (vars) => {
+      setFillPendingRowNo(vars.scope);
+    },
+    onSettled: () => {
+      setFillPendingRowNo(null);
+    },
+    onSuccess: async (result, vars) => {
+      setAcceptedRowNos((prev) => {
+        const next = new Set(prev);
+        for (const r of vars.rows) next.add(r.rowNo);
+        return next;
+      });
+      if (result.batch.status !== 'staged') {
+        setDone({ batch: result.batch, skipped: [] });
+        setStep('done');
+        return;
+      }
+      // Refresh staged first page and any loaded extra pages so row outcomes and batch counts match the server.
+      const totalLoadedAll = (staged?.rows.length ?? 0) + (outcome === 'all' ? more.length : 0);
+      const firstPage = await client.crm.contactImport.preview({ batchId: vars.batchId, after: 0, limit: IMPORT_PREVIEW_PAGE });
+      const extraRows: ImportPreview['rows'] = [];
+      let extraHas: boolean | null = null;
+      if (outcome === 'all' && totalLoadedAll > IMPORT_PREVIEW_PAGE && firstPage.more) {
+        let cursor = firstPage.rows.at(-1)?.rowNo ?? 0;
+        let hasNext = firstPage.more;
+        while (hasNext && firstPage.rows.length + extraRows.length < totalLoadedAll) {
+          const nextPage = await client.crm.contactImport.preview({ batchId: vars.batchId, after: cursor, limit: IMPORT_PREVIEW_PAGE });
+          extraRows.push(...nextPage.rows);
+          hasNext = nextPage.more;
+          extraHas = nextPage.more;
+          if (nextPage.rows.length === 0) break;
+          cursor = nextPage.rows.at(-1)?.rowNo ?? cursor;
+        }
+      }
+      setStaged(firstPage);
+      if (outcome === 'all') {
+        setMore(extraRows);
+        setMoreHas(extraHas);
+      } else {
+        setMore([]);
+        setMoreHas(null);
+      }
+      void queryClient.invalidateQueries({ queryKey: orpc.crm.contactImport.preview.key() });
+    },
+  });
+
   const commit = useMutation(
     orpc.crm.contactImport.commit.mutationOptions({
       onSuccess: (result) => {
@@ -117,9 +540,6 @@ export function ContactImportPage() {
     ...orpc.crm.contactImport.preview.queryOptions({ input: { batchId: batchId ?? '00000000-0000-4000-8000-000000000000', ...(outcome === 'all' ? {} : { outcome }), after: 0, limit: 100 } }),
     enabled: step === 'preview' && batchId !== undefined && outcome !== 'all',
   });
-  const [more, setMore] = useState<ImportPreview['rows']>([]);
-  // Whether the pages loaded after the first one left rows unread; null until one is loaded.
-  const [moreHas, setMoreHas] = useState<boolean | null>(null);
   // The batch and filter the screen shows now: an answer that comes back after either changed belongs to a list no longer there.
   const viewKey = `${batchId ?? ''}|${outcome}`;
   const shown = useRef(viewKey);
@@ -152,6 +572,10 @@ export function ContactImportPage() {
     setCreateCompanies(false);
     setFilename('');
     setReadError(null);
+    setAcceptedRowNos(new Set());
+    setFillPendingRowNo(null);
+    taxLookup.reset();
+    fillSuggestions.reset();
     if (input.current) input.current.value = '';
   };
 
@@ -224,11 +648,11 @@ export function ContactImportPage() {
       {step === 'map' && csv && (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">{t('map.hint', { file: filename, rows: String(csv.rows.length) })}</p>
-          <DataTable head={[t('map.column'), t('map.field'), t('map.sample')]}>
+          <DataTable head={[t('map.column'), t('map.field'), t('map.sample')]} stacked>
             {csv.header.map((h, i) => (
               <TableRow key={`${h}-${i}`}>
-                <TableCell className="text-sm font-medium">{h || t('map.unnamed', { n: String(i + 1) })}</TableCell>
-                <TableCell>
+                <TableCell data-label={t('map.column')} className="text-sm font-medium">{h || t('map.unnamed', { n: String(i + 1) })}</TableCell>
+                <TableCell data-label={t('map.field')}>
                   <NativeSelect
                     size="sm"
                     aria-label={t('map.fieldOf', { column: h || String(i + 1) })}
@@ -243,17 +667,17 @@ export function ContactImportPage() {
                     ))}
                   </NativeSelect>
                 </TableCell>
-                <TableCell className="text-sm text-muted-foreground">{csv.rows.slice(0, 3).map((r) => r[i] ?? '').filter(Boolean).join(' | ')}</TableCell>
+                <TableCell data-label={t('map.sample')} className="text-sm text-muted-foreground">{csv.rows.slice(0, 3).map((r) => r[i] ?? '').filter(Boolean).join(' | ')}</TableCell>
               </TableRow>
             ))}
           </DataTable>
           {!nameMapped && <ErrorText>{t('map.nameRequired')}</ErrorText>}
           {stage.error && <ErrorText>{errorMessage(stage.error)}</ErrorText>}
-          <div className="flex gap-2">
-            <Button disabled={!nameMapped} loading={stage.isPending} onClick={() => stage.mutate({ filename, rows: mappedRows(csv.rows, mapping, csv.numeric) })}>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" className="max-md:min-h-11" disabled={!nameMapped} loading={stage.isPending} onClick={() => stage.mutate({ filename, rows: mappedRows(csv.rows, mapping, csv.numeric) })}>
               {t('map.next')}
             </Button>
-            <Button variant="ghost" disabled={stage.isPending} onClick={reset}>
+            <Button type="button" variant="ghost" className="max-md:min-h-11" disabled={stage.isPending} onClick={reset}>
               {t('cancel')}
             </Button>
           </div>
@@ -261,95 +685,41 @@ export function ContactImportPage() {
       )}
 
       {step === 'preview' && staged && counts && (
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">{t('preview.hint')}</p>
-          <ul className="flex flex-wrap gap-2 text-sm" aria-label={t('preview.counts')}>
-            <li><Badge variant="success">{t('preview.new', { count: String(counts.newRows) })}</Badge></li>
-            <li><Badge variant="outline">{t('preview.duplicate', { count: String(counts.duplicateRows) })}</Badge></li>
-            <li><Badge variant="outline">{t('preview.conflict', { count: String(counts.conflictRows) })}</Badge></li>
-            <li><Badge variant="outline">{t('preview.invalid', { count: String(counts.invalidRows) })}</Badge></li>
-          </ul>
-          <Tabs value={outcome} onValueChange={(v) => { setOutcome(v as ImportOutcome | 'all'); setMore([]); setMoreHas(null); }}>
-            <TabsList aria-label={t('preview.filter')}>
-              {OUTCOMES.map((o) => (
-                <TabsTrigger key={o} value={o}>
-                  {t(`outcome.${o}`)}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-          <DataTable head={[t('preview.row'), t('field.name'), t('field.company'), t('field.taxCode'), t('field.email'), t('field.phone'), t('preview.result')]}>
-            {rows.map((r) => (
-              <TableRow key={r.rowNo} data-testid="import-row">
-                <TableCell className="text-sm tabular-nums">{r.rowNo}</TableCell>
-                <TableCell className="text-sm">
-                  {r.name}
-                  <p className="text-xs text-muted-foreground">{t(`preview.kindOf.${r.kind}`)}</p>
-                </TableCell>
-                <TableCell className="text-sm" data-testid="import-company">
-                  {r.company && (
-                    <>
-                      {r.company.name}
-                      {companyText(r) && <p className="text-xs text-muted-foreground">{companyText(r)}</p>}
-                    </>
-                  )}
-                </TableCell>
-                <TableCell className="text-sm">{r.taxCode}</TableCell>
-                <TableCell className="text-sm">{r.email}</TableCell>
-                <TableCell className="text-sm">{r.phone}</TableCell>
-                <TableCell className="text-sm">
-                  <Badge variant={r.outcome === 'new' ? 'success' : 'outline'}>{t(`outcome.${r.outcome}`)}</Badge>
-                  {r.reason && <p className="text-xs text-muted-foreground">{reasonText(r.reason)}</p>}
-                  {r.match && <p className="text-xs text-muted-foreground">{t('preview.matches', { name: r.match.name })}</p>}
-                </TableCell>
-              </TableRow>
-            ))}
-          </DataTable>
-          {hasMore && (
-            <Button variant="outline" size="sm" loading={loadMore.isPending} onClick={() => loadMore.mutate()}>
-              {t('preview.more')}
-            </Button>
-          )}
-          {counts.duplicateRows > 0 && (
-            <fieldset className="space-y-1 text-sm">
-              <legend className="font-medium">{t('preview.duplicates')}</legend>
-              {(['skip', 'fill_empty'] as const).map((choice) => (
-                <label key={choice} className="flex items-center gap-2">
-                  <input type="radio" name="on-duplicate" checked={onDuplicate === choice} onChange={() => setOnDuplicate(choice)} />
-                  {t(`choice.${choice}`)}
-                </label>
-              ))}
-            </fieldset>
-          )}
-          {counts.newCompanies > 0 && (
-            <label className="flex items-start gap-2 text-sm">
-              <input type="checkbox" className="mt-1" checked={createCompanies} onChange={(e) => setCreateCompanies(e.target.checked)} />
-              <span>
-                {t('preview.createCompanies', { count: String(counts.newCompanies) })}
-                {newCompanyNames.length > 0 && (
-                  <span className="block text-xs text-muted-foreground">
-                    {newCompanyNames.join(', ')}
-                    {counts.newCompanies > newCompanyNames.length ? ', …' : ''}
-                  </span>
-                )}
-              </span>
-            </label>
-          )}
-          {(commit.error || cancel.error) && <ErrorText>{errorMessage(commit.error ?? cancel.error)}</ErrorText>}
-          {counts.newRows === 0 && !(onDuplicate === 'fill_empty' && counts.duplicateRows > 0) && (
-            <p className="text-xs text-muted-foreground" role="status">
-              {t(counts.duplicateRows > 0 ? 'preview.nothingNewDuplicates' : 'preview.nothingNew')}
-            </p>
-          )}
-          <div className="flex gap-2">
-            <Button disabled={counts.newRows === 0 && !(onDuplicate === 'fill_empty' && counts.duplicateRows > 0)} loading={commit.isPending} onClick={() => commit.mutate({ batchId: counts.id, onDuplicate, createCompanies })}>
-              {t('preview.import', { count: String(counts.newRows) })}
-            </Button>
-            <Button variant="ghost" loading={cancel.isPending} onClick={() => cancel.mutate({ batchId: counts.id })}>
-              {t('cancel')}
-            </Button>
-          </div>
-        </div>
+        <ContactImportPreview
+          staged={staged}
+          rows={rows}
+          outcome={outcome}
+          onOutcomeChange={(next) => {
+            setOutcome(next);
+            setMore([]);
+            setMoreHas(null);
+          }}
+          hasMore={hasMore}
+          loadingMore={loadMore.isPending}
+          onLoadMore={() => loadMore.mutate()}
+          onDuplicate={onDuplicate}
+          onDuplicateChange={setOnDuplicate}
+          createCompanies={createCompanies}
+          onCreateCompaniesChange={setCreateCompanies}
+          newCompanyNames={newCompanyNames}
+          onCommit={() => commit.mutate({ batchId: counts.id, onDuplicate, createCompanies })}
+          commitPending={commit.isPending}
+          onCancel={() => cancel.mutate({ batchId: counts.id })}
+          cancelPending={cancel.isPending}
+          actionError={commit.error ?? cancel.error}
+          deploymentTaxLookup={deploymentTaxLookup}
+          taxLookupState={{
+            isPending: taxLookup.isPending,
+            data: taxLookup.data,
+            error: taxLookup.error,
+            onRetry: () => taxLookup.mutate(counts.id),
+          }}
+          acceptedRowNos={acceptedRowNos}
+          fillPendingRowNo={fillPendingRowNo}
+          fillError={fillSuggestions.error}
+          onAcceptRow={(item) => fillSuggestions.mutate({ batchId: counts.id, rows: [item], scope: item.rowNo })}
+          onAcceptAll={(items) => fillSuggestions.mutate({ batchId: counts.id, rows: items, scope: 'batch' })}
+        />
       )}
 
       {step === 'done' && done && csv && (

@@ -250,7 +250,18 @@ import { zFinanceMonthCloseExplainAsk, zFinanceMonthCloseInput, zMonthClose, zMo
 import { zExpenseVarianceExplanation, zFinanceExpenseVariance, zFinanceExpenseVarianceExplainAsk, zFinanceExpenseVarianceInput } from './finance-expense-variance.ts';
 import { zFinanceUnusualEntries, zFinanceUnusualEntriesExplainAsk, zFinanceUnusualEntriesInput, zFinanceUnusualEntryReviewInput, zFinanceUnusualEntryReviewOutput, zUnusualEntriesExplanation } from './finance-unusual-entries.ts';
 import { zFinanceQuarterSummary, zFinanceQuarterSummaryExplainAsk, zFinanceQuarterSummaryInput, zQuarterSummaryExplanation } from './finance-quarter-summary.ts';
-import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
+import {
+  zImportBatch,
+  zImportCommit,
+  zImportCommitted,
+  zImportFillTaxSuggestions,
+  zImportFillTaxSuggestionsResult,
+  zImportPreview,
+  zImportPreviewQuery,
+  zImportRef,
+  zImportStage,
+  zImportTaxLookupResult,
+} from './contact-import.ts';
 import { zFilterAstShape, zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared, zSavedViewSortShape } from './saved-view.ts';
 import {
   zConversationAssign,
@@ -1526,6 +1537,8 @@ export const contract = {
     contactImport: {
       stage: oc.input(zImportStage).output(zImportPreview),
       preview: oc.input(zImportPreviewQuery).output(zImportPreview),
+      taxLookup: oc.input(zImportRef).output(zImportTaxLookupResult),
+      fillTaxSuggestions: oc.input(zImportFillTaxSuggestions).output(zImportFillTaxSuggestionsResult),
       commit: oc.input(zImportCommit).output(zImportCommitted),
       cancel: oc.input(zImportRef).output(zImportBatch),
     },

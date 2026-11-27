@@ -21,7 +21,9 @@ import {
   IMPORT_PREVIEW_PAGE,
   IMPORT_STAGED_DAYS,
   phoneKey,
+  zId,
   zImportCommit,
+  zImportFillTaxSuggestions,
   zImportPreviewQuery,
   zImportRef,
   zImportStage,
@@ -29,6 +31,7 @@ import {
   type ImportBatch,
   type ImportCommitted,
   type ImportCompanyState,
+  type ImportFillTaxSuggestionsResult,
   type ImportOnDuplicate,
   type ImportOutcome,
   type ImportPreview,
@@ -37,7 +40,7 @@ import {
   type ImportRowInput,
   type ImportStatus,
 } from '@ludy/kernel-contract';
-import { checkPartyFields } from '@ludy/kernel';
+import { checkPartyFields, isEnterpriseTaxCode, readTaxLookupCacheBatch, readTaxLookupSwitch, type CachedTaxLookupEntry } from '@ludy/kernel';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
@@ -332,6 +335,144 @@ async function expireStale(ctx: CommandContext): Promise<void> {
 // An invalid row is kept as read for the preview, minus the control characters (a NUL cannot be stored) and cut to the column.
 const clip = (value: string | null, max: number): string | null => (value === null ? null : value.replace(/\p{Cc}/gu, ' ').slice(0, max));
 
+interface StagedDraftRow {
+  rowNo: number;
+  kindWord?: string | null;
+  kind?: Kind;
+  name: string;
+  taxCode: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  company: string | null;
+}
+
+interface EvaluatedStagedRow {
+  org_id: string;
+  batch_id: string;
+  row_no: number;
+  kind: Kind;
+  name: string;
+  tax_code: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  outcome: ImportOutcome;
+  reason: ImportReason | null;
+  match_party_id: string | null;
+  company_name: string | null;
+  company_state: ImportCompanyState;
+  company_party_id: string | null;
+}
+
+async function evaluateStagedRows(
+  ctx: Pick<CommandContext, 'trx' | 'orgId'>,
+  batchId: string,
+  drafts: readonly StagedDraftRow[],
+): Promise<{
+  staged: EvaluatedStagedRow[];
+  counts: {
+    totalRows: number;
+    newRows: number;
+    duplicateRows: number;
+    conflictRows: number;
+    invalidRows: number;
+    newCompanies: number;
+  };
+}> {
+  const candidates: Candidate[] = [];
+  const invalid: { rowNo: number; raw: StagedDraftRow; kind: Kind; reason: ImportReason }[] = [];
+  for (const raw of drafts) {
+    const checked = checkPartyFields({
+      name: raw.name,
+      taxCode: cell(raw.taxCode),
+      email: cell(raw.email),
+      phone: cell(raw.phone),
+      address: cell(raw.address),
+    });
+    if (!checked.ok) {
+      const normalizedTax = normalizeTaxCode(cell(raw.taxCode));
+      const fallbackKind = raw.kindWord !== undefined ? kindOf(raw.kindWord, normalizedTax) : (raw.kind ?? kindOf(null, normalizedTax));
+      invalid.push({ rowNo: raw.rowNo, raw, kind: fallbackKind, reason: checked.reason });
+      continue;
+    }
+    const f = checked.fields;
+    const kind = raw.kindWord !== undefined ? kindOf(raw.kindWord, f.taxCode) : (raw.kind ?? kindOf(null, f.taxCode));
+    const companyCell = cell(raw.company);
+    // Only a person works at a company: a company's row has none.
+    candidates.push({
+      rowNo: raw.rowNo,
+      kind,
+      name: f.name,
+      taxCode: f.taxCode,
+      email: f.email,
+      phone: f.phone,
+      address: f.address,
+      company: kind === 'person' ? usableCompany(companyCell) : null,
+      companyRaw: clip(companyCell, 1000),
+    });
+  }
+  const verdicts = classify(candidates, await existingFor(ctx, candidates));
+  // The companies the file makes itself: its new rows of kind company. A person's cell naming one is linked to it, and no second one is made.
+  const fileCompanies = candidates.filter((c) => c.kind === 'organization' && verdicts.get(c.rowNo)?.outcome === 'new').map((c) => ({ name: c.name, taxCode: c.taxCode }));
+  const companies = await resolveCompanies(ctx, candidates.flatMap((c) => (c.company === null ? [] : [c.company])), fileCompanies);
+  const companyOf = (c: Candidate): CompanyVerdict => (c.company === null ? NO_COMPANY : (companies.get(c.company) ?? NO_COMPANY));
+  const staged: EvaluatedStagedRow[] = [
+    ...candidates.map((c) => {
+      const v = verdicts.get(c.rowNo) as Verdict;
+      const company = companyOf(c);
+      return {
+        org_id: ctx.orgId,
+        batch_id: batchId,
+        row_no: c.rowNo,
+        kind: c.kind,
+        name: c.name,
+        tax_code: c.taxCode,
+        email: c.email,
+        phone: c.phone,
+        address: c.address,
+        outcome: v.outcome,
+        reason: v.reason,
+        match_party_id: v.matchId,
+        company_name: c.companyRaw,
+        company_state: company.state,
+        company_party_id: company.partyId,
+      };
+    }),
+    ...invalid.map((x) => ({
+      org_id: ctx.orgId,
+      batch_id: batchId,
+      row_no: x.rowNo,
+      kind: x.kind,
+      name: clip(x.raw.name.trim(), 1000) ?? '',
+      tax_code: clip(cell(x.raw.taxCode), 40),
+      email: clip(cell(x.raw.email), 1000),
+      phone: clip(cell(x.raw.phone), 100),
+      address: clip(cell(x.raw.address), 2000),
+      outcome: 'invalid' as const,
+      reason: x.reason,
+      match_party_id: null,
+      company_name: clip(cell(x.raw.company), 1000),
+      company_state: 'none' as const,
+      company_party_id: null,
+    })),
+  ].sort((a, b) => a.row_no - b.row_no);
+  const count = (o: ImportOutcome) => staged.filter((s) => s.outcome === o).length;
+  // The companies a commit could make: one for each name the new rows share (duplicates fill from an existing company only).
+  const toMake = new Set(candidates.filter((c) => verdicts.get(c.rowNo)?.outcome === 'new' && companyOf(c).state === 'new').map((c) => companyOf(c).key));
+  return {
+    staged,
+    counts: {
+      totalRows: staged.length,
+      newRows: count('new'),
+      duplicateRows: count('duplicate'),
+      conflictRows: count('conflict'),
+      invalidRows: count('invalid'),
+      newCompanies: toMake.size,
+    },
+  };
+}
+
 export const importStage = defineCommand({
   name: 'crm.import.stage',
   input: zImportStage,
@@ -350,83 +491,34 @@ export const importStage = defineCommand({
       await ctx.trx.deleteFrom('ludy_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', 'in', old).execute();
       await ctx.trx.updateTable('ludy_crm.import_batch').set({ status: 'cancelled', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', 'in', old).execute();
     }
-    // What each row is as a party would store it, or why it cannot be.
-    const candidates: Candidate[] = [];
-    const invalid: { rowNo: number; raw: ImportRowInput; reason: ImportReason }[] = [];
-    input.rows.forEach((raw: ImportRowInput, i: number) => {
-      const rowNo = i + 1;
-      const checked = checkPartyFields({ name: raw.name, taxCode: cell(raw.taxCode), email: cell(raw.email), phone: cell(raw.phone), address: cell(raw.address) });
-      if (!checked.ok) {
-        invalid.push({ rowNo, raw, reason: checked.reason });
-        return;
-      }
-      const f = checked.fields;
-      const kind = kindOf(raw.kind, f.taxCode);
-      const companyCell = cell(raw.company ?? null);
-      // Only a person works at a company: a company's row has none.
-      candidates.push({ rowNo, kind, name: f.name, taxCode: f.taxCode, email: f.email, phone: f.phone, address: f.address, company: kind === 'person' ? usableCompany(companyCell) : null, companyRaw: clip(companyCell, 1000) });
-    });
-    const verdicts = classify(candidates, await existingFor(ctx, candidates));
-    // The companies the file makes itself: its new rows of kind company. A person's cell naming one is linked to it, and no second one is made.
-    const fileCompanies = candidates.filter((c) => c.kind === 'organization' && verdicts.get(c.rowNo)?.outcome === 'new').map((c) => ({ name: c.name, taxCode: c.taxCode }));
-    const companies = await resolveCompanies(ctx, candidates.flatMap((c) => (c.company === null ? [] : [c.company])), fileCompanies);
-    const companyOf = (c: Candidate): CompanyVerdict => (c.company === null ? NO_COMPANY : (companies.get(c.company) ?? NO_COMPANY));
     const batch = await ctx.trx
       .insertInto('ludy_crm.import_batch')
       .values({ org_id: ctx.orgId, filename: input.filename, created_by: userId, created_at: ctx.now })
       .returning('id')
       .executeTakeFirstOrThrow();
-    const staged = [
-      ...candidates.map((c) => {
-        const v = verdicts.get(c.rowNo) as Verdict;
-        const company = companyOf(c);
-        return {
-          org_id: ctx.orgId,
-          batch_id: batch.id,
-          row_no: c.rowNo,
-          kind: c.kind,
-          name: c.name,
-          tax_code: c.taxCode,
-          email: c.email,
-          phone: c.phone,
-          address: c.address,
-          outcome: v.outcome,
-          reason: v.reason,
-          match_party_id: v.matchId,
-          company_name: c.companyRaw,
-          company_state: company.state,
-          company_party_id: company.partyId,
-        };
-      }),
-      ...invalid.map((x) => ({
-        org_id: ctx.orgId,
-        batch_id: batch.id,
-        row_no: x.rowNo,
-        kind: 'person' as const,
-        name: clip(x.raw.name.trim(), 1000) ?? '',
-        tax_code: clip(cell(x.raw.taxCode), 40),
-        email: clip(cell(x.raw.email), 1000),
-        phone: clip(cell(x.raw.phone), 100),
-        address: clip(cell(x.raw.address), 2000),
-        outcome: 'invalid' as const,
-        reason: x.reason,
-        match_party_id: null,
-        company_name: clip(cell(x.raw.company ?? null), 1000),
-        company_state: 'none' as const,
-        company_party_id: null,
+    const evaluated = await evaluateStagedRows(
+      ctx,
+      batch.id,
+      input.rows.map((raw: ImportRowInput, i: number) => ({
+        rowNo: i + 1,
+        kindWord: raw.kind,
+        name: raw.name,
+        taxCode: raw.taxCode,
+        email: raw.email,
+        phone: raw.phone,
+        address: raw.address,
+        company: raw.company ?? null,
       })),
-    ].sort((a, b) => a.row_no - b.row_no);
+    );
+    const { staged, counts } = evaluated;
     for (let i = 0; i < staged.length; i += CHUNK) await ctx.trx.insertInto('ludy_crm.import_row').values(staged.slice(i, i + CHUNK)).execute();
-    const count = (o: ImportOutcome) => staged.filter((s) => s.outcome === o).length;
-    // The companies a commit could make: one for each name the new rows share (duplicates fill from an existing company only).
-    const toMake = new Set(candidates.filter((c) => verdicts.get(c.rowNo)?.outcome === 'new' && companyOf(c).state === 'new').map((c) => companyOf(c).key));
     await ctx.trx
       .updateTable('ludy_crm.import_batch')
-      .set({ total_rows: staged.length, new_rows: count('new'), duplicate_rows: count('duplicate'), conflict_rows: count('conflict'), invalid_rows: count('invalid'), new_companies: toMake.size })
+      .set({ total_rows: counts.totalRows, new_rows: counts.newRows, duplicate_rows: counts.duplicateRows, conflict_rows: counts.conflictRows, invalid_rows: counts.invalidRows, new_companies: counts.newCompanies })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', batch.id)
       .execute();
-    ctx.audit({ batchId: batch.id, rows: staged.length, new: count('new'), duplicate: count('duplicate'), conflict: count('conflict'), invalid: count('invalid'), newCompanies: toMake.size, replaced: replaced.length });
+    ctx.audit({ batchId: batch.id, rows: counts.totalRows, new: counts.newRows, duplicate: counts.duplicateRows, conflict: counts.conflictRows, invalid: counts.invalidRows, newCompanies: counts.newCompanies, replaced: replaced.length });
     return previewOf(ctx, { batchId: batch.id });
   },
 });
@@ -747,5 +839,247 @@ export const importExpire = defineCommand({
   },
 });
 
-export const importCommands = [importStage, importCommit, importCancel, importExpire];
-export const importQueries = [importPreview];
+export interface ImportTaxLookupCandidate {
+  rowNo: number;
+  taxCode: string;
+  needsName: boolean;
+  needsAddress: boolean;
+  cachedResult: CachedTaxLookupEntry | null;
+}
+
+export interface ImportTaxLookupCandidatesResult {
+  expired: boolean;
+  candidates: ImportTaxLookupCandidate[];
+}
+
+/**
+ * Step 1 of TC3 (#4990): short read-only transaction before any external lookup.
+ * Enforces caller ownership/role, batch staged state, deployment & org tax-lookup switches,
+ * filters to valid 10- or 13-digit codes on rows missing name or address (never 12-digit or invalid),
+ * and reads fresh org cache entries first.
+ */
+export const importTaxLookupCandidates = defineQuery({
+  name: 'crm.import.tax_lookup_candidates',
+  input: z.strictObject({ batchId: zId, deploymentEnabled: z.boolean() }),
+  access: IMPORTERS,
+  handler: async (ctx, input): Promise<ImportTaxLookupCandidatesResult> => {
+    const userId = userOf(ctx.actor);
+    const batch = await ctx.trx
+      .selectFrom('ludy_crm.import_batch')
+      .select(['id', 'status', 'created_by', sql<boolean>`created_at < now() - ${sql.raw(`interval '${IMPORT_STAGED_DAYS} days'`)}`.as('stale')])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.batchId)
+      .executeTakeFirst();
+    if (!batch) throw notFound();
+    if (batch.created_by !== userId && ctx.role !== 'owner' && ctx.role !== 'admin') {
+      throw new DomainError('IMPORT_FORBIDDEN', 403, 'Chỉ người nhập tệp, chủ sở hữu hoặc quản trị viên mới xem được lần nhập này');
+    }
+    if (!input.deploymentEnabled) {
+      throw new DomainError('TAX_LOOKUP_DISABLED', 404, 'Máy chủ chưa bật tra cứu mã số thuế');
+    }
+    const orgEnabled = await readTaxLookupSwitch(ctx.trx, ctx.orgId);
+    if (!orgEnabled) {
+      throw new DomainError(
+        'TAX_LOOKUP_ORG_DISABLED',
+        409,
+        'Tổ chức chưa bật tra cứu mã số thuế; bật công tắc đồng nghĩa cho phép gửi mã số thuế tới nhà cung cấp',
+      );
+    }
+    if (batch.status === 'expired' || (batch.status === 'staged' && batch.stale)) {
+      return { expired: true, candidates: [] };
+    }
+    if (batch.status === 'committed') throw new DomainError('IMPORT_NOT_STAGED', 409, 'Lần nhập này đã được thực hiện');
+    if (batch.status !== 'staged') throw new DomainError('IMPORT_NOT_STAGED', 409, 'Lần nhập này đã bị hủy');
+
+    const rows = await ctx.trx
+      .selectFrom('ludy_crm.import_row')
+      .select(['row_no', 'name', 'tax_code', 'address'])
+      .where('org_id', '=', ctx.orgId)
+      .where('batch_id', '=', batch.id)
+      .where('tax_code', 'is not', null)
+      .orderBy('row_no')
+      .execute();
+
+    const eligible: Array<{ rowNo: number; taxCode: string; needsName: boolean; needsAddress: boolean }> = [];
+    for (const r of rows) {
+      const normalized = normalizeTaxCode(r.tax_code);
+      if (!isEnterpriseTaxCode(normalized)) continue;
+      const needsName = r.name.trim() === '';
+      const needsAddress = (r.address ?? '').trim() === '';
+      if (!needsName && !needsAddress) continue;
+      eligible.push({ rowNo: r.row_no, taxCode: normalized, needsName, needsAddress });
+    }
+
+    const cached = await readTaxLookupCacheBatch(
+      ctx.trx,
+      ctx.orgId,
+      eligible.map((e) => e.taxCode),
+    );
+
+    return {
+      expired: false,
+      candidates: eligible.map((e) => ({
+        ...e,
+        cachedResult: cached.get(e.taxCode) ?? null,
+      })),
+    };
+  },
+});
+
+export const importFillTaxSuggestions = defineCommand({
+  name: 'crm.import.fill_tax_suggestions',
+  input: zImportFillTaxSuggestions,
+  target: (input) => ({ type: 'crm.import', id: input.batchId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: IMPORTERS,
+  handler: async (ctx, input): Promise<ImportFillTaxSuggestionsResult> => {
+    userOf(ctx.actor);
+    await expireStale(ctx);
+    const batch = await lockBatch(ctx, input.batchId);
+    if (batch.status === 'expired') return { batch: batchView(batch), filledRows: 0, filledName: 0, filledAddress: 0 };
+    if (batch.status === 'committed') throw new DomainError('IMPORT_NOT_STAGED', 409, 'Lần nhập này đã được thực hiện');
+    if (batch.status !== 'staged') throw new DomainError('IMPORT_NOT_STAGED', 409, 'Lần nhập này đã bị hủy');
+
+    const existingRows = await ctx.trx
+      .selectFrom('ludy_crm.import_row')
+      .select(['row_no', 'kind', 'name', 'tax_code', 'email', 'phone', 'address', 'outcome', 'reason', 'match_party_id', 'company_name', 'company_state', 'company_party_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('batch_id', '=', batch.id)
+      .orderBy('row_no')
+      .execute();
+
+    const byRow = new Map(input.rows.map((r) => [r.rowNo, r]));
+    let filledRows = 0;
+    let filledName = 0;
+    let filledAddress = 0;
+
+    const drafts: StagedDraftRow[] = existingRows.map((r) => {
+      const req = byRow.get(r.row_no);
+      const validEnterpriseCode = isEnterpriseTaxCode(normalizeTaxCode(r.tax_code));
+      let nextName = r.name;
+      let nextAddress = r.address;
+      let changed = false;
+
+      if (req && validEnterpriseCode) {
+        if (r.name.trim() === '' && req.name != null) {
+          const nameCheck = checkPartyFields({ name: req.name });
+          if (!nameCheck.ok) {
+            throw new DomainError('VALIDATION', 422, 'Tên gợi ý không hợp lệ: một dòng, tối đa 300 ký tự');
+          }
+          nextName = nameCheck.fields.name;
+          filledName += 1;
+          changed = true;
+        }
+        if ((r.address ?? '').trim() === '' && req.address != null) {
+          const addrCheck = checkPartyFields({ name: 'x', address: req.address });
+          if (!addrCheck.ok || addrCheck.fields.address === null) {
+            throw new DomainError('INVALID_ADDRESS', 422, 'Địa chỉ gợi ý không hợp lệ: một dòng, tối đa 500 ký tự');
+          }
+          nextAddress = addrCheck.fields.address;
+          filledAddress += 1;
+          changed = true;
+        }
+      }
+      if (changed) filledRows += 1;
+
+      return {
+        rowNo: r.row_no,
+        kind: r.kind as Kind,
+        name: nextName,
+        taxCode: r.tax_code,
+        email: r.email,
+        phone: r.phone,
+        address: nextAddress,
+        company: r.company_name,
+      };
+    });
+
+    if (filledRows === 0) {
+      ctx.audit({
+        batchId: batch.id,
+        requested: input.rows.length,
+        filledRows: 0,
+        filledName: 0,
+        filledAddress: 0,
+        new: batch.new_rows,
+        duplicate: batch.duplicate_rows,
+        conflict: batch.conflict_rows,
+        invalid: batch.invalid_rows,
+        newCompanies: batch.new_companies,
+      });
+      return { batch: batchView(batch), filledRows: 0, filledName: 0, filledAddress: 0 };
+    }
+
+    const evaluated = await evaluateStagedRows(ctx, batch.id, drafts);
+    const prevByRow = new Map(existingRows.map((r) => [r.row_no, r]));
+    // import_row revokes UPDATE from ludy_tenant, so changed staged rows are replaced atomically via DELETE + INSERT.
+    const changedRows = evaluated.staged.filter((next) => {
+      const prev = prevByRow.get(next.row_no);
+      if (!prev) return true;
+      return (
+        prev.kind !== next.kind ||
+        prev.name !== next.name ||
+        prev.tax_code !== next.tax_code ||
+        prev.email !== next.email ||
+        prev.phone !== next.phone ||
+        prev.address !== next.address ||
+        prev.outcome !== next.outcome ||
+        prev.reason !== next.reason ||
+        prev.match_party_id !== next.match_party_id ||
+        prev.company_name !== next.company_name ||
+        prev.company_state !== next.company_state ||
+        prev.company_party_id !== next.company_party_id
+      );
+    });
+
+    if (changedRows.length > 0) {
+      const changedNos = changedRows.map((r) => r.row_no);
+      for (let i = 0; i < changedNos.length; i += CHUNK) {
+        await ctx.trx
+          .deleteFrom('ludy_crm.import_row')
+          .where('org_id', '=', ctx.orgId)
+          .where('batch_id', '=', batch.id)
+          .where('row_no', 'in', changedNos.slice(i, i + CHUNK))
+          .execute();
+      }
+      for (let i = 0; i < changedRows.length; i += CHUNK) {
+        await ctx.trx.insertInto('ludy_crm.import_row').values(changedRows.slice(i, i + CHUNK)).execute();
+      }
+    }
+
+    const { counts } = evaluated;
+    await ctx.trx
+      .updateTable('ludy_crm.import_batch')
+      .set({
+        new_rows: counts.newRows,
+        duplicate_rows: counts.duplicateRows,
+        conflict_rows: counts.conflictRows,
+        invalid_rows: counts.invalidRows,
+        new_companies: counts.newCompanies,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', batch.id)
+      .execute();
+
+    // Counts only: never log names, addresses, or tax codes.
+    ctx.audit({
+      batchId: batch.id,
+      requested: input.rows.length,
+      filledRows,
+      filledName,
+      filledAddress,
+      new: counts.newRows,
+      duplicate: counts.duplicateRows,
+      conflict: counts.conflictRows,
+      invalid: counts.invalidRows,
+      newCompanies: counts.newCompanies,
+    });
+
+    const after = await ctx.trx.selectFrom('ludy_crm.import_batch').select(BATCH_COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', batch.id).executeTakeFirstOrThrow();
+    return { batch: batchView(after), filledRows, filledName, filledAddress };
+  },
+});
+
+export const importCommands = [importStage, importFillTaxSuggestions, importCommit, importCancel, importExpire];
+export const importQueries = [importPreview, importTaxLookupCandidates];

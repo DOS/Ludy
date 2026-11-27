@@ -7,8 +7,14 @@ import { zId } from './schemas.ts';
 
 export const IMPORT_MAX_ROWS = 2000;
 export const IMPORT_PREVIEW_PAGE = 100;
+export const IMPORT_TAX_LOOKUP_MAX_ROWS = 50;
 // A staged batch older than this is refused and its rows are deleted: they carry personal data.
 export const IMPORT_STAGED_DAYS = 7;
+
+export const IMPORT_TAX_LOOKUP_STATUSES = ['suggested', 'not_found', 'not_looked_up', 'no_fill'] as const;
+export type ImportTaxLookupStatus = (typeof IMPORT_TAX_LOOKUP_STATUSES)[number];
+export const IMPORT_TAX_LOOKUP_STOP_REASONS = ['batch_limit', 'rate_limit', 'unavailable'] as const;
+export type ImportTaxLookupStopReason = (typeof IMPORT_TAX_LOOKUP_STOP_REASONS)[number];
 
 export const IMPORT_OUTCOMES = ['new', 'duplicate', 'conflict', 'invalid'] as const;
 export type ImportOutcome = (typeof IMPORT_OUTCOMES)[number];
@@ -159,4 +165,79 @@ export const zImportPreview = z.object({
 export const zImportCommitted = z.object({
   batch: zImportBatch,
   skipped: z.array(z.object({ rowNo: z.number().int(), reason: z.enum(IMPORT_REASONS) })),
+});
+
+export interface ImportTaxLookupItem {
+  rowNo: number;
+  taxCode: string;
+  status: ImportTaxLookupStatus;
+  suggestedName: string | null;
+  suggestedAddress: string | null;
+  statusText: string | null;
+  cached: boolean;
+  household: boolean;
+}
+
+export interface ImportTaxLookupResult {
+  expired: boolean;
+  items: ImportTaxLookupItem[];
+  lookedUpRows: number;
+  providerCalls: number;
+  stopReason: ImportTaxLookupStopReason | null;
+  retryAfterSeconds?: number;
+  quotaWarning?: boolean;
+}
+
+export const zImportTaxLookupItem = z.object({
+  rowNo: z.number().int().min(1),
+  taxCode: z.string(),
+  status: z.enum(IMPORT_TAX_LOOKUP_STATUSES),
+  suggestedName: z.string().nullable(),
+  suggestedAddress: z.string().nullable(),
+  statusText: z.string().nullable(),
+  cached: z.boolean(),
+  household: z.boolean(),
+});
+
+export const zImportTaxLookupResult = z.object({
+  expired: z.boolean(),
+  items: z.array(zImportTaxLookupItem),
+  lookedUpRows: z.number().int().min(0),
+  providerCalls: z.number().int().min(0),
+  stopReason: z.enum(IMPORT_TAX_LOOKUP_STOP_REASONS).nullable(),
+  retryAfterSeconds: z.number().int().positive().optional(),
+  quotaWarning: z.boolean().optional(),
+});
+
+export const zImportFillTaxSuggestionRow = z
+  .strictObject({
+    rowNo: z.number().int().min(1).max(IMPORT_MAX_ROWS),
+    name: z.string().trim().min(1).max(300).nullable().optional(),
+    address: z.string().trim().min(1).max(500).nullable().optional(),
+  })
+  .refine((r) => Boolean(r.name) || Boolean(r.address), { message: 'Provide name or address to fill' });
+export type ImportFillTaxSuggestionRow = z.infer<typeof zImportFillTaxSuggestionRow>;
+
+export const zImportFillTaxSuggestions = z.strictObject({
+  batchId: zId,
+  rows: z
+    .array(zImportFillTaxSuggestionRow)
+    .min(1)
+    .max(IMPORT_TAX_LOOKUP_MAX_ROWS)
+    .refine((rows) => new Set(rows.map((r) => r.rowNo)).size === rows.length, { message: 'Duplicate rowNo in fill suggestions' }),
+});
+export type ImportFillTaxSuggestions = z.infer<typeof zImportFillTaxSuggestions>;
+
+export interface ImportFillTaxSuggestionsResult {
+  batch: ImportBatch;
+  filledRows: number;
+  filledName: number;
+  filledAddress: number;
+}
+
+export const zImportFillTaxSuggestionsResult = z.object({
+  batch: zImportBatch,
+  filledRows: z.number().int().min(0),
+  filledName: z.number().int().min(0),
+  filledAddress: z.number().int().min(0),
 });

@@ -73,6 +73,7 @@ import {
 } from '@ludy/kernel';
 import type { PartyTaxLookupResult } from '@ludy/kernel-contract';
 import { getPartyTaxLookupAdapter } from './tax-lookup-casso.ts';
+import { runContactImportTaxLookup } from './tax-lookup-import.ts';
 import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@ludy/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@ludy/mod-crm';
@@ -2332,6 +2333,19 @@ export function createRpcHandler(
       contactImport: {
         stage: os.crm.contactImport.stage.handler(crmCommand('crm.import.stage')),
         preview: os.crm.contactImport.preview.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.import.preview', input, { actor, orgId }))),
+        taxLookup: os.crm.contactImport.taxLookup.handler(({ context, input }) =>
+          inCrm(context, (orgId, actor) =>
+            runContactImportTaxLookup({
+              runtime,
+              adapter: getPartyTaxLookupAdapter(runtime),
+              defaultLimiter: defaultTaxLookupLimiter,
+              orgId,
+              actor,
+              batchId: input.batchId,
+            }),
+          ),
+        ),
+        fillTaxSuggestions: os.crm.contactImport.fillTaxSuggestions.handler(crmCommand('crm.import.fill_tax_suggestions')),
         commit: os.crm.contactImport.commit.handler(crmCommand('crm.import.commit')),
         cancel: os.crm.contactImport.cancel.handler(crmCommand('crm.import.cancel')),
       },
