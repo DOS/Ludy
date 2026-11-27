@@ -142,7 +142,7 @@ export const metricsSummary = defineQuery({
   name: 'social.metrics.summary',
   input: z.object({ days: z.number().int().min(1).max(365).optional(), postId: zId.optional(), labelId: zId.optional() }),
   access: ALL,
-  handler: async (ctx, input): Promise<MetricsRow[]> => (await latestMetrics(ctx.trx, ctx.orgId, input, SUMMARY_LIMIT, await channelScope(ctx))).map(({ text: _text, ...row }) => row),
+  handler: async (ctx, input): Promise<MetricsRow[]> => (await latestMetrics(ctx.trx, ctx.orgId, input, SUMMARY_LIMIT, await channelScope(ctx))).map(({ text: _text, signature: _signature, ...row }) => row),
 });
 
 // What the screens show at most, and what one export holds at most (it says when it was cut).
@@ -337,7 +337,7 @@ interface MetricsFilter {
   liveOnly?: boolean | undefined;
 }
 
-export async function latestMetrics(trx: Trx, orgId: string, input: MetricsFilter, limit: number, scope: ChannelScope): Promise<(MetricsRow & { text: string })[]> {
+export async function latestMetrics(trx: Trx, orgId: string, input: MetricsFilter, limit: number, scope: ChannelScope): Promise<(MetricsRow & { text: string; signature: unknown })[]> {
   const days = input.days ?? 30;
   const window = input.postId ? sql`v.post_id = ${input.postId}::uuid` : sql`v.published_at > pg_catalog.now() - pg_catalog.make_interval(days => ${days}::int)`;
   const labelled = input.labelId
@@ -350,6 +350,7 @@ export async function latestMetrics(trx: Trx, orgId: string, input: MetricsFilte
     provider: string;
     channel_connection_id: string;
     body: string;
+    signature: unknown;
     published_at: Date | null;
     external_url: string | null;
     metrics: Record<string, number> | null;
@@ -357,6 +358,8 @@ export async function latestMetrics(trx: Trx, orgId: string, input: MetricsFilte
     clicks: string | null;
   }>`
     SELECT v.id AS variant_id, v.post_id, v.provider, v.channel_connection_id, coalesce(v.body, p.body) AS body,
+           -- Only the signature of the variant's settings (a text, false or absent), as the MCP posts list reads it: the text a channel goes out with ends with it.
+           v.settings -> 'signature' AS signature,
            v.published_at, v.external_url, s.metrics, s.captured_at,
            (SELECT CASE WHEN count(l.id) = 0 THEN NULL ELSE coalesce(sum(c.clicks), 0) END FROM ludy_social.short_link l
             LEFT JOIN ludy_social.short_link_click c ON c.org_id = l.org_id AND c.short_link_id = l.id
@@ -379,6 +382,7 @@ export async function latestMetrics(trx: Trx, orgId: string, input: MetricsFilte
     connectionId: r.channel_connection_id,
     excerpt: r.body.replace(/\s+/g, ' ').trim().slice(0, 160),
     text: r.body,
+    signature: r.signature,
     publishedAt: r.published_at ? r.published_at.toISOString() : null,
     externalUrl: r.external_url,
     metrics: r.metrics ?? {},
@@ -474,6 +478,8 @@ export const metricsInsights = defineQuery({
       metrics: Record<string, number> | null;
     }>`
       SELECT v.id AS variant_id, v.post_id, v.provider, v.channel_connection_id, coalesce(v.body, p.body) AS body,
+           -- Only the signature of the variant's settings (a text, false or absent), as the MCP posts list reads it: the text a channel goes out with ends with it.
+           v.settings -> 'signature' AS signature,
              v.published_at, v.external_url, v.settings->>'postType' AS post_type,
              CASE WHEN jsonb_typeof(v.media) = 'array' THEN (
                SELECT array_agg(f.content_type ORDER BY x.n) FROM jsonb_array_elements(v.media) WITH ORDINALITY x(e, n)
