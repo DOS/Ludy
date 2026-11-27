@@ -1920,7 +1920,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
 
     await runtime.execute(
       'projects.task.move_column',
-      { projectId, taskId: tMain, columnId: doneCol!.id, position: 1000 },
+      { projectId, taskId: tMain, columnId: doneCol!.id },
       { actor: asUser(member.userId), orgId: s2Org.orgId },
     );
 
@@ -2037,7 +2037,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     patchUpdatedAtOverride = '2027-02-01T10:10:00Z';
     await runtime.execute(
       'projects.task.move_column',
-      { projectId, taskId: tMain, columnId: todoCol!.id, position: 500 },
+      { projectId, taskId: tMain, columnId: todoCol!.id },
       { actor: asUser(member.userId), orgId: s2Org.orgId },
     );
     const reopenJobs: Array<{ orgId: string; deliveryId: string }> = [];
