@@ -370,7 +370,7 @@ export const morningMailContent = defineQuery({
       return zMorningBriefingContent.parse({ day: input.day, totalMeetings: 0, meetings: [] });
     }
     const { rows: connRows } = await sql<{ id: string }>`
-      SELECT id FROM ludy_meetings.morning_briefing_active_connections()`.execute(ctx.trx);
+      SELECT id FROM ludy_meetings.morning_briefing_active_connections() AS t(id)`.execute(ctx.trx);
     const connectionIds = connRows.map((r) => r.id);
     if (connectionIds.length === 0) {
       return zMorningBriefingContent.parse({ day: input.day, totalMeetings: 0, meetings: [] });
