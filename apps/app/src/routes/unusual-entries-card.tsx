@@ -23,7 +23,11 @@ function HitRow({ hit, note, slug, canMark, legalEntityId }: { hit: UnusualEntry
   const queryClient = useQueryClient();
   const mark = useMutation({
     mutationFn: () => client.financeUnusualEntries.review({ legalEntityId, entryId: hit.entryId, rule: hit.rule }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: orpc.financeUnusualEntries.key() }),
+    // Only the read is invalidated: the notes are asked again by themselves when the hits change (one model call, not two), and the focus goes to the heading because the marked row leaves the list.
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: orpc.financeUnusualEntries.get.key() });
+      document.getElementById('overview-unusual')?.focus();
+    },
   });
   const kind = detailKind(hit);
   const detail =
@@ -145,7 +149,7 @@ export function UnusualEntriesCard({ slug, legalEntityId, ready }: { slug: strin
     <section aria-labelledby="overview-unusual" className="mt-8" data-testid="unusual-entries">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 id="overview-unusual" className="text-sm font-semibold">
+          <h2 id="overview-unusual" tabIndex={-1} className="text-sm font-semibold outline-none">
             {t('title')}
           </h2>
           <p className="mt-1 text-xs text-subtle-foreground">{t('subtitle')}</p>

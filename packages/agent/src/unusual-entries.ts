@@ -88,7 +88,7 @@ const RULE_LABEL: Record<Language, Record<UnusualEntryRuleCode, string>> = {
     off_day: 'bút toán do người nhập vào một ngày nghỉ',
   },
   en: {
-    duplicate_invoice: 'a purchase invoice with the same supplier, invoice number and amount as one booked before',
+    duplicate_invoice: 'a purchase invoice with the same supplier, invoice number and amount as one entered before',
     control_manual: 'a manual voucher that touches a receivable, payable or tax account',
     amount_outlier: 'an amount far from what is usual for this supplier or customer on this account',
     new_account: 'an account never used before with this supplier or this kind of voucher',
@@ -106,7 +106,7 @@ const DETAIL_LABEL = {
   control: {
     receivable: 'it touches a customer receivable account',
     payable: 'it touches a supplier payable account',
-    input_vat: 'it touches the input VAT account',
+    input_vat: 'it touches the input tax account',
     tax: 'it touches a tax payable account',
     employee: 'it touches an employee payable account',
   },
@@ -155,8 +155,16 @@ export function unusualEntriesPrompt(facts: UnusualEntriesNoteFacts): string {
 }
 
 // A word that says the entry is wrong. English on the folded text; Vietnamese on the text as written, because folded "sai" would also read "sài" and "lỗi" would read "lời" and "lợi".
-const WRONGNESS_EN = /\b(?:wrong\w*|incorrect\w*|error\w*|mistak\w*|mistaken|fraud\w*|fake\w*|false\w*|forged|forgery|illegal\w*|invalid\w*|improper\w*|bogus|erroneous\w*|should\s+not|shouldn\s*t|must\s+not|not\s+supposed|misposted|misbooked|miscoded)\b/;
-const WRONGNESS_VI = /(?<![\p{L}])(?:sai|lỗi|nhầm|gian\s+lận|giả|giả\s+mạo|sai\s+sót|vi\s+phạm|không\s+đúng|không\s+hợp\s+lệ|không\s+nên|bất\s+hợp\s+pháp)(?![\p{L}])/iu;
+const WRONGNESS_EN = /\b(?:wrong\w*|incorrect\w*|error\w*|mistak\w*|mistaken|fraud\w*|fake\w*|false\w*|forged|forgery|illegal\w*|invalid\w*|improper\w*|bogus|erroneous\w*|should\s+not|shouldn\s*t|must\s+not|not\s+supposed|misposted|misbooked|miscoded|not\s+(?:right|valid|legit\w*|correct|accurate|proper|genuine|real|authori[sz]ed)|inaccura\w*|typo\w*|misstat\w*|overstat\w*|understat\w*|irregular\w*|suspicio\w*|suspect\w*|scam\w*|stol\w*|theft|steal\w*|cheat\w*|dishonest\w*|manipulat\w*|unauthori[sz]ed|bad)\b/;
+const WRONGNESS_VI = /(?<![\p{L}])(?:sai|lỗi|nhầm|gian\s+lận|giả|giả\s+mạo|sai\s+sót|vi\s+phạm|không\s+đúng|không\s+hợp\s+lệ|không\s+nên|bất\s+hợp\s+pháp|không\s+chính\s+xác|không\s+hợp\s+lý|không\s+phù\s+hợp|lừa\s+đảo|gian\s+dối|đáng\s+ngờ|ma|thiếu|thừa)(?![\p{L}])/iu;
+// More date words than the shared check knows: a month, a period, a holiday (the model is told only "a day off", so it cannot know which kind), a Vietnamese month, holiday or Tết. "ngày nghỉ" (a day off) stays allowed.
+const DATES_EXTRA_EN = /\b(?:month|months|monthly|holiday|holidays|date|dates|period)\b/;
+const DATES_EXTRA_VI = /(?<![\p{L}])(?:tháng|ngày\s+lễ|lễ|tết|dịp)(?![\p{L}])/iu;
+// Plain adjectives that say the amount is up or down, which the comparatives of the shared check do not catch.
+const UP_EXTRA_EN = /\b(?:high|big|large|huge|expensive|pricey|heavy)/;
+const UP_EXTRA_VI = /(?<![\p{L}])(?:cao|đắt|lớn|vượt|trên)(?![\p{L}])/iu;
+const DOWN_EXTRA_EN = /\b(?:low|small|tiny|cheap|minor|modest)/;
+const DOWN_EXTRA_VI = /(?<![\p{L}])(?:thấp|rẻ|nhỏ|bé|ít|dưới)(?![\p{L}])/iu;
 // Advice to do something with money (and to undo the entry): the note says what may be, not what to do.
 const MONEY_ADVICE_EN = /\b(?:refund\w*|reimburs\w*|repay\w*|recover\w*|claw\s*back|chargeback\w*|revers\w*|write\s*off|writ\w*\s+off|cancel\w*|void\w*|delet\w*|remov\w*|stop\s+pay\w*|withhold\w*|pay\s+back|transfer\w*|move\s+(?:the\s+)?(?:money|funds)|correct\w*|adjust\w*|fix\w*)\b/;
 const MONEY_ADVICE_VI = /(?<![\p{L}])(?:hoàn\s+tiền|hoàn\s+lại|thu\s+hồi|hủy|xóa|đảo\s+bút\s+toán|điều\s+chỉnh|sửa|chuyển\s+tiền|chuyển\s+khoản|trả\s+lại|đòi\s+lại)(?![\p{L}])/iu;
@@ -193,13 +201,14 @@ export function checkUnusualEntriesNotes(facts: UnusualEntriesNoteFacts, output:
     // The sentence opens with the hedge and holds no capitalised word after it: no name is given, so none can be right.
     if (!OPENS_HEDGE.test(folded) || hasUnknownName(read)) continue;
     if (CLAIMED_EXTRA.test(folded) || marketplaceLineClaimsDone(read)) continue;
+    if (DATES_EXTRA_EN.test(folded) || DATES_EXTRA_VI.test(read)) continue;
     if (DATES.test(folded) || DATES_VI.test(read) || CERTAINTY.test(folded) || FUTURE.test(folded) || ADVICE_EN.test(folded) || ADVICE_VI.test(read)) continue;
     // The entry is unusual, never wrong; and the note never tells anyone to move or undo money.
     if (WRONGNESS_EN.test(folded) || WRONGNESS_VI.test(read) || MONEY_ADVICE_EN.test(folded) || MONEY_ADVICE_VI.test(read)) continue;
     // A row about an amount far above the usual range must not say down, and one far below must not say up.
     if (hit.rule === 'amount_outlier') {
-      const up = SAYS_UP.test(folded) || SAYS_UP_VI.test(read);
-      const down = SAYS_DOWN.test(folded) || SAYS_DOWN_VI.test(read);
+      const up = SAYS_UP.test(folded) || SAYS_UP_VI.test(read) || UP_EXTRA_EN.test(folded) || UP_EXTRA_VI.test(read);
+      const down = SAYS_DOWN.test(folded) || SAYS_DOWN_VI.test(read) || DOWN_EXTRA_EN.test(folded) || DOWN_EXTRA_VI.test(read);
       if ((hit.direction === 'high' && down) || (hit.direction === 'low' && up)) continue;
     }
     stand.set(place, text);

@@ -57,7 +57,7 @@ describe('what the model is told', () => {
 
   it('tells the rule, the kind of voucher and one fixed detail, and never says which kind of day off', () => {
     const text = unusualEntriesFactsText(facts());
-    expect(text).toContain('Row 1: a purchase invoice with the same supplier, invoice number and amount as one booked before; invoice');
+    expect(text).toContain('Row 1: a purchase invoice with the same supplier, invoice number and amount as one entered before; invoice');
     expect(text).toContain('the amount is far above the usual range');
     expect(text).toContain('the amount is far below the usual range');
     expect(text).toContain('new for this supplier');
@@ -190,6 +190,23 @@ describe('a note that is refused', () => {
     refused('Có thể hóa đơn giả.', 1, facts('vi'));
   });
 
+  it('refuses a month, a period, a holiday and a Vietnamese month or Tết as dates', () => {
+    refused('Possibly keyed last month.', 5);
+    refused('Possibly keyed at month end.', 5);
+    refused('Possibly a bank holiday is behind it.', 5);
+    refused('Possibly keyed in the same period.', 5);
+    refused('Có thể nhập vào tháng trước.', 5, facts('vi'));
+    refused('Có thể nhập vào cuối tháng.', 5, facts('vi'));
+    refused('Có thể nhập vào ngày lễ.', 5, facts('vi'));
+    refused('Có thể nhập dịp tết.', 5, facts('vi'));
+    expect(stands(5, 'Có thể bút toán này nhập vào một ngày nghỉ.', facts('vi'))).toBe(true);
+  });
+
+  it('refuses more ways to say the entry is wrong', () => {
+    for (const text of ['Possibly this entry is not right.', 'Possibly this entry is not valid.', 'Possibly an inaccurate amount.', 'Possibly a typo.', 'Possibly an irregularity.', 'Possibly a suspicious entry.', 'Possibly a scam.', 'Possibly someone is cheating.', 'Possibly an unauthorised entry.', 'Possibly a bad entry.']) refused(text);
+    for (const text of ['Có thể không chính xác.', 'Có thể là lừa đảo.', 'Có thể đáng ngờ.', 'Có thể nhập thiếu.', 'Có thể tính thừa.', 'Có thể là hóa đơn ma.']) refused(text, 1, facts('vi'));
+  });
+
   it('refuses a sentence with no hedge at the start, several sentences, a long one and an empty one', () => {
     refused('A repeat of an invoice.');
     refused('It looks like a repeat of an invoice.');
@@ -205,6 +222,12 @@ describe('a note that is refused', () => {
     refused('Possibly a larger purchase than usual.', 3);
     refused('Possibly a higher amount than usual.', 3);
     refused('Có thể khoản này nhỏ hơn mức thường.', 2, facts('vi'));
+    refused('Possibly a tiny purchase.', 2);
+    refused('Possibly unusually small.', 2);
+    refused('Possibly a huge purchase.', 3);
+    refused('Possibly a high amount.', 3);
+    refused('Có thể khoản mua thấp.', 2, facts('vi'));
+    refused('Có thể khoản mua cao.', 3, facts('vi'));
     refused('Có thể khoản này lớn hơn mức thường.', 3, facts('vi'));
   });
 

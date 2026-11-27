@@ -839,7 +839,7 @@ export const en = {
       open: 'Open voucher',
       openLabel: 'Open the voucher of {date}',
       mark: 'Mark as reviewed',
-      markLabel: 'Mark the entry of {date} as reviewed',
+      markLabel: 'Mark as reviewed, entry of {date}',
       marking: 'Marking…',
       markError: 'Could not mark this entry. Try again.',
       note: {

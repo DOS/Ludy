@@ -177,7 +177,7 @@ describe('the list of hits', () => {
     expect(html).toContain('Mở chứng từ');
     expect(html).toContain('aria-label="Mở chứng từ ngày');
     expect(html).toContain('Đánh dấu đã xem');
-    expect(html).toContain('aria-label="Đánh dấu bút toán ngày');
+    expect(html).toContain('aria-label="Đánh dấu đã xem, bút toán ngày');
   });
 
   it('offers a viewer the voucher but no mark', () => {

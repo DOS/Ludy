@@ -838,7 +838,7 @@ export const vi = {
       open: 'Mở chứng từ',
       openLabel: 'Mở chứng từ ngày {date}',
       mark: 'Đánh dấu đã xem',
-      markLabel: 'Đánh dấu bút toán ngày {date} đã xem',
+      markLabel: 'Đánh dấu đã xem, bút toán ngày {date}',
       marking: 'Đang đánh dấu…',
       markError: 'Chưa đánh dấu được bút toán này. Hãy thử lại.',
       note: {
