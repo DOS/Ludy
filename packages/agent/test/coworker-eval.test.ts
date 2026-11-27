@@ -81,7 +81,7 @@ function createStubRuntime() {
         text = JSON.stringify({
           sentences: [{ text: 'Nam phu trach quay chup.', cites: [1] }],
         });
-      } else if (feature === 'meetings.brief') {
+      } else if (feature === 'meetings.brief' || feature === 'meetings.brief_daily') {
         text = JSON.stringify({
           sentences: [{ text: 'Nhom da hop va chot lich quay chup vao sang thu Ba.', cites: [1] }],
         });

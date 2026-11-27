@@ -12489,6 +12489,7 @@ export const vi = {
       meetings_digest: 'Viết vài câu về những gì đã chốt và việc còn dở trong các cuộc họp của tuần',
       meetings_assignee: 'Đọc tên được nhắc cho một việc cần làm và chọn người nhiều khả năng nhất',
       meetings_brief: 'Viết vài câu chuẩn bị trước cuộc họp từ những gì đã chốt, việc còn dở và cơ hội của khách',
+      meetings_brief_daily: 'Soạn vài dòng chuẩn bị trước mỗi cuộc họp buổi sáng từ những gì đã chốt, việc còn dở và cơ hội của khách',
       meetings_chapters: 'Lập mục lục cuộc họp từ bản ghi, mỗi mục kèm giây của dòng bắt đầu',
       meetings_title: 'Gợi ý tối đa ba tên cho cuộc họp từ bản ghi, khi người ghi bấm',
       meetings_commitments: 'Liệt kê mỗi người nói đã cam kết hay quyết định gì trong cuộc họp, từ bản ghi, khi người ghi bấm',
@@ -20489,6 +20490,7 @@ export const vi = {
         facts: 'Xem những gì đã chốt, việc còn dở và cơ hội đang mở của khách trước một cuộc họp',
         start: 'Nhờ Vy viết vài câu chuẩn bị trước một cuộc họp',
         status: 'Xem Vy có viết được phần chuẩn bị cho cuộc họp không',
+        store_lines: 'Lưu dòng gợi ý chuẩn bị buổi sáng',
       },
       mcp: {
         list: 'Cho ứng dụng AI xem danh sách các cuộc họp đã công bố biên bản và chia sẻ cho cả công ty',

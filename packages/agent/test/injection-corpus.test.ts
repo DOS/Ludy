@@ -116,6 +116,7 @@ import {
   noKnowledge,
   summarizeMeeting,
   summarizeNote,
+  writeBrief,
   type MemberRef,
   type Ports,
   type SummarySegment,
@@ -850,6 +851,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('meetings.translate');
     cover('meetings.ask');
     cover('meetings.brief');
+    cover('meetings.brief_daily');
     cover('meetings.digest');
     cover('meetings.assignee');
     cover('meetings.adherence');
@@ -976,6 +978,23 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
         expect(sameAsk.sentences, `ask same-source ${c.id}`).toEqual([]);
       }
       expect(checkBrief(JSON.stringify({ sentences: [{ text: c.poisonedOutput, cites: [1] }] }), poisonedFacts).sentences, `brief ${c.id}`).toEqual([]);
+      const seenDailyFeatures: string[] = [];
+      const dailyPorts = bindPorts(
+        { orgId: '11111111-1111-4111-8111-111111111111', memberUserId: '22222222-2222-4222-8222-222222222222' },
+        {
+          model: {
+            generate: async (_who, prompt) => {
+              if (prompt.feature) seenDailyFeatures.push(prompt.feature);
+              return { text: JSON.stringify({ sentences: [{ text: c.poisonedOutput, cites: [1] }] }), usage: { inputTokens: 1, outputTokens: 1 } };
+            },
+          },
+          memory: { read: async () => [], write: async () => ({ id: 'm1' }), forget: async () => undefined },
+          knowledge: noKnowledge,
+        },
+      );
+      const dailyChecked = await writeBrief({ facts: [{ kind: 'decision', text: poisonedFacts[0]!.text }], feature: 'meetings.brief_daily' }, dailyPorts);
+      expect(seenDailyFeatures, `brief_daily feature ${c.id}`).toEqual(['meetings.brief_daily']);
+      expect(dailyChecked.answer.sentences, `brief_daily ${c.id}`).toEqual([]);
       expect(checkDigest(JSON.stringify({ sentences: [{ text: c.poisonedOutput, cites: [1] }] }), poisonedFacts).sentences, `digest ${c.id}`).toEqual([]);
 
       expect(() => checkAssignee(JSON.stringify({ n: c.poisonedOutput }), `Giao cho Lan lam. ${nextCase.untrustedInput}`, ['Lan', 'Nam'])).toThrow();

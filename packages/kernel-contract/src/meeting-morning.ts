@@ -201,3 +201,11 @@ export const zMorningBriefingContent = z
     },
   );
 export type MorningBriefingContent = z.infer<typeof zMorningBriefingContent>;
+
+export const zDailyBriefStoreLinesInput = z.strictObject({
+  userId: zId,
+  meetingId: zId,
+  lines: z.array(zBoundedText(MORNING_BRIEFING_CAPS.vyLineTextMax, 1)).min(1).max(MORNING_BRIEFING_CAPS.vyLinesPerMeetingMax),
+  expiresAt: z.iso.datetime({ offset: true }).max(64),
+});
+export type DailyBriefStoreLinesInput = z.infer<typeof zDailyBriefStoreLinesInput>;

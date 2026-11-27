@@ -22,11 +22,13 @@ export const BRIEF_TIMEOUT_MS = 30_000;
 /** The most the model may write: three short sentences with their fact numbers fit well inside it; a longer answer is cut and then refused as unparsable. */
 export const BRIEF_MAX_OUTPUT_TOKENS = 700;
 
-export async function generateMeetingBriefText(config: AiConfig, prompt: { system: string; user: string }, timeoutMs: number = BRIEF_TIMEOUT_MS): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }> {
+export type BriefModelFeature = 'meetings.brief' | 'meetings.brief_daily';
+
+async function runBriefModelCall(
+  call: () => Promise<{ text: string; usage: { inputTokens?: number | undefined; outputTokens?: number | undefined } }>,
+): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }> {
   try {
-    const { text, usage } = await metered('meetings.brief', () =>
-      generateText({ model: chatModel(config), system: prompt.system, prompt: prompt.user, abortSignal: AbortSignal.timeout(timeoutMs), maxRetries: 0, maxOutputTokens: BRIEF_MAX_OUTPUT_TOKENS }),
-    );
+    const { text, usage } = await call();
     return { text, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
   } catch (error: unknown) {
     // The meter's own refusals (a spent budget, no scope) and nothing else keep their type; every provider failure is a fixed word, never the provider's message.
@@ -34,4 +36,25 @@ export async function generateMeetingBriefText(config: AiConfig, prompt: { syste
     const timedOut = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
     throw new BriefModelError(timedOut ? 'timeout' : 'failed');
   }
+}
+
+export function generateMeetingBriefText(
+  config: AiConfig,
+  prompt: { system: string; user: string },
+  timeoutMs: number = BRIEF_TIMEOUT_MS,
+  feature: BriefModelFeature = 'meetings.brief',
+): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }> {
+  const input = {
+    model: chatModel(config),
+    system: prompt.system,
+    prompt: prompt.user,
+    abortSignal: AbortSignal.timeout(timeoutMs),
+    maxRetries: 0,
+    maxOutputTokens: BRIEF_MAX_OUTPUT_TOKENS,
+  };
+  return runBriefModelCall(() =>
+    feature === 'meetings.brief_daily'
+      ? metered('meetings.brief_daily', () => generateText(input))
+      : metered('meetings.brief', () => generateText(input)),
+  );
 }
