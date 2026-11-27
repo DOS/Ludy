@@ -140,29 +140,28 @@ async function readPublishedForCatchUp(ctx: CommandContext | QueryContext, meeti
 const catchUpStatus = defineQuery({
   name: 'meetings.catch_up.status',
   input: zMeetingRef,
-  output: zCatchUpStatus,
   access: ROLES,
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input): Promise<CatchUpStatus> => {
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id === userId) {
-      return { meetingId: input.meetingId, available: false, reason: 'is_recorder', yourItems: [], estimate: null };
+      return zCatchUpStatus.parse({ meetingId: input.meetingId, available: false, reason: 'is_recorder', yourItems: [], estimate: null });
     }
     const data = await readPublishedForCatchUp(ctx, input.meetingId);
     if (!data) {
-      return { meetingId: input.meetingId, available: false, reason: 'not_published', yourItems: [], estimate: null };
+      return zCatchUpStatus.parse({ meetingId: input.meetingId, available: false, reason: 'not_published', yourItems: [], estimate: null });
     }
     if (data.redacted) {
-      return { meetingId: input.meetingId, available: false, reason: 'redacted', yourItems: [], estimate: null };
+      return zCatchUpStatus.parse({ meetingId: input.meetingId, available: false, reason: 'redacted', yourItems: [], estimate: null });
     }
     const askerName = await askerDisplayName(ctx, userId);
     const yourItems = yourCatchUpItems(data.items, userId, askerName);
     const vy = await vyReason(ctx);
     if (vy === 'forbidden' || vy === 'budget' || vy === 'off' || vy === 'paused') {
-      return { meetingId: input.meetingId, available: false, reason: vy, yourItems, estimate: null };
+      return zCatchUpStatus.parse({ meetingId: input.meetingId, available: false, reason: vy, yourItems, estimate: null });
     }
-    return { meetingId: input.meetingId, available: true, reason: null, yourItems, estimate: null };
+    return zCatchUpStatus.parse({ meetingId: input.meetingId, available: true, reason: null, yourItems, estimate: null });
   },
 });
 
@@ -170,7 +169,6 @@ const catchUpStatus = defineQuery({
 const catchUpFacts = defineQuery({
   name: 'meetings.catch_up.facts',
   input: zMeetingRef,
-  output: zCatchUpFacts,
   access: ROLES,
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input): Promise<CatchUpFacts> => {
@@ -187,7 +185,7 @@ const catchUpFacts = defineQuery({
       .where('id', '=', input.meetingId)
       .executeTakeFirstOrThrow();
     const askerName = await askerDisplayName(ctx, userId);
-    return {
+    return zCatchUpFacts.parse({
       meetingId: input.meetingId,
       language: meetingRow.language === 'en' ? 'en' : 'vi',
       askerName,
@@ -200,7 +198,7 @@ const catchUpFacts = defineQuery({
         when: row.when_drafted,
         isYours: matchCatchUpItem(row, userId, askerName) !== null,
       })),
-    };
+    });
   },
 });
 
@@ -208,7 +206,6 @@ const catchUpFacts = defineQuery({
 const catchUpStart = defineCommand({
   name: 'meetings.catch_up.start',
   input: zMeetingRef,
-  output: zCatchUpStarted,
   risk: 'R1',
   sideEffect: 'internal',
   access: ROLES,
@@ -230,7 +227,7 @@ const catchUpStart = defineCommand({
       subjectId: randomUUID(),
     });
     ctx.audit({ meetingId: input.meetingId, runId: started.runId });
-    return { meetingId: input.meetingId, runId: started.runId };
+    return zCatchUpStarted.parse({ meetingId: input.meetingId, runId: started.runId });
   },
 });
 

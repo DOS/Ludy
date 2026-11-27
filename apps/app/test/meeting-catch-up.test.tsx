@@ -32,6 +32,9 @@ const { CatchUpResult, MeetingCatchUp, catchUpAnchorId, catchUpRunCodeOf } = awa
 
 const ITEM_A = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b';
 
+const escaped = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
+
 const baseStatus = (over: Partial<CatchUpStatus> = {}): CatchUpStatus => ({
   meetingId: 'm1',
   available: true,
@@ -70,7 +73,7 @@ describe('MeetingCatchUp (#5130)', () => {
 
     const recorderHtml = renderStatus(baseStatus({ available: false, reason: 'is_recorder', yourItems: [], estimate: null }), 'vi');
     expect(recorderHtml).toContain('data-testid="catch-up-recorder-note"');
-    expect(recorderHtml).toContain(viMessages.meetings.catchUp.recorderOnlyNote);
+    expect(recorderHtml).toContain(escaped(viMessages.meetings.catchUp.recorderOnlyNote));
   });
 
   it('shows code-built "Việc của bạn" even when AI is off and highlights matchedBy name', () => {
@@ -95,9 +98,9 @@ describe('MeetingCatchUp (#5130)', () => {
       'vi',
     );
     expect(html).toContain('data-testid="catch-up-your-items"');
-    expect(html).toContain(viMessages.meetings.catchUp.yourItemsTitle);
+    expect(html).toContain(escaped(viMessages.meetings.catchUp.yourItemsTitle));
     expect(html).toContain('Gửi báo giá cho khách A');
-    expect(html).toContain(viMessages.meetings.catchUp.matchedByName);
+    expect(html).toContain(escaped(viMessages.meetings.catchUp.matchedByName));
     expect(html).not.toContain('data-testid="catch-up-button"');
   });
 
@@ -109,14 +112,14 @@ describe('MeetingCatchUp (#5130)', () => {
 
     const forbidden = renderStatus(baseStatus({ available: false, reason: 'forbidden', estimate: null }));
     expect(forbidden).toContain('data-testid="catch-up-blocked"');
-    expect(forbidden).toContain(en.meetings.catchUp.blockedForbidden);
+    expect(forbidden).toContain(escaped(en.meetings.catchUp.blockedForbidden));
 
     const paused = renderStatus(baseStatus({ available: false, reason: 'paused', estimate: null }));
     expect(paused).toContain('data-testid="catch-up-blocked"');
-    expect(paused).toContain(en.meetings.catchUp.blockedPaused);
+    expect(paused).toContain(escaped(en.meetings.catchUp.blockedPaused));
 
     const budget = renderStatus(baseStatus({ available: false, reason: 'budget', estimate: null }));
-    expect(budget).toContain(en.meetings.catchUp.blockedBudget);
+    expect(budget).toContain(escaped(en.meetings.catchUp.blockedBudget));
   });
 
   it('renders cited lines with decision/item anchor IDs, empty state, and failed error codes', () => {
@@ -133,15 +136,15 @@ describe('MeetingCatchUp (#5130)', () => {
       dropped: 1,
     });
     expect(written).toContain('data-testid="catch-up-result"');
-    expect(written).toContain(en.meetings.catchUp.fromVy);
+    expect(written).toContain(escaped(en.meetings.catchUp.fromVy));
     expect(written).toContain('Decision 1');
-    expect(written).toContain(en.meetings.catchUp.citeItem);
+    expect(written).toContain(escaped(en.meetings.catchUp.citeItem));
     expect(written).toContain('data-testid="catch-up-dropped"');
 
-    expect(renderResult({ state: 'none', errorCode: null, lines: [], dropped: 0 })).toContain(en.meetings.catchUp.empty);
+    expect(renderResult({ state: 'none', errorCode: null, lines: [], dropped: 0 })).toContain(escaped(en.meetings.catchUp.empty));
 
     const failed = renderResult({ state: 'failed', errorCode: 'AI_BUDGET_EXHAUSTED', lines: [], dropped: 0 });
-    expect(failed).toContain(en.meetings.catchUp.codes.AI_BUDGET_EXHAUSTED);
+    expect(failed).toContain(escaped(en.meetings.catchUp.codes.AI_BUDGET_EXHAUSTED));
     expect(catchUpRunCodeOf('CATCH_UP_UNPARSABLE')).toBe('CATCH_UP_UNPARSABLE');
     expect(catchUpRunCodeOf('UNKNOWN_CODE')).toBe('default');
   });
