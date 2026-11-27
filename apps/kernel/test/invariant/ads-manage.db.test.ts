@@ -638,6 +638,27 @@ suite('the changes of a running ad (#3835, W4)', () => {
     expect(await request(r, { kind: 'budget_lower', fromBudget: '100000', toBudget: '70000' })).toBeTruthy();
   });
 
+  it('accepts a person\'s lower budget when the unclear change of the family is older than the newest applied one: the platform shows the applied value, so nothing is in doubt (#5188)', async () => {
+    const r = await rig();
+    const unclear = await request(r, LOWER);
+    await settle(r, unclear, 'unclear', 'reconcile_unclear');
+    // While it is the newest of its family, a lower budget is refused (the branch above).
+    const [held, heldParams] = defaults(r, { kind: 'budget_lower', fromBudget: '100000', toBudget: '70000' });
+    await inContext(r.org, 'owner', (c) => refused(c, held, heldParams, 'ADS_MANAGE_UNCLEAR'));
+    // An approved raise that the platform applied overtakes it (seq above the unclear one's): the budget is 150000 now, and the unclear row (seq below the newest applied) is no longer a doubt.
+    const raise = await approved<{ id: string }>(r, RAISE, { commit: true });
+    await settle(r, raise.id, 'applied');
+    expect((await get(r, unclear))?.state).toBe('unclear');
+    expect(await hold(r)).toEqual({ daily_budget: '150000', end_on: r.end });
+    // A person's lower budget (from the confirmed 150000) is accepted by the guard, for an owner and, on a fresh rig, for an admin.
+    expect(await request(r, { kind: 'budget_lower', fromBudget: '150000', toBudget: '90000' })).toBeTruthy();
+    const other = await rig();
+    const otherUnclear = await request(other, LOWER);
+    await settle(other, otherUnclear, 'unclear', 'reconcile_unclear');
+    await settle(other, (await approved<{ id: string }>(other, RAISE, { commit: true })).id, 'applied');
+    expect(await request(other, { kind: 'budget_lower', fromBudget: '150000', toBudget: '80000' }, 'admin')).toBeTruthy();
+  });
+
   it('lets the system settle an unclear change as applied or failed and nothing else; no person does, and a change a newer one overtook stays as it is (#3898)', async () => {
     const r = await rig();
     const unclear = await request(r, LOWER);
