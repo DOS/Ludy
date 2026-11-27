@@ -17,8 +17,8 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   const { createElement } = await import('react');
   return {
     ...(await importOriginal<object>()),
-    Link: ({ children, to, params, hash, className }: { children?: ReactNode; to: string; params?: Record<string, string>; hash?: string; className?: string }) =>
-      createElement('a', { href: to.replace(/\$(\w+)/g, (_match, name: string) => params?.[name] ?? '') + (hash ? `#${hash}` : ''), className }, children),
+    Link: ({ children, to, params, hash, className, 'aria-label': ariaLabel }: { children?: ReactNode; to: string; params?: Record<string, string>; hash?: string; className?: string; 'aria-label'?: string }) =>
+      createElement('a', { href: to.replace(/\$(\w+)/g, (_match, name: string) => params?.[name] ?? '') + (hash ? `#${hash}` : ''), className, 'aria-label': ariaLabel }, children),
   };
 });
 vi.mock('../src/lib/api.ts', async () => {
