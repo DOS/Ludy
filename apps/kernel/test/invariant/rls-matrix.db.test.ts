@@ -124,6 +124,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  // #4993 (CRM SG1): per-member seen marks on contact attention items (step 0).
+  'crove_crm.party_attention_seen',
   // #4991 (PM1 step 0): per-member pre-meeting facts drafts scoped to a user + contact.
   'crove_meetings.meeting_brief_draft',
   // #5073 / #5080 (ADR-0049 #5108): short-lived 36h prep lines for opted-in members, strict user + member_briefing RLS.
@@ -174,6 +176,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
       `NOT EXISTS (SELECT 1 FROM crove_kernel.agent a WHERE a.org_id OPERATOR(pg_catalog.=) t.org_id AND a.id OPERATOR(pg_catalog.=) t.agent_id AND a.kind OPERATOR(pg_catalog.=) 'member_vy' AND a.member_user_id OPERATOR(pg_catalog.<>) '${m}'::uuid)`,
   ],
   // The tables below are not in the catalog and are keyed to a user (ctx_user_id), which member mode does not have: it reads none of their rows.
+  ['crove_crm.party_attention_seen', () => 'false'], // A member's own attention acknowledgements (#4993); read in user context alone, an agent context reads none.
   ['crove_hr.attendance_log', () => 'false'], // HR is for owners and admins or linked self employees in a user context (ADR-0046); an agent context reads none.
   ['crove_hr.attendance_qr_config', () => 'false'], // HR, as above.
   ['crove_hr.business_trip_request', () => 'false'], // HR, as above.
@@ -316,6 +319,8 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
   ['crove_notes.note', ['update']],
 ]);
 const AUTHOR_ONLY = new Map<string, string>([
+  // Per-member seen marks on contact attention items (#4993): user context only; the system context sees and changes none of it.
+  ['crove_crm.party_attention_seen', 'false'],
   // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
   // Departments and lightweight recruiting (#3403), Stage 5C attendance (#4447), Stage 6 HR (#4527, #4528, #4529), and Stage 7A shifts (#5216): user-context only; system and agent contexts read and write none.
   ['crove_hr.attendance_log', 'false'],
@@ -1346,6 +1351,21 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, id: randomUUID(), batch_id: batch, row_no: importRowNo++, name: 'RLS matrix import row', outcome: 'new' },
       };
     },
+  },
+  // Per-member seen mark for a contact attention item (#4993): user context alone for owner/admin/member, column update on seen_event_at/seen_at, no delete.
+  'crove_crm.party_attention_seen': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        user_id: o.owner,
+        party_id: o.party,
+        kind: 'quote_viewed',
+        target_id: randomUUID(),
+        seen_event_at: '2026-10-01T00:00:00Z',
+      },
+    }),
+    update: { set: 'seen_event_at = seen_event_at' },
   },
   // A stage of the CRM pipeline (#2225): open stages only here, since an org has one won and one lost stage at most.
   'crove_crm.pipeline_stage': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } }) },
