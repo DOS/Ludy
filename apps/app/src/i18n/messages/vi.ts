@@ -20751,6 +20751,7 @@ export const vi = {
         hook_status: 'Xem trạng thái hoạt động của webhook PAT GitHub',
         link: {
           add: 'Gắn liên kết issue hoặc pull request GitHub vào công việc dự án',
+          prepare: 'Kiểm tra quyền và kho đã gắn trước khi thêm liên kết GitHub',
           remove: 'Gỡ liên kết GitHub khỏi công việc dự án',
         },
         repo: {

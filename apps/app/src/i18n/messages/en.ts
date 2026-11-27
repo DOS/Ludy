@@ -20751,6 +20751,7 @@ export const en = {
         hook_status: 'Read GitHub PAT webhook standing and last delivery time',
         link: {
           add: 'Attach a GitHub issue or pull request link to a project task',
+          prepare: 'Verify permissions and repository binding before linking a GitHub item',
           remove: 'Remove a GitHub link from a project task',
         },
         repo: {
