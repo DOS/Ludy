@@ -1,8 +1,9 @@
 // The personal-data registry's per-row handling (#1312): a legal entity the org keeps books for (a client, a household
 // whose name and 12-digit code are a person's) is kept by law, and only the org's default entity is the org's own.
 import { describe, expect, it } from 'vitest';
-import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_PENDING, PERSONAL_DATA_SCHEMAS, SEALED_COLUMNS, personalDataProbe, rowHandling, type PersonalDataColumn } from '@ludy/kernel';
+import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_KINDS, PERSONAL_DATA_PENDING, PERSONAL_DATA_SCHEMAS, SEALED_COLUMNS, personalDataProbe, rowHandling, type PersonalDataColumn } from '@ludy/kernel';
 import { personalDataProbe as contractPersonalDataProbe } from '@ludy/kernel-contract';
+import { financeManifest } from '@ludy/mod-finance';
 import { hrManifest } from '@ludy/mod-hr';
 import { meetingsManifest } from '@ludy/mod-meetings';
 import { notesManifest } from '@ludy/mod-notes';
@@ -250,5 +251,14 @@ describe('personal-data registry: conversations (#3669)', () => {
     expect(contractPersonalDataProbe('  Alice@Example.TEST  ')).toEqual({ kind: 'email', email: 'alice@example.test' });
     expect(contractPersonalDataProbe('+84 912 345 678')).toEqual({ kind: 'digits', digits: '84912345678' });
     expect(contractPersonalDataProbe('ab')).toBeNull();
+  });
+});
+
+describe('personal-data registry: buyer identity CCCD (#3682)', () => {
+  it('registers national_id kind and maps einvoice_draft.buyer_identity as national_id with keep_legal', () => {
+    expect(PERSONAL_DATA_KINDS).toContain('national_id');
+    expect(entries['ludy_finance.einvoice_draft.buyer_identity']).toMatchObject({ kind: 'national_id', handling: 'keep_legal' });
+    expect(financeManifest.tables.ludy_finance.einvoice_draft.buyer_identity).toBe('national_id');
+    expect(personalDataProbe('0790-9200-0111')).toEqual({ kind: 'digits', digits: '079092000111' });
   });
 });

@@ -349,7 +349,7 @@ function DraftForm({ initial, series, legalEntityId, originalNumber, handoffPref
   });
   const issues = check.data?.issues ?? [];
   // What cannot be stored yet (a date, a quantity or a price that is not a value): the rest is saved with its issues shown.
-  const unsaveable = issues.some((i) => (['DATE_REQUIRED', 'DATE_INVALID', 'SALE_DATE_INVALID', 'SALE_DATE_AFTER_INVOICE', 'LINE_QUANTITY_INVALID', 'LINE_PRICE_INVALID', 'BUYER_NATIONALITY_REQUIRED', 'BUYER_NATIONALITY_INVALID'] as const).some((c) => c === i.code)) || check.data === undefined;
+  const unsaveable = issues.some((i) => (['DATE_REQUIRED', 'DATE_INVALID', 'SALE_DATE_INVALID', 'SALE_DATE_AFTER_INVOICE', 'RATE_DATE_INVALID', 'LINE_QUANTITY_INVALID', 'LINE_PRICE_INVALID', 'BUYER_NATIONALITY_REQUIRED', 'BUYER_NATIONALITY_INVALID'] as const).some((c) => c === i.code)) || check.data === undefined;
   const bad = (field: string) => issues.some((i) => i.field === field);
   // The error of each of the two late-sale fields sits under it and is linked to it, and a field shows only its own (#3535).
   const saleDateIssue = issues.find((i) => i.field === 'saleDate');
