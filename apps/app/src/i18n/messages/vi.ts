@@ -1026,10 +1026,24 @@ export const vi = {
   notifications: {
     morningNotice: {
       title: 'Các cuộc họp hôm nay, vào buổi sáng',
-      hint: 'Mỗi ngày một lần, vào giờ bạn chọn, một thông báo trong ứng dụng và qua email cho biết hôm nay bạn có bao nhiêu cuộc họp kèm đường dẫn để xem, cùng thông báo đẩy nếu bạn bật trên thiết bị này. Chỉ có số lượng và đường dẫn (thông báo đẩy chỉ nêu loại việc), không tiêu đề, không tên. Ngày không có cuộc họp thì không gửi gì.',
+      hint: 'Mỗi ngày một lần, vào giờ bạn chọn, một thông báo trong ứng dụng và qua email cho biết hôm nay bạn có bao nhiêu cuộc họp kèm đường dẫn để xem, cùng thông báo đẩy nếu bạn bật trên thiết bị này. Chỉ có số lượng và đường dẫn (thông báo đẩy chỉ nêu loại việc), không tiêu đề, không tên trừ khi bạn bật Bản tin đầy đủ. Ngày không có cuộc họp thì không gửi gì.',
       label: 'Báo cho tôi các cuộc họp trong ngày vào mỗi buổi sáng',
       at: 'Lúc',
       zone: 'Theo múi giờ của bạn: {zone}',
+      contentLabel: 'Nội dung email buổi sáng',
+      content: {
+        count: {
+          title: 'Chỉ báo số lượng',
+          hint: 'Chỉ gửi số cuộc họp hôm nay và liên kết mở trang Cuộc họp. Không gửi tiêu đề hay nội dung cuộc họp ra ngoài qua email.',
+        },
+        full: {
+          title: 'Bản tin đầy đủ',
+          hint: 'Gồm tiêu đề, giờ họp, người đọc trong công ty, số khách mời, quyết định trước đó, việc còn mở và cơ hội CRM đang mở (nếu có).',
+        },
+      },
+      fullNotice: 'Lưu ý: khi chọn Bản tin đầy đủ, tiêu đề và nội dung các cuộc họp liên quan sẽ rời máy chủ qua email gửi cho bạn.',
+      vyLinesLabel: 'Kèm gợi ý chuẩn bị của Vy trong bản tin',
+      vyLinesHint: 'Tùy chọn riêng (tắt mặc định). Vy viết vài dòng chuẩn bị cho tối đa 5 cuộc họp mỗi ngày; khi tắt AI, bản tin đầy đủ vẫn gửi bình thường với dữ liệu thực tế.',
       noMail: 'Máy chủ này chưa gửi được email, nên chưa có thư nào được gửi cho đến khi người cài đặt thiết lập thư. Thông báo trong ứng dụng vẫn hoạt động, và thông báo đẩy trên trình duyệt cũng vẫn gửi nếu đã bật trên thiết bị.',
       saved: 'Đã lưu',
     },
@@ -17687,7 +17701,6 @@ export const vi = {
       ASK_BUSY: 'Vy đang bận trả lời các câu hỏi. Hãy thử lại sau vài phút.',
       BRIEF_OFF: 'Hệ thống này chưa bật việc Vy viết phần chuẩn bị cho cuộc họp.',
       BRIEF_BUSY: 'Vy đang bận viết các phần chuẩn bị. Hãy thử lại sau vài phút.',
-      BRIEFING_NOT_ENABLED: 'Chưa bật chế độ bản tin buổi sáng đầy đủ trên hệ thống này.',
       ADHERENCE_OFF: 'Hệ thống này chưa bật việc nhờ Vy kiểm tra cuộc họp đã bàn đủ chưa.',
       ADHERENCE_BUSY: 'Vy đang bận kiểm tra các cuộc họp. Hãy thử lại sau vài phút.',
       TITLE_BUSY: 'Vy đang bận gợi ý tên. Hãy thử lại sau vài phút.',
@@ -20462,6 +20475,7 @@ export const vi = {
       },
       morning: {
         get: 'Xem cài đặt thông báo buổi sáng về các cuộc họp trong ngày của bạn',
+        mail_content: 'Đọc nội dung bản tin buổi sáng',
         notice: 'Gửi cho một thành viên thông báo buổi sáng về các cuộc họp trong ngày (lượt quét của hệ thống)',
         set: 'Bật hoặc tắt thông báo buổi sáng về các cuộc họp trong ngày, và chọn giờ',
       },

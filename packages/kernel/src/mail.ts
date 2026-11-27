@@ -395,6 +395,8 @@ export type QueuedMailBegin =
       action: 'send';
       attempt: number;
       stream: MailStream;
+      source: string;
+      sourceId: string | null;
       templateKey: string;
       templateVersion: number;
       to: string;
@@ -462,7 +464,7 @@ export const beginQueuedMail = defineCommand({
     requireSystem(ctx);
     const mail = await ctx.trx
       .selectFrom('ludy_kernel.mail_message')
-      .select(['id', 'stream', 'status', 'attempts', 'template_key', 'template_version', 'to_address', 'to_hash', 'subject', 'payload', 'message_id_header'])
+      .select(['id', 'stream', 'status', 'attempts', 'source', 'source_id', 'template_key', 'template_version', 'to_address', 'to_hash', 'subject', 'payload', 'message_id_header'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.messageId)
       .forUpdate()
@@ -509,6 +511,8 @@ export const beginQueuedMail = defineCommand({
       action: 'send',
       attempt,
       stream: mail.stream,
+      source: mail.source,
+      sourceId: mail.source_id,
       templateKey: mail.template_key,
       templateVersion: mail.template_version,
       to: mail.to_address,

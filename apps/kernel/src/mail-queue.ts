@@ -7,7 +7,7 @@
 import { sql } from 'kysely';
 import type { Db } from '@ludy/db';
 import type { QueuedMailBegin } from '@ludy/kernel';
-import type { BlobStore, CredentialBroker, Runtime } from '@ludy/kernel-runtime';
+import { memberBriefingRuntime, type BlobStore, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import type { MailAttachment, MailErrorKind, MailProvider, OutboundMail, SendResult } from '@ludy/mail';
 import { bounceAddress } from './invite-mail.ts';
 import { DEFAULT_BRAND_NAME } from './config.ts';
@@ -53,6 +53,7 @@ export interface MailTemplateInput {
   store?: BlobStore;
   execute<T>(command: string, input: unknown): Promise<T>;
   query?<T>(name: string, input: unknown): Promise<T>;
+  queryBriefing?<T>(name: string, input: unknown): Promise<T>;
 }
 export interface MailTemplate {
   render(input: MailTemplateInput): Promise<{ subject: string; text: string; html: string; replyTo?: string; inReplyTo?: string; references?: readonly string[]; fromName?: string; attachments?: readonly MailAttachment[] } | null>;
@@ -143,6 +144,10 @@ export async function runMailJob(deps: MailQueueDeps, job: MailJob): Promise<Mai
 async function sendOne(deps: MailQueueDeps, job: MailJob, mail: Extract<QueuedMailBegin, { action: 'send' }>): Promise<Sent> {
   const template = Object.hasOwn(deps.templates, mail.templateKey) ? deps.templates[mail.templateKey] : undefined;
   if (!template) return { outcome: 'failed', code: 'TEMPLATE_UNKNOWN' };
+  const briefingUserId =
+    mail.templateKey === 'meetings.morning' && mail.source === 'meetings.morning' && typeof mail.sourceId === 'string' && mail.sourceId !== ''
+      ? mail.sourceId
+      : null;
   let content: Awaited<ReturnType<MailTemplate['render']>>;
   try {
     content = await template.render({
@@ -158,6 +163,15 @@ async function sendOne(deps: MailQueueDeps, job: MailJob, mail: Extract<QueuedMa
       ...(deps.store ? { store: deps.store } : {}),
       execute: <T>(command: string, input: unknown) => deps.runtime.execute<T>(command, input, { actor: ACTOR, orgId: job.orgId }),
       query: <T>(name: string, input: unknown) => deps.runtime.query<T>(name, input, { actor: ACTOR, orgId: job.orgId }),
+      ...(briefingUserId
+        ? {
+            queryBriefing: <T>(name: string, input: unknown) =>
+              memberBriefingRuntime(deps.runtime, job.orgId, {
+                memberUserId: briefingUserId,
+                mailId: job.messageId,
+              }).query<T>(name, input),
+          }
+        : {}),
     });
   } catch {
     content = null;
@@ -165,9 +179,10 @@ async function sendOne(deps: MailQueueDeps, job: MailJob, mail: Extract<QueuedMa
   if (!content) return { outcome: 'failed', code: 'TEMPLATE_DATA' };
   const returnPath = mail.bounceToken ? bounceAddress(mail.bounceToken, deps.bounceDomain) : undefined;
   const outbound: OutboundMail = { to: mail.to, subject: content.subject, text: content.text, html: content.html, messageId: mail.messageIdHeader, ...(returnPath ? { returnPath } : {}), ...(content.replyTo ? { replyTo: content.replyTo } : {}), ...(content.inReplyTo ? { inReplyTo: content.inReplyTo } : {}), ...(content.references?.length ? { references: content.references } : {}), ...(content.fromName ? { fromName: content.fromName } : {}), ...(content.attachments?.length ? { attachments: content.attachments } : {}) };
+  const isSensitiveBriefingMail = mail.templateKey === 'meetings.morning' && !('count' in mail.payload);
   if (!deps.mailer.enabled) {
-    // The log provider shows the mail in the logs; nothing leaves the deployment. A reply to a customer is not shown: its subject is the customer's.
-    if (mail.templateKey !== 'kernel.conversation_reply') {
+    // The log provider shows the mail in the logs; nothing leaves the deployment. A reply to a customer or a full morning briefing is not shown: its contents are sensitive.
+    if (mail.templateKey !== 'kernel.conversation_reply' && !isSensitiveBriefingMail) {
       await Promise.resolve()
         .then(() => deps.mailer.send(outbound))
         .catch(() => undefined);

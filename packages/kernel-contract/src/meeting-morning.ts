@@ -68,6 +68,13 @@ export const zMorningEmpty = z.strictObject({});
 export const zMorningNotice = z.strictObject({ userId: z.uuid(), day: z.iso.date() });
 export type MorningNotice = z.infer<typeof zMorningNotice>;
 
+// Render-time morning briefing query input (worker-only member_briefing context).
+export const zMorningMailContentInput = z.strictObject({
+  day: z.iso.date(),
+  orgPrefix: z.string().regex(/^\/o\/[a-z0-9][a-z0-9-]{0,62}$/),
+});
+export type MorningMailContentInput = z.infer<typeof zMorningMailContentInput>;
+
 // The mail's stored merge data (`mail_message.payload`): non-sensitive render metadata only.
 // Disjoint union between v1 count-only payloads (`{ lang, org, count, path }`) and v2 full briefing render-time payloads
 // per ADR-0049 amendment #5108 (`{ lang, org, path, day }`), keeping each variant strictly to its 4 fields.

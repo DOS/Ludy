@@ -1027,10 +1027,24 @@ export const en = {
   notifications: {
     morningNotice: {
       title: "Today's meetings, in the morning",
-      hint: 'Once a day, at the time you choose, a notice in the app and by email with how many meetings you have today and a link to see them, plus a browser push if turned on for this device. Only a count and a link are sent (browser push names the kind only), no title or name. Nothing is sent on a day with no meeting.',
+      hint: 'Once a day, at the time you choose, a notice in the app and by email with how many meetings you have today and a link to see them, plus a browser push if turned on for this device. By default only a count and a link are sent (browser push names the kind only), no title or name. Nothing is sent on a day with no meeting.',
       label: "Tell me about the day's meetings every morning",
       at: 'At',
       zone: 'In your time zone: {zone}',
+      contentLabel: 'Morning email content',
+      content: {
+        count: {
+          title: 'Count only',
+          hint: 'Sends only the number of meetings today and a link to Meetings. No meeting titles or content leave the server by email.',
+        },
+        full: {
+          title: 'Full daily briefing',
+          hint: 'Includes titles, times, org readers, invitee counts, previous decisions, open items, and open CRM deals.',
+        },
+      },
+      fullNotice: 'Note: choosing the full daily briefing sends your meeting titles and related details outside the server in your morning email.',
+      vyLinesLabel: 'Include Vy prep lines in the briefing',
+      vyLinesHint: 'Separate opt-in (off by default). Vy writes short prep lines for up to 5 meetings a day; with AI off, the full briefing still sends with factual meeting details.',
       noMail: 'This server cannot send email yet, so no email is sent until the installer sets up mail. In-app notices still work, and browser push also fires if enabled on a device.',
       saved: 'Saved',
     },
@@ -17686,7 +17700,6 @@ export const en = {
       ASK_OFF: 'Asking Vy about meetings is not turned on on this system.',
       ASK_BUSY: 'Vy is busy answering questions. Try again in a few minutes.',
       BRIEF_OFF: 'Vy writing the preparation for a meeting is not turned on on this system.',
-      BRIEFING_NOT_ENABLED: 'The full daily morning briefing is not enabled on this system yet.',
       ADHERENCE_OFF: 'Vy checking whether a meeting covered its agenda is not turned on on this system.',
       ADHERENCE_BUSY: 'Vy is busy checking meetings. Try again in a few minutes.',
       ASSIGNEE_OFF: 'Vy naming who an action item belongs to is not turned on on this system.',
@@ -20462,6 +20475,7 @@ export const en = {
       },
       morning: {
         get: "See your own setting for the morning notice of the day's meetings",
+        mail_content: 'Read morning briefing mail content',
         notice: "Send a member their morning notice of the day's meetings (the system's sweep)",
         set: "Turn the morning notice of the day's meetings on or off, and choose its time",
       },

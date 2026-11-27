@@ -266,6 +266,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.minutes_docx.download',
       'meetings.today.facts',
       'meetings.morning.get',
+      'meetings.morning.mail_content',
       'meetings.weekly.get',
       'meetings.assignee.facts',
       'meetings.assignee.status',
