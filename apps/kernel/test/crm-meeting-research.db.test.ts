@@ -91,7 +91,9 @@ SUITE('PM2 Dy pre-meeting research brief over HTTP API on PostgreSQL 17 (#4992)'
   }
 
   async function tokenFor(who: Account, mfa = false) {
-    return new SignJWT({ role: 'authenticated', email: who.email, session_id: who.session, aal: mfa ? 'aal2' : 'aal1', is_anonymous: false })
+    const now = Math.floor(Date.now() / 1000);
+    const mfaClaims = mfa ? { aal: 'aal2', amr: [{ method: 'totp', timestamp: now }] } : { aal: 'aal1' };
+    return new SignJWT({ role: 'authenticated', email: who.email, session_id: who.session, ...mfaClaims, is_anonymous: false })
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(who.subject)
       .setIssuer(ISSUER)
