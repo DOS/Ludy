@@ -393,13 +393,12 @@ export async function readStatementFile(deps: StatementFileDeps, orgId: string, 
     return { handled: true };
   }
   const { summary } = outcome;
-  const feedNote = summary.feed && summary.feed.leftOut > 0 ? `, ${summary.feed.leftOut} dòng bỏ qua (nguồn tự động từ ${summary.feed.from})` : '';
   await record('done', {
     error: null,
     result: { kind: 'bank_statement', summary, rows },
     // The run belongs to the entity the account is mapped to: only members who see it see the statement's account and totals.
     legalEntityId: summary.legalEntityId,
-    summary: `Sao kê tài khoản ${summary.bankAccount} chờ nhập: ${summary.lines} dòng, ${summary.newLines} dòng mới${feedNote}`,
+    summary: `Sao kê tài khoản ${summary.bankAccount} chờ nhập: ${summary.lines} dòng, ${summary.newLines} dòng mới${summary.feed && summary.feed.leftOut > 0 ? `, ${summary.feed.leftOut} dòng bỏ qua (nguồn tự động từ ${summary.feed.from})` : ''}`,
   });
   return { handled: true };
 }

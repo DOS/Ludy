@@ -328,4 +328,26 @@ describe('skipFedLines (#4218)', () => {
       ['2026-10-12', 'NF-2', 2],
     ]);
   });
+
+  it('keeps balance breaks on retained conflict lines on or after the cut-over day while dropping breaks on skipped rows (#4223)', () => {
+    const preBreakRow = row('2026-10-10', '100', '', '999', 'BR-PRE');
+    const skippedBreakRow = row('2026-10-15', '200', '', '1500', 'BR-SKIP');
+    const conflictBreakRow = row('2026-10-16', '900', '', '1700', 'BR-CFL');
+    const stored = {
+      keys: new Set(['ref:BR-CFL']),
+      dateAmounts: new Set<string>(),
+      refs: new Map([['BR-CFL', [{ date: '2026-10-16', amount: '200' }]]]),
+    };
+    const chain = {
+      before: { date: '2026-10-09', amount: '50', balance: '50' },
+      within: [{ date: '2026-10-16', amount: '200', balance: '1700' }],
+    };
+    const checked = checkStatement(input([preBreakRow, skippedBreakRow, conflictBreakRow]), stored, chain);
+    const skipped = skipFedLines(checked, '2026-10-15');
+    // preBreakRow (before cut-over: 50+100=150 != 999) and conflictBreakRow (retained: 1700+900=2600 != 1700) stay; skippedBreakRow (999+200=1199 != 1500) is dropped.
+    expect(skipped.preview.breaks).toEqual([
+      { date: '2026-10-10', rowNo: preBreakRow.rowNo, expected: '150', balance: '999' },
+      { date: '2026-10-16', rowNo: conflictBreakRow.rowNo, expected: '2600', balance: '1700' },
+    ]);
+  });
 });

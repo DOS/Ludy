@@ -816,7 +816,6 @@ export const statementState = defineCommand({
     });
     const orders = kind === 'marketplace_orders';
     const income = kind === 'marketplace_income';
-    const feedNote = input.feed && input.feed.leftOut > 0 ? `, ${input.feed.leftOut} dòng bỏ qua (nguồn tự động từ ${input.feed.from})` : '';
     await ctx.activity(
       'kernel.file',
       input.fileId,
@@ -826,7 +825,7 @@ export const statementState = defineCommand({
           ? `Đã nhập báo cáo thu nhập: ${input.newLines ?? 0} dòng`
           : orders
             ? `Đã nhập báo cáo đơn hàng: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có`
-            : `Đã nhập sao kê: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có${feedNote}`
+            : `Đã nhập sao kê: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có${input.feed && input.feed.leftOut > 0 ? `, ${input.feed.leftOut} dòng bỏ qua (nguồn tự động từ ${input.feed.from})` : ''}`
         : income
           ? 'Đã bỏ qua báo cáo thu nhập; không có gì được nhập'
           : orders
