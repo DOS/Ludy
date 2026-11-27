@@ -538,28 +538,28 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
         );
       });
 
-      await workerClient.query('BEGIN');
-      try {
-        await workerClient.query(`SELECT ludy_kernel.enter_member_briefing_context($1::uuid, $2::uuid, $3::uuid)`, [
-          orgId,
-          users.eligible,
-          briefingMailId,
-        ]);
-        await expect(
-          workerClient.query(`SELECT * FROM ludy_meetings.morning_brief_daily_due(10, $1::uuid, NULL, NULL)`, [orgId]),
-        ).rejects.toThrow(/AGENT_FORBIDDEN/);
-        await expect(
-          workerClient.query(`SELECT * FROM ludy_meetings.morning_brief_active_connections($1::uuid, $2::uuid)`, [orgId, users.eligible]),
-        ).rejects.toThrow(/AGENT_FORBIDDEN/);
-      } finally {
-        await workerClient.query('ROLLBACK');
+      for (const [sqlText, params] of [
+        [`SELECT * FROM ludy_meetings.morning_brief_daily_due(10, $1::uuid, NULL, NULL)`, [orgId]],
+        [`SELECT * FROM ludy_meetings.morning_brief_active_connections($1::uuid, $2::uuid)`, [orgId, users.eligible]],
+      ] as const) {
+        await workerClient.query('BEGIN');
+        try {
+          await workerClient.query(`SELECT ludy_kernel.enter_member_briefing_context($1::uuid, $2::uuid, $3::uuid)`, [
+            orgId,
+            users.eligible,
+            briefingMailId,
+          ]);
+          await expect(workerClient.query(sqlText, [...params])).rejects.toThrow(/AGENT_FORBIDDEN/);
+        } finally {
+          await workerClient.query('ROLLBACK');
+        }
       }
 
       // Clean up test 1 policies and notice flags so subsequent tests stay isolated.
       await admin(async (c) => {
         await c.query(`DELETE FROM ludy_kernel.mail_message WHERE org_id = $1 AND id = $2`, [orgId, briefingMailId]);
         await c.query(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1`, [orgId]);
-        await c.query(`DELETE FROM ludy_kernel.ai_usage WHERE org_id = $1`, [orgId]);
+        await c.query(`DELETE FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost'`, [orgId]);
         await c.query(`UPDATE ludy_meetings.morning_notice SET enabled = false WHERE org_id = $1`, [orgId]);
       });
     } finally {
