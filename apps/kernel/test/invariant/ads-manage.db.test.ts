@@ -615,6 +615,29 @@ suite('the changes of a running ad (#3835, W4)', () => {
     }
   });
 
+  it('refuses a lower budget and a shorter schedule behind an unclear change of their family, as the commands do (#3898): another family is not held back, and a failed one frees the family again', async () => {
+    const r = await rig();
+    const unclearLower = await request(r, LOWER);
+    await settle(r, unclearLower, 'unclear', 'reconcile_unclear');
+    // The budget family is unclear: a lower budget is refused whatever it asks for, with its own code, and nothing is written.
+    for (const toBudget of ['70000', '99999']) {
+      const [text, params] = defaults(r, { kind: 'budget_lower', fromBudget: '100000', toBudget });
+      await inContext(r.org, 'owner', (c) => refused(c, text, params, 'ADS_MANAGE_UNCLEAR'));
+      await inContext(r.org, 'admin', (c) => refused(c, text, params, 'ADS_MANAGE_UNCLEAR'));
+    }
+    // The schedule and each object's status are other families: not held back by it.
+    const shorten = await request(r, SHORTEN(r));
+    await request(r, { kind: 'pause', slot: 'campaign' });
+    // The same for the schedule: an unclear shorten refuses the next one, and not a lower budget (the budget family is its own).
+    await settle(r, shorten, 'unclear', 'reconcile_unclear');
+    const [again, againParams] = defaults(r, { kind: 'schedule_shorten', fromEndOn: r.end, toEndOn: D(6) });
+    await inContext(r.org, 'owner', (c) => refused(c, again, againParams, 'ADS_MANAGE_UNCLEAR'));
+    expect((await rows<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_manage_change WHERE org_id = $1`, [r.org.orgId]))[0]?.n).toBe('3');
+    // A failed change was never made: the unclear one that is newest of the family stands until a read settles it, and once the system settles it the family is free.
+    await settle(r, unclearLower, 'failed', 'unclear_not_applied');
+    expect(await request(r, { kind: 'budget_lower', fromBudget: '100000', toBudget: '70000' })).toBeTruthy();
+  });
+
   it('lets the system settle an unclear change as applied or failed and nothing else; no person does, and a change a newer one overtook stays as it is (#3898)', async () => {
     const r = await rig();
     const unclear = await request(r, LOWER);
