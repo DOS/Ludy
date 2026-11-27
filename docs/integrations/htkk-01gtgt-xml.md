@@ -53,8 +53,9 @@ Sources read on 2026-10-19.
 Root `HSoThueDTu` in GDT's namespace, `HSoKhaiThue id="ID_1"`, then:
 
 - **`TTinChung`** (envelope): `TTinDVu` names Ludy (`maDVu` `LUDY`), not HTKK. `TKhaiThue`: `maTKhai` 842, the form's
-  title and legal basis, `pbanTKhaiXML` 2.8.3, `loaiTKhai` `C` (first return; supplementary returns are out of
-  scope), `soLan` 0. `KyKKhaiThue`: a month is `kieuKy` `M`, `kyKKhai` `MM/YYYY` (as the schema notes say); a quarter is
+  title and legal basis, `pbanTKhaiXML` 2.8.3, `loaiTKhai` `C` (`soLan` 0) for a regular period, or `loaiTKhai` `B`
+  (`soLan` 1 by default, or `supplementaryCount`) when the period has `supplementary` late-sale items (#3541).
+  `KyKKhaiThue`: a month is `kieuKy` `M`, `kyKKhai` `MM/YYYY` (as the schema notes say); a quarter is
   `kieuKy` `Q`, `kyKKhai` `Q/YYYY` with its first and last month (as S3); the first and last day as `DD/MM/YYYY`.
   `ngayLapTKhai` and `ngayKy` are the day of the download in Vietnam time, `YYYY-MM-DD` (`ngayKy` is an `xs:date`).
   The tax office, the signer and the line of business are empty. `NNT`: the org's tax code, name and, when it is set
@@ -63,7 +64,11 @@ Root `HSoThueDTu` in GDT's namespace, `HSoKhaiThue id="ID_1"`, then:
 - **`CTieuTKhaiChinh`**: `ma_NganhNghe` `00` (ordinary business), `tieuMucHachToan` `1701` (domestic VAT), an empty
   `Header` ([09] to [11c]), then every indicator from [21] to [43], all numbers (the schema types them `xs:long`,
   `xs:nonNegativeInteger` for [22], [40a], [40] and [41], and `xs:boolean` for [21]; an empty number would fail it).
-- No `PLuc` (appendices): the reduced-rate appendix of Decree 174/2025 is not generated.
+  When `supplementary` items exist (#3541), [26] to [35] and the derived totals [36] to [43] carry the combined figures
+  (`input`, `output` and `supplementary`) so the amended return adds up to the dong.
+- No `PLuc` (appendices): the reduced-rate appendix of Decree 174/2025 is not generated, and for supplementary returns
+  (`loaiTKhai` `B`), `PL01_KHBS` and `PL01_1_KHBS` are omitted (`minOccurs="0"` in `KHBS_01_GTGT_TT80_283.xsd`) until
+  live HTKK verification (#332) and original `maGiaoDich` capture exist; the accountant completes `01/KHBS` in HTKK.
 
 | Indicator | Value |
 |---|---|

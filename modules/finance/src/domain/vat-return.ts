@@ -265,6 +265,21 @@ export function sideTotals(breakdowns: ReadonlyArray<Pick<DocumentBreakdown, 'ra
   };
 }
 
+/** Sums two side totals by rate (for combining main output with supplementary sales, #3541). */
+export function addSideTotals(a: SideTotals, b: SideTotals): SideTotals {
+  const rateOf = (side: SideTotals, rate: VatRate) => side.byRate.find((r) => r.rate === rate) ?? { rate, taxable: '0', vat: '0' };
+  return {
+    byRate: VAT_RATES.map((rate) => ({
+      rate,
+      taxable: canonical(money(rateOf(a, rate).taxable).plus(money(rateOf(b, rate).taxable))),
+      vat: canonical(money(rateOf(a, rate).vat).plus(money(rateOf(b, rate).vat))),
+    })),
+    taxable: canonical(money(a.taxable).plus(money(b.taxable))),
+    vat: canonical(money(a.vat).plus(money(b.vat))),
+    documents: a.documents + b.documents,
+  };
+}
+
 // The form 01/GTGT indicators Ludy can fill from invoices, in the form's order. [25] (input VAT eligible for
 // deduction) and everything from [36] on need the accountant's judgement or the previous return, so they are left
 // out. Labels stay Vietnamese: they are the form's own wording, for Vietnamese accountants.
