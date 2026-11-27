@@ -585,6 +585,8 @@ const channelOrderNo = () => `RLS${(channelOrderSeq++).toString().padStart(8, '0
 let channelSettlementSeq = 0;
 const channelSettlementDay = () => new Date(Date.UTC(2000, 0, 1 + channelSettlementSeq++)).toISOString().slice(0, 10);
 let lineNo = 100;
+// The orgs that already had a mark row made for them (the seed's), for the entry_review_mark factory.
+const entryReviewMarkSeeded = new Set<string>();
 const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit' | 'credit'): Row => ({
   table: 'crove_finance.journal_line',
   values: { org_id: org, entry_id: entry, line_no: lineNo, account_code: side === 'debit' ? '6422' : '331', debit: side === 'debit' ? '100' : '0', credit: side === 'credit' ? '100' : '0' },
@@ -1748,16 +1750,14 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // The register of fixed assets and prepaid costs (#919): one row per asset, never deleted. Tenant roles update only
   // the end of its schedule (a column grant), so the update probes assign end_reason to itself.
-  // #5182 (step 0, the migration follows): a person's mark that one hit of the monthly review of unusual entries was looked at: one row per (entry, rule), append-only, its entity filled from its entry by the
-  // legal-entity trigger. The entry is created in the same transaction (its balancing lines complete it), as for a journal line.
+  // #5182: a person's mark that one hit of the monthly review of unusual entries was looked at: one row per (entry, rule), append-only, its entity filled from its entry by the legal-entity trigger. A mark points at a
+  // journal entry, which a login role cannot create (tenant roles hold no INSERT on journal_entry), so a probe's own transaction cannot build one: every row names the org's committed entry (o.entry, the seed's).
+  // (entry, rule) is unique and the seed row is the only committed one, so the first row made for an org (the seed's, in beforeAll) takes one rule and every later row (a probe's, rolled back) another.
   'crove_finance.entry_review_mark': {
     make: (o) => {
-      const entry = randomUUID();
-      return {
-        setup: [journalEntry(o.id, entry)],
-        row: { org_id: o.id, id: randomUUID(), entry_id: entry, rule: 'amount_outlier', marked_by: o.owner },
-        complete: [balancingLine(o.id, entry, 1, 'debit'), balancingLine(o.id, entry, 2, 'credit')],
-      };
+      const seeded = entryReviewMarkSeeded.has(o.id);
+      entryReviewMarkSeeded.add(o.id);
+      return { row: { org_id: o.id, id: randomUUID(), entry_id: o.entry, rule: seeded ? 'off_day' : 'amount_outlier', marked_by: o.owner } };
     },
   },
   'crove_finance.fixed_asset': {
