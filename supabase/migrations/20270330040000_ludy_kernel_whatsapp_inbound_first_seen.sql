@@ -100,7 +100,7 @@ BEGIN
   -- dropped as expired by conversation_inbound_claim like any old notice.
   IF v_first IS NOT NULL THEN
     UPDATE ludy_kernel.conversation_inbound_pending p
-    SET received_at = pg_catalog.least(p.received_at, v_first)
+    SET received_at = LEAST(p.received_at, v_first)
     WHERE p.seq = v_seq;
   END IF;
   RETURN v_seq;
@@ -126,7 +126,7 @@ BEGIN
   WHERE f.key IN (
     SELECT o.key FROM ludy_kernel.conversation_inbound_first_seen o
     WHERE o.first_seen_at < pg_catalog.now() - pg_catalog.make_interval(days => 8)
-    ORDER BY o.first_seen_at LIMIT pg_catalog.least(pg_catalog.greatest(COALESCE(p_limit, 1), 1), 5000) FOR UPDATE SKIP LOCKED
+    ORDER BY o.first_seen_at LIMIT LEAST(GREATEST(COALESCE(p_limit, 1), 1), 5000) FOR UPDATE SKIP LOCKED
   );
   GET DIAGNOSTICS v_n = ROW_COUNT;
   RETURN v_n;
