@@ -258,3 +258,25 @@ describe('the 8% of a correction follows the confirmed basis (#3709)', () => {
     expect(codes(draft({ date: '2026-12-15', lines: eight }), '2026-12-15')).not.toContain(REFUSED);
   });
 });
+
+describe('rateDate validation (#3682)', () => {
+  const eight = [line({ vatRate: '8%' })];
+  const REFUSED = 'lines.1.vatRate:LINE_VAT_RATE_REDUCED_OUTSIDE_PERIOD';
+
+  it('refuses a non-null rateDate that is not a valid calendar day and fails closed', () => {
+    for (const bad of ['', 'not a date', '2026-02-30', '2026-13-01', '2026-02-29', '0000-01-01', '2026-1-1', ' 2026-11-20 ']) {
+      const issues = codes(draft({ date: '2027-01-10', rateDate: bad, lines: eight }), '2027-01-10');
+      expect(issues, bad).toEqual(['rateDate:RATE_DATE_INVALID']);
+      expect(issues, bad).not.toContain(REFUSED);
+      expect(codes(draft({ date: '2026-11-03', rateDate: bad, lines: [line({ vatRate: '10%' })] }))).toEqual(['rateDate:RATE_DATE_INVALID']);
+    }
+  });
+
+  it('allows omitted or null rateDate and valid calendar dates including leap days', () => {
+    expect(codes(draft({ date: '2026-11-03', lines: eight }))).toEqual([]);
+    expect(codes(draft({ date: '2026-11-03', rateDate: undefined, lines: eight }))).toEqual([]);
+    expect(codes(draft({ date: '2026-11-03', rateDate: null, lines: eight }))).toEqual([]);
+    expect(codes(draft({ date: '2027-01-10', rateDate: '2024-02-29', lines: eight }), '2027-01-10')).toEqual([]);
+    expect(codes(draft({ date: '2026-11-03', rateDate: '2027-01-01', lines: eight }), '2026-11-03')).toEqual([REFUSED]);
+  });
+});
