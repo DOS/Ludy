@@ -559,11 +559,13 @@ export const KERNEL_ERROR_CODES = [
   'MINUTES_TEMPLATE_NAME_TAKEN',
   'MINUTES_TEMPLATE_SECTIONS_INVALID',
   'MINUTES_TEMPLATES_MAX',
-  // The second-language version of the published minutes (#4777); MINUTES_NOT_PUBLISHED is the same code as the Word file's (#4774), below.
+  // The second-language version of the published minutes (#4777, #5225); MINUTES_NOT_PUBLISHED is the same code as the Word file's (#4774), below.
   'MINUTES_VERSION_STALE',
   'MINUTES_VERSION_SEGMENTS_INVALID',
   'MINUTES_VERSION_TEXT_REJECTED',
   'MINUTES_VERSION_TOO_LARGE',
+  'MINUTES_VERSION_NOT_FOUND',
+  'MINUTES_VERSION_STAGE',
   // The glossary an org keeps (Meetings #4043).
   'GLOSSARY_TERM_NOT_FOUND',
   'GLOSSARY_TERM_TAKEN',

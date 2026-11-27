@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { MINUTES_DOCX_MIME, sectionsToText, type MinutesDocx } from '@ludy/kernel-contract';
+import { MINUTES_DOCX_MIME, sectionsToText, type MinutesDocx, type TranslationSource } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -49,8 +49,14 @@ suite('The published minutes as a Word file (#4774)', () => {
   const users: Record<string, string> = {};
   const NAMES: Record<string, string> = { owner: 'Chủ Công Ty', adm: 'Quản Trị Viên', rec: 'Anh Người Ghi', lan: 'Chị Lan Đọc', other: 'Bạn Không Đọc' };
   const asUser = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const });
-  const download = (who: string, meetingId: string, place?: string) =>
-    runtime.query<MinutesDocx>('meetings.minutes_docx.download', place === undefined ? { meetingId } : { meetingId, place }, { actor: asUser(who), orgId });
+  const exec = <O = unknown>(who: string, name: string, input: unknown) => runtime.execute<O>(name, input, { actor: asUser(who), orgId });
+  const query = <O = unknown>(who: string, name: string, input: unknown) => runtime.query<O>(name, input, { actor: asUser(who), orgId });
+  const download = (who: string, meetingId: string, place?: string, language?: 'vi' | 'en') =>
+    runtime.query<MinutesDocx>(
+      'meetings.minutes_docx.download',
+      { meetingId, ...(place === undefined ? {} : { place }), ...(language === undefined ? {} : { language }) },
+      { actor: asUser(who), orgId },
+    );
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const c = new pg.Client({ connectionString: adminUrl });
     await c.connect();
@@ -62,12 +68,12 @@ suite('The published minutes as a Word file (#4774)', () => {
   }
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
 
-  async function meeting(spec: { title: string; readers?: string[]; visibility?: 'attendees' | 'org'; textDay?: string; template?: string }): Promise<string> {
+  async function meeting(spec: { title: string; readers?: string[]; visibility?: 'attendees' | 'org'; textDay?: string; template?: string; language?: 'vi' | 'en' }): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
       `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, summary_template)
-       VALUES ($1, $2, $4, 'vi', '2026-11-14T07:00:00Z', '2026-11-14T08:30:00Z', 5400, $3, $5, 'ready', 'told_at_start', $3, now(), '1.0', current_date - 1, ${spec.textDay ?? 'current_date + 365'}, $6)`,
-      [orgId, id, users.rec, spec.title, spec.visibility ?? 'attendees', spec.template ?? 'general'],
+       VALUES ($1, $2, $4, $7, '2026-11-14T07:00:00Z', '2026-11-14T08:30:00Z', 5400, $3, $5, 'ready', 'told_at_start', $3, now(), '1.0', current_date - 1, ${spec.textDay ?? 'current_date + 365'}, $6)`,
+      [orgId, id, users.rec, spec.title, spec.visibility ?? 'attendees', spec.template ?? 'general', spec.language ?? 'vi'],
     );
     for (const reader of spec.readers ?? []) await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[reader]]);
     return id;
@@ -237,5 +243,95 @@ suite('The published minutes as a Word file (#4774)', () => {
     expect(audit.rows.length).toBeGreaterThan(0);
     const text = audit.rows.map((r) => r.row).join('\n');
     for (const secret of ['rất riêng', 'Họp để kiểm toán']) expect(text, secret).not.toContain(secret);
+  });
+
+  it('downloads a published second-language version as .docx with localized chrome, fails closed when missing or unpublished, and isolates non-readers (#5225)', async () => {
+    const id = await meeting({ title: 'Họp song ngữ', readers: ['lan'] });
+    await result(id, 'published', 'Chốt báo giá 1.250.000 cho khách A.', ['Giữ giá cũ cho khách A']);
+    await item(id, 'Gửi báo giá cho khách A', 'published', 'lan', '2026-11-20');
+    await item(id, 'Việc nháp bí mật', 'draft', 'rec', '2026-11-21');
+
+    // Missing version fails closed with 404 MINUTES_VERSION_NOT_FOUND, while non-readers get MEETING_NOT_FOUND.
+    await expect(download('lan', id, undefined, 'en')).rejects.toMatchObject({ code: 'MINUTES_VERSION_NOT_FOUND' });
+    for (const who of ['other', 'adm', 'owner']) {
+      await expect(download(who, id, undefined, 'en'), who).rejects.toMatchObject({ code: 'MEETING_NOT_FOUND' });
+    }
+
+    // Draft-only meeting returns MINUTES_NOT_PUBLISHED even when language is requested.
+    const draftOnly = await meeting({ title: 'Nháp song ngữ', readers: ['lan'] });
+    await result(draftOnly, 'draft', 'Chỉ có nháp', []);
+    await expect(download('rec', draftOnly, undefined, 'en')).rejects.toMatchObject({ code: 'MINUTES_NOT_PUBLISHED' });
+
+    // Publish English version under recorder and download as reader.
+    const src = await query<TranslationSource>('rec', 'meetings.translation.source', { meetingId: id, stage: 'published', to: 'en' });
+    const itemSeg = src.segments.find((s) => s.key.startsWith('item:'));
+    expect(itemSeg).toBeDefined();
+    await exec('rec', 'meetings.minutes_version.publish', {
+      meetingId: id,
+      language: 'en',
+      hash: src.hash,
+      segments: [
+        { key: 'summary', text: 'Quote of 1,250,000 agreed for customer A.' },
+        { key: 'decision:0', text: 'Keep the old price for customer A' },
+        { key: itemSeg!.key, text: 'Send the quote to customer A' },
+      ],
+    });
+
+    const enFile = await download('lan', id, 'Room 301', 'en');
+    expect(enFile.filename).toBe('Meeting minutes - Họp song ngữ - 2026-11-14.docx');
+    const enParts = parts(enFile);
+    expect(enParts.get('word/styles.xml')).toContain('w:val="en-US"');
+    const enText = wordText(enFile);
+    expect(enText).toEqual(
+      expect.arrayContaining([
+        'MEETING MINUTES',
+        'Re: Họp song ngữ',
+        'From 14:00 to 15:30, 14/11/2026',
+        'Room 301',
+        '• Anh Người Ghi (Minute taker)',
+        'I. MEETING SUMMARY',
+        'Quote of 1,250,000 agreed for customer A.',
+        'II. DECISIONS',
+        '• Keep the old price for customer A',
+        'III. ACTION ITEMS',
+        'Task',
+        'Assignee',
+        'Due date',
+        'Send the quote to customer A',
+        'Chị Lan Đọc',
+        '20/11/2026',
+        'MINUTE TAKER',
+      ]),
+    );
+    const enJoined = enText.join('\n');
+    for (const leaked of ['Chốt báo giá', 'Giữ giá cũ', 'Gửi báo giá', 'Việc nháp', '@docx.test']) {
+      expect(enJoined).not.toContain(leaked);
+    }
+
+    // Default download still returns the original Vietnamese document.
+    expect(wordText(await download('lan', id))).toEqual(expect.arrayContaining(['BIÊN BẢN CUỘC HỌP', 'Chốt báo giá 1.250.000 cho khách A.']));
+
+    // Republishing original drops stale minutes_version, so EN .docx fails closed again.
+    await exec('rec', 'meetings.summary.save', { meetingId: id, summary: 'Bản gốc mới.', decisions: [] });
+    await exec('rec', 'meetings.result.publish', { meetingId: id, confirmed: true });
+    await expect(download('lan', id, undefined, 'en')).rejects.toMatchObject({ code: 'MINUTES_VERSION_NOT_FOUND' });
+
+    // An English original meeting renders English chrome by default and supports a published Vietnamese version.
+    const enMeeting = await meeting({ title: 'English Board Sync', readers: ['lan'], language: 'en' });
+    await result(enMeeting, 'published', 'Agreed on Q2 hiring plan.', ['Approve 2 roles']);
+    expect(wordText(await download('lan', enMeeting))).toEqual(expect.arrayContaining(['MEETING MINUTES', 'Agreed on Q2 hiring plan.']));
+    const viSrc = await query<TranslationSource>('rec', 'meetings.translation.source', { meetingId: enMeeting, stage: 'published', to: 'vi' });
+    await exec('rec', 'meetings.minutes_version.publish', {
+      meetingId: enMeeting,
+      language: 'vi',
+      hash: viSrc.hash,
+      segments: [
+        { key: 'summary', text: 'Thống nhất kế hoạch tuyển dụng quý 2.' },
+        { key: 'decision:0', text: 'Duyệt tuyển 2 vị trí' },
+      ],
+    });
+    const viFile = await download('lan', enMeeting, undefined, 'vi');
+    expect(parts(viFile).get('word/styles.xml')).toContain('w:val="vi-VN"');
+    expect(wordText(viFile)).toEqual(expect.arrayContaining(['BIÊN BẢN CUỘC HỌP', 'Thống nhất kế hoạch tuyển dụng quý 2.', '• Duyệt tuyển 2 vị trí']));
   });
 });

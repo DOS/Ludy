@@ -4,6 +4,7 @@
 // minutes file is a few tens of KB), so no download route is needed. This file holds the shapes and the limits both sides use; no database or network access here.
 import { z } from 'zod';
 import { MEETING_PLACE_MAX } from './meeting-place.ts';
+import { zMeetingLanguage } from './meetings.ts';
 import { zId } from './schemas.ts';
 
 export const MINUTES_DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -19,6 +20,7 @@ export const zMinutesDocxInput = z.strictObject({
     .max(MINUTES_DOCX_PLACE_MAX * 2)
     .refine((text) => [...text].length <= MINUTES_DOCX_PLACE_MAX)
     .default(''),
+  language: zMeetingLanguage.optional(),
 });
 export type MinutesDocxInput = z.infer<typeof zMinutesDocxInput>;
 
