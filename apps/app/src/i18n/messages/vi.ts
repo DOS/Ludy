@@ -5268,6 +5268,11 @@ export const vi = {
       turnOff: 'Tắt',
       saved: 'Đã lưu cài đặt.',
       adminOnly: 'Chỉ chủ sở hữu hoặc quản trị viên mới đổi được.',
+      orgListTitle: 'Các liên kết đang còn hạn trong tổ chức',
+      orgListEmpty: 'Chưa có liên kết biên bản nào đang bật.',
+      orgListPrivate: 'Cuộc họp riêng tư',
+      orgListCreatedBy: 'Tạo bởi {name}',
+      orgListRevokeFor: 'Thu hồi liên kết của {meeting} tạo {at}',
     },
     // "Gửi biên bản tới địa chỉ của tôi" (A6, #3164): webhook riêng của từng thành viên cho biên bản họ công bố.
     hook: {
@@ -20641,6 +20646,7 @@ export const vi = {
         create: 'Tạo liên kết tới biên bản đã xuất bản cho người ngoài',
         revoke: 'Thu hồi liên kết tới biên bản đã xuất bản',
         list: 'Xem các liên kết tới biên bản đã xuất bản của một cuộc họp',
+        org_list: 'Xem các liên kết tới biên bản đang còn hạn trong tổ chức',
         switch: {
           get: 'Xem tổ chức có cho chia sẻ biên bản ra ngoài hay không',
           set: 'Bật hoặc tắt việc chia sẻ biên bản ra ngoài',

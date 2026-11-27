@@ -1,5 +1,5 @@
 import { oc } from '@orpc/contract';
-import { zMinutesLinkCreate, zMinutesLinkCreated, zMinutesLinkItems, zMinutesLinkList, zMinutesLinkRevoke, zMinutesLinkRevoked, zMinutesLinkSwitch, zMinutesLinkSwitchGet } from './meeting-minutes-link.ts';
+import { zMinutesLinkCreate, zMinutesLinkCreated, zMinutesLinkItems, zMinutesLinkList, zMinutesLinkRevoke, zMinutesLinkRevoked, zMinutesLinkSwitch, zMinutesLinkSwitchGet, zOrgMinutesLinkList, zOrgMinutesLinkListInput } from './meeting-minutes-link.ts';
 import { z } from 'zod';
 import { zSpeakingStyle, zSpeakingStyleInput } from './meeting-speaking-style.ts';
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
@@ -2002,6 +2002,7 @@ export const contract = {
       create: oc.input(zMinutesLinkCreate).output(zMinutesLinkCreated),
       revoke: oc.input(zMinutesLinkRevoke).output(zMinutesLinkRevoked),
       list: oc.input(zMinutesLinkList).output(zMinutesLinkItems),
+      orgList: oc.input(zOrgMinutesLinkListInput).output(zOrgMinutesLinkList),
     },
     // A member's own webhook for the minutes they publish (A6, #3164): the card reads `get`, `set` makes or changes it (the secret comes back once, when it is made), `rotateSecret`, `clear` and
     // `test` (a `ping` with no meeting data). The owner's `switch` (off by default) gates all of it; nothing is sent while it is off.

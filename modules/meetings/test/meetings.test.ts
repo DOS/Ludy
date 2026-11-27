@@ -212,6 +212,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.minutes_esign.get',
       'meetings.minutes_link.switch.get',
       'meetings.minutes_link.list',
+      'meetings.minutes_link.org_list',
       'meetings.media.orphan_keys',
       'meetings.transcript.get',
       'meetings.transcript.redact_candidates',

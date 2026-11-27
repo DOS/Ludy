@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactNode } from 'react';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { MINUTES_LINKS_MAX, zMinutesLinkItem, type MeetingResults as Results, type MinutesLinkItem, type MinutesLinkItems } from '@ludy/kernel-contract';
+import { MINUTES_LINKS_MAX, zMinutesLinkItem, zOrgMinutesLinkItem, type MeetingResults as Results, type MinutesLinkItem, type MinutesLinkItems, type OrgMinutesLinkItem, type OrgMinutesLinkList } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
@@ -323,5 +323,99 @@ describe('MinutesLinkSwitchCard', () => {
     expect(html).toContain('tối đa 30 ngày');
     expect(html).toContain('thu hồi được bất cứ lúc nào');
     expect(en.meetings.minutesLinkSwitch.hint).toContain('at most {days, number} days');
+  });
+});
+
+describe('org-wide live minutes links list in MinutesLinkSwitchCard (#4952)', () => {
+  const orgItem = (n: number, over: Partial<OrgMinutesLinkItem> = {}): OrgMinutesLinkItem => ({
+    id: `0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f50${String(n).padStart(2, '0')}`,
+    meetingId: `0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f60${String(n).padStart(2, '0')}`,
+    meetingTitle: 'Họp giao ban tuần',
+    canOpenMeeting: true,
+    createdByName: 'Chị Lan',
+    createdAt: '2026-11-20T03:00:00.000Z',
+    expiresAt: '2026-12-20T03:00:00.000Z',
+    views: 2,
+    firstViewedAt: '2026-11-21T04:00:00.000Z',
+    ...over,
+  });
+
+  function switchWithOrgList(enabled: boolean, role: 'owner' | 'admin' | 'member' | 'viewer', orgList: OrgMinutesLinkList | null, locale: 'en' | 'vi' = 'vi', slug: string | undefined = 'acme') {
+    client.current.clear();
+    client.current.setQueryData(['meetings', 'minutesLink', 'switch', 'get'], { enabled });
+    client.current.setQueryData(['org', 'get'], { role });
+    if (orgList) client.current.setQueryData(['meetings', 'minutesLink', 'orgList'], orgList);
+    return renderToStaticMarkup(wrap(<MinutesLinkSwitchCard slug={slug} />, locale));
+  }
+
+  it('shows readable meetings as links, unreadable attendees-only meetings as muted private fallback with zero leakage, and 44px revoke buttons for owner and admin', () => {
+    const privateMeetingId = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f6099';
+    const items = [
+      orgItem(1),
+      orgItem(2, {
+        meetingId: privateMeetingId,
+        meetingTitle: null,
+        canOpenMeeting: false,
+        createdByName: null,
+        views: 0,
+        firstViewedAt: null,
+      }),
+    ];
+    for (const role of ['owner', 'admin'] as const) {
+      const html = switchWithOrgList(true, role, { items }, 'vi');
+      expect(html).toContain('data-testid="org-minutes-links"');
+      expect(html).toContain('data-testid="org-minutes-links-list"');
+      expect(html.match(/data-testid="org-minutes-link-item"/g)).toHaveLength(2);
+      expect(html).toContain('Họp giao ban tuần');
+      expect(html).toContain(`href="/o/acme/meetings/${items[0]!.meetingId}"`);
+      expect(html).toContain('Tạo bởi Chị Lan');
+      expect(html).toContain('2 lượt mở');
+      expect(html).toContain('data-testid="org-minutes-link-private"');
+      expect(html).toContain('Cuộc họp riêng tư');
+      expect(html).toContain('italic');
+      expect(html).not.toContain(privateMeetingId);
+      expect(html).toContain('0 lượt mở');
+      expect(html).toContain('Chưa ai mở');
+      expect(html).toContain(`aria-label="Thu hồi liên kết của Họp giao ban tuần tạo`);
+      expect(html).toContain(`aria-label="Thu hồi liên kết của Cuộc họp riêng tư tạo`);
+      expect(html.match(/data-testid="org-minutes-link-revoke"/g)).toHaveLength(2);
+      expect(html).toContain('min-h-11');
+      expect(html).not.toContain('/-/minutes');
+    }
+
+    const enHtml = switchWithOrgList(true, 'owner', { items }, 'en');
+    expect(enHtml).toContain('Live links across the organization');
+    expect(enHtml).toContain('Private meeting');
+    expect(enHtml).toContain('Made by Chị Lan');
+    expect(enHtml).toContain('2 views');
+    expect(enHtml).toContain('aria-label="Revoke link for Private meeting made');
+  });
+
+  it('shows plain title when slug is absent, keeps listing when org switch is off, and shows empty note when none are live', () => {
+    const noSlug = switchWithOrgList(false, 'admin', { items: [orgItem(1)] }, 'vi', undefined);
+    expect(noSlug).toContain('Họp giao ban tuần');
+    expect(noSlug).not.toContain('<a ');
+
+    const emptyVi = switchWithOrgList(true, 'owner', { items: [] }, 'vi');
+    expect(emptyVi).toContain('data-testid="org-minutes-links-empty"');
+    expect(emptyVi).toContain(viMessages.meetings.minutesLinkSwitch.orgListEmpty);
+
+    const emptyEn = switchWithOrgList(false, 'owner', { items: [] }, 'en');
+    expect(emptyEn).toContain(en.meetings.minutesLinkSwitch.orgListEmpty);
+  });
+
+  it('never renders the org-wide list for member or viewer even if cached', () => {
+    for (const role of ['member', 'viewer'] as const) {
+      const html = switchWithOrgList(true, role, { items: [orgItem(1)] }, 'vi');
+      expect(html).not.toContain('data-testid="org-minutes-links"');
+      expect(html).not.toContain('Họp giao ban tuần');
+      expect(html).not.toContain('data-testid="org-minutes-link-revoke"');
+    }
+  });
+
+  it('cannot carry token, path, or creator email in zOrgMinutesLinkItem', () => {
+    expect(zOrgMinutesLinkItem.safeParse(orgItem(1)).success).toBe(true);
+    expect(zOrgMinutesLinkItem.safeParse({ ...orgItem(1), token: TOKEN }).success).toBe(false);
+    expect(zOrgMinutesLinkItem.safeParse({ ...orgItem(1), email: 'lan@example.test' }).success).toBe(false);
   });
 });
