@@ -67,11 +67,11 @@ export function CatchUpResult({ answer }: { answer: CatchUpAnswer }) {
             <button
               type="button"
               data-testid="catch-up-cite"
-              aria-label={`${t('citeJumpLabel')}: ${line.cite.kind === 'decision' ? t('citeDecision', { index: line.cite.index }) : t('citeItem')}`}
+              aria-label={`${t('citeJumpLabel')}: ${line.cite.kind === 'decision' ? t('citeDecision', { index: String(line.cite.index) }) : t('citeItem')}`}
               onClick={() => scrollToCatchUpTarget(catchUpAnchorId(line.cite))}
               className="inline-flex min-h-11 items-center rounded border px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              {line.cite.kind === 'decision' ? t('citeDecision', { index: line.cite.index }) : t('citeItem')}
+              {line.cite.kind === 'decision' ? t('citeDecision', { index: String(line.cite.index) }) : t('citeItem')}
             </button>
           </li>
         ))}
@@ -161,8 +161,8 @@ export function MeetingCatchUp({ meetingId }: { meetingId: string }) {
             {status.estimate && totalEstimateTokens !== null && (
               <span className="text-xs text-muted-foreground" data-testid="catch-up-estimate">
                 {status.estimate.cost !== null
-                  ? t('estimateCost', { tokens: totalEstimateTokens, cost: status.estimate.cost })
-                  : t('estimateTokens', { tokens: totalEstimateTokens })}
+                  ? t('estimateCost', { tokens: String(totalEstimateTokens), cost: status.estimate.cost })
+                  : t('estimateTokens', { tokens: String(totalEstimateTokens) })}
               </span>
             )}
           </div>
