@@ -141,8 +141,9 @@ export function QuarterSummaryTable({ data, notes }: { data: FinanceQuarterSumma
       {data.empty ? (
         <p className="text-sm text-muted-foreground">{t('empty')}</p>
       ) : (
-        // The table scrolls sideways on a phone and holds nothing a keyboard can focus, so the scroller itself is focusable and named (axe: scrollable-region-focusable).
-        <div role="region" tabIndex={0} aria-label={t('title')} className="w-full overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        // The table scrolls sideways on a phone and holds nothing a keyboard can focus, so the scroller itself is focusable and named (axe: scrollable-region-focusable). It is a group, not a region: the
+        // section around it is already the landmark with this name, and a second landmark of the same name fails axe (landmark-unique).
+        <div role="group" tabIndex={0} aria-label={t('title')} className="w-full overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <table className="w-full min-w-[34rem] text-sm">
             <caption className="sr-only">{t('title')}</caption>
             <thead>

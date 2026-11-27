@@ -94,9 +94,10 @@ describe('the table of figures', () => {
     expect(html).toContain('<caption class="sr-only">Quý này nói gì</caption>');
   });
 
-  it('puts the sideways scroller of the table in the tab order with a name, so a keyboard can scroll it (axe: scrollable-region-focusable)', () => {
+  it('puts the sideways scroller of the table in the tab order with a name, so a keyboard can scroll it, and makes it a group so it is no second landmark (axe: scrollable-region-focusable, landmark-unique)', () => {
     const html = render('vi', DATA);
-    expect(html).toMatch(/<div role="region" tabindex="0" aria-label="Quý này nói gì" class="[^"]*overflow-x-auto[^"]*">/);
+    expect(html).toMatch(/<div role="group" tabindex="0" aria-label="Quý này nói gì" class="[^"]*overflow-x-auto[^"]*">/);
+    expect(html).not.toContain('role="region"');
   });
 
   it('is in English too, with the name of the coworker never typed in the copy', () => {
