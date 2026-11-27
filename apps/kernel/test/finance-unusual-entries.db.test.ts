@@ -702,7 +702,7 @@ suite('monthly review of unusual entries (#5182)', () => {
       seen.length = 0;
       await review({ legalEntityId: padded });
       // One statement finds, ranks and caps the hits (the other reads fetch the entity's books, names and chart).
-      expect(seen.filter((s) => s.includes('WITH ln AS')).length).toBe(1);
+      expect(seen.filter((s) => s.includes('WITH we AS MATERIALIZED')).length).toBe(1);
     });
   });
 
