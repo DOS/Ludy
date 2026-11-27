@@ -1680,6 +1680,8 @@ export const GITHUB_TASK_LINK_KINDS = ['issue', 'pull_request'] as const;
 export type GithubTaskLinkKind = (typeof GITHUB_TASK_LINK_KINDS)[number];
 export const GITHUB_EXTERNAL_STATES = ['open', 'closed', 'merged', 'draft'] as const;
 export type GithubExternalState = (typeof GITHUB_EXTERNAL_STATES)[number];
+export const GITHUB_OUTBOUND_STATES = ['open', 'closed'] as const;
+export type GithubOutboundState = (typeof GITHUB_OUTBOUND_STATES)[number];
 export const GITHUB_LINK_SOURCES = ['manual', 'mention', 'branch'] as const;
 export type GithubLinkSource = (typeof GITHUB_LINK_SOURCES)[number];
 export type ProjectsGithubTaskLinkTable = Refine<
@@ -1687,7 +1689,7 @@ export type ProjectsGithubTaskLinkTable = Refine<
   {
     kind: GithubTaskLinkKind;
     external_state: GithubExternalState;
-    last_outbound_state: 'open' | 'closed' | null;
+    last_outbound_state: GithubOutboundState | null;
     link_source: GithubLinkSource;
   }
 >;

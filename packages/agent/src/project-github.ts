@@ -30,10 +30,25 @@ const DESCRIPTION_PROMPT_CHARS = 900;
 const REPO_PROMPT_CHARS = 120;
 const LANGUAGE = { vi: 'Vietnamese', en: 'English' } as const;
 const HTML_TAG = /<[a-z!/]/i;
+const INLINE_MARKDOWN_RE = /\*\*[^*\n]+\*\*|__[^_\n]+__|`[^`\n]+`|!?\[[^\]\n]+\]\([^)\n]+\)/;
+const GITHUB_AUTONOMOUS_ACTION_RE: readonly RegExp[] = [
+  /(?<![\p{L}\p{N}])(?<!không\s)(?<!chưa\s)(?<!đừng\s)(?<!tránh\s)(?:tự\s+động|đã\s+tự\s+động)\s+(?:gắn|đóng|mở\s+lại|merge|gộp|liên\s+kết)(?![\p{L}\p{N}])/iu,
+  /(?<![\p{L}\p{N}])(?<!khong\s)(?<!chua\s)(?<!dung\s)(?<!tranh\s)(?:tu\s+dong|da\s+tu\s+dong)\s+(?:gan|dong|mo\s+lai|merge|gop|lien\s+ket)(?![\p{L}\p{N}])/iu,
+  /(?<![\p{L}\p{N}])(?<!not\s)(?<!never\s)(?<!no\s)(?:auto[- ]?(?:link|close|reopen|merge)(?:s|d|ed)?|automatically\s+(?:linked|closed|reopened|merged))(?![\p{L}\p{N}])/iu,
+];
 const TRAILING_URL_PUNCT = new Set(['.', ',', ';', ':', '!', '?', ')', "'", '"', ']']);
 
 const oneLine = plainLine;
 const fenced = escapePromptFences;
+
+function hasInlineMarkdown(text: string): boolean {
+  return INLINE_MARKDOWN_RE.test(text);
+}
+
+function hasGithubAutonomousAction(text: string): boolean {
+  const normalized = text.normalize('NFC').toLowerCase();
+  return GITHUB_AUTONOMOUS_ACTION_RE.some((re) => re.test(normalized));
+}
 
 function collectTrustedUrlTokens(trustedTexts: readonly string[]): string[] {
   const urls = new Set<string>();
@@ -61,7 +76,8 @@ function passesCommonSafetyGuards(
   if (hasPromptMarkupLeak(rawText)) return false;
   if (HTML_TAG.test(rawText) || HTML_TAG.test(trimmedText)) return false;
   if (hasMarkdownNoise(rawText) || hasMarkdownNoise(trimmedText)) return false;
-  if (hasAutonomousActionDirective(rawText)) return false;
+  if (hasInlineMarkdown(rawText) || hasInlineMarkdown(trimmedText)) return false;
+  if (hasAutonomousActionDirective(rawText) || hasGithubAutonomousAction(rawText)) return false;
   if (draftLinksOutside(trimmedText, trustedTexts).length > 0) return false;
 
   const untrusted = stripTrustedPhrases(trimmedText, trustedWithUrls);
@@ -357,14 +373,7 @@ export type ProjectGithubIssueMatchGenerator = (args: {
 
 export interface ProjectGithubIssueMatchValidated {
   candidateId: string;
-  repoFullName: string;
-  externalNumber: number;
-  externalUrl: string;
-  externalTitle: string;
-  authorLogin: string | null;
-  updatedAt: string | null;
   reason: string | null;
-  tainted: true;
 }
 
 export type ProjectGithubIssueMatchCheckResult =
@@ -459,14 +468,7 @@ export function checkGithubIssueMatch(
     seen.add(cid);
     matches.push({
       candidateId: candidate.candidateId,
-      repoFullName: candidate.repoFullName,
-      externalNumber: candidate.externalNumber,
-      externalUrl: candidate.externalUrl,
-      externalTitle: candidate.externalTitle,
-      authorLogin: candidate.authorLogin,
-      updatedAt: candidate.updatedAt,
       reason: cleanReason,
-      tainted: true,
     });
     if (matches.length >= 3) break;
   }
@@ -519,12 +521,6 @@ export function rankGithubIssueCandidatesDeterministic(
 
   return selected.map(({ candidate, score }) => ({
     candidateId: candidate.candidateId,
-    repoFullName: candidate.repoFullName,
-    externalNumber: candidate.externalNumber,
-    externalUrl: candidate.externalUrl,
-    externalTitle: candidate.externalTitle,
-    authorLogin: candidate.authorLogin,
-    updatedAt: candidate.updatedAt,
     reason:
       score >= 100
         ? facts.language === 'vi'
@@ -537,6 +533,5 @@ export function rankGithubIssueCandidatesDeterministic(
           : facts.language === 'vi'
             ? 'Issue đang mở gần đây trong kho đã gắn'
             : 'Recent open issue in a bound repository',
-    tainted: true,
   }));
 }

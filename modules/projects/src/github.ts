@@ -16,6 +16,7 @@ import {
   zGithubIssueMatchRpcInput,
   zGithubLinkPrepareInput,
   zGithubOutboundContextQueryInput,
+  zGithubOutboundEnqueueInput,
   zGithubPrSummaryRpcInput,
   zGithubRecordOutboundInput,
   zGithubRepoBindInput,
@@ -62,6 +63,7 @@ export function setProjectsGithubAppInfo(info: { configured: boolean; slug: stri
 }
 
 const ADMINS = ['owner', 'admin'] as const;
+const MEMBERS = ['owner', 'admin', 'member'] as const;
 const READERS = ['owner', 'admin', 'member', 'viewer'] as const;
 
 const projectTarget = (input: { projectId: string }) => ({ type: 'projects.project', id: input.projectId });
@@ -1554,6 +1556,72 @@ export const projectGithubOutboundContext = defineQuery({
   },
 });
 
+const OUTBOUND_DELIVERY_ENQUEUE_WRITES = [
+  tableWrite(TABLES, 'ludy_projects', 'github_sync_delivery', [
+    'id',
+    'org_id',
+    'project_id',
+    'direction',
+    'delivery_id',
+    'event_type',
+    'repo_full_name',
+    'external_number',
+    'task_id',
+    'link_id',
+    'idempotency_key',
+    'target_remote_state',
+    'status',
+    'summary',
+    'received_at',
+    'processed_at',
+  ]),
+] as const;
+
+async function runOutboundEnqueueSql(
+  trx: QueryContext['trx'],
+  taskId: string,
+  previousStatus: string,
+  nextStatus: string,
+  now: Date,
+): Promise<{ enqueued: number }> {
+  const { rows } = await sql<{ enqueued: number }>`
+    SELECT ludy_projects.github_outbound_enqueue_for_task(
+      ${taskId}::uuid,
+      ${previousStatus},
+      ${nextStatus},
+      ${now}::timestamptz
+    ) AS enqueued`.execute(trx);
+  return { enqueued: Number(rows[0]?.enqueued ?? 0) };
+}
+
+export const projectGithubOutboundEnqueue = defineCommand({
+  name: 'projects.github.outbound_enqueue',
+  input: zGithubOutboundEnqueueInput,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  writes: [...OUTBOUND_DELIVERY_ENQUEUE_WRITES],
+  target: (input) => ({ type: 'kernel.task', id: input.taskId }),
+  handler: (ctx, input): Promise<{ enqueued: number }> =>
+    runOutboundEnqueueSql(ctx.trx, input.taskId, input.previousStatus, input.nextStatus, ctx.now),
+});
+
+export const projectGithubOutboundEnqueueSystem = defineCommand({
+  name: 'projects.github.outbound_enqueue_system',
+  input: zGithubOutboundEnqueueInput,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  writes: [...OUTBOUND_DELIVERY_ENQUEUE_WRITES],
+  target: (input) => ({ type: 'kernel.task', id: input.taskId }),
+  handler: (ctx, input): Promise<{ enqueued: number }> => {
+    if (ctx.actor.type !== 'system') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới xếp hàng đồng bộ GitHub từ tác tử');
+    }
+    return runOutboundEnqueueSql(ctx.trx, input.taskId, input.previousStatus, input.nextStatus, ctx.now);
+  },
+});
+
 export const projectGithubRecordOutbound = defineCommand({
   name: 'projects.github.record_outbound',
   input: zGithubRecordOutboundInput,
@@ -1702,7 +1770,7 @@ export const projectGithubAiPrSummarySource = defineQuery({
 export const projectGithubAiIssueMatchSource = defineQuery({
   name: 'projects.github.ai_issue_match_source',
   input: zGithubIssueMatchRpcInput.pick({ projectId: true, taskId: true }),
-  access: READERS,
+  access: WRITERS,
   handler: async (ctx, input): Promise<ProjectGithubIssueMatchSource> => {
     userOf(ctx.actor);
     const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
@@ -1808,6 +1876,8 @@ export const projectGithubCommands = [
   projectGithubTaskLinkRemove,
   projectGithubApplyInboundEvent,
   projectGithubInstallationSync,
+  projectGithubOutboundEnqueue,
+  projectGithubOutboundEnqueueSystem,
   projectGithubRecordOutbound,
 ];
 

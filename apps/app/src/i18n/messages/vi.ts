@@ -21079,6 +21079,8 @@ export const vi = {
           remove: 'Gỡ liên kết GitHub khỏi công việc dự án',
         },
         outbound_context: 'Đọc cấu hình, kho và trạng thái công việc phục vụ đồng bộ ra GitHub (hệ thống)',
+        outbound_enqueue: 'Xếp hàng đồng bộ đóng hoặc mở lại issue GitHub khi đổi trạng thái công việc',
+        outbound_enqueue_system: 'Xếp hàng đồng bộ đóng hoặc mở lại issue GitHub sau chuyển trạng thái từ tác tử (hệ thống)',
         record_outbound: 'Ghi nhận trạng thái và dấu thời gian chống lặp sau khi đồng bộ issue ra GitHub (hệ thống)',
         repo: {
           bind: 'Gắn một kho mã nguồn GitHub vào dự án',

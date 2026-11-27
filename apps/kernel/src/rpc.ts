@@ -5933,11 +5933,15 @@ export function createRpcHandler(
               source.externalAccountId &&
               channels?.github?.hasAppCredentials
             ) {
-              for (const repo of source.repos.slice(0, 5)) {
-                const fetched = await channels.github
-                  .listOpenIssues({ kind: 'github_app', installationId: source.externalAccountId }, repo.repoFullName, 20)
-                  .catch(() => []);
-                for (const item of fetched) {
+              const installationId = source.externalAccountId;
+              const repoBatches = await Promise.allSettled(
+                source.repos
+                  .slice(0, 5)
+                  .map((repo) => channels.github!.listOpenIssues({ kind: 'github_app', installationId }, repo.repoFullName, 20)),
+              );
+              for (const settled of repoBatches) {
+                if (settled.status !== 'fulfilled') continue;
+                for (const item of settled.value) {
                   pushCandidate({
                     repoFullName: item.repoFullName,
                     externalNumber: item.number,

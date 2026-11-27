@@ -46,12 +46,17 @@ CREATE INDEX IF NOT EXISTS github_sync_delivery_outbound_queued_idx
   ON ludy_projects.github_sync_delivery (received_at, id)
   WHERE direction = 'outbound' AND status = 'queued';
 
+CREATE INDEX IF NOT EXISTS github_sync_delivery_link_idx
+  ON ludy_projects.github_sync_delivery (org_id, link_id)
+  WHERE link_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS github_sync_delivery_outbound_link_idx
   ON ludy_projects.github_sync_delivery (org_id, link_id)
   WHERE link_id IS NOT NULL AND direction = 'outbound' AND status = 'queued';
 
--- Context-bound enqueue invoked inside Runtime.execute('kernel.task.set_status') when a task crosses the 'done' boundary.
--- Enforces opt-in binding (outbound_close_issue_on_done = true), 'issue'-only links, active projects app gate, and Layer 2 state equality check.
+-- Context-bound enqueue invoked via projects.github.outbound_enqueue (user in-tx) or projects.github.outbound_enqueue_system (agent outbox relay)
+-- when a task crosses the 'done' boundary. Enforces opt-in binding (outbound_close_issue_on_done = true), 'issue'-only links,
+-- active projects app gate, and Layer 2 state equality check; kernel.task.sync_external_status (inbound sync) never invokes it (Layer 1).
 -- migration-lint: cross-module verifies org_app_on('projects'), active tenant, and active GitHub channel_connection in the caller's tx
 CREATE OR REPLACE FUNCTION ludy_projects.github_outbound_enqueue_for_task(
   p_task_id uuid,
@@ -77,8 +82,9 @@ BEGIN
     RAISE EXCEPTION 'GITHUB_SYNC_CONTEXT_REQUIRED' USING ERRCODE = '42501';
   END IF;
 
-  -- Layer 1 safety: system/inbound sync never triggers outbound enqueue.
-  IF v_actor = 'system' THEN
+  -- Reject 'agent' actor contexts because agent_write_guard restricts direct agent writes on github_sync_delivery;
+  -- agent task transitions emit an outbox event relayed as 'system' via projects.github.outbound_enqueue_system.
+  IF v_actor NOT IN ('user', 'system') THEN
     RETURN 0;
   END IF;
 

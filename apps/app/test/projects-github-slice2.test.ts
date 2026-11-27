@@ -55,8 +55,10 @@ describe('Projects GitHub Integration Slice 2 UI & i18n (#5159)', () => {
       expect(aiFeatures.projects_github_pr_summary).not.toMatch(/[\u2014\u2013]/);
       expect(aiFeatures.projects_github_issue_match).not.toMatch(/[\u2014\u2013]/);
 
-      const cmdGh = data.commandLabels.projects.github as unknown as Record<string, unknown>;
+      const cmdGh = data.commands.projects.github as unknown as Record<string, unknown>;
       expect(typeof cmdGh.outbound_context).toBe('string');
+      expect(typeof cmdGh.outbound_enqueue).toBe('string');
+      expect(typeof cmdGh.outbound_enqueue_system).toBe('string');
       expect(typeof cmdGh.record_outbound).toBe('string');
       expect(typeof cmdGh.ai_pr_summary_source).toBe('string');
       expect(typeof cmdGh.ai_issue_match_source).toBe('string');

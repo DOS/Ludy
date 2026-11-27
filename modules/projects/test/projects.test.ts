@@ -120,6 +120,8 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.github.installation_sync',
       'projects.github.link.add',
       'projects.github.link.remove',
+      'projects.github.outbound_enqueue',
+      'projects.github.outbound_enqueue_system',
       'projects.github.record_outbound',
       'projects.github.repo.bind',
       'projects.github.repo.unbind',

@@ -73,7 +73,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'packages/db/src/schema.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'], why: 'refinements of the generated table types (CHECK unions, trigger-set columns); types only, no SQL' },
   'packages/kernel/src/agents.ts': {
     modules: ['projects'],
-    why: 'kernel.projects_roadmap.otp_cleanup prunes expired/invalidated public roadmap OTP challenges older than 24 hours through crove_projects.cleanup_roadmap_otp_org (#4399, ADR-0053, ADR-0057) whether or not projects is switched on, and kernel.task.set_status calls ludy_projects.github_outbound_enqueue_for_task only when projects is installed (#5159, ADR-0060)',
+    why: 'kernel.projects_roadmap.otp_cleanup prunes expired/invalidated public roadmap OTP challenges older than 24 hours through crove_projects.cleanup_roadmap_otp_org (#4399, ADR-0053, ADR-0057) whether or not projects is switched on',
   },
   'packages/kernel/src/engage-view.ts': {
     modules: ['ads', 'crm', 'social'],

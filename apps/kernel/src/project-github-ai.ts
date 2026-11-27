@@ -6,12 +6,12 @@ import {
   buildDeterministicGithubPrSummary,
   rankGithubIssueCandidatesDeterministic,
   type InboxReader,
-  type ProjectGithubIssueMatchCandidateInput,
   type ProjectGithubIssueMatchFacts,
   type ProjectGithubPrSummaryFacts,
 } from '@ludy/agent';
 import type {
   GithubAiState,
+  GithubIssueMatchCandidate,
   GithubIssueMatchRpcResult,
   GithubPrSummaryRpcResult,
 } from '@ludy/kernel-contract';
@@ -111,11 +111,35 @@ export async function prepareProjectGithubIssueMatch(
   gates: { readonly githubEnabled: boolean; readonly aiStopped: boolean; readonly aiBudgetSpent: boolean },
 ): Promise<GithubIssueMatchRpcResult> {
   const inspectedCount = facts.candidates.length;
+  const candidateById = new Map(facts.candidates.map((c) => [c.candidateId, c]));
+  const hydrateCandidates = (
+    items: ReadonlyArray<{ readonly candidateId: string; readonly reason: string | null }>,
+    deterministic: boolean,
+  ): GithubIssueMatchCandidate[] => {
+    const out: GithubIssueMatchCandidate[] = [];
+    for (const item of items) {
+      const c = candidateById.get(item.candidateId);
+      if (!c) continue;
+      out.push({
+        candidateId: c.candidateId,
+        repoFullName: c.repoFullName,
+        externalNumber: c.externalNumber,
+        externalUrl: c.externalUrl,
+        externalTitle: c.externalTitle,
+        authorLogin: c.authorLogin,
+        updatedAt: c.updatedAt,
+        reason: item.reason,
+        deterministic,
+        tainted: true,
+      });
+    }
+    return out;
+  };
   const deterministicFallback = (aiState: GithubAiState): GithubIssueMatchRpcResult => {
     const ranked = gates.githubEnabled && inspectedCount > 0 ? rankGithubIssueCandidatesDeterministic(facts) : [];
     return {
       ai: aiState,
-      candidates: ranked.map((c) => ({ ...c, deterministic: true })),
+      candidates: hydrateCandidates(ranked, true),
       inspectedCount,
     };
   };
@@ -138,7 +162,7 @@ export async function prepareProjectGithubIssueMatch(
     }
     return {
       ai: 'used',
-      candidates: out.matches.map((m) => ({ ...m, deterministic: false })),
+      candidates: hydrateCandidates(out.matches, false),
       inspectedCount,
     };
   } catch (error: unknown) {
@@ -152,5 +176,3 @@ export async function prepareProjectGithubIssueMatch(
     ticket.release();
   }
 }
-
-export type ProjectGithubCandidateInput = ProjectGithubIssueMatchCandidateInput;

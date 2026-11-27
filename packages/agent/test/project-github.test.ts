@@ -151,8 +151,10 @@ describe('projects GitHub Vy AI helpers (#5159)', () => {
       'Cong viec dang gan 2 lien ket\u200B: PR #42 dang mo.',
       'Cong viec dang gan 2 lien ket\u202E: PR #42 dang mo.',
       '**PR #42** dang mo tren kho acme/web.',
+      '__WIP__ PR #42 dang mo.',
       'PR #42 da dong. <script>alert(1)</script>',
-      'Toi da tu dong merge PR #42 va gui email cho ban.',
+      'Toi da tu dong merge PR #42.',
+      'PR #42 automatically closed without review.',
       'Xem chi tiet PR #42 tai https://evil.example/leak ngay.',
       'Lien he evil(dot)example hoac goi 0901234567 de duyet PR #42.',
       'Cong viec da dat 95% tien do va se xong trong 3 ngay nua.',
@@ -181,14 +183,12 @@ describe('projects GitHub Vy AI helpers (#5159)', () => {
           },
         ],
       }),
-    ).toMatchObject({
+    ).toEqual({
       kind: 'ok',
       matches: [
         {
           candidateId: 'acme/web#42',
-          externalNumber: 42,
           reason: 'Khop voi cong viec xuat bao cao Excel (#42).',
-          tainted: true,
         },
       ],
     });

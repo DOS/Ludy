@@ -421,7 +421,13 @@ export const zGithubTaskLinkAddRpcResult = z.object({
   link: zGithubTaskLinkView,
 });
 
-// Outbound worker runtime context query and recording schemas (#5159 Slice 2).
+// Outbound enqueue and worker runtime context query/recording schemas (#5159 Slice 2).
+export const zGithubOutboundEnqueueInput = z.strictObject({
+  taskId: zId,
+  previousStatus: z.string().trim().min(1).max(40),
+  nextStatus: z.string().trim().min(1).max(40),
+});
+
 export const zGithubOutboundContextQueryInput = z.strictObject({
   projectId: zId,
   taskId: zId,

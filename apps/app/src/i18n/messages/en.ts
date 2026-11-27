@@ -21079,6 +21079,8 @@ export const en = {
           remove: 'Remove a GitHub link from a project task',
         },
         outbound_context: 'Read current binding, repo, and task status for outbound GitHub sync (system)',
+        outbound_enqueue: 'Queue outbound GitHub issue close/reopen sync after task status change',
+        outbound_enqueue_system: 'Queue outbound GitHub issue close/reopen sync from agent transition (system)',
         record_outbound: 'Record outbound GitHub issue state sync timestamp and loop-breaker state (system)',
         repo: {
           bind: 'Bind a GitHub repository to a project',

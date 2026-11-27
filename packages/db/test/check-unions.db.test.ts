@@ -25,6 +25,7 @@ import {
   BOOKING_STATUSES,
   GITHUB_EXTERNAL_STATES,
   GITHUB_LINK_SOURCES,
+  GITHUB_OUTBOUND_STATES,
   GITHUB_TASK_LINK_KINDS,
   AGENT_RISKS,
   AGENT_RUNTIMES,
@@ -690,6 +691,7 @@ const UNIONS = unions({
   'ludy_social.post_variant.status': SOCIAL_VARIANT_STATUSES,
   'ludy_projects.github_task_link.external_state': GITHUB_EXTERNAL_STATES,
   'ludy_projects.github_task_link.kind': GITHUB_TASK_LINK_KINDS,
+  'ludy_projects.github_task_link.last_outbound_state': GITHUB_OUTBOUND_STATES,
   'ludy_projects.github_task_link.link_source': GITHUB_LINK_SOURCES,
 });
 

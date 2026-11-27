@@ -37,11 +37,13 @@ import {
   processGithubWebhookBatch,
   projectsGithubHydrateJobOptions,
   projectsGithubOutboundJobOptions,
+  runGithubAgentTransitionEnqueue,
   runGithubHydrateJob,
   runGithubOutboundJob,
   runGithubOutboundSweep,
   type ProjectsGithubHydrateJob,
   type ProjectsGithubOutboundJob,
+  type ProjectsGithubSweepJob,
 } from './projects-github-worker.ts';
 import type { GithubClient } from '@ludy/github';
 import { processInboundEmail, type InboundJob } from './inbound.ts';
@@ -2010,7 +2012,10 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       missed: 'once',
       expireInSeconds: PROJECTS_GITHUB_WEBHOOK_SWEEP_EXPIRE_SECONDS,
     });
-    await boss.work(QUEUES.projectsGithubSweep, { batchSize: 1 }, async () => {
+    await boss.work<ProjectsGithubSweepJob | null>(QUEUES.projectsGithubSweep, { batchSize: 1 }, async ([job]) => {
+      if (job?.data?.mode === 'agent_task_transition') {
+        await runGithubAgentTransitionEnqueue({ runtime: deps.runtime }, job.data);
+      }
       const done = await runGithubOutboundSweep({
         workerDb: deps.workerDb,
         runtime: deps.runtime,
@@ -4059,6 +4064,30 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   externalNumber: row.payload.externalNumber,
                 };
                 return boss.send(QUEUES.projectsGithubHydrate, hydrateJob, projectsGithubHydrateJobOptions(hydrateJob));
+              }
+              if (
+                projects &&
+                deps.channels?.github &&
+                deps.channels.broker &&
+                deps.channels.broker.id !== 'none' &&
+                row.type === 'projects.github.task_transitioned' &&
+                typeof row.payload.taskId === 'string' &&
+                typeof row.payload.previousStatus === 'string' &&
+                typeof row.payload.nextStatus === 'string'
+              ) {
+                const sweepJob: ProjectsGithubSweepJob = {
+                  mode: 'agent_task_transition',
+                  orgId: row.org_id,
+                  taskId: row.payload.taskId,
+                  previousStatus: row.payload.previousStatus,
+                  nextStatus: row.payload.nextStatus,
+                };
+                return boss.send(QUEUES.projectsGithubSweep, sweepJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.projectsGithubSweep, row.event_id),
+                  retryLimit: PROJECTS_GITHUB_OUTBOUND_RETRY_LIMIT,
+                  retryDelay: 10,
+                  retryBackoff: true,
+                });
               }
               if (Object.hasOwn(AGENT_PROPOSAL_COMMANDS, row.type)) {
                 return boss.send(QUEUES.agentProposal, { orgId: row.org_id, eventId: row.event_id, type: row.type }, {

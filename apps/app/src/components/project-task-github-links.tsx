@@ -351,6 +351,14 @@ export function ProjectTaskGithubLinks({
                             >
                               {cand.deterministic ? t('aiDeterministicBadge') : t('aiBadge')}
                             </Badge>
+                            <Badge
+                              variant="warning"
+                              className="h-5 px-1.5 text-[11px]"
+                              title={t('taintedHint')}
+                              data-testid="github-issue-match-tainted-badge"
+                            >
+                              {t('taintedBadge')}
+                            </Badge>
                           </div>
                           {safeHref ? (
                             <a

@@ -1266,9 +1266,25 @@ export const setTaskStatus = defineCommand({
       existingTask.status !== input.status &&
       (input.status === 'done' || (existingTask.status === 'done' && input.status !== 'cancelled'))
     ) {
-      // Enqueue outbound Done <-> Close/Reopen deliveries inside the same tx only when projects is installed;
-      // the definer further gates on org_app_on('projects'), opt-in outbound_close_issue_on_done, 'issue' links, and Layer 2 state equality (#5159).
-      await sql`SELECT ludy_projects.github_outbound_enqueue_for_task(${input.id}::uuid, ${existingTask.status}, ${input.status}, ${ctx.now}::timestamptz)`.execute(ctx.trx);
+      if (ctx.actor.type === 'user') {
+        // Run projects.github.outbound_enqueue in-tx (aside via its own declared writes) only when projects app is on (#5159).
+        const { rows: appRows } = await sql<{ on: boolean }>`SELECT ludy_kernel.org_app_on(${ctx.orgId}::uuid, 'projects') AS "on"`.execute(ctx.trx);
+        if (appRows[0]?.on === true) {
+          await ctx.run('projects.github.outbound_enqueue', {
+            taskId: input.id,
+            previousStatus: existingTask.status,
+            nextStatus: input.status,
+          });
+        }
+      } else {
+        // Org-chart agents cannot write ludy_projects.github_sync_delivery directly due to agent_write_guard;
+        // emit an IDs/codes-only outbox event relayed via projects-github-sweep (egress: 'none') as 'system'.
+        await ctx.emit('projects.github.task_transitioned', {
+          taskId: input.id,
+          previousStatus: existingTask.status,
+          nextStatus: input.status,
+        });
+      }
     }
     return { taskId: input.id, status: input.status };
   },

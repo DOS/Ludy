@@ -49,6 +49,7 @@ import {
   hasGithubOutboundWork,
   hasGithubWebhookWork,
   processGithubWebhookBatch,
+  runGithubAgentTransitionEnqueue,
   runGithubHydrateJob,
   runGithubOutboundJob,
   runGithubOutboundSweep,
@@ -1905,6 +1906,9 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     expect(ownerSaveOutbound.status).toBe(200);
     expect((ownerSaveOutbound.body?.binding as { outboundCloseIssueOnDone: boolean })?.outboundCloseIssueOnDone).toBe(true);
 
+    // Materialize default board columns before looking up Done / Todo columns for move_column.
+    await runtime.query<ProjectBoard>('projects.board', { projectId }, { actor: asUser(owner.userId), orgId: s2Org.orgId });
+
     // 2) Opt-in Done -> closes 'issue' #77 ONLY via PATCH (never touches 'pull_request' #101).
     const cols = await rows<{ id: string; task_status: string }>(
       'SELECT id, task_status FROM ludy_projects.project_column WHERE org_id = $1 AND project_id = $2',
@@ -2148,8 +2152,82 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     expect(jobWhenOff).toBe('skipped');
     expect(brokerOpenCount).toBe(0);
     expect(patchedRequests.length).toBe(patchesBeforeAppOff);
-    // Turn projects back ON for AI helper RPC tests below.
+    // When projects app is turned off, human kernel.task.set_status must still succeed without throwing MODULE_OFF!
+    await runtime.execute('kernel.task.set_status', { id: tLayer2, status: 'todo' }, { actor: asUser(member.userId), orgId: s2Org.orgId });
+
+    // Turn projects back ON for agent transition + AI helper RPC tests below.
     await runtime.execute('kernel.org.set_app', { module: 'projects', enabled: true }, { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() });
+
+    // 4b) Org-chart AI agent moving a linked task to 'done' passes #1710 & agent_write_guard via outbox + SYSTEM sweep enqueue (#5159).
+    const agentInstall = await runtime.execute<{ agentId: string; positionId: string }>(
+      'kernel.agent.template.install',
+      { templateKey: 'finance.chief_accountant' },
+      { actor: asMfa(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+    const { taskId: tAgent } = await runtime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId, title: 'Agent closes issue #79 cleanly', assigneePositionId: agentInstall.positionId },
+      { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+    remoteItems.set('/repos/octo-org/core-api/issues/79', {
+      number: 79,
+      html_url: 'https://github.com/octo-org/core-api/issues/79',
+      title: 'Agent-owned task linked issue',
+      state: 'open',
+      user: { login: 'octo-author' },
+      updated_at: '2027-02-01T10:30:00Z',
+    });
+    const linkAgentIssue = await rpc(
+      app,
+      'projects/github/taskLinkAdd',
+      member,
+      { projectId, taskId: tAgent, url: 'https://github.com/octo-org/core-api/issues/79', idempotencyKey: randomUUID() },
+      s2Org.slug,
+    );
+    expect(linkAgentIssue.status).toBe(200);
+    const agentRunRows = await rows<{ id: string }>(
+      `INSERT INTO ludy_kernel.ai_run (org_id, agent_id, module, status, started_at, expires_at)
+       VALUES ($1::uuid, $2::uuid, 'finance', 'running', now(), now() + interval '15 minutes')
+       RETURNING id`,
+      [s2Org.orgId, agentInstall.agentId],
+    );
+    const agentActor = { type: 'agent' as const, agentId: agentInstall.agentId, runId: agentRunRows[0]!.id };
+    const agentLease = await workerRuntime.execute<{ fence: string }>(
+      'kernel.task.checkout',
+      { id: tAgent },
+      { actor: agentActor, orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+    await workerRuntime.execute(
+      'kernel.task.set_status',
+      { id: tAgent, fence: agentLease.fence, status: 'done' },
+      { actor: agentActor, orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
+    const outboxTransition = await rows<{ payload: { taskId: string; previousStatus: string; nextStatus: string } }>(
+      `SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'projects.github.task_transitioned' ORDER BY id DESC LIMIT 1`,
+      [s2Org.orgId],
+    );
+    expect(outboxTransition[0]?.payload).toEqual({
+      taskId: tAgent,
+      previousStatus: 'in_progress',
+      nextStatus: 'done',
+    });
+    expect(await runGithubAgentTransitionEnqueue({ runtime: workerRuntime }, { mode: 'agent_task_transition', orgId: s2Org.orgId, ...outboxTransition[0]!.payload })).toBe(1);
+    const agentSweepJobs: Array<{ orgId: string; deliveryId: string }> = [];
+    await runGithubOutboundSweep({
+      workerDb,
+      runtime: workerRuntime,
+      sendOutbound: async (j) => {
+        agentSweepJobs.push(j);
+      },
+    });
+    const patchesBeforeAgent = patchedRequests.length;
+    for (const j of agentSweepJobs) {
+      await runGithubOutboundJob({ runtime: workerRuntime, workerDb, broker: vault, github: githubClient }, j);
+    }
+    expect(patchedRequests.slice(patchesBeforeAgent)).toContainEqual({
+      path: '/repos/octo-org/core-api/issues/79',
+      body: { state: 'closed' },
+    });
 
     // 5) Definer privilege check: app/tenant roles cannot invoke worker-only sweep/has_work/claim definers (42501 / permission denied).
     await expect(appDb.executeQuery(sql`SELECT ludy_projects.github_outbound_has_work()`.compile(appDb))).rejects.toThrow(/permission denied/);
@@ -2179,6 +2257,16 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
       s2Org.slug,
     );
     expect(privateMatchDenied.status).toBe(404);
+
+    // Read-only viewer cannot spend AI budget or fetch open GitHub issues via aiIssueMatch.
+    const viewerMatchDenied = await rpc(
+      appWithAi,
+      'projects/github/aiIssueMatch',
+      viewer,
+      { projectId, taskId: tMain, language: 'vi' },
+      s2Org.slug,
+    );
+    expect(viewerMatchDenied.status).toBe(403);
 
     // Populate open candidate issues on octo-org/core-api (mixing 2 issues + 1 PR disguised in /issues endpoint).
     openRepoIssues.set('octo-org/core-api', [

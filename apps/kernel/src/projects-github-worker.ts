@@ -136,6 +136,33 @@ export interface ProjectsGithubOutboundJob {
   readonly deliveryId: string;
 }
 
+export interface ProjectsGithubSweepJob {
+  readonly mode: 'agent_task_transition';
+  readonly orgId: string;
+  readonly taskId: string;
+  readonly previousStatus: string;
+  readonly nextStatus: string;
+}
+
+export async function runGithubAgentTransitionEnqueue(
+  deps: { readonly runtime: Runtime },
+  job: ProjectsGithubSweepJob,
+): Promise<number> {
+  if (!(await deps.runtime.appOn(job.orgId, 'projects', { fresh: true }))) {
+    return 0;
+  }
+  const res = await deps.runtime.execute<{ enqueued: number }>(
+    'projects.github.outbound_enqueue_system',
+    {
+      taskId: job.taskId,
+      previousStatus: job.previousStatus,
+      nextStatus: job.nextStatus,
+    },
+    { actor: SYSTEM, orgId: job.orgId },
+  );
+  return res.enqueued;
+}
+
 export function projectsGithubOutboundJobOptions(job: ProjectsGithubOutboundJob) {
   return {
     singletonKey: jobKey(job.orgId, QUEUES.projectsGithubOutbound, job.deliveryId),
