@@ -205,7 +205,7 @@ jobs:
           while :; do
             pending=()
             failed=()
-            check_workflow_jobs "$SHA" '.github/workflows/ci.yml' 'Lint, typecheck, unit tests'
+            check_workflow_jobs "$SHA" '.github/workflows/ci.yml' 'Lint, typecheck, test'
             check_workflow_jobs "$SHA" '.github/workflows/desktop-build.yml' "${desktop_jobs[@]}"
             if ((${#failed[@]} > 0)); then
               printf '::error::required check not green: %s\n' "${failed[*]}"
