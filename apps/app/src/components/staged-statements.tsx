@@ -21,19 +21,25 @@ import { CardSkeleton, DataTable, ErrorText, Spinner } from './ui.tsx';
 type Statement = NonNullable<FileStatus['statement']>;
 
 // One staged statement's lines, asked for when the member opens them.
-function StatementLines({ fileId, shownConflicts }: { fileId: string; shownConflicts: number }) {
+function StatementLines({ fileId, shownConflicts, shownFeed }: { fileId: string; shownConflicts: number; shownFeed: Statement['feed'] }) {
   const t = useTranslations('inbox.staged');
   const f = useFormat();
   const lines = useQuery(orpc.bank.statementLines.queryOptions({ input: { fileId } }));
   if (lines.isPending) return <Spinner />;
   if (lines.isError) return <ErrorText>{errorMessage(lines.error)}</ErrorText>;
-  const { lines: rows, total, conflicts } = lines.data;
+  const { lines: rows, total, conflicts, feed } = lines.data;
+  const feedChanged = feed && feed.leftOut > 0 && (!shownFeed || shownFeed.leftOut === 0 || shownFeed.from !== feed.from || shownFeed.leftOut !== feed.leftOut);
   return (
     <div className="mt-3 space-y-2" data-testid="staged-statement-lines">
       {/* The lines are checked against the books as they are now: a conflict the card's own count did not know of is said here. */}
       {conflicts > shownConflicts && (
         <Alert className="border-warning/30 bg-warning/10 text-warning" role="note" data-testid="staged-new-conflicts">
           <AlertDescription className="text-warning">{t('conflictsNow', { count: conflicts })}</AlertDescription>
+        </Alert>
+      )}
+      {feedChanged && (
+        <Alert className="border-warning/30 bg-warning/10 text-warning" role="note" data-testid="staged-live-feed-skipped">
+          <AlertDescription className="text-warning">{t('feedSkipped', { count: feed.leftOut, from: f.date(feed.from) })}</AlertDescription>
         </Alert>
       )}
       {total > rows.length && <p className="text-xs text-subtle-foreground">{t('linesTruncated', { shown: rows.length, total })}</p>}
@@ -84,7 +90,13 @@ export function StagedStatements({ canDecide, refetchMs }: { canDecide: boolean;
     orpc.bank.statementConfirm.mutationOptions({
       onSuccess: (result) => {
         settle();
-        toast(t('imported', { count: result.counts.new + result.counts.ambiguous + result.counts.conflict }), 'success');
+        const count = result.counts.new + result.counts.ambiguous + result.counts.conflict;
+        toast(
+          result.feed && result.feed.leftOut > 0
+            ? t('importedWithFeed', { count, feedSkipped: result.feed.leftOut, from: f.date(result.feed.from) })
+            : t('imported', { count }),
+          'success',
+        );
       },
       onError: (error) => {
         settle();
@@ -161,13 +173,31 @@ export function StagedStatements({ canDecide, refetchMs }: { canDecide: boolean;
                   </div>
                   <div>
                     <dt className="text-subtle-foreground">{t('lines')}</dt>
-                    <dd className="text-foreground tabular-nums">{t('linesValue', { lines: f.number(file.statement.lines), news: f.number(file.statement.newLines), duplicates: f.number(file.statement.duplicateLines) })}</dd>
+                    <dd className="text-foreground tabular-nums">
+                      {file.statement.feed && file.statement.feed.leftOut > 0
+                        ? t('linesValueWithFeed', {
+                            lines: f.number(file.statement.lines),
+                            news: f.number(file.statement.newLines),
+                            duplicates: f.number(file.statement.duplicateLines),
+                            feedSkipped: f.number(file.statement.feed.leftOut),
+                          })
+                        : t('linesValue', {
+                            lines: f.number(file.statement.lines),
+                            news: f.number(file.statement.newLines),
+                            duplicates: f.number(file.statement.duplicateLines),
+                          })}
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-subtle-foreground">{t('totals')}</dt>
                     <dd className="text-foreground tabular-nums">{t('totalsValue', { moneyIn: f.money(file.statement.totalIn), moneyOut: f.money(file.statement.totalOut) })}</dd>
                   </div>
                 </dl>
+                {file.statement.feed && file.statement.feed.leftOut > 0 && (
+                  <Alert className="mt-3 border-warning/30 bg-warning/10 text-warning" role="note" data-testid="staged-feed-skipped">
+                    <AlertDescription className="text-warning">{t('feedSkipped', { count: file.statement.feed.leftOut, from: f.date(file.statement.feed.from) })}</AlertDescription>
+                  </Alert>
+                )}
                 {file.statement.conflictLines > 0 && (
                   <Alert className="mt-3 border-warning/30 bg-warning/10 text-warning" role="note" data-testid="staged-conflicts">
                     <AlertDescription className="text-warning">{t('conflicts', { count: file.statement.conflictLines })}</AlertDescription>
@@ -179,7 +209,7 @@ export function StagedStatements({ canDecide, refetchMs }: { canDecide: boolean;
                     <Button size="sm" variant="ghost" aria-expanded={shown} onClick={() => setOpen(shown ? null : file.id)}>
                       {shown ? t('hideLines') : t('showLines', { lines: file.statement.lines })}
                     </Button>
-                    {shown && <StatementLines fileId={file.id} shownConflicts={file.statement.conflictLines} />}
+                    {shown && <StatementLines fileId={file.id} shownConflicts={file.statement.conflictLines} shownFeed={file.statement.feed} />}
                   </div>
                 )}
                 {canDecide ? (
