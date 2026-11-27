@@ -12489,6 +12489,7 @@ export const vi = {
       meetings_digest: 'Viết vài câu về những gì đã chốt và việc còn dở trong các cuộc họp của tuần',
       meetings_assignee: 'Đọc tên được nhắc cho một việc cần làm và chọn người nhiều khả năng nhất',
       meetings_brief: 'Viết vài câu chuẩn bị trước cuộc họp từ những gì đã chốt, việc còn dở và cơ hội của khách',
+      meetings_brief_daily: 'Soạn vài dòng chuẩn bị trước mỗi cuộc họp buổi sáng từ những gì đã chốt, việc còn dở và cơ hội của khách',
       meetings_chapters: 'Lập mục lục cuộc họp từ bản ghi, mỗi mục kèm giây của dòng bắt đầu',
       meetings_title: 'Gợi ý tối đa ba tên cho cuộc họp từ bản ghi, khi người ghi bấm',
       meetings_commitments: 'Liệt kê mỗi người nói đã cam kết hay quyết định gì trong cuộc họp, từ bản ghi, khi người ghi bấm',

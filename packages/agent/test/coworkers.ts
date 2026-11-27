@@ -205,9 +205,7 @@ export interface CoworkerEvalSummary {
   perModule: CoworkerModuleMetrics[];
 }
 
-// System-started features whose prompt/validator lands in #5073 Step 2 (Meetings slice);
-// remove entries here once their real coworker prompt and eval cases land.
-export const UNIMPLEMENTED_SYSTEM_FEATURES = new Set<string>(['meetings.brief_daily']);
+export const UNIMPLEMENTED_SYSTEM_FEATURES = new Set<string>([]);
 
 export const ALL_COWORKER_FEATURE_KEYS: readonly CoworkerFeatureKey[] = [
   ...new Set<CoworkerFeatureKey>([
@@ -1335,6 +1333,18 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
     ),
     injCase('meetings.brief.inj.3', 'meetings.brief', 'vi', (rt) =>
       runInjectionSafe(() => writeBrief({ facts: [{ kind: 'decision', text: corpusAt(3).untrustedInput }] }, rt.memberPorts)),
+    ),
+    cleanCase('meetings.brief_daily.clean', 'meetings.brief_daily', 'vi', (rt) =>
+      runCleanChecked(
+        () => writeBrief({ facts: briefFactsVy, feature: 'meetings.brief_daily' }, rt.memberPorts),
+        (out) => isRecord(out) && isRecord(out.answer),
+        'meetings.brief_daily',
+      ),
+    ),
+    injCase('meetings.brief_daily.inj.3', 'meetings.brief_daily', 'vi', (rt) =>
+      runInjectionSafe(() =>
+        writeBrief({ facts: [{ kind: 'decision', text: corpusAt(3).untrustedInput }], feature: 'meetings.brief_daily' }, rt.memberPorts),
+      ),
     ),
     cleanCase('meetings.digest.clean', 'meetings.digest', 'vi', (rt) =>
       runCleanChecked(

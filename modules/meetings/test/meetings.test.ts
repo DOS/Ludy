@@ -145,6 +145,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.translation.transcript_stop',
       'meetings.ask.start',
       'meetings.brief.start',
+      'meetings.brief.store_lines',
       'meetings.digest.start',
       'meetings.voice_cue.draft',
       'meetings.morning.set',

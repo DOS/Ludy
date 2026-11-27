@@ -12489,6 +12489,7 @@ export const en = {
       meetings_digest: 'Writing a few sentences on what was decided and what is still open across the week\'s meetings',
       meetings_assignee: 'Reading the name said for an action item and picking the person it most likely means',
       meetings_brief: 'Writing a few sentences to prepare for a meeting from what was decided, what is open and the customer\'s deals',
+      meetings_brief_daily: 'Preparing a few short lines before each morning meeting from what was decided, what is open and the customer\'s deals',
       meetings_chapters: 'Writing the table of contents of a meeting from its transcript, each chapter at the second of its first line',
       meetings_title: 'Suggesting up to three titles for a meeting from its transcript, on the recorder\'s click',
       meetings_commitments: 'Listing what each speaker of a meeting said they would do or decided, from its transcript, on the recorder\'s click',
