@@ -99,10 +99,13 @@ rows from before the day the entity's current chart began are not read (TT133 an
 **Ranking and cap.** In SQL: rule order (the list above), then amount, then the later day. At most 6 hits per rule and 30 in
 all; hits already marked reviewed are taken out before the ranking, so they never use a place, and are counted.
 
-**The reviewed mark.** `finance.unusual_entries.review` (R1, user actors only, owners, admins and members) inserts one row of
+**The reviewed mark.** `finance.unusual_entries.review` (R1, user actors only, owners, admins and members) first runs the same rule SQL for that one
+entry in the month of its date and refuses `NOT_A_HIT` (writing nothing) unless the pair is a current hit, so a member cannot
+pre-suppress a hit that has not happened (PO decision 2026-11-27); it then inserts one row of
 `ludy_finance.entry_review_mark` per (org, entry, rule); the unique key makes it idempotent and the runtime audits every run
 (entry id, rule, whether it was already marked, no figure or text). No ledger table is touched and there is no unmark in this
-slice. The table is insert-only for the tenant role, under RLS and the legal-entity scope. It is not purged with the org's
+slice. The card lists the newest 10 reviewed hits with "reviewed by <name>, <date>" (the name the org knows the member by, the
+date in Vietnam time). The table is insert-only for the tenant role, under RLS and the legal-entity scope. It is not purged with the org's
 tenant data: it follows the ledger entry it points at, which `ludy_kernel.org_purge` reads and never deletes, as
 `input_vat_check` does, so no `ludy_kernel` function is replaced.
 

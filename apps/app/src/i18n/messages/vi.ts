@@ -808,6 +808,7 @@ export const vi = {
       none: 'Tháng này không có bút toán nào trông bất thường.',
       more: '{count, plural, other {# bút toán khác}} cũng trông bất thường nhưng chưa hiện ở đây.',
       reviewed: '{count, plural, other {# mục}} đã được đánh dấu đã xem và không hiện trong danh sách này.',
+      reviewedList: { title: 'Xem các mục đã được đánh dấu', by: 'Đã xem bởi {name}, {date}', on: 'Đã xem ngày {date}' },
       rules: {
         duplicate_invoice: 'Giống một hóa đơn đã ghi sổ trước đó',
         control_manual: 'Bút toán tay chạm vào tài khoản công nợ hoặc thuế',

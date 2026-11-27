@@ -51,6 +51,7 @@ const REVIEW: FinanceUnusualEntries = {
   ],
   moreHits: 0,
   reviewed: 0,
+  reviewedHits: [],
 };
 
 function setup(answer: ((facts: UnusualEntriesNoteFacts) => Promise<UnusualEntriesNotesResult>) | null, budget = new DraftBudget()) {

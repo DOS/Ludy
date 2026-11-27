@@ -29,10 +29,12 @@ import {
   UNUSUAL_NEW_ACCOUNT_KIND_MIN,
   UNUSUAL_NEW_ACCOUNT_PARTY_MIN,
   UNUSUAL_OFF_DAY_MIN_AMOUNT,
+  UNUSUAL_REVIEWED_SHOWN,
   zFinanceUnusualEntriesInput,
   zFinanceUnusualEntryReviewInput,
   type ExpenseVarianceSourceKind,
   type FinanceUnusualEntries,
+  type ReviewedHit,
   type UnusualControlGroup,
   type UnusualEntryHit,
   type UnusualEntryRule,
@@ -90,12 +92,16 @@ interface HitRow {
   d_number: string | null;
   d_other: string | null;
   d_other_date: string | null;
+  reviewed: boolean | null;
+  marked_by: string | null;
+  marked_on: string | null;
 }
 
-// The whole review in ONE statement: the valid lines, the five rules, the ranking and the cap. See the header for what each part reads.
-async function hitRows(ctx: QueryContext, entity: string, regime: 'tt133' | 'tt99', span: ReturnType<typeof reviewWindow>, holidays: readonly string[]): Promise<HitRow[]> {
+// The valid lines, the five rules and the hits with their reviewed marks, as the head of a statement (the tail is the caller's): the list ranks and caps them, the review command asks only whether one entry is a
+// hit of a rule (`entryId`). See the header for what each part reads.
+function hitsHead(ctx: QueryContext, entity: string, regime: 'tt133' | 'tt99', span: ReturnType<typeof reviewWindow>, holidays: readonly string[], entryId: string | null) {
   const org = ctx.orgId;
-  const { rows } = await sql<HitRow>`
+  return sql`
     WITH ln AS (
       SELECT e.id AS entry_id, e.entry_date, e.source_type, e.source_id, e.description, l.account_code, l.debit, l.credit,
         -- The party of a line is its own, or the one party the whole entry names: an invoice posts the party on its payable or receivable line only (record.ts), not on the expense line the rules look at.
@@ -225,28 +231,44 @@ async function hitRows(ctx: QueryContext, entity: string, regime: 'tt133' | 'tt9
       ORDER BY e.entry_id
     ),
     hits AS (
-      SELECT u.*, e.entry_date, e.kind, e.description, e.amount, (m.entry_id IS NOT NULL) AS reviewed,
+      SELECT u.*, e.entry_date, e.kind, e.description, e.amount, (m.entry_id IS NOT NULL) AS reviewed, m.marked_by, m.created_at AS marked_at,
         (CASE u.rule WHEN 'duplicate_invoice' THEN 1 WHEN 'control_manual' THEN 2 WHEN 'amount_outlier' THEN 3 WHEN 'new_account' THEN 4 ELSE 5 END) AS prio
       FROM (
         SELECT * FROM hd UNION ALL SELECT * FROM hc UNION ALL SELECT * FROM ho UNION ALL SELECT * FROM hn UNION ALL SELECT * FROM hf
       ) u
-      JOIN em e ON e.entry_id = u.entry_id
+      JOIN em e ON e.entry_id = u.entry_id AND (${entryId}::uuid IS NULL OR e.entry_id = ${entryId}::uuid)
       LEFT JOIN ludy_finance.entry_review_mark m ON m.org_id = ${org}::uuid AND m.entry_id = u.entry_id AND m.rule = u.rule
-    ),
+    )`;
+}
+
+// The list in ONE statement: the hits not yet reviewed, ranked and capped, then the newest reviewed ones.
+async function hitRows(ctx: QueryContext, entity: string, regime: 'tt133' | 'tt99', span: ReturnType<typeof reviewWindow>, holidays: readonly string[]): Promise<HitRow[]> {
+  const { rows } = await sql<HitRow>`
+    ${hitsHead(ctx, entity, regime, span, holidays, null)},
     unreviewed AS (
       SELECT h.*, pg_catalog.row_number() OVER (PARTITION BY h.rule ORDER BY h.amount DESC, h.entry_date DESC, h.entry_id) AS rk FROM hits h WHERE NOT h.reviewed
     ),
     picked AS (
       SELECT * FROM unreviewed WHERE rk <= ${UNUSUAL_MAX_PER_RULE} ORDER BY prio, amount DESC, entry_date DESC, entry_id LIMIT ${UNUSUAL_MAX_HITS}
     ),
+    done AS (
+      SELECT h.*, NULL::bigint AS rk FROM hits h WHERE h.reviewed ORDER BY h.marked_at DESC, h.entry_id LIMIT ${UNUSUAL_REVIEWED_SHOWN}
+    ),
     summary AS (
       SELECT (SELECT pg_catalog.count(*) FROM em) AS entries, pg_catalog.count(*) FILTER (WHERE NOT reviewed) AS open_total, pg_catalog.count(*) FILTER (WHERE reviewed) AS reviewed_total FROM hits
     )
     SELECT s.entries, s.open_total, s.reviewed_total, p.entry_id, p.rule, pg_catalog.to_char(p.entry_date, 'YYYY-MM-DD') AS entry_date, p.kind, p.description, p.amount, p.party_id, p.grp, p.d_amount,
-      p.d_median, p.d_count, p.d_direction, p.d_basis, p.d_day, p.d_control, p.d_number, p.d_other, pg_catalog.to_char(p.d_other_date, 'YYYY-MM-DD') AS d_other_date
-    FROM summary s LEFT JOIN picked p ON true
-    ORDER BY p.prio, p.amount DESC, p.entry_date DESC, p.entry_id`.execute(ctx.trx);
+      p.d_median, p.d_count, p.d_direction, p.d_basis, p.d_day, p.d_control, p.d_number, p.d_other, pg_catalog.to_char(p.d_other_date, 'YYYY-MM-DD') AS d_other_date,
+      p.reviewed, p.marked_by, pg_catalog.to_char(p.marked_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS marked_on
+    FROM summary s LEFT JOIN (SELECT * FROM picked UNION ALL SELECT * FROM done) p ON true
+    ORDER BY p.reviewed NULLS FIRST, CASE WHEN p.reviewed THEN NULL ELSE p.prio END, p.marked_at DESC NULLS LAST, p.amount DESC, p.entry_date DESC, p.entry_id`.execute(ctx.trx);
   return rows;
+}
+
+// Whether one entry is a hit of one rule right now (reviewed or not): the same rule SQL, asked of that entry alone, in the month of its date.
+async function isCurrentHit(ctx: QueryContext, entity: string, regime: 'tt133' | 'tt99', span: ReturnType<typeof reviewWindow>, holidays: readonly string[], entryId: string, rule: string): Promise<boolean> {
+  const { rows } = await sql<{ rule: string }>`${hitsHead(ctx, entity, regime, span, holidays, entryId)} SELECT h.rule FROM hits h WHERE h.rule = ${rule}::text`.execute(ctx.trx);
+  return rows.length > 0;
 }
 
 async function accountNames(ctx: QueryContext, regime: string, version: string, codes: readonly string[]): Promise<Map<string, string>> {
@@ -258,16 +280,30 @@ async function accountNames(ctx: QueryContext, regime: string, version: string, 
   return new Map(rows.map((r) => [r.code, r.name]));
 }
 
+// What a review of one ended month reads from the entity's books rows: the chart in force (regime and version), the days each rule reads and the holidays of the month. A month in progress is not reviewed: its entries
+// are still being posted.
+async function reviewSetup(ctx: QueryContext, entity: string, month: string) {
+  const today = await databaseToday(ctx.trx);
+  if (month >= today.slice(0, 7)) throw unusualMonthNotEnded();
+  const books = await booksRows(ctx, entity);
+  const first = reviewWindow(month, '1900-01-01');
+  const here = booksOnDate(books, first.to);
+  return { here, span: reviewWindow(month, chartStart(books, first.to)), holidays: holidaysIn(month) };
+}
+
+export const notAHit = () => new DomainError('NOT_A_HIT', 404, 'Bút toán này không nằm trong danh sách cần xem lại của tháng của nó, nên chưa đánh dấu được');
+
+// The display names the org knows its members by (a member with no display name has none: the card then says only when).
+async function memberNameMap(ctx: QueryContext, ids: readonly string[]): Promise<Map<string, string>> {
+  if (ids.length === 0) return new Map();
+  const { rows } = await sql<{ user_id: string; display_name: string | null }>`SELECT user_id, display_name FROM ludy_kernel.member_profiles(${[...ids]}::uuid[])`.execute(ctx.trx);
+  return new Map(rows.flatMap((r) => (r.display_name && r.display_name.trim() !== '' ? [[r.user_id, r.display_name.trim()] as const] : [])));
+}
+
 export async function financeUnusualEntries(ctx: QueryContext, input: { month: string; legalEntityId?: string | undefined }): Promise<FinanceUnusualEntries> {
   const entity = await resolveLegalEntity(ctx, input.legalEntityId);
-  const today = await databaseToday(ctx.trx);
-  // A month in progress is not reviewed: its entries are still being posted.
-  if (input.month >= today.slice(0, 7)) throw unusualMonthNotEnded();
-  const books = await booksRows(ctx, entity);
-  const first = reviewWindow(input.month, '1900-01-01');
-  const here = booksOnDate(books, first.to);
-  const real = reviewWindow(input.month, chartStart(books, first.to));
-  const rows = await hitRows(ctx, entity, here.regime, real, holidaysIn(input.month));
+  const { here, span: real, holidays } = await reviewSetup(ctx, entity, input.month);
+  const rows = await hitRows(ctx, entity, here.regime, real, holidays);
   const summary = rows[0];
   const found = rows.filter((r): r is HitRow & { entry_id: string; rule: UnusualEntryRule; entry_date: string; kind: ExpenseVarianceSourceKind; amount: string } => r.entry_id !== null && r.rule !== null);
 
@@ -278,7 +314,7 @@ export async function financeUnusualEntries(ctx: QueryContext, input: { month: s
   }
   const names = await accountNames(ctx, here.regime, here.version, [...new Set(found.flatMap((r) => (r.grp ? [r.grp] : [])))]);
 
-  const hits: UnusualEntryHit[] = found.map((r) => {
+  const toHit = (r: (typeof found)[number]): UnusualEntryHit => {
     const usual = r.rule === 'amount_outlier' ? moneyText(r.d_median) : null;
     const groupAmount = r.rule === 'amount_outlier' ? moneyText(r.d_amount) : null;
     return {
@@ -304,7 +340,11 @@ export async function financeUnusualEntries(ctx: QueryContext, input: { month: s
       otherEntryId: r.d_other,
       otherEntryDate: r.d_other_date,
     };
-  });
+  };
+  const hits = found.filter((r) => !r.reviewed).map(toHit);
+  const doneRows = found.filter((r) => r.reviewed);
+  const reviewers = await memberNameMap(ctx, [...new Set(doneRows.flatMap((r) => (r.marked_by ? [r.marked_by] : [])))]);
+  const reviewedHits: ReviewedHit[] = doneRows.map((r) => ({ hit: toHit(r), reviewedByName: r.marked_by ? (reviewers.get(r.marked_by) ?? null) : null, reviewedAt: r.marked_on ?? r.entry_date }));
   const open = Number(summary?.open_total ?? 0);
   return {
     month: input.month,
@@ -324,6 +364,7 @@ export async function financeUnusualEntries(ctx: QueryContext, input: { month: s
     hits,
     moreHits: Math.max(0, open - hits.length),
     reviewed: Number(summary?.reviewed_total ?? 0),
+    reviewedHits,
   };
 }
 
@@ -334,7 +375,7 @@ export const financeUnusualEntriesQuery = defineQuery({
   handler: (ctx, input): Promise<FinanceUnusualEntries> => financeUnusualEntries(ctx, input),
 });
 
-// A person marks one hit (an entry and the rule that found it) as reviewed. It changes no ledger table: one row of entry_review_mark, the first time. The unique key (org, entry, rule) makes it idempotent: a second
+// A person marks one CURRENT hit (an entry and the rule that finds it now) as reviewed; anything else is refused NOT_A_HIT and writes nothing. It changes no ledger table: one row of entry_review_mark, the first time. The unique key (org, entry, rule) makes it idempotent: a second
 // mark inserts nothing and answers alreadyReviewed. The runtime audits every run; the audit holds the entry id, the rule and whether it was already marked, never a figure, name or text. A viewer is refused by access,
 // and so is an agent or Vy (only a user marks).
 export const unusualEntriesReview = defineCommand({
@@ -348,12 +389,19 @@ export const unusualEntriesReview = defineCommand({
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
     const entry = await ctx.trx
       .selectFrom('ludy_finance.journal_entry')
-      .select('id')
+      .select(['id', 'entry_date'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', entity)
       .where('id', '=', input.entryId)
       .executeTakeFirst();
     if (!entry) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy bút toán trong pháp nhân này');
+    // Only a current hit is marked: a member must not be able to suppress a hit that has not happened yet. The same rule SQL is run for that one entry, in the month of its date.
+    const month = String(entry.entry_date).slice(0, 7);
+    const { here, span, holidays } = await reviewSetup(ctx, entity, month).catch((error: unknown) => {
+      if (error instanceof DomainError && error.code === 'MONTH_NOT_ENDED') throw notAHit();
+      throw error;
+    });
+    if (!(await isCurrentHit(ctx, entity, here.regime, span, holidays, entry.id, input.rule))) throw notAHit();
     const inserted = await ctx.trx
       .insertInto('ludy_finance.entry_review_mark')
       .values({ org_id: ctx.orgId, legal_entity_id: entity, entry_id: entry.id, rule: input.rule, marked_by: ctx.actor.userId })

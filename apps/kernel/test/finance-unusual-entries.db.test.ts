@@ -589,14 +589,33 @@ suite('monthly review of unusual entries (#5182)', () => {
       // The reviewed hit no longer takes a place: the seventh largest comes in, one is still past the limit.
       expect(handles(r)).toEqual(['amount_outlier:lệch 6', 'amount_outlier:lệch 5', 'amount_outlier:lệch 4', 'amount_outlier:lệch 3', 'amount_outlier:lệch 2', 'amount_outlier:lệch 1']);
       expect(r).toMatchObject({ moreHits: 1, reviewed: 1 });
+      // The reviewed hit is listed with the day of the mark and the name the org knows the member by (none here: the test identities have no display name).
+      expect(r.reviewedHits).toHaveLength(1);
+      expect(r.reviewedHits[0]).toMatchObject({ reviewedByName: null, reviewedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
+      expect(r.reviewedHits[0]?.hit).toMatchObject({ rule: 'amount_outlier', entryId: ids[0], description: 'lệch 7', amount: '47000000' });
     });
 
-    it('marks per hit: the same entry under another rule is another mark', async () => {
+    it('marks only a current hit: another rule for the same entry, an entry that is no hit at all and an entry of a month in progress write nothing', async () => {
       const r = await review({ legalEntityId: capped });
       const entry = r.hits[0]?.entryId as string;
-      expect((await mark({ entryId: entry, rule: 'off_day', legalEntityId: capped })).alreadyReviewed).toBe(false);
-      // The hit it is about is still there under its own rule.
-      expect((await review({ legalEntityId: capped })).hits[0]?.entryId).toBe(entry);
+      const before = await counts();
+      // The entry is a hit of amount_outlier only; pre-suppressing another rule is refused.
+      expect(await refusal(mark({ entryId: entry, rule: 'off_day', legalEntityId: capped }))).toMatchObject({ code: 'NOT_A_HIT', status: 404 });
+      expect(await refusal(mark({ entryId: entry, rule: 'duplicate_invoice', legalEntityId: capped }))).toMatchObject({ code: 'NOT_A_HIT', status: 404 });
+      // An ordinary history entry of the same entity is a hit of nothing.
+      const plainEntry = await admin(async (a) => String((await a.query<{ id: string }>(`SELECT id FROM ludy_finance.journal_entry WHERE org_id = $1 AND legal_entity_id = $2 AND entry_date < '2026-07-01' ORDER BY entry_date LIMIT 1`, [orgId, capped])).rows[0]?.id));
+      expect(await refusal(mark({ entryId: plainEntry, rule: 'amount_outlier', legalEntityId: capped }))).toMatchObject({ code: 'NOT_A_HIT', status: 404 });
+      // An entry in a month that has not ended has no review yet.
+      const today = await admin(async (a) => String((await a.query<{ d: string }>(`SELECT to_char(current_date, 'YYYY-MM-DD') AS d`)).rows[0]?.d));
+      const running = await raw({ entity: capped, date: today, description: 'tháng đang chạy', lines: [{ account: '6422', debit: '1000' }, { account: '331', credit: '1000' }] });
+      expect(await refusal(mark({ entryId: running, rule: 'amount_outlier', legalEntityId: capped }))).toMatchObject({ code: 'NOT_A_HIT', status: 404 });
+      expect((await counts()).marks).toBe(before.marks);
+      // The real hit is still recorded, and again it is a no-op that says so.
+      expect((await mark({ entryId: entry, rule: 'amount_outlier', legalEntityId: capped })).alreadyReviewed).toBe(false);
+      expect((await mark({ entryId: entry, rule: 'amount_outlier', legalEntityId: capped })).alreadyReviewed).toBe(true);
+      const after = await review({ legalEntityId: capped });
+      expect(after.reviewed).toBe(2);
+      expect(after.reviewedHits.map((h) => h.hit.entryId)).toEqual([entry, ids[0]]);
     });
 
     it('refuses a viewer, an entry of another entity, an unknown entry and an unknown rule, and writes nothing then', async () => {

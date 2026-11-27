@@ -34,6 +34,8 @@ export const UNUSUAL_OFF_DAY_MIN_AMOUNT = '5000000';
 export const UNUSUAL_MAX_PER_RULE = 6;
 export const UNUSUAL_MAX_HITS = 30;
 export const UNUSUAL_NOTE_HITS = 12;
+// The newest reviewed hits the card lists, with who marked them and when.
+export const UNUSUAL_REVIEWED_SHOWN = 10;
 
 export const zFinanceUnusualEntriesInput = z.object({ month: zExpenseVarianceMonth, legalEntityId: zId.optional() });
 export type FinanceUnusualEntriesInput = z.infer<typeof zFinanceUnusualEntriesInput>;
@@ -77,6 +79,10 @@ export const zUnusualEntryHit = z.object({
 });
 export type UnusualEntryHit = z.infer<typeof zUnusualEntryHit>;
 
+// A hit already marked reviewed: the hit as it reads now, the name the org knows the member by (null when they have none) and the day of the mark (Vietnam time).
+export const zReviewedHit = z.object({ hit: zUnusualEntryHit, reviewedByName: z.string().nullable(), reviewedAt: zLocalDate });
+export type ReviewedHit = z.infer<typeof zReviewedHit>;
+
 export const zFinanceUnusualEntries = z.object({
   month: zExpenseVarianceMonth,
   legalEntityId: zId,
@@ -99,6 +105,8 @@ export const zFinanceUnusualEntries = z.object({
   hits: z.array(zUnusualEntryHit).max(UNUSUAL_MAX_HITS),
   moreHits: z.number().int().nonnegative(),
   reviewed: z.number().int().nonnegative(),
+  // The newest of the reviewed hits, at most UNUSUAL_REVIEWED_SHOWN.
+  reviewedHits: z.array(zReviewedHit).max(UNUSUAL_REVIEWED_SHOWN),
 });
 export type FinanceUnusualEntries = z.infer<typeof zFinanceUnusualEntries>;
 
@@ -112,7 +120,7 @@ export const zUnusualEntriesExplanation = z.object({
 });
 export type UnusualEntriesExplanation = z.infer<typeof zUnusualEntriesExplanation>;
 
-// finance.unusual_entries.review: a person marks one hit (an entry and the rule that found it) as reviewed. Idempotent: marking again changes nothing and says so. It touches no ledger table.
+// finance.unusual_entries.review: a person marks one current hit (an entry and the rule that finds it now) as reviewed; any other pair is refused NOT_A_HIT. Idempotent: marking again changes nothing and says so. It touches no ledger table.
 export const UNUSUAL_ENTRY_REVIEW_COMMAND = 'finance.unusual_entries.review';
 export const zFinanceUnusualEntryReviewInput = z.object({ legalEntityId: zId.optional(), entryId: zId, rule: zUnusualEntryRule });
 export type FinanceUnusualEntryReviewInput = z.infer<typeof zFinanceUnusualEntryReviewInput>;

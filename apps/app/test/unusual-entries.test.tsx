@@ -84,6 +84,7 @@ const DATA: FinanceUnusualEntries = {
   hits: HITS,
   moreHits: 0,
   reviewed: 0,
+  reviewedHits: [],
 };
 
 const render = (locale: 'vi' | 'en', data: FinanceUnusualEntries, notes: ReadonlyArray<{ key: string; text: string }> = [], canMark = true) =>
@@ -224,6 +225,17 @@ describe('the list of hits', () => {
     expect(render('vi', { ...DATA, reviewed: 3 })).toContain('3 mục');
     expect(render('en', { ...DATA, reviewed: 1 })).toContain('1 hit is already marked as reviewed');
     expect(render('en', { ...DATA, regime: 'tt99' })).toContain('Circular 99');
+    // The reviewed hits are listed with who marked them and when, or only when if the member has no display name.
+    const done = [
+      { hit: { ...base, entryId: 'e-done' }, reviewedByName: 'Nguyễn Thu Hà', reviewedAt: '2026-08-03' },
+      { hit: { ...base, entryId: 'e-done2', rule: 'off_day' as const }, reviewedByName: null, reviewedAt: '2026-08-04' },
+    ];
+    const listed = render('vi', { ...DATA, reviewed: 2, reviewedHits: done });
+    expect(listed).toContain('data-testid="unusual-reviewed-amount_outlier-e-done"');
+    expect(listed).toContain('Đã xem bởi Nguyễn Thu Hà');
+    expect(listed).toContain('Đã xem ngày');
+    expect(render('en', { ...DATA, reviewed: 1, reviewedHits: [done[0] as (typeof done)[0]] })).toContain('Reviewed by Nguyễn Thu Hà');
+    expect(render('vi', DATA)).not.toContain('unusual-reviewed');
     // The calendar's limits are said in words, with AI on or off.
     expect(render('en', DATA)).toContain('Days the government moves are not in it');
   });

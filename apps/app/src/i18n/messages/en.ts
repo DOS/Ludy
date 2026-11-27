@@ -809,6 +809,7 @@ export const en = {
       none: 'No entry looked unusual this month.',
       more: '{count, plural, one {# more entry} other {# more entries}} also look unusual but are not shown here.',
       reviewed: '{count, plural, one {# hit is} other {# hits are}} already marked as reviewed and left out of this list.',
+      reviewedList: { title: 'See the reviewed hits', by: 'Reviewed by {name}, {date}', on: 'Reviewed on {date}' },
       rules: {
         duplicate_invoice: 'Looks like a repeat of an invoice already booked',
         control_manual: 'Manual voucher on a receivable, payable or tax account',

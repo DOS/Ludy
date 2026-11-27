@@ -113,6 +113,24 @@ export function UnusualEntriesList({
       )}
       {data.moreHits > 0 && <p className="mt-2 text-xs text-subtle-foreground">{t('more', { count: data.moreHits })}</p>}
       {data.reviewed > 0 && <p className="mt-2 text-xs text-subtle-foreground">{t('reviewed', { count: data.reviewed })}</p>}
+      {data.reviewedHits.length > 0 && (
+        <details className="mt-1" data-testid="unusual-reviewed">
+          <summary className="flex min-h-11 cursor-pointer items-center text-xs text-link md:min-h-8">{t('reviewedList.title')}</summary>
+          <ul className="space-y-2 pb-2">
+            {data.reviewedHits.map(({ hit, reviewedByName, reviewedAt }) => (
+              <li key={`${hit.rule}:${hit.entryId}`} className="text-xs" data-testid={`unusual-reviewed-${hit.rule}-${hit.entryId}`}>
+                <span className="text-foreground">{t(`rules.${hit.rule}`)}</span>
+                <span className="text-subtle-foreground">
+                  {' · '}
+                  {t('voucherOf', { date: f.date(hit.entryDate) })}
+                  {hit.description ? ` · ${hit.description}` : ''}
+                </span>
+                <span className="block text-muted-foreground">{reviewedByName ? t('reviewedList.by', { name: reviewedByName, date: f.date(reviewedAt) }) : t('reviewedList.on', { date: f.date(reviewedAt) })}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       <p className="mt-3 text-xs text-subtle-foreground">
         {t('threshold', {
           factor: data.thresholds.amountFactor,
