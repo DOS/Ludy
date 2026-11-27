@@ -1542,7 +1542,7 @@ export const selfShiftSwapSubmit = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', parsed.requesterAssignmentId)
       .where('employee_id', '=', reqEmp.id)
-      .forUpdate()
+      .forShare()
       .executeTakeFirst();
     if (!reqAssignment) {
       throw assignmentNotFound();

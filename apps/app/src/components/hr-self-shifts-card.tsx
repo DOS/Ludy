@@ -121,7 +121,7 @@ export function HrSelfShiftsCard({ enabled = true }: { enabled?: boolean }) {
       {cancelSwapMut.error && <ErrorText>{errorMessage(cancelSwapMut.error)}</ErrorText>}
 
       {!shiftsQ.isLoading && assignments.length === 0 ? (
-        <Empty title={t('emptyTitle')} body={t('emptyBody')} />
+        <Empty title={t('emptyTitle')} hint={t('emptyBody')} />
       ) : (
         <div className="space-y-2">
           {assignments.map((a) => (

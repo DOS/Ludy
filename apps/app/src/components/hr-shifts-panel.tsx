@@ -408,12 +408,12 @@ export function HrShiftsPanel({
         {templates.length === 0 ? (
           <Empty
             title={t('noTemplatesTitle')}
-            body={t('noTemplatesBody')}
+            hint={t('noTemplatesBody')}
           />
         ) : employees.length === 0 ? (
           <Empty
             title={t('noEmployeesTitle')}
-            body={t('noEmployeesBody')}
+            hint={t('noEmployeesBody')}
           />
         ) : (
           <div className="overflow-x-auto">
@@ -675,7 +675,7 @@ export function HrShiftsPanel({
         )}
 
         {swaps.length === 0 ? (
-          <Empty title={t('noSwapsTitle')} body={t('noSwapsBody')} />
+          <Empty title={t('noSwapsTitle')} hint={t('noSwapsBody')} />
         ) : (
           <div className="space-y-3">
             {swaps.map((s) => (
