@@ -1350,7 +1350,11 @@ export const shiftAssignmentDelete = defineCommand({
   sideEffect: 'internal',
   access: STAFF_ROLES,
   target: (input: HrShiftAssignmentDelete) => ({ type: 'hr.shift_assignment', id: input.assignmentId }),
-  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'shift_assignment', ['id'])],
+  writes: [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'shift_assignment', ['id']),
+    // Deleting a shift assignment triggers ON DELETE SET NULL(target_assignment_id) on non-pending swaps.
+    tableWrite(hrManifest.tables, 'ludy_hr', 'shift_swap_request', ['target_assignment_id']),
+  ],
   handler: async (ctx, input: HrShiftAssignmentDelete): Promise<HrShiftAssignmentDeleteResult> => {
     userOf(ctx.actor);
     const isAdmin = ctx.role === 'owner' || ctx.role === 'admin';
