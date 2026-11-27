@@ -4,6 +4,7 @@ import { esignEn } from '../../content/esign-en';
 import { esignVi } from '../../content/esign-vi';
 import { vi } from '../../content/vi';
 import { AppPage } from './app-page';
+import { EsignComparison } from './esign-comparison';
 import {
   CeremonyVisual,
   EsignHero,
@@ -25,6 +26,7 @@ export function EsignPage({ lang }: { lang: 'vi' | 'en' }) {
       dict={dict}
       copy={copy}
       hero={<EsignHero {...props} />}
+      comparison={<EsignComparison copy={copy.comparison} />}
       visuals={{
         [copy.groups.items[0]!.id]: <IntakeAndTemplatesVisual {...props} />,
         [copy.groups.items[1]!.id]: <HandoffsVisual {...props} />,
