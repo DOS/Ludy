@@ -44,8 +44,8 @@ export interface AskBooksChoice {
 export interface AskBooksAi {
   reader: Pick<InboxReader, 'askBooksPick'> | null;
   budget: DraftBudget;
-  // Choices by org, language and redacted question, with the time they were made. A null choice is a refusal (or a failed call) kept the same way, so asking the same words again does not pay for the same refused answer.
-  kept: Map<string, { choice: AskBooksChoice | null; at: number; ttl: number }>;
+  // Choices by org, language and redacted question, with the time they were made. A null choice is a refusal (or a failed call) kept the same way, so asking the same words again does not pay for the same refused answer; 'none' is a question the catalogue does not answer.
+  kept: Map<string, { choice: AskBooksChoice | 'none' | null; at: number; ttl: number }>;
 }
 
 export const ASK_BOOKS_KEEP_MS = 30 * 60 * 1000;
@@ -157,7 +157,7 @@ export async function askBooks(
   if (!ai.reader) return none('off');
   const prepared = prepareAskBooksQuestion(input.question);
   const key = `${orgId}\n${language}\n${prepared.redacted}`;
-  const keep = (choice: AskBooksChoice | null, ttl: number) => {
+  const keep = (choice: AskBooksChoice | 'none' | null, ttl: number) => {
     if (ai.kept.size >= ASK_BOOKS_KEEP_MAX) ai.kept.delete(ai.kept.keys().next().value as string);
     ai.kept.set(key, { choice, at: now(), ttl });
   };
@@ -167,6 +167,7 @@ export async function askBooks(
   if (hit && now() - hit.at < hit.ttl) {
     // A kept choice has no sentence: it is the entry and the kind of period only.
     if (hit.choice === null) return none('failed');
+    if (hit.choice === 'none') return none('used');
     choice = hit.choice;
   } else {
     const ticket = ai.budget.take(orgId, userId);
@@ -180,7 +181,7 @@ export async function askBooks(
       }
       if (result.entry === 'none' || result.period === 'none') {
         // The question fits no entry of the catalogue: kept like any choice, and the screen lists what can be asked.
-        keep(null, ASK_BOOKS_KEEP_MS);
+        keep('none', ASK_BOOKS_KEEP_MS);
         return none('used');
       }
       if (result.leadCode) console.error(`[finance-ask-books] sentence dropped: ${result.leadCode}`);
@@ -198,7 +199,8 @@ export async function askBooks(
   }
 
   // The period is code's: a relative word from the day, or what the parser found in the question. Anything the entry's read does not take, or that is not clear, is a list to pick from.
-  const token: AskBooksRelativeToken | 'named' = choice.period;
+  // What code found in the question wins over the word the model gave: an explicit month, quarter or year (or two of them, which is a list) is the owner's, not the model's reading.
+  const token: AskBooksRelativeToken | 'named' = prepared.named.kind === 'none' ? choice.period : 'named';
   const outcome = resolveAskPeriod(choice.entry, token, prepared.named, today);
   if (outcome.kind === 'pick') return pickPeriod('used', choice.entry, today, lead);
   return { ai: 'used', state: 'card', lead, card: await runAskBooksEntry(query, choice.entry, outcome.period, input.legalEntityId), pick: null };

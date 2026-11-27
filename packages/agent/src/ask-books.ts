@@ -88,6 +88,8 @@ const QUARTER = /(?<![\p{L}])(?:quý|quy|quarter|q)\s*(iv|iii|ii|i|một|hai|ba|
 const QUARTER_ORDINAL = /(?<![\p{L}])(first|second|third|fourth|1st|2nd|3rd|4th)\s+quarter(?![\p{L}])/giu;
 const YEAR_PREFIXED = /(?<![\p{L}])(?:năm|nam|year|fy)\s*(20\d{2})(?![\p{L}\p{N}])/giu;
 const YEAR_BARE = /(?<![\p{L}\p{N}.,])(20\d{2})(?![\p{L}\p{N}])/gu;
+// A year said as a word beside a month or quarter ("tháng ba năm ngoái", "March last year"): the offset is not applied by guess, the owner picks.
+const YEAR_WORD = /(?<![\p{L}])(?:năm\s+(?:ngoái|trước|nay|này)|(?:last|this|previous)\s+year)(?![\p{L}])/iu;
 // Every pattern above, in the order they are blanked out of the text the model reads.
 const PERIOD_PATTERNS: readonly RegExp[] = [MONTH_VI, MONTH_NUMBERED, MONTH_SLASH_YEAR, QUARTER, QUARTER_ORDINAL, YEAR_PREFIXED, MONTH_EN, YEAR_BARE];
 
@@ -130,6 +132,7 @@ export function parseNamedPeriod(question: string): AskBooksNamedResult {
   for (const m of text.matchAll(YEAR_PREFIXED)) years.add(Number(m[1]));
   for (const m of text.matchAll(YEAR_BARE)) bareYears.add(Number(m[1]));
   if (invalid) return { kind: 'ambiguous' };
+  if (YEAR_WORD.test(text) && months.size + quarters.size > 0 && years.size === 0) return { kind: 'ambiguous' };
   // A bare 20xx is a year only beside a month or a quarter; alone it may be any number.
   const allYears = new Set<number>([...years, ...(months.size + quarters.size > 0 ? bareYears : [])]);
   if (months.size === 0 && quarters.size === 0 && allYears.size === 0) return { kind: 'none' };

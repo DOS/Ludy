@@ -33,10 +33,10 @@ export class AskBooksCoworker {
       });
   }
 
-  /** The report and period the question asks for, from the REDACTED question only (prepareAskBooksQuestion), or why there is none: a question with no letters left means no model call; a choice outside the closed lists
+  /** The report and period the question asks for, from the REDACTED question only (prepareAskBooksQuestion), or why there is none: a question with no letters left (the placeholders are not letters) means no model call; a choice outside the closed lists
    * is refused whole (ask-books.ts). onUsage gets the tokens the call used. */
   async pick(redactedQuestion: string, language: 'vi' | 'en', onUsage?: (usage: AiUsage) => void): Promise<AskBooksResult> {
-    if (!/\p{L}/u.test(redactedQuestion)) return { kind: 'none', code: 'EMPTY' };
+    if (!/\p{L}/u.test(redactedQuestion.replace(/\[(?:period|number)\]/g, ''))) return { kind: 'none', code: 'EMPTY' };
     const { output, usage } = await this.generate({ system: askBooksInstructions(language), prompt: askBooksPrompt(redactedQuestion) });
     if (usage) onUsage?.(usage);
     return checkAskBooksOutput(redactedQuestion, output);

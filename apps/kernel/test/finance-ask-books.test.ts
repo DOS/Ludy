@@ -332,6 +332,23 @@ describe('askBooks: what is kept and who is asked', () => {
     expect(asked).toHaveLength(3);
   });
 
+  it('keeps a question the catalogue does not answer as such, not as a failure', async () => {
+    const { reader, asked } = readerOf(async () => ({ kind: 'choice', entry: 'none', period: 'none', lead: null, leadCode: null }));
+    const ai = askBooksAi(reader, new DraftBudget());
+    expect((await askBooks(ai, fakeQuery([]), ORG, OWNER, { question: 'Lương tháng này bao nhiêu?' }, () => 1_000, today)).ai).toBe('used');
+    expect((await askBooks(ai, fakeQuery([]), ORG, OWNER, { question: 'Lương tháng này bao nhiêu?' }, () => 2_000, today)).ai).toBe('used');
+    expect(asked).toHaveLength(1);
+  });
+
+  it('takes the month the question names over a relative word of the model, and a list when the question names two', async () => {
+    const { reader } = readerOf(async () => choice('profit_loss', 'this_month'));
+    const ai = askBooksAi(reader, new DraftBudget());
+    const named = await askBooks(ai, fakeQuery([]), ORG, OWNER, { question: 'Tháng 10 lãi bao nhiêu?' }, () => 1_000, today);
+    expect(named.card?.period.value).toBe('2026-10');
+    const two = await askBooks(ai, fakeQuery([]), ORG, OWNER, { question: 'Lãi tháng 9 và tháng 10 bao nhiêu?' }, () => 1_000, today);
+    expect(two.state).toBe('pick_period');
+  });
+
   it('keeps the choice for the set time and asks again after it', async () => {
     const { reader, asked } = readerOf(async () => choice('cash_balance', 'as_of_today'));
     const ai = askBooksAi(reader, new DraftBudget());

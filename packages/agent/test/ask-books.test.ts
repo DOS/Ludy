@@ -60,6 +60,9 @@ describe('parseNamedPeriod', () => {
     expect(parseNamedPeriod('tháng 10 hay quý 3')).toEqual({ kind: 'ambiguous' });
     expect(parseNamedPeriod('lãi tháng 13')).toEqual({ kind: 'ambiguous' });
     expect(parseNamedPeriod('Q5')).toEqual({ kind: 'ambiguous' });
+    // A year said as a word beside a month is a list too, never a guess at the offset.
+    expect(parseNamedPeriod('tháng ba năm ngoái')).toEqual({ kind: 'ambiguous' });
+    expect(parseNamedPeriod('profit in March last year')).toEqual({ kind: 'ambiguous' });
   });
 });
 

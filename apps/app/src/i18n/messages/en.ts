@@ -673,7 +673,6 @@ export const en = {
       tasks: { label: '{count, plural, one {task assigned to you} other {tasks assigned to you}}', hint: 'Open tasks of yours or of a position you hold', open: 'See tasks' },
     },
   },
-  // The 30/60/90-day cash forecast, a card on the Tổng quan of the Kế toán app (#4391).
   financeAskBooks: {
     title: 'Ask the books',
     subtitle: 'Ask in plain words, for example "How much profit in October?". AI only chooses the report that fits the question; every figure is computed by the books and shown on this card.',
@@ -750,6 +749,7 @@ export const en = {
       canAsk: 'You can ask about:',
     },
   },
+  // The 30/60/90-day cash forecast, a card on the Tổng quan of the Kế toán app (#4391).
   financeCashForecast: {
     title: 'Cash forecast, next 90 days',
     subtitle: 'The cash in the books and what is expected to come in and go out, from the invoices and payments in the books. A forecast, not a promise.',

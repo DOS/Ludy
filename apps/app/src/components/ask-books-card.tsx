@@ -50,10 +50,10 @@ function ReportLink({ slug, card, children }: { slug: string; card: AskBooksCard
   switch (card.entry) {
     case 'profit_loss':
     case 'cash_balance':
-      return <Link to="/o/$slug/ledger" params={params} search={{ report: 'statements', period: card.period.value }} className={LINK_CLASS}>{children}</Link>;
+      return <Link to="/o/$slug/ledger" params={params} search={{ report: 'statements' as const, period: card.period.value }} className={LINK_CLASS}>{children}</Link>;
     case 'receivables_top':
     case 'payables_top':
-      return <Link to="/o/$slug/ledger" params={params} search={{ report: 'parties', period: card.period.value }} className={LINK_CLASS}>{children}</Link>;
+      return <Link to="/o/$slug/ledger" params={params} search={{ report: 'parties' as const, period: card.period.value }} className={LINK_CLASS}>{children}</Link>;
     case 'vat_position':
       return <Link to="/o/$slug/vat" params={params} search={{ period: card.period.value }} className={LINK_CLASS}>{children}</Link>;
     case 'stock_value':
@@ -87,7 +87,11 @@ export function AskBooksPanel({ slug, legalEntityId, ready }: { slug: string; le
   const pickPeriod = (entry: AskBooksEntry, value: string) => send({ pick: { entry, period: { kind: 'period', value } }, lang, ...entityPart });
 
   const answer: AskBooksAnswer | undefined = ask.data;
-  const options = (entry: AskBooksEntry) => askBooksPickOptions(entry, localToday());
+  // The periods to change to, with the one on the card always among them (a year or a quarter older than the list goes back would otherwise show as the first option).
+  const options = (entry: AskBooksEntry, current: AskBooksCard['period']) => {
+    const list = askBooksPickOptions(entry, localToday());
+    return list.some((o) => o.value === current.value) ? list : [{ kind: current.kind, value: current.value }, ...list];
+  };
   const figureLabel = (card: AskBooksCard, key: AskBooksFigureKey): string => (key === 'total' ? t(card.entry === 'payables_top' ? 'total.payables_top' : 'total.receivables_top') : key === 'advances' ? t(card.entry === 'payables_top' ? 'advances.payables_top' : 'advances.receivables_top') : t(`figure.${key}`));
 
   return (
@@ -160,7 +164,7 @@ export function AskBooksPanel({ slug, legalEntityId, ready }: { slug: string; le
                 <label className="flex items-center gap-2 text-xs text-subtle-foreground">
                   <span className="whitespace-nowrap">{t('period.change')}</span>
                   <NativeSelect className="w-40 [&_select]:min-h-11" value={answer.card.period.value} onChange={(e) => answer.card && pickPeriod(answer.card.entry, e.target.value)} data-testid="ask-books-change-period">
-                    {options(answer.card.entry).map((o) => (
+                    {options(answer.card.entry, answer.card.period).map((o) => (
                       <NativeSelectOption key={`${o.kind}:${o.value}`} value={o.value}>{periodLabel(o.value)}</NativeSelectOption>
                     ))}
                   </NativeSelect>

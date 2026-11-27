@@ -672,7 +672,6 @@ export const vi = {
       tasks: { label: '{count, plural, other {việc đang giao cho bạn}}', hint: 'Việc chưa xong của bạn hoặc của vị trí bạn giữ', open: 'Xem công việc' },
     },
   },
-  // Dự báo dòng tiền 30/60/90 ngày, một thẻ trên Tổng quan của ứng dụng Kế toán (#4391).
   financeAskBooks: {
     title: 'Hỏi sổ sách',
     subtitle: 'Hỏi bằng lời thường, ví dụ "Tháng 10 lãi bao nhiêu?". AI chỉ chọn báo cáo phù hợp với câu hỏi, mọi con số do sổ sách tính và hiện trên thẻ này.',
@@ -749,6 +748,7 @@ export const vi = {
       canAsk: 'Bạn có thể hỏi về:',
     },
   },
+  // Dự báo dòng tiền 30/60/90 ngày, một thẻ trên Tổng quan của ứng dụng Kế toán (#4391).
   financeCashForecast: {
     title: 'Dự báo dòng tiền 90 ngày tới',
     subtitle: 'Tiền đang có trong sổ và các khoản dự kiến thu, chi, tính từ hóa đơn và khoản thanh toán trong sổ. Đây là dự báo, không phải cam kết.',
