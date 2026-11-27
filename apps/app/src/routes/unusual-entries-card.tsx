@@ -38,7 +38,7 @@ function HitRow({ hit, note, slug, canMark, legalEntityId }: { hit: UnusualEntry
         : kind === 'amount'
           ? t('detail.amount', { groupAmount: f.money(hit.groupAmount ?? '0'), account: accountText(hit), usual: f.money(hit.usual ?? '0'), count: hit.historyCount ?? 0, ratio: f.decimal(hit.ratio ?? '0', 1) })
           : kind === 'newParty' || kind === 'newKind'
-            ? t(`detail.${kind}`, { account: accountText(hit), months: UNUSUAL_NEW_ACCOUNT_MONTHS })
+            ? t(`detail.${kind}`, { account: accountText(hit), months: String(UNUSUAL_NEW_ACCOUNT_MONTHS) })
             : t(`detail.${kind}`, { date: f.date(hit.entryDate) });
   const date = f.date(hit.entryDate);
   return (
@@ -133,9 +133,9 @@ export function UnusualEntriesList({
       )}
       <p className="mt-3 text-xs text-subtle-foreground">
         {t('threshold', {
-          factor: data.thresholds.amountFactor,
-          months: data.thresholds.historyMonths,
-          history: data.thresholds.minHistory,
+          factor: String(data.thresholds.amountFactor),
+          months: String(data.thresholds.historyMonths),
+          history: String(data.thresholds.minHistory),
           minDiff: f.money(data.thresholds.amountMinDiff),
           offDay: f.money(data.thresholds.offDayMinAmount),
         })}
