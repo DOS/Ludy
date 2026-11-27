@@ -390,7 +390,8 @@ export const mcpMetricsSummary = defineQuery({
         postId: r.postId,
         provider: plainLine(r.provider, 40),
         connectionId: r.connectionId,
-        excerpt: plainLine(r.text, MCP_EXCERPT_MAX),
+        // The channel's signature ends the text as it ends what goes out (as in the posts list), before the text is made one plain line and cut.
+        excerpt: plainLine(withSignature(r.text, { signature: r.signature }), MCP_EXCERPT_MAX),
         publishedAt: r.publishedAt,
         externalUrl: optionalLine(r.externalUrl, 2048),
         metrics: r.metrics,

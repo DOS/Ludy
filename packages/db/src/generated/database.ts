@@ -187,6 +187,7 @@ export interface LudyKernelSchema {
   'ludy_kernel.meeting_platform_connection': KernelMeetingPlatformConnectionTable;
   'ludy_kernel.meeting_platform_recording': KernelMeetingPlatformRecordingTable;
   'ludy_kernel.member_availability': KernelMemberAvailabilityTable;
+  'ludy_kernel.member_briefing_table': KernelMemberBriefingTableTable;
   'ludy_kernel.member_home_layout': KernelMemberHomeLayoutTable;
   'ludy_kernel.member_invite': KernelMemberInviteTable;
   'ludy_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
@@ -248,6 +249,7 @@ export interface LudyMeetingsSchema {
   'ludy_meetings.minutes_link': MeetingsMinutesLinkTable;
   'ludy_meetings.minutes_template': MeetingsMinutesTemplateTable;
   'ludy_meetings.minutes_version': MeetingsMinutesVersionTable;
+  'ludy_meetings.morning_brief_lines': MeetingsMorningBriefLinesTable;
   'ludy_meetings.morning_notice': MeetingsMorningNoticeTable;
   'ludy_meetings.tracker_alert': MeetingsTrackerAlertTable;
   'ludy_meetings.tracker_term': MeetingsTrackerTermTable;
@@ -3203,6 +3205,13 @@ export interface KernelMemberAvailabilityTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** ludy_kernel.member_briefing_table */
+export interface KernelMemberBriefingTableTable {
+  table_name: ColumnType<string, NotGranted, NotGranted>;
+  mode: ColumnType<string, NotGranted, NotGranted>;
+  adr: ColumnType<string, NotGranted, NotGranted>;
+}
+
 /** ludy_kernel.member_home_layout */
 export interface KernelMemberHomeLayoutTable {
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -4020,6 +4029,17 @@ export interface MeetingsMinutesVersionTable {
   published_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
+/** ludy_meetings.morning_brief_lines */
+export interface MeetingsMorningBriefLinesTable {
+  org_id: ColumnType<string, NotGranted, NotGranted>;
+  id: ColumnType<string, NotGranted, NotGranted>;
+  user_id: ColumnType<string, NotGranted, NotGranted>;
+  meeting_id: ColumnType<string, NotGranted, NotGranted>;
+  lines: ColumnType<unknown, NotGranted, NotGranted>;
+  expires_at: ColumnType<Date, NotGranted, NotGranted>;
+  created_at: ColumnType<Date, NotGranted, NotGranted>;
+}
+
 /** ludy_meetings.morning_notice */
 export interface MeetingsMorningNoticeTable {
   org_id: string;
@@ -4030,6 +4050,9 @@ export interface MeetingsMorningNoticeTable {
   language: Generated<string>;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  enabled: Generated<boolean>;
+  content: Generated<string>;
+  vy_lines: Generated<boolean>;
 }
 
 /** ludy_meetings.tracker_alert */

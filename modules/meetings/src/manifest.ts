@@ -135,8 +135,10 @@ export const meetingsManifest = defineModule({
       minutes_template: columns(['org_id', 'id', 'name', 'sections', 'archived_at', 'created_by', 'created_at', 'updated_at']),
       // The recorder's published second-language version of a meeting's minutes (#4777): read by the meeting's readers. The body (the reviewed translated text) is personal data.
       minutes_version: columns(['org_id', 'id', 'meeting_id', 'language', 'source_hash', 'published_by', 'source_run_id', 'published_at'], { body: 'pii' }),
-      // A member's own opt-in to the morning notice of the day's meetings (#3955): a time of day, their time zone and the language of the mail. One row per member, theirs alone; no title, name or text of a meeting is in it.
-      morning_notice: columns(['org_id', 'id', 'user_id', 'send_minute', 'time_zone', 'language', 'created_at', 'updated_at']),
+      // Short-lived Vy daily briefing prep lines (#5080, ADR-0049): auto-expired at 36 hours, readable only in user and member_briefing contexts.
+      morning_brief_lines: columns(['org_id', 'id', 'user_id', 'meeting_id', 'expires_at', 'created_at'], { lines: 'pii' }),
+      // A member's own opt-in to the morning notice of the day's meetings (#3955, #5080): a time of day, their time zone, language, enabled, content mode, and Vy lines flag. One row per member, theirs alone; no title, name or text of a meeting is in it.
+      morning_notice: columns(['org_id', 'id', 'user_id', 'send_minute', 'time_zone', 'language', 'enabled', 'content', 'vy_lines', 'created_at', 'updated_at']),
       // A member's own opt-in to the alert when a tracked word comes up in a new meeting (#4873): one row per member, theirs alone, and the language of their mail; no word, meeting or text.
       tracker_alert: columns(['org_id', 'id', 'user_id', 'language', 'created_at']),
       // The words an org tracks across its meetings (#4818): a term an owner chose, plain text, like a glossary term; no meeting text.
