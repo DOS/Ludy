@@ -20099,6 +20099,7 @@ export const en = {
         set: "Turn the Monday notice of the week's meetings on or off, and choose its time",
       },
       brief: {
+        daily_facts: 'Read daily meeting preparation facts for personal Vy',
         facts: "See what was decided, what is still open and the customer's open deals before a meeting",
         start: 'Ask Vy to write a few sentences to prepare for a meeting',
         status: 'See whether Vy can write the preparation for a meeting',

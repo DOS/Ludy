@@ -33,6 +33,12 @@ const { MarketplaceConnectionsCard } = await import('../src/routes/marketplace-c
 type Role = 'owner' | 'admin' | 'member' | 'viewer';
 // The markup escapes an apostrophe.
 const esc = (text: string): string => text.replace(/&/g, '&amp;').replace(/'/g, '&#x27;');
+const rx = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function controlByLabel(html: string, label: string): string {
+  const id = new RegExp(`<label[^>]*\\bfor="([^"]+)"[^>]*>${rx(esc(label))}</label>`).exec(html)?.[1];
+  expect(id, `visible <label for="..."> missing for "${label}"`).toBeTruthy();
+  return html.match(new RegExp(`<(?:input|select)\\b[^>]*\\bid="${rx(id ?? '')}"[^>]*>`))?.[0] ?? '';
+}
 const at = '2026-11-03T00:00:00.000Z';
 const entity = (id: string, name: string, isDefault: boolean): LegalEntity => ({ id, name, kind: 'company', taxCode: '0100109100', parentId: null, isDefault, createdAt: at, updatedAt: at });
 const offered: MarketplaceProviders = {
@@ -115,9 +121,9 @@ describe('MarketplaceConnectionsCard', () => {
     expect(html).toContain(`aria-label="${en.marketplaceConnections.connectTitle}"`);
     expect(html).toContain(esc(en.marketplaceConnections.offlineNote));
     // One adapter and one entity: nothing to choose but the marketplace.
-    expect(html).not.toContain(`aria-label="${en.marketplaceConnections.adapter}"`);
-    expect(html).not.toContain(`aria-label="${en.marketplaceConnections.entity}"`);
-    expect(html).toContain(`aria-label="${en.marketplaceConnections.platform}"`);
+    expect(html).not.toContain(`>${en.marketplaceConnections.adapter}</label>`);
+    expect(html).not.toContain(`>${en.marketplaceConnections.entity}</label>`);
+    expect(controlByLabel(html, en.marketplaceConnections.platform)).toContain('<select');
     // The card says a pull only stages orders for a person to confirm.
     expect(html).toContain(esc(en.marketplaceConnections.intro));
   });
@@ -200,16 +206,27 @@ describe('MarketplaceConnectionsCard', () => {
     expect(card('owner', { providers: real })).not.toContain(`>${en.marketplaceConnections.pollNow}<`);
   });
 
-  it('asks for the entity when the org has several, and shows a password field for an adapter that names its fields', () => {
+  it('asks for the entity when the org has several, and shows a password field with visible labels for an adapter that names its fields', () => {
     const several = card('owner', { entities: [entity('e1', 'Công ty TNHH Mẫu', true), entity('e2', 'Chi nhánh Hà Nội', false)] });
-    expect(several).toContain(`aria-label="${en.marketplaceConnections.entity}"`);
+    expect(controlByLabel(several, en.marketplaceConnections.entity)).toContain('<select');
     expect(several).toContain('Chi nhánh Hà Nội');
-    const real = card('owner', { providers: { ...offered, adapters: [{ id: 'shopee_api', offline: false, push: false, connectFields: ['user', 'password'], platforms: ['shopee'] }] }, connections: [] });
+    const real = card('owner', {
+      providers: {
+        ...offered,
+        adapters: [
+          { id: 'shopee_api', offline: false, push: false, connectFields: ['user', 'password'], platforms: ['shopee'] },
+          { id: 'sandbox', offline: true, push: false, connectFields: [], platforms: ['shopee'] },
+        ],
+      },
+      connections: [],
+    });
+    expect(controlByLabel(real, en.marketplaceConnections.adapter)).toContain('<select');
     // The fields are named in words, not by the adapter's raw field name; a name with no words of its own is shown as it is.
-    expect(real).toMatch(/type="password"[^>]*aria-label="Password"|aria-label="Password"[^>]*type="password"/);
-    expect(real).toMatch(/type="text"[^>]*aria-label="Username"|aria-label="Username"[^>]*type="text"/);
+    expect(controlByLabel(real, 'Password')).toContain('type="password"');
+    expect(controlByLabel(real, 'Username')).toContain('type="text"');
     const odd = card('owner', { providers: { ...offered, adapters: [{ id: 'shopee_api', offline: false, push: false, connectFields: ['zzField'], platforms: ['shopee'] }] }, connections: [] });
-    expect(odd).toContain('aria-label="zzField"');
+    expect(controlByLabel(odd, 'zzField')).toContain('type="password"');
+    expect(real).not.toMatch(/<label[^>]*class="[^"]*sr-only/);
     expect(real).toContain(en.marketplaceConnections.fieldsNote);
     expect(real).not.toContain(en.marketplaceConnections.offlineNote);
   });
@@ -247,10 +264,11 @@ describe('MarketplaceConnectionsCard', () => {
     expect(pollStateKey(mine({ lastTestState: 'api_not_enabled' }), 'ok')).toBe('pollStates.ok');
     // The form: the App Key is an identifier shown as typed, the App Secret is hidden, both in words.
     const form = card('owner', { providers: lazada, connections: [] });
-    expect(form).toMatch(/type="text"[^>]*aria-label="App Key"|aria-label="App Key"[^>]*type="text"/);
-    expect(form).toMatch(/type="password"[^>]*aria-label="App Secret"|aria-label="App Secret"[^>]*type="password"/);
+    expect(controlByLabel(form, 'App Key')).toContain('type="text"');
+    expect(controlByLabel(form, 'App Secret')).toContain('type="password"');
     // Vietnamese words exist for both.
-    expect(card('owner', { providers: lazada, connections: [], locale: 'vi' })).toContain('Mã bí mật ứng dụng (App Secret)');
+    const viForm = card('owner', { providers: lazada, connections: [], locale: 'vi' });
+    expect(controlByLabel(viForm, 'Mã bí mật ứng dụng (App Secret)')).toContain('type="password"');
   });
 
   it('offers Authorize on a live Lazada connection to an owner or admin, says where the authorization stands and until when, and offers it to no one else (#4238)', () => {
@@ -300,8 +318,8 @@ describe('MarketplaceConnectionsCard', () => {
     expect(testStateKey('tiktok_shop', 'unreachable')).toBe('testStates.unreachable');
     expect(canAuthorize(mine({}), tiktok.adapters)).toBe(true);
     const form = card('owner', { providers: tiktok, connections: [], locale: 'vi' });
-    expect(form).toMatch(/type="text"[^>]*aria-label="Mã dịch vụ của ứng dụng \(Service ID\)"|aria-label="Mã dịch vụ của ứng dụng \(Service ID\)"[^>]*type="text"/);
-    expect(form).toMatch(/type="password"[^>]*aria-label="Mã bí mật ứng dụng \(App Secret\)"|aria-label="Mã bí mật ứng dụng \(App Secret\)"[^>]*type="password"/);
+    expect(controlByLabel(form, 'Mã dịch vụ của ứng dụng (Service ID)')).toContain('type="text"');
+    expect(controlByLabel(form, 'Mã bí mật ứng dụng (App Secret)')).toContain('type="password"');
   });
 
   it('is in Vietnamese with the same keys', () => {

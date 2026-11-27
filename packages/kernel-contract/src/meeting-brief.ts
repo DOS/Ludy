@@ -77,6 +77,35 @@ export const zBriefAnswer = z.strictObject({
 });
 export type BriefAnswer = z.infer<typeof zBriefAnswer>;
 
+export const DAILY_BRIEF_MEETINGS_MAX = 5;
+export const DAILY_BRIEF_WINDOW_HOURS_MAX = 26;
+export const zDailyBriefFactsInput = z
+  .strictObject({
+    from: z.iso.datetime({ offset: true }),
+    to: z.iso.datetime({ offset: true }),
+    connectionIds: z.array(zId).max(20).optional(),
+  })
+  .refine(
+    (v) => {
+      const fromMs = Date.parse(v.from);
+      const toMs = Date.parse(v.to);
+      return Number.isFinite(fromMs) && Number.isFinite(toMs) && toMs > fromMs && toMs - fromMs <= DAILY_BRIEF_WINDOW_HOURS_MAX * 3_600_000;
+    },
+    { message: 'Briefing window must be positive and at most 26 hours' },
+  );
+export type DailyBriefFactsInput = z.infer<typeof zDailyBriefFactsInput>;
+export const zDailyBriefItem = z.strictObject({
+  agendaId: zId,
+  meetingId: zId.nullable(),
+  startsAt: z.string(),
+  brief: zBriefFacts,
+});
+export type DailyBriefItem = z.infer<typeof zDailyBriefItem>;
+export const zDailyBriefFacts = z.strictObject({
+  items: z.array(zDailyBriefItem).max(DAILY_BRIEF_MEETINGS_MAX),
+});
+export type DailyBriefFacts = z.infer<typeof zDailyBriefFacts>;
+
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 // The numbered facts
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------

@@ -5,12 +5,13 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EInvoiceConnection, LegalEntity } from '@ludy/kernel-contract';
+import type { EInvoiceConnection, EInvoiceProviderInfo, LegalEntity } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
+import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
-const config = vi.hoisted(() => ({ current: { modules: ['finance'], bankFeeds: { sandbox: false } } as { modules: string[]; bankFeeds?: { sandbox: boolean } } }));
+const config = vi.hoisted(() => ({ current: { modules: ['finance'], bankFeeds: { sandbox: false } } as { modules: string[]; bankFeeds?: { sandbox: boolean; tingee?: boolean } } }));
 
 vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
@@ -44,20 +45,29 @@ const connection: EInvoiceConnection = {
   lastTestedAt: null,
 };
 
-function section(seed: { bank: boolean; providers: boolean; connections?: EInvoiceConnection[] }): string {
-  config.current = { modules: ['finance'], bankFeeds: { sandbox: seed.bank } };
+function section(seed: {
+  bank: boolean;
+  tingee?: boolean;
+  providers: boolean;
+  einvoiceProviders?: EInvoiceProviderInfo[];
+  connections?: EInvoiceConnection[];
+  entities?: LegalEntity[];
+  locale?: 'en' | 'vi';
+}): string {
+  config.current = { modules: ['finance'], bankFeeds: { sandbox: seed.bank, ...(seed.tingee ? { tingee: true } : {}) } };
   const qc = client.current;
-  qc.setQueryData(['einvoice', 'providers'], seed.providers ? [{ id: 'sandbox', offline: true, connectFields: [] }] : []);
+  qc.setQueryData(['einvoice', 'providers'], seed.einvoiceProviders ?? (seed.providers ? [{ id: 'sandbox', offline: true, connectFields: [] }] : []));
   qc.setQueryData(['einvoice', 'connections', 'list'], seed.connections ?? []);
   qc.setQueryData(['einvoice', 'series', 'list'], []);
-  qc.setQueryData(['legalEntities', 'list'], [entity]);
+  qc.setQueryData(['legalEntities', 'list'], seed.entities ?? [entity]);
   qc.setQueryData(['bankFeeds', 'accounts'], []);
   qc.setQueryData(['bankFeeds', 'connections'], []);
   qc.setQueryData(['bankFeeds', 'listed'], []);
   qc.setQueryData(['accounts', 'list'], []);
+  const locale = seed.locale ?? 'en';
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
-      <IntlProvider locale="en" messages={catalog('en')}>
+      <IntlProvider locale={locale} messages={catalog(locale)}>
         <IntegrationsSection role="owner" orgSlug="mau" />
       </IntlProvider>
     </QueryClientProvider>,
@@ -122,5 +132,74 @@ describe('IntegrationsSection', () => {
     const html = section({ bank: false, providers: false, connections: [connection] });
     expect(html).toContain(`>${en.integrations.title}<`);
     expect(html).toContain('Nhà cung cấp hóa đơn thử nghiệm');
+  });
+
+  it('wires every control on every Settings Integrations connect form to a visible <label for="..."> (#4221)', () => {
+    const qc = client.current;
+    const entities: LegalEntity[] = [
+      { ...entity, taxCode: null },
+      { id: 'e2', name: 'Chi nhánh Hà Nội', kind: 'branch', taxCode: '0100109101', parentId: 'e1', isDefault: false, createdAt: at, updatedAt: at },
+    ];
+    qc.setQueryData(['marketplace', 'providers'], {
+      adapters: [
+        { id: 'lazada', offline: false, push: false, connectFields: ['appKey', 'appSecret'], platforms: ['lazada'] },
+        { id: 'sandbox', offline: true, push: false, connectFields: [], platforms: ['shopee'] },
+      ],
+      platforms: [
+        { platform: 'lazada', adapter: true, adapters: ['lazada'] },
+        { platform: 'shopee', adapter: true, adapters: ['sandbox'] },
+      ],
+    });
+    qc.setQueryData(['marketplace', 'connections', 'list'], []);
+    qc.setQueryData(['misaAmis', 'status'], { offered: true, pushOffered: false, aspOffered: true });
+    qc.setQueryData(['misaAmis', 'connections', 'list'], []);
+
+    for (const locale of ['en', 'vi'] as const) {
+      const html = section({
+        bank: true,
+        tingee: true,
+        providers: true,
+        einvoiceProviders: [
+          { id: 'misa', offline: false, connectFields: ['user', 'password'] },
+          { id: 'sandbox', offline: true, connectFields: [] },
+        ],
+        entities,
+        locale,
+      });
+      const forms = html.match(/<form[\s\S]*?<\/form>/g) ?? [];
+      expect(forms).toHaveLength(5);
+
+      const seenLabels = new Map<string, string>();
+      for (const m of html.matchAll(/<label\b([^>]*)>([^<]+)<\/label>/g)) {
+        const attrs = m[1] ?? '';
+        const text = (m[2] ?? '').trim();
+        const forId = /\bfor="([^"]+)"/.exec(attrs)?.[1];
+        expect(forId, `label "${text}" missing for`).toBeTruthy();
+        expect(attrs).not.toContain('sr-only');
+        seenLabels.set(forId!, text);
+      }
+
+      let controlCount = 0;
+      for (const form of forms) {
+        for (const tagMatch of form.matchAll(/<(input|select)\b[^>]*>/g)) {
+          const tag = tagMatch[0];
+          controlCount += 1;
+          const id = /\bid="([^"]+)"/.exec(tag)?.[1];
+          expect(id, `connect control missing id: ${tag}`).toBeTruthy();
+          expect(seenLabels.get(id!), `connect control missing visible <label for="${id}">: ${tag}`).toBeTruthy();
+          expect(tag).not.toContain('aria-label=');
+          expect(tag).toContain('min-h-11');
+        }
+      }
+      expect(controlCount).toBe(17);
+
+      const labels = locale === 'en' ? en : viMessages;
+      expect(html).toContain(`>${labels.bankFeeds.tingee.clientIdLabel}</label>`);
+      expect(html).toContain(`>${labels.bankFeeds.tingee.secretLabel}</label>`);
+      expect(html).toContain(`>${labels.bankFeeds.tingee.nameLabel}</label>`);
+      expect(html).toContain(`>${labels.bankFeeds.nameLabel}</label>`);
+      expect(html).toContain(`>${labels.einvoiceConnections.taxCode}</label>`);
+      expect(html).toContain(`>${labels.marketplaceConnections.platform}</label>`);
+    }
   });
 });
