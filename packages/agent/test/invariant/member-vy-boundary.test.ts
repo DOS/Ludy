@@ -12930,7 +12930,14 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     ).toContain('generateNoteSummaryText');
     expect(
       workspaceAdapterLeakViolations(
-        `${splitNotePrefix} export const fn = a + <Foo<'x' + 'y'>>b + c + d + e;`,
+        `${splitNotePrefix} export const fn = a + <Foo<Bar<{ x: 1; }>>>b + c + d + e;`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `${splitNotePrefix} export const fn = a + <Foo<\`\${'x'}\` | (() => { y: 2; })>>b + c + d + e;`,
         DEFAULT_ADAPTER_EXPORTS,
         'apps/web/src/leak.ts',
       ),
