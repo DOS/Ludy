@@ -1917,6 +1917,7 @@ export function createRpcHandler(
         create: os.meetings.minutesLink.create.handler(meetingsCommand('meetings.minutes_link.create')),
         revoke: os.meetings.minutesLink.revoke.handler(meetingsCommand('meetings.minutes_link.revoke')),
         list: os.meetings.minutesLink.list.handler(meetingsQuery('meetings.minutes_link.list')),
+        orgList: os.meetings.minutesLink.orgList.handler(meetingsQuery('meetings.minutes_link.org_list')),
       },
       search: os.meetings.search.handler(meetingsQuery('meetings.search')),
       speakingStyle: { get: os.meetings.speakingStyle.get.handler(meetingsQuery('meetings.speaking_style.get')) },

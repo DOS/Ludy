@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The link to the published minutes for people outside the org (Meetings, #4822). Two parts:
 //   MinutesLinkSwitchCard  in the Meetings settings, for every member to read and an owner or admin to change: "Chia sẻ biên bản ra ngoài", off by default. While it is off no link can be made or opened.
+//                          For an owner or admin (#4952), also lists the org's live minutes links with safe title hiding for unreadable attendees-only meetings and a Revoke action.
 //   MinutesLinkPanel       on the recorder's meeting page (and, for an owner or admin who is not the recorder, a manager view: the same list and "Thu hồi", no create button; #4947), under the published minutes: "Tạo liên kết" makes a read-only link and shows the full address ONCE with a Copy button (the server keeps only a hash of
 //                          the token and cannot show it again); the list says which links are live, expired or revoked and how often each was opened, never a token; "Thu hồi" ends a live link after a confirm.
 // No money and no AI part here: a person decides what to share and with whom, and the core works with AI off.
@@ -24,11 +25,14 @@ import { ErrorText } from './ui.tsx';
 // ---------------------------------------------------------------------------
 // The org setting (Meetings settings)
 // ---------------------------------------------------------------------------
-export function MinutesLinkSwitchCard() {
+export function MinutesLinkSwitchCard({ slug }: { slug?: string | undefined } = {}) {
   const t = useTranslations('meetings.minutesLinkSwitch');
+  const tLink = useTranslations('meetings.minutesLink');
+  const f = useFormat();
   const query = useQuery(orpc.meetings.minutesLink.switch.get.queryOptions({ input: {} }));
   const orgQuery = useQuery(orpc.org.get.queryOptions());
   const canEdit = orgQuery.data?.role === 'owner' || orgQuery.data?.role === 'admin';
+  const orgListQuery = useQuery({ ...orpc.meetings.minutesLink.orgList.queryOptions({ input: {} }), enabled: canEdit, refetchOnWindowFocus: false });
   const enabled = query.data?.enabled === true;
   const flip = useMutation({
     mutationFn: (next: boolean) => orpc.meetings.minutesLink.switch.set.call({ enabled: next }),
@@ -38,8 +42,17 @@ export function MinutesLinkSwitchCard() {
       toast(t('saved'), 'success');
     },
   });
+  const revoke = useMutation({
+    mutationFn: (args: { meetingId: string; linkId: string }) => orpc.meetings.minutesLink.revoke.call(args),
+    onError: () => void queryClient.invalidateQueries({ queryKey: orpc.meetings.minutesLink.key() }),
+    onSuccess: async () => {
+      toast(tLink('revoked'), 'success');
+      await queryClient.invalidateQueries({ queryKey: orpc.meetings.minutesLink.key() });
+    },
+  });
 
   if (query.isPending) return null;
+  const orgItems = orgListQuery.data?.items ?? [];
   return (
     <Card data-testid="minutes-link-switch-card">
       <CardHeader>
@@ -60,6 +73,85 @@ export function MinutesLinkSwitchCard() {
           )}
         </div>
         {flip.error ? <ErrorText>{errorMessage(flip.error)}</ErrorText> : null}
+        {canEdit && (orgListQuery.data !== undefined || orgListQuery.error) ? (
+          <div className="space-y-2 border-t pt-3" data-testid="org-minutes-links">
+            <h3 className="text-xs font-medium text-muted-foreground">{t('orgListTitle')}</h3>
+            {orgListQuery.error ? (
+              <ErrorText>{errorMessage(orgListQuery.error)}</ErrorText>
+            ) : orgItems.length === 0 ? (
+              <p className="text-xs text-muted-foreground" data-testid="org-minutes-links-empty">
+                {t('orgListEmpty')}
+              </p>
+            ) : (
+              <ul className="divide-y rounded-lg border text-sm" data-testid="org-minutes-links-list">
+                {orgItems.map((l) => {
+                  const meetingLabel = l.canOpenMeeting && l.meetingTitle !== null ? l.meetingTitle : t('orgListPrivate');
+                  return (
+                    <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2" data-testid="org-minutes-link-item">
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="min-w-0">
+                          {l.canOpenMeeting && l.meetingTitle !== null ? (
+                            slug ? (
+                              <Link
+                                to="/o/$slug/meetings/$id"
+                                params={{ slug, id: l.meetingId }}
+                                className="inline-flex min-h-11 items-center font-medium text-link underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:min-h-0"
+                                data-testid="org-minutes-link-meeting"
+                              >
+                                <span className="min-w-0 break-words">{l.meetingTitle}</span>
+                              </Link>
+                            ) : (
+                              <span className="font-medium text-foreground break-words" data-testid="org-minutes-link-meeting">
+                                {l.meetingTitle}
+                              </span>
+                            )
+                          ) : (
+                            <span className="italic text-muted-foreground" data-testid="org-minutes-link-private">
+                              {t('orgListPrivate')}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {[
+                            l.createdByName ? t('orgListCreatedBy', { name: l.createdByName }) : null,
+                            tLink('views', { count: l.views }),
+                            tLink('created', { at: f.dateTime(l.createdAt) }),
+                            tLink('expires', { at: f.dateTime(l.expiresAt) }),
+                            l.firstViewedAt ? tLink('firstViewed', { at: f.dateTime(l.firstViewedAt) }) : tLink('neverViewed'),
+                          ]
+                            .filter((part): part is string => part !== null)
+                            .join(' · ')}
+                        </p>
+                      </div>
+                      <ConfirmDialog
+                        disabled={revoke.isPending}
+                        render={
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="min-h-11 shrink-0"
+                            loading={revoke.isPending && revoke.variables?.linkId === l.id}
+                            disabled={revoke.isPending}
+                            aria-label={t('orgListRevokeFor', { meeting: meetingLabel, at: f.dateTime(l.createdAt) })}
+                            data-testid="org-minutes-link-revoke"
+                          />
+                        }
+                        destructive
+                        title={tLink('revokeTitle')}
+                        description={tLink('revokeConfirmManager')}
+                        confirm={tLink('revoke')}
+                        onConfirm={() => revoke.mutate({ meetingId: l.meetingId, linkId: l.id })}
+                      >
+                        {tLink('revoke')}
+                      </ConfirmDialog>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {revoke.error ? <ErrorText>{errorMessage(revoke.error)}</ErrorText> : null}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -218,7 +310,11 @@ export function MinutesLinkPanel({ meetingId, slug, manager = false }: { meeting
   const [copy, setCopy] = useState<CopyOutcome>('idle');
   const urlRef = useRef<HTMLInputElement | null>(null);
   const t = useTranslations('meetings.minutesLink');
-  const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.meetings.minutesLink.list.key() });
+  const refresh = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: orpc.meetings.minutesLink.list.key() }),
+      queryClient.invalidateQueries({ queryKey: orpc.meetings.minutesLink.orgList.key() }),
+    ]);
   const create = useMutation({
     // The answer holds the one-time address: the cache keeps nothing of it once nobody observes the mutation.
     gcTime: 0,

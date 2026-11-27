@@ -11,9 +11,10 @@ const zId = z.string().regex(UUID);
 export const MINUTES_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 // The page of the link (a route of the app); the token is in the fragment, never in a path or query that a log could keep.
 export const MINUTES_PAGE_PATH = '/-/minutes';
-// How long a link lives, and how many live ones a meeting keeps.
+// How long a link lives, how many live ones a meeting keeps, and how many live links the org list shows at once.
 export const MINUTES_LINK_DAYS = 30;
 export const MINUTES_LINKS_MAX = 10;
+export const ORG_MINUTES_LINKS_MAX = 100;
 
 export const zMinutesLinkCreate = z.strictObject({ meetingId: zId });
 export const zMinutesLinkCreated = z.strictObject({ linkId: zId, token: z.string().regex(MINUTES_TOKEN_PATTERN), expiresAt: z.string(), path: z.string() });
@@ -38,6 +39,24 @@ export const zMinutesLinkItem = z.strictObject({
 export type MinutesLinkItem = z.infer<typeof zMinutesLinkItem>;
 export const zMinutesLinkItems = z.strictObject({ enabled: z.boolean(), items: z.array(zMinutesLinkItem) });
 export type MinutesLinkItems = z.infer<typeof zMinutesLinkItems>;
+
+// Org-wide live links for an owner or admin in Meetings settings (#4952): never holds a token or an email.
+// When the caller cannot read the meeting under RLS, meetingTitle is null and canOpenMeeting is false.
+export const zOrgMinutesLinkListInput = z.strictObject({});
+export const zOrgMinutesLinkItem = z.strictObject({
+  id: zId,
+  meetingId: zId,
+  meetingTitle: z.string().nullable(),
+  canOpenMeeting: z.boolean(),
+  createdByName: z.string().nullable(),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+  views: z.number().int().min(0),
+  firstViewedAt: z.string().nullable(),
+});
+export type OrgMinutesLinkItem = z.infer<typeof zOrgMinutesLinkItem>;
+export const zOrgMinutesLinkList = z.strictObject({ items: z.array(zOrgMinutesLinkItem) });
+export type OrgMinutesLinkList = z.infer<typeof zOrgMinutesLinkList>;
 
 // The org setting: every member reads it (the meeting page shows the panel only while it is on), an owner or admin changes it.
 export const zMinutesLinkSwitch = z.strictObject({ enabled: z.boolean() });

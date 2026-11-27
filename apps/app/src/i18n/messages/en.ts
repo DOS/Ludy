@@ -5381,6 +5381,11 @@ export const en = {
       turnOff: 'Turn off',
       saved: 'Setting saved.',
       adminOnly: 'Only an owner or an admin can change this.',
+      orgListTitle: 'Live links across the organization',
+      orgListEmpty: 'No live minutes links right now.',
+      orgListPrivate: 'Private meeting',
+      orgListCreatedBy: 'Made by {name}',
+      orgListRevokeFor: 'Revoke link for {meeting} made {at}',
     },
     // "Send minutes to my address" (A6, #3164): a member's own webhook for the minutes they publish.
     hook: {
@@ -20801,6 +20806,7 @@ export const en = {
         create: 'Make a link to the published minutes for people outside',
         revoke: 'Revoke a link to the published minutes',
         list: 'See the links to the published minutes of a meeting',
+        org_list: 'See live links to published minutes across the organization',
         switch: {
           get: 'Read whether minutes can be shared with people outside',
           set: 'Turn sharing minutes with people outside on or off',
