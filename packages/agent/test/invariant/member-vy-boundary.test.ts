@@ -4025,6 +4025,73 @@ function extractAstFacts(
   const nonSafeBaseAliases = new Map<string, Set<string>>();
   const seedEscapedSafeKillBases = new Set<string>();
   let hasProtoMutation = false;
+  const seedProtoHosts = new Set<string>();
+  for (const h of PROTO_ACCESS_HOSTS) {
+    seedProtoHosts.add(astVarKey(rootScope, h));
+  }
+  for (const reqHost of AST_REQUIRE_HOSTS) {
+    for (const pHost of ['Object', 'Reflect', 'Function', 'Array']) {
+      seedProtoHosts.add(`prop:${astVarKey(rootScope, reqHost)}\0${pHost}`);
+    }
+  }
+  const seedProtoMethods = new Set<string>();
+  for (const objName of ['Reflect', 'Object']) {
+    const objKey = astVarKey(rootScope, objName);
+    for (const mName of PROTO_REFLECT_OR_OBJECT_METHODS) {
+      seedProtoMethods.add(`prop:${objKey}\0${mName}`);
+    }
+  }
+  const protoElementAccessCandidates: Array<{ hostExpr: tsType.Expression; scope: AstLexScope }> = [];
+  const protoMethodCallCandidates: Array<{
+    calleeExpr: tsType.Expression;
+    calleeHost: tsType.Expression | null;
+    methodName: string | null;
+    arg0: tsType.Expression | null;
+    keyArg: tsType.Expression | null;
+    scope: AstLexScope;
+  }> = [];
+  const protoDestructureCandidates: Array<{ rhsExpr: tsType.Expression; scope: AstLexScope }> = [];
+  const lhsTargetHasUnresolvedElementAccess = (expr: tsType.Expression, evalScope: AstLexScope): boolean => {
+    const work: tsType.Node[] = [expr];
+    while (work.length > 0) {
+      const cur = work.pop()!;
+      if (
+        ts.isParenthesizedExpression(cur) ||
+        ts.isNonNullExpression(cur) ||
+        ts.isAsExpression(cur) ||
+        ts.isTypeAssertionExpression(cur) ||
+        ts.isSatisfiesExpression(cur) ||
+        ts.isSpreadElement(cur) ||
+        ts.isSpreadAssignment(cur)
+      ) {
+        work.push(cur.expression);
+      } else if (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
+        let chain: tsType.Expression = cur;
+        while (ts.isPropertyAccessExpression(chain) || ts.isElementAccessExpression(chain)) {
+          if (ts.isElementAccessExpression(chain)) {
+            const mem = extractAstMemberName(chain, evalScope);
+            const argNorm = unwrapAstExpr(chain.argumentExpression, false);
+            if (mem.memberName === null && !ts.isNumericLiteral(argNorm)) {
+              return true;
+            }
+          }
+          chain = unwrapAstExpr(chain.expression, true);
+        }
+      } else if (ts.isArrayLiteralExpression(cur)) {
+        for (const el of cur.elements) {
+          if (!ts.isOmittedExpression(el)) work.push(el);
+        }
+      } else if (ts.isObjectLiteralExpression(cur)) {
+        for (const prop of cur.properties) {
+          if (ts.isPropertyAssignment(prop)) work.push(prop.initializer);
+          else if (ts.isSpreadAssignment(prop)) work.push(prop.expression);
+        }
+      } else if (ts.isBinaryExpression(cur) && cur.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        work.push(cur.left);
+      }
+    }
+    return false;
+  };
   const blockedSafeKillVars = new Set<string>();
   const safeKillValueCandidates: Array<{ targetKey: string; rhsExpr: tsType.Expression; evalScope: AstLexScope }> = [];
   const resolveAstMemberKeyPath = (
@@ -4923,6 +4990,9 @@ function extractAstFacts(
               }
             }
           } else {
+            if (lhsTargetHasUnresolvedElementAccess(node.initializer, nextScope)) {
+              hasProtoMutation = true;
+            }
             for (const idName of collectAstLhsTargetIdentNames(node.initializer)) {
               blockedSafeKillVars.add(astVarKey(nextScope, idName));
             }
@@ -5195,6 +5265,9 @@ function extractAstFacts(
     ) {
       const isPlainEquals = node.operatorToken.kind === ts.SyntaxKind.EqualsToken;
       const lhsExpr = unwrapAstExpr(node.left, false);
+      if (!nextInTypePos && lhsTargetHasUnresolvedElementAccess(lhsExpr, nextScope)) {
+        hasProtoMutation = true;
+      }
       let lhsTarget: string[] = [];
       if (ts.isIdentifier(lhsExpr)) {
         const lhsKey = astVarKey(nextScope, lhsExpr.text);
@@ -5250,22 +5323,25 @@ function extractAstFacts(
         }
       }
       if (ts.isObjectLiteralExpression(lhsExpr)) {
-        if (isAstProtoBearingHost(node.right)) {
-          const checkObjProps: tsType.ObjectLiteralExpression[] = [lhsExpr];
-          while (checkObjProps.length > 0) {
-            const obj = checkObjProps.pop()!;
-            for (const prop of obj.properties) {
-              if (ts.isPropertyAssignment(prop)) {
-                if (ts.isComputedPropertyName(prop.name)) {
-                  const keyName = resolveAstPropertyName(prop.name, nextScope).name;
-                  if (keyName === null || keyName === 'prototype' || keyName === '__proto__') {
-                    hasProtoMutation = true;
-                  }
+        let hasComputedOrProtoKey = false;
+        const checkObjProps: tsType.ObjectLiteralExpression[] = [lhsExpr];
+        while (checkObjProps.length > 0) {
+          const obj = checkObjProps.pop()!;
+          for (const prop of obj.properties) {
+            if (ts.isPropertyAssignment(prop)) {
+              if (ts.isComputedPropertyName(prop.name)) {
+                const keyName = resolveAstPropertyName(prop.name, nextScope).name;
+                if (keyName === null || keyName === 'prototype' || keyName === '__proto__') {
+                  hasComputedOrProtoKey = true;
                 }
-                if (ts.isObjectLiteralExpression(prop.initializer)) checkObjProps.push(prop.initializer);
               }
+              if (ts.isObjectLiteralExpression(prop.initializer)) checkObjProps.push(prop.initializer);
             }
           }
+        }
+        if (hasComputedOrProtoKey) {
+          if (isAstProtoBearingHost(node.right)) hasProtoMutation = true;
+          else protoDestructureCandidates.push({ rhsExpr: node.right, scope: nextScope });
         }
         recordDestructuredEntries(
           collectDestructuringTargetsAndRefs(lhsExpr, nextScope).entries,
@@ -5319,7 +5395,25 @@ function extractAstFacts(
               hasProtoMutation = true;
             }
           }
+        } else if (mem.memberName === null || PROTO_REFLECT_OR_OBJECT_METHODS.has(mem.memberName)) {
+          protoMethodCallCandidates.push({
+            calleeExpr: directCallee,
+            calleeHost: mem.host,
+            methodName: mem.memberName,
+            arg0: node.arguments[0] ?? null,
+            keyArg: node.arguments[1] ?? null,
+            scope: nextScope,
+          });
         }
+      } else if (!nextInTypePos && ts.isIdentifier(directCallee) && node.arguments.length >= 1) {
+        protoMethodCallCandidates.push({
+          calleeExpr: directCallee,
+          calleeHost: null,
+          methodName: null,
+          arg0: node.arguments[0]!,
+          keyArg: node.arguments[1] ?? null,
+          scope: nextScope,
+        });
       }
     }
 
@@ -5330,10 +5424,15 @@ function extractAstFacts(
         mem.memberName === 'prototype' ||
         mem.memberName === '__proto__' ||
         mem.memberName === 'setPrototypeOf' ||
-        mem.memberName === 'getPrototypeOf' ||
-        (ts.isElementAccessExpression(node) && mem.memberName === null && isAstProtoBearingHost(mem.host))
+        mem.memberName === 'getPrototypeOf'
       ) {
         hasProtoMutation = true;
+      } else if (ts.isElementAccessExpression(node) && mem.memberName === null) {
+        if (isAstProtoBearingHost(mem.host)) {
+          hasProtoMutation = true;
+        } else {
+          protoElementAccessCandidates.push({ hostExpr: mem.host, scope: nextScope });
+        }
       }
       const hostNorm = unwrapAstExpr(mem.host, true);
       if (
@@ -5382,10 +5481,10 @@ function extractAstFacts(
         if (
           owner &&
           (ts.isVariableDeclaration(owner) || ts.isParameter(owner)) &&
-          owner.initializer &&
-          isAstProtoBearingHost(owner.initializer)
+          owner.initializer
         ) {
-          hasProtoMutation = true;
+          if (isAstProtoBearingHost(owner.initializer)) hasProtoMutation = true;
+          else protoDestructureCandidates.push({ rhsExpr: owner.initializer, scope: nextScope });
         }
       }
     }
@@ -5701,6 +5800,92 @@ function extractAstFacts(
   }
   const nonSafeKillValues = propagateAliases(seedNonSafeKillValues, aliasEdges);
   const escapedSafeKillBases = propagateAliases(seedEscapedSafeKillBases, aliasEdges, nonSafeBaseAliases);
+  if (!hasProtoMutation) {
+    let protoAliasHosts = propagateAliases(seedProtoHosts, aliasEdges);
+    let protoMethodAliases = propagateAliases(seedProtoMethods, aliasEdges);
+    let protoChanged = true;
+    let protoPass = 0;
+    while (protoChanged && protoPass < 4) {
+      protoChanged = false;
+      protoPass += 1;
+      for (const cand of memberBindCandidates) {
+        if (!anyAstBranchMatchesSet(cand.host, cand.scope, protoAliasHosts)) continue;
+        if (
+          cand.propName === 'Object' ||
+          cand.propName === 'Reflect' ||
+          cand.propName === 'Function' ||
+          cand.propName === 'Array'
+        ) {
+          for (const t of cand.targets) {
+            if (!seedProtoHosts.has(t)) {
+              seedProtoHosts.add(t);
+              protoChanged = true;
+            }
+          }
+        } else if (cand.propName !== null && PROTO_REFLECT_OR_OBJECT_METHODS.has(cand.propName)) {
+          for (const t of cand.targets) {
+            if (!seedProtoMethods.has(t)) {
+              seedProtoMethods.add(t);
+              protoChanged = true;
+            }
+          }
+        }
+      }
+      if (protoChanged) {
+        protoAliasHosts = propagateAliases(seedProtoHosts, aliasEdges);
+        protoMethodAliases = propagateAliases(seedProtoMethods, aliasEdges);
+      }
+    }
+    const isProtoHostResolved = (expr: tsType.Expression, scope: AstLexScope): boolean => {
+      if (isAstProtoBearingHost(expr)) return true;
+      if (anyAstBranchMatchesSet(expr, scope, protoAliasHosts)) return true;
+      const norm = unwrapAstExpr(expr, true);
+      if (ts.isPropertyAccessExpression(norm) || ts.isElementAccessExpression(norm)) {
+        const base = unwrapAstExpr(norm.expression, true);
+        if (anyAstBranchMatchesSet(base, scope, protoAliasHosts) || isAstProtoBearingHost(base)) return true;
+      }
+      return false;
+    };
+    for (const cand of protoElementAccessCandidates) {
+      if (isProtoHostResolved(cand.hostExpr, cand.scope)) {
+        hasProtoMutation = true;
+        break;
+      }
+    }
+    if (!hasProtoMutation) {
+      for (const cand of protoDestructureCandidates) {
+        if (isProtoHostResolved(cand.rhsExpr, cand.scope)) {
+          hasProtoMutation = true;
+          break;
+        }
+      }
+    }
+    if (!hasProtoMutation) {
+      for (const cand of protoMethodCallCandidates) {
+        const isMethodMatch = cand.calleeHost
+          ? isProtoHostResolved(cand.calleeHost, cand.scope) &&
+            (cand.methodName === null || PROTO_REFLECT_OR_OBJECT_METHODS.has(cand.methodName))
+          : ts.isIdentifier(cand.calleeExpr) &&
+            protoMethodAliases.has(astVarKey(cand.scope, cand.calleeExpr.text));
+        if (!isMethodMatch) continue;
+        if (cand.methodName === 'getPrototypeOf' || cand.methodName === 'setPrototypeOf') {
+          hasProtoMutation = true;
+          break;
+        }
+        if (cand.arg0 && isProtoHostResolved(cand.arg0, cand.scope)) {
+          if (!cand.keyArg) {
+            hasProtoMutation = true;
+            break;
+          }
+          const keyVal = resolveAstConstString(cand.keyArg, cand.scope, 'full_const');
+          if (keyVal === null || keyVal === 'prototype' || keyVal === '__proto__') {
+            hasProtoMutation = true;
+            break;
+          }
+        }
+      }
+    }
+  }
   const isSafeKillExpr = (
     expr: tsType.Expression,
     evalScope: AstLexScope,
@@ -14269,5 +14454,39 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
         "let read = globalThis.fetch;\nconst items = ['a', 'b'];\nconst idx = Math.floor(Math.random() * 2);\nconst picked = items[idx];\nread = cache.fetch;\nread(picked);",
       ),
     ).toEqual([]);
+
+    // Line PO Round 14 regressions: aliased proto hosts and LHS unresolved computed element writes
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst O = Object;\nlet p = 'proto';\np += 'type';\n(O as any)[p].fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read2 = globalThis.fetch;\nconst R = Reflect;\nlet p2 = 'proto';\np2 += 'type';\n(R.get(Object, p2) as any).fetch = read2;\nread2 = cache.fetch;\nread2('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read3 = globalThis.fetch;\nconst obj: any = {};\nlet k = '__pro';\nk += 'to__';\nobj[k].fetch = read3;\nread3 = cache.fetch;\nread3('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst obj: any = {};\nlet k = 'fetch';\n([obj[k]] = [read]);\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst obj: any = {};\nlet k = 'fetch';\nfor (obj[k].nested of [read]) {}\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst { Reflect: R, Object: O } = globalThis;\nconst g = R.get;\nlet p = 'proto';\np += 'type';\n(g(O, p) as any).fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(memberVyViolations('let read = globalThis.fetch;\nread = cache.fetch;\nread(key);')).toEqual([]);
+    expect(memberVyViolations('let read = globalThis.fetch;\nread = cache.fetch.bind(cache);\nread(key);')).toEqual([]);
   }, 30_000);
 });
