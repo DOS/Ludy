@@ -194,6 +194,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
 
   const owner: Person = { subject: 'gh-owner', email: 'gh-owner@ludy.test', session: randomUUID(), userId: '' };
   const member: Person = { subject: 'gh-member', email: 'gh-member@ludy.test', session: randomUUID(), userId: '' };
+  const viewer: Person = { subject: 'gh-viewer', email: 'gh-viewer@ludy.test', session: randomUUID(), userId: '' };
   const outsider: Person = { subject: 'gh-outsider', email: 'gh-outsider@ludy.test', session: randomUUID(), userId: '' };
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
@@ -317,6 +318,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
 
     owner.userId = await upsertIdentity(appDb, { issuer: ISSUER, subject: owner.subject, email: owner.email, name: 'GH Owner' });
     member.userId = await upsertIdentity(appDb, { issuer: ISSUER, subject: member.subject, email: member.email, name: 'GH Member' });
+    viewer.userId = await upsertIdentity(appDb, { issuer: ISSUER, subject: viewer.subject, email: viewer.email, name: 'GH Viewer' });
     outsider.userId = await upsertIdentity(appDb, { issuer: ISSUER, subject: outsider.subject, email: outsider.email, name: 'GH Outsider' });
   }, 120_000);
 
@@ -332,7 +334,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
 
   it('keeps zero GitHub setup by default, enforces permissions & 5-repo cap, syncs App webhooks + hydration + checkout lease deferral', async () => {
     const org = await createOrg(runtime, asUser(owner.userId), 'Cong ty GitHub App');
-    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [org.orgId, member.userId]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [org.orgId, member.userId, viewer.userId]);
 
     const { projectId } = await runtime.execute<{ projectId: string }>(
       'projects.project.create',
@@ -639,6 +641,104 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     expect(deliveryOutcomes.some((d) => d.external_number === 102 && d.status === 'deferred')).toBe(true);
     expect(deliveryOutcomes.some((d) => d.external_number === 103 && d.status === 'applied')).toBe(true);
 
+    // Out-of-order older webhook timestamp does not regress PR 101 title or reopen state.
+    const stalePr1Body = JSON.stringify({
+      action: 'closed',
+      installation: { id: 777 },
+      repository: { id: 1001, full_name: 'octo-org/core-api' },
+      pull_request: {
+        number: 101,
+        html_url: 'https://github.com/octo-org/core-api/pull/101',
+        title: 'Stale Old PR Title',
+        body: 'Fixes ACME-1',
+        state: 'closed',
+        draft: false,
+        merged: false,
+        head: { ref: 'fix/login' },
+        user: { login: 'octocat' },
+        updated_at: '2026-11-27T00:50:00Z',
+      },
+    });
+    await app.request(GITHUB_WEBHOOK_PATH, {
+      method: 'POST',
+      headers: {
+        'x-github-event': 'pull_request',
+        'x-github-delivery': randomUUID(),
+        'x-hub-signature-256': signGithubPayload(stalePr1Body, APP_WEBHOOK_SECRET),
+      },
+      body: stalePr1Body,
+    });
+    await processGithubWebhookBatch({
+      workerDb,
+      runtime: workerRuntime,
+      broker: vault,
+      appWebhookSecrets: [APP_WEBHOOK_SECRET],
+    });
+    const pr101AfterStale = await rows<{ external_title: string; external_state: string }>(
+      'SELECT external_title, external_state FROM ludy_projects.github_task_link WHERE org_id = $1 AND project_id = $2 AND external_number = 101',
+      [org.orgId, projectId],
+    );
+    expect(pr101AfterStale[0]).toEqual({ external_title: 'Fix oauth login crash', external_state: 'open' });
+
+    // Viewer (read-only) and member with non-project taskId fail authorization BEFORE calling api.github.com;
+    // writer pasting an /issues/205 URL that belongs to a PR stores kind = 'pull_request' and canonical /pull/205 URL.
+    remoteItems.set('/repos/octo-org/core-api/issues/205', {
+      number: 205,
+      html_url: 'https://github.com/octo-org/core-api/issues/205',
+      title: 'PR resolved via issues URL',
+      state: 'open',
+      pull_request: {},
+      user: { login: 'pr-via-issue' },
+      updated_at: '2026-11-27T01:15:00Z',
+    });
+    remoteItems.set('/repos/octo-org/core-api/pulls/205', {
+      number: 205,
+      html_url: 'https://github.com/octo-org/core-api/pull/205',
+      title: 'PR resolved via issues URL',
+      state: 'open',
+      draft: false,
+      merged: false,
+      head: { ref: 'fix/issues-url' },
+      user: { login: 'pr-via-issue' },
+      updated_at: '2026-11-27T01:15:00Z',
+    });
+    const callsBeforeViewer = githubCalls.length;
+    const viewerLinkDenied = await rpc(
+      app,
+      'projects/github/taskLinkAdd',
+      viewer,
+      { projectId, taskId: t1, url: 'https://github.com/octo-org/core-api/issues/205', idempotencyKey: randomUUID() },
+      org.slug,
+    );
+    expect(viewerLinkDenied.status).toBe(403);
+    expect(githubCalls.length).toBe(callsBeforeViewer);
+
+    const badTaskDenied = await rpc(
+      app,
+      'projects/github/taskLinkAdd',
+      member,
+      { projectId, taskId: randomUUID(), url: 'https://github.com/octo-org/core-api/issues/205', idempotencyKey: randomUUID() },
+      org.slug,
+    );
+    expect(badTaskDenied.status).toBe(404);
+    expect(githubCalls.length).toBe(callsBeforeViewer);
+
+    const memberIssuePrLink = await rpc(
+      app,
+      'projects/github/taskLinkAdd',
+      member,
+      { projectId, taskId: t1, url: 'https://github.com/octo-org/core-api/issues/205', idempotencyKey: randomUUID() },
+      org.slug,
+    );
+    expect(memberIssuePrLink.status).toBe(200);
+    expect(memberIssuePrLink.body?.link).toMatchObject({
+      kind: 'pull_request',
+      externalNumber: 205,
+      externalUrl: 'https://github.com/octo-org/core-api/pull/205',
+      branchName: 'fix/issues-url',
+      hydrating: false,
+    });
+
     // 5) Installation deletion webhook pauses App binding and clears repo webhook_configured.
     const uninstallBody = JSON.stringify({
       action: 'deleted',
@@ -855,6 +955,54 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     expect(hydratedRes).toBe('hydrated');
     const linksView = await runtime.query<GithubTaskLinksQueryResult>('projects.github.task_links', { projectId: projA, taskId: patTask }, { actor: asUser(owner.userId), orgId: orgA.orgId });
     expect(linksView.links.find((l) => l.id === createdLink.id)).toMatchObject({ hydrating: false, externalTitle: 'Hydrated PAT issue #77', authorLogin: 'pat-author' });
+
+    // PAT /issues/78 link targeting a PR upgrades the placeholder row in place without leaving a hydrating orphan.
+    remoteItems.set('/repos/octo-org/core-api/issues/78', {
+      number: 78,
+      html_url: 'https://github.com/octo-org/core-api/issues/78',
+      title: 'PAT PR via issues URL',
+      state: 'open',
+      pull_request: {},
+      user: { login: 'pat-pr-author' },
+      updated_at: '2026-11-27T02:06:00Z',
+    });
+    remoteItems.set('/repos/octo-org/core-api/pulls/78', {
+      number: 78,
+      html_url: 'https://github.com/octo-org/core-api/pull/78',
+      title: 'PAT PR via issues URL',
+      state: 'open',
+      draft: false,
+      merged: false,
+      head: { ref: 'feat/pat-78' },
+      user: { login: 'pat-pr-author' },
+      updated_at: '2026-11-27T02:06:00Z',
+    });
+    const patPrAdd = await rpc(
+      app,
+      'projects/github/taskLinkAdd',
+      owner,
+      { projectId: projA, taskId: patTask, url: 'https://github.com/octo-org/core-api/issues/78', idempotencyKey: randomUUID() },
+      orgA.slug,
+    );
+    expect(patPrAdd.status).toBe(200);
+    const patPrPlaceholder = patPrAdd.body?.link as { id: string; kind: string; hydrating: boolean };
+    expect(patPrPlaceholder).toMatchObject({ kind: 'issue', hydrating: true });
+    expect(
+      await runGithubHydrateJob(
+        { runtime: workerRuntime, workerDb, broker: vault, github: githubClient },
+        { mode: 'link_refresh', orgId: orgA.orgId, projectId: projA, taskId: patTask, linkId: patPrPlaceholder.id, kind: 'issue', externalNumber: 78 },
+      ),
+    ).toBe('hydrated');
+    const patLinksAfterPr = await runtime.query<GithubTaskLinksQueryResult>('projects.github.task_links', { projectId: projA, taskId: patTask }, { actor: asUser(owner.userId), orgId: orgA.orgId });
+    const links78 = patLinksAfterPr.links.filter((l) => l.externalNumber === 78);
+    expect(links78).toHaveLength(1);
+    expect(links78[0]).toMatchObject({
+      id: patPrPlaceholder.id,
+      kind: 'pull_request',
+      externalUrl: 'https://github.com/octo-org/core-api/pull/78',
+      branchName: 'feat/pat-78',
+      hydrating: false,
+    });
 
     // 10 wrong-HMAC notices auto-stop the PAT hook; rotation resets standing to active.
     for (let i = 0; i < 10; i += 1) {

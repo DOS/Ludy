@@ -563,8 +563,11 @@ DECLARE
   v_existing_id uuid;
   v_gen integer;
 BEGIN
-  IF v_org IS NULL OR ludy_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR v_user IS NULL THEN
-    RAISE EXCEPTION 'GITHUB_HOOK_USER_CONTEXT' USING ERRCODE = '42501';
+  IF v_org IS NULL OR ludy_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR v_user IS NULL OR NOT EXISTS (
+    SELECT 1 FROM ludy_kernel.tenant_member m
+    WHERE m.org_id = v_org AND m.user_id = v_user AND m.role IN ('owner', 'admin')
+  ) THEN
+    RAISE EXCEPTION 'GITHUB_HOOK_FORBIDDEN' USING ERRCODE = '42501';
   END IF;
   IF p_connection_id IS NULL OR p_hook_key_sha256 IS NULL OR p_hook_key_sha256 !~ '^[0-9a-f]{64}$' THEN
     RAISE EXCEPTION 'GITHUB_HOOK_INVALID' USING ERRCODE = '22023';
@@ -624,8 +627,24 @@ AS $$
 DECLARE
   v_org uuid := ludy_kernel.ctx_org_id();
 BEGIN
-  IF v_org IS NULL OR ludy_kernel.ctx_actor_type() IS NULL THEN
-    RAISE EXCEPTION 'GITHUB_HOOK_CONTEXT_REQUIRED' USING ERRCODE = '42501';
+  IF v_org IS NULL OR ludy_kernel.ctx_actor_type() IS NULL OR NOT (
+    ludy_kernel.ctx_actor_type() = 'system'
+    OR (
+      ludy_kernel.ctx_actor_type() = 'user'
+      AND ludy_kernel.ctx_user_id() IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM ludy_kernel.tenant_member m
+        WHERE m.org_id = v_org AND m.user_id = ludy_kernel.ctx_user_id() AND m.role IN ('owner', 'admin')
+      )
+    )
+    OR EXISTS (
+      SELECT 1 FROM ludy_projects.github_project_binding b
+      WHERE b.org_id = v_org
+        AND b.channel_connection_id = p_connection_id
+        AND ludy_projects.project_visible(v_org, b.project_id)
+    )
+  ) THEN
+    RAISE EXCEPTION 'GITHUB_HOOK_FORBIDDEN' USING ERRCODE = '42501';
   END IF;
 
   RETURN QUERY
@@ -1176,8 +1195,21 @@ STRICT
 PARALLEL SAFE
 SET search_path = pg_catalog, pg_temp
 AS $$
+DECLARE
+  v_text text;
 BEGIN
-  RETURN pg_catalog.convert_from(p_body, 'UTF8');
+  v_text := pg_catalog.convert_from(p_body, 'UTF8');
+  IF pg_catalog.strpos(v_text, '\') > 0 THEN
+    BEGIN
+      IF pg_catalog.pg_input_is_valid(v_text, 'json') THEN
+        RETURN v_text || E'\n' || (v_text::jsonb)::text;
+      END IF;
+    EXCEPTION
+      WHEN OTHERS THEN
+        NULL;
+    END;
+  END IF;
+  RETURN v_text;
 EXCEPTION
   WHEN character_not_in_repertoire THEN
     RETURN '';

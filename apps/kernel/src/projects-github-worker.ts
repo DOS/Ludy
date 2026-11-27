@@ -212,18 +212,31 @@ async function applyParsedEventToBinding(
       .map((m) => m.taskId)
       .filter((id): id is string => typeof id === 'string');
 
-    if (sendHydrate && parsed.branchName && (matchedNumbers.length > 0 || matchedTaskIds.length > 0)) {
-      await sendHydrate({
-        mode: 'branch_pr',
-        orgId: binding.org_id,
-        projectId: binding.project_id,
-        channelConnectionId: binding.channel_connection_id,
-        repoFullName: parsed.repoFullName,
-        branchName: parsed.branchName,
-        deliveryId,
-        taskNumbers: matchedNumbers,
-        taskIds: matchedTaskIds,
-      });
+    if (sendHydrate && !parsed.deleted && parsed.branchName && (matchedNumbers.length > 0 || matchedTaskIds.length > 0)) {
+      try {
+        await sendHydrate({
+          mode: 'branch_pr',
+          orgId: binding.org_id,
+          projectId: binding.project_id,
+          channelConnectionId: binding.channel_connection_id,
+          repoFullName: parsed.repoFullName,
+          branchName: parsed.branchName,
+          deliveryId,
+          taskNumbers: matchedNumbers,
+          taskIds: matchedTaskIds,
+        });
+      } catch (error) {
+        await sql`
+          SELECT ludy_projects.github_sync_delivery_finish(
+            ${binding.org_id}::uuid,
+            ${ledgerId}::uuid,
+            'failed',
+            NULL::uuid,
+            'HYDRATE_ENQUEUE_FAILED',
+            'Failed to queue branch PR check'
+          )`.execute(deps.workerDb);
+        throw error;
+      }
       await sql`
         SELECT ludy_projects.github_sync_delivery_finish(
           ${binding.org_id}::uuid,
@@ -559,6 +572,7 @@ export async function runGithubHydrateJob(
           repoFullName: item.repoFullName,
           eventKind: item.kind === 'issue' ? 'issue' : 'pull_request',
           action: 'edited',
+          replaceLinkId: job.linkId,
           externalNumber: item.number,
           externalUrl: item.externalUrl,
           externalTitle: item.externalTitle,

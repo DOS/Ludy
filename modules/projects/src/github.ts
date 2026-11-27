@@ -12,6 +12,7 @@ import {
   zGithubBindingSaveInput,
   zGithubHookSetInput,
   zGithubHookStatusInput,
+  zGithubLinkPrepareInput,
   zGithubRepoBindInput,
   zGithubRepoUnbindInput,
   zGithubSyncLogQueryInput,
@@ -24,6 +25,7 @@ import {
   type GithubHookSetResult,
   type GithubHookStanding,
   type GithubHookStatusResult,
+  type GithubLinkPrepareResult,
   type GithubProjectBindingView,
   type GithubProjectRepoView,
   type GithubSyncLogEntry,
@@ -689,6 +691,79 @@ export const projectGithubTaskLinks = defineQuery({
   },
 });
 
+async function resolveTaskLinkTarget(
+  trx: QueryContext['trx'],
+  orgId: string,
+  projectId: string,
+  taskId: string,
+  repoFullName: string,
+  lockTask: boolean,
+): Promise<{
+  projectId: string;
+  provider: 'github_app' | 'github_pat';
+  externalAccountId: string;
+  repoFullName: string;
+}> {
+  const project = await loadProject(trx, orgId, projectId, false);
+  assertNotArchived(project);
+
+  const taskQuery = trx
+    .selectFrom('ludy_projects.project_task as pt')
+    .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
+    .select(['pt.task_id'])
+    .where('pt.org_id', '=', orgId)
+    .where('pt.project_id', '=', project.id)
+    .where('pt.task_id', '=', taskId);
+  const visibleTask = await (lockTask ? taskQuery.forUpdate() : taskQuery).executeTakeFirst();
+  if (!visibleTask) throw taskNotFound();
+
+  const binding = await trx
+    .selectFrom('ludy_projects.github_project_binding as b')
+    .innerJoin('ludy_kernel.channel_connection as c', (join) =>
+      join.onRef('c.org_id', '=', 'b.org_id').onRef('c.id', '=', 'b.channel_connection_id'),
+    )
+    .select(['b.id', 'b.github_enabled', 'c.provider', 'c.external_account_id'])
+    .where('b.org_id', '=', orgId)
+    .where('b.project_id', '=', project.id)
+    .executeTakeFirst();
+  if (!binding || !binding.github_enabled) {
+    throw new DomainError('GITHUB_DISABLED', 409, 'Dự án này chưa bật tích hợp GitHub');
+  }
+
+  const boundRepo = await trx
+    .selectFrom('ludy_projects.github_project_repo')
+    .select(['id', 'repo_full_name'])
+    .where('org_id', '=', orgId)
+    .where('project_id', '=', project.id)
+    .where(sql<boolean>`pg_catalog.lower(repo_full_name) = pg_catalog.lower(${repoFullName})`)
+    .executeTakeFirst();
+  if (!boundRepo) {
+    throw new DomainError('GITHUB_REPO_NOT_BOUND', 403, 'Kho mã nguồn GitHub này chưa được gắn với dự án');
+  }
+
+  return {
+    projectId: project.id,
+    provider: binding.provider === 'github_app' ? 'github_app' : 'github_pat',
+    externalAccountId: binding.external_account_id,
+    repoFullName: boundRepo.repo_full_name,
+  };
+}
+
+export const projectGithubLinkPrepare = defineQuery({
+  name: 'projects.github.link.prepare',
+  input: zGithubLinkPrepareInput,
+  access: WRITERS,
+  handler: async (ctx, input): Promise<GithubLinkPrepareResult> => {
+    userOf(ctx.actor);
+    const target = await resolveTaskLinkTarget(ctx.trx, ctx.orgId, input.projectId, input.taskId, input.repoFullName, false);
+    return {
+      provider: target.provider,
+      externalAccountId: target.externalAccountId,
+      repoFullName: target.repoFullName,
+    };
+  },
+});
+
 export const projectGithubTaskLinkAdd = defineCommand({
   name: 'projects.github.link.add',
   input: zGithubTaskLinkAddInput,
@@ -721,49 +796,17 @@ export const projectGithubTaskLinkAdd = defineCommand({
   target: projectTarget,
   handler: async (ctx, input): Promise<{ link: GithubTaskLinkView }> => {
     const userId = userOf(ctx.actor);
-    const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
-    assertNotArchived(project);
-
-    const visibleTask = await ctx.trx
-      .selectFrom('ludy_projects.project_task as pt')
-      .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
-      .select(['pt.task_id'])
-      .where('pt.org_id', '=', ctx.orgId)
-      .where('pt.project_id', '=', project.id)
-      .where('pt.task_id', '=', input.taskId)
-      .executeTakeFirst();
-    if (!visibleTask) throw taskNotFound();
-
-    const binding = await ctx.trx
-      .selectFrom('ludy_projects.github_project_binding')
-      .select(['id', 'github_enabled'])
-      .where('org_id', '=', ctx.orgId)
-      .where('project_id', '=', project.id)
-      .executeTakeFirst();
-    if (!binding || !binding.github_enabled) {
-      throw new DomainError('GITHUB_DISABLED', 409, 'Dự án này chưa bật tích hợp GitHub');
-    }
-
-    const boundRepo = await ctx.trx
-      .selectFrom('ludy_projects.github_project_repo')
-      .select(['id', 'repo_full_name'])
-      .where('org_id', '=', ctx.orgId)
-      .where('project_id', '=', project.id)
-      .where(sql<boolean>`pg_catalog.lower(repo_full_name) = pg_catalog.lower(${input.repoFullName})`)
-      .executeTakeFirst();
-    if (!boundRepo) {
-      throw new DomainError('GITHUB_REPO_NOT_BOUND', 403, 'Kho mã nguồn GitHub này chưa được gắn với dự án');
-    }
+    const target = await resolveTaskLinkTarget(ctx.trx, ctx.orgId, input.projectId, input.taskId, input.repoFullName, true);
 
     const existing = await ctx.trx
       .selectFrom('ludy_projects.github_task_link')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
-      .where('project_id', '=', project.id)
+      .where('project_id', '=', target.projectId)
       .where('task_id', '=', input.taskId)
       .where('kind', '=', input.kind)
       .where('external_number', '=', input.externalNumber)
-      .where(sql<boolean>`pg_catalog.lower(repo_full_name) = pg_catalog.lower(${boundRepo.repo_full_name})`)
+      .where(sql<boolean>`pg_catalog.lower(repo_full_name) = pg_catalog.lower(${target.repoFullName})`)
       .executeTakeFirst();
 
     let savedRow;
@@ -790,9 +833,9 @@ export const projectGithubTaskLinkAdd = defineCommand({
         .insertInto('ludy_projects.github_task_link')
         .values({
           org_id: ctx.orgId,
-          project_id: project.id,
+          project_id: target.projectId,
           task_id: input.taskId,
-          repo_full_name: boundRepo.repo_full_name,
+          repo_full_name: target.repoFullName,
           kind: input.kind,
           external_number: input.externalNumber,
           external_url: input.externalUrl,
@@ -814,14 +857,14 @@ export const projectGithubTaskLinkAdd = defineCommand({
     }
 
     ctx.audit({
-      projectId: project.id,
+      projectId: target.projectId,
       taskId: input.taskId,
       kind: input.kind,
       externalNumber: input.externalNumber,
       externalTitle: auditValue(GITHUB_TASK_LINK, 'external_title', savedRow.external_title),
     });
     await ctx.emit('projects.github.link_added', {
-      projectId: project.id,
+      projectId: target.projectId,
       taskId: input.taskId,
       linkId: savedRow.id,
       kind: savedRow.kind,
@@ -1014,7 +1057,60 @@ export const projectGithubApplyInboundEvent = defineCommand({
         .where(sql<boolean>`pg_catalog.lower(repo_full_name) = pg_catalog.lower(${input.repoFullName})`)
         .execute();
 
+      const existingTaskSet = new Set(existingLinks.map((l) => l.task_id));
+      const upgradedTaskIds = new Set<string>();
+
+      // When a user pasted /issues/N for a PR in PAT mode, hydration resolves kind='pull_request':
+      // upgrade the placeholder row in place (or drop it cleanly if a PR link already exists on the task).
+      if (input.replaceLinkId && !existingLinks.some((l) => l.id === input.replaceLinkId)) {
+        const placeholder = await ctx.trx
+          .selectFrom('ludy_projects.github_task_link')
+          .selectAll()
+          .where('org_id', '=', ctx.orgId)
+          .where('project_id', '=', project.id)
+          .where('id', '=', input.replaceLinkId)
+          .executeTakeFirst();
+        if (placeholder) {
+          if (existingTaskSet.has(placeholder.task_id)) {
+            await ctx.trx
+              .deleteFrom('ludy_projects.github_task_link')
+              .where('org_id', '=', ctx.orgId)
+              .where('id', '=', placeholder.id)
+              .execute();
+          } else {
+            const incoming = matchedTasks.get(placeholder.task_id);
+            const mergedCloses = placeholder.closes_task || Boolean(incoming?.closesTask);
+            await ctx.trx
+              .updateTable('ludy_projects.github_task_link')
+              .set({
+                kind: linkKind,
+                external_number: input.externalNumber,
+                external_url: input.externalUrl,
+                external_title: input.externalTitle,
+                external_state: input.externalState,
+                branch_name: input.branchName !== undefined ? input.branchName : placeholder.branch_name,
+                author_login: input.authorLogin !== undefined ? input.authorLogin : placeholder.author_login,
+                closes_task: mergedCloses,
+                hydrating: false,
+                last_remote_event_at: remoteTs ?? placeholder.last_remote_event_at,
+                last_synced_at: ctx.now,
+                updated_at: ctx.now,
+              })
+              .where('org_id', '=', ctx.orgId)
+              .where('id', '=', placeholder.id)
+              .execute();
+            upgradedTaskIds.add(placeholder.task_id);
+            linkedTaskIds.push(placeholder.task_id);
+            taskClosingEligibility.set(placeholder.task_id, mergedCloses);
+          }
+        }
+      }
+
       for (const link of existingLinks) {
+        const prevTs = link.last_remote_event_at ? new Date(link.last_remote_event_at) : null;
+        if (!link.hydrating && prevTs !== null && !Number.isNaN(prevTs.getTime()) && remoteTs !== null && remoteTs.getTime() < prevTs.getTime()) {
+          continue;
+        }
         const incoming = matchedTasks.get(link.task_id);
         const mergedCloses = link.closes_task || Boolean(incoming?.closesTask);
         await ctx.trx
@@ -1038,9 +1134,8 @@ export const projectGithubApplyInboundEvent = defineCommand({
         taskClosingEligibility.set(link.task_id, mergedCloses);
       }
 
-      const existingTaskSet = new Set(existingLinks.map((l) => l.task_id));
       for (const [taskId, spec] of matchedTasks.entries()) {
-        if (existingTaskSet.has(taskId)) continue;
+        if (existingTaskSet.has(taskId) || upgradedTaskIds.has(taskId)) continue;
         await ctx.trx
           .insertInto('ludy_projects.github_task_link')
           .values({
@@ -1184,6 +1279,7 @@ export const projectGithubCommands = [
 export const projectGithubQueries = [
   projectGithubBindingGet,
   projectGithubHookStatus,
+  projectGithubLinkPrepare,
   projectGithubTaskLinks,
   projectGithubSyncLog,
 ];

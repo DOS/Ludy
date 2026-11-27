@@ -9,7 +9,7 @@ import { Button } from '@ludy/ui/components/button';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { ProjectIcon } from '@ludy/ui/components/project-icon';
-import { ErrorText, FieldError, fieldControl } from './ui.tsx';
+import { ErrorText, FieldError, RowsSkeleton, fieldControl } from './ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 
 export function safeGithubItemUrl(rawUrl: string): string | null {
@@ -129,7 +129,7 @@ export function ProjectTaskGithubLinks({
       </div>
 
       {linksQuery.isPending ? (
-        <p className="text-xs text-muted-foreground">...</p>
+        <RowsSkeleton rows={2} />
       ) : linksQuery.error ? (
         <ErrorText>{errorMessage(linksQuery.error)}</ErrorText>
       ) : links.length === 0 ? (

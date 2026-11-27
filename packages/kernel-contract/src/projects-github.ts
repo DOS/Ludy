@@ -289,6 +289,7 @@ export const zGithubApplyInboundEventInput = z.strictObject({
   repoFullName: z.string().regex(GITHUB_REPO_FULL_NAME_PATTERN),
   eventKind: z.enum(['issue', 'pull_request', 'push']),
   action: z.string().min(1).max(40),
+  replaceLinkId: zId.optional(),
   externalNumber: z.number().int().positive().optional(),
   externalUrl: z.string().regex(GITHUB_ITEM_URL_PATTERN).max(500).optional(),
   externalTitle: z.string().trim().min(1).max(300).optional(),
@@ -301,6 +302,19 @@ export const zGithubApplyInboundEventInput = z.strictObject({
   matches: z.array(zGithubMatchedTaskInput).max(50),
 });
 export type GithubApplyInboundEventInput = z.infer<typeof zGithubApplyInboundEventInput>;
+
+export const zGithubLinkPrepareInput = z.strictObject({
+  projectId: zId,
+  taskId: zId,
+  repoFullName: z.string().regex(GITHUB_REPO_FULL_NAME_PATTERN),
+});
+export type GithubLinkPrepareInput = z.infer<typeof zGithubLinkPrepareInput>;
+
+export interface GithubLinkPrepareResult {
+  provider: 'github_app' | 'github_pat';
+  externalAccountId: string;
+  repoFullName: string;
+}
 
 export const zGithubApplyInboundEventResult = z.object({
   linkedTaskIds: z.array(zId),

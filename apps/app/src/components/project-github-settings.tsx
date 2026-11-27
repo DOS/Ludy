@@ -428,14 +428,18 @@ export function ProjectGithubSettingsDialog({
                     size="sm"
                     variant="outline"
                     className="min-h-11 shrink-0 sm:min-h-9"
-                    onClick={() => {
-                      if (typeof navigator !== 'undefined' && navigator.clipboard) {
-                        void navigator.clipboard.writeText(webhookUrlOnce);
+                    onClick={async () => {
+                      try {
+                        if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                          await navigator.clipboard.writeText(webhookUrlOnce);
+                          setCopiedUrl(true);
+                        }
+                      } catch {
+                        // Clipboard permission unavailable or denied; keep input visible for manual copy.
                       }
-                      setCopiedUrl(true);
                     }}
                   >
-                    {copiedUrl ? t('copiedWebhook') : t('copyWebhookBtn')}
+                    <span aria-live="polite">{copiedUrl ? t('copiedWebhook') : t('copyWebhookBtn')}</span>
                   </Button>
                 </div>
               </div>

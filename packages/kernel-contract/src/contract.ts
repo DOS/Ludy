@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { zSpeakingStyle, zSpeakingStyleInput } from './meeting-speaking-style.ts';
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
 import { zSalesInsightAnswer, zSalesInsightStatus } from './meeting-sales-insight.ts';
+import { zCatchUpAnswer, zCatchUpStatus } from './meeting-catch-up.ts';
 import { ORG_KINDS } from './apps.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
@@ -2049,6 +2050,12 @@ export const contract = {
     openPoints: {
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       list: oc.input(zSummaryRef).output(zOpenPointsAnswer),
+    },
+    // Catch-up summary for a member who missed a meeting (#5130, L33): `status` returns whether Vy is available plus code-built `yourItems` (works with AI off),
+    // and `write` has the member's own Vy write up to five concise lines grounded in published minutes only (never transcript/draft/notes). Returned only to the caller; counts only stored.
+    catchUp: {
+      status: oc.input(zMeetingRef).output(zCatchUpStatus),
+      write: oc.input(zMeetingRef).output(zCatchUpAnswer),
     },
     // Sales call insights for a meeting linked to an open deal (#4920, L26): `status` feeds the button (recorder + linked open deal + transcript), `analyze` runs the recorder's own Vy once to extract
     // customer concerns, buying signals and agreed next steps citing existing transcript line IDs, plus code-computed customer talk-time share from mapped speakers. Results stay tainted and ephemeral.

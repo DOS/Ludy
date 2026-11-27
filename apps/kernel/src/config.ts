@@ -972,8 +972,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (Boolean(config.GITHUB_APP_ID) !== Boolean(config.GITHUB_APP_PRIVATE_KEY)) {
     throw new Error('set both GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY, or neither');
   }
-  if (config.GITHUB_APP_WEBHOOK_SECRET_PREVIOUS && !config.GITHUB_APP_WEBHOOK_SECRET) {
-    throw new Error('GITHUB_APP_WEBHOOK_SECRET_PREVIOUS is set without GITHUB_APP_WEBHOOK_SECRET');
+  if (config.GITHUB_APP_WEBHOOK_SECRET_PREVIOUS) {
+    if (!config.GITHUB_APP_WEBHOOK_SECRET) {
+      throw new Error('GITHUB_APP_WEBHOOK_SECRET_PREVIOUS is set without GITHUB_APP_WEBHOOK_SECRET');
+    }
+    if (config.GITHUB_APP_WEBHOOK_SECRET_PREVIOUS === config.GITHUB_APP_WEBHOOK_SECRET) {
+      throw new Error('GITHUB_APP_WEBHOOK_SECRET_PREVIOUS must differ from GITHUB_APP_WEBHOOK_SECRET');
+    }
+    if (/change-?me/i.test(config.GITHUB_APP_WEBHOOK_SECRET_PREVIOUS)) {
+      throw new Error('GITHUB_APP_WEBHOOK_SECRET_PREVIOUS still has a sample value');
+    }
   }
   // A sign-up policy the deployment cannot enforce, or one set only halfway, stops the boot instead of leaving
   // sign-up more open than the operator meant (#350).

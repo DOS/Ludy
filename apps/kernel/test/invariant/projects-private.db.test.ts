@@ -1815,6 +1815,9 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       expect(
         await attemptSql(actor, `SELECT * FROM crove_projects.github_sync_delivery_list($1::uuid, 10)`, [privateProjectId]),
       ).toEqual({ ok: true, rowCount: 0 });
+      expect(
+        await attemptSql(actor, `SELECT * FROM crove_projects.github_webhook_hook_status($1::uuid)`, [conn.connectionId]),
+      ).toMatchObject({ ok: false, code: '42501' });
 
       const insLink = await attemptSql(
         actor,
@@ -1835,6 +1838,17 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       await expect(
         appRt.query('projects.github.sync_log', { projectId: privateProjectId, limit: 10 }, { actor: asUser(uid), orgId }),
       ).rejects.toThrow();
+    }
+
+    // Even invited project members/viewers can read hook status for their visible project, yet cannot execute SQL hook_set (owner/admin only).
+    for (const uid of [users.invitedMember, users.invitedViewer]) {
+      const invitedActor = userActor(`invited-${uid.slice(0, 6)}`, () => orgId, () => uid);
+      expect(
+        await attemptSql(invitedActor, `SELECT * FROM crove_projects.github_webhook_hook_status($1::uuid)`, [conn.connectionId]),
+      ).toEqual({ ok: true, rowCount: 1 });
+      expect(
+        await attemptSql(invitedActor, `SELECT * FROM crove_projects.github_webhook_hook_set($1::uuid, $2)`, [conn.connectionId, 'a'.repeat(64)]),
+      ).toMatchObject({ ok: false, code: '42501' });
     }
   });
 });

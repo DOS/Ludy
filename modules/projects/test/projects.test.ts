@@ -100,7 +100,7 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 72 commands and 40 queries with consistent module prefix', () => {
+  it('exports all 72 commands and 41 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
       'projects.column.create',
       'projects.column.delete',
@@ -184,6 +184,7 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.dependency.list',
       'projects.github.binding.get',
       'projects.github.hook_status',
+      'projects.github.link.prepare',
       'projects.github.sync_log',
       'projects.github.task_links',
       'projects.mcp.roadmap_demand_summary',

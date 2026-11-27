@@ -24,6 +24,7 @@ import {
   type GithubBindingGetResult,
   type GithubBindingSaveResult,
   type GithubHookSetResult,
+  type GithubLinkPrepareResult,
   type GithubTaskLinkView,
 } from '@ludy/kernel-contract';
 import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, BankSignDepositMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceHomeMoney, FinanceOverview, MonthClose, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
@@ -124,7 +125,7 @@ import {
   type SignAi,
 } from './sign-ai.ts';
 import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
-import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments, runMeetingLabelSuggest, runMeetingOpenPoints, runMeetingSalesInsight, salesInsightStatusOf, runMeetingTemplateSuggest } from './member-vy-ports.ts';
+import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments, runMeetingLabelSuggest, runMeetingOpenPoints, catchUpStatusOf, runMeetingCatchUp, runMeetingSalesInsight, salesInsightStatusOf, runMeetingTemplateSuggest } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type MarketplaceProposalFacts, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
 import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.ts';
@@ -2002,6 +2003,16 @@ export function createRpcHandler(
         status: os.meetings.openPoints.status.handler(meetingsQuery('meetings.open_points.status')),
         list: os.meetings.openPoints.list.handler(({ context, input }) =>
           inMeetings(context, (orgId, actor) => runMeetingOpenPoints({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
+      },
+      // Catch-up summary for a member who missed a meeting (#5130, L33): `status` returns whether Vy is available plus code-built `yourItems` (works with AI off),
+      // `write` runs the reader's own Vy once over published minutes only (never transcript, draft or notes) and stores counts only.
+      catchUp: {
+        status: os.meetings.catchUp.status.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => catchUpStatusOf({ runtime, price: aiPrice, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor, input.meetingId)),
+        ),
+        write: os.meetings.catchUp.write.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingCatchUp({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingBriefs, price: aiPrice }, orgId, actor, input.meetingId)),
         ),
       },
       // Sales call insights for a meeting linked to an open deal (#4920, L26): recorder-only foreground Vy run with cited transcript line IDs and code-computed customer talk share.
@@ -5423,7 +5434,7 @@ export function createRpcHandler(
           inProjects(context, async (orgId, actor) => {
             await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được GitHub cho dự án');
             if (!channels || channels.broker.id === 'none') {
-              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối trên máy chủ');
             }
             if (!channels.github) {
               throw new DomainError('GITHUB_UNAVAILABLE', 503, 'Kết nối GitHub chưa sẵn sàng trên máy chủ');
@@ -5505,10 +5516,10 @@ export function createRpcHandler(
           inProjects(context, async (orgId, actor) => {
             await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được GitHub App cho dự án');
             if (!channels || channels.broker.id === 'none') {
-              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối trên máy chủ');
             }
             if (!channels.github || !channels.github.hasAppCredentials) {
-              throw new DomainError('GITHUB_APP_NOT_CONFIGURED', 503, 'Máy chủ chưa cấu hình GitHub App (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY)');
+              throw new DomainError('GITHUB_APP_NOT_CONFIGURED', 503, 'Máy chủ chưa cấu hình GitHub App');
             }
             const previous = await runtime.query<GithubBindingGetResult>(
               'projects.github.binding.get',
@@ -5653,30 +5664,29 @@ export function createRpcHandler(
             if (!parsed) {
               throw new DomainError('GITHUB_URL_INVALID', 400, 'Liên kết phải trỏ tới issue hoặc pull request trên github.com');
             }
-            const current = await runtime.query<GithubBindingGetResult>('projects.github.binding.get', { projectId: input.projectId }, { actor, orgId });
-            if (!current.binding || !current.binding.githubEnabled) {
-              throw new DomainError('GITHUB_DISABLED', 409, 'Dự án này chưa bật tích hợp GitHub');
-            }
-            const boundRepo = current.binding.repos.find(
-              (r) => r.repoFullName.toLowerCase() === parsed.repoFullName.toLowerCase(),
+            const prepared = await runtime.query<GithubLinkPrepareResult>(
+              'projects.github.link.prepare',
+              { projectId: input.projectId, taskId: input.taskId, repoFullName: parsed.repoFullName },
+              { actor, orgId },
             );
-            if (!boundRepo) {
-              throw new DomainError('GITHUB_REPO_NOT_BOUND', 403, 'Kho mã nguồn GitHub này chưa được gắn với dự án');
-            }
-            let externalTitle = `${boundRepo.repoFullName}#${parsed.externalNumber}`;
+            let resolvedKind: 'issue' | 'pull_request' = parsed.kind;
+            let resolvedUrl = parsed.canonicalUrl;
+            let externalTitle = `${prepared.repoFullName}#${parsed.externalNumber}`;
             let externalState: 'open' | 'closed' | 'merged' | 'draft' = 'open';
             let branchName: string | null = null;
             let authorLogin: string | null = null;
             let hydrating = true;
 
-            if (current.binding.provider === 'github_app' && channels?.github?.hasAppCredentials) {
+            if (prepared.provider === 'github_app' && channels?.github?.hasAppCredentials) {
               try {
                 const item = await channels.github.getIssueOrPr(
-                  { kind: 'github_app', installationId: current.binding.externalAccountId },
-                  boundRepo.repoFullName,
+                  { kind: 'github_app', installationId: prepared.externalAccountId },
+                  prepared.repoFullName,
                   parsed.kind,
                   parsed.externalNumber,
                 );
+                resolvedKind = item.kind;
+                resolvedUrl = item.externalUrl;
                 externalTitle = item.externalTitle;
                 externalState = item.externalState;
                 branchName = item.branchName;
@@ -5694,10 +5704,10 @@ export function createRpcHandler(
               {
                 projectId: input.projectId,
                 taskId: input.taskId,
-                repoFullName: boundRepo.repoFullName,
-                kind: parsed.kind,
+                repoFullName: prepared.repoFullName,
+                kind: resolvedKind,
                 externalNumber: parsed.externalNumber,
-                externalUrl: parsed.canonicalUrl,
+                externalUrl: resolvedUrl,
                 externalTitle,
                 externalState,
                 branchName,
