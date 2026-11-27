@@ -3,7 +3,7 @@
 // on every version, which reset the inputs when the fresh read landed after the card's copy and let a save send the stale title.
 import { describe, expect, it } from 'vitest';
 import type { Deal, PartyChoice } from '@ludy/kernel-contract';
-import { dealFormValues } from '../src/components/deal-form.tsx';
+import { dealFormValues, newerDeal } from '../src/components/deal-form.tsx';
 
 const deal = (over: Partial<Deal> = {}): Deal =>
   ({
@@ -45,5 +45,17 @@ describe('dealFormValues', () => {
     const picked: PartyChoice = { ...preset, id: '00000000-0000-4000-8000-000000000021', name: 'Picked' };
     expect(dealFormValues(null, preset, {})).toMatchObject({ title: '', amount: '', ownerUserId: 'me', party: preset });
     expect(dealFormValues(null, preset, { party: picked }).party).toBe(picked);
+  });
+});
+
+describe('newerDeal', () => {
+  it('prefers the read when it is as new as the card, and the card when a cached read is older', () => {
+    const card = deal({ version: 2, title: 'Mới' });
+    expect(newerDeal(card, undefined)).toBe(card);
+    expect(newerDeal(card, deal({ version: 1, title: 'Cũ' }))).toBe(card);
+    const same = deal({ version: 2, title: 'Mới', amount: '2000000.00' });
+    expect(newerDeal(card, same)).toBe(same);
+    const later = deal({ version: 3 });
+    expect(newerDeal(card, later)).toBe(later);
   });
 });

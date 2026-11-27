@@ -161,6 +161,11 @@ export function dealFormValues(deal: Deal | null, presetParty: PartyChoice | nul
   };
 }
 
+// The newer of two copies of one deal: the card or row the sheet was opened from, and the read by id. A cached read can be older than the card (the board refetched after a save, the read by id is still within its stale time), and a form on the older copy would send a version the server refuses (#5015).
+export function newerDeal(opened: Deal, read: Deal | undefined): Deal {
+  return read && read.version >= opened.version ? read : opened;
+}
+
 // presetParty: a new deal for this party, chosen and not changeable (the contact panel's "Thêm cơ hội", #3292). plain: the form sits in a side sheet (#3648), which frames it: one column, no border of its own.
 // The form is not keyed by the deal's version: a newer version keeps the typed edits (see dealFormValues) and the next save carries that version.
 export function DealForm({ deal, members, onDone, presetParty = null, plain = false }: { deal: Deal | null; members: readonly Member[]; onDone: () => void; presetParty?: PartyChoice | null; plain?: boolean }) {

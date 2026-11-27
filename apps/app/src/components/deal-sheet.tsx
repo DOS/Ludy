@@ -9,7 +9,7 @@ import type { Deal, PartyChoice } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@ludy/ui/components/sheet';
 import { DealBookings } from './booking-deal.tsx';
-import { DealForm, type Member } from './deal-form.tsx';
+import { DealForm, newerDeal, type Member } from './deal-form.tsx';
 import { DealQuotes } from './deal-quotes.tsx';
 import { LinkedMeetings, meetingsInstalled } from './linked-meetings.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
@@ -39,10 +39,10 @@ export function DealSheet({ target, members, canEdit, onClose }: { target: DealS
   const common = useTranslations('common');
   const { locale } = useLocaleSetting();
   const [roadmapSignalOpen, setRoadmapSignalOpen] = useState(false);
-  // The deal as it is now: a quote's offer or a move made in the sheet changes it, and a stale version would refuse the next edit. The row or card it was opened from is the first answer.
+  // The deal as it is now: a quote's offer or a move made in the sheet changes it, and a stale version would refuse the next edit. The row or card it was opened from is the first answer, and a cached read older than it never replaces it (#5015).
   const opened = target.kind === 'deal' ? target.deal : null;
   const fresh = useQuery({ ...orpc.crm.deals.get.queryOptions({ input: { dealId: opened?.id ?? '00000000-0000-0000-0000-000000000000' } }), enabled: opened !== null, ...(opened ? { placeholderData: opened } : {}) });
-  const deal = opened === null ? null : (fresh.data ?? opened);
+  const deal = opened === null ? null : newerDeal(opened, fresh.data);
   const stages = useQuery(orpc.crm.pipeline.stages.queryOptions({ input: {} }));
   const stageName = deal ? stages.data?.find((s) => s.id === deal.stageId)?.name : undefined;
   return (
