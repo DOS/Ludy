@@ -159,6 +159,19 @@ describe('buildOverview', () => {
     expect(overviewMonth('2026-10', { lines: [], unmapped: [] })).toEqual({ month: '2026-10', revenue: '0', costs: '0', profit: '0' });
   });
 
+  it('reads the profit and the month results under the TT99 map when the books are TT99 (#5187)', () => {
+    // Revenue 1000 less a 100 deduction on 521, financial income 50 on 515 (line 22 here, line 21 under TT133), cost of goods 600, selling 40 on 641 and administration 100 on 642.
+    // Profit before tax: 900 - 600 + 50 - 40 - 100 = 210; revenue for the chart is 900 + 50 = 950, so the costs are 740.
+    const rows = [entry('2026-10-21', [['5111', '0', '1000'], ['521', '100', '0'], ['515', '0', '50'], ['632', '600', '0'], ['641', '40', '0'], ['642', '100', '0']])];
+    const tt99 = buildOverview({ ...base, regime: 'tt99', resultsNow: rows, monthly: months.map((m, i) => (i === 4 ? { ...m, entries: rows } : m)) });
+    expect(tt99.profit.amount).toBe('210');
+    expect(tt99.unmapped).toBe(0);
+    expect(tt99.months[4]).toEqual({ month: '2026-10', revenue: '950', costs: '740', profit: '210' });
+    // The same entries under the TT133 map leave 521 and 641 unmapped, which is why the regime is chosen from the books.
+    const tt133 = buildOverview({ ...base, resultsNow: rows });
+    expect(tt133.unmapped).toBe(2);
+  });
+
   it('counts the balances of the period that no B02 line reads', () => {
     expect(buildOverview({ ...base, resultsNow: [entry('2026-10-21', [['8888', '5', '0']])] }).unmapped).toBe(1);
   });

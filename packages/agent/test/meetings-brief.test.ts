@@ -2,7 +2,18 @@
 // The checks on the member's Vy writing the brief before a meeting (#3543): a sentence stays only when it cites numbered facts and every figure in it is written in a cited fact; at most three stay; an
 // answer that is not the expected object is refused whole; and an instruction inside a fact is data (the prompt fences it; nothing here acts on it).
 import { describe, expect, it } from 'vitest';
-import { BRIEF_LIMITS, BriefError, checkBrief } from '../src/member-vy/meetings-brief.ts';
+import {
+  AI_FEATURES,
+  AiBudgetExhaustedError,
+  AiMeterMissingError,
+  BriefModelError,
+  generateMeetingBriefText,
+  withAiScope,
+  type AiConfig,
+  type AiMeter,
+} from '../src/index.ts';
+import { bindPorts, noKnowledge } from '../src/member-vy/ports.ts';
+import { BRIEF_LIMITS, BriefError, checkBrief, writeBrief } from '../src/member-vy/meetings-brief.ts';
 
 const facts = [
   { text: 'Decision of the last meeting: Chốt giá gói kế toán 15.000.000 đồng' },
@@ -90,5 +101,65 @@ describe('checkBrief', () => {
     expect(() => checkBrief('not json', facts)).toThrow(BriefError);
     expect(() => checkBrief('{"other": []}', facts)).toThrow(BriefError);
     expect(checkBrief(answer([]), facts)).toEqual({ sentences: [], dropped: 0 });
+  });
+});
+
+const MODEL_CONFIG: AiConfig = { baseURL: 'http://127.0.0.1:9/v1', apiKey: null, model: 'test-model' };
+const MODEL_PROMPT = { system: 'Chuẩn bị trước họp', user: 'Dữ liệu cuộc họp bí mật' };
+
+describe('generateMeetingBriefText (meetings.brief_daily)', () => {
+  it('routes meetings.brief_daily through the meetings module and daily feature key', async () => {
+    expect(AI_FEATURES['meetings.brief_daily']).toBe('meetings');
+    await expect(generateMeetingBriefText(MODEL_CONFIG, MODEL_PROMPT, 500, 'meetings.brief_daily')).rejects.toBeInstanceOf(AiMeterMissingError);
+
+    const asked: Array<{ feature: string; module: string; memberRunId: string | null | undefined }> = [];
+    const meter: AiMeter = {
+      admit: async (call) => {
+        asked.push({ feature: call.feature, module: call.module, memberRunId: call.memberRunId });
+        throw new AiBudgetExhaustedError('module', null);
+      },
+      record: async () => undefined,
+    };
+    await expect(
+      withAiScope({ orgId: 'org-1', memberRunId: 'run-daily', meter }, () =>
+        generateMeetingBriefText(MODEL_CONFIG, MODEL_PROMPT, 500, 'meetings.brief_daily'),
+      ),
+    ).rejects.toBeInstanceOf(AiBudgetExhaustedError);
+    expect(asked).toEqual([{ feature: 'meetings.brief_daily', module: 'meetings', memberRunId: 'run-daily' }]);
+  });
+
+  it('forwards feature meetings.brief_daily from writeBrief to the model port', async () => {
+    const seenFeatures: Array<string | undefined> = [];
+    const ports = bindPorts(
+      { orgId: '11111111-1111-4111-8111-111111111111', memberUserId: '22222222-2222-4222-8222-222222222222' },
+      {
+        model: {
+          generate: async (_who, prompt) => {
+            seenFeatures.push(prompt.feature);
+            return {
+              text: JSON.stringify({ sentences: [{ text: 'Buổi trước chốt giá 15.000.000 đồng.', cites: [1] }] }),
+              usage: { inputTokens: 12, outputTokens: 8 },
+            };
+          },
+        },
+        memory: { read: async () => [], write: async () => ({ id: 'm1' }), forget: async () => undefined },
+        knowledge: noKnowledge,
+      },
+    );
+    const out = await writeBrief({ facts: [{ kind: 'decision', text: facts[0]!.text }], feature: 'meetings.brief_daily' }, ports);
+    expect(seenFeatures).toEqual(['meetings.brief_daily']);
+    expect(out.answer.sentences).toEqual([{ text: 'Buổi trước chốt giá 15.000.000 đồng.', cites: [1] }]);
+  });
+
+  it('turns provider failures into a fixed BriefModelError code', async () => {
+    const meter: AiMeter = { admit: async () => undefined, record: async () => undefined };
+    const error = await withAiScope({ orgId: 'org-1', memberRunId: 'run-daily', meter }, () =>
+      generateMeetingBriefText(MODEL_CONFIG, MODEL_PROMPT, 2000, 'meetings.brief_daily'),
+    ).then(
+      () => null,
+      (e: unknown) => e as unknown,
+    );
+    expect(error).toBeInstanceOf(BriefModelError);
+    expect((error as BriefModelError).message).toMatch(/^BRIEF_(FAILED|TIMEOUT)$/);
   });
 });

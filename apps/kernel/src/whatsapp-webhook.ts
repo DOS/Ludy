@@ -34,7 +34,9 @@ export interface WhatsAppWebhookConfig {
 // Events seen lately, by their own id, so a signed notice replayed (by Meta's retries or by anyone holding a captured one) is answered without being parked
 // again; the window is Messenger's 36 hours, the one figure on file [U for WhatsApp]. A per-process guard against a queue flooded with one body: the guarantee
 // that a replay stores nothing twice is the unique platform message id of the thread's messages, which holds across processes and restarts. An event is
-// remembered only once it is parked.
+// remembered only once it is parked. The same events are also recorded durably, across processes and restarts, in ludy_kernel.conversation_inbound_first_seen
+// (#5085): a retry parked by another process is dated the event's first arrival, never later, so a notice first received before a number handover cannot
+// pass the `received_at >= connected_at` check of the new holder (#5047) by being retried inside WHATSAPP_CLOCK_SKEW_MS.
 export { FacebookReplayCache as WhatsAppReplayCache };
 
 // A verified event dated more than 7 days ago is answered 200 and not parked. How long Meta retries a WhatsApp delivery is [U] (a week is the longest figure
@@ -62,6 +64,13 @@ function eventReplayKey(accountId: string, event: InboundConversationEvent): str
   return `${accountId}:${event.direction}:${event.deliveryFailed ? `f:${createHash('sha256').update(event.deliveryFailed.code).digest('hex').slice(0, 8)}` : 'm'}:${event.messageId}`;
 }
 
+// The key the database keeps of an event (ludy_kernel.conversation_inbound_first_seen): a domain-separated SHA-256 of its id, as lowercase hex, so the table holds
+// neither the business phone number id nor the platform's message id. The id is opaque and unguessable (Meta's wamid), so an unkeyed hash is enough, and a
+// key that does not depend on the app secret survives a secret rotation.
+export function durableEventKey(replayKey: string): string {
+  return createHash('sha256').update(`ludy.whatsapp.first_seen.v1:${replayKey}`).digest('hex');
+}
+
 export async function acceptWhatsAppWebhook(
   runtime: Runtime,
   config: Pick<WhatsAppWebhookConfig, 'appSecret' | 'appSecretPrevious' | 'now'>,
@@ -78,18 +87,25 @@ export async function acceptWhatsAppWebhook(
     throw error;
   }
   const freshKeys: string[] = [];
+  // Every live event's durable id, fresh in this process or not: a retry that reaches another process or follows a restart finds an empty cache, and
+  // the database remembers when the event was first seen (#5085).
+  const seenKeys = new Set<string>();
   for (const notice of notices) {
     for (const event of notice.events) {
       if (now - Date.parse(event.at) > WHATSAPP_NOTICE_MAX_AGE_MS) continue;
       const key = eventReplayKey(notice.accountId, event);
+      seenKeys.add(durableEventKey(key));
       if (!replays?.has(key)) freshKeys.push(key);
     }
   }
   if (freshKeys.length === 0) return { status: 200, parked: false };
   try {
-    await runtime.orgless(async (db) => {
-      await sql`SELECT ludy_kernel.conversation_inbound_enqueue('whatsapp', ${Buffer.from(request.body)}::bytea)`.execute(db);
+    const parked = await runtime.orgless(async (db) => {
+      const { rows } = await sql<{ seq: string | null }>`SELECT ludy_kernel.conversation_inbound_enqueue_seen('whatsapp', ${Buffer.from(request.body)}::bytea, ${[...seenKeys]}::text[]) AS seq`.execute(db);
+      return rows[0]?.seq ?? null;
     });
+    // NULL: the backlog is full (the keys stay recorded, so the retry keeps the original time).
+    if (parked === null) return { status: 503, code: 'BACKLOG' };
   } catch (error) {
     // The definer refuses past 10000 waiting notices (53400), which the runtime maps to OVERLOADED: Meta retries, so a 503 is recovered.
     if (error instanceof DomainError && error.code === 'OVERLOADED') return { status: 503, code: 'BACKLOG' };

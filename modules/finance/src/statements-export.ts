@@ -10,6 +10,9 @@ import { setMoneyCell as setMoney, setTextCell as setText } from './export.ts';
 import type { ColumnAmounts, FinancialStatements, StatementLine, UnmappedRow } from './statements.ts';
 
 export const DRAFT_NOTICE = 'BẢN NHÁP: mã chỉ tiêu và cách lấy số liệu từ tài khoản chưa được kế toán kiểm tra; không dùng để nộp.';
+// B02 read under the TT99 chart (#5187): the line codes and the account map come from secondary sources, not the official text.
+export const TT99_NOTICE = 'Kết quả hoạt động kinh doanh (B02) đọc theo hệ thống tài khoản Thông tư 99; báo cáo tình hình tài chính (B01) vẫn theo mẫu Thông tư 133 cho đến khi có mẫu Thông tư 99.';
+export const MIXED_CHARTS_NOTICE = 'Cảnh báo: kỳ này hoặc một cột so sánh có phần ghi sổ theo hệ thống tài khoản khác; mọi cột đọc theo hệ thống của ngày cuối kỳ nên số liệu có thể lệch.';
 
 // A column beside the period's own: its heading, and the amount of each line by code (a line the column's period has no
 // entries for reads 0).
@@ -88,6 +91,7 @@ export async function buildStatementsWorkbook(statements: FinancialStatements, o
   workbook.creator = brand;
   workbook.title = `Báo cáo tài chính ${statements.period.period} ${orgName}`;
   const { startOfYear, lastYear, previous } = statements.comparison;
+  const tt99 = statements.regime === 'tt99';
   const b01 = statementSheet(
     workbook,
     'B01-DNN',
@@ -102,7 +106,7 @@ export async function buildStatementsWorkbook(statements: FinancialStatements, o
     setText(note.getCell('label'), 'Cảnh báo: tổng tài sản (mã 200) và tổng nguồn vốn (mã 500) không bằng nhau');
     note.font = { bold: true };
   }
-  statementSheet(
+  const b02 = statementSheet(
     workbook,
     'B02-DNN',
     `Báo cáo kết quả hoạt động kinh doanh (B02-DNN), kỳ ${statements.period.period} (${statements.b02.from} đến ${statements.b02.to})`,
@@ -114,5 +118,9 @@ export async function buildStatementsWorkbook(statements: FinancialStatements, o
       ...(previous ? [{ header: `Kỳ liền trước (${previous.period})`, amounts: previous.amounts, unmapped: previous.unmapped }] : []),
     ],
   );
+  for (const sheet of [b01, b02]) {
+    if (tt99) setText(sheet.addRow([]).getCell('label'), TT99_NOTICE);
+    if (statements.mixedCharts === true) setText(sheet.addRow([]).getCell('label'), MIXED_CHARTS_NOTICE);
+  }
   return new Uint8Array(await workbook.xlsx.writeBuffer());
 }

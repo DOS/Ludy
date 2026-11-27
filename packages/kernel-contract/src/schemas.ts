@@ -1419,8 +1419,12 @@ const zUnmappedRow = z.object({ accountCode: z.string(), accountName: z.string()
 // the warnings of the period's own statement, kept for the column.
 const zColumnAmounts = z.record(z.string(), zMoney);
 const zComparedPeriod = z.object({ period: zLedgerPeriod, from: zLocalDate, to: zLocalDate, amounts: zColumnAmounts, unmapped: z.number().int().nonnegative() });
+// `regime` is the chart the income statement (B02) is read under, the entity's books on the period's last day (#5187; TT133 when left out), and `mixedCharts` says a part of the period or of a comparison column was booked under the other chart.
+// B01 keeps the TT133 layout under both until the TT99 B01-DN map exists (#5204).
 export const zFinancialStatements = z.object({
   period: zLedgerPeriodRange,
+  regime: z.enum(['tt133', 'tt99']).optional(),
+  mixedCharts: z.boolean().optional(),
   b01: z.object({ asOf: zLocalDate, lines: z.array(zStatementLine), unmapped: z.array(zUnmappedRow), balanced: z.boolean() }),
   b02: z.object({ from: zLocalDate, to: zLocalDate, lines: z.array(zStatementLine), unmapped: z.array(zUnmappedRow) }),
   comparison: z.object({

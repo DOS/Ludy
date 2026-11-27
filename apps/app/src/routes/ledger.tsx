@@ -394,7 +394,17 @@ function Statements({ period }: { period: string }) {
         </Button>
       </div>
       {exportXlsx.error && <ErrorText>{errorMessage(exportXlsx.error)}</ErrorText>}
-      {/^\d{4}$/.test(period) && <HtkkStatements year={Number(period)} />}
+      {data.regime === 'tt99' && (
+        <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
+          {t('statementsTt99')}
+        </Alert>
+      )}
+      {data.mixedCharts === true && (
+        <Alert className="border-warning/30 bg-warning/10 text-warning" role="status">
+          {t('statementsMixedCharts')}
+        </Alert>
+      )}
+      {/^\d{4}$/.test(period) && data.regime !== 'tt99' && <HtkkStatements year={Number(period)} />}
       {!data.b01.balanced && (
         <Alert className="border-warning/30 bg-warning/10 text-warning" role="status">
           {t('statementsUnbalanced')}

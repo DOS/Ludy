@@ -24,6 +24,7 @@ import {
   zBriefTarget,
   zDailyBriefFacts,
   zDailyBriefFactsInput,
+  zDailyBriefStoreLinesInput,
   type BriefDeal,
   type BriefFacts,
   type BriefStatus,
@@ -265,5 +266,44 @@ export const briefDailyFacts = defineQuery({
   },
 });
 
-export const briefCommands = [briefStart];
+export const briefStoreLines = defineCommand({
+  name: 'meetings.brief.store_lines',
+  input: zDailyBriefStoreLinesInput,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<{ stored: boolean; lineCount: number }> => {
+    if (ctx.actor.type !== 'system') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới lưu được dòng chuẩn bị buổi sáng');
+    }
+    try {
+      await sql`
+        SELECT ludy_meetings.morning_brief_lines_upsert(
+          ${ctx.orgId}::uuid,
+          ${input.userId}::uuid,
+          ${input.meetingId}::uuid,
+          ${JSON.stringify(input.lines)}::jsonb,
+          ${input.expiresAt}::timestamptz
+        )`.execute(ctx.trx);
+    } catch (error: unknown) {
+      const msg = (error as { message?: string } | null)?.message ?? '';
+      if (msg.includes('BRIEF_LINES_NOT_ELIGIBLE')) {
+        throw new DomainError('BRIEF_LINES_NOT_ELIGIBLE', 403, 'Thành viên không còn đủ điều kiện nhận gợi ý buổi sáng');
+      }
+      if (msg.includes('BRIEF_LINES_MEETING_MISSING')) {
+        throw new DomainError('MEETING_NOT_FOUND', 404, 'Không tìm thấy cuộc họp');
+      }
+      if (msg.includes('BRIEF_LINES_INVALID') || msg.includes('BRIEF_LINES_EXPIRY_INVALID')) {
+        const code = msg.includes('BRIEF_LINES_EXPIRY_INVALID') ? 'BRIEF_LINES_EXPIRY_INVALID' : 'BRIEF_LINES_INVALID';
+        throw new DomainError(code, 422, 'Dữ liệu dòng chuẩn bị buổi sáng không hợp lệ');
+      }
+      throw error;
+    }
+    ctx.audit({ lineCount: input.lines.length });
+    return { stored: true, lineCount: input.lines.length };
+  },
+});
+
+export const briefCommands = [briefStart, briefStoreLines];
 export const briefQueries = [briefFacts, briefDailyFacts, briefStatus];

@@ -5,16 +5,18 @@
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import { buildStatementsWorkbook, ledgerPeriod, type FinancialStatements } from '../src/index.ts';
-import { DRAFT_NOTICE } from '../src/statements-export.ts';
+import { DRAFT_NOTICE, MIXED_CHARTS_NOTICE, TT99_NOTICE } from '../src/statements-export.ts';
 import { expectExcelSheetNames } from './sheet-names.ts';
 
 const NO_COMPARISON: FinancialStatements['comparison'] = { startOfYear: null, lastYear: null, previous: null };
 
 function statements(
-  overrides: { balanced?: boolean; unmapped?: FinancialStatements['b01']['unmapped']; payable?: string; period?: string; comparison?: FinancialStatements['comparison'] } = {},
+  overrides: { regime?: 'tt133' | 'tt99'; mixedCharts?: boolean; balanced?: boolean; unmapped?: FinancialStatements['b01']['unmapped']; payable?: string; period?: string; comparison?: FinancialStatements['comparison'] } = {},
 ): FinancialStatements {
   return {
     period: ledgerPeriod(overrides.period ?? '2026-09'),
+    ...(overrides.regime ? { regime: overrides.regime } : {}),
+    ...(overrides.mixedCharts !== undefined ? { mixedCharts: overrides.mixedCharts } : {}),
     comparison: overrides.comparison ?? NO_COMPARISON,
     b01: {
       asOf: '2026-09-30',
@@ -74,6 +76,19 @@ describe('buildStatementsWorkbook', () => {
       ['Chi phí quản lý kinh doanh', '24', 1800000, 900000, 1800000],
       ['=SUM(A1)', '60', -1800000, -900000, 0],
     ]);
+  });
+
+  it('says on both sheets that B02 is read under the TT99 chart, and adds the mixed-chart warning only when asked (#5187)', async () => {
+    const tt99 = await readBack(statements({ regime: 'tt99' }));
+    for (const name of ['B01-DNN', 'B02-DNN']) {
+      const labels = rowsOf(tt99.getWorksheet(name)).map((row) => row[0]);
+      expect(labels).toContain(TT99_NOTICE);
+      expect(labels).not.toContain(MIXED_CHARTS_NOTICE);
+    }
+    const mixed = await readBack(statements({ regime: 'tt99', mixedCharts: true }));
+    expect(rowsOf(mixed.getWorksheet('B02-DNN')).map((row) => row[0])).toEqual(expect.arrayContaining([TT99_NOTICE, MIXED_CHARTS_NOTICE]));
+    const tt133 = await readBack(statements({ regime: 'tt133' }));
+    expect(rowsOf(tt133.getWorksheet('B02-DNN')).map((row) => row[0])).not.toContain(TT99_NOTICE);
   });
 
   it('warns under a comparison column that does not balance or that no line reads in full', async () => {

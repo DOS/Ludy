@@ -189,4 +189,40 @@ describe('Ludy eSign landing page (#4605, #5109)', () => {
     expect(numbersSource).toContain('md:text-base');
     expect(numbersSource).toContain('lg:text-2xl');
   });
+
+  it('includes a bilingual 4-vendor x 8-row comparison section as a pure Server Component (#5209)', () => {
+    expect(esignVi.comparison.vendors).toHaveLength(4);
+    expect(esignEn.comparison.vendors).toHaveLength(4);
+    expect(esignVi.comparison.vendors.map((v) => v.key)).toEqual(['ludy', 'documenso', 'docusign', 'misa']);
+    expect(esignEn.comparison.vendors.map((v) => v.key)).toEqual(['ludy', 'documenso', 'docusign', 'misa']);
+
+    expect(esignVi.comparison.rows).toHaveLength(8);
+    expect(esignEn.comparison.rows).toHaveLength(8);
+    expect(esignEn.comparison.rows.map((r) => r.id)).toEqual(esignVi.comparison.rows.map((r) => r.id));
+
+    for (const row of esignVi.comparison.rows) {
+      expect(row.values).toHaveLength(4);
+    }
+    for (const row of esignEn.comparison.rows) {
+      expect(row.values).toHaveLength(4);
+    }
+
+    const pageSource = readFileSync(join(WEB_SRC, 'components', 'apps', 'esign-page.tsx'), 'utf8');
+    expect(pageSource).toContain('comparison={<EsignComparison copy={copy.comparison} />}');
+
+    const comparisonSource = readFileSync(join(WEB_SRC, 'components', 'apps', 'esign-comparison.tsx'), 'utf8');
+    expect(comparisonSource.startsWith('// SPDX-License-Identifier: AGPL-3.0-only')).toBe(true);
+    expect(comparisonSource).toContain('<caption');
+    expect(comparisonSource).toContain('scope="col"');
+    expect(comparisonSource).toContain('scope="row"');
+    expect(comparisonSource).toContain('lg:hidden');
+
+    expect(comparisonSource).not.toContain("'use client'");
+    expect(comparisonSource).not.toContain('"use client"');
+    expect(comparisonSource).not.toContain('font-mono');
+    expect(comparisonSource).not.toContain('shadow-2xl');
+    expect(comparisonSource).not.toContain('size-11');
+    expect(comparisonSource).not.toContain('size-12');
+    expect(comparisonSource).not.toMatch(/[\u2013\u2014]/);
+  });
 });

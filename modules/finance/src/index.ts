@@ -45,6 +45,7 @@ import { financeOverviewQuery } from './overview.ts';
 import { financeHomeMoneyQuery } from './home-money.ts';
 import { financeMonthCloseQuery } from './month-close.ts';
 import { financeExpenseVarianceQuery } from './expense-variance.ts';
+import { financeQuarterSummaryQuery } from './quarter-summary.ts';
 import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoice-connections.ts';
 import { marketplaceColumnsCommands, marketplaceColumnsQueries } from './marketplace-columns.ts';
 import { marketplaceConnectionCommands, marketplaceConnectionQueries } from './marketplace-connections.ts';
@@ -225,7 +226,7 @@ export { foldVietnamese, portalStatus } from './domain/portal-status.ts';
 export { buildJournalWorkbook } from './export.ts';
 export { buildSupplierPaymentBankFileWorkbook } from './supplier-payment-bank-file-xlsx.ts';
 export { buildVatWorkbook, VAT_RATE_LABELS, VAT_WARNING_LABELS } from './vat-export.ts';
-export { buildVat01Xml, xmlCarryForward, type XmlCarryForwardSource } from './vat-xml.ts';
+export { buildVat01Xml, xmlCarryForward, type Vat01XmlOptions, type XmlCarryForwardSource } from './vat-xml.ts';
 export { buildLedgerWorkbook } from './ledger-export.ts';
 export { buildStatementsWorkbook } from './statements-export.ts';
 export { buildStatementsHtkkXml, type StatementsFiling } from './statements-htkk.ts';
@@ -268,6 +269,7 @@ export * from './domain/money.ts';
 export * from './domain/ledger.ts';
 export { postJournalEntry, postNewEntry, sourceRevisionError } from './ledger.ts';
 export * from './domain/tt133-reports.ts';
+export * from './domain/tt99-reports.ts';
 export * from './domain/vat-return.ts';
 export * from './domain/number-gaps.ts';
 export * from './domain/vat-01gtgt-xml.ts';
@@ -342,6 +344,7 @@ export const financeQueries = [
   financeHomeMoneyQuery,
   financeMonthCloseQuery,
   financeExpenseVarianceQuery,
+  financeQuarterSummaryQuery,
   openingBalancePreview,
   vouchersList,
   cashVouchers,
