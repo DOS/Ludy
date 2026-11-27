@@ -55,3 +55,26 @@ export const zCatchUpAnswer = z.strictObject({
   dropped: z.number().int().min(0).max(1000),
 });
 export type CatchUpAnswer = z.infer<typeof zCatchUpAnswer>;
+
+export const zCatchUpFacts = z.strictObject({
+  meetingId: zId,
+  language: z.enum(['vi', 'en']),
+  askerName: z.string(),
+  summary: z.string(),
+  decisions: z.array(z.string()),
+  items: z.array(
+    z.strictObject({
+      id: zId,
+      title: z.string(),
+      who: z.string(),
+      when: z.string(),
+      isYours: z.boolean(),
+    }),
+  ),
+});
+export type CatchUpFacts = z.infer<typeof zCatchUpFacts>;
+
+export const zCatchUpStarted = z.strictObject({
+  meetingId: zId,
+  runId: zId,
+});

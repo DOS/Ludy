@@ -9,7 +9,9 @@ import {
   CATCH_UP_YOUR_ITEMS_MAX,
   zCatchUpAnswer,
   zCatchUpCitation,
+  zCatchUpFacts,
   zCatchUpLine,
+  zCatchUpStarted,
   zCatchUpStatus,
   zCatchUpYourItem,
   type CatchUpLine,
@@ -83,5 +85,17 @@ describe('meeting catch-up contract (#5130)', () => {
     ).toBe(false);
     expect(zCatchUpAnswer.safeParse({ state: 'failed', errorCode: 'CATCH_UP_FAILED', lines: [], dropped: 0 }).success).toBe(true);
     expect(zCatchUpAnswer.safeParse({ state: 'failed', errorCode: 'bad-code', lines: [], dropped: 0 }).success).toBe(false);
+
+    expect(
+      zCatchUpFacts.safeParse({
+        meetingId: ID,
+        language: 'vi',
+        askerName: 'An',
+        summary: 'Tom tat',
+        decisions: ['Chot gia'],
+        items: [{ id: ID, title: 'Gui bao gia', who: 'An', when: 'thu sau', isYours: true }],
+      }).success,
+    ).toBe(true);
+    expect(zCatchUpStarted.safeParse({ meetingId: ID, runId: ID }).success).toBe(true);
   });
 });

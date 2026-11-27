@@ -9,13 +9,15 @@ import { sql } from 'kysely';
 import {
   CATCH_UP_YOUR_ITEMS_MAX,
   REDACTION_MARK_BY_KIND,
+  zCatchUpFacts,
+  zCatchUpStarted,
   zCatchUpStatus,
   zMeetingRef,
+  type CatchUpFacts,
   type CatchUpStatus,
   type CatchUpYourItem,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
-import { z } from 'zod';
 import { ASSIGNEE_HONORIFICS } from './assignee-match.ts';
 import { vyReason } from './ask.ts';
 import { plainName } from './plain-name.ts';
@@ -36,37 +38,6 @@ export interface CatchUpActionRow {
   status: 'suggested' | 'accepted';
   task_id: string | null;
 }
-
-interface CatchUpFacts {
-  meetingId: string;
-  language: 'vi' | 'en';
-  askerName: string;
-  summary: string;
-  decisions: string[];
-  items: Array<{ id: string; title: string; who: string; when: string; isYours: boolean }>;
-}
-
-const zCatchUpFacts = z.strictObject({
-  meetingId: z.string(),
-  language: z.enum(['vi', 'en']),
-  askerName: z.string(),
-  summary: z.string(),
-  decisions: z.array(z.string()),
-  items: z.array(
-    z.strictObject({
-      id: z.string(),
-      title: z.string(),
-      who: z.string(),
-      when: z.string(),
-      isYours: z.boolean(),
-    }),
-  ),
-});
-
-const zCatchUpStarted = z.strictObject({
-  meetingId: z.string(),
-  runId: z.string(),
-});
 
 function nameWords(raw: string, stripHonorifics: boolean): string[] {
   const withoutParens = raw.replace(/\([^)]*\)/g, ' ');
