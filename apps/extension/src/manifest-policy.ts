@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The fixed list of what the extension may ask the browser for (meetings plan section 5.7, ADR-0047 point 10). CI builds
-// the package and checks the built manifest against it (scripts/check-manifest.mjs); a permission added to the manifest
-// without a change here, which the security review sees, fails the build.
+// the Chrome Web Store package and checks the built manifest against it (scripts/check-manifest.mjs); a permission added
+// or loosened without updating this policy fails the build and triggers security review.
 
 export const BASE_PERMISSIONS = ['identity', 'storage'] as const;
 // Asked only when the member turns the meetings feature on, and given back when it is turned off (`activeTab` lets the popup read the active meeting tab URL on click to prevent duplicate capture, #4123).
@@ -9,52 +9,60 @@ export const MEETINGS_OPTIONAL_PERMISSIONS = ['offscreen', 'tabCapture', 'active
 // Asked only when the member enables the Web Clipper toggle inside Notes, and given back when turned off.
 export const WEB_CLIPPER_OPTIONAL_PERMISSIONS = ['activeTab', 'scripting'] as const;
 export const OPTIONAL_PERMISSIONS = [...new Set([...MEETINGS_OPTIONAL_PERMISSIONS, ...WEB_CLIPPER_OPTIONAL_PERMISSIONS])] as const;
-// The Ludy cloud address, granted at install.
-export const DEFAULT_HOST_PERMISSIONS = ['https://app.ludy.vn/*'] as const;
-// A self-hosted address the member types: asked for that one origin at setup, never granted by default. `localhost`
-// (plain http) serves the `docker compose up` stack on the member's own machine; 127.0.0.1 and [::1] are not accepted.
-export const OPTIONAL_HOST_PERMISSIONS = ['http://localhost/*', 'https://*/*'] as const;
+// The Ludy Cloud API origin granted at install (`https://api.ludy.vn/*`).
+export const DEFAULT_HOST_PERMISSIONS = ['https://api.ludy.vn/*'] as const;
 
-// The one page a website may navigate to (#4662): the landing page of the sign-in tab, which the app sends the member to with the one-time code. It is listed for the
-// cloud address and `localhost` (the docker stack) only, never `https://*/*`, so no page of any other site can reach it; the page does nothing without a pending sign-in
-// of this browser session and a matching state. It is not a permission and adds no install or update warning. A self-hosted https address keeps the browser window.
-// The manifest may declare no `web_accessible_resources` at all, or exactly this one entry: any other entry, key or match fails.
+// The one page the Ludy App origin may navigate to (#4662): the landing page of the sign-in tab, which receives the one-time code.
+// Locked to `https://app.ludy.vn/*` in the Chrome Web Store build; self-hosters override at build time via `scripts/build.mjs`.
 export const WEB_ACCESSIBLE_PAGE = 'connected.html';
-export const WEB_ACCESSIBLE_MATCHES = ['https://app.ludy.vn/*', 'http://localhost/*'] as const;
+export const DEFAULT_APP_MATCHES = ['https://app.ludy.vn/*'] as const;
 
-// Manifest keys that would reach sites or run code outside the package.
-const FORBIDDEN_KEYS = ['content_scripts', 'externally_connectable', 'update_url', 'declarative_net_request', 'sandbox'] as const;
+// Manifest keys that would reach arbitrary sites, request wildcard host access, or run code outside the package.
+const FORBIDDEN_KEYS = [
+  'content_scripts',
+  'externally_connectable',
+  'update_url',
+  'declarative_net_request',
+  'sandbox',
+  'optional_host_permissions',
+] as const;
 
 const sameSet = (actual: unknown, expected: readonly string[]): boolean =>
   Array.isArray(actual) && actual.length === expected.length && [...actual].map(String).sort().join('\n') === [...expected].sort().join('\n');
 
-// `web_accessible_resources` is absent, or exactly one entry: the sign-in landing page, for the cloud address and localhost, with nothing added (no `extension_ids`, no `use_dynamic_url`).
-function webAccessibleViolations(value: unknown): string[] {
+// `web_accessible_resources` is absent, or exactly one entry: `connected.html` for the pinned app origin pattern, with no extra keys (`extension_ids`, `use_dynamic_url`).
+function webAccessibleViolations(value: unknown, appMatches: readonly string[]): string[] {
   if (value === undefined) return [];
-  const expected = `[{ resources: [${WEB_ACCESSIBLE_PAGE}], matches: [${WEB_ACCESSIBLE_MATCHES.join(', ')}] }]`;
+  const expected = `[{ resources: [${WEB_ACCESSIBLE_PAGE}], matches: [${appMatches.join(', ')}] }]`;
   if (!Array.isArray(value) || value.length !== 1) return [`web_accessible_resources must be absent or exactly ${expected}, found ${JSON.stringify(value)}`];
   const entry = value[0] as Record<string, unknown> | null;
   const keys = entry && typeof entry === 'object' ? Object.keys(entry).sort().join(',') : '';
-  if (keys !== 'matches,resources' || !sameSet(entry?.resources, [WEB_ACCESSIBLE_PAGE]) || !sameSet(entry?.matches, WEB_ACCESSIBLE_MATCHES)) {
+  if (keys !== 'matches,resources' || !sameSet(entry?.resources, [WEB_ACCESSIBLE_PAGE]) || !sameSet(entry?.matches, appMatches)) {
     return [`web_accessible_resources must be absent or exactly ${expected}, found ${JSON.stringify(value)}`];
   }
   return [];
 }
 
-// The reasons the manifest breaks the list, empty when it keeps it.
-export function manifestViolations(manifest: Record<string, unknown>): string[] {
+export interface ManifestPolicyExpected {
+  hostPermissions?: readonly string[];
+  appMatches?: readonly string[];
+}
+
+// The reasons the manifest breaks the policy, empty when it keeps it.
+export function manifestViolations(manifest: Record<string, unknown>, expected?: ManifestPolicyExpected): string[] {
+  const hostPermissions = expected?.hostPermissions ?? DEFAULT_HOST_PERMISSIONS;
+  const appMatches = expected?.appMatches ?? DEFAULT_APP_MATCHES;
   const problems: string[] = [];
   if (manifest.manifest_version !== 3) problems.push('manifest_version must be 3');
   if (!sameSet(manifest.permissions, BASE_PERMISSIONS)) problems.push(`permissions must be exactly [${BASE_PERMISSIONS.join(', ')}], found ${JSON.stringify(manifest.permissions)}`);
   if (!sameSet(manifest.optional_permissions, OPTIONAL_PERMISSIONS)) {
     problems.push(`optional_permissions must be exactly [${OPTIONAL_PERMISSIONS.join(', ')}], found ${JSON.stringify(manifest.optional_permissions)}`);
   }
-  if (!sameSet(manifest.host_permissions, DEFAULT_HOST_PERMISSIONS)) problems.push(`host_permissions must be exactly [${DEFAULT_HOST_PERMISSIONS.join(', ')}], found ${JSON.stringify(manifest.host_permissions)}`);
-  if (!sameSet(manifest.optional_host_permissions, OPTIONAL_HOST_PERMISSIONS)) {
-    problems.push(`optional_host_permissions must be exactly [${OPTIONAL_HOST_PERMISSIONS.join(', ')}], found ${JSON.stringify(manifest.optional_host_permissions)}`);
+  if (!sameSet(manifest.host_permissions, hostPermissions)) {
+    problems.push(`host_permissions must be exactly [${hostPermissions.join(', ')}], found ${JSON.stringify(manifest.host_permissions)}`);
   }
   for (const key of FORBIDDEN_KEYS) if (key in manifest) problems.push(`the manifest must not declare ${key}`);
-  problems.push(...webAccessibleViolations(manifest.web_accessible_resources));
+  problems.push(...webAccessibleViolations(manifest.web_accessible_resources, appMatches));
   const csp = (manifest.content_security_policy as { extension_pages?: unknown } | undefined)?.extension_pages;
   if (typeof csp !== 'string' || /unsafe-eval|unsafe-inline|https?:|\*/.test(csp)) problems.push('content_security_policy.extension_pages must allow scripts from the package only');
   return problems;
@@ -70,9 +78,8 @@ export const LISTING_LOCALES = ['en', 'vi'] as const;
 const MESSAGE_REF = /^__MSG_([A-Za-z0-9_@]+)__$/;
 type Messages = Record<string, { message?: unknown } | undefined> | null;
 
-// A localized manifest: `default_locale` is set, the name, the description and the toolbar title are `__MSG_key__` references (a hard-coded text would
-// show in every language and leave the store with one listing), and each language in the list has a message for every reference, within the store's limits.
-// `locales` maps a language folder name to its parsed messages.json. Adds no permission and changes none.
+// A localized manifest: `default_locale` is set, the name, the description and the toolbar title are `__MSG_key__` references,
+// and each language in the list has a message for every reference, within the store's limits.
 export function localeViolations(manifest: Record<string, unknown>, locales: Record<string, Messages>): string[] {
   const problems: string[] = [];
   const action = manifest.action as { default_title?: unknown } | undefined;

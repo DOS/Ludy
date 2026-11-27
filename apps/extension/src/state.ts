@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// What the extension keeps in its own storage (chrome.storage.local, visible to this extension only): the Ludy address,
-// one connected account per org (the extension token and the org's slug) and which features the member turned on. The
-// token is the only secret; the kernel stores its hash. A token belongs to one address, so changing the address drops
-// every account.
-import { DEFAULT_ADDRESS } from './ludy-address.ts';
+// What the extension keeps in its own storage (chrome.storage.local, visible to this extension only): the built-in Ludy
+// App and API origins, one connected account per org (the extension token and the org's slug), and which features the
+// member turned on. The token is the only secret; the kernel stores its hash. Tokens stay pinned to their origins so an
+// upgraded or rebuilt package never sends tokens from another server to Ludy Cloud (or vice versa).
+import { DEFAULT_API_ADDRESS, DEFAULT_APP_ADDRESS } from './ludy-address.ts';
 
 export interface Account {
   orgId: string;
@@ -14,7 +14,8 @@ export interface Account {
 }
 
 export interface State {
-  address: string;
+  appAddress: string;
+  apiAddress: string;
   accounts: Record<string, Account>;
   activeOrg: string | null;
   enabled: Record<string, boolean>;
@@ -28,29 +29,61 @@ export interface StorageArea {
 
 const KEY = 'ludy-extension-state';
 
-export const emptyState = (): State => ({ address: DEFAULT_ADDRESS, accounts: {}, activeOrg: null, enabled: {} });
+export const emptyState = (): State => ({
+  appAddress: DEFAULT_APP_ADDRESS,
+  apiAddress: DEFAULT_API_ADDRESS,
+  accounts: {},
+  activeOrg: null,
+  enabled: {},
+});
 
 // Whatever storage holds is checked, not trusted: a damaged value reads as the empty state.
+// Legacy `{ address: 'https://app.ludy.vn', accounts }` upgrades cleanly to split Cloud origins without dropping
+// existing accounts; accounts stored for any other origin are dropped so tokens never leak across origins.
 export function readState(raw: unknown): State {
   if (typeof raw !== 'object' || raw === null) return emptyState();
-  const r = raw as Partial<State>;
+  const r = raw as Record<string, unknown>;
+  const enabled: Record<string, boolean> = {};
+  const rawEnabled = r.enabled;
+  if (typeof rawEnabled === 'object' && rawEnabled !== null) {
+    for (const [id, on] of Object.entries(rawEnabled as Record<string, unknown>)) if (on === true) enabled[id] = true;
+  }
+
+  const hasSplit = typeof r.appAddress === 'string' || typeof r.apiAddress === 'string';
+  const legacyAddress = typeof r.address === 'string' && r.address !== '' ? r.address : null;
+  const isCloudUpgrade =
+    DEFAULT_APP_ADDRESS === 'https://app.ludy.vn' &&
+    DEFAULT_API_ADDRESS === 'https://api.ludy.vn' &&
+    legacyAddress === 'https://app.ludy.vn';
+  const sameOrigins = hasSplit
+    ? r.appAddress === DEFAULT_APP_ADDRESS && r.apiAddress === DEFAULT_API_ADDRESS
+    : legacyAddress === DEFAULT_API_ADDRESS || isCloudUpgrade;
+
   const accounts: Record<string, Account> = {};
-  for (const [orgId, a] of Object.entries(r.accounts ?? {})) {
-    if (
-      a &&
-      typeof a.token === 'string' &&
-      typeof a.orgSlug === 'string' &&
-      typeof a.expiresAt === 'string' &&
-      (a.tokenId === undefined || typeof a.tokenId === 'string') &&
-      a.orgId === orgId
-    ) {
-      accounts[orgId] = a;
+  if (sameOrigins && typeof r.accounts === 'object' && r.accounts !== null) {
+    for (const [orgId, rawAccount] of Object.entries(r.accounts as Record<string, unknown>)) {
+      const a = rawAccount as Partial<Account> | null;
+      if (
+        a &&
+        typeof a.token === 'string' &&
+        typeof a.orgSlug === 'string' &&
+        typeof a.expiresAt === 'string' &&
+        (a.tokenId === undefined || typeof a.tokenId === 'string') &&
+        a.orgId === orgId
+      ) {
+        accounts[orgId] = a as Account;
+      }
     }
   }
-  const enabled: Record<string, boolean> = {};
-  for (const [id, on] of Object.entries(r.enabled ?? {})) if (on === true) enabled[id] = true;
+
   const activeOrg = typeof r.activeOrg === 'string' && r.activeOrg in accounts ? r.activeOrg : (Object.keys(accounts)[0] ?? null);
-  return { address: typeof r.address === 'string' && r.address !== '' ? r.address : DEFAULT_ADDRESS, accounts, activeOrg, enabled };
+  return {
+    appAddress: DEFAULT_APP_ADDRESS,
+    apiAddress: DEFAULT_API_ADDRESS,
+    accounts,
+    activeOrg,
+    enabled,
+  };
 }
 
 export async function loadState(area: StorageArea): Promise<State> {
@@ -58,8 +91,6 @@ export async function loadState(area: StorageArea): Promise<State> {
 }
 
 export const saveState = (area: StorageArea, state: State): Promise<void> => area.set({ [KEY]: state });
-
-export const withAddress = (state: State, address: string): State => (address === state.address ? state : { ...emptyState(), address, enabled: state.enabled });
 
 export function withAccount(state: State, account: Account): State {
   return { ...state, accounts: { ...state.accounts, [account.orgId]: account }, activeOrg: account.orgId };
@@ -106,13 +137,13 @@ export const emptyCaptureDraft = (): CaptureDraft => ({
   sourceUrl: null,
 });
 
-export function captureScopeKey(serverUrl: string, orgId: string | null | undefined): string | null {
-  if (!serverUrl || !orgId) return null;
-  return `${serverUrl}\u0000${orgId}`;
+export function captureScopeKey(apiUrl: string, orgId: string | null | undefined): string | null {
+  if (!apiUrl || !orgId) return null;
+  return `${apiUrl}\u0000${orgId}`;
 }
 
 /**
- * Keeps in-memory Quick Capture drafts and pending async capture operations isolated by `(serverUrl, orgId)`,
+ * Keeps in-memory Quick Capture drafts and pending async capture operations isolated by `(apiUrl, orgId)`,
  * clearing drafts and invalidating stale completions on sign-out or server change (#3742).
  */
 export function createCaptureDraftStore() {
@@ -138,16 +169,16 @@ export function createCaptureDraftStore() {
   };
 
   return {
-    syncState(state: Pick<State, 'address' | 'accounts' | 'activeOrg'>): { changed: boolean; key: string | null } {
+    syncState(state: Pick<State, 'apiAddress' | 'accounts' | 'activeOrg'>): { changed: boolean; key: string | null } {
       for (const key of scopes.keys()) {
         const sep = key.indexOf('\u0000');
-        const serverUrl = key.slice(0, sep);
+        const apiUrl = key.slice(0, sep);
         const orgId = key.slice(sep + 1);
-        if (serverUrl !== state.address || !Object.hasOwn(state.accounts, orgId)) {
+        if (apiUrl !== state.apiAddress || !Object.hasOwn(state.accounts, orgId)) {
           deleteKey(key);
         }
       }
-      const nextKey = captureScopeKey(state.address, state.activeOrg);
+      const nextKey = captureScopeKey(state.apiAddress, state.activeOrg);
       const changed = nextKey !== activeKey;
       activeKey = nextKey;
       return { changed, key: nextKey };
@@ -157,14 +188,14 @@ export function createCaptureDraftStore() {
       return activeKey;
     },
 
-    get(serverUrl: string, orgId: string): CaptureScopeState {
-      const key = captureScopeKey(serverUrl, orgId);
+    get(apiUrl: string, orgId: string): CaptureScopeState {
+      const key = captureScopeKey(apiUrl, orgId);
       if (!key) return { draft: emptyCaptureDraft(), status: '', busy: false };
       return ensureScope(key);
     },
 
-    clearScope(serverUrl: string, orgId: string | null | undefined): void {
-      const key = captureScopeKey(serverUrl, orgId);
+    clearScope(apiUrl: string, orgId: string | null | undefined): void {
+      const key = captureScopeKey(apiUrl, orgId);
       if (key) deleteKey(key);
     },
 
@@ -176,8 +207,8 @@ export function createCaptureDraftStore() {
       activeKey = null;
     },
 
-    beginOp(serverUrl: string, orgId: string): { scope: CaptureScopeState; op: CaptureOp } | null {
-      const key = captureScopeKey(serverUrl, orgId);
+    beginOp(apiUrl: string, orgId: string): { scope: CaptureScopeState; op: CaptureOp } | null {
+      const key = captureScopeKey(apiUrl, orgId);
       if (!key) return null;
       const scope = ensureScope(key);
       if (scope.busy) return null;

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Sign-in in a normal browser tab (#4662). The popup closes when a new tab takes focus, so the answer cannot come back to it: the extension keeps the
-// PKCE verifier and the state of the flow in chrome.storage.session (this browser session, this extension's own pages only), opens the app's connect page in a
-// tab, and the app sends that tab to connected.html with the one-time code. That page, not the popup, checks the state, trades the code for the token and says
-// "connected". A tab the browser will not open, or an address the manifest does not let reach connected.html, keeps the browser window of launchWebAuthFlow.
+// Sign-in in a normal browser tab (#4662). The popup closes when a new tab takes focus, so the answer cannot come back to
+// it: the extension keeps the PKCE verifier and the state of the flow in chrome.storage.session, opens the App origin's
+// /-/extension/connect page in a tab, and the App sends that tab to connected.html with the one-time code. That page
+// verifies the state and exchanges the code against the API origin (apiAddress).
 import { createClient } from './api.ts';
 import { parseConnectResult } from './auth.ts';
 import { NOTES_SCOPE } from './page-capture.ts';
@@ -17,7 +17,8 @@ export const PENDING_TTL_MS = 10 * 60 * 1000;
 export interface PendingSignIn {
   verifier: string;
   state: string;
-  address: string;
+  appAddress: string;
+  apiAddress: string;
   // The address the app sends the tab to: this extension's connected page.
   redirect: string;
   // The sign-in asked for the notes scope: an org that does not give it is remembered, so the popup does not ask again.
@@ -29,18 +30,36 @@ export interface PendingSignIn {
 export function readPending(raw: unknown, now: number): PendingSignIn | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const r = raw as Partial<PendingSignIn>;
-  if (typeof r.verifier !== 'string' || typeof r.state !== 'string' || typeof r.address !== 'string' || typeof r.redirect !== 'string') return null;
+  if (
+    typeof r.verifier !== 'string' ||
+    typeof r.state !== 'string' ||
+    typeof r.appAddress !== 'string' ||
+    r.appAddress === '' ||
+    typeof r.apiAddress !== 'string' ||
+    r.apiAddress === '' ||
+    typeof r.redirect !== 'string'
+  ) {
+    return null;
+  }
   if (typeof r.notesAsked !== 'boolean' || typeof r.startedAt !== 'number') return null;
   if (r.startedAt > now || now - r.startedAt >= PENDING_TTL_MS) return null;
-  return { verifier: r.verifier, state: r.state, address: r.address, redirect: r.redirect, notesAsked: r.notesAsked, startedAt: r.startedAt };
+  return {
+    verifier: r.verifier,
+    state: r.state,
+    appAddress: r.appAddress,
+    apiAddress: r.apiAddress,
+    redirect: r.redirect,
+    notesAsked: r.notesAsked,
+    startedAt: r.startedAt,
+  };
 }
 
-// Whether the manifest lets pages of `address` reach connected.html: one of the `matches` of the entry that lists it covers the address (scheme and host; a
-// match pattern ignores the port). Only the cloud address and `localhost` are listed, so any other self-hosted address signs in through the browser window.
-export function tabSignInCovers(manifest: { web_accessible_resources?: Array<{ resources?: string[]; matches?: string[] }> }, address: string): boolean {
+// Whether the manifest lets pages of `appAddress` reach connected.html: one of the `matches` of the entry that lists it
+// covers the address (scheme and host; a match pattern ignores the port).
+export function tabSignInCovers(manifest: { web_accessible_resources?: Array<{ resources?: string[]; matches?: string[] }> }, appAddress: string): boolean {
   let url: URL;
   try {
-    url = new URL(address);
+    url = new URL(appAddress);
   } catch {
     return false;
   }
@@ -60,8 +79,8 @@ export const isExtensionPageAddress = (url: string): boolean => /^chrome-extensi
 
 export type TabSignInResult = 'connected' | 'denied' | 'failed' | 'nothing';
 
-type Exchange = (address: string, code: string, verifier: string) => Promise<{ token: string; tokenId?: string; orgId: string; scopes: string[]; expiresAt: string }>;
-const exchangeWithKernel: Exchange = (address, code, verifier) => createClient(address, null).exchangeCode(code, verifier);
+type Exchange = (apiAddress: string, code: string, verifier: string) => Promise<{ token: string; tokenId?: string; orgId: string; scopes: string[]; expiresAt: string }>;
+const exchangeWithKernel: Exchange = (apiAddress, code, verifier) => createClient(apiAddress, null).exchangeCode(code, verifier);
 
 // The orgs whose sign-in asked for the notes scope and did not get it (the org has no Notes), kept for this browser session.
 export async function loadNotesExcluded(session: StorageArea): Promise<Set<string>> {
@@ -97,9 +116,9 @@ export async function completeTabSignIn(
     const result = parseConnectResult(returnedUrl, { verifier: pending.verifier, challenge: '', state: pending.state }, pending.redirect);
     if ('error' in result) return result.error === 'access_denied' ? 'denied' : 'failed';
     const state = await loadState(deps.local);
-    // The member changed the address while the tab was open: a token for the old address must not become an account of the new one.
-    if (state.address !== pending.address) return 'failed';
-    const done = await (deps.exchange ?? exchangeWithKernel)(pending.address, result.code, pending.verifier);
+    // The built-in origins changed while the tab was open: a token for the old origins must not become an account of the new ones.
+    if (state.appAddress !== pending.appAddress || state.apiAddress !== pending.apiAddress) return 'failed';
+    const done = await (deps.exchange ?? exchangeWithKernel)(pending.apiAddress, result.code, pending.verifier);
     await rememberNotesExcluded(deps.session, done.orgId, pending.notesAsked && !done.scopes.includes(NOTES_SCOPE));
     await saveState(
       deps.local,

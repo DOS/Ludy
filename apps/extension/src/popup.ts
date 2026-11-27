@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The popup: the shell (address, sign-in, org picker, the features of this org) and the meetings feature (turn on, the
-// consent step, "Ghi cả video", start and stop). Every string is set as text, never as markup. Nothing here reads a page:
-// the one tab it touches is the active one the member clicked the icon on, and only to ask for its audio.
+// The popup: the shell (Ludy Cloud sign-in, org picker, feature tabs) and the Meetings & Notes features.
+// Every string is set as text, never as markup. Nothing here reads a page in the background: tab audio or active page
+// capture runs only after explicit opt-in and click.
 import { ENGLISH, T } from './strings.ts';
-import { DEFAULT_ADDRESS, isDefaultAddress, originPattern, parseAddress, stalePattern } from './ludy-address.ts';
-import { activeAccount, createCaptureDraftStore, loadState, saveState, withAccount, withAddress, withFeature, withoutAccount, type State } from './state.ts';
+import { activeAccount, createCaptureDraftStore, loadState, saveState, withAccount, withFeature, withoutAccount, type State } from './state.ts';
 import { permissionsToRemove, visibleFeatures, FEATURES, type Me } from './features.ts';
 import { AGENDA_SCOPE, agendaLine, type AgendaNext } from './agenda.ts';
 import { connectUrl, deviceName, newPkce, parseConnectResult, resolveSignInScopes } from './auth.ts';
@@ -38,6 +37,8 @@ let notice = '';
 let draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false, liveNotes: false };
 let ticker: ReturnType<typeof setInterval> | undefined;
 let stopping = false;
+let activePanelTab: 'meetings' | 'notes' = 'meetings';
+let noticeExpanded = false;
 // The recording notice shown in the consent step (A1, #3159): the popup's language first, the other one a click away. The
 // extension knows no meeting language before the meeting exists, so the browser's language is the default.
 let noticeLang: RecordingNoticeLanguage = T === ENGLISH ? 'en' : 'vi';
@@ -45,7 +46,7 @@ let copyNote = '';
 // Shown under the "Sắp họp" cards after a title was filled in from one.
 let agendaNote = '';
 let agendaRead: { token: string; promise: Promise<AgendaNext | null> } | null = null;
-let serverModules: { address: string; promise: Promise<readonly string[] | null> } | null = null;
+let serverModules: { apiAddress: string; promise: Promise<readonly string[] | null> } | null = null;
 // Set when the org refused the method as not written (A2, #3160): the unwritten choice is then not offered for the rest of this popup.
 let strictOrg = false;
 const CONFIG_DISCOVERY_TIMEOUT_MS = 3_000;
@@ -112,7 +113,7 @@ function recordingScopeMatch(
   const verifiedTokenId = me?.tokenId ?? account?.tokenId;
   if (!verifiedOrgId || !account) return 'other';
   if (item.orgId && item.orgId !== verifiedOrgId) return 'other';
-  if (item.address && item.address !== state.address) return 'other';
+  if (item.address && item.address !== state.apiAddress) return 'other';
   if (!item.orgId || !item.address || !item.tokenId) return 'unverified';
   if (!verifiedTokenId) return 'unverified';
   return item.tokenId === verifiedTokenId ? 'same' : 'other';
@@ -132,10 +133,19 @@ function recordingBanner(recording: RecordingState, scopeMatch: ScopeMatch, onMo
   });
   const label = scopeMatch === 'same' ? recording.title : scopeMatch === 'unverified' ? T.recordingVerifying : T.recordingOtherOrg;
   return [
-    h('p', {}, clock, ` · ${label}`),
-    ...(scopeMatch === 'same' && recording.micMissing ? [h('p', { class: 'error' }, T.micMissing)] : []),
-    h('button', { class: 'danger', id: 'stop-recording', ...(stopping ? { disabled: true } : {}), onclick: () => void stopRecording() }, T.stop),
+    h(
+      'div',
+      { class: 'rec-card' },
+      h('div', { class: 'rec-header' }, h('span', { class: 'rec-dot', 'aria-hidden': 'true' }), clock, h('span', { class: 'rec-title' }, label)),
+      ...(scopeMatch === 'same' && recording.micMissing ? [h('p', { class: 'error' }, T.micMissing)] : []),
+      h('button', { class: 'danger btn-block', id: 'stop-recording', ...(stopping ? { disabled: true } : {}), onclick: () => void stopRecording() }, T.stop),
+    ),
   ];
+}
+
+function noticeBanner(): Node | null {
+  if (!notice) return null;
+  return h('p', { class: 'alert-banner', id: 'popup-notice', role: 'alert' }, notice);
 }
 
 async function mountShellAfterStorageRead(): Promise<void> {
@@ -146,9 +156,13 @@ async function mountShellAfterStorageRead(): Promise<void> {
   ]);
   const onMount: Array<() => void> = [];
   const recovery = buildRecoveryBanners(rawRecording, rawLost, state, null, onMount);
-  const shell = h('div');
-  shell.append(h('h1', {}, T.title), ...recovery.nodes);
-  if (notice) shell.append(h('p', { class: 'error', id: 'popup-notice', role: 'alert' }, notice));
+  const shell = h('div', { class: 'shell' });
+  shell.append(
+    h('div', { class: 'topbar' }, h('img', { class: 'topbar-logo', src: 'icons/icon-32.png', alt: '', width: '24', height: '24' }), h('h1', {}, T.title)),
+    ...recovery.nodes,
+  );
+  const banner = noticeBanner();
+  if (banner) shell.append(banner);
   clearTicker();
   root.replaceChildren(shell);
   for (const run of onMount) run();
@@ -194,11 +208,11 @@ async function renderRecoveryBanners(
     const scopeKey = pendingScopeKey(lost.meetingId);
     const pendingScope = readPendingScope((await area.get(scopeKey))[scopeKey]);
     const wrongOrigin =
-      (pendingScope && pendingScope.address !== state.address) ||
-      (lost.address && lost.address !== state.address) ||
+      (pendingScope && pendingScope.address !== state.apiAddress) ||
+      (lost.address && lost.address !== state.apiAddress) ||
       (lost.orgId && lost.orgId !== me.orgId);
     if (!wrongOrigin && token && me.scopes.includes('meetings')) {
-      const owned = await createClient(state.address, token).extensionMeetingOwned(lost.meetingId, {
+      const owned = await createClient(state.apiAddress, token).extensionMeetingOwned(lost.meetingId, {
         signal: AbortSignal.timeout(CONFIG_DISCOVERY_TIMEOUT_MS),
       });
       if (owned === 'owned') {
@@ -211,11 +225,11 @@ async function renderRecoveryBanners(
         }
         if (
           !latestLost.tokenId &&
-          latestState.address === state.address &&
+          latestState.apiAddress === state.apiAddress &&
           latestAccount?.orgId === me.orgId &&
           latestAccount.token === token
         ) {
-          const scopedLost: LostState = { ...latestLost, orgId: me.orgId, address: state.address, tokenId: me.tokenId };
+          const scopedLost: LostState = { ...latestLost, orgId: me.orgId, address: state.apiAddress, tokenId: me.tokenId };
           await area.set({ [LOST_KEY]: scopedLost }).catch(() => undefined);
           return { nodes: lostView(scopedLost, 'same'), hasRecording: false };
         }
@@ -237,8 +251,7 @@ async function render(): Promise<void> {
     if (!pass.isCurrent()) return null;
     const { changed } = captureDrafts.syncState(state);
     if (changed && notice !== T.signingIn) notice = '';
-    const view = h('div');
-    view.append(h('h1', {}, T.title));
+    const view = h('div', { class: 'shell' });
     const account = activeAccount(state);
     if (!account) {
       const recovery = buildRecoveryBanners(rawRecording, rawLost, state, null, pass.onMount);
@@ -246,9 +259,13 @@ async function render(): Promise<void> {
     } else {
       const preliminary = buildRecoveryBanners(rawRecording, rawLost, state, null, pass.onMount);
       if (preliminary.nodes.length > 0 && pass.isCurrent()) {
-        const shell = h('div');
-        shell.append(h('h1', {}, T.title), ...preliminary.nodes);
-        if (notice) shell.append(h('p', { class: 'error', id: 'popup-notice', role: 'alert' }, notice));
+        const shell = h('div', { class: 'shell' });
+        shell.append(
+          h('div', { class: 'topbar' }, h('img', { class: 'topbar-logo', src: 'icons/icon-32.png', alt: '', width: '24', height: '24' }), h('h1', {}, T.title)),
+          ...preliminary.nodes,
+        );
+        const banner = noticeBanner();
+        if (banner) shell.append(banner);
         root.replaceChildren(shell);
         for (const run of pass.onMount.splice(0)) run();
       }
@@ -257,80 +274,27 @@ async function render(): Promise<void> {
     if (!pass.isCurrent()) return null;
     return () => {
       clearTicker();
-      if (notice) view.append(h('p', { class: 'error', id: 'popup-notice', role: 'alert' }, notice));
+      const banner = noticeBanner();
+      if (banner) view.append(banner);
       root.replaceChildren(view);
     };
   });
 }
 
-function addressForm(state: State): Node[] {
-  const self = !isDefaultAddress(state.address);
-  const input = h('input', { type: 'text', id: 'address', placeholder: T.addressPlaceholder, value: self ? state.address : '', 'aria-label': T.selfHosted });
-  const cloud = h('input', { type: 'radio', name: 'where', id: 'where-cloud', checked: !self });
-  const own = h('input', { type: 'radio', name: 'where', id: 'where-own', checked: self });
-  return [
-    h('div', { class: 'row' }, cloud, h('label', { for: 'where-cloud' }, T.cloud)),
-    h('div', { class: 'row' }, own, h('label', { for: 'where-own' }, T.selfHosted)),
-    input,
-    h('button', {
-      onclick: () =>
-        void (async () => {
-          notice = '';
-          const typed = (own as HTMLInputElement).checked ? parseAddress(input.value) : { origin: DEFAULT_ADDRESS };
-          if ('problem' in typed) {
-            notice = typed.problem === 'insecure' ? T.addressInsecure : T.addressInvalid;
-          } else {
-            // The browser asks for this one address only, on this click; the default address is in the install.
-            // A refused or failing request (the browser throws for a pattern the manifest does not list) says the same thing.
-            const granted = isDefaultAddress(typed.origin) || (await chrome.permissions.request({ origins: [originPattern(typed.origin)] }).catch(() => false));
-            if (granted) {
-              // The state is read again here, not taken from when this popup was drawn: another popup may have moved the address in
-              // between, and the permission to give back is the one of the address that is stored now, not the one this popup showed.
-              const current = await loadState(area);
-              const next = withAddress(current, typed.origin);
-              if (next.address !== current.address) {
-                captureDrafts.clearAll();
-                serverModules = null;
-                verifiedLegacyChecked.clear();
-                // Pin any server-less lost notice or pending recordings to the previous address so the new server cannot claim or leak them (#4725).
-                const staleLost = readLost((await area.get(LOST_KEY))[LOST_KEY]);
-                if (staleLost && !staleLost.address) {
-                  await area.set({ [LOST_KEY]: { ...staleLost, address: current.address } satisfies LostState }).catch(() => undefined);
-                }
-                for (const orgId of Object.keys(current.accounts)) {
-                  const rows = await store.list(orgId).catch(() => [] as RecordingMeta[]);
-                  if (rows.length === 0) continue;
-                  const keys = rows.map((r) => pendingScopeKey(r.meetingId));
-                  const existingScopes = await area.get(keys).catch(() => ({}) as Record<string, unknown>);
-                  const pinned: Record<string, RecordingScope> = {};
-                  for (const row of rows) {
-                    const key = pendingScopeKey(row.meetingId);
-                    if (!readPendingScope(existingScopes[key])) {
-                      pinned[key] = { orgId, address: current.address };
-                    }
-                  }
-                  if (Object.keys(pinned).length > 0) await area.set(pinned).catch(() => undefined);
-                }
-              }
-              await saveState(area, next);
-              // The address moved: the browser permission for the previous self-hosted one is given back.
-              const stale = stalePattern(current.address, typed.origin);
-              if (stale) await chrome.permissions.remove({ origins: [stale] }).catch(() => false);
-            } else notice = T.addressDenied;
-          }
-          await render();
-        })(),
-    }, T.save),
-  ];
-}
-
 function signInView(state: State): Node[] {
   return [
-    h('h2', {}, T.setupTitle),
-    ...addressForm(state),
-    h('p', { class: 'note' }, state.address),
-    h('p', { class: 'note', id: 'sign-in-device-note' }, T.signInDeviceNote),
-    h('button', { class: 'primary', onclick: () => void signIn(state) }, T.signIn),
+    h(
+      'div',
+      { class: 'signin-card' },
+      h(
+        'div',
+        { class: 'signin-header' },
+        h('img', { class: 'signin-logo', src: 'icons/icon-48.png', alt: '', width: '48', height: '48' }),
+        h('h1', { class: 'signin-title' }, T.title),
+      ),
+      h('p', { class: 'signin-subtitle' }, T.signInSubtitle),
+      h('button', { class: 'primary btn-block btn-lg', id: 'sign-in', onclick: () => void signIn(state) }, T.signIn),
+    ),
   ];
 }
 
@@ -338,20 +302,28 @@ async function signIn(state: State, withAgenda = false): Promise<void> {
   notice = T.signingIn;
   await render();
   try {
-    const config = await createClient(state.address, null)
+    const config = await createClient(state.apiAddress, null)
       .config({ signal: AbortSignal.timeout(CONFIG_DISCOVERY_TIMEOUT_MS) })
       .catch(() => null);
     const scopesToAsk = resolveSignInScopes(config?.modules);
     const askAgenda = withAgenda && scopesToAsk.includes('meetings');
     const pkce = await newPkce();
-    // A normal browser tab when the manifest lets the app's pages reach connected.html (the cloud address and localhost): the popup closes when the tab takes
-    // focus, so the tab's own page, not this one, finishes the sign-in (src/signin.ts, #4662). Any other address, or a tab the browser will not open, keeps the window below.
+    // Open /-/extension/connect on the App origin in a normal tab when covered by web_accessible_resources (#4662),
+    // falling back to chrome.identity.launchWebAuthFlow otherwise; exchange the code strictly at state.apiAddress.
     const tabRedirect = chrome.runtime.getURL(CONNECTED_PAGE);
-    if (tabSignInCovers(chrome.runtime.getManifest(), state.address) && isExtensionPageAddress(tabRedirect)) {
-      const pending: PendingSignIn = { verifier: pkce.verifier, state: pkce.state, address: state.address, redirect: tabRedirect, notesAsked: scopesToAsk.includes(NOTES_SCOPE), startedAt: Date.now() };
+    if (tabSignInCovers(chrome.runtime.getManifest(), state.appAddress) && isExtensionPageAddress(tabRedirect)) {
+      const pending: PendingSignIn = {
+        verifier: pkce.verifier,
+        state: pkce.state,
+        appAddress: state.appAddress,
+        apiAddress: state.apiAddress,
+        redirect: tabRedirect,
+        notesAsked: scopesToAsk.includes(NOTES_SCOPE),
+        startedAt: Date.now(),
+      };
       await chrome.storage.session.set({ [PENDING_KEY]: pending });
       try {
-        await chrome.tabs.create({ url: connectUrl(state.address, pkce, tabRedirect, deviceName(navigator.userAgent), askAgenda, scopesToAsk) });
+        await chrome.tabs.create({ url: connectUrl(state.appAddress, pkce, tabRedirect, deviceName(navigator.userAgent), askAgenda, scopesToAsk) });
         notice = '';
         await render();
         return;
@@ -361,14 +333,14 @@ async function signIn(state: State, withAgenda = false): Promise<void> {
     }
     const redirect = chrome.identity.getRedirectURL('connect');
     const returned = await chrome.identity.launchWebAuthFlow({
-      url: connectUrl(state.address, pkce, redirect, deviceName(navigator.userAgent), askAgenda, scopesToAsk),
+      url: connectUrl(state.appAddress, pkce, redirect, deviceName(navigator.userAgent), askAgenda, scopesToAsk),
       interactive: true,
     });
     const result = returned ? parseConnectResult(returned, pkce, redirect) : { error: 'invalid' };
     if ('error' in result) {
       notice = result.error === 'access_denied' ? T.signInDenied : T.signInFailed;
     } else {
-      const done = await createClient(state.address, null).exchangeCode(result.code, pkce.verifier);
+      const done = await createClient(state.apiAddress, null).exchangeCode(result.code, pkce.verifier);
       await rememberNotesExcluded(chrome.storage.session, done.orgId, scopesToAsk.includes(NOTES_SCOPE) && !done.scopes.includes(NOTES_SCOPE));
       const next = withAccount(await loadState(area), {
         orgId: done.orgId,
@@ -392,38 +364,61 @@ async function signedInView(state: State, onMount: Array<() => void>): Promise<N
   if (!account) return [];
   const out: Node[] = [];
   const orgs = Object.values(state.accounts);
-  const picker = h('select', { id: 'org', 'aria-label': T.org, onchange: () => void (async () => {
-    const current = await loadState(area);
-    const next = { ...current, activeOrg: picker.value };
-    if (next.activeOrg !== current.activeOrg) notice = '';
-    captureDrafts.syncState(next);
-    await saveState(area, next);
-    await render();
-  })() }, ...orgs.map((a) => h('option', { value: a.orgId, selected: a.orgId === account.orgId }, a.orgSlug)));
-  out.push(
-    h('label', { class: 'block', for: 'org' }, T.org),
-    picker,
-    h('div', { class: 'row' },
-      h('button', { onclick: () => void signIn(state) }, T.addOrg),
-      h('button', { onclick: () => void (async () => {
+  const picker = h('select', {
+    id: 'org',
+    class: 'org-select',
+    'aria-label': T.org,
+    onchange: () =>
+      void (async () => {
         const current = await loadState(area);
-        captureDrafts.clearScope(current.address, account.orgId);
-        notice = '';
-        const next = withoutAccount(current, account.orgId);
+        const next = { ...current, activeOrg: picker.value };
+        if (next.activeOrg !== current.activeOrg) notice = '';
         captureDrafts.syncState(next);
         await saveState(area, next);
         await render();
-      })() }, T.signOut),
+      })(),
+  }, ...orgs.map((a) => h('option', { value: a.orgId, selected: a.orgId === account.orgId }, a.orgSlug)));
+
+  const topbar = h(
+    'div',
+    { class: 'topbar' },
+    h('img', { class: 'topbar-logo', src: 'icons/icon-32.png', alt: '', width: '24', height: '24' }),
+    picker,
+    h(
+      'div',
+      { class: 'topbar-actions' },
+      h('button', { class: 'btn-icon', id: 'add-org', title: T.addOrg, 'aria-label': T.addOrg, onclick: () => void signIn(state) }, '+'),
+      h(
+        'button',
+        {
+          class: 'btn-icon',
+          id: 'sign-out',
+          title: T.signOut,
+          'aria-label': T.signOut,
+          onclick: () =>
+            void (async () => {
+              const current = await loadState(area);
+              captureDrafts.clearScope(current.apiAddress, account.orgId);
+              notice = '';
+              const next = withoutAccount(current, account.orgId);
+              captureDrafts.syncState(next);
+              await saveState(area, next);
+              await render();
+            })(),
+        },
+        h('span', { class: 'icon-signout', 'aria-hidden': 'true' }),
+      ),
     ),
-    h('p', { class: 'note' }, `${state.address} · ${T.signOutNote}`),
   );
+  out.push(topbar);
+
   let me: Me | null = null;
   try {
-    me = await createClient(state.address, account.token).me();
+    me = await createClient(state.apiAddress, account.token).me();
     if (me.tokenId && me.orgId === account.orgId && account.tokenId !== me.tokenId) {
       const current = await loadState(area);
       const currentAccount = current.accounts[account.orgId];
-      if (current.address === state.address && currentAccount?.token === account.token && currentAccount.tokenId !== me.tokenId) {
+      if (current.apiAddress === state.apiAddress && currentAccount?.token === account.token && currentAccount.tokenId !== me.tokenId) {
         await saveState(area, {
           ...current,
           accounts: { ...current.accounts, [account.orgId]: { ...currentAccount, tokenId: me.tokenId } },
@@ -433,7 +428,7 @@ async function signedInView(state: State, onMount: Array<() => void>): Promise<N
   } catch (error) {
     // A token the server no longer accepts is dropped here, so the member signs in again; rebuild from the signed-out state immediately so stale tokenId cannot leak banners (#4725).
     if (error instanceof LudyError && error.status === 401) {
-      captureDrafts.clearScope(state.address, account.orgId);
+      captureDrafts.clearScope(state.apiAddress, account.orgId);
       const next = withoutAccount(await loadState(area), account.orgId);
       captureDrafts.syncState(next);
       await saveState(area, next);
@@ -450,14 +445,14 @@ async function signedInView(state: State, onMount: Array<() => void>): Promise<N
   const features = visibleFeatures(me);
   let showNotesAsk = false;
   if (!me.scopes.includes(NOTES_SCOPE) && !(await loadNotesExcluded(chrome.storage.session)).has(account.orgId)) {
-    if (serverModules?.address !== state.address) {
+    if (serverModules?.apiAddress !== state.apiAddress) {
       serverModules = {
-        address: state.address,
-        promise: createClient(state.address, null)
+        apiAddress: state.apiAddress,
+        promise: createClient(state.apiAddress, null)
           .config({ signal: AbortSignal.timeout(CONFIG_DISCOVERY_TIMEOUT_MS) })
           .then((c) => c.modules ?? null)
           .catch(() => {
-            if (serverModules?.address === state.address) serverModules = null;
+            if (serverModules?.apiAddress === state.apiAddress) serverModules = null;
             return null;
           }),
       };
@@ -465,26 +460,69 @@ async function signedInView(state: State, onMount: Array<() => void>): Promise<N
     const installed = await serverModules.promise;
     showNotesAsk = Boolean(installed?.includes(NOTES_SCOPE));
   }
-  if (features.length === 0 && !showNotesAsk) out.push(h('p', {}, T.noFeatures));
+  if (features.length === 0 && !showNotesAsk) out.push(h('div', { class: 'card' }, h('p', { class: 'note' }, T.noFeatures)));
   if (showNotesAsk) {
     out.push(
-      h('div', { class: 'capture-box', id: 'notes-ask' },
+      h(
+        'div',
+        { class: 'card', id: 'notes-ask' },
         h('p', { class: 'note' }, T.notesAskNote),
-        h('button', { id: 'notes-reconnect', onclick: () => void signIn(state, me.scopes.includes(AGENDA_SCOPE)) }, T.notesReconnect)),
+        h('button', { class: 'btn-secondary btn-sm', id: 'notes-reconnect', onclick: () => void signIn(state, me.scopes.includes(AGENDA_SCOPE)) }, T.notesReconnect),
+      ),
     );
   }
-  for (const feature of features) {
-    if (feature.id === 'meetings') out.push(...(await meetingsView(state, me, account.token, recovery.hasRecording)));
-    else if (feature.id === 'notes') out.push(...(await notesView(state, account.orgId, account.token)));
+
+  const hasMeetings = features.some((f) => f.id === 'meetings');
+  const hasNotes = features.some((f) => f.id === 'notes');
+  const meetingsNodes = hasMeetings ? await meetingsView(state, me, account.token, recovery.hasRecording, hasNotes && !recovery.hasRecording) : [];
+  const notesNodes = hasNotes ? await notesView(state, account.orgId, account.token, meetingsNodes.length > 0) : [];
+
+  if (meetingsNodes.length > 0 && notesNodes.length > 0) {
+    const meetingsPanel = h('div', { class: 'stack-sm', id: 'panel-meetings', role: 'tabpanel', hidden: activePanelTab !== 'meetings' }, ...meetingsNodes);
+    const notesPanel = h('div', { class: 'stack-sm', id: 'panel-notes', role: 'tabpanel', hidden: activePanelTab !== 'notes' }, ...notesNodes);
+    const tabMeetings = h('button', {
+      id: 'tab-meetings',
+      role: 'tab',
+      class: activePanelTab === 'meetings' ? 'active-tab' : undefined,
+      'aria-selected': activePanelTab === 'meetings' ? 'true' : 'false',
+    }, T.meetingsTab);
+    const tabNotes = h('button', {
+      id: 'tab-notes',
+      role: 'tab',
+      class: activePanelTab === 'notes' ? 'active-tab' : undefined,
+      'aria-selected': activePanelTab === 'notes' ? 'true' : 'false',
+    }, T.notesTab);
+
+    const selectTab = (nextTab: 'meetings' | 'notes') => {
+      activePanelTab = nextTab;
+      const isMeetings = nextTab === 'meetings';
+      tabMeetings.className = isMeetings ? 'active-tab' : '';
+      tabMeetings.setAttribute('aria-selected', isMeetings ? 'true' : 'false');
+      tabNotes.className = isMeetings ? '' : 'active-tab';
+      tabNotes.setAttribute('aria-selected', isMeetings ? 'false' : 'true');
+      meetingsPanel.hidden = !isMeetings;
+      notesPanel.hidden = isMeetings;
+    };
+    tabMeetings.addEventListener('click', () => selectTab('meetings'));
+    tabNotes.addEventListener('click', () => selectTab('notes'));
+
+    out.push(
+      h('div', { class: 'segmented', role: 'tablist' }, tabMeetings, tabNotes),
+      meetingsPanel,
+      notesPanel,
+    );
+  } else {
+    out.push(...meetingsNodes, ...notesNodes);
   }
+
   out.push(...(await pendingView(state, me, account.token)));
   return out;
 }
 
-async function notesView(state: State, orgId: string, token: string): Promise<Node[]> {
+async function notesView(state: State, orgId: string, token: string, hideHeading = false): Promise<Node[]> {
   const clipperGranted = await chrome.permissions.contains({ permissions: [...WEB_CLIPPER_PERMISSIONS] }).catch(() => false);
   const clipperOn = clipperGranted && state.enabled.clipper === true;
-  const scopeState = captureDrafts.get(state.address, orgId);
+  const scopeState = captureDrafts.get(state.apiAddress, orgId);
   const captureDraft = scopeState.draft;
   const notesStatus = scopeState.status;
   const notesBusy = scopeState.busy;
@@ -531,10 +569,8 @@ async function notesView(state: State, orgId: string, token: string): Promise<No
     });
     tagsInput.addEventListener('input', () => void (captureDraft.tags = tagsInput.value));
     bodyFields.push(
-      h('label', { class: 'block', for: 'capture-body' }, T.captureBody),
-      bodyInput,
-      h('label', { class: 'block', for: 'capture-tags' }, T.captureTags),
-      tagsInput,
+      h('div', {}, h('label', { class: 'block', for: 'capture-body' }, T.captureBody), bodyInput),
+      h('div', {}, h('label', { class: 'block', for: 'capture-tags' }, T.captureTags), tagsInput),
     );
   } else {
     const detailsInput = h('textarea', {
@@ -552,22 +588,28 @@ async function notesView(state: State, orgId: string, token: string): Promise<No
     });
     dueInput.addEventListener('input', () => void (captureDraft.dueOn = dueInput.value));
     bodyFields.push(
-      h('label', { class: 'block', for: 'capture-details' }, T.captureDetails),
-      detailsInput,
-      h('label', { class: 'block', for: 'capture-due' }, T.captureDueOn),
-      dueInput,
+      h('div', {}, h('label', { class: 'block', for: 'capture-details' }, T.captureDetails), detailsInput),
+      h('div', {}, h('label', { class: 'block', for: 'capture-due' }, T.captureDueOn), dueInput),
     );
   }
 
   const sourceChip = captureDraft.sourceUrl
-    ? h('div', { class: 'source-chip', id: 'capture-source' },
-      h('span', {}, T.captureSourceLabel.replace('{url}', captureDraft.sourceUrl)),
-      h('button', {
-        id: 'capture-source-clear',
-        disabled: notesBusy,
-        'aria-label': T.captureSourceClear,
-        onclick: () => void ((captureDraft.sourceUrl = null), render()),
-      }, 'x'))
+    ? h(
+        'div',
+        { class: 'source-chip', id: 'capture-source' },
+        h('span', {}, T.captureSourceLabel.replace('{url}', captureDraft.sourceUrl)),
+        h(
+          'button',
+          {
+            id: 'capture-source-clear',
+            class: 'btn-ghost btn-sm',
+            disabled: notesBusy,
+            'aria-label': T.captureSourceClear,
+            onclick: () => void ((captureDraft.sourceUrl = null), render()),
+          },
+          'x',
+        ),
+      )
     : null;
 
   const clipperToggle = h('input', {
@@ -576,55 +618,63 @@ async function notesView(state: State, orgId: string, token: string): Promise<No
     checked: clipperOn,
     disabled: notesBusy,
   });
-  clipperToggle.addEventListener('change', () => void toggleWebClipper(clipperToggle.checked, state.address, orgId));
+  clipperToggle.addEventListener('change', () => void toggleWebClipper(clipperToggle.checked, state.apiAddress, orgId));
 
   const clipperControls: Node[] = [
-    h('div', { class: 'clipper-box', id: 'clipper-box' },
-      h('div', { class: 'row' }, clipperToggle, h('label', { for: 'clipper-toggle' }, T.clipperToggle)),
+    h(
+      'div',
+      { class: 'clipper-box', id: 'clipper-box' },
+      h('div', { class: 'check-row' }, clipperToggle, h('label', { for: 'clipper-toggle' }, T.clipperToggle)),
       h('p', { class: 'note' }, T.clipperHint),
       ...(clipperOn
         ? [
-            h('div', { class: 'row' },
+            h(
+              'div',
+              { class: 'clipper-actions' },
               h('button', {
-                class: 'primary',
+                class: 'primary btn-sm',
                 id: 'clip-now',
                 disabled: notesBusy,
                 onclick: () => void clipCurrentPage(state, orgId, token, 'save'),
               }, T.clipNowButton),
               h('button', {
+                class: 'btn-secondary btn-sm',
                 id: 'clip-fill',
                 disabled: notesBusy,
                 onclick: () => void clipCurrentPage(state, orgId, token, 'fill'),
-              }, T.clipFillButton)),
+              }, T.clipFillButton),
+            ),
           ]
-        : [])),
+        : []),
+    ),
   ];
 
   return [
-    h('h2', {}, T.notesTitle),
-    h('div', { class: 'capture-box', id: 'notes-capture' },
-      h('p', { class: 'note', id: 'notes-privacy-hint' }, T.notesPrivacyHint),
+    h('h2', { class: hideHeading ? 'sr-only' : undefined }, T.notesTitle),
+    h(
+      'div',
+      { class: 'capture-box', id: 'notes-capture' },
       h('div', { class: 'tabs' }, modeNoteBtn, modeTodoBtn),
-      h('label', { class: 'block', for: 'capture-title' }, isNote ? T.captureTitleNote : T.captureTitleTodo),
-      titleInput,
+      h('p', { class: 'note', id: 'notes-privacy-hint' }, T.notesPrivacyHint),
+      h('div', {}, h('label', { class: 'block', for: 'capture-title' }, isNote ? T.captureTitleNote : T.captureTitleTodo), titleInput),
       ...bodyFields,
       sourceChip,
-      h('div', { class: 'row' },
-        h('button', {
-          class: 'primary',
-          id: 'capture-save',
-          disabled: notesBusy,
-          onclick: () => void saveQuickCapture(state, orgId, token),
-        }, isNote ? T.captureSaveNote : T.captureSaveTodo)),
+      h('button', {
+        class: 'primary btn-block',
+        id: 'capture-save',
+        disabled: notesBusy,
+        onclick: () => void saveQuickCapture(state, orgId, token),
+      }, isNote ? T.captureSaveNote : T.captureSaveTodo),
       ...clipperControls,
-      notesStatus ? h('p', { class: 'note', id: 'notes-status', role: 'status' }, notesStatus) : null),
+      notesStatus ? h('p', { class: 'note', id: 'notes-status', role: 'status' }, notesStatus) : null,
+    ),
   ];
 }
 
-async function toggleWebClipper(enable: boolean, address: string, orgId: string): Promise<void> {
+async function toggleWebClipper(enable: boolean, apiAddress: string, orgId: string): Promise<void> {
   notice = '';
   await activeTab.captureBaseline(chrome.permissions);
-  const scopeState = captureDrafts.get(address, orgId);
+  const scopeState = captureDrafts.get(apiAddress, orgId);
   scopeState.status = '';
   if (enable) {
     // Only asks Chrome for activeTab + scripting on this explicit toggle click.
@@ -646,7 +696,7 @@ async function toggleWebClipper(enable: boolean, address: string, orgId: string)
 }
 
 async function clipCurrentPage(state: State, orgId: string, token: string, action: 'save' | 'fill'): Promise<void> {
-  const started = captureDrafts.beginOp(state.address, orgId);
+  const started = captureDrafts.beginOp(state.apiAddress, orgId);
   if (!started) return;
   const { scope, op } = started;
   if (op.isActive()) notice = '';
@@ -684,7 +734,7 @@ async function clipCurrentPage(state: State, orgId: string, token: string, actio
       scope.status = T.clipFilled;
       return;
     }
-    const client = createClient(state.address, token);
+    const client = createClient(state.apiAddress, token);
     await client.clipNote({
       title: captured.clip.title,
       body: captured.clip.body,
@@ -703,7 +753,7 @@ async function clipCurrentPage(state: State, orgId: string, token: string, actio
 }
 
 async function saveQuickCapture(state: State, orgId: string, token: string): Promise<void> {
-  const scopeState = captureDrafts.get(state.address, orgId);
+  const scopeState = captureDrafts.get(state.apiAddress, orgId);
   if (scopeState.busy) return;
   const sent = { ...scopeState.draft };
   const title = sent.title.trim();
@@ -713,14 +763,14 @@ async function saveQuickCapture(state: State, orgId: string, token: string): Pro
     await render();
     return;
   }
-  const started = captureDrafts.beginOp(state.address, orgId);
+  const started = captureDrafts.beginOp(state.apiAddress, orgId);
   if (!started) return;
   const { scope, op } = started;
   if (op.isActive()) notice = '';
   scope.status = T.captureSaving;
   try {
     await render();
-    const client = createClient(state.address, token);
+    const client = createClient(state.apiAddress, token);
     if (sent.kind === 'note') {
       await client.clipNote({
         title,
@@ -758,56 +808,101 @@ async function saveQuickCapture(state: State, orgId: string, token: string): Pro
   }
 }
 
-async function meetingsView(state: State, me: Me, token: string, hasActiveRecording: boolean): Promise<Node[]> {
+async function meetingsView(state: State, me: Me, token: string, hasActiveRecording: boolean, hideHeading = false): Promise<Node[]> {
   if (hasActiveRecording) return [];
   const feature = FEATURES.find((f) => f.id === 'meetings')!;
-  const out: Node[] = [h('h2', {}, T.meetings)];
+  const out: Node[] = [h('h2', { class: hideHeading ? 'sr-only' : undefined }, T.meetings)];
   const granted = await chrome.permissions.contains({ permissions: [...feature.permissions] }).catch(() => false);
   if (!granted || state.enabled.meetings !== true) {
     out.push(
-      h('p', { class: 'note' }, T.meetingsNote),
-      h('button', { class: 'primary', onclick: () => void turnOn() }, T.meetingsOn),
+      h(
+        'div',
+        { class: 'card' },
+        h('p', { class: 'note' }, T.meetingsNote),
+        h('button', { class: 'primary btn-block btn-lg', onclick: () => void turnOn() }, T.meetingsOn),
+      ),
     );
     return out;
   }
   out.push(...(await agendaView(state, me, token)));
-  const title = h('input', { type: 'text', id: 'title', value: draft.title, maxlength: '200' });
-  title.addEventListener('input', () => void (draft.title = title.value));
+
+  const startBtn = h('button', {
+    class: 'primary btn-block btn-lg',
+    id: 'start',
+    disabled: consentBlocker(draft) !== null,
+    onclick: () => void startRecording(),
+  }, T.start);
+  const syncStartDisabled = () => {
+    (startBtn as HTMLButtonElement).disabled = consentBlocker(draft) !== null;
+  };
+
+  const title = h('input', { type: 'text', id: 'title', value: draft.title, maxlength: '200', placeholder: T.meetingTitlePlaceholder });
+  title.addEventListener('input', () => {
+    draft.title = title.value;
+    syncStartDisabled();
+  });
   const method = h('select', { id: 'method' },
     h('option', { value: '' }, T.consentChoose),
     ...CONSENT_METHODS.filter((m) => !(strictOrg && m === 'told_at_start')).map((m) => h('option', { value: m, selected: draft.consentMethod === m }, T.consentMethods[m])));
-  method.addEventListener('change', () => void (draft.consentMethod = method.value));
+  method.addEventListener('change', () => {
+    draft.consentMethod = method.value;
+    syncStartDisabled();
+  });
   const agreed = h('input', { type: 'checkbox', id: 'agreed', checked: draft.consentAgreed });
-  agreed.addEventListener('change', () => void (draft.consentAgreed = agreed.checked));
+  agreed.addEventListener('change', () => {
+    draft.consentAgreed = agreed.checked;
+    syncStartDisabled();
+  });
   // Off by default, and off again for each new recording unless ticked.
   const video = h('input', { type: 'checkbox', id: 'video', checked: draft.keepVideo });
   video.addEventListener('change', () => void (draft.keepVideo = video.checked));
   // Off by default and never remembered: ticked for one recording only.
   const liveNotes = h('input', { type: 'checkbox', id: 'live', checked: draft.liveNotes });
   liveNotes.addEventListener('change', () => void (draft.liveNotes = liveNotes.checked));
-  out.push(
-    h('label', { class: 'block', for: 'title' }, T.meetingTitle),
-    title,
-    h('div', { class: 'consent' },
-      h('strong', {}, T.consentTitle),
-      h('p', { class: 'note' }, T.consentNotice),
-      h('strong', { class: 'note' }, T.noticeHeading),
-      h('p', { class: 'notice', id: 'notice-text', lang: noticeLang }, RECORDING_NOTICE.text[noticeLang]),
-      h('div', { class: 'row' },
-        h('button', { id: 'copy-notice', onclick: () => void copyNotice() }, T.noticeCopy),
-        h('button', { id: 'notice-lang', onclick: () => toggleNoticeLanguage() }, otherNoticeLanguage(noticeLang) === 'en' ? T.noticeShowEn : T.noticeShowVi)),
-      copyNote ? h('p', { class: 'note', id: 'copy-note', role: 'status' }, copyNote) : null,
-      h('p', { class: 'note' }, T.noticeDraft),
-      h('label', { class: 'block', for: 'method' }, T.consentMethod),
-      method,
-      strictOrg ? h('p', { class: 'note', id: 'strict-note' }, T.strictNote) : null,
-      h('div', { class: 'row' }, agreed, h('label', { for: 'agreed' }, T.consentConfirm)),
+
+  const noticeDetails = h(
+    'details',
+    { class: 'notice-disclosure', ...(noticeExpanded ? { open: true } : {}) },
+    h('summary', {}, T.noticeHeading),
+    h('p', { class: 'notice', id: 'notice-text', lang: noticeLang }, RECORDING_NOTICE.text[noticeLang]),
+    h(
+      'div',
+      { class: 'row' },
+      h('button', { class: 'btn-secondary btn-sm', id: 'copy-notice', onclick: () => void copyNotice() }, T.noticeCopy),
+      h('button', { class: 'btn-ghost btn-sm', id: 'notice-lang', onclick: () => toggleNoticeLanguage() }, otherNoticeLanguage(noticeLang) === 'en' ? T.noticeShowEn : T.noticeShowVi),
     ),
-    h('div', { class: 'row' }, video, h('label', { for: 'video' }, T.withVideo)),
-    h('div', { class: 'row' }, liveNotes, h('label', { for: 'live' }, T.liveNotes)),
-    h('p', { class: 'note' }, T.liveNotesHint),
-    h('button', { class: 'primary', id: 'start', onclick: () => void startRecording() }, T.start),
-    h('button', { onclick: () => void turnOff() }, T.meetingsOff),
+    copyNote ? h('p', { class: 'note', id: 'copy-note', role: 'status' }, copyNote) : null,
+    h('p', { class: 'note' }, T.noticeDraft),
+  );
+  noticeDetails.addEventListener('toggle', () => {
+    noticeExpanded = (noticeDetails as HTMLDetailsElement).open;
+  });
+
+  out.push(
+    h(
+      'div',
+      { class: 'card' },
+      h('div', {}, h('label', { class: 'block', for: 'title' }, T.meetingTitle), title),
+      h(
+        'div',
+        { class: 'consent' },
+        h('div', { class: 'consent-header' }, h('strong', {}, T.consentTitle), h('span', { class: 'badge badge-warn' }, T.consentRequired)),
+        h('p', { class: 'note' }, T.consentNotice),
+        noticeDetails,
+        h('div', {}, h('label', { class: 'block', for: 'method' }, T.consentMethod), method),
+        strictOrg ? h('p', { class: 'note', id: 'strict-note' }, T.strictNote) : null,
+        h('div', { class: 'check-row' }, agreed, h('label', { for: 'agreed' }, T.consentConfirm)),
+      ),
+      h(
+        'div',
+        { class: 'stack-xs' },
+        h('div', { class: 'check-row' }, video, h('label', { for: 'video' }, T.withVideo)),
+        h('div', { class: 'check-row' }, liveNotes, h('label', { for: 'live' }, T.liveNotes)),
+        h('p', { class: 'note' }, T.liveNotesHint),
+      ),
+      startBtn,
+      h('button', { class: 'btn-outline btn-block btn-sm', onclick: () => void turnOff() }, T.meetingsOff),
+    ),
   );
   return out;
 }
@@ -816,23 +911,37 @@ async function meetingsView(state: State, me: Me, token: string, hasActiveRecord
 // title below; the consent step, the confirmations and "Bắt đầu ghi" are the member's, as always. A failing read (an old server, a refused scope) draws nothing.
 async function agendaView(state: State, me: Me, token: string): Promise<Node[]> {
   if (!me.scopes.includes(AGENDA_SCOPE)) {
-    return [h('div', { class: 'agenda', id: 'agenda-ask' }, h('p', { class: 'note' }, T.agendaNote), h('button', { id: 'agenda-on', onclick: () => void signIn(state, true) }, T.agendaOn))];
+    return [
+      h(
+        'div',
+        { class: 'agenda', id: 'agenda-ask' },
+        h('p', { class: 'note' }, T.agendaNote),
+        h('button', { class: 'btn-secondary btn-sm', id: 'agenda-on', onclick: () => void signIn(state, true) }, T.agendaOn),
+      ),
+    ];
   }
   if (me.features.agenda !== true) return [];
   // Read once for each token while this popup is open: a redraw (a language toggle, a copied notice, a filled title) does not ask the server again, and each read is an audit row there.
-  if (agendaRead?.token !== token) agendaRead = { token, promise: createClient(state.address, token).agendaNext().catch(() => null) };
+  if (agendaRead?.token !== token) agendaRead = { token, promise: createClient(state.apiAddress, token).agendaNext().catch(() => null) };
   const next: AgendaNext | null = await agendaRead.promise;
   if (!next) return [];
   if (!next.enabled) return [h('p', { class: 'note', id: 'agenda-off' }, T.agendaOff)];
   if (next.events.length === 0) return [];
   return [
-    h('div', { class: 'agenda', id: 'agenda' },
+    h(
+      'div',
+      { class: 'agenda', id: 'agenda' },
       h('strong', {}, T.agendaTitle),
       ...next.events.map((event) =>
-        h('div', { class: 'row agenda-event' },
+        h(
+          'div',
+          { class: 'agenda-event' },
           h('span', {}, agendaLine(T.agendaLine, T.agendaUntitled, event)),
-          h('button', { class: 'agenda-record', onclick: () => void fillTitle(event.title) }, T.agendaRecord))),
-      ...(agendaNote ? [h('p', { class: 'note', id: 'agenda-filled', role: 'status' }, agendaNote)] : [])),
+          h('button', { class: 'agenda-record btn-secondary btn-sm', onclick: () => void fillTitle(event.title) }, T.agendaRecord),
+        ),
+      ),
+      ...(agendaNote ? [h('p', { class: 'note', id: 'agenda-filled', role: 'status' }, agendaNote)] : []),
+    ),
   ];
 }
 
@@ -854,16 +963,19 @@ function lostView(lost: LostState, scopeMatch: ScopeMatch): Node[] {
       ? [
           h('p', {}, `${lost.title}: ${T.lostReasons[lost.reason]}`),
           h('p', { class: 'note' }, lost.uploaded ? T.lostUploaded : T.lostKept),
-          h('button', { id: 'lost-dismiss', onclick: () => void dismissLost() }, T.lostDismiss),
+          h('button', { class: 'btn-secondary btn-sm', id: 'lost-dismiss', onclick: () => void dismissLost() }, T.lostDismiss),
         ]
       : [
           h('p', {}, scopeMatch === 'unverified' ? T.lostVerifying : T.lostOtherOrg),
-          ...(isUnscopedLegacy ? [h('button', { id: 'lost-dismiss', onclick: () => void dismissLost() }, T.lostDismiss)] : []),
+          ...(isUnscopedLegacy ? [h('button', { class: 'btn-secondary btn-sm', id: 'lost-dismiss', onclick: () => void dismissLost() }, T.lostDismiss)] : []),
         ];
   return [
-    h('div', { class: 'lost', id: 'lost', role: 'alert' },
+    h(
+      'div',
+      { class: 'lost', id: 'lost', role: 'alert' },
       h('strong', {}, T.lostLine.replace('{time}', time)),
-      ...details),
+      ...details,
+    ),
   ];
 }
 
@@ -952,7 +1064,7 @@ async function stopRecording(): Promise<void> {
   if (stopBtn) stopBtn.disabled = true;
   const existingNotice = document.getElementById('popup-notice');
   if (existingNotice) existingNotice.replaceChildren(notice);
-  else root.append(h('p', { class: 'error', id: 'popup-notice', role: 'alert' }, notice));
+  else root.append(h('p', { class: 'alert-banner', id: 'popup-notice', role: 'alert' }, notice));
   let reply: StopReply | null = null;
   try {
     reply = (await chrome.runtime.sendMessage({ type: 'stop' })) as StopReply;
@@ -985,12 +1097,12 @@ const legacyKey = (address: string, orgId: string, tokenId: string, meetingId: s
 
 async function verifyLegacyPending(candidates: RecordingMeta[], state: State, me: Me, token: string): Promise<void> {
   const toCheck = candidates.filter((m) => {
-    const key = legacyKey(state.address, me.orgId, me.tokenId, m.meetingId);
+    const key = legacyKey(state.apiAddress, me.orgId, me.tokenId, m.meetingId);
     return !verifiedLegacyChecked.has(key) && !verifiedLegacyInFlight.has(key);
   });
   if (toCheck.length === 0) return;
-  for (const m of toCheck) verifiedLegacyInFlight.add(legacyKey(state.address, me.orgId, me.tokenId, m.meetingId));
-  const client = createClient(state.address, token);
+  for (const m of toCheck) verifiedLegacyInFlight.add(legacyKey(state.apiAddress, me.orgId, me.tokenId, m.meetingId));
+  const client = createClient(state.apiAddress, token);
   const queue = [...toCheck];
   const pendingOwned: string[] = [];
   let flushTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1007,7 +1119,7 @@ async function verifyLegacyPending(candidates: RecordingMeta[], state: State, me
       area.get(batch.map(pendingScopeKey)),
     ]);
     const currentAccount = activeAccount(currentState);
-    if (currentState.address !== state.address || currentAccount?.orgId !== me.orgId || currentAccount.token !== token) return;
+    if (currentState.apiAddress !== state.apiAddress || currentAccount?.orgId !== me.orgId || currentAccount.token !== token) return;
     const liveIds = new Set(currentLeft.map((row) => row.meetingId));
     const activeRec = rawRec[RECORDING_KEY] as RecordingState | undefined;
     const recoveredScopes: Record<string, RecordingScope> = {};
@@ -1017,7 +1129,7 @@ async function verifyLegacyPending(candidates: RecordingMeta[], state: State, me
       const scopeKey = pendingScopeKey(meetingId);
       const existingScope = readPendingScope(rawExistingScopes[scopeKey]);
       if (existingScope && recordingScopeMatch(existingScope, currentState, me) !== 'unverified') continue;
-      recoveredScopes[scopeKey] = { orgId: me.orgId, address: state.address, tokenId: me.tokenId };
+      recoveredScopes[scopeKey] = { orgId: me.orgId, address: state.apiAddress, tokenId: me.tokenId };
     }
     if (Object.keys(recoveredScopes).length > 0) {
       const saved = await area.set(recoveredScopes).then(() => true, () => false);
@@ -1044,7 +1156,7 @@ async function verifyLegacyPending(candidates: RecordingMeta[], state: State, me
     while (queue.length > 0) {
       const m = queue.shift();
       if (!m) break;
-      const key = legacyKey(state.address, me.orgId, me.tokenId, m.meetingId);
+      const key = legacyKey(state.apiAddress, me.orgId, me.tokenId, m.meetingId);
       try {
         const status = await client.extensionMeetingOwned(m.meetingId, {
           signal: AbortSignal.timeout(CONFIG_DISCOVERY_TIMEOUT_MS),
@@ -1076,7 +1188,7 @@ async function pendingView(state: State, me: Me, token: string): Promise<Node[]>
   ]);
   const confirmedIds = new Set(confirmedLeft.map((m) => m.meetingId));
   const recording = rawRecording[RECORDING_KEY] as RecordingState | undefined;
-  const client = createClient(state.address, token);
+  const client = createClient(state.apiAddress, token);
   const canVerifyLegacy = me.scopes.includes('meetings');
   const idle: RecordingMeta[] = [];
   const unscoped: RecordingMeta[] = [];
@@ -1093,7 +1205,7 @@ async function pendingView(state: State, me: Me, token: string): Promise<Node[]>
       }
       if (scopeMatch === 'other') continue;
     }
-    if (canVerifyLegacy && !verifiedLegacyChecked.has(legacyKey(state.address, me.orgId, me.tokenId, m.meetingId))) {
+    if (canVerifyLegacy && !verifiedLegacyChecked.has(legacyKey(state.apiAddress, me.orgId, me.tokenId, m.meetingId))) {
       unscoped.push(m);
     }
   }
@@ -1101,20 +1213,50 @@ async function pendingView(state: State, me: Me, token: string): Promise<Node[]>
   idle.sort((a, b) => a.startedAt - b.startedAt);
   if (idle.length === 0) return [];
   return [
-    h('h2', {}, T.pending),
-    ...idle.map((meta) =>
-      h('div', { class: 'row' },
-        h('span', {}, `${meta.title} (${formatClock(meta.elapsedMs)})`),
-        h('button', { onclick: () => void (async () => {
-          const { uploads } = await client.config({ signal: AbortSignal.timeout(CONFIG_DISCOVERY_TIMEOUT_MS) }).catch(() => ({ uploads: 'direct' as const }));
-          const done = await uploadSaved({ store }, client, uploads, meta);
-          if (done.ok) await area.remove(pendingScopeKey(meta.meetingId)).catch(() => undefined);
-          notice = done.ok ? T.uploaded : T.uploadFailed;
-          await render();
-        })() }, T.retry),
-        // Discarding a left-over copy ends that meeting's recording too (best effort), so the app's recording chip lets go (#3196).
-        h('button', { onclick: () => void reportEnded(client, meta).then(() => store.remove(meta.id)).then(() => area.remove(pendingScopeKey(meta.meetingId)).catch(() => undefined)).then(render) }, T.discard),
-      )),
+    h(
+      'div',
+      { class: 'card' },
+      h('h2', {}, T.pending),
+      ...idle.map((meta) =>
+        h(
+          'div',
+          { class: 'pending-row' },
+          h('span', {}, `${meta.title} (${formatClock(meta.elapsedMs)})`),
+          h(
+            'div',
+            { class: 'row' },
+            h(
+              'button',
+              {
+                class: 'btn-secondary btn-sm',
+                onclick: () =>
+                  void (async () => {
+                    const { uploads } = await client.config({ signal: AbortSignal.timeout(CONFIG_DISCOVERY_TIMEOUT_MS) }).catch(() => ({ uploads: 'direct' as const }));
+                    const done = await uploadSaved({ store }, client, uploads, meta);
+                    if (done.ok) await area.remove(pendingScopeKey(meta.meetingId)).catch(() => undefined);
+                    notice = done.ok ? T.uploaded : T.uploadFailed;
+                    await render();
+                  })(),
+              },
+              T.retry,
+            ),
+            // Discarding a left-over copy ends that meeting's recording too (best effort), so the app's recording chip lets go (#3196).
+            h(
+              'button',
+              {
+                class: 'btn-outline btn-sm',
+                onclick: () =>
+                  void reportEnded(client, meta)
+                    .then(() => store.remove(meta.id))
+                    .then(() => area.remove(pendingScopeKey(meta.meetingId)).catch(() => undefined))
+                    .then(render),
+              },
+              T.discard,
+            ),
+          ),
+        ),
+      ),
+    ),
   ];
 }
 
