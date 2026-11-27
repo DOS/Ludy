@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { noteOf, prNumbers, releaseNotes } from '../release-notes.mjs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { noteOf, prNumbers, readSubjects, releaseNotes } from '../release-notes.mjs';
 
 describe('noteOf', () => {
   it('reads the note line in its usual forms', () => {
@@ -63,4 +67,145 @@ describe('releaseNotes', () => {
     const md = releaseNotes({ tag: 'v0.2.1', subjects: ['chore: settings (#700)'], body: () => null });
     expect(md).toBe('## Có gì mới trong v0.2.1\n\nBản này không có thay đổi nào bạn cần biết.\n');
   });
+});
+
+describe('readSubjects', () => {
+  let dir = '';
+  let step = 0;
+
+  const git = (args: string[], isoDate?: string) =>
+    execFileSync('git', args, {
+      cwd: dir,
+      encoding: 'utf8',
+      env: isoDate ? { ...process.env, GIT_AUTHOR_DATE: isoDate, GIT_COMMITTER_DATE: isoDate } : process.env,
+    });
+
+  const nextDate = () => {
+    step += 1;
+    const hours = String(Math.floor(step / 60)).padStart(2, '0');
+    const minutes = String(step % 60).padStart(2, '0');
+    return `2026-11-01T${hours}:${minutes}:00Z`;
+  };
+
+  const commit = (message: string) => {
+    git(['commit', '--allow-empty', '-q', '-m', message], nextDate());
+  };
+
+  const merge = (branch: string, message: string) => {
+    git(['merge', '--no-ff', '-q', '-m', message, branch], nextDate());
+  };
+
+  function initRepo() {
+    step = 0;
+    dir = mkdtempSync(join(tmpdir(), 'crove-release-notes-'));
+    git(['init', '-q', '-b', 'main']);
+    git(['config', 'user.email', 'test@example.com']);
+    git(['config', 'user.name', 'test']);
+    git(['config', 'core.hooksPath', join(dir, '.no-hooks')]);
+    git(['config', 'core.autocrlf', 'false']);
+  }
+
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = '';
+  });
+
+  it('captures dev squash PRs and main direct commits across a promotion merge commit while skipping the merge commit', () => {
+    initRepo();
+    commit('feat(core): initial setup (#100)');
+    git(['tag', 'v0.1.0']);
+
+    git(['checkout', '-q', '-b', 'dev']);
+    commit('feat(finance): add export (#101)');
+    commit('fix(kernel): retry logic (#102)');
+
+    git(['checkout', '-q', 'main']);
+    commit('fix(auth): hotfix session (#103)');
+    merge('dev', 'chore(release): promote dev to main (#104)');
+    git(['tag', 'v0.2.0']);
+
+    const subjects = readSubjects('v0.1.0', 'v0.2.0', { cwd: dir });
+    expect(subjects).toEqual([
+      'fix(auth): hotfix session (#103)',
+      'fix(kernel): retry logic (#102)',
+      'feat(finance): add export (#101)',
+    ]);
+    expect(prNumbers(subjects)).toEqual([101, 102, 103]);
+
+    const bodies: Record<number, string | null> = {
+      100: 'Release note (vi): Thay đổi cũ không được lặp lại.',
+      101: 'Release note (vi): Thêm xuất dữ liệu tài chính.',
+      102: 'Release note (vi): Sửa lỗi thử lại trong kernel.',
+      103: 'Release note (vi): Sửa lỗi phiên đăng nhập.',
+      104: 'Release note (vi): Merge commit không được xuất hiện.',
+    };
+    expect(releaseNotes({ tag: 'v0.2.0', subjects, body: (pr) => bodies[pr] ?? null })).toBe(
+      '## Có gì mới trong v0.2.0\n\n- Thêm xuất dữ liệu tài chính. (#101)\n- Sửa lỗi thử lại trong kernel. (#102)\n- Sửa lỗi phiên đăng nhập. (#103)\n',
+    );
+  }, 60_000);
+
+  it('reads non-merge commits for an initial release across linear and merge-commit history', () => {
+    initRepo();
+    commit('feat(core): bootstrap (#100)');
+    git(['checkout', '-q', '-b', 'feat-branch']);
+    commit('feat(web): landing page (#101)');
+    git(['checkout', '-q', 'main']);
+    commit('fix(ci): lint check (#102)');
+    merge('feat-branch', 'Merge pull request #103');
+    commit('docs: add readme (#104)');
+    git(['tag', 'v0.1.0']);
+
+    const subjects = readSubjects('', 'v0.1.0', { cwd: dir });
+    expect(subjects).toEqual([
+      'docs: add readme (#104)',
+      'fix(ci): lint check (#102)',
+      'feat(web): landing page (#101)',
+      'feat(core): bootstrap (#100)',
+    ]);
+    expect(prNumbers(subjects)).toEqual([100, 101, 102, 104]);
+  }, 60_000);
+
+  it('does not emit pre-v0.1.0 PRs across an earlier main -> dev sync merge inside v0.1.0..dev', () => {
+    initRepo();
+    commit('feat(core): pre-release base (#99)');
+    git(['checkout', '-q', '-b', 'dev']);
+    commit('feat(finance): post-branch dev work (#101)');
+
+    git(['checkout', '-q', 'main']);
+    commit('fix(kernel): v0.1.0 release fix (#100)');
+    git(['tag', 'v0.1.0']);
+
+    git(['checkout', '-q', 'dev']);
+    merge('main', 'Merge branch main into dev (#102)');
+    commit('feat(sales): post-sync dev work (#103)');
+
+    const subjects = readSubjects('v0.1.0', 'dev', { cwd: dir });
+    expect(subjects).toEqual([
+      'feat(sales): post-sync dev work (#103)',
+      'feat(finance): post-branch dev work (#101)',
+    ]);
+    expect(prNumbers(subjects)).toEqual([101, 103]);
+  }, 60_000);
+
+  it('throws the usage error for invalid or flag-like refs', () => {
+    initRepo();
+    commit('feat(core): init (#100)');
+    git(['tag', 'v0.1.0']);
+
+    expect(() => readSubjects('', '--exec=touch /tmp/pwn', { cwd: dir })).toThrow(
+      'usage: node tools/release-notes.mjs <previous tag or empty> <tag>',
+    );
+    expect(() => readSubjects('--exec=touch /tmp/pwn', 'v0.1.0', { cwd: dir })).toThrow(
+      'usage: node tools/release-notes.mjs <previous tag or empty> <tag>',
+    );
+    expect(() => readSubjects('', 'v0.1.0..HEAD', { cwd: dir })).toThrow(
+      'usage: node tools/release-notes.mjs <previous tag or empty> <tag>',
+    );
+    expect(() => readSubjects('v0.1.0..HEAD', 'v0.1.0', { cwd: dir })).toThrow(
+      'usage: node tools/release-notes.mjs <previous tag or empty> <tag>',
+    );
+    expect(() => readSubjects('', '', { cwd: dir })).toThrow(
+      'usage: node tools/release-notes.mjs <previous tag or empty> <tag>',
+    );
+  }, 60_000);
 });

@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The license header check for new source files (#1953): which files it reads, the line it accepts, and the line it asks
 // for.
-import { describe, expect, it } from 'vitest';
-import { HEADER_LINE, IDENTIFIER, checkedPaths, escapeData, escapeProperty, hasHeader, headerFor, missingHeaders } from '../ci/spdx-header.mjs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { HEADER_LINE, IDENTIFIER, checkedPaths, defaultBase, escapeData, escapeProperty, hasHeader, headerFor, missingHeaders } from '../ci/spdx-header.mjs';
 
 describe('SPDX header check', () => {
   it('reads new TypeScript, JavaScript and SQL sources, but not third-party files or other kinds', () => {
@@ -60,4 +64,40 @@ describe('SPDX header check', () => {
     expect(escapeProperty('a,b:c%d\n::error::x.ts')).toBe('a%2Cb%3Ac%25d%0A%3A%3Aerror%3A%3Ax.ts');
     expect(escapeData('line\r\n::warning::x')).toBe('line%0D%0A::warning::x');
   });
+});
+
+describe('defaultBase', () => {
+  let dir = '';
+  const run = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
+
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = '';
+  });
+
+  function initRepo(): string {
+    dir = mkdtempSync(join(tmpdir(), 'crove-spdx-header-'));
+    run('init', '-q', '-b', 'main');
+    run('config', 'user.email', 'test@example.com');
+    run('config', 'user.name', 'test');
+    run('config', 'core.hooksPath', join(dir, '.no-hooks'));
+    run('config', 'core.autocrlf', 'false');
+    writeFileSync(join(dir, 'README.md'), 'init\n');
+    run('add', 'README.md');
+    run('commit', '-q', '-m', 'init');
+    return run('rev-parse', 'HEAD').trim();
+  }
+
+  it('returns origin/dev when both refs/remotes/origin/dev and refs/remotes/origin/main exist', () => {
+    const head = initRepo();
+    run('update-ref', 'refs/remotes/origin/main', head);
+    run('update-ref', 'refs/remotes/origin/dev', head);
+    expect(defaultBase(dir)).toBe('origin/dev');
+  }, 60_000);
+
+  it('falls back to origin/main when refs/remotes/origin/dev is absent', () => {
+    const head = initRepo();
+    run('update-ref', 'refs/remotes/origin/main', head);
+    expect(defaultBase(dir)).toBe('origin/main');
+  }, 60_000);
 });
