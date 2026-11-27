@@ -2920,14 +2920,53 @@ const PROTO_REFLECT_OR_OBJECT_METHODS = new Set([
   'getOwnPropertyDescriptors',
   'getPrototypeOf',
   'setPrototypeOf',
+  '__defineGetter__',
+  '__defineSetter__',
+  '__lookupGetter__',
+  '__lookupSetter__',
 ]);
-const PROTO_MUTATING_METHODS = new Set(['assign', 'defineProperty', 'defineProperties', 'set', 'setPrototypeOf']);
+const PROTO_MUTATING_METHODS = new Set([
+  'assign',
+  'defineProperty',
+  'defineProperties',
+  'set',
+  'setPrototypeOf',
+  '__defineGetter__',
+  '__defineSetter__',
+]);
 const PROTO_REFLECTIVE_READ_METHODS = new Set([
   'get',
   'getOwnPropertyDescriptor',
   'getOwnPropertyDescriptors',
   'getPrototypeOf',
+  '__lookupGetter__',
+  '__lookupSetter__',
 ]);
+const PROTO_RECEIVER_ANNEX_B_METHODS = new Set([
+  '__defineGetter__',
+  '__defineSetter__',
+  '__lookupGetter__',
+  '__lookupSetter__',
+]);
+
+function unwrapAstGlobalAliasBase(expr: tsType.Expression): tsType.Expression {
+  let base = unwrapAstExpr(expr, true);
+  for (let bStep = 0; bStep < 16; bStep += 1) {
+    if (ts.isPropertyAccessExpression(base) && AST_GLOBAL_ALIAS_MEMBERS.has(base.name.text)) {
+      base = unwrapAstExpr(base.expression, true);
+      continue;
+    }
+    if (ts.isElementAccessExpression(base)) {
+      const innerKey = unwrapAstExpr(base.argumentExpression, false);
+      if (ts.isStringLiteralLike(innerKey) && AST_GLOBAL_ALIAS_MEMBERS.has(innerKey.text)) {
+        base = unwrapAstExpr(base.expression, true);
+        continue;
+      }
+    }
+    break;
+  }
+  return base;
+}
 
 function isAstProtoBearingHost(expr: tsType.Expression): boolean {
   let cur = unwrapAstExpr(expr, true);
@@ -2939,14 +2978,7 @@ function isAstProtoBearingHost(expr: tsType.Expression): boolean {
         cur = unwrapAstExpr(cur.expression, true);
         continue;
       }
-      let base = unwrapAstExpr(cur.expression, true);
-      for (let bStep = 0; bStep < 16; bStep += 1) {
-        if (ts.isPropertyAccessExpression(base) && AST_GLOBAL_ALIAS_MEMBERS.has(base.name.text)) {
-          base = unwrapAstExpr(base.expression, true);
-          continue;
-        }
-        break;
-      }
+      const base = unwrapAstGlobalAliasBase(cur.expression);
       return ts.isIdentifier(base) && AST_REQUIRE_HOSTS.has(base.text);
     }
     if (ts.isElementAccessExpression(cur)) {
@@ -2955,21 +2987,7 @@ function isAstProtoBearingHost(expr: tsType.Expression): boolean {
         cur = unwrapAstExpr(cur.expression, true);
         continue;
       }
-      let base = unwrapAstExpr(cur.expression, true);
-      for (let bStep = 0; bStep < 16; bStep += 1) {
-        if (ts.isPropertyAccessExpression(base) && AST_GLOBAL_ALIAS_MEMBERS.has(base.name.text)) {
-          base = unwrapAstExpr(base.expression, true);
-          continue;
-        }
-        if (ts.isElementAccessExpression(base)) {
-          const innerKey = unwrapAstExpr(base.argumentExpression, false);
-          if (ts.isStringLiteralLike(innerKey) && AST_GLOBAL_ALIAS_MEMBERS.has(innerKey.text)) {
-            base = unwrapAstExpr(base.expression, true);
-            continue;
-          }
-        }
-        break;
-      }
+      const base = unwrapAstGlobalAliasBase(cur.expression);
       return ts.isIdentifier(base) && AST_REQUIRE_HOSTS.has(base.text);
     }
     break;
@@ -3043,6 +3061,8 @@ interface AstCallSiteRecord {
   readonly firstArgExpr: tsType.Expression | null;
   readonly missingApplyFirstArg: boolean;
   readonly isIndirect: boolean;
+  readonly posArgs: readonly (tsType.Expression | null)[];
+  readonly hasUnknownPosArgs: boolean;
   readonly scope: AstLexScope;
   readonly boundTargets: string[];
   readonly outerAccessExpr: tsType.Expression;
@@ -3413,9 +3433,32 @@ function findAstCallOpenParenPos(call: tsType.CallExpression, sf: tsType.SourceF
   return idx >= 0 && idx < call.end ? idx : Math.max(0, pos - 1);
 }
 
+function isAstReflectHostChain(expr: tsType.Expression, scope: AstLexScope): boolean {
+  const norm = unwrapAstExpr(expr, true);
+  if (ts.isIdentifier(norm) && norm.text === 'Reflect') return true;
+  if (ts.isPropertyAccessExpression(norm) || ts.isElementAccessExpression(norm)) {
+    const mem = extractAstMemberName(norm, scope);
+    if (mem.memberName !== 'Reflect') return false;
+    let base = unwrapAstExpr(mem.host, true);
+    for (let step = 0; step < 16; step += 1) {
+      if (ts.isIdentifier(base) && AST_REQUIRE_HOSTS.has(base.text)) return true;
+      if (ts.isPropertyAccessExpression(base) || ts.isElementAccessExpression(base)) {
+        const bMem = extractAstMemberName(base, scope);
+        if (bMem.memberName !== null && AST_GLOBAL_ALIAS_MEMBERS.has(bMem.memberName)) {
+          base = unwrapAstExpr(bMem.host, true);
+          continue;
+        }
+      }
+      break;
+    }
+  }
+  return false;
+}
+
 function unwrapAstCall(
   call: tsType.CallExpression,
   scope: AstLexScope,
+  isReflectApplyCallee?: (calleeExpr: tsType.Expression, evalScope: AstLexScope) => boolean,
 ): {
   readonly calleeExpr: tsType.Expression;
   readonly firstArgExpr: tsType.Expression | null;
@@ -3469,6 +3512,23 @@ function unwrapAstCall(
     return { expr: null, missing: true, pos: [], unknown: true };
   };
 
+  const isReflectApply = (expr: tsType.Expression): boolean => {
+    if (isReflectApplyCallee && isReflectApplyCallee(expr, scope)) return true;
+    const norm = unwrapAstExpr(expr, true);
+    if (ts.isPropertyAccessExpression(norm) || ts.isElementAccessExpression(norm)) {
+      const mem = extractAstMemberName(norm, scope);
+      return mem.memberName === 'apply' && isAstReflectHostChain(mem.host, scope);
+    }
+    return false;
+  };
+
+  const filterConcreteArrayElements = (arrExpr: tsType.Expression | null | undefined, skipCount = 0): tsType.Expression[] => {
+    const nextArr = arrExpr ? unwrapAstExpr(arrExpr, true) : undefined;
+    if (!nextArr || !ts.isArrayLiteralExpression(nextArr)) return [];
+    const elems = skipCount > 0 ? nextArr.elements.slice(skipCount) : nextArr.elements;
+    return elems.filter((el): el is tsType.Expression => el.kind !== ts.SyntaxKind.OmittedExpression);
+  };
+
   for (let loop = 0; loop < 8; loop += 1) {
     calleeExpr = unwrapAstExpr(calleeExpr, true);
     if (ts.isCallExpression(calleeExpr)) {
@@ -3476,6 +3536,48 @@ function unwrapAstCall(
       if (ts.isPropertyAccessExpression(innerTarget) || ts.isElementAccessExpression(innerTarget)) {
         const mem = extractAstMemberName(innerTarget, scope);
         if (mem.memberName === 'bind') {
+          const bindHost = unwrapAstExpr(mem.host, true);
+          const bindHostMember =
+            ts.isPropertyAccessExpression(bindHost) || ts.isElementAccessExpression(bindHost)
+              ? extractAstMemberName(bindHost, scope).memberName
+              : null;
+          if (bindHostMember === 'call' || (bindHostMember === 'apply' && !isReflectApply(bindHost))) {
+            const targetFn = calleeExpr.arguments[0];
+            if (targetFn && !ts.isSpreadElement(targetFn)) {
+              const allBound = extractPosArgs(calleeExpr.arguments.slice(1));
+              const combinedPos = allBound.unknown ? allBound.list : [...allBound.list, ...posArgs];
+              const combinedUnknown = allBound.unknown || hasUnknownPosArgs;
+              const combinedArgs = [...calleeExpr.arguments.slice(1), ...args];
+              if (bindHostMember === 'call') {
+                if (combinedPos.length > 0 && combinedPos[0] === null) {
+                  posArgs = [];
+                  hasUnknownPosArgs = true;
+                } else {
+                  posArgs = combinedPos.slice(1);
+                  hasUnknownPosArgs = combinedUnknown;
+                }
+                args = combinedArgs.slice(1);
+                firstArgExpr = args[0] ?? null;
+                hasExplicitFirstArg = args.length > 0;
+                missingApplyFirstArg = false;
+              } else {
+                const arrArg = combinedPos[1];
+                const arrInfo = extractArrayArg0(arrArg);
+                args = filterConcreteArrayElements(arrArg);
+                calleeExpr = targetFn;
+                firstArgExpr = arrInfo.expr;
+                missingApplyFirstArg = arrInfo.missing;
+                posArgs = arrInfo.pos;
+                hasUnknownPosArgs = arrInfo.unknown;
+                hasExplicitFirstArg = args.length > 0;
+                isIndirect = true;
+                continue;
+              }
+              calleeExpr = targetFn;
+              isIndirect = true;
+              continue;
+            }
+          }
           if (calleeExpr.arguments.length >= 2) {
             const firstBindArg = calleeExpr.arguments[0];
             if (firstBindArg && ts.isSpreadElement(firstBindArg)) {
@@ -3502,32 +3604,65 @@ function unwrapAstCall(
       break;
     }
 
+    if (isReflectApply(calleeExpr)) {
+      const fnArg = posArgs[0];
+      if (!fnArg) break;
+      const arrArg = posArgs[2];
+      const arrInfo = extractArrayArg0(arrArg);
+      args = filterConcreteArrayElements(arrArg);
+      hasExplicitFirstArg = true;
+      calleeExpr = fnArg;
+      firstArgExpr = arrInfo.expr;
+      missingApplyFirstArg = arrInfo.missing;
+      posArgs = arrInfo.pos;
+      hasUnknownPosArgs = arrInfo.unknown;
+      isIndirect = true;
+      continue;
+    }
+
     if (ts.isPropertyAccessExpression(calleeExpr) || ts.isElementAccessExpression(calleeExpr)) {
       const mem = extractAstMemberName(calleeExpr, scope);
       const hostNorm = unwrapAstExpr(mem.host, true);
-      if (mem.memberName === 'apply' && ts.isIdentifier(hostNorm) && hostNorm.text === 'Reflect') {
-        const fnArg = posArgs[0];
-        if (!fnArg) break;
-        const arrArg = posArgs[2];
-        const arrInfo = extractArrayArg0(arrArg);
-        const nextArr = arrArg ? unwrapAstExpr(arrArg, true) : undefined;
-        args =
-          nextArr && ts.isArrayLiteralExpression(nextArr)
-            ? nextArr.elements.filter((el): el is tsType.Expression => el.kind !== ts.SyntaxKind.OmittedExpression)
-            : [];
-        hasExplicitFirstArg = true;
-        calleeExpr = fnArg;
-        firstArgExpr = arrInfo.expr;
-        missingApplyFirstArg = arrInfo.missing;
-        posArgs = arrInfo.pos;
-        hasUnknownPosArgs = arrInfo.unknown;
-        isIndirect = true;
-        continue;
-      }
       if (mem.memberName === 'call' && !hasExplicitFirstArg) {
         break;
       }
       if (mem.memberName === 'call') {
+        const hostMem =
+          ts.isPropertyAccessExpression(hostNorm) || ts.isElementAccessExpression(hostNorm)
+            ? extractAstMemberName(hostNorm, scope)
+            : null;
+        if (hostMem && hostMem.memberName === 'call') {
+          const targetFn = posArgs[0];
+          if (!targetFn) break;
+          if (posArgs.length >= 2 && posArgs[1] === null) {
+            posArgs = [];
+            hasUnknownPosArgs = true;
+          } else {
+            posArgs = posArgs.slice(2);
+          }
+          args = args.slice(2);
+          calleeExpr = targetFn;
+          firstArgExpr = args[0] ?? null;
+          hasExplicitFirstArg = args.length > 0;
+          missingApplyFirstArg = false;
+          isIndirect = true;
+          continue;
+        }
+        if (hostMem && hostMem.memberName === 'apply' && !isReflectApply(hostNorm)) {
+          const targetFn = posArgs[0];
+          if (!targetFn) break;
+          const arrArg = posArgs[2];
+          const arrInfo = extractArrayArg0(arrArg);
+          args = filterConcreteArrayElements(arrArg);
+          hasExplicitFirstArg = true;
+          calleeExpr = targetFn;
+          firstArgExpr = arrInfo.expr;
+          missingApplyFirstArg = arrInfo.missing;
+          posArgs = arrInfo.pos;
+          hasUnknownPosArgs = arrInfo.unknown;
+          isIndirect = true;
+          continue;
+        }
         if (posArgs.length > 0 && posArgs[0] === null) {
           posArgs = [];
           hasUnknownPosArgs = true;
@@ -3541,13 +3676,45 @@ function unwrapAstCall(
         continue;
       }
       if (mem.memberName === 'apply') {
+        const hostMem =
+          ts.isPropertyAccessExpression(hostNorm) || ts.isElementAccessExpression(hostNorm)
+            ? extractAstMemberName(hostNorm, scope)
+            : null;
+        if (hostMem && hostMem.memberName === 'call') {
+          const targetFn = posArgs[0];
+          if (!targetFn) break;
+          const arrArg = posArgs[1];
+          const arrInfo = extractArrayArg0(arrArg);
+          const badThisArg = arrInfo.pos.length > 0 && arrInfo.pos[0] === null;
+          args = filterConcreteArrayElements(arrArg, 1);
+          calleeExpr = targetFn;
+          firstArgExpr = args[0] ?? null;
+          missingApplyFirstArg = arrInfo.missing || badThisArg;
+          posArgs = badThisArg ? [] : arrInfo.pos.slice(1);
+          hasUnknownPosArgs = arrInfo.unknown || badThisArg;
+          hasExplicitFirstArg = args.length > 0;
+          isIndirect = true;
+          continue;
+        }
+        if (hostMem && hostMem.memberName === 'apply' && !isReflectApply(hostNorm)) {
+          const targetFn = posArgs[0];
+          if (!targetFn) break;
+          const outerInfo = extractArrayArg0(posArgs[1]);
+          const innerArrArg = outerInfo.pos[1];
+          const innerInfo = extractArrayArg0(innerArrArg);
+          args = filterConcreteArrayElements(innerArrArg);
+          calleeExpr = targetFn;
+          firstArgExpr = innerInfo.expr;
+          missingApplyFirstArg = outerInfo.unknown || innerInfo.missing;
+          posArgs = outerInfo.unknown ? [] : innerInfo.pos;
+          hasUnknownPosArgs = outerInfo.unknown || innerInfo.unknown;
+          hasExplicitFirstArg = true;
+          isIndirect = true;
+          continue;
+        }
         const arrArg = posArgs[1];
         const arrInfo = extractArrayArg0(arrArg);
-        const nextArr = arrArg ? unwrapAstExpr(arrArg, true) : undefined;
-        args =
-          nextArr && ts.isArrayLiteralExpression(nextArr)
-            ? nextArr.elements.filter((el): el is tsType.Expression => el.kind !== ts.SyntaxKind.OmittedExpression)
-            : [];
+        args = filterConcreteArrayElements(arrArg);
         calleeExpr = mem.host;
         firstArgExpr = arrInfo.expr;
         missingApplyFirstArg = arrInfo.missing;
@@ -4133,6 +4300,8 @@ function extractAstFacts(
   let hasAnyMemberOrObjectMutation = false;
   let hasConstructorRead = false;
   let hasReflectiveReadCall = false;
+  let hasReflectValueRef = false;
+  let hasProtoHostValueRef = false;
   let disallowGlobalSafeKillBases = false;
   const lhsMemberWriteRoots: Array<{ expr: tsType.Expression; scope: AstLexScope }> = [];
   const lhsHasMemberWriteChain = (expr: tsType.Expression, evalScope: AstLexScope): boolean => {
@@ -4197,12 +4366,16 @@ function extractAstFacts(
     } else if (
       keyName === 'assign' ||
       keyName === 'defineProperty' ||
-      keyName === 'defineProperties'
+      keyName === 'defineProperties' ||
+      keyName === '__defineGetter__' ||
+      keyName === '__defineSetter__'
     ) {
       hasAnyMemberOrObjectMutation = true;
     } else if (
       keyName === 'getOwnPropertyDescriptor' ||
-      keyName === 'getOwnPropertyDescriptors'
+      keyName === 'getOwnPropertyDescriptors' ||
+      keyName === '__lookupGetter__' ||
+      keyName === '__lookupSetter__'
     ) {
       hasReflectiveReadCall = true;
     } else if (keyName === 'set' && hostExpr) {
@@ -4218,6 +4391,7 @@ function extractAstFacts(
     arg0: tsType.Expression | null;
     keyArg: tsType.Expression | null;
     hasUnknownArgs: boolean;
+    callSiteIndex: number;
     scope: AstLexScope;
   }> = [];
   const protoDestructureCandidates: Array<{ rhsExpr: tsType.Expression; scope: AstLexScope }> = [];
@@ -4352,24 +4526,20 @@ function extractAstFacts(
   const extractReflectGetTargetAndKey = (
     expr: tsType.Expression,
     scope: AstLexScope,
+    isReflectHostPred: (h: tsType.Expression, s: AstLexScope) => boolean = isAstReflectHostChain,
+    isReflectApplyPred?: (c: tsType.Expression, s: AstLexScope) => boolean,
   ): { host: tsType.Expression; propName: string | null; isComputedBracket: boolean } | null => {
     const direct = unwrapAstExpr(expr, true);
     if (!ts.isCallExpression(direct)) return null;
-    const fnExpr = unwrapAstExpr(direct.expression, true);
+    const unwrappedCall = unwrapAstCall(direct, scope, isReflectApplyPred);
+    const fnExpr = unwrappedCall.calleeExpr;
     if (!ts.isPropertyAccessExpression(fnExpr) && !ts.isElementAccessExpression(fnExpr)) return null;
     const mem = extractAstMemberName(fnExpr, scope);
     if (mem.memberName !== 'get') return null;
-    const recv = unwrapAstExpr(mem.host, true);
-    let isReflectRecv = ts.isIdentifier(recv) && recv.text === 'Reflect';
-    if (!isReflectRecv && (ts.isPropertyAccessExpression(recv) || ts.isElementAccessExpression(recv))) {
-      const recvMem = extractAstMemberName(recv, scope);
-      const recvHost = unwrapAstExpr(recvMem.host, true);
-      isReflectRecv = recvMem.memberName === 'Reflect' && ts.isIdentifier(recvHost) && AST_REQUIRE_HOSTS.has(recvHost.text);
-    }
-    if (!isReflectRecv) return null;
-    const tgt = direct.arguments[0] ? unwrapAstExpr(direct.arguments[0], false) : null;
+    if (!isReflectHostPred(mem.host, scope)) return null;
+    const tgt = unwrappedCall.posArgs[0] ? unwrapAstExpr(unwrappedCall.posArgs[0], false) : null;
     if (!tgt) return null;
-    const key = direct.arguments[1] ? unwrapAstExpr(direct.arguments[1], false) : null;
+    const key = unwrappedCall.posArgs[1] ? unwrapAstExpr(unwrappedCall.posArgs[1], false) : null;
     const propName = key ? resolveAstConstString(key, scope, 'full_const') : null;
     return { host: unwrapAstExpr(tgt, true), propName, isComputedBracket: true };
   };
@@ -4532,7 +4702,13 @@ function extractAstFacts(
   }> = [];
   const callSites: AstCallSiteRecord[] = [];
   const elementAccessNodes: Array<{ node: tsType.ElementAccessExpression; scope: AstLexScope }> = [];
-  const reflectGetCallNodes: Array<{ call: tsType.CallExpression; scope: AstLexScope }> = [];
+  const reflectGetCallNodes: Array<{
+    tgt: tsType.Expression | null;
+    key: tsType.Expression | null;
+    boundTargets: string[];
+    node: tsType.CallExpression;
+    scope: AstLexScope;
+  }> = [];
   const hostMemberAccesses: Array<{ hostExpr: tsType.Expression; memberName: string | null; scope: AstLexScope }> = [];
 
   let hasComputedDynamic = false;
@@ -5594,12 +5770,15 @@ function extractAstFacts(
       ) {
         outerAccessExpr = outerAccessExpr.parent;
       }
+      const callSiteIndex = callSites.length;
       callSites.push({
         call: node,
         calleeExpr: unwrapped.calleeExpr,
         firstArgExpr: unwrapped.firstArgExpr,
         missingApplyFirstArg: unwrapped.missingApplyFirstArg,
         isIndirect: unwrapped.isIndirect,
+        posArgs: unwrapped.posArgs,
+        hasUnknownPosArgs: unwrapped.hasUnknownPosArgs,
         scope: nextScope,
         boundTargets: getScopedAssignmentTargets(node, nextScope),
         outerAccessExpr,
@@ -5609,10 +5788,6 @@ function extractAstFacts(
       const callArg1 = unwrapped.posArgs[1] ?? null;
       if (!nextInTypePos && (ts.isPropertyAccessExpression(directCallee) || ts.isElementAccessExpression(directCallee))) {
         const mem = extractAstMemberName(directCallee, nextScope);
-        const recv = unwrapAstExpr(mem.host, true);
-        if (mem.memberName === 'get' && ts.isIdentifier(recv) && recv.text === 'Reflect') {
-          reflectGetCallNodes.push({ call: node, scope: nextScope });
-        }
         protoMethodCallCandidates.push({
           calleeExpr: directCallee,
           calleeHost: mem.host,
@@ -5620,6 +5795,7 @@ function extractAstFacts(
           arg0: callArg0,
           keyArg: callArg1,
           hasUnknownArgs: unwrapped.hasUnknownPosArgs,
+          callSiteIndex,
           scope: nextScope,
         });
       } else if (!nextInTypePos) {
@@ -5630,6 +5806,7 @@ function extractAstFacts(
           arg0: callArg0,
           keyArg: callArg1,
           hasUnknownArgs: unwrapped.hasUnknownPosArgs,
+          callSiteIndex,
           scope: nextScope,
         });
       }
@@ -5640,6 +5817,22 @@ function extractAstFacts(
       const mem = extractAstMemberName(node, nextScope);
       if (mem.memberName !== null) {
         recordReflectOrProtoKeyAccess(mem.memberName, mem.host, nextScope);
+        if (PROTO_ACCESS_HOSTS.has(mem.memberName)) {
+          let wrappedMember: tsType.Node = node;
+          while (wrappedMember.parent && isAstUnescapedNodeWrapper(wrappedMember.parent)) {
+            wrappedMember = wrappedMember.parent;
+          }
+          const mParent = wrappedMember.parent;
+          const isMemberBase = Boolean(
+            mParent &&
+              (ts.isPropertyAccessExpression(mParent) || ts.isElementAccessExpression(mParent)) &&
+              mParent.expression === wrappedMember,
+          );
+          if (!isMemberBase) {
+            hasProtoHostValueRef = true;
+            if (mem.memberName === 'Reflect') hasReflectValueRef = true;
+          }
+        }
       } else if (ts.isElementAccessExpression(node)) {
         const argNorm = unwrapAstExpr(node.argumentExpression, false);
         if (!ts.isNumericLiteral(argNorm)) {
@@ -5712,6 +5905,37 @@ function extractAstFacts(
       const parent = node.parent;
       if (!isAstSafeKillBaseIdentRead(node, parent, nextInTypePos, nextScope)) {
         seedEscapedSafeKillBases.add(astVarKey(nextScope, node.text));
+      }
+      if (
+        !nextInTypePos &&
+        PROTO_ACCESS_HOSTS.has(node.text) &&
+        astVarKey(nextScope, node.text) === `global:${node.text}` &&
+        (!parent || !isAstIdentNonValueRequireOrImportKey(node, parent, nextInTypePos)) &&
+        !(
+          parent &&
+          (ts.isVariableDeclaration(parent) ||
+            ts.isEnumDeclaration(parent) ||
+            ts.isImportEqualsDeclaration(parent) ||
+            ts.isNamespaceExport(parent) ||
+            ts.isJsxClosingElement(parent) ||
+            ts.isMetaProperty(parent)) &&
+          (!('name' in parent) || parent.name === node)
+        )
+      ) {
+        let wrappedIdent: tsType.Node = node;
+        while (wrappedIdent.parent && isAstUnescapedNodeWrapper(wrappedIdent.parent)) {
+          wrappedIdent = wrappedIdent.parent;
+        }
+        const iParent = wrappedIdent.parent;
+        const isDirectMemberBase = Boolean(
+          iParent &&
+            (ts.isPropertyAccessExpression(iParent) || ts.isElementAccessExpression(iParent)) &&
+            iParent.expression === wrappedIdent,
+        );
+        if (!isDirectMemberBase) {
+          hasProtoHostValueRef = true;
+          if (node.text === 'Reflect') hasReflectValueRef = true;
+        }
       }
       const isValidDirectExportIdent = validDirectReexportIdentNodes.has(node);
       if (!isValidDirectExportIdent) {
@@ -5891,6 +6115,190 @@ function extractAstFacts(
     if (!rChanged) break;
     requireHosts = propagateAliases(seedRequireHosts, aliasEdges);
   }
+  const seedReflectHosts = new Set<string>(['global:Reflect']);
+  for (const reqH of requireHosts) {
+    seedReflectHosts.add(`prop:${reqH}\0Reflect`);
+  }
+  let reflectHostAliases = propagateAliases(seedReflectHosts, aliasEdges);
+  for (let rfPass = 0; rfPass < 4; rfPass += 1) {
+    let rfChanged = false;
+    for (const cand of memberBindCandidates) {
+      if (cand.propName === 'Reflect' && anyAstBranchMatchesSet(cand.host, cand.scope, requireHosts)) {
+        for (const t of cand.targets) {
+          if (!seedReflectHosts.has(t)) {
+            seedReflectHosts.add(t);
+            rfChanged = true;
+          }
+        }
+      }
+    }
+    if (!rfChanged) break;
+    reflectHostAliases = propagateAliases(seedReflectHosts, aliasEdges);
+  }
+  const isAliasReflectHost = (expr: tsType.Expression, scope: AstLexScope): boolean => {
+    for (const br of expandAstBranchExprs(expr)) {
+      if (ts.isIdentifier(br)) {
+        if (reflectHostAliases.has(astVarKey(scope, br.text))) return true;
+      } else if (ts.isPropertyAccessExpression(br) || ts.isElementAccessExpression(br)) {
+        const memKey = resolveAstMemberKeyPath(br, scope).key;
+        if (memKey !== null && reflectHostAliases.has(memKey)) return true;
+        const mem = extractAstMemberName(br, scope);
+        if (mem.memberName === 'Reflect') {
+          let base = unwrapAstExpr(mem.host, true);
+          for (let step = 0; step < 16; step += 1) {
+            if (anyAstBranchMatchesSet(base, scope, requireHosts)) return true;
+            if (ts.isPropertyAccessExpression(base) || ts.isElementAccessExpression(base)) {
+              const bMem = extractAstMemberName(base, scope);
+              if (bMem.memberName !== null && AST_GLOBAL_ALIAS_MEMBERS.has(bMem.memberName)) {
+                base = unwrapAstExpr(bMem.host, true);
+                continue;
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+    return false;
+  };
+  const seedReflectApply = new Set<string>();
+  const seedReflectGet = new Set<string>();
+  for (const rh of reflectHostAliases) {
+    seedReflectApply.add(`prop:${rh}\0apply`);
+    seedReflectGet.add(`prop:${rh}\0get`);
+  }
+  let reflectApplyAliases = propagateAliases(seedReflectApply, aliasEdges);
+  for (let raPass = 0; raPass < 4; raPass += 1) {
+    let raChanged = false;
+    for (const cand of memberBindCandidates) {
+      if (cand.propName === 'apply' && anyAstBranchMatchesSet(cand.host, cand.scope, reflectHostAliases)) {
+        for (const t of cand.targets) {
+          if (!seedReflectApply.has(t)) {
+            seedReflectApply.add(t);
+            raChanged = true;
+          }
+        }
+      }
+    }
+    if (!raChanged) break;
+    reflectApplyAliases = propagateAliases(seedReflectApply, aliasEdges);
+  }
+  let reflectGetMethodAliases = propagateAliases(seedReflectGet, aliasEdges);
+  for (let rgPass = 0; rgPass < 4; rgPass += 1) {
+    let rgChanged = false;
+    for (const cand of memberBindCandidates) {
+      if (cand.propName === 'get' && anyAstBranchMatchesSet(cand.host, cand.scope, reflectHostAliases)) {
+        for (const t of cand.targets) {
+          if (!seedReflectGet.has(t)) {
+            seedReflectGet.add(t);
+            rgChanged = true;
+          }
+        }
+      }
+    }
+    if (!rgChanged) break;
+    reflectGetMethodAliases = propagateAliases(seedReflectGet, aliasEdges);
+  }
+  const isAliasReflectApplyCallee = (calleeExpr: tsType.Expression, scope: AstLexScope): boolean => {
+    for (const br of expandAstBranchExprs(calleeExpr)) {
+      if (ts.isIdentifier(br)) {
+        if (reflectApplyAliases.has(astVarKey(scope, br.text))) return true;
+      } else if (ts.isPropertyAccessExpression(br) || ts.isElementAccessExpression(br)) {
+        const mem = extractAstMemberName(br, scope);
+        if (mem.memberName === 'apply' && isAliasReflectHost(mem.host, scope)) return true;
+        const memKey = resolveAstMemberKeyPath(br, scope).key;
+        if (memKey !== null && reflectApplyAliases.has(memKey)) return true;
+      }
+    }
+    return false;
+  };
+  const isAliasReflectGetCallee = (calleeExpr: tsType.Expression, scope: AstLexScope): boolean => {
+    for (const br of expandAstBranchExprs(calleeExpr)) {
+      if (ts.isIdentifier(br)) {
+        if (reflectGetMethodAliases.has(astVarKey(scope, br.text))) return true;
+      } else if (ts.isPropertyAccessExpression(br) || ts.isElementAccessExpression(br)) {
+        const mem = extractAstMemberName(br, scope);
+        if (mem.memberName === 'get' && isAliasReflectHost(mem.host, scope)) return true;
+        const memKey = resolveAstMemberKeyPath(br, scope).key;
+        if (memKey !== null && reflectGetMethodAliases.has(memKey)) return true;
+      }
+    }
+    return false;
+  };
+  const updatedCallSiteIndices = new Set<number>();
+  for (let siteIdx = 0; siteIdx < callSites.length; siteIdx += 1) {
+    const site = callSites[siteIdx]!;
+    const reUnwrapped = unwrapAstCall(site.call, site.scope, isAliasReflectApplyCallee);
+    if (
+      reUnwrapped.calleeExpr !== site.calleeExpr ||
+      reUnwrapped.firstArgExpr !== site.firstArgExpr ||
+      reUnwrapped.missingApplyFirstArg !== site.missingApplyFirstArg ||
+      reUnwrapped.hasUnknownPosArgs !== site.hasUnknownPosArgs
+    ) {
+      const updatedSite: AstCallSiteRecord = {
+        ...site,
+        calleeExpr: reUnwrapped.calleeExpr,
+        firstArgExpr: reUnwrapped.firstArgExpr,
+        missingApplyFirstArg: reUnwrapped.missingApplyFirstArg,
+        isIndirect: reUnwrapped.isIndirect,
+        posArgs: reUnwrapped.posArgs,
+        hasUnknownPosArgs: reUnwrapped.hasUnknownPosArgs,
+      };
+      callSites[siteIdx] = updatedSite;
+      updatedCallSiteIndices.add(siteIdx);
+      if (
+        updatedSite.calleeExpr.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(updatedSite.calleeExpr) && updatedSite.calleeExpr.text === 'require')
+      ) {
+        seedModuleBindingsFromCallSite(updatedSite);
+      }
+    }
+  }
+  if (updatedCallSiteIndices.size > 0) {
+    for (let j = 0; j < protoMethodCallCandidates.length; j += 1) {
+      const pCand = protoMethodCallCandidates[j]!;
+      if (!updatedCallSiteIndices.has(pCand.callSiteIndex)) continue;
+      const updatedSite = callSites[pCand.callSiteIndex]!;
+      const uCallee = updatedSite.calleeExpr;
+      const uArg0 = updatedSite.posArgs[0] ?? null;
+      const uArg1 = updatedSite.posArgs[1] ?? null;
+      if (ts.isPropertyAccessExpression(uCallee) || ts.isElementAccessExpression(uCallee)) {
+        const mem = extractAstMemberName(uCallee, updatedSite.scope);
+        protoMethodCallCandidates[j] = {
+          calleeExpr: uCallee,
+          calleeHost: mem.host,
+          methodName: mem.memberName,
+          arg0: uArg0,
+          keyArg: uArg1,
+          hasUnknownArgs: updatedSite.hasUnknownPosArgs,
+          callSiteIndex: pCand.callSiteIndex,
+          scope: updatedSite.scope,
+        };
+      } else {
+        protoMethodCallCandidates[j] = {
+          calleeExpr: uCallee,
+          calleeHost: null,
+          methodName: null,
+          arg0: uArg0,
+          keyArg: uArg1,
+          hasUnknownArgs: updatedSite.hasUnknownPosArgs,
+          callSiteIndex: pCand.callSiteIndex,
+          scope: updatedSite.scope,
+        };
+      }
+    }
+  }
+  for (const site of callSites) {
+    if (isAliasReflectGetCallee(site.calleeExpr, site.scope)) {
+      reflectGetCallNodes.push({
+        tgt: site.posArgs[0] ?? null,
+        key: site.posArgs[1] ?? null,
+        boundTargets: site.boundTargets,
+        node: site.call,
+        scope: site.scope,
+      });
+    }
+  }
   let nodeModuleNamespaces = propagateAliases(seedNodeModuleNs, aliasEdges);
   for (const access of hostMemberAccesses) {
     if (anyAstBranchMatchesSet(access.hostExpr, access.scope, requireHosts)) {
@@ -5922,33 +6330,33 @@ function extractAstFacts(
   }
 
   const prePropagatedMeterNs = propagateAliases(seedMeterNs, aliasEdges);
-  for (const { call: rgCall, scope: rgScope } of reflectGetCallNodes) {
-    const tgt = rgCall.arguments[0] ? unwrapAstExpr(rgCall.arguments[0], false) : null;
-    const key = rgCall.arguments[1] ? unwrapAstExpr(rgCall.arguments[1], false) : null;
-    const resolvedKey = key ? resolveAstConstString(key, rgScope, 'full_const') : null;
-    const isReqHostTgt = Boolean(tgt && anyAstBranchMatchesSet(tgt, rgScope, requireHosts));
+  for (const rgEntry of reflectGetCallNodes) {
+    const tgt = rgEntry.tgt ? unwrapAstExpr(rgEntry.tgt, false) : null;
+    const key = rgEntry.key ? unwrapAstExpr(rgEntry.key, false) : null;
+    const resolvedKey = key ? resolveAstConstString(key, rgEntry.scope, 'full_const') : null;
+    const isReqHostTgt = Boolean(tgt && anyAstBranchMatchesSet(tgt, rgEntry.scope, requireHosts));
     if (isReqHostTgt) {
       if (resolvedKey === 'require') {
         hasBareRequire = true;
-        for (const t of getScopedAssignmentTargets(rgCall, rgScope)) seedRequire.add(t);
+        for (const t of rgEntry.boundTargets) seedRequire.add(t);
       } else if (resolvedKey === 'createRequire') {
         hasBareRequire = true;
-        for (const t of getScopedAssignmentTargets(rgCall, rgScope)) seedCreateRequire.add(t);
+        for (const t of rgEntry.boundTargets) seedCreateRequire.add(t);
       } else if (resolvedKey === 'fetch') {
-        for (const t of getScopedAssignmentTargets(rgCall, rgScope)) seedFetchAtNode(t, rgCall);
+        for (const t of rgEntry.boundTargets) seedFetchAtNode(t, rgEntry.node);
       } else if (resolvedKey === 'WebSocket' || resolvedKey === 'XMLHttpRequest') {
         stringAndIdentMatches.add(resolvedKey);
       }
     }
-    if (tgt && anyAstBranchMatchesSet(tgt, rgScope, nodeModuleNamespaces) && resolvedKey === 'createRequire') {
+    if (tgt && anyAstBranchMatchesSet(tgt, rgEntry.scope, nodeModuleNamespaces) && resolvedKey === 'createRequire') {
       hasBareRequire = true;
-      for (const t of getScopedAssignmentTargets(rgCall, rgScope)) seedCreateRequire.add(t);
+      for (const t of rgEntry.boundTargets) seedCreateRequire.add(t);
     }
-    if (tgt && anyAstBranchMatchesSet(tgt, rgScope, prePropagatedMeterNs) && resolvedKey === 'metered') {
-      for (const t of getScopedAssignmentTargets(rgCall, rgScope)) seedMeterAliases.add(t);
+    if (tgt && anyAstBranchMatchesSet(tgt, rgEntry.scope, prePropagatedMeterNs) && resolvedKey === 'metered') {
+      for (const t of rgEntry.boundTargets) seedMeterAliases.add(t);
     }
     if (resolvedKey === 'execute') {
-      for (const t of getScopedAssignmentTargets(rgCall, rgScope)) seedExecuteAliases.add(t);
+      for (const t of rgEntry.boundTargets) seedExecuteAliases.add(t);
     }
   }
 
@@ -6154,19 +6562,34 @@ function extractAstFacts(
         break;
       }
     }
+    if (hasReflectValueRef && protoSetHostCandidates.length > 0) {
+      hasAnyMemberOrObjectMutation = true;
+    }
+    if (hasReflectValueRef && protoGetHostCandidates.length > 0) {
+      hasReflectiveReadCall = true;
+    }
     for (const cand of protoMethodCallCandidates) {
       let matched = false;
       let isMutatingMethod = false;
       let isReflectiveReadMethod = false;
       let isAlwaysProtoMethod = false;
+      let matchedReceiverHost: tsType.Expression | null = null;
+      let matchedReceiverMethodName: string | null = null;
       for (const br of expandAstBranchExprs(cand.calleeExpr)) {
         if (ts.isPropertyAccessExpression(br) || ts.isElementAccessExpression(br)) {
           const brMem = extractAstMemberName(br, cand.scope);
+          const isReflectValueAccess =
+            hasReflectValueRef && (brMem.memberName === 'get' || brMem.memberName === 'set');
           if (
-            isProtoHostResolved(brMem.host, cand.scope) &&
-            (brMem.memberName === null || PROTO_REFLECT_OR_OBJECT_METHODS.has(brMem.memberName))
+            (isProtoHostResolved(brMem.host, cand.scope) &&
+              (brMem.memberName === null || PROTO_REFLECT_OR_OBJECT_METHODS.has(brMem.memberName))) ||
+            isReflectValueAccess
           ) {
             matched = true;
+            if (brMem.memberName !== null && PROTO_RECEIVER_ANNEX_B_METHODS.has(brMem.memberName)) {
+              matchedReceiverHost = brMem.host;
+              matchedReceiverMethodName = brMem.memberName;
+            }
             if (brMem.memberName === null || PROTO_MUTATING_METHODS.has(brMem.memberName)) {
               isMutatingMethod = true;
             }
@@ -6209,8 +6632,22 @@ function extractAstFacts(
       if (!hasProtoMutation) {
         if (isAlwaysProtoMethod) {
           hasProtoMutation = true;
+        } else if (
+          matchedReceiverHost !== null &&
+          matchedReceiverMethodName !== null &&
+          PROTO_RECEIVER_ANNEX_B_METHODS.has(matchedReceiverMethodName) &&
+          isProtoHostResolved(matchedReceiverHost, cand.scope)
+        ) {
+          if (!cand.arg0) {
+            hasProtoMutation = true;
+          } else {
+            const propVal = resolveAstConstString(cand.arg0, cand.scope, 'full_const');
+            if (propVal === null || propVal === 'prototype' || propVal === '__proto__') {
+              hasProtoMutation = true;
+            }
+          }
         } else if (cand.arg0 && isProtoHostResolved(cand.arg0, cand.scope)) {
-          if (cand.methodName === 'getOwnPropertyDescriptors' || !cand.keyArg) {
+          if (!cand.keyArg) {
             hasProtoMutation = true;
           } else {
             const keyVal = resolveAstConstString(cand.keyArg, cand.scope, 'full_const');
@@ -6220,6 +6657,14 @@ function extractAstFacts(
           }
         }
       }
+    }
+    if (
+      !hasProtoMutation &&
+      hasProtoHostValueRef &&
+      (protoElementAccessCandidates.length > 0 || protoDestructureCandidates.length > 0)
+    ) {
+      hasProtoMutation = true;
+      hasAnyMemberOrObjectMutation = true;
     }
     if (!hasProtoMutation) {
       for (const cand of protoElementAccessCandidates) {
@@ -6401,18 +6846,18 @@ function extractAstFacts(
       hasNonDirectAgentComputedAccess = true;
     }
   }
-  for (const { call: rgCall, scope: rgScope } of reflectGetCallNodes) {
-    const tgt = rgCall.arguments[0] ? unwrapAstExpr(rgCall.arguments[0], false) : null;
-    const key = rgCall.arguments[1] ? unwrapAstExpr(rgCall.arguments[1], false) : null;
-    const resolvedKey = key ? resolveAstConstString(key, rgScope, 'full_const') : null;
+  for (const rgEntry of reflectGetCallNodes) {
+    const tgt = rgEntry.tgt ? unwrapAstExpr(rgEntry.tgt, false) : null;
+    const key = rgEntry.key ? unwrapAstExpr(rgEntry.key, false) : null;
+    const resolvedKey = key ? resolveAstConstString(key, rgEntry.scope, 'full_const') : null;
     const isDirectLit = Boolean(key && (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)));
-    if (!isDirectLit && tgt && anyAstBranchMatchesSet(tgt, rgScope, agentBindings)) {
+    if (!isDirectLit && tgt && anyAstBranchMatchesSet(tgt, rgEntry.scope, agentBindings)) {
       hasNonDirectAgentComputedAccess = true;
     }
-    if (tgt && anyAstBranchMatchesSet(tgt, rgScope, requireHosts) && (resolvedKey === 'require' || resolvedKey === 'createRequire')) {
+    if (tgt && anyAstBranchMatchesSet(tgt, rgEntry.scope, requireHosts) && (resolvedKey === 'require' || resolvedKey === 'createRequire')) {
       hasBareRequire = true;
     }
-    if (tgt && anyAstBranchMatchesSet(tgt, rgScope, nodeModuleNamespaces) && resolvedKey === 'createRequire') {
+    if (tgt && anyAstBranchMatchesSet(tgt, rgEntry.scope, nodeModuleNamespaces) && resolvedKey === 'createRequire') {
       hasBareRequire = true;
     }
   }
@@ -6473,17 +6918,17 @@ function extractAstFacts(
               callsFetch = true;
             }
           }
-          if (mem.memberName === 'get' && ts.isIdentifier(h) && h.text === 'Reflect') {
-            const tgt = site.call.arguments[0] ? unwrapAstExpr(site.call.arguments[0], false) : null;
-            const key = site.call.arguments[1] ? unwrapAstExpr(site.call.arguments[1], false) : null;
+          if (mem.memberName === 'get' && isAliasReflectHost(h, site.scope)) {
+            const tgt = site.posArgs[0] ? unwrapAstExpr(site.posArgs[0], false) : null;
+            const key = site.posArgs[1] ? unwrapAstExpr(site.posArgs[1], false) : null;
             const keyStr = key ? resolveAstConstString(key, site.scope, 'full_const') : null;
-            if (tgt && anyAstBranchMatchesSet(tgt, site.scope, requireHosts) && keyStr === 'require') {
+            if (tgt && anyAstBranchMatchesSet(tgt, site.scope, requireHosts) && (keyStr === 'require' || keyStr === 'createRequire')) {
               hasBareRequire = true;
             }
           }
         }
       } else if (ts.isCallExpression(brCallee)) {
-        const innerUnwrapped = unwrapAstCall(brCallee, site.scope);
+        const innerUnwrapped = unwrapAstCall(brCallee, site.scope, isAliasReflectApplyCallee);
         let isCrCallee = false;
         if (ts.isIdentifier(innerUnwrapped.calleeExpr) && createRequireAliases.has(astVarKey(site.scope, innerUnwrapped.calleeExpr.text))) {
           isCrCallee = true;
@@ -6496,7 +6941,12 @@ function extractAstFacts(
             }
           }
         } else {
-          const innerRg = extractReflectGetTargetAndKey(innerUnwrapped.calleeExpr, site.scope);
+          const innerRg = extractReflectGetTargetAndKey(
+            innerUnwrapped.calleeExpr,
+            site.scope,
+            isAliasReflectHost,
+            isAliasReflectApplyCallee,
+          );
           if (
             innerRg &&
             innerRg.propName === 'createRequire' &&
@@ -6511,7 +6961,12 @@ function extractAstFacts(
           dynKind = 'require';
           isIndirectRequire = true;
         } else {
-          const rg = extractReflectGetTargetAndKey(brCallee, site.scope);
+          const rg = extractReflectGetTargetAndKey(
+            brCallee,
+            site.scope,
+            isAliasReflectHost,
+            isAliasReflectApplyCallee,
+          );
           if (rg) {
             if (anyAstBranchMatchesSet(rg.host, site.scope, requireHosts)) {
               if (rg.propName === 'require') {
@@ -7557,8 +8012,26 @@ function collectPatternIdents(
 
 const SKIP_DECL_STOP_KW = new Set(['const', 'let', 'var', 'function', 'class', 'return', 'if', 'for', 'while', 'export', 'import']);
 const LINE_CONT_PUNCTS = new Set(['+', '=', '(', '&&', '||', '??', '?', ':']);
+const LINE_ASSIGN_PUNCTS = [
+  '+=',
+  '-=',
+  '*=',
+  '/=',
+  '%=',
+  '**=',
+  '<<=',
+  '>>=',
+  '>>>=',
+  '&=',
+  '|=',
+  '^=',
+  '&&=',
+  '||=',
+  '??=',
+] as const;
 const LINE_PREV_CONT_PUNCTS = new Set([
   ...LINE_CONT_PUNCTS,
+  ...LINE_ASSIGN_PUNCTS,
   '-',
   '*',
   '/',
@@ -7584,8 +8057,26 @@ const LINE_PREV_CONT_PUNCTS = new Set([
   '=>',
   '[',
 ]);
-const LINE_PREV_CONT_KEYWORDS = new Set(['new', 'typeof', 'void', 'delete', 'await', 'yield', 'in', 'instanceof']);
+const LINE_PREV_CONT_KEYWORDS = new Set([
+  'new',
+  'typeof',
+  'void',
+  'delete',
+  'await',
+  'yield',
+  'in',
+  'instanceof',
+  'as',
+  'satisfies',
+  'extends',
+  'function',
+  'class',
+]);
 const LINE_NEXT_CONT_PUNCTS = new Set([
+  ...LINE_ASSIGN_PUNCTS,
+  '=',
+  '(',
+  '[',
   '+',
   '-',
   '*',
@@ -7614,8 +8105,26 @@ const LINE_NEXT_CONT_PUNCTS = new Set([
   '>>',
   '>>>',
 ]);
-const LINE_NEXT_CONT_KEYWORDS = new Set(['as', 'satisfies', 'in', 'instanceof']);
-const NON_PREFIX_BANG_PREV_PUNCTS = new Set([')', ']', '}', '!', '++', '--']);
+const LINE_NEXT_CONT_KEYWORDS = new Set(['as', 'satisfies', 'in', 'instanceof', 'extends']);
+const NON_PREFIX_EXPR_END_PUNCTS = new Set([')', ']', '}', '!', '++', '--']);
+const isDeclExprEndToken = (tok: Token, tokIsMemberIdent: boolean): boolean => {
+  if (
+    tok.kind === 'number' ||
+    tok.kind === 'string' ||
+    tok.kind === 'regex' ||
+    tok.kind === 'template' ||
+    tok.kind === 'template_tail'
+  ) {
+    return true;
+  }
+  if (tok.kind === 'ident') {
+    return (
+      tokIsMemberIdent ||
+      (!LINE_PREV_CONT_KEYWORDS.has(tok.value) && !SKIP_DECL_STOP_KW.has(tok.value))
+    );
+  }
+  return tok.kind === 'punct' && NON_PREFIX_EXPR_END_PUNCTS.has(tok.value);
+};
 
 function findTypeDeclStop(
   tokens: readonly Token[],
@@ -7707,46 +8216,52 @@ function findDeclInitEnd(
   let td = 0;
   let lastLine = tokens[exprStart - 1]?.line ?? (tokens[exprStart]?.line ?? 1);
   let prevTok: Token | undefined = tokens[exprStart - 1];
+  let prevBangWasPrefix = false;
+  let prevTokIsMemberIdent = false;
+  let prev2Tok: Token | undefined = exprStart >= 2 ? tokens[exprStart - 2] : undefined;
+  let prev2WasMemberIdent = false;
+  let inFnOrClassHeader = false;
+  let fnOrClassBodyCd = -1;
   let steps = 0;
   while (q < tokens.length && steps < maxSteps) {
     steps += 1;
     const cur = tokens[q]!;
     const prevWasAdjacent = q > 0 && tokens[q - 1] === prevTok;
-    const prevPrevTok = prevWasAdjacent && q >= 2 ? tokens[q - 2] : undefined;
-    const prevIsMemberAccess = prevWasAdjacent && isMemberPrev(tokens, q - 1);
+    const prevPrevTok = prevWasAdjacent && q >= 2 ? tokens[q - 2] : prev2Tok;
+    const prevIsMemberAccess = prevTokIsMemberIdent;
     const prevIsJsxTagGt =
       prevTok?.kind === 'punct' &&
       prevTok.value === '>' &&
       prevPrevTok?.kind === 'punct' &&
       prevPrevTok.value === '/';
-    const prevIsPostfixBang =
+    const prevIsPostfixIncDec =
       prevTok?.kind === 'punct' &&
-      prevTok.value === '!' &&
-      (!prevWasAdjacent ||
-        !prevPrevTok ||
-        prevPrevTok.kind === 'number' ||
-        prevPrevTok.kind === 'string' ||
-        prevPrevTok.kind === 'regex' ||
-        prevPrevTok.kind === 'template_tail' ||
-        (prevPrevTok.kind === 'ident' &&
-          !LINE_PREV_CONT_KEYWORDS.has(prevPrevTok.value) &&
-          !SKIP_DECL_STOP_KW.has(prevPrevTok.value)) ||
-        (prevPrevTok.kind === 'punct' && NON_PREFIX_BANG_PREV_PUNCTS.has(prevPrevTok.value)));
+      (prevTok.value === '++' || prevTok.value === '--') &&
+      (!prevWasAdjacent || !prevPrevTok || isDeclExprEndToken(prevPrevTok, prev2WasMemberIdent));
     const prevCont =
       (prevTok?.kind === 'punct' &&
         ((LINE_PREV_CONT_PUNCTS.has(prevTok.value) && !prevIsJsxTagGt) ||
-          (prevTok.value === '!' && !prevIsPostfixBang))) ||
+          (prevTok.value === '!' && prevBangWasPrefix) ||
+          ((prevTok.value === '++' || prevTok.value === '--') && !prevIsPostfixIncDec))) ||
       (prevTok?.kind === 'ident' && LINE_PREV_CONT_KEYWORDS.has(prevTok.value) && !prevIsMemberAccess);
     if (pd === 0 && bd === 0 && cd === 0 && td === 0 && cur.line > lastLine) {
+      const isStopKw = cur.kind === 'ident' && SKIP_DECL_STOP_KW.has(cur.value);
+      const headerCont = inFnOrClassHeader && !isStopKw;
       const nextCont =
+        cur.kind === 'template' ||
+        cur.kind === 'template_head' ||
         (cur.kind === 'punct' && LINE_NEXT_CONT_PUNCTS.has(cur.value)) ||
         (cur.kind === 'ident' && LINE_NEXT_CONT_KEYWORDS.has(cur.value));
-      if (!prevCont && !nextCont) return { endIdx: q, truncated: false };
+      if (!prevCont && !nextCont && !headerCont) return { endIdx: q, truncated: false };
     }
     if (cur.kind === 'template_head') {
       if (templateTail) {
         const tl = templateTail[q] ?? -1;
         if (tl > q) {
+          prev2Tok = undefined;
+          prev2WasMemberIdent = false;
+          prevBangWasPrefix = false;
+          prevTokIsMemberIdent = false;
           prevTok = tokens[tl]!;
           lastLine = prevTok.line;
           q = tl + 1;
@@ -7761,6 +8276,10 @@ function findDeclInitEnd(
         if (delims) {
           const cl = delims.paren[q] ?? -1;
           if (cl > q) {
+            prev2Tok = undefined;
+            prev2WasMemberIdent = false;
+            prevBangWasPrefix = false;
+            prevTokIsMemberIdent = false;
             prevTok = tokens[cl]!;
             lastLine = prevTok.line;
             q = cl + 1;
@@ -7775,6 +8294,10 @@ function findDeclInitEnd(
         if (delims) {
           const cl = delims.bracket[q] ?? -1;
           if (cl > q) {
+            prev2Tok = undefined;
+            prev2WasMemberIdent = false;
+            prevBangWasPrefix = false;
+            prevTokIsMemberIdent = false;
             prevTok = tokens[cl]!;
             lastLine = prevTok.line;
             q = cl + 1;
@@ -7786,9 +8309,24 @@ function findDeclInitEnd(
         if (bd === 0 && pd === 0 && cd === 0 && td === 0) return { endIdx: q, truncated: false };
         if (bd > 0) bd -= 1;
       } else if (cur.value === '{') {
+        const isFnOrClassBodyOpen =
+          inFnOrClassHeader &&
+          pd === 0 &&
+          bd === 0 &&
+          cd === 0 &&
+          td === 0 &&
+          !(
+            prevTok?.kind === 'punct' &&
+            (prevTok.value === ':' || prevTok.value === '=>' || prevTok.value === '|' || prevTok.value === '&')
+          );
         if (delims) {
           const cl = delims.brace[q] ?? -1;
           if (cl > q) {
+            if (isFnOrClassBodyOpen) inFnOrClassHeader = false;
+            prev2Tok = undefined;
+            prev2WasMemberIdent = false;
+            prevBangWasPrefix = false;
+            prevTokIsMemberIdent = false;
             prevTok = tokens[cl]!;
             lastLine = prevTok.line;
             q = cl + 1;
@@ -7796,9 +8334,16 @@ function findDeclInitEnd(
           }
         }
         cd += 1;
+        if (isFnOrClassBodyOpen) fnOrClassBodyCd = cd;
       } else if (cur.value === '}') {
         if (cd === 0 && pd === 0 && bd === 0 && td === 0) return { endIdx: q, truncated: false };
-        if (cd > 0) cd -= 1;
+        if (cd > 0) {
+          if (fnOrClassBodyCd === cd) {
+            inFnOrClassHeader = false;
+            fnOrClassBodyCd = -1;
+          }
+          cd -= 1;
+        }
       } else if (pd === 0 && bd === 0 && cd === 0 && td === 0 && (cur.value === ',' || cur.value === ';')) {
         return { endIdx: q, truncated: false };
       }
@@ -7821,8 +8366,32 @@ function findDeclInitEnd(
       )
     ) {
       return { endIdx: q, truncated: false };
+    } else if (
+      pd === 0 &&
+      bd === 0 &&
+      cd === 0 &&
+      td === 0 &&
+      cur.kind === 'ident' &&
+      (cur.value === 'function' || cur.value === 'class') &&
+      !isMemberPrev(tokens, q)
+    ) {
+      inFnOrClassHeader = true;
     }
+    const curBangWasPrefix =
+      cur.kind === 'punct' &&
+      cur.value === '!' &&
+      (prevTok?.kind === 'punct' && prevTok.value === '!'
+        ? prevBangWasPrefix
+        : !prevTok || !isDeclExprEndToken(prevTok, prevTokIsMemberIdent));
+    const curIsMemberIdent =
+      cur.kind === 'ident' &&
+      prevTok?.kind === 'punct' &&
+      (prevTok.value === '.' || prevTok.value === '?.');
+    prev2Tok = prevTok;
+    prev2WasMemberIdent = prevTokIsMemberIdent;
     prevTok = cur;
+    prevTokIsMemberIdent = curIsMemberIdent;
+    prevBangWasPrefix = curBangWasPrefix;
     lastLine = cur.line;
     q += 1;
   }
@@ -15205,6 +15774,146 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(
       memberVyViolations(
         "let read = globalThis.fetch;\nconst myMap = new Map<string, any>();\nconst x = myMap.get('k');\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toEqual([]);
+    // Platform PO Round 8 regressions (R8-BF-1..R8-BF-3): non-id/inline Reflect/Object hosts & Annex B accessors, chained Reflect.apply / meta-call, multiline headers & chained !
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\n(() => Reflect)().set(globalThis, 'cache', { fetch: read });\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\n(globalThis as any).__defineGetter__('cache', () => ({ fetch: read }));\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "import { cache } from './cache';\nlet read = globalThis.fetch;\nlet p = 'proto';\np += 'type';\nconst proto: any = (() => Reflect)().get(Object, p);\nproto.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "import { cache } from './cache';\nlet read = globalThis.fetch;\nlet p = '__pro';\np += 'to__';\nconst getter = ({} as any).__lookupGetter__(p);\nconst proto: any = getter.call(Object);\nproto.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "import { cache } from './cache';\nlet read = globalThis.fetch;\nlet p = 'proto';\np += 'type';\n((() => Object)())[p].fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nglobalThis.Reflect.apply(Object.assign, null, [globalThis, { cache: { fetch: read } }]);\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nglobalThis['Reflect']['apply'](Object.assign, null, [globalThis, { cache: { fetch: read } }]);\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst R = Reflect;\nR.apply(Object.assign, null, [globalThis, { cache: { fetch: read } }]);\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst ra = Reflect.apply;\nra(Object.assign, null, [globalThis, { cache: { fetch: read } }]);\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nFunction.prototype.call.call(Object.assign, null, globalThis, { cache: { fetch: read } });\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nFunction.prototype.apply.call(Object.assign, null, [globalThis, { cache: { fetch: read } }]);\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(memberVyViolations("const R = Reflect;\nR.apply(execute, null, ['x']);")).toContain(
+      'runs commands directly',
+    );
+    expect(memberVyViolations("const R = Reflect;\nR.apply(require, null, ['node:https']);")).toContain(
+      'calls the network directly',
+    );
+    expect(meteredNotes("const R = Reflect;\nR.apply(metered, null, ['notes.secret', fn]);")).toEqual([
+      'notes.secret',
+    ]);
+    expect(
+      workspaceAdapterLeakViolations(
+        "const x = fn\n  (arg), a = 'gen', b = a + 'erate' + 'NoteSum' + 'maryText';\nexport { b };",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const x = obj\n  ['k'], a = 'gen', b = a + 'erate' + 'NoteSum' + 'maryText';\nexport { b };",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const x = tag\n  `hi`, a = 'gen', b = a + 'erate' + 'NoteSum' + 'maryText';\nexport { b };",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const x = !!\n  y, a = 'gen', b = a + 'erate' + 'NoteSum' + 'maryText';\nexport { b };",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const x = y as\n  string, a = 'gen', b = a + 'erate' + 'NoteSum' + 'maryText';\nexport { b };",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const f = function foo()\n  {\n    return 1;\n  }, a = 'gen', b = a + 'erate' + 'NoteSum' + 'maryText';\nexport { b };",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const c = class Foo\n  extends Bar\n  {\n  }, a = 'gen', b = a + 'erate' + 'NoteSum' + 'maryText';\nexport { b };",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "let y = 1;\nconst x = y\n  += 2, a = 'gen', b = a + 'erate' + 'NoteSum' + 'maryText';\nexport { b };",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const x = foo!!\nconst a = 'safe';\nexport { a };",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toEqual([]);
+    expect(
+      workspaceAdapterLeakViolations(
+        "const a = 'x'\nconst b = 'y';\nexport { b };",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toEqual([]);
+    expect(
+      memberVyViolations(
+        "import { cache } from './cache';\nlet read = globalThis.fetch;\nconst keys = Object.keys(obj);\nconst items = Array.isArray(keys) ? keys : [keys];\nconst idx = Math.floor(Math.random() * 2);\nconst picked = items[idx];\nread = cache.fetch;\nread(picked);",
       ),
     ).toEqual([]);
     expect(
