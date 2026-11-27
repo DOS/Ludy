@@ -456,7 +456,7 @@ function githubFailure(error: unknown): DomainError {
 }
 
 function githubOAuthStateHash(stateToken: string, projectId: string): string {
-  return `sha256:${createHmac('sha256', projectId).update(stateToken, 'utf8').digest('hex')}`;
+  return `sha256:${createHmac('sha256', projectId.toLowerCase()).update(stateToken, 'utf8').digest('hex')}`;
 }
 
 // A meeting platform's refusal or failure during the connect step, as the answer the user sees: a fixed text, never the platform's words (the adapter's error carries only a short code).

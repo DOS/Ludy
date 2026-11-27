@@ -1341,15 +1341,28 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     );
     expect(bound.status).toBe(200);
 
-    // Create task & custom column to verify B2 ON DELETE SET NULL without FK error.
-    const fallbackCol = await runtime.execute<{ column: { id: string } }>(
-      'projects.column.create',
-      { projectId: proj1a, name: 'Fallback Lane', taskStatus: 'todo' },
+    // Create task & custom columns (init defaults first so column.create and status validation succeed) to verify B2 ON DELETE SET NULL without FK error.
+    const defaults = await runtime.execute<{ columns: Array<{ id: string; taskStatus: string }> }>(
+      'projects.column.init_defaults',
+      { projectId: proj1a, language: 'en' },
       { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
     );
-    const customCol = await runtime.execute<{ column: { id: string } }>(
+    const defProg = defaults.columns.find((c) => c.taskStatus === 'in_progress')!;
+    const defRev = defaults.columns.find((c) => c.taskStatus === 'in_review')!;
+    const defDone = defaults.columns.find((c) => c.taskStatus === 'done')!;
+    const colProg = await runtime.execute<{ column: { id: string } }>(
       'projects.column.create',
-      { projectId: proj1a, name: 'QA Staging', taskStatus: 'in_progress' },
+      { projectId: proj1a, name: 'QA Progress', taskStatus: 'in_progress' },
+      { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
+    );
+    const colRev = await runtime.execute<{ column: { id: string } }>(
+      'projects.column.create',
+      { projectId: proj1a, name: 'QA Review', taskStatus: 'in_review' },
+      { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
+    );
+    const colDone = await runtime.execute<{ column: { id: string } }>(
+      'projects.column.create',
+      { projectId: proj1a, name: 'QA Done', taskStatus: 'done' },
       { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
     );
     const saveCols = await rpc(
@@ -1360,9 +1373,9 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
         projectId: proj1a,
         channelConnectionId: String(connAuto.body?.connectionId ?? ''),
         githubEnabled: true,
-        inboundColInProgress: customCol.column.id,
-        inboundColInReview: customCol.column.id,
-        inboundColDone: customCol.column.id,
+        inboundColInProgress: colProg.column.id,
+        inboundColInReview: colRev.column.id,
+        inboundColDone: colDone.column.id,
         idempotencyKey: randomUUID(),
       },
       orgOne.slug,
@@ -1452,10 +1465,20 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
       FROM ludy_projects.github_pat_org_bindings(${orgTwo.orgId}::uuid, ${patConnIdScope}::uuid, 1001::bigint)`.execute(workerDb);
     expect(wrongOrgPatBindings).toEqual([]);
 
-    // B2: Delete custom column -> inbound_col_* columns become NULL cleanly; delete task -> github_sync_delivery.task_id becomes NULL cleanly.
+    // B2: Delete custom columns -> inbound_col_* columns become NULL cleanly; delete kernel.task -> github_sync_delivery.task_id becomes NULL cleanly.
     await runtime.execute(
       'projects.column.delete',
-      { projectId: proj1a, columnId: customCol.column.id, fallbackColumnId: fallbackCol.column.id },
+      { projectId: proj1a, columnId: colProg.column.id, fallbackColumnId: defProg.id },
+      { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
+    );
+    await runtime.execute(
+      'projects.column.delete',
+      { projectId: proj1a, columnId: colRev.column.id, fallbackColumnId: defRev.id },
+      { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
+    );
+    await runtime.execute(
+      'projects.column.delete',
+      { projectId: proj1a, columnId: colDone.column.id, fallbackColumnId: defDone.id },
       { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
     );
     const colsAfterDel = await rows<{ inbound_col_in_progress: string | null; inbound_col_in_review: string | null; inbound_col_done: string | null }>(
@@ -1464,11 +1487,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     );
     expect(colsAfterDel[0]).toEqual({ inbound_col_in_progress: null, inbound_col_in_review: null, inbound_col_done: null });
 
-    await runtime.execute(
-      'projects.task.remove',
-      { projectId: proj1a, taskId: taskSec },
-      { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
-    );
+    await admin((c) => c.query('DELETE FROM ludy_kernel.task WHERE org_id = $1 AND id = $2', [orgOne.orgId, taskSec]));
     const delivAfterTaskDel = await rows<{ task_id: string | null }>(
       'SELECT task_id FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND project_id = $2',
       [orgOne.orgId, proj1a],
