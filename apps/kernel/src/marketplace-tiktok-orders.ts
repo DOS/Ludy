@@ -152,6 +152,7 @@ interface RawLine {
   unitPrice: string;
   amount: string;
   stage: MarketplaceOrderStage;
+  lostParcel: boolean;
 }
 
 interface RawOrder {
@@ -198,10 +199,11 @@ function parseOrder(entry: unknown, seenLines: Set<string>, latestMs: number): R
     // THE STOCK RULE (accepted by the Accounting PO on #2524): a line the SYSTEM cancelled after the carrier had collected it is a parcel lost in transit (TikTok cancels after about seven days without
     // tracking progress). Its goods are gone, not back, so it stays `shipped` (stock stays out; a write-off is a person's bookkeeping) and never becomes `cancelled`, which would put it back into stock.
     let stage = TIKTOK_ORDER_STAGE[display]!;
-    if (stage === 'cancelled' && cancelUser === 'SYSTEM' && collected !== null) stage = 'shipped';
+    const lostParcel = stage === 'cancelled' && cancelUser === 'SYSTEM' && collected !== null;
+    if (lostParcel) stage = 'shipped';
     const product = typeof l.product_name === 'string' ? l.product_name : '';
     const variant = typeof l.sku_name === 'string' && l.sku_name !== '' ? ` - ${l.sku_name}` : '';
-    return { id: lineId, skuId, sku, itemName: cleanLabel(`${product}${variant}`, 300), unitPrice: price, amount: paid, stage };
+    return { id: lineId, skuId, sku, itemName: cleanLabel(`${product}${variant}`, 300), unitPrice: price, amount: paid, stage, lostParcel };
   });
   return { id, updatedAt, createdDay: vietnamDay(created), shippedDay: shipped === null && collected === null ? null : vietnamDay(shipped ?? collected!), deliveredDay: delivered === null ? null : vietnamDay(delivered), lines };
 }
@@ -363,7 +365,15 @@ export function tiktokMarketplace(options: TiktokOptions, caller: TiktokCaller =
           shippedAt: shipped ? order.shippedDay : null,
           deliveredAt: delivered ? order.deliveredDay : null,
           stage,
-          lines: own.map((l): MarketplaceOrderLine => ({ lineKey: l.id, sku: l.sku, itemName: l.itemName, quantity: '1', unitPrice: l.unitPrice, amount: toMoney(money(l.amount)) })),
+          lines: own.map((l): MarketplaceOrderLine => ({
+            lineKey: l.id,
+            sku: l.sku,
+            itemName: l.itemName,
+            quantity: '1',
+            unitPrice: l.unitPrice,
+            amount: toMoney(money(l.amount)),
+            ...(l.lostParcel ? { lostParcel: true } : {}),
+          })),
         });
       }
     }
@@ -427,7 +437,10 @@ export function tiktokMarketplace(options: TiktokOptions, caller: TiktokCaller =
           const line = order.lines.find((l) => l.id === lineId);
           // A return that names a line the order does not hold is not TikTok's answer.
           if (!line) throw notRecognized();
-          if (line.stage !== 'cancelled') line.stage = 'returned';
+          if (line.stage !== 'cancelled') {
+            line.stage = 'returned';
+            line.lostParcel = false;
+          }
         }
       }
       // Returns held back: their window resumes a second before the first held one (those taken at that second are read again; the confirm step dedupes), never earlier than where it started.

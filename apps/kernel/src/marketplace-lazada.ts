@@ -91,6 +91,9 @@ export const LAZADA_ITEM_STAGE: Readonly<Record<string, MarketplaceOrderStage>> 
   shipped_back_success: 'returned',
 };
 
+// Goods lost, damaged or scrapped in 3PL transit (#4265): stays `shipped` and carries the lost-parcel flag until a later status brings goods back.
+export const LAZADA_LOST_PARCEL_STATUSES: ReadonlySet<string> = new Set(['lost', 'lost_by_3pl', 'damaged_by_3pl', 'package_scrapped']);
+
 // The sealed secret of a connection: {"appKey": "...", "appSecret": "...", "accessToken": "..."} (more fields join in the token slice and are ignored here). A malformed one is refused without echoing it.
 export interface LazadaCredential {
   appKey: string;
@@ -311,7 +314,19 @@ export function lazadaMarketplace(options: LazadaOptions, caller: ReturnType<typ
           if (seenItems.has(itemId)) throw notRecognized();
           seenItems.add(itemId);
           // One order item is one unit (Lazada answers each unit as its own item): quantity 1, the item's own id as the line key.
-          rows.push({ line: { lineKey: itemId, sku, itemName: cleanLabel(name, 300), quantity: '1', unitPrice: price, amount: paid }, stage });
+          const lostParcel = LAZADA_LOST_PARCEL_STATUSES.has(status);
+          rows.push({
+            line: {
+              lineKey: itemId,
+              sku,
+              itemName: cleanLabel(name, 300),
+              quantity: '1',
+              unitPrice: price,
+              amount: paid,
+              ...(lostParcel ? { lostParcel: true } : {}),
+            },
+            stage,
+          });
         }
         byOrder.set(orderId, rows);
       }

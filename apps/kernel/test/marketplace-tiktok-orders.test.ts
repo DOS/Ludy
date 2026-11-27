@@ -71,17 +71,32 @@ describe('the stage table and the stock rule', () => {
     }
   });
 
-  it('keeps a line the SYSTEM cancelled after collection as `shipped` (a lost parcel never comes back into stock), and a cancellation before collection as `cancelled`', async () => {
-    const lost = fakeOrder({ status: 'CANCELLED', update_time: t(1), collection_time: t(-500), rts_time: t(-900), line_items: [fakeLine({ display_status: 'CANCELLED', cancel_user: 'SYSTEM' })] });
+  it('keeps a line the SYSTEM cancelled after collection as `shipped` (a lost parcel never comes back into stock), clears the flag on goods-back return, and marks cancellation before collection as `cancelled`', async () => {
+    const lostLine = fakeLine({ display_status: 'CANCELLED', cancel_user: 'SYSTEM' });
+    const lost = fakeOrder({ status: 'CANCELLED', update_time: t(1), collection_time: t(-500), rts_time: t(-900), line_items: [lostLine] });
     const never = fakeOrder({ status: 'CANCELLED', update_time: t(2), line_items: [fakeLine({ display_status: 'CANCELLED', cancel_user: 'SYSTEM' })] });
     const buyer = fakeOrder({ status: 'CANCELLED', update_time: t(3), line_items: [fakeLine({ display_status: 'CANCELLED', cancel_user: 'BUYER' })] });
-    const { provider } = setup({ orders: [lost, never, buyer] });
+    const shipping = fakeOrder({ status: 'IN_TRANSIT', update_time: t(4), collection_time: t(-400), rts_time: t(-800), line_items: [fakeLine({ display_status: 'IN_TRANSIT' })] });
+    const { provider } = setup({ orders: [lost, never, buyer, shipping] });
     const page = await provider.listOrders(SECRET, 'tiktok_shop', null);
-    expect(orderNos(page.orders)).toEqual([`${String(lost.id)}:shipped`, `${String(never.id)}:cancelled`, `${String(buyer.id)}:cancelled`]);
-    // The lost parcel shows its shipping day and no delivery day.
+    expect(orderNos(page.orders)).toEqual([`${String(lost.id)}:shipped`, `${String(never.id)}:cancelled`, `${String(buyer.id)}:cancelled`, `${String(shipping.id)}:shipped`]);
+    // The lost parcel shows its shipping day, no delivery day, and lostParcel: true; normal shipped or pre-pickup cancelled lines do not.
     const lostPort = page.orders.find((o) => o.orderNo === lost.id);
     expect(lostPort?.shippedAt).toBe(new Date((t(-900) + 7 * 3600) * 1000).toISOString().slice(0, 10));
     expect(lostPort?.deliveredAt).toBeNull();
+    expect(lostPort?.lines[0]?.lostParcel).toBe(true);
+    expect(page.orders.find((o) => o.orderNo === shipping.id)?.lines[0]?.lostParcel).toBeUndefined();
+    expect(page.orders.find((o) => o.orderNo === never.id)?.lines[0]?.lostParcel).toBeUndefined();
+    expect(page.orders.find((o) => o.orderNo === buyer.id)?.lines[0]?.lostParcel).toBeUndefined();
+
+    // When a later return brings goods back for that line, stage advances to returned and lostParcel clears.
+    const returned = setup({
+      orders: [lost],
+      returns: [fakeReturn({ order_id: lost.id, update_time: t(10), return_line_items: [{ order_line_item_id: lostLine.id }] })],
+    });
+    const returnedPage = await returned.provider.listOrders(SECRET, 'tiktok_shop', null);
+    expect(orderNos(returnedPage.orders)).toEqual([`${String(lost.id)}:returned`]);
+    expect(returnedPage.orders[0]?.lines[0]?.lostParcel).toBeUndefined();
   });
 
   it('refuses a cancel_user it does not know', async () => {

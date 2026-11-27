@@ -1087,6 +1087,7 @@ export interface FinanceChannelOrderLineTable {
   goods_back_attempt: number | null;
   goods_back_by: string | null;
   goods_back_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  lost_parcel: Generated<boolean>;
 }
 
 /** ludy_finance.channel_order */

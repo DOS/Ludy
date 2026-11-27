@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { MARKETPLACE_PLATFORM_LIMITS, MarketplaceProviderError, marketplaceOrdersCsv, parseMarketplaceOrderPage } from '@ludy/mod-finance';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
-import { LAZADA_HOSTS, LAZADA_ITEM_STAGE, isAwaitingAuthorization, lazadaMarketplace, lazadaStamp, parseLazadaSecret, parseLazadaTime, signLazadaRequest } from '../src/marketplace-lazada.ts';
+import { LAZADA_HOSTS, LAZADA_ITEM_STAGE, LAZADA_LOST_PARCEL_STATUSES, isAwaitingAuthorization, lazadaMarketplace, lazadaStamp, parseLazadaSecret, parseLazadaTime, signLazadaRequest } from '../src/marketplace-lazada.ts';
 import { fakeLazada, fakeOrder, type FakeOrder } from './fake-lazada.ts';
 
 const KEY = { appKey: '123456', appSecret: 'helloworld', accessToken: '50000000001abcDEF' };
@@ -298,13 +298,32 @@ describe('the closed status table', () => {
     ['shipped_back', 'shipped'], ['shipped_back_failed', 'shipped'], ['shipped_back_success', 'returned'],
   ];
 
-  it('is exactly the expected table', () => {
+  it('is exactly the expected table, and flags only lost, lost_by_3pl, damaged_by_3pl and package_scrapped as lostParcel', () => {
     expect(Object.entries(LAZADA_ITEM_STAGE).sort()).toEqual([...EXPECTED].sort());
+    expect([...LAZADA_LOST_PARCEL_STATUSES].sort()).toEqual(['damaged_by_3pl', 'lost', 'lost_by_3pl', 'package_scrapped']);
   });
 
   it.each(EXPECTED)('maps %s to %s', async (status, stage) => {
     const { provider } = setup([fakeOrder({ id: '1', number: '9104000001', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '2', status }])]);
-    expect((await provider.listOrders(SECRET, 'lazada', null)).orders[0]?.stage).toBe(stage);
+    const page = await provider.listOrders(SECRET, 'lazada', null);
+    expect(page.orders[0]?.stage).toBe(stage);
+    expect(page.orders[0]?.lines[0]?.lostParcel).toBe(LAZADA_LOST_PARCEL_STATUSES.has(status) ? true : undefined);
+  });
+
+  it('keeps lostParcel per line when one order mixes a shipping item and a damaged_by_3pl item', async () => {
+    const { provider } = setup([
+      fakeOrder({ id: '1', number: '9104000002', updatedAt: '2026-11-09T10:00:00+07:00' }, [
+        { id: '10', status: 'shipping' },
+        { id: '11', status: 'damaged_by_3pl' },
+      ]),
+    ]);
+    const page = await provider.listOrders(SECRET, 'lazada', null);
+    expect(page.orders).toHaveLength(1);
+    expect(page.orders[0]?.stage).toBe('shipped');
+    expect(page.orders[0]?.lines.map((l) => [l.lineKey, l.lostParcel ?? false])).toEqual([
+      ['10', false],
+      ['11', true],
+    ]);
   });
 
   it('is case-insensitive, and an unknown status makes the page not_recognized', async () => {
