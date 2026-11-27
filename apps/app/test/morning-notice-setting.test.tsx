@@ -114,31 +114,29 @@ describe('MorningNoticeSetting', () => {
     expect(render({ enabled: false, locale: 'vi' })).toContain(catalog('vi').notifications.morningNotice.title);
   });
 
-  it('keeps content mode defaulting to count-only, disables full options until enabled, and gates vyLines behind full briefing (#5080)', () => {
+  it('keeps content mode defaulting to count-only, hides extra briefing controls until enabled, and gates vyLines behind full briefing (#5080)', () => {
     const offHtml = render({ enabled: false, content: 'full', vyLines: true });
-    expect(offHtml).toContain('role="radiogroup"');
-    expect(offHtml).toContain('aria-labelledby="morning-notice-content-label"');
-    const countBtnOff = /<button[^>]*data-testid="morning-notice-content-count"[^>]*>/.exec(offHtml)?.[0] ?? '';
-    const fullBtnOff = /<button[^>]*data-testid="morning-notice-content-full"[^>]*>/.exec(offHtml)?.[0] ?? '';
-    expect(countBtnOff).toContain('role="radio"');
-    expect(countBtnOff).toContain('min-h-11');
-    expect(countBtnOff).toContain('disabled');
-    expect(fullBtnOff).toContain('role="radio"');
-    expect(fullBtnOff).toContain('min-h-11');
-    expect(fullBtnOff).toContain('disabled');
+    expect(offHtml).not.toContain('role="radiogroup"');
+    expect(offHtml).not.toContain('data-testid="morning-notice-content-count"');
+    expect(offHtml).not.toContain('data-testid="morning-notice-content-full"');
     expect(offHtml).not.toContain('data-testid="morning-notice-full-notice"');
-    const vyOff = /<span[^>]*data-testid="morning-notice-vy-lines"[^>]*>/.exec(offHtml)?.[0] ?? '';
-    expect(vyOff).toContain('aria-checked="false"');
-    expect(vyOff).toMatch(/aria-disabled="true"|data-disabled/);
+    expect(offHtml).not.toContain('data-testid="morning-notice-vy-lines"');
 
     const countHtml = render({ enabled: true, content: 'count' });
+    expect(countHtml).toContain('role="radiogroup"');
+    expect(countHtml).toContain('aria-labelledby="morning-notice-content-label"');
     const countBtnOn = /<button[^>]*data-testid="morning-notice-content-count"[^>]*>/.exec(countHtml)?.[0] ?? '';
     const fullBtnOn = /<button[^>]*data-testid="morning-notice-content-full"[^>]*>/.exec(countHtml)?.[0] ?? '';
+    expect(countBtnOn).toContain('role="radio"');
+    expect(countBtnOn).toContain('min-h-11');
     expect(countBtnOn).toContain('aria-checked="true"');
     expect(countBtnOn).toContain('tabindex="0"');
-    expect(countBtnOn).not.toContain('disabled');
+    expect(countBtnOn).not.toMatch(/\sdisabled(?:=|\s|>)/);
+    expect(fullBtnOn).toContain('role="radio"');
+    expect(fullBtnOn).toContain('min-h-11');
     expect(fullBtnOn).toContain('aria-checked="false"');
     expect(fullBtnOn).toContain('tabindex="-1"');
+    expect(fullBtnOn).not.toMatch(/\sdisabled(?:=|\s|>)/);
     expect(countHtml).not.toContain('data-testid="morning-notice-full-notice"');
     const vyCount = /<span[^>]*data-testid="morning-notice-vy-lines"[^>]*>/.exec(countHtml)?.[0] ?? '';
     expect(vyCount).toContain('aria-checked="false"');

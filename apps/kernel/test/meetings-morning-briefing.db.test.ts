@@ -361,7 +361,7 @@ suite('morning full daily briefing end-to-end (#5080)', () => {
     const now = await localNow(ZONE);
     const connPrimary = await connectCalendar('lan', 'primary');
     const connSecondary = await connectCalendar('lan', 'secondary');
-    const connInactive = await connectCalendar('lan', 'paused', 'paused');
+    const connInactive = await connectCalendar('lan', 'paused', 'expired');
 
     const seriesId = randomUUID();
     const prevMeetingId = await createMeeting({
@@ -460,9 +460,32 @@ suite('morning full daily briefing end-to-end (#5080)', () => {
     );
 
     // Vy 36h prep lines: valid for lan + expired + nam's lines (must not cross members).
+    await setMorning('lan', {
+      enabled: true,
+      minute: Math.max(0, now.minute - 10),
+      timeZone: ZONE,
+      language: 'vi',
+      content: 'full',
+      vyLines: true,
+    });
+    await setMorning('nam', {
+      enabled: true,
+      minute: 60,
+      timeZone: 'UTC',
+      language: 'vi',
+      content: 'full',
+      vyLines: true,
+    });
     await upsertVyLines('lan', todayMeetingId, ['Kiểm tra lại hợp đồng Á Châu trước 9 giờ.'], 12);
-    await upsertVyLines('lan', dealLinkedMeetingId, ['Hết hạn rồi không được hiện.'], -1);
+    await upsertVyLines('lan', dealLinkedMeetingId, ['Hết hạn rồi không được hiện.'], 12);
+    await sqlAdmin(
+      `UPDATE ludy_meetings.morning_brief_lines
+       SET expires_at = now() - interval '1 hour'
+       WHERE org_id = $1 AND user_id = $2 AND meeting_id = $3`,
+      [orgId, users.lan, dealLinkedMeetingId],
+    );
     await upsertVyLines('nam', todayMeetingId, ['Ghi chú riêng của Nam không được lộ cho Lan.'], 12);
+    await setMorning('nam', { enabled: false, minute: 60, timeZone: 'UTC', language: 'vi', content: 'count', vyLines: false });
 
     // Deduplicated calendar agenda: duplicate external_id across connections keeps linked row; inactive connection ignored.
     const t1Start = new Date(now.start_of_day.getTime() + 9 * 3600_000);
@@ -624,6 +647,7 @@ suite('morning full daily briefing end-to-end (#5080)', () => {
       seriesId: seriesNoVy,
     });
     await addResult(prevNoVy, ['Quyết định từ phiên trước của no_vy']);
+    await setMorning('no_vy', { enabled: true, minute: dueMinute, timeZone: ZONE, language: 'vi', content: 'full', vyLines: true });
     await upsertVyLines('no_vy', meetingNoVy, ['Gợi ý Vy phải bị ẩn khi vyLines tắt']);
     await insertAgenda({
       connectionId: connNoVy,
@@ -649,6 +673,7 @@ suite('morning full daily briefing end-to-end (#5080)', () => {
 
     // Cap vyLines at MORNING_BRIEFING_CAPS.vyMeetingsMax (5) across 7 meetings.
     const connCap = await connectCalendar('vy_cap');
+    await setMorning('vy_cap', { enabled: true, minute: dueMinute, timeZone: ZONE, language: 'en', content: 'full', vyLines: true });
     for (let i = 0; i < 7; i += 1) {
       const mId = await createMeeting({
         recorder: 'vy_cap',
@@ -667,7 +692,6 @@ suite('morning full daily briefing end-to-end (#5080)', () => {
         meetingId: mId,
       });
     }
-    await setMorning('vy_cap', { enabled: true, minute: dueMinute, timeZone: ZONE, language: 'en', content: 'full', vyLines: true });
     await worker.execute('meetings.morning.notice', { userId: users.vy_cap, day: now.day }, { actor: SYSTEM, orgId });
     const capMail = (await mailRowsFor('vy_cap'))[0]!;
     const outCap = captureMailer();
@@ -742,6 +766,7 @@ suite('morning full daily briefing end-to-end (#5080)', () => {
       readers: ['nam', 'hoa'],
       seriesId: revSeries,
     });
+    await setMorning('nam', { enabled: true, minute: dueMinute, timeZone: ZONE, language: 'vi', content: 'full', vyLines: true });
     await upsertVyLines('nam', revToday, ['Gợi ý Vy phải biến mất khi gỡ quyền']);
     await insertAgenda({
       connectionId: connRev,
@@ -753,7 +778,6 @@ suite('morning full daily briefing end-to-end (#5080)', () => {
       meetingId: revToday,
       seriesId: revSeries,
     });
-    await setMorning('nam', { enabled: true, minute: dueMinute, timeZone: ZONE, language: 'vi', content: 'full', vyLines: true });
     await worker.execute('meetings.morning.notice', { userId: users.nam, day: now.day }, { actor: SYSTEM, orgId });
     await sqlAdmin(
       `DELETE FROM ludy_meetings.meeting_reader WHERE org_id = $1 AND user_id = $2 AND meeting_id IN ($3, $4)`,
@@ -838,7 +862,7 @@ suite('morning full daily briefing end-to-end (#5080)', () => {
     });
     expect(previewLogs).toEqual([]);
 
-    // 5. Direct SQL role & context checks on 20270329120000 helpers.
+    // 5. Direct SQL role & context checks on morning briefing helper definers.
     const appClient = new pg.Client({ connectionString: appConnUrl });
     await appClient.connect();
     try {

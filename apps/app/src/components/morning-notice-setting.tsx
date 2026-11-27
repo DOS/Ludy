@@ -137,78 +137,82 @@ export function MorningNoticeSetting({ muted = false }: { muted?: boolean }) {
         />
       </label>
       {enabled && <p id="morning-notice-zone" className="text-xs text-subtle-foreground">{t('zone', { zone: state?.timeZone ?? browserZone() })}</p>}
-      <div className="space-y-2 border-t border-border/60 pt-3">
-        <p id="morning-notice-content-label" className="text-xs font-medium text-foreground">
-          {t('contentLabel')}
-        </p>
-        <div
-          ref={radioGroupRef}
-          role="radiogroup"
-          aria-labelledby="morning-notice-content-label"
-          aria-disabled={!enabled || busy || undefined}
-          className="grid gap-2 sm:grid-cols-2"
-        >
-          {MORNING_CONTENT_MODES.map((mode, index) => {
-            const chosen = content === mode;
-            return (
-              <button
-                key={mode}
-                type="button"
-                role="radio"
-                aria-checked={chosen}
-                tabIndex={enabled && chosen ? 0 : -1}
-                disabled={!enabled || busy}
-                data-value={mode}
-                data-testid={`morning-notice-content-${mode}`}
-                onClick={() => selectContent(mode)}
-                onKeyDown={(event) => handleContentKeyDown(event, index)}
-                className={`flex min-h-11 flex-col items-start justify-center gap-1 rounded-lg border p-3 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${
-                  chosen ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border hover:bg-muted/40'
-                }`}
-              >
-                <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-                  <span
-                    aria-hidden="true"
-                    className={`inline-flex size-4 shrink-0 items-center justify-center rounded-full border ${
-                      chosen ? 'border-primary' : 'border-field-border'
+      {enabled && (
+        <>
+          <div className="space-y-2 border-t border-border/60 pt-3">
+            <p id="morning-notice-content-label" className="text-xs font-medium text-foreground">
+              {t('contentLabel')}
+            </p>
+            <div
+              ref={radioGroupRef}
+              role="radiogroup"
+              aria-labelledby="morning-notice-content-label"
+              aria-disabled={!enabled || busy || undefined}
+              className="grid gap-2 sm:grid-cols-2"
+            >
+              {MORNING_CONTENT_MODES.map((mode, index) => {
+                const chosen = content === mode;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="radio"
+                    aria-checked={chosen}
+                    tabIndex={enabled && chosen ? 0 : -1}
+                    disabled={!enabled || busy}
+                    data-value={mode}
+                    data-testid={`morning-notice-content-${mode}`}
+                    onClick={() => selectContent(mode)}
+                    onKeyDown={(event) => handleContentKeyDown(event, index)}
+                    className={`flex min-h-11 flex-col items-start justify-center gap-1 rounded-lg border p-3 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${
+                      chosen ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border hover:bg-muted/40'
                     }`}
                   >
-                    {chosen && <span className="size-2 rounded-full bg-primary" />}
-                  </span>
-                  {t(`content.${mode}.title`)}
+                    <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+                      <span
+                        aria-hidden="true"
+                        className={`inline-flex size-4 shrink-0 items-center justify-center rounded-full border ${
+                          chosen ? 'border-primary' : 'border-field-border'
+                        }`}
+                      >
+                        {chosen && <span className="size-2 rounded-full bg-primary" />}
+                      </span>
+                      {t(`content.${mode}.title`)}
+                    </span>
+                    <span className="text-xs text-subtle-foreground">{t(`content.${mode}.hint`)}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {content === 'full' && (
+              <p className="text-xs text-subtle-foreground" data-testid="morning-notice-full-notice">
+                {t('fullNotice')}
+              </p>
+            )}
+          </div>
+          <div className="space-y-1">
+            <label className="flex min-h-11 items-start gap-2.5 py-1 text-sm text-muted-foreground">
+              <Checkbox
+                className="mt-0.5"
+                checked={vyLines}
+                aria-describedby="morning-notice-vy-hint"
+                disabled={!enabled || content !== 'full' || busy}
+                data-testid="morning-notice-vy-lines"
+                onCheckedChange={(checked) => {
+                  if (!enabled || content !== 'full' || busy) return;
+                  set.mutate({ enabled: true, minute, content: 'full', vyLines: checked === true });
+                }}
+              />
+              <span className="space-y-0.5">
+                <span className="block font-medium text-foreground">{t('vyLinesLabel')}</span>
+                <span id="morning-notice-vy-hint" className="block text-xs text-subtle-foreground">
+                  {t('vyLinesHint')}
                 </span>
-                <span className="text-xs text-subtle-foreground">{t(`content.${mode}.hint`)}</span>
-              </button>
-            );
-          })}
-        </div>
-        {enabled && content === 'full' && (
-          <p className="text-xs text-subtle-foreground" data-testid="morning-notice-full-notice">
-            {t('fullNotice')}
-          </p>
-        )}
-      </div>
-      <div className="space-y-1">
-        <label className="flex min-h-11 items-start gap-2.5 py-1 text-sm text-muted-foreground">
-          <Checkbox
-            className="mt-0.5"
-            checked={vyLines}
-            aria-describedby="morning-notice-vy-hint"
-            disabled={!enabled || content !== 'full' || busy}
-            data-testid="morning-notice-vy-lines"
-            onCheckedChange={(checked) => {
-              if (!enabled || content !== 'full' || busy) return;
-              set.mutate({ enabled: true, minute, content: 'full', vyLines: checked === true });
-            }}
-          />
-          <span className="space-y-0.5">
-            <span className="block font-medium text-foreground">{t('vyLinesLabel')}</span>
-            <span id="morning-notice-vy-hint" className="block text-xs text-subtle-foreground">
-              {t('vyLinesHint')}
-            </span>
-          </span>
-        </label>
-      </div>
+              </span>
+            </label>
+          </div>
+        </>
+      )}
       {!mailOn && <p className="text-xs text-subtle-foreground">{t('noMail')}</p>}
       {(setting.error || set.error) && <ErrorText>{errorMessage(setting.error ?? set.error)}</ErrorText>}
     </Card>

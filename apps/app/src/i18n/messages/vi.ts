@@ -955,7 +955,7 @@ export const vi = {
   notifications: {
     morningNotice: {
       title: 'Các cuộc họp hôm nay, vào buổi sáng',
-      hint: 'Mỗi ngày một lần, vào giờ bạn chọn, một thông báo trong ứng dụng và qua email cho biết các cuộc họp hôm nay kèm đường dẫn để xem, cùng thông báo đẩy nếu bạn bật trên thiết bị này. Mặc định chỉ gửi số lượng và đường dẫn (thông báo đẩy chỉ nêu loại việc), không tiêu đề, không tên. Ngày không có cuộc họp thì không gửi gì.',
+      hint: 'Mỗi ngày một lần, vào giờ bạn chọn, một thông báo trong ứng dụng và qua email cho biết hôm nay bạn có bao nhiêu cuộc họp kèm đường dẫn để xem, cùng thông báo đẩy nếu bạn bật trên thiết bị này. Chỉ có số lượng và đường dẫn (thông báo đẩy chỉ nêu loại việc), không tiêu đề, không tên trừ khi bạn bật Bản tin đầy đủ. Ngày không có cuộc họp thì không gửi gì.',
       label: 'Báo cho tôi các cuộc họp trong ngày vào mỗi buổi sáng',
       at: 'Lúc',
       zone: 'Theo múi giờ của bạn: {zone}',
@@ -17627,7 +17627,6 @@ export const vi = {
       ASK_BUSY: 'Vy đang bận trả lời các câu hỏi. Hãy thử lại sau vài phút.',
       BRIEF_OFF: 'Hệ thống này chưa bật việc Vy viết phần chuẩn bị cho cuộc họp.',
       BRIEF_BUSY: 'Vy đang bận viết các phần chuẩn bị. Hãy thử lại sau vài phút.',
-      BRIEFING_NOT_ENABLED: 'Chưa bật chế độ bản tin buổi sáng đầy đủ trên hệ thống này.',
       ADHERENCE_OFF: 'Hệ thống này chưa bật việc nhờ Vy kiểm tra cuộc họp đã bàn đủ chưa.',
       ADHERENCE_BUSY: 'Vy đang bận kiểm tra các cuộc họp. Hãy thử lại sau vài phút.',
       TITLE_BUSY: 'Vy đang bận gợi ý tên. Hãy thử lại sau vài phút.',
@@ -20399,6 +20398,7 @@ export const vi = {
       },
       morning: {
         get: 'Xem cài đặt thông báo buổi sáng về các cuộc họp trong ngày của bạn',
+        mail_content: 'Đọc nội dung bản tin buổi sáng',
         notice: 'Gửi cho một thành viên thông báo buổi sáng về các cuộc họp trong ngày (lượt quét của hệ thống)',
         set: 'Bật hoặc tắt thông báo buổi sáng về các cuộc họp trong ngày, và chọn giờ',
       },

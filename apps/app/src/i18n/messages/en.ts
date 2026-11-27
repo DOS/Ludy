@@ -17626,7 +17626,6 @@ export const en = {
       ASK_OFF: 'Asking Vy about meetings is not turned on on this system.',
       ASK_BUSY: 'Vy is busy answering questions. Try again in a few minutes.',
       BRIEF_OFF: 'Vy writing the preparation for a meeting is not turned on on this system.',
-      BRIEFING_NOT_ENABLED: 'The full daily morning briefing is not enabled on this system yet.',
       ADHERENCE_OFF: 'Vy checking whether a meeting covered its agenda is not turned on on this system.',
       ADHERENCE_BUSY: 'Vy is busy checking meetings. Try again in a few minutes.',
       ASSIGNEE_OFF: 'Vy naming who an action item belongs to is not turned on on this system.',
@@ -20399,6 +20398,7 @@ export const en = {
       },
       morning: {
         get: "See your own setting for the morning notice of the day's meetings",
+        mail_content: 'Read morning briefing mail content',
         notice: "Send a member their morning notice of the day's meetings (the system's sweep)",
         set: "Turn the morning notice of the day's meetings on or off, and choose its time",
       },
