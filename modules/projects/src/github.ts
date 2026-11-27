@@ -12,6 +12,7 @@ import {
   zGithubBindingSaveInput,
   zGithubHookSetInput,
   zGithubHookStatusInput,
+  zGithubInstallationSyncInput,
   zGithubLinkPrepareInput,
   zGithubRepoBindInput,
   zGithubRepoUnbindInput,
@@ -25,6 +26,7 @@ import {
   type GithubHookSetResult,
   type GithubHookStanding,
   type GithubHookStatusResult,
+  type GithubInstallationSyncResult,
   type GithubLinkPrepareResult,
   type GithubProjectBindingView,
   type GithubProjectRepoView,
@@ -124,6 +126,7 @@ async function loadBindingView(
   trx: QueryContext['trx'],
   orgId: string,
   projectId: string,
+  revealExternalAccountId: boolean,
 ): Promise<GithubProjectBindingView | null> {
   const row = await trx
     .selectFrom('ludy_projects.github_project_binding as b')
@@ -192,7 +195,7 @@ async function loadBindingView(
     provider: row.provider === 'github_app' ? 'github_app' : 'github_pat',
     connectionDisplayName: row.display_name,
     connectionStatus: row.connection_status,
-    externalAccountId: row.external_account_id,
+    externalAccountId: revealExternalAccountId ? row.external_account_id : null,
     githubEnabled: row.github_enabled,
     taskKeyPrefix: row.task_key_prefix,
     nextTaskNumber: row.next_task_number,
@@ -279,7 +282,8 @@ export const projectGithubBindingGet = defineQuery({
       const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
       projectId = project.id;
     }
-    const binding = await loadBindingView(ctx.trx, ctx.orgId, projectId);
+    const revealExternalAccountId = ctx.actor.type === 'system' || ctx.role === 'owner' || ctx.role === 'admin';
+    const binding = await loadBindingView(ctx.trx, ctx.orgId, projectId, revealExternalAccountId);
     return {
       brokerConfigured: githubBrokerAvailable,
       appConfigured: githubAppInfo.configured,
@@ -452,7 +456,7 @@ export const projectGithubBindingSave = defineCommand({
       }
     }
 
-    const binding = await loadBindingView(ctx.trx, ctx.orgId, project.id);
+    const binding = await loadBindingView(ctx.trx, ctx.orgId, project.id, true);
     if (!binding) throw new DomainError('GITHUB_BINDING_NOT_FOUND', 404, 'Không tìm thấy cấu hình GitHub');
     ctx.audit({
       projectId: project.id,
@@ -550,7 +554,7 @@ export const projectGithubRepoBind = defineCommand({
         .execute();
     }
 
-    const view = await loadBindingView(ctx.trx, ctx.orgId, project.id);
+    const view = await loadBindingView(ctx.trx, ctx.orgId, project.id, true);
     if (!view) throw new DomainError('GITHUB_BINDING_NOT_FOUND', 404, 'Không tìm thấy cấu hình GitHub');
     ctx.audit({ projectId: project.id, githubRepoId: input.githubRepoId });
     await ctx.emit('projects.github.repo_bound', { projectId: project.id });
@@ -578,7 +582,7 @@ export const projectGithubRepoUnbind = defineCommand({
       .where('id', '=', input.repoId)
       .execute();
 
-    const view = await loadBindingView(ctx.trx, ctx.orgId, project.id);
+    const view = await loadBindingView(ctx.trx, ctx.orgId, project.id, true);
     if (!view) throw new DomainError('GITHUB_BINDING_NOT_FOUND', 404, 'Không tìm thấy cấu hình GitHub');
     ctx.audit({ projectId: project.id, repoId: input.repoId });
     return { binding: view };
@@ -1266,6 +1270,124 @@ export const projectGithubApplyInboundEvent = defineCommand({
   },
 });
 
+export const projectGithubInstallationSync = defineCommand({
+  name: 'projects.github.installation_sync',
+  input: zGithubInstallationSyncInput,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.channelConnectionId }),
+  handler: async (ctx, input): Promise<GithubInstallationSyncResult> => {
+    if (ctx.actor.type !== 'system') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới đồng bộ được cài đặt GitHub App');
+    }
+
+    const conn = await ctx.trx
+      .selectFrom('ludy_kernel.channel_connection')
+      .select(['id', 'status'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.channelConnectionId)
+      .where('provider', '=', 'github_app')
+      .executeTakeFirst();
+    if (!conn) {
+      return { updatedBindings: 0, deletedRepos: 0 };
+    }
+
+    const bindings = await ctx.trx
+      .selectFrom('ludy_projects.github_project_binding')
+      .select(['id', 'project_id', 'paused_reason'])
+      .where('org_id', '=', ctx.orgId)
+      .where('channel_connection_id', '=', conn.id)
+      .orderBy('project_id', 'asc')
+      .orderBy('id', 'asc')
+      .forUpdate()
+      .execute();
+
+    const bindingIds = bindings.map((b) => b.id);
+    let updatedBindings = 0;
+    let deletedRepos = 0;
+
+    if (input.action === 'suspend') {
+      if (conn.status !== 'revoked' && bindingIds.length > 0) {
+        const res = await ctx.trx
+          .updateTable('ludy_projects.github_project_binding')
+          .set({
+            paused_reason: 'installation_suspended',
+            paused_at: ctx.now,
+            updated_at: ctx.now,
+          })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', 'in', bindingIds)
+          .executeTakeFirst();
+        updatedBindings = Number(res.numUpdatedRows);
+      }
+    } else if (input.action === 'unsuspend') {
+      if (conn.status === 'active' && bindingIds.length > 0) {
+        const res = await ctx.trx
+          .updateTable('ludy_projects.github_project_binding')
+          .set({
+            paused_reason: null,
+            paused_at: null,
+            updated_at: ctx.now,
+          })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', 'in', bindingIds)
+          .where('paused_reason', 'in', ['installation_suspended', 'app_suspended'])
+          .executeTakeFirst();
+        updatedBindings = Number(res.numUpdatedRows);
+      }
+    } else if (input.action === 'deleted') {
+      if (bindingIds.length > 0) {
+        const res = await ctx.trx
+          .updateTable('ludy_projects.github_project_binding')
+          .set({
+            github_enabled: false,
+            paused_reason: 'installation_deleted',
+            paused_at: ctx.now,
+            updated_at: ctx.now,
+          })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', 'in', bindingIds)
+          .executeTakeFirst();
+        updatedBindings = Number(res.numUpdatedRows);
+
+        const delRes = await ctx.trx
+          .deleteFrom('ludy_projects.github_project_repo')
+          .where('org_id', '=', ctx.orgId)
+          .where('binding_id', 'in', bindingIds)
+          .executeTakeFirst();
+        deletedRepos = Number(delRes.numDeletedRows);
+      }
+    } else if (input.action === 'repositories_removed') {
+      if (input.removedRepoIds && input.removedRepoIds.length > 0 && bindingIds.length > 0) {
+        const delRes = await ctx.trx
+          .deleteFrom('ludy_projects.github_project_repo')
+          .where('org_id', '=', ctx.orgId)
+          .where('binding_id', 'in', bindingIds)
+          .where('github_repo_id', 'in', input.removedRepoIds)
+          .executeTakeFirst();
+        deletedRepos = Number(delRes.numDeletedRows);
+      }
+    }
+
+    ctx.audit({
+      channelConnectionId: conn.id,
+      action: input.action,
+      updatedBindings,
+      deletedRepos,
+    });
+    if (updatedBindings > 0 || deletedRepos > 0) {
+      await ctx.emit('projects.github.installation_synced', {
+        channelConnectionId: conn.id,
+        action: input.action,
+        updatedBindings,
+        deletedRepos,
+      });
+    }
+    return { updatedBindings, deletedRepos };
+  },
+});
+
 export const projectGithubCommands = [
   projectGithubBindingSave,
   projectGithubRepoBind,
@@ -1274,6 +1396,7 @@ export const projectGithubCommands = [
   projectGithubTaskLinkAdd,
   projectGithubTaskLinkRemove,
   projectGithubApplyInboundEvent,
+  projectGithubInstallationSync,
 ];
 
 export const projectGithubQueries = [

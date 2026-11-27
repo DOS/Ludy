@@ -96,7 +96,7 @@ export const zGithubProjectBindingView = z.object({
   provider: z.enum(GITHUB_PROVIDERS),
   connectionDisplayName: z.string(),
   connectionStatus: z.string(),
-  externalAccountId: z.string(),
+  externalAccountId: z.string().nullable(),
   githubEnabled: z.boolean(),
   taskKeyPrefix: z.string().nullable(),
   nextTaskNumber: z.number().int().positive(),
@@ -343,13 +343,41 @@ export const zGithubConnectPatRpcResult = z.object({
   backfilledCount: z.number().int().nonnegative(),
 });
 
+export const zGithubAppOAuthStartRpcInput = z.strictObject({
+  projectId: zId,
+});
+export type GithubAppOAuthStartRpcInput = z.infer<typeof zGithubAppOAuthStartRpcInput>;
+
+export const zGithubAppOAuthStartRpcResult = z.object({
+  authorizeUrl: z.string().url(),
+  state: z.string(),
+  expiresAt: z.string(),
+});
+export type GithubAppOAuthStartRpcResult = z.infer<typeof zGithubAppOAuthStartRpcResult>;
+
 export const zGithubConnectAppRpcInput = z.strictObject({
   projectId: zId,
-  installationId: z.string().regex(/^[1-9][0-9]{0,19}$/),
+  state: z.string().trim().min(16).max(200),
+  code: z.string().trim().min(1).max(512),
+  installationId: z.string().regex(/^[1-9][0-9]{0,19}$/).optional(),
   taskKeyPrefix: z.string().regex(GITHUB_TASK_PREFIX_PATTERN).nullable().optional(),
   backfillTaskNumbers: z.boolean().optional(),
   idempotencyKey: zId,
 });
+export type GithubConnectAppRpcInput = z.infer<typeof zGithubConnectAppRpcInput>;
+
+export const zGithubInstallationSyncInput = z.strictObject({
+  channelConnectionId: zId,
+  action: z.enum(['suspend', 'unsuspend', 'deleted', 'repositories_removed']),
+  removedRepoIds: z.array(z.string().regex(/^[1-9][0-9]{0,19}$/)).max(200).optional(),
+});
+export type GithubInstallationSyncInput = z.infer<typeof zGithubInstallationSyncInput>;
+
+export const zGithubInstallationSyncResult = z.object({
+  updatedBindings: z.number().int().nonnegative(),
+  deletedRepos: z.number().int().nonnegative(),
+});
+export type GithubInstallationSyncResult = z.infer<typeof zGithubInstallationSyncResult>;
 
 export const zGithubConnectAppRpcResult = z.object({
   connectionId: zId,

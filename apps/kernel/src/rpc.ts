@@ -5512,21 +5512,105 @@ export function createRpcHandler(
             };
           }),
         ),
+        appOAuthStart: os.projects.github.appOAuthStart.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được GitHub App cho dự án');
+            if (!channels || channels.broker.id === 'none') {
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối trên máy chủ');
+            }
+            if (!channels.github || !channels.github.hasAppCredentials || !channels.github.hasAppOAuth || !channels.github.oauthClientId || !channels.publicUrl) {
+              throw new DomainError('GITHUB_APP_NOT_CONFIGURED', 503, 'Máy chủ chưa cấu hình GitHub App');
+            }
+            const current = await runtime.query<GithubBindingGetResult>(
+              'projects.github.binding.get',
+              { projectId: input.projectId },
+              { actor, orgId },
+            );
+            const attempt = newOAuthAttempt(false);
+            const begun = await runtime.execute<{ attemptId: string; expiresAt: string }>(
+              'kernel.channel.oauth_begin',
+              {
+                provider: 'github_app',
+                stateHash: oauthStateHash(`${attempt.state}:${input.projectId}`),
+                codeVerifier: null,
+              },
+              { actor, orgId },
+            );
+            const authorizeUrl = current.appSlug
+              ? `https://github.com/apps/${encodeURIComponent(current.appSlug)}/installations/new?state=${encodeURIComponent(attempt.state)}`
+              : `https://github.com/login/oauth/authorize?${new URLSearchParams({
+                  client_id: channels.github.oauthClientId,
+                  redirect_uri: oauthRedirectUri('github_app'),
+                  state: attempt.state,
+                }).toString()}`;
+            return {
+              authorizeUrl,
+              state: attempt.state,
+              expiresAt: begun.expiresAt,
+            };
+          }),
+        ),
         connectApp: os.projects.github.connectApp.handler(({ context, input }) =>
           inProjects(context, async (orgId, actor) => {
             await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được GitHub App cho dự án');
             if (!channels || channels.broker.id === 'none') {
               throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối trên máy chủ');
             }
-            if (!channels.github || !channels.github.hasAppCredentials) {
+            if (!channels.github || !channels.github.hasAppCredentials || !channels.github.hasAppOAuth) {
               throw new DomainError('GITHUB_APP_NOT_CONFIGURED', 503, 'Máy chủ chưa cấu hình GitHub App');
             }
+            // Consume single-use state bound to projectId BEFORE making any GitHub OAuth/API calls.
+            await runtime.execute<{ codeVerifier: string | null }>(
+              'kernel.channel.oauth_consume',
+              { provider: 'github_app', stateHash: oauthStateHash(`${input.state}:${input.projectId}`) },
+              { actor, orgId },
+            );
+            const userAccessToken = await channels.github
+              .exchangeOAuthCode({
+                code: input.code,
+                redirectUri: oauthRedirectUri('github_app'),
+              })
+              .catch((error: unknown) => {
+                throw githubFailure(error);
+              });
+            const userInstallations = await channels.github
+              .listUserInstallations(userAccessToken)
+              .catch((error: unknown) => {
+                throw githubFailure(error);
+              });
+
+            let targetInstallationId: string;
+            if (input.installationId) {
+              if (!userInstallations.some((inst) => inst.installationId === input.installationId)) {
+                throw new DomainError(
+                  'GITHUB_INSTALLATION_NOT_AUTHORIZED',
+                  403,
+                  'Tài khoản GitHub vừa xác thực không có quyền trên bản cài đặt GitHub App này',
+                );
+              }
+              targetInstallationId = input.installationId;
+            } else if (userInstallations.length === 0) {
+              throw new DomainError(
+                'GITHUB_NO_INSTALLATIONS',
+                422,
+                'Tài khoản GitHub này chưa cài đặt ứng dụng Ludy trên tài khoản hoặc tổ chức nào',
+              );
+            } else if (userInstallations.length > 1) {
+              throw new DomainError(
+                'GITHUB_MULTIPLE_INSTALLATIONS',
+                422,
+                'Tài khoản GitHub đang có nhiều bản cài đặt; hãy chọn cụ thể một bản cài đặt trên GitHub rồi thử lại',
+              );
+            } else {
+              targetInstallationId = userInstallations[0]!.installationId;
+            }
+
             const previous = await runtime.query<GithubBindingGetResult>(
               'projects.github.binding.get',
               { projectId: input.projectId },
               { actor, orgId },
             );
-            const summary = await channels.github.getInstallation(input.installationId).catch((error: unknown) => {
+            const summary = await channels.github.getInstallation(targetInstallationId).catch((error: unknown) => {
               throw githubFailure(error);
             });
             const repos = await channels.github.listInstallationRepos(summary.installationId).catch((error: unknown) => {
@@ -5626,6 +5710,9 @@ export function createRpcHandler(
             if (current.binding.provider === 'github_app') {
               if (!channels.github.hasAppCredentials) {
                 throw new DomainError('GITHUB_APP_NOT_CONFIGURED', 503, 'Máy chủ chưa cấu hình GitHub App');
+              }
+              if (!current.binding.externalAccountId) {
+                throw new DomainError('GITHUB_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối GitHub đang hoạt động');
               }
               const repos = await channels.github.listInstallationRepos(current.binding.externalAccountId).catch((error: unknown) => {
                 throw githubFailure(error);

@@ -151,7 +151,8 @@ function app(authenticate: HttpDeps['authenticate']) {
     bankFeedHooks: { bank_tingee: { id: 'bank_tingee', hosts: [], hookTimestampFresh: () => true, verifyHook: () => 'ok' } } as unknown as NonNullable<HttpDeps['bankFeedHooks']>,
     // A marketplace that takes signed pushes, so its route is registered and listed (#4346).
     marketplacePush: { adapters: ['shopee'] },
-    // Projects GitHub App webhook secret (#5158, ADR-0060), so POST /api/projects/github/webhook is registered and listed.
+    // Projects GitHub App webhook secret (#5158, ADR-0060), so POST /api/projects/github/webhook and /:hookKey are registered and listed.
+    broker: { id: 'route-coverage-key' } as unknown as NonNullable<HttpDeps['broker']>,
     githubWebhook: { appWebhookSecret: 'g'.repeat(32) },
     // The ClientID of MISA AMIS, so its callback is registered and listed (#3903).
     misaAmisCallback: { clientId: 'misa-client-id-0001' },

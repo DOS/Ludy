@@ -103,6 +103,8 @@ export interface EgressResponse {
   url: string;
   status: number;
   contentType: string | null;
+  // Lowercase scalar response headers forwarded when present (for rate-limit / retry metadata).
+  headers?: Readonly<Record<string, string>>;
   body: Buffer;
   truncated: boolean;
 }
@@ -245,11 +247,17 @@ function once(url: URL, target: { address: string; family: number }, options: Eg
         finish(() => reject(new EgressError('too_large', 'the response is too large')));
         return;
       }
+      const headers: Record<string, string> = {};
+      for (const name of ['content-type', 'retry-after', 'x-ratelimit-remaining', 'x-ratelimit-reset'] as const) {
+        const raw = res.headers[name];
+        if (typeof raw === 'string') headers[name] = raw;
+        else if (Array.isArray(raw) && raw[0] !== undefined) headers[name] = raw[0];
+      }
       const chunks: Buffer[] = [];
       let size = 0;
       const done = (truncated: boolean) =>
         finish(() =>
-          resolve({ response: { url: url.toString(), status, contentType: typeof res.headers['content-type'] === 'string' ? res.headers['content-type'] : null, body: Buffer.concat(chunks), truncated } }),
+          resolve({ response: { url: url.toString(), status, contentType: typeof res.headers['content-type'] === 'string' ? res.headers['content-type'] : null, headers, body: Buffer.concat(chunks), truncated } }),
         );
       res.on('data', (chunk: Buffer) => {
         if (settled) return;

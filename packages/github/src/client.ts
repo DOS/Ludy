@@ -13,6 +13,8 @@ import {
 
 export const GITHUB_HOSTS = ['api.github.com'] as const;
 export const GITHUB_API_BASE_URL = 'https://api.github.com';
+export const GITHUB_OAUTH_TOKEN_URL = 'https://github.com/login/oauth/access_token';
+const TOKEN_CACHE_MAX = 500;
 
 export interface GithubTransportRequest {
   readonly method: 'GET' | 'POST';
@@ -58,6 +60,12 @@ export interface GithubInstallationSummary {
   readonly accountType: string;
 }
 
+export interface GithubUserInstallation {
+  readonly installationId: string;
+  readonly accountLogin: string;
+  readonly accountType: string;
+}
+
 export interface GithubPatAccountSummary {
   readonly accountId: string;
   readonly accountLogin: string;
@@ -67,11 +75,16 @@ export interface GithubPatAccountSummary {
 export interface GithubClientOptions {
   readonly transport: GithubTransport;
   readonly app?: { readonly appId: string; readonly privateKeyPem: string } | undefined;
+  readonly appOAuth?: { readonly clientId: string; readonly clientSecret: string } | undefined;
   readonly now?: (() => number) | undefined;
 }
 
 export interface GithubClient {
   readonly hasAppCredentials: boolean;
+  readonly hasAppOAuth: boolean;
+  readonly oauthClientId: string | null;
+  exchangeOAuthCode(input: { readonly code: string; readonly redirectUri: string }): Promise<string>;
+  listUserInstallations(userAccessToken: string): Promise<GithubUserInstallation[]>;
   getInstallation(installationId: string): Promise<GithubInstallationSummary>;
   listInstallationRepos(installationId: string): Promise<GithubRepoSummary[]>;
   inspectPatAndListRepos(token: string): Promise<GithubPatAccountSummary>;
@@ -99,6 +112,23 @@ const zInstallationRes = z.object({
     .nullable()
     .optional(),
 });
+
+const zUserInstallationsRes = z.object({
+  total_count: z.number().int().nonnegative().optional(),
+  installations: z.array(zInstallationRes).max(200),
+});
+
+const zOAuthTokenRes = z.union([
+  z.object({
+    access_token: z.string().min(10).max(512),
+    token_type: z.string().optional(),
+    scope: z.string().optional(),
+  }),
+  z.object({
+    error: z.string().min(1),
+    error_description: z.string().optional(),
+  }),
+]);
 
 const zInstallationTokenRes = z.object({
   token: z.string().min(10).max(512),
@@ -240,12 +270,19 @@ export function createGithubClient(options: GithubClientOptions): GithubClient {
     const cleanId = assertCleanInstallationId(installationId);
     const cached = tokenCache.get(cleanId);
     if (cached && cached.expiresMs - 60_000 > now()) {
+      tokenCache.delete(cleanId);
+      tokenCache.set(cleanId, cached);
       return cached.token;
     }
 
     const jwt = createGithubAppJwt(options.app.appId, options.app.privateKeyPem, Math.floor(now() / 1000));
     const minted = await callApi('POST', `/app/installations/${cleanId}/access_tokens`, jwt, zInstallationTokenRes);
     const expiresMs = Date.parse(minted.expires_at);
+    if (tokenCache.size >= TOKEN_CACHE_MAX && !tokenCache.has(cleanId)) {
+      const oldestKey = tokenCache.keys().next().value;
+      if (oldestKey !== undefined) tokenCache.delete(oldestKey);
+    }
+    tokenCache.delete(cleanId);
     tokenCache.set(cleanId, {
       token: minted.token,
       expiresMs: Number.isFinite(expiresMs) ? expiresMs : now() + 45 * 60_000,
@@ -262,6 +299,20 @@ export function createGithubClient(options: GithubClientOptions): GithubClient {
     return mintInstallationToken(auth.installationId);
   }
 
+  async function withAuth<T>(auth: GithubAuth, fn: (token: string) => Promise<T>): Promise<T> {
+    const token = await bearerFor(auth);
+    try {
+      return await fn(token);
+    } catch (error) {
+      if (auth.kind === 'github_app' && error instanceof GithubError && error.kind === 'credentials') {
+        tokenCache.delete(assertCleanInstallationId(auth.installationId));
+        const refreshed = await bearerFor(auth);
+        return await fn(refreshed);
+      }
+      throw error;
+    }
+  }
+
   function encodeRepoPath(repoFullName: string): { repo: string; encoded: string } {
     const repo = normalizeRepoFullName(repoFullName);
     if (!repo) throw new GithubError('bad_request', 'Invalid repository name');
@@ -274,6 +325,89 @@ export function createGithubClient(options: GithubClientOptions): GithubClient {
 
   return {
     hasAppCredentials: Boolean(options.app),
+    hasAppOAuth: Boolean(options.appOAuth),
+    oauthClientId: options.appOAuth?.clientId ?? null,
+
+    async exchangeOAuthCode(input: { readonly code: string; readonly redirectUri: string }): Promise<string> {
+      if (!options.appOAuth) {
+        throw new GithubError('credentials', 'GitHub App OAuth is not configured on this server');
+      }
+      const cleanCode = input.code.trim();
+      if (!cleanCode || cleanCode.length > 512) {
+        throw new GithubError('bad_request', 'Invalid GitHub OAuth authorization code');
+      }
+      let redirectUri: string;
+      try {
+        const parsed = new URL(input.redirectUri);
+        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+          throw new Error('unsupported protocol');
+        }
+        redirectUri = parsed.toString();
+      } catch {
+        throw new GithubError('bad_request', 'Invalid GitHub OAuth redirect URI');
+      }
+      const body = new URLSearchParams({
+        client_id: options.appOAuth.clientId,
+        client_secret: options.appOAuth.clientSecret,
+        code: cleanCode,
+        redirect_uri: redirectUri,
+      }).toString();
+      let response: GithubTransportResponse;
+      try {
+        response = await options.transport({
+          method: 'POST',
+          url: GITHUB_OAUTH_TOKEN_URL,
+          headers: {
+            accept: 'application/json',
+            'content-type': 'application/x-www-form-urlencoded',
+          },
+          body,
+        });
+      } catch (error) {
+        if (error instanceof GithubError) throw error;
+        throw new GithubError('unreachable', 'Failed to reach github.com for OAuth exchange', { cause: error });
+      }
+      if (response.status < 200 || response.status >= 300) {
+        throw classifyHttpFailure(response.status, response.headers);
+      }
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(response.body);
+      } catch (error) {
+        throw new GithubError('invalid_response', 'GitHub OAuth returned invalid JSON', { cause: error });
+      }
+      const parsed = zOAuthTokenRes.safeParse(parsedJson);
+      if (!parsed.success) {
+        throw new GithubError('invalid_response', 'GitHub OAuth response did not match expected schema');
+      }
+      if ('error' in parsed.data) {
+        throw new GithubError('credentials', 'GitHub rejected the OAuth authorization code');
+      }
+      return parsed.data.access_token;
+    },
+
+    async listUserInstallations(userAccessToken: string): Promise<GithubUserInstallation[]> {
+      const cleanToken = userAccessToken.trim();
+      if (!cleanToken || cleanToken.length < 10) {
+        throw new GithubError('credentials', 'GitHub user access token is invalid');
+      }
+      const out: GithubUserInstallation[] = [];
+      for (let page = 1; page <= 5; page++) {
+        const path = page === 1 ? '/user/installations?per_page=100' : `/user/installations?per_page=100&page=${page}`;
+        const res = await callApi('GET', path, cleanToken, zUserInstallationsRes);
+        for (const item of res.installations) {
+          out.push({
+            installationId: String(item.id),
+            accountLogin: sanitizeGithubLogin(item.account?.login) ?? `installation-${item.id}`,
+            accountType: sanitizeGithubText(item.account?.type ?? 'User', 40) || 'User',
+          });
+        }
+        if (res.installations.length < 100 || (res.total_count !== undefined && out.length >= res.total_count)) {
+          break;
+        }
+      }
+      return out;
+    },
 
     async getInstallation(installationId: string): Promise<GithubInstallationSummary> {
       if (!options.app) {
@@ -290,9 +424,11 @@ export function createGithubClient(options: GithubClientOptions): GithubClient {
     },
 
     async listInstallationRepos(installationId: string): Promise<GithubRepoSummary[]> {
-      const token = await mintInstallationToken(installationId);
-      const res = await callApi('GET', '/installation/repositories?per_page=100', token, zInstallationReposRes);
-      return res.repositories.map(parseRepoSummary).filter((r): r is GithubRepoSummary => r !== null);
+      const cleanId = assertCleanInstallationId(installationId);
+      return withAuth({ kind: 'github_app', installationId: cleanId }, async (token) => {
+        const res = await callApi('GET', '/installation/repositories?per_page=100', token, zInstallationReposRes);
+        return res.repositories.map(parseRepoSummary).filter((r): r is GithubRepoSummary => r !== null);
+      });
     },
 
     async inspectPatAndListRepos(token: string): Promise<GithubPatAccountSummary> {
@@ -332,45 +468,45 @@ export function createGithubClient(options: GithubClientOptions): GithubClient {
         throw new GithubError('bad_request', 'Invalid GitHub issue or pull request number');
       }
       const { repo, encoded } = encodeRepoPath(repoFullName);
-      const token = await bearerFor(auth);
 
-      if (kind === 'issue') {
-        const res = await callApi('GET', `/repos/${encoded}/issues/${externalNumber}`, token, zIssueRes);
-        if (res.pull_request !== undefined) {
-          return this.getIssueOrPr(auth, repo, 'pull_request', externalNumber);
+      return withAuth(auth, async (token) => {
+        if (kind === 'issue') {
+          const res = await callApi('GET', `/repos/${encoded}/issues/${externalNumber}`, token, zIssueRes);
+          if (res.pull_request === undefined) {
+            const url = canonicalGithubItemUrl(repo, 'issue', res.number, res.html_url);
+            if (!url) throw new GithubError('invalid_response', 'Invalid GitHub issue URL');
+            return {
+              kind: 'issue',
+              repoFullName: repo,
+              number: res.number,
+              externalUrl: url,
+              externalTitle: sanitizeGithubText(res.title, 300) || `Issue #${res.number}`,
+              externalState: res.state,
+              branchName: null,
+              authorLogin: sanitizeGithubLogin(res.user?.login),
+              updatedAt: res.updated_at ?? null,
+            };
+          }
         }
-        const url = canonicalGithubItemUrl(repo, 'issue', res.number, res.html_url);
-        if (!url) throw new GithubError('invalid_response', 'Invalid GitHub issue URL');
+
+        const res = await callApi('GET', `/repos/${encoded}/pulls/${externalNumber}`, token, zPullRes);
+        const url = canonicalGithubItemUrl(repo, 'pull_request', res.number, res.html_url);
+        if (!url) throw new GithubError('invalid_response', 'Invalid GitHub pull request URL');
+        const isMerged = Boolean(res.merged || res.merged_at);
+        const state: 'open' | 'closed' | 'merged' | 'draft' =
+          res.state === 'closed' ? (isMerged ? 'merged' : 'closed') : res.draft ? 'draft' : 'open';
         return {
-          kind: 'issue',
+          kind: 'pull_request',
           repoFullName: repo,
           number: res.number,
           externalUrl: url,
-          externalTitle: sanitizeGithubText(res.title, 300) || `Issue #${res.number}`,
-          externalState: res.state,
-          branchName: null,
+          externalTitle: sanitizeGithubText(res.title, 300) || `PR #${res.number}`,
+          externalState: state,
+          branchName: sanitizeBranchName(res.head?.ref),
           authorLogin: sanitizeGithubLogin(res.user?.login),
           updatedAt: res.updated_at ?? null,
         };
-      }
-
-      const res = await callApi('GET', `/repos/${encoded}/pulls/${externalNumber}`, token, zPullRes);
-      const url = canonicalGithubItemUrl(repo, 'pull_request', res.number, res.html_url);
-      if (!url) throw new GithubError('invalid_response', 'Invalid GitHub pull request URL');
-      const isMerged = Boolean(res.merged || res.merged_at);
-      const state: 'open' | 'closed' | 'merged' | 'draft' =
-        res.state === 'closed' ? (isMerged ? 'merged' : 'closed') : res.draft ? 'draft' : 'open';
-      return {
-        kind: 'pull_request',
-        repoFullName: repo,
-        number: res.number,
-        externalUrl: url,
-        externalTitle: sanitizeGithubText(res.title, 300) || `PR #${res.number}`,
-        externalState: state,
-        branchName: sanitizeBranchName(res.head?.ref),
-        authorLogin: sanitizeGithubLogin(res.user?.login),
-        updatedAt: res.updated_at ?? null,
-      };
+      });
     },
 
     async findOpenPrForBranch(
@@ -382,27 +518,28 @@ export function createGithubClient(options: GithubClientOptions): GithubClient {
       const owner = repo.slice(0, repo.indexOf('/'));
       const cleanBranch = sanitizeBranchName(branchName);
       if (!cleanBranch) return null;
-      const token = await bearerFor(auth);
       const head = encodeURIComponent(`${owner}:${cleanBranch}`);
-      const pulls = await callApi('GET', `/repos/${encoded}/pulls?head=${head}&state=all&per_page=1`, token, z.array(zPullRes).max(5));
-      const first = pulls[0];
-      if (!first) return null;
-      const url = canonicalGithubItemUrl(repo, 'pull_request', first.number, first.html_url);
-      if (!url) return null;
-      const isMerged = Boolean(first.merged || first.merged_at);
-      const state: 'open' | 'closed' | 'merged' | 'draft' =
-        first.state === 'closed' ? (isMerged ? 'merged' : 'closed') : first.draft ? 'draft' : 'open';
-      return {
-        kind: 'pull_request',
-        repoFullName: repo,
-        number: first.number,
-        externalUrl: url,
-        externalTitle: sanitizeGithubText(first.title, 300) || `PR #${first.number}`,
-        externalState: state,
-        branchName: sanitizeBranchName(first.head?.ref) ?? cleanBranch,
-        authorLogin: sanitizeGithubLogin(first.user?.login),
-        updatedAt: first.updated_at ?? null,
-      };
+      return withAuth(auth, async (token) => {
+        const pulls = await callApi('GET', `/repos/${encoded}/pulls?head=${head}&state=all&per_page=1`, token, z.array(zPullRes).max(5));
+        const first = pulls[0];
+        if (!first) return null;
+        const url = canonicalGithubItemUrl(repo, 'pull_request', first.number, first.html_url);
+        if (!url) return null;
+        const isMerged = Boolean(first.merged || first.merged_at);
+        const state: 'open' | 'closed' | 'merged' | 'draft' =
+          first.state === 'closed' ? (isMerged ? 'merged' : 'closed') : first.draft ? 'draft' : 'open';
+        return {
+          kind: 'pull_request',
+          repoFullName: repo,
+          number: first.number,
+          externalUrl: url,
+          externalTitle: sanitizeGithubText(first.title, 300) || `PR #${first.number}`,
+          externalState: state,
+          branchName: sanitizeBranchName(first.head?.ref) ?? cleanBranch,
+          authorLogin: sanitizeGithubLogin(first.user?.login),
+          updatedAt: first.updated_at ?? null,
+        };
+      });
     },
   };
 }

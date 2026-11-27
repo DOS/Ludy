@@ -12,6 +12,7 @@
 import { createHmac, generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
+import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
@@ -26,7 +27,7 @@ import type {
   PersonalDataResult,
   ProjectBoard,
 } from '@ludy/kernel-contract';
-import { CredentialVault, Runtime, parseVaultKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { CredentialVault, Runtime, parseVaultKey, sha256Hex, type BlobStore, type CredentialBroker } from '@ludy/kernel-runtime';
 import { financeCommands } from '@ludy/mod-finance';
 import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
 import { createAuthenticator } from '../src/auth.ts';
@@ -121,25 +122,76 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
   const mockTransport: GithubTransport = async (req) => {
     const parsedUrl = new URL(req.url);
     expect(parsedUrl.protocol).toBe('https:');
-    expect(parsedUrl.hostname).toBe('api.github.com');
+    const isOAuth = parsedUrl.hostname === 'github.com' && parsedUrl.pathname === '/login/oauth/access_token';
+    expect(parsedUrl.hostname === 'api.github.com' || isOAuth).toBe(true);
     const pathWithQuery = `${parsedUrl.pathname}${parsedUrl.search}`;
     githubCalls.push(`${req.method} ${pathWithQuery}`);
 
-    if (req.method === 'POST' && parsedUrl.pathname === '/app/installations/777/access_tokens') {
+    if (req.method === 'POST' && isOAuth) {
+      const params = new URLSearchParams(req.body ?? '');
+      const code = params.get('code') ?? '';
+      if (code === 'code-install-777') {
+        return { status: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ access_token: 'ghu_user_777_token_test', token_type: 'bearer' }) };
+      }
+      if (code === 'code-install-888') {
+        return { status: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ access_token: 'ghu_user_888_token_test', token_type: 'bearer' }) };
+      }
+      if (code === 'code-other-user') {
+        return { status: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ access_token: 'ghu_user_999_token_test', token_type: 'bearer' }) };
+      }
+      if (code === 'code-empty-user') {
+        return { status: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ access_token: 'ghu_user_empty_token_test', token_type: 'bearer' }) };
+      }
+      if (code === 'code-multi-user') {
+        return { status: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ access_token: 'ghu_user_multi_token_test', token_type: 'bearer' }) };
+      }
+      return { status: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'bad_verification_code' }) };
+    }
+    if (req.method === 'GET' && parsedUrl.pathname === '/user/installations') {
+      const auth = req.headers.authorization ?? '';
+      if (auth === 'Bearer ghu_user_777_token_test') {
+        return { status: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ total_count: 1, installations: [{ id: 777, account: { login: 'octo-org', type: 'Organization' } }] }) };
+      }
+      if (auth === 'Bearer ghu_user_888_token_test') {
+        return { status: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ total_count: 1, installations: [{ id: 888, account: { login: 'octo-org-2', type: 'Organization' } }] }) };
+      }
+      if (auth === 'Bearer ghu_user_999_token_test') {
+        return { status: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ total_count: 1, installations: [{ id: 999, account: { login: 'other-org', type: 'Organization' } }] }) };
+      }
+      if (auth === 'Bearer ghu_user_empty_token_test') {
+        return { status: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ total_count: 0, installations: [] }) };
+      }
+      if (auth === 'Bearer ghu_user_multi_token_test') {
+        return {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            total_count: 2,
+            installations: [
+              { id: 777, account: { login: 'octo-org', type: 'Organization' } },
+              { id: 888, account: { login: 'octo-org-2', type: 'Organization' } },
+            ],
+          }),
+        };
+      }
+    }
+    if (req.method === 'POST' && /^\/app\/installations\/(777|888|999)\/access_tokens$/.test(parsedUrl.pathname)) {
+      const instId = parsedUrl.pathname.split('/')[3];
       return {
         status: 201,
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          token: 'ghs_installation_token_777',
+          token: `ghs_installation_token_${instId}`,
           expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
         }),
       };
     }
-    if (req.method === 'GET' && parsedUrl.pathname === '/app/installations/777') {
+    if (req.method === 'GET' && /^\/app\/installations\/(777|888|999)$/.test(parsedUrl.pathname)) {
+      const instId = Number(parsedUrl.pathname.split('/')[3]);
       return {
         status: 200,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id: 777, account: { id: 9001, login: 'octo-org' } }),
+        body: JSON.stringify({ id: instId, account: { id: 9000 + instId, login: instId === 777 ? 'octo-org' : `org-${instId}` } }),
       };
     }
     if (req.method === 'GET' && parsedUrl.pathname === '/installation/repositories') {
@@ -190,6 +242,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
   const githubClient = createGithubClient({
     transport: mockTransport,
     app: { appId: '123456', privateKeyPem: appPrivateKeyPem },
+    appOAuth: { clientId: 'gh_oauth_client_test', clientSecret: 'gh_oauth_secret_test_012345' },
   });
 
   const owner: Person = { subject: 'gh-owner', email: 'gh-owner@ludy.test', session: randomUUID(), userId: '' };
@@ -358,27 +411,40 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     const initialBinding = await runtime.query<GithubBindingGetResult>('projects.github.binding.get', { projectId }, { actor: asUser(owner.userId), orgId: org.orgId });
     expect(initialBinding.binding).toBeNull();
 
-    // Member cannot connect GitHub App or PAT.
+    // Member cannot start OAuth or connect GitHub App or PAT.
     const memberDenied = await rpc(
       app,
       'projects/github/connectApp',
       member,
-      { projectId, installationId: '777', taskKeyPrefix: 'ACME', idempotencyKey: randomUUID() },
+      { projectId, state: '0'.repeat(32), code: 'code-install-777', installationId: '777', taskKeyPrefix: 'ACME', idempotencyKey: randomUUID() },
       org.slug,
     );
     expect(memberDenied.status).toBe(403);
 
-    // Owner connects GitHub App with prefix ACME and backfillTaskNumbers = true.
+    // Owner starts GitHub App OAuth and connects verified installation 777 with prefix ACME and backfillTaskNumbers = true.
+    const oauthStarted = await rpc(app, 'projects/github/appOAuthStart', owner, { projectId }, org.slug);
+    expect(oauthStarted.status).toBe(200);
+    const oauthState = String(oauthStarted.body?.state ?? '');
+    expect(oauthState.length).toBeGreaterThanOrEqual(16);
+
     const connected = await rpc(
       app,
       'projects/github/connectApp',
       owner,
-      { projectId, installationId: '777', taskKeyPrefix: 'ACME', backfillTaskNumbers: true, idempotencyKey: randomUUID() },
+      { projectId, state: oauthState, code: 'code-install-777', installationId: '777', taskKeyPrefix: 'ACME', backfillTaskNumbers: true, idempotencyKey: randomUUID() },
       org.slug,
     );
     expect(connected.status).toBe(200);
     expect(connected.body?.backfilledCount).toBe(1);
     expect((connected.body?.availableRepos as unknown[])?.length).toBe(6);
+
+    // B1.3: externalAccountId is exposed to owner/admin and nulled for member/viewer.
+    const ownerBindingView = await rpc(app, 'projects/github/bindingGet', owner, { projectId }, org.slug);
+    expect((ownerBindingView.body?.binding as { externalAccountId?: unknown } | null)?.externalAccountId).toBe('777');
+    const memberBindingView = await rpc(app, 'projects/github/bindingGet', member, { projectId }, org.slug);
+    expect((memberBindingView.body?.binding as { externalAccountId?: unknown } | null)?.externalAccountId).toBeNull();
+    const viewerBindingView = await rpc(app, 'projects/github/bindingGet', viewer, { projectId }, org.slug);
+    expect((viewerBindingView.body?.binding as { externalAccountId?: unknown } | null)?.externalAccountId).toBeNull();
 
     // Social/Inbox channel list excludes github_app / github_pat.
     const socialChannels = await runtime.query<Array<{ provider: string }>>('kernel.channel.list', {}, { actor: asUser(owner.userId), orgId: org.orgId });
@@ -761,16 +827,21 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
       appWebhookSecrets: [APP_WEBHOOK_SECRET],
     });
     expect(uninstallBatch.appProcessed).toBe(1);
-    const pausedBinding = await rows<{ paused_reason: string | null; paused_at: string | null; conn_status: string }>(
-      `SELECT b.paused_reason, b.paused_at, c.status AS conn_status
+    const pausedBinding = await rows<{ github_enabled: boolean; paused_reason: string | null; paused_at: string | null; conn_status: string }>(
+      `SELECT b.github_enabled, b.paused_reason, b.paused_at, c.status AS conn_status
        FROM ludy_projects.github_project_binding b
        JOIN ludy_kernel.channel_connection c ON c.org_id = b.org_id AND c.id = b.channel_connection_id
        WHERE b.org_id = $1 AND b.project_id = $2`,
       [org.orgId, projectId],
     );
-    expect(pausedBinding[0]!.paused_reason).toBe('app_uninstalled');
+    expect(pausedBinding[0]!.github_enabled).toBe(false);
+    expect(pausedBinding[0]!.paused_reason).toBe('installation_deleted');
     expect(pausedBinding[0]!.paused_at).not.toBeNull();
     expect(pausedBinding[0]!.conn_status).toBe('revoked');
+    const remainingRepos = await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_projects.github_project_repo WHERE org_id = $1 AND project_id = $2', [org.orgId, projectId]);
+    expect(remainingRepos[0]?.n).toBe('0');
+    const remainingCreds = await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.credential c JOIN ludy_projects.github_project_binding b ON b.channel_connection_id = c.connection_id WHERE b.org_id = $1 AND b.project_id = $2', [org.orgId, projectId]);
+    expect(remainingCreds[0]?.n).toBe('0');
   });
 
   it('enforces PAT :hookKey opaque 404 (off/unentitled), 10-refusal auto-stop, rotation, 10m sweep, PDPL erase, export, and org_purge', async () => {
@@ -1149,5 +1220,391 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     }
     const orgBBinding = await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_projects.github_project_binding WHERE org_id = $1', [orgB.orgId]);
     expect(orgBBinding[0]?.n).toBe('1');
+  });
+
+  it('enforces B1 OAuth ownership + cross-org uniqueness, B2 ON DELETE SET NULL, B3 suspend/unsuspend/out-of-order, B4 off-app drop, B5 repo-id routing, and N6 broker gate', async () => {
+    const orgOne = await createOrg(runtime, asUser(owner.userId), 'Công ty Bảo Mật Một');
+    const orgTwo = await createOrg(runtime, asUser(outsider.userId), 'Công ty Bảo Mật Hai');
+
+    const { projectId: proj1a } = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Security Project 1A' },
+      { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
+    );
+    const { projectId: proj1b } = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Security Project 1B' },
+      { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
+    );
+    const { projectId: proj2 } = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Security Project 2' },
+      { actor: asUser(outsider.userId), orgId: orgTwo.orgId, idempotencyKey: randomUUID() },
+    );
+
+    // B1.1: tampered/wrong-project state, unowned installationId, 0 installations, >1 installations, and replay all fail fail-closed.
+    const startA = await rpc(app, 'projects/github/appOAuthStart', owner, { projectId: proj1a }, orgOne.slug);
+    expect(startA.status).toBe(200);
+    const stateA = String(startA.body?.state ?? '');
+
+    // Wrong projectId bound to stateA -> OAUTH_STATE_INVALID (consumed or rejected; issue fresh state for next check).
+    const crossProj = await rpc(
+      app,
+      'projects/github/connectApp',
+      owner,
+      { projectId: proj1b, state: stateA, code: 'code-install-777', installationId: '777', idempotencyKey: randomUUID() },
+      orgOne.slug,
+    );
+    expect(crossProj.status).toBe(400);
+
+    // Replay of stateA on its original project after bad exchange? Let's consume stateA validly via unowned attempt:
+    const startA2 = await rpc(app, 'projects/github/appOAuthStart', owner, { projectId: proj1a }, orgOne.slug);
+    const stateA2 = String(startA2.body?.state ?? '');
+    const callsBeforeForbidden = githubCalls.length;
+    const unowned = await rpc(
+      app,
+      'projects/github/connectApp',
+      owner,
+      { projectId: proj1a, state: stateA2, code: 'code-other-user', installationId: '888', idempotencyKey: randomUUID() },
+      orgOne.slug,
+    );
+    expect(unowned.status).toBe(403);
+    expect(unowned.body?.code).toBe('GITHUB_INSTALLATION_NOT_AUTHORIZED');
+    // Verify stateA2 was consumed before exchange so replay cannot reuse it.
+    const callsAtForbidden = githubCalls.length;
+    const replayA2 = await rpc(
+      app,
+      'projects/github/connectApp',
+      owner,
+      { projectId: proj1a, state: stateA2, code: 'code-install-888', installationId: '888', idempotencyKey: randomUUID() },
+      orgOne.slug,
+    );
+    expect(replayA2.status).toBe(400);
+    expect(githubCalls.length).toBe(callsAtForbidden);
+    expect(callsAtForbidden).toBeGreaterThan(callsBeforeForbidden);
+
+    // 0 installations and >1 installations when installationId is omitted:
+    const startEmpty = await rpc(app, 'projects/github/appOAuthStart', owner, { projectId: proj1a }, orgOne.slug);
+    const noInst = await rpc(
+      app,
+      'projects/github/connectApp',
+      owner,
+      { projectId: proj1a, state: String(startEmpty.body?.state ?? ''), code: 'code-empty-user', idempotencyKey: randomUUID() },
+      orgOne.slug,
+    );
+    expect(noInst.status).toBe(422);
+    expect(noInst.body?.code).toBe('GITHUB_NO_INSTALLATIONS');
+
+    const startMulti = await rpc(app, 'projects/github/appOAuthStart', owner, { projectId: proj1a }, orgOne.slug);
+    const multiInst = await rpc(
+      app,
+      'projects/github/connectApp',
+      owner,
+      { projectId: proj1a, state: String(startMulti.body?.state ?? ''), code: 'code-multi-user', idempotencyKey: randomUUID() },
+      orgOne.slug,
+    );
+    expect(multiInst.status).toBe(422);
+    expect(multiInst.body?.code).toBe('GITHUB_MULTIPLE_INSTALLATIONS');
+
+    // Connect uniquely via omitted installationId (single installation 888 owned by code-install-888):
+    const startAuto = await rpc(app, 'projects/github/appOAuthStart', owner, { projectId: proj1a }, orgOne.slug);
+    const connAuto = await rpc(
+      app,
+      'projects/github/connectApp',
+      owner,
+      { projectId: proj1a, state: String(startAuto.body?.state ?? ''), code: 'code-install-888', taskKeyPrefix: 'SEC', idempotencyKey: randomUUID() },
+      orgOne.slug,
+    );
+    expect(connAuto.status).toBe(200);
+    expect(String(connAuto.body?.connectionId ?? '')).not.toBe('');
+
+    // B1.2: Another org cannot claim installation 888 while orgOne holds an active/non-revoked connection -> 409 CHANNEL_ACCOUNT_TAKEN.
+    const startOrgTwo = await rpc(app, 'projects/github/appOAuthStart', outsider, { projectId: proj2 }, orgTwo.slug);
+    const takenErr = await rpc(
+      app,
+      'projects/github/connectApp',
+      outsider,
+      { projectId: proj2, state: String(startOrgTwo.body?.state ?? ''), code: 'code-install-888', installationId: '888', idempotencyKey: randomUUID() },
+      orgTwo.slug,
+    );
+    expect(takenErr.status).toBe(409);
+    expect(takenErr.body?.code).toBe('CHANNEL_ACCOUNT_TAKEN');
+
+    // Bind repo 1001 with an outdated repo_full_name ('octo-org/legacy-name') for B5 test.
+    const bound = await rpc(
+      app,
+      'projects/github/repoBind',
+      owner,
+      { projectId: proj1a, githubRepoId: '1001', repoFullName: 'octo-org/legacy-name', defaultBranch: 'main', webhookConfigured: true, idempotencyKey: randomUUID() },
+      orgOne.slug,
+    );
+    expect(bound.status).toBe(200);
+
+    // Create task & custom column to verify B2 ON DELETE SET NULL without FK error.
+    const customCol = await runtime.execute<{ columnId: string }>(
+      'projects.column.create',
+      { projectId: proj1a, name: 'QA Staging' },
+      { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
+    );
+    const saveCols = await rpc(
+      app,
+      'projects/github/bindingSave',
+      owner,
+      {
+        projectId: proj1a,
+        githubEnabled: true,
+        inboundColInProgress: customCol.columnId,
+        inboundColInReview: customCol.columnId,
+        inboundColDone: customCol.columnId,
+        idempotencyKey: randomUUID(),
+      },
+      orgOne.slug,
+    );
+    expect(saveCols.status).toBe(200);
+
+    const { taskId: taskSec } = await runtime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId: proj1a, title: 'Fix renamed repo sync', assigneePositionId: null },
+      { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
+    );
+
+    // B5: Webhook payload arrives with RENAMED repository full_name ('octo-org/renamed-core') and same githubRepoId (1001) -> still routes & syncs!
+    const renamedPrBody = JSON.stringify({
+      action: 'opened',
+      installation: { id: 888 },
+      repository: { id: 1001, full_name: 'octo-org/renamed-core' },
+      pull_request: {
+        number: 301,
+        title: 'Resolve SEC-1 after repo rename',
+        body: 'Closes SEC-1',
+        state: 'open',
+        merged: false,
+        draft: false,
+        html_url: 'https://github.com/octo-org/renamed-core/pull/301',
+        updated_at: '2027-02-01T00:00:00Z',
+        user: { login: 'dev-alice' },
+        head: { ref: 'feat/SEC-1' },
+      },
+    });
+    const renamedRes = await app.request(GITHUB_WEBHOOK_PATH, {
+      method: 'POST',
+      headers: {
+        'x-github-event': 'pull_request',
+        'x-github-delivery': randomUUID(),
+        'x-hub-signature-256': signGithubPayload(renamedPrBody, APP_WEBHOOK_SECRET),
+      },
+      body: renamedPrBody,
+    });
+    expect(renamedRes.status).toBe(202);
+    await processGithubWebhookBatch({
+      workerDb,
+      runtime: workerRuntime,
+      broker: vault,
+      appWebhookSecrets: [APP_WEBHOOK_SECRET],
+    });
+    const secLinks = await rows<{ task_id: string }>(
+      'SELECT task_id FROM ludy_projects.github_task_link WHERE org_id = $1 AND project_id = $2',
+      [orgOne.orgId, proj1a],
+    );
+    expect(secLinks).toEqual([{ task_id: taskSec }]);
+
+    // B5: Verify github_pat_org_bindings enforces p_org_id on a real github_pat connection.
+    const { projectId: projPatScope } = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'PAT Org Scope Check' },
+      { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
+    );
+    const connectPatScope = await rpc(
+      app,
+      'projects/github/connectPat',
+      owner,
+      {
+        projectId: projPatScope,
+        accessToken: 'test-pat-scope-token-value',
+        webhookSecret: PAT_WEBHOOK_SECRET,
+        idempotencyKey: randomUUID(),
+      },
+      orgOne.slug,
+    );
+    expect(connectPatScope.status).toBe(200);
+    const patConnIdScope = String(connectPatScope.body?.connectionId ?? '');
+    const bindPatScope = await rpc(
+      app,
+      'projects/github/repoBind',
+      owner,
+      { projectId: projPatScope, githubRepoId: '1001', repoFullName: 'octo-org/core-api', defaultBranch: 'main', idempotencyKey: randomUUID() },
+      orgOne.slug,
+    );
+    expect(bindPatScope.status).toBe(200);
+    const { rows: rightOrgPatBindings } = await sql<{ org_id: string }>`
+      SELECT org_id
+      FROM ludy_projects.github_pat_org_bindings(${orgOne.orgId}::uuid, ${patConnIdScope}::uuid, 1001::bigint)`.execute(workerDb);
+    expect(rightOrgPatBindings).toHaveLength(1);
+    const { rows: wrongOrgPatBindings } = await sql<{ org_id: string }>`
+      SELECT org_id
+      FROM ludy_projects.github_pat_org_bindings(${orgTwo.orgId}::uuid, ${patConnIdScope}::uuid, 1001::bigint)`.execute(workerDb);
+    expect(wrongOrgPatBindings).toEqual([]);
+
+    // B2: Delete custom column -> inbound_col_* columns become NULL cleanly; delete task -> github_sync_delivery.task_id becomes NULL cleanly.
+    await runtime.execute(
+      'projects.column.delete',
+      { projectId: proj1a, columnId: customCol.columnId },
+      { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
+    );
+    const colsAfterDel = await rows<{ inbound_col_in_progress: string | null; inbound_col_in_review: string | null; inbound_col_done: string | null }>(
+      'SELECT inbound_col_in_progress, inbound_col_in_review, inbound_col_done FROM ludy_projects.github_project_binding WHERE org_id = $1 AND project_id = $2',
+      [orgOne.orgId, proj1a],
+    );
+    expect(colsAfterDel[0]).toEqual({ inbound_col_in_progress: null, inbound_col_in_review: null, inbound_col_done: null });
+
+    await runtime.execute(
+      'projects.task.remove',
+      { projectId: proj1a, taskId: taskSec },
+      { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() },
+    );
+    const delivAfterTaskDel = await rows<{ task_id: string | null }>(
+      'SELECT task_id FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND project_id = $2',
+      [orgOne.orgId, proj1a],
+    );
+    expect(delivAfterTaskDel.length).toBeGreaterThan(0);
+    expect(delivAfterTaskDel.every((r) => r.task_id === null)).toBe(true);
+
+    // B4: When projects app is turned off for orgOne, queued App webhook does not record delivery rows or call GitHub API.
+    await runtime.execute('kernel.org.set_app', { module: 'projects', enabled: false }, { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() });
+    const countBeforeOff = await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_projects.github_sync_delivery WHERE org_id = $1', [orgOne.orgId]);
+    const callsBeforeOff = githubCalls.length;
+    const offBody = JSON.stringify({
+      action: 'opened',
+      installation: { id: 888 },
+      repository: { id: 1001, full_name: 'octo-org/renamed-core' },
+      issue: { number: 399, html_url: 'https://github.com/octo-org/renamed-core/issues/399', title: 'Off-app drop test SEC-1', state: 'open' },
+    });
+    await app.request(GITHUB_WEBHOOK_PATH, {
+      method: 'POST',
+      headers: { 'x-github-event': 'issues', 'x-github-delivery': randomUUID(), 'x-hub-signature-256': signGithubPayload(offBody, APP_WEBHOOK_SECRET) },
+      body: offBody,
+    });
+    await processGithubWebhookBatch({
+      workerDb,
+      runtime: workerRuntime,
+      broker: vault,
+      appWebhookSecrets: [APP_WEBHOOK_SECRET],
+    });
+    const countAfterOff = await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_projects.github_sync_delivery WHERE org_id = $1', [orgOne.orgId]);
+    expect(countAfterOff[0]?.n).toBe(countBeforeOff[0]?.n);
+    expect(githubCalls.length).toBe(callsBeforeOff);
+    await runtime.execute('kernel.org.set_app', { module: 'projects', enabled: true }, { actor: asUser(owner.userId), orgId: orgOne.orgId, idempotencyKey: randomUUID() });
+
+    // B3: suspend -> unsuspend -> deleted -> out-of-order unsuspend ignored.
+    const suspendPayload = JSON.stringify({ action: 'suspend', installation: { id: 888, account: { id: 9888, login: 'octo-org-2' } } });
+    await app.request(GITHUB_WEBHOOK_PATH, {
+      method: 'POST',
+      headers: { 'x-github-event': 'installation', 'x-github-delivery': randomUUID(), 'x-hub-signature-256': signGithubPayload(suspendPayload, APP_WEBHOOK_SECRET) },
+      body: suspendPayload,
+    });
+    await processGithubWebhookBatch({ workerDb, runtime: workerRuntime, broker: vault, appWebhookSecrets: [APP_WEBHOOK_SECRET] });
+    const afterSuspend = await rows<{ paused_reason: string | null }>('SELECT paused_reason FROM ludy_projects.github_project_binding WHERE org_id = $1 AND project_id = $2', [orgOne.orgId, proj1a]);
+    expect(afterSuspend[0]?.paused_reason).toBe('installation_suspended');
+
+    const unsuspendPayload = JSON.stringify({ action: 'unsuspend', installation: { id: 888, account: { id: 9888, login: 'octo-org-2' } } });
+    await app.request(GITHUB_WEBHOOK_PATH, {
+      method: 'POST',
+      headers: { 'x-github-event': 'installation', 'x-github-delivery': randomUUID(), 'x-hub-signature-256': signGithubPayload(unsuspendPayload, APP_WEBHOOK_SECRET) },
+      body: unsuspendPayload,
+    });
+    await processGithubWebhookBatch({ workerDb, runtime: workerRuntime, broker: vault, appWebhookSecrets: [APP_WEBHOOK_SECRET] });
+    const afterUnsuspend = await rows<{ paused_reason: string | null; paused_at: string | null }>('SELECT paused_reason, paused_at FROM ludy_projects.github_project_binding WHERE org_id = $1 AND project_id = $2', [orgOne.orgId, proj1a]);
+    expect(afterUnsuspend[0]).toEqual({ paused_reason: null, paused_at: null });
+
+    // B3: installation_repositories.removed deletes removed repo via system installation_sync.
+    await rpc(
+      app,
+      'projects/github/repoBind',
+      owner,
+      { projectId: proj1a, githubRepoId: '1002', repoFullName: 'octo-org/web-app', defaultBranch: 'main', webhookConfigured: true, idempotencyKey: randomUUID() },
+      orgOne.slug,
+    );
+    const repoRemovedPayload = JSON.stringify({
+      action: 'removed',
+      installation: { id: 888 },
+      repositories_removed: [{ id: 1002, full_name: 'octo-org/web-app' }],
+    });
+    await app.request(GITHUB_WEBHOOK_PATH, {
+      method: 'POST',
+      headers: { 'x-github-event': 'installation_repositories', 'x-github-delivery': randomUUID(), 'x-hub-signature-256': signGithubPayload(repoRemovedPayload, APP_WEBHOOK_SECRET) },
+      body: repoRemovedPayload,
+    });
+    await processGithubWebhookBatch({ workerDb, runtime: workerRuntime, broker: vault, appWebhookSecrets: [APP_WEBHOOK_SECRET] });
+    const reposAfterRemove = await rows<{ github_repo_id: string }>('SELECT github_repo_id::text FROM ludy_projects.github_project_repo WHERE org_id = $1 AND project_id = $2 ORDER BY github_repo_id', [orgOne.orgId, proj1a]);
+    expect(reposAfterRemove).toEqual([{ github_repo_id: '1001' }]);
+
+    const delPayload = JSON.stringify({ action: 'deleted', installation: { id: 888, account: { id: 9888, login: 'octo-org-2' } } });
+    await app.request(GITHUB_WEBHOOK_PATH, {
+      method: 'POST',
+      headers: { 'x-github-event': 'installation', 'x-github-delivery': randomUUID(), 'x-hub-signature-256': signGithubPayload(delPayload, APP_WEBHOOK_SECRET) },
+      body: delPayload,
+    });
+    await processGithubWebhookBatch({ workerDb, runtime: workerRuntime, broker: vault, appWebhookSecrets: [APP_WEBHOOK_SECRET] });
+
+    // Out-of-order unsuspend arriving after deleted MUST keep connection revoked and binding disabled/paused.
+    await app.request(GITHUB_WEBHOOK_PATH, {
+      method: 'POST',
+      headers: { 'x-github-event': 'installation', 'x-github-delivery': randomUUID(), 'x-hub-signature-256': signGithubPayload(unsuspendPayload, APP_WEBHOOK_SECRET) },
+      body: unsuspendPayload,
+    });
+    await processGithubWebhookBatch({ workerDb, runtime: workerRuntime, broker: vault, appWebhookSecrets: [APP_WEBHOOK_SECRET] });
+    const afterOutOfOrder = await rows<{ github_enabled: boolean; paused_reason: string | null; conn_status: string }>(
+      `SELECT b.github_enabled, b.paused_reason, c.status AS conn_status
+       FROM ludy_projects.github_project_binding b
+       JOIN ludy_kernel.channel_connection c ON c.org_id = b.org_id AND c.id = b.channel_connection_id
+       WHERE b.org_id = $1 AND b.project_id = $2`,
+      [orgOne.orgId, proj1a],
+    );
+    expect(afterOutOfOrder[0]).toEqual({ github_enabled: false, paused_reason: 'installation_deleted', conn_status: 'revoked' });
+
+    // Audit and outbox contain installation_sync + channel disconnection after deletion.
+    const auditSynced = await rows<{ n: string }>(
+      `SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'projects.github.installation_sync'`,
+      [orgOne.orgId],
+    );
+    expect(Number(auditSynced[0]?.n ?? 0)).toBeGreaterThanOrEqual(3);
+
+    // Once revoked in orgOne, orgTwo can now connect installation 888 cleanly.
+    const retryOrgTwo = await rpc(app, 'projects/github/appOAuthStart', outsider, { projectId: proj2 }, orgTwo.slug);
+    const okOrgTwo = await rpc(
+      app,
+      'projects/github/connectApp',
+      outsider,
+      { projectId: proj2, state: String(retryOrgTwo.body?.state ?? ''), code: 'code-install-888', installationId: '888', idempotencyKey: randomUUID() },
+      orgTwo.slug,
+    );
+    expect(okOrgTwo.status).toBe(200);
+
+    // N6: Without credential broker (broker.id === 'none'), GITHUB_PAT_WEBHOOK_PATH is not registered -> 404.
+    const noBrokerConfig = loadConfig({
+      DATABASE_URL: 'postgres://localhost/x',
+      AUTH_JWT_SECRET: SECRET,
+      AUTH_ISSUER: ISSUER,
+      AUTH_SESSION_CHECK: 'off',
+      PUBLIC_URL: 'http://localhost:8080',
+      MIGRATIONS_DIR: MIGRATIONS,
+      WEB_DIST: '/nonexistent',
+    });
+    const appNoBroker = createHttpApp({
+      config: noBrokerConfig,
+      runtime,
+      store: { put: async () => {}, get: async () => Buffer.alloc(0), delete: async () => {}, exists: async () => false } as unknown as BlobStore,
+      authenticate: createAuthenticator(noBrokerConfig, appDb),
+      pool: appPool,
+      aiEnabled: false,
+      channels: { broker: { id: 'none' } as unknown as CredentialBroker, sandbox: false, publicUrl: 'http://localhost:8080' },
+      githubWebhook: { appWebhookSecret: APP_WEBHOOK_SECRET },
+    });
+    const patNoBrokerRes = await appNoBroker.request(GITHUB_PAT_WEBHOOK_PATH.replace(':hookKey', 'A'.repeat(32)), {
+      method: 'POST',
+      headers: { 'x-github-event': 'ping', 'x-github-delivery': randomUUID(), 'x-hub-signature-256': 'sha256=' + '0'.repeat(64) },
+      body: '{}',
+    });
+    expect(patNoBrokerRes.status).toBe(404);
   });
 });

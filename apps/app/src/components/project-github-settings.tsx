@@ -27,10 +27,10 @@ import {
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
-import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { ErrorText, FieldError, RowsSkeleton, fieldControl, fieldHintId } from './ui.tsx';
-import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
+import { rememberGithubOAuthAttempt } from '../lib/oauth.ts';
 
 export function normalizeTaskKeyPrefixDraft(raw: string): string | null {
   const clean = raw.trim().toUpperCase();
@@ -64,17 +64,18 @@ export function sortAvailableGithubRepos(
 export function ProjectGithubSettingsDialog({
   open,
   onOpenChange,
+  orgSlug,
   project,
   columns,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  orgSlug?: string;
   project: ProjectDetail;
   columns: readonly ProjectColumn[];
 }) {
   const t = useTranslations('projects.github');
   const tc = useTranslations('common');
-  const installationInputId = useId();
   const patTokenInputId = useId();
   const patSecretInputId = useId();
   const patDisplayInputId = useId();
@@ -86,7 +87,6 @@ export function ProjectGithubSettingsDialog({
   const repoPickerSelectId = useId();
 
   const [authTab, setAuthTab] = useState<'app' | 'pat'>('app');
-  const [installationId, setInstallationId] = useState('');
   const [patToken, setPatToken] = useState('');
   const [patSecret, setPatSecret] = useState('');
   const [patDisplayName, setPatDisplayName] = useState('');
@@ -155,14 +155,20 @@ export function ProjectGithubSettingsDialog({
     void queryClient.invalidateQueries({ queryKey: orpc.projects.key() });
   };
 
-  const connectApp = useMutation(
-    orpc.projects.github.connectApp.mutationOptions({
+  const startAppOAuth = useMutation(
+    orpc.projects.github.appOAuthStart.mutationOptions({
       onSuccess: (res) => {
-        setAvailableRepos(sortAvailableGithubRepos(res.availableRepos));
-        setSelectedRepoId(res.availableRepos[0]?.githubRepoId ?? '');
-        setBackfilledNotice(res.backfilledCount);
-        setInstallationId('');
-        invalidateAll();
+        const slug = orgSlug ?? getCurrentOrg() ?? '';
+        const normalizedPrefix = normalizeTaskKeyPrefixDraft(taskKeyPrefix);
+        if (slug) {
+          rememberGithubOAuthAttempt(res.state, {
+            slug,
+            projectId: project.id,
+            taskKeyPrefix: normalizedPrefix,
+            backfillTaskNumbers,
+          });
+        }
+        window.location.assign(res.authorizeUrl);
       },
     }),
   );
@@ -223,22 +229,15 @@ export function ProjectGithubSettingsDialog({
     }),
   );
 
-  const handleConnectApp = (e: FormEvent) => {
+  const handleStartAppOAuth = (e: FormEvent) => {
     e.preventDefault();
-    const cleanId = installationId.trim();
-    if (!cleanId) return;
     const normalizedPrefix = normalizeTaskKeyPrefixDraft(taskKeyPrefix);
     if (normalizedPrefix && !GITHUB_TASK_PREFIX_PATTERN.test(normalizedPrefix)) {
       setPrefixError(t('taskPrefixInvalid'));
       return;
     }
     setPrefixError(null);
-    connectApp.mutate({
-      projectId: project.id,
-      installationId: cleanId,
-      ...(normalizedPrefix ? { taskKeyPrefix: normalizedPrefix, backfillTaskNumbers } : {}),
-      idempotencyKey: crypto.randomUUID(),
-    });
+    startAppOAuth.mutate({ projectId: project.id });
   };
 
   const handleConnectPat = (e: FormEvent) => {
@@ -332,8 +331,6 @@ export function ProjectGithubSettingsDialog({
   const repoLimitReached = repoCount >= GITHUB_REPOS_PER_PROJECT_MAX;
   const brokerConfigured = bindingQuery.data?.brokerConfigured ?? true;
   const appConfigured = bindingQuery.data?.appConfigured ?? false;
-  const appSlug = bindingQuery.data?.appSlug ?? null;
-  const appInstallHref = appSlug ? `https://github.com/apps/${encodeURIComponent(appSlug)}/installations/new` : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -465,38 +462,14 @@ export function ProjectGithubSettingsDialog({
                   !appConfigured ? (
                     <p className="text-xs text-muted-foreground">{t('appNotConfigured')}</p>
                   ) : (
-                    <form onSubmit={handleConnectApp} className="space-y-3">
+                    <form onSubmit={handleStartAppOAuth} className="space-y-3">
                       <p className="text-xs text-muted-foreground">{t('appInstallHint')}</p>
-                      {appInstallHref && (
-                        <a
-                          href={appInstallHref}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex min-h-11 items-center gap-1.5 rounded border border-border px-3 text-xs font-medium text-link hover:underline sm:min-h-9"
-                        >
-                          <ProjectIcon name="link" className="size-3.5" />
-                          <span>{t('appInstallLink')}</span>
-                        </a>
-                      )}
-                      <div className="space-y-1.5">
-                        <Label htmlFor={installationInputId}>{t('installationIdLabel')}</Label>
-                        <Input
-                          id={installationInputId}
-                          type="text"
-                          inputMode="numeric"
-                          value={installationId}
-                          onChange={(e) => setInstallationId(e.target.value)}
-                          placeholder={t('installationIdPlaceholder')}
-                          className="min-h-11 sm:min-h-9"
-                          data-testid="github-installation-id-input"
-                        />
-                      </div>
                       {taskKeyPrefixSection}
-                      {connectApp.error && <ErrorText>{errorMessage(connectApp.error)}</ErrorText>}
+                      {startAppOAuth.error && <ErrorText>{errorMessage(startAppOAuth.error)}</ErrorText>}
                       <Button
                         type="submit"
-                        disabled={!installationId.trim() || connectApp.isPending}
-                        loading={connectApp.isPending}
+                        disabled={startAppOAuth.isPending}
+                        loading={startAppOAuth.isPending}
                         className="min-h-11 sm:min-h-9"
                         data-testid="github-connect-app-submit"
                       >

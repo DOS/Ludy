@@ -372,8 +372,31 @@ export async function processGithubWebhookBatch(
         }
 
         if (parsed.eventType === 'installation') {
-          await sql`
-            SELECT ludy_projects.github_app_installation_handle(${parsed.installationId}::bigint, ${parsed.action}, NULL::bigint[])`.execute(deps.workerDb);
+          if (parsed.action === 'suspend' || parsed.action === 'unsuspend' || parsed.action === 'deleted') {
+            const installIdStr = String(parsed.installationId);
+            const { rows: targets } = await sql<{ org_id: string; channel_connection_id: string }>`
+              SELECT org_id, channel_connection_id
+              FROM ludy_projects.github_app_installation_targets(${installIdStr})`.execute(deps.workerDb);
+            for (const target of targets) {
+              if (await deps.runtime.appOn(target.org_id, 'projects', { fresh: true })) {
+                await deps.runtime.execute(
+                  'projects.github.installation_sync',
+                  {
+                    channelConnectionId: target.channel_connection_id,
+                    action: parsed.action,
+                  },
+                  { actor: SYSTEM, orgId: target.org_id },
+                );
+              }
+              if (parsed.action === 'deleted') {
+                await deps.runtime.execute(
+                  'kernel.channel.revoke_by_platform',
+                  { connectionId: target.channel_connection_id },
+                  { actor: SYSTEM, orgId: target.org_id },
+                );
+              }
+            }
+          }
           await sql`SELECT ludy_projects.github_webhook_pending_done(${row.seq}::bigint)`.execute(deps.workerDb);
           appProcessed += 1;
           continue;
@@ -381,13 +404,36 @@ export async function processGithubWebhookBatch(
 
         if (parsed.eventType === 'installation_repositories') {
           if (parsed.action === 'removed' && parsed.removedRepoIds.length > 0) {
-            await sql`
-              SELECT ludy_projects.github_app_installation_handle(
-                ${parsed.installationId}::bigint,
-                'removed',
-                ${sql`ARRAY[${sql.join(parsed.removedRepoIds.map((id) => sql`${id}::bigint`))}]::bigint[]`}
-              )`.execute(deps.workerDb);
+            const installIdStr = String(parsed.installationId);
+            const removedRepoIds = parsed.removedRepoIds
+              .filter((id) => Number.isSafeInteger(id) && id > 0)
+              .map((id) => String(id));
+            if (removedRepoIds.length > 0) {
+              const { rows: targets } = await sql<{ org_id: string; channel_connection_id: string }>`
+                SELECT org_id, channel_connection_id
+                FROM ludy_projects.github_app_installation_targets(${installIdStr})`.execute(deps.workerDb);
+              for (const target of targets) {
+                if (!(await deps.runtime.appOn(target.org_id, 'projects', { fresh: true }))) {
+                  continue;
+                }
+                await deps.runtime.execute(
+                  'projects.github.installation_sync',
+                  {
+                    channelConnectionId: target.channel_connection_id,
+                    action: 'repositories_removed',
+                    removedRepoIds,
+                  },
+                  { actor: SYSTEM, orgId: target.org_id },
+                );
+              }
+            }
           }
+          await sql`SELECT ludy_projects.github_webhook_pending_done(${row.seq}::bigint)`.execute(deps.workerDb);
+          appProcessed += 1;
+          continue;
+        }
+
+        if (!Number.isSafeInteger(parsed.githubRepoId) || parsed.githubRepoId <= 0) {
           await sql`SELECT ludy_projects.github_webhook_pending_done(${row.seq}::bigint)`.execute(deps.workerDb);
           appProcessed += 1;
           continue;
@@ -400,7 +446,7 @@ export async function processGithubWebhookBatch(
             SELECT org_id, project_id, binding_id, channel_connection_id, task_key_prefix,
                    auto_link_mentions, auto_link_branch, inbound_in_progress_on_pr, inbound_done_on_merge,
                    inbound_col_in_progress, inbound_col_in_review, inbound_col_done
-            FROM ludy_projects.github_app_org_bindings(${installId}::bigint, ${parsed.repoFullName})`.execute(deps.workerDb);
+            FROM ludy_projects.github_app_org_bindings(${installId}::bigint, ${parsed.githubRepoId}::bigint)`.execute(deps.workerDb);
           for (const binding of bindings) {
             await applyParsedEventToBinding(deps, binding, row.delivery_id, row.event_type, parsed, deps.sendHydrate);
           }
@@ -448,51 +494,59 @@ export async function processGithubWebhookBatch(
         return webhookSecret;
       };
 
-      for (const row of claimResult) {
-        if (
-          !row.org_id ||
-          !row.reject_token ||
-          !row.connection_id ||
-          !row.delivery_id ||
-          !row.event_type ||
-          !row.signature_256 ||
-          !row.body ||
-          row.generation === null
-        ) {
-          patDropped += 1;
-          continue;
-        }
-        const webhookSecret = await patSecretOf(row.org_id, row.connection_id);
-        if (!webhookSecret) {
-          patDropped += 1;
-          continue;
-        }
-        const rawBytes = new Uint8Array(row.body);
-        if (!verifyGithubWebhookSignature(rawBytes, row.signature_256, [webhookSecret])) {
-          refusedHooks.push({ rejectToken: row.reject_token, generation: Number(row.generation) });
-          patRefused += 1;
-          continue;
-        }
-        const parsed = parseGithubWebhookPayload(row.event_type, rawBytes);
-        if (!parsed || parsed.eventType === 'installation' || parsed.eventType === 'installation_repositories') {
-          patDropped += 1;
-          continue;
-        }
+      try {
+        for (const row of claimResult) {
+          if (
+            !row.org_id ||
+            !row.reject_token ||
+            !row.connection_id ||
+            !row.delivery_id ||
+            !row.event_type ||
+            !row.signature_256 ||
+            !row.body ||
+            row.generation === null
+          ) {
+            patDropped += 1;
+            continue;
+          }
+          const webhookSecret = await patSecretOf(row.org_id, row.connection_id);
+          if (!webhookSecret) {
+            patDropped += 1;
+            continue;
+          }
+          const rawBytes = new Uint8Array(row.body);
+          if (!verifyGithubWebhookSignature(rawBytes, row.signature_256, [webhookSecret])) {
+            refusedHooks.push({ rejectToken: row.reject_token, generation: Number(row.generation) });
+            patRefused += 1;
+            continue;
+          }
+          const parsed = parseGithubWebhookPayload(row.event_type, rawBytes);
+          if (
+            !parsed ||
+            parsed.eventType === 'installation' ||
+            parsed.eventType === 'installation_repositories' ||
+            !Number.isSafeInteger(parsed.githubRepoId) ||
+            parsed.githubRepoId <= 0
+          ) {
+            patDropped += 1;
+            continue;
+          }
 
-        const { rows: bindings } = await sql<BindingRow>`
-          SELECT org_id, project_id, binding_id, channel_connection_id, task_key_prefix,
-                 auto_link_mentions, auto_link_branch, inbound_in_progress_on_pr, inbound_done_on_merge,
-                 inbound_col_in_progress, inbound_col_in_review, inbound_col_done
-          FROM ludy_projects.github_pat_org_bindings(${row.connection_id}::uuid, ${parsed.repoFullName})`.execute(deps.workerDb);
-        for (const binding of bindings) {
-          await applyParsedEventToBinding(deps, binding, row.delivery_id, row.event_type, parsed, deps.sendHydrate);
+          const { rows: bindings } = await sql<BindingRow>`
+            SELECT org_id, project_id, binding_id, channel_connection_id, task_key_prefix,
+                   auto_link_mentions, auto_link_branch, inbound_in_progress_on_pr, inbound_done_on_merge,
+                   inbound_col_in_progress, inbound_col_in_review, inbound_col_done
+            FROM ludy_projects.github_pat_org_bindings(${row.org_id}::uuid, ${row.connection_id}::uuid, ${parsed.githubRepoId}::bigint)`.execute(deps.workerDb);
+          for (const binding of bindings) {
+            await applyParsedEventToBinding(deps, binding, row.delivery_id, row.event_type, parsed, deps.sendHydrate);
+          }
+          patOk += 1;
         }
-        patOk += 1;
-      }
-
-      for (const refused of refusedHooks) {
-        await sql`
-          SELECT ludy_projects.github_webhook_hook_reject(${refused.rejectToken}::uuid, ${refused.generation}::int)`.execute(deps.workerDb);
+      } finally {
+        for (const refused of refusedHooks) {
+          await sql`
+            SELECT ludy_projects.github_webhook_hook_reject(${refused.rejectToken}::uuid, ${refused.generation}::int)`.execute(deps.workerDb);
+        }
       }
 
       if (claimResult.length < WEBHOOK_CLAIM_BATCH) break;

@@ -117,6 +117,7 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.github.apply_inbound_event',
       'projects.github.binding.save',
       'projects.github.hook_set',
+      'projects.github.installation_sync',
       'projects.github.link.add',
       'projects.github.link.remove',
       'projects.github.repo.bind',
@@ -245,6 +246,7 @@ describe('@ludy/mod-projects (#2591)', () => {
         command.name === 'projects.roadmap.item.convert_to_task' ||
         command.name === 'projects.triage.accept' ||
         command.name === 'projects.github.hook_set' ||
+        command.name === 'projects.github.installation_sync' ||
         command.name === 'projects.github.apply_inbound_event' ||
         command.name.startsWith('projects.tasks_from_note.') ||
         command.name.startsWith('projects.tasks_from_source.') ||

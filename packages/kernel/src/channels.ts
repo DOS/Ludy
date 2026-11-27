@@ -151,6 +151,9 @@ export const channelConnect = defineCommand({
           if (pg?.code === '23505' && pg.constraint === 'channel_connection_whatsapp_account_uq') {
             throw new DomainError('CHANNEL_ACCOUNT_TAKEN', 409, 'Số WhatsApp này đang được một tổ chức khác kết nối. Hãy ngắt kết nối ở đó trước khi kết nối lại ở đây');
           }
+          if (pg?.code === '23505' && pg.constraint === 'channel_connection_github_app_installation_uq') {
+            throw new DomainError('CHANNEL_ACCOUNT_TAKEN', 409, 'Cài đặt GitHub App này đang được một tổ chức khác sử dụng. Hãy ngắt kết nối ở đó trước khi kết nối lại ở đây');
+          }
           throw error;
         });
       id = row.id;

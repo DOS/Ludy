@@ -30,11 +30,11 @@ const WORKER_ONLY_DEFINERS = [
   'crove_projects.github_webhook_pending_done(bigint)',
   'crove_projects.github_webhook_hook_claim(integer)',
   'crove_projects.github_webhook_hook_reject(uuid, integer)',
-  'crove_projects.github_app_org_bindings(bigint, text)',
-  'crove_projects.github_pat_org_bindings(uuid, text)',
+  'crove_projects.github_app_org_bindings(bigint, bigint)',
+  'crove_projects.github_pat_org_bindings(uuid, uuid, bigint)',
   'crove_projects.github_sync_delivery_begin(uuid, uuid, text, text, text, text, integer)',
   'crove_projects.github_sync_delivery_finish(uuid, uuid, text, uuid, text, text)',
-  'crove_projects.github_app_installation_handle(bigint, text, bigint[])',
+  'crove_projects.github_app_installation_targets(text)',
 ] as const;
 
 const APP_ONLY_DEFINERS = [

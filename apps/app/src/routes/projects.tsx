@@ -1144,6 +1144,7 @@ export function ProjectDetailView({ initialView }: { initialView?: ProjectViewMo
       <ProjectGithubSettingsDialog
         open={githubOpen}
         onOpenChange={setGithubOpen}
+        orgSlug={slug}
         project={project}
         columns={board.columns ?? []}
       />

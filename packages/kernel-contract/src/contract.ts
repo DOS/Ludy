@@ -915,6 +915,8 @@ import {
   zProjectTriageSnoozeInput,
 } from './projects-triage.ts';
 import {
+  zGithubAppOAuthStartRpcInput,
+  zGithubAppOAuthStartRpcResult,
   zGithubBindingGetInput,
   zGithubBindingGetResult,
   zGithubBindingSaveInput,
@@ -4237,6 +4239,7 @@ export const contract = {
         .input(zGithubBindingSaveInput.extend({ idempotencyKey: zId }))
         .output(zGithubBindingSaveResult),
       connectPat: oc.input(zGithubConnectPatRpcInput).output(zGithubConnectPatRpcResult),
+      appOAuthStart: oc.input(zGithubAppOAuthStartRpcInput).output(zGithubAppOAuthStartRpcResult),
       connectApp: oc.input(zGithubConnectAppRpcInput).output(zGithubConnectAppRpcResult),
       rotatePatHook: oc.input(zGithubRotatePatHookRpcInput).output(zGithubRotatePatHookRpcResult),
       listAvailableRepos: oc.input(zGithubListAvailableReposRpcInput).output(zGithubListAvailableReposRpcResult),

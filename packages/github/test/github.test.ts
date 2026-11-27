@@ -161,4 +161,75 @@ describe('@ludy/github', () => {
       'GET https://api.github.com/repos/acme/web/pulls/999',
     ]);
   });
+
+  it('evicts cached App tokens on 401 and retries once, bounds cache to 500 entries, and performs GitHub App OAuth exchange + installation listing', async () => {
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const pem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const seenAuth: string[] = [];
+    let mintSeq = 0;
+    let firstRepoCall = true;
+
+    const client = createGithubClient({
+      app: { appId: '4242', privateKeyPem: pem },
+      appOAuth: { clientId: 'Iv1.testclient', clientSecret: 'test-client-secret-012345' },
+      now: () => 1_700_000_000_000,
+      transport: async (req) => {
+        if (req.url === 'https://github.com/login/oauth/access_token') {
+          const params = new URLSearchParams(req.body ?? '');
+          if (params.get('code') === 'bad-code') {
+            return { status: 200, body: JSON.stringify({ error: 'bad_verification_code', error_description: 'The code passed is incorrect' }) };
+          }
+          return { status: 200, body: JSON.stringify({ access_token: 'ghu_user_access_123456', token_type: 'bearer' }) };
+        }
+        if (req.url.startsWith('https://api.github.com/user/installations')) {
+          const url = new URL(req.url);
+          const page = Number(url.searchParams.get('page') ?? '1');
+          const batch = page === 1
+            ? Array.from({ length: 100 }, (_, i) => ({ id: i + 1, account: { login: `org-${i + 1}`, type: 'Organization' } }))
+            : [{ id: 101, account: { login: 'org-101', type: 'Organization' } }];
+          return { status: 200, body: JSON.stringify({ total_count: 101, installations: batch }) };
+        }
+        if (req.url.endsWith('/access_tokens')) {
+          mintSeq += 1;
+          return {
+            status: 201,
+            body: JSON.stringify({ token: `ghs_tok_${mintSeq}_1234567890`, expires_at: '2023-11-15T00:00:00Z' }),
+          };
+        }
+        if (req.url === 'https://api.github.com/installation/repositories?per_page=100') {
+          seenAuth.push(req.headers.authorization ?? '');
+          if (firstRepoCall) {
+            firstRepoCall = false;
+            return { status: 401, body: '{"message":"Bad credentials"}' };
+          }
+          return { status: 200, body: JSON.stringify({ repositories: [] }) };
+        }
+        return { status: 500, body: '{}' };
+      },
+    });
+
+    // OAuth code exchange + 2-page installation listing + error classification on GitHub HTTP 200 OAuth error.
+    await expect(client.exchangeOAuthCode({ code: 'bad-code', redirectUri: 'https://app.ludy.test/channels/oauth/github_app/callback' })).rejects.toMatchObject({
+      name: 'GithubError',
+      kind: 'credentials',
+    });
+    const userToken = await client.exchangeOAuthCode({ code: 'good-code', redirectUri: 'https://app.ludy.test/channels/oauth/github_app/callback' });
+    expect(userToken).toBe('ghu_user_access_123456');
+    const installations = await client.listUserInstallations(userToken);
+    expect(installations).toHaveLength(101);
+
+    // First call gets 401 -> evicts tok_1 -> retries with tok_2 cleanly.
+    const repos = await client.listInstallationRepos('555');
+    expect(repos).toEqual([]);
+    expect(seenAuth).toEqual(['Bearer ghs_tok_1_1234567890', 'Bearer ghs_tok_2_1234567890']);
+
+    // Bounded cache: minting 505 distinct installations evicts installation '555', forcing a fresh mint for '555'.
+    const beforeEvict = mintSeq;
+    for (let i = 1; i <= 505; i += 1) {
+      await client.listInstallationRepos(String(1000 + i));
+    }
+    expect(mintSeq).toBe(beforeEvict + 505);
+    await client.listInstallationRepos('555');
+    expect(mintSeq).toBe(beforeEvict + 506);
+  });
 });

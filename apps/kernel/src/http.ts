@@ -1570,47 +1570,50 @@ export function createHttpApp(deps: HttpDeps) {
       );
     }
 
-    app.post(
-      GITHUB_PAT_WEBHOOK_PATH,
-      async (c, next) => {
-        if (!isGithubHookKey(c.req.param('hookKey'))) return c.json({ code: 'NOT_FOUND' }, 404);
-        const decision = githubAddressLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
-        if (!decision.allowed) {
-          warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
-          c.header('retry-after', String(decision.retryAfterSeconds));
-          return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
-        }
-        await next();
-      },
-      bodyLimit({ maxSize: MAX_GITHUB_WEBHOOK_BYTES }),
-      async (c) => {
-        try {
-          const outcome = await acceptGithubPatHook(
-            runtime,
-            {
-              hookKey: c.req.param('hookKey'),
-              signature256: c.req.header(GITHUB_SIGNATURE_HEADER),
-              eventType: c.req.header(GITHUB_EVENT_HEADER),
-              deliveryId: c.req.header(GITHUB_DELIVERY_HEADER),
-              body: new Uint8Array(await c.req.arrayBuffer()),
-            },
-            githubPatHookBudget,
-            githubBilling,
-          );
-          if (outcome.status === 404) return c.json({ code: 'NOT_FOUND' }, 404);
-          if (outcome.status === 429) {
-            c.header('retry-after', String(outcome.retryAfterSeconds));
-            return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: outcome.retryAfterSeconds }, 429);
+    const githubPatBroker = deps.channels?.broker ?? deps.broker;
+    if (githubPatBroker && githubPatBroker.id !== 'none') {
+      app.post(
+        GITHUB_PAT_WEBHOOK_PATH,
+        async (c, next) => {
+          if (!isGithubHookKey(c.req.param('hookKey'))) return c.json({ code: 'NOT_FOUND' }, 404);
+          const decision = githubAddressLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+          if (!decision.allowed) {
+            warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+            c.header('retry-after', String(decision.retryAfterSeconds));
+            return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
           }
-          if (outcome.status === 202) return c.json({ queued: outcome.queued }, 202);
-          if (outcome.status === 200) return c.json({ ok: true, ignored: true }, 200);
-          return c.json({ code: outcome.code }, outcome.status);
-        } catch (error) {
-          console.error('[projects-github-hook] request failed:', error instanceof Error ? error.name : 'error');
-          return c.json({ code: 'INTERNAL' }, 500);
-        }
-      },
-    );
+          await next();
+        },
+        bodyLimit({ maxSize: MAX_GITHUB_WEBHOOK_BYTES }),
+        async (c) => {
+          try {
+            const outcome = await acceptGithubPatHook(
+              runtime,
+              {
+                hookKey: c.req.param('hookKey'),
+                signature256: c.req.header(GITHUB_SIGNATURE_HEADER),
+                eventType: c.req.header(GITHUB_EVENT_HEADER),
+                deliveryId: c.req.header(GITHUB_DELIVERY_HEADER),
+                body: new Uint8Array(await c.req.arrayBuffer()),
+              },
+              githubPatHookBudget,
+              githubBilling,
+            );
+            if (outcome.status === 404) return c.json({ code: 'NOT_FOUND' }, 404);
+            if (outcome.status === 429) {
+              c.header('retry-after', String(outcome.retryAfterSeconds));
+              return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: outcome.retryAfterSeconds }, 429);
+            }
+            if (outcome.status === 202) return c.json({ queued: outcome.queued }, 202);
+            if (outcome.status === 200) return c.json({ ok: true, ignored: true }, 200);
+            return c.json({ code: outcome.code }, outcome.status);
+          } catch (error) {
+            console.error('[projects-github-hook] request failed:', error instanceof Error ? error.name : 'error');
+            return c.json({ code: 'INTERNAL' }, 500);
+          }
+        },
+      );
+    }
   }
 
   // MISA AMIS's callback with the result of a save (#3903, S4 of #3854; MISA ASP posts to it too, #4103): public, checked by the HMAC of its signed `data` before anything else is read, capped in size and rate limited per client

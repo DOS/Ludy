@@ -62,11 +62,11 @@ CREATE TABLE IF NOT EXISTS ludy_projects.github_project_binding (
   CONSTRAINT github_project_binding_connection_fk FOREIGN KEY (org_id, channel_connection_id)
     REFERENCES ludy_kernel.channel_connection (org_id, id) ON DELETE CASCADE,
   CONSTRAINT github_project_binding_col_in_progress_fk FOREIGN KEY (org_id, inbound_col_in_progress)
-    REFERENCES ludy_projects.project_column (org_id, id) ON DELETE SET NULL,
+    REFERENCES ludy_projects.project_column (org_id, id) ON DELETE SET NULL (inbound_col_in_progress),
   CONSTRAINT github_project_binding_col_in_review_fk FOREIGN KEY (org_id, inbound_col_in_review)
-    REFERENCES ludy_projects.project_column (org_id, id) ON DELETE SET NULL,
+    REFERENCES ludy_projects.project_column (org_id, id) ON DELETE SET NULL (inbound_col_in_review),
   CONSTRAINT github_project_binding_col_done_fk FOREIGN KEY (org_id, inbound_col_done)
-    REFERENCES ludy_projects.project_column (org_id, id) ON DELETE SET NULL
+    REFERENCES ludy_projects.project_column (org_id, id) ON DELETE SET NULL (inbound_col_done)
 );
 
 CREATE INDEX IF NOT EXISTS github_project_binding_conn_idx
@@ -303,7 +303,7 @@ CREATE TABLE IF NOT EXISTS ludy_projects.github_sync_delivery (
   CONSTRAINT github_sync_delivery_project_fk FOREIGN KEY (org_id, project_id)
     REFERENCES ludy_projects.project (org_id, id) ON DELETE CASCADE,
   CONSTRAINT github_sync_delivery_task_fk FOREIGN KEY (org_id, task_id)
-    REFERENCES ludy_kernel.task (org_id, id) ON DELETE SET NULL,
+    REFERENCES ludy_kernel.task (org_id, id) ON DELETE SET NULL (task_id),
   CONSTRAINT github_sync_delivery_dedupe_uq UNIQUE (org_id, project_id, direction, delivery_id)
 );
 
@@ -906,7 +906,7 @@ END $$;
 -- ---------------------------------------------------------------------------
 -- 5. Definer lookups & sync delivery ledger helpers
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION ludy_projects.github_app_org_bindings(p_installation_id bigint, p_repo_full_name text)
+CREATE OR REPLACE FUNCTION ludy_projects.github_app_org_bindings(p_installation_id bigint, p_github_repo_id bigint)
 RETURNS TABLE (
   org_id uuid,
   project_id uuid,
@@ -930,7 +930,7 @@ BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'ludy_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'GITHUB_WEBHOOK_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
-  IF p_installation_id IS NULL OR p_installation_id <= 0 OR p_repo_full_name IS NULL THEN
+  IF p_installation_id IS NULL OR p_installation_id <= 0 OR p_github_repo_id IS NULL OR p_github_repo_id <= 0 THEN
     RETURN;
   END IF;
 
@@ -949,11 +949,11 @@ BEGIN
     AND b.github_enabled = true
     AND b.auto_sync_inbound = true
     AND b.paused_at IS NULL
-    AND pg_catalog.lower(r.repo_full_name) = pg_catalog.lower(p_repo_full_name)
+    AND r.github_repo_id = p_github_repo_id
   ORDER BY b.org_id, b.project_id;
 END $$;
 
-CREATE OR REPLACE FUNCTION ludy_projects.github_pat_org_bindings(p_connection_id uuid, p_repo_full_name text)
+CREATE OR REPLACE FUNCTION ludy_projects.github_pat_org_bindings(p_org_id uuid, p_connection_id uuid, p_github_repo_id bigint)
 RETURNS TABLE (
   org_id uuid,
   project_id uuid,
@@ -977,7 +977,7 @@ BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'ludy_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'GITHUB_WEBHOOK_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
-  IF p_connection_id IS NULL OR p_repo_full_name IS NULL THEN
+  IF p_org_id IS NULL OR p_connection_id IS NULL OR p_github_repo_id IS NULL OR p_github_repo_id <= 0 THEN
     RETURN;
   END IF;
 
@@ -986,17 +986,18 @@ BEGIN
          b.auto_link_mentions, b.auto_link_branch, b.inbound_in_progress_on_pr, b.inbound_done_on_merge,
          b.inbound_col_in_progress, b.inbound_col_in_review, b.inbound_col_done
   FROM ludy_kernel.channel_connection c
-  JOIN ludy_kernel.tenant t ON t.org_id = c.org_id AND t.status = 'active' AND ludy_kernel.org_app_on(t.org_id, 'projects')
-  JOIN ludy_projects.github_project_binding b ON b.org_id = c.org_id AND b.channel_connection_id = c.id
-  JOIN ludy_projects.project p ON p.org_id = b.org_id AND p.id = b.project_id AND p.status <> 'archived' AND NOT p.is_template
-  JOIN ludy_projects.github_project_repo r ON r.org_id = b.org_id AND r.binding_id = b.id
-  WHERE c.id = p_connection_id
+  JOIN ludy_kernel.tenant t ON t.org_id = p_org_id AND t.status = 'active' AND ludy_kernel.org_app_on(p_org_id, 'projects')
+  JOIN ludy_projects.github_project_binding b ON b.org_id = p_org_id AND b.channel_connection_id = c.id
+  JOIN ludy_projects.project p ON p.org_id = p_org_id AND p.id = b.project_id AND p.status <> 'archived' AND NOT p.is_template
+  JOIN ludy_projects.github_project_repo r ON r.org_id = p_org_id AND r.binding_id = b.id
+  WHERE c.org_id = p_org_id
+    AND c.id = p_connection_id
     AND c.provider = 'github_pat'
     AND c.status = 'active'
     AND b.github_enabled = true
     AND b.auto_sync_inbound = true
     AND b.paused_at IS NULL
-    AND pg_catalog.lower(r.repo_full_name) = pg_catalog.lower(p_repo_full_name)
+    AND r.github_repo_id = p_github_repo_id
   ORDER BY b.org_id, b.project_id;
 END $$;
 
@@ -1110,81 +1111,33 @@ BEGIN
   LIMIT v_limit;
 END $$;
 
-CREATE OR REPLACE FUNCTION ludy_projects.github_app_installation_handle(
-  p_installation_id bigint,
-  p_action text,
-  p_removed_repo_ids bigint[] DEFAULT NULL
+CREATE OR REPLACE FUNCTION ludy_projects.github_app_installation_targets(p_installation_id text)
+RETURNS TABLE (
+  org_id uuid,
+  channel_connection_id uuid
 )
-RETURNS integer
 LANGUAGE plpgsql
+STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
-  v_rows integer := 0;
+  v_clean text := btrim(COALESCE(p_installation_id, ''));
 BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'ludy_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'GITHUB_WEBHOOK_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
-  IF p_installation_id IS NULL OR p_installation_id <= 0 THEN
-    RETURN 0;
+  IF v_clean !~ '^[1-9][0-9]{0,19}$' THEN
+    RETURN;
   END IF;
 
-  IF p_action IN ('deleted', 'suspend') THEN
-    UPDATE ludy_projects.github_project_binding b
-    SET paused_reason = CASE WHEN p_action = 'deleted' THEN 'app_uninstalled' ELSE 'app_suspended' END,
-        paused_at = pg_catalog.clock_timestamp(),
-        updated_at = pg_catalog.clock_timestamp()
-    FROM ludy_kernel.channel_connection c
-    WHERE c.org_id = b.org_id
-      AND c.id = b.channel_connection_id
-      AND c.provider = 'github_app'
-      AND c.external_account_id = p_installation_id::text
-      AND c.status = 'active';
-    GET DIAGNOSTICS v_rows = ROW_COUNT;
-
-    IF p_action = 'deleted' THEN
-      UPDATE ludy_kernel.channel_connection c
-      SET status = 'revoked',
-          status_reason = 'github_app_uninstalled',
-          updated_at = pg_catalog.clock_timestamp()
-      WHERE c.provider = 'github_app'
-        AND c.external_account_id = p_installation_id::text
-        AND c.status = 'active';
-    END IF;
-    RETURN v_rows;
-  END IF;
-
-  IF p_action = 'unsuspend' THEN
-    UPDATE ludy_projects.github_project_binding b
-    SET paused_reason = NULL,
-        paused_at = NULL,
-        updated_at = pg_catalog.clock_timestamp()
-    FROM ludy_kernel.channel_connection c
-    WHERE c.org_id = b.org_id
-      AND c.id = b.channel_connection_id
-      AND c.provider = 'github_app'
-      AND c.external_account_id = p_installation_id::text
-      AND b.paused_reason = 'app_suspended';
-    GET DIAGNOSTICS v_rows = ROW_COUNT;
-    RETURN v_rows;
-  END IF;
-
-  IF p_action = 'removed' AND p_removed_repo_ids IS NOT NULL AND pg_catalog.cardinality(p_removed_repo_ids) > 0 THEN
-    DELETE FROM ludy_projects.github_project_repo r
-    USING ludy_projects.github_project_binding b, ludy_kernel.channel_connection c
-    WHERE r.org_id = b.org_id
-      AND r.binding_id = b.id
-      AND c.org_id = b.org_id
-      AND c.id = b.channel_connection_id
-      AND c.provider = 'github_app'
-      AND c.external_account_id = p_installation_id::text
-      AND r.github_repo_id = ANY (p_removed_repo_ids);
-    GET DIAGNOSTICS v_rows = ROW_COUNT;
-    RETURN v_rows;
-  END IF;
-
-  RETURN 0;
+  RETURN QUERY
+  SELECT c.org_id, c.id AS channel_connection_id
+  FROM ludy_kernel.channel_connection c
+  WHERE c.provider = 'github_app'
+    AND c.external_account_id = v_clean
+    AND c.status <> 'revoked'
+  ORDER BY c.org_id, c.id;
 END $$;
 
 CREATE OR REPLACE FUNCTION ludy_projects.github_notice_search_text(p_body bytea)
@@ -1253,12 +1206,12 @@ REVOKE ALL ON FUNCTION
   ludy_projects.github_webhook_hook_put(uuid, text, integer, text, text, text, bytea),
   ludy_projects.github_webhook_hook_claim(integer),
   ludy_projects.github_webhook_hook_reject(uuid, integer),
-  ludy_projects.github_app_org_bindings(bigint, text),
-  ludy_projects.github_pat_org_bindings(uuid, text),
+  ludy_projects.github_app_org_bindings(bigint, bigint),
+  ludy_projects.github_pat_org_bindings(uuid, uuid, bigint),
   ludy_projects.github_sync_delivery_begin(uuid, uuid, text, text, text, text, integer),
   ludy_projects.github_sync_delivery_finish(uuid, uuid, text, uuid, text, text),
   ludy_projects.github_sync_delivery_list(uuid, integer),
-  ludy_projects.github_app_installation_handle(bigint, text, bigint[]),
+  ludy_projects.github_app_installation_targets(text),
   ludy_projects.github_notice_search_text(bytea),
   ludy_projects.personal_data_erase_github_notice(text, text)
 FROM PUBLIC;
@@ -1272,7 +1225,7 @@ BEGIN
     WHERE (rolname LIKE 'ludy\_%' OR rolname LIKE 'crove\_%') AND rolname <> current_user
   LOOP
     EXECUTE pg_catalog.format(
-      'REVOKE ALL ON FUNCTION ludy_projects.github_project_binding_guard(), ludy_projects.github_project_repo_guard(), ludy_projects.github_webhook_pending_enqueue(text, text, text, bigint, bytea), ludy_projects.github_webhook_sweep(), ludy_projects.github_webhook_has_work(), ludy_projects.github_webhook_pending_claim(integer, integer), ludy_projects.github_webhook_pending_done(bigint), ludy_projects.github_webhook_hook_set(uuid, text), ludy_projects.github_webhook_hook_status(uuid), ludy_projects.github_webhook_hook_find(text), ludy_projects.github_webhook_hook_put(uuid, text, integer, text, text, text, bytea), ludy_projects.github_webhook_hook_claim(integer), ludy_projects.github_webhook_hook_reject(uuid, integer), ludy_projects.github_app_org_bindings(bigint, text), ludy_projects.github_pat_org_bindings(uuid, text), ludy_projects.github_sync_delivery_begin(uuid, uuid, text, text, text, text, integer), ludy_projects.github_sync_delivery_finish(uuid, uuid, text, uuid, text, text), ludy_projects.github_sync_delivery_list(uuid, integer), ludy_projects.github_app_installation_handle(bigint, text, bigint[]), ludy_projects.github_notice_search_text(bytea), ludy_projects.personal_data_erase_github_notice(text, text) FROM %I',
+      'REVOKE ALL ON FUNCTION ludy_projects.github_project_binding_guard(), ludy_projects.github_project_repo_guard(), ludy_projects.github_webhook_pending_enqueue(text, text, text, bigint, bytea), ludy_projects.github_webhook_sweep(), ludy_projects.github_webhook_has_work(), ludy_projects.github_webhook_pending_claim(integer, integer), ludy_projects.github_webhook_pending_done(bigint), ludy_projects.github_webhook_hook_set(uuid, text), ludy_projects.github_webhook_hook_status(uuid), ludy_projects.github_webhook_hook_find(text), ludy_projects.github_webhook_hook_put(uuid, text, integer, text, text, text, bytea), ludy_projects.github_webhook_hook_claim(integer), ludy_projects.github_webhook_hook_reject(uuid, integer), ludy_projects.github_app_org_bindings(bigint, bigint), ludy_projects.github_pat_org_bindings(uuid, uuid, bigint), ludy_projects.github_sync_delivery_begin(uuid, uuid, text, text, text, text, integer), ludy_projects.github_sync_delivery_finish(uuid, uuid, text, uuid, text, text), ludy_projects.github_sync_delivery_list(uuid, integer), ludy_projects.github_app_installation_targets(text), ludy_projects.github_notice_search_text(bytea), ludy_projects.personal_data_erase_github_notice(text, text) FROM %I',
       r.rolname
     );
   END LOOP;
@@ -1298,11 +1251,11 @@ GRANT EXECUTE ON FUNCTION
   ludy_projects.github_webhook_pending_done(bigint),
   ludy_projects.github_webhook_hook_claim(integer),
   ludy_projects.github_webhook_hook_reject(uuid, integer),
-  ludy_projects.github_app_org_bindings(bigint, text),
-  ludy_projects.github_pat_org_bindings(uuid, text),
+  ludy_projects.github_app_org_bindings(bigint, bigint),
+  ludy_projects.github_pat_org_bindings(uuid, uuid, bigint),
   ludy_projects.github_sync_delivery_begin(uuid, uuid, text, text, text, text, integer),
   ludy_projects.github_sync_delivery_finish(uuid, uuid, text, uuid, text, text),
-  ludy_projects.github_app_installation_handle(bigint, text, bigint[])
+  ludy_projects.github_app_installation_targets(text)
 TO ludy_worker;
 
 -- ---------------------------------------------------------------------------
