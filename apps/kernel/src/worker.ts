@@ -137,7 +137,7 @@ import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
 import { HELD_SWEEP_MS, holdEvents, planHolds, releaseHeld, releaseHeldOfOrg, type SweepCursor } from './outbox-hold.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
-import { failUndraftable, reconcileTelegramDisplacements, rekeyTelegramWebhooks, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
+import { failUndraftable, reconcileTelegramDisplacements, rekeyTelegramWebhooks, requestDueConversationDrafts, purgeInboundFirstSeen, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
@@ -4191,6 +4191,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       await sweepConversationDrafts({ workerDb: deps.workerDb });
       // The expired "you are replying" markers of the Inbox (CV3).
       await sweepConversationComposing({ workerDb: deps.workerDb });
+      // The expired first-seen keys of WhatsApp webhook events (#5085).
+      await purgeInboundFirstSeen({ workerDb: deps.workerDb });
       // The campaign draft requests the job never answered (ads W1b): in every deployment, so a member can ask again after 15 minutes.
       await sweepAdsCampaignRequests({ workerDb: deps.workerDb });
       // The new conversations Vy drafts a reply for (CV8): only where a model is configured.

@@ -1413,6 +1413,17 @@ export async function sweepConversationComposing(deps: { workerDb: Db; now?: () 
   return rows[0]?.n ?? 0;
 }
 
+// The durable first-seen keys of WhatsApp webhook events past their 7 days (ludy_kernel.conversation_inbound_first_seen_purge, the worker login's, #5085): a key
+// only matters while a retry or an unparked notice of its event can still arrive. A batch at a time, not more often than every ten seconds; runs in every deployment.
+let lastFirstSeenPurge = 0;
+export async function purgeInboundFirstSeen(deps: { workerDb: Db; now?: () => number; force?: boolean }): Promise<number> {
+  const now = (deps.now ?? Date.now)();
+  if (!deps.force && now - lastFirstSeenPurge < DRAFT_DUE_MS) return 0;
+  lastFirstSeenPurge = now;
+  const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.conversation_inbound_first_seen_purge(1000::int) AS n`.execute(deps.workerDb);
+  return rows[0]?.n ?? 0;
+}
+
 // The new conversations to draft for (ludy_kernel.conversation_draft_due, the worker login's), at most a few at a time and not more often than every
 // ten seconds: each costs a model call.
 const DRAFT_DUE_MS = 10_000;
