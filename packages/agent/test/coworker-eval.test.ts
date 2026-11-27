@@ -8,6 +8,7 @@ import {
   ExpenseVarianceCoworker,
   InboxReader,
   PayrollCoworker,
+  QuarterSummaryCoworker,
   SchedulingReader,
   SignAcceptanceReader,
   SignAiReader,
@@ -408,6 +409,16 @@ function createStubRuntime() {
     scheduling: new SchedulingReader(STUB_CONFIG, async () => ({ asksForMeeting: true, windows: [{ date: '2026-10-08', from: '14:00', to: '15:00' }] })),
     expenseVariance: new ExpenseVarianceCoworker(STUB_CONFIG, async () => ({
       output: { notes: [{ row: 1, text: 'Co the do hoa don tu nha cung cap tang so voi ky truoc.' }] },
+      usage: zeroUsage,
+    })),
+    quarterSummary: new QuarterSummaryCoworker(STUB_CONFIG, async () => ({
+      output: {
+        notes: [
+          { row: 1, text: 'Sales revenue rose against the previous quarter and the same quarter last year.' },
+          { row: 2, text: 'Costs rose against the previous quarter but stayed steady against the same quarter last year.' },
+          { row: 3, text: 'Cash fell against the previous quarter and the same quarter last year.' },
+        ],
+      },
       usage: zeroUsage,
     })),
     payroll: new PayrollCoworker(STUB_CONFIG, {

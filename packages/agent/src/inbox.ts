@@ -115,6 +115,8 @@ import {
 import { checkVatLateSentence, vatLateInstructions, vatLatePrompt, vatLateQuiet, type VatLateFacts, type VatLateSentenceResult } from './vat-late.ts';
 import { checkMonthCloseNote, monthCloseInstructions, monthClosePrompt, monthCloseQuiet, type MonthCloseFacts, type MonthCloseNoteResult } from './month-close.ts';
 import { ExpenseVarianceCoworker } from './expense-variance-coworker.ts';
+import { QuarterSummaryCoworker } from './quarter-summary-coworker.ts';
+import type { QuarterSummaryNoteFacts, QuarterSummaryNotesResult } from './quarter-summary.ts';
 import type { ExpenseVarianceNoteFacts, ExpenseVarianceNotesResult } from './expense-variance.ts';
 import { checkCashForecastSentence, cashForecastInstructions, cashForecastPrompt, cashForecastQuiet, type CashForecastFacts, type CashForecastSentenceResult } from './cash-forecast.ts';
 import { checkOverviewSentence, overviewInstructions, overviewPrompt, overviewQuiet, type OverviewFacts, type OverviewSentenceResult } from './overview.ts';
@@ -473,11 +475,13 @@ export class InboxReader {
   private readonly generateSignAcceptanceDraft: SignAcceptanceDraftGenerator;
   private readonly payroll: PayrollCoworker;
   private readonly expenseVariance: ExpenseVarianceCoworker;
+  private readonly quarterSummary: QuarterSummaryCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
   constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; signDepositMatch?: SignDepositMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; roadmapSignalMatch?: RoadmapSignalMatchGenerator; projectTriageAssist?: ProjectTriageAssistGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; hrRequestDraft?: HrSelfRequestDraftGenerator; hrPolicyQa?: HrSelfPolicyQaGenerator; hrAddendumCheck?: HrAddendumCheckGenerator; hrOkrCheckinDraft?: HrOkrCheckinDraftGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.expenseVariance = new ExpenseVarianceCoworker(config);
+    this.quarterSummary = new QuarterSummaryCoworker(config);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
     this.generateAttendanceAnomalies = generators.attendanceAnomalies ?? createAttendanceAnomalyGenerator(config);
@@ -912,6 +916,12 @@ export class InboxReader {
    * or is not marked as a possibility is dropped (expense-variance.ts). onUsage gets the tokens the call used. */
   expenseVarianceNotes(facts: ExpenseVarianceNoteFacts, onUsage?: (usage: AiUsage) => void): Promise<ExpenseVarianceNotesResult> {
     return this.expenseVariance.notes(facts, onUsage);
+  }
+
+  /** The finance coworker's sentences on the quarter card (#5183), one per figure row code asked, told fixed row names and movement labels only (no figure, date, code or name); a sentence that states any of those, a
+   * cause, a promise or advice, or says a direction its row does not have, is dropped, and a set below its floor is dropped whole (quarter-summary.ts). onUsage gets the tokens the call used. */
+  quarterSummaryNotes(facts: QuarterSummaryNoteFacts, onUsage?: (usage: AiUsage) => void): Promise<QuarterSummaryNotesResult> {
+    return this.quarterSummary.notes(facts, onUsage);
   }
 
   /** The finance coworker's sentence on the Kế toán overview (#2631) from its aggregated figures, or why there is none: when nothing moved the model is not asked,

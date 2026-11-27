@@ -23,6 +23,8 @@ export * from './cash-forecast.ts';
 export * from './overview.ts';
 export * from './expense-variance.ts';
 export * from './expense-variance-coworker.ts';
+export * from './quarter-summary.ts';
+export * from './quarter-summary-coworker.ts';
 export * from './vat-late.ts';
 export * from './marketplace-line.ts';
 export * from './marketplace-columns.ts';

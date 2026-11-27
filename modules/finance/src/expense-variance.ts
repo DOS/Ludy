@@ -30,7 +30,7 @@ const EXPENSE_PATTERN = '^(6[0-9]|811|821)';
 
 export const monthNotEnded = () => new DomainError('MONTH_NOT_ENDED', 422, 'Tháng này chưa kết thúc; hãy chọn một tháng đã qua để so sánh chi phí');
 
-async function booksRows(ctx: QueryContext, entity: string): Promise<BooksRow[]> {
+export async function booksRows(ctx: QueryContext, entity: string): Promise<BooksRow[]> {
   const rows = await ctx.trx
     .selectFrom('ludy_finance.legal_entity_books')
     .select(['regime', 'chart_version', 'effective_from'])
