@@ -1352,6 +1352,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
       owner,
       {
         projectId: proj1a,
+        channelConnectionId: String(connAuto.body?.connectionId ?? ''),
         githubEnabled: true,
         inboundColInProgress: customCol.columnId,
         inboundColInReview: customCol.columnId,

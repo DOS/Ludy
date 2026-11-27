@@ -122,11 +122,11 @@ export function OAuthCallbackPage() {
   const back = slug ? (
     isGithub ? (
       projectId ? (
-        <Link to="/o/$slug/projects/$id" params={{ slug, id: projectId }} className="text-sm font-medium text-primary hover:underline">
+        <Link to="/o/$slug/projects/$id" params={{ slug, id: projectId }} className="inline-flex min-h-11 items-center text-sm font-medium text-primary hover:underline">
           {tg('backToProject')}
         </Link>
       ) : (
-        <Link to="/o/$slug/projects" params={{ slug }} className="text-sm font-medium text-primary hover:underline">
+        <Link to="/o/$slug/projects" params={{ slug }} className="inline-flex min-h-11 items-center text-sm font-medium text-primary hover:underline">
           {tg('backToProject')}
         </Link>
       )
@@ -140,7 +140,7 @@ export function OAuthCallbackPage() {
       </Link>
     )
   ) : (
-    <Link to="/" className="text-sm font-medium text-primary hover:underline">
+    <Link to="/" className="inline-flex min-h-11 items-center text-sm font-medium text-primary hover:underline">
       {isGithub ? tg('backToProject') : ads ? ta('oauth.backToAds') : t('backToChannels')}
     </Link>
   );
@@ -171,7 +171,7 @@ export function OAuthCallbackPage() {
             {(finish.data.failed?.length ?? 0) > 0 && <ErrorText>{failedText((finish.data.failed ?? []).map((c) => c.displayName).join(', '))}</ErrorText>}
             {/* An account refused because its token can change campaigns while running ads is off: the person is told to remove the app, not only that it failed. */}
             {finish.data.failed?.some((c) => c.code === 'OAUTH_WRITE_PERMISSION') && <ErrorText>{kernelErrorMessage('OAUTH_WRITE_PERMISSION', undefined, root, { server: null })}</ErrorText>}
-            {(finish.data.skipped ?? 0) > 0 && <p className="text-sm text-muted-foreground">{ads ? ta('oauth.skipped', { count: String(finish.data.skipped), max: String(OAUTH_MAX_ACCOUNTS_PER_GRANT) }) : t('oauthSkipped', { count: finish.data.skipped, max: OAUTH_MAX_ACCOUNTS_PER_GRANT })}</p>}
+            {(finish.data.skipped ?? 0) > 0 && <p className="text-sm text-muted-foreground">{ads ? ta('oauth.skipped', { count: String(finish.data.skipped ?? 0), max: String(OAUTH_MAX_ACCOUNTS_PER_GRANT) }) : t('oauthSkipped', { count: finish.data.skipped ?? 0, max: OAUTH_MAX_ACCOUNTS_PER_GRANT })}</p>}
           </>
         )}
         {finish.error && <ErrorText>{githubTakenError ? tg('installationTakenError') : errorMessage(finish.error)}</ErrorText>}

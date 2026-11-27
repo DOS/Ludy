@@ -65,15 +65,15 @@ describe('GitHub App configuration', () => {
   });
 
   it('enforces https callback origin on public deployments when GITHUB_APP_CLIENT_ID is set', () => {
-    const publicBase = {
+    const publicHttpBase = {
       ...BASE,
       ...FULL_GITHUB_APP,
       AUTH_SESSION_CHECK: 'jwt',
       PUBLIC_AUTH_URL: 'https://auth.example.test',
       WEB_DIST: '/nonexistent',
-      PUBLIC_URL: 'https://ludy.example.test',
-      APP_URL: 'http://ludy.example.test',
+      PUBLIC_URL: 'http://ludy.example.test',
     };
-    expect(() => loadConfig(publicBase)).toThrow(/GITHUB_APP_CLIENT_ID/);
+    expect(() => loadConfig(publicHttpBase)).toThrow(/GITHUB_APP_CLIENT_ID/);
+    expect(loadConfig({ ...publicHttpBase, PUBLIC_URL: 'https://ludy.example.test' }).GITHUB_APP_CLIENT_ID).toBe('Iv1.testclientid');
   });
 });
