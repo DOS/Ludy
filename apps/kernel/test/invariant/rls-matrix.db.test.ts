@@ -87,6 +87,15 @@ const MACHINERY = new Set([
   'crove_meetings.chat_channel_target',
   // #3168: the message of a queued post to a minutes channel, kept only while the post is queued and deleted when it settles: reached only by definers, no login role grant.
   'crove_meetings.chat_post_body',
+  // #5157 Step 0 / #5158 Slice 1 (Projects GitHub Integration, ADR-0060): idempotent sync delivery ledger
+  // (carries RESTRICTIVE project_visibility alongside REVOKE ALL), per-connection webhook secret hashes, and
+  // transient PAT raw webhook notice buffer (deleted on claim and by 10-minute keeping sweep). Definer-only with RLS
+  // enabled and zero login role grants; land before their tables (PENDING_TABLES). (github_webhook_pending is
+  // orgless like conversation_inbound_pending, so it stays outside this org_id RLS matrix and is guarded by
+  // agents.db.test.ts plus its Slice 1 orgless definer invariant.)
+  'crove_projects.github_sync_delivery',
+  'crove_projects.github_webhook_hook',
+  'crove_projects.github_webhook_notice',
   // #4398 / #4399 (Projects Public Roadmap, ADR-0057): short-lived hashed email OTP challenges (otp_sha256, rate counters) and sealed subscriber emails (preserving roadmap_vote anonymity):
   // reached only by definers with RLS enabled and zero login role grants. Land before their tables (PENDING_TABLES).
   'crove_projects.roadmap_otp',
@@ -115,8 +124,19 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_finance.entry_review_mark',
+  'crove_hr.shift_assignment',
+  'crove_hr.shift_swap_request',
+  'crove_hr.shift_template',
   'crove_kernel.native_push_device',
   'crove_kernel.native_push_sent',
+  'crove_meetings.morning_brief_lines',
+  'crove_projects.github_project_binding',
+  'crove_projects.github_project_repo',
+  'crove_projects.github_sync_delivery',
+  'crove_projects.github_task_link',
+  'crove_projects.github_webhook_hook',
+  'crove_projects.github_webhook_notice',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -187,6 +207,9 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_hr.payroll_run', () => 'false'], // HR, as above.
   ['crove_hr.probation_review', () => 'false'], // HR, as above.
   ['crove_hr.salary_advance_request', () => 'false'], // HR, as above.
+  ['crove_hr.shift_assignment', () => 'false'], // HR, as above.
+  ['crove_hr.shift_swap_request', () => 'false'], // HR, as above.
+  ['crove_hr.shift_template', () => 'false'], // HR, as above.
   ['crove_kernel.calendar_connection', () => 'false'], // A member's own connection.
   ['crove_kernel.calendar_event_link', () => 'false'], // Reads through the member's own connection.
   ['crove_kernel.conversation', () => 'false'], // The inbox is read per member.
@@ -230,6 +253,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.meeting_video', () => 'false'], // As above.
   ['crove_meetings.minutes_link', () => 'false'], // The recorder's own links to the published minutes, read by the recorder (and owners and admins), users (#4822); an agent context reads none.
   ['crove_meetings.minutes_version', () => 'false'], // The recorder's published second-language version of the minutes, read by the meeting's readers, users (#4777).
+  ['crove_meetings.morning_brief_lines', () => 'false'], // Short-lived 36h prep lines for opted-in members, read in user and member_briefing contexts only (#5073 / #5080, ADR-0049 #5108); member_vy reads none.
   ['crove_meetings.morning_notice', () => 'false'], // A member's own opt-in to the morning notice of the day's meetings, read by that member, a user (#3955).
   ['crove_meetings.tracker_alert', () => 'false'], // A member's own opt-in to the alert when a tracked keyword comes up in a new meeting, read by that member, a user (meetings tracker alerts, #4873); an agent context reads none.
   ['crove_meetings.tracker_term', () => 'false'], // The org's tracked keywords, read by the members of the org, users (meetings trackers, #4818); an agent context reads none.
@@ -301,7 +325,7 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
 ]);
 const AUTHOR_ONLY = new Map<string, string>([
   // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
-  // Departments and lightweight recruiting (#3403), Stage 5C attendance (#4447), and Stage 6 HR (#4527, #4528, #4529): user-context only; system and agent contexts read and write none.
+  // Departments and lightweight recruiting (#3403), Stage 5C attendance (#4447), Stage 6 HR (#4527, #4528, #4529), and Stage 7A shifts (#5216): user-context only; system and agent contexts read and write none.
   ['crove_hr.attendance_log', 'false'],
   ['crove_hr.attendance_qr_config', 'false'],
   ['crove_hr.business_trip_request', 'false'],
@@ -328,6 +352,9 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_hr.payroll_run', 'false'],
   ['crove_hr.probation_review', 'false'],
   ['crove_hr.salary_advance_request', 'false'],
+  ['crove_hr.shift_assignment', 'false'],
+  ['crove_hr.shift_swap_request', 'false'],
+  ['crove_hr.shift_template', 'false'],
   // What Vy keeps about one member (ADR-0049 decision 3, stage A): the member's alone. The system context, an owner, an admin, another member and an org-chart agent read and write none; the cases are in member-vy-private.db.test.ts.
   // A member's own recordings a meeting platform offered (meetings integrations C1, #3173): the member's alone; the worker's system context reads and writes nothing (its writers are definers).
   ['crove_kernel.meeting_platform_recording', 'false'],
@@ -371,6 +398,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.minutes_link', 'false'],
   // The recorder's published second-language version of a meeting's minutes (#4777): read by the meeting's readers, users only; worker system context reads and writes nothing.
   ['crove_meetings.minutes_version', 'false'],
+  // Short-lived 36h Vy briefing prep lines (#5073 / #5080, ADR-0049 #5108): user + member_briefing only; worker system context reads and writes nothing.
+  ['crove_meetings.morning_brief_lines', 'false'],
   // A member's own morning notice setting (#3955): the member's alone; worker system context reads and writes nothing (its one reader is a definer).
   ['crove_meetings.morning_notice', 'false'],
   // A member's own opt-in to tracker alerts (#4873): the member's alone, users only; worker system context reads and writes nothing (its one reader is a definer).
@@ -450,6 +479,8 @@ const APPEND_ONLY = new Set<string>([
   'crove_crm.sales_order_line',
   'crove_finance.channel_settlement',
   'crove_finance.channel_settlement_line',
+  // #5182: a person's mark that one hit of the monthly review of unusual entries was looked at; a second mark is a no-op and nothing edits or deletes one (insert-only grant).
+  'crove_finance.entry_review_mark',
   // The household profile of an entity (#2517): a change of tax group, method or trades is a new row from its effective date, never an edit of an earlier one.
   'crove_finance.household_profile',
   // #4037 (slice 2 of #3850): a confirmed mapping of a marketplace report's columns is a new row per org and platform, the latest wins; an earlier one is never edited or deleted.
@@ -541,6 +572,11 @@ let hrDepartmentSeq = 0;
 // Stage 6C addendum numbers and asset codes (#4528): unique per entity/org across seeded and probed rows.
 let hrAddendumSeq = 0;
 let hrAssetSeq = 0;
+// Stage 7A shift templates and roster dates (#5216): unique template codes and work dates across seeded and probed rows.
+let hrShiftTemplateSeq = 0;
+const hrShiftTemplateCode = () => `SHIFT_${String(++hrShiftTemplateSeq).padStart(4, '0')}`;
+let hrShiftDateSeq = 0;
+const hrShiftDate = () => new Date(Date.UTC(2026, 0, 1 + hrShiftDateSeq++)).toISOString().slice(0, 10);
 // A pay run (#2531) is unique per entity and month: each seeded one takes the next month from January 2000.
 let payrollMonthSeq = 0;
 const payrollMonth = () => {
@@ -554,6 +590,8 @@ const channelOrderNo = () => `RLS${(channelOrderSeq++).toString().padStart(8, '0
 let channelSettlementSeq = 0;
 const channelSettlementDay = () => new Date(Date.UTC(2000, 0, 1 + channelSettlementSeq++)).toISOString().slice(0, 10);
 let lineNo = 100;
+// The orgs that already had a mark row made for them (the seed's), for the entry_review_mark factory.
+const entryReviewMarkSeeded = new Set<string>();
 const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit' | 'credit'): Row => ({
   table: 'crove_finance.journal_line',
   values: { org_id: org, entry_id: entry, line_no: lineNo, account_code: side === 'debit' ? '6422' : '331', debit: side === 'debit' ? '100' : '0', credit: side === 'credit' ? '100' : '0' },
@@ -826,6 +864,30 @@ const projectsCycleTaskSetup = (o: { id: string; owner: string }) => {
       { table: 'crove_projects.project', values: project },
       { table: 'crove_projects.project_cycle', values: cycle },
       { table: 'crove_kernel.task', values: task },
+    ],
+  };
+};
+// Projects GitHub integration (#5157 Step 0 / #5158 Slice 1, ADR-0060): unique repo/issue counters and parent binding setup.
+let githubRepoSeq = 100_000;
+let githubIssueSeq = 1;
+const projectsGithubBindingSetup = (o: { id: string; owner: string }) => {
+  const project = projectsProjectRow(o);
+  const connection = { ...channelConnectionRow(o), provider: 'github_pat' };
+  const binding = {
+    org_id: o.id,
+    id: randomUUID(),
+    project_id: project.id,
+    channel_connection_id: connection.id,
+    created_by: o.owner,
+  };
+  return {
+    project,
+    connection,
+    binding,
+    setup: [
+      { table: 'crove_projects.project', values: project },
+      { table: 'crove_kernel.channel_connection', values: connection },
+      { table: 'crove_projects.github_project_binding', values: binding },
     ],
   };
 };
@@ -1690,6 +1752,16 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_finance.einvoice_series': {
     update: { set: 'is_default = is_default' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), provider: 'sandbox', template_no: '1', symbol: einvoiceSymbol() } }),
+  },
+  // #5182: a person's mark that one hit of the monthly review of unusual entries was looked at: one row per (entry, rule), append-only, its entity filled from its entry by the legal-entity trigger. A mark points at a
+  // journal entry, which a login role cannot create (tenant roles hold no INSERT on journal_entry), so a probe's own transaction cannot build one: every row names the org's committed entry (o.entry, the seed's).
+  // (entry, rule) is unique and the seed row is the only committed one, so the first row made for an org (the seed's, in beforeAll) takes one rule and every later row (a probe's, rolled back) another.
+  'crove_finance.entry_review_mark': {
+    make: (o) => {
+      const seeded = entryReviewMarkSeeded.has(o.id);
+      entryReviewMarkSeeded.add(o.id);
+      return { row: { org_id: o.id, id: randomUUID(), entry_id: o.entry, rule: seeded ? 'off_day' : 'amount_outlier', marked_by: o.owner } };
+    },
   },
   // The register of fixed assets and prepaid costs (#919): one row per asset, never deleted. Tenant roles update only
   // the end of its schedule (a column grant), so the update probes assign end_reason to itself.
@@ -2620,6 +2692,99 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         },
       };
     },
+  },
+  // #5216 (Stage 7A): employee weekly shift roster assignment (owner/admin, L1 department manager scope, and linked employee self-read in a user context; system and agent contexts read and write none).
+  'crove_hr.shift_assignment': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      const template = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } },
+          {
+            table: 'crove_hr.shift_template',
+            values: {
+              org_id: o.id,
+              id: template,
+              code: hrShiftTemplateCode(),
+              name: 'RLS matrix shift',
+              start_minute: 480,
+              end_minute: 1020,
+            },
+          },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          employee_id: employee,
+          shift_template_id: template,
+          work_date: hrShiftDate(),
+        },
+      };
+    },
+  },
+  // #5216 (Stage 7A): 1-step employee shift swap request (owner/admin, L1 department manager scope, and linked requester/target employee in a user context; system and agent contexts read and write none).
+  'crove_hr.shift_swap_request': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const requester = randomUUID();
+      const target = randomUUID();
+      const template = randomUUID();
+      const assignment = randomUUID();
+      const workDate = hrShiftDate();
+      return {
+        setup: [
+          { table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: requester, display_name: 'RLS matrix requester' } },
+          { table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: target, display_name: 'RLS matrix target' } },
+          {
+            table: 'crove_hr.shift_template',
+            values: {
+              org_id: o.id,
+              id: template,
+              code: hrShiftTemplateCode(),
+              name: 'RLS matrix shift',
+              start_minute: 480,
+              end_minute: 1020,
+            },
+          },
+          {
+            table: 'crove_hr.shift_assignment',
+            values: {
+              org_id: o.id,
+              id: assignment,
+              employee_id: requester,
+              shift_template_id: template,
+              work_date: workDate,
+            },
+          },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          requester_employee_id: requester,
+          target_employee_id: target,
+          requester_assignment_id: assignment,
+          work_date: workDate,
+          reason: 'RLS matrix',
+          status: 'pending',
+        },
+      };
+    },
+  },
+  // #5216 (Stage 7A): SME shift template per legal entity (owner/admin write and linked self-employee read in a user context; system and agent contexts read and write none).
+  'crove_hr.shift_template': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        code: hrShiftTemplateCode(),
+        name: 'RLS matrix shift',
+        start_minute: 480,
+        end_minute: 1020,
+      },
+    }),
   },
   'crove_kernel."position"': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix seat', module: 'finance', role_key: 'finance.chief_accountant' } }),
@@ -3758,6 +3923,24 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #5073 / #5080 (ADR-0049 #5108): short-lived 36h Vy briefing prep lines for opted-in members, readable in user and member_briefing contexts only;
+  // worker system context and member_vy read none. Lands in PENDING_TABLES before its migration.
+  'crove_meetings.morning_brief_lines': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          user_id: o.owner,
+          meeting_id: meeting.id,
+          lines: JSON.stringify(['RLS matrix briefing prep line']),
+          expires_at: new Date(Date.now() + 36 * 60 * 60 * 1000).toISOString(),
+        },
+      };
+    },
+  },
   // #3955 (part B): a member's own opt-in to the morning notice of the day's meetings (a time of day, their zone and language), one row per member, read, written and deleted by that member alone, so the
   // system context reads none.
   'crove_meetings.morning_notice': {
@@ -3890,6 +4073,131 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // Private by nature: the system context reads none.
   'crove_notes.todo_list': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), owner_user_id: o.owner, name: `RLS matrix list ${tag()}`, sort_key: 'a0' } }),
+  },
+  // Projects GitHub integration (#5157 Step 0 / #5158 Slice 1, ADR-0060): per-project GitHub App/PAT binding, bounded repo list,
+  // idempotent sync ledger, tainted PR/issue links, PAT hook hashes, and transient PAT webhook notice. Land in PENDING_TABLES before migrations.
+  'crove_projects.github_project_binding': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      const connection = { ...channelConnectionRow(o), provider: 'github_pat' };
+      return {
+        setup: [
+          { table: 'crove_projects.project', values: project },
+          { table: 'crove_kernel.channel_connection', values: connection },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          channel_connection_id: connection.id,
+          created_by: o.owner,
+        },
+      };
+    },
+  },
+  'crove_projects.github_project_repo': {
+    make: (o) => {
+      const { project, binding, setup } = projectsGithubBindingSetup(o);
+      return {
+        setup,
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          binding_id: binding.id,
+          github_repo_id: githubRepoSeq++,
+          repo_full_name: `octo/rls-repo-${tag()}`,
+          created_by: o.owner,
+        },
+      };
+    },
+  },
+  'crove_projects.github_sync_delivery': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      return {
+        setup: [{ table: 'crove_projects.project', values: project }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          direction: 'inbound',
+          delivery_id: randomUUID(),
+          event_type: 'issues.opened',
+          status: 'queued',
+        },
+      };
+    },
+  },
+  'crove_projects.github_task_link': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      const task = { org_id: o.id, id: randomUUID(), title: 'RLS matrix task', source: 'human', created_by_type: 'user' };
+      const issueNumber = githubIssueSeq++;
+      const repo = `octo/rls-repo-${tag()}`;
+      return {
+        setup: [
+          { table: 'crove_projects.project', values: project },
+          { table: 'crove_kernel.task', values: task },
+          { table: 'crove_projects.project_task', values: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: task.id } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          task_id: task.id,
+          repo_full_name: repo,
+          kind: 'issue',
+          external_number: issueNumber,
+          external_url: `https://github.com/${repo}/issues/${issueNumber}`,
+          external_title: 'RLS matrix linked issue',
+          external_state: 'open',
+          link_source: 'manual',
+          tainted: 'true',
+          created_by: o.owner,
+        },
+      };
+    },
+  },
+  'crove_projects.github_webhook_hook': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'github_pat' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          channel_connection_id: connection.id,
+          hook_key_sha256: hex64(),
+        },
+      };
+    },
+  },
+  'crove_projects.github_webhook_notice': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'github_pat' };
+      const hook = {
+        org_id: o.id,
+        id: randomUUID(),
+        channel_connection_id: connection.id,
+        hook_key_sha256: hex64(),
+      };
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_projects.github_webhook_hook', values: hook },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          hook_id: hook.id,
+          delivery_id: randomUUID(),
+          event_type: 'issues',
+          signature_256: `sha256=${hex64()}`,
+          body: `\\x${Buffer.from('{"action":"opened"}').toString('hex')}`,
+        },
+      };
+    },
   },
   // Projects and task board (ADR-0048, docs/plan/projects.md section 4.1 and 6, #2586): org-visible under apply_tenant_rls.
   'crove_projects.project': {
@@ -6656,6 +6964,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
       await admin.query('DELETE FROM crove_meetings.meeting WHERE id = ANY($1::uuid[])', [meetingsIds]);
       await admin.query('DELETE FROM crove_meetings.calendar_agenda WHERE id = ANY($1::uuid[])', [agendaIds]);
       await admin.query('DELETE FROM crove_kernel.calendar_connection WHERE id = ANY($1::uuid[])', [connIds]);
+      await admin.query('DELETE FROM crove_kernel.ai_run WHERE org_id = $1::uuid AND id = $2::uuid', [orgs.A.id, viewerVyRun]);
+      await admin.query('DELETE FROM crove_kernel.agent WHERE org_id = $1::uuid AND id = $2::uuid', [orgs.A.id, viewerVyAgent]);
+      await admin.query('DELETE FROM crove_kernel.member_permission_override WHERE org_id = $1::uuid AND user_id = $2::uuid', [orgs.A.id, viewerVyUser]);
+      await admin.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1::uuid AND user_id = $2::uuid', [orgs.A.id, viewerVyUser]);
+      await admin.query('DELETE FROM crove_kernel.user_account WHERE id = $1::uuid', [viewerVyUser]);
     }
   });
 });

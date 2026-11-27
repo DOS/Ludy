@@ -56,6 +56,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   extractor: ['provider:ai'],
   // The speech to text endpoint of packages/agent (#2578, M4b): the recorder's audio goes to the provider the deployment names, in the recorder's own Vy run.
   meetingsTranscribe: ['provider:ai'],
+  // Daily Vy meeting brief writer (ADR-0049 amendment, #5073 Step 2b-2): invokes writeBrief over member-scoped facts
+  // through the deployment's AI endpoint, bound in kernel.ts via member-vy-ports.ts.
+  meetingsBriefWriter: ['provider:ai'],
   // The audio extraction of a video-only meeting platform recording (C2a, #3306): the import job streams the video into crove-media, a service of the stack itself (its network has no route out), which returns
   // mono Opus. The job's call to the platform still goes through guardedStream; this field reaches only crove-media, so it classifies as nothing. Classified before the field exists (step 0, the PENDING_DEPS pattern).
   meetingsImportExtractor: [],
@@ -133,6 +136,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // The meeting platform adapters (meetings integrations C1, #3173): the offline sandbox reaches nothing, and a real adapter (Google Meet, Zoom, Teams: C2 to C4) its platform's own API hosts, each bound to them by its allowlisted
   // fetch; the file itself is downloaded by the import job through guardedStream, so the field is classified for what it can reach: the platforms of @ludy/channel. Only the import job and its sweep reach the field.
   'channels.meetingPlatforms': ['provider:channel'],
+  // The GitHub API adapter for modules/projects (@ludy/github, ADR-0060, #5157 Step 0 / #5158 Slice 1 / #5159 Slice 2): bound strictly to https://api.github.com via guardedRequest/egressFetch (maxRedirects: 0, private-IP DNS pinning).
+  // Reached only by projects-github-hydrate and projects-github-outbound. Classified before the field exists (step 0, as for channels.misaAmis: the base copy of this suite must know it when the field lands).
+  'channels.github': ['provider:github'],
   publicUrl: [],
   // Where the links in mail and chat alerts open the web app (APP_URL, #2261): a string, no egress.
   appUrl: [],
@@ -157,6 +163,7 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
 // classification here first, which passes both the PR's own copy and the base one, then the field in a later PR, whose
 // base copy already knows it. Remove the entry once the field is on the base branch.
 export const PENDING_DEPS: Readonly<Record<string, string>> = {
+  meetingsBriefWriter: '#5073',
   nativePush: '#4883',
 };
 

@@ -117,6 +117,8 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
+  '/api/projects/github/webhook': 'GitHub App webhook receiver (#5158, ADR-0060): checks X-Hub-Signature-256 HMAC over raw bytes before JSON parse, 256 KB body cap, per-IP rate limit, delivery UUID + event allowlist, and drops off/unentitled orgs in worker',
+  '/api/projects/github/webhook/:hookKey': 'GitHub PAT per-connection webhook receiver (#5158, ADR-0060): gates 32-char base64url hookKey hash via definer checking org_app_on + entitlement -> opaque 404 (ADR-0053), 256 KB cap, stores transient notice verified and cleared by worker',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 

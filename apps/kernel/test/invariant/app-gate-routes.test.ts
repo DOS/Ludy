@@ -98,6 +98,9 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   // #4723 (eSign Slice 6d): ludy_sign.public_deposit_qr_source and public_record_deposit_notice enforce org_app_on + entitlement -> opaque 404.
   '/api/sign/deposit-qr': { app: 'sign', gate: 'sql', why: 'crove_sign.public_deposit_qr_source checks org_app_on + entitlement -> 404 (#4723)' },
   '/api/sign/deposit-notice': { app: 'sign', gate: 'sql', why: 'crove_sign.public_record_deposit_notice checks org_app_on + entitlement -> 404 (#4723)' },
+  // #5158 Slice 1 (Projects GitHub Integration, ADR-0060): pending on main until dev promotion lands the webhook routes.
+  '/api/projects/github/webhook': { app: 'projects', gate: 'pending', why: 'GitHub App webhook receiver (#5158, ADR-0060): pending on main before dev promotion' },
+  '/api/projects/github/webhook/:hookKey': { app: 'projects', gate: 'pending', why: 'GitHub PAT per-connection webhook receiver (#5158, ADR-0060): pending on main before dev promotion' },
 };
 
 // The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`. A line at the key indent that
@@ -133,10 +136,10 @@ describe('public routes against the per-org app gate (ADR-0053, slice c C2)', ()
     expect(Object.keys(CLASSES).filter((p) => !paths.has(p))).toEqual([]);
   });
 
-  it('gates every route of Social, CRM, Finance and Sign in SQL or by dropping, and keeps kernel and pending classes honest', () => {
+  it('gates every route of Social, CRM, Finance, Sign and Projects in SQL or by dropping, and keeps kernel and pending classes honest', () => {
     const { pending } = publicLists();
     for (const [path, c] of Object.entries(CLASSES)) {
-      if (!pending.includes(path) && ['social', 'crm', 'social+crm', 'finance', 'sign'].includes(c.app)) expect(['sql', 'dropped'], path).toContain(c.gate);
+      if (!pending.includes(path) && ['social', 'crm', 'social+crm', 'finance', 'sign', 'projects'].includes(c.app)) expect(['sql', 'dropped'], path).toContain(c.gate);
       // The kernel class belongs to the kernel app and the kernel app to the kernel class: an app's route cannot be filed as kernel.
       expect(c.gate === 'kernel', `${path}: kernel gate and kernel app go together`).toBe(c.app === 'kernel');
       // 'pending' stands only for a route that is still in route-coverage's PENDING list (not in the code yet).
