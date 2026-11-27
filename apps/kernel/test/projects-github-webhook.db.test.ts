@@ -2124,6 +2124,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     expect(queuedForAppOffTest).toHaveLength(1);
 
     await runtime.execute('kernel.org.set_app', { module: 'projects', enabled: false }, { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() });
+    expect(await hasGithubOutboundWork(workerDb)).toBe(false);
     const sentWhenOff: unknown[] = [];
     const sweepWhenOff = await runGithubOutboundSweep({
       workerDb,
@@ -2133,7 +2134,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
       },
     });
     expect(sentWhenOff).toEqual([]);
-    expect(sweepWhenOff.skippedOff).toBeGreaterThanOrEqual(1);
+    expect(sweepWhenOff).toEqual({ handedOver: 0, skippedOff: 0 });
 
     let brokerOpenCount = 0;
     const spyBroker: CredentialBroker = {
@@ -2229,9 +2230,12 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
       body: { state: 'closed' },
     });
 
-    // 5) Definer privilege check: app/tenant roles cannot invoke worker-only sweep/has_work/claim definers (42501 / permission denied).
+    // 5) Definer privilege check: app/tenant roles cannot invoke worker-only sweep/has_work/defer/claim definers (42501 / permission denied).
     await expect(appDb.executeQuery(sql`SELECT ludy_projects.github_outbound_has_work()`.compile(appDb))).rejects.toThrow(/permission denied/);
     await expect(appDb.executeQuery(sql`SELECT * FROM ludy_projects.github_outbound_sweep(10)`.compile(appDb))).rejects.toThrow(/permission denied/);
+    await expect(
+      appDb.executeQuery(sql`SELECT ludy_projects.github_outbound_defer(${s2Org.orgId}::uuid, NULL::uuid, 60)`.compile(appDb)),
+    ).rejects.toThrow(/permission denied/);
     await expect(
       appDb.executeQuery(sql`SELECT * FROM ludy_projects.github_outbound_delivery_claim(${s2Org.orgId}::uuid, ${queuedForAppOffTest[0]!.id}::uuid)`.compile(appDb)),
     ).rejects.toThrow(/permission denied/);
@@ -2374,14 +2378,433 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
             'github_outbound_enqueue_for_task',
             'github_outbound_has_work',
             'github_outbound_sweep',
+            'github_outbound_defer',
             'github_outbound_delivery_claim'
           )
         ORDER BY p.proname`,
     );
-    expect(slice2FnRows).toHaveLength(4);
+    expect(slice2FnRows).toHaveLength(5);
     for (const fnRow of slice2FnRows) {
       expect(fnRow.prosecdef).toBe(true);
       expect(fnRow.proconfig).toContain('search_path=pg_catalog, pg_temp');
     }
+  });
+
+  it('prevents MODULE_OFF on unentitled org task transitions, avoids cross-tenant starvation across >100 off/unentitled rows, and expires stale rows (#5159)', async () => {
+    const entitledOrgs = new Set<string>();
+    const billingRegistry = {
+      commands: [...kernelCommands, ...projectsCommands, ...financeCommands],
+      queries: [...kernelQueries({ inboundDomain: null }), ...projectsQueries],
+    };
+    const billingRuntime = new Runtime(appDb, {
+      manifests: TEST_MANIFESTS,
+      sessions: createSessionStatusSource('off'),
+      stepUp: 'off',
+      entitlements: async (orgId) => (entitledOrgs.has(orgId) ? ['full'] : ['notes']),
+    }).register(billingRegistry);
+    const billingWorkerRuntime = new Runtime(workerDb, {
+      manifests: TEST_MANIFESTS,
+      entitlements: async (orgId) => (entitledOrgs.has(orgId) ? ['full'] : ['notes']),
+    }).register(billingRegistry);
+
+    const appConnUrl = (() => {
+      const u = new URL(adminUrl);
+      u.username = 'ludy_app';
+      u.password = 'gh-app-pw';
+      return u.toString();
+    })();
+    const billingHttpConfig = loadConfig({
+      DATABASE_URL: appConnUrl,
+      AUTH_JWT_SECRET: SECRET,
+      AUTH_ISSUER: ISSUER,
+      AUTH_SESSION_CHECK: 'off',
+      PUBLIC_URL: 'http://localhost:8080',
+      MIGRATIONS_DIR: MIGRATIONS,
+      WEB_DIST: '/nonexistent',
+    });
+    const billingApp = createHttpApp({
+      config: billingHttpConfig,
+      runtime: billingRuntime,
+      store,
+      authenticate: createAuthenticator(billingHttpConfig, appDb),
+      pool: appPool,
+      aiEnabled: false,
+      billing: { entitlements: async (orgId) => (entitledOrgs.has(orgId) ? ['full'] : ['notes']) },
+      channels: { broker: vault, sandbox: false, github: githubClient, publicUrl: 'http://localhost:8080' },
+      githubWebhook: { appWebhookSecret: APP_WEBHOOK_SECRET, appWebhookSecretPrevious: APP_WEBHOOK_SECRET_PREV },
+      githubWebhookLimits: { address: new RateLimiter({ perMinute: 1000 }), hook: new RateLimiter({ perMinute: 1000 }) },
+    });
+
+    // Clear any deferred queued row left by prior test cases so readiness assertions start from a known empty queue.
+    await rows(
+      `UPDATE ludy_projects.github_sync_delivery
+          SET status = 'skipped', summary = 'Reset before starvation test', processed_at = now()
+        WHERE direction = 'outbound' AND status = 'queued'`,
+    );
+
+    const unentitledOrg = await createOrg(billingRuntime, asUser(owner.userId), 'Cong ty Unentitled');
+    const activeOrg = await createOrg(billingRuntime, asUser(owner.userId), 'Cong ty Active Sync');
+    const offOrg = await createOrg(billingRuntime, asUser(owner.userId), 'Cong ty Projects Off');
+    entitledOrgs.add(unentitledOrg.orgId);
+    entitledOrgs.add(activeOrg.orgId);
+    entitledOrgs.add(offOrg.orgId);
+
+    for (const orgId of [unentitledOrg.orgId, activeOrg.orgId, offOrg.orgId]) {
+      await rows(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member.userId]);
+    }
+
+    // Seed an opt-in bound project + open issue #301 on unentitledOrg BEFORE dropping its 'projects' entitlement.
+    const { projectId: unentitledProjId } = await billingRuntime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Unentitled Downgraded Project', visibility: 'org' },
+      { actor: asUser(owner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    const unentPat = await rpc(
+      billingApp,
+      'projects/github/connectPat',
+      owner,
+      {
+        projectId: unentitledProjId,
+        accessToken: 'github_pat_fake_unentitled',
+        webhookSecret: PAT_WEBHOOK_SECRET,
+        taskKeyPrefix: 'UN',
+        backfillTaskNumbers: true,
+        idempotencyKey: randomUUID(),
+      },
+      unentitledOrg.slug,
+    );
+    expect(unentPat.status).toBe(200);
+    const unentConnId = String((unentPat.body as { connectionId: string }).connectionId);
+    const unentRepoBind = await rpc(
+      billingApp,
+      'projects/github/repoBind',
+      owner,
+      {
+        projectId: unentitledProjId,
+        githubRepoId: '1001',
+        repoFullName: 'octo-org/core-api',
+        defaultBranch: 'main',
+        webhookConfigured: true,
+        idempotencyKey: randomUUID(),
+      },
+      unentitledOrg.slug,
+    );
+    expect(unentRepoBind.status).toBe(200);
+    const unentBind = await rpc(
+      billingApp,
+      'projects/github/bindingSave',
+      owner,
+      {
+        projectId: unentitledProjId,
+        channelConnectionId: unentConnId,
+        githubEnabled: true,
+        autoSyncInbound: true,
+        inboundDoneOnMerge: true,
+        outboundCloseIssueOnDone: true,
+        idempotencyKey: randomUUID(),
+      },
+      unentitledOrg.slug,
+    );
+    expect(unentBind.status).toBe(200);
+
+    const { taskId: tUnentHuman } = await billingRuntime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId: unentitledProjId, title: 'Human task during unentitled state', assigneePositionId: null },
+      { actor: asUser(owner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    remoteItems.set('/repos/octo-org/core-api/issues/301', {
+      number: 301,
+      html_url: 'https://github.com/octo-org/core-api/issues/301',
+      title: 'Unentitled issue',
+      state: 'open',
+      user: { login: 'octo-author' },
+      updated_at: '2027-02-01T12:00:00Z',
+    });
+    const unentLink = await rpc(
+      billingApp,
+      'projects/github/taskLinkAdd',
+      member,
+      { projectId: unentitledProjId, taskId: tUnentHuman, url: 'https://github.com/octo-org/core-api/issues/301', idempotencyKey: randomUUID() },
+      unentitledOrg.slug,
+    );
+    expect(unentLink.status).toBe(200);
+    expect(
+      await runGithubHydrateJob(
+        { runtime: billingWorkerRuntime, workerDb, broker: vault, github: githubClient },
+        {
+          mode: 'link_refresh',
+          orgId: unentitledOrg.orgId,
+          projectId: unentitledProjId,
+          taskId: tUnentHuman,
+          linkId: String((unentLink.body?.link as { id: string } | undefined)?.id ?? ''),
+          kind: 'issue',
+          externalNumber: 301,
+        },
+      ),
+    ).toBe('hydrated');
+
+    const agentInstallUnent = await billingRuntime.execute<{ agentId: string; positionId: string }>(
+      'kernel.agent.template.install',
+      { templateKey: 'finance.chief_accountant' },
+      { actor: asMfa(owner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    const { taskId: tUnentAgent } = await billingRuntime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId: unentitledProjId, title: 'Agent task while unentitled', assigneePositionId: agentInstallUnent.positionId },
+      { actor: asUser(owner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    const unentRunRows = await rows<{ id: string }>(
+      `INSERT INTO ludy_kernel.ai_run (org_id, agent_id, module, status, started_at, expires_at)
+       VALUES ($1::uuid, $2::uuid, 'finance', 'running', now(), now() + interval '15 minutes')
+       RETURNING id`,
+      [unentitledOrg.orgId, agentInstallUnent.agentId],
+    );
+    const unentAgentActor = { type: 'agent' as const, agentId: agentInstallUnent.agentId, runId: unentRunRows[0]!.id };
+    const unentAgentLease = await billingWorkerRuntime.execute<{ fence: string }>(
+      'kernel.task.checkout',
+      { id: tUnentAgent },
+      { actor: unentAgentActor, orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+
+    // Also create a standalone kernel task on unentitledOrg before removing 'projects' entitlement.
+    const { taskId: tStandalone } = await billingRuntime.execute<{ taskId: string }>(
+      'kernel.task.create',
+      { title: 'Standalone Notes/Finance org task', assigneePositionId: null },
+      { actor: asUser(owner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+
+    // Drop 'projects' from Cloud entitlements (t.apps_off stays empty so SQL org_app_on = true).
+    entitledOrgs.delete(unentitledOrg.orgId);
+
+    // Blocker 1: BOTH human and org-chart agent Done/reopen transitions succeed without 404 MODULE_OFF or held outbox events.
+    await billingRuntime.execute(
+      'kernel.task.set_status',
+      { id: tUnentHuman, status: 'done' },
+      { actor: asUser(member.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    await billingRuntime.execute(
+      'kernel.task.set_status',
+      { id: tUnentHuman, status: 'todo' },
+      { actor: asUser(member.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    await billingRuntime.execute(
+      'kernel.task.set_status',
+      { id: tStandalone, status: 'done' },
+      { actor: asUser(member.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    await billingWorkerRuntime.execute(
+      'kernel.task.set_status',
+      { id: tUnentAgent, fence: unentAgentLease.fence, status: 'done' },
+      { actor: unentAgentActor, orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+    );
+
+    const unentDeliveries = await rows<{ id: string }>(
+      `SELECT id FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND direction = 'outbound'`,
+      [unentitledOrg.orgId],
+    );
+    expect(unentDeliveries).toEqual([]);
+    const unentOutboxEvents = await rows<{ id: string }>(
+      `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.github_transitioned'`,
+      [unentitledOrg.orgId],
+    );
+    expect(unentOutboxEvents).toEqual([]);
+
+    // Blocker 2a: off-app rows (org_app_on = false) are ignored by has_work & SQL sweep until 8h TTL expiry.
+    const { projectId: offProjId } = await billingRuntime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Off App Project', visibility: 'org' },
+      { actor: asUser(owner.userId), orgId: offOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    await billingRuntime.execute(
+      'kernel.org.set_app',
+      { module: 'projects', enabled: false },
+      { actor: asUser(owner.userId), orgId: offOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    const offDeliveryRows = await rows<{ id: string }>(
+      `INSERT INTO ludy_projects.github_sync_delivery (
+         org_id, project_id, direction, delivery_id, event_type,
+         repo_full_name, external_number, target_remote_state, status, received_at, next_attempt_at
+       )
+       VALUES (
+         $1::uuid, $2::uuid, 'outbound', $3, 'issues.state',
+         'octo-org/core-api', 302, 'closed', 'queued', now() - interval '30 minutes', now() - interval '30 minutes'
+       )
+       RETURNING id`,
+      [offOrg.orgId, offProjId, `outbound:off-${randomUUID()}`],
+    );
+    const offDeliveryId = offDeliveryRows[0]!.id;
+    expect(await hasGithubOutboundWork(workerDb)).toBe(false);
+    const sqlSweepOffOnly = await workerDb.executeQuery(
+      sql<{ id: string }>`SELECT id FROM ludy_projects.github_outbound_sweep(100)`.compile(workerDb),
+    );
+    expect(sqlSweepOffOnly.rows).toEqual([]);
+
+    // Blocker 2b: >100 older unentitled org rows do NOT starve activeOrg behind them; deferred rows keep has_work false.
+    await rows(
+      `INSERT INTO ludy_projects.github_sync_delivery (
+         org_id, project_id, direction, delivery_id, event_type,
+         repo_full_name, external_number, target_remote_state, status, received_at, next_attempt_at
+       )
+       SELECT $1::uuid, $2::uuid, 'outbound', 'outbound:starve-' || g::text || '-' || $3, 'issues.state',
+              'octo-org/core-api', 303, 'closed', 'queued',
+              now() - interval '2 hours' + pg_catalog.make_interval(secs => g),
+              now() - interval '2 hours' + pg_catalog.make_interval(secs => g)
+         FROM pg_catalog.generate_series(1, 120) AS g`,
+      [unentitledOrg.orgId, unentitledProjId, randomUUID()],
+    );
+
+    const { projectId: activeProjId } = await billingRuntime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Active Org Behind Backlog', visibility: 'org' },
+      { actor: asUser(owner.userId), orgId: activeOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    const activePat = await rpc(
+      billingApp,
+      'projects/github/connectPat',
+      owner,
+      {
+        projectId: activeProjId,
+        accessToken: 'github_pat_fake_active',
+        webhookSecret: PAT_WEBHOOK_SECRET,
+        taskKeyPrefix: 'AC',
+        backfillTaskNumbers: true,
+        idempotencyKey: randomUUID(),
+      },
+      activeOrg.slug,
+    );
+    expect(activePat.status).toBe(200);
+    const activeConnId = String((activePat.body as { connectionId: string }).connectionId);
+    const activeRepoBind = await rpc(
+      billingApp,
+      'projects/github/repoBind',
+      owner,
+      {
+        projectId: activeProjId,
+        githubRepoId: '1001',
+        repoFullName: 'octo-org/core-api',
+        defaultBranch: 'main',
+        webhookConfigured: true,
+        idempotencyKey: randomUUID(),
+      },
+      activeOrg.slug,
+    );
+    expect(activeRepoBind.status).toBe(200);
+    const activeBind = await rpc(
+      billingApp,
+      'projects/github/bindingSave',
+      owner,
+      {
+        projectId: activeProjId,
+        channelConnectionId: activeConnId,
+        githubEnabled: true,
+        autoSyncInbound: true,
+        inboundDoneOnMerge: true,
+        outboundCloseIssueOnDone: true,
+        idempotencyKey: randomUUID(),
+      },
+      activeOrg.slug,
+    );
+    expect(activeBind.status).toBe(200);
+
+    const { taskId: tActive } = await billingRuntime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId: activeProjId, title: 'Active org task must sweep immediately', assigneePositionId: null },
+      { actor: asUser(owner.userId), orgId: activeOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    remoteItems.set('/repos/octo-org/core-api/issues/302', {
+      number: 302,
+      html_url: 'https://github.com/octo-org/core-api/issues/302',
+      title: 'Active org issue',
+      state: 'open',
+      user: { login: 'octo-author' },
+      updated_at: '2027-02-01T12:05:00Z',
+    });
+    const activeLink = await rpc(
+      billingApp,
+      'projects/github/taskLinkAdd',
+      member,
+      { projectId: activeProjId, taskId: tActive, url: 'https://github.com/octo-org/core-api/issues/302', idempotencyKey: randomUUID() },
+      activeOrg.slug,
+    );
+    expect(activeLink.status).toBe(200);
+    expect(
+      await runGithubHydrateJob(
+        { runtime: billingWorkerRuntime, workerDb, broker: vault, github: githubClient },
+        {
+          mode: 'link_refresh',
+          orgId: activeOrg.orgId,
+          projectId: activeProjId,
+          taskId: tActive,
+          linkId: String((activeLink.body?.link as { id: string } | undefined)?.id ?? ''),
+          kind: 'issue',
+          externalNumber: 302,
+        },
+      ),
+    ).toBe('hydrated');
+    await billingRuntime.execute(
+      'kernel.task.set_status',
+      { id: tActive, status: 'done' },
+      { actor: asUser(member.userId), orgId: activeOrg.orgId, idempotencyKey: randomUUID() },
+    );
+
+    const activeDeliveryRows = await rows<{ id: string }>(
+      `SELECT id FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND direction = 'outbound' AND status = 'queued'`,
+      [activeOrg.orgId],
+    );
+    expect(activeDeliveryRows).toHaveLength(1);
+    const activeDeliveryId = activeDeliveryRows[0]!.id;
+
+    const activeSweptJobs: Array<{ orgId: string; deliveryId: string }> = [];
+    const starvationSweep = await runGithubOutboundSweep({
+      workerDb,
+      runtime: billingWorkerRuntime,
+      sendOutbound: async (j) => {
+        activeSweptJobs.push(j);
+      },
+      limit: 100,
+    });
+    expect(starvationSweep.handedOver).toBe(1);
+    expect(starvationSweep.skippedOff).toBeGreaterThanOrEqual(120);
+    expect(activeSweptJobs).toEqual([{ orgId: activeOrg.orgId, deliveryId: activeDeliveryId }]);
+
+    expect(
+      await runGithubOutboundJob({ runtime: billingWorkerRuntime, workerDb, broker: vault, github: githubClient }, activeSweptJobs[0]!),
+    ).toBe('applied');
+    expect(remoteItems.get('/repos/octo-org/core-api/issues/302')?.state).toBe('closed');
+
+    // Immediately after activeOrg completes, has_work must return false (120 deferred unentitled + 1 off-app ignored).
+    expect(await hasGithubOutboundWork(workerDb)).toBe(false);
+
+    // Blocker 2c: bounded 8h TTL expires stale off-app and deferred rows once, then stops waking has_work.
+    const oneDeferredRow = await rows<{ id: string }>(
+      `SELECT id FROM ludy_projects.github_sync_delivery WHERE org_id = $1 AND direction = 'outbound' AND status = 'queued' LIMIT 1`,
+      [unentitledOrg.orgId],
+    );
+    await rows(
+      `UPDATE ludy_projects.github_sync_delivery
+          SET received_at = now() - interval '9 hours'
+        WHERE id = ANY($1::uuid[])`,
+      [[offDeliveryId, oneDeferredRow[0]!.id]],
+    );
+    expect(await hasGithubOutboundWork(workerDb)).toBe(true);
+    const expiredDispatchJobs: unknown[] = [];
+    await runGithubOutboundSweep({
+      workerDb,
+      runtime: billingWorkerRuntime,
+      sendOutbound: async (j) => {
+        expiredDispatchJobs.push(j);
+      },
+      limit: 100,
+    });
+    expect(expiredDispatchJobs).toEqual([]);
+    const expiredCheck = await rows<{ status: string; error_code: string | null }>(
+      `SELECT status, error_code FROM ludy_projects.github_sync_delivery WHERE id = ANY($1::uuid[]) ORDER BY id`,
+      [[offDeliveryId, oneDeferredRow[0]!.id]],
+    );
+    expect(expiredCheck).toEqual([
+      { status: 'skipped', error_code: 'EXPIRED' },
+      { status: 'skipped', error_code: 'EXPIRED' },
+    ]);
+    expect(await hasGithubOutboundWork(workerDb)).toBe(false);
   });
 });

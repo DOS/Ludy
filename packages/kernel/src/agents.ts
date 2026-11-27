@@ -1266,8 +1266,16 @@ export const setTaskStatus = defineCommand({
       existingTask.status !== input.status &&
       (input.status === 'done' || (existingTask.status === 'done' && input.status !== 'cancelled'))
     ) {
-      const { rows: appRows } = await sql<{ on: boolean }>`SELECT ludy_kernel.org_app_on(${ctx.orgId}::uuid, 'projects') AS "on"`.execute(ctx.trx);
-      if (appRows[0]?.on === true) {
+      // Check both org apps_off and Cloud billing entitlements via ctx.appEnabled (#5159, ADR-0053)
+      // so unentitled orgs do not fail task transitions with 404 MODULE_OFF or emit held outbox events.
+      const projectsEnabled = ctx.appEnabled
+        ? await ctx.appEnabled('projects')
+        : (
+            await sql<{ on: boolean }>`SELECT ludy_kernel.org_app_on(${ctx.orgId}::uuid, 'projects') AS "on"`.execute(
+              ctx.trx,
+            )
+          ).rows[0]?.on === true;
+      if (projectsEnabled) {
         if (ctx.actor.type === 'user') {
           // Run projects.github.outbound_enqueue in-tx (aside via its own declared writes) (#5159).
           await ctx.run('projects.github.outbound_enqueue', {

@@ -760,33 +760,69 @@ interface ClaimedOutboundRow {
   attempt_count: number;
 }
 
+const OUTBOUND_OFF_DEFER_SECONDS = 900;
+const OUTBOUND_SWEEP_MAX_PASSES = 10;
+
+async function deferGithubOutbound(
+  workerDb: Db,
+  orgId: string,
+  deliveryId: string | null,
+  delaySeconds: number,
+): Promise<number> {
+  const { rows } = await sql<{ count: number }>`
+    SELECT ludy_projects.github_outbound_defer(
+      ${orgId}::uuid,
+      ${deliveryId === null ? sql`NULL::uuid` : sql`${deliveryId}::uuid`},
+      ${delaySeconds}::int
+    ) AS count`.execute(workerDb);
+  return rows[0]?.count ?? 0;
+}
+
 export async function runGithubOutboundSweep(deps: {
   readonly workerDb: Db;
   readonly runtime: Runtime;
   readonly sendOutbound: (job: ProjectsGithubOutboundJob) => Promise<unknown>;
   readonly limit?: number | undefined;
+  readonly deferSeconds?: number | undefined;
 }): Promise<{ handedOver: number; skippedOff: number }> {
   const batchLimit = deps.limit ?? 100;
-  const { rows } = await sql<OutboundSweepRow>`
-    SELECT id, org_id, project_id, task_id, link_id, repo_full_name, external_number, target_remote_state
-      FROM ludy_projects.github_outbound_sweep(${batchLimit}::int)`.execute(deps.workerDb);
-
+  const deferSeconds = deps.deferSeconds ?? OUTBOUND_OFF_DEFER_SECONDS;
   const appOnByOrg = new Map<string, boolean>();
+  const deferredOrgs = new Set<string>();
+  const handedIds = new Set<string>();
   let handedOver = 0;
   let skippedOff = 0;
 
-  for (const row of rows) {
-    let projectsOn = appOnByOrg.get(row.org_id);
-    if (projectsOn === undefined) {
-      projectsOn = await deps.runtime.appOn(row.org_id, 'projects', { fresh: true });
-      appOnByOrg.set(row.org_id, projectsOn);
+  for (let pass = 0; pass < OUTBOUND_SWEEP_MAX_PASSES; pass++) {
+    const { rows } = await sql<OutboundSweepRow>`
+      SELECT id, org_id, project_id, task_id, link_id, repo_full_name, external_number, target_remote_state
+        FROM ludy_projects.github_outbound_sweep(${batchLimit}::int)`.execute(deps.workerDb);
+
+    if (rows.length === 0) break;
+
+    let deferredThisPass = 0;
+    for (const row of rows) {
+      let projectsOn = appOnByOrg.get(row.org_id);
+      if (projectsOn === undefined) {
+        projectsOn = await deps.runtime.appOn(row.org_id, 'projects', { fresh: true });
+        appOnByOrg.set(row.org_id, projectsOn);
+      }
+      if (!projectsOn) {
+        if (!deferredOrgs.has(row.org_id)) {
+          await deferGithubOutbound(deps.workerDb, row.org_id, null, deferSeconds);
+          deferredOrgs.add(row.org_id);
+          deferredThisPass += 1;
+        }
+        skippedOff += 1;
+        continue;
+      }
+      if (handedIds.has(row.id)) continue;
+      handedIds.add(row.id);
+      await deps.sendOutbound({ orgId: row.org_id, deliveryId: row.id });
+      handedOver += 1;
     }
-    if (!projectsOn) {
-      skippedOff += 1;
-      continue;
-    }
-    await deps.sendOutbound({ orgId: row.org_id, deliveryId: row.id });
-    handedOver += 1;
+
+    if (rows.length < batchLimit || deferredThisPass === 0) break;
   }
 
   return { handedOver, skippedOff };
@@ -824,6 +860,7 @@ export async function runGithubOutboundJob(
 ): Promise<'applied' | 'skipped' | 'failed'> {
   // Enforce fresh app gate upfront before touching credentials, DB claims/mutations, or api.github.com (ADR-0053, #5159).
   if (!(await deps.runtime.appOn(job.orgId, 'projects', { fresh: true }))) {
+    await deferGithubOutbound(deps.workerDb, job.orgId, job.deliveryId, OUTBOUND_OFF_DEFER_SECONDS);
     return 'skipped';
   }
 

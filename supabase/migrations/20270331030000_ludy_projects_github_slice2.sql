@@ -1,9 +1,9 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Projects GitHub Integration Slice 2 (#5159, ADR-0060):
 --   1. Adds outbound loop-breaker columns (last_outbound_state, last_outbound_at) to ludy_projects.github_task_link
---      and optional link_id FK on ludy_projects.github_sync_delivery.
+--      and link_id FK + next_attempt_at deferral schedule on ludy_projects.github_sync_delivery.
 --   2. Adds context-bound github_outbound_enqueue_for_task (called inside kernel.task.set_status) and
---      worker-only outbound sweep/claim definers (zero direct tenant mutations in worker SQL).
+--      worker-only outbound sweep/claim/defer definers (org_app_on gate, 8h TTL expiry, per-org deferral, zero seq scans).
 --   3. Registers projects-github-sweep (standard) and projects-github-outbound (stately) queues in ludy_jobs.
 SET LOCAL lock_timeout = '2s';
 
@@ -26,7 +26,8 @@ BEGIN
 END $$;
 
 ALTER TABLE ludy_projects.github_sync_delivery
-  ADD COLUMN IF NOT EXISTS link_id uuid;
+  ADD COLUMN IF NOT EXISTS link_id uuid,
+  ADD COLUMN IF NOT EXISTS next_attempt_at timestamptz NOT NULL DEFAULT pg_catalog.now();
 
 DO $$
 BEGIN
@@ -45,6 +46,18 @@ END $$;
 CREATE INDEX IF NOT EXISTS github_sync_delivery_outbound_queued_idx
   ON ludy_projects.github_sync_delivery (received_at, id)
   WHERE direction = 'outbound' AND status = 'queued';
+
+CREATE INDEX IF NOT EXISTS github_sync_delivery_outbound_due_idx
+  ON ludy_projects.github_sync_delivery (next_attempt_at, received_at, id)
+  WHERE direction = 'outbound' AND status = 'queued';
+
+CREATE INDEX IF NOT EXISTS github_sync_delivery_outbound_org_due_idx
+  ON ludy_projects.github_sync_delivery (org_id, next_attempt_at, received_at)
+  WHERE direction = 'outbound' AND status = 'queued';
+
+CREATE INDEX IF NOT EXISTS github_sync_delivery_outbound_poison_idx
+  ON ludy_projects.github_sync_delivery (id)
+  WHERE direction = 'outbound' AND status = 'queued' AND attempt_count >= 5;
 
 CREATE INDEX IF NOT EXISTS github_sync_delivery_link_idx
   ON ludy_projects.github_sync_delivery (org_id, link_id)
@@ -160,7 +173,7 @@ BEGIN
     INSERT INTO ludy_projects.github_sync_delivery (
       id, org_id, project_id, direction, delivery_id, event_type,
       repo_full_name, external_number, task_id, link_id,
-      idempotency_key, target_remote_state, status, received_at
+      idempotency_key, target_remote_state, status, received_at, next_attempt_at
     )
     VALUES (
       v_delivery_id,
@@ -176,6 +189,7 @@ BEGIN
       'outbound:' || v_delivery_id::text,
       v_target_state,
       'queued',
+      v_now,
       v_now
     );
 
@@ -185,6 +199,8 @@ BEGIN
   RETURN v_count;
 END $$;
 
+-- Worker-only readiness probe: ignores off-app and deferred rows while allowing due active-org work, stale >=8h expiry, or >=5 poison cleanup.
+-- migration-lint: cross-module checks ludy_kernel.org_app_on('projects') before waking outbound sweep
 CREATE OR REPLACE FUNCTION ludy_projects.github_outbound_has_work()
 RETURNS boolean
 LANGUAGE plpgsql
@@ -192,6 +208,8 @@ STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $$
+DECLARE
+  v_now timestamptz := pg_catalog.clock_timestamp();
 BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'ludy_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'GITHUB_SYNC_WORKER_ONLY' USING ERRCODE = '42501';
@@ -203,12 +221,34 @@ BEGIN
   RETURN EXISTS (
     SELECT 1
     FROM ludy_projects.github_sync_delivery d
-    WHERE d.direction = 'outbound' AND d.status = 'queued'
+    WHERE d.direction = 'outbound'
+      AND d.status = 'queued'
+      AND d.attempt_count < 5
+      AND d.next_attempt_at <= v_now
+      AND d.received_at > v_now - interval '8 hours'
+      AND ludy_kernel.org_app_on(d.org_id, 'projects')
+    LIMIT 1
+  )
+  OR EXISTS (
+    SELECT 1
+    FROM ludy_projects.github_sync_delivery d
+    WHERE d.direction = 'outbound'
+      AND d.status = 'queued'
+      AND d.received_at <= v_now - interval '8 hours'
+    LIMIT 1
+  )
+  OR EXISTS (
+    SELECT 1
+    FROM ludy_projects.github_sync_delivery d
+    WHERE d.direction = 'outbound'
+      AND d.status = 'queued'
+      AND d.attempt_count >= 5
     LIMIT 1
   );
 END $$;
 
--- Worker sweep (egress 'none'): fails poison rows (>= 5 attempts) in machinery ledger and lists queued outbound rows.
+-- Worker sweep (egress 'none'): expires stale (>= 8h) rows, fails poison (>= 5 attempts) rows, and lists due active-org rows.
+-- migration-lint: cross-module checks ludy_kernel.org_app_on('projects') to exclude off-app orgs from sweep dispatch
 CREATE OR REPLACE FUNCTION ludy_projects.github_outbound_sweep(p_limit integer DEFAULT 100)
 RETURNS TABLE (
   id uuid,
@@ -236,6 +276,15 @@ BEGIN
   END IF;
 
   UPDATE ludy_projects.github_sync_delivery d
+     SET status = 'skipped',
+         error_code = 'EXPIRED',
+         summary = 'Outbound delivery expired before execution',
+         processed_at = v_now
+   WHERE d.direction = 'outbound'
+     AND d.status = 'queued'
+     AND d.received_at <= v_now - interval '8 hours';
+
+  UPDATE ludy_projects.github_sync_delivery d
      SET status = 'failed',
          error_code = 'MAX_ATTEMPTS',
          summary = 'Outbound delivery retry cap reached',
@@ -251,8 +300,52 @@ BEGIN
   WHERE d.direction = 'outbound'
     AND d.status = 'queued'
     AND d.attempt_count < 5
-  ORDER BY d.received_at ASC, d.id ASC
+    AND d.next_attempt_at <= v_now
+    AND d.received_at > v_now - interval '8 hours'
+    AND ludy_kernel.org_app_on(d.org_id, 'projects')
+  ORDER BY d.next_attempt_at ASC, d.received_at ASC, d.id ASC
   LIMIT v_limit;
+END $$;
+
+-- Worker deferral helper: pushes next_attempt_at forward for unentitled/paused org rows so neither sweep nor relay spins or starves active orgs.
+CREATE OR REPLACE FUNCTION ludy_projects.github_outbound_defer(
+  p_org_id uuid,
+  p_delivery_id uuid DEFAULT NULL,
+  p_delay_seconds integer DEFAULT 900
+)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_ctx_org uuid := ludy_kernel.ctx_org_id();
+  v_now timestamptz := pg_catalog.clock_timestamp();
+  v_delay integer := LEAST(GREATEST(COALESCE(p_delay_seconds, 900), 1), 3600);
+  v_count integer := 0;
+BEGIN
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'ludy_worker', 'MEMBER') THEN
+    RAISE EXCEPTION 'GITHUB_SYNC_WORKER_ONLY' USING ERRCODE = '42501';
+  END IF;
+  IF p_org_id IS NULL THEN
+    RETURN 0;
+  END IF;
+  IF v_ctx_org IS NOT NULL AND v_ctx_org IS DISTINCT FROM p_org_id THEN
+    RAISE EXCEPTION 'GITHUB_SYNC_ORG_MISMATCH' USING ERRCODE = '42501';
+  END IF;
+
+  UPDATE ludy_projects.github_sync_delivery d
+     SET next_attempt_at = v_now + pg_catalog.make_interval(secs => v_delay)
+   WHERE d.org_id = p_org_id
+     AND d.direction = 'outbound'
+     AND d.status = 'queued'
+     AND d.attempt_count < 5
+     AND d.received_at > v_now - interval '8 hours'
+     AND d.next_attempt_at <= v_now
+     AND (p_delivery_id IS NULL OR d.id = p_delivery_id);
+
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
 END $$;
 
 CREATE OR REPLACE FUNCTION ludy_projects.github_outbound_delivery_claim(p_org_id uuid, p_delivery_id uuid)
@@ -272,6 +365,7 @@ SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
   v_ctx_org uuid := ludy_kernel.ctx_org_id();
+  v_now timestamptz := pg_catalog.clock_timestamp();
 BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'ludy_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'GITHUB_SYNC_WORKER_ONLY' USING ERRCODE = '42501';
@@ -288,6 +382,7 @@ BEGIN
      AND d.direction = 'outbound'
      AND d.status = 'queued'
      AND d.attempt_count < 5
+     AND d.received_at > v_now - interval '8 hours'
   RETURNING d.id, d.project_id, d.task_id, d.link_id,
             d.repo_full_name, d.external_number, d.target_remote_state, d.attempt_count;
 END $$;
@@ -296,6 +391,7 @@ REVOKE ALL ON FUNCTION
   ludy_projects.github_outbound_enqueue_for_task(uuid, text, text, timestamptz),
   ludy_projects.github_outbound_has_work(),
   ludy_projects.github_outbound_sweep(integer),
+  ludy_projects.github_outbound_defer(uuid, uuid, integer),
   ludy_projects.github_outbound_delivery_claim(uuid, uuid)
 FROM PUBLIC;
 
@@ -308,7 +404,7 @@ BEGIN
     WHERE (rolname LIKE 'ludy\_%' OR rolname LIKE 'crove\_%') AND rolname <> current_user
   LOOP
     EXECUTE pg_catalog.format(
-      'REVOKE ALL ON FUNCTION ludy_projects.github_outbound_enqueue_for_task(uuid, text, text, timestamptz), ludy_projects.github_outbound_has_work(), ludy_projects.github_outbound_sweep(integer), ludy_projects.github_outbound_delivery_claim(uuid, uuid) FROM %I',
+      'REVOKE ALL ON FUNCTION ludy_projects.github_outbound_enqueue_for_task(uuid, text, text, timestamptz), ludy_projects.github_outbound_has_work(), ludy_projects.github_outbound_sweep(integer), ludy_projects.github_outbound_defer(uuid, uuid, integer), ludy_projects.github_outbound_delivery_claim(uuid, uuid) FROM %I',
       r.rolname
     );
   END LOOP;
@@ -321,6 +417,7 @@ TO ludy_tenant;
 GRANT EXECUTE ON FUNCTION
   ludy_projects.github_outbound_has_work(),
   ludy_projects.github_outbound_sweep(integer),
+  ludy_projects.github_outbound_defer(uuid, uuid, integer),
   ludy_projects.github_outbound_delivery_claim(uuid, uuid)
 TO ludy_worker;
 
