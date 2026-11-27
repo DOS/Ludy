@@ -1662,17 +1662,23 @@ function addAliasEdge(edges: Map<string, Set<string>>, from: string, to: string)
   set.add(to);
 }
 
-function propagateAliases(seeds: Iterable<string>, edges: ReadonlyMap<string, ReadonlySet<string>>): Set<string> {
+function propagateAliases(
+  seeds: Iterable<string>,
+  edges: ReadonlyMap<string, ReadonlySet<string>>,
+  extraEdges?: ReadonlyMap<string, ReadonlySet<string>>,
+): Set<string> {
   const out = new Set<string>(seeds);
   const queue = [...out];
   while (queue.length > 0) {
     const cur = queue.pop()!;
-    const nexts = edges.get(cur);
-    if (!nexts) continue;
-    for (const next of nexts) {
-      if (!out.has(next)) {
-        out.add(next);
-        queue.push(next);
+    for (const edgeMap of extraEdges ? [edges, extraEdges] : [edges]) {
+      const nexts = edgeMap.get(cur);
+      if (!nexts) continue;
+      for (const next of nexts) {
+        if (!out.has(next)) {
+          out.add(next);
+          queue.push(next);
+        }
       }
     }
   }
@@ -3102,7 +3108,7 @@ function collectAstBindingIdentifiers(pattern: tsType.BindingName): string[] {
 function unwrapAstExpr(node: tsType.Expression, includeComma = false): tsType.Expression {
   let cur = node;
   let steps = 0;
-  while (steps < 64) {
+  while (steps < 256) {
     steps += 1;
     if (
       ts.isParenthesizedExpression(cur) ||
@@ -3463,6 +3469,9 @@ function seedBlockShadowIdentifiers(blockNode: tsType.Node, scope: AstLexScope):
     } else if (ts.isClassDeclaration(stmt) && stmt.name) {
       scope.declaredNames.add(stmt.name.text);
       scope.constStrings.set(stmt.name.text, null);
+    } else if (ts.isModuleDeclaration(stmt) && ts.isIdentifier(stmt.name)) {
+      scope.declaredNames.add(stmt.name.text);
+      scope.constStrings.set(stmt.name.text, null);
     } else if (ts.isImportDeclaration(stmt) && stmt.importClause) {
       if (stmt.importClause.name) {
         scope.declaredNames.add(stmt.importClause.name.text);
@@ -3480,6 +3489,97 @@ function seedBlockShadowIdentifiers(blockNode: tsType.Node, scope: AstLexScope):
       }
     }
   }
+}
+
+function seedFnVarDecls(fnBodyRoot: tsType.Node, fnScope: AstLexScope): void {
+  const blockScopedFlags = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.BlockScoped;
+  const work: tsType.Node[] = [fnBodyRoot];
+  while (work.length > 0) {
+    const cur = work.pop()!;
+    if (
+      cur !== fnBodyRoot &&
+      (ts.isFunctionLike(cur) ||
+        ts.isClassDeclaration(cur) ||
+        ts.isClassExpression(cur) ||
+        ts.isModuleDeclaration(cur) ||
+        ts.isTypeNode(cur) ||
+        ts.isInterfaceDeclaration(cur) ||
+        ts.isTypeAliasDeclaration(cur))
+    ) {
+      continue;
+    }
+    if (ts.isVariableDeclarationList(cur)) {
+      if ((cur.flags & blockScopedFlags) === 0) {
+        for (const decl of cur.declarations) {
+          for (const name of collectAstBindingIdentifiers(decl.name)) {
+            fnScope.declaredNames.add(name);
+            fnScope.constStrings.set(name, null);
+          }
+        }
+      }
+    }
+    ts.forEachChild(cur, (ch) => {
+      work.push(ch);
+    });
+  }
+}
+
+function collectAstAssignTargetNames(expr: tsType.Expression): {
+  identNames: string[];
+  memberRootBaseNames: string[];
+} {
+  const identNames: string[] = [];
+  const memberRootBaseNames: string[] = [];
+  const stack: tsType.Node[] = [expr];
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    if (
+      ts.isParenthesizedExpression(cur) ||
+      ts.isNonNullExpression(cur) ||
+      ts.isAsExpression(cur) ||
+      ts.isTypeAssertionExpression(cur) ||
+      ts.isSatisfiesExpression(cur)
+    ) {
+      stack.push(cur.expression);
+    } else if (ts.isIdentifier(cur)) {
+      identNames.push(cur.text);
+    } else if (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
+      let root: tsType.Expression = unwrapAstExpr(cur.expression, true);
+      while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) {
+        root = unwrapAstExpr(root.expression, true);
+      }
+      if (ts.isIdentifier(root)) {
+        memberRootBaseNames.push(root.text);
+      }
+    } else if (ts.isArrayLiteralExpression(cur)) {
+      for (const el of cur.elements) {
+        if (!ts.isOmittedExpression(el)) stack.push(el);
+      }
+    } else if (ts.isSpreadElement(cur) || ts.isSpreadAssignment(cur)) {
+      stack.push(cur.expression);
+    } else if (ts.isObjectLiteralExpression(cur)) {
+      for (const prop of cur.properties) {
+        if (ts.isPropertyAssignment(prop)) stack.push(prop.initializer);
+        else if (ts.isShorthandPropertyAssignment(prop)) identNames.push(prop.name.text);
+        else if (ts.isSpreadAssignment(prop)) stack.push(prop.expression);
+      }
+    } else if (ts.isConditionalExpression(cur)) {
+      stack.push(cur.whenTrue, cur.whenFalse);
+    } else if (ts.isBinaryExpression(cur)) {
+      if (cur.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        stack.push(cur.left);
+      } else if (
+        cur.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+        cur.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+        cur.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+      ) {
+        stack.push(cur.left, cur.right);
+      } else if (cur.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+        stack.push(cur.right);
+      }
+    }
+  }
+  return { identNames, memberRootBaseNames };
 }
 
 function isAstKnownSafeFetchKillRhs(expr: tsType.Expression): boolean {
@@ -3801,41 +3901,9 @@ function extractAstFacts(
   const seedRequireHosts = new Set<string>([...AST_REQUIRE_HOSTS].map((h) => `global:${h}`));
   const seedNonSafeKillBases = new Set<string>();
   const seedNonSafeKillValues = new Set<string>();
+  const nonSafeBaseAliases = new Map<string, Set<string>>();
   const blockedSafeKillVars = new Set<string>();
   const safeKillValueCandidates: Array<{ targetKey: string; rhsExpr: tsType.Expression; evalScope: AstLexScope }> = [];
-  const collectAstExprIdentNames = (expr: tsType.Expression): string[] => {
-    const names: string[] = [];
-    const stack: tsType.Node[] = [expr];
-    while (stack.length > 0) {
-      const cur = stack.pop()!;
-      if (
-        ts.isParenthesizedExpression(cur) ||
-        ts.isNonNullExpression(cur) ||
-        ts.isAsExpression(cur) ||
-        ts.isTypeAssertionExpression(cur) ||
-        ts.isSatisfiesExpression(cur)
-      ) {
-        stack.push(cur.expression);
-      } else if (ts.isIdentifier(cur)) {
-        names.push(cur.text);
-      } else if (ts.isArrayLiteralExpression(cur)) {
-        for (const el of cur.elements) {
-          if (!ts.isOmittedExpression(el)) stack.push(el);
-        }
-      } else if (ts.isSpreadElement(cur) || ts.isSpreadAssignment(cur)) {
-        stack.push(cur.expression);
-      } else if (ts.isObjectLiteralExpression(cur)) {
-        for (const prop of cur.properties) {
-          if (ts.isPropertyAssignment(prop)) stack.push(prop.initializer);
-          else if (ts.isShorthandPropertyAssignment(prop)) names.push(prop.name.text);
-          else if (ts.isSpreadAssignment(prop)) stack.push(prop.expression);
-        }
-      } else if (ts.isBinaryExpression(cur) && cur.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-        stack.push(cur.left);
-      }
-    }
-    return names;
-  };
   const localWrapperBindTargets: Array<{ hostExpr: tsType.Expression; targets: string[]; scope: AstLexScope }> = [];
   const seedMeterAliases = new Set<string>(['global:metered']);
   const seedMeterNs = new Set<string>();
@@ -4090,6 +4158,7 @@ function extractAstFacts(
     constStrings: new Map<string, string | null>(),
   };
   seedBlockShadowIdentifiers(sf, rootScope);
+  seedFnVarDecls(sf, rootScope);
 
   const checkStringOrIdentValue = (val: string, skipSymMatch: boolean, isValidDirectNode = false): void => {
     if (AST_MEMBER_VY_NAMES.has(val)) stringAndIdentMatches.add(val);
@@ -4245,6 +4314,10 @@ function extractAstFacts(
         const toKey = targetKeys[0]!;
         addAliasEdge(aliasEdges, fromKey, toKey);
         addPositionalEdge(fromKey, toKey, assignEndPos ?? cur.getStart(sf), cur);
+        if (!toKey.startsWith('prop:')) {
+          addAliasEdge(nonSafeBaseAliases, fromKey, toKey);
+          addAliasEdge(nonSafeBaseAliases, toKey, fromKey);
+        }
       } else if (memberAccess) {
         memberBindCandidates.push({
           host: memberAccess.host,
@@ -4650,13 +4723,16 @@ function extractAstFacts(
 
     if (node !== sf) {
       if (ts.isBlock(node) || ts.isCaseBlock(node) || ts.isModuleBlock(node)) {
-        nextScope = createAstChildScope(scope, false);
+        nextScope = createAstChildScope(scope, ts.isModuleBlock(node));
         seedBlockShadowIdentifiers(node, nextScope);
+        if (ts.isModuleBlock(node)) {
+          seedFnVarDecls(node, nextScope);
+        }
       } else if (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) {
         nextScope = createAstChildScope(scope, false);
         if (ts.isForInStatement(node) || ts.isForOfStatement(node)) {
           if (ts.isVariableDeclarationList(node.initializer)) {
-            const isLexicalLoop = Boolean(node.initializer.flags & (ts.NodeFlags.Const | ts.NodeFlags.Let));
+            const isLexicalLoop = Boolean(node.initializer.flags & (ts.NodeFlags.Const | ts.NodeFlags.Let | ts.NodeFlags.BlockScoped));
             let targetLoopScope = nextScope;
             if (!isLexicalLoop) {
               while (targetLoopScope.parent && !targetLoopScope.isFnScope) targetLoopScope = targetLoopScope.parent;
@@ -4669,8 +4745,12 @@ function extractAstFacts(
               }
             }
           } else {
-            for (const name of collectAstExprIdentNames(node.initializer)) {
+            const { identNames, memberRootBaseNames } = collectAstAssignTargetNames(node.initializer);
+            for (const name of identNames) {
               blockedSafeKillVars.add(astVarKey(nextScope, name));
+            }
+            for (const baseName of memberRootBaseNames) {
+              seedNonSafeKillBases.add(astVarKey(nextScope, baseName));
             }
           }
         }
@@ -4700,6 +4780,13 @@ function extractAstFacts(
             blockedSafeKillVars.add(astVarKey(nextScope, name));
           }
         }
+        if (node.body) {
+          seedFnVarDecls(node.body, nextScope);
+        }
+      } else if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name) {
+        seedNonSafeKillBases.add(astVarKey(scope, node.name.text));
+      } else if (ts.isModuleDeclaration(node) && ts.isIdentifier(node.name)) {
+        seedNonSafeKillBases.add(astVarKey(scope, node.name.text));
       }
       if (
         ts.isTypeNode(node) ||
@@ -4963,8 +5050,12 @@ function extractAstFacts(
         }
       }
       if (ts.isObjectLiteralExpression(lhsExpr) || ts.isArrayLiteralExpression(lhsExpr)) {
-        for (const idName of collectAstExprIdentNames(lhsExpr)) {
+        const { identNames, memberRootBaseNames } = collectAstAssignTargetNames(lhsExpr);
+        for (const idName of identNames) {
           blockedSafeKillVars.add(astVarKey(nextScope, idName));
+        }
+        for (const baseName of memberRootBaseNames) {
+          seedNonSafeKillBases.add(astVarKey(nextScope, baseName));
         }
       }
       if (ts.isObjectLiteralExpression(lhsExpr)) {
@@ -4981,6 +5072,41 @@ function extractAstFacts(
     }
 
     // 3. Collect all CallExpressions (with outermost wrapper info for bound assignment/member access)
+    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+      let skipBindThisArg = false;
+      let bindReceiverIdent: string | null = null;
+      if (ts.isCallExpression(node)) {
+        const directCalleeForBind = unwrapAstExpr(node.expression, true);
+        if (ts.isPropertyAccessExpression(directCalleeForBind) || ts.isElementAccessExpression(directCalleeForBind)) {
+          const bMem = extractAstMemberName(directCalleeForBind, nextScope);
+          if (bMem.memberName === 'bind') {
+            const bHost = unwrapAstExpr(bMem.host, true);
+            if (ts.isPropertyAccessExpression(bHost) || ts.isElementAccessExpression(bHost)) {
+              let root: tsType.Expression = unwrapAstExpr(bHost.expression, true);
+              while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) {
+                root = unwrapAstExpr(root.expression, true);
+              }
+              if (ts.isIdentifier(root)) {
+                skipBindThisArg = true;
+                bindReceiverIdent = root.text;
+              }
+            }
+          }
+        }
+      }
+      if (node.arguments) {
+        for (let argIdx = 0; argIdx < node.arguments.length; argIdx += 1) {
+          const argNorm = unwrapAstExpr(node.arguments[argIdx]!, false);
+          if (skipBindThisArg && argIdx === 0 && ts.isIdentifier(argNorm) && argNorm.text === bindReceiverIdent) {
+            continue;
+          }
+          const { identNames } = collectAstAssignTargetNames(argNorm);
+          for (const idName of identNames) {
+            seedNonSafeKillBases.add(astVarKey(nextScope, idName));
+          }
+        }
+      }
+    }
     if (ts.isCallExpression(node)) {
       const unwrapped = unwrapAstCall(node, nextScope);
       let outerAccessExpr: tsType.Expression = node;
@@ -5298,7 +5424,7 @@ function extractAstFacts(
     (fetchTaintsByVarAndFn.size > 0 || fetchGlobalVars.size > 0) &&
     (fetchKillCandidates.length > 0 || positionalEdgesBySource.size > 0)
   ) {
-  let nonSafeKillBases = propagateAliases(seedNonSafeKillBases, aliasEdges);
+  let nonSafeKillBases = propagateAliases(seedNonSafeKillBases, aliasEdges, nonSafeBaseAliases);
   const isExprNonSafeKillSource = (expr: tsType.Expression, scope: AstLexScope): boolean => {
     for (const br of expandAstBranchExprs(expr)) {
       if (!ts.isIdentifier(br)) return true;
@@ -5332,7 +5458,7 @@ function extractAstFacts(
         seedNonSafeKillValues.add(t);
       }
     }
-    if (changedNonSafe) nonSafeKillBases = propagateAliases(seedNonSafeKillBases, aliasEdges);
+    if (changedNonSafe) nonSafeKillBases = propagateAliases(seedNonSafeKillBases, aliasEdges, nonSafeBaseAliases);
   }
   const nonSafeKillValues = propagateAliases(seedNonSafeKillValues, aliasEdges);
   const isSafeKillExpr = (
@@ -5918,7 +6044,15 @@ function stripOuterParens(
   return { start: s, end: e };
 }
 
-function skipLeadingTypeAssertionTokens(tokens: readonly Token[], startIdx: number, maxIdx: number): number {
+const NORM_EXPR_PREFIX_KEYWORDS = new Set(['await', 'typeof', 'void', 'delete', 'new']);
+
+function skipLeadingTypeAssertionTokens(
+  tokens: readonly Token[],
+  startIdx: number,
+  maxIdx: number,
+  cappedOut?: { value: boolean },
+  maxIsCapped = false,
+): number {
   const first = tokens[startIdx];
   if (!first || first.kind !== 'punct' || first.value !== '<' || startIdx + 2 >= maxIdx) return -1;
   if (tokens[startIdx + 1]?.kind === 'punct' && tokens[startIdx + 1]?.value === '/') return -1;
@@ -5934,13 +6068,31 @@ function skipLeadingTypeAssertionTokens(tokens: readonly Token[], startIdx: numb
     else if (tk.kind === 'template_tail' && td > 0) td -= 1;
     else if (tk.kind === 'punct') {
       if (tk.value === '(') pd += 1;
-      else if (tk.value === ')' && pd > 0) pd -= 1;
-      else if (tk.value === '[') bd += 1;
-      else if (tk.value === ']' && bd > 0) bd -= 1;
-      else if (tk.value === '{') cd += 1;
-      else if (tk.value === '}' && cd > 0) cd -= 1;
-      else if (pd === 0 && bd === 0 && cd === 0 && td === 0) {
-        if (tk.value === ';') return -1;
+      else if (tk.value === ')') {
+        if (pd === 0 && bd === 0 && cd === 0 && td === 0) return -1;
+        if (pd > 0) pd -= 1;
+      } else if (tk.value === '[') bd += 1;
+      else if (tk.value === ']') {
+        if (pd === 0 && bd === 0 && cd === 0 && td === 0) return -1;
+        if (bd > 0) bd -= 1;
+      } else if (tk.value === '{') cd += 1;
+      else if (tk.value === '}') {
+        if (pd === 0 && bd === 0 && cd === 0 && td === 0) return -1;
+        if (cd > 0) cd -= 1;
+      } else if (pd === 0 && bd === 0 && cd === 0 && td === 0) {
+        if (
+          tk.value === ';' ||
+          tk.value === '&&' ||
+          tk.value === '||' ||
+          tk.value === '??' ||
+          tk.value === '=' ||
+          tk.value === '==' ||
+          tk.value === '===' ||
+          tk.value === '!=' ||
+          tk.value === '!=='
+        ) {
+          return -1;
+        }
         if (tk.value === '<') ad += 1;
         else if (tk.value === '>') ad -= 1;
         else if (tk.value === '>>' && ad >= 2) ad -= 2;
@@ -5949,6 +6101,7 @@ function skipLeadingTypeAssertionTokens(tokens: readonly Token[], startIdx: numb
       }
     }
   }
+  if (cappedOut && (startIdx + 64 <= maxIdx || maxIsCapped)) cappedOut.value = true;
   return -1;
 }
 
@@ -5958,14 +6111,20 @@ function normalizeValueExprSpan(
   end: number,
   delims: DelimiterPairs,
   templateTail?: Int32Array,
+  cappedOut?: { value: boolean },
+  endIsCapped = false,
 ): { start: number; end: number } {
   let s = start;
   let e = end;
+  let converged = false;
   for (let pass = 0; pass < 16; pass += 1) {
     const parenTrim = stripOuterParens(tokens, s, e, delims);
     s = parenTrim.start;
     e = parenTrim.end;
-    if (s >= e) break;
+    if (s >= e) {
+      converged = true;
+      break;
+    }
     let changed = false;
     if (
       tokens[s]?.kind === 'ident' &&
@@ -5976,7 +6135,7 @@ function normalizeValueExprSpan(
       s += 1;
       changed = true;
     } else {
-      const afterType = skipLeadingTypeAssertionTokens(tokens, s, e);
+      const afterType = skipLeadingTypeAssertionTokens(tokens, s, e, cappedOut, endIsCapped);
       if (afterType > s) {
         s = afterType;
         changed = true;
@@ -5987,6 +6146,7 @@ function normalizeValueExprSpan(
       changed = true;
     }
     let td = 0;
+    let atExprPrefix = true;
     for (let idx = s; idx < e; idx += 1) {
       const tk = tokens[idx]!;
       if (tk.kind === 'template_head') {
@@ -5994,18 +6154,26 @@ function normalizeValueExprSpan(
           const tl = templateTail[idx] ?? -1;
           if (tl > idx && tl < e) {
             idx = tl;
+            atExprPrefix = false;
             continue;
           }
           break;
         }
         td += 1;
-      } else if (tk.kind === 'template_tail' && td > 0) {
+        continue;
+      }
+      if (tk.kind === 'template_tail' && td > 0) {
         td -= 1;
-      } else if (td === 0 && tk.kind === 'punct') {
+        if (td === 0) atExprPrefix = false;
+        continue;
+      }
+      if (td > 0) continue;
+      if (tk.kind === 'punct') {
         if (tk.value === '(') {
           const cl = delims.paren[idx] ?? -1;
           if (cl > idx && cl < e) {
             idx = cl;
+            atExprPrefix = false;
             continue;
           }
           break;
@@ -6014,6 +6182,7 @@ function normalizeValueExprSpan(
           const cl = delims.bracket[idx] ?? -1;
           if (cl > idx && cl < e) {
             idx = cl;
+            atExprPrefix = false;
             continue;
           }
           break;
@@ -6022,18 +6191,54 @@ function normalizeValueExprSpan(
           const cl = delims.brace[idx] ?? -1;
           if (cl > idx && cl < e) {
             idx = cl;
+            atExprPrefix = false;
             continue;
           }
           break;
         }
-      } else if (td === 0 && tk.kind === 'ident' && (tk.value === 'as' || tk.value === 'satisfies') && idx > s) {
-        e = idx;
-        changed = true;
-        break;
+        if (atExprPrefix && tk.value === '<') {
+          const afterType = skipLeadingTypeAssertionTokens(tokens, idx, e, cappedOut, endIsCapped);
+          if (afterType > idx) {
+            idx = afterType - 1;
+            continue;
+          }
+        }
+        if (tk.value === '.' || tk.value === '?.' || tk.value === ')' || tk.value === ']' || tk.value === '}') {
+          atExprPrefix = false;
+        } else if (tk.value === '!' || tk.value === '++' || tk.value === '--') {
+          // Preserve prefix vs postfix state
+        } else if (tk.value === '~' || tk.value === '...' || (atExprPrefix && (tk.value === '+' || tk.value === '-'))) {
+          atExprPrefix = true;
+        } else {
+          atExprPrefix = true;
+        }
+        continue;
       }
+      if (tk.kind === 'ident') {
+        const prevTok = tokens[idx - 1];
+        const prevIsDot = prevTok?.kind === 'punct' && (prevTok.value === '.' || prevTok.value === '?.');
+        if (!atExprPrefix && !tk.escaped && (tk.value === 'as' || tk.value === 'satisfies') && idx > s && !prevIsDot) {
+          e = idx;
+          changed = true;
+          break;
+        }
+        if (atExprPrefix && !tk.escaped && NORM_EXPR_PREFIX_KEYWORDS.has(tk.value)) {
+          atExprPrefix = true;
+        } else if (!atExprPrefix && !tk.escaped && (tk.value === 'in' || tk.value === 'instanceof') && !prevIsDot) {
+          atExprPrefix = true;
+        } else {
+          atExprPrefix = false;
+        }
+        continue;
+      }
+      atExprPrefix = false;
     }
-    if (!changed) break;
+    if (!changed) {
+      converged = true;
+      break;
+    }
   }
+  if (!converged && cappedOut) cappedOut.value = true;
   return { start: s, end: e };
 }
 
@@ -6102,9 +6307,14 @@ function tryResolveConstantStringExpr(
   constLookup: ConstLookupFn,
   depth = 0,
   templateTail?: Int32Array,
+  cappedOut?: { value: boolean },
 ): string | null {
-  if (depth > 16 || start >= end || end - start > 128) return null;
-  const trimmed = normalizeValueExprSpan(tokens, start, end, delims, templateTail);
+  if (start >= end) return null;
+  if (depth > 16 || end - start > 128) {
+    if (cappedOut) cappedOut.value = true;
+    return null;
+  }
+  const trimmed = normalizeValueExprSpan(tokens, start, end, delims, templateTail, cappedOut);
   const s = trimmed.start;
   const e = trimmed.end;
   if (s >= e) return null;
@@ -6124,7 +6334,7 @@ function tryResolveConstantStringExpr(
       if (tok.kind === 'ident' && !tok.escaped && tok.value === 'await') {
         continue;
       }
-      const afterType = skipLeadingTypeAssertionTokens(tokens, idx, e);
+      const afterType = skipLeadingTypeAssertionTokens(tokens, idx, e, cappedOut);
       if (afterType > idx) {
         idx = afterType - 1;
         continue;
@@ -6154,7 +6364,17 @@ function tryResolveConstantStringExpr(
   if (termRanges.length > 1) {
     const parts: string[] = [];
     for (const r of termRanges) {
-      const part = tryResolveConstantStringExpr(tokens, r.start, r.end, delims, templateNext, constLookup, depth + 1, templateTail);
+      const part = tryResolveConstantStringExpr(
+        tokens,
+        r.start,
+        r.end,
+        delims,
+        templateNext,
+        constLookup,
+        depth + 1,
+        templateTail,
+        cappedOut,
+      );
       if (part === null) return null;
       parts.push(part);
     }
@@ -6178,7 +6398,17 @@ function tryResolveConstantStringExpr(
       steps += 1;
       const next = templateNext[cur] ?? -1;
       if (next <= cur || next >= e) return null;
-      const exprVal = tryResolveConstantStringExpr(tokens, cur + 1, next, delims, templateNext, constLookup, depth + 1, templateTail);
+      const exprVal = tryResolveConstantStringExpr(
+        tokens,
+        cur + 1,
+        next,
+        delims,
+        templateNext,
+        constLookup,
+        depth + 1,
+        templateTail,
+        cappedOut,
+      );
       if (exprVal === null) return null;
       parts.push(exprVal);
       const nextTok = tokens[next]!;
@@ -6188,6 +6418,7 @@ function tryResolveConstantStringExpr(
       }
       cur = next;
     }
+    if (steps >= 32 && cappedOut) cappedOut.value = true;
   }
   return null;
 }
@@ -9579,30 +9810,63 @@ function hasTokenResolvedWorkspaceTarget(
         if (v !== null && (symbolSet.has(v) || isAgentOrAdapterTextValue(v, fromRelPath))) return true;
       }
     }
-    const advanceOp = (idx: number, maxEnd: number): number => {
+    const advanceOp = (
+      idx: number,
+      maxEnd: number,
+      maxIsCapped: boolean,
+      inPlusChain: boolean,
+      cappedOut: { value: boolean },
+    ): number => {
       let cur = idx;
+      let prefixDone = false;
       for (let step = 0; step < 16 && cur < maxEnd; step += 1) {
         const tk = tokens[cur]!;
         if (tk.kind === 'ident' && !tk.escaped && tk.value === 'await' && cur + 1 < maxEnd) {
           cur += 1;
           continue;
         }
-        const afterType = skipLeadingTypeAssertionTokens(tokens, cur, maxEnd);
+        const afterType = skipLeadingTypeAssertionTokens(tokens, cur, maxEnd, cappedOut, maxIsCapped);
+        if (cappedOut.value) return -1;
         if (afterType > cur) {
           cur = afterType;
           continue;
         }
+        prefixDone = true;
         break;
       }
-      if (cur >= maxEnd) return -1;
+      if (!prefixDone) {
+        cappedOut.value = true;
+        return -1;
+      }
+      if (cur >= maxEnd) {
+        if (maxIsCapped) cappedOut.value = true;
+        return -1;
+      }
       const tk = tokens[cur]!;
       let end = -1;
       if (tk.kind === 'punct' && tk.value === '(') {
         const close = delims.paren[cur] ?? -1;
-        if (close > cur && close < maxEnd) end = close + 1;
+        if (close > cur && close < maxEnd) {
+          end = close + 1;
+        } else if (maxIsCapped && close >= maxEnd) {
+          if (inPlusChain || tokens[close + 1]?.value === '+') {
+            cappedOut.value = true;
+          } else {
+            for (let k = cur + 1; k < maxEnd; k += 1) {
+              if (tokens[k]?.kind === 'punct' && tokens[k]?.value === '+') {
+                cappedOut.value = true;
+                break;
+              }
+            }
+          }
+        }
       } else if (tk.kind === 'template_head') {
         const tailIdx = templateTail[cur] ?? -1;
-        if (tailIdx > cur && tailIdx < maxEnd) end = tailIdx + 1;
+        if (tailIdx > cur && tailIdx < maxEnd) {
+          end = tailIdx + 1;
+        } else if (maxIsCapped && tailIdx >= maxEnd) {
+          cappedOut.value = true;
+        }
       } else if (
         tk.kind === 'string' ||
         tk.kind === 'template' ||
@@ -9611,6 +9875,7 @@ function hasTokenResolvedWorkspaceTarget(
         end = cur + 1;
       }
       if (end < 0) return -1;
+      let suffixDone = false;
       for (let step = 0; step < 16 && end < maxEnd; step += 1) {
         const suf = tokens[end]!;
         if (suf.kind === 'punct' && suf.value === '!') {
@@ -9619,21 +9884,51 @@ function hasTokenResolvedWorkspaceTarget(
         }
         if (suf.kind === 'ident' && (suf.value === 'as' || suf.value === 'satisfies')) {
           const afterAs = skipWorkspaceTypeAssertion(tokens, end + 1, maxEnd);
+          if (afterAs >= maxEnd && maxIsCapped) {
+            cappedOut.value = true;
+            return -1;
+          }
           if (afterAs > end + 1) {
             end = afterAs;
             continue;
           }
         }
+        suffixDone = true;
         break;
+      }
+      if (!suffixDone && end < maxEnd) {
+        const suf = tokens[end]!;
+        if (
+          (suf.kind === 'punct' && suf.value === '!') ||
+          (suf.kind === 'ident' && (suf.value === 'as' || suf.value === 'satisfies'))
+        ) {
+          cappedOut.value = true;
+          return -1;
+        }
+      }
+      if (end >= maxEnd && maxIsCapped) {
+        cappedOut.value = true;
       }
       return end;
     };
+    const capped = { value: false };
     for (let i = 0; i < tokens.length; i += 1) {
       const t = tokens[i]!;
       if (t.kind === 'template_head') {
         const tailIdx = templateTail[i] ?? -1;
         if (tailIdx >= 0) {
-          const val = tryResolveConstantStringExpr(tokens, i, tailIdx + 1, delims, templateNext, constLookup, 0, templateTail);
+          const val = tryResolveConstantStringExpr(
+            tokens,
+            i,
+            tailIdx + 1,
+            delims,
+            templateNext,
+            constLookup,
+            0,
+            templateTail,
+            capped,
+          );
+          if (capped.value) return true;
           if (val !== null && (symbolSet.has(val) || isAgentOrAdapterTextValue(val, fromRelPath))) return true;
         }
       }
@@ -9650,14 +9945,18 @@ function hasTokenResolvedWorkspaceTarget(
         continue;
       }
       const maxEnd = Math.min(tokens.length, i + 128);
-      const firstEnd = advanceOp(i, maxEnd);
+      const maxIsCapped = maxEnd < tokens.length;
+      const firstEnd = advanceOp(i, maxEnd, maxIsCapped, false, capped);
+      if (capped.value) return true;
       if (firstEnd > i) {
         let cursor = firstEnd;
         while (cursor < maxEnd && tokens[cursor]?.kind === 'punct' && tokens[cursor]?.value === '+') {
-          const nextEnd = advanceOp(cursor + 1, maxEnd);
+          const nextEnd = advanceOp(cursor + 1, maxEnd, maxIsCapped, true, capped);
+          if (capped.value) return true;
           if (nextEnd < 0) break;
           cursor = nextEnd;
         }
+        if (cursor >= maxEnd && maxIsCapped) return true;
         let hasPlusChain = cursor > firstEnd;
         if (!hasPlusChain && t.kind === 'punct' && t.value === '(') {
           for (let k = i + 1; k < cursor - 1; k += 1) {
@@ -9668,7 +9967,8 @@ function hasTokenResolvedWorkspaceTarget(
           }
         }
         if (hasPlusChain) {
-          const val = tryResolveConstantStringExpr(tokens, i, cursor, delims, templateNext, constLookup, 0, templateTail);
+          const val = tryResolveConstantStringExpr(tokens, i, cursor, delims, templateNext, constLookup, 0, templateTail, capped);
+          if (capped.value) return true;
           if (val !== null && (symbolSet.has(val) || isAgentOrAdapterTextValue(val, fromRelPath))) return true;
         }
       }
@@ -13012,5 +13312,98 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(disallowedMeteredNotes('other.ts', "const r = /abc\nmetered('notes.summary', fn);")).toEqual([
       'notes.summary',
     ]);
+
+    // Platform PO Round 4 R4-B1a, R4-B1b, R4-B2a, R4-B2b regressions
+    expect(
+      workspaceAdapterLeakViolations(
+        "const a='gen',as='erate',c='Note',d='Summary',e='Text'; export const fn = a + as + c + d + e;",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "type as = string; const a='gen',b='erate',c='Note',d='Summary',e='Text'; export const fn = a + <as>b + c + d + e;",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const a='gen',as='erate',c='Note',d='Summary',e='Text'; export const fn = (a + as + c + d + e) as string;",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `${splitNotePrefix} export const fn = a!!!!!!!!!!!!!!!!! + b + c + d + e;`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    const wide16Type = Array.from({ length: 16 }, (_, idx) => `k${idx}: 1;`).join(' ');
+    expect(
+      workspaceAdapterLeakViolations(
+        `${splitNotePrefix} export const fn = a + <{ ${wide16Type} } | string>b + c + d + e;`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `${splitNotePrefix} export const fn = <{ ${wide16Type} } | string>a + b + c + d + e;`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nfn = read;\nif (false) {\n  var fn: any = () => null;\n}\nread = fn;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "export function run() {\n  let read = globalThis.fetch;\n  fn = read;\n  if (false) {\n    var fn: any = () => null;\n  }\n  read = fn;\n  read('https://x.test');\n}",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "class C {\n  static fetch = globalThis.fetch;\n}\nlet read = globalThis.fetch;\nread = C.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "namespace N {\n  export const fetch = globalThis.fetch;\n}\nlet read = globalThis.fetch;\nread = N.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst alias = cache;\nalias.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\n([cache.fetch] = [read]);\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\n({ fetch: cache.fetch } = { fetch: read });\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nfor (cache.fetch of [read]) {}\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nObject.assign(cache, { fetch: read });\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations('let read = globalThis.fetch;\nread = cache.fetch.bind(cache);\nread(key);'),
+    ).toEqual([]);
   }, 30_000);
 });
