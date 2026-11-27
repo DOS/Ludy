@@ -103,6 +103,10 @@ function createStubRuntime() {
         text = JSON.stringify({ labels: ['Ke hoach ban hang'] });
       } else if (feature === 'meetings.open_points') {
         text = JSON.stringify({ points: [{ kind: 'question', text: 'Ai se gui bao cao truoc thu Sau?', second: 0 }] });
+      } else if (feature === 'meetings.catch_up') {
+        text = JSON.stringify({
+          lines: [{ text: 'Nhom chot ke hoach ban hang va giu dung tien do da de ra.', cite: { kind: 'decision', index: 1 } }],
+        });
       } else if (feature === 'meetings.sales_insight') {
         if (prompt.user.includes('11111111-1111-4111-8111-111111111102')) {
           text = JSON.stringify({

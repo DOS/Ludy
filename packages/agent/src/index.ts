@@ -68,6 +68,7 @@ export * from './commitments-model.ts';
 export * from './template-suggest-model.ts';
 export * from './deal-update-model.ts';
 export * from './open-points-model.ts';
+export * from './catch-up-model.ts';
 export * from './sales-insight-model.ts';
 export * from './label-suggest-model.ts';
 export * from './followup-note-model.ts';

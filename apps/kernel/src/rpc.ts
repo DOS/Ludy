@@ -115,7 +115,7 @@ import {
   type SignAi,
 } from './sign-ai.ts';
 import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
-import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments, runMeetingLabelSuggest, runMeetingOpenPoints, runMeetingSalesInsight, salesInsightStatusOf, runMeetingTemplateSuggest } from './member-vy-ports.ts';
+import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments, runMeetingLabelSuggest, runMeetingOpenPoints, catchUpStatusOf, runMeetingCatchUp, runMeetingSalesInsight, salesInsightStatusOf, runMeetingTemplateSuggest } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type MarketplaceProposalFacts, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
 import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.ts';
@@ -1971,6 +1971,16 @@ export function createRpcHandler(
         status: os.meetings.openPoints.status.handler(meetingsQuery('meetings.open_points.status')),
         list: os.meetings.openPoints.list.handler(({ context, input }) =>
           inMeetings(context, (orgId, actor) => runMeetingOpenPoints({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
+      },
+      // Catch-up summary for a member who missed a meeting (#5130, L33): `status` returns whether Vy is available plus code-built `yourItems` (works with AI off),
+      // `write` runs the reader's own Vy once over published minutes only (never transcript, draft or notes) and stores counts only.
+      catchUp: {
+        status: os.meetings.catchUp.status.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => catchUpStatusOf({ runtime, price: aiPrice, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor, input.meetingId)),
+        ),
+        write: os.meetings.catchUp.write.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingCatchUp({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingBriefs, price: aiPrice }, orgId, actor, input.meetingId)),
         ),
       },
       // Sales call insights for a meeting linked to an open deal (#4920, L26): recorder-only foreground Vy run with cited transcript line IDs and code-computed customer talk share.
