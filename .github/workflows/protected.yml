@@ -147,6 +147,114 @@ jobs:
           echo "suite=base" >> "$GITHUB_OUTPUT"
           echo "manifest=$(xargs -0 sha256sum -z -- < "$base_list" | base64 -w0)" >> "$GITHUB_OUTPUT"
           echo "kinds=$(base64 -w0 < "$base_kinds")" >> "$GITHUB_OUTPUT"
+          ts_meta=$(node -e '
+            const { execFileSync } = require("node:child_process");
+            const fs = require("node:fs");
+            const base = process.env.BASE_SHA;
+            const baseListPath = process.argv[1];
+            const existsInBase = (p) => {
+              try {
+                execFileSync("git", ["cat-file", "-e", `${base}:${p}`], { stdio: "ignore" });
+                return true;
+              } catch (err) {
+                if (err && (err.status === 1 || err.status === 128)) {
+                  execFileSync("git", ["rev-parse", "--verify", `${base}^{commit}`], { stdio: "ignore" });
+                  return false;
+                }
+                throw err;
+              }
+            };
+            const showRequired = (p) => execFileSync("git", ["show", `${base}:${p}`], { encoding: "utf8" });
+            const assertNoBaseTsApiEnvRef = () => {
+              const relFiles = fs.readFileSync(baseListPath, "utf8").split("\0").filter(Boolean);
+              for (const rel of relFiles) {
+                if (/(?:LUDY|CROVE)_INVARIANT_TS_API_PATH/.test(showRequired(rel))) {
+                  throw new Error(`Base invariant file ${rel} references *_INVARIANT_TS_API_PATH without typescript-api in BASE_SHA`);
+                }
+              }
+            };
+            if (!existsInBase("packages/agent/package.json")) {
+              assertNoBaseTsApiEnvRef();
+              process.stdout.write(JSON.stringify({ enabled: false }));
+              process.exit(0);
+            }
+            const agentPkg = JSON.parse(showRequired("packages/agent/package.json"));
+            const hasTsApi = Boolean(agentPkg.devDependencies?.["typescript-api"] || agentPkg.dependencies?.["typescript-api"]);
+            if (!hasTsApi) {
+              assertNoBaseTsApiEnvRef();
+              process.stdout.write(JSON.stringify({ enabled: false }));
+              process.exit(0);
+            }
+            const lockRaw = showRequired("pnpm-lock.yaml");
+            const lines = lockRaw.split(/\r?\n/);
+            let topSection = "";
+            let inAgentImporter = false;
+            let inAgentDeps = false;
+            let inTsApi = false;
+            let pkgKey = null;
+            for (const line of lines) {
+              if (/^\S/.test(line)) {
+                topSection = line.trim();
+                if (inAgentImporter) break;
+                continue;
+              }
+              if (topSection !== "importers:") continue;
+              if (line === "  packages/agent:") { inAgentImporter = true; continue; }
+              if (inAgentImporter) {
+                if (/^  \S/.test(line)) break;
+                if (line === "    devDependencies:" || line === "    dependencies:") { inAgentDeps = true; continue; }
+                if (inAgentDeps && /^    \S/.test(line)) { inAgentDeps = false; continue; }
+                if (inAgentDeps) {
+                  if (/^      ['\''"]?typescript-api['\''"]?:$/.test(line)) { inTsApi = true; continue; }
+                  if (inTsApi && /^      \S/.test(line)) { inTsApi = false; continue; }
+                  if (inTsApi) {
+                    const vm = /^        version:\s*([^\s(]+)/.exec(line);
+                    if (vm) { pkgKey = vm[1].replace(/^['\''"]|['\''"]$/g, ""); break; }
+                  }
+                }
+              }
+            }
+            if (!pkgKey) throw new Error("Missing typescript-api version in BASE_SHA pnpm-lock.yaml");
+            const atIdx = pkgKey.lastIndexOf("@");
+            if (atIdx <= 0) throw new Error(`Invalid package key ${pkgKey}`);
+            const pkgName = pkgKey.slice(0, atIdx);
+            const pkgVer = pkgKey.slice(atIdx + 1);
+            topSection = "";
+            let inPkg = false;
+            let resLine = null;
+            for (const line of lines) {
+              if (/^\S/.test(line)) {
+                topSection = line.trim();
+                if (inPkg) break;
+                continue;
+              }
+              if (topSection !== "packages:") continue;
+              const km = /^  ([^:\s][^:]*):$/.exec(line);
+              if (km) {
+                const rawKey = km[1].replace(/^['\''"]|['\''"]$/g, "");
+                inPkg = rawKey === pkgKey || rawKey.startsWith(`${pkgKey}(`);
+                continue;
+              }
+              if (inPkg && /^  \S/.test(line)) break;
+              if (inPkg && line.startsWith("    resolution: ")) { resLine = line; break; }
+            }
+            if (!resLine) throw new Error(`Missing resolution for ${pkgKey} in BASE_SHA pnpm-lock.yaml`);
+            const intM = /integrity:\s*(sha512-[A-Za-z0-9+/=]+)/.exec(resLine);
+            if (!intM) throw new Error(`Missing sha512 integrity for ${pkgKey}`);
+            const tbM = /tarball:\s*([^\s,}]+)/.exec(resLine);
+            const url = tbM ? tbM[1].replace(/^['\''"]|['\''"]$/g, "") : `https://registry.npmjs.org/${pkgName}/-/${pkgName.split("/").pop()}-${pkgVer}.tgz`;
+            if (!/^https:\/\//.test(url)) throw new Error(`Non-HTTPS tarball URL ${url}`);
+            process.stdout.write(JSON.stringify({ enabled: true, pkgKey, url, integrity: intM[1] }));
+          ' "$base_list")
+          ts_api_enabled=$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).enabled))' "$ts_meta")
+          echo "ts_api_enabled=$ts_api_enabled" >> "$GITHUB_OUTPUT"
+          if [ "$ts_api_enabled" = "true" ]; then
+            node -e '
+              const fs = require("node:fs");
+              const m = JSON.parse(process.argv[1]);
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, `ts_api_url=${m.url}\nts_api_integrity=${m.integrity}\n`);
+            ' "$ts_meta"
+          fi
           changed=$(git -c core.quotePath=false diff --name-status "$BASE_SHA...$HEAD_SHA" -- ':(glob)**/test/invariant/**' vitest.invariant.config.ts \
             ':(glob)supabase/tests/database/_*.test.sql')
           {
@@ -163,6 +271,51 @@ jobs:
             echo
           } >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$changed" ]; then echo "::warning::This PR changes the invariant suite; CI ran the base copy instead."; fi
+
+      - name: Pin typescript-api from the base branch for the invariant suite
+        id: ts_api
+        if: steps.take.outputs.suite == 'base'
+        env:
+          TS_API_ENABLED: ${{ steps.take.outputs.ts_api_enabled }}
+          TS_API_URL: ${{ steps.take.outputs.ts_api_url }}
+          TS_API_INTEGRITY: ${{ steps.take.outputs.ts_api_integrity }}
+        run: |
+          set -euo pipefail
+          if [ "$TS_API_ENABLED" != "true" ]; then
+            echo "The base branch does not use typescript-api yet (bootstrap); nothing to pin."
+            exit 0
+          fi
+          tgz="$RUNNER_TEMP/base-typescript-api.tgz"
+          curl --proto =https --proto-redir =https -fsSL --retry 3 "$TS_API_URL" -o "$tgz"
+          node -e '
+            const fs = require("node:fs");
+            const crypto = require("node:crypto");
+            const expected = process.env.TS_API_INTEGRITY.replace(/^sha512-/, "");
+            const actual = crypto.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64");
+            if (actual.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(actual, "utf8"), Buffer.from(expected, "utf8"))) {
+              console.error(`Base typescript-api sha512 mismatch: expected ${expected}, got ${actual}`);
+              process.exit(1);
+            }
+          ' "$tgz"
+          ts_dir="$RUNNER_TEMP/base-ts-api"
+          rm -rf "$ts_dir"
+          mkdir -p "$ts_dir"
+          tar -xzf "$tgz" --strip-components=1 -C "$ts_dir"
+          entry_path=$(node -e '
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const dir = process.argv[1];
+            const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+            const ep = path.resolve(dir, typeof pkg.main === "string" ? pkg.main : "lib/typescript.js");
+            if (!ep.startsWith(dir + path.sep) || !fs.existsSync(ep)) {
+              console.error(`Invalid typescript-api entrypoint ${ep}`);
+              process.exit(1);
+            }
+            process.stdout.write(ep);
+          ' "$ts_dir")
+          kinds_sha=$(find "$ts_dir" ! -type d -print0 | LC_ALL=C sort -z | xargs -0 -r stat --printf='%F %h %n\0' | sha256sum | cut -d' ' -f1)
+          content_sha=$(find "$ts_dir" -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum -z | sha256sum | cut -d' ' -f1)
+          printf 'entry_path=%s\nkinds_sha=%s\ncontent_sha=%s\n' "$entry_path" "$kinds_sha" "$content_sha" >> "$GITHUB_OUTPUT"
 
       - name: Install pnpm
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
@@ -181,6 +334,10 @@ jobs:
           SUITE: ${{ steps.take.outputs.suite }}
           MANIFEST: ${{ steps.take.outputs.manifest }}
           KINDS: ${{ steps.take.outputs.kinds }}
+          TS_API_ENABLED: ${{ steps.take.outputs.ts_api_enabled }}
+          TS_API_ENTRY_PATH: ${{ steps.ts_api.outputs.entry_path }}
+          TS_API_KINDS_SHA: ${{ steps.ts_api.outputs.kinds_sha }}
+          TS_API_CONTENT_SHA: ${{ steps.ts_api.outputs.content_sha }}
         run: |
           set -euo pipefail
           if [ "$SUITE" = pr ]; then echo "The PR's own copy ran (the base branch has no suite yet); nothing to re-check."; exit 0; fi
@@ -227,6 +384,15 @@ jobs:
             echo "::$tok::"
             exit 1
           fi
+          if [ "$TS_API_ENABLED" = "true" ]; then
+            ts_dir="$RUNNER_TEMP/base-ts-api"
+            actual_ts_kinds_sha=$(find "$ts_dir" ! -type d -print0 | LC_ALL=C sort -z | xargs -0 -r stat --printf='%F %h %n\0' | sha256sum | cut -d' ' -f1)
+            actual_ts_content_sha=$(find "$ts_dir" -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum -z | sha256sum | cut -d' ' -f1)
+            if [ -z "$TS_API_ENTRY_PATH" ] || [ ! -f "$TS_API_ENTRY_PATH" ] || [ -z "$TS_API_KINDS_SHA" ] || [ "$actual_ts_kinds_sha" != "$TS_API_KINDS_SHA" ] || [ "$actual_ts_content_sha" != "$TS_API_CONTENT_SHA" ]; then
+              echo "::error::The pinned base typescript-api parser on disk changed."
+              exit 1
+            fi
+          fi
 
       # The runner prints the service container's log at the end of the job. Each statement the suite refuses on
       # purpose would add ERROR and STATEMENT lines there, thousands in all, and push the test report out of the
@@ -244,6 +410,7 @@ jobs:
       - name: Run the invariant suite against this PR's code (PostgreSQL 17)
         env:
           SHARD: ${{ matrix.shard }}
+          LUDY_INVARIANT_TS_API_PATH: ${{ steps.ts_api.outputs.entry_path }}
         run: pnpm exec vitest run --config vitest.invariant.config.ts --shard="${SHARD}/4" --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/invariant.json"
 
       - name: Fail if any invariant test was skipped
@@ -264,6 +431,10 @@ jobs:
           SUITE: ${{ steps.take.outputs.suite }}
           MANIFEST: ${{ steps.take.outputs.manifest }}
           KINDS: ${{ steps.take.outputs.kinds }}
+          TS_API_ENABLED: ${{ steps.take.outputs.ts_api_enabled }}
+          TS_API_ENTRY_PATH: ${{ steps.ts_api.outputs.entry_path }}
+          TS_API_KINDS_SHA: ${{ steps.ts_api.outputs.kinds_sha }}
+          TS_API_CONTENT_SHA: ${{ steps.ts_api.outputs.content_sha }}
         run: |
           set -euo pipefail
           if [ "$SUITE" = pr ]; then echo "The PR's own copy ran (the base branch has no suite yet); nothing to re-check."; exit 0; fi
@@ -309,6 +480,15 @@ jobs:
             printf '%s\n' "$shims" | sed 's/^/  /'
             echo "::$tok::"
             exit 1
+          fi
+          if [ "$TS_API_ENABLED" = "true" ]; then
+            ts_dir="$RUNNER_TEMP/base-ts-api"
+            actual_ts_kinds_sha=$(find "$ts_dir" ! -type d -print0 | LC_ALL=C sort -z | xargs -0 -r stat --printf='%F %h %n\0' | sha256sum | cut -d' ' -f1)
+            actual_ts_content_sha=$(find "$ts_dir" -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum -z | sha256sum | cut -d' ' -f1)
+            if [ -z "$TS_API_ENTRY_PATH" ] || [ ! -f "$TS_API_ENTRY_PATH" ] || [ -z "$TS_API_KINDS_SHA" ] || [ "$actual_ts_kinds_sha" != "$TS_API_KINDS_SHA" ] || [ "$actual_ts_content_sha" != "$TS_API_CONTENT_SHA" ]; then
+              echo "::error::The pinned base typescript-api parser on disk changed."
+              exit 1
+            fi
           fi
 
       # Also after a failure: the failed and skipped tests go to the job summary, to error annotations and to this
