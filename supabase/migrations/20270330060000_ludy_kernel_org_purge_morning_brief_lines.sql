@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Include ludy_meetings.morning_brief_lines in ludy_kernel.org_purge (#5080 Slice A1, ADR-0049):
--- Restates ludy_kernel.org_purge from 20270329030000_ludy_kernel_org_purge_native_push.sql with
+-- Restates ludy_kernel.org_purge from 20270330010000_ludy_kernel_org_purge_projects_github.sql with
 -- ludy_meetings.morning_brief_lines added in v_kernel_first before ludy_meetings.morning_notice and ludy_meetings.meeting.
 -- Idempotent; applied migrations stay untouched.
 SET LOCAL lock_timeout = '2s';
@@ -33,6 +33,7 @@ DECLARE
   v_keys text[];
   v_conversation_keys text[];
   v_note_attachment_keys text[];
+  -- Rows of these tables are deleted whole, in this order (children before the rows they reference).
   v_kernel_first text[] := ARRAY[
     'ludy_sign.api_key',
     'ludy_sign.playbook_check', 'ludy_sign.playbook_rule',
@@ -51,6 +52,7 @@ DECLARE
     'ludy_ads.ad_flag_setting', 'ludy_ads.ad_campaign_request', 'ludy_ads.ad_campaign_draft', 'ludy_ads.ad_spend_cap', 'ludy_ads.ad_org_setting', 'ludy_ads.ad_sync_run', 'ludy_ads.ad_spend_day', 'ludy_ads.ad_account',
     'ludy_kernel.member_home_layout', 'ludy_kernel.today_mail', 'ludy_kernel.saved_view', 'ludy_notes.link', 'ludy_notes.todo', 'ludy_notes.todo_list', 'ludy_notes.attachment', 'ludy_notes.note_version', 'ludy_notes.note', 'ludy_notes.notebook', 'ludy_notes.note_template',
     'ludy_projects.roadmap_signal', 'ludy_projects.roadmap_announcement', 'ludy_projects.roadmap_vote', 'ludy_projects.roadmap_subscriber', 'ludy_projects.roadmap_otp', 'ludy_projects.roadmap_item', 'ludy_projects.roadmap_board',
+    'ludy_projects.github_webhook_notice', 'ludy_projects.github_webhook_hook', 'ludy_projects.github_sync_delivery', 'ludy_projects.github_task_link', 'ludy_projects.github_project_repo', 'ludy_projects.github_project_binding',
     'ludy_projects.project_cycle_snapshot', 'ludy_projects.project_cycle_task_history',
     'ludy_projects.project_triage_item', 'ludy_projects.time_entry', 'ludy_projects.task_dependency', 'ludy_projects.project_task', 'ludy_projects.project_column', 'ludy_projects.project_cycle', 'ludy_projects.project_member', 'ludy_projects.project',
     'ludy_kernel.activity', 'ludy_kernel.agent_wakeup', 'ludy_kernel.extraction',

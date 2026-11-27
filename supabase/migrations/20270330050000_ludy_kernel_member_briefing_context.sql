@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Read-only member_briefing context primitives, 23 briefing_sealed_closed policies, 7 Meetings restrictive
+-- Read-only member_briefing context primitives, 26 briefing_sealed_closed policies, 7 Meetings restrictive
 -- SELECT policies, narrow member_briefing_directory lookup, and write/worker guards (#5080 Slice A1, ADR-0049):
 --   1. ludy_kernel.member_briefing_table (migration-only read catalog).
 --   2. ludy_kernel.ctx_briefing_user_id() (INVOKER STABLE helper mirroring ctx_mcp_member_id()).
@@ -7,7 +7,7 @@
 --      checks on org, member, email, mail_message, and morning_notice).
 --   4. Narrow lookup view ludy_kernel.member_briefing_directory (security_invoker + security_barrier,
 --      worker SELECT only, returning only user_id and display_name via untainted SQL helper).
---   5. 23 restrictive briefing_sealed_closed FOR ALL policies (8 ludy_kernel + 15 ludy_projects tables).
+--   5. 26 restrictive briefing_sealed_closed FOR ALL policies (8 ludy_kernel + 18 ludy_projects tables).
 --   6. Write/worker guards rejecting kind = 'member_briefing' with 42501.
 --   7. 7 restrictive FOR SELECT policies on allowlisted ludy_meetings tables.
 -- Idempotent; applied migrations stay untouched.
@@ -247,7 +247,7 @@ INSERT INTO ludy_kernel.member_briefing_table (table_name, mode, adr) VALUES
   ('ludy_meetings.morning_brief_lines', 'read', 'ADR-0049')
 ON CONFLICT (table_name) DO NOTHING;
 
--- 23 restrictive briefing_sealed_closed FOR ALL policies (8 ludy_kernel + 15 ludy_projects).
+-- 26 restrictive briefing_sealed_closed FOR ALL policies (8 ludy_kernel + 18 ludy_projects).
 DROP POLICY IF EXISTS briefing_sealed_closed ON ludy_kernel.ai_run;
 CREATE POLICY briefing_sealed_closed ON ludy_kernel.ai_run AS RESTRICTIVE FOR ALL TO ludy_tenant
   USING (((SELECT ludy_kernel.ctx_verified()) ->> 'kind') IS DISTINCT FROM 'member_briefing')
@@ -390,6 +390,27 @@ CREATE POLICY briefing_sealed_closed ON ludy_projects.task_dependency AS RESTRIC
 DROP POLICY IF EXISTS briefing_sealed_closed ON ludy_projects.time_entry;
 -- migration-lint: cross-module ADR-0049 briefing_sealed_closed closes ludy_projects.*
 CREATE POLICY briefing_sealed_closed ON ludy_projects.time_entry AS RESTRICTIVE FOR ALL TO ludy_tenant
+  USING (((SELECT ludy_kernel.ctx_verified()) ->> 'kind') IS DISTINCT FROM 'member_briefing')
+  WITH CHECK (((SELECT ludy_kernel.ctx_verified()) ->> 'kind') IS DISTINCT FROM 'member_briefing');
+
+-- migration-lint: cross-module ADR-0049 briefing_sealed_closed closes ludy_projects.*
+DROP POLICY IF EXISTS briefing_sealed_closed ON ludy_projects.github_project_binding;
+-- migration-lint: cross-module ADR-0049 briefing_sealed_closed closes ludy_projects.*
+CREATE POLICY briefing_sealed_closed ON ludy_projects.github_project_binding AS RESTRICTIVE FOR ALL TO ludy_tenant
+  USING (((SELECT ludy_kernel.ctx_verified()) ->> 'kind') IS DISTINCT FROM 'member_briefing')
+  WITH CHECK (((SELECT ludy_kernel.ctx_verified()) ->> 'kind') IS DISTINCT FROM 'member_briefing');
+
+-- migration-lint: cross-module ADR-0049 briefing_sealed_closed closes ludy_projects.*
+DROP POLICY IF EXISTS briefing_sealed_closed ON ludy_projects.github_project_repo;
+-- migration-lint: cross-module ADR-0049 briefing_sealed_closed closes ludy_projects.*
+CREATE POLICY briefing_sealed_closed ON ludy_projects.github_project_repo AS RESTRICTIVE FOR ALL TO ludy_tenant
+  USING (((SELECT ludy_kernel.ctx_verified()) ->> 'kind') IS DISTINCT FROM 'member_briefing')
+  WITH CHECK (((SELECT ludy_kernel.ctx_verified()) ->> 'kind') IS DISTINCT FROM 'member_briefing');
+
+-- migration-lint: cross-module ADR-0049 briefing_sealed_closed closes ludy_projects.*
+DROP POLICY IF EXISTS briefing_sealed_closed ON ludy_projects.github_task_link;
+-- migration-lint: cross-module ADR-0049 briefing_sealed_closed closes ludy_projects.*
+CREATE POLICY briefing_sealed_closed ON ludy_projects.github_task_link AS RESTRICTIVE FOR ALL TO ludy_tenant
   USING (((SELECT ludy_kernel.ctx_verified()) ->> 'kind') IS DISTINCT FROM 'member_briefing')
   WITH CHECK (((SELECT ludy_kernel.ctx_verified()) ->> 'kind') IS DISTINCT FROM 'member_briefing');
 
