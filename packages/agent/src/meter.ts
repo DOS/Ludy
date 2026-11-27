@@ -52,6 +52,9 @@ export const AI_FEATURES = {
   // The accounting coworker's note on the 30/60/90-day cash forecast (#4391): written from the figures and dates code computed, in words only (it states no figure and no date, the card carries them), and refused
   // when it holds a digit, a link, advice about money or a promise.
   'finance.cash_forecast_explain': 'finance',
+  // The accounting coworker's reading of a question about the books on the Kế toán screen (#5181): it chooses one entry of a closed catalogue of existing reads and a period kind (never a date or a figure), and may add one short sentence that holds no
+  // number, date, name, advice or promise. Code validates the choice, resolves the period and runs the read as the asking member; a person reads the card.
+  'finance.ask_books': 'finance',
   // The finance coworker's sentence naming the late sales invoices of a VAT working and their original periods (#3540): written from invoice numbers and periods only, dropped when it names one that is not in the lists.
   'finance.vat_late_explain': 'finance',
   // The finance coworker on stock (#2514): which item of the org a line of an invoice or an order is most likely about (it only suggests; a person confirms), and the wording of a reorder

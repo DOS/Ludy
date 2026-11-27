@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_FEATURE_KEYS,
   AdsCampaignWriter,
+  AskBooksCoworker,
   ConversationWriter,
   ExpenseVarianceCoworker,
   InboxReader,
@@ -419,6 +420,10 @@ function createStubRuntime() {
           { row: 3, text: 'Cash fell against the previous quarter and the same quarter last year.' },
         ],
       },
+      usage: zeroUsage,
+    })),
+    askBooks: new AskBooksCoworker(STUB_CONFIG, async () => ({
+      output: { entry: 'profit_loss', period: 'named', lead: 'Day la bao cao ket qua kinh doanh cua ky duoc chon.' },
       usage: zeroUsage,
     })),
     payroll: new PayrollCoworker(STUB_CONFIG, {

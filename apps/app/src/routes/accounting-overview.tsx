@@ -12,6 +12,7 @@ import { buttonVariants } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { cn } from '@ludy/ui/lib/utils';
+import { AskBooksPanel } from '../components/ask-books-card.tsx';
 import { CashForecastCard } from '../components/cash-forecast-card.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { MonthCloseCard } from '../components/month-close-card.tsx';
@@ -278,6 +279,7 @@ export function AccountingOverviewPage() {
           ) : (
             <>
               <Explanation input={input} ready={entity.ready} version={overview.dataUpdatedAt} />
+              <AskBooksPanel slug={slug} legalEntityId={entity.legalEntityId} ready={entity.ready} />
               <CashForecastCard legalEntityId={entity.legalEntityId} ready={entity.ready} />
               <ResultsChart months={data.months} />
               <ExpenseMix expenses={data.expenses} />

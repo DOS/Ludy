@@ -225,6 +225,7 @@ import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
 import { zCashForecast, zCashForecastExplanation, zFinanceCashForecastExplainAsk, zFinanceCashForecastInput } from './finance-cash-forecast.ts';
+import { zAskBooksAnswer, zFinanceAskBooksInput } from './finance-ask-books.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
 import { zFinanceHomeMoney, zFinanceHomeMoneyInput } from './finance-home-money.ts';
 import { zFinanceMonthCloseExplainAsk, zFinanceMonthCloseInput, zMonthClose, zMonthCloseNote } from './finance-month-close.ts';
@@ -3675,6 +3676,10 @@ export const contract = {
   financeCashForecast: {
     get: oc.input(zFinanceCashForecastInput).output(zCashForecast),
     explain: oc.input(zFinanceCashForecastExplainAsk).output(zCashForecastExplanation),
+  },
+  // "Ask the books in plain words" (#5181): a question typed in words, or a report picked on the card; the answer is a card with every figure from an existing read, run as the asking member.
+  financeAskBooks: {
+    ask: oc.input(zFinanceAskBooksInput).output(zAskBooksAnswer),
   },
   financeOverview: {
     get: oc.input(zFinanceOverviewInput).output(zFinanceOverview),
