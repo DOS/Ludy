@@ -109,9 +109,9 @@ describe('extractWebsiteText & fetchCompanyWebsiteText (#4992)', () => {
   });
 
   it('enforces httpsOnly, 200 KB cap, 5 s timeout, same-host hostAllowed, and stops cleanly on 403/429/redirects', async () => {
-    let seenOpts: EgressOptions | null = null;
+    const seenOpts: EgressOptions[] = [];
     const captureFetch: typeof guardedFetch = async (_url, options) => {
-      seenOpts = options;
+      seenOpts.push(options);
       return {
         url: 'https://hoamai.test/',
         status: 200,
@@ -123,13 +123,13 @@ describe('extractWebsiteText & fetchCompanyWebsiteText (#4992)', () => {
 
     const ok = await fetchCompanyWebsiteText('https://hoamai.test', captureFetch);
     expect(ok).toEqual({ text: 'Chào mừng đến Hoa Mai', outcome: 'used' });
-    expect(seenOpts?.httpsOnly).toBe(true);
-    expect(seenOpts?.maxBytes).toBe(MEETING_RESEARCH_FETCH_MAX_BYTES);
-    expect(seenOpts?.overLimit).toBe('truncate');
-    expect(seenOpts?.timeoutMs).toBe(MEETING_RESEARCH_FETCH_TIMEOUT_MS);
-    expect(seenOpts?.hostAllowed?.('hoamai.test')).toBe(true);
-    expect(seenOpts?.hostAllowed?.('HOAMAI.TEST')).toBe(true);
-    expect(seenOpts?.hostAllowed?.('other.test')).toBe(false);
+    expect(seenOpts[0]?.httpsOnly).toBe(true);
+    expect(seenOpts[0]?.maxBytes).toBe(MEETING_RESEARCH_FETCH_MAX_BYTES);
+    expect(seenOpts[0]?.overLimit).toBe('truncate');
+    expect(seenOpts[0]?.timeoutMs).toBe(MEETING_RESEARCH_FETCH_TIMEOUT_MS);
+    expect(seenOpts[0]?.hostAllowed?.('hoamai.test')).toBe(true);
+    expect(seenOpts[0]?.hostAllowed?.('HOAMAI.TEST')).toBe(true);
+    expect(seenOpts[0]?.hostAllowed?.('other.test')).toBe(false);
 
     const statusFetch = (status: number): typeof guardedFetch => async () => ({
       url: 'https://hoamai.test/',
@@ -331,24 +331,24 @@ describe('prepareMeetingResearch (#4992)', () => {
       },
     );
 
-    const outcomes: Array<() => ReturnType<typeof guardedFetch>> = [
-      () => async () => ({ url: 'https://hoamai.test/', status: 403, contentType: 'text/html', body: Buffer.from('403'), truncated: false }),
-      () => async () => ({ url: 'https://hoamai.test/', status: 429, contentType: 'text/html', body: Buffer.from('429'), truncated: false }),
-      () => async () => ({
+    const outcomes: Array<typeof guardedFetch> = [
+      async () => ({ url: 'https://hoamai.test/', status: 403, contentType: 'text/html', body: Buffer.from('403'), truncated: false }),
+      async () => ({ url: 'https://hoamai.test/', status: 429, contentType: 'text/html', body: Buffer.from('429'), truncated: false }),
+      async () => ({
         url: 'https://hoamai.test/',
         status: 200,
         contentType: 'text/html',
         body: Buffer.from('<title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/x"></script>'),
         truncated: false,
       }),
-      () => async () => {
+      async () => {
         throw new EgressError('blocked', 'redirect target is private');
       },
     ];
     const expectedOutcomes = ['forbidden', 'rate_limited', 'challenge', 'redirect_blocked'] as const;
 
-    for (const [idx, mkFetch] of outcomes.entries()) {
-      const ai = meetingResearchAi(reader, new DraftBudget(), { fetch: mkFetch() });
+    for (const [idx, fetchFn] of outcomes.entries()) {
+      const ai = meetingResearchAi(reader, new DraftBudget(), { fetch: fetchFn });
       const res = await prepareMeetingResearch(
         ai,
         'org-1',

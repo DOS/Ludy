@@ -314,7 +314,7 @@ export async function prepareMeetingResearch(
   let websiteOutcome: MeetingResearchWebsiteOutcome = initialWebsiteOutcome;
   let websiteText: string | null = null;
   let websiteChars = 0;
-  let brief = emptyBrief;
+  let brief: { summary: string | null; points: readonly string[]; websiteQuotes: readonly string[] } = emptyBrief;
 
   try {
     const confirmedWebsite =

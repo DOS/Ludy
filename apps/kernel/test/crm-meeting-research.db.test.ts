@@ -14,8 +14,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { InboxReader } from '@ludy/agent';
-import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, kernelCommands, kernelQueries } from '@ludy/kernel';
-import type { MeetingFactsOutput, MeetingResearchOutput } from '@ludy/kernel-contract';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, type MeetingFactsOutput, type MeetingResearchOutput } from '@ludy/kernel-contract';
 import { Runtime, type BlobStore, type UserActor } from '@ludy/kernel-runtime';
 import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
@@ -48,7 +48,7 @@ const makeAccount = (name: string): Account => ({
   userId: '',
 });
 
-const asUser = (userId: string): UserActor => ({ type: 'user', userId, sessionId: `sess-${userId}` });
+const asUser = (userId: string): UserActor => ({ type: 'user', userId, aal: 'aal1', sessionId: randomUUID() });
 
 SUITE('PM2 Dy pre-meeting research brief over HTTP API on PostgreSQL 17 (#4992)', () => {
   const dbName = `ludy_test_meeting_research_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -64,7 +64,7 @@ SUITE('PM2 Dy pre-meeting research brief over HTTP API on PostgreSQL 17 (#4992)'
 
   const aiPrompts: string[] = [];
   let nextReplyJson = '';
-  let delayReplyMs = 0;
+  let holdGate: { started: () => void; release: Promise<void> } | null = null;
 
   const owner = makeAccount('owner');
   const member = makeAccount('member');
@@ -142,8 +142,13 @@ SUITE('PM2 Dy pre-meeting research brief over HTTP API on PostgreSQL 17 (#4992)'
             }),
           );
         };
-        if (delayReplyMs > 0) setTimeout(send, delayReplyMs);
-        else send();
+        if (holdGate) {
+          const gate = holdGate;
+          gate.started();
+          void gate.release.then(send);
+        } else {
+          send();
+        }
       });
     });
     await new Promise<void>((resolve) => fakeAiServer.listen(0, '127.0.0.1', resolve));
@@ -411,22 +416,34 @@ SUITE('PM2 Dy pre-meeting research brief over HTTP API on PostgreSQL 17 (#4992)'
       websiteQuotes: [],
     });
 
-    delayReplyMs = 80;
+    let markStarted!: () => void;
+    const modelStarted = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let releaseModel!: () => void;
+    holdGate = {
+      started: markStarted,
+      release: new Promise<void>((resolve) => {
+        releaseModel = resolve;
+      }),
+    };
+
     const req1Promise = rpc(appOn, 'crm/contacts/meetingResearch', owner, {
       targetKind: 'meeting',
       targetId: meetingId,
       partyId: personId,
       readWebsite: false,
     });
-    await new Promise((r) => setTimeout(r, 15));
+    await modelStarted;
     const concurrentBusy = await rpc(appOn, 'crm/contacts/meetingResearch', owner, {
       targetKind: 'meeting',
       targetId: meetingId,
       partyId: personId,
       readWebsite: false,
     });
+    releaseModel();
+    holdGate = null;
     const req1 = await req1Promise;
-    delayReplyMs = 0;
 
     expect(req1.status).toBe(200);
     expect((req1.body as MeetingResearchOutput).ai).toBe('ok');

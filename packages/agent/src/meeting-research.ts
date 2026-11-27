@@ -263,8 +263,9 @@ function dayKeys(text: string): string[] {
 }
 
 function amountKeys(text: string): string[] {
+  const withoutDates = text.replace(/\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{4})?\b/g, ' ');
   const keys: string[] = [];
-  for (const m of text.matchAll(/\b\d{1,3}(?:[.,]\d{3})+\b|\b\d{4,}\b/g)) {
+  for (const m of withoutDates.matchAll(/\b\d{1,3}(?:[.,]\d{3})+\b|\b\d{4,}\b/g)) {
     keys.push(m[0].replace(/[.,]/g, ''));
   }
   return keys;
@@ -387,6 +388,11 @@ function extractFactsContext(facts: MeetingResearchFacts, pageText: string | nul
   for (const c of currencies) {
     trusted.add(c);
     stripPhrases.push(c);
+  }
+
+  for (const labelText of stripPhrases) {
+    for (const num of pagePlainNumbers(labelText)) trusted.add(num);
+    for (const a of amountKeys(labelText)) amounts.add(a);
   }
 
   const cleanPage = cleanPageForFigures(pageText);
