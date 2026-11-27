@@ -62,6 +62,7 @@ Daily job `kernel-retention-purge`, 02:30 Asia/Ho_Chi_Minh (`apps/kernel/src/ret
 | Dropped inbound mail records | 30 days after the last drop | same |
 | Member invites (the invited email) | 90 days after accepted, revoked or expired; pending ones until they expire | same |
 | Browser upload grants | 7 days after creation, once used or expired | same |
+| Tax-code lookup cache (`ludy_kernel.tax_lookup_cache`) | 24 hours (found) or 1 hour (not found); household results never cached | `ludy_kernel.retention_purge()`, `20270402200000_ludy_kernel_tax_lookup_cache.sql` |
 | Address and subject of sent mail | 13 months; a keyed hash of the address stays | `mail_retention_purge()`, `20261022050000_crove_kernel_mail_queue.sql` |
 | Merge data of sent mail | 30 days after its final status | same |
 | Refusal tallies | 7 days (`REFUSAL_TALLY_RETENTION_DAYS`) | `apps/kernel/src/worker.ts` |
@@ -113,7 +114,7 @@ The tenant row stays, marked `closed` (`docs/runbooks/org-offboarding.md`).
 | Cloudflare Email Routing and a mail worker | the raw message of every mail sent to an org's inbound address, attachments included, relayed to Crove | `tools/inbound-mail/worker.js`, `docs/runbooks/provision-pilot.md` |
 | Alert webhook (Telegram, Slack or Discord) | operations alerts carry check names and counts. Security alerts carry ids and counts, with user and org ids but no email, name or token. A Social team-chat alert, set up per org, carries up to 400 characters of a post. | `apps/kernel/src/security-signals.ts`, `modules/social/src/chat-alerts.ts` |
 | Uptime check and heartbeat monitor | a request to `/healthz`, or a ping; no data | `docs/runbooks/alerts.md` |
-| Tax code lookup (`TAX_CODE_LOOKUP_URL`) | the tax codes users type | `.env.example` |
+| Tax code lookup (`TAX_CODE_LOOKUP_URL`, opt-in `TAX_LOOKUP_PROVIDER=casso`) | enterprise tax codes users type (`casso` is `off` by default; 12-digit citizen IDs refused and never sent) | `.env.example` |
 | Tax portal hoadondientu.gdt.gov.vn (`TAX_PORTAL_SYNC`, #325), when an accountant runs the assisted sync | the client's tax code, the portal password and CAPTCHA answer the accountant types (used for that one login, never stored); the client's purchase invoices come back, which may name individual sellers. The portal's answer is stored as the list's evidence file | `apps/kernel/src/portal-sync.ts`, `docs/integrations/tax-portal-sync.md` |
 | The browsers' push services (Google, Mozilla, Apple, Microsoft), when the deployment sets the VAPID keys and a member turns push on for a device (#1238) | an encrypted message (RFC 8291) with the product name, a short line naming the kind of notice and the app path it opens, never the text of what it is about (Social's notices, #1238, and the kernel's, #3736); the push service sees the endpoint it issued, the time and the size | `apps/kernel/src/web-push.ts` |
 | Pexels (`MEDIA_PEXELS_API_KEY`), when the deployment turns stock photos on | the search terms members type and the ids of the photos they save, sent by the API only (never from a browser); the photos and their credits come back | `apps/kernel/src/stock-photos.ts` |

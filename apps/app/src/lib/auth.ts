@@ -53,6 +53,8 @@ export interface PublicConfig {
   statusPage?: boolean;
   // The server can look up a tax code in the public registry to prefill a new org (TAX_CODE_LOOKUP_URL, issue #324).
   taxCodeLookup?: boolean;
+  // Pluggable enterprise tax-code lookup for CRM/parties (TAX_LOOKUP_PROVIDER, issue #4988 TC1).
+  partyTaxLookup?: boolean;
   // The reconciliation screen may fetch a period's purchase list from the tax portal (TAX_PORTAL_SYNC, issue #325).
   taxPortalSync?: boolean;
   // The offline sandbox channel can be connected (CHANNEL_SANDBOX); `oauth` lists the providers connected through

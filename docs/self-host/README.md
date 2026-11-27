@@ -178,6 +178,8 @@ AI_BASE_URL=<url> AI_MODEL=<model> AI_API_KEY=<key> pnpm ai:eval
 
 Documents go to that endpoint; pick one you are allowed to send your clients' invoices to.
 
+**Tax-code lookup (CRM / parties, optional).** `TAX_LOOKUP_PROVIDER=off` by default: zero outbound requests leave the server and `docker compose up` works with no external account. Setting `TAX_LOOKUP_PROVIDER=casso` also requires your own Casso Open Platform credentials (`CASSO_CLIENT_ID` and `CASSO_CLIENT_SECRET`, never the shared Public Starter Key) and an owner/admin opt-in per organization. Leave this setting `off` until a person obtains Casso Open Platform's written terms covering caching, redistribution, data source and household-business data (`#62`, `#4988`).
+
 ## 8. Start, then check
 
 ```bash

@@ -122,6 +122,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'ludy_kernel.outbox_event': 'the outbox: machinery, archived by the retention job',
   'ludy_kernel.outbox_pending': 'the outbox delivery queue: machinery',
   'ludy_kernel.refusal_tally': 'refusal counters per window: rate-limit machinery',
+  'ludy_kernel.tax_lookup_cache': 'org-scoped ephemeral enterprise tax-code lookup cache (at most 24 hours; never holds household records or business ledger data)',
   'ludy_kernel.usage_deferral': 'a deferred metering retry: machinery',
   // Private to one member: the line's precedent exports counts only (kernel.member_vy_private_count).
   'ludy_kernel.member_vy_memory': "private to its member (ADR-0049): readable by that member alone, no owner, admin or system context reads it; the count is in kernel.member_vy_private_count",

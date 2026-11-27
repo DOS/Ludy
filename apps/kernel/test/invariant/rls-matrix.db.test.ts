@@ -124,8 +124,6 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  // #4988 (TC1): org-scoped tax-code lookup cache with 24h hit / 1h not-found TTL (step 0).
-  'crove_kernel.tax_lookup_cache',
   // #5073 / #5080 (ADR-0049 #5108): short-lived 36h prep lines for opted-in members, strict user + member_briefing RLS.
   'crove_meetings.morning_brief_lines',
 ]);

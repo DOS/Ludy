@@ -19,6 +19,12 @@ import { zSalesInsightAnswer, zSalesInsightStatus } from './meeting-sales-insigh
 import { zCatchUpAnswer, zCatchUpStatus } from './meeting-catch-up.ts';
 import { zNotesMinutesAnswer, zNotesMinutesStatus } from './meeting-notes-minutes.ts';
 import { ORG_KINDS } from './apps.ts';
+import {
+  zPartyTaxLookupInput,
+  zPartyTaxLookupResult,
+  zPartyTaxLookupSwitch,
+  zPartyTaxLookupSwitchInput,
+} from './tax-lookup.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
   zBulkApproveItems,
@@ -3165,6 +3171,13 @@ export const contract = {
     timeline: oc.input(z.object({ partyId: zId })).output(zTimeline),
     // Owners, admins and members: pairs of parties that look like duplicates, strongest first.
     duplicateHints: oc.input(z.object({})).output(z.array(zDuplicateHint)),
+    // TC1 (#4988): pluggable enterprise tax-code lookup (10 or 10-3 digits, writes nothing to party, refuses 12-digit citizen IDs)
+    // and its per-org opt-in switch (off by default; owner or admin changes it; enabling acknowledges tax codes go to the configured provider).
+    taxLookup: oc.input(zPartyTaxLookupInput).output(zPartyTaxLookupResult),
+    taxLookupSwitch: {
+      get: oc.input(z.strictObject({})).output(zPartyTaxLookupSwitch),
+      set: oc.input(zPartyTaxLookupSwitchInput).output(zPartyTaxLookupSwitch),
+    },
   },
   documents: {
     list: oc.input(z.object({ from: zLocalDate.optional(), to: zLocalDate.optional(), legalEntityId: zId.optional() })).output(z.array(zPurchaseDocument)),

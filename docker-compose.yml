@@ -216,6 +216,10 @@ services:
       # The public status page PUBLIC_URL/status (#678): the prober's last result, on the shared `status` volume.
       STATUS_FILE: ${STATUS_FILE:-}
       TAX_CODE_LOOKUP_URL: ${TAX_CODE_LOOKUP_URL:-}
+      # Pluggable enterprise tax-code lookup for CRM / parties (#4988, TC1): off by default (zero outbound network).
+      TAX_LOOKUP_PROVIDER: ${TAX_LOOKUP_PROVIDER:-off}
+      CASSO_CLIENT_ID: ${CASSO_CLIENT_ID:-}
+      CASSO_CLIENT_SECRET: ${CASSO_CLIENT_SECRET:-}
       # Stock photos from Pexels in the Social media library (#1106); empty turns them off.
       MEDIA_PEXELS_API_KEY: ${MEDIA_PEXELS_API_KEY:-}
       # Browser push for Social notifications (#1238): all three or none; empty turns push off.
