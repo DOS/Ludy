@@ -107,32 +107,50 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
   });
 
   it('is off until a member turns it on, shows a member only their own setting, and is turned off by deleting the row', async () => {
-    expect(await get('lan')).toEqual({ enabled: false, minute: 420, timeZone: ZONE, language: 'vi' });
-    expect(await set('lan', { enabled: true, minute: 450, timeZone: ZONE, language: 'en' })).toEqual({ enabled: true, minute: 450, timeZone: ZONE, language: 'en' });
-    expect(await get('lan')).toEqual({ enabled: true, minute: 450, timeZone: ZONE, language: 'en' });
+    expect(await get('lan')).toEqual({ enabled: false, minute: 420, timeZone: ZONE, language: 'vi', content: 'count', vyLines: false });
+    expect(await set('lan', { enabled: true, minute: 450, timeZone: ZONE, language: 'en' })).toEqual({ enabled: true, minute: 450, timeZone: ZONE, language: 'en', content: 'count', vyLines: false });
+    expect(await get('lan')).toEqual({ enabled: true, minute: 450, timeZone: ZONE, language: 'en', content: 'count', vyLines: false });
     // Nobody else sees it, an owner included; the system context reads no member's setting either.
     for (const who of ['owner', 'nam']) expect(await get(who), who).toMatchObject({ enabled: false });
     expect(await refuses(worker.query('meetings.morning.get', {}, { actor: SYSTEM, orgId }))).not.toBeNull();
     // Turning it on again changes the one row; defaults fill what the member left out.
     await set('lan', { enabled: true });
-    expect(await get('lan')).toEqual({ enabled: true, minute: 420, timeZone: ZONE, language: 'vi' });
+    expect(await get('lan')).toEqual({ enabled: true, minute: 420, timeZone: ZONE, language: 'vi', content: 'count', vyLines: false });
     expect((await sqlAdmin(`SELECT 1 FROM ludy_meetings.morning_notice WHERE org_id = $1 AND user_id = $2`, [orgId, users.lan])).rowCount).toBe(1);
     await set('lan', { enabled: false });
-    expect(await get('lan')).toMatchObject({ enabled: false });
+    expect(await get('lan')).toMatchObject({ enabled: false, content: 'count', vyLines: false });
     expect((await sqlAdmin(`SELECT 1 FROM ludy_meetings.morning_notice WHERE org_id = $1 AND user_id = $2`, [orgId, users.lan])).rowCount).toBe(0);
   });
 
-  it('refuses a time that is not a minute of the day and a zone that is not a zone', async () => {
+  it('refuses invalid time/zone/vyLines without full, allows full briefing and vyLines with consent, and clears vyLines on downgrade', async () => {
     for (const bad of [{ minute: -1 }, { minute: 1440 }, { minute: 7.5 }, { timeZone: 'Mars/Olympus' }, { timeZone: '' }, { language: 'fr' }, { extra: 1 }]) {
       expect(await refuses(set('lan', { enabled: true, ...bad })), JSON.stringify(bad)).not.toBeNull();
     }
-    expect(await refuses(set('lan', { enabled: true, content: 'full' }))).toBe('BRIEFING_NOT_ENABLED');
-    expect(await refuses(set('lan', { enabled: true, content: 'full', vyLines: true }))).toBe('BRIEFING_NOT_ENABLED');
+    expect(await set('lan', { enabled: true, content: 'full' })).toEqual({
+      enabled: true,
+      minute: 420,
+      timeZone: ZONE,
+      language: 'vi',
+      content: 'full',
+      vyLines: false,
+    });
+    expect(await set('lan', { enabled: true, content: 'full', vyLines: true })).toEqual({
+      enabled: true,
+      minute: 420,
+      timeZone: ZONE,
+      language: 'vi',
+      content: 'full',
+      vyLines: true,
+    });
+    expect(await get('lan')).toMatchObject({ content: 'full', vyLines: true });
+    // Turning vyLines on with count-only mode is still refused by the contract.
     expect(await refuses(set('lan', { enabled: true, vyLines: true }))).not.toBeNull();
-    // Turning off always deletes the subscription even if unimplemented v2 flags are passed.
-    await set('lan', { enabled: true });
+    // Switching back to count clears vyLines automatically.
+    expect(await set('lan', { enabled: true, content: 'count' })).toMatchObject({ enabled: true, content: 'count', vyLines: false });
+    // Turning off deletes the subscription even if full/vyLines flags are also passed.
+    await set('lan', { enabled: true, content: 'full', vyLines: true });
     await set('lan', { enabled: false, content: 'full', vyLines: true });
-    expect(await get('lan')).toMatchObject({ enabled: false });
+    expect(await get('lan')).toMatchObject({ enabled: false, content: 'count', vyLines: false });
   });
 
   it('sends one in-app notice and one mail with only the count and a link, once a day, and a second pass or dispatch sends nothing more', async () => {

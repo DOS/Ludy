@@ -33,6 +33,14 @@ export interface StatementsFiling {
 async function loadFiling(ctx: QueryContext, year: number, legalEntityId: string): Promise<Omit<StatementsFiling, 'taxpayer'>> {
   const current = await financialStatements(ctx, String(year), legalEntityId);
   const previous = await financialStatements(ctx, String(year - 1), legalEntityId);
+  // The file is HTKK's TT133 set (form 683, B01a-DNN, B02-DNN, F01-DNN). No HTKK form for TT99 is known (#5187): a year booked under TT99, or straddling the change, is refused rather than written as a TT133 file with wrong lines.
+  if (current.regime === 'tt99' || previous.regime === 'tt99' || current.mixedCharts === true) {
+    throw new DomainError(
+      'STATEMENTS_HTKK_REGIME',
+      422,
+      'Tệp báo cáo tài chính cho HTKK hiện chỉ có cho sổ theo Thông tư 133. Pháp nhân này ghi sổ theo Thông tư 99 trong năm này hoặc năm trước, nên chưa xuất được tệp để nộp.',
+    );
+  }
   const tb = await yearTrialBalance(ctx, year, legalEntityId);
   const { uncovered } = f01Values(tb);
   const warnings: StatementsHtkkWarning[] = [];

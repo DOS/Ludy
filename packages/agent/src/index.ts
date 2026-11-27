@@ -21,8 +21,26 @@ export * from './followup.ts';
 export * from './month-close.ts';
 export * from './cash-forecast.ts';
 export * from './overview.ts';
-export * from './expense-variance.ts';
+// The text checks expense-variance.ts exports for unusual-entries.ts are internal to the package: only the feature's own surface is public.
+export {
+  EXPENSE_VARIANCE_NOTE_MAX,
+  checkExpenseVarianceNotes,
+  expenseVarianceFactsText,
+  expenseVarianceInstructions,
+  expenseVarianceNotesHaveNews,
+  expenseVariancePrompt,
+  type ExpenseVarianceKind,
+  type ExpenseVarianceNote,
+  type ExpenseVarianceNoteContributor,
+  type ExpenseVarianceNoteFacts,
+  type ExpenseVarianceNoteLine,
+  type ExpenseVarianceNotesResult,
+} from './expense-variance.ts';
+export * from './unusual-entries.ts';
+export * from './unusual-entries-coworker.ts';
 export * from './expense-variance-coworker.ts';
+export * from './quarter-summary.ts';
+export * from './quarter-summary-coworker.ts';
 export * from './ask-books.ts';
 export * from './ask-books-coworker.ts';
 export * from './vat-late.ts';
@@ -83,6 +101,7 @@ export * from './project-weekly-status.ts';
 export * from './project-cycle-summary.ts';
 export * from './project-roadmap.ts';
 export * from './project-triage.ts';
+export * from './project-github.ts';
 export * from './transcribe.ts';
 export * from './transcribe-eval.ts';
 export * from './sign-ai.ts';

@@ -35,6 +35,8 @@ export type Take = 'debit' | 'credit' | 'netDebit' | 'netCredit' | 'debitTurnove
 
 export interface AccountRule {
   prefixes: readonly string[];
+  // Prefixes the rule leaves out of the accounts `prefixes` match (TT99's line 51 reads 821 but not its deferred-tax account 8212, which line 52 reads). No TT133 rule uses it.
+  exclude?: readonly string[];
   take: Take;
   // -1 for the lines the form marks (*): contra accounts shown as negative amounts.
   sign?: -1;
@@ -163,7 +165,7 @@ interface Bucket {
 }
 
 function matches(rule: AccountRule, accountCode: string): boolean {
-  return rule.prefixes.some((p) => accountCode.startsWith(p));
+  return rule.prefixes.some((p) => accountCode.startsWith(p)) && !(rule.exclude ?? []).some((p) => accountCode.startsWith(p));
 }
 
 function checkCurrency(entries: ReadonlyArray<ReportEntry>, bookCurrency: string): void {
@@ -193,21 +195,27 @@ function buckets(entries: ReadonlyArray<ReportEntry>, byParty: boolean): Bucket[
   return [...map.values()].sort((a, b) => a.accountCode.localeCompare(b.accountCode) || (a.partyId ?? '').localeCompare(b.partyId ?? ''));
 }
 
+// Each line's value from its rules and its formula. A formula may name a line printed LATER (the TT99 B01 prints totals before their parts, as the form does): the value is worked out when first needed, a cycle is an error,
+// and the lines come back in the order the map prints them. A map whose formulas only point backwards (every TT133 map) gives exactly what it always gave.
 function evaluate(defs: readonly ReportLineDef[], ruleValue: (rule: AccountRule) => DecimalValue): ReportLine[] {
+  const byCode = new Map(defs.map((d) => [d.code, d]));
   const values = new Map<string, DecimalValue>();
-  const lines: ReportLine[] = [];
-  for (const def of defs) {
+  const working = new Set<string>();
+  const valueOf = (code: string, from: string): DecimalValue => {
+    const done = values.get(code);
+    if (done !== undefined) return done;
+    const def = byCode.get(code);
+    if (def === undefined) throw new Error(`line ${from} refers to ${code}, which is not defined`);
+    if (working.has(code)) throw new Error(`line ${code} depends on itself`);
+    working.add(code);
     let value = money(0);
     for (const rule of def.rules ?? []) value = value.plus(ruleValue(rule).times(rule.sign ?? 1));
-    for (const [sign, code] of def.formula ?? []) {
-      const part = values.get(code);
-      if (part === undefined) throw new Error(`line ${def.code} refers to ${code}, which is not defined before it`);
-      value = value.plus(part.times(sign));
-    }
-    values.set(def.code, value);
-    lines.push({ code: def.code, label: def.label, amount: canonical(value) });
-  }
-  return lines;
+    for (const [sign, part] of def.formula ?? []) value = value.plus(valueOf(part, def.code).times(sign));
+    working.delete(code);
+    values.set(code, value);
+    return value;
+  };
+  return defs.map((def) => ({ code: def.code, label: def.label, amount: canonical(valueOf(def.code, def.code)) }));
 }
 
 interface AccountReaders {
@@ -235,15 +243,24 @@ function ofEntity(entries: ReadonlyArray<ReportEntry>, legalEntityId: string, bo
   return own;
 }
 
-// B01 of one legal entity at `asOf` (inclusive), from every entry dated on or before it.
+// The map a B01 is read under and the two lines whose equality `balanced` checks (total assets and total sources). TT133's is B01_TT133; TT99's is in domain/tt99-reports.ts.
+export interface B01Setup {
+  defs: readonly ReportLineDef[];
+  assets: string;
+  sources: string;
+}
+export const B01_TT133: B01Setup = { defs: B01_LINES, assets: '200', sources: '500' };
+
+// B01 of one legal entity at `asOf` (inclusive), from every entry dated on or before it. `setup` is TT133's when left out, so every caller that does not name one reads what it always read.
 export function buildB01(
   entries: ReadonlyArray<ReportEntry>,
   legalEntityId: string,
   asOf: string,
   bookCurrency = 'VND',
+  setup: B01Setup = B01_TT133,
 ): Report & { balanced: boolean } {
   const upTo = ofEntity(entries, legalEntityId, bookCurrency).filter((e) => e.entryDate <= asOf);
-  const rules = B01_LINES.flatMap((d) => d.rules ?? []);
+  const rules = setup.defs.flatMap((d) => d.rules ?? []);
   const perParty = buckets(upTo, true);
   const perAccount = buckets(upTo, false);
   const readers = new Map(perAccount.map((b) => [b.accountCode, readersOf(rules, b.accountCode)]));
@@ -265,7 +282,7 @@ export function buildB01(
     }
     return value;
   };
-  const lines = evaluate(B01_LINES, ruleValue);
+  const lines = evaluate(setup.defs, ruleValue);
 
   // A balance whose side no rule reads: the statement would silently drop it.
   const unmapped: UnmappedBalance[] = [];
@@ -279,17 +296,25 @@ export function buildB01(
   }
 
   const total = (code: string) => money(lines.find((l) => l.code === code)?.amount ?? '0');
-  return { lines, unmapped, balanced: total('200').equals(total('500')) };
+  return { lines, unmapped, balanced: total(setup.assets).equals(total(setup.sources)) };
 }
 
 // B02 of one legal entity for the period [from, to] (inclusive), leaving out the year-end closing entries
 // (any line on 911).
-export function buildB02(entries: ReadonlyArray<ReportEntry>, legalEntityId: string, from: string, to: string, bookCurrency = 'VND'): Report {
+// `defs` is the map of the entity's regime (domain/tt99-reports.ts has TT99's); it is TT133's when left out, so every caller that does not name one reads what it always read.
+export function buildB02(
+  entries: ReadonlyArray<ReportEntry>,
+  legalEntityId: string,
+  from: string,
+  to: string,
+  bookCurrency = 'VND',
+  defs: readonly ReportLineDef[] = B02_LINES,
+): Report {
   const inPeriod = ofEntity(entries, legalEntityId, bookCurrency).filter(
     (e) => e.entryDate >= from && e.entryDate <= to && !e.lines.some((l) => l.accountCode.startsWith(CLOSING_ACCOUNT)),
   );
   const activity = buckets(inPeriod, false);
-  const rules = B02_LINES.flatMap((d) => d.rules ?? []);
+  const rules = defs.flatMap((d) => d.rules ?? []);
   const ruleValue = (rule: AccountRule): DecimalValue => {
     let value = money(0);
     for (const b of activity.filter((x) => matches(rule, x.accountCode))) {
@@ -301,7 +326,7 @@ export function buildB02(entries: ReadonlyArray<ReportEntry>, legalEntityId: str
     }
     return value;
   };
-  const lines = evaluate(B02_LINES, ruleValue);
+  const lines = evaluate(defs, ruleValue);
 
   // Activity on a revenue, income or expense account (classes 5 to 8) that no line reads.
   const unmapped: UnmappedBalance[] = activity

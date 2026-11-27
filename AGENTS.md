@@ -29,7 +29,7 @@ Ludy is for one-person companies and SMEs in Vietnam. Every issue, plan and PR m
 - Never edit in the main checkout. Do every task in its own worktree and branch, from a freshly fetched `origin/dev` (use `origin/main` only for a `dev -> main` promotion PR or a main-only docs/CI fix during transition): `.claude/worktrees/<task-name>` (Claude Code), `.codex/worktrees/<task-name>` (Codex), `.cursor/worktrees/<task-name>` (Cursor), `.agents/worktrees/<task-name>` (Antigravity). Never in `.worktrees`, sibling directories, global `_worktrees` folders or temp directories.
 - First check `git worktree list` and open PRs. Never edit another task's or agent's worktree or take over its branch; create a new one. A locked worktree belongs to an active agent.
 - Never `git checkout`, `reset --hard`, `clean` or bare `git stash` in a path another agent may use; set work aside with a WIP commit.
-- Rebase on your target base (`origin/dev` for task PRs; `origin/main` for promotion PRs) right before merging. Never rebase or squash-rewrite shared `dev` commits inside a promotion PR; merge `origin/dev` cleanly into `origin/main`. Resolve conflicts by keeping both sides unless one is clearly superseded.
+- Sync with your target base right before merging: rebase on `origin/dev` for task PRs, and merge `origin/dev` cleanly into `origin/main` for promotion PRs (never rebase or squash-rewrite shared `dev` commits inside a promotion PR). Resolve conflicts by keeping both sides unless one is clearly superseded.
 - After the merge, remove your worktree with `git worktree remove` (never force), only if `git status` is clean.
 
 ## Picking up work (GitHub Project "Ludy")

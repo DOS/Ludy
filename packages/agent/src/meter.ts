@@ -47,6 +47,10 @@ export const AI_FEATURES = {
   'finance.month_close_explain': 'finance',
   // The finance coworker's possible reason per flagged expense line on the expense variance card (#4392): code found which costs moved and who is behind them; the model is told no figure at all (a fixed kind of expense, the direction, a supplier name when it may be told, the kind of voucher, single or several) and a note is dropped when it states any number, date or name it was not given, claims certainty or is not marked as a possibility. A read; a person decides.
   'finance.expense_variance_note': 'finance',
+  // The finance coworker's possible thing to look at per hit of the monthly review of unusual posted entries (#5182): code found the entries by five deterministic rules and computed every figure; the model is told fixed labels only (no figure, date, account code, voucher number or name) and its note is refused when it states a number, a date or a name, says the entry is wrong, advises or is not marked as a possibility.
+  'finance.unusual_entries_note': 'finance',
+  // The finance coworker's sentences on the quarter card (#5183): code computed every figure and how each moved; the model is told only fixed row names and movement labels (rose, fell, steady, first time, none), never a figure, a date, a code or a name, and a sentence is dropped when it states any of those, a cause, a promise or advice. A read; a person decides.
+  'finance.quarter_summary_note': 'finance',
   // The accounting coworker's note on the 30/60/90-day cash forecast (#4391): written from the figures and dates code computed, in words only (it states no figure and no date, the card carries them), and refused
   // when it holds a digit, a link, advice about money or a promise.
   'finance.cash_forecast_explain': 'finance',
@@ -120,6 +124,8 @@ export const AI_FEATURES = {
   'meetings.ask': 'meetings',
   // The member's Vy writing the two or three sentences of the brief before a meeting (#3543): one call over at most 23 short facts the member's own reads found, the member waiting for it, through their own meter.
   'meetings.brief': 'meetings',
+  // The member's Vy preparing checked daily prep lines for the morning briefing (#5073): system-started background call per meeting, through the member's meter.
+  'meetings.brief_daily': 'meetings',
   // The member's Vy writing the few sentences of the weekly digest across meetings (#3949): one call over at most 60 short facts the member's own reads found, the member waiting for it, through their own meter.
   'meetings.digest': 'meetings',
   // The member's Vy naming who an action item belongs to from the name said in the meeting (#3921): one call over a name and at most 100 names, the member waiting for it, through their own meter.
@@ -160,6 +166,10 @@ export const AI_FEATURES = {
   'projects.roadmap_signal_match': 'projects',
   // Vy's triage proposal for one triage inbox item (#4493, ADR-0058): proposes priority, seat, cycle, or duplicate from allowlisted candidate IDs only; human accepts/merges/declines.
   'projects.triage_assist': 'projects',
+  // Vy's transient GitHub PR/issue status summary on one project task (#5159, ADR-0060 D6): zero tools, <<< >>> fenced external data, checked by summaryNumbersOutside/draftLinksOutside/injection guards; never stored.
+  'projects.github_pr_summary': 'projects',
+  // Vy's read-only GitHub issue match ranking on one project task (#5159, ADR-0060 D6): zero tools, allowlisted candidateId checks (UNKNOWN_ID fails closed); human clicks Confirm Link via taskLinkAdd.
+  'projects.github_issue_match': 'projects',
   // Member-scoped Vy proposing project tasks from one note (projects P7, #2598, ADR-0049): one call over the note text and project members' active seats; nothing is created until explicit human confirmation.
   'projects.tasks_from_note': 'projects',
   // Member-scoped Vy proposing project tasks from a note, meeting, or conversation (#2608, ADR-0049): one call over caller-readable source text and project members' active seats; nothing is created until explicit human confirmation.

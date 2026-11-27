@@ -10,11 +10,12 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { createDb, createPool, type Db } from '@ludy/db';
 import type { ExtractClient } from '@ludy/extract-contract';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { kernelCommands, kernelQueries } from '@ludy/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { Runtime, defineCommand, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
@@ -115,13 +116,22 @@ suite('learned account rules with provenance (#1399)', () => {
   }
 
   // The fixture invoice under a new number, with its internet line dated in `month` (the fixture says 9/2026).
-  const invoice = (number: string, month = '9/2026') =>
-    new TextEncoder().encode(
-      FIXTURE.toString('utf8').replace('<SHDon>1234</SHDon>', `<SHDon>${number}</SHDon>`).replace('tháng 9/2026', `tháng ${month}`),
-    );
+  const invoice = (number: string, options: { month?: string | undefined; sellerName?: string | undefined; taxCode?: string | null | undefined } = {}) => {
+    let xml = FIXTURE.toString('utf8')
+      .replace('<SHDon>1234</SHDon>', `<SHDon>${number}</SHDon>`)
+      .replace('tháng 9/2026', `tháng ${options.month ?? '9/2026'}`);
+    if (options.sellerName !== undefined) xml = xml.replace('<Ten>CÔNG TY TNHH DỊCH VỤ MẪU</Ten>', `<Ten>${options.sellerName}</Ten>`);
+    if (options.taxCode === null) xml = xml.replace('<MST>0101234564</MST>', '');
+    else if (options.taxCode !== undefined) xml = xml.replace('<MST>0101234564</MST>', `<MST>${options.taxCode}</MST>`);
+    return new TextEncoder().encode(xml);
+  };
 
-  async function propose(number: string, month?: string) {
-    const bytes = invoice(number, month);
+  async function propose(
+    number: string,
+    monthOrOptions: string | { month?: string | undefined; sellerName?: string | undefined; taxCode?: string | null | undefined } = {},
+  ) {
+    const options = typeof monthOrOptions === 'string' ? { month: monthOrOptions } : monthOrOptions;
+    const bytes = invoice(number, options);
     const sha256 = sha256Hex(bytes);
     const storageKey = fileKey(org.orgId, sha256);
     const generation = await store.put(storageKey, bytes);
@@ -381,5 +391,169 @@ suite('learned account rules with provenance (#1399)', () => {
       await client.query('ROLLBACK').catch(() => {});
       await client.end();
     }
+  });
+
+  it('learns no categorization rules and records no learned_rules in audit_event on a non-user approval (#1457)', async () => {
+    const systemApprove = defineCommand({
+      name: 'kernel.test_system_approve',
+      input: z.object({ proposalId: z.uuid() }),
+      risk: 'R3',
+      sideEffect: 'financial',
+      access: 'system',
+      handler: async (ctx, input) => {
+        const proposal = await ctx.trx
+          .selectFrom('ludy_kernel.proposal')
+          .select(['payload'])
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', input.proposalId)
+          .forUpdate()
+          .executeTakeFirstOrThrow();
+        await ctx.trx
+          .updateTable('ludy_kernel.proposal')
+          .set({ status: 'approved', decided_at: ctx.now, executed_command_id: ctx.commandId })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', input.proposalId)
+          .execute();
+        const result = await ctx.run<{ documentId: string; journalEntryId: string }>(
+          'finance.purchase.record',
+          { payload: proposal.payload, acceptFailedChecks: false },
+          { proposalId: input.proposalId },
+        );
+        await ctx.trx
+          .updateTable('ludy_kernel.proposal')
+          .set({ status: 'executed', result: JSON.stringify(result) })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', input.proposalId)
+          .execute();
+        return result;
+      },
+    });
+    const systemRuntime = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({
+      commands: [...kernelCommands, ...financeCommands, systemApprove],
+      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
+    });
+
+    const id = await propose('9108', { sellerName: 'CÔNG TY DUYỆT HỆ THỐNG', taxCode: null });
+    const before = await detail(id);
+    const internetLineNo = lineOf(before.payload.lines, 'Cước dịch vụ internet').lineNo;
+    const edited = await rpc('inbox/edit', owner, {
+      id,
+      revision: before.revision,
+      lineAccounts: [{ lineNo: internetLineNo, debitAccount: '242' }],
+      idempotencyKey: randomUUID(),
+    });
+    expect(edited).toMatchObject({ status: 200, body: { changed: true } });
+    const revised = await detail(id);
+    expect(lineOf(revised.payload.lines, 'Cước dịch vụ internet').accountRule).toMatchObject({ source: 'user' });
+
+    const rulesBefore = await rules();
+    const recorded = await systemRuntime.execute<{ documentId: string; journalEntryId: string }>(
+      'kernel.test_system_approve',
+      { proposalId: id },
+      { actor: { type: 'system', component: 'test.agent' }, orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(recorded.documentId).toEqual(expect.any(String));
+    expect(await rules()).toEqual(rulesBefore);
+
+    const audit = await admin(async (c) =>
+      (
+        await c.query<{ actor_type: string; outcome: string; detail: Record<string, unknown> }>(
+          `SELECT actor_type, outcome, detail
+             FROM ludy_kernel.audit_event
+            WHERE org_id = $1 AND command = 'finance.purchase.record' AND proposal_id = $2`,
+          [org.orgId, id],
+        )
+      ).rows,
+    );
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ actor_type: 'system', outcome: 'ok', detail: { direction: 'purchase' } });
+    expect(audit[0]?.detail).not.toHaveProperty('learned_rules');
+  });
+
+  it('picks the same oldest party for both suggestion and rule learning when two same-name parties exist (#1457)', async () => {
+    const expectSameOldestParty = async (params: {
+      sellerName: string;
+      storedOldestName: string;
+      firstInvoice: string;
+      secondInvoice: string;
+      olderPartyId: string;
+      newerPartyId: string;
+      olderCreatedAt: string;
+      newerCreatedAt: string;
+    }) => {
+      // Insert the losing (newer or higher-id) party first so neither insertion order nor id alone picks the winner.
+      await admin((c) =>
+        c.query(
+          `INSERT INTO ludy_kernel.party (org_id, id, name, tax_code, source_trust, created_at)
+           VALUES ($1, $2, $3, NULL, 'external', $4::timestamptz),
+                  ($1, $5, $6, NULL, 'external', $7::timestamptz)`,
+          [org.orgId, params.newerPartyId, params.sellerName, params.newerCreatedAt, params.olderPartyId, params.storedOldestName, params.olderCreatedAt],
+        ),
+      );
+      expect(await rpc('accountRules/create', owner, { keyword: 'internet', accountCode: '6421', vendorPartyId: params.newerPartyId })).toMatchObject({
+        status: 200,
+      });
+
+      // Extraction must ignore the newer/higher-id party's keyword rule and fall back to builtin (6422).
+      const first = await propose(params.firstInvoice, { sellerName: params.sellerName, taxCode: null });
+      expect(lineOf((await detail(first)).payload.lines, 'Cước dịch vụ internet')).toMatchObject({
+        debitAccount: '6422',
+        accountRule: { source: 'builtin' },
+      });
+
+      // Approving must bind both the purchase document and the newly learned rule to the exact same oldest party.
+      const recorded = await editAndApprove(first, { 'Cước dịch vụ internet': '242' });
+      const docParty = await admin(async (c) =>
+        (await c.query<{ party_id: string }>(`SELECT party_id FROM ludy_finance.purchase_document WHERE org_id = $1 AND id = $2`, [org.orgId, recorded.documentId])).rows[0]
+          ?.party_id,
+      );
+      expect(docParty).toBe(params.olderPartyId);
+
+      const learned = await admin(async (c) =>
+        (
+          await c.query<{ id: string; vendor_party_id: string; debit_account: string }>(
+            `SELECT id, vendor_party_id, debit_account
+               FROM ludy_finance.categorization_rule
+              WHERE org_id = $1 AND source_document_id = $2`,
+            [org.orgId, recorded.documentId],
+          )
+        ).rows,
+      );
+      expect(learned).toEqual([{ id: expect.any(String), vendor_party_id: params.olderPartyId, debit_account: '242' }]);
+      const learnedRuleId = learned[0]?.id;
+
+      // The next invoice for the same tax-code-less seller reads its suggestion from that same oldest party's rule.
+      const second = await propose(params.secondInvoice, { sellerName: params.sellerName, taxCode: null });
+      expect(lineOf((await detail(second)).payload.lines, 'Cước dịch vụ internet')).toMatchObject({
+        debitAccount: '242',
+        accountRule: { source: 'learned', scope: 'vendor', matchKind: 'description', ruleId: learnedRuleId },
+      });
+    };
+
+    // 1. Different created_at: newer party inserted first with the smaller id so only created_at ASC picks olderPartyId.
+    const [smallerId, largerId] = [randomUUID(), randomUUID()].sort() as [string, string];
+    await expectSameOldestParty({
+      sellerName: 'CONG TY TRUNG TEN',
+      storedOldestName: 'Cong ty Trung Ten',
+      firstInvoice: '9201',
+      secondInvoice: '9202',
+      newerPartyId: smallerId,
+      olderPartyId: largerId,
+      newerCreatedAt: '2026-10-02T00:00:00Z',
+      olderCreatedAt: '2026-10-01T00:00:00Z',
+    });
+
+    // 2. Identical created_at: higher id inserted first so only id ASC tie-breaking picks tieSmallerId.
+    const [tieSmallerId, tieLargerId] = [randomUUID(), randomUUID()].sort() as [string, string];
+    await expectSameOldestParty({
+      sellerName: 'CÔNG TY CÙNG THỜI ĐIỂM',
+      storedOldestName: 'CÔNG TY CÙNG THỜI ĐIỂM',
+      firstInvoice: '9203',
+      secondInvoice: '9204',
+      newerPartyId: tieLargerId,
+      olderPartyId: tieSmallerId,
+      newerCreatedAt: '2026-10-01T00:00:00Z',
+      olderCreatedAt: '2026-10-01T00:00:00Z',
+    });
   });
 });

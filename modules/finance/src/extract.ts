@@ -14,6 +14,7 @@ import { BOOK_CURRENCY, convertInvoice, type ForeignAmounts } from './domain/for
 // A decimal string a lookup is given to compare amounts with (#2320): the money helpers parse it, so it is refused here when it is not one.
 const zAmount = z.string().regex(/^-?\d{1,20}(\.\d{1,6})?$/);
 import { loadOwnTaxCodes, readSeller } from './own-tax-code.ts';
+import { findPartyByName } from './parties.ts';
 import { rulesForSuggestion } from './categorization.ts';
 import { HISTORY_WINDOW, anomalyChecks, type VendorHistory } from './domain/anomaly.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -287,16 +288,7 @@ export const purchaseLookup = defineQuery({
     // The vendor whose learned rules apply: by tax code as above, or, for an invoice without one, by name as
     // finance.purchase.record finds or creates the party it learns for (upsertParty).
     const ruleParty =
-      party ??
-      (!sale && !input.sellerTaxCode && input.sellerName.trim()
-        ? await ctx.trx
-            .selectFrom('ludy_kernel.party')
-            .select('id')
-            .where('org_id', '=', ctx.orgId)
-            .where('tax_code', 'is', null)
-            .where((eb) => eb(eb.fn('lower', ['name']), '=', input.sellerName.trim().toLowerCase()))
-            .executeTakeFirst()
-        : undefined);
+      party ?? (!sale && !input.sellerTaxCode && input.sellerName.trim() ? await findPartyByName(ctx, input.sellerName.trim()) : undefined);
     const regime = sale && input.issueDate ? (await booksOn(ctx, entityId, input.issueDate)).regime : undefined;
     return {
       direction: sale ? 'sale' : 'purchase',

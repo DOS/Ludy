@@ -29,6 +29,8 @@ export * from './finance-ask-books.ts';
 export * from './finance-overview.ts';
 export * from './finance-home-money.ts';
 export * from './finance-expense-variance.ts';
+export * from './finance-unusual-entries.ts';
+export * from './finance-quarter-summary.ts';
 export * from './einvoice.ts';
 export * from './einvoice-notice.ts';
 export * from './supplier-bank.ts';

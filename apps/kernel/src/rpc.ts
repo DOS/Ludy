@@ -27,7 +27,7 @@ import {
   type GithubLinkPrepareResult,
   type GithubTaskLinkView,
 } from '@ludy/kernel-contract';
-import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, BankSignDepositMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceHomeMoney, FinanceOverview, MonthClose, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
+import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, BankSignDepositMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceUnusualEntries, FinanceHomeMoney, FinanceOverview, MonthClose, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformConsentError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@ludy/channel';
@@ -67,10 +67,10 @@ import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@ludy/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@ludy/mod-crm';
 import type { MeetingResults, Notes, Transcript } from '@ludy/kernel-contract';
-import type { ProjectCycleSummarySource, ProjectTriageAssistSource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource, RoadmapAiSignalMatchSource } from '@ludy/mod-projects';
+import type { ProjectCycleSummarySource, ProjectGithubIssueMatchSource, ProjectGithubPrSummarySource, ProjectTriageAssistSource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource, RoadmapAiSignalMatchSource } from '@ludy/mod-projects';
 import { enrichMeetingSignalMatchSource } from '@ludy/mod-projects';
 import { sql } from 'kysely';
-import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@ludy/agent';
+import { AiBudgetExhaustedError, GITHUB_ISSUE_MATCH_CANDIDATES_MAX, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type ProjectGithubIssueMatchCandidateInput, type WeeklyFacts, type WeeklyResult } from '@ludy/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
@@ -111,6 +111,7 @@ import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-wee
 import { prepareProjectCycleSummary, projectCycleSummaryAi } from './project-cycle-summary-ai.ts';
 import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, prepareRoadmapSignalMatch, projectRoadmapAi } from './project-roadmap-ai.ts';
 import { prepareProjectTriageAssist, projectTriageAi } from './project-triage-ai.ts';
+import { prepareProjectGithubIssueMatch, prepareProjectGithubPrSummary, projectGithubAi } from './project-github-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
   analyzeSignPacketConsistency,
@@ -133,6 +134,9 @@ import { askBooks, askBooksAi } from './finance-ask-books.ts';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainMonthClose, monthCloseAi } from './finance-month-close-ai.ts';
 import { explainExpenseVariance, expenseVarianceAi } from './finance-expense-variance-ai.ts';
+import { explainUnusualEntries, unusualEntriesAi } from './finance-unusual-entries-ai.ts';
+import { explainQuarterSummary, quarterSummaryAi } from './finance-quarter-summary-ai.ts';
+import type { FinanceQuarterSummary } from '@ludy/kernel-contract';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { marketplaceColumnsAi, proposeMarketplaceColumns } from './finance-marketplace-columns-ai.ts';
 import { explainMarketplaceFees, marketplaceFeeNoteAi } from './finance-marketplace-fee-note-ai.ts';
@@ -578,6 +582,10 @@ export function createRpcHandler(
   const financeVatLateAi = vatLateAi(conversationReader?.vatLateSentence ? { vatLateSentence: conversationReader.vatLateSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's possible reason per flagged expense line (#4392): the same reader and model, a budget of its own; told no figure at all.
   const financeExpenseVarianceAi = expenseVarianceAi(conversationReader?.expenseVarianceNotes ? { expenseVarianceNotes: conversationReader.expenseVarianceNotes.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's possible thing to look at per hit of the monthly review of unusual entries (#5182): the same reader and model, a budget of its own; told fixed labels only, no figure, date, code or name.
+  const financeUnusualEntriesAi = unusualEntriesAi(conversationReader?.unusualEntriesNotes ? { unusualEntriesNotes: conversationReader.unusualEntriesNotes.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's sentences on the quarter card (#5183): the same reader and model, a budget of its own; told fixed row names and movement labels, never a figure, a date, a code or a name.
+  const financeQuarterSummaryAi = quarterSummaryAi(conversationReader?.quarterSummaryNotes ? { quarterSummaryNotes: conversationReader.quarterSummaryNotes.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   // The accounting coworker's one sentence on why a money-in bank line may match a completed eSign deposit request (#4723): non-PII facts only.
@@ -717,6 +725,19 @@ export function createRpcHandler(
   );
   const projectTriageCoworker = projectTriageAi(
     conversationReader?.projectTriageAssist ? { projectTriageAssist: conversationReader.projectTriageAssist.bind(conversationReader) } : null,
+    suggestionBudget(),
+  );
+  const projectGithubCoworker = projectGithubAi(
+    conversationReader
+      ? {
+          ...(conversationReader.projectGithubPrSummary
+            ? { projectGithubPrSummary: conversationReader.projectGithubPrSummary.bind(conversationReader) }
+            : {}),
+          ...(conversationReader.projectGithubIssueMatch
+            ? { projectGithubIssueMatch: conversationReader.projectGithubIssueMatch.bind(conversationReader) }
+            : {}),
+        }
+      : null,
     suggestionBudget(),
   );
   const signCoworker = signAi(
@@ -3937,6 +3958,30 @@ export function createRpcHandler(
         }),
       ),
     },
+    financeUnusualEntries: {
+      get: os.financeUnusualEntries.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<FinanceUnusualEntries>('finance.unusual_entries.list', input, { actor, orgId }))),
+      // The notes are asked of the model outside any transaction, from the hits the review read in the member's own one (their legal entities only).
+      explain: os.financeUnusualEntries.explain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const review = await runtime.query<FinanceUnusualEntries>('finance.unusual_entries.list', ask, { actor, orgId });
+          return explainUnusualEntries(financeUnusualEntriesAi, orgId, actor.userId, review, lang ?? 'vi');
+        }),
+      ),
+      // A person marks one hit as reviewed: an audited, idempotent command that touches no ledger table.
+      review: os.financeUnusualEntries.review.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.unusual_entries.review', input, { actor, orgId }))),
+    },
+    financeQuarterSummary: {
+      get: os.financeQuarterSummary.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<FinanceQuarterSummary>('finance.quarter_summary', input, { actor, orgId }))),
+      // The sentences are asked of the model outside any transaction, from the figures the summary read in the member's own one (their legal entities only); code picks the rows and the model is told labels only.
+      explain: os.financeQuarterSummary.explain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const summary = await runtime.query<FinanceQuarterSummary>('finance.quarter_summary', ask, { actor, orgId });
+          return explainQuarterSummary(financeQuarterSummaryAi, orgId, actor.userId, summary, lang ?? 'vi');
+        }),
+      ),
+    },
     supplierBank: {
       list: os.supplierBank.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_bank_account.list', input, { actor, orgId }))),
       add: os.supplierBank.add.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_bank_account.add', input, { actor, orgId }))),
@@ -5838,6 +5883,111 @@ export function createRpcHandler(
           }),
         ),
         syncLog: os.projects.github.syncLog.handler(projectsQuery('projects.github.sync_log')),
+        aiPrSummary: os.projects.github.aiPrSummary.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const source = await runtime.query<ProjectGithubPrSummarySource>(
+              'projects.github.ai_pr_summary_source',
+              { projectId: input.projectId, taskId: input.taskId },
+              { actor, orgId },
+            );
+            return prepareProjectGithubPrSummary(
+              projectGithubCoworker,
+              orgId,
+              actor.userId,
+              source,
+              input.language ?? 'vi',
+            );
+          }),
+        ),
+        aiIssueMatch: os.projects.github.aiIssueMatch.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const source = await runtime.query<ProjectGithubIssueMatchSource>(
+              'projects.github.ai_issue_match_source',
+              { projectId: input.projectId, taskId: input.taskId },
+              { actor, orgId },
+            );
+            const existingSet = new Set(source.existingLinkKeys);
+            const candidateMap = new Map<string, ProjectGithubIssueMatchCandidateInput>();
+            const pushCandidate = (c: {
+              repoFullName: string;
+              externalNumber: number;
+              externalUrl: string;
+              externalTitle: string;
+              authorLogin: string | null;
+              updatedAt: string | null;
+            }) => {
+              const dedupeKey = `${c.repoFullName.toLowerCase()}#${c.externalNumber}`;
+              if (existingSet.has(dedupeKey) || candidateMap.has(dedupeKey)) return;
+              if (candidateMap.size >= GITHUB_ISSUE_MATCH_CANDIDATES_MAX) return;
+              candidateMap.set(dedupeKey, {
+                candidateId: `${c.repoFullName}#${c.externalNumber}`,
+                repoFullName: c.repoFullName,
+                externalNumber: c.externalNumber,
+                externalUrl: c.externalUrl,
+                externalTitle: c.externalTitle,
+                authorLogin: c.authorLogin,
+                updatedAt: c.updatedAt,
+                tainted: true,
+              });
+            };
+
+            if (
+              source.githubEnabled &&
+              source.provider === 'github_app' &&
+              source.externalAccountId &&
+              channels?.github?.hasAppCredentials
+            ) {
+              const installationId = source.externalAccountId;
+              const repoBatches = await Promise.allSettled(
+                source.repos
+                  .slice(0, 5)
+                  .map((repo) => channels.github!.listOpenIssues({ kind: 'github_app', installationId }, repo.repoFullName, 20)),
+              );
+              const repoLists = repoBatches.map((s) => (s.status === 'fulfilled' ? s.value : []));
+              const maxLen = Math.max(0, ...repoLists.map((list) => list.length));
+              for (let idx = 0; idx < maxLen; idx += 1) {
+                for (const list of repoLists) {
+                  const item = list[idx];
+                  if (!item) continue;
+                  pushCandidate({
+                    repoFullName: item.repoFullName,
+                    externalNumber: item.number,
+                    externalUrl: item.externalUrl,
+                    externalTitle: item.externalTitle,
+                    authorLogin: item.authorLogin,
+                    updatedAt: item.updatedAt,
+                  });
+                }
+              }
+            }
+            for (const cached of source.cachedIssues) {
+              pushCandidate(cached);
+            }
+
+            return prepareProjectGithubIssueMatch(
+              projectGithubCoworker,
+              orgId,
+              actor.userId,
+              {
+                language: input.language ?? 'vi',
+                projectName: source.projectName,
+                task: {
+                  id: source.taskId,
+                  key: source.taskKey,
+                  title: source.taskTitle,
+                  description: source.taskDescription,
+                  tainted: source.taskTainted,
+                },
+                candidates: [...candidateMap.values()],
+              },
+              {
+                githubEnabled: source.githubEnabled,
+                aiStopped: source.aiStopped,
+                aiBudgetSpent: source.aiBudgetSpent,
+              },
+            );
+          }),
+        ),
       },
     },
     sign: {

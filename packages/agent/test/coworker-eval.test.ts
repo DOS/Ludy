@@ -7,8 +7,10 @@ import {
   AskBooksCoworker,
   ConversationWriter,
   ExpenseVarianceCoworker,
+  UnusualEntriesCoworker,
   InboxReader,
   PayrollCoworker,
+  QuarterSummaryCoworker,
   SchedulingReader,
   SignAcceptanceReader,
   SignAiReader,
@@ -80,7 +82,7 @@ function createStubRuntime() {
         text = JSON.stringify({
           sentences: [{ text: 'Nam phu trach quay chup.', cites: [1] }],
         });
-      } else if (feature === 'meetings.brief') {
+      } else if (feature === 'meetings.brief' || feature === 'meetings.brief_daily') {
         text = JSON.stringify({
           sentences: [{ text: 'Nhom da hop va chot lich quay chup vao sang thu Ba.', cites: [1] }],
         });
@@ -298,6 +300,18 @@ function createStubRuntime() {
       },
       usage: zeroUsage,
     }),
+    projectGithubPrSummary: async () => ({
+      output: {
+        summary: 'Cong viec dang gan 1 lien ket GitHub: PR #42 tren kho acme/web dang mo va cho duyet.',
+      },
+      usage: zeroUsage,
+    }),
+    projectGithubIssueMatch: async () => ({
+      output: {
+        matches: [{ candidateId: 'acme/web#42', reason: 'Khop voi cong viec xuat bao cao Excel.' }],
+      },
+      usage: zeroUsage,
+    }),
     recruitingBrief: async () => ({
       output: {
         summary: 'Ung vien C1 co 3 nam kinh nghiem ke toan va khop 1 trong 2 ky nang yeu cau.',
@@ -409,6 +423,20 @@ function createStubRuntime() {
     scheduling: new SchedulingReader(STUB_CONFIG, async () => ({ asksForMeeting: true, windows: [{ date: '2026-10-08', from: '14:00', to: '15:00' }] })),
     expenseVariance: new ExpenseVarianceCoworker(STUB_CONFIG, async () => ({
       output: { notes: [{ row: 1, text: 'Co the do hoa don tu nha cung cap tang so voi ky truoc.' }] },
+      usage: zeroUsage,
+    })),
+    unusualEntries: new UnusualEntriesCoworker(STUB_CONFIG, async () => ({
+      output: { notes: [{ row: 1, text: 'Co the khoan mua nay lon hon muc thuong cua mot nha cung cap.' }] },
+      usage: zeroUsage,
+    })),
+    quarterSummary: new QuarterSummaryCoworker(STUB_CONFIG, async () => ({
+      output: {
+        notes: [
+          { row: 1, text: 'Sales revenue rose against the previous quarter and the same quarter last year.' },
+          { row: 2, text: 'Costs rose against the previous quarter but stayed steady against the same quarter last year.' },
+          { row: 3, text: 'Cash fell against the previous quarter and the same quarter last year.' },
+        ],
+      },
       usage: zeroUsage,
     })),
     askBooks: new AskBooksCoworker(STUB_CONFIG, async () => ({
