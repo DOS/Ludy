@@ -19284,8 +19284,10 @@ export const vi = {
         cancel: 'Hủy lần nhập liên hệ',
         commit: 'Nhập liên hệ từ tệp',
         expire: 'Xóa các dòng nhập liên hệ quá 7 ngày',
+        fill_tax_suggestions: 'Điền tên hoặc địa chỉ gợi ý từ mã số thuế vào lần nhập liên hệ',
         preview: 'Xem trước lần nhập liên hệ',
         stage: 'Đọc tệp liên hệ để xem trước',
+        tax_lookup_candidates: 'Đọc các dòng nhập liên hệ đủ điều kiện tra cứu mã số thuế',
       },
       next_step: {
         done: 'Đánh dấu xong việc tiếp theo của cơ hội',
@@ -20580,6 +20582,7 @@ export const vi = {
         mark_duplicate: 'Gộp đối tác trùng',
         set_company: 'Gắn người liên hệ với công ty họ làm việc',
         tax_lookup: 'Tra cứu mã số thuế doanh nghiệp',
+        tax_lookup_batch: 'Tra cứu hàng loạt mã số thuế doanh nghiệp',
         tax_lookup_prepare: 'Chuẩn bị tra cứu mã số thuế doanh nghiệp',
         tax_lookup_switch: {
           get: 'Xem trạng thái bật tra cứu mã số thuế',

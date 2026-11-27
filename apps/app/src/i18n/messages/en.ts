@@ -19284,8 +19284,10 @@ export const en = {
         cancel: 'Cancel a contact import',
         commit: 'Import contacts from a file',
         expire: 'Delete contact import rows older than 7 days',
+        fill_tax_suggestions: 'Fill suggested names or addresses from tax codes in a contact import',
         preview: 'Preview a contact import',
         stage: 'Stage a contact file for preview',
+        tax_lookup_candidates: 'List contact import rows eligible for tax-code lookup',
       },
       next_step: {
         done: 'Mark the next steps of deals done',
@@ -20580,6 +20582,7 @@ export const en = {
         mark_duplicate: 'Merge a duplicate party',
         set_company: 'Link a person to the company they work at',
         tax_lookup: 'Look up an enterprise tax code',
+        tax_lookup_batch: 'Look up enterprise tax codes in a batch',
         tax_lookup_prepare: 'Prepare enterprise tax-code lookup',
         tax_lookup_switch: {
           get: 'Check the enterprise tax-code lookup setting',

@@ -439,14 +439,23 @@ export function ContactImportPage() {
   const [fillPendingRowNo, setFillPendingRowNo] = useState<number | 'batch' | null>(null);
   const reasonText = (reason: ImportReason | null) => (reason ? t(`reason.${reason}`) : '');
 
+  const [more, setMore] = useState<ImportPreview['rows']>([]);
+  // Whether the pages loaded after the first one left rows unread; null until one is loaded.
+  const [moreHas, setMoreHas] = useState<boolean | null>(null);
+
   const stagedRef = useRef(staged);
   stagedRef.current = staged;
+  const outcomeRef = useRef(outcome);
+  outcomeRef.current = outcome;
+  const moreRef = useRef(more);
+  moreRef.current = more;
 
   const taxLookup = useMutation({
     mutationFn: (batchId: string) => client.crm.contactImport.taxLookup({ batchId }),
-    onSuccess: (result) => {
+    onSuccess: (result, batchId) => {
       const current = stagedRef.current;
-      if (result.expired && current) {
+      if (!current || current.batch.id !== batchId) return;
+      if (result.expired) {
         setDone({ batch: { ...current.batch, status: 'expired' }, skipped: [] });
         setStep('done');
       }
@@ -470,20 +479,17 @@ export function ContactImportPage() {
     }),
   );
 
-  const [more, setMore] = useState<ImportPreview['rows']>([]);
-  // Whether the pages loaded after the first one left rows unread; null until one is loaded.
-  const [moreHas, setMoreHas] = useState<boolean | null>(null);
-
   const fillSuggestions = useMutation({
     mutationFn: async (vars: { batchId: string; rows: FillSuggestionRowInput[]; scope: number | 'batch' }) =>
       client.crm.contactImport.fillTaxSuggestions({ batchId: vars.batchId, rows: vars.rows }),
     onMutate: (vars) => {
       setFillPendingRowNo(vars.scope);
     },
-    onSettled: () => {
-      setFillPendingRowNo(null);
+    onSettled: (_data, _error, vars) => {
+      if (stagedRef.current?.batch.id === vars.batchId) setFillPendingRowNo(null);
     },
     onSuccess: async (result, vars) => {
+      if (stagedRef.current?.batch.id !== vars.batchId) return;
       setAcceptedRowNos((prev) => {
         const next = new Set(prev);
         for (const r of vars.rows) next.add(r.rowNo);
@@ -495,11 +501,12 @@ export function ContactImportPage() {
         return;
       }
       // Refresh staged first page and any loaded extra pages so row outcomes and batch counts match the server.
-      const totalLoadedAll = (staged?.rows.length ?? 0) + (outcome === 'all' ? more.length : 0);
+      const liveOutcome = outcomeRef.current;
+      const totalLoadedAll = (stagedRef.current?.rows.length ?? 0) + (liveOutcome === 'all' ? moreRef.current.length : 0);
       const firstPage = await client.crm.contactImport.preview({ batchId: vars.batchId, after: 0, limit: IMPORT_PREVIEW_PAGE });
       const extraRows: ImportPreview['rows'] = [];
       let extraHas: boolean | null = null;
-      if (outcome === 'all' && totalLoadedAll > IMPORT_PREVIEW_PAGE && firstPage.more) {
+      if (liveOutcome === 'all' && totalLoadedAll > IMPORT_PREVIEW_PAGE && firstPage.more) {
         let cursor = firstPage.rows.at(-1)?.rowNo ?? 0;
         let hasNext = firstPage.more;
         while (hasNext && firstPage.rows.length + extraRows.length < totalLoadedAll) {
@@ -511,8 +518,9 @@ export function ContactImportPage() {
           cursor = nextPage.rows.at(-1)?.rowNo ?? cursor;
         }
       }
+      if (stagedRef.current?.batch.id !== vars.batchId) return;
       setStaged(firstPage);
-      if (outcome === 'all') {
+      if (outcomeRef.current === 'all') {
         setMore(extraRows);
         setMoreHas(extraHas);
       } else {
@@ -709,14 +717,14 @@ export function ContactImportPage() {
           actionError={commit.error ?? cancel.error}
           deploymentTaxLookup={deploymentTaxLookup}
           taxLookupState={{
-            isPending: taxLookup.isPending,
-            data: taxLookup.data,
-            error: taxLookup.error,
+            isPending: taxLookup.variables === counts.id && taxLookup.isPending,
+            data: taxLookup.variables === counts.id ? taxLookup.data : undefined,
+            error: taxLookup.variables === counts.id ? taxLookup.error : null,
             onRetry: () => taxLookup.mutate(counts.id),
           }}
           acceptedRowNos={acceptedRowNos}
           fillPendingRowNo={fillPendingRowNo}
-          fillError={fillSuggestions.error}
+          fillError={fillSuggestions.variables?.batchId === counts.id ? fillSuggestions.error : null}
           onAcceptRow={(item) => fillSuggestions.mutate({ batchId: counts.id, rows: [item], scope: item.rowNo })}
           onAcceptAll={(items) => fillSuggestions.mutate({ batchId: counts.id, rows: items, scope: 'batch' })}
         />
