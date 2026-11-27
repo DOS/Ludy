@@ -37,6 +37,7 @@ import { postDocumentStock } from './stock-lines.ts';
 import { orderSourcesOfInvoice, type OrderSource } from './order-handoff.ts';
 import { invoiceLabel, journalMemo } from './memo.ts';
 import { loadOwnTaxCodes, readSeller } from './own-tax-code.ts';
+import { findPartyByName } from './parties.ts';
 import { databaseToday, dateLabel, liveOpeningDate } from './period-lock.ts';
 import { BOOK_CURRENCY, checkRate, convertInvoice, foreignNote, toDong } from './domain/foreign-currency.ts';
 
@@ -78,14 +79,7 @@ export async function upsertParty(ctx: CommandContext, ref: PurchaseProposal['se
         .where('tax_code', '=', taxCode)
         .forShare()
         .executeTakeFirst()
-    : await ctx.trx
-        .selectFrom('ludy_kernel.party')
-        .select('id')
-        .where('org_id', '=', ctx.orgId)
-        .where('tax_code', 'is', null)
-        .where((eb) => eb(eb.fn('lower', ['name']), '=', name.toLowerCase()))
-        .forShare()
-        .executeTakeFirst();
+    : await findPartyByName(ctx, name, { lock: true });
   if (existing) return existing.id;
   // A member limited to some legal entities may not see a company the org already knows under this tax code (#1280):
   // the kernel links that party to the member's entities and it is used (a person's party needs an owner to link it).
