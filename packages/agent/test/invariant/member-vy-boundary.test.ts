@@ -8458,7 +8458,8 @@ const ADAPTER_FUNCTION_NOTES_KEYS = new Map<string, string>([
 ]);
 const ADAPTER_NOTES_KEYS = new Set(ADAPTER_FUNCTION_NOTES_KEYS.values());
 const ADAPTER_NOTE_IMPORT_RE = /(?:^|\/)note-ai-model(?:\.[cm]?[jt]s)?$/;
-const isNoteAiModelSpecifier = (spec: string): boolean => ADAPTER_NOTE_IMPORT_RE.test(normalizeModuleSpecifier(spec));
+const isNoteAiModelSpecifier = (spec: string): boolean =>
+  (spec.includes('model') || spec.includes('%')) && ADAPTER_NOTE_IMPORT_RE.test(normalizeModuleSpecifier(spec));
 const DEFAULT_ADAPTER_EXPORTS: readonly string[] = [...ADAPTER_FUNCTION_NOTES_KEYS.keys()];
 const DEFAULT_ADAPTER_EXPORT_SET = new Set(DEFAULT_ADAPTER_EXPORTS);
 const MEMBER_VY_NAMES_SET = new Set(['memberVy', 'member_vy', 'PrivateText']);
@@ -10021,17 +10022,17 @@ function collectScopedConstBindings(
     return sc.bindings;
   };
 
-  const seedNames = (target: 'brace' | 'concise', idx: number, names: readonly string[]): void => {
-    if (names.length === 0) return;
-    let map = target === 'brace' ? braceSeedBindings : conciseEnterAt;
-    if (!map) {
-      map = new Map<number, string[]>();
-      if (target === 'brace') braceSeedBindings = map;
-      else conciseEnterAt = map;
-    }
-    const prev = map.get(idx);
+  const seedNames = (
+    map: Map<number, string[]> | null,
+    idx: number,
+    names: readonly string[],
+  ): Map<number, string[]> | null => {
+    if (names.length === 0) return map;
+    const target = map ?? new Map<number, string[]>();
+    const prev = target.get(idx);
     if (prev) prev.push(...names);
-    else map.set(idx, [...names]);
+    else target.set(idx, [...names]);
+    return target;
   };
 
   for (let i = 0; i < tokens.length; i += 1) {
@@ -10090,8 +10091,11 @@ function collectScopedConstBindings(
           if (fnTarget) {
             const paramNames: string[] = [];
             collectPatternIdents(tokens, i + 1, closeParen, delims, paramNames, false, templateTail);
-            if (fnTarget.targetKind === 'brace') seedNames('brace', fnTarget.targetIdx, paramNames);
-            else seedNames('concise', fnTarget.targetIdx, paramNames);
+            if (fnTarget.targetKind === 'brace') {
+              braceSeedBindings = seedNames(braceSeedBindings, fnTarget.targetIdx, paramNames);
+            } else {
+              conciseEnterAt = seedNames(conciseEnterAt, fnTarget.targetIdx, paramNames);
+            }
           }
         }
       }
@@ -10117,9 +10121,9 @@ function collectScopedConstBindings(
     if (t.kind === 'ident' && !isMemberPrev(tokens, i) && tokens[i + 1]?.kind === 'punct' && tokens[i + 1]?.value === '=>') {
       const afterArrow = tokens[i + 2];
       if (afterArrow?.kind === 'punct' && afterArrow.value === '{') {
-        seedNames('brace', i + 2, [t.value]);
+        braceSeedBindings = seedNames(braceSeedBindings, i + 2, [t.value]);
       } else {
-        seedNames('concise', i + 2, [t.value]);
+        conciseEnterAt = seedNames(conciseEnterAt, i + 2, [t.value]);
       }
       continue;
     }
@@ -12490,6 +12494,9 @@ export function indexReexportViolations(indexText: string, symbols: readonly str
 }
 
 const isAgentBarrel = (spec: string, fromRelPath?: string): boolean => {
+  if (!spec.includes('agent') && !spec.includes('index') && !spec.includes('%') && !spec.includes('.')) {
+    return false;
+  }
   const normalizedSpec = normalizeModuleSpecifier(spec).replace(/\.[cm]?js$|\.[cm]ts$/, '.ts');
   if (
     normalizedSpec === '@ludy/agent' ||
