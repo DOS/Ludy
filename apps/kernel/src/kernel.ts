@@ -6,7 +6,7 @@ import { serve } from '@hono/node-server';
 import type { Server } from 'node:http';
 import { configureUploadTimeouts } from './upload-timeouts.ts';
 import { memberMeter } from './ai-meter.ts';
-import { summaryModelPort, type ModelPort } from './member-vy-ports.ts';
+import { createMeetingsBriefWriter, summaryModelPort, type ModelPort } from './member-vy-ports.ts';
 import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SignAiReader, SocialWriter, TodayWriter, WeeklyWriter, type InvoiceReader } from '@ludy/agent';
 import {
   BlueskyPublisher,
@@ -981,6 +981,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             extractor: resolved.ai,
             conversationWriter: resolved.conversationWriter,
             adsCampaignWriter: resolved.adsCampaignWriter,
+            meetingsBriefWriter: resolved.summaryModel ? createMeetingsBriefWriter(resolved.summaryModel) : null,
             extract: createExtractClient({ url: extractUrl, concurrency: extractConcurrency(config) }),
             inboundDomain: config.INBOUND_DOMAIN ?? null,
             revoker: resolved.identity.revoker,

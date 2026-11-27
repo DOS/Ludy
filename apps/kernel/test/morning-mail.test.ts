@@ -83,11 +83,32 @@ describe('the morning mail', () => {
     await expect(morningMailTemplate.render(input({ ...base, count: -1 }))).rejects.toThrow();
     // No subject, no mail.
     expect(await morningMailTemplate.render(input(base, null))).toBeNull();
-    // V2 full briefing payloads fail closed until Slice C implements render-time lookup and template rendering.
+    // V2 full briefing payloads fail closed when queryBriefing is not provided.
     expect(await morningMailTemplate.render(input({ lang: 'vi', org: 'Acme', path: '/o/acme/meetings', day: '2026-11-26' }))).toBeNull();
     // Mixed count + day or extra content keys are rejected.
     await expect(morningMailTemplate.render(input({ ...base, day: '2026-11-26' }))).rejects.toThrow();
     await expect(morningMailTemplate.render(input({ lang: 'vi', org: 'Acme', path: '/o/acme/meetings', day: '2026-11-26', content: 'full' }))).rejects.toThrow();
+  });
+
+  it('fetches v2 full briefing content via queryBriefing and renders the full mail when provided (#5080)', async () => {
+    const calls: Array<{ name: string; params: Record<string, unknown> }> = [];
+    const rendered = await morningMailTemplate.render({
+      ...input({ lang: 'vi', org: 'Công ty <A>', path: '/o/acme/meetings', day: '2026-11-26' }, 'Lịch họp trong ngày'),
+      queryBriefing: async <T,>(name: string, params: unknown): Promise<T> => {
+        calls.push({ name, params: params as Record<string, unknown> });
+        return {
+          day: '2026-11-26',
+          totalMeetings: 1,
+          meetings: [sampleMeeting()],
+        } as unknown as T;
+      },
+    });
+    expect(calls).toEqual([{ name: MORNING_MAIL_CONTENT_COMMAND, params: { day: '2026-11-26', orgPrefix: '/o/acme' } }]);
+    expect(rendered).not.toBeNull();
+    expect(rendered?.subject).toBe('Lịch họp trong ngày');
+    expect(rendered?.text).toContain('Họp giao ban tuần');
+    expect(rendered?.text).toContain('Gói Enterprise Q4');
+    expect(rendered?.html).toContain('https://ludy.test/o/acme/meetings');
   });
 });
 

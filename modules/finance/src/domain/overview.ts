@@ -6,7 +6,8 @@
 import { money, type DecimalValue } from '@ludy/l10n-vn';
 import { OVERVIEW_EXPENSE_GROUPS, OVERVIEW_MONTHS, type FinanceOverview, type OverviewComparison, type OverviewExpense, type OverviewFigure, type OverviewMonth, type OverviewRange } from '@ludy/kernel-contract';
 import { canonical } from './money.ts';
-import { B01_LINES, B02_LINES, buildB01, buildB02, type Report, type ReportEntry } from './tt133-reports.ts';
+import { B01_LINES, buildB01, buildB02, type Report, type ReportEntry } from './tt133-reports.ts';
+import { B02_ROLES, b02LinesFor, type StatementsRegime } from './tt99-reports.ts';
 
 export interface OverviewPeriods {
   from: string;
@@ -128,9 +129,11 @@ export function expenseMix(now: ReadonlyArray<ReportEntry>, before: ReadonlyArra
 
 // A month's results from its B02: revenue is net sales, financial income and other income; the profit is B02's profit before tax, and the costs what is left
 // of the revenue after it.
-export function overviewMonth(month: string, report: Report): OverviewMonth {
-  const revenue = line(report, '10').plus(line(report, '21')).plus(line(report, '31'));
-  const profit = line(report, '50');
+export function overviewMonth(month: string, report: Report, regime: StatementsRegime = 'tt133'): OverviewMonth {
+  // The lines by what they mean: financial revenue is 21 under TT133 and 22 under TT99 (where 21 is the investment-property line, also revenue here).
+  const roles = B02_ROLES[regime];
+  const revenue = roles.financeRevenue.reduce((sum, code) => sum.plus(line(report, code)), line(report, roles.netRevenue)).plus(line(report, roles.otherIncome));
+  const profit = line(report, roles.profit);
   return { month, revenue: canonical(revenue), costs: canonical(revenue.minus(profit)), profit: canonical(profit) };
 }
 
@@ -147,30 +150,34 @@ export interface OverviewSource {
   // The same for each month of overviewMonths(periods.to).
   monthly: Array<{ month: string; from: string; to: string; entries: ReportEntry[] }>;
   empty: boolean;
+  // The chart the income statement is read under (the entity's books on the period's last day); TT133 when left out.
+  regime?: StatementsRegime;
 }
 
 // Only the lines the overview reads: if the statement mapping changes a code, this fails loudly rather than reading 0.
 const NEEDED_B01 = ['110', '131', '311'];
-const NEEDED_B02 = ['10', '21', '31', '50'];
 
 export function buildOverview(source: OverviewSource): FinanceOverview {
   const { periods, legalEntityId } = source;
   for (const code of NEEDED_B01) if (!B01_LINES.some((d) => d.code === code)) throw new Error(`B01 has no line ${code}`);
-  for (const code of NEEDED_B02) if (!B02_LINES.some((d) => d.code === code)) throw new Error(`B02 has no line ${code}`);
+  const regime = source.regime ?? 'tt133';
+  const defs = b02LinesFor(regime);
+  const roles = B02_ROLES[regime];
+  for (const code of [roles.netRevenue, ...roles.financeRevenue, roles.otherIncome, roles.profit]) if (!defs.some((d) => d.code === code)) throw new Error(`B02 has no line ${code}`);
   const b01Now = buildB01(source.balancesNow, legalEntityId, periods.to);
   const b01Before = buildB01(source.balancesBefore, legalEntityId, periods.previousTo);
-  const b02Now = buildB02(source.resultsNow, legalEntityId, periods.from, periods.to);
-  const b02Before = buildB02(source.resultsBefore, legalEntityId, periods.previousFrom, periods.previousTo);
+  const b02Now = buildB02(source.resultsNow, legalEntityId, periods.from, periods.to, 'VND', defs);
+  const b02Before = buildB02(source.resultsBefore, legalEntityId, periods.previousFrom, periods.previousTo, 'VND', defs);
   const inPeriod = (entries: ReportEntry[], from: string, to: string) => entries.filter((e) => e.entryDate >= from && e.entryDate <= to);
   return {
     range: source.range,
     ...periods,
     empty: source.empty,
     cash: overviewFigure(line(b01Now, '110').toFixed(), line(b01Before, '110').toFixed()),
-    profit: overviewFigure(line(b02Now, '50').toFixed(), line(b02Before, '50').toFixed()),
+    profit: overviewFigure(line(b02Now, roles.profit).toFixed(), line(b02Before, roles.profit).toFixed()),
     receivables: overviewFigure(line(b01Now, '131').toFixed(), line(b01Before, '131').toFixed()),
     payables: overviewFigure(line(b01Now, '311').toFixed(), line(b01Before, '311').toFixed()),
-    months: source.monthly.map((m) => overviewMonth(m.month, buildB02(inPeriod(m.entries, m.from, m.to), legalEntityId, m.from, m.to))),
+    months: source.monthly.map((m) => overviewMonth(m.month, buildB02(inPeriod(m.entries, m.from, m.to), legalEntityId, m.from, m.to, 'VND', defs), regime)),
     expenses: expenseMix(inPeriod(source.resultsNow, periods.from, periods.to), inPeriod(source.resultsBefore, periods.previousFrom, periods.previousTo)),
     unmapped: b02Now.unmapped.length,
   };

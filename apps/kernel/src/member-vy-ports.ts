@@ -142,6 +142,8 @@ export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_T
           return generateMeetingAssigneeText(config, prompt, Math.min(timeoutMs, ASSIGNEE_TIMEOUT_MS));
         case 'meetings.brief':
           return generateMeetingBriefText(config, prompt, Math.min(timeoutMs, BRIEF_TIMEOUT_MS));
+        case 'meetings.brief_daily':
+          return generateMeetingBriefText(config, prompt, Math.min(timeoutMs, BRIEF_TIMEOUT_MS), 'meetings.brief_daily');
         case 'meetings.chapters':
           return generateMeetingChaptersText(config, prompt, Math.min(timeoutMs, CHAPTERS_TIMEOUT_MS));
         case 'meetings.title':
@@ -1815,6 +1817,40 @@ export async function runMeetingBrief(deps: MeetingBriefDeps, orgId: string, act
   } finally {
     ticket.release();
   }
+}
+
+export type MeetingsBriefWriteResult =
+  | { sentences: readonly string[]; dropped: number; errorCode?: undefined }
+  | { errorCode: string };
+
+export interface MeetingsBriefWriter {
+  writeDailyBrief(
+    member: MemberRef,
+    facts: readonly { kind: 'decision' | 'item' | 'deal'; text: string }[],
+  ): Promise<MeetingsBriefWriteResult>;
+}
+
+/** Member-Vy port wrapper for daily prep lines (#5073): keeps @ludy/agent/member-vy isolated to member-vy-ports.ts. */
+export function createMeetingsBriefWriter(model: ModelPort): MeetingsBriefWriter {
+  return {
+    async writeDailyBrief(member, facts) {
+      try {
+        const result = await withDeadline(
+          writeBrief({ facts, feature: 'meetings.brief_daily' }, bindPorts(member, { model, memory: nothingToRemember, knowledge: noKnowledge })),
+          BRIEF_TIMEOUT_MS,
+        );
+        return {
+          sentences: result.answer.sentences.map((s) => s.text),
+          dropped: result.answer.dropped,
+        };
+      } catch (error: unknown) {
+        if (error instanceof AiBudgetExhaustedError || error instanceof AiMeterMissingError || error instanceof DomainError) {
+          throw error;
+        }
+        return { errorCode: error instanceof SummaryModelError && error.kind === 'timeout' ? 'BRIEF_TIMEOUT' : briefCodeOf(error) };
+      }
+    },
+  };
 }
 
 

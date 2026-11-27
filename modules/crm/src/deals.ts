@@ -92,8 +92,9 @@ export const pipelineStages = defineQuery({
   name: 'crm.stage.list',
   input: z.strictObject({}),
   access: ALL,
-  // Opted in for member-scoped Vy daily briefings (ADR-0049 amendment, #5073).
+  // Opted in for member-scoped Vy daily briefings (ADR-0049 amendment, #5073) and render-time morning briefings (#5080).
   memberVy: { reads: [] },
+  memberBriefing: { reads: [] },
   handler: async (ctx): Promise<PipelineStage[]> => loadStages(ctx),
 });
 
@@ -440,8 +441,9 @@ export const dealGet = defineQuery({
   name: 'crm.deal.get',
   input: zDealRef,
   access: ALL,
-  // Opted in for member-scoped Vy daily briefings (ADR-0049 amendment, #5073).
+  // Opted in for member-scoped Vy daily briefings (ADR-0049 amendment, #5073) and render-time morning briefings (#5080).
   memberVy: { reads: [] },
+  memberBriefing: { reads: [] },
   handler: async (ctx, input): Promise<Deal> => loadView(ctx, input.dealId),
 });
 
@@ -449,8 +451,9 @@ export const dealList = defineQuery({
   name: 'crm.deal.list',
   input: zDealListQuery,
   access: ALL,
-  // Opted in for member-scoped Vy daily briefings (ADR-0049 amendment, #5073).
+  // Opted in for member-scoped Vy daily briefings (ADR-0049 amendment, #5073) and render-time morning briefings (#5080).
   memberVy: { reads: [] },
+  memberBriefing: { reads: [] },
   handler: async (ctx, input): Promise<DealPage> => {
     const limit = input.limit ?? DEAL_PAGE_SIZE;
     let q = base(ctx);

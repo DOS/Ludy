@@ -35,6 +35,8 @@ export type Take = 'debit' | 'credit' | 'netDebit' | 'netCredit' | 'debitTurnove
 
 export interface AccountRule {
   prefixes: readonly string[];
+  // Prefixes the rule leaves out of the accounts `prefixes` match (TT99's line 51 reads 821 but not its deferred-tax account 8212, which line 52 reads). No TT133 rule uses it.
+  exclude?: readonly string[];
   take: Take;
   // -1 for the lines the form marks (*): contra accounts shown as negative amounts.
   sign?: -1;
@@ -163,7 +165,7 @@ interface Bucket {
 }
 
 function matches(rule: AccountRule, accountCode: string): boolean {
-  return rule.prefixes.some((p) => accountCode.startsWith(p));
+  return rule.prefixes.some((p) => accountCode.startsWith(p)) && !(rule.exclude ?? []).some((p) => accountCode.startsWith(p));
 }
 
 function checkCurrency(entries: ReadonlyArray<ReportEntry>, bookCurrency: string): void {
@@ -284,12 +286,20 @@ export function buildB01(
 
 // B02 of one legal entity for the period [from, to] (inclusive), leaving out the year-end closing entries
 // (any line on 911).
-export function buildB02(entries: ReadonlyArray<ReportEntry>, legalEntityId: string, from: string, to: string, bookCurrency = 'VND'): Report {
+// `defs` is the map of the entity's regime (domain/tt99-reports.ts has TT99's); it is TT133's when left out, so every caller that does not name one reads what it always read.
+export function buildB02(
+  entries: ReadonlyArray<ReportEntry>,
+  legalEntityId: string,
+  from: string,
+  to: string,
+  bookCurrency = 'VND',
+  defs: readonly ReportLineDef[] = B02_LINES,
+): Report {
   const inPeriod = ofEntity(entries, legalEntityId, bookCurrency).filter(
     (e) => e.entryDate >= from && e.entryDate <= to && !e.lines.some((l) => l.accountCode.startsWith(CLOSING_ACCOUNT)),
   );
   const activity = buckets(inPeriod, false);
-  const rules = B02_LINES.flatMap((d) => d.rules ?? []);
+  const rules = defs.flatMap((d) => d.rules ?? []);
   const ruleValue = (rule: AccountRule): DecimalValue => {
     let value = money(0);
     for (const b of activity.filter((x) => matches(rule, x.accountCode))) {
@@ -301,7 +311,7 @@ export function buildB02(entries: ReadonlyArray<ReportEntry>, legalEntityId: str
     }
     return value;
   };
-  const lines = evaluate(B02_LINES, ruleValue);
+  const lines = evaluate(defs, ruleValue);
 
   // Activity on a revenue, income or expense account (classes 5 to 8) that no line reads.
   const unmapped: UnmappedBalance[] = activity
