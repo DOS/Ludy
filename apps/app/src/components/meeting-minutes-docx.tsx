@@ -43,16 +43,24 @@ export function MinutesDocxButton({
 }: {
   meetingId: string;
   place: string;
-  originalLanguage?: MeetingLanguage;
-  availableLanguages?: readonly MeetingLanguage[];
-  disabled?: boolean;
+  originalLanguage?: MeetingLanguage | undefined;
+  availableLanguages?: readonly MeetingLanguage[] | undefined;
+  disabled?: boolean | undefined;
 }) {
   const t = useTranslations('meetings.minutes');
+  const tt = useTranslations('meetings.translationTargets');
   const [failure, setFailure] = useState<string | null>(null);
-  const [selectedLanguage, setSelectedLanguage] = useState<MeetingLanguage>(originalLanguage);
+  const [selection, setSelection] = useState<{ meetingId: string; originalLanguage: MeetingLanguage; language: MeetingLanguage } | null>(null);
   const extraLanguages = availableLanguages.filter((lang) => lang !== originalLanguage);
+  const selectedLanguage =
+    selection !== null && selection.meetingId === meetingId && selection.originalLanguage === originalLanguage
+      ? selection.language
+      : null;
   const activeLanguage: MeetingLanguage =
-    selectedLanguage !== originalLanguage && extraLanguages.includes(selectedLanguage) ? selectedLanguage : originalLanguage;
+    selectedLanguage !== null && selectedLanguage !== originalLanguage && extraLanguages.includes(selectedLanguage)
+      ? selectedLanguage
+      : originalLanguage;
+  const languageNames: Record<MeetingLanguage, string> = { vi: tt('names.vi'), en: tt('names.en') };
   const download = useMutation({
     mutationFn: () =>
       orpc.meetings.minutesDocx.download.call({
@@ -78,10 +86,10 @@ export function MinutesDocxButton({
               variant={activeLanguage === originalLanguage ? 'secondary' : 'outline'}
               aria-pressed={activeLanguage === originalLanguage}
               disabled={download.isPending || disabled}
-              onClick={() => setSelectedLanguage(originalLanguage)}
+              onClick={() => setSelection(null)}
               data-testid="minutes-docx-lang-original"
             >
-              {t('docxOriginal', { lang: originalLanguage.toUpperCase() })}
+              {t('docxOriginal', { lang: languageNames[originalLanguage] })}
             </Button>
             {extraLanguages.map((lang) => (
               <Button
@@ -93,10 +101,10 @@ export function MinutesDocxButton({
                 aria-pressed={activeLanguage === lang}
                 lang={lang}
                 disabled={download.isPending || disabled}
-                onClick={() => setSelectedLanguage(lang)}
+                onClick={() => setSelection({ meetingId, originalLanguage, language: lang })}
                 data-testid={`minutes-docx-lang-${lang}`}
               >
-                {t('docxVersion', { lang: lang.toUpperCase() })}
+                {languageNames[lang]}
               </Button>
             ))}
           </div>

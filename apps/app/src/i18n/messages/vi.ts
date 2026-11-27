@@ -6206,7 +6206,6 @@ export const vi = {
       docx: 'Tải về Word (.docx)',
       docxLanguageLabel: 'Ngôn ngữ tệp Word',
       docxOriginal: 'Bản gốc ({lang})',
-      docxVersion: 'Bản dịch ({lang})',
       printHint: 'Trình duyệt sẽ in trang này. Chọn "Lưu dưới dạng PDF" nếu bạn muốn có tệp.',
       placeLabel: 'Địa điểm họp',
       placeHint: 'Chỉ để in; không được lưu (chỉ người ghi cuộc họp lưu được địa điểm). Bỏ trống thì biên bản chừa dòng chấm để điền tay.',

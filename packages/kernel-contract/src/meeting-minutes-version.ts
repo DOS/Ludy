@@ -14,6 +14,7 @@ export const zMinutesVersionSegment = z.strictObject({
   text: z.string().trim().min(1).max(TRANSLATION_SEGMENT_TEXT_MAX).refine((s) => !HIDDEN.test(s), 'hidden characters'),
 });
 export type MinutesVersionSegment = z.infer<typeof zMinutesVersionSegment>;
+export const zMinutesVersionSegments = z.array(zMinutesVersionSegment).min(1).max(TRANSLATION_SEGMENTS_MAX);
 
 // The recorder's click: the language, the hash of the published original they reviewed it against (a changed original is refused as stale), the run of their Vy it began from when it
 // did (an id for the audit trail; the text is never read from it here) and the text they approved, per segment of the original.
@@ -22,7 +23,7 @@ export const zMinutesVersionPublish = z.strictObject({
   language: zTranslationTarget,
   hash: zTranslationHash,
   runId: zId.optional(),
-  segments: z.array(zMinutesVersionSegment).min(1).max(TRANSLATION_SEGMENTS_MAX),
+  segments: zMinutesVersionSegments,
 });
 export const zMinutesVersionPublished = z.strictObject({ meetingId: zId, language: zTranslationTarget, segments: z.number().int().min(1) });
 export const zMinutesVersionUnpublish = z.strictObject({ meetingId: zId, language: zTranslationTarget });
@@ -33,7 +34,7 @@ export const zMinutesVersionRef = z.strictObject({ meetingId: zId });
 export const zMinutesVersion = z.strictObject({
   language: zTranslationTarget,
   publishedAt: z.string(),
-  segments: z.array(zMinutesVersionSegment).min(1).max(TRANSLATION_SEGMENTS_MAX),
+  segments: zMinutesVersionSegments,
 });
 export type MinutesVersion = z.infer<typeof zMinutesVersion>;
 export const zMinutesVersions = z.strictObject({ meetingId: zId, from: zMeetingLanguage, versions: z.array(zMinutesVersion).max(5) });

@@ -10,7 +10,6 @@
 // MINUTES_NOT_PUBLISHED (409), as the page shows "Bản nháp" and no content. The date, the people and the due dates come from the meeting and code (its start, its readers, the attendee matched, the date
 // parsed), as on the page; names are display names only, never an email address. The place is the one typed on the page, not stored. No model is used and nothing is written.
 import { sql } from 'kysely';
-import { z } from 'zod';
 import {
   parseStoredSections,
   templateSections,
@@ -18,7 +17,7 @@ import {
   zMeetingSummaryTemplate,
   zMinutesDocx,
   zMinutesDocxInput,
-  zMinutesVersionSegment,
+  zMinutesVersionSegments,
   MINUTES_DOCX_MIME,
   type MeetingLanguage,
   type MeetingSummaryTemplate,
@@ -90,7 +89,7 @@ export const minutesDocxDownload = defineQuery({
       if (!version) {
         throw new DomainError('MINUTES_VERSION_NOT_FOUND', 404, 'Chưa có bản dịch biên bản được đăng cho ngôn ngữ này');
       }
-      const parsedSegments = z.array(zMinutesVersionSegment).parse(version.body);
+      const parsedSegments = zMinutesVersionSegments.parse(version.body);
       versionSegments = new Map(parsedSegments.map((s) => [s.key, s.text]));
     }
 

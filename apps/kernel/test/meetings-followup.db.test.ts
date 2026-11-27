@@ -264,6 +264,9 @@ suite('the follow-up email of a meeting (#2590)', () => {
     // Falls back to stage 'draft' when nothing is published; excludes internal org member suggestions on draft stage.
     const draft = await query<FollowupDraft>('recorder', 'meetings.followup.draft', { meetingId: m });
     expect(draft).toMatchObject({ meetingId: m, stage: 'draft', hasPublished: false, hasDraft: true });
+    // Asking for a translated version on a draft-only meeting fails closed instead of falling back to draft.
+    expect(await refuses(query('recorder', 'meetings.followup.draft', { meetingId: m, versionLanguage: 'en' }))).toBe('NO_PUBLISHED_SUMMARY');
+    expect(await refuses(query('recorder', 'meetings.followup.draft', { meetingId: m, stage: 'draft', versionLanguage: 'en' }))).toBe('MINUTES_VERSION_STAGE');
     expect(draft.facts).toEqual({
       summary: 'Thảo luận gói thử 1 tháng.',
       decisions: ['Chốt bản nháp'],

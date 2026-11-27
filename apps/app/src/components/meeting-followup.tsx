@@ -81,15 +81,15 @@ export function FollowupForm({
   onReload,
 }: {
   draft: FollowupDraft;
-  noteStatus?: FollowupNoteStatus | null;
-  noteStatusPending?: boolean;
-  initialStyle?: FollowupStyle;
-  versionLanguage?: MeetingLanguage;
-  onStageChange?: (stage: FollowupStage) => void;
-  onVersionLanguageChange?: (language: MeetingLanguage | undefined) => void;
-  onStyleChange?: (style: FollowupStyle) => void;
+  noteStatus?: FollowupNoteStatus | null | undefined;
+  noteStatusPending?: boolean | undefined;
+  initialStyle?: FollowupStyle | undefined;
+  versionLanguage?: MeetingLanguage | undefined;
+  onStageChange?: ((stage: FollowupStage) => void) | undefined;
+  onVersionLanguageChange?: ((language: MeetingLanguage | undefined) => void) | undefined;
+  onStyleChange?: ((style: FollowupStyle) => void) | undefined;
   onSent: (queued: number) => void;
-  onReload?: () => void;
+  onReload?: (() => void) | undefined;
 }) {
   const t = useTranslations('meetings.followup');
   const tt = useTranslations('meetings.translationTargets');
@@ -662,7 +662,9 @@ export function stageAfterLoadError(choice: FollowupStage | undefined, error: un
  */
 export function versionAfterLoadError(choice: MeetingLanguage | undefined, error: unknown): MeetingLanguage | undefined {
   const code = (error as { code?: string } | null)?.code;
-  return choice !== undefined && (code === 'MINUTES_VERSION_NOT_FOUND' || code === 'MINUTES_VERSION_STAGE') ? undefined : choice;
+  return choice !== undefined && (code === 'MINUTES_VERSION_NOT_FOUND' || code === 'MINUTES_VERSION_STAGE' || code === 'NO_PUBLISHED_SUMMARY')
+    ? undefined
+    : choice;
 }
 
 function FollowupBody({ meetingId, onSent }: { meetingId: string; onSent: (queued: number) => void }) {

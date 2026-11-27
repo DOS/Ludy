@@ -9,7 +9,6 @@
 // The facts are rebuilt from the chosen stage at send time (refusing STALE_FOLLOWUP if edited or published since), and every text is cleaned and checked in code.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import { z } from 'zod';
 import type { MemberRole } from '@ludy/db';
 import {
   FOLLOWUP_CLOSING_MAX,
@@ -32,7 +31,7 @@ import {
   zFollowupNoteStatus,
   zFollowupSend,
   zMeetingRef,
-  zMinutesVersionSegment,
+  zMinutesVersionSegments,
   type FollowupDraft,
   type FollowupFacts,
   type FollowupMail,
@@ -121,7 +120,7 @@ async function stageFacts(
   orgId: string,
   meetingId: string,
   stage: FollowupStage,
-  opts?: { versionLanguage?: Lang; originalLang?: Lang; missingVersionAsStale?: boolean },
+  opts?: { versionLanguage?: Lang | undefined; originalLang?: Lang | undefined; missingVersionAsStale?: boolean | undefined },
 ): Promise<StageFacts | null> {
   const result = await trx
     .selectFrom('ludy_meetings.meeting_result')
@@ -163,7 +162,7 @@ async function stageFacts(
       if (opts.missingVersionAsStale) throw staleFollowup();
       throw versionNotFound();
     }
-    const parsedSegments = z.array(zMinutesVersionSegment).parse(version.body);
+    const parsedSegments = zMinutesVersionSegments.parse(version.body);
     const byKey = new Map(parsedSegments.map((s) => [s.key, s.text]));
     const facts: FollowupFacts = {
       summary: byKey.get('summary') ?? '',
@@ -216,8 +215,8 @@ async function resolveStageFacts(
   trx: Trx,
   orgId: string,
   meetingId: string,
-  requested?: FollowupStage,
-  versionLanguage?: Lang,
+  requested?: FollowupStage | undefined,
+  versionLanguage?: Lang | undefined,
   originalLang: Lang = 'vi',
 ): Promise<StageFacts> {
   if (requested === 'published') {
@@ -233,7 +232,9 @@ async function resolveStageFacts(
   }
   const pub = await stageFacts(trx, orgId, meetingId, 'published', { versionLanguage, originalLang });
   if (pub) return pub;
-  const draft = await stageFacts(trx, orgId, meetingId, 'draft', { versionLanguage, originalLang });
+  // Published minutes_version never falls back silently to an unpublished draft.
+  if (versionLanguage !== undefined) throw noSummary();
+  const draft = await stageFacts(trx, orgId, meetingId, 'draft', { originalLang });
   if (draft) return draft;
   throw noSummary();
 }

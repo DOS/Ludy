@@ -176,6 +176,7 @@ describe('the stage and version the dialog asks for after a failed load (#4479, 
   it('resets versionLanguage when the published version is removed or stage falls back to draft', () => {
     expect(versionAfterLoadError('en', { code: 'MINUTES_VERSION_NOT_FOUND' })).toBeUndefined();
     expect(versionAfterLoadError('en', { code: 'MINUTES_VERSION_STAGE' })).toBeUndefined();
+    expect(versionAfterLoadError('en', { code: 'NO_PUBLISHED_SUMMARY' })).toBeUndefined();
     expect(versionAfterLoadError('en', { code: 'FORBIDDEN' })).toBe('en');
     expect(versionAfterLoadError(undefined, { code: 'MINUTES_VERSION_NOT_FOUND' })).toBeUndefined();
   });

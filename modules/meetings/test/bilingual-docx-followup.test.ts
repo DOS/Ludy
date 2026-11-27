@@ -9,6 +9,7 @@ import {
   zFollowupSend,
   zFollowupWordingAsk,
   zMinutesDocxInput,
+  zMinutesVersionSegments,
 } from '@ludy/kernel-contract';
 import { followupFixedWords } from '../src/followup.ts';
 
@@ -24,6 +25,8 @@ describe('bilingual docx and follow-up schemas (#5225)', () => {
     });
     expect(zMinutesDocxInput.safeParse({ meetingId: MEETING_ID, language: 'zh' }).success).toBe(false);
     expect(zMinutesDocxInput.safeParse({ meetingId: MEETING_ID, language: 'fr' }).success).toBe(false);
+    expect(zMinutesVersionSegments.parse([{ key: 'summary', text: 'Agreed.' }])).toEqual([{ key: 'summary', text: 'Agreed.' }]);
+    expect(zMinutesVersionSegments.safeParse([]).success).toBe(false);
   });
 
   it('accepts optional versionLanguage on follow-up asks and availableVersions on draft', () => {

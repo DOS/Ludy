@@ -6208,7 +6208,6 @@ export const en = {
       docx: 'Download as Word (.docx)',
       docxLanguageLabel: 'Word file language',
       docxOriginal: 'Original ({lang})',
-      docxVersion: 'Translated ({lang})',
       printHint: 'Your browser prints this page. Choose "Save as PDF" if you want a file.',
       placeLabel: 'Meeting place',
       placeHint: 'For printing only; not saved (only the meeting recorder can save a place). Leave it empty to print a dotted line to fill in by hand.',

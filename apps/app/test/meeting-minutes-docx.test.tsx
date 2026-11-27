@@ -120,8 +120,8 @@ describe('the button', () => {
     expect(html).toContain('data-testid="minutes-docx-language"');
     expect(html).toContain('data-testid="minutes-docx-lang-original"');
     expect(html).toContain('data-testid="minutes-docx-lang-en"');
-    expect(html).toContain('Original (VI)');
-    expect(html).toContain('Translated (EN)');
+    expect(html).toContain('Original (Tiếng Việt)');
+    expect(html).toContain('English');
     expect(html).toContain('min-h-11');
 
     client.current.clear();
@@ -131,8 +131,19 @@ describe('the button', () => {
       versions: [{ language: 'en', publishedAt: '2026-11-25T03:00:00.000Z', segments: [{ key: 'summary', text: 'Delivered.' }] }],
     });
     const viHtml = page(results({ published }), 'vi');
-    expect(viHtml).toContain('Bản gốc (VI)');
-    expect(viHtml).toContain('Bản dịch (EN)');
+    expect(viHtml).toContain('Bản gốc (Tiếng Việt)');
+    expect(viHtml).toContain('English');
+
+    client.current.clear();
+    client.current.setQueryData(['meetings', 'minutesVersion', 'get'], {
+      meetingId: 'm1',
+      from: 'en',
+      versions: [{ language: 'vi', publishedAt: '2026-11-25T03:00:00.000Z', segments: [{ key: 'summary', text: 'Đã giao.' }] }],
+    });
+    const enOrigHtml = page(results({ published }), 'en');
+    expect(enOrigHtml).toContain('data-testid="minutes-docx-lang-vi"');
+    expect(enOrigHtml).toContain('Original (English)');
+    expect(enOrigHtml).toContain('Tiếng Việt');
   });
 });
 
