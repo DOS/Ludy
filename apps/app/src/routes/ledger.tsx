@@ -243,6 +243,7 @@ function StatementTable({
   extra,
   lines,
   unmapped,
+  totals = { assets: '200', sources: '500' },
 }: {
   title: string;
   control?: ReactNode;
@@ -250,6 +251,8 @@ function StatementTable({
   extra: ExtraColumn[];
   lines: StatementLine[];
   unmapped: UnmappedRow[];
+  // The codes of total assets and total sources the unbalanced warning of a column names (200 and 500 under TT133, 280 and 440 under TT99).
+  totals?: { assets: string; sources: string };
 }) {
   const t = useTranslations('ledger');
   const f = useFormat();
@@ -263,7 +266,7 @@ function StatementTable({
         <Fragment key={column.head}>
           {column.balanced === false && (
             <Alert className="border-warning/30 bg-warning/10 text-warning" role="status">
-              {t('compareUnbalanced', { column: column.head })}
+              {t('compareUnbalanced', { column: column.head, assets: totals.assets, sources: totals.sources })}
             </Alert>
           )}
           {column.unmapped > 0 && (
@@ -423,6 +426,7 @@ function Statements({ period }: { period: string }) {
         }
         lines={data.b01.lines}
         unmapped={data.b01.unmapped}
+        totals={tt99 ? { assets: '280', sources: '440' } : { assets: '200', sources: '500' }}
       />
       <StatementTable
         title={t('b02Title', { form, from: f.date(data.b02.from), to: f.date(data.b02.to) })}

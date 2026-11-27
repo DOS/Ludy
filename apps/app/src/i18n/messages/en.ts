@@ -10387,7 +10387,7 @@ export const en = {
     compareWith: 'Compare with',
     compareLastYear: 'Same period last year',
     comparePrevious: 'Previous period',
-    compareUnbalanced: 'Column "{column}": total assets (code 200) and total sources (code 500) differ, so the comparison cannot be relied on.',
+    compareUnbalanced: 'Column "{column}": total assets (code {assets}) and total sources (code {sources}) differ, so the comparison cannot be relied on.',
     compareUnmapped: 'Column "{column}" has balances no line reads, so the comparison is incomplete.',
     b01Title: 'Statement of financial position (B01-{form}) at {date}',
     b02Title: 'Income statement (B02-{form}), {from} to {to}',

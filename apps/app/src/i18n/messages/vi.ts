@@ -10384,7 +10384,7 @@ export const vi = {
     compareWith: 'So sánh với',
     compareLastYear: 'Cùng kỳ năm trước',
     comparePrevious: 'Kỳ liền trước',
-    compareUnbalanced: 'Cột "{column}": tổng tài sản (mã 200) và tổng nguồn vốn (mã 500) không bằng nhau, nên số so sánh chưa đáng tin.',
+    compareUnbalanced: 'Cột "{column}": tổng tài sản (mã {assets}) và tổng nguồn vốn (mã {sources}) không bằng nhau, nên số so sánh chưa đáng tin.',
     compareUnmapped: 'Cột "{column}" có số dư chưa được chỉ tiêu nào đọc, nên số liệu so sánh chưa đầy đủ.',
     b01Title: 'Báo cáo tình hình tài chính (B01-{form}) tại ngày {date}',
     b02Title: 'Báo cáo kết quả hoạt động kinh doanh (B02-{form}), từ {from} đến {to}',
