@@ -104,6 +104,47 @@ describe('checkCatchUp (#5130)', () => {
   it('throws CATCH_UP_UNPARSABLE on malformed JSON or missing lines array', () => {
     expect(() => checkCatchUp('not json', SOURCE)).toThrowError(CatchUpError);
     expect(() => checkCatchUp(JSON.stringify({ ok: true }), SOURCE)).toThrowError(CatchUpError);
+    expect(() => checkCatchUp('```xml\n{"lines":[]}\n```', SOURCE)).toThrowError(CatchUpError);
+    expect(() => checkCatchUp('```json\n{"lines":[]}```', SOURCE)).toThrowError(CatchUpError);
+  });
+
+  it('keeps grounded grouped currency amounts while rejecting phone numbers even when cited, and strips valid JSON fences', () => {
+    const phoneDecision = 'Khách liên hệ số 0901234567 hoặc 090.123.4567 hay +84 901 234 567 và 84901234567.';
+    const groupedSource: CatchUpSource = {
+      ...SOURCE,
+      decisions: [
+        'Chốt ngân sách 15.000.000 đ và dự phòng 150.000.000 đ cho quý 4.',
+        phoneDecision,
+      ],
+    };
+    const out = checkCatchUp(
+      `\`\`\`json\n${JSON.stringify({
+        lines: [
+          { text: 'Ngân sách 15.000.000 đ và dự phòng 150.000.000 đ đã được chốt cho quý 4.', cite: { kind: 'decision', index: 1 } },
+          { text: 'Gọi 0901234567 ngay.', cite: { kind: 'decision', index: 2 } },
+          { text: 'Gọi 090.123.4567 ngay.', cite: { kind: 'decision', index: 2 } },
+          { text: 'Nhắn +84 901 234 567 ngay.', cite: { kind: 'decision', index: 2 } },
+          { text: 'Số 84901234567 để xác nhận.', cite: { kind: 'decision', index: 2 } },
+        ],
+      })}\n\`\`\``,
+      groupedSource,
+    );
+    expect(out.lines).toEqual([
+      { text: 'Ngân sách 15.000.000 đ và dự phòng 150.000.000 đ đã được chốt cho quý 4.', cite: { kind: 'decision', index: 1 } },
+    ]);
+    expect(out.dropped).toBe(4);
+
+    const upperFence = checkCatchUp(
+      '```JSON\r\n{"lines":[{"text":"Ngân sách 15.000.000 đ đã chốt.","cite":{"kind":"decision","index":1}}]}\r\n```',
+      groupedSource,
+    );
+    expect(upperFence.lines).toHaveLength(1);
+
+    const bareFence = checkCatchUp(
+      '```\n{"lines":[{"text":"Ngân sách 150.000.000 đ đã chốt.","cite":{"kind":"decision","index":1}}]}\n```',
+      groupedSource,
+    );
+    expect(bareFence.lines).toHaveLength(1);
   });
 
   it('runs writeCatchUp under meetings.catch_up with nonce tags and escapes injection fences', async () => {

@@ -13,7 +13,8 @@ import {
 } from '../injection-guards.ts';
 import { privateText, revealPrivateText } from '../private-text.ts';
 import { foldTitleText } from './meeting-chapters.ts';
-import { hasContact, numbersIn } from './meeting-summary.ts';
+import { numbersIn } from './meeting-summary.ts';
+import { contactsIn } from './meeting-translation.ts';
 import type { BoundPorts } from './ports.ts';
 import { runFeature } from './run-feature.ts';
 
@@ -117,10 +118,26 @@ function numbersGrounded(text: string, citedText: string): boolean {
   return true;
 }
 
+const GROUPED_AMOUNT_RE = /(?<![\d+.])[1-9]\d{0,2}(?:\.\d{3}){2,}(?![\d.])/g;
+
+function hasCatchUpContact(text: string): boolean {
+  const lower = text.toLowerCase();
+  if (lower.includes('http://') || lower.includes('https://') || lower.includes('www.')) return true;
+  if (hasObfuscatedContactOrLink(text)) return true;
+  const withoutAmounts = text.replace(GROUPED_AMOUNT_RE, ' ');
+  return contactsIn(withoutAmounts).size > 0;
+}
+
 function stripJsonFence(raw: string): string {
   const trimmed = raw.trim();
-  const fenced = /^```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```$/i.exec(trimmed);
-  return fenced ? fenced[1]!.trim() : trimmed;
+  if (!trimmed.startsWith('```') || !trimmed.endsWith('```')) return trimmed;
+  const firstBreak = trimmed.indexOf('\n');
+  if (firstBreak === -1) return trimmed;
+  const opening = trimmed.slice(3, firstBreak).trim().toLowerCase();
+  if (opening !== '' && opening !== 'json') return trimmed;
+  const bodyWithTrailingBreak = trimmed.slice(firstBreak + 1, -3);
+  if (!bodyWithTrailingBreak.endsWith('\n')) return trimmed;
+  return bodyWithTrailingBreak.trim();
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -128,7 +145,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** Parses and validates Vy's catch-up lines against published decisions and action items. */
-export function checkCatchUp(raw: string, input: Pick<CatchUpSource, 'decisions' | 'items'>): CatchUpChecked {
+export function checkCatchUp(
+  raw: string,
+  input: { decisions: readonly string[]; items: ReadonlyArray<{ id: string; title: string; who: string; when: string }> },
+): CatchUpChecked {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripJsonFence(raw));
@@ -196,10 +216,8 @@ export function checkCatchUp(raw: string, input: Pick<CatchUpSource, 'decisions'
     const citedHasMoneyScale = hasUngroundedMoneyOrScaleWords(citedText) || hasUngroundedMoneyOrScaleWords(normCited);
     const lineHasMoneyScale = hasUngroundedMoneyOrScaleWords(text) || hasUngroundedMoneyOrScaleWords(normText);
     if (
-      hasContact(text) ||
-      hasContact(normText) ||
-      hasObfuscatedContactOrLink(text) ||
-      hasObfuscatedContactOrLink(normText) ||
+      hasCatchUpContact(text) ||
+      hasCatchUpContact(normText) ||
       hasAutonomousActionDirective(text) ||
       hasAutonomousActionDirective(normText) ||
       hasPromptMarkupLeak(text) ||
