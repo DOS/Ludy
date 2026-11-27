@@ -402,7 +402,7 @@ function Statements({ period }: { period: string }) {
       {exportXlsx.error && <ErrorText>{errorMessage(exportXlsx.error)}</ErrorText>}
       {data.regime === 'tt99' && (
         <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
-          <strong>{t('statementsB01Draft')}</strong> {t('statementsTt99')}
+          <strong>B01: {t('statementsB01Draft')}.</strong> {t('statementsTt99')}
         </Alert>
       )}
       {data.mixedCharts === true && (
