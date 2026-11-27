@@ -126,6 +126,8 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   // #4993 (CRM SG1): per-member seen marks on contact attention items (step 0).
   'crove_crm.party_attention_seen',
+  // #4988 (TC1): org-scoped tax-code lookup cache with 24h hit / 1h not-found TTL (step 0).
+  'crove_kernel.tax_lookup_cache',
   // #4991 (PM1 step 0): per-member pre-meeting facts drafts scoped to a user + contact.
   'crove_meetings.meeting_brief_draft',
   // #5073 / #5080 (ADR-0049 #5108): short-lived 36h prep lines for opted-in members, strict user + member_briefing RLS.
@@ -722,6 +724,8 @@ const socialShortLinkRows = (o: { id: string; owner: string }) => {
 let portalListYear = 2000;
 // A tax obligation is marked done once per period (#921): each row its own year.
 let taxObligationYear = 2000;
+// A cached tax-code lookup is unique per org (#4988): each factory row takes a distinct 10-digit tax code.
+let taxLookupCodeSeq = 1;
 // A legal entity's books take a regime from the first day of a fiscal year (#1403): each row its own year.
 let legalEntityBooksYear = 2000;
 // Active bookings of one member never overlap (#1313): each calendar event row its own hour.
@@ -3530,6 +3534,20 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, task_id: task, body: 'RLS matrix', author_type: 'user' },
       };
     },
+  },
+  // Cached tax-code lookup entry per org (#4988), storing hit/not-found expiry and never household records.
+  'crove_kernel.tax_lookup_cache': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        tax_code: String(100_000_000 + taxLookupCodeSeq++).padStart(10, '0'),
+        found: true,
+        name: 'RLS matrix company',
+        address: 'RLS matrix address',
+        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      },
+    }),
   },
   // A tax obligation of the org's calendar marked done for a period (#921), one per obligation and period.
   'crove_kernel.tax_obligation_done': {
