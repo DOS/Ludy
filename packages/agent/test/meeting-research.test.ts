@@ -76,6 +76,15 @@ describe('meeting research prompt and taint checks (#4992)', () => {
       }),
     ).toEqual({ kind: 'none', code: 'FIGURES' });
 
+    // Invented ISO date outside facts and page
+    expect(
+      checkMeetingResearch(FACTS, {
+        summary: 'Công ty Hoa Mai dự kiến chốt ngày 2026-11-29 cho Gói phần mềm CRM 2026.',
+        points: ['Chốt báo giá BG-001.', 'Nhắc hóa đơn quá hạn 5.000.000 VND.'],
+        websiteQuotes: [],
+      }),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
     // Link or @handle refused even if present on an adversarial page
     expect(
       checkMeetingResearch(

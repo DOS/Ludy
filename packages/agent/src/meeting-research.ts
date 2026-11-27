@@ -280,16 +280,20 @@ function addDateFigures(set: Set<string>, days: Set<string>, iso: string | null)
   days.add(`${month}-${day}`);
 }
 
+// Match full dates (YYYY-MM-DD, DD/MM/YYYY) before short DD/MM so suffixes like "11-30" inside "2026-11-30" are not re-parsed as DD-MM.
+const DATE_TOKEN_RE =
+  /\b(\d{4})-(\d{2})-(\d{2})\b|\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b|(?<![\d/-])\b(\d{1,2})[/-](\d{1,2})\b(?![\d/-])/g;
+
 function dayKeys(text: string): string[] {
   const keys: string[] = [];
-  for (const m of text.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) {
-    keys.push(`${m[1]!}-${m[2]!}-${m[3]!}`);
-  }
-  for (const m of text.matchAll(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/g)) {
-    keys.push(`${m[3]!}-${m[2]!.padStart(2, '0')}-${m[1]!.padStart(2, '0')}`);
-  }
-  for (const m of text.matchAll(/\b(\d{1,2})[/-](\d{1,2})\b/g)) {
-    keys.push(`${m[2]!.padStart(2, '0')}-${m[1]!.padStart(2, '0')}`);
+  for (const m of text.matchAll(DATE_TOKEN_RE)) {
+    if (m[1] && m[2] && m[3]) {
+      keys.push(`${m[1]}-${m[2]}-${m[3]}`);
+    } else if (m[4] && m[5] && m[6]) {
+      keys.push(`${m[6]}-${m[5].padStart(2, '0')}-${m[4].padStart(2, '0')}`);
+    } else if (m[7] && m[8]) {
+      keys.push(`${m[8].padStart(2, '0')}-${m[7].padStart(2, '0')}`);
+    }
   }
   return keys;
 }
@@ -429,7 +433,11 @@ function extractFactsContext(facts: MeetingResearchFacts, pageText: string | nul
 
   const cleanPage = cleanPageForFigures(pageText);
   if (cleanPage !== null) {
-    for (const d of dayKeys(cleanPage)) days.add(d);
+    for (const d of dayKeys(cleanPage)) {
+      days.add(d);
+      const full = /^\d{4}-(\d{2}-\d{2})$/.exec(d);
+      if (full) days.add(full[1]!);
+    }
     for (const a of amountKeys(cleanPage)) amounts.add(a);
     for (const t of timeKeys(cleanPage)) times.add(t);
     for (const num of pagePlainNumbers(cleanPage)) trusted.add(num);
