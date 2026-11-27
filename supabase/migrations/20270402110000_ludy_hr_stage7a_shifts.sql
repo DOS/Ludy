@@ -406,8 +406,14 @@ CREATE INDEX IF NOT EXISTS shift_swap_request_entity_status_date_idx
 CREATE INDEX IF NOT EXISTS shift_swap_request_requester_idx
   ON ludy_hr.shift_swap_request (org_id, requester_employee_id, work_date DESC);
 
+CREATE INDEX IF NOT EXISTS shift_swap_request_entity_requester_idx
+  ON ludy_hr.shift_swap_request (org_id, legal_entity_id, requester_employee_id, work_date DESC);
+
 CREATE INDEX IF NOT EXISTS shift_swap_request_target_idx
   ON ludy_hr.shift_swap_request (org_id, target_employee_id, work_date DESC);
+
+CREATE INDEX IF NOT EXISTS shift_swap_request_entity_target_idx
+  ON ludy_hr.shift_swap_request (org_id, legal_entity_id, target_employee_id, work_date DESC);
 
 CREATE INDEX IF NOT EXISTS shift_swap_request_entity_req_assign_idx
   ON ludy_hr.shift_swap_request (org_id, legal_entity_id, requester_assignment_id);

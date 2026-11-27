@@ -844,7 +844,6 @@ export const shiftTemplateList = defineQuery({
   name: 'hr.shift.template.list',
   input: zHrShiftTemplateList,
   access: STAFF_ROLES,
-  sensitive: false,
   handler: async (ctx, input: HrShiftTemplateList): Promise<HrShiftTemplateListResult> => {
     const parsed = zHrShiftTemplateList.parse(input);
     const legalEntityId = await resolveEntity(ctx, parsed.legalEntityId);
@@ -1873,7 +1872,6 @@ export const shiftSwapApprove = defineCommand({
       requesterEmployeeId: swap.requester_employee_id,
       targetEmployeeId: swap.target_employee_id,
       workDate,
-      noted: parsed.decisionNote !== undefined && parsed.decisionNote !== null && parsed.decisionNote.length > 0,
     });
 
     const [view] = await mapSwapViews(ctx.trx, ctx.orgId, updated.legal_entity_id, [updated]);
@@ -1920,7 +1918,6 @@ export const shiftSwapReject = defineCommand({
       requesterEmployeeId: swap.requester_employee_id,
       targetEmployeeId: swap.target_employee_id,
       workDate: isoDateOnly(updated.work_date),
-      noted: parsed.decisionNote !== undefined && parsed.decisionNote !== null && parsed.decisionNote.length > 0,
     });
 
     const [view] = await mapSwapViews(ctx.trx, ctx.orgId, updated.legal_entity_id, [updated]);
