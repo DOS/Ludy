@@ -11,12 +11,18 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import type { FinanceOverview, FinanceQuarterSummary, HouseholdCnkd, HouseholdProfileView, QuarterSummaryFigure, StockReportRow, VatReport } from '@ludy/kernel-contract';
+import type { FinanceOverview, FinanceQuarterSummary, HouseholdCnkd, HouseholdProfileView, QuarterSummaryFigure, StockReportRow } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { money, sum } from '@ludy/l10n-vn';
 import { financeCommands, financeQueries, type FinancialStatements } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
+
+// The part of the VAT working this file reads (the contract exports its schema, not its type): the indicators of form 01/GTGT and the filed mark.
+interface VatRead {
+  indicators: Array<{ code: string; amount: string }>;
+  filed: unknown;
+}
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -282,7 +288,7 @@ suite('the quarter in plain words (#5183)', () => {
 
   it('matches the VAT working of the quarter and the reminders\' oldest overdue invoice', async () => {
     const s = await summary({ legalEntityId: main });
-    const vat = await rt.query<VatReport>('finance.vat.period', { period: QUARTER, legalEntityId: main }, { actor: asUser(owner), orgId });
+    const vat = await rt.query<VatRead>('finance.vat.period', { period: QUARTER, legalEntityId: main }, { actor: asUser(owner), orgId });
     const indicator = (code: string) => vat.indicators.find((i) => i.code === code)?.amount ?? '0';
     expect(s.vat).toEqual({ output: indicator('35'), input: indicator('24'), difference: money(indicator('35')).minus(indicator('24')).toFixed(), filed: vat.filed !== null });
     // The overdue read is the reminders' own: the same oldest due date as the signal that Vy reads for this customer.
