@@ -189,7 +189,7 @@ suite('the income statement under the entity\'s chart (#5187)', () => {
     expect(s.b01.unmapped).toEqual([]);
     // The statement is read under the TT99 form: its own codes, in the form's order (a total before its parts).
     expect(s.b01.lines[0]).toMatchObject({ code: '100', total: true });
-    expect(s.b01.lines.at(-1)).toMatchObject({ code: '440', total: true });
+    expect(s.b01.lines[s.b01.lines.length - 1]).toMatchObject({ code: '440', total: true });
     // The start-of-year column (31 December 2025) is a TT133 date, so the statement says the charts are mixed.
     expect(s.mixedCharts).toBe(true);
   });

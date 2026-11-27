@@ -7,7 +7,7 @@ import { B01_LINES, B01_LINES_TT99, B01_ROLES, B01_TT133, B01_TT99, b01For, buil
 
 const LE = 'le-b01-tt99';
 const DAY = '2026-12-31';
-type Leg = [account: string, debit: number, credit: number, party?: string];
+type Leg = [account: string, debit: number, credit: number, party?: string | undefined];
 
 function entry(legs: Leg[], date = '2026-06-30'): ReportEntry {
   return {
