@@ -301,12 +301,12 @@ describe('sideTotals and form01Indicators', () => {
 
   it('adds two side totals by rate without losing precision (#3541)', () => {
     const main = sideTotals([
-      { rates: [{ rate: '10', taxable: '9007199254740993', vat: '900719925474099' }], allocated: false },
-      { rates: [{ rate: '5', taxable: '100000', vat: '5000' }], allocated: false },
+      { rates: [{ rate: '10', taxable: '9007199254740993', vat: '900719925474099' }] },
+      { rates: [{ rate: '5', taxable: '100000', vat: '5000' }] },
     ]);
     const supp = sideTotals([
-      { rates: [{ rate: '8', taxable: '200000', vat: '16000' }], allocated: false },
-      { rates: [{ rate: '10', taxable: '2', vat: '1' }], allocated: false },
+      { rates: [{ rate: '8', taxable: '200000', vat: '16000' }] },
+      { rates: [{ rate: '10', taxable: '2', vat: '1' }] },
     ]);
     const combined = addSideTotals(main, supp);
     expect(combined.documents).toBe(4);
