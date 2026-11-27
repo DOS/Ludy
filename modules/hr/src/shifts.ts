@@ -60,7 +60,12 @@ import { money } from '@ludy/l10n-vn';
 import { MANAGERS, resolveEntity, userOf } from './employees.ts';
 import { STAFF_ROLES, resolveSelfEmployee } from './leave-requests.ts';
 import { hrManifest } from './manifest.ts';
-import { isSoleOwnerOrg, loadDepartmentNameMap, loadManagedDepartmentSet } from './stage6b-shared.ts';
+import {
+  isSoleOwnerOrg,
+  loadDepartmentNameMap,
+  loadManagedDepartmentSet,
+  requireStage6bRole,
+} from './stage6b-shared.ts';
 
 export const VN_OFFSET_MS = 7 * 3_600_000;
 export const HOUR_MS = 3_600_000;
@@ -349,6 +354,44 @@ async function loadUnavailableSpans(
   return rows;
 }
 
+async function loadShiftDeptNames(
+  trx: Trx,
+  orgId: string,
+  departmentIds: readonly (string | null | undefined)[],
+): Promise<Map<string, string>> {
+  const unique = [...new Set(departmentIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+  if (unique.length === 0) return new Map();
+  const map = await loadDepartmentNameMap(trx, orgId, unique);
+  const out = new Map<string, string>();
+  for (const [id, info] of map.entries()) {
+    out.set(id, info.name);
+  }
+  return out;
+}
+
+async function loadSwapAssignmentLabels(
+  trx: Trx,
+  orgId: string,
+  legalEntityId: string,
+  assignmentIds: readonly string[],
+): Promise<Map<string, { code: string; name: string }>> {
+  if (assignmentIds.length === 0) return new Map();
+  const { rows } = await sql<{
+    assignment_id: string;
+    shift_template_id: string;
+    shift_code: string;
+    shift_name: string;
+  }>`
+    SELECT assignment_id, shift_template_id, shift_code, shift_name
+      FROM ludy_hr.shift_swap_assignment_labels(
+        ${orgId}::uuid,
+        ${legalEntityId}::uuid,
+        ${[...assignmentIds]}::uuid[]
+      )
+  `.execute(trx);
+  return new Map(rows.map((r) => [r.assignment_id, { code: r.shift_code, name: r.shift_name }]));
+}
+
 async function resolveManagerScope(
   ctx: Parameters<Parameters<typeof defineQuery>[0]['handler']>[0],
   requestedEntityId: string | undefined,
@@ -361,7 +404,8 @@ async function resolveManagerScope(
 }> {
   const callerUserId = userOf(ctx.actor);
   const isAdmin = ctx.role === 'owner' || ctx.role === 'admin';
-  const managedDeptIds = isAdmin ? new Set<string>() : await loadManagedDepartmentSet(ctx.trx, ctx.orgId, callerUserId);
+  const managedDepts = isAdmin ? [] : await loadManagedDepartmentSet(ctx.trx, ctx.orgId, callerUserId);
+  const managedDeptIds = new Set(managedDepts.map((d) => d.id));
 
   if (!isAdmin && managedDeptIds.size === 0) {
     throw forbiddenRosterError();
@@ -424,12 +468,18 @@ async function mapAssignmentViews(
     note: string | null;
     updated_at: Date | string;
   }[],
+  preloaded?: {
+    visibleEmps?: VisibleShiftEmployee[];
+    deptNames?: Map<string, string>;
+  },
 ): Promise<HrShiftAssignmentView[]> {
   if (rows.length === 0) return [];
   const tplIds = [...new Set(rows.map((r) => r.shift_template_id))];
   const [visibleEmps, deptNames, tplRows] = await Promise.all([
-    loadVisibleEmployees(trx, orgId, legalEntityId),
-    loadDepartmentNameMap(trx, orgId),
+    preloaded?.visibleEmps ? Promise.resolve(preloaded.visibleEmps) : loadVisibleEmployees(trx, orgId, legalEntityId),
+    preloaded?.deptNames
+      ? Promise.resolve(preloaded.deptNames)
+      : loadShiftDeptNames(trx, orgId, rows.map((r) => r.department_id)),
     trx
       .selectFrom('ludy_hr.shift_template')
       .select([
@@ -498,6 +548,10 @@ async function mapSwapViews(
     created_at: Date | string;
     updated_at: Date | string;
   }[],
+  preloaded?: {
+    visibleEmps?: VisibleShiftEmployee[];
+    deptNames?: Map<string, string>;
+  },
 ): Promise<HrShiftSwapView[]> {
   if (rows.length === 0) return [];
   const assignmentIds = [
@@ -508,33 +562,15 @@ async function mapSwapViews(
     ),
   ];
 
-  const [visibleEmps, deptNames, assignRows] = await Promise.all([
-    loadVisibleEmployees(trx, orgId, legalEntityId),
-    loadDepartmentNameMap(trx, orgId),
-    assignmentIds.length > 0
-      ? trx
-          .selectFrom('ludy_hr.shift_assignment')
-          .select(['id', 'shift_template_id'])
-          .where('org_id', '=', orgId)
-          .where('id', 'in', assignmentIds)
-          .execute()
-      : Promise.resolve([]),
+  const [visibleEmps, deptNames, tplByAssignId] = await Promise.all([
+    preloaded?.visibleEmps ? Promise.resolve(preloaded.visibleEmps) : loadVisibleEmployees(trx, orgId, legalEntityId),
+    preloaded?.deptNames
+      ? Promise.resolve(preloaded.deptNames)
+      : loadShiftDeptNames(trx, orgId, rows.map((r) => r.department_id)),
+    loadSwapAssignmentLabels(trx, orgId, legalEntityId, assignmentIds),
   ]);
 
-  const tplIds = [...new Set(assignRows.map((a) => a.shift_template_id))];
-  const tplRows =
-    tplIds.length > 0
-      ? await trx
-          .selectFrom('ludy_hr.shift_template')
-          .select(['id', 'code', 'name'])
-          .where('org_id', '=', orgId)
-          .where('id', 'in', tplIds)
-          .execute()
-      : [];
-
   const empNameById = new Map(visibleEmps.map((e) => [e.id, e.display_name]));
-  const tplById = new Map(tplRows.map((t) => [t.id, t]));
-  const tplByAssignId = new Map(assignRows.map((a) => [a.id, tplById.get(a.shift_template_id) ?? null]));
 
   return rows.map((row) => {
     const reqTpl = tplByAssignId.get(row.requester_assignment_id) ?? null;
@@ -845,7 +881,8 @@ export const shiftTemplateCreate = defineCommand({
   sideEffect: 'internal',
   access: MANAGERS,
   permission: 'hr.payroll.run',
-  target: (input: HrShiftTemplateCreate) => ({ type: 'hr.shift_template', id: input.legalEntityId ?? 'default' }),
+  target: (input: HrShiftTemplateCreate) =>
+    input.legalEntityId ? { type: 'hr.shift_template', id: input.legalEntityId } : null,
   writes: [
     tableWrite(hrManifest.tables, 'ludy_hr', 'shift_template', [
       'org_id',
@@ -1043,7 +1080,8 @@ export const shiftTemplateSeedDefaults = defineCommand({
   sideEffect: 'internal',
   access: MANAGERS,
   permission: 'hr.payroll.run',
-  target: (input: HrShiftTemplateSeedDefaults) => ({ type: 'hr.shift_template', id: input.legalEntityId ?? 'default' }),
+  target: (input: HrShiftTemplateSeedDefaults) =>
+    input.legalEntityId ? { type: 'hr.shift_template', id: input.legalEntityId } : null,
   writes: [
     tableWrite(hrManifest.tables, 'ludy_hr', 'shift_template', [
       'org_id',
@@ -1139,7 +1177,7 @@ export const shiftRosterGet = defineQuery({
     const weekStart = parsed.weekStart ?? mondayOfLocalWeek(today);
     const weekEnd = addDaysLocalDate(weekStart, 6);
 
-    const [tplRows, visibleEmps, deptNames, assignRows, pendingSwaps] = await Promise.all([
+    const [tplRows, visibleEmps, assignRows, pendingSwaps] = await Promise.all([
       ctx.trx
         .selectFrom('ludy_hr.shift_template')
         .selectAll()
@@ -1150,7 +1188,6 @@ export const shiftRosterGet = defineQuery({
         .orderBy('code', 'asc')
         .execute(),
       loadVisibleEmployees(ctx.trx, ctx.orgId, legalEntityId),
-      loadDepartmentNameMap(ctx.trx, ctx.orgId),
       (() => {
         let q = ctx.trx
           .selectFrom('ludy_hr.shift_assignment')
@@ -1182,13 +1219,21 @@ export const shiftRosterGet = defineQuery({
       })(),
     ]);
 
+    const deptNames = await loadShiftDeptNames(ctx.trx, ctx.orgId, [
+      ...visibleEmps.map((e) => e.department_id),
+      ...assignRows.map((a) => a.department_id),
+    ]);
+
     const scopedEmps = visibleEmps.filter((e) => {
       if (parsed.departmentId) return e.department_id === parsed.departmentId;
       if (isAdmin) return true;
       return e.department_id !== null && managedDeptIds.has(e.department_id);
     });
 
-    const assignments = await mapAssignmentViews(ctx.trx, ctx.orgId, legalEntityId, assignRows);
+    const assignments = await mapAssignmentViews(ctx.trx, ctx.orgId, legalEntityId, assignRows, {
+      visibleEmps,
+      deptNames,
+    });
 
     return {
       legalEntityId,
@@ -1322,6 +1367,16 @@ export const shiftAssignmentDelete = defineCommand({
     const isAdmin = ctx.role === 'owner' || ctx.role === 'admin';
     const parsed = zHrShiftAssignmentDelete.parse(input);
 
+    const preExisting = await ctx.trx
+      .selectFrom('ludy_hr.shift_assignment')
+      .select(['id', 'employee_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', parsed.assignmentId)
+      .executeTakeFirst();
+    if (!preExisting) throw assignmentNotFound();
+
+    await lockShiftEmployee(ctx.trx, ctx.orgId, preExisting.employee_id);
+
     const existing = await ctx.trx
       .selectFrom('ludy_hr.shift_assignment')
       .selectAll()
@@ -1331,14 +1386,18 @@ export const shiftAssignmentDelete = defineCommand({
       .executeTakeFirst();
     if (!existing) throw assignmentNotFound();
 
-    await lockShiftEmployee(ctx.trx, ctx.orgId, existing.employee_id);
     await assertCanManageDepartment(ctx.trx, ctx.orgId, isAdmin, existing.department_id);
 
     const swapRef = await ctx.trx
       .selectFrom('ludy_hr.shift_swap_request')
       .select(['id', 'status'])
       .where('org_id', '=', ctx.orgId)
-      .where('requester_assignment_id', '=', existing.id)
+      .where((eb) =>
+        eb.or([
+          eb('requester_assignment_id', '=', existing.id),
+          eb.and([eb('target_assignment_id', '=', existing.id), eb('status', '=', 'pending')]),
+        ]),
+      )
       .limit(1)
       .executeTakeFirst();
     if (swapRef) {
@@ -1381,7 +1440,7 @@ export const selfShiftsList = defineQuery({
     const weekStart = parsed.weekStart ?? mondayOfLocalWeek(today);
     const weekEnd = addDaysLocalDate(weekStart, 6);
 
-    const [assignRows, swapRows, visibleEmps, deptNames] = await Promise.all([
+    const [assignRows, swapRows, visibleEmps] = await Promise.all([
       ctx.trx
         .selectFrom('ludy_hr.shift_assignment')
         .selectAll()
@@ -1402,12 +1461,17 @@ export const selfShiftsList = defineQuery({
       emp.status === 'active'
         ? loadVisibleEmployees(ctx.trx, ctx.orgId, emp.legal_entity_id)
         : Promise.resolve([]),
-      loadDepartmentNameMap(ctx.trx, ctx.orgId),
+    ]);
+
+    const deptNames = await loadShiftDeptNames(ctx.trx, ctx.orgId, [
+      ...visibleEmps.map((e) => e.department_id),
+      ...assignRows.map((a) => a.department_id),
+      ...swapRows.map((s) => s.department_id),
     ]);
 
     const [assignments, swaps] = await Promise.all([
-      mapAssignmentViews(ctx.trx, ctx.orgId, emp.legal_entity_id, assignRows),
-      mapSwapViews(ctx.trx, ctx.orgId, emp.legal_entity_id, swapRows),
+      mapAssignmentViews(ctx.trx, ctx.orgId, emp.legal_entity_id, assignRows, { visibleEmps, deptNames }),
+      mapSwapViews(ctx.trx, ctx.orgId, emp.legal_entity_id, swapRows, { visibleEmps, deptNames }),
     ]);
 
     const peerCandidates = visibleEmps
@@ -1496,15 +1560,16 @@ export const selfShiftSwapSubmit = defineCommand({
     }
 
     const workDate = isoDateOnly(reqAssignment.work_date);
-    const tgtAssignment = await ctx.trx
-      .selectFrom('ludy_hr.shift_assignment')
-      .selectAll()
-      .where('org_id', '=', ctx.orgId)
-      .where('legal_entity_id', '=', reqEmp.legal_entity_id)
-      .where('employee_id', '=', tgtEmp.id)
-      .where('work_date', '=', workDate)
-      .forUpdate()
-      .executeTakeFirst();
+    const { rows: tgtRows } = await sql<{ assignment_id: string; shift_template_id: string }>`
+      SELECT assignment_id, shift_template_id
+        FROM ludy_hr.resolve_self_shift_swap_target(
+          ${ctx.orgId}::uuid,
+          ${reqEmp.legal_entity_id}::uuid,
+          ${tgtEmp.id}::uuid,
+          ${workDate}::date
+        )
+    `.execute(ctx.trx);
+    const tgtAssignment = tgtRows[0];
 
     if (tgtAssignment && tgtAssignment.shift_template_id === reqAssignment.shift_template_id) {
       throw new DomainError('HR_SHIFT_SWAP_IDENTICAL_SHIFT', 422, 'Hai nhân viên đang được xếp cùng một mẫu ca');
@@ -1530,7 +1595,7 @@ export const selfShiftSwapSubmit = defineCommand({
         requester_employee_id: reqEmp.id,
         target_employee_id: tgtEmp.id,
         requester_assignment_id: reqAssignment.id,
-        target_assignment_id: tgtAssignment?.id ?? null,
+        target_assignment_id: tgtAssignment?.assignment_id ?? null,
         department_id: reqAssignment.department_id ?? reqEmp.department_id,
         work_date: workDate,
         reason: parsed.reason && parsed.reason.length > 0 ? parsed.reason : null,
@@ -1571,6 +1636,8 @@ export const selfShiftSwapCancel = defineCommand({
       throw new DomainError('HR_SELF_NOT_LINKED', 403, 'Tài khoản của bạn chưa được liên kết với hồ sơ nhân viên nào');
     }
 
+    await lockShiftEmployee(ctx.trx, ctx.orgId, selfEmp.id);
+
     const swap = await ctx.trx
       .selectFrom('ludy_hr.shift_swap_request')
       .selectAll()
@@ -1583,7 +1650,6 @@ export const selfShiftSwapCancel = defineCommand({
       throw new DomainError('FORBIDDEN', 403, 'Chỉ người gửi yêu cầu mới được hủy đơn đổi ca');
     }
 
-    await lockShiftEmployee(ctx.trx, ctx.orgId, selfEmp.id);
     if (swap.status !== 'pending') {
       throw new DomainError('HR_SHIFT_SWAP_NOT_PENDING', 409, 'Chỉ hủy được yêu cầu đổi ca đang chờ duyệt');
     }
@@ -1643,7 +1709,22 @@ async function lockSwapDecisionPair(
   swapId: string,
 ) {
   const callerUserId = userOf(ctx.actor);
-  const isAdmin = ctx.role === 'owner' || ctx.role === 'admin';
+  const role = requireStage6bRole(ctx.role);
+  const isAdmin = role === 'owner' || role === 'admin';
+
+  const swapPre = await ctx.trx
+    .selectFrom('ludy_hr.shift_swap_request')
+    .select(['id', 'requester_employee_id', 'target_employee_id'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', swapId)
+    .executeTakeFirst();
+  if (!swapPre) throw swapNotFound();
+
+  const sortedIds = [swapPre.requester_employee_id, swapPre.target_employee_id].sort();
+  const lockedA = await lockShiftEmployee(ctx.trx, ctx.orgId, sortedIds[0]!);
+  const lockedB = await lockShiftEmployee(ctx.trx, ctx.orgId, sortedIds[1]!);
+  const reqEmp = lockedA.id === swapPre.requester_employee_id ? lockedA : lockedB;
+  const tgtEmp = lockedA.id === swapPre.target_employee_id ? lockedA : lockedB;
 
   const swap = await ctx.trx
     .selectFrom('ludy_hr.shift_swap_request')
@@ -1656,16 +1737,10 @@ async function lockSwapDecisionPair(
 
   await assertCanManageDepartment(ctx.trx, ctx.orgId, isAdmin, swap.department_id);
 
-  const sortedIds = [swap.requester_employee_id, swap.target_employee_id].sort();
-  const lockedA = await lockShiftEmployee(ctx.trx, ctx.orgId, sortedIds[0]!);
-  const lockedB = await lockShiftEmployee(ctx.trx, ctx.orgId, sortedIds[1]!);
-  const reqEmp = lockedA.id === swap.requester_employee_id ? lockedA : lockedB;
-  const tgtEmp = lockedA.id === swap.target_employee_id ? lockedA : lockedB;
-
   const callerInSwap =
     callerUserId === reqEmp.user_id || callerUserId === tgtEmp.user_id || callerUserId === swap.created_by;
   if (callerInSwap) {
-    const soleOwner = await isSoleOwnerOrg(ctx.trx, ctx.orgId);
+    const soleOwner = await isSoleOwnerOrg(ctx.trx, ctx.orgId, callerUserId, role);
     if (!soleOwner) {
       throw new DomainError('FORBIDDEN', 403, 'Không thể tự duyệt hoặc từ chối yêu cầu đổi ca liên quan tới bản thân');
     }
@@ -1726,9 +1801,27 @@ export const shiftSwapApprove = defineCommand({
       .forUpdate()
       .executeTakeFirst();
 
+    const neededTplIds =
+      swap.target_assignment_id && currentTgtAssign
+        ? [...new Set([reqAssignment.shift_template_id, currentTgtAssign.shift_template_id])]
+        : [reqAssignment.shift_template_id];
+    const usedTpls = await ctx.trx
+      .selectFrom('ludy_hr.shift_template')
+      .select(['id', 'archived_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('legal_entity_id', '=', swap.legal_entity_id)
+      .where('id', 'in', neededTplIds)
+      .execute();
+    if (usedTpls.length !== neededTplIds.length || usedTpls.some((t) => t.archived_at !== null)) {
+      throw new DomainError('HR_SHIFT_TEMPLATE_ARCHIVED', 409, 'Không thể duyệt đổi ca vì mẫu ca đã bị lưu trữ');
+    }
+
     if (swap.target_assignment_id) {
       if (!currentTgtAssign || currentTgtAssign.id !== swap.target_assignment_id) {
         throw new DomainError('HR_SHIFT_SWAP_ASSIGNMENT_CHANGED', 409, 'Lịch ca của đồng nghiệp nhận đổi đã thay đổi');
+      }
+      if (currentTgtAssign.shift_template_id === reqAssignment.shift_template_id) {
+        throw new DomainError('HR_SHIFT_SWAP_IDENTICAL_SHIFT', 422, 'Hai nhân viên đang được xếp cùng một mẫu ca');
       }
       if (!isAdmin && currentTgtAssign.department_id !== swap.department_id) {
         await assertCanManageDepartment(ctx.trx, ctx.orgId, false, currentTgtAssign.department_id);
@@ -1867,9 +1960,8 @@ export const shiftCoverageRead = defineQuery({
     const extStart = addDaysLocalDate(weekStart, -1);
     const extEnd = addDaysLocalDate(weekEnd, 1);
 
-    const [visibleEmps, deptNames, assignRows, unavailRows] = await Promise.all([
+    const [visibleEmps, assignRows, unavailRows] = await Promise.all([
       loadVisibleEmployees(ctx.trx, ctx.orgId, legalEntityId),
-      loadDepartmentNameMap(ctx.trx, ctx.orgId),
       (() => {
         let q = ctx.trx
           .selectFrom('ludy_hr.shift_assignment')
@@ -1888,13 +1980,21 @@ export const shiftCoverageRead = defineQuery({
       loadUnavailableSpans(ctx.trx, ctx.orgId, legalEntityId, weekStart, weekEnd),
     ]);
 
+    const deptNames = await loadShiftDeptNames(ctx.trx, ctx.orgId, [
+      ...visibleEmps.map((e) => e.department_id),
+      ...assignRows.map((a) => a.department_id),
+    ]);
+
     const scopedEmps = visibleEmps.filter((e) => {
       if (parsed.departmentId) return e.department_id === parsed.departmentId;
       if (isAdmin) return true;
       return e.department_id !== null && managedDeptIds.has(e.department_id);
     });
 
-    const mappedAssignments = await mapAssignmentViews(ctx.trx, ctx.orgId, legalEntityId, assignRows);
+    const mappedAssignments = await mapAssignmentViews(ctx.trx, ctx.orgId, legalEntityId, assignRows, {
+      visibleEmps,
+      deptNames,
+    });
     const scopedEmpIds = new Set(scopedEmps.map((e) => e.id));
 
     const analysis = analyzeWeeklyShiftCoverage({

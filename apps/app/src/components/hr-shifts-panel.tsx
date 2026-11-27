@@ -702,6 +702,7 @@ export function HrShiftsPanel({
                     <Input
                       value={decisionNotes[s.id] ?? ''}
                       onChange={(e) => setDecisionNotes((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                      aria-label={t('decisionNotePlaceholder')}
                       placeholder={t('decisionNotePlaceholder')}
                       maxLength={1000}
                       className={`max-w-xs ${PHONE_TARGET}`}

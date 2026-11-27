@@ -317,6 +317,18 @@ suite('HR Stage 7A shifts, weekly roster, 1-step swaps, night rollup & Ly covera
       reason: 'Đổi sang ca chiều 2027-04-05',
     });
     expect(swapAB.targetAssignmentId).toBe(assignB.id);
+    expect(swapAB.requesterShiftCode).toBe('CA_SANG');
+    expect(swapAB.targetShiftCode).toBe('CA_CHIEU');
+
+    const selfViewWithSwap = await o.query<HrSelfShiftsResult>(o.staffA, 'hr.self.shifts.list', { weekStart: '2027-04-05' });
+    const swapFromSelfList = selfViewWithSwap.swaps.find((s) => s.id === swapAB.id);
+    expect(swapFromSelfList?.requesterShiftCode).toBe('CA_SANG');
+    expect(swapFromSelfList?.targetShiftCode).toBe('CA_CHIEU');
+
+    // Deleting a pending swap's target assignment is blocked cleanly
+    await expect(
+      o.exec(o.manager, 'hr.shift.assignment.delete', { assignmentId: assignB.id }),
+    ).rejects.toMatchObject({ code: 'HR_SHIFT_ASSIGNMENT_IN_SWAP', status: 409 });
 
     // Anti-self-approval: if manager submits swap on own shift, manager cannot approve own swap (multi-owner/admin org).
     const selfSwapMgr = await o.exec<HrShiftSwapView>(o.manager, 'hr.self.shift_swap.submit', {
@@ -352,6 +364,36 @@ suite('HR Stage 7A shifts, weekly roster, 1-step swaps, night rollup & Ly covera
     expect(approvedTakeover.status).toBe('approved');
     const rosterAfterTakeover = await o.query<HrShiftRosterResult>(o.admin, 'hr.shift.roster.get', { weekStart: '2027-04-05' });
     expect(rosterAfterTakeover.assignments.find((a) => a.id === assignMgr.id)?.employeeId).toBe(empB);
+
+    // Deleting a non-pending (approved) historical swap's target assignment succeeds via ON DELETE SET NULL(target_assignment_id)
+    const assignApr12A = await o.exec<HrShiftAssignmentView>(o.manager, 'hr.shift.assignment.upsert', {
+      employeeId: empA,
+      shiftTemplateId: tplSang.id,
+      workDate: '2027-04-12',
+    });
+    const assignApr12B = await o.exec<HrShiftAssignmentView>(o.manager, 'hr.shift.assignment.upsert', {
+      employeeId: empB,
+      shiftTemplateId: tplChieu.id,
+      workDate: '2027-04-12',
+    });
+    const swapApr12 = await o.exec<HrShiftSwapView>(o.staffA, 'hr.self.shift_swap.submit', {
+      requesterAssignmentId: assignApr12A.id,
+      targetEmployeeId: empB,
+    });
+    await o.exec<HrShiftSwapView>(o.manager, 'hr.shift_swap.approve', { swapId: swapApr12.id });
+    const deletedHistoricalTarget = await o.exec<{ assignmentId: string; deleted: boolean }>(
+      o.manager,
+      'hr.shift.assignment.delete',
+      { assignmentId: assignApr12B.id },
+    );
+    expect(deletedHistoricalTarget.deleted).toBe(true);
+    const swapApr12Row = (
+      await adminPool.query<{ target_assignment_id: string | null }>(
+        `SELECT target_assignment_id FROM ludy_hr.shift_swap_request WHERE org_id = $1 AND id = $2`,
+        [o.orgId, swapApr12.id],
+      )
+    ).rows[0];
+    expect(swapApr12Row?.target_assignment_id).toBeNull();
 
     // 5. Attendance adherence & Art. 106 break-adjusted nightHours payroll rollup
     // Assign empC to CA_TOI_60 (18:00-02:00, break 60m) on 2027-04-07 and adjust log 18:00-02:00 (25m late test on another day).
@@ -546,12 +588,95 @@ suite('HR Stage 7A shifts, weekly roster, 1-step swaps, night rollup & Ly covera
       sqlClient.release();
     }
 
+    // 7b. Archiving a department revokes L1 manager shift roster access
+    const { departmentId: deptArchive } = await o.exec<HrDepartmentWritten>(o.owner, 'hr.department.add', {
+      name: 'Bộ phận Tạm',
+      payFunction: 'admin',
+    });
+    await o.exec(o.owner, 'hr.department.set_manager', { departmentId: deptArchive, managerUserId: o.otherMgr });
+    const rosterBeforeArchive = await o.query<HrShiftRosterResult>(o.otherMgr, 'hr.shift.roster.get', {
+      departmentId: deptArchive,
+    });
+    expect(rosterBeforeArchive.manageableDepartmentIds).toContain(deptArchive);
+    await o.exec(o.owner, 'hr.department.archive', { departmentId: deptArchive });
+    await expect(
+      o.query(o.otherMgr, 'hr.shift.roster.get', { departmentId: deptArchive }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+
+    // 7c. Sole-owner OPC org allows sole owner to self-approve own swap
+    const soloTag = randomUUID().slice(0, 8);
+    const soloDb = createDb(appPool);
+    const soloOwner = await upsertIdentity(soloDb, {
+      issuer: 'hr7a',
+      subject: `solo-${soloTag}`,
+      email: `solo-${soloTag}@hr7a.test`,
+      name: 'Chủ OPC Duy Nhất',
+    });
+    const soloPeer = await upsertIdentity(soloDb, {
+      issuer: 'hr7a',
+      subject: `solopeer-${soloTag}`,
+      email: `solopeer-${soloTag}@hr7a.test`,
+      name: 'Cộng sự OPC',
+    });
+    const { orgId: soloOrgId } = await createOrg(rt, asUser(soloOwner), `OPC Sole ${soloTag}`);
+    await adminPool.query(
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`,
+      [soloOrgId, soloPeer],
+    );
+    const soloSeeded = await rt.execute<HrShiftTemplateSeedResult>(
+      'hr.shift.template.seed_defaults',
+      {},
+      { actor: asUser(soloOwner), orgId: soloOrgId },
+    );
+    const { employeeId: empSoloOwner } = await rt.execute<HrWritten>(
+      'hr.payroll.employee.add',
+      {
+        displayName: 'Chủ OPC',
+        jobTitle: 'Giám đốc',
+        employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: '15000000' },
+      },
+      { actor: asMfa(soloOwner), orgId: soloOrgId },
+    );
+    await rt.execute(
+      'hr.payroll.employee.link_member',
+      { employeeId: empSoloOwner!, userId: soloOwner },
+      { actor: asMfa(soloOwner), orgId: soloOrgId },
+    );
+    const { employeeId: empSoloPeer } = await rt.execute<HrWritten>(
+      'hr.payroll.employee.add',
+      {
+        displayName: 'Cộng sự',
+        jobTitle: 'Nhân viên',
+        employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: '10000000' },
+      },
+      { actor: asMfa(soloOwner), orgId: soloOrgId },
+    );
+    const soloTplSang = soloSeeded.templates.find((t) => t.code === 'CA_SANG')!;
+    const soloAssign = await rt.execute<HrShiftAssignmentView>(
+      'hr.shift.assignment.upsert',
+      { employeeId: empSoloOwner!, shiftTemplateId: soloTplSang.id, workDate: '2027-04-14' },
+      { actor: asUser(soloOwner), orgId: soloOrgId },
+    );
+    const soloSwap = await rt.execute<HrShiftSwapView>(
+      'hr.self.shift_swap.submit',
+      { requesterAssignmentId: soloAssign.id, targetEmployeeId: empSoloPeer! },
+      { actor: asUser(soloOwner), orgId: soloOrgId },
+    );
+    const soloApproved = await rt.execute<HrShiftSwapView>(
+      'hr.shift_swap.approve',
+      { swapId: soloSwap.id },
+      { actor: asUser(soloOwner), orgId: soloOrgId },
+    );
+    expect(soloApproved.status).toBe('approved');
+
     // 8. Verify SECURITY DEFINER & trigger pg_proc hardening
     for (const fn of [
       'ludy_hr.is_active_linked_employee(uuid, uuid)',
       'ludy_hr.shift_visible_employees(uuid, uuid)',
       'ludy_hr.lock_shift_employee_active(uuid, uuid)',
       'ludy_hr.shift_unavailable_employee_dates(uuid, uuid, date, date)',
+      'ludy_hr.resolve_self_shift_swap_target(uuid, uuid, uuid, date)',
+      'ludy_hr.shift_swap_assignment_labels(uuid, uuid, uuid[])',
     ]) {
       const meta = (
         await adminPool.query<{

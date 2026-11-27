@@ -229,7 +229,7 @@ CREATE OR REPLACE FUNCTION ludy_hr.shift_assignment_update_guard() RETURNS trigg
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_user uuid := ludy_kernel.ctx_user_id();
-  v_is_admin boolean := false;
+  v_is_owner boolean := false;
   v_old_erased timestamptz;
   v_new_status text;
   v_new_erased timestamptz;
@@ -248,7 +248,7 @@ BEGIN
      AND NEW.note IS NOT DISTINCT FROM OLD.note
      AND NEW.created_by IS NOT DISTINCT FROM OLD.created_by
      AND NEW.created_at = OLD.created_at
-     AND NEW.updated_at = OLD.updated_at
+     AND NEW.updated_at >= OLD.updated_at
      AND NOT EXISTS (SELECT 1 FROM ludy_hr.department d WHERE d.org_id = OLD.org_id AND d.id = OLD.department_id) THEN
     RETURN NEW;
   END IF;
@@ -259,15 +259,15 @@ BEGIN
 
   SELECT EXISTS (
     SELECT 1 FROM ludy_kernel.tenant_member m
-     WHERE m.org_id = NEW.org_id AND m.user_id = v_user AND m.role IN ('owner', 'admin')
-  ) INTO v_is_admin;
+     WHERE m.org_id = NEW.org_id AND m.user_id = v_user AND m.role = 'owner'
+  ) INTO v_is_owner;
 
   SELECT e.erased_at INTO v_old_erased
     FROM ludy_hr.payroll_employee e
    WHERE e.org_id = OLD.org_id AND e.id = OLD.employee_id;
 
   IF v_old_erased IS NOT NULL THEN
-    IF v_is_admin
+    IF v_is_owner
        AND NEW.note IS NULL
        AND NEW.org_id = OLD.org_id
        AND NEW.id = OLD.id
@@ -515,6 +515,7 @@ CREATE OR REPLACE FUNCTION ludy_hr.shift_swap_request_update_guard() RETURNS tri
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_user uuid := ludy_kernel.ctx_user_id();
+  v_is_owner boolean := false;
   v_is_admin boolean := false;
   v_is_l1_mgr boolean := false;
   v_any_erased boolean := false;
@@ -539,7 +540,7 @@ BEGIN
      AND NEW.decision_note IS NOT DISTINCT FROM OLD.decision_note
      AND NEW.created_by IS NOT DISTINCT FROM OLD.created_by
      AND NEW.created_at = OLD.created_at
-     AND NEW.updated_at = OLD.updated_at
+     AND NEW.updated_at >= OLD.updated_at
      AND NOT EXISTS (SELECT 1 FROM ludy_hr.shift_assignment a WHERE a.org_id = OLD.org_id AND a.legal_entity_id = OLD.legal_entity_id AND a.id = OLD.target_assignment_id) THEN
     RETURN NEW;
   END IF;
@@ -561,7 +562,7 @@ BEGIN
      AND NEW.decision_note IS NOT DISTINCT FROM OLD.decision_note
      AND NEW.created_by IS NOT DISTINCT FROM OLD.created_by
      AND NEW.created_at = OLD.created_at
-     AND NEW.updated_at = OLD.updated_at
+     AND NEW.updated_at >= OLD.updated_at
      AND NOT EXISTS (SELECT 1 FROM ludy_hr.department d WHERE d.org_id = OLD.org_id AND d.id = OLD.department_id) THEN
     RETURN NEW;
   END IF;
@@ -570,10 +571,16 @@ BEGIN
     RAISE EXCEPTION 'user actor required to update shift_swap_request' USING ERRCODE = '42501';
   END IF;
 
-  SELECT EXISTS (
-    SELECT 1 FROM ludy_kernel.tenant_member m
-     WHERE m.org_id = NEW.org_id AND m.user_id = v_user AND m.role IN ('owner', 'admin')
-  ) INTO v_is_admin;
+  SELECT
+    EXISTS (
+      SELECT 1 FROM ludy_kernel.tenant_member m
+       WHERE m.org_id = NEW.org_id AND m.user_id = v_user AND m.role = 'owner'
+    ),
+    EXISTS (
+      SELECT 1 FROM ludy_kernel.tenant_member m
+       WHERE m.org_id = NEW.org_id AND m.user_id = v_user AND m.role IN ('owner', 'admin')
+    )
+    INTO v_is_owner, v_is_admin;
 
   IF NEW.org_id IS DISTINCT FROM OLD.org_id
      OR NEW.id IS DISTINCT FROM OLD.id
@@ -596,9 +603,9 @@ BEGIN
        AND e.erased_at IS NOT NULL
   ) INTO v_any_erased;
 
-  -- PDPL erasure path: owner/admin clears free-text PII and cancels pending swaps for erased employees.
+  -- PDPL erasure path: owner clears free-text PII and cancels pending swaps for erased employees.
   IF v_any_erased THEN
-    IF v_is_admin
+    IF v_is_owner
        AND NEW.reason IS NULL
        AND NEW.decision_note IS NULL
        AND NEW.decided_by IS NOT DISTINCT FROM OLD.decided_by
@@ -913,3 +920,127 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION ludy_hr.shift_unavailable_employee_dates(uuid, uuid, date, date) FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 GRANT EXECUTE ON FUNCTION ludy_hr.shift_unavailable_employee_dates(uuid, uuid, date, date) TO ludy_tenant;
+
+CREATE OR REPLACE FUNCTION ludy_hr.resolve_self_shift_swap_target(
+  p_org_id uuid,
+  p_legal_entity_id uuid,
+  p_target_employee_id uuid,
+  p_work_date date
+)
+RETURNS TABLE (
+  assignment_id uuid,
+  shift_template_id uuid
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := ludy_kernel.ctx_org_id();
+  v_actor text := ludy_kernel.ctx_actor_type();
+  v_user uuid := ludy_kernel.ctx_user_id();
+  v_le_scope text[] := ludy_kernel.ctx_le_scope();
+  v_role text;
+BEGIN
+  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org OR p_legal_entity_id IS NULL OR p_target_employee_id IS NULL OR p_work_date IS NULL THEN
+    RETURN;
+  END IF;
+  IF v_actor IS DISTINCT FROM 'user' OR v_user IS NULL THEN
+    RETURN;
+  END IF;
+  IF NOT (
+    '*' = ANY (COALESCE(v_le_scope, ARRAY[]::text[]))
+    OR p_legal_entity_id::text = ANY (COALESCE(v_le_scope, ARRAY[]::text[]))
+  ) THEN
+    RETURN;
+  END IF;
+
+  SELECT m.role INTO v_role
+    FROM ludy_kernel.tenant_member m
+   WHERE m.org_id = v_org AND m.user_id = v_user;
+  IF v_role IS NULL OR v_role NOT IN ('owner', 'admin', 'member') THEN
+    RETURN;
+  END IF;
+  IF v_role = 'member' AND NOT ludy_hr.is_active_linked_employee(v_org, p_legal_entity_id) THEN
+    RETURN;
+  END IF;
+
+  RETURN QUERY
+  SELECT a.id AS assignment_id, a.shift_template_id
+    FROM ludy_hr.shift_assignment a
+    JOIN ludy_hr.payroll_employee e
+      ON e.org_id = a.org_id
+     AND e.legal_entity_id = a.legal_entity_id
+     AND e.id = a.employee_id
+   WHERE a.org_id = v_org
+     AND a.legal_entity_id = p_legal_entity_id
+     AND a.employee_id = p_target_employee_id
+     AND a.work_date = p_work_date
+     AND e.erased_at IS NULL
+     AND e.status = 'active';
+END $$;
+REVOKE ALL ON FUNCTION ludy_hr.resolve_self_shift_swap_target(uuid, uuid, uuid, date) FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION ludy_hr.resolve_self_shift_swap_target(uuid, uuid, uuid, date) TO ludy_tenant;
+
+CREATE OR REPLACE FUNCTION ludy_hr.shift_swap_assignment_labels(
+  p_org_id uuid,
+  p_legal_entity_id uuid,
+  p_assignment_ids uuid[]
+)
+RETURNS TABLE (
+  assignment_id uuid,
+  shift_template_id uuid,
+  shift_code text,
+  shift_name text
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := ludy_kernel.ctx_org_id();
+  v_actor text := ludy_kernel.ctx_actor_type();
+  v_user uuid := ludy_kernel.ctx_user_id();
+  v_le_scope text[] := ludy_kernel.ctx_le_scope();
+  v_role text;
+BEGIN
+  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org OR p_legal_entity_id IS NULL OR p_assignment_ids IS NULL OR pg_catalog.cardinality(p_assignment_ids) = 0 THEN
+    RETURN;
+  END IF;
+  IF v_actor IS DISTINCT FROM 'user' OR v_user IS NULL THEN
+    RETURN;
+  END IF;
+  IF NOT (
+    '*' = ANY (COALESCE(v_le_scope, ARRAY[]::text[]))
+    OR p_legal_entity_id::text = ANY (COALESCE(v_le_scope, ARRAY[]::text[]))
+  ) THEN
+    RETURN;
+  END IF;
+
+  SELECT m.role INTO v_role
+    FROM ludy_kernel.tenant_member m
+   WHERE m.org_id = v_org AND m.user_id = v_user;
+  IF v_role IS NULL OR v_role NOT IN ('owner', 'admin', 'member') THEN
+    RETURN;
+  END IF;
+
+  RETURN QUERY
+  SELECT a.id AS assignment_id, a.shift_template_id, t.code AS shift_code, t.name AS shift_name
+    FROM ludy_hr.shift_assignment a
+    JOIN ludy_hr.shift_template t
+      ON t.org_id = a.org_id
+     AND t.legal_entity_id = a.legal_entity_id
+     AND t.id = a.shift_template_id
+   WHERE a.org_id = v_org
+     AND a.legal_entity_id = p_legal_entity_id
+     AND a.id = ANY (p_assignment_ids)
+     AND EXISTS (
+       SELECT 1
+         FROM ludy_hr.shift_swap_request s
+        WHERE s.org_id = v_org
+          AND s.legal_entity_id = p_legal_entity_id
+          AND (a.id = s.requester_assignment_id OR a.id = s.target_assignment_id)
+          AND (
+            v_role IN ('owner', 'admin')
+            OR (s.department_id IS NOT NULL AND ludy_hr.is_active_dept_manager(v_org, s.department_id))
+            OR ludy_hr.is_self_employee(v_org, s.requester_employee_id)
+            OR ludy_hr.is_self_employee(v_org, s.target_employee_id)
+          )
+     );
+END $$;
+REVOKE ALL ON FUNCTION ludy_hr.shift_swap_assignment_labels(uuid, uuid, uuid[]) FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION ludy_hr.shift_swap_assignment_labels(uuid, uuid, uuid[]) TO ludy_tenant;

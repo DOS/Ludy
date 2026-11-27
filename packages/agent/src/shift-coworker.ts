@@ -232,10 +232,20 @@ function buildAliases(input: ShiftCoverageSuggestInput): {
     realNameByAlias.set(alias, displayName);
     empIdByAlias.set(alias, employeeId);
     const trimmed = displayName.trim();
-    if (trimmed.length >= 3) forbidden.push(trimmed);
+    if (trimmed.length >= 2) forbidden.push(trimmed);
   });
 
   return { aliasByEmployeeId, realNameByAlias, empIdByAlias, forbidden };
+}
+
+const ALIAS_TOKEN = /(?<![\p{L}\p{N}])E\d+(?![\p{L}\p{N}])/giu;
+const stripAliasTokens = (value: string): string => value.normalize('NFKC').replace(ALIAS_TOKEN, ' ');
+
+function hasUnissuedAlias(text: string, issued: ReadonlyMap<string, string>): boolean {
+  for (const match of text.normalize('NFKC').matchAll(ALIAS_TOKEN)) {
+    if (!issued.has(match[0].toUpperCase())) return true;
+  }
+  return false;
 }
 
 function containsForbiddenPii(text: string, forbidden: readonly string[]): boolean {
@@ -400,8 +410,9 @@ export async function suggestShiftCoverage(
     summaryRaw.length === 0 ||
     hasMarkdownNoise(combined) ||
     hasAddress(combined) ||
+    hasUnissuedAlias(combined, realNameByAlias) ||
     containsForbiddenPii(combined, forbidden) ||
-    statedFiguresProblem(combined, [prompt]) !== null
+    statedFiguresProblem(stripAliasTokens(combined), [stripAliasTokens(prompt)]) !== null
   ) {
     return { ...fallback, ai: { ok: false, reason: 'refused' } };
   }

@@ -483,6 +483,8 @@ export function HrAttendancePage() {
       <div className="flex flex-wrap gap-2 print:hidden" role="tablist" aria-label={t('title')}>
         <Button
           type="button"
+          role="tab"
+          aria-selected={activeTab === 'attendance'}
           variant={activeTab === 'attendance' ? 'default' : 'outline'}
           size="sm"
           className={PHONE_TARGET}
@@ -493,6 +495,8 @@ export function HrAttendancePage() {
         </Button>
         <Button
           type="button"
+          role="tab"
+          aria-selected={activeTab === 'shifts'}
           variant={activeTab === 'shifts' ? 'default' : 'outline'}
           size="sm"
           className={PHONE_TARGET}
