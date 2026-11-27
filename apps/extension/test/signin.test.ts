@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Sign-in in a normal tab (#4662): which addresses the manifest lets reach the landing page, what the pending sign-in holds, and what the landing page does with the
-// address the app sent the tab to. An answer with another state does not use up the pending sign-in; one with the right state is read as the window flow reads it, trades the
-// code once, and a changed address or an old record gives no account.
+// Sign-in in a normal tab (#4662): which App origin the manifest lets reach the landing page, what the pending sign-in
+// holds (appAddress + apiAddress), and what the landing page exchanges against apiAddress.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { newPkce, parseConnectResult } from '../src/auth.ts';
 import { CONNECTED_PAGE, PENDING_KEY, PENDING_TTL_MS, completeTabSignIn, isExtensionPageAddress, loadNotesExcluded, readPending, rememberNotesExcluded, tabSignInCovers, type PendingSignIn } from '../src/signin.ts';
 import { emptyState, loadState, saveState, type StorageArea } from '../src/state.ts';
-import { manifestViolations, WEB_ACCESSIBLE_MATCHES, WEB_ACCESSIBLE_PAGE } from '../src/manifest-policy.ts';
+import { DEFAULT_APP_MATCHES, manifestViolations, WEB_ACCESSIBLE_PAGE } from '../src/manifest-policy.ts';
 
 const memory = (): StorageArea & { data: Map<string, unknown> } => {
   const data = new Map<string, unknown>();
@@ -23,17 +22,24 @@ const ID = 'abcdefghijklmnopabcdefghijklmnop';
 const REDIRECT = `chrome-extension://${ID}/connected.html`;
 const NOW = 1_800_000_000_000;
 const CODE = `crc_${'A'.repeat(43)}`;
-const pending = (change: Partial<PendingSignIn> = {}): PendingSignIn => ({ verifier: 'v'.repeat(43), state: 'st1', address: 'https://app.ludy.vn', redirect: REDIRECT, notesAsked: true, startedAt: NOW - 1000, ...change });
+const pending = (change: Partial<PendingSignIn> = {}): PendingSignIn => ({
+  verifier: 'v'.repeat(43),
+  state: 'st1',
+  appAddress: 'https://app.ludy.vn',
+  apiAddress: 'https://api.ludy.vn',
+  redirect: REDIRECT,
+  notesAsked: true,
+  startedAt: NOW - 1000,
+  ...change,
+});
 const answer = (query: string) => `${REDIRECT}?${query}`;
 
 describe('which addresses sign in through a tab', () => {
-  const manifest = { web_accessible_resources: [{ resources: [WEB_ACCESSIBLE_PAGE], matches: [...WEB_ACCESSIBLE_MATCHES] }] };
+  const manifest = { web_accessible_resources: [{ resources: [WEB_ACCESSIBLE_PAGE], matches: [...DEFAULT_APP_MATCHES] }] };
 
-  it('the cloud address and localhost on any port do, any other address keeps the window', () => {
+  it('only the pinned Ludy Cloud App origin is covered in the store manifest; other origins keep the window', () => {
     expect(tabSignInCovers(manifest, 'https://app.ludy.vn')).toBe(true);
-    expect(tabSignInCovers(manifest, 'http://localhost')).toBe(true);
-    expect(tabSignInCovers(manifest, 'http://localhost:8080')).toBe(true);
-    for (const other of ['https://ludy.congty.vn', 'http://app.ludy.vn', 'https://app.ludy.vn.evil.example', 'https://evil.example', 'http://127.0.0.1:8080', 'not an address', '']) {
+    for (const other of ['https://api.ludy.vn', 'http://localhost:8080', 'https://ludy.congty.vn', 'http://app.ludy.vn', 'https://app.ludy.vn.evil.example', 'https://evil.example', 'http://127.0.0.1:8080', 'not an address', '']) {
       expect(tabSignInCovers(manifest, other), other).toBe(false);
     }
   });
@@ -43,12 +49,12 @@ describe('which addresses sign in through a tab', () => {
     expect(tabSignInCovers({ web_accessible_resources: [{ resources: ['popup.html'], matches: ['https://app.ludy.vn/*'] }] }, 'https://app.ludy.vn')).toBe(false);
   });
 
-  it('the shipped manifest lists the landing page for the cloud address and localhost, which is what the policy allows', () => {
+  it('the shipped manifest lists the landing page for app.ludy.vn only, matching the policy', () => {
     const shipped = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8')) as Record<string, unknown>;
     expect(CONNECTED_PAGE).toBe(WEB_ACCESSIBLE_PAGE);
     expect(manifestViolations(shipped)).toEqual([]);
     expect(tabSignInCovers(shipped as Parameters<typeof tabSignInCovers>[0], 'https://app.ludy.vn')).toBe(true);
-    expect(tabSignInCovers(shipped as Parameters<typeof tabSignInCovers>[0], 'http://localhost:8080')).toBe(true);
+    expect(tabSignInCovers(shipped as Parameters<typeof tabSignInCovers>[0], 'http://localhost:8080')).toBe(false);
     expect(tabSignInCovers(shipped as Parameters<typeof tabSignInCovers>[0], 'https://ludy.congty.vn')).toBe(false);
   });
 });
@@ -68,6 +74,8 @@ describe('the pending sign-in', () => {
     expect(readPending(pending({ startedAt: NOW - PENDING_TTL_MS }), NOW)).toBeNull();
     expect(readPending(pending({ startedAt: NOW + 1 }), NOW)).toBeNull();
     expect(readPending({ ...pending(), state: 1 }, NOW)).toBeNull();
+    expect(readPending({ ...pending(), appAddress: '' }, NOW)).toBeNull();
+    expect(readPending({ ...pending(), apiAddress: '' }, NOW)).toBeNull();
     expect(readPending({ ...pending(), notesAsked: 'yes' }, NOW)).toBeNull();
     expect(readPending(null, NOW)).toBeNull();
     expect(readPending('x', NOW)).toBeNull();
@@ -79,20 +87,20 @@ describe('the landing page', () => {
     const session = memory();
     const local = memory();
     if (record) await session.set({ [PENDING_KEY]: record });
-    await saveState(local, { ...emptyState(), address: 'https://app.ludy.vn' });
+    await saveState(local, emptyState());
     const calls: Array<[string, string, string]> = [];
-    const exchange = async (address: string, code: string, verifier: string) => {
-      calls.push([address, code, verifier]);
+    const exchange = async (apiAddress: string, code: string, verifier: string) => {
+      calls.push([apiAddress, code, verifier]);
       return { token: 'crx_new', tokenId: 'tok_new', orgId: 'org1', scopes: ['meetings'], expiresAt: '2027-01-01T00:00:00.000Z' };
     };
     return { session, local, calls, exchange };
   };
   const run = (s: Awaited<ReturnType<typeof setup>>, url: string) => completeTabSignIn(url, { session: s.session, local: s.local, now: NOW, exchange: s.exchange });
 
-  it('trades the code once, saves the account and uses the pending sign-in up', async () => {
+  it('trades the code once against apiAddress (never appAddress), saves the account and uses the pending sign-in up', async () => {
     const s = await setup();
     expect(await run(s, answer(`code=${CODE}&org=cong-ty&state=st1`))).toBe('connected');
-    expect(s.calls).toEqual([['https://app.ludy.vn', CODE, 'v'.repeat(43)]]);
+    expect(s.calls).toEqual([['https://api.ludy.vn', CODE, 'v'.repeat(43)]]);
     const state = await loadState(s.local);
     expect(state.accounts.org1).toMatchObject({ orgSlug: 'cong-ty', token: 'crx_new', tokenId: 'tok_new' });
     expect(state.activeOrg).toBe('org1');
@@ -131,11 +139,17 @@ describe('the landing page', () => {
     expect(denied.calls.length + other.calls.length + bare.calls.length).toBe(0);
   });
 
-  it('a changed address gives no account, and a failed trade says so', async () => {
-    const moved = await setup(pending({ address: 'https://ludy.congty.vn' }));
-    expect(await run(moved, answer(`code=${CODE}&org=cong-ty&state=st1`))).toBe('failed');
-    expect(moved.calls).toHaveLength(0);
-    expect(Object.keys((await loadState(moved.local)).accounts)).toEqual([]);
+  it('a changed app or api origin gives no account, and a failed trade says so', async () => {
+    const movedApp = await setup(pending({ appAddress: 'https://ludy.congty.vn' }));
+    expect(await run(movedApp, answer(`code=${CODE}&org=cong-ty&state=st1`))).toBe('failed');
+    expect(movedApp.calls).toHaveLength(0);
+    expect(Object.keys((await loadState(movedApp.local)).accounts)).toEqual([]);
+
+    const movedApi = await setup(pending({ apiAddress: 'https://api.congty.vn' }));
+    expect(await run(movedApi, answer(`code=${CODE}&org=cong-ty&state=st1`))).toBe('failed');
+    expect(movedApi.calls).toHaveLength(0);
+    expect(Object.keys((await loadState(movedApi.local)).accounts)).toEqual([]);
+
     const failing = await setup();
     const result = await completeTabSignIn(answer(`code=${CODE}&org=cong-ty&state=st1`), {
       session: failing.session,

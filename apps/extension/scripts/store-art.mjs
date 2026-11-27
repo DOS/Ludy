@@ -1,32 +1,34 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Regenerates the Chrome Web Store images in apps/extension/store (docs/runbooks/extension-store.md): three 1280x800
 // screenshots, the 440x280 small tile and the 1400x560 marquee, each in Vietnamese and English, as PNG with no alpha channel (the store refuses
-// an alpha channel). Screenshots 1 and 2 are the real popup, loaded unpacked in Chromium against the e2e fake Ludy
-// (e2e/fake-ludy.ts), so they hold no customer data; the fake server's local address is shown as https://app.ludy.vn, the
-// address a Ludy Cloud member sees. Screenshot 3 (the consent step) is text only: the consent form needs the tabCapture
+// an alpha channel). Screenshots 1 and 2 are the real popup, loaded unpacked in Chromium against a temp build pointed at the e2e fake Ludy
+// (e2e/fake-ludy.ts), so they hold no customer data. Screenshot 3 (the consent step) is text only: the consent form needs the tabCapture
 // permission, which automation cannot grant.
 //
-// Run after `node scripts/build.mjs`: `node scripts/store-art.mjs` (from apps/extension). It writes into store/.
+// Run from apps/extension: `node scripts/store-art.mjs`. It writes into store/.
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 import { startFakeLudy } from '../e2e/fake-ludy.ts';
 
-const dist = fileURLToPath(new URL('../dist', import.meta.url));
+const pkg = fileURLToPath(new URL('..', import.meta.url));
 const out = fileURLToPath(new URL('../store', import.meta.url));
 const mark = readFileSync(fileURLToPath(new URL('../../web/public/brand/ludy-mark.svg', import.meta.url)), 'utf8').replace('<svg ', '<svg width="100%" height="100%" ');
 const shots = {};
 
 // 1. The real popup, signed out and signed in, per language.
 const fake = await startFakeLudy();
+const tempDist = mkdtempSync(`${tmpdir()}/ludy-store-dist-`);
 try {
+  execFileSync('node', ['scripts/build.mjs', '--origin', fake.origin, '--out', tempDist], { cwd: pkg, stdio: 'inherit' });
   for (const lang of ['vi', 'en-US']) {
     const profile = mkdtempSync(`${tmpdir()}/ludy-store-art-`);
     const context = await chromium.launchPersistentContext(profile, {
       channel: 'chromium',
       ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
-      args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, `--lang=${lang}`],
+      args: [`--disable-extensions-except=${tempDist}`, `--load-extension=${tempDist}`, `--lang=${lang}`],
       locale: lang,
       deviceScaleFactor: 2,
     });
@@ -51,7 +53,7 @@ try {
       await worker.evaluate(
         ([origin]) =>
           chrome.storage.local.set({
-            'ludy-extension-state': { address: origin, accounts: { org1: { orgId: 'org1', orgSlug: 'cong-ty-mau', token: 'crx_test', expiresAt: '2027-01-01T00:00:00.000Z' } }, activeOrg: 'org1', enabled: {} },
+            'ludy-extension-state': { appAddress: origin, apiAddress: origin, accounts: { org1: { orgId: 'org1', orgSlug: 'cong-ty-mau', token: 'crx_test', expiresAt: '2027-01-01T00:00:00.000Z' } }, activeOrg: 'org1', enabled: {} },
           }),
         [fake.origin],
       );
@@ -63,20 +65,21 @@ try {
   }
 } finally {
   await fake.close();
+  rmSync(tempDist, { recursive: true, force: true });
 }
 
 // 2. The store images around them.
 const T = {
   en: {
     s1: ['Record browser meetings into Ludy', ['Google Meet, and Teams or Zoom in the browser', 'Tab audio together with your microphone', 'Uploaded to your Ludy workspace when you stop'], 'en-feature'],
-    s2: ['Sign in without sharing your password', ['Ludy Cloud or your company’s own Ludy server', 'Approve the extension for one workspace', 'Revoke it any time in Ludy, connected devices'], 'en-connect'],
+    s2: ['Sign in without sharing your password', ['Sign in on Ludy Cloud (app.ludy.vn)', 'Approve the extension for one workspace', 'Revoke it any time in Ludy, connected devices'], 'en-connect'],
     s3: ['Consent comes first', ['Before recording, confirm everyone was told', 'No confirmation, no recording', 'REC badge and timer stay visible', 'Video only if you tick it'], null],
     tag: 'Meeting notes for small businesses',
     sub: 'Record in your browser. Summary, decisions and action items in Ludy.',
   },
   vi: {
     s1: ['Ghi cuộc họp trên trình duyệt vào Ludy', ['Google Meet, và Teams hoặc Zoom bản web', 'Ghi âm tab họp cùng micro của bạn', 'Tải lên tổ chức Ludy khi bạn dừng'], 'vi-feature'],
-    s2: ['Đăng nhập không cần đưa mật khẩu', ['Ludy Cloud hoặc máy chủ Ludy của công ty bạn', 'Cho phép tiện ích làm việc với một tổ chức', 'Thu hồi bất cứ lúc nào trong Ludy'], 'vi-connect'],
+    s2: ['Đăng nhập không cần đưa mật khẩu', ['Đăng nhập qua Ludy Cloud (app.ludy.vn)', 'Cho phép tiện ích làm việc với một tổ chức', 'Thu hồi bất cứ lúc nào trong Ludy'], 'vi-connect'],
     s3: ['Đồng ý trước, ghi sau', ['Xác nhận đã báo cho mọi người trước khi ghi', 'Không xác nhận thì không ghi được', 'Luôn hiện REC và đồng hồ khi đang ghi', 'Chỉ ghi video khi bạn tích chọn'], null],
     tag: 'Ghi chú cuộc họp cho doanh nghiệp nhỏ',
     sub: 'Ghi trên trình duyệt. Tóm tắt, quyết định và việc cần làm trong Ludy.',

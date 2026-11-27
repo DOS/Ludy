@@ -109,7 +109,7 @@ export interface Client {
   uploadMedia(input: { meetingId: string; kind: 'audio' | 'video'; file: File; lengthSeconds: number; uploads: 'presigned' | 'direct'; stopReason?: RecordingStopReason }): Promise<Uploaded>;
 }
 
-export function createClient(address: string, token: string | null, fetchImpl: FetchLike = (input, init) => fetch(input, init)): Client {
+export function createClient(apiAddress: string, token: string | null, fetchImpl: FetchLike = (input, init) => fetch(input, init)): Client {
   const call = async (path: string, init: RequestInit = {}, auth = true): Promise<Response> => {
     const headers = new Headers(init.headers);
     if (auth) {
@@ -118,7 +118,7 @@ export function createClient(address: string, token: string | null, fetchImpl: F
     }
     // `redirect: 'error'`: a proxy that answers with a redirect must not send the token (or the request) to another
     // origin; older Chromium within minimum_chrome_version may forward Authorization across origins.
-    const response = await fetchImpl(ludyUrl(address, path), { ...init, headers, credentials: 'omit', cache: 'no-store', redirect: 'error' });
+    const response = await fetchImpl(ludyUrl(apiAddress, path), { ...init, headers, credentials: 'omit', cache: 'no-store', redirect: 'error' });
     if (!response.ok) throw await failure(response);
     return response;
   };
@@ -240,7 +240,7 @@ export function createClient(address: string, token: string | null, fetchImpl: F
       const purpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
       if (uploads === 'presigned') {
         const grant = (await (await call('/api/files/uploads', json({ purpose }))).json()) as { uploadId: string; url: string; fields: Record<string, string> };
-        const target = assertGrantUrl(grant.url, address);
+        const target = assertGrantUrl(grant.url, apiAddress);
         const form = new FormData();
         for (const [name, value] of Object.entries(grant.fields)) form.append(name, value);
         // The file goes last: S3 ignores fields after it.

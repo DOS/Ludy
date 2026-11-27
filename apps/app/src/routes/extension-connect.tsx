@@ -83,7 +83,7 @@ export function ExtensionConnectPage() {
   const desktop = request?.client === 'desktop';
   const noFeature = org && orgApps.isSuccess && effectiveScopes.length === 0 && (!desktop || request.scopes.length > 0);
   return (
-    <main className="flex min-h-full items-center justify-center bg-background px-4">
+    <main className="flex min-h-screen w-full items-center justify-center bg-background px-4 py-8">
       <Card className="block w-full max-w-md space-y-4 p-6">
         <ScreenTitle name={desktop ? t('desktop.title') : t('title')} />
         <h1 className="text-lg font-semibold text-foreground">{desktop ? t('desktop.title') : t('title')}</h1>
