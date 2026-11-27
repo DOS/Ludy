@@ -5207,6 +5207,7 @@ function extractAstFacts(
   const meterAliases = propagateAliases(seedMeterAliases, aliasEdges);
   const agentBindings = propagateAliases(seedAgentBindings, aliasEdges);
   const executeAliases = propagateAliases(seedExecuteAliases, aliasEdges);
+  if (fetchTaintsByVarAndFn.size > 0 || fetchGlobalVars.size > 0) {
   let nonSafeKillBases = propagateAliases(seedNonSafeKillBases, aliasEdges);
   const isExprNonSafeKillSource = (expr: tsType.Expression, scope: AstLexScope): boolean => {
     for (const br of expandAstBranchExprs(expr)) {
@@ -5298,6 +5299,7 @@ function extractAstFacts(
         fetchQueue.push(edge.to);
       }
     }
+  }
   }
 
   // Check computed property access / Reflect.get / computed destructure on agent bindings
@@ -9407,12 +9409,16 @@ function hasTokenResolvedWorkspaceTarget(
 const WORKSPACE_AST_DIRECT_IDENTS = new Set([
   'fromCharCode',
   'fromCodePoint',
-  'require',
   'createRequire',
   'eval',
   'Function',
   'Reflect',
 ]);
+
+const WORKSPACE_AST_TEXT_TRIGGER_RE =
+  /(?:@(?:ludy|crove)(?:$|[^a-zA-Z0-9_/]|\/(?:$|[^a-zA-Z0-9_]|a(?:$|g|[^a-zA-Z0-9_-])))|note-ai|packages\/agent|generate(?:Note|Todo)|SummaryText|TodoSuggest|TodoPlan|NoteOrganize)/;
+
+const WORKSPACE_AST_ESCAPE_RE = /\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]/;
 
 const WORKSPACE_HOST_DOT_MEMBERS = new Set([
   'fromCharCode',
@@ -9555,15 +9561,32 @@ function hasWorkspaceHostBracketOrMember(toks: readonly Token[], startIdx: numbe
 }
 
 function hasWorkspaceAstTokenTrigger(
+  fileText: string,
   primaryLists: ReadonlyArray<readonly Token[]>,
+  symbols: readonly string[],
+  symbolSet: ReadonlySet<string>,
   fromRelPath: string | undefined,
-  hasRelevantKeywordHint: boolean,
 ): boolean {
+  let minSymLen = Infinity;
+  for (const sym of symbols) {
+    if (sym.length < minSymLen) minSymLen = sym.length;
+  }
+  let keywordHint: boolean | null = null;
+  const getKeywordHint = (): boolean => {
+    if (keywordHint === null) {
+      keywordHint =
+        /@(?:ludy|crove)|agent|note-ai|packages|\b(?:import|export|require|createRequire|eval|Function|Reflect|String|globalThis|window|self|module|global)\b|generate|Summary|Todo|from(?:CharCode|CodePoint)|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|await\s+(?:\(\s*)?['"`]/.test(
+          fileText,
+        );
+    }
+    return keywordHint;
+  };
   for (const toks of primaryLists) {
     for (let i = 0; i < toks.length; i += 1) {
       const t = toks[i]!;
-      if (t.kind === 'invalid' && (fromRelPath !== undefined || hasRelevantKeywordHint)) {
-        return true;
+      if (t.kind === 'invalid') {
+        if (fromRelPath !== undefined || getKeywordHint()) return true;
+        continue;
       }
       if (t.kind === 'regex') {
         if (
@@ -9576,14 +9599,61 @@ function hasWorkspaceAstTokenTrigger(
         }
         continue;
       }
+      if (
+        t.kind === 'string' ||
+        t.kind === 'template' ||
+        t.kind === 'template_head' ||
+        t.kind === 'template_middle' ||
+        t.kind === 'template_tail'
+      ) {
+        if (
+          WORKSPACE_AST_TEXT_TRIGGER_RE.test(t.value) ||
+          WORKSPACE_AST_ESCAPE_RE.test(t.raw) ||
+          symbolSet.has(t.value) ||
+          (t.value.length >= minSymLen && symbols.some((sym) => t.value.includes(sym)))
+        ) {
+          return true;
+        }
+        continue;
+      }
       if (t.kind !== 'ident') continue;
+      if (t.escaped && WORKSPACE_AST_ESCAPE_RE.test(t.raw)) return true;
       if (t.value === 'import') {
         const next = toks[i + 1];
         if (next?.kind === 'punct' && next.value === '(') return true;
         continue;
       }
+      if (t.value === 'require') {
+        if (!isMemberPrev(toks, i)) return true;
+        continue;
+      }
       if (WORKSPACE_AST_DIRECT_IDENTS.has(t.value)) return true;
+      if (
+        t.value === 'globalThis' &&
+        !(
+          toks[i + 1]?.kind === 'punct' &&
+          toks[i + 1]?.value === '.' &&
+          toks[i + 2]?.kind === 'ident' &&
+          !WORKSPACE_HOST_DOT_MEMBERS.has(toks[i + 2]!.value) &&
+          !AST_REQUIRE_HOSTS.has(toks[i + 2]!.value)
+        )
+      ) {
+        return true;
+      }
       if ((t.value === 'String' || AST_REQUIRE_HOSTS.has(t.value)) && hasWorkspaceHostBracketOrMember(toks, i)) {
+        return true;
+      }
+      if (
+        symbolSet.has(t.value) ||
+        (t.value.length >= 8 &&
+          (t.value.includes('generateNote') ||
+            t.value.includes('generateTodo') ||
+            t.value.includes('SummaryText') ||
+            t.value.includes('TodoSuggest') ||
+            t.value.includes('TodoPlan') ||
+            t.value.includes('NoteOrganize'))) ||
+        (t.value.length >= minSymLen && symbols.some((sym) => t.value.includes(sym)))
+      ) {
         return true;
       }
     }
@@ -9594,6 +9664,7 @@ function hasWorkspaceAstTokenTrigger(
 function shouldParseWorkspaceAst(
   fileText: string,
   symbols: readonly string[],
+  symbolSet: ReadonlySet<string>,
   fromRelPath: string | undefined,
   isKnownJsxPath: boolean,
   primaryLists: ReadonlyArray<readonly Token[]>,
@@ -9605,24 +9676,12 @@ function shouldParseWorkspaceAst(
   const relFromRoot = fromRelPath?.replace(/\\/g, '/');
   if (relFromRoot && relFromRoot.startsWith('packages/agent/')) return true;
   if (fromRelPath === undefined && fileText.length < 30_000) return true;
-  const hasRelevantKeywordHint =
-    /@(?:ludy|crove)|agent|note-ai|packages|\b(?:import|export|require|createRequire|eval|Function|Reflect|String|globalThis|window|self|module|global)\b|generate|Summary|Todo|from(?:CharCode|CodePoint)|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|await\s+(?:\(\s*)?['"`]/.test(
-      fileText,
-    );
-  if (hasWorkspaceAstTokenTrigger(primaryLists, fromRelPath, hasRelevantKeywordHint)) {
-    return true;
-  }
-  if (
-    /(?:@(?:ludy|crove)(?:$|[^a-zA-Z0-9_/]|\/(?:$|[^a-zA-Z0-9_]|a(?:$|g|[^a-zA-Z0-9_-])))|note-ai|packages\/agent|generate(?:Note|Todo)|SummaryText|TodoSuggest|TodoPlan|NoteOrganize|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|globalThis)/.test(
-      fileText,
-    )
-  ) {
+  if (hasWorkspaceAstTokenTrigger(fileText, primaryLists, symbols, symbolSet, fromRelPath)) {
     return true;
   }
   if (hasTokenResolvedWorkspaceTarget(primaryLists, symbols, fromRelPath, primaryDelims)) {
     return true;
   }
-  if (symbols.some((sym) => fileText.includes(sym))) return true;
   if (
     isKnownJsxPath &&
     /(?<![/*])\/(?![/*])\s*\{(?![ \t]*[a-zA-Z0-9_$.]+[ \t]*\})/.test(fileText)
@@ -9683,6 +9742,7 @@ export function workspaceAdapterLeakViolations(
     shouldParseWorkspaceAst(
       fileText,
       symbols,
+      symbolSet,
       fromRelPath,
       isKnownJsxPath,
       primaryLists,
