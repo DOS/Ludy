@@ -24,10 +24,11 @@ function invoice(id: string, overrides: Partial<VatInvoiceView> = {}): VatInvoic
   };
 }
 
-function report(input: VatInvoiceView[], output: VatInvoiceView[] | null): VatReport {
+function report(input: VatInvoiceView[], output: VatInvoiceView[] | null, supplementary: VatInvoiceView[] = []): VatReport {
   const inputSide = { available: true, documents: input, totals: sideTotals(input) };
   const outputSide = { available: output !== null, documents: output ?? [], totals: sideTotals(output ?? []) };
-  return { period: vatPeriod('2026-09'), input: inputSide, output: outputSide, supplementary: { documents: [], totals: sideTotals([]) }, lateSales: [], indicators: form01Indicators(inputSide.totals, outputSide.totals), paymentChecks: { items: [], vatAtRisk: '0', notDeductibleVat: '0', unchecked: 0, suggested25: inputSide.totals.vat }, carryForward: { amount: '0', previous: null, lookedFor: [] }, filed: null };
+  const supplementaryTotals = sideTotals(supplementary);
+  return { period: vatPeriod('2026-09'), input: inputSide, output: outputSide, supplementary: { documents: supplementary, totals: supplementaryTotals }, lateSales: [], indicators: form01Indicators(inputSide.totals, outputSide.totals), paymentChecks: { items: [], vatAtRisk: '0', notDeductibleVat: '0', unchecked: 0, suggested25: inputSide.totals.vat }, carryForward: { amount: '0', previous: null, lookedFor: [] }, filed: null };
 }
 
 async function readBack(r: VatReport, brand?: string): Promise<ExcelJS.Workbook> {
@@ -132,5 +133,86 @@ describe('buildVatWorkbook', () => {
     // An empty but available sales side has only its header and the total row.
     const sales = rowsOf(workbook.getWorksheet('Bán ra') as ExcelJS.Worksheet);
     expect(sales.slice(1)).toEqual([[undefined, undefined, undefined, undefined, undefined, 'Tổng cộng', undefined, 0, 0]]);
+  });
+
+  it('writes supplementary items, their by-rate totals and combined sales when present, without touching regular exports (#3541)', async () => {
+    const regular = await readBack(report([invoice('a')], [invoice('s1')]));
+    expect(regular.worksheets.map((s) => s.name)).toEqual(['Tổng hợp', 'Bán ra', 'Mua vào']);
+    const regularSummary = rowsOf(regular.getWorksheet('Tổng hợp') as ExcelJS.Worksheet);
+    expect(regularSummary.some((r) => String(r[1] ?? '').includes('bổ sung'))).toBe(false);
+
+    const supp = [
+      invoice('sup1', {
+        issueDate: '2026-10-05',
+        saleDate: '2026-09-28',
+        number: '2001',
+        partyName: '=CMD("x")',
+        rates: [
+          { rate: '8', taxable: '500000', vat: '40000' },
+          { rate: '10', taxable: '1234567890123456', vat: '123456789012346' },
+        ],
+        warnings: ['late_sale'],
+      }),
+      invoice('sup2', {
+        issueDate: '2026-10-06',
+        saleDate: '2026-09-29',
+        number: '2002',
+        rates: [{ rate: 'other', taxable: '250000', vat: '0' }],
+        warnings: ['late_sale', 'rate_unknown'],
+      }),
+    ];
+    const workbook = await readBack(report([invoice('a')], [invoice('s1')], supp));
+    expect(workbook.worksheets.map((s) => s.name)).toEqual(['Tổng hợp', 'Bán ra', 'Mua vào', 'Kê khai bổ sung']);
+    expectExcelSheetNames(workbook);
+
+    const summary = rowsOf(workbook.getWorksheet('Tổng hợp') as ExcelJS.Worksheet);
+    // Main [32] and [33] on Tổng hợp keep the original declared output (not reopened by supplementary).
+    const byCode = new Map(summary.filter((r) => typeof r[0] === 'string' && String(r[0]).startsWith('[')).map((r) => [r[0], r[2]]));
+    expect(byCode.get('[32]')).toBe(1800000);
+    expect(byCode.get('[33]')).toBe(180000);
+
+    const suppTitleIdx = summary.findIndex((r) => r[1] === 'Hóa đơn bán ra cần kê khai bổ sung theo thuế suất');
+    expect(suppTitleIdx).toBeGreaterThan(-1);
+    expect(summary[suppTitleIdx]?.slice(2, 4)).toEqual(['Giá trị chưa có thuế', 'Thuế GTGT']);
+
+    const suppTotalRow = summary.slice(suppTitleIdx).find((r) => r[1] === 'Tổng cộng (2 hóa đơn)');
+    expect(suppTotalRow?.slice(2, 4)).toEqual(['1234567890873456', 123456789052346]);
+
+    const combinedRow = summary.find((r) => r[1] === 'Tổng bán ra sau bổ sung (3 hóa đơn)');
+    expect(combinedRow?.slice(2, 4)).toEqual(['1234567892673456', 123456789232346]);
+    expect(summary.some((r) => String(r[1] ?? '').includes('nằm ngoài bảng kê bán ra và chỉ tiêu [26] đến [35]'))).toBe(true);
+    const otherSuppRow = summary.find((r) => r[1] === 'Doanh thu bán ra cần kê khai bổ sung chưa rõ thuế suất, không nằm trong chỉ tiêu nào: kiểm tra các hóa đơn đó trước khi nộp tờ khai bổ sung');
+    expect(otherSuppRow?.[2]).toBe(250000);
+
+    const suppSheet = workbook.getWorksheet('Kê khai bổ sung') as ExcelJS.Worksheet;
+    const suppRows = rowsOf(suppSheet);
+    expect(suppRows[0]).toEqual(['STT', 'Ngày hóa đơn', 'Ký hiệu HĐ', 'Số HĐ', 'MST người mua', 'Tên người mua', 'Thuế suất', 'Giá trị chưa có thuế', 'Thuế GTGT', 'Ghi chú']);
+    expect(suppRows[1]).toEqual([
+      1,
+      '2026-10-05',
+      'C26TAB',
+      '2001',
+      '0101234564',
+      '=CMD("x")',
+      '8%',
+      500000,
+      40000,
+      'Ngày bán 2026-09-28; Hóa đơn lập sau kỳ của ngày bán (hóa đơn lập muộn): kê khai ở kỳ của ngày bán',
+    ]);
+    expect(suppSheet.getRow(2).getCell(6).type).toBe(ExcelJS.ValueType.String);
+    expect(suppSheet.getRow(3).getCell(8)).toMatchObject({ type: ExcelJS.ValueType.String, value: '1234567890123456' });
+    expect(suppRows[3]).toEqual([
+      2,
+      '2026-10-06',
+      'C26TAB',
+      '2002',
+      '0101234564',
+      'Công ty TNHH ABC',
+      'Chưa rõ thuế suất',
+      250000,
+      0,
+      'Ngày bán 2026-09-29; Hóa đơn lập sau kỳ của ngày bán (hóa đơn lập muộn): kê khai ở kỳ của ngày bán; Có dòng chưa rõ thuế suất',
+    ]);
+    expect(suppRows[4]).toEqual([undefined, undefined, undefined, undefined, undefined, 'Tổng cộng', undefined, '1234567890873456', 123456789052346]);
   });
 });
