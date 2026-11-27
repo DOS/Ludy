@@ -26,7 +26,7 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: node([]), queryClient: client.current, errorMessage: String };
 });
 
-const { FollowupForm, stageAfterLoadError } = await import('../src/components/meeting-followup.tsx');
+const { FollowupForm, stageAfterLoadError, versionAfterLoadError } = await import('../src/components/meeting-followup.tsx');
 const { MeetingResults } = await import('../src/components/meeting-results.tsx');
 
 const DRAFT: FollowupDraft = {
@@ -46,7 +46,7 @@ const DRAFT: FollowupDraft = {
 function form(
   draft: FollowupDraft,
   locale: 'en' | 'vi' = 'en',
-  opts: { initialStyle?: FollowupStyle; noteStatus?: FollowupNoteStatus | null } = {},
+  opts: { initialStyle?: FollowupStyle; noteStatus?: FollowupNoteStatus | null; versionLanguage?: 'vi' | 'en' } = {},
 ) {
   return renderToStaticMarkup(
     <QueryClientProvider client={client.current}>
@@ -55,7 +55,9 @@ function form(
           draft={draft}
           initialStyle={opts.initialStyle ?? 'structured'}
           noteStatus={opts.noteStatus ?? null}
+          versionLanguage={opts.versionLanguage}
           onStageChange={() => {}}
+          onVersionLanguageChange={() => {}}
           onSent={() => {}}
         />
       </IntlProvider>
@@ -138,9 +140,29 @@ describe('FollowupForm', () => {
     expect(Object.keys(en.meetings.followup.noteAiStatus).sort()).toEqual(Object.keys(viMessages.meetings.followup.noteAiStatus).sort());
     expect(Object.keys(en.meetings.followup.noteState).sort()).toEqual(Object.keys(viMessages.meetings.followup.noteState).sort());
   });
+
+  it('shows a version language toggle with 44px targets only for published stage when availableVersions exist (#5225)', () => {
+    expect(form(DRAFT)).not.toContain('data-testid="followup-version-switch"');
+    expect(form({ ...DRAFT, stage: 'draft', availableVersions: ['en'] })).not.toContain('data-testid="followup-version-switch"');
+
+    const withVersion = form({ ...DRAFT, stage: 'published', availableVersions: ['en'] }, 'vi');
+    expect(withVersion).toContain('data-testid="followup-version-switch"');
+    expect(withVersion).toContain('data-testid="followup-version-original"');
+    expect(withVersion).toContain('data-testid="followup-version-en"');
+    expect(withVersion).toContain('min-h-11');
+    expect(withVersion).toContain(viMessages.meetings.followup.versionOriginal);
+    expect(withVersion).toContain('English');
+
+    const selectedEn = form(
+      { ...DRAFT, stage: 'published', lang: 'en', availableVersions: ['en'] },
+      'en',
+      { versionLanguage: 'en' },
+    );
+    expect(selectedEn).toMatch(/<button[^>]*aria-pressed="true"[^>]*data-testid="followup-version-en"|<button[^>]*data-testid="followup-version-en"[^>]*aria-pressed="true"/);
+  });
 });
 
-describe('the stage the dialog asks for after a failed load (#4479)', () => {
+describe('the stage and version the dialog asks for after a failed load (#4479, #5225)', () => {
   it('falls back to the default stage when the chosen draft is gone (published in another tab), and keeps every other choice and error', () => {
     const gone = { code: 'NO_DRAFT_SUMMARY' };
     expect(stageAfterLoadError('draft', gone)).toBeUndefined();
@@ -149,6 +171,13 @@ describe('the stage the dialog asks for after a failed load (#4479)', () => {
     expect(stageAfterLoadError('draft', { code: 'FORBIDDEN' })).toBe('draft');
     expect(stageAfterLoadError('draft', new Error('network'))).toBe('draft');
     expect(stageAfterLoadError('draft', null)).toBe('draft');
+  });
+
+  it('resets versionLanguage when the published version is removed or stage falls back to draft', () => {
+    expect(versionAfterLoadError('en', { code: 'MINUTES_VERSION_NOT_FOUND' })).toBeUndefined();
+    expect(versionAfterLoadError('en', { code: 'MINUTES_VERSION_STAGE' })).toBeUndefined();
+    expect(versionAfterLoadError('en', { code: 'FORBIDDEN' })).toBe('en');
+    expect(versionAfterLoadError(undefined, { code: 'MINUTES_VERSION_NOT_FOUND' })).toBeUndefined();
   });
 });
 

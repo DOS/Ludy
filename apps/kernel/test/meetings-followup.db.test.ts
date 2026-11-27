@@ -10,9 +10,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { FOLLOWUP_SENDS_PER_MEETING_PER_DAY, type FollowupDraft, type FollowupSent } from '@ludy/kernel-contract';
+import { FOLLOWUP_SENDS_PER_MEETING_PER_DAY, type FollowupDraft, type FollowupSent, type TranslationSource } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
+import { renderFollowupMail } from '../src/followup-mail.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -363,5 +364,187 @@ suite('the follow-up email of a meeting (#2590)', () => {
     const auditText = JSON.stringify(audit.rows[0]?.detail);
     expect(auditText).not.toContain('thử nghiệm');
     expect(auditText).not.toContain('Chào An');
+  });
+
+  it('supports bilingual follow-up draft and send from a published minutes_version, renders localized mail, and rejects stale/unpublished versions (#5225)', async () => {
+    const m = await seedPublished(['attendee'], 'Chốt báo giá 1.250.000 cho khách A.');
+    // Before publishing EN version, availableVersions is empty and requesting EN fails closed.
+    const initial = await query<FollowupDraft>('recorder', 'meetings.followup.draft', { meetingId: m });
+    expect(initial.availableVersions).toEqual([]);
+    expect(await refuses(query('recorder', 'meetings.followup.draft', { meetingId: m, versionLanguage: 'en' }))).toBe('MINUTES_VERSION_NOT_FOUND');
+    expect(await refuses(query('recorder', 'meetings.followup.draft', { meetingId: m, stage: 'draft', versionLanguage: 'en' }))).toBe('MINUTES_VERSION_STAGE');
+
+    const src = await query<TranslationSource>('recorder', 'meetings.translation.source', { meetingId: m, stage: 'published', to: 'en' });
+    const itemSeg = src.segments.find((s) => s.key.startsWith('item:'));
+    expect(itemSeg).toBeDefined();
+    await exec('recorder', 'meetings.minutes_version.publish', {
+      meetingId: m,
+      language: 'en',
+      hash: src.hash,
+      segments: [
+        { key: 'summary', text: 'Quote of 1,250,000 agreed for customer A.' },
+        { key: 'decision:0', text: 'Keep old pricing' },
+        { key: itemSeg!.key, text: 'Send quote to customer' },
+      ],
+    });
+
+    const originalDraft = await query<FollowupDraft>('recorder', 'meetings.followup.draft', { meetingId: m });
+    expect(originalDraft.availableVersions).toEqual(['en']);
+    expect(originalDraft.lang).toBe('vi');
+
+    const enDraft = await query<FollowupDraft>('recorder', 'meetings.followup.draft', { meetingId: m, versionLanguage: 'en' });
+    expect(enDraft).toMatchObject({
+      meetingId: m,
+      lang: 'en',
+      stage: 'published',
+      availableVersions: ['en'],
+    });
+    expect(enDraft.words.greeting).toBe('Hello,');
+    expect(enDraft.words.subject).toMatch(/^Meeting summary, /);
+    expect(enDraft.facts).toEqual({
+      summary: 'Quote of 1,250,000 agreed for customer A.',
+      decisions: ['Keep old pricing'],
+      items: [{ title: 'Send quote to customer', who: 'An', when: 'thứ sáu' }],
+    });
+    expect(enDraft.factsKey).not.toBe(originalDraft.factsKey);
+
+    // Non-recorder isolation holds for bilingual draft and send.
+    expect(await refuses(query('attendee', 'meetings.followup.draft', { meetingId: m, versionLanguage: 'en' }))).toBe('FORBIDDEN');
+    expect(await refuses(query('other', 'meetings.followup.draft', { meetingId: m, versionLanguage: 'en' }))).toBe('MEETING_NOT_FOUND');
+
+    // Sending with versionLanguage queues English payload rendered with English labels and text-free audit metadata.
+    const sent = await exec<FollowupSent>(
+      'recorder',
+      'meetings.followup.send',
+      {
+        meetingId: m,
+        stage: 'published',
+        versionLanguage: 'en',
+        factsKey: enDraft.factsKey,
+        subject: enDraft.words.subject,
+        greeting: enDraft.words.greeting,
+        lead: enDraft.words.lead,
+        closing: enDraft.words.closing,
+        recipients: ['attendee@followup.test'],
+        confirmedOutsiders: [],
+        confirmRepeat: false,
+        fromVy: false,
+        reviewed: false,
+      },
+      randomUUID(),
+    );
+    expect(sent).toMatchObject({ meetingId: m, queued: 1, suppressed: 0 });
+    const rows = await mails(m);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.payload).toMatchObject({
+      lang: 'en',
+      facts: enDraft.facts,
+    });
+    const rendered = renderFollowupMail(rows[0]!.payload, { replyTo: null, brand: 'Ludy' });
+    expect(rendered.text).toContain('Summary:\nQuote of 1,250,000 agreed for customer A.');
+    expect(rendered.text).toContain('Decisions:\n- Keep old pricing');
+    expect(rendered.text).toContain('Action items:\n- Send quote to customer, Owner: An, Due: thứ sáu');
+    expect(rendered.text).toContain('Kind regards,');
+    expect(rendered.html).toContain('<html lang="en">');
+
+    // Republishing the EN minutes_version invalidates the earlier factsKey (STALE_FOLLOWUP).
+    await exec('recorder', 'meetings.minutes_version.publish', {
+      meetingId: m,
+      language: 'en',
+      hash: src.hash,
+      segments: [
+        { key: 'summary', text: 'Updated quote of 1,250,000 agreed for customer A.' },
+        { key: 'decision:0', text: 'Keep old pricing' },
+        { key: itemSeg!.key, text: 'Send quote to customer' },
+      ],
+    });
+    expect(
+      await refuses(
+        exec(
+          'recorder',
+          'meetings.followup.send',
+          {
+            meetingId: m,
+            stage: 'published',
+            versionLanguage: 'en',
+            factsKey: enDraft.factsKey,
+            subject: enDraft.words.subject,
+            greeting: enDraft.words.greeting,
+            lead: enDraft.words.lead,
+            closing: enDraft.words.closing,
+            recipients: ['attendee@followup.test'],
+            confirmedOutsiders: [],
+            confirmRepeat: true,
+            fromVy: false,
+            reviewed: false,
+          },
+          randomUUID(),
+        ),
+      ),
+    ).toBe('STALE_FOLLOWUP');
+
+    // Unpublishing the EN version also triggers STALE_FOLLOWUP on Send and 404 on Draft.
+    const refreshed = await query<FollowupDraft>('recorder', 'meetings.followup.draft', { meetingId: m, versionLanguage: 'en' });
+    await exec('recorder', 'meetings.minutes_version.unpublish', { meetingId: m, language: 'en' });
+    expect(
+      await refuses(
+        exec(
+          'recorder',
+          'meetings.followup.send',
+          {
+            meetingId: m,
+            stage: 'published',
+            versionLanguage: 'en',
+            factsKey: refreshed.factsKey,
+            subject: refreshed.words.subject,
+            greeting: refreshed.words.greeting,
+            lead: refreshed.words.lead,
+            closing: refreshed.words.closing,
+            recipients: ['attendee@followup.test'],
+            confirmedOutsiders: [],
+            confirmRepeat: true,
+            fromVy: false,
+            reviewed: false,
+          },
+          randomUUID(),
+        ),
+      ),
+    ).toBe('STALE_FOLLOWUP');
+    expect(await refuses(query('recorder', 'meetings.followup.draft', { meetingId: m, versionLanguage: 'en' }))).toBe('MINUTES_VERSION_NOT_FOUND');
+
+    // Republishing original minutes drops EN minutes_version and triggers STALE_FOLLOWUP on Send.
+    await exec('recorder', 'meetings.minutes_version.publish', {
+      meetingId: m,
+      language: 'en',
+      hash: src.hash,
+      segments: [{ key: 'summary', text: 'Quote of 1,250,000 agreed for customer A.' }],
+    });
+    const beforeOrigRepublish = await query<FollowupDraft>('recorder', 'meetings.followup.draft', { meetingId: m, versionLanguage: 'en' });
+    await exec('recorder', 'meetings.summary.save', { meetingId: m, summary: 'Thay đổi mới ở bản gốc.', decisions: [] });
+    await exec('recorder', 'meetings.result.publish', { meetingId: m, confirmed: true });
+    expect(
+      await refuses(
+        exec(
+          'recorder',
+          'meetings.followup.send',
+          {
+            meetingId: m,
+            stage: 'published',
+            versionLanguage: 'en',
+            factsKey: beforeOrigRepublish.factsKey,
+            subject: beforeOrigRepublish.words.subject,
+            greeting: beforeOrigRepublish.words.greeting,
+            lead: beforeOrigRepublish.words.lead,
+            closing: beforeOrigRepublish.words.closing,
+            recipients: ['attendee@followup.test'],
+            confirmedOutsiders: [],
+            confirmRepeat: true,
+            fromVy: false,
+            reviewed: false,
+          },
+          randomUUID(),
+        ),
+      ),
+    ).toBe('STALE_FOLLOWUP');
   });
 });

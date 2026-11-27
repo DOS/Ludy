@@ -5,7 +5,7 @@
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MinutesDocx } from '@ludy/kernel-contract';
+import type { MeetingLanguage, MinutesDocx } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
 import { ErrorText } from './ui.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
@@ -34,11 +34,32 @@ export function saveDocx(file: MinutesDocx): void {
   }
 }
 
-export function MinutesDocxButton({ meetingId, place, disabled = false }: { meetingId: string; place: string; disabled?: boolean }) {
+export function MinutesDocxButton({
+  meetingId,
+  place,
+  originalLanguage = 'vi',
+  availableLanguages = [],
+  disabled = false,
+}: {
+  meetingId: string;
+  place: string;
+  originalLanguage?: MeetingLanguage;
+  availableLanguages?: readonly MeetingLanguage[];
+  disabled?: boolean;
+}) {
   const t = useTranslations('meetings.minutes');
   const [failure, setFailure] = useState<string | null>(null);
+  const [selectedLanguage, setSelectedLanguage] = useState<MeetingLanguage>(originalLanguage);
+  const extraLanguages = availableLanguages.filter((lang) => lang !== originalLanguage);
+  const activeLanguage: MeetingLanguage =
+    selectedLanguage !== originalLanguage && extraLanguages.includes(selectedLanguage) ? selectedLanguage : originalLanguage;
   const download = useMutation({
-    mutationFn: () => orpc.meetings.minutesDocx.download.call({ meetingId, place: place.trim() }),
+    mutationFn: () =>
+      orpc.meetings.minutesDocx.download.call({
+        meetingId,
+        place: place.trim(),
+        ...(activeLanguage !== originalLanguage ? { language: activeLanguage } : {}),
+      }),
     onSuccess: (file) => {
       setFailure(null);
       saveDocx(file);
@@ -47,9 +68,43 @@ export function MinutesDocxButton({ meetingId, place, disabled = false }: { meet
   });
   return (
     <div className="space-y-1">
-      <Button type="button" variant="outline" loading={download.isPending} disabled={disabled} onClick={() => download.mutate()} data-testid="minutes-docx">
-        {t('docx')}
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        {extraLanguages.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1" role="group" aria-label={t('docxLanguageLabel')} data-testid="minutes-docx-language">
+            <Button
+              type="button"
+              size="sm"
+              className="min-h-11"
+              variant={activeLanguage === originalLanguage ? 'secondary' : 'outline'}
+              aria-pressed={activeLanguage === originalLanguage}
+              disabled={download.isPending || disabled}
+              onClick={() => setSelectedLanguage(originalLanguage)}
+              data-testid="minutes-docx-lang-original"
+            >
+              {t('docxOriginal', { lang: originalLanguage.toUpperCase() })}
+            </Button>
+            {extraLanguages.map((lang) => (
+              <Button
+                key={lang}
+                type="button"
+                size="sm"
+                className="min-h-11"
+                variant={activeLanguage === lang ? 'secondary' : 'outline'}
+                aria-pressed={activeLanguage === lang}
+                lang={lang}
+                disabled={download.isPending || disabled}
+                onClick={() => setSelectedLanguage(lang)}
+                data-testid={`minutes-docx-lang-${lang}`}
+              >
+                {t('docxVersion', { lang: lang.toUpperCase() })}
+              </Button>
+            ))}
+          </div>
+        )}
+        <Button type="button" variant="outline" className="min-h-11" loading={download.isPending} disabled={disabled} onClick={() => download.mutate()} data-testid="minutes-docx">
+          {t('docx')}
+        </Button>
+      </div>
       {failure && <ErrorText>{failure}</ErrorText>}
     </div>
   );

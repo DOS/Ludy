@@ -10,6 +10,7 @@
 // MINUTES_NOT_PUBLISHED (409), as the page shows "Bản nháp" and no content. The date, the people and the due dates come from the meeting and code (its start, its readers, the attendee matched, the date
 // parsed), as on the page; names are display names only, never an email address. The place is the one typed on the page, not stored. No model is used and nothing is written.
 import { sql } from 'kysely';
+import { z } from 'zod';
 import {
   parseStoredSections,
   templateSections,
@@ -17,7 +18,9 @@ import {
   zMeetingSummaryTemplate,
   zMinutesDocx,
   zMinutesDocxInput,
+  zMinutesVersionSegment,
   MINUTES_DOCX_MIME,
+  type MeetingLanguage,
   type MeetingSummaryTemplate,
   type MinutesDocx,
 } from '@ludy/kernel-contract';
@@ -26,7 +29,17 @@ import { buildMinutesDocx, cleanLine, dueText, minutesFilename, vnMoment, type M
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 // A member with no display name (an email address is never a name) or no longer in the org.
-const UNKNOWN_MEMBER = 'Thành viên';
+const UNKNOWN_MEMBER: Record<MeetingLanguage, string> = {
+  vi: 'Thành viên',
+  en: 'Member',
+};
+
+const EN_SECTION_TITLES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  briefing: { progress: 'Results since the last meeting', issues: 'Problems and blockers', plan: 'Plan for the next period', requests: 'Requests and proposals' },
+  customer: { needs: 'What the customer needs', discussed: 'What was discussed', feedback: 'Customer feedback and concerns', next_steps: 'Agreed next steps' },
+  supplier: { supply: 'Supply status', terms: 'Prices and terms', issues: 'Problems and complaints', commitments: 'Supplier commitments' },
+  one_on_one: { updates: 'Work updates', feedback: 'Feedback', support: 'Difficulties and support needed', goals: 'Next goals' },
+};
 
 export const minutesDocxDownload = defineQuery({
   name: 'meetings.minutes_docx.download',
@@ -39,7 +52,7 @@ export const minutesDocxDownload = defineQuery({
     const open = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     const meeting = await ctx.trx
       .selectFrom('ludy_meetings.meeting')
-      .select(['title', 'started_at', 'created_at', 'ended_at', 'summary_template', 'minutes_template_sections'])
+      .select(['title', 'language', 'started_at', 'created_at', 'ended_at', 'summary_template', 'minutes_template_sections'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirstOrThrow();
@@ -53,7 +66,7 @@ export const minutesDocxDownload = defineQuery({
       .executeTakeFirst();
     const items = await ctx.trx
       .selectFrom('ludy_meetings.action_item')
-      .select(['title', 'who_parsed', sql<string | null>`when_parsed::text`.as('when_parsed')])
+      .select(['id', 'title', 'who_parsed', sql<string | null>`when_parsed::text`.as('when_parsed')])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .where('stage', '=', 'published')
@@ -62,6 +75,24 @@ export const minutesDocxDownload = defineQuery({
       .orderBy('id')
       .execute();
     if (!result && items.length === 0) throw new DomainError('MINUTES_NOT_PUBLISHED', 409, 'The recorder has not shared the minutes yet');
+
+    const originalLang: MeetingLanguage = meeting.language === 'en' ? 'en' : 'vi';
+    const targetLang: MeetingLanguage = input.language ?? originalLang;
+    let versionSegments: Map<string, string> | null = null;
+    if (targetLang !== originalLang) {
+      const version = await ctx.trx
+        .selectFrom('ludy_meetings.minutes_version')
+        .select(['language', 'body'])
+        .where('org_id', '=', ctx.orgId)
+        .where('meeting_id', '=', input.meetingId)
+        .where('language', '=', targetLang)
+        .executeTakeFirst();
+      if (!version) {
+        throw new DomainError('MINUTES_VERSION_NOT_FOUND', 404, 'Chưa có bản dịch biên bản được đăng cho ngôn ngữ này');
+      }
+      const parsedSegments = z.array(zMinutesVersionSegment).parse(version.body);
+      versionSegments = new Map(parsedSegments.map((s) => [s.key, s.text]));
+    }
 
     // The people: the recorder first, then the readers, and the owner of each item, by display name.
     const readers = await ctx.trx.selectFrom('ludy_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).orderBy('created_at').orderBy('id').execute();
@@ -73,28 +104,46 @@ export const minutesDocxDownload = defineQuery({
       // A name as the page shows it: one line, whitespace collapsed (the speaker label's length rule is not applied, so a long name is not lost).
       for (const r of rows) names.set(r.user_id, cleanLine(r.display_name ?? '').replace(/\s+/gu, ' ').trim());
     }
-    const nameOf = (userId: string) => (names.get(userId) || UNKNOWN_MEMBER);
+    const nameOf = (userId: string) => names.get(userId) || UNKNOWN_MEMBER[targetLang];
 
     const parsedTemplate = zMeetingSummaryTemplate.safeParse(meeting.summary_template);
     const template: MeetingSummaryTemplate = parsedTemplate.success ? parsedTemplate.data : 'general';
     const copy = template === 'custom' && meeting.minutes_template_sections !== null ? parseStoredSections(meeting.minutes_template_sections) : null;
+    const summaryText = versionSegments ? (versionSegments.get('summary') ?? '') : (result?.summary ?? '');
     let sections: MinutesDocSection[] = [];
-    if (result) {
+    if (summaryText.trim() !== '') {
       const defs = templateSections(template, copy);
-      const parsed = textToSections(template, result.summary, copy);
-      // Text not in the template's form (the template changed since it was shared) is shown whole, as it was shared.
+      const parsed = textToSections(template, summaryText, copy);
+      const headingTitle = (key: string) => (template !== 'custom' && targetLang === 'en' ? EN_SECTION_TITLES[template]?.[key] : undefined) ?? defs.find((d) => d.key === key)?.title ?? key;
+      // Text not in the template's form (the template changed since it was shared, or a second-language version translated headings) is shown whole, as it was shared.
       sections = parsed
         ? parsed
             .filter((s) => s.text !== '')
-            .map((s, i) => ({ heading: `${i + 1}. ${defs.find((d) => d.key === s.key)?.title ?? s.key}`, text: s.text }))
-        : result.summary.trim() === '' || result.summary.trim() === '-'
+            .map((s, i) => ({ heading: `${i + 1}. ${headingTitle(s.key)}`, text: s.text }))
+        : summaryText.trim() === '-'
           ? []
-          : [{ heading: null, text: result.summary }];
+          : [{ heading: null, text: summaryText }];
     }
+    const rawDecisions = result && Array.isArray(result.decisions) ? (result.decisions as unknown[]) : [];
+    const conclusions = versionSegments
+      ? rawDecisions.flatMap((_, idx) => {
+          const translated = versionSegments.get(`decision:${idx}`);
+          return typeof translated === 'string' && translated.trim() !== '' ? [translated] : [];
+        })
+      : rawDecisions.filter((d): d is string => typeof d === 'string' && d.trim() !== '');
+    const actions = versionSegments
+      ? items.flatMap((i) => {
+          const translatedTitle = versionSegments.get(`item:${i.id}`);
+          return translatedTitle !== undefined && translatedTitle.trim() !== ''
+            ? [{ title: translatedTitle, owner: i.who_parsed ? nameOf(i.who_parsed) : null, due: dueText(i.when_parsed) }]
+            : [];
+        })
+      : items.map((i) => ({ title: i.title, owner: i.who_parsed ? nameOf(i.who_parsed) : null, due: dueText(i.when_parsed) }));
     const company = await ctx.trx.selectFrom('ludy_kernel.tenant').select('name').where('org_id', '=', ctx.orgId).executeTakeFirst();
     const startedAt = new Date((meeting.started_at ?? meeting.created_at) as Date | string);
     const from = vnMoment(startedAt);
     const doc: MinutesDoc = {
+      language: targetLang,
       company: company?.name ?? '',
       title: meeting.title,
       from,
@@ -102,12 +151,12 @@ export const minutesDocxDownload = defineQuery({
       place: input.place,
       attendees: people.map(nameOf),
       sections,
-      conclusions: result && Array.isArray(result.decisions) ? (result.decisions as unknown[]).filter((d): d is string => typeof d === 'string' && d.trim() !== '') : [],
-      actions: items.map((i) => ({ title: i.title, owner: i.who_parsed ? nameOf(i.who_parsed) : null, due: dueText(i.when_parsed) })),
+      conclusions,
+      actions,
     };
     const bytes = buildMinutesDocx(doc);
     return zMinutesDocx.parse({
-      filename: minutesFilename(meeting.title, `${from.year}-${from.month}-${from.day}`),
+      filename: minutesFilename(meeting.title, `${from.year}-${from.month}-${from.day}`, targetLang),
       mimeType: MINUTES_DOCX_MIME,
       bytes: bytes.length,
       contentBase64: Buffer.from(bytes).toString('base64'),

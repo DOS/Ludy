@@ -20,6 +20,7 @@ import {
   type FollowupStage,
   type FollowupStyle,
   type FollowupWording,
+  type MeetingLanguage,
 } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -72,7 +73,10 @@ export function FollowupForm({
   noteStatus = null,
   noteStatusPending = false,
   initialStyle = 'structured',
+  versionLanguage,
   onStageChange,
+  onVersionLanguageChange,
+  onStyleChange,
   onSent,
   onReload,
 }: {
@@ -80,12 +84,20 @@ export function FollowupForm({
   noteStatus?: FollowupNoteStatus | null;
   noteStatusPending?: boolean;
   initialStyle?: FollowupStyle;
+  versionLanguage?: MeetingLanguage;
   onStageChange?: (stage: FollowupStage) => void;
+  onVersionLanguageChange?: (language: MeetingLanguage | undefined) => void;
+  onStyleChange?: (style: FollowupStyle) => void;
   onSent: (queued: number) => void;
   onReload?: () => void;
 }) {
   const t = useTranslations('meetings.followup');
+  const tt = useTranslations('meetings.translationTargets');
   const effectiveStage: FollowupStage = draft.stage ?? 'published';
+  const availableVersions = (draft.availableVersions ?? []).filter((v): v is MeetingLanguage => v === 'vi' || v === 'en');
+  const effectiveVersionLanguage: MeetingLanguage | undefined =
+    effectiveStage === 'published' && versionLanguage && availableVersions.includes(versionLanguage) ? versionLanguage : undefined;
+  const versionNames: Record<MeetingLanguage, string> = { vi: tt('names.vi'), en: tt('names.en') };
   const [style, setStyle] = useState<FollowupStyle>(initialStyle);
   const [subject, setSubject] = useState(draft.words.subject);
   const [greeting, setGreeting] = useState(draft.words.greeting);
@@ -120,6 +132,7 @@ export function FollowupForm({
       orpc.meetings.followup.wording.call({
         meetingId: draft.meetingId,
         stage: effectiveStage,
+        ...(effectiveVersionLanguage ? { versionLanguage: effectiveVersionLanguage } : {}),
         ...(hint.trim() ? { hint: hint.trim() } : {}),
       }),
     onSuccess: (answer: FollowupWording) => {
@@ -140,6 +153,7 @@ export function FollowupForm({
       orpc.meetings.followup.note.call({
         meetingId: draft.meetingId,
         stage: effectiveStage,
+        ...(effectiveVersionLanguage ? { versionLanguage: effectiveVersionLanguage } : {}),
         ...(noteHint.trim() ? { hint: noteHint.trim() } : {}),
       }),
     onSuccess: (answer: FollowupNoteAnswer) => {
@@ -158,6 +172,7 @@ export function FollowupForm({
         meetingId: draft.meetingId,
         style,
         stage: effectiveStage,
+        ...(effectiveVersionLanguage ? { versionLanguage: effectiveVersionLanguage } : {}),
         factsKey: draft.factsKey,
         subject,
         ...(style === 'personal_note'
@@ -276,6 +291,39 @@ export function FollowupForm({
         </div>
       )}
 
+      {effectiveStage === 'published' && availableVersions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label={t('versionLabel')} data-testid="followup-version-switch">
+          <Button
+            type="button"
+            size="sm"
+            className="min-h-11"
+            variant={effectiveVersionLanguage === undefined ? 'secondary' : 'outline'}
+            aria-pressed={effectiveVersionLanguage === undefined}
+            disabled={send.isPending || busyAi}
+            onClick={() => onVersionLanguageChange?.(undefined)}
+            data-testid="followup-version-original"
+          >
+            {t('versionOriginal')}
+          </Button>
+          {availableVersions.map((lang) => (
+            <Button
+              key={lang}
+              type="button"
+              size="sm"
+              className="min-h-11"
+              variant={effectiveVersionLanguage === lang ? 'secondary' : 'outline'}
+              aria-pressed={effectiveVersionLanguage === lang}
+              lang={lang}
+              disabled={send.isPending || busyAi}
+              onClick={() => onVersionLanguageChange?.(lang)}
+              data-testid={`followup-version-${lang}`}
+            >
+              {versionNames[lang]}
+            </Button>
+          ))}
+        </div>
+      )}
+
       {effectiveStage === 'draft' && (
         <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm" data-testid="followup-unpublished-notice">
           <p className="text-xs text-foreground">{t('unpublishedNotice')}</p>
@@ -293,7 +341,7 @@ export function FollowupForm({
           variant={style === 'structured' ? 'secondary' : 'outline'}
           aria-pressed={style === 'structured'}
           disabled={send.isPending || busyAi}
-          onClick={() => { setStyle('structured'); touch(); }}
+          onClick={() => { setStyle('structured'); onStyleChange?.('structured'); touch(); }}
           data-testid="followup-style-structured"
         >
           {t('styleStructured')}
@@ -304,7 +352,7 @@ export function FollowupForm({
           variant={style === 'personal_note' ? 'secondary' : 'outline'}
           aria-pressed={style === 'personal_note'}
           disabled={send.isPending || busyAi}
-          onClick={() => { setStyle('personal_note'); touch(); }}
+          onClick={() => { setStyle('personal_note'); onStyleChange?.('personal_note'); touch(); }}
           data-testid="followup-style-personal"
         >
           {t('stylePersonalNote')}
@@ -609,10 +657,27 @@ export function stageAfterLoadError(choice: FollowupStage | undefined, error: un
   return choice === 'draft' && code === 'NO_DRAFT_SUMMARY' ? undefined : choice;
 }
 
+/**
+ * The version language to ask for after a failed load. If the chosen published minutes version was taken down (or stage fell back to draft), reset to the original language.
+ */
+export function versionAfterLoadError(choice: MeetingLanguage | undefined, error: unknown): MeetingLanguage | undefined {
+  const code = (error as { code?: string } | null)?.code;
+  return choice !== undefined && (code === 'MINUTES_VERSION_NOT_FOUND' || code === 'MINUTES_VERSION_STAGE') ? undefined : choice;
+}
+
 function FollowupBody({ meetingId, onSent }: { meetingId: string; onSent: (queued: number) => void }) {
   const [stageChoice, setStageChoice] = useState<FollowupStage | undefined>(undefined);
+  const [versionChoice, setVersionChoice] = useState<MeetingLanguage | undefined>(undefined);
+  const [style, setStyle] = useState<FollowupStyle>('structured');
+  const effectiveVersionChoice = stageChoice === 'draft' ? undefined : versionChoice;
   const draft = useQuery({
-    ...orpc.meetings.followup.draft.queryOptions({ input: { meetingId, ...(stageChoice ? { stage: stageChoice } : {}) } }),
+    ...orpc.meetings.followup.draft.queryOptions({
+      input: {
+        meetingId,
+        ...(stageChoice ? { stage: stageChoice } : {}),
+        ...(effectiveVersionChoice ? { versionLanguage: effectiveVersionChoice } : {}),
+      },
+    }),
     ...FRESH,
   });
   const noteStatus = useQuery({
@@ -620,20 +685,31 @@ function FollowupBody({ meetingId, onSent }: { meetingId: string; onSent: (queue
     ...FRESH,
   });
   const fallback = draft.error ? stageAfterLoadError(stageChoice, draft.error) : stageChoice;
+  const fallbackVersion = draft.error ? versionAfterLoadError(effectiveVersionChoice, draft.error) : effectiveVersionChoice;
   useEffect(() => {
     if (fallback !== stageChoice) setStageChoice(fallback);
   }, [fallback, stageChoice]);
+  useEffect(() => {
+    if (fallbackVersion !== effectiveVersionChoice && stageChoice !== 'draft') setVersionChoice(fallbackVersion);
+  }, [fallbackVersion, effectiveVersionChoice, stageChoice]);
   if (draft.isPending) return null;
-  // The default stage is being asked for: nothing is shown for the one render before it loads, not the error of the stage that is gone.
-  if (draft.error && fallback !== stageChoice) return null;
+  // The default stage or original version is being asked for: nothing is shown for the one render before it loads, not the error of the version that is gone.
+  if (draft.error && (fallback !== stageChoice || fallbackVersion !== effectiveVersionChoice)) return null;
   if (draft.error) return <ErrorText>{errorMessage(draft.error)}</ErrorText>;
   return (
     <FollowupForm
-      key={`${draft.data.stage ?? 'published'}-${draft.data.factsKey}`}
+      key={`${draft.data.stage ?? 'published'}-${draft.data.lang}-${draft.data.factsKey}`}
       draft={draft.data}
       noteStatus={noteStatus.data ?? null}
       noteStatusPending={noteStatus.isPending}
-      onStageChange={(next) => setStageChoice(next)}
+      initialStyle={style}
+      versionLanguage={effectiveVersionChoice}
+      onStageChange={(next) => {
+        setStageChoice(next);
+        if (next === 'draft') setVersionChoice(undefined);
+      }}
+      onVersionLanguageChange={(next) => setVersionChoice(next)}
+      onStyleChange={setStyle}
       onSent={onSent}
       onReload={() => void draft.refetch()}
     />

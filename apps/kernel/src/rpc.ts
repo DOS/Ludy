@@ -1776,7 +1776,11 @@ export function createRpcHandler(
           inMeetings(context, async (orgId, actor) => {
             const draft = await runtime.query<FollowupDraft>(
               'meetings.followup.draft',
-              { meetingId: input.meetingId, ...(input.stage ? { stage: input.stage } : {}) },
+              {
+                meetingId: input.meetingId,
+                ...(input.stage ? { stage: input.stage } : {}),
+                ...(input.versionLanguage ? { versionLanguage: input.versionLanguage } : {}),
+              },
               { actor, orgId },
             );
             return wordFollowup(followupAi, orgId, actor.userId, { lang: draft.lang, org: draft.org }, input.hint);
