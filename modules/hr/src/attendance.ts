@@ -272,7 +272,7 @@ export function computeEmployeeAttendanceRollup(args: {
           : null;
       const ordNight =
         regularMins > 0 && e.checkedInAt && regularEnd
-          ? computeShiftAdjustedNightMinutes(e.checkedInAt, regularEnd, regularMins, e.shift)
+          ? computeShiftAdjustedNightMinutes(e.checkedInAt, regularEnd, regularMins)
           : 0;
       const otStart = e.checkedInAt ? new Date(e.checkedInAt.getTime() + REGULAR_SHIFT_MINUTES * 60_000) : null;
       const otEnd =
@@ -281,7 +281,7 @@ export function computeEmployeeAttendanceRollup(args: {
           : null;
       const otNight =
         extraMins > 0 && otStart && otEnd
-          ? computeShiftAdjustedNightMinutes(otStart, otEnd, extraMins, null)
+          ? computeShiftAdjustedNightMinutes(otStart, otEnd, extraMins)
           : 0;
       ordinaryNightMinutes += ordNight;
       otMinutes['normal_day:night'] += otNight;
@@ -293,7 +293,7 @@ export function computeEmployeeAttendanceRollup(args: {
           : null;
       const night =
         e.checkedInAt && creditedEnd
-          ? computeShiftAdjustedNightMinutes(e.checkedInAt, creditedEnd, mins, e.shift)
+          ? computeShiftAdjustedNightMinutes(e.checkedInAt, creditedEnd, mins)
           : 0;
       otMinutes[`${kind}:night`] += night;
       otMinutes[`${kind}:day`] += Math.max(0, mins - night);
@@ -461,7 +461,7 @@ function toAttendanceLogView(
     const creditedEnd = new Date(
       Math.min(row.checked_out_at.getTime(), row.checked_in_at.getTime() + regularMins * 60_000),
     );
-    nightMinutes = computeShiftAdjustedNightMinutes(row.checked_in_at, creditedEnd, regularMins, shift);
+    nightMinutes = computeShiftAdjustedNightMinutes(row.checked_in_at, creditedEnd, regularMins);
   }
   return {
     id: row.id,

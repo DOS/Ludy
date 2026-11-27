@@ -416,7 +416,7 @@ suite('HR Stage 7A shifts, weekly roster, 1-step swaps, night rollup & Ly covera
     expect(logApr07.shiftTemplateCode).toBe('CA_TOI_60');
     expect(logApr07.lateMinutes).toBe(20);
     expect(logApr07.earlyLeaveMinutes).toBe(0);
-    expect(logApr07.nightMinutes).toBeGreaterThan(200);
+    expect(logApr07.nightMinutes).toBe(240);
     expect(selfAttC.summary.totalLateMinutes).toBe(20);
 
     const adminAtt = await o.query<HrAttendanceListResult>(o.admin, 'hr.attendance.list', {
@@ -432,7 +432,7 @@ suite('HR Stage 7A shifts, weekly roster, 1-step swaps, night rollup & Ly covera
       allowIncomplete: true,
     });
     const empCRollup = rollup.rows.find((r) => r.employeeId === empC)!;
-    expect(Number(empCRollup.nightHours)).toBeGreaterThan(3);
+    expect(empCRollup.nightHours).toBe('4');
 
     const payLineRes = await adminPool.query<{ inputs: Record<string, unknown> }>(
       `SELECT inputs FROM ludy_hr.payroll_line WHERE org_id = $1 AND run_id = $2 AND employee_id = $3`,
@@ -520,13 +520,57 @@ suite('HR Stage 7A shifts, weekly roster, 1-step swaps, night rollup & Ly covera
     expect(briefFallback.ai).toEqual({ ok: false, reason: 'off' });
     expect(briefFallback.conflicts.length).toBeGreaterThanOrEqual(2);
 
-    // 7. PDPL erasure cancels pending swaps and scrubs note, reason, decision_note
+    // 7. Ended employee allows cleanup (reject, cancel, assignment.delete) while blocking approve/upsert/submit; PDPL erasure scrubs PII
+    const assignAEndedReject = await o.exec<HrShiftAssignmentView>(o.manager, 'hr.shift.assignment.upsert', {
+      employeeId: empA,
+      shiftTemplateId: tplSang.id,
+      workDate: '2027-04-15',
+    });
+    const swapEndedReject = await o.exec<HrShiftSwapView>(o.staffA, 'hr.self.shift_swap.submit', {
+      requesterAssignmentId: assignAEndedReject.id,
+      targetEmployeeId: empB,
+    });
+    const assignAEndedCancel = await o.exec<HrShiftAssignmentView>(o.manager, 'hr.shift.assignment.upsert', {
+      employeeId: empA,
+      shiftTemplateId: tplSang.id,
+      workDate: '2027-04-16',
+    });
+    const swapEndedCancel = await o.exec<HrShiftSwapView>(o.staffA, 'hr.self.shift_swap.submit', {
+      requesterAssignmentId: assignAEndedCancel.id,
+      targetEmployeeId: empB,
+    });
+    const assignAEndedDelete = await o.exec<HrShiftAssignmentView>(o.manager, 'hr.shift.assignment.upsert', {
+      employeeId: empA,
+      shiftTemplateId: tplSang.id,
+      workDate: '2027-04-17',
+    });
     const pendingBeforeErase = await o.exec<HrShiftSwapView>(o.staffA, 'hr.self.shift_swap.submit', {
       requesterAssignmentId: assignA.id,
       targetEmployeeId: empB,
       reason: 'Lý do nhạy cảm cần xóa PDPL',
     });
     await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: empA, endedOn: '2026-10-01' }, asMfa(o.owner));
+
+    await expect(
+      o.exec(o.manager, 'hr.shift_swap.approve', { swapId: swapEndedReject.id }),
+    ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ENDED', status: 409 });
+    const rejectedForEnded = await o.exec<HrShiftSwapView>(o.manager, 'hr.shift_swap.reject', {
+      swapId: swapEndedReject.id,
+      decisionNote: 'Nhân viên đã nghỉ việc',
+    });
+    expect(rejectedForEnded.status).toBe('rejected');
+
+    const cancelledForEnded = await o.exec<HrShiftSwapView>(o.staffA, 'hr.self.shift_swap.cancel', {
+      swapId: swapEndedCancel.id,
+    });
+    expect(cancelledForEnded.status).toBe('cancelled');
+
+    const deletedForEnded = await o.exec<{ assignmentId: string; deleted: boolean }>(
+      o.manager,
+      'hr.shift.assignment.delete',
+      { assignmentId: assignAEndedDelete.id },
+    );
+    expect(deletedForEnded.deleted).toBe(true);
     const c = await adminPool.connect();
     let cCommitted = false;
     let cBroken = false;

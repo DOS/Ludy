@@ -56,7 +56,6 @@ import {
   type HrShiftTemplateView,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
-import { money } from '@ludy/l10n-vn';
 import { MANAGERS, resolveEntity, userOf } from './employees.ts';
 import { STAFF_ROLES, resolveSelfEmployee } from './leave-requests.ts';
 import { hrManifest } from './manifest.ts';
@@ -204,34 +203,20 @@ export function computeShiftAdherence(args: {
 }
 
 /**
- * Computes Art. 106 22:00-06:00 night minutes over `[startAt, endAt)`, subtracting the proportional
- * share of the assigned shift's `breakMinutes` (via `decimal.js`) and capping by `capMinutes`.
+ * Computes raw Art. 106 22:00-06:00 night minutes over `[startAt, endAt)`, capped by `capMinutes`.
+ * Under BLLĐ Art. 109(1), breaks inside continuous >= 6h shifts count as paid working time and
+ * are not deducted from night overlap.
  */
 export function computeShiftAdjustedNightMinutes(
   startAt: Date | null,
   endAt: Date | null,
   capMinutes: number,
-  shift?: Pick<ShiftTemplateWindow, 'startMinute' | 'endMinute' | 'breakMinutes' | 'crossesMidnight'> | null,
 ): number {
   if (!startAt || !endAt || capMinutes <= 0) return 0;
   const spanMinutes = Math.max(0, Math.floor((endAt.getTime() - startAt.getTime()) / 60_000));
   if (spanMinutes <= 0) return 0;
-
   const rawNight = Math.min(spanMinutes, nightOverlapMinutes(startAt, endAt));
-  if (rawNight <= 0) return 0;
-  if (!shift || shift.breakMinutes <= 0) {
-    return Math.min(capMinutes, rawNight);
-  }
-
-  const shiftSpan = Math.max(1, shiftDurationMinutes(shift.startMinute, shift.endMinute, shift.crossesMidnight));
-  const appliedBreakDec =
-    spanMinutes <= shiftSpan
-      ? money(shift.breakMinutes).times(spanMinutes).div(shiftSpan)
-      : money(shift.breakMinutes);
-  const nightBreak = Number(
-    appliedBreakDec.times(rawNight).div(spanMinutes).toDecimalPlaces(0).toFixed(0),
-  );
-  return Math.min(capMinutes, Math.max(0, rawNight - nightBreak));
+  return Math.min(capMinutes, rawNight);
 }
 
 function toTemplateView(row: {
@@ -309,7 +294,12 @@ function swapNotFound(): DomainError {
   return new DomainError('NOT_FOUND', 404, 'Không tìm thấy yêu cầu đổi ca');
 }
 
-async function lockShiftEmployee(trx: Trx, orgId: string, employeeId: string): Promise<LockedShiftEmployee> {
+async function lockShiftEmployee(
+  trx: Trx,
+  orgId: string,
+  employeeId: string,
+  opts: { allowEnded?: boolean } = {},
+): Promise<LockedShiftEmployee> {
   const { rows } = await sql<LockedShiftEmployee>`
     SELECT id, legal_entity_id, department_id, display_name, status, is_erased, user_id
       FROM ludy_hr.lock_shift_employee_active(${orgId}::uuid, ${employeeId}::uuid)
@@ -321,7 +311,7 @@ async function lockShiftEmployee(trx: Trx, orgId: string, employeeId: string): P
   if (emp.is_erased) {
     throw new DomainError('HR_EMPLOYEE_ERASED', 409, 'Hồ sơ nhân viên đã được xóa theo yêu cầu');
   }
-  if (emp.status !== 'active') {
+  if (!opts.allowEnded && emp.status !== 'active') {
     throw new DomainError('HR_EMPLOYEE_ENDED', 409, 'Nhân viên đã kết thúc làm việc, không thể phân ca hoặc đổi ca');
   }
   return emp;
@@ -1375,7 +1365,7 @@ export const shiftAssignmentDelete = defineCommand({
       .executeTakeFirst();
     if (!preExisting) throw assignmentNotFound();
 
-    await lockShiftEmployee(ctx.trx, ctx.orgId, preExisting.employee_id);
+    await lockShiftEmployee(ctx.trx, ctx.orgId, preExisting.employee_id, { allowEnded: true });
 
     const existing = await ctx.trx
       .selectFrom('ludy_hr.shift_assignment')
@@ -1636,7 +1626,7 @@ export const selfShiftSwapCancel = defineCommand({
       throw new DomainError('HR_SELF_NOT_LINKED', 403, 'Tài khoản của bạn chưa được liên kết với hồ sơ nhân viên nào');
     }
 
-    await lockShiftEmployee(ctx.trx, ctx.orgId, selfEmp.id);
+    await lockShiftEmployee(ctx.trx, ctx.orgId, selfEmp.id, { allowEnded: true });
 
     const swap = await ctx.trx
       .selectFrom('ludy_hr.shift_swap_request')
@@ -1707,6 +1697,7 @@ export const shiftSwapList = defineQuery({
 async function lockSwapDecisionPair(
   ctx: Parameters<Parameters<typeof defineCommand>[0]['handler']>[0],
   swapId: string,
+  opts: { allowEnded?: boolean } = {},
 ) {
   const callerUserId = userOf(ctx.actor);
   const role = requireStage6bRole(ctx.role);
@@ -1721,8 +1712,8 @@ async function lockSwapDecisionPair(
   if (!swapPre) throw swapNotFound();
 
   const sortedIds = [swapPre.requester_employee_id, swapPre.target_employee_id].sort();
-  const lockedA = await lockShiftEmployee(ctx.trx, ctx.orgId, sortedIds[0]!);
-  const lockedB = await lockShiftEmployee(ctx.trx, ctx.orgId, sortedIds[1]!);
+  const lockedA = await lockShiftEmployee(ctx.trx, ctx.orgId, sortedIds[0]!, opts);
+  const lockedB = await lockShiftEmployee(ctx.trx, ctx.orgId, sortedIds[1]!, opts);
   const reqEmp = lockedA.id === swapPre.requester_employee_id ? lockedA : lockedB;
   const tgtEmp = lockedA.id === swapPre.target_employee_id ? lockedA : lockedB;
 
@@ -1908,7 +1899,7 @@ export const shiftSwapReject = defineCommand({
   ],
   handler: async (ctx, input: HrShiftSwapDecide): Promise<HrShiftSwapView> => {
     const parsed = zHrShiftSwapDecide.parse(input);
-    const { callerUserId, swap } = await lockSwapDecisionPair(ctx, parsed.swapId);
+    const { callerUserId, swap } = await lockSwapDecisionPair(ctx, parsed.swapId, { allowEnded: true });
 
     const updated = await ctx.trx
       .updateTable('ludy_hr.shift_swap_request')

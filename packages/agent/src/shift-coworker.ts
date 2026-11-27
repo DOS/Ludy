@@ -9,14 +9,6 @@
 import { randomInt } from 'node:crypto';
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
-import type {
-  HrShiftConflictKind,
-  HrShiftCoverageAiReason,
-  HrShiftCoverageCandidate,
-  HrShiftCoverageConflict,
-  HrShiftCoverageGap,
-  HrShiftCoverageSuggestion,
-} from '@ludy/kernel-contract';
 import { classifyAiError } from './errors.ts';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
 import { AiBudgetExhaustedError, metered } from './meter.ts';
@@ -31,6 +23,51 @@ export const SHIFT_COVERAGE_HIGHLIGHTS_MAX = 6;
 export const SHIFT_COVERAGE_SUGGESTIONS_MAX = 8;
 export const SHIFT_COVERAGE_NOTE_MAX = 200;
 export const SHIFT_COVERAGE_ALIASES_MAX = 80;
+
+export type HrShiftConflictKind = 'approved_leave' | 'approved_trip' | 'public_holiday' | 'short_rest';
+export type HrShiftCoverageAiReason = 'ok' | 'off' | 'budget' | 'rate_limited' | 'unavailable' | 'refused';
+
+export interface HrShiftCoverageConflict {
+  assignmentId: string;
+  employeeId: string;
+  employeeName: string;
+  departmentId: string | null;
+  departmentName: string | null;
+  shiftTemplateId: string;
+  shiftCode: string;
+  shiftName: string;
+  workDate: string;
+  kind: HrShiftConflictKind;
+  detail: string;
+}
+
+export interface HrShiftCoverageCandidate {
+  employeeId: string;
+  employeeName: string;
+  departmentId: string | null;
+  departmentName: string | null;
+  weeklyShiftCount: number;
+  hasAdjacentRestGap: boolean;
+}
+
+export interface HrShiftCoverageGap {
+  date: string;
+  departmentId: string | null;
+  departmentName: string | null;
+  shiftCode: string | null;
+  shiftName: string | null;
+  reason: string;
+  candidates: HrShiftCoverageCandidate[];
+}
+
+export interface HrShiftCoverageSuggestion {
+  workDate: string;
+  targetEmployeeId: string | null;
+  targetEmployeeName: string | null;
+  suggestedCandidateId: string | null;
+  suggestedCandidateName: string | null;
+  note: string;
+}
 
 export interface ShiftCoverageSuggestInput {
   weekStart: string;
@@ -248,6 +285,17 @@ function hasUnissuedAlias(text: string, issued: ReadonlyMap<string, string>): bo
   return false;
 }
 
+const FORBIDDEN_ACTION_RE =
+  /(?:^|[^\p{L}\p{N}])(?:đã\s+(?:gán|phân\s+ca|xếp\s+ca|duyệt|chấp\s+thuận|đổi\s+ca|hoán\s+đổi|cập\s+nhật\s+lịch|được\s+(?:gán|phân\s+ca|duyệt|đổi\s+ca))|tự\s+động\s+(?:gán|phân\s+ca|duyệt|đổi\s+ca)|already\s+(?:assigned|scheduled|approved|swapped)|auto[\s-]*(?:assigned|approved|swapped)|have\s+(?:assigned|approved|swapped)|roster\s+updated)(?=$|[^\p{L}\p{N}])/iu;
+
+function hasForbiddenActionClaim(text: string): boolean {
+  const scrubbed = text
+    .normalize('NFC')
+    .replace(/\s+/g, ' ')
+    .replace(/(?:nghỉ\s+phép|công\s+tác)\s+đã\s+duyệt/giu, ' ');
+  return FORBIDDEN_ACTION_RE.test(scrubbed);
+}
+
 function containsForbiddenPii(text: string, forbidden: readonly string[]): boolean {
   return promptLeaks(text, forbidden).length > 0;
 }
@@ -410,6 +458,7 @@ export async function suggestShiftCoverage(
     summaryRaw.length === 0 ||
     hasMarkdownNoise(combined) ||
     hasAddress(combined) ||
+    hasForbiddenActionClaim(combined) ||
     hasUnissuedAlias(combined, realNameByAlias) ||
     containsForbiddenPii(combined, forbidden) ||
     statedFiguresProblem(stripAliasTokens(combined), [stripAliasTokens(prompt)]) !== null

@@ -430,7 +430,7 @@ export const zHrShiftCoverageBrief = z.object({
 });
 export type HrShiftCoverageBrief = z.infer<typeof zHrShiftCoverageBrief>;
 
-export const zHrShiftCoverageAudit = z.object({
+export const zHrShiftCoverageAudit = z.strictObject({
   legalEntityId: zId,
   weekStart: zLocalDate,
   aiReason: z.enum(HR_SHIFT_COVERAGE_AI_REASONS),

@@ -100,8 +100,8 @@ BEGIN
   EXECUTE 'DROP POLICY IF EXISTS le_scope ON ludy_hr.shift_template';
   EXECUTE
     'CREATE POLICY le_scope ON ludy_hr.shift_template AS RESTRICTIVE FOR ALL TO ludy_tenant '
-    'USING (''*'' = ANY (COALESCE((SELECT ludy_kernel.ctx_le_scope())::text[], ARRAY[]::text[])) OR legal_entity_id::text = ANY (COALESCE((SELECT ludy_kernel.ctx_le_scope())::text[], ARRAY[]::text[]))) '
-    'WITH CHECK (''*'' = ANY (COALESCE((SELECT ludy_kernel.ctx_le_scope())::text[], ARRAY[]::text[])) OR legal_entity_id::text = ANY (COALESCE((SELECT ludy_kernel.ctx_le_scope())::text[], ARRAY[]::text[])))';
+    'USING (''*'' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[])) '
+    'WITH CHECK (''*'' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]))';
 
   EXECUTE 'DROP POLICY IF EXISTS shift_template_select ON ludy_hr.shift_template';
   EXECUTE
@@ -325,8 +325,8 @@ BEGIN
   EXECUTE 'DROP POLICY IF EXISTS le_scope ON ludy_hr.shift_assignment';
   EXECUTE
     'CREATE POLICY le_scope ON ludy_hr.shift_assignment AS RESTRICTIVE FOR ALL TO ludy_tenant '
-    'USING (''*'' = ANY (COALESCE((SELECT ludy_kernel.ctx_le_scope())::text[], ARRAY[]::text[])) OR legal_entity_id::text = ANY (COALESCE((SELECT ludy_kernel.ctx_le_scope())::text[], ARRAY[]::text[]))) '
-    'WITH CHECK (''*'' = ANY (COALESCE((SELECT ludy_kernel.ctx_le_scope())::text[], ARRAY[]::text[])) OR legal_entity_id::text = ANY (COALESCE((SELECT ludy_kernel.ctx_le_scope())::text[], ARRAY[]::text[])))';
+    'USING (''*'' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[])) '
+    'WITH CHECK (''*'' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]))';
 
   EXECUTE 'DROP POLICY IF EXISTS shift_assignment_select ON ludy_hr.shift_assignment';
   EXECUTE
@@ -643,7 +643,7 @@ BEGIN
     IF NEW.decided_by IS NOT NULL OR NEW.decided_at IS NOT NULL OR NEW.decision_note IS NOT NULL THEN
       RAISE EXCEPTION 'cancelled shift swap cannot set decision fields' USING ERRCODE = '23514';
     END IF;
-    IF v_is_admin OR ludy_hr.is_active_self_employee(OLD.org_id, OLD.requester_employee_id) THEN
+    IF v_is_admin OR ludy_hr.is_self_employee(OLD.org_id, OLD.requester_employee_id) THEN
       RETURN NEW;
     END IF;
     RAISE EXCEPTION 'only requester or HR admin may cancel pending shift swap' USING ERRCODE = '42501';
@@ -689,8 +689,8 @@ BEGIN
   EXECUTE 'DROP POLICY IF EXISTS le_scope ON ludy_hr.shift_swap_request';
   EXECUTE
     'CREATE POLICY le_scope ON ludy_hr.shift_swap_request AS RESTRICTIVE FOR ALL TO ludy_tenant '
-    'USING (''*'' = ANY (COALESCE((SELECT ludy_kernel.ctx_le_scope())::text[], ARRAY[]::text[])) OR legal_entity_id::text = ANY (COALESCE((SELECT ludy_kernel.ctx_le_scope())::text[], ARRAY[]::text[]))) '
-    'WITH CHECK (''*'' = ANY (COALESCE((SELECT ludy_kernel.ctx_le_scope())::text[], ARRAY[]::text[])) OR legal_entity_id::text = ANY (COALESCE((SELECT ludy_kernel.ctx_le_scope())::text[], ARRAY[]::text[])))';
+    'USING (''*'' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[])) '
+    'WITH CHECK (''*'' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]))';
 
   EXECUTE 'DROP POLICY IF EXISTS shift_swap_request_select ON ludy_hr.shift_swap_request';
   EXECUTE
@@ -716,12 +716,12 @@ BEGIN
     'USING ((SELECT ludy_kernel.ctx_actor_type()) = ''user'' AND ('
     '  EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = shift_swap_request.org_id AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) AND m.role IN (''owner'', ''admin''))'
     '  OR (department_id IS NOT NULL AND ludy_hr.is_active_dept_manager(shift_swap_request.org_id, shift_swap_request.department_id))'
-    '  OR ludy_hr.is_active_self_employee(shift_swap_request.org_id, shift_swap_request.requester_employee_id)'
+    '  OR ludy_hr.is_self_employee(shift_swap_request.org_id, shift_swap_request.requester_employee_id)'
     ')) '
     'WITH CHECK ((SELECT ludy_kernel.ctx_actor_type()) = ''user'' AND ('
     '  EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = shift_swap_request.org_id AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) AND m.role IN (''owner'', ''admin''))'
     '  OR (department_id IS NOT NULL AND ludy_hr.is_active_dept_manager(shift_swap_request.org_id, shift_swap_request.department_id))'
-    '  OR ludy_hr.is_active_self_employee(shift_swap_request.org_id, shift_swap_request.requester_employee_id)'
+    '  OR ludy_hr.is_self_employee(shift_swap_request.org_id, shift_swap_request.requester_employee_id)'
     '))';
 
   EXECUTE 'DROP POLICY IF EXISTS shift_swap_request_delete ON ludy_hr.shift_swap_request';
@@ -804,6 +804,9 @@ DECLARE
   v_user uuid := ludy_kernel.ctx_user_id();
   v_le_scope text[] := ludy_kernel.ctx_le_scope();
   v_role text;
+  v_entity uuid;
+  v_dept uuid;
+  v_emp_user uuid;
   v_row ludy_hr.payroll_employee%ROWTYPE;
 BEGIN
   IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org OR p_employee_id IS NULL THEN
@@ -820,18 +823,34 @@ BEGIN
     RETURN;
   END IF;
 
-  SELECT e.* INTO v_row
+  SELECT e.legal_entity_id, e.department_id, e.user_id INTO v_entity, v_dept, v_emp_user
     FROM ludy_hr.payroll_employee e
-   WHERE e.org_id = v_org AND e.id = p_employee_id
-   FOR UPDATE;
+   WHERE e.org_id = v_org AND e.id = p_employee_id;
   IF NOT FOUND THEN
     RETURN;
   END IF;
 
   IF NOT (
     '*' = ANY (COALESCE(v_le_scope, ARRAY[]::text[]))
-    OR v_row.legal_entity_id::text = ANY (COALESCE(v_le_scope, ARRAY[]::text[]))
+    OR v_entity::text = ANY (COALESCE(v_le_scope, ARRAY[]::text[]))
   ) THEN
+    RETURN;
+  END IF;
+
+  IF NOT (
+    v_role IN ('owner', 'admin')
+    OR v_emp_user IS NOT DISTINCT FROM v_user
+    OR (v_dept IS NOT NULL AND ludy_hr.is_active_dept_manager(v_org, v_dept))
+    OR ludy_hr.is_active_linked_employee(v_org, v_entity)
+  ) THEN
+    RETURN;
+  END IF;
+
+  SELECT e.* INTO v_row
+    FROM ludy_hr.payroll_employee e
+   WHERE e.org_id = v_org AND e.id = p_employee_id AND e.legal_entity_id = v_entity
+   FOR UPDATE;
+  IF NOT FOUND THEN
     RETURN;
   END IF;
 

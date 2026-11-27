@@ -3,7 +3,7 @@
 // deterministic anomalies + Ly narration, manual adjustment, and 1-click rollup into draft payroll.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import {
   HR_ATTENDANCE_METHODS,
@@ -257,6 +257,23 @@ export function HrAttendancePage() {
 
   const activeEntityIdRef = useRef('');
   const qrConfigRef = useRef<{ legalEntityId: string; activeConfigId: string | null } | null>(null);
+  const attendanceTabRef = useRef<HTMLButtonElement>(null);
+  const shiftsTabRef = useRef<HTMLButtonElement>(null);
+
+  const onTabKeyDown = (e: KeyboardEvent<HTMLButtonElement>, current: 'attendance' | 'shifts') => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
+    e.preventDefault();
+    const next: 'attendance' | 'shifts' =
+      e.key === 'Home'
+        ? 'attendance'
+        : e.key === 'End'
+          ? 'shifts'
+          : current === 'attendance'
+            ? 'shifts'
+            : 'attendance';
+    setActiveTab(next);
+    (next === 'attendance' ? attendanceTabRef : shiftsTabRef).current?.focus();
+  };
 
   const rotateQr = useMutation({
     ...orpc.hr.attendance.qr.rotate.mutationOptions(),
@@ -482,25 +499,35 @@ export function HrAttendancePage() {
 
       <div className="flex flex-wrap gap-2 print:hidden" role="tablist" aria-label={t('title')}>
         <Button
+          ref={attendanceTabRef}
+          id="hr-attendance-tab-attendance"
           type="button"
           role="tab"
           aria-selected={activeTab === 'attendance'}
+          aria-controls="hr-attendance-tabpanel-attendance"
+          tabIndex={activeTab === 'attendance' ? 0 : -1}
           variant={activeTab === 'attendance' ? 'default' : 'outline'}
           size="sm"
           className={PHONE_TARGET}
           onClick={() => setActiveTab('attendance')}
+          onKeyDown={(e) => onTabKeyDown(e, 'attendance')}
           data-testid="hr-attendance-tab-attendance"
         >
           {t('attendanceTab')}
         </Button>
         <Button
+          ref={shiftsTabRef}
+          id="hr-attendance-tab-shifts"
           type="button"
           role="tab"
           aria-selected={activeTab === 'shifts'}
+          aria-controls="hr-attendance-tabpanel-shifts"
+          tabIndex={activeTab === 'shifts' ? 0 : -1}
           variant={activeTab === 'shifts' ? 'default' : 'outline'}
           size="sm"
           className={PHONE_TARGET}
           onClick={() => setActiveTab('shifts')}
+          onKeyDown={(e) => onTabKeyDown(e, 'shifts')}
           data-testid="hr-attendance-tab-shifts"
         >
           {t('shiftsTab')}
@@ -508,9 +535,20 @@ export function HrAttendancePage() {
       </div>
 
       {activeTab === 'shifts' ? (
-        <HrShiftsPanel legalEntityId={activeEntityId} canManageOrgRoster={true} />
+        <div
+          id="hr-attendance-tabpanel-shifts"
+          role="tabpanel"
+          aria-labelledby="hr-attendance-tab-shifts"
+        >
+          <HrShiftsPanel legalEntityId={activeEntityId} canManageOrgRoster={true} />
+        </div>
       ) : (
-        <>
+        <div
+          id="hr-attendance-tabpanel-attendance"
+          role="tabpanel"
+          aria-labelledby="hr-attendance-tab-attendance"
+          className="space-y-6"
+        >
           {listQ.isLoading && <TableSkeleton rows={5} columns={6} />}
           {listQ.error && <ErrorText>{errorMessage(listQ.error)}</ErrorText>}
 
@@ -1013,7 +1051,7 @@ export function HrAttendancePage() {
           </DataTable>
         )}
       </Card>
-        </>
+        </div>
       )}
     </div>
   );

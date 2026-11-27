@@ -60,7 +60,7 @@ describe('HR Stage 7A Shifts UI & i18n (#5216)', () => {
     expect(parseClockToMinute('bad')).toBeNull();
 
     for (const msg of [viMessages, enMessages]) {
-      expect(msg.agents.aiMeter.features.hr_shift_coverage_suggest).toBeTruthy();
+      expect(msg.aiMeter.features.hr_shift_coverage_suggest).toBeTruthy();
       expect(msg.audit.objects.hr.shift_template).toBeTruthy();
       expect(msg.audit.objects.hr.shift_assignment).toBeTruthy();
       expect(msg.audit.objects.hr.shift_swap_request).toBeTruthy();

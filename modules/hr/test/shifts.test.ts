@@ -104,15 +104,7 @@ describe('HR Stage 7A deterministic shift & coverage logic (#5216)', () => {
     ).toEqual({ lateMinutes: 0, earlyLeaveMinutes: 0 });
   });
 
-  it('calculates Art. 106 break-adjusted night hours via decimal.js without auto-deducting late wage fines (Art. 127)', () => {
-    const nightNoBreak = toShiftWin({
-      code: 'CA_DEM',
-      name: 'Ca đêm',
-      startMinute: 22 * 60,
-      endMinute: 6 * 60,
-      breakMinutes: 0,
-      crossesMidnight: true,
-    });
+  it('calculates Art. 106 night hours (including Art. 109(1) paid breaks) via decimal.js without Art. 127 late fines', () => {
     const nightWith60mBreak = toShiftWin({
       code: 'CA_DEM_NGHI',
       name: 'Ca đêm có nghỉ',
@@ -130,34 +122,31 @@ describe('HR Stage 7A deterministic shift & coverage logic (#5216)', () => {
       crossesMidnight: true,
     });
 
-    // Pure night helper checks:
+    // Pure night helper checks (Art. 106 22:00-06:00 raw overlap without deducting Art. 109(1) paid breaks):
     expect(
       computeShiftAdjustedNightMinutes(
         new Date('2027-04-05T22:00:00+07:00'),
         new Date('2027-04-06T06:00:00+07:00'),
         480,
-        nightNoBreak,
       ),
     ).toBe(480);
-    expect(
-      computeShiftAdjustedNightMinutes(
-        new Date('2027-04-05T22:00:00+07:00'),
-        new Date('2027-04-06T06:00:00+07:00'),
-        480,
-        nightWith60mBreak,
-      ),
-    ).toBe(420);
-    // 18:00-02:00 (240m day, 240m night, 60m break -> 30m subtracted from night -> 210m = 3.5h)
     expect(
       computeShiftAdjustedNightMinutes(
         new Date('2027-04-05T18:00:00+07:00'),
         new Date('2027-04-06T02:00:00+07:00'),
         480,
-        splitShift60mBreak,
       ),
-    ).toBe(210);
+    ).toBe(240);
+    // Respects worked-minutes cap when shift span exceeds regular cap
+    expect(
+      computeShiftAdjustedNightMinutes(
+        new Date('2027-04-05T22:00:00+07:00'),
+        new Date('2027-04-06T06:00:00+07:00'),
+        300,
+      ),
+    ).toBe(300);
 
-    // Rollup keeps existing inputs intact, credits exact break-adjusted nightHours, and creates 0 late wage deductions (Art. 127).
+    // Rollup keeps existing inputs intact, credits raw Art. 106 nightHours (Art. 109(1) break included in paid time), and creates 0 late wage deductions (Art. 127).
     const existingInputs = zHrPayrollInputs.parse({ deductions: [] });
     const splitRollup = computeEmployeeAttendanceRollup({
       month: '2027-04',
@@ -176,9 +165,28 @@ describe('HR Stage 7A deterministic shift & coverage logic (#5216)', () => {
         },
       ],
     });
-    expect(splitRollup.nightHours).toBe('3.5'); // 240 rawNight - proportional 30m break (60 * 240 / 480) = 210m -> 3.5h
+    expect(splitRollup.nightHours).toBe('4'); // raw 22:00-02:00 overlap = 240m -> 4h (breaks not subtracted under Art. 109(1))
     expect(splitRollup.workedDays).toBe('1');
     expect(existingInputs.deductions).toEqual([]);
+
+    const fullNightRollup = computeEmployeeAttendanceRollup({
+      month: '2027-04',
+      workingDays: '26',
+      payBasis: 'monthly',
+      existingInputs,
+      paidLeaveDays: '0',
+      entries: [
+        {
+          workDate: '2027-04-06',
+          checkedInAt: new Date('2027-04-06T22:00:00+07:00'),
+          checkedOutAt: new Date('2027-04-07T06:00:00+07:00'),
+          workedMinutes: 480,
+          status: 'present',
+          shift: nightWith60mBreak,
+        },
+      ],
+    });
+    expect(fullNightRollup.nightHours).toBe('8');
   });
 
   it('detects leave, trip, holiday, and < 12h short-rest conflicts and ranks clean replacement candidates', () => {
