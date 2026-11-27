@@ -18,18 +18,23 @@ import {
   zCrmBookingBriefTargetOutput,
   zMeetingFactsInput,
   zMeetingFactsOutput,
+  zMeetingResearchAuditInput,
+  zMeetingResearchSourceInput,
+  zMeetingResearchSourceOutput,
   type MeetingFactsContact,
   type MeetingFactsDeal,
   type MeetingFactsOutput,
   type MeetingFactsQuote,
+  type MeetingResearchSourceOutput,
   type MeetingsAttendeeHashesOutput,
   type PartyInvoiceSummary,
   type PartyInvoiceSummaryOutput,
 } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
-import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { money } from '@ludy/l10n-vn';
 import { readableBooking } from './bookings.ts';
+import { emailDomainOf } from './company-suggest.ts';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const MESSAGE_CHARS = 300;
@@ -317,6 +322,25 @@ export const contactMeetingFactsQuery = defineQuery({
       }
     }
 
+    const emailRows = await sql<{ id: string; email: string | null; company_email: string | null }>`
+      SELECT
+        k.id,
+        k.email,
+        co.email AS company_email
+      FROM ludy_kernel.party k
+      LEFT JOIN ludy_kernel.party c0
+        ON c0.org_id = k.org_id AND c0.id = k.company_id
+      LEFT JOIN ludy_kernel.party co
+        ON co.org_id = k.org_id AND co.id = coalesce(c0.duplicate_of, c0.id)
+      WHERE k.org_id = ${ctx.orgId}::uuid
+        AND k.id = ANY(${partyIds}::uuid[])
+    `.execute(ctx.trx);
+    const websiteByKept = new Map<string, string | null>();
+    for (const row of emailRows.rows) {
+      const domain = emailDomainOf(row.email) ?? emailDomainOf(row.company_email);
+      websiteByKept.set(row.id, domain === null ? null : `https://${domain}`);
+    }
+
     const contacts: MeetingFactsContact[] = [];
     for (const party of parties) {
       const partyGroup = groupRows.rows.filter((r) => r.kept_id === party.id).map((r) => r.id);
@@ -338,6 +362,7 @@ export const contactMeetingFactsQuery = defineQuery({
       contacts.push({
         partyId: party.id,
         contactName: party.name,
+        websiteUrl: websiteByKept.get(party.id) ?? null,
         deals: dealsByKept.get(party.id) ?? [],
         latestQuote: quoteByKept.get(party.id) ?? null,
         invoices: inv
@@ -361,4 +386,66 @@ export const contactMeetingFactsQuery = defineQuery({
   },
 });
 
-export const meetingFactsQueries = [crmBookingBriefTargetQuery, contactMeetingFactsQuery];
+export const contactMeetingResearchSourceQuery = defineQuery({
+  name: 'crm.contact.meeting_research_source',
+  input: zMeetingResearchSourceInput,
+  access: EDITORS,
+  handler: async (ctx, input): Promise<MeetingResearchSourceOutput> => {
+    if (ctx.actor.type !== 'user') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới chuẩn bị thông tin liên hệ trước cuộc họp');
+    }
+    const facts = await contactMeetingFactsQuery.handler(ctx, { targetKind: input.targetKind, targetId: input.targetId });
+    const aiGateRes = await sql<{ ai_stopped: boolean; budget_spent: boolean }>`
+      SELECT
+        (
+          ludy_kernel.global_kill_switch_on('ai')
+          OR EXISTS (
+            SELECT 1 FROM ludy_kernel.kill_switch k
+             WHERE k.org_id = ${ctx.orgId}::uuid
+               AND k.released_at IS NULL
+               AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = 'crm'))
+          )
+        ) AS ai_stopped,
+        ludy_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, 'crm', NULL::uuid) AS budget_spent
+    `.execute(ctx.trx);
+    const aiGate = aiGateRes.rows[0];
+    const contact = facts.contacts.find((c) => c.partyId === input.partyId) ?? null;
+    return zMeetingResearchSourceOutput.parse({
+      aiStopped: aiGate?.ai_stopped === true,
+      aiBudgetSpent: aiGate?.budget_spent === true,
+      wordsAllowed: facts.wordsAllowed,
+      contact,
+    });
+  },
+});
+
+export const meetingResearchAuditCommand = defineCommand({
+  name: 'crm.contact.meeting_research.audit',
+  input: zMeetingResearchAuditInput,
+  risk: 'R0',
+  sideEffect: 'none',
+  access: EDITORS,
+  writes: [],
+  handler: async (ctx, input): Promise<{ ok: true }> => {
+    if (ctx.actor.type !== 'user') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới ghi nhận lượt chuẩn bị trước họp');
+    }
+    ctx.audit({
+      targetKind: input.targetKind,
+      targetId: input.targetId,
+      partyId: input.partyId,
+      aiState: input.aiState,
+      dealsCount: input.dealsCount,
+      messagesCount: input.messagesCount,
+      websiteRequested: input.websiteRequested,
+      websiteUsed: input.websiteUsed,
+      websiteChars: input.websiteChars,
+      quotesCount: input.quotesCount,
+      pointsCount: input.pointsCount,
+    });
+    return { ok: true };
+  },
+});
+
+export const meetingFactsCommands = [meetingResearchAuditCommand];
+export const meetingFactsQueries = [crmBookingBriefTargetQuery, contactMeetingFactsQuery, contactMeetingResearchSourceQuery];

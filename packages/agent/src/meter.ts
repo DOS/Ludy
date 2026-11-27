@@ -114,6 +114,8 @@ export const AI_FEATURES = {
   'crm.followup_draft': 'crm',
   // The sales coworker's brief before a booking linked to a deal (#3115): a short summary and 2 to 3 points to raise, written from the deal, its latest sent quote and the customer's latest words that the member may read. Every figure, date and name in it must be one of the facts' own, or the brief is refused and the person reads the facts list alone; nothing is stored or sent.
   'crm.meeting_brief': 'crm',
+  // Dy's pre-meeting brief from PM1 contact facts and optionally the company's public homepage (#4992, PM2): a short summary, 2 to 3 points to raise, and up to 2 verbatim website quotes. Refused whole when ungrounded or carrying links, handles or invented names/figures; nothing from the page is stored beyond what the draft quotes.
+  'crm.meeting_research': 'crm',
   // Speech to text for the meetings module (#2578, M4a): one call per audio chunk of a meeting, through the deployment's OpenAI-compatible transcription endpoint.
   'meetings.transcribe': 'meetings',
   // The recorder's Vy summarizing one meeting (#2580, M6 part B2): one call over the transcript, the member waiting for it, through their own meter.

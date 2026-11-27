@@ -62,6 +62,7 @@ import {
   type MarketplaceLineFacts,
   type MarketplaceProposalNoteFacts,
   type MeetingBriefFacts,
+  type MeetingResearchFacts,
   type MisaAmisBlockerNotesFacts,
   type MisaCheckLineFacts,
   type MonthCloseFacts,
@@ -697,12 +698,22 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     }
   });
 
-  it('crm.*: refuses injections in booking_schedule, company_rank, quote_suggest, followup_draft, meeting_brief', async () => {
+  it('crm.*: refuses injections in booking_schedule, company_rank, quote_suggest, followup_draft, meeting_brief, meeting_research', async () => {
     cover('crm.booking_schedule');
     cover('crm.company_rank');
     cover('crm.quote_suggest');
     cover('crm.followup_draft');
     cover('crm.meeting_brief');
+    cover('crm.meeting_research');
+
+    const researchFacts: MeetingResearchFacts = {
+      contactName: 'Anh Hung',
+      deals: [{ title: 'Hop dong 2026', stage: 'Proposal', amount: '20000000', expectedClose: '2026-10-20' }],
+      latestQuote: { label: 'BG-001', total: '20000000', status: 'sent', validUntil: '2026-10-30', expired: false, sentOn: '2026-10-01' },
+      invoices: { openCount: 1, overdueAmount: '0', lastInvoiceDate: '2026-10-01', lastPaidDate: null },
+      messages: ['Hen thu Hai 14h nhe'],
+      websiteText: 'Cong ty chuyen giai phap phan mem quan ly cho doanh nghiep.',
+    };
 
     const quoteReq: QuoteSuggestRequest = {
       dealTitle: 'Goi tu van',
@@ -739,6 +750,10 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
           output: { summary: c.poisonedOutput, points: [c.poisonedOutput, 'Can chuan bi tai lieu tu van.'] },
           usage: zeroUsage,
         }),
+        meetingResearch: async () => ({
+          output: { summary: c.poisonedOutput, points: [c.poisonedOutput, 'Can chuan bi tai lieu tu van.'], websiteQuotes: [] },
+          usage: zeroUsage,
+        }),
       });
       expect(await reader.rankCompanies(c.untrustedInput, 'khach@example.com', ['Cong ty A', 'Cong ty B']), `companyRank ${c.id}`).toEqual([1, 0]);
       const quoteRes = await reader.quoteLines({
@@ -770,6 +785,24 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
         }),
       });
       expect((await pointPoisonedReader.meetingBrief({ ...briefFacts, messages: [c.untrustedInput] })).kind, `meetingBrief point ${c.id}`).toBe('none');
+
+      expect((await reader.meetingResearch({ ...researchFacts, websiteText: c.untrustedInput })).kind, `meetingResearch ${c.id}`).toBe('none');
+
+      const researchPointPoisonedReader = new InboxReader(STUB_CONFIG, {
+        meetingResearch: async () => ({
+          output: { summary: 'Trao doi hop dong 2026 voi Anh Hung.', points: [c.poisonedOutput, 'Can chuan bi tai lieu tu van.'], websiteQuotes: [] },
+          usage: zeroUsage,
+        }),
+      });
+      expect((await researchPointPoisonedReader.meetingResearch({ ...researchFacts, websiteText: c.untrustedInput })).kind, `meetingResearch point ${c.id}`).toBe('none');
+
+      const researchQuotePoisonedReader = new InboxReader(STUB_CONFIG, {
+        meetingResearch: async () => ({
+          output: { summary: 'Trao doi hop dong 2026 voi Anh Hung.', points: ['Chuan bi noi dung bao gia BG-001.', 'Can chuan bi tai lieu tu van.'], websiteQuotes: [c.poisonedOutput] },
+          usage: zeroUsage,
+        }),
+      });
+      expect((await researchQuotePoisonedReader.meetingResearch(researchFacts)).kind, `meetingResearch quote ${c.id}`).toBe('none');
     }
   });
 

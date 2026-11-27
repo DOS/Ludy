@@ -7,7 +7,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useId, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MeetingBriefDraft, MeetingBriefTargetKind, MeetingFactsContact } from '@ludy/kernel-contract';
+import type { MeetingBriefDraft, MeetingBriefTargetKind, MeetingFactsContact, MeetingResearchOutput, MeetingResearchWebsiteOutcome } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
@@ -34,6 +34,8 @@ export interface DraftFormatLabels {
   messages: string;
   noMessages: string;
   noDate: string;
+  researchHeading?: string;
+  researchWebsiteQuote?: (quote: string) => string;
 }
 
 export interface DraftFormatters {
@@ -51,7 +53,12 @@ function truncateCodePoints(text: string, max: number): string {
 }
 
 // Formats deterministic pre-meeting contact facts into plain text for a private draft or meeting note.
-export function formatContactBriefDraft(contact: MeetingFactsContact, labels: DraftFormatLabels, format: DraftFormatters): string {
+export function formatContactBriefDraft(
+  contact: MeetingFactsContact,
+  labels: DraftFormatLabels,
+  format: DraftFormatters,
+  research?: MeetingResearchOutput | null,
+): string {
   const lines: string[] = [labels.heading];
 
   lines.push(`${labels.deals}:`);
@@ -96,8 +103,30 @@ export function formatContactBriefDraft(contact: MeetingFactsContact, labels: Dr
     }
   }
 
+  if (research?.ai === 'ok' && research.summary) {
+    if (labels.researchHeading) lines.push('', `${labels.researchHeading}:`);
+    lines.push(research.summary);
+    for (const point of research.points) {
+      lines.push(`- ${point}`);
+    }
+    for (const quote of research.websiteQuotes) {
+      lines.push(`- ${labels.researchWebsiteQuote ? labels.researchWebsiteQuote(quote) : `“${quote}” (từ trang web của họ)`}`);
+    }
+  }
+
   return truncateCodePoints(lines.join('\n'), DRAFT_MAX_CHARS);
 }
+
+const WEBSITE_NOTICE_OUTCOMES: ReadonlySet<MeetingResearchWebsiteOutcome> = new Set([
+  'blocked',
+  'redirect_blocked',
+  'forbidden',
+  'rate_limited',
+  'challenge',
+  'timeout',
+  'not_html',
+  'failed',
+]);
 
 function ContactFactItem({
   slug,
@@ -107,6 +136,7 @@ function ContactFactItem({
   linkedMeetingId,
   canPutToNotes,
   meetingsEnabled,
+  aiOn,
   draft,
 }: {
   slug: string;
@@ -116,14 +146,51 @@ function ContactFactItem({
   linkedMeetingId: string | null;
   canPutToNotes: boolean;
   meetingsEnabled: boolean;
+  aiOn: boolean | undefined;
   draft: MeetingBriefDraft | undefined;
 }) {
   const t = useTranslations('meetings.briefFacts');
   const f = useFormat();
   const inputId = useId();
   const hintId = useId();
+  const researchHeadingId = useId();
   const [editedText, setEditedText] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [readWebsite, setReadWebsite] = useState(false);
+  const [research, setResearch] = useState<MeetingResearchOutput | null>(null);
+  const [researchError, setResearchError] = useState<string | null>(null);
+  const [localAiOff, setLocalAiOff] = useState(false);
+
+  const runResearch = useMutation({
+    mutationFn: async (confirmWebsite: boolean): Promise<MeetingResearchOutput> =>
+      orpc.crm.contacts.meetingResearch.call({
+        targetKind,
+        targetId,
+        partyId: contact.partyId,
+        readWebsite: confirmWebsite,
+        ...(confirmWebsite && contact.websiteUrl ? { expectedWebsiteUrl: contact.websiteUrl } : {}),
+      }),
+    onSuccess: (data) => {
+      setResearch(data);
+      setResearchError(null);
+      setLocalAiOff(data.ai === 'off');
+    },
+    onError: () => {
+      setResearchError(t('researchAiFailed'));
+    },
+  });
+
+  const handleAskDy = () => {
+    if (runResearch.isPending) return;
+    if (aiOn === false) {
+      setLocalAiOff(true);
+      setResearchError(null);
+      return;
+    }
+    setLocalAiOff(false);
+    setResearchError(null);
+    runResearch.mutate(Boolean(contact.websiteUrl && readWebsite));
+  };
 
   const invalidateDrafts = () =>
     queryClient.invalidateQueries({ queryKey: orpc.meetings.briefDraft.list.key() });
@@ -214,12 +281,62 @@ function ContactFactItem({
       messages: t('messagesTitle'),
       noMessages: t('noMessages'),
       noDate: t('noDate'),
+      researchHeading: t('researchHeading'),
+      researchWebsiteQuote: (quote) => t('researchWebsiteQuote', { quote }),
     },
     {
       money: (val) => f.money(val),
       date: (val) => f.date(val),
     },
+    research,
   );
+
+  const researchWebsiteNotice = (() => {
+    const out = research?.websiteOutcome;
+    if (!out || !WEBSITE_NOTICE_OUTCOMES.has(out)) return null;
+    switch (out) {
+      case 'blocked':
+        return t('researchWebsiteReasons.blocked');
+      case 'redirect_blocked':
+        return t('researchWebsiteReasons.redirect_blocked');
+      case 'forbidden':
+        return t('researchWebsiteReasons.forbidden');
+      case 'rate_limited':
+        return t('researchWebsiteReasons.rate_limited');
+      case 'challenge':
+        return t('researchWebsiteReasons.challenge');
+      case 'timeout':
+        return t('researchWebsiteReasons.timeout');
+      case 'not_html':
+        return t('researchWebsiteReasons.not_html');
+      case 'failed':
+        return t('researchWebsiteReasons.failed');
+      default:
+        return null;
+    }
+  })();
+
+  const researchStatusText = (() => {
+    if (aiOn === false || localAiOff || research?.ai === 'off') return t('researchAiOff');
+    if (researchError) return researchError;
+    if (!research) return null;
+    switch (research.ai) {
+      case 'paused':
+        return t('researchAiPaused');
+      case 'budget':
+        return t('researchAiBudget');
+      case 'busy':
+        return t('researchAiBusy');
+      case 'failed':
+        return t('researchAiFailed');
+      case 'refused':
+        return t('researchAiRefused');
+      case 'ok':
+        return researchWebsiteNotice;
+      default:
+        return null;
+    }
+  })();
 
   const currentBody = editedText ?? draft?.body ?? '';
   const hasSavedDraft = draft !== undefined;
@@ -312,6 +429,80 @@ function ContactFactItem({
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      <section className="space-y-2 border-t border-border pt-2" aria-labelledby={researchHeadingId} data-testid="contact-facts-research">
+        <h4 id={researchHeadingId} className="text-xs font-medium text-muted-foreground">
+          {t('researchHeading')}
+        </h4>
+        {contact.websiteUrl && (
+          <label className="flex min-h-11 cursor-pointer items-start gap-2.5 py-1.5 text-xs text-foreground">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-5 w-5 shrink-0 rounded border border-input accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              checked={readWebsite}
+              onChange={(e) => setReadWebsite(e.target.checked)}
+              data-testid="contact-facts-website-confirm"
+            />
+            <span className="min-w-0 break-all">{t('researchConfirmWebsite', { url: contact.websiteUrl })}</span>
+          </label>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="min-h-11"
+            disabled={runResearch.isPending}
+            onClick={handleAskDy}
+            data-testid="contact-facts-research-btn"
+          >
+            {runResearch.isPending ? t('researchRunning') : t('researchSubmit')}
+          </Button>
+          {contact.websiteUrl && readWebsite && !runResearch.isPending && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="min-h-11"
+              onClick={() => setReadWebsite(false)}
+              data-testid="contact-facts-website-skip"
+            >
+              {t('researchSkipWebsite')}
+            </Button>
+          )}
+        </div>
+        {researchStatusText && (
+          <p role="status" aria-live="polite" className="text-xs text-muted-foreground" data-testid="contact-facts-research-status">
+            {researchStatusText}
+          </p>
+        )}
+        {research?.ai === 'ok' && research.summary && (
+          <div className="space-y-2 rounded-md border border-border bg-muted/40 p-3 text-sm" data-testid="contact-facts-research-result">
+            <p className="text-xs font-medium text-muted-foreground">{t('researchDraftBadge')}</p>
+            <p className="break-words text-foreground" data-testid="contact-facts-research-summary">
+              {research.summary}
+            </p>
+            {research.points.length > 0 && (
+              <ul className="list-disc space-y-1 pl-4 text-foreground" data-testid="contact-facts-research-points">
+                {research.points.map((point, idx) => (
+                  <li key={idx} className="break-words">
+                    {point}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {research.websiteQuotes.length > 0 && (
+              <ul className="space-y-1 border-t border-border pt-2 text-xs text-muted-foreground" data-testid="contact-facts-research-quotes">
+                {research.websiteQuotes.map((quote, idx) => (
+                  <li key={idx} className="break-words">
+                    {t('researchWebsiteQuote', { quote })}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
       </section>
 
@@ -455,6 +646,14 @@ export function ContactMeetingFacts({
     retry: false,
   });
 
+  const aiMeter = useQuery({
+    ...orpc.ai.meter.queryOptions({ input: { module: 'crm' } }),
+    enabled: expanded,
+    staleTime: 15_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+
   const hasContacts = (facts.data?.contacts.length ?? 0) > 0;
   const drafts = useQuery({
     ...orpc.meetings.briefDraft.list.queryOptions({ input: { targetKind, targetId } }),
@@ -504,6 +703,7 @@ export function ContactMeetingFacts({
               linkedMeetingId={linkedMeetingId}
               canPutToNotes={Boolean(linkedMeetingId && effectiveRecorder)}
               meetingsEnabled={meetingsOn}
+              aiOn={aiMeter.data?.aiOn}
               draft={draftByParty.get(contact.partyId)}
             />
           ))}
@@ -556,6 +756,7 @@ export function ContactMeetingFacts({
                   linkedMeetingId={linkedMeetingId}
                   canPutToNotes={Boolean(linkedMeetingId && effectiveRecorder)}
                   meetingsEnabled={meetingsOn}
+                  aiOn={aiMeter.data?.aiOn}
                   draft={draftByParty.get(contact.partyId)}
                 />
               ))}

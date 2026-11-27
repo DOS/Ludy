@@ -75,6 +75,7 @@ export * from './einvoice-reason.ts';
 export * from './quote-lines.ts';
 export * from './crm-followup.ts';
 export * from './meeting-brief.ts';
+export * from './meeting-research.ts';
 export * from './summary.ts';
 export * from './summary-model.ts';
 export * from './translation-model.ts';

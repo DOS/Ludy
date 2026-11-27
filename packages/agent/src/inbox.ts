@@ -134,6 +134,14 @@ import { checkCashForecastSentence, cashForecastInstructions, cashForecastPrompt
 import { checkOverviewSentence, overviewInstructions, overviewPrompt, overviewQuiet, type OverviewFacts, type OverviewSentenceResult } from './overview.ts';
 import { checkCrmFollowupWords, crmFollowupInstructions, crmFollowupPrompt, type CrmFollowupWordsRequest, type CrmFollowupWordsResult } from './crm-followup.ts';
 import { checkMeetingBrief, meetingBriefInstructions, meetingBriefPrompt, type MeetingBriefFacts, type MeetingBriefResult } from './meeting-brief.ts';
+import {
+  checkMeetingResearch,
+  meetingResearchInstructions,
+  meetingResearchPrompt,
+  zMeetingResearchOut,
+  type MeetingResearchFacts,
+  type MeetingResearchResult,
+} from './meeting-research.ts';
 import { checkFollowupWords, followupInstructions, followupPrompt, type FollowupWordsRequest, type FollowupWordsResult } from './followup.ts';
 import { checkReminderWords, reminderInstructions, reminderPrompt, type ReminderWordsRequest, type ReminderWordsResult } from './reminder.ts';
 import {
@@ -286,6 +294,7 @@ const zMeetingBriefOut = z.object({
   points: z.array(z.string()).describe('Two or three short points to raise in the meeting, each one plain sentence, using only the facts given'),
 });
 export type MeetingBriefGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMeetingBriefOut> | null; usage?: AiUsage }>;
+export type MeetingResearchGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMeetingResearchOut> | null; usage?: AiUsage }>;
 const zProjectWeeklyStatusOut = z.object({
   sentences: z.array(z.string()).describe('3 to 5 plain sentences summarizing the project week, citing only numbers and facts given'),
 });
@@ -464,6 +473,7 @@ export class InboxReader {
   private readonly generateFollowup: FollowupGenerator;
   private readonly generateCrmFollowup: CrmFollowupGenerator;
   private readonly generateMeetingBrief: MeetingBriefGenerator;
+  private readonly generateMeetingResearch: MeetingResearchGenerator;
   private readonly generateOverview: OverviewGenerator;
   private readonly generateMonthClose: MonthCloseGenerator;
   private readonly generateCashForecast: CashForecastGenerator;
@@ -511,7 +521,7 @@ export class InboxReader {
   private readonly askBooks: AskBooksCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; signDepositMatch?: SignDepositMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; roadmapSignalMatch?: RoadmapSignalMatchGenerator; projectTriageAssist?: ProjectTriageAssistGenerator; projectGithubPrSummary?: ProjectGithubPrSummaryGenerator; projectGithubIssueMatch?: ProjectGithubIssueMatchGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; hrRequestDraft?: HrSelfRequestDraftGenerator; hrPolicyQa?: HrSelfPolicyQaGenerator; hrAddendumCheck?: HrAddendumCheckGenerator; hrOkrCheckinDraft?: HrOkrCheckinDraftGenerator; shiftCoverageSuggest?: ShiftCoverageGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; meetingResearch?: MeetingResearchGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; signDepositMatch?: SignDepositMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; roadmapSignalMatch?: RoadmapSignalMatchGenerator; projectTriageAssist?: ProjectTriageAssistGenerator; projectGithubPrSummary?: ProjectGithubPrSummaryGenerator; projectGithubIssueMatch?: ProjectGithubIssueMatchGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; hrRequestDraft?: HrSelfRequestDraftGenerator; hrPolicyQa?: HrSelfPolicyQaGenerator; hrAddendumCheck?: HrAddendumCheckGenerator; hrOkrCheckinDraft?: HrOkrCheckinDraftGenerator; shiftCoverageSuggest?: ShiftCoverageGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.expenseVariance = new ExpenseVarianceCoworker(config);
     this.unusualEntries = new UnusualEntriesCoworker(config);
@@ -582,6 +592,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('crm.meeting_brief', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zMeetingBriefOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateMeetingResearch =
+      generators.meetingResearch ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('crm.meeting_research', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zMeetingResearchOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -902,6 +920,15 @@ export class InboxReader {
     const { output, usage } = await this.generateMeetingBrief({ system: meetingBriefInstructions(), prompt: meetingBriefPrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkMeetingBrief(facts, output);
+  }
+
+  /** Dy's pre-meeting research brief (#4992, PM2): 1-3 summary sentences, 2-3 talking points, and up to 2 verbatim website quotes
+   * from PM1 contact facts and optionally trimmed, fenced public homepage text. Metered as crm.meeting_research; refused as a whole on
+   * taint or ungrounded figures/links/handles/names/quotes. Nothing is stored or sent. */
+  async meetingResearch(facts: MeetingResearchFacts, onUsage?: (usage: AiUsage) => void): Promise<MeetingResearchResult> {
+    const { output, usage } = await this.generateMeetingResearch({ system: meetingResearchInstructions(), prompt: meetingResearchPrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkMeetingResearch(facts, output);
   }
 
   /** The finance coworker on payroll (#2534): what probably changes this month, the anomalies code found in a sentence each, and one payslip explained, from the pseudonymized sheet only

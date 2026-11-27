@@ -253,6 +253,17 @@ function createStubRuntime() {
       },
       usage: zeroUsage,
     }),
+    meetingResearch: async () => ({
+      output: {
+        summary: 'Lien he Anh Hung co co hoi Hop dong 2026 tri gia 20.000.000 VND, du kien chot 2026-10-20.',
+        points: [
+          'Hoi tien do co hoi Hop dong 2026 tri gia 20.000.000 VND.',
+          'Xac nhan lich hen luc 14h theo tin nhan gan nhat.',
+        ],
+        websiteQuotes: [],
+      },
+      usage: zeroUsage,
+    }),
     intents: async () => ({ output: { items: [{ n: 1, intent: 'question' }] }, usage: zeroUsage }),
     rank: async () => ({ output: { order: [1, 2] }, usage: zeroUsage }),
     followup: async () => ({ output: { lead: 'Cam on quy khach da tham du cuoc hop.', closing: 'Tran trong.' }, usage: zeroUsage }),

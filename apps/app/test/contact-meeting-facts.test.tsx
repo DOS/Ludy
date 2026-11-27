@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { MeetingBriefDraftListOutput, MeetingFactsContact, MeetingFactsOutput } from '@ludy/kernel-contract';
+import type { MeetingBriefDraftListOutput, MeetingFactsContact, MeetingFactsOutput, MeetingResearchOutput } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
@@ -213,5 +213,80 @@ describe('ContactMeetingFacts (#4991)', () => {
     expect(html).toContain('aria-label="Thông tin trước họp cho Họp với Hoa Mai"');
     expect(html).toContain('min-h-11');
     expect(html).not.toContain('data-testid="contact-meeting-facts"');
+  });
+
+  it('renders PM2 "Nhờ Dy chuẩn bị", confirmed website URL before fetch, AI-off message, and formats Dy draft quotes cleanly (#4992)', () => {
+    reset();
+    const meetingId = '00000000-0000-4000-8000-000000000099';
+    const withSite = contactFixture();
+    withSite.websiteUrl = 'https://hoamai.test';
+    client.current.setQueryData(['crm', 'contacts', 'meetingFacts', { targetKind: 'meeting', targetId: meetingId }], factsFixture([withSite]));
+    client.current.setQueryData(['meetings', 'briefDraft', 'list', { targetKind: 'meeting', targetId: meetingId }], emptyDrafts);
+    client.current.setQueryData(['ai', 'meter', { module: 'crm' }], {
+      aiOn: false,
+      state: 'none',
+      percent: null,
+      scope: null,
+      resetAt: '2026-12-01T00:00:00.000Z',
+    });
+
+    const htmlAiOff = renderToStaticMarkup(
+      wrap(<ContactMeetingFacts slug="acme" targetKind="meeting" targetId={meetingId} linkedMeetingId={meetingId} isRecorder canRead />, 'vi'),
+    );
+    expect(htmlAiOff).toContain('Nhờ Dy chuẩn bị');
+    expect(htmlAiOff).toContain('data-testid="contact-facts-website-confirm"');
+    expect(htmlAiOff).toContain('https://hoamai.test');
+    expect(htmlAiOff).toContain('data-testid="contact-facts-research-btn"');
+    expect(htmlAiOff).toContain('min-h-11');
+    expect(htmlAiOff).toContain('break-all');
+    expect(htmlAiOff).toContain('data-testid="contact-facts-research-status"');
+    expect(htmlAiOff).toContain('AI đang tắt nên Dy chưa viết tóm tắt.');
+    expect(htmlAiOff).not.toContain('checked=""');
+
+    // Free-mail contact with websiteUrl: null hides website confirmation checkbox.
+    const withoutSite = contactFixture();
+    withoutSite.websiteUrl = null;
+    client.current.setQueryData(['crm', 'contacts', 'meetingFacts', { targetKind: 'meeting', targetId: meetingId }], factsFixture([withoutSite]));
+    const htmlNoSite = renderToStaticMarkup(
+      wrap(<ContactMeetingFacts slug="acme" targetKind="meeting" targetId={meetingId} linkedMeetingId={meetingId} isRecorder canRead />, 'vi'),
+    );
+    expect(htmlNoSite).not.toContain('data-testid="contact-facts-website-confirm"');
+
+    // Private draft helper includes Dy's summary, points, and quotes marked "từ trang web của họ" (never unquoted page HTML).
+    const research: MeetingResearchOutput = {
+      ai: 'ok',
+      partyId: withSite.partyId,
+      websiteUrl: 'https://hoamai.test',
+      websiteOutcome: 'used',
+      summary: 'Công ty Hoa Mai đang mở cơ hội gói CRM 2026.',
+      points: ['Chốt báo giá gần nhất.', 'Hỏi thêm về quy mô 30 đại lý.'],
+      websiteQuotes: ['30 đại lý toàn quốc'],
+      tainted: true,
+    };
+    const draftWithResearch = formatContactBriefDraft(
+      withSite,
+      {
+        heading: 'Chuẩn bị trước họp: Công ty Hoa Mai',
+        deals: 'Cơ hội đang mở',
+        noDeals: 'Chưa có cơ hội đang mở.',
+        quote: 'Báo giá đã gửi gần nhất',
+        noQuote: 'Chưa gửi báo giá nào.',
+        quoteExpired: 'đã hết hạn',
+        quoteStatus: { sent: 'đã gửi', accepted: 'đã được chấp nhận', declined: 'bị từ chối', superseded: 'đã thay bằng bản mới' },
+        invoices: 'Hóa đơn và công nợ',
+        invoicesSummary: (open, overdue) => `Mở: ${open}, quá hạn: ${overdue}`,
+        messages: 'Tin nhắn đến mới nhất',
+        noMessages: 'Không có tin nhắn.',
+        noDate: 'chưa có',
+        researchHeading: 'Bản tóm tắt gợi ý của Dy (bản nháp)',
+        researchWebsiteQuote: (quote) => `“${quote}” (từ trang web của họ)`,
+      },
+      { money: (v) => `${v} VND`, date: (d) => d },
+      research,
+    );
+    expect(draftWithResearch).toContain('Bản tóm tắt gợi ý của Dy (bản nháp):');
+    expect(draftWithResearch).toContain('Công ty Hoa Mai đang mở cơ hội gói CRM 2026.');
+    expect(draftWithResearch).toContain('“30 đại lý toàn quốc” (từ trang web của họ)');
+    expect(draftWithResearch).not.toContain('\u2014');
   });
 });
