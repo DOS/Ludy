@@ -50,6 +50,19 @@ export function canAdvance(from: Stage, to: Stage): boolean {
   return false;
 }
 
+// How far a line may advance given its prior stage and lost-parcel state: a shipped parcel flagged lost cannot move to cancelled (only returned or completed clears the flag), and a
+// shipped line with no flag yet advances to flagged lost when a later report reports carrier loss.
+function lineProgress(
+  was: { stage: Stage; lostParcel: boolean },
+  line: { stage: Stage; lostParcel?: boolean | undefined },
+): { advance: boolean; nextStage: Stage; nextLostParcel: boolean } {
+  const lineLost = line.stage === 'shipped' && line.lostParcel === true;
+  if (was.lostParcel && line.stage === 'cancelled') return { advance: false, nextStage: was.stage, nextLostParcel: true };
+  if (canAdvance(was.stage, line.stage)) return { advance: true, nextStage: line.stage, nextLostParcel: line.stage === 'shipped' && lineLost };
+  if (was.stage === 'shipped' && line.stage === 'shipped' && !was.lostParcel && lineLost) return { advance: true, nextStage: 'shipped', nextLostParcel: true };
+  return { advance: false, nextStage: was.stage, nextLostParcel: was.lostParcel };
+}
+
 // The stages whose shipment takes stock out; a placed order moves nothing, and a return or a cancellation after the shipment is a person's answer (marketplace-return.ts, #4355).
 const MOVES_STOCK: ReadonlySet<Stage> = new Set(['shipped', 'completed', 'returned']);
 
@@ -57,10 +70,12 @@ const MOVES_STOCK: ReadonlySet<Stage> = new Set(['shipped', 'completed', 'return
 export function summaryOf(read: { platform: Platform; profile: { version: string; confirmed: boolean }; lines: readonly StagedLine[]; skipped: ReadonlyArray<{ reason: string }>; unknownStatuses: readonly string[] }, filename: string): MarketplaceSummary {
   const stages = { placed: 0, shipped: 0, completed: 0, cancelled: 0, returned: 0, unknown: 0 };
   const orders = new Set<string>();
+  let lostParcels = 0;
   let from: string | null = null;
   let to: string | null = null;
   for (const line of read.lines) {
     stages[line.stage] += 1;
+    if (line.stage === 'shipped' && line.lostParcel === true) lostParcels += 1;
     orders.add(line.orderNo);
     if (line.orderedAt !== null && (from === null || line.orderedAt < from)) from = line.orderedAt;
     if (line.orderedAt !== null && (to === null || line.orderedAt > to)) to = line.orderedAt;
@@ -78,6 +93,7 @@ export function summaryOf(read: { platform: Platform; profile: { version: string
     stages,
     unknownStatuses: [...read.unknownStatuses],
     ignoredRows: read.skipped.filter((s) => s.reason === 'no_order_no').length,
+    ...(lostParcels > 0 ? { lostParcels } : {}),
   };
 }
 
@@ -152,12 +168,12 @@ const keyOf = (k: OrderKey) => `${k.platform}\u0000${k.orderNo}\u0000${k.lineKey
 
 // The lines of this entity the report names, as the org holds them now, by (platform, order number, line).
 async function knownLines(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId: string, platform: Platform, orderNos: readonly string[]) {
-  const map = new Map<string, { id: string; stage: Stage; quantity: string; sku: string | null; shippedAt: string | null; deliveredAt: string | null; orderedAt: string | null; attempt: number }>();
+  const map = new Map<string, { id: string; stage: Stage; lostParcel: boolean; quantity: string; sku: string | null; shippedAt: string | null; deliveredAt: string | null; orderedAt: string | null; attempt: number }>();
   for (let i = 0; i < orderNos.length; i += 1000) {
     const rows = await ctx.trx
       .selectFrom('ludy_finance.channel_order_line as l')
       .innerJoin('ludy_finance.channel_order as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.id', '=', 'l.order_id'))
-      .select(['l.id', 'l.line_key', 'l.stage', 'l.quantity', 'l.sku', 'l.shipped_at', 'l.delivered_at', 'l.attempt', 'o.order_no', 'o.ordered_at'])
+      .select(['l.id', 'l.line_key', 'l.stage', 'l.lost_parcel', 'l.quantity', 'l.sku', 'l.shipped_at', 'l.delivered_at', 'l.attempt', 'o.order_no', 'o.ordered_at'])
       .where('l.org_id', '=', ctx.orgId)
       .where('o.legal_entity_id', '=', legalEntityId)
       .where('o.platform', '=', platform)
@@ -167,6 +183,7 @@ async function knownLines(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityI
       map.set(keyOf({ platform, orderNo: r.order_no, lineKey: r.line_key }), {
         id: r.id,
         stage: r.stage,
+        lostParcel: r.lost_parcel,
         quantity: String(r.quantity),
         sku: r.sku,
         shippedAt: r.shipped_at === null ? null : String(r.shipped_at).slice(0, 10),
@@ -224,7 +241,7 @@ async function previewOf(ctx: QueryContext, staged: NonNullable<Awaited<ReturnTy
   for (const line of staged.lines) {
     const was = known.get(keyOf({ platform, orderNo: line.orderNo, lineKey: line.lineKey }));
     if (!was) newLines += 1;
-    else if (canAdvance(was.stage, line.stage)) advancedLines += 1;
+    else if (lineProgress(was, line).advance) advancedLines += 1;
     else knownLinesCount += 1;
     if (MOVES_STOCK.has(line.stage)) {
       if (line.sku && matches.has(normalizeAlias(line.sku))) matched += 1;
@@ -275,7 +292,7 @@ export const marketplaceOrders = defineQuery({
     if (orders.length === 0) return [];
     const lines = await ctx.trx
       .selectFrom('ludy_finance.channel_order_line as l')
-      .select(['l.id', 'l.order_id', 'l.line_key', 'l.sku', 'l.item_name', 'l.quantity', 'l.unit_price', 'l.amount', 'l.stage', 'l.shipped_at', 'l.attempt'])
+      .select(['l.id', 'l.order_id', 'l.line_key', 'l.sku', 'l.item_name', 'l.quantity', 'l.unit_price', 'l.amount', 'l.stage', 'l.lost_parcel', 'l.shipped_at', 'l.attempt'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.order_id', 'in', orders.map((o) => o.id))
       .orderBy('l.line_key')
@@ -311,6 +328,7 @@ export const marketplaceOrders = defineQuery({
           unitPrice: l.unit_price === null ? null : plainQuantity(String(l.unit_price)),
           amount: l.amount === null ? null : plainQuantity(String(l.amount)),
           stage: l.stage,
+          lostParcel: l.lost_parcel,
           shippedAt: l.shipped_at === null ? null : String(l.shipped_at).slice(0, 10),
           itemCode: codes.get(l.id) ?? null,
         })),
@@ -409,13 +427,15 @@ export const marketplaceConfirm = defineCommand({
         if (was) {
           // The delivery day is kept only for a delivery that happened: a line reported completed, or one that was completed and then came back. A line that goes from shipped to returned
           // is a failed delivery (the parcel came back to the seller): whatever day the platform gives it, none is written.
-          const deliveredAt = was.deliveredAt === null && line.deliveredAt !== null && (line.stage === 'completed' || (line.stage === 'returned' && was.stage === 'completed')) ? line.deliveredAt : null;
-          if (canAdvance(was.stage, line.stage)) {
+          const progress = lineProgress(was, line);
+          const deliveredAt = was.deliveredAt === null && line.deliveredAt !== null && (progress.nextStage === 'completed' || (progress.nextStage === 'returned' && was.stage === 'completed')) ? line.deliveredAt : null;
+          if (progress.advance) {
             // The shipping day and the delivery day are set once; a later report can give them, never change them.
             await ctx.trx
               .updateTable('ludy_finance.channel_order_line')
               .set({
-                stage: line.stage,
+                stage: progress.nextStage,
+                ...(progress.nextLostParcel !== was.lostParcel ? { lost_parcel: progress.nextLostParcel } : {}),
                 ...(was.shippedAt === null && line.shippedAt !== null ? { shipped_at: line.shippedAt } : {}),
                 // coalesce: another confirmation that stored a day first keeps its day (the table refuses a change, which would fail this whole confirm).
                 ...(deliveredAt !== null ? { delivered_at: sql<string>`coalesce(delivered_at, ${deliveredAt}::date)` } : {}),
@@ -425,7 +445,7 @@ export const marketplaceConfirm = defineCommand({
               .where('id', '=', was.id)
               .execute();
             updatedLines += 1;
-            touched.push({ id: was.id, stage: line.stage, quantity: was.quantity, shippedAt: was.shippedAt ?? line.shippedAt, orderedAt: was.orderedAt ?? line.orderedAt, sku: was.sku, attempt: was.attempt });
+            touched.push({ id: was.id, stage: progress.nextStage, quantity: was.quantity, shippedAt: was.shippedAt ?? line.shippedAt, orderedAt: was.orderedAt ?? line.orderedAt, sku: was.sku, attempt: was.attempt });
           } else {
             // A line that is already completed and has no delivery day yet takes it from a report that says it is completed (the earlier file had no completion column).
             if (was.deliveredAt === null && line.deliveredAt !== null && was.stage === 'completed' && line.stage === 'completed') {
@@ -464,6 +484,7 @@ export const marketplaceConfirm = defineCommand({
             unit_price: line.unitPrice,
             amount: line.amount,
             stage: line.stage,
+            lost_parcel: line.stage === 'shipped' && line.lostParcel === true,
             shipped_at: line.shippedAt,
             // A new line reported returned was never seen delivered: it gets no day.
             delivered_at: line.stage === 'completed' ? line.deliveredAt : null,

@@ -122,6 +122,11 @@ export function StagedMarketplace({ canDecide, refetchMs }: { canDecide: boolean
                     <AlertDescription className="text-warning">{t('ignoredRows', { count: s.ignoredRows })}</AlertDescription>
                   </Alert>
                 )}
+                {(s.lostParcels ?? 0) > 0 && (
+                  <Alert className="mt-3 border-warning/30 bg-warning/10 text-warning" role="note" data-testid="staged-marketplace-lost">
+                    <AlertDescription className="text-warning">{t('lostParcels', { count: s.lostParcels ?? 0 })}</AlertDescription>
+                  </Alert>
+                )}
                 {!s.profileConfirmed && <p className="mt-2 text-xs text-subtle-foreground">{t('mappingHint')}</p>}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button size="sm" loading={confirm.isPending && confirm.variables === file.fileId} disabled={busy} onClick={() => confirm.mutate(file.fileId)} data-testid="staged-marketplace-import">

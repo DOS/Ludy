@@ -59,6 +59,7 @@ export async function returnsToConfirm(ctx: Pick<QueryContext, 'trx' | 'orgId'>,
     JOIN ludy_finance.stock_item i ON i.org_id = s.org_id AND i.id = s.item_id
     WHERE l.org_id = ${ctx.orgId}::uuid
       AND l.stage IN ('returned', 'cancelled')
+      AND NOT l.lost_parcel
       AND (l.goods_back IS NULL OR l.goods_back_attempt <> l.attempt)
       AND (${legalEntityId ?? null}::uuid IS NULL OR l.legal_entity_id = ${legalEntityId ?? null}::uuid)
       AND NOT EXISTS (SELECT 1 FROM ludy_finance.stock_move r WHERE r.org_id = l.org_id AND r.order_line_id = l.id AND r.order_move = 'return' AND r.order_attempt = l.attempt)
@@ -116,7 +117,7 @@ export const marketplaceReturnDecide = defineCommand({
     await ctx.trx.selectFrom('ludy_finance.channel_order_line').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.orderLineId).forUpdate().executeTakeFirst();
     const line = await ctx.trx
       .selectFrom('ludy_finance.channel_order_line')
-      .select(['id', 'order_id', 'stage', 'attempt', 'goods_back', 'goods_back_attempt'])
+      .select(['id', 'order_id', 'stage', 'lost_parcel', 'attempt', 'goods_back', 'goods_back_attempt'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.orderLineId)
       .executeTakeFirst();
@@ -133,7 +134,7 @@ export const marketplaceReturnDecide = defineCommand({
     if ((line.goods_back !== null && line.goods_back_attempt === line.attempt) || made.some((m) => m.order_move === 'return')) {
       throw new DomainError('MARKETPLACE_RETURN_DECIDED', 409, 'Dòng này đã được xác nhận hàng về hoặc không về');
     }
-    if ((line.stage !== 'returned' && line.stage !== 'cancelled') || !ship) {
+    if (line.lost_parcel || (line.stage !== 'returned' && line.stage !== 'cancelled') || !ship) {
       throw new DomainError('MARKETPLACE_RETURN_NOT_OFFERED', 422, 'Dòng này chưa được báo trả hàng hoặc chưa có phiếu xuất kho để hoàn lại');
     }
     const compensated = (await sql<{ yes: boolean }>`SELECT ${compensatedOn(ctx.orgId, sql`${line.order_id}::uuid`)} AS yes`.execute(ctx.trx)).rows[0]?.yes === true;

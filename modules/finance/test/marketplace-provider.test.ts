@@ -128,6 +128,24 @@ describe('counting rows before building them', () => {
     expect(marketplaceOrdersCsv('shopee', [huge]).trimEnd().split('\n')).toHaveLength(1 + 300);
     expect(MARKETPLACE_CSV_MAX_ROWS).toBe(20_000);
   });
+
+  it('writes lostParcel row indices beside the headers only when a shipped line is flagged lost, including every expanded Lazada unit', () => {
+    const plain = marketplaceOrdersCsv('tiktok_shop', [order()], '0192a000-0000-7000-8000-00000000000a');
+    expect(cellsOf(plain)).toHaveLength(3);
+    expect(plain).not.toContain('Ludy marketplace lost parcel');
+
+    const mixed: MarketplaceOrder[] = [
+      { ...order({ lineKey: 'ok-1' }), stage: 'shipped', shippedAt: '2026-11-03' },
+      { ...order({ lineKey: 'lost-1', lostParcel: true }, '2', '200000'), orderNo: '9101000010', stage: 'shipped', shippedAt: '2026-11-03' },
+      { ...order({ lineKey: 'ok-2', lostParcel: true }), orderNo: '9101000011', stage: 'returned', shippedAt: '2026-11-03', deliveredAt: '2026-11-04' },
+    ];
+    const lazadaRows = cellsOf(marketplaceOrdersCsv('lazada', mixed, '0192a000-0000-7000-8000-00000000000a'));
+    expect(lazadaRows[0]).toEqual(['Ludy marketplace connection 0192a000-0000-7000-8000-00000000000a']);
+    // Line ok-1 takes data row 1; line lost-1 (2 units on Lazada) takes data rows 2 and 3; ok-2 is returned so never flagged lost.
+    expect(lazadaRows[1]).toEqual(['Ludy marketplace lost parcel 2,3']);
+    expect(lazadaRows[2]![0]).toBe('orderNumber');
+    expect(lazadaRows).toHaveLength(7);
+  });
 });
 
 // #2840 point 2: the page a provider returns is checked before anything of it is used.
@@ -144,8 +162,16 @@ describe('parseMarketplaceOrderPage', () => {
   };
   const withLine = (change: (l: Record<string, unknown>) => void): unknown => withOrder((o) => change((o.lines as Array<Record<string, unknown>>)[0]!));
 
-  it('takes a good page, and every page the offline provider serves for every platform', async () => {
+  it('takes a good page, accepts lostParcel on shipped lines, and refuses lostParcel outside shipped orders', async () => {
     expect(parseMarketplaceOrderPage(good())).toEqual(good());
+    expect(parseMarketplaceOrderPage(withLine((l) => (l.lostParcel = true)))).not.toBeNull();
+    for (const nonShipped of ['placed', 'completed', 'cancelled', 'returned']) {
+      const invalid = withOrder((o) => {
+        o.stage = nonShipped;
+        ((o.lines as Array<Record<string, unknown>>)[0]!).lostParcel = true;
+      });
+      expect(parseMarketplaceOrderPage(invalid)).toBeNull();
+    }
     const sandbox = createSandboxMarketplaceProvider();
     for (const platform of Object.keys(MARKETPLACE_PLATFORM_LIMITS) as MarketplacePlatformKey[]) {
       expect(parseMarketplaceOrderPage(await sandbox.listOrders('sandbox', platform, null))).not.toBeNull();
