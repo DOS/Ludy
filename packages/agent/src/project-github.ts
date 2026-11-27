@@ -30,7 +30,6 @@ const DESCRIPTION_PROMPT_CHARS = 900;
 const REPO_PROMPT_CHARS = 120;
 const LANGUAGE = { vi: 'Vietnamese', en: 'English' } as const;
 const HTML_TAG = /<[a-z!/]/i;
-const INLINE_MARKDOWN_RE = /\*\*[^*\n]+\*\*|__[^_\n]+__|`[^`\n]+`|!?\[[^\]\n]+\]\([^)\n]+\)/;
 const GITHUB_AUTONOMOUS_ACTION_RE: readonly RegExp[] = [
   /(?<![\p{L}\p{N}])(?<!không\s)(?<!chưa\s)(?<!đừng\s)(?<!tránh\s)(?:tự\s+động|đã\s+tự\s+động)\s+(?:gắn|đóng|mở\s+lại|merge|gộp|liên\s+kết)(?![\p{L}\p{N}])/iu,
   /(?<![\p{L}\p{N}])(?<!khong\s)(?<!chua\s)(?<!dung\s)(?<!tranh\s)(?:tu\s+dong|da\s+tu\s+dong)\s+(?:gan|dong|mo\s+lai|merge|gop|lien\s+ket)(?![\p{L}\p{N}])/iu,
@@ -41,8 +40,38 @@ const TRAILING_URL_PUNCT = new Set(['.', ',', ';', ':', '!', '?', ')', "'", '"',
 const oneLine = plainLine;
 const fenced = escapePromptFences;
 
+function hasPairedToken(text: string, token: string): boolean {
+  const open = text.indexOf(token);
+  if (open === -1) return false;
+  const close = text.indexOf(token, open + token.length);
+  return close > open + token.length && !text.slice(open + token.length, close).includes('\n');
+}
+
+function hasInlineMarkdownLink(text: string): boolean {
+  let i = 0;
+  while (i < text.length) {
+    const mid = text.indexOf('](', i);
+    if (mid === -1) return false;
+    const open = text.lastIndexOf('[', mid - 1);
+    const closeParen = text.indexOf(')', mid + 2);
+    if (open !== -1 && closeParen > mid + 2) {
+      const prevClose = text.lastIndexOf(']', mid - 1);
+      if (prevClose < open && !text.slice(open + 1, closeParen).includes('\n')) {
+        return true;
+      }
+    }
+    i = mid + 2;
+  }
+  return false;
+}
+
 function hasInlineMarkdown(text: string): boolean {
-  return INLINE_MARKDOWN_RE.test(text);
+  return (
+    hasPairedToken(text, '**') ||
+    hasPairedToken(text, '__') ||
+    hasPairedToken(text, '`') ||
+    hasInlineMarkdownLink(text)
+  );
 }
 
 function hasGithubAutonomousAction(text: string): boolean {

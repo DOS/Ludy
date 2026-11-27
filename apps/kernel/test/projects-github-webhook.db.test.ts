@@ -425,18 +425,18 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
             usage: { inputTokens: 45, outputTokens: 16 },
           };
         },
-        projectGithubIssueMatch: async ({ candidates, prompt }) => {
+        projectGithubIssueMatch: async ({ prompt }) => {
           if (prompt.includes('INJECT_UNKNOWN_ID')) {
             return {
               output: { matches: [{ candidateId: 'octo-org/core-api#99999', reason: 'Forged ID.' }] },
               usage: { inputTokens: 10, outputTokens: 10 },
             };
           }
-          const first = candidates[0];
+          const matched = /candidateId=([^\s|]+)\s*\|\s*repo="[^"]+"\s*\|\s*issue=#(\d+)/.exec(prompt);
           return {
             output: {
-              matches: first
-                ? [{ candidateId: first.candidateId, reason: `Khop noi dung voi issue #${first.externalNumber}.` }]
+              matches: matched
+                ? [{ candidateId: matched[1]!, reason: `Khop noi dung voi issue #${matched[2]!}.` }]
                 : [],
             },
             usage: { inputTokens: 40, outputTokens: 15 },
@@ -2203,7 +2203,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
       { actor: agentActor, orgId: s2Org.orgId, idempotencyKey: randomUUID() },
     );
     const outboxTransition = await rows<{ payload: { taskId: string; previousStatus: string; nextStatus: string } }>(
-      `SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'projects.github.task_transitioned' ORDER BY id DESC LIMIT 1`,
+      `SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.github_transitioned' ORDER BY id DESC LIMIT 1`,
       [s2Org.orgId],
     );
     expect(outboxTransition[0]?.payload).toEqual({

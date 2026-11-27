@@ -131,7 +131,6 @@ BEGIN
       AND NOT p.is_template
       AND (
         ludy_projects.actor_bypasses_private_projects()
-        OR v_actor = 'agent'
         OR ludy_projects.project_visible(v_org, p.id)
       )
       AND b.github_enabled = true

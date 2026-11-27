@@ -5939,9 +5939,12 @@ export function createRpcHandler(
                   .slice(0, 5)
                   .map((repo) => channels.github!.listOpenIssues({ kind: 'github_app', installationId }, repo.repoFullName, 20)),
               );
-              for (const settled of repoBatches) {
-                if (settled.status !== 'fulfilled') continue;
-                for (const item of settled.value) {
+              const repoLists = repoBatches.map((s) => (s.status === 'fulfilled' ? s.value : []));
+              const maxLen = Math.max(0, ...repoLists.map((list) => list.length));
+              for (let idx = 0; idx < maxLen; idx += 1) {
+                for (const list of repoLists) {
+                  const item = list[idx];
+                  if (!item) continue;
                   pushCandidate({
                     repoFullName: item.repoFullName,
                     externalNumber: item.number,

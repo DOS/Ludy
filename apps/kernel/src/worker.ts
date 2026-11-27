@@ -4070,7 +4070,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 deps.channels?.github &&
                 deps.channels.broker &&
                 deps.channels.broker.id !== 'none' &&
-                row.type === 'projects.github.task_transitioned' &&
+                row.type === 'kernel.task.github_transitioned' &&
                 typeof row.payload.taskId === 'string' &&
                 typeof row.payload.previousStatus === 'string' &&
                 typeof row.payload.nextStatus === 'string'
