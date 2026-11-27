@@ -124,8 +124,10 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  // #5182 (monthly review of unusual posted entries): a person's mark that a hit was looked at; its factory lands here before its migration (step 0).
-  'crove_finance.entry_review_mark',
+  // #5216 (HR Stage 7A): SME shift templates, weekly roster assignments, and 1-step shift swap requests (step 0).
+  'crove_hr.shift_assignment',
+  'crove_hr.shift_swap_request',
+  'crove_hr.shift_template',
   // #5073 / #5080 (ADR-0049 #5108): short-lived 36h prep lines for opted-in members, strict user + member_briefing RLS.
   'crove_meetings.morning_brief_lines',
 ]);
@@ -198,6 +200,9 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_hr.payroll_run', () => 'false'], // HR, as above.
   ['crove_hr.probation_review', () => 'false'], // HR, as above.
   ['crove_hr.salary_advance_request', () => 'false'], // HR, as above.
+  ['crove_hr.shift_assignment', () => 'false'], // HR, as above.
+  ['crove_hr.shift_swap_request', () => 'false'], // HR, as above.
+  ['crove_hr.shift_template', () => 'false'], // HR, as above.
   ['crove_kernel.calendar_connection', () => 'false'], // A member's own connection.
   ['crove_kernel.calendar_event_link', () => 'false'], // Reads through the member's own connection.
   ['crove_kernel.conversation', () => 'false'], // The inbox is read per member.
@@ -313,7 +318,7 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
 ]);
 const AUTHOR_ONLY = new Map<string, string>([
   // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
-  // Departments and lightweight recruiting (#3403), Stage 5C attendance (#4447), and Stage 6 HR (#4527, #4528, #4529): user-context only; system and agent contexts read and write none.
+  // Departments and lightweight recruiting (#3403), Stage 5C attendance (#4447), Stage 6 HR (#4527, #4528, #4529), and Stage 7A shifts (#5216): user-context only; system and agent contexts read and write none.
   ['crove_hr.attendance_log', 'false'],
   ['crove_hr.attendance_qr_config', 'false'],
   ['crove_hr.business_trip_request', 'false'],
@@ -340,6 +345,9 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_hr.payroll_run', 'false'],
   ['crove_hr.probation_review', 'false'],
   ['crove_hr.salary_advance_request', 'false'],
+  ['crove_hr.shift_assignment', 'false'],
+  ['crove_hr.shift_swap_request', 'false'],
+  ['crove_hr.shift_template', 'false'],
   // What Vy keeps about one member (ADR-0049 decision 3, stage A): the member's alone. The system context, an owner, an admin, another member and an org-chart agent read and write none; the cases are in member-vy-private.db.test.ts.
   // A member's own recordings a meeting platform offered (meetings integrations C1, #3173): the member's alone; the worker's system context reads and writes nothing (its writers are definers).
   ['crove_kernel.meeting_platform_recording', 'false'],
@@ -557,6 +565,11 @@ let hrDepartmentSeq = 0;
 // Stage 6C addendum numbers and asset codes (#4528): unique per entity/org across seeded and probed rows.
 let hrAddendumSeq = 0;
 let hrAssetSeq = 0;
+// Stage 7A shift templates and roster dates (#5216): unique template codes and work dates across seeded and probed rows.
+let hrShiftTemplateSeq = 0;
+const hrShiftTemplateCode = () => `SHIFT_${String(++hrShiftTemplateSeq).padStart(4, '0')}`;
+let hrShiftDateSeq = 0;
+const hrShiftDate = () => new Date(Date.UTC(2026, 0, 1 + hrShiftDateSeq++)).toISOString().slice(0, 10);
 // A pay run (#2531) is unique per entity and month: each seeded one takes the next month from January 2000.
 let payrollMonthSeq = 0;
 const payrollMonth = () => {
@@ -570,6 +583,8 @@ const channelOrderNo = () => `RLS${(channelOrderSeq++).toString().padStart(8, '0
 let channelSettlementSeq = 0;
 const channelSettlementDay = () => new Date(Date.UTC(2000, 0, 1 + channelSettlementSeq++)).toISOString().slice(0, 10);
 let lineNo = 100;
+// The orgs that already had a mark row made for them (the seed's), for the entry_review_mark factory.
+const entryReviewMarkSeeded = new Set<string>();
 const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit' | 'credit'): Row => ({
   table: 'crove_finance.journal_line',
   values: { org_id: org, entry_id: entry, line_no: lineNo, account_code: side === 'debit' ? '6422' : '331', debit: side === 'debit' ? '100' : '0', credit: side === 'credit' ? '100' : '0' },
@@ -1733,16 +1748,14 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // The register of fixed assets and prepaid costs (#919): one row per asset, never deleted. Tenant roles update only
   // the end of its schedule (a column grant), so the update probes assign end_reason to itself.
-  // #5182 (step 0, the migration follows): a person's mark that one hit of the monthly review of unusual entries was looked at: one row per (entry, rule), append-only, its entity filled from its entry by the
-  // legal-entity trigger. The entry is created in the same transaction (its balancing lines complete it), as for a journal line.
+  // #5182: a person's mark that one hit of the monthly review of unusual entries was looked at: one row per (entry, rule), append-only, its entity filled from its entry by the legal-entity trigger. A mark points at a
+  // journal entry, which a login role cannot create (tenant roles hold no INSERT on journal_entry), so a probe's own transaction cannot build one: every row names the org's committed entry (o.entry, the seed's).
+  // (entry, rule) is unique and the seed row is the only committed one, so the first row made for an org (the seed's, in beforeAll) takes one rule and every later row (a probe's, rolled back) another.
   'crove_finance.entry_review_mark': {
     make: (o) => {
-      const entry = randomUUID();
-      return {
-        setup: [journalEntry(o.id, entry)],
-        row: { org_id: o.id, id: randomUUID(), entry_id: entry, rule: 'amount_outlier', marked_by: o.owner },
-        complete: [balancingLine(o.id, entry, 1, 'debit'), balancingLine(o.id, entry, 2, 'credit')],
-      };
+      const seeded = entryReviewMarkSeeded.has(o.id);
+      entryReviewMarkSeeded.add(o.id);
+      return { row: { org_id: o.id, id: randomUUID(), entry_id: o.entry, rule: seeded ? 'off_day' : 'amount_outlier', marked_by: o.owner } };
     },
   },
   'crove_finance.fixed_asset': {
@@ -2672,6 +2685,99 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         },
       };
     },
+  },
+  // #5216 (Stage 7A): employee weekly shift roster assignment (owner/admin, L1 department manager scope, and linked employee self-read in a user context; system and agent contexts read and write none).
+  'crove_hr.shift_assignment': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      const template = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } },
+          {
+            table: 'crove_hr.shift_template',
+            values: {
+              org_id: o.id,
+              id: template,
+              code: hrShiftTemplateCode(),
+              name: 'RLS matrix shift',
+              start_minute: 480,
+              end_minute: 1020,
+            },
+          },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          employee_id: employee,
+          shift_template_id: template,
+          work_date: hrShiftDate(),
+        },
+      };
+    },
+  },
+  // #5216 (Stage 7A): 1-step employee shift swap request (owner/admin, L1 department manager scope, and linked requester/target employee in a user context; system and agent contexts read and write none).
+  'crove_hr.shift_swap_request': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const requester = randomUUID();
+      const target = randomUUID();
+      const template = randomUUID();
+      const assignment = randomUUID();
+      const workDate = hrShiftDate();
+      return {
+        setup: [
+          { table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: requester, display_name: 'RLS matrix requester' } },
+          { table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: target, display_name: 'RLS matrix target' } },
+          {
+            table: 'crove_hr.shift_template',
+            values: {
+              org_id: o.id,
+              id: template,
+              code: hrShiftTemplateCode(),
+              name: 'RLS matrix shift',
+              start_minute: 480,
+              end_minute: 1020,
+            },
+          },
+          {
+            table: 'crove_hr.shift_assignment',
+            values: {
+              org_id: o.id,
+              id: assignment,
+              employee_id: requester,
+              shift_template_id: template,
+              work_date: workDate,
+            },
+          },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          requester_employee_id: requester,
+          target_employee_id: target,
+          requester_assignment_id: assignment,
+          work_date: workDate,
+          reason: 'RLS matrix',
+          status: 'pending',
+        },
+      };
+    },
+  },
+  // #5216 (Stage 7A): SME shift template per legal entity (owner/admin write and linked self-employee read in a user context; system and agent contexts read and write none).
+  'crove_hr.shift_template': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        code: hrShiftTemplateCode(),
+        name: 'RLS matrix shift',
+        start_minute: 480,
+        end_minute: 1020,
+      },
+    }),
   },
   'crove_kernel."position"': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix seat', module: 'finance', role_key: 'finance.chief_accountant' } }),

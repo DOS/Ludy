@@ -17,7 +17,7 @@ export const GITHUB_OAUTH_TOKEN_URL = 'https://github.com/login/oauth/access_tok
 const TOKEN_CACHE_MAX = 500;
 
 export interface GithubTransportRequest {
-  readonly method: 'GET' | 'POST';
+  readonly method: 'GET' | 'POST' | 'PATCH';
   readonly url: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly body?: string | undefined;
@@ -79,6 +79,15 @@ export interface GithubClientOptions {
   readonly now?: (() => number) | undefined;
 }
 
+export interface GithubSetIssueStateInput {
+  readonly auth: GithubAuth;
+  readonly owner: string;
+  readonly repo: string;
+  readonly issueNumber: number;
+  readonly state: 'open' | 'closed';
+  readonly kind?: 'issue' | 'pull_request' | undefined;
+}
+
 export interface GithubClient {
   readonly hasAppCredentials: boolean;
   readonly hasAppOAuth: boolean;
@@ -100,6 +109,12 @@ export interface GithubClient {
     repoFullName: string,
     branchName: string,
   ): Promise<GithubExternalItem | null>;
+  listOpenIssues(
+    auth: GithubAuth,
+    repoFullName: string,
+    limit?: number,
+  ): Promise<GithubExternalItem[]>;
+  setIssueState(input: GithubSetIssueStateInput): Promise<GithubExternalItem>;
 }
 
 const zInstallationRes = z.object({
@@ -215,10 +230,11 @@ export function createGithubClient(options: GithubClientOptions): GithubClient {
   const tokenCache = new Map<string, { token: string; expiresMs: number }>();
 
   async function callApi<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PATCH',
     path: string,
     bearerToken: string,
     schema: z.ZodType<T>,
+    body?: string,
   ): Promise<T> {
     if (!path.startsWith('/')) {
       throw new GithubError('bad_request', 'Invalid GitHub API path');
@@ -238,7 +254,9 @@ export function createGithubClient(options: GithubClientOptions): GithubClient {
           accept: 'application/vnd.github+json',
           authorization: `Bearer ${bearerToken}`,
           'x-github-api-version': '2022-11-28',
+          ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
         },
+        ...(body !== undefined ? { body } : {}),
       });
     } catch (error) {
       if (error instanceof GithubError) throw error;
@@ -538,6 +556,80 @@ export function createGithubClient(options: GithubClientOptions): GithubClient {
           branchName: sanitizeBranchName(first.head?.ref) ?? cleanBranch,
           authorLogin: sanitizeGithubLogin(first.user?.login),
           updatedAt: first.updated_at ?? null,
+        };
+      });
+    },
+
+    async listOpenIssues(
+      auth: GithubAuth,
+      repoFullName: string,
+      limit = 20,
+    ): Promise<GithubExternalItem[]> {
+      const capped = Math.min(Math.max(Math.trunc(limit), 1), 30);
+      const { repo, encoded } = encodeRepoPath(repoFullName);
+      return withAuth(auth, async (token) => {
+        const items = await callApi(
+          'GET',
+          `/repos/${encoded}/issues?state=open&sort=updated&per_page=50`,
+          token,
+          z.array(zIssueRes).max(50),
+        );
+        const out: GithubExternalItem[] = [];
+        for (const item of items) {
+          // GitHub REST /issues endpoint includes pull requests when pull_request key is present; exclude PRs here.
+          if (item.pull_request !== undefined) continue;
+          const url = canonicalGithubItemUrl(repo, 'issue', item.number, item.html_url);
+          if (!url) continue;
+          out.push({
+            kind: 'issue',
+            repoFullName: repo,
+            number: item.number,
+            externalUrl: url,
+            externalTitle: sanitizeGithubText(item.title, 300) || `Issue #${item.number}`,
+            externalState: item.state,
+            branchName: null,
+            authorLogin: sanitizeGithubLogin(item.user?.login),
+            updatedAt: item.updated_at ?? null,
+          });
+          if (out.length >= capped) break;
+        }
+        return out;
+      });
+    },
+
+    async setIssueState(input: GithubSetIssueStateInput): Promise<GithubExternalItem> {
+      if (input.kind !== undefined && input.kind !== 'issue') {
+        throw new GithubError('bad_request', 'Only GitHub issues support outbound state updates');
+      }
+      if (!Number.isInteger(input.issueNumber) || input.issueNumber < 1) {
+        throw new GithubError('bad_request', 'Invalid GitHub issue number');
+      }
+      if (input.state !== 'open' && input.state !== 'closed') {
+        throw new GithubError('bad_request', 'Invalid GitHub issue state');
+      }
+      if (!input.owner.trim() || input.owner.includes('/') || !input.repo.trim() || input.repo.includes('/')) {
+        throw new GithubError('bad_request', 'Invalid GitHub repository owner or name');
+      }
+      const { repo, encoded } = encodeRepoPath(`${input.owner.trim()}/${input.repo.trim()}`);
+      const payload = JSON.stringify({ state: input.state });
+
+      return withAuth(input.auth, async (token) => {
+        const res = await callApi('PATCH', `/repos/${encoded}/issues/${input.issueNumber}`, token, zIssueRes, payload);
+        if (res.pull_request !== undefined) {
+          throw new GithubError('bad_request', 'Refusing to update pull request via issues endpoint');
+        }
+        const url = canonicalGithubItemUrl(repo, 'issue', res.number, res.html_url);
+        if (!url) throw new GithubError('invalid_response', 'Invalid GitHub issue URL');
+        return {
+          kind: 'issue',
+          repoFullName: repo,
+          number: res.number,
+          externalUrl: url,
+          externalTitle: sanitizeGithubText(res.title, 300) || `Issue #${res.number}`,
+          externalState: res.state,
+          branchName: null,
+          authorLogin: sanitizeGithubLogin(res.user?.login),
+          updatedAt: res.updated_at ?? null,
         };
       });
     },

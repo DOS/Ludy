@@ -2,15 +2,15 @@
 // Task-level GitHub issue/PR chips, tainted warning badges, and manual link editor (#5158, ADR-0060).
 import { parseGithubItemUrl, type GithubExternalState } from '@ludy/kernel-contract';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useId, useState, type FormEvent } from 'react';
-import { useTranslations } from 'use-intl';
+import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useLocale, useTranslations } from 'use-intl';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { ErrorText, FieldError, RowsSkeleton, fieldControl } from './ui.tsx';
-import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 
 export function safeGithubItemUrl(rawUrl: string): string | null {
   try {
@@ -51,6 +51,7 @@ export function ProjectTaskGithubLinks({
   onChanged?: (() => void) | undefined;
 }) {
   const t = useTranslations('projects.github');
+  const locale = useLocale() === 'en' ? 'en' : 'vi';
   const urlInputId = useId();
   const [urlDraft, setUrlDraft] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
@@ -59,6 +60,22 @@ export function ProjectTaskGithubLinks({
     ...orpc.projects.github.taskLinks.queryOptions({ input: { projectId, taskId } }),
     enabled: githubEnabled,
   });
+
+  const aiPrSummary = useMutation({
+    mutationFn: () => client.projects.github.aiPrSummary({ projectId, taskId, language: locale }),
+  });
+
+  const aiIssueMatch = useMutation({
+    mutationFn: () => client.projects.github.aiIssueMatch({ projectId, taskId, language: locale }),
+  });
+
+  const { reset: resetPrSummary } = aiPrSummary;
+  const { reset: resetIssueMatch } = aiIssueMatch;
+
+  useEffect(() => {
+    resetPrSummary();
+    resetIssueMatch();
+  }, [projectId, taskId, resetPrSummary, resetIssueMatch]);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({
@@ -74,6 +91,7 @@ export function ProjectTaskGithubLinks({
         setUrlDraft('');
         setUrlError(null);
         invalidate();
+        if (aiIssueMatch.data) aiIssueMatch.reset();
       },
     }),
   );
@@ -224,11 +242,165 @@ export function ProjectTaskGithubLinks({
         </ul>
       )}
 
+      {links.length > 0 && (
+        <div
+          className="space-y-2 rounded-md border border-border/80 bg-background/80 p-2.5 text-xs"
+          data-testid="github-pr-summary-panel"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <Badge variant="brand" className="h-5 px-1.5 text-[11px]" data-testid="github-pr-summary-ai-badge">
+                {t('aiBadge')}
+              </Badge>
+              <span className="font-medium text-foreground">{t('aiSummaryTitle')}</span>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={aiPrSummary.isPending}
+              loading={aiPrSummary.isPending}
+              onClick={() => aiPrSummary.mutate()}
+              className="min-h-11 px-3 text-xs"
+              data-testid="github-pr-summary-btn"
+            >
+              {aiPrSummary.data ? t('aiSummaryRefreshBtn') : t('aiSummaryBtn')}
+            </Button>
+          </div>
+          {aiPrSummary.error && <ErrorText>{errorMessage(aiPrSummary.error)}</ErrorText>}
+          {aiPrSummary.data && (
+            <div className="space-y-1">
+              {aiPrSummary.data.ai === 'used' && aiPrSummary.data.summary ? (
+                <p className="break-words text-foreground" data-testid="github-pr-summary-text">
+                  {aiPrSummary.data.summary}
+                </p>
+              ) : (
+                <>
+                  {aiPrSummary.data.fallbackSummary && (
+                    <p className="break-words text-foreground" data-testid="github-pr-summary-fallback">
+                      {aiPrSummary.data.fallbackSummary}
+                    </p>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    {aiPrSummary.data.ai === 'busy' ? t('aiBusyNotice') : t('aiFallbackNotice')}
+                  </p>
+                </>
+              )}
+              <p className="text-[11px] text-muted-foreground">{t('aiSummaryHint')}</p>
+            </div>
+          )}
+        </div>
+      )}
+
       {canWrite && (
         <form onSubmit={handleSubmit} className="space-y-2 border-t border-border/70 pt-2.5">
-          <Label htmlFor={urlInputId} className="text-xs font-medium text-foreground">
-            {t('linkUrlLabel')}
-          </Label>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Label htmlFor={urlInputId} className="text-xs font-medium text-foreground">
+              {t('linkUrlLabel')}
+            </Label>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={aiIssueMatch.isPending}
+              loading={aiIssueMatch.isPending}
+              onClick={() => aiIssueMatch.mutate()}
+              className="min-h-11 px-3 text-xs"
+              data-testid="github-issue-match-btn"
+            >
+              <Badge variant="brand" className="mr-1.5 h-5 px-1.5 text-[11px]">
+                {t('aiBadge')}
+              </Badge>
+              <span>{t('aiIssueMatchBtn')}</span>
+            </Button>
+          </div>
+          {aiIssueMatch.error && <ErrorText>{errorMessage(aiIssueMatch.error)}</ErrorText>}
+          {aiIssueMatch.data && (
+            <div
+              className="space-y-2 rounded-md border border-border/80 bg-background/80 p-2.5 text-xs"
+              data-testid="github-issue-match-panel"
+            >
+              <p className="font-medium text-foreground">{t('aiIssueMatchTitle')}</p>
+              {aiIssueMatch.data.ai !== 'used' && aiIssueMatch.data.candidates.length > 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                  {aiIssueMatch.data.ai === 'busy' ? t('aiBusyNotice') : t('aiMatchFallbackNotice')}
+                </p>
+              )}
+              {aiIssueMatch.data.candidates.length === 0 ? (
+                <p className="text-xs text-muted-foreground" data-testid="github-issue-match-empty">
+                  {t('aiIssueMatchEmpty')}
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {aiIssueMatch.data.candidates.map((cand) => {
+                    const safeHref = safeGithubItemUrl(cand.externalUrl);
+                    return (
+                      <li
+                        key={cand.candidateId}
+                        className="flex flex-col gap-2 rounded border border-border bg-background p-2 sm:flex-row sm:items-center sm:justify-between"
+                        data-testid="github-issue-match-candidate"
+                      >
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Badge variant="outline" className="h-5 px-1.5 font-mono text-[11px]">
+                              {`${t('linkTypeIssue')} #${cand.externalNumber}`}
+                            </Badge>
+                            <Badge
+                              variant={cand.deterministic ? 'secondary' : 'brand'}
+                              className="h-5 px-1.5 text-[11px]"
+                            >
+                              {cand.deterministic ? t('aiDeterministicBadge') : t('aiBadge')}
+                            </Badge>
+                            <Badge
+                              variant="warning"
+                              className="h-5 px-1.5 text-[11px]"
+                              title={t('taintedHint')}
+                              data-testid="github-issue-match-tainted-badge"
+                            >
+                              {t('taintedBadge')}
+                            </Badge>
+                          </div>
+                          {safeHref ? (
+                            <a
+                              href={safeHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex min-h-11 items-center rounded break-words font-medium text-foreground hover:text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                            >
+                              {cand.externalTitle}
+                            </a>
+                          ) : (
+                            <p className="break-words font-medium text-foreground">{cand.externalTitle}</p>
+                          )}
+                          {cand.reason && (
+                            <p className="text-[11px] text-muted-foreground">{cand.reason}</p>
+                          )}
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={addLink.isPending}
+                          onClick={() =>
+                            addLink.mutate({
+                              projectId,
+                              taskId,
+                              url: cand.externalUrl,
+                              idempotencyKey: crypto.randomUUID(),
+                            })
+                          }
+                          className="min-h-11 shrink-0 px-3 text-xs"
+                          data-testid="github-issue-match-confirm-btn"
+                        >
+                          {t('aiIssueMatchConfirmBtn')}
+                        </Button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
           <div className="flex flex-col gap-2 sm:flex-row">
             <Input
               {...fieldControl(urlInputId, { error: Boolean(urlError) })}

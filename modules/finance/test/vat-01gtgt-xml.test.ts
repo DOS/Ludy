@@ -27,11 +27,11 @@ function invoice(id: string, rates: VatInvoiceView['rates']): VatInvoiceView {
     saleDate: null, id, issueDate: '2026-09-15', postingDate: '2026-09-15', series: 'C26TAB', number: id, partyName: 'Công ty TNHH ABC', partyTaxCode: '0101234564', subtotal: '0', vatAmount: '0', total: '0', rates, warnings: [] };
 }
 
-function declaration(period: string, input: VatInvoiceView[], output: VatInvoiceView[], name = 'Công ty TNHH Ludy Demo', address: string | null = null): VatDeclaration {
+function declaration(period: string, input: VatInvoiceView[], output: VatInvoiceView[], name = 'Công ty TNHH Ludy Demo', address: string | null = null, supplementary: VatInvoiceView[] = []): VatDeclaration {
   const inputSide = { available: true, documents: input, totals: sideTotals(input) };
   const outputSide = { available: true, documents: output, totals: sideTotals(output) };
   return {
-    report: { period: vatPeriod(period), input: inputSide, output: outputSide, supplementary: { documents: [], totals: sideTotals([]) }, lateSales: [], indicators: form01Indicators(inputSide.totals, outputSide.totals), paymentChecks: { items: [], vatAtRisk: '0', notDeductibleVat: '0', unchecked: 0, suggested25: inputSide.totals.vat }, carryForward: { amount: '0', previous: null, lookedFor: [] }, filed: null },
+    report: { period: vatPeriod(period), input: inputSide, output: outputSide, supplementary: { documents: supplementary, totals: sideTotals(supplementary) }, lateSales: [], indicators: form01Indicators(inputSide.totals, outputSide.totals), paymentChecks: { items: [], vatAtRisk: '0', notDeductibleVat: '0', unchecked: 0, suggested25: inputSide.totals.vat }, carryForward: { amount: '0', previous: null, lookedFor: [] }, filed: null },
     taxpayer: { taxCode: '0101234564', name, address },
   };
 }
@@ -368,6 +368,104 @@ describe('buildVat01Xml', () => {
     expect(() => buildForm01Xml({ period: d.report.period, indicators: [] }, { taxCode: '', name: 'X' }, { today: '2026-10-19' })).toThrow(/tax code/);
     expect(() => buildForm01Xml({ period: d.report.period, indicators: [] }, { taxCode: '0101234564', name: 'X' }, { today: '19/10/2026' })).toThrow(/date/);
     expect(buildForm01Xml({ period: d.report.period, indicators: [] }, { taxCode: '0101234564-001', name: 'X' }, { today: '2026-10-19' })).toContain('<mst>0101234564-001</mst>');
+  });
+
+  it('validates declarationKind and supplementaryCount fail-closed on buildForm01Xml (#3541)', () => {
+    const d = declaration('2026-09', [], []);
+    // C forces soLan = 0 even if supplementaryCount is passed.
+    const regular = buildForm01Xml({ period: d.report.period, indicators: [] }, d.taxpayer, { today: '2026-10-19', declarationKind: 'C', supplementaryCount: 3 });
+    expect(paths(regular)).toEqual(EXPECTED_ORDER);
+    expect([valueOf(regular, 'loaiTKhai'), valueOf(regular, 'soLan')]).toEqual(['C', '0']);
+
+    // B defaults soLan to 1 and accepts positive integers, omitting PLuc.
+    const suppDefault = buildForm01Xml({ period: d.report.period, indicators: [] }, d.taxpayer, { today: '2026-10-19', declarationKind: 'B' });
+    expect(paths(suppDefault)).toEqual(EXPECTED_ORDER);
+    expect([valueOf(suppDefault, 'loaiTKhai'), valueOf(suppDefault, 'soLan')]).toEqual(['B', '1']);
+    expect(suppDefault).not.toContain('<PLuc');
+
+    const suppSecond = buildForm01Xml({ period: d.report.period, indicators: [] }, d.taxpayer, { today: '2026-10-19', declarationKind: 'B', supplementaryCount: 2 });
+    expect([valueOf(suppSecond, 'loaiTKhai'), valueOf(suppSecond, 'soLan')]).toEqual(['B', '2']);
+
+    expect(() => buildForm01Xml({ period: d.report.period, indicators: [] }, d.taxpayer, { today: '2026-10-19', declarationKind: 'T' as 'C' })).toThrow(/declaration kind/);
+    for (const badCount of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => buildForm01Xml({ period: d.report.period, indicators: [] }, d.taxpayer, { today: '2026-10-19', declarationKind: 'B', supplementaryCount: badCount }), String(badCount)).toThrow(/supplementaryCount/);
+    }
+  });
+
+  it('writes loaiTKhai=B with combined adjusted figures when supplementary items exist, keeping regular exports untouched (#3541)', () => {
+    // Regular export stays loaiTKhai=C, soLan=0 even if supplementaryCount is supplied.
+    const regular = buildVat01Xml(declaration('2026-09', purchases, sales), '2026-10-19', { supplementaryCount: 2 });
+    expect([valueOf(regular, 'loaiTKhai'), valueOf(regular, 'soLan'), valueOf(regular, 'ct32'), valueOf(regular, 'ct33')]).toEqual(['C', '0', '13000000', '1240000']);
+
+    const late = [
+      invoice('sup1', [
+        { rate: '8', taxable: '1000000.4', vat: '80000.5' },
+        { rate: '5', taxable: '500000', vat: '25000' },
+      ]),
+      invoice('sup2', [
+        { rate: '0', taxable: '200000', vat: '0' },
+        { rate: 'KCT', taxable: '100000', vat: '0' },
+        { rate: 'KKKNT', taxable: '50000', vat: '0' },
+        { rate: 'other', taxable: '999999', vat: '0' },
+      ]),
+    ];
+    const d = declaration('2026-09', purchases, sales, 'Công ty TNHH Ludy Demo', '1 Đường A', late);
+    const xml = buildVat01Xml(d, '2026-10-19', { carriedForward: '100000', deductInput: true });
+    expect(paths(xml)).toEqual(EXPECTED_ORDER);
+    expect(xml).not.toContain('<PLuc');
+    expect([valueOf(xml, 'loaiTKhai'), valueOf(xml, 'soLan')]).toEqual(['B', '1']);
+    // Original output: KCT 700k, 0% 4M, 5% 2M/100k, 10%+8% 13M/1.24M, KKKNT 300k.
+    // Supplementary adds: KCT 100k, 0% 200k, 5% 500k/25k, 8% 1,000,000.4 -> 1,000,000 and VAT 80,000.5 -> 80,001, KKKNT 50k; 'other' ignored.
+    expect([
+      valueOf(xml, 'ct22'),
+      valueOf(xml, 'ct24'),
+      valueOf(xml, 'ct25'),
+      valueOf(xml, 'ct26'),
+      valueOf(xml, 'ct29'),
+      valueOf(xml, 'ct30'),
+      valueOf(xml, 'ct31'),
+      valueOf(xml, 'ct32'),
+      valueOf(xml, 'ct33'),
+      valueOf(xml, 'ct32a'),
+      valueOf(xml, 'ct27'),
+      valueOf(xml, 'ct28'),
+      valueOf(xml, 'ct34'),
+      valueOf(xml, 'ct35'),
+      valueOf(xml, 'ct36'),
+      valueOf(xml, 'ct40a'),
+      valueOf(xml, 'ct40'),
+      valueOf(xml, 'ct41'),
+      valueOf(xml, 'ct43'),
+    ]).toEqual([
+      '100000',
+      '220000',
+      '220000',
+      '800000',
+      '4200000',
+      '2500000',
+      '125000',
+      '14000000',
+      '1320001',
+      '350000',
+      '21050000',
+      '1445001',
+      '21850000',
+      '1445001',
+      '1225001',
+      '1125001',
+      '1125001',
+      '0',
+      '0',
+    ]);
+
+    const second = buildVat01Xml(d, '2026-10-19', { supplementaryCount: 2 });
+    expect([valueOf(second, 'loaiTKhai'), valueOf(second, 'soLan')]).toEqual(['B', '2']);
+
+    // Combined output exceeding 14 digits refuses cleanly with 422 INVALID.
+    const huge = declaration('2026-09', [], [invoice('s', [{ rate: '10', taxable: '99999999999999', vat: '0' }])], 'Công ty TNHH Ludy Demo', null, [
+      invoice('sup-huge', [{ rate: '10', taxable: '1', vat: '0' }]),
+    ]);
+    expect(() => buildVat01Xml(huge, '2026-10-19')).toThrow(expect.objectContaining({ code: 'INVALID', status: 422 }));
   });
 });
 

@@ -12296,6 +12296,25 @@ export function workspaceAdapterLeakViolations(
   return [...out];
 }
 
+// A scan that never ends is a bug, so the pathological-input tests keep one absolute ceiling, as a hang guard only. How long a shared CI runner takes is not what they measure (#5210): they compare the time on an input with
+// the time on one twice as large, in the same run, so a linear scan passes on a slow runner and a quadratic one fails on a fast one.
+const HANG_GUARD_MS = 60_000;
+// Doubling the input may at most triple the time: a linear scan takes about twice as long, a quadratic one about four times.
+const SCALING_LIMIT = 3;
+
+// How much slower the larger input is: measure(scale) returns the cost of one run at that scale (milliseconds in the real test). Each size takes the better of two runs, after one smaller warm-up run, and a first answer over the limit is
+// measured once more, keeping the smaller ratio, so a pause of the runner during one run does not fail a linear scan, while a quadratic one stays over the limit on both attempts.
+function scalingRatio(measure: (scale: number) => number, base: number): number {
+  measure(base / 4);
+  const attempt = (): number => {
+    const small = Math.min(measure(base), measure(base));
+    const large = Math.min(measure(2 * base), measure(2 * base));
+    return large / Math.max(small, 1e-3);
+  };
+  const first = attempt();
+  return first < SCALING_LIMIT ? first : Math.min(first, attempt());
+}
+
 describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)', () => {
   it('flags what a pure feature must not do (the scanner is not vacuous)', () => {
     expect(memberVyViolations(`import { Runtime } from '@ludy/kernel-runtime';`)).toEqual(['imports @ludy/kernel-runtime']);
@@ -13909,8 +13928,93 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(workspaceAdapterLeakViolations(halfMbFanoutAlias, DEFAULT_ADAPTER_EXPORTS)).toEqual([]);
     expect(workspaceAdapterLeakViolations(nestedDestructDefault, DEFAULT_ADAPTER_EXPORTS)).toEqual([]);
     expect(indexReexportViolations(halfMbDiv, DEFAULT_ADAPTER_EXPORTS)).toEqual([]);
-    expect(performance.now() - t0).toBeLessThan(15_000);
-  }, 30_000);
+    // A hang guard only (see HANG_GUARD_MS); the linear scaling itself is checked by ratio in the next test.
+    expect(performance.now() - t0).toBeLessThan(HANG_GUARD_MS);
+  }, HANG_GUARD_MS + 30_000);
+
+  it('scans the pathological inputs in linear time: doubling the input at most triples the time (#5210)', () => {
+    // The same input families as the test above, each a repeat count times a unit, with every count multiplied by `scale`. The scans are the ones of that test, run without their expectations (that test pins what they return).
+    const prepare = (scale: number): (() => void) => {
+      const r = (unit: string, count: number): string => unit.repeat(Math.max(1, Math.round(count * scale)));
+      const halfMbDiv = r('a / ', 125_000);
+      const halfMbSlashComments = `${r('a/', 50_000)}${r('/**/', 50_000)}`;
+      const halfMbMetered = r('metered<', 62_500);
+      const halfMbMeteredParens = r('metered(', 62_500);
+      const nestedBareParens = `${r('(', 125_000)}x${r(')', 125_000)}`;
+      const balancedMetered = `${r('metered<', 30_000)}${r('>', 30_000)}`;
+      const nestedMeteredParens = `${r('metered(', 20_000)}x${r(')', 20_000)}`;
+      const nestedTemplateMetered = `${r('metered(`notes.${', 24_000)}x${r('}`)', 24_000)}`;
+      const nestedTemplateCallee = `${r('(`a${', 15_000)}metered${r('}`)(x)', 15_000)}`;
+      const nestedArrowTemplateDefaults = `${r('((a = `${1, ', 7_500)}1${r('}`) => 1)', 7_500)}`;
+      const nestedImports = `${r('import(', 20_000)}x${r(')', 20_000)}`;
+      const nestedImportBraces = r('import { ', 20_000);
+      const halfMbImportX = r('\nimport x', 62_500);
+      const halfMbFromQuote = r("import from '", 38_500);
+      const halfMbNewlineFromQuote = r("\nimport from '", 35_700);
+      const halfMbFromWs = r('import from ', 41_666);
+      const halfMbSingleQuoteImports = r("import('a');", 41_000);
+      const halfMbSingleQuoteFroms = r("import x from 'a';\n", 26_000);
+      const halfMbTypedConst = r('const x: ', 55_000);
+      const halfMbGenericConst = r('const x: Foo<', 38_000);
+      const halfMbFanoutAlias = Array.from({ length: Math.max(1, Math.round(50_000 * scale)) }, (_, idx) => `v${idx}=x;`).join('');
+      const nestedArrowParams = `${r('(a = ', 15_000)}1${r(') => 1', 15_000)}`;
+      const nestedCommaSeqCall = `${r('(0, ', 15_000)}metered${r(')(x)', 15_000)}`;
+      const nestedCommaSeqNoCall = `${r('(0, ', 15_000)}otherFn${r(')(x)', 15_000)}`;
+      const nestedDestructDefault = `${r('({ a = ', 15_000)}1${r(' } = x)', 15_000)}`;
+      return () => {
+        const sink: unknown[] = [];
+        sink.push(stripComments(halfMbDiv), stripComments(halfMbSlashComments));
+        sink.push(meteredNotes(halfMbDiv), meteredNotes(halfMbSlashComments), meteredNotes(halfMbMetered), meteredNotes(halfMbMeteredParens), meteredNotes(balancedMetered));
+        sink.push(disallowedMeteredNotes('other.ts', halfMbTypedConst), disallowedMeteredNotes('other.ts', halfMbGenericConst), disallowedMeteredNotes('other.ts', nestedArrowParams));
+        sink.push(disallowedMeteredNotes('other.ts', nestedArrowTemplateDefaults), disallowedMeteredNotes('other.ts', nestedCommaSeqCall), disallowedMeteredNotes('other.ts', nestedCommaSeqNoCall));
+        sink.push(disallowedMeteredNotes('other.ts', nestedDestructDefault), disallowedMeteredNotes('other.ts', nestedMeteredParens), disallowedMeteredNotes('other.ts', nestedTemplateCallee));
+        sink.push(meteredNotes(nestedTemplateCallee), notesKeyLiterals(nestedTemplateCallee), meteredNotes(nestedTemplateMetered));
+        sink.push(notesKeyLiterals(halfMbDiv), notesKeyLiterals(nestedTemplateMetered));
+        sink.push(specifiers(halfMbDiv), specifiers(nestedBareParens), specifiers(halfMbImportX), specifiers(nestedImports), specifiers(nestedImportBraces));
+        sink.push(linearRawSpecifiers(halfMbFromQuote), linearRawSpecifiers(halfMbNewlineFromQuote), linearRawSpecifiers(halfMbFromWs));
+        sink.push(linearRawSpecifiers(halfMbSingleQuoteImports), linearRawSpecifiers(halfMbSingleQuoteFroms));
+        sink.push(modelAdapterViolations(halfMbDiv));
+        sink.push(workspaceAdapterLeakViolations(halfMbDiv, DEFAULT_ADAPTER_EXPORTS), workspaceAdapterLeakViolations(nestedBareParens, DEFAULT_ADAPTER_EXPORTS));
+        sink.push(workspaceAdapterLeakViolations(nestedArrowTemplateDefaults, DEFAULT_ADAPTER_EXPORTS), workspaceAdapterLeakViolations(halfMbFanoutAlias, DEFAULT_ADAPTER_EXPORTS));
+        sink.push(workspaceAdapterLeakViolations(nestedDestructDefault, DEFAULT_ADAPTER_EXPORTS), indexReexportViolations(halfMbDiv, DEFAULT_ADAPTER_EXPORTS));
+        expect(sink.length).toBeGreaterThan(0);
+      };
+    };
+    // The inputs are built outside the clock; only the scans are timed.
+    const timed = (scale: number): number => {
+      const run = prepare(scale);
+      const start = performance.now();
+      run();
+      return performance.now() - start;
+    };
+    // Sizes of an eighth and a quarter of the half-megabyte inputs of the test above: well under 5 s each, even on a slow runner.
+    const ratio = scalingRatio(timed, 1 / 8);
+    expect(ratio, 'doubling the input made the scan this many times slower (linear is about 2, quadratic about 4)').toBeLessThan(SCALING_LIMIT);
+  }, HANG_GUARD_MS + 30_000);
+
+  it('the ratio check fails a scan that is quadratic and passes one that is linear (the check is not vacuous, #5210)', () => {
+    // Stand-ins with a counted cost instead of a clock, so this proves the comparison and cannot flake: n steps for a linear scan, n squared for a quadratic one.
+    const counted = (steps: (n: number) => number) => (scale: number) => steps(Math.round(200 * scale));
+    const linear = counted((n) => {
+      let steps = 0;
+      for (let i = 0; i < n; i++) steps++;
+      return steps;
+    });
+    const quadratic = counted((n) => {
+      let steps = 0;
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) steps++;
+      return steps;
+    });
+    expect(scalingRatio(linear, 1)).toBeCloseTo(2, 5);
+    expect(scalingRatio(quadratic, 1)).toBeCloseTo(4, 5);
+    expect(scalingRatio(linear, 1)).toBeLessThan(SCALING_LIMIT);
+    expect(scalingRatio(quadratic, 1)).toBeGreaterThanOrEqual(SCALING_LIMIT);
+    // A scan that is a little worse than linear (n log n) still passes, and one that is clearly worse (n to the 1.8) does not.
+    const nLogN = counted((n) => Math.round(n * Math.log2(Math.max(n, 2)) * 100));
+    expect(scalingRatio(nLogN, 8)).toBeLessThan(SCALING_LIMIT);
+    const slow = counted((n) => Math.round(n ** 1.8));
+    expect(scalingRatio(slow, 4)).toBeGreaterThanOrEqual(SCALING_LIMIT);
+  });
 
   it('verifies linearRawSpecifiers supersedes main regex across normal, escaped, malformed, and fuzz inputs', () => {
     const LEGACY_MAIN_SPECIFIER_RE =

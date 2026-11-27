@@ -230,6 +230,8 @@ import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zO
 import { zFinanceHomeMoney, zFinanceHomeMoneyInput } from './finance-home-money.ts';
 import { zFinanceMonthCloseExplainAsk, zFinanceMonthCloseInput, zMonthClose, zMonthCloseNote } from './finance-month-close.ts';
 import { zExpenseVarianceExplanation, zFinanceExpenseVariance, zFinanceExpenseVarianceExplainAsk, zFinanceExpenseVarianceInput } from './finance-expense-variance.ts';
+import { zFinanceUnusualEntries, zFinanceUnusualEntriesExplainAsk, zFinanceUnusualEntriesInput, zFinanceUnusualEntryReviewInput, zFinanceUnusualEntryReviewOutput, zUnusualEntriesExplanation } from './finance-unusual-entries.ts';
+import { zFinanceQuarterSummary, zFinanceQuarterSummaryExplainAsk, zFinanceQuarterSummaryInput, zQuarterSummaryExplanation } from './finance-quarter-summary.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zFilterAstShape, zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared, zSavedViewSortShape } from './saved-view.ts';
 import {
@@ -936,6 +938,10 @@ import {
   zGithubRotatePatHookRpcResult,
   zGithubSyncLogQueryInput,
   zGithubSyncLogQueryResult,
+  zGithubPrSummaryRpcInput,
+  zGithubPrSummaryRpcResult,
+  zGithubIssueMatchRpcInput,
+  zGithubIssueMatchRpcResult,
   zGithubTaskLinkAddRpcInput,
   zGithubTaskLinkAddRpcResult,
   zGithubTaskLinkRemoveInput,
@@ -3704,6 +3710,22 @@ export const contract = {
     get: oc.input(zFinanceExpenseVarianceInput).output(zFinanceExpenseVariance),
     explain: oc.input(zFinanceExpenseVarianceExplainAsk).output(zExpenseVarianceExplanation),
   },
+  // The monthly review of posted entries that look unusual (#5182) on the Tổng quan: get answers the entries of one ended month that five rules flag (a second copy of an invoice, a manual voucher on a control
+  // account, an amount far outside the usual range, an account never used with this party or kind of voucher, an entry typed on a day off), ranked and capped in SQL, every role, read only; explain is the finance
+  // coworker's one possible thing to look at per hit, asked of the model outside any transaction, and a note that states a number, a date, a name or says the entry is wrong is dropped; review is a person's
+  // audited, idempotent mark that a hit was looked at (owners, admins and members; it touches no ledger table).
+  financeUnusualEntries: {
+    get: oc.input(zFinanceUnusualEntriesInput).output(zFinanceUnusualEntries),
+    explain: oc.input(zFinanceUnusualEntriesExplainAsk).output(zUnusualEntriesExplanation),
+    review: oc.input(zFinanceUnusualEntryReviewInput).output(zFinanceUnusualEntryReviewOutput),
+  },
+  // The quarter in plain words (#5183), every role, read only: get answers the figures of one ended quarter of one legal entity (revenue, costs, profit, cash, receivables, payables, VAT or the household's tax,
+  // stock) with their comparison labels; explain is the finance coworker's three to five sentences, each tied to one figure row, asked of the model outside any transaction from fixed labels only (no figure,
+  // date, code or name), and a sentence that states a number, a date, a cause, a promise or advice is dropped.
+  financeQuarterSummary: {
+    get: oc.input(zFinanceQuarterSummaryInput).output(zFinanceQuarterSummary),
+    explain: oc.input(zFinanceQuarterSummaryExplainAsk).output(zQuarterSummaryExplanation),
+  },
   // Ledger reports of a month, quarter or year (issue #321): the trial balance and the receivables and payables per
   // party, and the general ledger of one account. The Excel workbook is GET /api/export/ledger.xlsx?period=<period>.
   ledger: {
@@ -4266,6 +4288,8 @@ export const contract = {
         .input(zGithubTaskLinkRemoveInput.extend({ idempotencyKey: zId }))
         .output(z.strictObject({ removed: z.boolean() })),
       syncLog: oc.input(zGithubSyncLogQueryInput).output(zGithubSyncLogQueryResult),
+      aiPrSummary: oc.input(zGithubPrSummaryRpcInput).output(zGithubPrSummaryRpcResult),
+      aiIssueMatch: oc.input(zGithubIssueMatchRpcInput).output(zGithubIssueMatchRpcResult),
     },
   },
   // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via LUDY_MODULES and org_app_on.

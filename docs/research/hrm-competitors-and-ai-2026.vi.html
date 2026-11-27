@@ -1,0 +1,1334 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!doctype html>
+<html lang="vi" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>So sánh Ludy Nhân sự với 27 đối thủ &amp; Khoảng trống tính năng (v6, 2026-11-27)</title>
+  <style>
+    :root {
+      --bg: #0f1113;
+      --surface: #16181d;
+      --card: #1b1e25;
+      --line: #2c303a;
+      --line-soft: #232730;
+      --fg: #eef0f4;
+      --muted: #a3a9b6;
+      --accent: #ff2e29;
+      --accent-ink: #ff8a85;
+      --ok: #34d399;
+      --ok-bg: #0f2a21;
+      --ok-border: #1e5240;
+      --warn: #fbbf24;
+      --warn-bg: #2a2110;
+      --warn-border: #594418;
+      --bad: #f87171;
+      --bad-bg: #2d1515;
+      --bad-border: #5e2626;
+      --info: #60a5fa;
+      --info-bg: #121f35;
+      --info-border: #254372;
+      --code-bg: #23262e;
+      --font-body: "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color-scheme: dark;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font-body);
+      font-size: 15px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: var(--accent-ink);
+      text-decoration: none;
+      overflow-wrap: anywhere;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    a:focus-visible {
+      outline: 2px solid var(--info);
+      outline-offset: 2px;
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.86em;
+      background: var(--code-bg);
+      color: var(--fg);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+
+    .page {
+      max-width: 1280px;
+      margin-inline: auto;
+      padding: 20px clamp(14px, 3vw, 28px) 56px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 18px 20px;
+    }
+
+    .hero {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .hero-top {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .eyebrow {
+      color: var(--accent-ink);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin: 0;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.4;
+      white-space: nowrap;
+    }
+
+    .pill-ok {
+      background: var(--ok-bg);
+      color: var(--ok);
+      border-color: var(--ok-border);
+    }
+
+    .pill-warn {
+      background: var(--warn-bg);
+      color: var(--warn);
+      border-color: var(--warn-border);
+    }
+
+    .pill-bad {
+      background: var(--bad-bg);
+      color: var(--bad);
+      border-color: var(--bad-border);
+    }
+
+    .pill-info {
+      background: var(--info-bg);
+      color: var(--info);
+      border-color: var(--info-border);
+    }
+
+    .pill-muted {
+      background: var(--surface);
+      color: var(--muted);
+      border-color: var(--line);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(21px, 3vw, 28px);
+      line-height: 1.28;
+      color: var(--fg);
+    }
+
+    .lead {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .lead strong {
+      color: var(--fg);
+    }
+
+    .doc-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 16px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 4px;
+    }
+
+    @media (min-width: 960px) {
+      .stats-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+
+    .stat-value {
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1.2;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat-value.warn { color: var(--warn); }
+    .stat-value.ok { color: var(--ok); }
+    .stat-value.info { color: var(--info); }
+    .stat-value.fg { color: var(--fg); }
+
+    .stat-label {
+      margin-top: 4px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .toolbar {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .tablist {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .tab-btn {
+      appearance: none;
+      background: var(--surface);
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 13px;
+      min-height: 40px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .tab-btn:hover {
+      color: var(--fg);
+      border-color: var(--info-border);
+    }
+
+    .tab-btn.is-active {
+      background: var(--info-bg);
+      color: var(--info);
+      border-color: var(--info);
+    }
+
+    .search-wrap {
+      flex: 1 1 240px;
+      max-width: 340px;
+    }
+
+    .search-input {
+      width: 100%;
+      min-height: 40px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--fg);
+      font-family: inherit;
+      font-size: 13px;
+    }
+
+    .search-input::placeholder {
+      color: var(--muted);
+    }
+
+    .tab-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .tab-panel.hidden {
+      display: none;
+    }
+
+    .filter-bar {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .filter-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .filter-btn {
+      appearance: none;
+      background: var(--surface);
+      color: var(--fg);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 12px;
+      min-height: 36px;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .filter-btn:hover {
+      border-color: var(--info-border);
+    }
+
+    .filter-btn.is-active {
+      background: var(--info-bg);
+      color: var(--info);
+      border-color: var(--info);
+    }
+
+    .count-label {
+      font-size: 12px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .callout {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--info);
+      border-radius: 10px;
+      padding: 14px 16px;
+      font-size: 13px;
+    }
+
+    .callout.warn {
+      border-left-color: var(--warn);
+    }
+
+    .callout-title {
+      font-weight: 700;
+      color: var(--fg);
+      margin-bottom: 6px;
+    }
+
+    .callout p,
+    .callout ul {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .callout ul {
+      padding-left: 18px;
+    }
+
+    .callout li {
+      margin: 4px 0;
+    }
+
+    .callout strong {
+      color: var(--fg);
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+
+    @media (min-width: 820px) {
+      .two-col {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .cards-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+
+    @media (min-width: 900px) {
+      .cards-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .gap-card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .gap-card-body {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .gap-card-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .meta-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .meta-chip {
+      background: var(--surface);
+      border: 1px solid var(--line-soft);
+      border-radius: 6px;
+      padding: 2px 8px;
+    }
+
+    .gap-title {
+      margin: 0;
+      font-size: 15.5px;
+      line-height: 1.38;
+      color: var(--fg);
+    }
+
+    .gap-line {
+      font-size: 12.5px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .gap-line strong {
+      color: var(--fg);
+    }
+
+    .gap-now {
+      background: var(--surface);
+      border: 1px solid var(--line-soft);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 12.5px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .gap-now strong {
+      color: var(--warn);
+    }
+
+    .gap-proposal {
+      border-top: 1px solid var(--line-soft);
+      padding-top: 10px;
+      font-size: 12.5px;
+      color: var(--fg);
+      line-height: 1.55;
+    }
+
+    .gap-proposal strong {
+      color: var(--ok);
+    }
+
+    .empty-state {
+      grid-column: 1 / -1;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 24px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .table-card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .table-scroll {
+      overflow-x: auto;
+    }
+
+    .table-scroll::-webkit-scrollbar {
+      height: 8px;
+      width: 8px;
+    }
+
+    .table-scroll::-webkit-scrollbar-thumb {
+      background: var(--line);
+      border-radius: 4px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    .matrix-table {
+      min-width: 1120px;
+    }
+
+    .ai-table {
+      min-width: 960px;
+    }
+
+    .comp-table {
+      min-width: 1040px;
+    }
+
+    thead th {
+      background: var(--surface);
+      color: var(--muted);
+      font-weight: 700;
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: bottom;
+    }
+
+    tbody td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line-soft);
+      vertical-align: top;
+      line-height: 1.5;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    tbody tr:hover td {
+      background: #20242d;
+    }
+
+    .sticky-col {
+      position: sticky;
+      left: 0;
+      background: var(--card);
+      z-index: 1;
+      min-width: 240px;
+      border-right: 1px solid var(--line-soft);
+    }
+
+    thead th.sticky-col {
+      background: var(--surface);
+      z-index: 2;
+    }
+
+    tbody tr:hover td.sticky-col {
+      background: #20242d;
+    }
+
+    .cell-ok {
+      color: var(--ok);
+      font-weight: 600;
+    }
+
+    .cell-warn {
+      color: var(--warn);
+      font-weight: 700;
+    }
+
+    .cell-bad {
+      color: var(--bad);
+    }
+
+    .cell-muted {
+      color: var(--muted);
+    }
+
+    .mono-num {
+      text-align: center;
+      font-family: var(--font-mono);
+      color: var(--muted);
+    }
+
+    .comp-name {
+      font-weight: 700;
+      color: var(--fg);
+      margin-bottom: 4px;
+    }
+
+    .site-footer {
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 8px 18px;
+      font-size: 12.5px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="panel hero">
+      <div class="hero-top">
+        <p class="eyebrow">Ludy Nhân sự (HRM) · Đối chiếu thị trường v6 · 27/11/2026</p>
+        <div class="badge-row">
+          <span class="pill pill-ok">Pilot v0.3.11 (bb6257bf3) đang chạy</span>
+          <span class="pill pill-info">origin/dev &amp; main: 24 bảng · 7 màn hình · 13 AI Ly + Vy 0đ</span>
+        </div>
+      </div>
+
+      <h1>So sánh Ludy Nhân sự với 27 đối thủ &amp; Khoảng trống tính năng SME đánh giá cao</h1>
+
+      <p class="lead">
+        Báo cáo kiểm tra trực tiếp mã nguồn thật trên nhánh <code>origin/dev</code>
+        (<code>modules/hr/src/**</code> và <code>apps/app/src/routes/hr-*.tsx</code>)
+        để tách bạch những gì Ludy đã làm xong ở Giai đoạn 1 đến 6 + Wave 2 với
+        <strong>10 tính năng phổ biến, được đánh giá cao mà đối thủ đang có nhưng Ludy chưa có</strong>,
+        phục vụ doanh nghiệp một người (OPC) và SME Việt Nam.
+      </p>
+
+      <div class="doc-links">
+        <span>Tài liệu liên quan:</span>
+        <a href="hrm-competitors-and-ai-2026.vi.md">Báo cáo đầy đủ tiếng Việt (Markdown v6)</a>
+        <a href="hrm-competitors-and-ai-2026.md">English full benchmark + 30 sources (v6)</a>
+        <a href="../product/scope.md">Ranh giới sản phẩm OPC/SME (scope.md)</a>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value warn">10 thiếu</div>
+          <div class="stat-label">6 Nhóm A ưu tiên ngay + 4 Nhóm B mở rộng (+5 Nhóm C loại trừ)</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value ok">14 cốt lõi</div>
+          <div class="stat-label">Nhóm năng lực nền tảng + Kế toán kép TT133/TT99 chung 1 DB</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value info">13 + 1 AI</div>
+          <div class="stat-label">13 lệnh Ly có đồng hồ ẩn danh + Vy Hôm nay 0đ AI, tắt AI chạy 100%</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value fg">27 đối thủ</div>
+          <div class="stat-label">10 VN &amp; APAC + 10 hàng đầu Thế giới + 7 AI-Native 2026</div>
+        </div>
+      </div>
+    </header>
+
+    <nav class="toolbar" aria-label="Điều hướng và tìm kiếm báo cáo">
+      <div class="tablist" role="tablist">
+        <button type="button" role="tab" id="tab-btn-gaps" aria-selected="true" aria-controls="tab-gaps" data-tab="gaps" class="tab-btn is-active">
+          1. Đối thủ có, Ludy chưa có (10 + 5)
+        </button>
+        <button type="button" role="tab" id="tab-btn-matrix" aria-selected="false" aria-controls="tab-matrix" data-tab="matrix" class="tab-btn">
+          2. Ma trận 24 tính năng (14 + 10)
+        </button>
+        <button type="button" role="tab" id="tab-btn-ai" aria-selected="false" aria-controls="tab-ai" data-tab="ai" class="tab-btn">
+          3. Kiểm kê 13 AI Ly + Vy (vs MISA &amp; Base)
+        </button>
+        <button type="button" role="tab" id="tab-btn-competitors" aria-selected="false" aria-controls="tab-competitors" data-tab="competitors" class="tab-btn">
+          4. Bảng 27 đối thủ chi tiết
+        </button>
+      </div>
+
+      <div class="search-wrap">
+        <input
+          id="searchInput"
+          type="search"
+          aria-label="Tìm tính năng, đối thủ, mã AI"
+          placeholder="Tìm tính năng, đối thủ, mã AI..."
+          class="search-input"
+        >
+      </div>
+    </nav>
+
+    <section id="tab-gaps" role="tabpanel" aria-labelledby="tab-btn-gaps" class="tab-panel">
+      <div class="filter-bar">
+        <div class="filter-pills" id="gapFilterBar">
+          <button type="button" data-gap-filter="all" aria-pressed="true" class="filter-btn gap-filter-btn is-active">
+            Tất cả (15)
+          </button>
+          <button type="button" data-gap-filter="A" aria-pressed="false" class="filter-btn gap-filter-btn">
+            Nhóm A: Ưu tiên Giai đoạn 7 (6)
+          </button>
+          <button type="button" data-gap-filter="B" aria-pressed="false" class="filter-btn gap-filter-btn">
+            Nhóm B: Mở rộng Giai đoạn 8 (4)
+          </button>
+          <button type="button" data-gap-filter="C" aria-pressed="false" class="filter-btn gap-filter-btn">
+            Nhóm C: Chủ động loại trừ (5)
+          </button>
+        </div>
+        <span id="gapCountLabel" class="count-label">Hiển thị 15 mục</span>
+      </div>
+
+      <div class="callout">
+        <div class="callout-title">Tiêu chí chọn lọc tính năng đối thủ có mà Ludy chưa có</div>
+        <p>
+          Chỉ giữ những tính năng SME dùng từ hàng tháng trở lên (hàng ngày, hàng tuần, mỗi kỳ lương) và có tỷ lệ người dùng khen cao trên MISA AMIS, Base.vn, 1Office, Tanca AI, BambooHR, Gusto, Rippling, Ashby, Lạc Việt; bỏ qua phần cứng FaceID/vân tay, EOR đa quốc gia, MDM giao laptop hay LMS/9-box tập đoàn lớn để giữ tuân thủ Luật Dữ liệu cá nhân <code>91/2025/QH15</code> và Luật AI <code>134/2025/QH15</code>.
+        </p>
+      </div>
+
+      <div id="gapCardsContainer" class="cards-grid"></div>
+    </section>
+
+    <section id="tab-matrix" role="tabpanel" aria-labelledby="tab-btn-matrix" class="tab-panel hidden">
+      <div class="filter-bar">
+        <div class="filter-pills" id="matrixFilterBar">
+          <button type="button" data-matrix-filter="all" aria-pressed="true" class="filter-btn matrix-filter-btn is-active">
+            Tất cả (24)
+          </button>
+          <button type="button" data-matrix-filter="has" aria-pressed="false" class="filter-btn matrix-filter-btn">
+            Nền tảng cốt lõi (14)
+          </button>
+          <button type="button" data-matrix-filter="gapA" aria-pressed="false" class="filter-btn matrix-filter-btn">
+            Chưa có - Nhóm A (6)
+          </button>
+          <button type="button" data-matrix-filter="gapB" aria-pressed="false" class="filter-btn matrix-filter-btn">
+            Chưa có - Nhóm B (4)
+          </button>
+        </div>
+        <span id="matrixCountLabel" class="count-label">Hiển thị 24 dòng</span>
+      </div>
+
+      <div class="table-card">
+        <div class="table-scroll">
+          <table class="matrix-table">
+            <thead>
+              <tr>
+                <th class="sticky-col">Tính năng / Yêu cầu thực tế</th>
+                <th>Ludy (v0.3.11 / origin/dev)</th>
+                <th>MISA AMIS</th>
+                <th>Base.vn</th>
+                <th>1Office</th>
+                <th>Lark Suite</th>
+                <th>Zoho People</th>
+                <th>BambooHR</th>
+                <th>Gusto</th>
+                <th>Rippling</th>
+                <th>Deel / Workday</th>
+              </tr>
+            </thead>
+            <tbody id="matrixBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-ai" role="tabpanel" aria-labelledby="tab-btn-ai" class="tab-panel hidden">
+      <div class="two-col">
+        <div class="callout">
+          <div class="callout-title">3 cổng chờ chuyên gia ngoài (owner-action)</div>
+          <ul>
+            <li><strong>#2535:</strong> Kế toán đối tác #61 xác nhận bộ quy tắc tính lương và gửi ví dụ đối chiếu.</li>
+            <li><strong>#2536:</strong> Luật sư chốt Luật Dữ liệu cá nhân (PDPL), thời hạn lưu trữ, phân loại Luật AI và lược đồ XSD HTKK (mở khóa email phiếu lương #2539).</li>
+            <li><strong>#2537:</strong> Doanh nghiệp nhỏ cung cấp dữ liệu bảng lương 1 tháng đã ẩn danh và hồ sơ đã nộp để đối chiếu.</li>
+          </ul>
+        </div>
+        <div class="callout warn">
+          <div class="callout-title">Nguyên tắc AI bắt buộc ở cả 13 tính năng hiện tại &amp; các tính năng mới</div>
+          <ul>
+            <li>Đi qua đồng hồ ngân sách AI (<code>withAiScope</code> + <code>metered()</code>); tắt AI hoặc hết hạn mức vẫn chạy <strong>100%</strong> theo quy tắc.</li>
+            <li>Ẩn danh nhân sự/ứng viên (<code>P1/C1/E1..En</code>), chặn rò rỉ dữ liệu cá nhân, AI không tự bịa số hay tự duyệt tiền, tuyển dụng, phụ lục, thuế.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-scroll">
+          <table class="ai-table">
+            <thead>
+              <tr>
+                <th style="width:56px;text-align:center">STT</th>
+                <th style="width:220px">Mã tính năng &amp; Đồng nghiệp AI</th>
+                <th style="width:120px">Giai đoạn</th>
+                <th>Vai trò trong Ludy &amp; Rào bảo vệ</th>
+                <th style="width:180px">Trạng thái (pilot / dev)</th>
+                <th>Đối chiếu MISA AVA &amp; Base AgentHub</th>
+              </tr>
+            </thead>
+            <tbody id="aiBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-competitors" role="tabpanel" aria-labelledby="tab-btn-competitors" class="tab-panel hidden">
+      <div class="filter-bar">
+        <div class="filter-pills" id="compFilterBar">
+          <button type="button" data-comp-filter="all" aria-pressed="true" class="filter-btn comp-filter-btn is-active">
+            Tất cả (27)
+          </button>
+          <button type="button" data-comp-filter="VN" aria-pressed="false" class="filter-btn comp-filter-btn">
+            Việt Nam &amp; APAC tại VN (10)
+          </button>
+          <button type="button" data-comp-filter="GLOBAL" aria-pressed="false" class="filter-btn comp-filter-btn">
+            Hàng đầu Thế giới (10)
+          </button>
+          <button type="button" data-comp-filter="AINATIVE" aria-pressed="false" class="filter-btn comp-filter-btn">
+            AI-Native 2025-2026 (7)
+          </button>
+        </div>
+        <span id="compCountLabel" class="count-label">Hiển thị 27 đối thủ</span>
+      </div>
+
+      <div class="table-card">
+        <div class="table-scroll">
+          <table class="comp-table">
+            <thead>
+              <tr>
+                <th style="width:190px">Phần mềm &amp; Nhóm</th>
+                <th style="width:220px">Trọng tâm / Ngách</th>
+                <th style="width:240px">Cách làm AI</th>
+                <th style="width:190px">Giá tham khảo (2026)</th>
+                <th>Mạnh hơn Ludy / Gợi ý</th>
+                <th>Yếu hơn Ludy / Lý do tránh</th>
+              </tr>
+            </thead>
+            <tbody id="compBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <footer class="site-footer">
+      <span>Nguồn kiểm chứng: <code>origin/dev</code> Ludy (24 bảng <code>ludy_hr.*</code>, 7 màn hình <code>/hr/*</code>, 13 lệnh AI có đồng hồ + <code>hr.today</code>) và đối chiếu 27 đối thủ HRM (2026-11-22 đến 2026-11-27).</span>
+      <span>Xem bản Markdown: <a href="hrm-competitors-and-ai-2026.vi.md">Tiếng Việt (v6)</a> · <a href="hrm-competitors-and-ai-2026.md">English (v6)</a> · <a href="../product/scope.md">scope.md</a></span>
+    </footer>
+  </div>
+
+  <script>
+    const GAPS = [
+      {
+        id: 'A1',
+        group: 'A',
+        badge: 'Nhóm A - Ưu tiên Giai đoạn 7',
+        title: 'A1. Ca làm việc & Lịch trực gọn cho SME + AI Ly rà hổng ca',
+        freq: 'Hàng ngày / Hàng tuần',
+        effort: 'Trung bình (M)',
+        rivals: 'MISA AMIS Chấm công, Base Timesheet, Tanca AI (tính năng bán chạy nhất), 1Office, Lark Attendance, Zoho People, BambooHR',
+        whyValued: 'Cửa hàng, phòng khám, văn phòng linh hoạt và SME dịch vụ đều cần phân ca sáng/chiều/hành chính/cuối tuần và tính đúng giờ vào ra từng người.',
+        ludyNow: 'Hiện tại attendance.ts mới ghi nhận check_in / check_out theo ngày và 1 mức scheduled_hours_per_day cố định; chưa có bảng định nghĩa ca, lịch trực tuần/tháng, đơn đổi ca hay tự động tính phút đi muộn/về sớm và phụ cấp ca đêm.',
+        smeDesign: '3 đến 5 mẫu ca chuẩn (Hành chính, Ca sáng, Ca chiều, Ca đêm), lịch gán ca theo phòng ban/tuần, xin đổi ca duyệt 1 bước, tự đổ phút đi muộn/về sớm và giờ ca đêm sang bảng lương. AI Ly đọc đơn phép đã duyệt, ngày lễ và quy định giờ nghỉ giữa ca để gợi ý người thay ca trống và cảnh báo trùng lịch (người duyệt, tắt AI vẫn chạy 100%).'
+      },
+      {
+        id: 'A2',
+        group: 'A',
+        badge: 'Nhóm A - Ưu tiên Giai đoạn 7',
+        title: 'A2. Lịch vắng mặt nhóm, Sơ đồ tổ chức, Danh bạ nội bộ & Sinh nhật/Kỷ niệm',
+        freq: 'Hàng ngày',
+        effort: 'Nhỏ - Trung bình (S-M)',
+        rivals: 'BambooHR (tính năng được khen nhiều nhất trên G2), HiBob, Rippling, Base.vn, MISA AMIS, Gusto',
+        whyValued: 'Quản lý biết ngay hôm nay hoặc tuần tới ai nghỉ để tránh thiếu người khi duyệt đơn mới; nhân viên tự tra cứu đồng nghiệp đúng phòng ban mà không chạm dữ liệu lương.',
+        ludyNow: 'Đã có danh sách nhân sự (hr-employees.tsx) và phòng ban (department) kèm quản lý L1 (manager_user_id), nhưng chưa có lịch vắng mặt toàn đội/phòng, chưa có sơ đồ cây tổ chức trực quan, chưa có danh bạ nội bộ ẩn lương/CCCD cho nhân viên thường, và chưa nhắc sinh nhật/kỷ niệm 1 năm trên Vy Hôm nay.',
+        smeDesign: 'Lịch vắng mặt tổng hợp trực tiếp từ đơn nghỉ + công tác đã duyệt kèm cảnh báo trùng lịch ngay màn duyệt; sơ đồ tổ chức đọc từ department + manager_user_id; danh bạ giữ chặt phân quyền (RBAC, ẩn lương/CCCD); nhắc sinh nhật/kỷ niệm trên hr.today (0đ AI) + Ly tóm tắt độ phủ nhân sự phòng khi duyệt đơn.'
+      },
+      {
+        id: 'A3',
+        group: 'A',
+        badge: 'Nhóm A - Ưu tiên Giai đoạn 7',
+        title: 'A3. Bảng điều khiển Nhân sự & Quỹ lương + Ly tóm tắt điều hành tháng',
+        freq: 'Hàng tháng / Hàng quý',
+        effort: 'Trung bình (M)',
+        rivals: 'MISA AMIS HRM, Base.vn, BambooHR, HiBob, Rippling, Ashby, Workday',
+        whyValued: 'Chủ doanh nghiệp và kế toán trưởng nhìn 1 màn hình là thấy ngay quy mô nhân sự tăng/giảm, tỷ lệ nghỉ việc, quỹ lương + chi phí chủ sử dụng 6 đến 12 tháng và điểm bất thường OT.',
+        ludyNow: 'Hiện mới có biểu đồ phễu tuyển dụng ở hr-recruiting.tsx; chưa có bảng điều khiển tổng hợp quân số (headcount), tỷ lệ nghỉ việc (turnover), xu hướng quỹ lương và employer_cost theo phòng ban, tồn phép năm toàn công ty và nút xuất báo cáo quản trị Excel/PDF.',
+        smeDesign: '1 màn hình tổng quan cho chủ sở hữu/quản trị viên gồm 4 thẻ KPI và 3 biểu đồ SQL xác định + xuất Excel/PDF. AI Ly (hr.executive_digest) đọc bảng số tổng hợp theo phòng ban (không gửi tên nhân viên) để viết 3 đến 5 ý tóm tắt biến động quỹ lương và giờ tăng ca (100% số liệu do SQL/decimal.js tính).'
+      },
+      {
+        id: 'A4',
+        group: 'A',
+        badge: 'Nhóm A - Ưu tiên Giai đoạn 7',
+        title: 'A4. Nhập hàng loạt nhân sự Excel/CSV & Quét OCR CCCD/BHXH an toàn PDPL',
+        freq: 'Khi chuyển hệ thống & mỗi đợt nhận người mới',
+        effort: 'Trung bình (M)',
+        rivals: 'Lạc Việt SureHCS (LV-AI.Docs), MISA AMIS, Base.vn, 1Office, Gusto',
+        whyValued: 'Giảm 80% thời gian nhập tay khi doanh nghiệp SME chuyển danh sách 20 đến 200 nhân sự từ file Excel sang Ludy hoặc khi nhân sự mới nộp hồ sơ.',
+        ludyNow: 'Đã có nhập bảng công Excel (hr.payroll.run.import_timekeeping) và bóc CV hộp cát (hr.cv_extract), nhưng chưa có nhập danh sách nhân sự/hợp đồng hàng loạt từ Excel/CSV và chưa có quét OCR ảnh/PDF CCCD hoặc mã số BHXH để điền nháp vào form nhận việc (hr-onboarding-ot-card).',
+        smeDesign: 'Luồng nhập Excel 2 bước (tải mẫu -> kiểm tra lỗi từng dòng -> bấm xác nhận lưu nguyên tử) kèm xuất danh sách tùy chọn cột. Trên form tự nhập nhận việc có nút quét ảnh/PDF CCCD trong hộp cát ludy-extract không nối mạng để điền sẵn số CCCD/ngày sinh/địa chỉ, sau khi nhân viên kiểm tra và lưu sẽ hủy ngay ảnh gốc để tuân thủ tối đa Luật 91/2025/QH15.'
+      },
+      {
+        id: 'A5',
+        group: 'A',
+        badge: 'Nhóm A - Ưu tiên Giai đoạn 7',
+        title: 'A5. Phát hành phiếu lương nội bộ 1 bấm (xem/xác nhận/thắc mắc) & Đọc nội quy',
+        freq: 'Hàng tháng (mỗi kỳ trả lương) & khi ban hành quy chế',
+        effort: 'Nhỏ - Trung bình (S-M)',
+        rivals: 'MISA AMIS Tiền lương, Base Me, BambooHR, Gusto, Rippling',
+        whyValued: 'Kế toán biết chắc nhân viên nào đã mở xem, đã xác nhận đúng hoặc đang gửi thắc mắc ở dòng nào; khi ban hành quy chế mới có chứng cứ mọi nhân viên đã đọc và bấm xác nhận.',
+        ludyNow: 'Nhân viên tự mở xem phiếu lương tại /hr/my còn gửi email phiếu lương (#2539) đang chờ luật sư (#2536); chưa có nút phát hành phiếu lương nội bộ hàng loạt, chưa theo dõi trạng thái xác nhận/thắc mắc từng người, và chưa có luồng giao nội quy từ Ludy Ghi chú bắt buộc bấm xác nhận đã đọc.',
+        smeDesign: 'Nút Phát hành phiếu lương nội bộ tại /hr/payroll (hoạt động ngay không chờ email #2539), hiện trạng thái Đã xem / Đã xác nhận / Đang thắc mắc ngay trên /hr/payroll và /hr/my, cùng mục Xác nhận nội quy đọc tài liệu từ Ludy Ghi chú có dấu thời gian kiểm toán. Ly hỗ trợ giải thích từng dòng lương (finance.payroll_explain) trước khi nhân viên gửi thắc mắc tới kế toán.'
+      },
+      {
+        id: 'A6',
+        group: 'A',
+        badge: 'Nhóm A - Ưu tiên Giai đoạn 7',
+        title: 'A6. Trang tuyển dụng công khai (/careers), Phiếu chấm phỏng vấn, Referral & Offer PDF',
+        freq: 'Hàng tuần / mỗi đợt tuyển dụng',
+        effort: 'Trung bình - Lớn (M-L)',
+        rivals: 'Ashby, BambooHR, Base E-Hiring, MISA AMIS Tuyển dụng, Rippling, Zoho Recruit',
+        whyValued: 'Khép kín quy trình tuyển dụng từ lúc đăng link nhận CV công khai trên Facebook/Zalo, chấm điểm phỏng vấn khách quan giữa nhiều người đến gửi thư mời nhận việc ký số.',
+        ludyNow: 'Đã có bảng job_opening, bóc CV nội bộ, mời phỏng vấn nháp Zalo/Facebook và phễu BI, nhưng chưa có link ứng tuyển công khai để ứng viên tự nộp CV vào hệ thống, chưa có phiếu chấm điểm phỏng vấn chuẩn hóa, chưa ghi nhận nhân viên giới thiệu (Referral) và chưa xuất Offer Letter PDF sang Ludy Ký kết.',
+        smeDesign: 'Trang /careers/:orgSlug tắt mặc định (chủ doanh nghiệp bật từng vị trí, bắt buộc ô đồng ý thu thập dữ liệu theo Luật 91/2025/QH15), phiếu phỏng vấn 3 đến 5 tiêu chí cố định, trường người giới thiệu nội bộ và xuất Offer Letter PDF ký số. Ly soạn nháp mô tả công việc (JD) và tóm tắt ý kiến các phiếu chấm trên bí danh C1 (không tự chấm rớt).'
+      },
+      {
+        id: 'B1',
+        group: 'B',
+        badge: 'Nhóm B - Mở rộng Giai đoạn 8',
+        title: 'B1. Hoàn ứng công tác phí & Quét OCR hóa đơn/biên lai',
+        freq: 'Hàng tuần / Hàng tháng',
+        effort: 'Trung bình (M)',
+        rivals: 'Rippling Spend, MISA AMIS, Base Request, 1Office, Deel',
+        whyValued: 'Hoàn thiện vòng đời đơn công tác (đã có ở 6B): nhân viên chụp biên lai khách sạn/vé xe/tiếp khách, kế toán duyệt chi trả kèm bảng lương hoặc chi riêng.',
+        ludyNow: 'Stage 6B đã có business_trip_request với khoản ước tính công tác phí, nhưng chưa có mục nộp chứng từ chi phí thực tế sau chuyến đi để quyết toán hoàn ứng sang Kế toán.',
+        smeDesign: 'Nối tiếp đơn công tác 6B: đính kèm hóa đơn trong hộp cát, Ly hỗ trợ đọc số tiền/ngày/nhà cung cấp từ hóa đơn (AI tainted, kế toán đối chiếu) và sinh đề nghị chi/kèm bảng lương dùng decimal.js.'
+      },
+      {
+        id: 'B2',
+        group: 'B',
+        badge: 'Nhóm B - Mở rộng Giai đoạn 8',
+        title: 'B2. Chấm công GPS / WiFi văn phòng có rào địa lý (không dùng FaceID)',
+        freq: 'Hàng ngày (đội hiện trường / văn phòng)',
+        effort: 'Trung bình (M)',
+        rivals: 'MISA AMIS, Base Checkin, Lark Attendance, FastWork, Zoho People, Tanca AI',
+        whyValued: 'Nhân viên sales thị trường hoặc kỹ thuật đi công trình có thể chấm công đúng địa điểm khách hàng hoặc văn phòng qua điện thoại mà không cần đầu tư máy chấm công.',
+        ludyNow: 'Hiện tại hr-attendance-checkin-card mới hỗ trợ bấm Web/PWA và quét mã QR văn phòng xoay vòng; chưa kiểm tra bán kính GPS văn phòng/điểm hẹn hoặc WiFi BSSID.',
+        smeDesign: 'Bật tùy chọn kiểm tra tọa độ lúc nhân viên chủ động bấm check-in/out (không theo dõi nền liên tục, không thu ảnh khuôn mặt FaceID) để vẫn an toàn tuyệt đối với Luật Bảo vệ dữ liệu cá nhân 91/2025/QH15.'
+      },
+      {
+        id: 'B3',
+        group: 'B',
+        badge: 'Nhóm B - Mở rộng Giai đoạn 8',
+        title: 'B3. Phụ cấp định kỳ tách thuế TNCN, Thưởng KPI/Hoa hồng & Mô phỏng tăng lương',
+        freq: 'Hàng tháng / Hàng quý',
+        effort: 'Trung bình (M)',
+        rivals: 'MISA AMIS Tiền lương, Base Payroll, 1Office, FastWork, HiBob',
+        whyValued: 'SME Việt Nam thường trả phụ cấp ăn trưa, xăng xe, điện thoại cố định hàng tháng (mỗi khoản có trần miễn thuế TNCN khác nhau) và thưởng doanh số sales; lãnh đạo cần thử mức tăng lương trước khi chốt.',
+        ludyNow: 'Bảng lương hiện cho phép nhập biến động từng kỳ hoặc 6B adjustment item; chưa có danh mục phụ cấp định kỳ tự lặp mỗi tháng gắn quy tắc miễn thuế theo chức danh và chưa có công cụ thử kịch bản tăng lương phòng ban.',
+        smeDesign: 'Bảng phụ cấp định kỳ theo hợp đồng (tự tách phần miễn thuế/chịu thuế TNCN, kế toán #61 xác nhận trần tại #2535), nhập nhanh thưởng KPI/hoa hồng, và thanh mô phỏng % tăng lương tính tổng chi phí phát sinh bằng decimal.js.'
+      },
+      {
+        id: 'B4',
+        group: 'B',
+        badge: 'Nhóm B - Mở rộng Giai đoạn 8',
+        title: 'B4. Checklist nghỉ việc đầy đủ (Offboarding), Ghi chú 1:1 gắn OKR & Khảo sát eNPS',
+        freq: 'Theo kỳ đánh giá / khi nghỉ việc',
+        effort: 'Trung bình (M)',
+        rivals: 'BambooHR, Lattice AI, HiBob, Base Review',
+        whyValued: 'Khi nhân sự nghỉ việc cần thu hồi tài khoản, bàn giao việc sang người mới, chốt phép dư và chốt sổ BHXH gọn gàng; quản lý giữ nhịp trao đổi 1:1 và đo mức gắn kết đội ngũ.',
+        ludyNow: 'Stage 6C đã chặn chốt nghỉ việc nếu còn tài sản chưa trả, nhưng chưa có checklist thu hồi tài khoản/bàn giao đầu việc Ludy Công tác tự động hay biên bản thanh lý PDF; Stage 6D mới có OKR quý, chưa có nhật ký họp 1:1 và khảo sát Pulse eNPS.',
+        smeDesign: 'Checklist Offboarding nối từ asset handover sang thu hồi quyền + chốt phép/trợ cấp thôi việc + biên bản PDF; ghi chú 1:1 ngắn gắn OKR; khảo sát eNPS ẩn danh chỉ hiện kết quả tổng khi có ít nhất 5 phản hồi để tránh lộ người trả lời.'
+      },
+      {
+        id: 'C1',
+        group: 'C',
+        badge: 'Nhóm C - Chủ động loại trừ (Scope SME)',
+        title: 'C1. Thuê đại diện EOR đa quốc gia & hợp nhất tài chính đa tập đoàn',
+        freq: 'Chỉ tập đoàn / công ty đa quốc gia',
+        effort: 'Ngoài phạm vi',
+        rivals: 'Workday, SAP SuccessFactors, Deel (599 USD/người), Rippling Global',
+        whyValued: 'Cần thiết cho tập đoàn mở văn phòng nhiều nước bằng pháp nhân thuê hộ EOR.',
+        ludyNow: 'Chủ động không làm theo docs/product/scope.md (Ludy phục vụ OPC/SME Việt Nam).',
+        smeDesign: 'Giữ ở Icebox; tránh kéo theo pháp lý lao động và thuế phức tạp của hàng chục quốc gia khác.'
+      },
+      {
+        id: 'C2',
+        group: 'C',
+        badge: 'Nhóm C - Chủ động loại trừ (Luật 91/2025)',
+        title: 'C2. Camera chấm công FaceID / Vân tay phần cứng & Chia ca nhà máy ngàn người',
+        freq: 'Nhà máy / chuỗi rất lớn',
+        effort: 'Ngoài phạm vi',
+        rivals: 'MISA AMIS (FaceID), Base Camera AI, Tanca AI, 1Office, Darwinbox',
+        whyValued: 'Quen thuộc ở xưởng sản xuất cần chống chấm công hộ bằng sinh trắc học.',
+        ludyNow: 'Chủ động không lưu dữ liệu sinh trắc học khuôn mặt/vân tay mặc định; dùng Web/PWA + QR xoay vòng.',
+        smeDesign: 'Tránh rủi ro xử lý dữ liệu sinh trắc học nhạy cảm theo Luật Bảo vệ dữ liệu cá nhân 91/2025/QH15 và tránh trói doanh nghiệp vào phần cứng độc quyền.'
+      },
+      {
+        id: 'C3',
+        group: 'C',
+        badge: 'Nhóm C - Chủ động loại trừ (Scope SME)',
+        title: 'C3. Quản trị thiết bị MDM & Kho vận giao nhận laptop tự động',
+        freq: 'Công ty công nghệ phát máy từ xa',
+        effort: 'Ngoài phạm vi',
+        rivals: 'Rippling IT, Warp IT',
+        whyValued: 'Khóa máy, xóa dữ liệu từ xa và vận chuyển laptop xuyên biên giới.',
+        ludyNow: 'Ludy chỉ quản lý checklist bàn giao/thu hồi tài sản nhân sự (6C) gắn cảnh báo nghỉ việc.',
+        smeDesign: 'Đủ đáp ứng kiểm soát tài sản SME mà không phải tích hợp kho vận hay quyền quản trị thiết bị cấp hệ điều hành.'
+      },
+      {
+        id: 'C4',
+        group: 'C',
+        badge: 'Nhóm C - Chủ động loại trừ (Luật AI 134/2025)',
+        title: 'C4. AI phỏng vấn video chấm rớt tự động / Giám sát webcam / Tự nộp thuế',
+        freq: 'Tuyển mass tự động hoặc thuế Mỹ',
+        effort: 'Ngoài phạm vi',
+        rivals: 'Mercor AI, micro1 Zara AI (proctoring), Warp Mỹ',
+        whyValued: 'Tiết kiệm nhân công sàng lọc ứng viên số lượng rất lớn hoặc tự nộp thuế.',
+        ludyNow: 'Cấm AI tự loại ứng viên, cấm giám sát webcam và cấm AI tự bấm nộp tờ khai hoặc chi tiền.',
+        smeDesign: 'Giữ đúng ranh giới Luật AI 134/2025/QH15 và nguyên tắc con người duyệt mọi quyết định ảnh hưởng quyền lợi lao động.'
+      },
+      {
+        id: 'C5',
+        group: 'C',
+        badge: 'Nhóm C - Chủ động loại trừ (Scope SME)',
+        title: 'C5. Hệ thống đào tạo LMS nặng, Đánh giá 360 độ & Ma trận 9-box tập đoàn',
+        freq: 'Doanh nghiệp >500 nhân sự',
+        effort: 'Ngoài phạm vi',
+        rivals: 'FPT.iHRP, Lạc Việt, SAP SuccessFactors, Workday, MISA Đánh giá Pro',
+        whyValued: 'Phù hợp khối nhân sự đông có bộ phận L&D và hiệu chỉnh xếp hạng hàng năm.',
+        ludyNow: 'Ludy chọn bài toán gọn hơn cho SME: Đánh giá hết thử việc (5B) + OKR quý gắn việc thật từ Ludy Công tác (6D).',
+        smeDesign: 'Không làm phình giao diện cho công ty 5 đến 200 người; giữ gọn trong 7 màn hình hiện tại.'
+      }
+    ];
+
+    const MATRIX = [
+      { cat: 'has', name: '1. Hồ sơ, HĐLĐ PDF/Ký số & xóa dữ liệu PDPL 91/2025', ludy: 'Có (24 bảng dev/main, xóa ludy:s1:)', misa: 'Có (SaaS đóng)', base: 'Có (SaaS)', one: 'Có (+1Sign)', lark: 'Một phần', zoho: 'Có', bamboo: 'Có', gusto: 'Có (Mỹ)', rippling: 'Có', other: 'Có' },
+      { cat: 'has', name: '2. Chấm công Web / PWA / QR & rà lỗi công', ludy: 'Có (5C + Ly + lịch lễ)', misa: 'Có', base: 'Có', one: 'Có', lark: 'Có', zoho: 'Có', bamboo: 'Một phần', gusto: 'Có', rippling: 'Có', other: 'Một phần / Có' },
+      { cat: 'has', name: '3. Máy chấm công FaceID / Vân tay / Ca nhà máy', ludy: 'Không (tránh 91/2025)', misa: 'Có (FaceID)', base: 'Có (Cam AI)', one: 'Có (FaceID)', lark: 'Không', zoho: 'Có (FaceID)', bamboo: 'Không', gusto: 'Một phần', rippling: 'Một phần', other: 'Không / Có' },
+      { cat: 'has', name: '4. Đơn Nghỉ phép & OT duyệt 2 cấp nối Lương', ludy: 'Có (5B + #5059)', misa: 'Có', base: 'Có', one: 'Có', lark: 'Một phần', zoho: 'Có', bamboo: 'Có', gusto: 'Có (Mỹ)', rippling: 'Có', other: 'Một phần / Có' },
+      { cat: 'has', name: '5. Tính lương VN, BHXH, TNCN (01/PLI, D02-LT)', ludy: 'Có (#2535/#2536 XML)', misa: 'Có (sâu nhất)', base: 'Có', one: 'Có', lark: 'Không', zoho: 'Không', bamboo: 'Không', gusto: 'Không', rippling: 'Một phần', other: 'EOR / Không' },
+      { cat: 'has', name: '6. Kế toán kép VN (TT133/TT99) chung DB, giấu lương cá nhân', ludy: 'Có (độc tôn)', misa: 'Một phần (mua riêng)', base: 'Không', one: 'Một phần', lark: 'Không', zoho: 'Một phần', bamboo: 'Không', gusto: 'Một phần', rippling: 'Một phần', other: 'Không / Tập đoàn' },
+      { cat: 'has', name: '7. Tuyển dụng ATS + AI đọc CV hộp cát + Phễu BI', ludy: 'Có (5D + #4827)', misa: 'Một phần (mua riêng)', base: 'Có (E-Hiring)', one: 'Có', lark: 'Một phần', zoho: 'Có (Recruit)', bamboo: 'Có', gusto: 'Có', rippling: 'Có', other: 'Add-on / Có' },
+      { cat: 'has', name: '8. Checklist nhận việc & Đánh giá thử việc gắn Dự án', ludy: 'Có (5B + Công tác)', misa: 'Có', base: 'Có', one: 'Có', lark: 'Một phần', zoho: 'Có', bamboo: 'Có', gusto: 'Có', rippling: 'Có', other: 'Có' },
+      { cat: 'has', name: '9. Xem trước biến động lương & Cảnh báo hạn Vy', ludy: 'Có (5E + 5A 0đ AI)', misa: 'Có (AVA)', base: 'Có (AgentHub)', one: 'Có (1AI)', lark: 'Không', zoho: 'Một phần', bamboo: 'Có', gusto: 'Có', rippling: 'Có', other: 'Có' },
+      { cat: 'has', name: '10. Chat AI nộp đơn từ & Hỏi đáp nội quy có trích dẫn', ludy: 'Có (6A + RBAC + tắt AI)', misa: 'Có (AVA Hot)', base: 'Có (AgentHub)', one: 'Có', lark: 'Một phần', zoho: 'Có (Zia)', bamboo: 'Có', gusto: 'Có', rippling: 'Có (RBAC)', other: 'Có' },
+      { cat: 'has', name: '11. Tạm ứng, Truy lĩnh / Bù trừ lương & Đơn công tác', ludy: 'Có (6B + #4759)', misa: 'Có', base: 'Có', one: 'Có', lark: 'Một phần', zoho: 'Một phần', bamboo: 'Một phần', gusto: 'Một phần', rippling: 'Có', other: 'Một phần / Có' },
+      { cat: 'has', name: '12. Phụ lục HĐ tự động PDF -> eSign & Bàn giao tài sản', ludy: 'Có (6C + #4750)', misa: 'Có', base: 'Có', one: 'Có', lark: 'Không', zoho: 'Có', bamboo: 'Có', gusto: 'Một phần', rippling: 'Có', other: 'Có' },
+      { cat: 'has', name: '13. Mục tiêu quý / OKR gọn gắn đầu việc Dự án', ludy: 'Có (6D + #4828)', misa: 'Có (gói Pro)', base: 'Có (Base Goal)', one: 'Có (1Work)', lark: 'Có', zoho: 'Có', bamboo: 'Một phần', gusto: 'Không', rippling: 'Có', other: 'Một phần / Có' },
+      { cat: 'has', name: '14. Mã mở tự cài AGPL-3.0, 0đ bản quyền & 100% tắt AI', ludy: 'Có (0đ + Docker)', misa: 'Không (37,8-54M+)', base: 'Không', one: 'Không', lark: 'Free <=20', zoho: 'Free <=5', bamboo: 'Không', gusto: 'Không', rippling: 'Không', other: 'Không' },
+      { cat: 'gapA', name: '15. [A1] Ca làm việc & Lịch trực SME + đổi ca', ludy: 'Chưa có (Nhóm A)', misa: 'Có', base: 'Có (Timesheet)', one: 'Có', lark: 'Có', zoho: 'Có', bamboo: 'Có (Shift)', gusto: 'Có', rippling: 'Có', other: 'Không / Có' },
+      { cat: 'gapA', name: '16. [A2] Lịch vắng mặt nhóm, Sơ đồ tổ chức & Danh bạ nội bộ', ludy: 'Chưa có (Nhóm A)', misa: 'Có', base: 'Có', one: 'Có', lark: 'Có', zoho: 'Có', bamboo: 'Có (rất khen)', gusto: 'Có', rippling: 'Có', other: 'Có' },
+      { cat: 'gapA', name: '17. [A3] Dashboard phân tích nhân sự, turnover & quỹ lương', ludy: 'Chưa có (Nhóm A)', misa: 'Có', base: 'Có', one: 'Có', lark: 'Một phần', zoho: 'Có', bamboo: 'Có', gusto: 'Có', rippling: 'Có', other: 'Có' },
+      { cat: 'gapA', name: '18. [A4] Nhập Excel nhân sự hàng loạt & Quét OCR CCCD/BHXH', ludy: 'Chưa có (Nhóm A)', misa: 'Có', base: 'Có', one: 'Có', lark: 'Một phần', zoho: 'Có (OCR)', bamboo: 'Có (CSV)', gusto: 'Có', rippling: 'Có', other: 'Có' },
+      { cat: 'gapA', name: '19. [A5] Phát hành phiếu lương nội bộ 1 bấm & Xác nhận đọc nội quy', ludy: 'Chưa có (Nhóm A)', misa: 'Có', base: 'Có (Base Me)', one: 'Có', lark: 'Một phần', zoho: 'Có', bamboo: 'Có (Sign/Read)', gusto: 'Có', rippling: 'Có', other: 'Có' },
+      { cat: 'gapA', name: '20. [A6] Trang tuyển dụng công khai, Phiếu phỏng vấn & Offer PDF', ludy: 'Chưa có (Nhóm A)', misa: 'Có (add-on)', base: 'Có (E-Hiring)', one: 'Có', lark: 'Một phần', zoho: 'Có', bamboo: 'Có', gusto: 'Có', rippling: 'Có', other: 'Có' },
+      { cat: 'gapB', name: '21. [B1] Hoàn ứng công tác phí & OCR hóa đơn chi phí', ludy: 'Chưa có (Nhóm B)', misa: 'Có', base: 'Có', one: 'Có', lark: 'Có', zoho: 'Có (Expense)', bamboo: 'Không', gusto: 'Một phần', rippling: 'Có (Spend)', other: 'Có' },
+      { cat: 'gapB', name: '22. [B2] Chấm công GPS / WiFi có rào địa lý (không FaceID)', ludy: 'Chưa có (Nhóm B)', misa: 'Có', base: 'Có', one: 'Có', lark: 'Có', zoho: 'Có', bamboo: 'Không', gusto: 'Có', rippling: 'Có', other: 'Không / Có' },
+      { cat: 'gapB', name: '23. [B3] Phụ cấp định kỳ tách thuế, Hoa hồng & Mô phỏng tăng lương', ludy: 'Chưa có (Nhóm B)', misa: 'Có', base: 'Có', one: 'Có', lark: 'Không', zoho: 'Không', bamboo: 'Một phần', gusto: 'Có', rippling: 'Có', other: 'Có (Workday)' },
+      { cat: 'gapB', name: '24. [B4] Checklist nghỉ việc đầy đủ, 1:1 gắn OKR & Khảo sát eNPS', ludy: 'Chưa có (Nhóm B)', misa: 'Một phần', base: 'Có (Review)', one: 'Một phần', lark: 'Một phần', zoho: 'Có', bamboo: 'Có (rất khen)', gusto: 'Một phần', rippling: 'Có', other: 'Có' }
+    ];
+
+    const AI_FEATURES = [
+      { id: '0', code: 'hr.today (Vy Hôm nay)', stage: '5A (#4444)', desc: 'Nhắc hạn HĐLĐ, thử việc, giấy phép ngoại kiều, đơn chờ duyệt ngay trên Home/L1 (0đ AI, không LLM, 0 PII trong tham số).', status: 'Xong & Đang chạy v0.3.11', vs: 'Ngang MISA AVA / Base về cảnh báo hạn nhưng 0đ token AI và phân quyền chặt tới từng phòng ban.' },
+      { id: '1', code: 'hr.recruiting_brief (Ly Tuyển dụng)', stage: '3 / 4 / 5D', desc: 'Tóm tắt mức sẵn sàng ứng viên, khoảng trống kỹ năng và gợi ý câu hỏi phỏng vấn trên bí danh C1 (không tự chấm rớt).', status: 'Xong & Đang chạy v0.3.11', vs: 'MISA Tuyển dụng & Base E-Hiring tính phí add-on riêng; Ludy tích hợp sẵn và ẩn danh C1 trước khi gọi AI.' },
+      { id: '2', code: 'hr.cv_extract (Ly Bóc CV)', stage: '5D (#4446 -> #4827)', desc: 'Bóc tách PDF/DOCX trong hộp cát ludy-extract không nối mạng + điền nháp form tuyển dụng (người tự bấm lưu).', status: 'Xong & Chạy v0.3.11; siết trên main/dev', vs: 'Ngang MISA / Base về đọc CV tự động, an toàn hơn nhờ tách hộp cát parse file không nối mạng ngoài.' },
+      { id: '3', code: 'hr.attendance_anomaly (Ly Rà công)', stage: '5C (#4447 -> #4753)', desc: 'Diễn giải các ca bất thường do SQL tính sẵn (thiếu check-out, <4h, >10h, cuối tuần, ngày lễ) bằng bí danh E1..En.', status: 'Xong & Chạy v0.3.11; siết lịch lễ main/dev', vs: 'Ngang Base AgentHub / MISA ở rà lỗi công nhưng không ép camera FaceID, dùng PWA + QR tránh rủi ro 91/2025.' },
+      { id: '4', code: 'hr.probation_summary (Ly Thử việc)', stage: '5B (#4448 -> #4852)', desc: 'Gom đầu việc đã xong từ Ludy Công tác + số liệu chấm công thành bản nháp nhận xét hết thử việc (người tự quyết).', status: 'Xong & Chạy v0.3.11; siết trên main/dev', vs: 'Điểm vượt trội: lấy thẳng bằng chứng công việc thật giống Lattice AI, Base/MISA tách app riêng khó đồng bộ mặc định.' },
+      { id: '5', code: 'hr.request_draft (Ly Chat nộp đơn)', stage: '6A (#4526)', desc: 'Hiểu câu chat tiếng Việt/Anh trên /hr/my thành nháp đơn nghỉ phép / OT / công tác (100% có bộ phân tích quy tắc khi tắt AI).', status: 'Xong & Đang chạy v0.3.11', vs: 'Đối trọng trực tiếp MISA AVA AI nộp đơn & Base AgentHub, kèm chế độ chạy 100% không cần AI.' },
+      { id: '6', code: 'hr.policy_qa (Ly Hỏi đáp nội quy)', stage: '6A (#4526)', desc: 'Trả lời hỏi đáp nội quy HR chỉ dựa trên ghi chú tổ chức mà người hỏi được xem trong Ludy Ghi chú, kèm trích dẫn xác thực.', status: 'Xong & Đang chạy v0.3.11', vs: 'Đối trọng trực tiếp MISA AVA Hỏi đáp chấm công & Base Chatbot, giữ chặt RBAC không lộ tài liệu sếp.' },
+      { id: '7', code: 'hr.addendum_check (Ly Soát phụ lục)', stage: '6C (#4528 -> #4750)', desc: 'Rà soát đủ trường luật định trên phụ lục hợp đồng đã ẩn danh trước khi xuất PDF sang Ludy Ký kết (eSign).', status: 'Xong & Chạy v0.3.11; siết trên main/dev', vs: 'Khớp khả năng tạo phụ lục của MISA, thêm lớp kiểm tra ẩn danh trước khi ký số ngay trong cùng hệ thống.' },
+      { id: '8', code: 'hr.okr_checkin_draft (Ly Nháp OKR)', stage: '6D (#4529 -> #4828)', desc: 'Tổng hợp tiến độ đầu việc Ludy Công tác đúng quyền người xem thành bản nháp báo cáo OKR quý (cấm AI tự chấm điểm).', status: 'Xong & Chạy v0.3.11; siết trên main/dev', vs: 'Nối thẳng việc làm thực tế vào OKR không phải nâng cấp lên gói Pro (54M/năm của MISA) hay mua thêm Base Goal.' },
+      { id: '9', code: 'finance.payroll_prepare (Ly Chuẩn bị lương)', stage: '2 / 5 (#2534)', desc: 'Đọc chênh lệch kỳ lương trước trên bảng ẩn danh (E1, nhãn cố định) để tóm tắt các điểm cần kế toán kiểm tra trước khi tính.', status: 'Xong & Đang chạy v0.3.11', vs: 'Tương đương bước trợ lý chuẩn bị kỳ lương trong MISA AVA / Base AgentHub nhưng giấu danh tính nhân sự tuyệt đối.' },
+      { id: '10', code: 'finance.payroll_flag (Ly Gắn cờ lương)', stage: '2 / 5E / 6B (#4759)', desc: 'Gắn cờ giải thích biến động lương tháng trước vs tháng này và cảnh báo ngưỡng bất thường tạm ứng/bù trừ 6B.', status: 'Xong & Chạy v0.3.11; siết trên main/dev', vs: 'Khớp cảnh báo bất thường của MISA AVA & Base AgentHub, mọi số tiền do decimal.js tính, AI không tự tính số.' },
+      { id: '11', code: 'finance.payroll_explain (Ly Giải thích phiếu lương)', stage: '2 / 5F (#4351)', desc: 'Giải thích từng dòng phiếu lương bằng tiếng Việt dễ hiểu cho nhân sự/quản lý; tự rớt về diễn giải chuẩn khi tắt AI.', status: 'Xong & Đang chạy v0.3.11 (P3 #4764 Icebox)', vs: 'Giúp nhân sự hiểu cấu trúc lương/BHXH/TNCN ngay trên /hr/my tương tự MISA AVA / Base, cấm AI bịa số ngoài phiếu.' },
+      { id: '12', code: 'finance.labor_check (Ly Rà 01/PLI)', stage: '2b (#3372)', desc: 'Đọc các lỗi thiếu CCCD, số BHXH, hợp đồng chưa ký, hạn HĐ trước khi xuất Sổ quản lý lao động & 01/PLI.', status: 'Xong & Đang chạy v0.3.11', vs: 'Điểm mạnh chuyên sâu tuân thủ LĐ VN mà Base / Lark / Zoho khó tự kiểm tra chuẩn hóa trước xuất báo cáo.' },
+      { id: '13', code: 'finance.bank_match_explain (Ly Khớp sao kê lương)', stage: '2 (#2532)', desc: 'Tại màn Ngân hàng, giải thích 1 câu vì sao dòng chi sao kê khớp khoản chi lương/BHXH/CĐ/TNCN mà không lộ tên hay số TK.', status: 'Xong & Đang chạy v0.3.11', vs: 'Khác biệt độc tôn với Base: nối trực tiếp sao kê ngân hàng & Kế toán kép TT133/TT99 trong 1 DB mà vẫn giấu lương cá nhân.' }
+    ];
+
+    const COMPETITORS = [
+      { group: 'VN', name: 'MISA AMIS HRM', focus: 'Đủ 8 mảng HR, Lương, Thuế, BHXH, FaceID, Đánh giá, Mục tiêu', ai: 'MISA AVA: AI nộp đơn, hỏi đáp chấm công, soạn JD, quét CV, rà lương', price: 'Standard 37,8M/năm; Pro 54M/năm (<=200 người), chưa gồm Tuyển dụng & Kế toán', better: 'Nộp thuế/BHXH + Bankhub cực sâu, app di động, FaceID, Lịch sử/Báo cáo, Ca/Dashboard đầy đủ', worse: 'Đắt khi cộng thêm Tuyển dụng & Kế toán; SaaS đóng; 360/9-box nặng cho SME nhỏ' },
+      { group: 'VN', name: 'Base.vn HRM+', focus: 'Bộ app rời: HRM, Checkin, Timesheet ca gãy, Payroll, Base Me, E-Hiring, Goal', ai: 'Base AgentHub: rà sai lệch lương, nhắc hạn HĐ, chatbot nội quy, luồng duyệt', price: '~450k đ/tháng trở lên; gói AI cao ~149k-169k đ/user/tháng + app lẻ', better: 'Chia ca bán lẻ/F&B rất mạnh (Timesheet), app Base Me quen thuộc, thương hiệu SME lớn', worse: 'Yếu sổ Kế toán VN TT133/TT99; dữ liệu chia nhiều app con; phí cộng dồn cao' },
+      { group: 'VN', name: '1Office HRM', focus: '1HRM + 1Work + 1CRM + 1Sign, FaceID, lương hoa hồng sales', ai: '1AI Timekeeper & 1AI Salary: quét lỗi công/lương, tự động luồng duyệt', price: '~40k-150k đ/user/tháng + phí cài đặt 5M-30M+ đ', better: 'Nối CRM/Hoa hồng/Ký số + Ca/FaceID + Dashboard đóng gói sẵn', worse: 'Bắt buộc phí triển khai ban đầu cao; SaaS đóng; Kế toán không sâu bằng Ludy/MISA' },
+      { group: 'VN', name: 'Terra HR Vietnam', focus: 'HRIS + Tính lương SME/FDI kèm dịch vụ thuê ngoài BPaaS', ai: 'Tự động hóa luồng duyệt & chống gian lận GPS (chưa mạnh AI hội thoại)', price: '~5M phí cài đặt + ~50k đ/người/tháng + phí BPaaS', better: 'Có phương án khoán đội ngũ kế toán tính lương BPaaS đi kèm', worse: 'Tốn phí cài đặt & phí tháng; không có Kế toán TT133/99 chung DB; ít đồng nghiệp AI' },
+      { group: 'VN', name: 'FastWork HRM+', focus: 'Đội hiện trường, công trình, bán lẻ GPS + FaceID, lương gắn KPI', ai: 'Nhận diện khuôn mặt AI chống gian lận hiện trường', price: '~10k-100k đ/user/tháng + 2M-10M+ đ cài đặt', better: 'Chấm công GPS/FaceID ngoài công trình & lương theo điểm KPI rất thực dụng', worse: 'Thiếu Kế toán kép & kê khai thuế VN chuẩn; tốn phí cài đặt; SaaS đóng' },
+      { group: 'VN', name: 'Tanca AI', focus: 'Camera AI, GPS/WiFi, lương công thức từ khóa, lịch ca thông minh', ai: 'Tanca AI Agents: AI tự xếp ca đúng luật LĐ, Chatbot 24/7, lọc CV', price: 'Free khởi đầu; mua trọn đời lõi; gói AI ~500k-647k đ/tháng+', better: 'Lịch ca kíp thông minh & gợi ý xếp ca được đánh giá rất cao ở VN', worse: 'Cloud đóng; thiếu sổ Kế toán kép TT133/99 và hóa đơn điện tử' },
+      { group: 'VN', name: 'FPT.iHRP', focus: 'Giải pháp HR & Lương cho tập đoàn lớn & FDI tại VN', ai: 'FPT AI Mentor gợi ý lộ trình học, AI Agents hỏi đáp & dự báo nghỉ việc', price: 'Báo giá dự án doanh nghiệp riêng', better: 'Độ sâu pháp lý FDI, đa chi nhánh, LMS đào tạo & triển khai dự án lớn', worse: 'Quá nặng và đắt cho OPC/SME 5-200 người; không tự bật dùng ngay' },
+      { group: 'VN', name: 'Lạc Việt SureHCS', focus: 'HRM kỳ cựu cho nhà máy/tập đoàn >500 nhân sự', ai: 'LV-AI.Docs (OCR CCCD, BHXH, bằng cấp), LV-AI.Resume, LV-AI.Help', price: 'Báo giá theo dự án / phân hệ (>500 nhân sự)', better: 'Quét OCR giấy tờ cá nhân VN rất chính xác, triển khai nhà máy lâu năm', worse: 'Thiết kế & chi phí cho khối >500 người; thiếu Kế toán TT133/99 chung gói gọn' },
+      { group: 'VN', name: 'Odoo 19 (+ Viindoo VN)', focus: 'ERP mã mở đa phân hệ + addon lương Viindoo VN', ai: 'Ask Odoo AI phân tích bảng lương (chỉ bản trả phí Enterprise)', price: 'Community free (thiếu Lương/AI); Enterprise ~13,4-24,9 USD/user + addon', better: 'Hệ sinh thái Kho, Sản xuất, Mua bán dùng chung 1 CSDL', worse: 'Bản chuẩn không có sẵn lương/BHXH/TNCN VN, bắt buộc trả tiền Enterprise + addon' },
+      { group: 'VN', name: 'Lark Suite', focus: 'Siêu app Chat + Họp + Attendance GPS/WiFi + OKR', ai: 'Lark Minutes tóm tắt họp giao việc, dịch đa ngôn ngữ, tìm kiếm AI', price: 'Free <=20; Basic ~6 USD; Pro ~12 USD/user/tháng', better: 'Trải nghiệm chat + họp + chấm công GPS + OKR trên di động cực mượt', worse: 'Không có Tính lương VN, BHXH, TNCN, 01/PLI hay Kế toán TT133/99' },
+      { group: 'GLOBAL', name: 'Workday', focus: 'Tập đoàn lớn 500-100.000+ người (HCM + Finance + Paradox)', ai: 'Workday Illuminate & Sana AI: AI Agent tự xử lý HR, Skills Cloud', price: 'Báo giá PEPM + Flex Credits', better: 'Phân tích nhân tài, kiểm soát tập đoàn toàn cầu & đo tiêu thụ AI', worse: 'Đắt, triển khai nhiều tháng; không có lương/BHXH/TT133 SME Việt Nam' },
+      { group: 'GLOBAL', name: 'SAP SuccessFactors', focus: 'Tập đoàn đa quốc gia gắn sâu SAP ERP', ai: 'Joule AI + HCM Audit Agent kiểm toán quyền & hồ sơ', price: 'Báo giá PEPM + AI Units', better: 'Kiểm toán phân quyền sâu & hiệu chỉnh lương thưởng tập đoàn', worse: 'Quá phức tạp cho SME VN; không có sẵn thuế/BHXH cho SME Việt Nam' },
+      { group: 'GLOBAL', name: 'ADP', focus: 'Tính lương & thuế số 1 toàn cầu (140+ nước)', ai: 'ADP Assist nhúng trong Teams/M365 rà tuân thủ & hỏi đáp phúc lợi', price: 'Báo giá PEPM theo quy mô & khu vực', better: 'Độ tin cậy trả lương quy mô lớn và tự động hóa nộp thuế nhiều bang/nước', worse: 'Giá ẩn; không hỗ trợ sổ sách Kế toán TT133/99 SME Việt Nam' },
+      { group: 'GLOBAL', name: 'Rippling', focus: 'SME công nghệ - Mid-market trên Employee Graph + Spend + IT', ai: 'Rippling AI: hỏi đáp có trích dẫn giữ chặt RBAC, Excel -> luồng lương', price: 'Từ ~8 USD/user/tháng + từng phân hệ; EOR ~499 USD', better: 'Hoàn ứng chi phí (Spend), Dashboard đồ thị nhân sự, Sơ đồ tổ chức, Ca', worse: 'Quản trị laptop/MDM ngoài phạm vi SME VN; không hỗ trợ TT133/99' },
+      { group: 'GLOBAL', name: 'Zoho People', focus: 'Siêu nhỏ & SME giá rẻ + hệ sinh thái Zoho', ai: 'Zia AI & Zia Agents: chatbot, quét OCR giấy tờ, dựng agent bằng ví token', price: 'Miễn phí <=5 người; ~1,25-4,50+ USD/người/tháng', better: 'Giá rất mềm cho SME, đủ ca/chấm công/OCR/KPI cơ bản', worse: 'Không có sẵn Tính lương, BHXH, TNCN và Kế toán TT133/99 Việt Nam' },
+      { group: 'GLOBAL', name: 'Darwinbox', focus: 'Enterprise APAC / Đông Nam Á (1.000+ nhân sự)', ai: 'Darwinbox Sense: lọc CV, dự báo nghỉ việc, tự động luồng duyệt', price: 'Báo giá riêng (ước tính ~10-100+ USD/người/tháng)', better: 'Giao diện mobile-first APAC rất mượt, xoay ca chuỗi bán lẻ lớn', worse: 'Giá và mô hình cho khối >1.000 người; dư thừa nhiều tính năng với SME' },
+      { group: 'GLOBAL', name: 'Deel', focus: 'Đội ngũ xuyên biên giới, EOR 130+ nước, CTV 120+ tiền tệ', ai: 'Deel AI rà luật lao động từng nước, tự soạn HĐ, lọc tuyển dụng', price: 'HR 0-5 USD; CTV ~49 USD; Global Payroll ~29 USD; EOR ~599 USD', better: 'Thuê nhân sự xuyên biên giới hợp pháp không cần lập công ty con', worse: 'Phí EOR rất cao; không phục vụ Kế toán thuế nội địa TT133/99' },
+      { group: 'GLOBAL', name: 'Gusto', focus: 'Siêu nhỏ & SME Mỹ 1-100+ người (sát tệp OPC/SME nhất)', ai: 'Gus AI: soạn tài liệu onboarding/ký số, dò lỗi trước chốt lương', price: '~49+6 đến ~180+22 USD/tháng (tích hợp sẵn AI)', better: 'Nhập CSV dễ, phát hành phiếu lương và UX cực kỳ thân thiện người không rành HR', worse: 'Chỉ phục vụ lương và thuế tại Mỹ; không dùng cho thuế/BHXH Việt Nam' },
+      { group: 'GLOBAL', name: 'BambooHR', focus: 'SME 20-300 người tối giản (rất được khen trên G2)', ai: 'Bamboo AI: hỏi đáp chính sách, xếp ca, xuất báo cáo, rà lỗi lương', price: '~10 / 17 / 25 USD/người/tháng (tối thiểu 250-650 USD/tháng)', better: 'Lịch vắng mặt Who is Out, Sơ đồ tổ chức, Danh bạ, Sinh nhật, Offboarding, eNPS', worse: 'Không có tính lương VN, BHXH, TNCN hay Kế toán TT133/TT99' },
+      { group: 'GLOBAL', name: 'HiBob', focus: 'SME tăng trưởng 100-1.500 người (văn hóa & mô phỏng lương)', ai: 'Bob AI Companion chat trong Slack/Teams đúng quyền RBAC', price: 'Báo giá PEPM theo phân hệ', better: 'Lịch vắng mặt, Sơ đồ tổ chức, Khảo sát Pulse, Mô phỏng ngân sách tăng lương', worse: 'Định giá cho công ty >100 người; không có lương/thuế SME Việt Nam' },
+      { group: 'AINATIVE', name: 'Warp (warp.co)', focus: 'Lương & tuân thủ thuế tự động cho startup Mỹ', ai: 'Warp Agent tự mở mã thuế, rà lỗi bảng lương, trả lời thông báo thuế', price: '~19-35 USD/user/tháng', better: 'Tự động hóa thủ tục tuân thủ hành chính giảm việc thủ công cho founder', worse: 'Để AI tự nộp thuế/khai báo không qua người duyệt vi phạm nguyên tắc an toàn VN' },
+      { group: 'AINATIVE', name: 'Ashby', focus: 'ATS + CRM + BI tuyển dụng sâu nhất thị trường', ai: 'Tìm ứng viên ngôn ngữ tự nhiên, phễu BI tỷ lệ rớt & ROI từng nguồn', price: '~300-400 USD/tháng (<100 nhân sự)', better: 'Phiếu chấm phỏng vấn (Scorecard), trang tuyển dụng công khai & Referral', worse: 'Chi phí cao cho riêng mảng tuyển dụng; Ludy đã có sẵn phễu BI SQL ở 5D' },
+      { group: 'AINATIVE', name: 'Mercor AI', focus: 'Sàn nhân tài & Phỏng vấn video bằng AI 20-45 phút', ai: 'AI phỏng vấn sâu 1:1 qua video để đánh giá năng lực & khớp dự án', price: 'Thu phí biên lợi nhuận từ doanh nghiệp thuê', better: 'Sàng lọc kỹ năng quy mô toàn cầu tự động hoàn toàn', worse: 'Tránh chủ động: AI phỏng vấn chấm rớt trái mô hình SME và Luật AI 134/2025' },
+      { group: 'AINATIVE', name: 'Juicebox (PeopleGPT)', focus: 'Tìm nguồn ứng viên bằng AI Agent 24/7', ai: 'Precision search trên hàng trăm triệu hồ sơ, agent lọc shortlist đa kênh', price: 'Starter ~119 USD; Growth ~199 USD; Agent +199 USD/tháng', better: 'Tìm lại ứng viên cũ trong kho bằng câu hỏi tự nhiên tiếng Việt/Anh', worse: 'Tránh quét dữ liệu cá nhân công khai không đồng ý theo Luật 91/2025/QH15' },
+      { group: 'AINATIVE', name: 'micro1 (Zara AI)', focus: 'Sàng lọc kỹ thuật đa ngôn ngữ có chống gian lận', ai: 'Zara AI phỏng vấn kỹ thuật kèm webcam proctoring, đồng bộ 50+ ATS', price: '~89-399 USD/tháng', better: 'Bộ khung câu hỏi kỹ thuật có cấu trúc cho người phỏng vấn thật tham khảo', worse: 'Tránh chủ động: giám sát webcam và để AI tự đánh giá ứng viên thay người' },
+      { group: 'AINATIVE', name: 'Paradox (Olivia)', focus: 'Tuyển dụng số lượng lớn qua tin nhắn (Workday mua)', ai: 'Ứng tuyển qua SMS/Messenger/QR, sàng lọc cơ bản 24/7 & đặt lịch', price: 'Từ ~1.000 USD/tháng (doanh nghiệp lớn)', better: 'Tốc độ thu nhận ứng viên qua chat/QR rất nhanh cho vị trí phổ thông', worse: 'Giá tập đoàn; Ludy 5D đã dùng Zalo OA / Facebook sẵn có của Ludy Engage' },
+      { group: 'AINATIVE', name: 'Lattice AI', focus: 'Hiệu suất, OKR, 1:1 & Khảo sát eNPS', ai: 'Gom ghi chú 1:1 & mục tiêu thành nháp đánh giá, tóm tắt khảo sát eNPS', price: '4-13 USD/người/tháng (tối thiểu 4.000 USD/năm)', better: 'Nhật ký họp 1:1 gắn OKR và khảo sát Pulse eNPS đo sức khỏe đội ngũ', worse: 'Đã bỏ hẳn mảng HRIS/lương; đắt tối thiểu 4.000 USD/năm' }
+    ];
+
+    let activeTab = 'gaps';
+    let gapFilter = 'all';
+    let matrixFilter = 'all';
+    let compFilter = 'all';
+    let searchQuery = '';
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function badgeClass(group) {
+      if (group === 'A') return 'pill-warn';
+      if (group === 'B') return 'pill-info';
+      return 'pill-muted';
+    }
+
+    function cellClass(text) {
+      if (text.startsWith('Chưa có')) return 'cell-warn';
+      if (text.startsWith('Có')) return 'cell-ok';
+      if (text.startsWith('Không')) return 'cell-bad';
+      return 'cell-muted';
+    }
+
+    function renderGaps() {
+      const q = searchQuery.trim().toLowerCase();
+      const filtered = GAPS.filter((item) => {
+        if (gapFilter !== 'all' && item.group !== gapFilter) return false;
+        if (!q) return true;
+        return [item.title, item.rivals, item.whyValued, item.ludyNow, item.smeDesign, item.badge]
+          .join(' ')
+          .toLowerCase()
+          .includes(q);
+      });
+      document.getElementById('gapCountLabel').textContent = 'Hiển thị ' + filtered.length + ' mục';
+      const container = document.getElementById('gapCardsContainer');
+      if (!filtered.length) {
+        container.innerHTML = '<div class="empty-state">Không tìm thấy hạng mục khớp từ khóa.</div>';
+        return;
+      }
+      container.innerHTML = filtered.map((item) => `
+        <article class="gap-card">
+          <div class="gap-card-body">
+            <div class="gap-card-head">
+              <span class="pill ${badgeClass(item.group)}">${escapeHtml(item.badge)}</span>
+              <div class="meta-tags">
+                <span class="meta-chip">${escapeHtml(item.freq)}</span>
+                <span class="meta-chip">Cỡ: ${escapeHtml(item.effort)}</span>
+              </div>
+            </div>
+            <h3 class="gap-title">${escapeHtml(item.title)}</h3>
+            <div class="gap-line">
+              <strong>Đối thủ nổi bật:</strong> ${escapeHtml(item.rivals)}
+            </div>
+            <div class="gap-line">
+              <strong>Vì sao hay dùng &amp; được khen:</strong> ${escapeHtml(item.whyValued)}
+            </div>
+            <div class="gap-now">
+              <strong>Hiện trạng Ludy:</strong> ${escapeHtml(item.ludyNow)}
+            </div>
+          </div>
+          <div class="gap-proposal">
+            <strong>Đề xuất lát cắt SME + AI Ly/Vy:</strong> ${escapeHtml(item.smeDesign)}
+          </div>
+        </article>
+      `).join('');
+    }
+
+    function renderMatrix() {
+      const q = searchQuery.trim().toLowerCase();
+      const filtered = MATRIX.filter((row) => {
+        if (matrixFilter !== 'all' && row.cat !== matrixFilter) return false;
+        if (!q) return true;
+        return Object.values(row).join(' ').toLowerCase().includes(q);
+      });
+      document.getElementById('matrixCountLabel').textContent = 'Hiển thị ' + filtered.length + ' dòng';
+      const body = document.getElementById('matrixBody');
+      if (!filtered.length) {
+        body.innerHTML = '<tr><td colspan="11" style="padding:24px;text-align:center" class="cell-muted">Không có dòng nào khớp bộ lọc.</td></tr>';
+        return;
+      }
+      body.innerHTML = filtered.map((r) => `
+        <tr>
+          <td class="sticky-col" style="font-weight:600;color:var(--fg)">${escapeHtml(r.name)}</td>
+          <td class="${cellClass(r.ludy)}">${escapeHtml(r.ludy)}</td>
+          <td class="${cellClass(r.misa)}">${escapeHtml(r.misa)}</td>
+          <td class="${cellClass(r.base)}">${escapeHtml(r.base)}</td>
+          <td class="${cellClass(r.one)}">${escapeHtml(r.one)}</td>
+          <td class="${cellClass(r.lark)}">${escapeHtml(r.lark)}</td>
+          <td class="${cellClass(r.zoho)}">${escapeHtml(r.zoho)}</td>
+          <td class="${cellClass(r.bamboo)}">${escapeHtml(r.bamboo)}</td>
+          <td class="${cellClass(r.gusto)}">${escapeHtml(r.gusto)}</td>
+          <td class="${cellClass(r.rippling)}">${escapeHtml(r.rippling)}</td>
+          <td class="${cellClass(r.other)}">${escapeHtml(r.other)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderAi() {
+      const q = searchQuery.trim().toLowerCase();
+      const filtered = AI_FEATURES.filter((f) => {
+        if (!q) return true;
+        return Object.values(f).join(' ').toLowerCase().includes(q);
+      });
+      const body = document.getElementById('aiBody');
+      if (!filtered.length) {
+        body.innerHTML = '<tr><td colspan="6" style="padding:24px;text-align:center" class="cell-muted">Không có tính năng AI khớp từ khóa.</td></tr>';
+        return;
+      }
+      body.innerHTML = filtered.map((f) => `
+        <tr>
+          <td class="mono-num">${escapeHtml(f.id)}</td>
+          <td style="font-weight:700;color:var(--fg)">${escapeHtml(f.code)}</td>
+          <td class="cell-muted">${escapeHtml(f.stage)}</td>
+          <td class="cell-muted">${escapeHtml(f.desc)}</td>
+          <td class="cell-ok">${escapeHtml(f.status)}</td>
+          <td class="cell-muted">${escapeHtml(f.vs)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderCompetitors() {
+      const q = searchQuery.trim().toLowerCase();
+      const filtered = COMPETITORS.filter((c) => {
+        if (compFilter !== 'all' && c.group !== compFilter) return false;
+        if (!q) return true;
+        return Object.values(c).join(' ').toLowerCase().includes(q);
+      });
+      document.getElementById('compCountLabel').textContent = 'Hiển thị ' + filtered.length + ' đối thủ';
+      const body = document.getElementById('compBody');
+      if (!filtered.length) {
+        body.innerHTML = '<tr><td colspan="6" style="padding:24px;text-align:center" class="cell-muted">Không có đối thủ khớp bộ lọc.</td></tr>';
+        return;
+      }
+      body.innerHTML = filtered.map((c) => {
+        const grpLabel = c.group === 'VN' ? 'VN & APAC' : c.group === 'GLOBAL' ? 'Thế giới' : 'AI-Native';
+        const grpBadge = c.group === 'VN' ? 'pill-ok' : c.group === 'GLOBAL' ? 'pill-info' : 'pill-warn';
+        return `
+          <tr>
+            <td>
+              <div class="comp-name">${escapeHtml(c.name)}</div>
+              <span class="pill ${grpBadge}">${grpLabel}</span>
+            </td>
+            <td class="cell-muted">${escapeHtml(c.focus)}</td>
+            <td class="cell-muted">${escapeHtml(c.ai)}</td>
+            <td style="color:var(--fg)">${escapeHtml(c.price)}</td>
+            <td class="cell-muted">${escapeHtml(c.better)}</td>
+            <td class="cell-muted">${escapeHtml(c.worse)}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderAll() {
+      renderGaps();
+      renderMatrix();
+      renderAi();
+      renderCompetitors();
+    }
+
+    function setActiveTab(tab) {
+      activeTab = tab;
+      document.querySelectorAll('.tab-panel').forEach((el) => el.classList.add('hidden'));
+      document.getElementById('tab-' + tab).classList.remove('hidden');
+      document.querySelectorAll('.tab-btn').forEach((btn) => {
+        const isCurrent = btn.dataset.tab === tab;
+        btn.classList.toggle('is-active', isCurrent);
+        btn.setAttribute('aria-selected', isCurrent ? 'true' : 'false');
+      });
+    }
+
+    function updateFilterButtons(selector, dataAttr, currentVal) {
+      document.querySelectorAll(selector).forEach((btn) => {
+        const isCurrent = btn.dataset[dataAttr] === currentVal;
+        btn.classList.toggle('is-active', isCurrent);
+        btn.setAttribute('aria-pressed', isCurrent ? 'true' : 'false');
+      });
+    }
+
+    document.querySelectorAll('.tab-btn').forEach((btn) => {
+      btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
+    });
+    document.querySelectorAll('.gap-filter-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        gapFilter = btn.dataset.gapFilter;
+        updateFilterButtons('.gap-filter-btn', 'gapFilter', gapFilter);
+        renderGaps();
+      });
+    });
+    document.querySelectorAll('.matrix-filter-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        matrixFilter = btn.dataset.matrixFilter;
+        updateFilterButtons('.matrix-filter-btn', 'matrixFilter', matrixFilter);
+        renderMatrix();
+      });
+    });
+    document.querySelectorAll('.comp-filter-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        compFilter = btn.dataset.compFilter;
+        updateFilterButtons('.comp-filter-btn', 'compFilter', compFilter);
+        renderCompetitors();
+      });
+    });
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+      searchQuery = e.target.value;
+      renderAll();
+    });
+
+    renderAll();
+  </script>
+</body>
+</html>

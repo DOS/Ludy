@@ -69,6 +69,7 @@ export interface LudyFinanceSchema {
   'ludy_finance.einvoice_draft_line': FinanceEinvoiceDraftLineTable;
   'ludy_finance.einvoice_notice': FinanceEinvoiceNoticeTable;
   'ludy_finance.einvoice_series': FinanceEinvoiceSeriesTable;
+  'ludy_finance.entry_review_mark': FinanceEntryReviewMarkTable;
   'ludy_finance.fixed_asset': FinanceFixedAssetTable;
   'ludy_finance.household_expense_group_map': FinanceHouseholdExpenseGroupMapTable;
   'ludy_finance.household_form_version': FinanceHouseholdFormVersionTable;
@@ -1294,6 +1295,17 @@ export interface FinanceEinvoiceSeriesTable {
   description: Generated<string>;
   is_default: Generated<boolean>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** ludy_finance.entry_review_mark */
+export interface FinanceEntryReviewMarkTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  entry_id: ColumnType<string, string, NotGranted>;
+  rule: ColumnType<string, string, NotGranted>;
+  marked_by: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
@@ -4329,6 +4341,8 @@ export interface ProjectsGithubTaskLinkTable {
   created_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  last_outbound_state: string | null;
+  last_outbound_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** ludy_projects.project_column */

@@ -139,53 +139,56 @@ export function figuresOf(moves: readonly MoveRow[], month: string, itemId: stri
   return { figures: monthFigures(moves.filter((m) => m.move_date >= after).map(costOf), month, { opening }), closed: false };
 }
 
+// The report rows of one month: every item of the org (of one entity, or of every entity the caller sees), as finance.stock.report answers them. Shared with the quarter summary (#5183), which sums the closing values.
+export async function stockReportRows(ctx: Pick<QueryContext, 'trx' | 'orgId'>, month: string, legalEntityId: string | undefined): Promise<StockReportRow[]> {
+  const items = await ctx.trx
+    .selectFrom('ludy_finance.stock_item')
+    .select(['id', 'legal_entity_id', 'code', 'name', 'unit', 'active'])
+    .where('org_id', '=', ctx.orgId)
+    .$if(legalEntityId !== undefined, (qb) => qb.where('legal_entity_id', '=', legalEntityId as string))
+    .orderBy('code')
+    .execute();
+  const moves = await movesUpTo(ctx, month, { legalEntityId: legalEntityId });
+  const closed = await closedMonths(ctx, month, legalEntityId);
+  const byItem = new Map<string, MoveRow[]>();
+  for (const move of moves) {
+    const bucket = byItem.get(move.item_id);
+    if (bucket) bucket.push(move);
+    else byItem.set(move.item_id, [move]);
+  }
+  const rows: StockReportRow[] = [];
+  for (const item of items) {
+    const own = byItem.get(item.id) ?? [];
+    const { figures, closed: isClosed } = figuresOf(own, month, item.id, item.legal_entity_id, closed);
+    // An item with no move and not in use has nothing to report; one a closed month stored is reported as it was stored.
+    if (own.length === 0 && !item.active && figures === null) continue;
+    const zero = '0';
+    rows.push({
+      itemId: item.id,
+      legalEntityId: item.legal_entity_id,
+      code: item.code,
+      name: item.name,
+      unit: item.unit,
+      openingQuantity: figures?.openingQuantity ?? zero,
+      openingValue: figures?.openingValue ?? zero,
+      inQuantity: figures?.inQuantity ?? zero,
+      inValue: figures?.inValue ?? zero,
+      outQuantity: figures?.outQuantity ?? zero,
+      outValue: figures?.outValue ?? zero,
+      closingQuantity: figures?.closingQuantity ?? zero,
+      closingValue: figures?.closingValue ?? zero,
+      unitCost: figures?.unitCost ?? null,
+      closed: isClosed,
+    });
+  }
+  return rows;
+}
+
 export const stockReport = defineQuery({
   name: 'finance.stock.report',
   input: zStockReportInput,
   access: ALL,
-  handler: async (ctx, input): Promise<StockReportRow[]> => {
-    const items = await ctx.trx
-      .selectFrom('ludy_finance.stock_item')
-      .select(['id', 'legal_entity_id', 'code', 'name', 'unit', 'active'])
-      .where('org_id', '=', ctx.orgId)
-      .$if(input.legalEntityId !== undefined, (qb) => qb.where('legal_entity_id', '=', input.legalEntityId as string))
-      .orderBy('code')
-      .execute();
-    const moves = await movesUpTo(ctx, input.month, { legalEntityId: input.legalEntityId });
-    const closed = await closedMonths(ctx, input.month, input.legalEntityId);
-    const byItem = new Map<string, MoveRow[]>();
-    for (const move of moves) {
-      const bucket = byItem.get(move.item_id);
-      if (bucket) bucket.push(move);
-      else byItem.set(move.item_id, [move]);
-    }
-    const rows: StockReportRow[] = [];
-    for (const item of items) {
-      const own = byItem.get(item.id) ?? [];
-      const { figures, closed: isClosed } = figuresOf(own, input.month, item.id, item.legal_entity_id, closed);
-      // An item with no move and not in use has nothing to report; one a closed month stored is reported as it was stored.
-      if (own.length === 0 && !item.active && figures === null) continue;
-      const zero = '0';
-      rows.push({
-        itemId: item.id,
-        legalEntityId: item.legal_entity_id,
-        code: item.code,
-        name: item.name,
-        unit: item.unit,
-        openingQuantity: figures?.openingQuantity ?? zero,
-        openingValue: figures?.openingValue ?? zero,
-        inQuantity: figures?.inQuantity ?? zero,
-        inValue: figures?.inValue ?? zero,
-        outQuantity: figures?.outQuantity ?? zero,
-        outValue: figures?.outValue ?? zero,
-        closingQuantity: figures?.closingQuantity ?? zero,
-        closingValue: figures?.closingValue ?? zero,
-        unitCost: figures?.unitCost ?? null,
-        closed: isClosed,
-      });
-    }
-    return rows;
-  },
+  handler: (ctx, input): Promise<StockReportRow[]> => stockReportRows(ctx, input.month, input.legalEntityId),
 });
 
 export const stockCard = defineQuery({

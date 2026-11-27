@@ -34,6 +34,7 @@ export interface HomeMoneyFigures {
 // The tiles from the entity's summed balances on 112, 131 and 331 up to `asOf` (`entries` as asEntries builds them), with the names of the 112 accounts
 // the chart holds. An account is listed when its net balance is not zero, largest by size first, at most HOME_MONEY_BANK_ACCOUNTS_MAX of them.
 export function buildHomeMoney(entries: ReportEntry[], legalEntityId: string, asOf: string, names: ReadonlyMap<string, string>): HomeMoneyFigures {
+  // Lines 131 and 311 read the same accounts under the TT133 and the TT99 map (modules/finance/test/tt99-b01.test.ts pins it), so the tiles need no regime.
   for (const code of ['131', '311']) if (!B01_LINES.some((d) => d.code === code)) throw new Error(`B01 has no line ${code}`);
   const b01 = buildB01(entries, legalEntityId, asOf);
   const line = (code: string) => canonical(money(b01.lines.find((l) => l.code === code)?.amount ?? '0'));

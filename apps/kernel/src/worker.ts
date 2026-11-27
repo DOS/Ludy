@@ -27,13 +27,23 @@ import { EVIDENCE_HOLD_SWEEP_MS, runEvidenceHolds } from './evidence-hold.ts';
 import { PROJECTS_RECURRING_SWEEP_MS, sweepProjectsRecurring } from './projects-recurring-worker.ts';
 import { ROADMAP_ANNOUNCEMENT_NOTIFY_EVENT, dispatchRoadmapAnnouncementNotifications, sweepRoadmapOtpCleanup } from './projects-roadmap-worker.ts';
 import {
+  PROJECTS_GITHUB_OUTBOUND_RETRY_LIMIT,
+  PROJECTS_GITHUB_OUTBOUND_SWEEP_CRON,
+  PROJECTS_GITHUB_OUTBOUND_SWEEP_EXPIRE_SECONDS,
   PROJECTS_GITHUB_WEBHOOK_SWEEP_CRON,
   PROJECTS_GITHUB_WEBHOOK_SWEEP_EXPIRE_SECONDS,
+  hasGithubOutboundWork,
   hasGithubWebhookWork,
   processGithubWebhookBatch,
   projectsGithubHydrateJobOptions,
+  projectsGithubOutboundJobOptions,
+  runGithubAgentTransitionEnqueue,
   runGithubHydrateJob,
+  runGithubOutboundJob,
+  runGithubOutboundSweep,
   type ProjectsGithubHydrateJob,
+  type ProjectsGithubOutboundJob,
+  type ProjectsGithubSweepJob,
 } from './projects-github-worker.ts';
 import type { GithubClient } from '@ludy/github';
 import { processInboundEmail, type InboundJob } from './inbound.ts';
@@ -64,6 +74,7 @@ import { engageWakeFeed } from './mcp-wake-engage.ts';
 import { runMeetingHookDelivery, type MeetingHookJob } from './meeting-hook.ts';
 import { MEETINGS_MORNING_CRON, runMeetingsMorningSweep } from './meetings-morning.ts';
 import { MEETINGS_WEEKLY_CRON, runMeetingsWeeklySweep } from './meetings-weekly.ts';
+import { MEETINGS_BRIEF_DAILY_CRON, purgeExpiredMorningBriefLines, runMeetingsBriefDailySweep, type MeetingsBriefWriter } from './meetings-brief-daily.ts';
 import { MEETINGS_SERIES_NUDGE_CRON, runMeetingsSeriesNudgeSweep } from './meetings-series-nudge.ts';
 import { MEETING_HOOK_SWEEP_CRON, MEETING_HOOK_SWEEP_EXPIRE_SECONDS, runMeetingHookSweep } from './meeting-hook-sweep.ts';
 import type { MediaAudioExtractor } from './meetings-extract.ts';
@@ -137,7 +148,7 @@ import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
 import { HELD_SWEEP_MS, holdEvents, planHolds, releaseHeld, releaseHeldOfOrg, type SweepCursor } from './outbox-hold.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
-import { failUndraftable, reconcileTelegramDisplacements, rekeyTelegramWebhooks, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
+import { failUndraftable, reconcileTelegramDisplacements, rekeyTelegramWebhooks, requestDueConversationDrafts, purgeInboundFirstSeen, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
@@ -716,6 +727,9 @@ export interface WorkerDeps {
   // The AI coworker's campaign drafts (ads W1b, #2295): the model that reads a member's brief and writes the creative part of a campaign; null runs without
   // AI (a request is settled as none with the code AI_OFF).
   adsCampaignWriter?: Pick<AdsCampaignWriter, 'draft'> | null;
+  // Daily morning briefing Vy prep lines writer (#5073): wraps writeBrief({ feature: 'meetings.brief_daily' }) behind member-vy-ports.ts;
+  // null runs without AI (cron unscheduled, no runs or writes).
+  meetingsBriefWriter?: MeetingsBriefWriter | null;
   // crove-extract (plan §7.6): every PDF, XML and MIME parse happens there, never in this process.
   extract: ExtractClient;
   inboundDomain: string | null;
@@ -1792,6 +1806,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     let failure: unknown;
     let results = 0;
     let former = 0;
+    let briefLinesPurged = 0;
     try {
       results = await sweepMemberVyResults({ runtime: deps.runtime, workerDb: deps.workerDb });
     } catch (error) {
@@ -1802,7 +1817,18 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     } catch (error) {
       failure ??= error;
     }
-    if (results > 0 || former > 0) console.log(`[member-vy-sweep] removed ${results} expired results and ${former} rows of former members`);
+    if (deps.runtime.installed('meetings')) {
+      try {
+        briefLinesPurged = await purgeExpiredMorningBriefLines(deps.workerDb);
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+    if (results > 0 || former > 0 || briefLinesPurged > 0) {
+      console.log(
+        `[member-vy-sweep] removed ${results} expired results, ${former} rows of former members, and ${briefLinesPurged} expired morning brief lines`,
+      );
+    }
     if (failure) throw failure;
   });
   await boss.schedule(QUEUES.memberVySweep, MEMBER_VY_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: MEMBER_VY_SWEEP_EXPIRE_SECONDS });
@@ -1883,6 +1909,23 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.meetingsWeekly, MEETINGS_WEEKLY_CRON, null, { tz: MEMBER_VY_SWEEP_TZ });
   } else {
     await dropCron(QUEUES.meetingsWeekly);
+  }
+  // Daily member-Vy prep lines sweep for morning briefings (#5073): every 5 minutes, prepares checked <= 240-char prep lines for
+  // opted-in members in their morning window when AI is enabled, writing through meetings.brief.store_lines and storing counts only.
+  const briefWriter = deps.meetingsBriefWriter;
+  if (deps.runtime.installed('meetings') && briefWriter) {
+    await boss.work(QUEUES.meetingsBriefDaily, { batchSize: 1 }, async () => {
+      const done = await runMeetingsBriefDailySweep({
+        runtime: deps.runtime,
+        workerDb: deps.workerDb,
+        writer: briefWriter,
+        price: deps.aiPrice ? { inputPerMTok: deps.aiPrice.inputPerMTok, outputPerMTok: deps.aiPrice.outputPerMTok } : undefined,
+      });
+      if (done.prepared + done.failures > 0) console.log(`[meetings-brief-daily] prepared ${done.prepared}, failures ${done.failures}`);
+    });
+    await boss.schedule(QUEUES.meetingsBriefDaily, MEETINGS_BRIEF_DAILY_CRON, null, { tz: MEMBER_VY_SWEEP_TZ });
+  } else {
+    await dropCron(QUEUES.meetingsBriefDaily);
   }
   // A member's minutes webhook (meetings integrations A6, #3164): a sweep every minute hands over the deliveries stored at publish (meeting-hook-sweep.ts), and one job per delivery posts it to the
   // address the member set (meeting-hook.ts, through the signing helper of mcp-wake.ts). The same rule as the wake-up (without a credential key no secret can be opened, so neither runs), and only when the meetings module is installed: its commands are what the sweep and the job run.
@@ -1969,6 +2012,25 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       missed: 'once',
       expireInSeconds: PROJECTS_GITHUB_WEBHOOK_SWEEP_EXPIRE_SECONDS,
     });
+    await boss.work<ProjectsGithubSweepJob | null>(QUEUES.projectsGithubSweep, { batchSize: 1 }, async ([job]) => {
+      if (job?.data?.mode === 'agent_task_transition') {
+        await runGithubAgentTransitionEnqueue({ runtime: deps.runtime }, job.data);
+      }
+      const done = await runGithubOutboundSweep({
+        workerDb: deps.workerDb,
+        runtime: deps.runtime,
+        sendOutbound: (outboundJob) =>
+          boss.send(QUEUES.projectsGithubOutbound, outboundJob, projectsGithubOutboundJobOptions(outboundJob)),
+      });
+      if (done.handedOver + done.skippedOff > 0) {
+        console.log(`[projects-github-sweep] handedOver=${done.handedOver} skippedOff=${done.skippedOff}`);
+      }
+    });
+    await boss.schedule(QUEUES.projectsGithubSweep, PROJECTS_GITHUB_OUTBOUND_SWEEP_CRON, null, {
+      tz: RETENTION_TZ,
+      missed: 'once',
+      expireInSeconds: PROJECTS_GITHUB_OUTBOUND_SWEEP_EXPIRE_SECONDS,
+    });
     const hydrateGithub = deps.channels?.github;
     const hydrateBroker = deps.channels?.broker;
     if (hydrateGithub && hydrateBroker && hydrateBroker.id !== 'none') {
@@ -1980,9 +2042,19 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         );
         console.log(`[projects-github-hydrate] ${job.data.mode} ${job.data.projectId.slice(0, 8)}: ${outcome}`);
       });
+      await boss.work<ProjectsGithubOutboundJob>(QUEUES.projectsGithubOutbound, { batchSize: 1, includeMetadata: true }, async ([job]) => {
+        if (!job) return;
+        const outcome = await runGithubOutboundJob(
+          { runtime: deps.runtime, workerDb: deps.workerDb, broker: hydrateBroker, github: hydrateGithub },
+          job.data,
+          { retryCount: job.retryCount, retryLimit: PROJECTS_GITHUB_OUTBOUND_RETRY_LIMIT },
+        );
+        console.log(`[projects-github-outbound] ${job.data.deliveryId.slice(0, 8)}: ${outcome}`);
+      });
     }
   } else {
     await dropCron(QUEUES.projectsGithubWebhook);
+    await dropCron(QUEUES.projectsGithubSweep);
   }
 
   // Meeting platform recordings (meetings integrations C1, #3173): a sweep every minute hands over the recordings a member chose to import, lists each due connection's finished recordings as suggestions and
@@ -3993,6 +4065,30 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 };
                 return boss.send(QUEUES.projectsGithubHydrate, hydrateJob, projectsGithubHydrateJobOptions(hydrateJob));
               }
+              if (
+                projects &&
+                deps.channels?.github &&
+                deps.channels.broker &&
+                deps.channels.broker.id !== 'none' &&
+                row.type === 'kernel.task.github_transitioned' &&
+                typeof row.payload.taskId === 'string' &&
+                typeof row.payload.previousStatus === 'string' &&
+                typeof row.payload.nextStatus === 'string'
+              ) {
+                const sweepJob: ProjectsGithubSweepJob = {
+                  mode: 'agent_task_transition',
+                  orgId: row.org_id,
+                  taskId: row.payload.taskId,
+                  previousStatus: row.payload.previousStatus,
+                  nextStatus: row.payload.nextStatus,
+                };
+                return boss.send(QUEUES.projectsGithubSweep, sweepJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.projectsGithubSweep, row.event_id),
+                  retryLimit: PROJECTS_GITHUB_OUTBOUND_RETRY_LIMIT,
+                  retryDelay: 10,
+                  retryBackoff: true,
+                });
+              }
               if (Object.hasOwn(AGENT_PROPOSAL_COMMANDS, row.type)) {
                 return boss.send(QUEUES.agentProposal, { orgId: row.org_id, eventId: row.event_id, type: row.type }, {
                   singletonKey: jobKey(row.org_id, QUEUES.agentProposal, row.event_id),
@@ -4191,6 +4287,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       await sweepConversationDrafts({ workerDb: deps.workerDb });
       // The expired "you are replying" markers of the Inbox (CV3).
       await sweepConversationComposing({ workerDb: deps.workerDb });
+      // The expired first-seen keys of WhatsApp webhook events (#5085).
+      await purgeInboundFirstSeen({ workerDb: deps.workerDb });
       // The campaign draft requests the job never answered (ads W1b): in every deployment, so a member can ask again after 15 minutes.
       await sweepAdsCampaignRequests({ workerDb: deps.workerDb });
       // The new conversations Vy drafts a reply for (CV8): only where a model is configured.
@@ -4204,6 +4302,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           QUEUES.projectsGithubWebhook,
           { trigger: 'relay' },
           { singletonKey: systemJobKey(QUEUES.projectsGithubWebhook, 'drain'), singletonSeconds: 5 },
+        );
+      }
+      if (projects && (await hasGithubOutboundWork(deps.workerDb))) {
+        await boss.send(
+          QUEUES.projectsGithubSweep,
+          { trigger: 'relay' },
+          { singletonKey: systemJobKey(QUEUES.projectsGithubSweep, 'drain'), singletonSeconds: 5 },
         );
       }
     } catch (error) {

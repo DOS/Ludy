@@ -25,6 +25,7 @@ import {
   BOOKING_STATUSES,
   GITHUB_EXTERNAL_STATES,
   GITHUB_LINK_SOURCES,
+  GITHUB_OUTBOUND_STATES,
   GITHUB_TASK_LINK_KINDS,
   AGENT_RISKS,
   AGENT_RUNTIMES,
@@ -163,6 +164,7 @@ import {
   LEGAL_ENTITY_KINDS,
   ROLE_SCOPES,
   INVITE_STATUSES,
+  ENTRY_REVIEW_RULES,
   INPUT_VAT_CHECK_OUTCOMES,
   MEMBER_AVAILABILITY_STATUSES,
   MEMBER_ROLES,
@@ -644,6 +646,7 @@ const UNIONS = unions({
   'ludy_finance.purchase_document.exchange_rate_source': EXCHANGE_RATE_SOURCES,
   'ludy_finance.cash_voucher.voucher_type': VOUCHER_TYPES,
   'ludy_finance.input_vat_check.outcome': INPUT_VAT_CHECK_OUTCOMES,
+  'ludy_finance.entry_review_mark.rule': ENTRY_REVIEW_RULES,
   'ludy_finance.vat_return_filed.status': VAT_RETURN_FILED_STATUSES,
   'ludy_finance.vat_return_filed.source': VAT_RETURN_FILED_SOURCES,
   'ludy_finance.fixed_asset.kind': FIXED_ASSET_KINDS,
@@ -688,6 +691,7 @@ const UNIONS = unions({
   'ludy_social.post_variant.status': SOCIAL_VARIANT_STATUSES,
   'ludy_projects.github_task_link.external_state': GITHUB_EXTERNAL_STATES,
   'ludy_projects.github_task_link.kind': GITHUB_TASK_LINK_KINDS,
+  'ludy_projects.github_task_link.last_outbound_state': GITHUB_OUTBOUND_STATES,
   'ludy_projects.github_task_link.link_source': GITHUB_LINK_SOURCES,
 });
 

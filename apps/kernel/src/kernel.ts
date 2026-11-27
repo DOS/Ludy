@@ -6,7 +6,7 @@ import { serve } from '@hono/node-server';
 import type { Server } from 'node:http';
 import { configureUploadTimeouts } from './upload-timeouts.ts';
 import { memberMeter } from './ai-meter.ts';
-import { summaryModelPort, type ModelPort } from './member-vy-ports.ts';
+import { createMeetingsBriefWriter, summaryModelPort, type ModelPort } from './member-vy-ports.ts';
 import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SignAiReader, SocialWriter, TodayWriter, WeeklyWriter, type InvoiceReader } from '@ludy/agent';
 import {
   BlueskyPublisher,
@@ -219,7 +219,7 @@ export interface KernelAdapters {
           >
         >)
     | null;
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'monthCloseNote' | 'expenseVarianceNotes' | 'cashForecastSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'signDepositMatchSentence' | 'marketplaceLineSentence' | 'marketplaceFeeNotes' | 'marketplaceProposalNote' | 'marketplaceColumns' | 'supplierPayableLineSentence' | 'bankCandidatesLineSentence' | 'misaCheckLineSentence' | 'misaAmisBlockerNotes' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'projectCycleSummary' | 'roadmapDedupe' | 'roadmapChangelogDraft' | 'roadmapSignalMatch' | 'projectTriageAssist' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'payrollDiffExplain' | 'laborCheck' | 'recruitingBrief' | 'attendanceAnomalies' | 'cvExtract' | 'hrProbationSummary' | 'hrRequestDraft' | 'hrPolicyQa' | 'hrAddendumCheck' | 'hrOkrCheckinDraft' | 'signAcceptanceDraft'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'monthCloseNote' | 'expenseVarianceNotes' | 'unusualEntriesNotes' | 'quarterSummaryNotes' | 'cashForecastSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'signDepositMatchSentence' | 'marketplaceLineSentence' | 'marketplaceFeeNotes' | 'marketplaceProposalNote' | 'marketplaceColumns' | 'supplierPayableLineSentence' | 'bankCandidatesLineSentence' | 'misaCheckLineSentence' | 'misaAmisBlockerNotes' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'projectCycleSummary' | 'roadmapDedupe' | 'roadmapChangelogDraft' | 'roadmapSignalMatch' | 'projectTriageAssist' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'payrollDiffExplain' | 'laborCheck' | 'recruitingBrief' | 'attendanceAnomalies' | 'cvExtract' | 'hrProbationSummary' | 'hrRequestDraft' | 'hrPolicyQa' | 'hrAddendumCheck' | 'hrOkrCheckinDraft' | 'signAcceptanceDraft'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -981,6 +981,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             extractor: resolved.ai,
             conversationWriter: resolved.conversationWriter,
             adsCampaignWriter: resolved.adsCampaignWriter,
+            meetingsBriefWriter: resolved.summaryModel ? createMeetingsBriefWriter(resolved.summaryModel) : null,
             extract: createExtractClient({ url: extractUrl, concurrency: extractConcurrency(config) }),
             inboundDomain: config.INBOUND_DOMAIN ?? null,
             revoker: resolved.identity.revoker,
