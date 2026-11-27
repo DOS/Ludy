@@ -19,10 +19,11 @@ const SCANNED = [...readdirSync(join(ROOT, 'apps')).map((app) => `apps/${app}/sr
 const ALLOWED: string[] = [];
 
 // Control-plane tables (plan §3.6): identity, a user's sessions across orgs, inbound routing, the per-client
-// email budget in front of Supabase Auth and the invalidation stream's one-time tickets (#69, #281), which only the
+// email budget in front of Supabase Auth, the WhatsApp first-seen keys of the webhook (#5085, #5188: reached only through conversation_inbound_enqueue_seen and
+// conversation_inbound_first_seen_purge) and the invalidation stream's one-time tickets (#69, #281), which only the
 // stream_ticket_issue and stream_ticket_redeem definers touch, and the deployment-wide kill switch (#886), reached
 // through global_kill_switch_on and global_kill_switch_set. staff joins this list when it is built (§4.12).
-const CONTROL_PLANE = ['user_account', 'auth_session', 'inbound_address', 'inbound_pending', 'conversation_inbound_pending', 'auth_email_send', 'stream_ticket', 'global_kill_switch', 'mcp_rate_limit'];
+const CONTROL_PLANE = ['user_account', 'auth_session', 'inbound_address', 'inbound_pending', 'conversation_inbound_pending', 'conversation_inbound_first_seen', 'auth_email_send', 'stream_ticket', 'global_kill_switch', 'mcp_rate_limit'];
 const NAMES = CONTROL_PLANE.join('|');
 // Schema-qualified anywhere (Kysely table names, raw SQL, sql.table), optionally quoted, in any case (PostgreSQL
 // folds unquoted names) and across line breaks; or the bare name as a whole string literal, optionally aliased
