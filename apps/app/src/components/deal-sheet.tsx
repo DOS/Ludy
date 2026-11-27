@@ -62,7 +62,7 @@ export function DealSheet({ target, members, canEdit, onClose }: { target: DealS
             <>
               <Section id="deal-sheet-details" title={t('sheet.details')}>
                 {canEdit ? (
-                  <DealForm key={deal.version} plain deal={deal} members={members} onDone={onClose} />
+                  <DealForm key={deal.id} plain deal={deal} members={members} onDone={onClose} />
                 ) : (
                   <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
                     <div>

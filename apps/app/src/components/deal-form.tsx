@@ -125,20 +125,59 @@ function PartyPicker({ value, onPick, invalid, describedBy, locked }: { value: P
   );
 }
 
+// What the person has typed so far, by field. A field that is not here follows the deal; one that is here keeps what was typed (null is a real edit: the customer let go).
+export interface DealFormEdits {
+  title?: string;
+  party?: PartyChoice | null;
+  amount?: string;
+  expectedClose?: string;
+  ownerUserId?: string;
+}
+
+export interface DealFormValues {
+  title: string;
+  party: PartyChoice | null;
+  amount: string;
+  expectedClose: string;
+  ownerUserId: string;
+}
+
+// The values the form shows: the deal as it is now, with the person's own edits on top (#5015). A deal that changes under an open form (a read that lands after the card's copy, a quote's offer, a move
+// from another tab) updates the fields nobody touched and never throws away or resets what was typed, so a save sends the typed title with the newest version and not the stale one.
+export function dealFormValues(deal: Deal | null, presetParty: PartyChoice | null, edits: DealFormEdits): DealFormValues {
+  const base: DealFormValues = {
+    title: deal?.title ?? '',
+    party: deal ? { id: deal.partyId, name: deal.partyName, kind: 'organization', taxCode: null } : presetParty,
+    amount: deal ? deal.amount.replace(/\.00$/, '') : '',
+    expectedClose: deal?.expectedClose ?? '',
+    ownerUserId: deal ? (deal.ownerUserId ?? '') : 'me',
+  };
+  return {
+    title: edits.title ?? base.title,
+    party: edits.party !== undefined ? edits.party : base.party,
+    amount: edits.amount ?? base.amount,
+    expectedClose: edits.expectedClose ?? base.expectedClose,
+    ownerUserId: edits.ownerUserId ?? base.ownerUserId,
+  };
+}
+
 // presetParty: a new deal for this party, chosen and not changeable (the contact panel's "Thêm cơ hội", #3292). plain: the form sits in a side sheet (#3648), which frames it: one column, no border of its own.
+// The form is not keyed by the deal's version: a newer version keeps the typed edits (see dealFormValues) and the next save carries that version.
 export function DealForm({ deal, members, onDone, presetParty = null, plain = false }: { deal: Deal | null; members: readonly Member[]; onDone: () => void; presetParty?: PartyChoice | null; plain?: boolean }) {
   const t = useTranslations('deals');
-  const [title, setTitle] = useState(deal?.title ?? '');
-  const [party, setParty] = useState<PartyChoice | null>(deal ? { id: deal.partyId, name: deal.partyName, kind: 'organization', taxCode: null } : presetParty);
-  const [amount, setAmount] = useState(deal ? deal.amount.replace(/\.00$/, '') : '');
-  const [expectedClose, setExpectedClose] = useState(deal?.expectedClose ?? '');
-  const [ownerUserId, setOwnerUserId] = useState(deal ? (deal.ownerUserId ?? '') : 'me');
+  const [edits, setEdits] = useState<DealFormEdits>({});
+  const { title, party, amount, expectedClose, ownerUserId } = dealFormValues(deal, presetParty, edits);
+  const setTitle = (v: string) => setEdits((e) => ({ ...e, title: v }));
+  const setParty = (v: PartyChoice | null) => setEdits((e) => ({ ...e, party: v }));
+  const setAmount = (v: string) => setEdits((e) => ({ ...e, amount: v }));
+  const setExpectedClose = (v: string) => setEdits((e) => ({ ...e, expectedClose: v }));
+  const setOwnerUserId = (v: string) => setEdits((e) => ({ ...e, ownerUserId: v }));
   const done = () => {
     refreshDeals();
     onDone();
   };
   const create = useMutation(orpc.crm.deals.create.mutationOptions({ onSuccess: done }));
-  // A refused edit (someone saved first) reloads the list; the form is keyed by the deal's version, so it reopens on the new one.
+  // A refused edit (someone saved first) reloads the deal: untouched fields show the new values, typed ones stay, and saving again sends the new version.
   const update = useMutation(orpc.crm.deals.update.mutationOptions({ onSuccess: done, onError: refreshDeals }));
   const pending = create.isPending || update.isPending;
   const fields = useFieldErrors<FormField>((field) => {
