@@ -15176,7 +15176,14 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     ).toContain('generateNoteSummaryText');
     expect(
       workspaceAdapterLeakViolations(
-        "const x = await\n  async () => 1, a = 'gen', b = a + 'erate' + 'NoteSum' + 'maryText';\nexport { b };",
+        "const x = await\n  async function () { return 1; }, a = 'gen', b = a + 'erate' + 'NoteSum' + 'maryText';\nexport { b };",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const x = await\n  (async () => 1), a = 'gen', b = a + 'erate' + 'NoteSum' + 'maryText';\nexport { b };",
         DEFAULT_ADAPTER_EXPORTS,
         'apps/web/src/leak.ts',
       ),
