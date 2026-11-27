@@ -236,6 +236,69 @@ describe('a direction the row does not have, or says against the wrong basis, re
   });
 });
 
+describe('a period, a season, a size, a cause, the future or advice to move money refuses the sentence', () => {
+  const rose = row('revenue', 'rose', 'rose');
+  it.each([
+    ['a Vietnamese "again" after the previous quarter', 'Doanh thu tăng so với quý trước nữa.'],
+    ['a Vietnamese "again" after last year', 'Doanh thu tăng so với cùng kỳ năm trước nữa.'],
+    ['a Vietnamese "that" after the previous quarter', 'Doanh thu tăng so với quý trước đó.'],
+    ['an English "before" after the previous quarter', 'Sales revenue rose against the previous quarter before.'],
+    ['an English "earlier" after the previous quarter', 'Sales revenue rose against the previous quarter and earlier.'],
+    ['an English "ago" after the previous quarter', 'Sales revenue rose against the previous quarter ago.'],
+    ['the last month', 'Sales revenue rose against the last month.'],
+    ['a Vietnamese month', 'Doanh thu tăng so với tháng.'],
+    ['summer', 'Sales revenue rose in summer.'],
+    ['winter', 'Sales revenue rose in winter.'],
+    ['mid-year', 'Sales revenue rose in mid year.'],
+    ['a Vietnamese mid-year', 'Doanh thu tăng giữa năm.'],
+    ['this week', 'Sales revenue rose this week.'],
+    ['a Vietnamese spring', 'Doanh thu tăng vào mùa xuân.'],
+    ['the fall as a season', 'Sales revenue rose the fall.'],
+    ['markedly', 'Sales revenue rose markedly.'],
+    ['notably', 'Sales revenue rose notably.'],
+    ['rapidly', 'Sales revenue rose rapidly.'],
+    ['vượt bậc', 'Doanh thu tăng vượt bậc.'],
+    ['hẳn', 'Doanh thu tăng hẳn.'],
+    ['ồ ạt', 'Doanh thu tăng ồ ạt.'],
+    ['rõ rệt', 'Doanh thu tăng rõ rệt.'],
+    ['chóng mặt', 'Doanh thu tăng chóng mặt.'],
+    ['vọt', 'Doanh thu tăng vọt.'],
+    ['on demand', 'Sales revenue rose on demand.'],
+    ['amid demand', 'Sales revenue rose amid demand.'],
+    ['as demand grew', 'Sales revenue rose as demand grew.'],
+    ['seasonal demand', 'Sales revenue rose on seasonal demand.'],
+    ['a Vietnamese "when" clause', 'Doanh thu tăng khi vào mùa.'],
+    ['a Vietnamese seasonal cause', 'Doanh thu tăng theo mùa.'],
+    ['a Vietnamese "thanks to"', 'Doanh thu tăng nhờ vào khách mới.'],
+    ['set to', 'Sales revenue is set to rise.'],
+    ['expected to', 'Sales revenue is expected to rise.'],
+    ['likely to', 'Sales revenue is likely to rise.'],
+    ['poised', 'Sales revenue is poised to rise.'],
+    ['on track', 'Sales revenue is on track to rise.'],
+    ['a Vietnamese "expected"', 'Doanh thu dự kiến tăng.'],
+    ['a Vietnamese "about to"', 'Doanh thu sắp tăng.'],
+    ['shift money', 'Cash rose, shift money to savings.'],
+    ['put aside', 'Cash rose, put cash aside.'],
+    ['dồn', 'Cash rose, dồn tiền vào quỹ.'],
+    ['chuyển', 'Cash rose, chuyển tiền đi.'],
+    ['đổ vào', 'Cash rose, đổ vào quỹ.'],
+  ])('refuses %s', (_name, text) => {
+    expect(stands(text, rose)).toBe(false);
+  });
+
+  it('keeps "before tax" in the name of a row and "only" as a word', () => {
+    expect(stands('Profit before tax fell against the previous quarter.', row('profit', 'fell', 'none'))).toBe(true);
+    expect(stands('Sales revenue rose only against the previous quarter.', rose)).toBe(true);
+  });
+
+  it('caps a sentence at 140 characters', () => {
+    const exact = 'Sales revenue rose against the previous quarter'.padEnd(139, ' and') + '.';
+    expect(Array.from(exact)).toHaveLength(140);
+    expect(stands(exact, rose)).toBe(true);
+    expect(stands(`${exact.slice(0, -1)} and.`, rose)).toBe(false);
+  });
+});
+
 describe('the set', () => {
   const three = factsOf(row('revenue', 'rose', 'rose'), row('costs', 'rose', 'steady'), row('cash', 'fell', 'fell'));
   const good = [

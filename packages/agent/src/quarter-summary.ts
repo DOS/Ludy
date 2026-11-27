@@ -18,7 +18,7 @@
 import { draftLinksOutside } from './conversation.ts';
 import { marketplaceLineClaimsDone } from './marketplace-line.ts';
 
-export const QUARTER_SUMMARY_NOTE_MAX = 240;
+export const QUARTER_SUMMARY_NOTE_MAX = 140;
 // The fewest sentences that make a summary (when at least that many rows were asked).
 export const QUARTER_SUMMARY_NOTES_FLOOR = 3;
 
@@ -131,16 +131,24 @@ const NUMBER_UNIT_VI = /(?<![\p{L}])(?:năm|tư)\s+(?:chứng từ|hóa đơn|ph
 // A date, by name or by position in the calendar. Accented words are tested on the text as written, because folding turns "năm" (year) into the "nam" of "nằm" and "quý" (quarter) into the "quy" of "quy định".
 const DATES =
   /\b(?:today|tonight|yesterday|tomorrow|week|weeks|weekly|weekend|decade|year|years|annual|annually|yearly|quarter|quarterly|january|february|march|april|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec|monday|tuesday|wednesday|thursday|friday|saturday|sunday|hom\s+(?:nay|qua|kia)|ngay\s+(?:mai|mot|kia|hom)|tuan\s+(?:truoc|nay|sau|qua|toi)|thang\s+(?:mot|hai|ba|bon|tu|nam|sau|bay|tam|chin|muoi|gieng|chap)|thu\s+(?:hai|ba|tu|nam|sau|bay)|chu\s+nhat)\b/;
+// Month, week, day and season words: a sentence names a period only with the three fixed phrases. "thu" and "hạ" are left out of the Vietnamese list because "doanh thu" and "hạ" (lower) are ordinary words; "mùa" covers the seasons.
+const DATES_MORE_EN = /\b(?:months?|monthly|weeks?|weekly|days?|daily|seasons?|seasonal\w*|spring|summer|autumn|winter|mid-?year|(?:the|this|last|next)\s+fall|holidays?|festive|tet)\b/;
+const DATES_MORE_VI = /(?<![\p{L}])(?:tháng|tuần|ngày|mùa|xuân|giữa\s+năm|nửa\s+năm|nửa\s+đầu|nửa\s+cuối|dịp|lễ|tết)(?![\p{L}])/iu;
+// What can follow a period phrase and name another period ("quý trước nữa", "cùng kỳ năm trước đó", "the previous quarter before"): refused anywhere in the text once the three phrases are taken out.
+const PERIOD_CONTINUATION_EN = /\b(?:before|prior|earlier|ago|previous|previously|former|formerly|later|next|last|following|after|afterwards|since|until|till|then|beyond|onward\w*|further)\b/;
+const PERIOD_CONTINUATION_VI = /(?<![\p{L}])(?:nữa|đó|kia|trước|sau|nay|ngoái|sớm|muộn|tiếp|kế)(?![\p{L}])/iu;
+// Any English adverb in -ly is refused (a size or a speed the labels do not carry: "markedly", "notably", "rapidly"), "only" and "possibly" apart.
+const hasLyAdverb = (folded: string): boolean => (folded.match(/\b[a-z]+ly\b/g) ?? []).some((w) => w !== 'only' && w !== 'possibly');
 const DATES_VI = /(?<![\p{L}])(?:quý|năm\s+(?:ngoái|trước|nay|sau|rồi)|cả\s+năm|cuối\s+năm|đầu\s+năm|tháng\s+trước|tháng\s+này)(?![\p{L}])/iu;
 // Certainty: the sentence says what moved, not that it is sure of anything beyond it.
 const CERTAINTY =
   /\b(?:certain(?:ly)?|clear(?:ly)?|obvious(?:ly)?|definite(?:ly)?|undoubted(?:ly)?|evident(?:ly)?|sure(?:ly)?|guarantee[ds]?|proof|prove[ds]?|proven|confirm\w*|therefore|thus|hence|consequently|actually|in\s+fact|no\s+doubt|must\s+(?:be|have)|chac\s+chan|ro\s+rang|hien\s+nhien|tat\s+nhien|khang\s+dinh|xac\s+nhan|bang\s+chung|chung\s+to|dam\s+bao|vi\s+vay|thuc\s+ra|thuc\s+te|han\s+la|chac\s+han)\b/;
 // A cause: the model is told none, so any cause it gives is invented.
 const CAUSE_EN =
-  /\b(?:because|since|due(?=\s+to)|owing|thanks|driven|led|leading|resulting|as\s+a\s+result|reason|reasons|why|explain\w*|behind|caus\w*|result\s+of|results?\s+from|stem(?:s|med)?\s+from|attribut\w+|contribut\w+|boost\w*|hurt|helped|helping|fuel\w*|trigger\w*|follow(?:s|ed|ing)?\s+from)\b/;
-const CAUSE_VI = /(?<![\p{L}])(?:vì|do|bởi|nhờ|tại|dẫn đến|nguyên nhân|lý do|gây ra|ảnh hưởng|kéo theo|đóng góp|kết quả của)(?![\p{L}])/iu;
+  /\b(?:as|amid\w*|despite|given|demand\w*|on\s+account|because|since|due(?=\s+to)|owing|thanks|driven|led|leading|resulting|as\s+a\s+result|reason|reasons|why|explain\w*|behind|caus\w*|result\s+of|results?\s+from|stem(?:s|med)?\s+from|attribut\w+|contribut\w+|boost\w*|hurt|helped|helping|fuel\w*|trigger\w*|follow(?:s|ed|ing)?\s+from)\b/;
+const CAUSE_VI = /(?<![\p{L}])(?:khi|theo\s+mùa|mùa\s+vụ|vào\s+dịp|vì|do|bởi|nhờ|tại|dẫn đến|nguyên nhân|lý do|gây ra|ảnh hưởng|kéo theo|đóng góp|kết quả của)(?![\p{L}])/iu;
 // A promise, a timing or the future tense.
-const FUTURE = /\b(?:will|shall|going\s+to|soon|shortly|already|se\b|sap\b|chac\s+se|hen\b)/;
+const FUTURE = /\b(?:set\s+to|expect\w*|likely|poised|on\s+track|forecast\w*|project(?:ed|ion)\w*|anticipat\w*|predict\w*|du\s+kien|du\s+bao|ky\s+vong|will|shall|going\s+to|soon|shortly|already|se\b|sap\b|chac\s+se|hen\b)/;
 // Advice or an order: the sentence says what moved, not what to do.
 const ADVICE_EN =
   /\b(?:should|must|need\s+to|needs\s+to|ought|recommend\w*|advise\w*|suggest\w*|please|make\s+sure|check\w*|review\w*|consider\w*|look\s+into|verif\w*|contact\w*|follow\s+up|investigat\w*|try|trying|reach\s+out|talk\s+to|speak\s+to|double.?check|worth|ask\w*|watch|keep\s+an\s+eye|monitor\w*)\b/;
@@ -148,12 +156,12 @@ const ADVICE_EN =
 const ADVICE_VI =
   /(?<![\p{L}])(?:hãy|khuyên|đề nghị|kiểm tra|xem lại|rà soát|thử|liên hệ|xác minh|điều tra|theo dõi|trao đổi|hỏi|gọi|nhắc|cần\s+phải)(?![\p{L}])|(?<![\p{L}])cần(?![\p{L}])(?!\s+thiết)|(?<!trở\s)(?<![\p{L}])nên(?![\p{L}])/iu;
 // Advice to move money, in any form: the card never tells the owner what to do with it.
-const MONEY_ADVICE_EN = /\b(?:move|moving|transfer\w*|pay|paying|paid|withdraw\w*|deposit\w*|invest\w*|borrow\w*|lend\w*|loan\w*|save|saving|savings|spend\w*|cut|cutting|collect\w*|chase|chasing|reclaim\w*|settle\w*|reduce\w*)\b/;
-const MONEY_ADVICE_VI = /(?<![\p{L}])(?:chuyển|rút|gửi|đầu tư|vay|cắt giảm|tiết kiệm|thu hồi|đòi|chi tiêu)(?![\p{L}])|(?<!phải\s)(?<![\p{L}])trả(?![\p{L}])/iu;
+const MONEY_ADVICE_EN = /\b(?:shift\w*|put|push\w*|park\w*|allocat\w*|redirect\w*|divert\w*|sweep\w*|stash\w*|set\s+aside|top\s+up|route|routing|fund\w*|move|moving|transfer\w*|pay|paying|paid|withdraw\w*|deposit\w*|invest\w*|borrow\w*|lend\w*|loan\w*|save|saving|savings|spend\w*|cut|cutting|collect\w*|chase|chasing|reclaim\w*|settle\w*|reduce\w*)\b/;
+const MONEY_ADVICE_VI = /(?<![\p{L}])(?:dồn|đổ|bơm|điều\s+chuyển|chuyển|rút|gửi|đầu tư|vay|cắt giảm|tiết kiệm|thu hồi|đòi|chi tiêu)(?![\p{L}])|(?<!phải\s)(?<![\p{L}])trả(?![\p{L}])/iu;
 // A size the labels do not carry: the sentence says it moved, never by how much or how fast.
 const MAGNITUDE_EN =
   /\b(?:sharp\w*|slight\w*|strong\w*|steep\w*|big|huge|large\w*|massive|major|minor|modest\w*|marginal\w*|significant\w*|substantial\w*|dramatic\w*|considerabl\w*|a\s+lot|much|many|little|slow\w*|fast|rapid\w*|quick\w*|soar\w*|plung\w*|plummet\w*|collaps\w*|skyrocket\w*|tumbl\w*|doubl\w*)\b/;
-const MAGNITUDE_VI = /(?<![\p{L}])(?:mạnh|nhẹ|đáng kể|nhiều|ít|rất|hơi|khá|đột biến|đột ngột|vọt|sụt|chậm|nhanh)(?![\p{L}])/iu;
+const MAGNITUDE_VI = /(?<![\p{L}])(?:mạnh|nhẹ|đáng kể|nhiều|ít|rất|hơi|khá|vượt\s+bậc|hẳn|ồ\s+ạt|rõ\s+rệt|chóng\s+mặt|đột\s+phá|đột biến|đột ngột|vọt|sụt|chậm|nhanh)(?![\p{L}])/iu;
 // A word that says up, one that says down, one that says steady and one that says new. The accented ones are tested on the text as written: folded, "tặng" (gift) reads as "tăng" (rise).
 const SAYS_UP =
   /\b(?:more|extra|additional|larger|bigger|greater|spike[ds]?|hike[ds]?|nhieu\s+(?:\w+\s+){0,2}hon|phat\s+sinh|bo\s+sung|lon\s+hon|went\s+up|goes\s+up|go\s+up|going\s+up|up\s+by|rose|rise|rises|rising|increase[ds]?|increasing|higher|grew|grow|growing|jump(?:ed)?|surge[ds]?|cao\s+hon|(?:was|were|is|are)\s+up|climb\w*|gain\w*|improv\w*|expand\w*|advanc\w*|upward\w*|stronger|better|swell\w*|growth|up)\b/;
@@ -224,7 +232,8 @@ export function checkQuarterSummaryNotes(facts: QuarterSummaryNoteFacts, output:
     if (DATES.test(folded) || DATES_VI.test(base) || CERTAINTY.test(folded) || FUTURE.test(folded)) continue;
     if (CAUSE_EN.test(folded) || CAUSE_VI.test(base)) continue;
     if (ADVICE_EN.test(folded) || ADVICE_VI.test(base) || MONEY_ADVICE_EN.test(folded) || MONEY_ADVICE_VI.test(base)) continue;
-    if (MAGNITUDE_EN.test(folded) || MAGNITUDE_VI.test(base)) continue;
+    if (MAGNITUDE_EN.test(folded) || MAGNITUDE_VI.test(base) || hasLyAdverb(folded)) continue;
+    if (DATES_MORE_EN.test(folded) || DATES_MORE_VI.test(base) || PERIOD_CONTINUATION_EN.test(folded.replace(/\bbefore\s+tax\b/g, ' ')) || PERIOD_CONTINUATION_VI.test(base.replace(/trước\s+thuế/giu, ' '))) continue;
     // A negation is refused: the sentence says what moved, never what did not.
     if (NEGATION_EN.test(folded) || NEGATION_VI.test(base.replace(/không\s+đổi/giu, ' '))) continue;
     // The direction must be one the row has, and each direction word is held to the basis it is said against: "rose against the previous quarter and the same quarter last year" is checked against both

@@ -322,7 +322,9 @@ suite('the quarter in plain words (#5183)', () => {
     const rows = await rt.query<StockReportRow[]>('finance.stock.report', { month: '2026-09', legalEntityId: stockEntity }, { actor: asUser(owner), orgId });
     const total = sum(rows.map((r) => r.closingValue)).toFixed();
     expect(figure(kept, 'stock')).toMatchObject({ amount: total, lastYear: null, vsLastYear: 'none' });
-    expect(kept.stockProvisional).toBe(rows.some((r) => !r.closed));
+    // Provisional when the quarter's own value or the previous quarter's one it is compared with is.
+    const before = await rt.query<StockReportRow[]>('finance.stock.report', { month: '2026-06', legalEntityId: stockEntity }, { actor: asUser(owner), orgId });
+    expect(kept.stockProvisional).toBe(rows.some((r) => !r.closed) || before.some((r) => !r.closed));
   });
 
   it('gives a household its revenue and its tax from the 01/CNKD worksheet, with no VAT row and no costs row', async () => {

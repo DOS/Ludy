@@ -185,7 +185,8 @@ export async function financeQuarterSummary(ctx: QueryContext, input: { quarter:
     overdue: { ...overdue, truncated },
     vat: household ? null : await vatOf(ctx, entity, period.period),
     householdTax: household ? await householdTaxOf(ctx, entity, period) : null,
-    stockProvisional: stockNow ? stockNow.provisional : null,
+    // Provisional when either value is: the quarter's own or the previous quarter's one it is compared with.
+    stockProvisional: stockNow ? stockNow.provisional || (stockBefore?.provisional ?? false) : null,
     lock: { state: lockStateOf(lock.lockedThrough, period.from, period.to), lockedThrough: lock.lockedThrough },
   };
   // The answer is held to the contract before it leaves.
