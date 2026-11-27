@@ -1178,7 +1178,11 @@ export async function runMeetingFollowupNote(
     try {
       started = await deps.runtime.execute<{ meetingId: string; runId: string; stage: 'published' | 'draft' }>(
         'meetings.followup.note_start',
-        { meetingId: input.meetingId, ...(input.stage ? { stage: input.stage } : {}) },
+        {
+          meetingId: input.meetingId,
+          ...(input.stage ? { stage: input.stage } : {}),
+          ...(input.versionLanguage ? { versionLanguage: input.versionLanguage } : {}),
+        },
         as,
       );
     } catch (error: unknown) {
@@ -1204,7 +1208,11 @@ export async function runMeetingFollowupNote(
     try {
       const draft = await deps.runtime.query<FollowupDraft>(
         'meetings.followup.draft',
-        { meetingId: input.meetingId, stage: started.stage },
+        {
+          meetingId: input.meetingId,
+          stage: started.stage,
+          ...(input.versionLanguage ? { versionLanguage: input.versionLanguage } : {}),
+        },
         as,
       );
       const bound = bindPorts({ orgId, memberUserId: actor.userId }, { model, memory: nothingToRemember, knowledge: noKnowledge });

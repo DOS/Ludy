@@ -31,6 +31,7 @@ import {
   zFollowupNoteStatus,
   zFollowupSend,
   zMeetingRef,
+  zMinutesVersionSegments,
   type FollowupDraft,
   type FollowupFacts,
   type FollowupMail,
@@ -87,6 +88,10 @@ const staleFollowup = () =>
   new DomainError('STALE_FOLLOWUP', 409, 'Tóm tắt của cuộc họp đã thay đổi từ lúc bạn mở bản nháp; hãy mở lại bản nháp để xem nội dung mới');
 const draftNotReviewed = () =>
   new DomainError('DRAFT_NOT_REVIEWED', 409, 'Hãy đọc và xác nhận bản nháp Vy viết trước khi soạn thư cảm ơn');
+const versionNotFound = () =>
+  new DomainError('MINUTES_VERSION_NOT_FOUND', 404, 'Chưa có bản dịch biên bản được đăng cho ngôn ngữ này');
+const versionStageError = () =>
+  new DomainError('MINUTES_VERSION_STAGE', 422, 'Bản dịch chỉ dùng được với biên bản đã chia sẻ, không dùng cho bản nháp');
 
 export interface Published {
   facts: FollowupFacts;
@@ -95,9 +100,28 @@ export interface Published {
 
 export interface StageFacts extends Published {
   stage: FollowupStage;
+  lang: Lang;
 }
 
-async function stageFacts(trx: Trx, orgId: string, meetingId: string, stage: FollowupStage): Promise<StageFacts | null> {
+async function listAvailableVersions(trx: Trx, orgId: string, meetingId: string, originalLang: Lang): Promise<Lang[]> {
+  const rows = await trx
+    .selectFrom('ludy_meetings.minutes_version')
+    .select('language')
+    .where('org_id', '=', orgId)
+    .where('meeting_id', '=', meetingId)
+    .where('language', 'in', ['vi', 'en'])
+    .orderBy('language')
+    .execute();
+  return rows.map((r) => r.language).filter((l): l is Lang => (l === 'vi' || l === 'en') && l !== originalLang);
+}
+
+async function stageFacts(
+  trx: Trx,
+  orgId: string,
+  meetingId: string,
+  stage: FollowupStage,
+  opts?: { versionLanguage?: Lang | undefined; originalLang?: Lang | undefined; missingVersionAsStale?: boolean | undefined },
+): Promise<StageFacts | null> {
   const result = await trx
     .selectFrom('ludy_meetings.meeting_result')
     .select(['id', 'summary', 'decisions', 'updated_at', 'tainted'])
@@ -119,14 +143,52 @@ async function stageFacts(trx: Trx, orgId: string, meetingId: string, stage: Fol
   if (stage === 'draft' && (result?.tainted === true || items.some((i) => i.status === 'suggested' && i.tainted === true))) {
     throw draftNotReviewed();
   }
-  const facts: FollowupFacts = {
-    summary: result?.summary ?? '',
-    decisions: Array.isArray(result?.decisions) ? (result.decisions as unknown[]).filter((d): d is string => typeof d === 'string') : [],
-    items: items.map((i) => ({ title: i.title, who: i.who_drafted ?? '', when: i.when_drafted ?? '' })),
-  };
+  const originalLang: Lang = opts?.originalLang ?? 'vi';
+  if (opts?.versionLanguage !== undefined && stage !== 'published') {
+    throw versionStageError();
+  }
   const stamp = result ? `${result.id}:${new Date(result.updated_at).toISOString()}` : 'items-only';
   const itemStamps = items.map((i) => `${i.id}:${new Date(i.updated_at).toISOString()}`);
-  return { stage, facts, key: sha256Hex(JSON.stringify([stage, stamp, facts, itemStamps])) };
+  const rawDecisions = Array.isArray(result?.decisions) ? (result.decisions as unknown[]) : [];
+  if (opts?.versionLanguage !== undefined && opts.versionLanguage !== originalLang) {
+    const version = await trx
+      .selectFrom('ludy_meetings.minutes_version')
+      .select(['id', 'language', 'source_hash', 'published_at', 'body'])
+      .where('org_id', '=', orgId)
+      .where('meeting_id', '=', meetingId)
+      .where('language', '=', opts.versionLanguage)
+      .executeTakeFirst();
+    if (!version) {
+      if (opts.missingVersionAsStale) throw staleFollowup();
+      throw versionNotFound();
+    }
+    const parsedSegments = zMinutesVersionSegments.parse(version.body);
+    const byKey = new Map(parsedSegments.map((s) => [s.key, s.text]));
+    const facts: FollowupFacts = {
+      summary: byKey.get('summary') ?? '',
+      decisions: rawDecisions.flatMap((_, idx) => {
+        const text = byKey.get(`decision:${idx}`);
+        return typeof text === 'string' && text.trim() !== '' ? [text] : [];
+      }),
+      items: items.flatMap((i) => {
+        const title = byKey.get(`item:${i.id}`);
+        return title !== undefined && title.trim() !== '' ? [{ title, who: i.who_drafted ?? '', when: i.when_drafted ?? '' }] : [];
+      }),
+    };
+    const versionStamp = [version.language, version.source_hash, new Date(version.published_at).toISOString(), version.id];
+    return {
+      stage,
+      lang: version.language === 'en' ? 'en' : 'vi',
+      facts,
+      key: sha256Hex(JSON.stringify([stage, stamp, facts, itemStamps, versionStamp])),
+    };
+  }
+  const facts: FollowupFacts = {
+    summary: result?.summary ?? '',
+    decisions: rawDecisions.filter((d): d is string => typeof d === 'string'),
+    items: items.map((i) => ({ title: i.title, who: i.who_drafted ?? '', when: i.when_drafted ?? '' })),
+  };
+  return { stage, lang: originalLang, facts, key: sha256Hex(JSON.stringify([stage, stamp, facts, itemStamps])) };
 }
 
 async function stageAvailable(trx: Trx, orgId: string, meetingId: string, stage: FollowupStage): Promise<boolean> {
@@ -149,20 +211,30 @@ async function stageAvailable(trx: Trx, orgId: string, meetingId: string, stage:
   return true;
 }
 
-async function resolveStageFacts(trx: Trx, orgId: string, meetingId: string, requested?: FollowupStage): Promise<StageFacts> {
+async function resolveStageFacts(
+  trx: Trx,
+  orgId: string,
+  meetingId: string,
+  requested?: FollowupStage | undefined,
+  versionLanguage?: Lang | undefined,
+  originalLang: Lang = 'vi',
+): Promise<StageFacts> {
   if (requested === 'published') {
-    const pub = await stageFacts(trx, orgId, meetingId, 'published');
+    const pub = await stageFacts(trx, orgId, meetingId, 'published', { versionLanguage, originalLang });
     if (!pub) throw noSummary();
     return pub;
   }
   if (requested === 'draft') {
-    const draft = await stageFacts(trx, orgId, meetingId, 'draft');
+    if (versionLanguage !== undefined) throw versionStageError();
+    const draft = await stageFacts(trx, orgId, meetingId, 'draft', { originalLang });
     if (!draft) throw noDraft();
     return draft;
   }
-  const pub = await stageFacts(trx, orgId, meetingId, 'published');
+  const pub = await stageFacts(trx, orgId, meetingId, 'published', { versionLanguage, originalLang });
   if (pub) return pub;
-  const draft = await stageFacts(trx, orgId, meetingId, 'draft');
+  // Published minutes_version never falls back silently to an unpublished draft.
+  if (versionLanguage !== undefined) throw noSummary();
+  const draft = await stageFacts(trx, orgId, meetingId, 'draft', { originalLang });
   if (draft) return draft;
   throw noSummary();
 }
@@ -292,10 +364,12 @@ export const followupDraft = defineQuery({
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can write its follow-up');
-    const resolved = await resolveStageFacts(ctx.trx, ctx.orgId, input.meetingId, input.stage);
+    const { lang: originalLang, day } = await meetingFacts(ctx.trx, ctx.orgId, input.meetingId);
+    const resolved = await resolveStageFacts(ctx.trx, ctx.orgId, input.meetingId, input.stage, input.versionLanguage, originalLang);
     const hasPublished = resolved.stage === 'published' ? true : await stageAvailable(ctx.trx, ctx.orgId, input.meetingId, 'published');
     const hasDraft = resolved.stage === 'draft' ? true : await stageAvailable(ctx.trx, ctx.orgId, input.meetingId, 'draft');
-    const { lang, day } = await meetingFacts(ctx.trx, ctx.orgId, input.meetingId);
+    const availableVersions = await listAvailableVersions(ctx.trx, ctx.orgId, input.meetingId, originalLang);
+    const lang = resolved.lang;
     const suggested = (await candidates(ctx.trx, ctx.orgId, input.meetingId, userId, resolved.stage)).slice(0, FOLLOWUP_RECIPIENTS_MAX);
     const sent = await alreadySentTo(ctx, input.meetingId, suggested.map((c) => c.email));
     const recipients: FollowupRecipient[] = suggested.map((c) => ({ kind: c.kind, id: c.id, name: c.name, email: c.email, alreadySent: sent.has(c.email) }));
@@ -306,6 +380,7 @@ export const followupDraft = defineQuery({
       stage: resolved.stage,
       hasPublished,
       hasDraft,
+      availableVersions,
       factsKey: resolved.key,
       facts: resolved.facts,
       words: followupFixedWords(lang, day),
@@ -342,13 +417,14 @@ export const followupNoteStart = defineCommand({
     if (!isSummaryEnabled()) throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here');
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can ask Vy for a follow-up note');
-    const resolved = await resolveStageFacts(ctx.trx, ctx.orgId, input.meetingId, input.stage);
+    const { lang: originalLang } = await meetingFacts(ctx.trx, ctx.orgId, input.meetingId);
+    const resolved = await resolveStageFacts(ctx.trx, ctx.orgId, input.meetingId, input.stage, input.versionLanguage, originalLang);
     const started = await ctx.run<{ runId: string }>('kernel.member_vy.run.start', {
       feature: FOLLOWUP_NOTE_FEATURE,
       subjectType: 'meeting',
       subjectId: input.meetingId,
     });
-    ctx.audit({ meetingId: input.meetingId, runId: started.runId, stage: resolved.stage });
+    ctx.audit({ meetingId: input.meetingId, runId: started.runId, stage: resolved.stage, ...(input.versionLanguage ? { versionLanguage: input.versionLanguage } : {}) });
     return zFollowupNoteStarted.parse({ meetingId: input.meetingId, runId: started.runId, stage: resolved.stage });
   },
 });
@@ -370,14 +446,20 @@ export const followupSend = defineCommand({
     await lockFollowup(ctx, input.meetingId);
 
     // The facts are rebuilt from the chosen stage now; the recorder reviewed another version when the key differs (or when a draft was published since).
+    if (input.versionLanguage !== undefined && input.stage !== 'published') throw versionStageError();
+    const { lang: originalLang } = await meetingFacts(ctx.trx, ctx.orgId, input.meetingId);
     let loaded: StageFacts | null;
     if (input.stage === 'published') {
-      loaded = await stageFacts(ctx.trx, ctx.orgId, input.meetingId, 'published');
+      loaded = await stageFacts(ctx.trx, ctx.orgId, input.meetingId, 'published', {
+        versionLanguage: input.versionLanguage,
+        originalLang,
+        missingVersionAsStale: true,
+      });
       if (!loaded) throw noSummary();
     } else {
-      loaded = await stageFacts(ctx.trx, ctx.orgId, input.meetingId, 'draft');
+      loaded = await stageFacts(ctx.trx, ctx.orgId, input.meetingId, 'draft', { originalLang });
       if (!loaded) {
-        const pub = await stageFacts(ctx.trx, ctx.orgId, input.meetingId, 'published');
+        const pub = await stageFacts(ctx.trx, ctx.orgId, input.meetingId, 'published', { originalLang });
         if (pub) throw staleFollowup();
         throw noDraft();
       }
@@ -394,7 +476,7 @@ export const followupSend = defineCommand({
     const subjectProblem = followupSubjectProblem(subject);
     if (subjectProblem) throw invalidText('subject', subjectProblem);
 
-    const { lang } = await meetingFacts(ctx.trx, ctx.orgId, input.meetingId);
+    const lang = loaded.lang;
     const org = await orgName(ctx.trx, ctx.orgId);
     const batchId = randomUUID();
     let payload: FollowupMail;
@@ -477,6 +559,7 @@ export const followupSend = defineCommand({
       fromVy: input.fromVy,
       style: input.style,
       stage: input.stage,
+      ...(input.versionLanguage ? { versionLanguage: input.versionLanguage } : {}),
     });
     return { meetingId: input.meetingId, batchId, queued, suppressed };
   },

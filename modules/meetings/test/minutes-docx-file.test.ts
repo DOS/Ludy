@@ -165,6 +165,61 @@ describe('the .docx', () => {
     expect(xml).toContain('&lt;w:p&gt;&amp;amp;&lt;/w:p&gt; &quot;quoted&quot; &apos;single&apos; nulbelloverridezerolone');
     for (const bad of ['\u0000', '\u0007', '\u202e', '\u200b', '\ud800']) expect(xml).not.toContain(bad);
   });
+
+  it('localizes chrome and styles language when rendered in English (#5225)', () => {
+    const enDoc = doc({
+      language: 'en',
+      company: 'Acme Ltd',
+      title: 'Weekly sync',
+      place: 'Room 301',
+      attendees: ['Alice', 'Bob'],
+      sections: [{ heading: null, text: 'Agreed on Q1 budget.' }],
+      conclusions: ['Approve Q1 budget'],
+      actions: [{ title: 'Send contract', owner: 'Bob', due: '14/11/2026' }],
+    });
+    const bytes = buildMinutesDocx(enDoc);
+    const parts = unzip(bytes);
+    for (const xml of parts.values()) assertWellFormed(xml);
+    expect(parts.get('word/styles.xml')).toContain('w:val="en-US"');
+    expect(parts.get('word/styles.xml')).toContain('w:eastAsia="en-US"');
+    const text = [...(parts.get('word/document.xml') ?? '').matchAll(/<w:t xml:space="preserve">([^<]*)<\/w:t>/gu)].map((m) => m[1]);
+    expect(text).toEqual([
+      'ACME LTD',
+      'MEETING MINUTES',
+      'Re: Weekly sync',
+      'Time: ',
+      'From 09:00 to 10:30, 24/11/2026',
+      'Place: ',
+      'Room 301',
+      'Attendees:',
+      '• Alice (Minute taker)',
+      '• Bob',
+      'I. MEETING SUMMARY',
+      'Agreed on Q1 budget.',
+      'II. DECISIONS',
+      '• Approve Q1 budget',
+      'III. ACTION ITEMS',
+      '#',
+      'Task',
+      'Assignee',
+      'Due date',
+      '1',
+      'Send contract',
+      'Bob',
+      '14/11/2026',
+      'MINUTE TAKER',
+      '(Signature and full name)',
+      'CHAIR OF THE MEETING',
+      '(Signature and full name)',
+    ]);
+
+    const emptyEn = documentXml(doc({ language: 'en', to: null, place: '', sections: [], conclusions: [], actions: [] }));
+    assertWellFormed(emptyEn);
+    expect(emptyEn).toContain('From 09:00, 24/11/2026');
+    expect(emptyEn).toContain('No content has been shared yet.');
+    expect(emptyEn).toContain('No decisions were recorded.');
+    expect(emptyEn).toContain('No action items were assigned.');
+  });
 });
 
 describe('text helpers', () => {
@@ -207,5 +262,12 @@ describe('minutesFilename', () => {
       expect(filename).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u);
       expect(zMinutesDocx.safeParse({ filename, mimeType: MINUTES_DOCX_MIME, bytes: 1, contentBase64: 'AA==' }).success, title.slice(0, 8)).toBe(true);
     }
+  });
+
+  it('names English downloads cleanly and bounds length', () => {
+    expect(minutesFilename('Weekly sync', '2026-11-24', 'en')).toBe('Meeting minutes - Weekly sync - 2026-11-24.docx');
+    expect(minutesFilename('///', '2026-11-24', 'en')).toBe('Meeting minutes - meeting - 2026-11-24.docx');
+    const longEn = minutesFilename('Sync '.repeat(80), '2026-11-24', 'en');
+    expect(zMinutesDocx.safeParse({ filename: longEn, mimeType: MINUTES_DOCX_MIME, bytes: 1, contentBase64: 'AA==' }).success).toBe(true);
   });
 });

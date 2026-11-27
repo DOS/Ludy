@@ -9,6 +9,7 @@ import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AiMeter } from '@ludy/agent';
 import type { ModelPort } from '@ludy/agent/member-vy';
+import type { TranslationSource } from '@ludy/kernel-contract';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
@@ -263,5 +264,48 @@ suite('the recorder\'s Vy personal-note follow-up route (#4292)', () => {
     const rows = await runs(meetingId);
     expect(rows).toHaveLength(1);
     expect(JSON.parse(rows[0]?.body ?? 'null')).toEqual({ v: 1, style: 'personal_note', paragraphs: 0, bullets: 0, dropped: 1 });
+  });
+
+  it('drafts an English personal note using published minutes_version when versionLanguage is set, and fails closed when missing or draft (#5225)', async () => {
+    const meetingId = await seedMeeting({ publish: true });
+    // Missing version fails before starting run or calling model.
+    expect(
+      await refuses(runMeetingFollowupNote(deps(), orgId, asUser('recorder'), { meetingId, stage: 'published', versionLanguage: 'en' })),
+    ).toBe('MINUTES_VERSION_NOT_FOUND');
+    expect(
+      await refuses(runMeetingFollowupNote(deps(), orgId, asUser('recorder'), { meetingId, stage: 'draft', versionLanguage: 'en' })),
+    ).toBe('MINUTES_VERSION_STAGE');
+    expect(modelCalls).toBe(0);
+
+    const src = await runtime.query<TranslationSource>(
+      'meetings.translation.source',
+      { meetingId, stage: 'published', to: 'en' },
+      { actor: asUser('recorder'), orgId },
+    );
+    const itemSeg = src.segments.find((s) => s.key.startsWith('item:'));
+    await exec('recorder', 'meetings.minutes_version.publish', {
+      meetingId,
+      language: 'en',
+      hash: src.hash,
+      segments: [
+        { key: 'summary', text: 'Agreed on 2 weeks trial at Binh Minh workshop.' },
+        { key: 'decision:0', text: 'Keep schedule' },
+        ...(itemSeg ? [{ key: itemSeg.key, text: 'Send rollout schedule' }] : []),
+      ],
+    });
+
+    const enNote =
+      'Hello An,\n\nThank you for discussing the 2 weeks trial at Binh Minh workshop.\n- Send rollout schedule by Friday\n\nPlease reply if anything needs adjusting.';
+    const out = await runMeetingFollowupNote(
+      deps({ model: fakeModel(JSON.stringify({ body: enNote })) }),
+      orgId,
+      asUser('recorder'),
+      { meetingId, stage: 'published', versionLanguage: 'en', hint: 'Warm and concise' },
+    );
+    expect(out).toEqual({ ai: 'used', errorCode: null, note: enNote, dropped: 0 });
+    expect(modelCalls).toBe(1);
+    expect(lastPrompt?.system).toContain('Write in English.');
+    expect(lastPrompt?.user).toContain('Language: English');
+    expect(lastPrompt?.user).toContain('Binh Minh workshop');
   });
 });

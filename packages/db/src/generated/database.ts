@@ -142,6 +142,9 @@ export interface LudyHrSchema {
   'ludy_hr.payroll_run': HrPayrollRunTable;
   'ludy_hr.probation_review': HrProbationReviewTable;
   'ludy_hr.salary_advance_request': HrSalaryAdvanceRequestTable;
+  'ludy_hr.shift_assignment': HrShiftAssignmentTable;
+  'ludy_hr.shift_swap_request': HrShiftSwapRequestTable;
+  'ludy_hr.shift_template': HrShiftTemplateTable;
 }
 
 export interface LudyKernelSchema {
@@ -2523,6 +2526,61 @@ export interface HrSalaryAdvanceRequestTable {
   final_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   decision_note: string | null;
   payroll_run_id: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.shift_assignment */
+export interface HrShiftAssignmentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: string;
+  department_id: string | null;
+  shift_template_id: string;
+  work_date: ColumnType<string, string, NotGranted>;
+  note: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.shift_swap_request */
+export interface HrShiftSwapRequestTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  requester_employee_id: ColumnType<string, string, NotGranted>;
+  target_employee_id: ColumnType<string, string, NotGranted>;
+  requester_assignment_id: ColumnType<string, string, NotGranted>;
+  target_assignment_id: ColumnType<string | null, string | null, NotGranted>;
+  department_id: ColumnType<string | null, string | null, NotGranted>;
+  work_date: ColumnType<string, string, NotGranted>;
+  reason: string | null;
+  status: Generated<string>;
+  decided_by: string | null;
+  decided_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  decision_note: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.shift_template */
+export interface HrShiftTemplateTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  code: string;
+  name: string;
+  start_minute: number;
+  end_minute: number;
+  break_minutes: Generated<number>;
+  grace_late_minutes: Generated<number>;
+  grace_early_minutes: Generated<number>;
+  crosses_midnight: Generated<boolean>;
+  archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;

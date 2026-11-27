@@ -926,7 +926,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
 
   it('(org export, #2676) streams the payroll tables to the owner with no plain number and no sealed text, and audits each read before it', async () => {
     const o = await exportOrg(true);
-    expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.department', 'hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent', 'hr.payroll_run', 'hr.payroll_line', 'hr.payroll_bank_template', 'hr.payroll_leave_entry', 'hr.leave_request', 'hr.attendance_log', 'hr.onboarding_submission', 'hr.overtime_request', 'hr.probation_review', 'hr.salary_advance_request', 'hr.payroll_adjustment_item', 'hr.business_trip_request', 'hr.contract_addendum', 'hr.employee_asset_handover', 'hr.okr_objective', 'hr.okr_key_result', 'hr.job_opening', 'hr.candidate', 'hr.candidate_stage_transition', 'meetings.glossary_term']);
+    expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.department', 'hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent', 'hr.payroll_run', 'hr.payroll_line', 'hr.payroll_bank_template', 'hr.payroll_leave_entry', 'hr.leave_request', 'hr.attendance_log', 'hr.onboarding_submission', 'hr.overtime_request', 'hr.probation_review', 'hr.salary_advance_request', 'hr.payroll_adjustment_item', 'hr.business_trip_request', 'hr.contract_addendum', 'hr.employee_asset_handover', 'hr.okr_objective', 'hr.okr_key_result', 'hr.shift_template', 'hr.shift_assignment', 'hr.shift_swap_request', 'hr.job_opening', 'hr.candidate', 'hr.candidate_stage_transition', 'meetings.glossary_term']);
     // No department, bank template, leave request, Stage 5B/5C/6B/6C/6D data, or recruiting data was saved in this org: those tables are served, and empty.
     const departments = await read(rt, 'hr.department', asUser(o.owner), o.orgId);
     const employees = await read(rt, 'hr.payroll_employee', asUser(o.owner), o.orgId);
@@ -948,11 +948,14 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const assetHandovers = await read(rt, 'hr.employee_asset_handover', asUser(o.owner), o.orgId);
     const okrObjectives = await read(rt, 'hr.okr_objective', asUser(o.owner), o.orgId);
     const okrKeyResults = await read(rt, 'hr.okr_key_result', asUser(o.owner), o.orgId);
+    const shiftTemplates = await read(rt, 'hr.shift_template', asUser(o.owner), o.orgId);
+    const shiftAssignments = await read(rt, 'hr.shift_assignment', asUser(o.owner), o.orgId);
+    const shiftSwapRequests = await read(rt, 'hr.shift_swap_request', asUser(o.owner), o.orgId);
     const openings = await read(rt, 'hr.job_opening', asUser(o.owner), o.orgId);
     const candidates = await read(rt, 'hr.candidate', asUser(o.owner), o.orgId);
     const candidateTransitions = await read(rt, 'hr.candidate_stage_transition', asUser(o.owner), o.orgId);
     const glossary = await read(rt, 'meetings.glossary_term', asUser(o.owner), o.orgId);
-    expect([departments.length, employees.length, employments.length, dependents.length, runs.length, lines.length, templates.length, leaveEntries.length, leaveRequests.length, attendanceLogs.length, onboardingSubmissions.length, overtimeRequests.length, probationReviews.length, salaryAdvanceRequests.length, payrollAdjustmentItems.length, businessTripRequests.length, contractAddendums.length, assetHandovers.length, okrObjectives.length, okrKeyResults.length, openings.length, candidates.length, candidateTransitions.length, glossary.length]).toEqual([0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect([departments.length, employees.length, employments.length, dependents.length, runs.length, lines.length, templates.length, leaveEntries.length, leaveRequests.length, attendanceLogs.length, onboardingSubmissions.length, overtimeRequests.length, probationReviews.length, salaryAdvanceRequests.length, payrollAdjustmentItems.length, businessTripRequests.length, contractAddendums.length, assetHandovers.length, okrObjectives.length, okrKeyResults.length, shiftTemplates.length, shiftAssignments.length, shiftSwapRequests.length, openings.length, candidates.length, candidateTransitions.length, glossary.length]).toEqual([0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     expect(runs[0]).toMatchObject({ month: '2026-06', status: 'draft' });
     expect(lines[0]).toMatchObject({ kind: 'pay', employee_id: employees[0]?.id });
     expect(employees[0]).toMatchObject({ display_name: EXPORT_NAME });
@@ -1039,7 +1042,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       const text = await ok.text();
       const all = text.trim().split('\n').map((l) => JSON.parse(l) as { org_id: string; _end?: boolean; rows?: number });
       // The last line says how many rows came before it, so a cut download cannot look whole.
-      const expected = table === 'hr.payroll_bank_template' || table === 'hr.department' || table === 'hr.job_opening' || table === 'hr.candidate' || table === 'hr.candidate_stage_transition' || table === 'hr.leave_request' || table === 'hr.attendance_log' || table === 'hr.onboarding_submission' || table === 'hr.overtime_request' || table === 'hr.probation_review' || table === 'hr.salary_advance_request' || table === 'hr.payroll_adjustment_item' || table === 'hr.business_trip_request' || table === 'hr.contract_addendum' || table === 'hr.employee_asset_handover' || table === 'hr.okr_objective' || table === 'hr.okr_key_result' || table === 'meetings.glossary_term' ? 0 : 1;
+      const expected = table === 'hr.payroll_bank_template' || table === 'hr.department' || table === 'hr.job_opening' || table === 'hr.candidate' || table === 'hr.candidate_stage_transition' || table === 'hr.leave_request' || table === 'hr.attendance_log' || table === 'hr.onboarding_submission' || table === 'hr.overtime_request' || table === 'hr.probation_review' || table === 'hr.salary_advance_request' || table === 'hr.payroll_adjustment_item' || table === 'hr.business_trip_request' || table === 'hr.contract_addendum' || table === 'hr.employee_asset_handover' || table === 'hr.okr_objective' || table === 'hr.okr_key_result' || table === 'hr.shift_template' || table === 'hr.shift_assignment' || table === 'hr.shift_swap_request' || table === 'meetings.glossary_term' ? 0 : 1;
       expect(all.at(-1), table).toEqual({ _end: true, rows: expected });
       const rows = all.slice(0, -1);
       expect(rows.length, table).toBe(expected);
@@ -1334,6 +1337,9 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       payroll_run: ['INSERT', 'SELECT'],
       probation_review: ['INSERT', 'SELECT'],
       salary_advance_request: ['INSERT', 'SELECT'],
+      shift_assignment: ['DELETE', 'INSERT', 'SELECT'],
+      shift_swap_request: ['INSERT', 'SELECT'],
+      shift_template: ['INSERT', 'SELECT'],
     };
     const TENANT_ROLES = ['ludy_app', 'ludy_definer_tenant', 'ludy_tenant', 'ludy_worker'];
     const ALL_OPS = ['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE'];

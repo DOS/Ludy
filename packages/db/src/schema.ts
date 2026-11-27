@@ -1445,6 +1445,30 @@ export type HrPayrollLineTable = Refine<
   G.HrPayrollLineTable,
   { kind: ColumnType<(typeof HR_LINE_KINDS)[number], (typeof HR_LINE_KINDS)[number] | undefined, never>; status: Generated<(typeof HR_LINE_STATUSES)[number]> }
 >;
+export const HR_SHIFT_SWAP_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const;
+export type HrShiftSwapStatus = (typeof HR_SHIFT_SWAP_STATUSES)[number];
+export type HrShiftTemplateTable = Refine<
+  G.HrShiftTemplateTable,
+  {
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export type HrShiftAssignmentTable = Refine<
+  G.HrShiftAssignmentTable,
+  {
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export type HrShiftSwapRequestTable = Refine<
+  G.HrShiftSwapRequestTable,
+  {
+    status: Generated<HrShiftSwapStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
 
 // The meetings module (#2576, ADR-0047): recorded meetings with consent records, retention dates and reader permissions.
 export const MEETING_VISIBILITIES = ['attendees', 'org'] as const;
@@ -1966,6 +1990,9 @@ type Refined = Tables<{
   'ludy_hr.payroll_run': HrPayrollRunTable;
   'ludy_hr.probation_review': HrProbationReviewTable;
   'ludy_hr.salary_advance_request': HrSalaryAdvanceRequestTable;
+  'ludy_hr.shift_assignment': HrShiftAssignmentTable;
+  'ludy_hr.shift_swap_request': HrShiftSwapRequestTable;
+  'ludy_hr.shift_template': HrShiftTemplateTable;
   'ludy_meetings.action_item': MeetingsActionItemTable;
   'ludy_meetings.capture_session': MeetingsCaptureSessionTable;
   'ludy_meetings.chat_channel': MeetingsChatChannelTable;

@@ -190,6 +190,8 @@ export const AI_FEATURES = {
   'hr.addendum_check': 'hr',
   // Ly's pseudonymized quarterly OKR check-in draft (#4529 Stage 6D): reads alias P1, numeric progress & optional Projects task titles only; never scores, ranks, or recommends employment actions.
   'hr.okr_checkin_draft': 'hr',
+  // Ly's pseudonymized weekly shift coverage suggestions (#5216 Stage 7A): reads E1..En aliases and deterministic conflict/candidate lists only; never mutates roster or swaps.
+  'hr.shift_coverage_suggest': 'hr',
   // Vy (the general manager) proposing signing field placements on a draft eSign PDF (#3351): one call over page sizes, declared signer role keys and bounded page text per ask, the member waiting for it. A key of its own, so field proposals never cut off risky clause summaries or other AI features.
   'sign.field_propose': 'sign',
   // Vy (the general manager) summarizing risky clauses with exact verbatim quotes from a draft eSign PDF (#3351): one call over bounded page text per ask, the member waiting for it.

@@ -89,7 +89,12 @@ import { draftProbationSummary, hrProbationAi, type HrProbationPorts } from './h
 import { askSelfHrPolicy, draftSelfHrRequest, hrSelfAi, type HrSelfAiPorts } from './hr-self-ai.ts';
 import { checkAddendumDraft, hrAddendumAi, type HrAddendumPorts } from './hr-addendum-ai.ts';
 import { draftOkrCheckinSummary, hrOkrAi, type HrOkrPorts } from './hr-okr-ai.ts';
-import type { HrAttendanceAnomaliesSnapshot } from '@ludy/kernel-contract';
+import {
+  generateShiftCoverageBrief,
+  type ShiftCoverageAi,
+  type ShiftCoveragePorts,
+} from './hr-shifts-ai.ts';
+import type { HrAttendanceAnomaliesSnapshot, HrShiftCoverageSnapshot } from '@ludy/kernel-contract';
 import type {
   HrAddendumCheckSource,
   HrInviteDraftContext,
@@ -631,6 +636,10 @@ export function createRpcHandler(
     reader: conversationReader?.attendanceAnomalies ? { attendanceAnomalies: conversationReader.attendanceAnomalies.bind(conversationReader) } : null,
     budget: suggestionBudget(),
   };
+  const shiftCoverageAi: ShiftCoverageAi = {
+    reader: conversationReader?.shiftCoverageSuggest ? { shiftCoverageSuggest: conversationReader.shiftCoverageSuggest.bind(conversationReader) } : null,
+    budget: suggestionBudget(),
+  };
   const probationAi = hrProbationAi(
     conversationReader?.hrProbationSummary
       ? { hrProbationSummary: conversationReader.hrProbationSummary.bind(conversationReader) }
@@ -923,6 +932,11 @@ export function createRpcHandler(
     read: (input) => runtime.query<HrAttendanceAnomaliesSnapshot>('hr.attendance.anomalies.read', input, { actor, orgId }),
     record: (month, legalEntityId, aiReason) =>
       runtime.execute('hr.attendance.anomalies.audit', { month, legalEntityId, aiReason }, { actor, orgId }),
+  });
+  const shiftCoveragePorts = (orgId: string, actor: UserActor): ShiftCoveragePorts => ({
+    read: (input) => runtime.query<HrShiftCoverageSnapshot>('hr.shift.coverage.read', input, { actor, orgId }),
+    record: (legalEntityId, weekStart, aiReason, conflictCount) =>
+      runtime.execute('hr.shift.coverage.audit', { legalEntityId, weekStart, aiReason, conflictCount }, { actor, orgId }),
   });
   const hrProbationPorts = (orgId: string, actor: UserActor): HrProbationPorts => ({
     read: (input) => runtime.query<HrProbationBriefSource>('hr.probation.brief.read', input, { actor, orgId }),
@@ -1412,6 +1426,39 @@ export function createRpcHandler(
         assets: {
           list: os.hr.self.assets.list.handler(hrQuery('hr.self.assets.list')),
         },
+        shifts: {
+          list: os.hr.self.shifts.list.handler(hrQuery('hr.self.shifts.list')),
+          swapSubmit: os.hr.self.shifts.swapSubmit.handler(hrCommand('hr.self.shift_swap.submit')),
+          swapCancel: os.hr.self.shifts.swapCancel.handler(hrCommand('hr.self.shift_swap.cancel')),
+        },
+      },
+      shifts: {
+        templates: {
+          list: os.hr.shifts.templates.list.handler(hrQuery('hr.shift.template.list')),
+          create: os.hr.shifts.templates.create.handler(hrCommand('hr.shift.template.create')),
+          update: os.hr.shifts.templates.update.handler(hrCommand('hr.shift.template.update')),
+          archive: os.hr.shifts.templates.archive.handler(hrCommand('hr.shift.template.archive')),
+          seedDefaults: os.hr.shifts.templates.seedDefaults.handler(hrCommand('hr.shift.template.seed_defaults')),
+        },
+        roster: {
+          get: os.hr.shifts.roster.get.handler(hrQuery('hr.shift.roster.get')),
+        },
+        assignments: {
+          upsert: os.hr.shifts.assignments.upsert.handler(hrCommand('hr.shift.assignment.upsert')),
+          delete: os.hr.shifts.assignments.delete.handler(hrCommand('hr.shift.assignment.delete')),
+        },
+        swaps: {
+          list: os.hr.shifts.swaps.list.handler(hrQuery('hr.shift_swap.list')),
+          approve: os.hr.shifts.swaps.approve.handler(hrCommand('hr.shift_swap.approve')),
+          reject: os.hr.shifts.swaps.reject.handler(hrCommand('hr.shift_swap.reject')),
+        },
+        coverage: {
+          suggest: os.hr.shifts.coverage.suggest.handler(({ context, input }) =>
+            inHr(context, (orgId, actor) =>
+              generateShiftCoverageBrief(shiftCoverageAi, shiftCoveragePorts(orgId, actor), orgId, actor.userId, input),
+            ),
+          ),
+        },
       },
       attendance: {
         list: os.hr.attendance.list.handler(hrQuery('hr.attendance.list')),
@@ -1776,7 +1823,11 @@ export function createRpcHandler(
           inMeetings(context, async (orgId, actor) => {
             const draft = await runtime.query<FollowupDraft>(
               'meetings.followup.draft',
-              { meetingId: input.meetingId, ...(input.stage ? { stage: input.stage } : {}) },
+              {
+                meetingId: input.meetingId,
+                ...(input.stage ? { stage: input.stage } : {}),
+                ...(input.versionLanguage ? { versionLanguage: input.versionLanguage } : {}),
+              },
               { actor, orgId },
             );
             return wordFollowup(followupAi, orgId, actor.userId, { lang: draft.lang, org: draft.org }, input.hint);
@@ -1866,6 +1917,7 @@ export function createRpcHandler(
         create: os.meetings.minutesLink.create.handler(meetingsCommand('meetings.minutes_link.create')),
         revoke: os.meetings.minutesLink.revoke.handler(meetingsCommand('meetings.minutes_link.revoke')),
         list: os.meetings.minutesLink.list.handler(meetingsQuery('meetings.minutes_link.list')),
+        orgList: os.meetings.minutesLink.orgList.handler(meetingsQuery('meetings.minutes_link.org_list')),
       },
       search: os.meetings.search.handler(meetingsQuery('meetings.search')),
       speakingStyle: { get: os.meetings.speakingStyle.get.handler(meetingsQuery('meetings.speaking_style.get')) },

@@ -1,5 +1,5 @@
 import { oc } from '@orpc/contract';
-import { zMinutesLinkCreate, zMinutesLinkCreated, zMinutesLinkItems, zMinutesLinkList, zMinutesLinkRevoke, zMinutesLinkRevoked, zMinutesLinkSwitch, zMinutesLinkSwitchGet } from './meeting-minutes-link.ts';
+import { zMinutesLinkCreate, zMinutesLinkCreated, zMinutesLinkItems, zMinutesLinkList, zMinutesLinkRevoke, zMinutesLinkRevoked, zMinutesLinkSwitch, zMinutesLinkSwitchGet, zOrgMinutesLinkList, zOrgMinutesLinkListInput } from './meeting-minutes-link.ts';
 import { z } from 'zod';
 import { zSpeakingStyle, zSpeakingStyleInput } from './meeting-speaking-style.ts';
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
@@ -490,6 +490,32 @@ import {
   zHrOkrTreeAsk,
   zHrOkrTreeResult,
 } from './hr-okr.ts';
+import {
+  zHrSelfShiftSwapCancel,
+  zHrSelfShiftSwapSubmit,
+  zHrSelfShiftsList,
+  zHrSelfShiftsResult,
+  zHrShiftAssignmentDelete,
+  zHrShiftAssignmentDeleteResult,
+  zHrShiftAssignmentUpsert,
+  zHrShiftAssignmentView,
+  zHrShiftCoverageAsk,
+  zHrShiftCoverageBrief,
+  zHrShiftRosterGet,
+  zHrShiftRosterResult,
+  zHrShiftSwapDecide,
+  zHrShiftSwapList,
+  zHrShiftSwapListResult,
+  zHrShiftSwapView,
+  zHrShiftTemplateArchive,
+  zHrShiftTemplateCreate,
+  zHrShiftTemplateList,
+  zHrShiftTemplateListResult,
+  zHrShiftTemplateSeedDefaults,
+  zHrShiftTemplateSeedResult,
+  zHrShiftTemplateUpdate,
+  zHrShiftTemplateView,
+} from './hr-shifts.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
   zHrCandidateAdd,
@@ -1619,6 +1645,35 @@ export const contract = {
       assets: {
         list: oc.input(z.strictObject({})).output(z.array(zHrSelfAssetView)),
       },
+      shifts: {
+        list: oc.input(zHrSelfShiftsList).output(zHrSelfShiftsResult),
+        swapSubmit: oc.input(zHrSelfShiftSwapSubmit).output(zHrShiftSwapView),
+        swapCancel: oc.input(zHrSelfShiftSwapCancel).output(zHrShiftSwapView),
+      },
+    },
+    shifts: {
+      templates: {
+        list: oc.input(zHrShiftTemplateList).output(zHrShiftTemplateListResult),
+        create: oc.input(zHrShiftTemplateCreate).output(zHrShiftTemplateView),
+        update: oc.input(zHrShiftTemplateUpdate).output(zHrShiftTemplateView),
+        archive: oc.input(zHrShiftTemplateArchive).output(zHrShiftTemplateView),
+        seedDefaults: oc.input(zHrShiftTemplateSeedDefaults).output(zHrShiftTemplateSeedResult),
+      },
+      roster: {
+        get: oc.input(zHrShiftRosterGet).output(zHrShiftRosterResult),
+      },
+      assignments: {
+        upsert: oc.input(zHrShiftAssignmentUpsert).output(zHrShiftAssignmentView),
+        delete: oc.input(zHrShiftAssignmentDelete).output(zHrShiftAssignmentDeleteResult),
+      },
+      swaps: {
+        list: oc.input(zHrShiftSwapList).output(zHrShiftSwapListResult),
+        approve: oc.input(zHrShiftSwapDecide).output(zHrShiftSwapView),
+        reject: oc.input(zHrShiftSwapDecide).output(zHrShiftSwapView),
+      },
+      coverage: {
+        suggest: oc.input(zHrShiftCoverageAsk).output(zHrShiftCoverageBrief),
+      },
     },
     attendance: {
       list: oc.input(zHrAttendanceList).output(zHrAttendanceListResult),
@@ -2002,6 +2057,7 @@ export const contract = {
       create: oc.input(zMinutesLinkCreate).output(zMinutesLinkCreated),
       revoke: oc.input(zMinutesLinkRevoke).output(zMinutesLinkRevoked),
       list: oc.input(zMinutesLinkList).output(zMinutesLinkItems),
+      orgList: oc.input(zOrgMinutesLinkListInput).output(zOrgMinutesLinkList),
     },
     // A member's own webhook for the minutes they publish (A6, #3164): the card reads `get`, `set` makes or changes it (the secret comes back once, when it is made), `rotateSecret`, `clear` and
     // `test` (a `ping` with no meeting data). The owner's `switch` (off by default) gates all of it; nothing is sent while it is off.

@@ -1,9 +1,131 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* DESIGN.md v4.3 Light & Dark tokens for the connected.html sign-in landing tab. */
 :root {
   color-scheme: light dark;
-  font: 16px/1.5 system-ui, sans-serif;
+  --bg: oklch(0.985 0.003 290);
+  --fg: oklch(0.141 0.004 285.8);
+  --card: oklch(1 0 0);
+  --muted-fg: oklch(0.45 0.016 285);
+  --subtle-fg: oklch(0.53 0.014 285);
+  --danger: oklch(0.53 0.2 25);
+  --danger-soft: oklch(0.96 0.03 25);
+  --success: oklch(0.47 0.085 172);
+  --success-soft: oklch(0.95 0.025 172);
+  --warning: oklch(0.52 0.12 62);
+  --warning-soft: oklch(0.96 0.045 80);
+  --border: oklch(0.915 0.007 290);
+  --radius-sheet: 12px;
 }
-body { margin: 0; padding: 48px 16px; }
-main { max-width: 28rem; margin: 0 auto; text-align: center; }
-h1 { font-size: 1.25rem; margin: 0 0 12px; }
-p { margin: 8px 0; }
-.error { color: #d92d20; }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: oklch(0.155 0.008 285);
+    --fg: oklch(1 0 0);
+    --card: oklch(0.19 0.01 285);
+    --muted-fg: oklch(0.75 0.012 285);
+    --subtle-fg: oklch(0.66 0.012 285);
+    --danger: oklch(0.73 0.16 20);
+    --danger-soft: oklch(0.27 0.05 25);
+    --success: oklch(0.8 0.1 172);
+    --success-soft: oklch(0.29 0.045 172);
+    --warning: oklch(0.83 0.13 80);
+    --warning-soft: oklch(0.31 0.05 75);
+    --border: oklch(0.285 0.012 285);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.55 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+}
+
+main {
+  width: 100%;
+  max-width: 400px;
+}
+
+.connected-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sheet);
+  padding: 28px 24px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.connected-logo {
+  width: 48px;
+  height: 48px;
+  display: block;
+  border-radius: 10px;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge-success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.badge-warn {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.badge-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+p {
+  margin: 0;
+}
+
+.connected-body {
+  font-size: 14px;
+  color: var(--muted-fg);
+}
+
+.error {
+  color: var(--danger);
+}
+
+.countdown {
+  font-size: 12.5px;
+  color: var(--subtle-fg);
+  font-variant-numeric: tabular-nums;
+}

@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import type { MinutesLinkCreated } from '@ludy/kernel-contract';
+import type { MinutesLinkCreated, OrgMinutesLinkList } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { minutesView } from '../src/minutes-link.ts';
@@ -25,6 +25,7 @@ suite('the minutes link for people outside the org (#4822)', () => {
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';
+  let db: ReturnType<typeof createDb>;
   let runtime: Runtime;
   const users: Record<string, string> = {};
   const asUser = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const });
@@ -85,7 +86,7 @@ suite('the minutes link for people outside the org (#4822)', () => {
     url.password = 'test-app-pw';
     const appPool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(appPool);
-    const db = createDb(appPool);
+    db = createDb(appPool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
     for (const key of ['owner', 'rec', 'other', 'gone']) users[key] = await upsertIdentity(db, { issuer: 'mlink', subject: key, email: `${key}@mlink.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Chia Sẻ')).orgId;
@@ -227,5 +228,165 @@ suite('the minutes link for people outside the org (#4822)', () => {
               has_function_privilege('public', 'ludy_meetings.minutes_link_view(text)', 'EXECUTE') AS pub`,
     );
     expect(rows.rows[0]).toEqual({ app: true, tenant: false, worker: false, pub: false });
+  });
+
+  it('lists live org minutes links for owner and admin without leaking unreadable attendees-only titles, supports revoke, and refuses member and viewer (#4952)', async () => {
+    const orgUsers: Record<string, string> = {};
+    for (const [key, displayName] of [
+      ['owner2', 'Chủ Doanh Nghiệp'],
+      ['admin2', 'Quản Trị Viên'],
+      ['rec2', 'Cô Lan'],
+      ['member2', 'Thành Viên'],
+      ['viewer2', 'Người Xem'],
+    ] as const) {
+      orgUsers[key] = await upsertIdentity(db, { issuer: 'mlink-4952', subject: key, email: `${key}@mlink.test`, name: displayName });
+    }
+    const asOrgUser = (who: string) => ({ type: 'user' as const, userId: orgUsers[who] as string, aal: 'aal1' as const });
+    const exec2 = <O = unknown>(who: string, name: string, input: unknown) => runtime.execute<O>(name, input, { actor: asOrgUser(who), orgId: org2 });
+    const ask2 = <O = unknown>(who: string, name: string, input: unknown) => runtime.query<O>(name, input, { actor: asOrgUser(who), orgId: org2 });
+    const org2 = (await createOrg(runtime, asOrgUser('owner2'), 'Công ty Quản Trị Liên Kết')).orgId;
+    await sqlAdmin(
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+       VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')`,
+      [org2, orgUsers.admin2, orgUsers.rec2, orgUsers.member2, orgUsers.viewer2],
+    );
+    await exec2('owner2', 'meetings.minutes_link.switch.set', { enabled: true });
+
+    // Empty initially.
+    expect(await ask2<OrgMinutesLinkList>('owner2', 'meetings.minutes_link.org_list', {})).toEqual({ items: [] });
+
+    const seedPublished = async (title: string, visibility: 'attendees' | 'org', secretSummary: string): Promise<string> => {
+      const mId = randomUUID();
+      await sqlAdmin(
+        `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+         VALUES ($1, $2, $4, 'vi', now() - interval '2 hours', now() - interval '1 hour', 3600, $3, $5, 'ready', 'told_at_start', $3, now(), '1.0', current_date + 20, current_date + 365)`,
+        [org2, mId, orgUsers.rec2, title, visibility],
+      );
+      await sqlAdmin(
+        `INSERT INTO ludy_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage)
+         VALUES ($1, $2, $3, '["Quyết định nội bộ"]'::jsonb, 'manual', 'published')`,
+        [org2, mId, secretSummary],
+      );
+      return mId;
+    };
+
+    // 1) Attendees-only meeting unreadable to both owner2 and admin2.
+    const privateMeetingId = await seedPublished('Họp lương bí mật', 'attendees', 'Lương tháng 12 tăng');
+    const privateLink = await exec2<MinutesLinkCreated>('rec2', 'meetings.minutes_link.create', { meetingId: privateMeetingId });
+    await view(privateLink.token);
+
+    // 2) Attendees-only meeting shared ONLY with admin2 (owner2 still cannot read it).
+    const adminSharedMeetingId = await seedPublished('Họp chia sẻ cho quản trị', 'attendees', 'Nội dung riêng cho admin');
+    await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [org2, randomUUID(), adminSharedMeetingId, orgUsers.admin2]);
+    const adminSharedLink = await exec2<MinutesLinkCreated>('rec2', 'meetings.minutes_link.create', { meetingId: adminSharedMeetingId });
+
+    // 3) Org-wide meeting readable by both owner2 and admin2.
+    const orgMeetingId = await seedPublished('Họp giao ban toàn công ty', 'org', 'Kế hoạch quý tới');
+    const orgWideLink = await exec2<MinutesLinkCreated>('rec2', 'meetings.minutes_link.create', { meetingId: orgMeetingId });
+
+    // 4) Expired link that must be excluded.
+    const expiredLink = await exec2<MinutesLinkCreated>('rec2', 'meetings.minutes_link.create', { meetingId: orgMeetingId });
+    await sqlAdmin(`UPDATE ludy_meetings.minutes_link SET created_at = now() - interval '2 days', expires_at = now() - interval '1 day' WHERE org_id = $1 AND id = $2`, [org2, expiredLink.linkId]);
+
+    // Member and viewer are refused (403 FORBIDDEN).
+    expect(await refuses(ask2('member2', 'meetings.minutes_link.org_list', {}))).toBe('FORBIDDEN');
+    expect(await refuses(ask2('viewer2', 'meetings.minutes_link.org_list', {}))).toBe('FORBIDDEN');
+
+    // Owner sees all 3 live links: org-wide has title + canOpenMeeting=true; the two unreadable attendees-only ones have null title + canOpenMeeting=false and ZERO secret content/email/token leakage.
+    const ownerList = await ask2<OrgMinutesLinkList>('owner2', 'meetings.minutes_link.org_list', {});
+    expect(ownerList.items).toHaveLength(3);
+    expect(new Set(ownerList.items.map((i) => i.id))).toEqual(new Set([orgWideLink.linkId, adminSharedLink.linkId, privateLink.linkId]));
+    expect(new Date(ownerList.items[0]!.createdAt).getTime()).toBeGreaterThanOrEqual(new Date(ownerList.items[1]!.createdAt).getTime());
+    expect(new Date(ownerList.items[1]!.createdAt).getTime()).toBeGreaterThanOrEqual(new Date(ownerList.items[2]!.createdAt).getTime());
+    const ownerPrivate = ownerList.items.find((i) => i.id === privateLink.linkId);
+    expect(ownerPrivate).toMatchObject({
+      id: privateLink.linkId,
+      meetingId: privateMeetingId,
+      meetingTitle: null,
+      canOpenMeeting: false,
+      createdByName: 'Cô Lan',
+      views: 1,
+    });
+    expect(ownerPrivate?.firstViewedAt).not.toBeNull();
+    expect(ownerList.items.find((i) => i.id === adminSharedLink.linkId)).toMatchObject({
+      meetingId: adminSharedMeetingId,
+      meetingTitle: null,
+      canOpenMeeting: false,
+    });
+    expect(ownerList.items.find((i) => i.id === orgWideLink.linkId)).toMatchObject({
+      meetingId: orgMeetingId,
+      meetingTitle: 'Họp giao ban toàn công ty',
+      canOpenMeeting: true,
+      createdByName: 'Cô Lan',
+      views: 0,
+      firstViewedAt: null,
+    });
+    const ownerSerialized = JSON.stringify(ownerList);
+    expect(ownerSerialized).not.toContain('Họp lương bí mật');
+    expect(ownerSerialized).not.toContain('Họp chia sẻ cho quản trị');
+    expect(ownerSerialized).not.toContain('Lương tháng 12 tăng');
+    expect(ownerSerialized).not.toContain('rec2@mlink.test');
+    expect(ownerSerialized).not.toContain(privateLink.token);
+    expect(ownerSerialized).not.toContain(orgWideLink.token);
+
+    // Admin sees both org-wide and admin-shared titles, while privateMeetingId remains null.
+    const adminList = await ask2<OrgMinutesLinkList>('admin2', 'meetings.minutes_link.org_list', {});
+    expect(adminList.items.find((i) => i.id === privateLink.linkId)).toMatchObject({
+      meetingTitle: null,
+      canOpenMeeting: false,
+    });
+    expect(adminList.items.find((i) => i.id === adminSharedLink.linkId)).toMatchObject({
+      meetingTitle: 'Họp chia sẻ cho quản trị',
+      canOpenMeeting: true,
+    });
+    expect(adminList.items.find((i) => i.id === orgWideLink.linkId)).toMatchObject({
+      meetingTitle: 'Họp giao ban toàn công ty',
+      canOpenMeeting: true,
+    });
+    expect(JSON.stringify(adminList)).not.toContain('Họp lương bí mật');
+
+    // Switch off still lets owner/admin list and revoke active links.
+    await exec2('owner2', 'meetings.minutes_link.switch.set', { enabled: false });
+    const afterSwitchOff = await ask2<OrgMinutesLinkList>('admin2', 'meetings.minutes_link.org_list', {});
+    expect(afterSwitchOff.items).toHaveLength(3);
+
+    // Admin revokes the unreadable attendees-only link; subsequent org_list excludes it and public view returns null.
+    expect(await exec2('admin2', 'meetings.minutes_link.revoke', { meetingId: privateMeetingId, linkId: privateLink.linkId })).toEqual({
+      linkId: privateLink.linkId,
+      revoked: true,
+    });
+    const afterRevoke = await ask2<OrgMinutesLinkList>('owner2', 'meetings.minutes_link.org_list', {});
+    expect(afterRevoke.items).toHaveLength(2);
+    expect(new Set(afterRevoke.items.map((i) => i.id))).toEqual(new Set([orgWideLink.linkId, adminSharedLink.linkId]));
+    expect(await view(privateLink.token)).toBeNull();
+
+    // Cross-org isolation: orgId links never appear in org2.
+    expect(afterRevoke.items.every((i) => i.meetingId === orgMeetingId || i.meetingId === adminSharedMeetingId)).toBe(true);
+
+    // Past text retention date hides title and marks canOpenMeeting=false.
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET text_retention_date = current_date - 2 WHERE org_id = $1 AND id = $2`, [org2, orgMeetingId]);
+    const afterRetention = await ask2<OrgMinutesLinkList>('owner2', 'meetings.minutes_link.org_list', {});
+    expect(afterRetention.items.find((i) => i.id === orgWideLink.linkId)).toMatchObject({
+      meetingTitle: null,
+      canOpenMeeting: false,
+    });
+
+    // Creator leaves the org: createdByName becomes null without exposing email.
+    await sqlAdmin('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [org2, orgUsers.rec2]);
+    const afterCreatorLeft = await ask2<OrgMinutesLinkList>('owner2', 'meetings.minutes_link.org_list', {});
+    expect(afterCreatorLeft.items.find((i) => i.id === orgWideLink.linkId)?.createdByName).toBeNull();
+    expect(JSON.stringify(afterCreatorLeft)).not.toContain('rec2@mlink.test');
+
+    // Sensitive read audit rows exist for owner2/admin2 calls and carry zero titles, IDs, or names.
+    const auditRows = await sqlAdmin<{ row: string }>(
+      `SELECT audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.minutes_link.org_list'`,
+      [org2],
+    );
+    expect(auditRows.rows.length).toBeGreaterThanOrEqual(4);
+    const auditText = auditRows.rows.map((r) => r.row).join('\n');
+    expect(auditText).not.toContain('Họp lương bí mật');
+    expect(auditText).not.toContain('Họp giao ban toàn công ty');
+    expect(auditText).not.toContain('Cô Lan');
+    expect(auditText).not.toContain(privateMeetingId);
   });
 });

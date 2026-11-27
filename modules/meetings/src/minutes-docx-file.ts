@@ -5,7 +5,7 @@
 // due date, and two blank signature blocks (Ludy signs for no one). Every text is cleaned of characters XML cannot hold and of the invisible and bidirectional controls (INVISIBLE_PATTERN), then
 // escaped, so no text can break the file or reorder a line. The file is deterministic: the same minutes give the same bytes.
 import { crc32, deflateRawSync } from 'node:zlib';
-import { INVISIBLE_PATTERN, MINUTES_DOCX_NAME_MAX } from '@ludy/kernel-contract';
+import { INVISIBLE_PATTERN, MINUTES_DOCX_NAME_MAX, type MeetingLanguage } from '@ludy/kernel-contract';
 
 /** A day and a time as Vietnamese offices write them, in Vietnam time. */
 export interface VnMoment {
@@ -38,6 +38,7 @@ export interface MinutesDocAction {
   due: string | null;
 }
 export interface MinutesDoc {
+  language?: MeetingLanguage;
   company: string;
   title: string;
   from: VnMoment;
@@ -200,40 +201,119 @@ function table(widths: readonly number[], rows: readonly string[][], opts: { bor
   return `<w:tbl><w:tblPr><w:tblW w:w="${widths.reduce((a, b) => a + b, 0)}" w:type="dxa"/><w:tblBorders>${borders}</w:tblBorders><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${body}</w:tbl>`;
 }
 
+const CHROME: Record<
+  MeetingLanguage,
+  {
+    heading: string;
+    subject: (title: string) => string;
+    timeLabel: string;
+    clockRange: (from: VnMoment, to: VnMoment) => string;
+    clockStart: (from: VnMoment) => string;
+    placeLabel: string;
+    attendeesLabel: string;
+    recorder: string;
+    sectionSummary: string;
+    noSummary: string;
+    sectionDecisions: string;
+    noDecisions: string;
+    sectionActions: string;
+    noActions: string;
+    colNo: string;
+    colTask: string;
+    colOwner: string;
+    colDue: string;
+    signRecorder: string;
+    signChair: string;
+    signHint: string;
+    filenamePrefix: string;
+    filenameFallback: string;
+  }
+> = {
+  vi: {
+    heading: 'BIÊN BẢN CUỘC HỌP',
+    subject: (title) => `V/v: ${title}`,
+    timeLabel: 'Thời gian',
+    clockRange: (from, to) => `Từ ${from.time} đến ${to.time}, ngày ${from.day} tháng ${from.month} năm ${from.year}`,
+    clockStart: (from) => `Từ ${from.time}, ngày ${from.day} tháng ${from.month} năm ${from.year}`,
+    placeLabel: 'Địa điểm',
+    attendeesLabel: 'Thành phần tham dự:',
+    recorder: 'Người ghi biên bản',
+    sectionSummary: 'I. NỘI DUNG CUỘC HỌP',
+    noSummary: 'Chưa có nội dung được chia sẻ.',
+    sectionDecisions: 'II. KẾT LUẬN',
+    noDecisions: 'Chưa có kết luận được ghi.',
+    sectionActions: 'III. CÔNG VIỆC CẦN THỰC HIỆN',
+    noActions: 'Không có công việc nào được giao.',
+    colNo: 'STT',
+    colTask: 'Nội dung công việc',
+    colOwner: 'Người phụ trách',
+    colDue: 'Hạn hoàn thành',
+    signRecorder: 'NGƯỜI GHI BIÊN BẢN',
+    signChair: 'CHỦ TRÌ CUỘC HỌP',
+    signHint: '(Ký, ghi rõ họ tên)',
+    filenamePrefix: 'Biên bản họp',
+    filenameFallback: 'cuộc họp',
+  },
+  en: {
+    heading: 'MEETING MINUTES',
+    subject: (title) => `Re: ${title}`,
+    timeLabel: 'Time',
+    clockRange: (from, to) => `From ${from.time} to ${to.time}, ${from.day}/${from.month}/${from.year}`,
+    clockStart: (from) => `From ${from.time}, ${from.day}/${from.month}/${from.year}`,
+    placeLabel: 'Place',
+    attendeesLabel: 'Attendees:',
+    recorder: 'Minute taker',
+    sectionSummary: 'I. MEETING SUMMARY',
+    noSummary: 'No content has been shared yet.',
+    sectionDecisions: 'II. DECISIONS',
+    noDecisions: 'No decisions were recorded.',
+    sectionActions: 'III. ACTION ITEMS',
+    noActions: 'No action items were assigned.',
+    colNo: '#',
+    colTask: 'Task',
+    colOwner: 'Assignee',
+    colDue: 'Due date',
+    signRecorder: 'MINUTE TAKER',
+    signChair: 'CHAIR OF THE MEETING',
+    signHint: '(Signature and full name)',
+    filenamePrefix: 'Meeting minutes',
+    filenameFallback: 'meeting',
+  },
+};
+
 /** The word/document.xml of the minutes. */
 export function documentXml(doc: MinutesDoc): string {
+  const c = CHROME[doc.language ?? 'vi'];
   const from = doc.from;
-  const clock = doc.to
-    ? `Từ ${from.time} đến ${doc.to.time}, ngày ${from.day} tháng ${from.month} năm ${from.year}`
-    : `Từ ${from.time}, ngày ${from.day} tháng ${from.month} năm ${from.year}`;
+  const clock = doc.to ? c.clockRange(from, doc.to) : c.clockStart(from);
   const out: string[] = [];
   out.push(text(doc.company.trim().toUpperCase(), { bold: true }));
-  out.push(text('BIÊN BẢN CUỘC HỌP', { bold: true, size: 30 }, { align: 'center', before: 120, after: 40 }));
-  out.push(text(`V/v: ${doc.title}`, { bold: true }, { align: 'center', after: 200 }));
-  out.push(labelled('Thời gian', clock));
-  out.push(labelled('Địa điểm', doc.place.trim() === '' ? DOTS : doc.place.trim()));
-  out.push(text('Thành phần tham dự:', { bold: true }, { keepNext: true }));
-  doc.attendees.forEach((name, i) => out.push(bullet(i === 0 ? `${name} (Người ghi biên bản)` : name)));
+  out.push(text(c.heading, { bold: true, size: 30 }, { align: 'center', before: 120, after: 40 }));
+  out.push(text(c.subject(doc.title), { bold: true }, { align: 'center', after: 200 }));
+  out.push(labelled(c.timeLabel, clock));
+  out.push(labelled(c.placeLabel, doc.place.trim() === '' ? DOTS : doc.place.trim()));
+  out.push(text(c.attendeesLabel, { bold: true }, { keepNext: true }));
+  doc.attendees.forEach((name, i) => out.push(bullet(i === 0 ? `${name} (${c.recorder})` : name)));
 
-  out.push(heading('I. NỘI DUNG CUỘC HỌP'));
-  if (doc.sections.length === 0) out.push(text('Chưa có nội dung được chia sẻ.'));
+  out.push(heading(c.sectionSummary));
+  if (doc.sections.length === 0) out.push(text(c.noSummary));
   for (const section of doc.sections) {
     if (section.heading !== null) out.push(text(section.heading, { bold: true }, { before: 80, keepNext: true }));
     out.push(block(section.text));
   }
 
-  out.push(heading('II. KẾT LUẬN'));
-  if (doc.conclusions.length === 0) out.push(text('Chưa có kết luận được ghi.'));
+  out.push(heading(c.sectionDecisions));
+  if (doc.conclusions.length === 0) out.push(text(c.noDecisions));
   for (const conclusion of doc.conclusions) out.push(bullet(conclusion));
 
-  out.push(heading('III. CÔNG VIỆC CẦN THỰC HIỆN'));
+  out.push(heading(c.sectionActions));
   if (doc.actions.length === 0) {
-    out.push(text('Không có công việc nào được giao.'));
+    out.push(text(c.noActions));
   } else {
     const cell = (value: string, style: RunStyle = {}, align: 'center' | 'left' = 'left') => paragraph(run(value, style), { align, after: 40 });
     const widths = [800, CONTENT_WIDTH - 800 - 2300 - 1900, 2300, 1900];
     const rows = [
-      [cell('STT', { bold: true }, 'center'), cell('Nội dung công việc', { bold: true }), cell('Người phụ trách', { bold: true }), cell('Hạn hoàn thành', { bold: true })],
+      [cell(c.colNo, { bold: true }, 'center'), cell(c.colTask, { bold: true }), cell(c.colOwner, { bold: true }), cell(c.colDue, { bold: true })],
       ...doc.actions.map((a, i) => [cell(String(i + 1), {}, 'center'), cell(a.title), cell(a.owner ?? CELL_DOTS), cell(a.due ?? CELL_DOTS)]),
     ];
     out.push(table(widths, rows, { borders: true, header: true }));
@@ -241,8 +321,8 @@ export function documentXml(doc: MinutesDoc): string {
 
   // Blank on purpose: people sign on paper or with their own e-signature tool.
   const sign = (title: string) =>
-    [text(title, { bold: true }, { align: 'center', before: 360, keepNext: true }), text('(Ký, ghi rõ họ tên)', { italic: true }, { align: 'center', after: 1600 })].join('');
-  out.push(table([Math.floor(CONTENT_WIDTH / 2), CONTENT_WIDTH - Math.floor(CONTENT_WIDTH / 2)], [[sign('NGƯỜI GHI BIÊN BẢN'), sign('CHỦ TRÌ CUỘC HỌP')]], { borders: false }));
+    [text(title, { bold: true }, { align: 'center', before: 360, keepNext: true }), text(c.signHint, { italic: true }, { align: 'center', after: 1600 })].join('');
+  out.push(table([Math.floor(CONTENT_WIDTH / 2), CONTENT_WIDTH - Math.floor(CONTENT_WIDTH / 2)], [[sign(c.signRecorder), sign(c.signChair)]], { borders: false }));
   // A table at the end of the body needs a paragraph after it.
   out.push(paragraph(''));
   return wordDocument(out.join(''));
@@ -260,40 +340,45 @@ const ROOT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`;
 const DOCUMENT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
-const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="${W}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:eastAsia="Times New Roman" w:cs="Times New Roman"/><w:sz w:val="26"/><w:szCs w:val="26"/><w:lang w:val="vi-VN" w:eastAsia="vi-VN" w:bidi="ar-SA"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="80" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`;
+const stylesXml = (language: MeetingLanguage) => {
+  const langTag = language === 'en' ? 'en-US' : 'vi-VN';
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="${W}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:eastAsia="Times New Roman" w:cs="Times New Roman"/><w:sz w:val="26"/><w:szCs w:val="26"/><w:lang w:val="${langTag}" w:eastAsia="${langTag}" w:bidi="ar-SA"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="80" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`;
+};
 
 /** A .docx around a word/document.xml: the zip of its parts, [Content_Types].xml first. */
-export function buildDocx(documentXmlText: string): Uint8Array {
+export function buildDocx(documentXmlText: string, language: MeetingLanguage = 'vi'): Uint8Array {
   const utf8 = (s: string) => new TextEncoder().encode(s);
   return zipFiles([
     { name: '[Content_Types].xml', data: utf8(CONTENT_TYPES) },
     { name: '_rels/.rels', data: utf8(ROOT_RELS) },
     { name: 'word/document.xml', data: utf8(documentXmlText) },
     { name: 'word/_rels/document.xml.rels', data: utf8(DOCUMENT_RELS) },
-    { name: 'word/styles.xml', data: utf8(STYLES) },
+    { name: 'word/styles.xml', data: utf8(stylesXml(language)) },
   ]);
 }
 
 /** The .docx of the minutes. */
-export const buildMinutesDocx = (doc: MinutesDoc): Uint8Array => buildDocx(documentXml(doc));
+export const buildMinutesDocx = (doc: MinutesDoc): Uint8Array => buildDocx(documentXml(doc), doc.language ?? 'vi');
 
 /**
- * The file name: "Biên bản họp - <title> - <YYYY-MM-DD>.docx", the title cut to fit and stripped of what a file name cannot hold on Windows, macOS or Linux (path separators, : * ? " < > |, controls, the invisible
- * characters), a title with nothing left named "cuộc họp".
+ * The file name: "Biên bản họp - <title> - <YYYY-MM-DD>.docx" (or "Meeting minutes - <title> - <YYYY-MM-DD>.docx" for English),
+ * the title cut to fit and stripped of what a file name cannot hold on Windows, macOS or Linux (path separators, : * ? " < > |, controls, the invisible
+ * characters), a title with nothing left named "cuộc họp" (or "meeting").
  */
-export function minutesFilename(title: string, day: string): string {
+export function minutesFilename(title: string, day: string, language: MeetingLanguage = 'vi'): string {
+  const c = CHROME[language];
   const clean = cleanLine(title)
     .replace(/[\\/:*?"<>|]/gu, ' ')
     .replace(/\s+/gu, ' ')
     .trim()
     .replace(/^[.\s]+|[.\s]+$/gu, '');
   // The budget is in UTF-16 units (what the answer's schema counts), and a character is never cut in two.
-  const budget = MINUTES_DOCX_NAME_MAX - 'Biên bản họp -  - 0000-00-00'.length;
+  const budget = MINUTES_DOCX_NAME_MAX - `${c.filenamePrefix} -  - 0000-00-00`.length;
   let cut = '';
-  for (const ch of Array.from(clean === '' ? 'cuộc họp' : clean)) {
+  for (const ch of Array.from(clean === '' ? c.filenameFallback : clean)) {
     if (cut.length + ch.length > budget) break;
     cut += ch;
   }
-  return `Biên bản họp - ${cut.trim()} - ${day}.docx`;
+  return `${c.filenamePrefix} - ${cut.trim()} - ${day}.docx`;
 }

@@ -605,6 +605,9 @@ export const OWNER_RUN_EXPORT_TABLES = {
   'hr.employee_asset_handover': { from: 'ludy_hr.employee_asset_handover', omit: [] },
   'hr.okr_objective': { from: 'ludy_hr.okr_objective', omit: [] },
   'hr.okr_key_result': { from: 'ludy_hr.okr_key_result', omit: [] },
+  'hr.shift_template': { from: 'ludy_hr.shift_template', omit: [] },
+  'hr.shift_assignment': { from: 'ludy_hr.shift_assignment', omit: [] },
+  'hr.shift_swap_request': { from: 'ludy_hr.shift_swap_request', omit: [] },
   // Lightweight recruiting openings and candidates (#3425, #4487), readable by owners and admins only.
   'hr.job_opening': { from: 'ludy_hr.job_opening', omit: [] },
   'hr.candidate': { from: 'ludy_hr.candidate', omit: [] },

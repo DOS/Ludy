@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// A stand-in for the Ludy kernel's extension routes: just enough to sign in a token, answer /api/extension/me, create a
-// meeting and take the media upload, recording every request so a test can say where the extension went.
+// A stand-in for the Ludy kernel's extension routes (and optional App consent page): just enough to sign in a token,
+// answer /api/extension/me, create a meeting and take the media upload, recording every request so a test can verify
+// split-origin traffic (appOrigin vs apiOrigin).
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -58,17 +59,21 @@ export async function startFakeLudy(): Promise<FakeLudy> {
   const server: Server = createServer((req, res) => {
     void (async () => {
       const path = new URL(req.url ?? '/', 'http://x').pathname;
-      // The extension page has no host permission in the test, so the answer carries CORS like a split deployment's.
+      // The extension page uses explicit host permissions or CORS in split deployments.
       res.setHeader('access-control-allow-origin', '*');
       res.setHeader('access-control-allow-headers', 'authorization, content-type');
       if (req.method === 'OPTIONS') return void res.writeHead(204).end();
       fake.requests.push({ method: req.method ?? '', path, authorization: req.headers.authorization, origin: req.headers.origin });
+      if (path === '/-/extension/connect') {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end('<!doctype html><title>Ludy Connect</title><main>Connect</main>');
+        return;
+      }
       const body = await read(req);
       const json = (value: unknown, status = 200) => void res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(value));
       if (path === '/api/config') return json({ uploads: 'direct' });
       if (path === '/api/extension/token') {
         fake.exchanges.push(JSON.parse(body.toString()) as Record<string, unknown>);
-        return json({ token: 'crx_signed_in', tokenId: 't2', orgId: 'org1', scopes: ['meetings'], expiresAt: '2027-01-01T00:00:00.000Z' });
+        return json({ token: 'crx_signed_in', tokenId: 't2', orgId: 'org1', scopes: fake.scopes, expiresAt: '2027-01-01T00:00:00.000Z' });
       }
       if (path === '/api/extension/me' && fake.redirectMeTo) return void res.writeHead(302, { location: `${fake.redirectMeTo}/api/extension/me` }).end();
       if (path === '/api/extension/me') {

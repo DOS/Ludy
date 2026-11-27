@@ -310,6 +310,16 @@ export function HrAttendanceCheckinCard({ enabled = true }: { enabled?: boolean 
             <div className="text-xs text-muted-foreground">{t('summaryTotalHours')}</div>
             <div className="text-lg font-semibold tabular-nums">{formatMinutesLabel(summary.totalWorkedMinutes) || '0h'}</div>
           </div>
+          {((summary.totalNightMinutes ?? 0) > 0 || (summary.totalLateMinutes ?? 0) > 0) && (
+            <div className="col-span-2 flex flex-wrap gap-2 sm:col-span-4">
+              {(summary.totalNightMinutes ?? 0) > 0 && (
+                <Badge variant="secondary">{t('nightMinutesBadge', { minutes: String(summary.totalNightMinutes) })}</Badge>
+              )}
+              {(summary.totalLateMinutes ?? 0) > 0 && (
+                <Badge variant="warning">{t('lateMinutesBadge', { minutes: String(summary.totalLateMinutes) })}</Badge>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -340,6 +350,18 @@ export function HrAttendanceCheckinCard({ enabled = true }: { enabled?: boolean 
                           {t(`anomalies.${kind}`)}
                         </Badge>
                       ))}
+                      {row.shiftTemplateCode && (
+                        <Badge variant="outline">{row.shiftTemplateCode}</Badge>
+                      )}
+                      {(row.lateMinutes ?? 0) > 0 && (
+                        <Badge variant="warning">{t('lateMinutesBadge', { minutes: String(row.lateMinutes) })}</Badge>
+                      )}
+                      {(row.earlyLeaveMinutes ?? 0) > 0 && (
+                        <Badge variant="warning">{t('earlyLeaveMinutesBadge', { minutes: String(row.earlyLeaveMinutes) })}</Badge>
+                      )}
+                      {(row.nightMinutes ?? 0) > 0 && (
+                        <Badge variant="secondary">{t('nightMinutesBadge', { minutes: String(row.nightMinutes) })}</Badge>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{row.note ?? ''}</TableCell>

@@ -3,7 +3,7 @@
 // deterministic anomalies + Ly narration, manual adjustment, and 1-click rollup into draft payroll.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import {
   HR_ATTENDANCE_METHODS,
@@ -26,6 +26,7 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { formatMinutesLabel, formatVietnamTime } from '../components/hr-attendance-checkin-card.tsx';
+import { HrShiftsPanel } from '../components/hr-shifts-panel.tsx';
 import { DataTable, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -194,6 +195,7 @@ export function HrAttendancePage() {
   const { locale } = useLocaleSetting();
 
   const [month, setMonth] = useState(() => vietnamMonth(new Date()));
+  const [activeTab, setActiveTab] = useState<'attendance' | 'shifts'>('attendance');
   const [selectedEntityId, setSelectedEntityId] = useState('');
   const [anomaliesOnly, setAnomaliesOnly] = useState(false);
   const [rotatedQr, setRotatedQr] = useState<RotatedQrBanner | null>(null);
@@ -216,6 +218,13 @@ export function HrAttendancePage() {
   const meQ = useQuery(orpc.me.get.queryOptions());
   const roleHere = meQ.data?.orgs.find((o) => o.slug === slug)?.role;
   const canManage = roleHere === 'owner' || roleHere === 'admin';
+
+  const l1RosterQ = useQuery({
+    ...orpc.hr.shifts.roster.get.queryOptions({ input: {} }),
+    enabled: !canManage && roleHere === 'member',
+    retry: false,
+    staleTime: 15_000,
+  });
 
   const entitiesQ = useQuery({
     ...orpc.legalEntities.list.queryOptions(),
@@ -248,6 +257,23 @@ export function HrAttendancePage() {
 
   const activeEntityIdRef = useRef('');
   const qrConfigRef = useRef<{ legalEntityId: string; activeConfigId: string | null } | null>(null);
+  const attendanceTabRef = useRef<HTMLButtonElement>(null);
+  const shiftsTabRef = useRef<HTMLButtonElement>(null);
+
+  const onTabKeyDown = (e: KeyboardEvent<HTMLButtonElement>, current: 'attendance' | 'shifts') => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
+    e.preventDefault();
+    const next: 'attendance' | 'shifts' =
+      e.key === 'Home'
+        ? 'attendance'
+        : e.key === 'End'
+          ? 'shifts'
+          : current === 'attendance'
+            ? 'shifts'
+            : 'attendance';
+    setActiveTab(next);
+    (next === 'attendance' ? attendanceTabRef : shiftsTabRef).current?.focus();
+  };
 
   const rotateQr = useMutation({
     ...orpc.hr.attendance.qr.rotate.mutationOptions(),
@@ -327,6 +353,14 @@ export function HrAttendancePage() {
   }
 
   if (!canManage) {
+    if (l1RosterQ.data) {
+      return (
+        <div className="space-y-6">
+          <PageHeader title={t('title')} subtitle={t('subtitle')} />
+          <HrShiftsPanel legalEntityId={l1RosterQ.data.legalEntityId} canManageOrgRoster={false} />
+        </div>
+      );
+    }
     return (
       <div className="space-y-6">
         <PageHeader title={t('title')} subtitle={t('subtitle')} />
@@ -463,10 +497,62 @@ export function HrAttendancePage() {
         />
       </div>
 
-      {listQ.isLoading && <TableSkeleton rows={5} columns={6} />}
-      {listQ.error && <ErrorText>{errorMessage(listQ.error)}</ErrorText>}
+      <div className="flex flex-wrap gap-2 print:hidden" role="tablist" aria-label={t('title')}>
+        <Button
+          ref={attendanceTabRef}
+          id="hr-attendance-tab-attendance"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'attendance'}
+          aria-controls="hr-attendance-tabpanel-attendance"
+          tabIndex={activeTab === 'attendance' ? 0 : -1}
+          variant={activeTab === 'attendance' ? 'default' : 'outline'}
+          size="sm"
+          className={PHONE_TARGET}
+          onClick={() => setActiveTab('attendance')}
+          onKeyDown={(e) => onTabKeyDown(e, 'attendance')}
+          data-testid="hr-attendance-tab-attendance"
+        >
+          {t('attendanceTab')}
+        </Button>
+        <Button
+          ref={shiftsTabRef}
+          id="hr-attendance-tab-shifts"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'shifts'}
+          aria-controls="hr-attendance-tabpanel-shifts"
+          tabIndex={activeTab === 'shifts' ? 0 : -1}
+          variant={activeTab === 'shifts' ? 'default' : 'outline'}
+          size="sm"
+          className={PHONE_TARGET}
+          onClick={() => setActiveTab('shifts')}
+          onKeyDown={(e) => onTabKeyDown(e, 'shifts')}
+          data-testid="hr-attendance-tab-shifts"
+        >
+          {t('shiftsTab')}
+        </Button>
+      </div>
 
-      {/* Office QR Management */}
+      {activeTab === 'shifts' ? (
+        <div
+          id="hr-attendance-tabpanel-shifts"
+          role="tabpanel"
+          aria-labelledby="hr-attendance-tab-shifts"
+        >
+          <HrShiftsPanel legalEntityId={activeEntityId} canManageOrgRoster={true} />
+        </div>
+      ) : (
+        <div
+          id="hr-attendance-tabpanel-attendance"
+          role="tabpanel"
+          aria-labelledby="hr-attendance-tab-attendance"
+          className="space-y-6"
+        >
+          {listQ.isLoading && <TableSkeleton rows={5} columns={6} />}
+          {listQ.error && <ErrorText>{errorMessage(listQ.error)}</ErrorText>}
+
+          {/* Office QR Management */}
       <Card className="block space-y-4 p-4 print:border-0 print:p-0" data-testid="hr-attendance-qr-card">
         <div className="flex flex-wrap items-start justify-between gap-3 print:hidden">
           <div>
@@ -721,7 +807,10 @@ export function HrAttendancePage() {
       {/* Attendance Logs & Manual Adjustment */}
       <Card className="block space-y-4 p-4 print:hidden" data-testid="hr-attendance-logs-card">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-base font-semibold">{t('logsTitle', { count: String(logs.length) })}</h2>
+            <div>
+              <h2 className="text-base font-semibold">{t('logsTitle', { count: String(logs.length) })}</h2>
+              <p className="text-xs text-muted-foreground">{t('noLateFineNote')}</p>
+            </div>
           <Button
             type="button"
             variant="outline"
@@ -929,6 +1018,18 @@ export function HrAttendancePage() {
                         {ta(`anomalies.${kind}`)}
                       </Badge>
                     ))}
+                    {row.shiftTemplateCode && (
+                      <Badge variant="outline">{row.shiftTemplateCode}</Badge>
+                    )}
+                    {(row.lateMinutes ?? 0) > 0 && (
+                      <Badge variant="warning">{t('lateMinutesBadge', { minutes: String(row.lateMinutes) })}</Badge>
+                    )}
+                    {(row.earlyLeaveMinutes ?? 0) > 0 && (
+                      <Badge variant="warning">{t('earlyLeaveMinutesBadge', { minutes: String(row.earlyLeaveMinutes) })}</Badge>
+                    )}
+                    {(row.nightMinutes ?? 0) > 0 && (
+                      <Badge variant="secondary">{t('nightMinutesBadge', { minutes: String(row.nightMinutes) })}</Badge>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">{row.note ?? ''}</TableCell>
@@ -950,6 +1051,8 @@ export function HrAttendancePage() {
           </DataTable>
         )}
       </Card>
+        </div>
+      )}
     </div>
   );
 }

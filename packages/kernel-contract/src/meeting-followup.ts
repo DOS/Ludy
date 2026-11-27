@@ -5,7 +5,7 @@
 // Every text is cleaned and checked by code on send, and facts are rebuilt from the chosen stage at send time (refusing STALE_FOLLOWUP if the result changed).
 import { z } from 'zod';
 import { isMailAddress } from './mail-address.ts';
-import { zMeetingLanguage, zMeetingRef } from './meetings.ts';
+import { MEETING_LANGUAGES, zMeetingLanguage, zMeetingRef } from './meetings.ts';
 import { zId } from './schemas.ts';
 
 // Most addresses one send goes to, and most sends (batches) per meeting in a rolling 24 hours, on top of the mail pipeline's own limits.
@@ -263,6 +263,7 @@ export type FollowupRecipient = z.infer<typeof zFollowupRecipient>;
 
 export const zFollowupDraftAsk = zMeetingRef.extend({
   stage: z.enum(FOLLOWUP_STAGES).optional(),
+  versionLanguage: zMeetingLanguage.optional(),
 });
 export type FollowupDraftAsk = z.infer<typeof zFollowupDraftAsk>;
 
@@ -274,7 +275,10 @@ export const zFollowupDraft = z.strictObject({
   stage: z.enum(FOLLOWUP_STAGES).optional(),
   hasPublished: z.boolean().optional(),
   hasDraft: z.boolean().optional(),
-  // What the recorder reviewed: a key over the stage + facts + ids + updated_at timestamps. The send rebuilds the facts and refuses (STALE_FOLLOWUP) when the stage changed since.
+  // Published second-language minutes versions available for this meeting (vi/en).
+  availableVersions: z.array(zMeetingLanguage).max(MEETING_LANGUAGES.length).optional(),
+  // What the recorder reviewed: a key over the stage + facts + ids + updated_at timestamps (plus version stamp when a published version is chosen).
+  // The send rebuilds the facts and refuses (STALE_FOLLOWUP) when the stage or version changed since.
   factsKey: z.string(),
   facts: zFollowupFacts,
   // The fixed words, the same whether or not a model is on.
@@ -289,6 +293,7 @@ export type FollowupDraft = z.infer<typeof zFollowupDraft>;
 export const FOLLOWUP_AI_STATES = ['used', 'off', 'busy', 'budget', 'failed'] as const;
 export const zFollowupWordingAsk = zMeetingRef.extend({
   stage: z.enum(FOLLOWUP_STAGES).optional(),
+  versionLanguage: zMeetingLanguage.optional(),
   hint: z.string().trim().max(FOLLOWUP_HINT_MAX).optional(),
 });
 export const zFollowupWording = z.strictObject({
@@ -308,6 +313,7 @@ export type FollowupNoteStatus = z.infer<typeof zFollowupNoteStatus>;
 
 export const zFollowupNoteStart = zMeetingRef.extend({
   stage: z.enum(FOLLOWUP_STAGES).optional(),
+  versionLanguage: zMeetingLanguage.optional(),
 });
 export const zFollowupNoteStarted = z.strictObject({
   meetingId: zId,
@@ -318,6 +324,7 @@ export type FollowupNoteStarted = z.infer<typeof zFollowupNoteStarted>;
 
 export const zFollowupNoteAsk = zMeetingRef.extend({
   stage: z.enum(FOLLOWUP_STAGES).optional(),
+  versionLanguage: zMeetingLanguage.optional(),
   hint: z.string().trim().max(FOLLOWUP_HINT_MAX).optional(),
 });
 export type FollowupNoteAsk = z.infer<typeof zFollowupNoteAsk>;
@@ -334,6 +341,7 @@ const zAddress = z.string().trim().max(254);
 export const zFollowupSend = zMeetingRef.extend({
   style: z.enum(FOLLOWUP_STYLES).default('structured'),
   stage: z.enum(FOLLOWUP_STAGES).default('published'),
+  versionLanguage: zMeetingLanguage.optional(),
   factsKey: z.string().min(1).max(100),
   subject: z.string().max(1000),
   greeting: z.string().max(2000).default(''),

@@ -13,23 +13,25 @@ describe('popup strings', () => {
     expect(paths(ENGLISH).sort()).toEqual(paths(VIETNAMESE).sort());
   });
 
-  it('no text is empty, and English is not Vietnamese left untranslated (apart from the brand and the example address)', () => {
+  it('no text is empty, and English is not Vietnamese left untranslated (apart from the brand)', () => {
     expect(texts(ENGLISH).every((t) => t.trim() !== '')).toBe(true);
     expect(texts(VIETNAMESE).every((t) => t.trim() !== '')).toBe(true);
     const same = paths(ENGLISH).filter((path) => {
       const get = (s: unknown) => path.split('.').reduce((v, k) => (v as Record<string, unknown>)[k], s) as string;
       return get(ENGLISH) === get(VIETNAMESE);
     });
-    expect(same.sort()).toEqual(['cloud', 'title']);
+    expect(same.sort()).toEqual(['title']);
   });
 
-  it('the sign-in step says, in both languages, that the browser and operating system name is sent (#3273)', () => {
-    expect(ENGLISH.signInDeviceNote).toMatch(/device name/i);
-    expect(ENGLISH.signInDeviceNote).toMatch(/browser/i);
-    expect(ENGLISH.signInDeviceNote).toMatch(/operating system/i);
-    expect(VIETNAMESE.signInDeviceNote).toMatch(/tên thiết bị/);
-    expect(VIETNAMESE.signInDeviceNote).toMatch(/trình duyệt/);
-    expect(VIETNAMESE.signInDeviceNote).toMatch(/hệ điều hành/);
+  it('removes legacy own-server and popup device-note strings (#5224)', () => {
+    for (const removed of ['setupTitle', 'cloud', 'selfHosted', 'addressPlaceholder', 'save', 'changeAddress', 'signInDeviceNote', 'signOutNote']) {
+      expect(Object.hasOwn(ENGLISH, removed)).toBe(false);
+      expect(Object.hasOwn(VIETNAMESE, removed)).toBe(false);
+    }
+    expect(ENGLISH.signInSubtitle).toContain('Ludy Cloud');
+    expect(VIETNAMESE.signInSubtitle).toContain('Ludy Cloud');
+    expect(ENGLISH.connectedCountdown).toContain('{seconds}');
+    expect(VIETNAMESE.connectedCountdown).toContain('{seconds}');
   });
 
   it('has clear reopen hint wording for first-use activeTab in both languages (#3742)', () => {

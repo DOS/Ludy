@@ -1013,7 +1013,7 @@ export function MeetingsPage() {
                 <RetentionSettingsCard />
                 <ConsentPolicyCard />
                 <MinutesEsignCard />
-                <MinutesLinkSwitchCard />
+                <MinutesLinkSwitchCard slug={slug} />
                 <MeetingHookCard />
                 <MinutesChannelsCard />
               </>

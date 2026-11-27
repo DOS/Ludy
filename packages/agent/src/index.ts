@@ -58,6 +58,7 @@ export * from './payroll-coworker.ts';
 export * from './labor-coworker.ts';
 export * from './recruiting-coworker.ts';
 export * from './attendance-coworker.ts';
+export * from './shift-coworker.ts';
 export * from './hr-probation.ts';
 export * from './hr-self.ts';
 export * from './hr-addendum.ts';

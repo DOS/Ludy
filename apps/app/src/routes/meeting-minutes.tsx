@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { MEETING_PLACE_MAX, type MeetingSummaryTemplate } from '@ludy/kernel-contract';
+import { MEETING_PLACE_MAX, type MeetingLanguage, type MeetingSummaryTemplate } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
@@ -165,6 +165,12 @@ export function MeetingMinutesPage() {
     },
   });
   const results = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId: id } }), ...READ_ONCE });
+  const hasPublishedResults = Boolean(results.data && (results.data.published !== null || results.data.items.some((i) => i.stage === 'published')));
+  const versions = useQuery({
+    ...orpc.meetings.minutesVersion.get.queryOptions({ input: { meetingId: id } }),
+    ...READ_ONCE,
+    enabled: hasPublishedResults,
+  });
   const org = useQuery(orpc.org.get.queryOptions());
   const back = (
     <Link to="/o/$slug/meetings/$id" params={{ slug, id }} className="text-sm text-link underline">
@@ -190,6 +196,11 @@ export function MeetingMinutesPage() {
   const placeTooLong = [...place.trim()].length > MEETING_PLACE_MAX;
   const placeError = savePlace.error ? errorMessage(savePlace.error) : placeTooLong ? t('minutes.placeTooLong', { max: String(MEETING_PLACE_MAX) }) : null;
   const model = buildMinutes(meeting.data, results.data, (userId) => memberLabel(members, userId, t('results.unknownMember')));
+  const originalLanguage: MeetingLanguage =
+    versions.data?.from ?? ((meeting.data as { language?: MeetingLanguage }).language === 'en' ? 'en' : 'vi');
+  const availableDocxLanguages = (versions.data?.versions ?? [])
+    .map((v) => v.language)
+    .filter((lang): lang is MeetingLanguage => (lang === 'vi' || lang === 'en') && lang !== originalLanguage);
   return frame(
     <div className="space-y-4">
       <div className="space-y-3 print:hidden">
@@ -212,8 +223,16 @@ export function MeetingMinutesPage() {
             </Button>
           )}
           <Button type="button" onClick={() => window.print()}>{t('minutes.print')}</Button>
-          {/* The published minutes as a Word file (#4774): built on the server from the published rows only. */}
-          {model.published && <MinutesDocxButton meetingId={id} place={place} disabled={placeTooLong} />}
+          {/* The published minutes as a Word file (#4774, #5225): built on the server from the published rows (or published second-language version) only. */}
+          {model.published && (
+            <MinutesDocxButton
+              meetingId={id}
+              place={place}
+              originalLanguage={originalLanguage}
+              availableLanguages={availableDocxLanguages}
+              disabled={placeTooLong}
+            />
+          )}
           {model.published && (
             <MeetingMinutesSignHandoff
               source={{
