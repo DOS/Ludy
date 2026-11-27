@@ -7,11 +7,13 @@ import { chatModel, type AiConfig, type AiUsage } from './index.ts';
 import { ASK_BOOKS_CHOICES, ASK_BOOKS_PERIODS, askBooksInstructions, askBooksPrompt, checkAskBooksOutput, type AskBooksResult } from './ask-books.ts';
 import { metered } from './meter.ts';
 
-const zAskBooksOut = z.object({
-  entry: z.enum(ASK_BOOKS_CHOICES).describe('The one report of the list that answers the question, or "none" when none does'),
-  period: z.enum(ASK_BOOKS_PERIODS).describe('The kind of period the question asks for, never a date; "none" only with entry "none"'),
-  lead: z.string().describe('At most one short sentence saying in words which report is shown, with no number, date, name, advice or promise; empty when unsure'),
-});
+// Built when the call is made, not when this file loads: the constants come from ask-books.ts, which the package index and the inbox reader load in a cycle with this file.
+const zAskBooksOut = () =>
+  z.object({
+    entry: z.enum(ASK_BOOKS_CHOICES).describe('The one report of the list that answers the question, or "none" when none does'),
+    period: z.enum(ASK_BOOKS_PERIODS).describe('The kind of period the question asks for, never a date; "none" only with entry "none"'),
+    lead: z.string().describe('At most one short sentence saying in words which report is shown, with no number, date, name, advice or promise; empty when unsure'),
+  });
 // The generator's output is read as plain data and checked by checkAskBooksOutput, whatever its declared shape: a test may hand it any object.
 export type AskBooksGenerator = (args: { system: string; prompt: string }) => Promise<{ output: Record<string, unknown> | null; usage?: AiUsage }>;
 
@@ -25,7 +27,7 @@ export class AskBooksCoworker {
       generator ??
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.ask_books', () =>
-          generateText({ model: chatModel(config), output: Output.object({ schema: zAskBooksOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+          generateText({ model: chatModel(config), output: Output.object({ schema: zAskBooksOut() }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
