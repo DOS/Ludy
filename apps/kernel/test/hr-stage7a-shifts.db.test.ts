@@ -449,7 +449,7 @@ suite('HR Stage 7A shifts, weekly roster, 1-step swaps, night rollup & Ly covera
 
     // 6. Conflict detection & Ly AI coverage brief with E1..En PII isolation
     // Approve leave for empA on 2027-04-08, schedule empA on 2027-04-08, and schedule empC on 2027-04-30 (VN holiday)
-    const leaveSubmitted = await o.exec<{ requestId: string }>(o.staffA, 'hr.self.leave.request.submit', {
+    const leaveSubmitted = await o.exec<{ requestId: string }>(o.staffA, 'hr.self.leave.request_submit', {
       startOn: '2027-04-08',
       endOn: '2027-04-08',
       kind: 'unpaid_leave',
