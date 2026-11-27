@@ -44,6 +44,7 @@ describe('meeting catch-up contract (#5130)', () => {
       matchedBy: 'name' as const,
     };
     expect(zCatchUpYourItem.safeParse(yourItem).success).toBe(true);
+    expect(zCatchUpYourItem.safeParse({ ...yourItem, status: 'dismissed' }).success).toBe(false);
 
     const status = {
       meetingId: ID,
@@ -54,7 +55,8 @@ describe('meeting catch-up contract (#5130)', () => {
     };
     expect(zCatchUpStatus.safeParse(status).success).toBe(true);
     expect(zCatchUpStatus.safeParse({ ...status, available: false, reason: 'is_recorder', yourItems: [], estimate: null }).success).toBe(true);
-    expect(zCatchUpStatus.safeParse({ ...status, available: false, reason: 'paused' }).success).toBe(false);
+    expect(zCatchUpStatus.safeParse({ ...status, available: false, reason: 'paused', estimate: null }).success).toBe(true);
+    expect(zCatchUpStatus.safeParse({ ...status, available: false, reason: 'unknown_reason' }).success).toBe(false);
     expect(
       zCatchUpStatus.safeParse({
         ...status,

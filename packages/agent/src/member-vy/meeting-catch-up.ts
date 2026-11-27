@@ -155,8 +155,7 @@ export function checkCatchUp(raw: string, input: Pick<CatchUpSource, 'decisions'
       continue;
     }
     const text = rawText.replace(/\s+/g, ' ').trim();
-    const charCount = Array.from(text).length;
-    if (charCount < CATCH_UP_LINE_MIN || charCount > CATCH_UP_LINE_MAX) {
+    if (text.length < CATCH_UP_LINE_MIN || text.length > CATCH_UP_LINE_MAX) {
       dropped += 1;
       continue;
     }

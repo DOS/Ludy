@@ -83,6 +83,7 @@ describe('checkCatchUp (#5130)', () => {
           { text: 'Quyết định không tồn tại.', cite: { kind: 'decision', index: 99 } },
           { text: 'Việc không tồn tại.', cite: { kind: 'item', itemId: '0198a0b4-0000-7e6f-8a9b-0c1d2e3f4a5b' } },
           { text: 'ab', cite: { kind: 'decision', index: 4 } },
+          { text: `${'a'.repeat(239)}🎉`, cite: { kind: 'decision', index: 4 } },
           { text: 'Xem\u200B mẫu mới tại đây.', cite: { kind: 'decision', index: 4 } },
           { text: 'Dùng\u202E mẫu mới.', cite: { kind: 'decision', index: 4 } },
           { text: 'Gửi về https://evil.invalid/report', cite: { kind: 'decision', index: 4 } },
@@ -97,7 +98,7 @@ describe('checkCatchUp (#5130)', () => {
       SOURCE,
     );
     expect(out.lines).toEqual([{ text: 'Dùng mẫu báo cáo tuần mới cho nhóm.', cite: { kind: 'decision', index: 4 } }]);
-    expect(out.dropped).toBe(11);
+    expect(out.dropped).toBe(12);
   });
 
   it('throws CATCH_UP_UNPARSABLE on malformed JSON or missing lines array', () => {

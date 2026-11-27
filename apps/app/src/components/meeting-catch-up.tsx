@@ -92,10 +92,19 @@ export function MeetingCatchUp({ meetingId }: { meetingId: string }) {
   const run = useMutation({ mutationFn: () => orpc.meetings.catchUp.write.call({ meetingId }) });
   const status: CatchUpStatus | undefined = statusQuery.data;
   if (!status) return null;
-  if (status.reason === 'is_recorder' || status.reason === 'not_published' || status.reason === 'redacted') return null;
+  if (status.reason === 'is_recorder') {
+    return (
+      <section className="space-y-2 rounded-lg border p-3" data-testid="meeting-catch-up" aria-label={t('title')}>
+        <p className="text-xs text-muted-foreground" data-testid="catch-up-recorder-note">
+          {t('recorderOnlyNote')}
+        </p>
+      </section>
+    );
+  }
+  if (status.reason === 'not_published' || status.reason === 'redacted') return null;
 
   const hasYourItems = status.yourItems.length > 0;
-  const showBlockedNote = !status.available && (status.reason === 'forbidden' || status.reason === 'budget');
+  const showBlockedNote = !status.available && (status.reason === 'forbidden' || status.reason === 'paused' || status.reason === 'budget');
   if (!hasYourItems && !status.available && !showBlockedNote) return null;
 
   const answer = run.data;
@@ -167,7 +176,7 @@ export function MeetingCatchUp({ meetingId }: { meetingId: string }) {
 
       {showBlockedNote && (
         <p className="text-xs text-muted-foreground" data-testid="catch-up-blocked">
-          {t(status.reason === 'forbidden' ? 'blockedForbidden' : 'blockedBudget')}
+          {t(status.reason === 'forbidden' ? 'blockedForbidden' : status.reason === 'paused' ? 'blockedPaused' : 'blockedBudget')}
         </p>
       )}
     </section>

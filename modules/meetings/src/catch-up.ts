@@ -33,7 +33,7 @@ export interface CatchUpActionRow {
   who_parsed: string | null;
   when_drafted: string;
   when_parsed: string | null;
-  status: 'suggested' | 'accepted' | 'dismissed';
+  status: 'suggested' | 'accepted';
   task_id: string | null;
 }
 
@@ -189,8 +189,7 @@ const catchUpStatus = defineQuery({
     const yourItems = yourCatchUpItems(data.items, userId, askerName);
     const vy = await vyReason(ctx);
     if (vy === 'forbidden' || vy === 'budget' || vy === 'off' || vy === 'paused') {
-      const reason = vy === 'paused' ? 'off' : vy;
-      return { meetingId: input.meetingId, available: false, reason, yourItems, estimate: null };
+      return { meetingId: input.meetingId, available: false, reason: vy, yourItems, estimate: null };
     }
     return { meetingId: input.meetingId, available: true, reason: null, yourItems, estimate: null };
   },
@@ -206,7 +205,7 @@ const catchUpFacts = defineQuery({
   handler: async (ctx, input): Promise<CatchUpFacts> => {
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
-    if (meeting.recorder_user_id === userId) throw new DomainError('FORBIDDEN', 403, 'The meeting recorder does not need a catch-up');
+    if (meeting.recorder_user_id === userId) throw new DomainError('FORBIDDEN', 403, 'The meeting recorder does not need a catch-up; this card is for readers');
     const data = await readPublishedForCatchUp(ctx, input.meetingId);
     if (!data) throw new DomainError('CATCH_UP_NOT_PUBLISHED', 422, 'Meeting minutes are not published yet');
     if (data.redacted) throw new DomainError('CATCH_UP_REDACTED', 422, 'Meeting minutes contain redacted content');
@@ -246,7 +245,7 @@ const catchUpStart = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
-    if (meeting.recorder_user_id === userId) throw new DomainError('FORBIDDEN', 403, 'The meeting recorder does not need a catch-up');
+    if (meeting.recorder_user_id === userId) throw new DomainError('FORBIDDEN', 403, 'The meeting recorder does not need a catch-up; this card is for readers');
     const data = await readPublishedForCatchUp(ctx, input.meetingId);
     if (!data) throw new DomainError('CATCH_UP_NOT_PUBLISHED', 422, 'Meeting minutes are not published yet');
     if (data.redacted) throw new DomainError('CATCH_UP_REDACTED', 422, 'Meeting minutes contain redacted content');

@@ -268,9 +268,9 @@ suite('meeting catch-up for a member who missed a meeting (#5130)', () => {
     try {
       const pausedStatus = await catchUpStatusOf(deps(), orgId, asUser('reader'), meetingId);
       expect(pausedStatus.available).toBe(false);
-      expect(pausedStatus.reason).toBe('off');
+      expect(pausedStatus.reason).toBe('paused');
       expect(pausedStatus.yourItems).toHaveLength(2);
-      expect(await refuses(runMeetingCatchUp(deps(), orgId, asUser('reader'), meetingId))).toMatchObject({ code: 'AI_STOPPED', status: 422 });
+      expect(await refuses(runMeetingCatchUp(deps(), orgId, asUser('reader'), meetingId))).toMatchObject({ code: 'AI_BUDGET_EXHAUSTED', status: 422 });
       expect(modelCalls).toBe(0);
     } finally {
       await runtime.execute('kernel.agent.kill_switch.release', { id: engaged.killSwitchId }, { actor: asMfa('owner'), orgId });

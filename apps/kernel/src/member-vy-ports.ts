@@ -3440,12 +3440,12 @@ export async function runMeetingCatchUp(deps: MeetingBriefDeps, orgId: string, a
   const model = deps.model;
   const meter = deps.meter(actor);
   const status = await deps.runtime.query<CatchUpStatus>('meetings.catch_up.status', { meetingId }, as);
-  if (status.reason === 'is_recorder') throw new DomainError('FORBIDDEN', 403, 'The meeting recorder does not need a catch-up');
+  if (status.reason === 'is_recorder') throw new DomainError('FORBIDDEN', 403, 'The meeting recorder does not need a catch-up; this card is for readers');
   if (status.reason === 'not_published') throw new DomainError('CATCH_UP_NOT_PUBLISHED', 422, 'Meeting minutes are not published yet');
   if (status.reason === 'redacted') throw new DomainError('CATCH_UP_REDACTED', 422, 'Meeting minutes contain redacted content');
   if (status.reason === 'forbidden') throw new DomainError('VY_NOT_ALLOWED', 403, 'You do not have permission to use Vy');
-  if (status.reason === 'budget') throw new DomainError('AI_BUDGET_EXHAUSTED', 422, 'Vy is paused or out of monthly AI budget');
-  if (!model || !meter) throw new DomainError('CATCH_UP_OFF', 422, 'Catch-up by Vy is not turned on here');
+  if (status.reason === 'paused' || status.reason === 'budget') throw new DomainError('AI_BUDGET_EXHAUSTED', 422, 'Vy is paused or out of monthly AI budget');
+  if (status.reason === 'off' || !model || !meter) throw new DomainError('CATCH_UP_OFF', 422, 'Catch-up by Vy is not turned on here');
 
   const ticket = deps.budget.take(orgId, actor.userId);
   if (!ticket.allowed) throw new DomainError('CATCH_UP_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });

@@ -62,12 +62,15 @@ function renderResult(answer: CatchUpAnswer, locale: 'en' | 'vi' = 'en') {
 }
 
 describe('MeetingCatchUp (#5130)', () => {
-  it('hides cleanly when status is missing, recorder, unpublished, redacted, or AI-off without yourItems', () => {
+  it('hides cleanly when status is missing, unpublished, redacted, or AI-off without yourItems, and notes recorder status cleanly', () => {
     expect(renderStatus(null)).toBe('');
-    expect(renderStatus(baseStatus({ available: false, reason: 'is_recorder' }))).toBe('');
     expect(renderStatus(baseStatus({ available: false, reason: 'not_published' }))).toBe('');
     expect(renderStatus(baseStatus({ available: false, reason: 'redacted' }))).toBe('');
     expect(renderStatus(baseStatus({ available: false, reason: 'off', yourItems: [], estimate: null }))).toBe('');
+
+    const recorderHtml = renderStatus(baseStatus({ available: false, reason: 'is_recorder', yourItems: [], estimate: null }), 'vi');
+    expect(recorderHtml).toContain('data-testid="catch-up-recorder-note"');
+    expect(recorderHtml).toContain(viMessages.meetings.catchUp.recorderOnlyNote);
   });
 
   it('shows code-built "Việc của bạn" even when AI is off and highlights matchedBy name', () => {
@@ -107,6 +110,10 @@ describe('MeetingCatchUp (#5130)', () => {
     const forbidden = renderStatus(baseStatus({ available: false, reason: 'forbidden', estimate: null }));
     expect(forbidden).toContain('data-testid="catch-up-blocked"');
     expect(forbidden).toContain(en.meetings.catchUp.blockedForbidden);
+
+    const paused = renderStatus(baseStatus({ available: false, reason: 'paused', estimate: null }));
+    expect(paused).toContain('data-testid="catch-up-blocked"');
+    expect(paused).toContain(en.meetings.catchUp.blockedPaused);
 
     const budget = renderStatus(baseStatus({ available: false, reason: 'budget', estimate: null }));
     expect(budget).toContain(en.meetings.catchUp.blockedBudget);

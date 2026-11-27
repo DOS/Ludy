@@ -30,7 +30,7 @@ export const zCatchUpYourItem = z.strictObject({
   who: z.string(),
   when: z.string(),
   whenDate: z.string().nullable(),
-  status: z.enum(['suggested', 'accepted', 'dismissed']),
+  status: z.enum(['suggested', 'accepted']),
   taskId: zId.nullable(),
   matchedBy: z.enum(['user_id', 'name']),
 });
@@ -39,7 +39,7 @@ export type CatchUpYourItem = z.infer<typeof zCatchUpYourItem>;
 export const zCatchUpStatus = z.strictObject({
   meetingId: zId,
   available: z.boolean(),
-  reason: z.enum(['off', 'is_recorder', 'not_published', 'redacted', 'forbidden', 'budget']).nullable(),
+  reason: z.enum(['off', 'is_recorder', 'not_published', 'redacted', 'forbidden', 'paused', 'budget']).nullable(),
   yourItems: z.array(zCatchUpYourItem).max(CATCH_UP_YOUR_ITEMS_MAX),
   estimate: zBriefStatus.shape.estimate,
 });
