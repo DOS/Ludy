@@ -2,6 +2,7 @@
 // Vietnamese copy of the Ludy eSign page (/esign). esign-en.ts mirrors this shape. Every claim here is merged and
 // usable on main today; live public CA credentials and Decree 337/2025 eContract platform reporting sit under "soon".
 // Company names, amounts and document numbers are example data and stay the same in both languages where they are names.
+import type { EsignComparisonCopy } from '../components/apps/esign-comparison';
 import type { AppPageCopy } from './app-page';
 import { N } from './roster';
 
@@ -394,6 +395,101 @@ export const esignVi = {
       ],
     },
   },
-} satisfies AppPageCopy & { fragments: object };
+  comparison: {
+    title: 'So sánh Ludy eSign với Documenso, DocuSign và MISA',
+    lead: 'Đối chiếu thực tế cho hộ kinh doanh và SME Việt Nam: tự cài đặt AGPL không thu phí theo người dùng, gửi qua Zalo và QR, chuyển .docx thành PDF và ghép bộ 1-5 tài liệu, đặt cọc VietQR sau ký, rà sổ tay SME và tách rõ phần chứng thực CA chờ rà soát pháp lý (#62).',
+    caption: 'Bảng so sánh năng lực ký tài liệu điện tử giữa Ludy eSign, Documenso, DocuSign và MISA AMIS WeSign + MISA eSign trên 8 tiêu chí cho doanh nghiệp nhỏ Việt Nam.',
+    capabilityLabel: 'Tiêu chí',
+    vendors: [
+      { key: 'ludy', name: 'Ludy eSign', tag: 'AGPL tự cài đặt' },
+      { key: 'documenso', name: 'Documenso', tag: 'AGPL + Cloud trả phí' },
+      { key: 'docusign', name: 'DocuSign', tag: 'SaaS đóng toàn cầu' },
+      { key: 'misa', name: 'MISA AMIS WeSign + eSign', tag: 'SaaS VN + CA tích hợp' },
+    ],
+    rows: [
+      {
+        id: 'self-host-licensing',
+        label: 'Tự cài đặt & mô hình bản quyền',
+        values: [
+          'AGPL-3.0 tự cài đặt đầy đủ qua docker compose up, không thu phí theo người dùng hay số lượt ký.',
+          'AGPL-3.0 bản Cộng đồng để đánh giá, kết hợp bản thương mại trả phí hoặc thuê bao Cloud theo người dùng.',
+          'Chỉ có SaaS đóng, thu phí thuê bao hằng năm theo người dùng, giới hạn số hồ sơ và mức IAM.',
+          'SaaS Việt Nam đóng, thu phí phần mềm hằng năm cộng lượt tài liệu và chứng thư số MISA eSign CA.',
+        ],
+      },
+      {
+        id: 'zalo-qr-handoff',
+        label: 'Link Zalo & quét QR chuyển máy',
+        values: [
+          'Link ký sau dấu # cho Zalo hoặc chat không cần CAPTCHA, quét QR chuyển từ máy tính sang điện thoại hoặc tại quầy, và chèn tin vào Hộp thư Zalo OA Engage.',
+          'Gửi qua email kèm liên kết ký trực tiếp hoặc trang hồ sơ công khai, không có luồng Zalo OA hay QR quầy.',
+          'Ưu tiên email, tuỳ chọn SMS hoặc mã xác thực cổng ký, không có luồng Zalo OA tích hợp.',
+          'Gửi qua email, SMS và thông báo Zalo ZNS trả phí theo tin mẫu.',
+        ],
+      },
+      {
+        id: 'docx-multi-doc',
+        label: 'Word (.docx) & bộ nhiều tài liệu',
+        values: [
+          'Hộp cát thuần JS (không LibreOffice) chuyển .docx sang PDF A4 dùng phông Be Vietnam Pro, ghép bộ 1-5 PDF tối đa 200 trang kèm mục lục và chứng chỉ SHA-256.',
+          'Chuyển .docx phía máy chủ qua LibreOffice, hỗ trợ hồ sơ nhiều tài liệu.',
+          'Hỗ trợ tải tệp Word .docx trực tiếp và ghép hồ sơ nhiều tài liệu.',
+          'Chuyển đổi Word .docx sang PDF và hỗ trợ ký theo lô hoặc bộ nhiều tài liệu.',
+        ],
+      },
+      {
+        id: 'post-sign-vietqr',
+        label: 'Thu đặt cọc VietQR sau khi ký',
+        values: [
+          'Hiện thẻ đặt cọc NAPAS VietQR sau khi ký từ xa với tài khoản thụ hưởng chốt lúc gửi và gợi ý khớp sao kê trong Ludy Tài chính, không giữ tiền hộ (zero escrow).',
+          'Không tích hợp thu tiền hay đối chiếu đặt cọc sau ký.',
+          'Thu tiền thẻ hoặc ACH trên các mức Business Pro cao hơn, không có VietQR nội địa.',
+          'Thu tiền tách riêng qua phân hệ AMIS Kế toán và meInvoice ngoài luồng ký.',
+        ],
+      },
+      {
+        id: 'vn-signatures-kyc',
+        label: 'Ký nháy, con dấu đỏ & KYC Việt Nam',
+        values: [
+          'Ký nháy tất cả các trang một chạm, con dấu đỏ công ty hoặc chức danh, tải CCCD, ĐKKD hoặc giấy uỷ quyền kèm tách MST/CCCD để đối chiếu KYC.',
+          'Đặt ô ký tắt thủ công từng trang, không có sẵn con dấu đỏ hay kiểm tra KYC Việt Nam.',
+          'Hỗ trợ đính kèm và con dấu, nhưng đặt ô ký tắt thủ công và không tách MST/CCCD Việt Nam.',
+          'Hỗ trợ đầy đủ ký nháy, con dấu doanh nghiệp và eKYC qua CCCD hoặc khuôn mặt.',
+        ],
+      },
+      {
+        id: 'public-ca-decree-337',
+        label: 'CA công cộng (Luật 20/2023) & NĐ 337/2025',
+        values: [
+          'Đã có Sandbox PAdES ngoại tuyến và giao diện VNPT SmartCA, Viettel MySign, MISA WeSign; bật CA thật và đồng bộ VNeID/Bộ Nội vụ đang chờ rà soát pháp lý (#62).',
+          'Dùng chứng thư X.509 hoặc CSC tổng quát, chưa tích hợp sẵn CA công cộng Việt Nam.',
+          'Hỗ trợ các CA đối tác quốc tế, chưa nối nền tảng hợp đồng lao động Bộ Nội vụ.',
+          'Tích hợp sẵn chữ ký số từ xa MISA eSign CA, USB Token và đồng bộ cổng Bộ Nội vụ hoặc VNeID.',
+        ],
+      },
+      {
+        id: 'ai-coworker-parity',
+        label: 'Đồng nghiệp AI theo hạn mức & chế độ tắt AI',
+        values: [
+          `10 tính năng từ ${N.gm} đo theo ngân sách AI (ô ký, điều khoản, sổ tay 6 quy tắc SME, nghĩa vụ, Hỏi đáp kho và rà chéo 2-5 PDF); khi tắt AI vẫn thao tác thủ công đầy đủ 100%.`,
+          'Có công cụ hỏi đáp tài liệu AI giới hạn lượt và máy chủ MCP, chưa có sổ tay hợp đồng Việt Nam.',
+          'Bán kèm phần mở rộng Iris AI và Agent Studio trên các mức IAM cao, không có chế độ tắt AI vẫn đủ công cụ nội bộ.',
+          'Tập trung định tuyến phê duyệt và mẫu sẵn, chưa kèm đồng nghiệp AI rà điều khoản hay tóm tắt sửa đổi.',
+        ],
+      },
+      {
+        id: 'handoffs-api-mcp',
+        label: 'Nối quy trình nội bộ, Webhook, REST API & MCP',
+        values: [
+          'Nối thẳng từ Báo giá, Họp, Nhân sự và Dự án (nghiệm thu sang nháp hoá đơn Ludy Tài chính), kèm Webhook HMAC, REST API /api/v1/sign/* và 4 công cụ MCP ludy.read chỉ đọc.',
+          'Mạnh về bộ công cụ lập trình TypeScript SDK v2, nhúng React, Webhook và hệ sinh thái MCP.',
+          'Cung cấp Maestro và các đầu nối quy trình ở những phiên bản thương mại cao.',
+          'Liên thông chặt trong hệ sinh thái AMIS Kế toán, meInvoice, CRM và bảo hiểm xã hội.',
+        ],
+      },
+    ],
+    note: 'Ghi chú đối chiếu: phạm vi sản phẩm của Documenso, DocuSign và MISA AMIS WeSign + MISA eSign được tổng hợp theo tài liệu công khai của từng hãng tại thời điểm tháng 11/2026. Kết nối chữ ký số công cộng trực tiếp và đồng bộ Nghị định 337/2025/NĐ-CP của Ludy eSign đang chờ hoàn tất thẩm định pháp lý (#62) trước khi bật diện rộng.',
+  },
+} satisfies AppPageCopy & { fragments: object; comparison: EsignComparisonCopy };
 
 export type EsignCopy = typeof esignVi;
