@@ -41,6 +41,7 @@ suite('the quarter in plain words (#5183)', () => {
   let home = '';
   let homeNoProfile = '';
   let stockEntity = '';
+  let closed99 = '';
   let customer = '';
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const asStepUp = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, mfaAt: Math.floor(Date.now() / 1000) });
@@ -177,12 +178,14 @@ suite('the quarter in plain words (#5183)', () => {
       home = await entity('Hộ kinh doanh có hồ sơ', 'household');
       homeNoProfile = await entity('Hộ kinh doanh chưa có hồ sơ', 'household');
       stockEntity = await entity('Công ty có kho');
+      closed99 = await entity('Công ty TT99 đã kết chuyển');
       await a.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`, [orgId, member, viewer]);
       // The member reads the TT99 company only.
       await a.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, member, tt99, owner]);
       customer = String((await a.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name, tax_code) VALUES ($1, 'Khách hàng nợ', '0101234564') RETURNING id`, [orgId])).rows[0]?.id);
       // The TT99 company keeps its books under TT99 for all of 2026, set before it has any entry.
       await a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2026-01-01')`, [orgId, tt99]);
+      await a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2026-01-01')`, [orgId, closed99]);
     });
 
     // The TT133 company (no books row). Sales on account to one customer: 100,000,000 in Q3 of 2025, 50,000,000 in Q2 and 100,000,000 in Q3 (the last as a sales invoice, so it can be overdue), a receipt of 40,000,000
@@ -203,6 +206,12 @@ suite('the quarter in plain words (#5183)', () => {
     await post(tt99, '2026-08-01', [{ account: '521', debit: '5000000' }, { account: '131', credit: '5000000' }]);
     await post(tt99, '2026-08-10', [{ account: '6417', debit: '12000000' }, { account: '331', credit: '12000000' }]);
     await post(tt99, '2026-08-11', [{ account: '6421', debit: '4000000' }, { account: '331', credit: '4000000' }]);
+
+    // A TT99 company whose production cost was closed: 621 of 8,000,000 in August is closed to 154 and then to 632 on 30 September, so 632 carries it and 621 nets to 0. The card must count it once.
+    await post(closed99, '2026-07-10', [{ account: '131', debit: '20000000' }, { account: '511', credit: '20000000' }]);
+    await post(closed99, '2026-08-05', [{ account: '621', debit: '8000000' }, { account: '331', credit: '8000000' }]);
+    await post(closed99, '2026-09-30', [{ account: '154', debit: '8000000' }, { account: '621', credit: '8000000' }]);
+    await post(closed99, '2026-09-30', [{ account: '632', debit: '8000000' }, { account: '154', credit: '8000000' }]);
 
     // The household: a percentage-method profile from the start of 2026 for one trade, takings of 600,000 in Q2 and 1,000,000 in Q3, no cost.
     await rt.execute<HouseholdProfileView>(
@@ -293,6 +302,17 @@ suite('the quarter in plain words (#5183)', () => {
     const q3 = await statements(QUARTER, tt99);
     expect(line(q3, '50')).toBe('46000000');
     expect(q3.b02.unmapped.map((u) => [u.accountCode, u.amount]).sort()).toEqual([['521', '5000000'], ['6417', '12000000']]);
+  });
+
+  it('counts production cost once when 621 was closed to 154 and 632', async () => {
+    const s = await summary({ legalEntityId: closed99 });
+    expect(s.includesUnmapped).toBe(false);
+    expect(figure(s, 'costs').amount).toBe('8000000');
+    expect(figure(s, 'profit').amount).toBe('12000000');
+    // The income statement reads 632 and lists nothing as unmapped but the pair that nets to 0, so its profit is the card's.
+    const q3 = await statements(QUARTER, closed99);
+    expect(line(q3, '50')).toBe('12000000');
+    expect(q3.b02.unmapped.every((u) => u.amount === '0')).toBe(true);
   });
 
   it('shows no stock row where no stock is kept, and the row where it is', async () => {

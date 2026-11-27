@@ -134,6 +134,28 @@ describe('the result figures of one period', () => {
     expect(money(column.revenue).plus(column.otherIncome).minus(column.costs).toFixed()).toBe(column.profit);
   });
 
+  it('counts nothing twice when production costs were closed to 154 and 632: a class 6 account that nets to 0 is not a cost of its own', () => {
+    // 621, 622, 623 and 627 each had a debit and a closing credit of the same size (the unmapped list holds them with a net of 0), and 632 carries the cost through line 11.
+    const column = resultColumn(
+      [{ code: '10', amount: '100' }, { code: '11', amount: '32' }, { code: '50', amount: '68' }],
+      [
+        { accountCode: '621', amount: '0' },
+        { accountCode: '622', amount: '0' },
+        { accountCode: '6231', amount: '0' },
+        { accountCode: '627', amount: '0' },
+      ],
+    );
+    expect(column).toEqual({ revenue: '100', otherIncome: '0', costs: '32', profit: '68', includesUnmapped: false });
+    // Only the part not yet closed is added: 5 still on 627 on top of the 32 already in 632.
+    expect(resultColumn([{ code: '10', amount: '100' }, { code: '11', amount: '32' }, { code: '50', amount: '68' }], [{ accountCode: '621', amount: '0' }, { accountCode: '627', amount: '5' }])).toEqual({
+      revenue: '100',
+      otherIncome: '0',
+      costs: '37',
+      profit: '63',
+      includesUnmapped: true,
+    });
+  });
+
   it('reads a period with no line as 0', () => {
     expect(resultColumn([], [])).toEqual({ revenue: '0', otherIncome: '0', costs: '0', profit: '0', includesUnmapped: false });
   });
