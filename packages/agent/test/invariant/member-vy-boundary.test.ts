@@ -1511,12 +1511,14 @@ const isMemberPrev = (tokens: readonly Token[], idx: number): boolean => {
 
 interface DelimiterPairs {
   paren: Int32Array;
+  openParen: Int32Array;
   brace: Int32Array;
   bracket: Int32Array;
 }
 
 function pairDelimiters(tokens: readonly Token[]): DelimiterPairs {
   const paren = new Int32Array(tokens.length).fill(-1);
+  const openParen = new Int32Array(tokens.length).fill(-1);
   const brace = new Int32Array(tokens.length).fill(-1);
   const bracket = new Int32Array(tokens.length).fill(-1);
   const parenStack: number[] = [];
@@ -1526,13 +1528,16 @@ function pairDelimiters(tokens: readonly Token[]): DelimiterPairs {
     const t = tokens[i]!;
     if (t.kind !== 'punct') continue;
     if (t.value === '(') parenStack.push(i);
-    else if (t.value === ')' && parenStack.length > 0) paren[parenStack.pop()!] = i;
-    else if (t.value === '{') braceStack.push(i);
+    else if (t.value === ')' && parenStack.length > 0) {
+      const openIdx = parenStack.pop()!;
+      paren[openIdx] = i;
+      openParen[i] = openIdx;
+    } else if (t.value === '{') braceStack.push(i);
     else if (t.value === '}' && braceStack.length > 0) brace[braceStack.pop()!] = i;
     else if (t.value === '[') bracketStack.push(i);
     else if (t.value === ']' && bracketStack.length > 0) bracket[bracketStack.pop()!] = i;
   }
-  return { paren, brace, bracket };
+  return { paren, openParen, brace, bracket };
 }
 
 function scanBalancedParenArg(
@@ -2903,6 +2908,27 @@ const findMatchingSpecifier = (spec: string, re: RegExp): string | null => {
 
 // --- Iterative TypeScript AST boundary walker (#5106) ---
 const AST_REQUIRE_HOSTS = new Set(['globalThis', 'window', 'self', 'module', 'global']);
+const PROTO_ACCESS_HOSTS = new Set(['Object', 'Reflect', 'Function', 'Array', ...AST_REQUIRE_HOSTS]);
+const PROTO_REFLECT_OR_OBJECT_METHODS = new Set([
+  'get',
+  'set',
+  'defineProperty',
+  'defineProperties',
+  'getOwnPropertyDescriptor',
+  'getPrototypeOf',
+  'setPrototypeOf',
+]);
+
+function isAstProtoBearingHost(expr: tsType.Expression): boolean {
+  const norm = unwrapAstExpr(expr, true);
+  if (ts.isIdentifier(norm) && PROTO_ACCESS_HOSTS.has(norm.text)) return true;
+  if (ts.isObjectLiteralExpression(norm) || ts.isArrayLiteralExpression(norm)) return true;
+  if (ts.isPropertyAccessExpression(norm) || ts.isElementAccessExpression(norm)) {
+    const base = unwrapAstExpr(norm.expression, true);
+    if (ts.isIdentifier(base) && AST_REQUIRE_HOSTS.has(base.text)) return true;
+  }
+  return false;
+}
 const AST_LEXICAL_UNCLOSED_CODES = new Set([1002, 1010, 1160, 1161]);
 const AST_JSX_UNCLOSED_CODES = new Set([17008, 17014]);
 const AST_MAX_PLUS_NODES = 256;
@@ -5224,6 +5250,23 @@ function extractAstFacts(
         }
       }
       if (ts.isObjectLiteralExpression(lhsExpr)) {
+        if (isAstProtoBearingHost(node.right)) {
+          const checkObjProps: tsType.ObjectLiteralExpression[] = [lhsExpr];
+          while (checkObjProps.length > 0) {
+            const obj = checkObjProps.pop()!;
+            for (const prop of obj.properties) {
+              if (ts.isPropertyAssignment(prop)) {
+                if (ts.isComputedPropertyName(prop.name)) {
+                  const keyName = resolveAstPropertyName(prop.name, nextScope).name;
+                  if (keyName === null || keyName === 'prototype' || keyName === '__proto__') {
+                    hasProtoMutation = true;
+                  }
+                }
+                if (ts.isObjectLiteralExpression(prop.initializer)) checkObjProps.push(prop.initializer);
+              }
+            }
+          }
+        }
         recordDestructuredEntries(
           collectDestructuringTargetsAndRefs(lhsExpr, nextScope).entries,
           rhsExpr,
@@ -5258,11 +5301,24 @@ function extractAstFacts(
         outerAccessExpr,
       });
       const directCallee = unwrapAstExpr(node.expression, true);
-      if (ts.isPropertyAccessExpression(directCallee) || ts.isElementAccessExpression(directCallee)) {
+      if (!nextInTypePos && (ts.isPropertyAccessExpression(directCallee) || ts.isElementAccessExpression(directCallee))) {
         const mem = extractAstMemberName(directCallee, nextScope);
         const recv = unwrapAstExpr(mem.host, true);
         if (mem.memberName === 'get' && ts.isIdentifier(recv) && recv.text === 'Reflect') {
           reflectGetCallNodes.push({ call: node, scope: nextScope });
+        }
+        const isReflectOrObjRecv =
+          (ts.isIdentifier(recv) && (recv.text === 'Reflect' || recv.text === 'Object')) ||
+          ((ts.isPropertyAccessExpression(recv) || ts.isElementAccessExpression(recv)) && isAstProtoBearingHost(recv.expression));
+        if (mem.memberName !== null && PROTO_REFLECT_OR_OBJECT_METHODS.has(mem.memberName) && isReflectOrObjRecv) {
+          if (mem.memberName === 'getPrototypeOf' || mem.memberName === 'setPrototypeOf') {
+            hasProtoMutation = true;
+          } else if (node.arguments.length >= 2 && isAstProtoBearingHost(node.arguments[0]!)) {
+            const keyArg = resolveAstConstString(node.arguments[1]!, nextScope, 'full_const');
+            if (keyArg === null || keyArg === 'prototype' || keyArg === '__proto__') {
+              hasProtoMutation = true;
+            }
+          }
         }
       }
     }
@@ -5274,7 +5330,8 @@ function extractAstFacts(
         mem.memberName === 'prototype' ||
         mem.memberName === '__proto__' ||
         mem.memberName === 'setPrototypeOf' ||
-        mem.memberName === 'getPrototypeOf'
+        mem.memberName === 'getPrototypeOf' ||
+        (ts.isElementAccessExpression(node) && mem.memberName === null && isAstProtoBearingHost(mem.host))
       ) {
         hasProtoMutation = true;
       }
@@ -5317,6 +5374,19 @@ function extractAstFacts(
         boundKey === 'getPrototypeOf'
       ) {
         hasProtoMutation = true;
+      } else if (boundKey === null && node.propertyName && ts.isComputedPropertyName(node.propertyName)) {
+        let owner: tsType.Node | undefined = node.parent;
+        while (owner && (ts.isObjectBindingPattern(owner) || ts.isArrayBindingPattern(owner) || ts.isBindingElement(owner))) {
+          owner = owner.parent;
+        }
+        if (
+          owner &&
+          (ts.isVariableDeclaration(owner) || ts.isParameter(owner)) &&
+          owner.initializer &&
+          isAstProtoBearingHost(owner.initializer)
+        ) {
+          hasProtoMutation = true;
+        }
       }
     }
 
@@ -10381,9 +10451,28 @@ function hasTokenResolvedWorkspaceTarget(
       }
       const prevTok = tokens[i - 1];
       const prevSameLine = Boolean(prevTok && prevTok.line === t.line);
+      let isControlHeaderCloseParen = false;
+      if (prevSameLine && prevTok?.kind === 'punct' && prevTok.value === ')') {
+        const openIdx = delims.openParen[i - 1] ?? -1;
+        const beforeOpen = openIdx > 0 ? tokens[openIdx - 1] : undefined;
+        isControlHeaderCloseParen = Boolean(
+          openIdx >= 0 &&
+            beforeOpen?.kind === 'ident' &&
+            !beforeOpen.escaped &&
+            (beforeOpen.value === 'if' ||
+              beforeOpen.value === 'while' ||
+              beforeOpen.value === 'for' ||
+              beforeOpen.value === 'with' ||
+              (beforeOpen.value === 'await' &&
+                openIdx >= 2 &&
+                tokens[openIdx - 2]?.kind === 'ident' &&
+                !tokens[openIdx - 2]!.escaped &&
+                tokens[openIdx - 2]?.value === 'for')),
+        );
+      }
       if (t.kind === 'punct' && t.value === '<') {
         if (isKnownJsxPath) continue;
-        if (prevSameLine && prevTok) {
+        if (prevSameLine && prevTok && !isControlHeaderCloseParen) {
           const isPrefixKw = prevTok.kind === 'ident' && !prevTok.escaped && REGEX_PREFIX_KEYWORDS.has(prevTok.value);
           if (
             (prevTok.kind === 'ident' && !isPrefixKw) ||
@@ -10398,7 +10487,7 @@ function hasTokenResolvedWorkspaceTarget(
           }
         }
       }
-      if (t.kind === 'punct' && t.value === '(' && prevSameLine && prevTok) {
+      if (t.kind === 'punct' && t.value === '(' && prevSameLine && prevTok && !isControlHeaderCloseParen) {
         const isPrefixKw = prevTok.kind === 'ident' && !prevTok.escaped && REGEX_PREFIX_KEYWORDS.has(prevTok.value);
         if (
           (prevTok.kind === 'ident' && !isPrefixKw) ||
@@ -14105,5 +14194,80 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
         "let read = globalThis.fetch;\nfn = read;\n{\n  using fn = (() => {}) as any;\n  void fn;\n}\nread = fn;\nread('https://x.test');",
       ),
     ).toContain('calls the network directly');
+
+    // Line PO Round 13 follow-up regressions: same-line control header ')' + unresolved computed bracket prototype mutations
+    const splitParts = "const a = 'gen', b = 'er', c = 'ate', d = 'Note', e = 'SummaryText';";
+    expect(
+      workspaceAdapterLeakViolations(
+        `${splitParts}\nif (cond) (a + b) + c + d + e;`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `${splitParts}\nif (cond) (a as any) + b + c + d + e;`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `${splitParts}\nif (cond) (<string>a) + b + c + d + e;`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `${splitParts}\nfor (const _ of []) (a + b) + c + d + e;`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `${splitParts}\nwhile (cond) (a + b) + c + d + e;`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `${splitParts}\nwhile (cond) <string>a + b + c + d + e;`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nlet p = 'proto';\np += 'type';\n(Object as any)[p].fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\n(Object as any)['proto'.concat('type')].fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nlet k = '__pro';\nk += 'to__';\n({} as any)[k].fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nlet p = 'proto';\np += 'type';\n(Reflect.get(Object, p) as any).fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nlet p = 'proto';\np += 'type';\nconst { [p]: protoObj } = Object as any;\nprotoObj.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst items = ['a', 'b'];\nconst idx = Math.floor(Math.random() * 2);\nconst picked = items[idx];\nread = cache.fetch;\nread(picked);",
+      ),
+    ).toEqual([]);
   }, 30_000);
 });
