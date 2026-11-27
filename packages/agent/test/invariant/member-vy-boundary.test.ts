@@ -3481,6 +3481,16 @@ function seedBlockShadowIdentifiers(blockNode: tsType.Node, scope: AstLexScope):
   }
 }
 
+function isAstKnownSafeFetchKillRhs(expr: tsType.Expression): boolean {
+  return (
+    ts.isFunctionLike(expr) ||
+    ts.isLiteralExpression(expr) ||
+    expr.kind === ts.SyntaxKind.NullKeyword ||
+    expr.kind === ts.SyntaxKind.UndefinedKeyword ||
+    ts.isNoSubstitutionTemplateLiteral(expr)
+  );
+}
+
 function isAstIdentNonValueRequireOrImportKey(ident: tsType.Identifier, parent: tsType.Node, inTypePos: boolean): boolean {
   if (inTypePos) {
     if (
@@ -4177,8 +4187,12 @@ function extractAstFacts(
         continue;
       }
       if (!ts.isIdentifier(cur)) {
+        const isSafeRhs = isAstKnownSafeFetchKillRhs(cur);
         for (const tk of targetKeys) {
           if (!tk.startsWith('prop:')) seedNonSafeKillBases.add(tk);
+          if (!isSafeRhs && !ts.isPropertyAccessExpression(cur)) {
+            seedNonSafeKillValues.add(tk);
+          }
         }
       }
       const memberAccess =
@@ -5241,12 +5255,7 @@ function extractAstFacts(
         const baseKey = astVarKey(k.evalScope, base.text);
         isKnownSafeKill = !requireHosts.has(baseKey) && !nonSafeKillBases.has(baseKey);
       }
-    } else if (
-      ts.isFunctionLike(k.rhsExpr) ||
-      ts.isLiteralExpression(k.rhsExpr) ||
-      k.rhsExpr.kind === ts.SyntaxKind.NullKeyword ||
-      k.rhsExpr.kind === ts.SyntaxKind.UndefinedKeyword
-    ) {
+    } else if (isAstKnownSafeFetchKillRhs(k.rhsExpr)) {
       isKnownSafeKill = true;
     }
     if (isKnownSafeKill) {
@@ -5756,12 +5765,65 @@ function normalizeValueExprSpan(
 ): { start: number; end: number } {
   let s = start;
   let e = end;
-  for (let pass = 0; pass < 8; pass += 1) {
+  for (let pass = 0; pass < 16; pass += 1) {
     const parenTrim = stripOuterParens(tokens, s, e, delims);
     s = parenTrim.start;
     e = parenTrim.end;
     if (s >= e) break;
     let changed = false;
+    if (
+      tokens[s]?.kind === 'ident' &&
+      !tokens[s]!.escaped &&
+      tokens[s]?.value === 'await' &&
+      s + 1 < e
+    ) {
+      s += 1;
+      changed = true;
+    } else if (
+      tokens[s]?.kind === 'punct' &&
+      tokens[s]?.value === '<' &&
+      s + 2 < e &&
+      !(tokens[s + 1]?.kind === 'punct' && tokens[s + 1]?.value === '/')
+    ) {
+      let ad = 1;
+      let pd = 0;
+      let bd = 0;
+      let cd = 0;
+      let td = 0;
+      let aborted = false;
+      let closeIdx = -1;
+      const maxTypeIdx = Math.min(e, s + 64);
+      for (let idx = s + 1; idx < maxTypeIdx; idx += 1) {
+        const tk = tokens[idx]!;
+        if (tk.kind === 'template_head') td += 1;
+        else if (tk.kind === 'template_tail' && td > 0) td -= 1;
+        else if (tk.kind === 'punct') {
+          if (tk.value === '(') pd += 1;
+          else if (tk.value === ')' && pd > 0) pd -= 1;
+          else if (tk.value === '[') bd += 1;
+          else if (tk.value === ']' && bd > 0) bd -= 1;
+          else if (tk.value === '{') cd += 1;
+          else if (tk.value === '}' && cd > 0) cd -= 1;
+          else if (tk.value === ';') {
+            aborted = true;
+            break;
+          } else if (pd === 0 && bd === 0 && cd === 0 && td === 0) {
+            if (tk.value === '<') ad += 1;
+            else if (tk.value === '>') ad -= 1;
+            else if (tk.value === '>>' && ad >= 2) ad -= 2;
+            else if (tk.value === '>>>' && ad >= 3) ad -= 3;
+            if (ad === 0) {
+              closeIdx = idx;
+              break;
+            }
+          }
+        }
+      }
+      if (!aborted && closeIdx > s + 1 && closeIdx + 1 < e) {
+        s = closeIdx + 1;
+        changed = true;
+      }
+    }
     while (e > s && tokens[e - 1]?.kind === 'punct' && tokens[e - 1]?.value === '!') {
       e -= 1;
       changed = true;
@@ -9342,6 +9404,187 @@ function hasTokenResolvedWorkspaceTarget(
   return false;
 }
 
+const WORKSPACE_AST_DIRECT_IDENTS = new Set([
+  'fromCharCode',
+  'fromCodePoint',
+  'require',
+  'createRequire',
+  'eval',
+  'Function',
+  'Reflect',
+]);
+
+const WORKSPACE_HOST_DOT_MEMBERS = new Set([
+  'fromCharCode',
+  'fromCodePoint',
+  'String',
+  'require',
+]);
+
+const WORKSPACE_TS_TYPE_PREFIX_IDENTS = new Set([
+  'typeof',
+  'keyof',
+  'readonly',
+  'unique',
+  'infer',
+  'is',
+  'asserts',
+]);
+
+function skipWorkspaceTypeAssertion(toks: readonly Token[], typeStart: number, limit: number): number {
+  let j = typeStart;
+  let td = 0;
+  let expectTypeOperand = true;
+  while (j < limit) {
+    const tk = toks[j]!;
+    if (td > 0) {
+      if (tk.kind === 'template_head') {
+        td += 1;
+      } else if (tk.kind === 'template_tail') {
+        td -= 1;
+        if (td === 0) expectTypeOperand = false;
+      } else if (tk.kind === 'punct') {
+        if (tk.value === '(' || tk.value === '[' || tk.value === '{' || tk.value === '<') {
+          td += 1;
+        } else if (tk.value === ')' || tk.value === ']' || tk.value === '}' || tk.value === '>') {
+          td -= 1;
+          if (td === 0) expectTypeOperand = false;
+        } else if (tk.value === '>>' || tk.value === '>>>') {
+          td = Math.max(0, td - tk.value.length);
+          if (td === 0) expectTypeOperand = false;
+        }
+      }
+      j += 1;
+      continue;
+    }
+    if (expectTypeOperand) {
+      if (
+        tk.kind === 'template_head' ||
+        (tk.kind === 'punct' && (tk.value === '(' || tk.value === '[' || tk.value === '{' || tk.value === '<'))
+      ) {
+        td = 1;
+        j += 1;
+        continue;
+      }
+      if (tk.kind === 'ident' && WORKSPACE_TS_TYPE_PREFIX_IDENTS.has(tk.value)) {
+        j += 1;
+        continue;
+      }
+      if (
+        tk.kind === 'ident' ||
+        tk.kind === 'string' ||
+        tk.kind === 'number' ||
+        tk.kind === 'template' ||
+        tk.kind === 'regex'
+      ) {
+        expectTypeOperand = false;
+        j += 1;
+        continue;
+      }
+      return j;
+    }
+    if (tk.kind === 'punct') {
+      if (tk.value === '<' || tk.value === '[') {
+        td = 1;
+        j += 1;
+        continue;
+      }
+      if (
+        tk.value === '.' ||
+        tk.value === '&' ||
+        tk.value === '|' ||
+        tk.value === '=>' ||
+        tk.value === '?' ||
+        tk.value === ':'
+      ) {
+        expectTypeOperand = true;
+        j += 1;
+        continue;
+      }
+    } else if (tk.kind === 'ident' && (tk.value === 'extends' || tk.value === 'is')) {
+      expectTypeOperand = true;
+      j += 1;
+      continue;
+    }
+    return j;
+  }
+  return j;
+}
+
+function hasWorkspaceHostBracketOrMember(toks: readonly Token[], startIdx: number): boolean {
+  let j = startIdx + 1;
+  let steps = 0;
+  const maxSteps = 20;
+  while (j < toks.length && steps < maxSteps) {
+    steps += 1;
+    const tk = toks[j]!;
+    if (tk.kind === 'punct') {
+      if (tk.value === '[') return true;
+      if (tk.value === '.') {
+        const next = toks[j + 1];
+        return Boolean(next?.kind === 'ident' && WORKSPACE_HOST_DOT_MEMBERS.has(next.value));
+      }
+      if (tk.value === '?.') {
+        const next = toks[j + 1];
+        return Boolean(
+          (next?.kind === 'punct' && next.value === '[') ||
+            (next?.kind === 'ident' && WORKSPACE_HOST_DOT_MEMBERS.has(next.value)),
+        );
+      }
+      if (tk.value === ')' || tk.value === '!') {
+        j += 1;
+        continue;
+      }
+      return false;
+    }
+    if (tk.kind === 'ident' && (tk.value === 'as' || tk.value === 'satisfies')) {
+      const nextIdx = skipWorkspaceTypeAssertion(toks, j + 1, Math.min(toks.length, j + 96));
+      if (nextIdx <= j + 1) return false;
+      j = nextIdx;
+      continue;
+    }
+    return false;
+  }
+  return false;
+}
+
+function hasWorkspaceAstTokenTrigger(
+  primaryLists: ReadonlyArray<readonly Token[]>,
+  fromRelPath: string | undefined,
+  hasRelevantKeywordHint: boolean,
+): boolean {
+  for (const toks of primaryLists) {
+    for (let i = 0; i < toks.length; i += 1) {
+      const t = toks[i]!;
+      if (t.kind === 'invalid' && (fromRelPath !== undefined || hasRelevantKeywordHint)) {
+        return true;
+      }
+      if (t.kind === 'regex') {
+        if (
+          /\b(?:import|require|createRequire|eval|Function|Reflect|String|globalThis|window|self|module|global|fromCharCode|fromCodePoint|agent|note-ai|generate|Todo|Summary|Note)|@ludy|@crove|packages\/agent|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]/.test(
+            t.raw,
+          ) ||
+          (/\{/.test(t.raw) && /['"`]/.test(t.raw))
+        ) {
+          return true;
+        }
+        continue;
+      }
+      if (t.kind !== 'ident') continue;
+      if (t.value === 'import') {
+        const next = toks[i + 1];
+        if (next?.kind === 'punct' && next.value === '(') return true;
+        continue;
+      }
+      if (WORKSPACE_AST_DIRECT_IDENTS.has(t.value)) return true;
+      if ((t.value === 'String' || AST_REQUIRE_HOSTS.has(t.value)) && hasWorkspaceHostBracketOrMember(toks, i)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function shouldParseWorkspaceAst(
   fileText: string,
   symbols: readonly string[],
@@ -9357,26 +9600,14 @@ function shouldParseWorkspaceAst(
   if (relFromRoot && relFromRoot.startsWith('packages/agent/')) return true;
   if (fromRelPath === undefined && fileText.length < 30_000) return true;
   const hasRelevantKeywordHint =
-    /@(?:ludy|crove)|agent|note-ai|packages|\bimport(?=\s*(?:\(|\/\*))|\b(?:export|require|createRequire|eval|Function|Reflect)\b|generate|Summary|Todo|from(?:CharCode|CodePoint)|\bString(?:\s*\))*(?:\s*\?\.)?\s*\[|\b(?:globalThis|window|self|module|global)\s*(?:\?\.)?\s*\[|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|await\s+['"`]/.test(
+    /@(?:ludy|crove)|agent|note-ai|packages|\b(?:import|export|require|createRequire|eval|Function|Reflect|String|globalThis|window|self|module|global)\b|generate|Summary|Todo|from(?:CharCode|CodePoint)|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|await\s+(?:\(\s*)?['"`]/.test(
       fileText,
     );
-  if (
-    primaryLists.some((toks) =>
-      toks.some(
-        (t) =>
-          (t.kind === 'invalid' && (fromRelPath !== undefined || hasRelevantKeywordHint)) ||
-          (t.kind === 'regex' &&
-            (/\bimport(?=\s*(?:\(|\/\*))|\b(?:require|createRequire|eval|Function|Reflect|agent|note-ai|generate|Todo|Summary|Note)|from(?:CharCode|CodePoint)|\bString(?:\s*\))*(?:\s*\?\.)?\s*\[|\b(?:globalThis|window|self|module|global)\s*(?:\?\.)?\s*\[|@ludy|@crove|packages\/agent|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]/.test(
-              t.raw,
-            ) ||
-              (/\{/.test(t.raw) && /['"`]/.test(t.raw)))),
-      ),
-    )
-  ) {
+  if (hasWorkspaceAstTokenTrigger(primaryLists, fromRelPath, hasRelevantKeywordHint)) {
     return true;
   }
   if (
-    /(?:@(?:ludy|crove)(?:$|[^a-zA-Z0-9_/]|\/(?:$|[^a-zA-Z0-9_]|a(?:$|g|[^a-zA-Z0-9_-])))|note-ai|packages\/agent|generate(?:Note|Todo)|SummaryText|TodoSuggest|TodoPlan|NoteOrganize|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|from(?:CharCode|CodePoint)|\bString(?:\s*\))*(?:\s*\?\.)?\s*\[|\b(?:globalThis|window|self|module|global)\s*(?:\?\.)?\s*\[|globalThis|createRequire|module\.require|window\.require|self\.require|\bimport(?=\s*(?:\(|\/\*))|\b(?:Reflect|eval|Function)\b|await\s+['"`])/.test(
+    /(?:@(?:ludy|crove)(?:$|[^a-zA-Z0-9_/]|\/(?:$|[^a-zA-Z0-9_]|a(?:$|g|[^a-zA-Z0-9_-])))|note-ai|packages\/agent|generate(?:Note|Todo)|SummaryText|TodoSuggest|TodoPlan|NoteOrganize|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|globalThis)/.test(
       fileText,
     )
   ) {
@@ -9388,7 +9619,7 @@ function shouldParseWorkspaceAst(
   if (symbols.some((sym) => fileText.includes(sym))) return true;
   if (
     isKnownJsxPath &&
-    /(?<![/*])\/(?![/*])[ \t]*\{(?![ \t]*[a-zA-Z0-9_$.]+[ \t]*\})/.test(fileText)
+    /(?<![/*])\/(?![/*])\s*\{(?![ \t]*[a-zA-Z0-9_$.]+[ \t]*\})/.test(fileText)
   ) {
     return true;
   }
@@ -9397,11 +9628,9 @@ function shouldParseWorkspaceAst(
     fileText.length < 30_000 &&
     /\b(?:import|export|require)\b/.test(fileText) &&
     /(?:^|\W)\.\.?(?:\/|['"`])/.test(fileText) &&
-    (/(?:agent|note-ai|packages|from(?:CharCode|CodePoint)|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|\\\r?\n)/i.test(
+    /(?:agent|note-ai|packages|\\u(?:00[2-7][0-9a-fA-F]|\{0*[2-7][0-9a-fA-F]\})|\\x[2-7][0-9a-fA-F]|\\\r?\n)/i.test(
       fileText,
-    ) ||
-      /\bString(?:\s*\))*(?:\s*\?\.)?\s*\[|\b(?:globalThis|window|self|module|global)\s*(?:\?\.)?\s*\[/.test(fileText) ||
-      /(?:import|require)\s*\([^)]*(?:\+|`|\$\{)/.test(fileText))
+    )
   ) {
     return true;
   }
@@ -12140,6 +12369,20 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(
       memberVyViolations("let fn;\n({ a: [fn] } = { a: [globalThis.fetch] });\nfn('https://x.test');"),
     ).toContain('calls the network directly');
+    // Platform PO Round 2 B2: opaque CallExpression intermediates must not kill fetch taint while cache.fetch safe kills remain allowed
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst fn = [read].pop()!;\nread = fn;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst fn = (() => read)();\nread = fn;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations('let read = globalThis.fetch;\nconst safe = cache.fetch;\nread = safe;\nread(key);'),
+    ).toEqual([]);
 
     // B3c: Reflect.get and computed destructuring of WebSocket / XMLHttpRequest
     expect(memberVyViolations("const W = Reflect.get(globalThis, 'Web' + 'Socket'); void W;")).toContain('calls the network directly');
@@ -12179,6 +12422,64 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(
       workspaceAdapterLeakViolations(
         'export const C = () => <p>return/{import(String.fromCharCode(64,108,117,100,121,47,97,103,101,110,116))}/</p>;',
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/C.tsx',
+      ),
+    ).toContain('uses computed dynamic import or require');
+    // Platform PO Round 2 B1: token-based workspace AST pre-filters and await/<Type> unwrapping in normalizeValueExprSpan
+    const genNoteCharCodes = '103,101,110,101,114,97,116,101,78,111,116,101,83,117,109,109,97,114,121,84,101,120,116';
+    expect(
+      workspaceAdapterLeakViolations(
+        `export const fn = String/*c*/['from' + 'CharCode'](${genNoteCharCodes});`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `export const fn = (String as any)['from' + 'CharCode'](${genNoteCharCodes});`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `export const fn = (window)['String']['from' + 'CharCode'](${genNoteCharCodes});`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const m = String/*c*/['from' + 'CharCode'](64,108,117,100,121,47,97,103,101,110,116); export const run = () => import // c\n  (m);",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('uses computed dynamic import or require');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const a='gen',x1='Z',b='erate',x2='Z',c='Note',x3='Z',d='Summary',x4='Z',e='Text'; export const run = async () => (await a) + b + c + d + e;",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const a='gen',x1='Z',b='erate',x2='Z',c='Note',x3='Z',d='Summary',x4='Z',e='Text'; export const fn = (<string>a) + b + c + d + e;",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const p0=await('@'),x0='Z',p1='lu',x1='Z',p2='dy/',x2='Z',p3='ag',x3='Z',p4='ent'; export const run = () => import // c\n  (p0+p1+p2+p3+p4);",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('uses computed dynamic import or require');
+    expect(
+      workspaceAdapterLeakViolations(
+        'export const C = () => <p>return/\n{import(String.fromCharCode(64,108,117,100,121,47,97,103,101,110,116))}/</p>;',
         DEFAULT_ADAPTER_EXPORTS,
         'apps/web/src/C.tsx',
       ),
