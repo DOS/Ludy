@@ -2788,7 +2788,8 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
       limit: 100,
     });
     expect(starvationSweep.handedOver).toBe(1);
-    expect(starvationSweep.skippedOff).toBeGreaterThanOrEqual(120);
+    // Pass 1 fetches batchLimit=100 rows and per-org defer defers all 120 unentitledOrg rows at once before Pass 2 sweeps activeOrg.
+    expect(starvationSweep.skippedOff).toBe(100);
     expect(activeSweptJobs).toEqual([{ orgId: activeOrg.orgId, deliveryId: activeDeliveryId }]);
 
     expect(
