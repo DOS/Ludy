@@ -2,7 +2,7 @@
 // Durable cross-process first-seen tracking of WhatsApp webhook events on PostgreSQL 17 (issue #5085, follow-up of #5047): a Meta retry that reaches another API
 // process (an empty replay cache) or follows a restart, inside WHATSAPP_CLOCK_SKEW_MS and across a number handover, is parked with the event's first arrival
 // time, never a later one, so it cannot be taken by the new holder of the number; the table keeps only hashed keys, the API login cannot read it, the worker
-// login purges it after 7 days, and a refused backlog keeps the keys. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes
+// login purges it after 8 days (7 days of event age plus the clock skew), and a refused backlog keeps the keys. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes
 // its own database.
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -229,11 +229,11 @@ suite('WhatsApp durable first-seen tracking (#5085)', () => {
     });
   });
 
-  it('the worker purge drops keys older than 7 days and keeps the rest', async () => {
+  it('the worker purge drops keys older than 8 days (7 days plus the clock skew) and keeps the rest', async () => {
     const oldKey = randomBytes(32);
     const freshKey = randomBytes(32);
     await rows(
-      `INSERT INTO ludy_kernel.conversation_inbound_first_seen (key, first_seen_at) VALUES ($1, now() - interval '8 days'), ($2, now() - interval '6 days')`,
+      `INSERT INTO ludy_kernel.conversation_inbound_first_seen (key, first_seen_at) VALUES ($1, now() - interval '9 days'), ($2, now() - interval '7 days 12 hours')`,
       [oldKey, freshKey],
     );
     expect(await purgeInboundFirstSeen({ workerDb, force: true })).toBeGreaterThanOrEqual(1);

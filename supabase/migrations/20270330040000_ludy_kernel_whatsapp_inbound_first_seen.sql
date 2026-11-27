@@ -14,8 +14,9 @@
 --    the unchanged conversation_inbound_enqueue (same caps, same lock) and dates it the earliest first-seen time of its keys, never later
 --    than now. A backlog refusal returns NULL instead of raising, so the keys recorded by this call survive the refusal and the platform's
 --    retry still carries the original time. Called by the API login only.
--- 3. ludy_kernel.conversation_inbound_first_seen_purge(limit): worker login only; drops keys older than 7 days, the age past which a
---    pending notice is dropped as expired and the webhook ignores an event as too old, so a key never has to outlive its use. The enqueue
+-- 3. ludy_kernel.conversation_inbound_first_seen_purge(limit): worker login only; drops keys older than 8 days: the webhook accepts an
+--    event up to 7 days after its own timestamp, which Meta's clock may run up to WHATSAPP_CLOCK_SKEW_MS (10 minutes) ahead of the first arrival, so
+--    7 days plus the skew, rounded up to a day, is the longest a key can still matter. The enqueue
 --    also drops a bounded batch, so the table stays small even if the worker is down.
 SET LOCAL lock_timeout = '2s';
 
@@ -79,12 +80,12 @@ BEGIN
     FROM ludy_kernel.conversation_inbound_first_seen f WHERE f.key = ANY (v_keys);
   END IF;
 
-  -- A small bounded batch of keys past their 7 days (the index is on first_seen_at; SKIP LOCKED so it never waits on the worker's purge), so the table stays
+  -- A small bounded batch of keys past their 8 days (the index is on first_seen_at; SKIP LOCKED so it never waits on the worker's purge), so the table stays
   -- small even without the worker, and the serialized section stays short. WhatsApp must come through this function, never the plain enqueue.
   DELETE FROM ludy_kernel.conversation_inbound_first_seen f
   WHERE f.key IN (
     SELECT o.key FROM ludy_kernel.conversation_inbound_first_seen o
-    WHERE o.first_seen_at < pg_catalog.now() - pg_catalog.make_interval(days => 7)
+    WHERE o.first_seen_at < pg_catalog.now() - pg_catalog.make_interval(days => 8)
     ORDER BY o.first_seen_at LIMIT 20 FOR UPDATE SKIP LOCKED
   );
 
@@ -124,7 +125,7 @@ BEGIN
   DELETE FROM ludy_kernel.conversation_inbound_first_seen f
   WHERE f.key IN (
     SELECT o.key FROM ludy_kernel.conversation_inbound_first_seen o
-    WHERE o.first_seen_at < pg_catalog.now() - pg_catalog.make_interval(days => 7)
+    WHERE o.first_seen_at < pg_catalog.now() - pg_catalog.make_interval(days => 8)
     ORDER BY o.first_seen_at LIMIT pg_catalog.least(pg_catalog.greatest(COALESCE(p_limit, 1), 1), 5000) FOR UPDATE SKIP LOCKED
   );
   GET DIAGNOSTICS v_n = ROW_COUNT;

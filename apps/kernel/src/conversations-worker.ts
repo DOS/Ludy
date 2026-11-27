@@ -1413,7 +1413,7 @@ export async function sweepConversationComposing(deps: { workerDb: Db; now?: () 
   return rows[0]?.n ?? 0;
 }
 
-// The durable first-seen keys of WhatsApp webhook events past their 7 days (ludy_kernel.conversation_inbound_first_seen_purge, the worker login's, #5085): a key
+// The durable first-seen keys of WhatsApp webhook events past their 8 days (7 days of event age plus the clock skew; ludy_kernel.conversation_inbound_first_seen_purge, the worker login's, #5085): a key
 // only matters while a retry or an unparked notice of its event can still arrive. A batch at a time, not more often than every ten seconds; runs in every deployment.
 let lastFirstSeenPurge = 0;
 export async function purgeInboundFirstSeen(deps: { workerDb: Db; now?: () => number; force?: boolean }): Promise<number> {
