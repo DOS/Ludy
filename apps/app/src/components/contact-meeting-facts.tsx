@@ -106,6 +106,7 @@ function ContactFactItem({
   targetId,
   linkedMeetingId,
   canPutToNotes,
+  meetingsEnabled,
   draft,
 }: {
   slug: string;
@@ -114,6 +115,7 @@ function ContactFactItem({
   targetId: string;
   linkedMeetingId: string | null;
   canPutToNotes: boolean;
+  meetingsEnabled: boolean;
   draft: MeetingBriefDraft | undefined;
 }) {
   const t = useTranslations('meetings.briefFacts');
@@ -313,94 +315,96 @@ function ContactFactItem({
         )}
       </section>
 
-      <div className="space-y-2 border-t border-border pt-2" data-testid="contact-facts-draft-section">
-        {!hasSavedDraft ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="min-h-11 md:min-h-9"
-              loading={saveDraft.isPending}
-              disabled={busy}
-              onClick={() => saveDraft.mutate(builtDraft)}
-              data-testid="contact-facts-keep-draft"
-            >
-              {t('keepDraft')}
-            </Button>
-            <span className="text-xs text-muted-foreground">{t('draftPrivateHint')}</span>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <Label htmlFor={inputId} className="text-xs font-medium text-foreground">
-              {t('draftLabel')}
-            </Label>
-            <Textarea
-              id={inputId}
-              rows={5}
-              value={currentBody}
-              maxLength={DRAFT_MAX_CHARS}
-              onChange={(e) => {
-                setStatusMessage(null);
-                setEditedText(e.target.value);
-              }}
-              aria-describedby={hintId}
-              className="text-sm"
-              data-testid="contact-facts-draft-input"
-            />
-            <p id={hintId} className="text-xs text-muted-foreground">
-              {t('draftPrivateHint')}
-            </p>
+      {meetingsEnabled && (
+        <div className="space-y-2 border-t border-border pt-2" data-testid="contact-facts-draft-section">
+          {!hasSavedDraft ? (
             <div className="flex flex-wrap items-center gap-2">
-              {dirty && currentBody.trim() !== '' && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="min-h-11 md:min-h-9"
-                  loading={saveDraft.isPending}
-                  disabled={busy}
-                  onClick={() => saveDraft.mutate(currentBody.trim())}
-                  data-testid="contact-facts-update-draft"
-                >
-                  {t('updateDraft')}
-                </Button>
-              )}
-              {canPutToNotes && linkedMeetingId && (
-                <Button
-                  type="button"
-                  size="sm"
-                  className="min-h-11 md:min-h-9"
-                  loading={putToNotes.isPending}
-                  disabled={busy || currentBody.trim() === ''}
-                  onClick={() => putToNotes.mutate()}
-                  data-testid="contact-facts-put-to-notes"
-                >
-                  {t('putToNotes')}
-                </Button>
-              )}
               <Button
                 type="button"
                 size="sm"
-                variant="ghost"
+                variant="outline"
                 className="min-h-11 md:min-h-9"
-                loading={removeDraft.isPending}
+                loading={saveDraft.isPending}
                 disabled={busy}
-                onClick={() => removeDraft.mutate({ targetKind: draft.targetKind, targetId: draft.targetId })}
-                data-testid="contact-facts-remove-draft"
+                onClick={() => saveDraft.mutate(builtDraft)}
+                data-testid="contact-facts-keep-draft"
               >
-                {t('removeDraft')}
+                {t('keepDraft')}
               </Button>
+              <span className="text-xs text-muted-foreground">{t('draftPrivateHint')}</span>
             </div>
-          </div>
-        )}
-        {statusMessage && (
-          <p role="status" aria-live="polite" className="text-xs text-foreground" data-testid="contact-facts-status">
-            {statusMessage}
-          </p>
-        )}
-        {activeError && <ErrorText>{errorMessage(activeError)}</ErrorText>}
-      </div>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor={inputId} className="text-xs font-medium text-foreground">
+                {t('draftLabel')}
+              </Label>
+              <Textarea
+                id={inputId}
+                rows={5}
+                value={currentBody}
+                maxLength={DRAFT_MAX_CHARS}
+                onChange={(e) => {
+                  setStatusMessage(null);
+                  setEditedText(e.target.value);
+                }}
+                aria-describedby={hintId}
+                className="text-sm"
+                data-testid="contact-facts-draft-input"
+              />
+              <p id={hintId} className="text-xs text-muted-foreground">
+                {t('draftPrivateHint')}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {dirty && currentBody.trim() !== '' && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="min-h-11 md:min-h-9"
+                    loading={saveDraft.isPending}
+                    disabled={busy}
+                    onClick={() => saveDraft.mutate(currentBody.trim())}
+                    data-testid="contact-facts-update-draft"
+                  >
+                    {t('updateDraft')}
+                  </Button>
+                )}
+                {canPutToNotes && linkedMeetingId && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="min-h-11 md:min-h-9"
+                    loading={putToNotes.isPending}
+                    disabled={busy || currentBody.trim() === ''}
+                    onClick={() => putToNotes.mutate()}
+                    data-testid="contact-facts-put-to-notes"
+                  >
+                    {t('putToNotes')}
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="min-h-11 md:min-h-9"
+                  loading={removeDraft.isPending}
+                  disabled={busy}
+                  onClick={() => removeDraft.mutate({ targetKind: draft.targetKind, targetId: draft.targetId })}
+                  data-testid="contact-facts-remove-draft"
+                >
+                  {t('removeDraft')}
+                </Button>
+              </div>
+            </div>
+          )}
+          {statusMessage && (
+            <p role="status" aria-live="polite" className="text-xs text-foreground" data-testid="contact-facts-status">
+              {statusMessage}
+            </p>
+          )}
+          {activeError && <ErrorText>{errorMessage(activeError)}</ErrorText>}
+        </div>
+      )}
     </article>
   );
 }
@@ -432,7 +436,9 @@ export function ContactMeetingFacts({
   const panelId = useId();
   const [open, setOpen] = useState(false);
 
-  const crmOn = installedModules().includes('crm');
+  const modules = installedModules();
+  const crmOn = modules.includes('crm');
+  const meetingsOn = modules.includes('meetings');
   const org = useQuery({
     ...orpc.org.get.queryOptions(),
     enabled: crmOn && canRead === undefined,
@@ -452,13 +458,13 @@ export function ContactMeetingFacts({
   const hasContacts = (facts.data?.contacts.length ?? 0) > 0;
   const drafts = useQuery({
     ...orpc.meetings.briefDraft.list.queryOptions({ input: { targetKind, targetId } }),
-    enabled: expanded && hasContacts,
+    enabled: expanded && hasContacts && meetingsOn,
     ...READ_ONCE,
   });
 
   const meetingQuery = useQuery({
     ...orpc.meetings.get.queryOptions({ input: { meetingId: linkedMeetingId ?? '' } }),
-    enabled: expanded && hasContacts && linkedMeetingId !== null && isRecorder === undefined,
+    enabled: expanded && hasContacts && meetingsOn && linkedMeetingId !== null && isRecorder === undefined,
     ...READ_ONCE,
     retry: false,
   });
@@ -497,6 +503,7 @@ export function ContactMeetingFacts({
               targetId={targetId}
               linkedMeetingId={linkedMeetingId}
               canPutToNotes={Boolean(linkedMeetingId && effectiveRecorder)}
+              meetingsEnabled={meetingsOn}
               draft={draftByParty.get(contact.partyId)}
             />
           ))}
@@ -548,6 +555,7 @@ export function ContactMeetingFacts({
                   targetId={targetId}
                   linkedMeetingId={linkedMeetingId}
                   canPutToNotes={Boolean(linkedMeetingId && effectiveRecorder)}
+                  meetingsEnabled={meetingsOn}
                   draft={draftByParty.get(contact.partyId)}
                 />
               ))}

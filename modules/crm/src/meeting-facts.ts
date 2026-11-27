@@ -42,7 +42,8 @@ interface MatchedParty {
 
 async function resolveBookingMatchedParties(ctx: QueryContext, bookingId: string): Promise<MatchedParty[]> {
   const booking = await readableBooking(ctx, bookingId);
-  const email = booking.email?.trim().toLowerCase() ?? '';
+  if (booking.status !== 'confirmed') return [];
+  const email = booking.visitor.email?.trim().toLowerCase() ?? '';
   if (email === '') return [];
   const { rows } = await sql<MatchedParty>`
     SELECT k.id, k.name
@@ -101,7 +102,8 @@ async function resolveHashesMatchedParties(
     for (const candidate of candidateBookings) {
       try {
         const readable = await readableBooking(ctx, candidate.id);
-        const normalized = readable.email?.trim().toLowerCase() ?? '';
+        if (readable.status !== 'confirmed') continue;
+        const normalized = readable.visitor.email?.trim().toLowerCase() ?? '';
         if (normalized !== '') emailSet.add(normalized);
       } catch (err) {
         if (!(err instanceof DomainError && err.code === 'BOOKING_NOT_FOUND')) throw err;
@@ -140,11 +142,14 @@ export const crmBookingBriefTargetQuery = defineQuery({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     try {
-      await readableBooking(ctx, input.bookingId);
-      return zCrmBookingBriefTargetOutput.parse({ readable: true });
+      const booking = await readableBooking(ctx, input.bookingId);
+      if (booking.status !== 'confirmed') {
+        return zCrmBookingBriefTargetOutput.parse({ readable: false, calendarEventId: null });
+      }
+      return zCrmBookingBriefTargetOutput.parse({ readable: true, calendarEventId: booking.calendarEventId ?? null });
     } catch (err) {
       if (err instanceof DomainError && err.code === 'BOOKING_NOT_FOUND') {
-        return zCrmBookingBriefTargetOutput.parse({ readable: false });
+        return zCrmBookingBriefTargetOutput.parse({ readable: false, calendarEventId: null });
       }
       throw err;
     }
@@ -201,8 +206,6 @@ export const contactMeetingFactsQuery = defineQuery({
     `.execute(ctx.trx);
     const allGroupPartyIds = groupRows.rows.map((r) => r.id);
 
-    const today = ISO_DAY.format(ctx.now);
-
     const dealsResult = await sql<{
       id: string;
       kept_id: string;
@@ -255,6 +258,7 @@ export const contactMeetingFactsQuery = defineQuery({
       status: 'sent' | 'accepted' | 'declined' | 'superseded';
       total: string;
       valid_until: string;
+      expired: boolean;
       sent_at: Date | null;
     }>`
       WITH ranked_quotes AS (
@@ -266,6 +270,7 @@ export const contactMeetingFactsQuery = defineQuery({
           q.status,
           q.total::text AS total,
           q.valid_until::text AS valid_until,
+          (q.status = 'sent' AND q.valid_until < (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date) AS expired,
           q.sent_at,
           ROW_NUMBER() OVER (
             PARTITION BY COALESCE(p.duplicate_of, p.id)
@@ -278,7 +283,7 @@ export const contactMeetingFactsQuery = defineQuery({
           AND q.number IS NOT NULL
           AND q.status IN (${sql.join(MEETING_BRIEF_QUOTE_STATUSES.map((s) => sql`${s}`))})
       )
-      SELECT id, kept_id, number, revision, status, total, valid_until, sent_at
+      SELECT id, kept_id, number, revision, status, total, valid_until, expired, sent_at
       FROM ranked_quotes
       WHERE rn = 1
     `.execute(ctx.trx);
@@ -291,7 +296,7 @@ export const contactMeetingFactsQuery = defineQuery({
         total: money(q.total).toFixed(),
         status: q.status,
         validUntil: q.valid_until,
-        expired: q.status === 'sent' && q.valid_until < today,
+        expired: q.expired,
         sentOn: q.sent_at ? ISO_DAY.format(q.sent_at) : null,
       });
     }

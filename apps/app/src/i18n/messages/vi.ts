@@ -17900,6 +17900,8 @@ export const vi = {
       AGENDA_NOT_FOUND: 'Sự kiện này không còn trong lịch của bạn',
       AGENDA_MEETING_LINKED: 'Cuộc họp này đã gắn với một sự kiện lịch',
       AGENDA_EVENT_LINKED: 'Sự kiện này đã gắn với một cuộc họp khác. Hãy gỡ liên kết cũ trước.',
+      BRIEF_DRAFT_TARGET_MISMATCH: 'Bản nháp chuẩn bị này chưa được gắn với cuộc họp đang mở.',
+      BRIEF_DRAFT_NOT_FOUND: 'Không tìm thấy bản nháp chuẩn bị này.',
       MEETING_HAS_DEAL: 'Cuộc họp này đã liên kết với một cơ hội. Hãy gỡ liên kết đó trước.',
       LINK_NOT_FOUND: 'Không tìm thấy liên kết này',
       LINK_TARGET_NOT_FOUND: 'Không tìm thấy liên hệ, cơ hội hoặc lịch hẹn cần liên kết',

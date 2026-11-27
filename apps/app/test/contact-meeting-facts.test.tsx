@@ -125,8 +125,8 @@ describe('ContactMeetingFacts (#4991)', () => {
     expect(htmlVi).toContain('Công ty Hoa Mai');
     expect(htmlVi).toContain('Gói tư vấn thuế năm');
     expect(htmlVi).toContain('BG-2026-0042');
-    expect(htmlVi.replace(/\s| /g, '')).toMatch(/25\.000\.000/);
-    expect(htmlVi.replace(/\s| /g, '')).toMatch(/1\.500\.000/);
+    expect(htmlVi.replace(/\s| /g, '')).toMatch(/25[.,]000[.,]000/);
+    expect(htmlVi.replace(/\s| /g, '')).toMatch(/1[.,]500[.,]000/);
     expect(htmlVi).toContain('Chị cần thêm 3 tài khoản trong tháng này');
     expect(htmlVi).toContain('data-testid="contact-facts-keep-draft"');
     expect(htmlVi).toContain('min-h-11');
@@ -149,6 +149,14 @@ describe('ContactMeetingFacts (#4991)', () => {
     expect(
       renderToStaticMarkup(wrap(<ContactMeetingFacts slug="acme" targetKind="meeting" targetId={meetingId} linkedMeetingId={meetingId} isRecorder canRead />, 'vi')),
     ).toBe('');
+
+    // With CRM installed but without Meetings installed, facts still render while private draft controls stay hidden.
+    modules.list = ['kernel', 'crm', 'finance'];
+    const crmOnlyHtml = renderToStaticMarkup(
+      wrap(<ContactMeetingFacts slug="acme" targetKind="meeting" targetId={meetingId} canRead />, 'vi'),
+    );
+    expect(crmOnlyHtml).toContain('Công ty Hoa Mai');
+    expect(crmOnlyHtml).not.toContain('data-testid="contact-facts-draft-section"');
   });
 
   it('shows private draft textarea and second-click Add-to-meeting-notes button only for recorder when a draft exists', () => {

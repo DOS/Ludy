@@ -170,10 +170,10 @@ suite('pre-meeting contact facts and private brief drafts on PostgreSQL (#4991 P
     };
 
     const deal = (partyId: string, title: string, amount = '25000000', expectedClose: string | null = null) =>
-      exec<{ id: string }>(owner, 'crm.deal.create', { partyId, title, amount, expectedClose });
+      exec<{ id: string; version: number }>(owner, 'crm.deal.create', { partyId, title, amount, expectedClose });
 
     const sentQuote = async (dealId: string, sentDaysAgo: number, validIn: number, number: string) => {
-      const draft = await exec<{ id: string }>(owner, 'crm.quote.save', {
+      const draft = await exec<{ id: string; total: string }>(owner, 'crm.quote.save', {
         dealId,
         lines: [
           { kind: 'item', description: 'Phần mềm', unit: 'gói', quantity: '2', unitPrice: '1500000', vatRate: '8%' },
@@ -183,30 +183,34 @@ suite('pre-meeting contact facts and private brief drafts on PostgreSQL (#4991 P
         "UPDATE ludy_crm.quote SET status = 'sent', number = $3, sent_at = now() - make_interval(days => $4), sent_via = 'link', valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + $5::int WHERE org_id = $1 AND id = $2",
         [orgId, draft.id, number, sentDaysAgo, validIn],
       );
-      const total = (await rows<{ total: string }>('SELECT total::text AS total FROM ludy_crm.quote WHERE org_id = $1 AND id = $2', [orgId, draft.id]))[0]!.total;
-      return { id: draft.id, number, total };
+      return { id: draft.id, number, total: draft.total };
     };
 
     const sale = async (partyId: string, number: string, date: string, total: string, legalEntity: string = entity): Promise<string> => {
       return admin(async (c) => {
         const doc = randomUUID();
         await c.query('BEGIN');
-        await c.query(
-          `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
-           VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', $6, 0, $6, 'sale', $7)`,
-          [orgId, doc, partyId, number, date, total, legalEntity],
-        );
-        const entry = randomUUID();
-        await c.query(
-          `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, 'finance.purchase_document', $5, $6)`,
-          [orgId, entry, date, `HĐ bán ${number}`, doc, legalEntity],
-        );
-        await c.query(
-          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, NULL, $5)`,
-          [orgId, entry, total, partyId, legalEntity],
-        );
-        await c.query('COMMIT');
-        return doc;
+        try {
+          await c.query(
+            `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
+             VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', $6, 0, $6, 'sale', $7)`,
+            [orgId, doc, partyId, number, date, total, legalEntity],
+          );
+          const entry = randomUUID();
+          await c.query(
+            `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, 'finance.purchase_document', $5, $6)`,
+            [orgId, entry, date, `HĐ bán ${number}`, doc, legalEntity],
+          );
+          await c.query(
+            `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, NULL, $5)`,
+            [orgId, entry, total, partyId, legalEntity],
+          );
+          await c.query('COMMIT');
+          return doc;
+        } catch (err) {
+          await c.query('ROLLBACK');
+          throw err;
+        }
       });
     };
 
@@ -214,15 +218,33 @@ suite('pre-meeting contact facts and private brief drafts on PostgreSQL (#4991 P
       await admin(async (c) => {
         const revEntry = randomUUID();
         await c.query('BEGIN');
-        await c.query(
-          `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'Hủy hóa đơn', 'finance.purchase_document_void', $4, $5)`,
-          [orgId, revEntry, date, docId, legalEntity],
-        );
-        await c.query(
-          `INSERT INTO ludy_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason, legal_entity_id) VALUES ($1, $2, $3, 'Sai số liệu', $4)`,
-          [orgId, docId, revEntry, legalEntity],
-        );
-        await c.query('COMMIT');
+        try {
+          const orig = (
+            await c.query<{ id: string }>(
+              `SELECT id FROM ludy_finance.journal_entry WHERE org_id = $1 AND source_type = 'finance.purchase_document' AND source_id = $2`,
+              [orgId, docId],
+            )
+          ).rows[0]!;
+          await c.query(
+            `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, reverses_entry_id, legal_entity_id)
+             VALUES ($1, $2, $3, 'Hủy hóa đơn', 'finance.purchase_document_void', $4, $5, $6)`,
+            [orgId, revEntry, date, docId, orig.id, legalEntity],
+          );
+          await c.query(
+            `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, memo, legal_entity_id)
+             SELECT org_id, $3, line_no, account_code, credit, debit, party_id, memo, legal_entity_id
+             FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2`,
+            [orgId, orig.id, revEntry],
+          );
+          await c.query(
+            `INSERT INTO ludy_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason, legal_entity_id) VALUES ($1, $2, $3, 'Sai số liệu', $4)`,
+            [orgId, docId, revEntry, legalEntity],
+          );
+          await c.query('COMMIT');
+        } catch (err) {
+          await c.query('ROLLBACK');
+          throw err;
+        }
       });
     };
 
@@ -230,26 +252,44 @@ suite('pre-meeting contact facts and private brief drafts on PostgreSQL (#4991 P
       return admin(async (c) => {
         const entry = randomUUID();
         await c.query('BEGIN');
-        await c.query(
-          `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'Thu tiền khách hàng', 'finance.journal_voucher', $4, $5)`,
-          [orgId, entry, date, randomUUID(), legalEntity],
-        );
-        await c.query(
-          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '112', $3, 0, NULL, $5), ($1, $2, 2, '131', 0, $3, $4, $5)`,
-          [orgId, entry, amount, partyId, legalEntity],
-        );
-        await c.query('COMMIT');
-        return entry;
+        try {
+          await c.query(
+            `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'Thu tiền khách hàng', 'finance.journal_voucher', $4, $5)`,
+            [orgId, entry, date, randomUUID(), legalEntity],
+          );
+          await c.query(
+            `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '112', $3, 0, NULL, $5), ($1, $2, 2, '131', 0, $3, $4, $5)`,
+            [orgId, entry, amount, partyId, legalEntity],
+          );
+          await c.query('COMMIT');
+          return entry;
+        } catch (err) {
+          await c.query('ROLLBACK');
+          throw err;
+        }
       });
     };
 
     const reverseReceipt = async (entryId: string, date: string, legalEntity: string = entity): Promise<void> => {
       await admin(async (c) => {
         const rev = randomUUID();
-        await c.query(
-          `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, reverses_entry_id, legal_entity_id) VALUES ($1, $2, $3, 'Đảo phiếu thu', 'finance.journal_voucher', $4, $5, $6)`,
-          [orgId, rev, date, randomUUID(), entryId, legalEntity],
-        );
+        await c.query('BEGIN');
+        try {
+          await c.query(
+            `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, reverses_entry_id, legal_entity_id) VALUES ($1, $2, $3, 'Đảo phiếu thu', 'finance.journal_voucher', $4, $5, $6)`,
+            [orgId, rev, date, randomUUID(), entryId, legalEntity],
+          );
+          await c.query(
+            `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, memo, legal_entity_id)
+             SELECT org_id, $3, line_no, account_code, credit, debit, party_id, memo, legal_entity_id
+             FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2`,
+            [orgId, entryId, rev],
+          );
+          await c.query('COMMIT');
+        } catch (err) {
+          await c.query('ROLLBACK');
+          throw err;
+        }
       });
     };
 
@@ -443,7 +483,7 @@ suite('pre-meeting contact facts and private brief drafts on PostgreSQL (#4991 P
     const openDeal = await o.deal(hoaMai, 'Gói tư vấn năm', '25000000', addDays(today, 14));
     const zeroDeal = await o.deal(hoaMaiDup, 'Cơ hội chưa có giá trị', '0', null);
     const wonDeal = await o.deal(hoaMai, 'Cơ hội đã thắng', '9000000');
-    await o.exec(o.owner, 'crm.deal.move', { dealId: wonDeal.id, stageId: o.wonStageId });
+    await o.exec(o.owner, 'crm.deal.move', { dealId: wonDeal.id, stageId: o.wonStageId, version: wonDeal.version });
     expect(zeroDeal.id).toBeTruthy();
 
     const quote = await o.sentQuote(openDeal.id, 2, 15, 'BG-2026-0101');
@@ -649,6 +689,49 @@ suite('pre-meeting contact facts and private brief drafts on PostgreSQL (#4991 P
       targetId: linkOnlyMeeting.meetingId,
     });
     expect(linkFacts.contacts[0]?.partyId).toBe(hoaMai);
+
+    // Booking draft put_to_notes requires the booking's calendar_event_id to be linked to target meetingId.
+    await o.exec(o.host, 'meetings.brief_draft.save', {
+      targetKind: 'booking',
+      targetId: bookingId,
+      partyId: hoaMai,
+      body: 'Ghi chú từ lịch hẹn tư vấn',
+    });
+    await expect(
+      o.exec(o.host, 'meetings.brief_draft.put_to_notes', {
+        targetKind: 'booking',
+        targetId: bookingId,
+        partyId: hoaMai,
+        meetingId: created.meetingId,
+      }),
+    ).rejects.toMatchObject({ code: 'BRIEF_DRAFT_TARGET_MISMATCH', status: 400 });
+    await o.exec(o.host, 'meetings.brief_draft.put_to_notes', {
+      targetKind: 'booking',
+      targetId: bookingId,
+      partyId: hoaMai,
+      meetingId: linkOnlyMeeting.meetingId,
+    });
+    const bookingLinkedNote = await rows<{ body: string }>(
+      'SELECT body FROM ludy_meetings.meeting_note WHERE org_id = $1 AND meeting_id = $2',
+      [o.orgId, linkOnlyMeeting.meetingId],
+    );
+    expect(bookingLinkedNote[0]?.body).toBe('Ghi chú từ lịch hẹn tư vấn');
+
+    // Cancelled bookings are not eligible for pre-meeting contact facts or brief drafts.
+    await o.exec(o.host, 'crm.booking.cancel', { bookingId });
+    const cancelledFacts = await o.query<MeetingFactsOutput>(o.host, 'crm.contact.meeting_facts', {
+      targetKind: 'booking',
+      targetId: bookingId,
+    });
+    expect(cancelledFacts.contacts).toEqual([]);
+    await expect(
+      o.exec(o.host, 'meetings.brief_draft.save', {
+        targetKind: 'booking',
+        targetId: bookingId,
+        partyId: hoaMai,
+        body: 'Không được lưu cho lịch đã hủy',
+      }),
+    ).rejects.toMatchObject({ code: 'BOOKING_NOT_FOUND', status: 404 });
   });
 
   it('keeps private per-member drafts strictly isolated, transfers explicitly to recorder notes only, cascades on contact delete, and erases via personal_data.erase', async () => {
@@ -728,7 +811,7 @@ suite('pre-meeting contact facts and private brief drafts on PostgreSQL (#4991 P
       }),
     ).rejects.toMatchObject({ status: 403 });
 
-    await o.exec(o.host, 'meetings.results.notes_save', { meetingId: created.meetingId, body: 'Ghi chú sẵn có' });
+    await o.exec(o.host, 'meetings.notes.save', { meetingId: created.meetingId, body: 'Ghi chú sẵn có' });
     const put1 = await o.exec<{ length: number; truncated: boolean }>(o.host, 'meetings.brief_draft.put_to_notes', {
       targetKind: 'agenda',
       targetId: agendaId,

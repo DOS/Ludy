@@ -17900,6 +17900,8 @@ export const en = {
       AGENDA_NOT_FOUND: 'That event is not in your calendar any more.',
       AGENDA_MEETING_LINKED: 'This meeting is already linked to a calendar event.',
       AGENDA_EVENT_LINKED: 'That event is already linked to another meeting. Remove the old link first.',
+      BRIEF_DRAFT_TARGET_MISMATCH: 'That pre-meeting draft is not linked to this meeting.',
+      BRIEF_DRAFT_NOT_FOUND: 'This pre-meeting draft was not found.',
       MEETING_HAS_DEAL: 'This meeting is already linked to a deal. Remove that link first.',
       LINK_NOT_FOUND: 'Link not found.',
       LINK_TARGET_NOT_FOUND: 'The contact, deal or calendar event to link was not found.',

@@ -49,7 +49,7 @@ async function assertTargetReadable(ctx: CommandContext, userId: string, targetK
     await openMeeting(ctx.trx, ctx.orgId, targetId);
     return;
   }
-  const res = await ctx.query<{ readable: boolean }>('crm.booking.brief_target', { bookingId: targetId });
+  const res = await ctx.query<{ readable: boolean; calendarEventId: string | null }>('crm.booking.brief_target', { bookingId: targetId });
   if (res.status !== 'ok' || !res.value.readable) {
     throw new DomainError('BOOKING_NOT_FOUND', 404, 'Không tìm thấy lịch hẹn');
   }
@@ -138,7 +138,7 @@ export const briefDraftSave = defineCommand({
     if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy liên hệ');
 
     const body = sliceCodePoints(input.body.trim(), MEETING_BRIEF_DRAFT_MAX);
-    if (body === '') throw new DomainError('INVALID_INPUT', 422, 'Nội dung bản nháp không được trống');
+    if (body === '') throw new DomainError('INVALID', 422, 'Nội dung bản nháp không được trống');
 
     const saved = await ctx.trx
       .insertInto('ludy_meetings.meeting_brief_draft')
@@ -223,7 +223,25 @@ export const briefDraftPutToNotes = defineCommand({
     }
 
     if (input.targetKind === 'booking') {
-      await assertTargetReadable(ctx, userId, 'booking', input.targetId);
+      const bookingRes = await ctx.query<{ readable: boolean; calendarEventId: string | null }>('crm.booking.brief_target', {
+        bookingId: input.targetId,
+      });
+      if (bookingRes.status !== 'ok' || !bookingRes.value.readable) {
+        throw new DomainError('BOOKING_NOT_FOUND', 404, 'Không tìm thấy lịch hẹn');
+      }
+      if (!bookingRes.value.calendarEventId) {
+        throw new DomainError('BRIEF_DRAFT_TARGET_MISMATCH', 400, 'Lịch hẹn chưa được gắn vào cuộc họp này');
+      }
+      const linkedMeeting = await ctx.trx
+        .selectFrom('ludy_meetings.meeting_link')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('meeting_id', '=', input.meetingId)
+        .where('calendar_event_id', '=', bookingRes.value.calendarEventId)
+        .executeTakeFirst();
+      if (!linkedMeeting) {
+        throw new DomainError('BRIEF_DRAFT_TARGET_MISMATCH', 400, 'Lịch hẹn chưa được gắn vào cuộc họp này');
+      }
     }
 
     // Lock the meeting row so concurrent put_to_notes calls across multiple contacts append sequentially.

@@ -49,7 +49,7 @@ export const zMeetingsAttendeeHashesOutput = z.strictObject({
 export type MeetingsAttendeeHashesOutput = z.infer<typeof zMeetingsAttendeeHashesOutput>;
 
 export const zCrmBookingBriefTargetInput = z.strictObject({ bookingId: zId });
-export const zCrmBookingBriefTargetOutput = z.strictObject({ readable: z.boolean() });
+export const zCrmBookingBriefTargetOutput = z.strictObject({ readable: z.boolean(), calendarEventId: zId.nullable() });
 
 export const zMeetingFactsInput = z.strictObject({
   targetKind: zMeetingBriefTargetKind,

@@ -370,7 +370,7 @@ describe('GoogleCalendarAdapter, the member\'s own meetings (B1, #3165)', () => 
   it('reads the primary calendar in time order with the events unfolded, asking for no address, description, attachment or location', async () => {
     const { fetchImpl, calls } = google({ [EVENTS]: [{ body: { items: [timed('a')] } }] });
     const answer = await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
-    expect(answer).toEqual({ events: [{ id: 'a', title: 'Họp a', startsAt: '2026-11-14T02:00:00.000Z', endsAt: '2026-11-14T03:00:00.000Z', timeZone: 'Asia/Ho_Chi_Minh', joinUrl: null, invitees: 0, series: null }] });
+    expect(answer).toEqual({ events: [{ id: 'a', title: 'Họp a', startsAt: '2026-11-14T02:00:00.000Z', endsAt: '2026-11-14T03:00:00.000Z', timeZone: 'Asia/Ho_Chi_Minh', joinUrl: null, invitees: 0, series: null, attendeeEmails: [] }] });
     expect(calls[0]?.auth).toBe('Bearer ya29.token-1');
   });
 

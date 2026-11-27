@@ -1515,7 +1515,7 @@ export const MEETING_BRIEF_DRAFT_TARGET_KINDS = ['agenda', 'booking', 'meeting']
 export type MeetingBriefDraftTargetKind = (typeof MEETING_BRIEF_DRAFT_TARGET_KINDS)[number];
 export type MeetingsMeetingBriefDraftTable = Refine<
   G.MeetingsMeetingBriefDraftTable,
-  { target_kind: MeetingBriefDraftTargetKind }
+  { target_kind: ColumnType<MeetingBriefDraftTargetKind, MeetingBriefDraftTargetKind, never> }
 >;
 
 // The transcript of a meeting (#2578): a segment is a draft, the recorder's own copy, until the recorder publishes it.
