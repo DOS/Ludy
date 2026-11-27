@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The finance coworker's possible things to look at on the monthly review of unusual entries, on the API side (#5182). finance.unusual_entries runs in the member's own transaction and gives the ranked hits; the
+// The finance coworker's possible things to look at on the monthly review of unusual entries, on the API side (#5182). finance.unusual_entries.list runs in the member's own transaction and gives the ranked hits; the
 // model call then runs here, outside any transaction, through the AI budget meter (the request's AI scope names the org and the member). The facts are built from that read in code, never from the caller, and
 // carry no figure, date, account code, voucher number or name at all: the rule that flagged each hit as a fixed phrase, the kind of voucher and one fixed detail (packages/agent unusual-entries.ts). A note is
 // dropped when it states a number, a date or a name it was not given, says the entry is wrong, claims certainty, advises or is not marked as a possibility.

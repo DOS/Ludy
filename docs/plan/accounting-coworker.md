@@ -65,7 +65,7 @@ the note in `packages/agent/src/expense-variance.ts` under the key `finance.expe
 
 Owner decision 2026-11-27 (JOY, Accounting PO, AI round 2). A monthly review of entries already **posted**, for one legal
 entity and one ended month. It differs from the flags of #2380, which fire on a proposal before a payment is approved; the
-thresholds that fit are reused from it and from the cost variance. It reads, never writes the books: `finance.unusual_entries`
+thresholds that fit are reused from it and from the cost variance. It reads, never writes the books: `finance.unusual_entries.list`
 runs in the member's own transaction, every statement filters org and entity, and the one statement that finds, ranks and caps
 the hits reads the last 24 months of one entity at most.
 
@@ -118,7 +118,7 @@ that say the entry is wrong and of advice to move money or undo an entry, and an
 The card shows every figure and an "Open voucher" action; with AI off, the budget spent or every note refused, the list is
 the same, without sentences and without a notice.
 
-**Where.** `finance.unusual_entries`, `finance.unusual_entries.review` and `financeUnusualEntries.{get,explain,review}`
+**Where.** `finance.unusual_entries.list`, `finance.unusual_entries.review` and `financeUnusualEntries.{get,explain,review}`
 (contract in `packages/kernel-contract/src/finance-unusual-entries.ts`), the query in `modules/finance/src/unusual-entries.ts`,
 its pure parts in `modules/finance/src/domain/unusual-entries.ts`, the note in `packages/agent/src/unusual-entries.ts` under
 the key `finance.unusual_entries_note`, the card in `apps/app/src/routes/unusual-entries-card.tsx`.

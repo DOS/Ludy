@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// finance.unusual_entries (#5182): the monthly review of POSTED entries that look unusual, for one legal entity and one ended month, and finance.unusual_entries.review, a person's audited, idempotent mark that
+// finance.unusual_entries.list (#5182): the monthly review of POSTED entries that look unusual, for one legal entity and one ended month, and finance.unusual_entries.review, a person's audited, idempotent mark that
 // one hit was looked at. It differs from the flags of #2380, which fire on a proposal before a payment is approved; the thresholds that fit are reused from it and from the expense variance (#4392).
 // Read only, in the member's own transaction: the entity is the caller's own (resolveLegalEntity), every read filters org and entity and the tables' le_scope policy applies. The five rules (kernel-contract
 // UNUSUAL_ENTRY_RULES) are deterministic and run in ONE statement that ranks and caps the hits in the database; money is NUMERIC there (the median and the spread are computed over numeric with ordered
@@ -376,7 +376,7 @@ export async function financeUnusualEntries(ctx: QueryContext, input: { month: s
 }
 
 export const financeUnusualEntriesQuery = defineQuery({
-  name: 'finance.unusual_entries',
+  name: 'finance.unusual_entries.list',
   input: zFinanceUnusualEntriesInput,
   access: ALL,
   handler: (ctx, input): Promise<FinanceUnusualEntries> => financeUnusualEntries(ctx, input),

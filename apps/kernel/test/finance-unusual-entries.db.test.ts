@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The monthly review of unusual posted entries (#5182) on PostgreSQL 17: known entries are written into the books and finance.unusual_entries must find exactly the entries each rule is meant to find, on both regimes
+// The monthly review of unusual posted entries (#5182) on PostgreSQL 17: known entries are written into the books and finance.unusual_entries.list must find exactly the entries each rule is meant to find, on both regimes
 // (TT133 groups 64xx at 4 digits, TT99 at 3), at the edges of every threshold (the minimum history, the factor, the 5,000,000 floor, the spread, the 24-month window, the ranges of days off), leave out a reversed pair
 // (both orders, and a reversal dated after the month) and the closing entries (911) on both regimes, never count another entity or org, rank and cap in SQL, keep reviewed hits out of the list and count them, give the
 // same list with a few hundred more history rows in ONE statement, and write nothing; finance.unusual_entries.review marks a hit once (idempotent), audited, refused for a viewer and for an entry of another entity,
@@ -182,7 +182,7 @@ suite('monthly review of unusual entries (#5182)', () => {
     admin(async (c) => String((await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'company', $3) RETURNING id`, [orgId, name, owner])).rows[0]?.id));
 
   const review = (input: { month?: string; legalEntityId?: string }, user = owner) =>
-    rt.query<FinanceUnusualEntries>('finance.unusual_entries', { month: MONTH, ...input }, { actor: asUser(user), orgId });
+    rt.query<FinanceUnusualEntries>('finance.unusual_entries.list', { month: MONTH, ...input }, { actor: asUser(user), orgId });
   const mark = (input: { entryId: string; rule: string; legalEntityId?: string }, user = owner) =>
     rt.execute<FinanceUnusualEntryReviewOutput>('finance.unusual_entries.review', input, { actor: asUser(user), orgId });
   const handles = (r: FinanceUnusualEntries) => r.hits.map((h) => `${h.rule}:${h.description}`);

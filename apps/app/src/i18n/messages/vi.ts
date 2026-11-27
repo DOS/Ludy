@@ -17852,6 +17852,7 @@ export const vi = {
       LEGAL_ENTITY_REQUIRED: 'Hãy chọn pháp nhân trước khi xem hoặc ghi sổ',
       LEGAL_ENTITY_NOT_ALLOWED: 'Bạn không có quyền với sổ sách của pháp nhân này',
       MONTH_NOT_ENDED: 'Tháng này chưa kết thúc. Hãy chọn một tháng đã qua để so sánh chi phí',
+      NOT_A_HIT: 'Bút toán này không còn trong danh sách của tháng đó nên không thể đánh dấu đã xem',
       SOURCE_LEGAL_ENTITY: 'Chứng từ này đã ghi sổ ở một pháp nhân khác; không ghi lại sang pháp nhân khác được',
       LEGAL_ENTITY_MISMATCH: 'Đề xuất ghi vào một pháp nhân khác pháp nhân của nó',
       LEGAL_ENTITY_MOVE_REFUSED: 'Đề xuất này thuộc một pháp nhân khác nên không chuyển được. Hãy từ chối đề xuất rồi tải chứng từ lên lại ở pháp nhân cần ghi sổ',
@@ -18950,6 +18951,10 @@ export const vi = {
     },
     finance: {
       expense_variance: 'Xem các dòng chi phí biến động của một tháng so với tháng trước và trung bình 3 tháng',
+      unusual_entries: {
+        list: 'Xem các bút toán đã ghi sổ của một tháng trông bất thường',
+        review: 'Đánh dấu một bút toán bất thường là đã xem',
+      },
       today: 'Xem việc kế toán cần bạn hôm nay',
       month_close: 'Xem những việc còn mở khi chốt sổ tháng',
       signals: {

@@ -17852,6 +17852,7 @@ export const en = {
       LEGAL_ENTITY_REQUIRED: 'Choose a legal entity before viewing or posting to the books.',
       LEGAL_ENTITY_NOT_ALLOWED: "You don't have access to this legal entity's books.",
       MONTH_NOT_ENDED: 'This month has not ended yet. Choose a month that has passed to compare costs.',
+      NOT_A_HIT: 'This entry is no longer on the list for that month, so it cannot be marked as reviewed.',
       SOURCE_LEGAL_ENTITY: 'This document was posted in another legal entity and cannot be posted again in a different one.',
       LEGAL_ENTITY_MISMATCH: 'This proposal would be recorded in a different legal entity from its own',
       LEGAL_ENTITY_MOVE_REFUSED: 'This proposal belongs to another legal entity and cannot be moved. Reject it and upload the document again in the entity whose books it goes to',
@@ -18950,6 +18951,10 @@ export const en = {
     },
     finance: {
       expense_variance: 'View the expense lines that moved in a month against last month and the 3-month average',
+      unusual_entries: {
+        list: 'View the posted entries of a month that look unusual',
+        review: 'Mark an unusual entry as reviewed',
+      },
       today: 'Read what needs you in accounting today',
       month_close: 'Read what is still open for the month close',
       signals: {

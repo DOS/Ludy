@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The unusual entries card on the Kế toán Tổng quan (#5182): for one ended month of the chosen legal entity, the posted entries that five rules found unusual (a repeat of an invoice, a manual voucher on a control
-// account, an amount far from the usual, an account never used before, an entry keyed on a day off). Every hit and every figure comes from the books (finance.unusual_entries); the finance coworker's possible thing
+// account, an amount far from the usual, an account never used before, an entry keyed on a day off). Every hit and every figure comes from the books (finance.unusual_entries.list); the finance coworker's possible thing
 // to look at per hit is read from the same read by the model and shown only when it came back, labelled as a possibility, so with AI off the list is the same and there is no gap and no notice. A hit is a place to
 // look, not a finding: a person opens the voucher, and may mark the hit as reviewed (finance.unusual_entries.review, audited, it touches no ledger table).
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';

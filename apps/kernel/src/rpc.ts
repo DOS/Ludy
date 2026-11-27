@@ -3932,12 +3932,12 @@ export function createRpcHandler(
       ),
     },
     financeUnusualEntries: {
-      get: os.financeUnusualEntries.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<FinanceUnusualEntries>('finance.unusual_entries', input, { actor, orgId }))),
+      get: os.financeUnusualEntries.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<FinanceUnusualEntries>('finance.unusual_entries.list', input, { actor, orgId }))),
       // The notes are asked of the model outside any transaction, from the hits the review read in the member's own one (their legal entities only).
       explain: os.financeUnusualEntries.explain.handler(({ context, input }) =>
         inFinance(context, async (orgId, actor) => {
           const { lang, ...ask } = input;
-          const review = await runtime.query<FinanceUnusualEntries>('finance.unusual_entries', ask, { actor, orgId });
+          const review = await runtime.query<FinanceUnusualEntries>('finance.unusual_entries.list', ask, { actor, orgId });
           return explainUnusualEntries(financeUnusualEntriesAi, orgId, actor.userId, review, lang ?? 'vi');
         }),
       ),
