@@ -5156,6 +5156,46 @@ export const en = {
         default: 'Something went wrong. Try again.',
       },
     },
+    briefFacts: {
+      title: 'Contact facts before the meeting',
+      subtitle: 'Read directly from CRM, Accounting, and Messages with no AI.',
+      show: 'Pre-meeting facts',
+      hide: 'Hide pre-meeting facts',
+      showFor: 'Pre-meeting facts for {name}',
+      hideFor: 'Hide pre-meeting facts for {name}',
+      loading: 'Loading contact facts...',
+      empty: 'No matching contact found in Contacts.',
+      openContacts: 'Open contacts',
+      dealsTitle: 'Open deals',
+      noDeals: 'No open deals.',
+      closeOn: 'expected close {date}',
+      quoteTitle: 'Latest sent quote',
+      noQuote: 'No quote sent yet.',
+      quoteExpired: 'expired',
+      quoteStatus: { sent: 'sent', accepted: 'accepted', declined: 'declined', superseded: 'replaced by a newer one' },
+      validUntil: 'valid until {date}',
+      sentOn: 'sent {date}',
+      invoicesTitle: 'Invoices',
+      invoicesOpen: 'Open invoices: {count}',
+      overdueAmount: 'Overdue: {amount}',
+      noOverdue: 'No overdue amount',
+      lastInvoice: 'Last invoice: {date}',
+      lastPaid: 'Last payment: {date}',
+      noDate: 'none yet',
+      invoicesDraftLine: 'Open invoices: {openCount}; Overdue: {overdue}; Last invoice: {lastInvoice}; Last payment: {lastPaid}',
+      messagesTitle: 'Latest inbound messages',
+      noMessages: 'No customer message that you may read.',
+      draftHeading: 'Pre-meeting preparation: {name}',
+      keepDraft: 'Keep as draft',
+      draftLabel: 'Private pre-meeting draft',
+      draftPrivateHint: 'Only you see this draft. It is never sent externally.',
+      updateDraft: 'Save draft changes',
+      putToNotes: 'Add to meeting notes',
+      removeDraft: 'Delete draft',
+      draftSaved: 'Saved to your private draft.',
+      draftRemoved: 'Private draft deleted.',
+      addedToNotes: 'Added your draft to meeting notes.',
+    },
     adherence: {
       title: 'Did the meeting cover what it was meant to?',
       intro: 'Compare what the meeting was meant to cover with its transcript. Vy marks a point as covered only when it can point to the transcript lines that show it; read those lines before you rely on it.',
@@ -19136,6 +19176,7 @@ export const en = {
     },
     crm: {
       booking: {
+        brief_target: 'Check whether you may read the pre-meeting facts for a booking',
         cancel: 'Cancel a booking',
         cancel_approved: "Cancel a booking (asked for by an AI coworker, approved by a person)",
         confirm: 'Confirm a booking',
@@ -19163,6 +19204,7 @@ export const en = {
       contact: {
         company_candidates: 'Find the companies a contact may work at',
         list: 'View the contact list',
+        meeting_facts: 'Read deals, quotes, invoice summary, and latest messages of contacts for a meeting',
       },
       deal: {
         board: 'View the deal board',
@@ -19275,6 +19317,9 @@ export const en = {
       },
     },
     finance: {
+      party: {
+        invoice_summary: 'Read a customer\'s open invoice count, overdue amount, and latest invoice and payment dates',
+      },
       expense_variance: 'View the expense lines that moved in a month against last month and the 3-month average',
       unusual_entries: {
         list: 'View the posted entries of a month that look unusual',
@@ -20652,6 +20697,7 @@ export const en = {
     },
     meetings: {
       agenda: {
+        attendee_hashes: 'Read the attendee email hashes of a calendar event or meeting',
         clear: 'Delete the meetings saved from your calendar',
         link: 'Link a recorded meeting to an event in your calendar',
         list: "See today's meetings in your calendar",
@@ -20746,6 +20792,12 @@ export const en = {
         start: 'Ask Vy to write a few sentences to prepare for a meeting',
         status: 'See whether Vy can write the preparation for a meeting',
         store_lines: 'Store morning briefing prep lines',
+      },
+      brief_draft: {
+        list: 'Read your private pre-meeting drafts',
+        put_to_notes: 'Copy your private pre-meeting facts draft into your meeting notes',
+        remove: 'Delete a private pre-meeting facts draft',
+        save: 'Save a private pre-meeting facts draft',
       },
       mcp: {
         list: 'Let an AI app list the meetings with published minutes shared with the whole company',

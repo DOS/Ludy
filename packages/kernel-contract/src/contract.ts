@@ -1,4 +1,16 @@
 import { oc } from '@orpc/contract';
+import {
+  zMeetingBriefDraftListInput,
+  zMeetingBriefDraftListOutput,
+  zMeetingBriefDraftPutToNotesInput,
+  zMeetingBriefDraftPutToNotesOutput,
+  zMeetingBriefDraftRemovedOutput,
+  zMeetingBriefDraftRemoveInput,
+  zMeetingBriefDraftSaveInput,
+  zMeetingBriefDraftSaveOutput,
+  zMeetingFactsInput,
+  zMeetingFactsOutput,
+} from './crm-meeting-facts.ts';
 import { zMinutesLinkCreate, zMinutesLinkCreated, zMinutesLinkItems, zMinutesLinkList, zMinutesLinkRevoke, zMinutesLinkRevoked, zMinutesLinkSwitch, zMinutesLinkSwitchGet, zOrgMinutesLinkList, zOrgMinutesLinkListInput } from './meeting-minutes-link.ts';
 import { z } from 'zod';
 import { zSpeakingStyle, zSpeakingStyleInput } from './meeting-speaking-style.ts';
@@ -1495,6 +1507,8 @@ export const contract = {
       companySuggestions: oc.input(zCompanySuggest).output(zCompanySuggested),
       // The conversations linked to the contact (#2333; for a company, its people's too), newest activity first, with no message body.
       conversations: oc.input(zPartyDealsQuery).output(z.array(zConversationOther)),
+      // Pre-meeting deterministic facts brief for an agenda event, booking, or meeting matched by case-folded attendee email (#4991 PM1, AI-free).
+      meetingFacts: oc.input(zMeetingFactsInput).output(zMeetingFactsOutput),
     },
     // Contact import (K5, #2229): rows read from a CSV in the browser are staged and classified without writing a party; the
     // person reads the preview, then commits (creating the new parties) or cancels. Owners, admins and members; every
@@ -2087,6 +2101,13 @@ export const contract = {
       facts: oc.input(zBriefTarget).output(zBriefFacts),
       status: oc.input(zBriefEmpty).output(zBriefStatus),
       write: oc.input(zBriefTarget).output(zBriefAnswer),
+    },
+    // Private per-member pre-meeting facts draft (#4991 PM1): readable/writable only by that member until explicitly put into meeting notes.
+    briefDraft: {
+      list: oc.input(zMeetingBriefDraftListInput).output(zMeetingBriefDraftListOutput),
+      save: oc.input(zMeetingBriefDraftSaveInput).output(zMeetingBriefDraftSaveOutput),
+      remove: oc.input(zMeetingBriefDraftRemoveInput).output(zMeetingBriefDraftRemovedOutput),
+      putToNotes: oc.input(zMeetingBriefDraftPutToNotesInput).output(zMeetingBriefDraftPutToNotesOutput),
     },
     // The recorder's Vy suggesting a title from the transcript (#3947): `status` is the button (the same answer as the chapters'), `suggest` the click that has the recorder's own Vy write up to three candidates.
     // The candidates go back to the browser and are stored nowhere; the recorder's pick is `meetings.rename`.

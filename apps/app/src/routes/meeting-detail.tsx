@@ -34,6 +34,7 @@ import {
   useRedactCandidatesQuery,
 } from '../components/meeting-redaction.tsx';
 import { MeetingHighlights } from '../components/meeting-highlights.tsx';
+import { ContactMeetingFacts } from '../components/contact-meeting-facts.tsx';
 import { MeetingLabels } from '../components/meeting-labels.tsx';
 import { MeetingLabelSuggest } from '../components/meeting-label-suggest.tsx';
 import { MeetingSpeakingStyle } from '../components/meeting-speaking-style.tsx';
@@ -544,6 +545,15 @@ export function MeetingDetailPage() {
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}
       {/* What to bring to the next meeting of a series (#3543): the previous meeting's decisions, the open items, the linked customer's open deals, and Vy's few sentences on a click */}
       <MeetingBrief slug={slug} meetingId={id} />
+      <ContactMeetingFacts
+        key={`brief-facts-${id}`}
+        slug={slug}
+        targetKind="meeting"
+        targetId={id}
+        linkedMeetingId={id}
+        isRecorder={meeting.isRecorder}
+        canRead={Boolean(orgQuery.data && orgQuery.data.role !== 'viewer')}
+      />
       {/* The open items of the previous meeting of its series (#3542), and the recorder's way to put a meeting in a series */}
       <MeetingSeries meetingId={id} isRecorder={meeting.isRecorder} startedAt={meeting.startedAt} />
       {meeting.isRecorder && <MeetingNotes meetingId={id} minutesTemplate={meeting.minutesTemplate} redactedEpoch={redactedEpoch} />}

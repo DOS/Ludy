@@ -5153,6 +5153,46 @@ export const vi = {
         default: 'Có lỗi xảy ra. Hãy thử lại.',
       },
     },
+    briefFacts: {
+      title: 'Thông tin liên hệ trước cuộc họp',
+      subtitle: 'Đọc trực tiếp từ CRM, Kế toán và Tin nhắn, không dùng AI.',
+      show: 'Thông tin trước họp',
+      hide: 'Ẩn thông tin trước họp',
+      showFor: 'Thông tin trước họp cho {name}',
+      hideFor: 'Ẩn thông tin trước họp cho {name}',
+      loading: 'Đang tải thông tin liên hệ...',
+      empty: 'Không tìm thấy liên hệ khớp trong danh bạ.',
+      openContacts: 'Mở danh bạ',
+      dealsTitle: 'Cơ hội đang mở',
+      noDeals: 'Chưa có cơ hội đang mở.',
+      closeOn: 'dự kiến chốt {date}',
+      quoteTitle: 'Báo giá đã gửi gần nhất',
+      noQuote: 'Chưa gửi báo giá nào.',
+      quoteExpired: 'đã hết hạn',
+      quoteStatus: { sent: 'đã gửi', accepted: 'đã được chấp nhận', declined: 'bị từ chối', superseded: 'đã được thay bằng bản mới' },
+      validUntil: 'hiệu lực đến {date}',
+      sentOn: 'gửi ngày {date}',
+      invoicesTitle: 'Hóa đơn và công nợ',
+      invoicesOpen: 'Hóa đơn đang mở: {count}',
+      overdueAmount: 'Quá hạn: {amount}',
+      noOverdue: 'Không có nợ quá hạn',
+      lastInvoice: 'Hóa đơn gần nhất: {date}',
+      lastPaid: 'Thanh toán gần nhất: {date}',
+      noDate: 'chưa có',
+      invoicesDraftLine: 'Hóa đơn đang mở: {openCount}; Quá hạn: {overdue}; Hóa đơn gần nhất: {lastInvoice}; Thanh toán gần nhất: {lastPaid}',
+      messagesTitle: 'Tin nhắn đến mới nhất',
+      noMessages: 'Không có tin nhắn khách nào bạn được xem.',
+      draftHeading: 'Chuẩn bị trước họp: {name}',
+      keepDraft: 'Giữ làm bản nháp',
+      draftLabel: 'Bản nháp chuẩn bị riêng tư',
+      draftPrivateHint: 'Chỉ riêng bạn thấy bản nháp này và không gửi ra ngoài.',
+      updateDraft: 'Lưu thay đổi bản nháp',
+      putToNotes: 'Đưa vào ghi chú cuộc họp',
+      removeDraft: 'Xóa bản nháp',
+      draftSaved: 'Đã lưu vào bản nháp riêng tư của bạn.',
+      draftRemoved: 'Đã xóa bản nháp riêng tư.',
+      addedToNotes: 'Đã chép bản nháp vào ghi chú cuộc họp.',
+    },
     adherence: {
       title: 'Cuộc họp đã bàn đủ chưa?',
       intro: 'So các mục định bàn với bản ghi của cuộc họp này. Vy chỉ đánh dấu một mục là đã bàn khi chỉ ra được dòng bản ghi cho thấy điều đó; bạn đọc lại các dòng ấy trước khi tin.',
@@ -19136,6 +19176,7 @@ export const vi = {
     },
     crm: {
       booking: {
+        brief_target: 'Kiểm tra quyền xem dữ kiện trước cuộc họp của một lịch hẹn',
         cancel: 'Hủy lịch hẹn',
         cancel_approved: "Hủy lịch hẹn (do đồng nghiệp AI đề xuất, người duyệt)",
         confirm: 'Xác nhận lịch hẹn',
@@ -19163,6 +19204,7 @@ export const vi = {
       contact: {
         company_candidates: 'Tìm các công ty một người liên hệ có thể làm việc',
         list: 'Xem danh sách liên hệ',
+        meeting_facts: 'Đọc cơ hội, báo giá, tóm tắt hóa đơn và tin nhắn mới nhất của liên hệ cho một cuộc họp',
       },
       deal: {
         board: 'Xem bảng cơ hội bán hàng',
@@ -19275,6 +19317,9 @@ export const vi = {
       },
     },
     finance: {
+      party: {
+        invoice_summary: 'Đọc số hóa đơn mở, số tiền quá hạn và ngày hóa đơn, thanh toán gần nhất của khách hàng',
+      },
       expense_variance: 'Xem các dòng chi phí biến động của một tháng so với tháng trước và trung bình 3 tháng',
       unusual_entries: {
         list: 'Xem các bút toán đã ghi sổ của một tháng trông bất thường',
@@ -20652,6 +20697,7 @@ export const vi = {
     },
     meetings: {
       agenda: {
+        attendee_hashes: 'Đọc mã băm email người tham dự của sự kiện lịch hoặc cuộc họp',
         clear: 'Xóa các cuộc họp đã lưu từ lịch của bạn',
         link: 'Gắn một cuộc họp đã ghi vào sự kiện lịch của bạn',
         list: 'Xem các cuộc họp hôm nay trong lịch của bạn',
@@ -20746,6 +20792,12 @@ export const vi = {
         start: 'Nhờ Vy viết vài câu chuẩn bị trước một cuộc họp',
         status: 'Xem Vy có viết được phần chuẩn bị cho cuộc họp không',
         store_lines: 'Lưu dòng gợi ý chuẩn bị buổi sáng',
+      },
+      brief_draft: {
+        list: 'Đọc các bản nháp chuẩn bị cuộc họp riêng tư của bạn',
+        put_to_notes: 'Chép bản nháp dữ kiện trước cuộc họp vào ghi chú cuộc họp của bạn',
+        remove: 'Xóa bản nháp dữ kiện chuẩn bị cuộc họp riêng tư',
+        save: 'Lưu bản nháp dữ kiện chuẩn bị cuộc họp riêng tư',
       },
       mcp: {
         list: 'Cho ứng dụng AI xem danh sách các cuộc họp đã công bố biên bản và chia sẻ cho cả công ty',

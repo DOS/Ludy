@@ -1510,6 +1510,14 @@ export const MORNING_NOTICE_CONTENTS = ['count', 'full'] as const;
 export type MorningNoticeContent = (typeof MORNING_NOTICE_CONTENTS)[number];
 export type MeetingsMorningNoticeTable = Refine<G.MeetingsMorningNoticeTable, { content: Generated<MorningNoticeContent> }>;
 
+// Pre-meeting facts draft kept privately by one member for a synced calendar event, booking, or meeting (#4991 PM1).
+export const MEETING_BRIEF_DRAFT_TARGET_KINDS = ['agenda', 'booking', 'meeting'] as const;
+export type MeetingBriefDraftTargetKind = (typeof MEETING_BRIEF_DRAFT_TARGET_KINDS)[number];
+export type MeetingsMeetingBriefDraftTable = Refine<
+  G.MeetingsMeetingBriefDraftTable,
+  { target_kind: MeetingBriefDraftTargetKind }
+>;
+
 // The transcript of a meeting (#2578): a segment is a draft, the recorder's own copy, until the recorder publishes it.
 export const TRANSCRIPT_STAGES = ['draft', 'published'] as const;
 export type TranscriptStageValue = (typeof TRANSCRIPT_STAGES)[number];
@@ -1998,6 +2006,7 @@ type Refined = Tables<{
   'ludy_meetings.chat_channel': MeetingsChatChannelTable;
   'ludy_meetings.chat_post': MeetingsChatPostTable;
   'ludy_meetings.meeting': MeetingsMeetingTable;
+  'ludy_meetings.meeting_brief_draft': MeetingsMeetingBriefDraftTable;
   'ludy_meetings.meeting_chapter': MeetingsMeetingChapterTable;
   'ludy_meetings.meeting_result': MeetingsMeetingResultTable;
   'ludy_meetings.minutes_version': MeetingsMinutesVersionTable;

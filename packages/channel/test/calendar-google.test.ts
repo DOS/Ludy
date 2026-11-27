@@ -380,7 +380,7 @@ describe('GoogleCalendarAdapter, the member\'s own meetings (B1, #3165)', () => 
     expect('events' in answer ? answer.events.map((e) => [e.id, e.series]) : answer).toEqual([['a_20261114T020000Z', 'a'], ['b', null], ['c', null], ['d', null], ['e', null]]);
   });
 
-  it('sends a field mask that names no attendee address, description, attachment or location', async () => {
+  it('sends a field mask that names attendee emails only (no displayName, description, attachment, location or organizer)', async () => {
     const seen: URL[] = [];
     const fetchImpl: Fetch = async (input) => {
       seen.push(new URL(input));
@@ -393,20 +393,28 @@ describe('GoogleCalendarAdapter, the member\'s own meetings (B1, #3165)', () => 
     expect(q?.get('timeMin')).toBe(FROM.toISOString());
     expect(q?.get('timeMax')).toBe(TO.toISOString());
     const fields = q?.get('fields') ?? '';
-    for (const forbidden of ['email', 'displayName', 'description', 'attachments', 'location', 'organizer', 'creator', 'htmlLink']) expect(fields, forbidden).not.toContain(forbidden);
-    expect(fields).toContain('attendees(self,responseStatus,optional)');
+    for (const forbidden of ['displayName', 'description', 'attachments', 'location', 'organizer', 'creator', 'htmlLink']) expect(fields, forbidden).not.toContain(forbidden);
+    expect(fields).toContain('attendees(email,self,responseStatus,optional,resource)');
   });
 
-  it('keeps a timed event, counts its invitees and keeps a Meet, Zoom or Teams address only', async () => {
-    const meet = timed('m', { hangoutLink: 'https://meet.google.com/abc-defg-hij', attendees: [{ self: true, responseStatus: 'accepted' }, { responseStatus: 'needsAction' }, { optional: true }] });
+  it('keeps a timed event, extracts case-folded non-self attendee emails, counts invitees, and keeps Meet, Zoom or Teams address only', async () => {
+    const meet = timed('m', {
+      hangoutLink: 'https://meet.google.com/abc-defg-hij',
+      attendees: [
+        { email: 'Me@Company.Test', self: true, responseStatus: 'accepted' },
+        { email: ' Khach@Example.Test ', responseStatus: 'needsAction' },
+        { email: 'khach@example.test', optional: true },
+        { email: 'room@resource.test', resource: true },
+      ],
+    });
     const zoom = timed('z', { conferenceData: { entryPoints: [{ entryPointType: 'phone', uri: 'tel:+84123' }, { entryPointType: 'video', uri: 'https://us02web.zoom.us/j/123456789?pwd=abc' }] } });
     const odd = timed('o', { hangoutLink: 'https://evil.example/meet.google.com', conferenceData: { entryPoints: [{ entryPointType: 'video', uri: 'http://zoom.us/j/1' }] } });
     const { fetchImpl } = google({ [EVENTS]: [{ body: { items: [meet, zoom, odd] } }] });
     const answer = await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
-    expect('events' in answer && answer.events.map((e) => [e.id, e.joinUrl, e.invitees])).toEqual([
-      ['m', 'https://meet.google.com/abc-defg-hij', 3],
-      ['z', 'https://us02web.zoom.us/j/123456789?pwd=abc', 0],
-      ['o', null, 0],
+    expect('events' in answer && answer.events.map((e) => [e.id, e.joinUrl, e.invitees, e.attendeeEmails])).toEqual([
+      ['m', 'https://meet.google.com/abc-defg-hij', 4, ['khach@example.test']],
+      ['z', 'https://us02web.zoom.us/j/123456789?pwd=abc', 0, []],
+      ['o', null, 0, []],
     ]);
   });
 

@@ -222,15 +222,22 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     expect(await refuses(on('nam', wrongGoogle))).toBe('CALENDAR_READ_SCOPE_MISSING');
   });
 
-  it('keeps only what the table allows: no address, description or attachment column, a join address that is https, a bounded title', async () => {
+  it('keeps only what the table allows: no plaintext address, description or attachment column, a join address that is https, a bounded title', async () => {
     const columns = (await sqlAdmin<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema = 'ludy_meetings' AND table_name = 'calendar_agenda' ORDER BY column_name")).rows.map((r) => r.column_name);
-    expect(columns).toEqual(['connection_id', 'ends_at', 'external_id', 'id', 'invitee_count', 'join_url', 'meeting_id', 'org_id', 'series_id', 'starts_at', 'time_zone', 'title', 'updated_at', 'user_id']);
+    expect(columns).toEqual(['attendee_email_hashes', 'connection_id', 'ends_at', 'external_id', 'id', 'invitee_count', 'join_url', 'meeting_id', 'org_id', 'series_id', 'starts_at', 'time_zone', 'title', 'updated_at', 'user_id']);
     const c = await connection('nam');
     await on('nam', c);
-    await sweep(c, [event('long', 30, 60, { title: 'x'.repeat(200), joinUrl: 'http://zoom.us/j/1', invitees: 1000 }), event('mail', 90, 30, { title: 'khach@congty.example gọi 0912345678' })]);
-    const rows = (await sqlAdmin<{ external_id: string; join_url: string | null; invitee_count: number; title: string }>('SELECT external_id, join_url, invitee_count, title FROM ludy_meetings.calendar_agenda WHERE connection_id = $1 ORDER BY external_id', [c])).rows;
-    // A join address that is not https is dropped; the invitee count is bounded.
-    expect(rows.find((r) => r.external_id === 'long')).toMatchObject({ join_url: null, invitee_count: 1000 });
+    await sweep(c, [
+      event('long', 30, 60, { title: 'x'.repeat(200), joinUrl: 'http://zoom.us/j/1', invitees: 1000, attendeeEmails: ['Khach.Hang@Example.Test'] }),
+      event('mail', 90, 30, { title: 'khach@congty.example gọi 0912345678' }),
+    ]);
+    const rows = (await sqlAdmin<{ external_id: string; join_url: string | null; invitee_count: number; title: string; attendee_email_hashes: string[] }>('SELECT external_id, join_url, invitee_count, title, attendee_email_hashes FROM ludy_meetings.calendar_agenda WHERE connection_id = $1 ORDER BY external_id', [c])).rows;
+    // A join address that is not https is dropped; the invitee count is bounded; attendee emails are stored only as keyed SHA-256 hashes.
+    const longRow = rows.find((r) => r.external_id === 'long');
+    expect(longRow).toMatchObject({ join_url: null, invitee_count: 1000 });
+    expect(longRow?.attendee_email_hashes).toHaveLength(1);
+    expect(longRow?.attendee_email_hashes[0]).toMatch(/^[0-9a-f]{64}$/);
+    expect(longRow?.attendee_email_hashes[0]).not.toContain('khach');
     // The command's input refuses an absurd count and a title over the cap before the definer sees it.
     expect(await refuses(sweep(c, [event('big', 10, 30, { invitees: 5000 })]))).toBe('VALIDATION');
     expect(await refuses(sweep(c, [event('wide', 10, 30, { title: 'x'.repeat(201) })]))).toBe('VALIDATION');

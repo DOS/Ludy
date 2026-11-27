@@ -474,6 +474,15 @@ export const PERSONAL_DATA_COLUMNS = {
     privateRows: 'always',
     reason: 'Short-lived Vy daily briefing prep lines of each member (auto-expire within 36 hours): held privately for that member, deleted on meeting delete, member removal, retention purge, archive shred, org purge, or personal-data erasure',
   },
+  // Pre-meeting facts draft of a member for an event or booking tied to a contact (#4991 PM1): held privately for that member alone,
+  // erased via ludy_meetings.meeting_brief_draft_erase() when matching the probe text or a matched contact, and cascaded on contact delete,
+  // member removal, meeting deletion, and org purge.
+  'ludy_meetings.meeting_brief_draft.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    privateRows: 'always',
+    reason: 'Pre-meeting facts draft of each member tied to a contact and event: held privately for that member, deleted on contact deletion, member removal, meeting deletion, org purge, or personal-data erasure',
+  },
   // The machine translation of a meeting's summary (meetings integrations E1, issue #3184): a member's own Vy's translation of the summary, its decisions and its item titles, private to the
   // member who asked. No finder, owner or admin reads it; it goes with the meeting, with the summary it translated, and an erasure that touches the meeting DROPS it (never redacts it:
   // a name cannot be located reliably in another language), so a request is answered the way it is for the transcript.
@@ -540,6 +549,11 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'free_text',
     handling: 'erase',
     reason: "The title of an event of a member's own calendar, which may name or describe a person: a cache of the next 7 days and the last day, read by that member alone, deleted at once when they switch the read off or disconnect the calendar, a day after the event ended at the next sync (a row the member linked to a meeting stays until that meeting goes), and with the org",
+  },
+  'ludy_meetings.calendar_agenda.attendee_email_hashes': {
+    kind: 'other',
+    handling: 'hashed',
+    reason: 'Keyed HMAC-SHA256 hashes (ludy_kernel.email_exact_hash) of synced calendar invitee emails used only to match CRM contacts (#4991 PM1); no raw email address is stored',
   },
   // The message of a post of approved minutes to a Slack or Teams channel waiting to be sent (meetings integrations B4, issue #3168): the title, day, summary, decisions, action items and link back, copied at
   // the recorder's click and kept only while the post is queued. The database DELETES the row the moment the post settles, and drops a queued post, deleting it, when the meeting's title, its published summary
@@ -1545,6 +1559,8 @@ export const MEMBER_LIVE_LINE_REASON =
   "Live preview lines of meetings being recorded or not yet transcribed (the row count is all of the organization's, not this person's) are held privately for the recorder and cannot be read here; they are replaced by the transcript, expire 30 days after they were made, go with their meeting, and go 30 days after their recorder is removed";
 export const MEMBER_BRIEF_LINES_REASON =
   "Short-lived Vy daily briefing prep lines (the row count is all of the organization's, not this person's) are held privately for the opted-in member and cannot be read here; matching lines were erased, and remaining lines auto-expire within 36 hours, go with their meeting, and go when that member is removed";
+export const MEMBER_BRIEF_DRAFT_REASON =
+  "Pre-meeting facts drafts (the row count is all of the organization's, not this person's) are held privately for each member and cannot be read here; drafts tied to matched contacts or mentioning the value were erased, and remaining drafts go when their contact or meeting is deleted or the member is removed";
 export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[], hidden: number): string {
   const first = [...dates].sort()[0];
   const word = kind === 'audio' ? 'The audio' : 'The video';
@@ -2210,6 +2226,20 @@ export const personalDataErase = defineCommand({
           ),
         );
     add('ludy_meetings.morning_brief_lines.lines', briefLinesErased ?? 0);
+    const matchedPartyIds = parties.map((p) => p.id);
+    const matchedPartySql = matchedPartyIds.length > 0 ? sql`${matchedPartyIds}::uuid[]` : sql`ARRAY[]::uuid[]`;
+    const briefDraftsErased =
+      shortNumber && matchedPartyIds.length === 0
+        ? 0
+        : await meetingScan(ctx.trx, async () =>
+            Number(
+              (
+                await sql<{ erased: string }>`
+                  SELECT ludy_meetings.meeting_brief_draft_erase(${probe.kind}, ${probeValue(probe)}, ${matchedPartySql}, ${!shortNumber})::text AS erased`.execute(ctx.trx)
+              ).rows[0]?.erased ?? 0,
+            ),
+          );
+    add('ludy_meetings.meeting_brief_draft.body', briefDraftsErased ?? 0);
     const redaction = shortNumber
       ? []
       : await meetingScan(ctx.trx, async () =>
@@ -2912,6 +2942,10 @@ export const personalDataErase = defineCommand({
       (await sql<{ n: string }>`SELECT COALESCE(pg_catalog.sum(brief_lines), 0)::text AS n FROM ludy_meetings.morning_brief_lines_counts()`.execute(ctx.trx)).rows[0]?.n ?? 0,
     );
     if (vyBriefLines > 0) kept.set('ludy_meetings.morning_brief_lines.lines', { column: 'ludy_meetings.morning_brief_lines.lines', rows: vyBriefLines, reason: MEMBER_BRIEF_LINES_REASON });
+    const memberBriefDrafts = Number(
+      (await sql<{ n: string }>`SELECT COALESCE(pg_catalog.sum(drafts), 0)::text AS n FROM ludy_meetings.meeting_brief_draft_counts()`.execute(ctx.trx)).rows[0]?.n ?? 0,
+    );
+    if (memberBriefDrafts > 0) kept.set('ludy_meetings.meeting_brief_draft.body', { column: 'ludy_meetings.meeting_brief_draft.body', rows: memberBriefDrafts, reason: MEMBER_BRIEF_DRAFT_REASON });
     // Private items no notice named: counted, never listed (the finder's privateItems after the erasure).
     if (untold.notes > 0) kept.set('ludy_notes.note', { column: 'ludy_notes.note', rows: untold.notes, reason: UNTOLD_PRIVATE_REASON });
     if (untold.todos > 0) kept.set('ludy_notes.todo', { column: 'ludy_notes.todo', rows: untold.todos, reason: UNTOLD_PRIVATE_REASON });
