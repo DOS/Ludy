@@ -95,6 +95,8 @@ suite('the income statement under the entity\'s chart (#5187)', () => {
       main = (await a.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
       tt99 = (await a.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Công ty TT99', 'company', $2) RETURNING id`, [orgId, owner])).rows[0]?.id as string;
       // The TT99 company keeps its books under TT99 for all of 2026, set before it has any entry.
+      // The HTKK file needs the org's tax code before it reads anything else.
+      await a.query(`UPDATE ludy_kernel.tenant SET tax_code = '0101234564' WHERE org_id = $1`, [orgId]);
       await a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2026-01-01')`, [orgId, tt99]);
     });
 

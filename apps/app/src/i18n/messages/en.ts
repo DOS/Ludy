@@ -10357,7 +10357,7 @@ export const en = {
     statementsExport: 'Export financial statements to Excel',
     statementsFile: '{brandSlug}-bao-cao-tai-chinh-{period}-{org}.xlsx',
     statementsTt99: 'The income statement (B02) is read under the Circular 99 chart of accounts (line codes come from secondary sources, not checked against the official text). The statement of financial position (B01) keeps the Circular 133 layout until the Circular 99 form exists. The HTKK file exists only for books under Circular 133.',
-    statementsMixedCharts: 'This period or a comparison column was partly booked under the other chart of accounts. Every column is read under the chart of the last day, so figures may be off: check with your accountant.\n'.rstrip('\n') + '\n',
+    statementsMixedCharts: 'This period or a comparison column was partly booked under the other chart of accounts. Every column is read under the chart of the last day, so figures may be off: check with your accountant.',
     statementsUnbalanced: 'Total assets (code 200) and total sources (code 500) differ: check the account balances.',
     htkkTitle: 'Financial statements {year} for HTKK',
     htkkIntro: 'The XML of the B01a-DNN set (TT133) that HTKK reads: the statement of financial position, the income statement and the F01-DNN trial balance. The accountant opens it in HTKK, adds the B09-DNN notes, the signers and the tax office, then files it.',
