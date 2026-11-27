@@ -71,6 +71,11 @@ export function durableEventKey(replayKey: string): string {
   return createHash('sha256').update(`ludy.whatsapp.first_seen.v1:${replayKey}`).digest('hex');
 }
 
+// The most keys one call of ludy_kernel.conversation_inbound_enqueue_seen takes (it raises 22023 past this, which would answer a signed body 500 and have Meta retry it
+// until it expires, #5188). A body with more events is still parked: it is dated by the earliest first-seen time of the keys sent, and the keys are the body's first ones in a
+// fixed order, so a retry of the same body sends the same keys, all first seen when the body first arrived.
+export const WHATSAPP_SEEN_KEYS_MAX = 1000;
+
 export async function acceptWhatsAppWebhook(
   runtime: Runtime,
   config: Pick<WhatsAppWebhookConfig, 'appSecret' | 'appSecretPrevious' | 'now'>,
@@ -101,7 +106,7 @@ export async function acceptWhatsAppWebhook(
   if (freshKeys.length === 0) return { status: 200, parked: false };
   try {
     const parked = await runtime.orgless(async (db) => {
-      const { rows } = await sql<{ seq: string | null }>`SELECT ludy_kernel.conversation_inbound_enqueue_seen('whatsapp', ${Buffer.from(request.body)}::bytea, ${[...seenKeys]}::text[]) AS seq`.execute(db);
+      const { rows } = await sql<{ seq: string | null }>`SELECT ludy_kernel.conversation_inbound_enqueue_seen('whatsapp', ${Buffer.from(request.body)}::bytea, ${[...seenKeys].slice(0, WHATSAPP_SEEN_KEYS_MAX)}::text[]) AS seq`.execute(db);
       return rows[0]?.seq ?? null;
     });
     // NULL: the backlog is full (the keys stay recorded, so the retry keeps the original time).

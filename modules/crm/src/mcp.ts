@@ -37,6 +37,12 @@ const LONG_TEXT_MAX = 2000;
 const zLimit = z.number().int().min(1).max(MCP_CRM_MAX).default(MCP_CRM_DEFAULT).describe(`How many to return (1 to ${MCP_CRM_MAX}, default ${MCP_CRM_DEFAULT}).`);
 const zCursor = z.strictObject({ createdAt: z.iso.datetime(), id: zId }).describe('The `next` of the previous answer, to read the following page.');
 
+// The page key carries created_at to the microsecond (#5188): the JS Date in `createdAt` stops at the millisecond, and a `now()` timestamp has six digits, so a cursor cut to
+// milliseconds could skip or repeat a row that shares its millisecond. The cursor goes back to Postgres as text, never through a JS Date.
+function cursorAt(column: 'd.created_at' | 'q.created_at') {
+  return sql<string>`to_char(${sql.ref(column)} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as('cursor_at');
+}
+
 export const zMcpDealsInput = z.strictObject({
   status: z.enum(DEAL_STAGE_KINDS).optional().describe('Only deals in this state: open, won or lost. Leave out for all.'),
   stageId: zId.optional().describe('Only deals in this pipeline stage.'),
@@ -135,12 +141,13 @@ export const mcpDeals = defineQuery({
     if (input.stageId) q = q.where('d.stage_id', '=', input.stageId);
     if (input.partyId) q = q.where('d.party_id', '=', input.partyId);
     if (input.status) q = q.where('s.kind', '=', input.status);
-    if (input.cursor) q = q.where(sql<boolean>`(d.created_at, d.id) < (${new Date(input.cursor.createdAt)}::timestamptz, ${input.cursor.id}::uuid)`);
-    const rows = await q.orderBy('d.created_at', 'desc').orderBy('d.id', 'desc').limit(input.limit + 1).execute();
-    const deals = rows.slice(0, input.limit).map(dealOf);
-    const last = deals.at(-1);
+    if (input.cursor) q = q.where(sql<boolean>`(d.created_at, d.id) < (${input.cursor.createdAt}::timestamptz, ${input.cursor.id}::uuid)`);
+    const rows = await q.select(cursorAt('d.created_at')).orderBy('d.created_at', 'desc').orderBy('d.id', 'desc').limit(input.limit + 1).execute();
+    const page = rows.slice(0, input.limit);
+    const deals = page.map(dealOf);
+    const last = page.at(-1);
     const stages = (await loadStages(ctx)).map((st) => ({ id: st.id, name: plainLine(st.name, TEXT_MAX), kind: st.kind, position: st.position }));
-    return { deals, stages, next: rows.length > input.limit && last ? { createdAt: last.createdAt, id: last.id } : null };
+    return { deals, stages, next: rows.length > input.limit && last ? { createdAt: last.cursor_at, id: last.id } : null };
   },
 });
 
@@ -242,12 +249,13 @@ export const mcpQuotes = defineQuery({
     if (input.dealId) q = q.where('q.deal_id', '=', input.dealId);
     if (input.partyId) q = q.where('q.party_id', '=', input.partyId);
     if (input.status) q = q.where('q.status', '=', input.status);
-    if (input.cursor) q = q.where(sql<boolean>`(q.created_at, q.id) < (${new Date(input.cursor.createdAt)}::timestamptz, ${input.cursor.id}::uuid)`);
-    const rows = await q.orderBy('q.created_at', 'desc').orderBy('q.id', 'desc').limit(input.limit + 1).execute();
+    if (input.cursor) q = q.where(sql<boolean>`(q.created_at, q.id) < (${input.cursor.createdAt}::timestamptz, ${input.cursor.id}::uuid)`);
+    const rows = await q.select(cursorAt('q.created_at')).orderBy('q.created_at', 'desc').orderBy('q.id', 'desc').limit(input.limit + 1).execute();
     const now = new Date();
-    const quotes = rows.slice(0, input.limit).map((r) => quoteOf(quoteSummaryView(r, now)));
-    const last = quotes.at(-1);
-    return { quotes, next: rows.length > input.limit && last ? { createdAt: last.createdAt, id: last.id } : null };
+    const page = rows.slice(0, input.limit);
+    const quotes = page.map((r) => quoteOf(quoteSummaryView(r, now)));
+    const last = page.at(-1);
+    return { quotes, next: rows.length > input.limit && last ? { createdAt: last.cursor_at, id: last.id } : null };
   },
 });
 

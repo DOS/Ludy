@@ -127,6 +127,13 @@ function gate(control: Control, kind: AdsManageKind): void {
 const openFamily = (control: Control, family: 'budget' | 'schedule' | AdsManageSlot): boolean =>
   control.changes.some((c) => c.state === 'queued' && (family === 'budget' ? c.kind.startsWith('budget_') : family === 'schedule' ? c.kind.startsWith('schedule_') : !c.kind.startsWith('budget_') && !c.kind.startsWith('schedule_') && c.slot === family));
 const unclearBlocks = () => refuse('ADS_CHANGE_UNCLEAR', 409, 'Có một thay đổi cùng loại chưa xác nhận được với nền tảng; chưa giảm hay rút ngắn tiếp được cho đến khi nó được xác nhận');
+// The database guard's own ADS_MANAGE_UNCLEAR (SQLSTATE 42501) is what a race past the command's unclearOpen check hits: another change settled as unclear between the read and the
+// insert. It shows the same clear refusal as the command's check, not the generic 42501 (#5188). The transaction is already aborted, and the refusal rolls the command back.
+function unclearFromGuard(error: unknown): never {
+  const pg = error as { code?: unknown; message?: unknown } | null;
+  if (pg !== null && typeof pg === 'object' && pg.code === '42501' && typeof pg.message === 'string' && pg.message.includes('ADS_MANAGE_UNCLEAR')) throw unclearBlocks();
+  throw error;
+}
 const changeOpen = () => refuse('ADS_CHANGE_OPEN', 409, 'Đã có một thay đổi cùng loại đang chờ nền tảng xác nhận; hãy đợi xong rồi thử tiếp');
 
 function requireZone(control: Control): string {
@@ -206,7 +213,8 @@ async function insertChange(ctx: Db & Pick<CommandContext, 'actor'>, control: Co
       ...(change.proposalId ? { proposal_id: change.proposalId } : {}),
     })
     .returning('id')
-    .executeTakeFirstOrThrow();
+    .executeTakeFirstOrThrow()
+    .catch(unclearFromGuard);
   return row.id;
 }
 

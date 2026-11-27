@@ -219,6 +219,8 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
   const lookups = { left: BUSINESS_LOOKUP_PER_PASS };
   // The notices the database dropped (poison or too old), by id: a body is personal data, so an alert names ids and counts only.
   const lost: ClaimedNotice[] = [];
+  // WhatsApp events the notice's first-seen time cut off (see below), by notice id: counts only (#5188).
+  const skewCut: { seq: string; events: number }[] = [];
   for (const notice of await claimNotices(deps.workerDb)) {
     if (notice.dropped || notice.body === null) {
       out.dropped++;
@@ -245,6 +247,17 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
             ? parse(notice.body)
             : null;
       parsedList = raw === null ? null : Array.isArray(raw) ? raw : [raw as ConversationNotice];
+      // Only when the claim is later than the notice's first-seen time can the wider read differ, so a notice read at once is parsed once.
+      if (notice.provider === 'whatsapp' && parsedList && Date.now() > receivedAtMs) {
+        // A body that mixes an event seen before with later ones is dated by the earliest first-seen time of its events (conversation_inbound_enqueue_seen), and the parse above
+        // leaves out an event dated more than the clock skew after that time. Read the same body as of now to count what the date cut off, so the loss is never silent (#5188).
+        const kept = parsedList.reduce((n, p) => n + p.events.length, 0);
+        const wider = parseWhatsAppNotices(notice.body, Date.now()).reduce((n, p) => n + p.events.length, 0);
+        if (wider > kept) {
+          skewCut.push({ seq: String(notice.seq), events: wider - kept });
+          log(`notice ${notice.seq} (whatsapp): ${wider - kept} event(s) dated after its first-seen time plus the clock skew were not stored`);
+        }
+      }
     } catch (error) {
       if (!(error instanceof ConversationNoticeError)) throw error;
     }
@@ -308,6 +321,10 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
   if (lost.length > 0) {
     const expired = lost.filter((n) => n.reason === 'expired').length;
     opsAlert(`[conversations] ALERT ${lost.length} waiting notice(s) dropped (${expired} older than 7 days, ${lost.length - expired} that failed 5 times): ${lost.slice(0, 20).map((n) => n.seq).join(', ')}${lost.length > 20 ? ', ...' : ''}`);
+  }
+  if (skewCut.length > 0) {
+    const events = skewCut.reduce((n, c) => n + c.events, 0);
+    opsAlert(`[conversations] ALERT ${events} WhatsApp event(s) in ${skewCut.length} notice(s) not stored: dated after the notice's first-seen time plus the clock skew (a retry mixed them with an event seen earlier): ${skewCut.slice(0, 20).map((c) => c.seq).join(', ')}${skewCut.length > 20 ? ', ...' : ''}`);
   }
   return out;
 }
