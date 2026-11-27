@@ -210,6 +210,19 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
     return id;
   }
 
+  async function asSystemTx<T>(c: pg.Client, fn: () => Promise<T>): Promise<T> {
+    await c.query('BEGIN');
+    try {
+      await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
+      const result = await fn();
+      await c.query('COMMIT');
+      return result;
+    } catch (error) {
+      await c.query('ROLLBACK');
+      throw error;
+    }
+  }
+
   async function ensureMemberVyAgent(c: pg.Client, userId: string, status: 'active' | 'paused' = 'active'): Promise<string> {
     const existing = await c.query<{ id: string }>(
       `SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2 LIMIT 1`,
@@ -220,10 +233,12 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
       return existing.rows[0].id;
     }
     const id = randomUUID();
-    await c.query(
-      `INSERT INTO ludy_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, status, created_by)
-       VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $4, $3)`,
-      [orgId, id, userId, status],
+    await asSystemTx(c, () =>
+      c.query(
+        `INSERT INTO ludy_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, status, created_by)
+         VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $4, $3)`,
+        [orgId, id, userId, status],
+      ),
     );
     return id;
   }
@@ -375,45 +390,53 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
       await seedNoticePref(c, users.alreadyNotified, { sendMinute: daytimeMinute });
       await seedAgendaEvent(c, { connectionId: conns.alreadyNotified!, userId: users.alreadyNotified, startsAtSql: eventTimeSql });
       await c.query(
-        `INSERT INTO ludy_kernel.notification (org_id, id, user_id, kind, title, body, dedupe_key)
-         VALUES ($1, $2, $3, 'meetings.morning', 'Lich hop', '1 cuoc hop', $4)`,
+        `INSERT INTO ludy_kernel.notification (org_id, id, user_id, kind, dedupe_key)
+         VALUES ($1, $2, $3, 'meetings.morning', $4)`,
         [orgId, randomUUID(), users.alreadyNotified, `morning:${daytimeDay}`],
       );
 
       const agRunning = await ensureMemberVyAgent(c, users.runningRun, 'active');
       await seedNoticePref(c, users.runningRun, { sendMinute: daytimeMinute });
       await seedAgendaEvent(c, { connectionId: conns.runningRun!, userId: users.runningRun, startsAtSql: eventTimeSql });
-      await c.query(
-        `INSERT INTO ludy_kernel.ai_run (id, org_id, agent_id, module, feature, status, tainted, started_at, expires_at)
-         VALUES ($1, $2, $3, 'meetings', 'meetings.brief_daily', 'running', true, now(), now() + interval '30 minutes')`,
-        [randomUUID(), orgId, agRunning],
+      await asSystemTx(c, () =>
+        c.query(
+          `INSERT INTO ludy_kernel.ai_run (id, org_id, agent_id, module, feature, status, tainted, started_at, expires_at)
+           VALUES ($1, $2, $3, 'meetings', 'meetings.brief_daily', 'running', true, now(), now() + interval '30 minutes')`,
+          [randomUUID(), orgId, agRunning],
+        ),
       );
 
       const agSucceeded = await ensureMemberVyAgent(c, users.succeededRun, 'active');
       await seedNoticePref(c, users.succeededRun, { sendMinute: daytimeMinute });
       await seedAgendaEvent(c, { connectionId: conns.succeededRun!, userId: users.succeededRun, startsAtSql: eventTimeSql });
-      await c.query(
-        `INSERT INTO ludy_kernel.ai_run (id, org_id, agent_id, module, feature, status, tainted, started_at, finished_at, expires_at)
-         VALUES ($1, $2, $3, 'meetings', 'meetings.brief_daily', 'succeeded', true, now(), now(), now() + interval '30 minutes')`,
-        [randomUUID(), orgId, agSucceeded],
+      await asSystemTx(c, () =>
+        c.query(
+          `INSERT INTO ludy_kernel.ai_run (id, org_id, agent_id, module, feature, status, tainted, started_at, finished_at, expires_at)
+           VALUES ($1, $2, $3, 'meetings', 'meetings.brief_daily', 'succeeded', true, now(), now(), now() + interval '30 minutes')`,
+          [randomUUID(), orgId, agSucceeded],
+        ),
       );
 
       const agRecentFail = await ensureMemberVyAgent(c, users.recentFailed, 'active');
       await seedNoticePref(c, users.recentFailed, { sendMinute: daytimeMinute });
       await seedAgendaEvent(c, { connectionId: conns.recentFailed!, userId: users.recentFailed, startsAtSql: eventTimeSql });
-      await c.query(
-        `INSERT INTO ludy_kernel.ai_run (id, org_id, agent_id, module, feature, status, error, tainted, started_at, finished_at, expires_at)
-         VALUES ($1, $2, $3, 'meetings', 'meetings.brief_daily', 'failed', 'TRANSCRIBE_FAILED', true, $4::timestamptz, $4::timestamptz, now() + interval '30 minutes')`,
-        [randomUUID(), orgId, agRecentFail, recentFailedStartedAt],
+      await asSystemTx(c, () =>
+        c.query(
+          `INSERT INTO ludy_kernel.ai_run (id, org_id, agent_id, module, feature, status, error, tainted, started_at, finished_at, expires_at)
+           VALUES ($1, $2, $3, 'meetings', 'meetings.brief_daily', 'failed', 'TRANSCRIBE_FAILED', true, $4::timestamptz, $4::timestamptz, $4::timestamptz + interval '30 minutes')`,
+          [randomUUID(), orgId, agRecentFail, recentFailedStartedAt],
+        ),
       );
 
       const agStaleFail = await ensureMemberVyAgent(c, users.staleFailed, 'active');
       await seedNoticePref(c, users.staleFailed, { sendMinute: daytimeMinute });
       await seedAgendaEvent(c, { connectionId: conns.staleFailed!, userId: users.staleFailed, startsAtSql: eventTimeSql });
-      await c.query(
-        `INSERT INTO ludy_kernel.ai_run (id, org_id, agent_id, module, feature, status, error, tainted, started_at, finished_at, expires_at)
-         VALUES ($1, $2, $3, 'meetings', 'meetings.brief_daily', 'failed', 'TRANSCRIBE_FAILED', true, $4::timestamptz, $4::timestamptz, now() + interval '30 minutes')`,
-        [randomUUID(), orgId, agStaleFail, staleFailedStartedAt],
+      await asSystemTx(c, () =>
+        c.query(
+          `INSERT INTO ludy_kernel.ai_run (id, org_id, agent_id, module, feature, status, error, tainted, started_at, finished_at, expires_at)
+           VALUES ($1, $2, $3, 'meetings', 'meetings.brief_daily', 'failed', 'TRANSCRIBE_FAILED', true, $4::timestamptz, $4::timestamptz, $4::timestamptz + interval '30 minutes')`,
+          [randomUUID(), orgId, agStaleFail, staleFailedStartedAt],
+        ),
       );
 
       // Midnight wraparound: pick a timezone at 23:XX local time so cand_day = tomorrow at send_minute = 0 falls inside now..now+60m.
@@ -440,7 +463,7 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
       await seedNoticePref(c, users.killSwitched, { sendMinute: daytimeMinute });
       await seedAgendaEvent(c, { connectionId: conns.killSwitched!, userId: users.killSwitched, startsAtSql: eventTimeSql });
       await c.query(
-        `INSERT INTO ludy_kernel.kill_switch (id, org_id, scope, target, reason, tripped_by)
+        `INSERT INTO ludy_kernel.kill_switch (id, org_id, scope, target, reason, engaged_by)
          VALUES ($1, $2, 'agent', $3, 'test kill switch', $4)`,
         [randomUUID(), orgId, agKill, users.owner],
       );
@@ -449,13 +472,13 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
       await seedNoticePref(c, users.budgetSpent, { sendMinute: daytimeMinute });
       await seedAgendaEvent(c, { connectionId: conns.budgetSpent!, userId: users.budgetSpent, startsAtSql: eventTimeSql });
       await c.query(
-        `INSERT INTO ludy_kernel.budget_policy (id, org_id, scope, target, monthly_limit, hard_stop, warn_pct)
-         VALUES ($1, $2, 'module', 'meetings', 10.000000, true, 80)`,
-        [randomUUID(), orgId],
+        `INSERT INTO ludy_kernel.budget_policy (id, org_id, scope, target, monthly_limit, hard_stop, warn_percent, updated_by)
+         VALUES ($1, $2, 'module', 'meetings', 10.000000, true, 80, $3)`,
+        [randomUUID(), orgId, users.owner],
       );
       await c.query(
-        `INSERT INTO ludy_kernel.ai_usage (id, org_id, agent_id, module, feature, input_tokens, output_tokens, cost)
-         VALUES ($1, $2, $3, 'meetings', 'meetings.brief_daily', 100, 50, 12.000000)`,
+        `INSERT INTO ludy_kernel.org_usage (id, org_id, metric, amount, agent_id, module, feature, input_tokens, output_tokens)
+         VALUES ($1, $2, 'ai_cost', 12.000000, $3, 'meetings', 'meetings.brief_daily', 100, 50)`,
         [randomUUID(), orgId, agBudget],
       );
     });
@@ -717,7 +740,8 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
       );
       expect(auditRes.rows.length).toBeGreaterThanOrEqual(2);
       for (const a of auditRes.rows) {
-        expect(Object.keys(a.detail)).toEqual(['lineCount']);
+        expect(Object.keys(a.detail).sort()).toEqual(['component', 'lineCount', 'workerInstance']);
+        expect(typeof (a.detail as { lineCount: unknown }).lineCount).toBe('number');
         expect(JSON.stringify(a.detail)).not.toContain(validLine1);
         expect(JSON.stringify(a.detail)).not.toContain(validLine2);
       }
@@ -813,9 +837,9 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
 
       const usageRow = await c.query<{ feature: string; module: string; input_tokens: number; output_tokens: number }>(
         `SELECT u.feature, u.module, u.input_tokens, u.output_tokens
-         FROM ludy_kernel.ai_usage u
+         FROM ludy_kernel.org_usage u
          JOIN ludy_kernel.agent a ON a.org_id = u.org_id AND a.id = u.agent_id
-         WHERE u.org_id = $1 AND a.member_user_id = $2 AND u.feature = 'meetings.brief_daily'`,
+         WHERE u.org_id = $1 AND a.member_user_id = $2 AND u.feature = 'meetings.brief_daily' AND u.metric = 'ai_cost'`,
         [orgId, users.injection],
       );
       expect(usageRow.rows).toEqual([{ feature: 'meetings.brief_daily', module: 'meetings', input_tokens: 120, output_tokens: 40 }]);
@@ -889,8 +913,8 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
          WHERE r.org_id = $1 AND a.member_user_id = $2 AND r.feature = 'meetings.brief_daily' ORDER BY r.started_at DESC LIMIT 1`,
         [orgId, users.revokeMidRun],
       );
-      expect(run.rows[0]?.status).toBe('failed');
-      expect(run.rows[0]?.error).toBe('VY_NOT_ALLOWED');
+      expect(run.rows[0]?.status).toBe('cancelled');
+      expect(run.rows[0]?.error).toBe('VY_USE_REMOVED');
     });
 
     // AI-off: null writer returns zero and starts no run
@@ -903,15 +927,8 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
     });
     expect(aiOff).toEqual({ found: 0, prepared: 0, skipped: 0, failures: 0 });
 
-    // Re-enable permission + test transient call error cooldown and 65m retry + purge
+    // Re-enable permission (cancelled run does not enter failed cooldown) + test transient call error cooldown and 65m retry + purge
     await app.execute('kernel.member.permission.set', { userId: users.revokeMidRun, permission: 'vy.use', allowed: true }, { actor: asUser(users.owner), orgId });
-    await admin(async (c) => {
-      await c.query(
-        `UPDATE ludy_kernel.ai_run r SET started_at = now() - interval '65 minutes'
-         FROM ludy_kernel.agent a WHERE r.org_id = a.org_id AND r.agent_id = a.id AND r.org_id = $1 AND a.member_user_id = $2`,
-        [orgId, users.revokeMidRun],
-      );
-    });
 
     const failingWriter: MeetingsBriefWriter = {
       writeDailyBrief: async () => ({ errorCode: 'BRIEF_FAILED' }),
@@ -1004,7 +1021,7 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
         writerCalls += 1;
         await admin(async (c) => {
           await c.query(
-            `INSERT INTO ludy_kernel.kill_switch (id, org_id, scope, target, reason, tripped_by)
+            `INSERT INTO ludy_kernel.kill_switch (id, org_id, scope, target, reason, engaged_by)
              VALUES ($1, $2, 'module', 'meetings', 'mid-run kill switch test', $3)`,
             [killId, orgId, users.owner],
           );
