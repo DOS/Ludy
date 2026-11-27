@@ -956,10 +956,24 @@ export const en = {
   notifications: {
     morningNotice: {
       title: "Today's meetings, in the morning",
-      hint: 'Once a day, at the time you choose, a notice in the app and by email with how many meetings you have today and a link to see them, plus a browser push if turned on for this device. Only a count and a link are sent (browser push names the kind only), no title or name. Nothing is sent on a day with no meeting.',
+      hint: 'Once a day, at the time you choose, a notice in the app and by email with how many meetings you have today and a link to see them, plus a browser push if turned on for this device. By default only a count and a link are sent (browser push names the kind only), no title or name. Nothing is sent on a day with no meeting.',
       label: "Tell me about the day's meetings every morning",
       at: 'At',
       zone: 'In your time zone: {zone}',
+      contentLabel: 'Morning email content',
+      content: {
+        count: {
+          title: 'Count only',
+          hint: 'Sends only the number of meetings today and a link to Meetings. No meeting titles or content leave the server by email.',
+        },
+        full: {
+          title: 'Full daily briefing',
+          hint: 'Includes titles, times, org readers, invitee counts, previous decisions, open items, and open CRM deals.',
+        },
+      },
+      fullNotice: 'Note: choosing the full daily briefing sends your meeting titles and related details outside the server in your morning email.',
+      vyLinesLabel: 'Include Vy prep lines in the briefing',
+      vyLinesHint: 'Separate opt-in (off by default). Vy writes short prep lines for up to 5 meetings a day; with AI off, the full briefing still sends with factual meeting details.',
       noMail: 'This server cannot send email yet, so no email is sent until the installer sets up mail. In-app notices still work, and browser push also fires if enabled on a device.',
       saved: 'Saved',
     },

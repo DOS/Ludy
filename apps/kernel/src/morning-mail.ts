@@ -2,13 +2,14 @@
 // The morning mail and daily briefing of the day's meetings (#3955, #5080, template meetings.morning):
 // - v1 count-only payloads (`{ lang, org, count, path }`) hold only the count and meetings link, nothing sensitive.
 // - v2 full briefing payloads (`{ lang, org, path, day }`) store metadata only in `mail_message.payload`; `morningMailTemplate.render`
-//   fails closed until Slice A wires `meetings.morning.mail_content`, and `renderMorningBriefingMail` strictly validates both the stored
+//   fetches briefing content at render time via `queryBriefing` (`meetings.morning.mail_content`), failing closed if absent, and `renderMorningBriefingMail` strictly validates both the stored
 //   payload and the render-time briefing content (with matching `day`), uses a fixed non-sensitive subject, strips invisible/control
 //   characters with post-NFKC caps, canonicalizes `publicUrl` and validates same-org internal paths, formats decimal-string money via
 //   `@ludy/l10n-vn`, keeps attributes free of titles/names, keeps HTML under Gmail's 102 KB clip boundary so the opt-out footer stays
 //   visible, and escapes every dynamic field in HTML.
 import {
   MORNING_BRIEFING_CAPS,
+  MORNING_MAIL_CONTENT_COMMAND,
   followupClean,
   zMorningBriefingContent,
   zMorningBriefingMail,
@@ -592,8 +593,19 @@ export const morningMailTemplate: MailTemplate = {
     if (!input.subject) return null;
     // Merge data that is not exactly the template's throws; the queue records TEMPLATE_DATA.
     const mail = zMorningMail.parse(input.payload);
-    // Fail closed until Slice C implements render-time full briefing lookup and templates.
-    if (!('count' in mail)) return null;
+    if (!('count' in mail)) {
+      if (!input.queryBriefing) return null;
+      const orgPrefix = mail.path.slice(0, -'/meetings'.length);
+      const briefing = await input.queryBriefing(MORNING_MAIL_CONTENT_COMMAND, {
+        day: mail.day,
+        orgPrefix,
+      });
+      return renderMorningBriefingMail(mail, briefing, {
+        subject: input.subject,
+        publicUrl: input.publicUrl,
+        brand: input.brand,
+      });
+    }
     const t = COPY[mail.lang];
     const url = `${input.publicUrl.replace(/\/+$/, '')}${mail.path}`;
     const text = [t.lead(mail.count), '', `${t.open}: ${url}`, '', t.footer(input.brand, mail.org)].join('\n');

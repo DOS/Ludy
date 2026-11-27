@@ -24,9 +24,16 @@ vi.mock('../src/lib/auth.ts', () => ({ getConfig: () => ({ modules: ['kernel', '
 
 const { MorningNoticeSetting, minuteToTime, timeToMinute } = await import('../src/components/morning-notice-setting.tsx');
 
-function render(opts: { enabled: boolean; minute?: number; locale?: 'en' | 'vi' }): string {
+function render(opts: { enabled: boolean; minute?: number; locale?: 'en' | 'vi'; content?: 'count' | 'full'; vyLines?: boolean }): string {
   state.qc.clear();
-  state.qc.setQueryData(['meetings', 'morning', 'get'], { enabled: opts.enabled, minute: opts.minute ?? 420, timeZone: 'Asia/Ho_Chi_Minh', language: 'vi' });
+  state.qc.setQueryData(['meetings', 'morning', 'get'], {
+    enabled: opts.enabled,
+    minute: opts.minute ?? 420,
+    timeZone: 'Asia/Ho_Chi_Minh',
+    language: 'vi',
+    content: opts.content ?? 'count',
+    vyLines: opts.vyLines ?? false,
+  });
   const locale = opts.locale ?? 'en';
   return renderToStaticMarkup(
     <QueryClientProvider client={state.qc}>
@@ -105,5 +112,57 @@ describe('MorningNoticeSetting', () => {
     state.mail = true;
     expect(render({ enabled: false })).not.toContain(enNoMail);
     expect(render({ enabled: false, locale: 'vi' })).toContain(catalog('vi').notifications.morningNotice.title);
+  });
+
+  it('keeps content mode defaulting to count-only, disables full options until enabled, and gates vyLines behind full briefing (#5080)', () => {
+    const offHtml = render({ enabled: false, content: 'full', vyLines: true });
+    expect(offHtml).toContain('role="radiogroup"');
+    expect(offHtml).toContain('aria-labelledby="morning-notice-content-label"');
+    const countBtnOff = /<button[^>]*data-testid="morning-notice-content-count"[^>]*>/.exec(offHtml)?.[0] ?? '';
+    const fullBtnOff = /<button[^>]*data-testid="morning-notice-content-full"[^>]*>/.exec(offHtml)?.[0] ?? '';
+    expect(countBtnOff).toContain('role="radio"');
+    expect(countBtnOff).toContain('min-h-11');
+    expect(countBtnOff).toContain('disabled');
+    expect(fullBtnOff).toContain('role="radio"');
+    expect(fullBtnOff).toContain('min-h-11');
+    expect(fullBtnOff).toContain('disabled');
+    expect(offHtml).not.toContain('data-testid="morning-notice-full-notice"');
+    const vyOff = /<span[^>]*data-testid="morning-notice-vy-lines"[^>]*>/.exec(offHtml)?.[0] ?? '';
+    expect(vyOff).toContain('aria-checked="false"');
+    expect(vyOff).toMatch(/aria-disabled="true"|data-disabled/);
+
+    const countHtml = render({ enabled: true, content: 'count' });
+    const countBtnOn = /<button[^>]*data-testid="morning-notice-content-count"[^>]*>/.exec(countHtml)?.[0] ?? '';
+    const fullBtnOn = /<button[^>]*data-testid="morning-notice-content-full"[^>]*>/.exec(countHtml)?.[0] ?? '';
+    expect(countBtnOn).toContain('aria-checked="true"');
+    expect(countBtnOn).toContain('tabindex="0"');
+    expect(countBtnOn).not.toContain('disabled');
+    expect(fullBtnOn).toContain('aria-checked="false"');
+    expect(fullBtnOn).toContain('tabindex="-1"');
+    expect(countHtml).not.toContain('data-testid="morning-notice-full-notice"');
+    const vyCount = /<span[^>]*data-testid="morning-notice-vy-lines"[^>]*>/.exec(countHtml)?.[0] ?? '';
+    expect(vyCount).toContain('aria-checked="false"');
+    expect(vyCount).toMatch(/aria-disabled="true"|data-disabled/);
+
+    const fullHtml = render({ enabled: true, content: 'full', vyLines: false });
+    const fullBtnChosen = /<button[^>]*data-testid="morning-notice-content-full"[^>]*>/.exec(fullHtml)?.[0] ?? '';
+    const countBtnUnchosen = /<button[^>]*data-testid="morning-notice-content-count"[^>]*>/.exec(fullHtml)?.[0] ?? '';
+    expect(fullBtnChosen).toContain('aria-checked="true"');
+    expect(fullBtnChosen).toContain('tabindex="0"');
+    expect(countBtnUnchosen).toContain('aria-checked="false"');
+    expect(countBtnUnchosen).toContain('tabindex="-1"');
+    expect(fullHtml).toContain('data-testid="morning-notice-full-notice"');
+    expect(fullHtml).toContain(catalog('en').notifications.morningNotice.fullNotice);
+    const vyFullOff = /<span[^>]*data-testid="morning-notice-vy-lines"[^>]*>/.exec(fullHtml)?.[0] ?? '';
+    expect(vyFullOff).toContain('aria-checked="false"');
+    expect(vyFullOff).not.toContain('aria-disabled="true"');
+    expect(vyFullOff).not.toContain('data-disabled');
+
+    const vyEnabledVi = render({ enabled: true, content: 'full', vyLines: true, locale: 'vi' });
+    const vyFullOn = /<span[^>]*data-testid="morning-notice-vy-lines"[^>]*>/.exec(vyEnabledVi)?.[0] ?? '';
+    expect(vyFullOn).toContain('aria-checked="true"');
+    expect(vyEnabledVi).toContain(catalog('vi').notifications.morningNotice.content.full.title);
+    expect(vyEnabledVi).toContain(catalog('vi').notifications.morningNotice.vyLinesLabel);
+    expect(vyEnabledVi).toContain(catalog('vi').notifications.morningNotice.fullNotice);
   });
 });
