@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // finance.quarter_summary (#5183): the quarter in plain words, the figures of one legal entity for one quarter that has ended, read only. Every figure comes from a read that already exists, so the card and the
 // reports cannot disagree:
-// - revenue, other income, costs and profit: the income statement's own lines (buildB02, as finance.statements.period and finance.overview read them) for the quarter, the previous quarter and the same quarter
+// - revenue, other income, costs and profit: the income statement's own lines (buildB02 with the TT133 map; finance.statements.period and finance.overview read a TT99 entity under the TT99 map since #5187, and this card keeps its own split below) for the quarter, the previous quarter and the same quarter
 //   last year, in ONE statement (#365) with the balances below, so every column sees the same entries even in the query's READ COMMITTED transaction. B02 is the TT133 map (#5187): the class 5 to 8 balances
 //   none of its lines reads (a TT99 entity's 641 and 521 above all) are added where they belong (domain/quarter-summary.ts) and the answer says so (`includesUnmapped`);
 // - cash (B01 line 110), receivables (131) and payables (311): the balances at the quarter's last day and at the last day of the two bases, the overview's own shape;
