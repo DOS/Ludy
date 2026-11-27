@@ -20490,6 +20490,7 @@ export const vi = {
         facts: 'Xem những gì đã chốt, việc còn dở và cơ hội đang mở của khách trước một cuộc họp',
         start: 'Nhờ Vy viết vài câu chuẩn bị trước một cuộc họp',
         status: 'Xem Vy có viết được phần chuẩn bị cho cuộc họp không',
+        store_lines: 'Lưu dòng gợi ý chuẩn bị buổi sáng',
       },
       mcp: {
         list: 'Cho ứng dụng AI xem danh sách các cuộc họp đã công bố biên bản và chia sẻ cho cả công ty',

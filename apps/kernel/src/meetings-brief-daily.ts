@@ -138,7 +138,7 @@ export async function runMeetingsBriefDailyForMember(
   }
 
   const { rows: connRows } = await sql<{ id: string }>`
-    SELECT id FROM ludy_meetings.morning_brief_active_connections(${row.org_id}::uuid, ${row.user_id}::uuid)`.execute(deps.workerDb);
+    SELECT id FROM ludy_meetings.morning_brief_active_connections(${row.org_id}::uuid, ${row.user_id}::uuid) AS t(id)`.execute(deps.workerDb);
   const connectionIds = connRows.map((c) => c.id).slice(0, ACTIVE_CONNECTIONS_MAX);
   if (connectionIds.length === 0) {
     return { status: 'skipped', storedMeetings: 0, storedLines: 0, errorCode: null };
@@ -217,7 +217,7 @@ export async function runMeetingsBriefDailyForMember(
         ),
       );
 
-      if (written.errorCode) {
+      if (!('sentences' in written)) {
         callErrors += 1;
         lastCallErrorCode = written.errorCode;
         continue;

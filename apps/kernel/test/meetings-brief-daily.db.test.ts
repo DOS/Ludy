@@ -171,7 +171,7 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
            org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted,
            when_parsed, transcript_seconds, stage, status, task_id, flags, tainted
          )
-         VALUES ($1, $2, $3, $4, 'Lan', $5, 'Thu sau', current_date::text, 30, 'published', 'suggested', NULL, '[]'::jsonb, false)`,
+         VALUES ($1, $2, $3, $4, 'Lan', $5, 'Thu sau', current_date, 30, 'published', 'suggested', NULL, '[]'::jsonb, false)`,
         [orgId, randomUUID(), meetingId, options.openItem, options.recorderId],
       );
     }
@@ -221,9 +221,9 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
     }
     const id = randomUUID();
     await c.query(
-      `INSERT INTO ludy_kernel.agent (org_id, id, kind, key, name, module, role, member_user_id, status)
-       VALUES ($1, $2, 'member_vy', $3, 'Vy', 'meetings', 'member', $4, $5)`,
-      [orgId, id, `member_vy:${userId}`, userId, status],
+      `INSERT INTO ludy_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, status, created_by)
+       VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $4, $3)`,
+      [orgId, id, userId, status],
     );
     return id;
   }
@@ -495,7 +495,7 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
       expect(wrapRow?.english).toBe(false);
 
       const connsRes = await workerClient.query<{ id: string }>(
-        `SELECT id FROM ludy_meetings.morning_brief_active_connections($1::uuid, $2::uuid)`,
+        `SELECT id FROM ludy_meetings.morning_brief_active_connections($1::uuid, $2::uuid) AS t(id)`,
         [orgId, users.eligible],
       );
       expect(connsRes.rows.map((r) => r.id)).toEqual([conns.eligible]);

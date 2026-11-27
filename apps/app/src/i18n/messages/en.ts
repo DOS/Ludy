@@ -20490,6 +20490,7 @@ export const en = {
         facts: "See what was decided, what is still open and the customer's open deals before a meeting",
         start: 'Ask Vy to write a few sentences to prepare for a meeting',
         status: 'See whether Vy can write the preparation for a meeting',
+        store_lines: 'Store morning briefing prep lines',
       },
       mcp: {
         list: 'Let an AI app list the meetings with published minutes shared with the whole company',
