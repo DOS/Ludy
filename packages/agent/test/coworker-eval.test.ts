@@ -388,6 +388,30 @@ function createStubRuntime() {
       output: { draft: 'Trong quý 2026-Q4, P1 đã đạt 3/4 công việc (75%) cho dự án Vận hành Q4.' },
       usage: zeroUsage,
     }),
+    shiftCoverageSuggest: async ({ prompt }) => {
+      const parsed = JSON.parse(prompt) as {
+        conflicts?: Array<{ alias: string; workDate: string; shiftCode: string }>;
+        gaps?: Array<{ workDate: string; candidateAliases?: Array<{ alias: string }> }>;
+      };
+      const targetAlias = parsed.conflicts?.[0]?.alias ?? 'E1';
+      const workDate = parsed.conflicts?.[0]?.workDate ?? '2026-10-06';
+      const candAlias = parsed.gaps?.[0]?.candidateAliases?.[0]?.alias ?? 'E2';
+      return {
+        output: {
+          summary: `Tuần này ghi nhận 1 xung đột ca cần bố trí người thay cho ${targetAlias}.`,
+          highlights: [`${targetAlias} trùng lịch ngày ${workDate}.`],
+          suggestions: [
+            {
+              workDate,
+              targetAlias,
+              candidateAlias: candAlias,
+              note: `Đề xuất ${candAlias} hỗ trợ ca ${parsed.conflicts?.[0]?.shiftCode ?? 'CA_SANG'} ngày ${workDate}.`,
+            },
+          ],
+        },
+        usage: zeroUsage,
+      };
+    },
   });
 
   return createCoworkerEvalRuntime(STUB_CONFIG, {

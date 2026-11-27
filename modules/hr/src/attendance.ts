@@ -57,14 +57,21 @@ import {
   resolveDraftLineTarget,
   sameOvertimeEntries,
 } from './payroll-run.ts';
+import {
+  DAY_MS,
+  computeShiftAdherence,
+  computeShiftAdjustedNightMinutes,
+  nightOverlapMinutes,
+  toShiftTemplateWindow,
+  type ShiftTemplateWindow,
+} from './shifts.ts';
+
+export { nightOverlapMinutes };
 
 export const HALF_DAY_THRESHOLD_MINUTES = 360;
 export const SHORT_DAY_ANOMALY_MINUTES = 240;
 export const LONG_DAY_ANOMALY_MINUTES = 600;
 export const REGULAR_SHIFT_MINUTES = 540;
-const VN_OFFSET_MS = 7 * 3_600_000;
-const DAY_MS = 86_400_000;
-const HOUR_MS = 3_600_000;
 const QR_HASH_PREFIX = 'crove-attendance-qr:v1:';
 
 /** Extracts the raw QR secret from either a direct token or an app check-in link containing `#qr=...` or `?qr=...`. */
@@ -178,24 +185,6 @@ export function detectAttendanceAnomalies(row: {
   return out;
 }
 
-/** Exact Vietnam (+07:00) night interval overlap minutes (22:00..06:00). */
-export function nightOverlapMinutes(startAt: Date | null, endAt: Date | null): number {
-  if (!startAt || !endAt || endAt.getTime() <= startAt.getTime()) return 0;
-  const startVn = startAt.getTime() + VN_OFFSET_MS;
-  const endVn = endAt.getTime() + VN_OFFSET_MS;
-  const firstDay = Math.floor(startVn / DAY_MS) - 1;
-  const lastDay = Math.floor(endVn / DAY_MS) + 1;
-  let overlapMs = 0;
-  for (let d = firstDay; d <= lastDay; d += 1) {
-    const winStart = d * DAY_MS + 22 * HOUR_MS;
-    const winEnd = (d + 1) * DAY_MS + 6 * HOUR_MS;
-    const lo = Math.max(startVn, winStart);
-    const hi = Math.min(endVn, winEnd);
-    if (hi > lo) overlapMs += hi - lo;
-  }
-  return Math.floor(overlapMs / 60_000);
-}
-
 function formatDecimalString(dec: ReturnType<typeof money>, scale: number): string {
   const fixed = dec.toDecimalPlaces(scale).toFixed(scale);
   if (!fixed.includes('.')) return fixed;
@@ -209,6 +198,7 @@ export interface AttendanceRollupEntry {
   checkedOutAt: Date | null;
   workedMinutes: number | null;
   status: HrAttendanceStatus;
+  shift?: ShiftTemplateWindow | null | undefined;
 }
 
 export interface ComputedEmployeeAttendanceRollup {
@@ -282,7 +272,7 @@ export function computeEmployeeAttendanceRollup(args: {
           : null;
       const ordNight =
         regularMins > 0 && e.checkedInAt && regularEnd
-          ? Math.min(regularMins, nightOverlapMinutes(e.checkedInAt, regularEnd))
+          ? computeShiftAdjustedNightMinutes(e.checkedInAt, regularEnd, regularMins, e.shift)
           : 0;
       const otStart = e.checkedInAt ? new Date(e.checkedInAt.getTime() + REGULAR_SHIFT_MINUTES * 60_000) : null;
       const otEnd =
@@ -291,7 +281,7 @@ export function computeEmployeeAttendanceRollup(args: {
           : null;
       const otNight =
         extraMins > 0 && otStart && otEnd
-          ? Math.min(extraMins, nightOverlapMinutes(otStart, otEnd))
+          ? computeShiftAdjustedNightMinutes(otStart, otEnd, extraMins, null)
           : 0;
       ordinaryNightMinutes += ordNight;
       otMinutes['normal_day:night'] += otNight;
@@ -301,7 +291,10 @@ export function computeEmployeeAttendanceRollup(args: {
         e.checkedInAt && e.checkedOutAt
           ? new Date(Math.min(e.checkedOutAt.getTime(), e.checkedInAt.getTime() + mins * 60_000))
           : null;
-      const night = e.checkedInAt && creditedEnd ? Math.min(mins, nightOverlapMinutes(e.checkedInAt, creditedEnd)) : 0;
+      const night =
+        e.checkedInAt && creditedEnd
+          ? computeShiftAdjustedNightMinutes(e.checkedInAt, creditedEnd, mins, e.shift)
+          : 0;
       otMinutes[`${kind}:night`] += night;
       otMinutes[`${kind}:day`] += Math.max(0, mins - night);
     }
@@ -382,6 +375,60 @@ export function computeEmployeeAttendanceRollup(args: {
   };
 }
 
+async function loadShiftWindowsMap(
+  trx: Parameters<Parameters<typeof defineQuery>[0]['handler']>[0]['trx'],
+  orgId: string,
+  employeeIds: readonly string[],
+  startDate: string,
+  endDate: string,
+): Promise<Map<string, ShiftTemplateWindow>> {
+  const out = new Map<string, ShiftTemplateWindow>();
+  if (employeeIds.length === 0) return out;
+  const rows = await trx
+    .selectFrom('ludy_hr.shift_assignment as sa')
+    .innerJoin('ludy_hr.shift_template as st', (j) =>
+      j
+        .onRef('st.org_id', '=', 'sa.org_id')
+        .onRef('st.legal_entity_id', '=', 'sa.legal_entity_id')
+        .onRef('st.id', '=', 'sa.shift_template_id'),
+    )
+    .select([
+      'sa.employee_id',
+      'sa.work_date',
+      'st.id as template_id',
+      'st.code',
+      'st.name',
+      'st.start_minute',
+      'st.end_minute',
+      'st.break_minutes',
+      'st.grace_late_minutes',
+      'st.grace_early_minutes',
+      'st.crosses_midnight',
+    ])
+    .where('sa.org_id', '=', orgId)
+    .where('sa.employee_id', 'in', [...employeeIds])
+    .where('sa.work_date', '>=', startDate)
+    .where('sa.work_date', '<=', endDate)
+    .execute();
+  for (const r of rows) {
+    out.set(
+      `${r.employee_id}:${isoDateOnly(r.work_date)}`,
+      toShiftTemplateWindow({
+        id: r.template_id,
+        code: r.code,
+        name: r.name,
+        start_minute: r.start_minute,
+        end_minute: r.end_minute,
+        break_minutes: r.break_minutes,
+        grace_late_minutes: r.grace_late_minutes,
+        grace_early_minutes: r.grace_early_minutes,
+        crosses_midnight: r.crosses_midnight,
+      }),
+    );
+  }
+  return out;
+}
+
 function toAttendanceLogView(
   row: {
     id: string;
@@ -397,8 +444,25 @@ function toAttendanceLogView(
     updated_at: Date;
   },
   today: string,
+  shift: ShiftTemplateWindow | null = null,
 ): HrAttendanceLogView {
   const workDate = isoDateOnly(row.work_date);
+  const adherence = computeShiftAdherence({
+    workDate,
+    checkedInAt: row.checked_in_at,
+    checkedOutAt: row.checked_out_at,
+    status: row.status,
+    shift,
+  });
+  let nightMinutes = 0;
+  if (row.checked_in_at && row.checked_out_at && row.worked_minutes !== null && row.status !== 'missing_checkout') {
+    const mins = Math.max(0, Math.min(1440, row.worked_minutes));
+    const regularMins = dayKindForDate(workDate) === 'normal_day' ? Math.min(mins, REGULAR_SHIFT_MINUTES) : mins;
+    const creditedEnd = new Date(
+      Math.min(row.checked_out_at.getTime(), row.checked_in_at.getTime() + regularMins * 60_000),
+    );
+    nightMinutes = computeShiftAdjustedNightMinutes(row.checked_in_at, creditedEnd, regularMins, shift);
+  }
   return {
     id: row.id,
     legalEntityId: row.legal_entity_id,
@@ -418,6 +482,11 @@ function toAttendanceLogView(
       workedMinutes: row.worked_minutes,
       status: row.status,
     }),
+    shiftTemplateCode: shift?.code ?? null,
+    shiftTemplateName: shift?.name ?? null,
+    lateMinutes: adherence.lateMinutes,
+    earlyLeaveMinutes: adherence.earlyLeaveMinutes,
+    nightMinutes,
     updatedAt: row.updated_at.toISOString(),
   };
 }
@@ -519,7 +588,8 @@ export const selfAttendanceCheckIn = defineCommand({
       method: parsed.method,
       status: 'missing_checkout',
     });
-    return toAttendanceLogView(inserted, today);
+    const shiftMap = await loadShiftWindowsMap(ctx.trx, ctx.orgId, [emp.id], today, today);
+    return toAttendanceLogView(inserted, today, shiftMap.get(`${emp.id}:${today}`) ?? null);
   },
 });
 
@@ -590,7 +660,8 @@ export const selfAttendanceCheckOut = defineCommand({
       workedMinutes: mins,
       status: nextStatus,
     });
-    return toAttendanceLogView(updated!, today);
+    const shiftMap = await loadShiftWindowsMap(ctx.trx, ctx.orgId, [emp.id], workDate, workDate);
+    return toAttendanceLogView(updated!, today, shiftMap.get(`${emp.id}:${workDate}`) ?? null);
   },
 });
 
@@ -618,7 +689,10 @@ export const selfAttendanceList = defineQuery({
       .orderBy('work_date', 'desc')
       .execute();
 
-    const logs = rows.map((r) => toAttendanceLogView(r, today));
+    const shiftStart = start < yesterday ? start : yesterday;
+    const shiftEnd = end > today ? end : today;
+    const shiftMap = await loadShiftWindowsMap(ctx.trx, ctx.orgId, [emp.id], shiftStart, shiftEnd);
+    const logs = rows.map((r) => toAttendanceLogView(r, today, shiftMap.get(`${r.employee_id}:${isoDateOnly(r.work_date)}`) ?? null));
     const recentOpenRows = await ctx.trx
       .selectFrom('ludy_hr.attendance_log')
       .selectAll()
@@ -626,7 +700,12 @@ export const selfAttendanceList = defineQuery({
       .where('employee_id', '=', emp.id)
       .where('work_date', 'in', [today, yesterday])
       .execute();
-    const recentByDate = new Map(recentOpenRows.map((r) => [isoDateOnly(r.work_date), toAttendanceLogView(r, today)]));
+    const recentByDate = new Map(
+      recentOpenRows.map((r) => {
+        const wd = isoDateOnly(r.work_date);
+        return [wd, toAttendanceLogView(r, today, shiftMap.get(`${r.employee_id}:${wd}`) ?? null)];
+      }),
+    );
     const todayRow = recentByDate.get(today) ?? null;
     const yesterdayRow = recentByDate.get(yesterday) ?? null;
     const isEligibleOpen = (row: HrAttendanceLogView | null): boolean =>
@@ -646,6 +725,9 @@ export const selfAttendanceList = defineQuery({
       missingCheckoutDays: 0,
       adjustedDays: 0,
       totalWorkedMinutes: 0,
+      totalLateMinutes: 0,
+      totalEarlyLeaveMinutes: 0,
+      totalNightMinutes: 0,
     };
     for (const l of logs) {
       if (l.status === 'present') summary.presentDays += 1;
@@ -653,6 +735,9 @@ export const selfAttendanceList = defineQuery({
       else if (l.status === 'missing_checkout' && l.workDate < today) summary.missingCheckoutDays += 1;
       else if (l.status === 'adjusted') summary.adjustedDays += 1;
       if (l.workedMinutes !== null) summary.totalWorkedMinutes += l.workedMinutes;
+      summary.totalLateMinutes = (summary.totalLateMinutes ?? 0) + (l.lateMinutes ?? 0);
+      summary.totalEarlyLeaveMinutes = (summary.totalEarlyLeaveMinutes ?? 0) + (l.earlyLeaveMinutes ?? 0);
+      summary.totalNightMinutes = (summary.totalNightMinutes ?? 0) + (l.nightMinutes ?? 0);
     }
 
     return {
@@ -719,10 +804,11 @@ async function loadAdminAttendanceData(
     }
   }
 
+  const shiftMap = await loadShiftWindowsMap(ctx.trx, ctx.orgId, empIds, start, end);
   const allLogs: HrAdminAttendanceRow[] = [];
   const anomalies: HrAttendanceAnomaly[] = [];
   for (const r of rows) {
-    const view = toAttendanceLogView(r, today);
+    const view = toAttendanceLogView(r, today, shiftMap.get(`${r.employee_id}:${isoDateOnly(r.work_date)}`) ?? null);
     const adminRow: HrAdminAttendanceRow = {
       ...view,
       employeeName: r.employee_name,
@@ -960,8 +1046,9 @@ export const attendanceAdjust = defineCommand({
       workedMinutes: saved.worked_minutes,
     });
 
+    const shiftMap = await loadShiftWindowsMap(ctx.trx, ctx.orgId, [emp.id], parsed.workDate, parsed.workDate);
     return {
-      ...toAttendanceLogView(saved, today),
+      ...toAttendanceLogView(saved, today, shiftMap.get(`${emp.id}:${parsed.workDate}`) ?? null),
       employeeName: emp.display_name,
       payBasis: term?.pay_basis ?? 'monthly',
     };
@@ -1136,6 +1223,7 @@ export const attendanceRollupToPayroll = defineCommand({
       }
     }
 
+    const shiftMap = await loadShiftWindowsMap(ctx.trx, ctx.orgId, payableEmpIds, start, end);
     const logsByEmp = new Map<string, AttendanceRollupEntry[]>();
     let missingCheckoutCount = 0;
     const openNonNormalDates: string[] = [];
@@ -1160,6 +1248,7 @@ export const attendanceRollupToPayroll = defineCommand({
         checkedOutAt: r.checked_out_at,
         workedMinutes: r.worked_minutes,
         status: r.status,
+        shift: shiftMap.get(`${r.employee_id}:${workDate}`) ?? null,
       });
       logsByEmp.set(r.employee_id, arr);
     }
