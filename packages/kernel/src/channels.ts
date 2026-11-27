@@ -54,7 +54,9 @@ function requireUser(ctx: CommandContext): string {
 
 export const zChannelConnect = z.strictObject({
   provider: zProvider,
-  externalAccountId: z.string().min(1).max(200).refine((value) => value.trim().length > 0, 'External account id must not be blank'),
+  // Trimmed before the checks so surrounding whitespace never reaches `channel_connection.external_account_id` and every pod
+  // derives the same advisoryLockKey for the account (#5091); a blank value fails `min(1)` after the trim.
+  externalAccountId: z.string().trim().min(1, 'External account id must not be blank').max(200),
   displayName: z.string().trim().min(1).max(200),
   scopes: z.array(z.string().min(1).max(200)).max(100),
   expiresAt: z.iso.datetime({ offset: true }).nullable(),
@@ -150,6 +152,9 @@ export const channelConnect = defineCommand({
           const pg = error as { code?: string; constraint?: string } | null;
           if (pg?.code === '23505' && pg.constraint === 'channel_connection_whatsapp_account_uq') {
             throw new DomainError('CHANNEL_ACCOUNT_TAKEN', 409, 'Số WhatsApp này đang được một tổ chức khác kết nối. Hãy ngắt kết nối ở đó trước khi kết nối lại ở đây');
+          }
+          if (pg?.code === '23505' && pg.constraint === 'channel_connection_github_app_installation_uq') {
+            throw new DomainError('CHANNEL_ACCOUNT_TAKEN', 409, 'Cài đặt GitHub App này đang được một tổ chức khác sử dụng. Hãy ngắt kết nối ở đó trước khi kết nối lại ở đây');
           }
           throw error;
         });
@@ -725,6 +730,8 @@ export const channelsList = defineQuery({
       .where('provider', 'not like', 'marketplace\\_%')
       // Nor an accounting software connection's (provider accounting_..., #3875): the finance module lists it; the entity it is for is in its external account id.
       .where('provider', 'not like', 'accounting\\_%')
+      // Nor a Projects GitHub App or PAT connection (ADR-0060, #5158): configured under Project Settings -> GitHub, never Social/Inbox.
+      .where('provider', 'not like', 'github\\_%')
       // Nor the Inbox's email connection (#2439): it is made by the first customer mail and is not a place to publish. The screen that limits which
       // channels a member may read (includeEmail) lists it, since reading email is one of those channels.
       .where('provider', input.includeEmail ? 'is not' : '<>', input.includeEmail ? null : 'email')

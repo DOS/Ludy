@@ -110,6 +110,7 @@ export const zStatementLines = z.object({
   lines: zBankImportPreview.shape.rows,
   total: z.number().int().nonnegative(),
   conflicts: z.number().int().nonnegative(),
+  feed: zBankImportPreview.shape.feed,
 });
 export type StatementLines = z.infer<typeof zStatementLines>;
 
@@ -117,6 +118,7 @@ export const zBankImportResult = z.object({
   importId: zId,
   counts: zBankImportPreview.shape.counts,
   breaks: zBankImportPreview.shape.breaks,
+  feed: zBankImportPreview.shape.feed,
 });
 export type BankImportResult = z.infer<typeof zBankImportResult>;
 

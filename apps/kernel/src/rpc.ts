@@ -4,6 +4,8 @@ import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
 import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MARKETPLACE_PUSH_ADAPTERS, marketplaceHookAddress, marketplaceHookBaseUsable, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@ludy/kernel-contract';
 import { TingeeError, sandboxBankFeed, type BankFeedProvider } from '@ludy/bank-feed';
+import { GithubError, type GithubClient } from '@ludy/github';
+import { githubHookKeyHash, githubOAuthStateDigest } from './projects-github-webhook.ts';
 import { RateLimiter } from './rate-limit.ts';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@ludy/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@ludy/einvoice';
@@ -17,6 +19,14 @@ import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
 import { makeSignWebhookSecret } from './sign-hook.ts';
+import {
+  parseGithubItemUrl,
+  type GithubBindingGetResult,
+  type GithubBindingSaveResult,
+  type GithubHookSetResult,
+  type GithubLinkPrepareResult,
+  type GithubTaskLinkView,
+} from '@ludy/kernel-contract';
 import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, BankSignDepositMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceHomeMoney, FinanceOverview, MonthClose, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
@@ -115,10 +125,11 @@ import {
   type SignAi,
 } from './sign-ai.ts';
 import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
-import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments, runMeetingLabelSuggest, runMeetingOpenPoints, catchUpStatusOf, runMeetingCatchUp, runMeetingSalesInsight, salesInsightStatusOf, runMeetingTemplateSuggest } from './member-vy-ports.ts';
+import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments, runMeetingLabelSuggest, runMeetingOpenPoints, catchUpStatusOf, runMeetingCatchUp, notesMinutesStatusOf, runMeetingNotesMinutes, runMeetingSalesInsight, salesInsightStatusOf, runMeetingTemplateSuggest } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type MarketplaceProposalFacts, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
 import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.ts';
+import { askBooks, askBooksAi } from './finance-ask-books.ts';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainMonthClose, monthCloseAi } from './finance-month-close-ai.ts';
 import { explainExpenseVariance, expenseVarianceAi } from './finance-expense-variance-ai.ts';
@@ -421,6 +432,28 @@ export interface RpcChannels {
   push?: { publicKey: string };
   // Mobile native push (#4883): true when the deployment configures a NativePushSender adapter; unset keeps native push disabled.
   nativePush?: boolean;
+  // Projects GitHub Integration client (#5158, ADR-0060): fixed host api.github.com through guardedRequest.
+  github?: GithubClient;
+}
+
+function githubFailure(error: unknown): DomainError {
+  if (!(error instanceof GithubError)) {
+    return new DomainError('GITHUB_UPSTREAM_FAILED', 503, 'Không thể kết nối tới GitHub lúc này; hãy thử lại sau');
+  }
+  switch (error.kind) {
+    case 'credentials':
+      return new DomainError('GITHUB_CREDENTIALS_INVALID', 422, 'Thông tin xác thực GitHub không hợp lệ hoặc đã hết hạn');
+    case 'forbidden':
+      return new DomainError('GITHUB_FORBIDDEN', 403, 'Token hoặc GitHub App chưa được cấp đủ quyền cho kho mã nguồn này');
+    case 'not_found':
+      return new DomainError('GITHUB_NOT_FOUND', 404, 'Không tìm thấy đối tượng tương ứng trên GitHub');
+    case 'rate_limited':
+      return new DomainError('GITHUB_RATE_LIMITED', 429, 'GitHub đang giới hạn tần suất gọi API; hãy thử lại sau ít phút');
+    case 'bad_request':
+      return new DomainError('GITHUB_BAD_REQUEST', 400, 'Yêu cầu gửi tới GitHub không hợp lệ');
+    default:
+      return new DomainError('GITHUB_UPSTREAM_FAILED', 503, 'Không thể kết nối tới GitHub lúc này; hãy thử lại sau');
+  }
 }
 
 // A meeting platform's refusal or failure during the connect step, as the answer the user sees: a fixed text, never the platform's words (the adapter's error carries only a short code).
@@ -519,6 +552,8 @@ export function createRpcHandler(
   const meetingAssignees = new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
   // Checking a meeting's agenda against its transcript (#3959) reads a whole transcript: its own budget, a few a minute, so it never makes a summary or a question wait.
   const meetingAdherence = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // Drafting minutes from typed notes for an unrecorded meeting (#5129): one call per click, own budget so it does not contend with other Vy calls.
+  const meetingNotesMinutes = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   // Proposing project tasks from a note (#2598): one call per click, own budget so it does not contend with meetings.
   const noteTaskProposals = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   // Notes N8 (#1677): independent budgets for summarizing notes and suggesting personal to-dos.
@@ -537,6 +572,8 @@ export function createRpcHandler(
   const financeMonthCloseAi = monthCloseAi(conversationReader?.monthCloseNote ? { monthCloseNote: conversationReader.monthCloseNote.bind(conversationReader) } : null, suggestionBudget());
   // The accounting coworker's note on the 30/60/90-day cash forecast (#4391): the same reader and model, a budget of its own; told the computed figures and dates only.
   const financeCashForecastAi = cashForecastAi(conversationReader?.cashForecastSentence ? { cashForecastSentence: conversationReader.cashForecastSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The accounting coworker that reads a question about the books (#5181): the same reader and model, a budget of its own; told only the owner's question with its dates and numbers blanked out, and it chooses an entry of a closed catalogue.
+  const financeAskBooksAi = askBooksAi(conversationReader?.askBooksPick ? { askBooksPick: conversationReader.askBooksPick.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's sentence naming the late sales invoices of a VAT working (#3540): the same reader and model, a budget of its own; told invoice numbers and periods only.
   const financeVatLateAi = vatLateAi(conversationReader?.vatLateSentence ? { vatLateSentence: conversationReader.vatLateSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's possible reason per flagged expense line (#4392): the same reader and model, a budget of its own; told no figure at all.
@@ -1981,6 +2018,15 @@ export function createRpcHandler(
         ),
         write: os.meetings.catchUp.write.handler(({ context, input }) =>
           inMeetings(context, (orgId, actor) => runMeetingCatchUp({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingBriefs, price: aiPrice }, orgId, actor, input.meetingId)),
+        ),
+      },
+      // Draft minutes from typed notes for an unrecorded meeting (#5129, L32): recorder-only, zero transcript segments, returns cited proposal and stores counts only.
+      notesMinutes: {
+        status: os.meetings.notesMinutes.status.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => notesMinutesStatusOf({ runtime, price: aiPrice, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor, input.meetingId)),
+        ),
+        write: os.meetings.notesMinutes.write.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingNotesMinutes({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingNotesMinutes, price: aiPrice }, orgId, actor, input.meetingId)),
         ),
       },
       // Sales call insights for a meeting linked to an open deal (#4920, L26): recorder-only foreground Vy run with cited transcript line IDs and code-computed customer talk share.
@@ -3874,6 +3920,12 @@ export function createRpcHandler(
         }),
       ),
     },
+    // "Ask the books in plain words" (#5181): the coworker only chooses a report and a kind of period; the report is then read as the asking member, in their own transaction, so the read's own role list, scope and refusal apply unchanged.
+    financeAskBooks: {
+      ask: os.financeAskBooks.ask.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => askBooks(financeAskBooksAi, <T>(name: string, ask: Record<string, unknown>) => runtime.query<T>(name, ask, { actor, orgId }), orgId, actor.userId, input)),
+      ),
+    },
     financeExpenseVariance: {
       get: os.financeExpenseVariance.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<FinanceExpenseVariance>('finance.expense_variance', input, { actor, orgId }))),
       // The notes are asked of the model outside any transaction, from the flagged lines the variance read in the member's own one (their legal entities only).
@@ -5389,6 +5441,399 @@ export function createRpcHandler(
             );
           }),
         ),
+      },
+      github: {
+        bindingGet: os.projects.github.bindingGet.handler(projectsQuery('projects.github.binding.get')),
+        bindingSave: os.projects.github.bindingSave.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('projects.github.binding.save', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+        connectPat: os.projects.github.connectPat.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được GitHub cho dự án');
+            if (!channels || channels.broker.id === 'none') {
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối trên máy chủ');
+            }
+            if (!channels.github) {
+              throw new DomainError('GITHUB_UNAVAILABLE', 503, 'Kết nối GitHub chưa sẵn sàng trên máy chủ');
+            }
+            const previous = await runtime.query<GithubBindingGetResult>(
+              'projects.github.binding.get',
+              { projectId: input.projectId },
+              { actor, orgId },
+            );
+            const summary = await channels.github.inspectPatAndListRepos(input.accessToken).catch((error: unknown) => {
+              throw githubFailure(error);
+            });
+            const externalAccountId = `${summary.accountId}:${input.projectId}`;
+            const sealed = channels.broker.seal(
+              JSON.stringify({ accessToken: input.accessToken, webhookSecret: input.webhookSecret }),
+              { orgId, provider: 'github_pat', externalAccountId },
+            );
+            const conn = await runtime.execute<{ connectionId: string; reconnected: boolean }>(
+              'kernel.channel.connect',
+              {
+                provider: 'github_pat',
+                externalAccountId,
+                displayName: input.displayName ?? `@${summary.accountLogin}`,
+                scopes: [],
+                expiresAt: null,
+                credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+              } satisfies ChannelConnectInput,
+              { actor, orgId, idempotencyKey: `github-connect:${input.idempotencyKey}` },
+            );
+            let saved: GithubBindingSaveResult;
+            try {
+              saved = await runtime.execute<GithubBindingSaveResult>(
+                'projects.github.binding.save',
+                {
+                  projectId: input.projectId,
+                  channelConnectionId: conn.connectionId,
+                  githubEnabled: true,
+                  ...(input.taskKeyPrefix !== undefined ? { taskKeyPrefix: input.taskKeyPrefix } : {}),
+                  ...(input.backfillTaskNumbers !== undefined ? { backfillTaskNumbers: input.backfillTaskNumbers } : {}),
+                },
+                { actor, orgId, idempotencyKey: input.idempotencyKey },
+              );
+            } catch (error) {
+              if (!conn.reconnected) {
+                await runtime.execute('kernel.channel.disconnect', { connectionId: conn.connectionId }, { actor, orgId }).catch(() => {});
+              }
+              throw error;
+            }
+            const targetConnectionId = saved.binding.channelConnectionId;
+            if (previous.binding?.provider === 'github_pat' && previous.binding.channelConnectionId !== targetConnectionId) {
+              await runtime
+                .execute('kernel.channel.disconnect', { connectionId: previous.binding.channelConnectionId }, { actor, orgId })
+                .catch(() => {});
+            }
+            const hookKey = randomBytes(24).toString('base64url');
+            await runtime.execute<GithubHookSetResult>(
+              'projects.github.hook_set',
+              { connectionId: targetConnectionId, hookKeySha256: githubHookKeyHash(hookKey) },
+              { actor, orgId },
+            );
+            const base = (channels.apiUrl ?? channels.publicUrl ?? '').replace(/\/+$/, '');
+            const webhookUrl = `${base}/api/projects/github/webhook/${hookKey}`;
+            const refreshed = await runtime.query<GithubBindingGetResult>('projects.github.binding.get', { projectId: input.projectId }, { actor, orgId });
+            return {
+              connectionId: targetConnectionId,
+              binding: refreshed.binding ?? saved.binding,
+              webhookUrl,
+              availableRepos: summary.repos.map((r) => ({
+                githubRepoId: r.githubRepoId,
+                repoFullName: r.repoFullName,
+                defaultBranch: r.defaultBranch,
+                privateRepo: r.privateRepo,
+              })),
+              backfilledCount: saved.backfilledCount,
+            };
+          }),
+        ),
+        appOAuthStart: os.projects.github.appOAuthStart.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được GitHub App cho dự án');
+            if (!channels || channels.broker.id === 'none') {
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối trên máy chủ');
+            }
+            if (!channels.github || !channels.github.hasAppCredentials || !channels.github.hasAppOAuth || !channels.github.oauthClientId || !channels.publicUrl) {
+              throw new DomainError('GITHUB_APP_NOT_CONFIGURED', 503, 'Máy chủ chưa cấu hình GitHub App');
+            }
+            const current = await runtime.query<GithubBindingGetResult>(
+              'projects.github.binding.get',
+              { projectId: input.projectId },
+              { actor, orgId },
+            );
+            const nonce = randomBytes(32).toString('base64url');
+            const begun = await runtime.execute<{ attemptId: string; expiresAt: string }>(
+              'kernel.channel.oauth_begin',
+              {
+                provider: 'github_app',
+                stateHash: githubOAuthStateDigest(nonce, input.projectId),
+                codeVerifier: null,
+              },
+              { actor, orgId },
+            );
+            const authorizeUrl = current.appSlug
+              ? `https://github.com/apps/${encodeURIComponent(current.appSlug)}/installations/new?state=${encodeURIComponent(nonce)}`
+              : `https://github.com/login/oauth/authorize?${new URLSearchParams({
+                  client_id: channels.github.oauthClientId,
+                  redirect_uri: oauthRedirectUri('github_app'),
+                  state: nonce,
+                }).toString()}`;
+            return {
+              authorizeUrl,
+              state: nonce,
+              expiresAt: begun.expiresAt,
+            };
+          }),
+        ),
+        connectApp: os.projects.github.connectApp.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được GitHub App cho dự án');
+            if (!channels || channels.broker.id === 'none') {
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối trên máy chủ');
+            }
+            if (!channels.github || !channels.github.hasAppCredentials || !channels.github.hasAppOAuth) {
+              throw new DomainError('GITHUB_APP_NOT_CONFIGURED', 503, 'Máy chủ chưa cấu hình GitHub App');
+            }
+            // Consume single-use state bound to projectId BEFORE making any GitHub OAuth/API calls.
+            await runtime.execute<{ codeVerifier: string | null }>(
+              'kernel.channel.oauth_consume',
+              { provider: 'github_app', stateHash: githubOAuthStateDigest(input.state, input.projectId) },
+              { actor, orgId },
+            );
+            const userAccessToken = await channels.github
+              .exchangeOAuthCode({
+                code: input.code,
+                redirectUri: oauthRedirectUri('github_app'),
+              })
+              .catch((error: unknown) => {
+                throw githubFailure(error);
+              });
+            const userInstallations = await channels.github
+              .listUserInstallations(userAccessToken)
+              .catch((error: unknown) => {
+                throw githubFailure(error);
+              });
+
+            let targetInstallationId: string;
+            if (input.installationId) {
+              if (!userInstallations.some((inst) => inst.installationId === input.installationId)) {
+                throw new DomainError(
+                  'GITHUB_INSTALLATION_NOT_AUTHORIZED',
+                  403,
+                  'Tài khoản GitHub vừa xác thực không có quyền trên bản cài đặt GitHub App này',
+                );
+              }
+              targetInstallationId = input.installationId;
+            } else if (userInstallations.length === 0) {
+              throw new DomainError(
+                'GITHUB_NO_INSTALLATIONS',
+                422,
+                'Tài khoản GitHub này chưa cài đặt ứng dụng Ludy trên tài khoản hoặc tổ chức nào',
+              );
+            } else if (userInstallations.length > 1) {
+              throw new DomainError(
+                'GITHUB_MULTIPLE_INSTALLATIONS',
+                422,
+                'Tài khoản GitHub đang có nhiều bản cài đặt; hãy chọn cụ thể một bản cài đặt trên GitHub rồi thử lại',
+              );
+            } else {
+              targetInstallationId = userInstallations[0]!.installationId;
+            }
+
+            const previous = await runtime.query<GithubBindingGetResult>(
+              'projects.github.binding.get',
+              { projectId: input.projectId },
+              { actor, orgId },
+            );
+            const summary = await channels.github.getInstallation(targetInstallationId).catch((error: unknown) => {
+              throw githubFailure(error);
+            });
+            const repos = await channels.github.listInstallationRepos(summary.installationId).catch((error: unknown) => {
+              throw githubFailure(error);
+            });
+            const sealed = channels.broker.seal(
+              JSON.stringify({ installationId: summary.installationId }),
+              { orgId, provider: 'github_app', externalAccountId: summary.installationId },
+            );
+            const conn = await runtime.execute<{ connectionId: string; reconnected: boolean }>(
+              'kernel.channel.connect',
+              {
+                provider: 'github_app',
+                externalAccountId: summary.installationId,
+                displayName: summary.accountLogin,
+                scopes: [],
+                expiresAt: null,
+                credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+              } satisfies ChannelConnectInput,
+              { actor, orgId, idempotencyKey: `github-connect:${input.idempotencyKey}` },
+            );
+            let saved: GithubBindingSaveResult;
+            try {
+              saved = await runtime.execute<GithubBindingSaveResult>(
+                'projects.github.binding.save',
+                {
+                  projectId: input.projectId,
+                  channelConnectionId: conn.connectionId,
+                  githubEnabled: true,
+                  ...(input.taskKeyPrefix !== undefined ? { taskKeyPrefix: input.taskKeyPrefix } : {}),
+                  ...(input.backfillTaskNumbers !== undefined ? { backfillTaskNumbers: input.backfillTaskNumbers } : {}),
+                },
+                { actor, orgId, idempotencyKey: input.idempotencyKey },
+              );
+            } catch (error) {
+              if (!conn.reconnected) {
+                await runtime.execute('kernel.channel.disconnect', { connectionId: conn.connectionId }, { actor, orgId }).catch(() => {});
+              }
+              throw error;
+            }
+            const targetConnectionId = saved.binding.channelConnectionId;
+            if (previous.binding?.provider === 'github_pat' && previous.binding.channelConnectionId !== targetConnectionId) {
+              await runtime
+                .execute('kernel.channel.disconnect', { connectionId: previous.binding.channelConnectionId }, { actor, orgId })
+                .catch(() => {});
+            }
+            return {
+              connectionId: targetConnectionId,
+              binding: saved.binding,
+              availableRepos: repos.map((r) => ({
+                githubRepoId: r.githubRepoId,
+                repoFullName: r.repoFullName,
+                defaultBranch: r.defaultBranch,
+                privateRepo: r.privateRepo,
+              })),
+              backfilledCount: saved.backfilledCount,
+            };
+          }),
+        ),
+        rotatePatHook: os.projects.github.rotatePatHook.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xoay được webhook GitHub');
+            const current = await runtime.query<GithubBindingGetResult>('projects.github.binding.get', { projectId: input.projectId }, { actor, orgId });
+            if (!current.binding) {
+              throw new DomainError('GITHUB_NOT_CONNECTED', 404, 'Dự án chưa kết nối GitHub');
+            }
+            if (current.binding.provider !== 'github_pat') {
+              throw new DomainError('GITHUB_PAT_ONLY', 409, 'Chỉ kết nối bằng PAT mới dùng đường dẫn webhook riêng');
+            }
+            if (input.webhookSecret !== undefined) {
+              throw new DomainError('GITHUB_PAT_ROTATE_SECRET_RECONNECT', 422, 'Để thay đổi webhook secret, hãy kết nối lại PAT ở biểu mẫu trên');
+            }
+            const hookKey = randomBytes(24).toString('base64url');
+            const setRes = await runtime.execute<GithubHookSetResult>(
+              'projects.github.hook_set',
+              { connectionId: current.binding.channelConnectionId, hookKeySha256: githubHookKeyHash(hookKey) },
+              { actor, orgId },
+            );
+            const base = (channels?.apiUrl ?? channels?.publicUrl ?? '').replace(/\/+$/, '');
+            return {
+              hookId: setRes.hookId,
+              webhookUrl: `${base}/api/projects/github/webhook/${hookKey}`,
+              standing: 'active' as const,
+            };
+          }),
+        ),
+        listAvailableRepos: os.projects.github.listAvailableRepos.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được danh sách kho GitHub');
+            if (!channels?.github) {
+              throw new DomainError('GITHUB_UNAVAILABLE', 503, 'Kết nối GitHub chưa sẵn sàng trên máy chủ');
+            }
+            const current = await runtime.query<GithubBindingGetResult>('projects.github.binding.get', { projectId: input.projectId }, { actor, orgId });
+            if (!current.binding) {
+              throw new DomainError('GITHUB_NOT_CONNECTED', 404, 'Dự án chưa kết nối GitHub');
+            }
+            if (current.binding.provider === 'github_app') {
+              if (!channels.github.hasAppCredentials) {
+                throw new DomainError('GITHUB_APP_NOT_CONFIGURED', 503, 'Máy chủ chưa cấu hình GitHub App');
+              }
+              if (!current.binding.externalAccountId) {
+                throw new DomainError('GITHUB_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối GitHub đang hoạt động');
+              }
+              const repos = await channels.github.listInstallationRepos(current.binding.externalAccountId).catch((error: unknown) => {
+                throw githubFailure(error);
+              });
+              return { repos: repos.map((r) => ({ ...r })) };
+            }
+            if (input.accessToken) {
+              const summary = await channels.github.inspectPatAndListRepos(input.accessToken).catch((error: unknown) => {
+                throw githubFailure(error);
+              });
+              return { repos: summary.repos.map((r) => ({ ...r })) };
+            }
+            throw new DomainError(
+              'GITHUB_PAT_REPOS_NEED_TOKEN',
+              422,
+              'Với kết nối PAT, hãy dán lại PAT để tải danh sách kho mới hoặc chọn từ danh sách đã nạp khi kết nối',
+            );
+          }),
+        ),
+        repoBind: os.projects.github.repoBind.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('projects.github.repo.bind', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+        repoUnbind: os.projects.github.repoUnbind.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('projects.github.repo.unbind', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+        taskLinks: os.projects.github.taskLinks.handler(projectsQuery('projects.github.task_links')),
+        taskLinkAdd: os.projects.github.taskLinkAdd.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const parsed = parseGithubItemUrl(input.url);
+            if (!parsed) {
+              throw new DomainError('GITHUB_URL_INVALID', 400, 'Liên kết phải trỏ tới issue hoặc pull request trên github.com');
+            }
+            const prepared = await runtime.query<GithubLinkPrepareResult>(
+              'projects.github.link.prepare',
+              { projectId: input.projectId, taskId: input.taskId, repoFullName: parsed.repoFullName },
+              { actor, orgId },
+            );
+            let resolvedKind: 'issue' | 'pull_request' = parsed.kind;
+            let resolvedUrl = parsed.canonicalUrl;
+            let externalTitle = `${prepared.repoFullName}#${parsed.externalNumber}`;
+            let externalState: 'open' | 'closed' | 'merged' | 'draft' = 'open';
+            let branchName: string | null = null;
+            let authorLogin: string | null = null;
+            let hydrating = true;
+
+            if (prepared.provider === 'github_app' && channels?.github?.hasAppCredentials) {
+              try {
+                const item = await channels.github.getIssueOrPr(
+                  { kind: 'github_app', installationId: prepared.externalAccountId },
+                  prepared.repoFullName,
+                  parsed.kind,
+                  parsed.externalNumber,
+                );
+                resolvedKind = item.kind;
+                resolvedUrl = item.externalUrl;
+                externalTitle = item.externalTitle;
+                externalState = item.externalState;
+                branchName = item.branchName;
+                authorLogin = item.authorLogin;
+                hydrating = false;
+              } catch (error) {
+                if (error instanceof GithubError && (error.kind === 'not_found' || error.kind === 'forbidden' || error.kind === 'credentials')) {
+                  throw githubFailure(error);
+                }
+              }
+            }
+
+            return runtime.execute<{ link: GithubTaskLinkView }>(
+              'projects.github.link.add',
+              {
+                projectId: input.projectId,
+                taskId: input.taskId,
+                repoFullName: prepared.repoFullName,
+                kind: resolvedKind,
+                externalNumber: parsed.externalNumber,
+                externalUrl: resolvedUrl,
+                externalTitle,
+                externalState,
+                branchName,
+                authorLogin,
+                linkSource: 'manual',
+                closesTask: true,
+                hydrating,
+              },
+              { actor, orgId, idempotencyKey: input.idempotencyKey },
+            );
+          }),
+        ),
+        taskLinkRemove: os.projects.github.taskLinkRemove.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('projects.github.link.remove', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+        syncLog: os.projects.github.syncLog.handler(projectsQuery('projects.github.sync_log')),
       },
     },
     sign: {

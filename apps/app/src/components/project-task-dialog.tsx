@@ -42,6 +42,7 @@ import { FormDialog } from './form-dialog.tsx';
 import { FormPanel } from './form-panel.tsx';
 import { TaskChecklistEditor, hasBlankChecklistStep, isTaskStaleRevision, normalizeChecklistSteps, taskRevisionPrecondition } from './task-checklist.tsx';
 import { ProjectDependencies } from './project-dependencies.tsx';
+import { ProjectTaskGithubLinks } from './project-task-github-links.tsx';
 import { TaskTimeTrackingPanel } from './project-time-panel.tsx';
 import { TaskRecurrenceControl } from './task-recurrence-control.tsx';
 import { ErrorText, FieldError, RowsSkeleton, fieldControl, fieldHintId } from './ui.tsx';
@@ -364,6 +365,7 @@ export function EditProjectTaskDialog({
   seats,
   cyclesEnabled = false,
   pointsEnabled = false,
+  githubEnabled = false,
   cycles = [],
   open,
   onOpenChange,
@@ -376,6 +378,7 @@ export function EditProjectTaskDialog({
   seats: readonly ProjectSeat[];
   cyclesEnabled?: boolean;
   pointsEnabled?: boolean;
+  githubEnabled?: boolean;
   cycles?: readonly ProjectCycle[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -392,6 +395,7 @@ export function EditProjectTaskDialog({
       seats={seats}
       cyclesEnabled={cyclesEnabled}
       pointsEnabled={pointsEnabled}
+      githubEnabled={githubEnabled}
       cycles={cycles}
       onOpenChange={onOpenChange}
     />
@@ -407,6 +411,7 @@ function EditProjectTaskPanel({
   seats,
   cyclesEnabled,
   pointsEnabled,
+  githubEnabled,
   cycles,
   onOpenChange,
 }: {
@@ -418,6 +423,7 @@ function EditProjectTaskPanel({
   seats: readonly ProjectSeat[];
   cyclesEnabled: boolean;
   pointsEnabled: boolean;
+  githubEnabled: boolean;
   cycles: readonly ProjectCycle[];
   onOpenChange: (open: boolean) => void;
 }) {
@@ -681,6 +687,13 @@ function EditProjectTaskPanel({
               refreshProjectQueries();
             }}
           />
+          <ProjectTaskGithubLinks
+            projectId={projectId}
+            taskId={task.id}
+            githubEnabled={githubEnabled}
+            canWrite={canWrite && !task.checkedOut}
+            onChanged={refreshProjectQueries}
+          />
         </div>
       }
     >
@@ -853,24 +866,41 @@ export function ProjectSettingsDialog({
   onOpenChange,
   project,
   members,
+  canConfigureGithub = false,
+  onOpenGithubSettings,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   project: ProjectDetail;
   members: ProjectBoard['members'];
+  canConfigureGithub?: boolean;
+  onOpenGithubSettings?: (() => void) | undefined;
 }) {
   if (!open) return null;
-  return <ProjectSettingsPanel key={project.id} project={project} members={members} onOpenChange={onOpenChange} />;
+  return (
+    <ProjectSettingsPanel
+      key={project.id}
+      project={project}
+      members={members}
+      canConfigureGithub={canConfigureGithub}
+      onOpenGithubSettings={onOpenGithubSettings}
+      onOpenChange={onOpenChange}
+    />
+  );
 }
 
 function ProjectSettingsPanel({
   onOpenChange,
   project,
   members,
+  canConfigureGithub,
+  onOpenGithubSettings,
 }: {
   onOpenChange: (open: boolean) => void;
   project: ProjectDetail;
   members: ProjectBoard['members'];
+  canConfigureGithub: boolean;
+  onOpenGithubSettings?: (() => void) | undefined;
 }) {
   const t = useTranslations('projects');
   const tc = useTranslations('common');
@@ -1226,6 +1256,25 @@ function ProjectSettingsPanel({
           </span>
         </label>
       </div>
+      {canConfigureGithub && onOpenGithubSettings && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/20 p-3">
+          <div className="space-y-0.5">
+            <p className="text-xs font-semibold text-foreground">{t('github.settingsTitle')}</p>
+            <p className="text-[11px] text-muted-foreground">{t('github.settingsSubtitle')}</p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onOpenGithubSettings}
+            className="min-h-11 shrink-0 sm:min-h-9"
+            data-testid="open-github-settings-button"
+          >
+            <ProjectIcon name="link" className="size-3.5" />
+            <span>{t('github.openSettingsBtn')}</span>
+          </Button>
+        </div>
+      )}
     </FormPanel>
   );
 }

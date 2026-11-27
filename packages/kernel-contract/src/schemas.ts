@@ -854,6 +854,9 @@ export const zStatementSummary = z.object({
   // Of those, lines whose bank reference the account already holds with another date or amount (#2191): stored flagged,
   // never taken for a duplicate.
   conflictLines: z.number().int().nonnegative().default(0),
+  // Set when the account is fed from a cut-over day on (#4218, #4223): the file's lines on or after `from` are
+  // skipped (not booked twice), `leftOut` of them, kept apart from `duplicateLines` already in the books.
+  feed: z.object({ from: zLocalDate, leftOut: z.number().int().nonnegative() }).nullable().default(null),
   from: zLocalDate.nullable(),
   to: zLocalDate.nullable(),
   totalIn: zMoney,

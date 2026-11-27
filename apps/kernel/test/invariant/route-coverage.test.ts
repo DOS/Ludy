@@ -111,15 +111,14 @@ const PUBLIC: Record<string, string> = {
   '/api/v1/sign/envelopes/from-template': 'external eSign REST draft-only envelope creation from template (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:draft scope, org_app_on + entitlement opaque 404, creates status = draft only for human review, and never auto-sends or mints signing tokens',
   '/api/sign/deposit-qr': 'post-sign non-custodial VietQR PNG image (#4723, Slice 6d): requires signed unexpired token in POST JSON body, enforces org_app_on + entitlement opaque 404, excludes hr_contract and meeting_minutes envelopes, rate-limited, returns verified PNG <= 256 KB with nosniff and no-store',
   '/api/sign/deposit-notice': 'post-sign non-blocking deposit transfer notice (#4723, Slice 6d): requires signed unexpired token, enforces org_app_on + entitlement opaque 404, excludes hr_contract and meeting_minutes envelopes, rate-limited, idempotent one-time notice/proof without altering signature validity',
+  '/api/projects/github/webhook': 'GitHub App webhook receiver (#5158, ADR-0060): checks X-Hub-Signature-256 HMAC over raw bytes before JSON parse, 256 KB body cap, per-IP rate limit, delivery UUID + event allowlist, and drops off/unentitled orgs in worker',
+  '/api/projects/github/webhook/:hookKey': 'GitHub PAT per-connection webhook receiver (#5158, ADR-0060): gates 32-char base64url hookKey hash via definer checking org_app_on + entitlement -> opaque 404 (ADR-0053), 256 KB cap, stores transient notice verified and cleared by worker',
 };
 
 // Public routes an open PR adds. CI runs the base branch's copy of this suite on a PR, so a new public route is listed
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
-// #5157 Step 0 / #5158 Slice 1 (Projects GitHub Integration, ADR-0060): App raw-byte HMAC intake and PAT :hookKey fallback.
 const PENDING: Record<string, string> = {
-  '/api/projects/github/webhook': 'GitHub App webhook receiver (#5158): checks X-Hub-Signature-256 HMAC over raw bytes before JSON parse, 256 KB body cap, per-IP rate limit, delivery UUID + event allowlist, and drops off/unentitled orgs in worker',
-  '/api/projects/github/webhook/:hookKey': 'GitHub PAT per-connection webhook receiver (#5158): gates 128-bit hookKey hash via definer checking org_app_on + entitlement -> opaque 404 (ADR-0053), 256 KB cap, stores transient notice verified and cleared by worker',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
@@ -152,6 +151,9 @@ function app(authenticate: HttpDeps['authenticate']) {
     bankFeedHooks: { bank_tingee: { id: 'bank_tingee', hosts: [], hookTimestampFresh: () => true, verifyHook: () => 'ok' } } as unknown as NonNullable<HttpDeps['bankFeedHooks']>,
     // A marketplace that takes signed pushes, so its route is registered and listed (#4346).
     marketplacePush: { adapters: ['shopee'] },
+    // Projects GitHub App webhook secret (#5158, ADR-0060), so POST /api/projects/github/webhook and /:hookKey are registered and listed.
+    broker: { id: 'route-coverage-key' } as unknown as NonNullable<HttpDeps['broker']>,
+    githubWebhook: { appWebhookSecret: 'g'.repeat(32) },
     // The ClientID of MISA AMIS, so its callback is registered and listed (#3903).
     misaAmisCallback: { clientId: 'misa-client-id-0001' },
     // The Meta app of Ads, so the data deletion callback is registered and listed (ads plan section 9, #2219).

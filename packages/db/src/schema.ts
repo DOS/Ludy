@@ -291,6 +291,7 @@ export type AgentKind = (typeof AGENT_KINDS)[number];
 export const MEMBER_PERMISSION_OVERRIDE_PERMISSIONS = ['vy.use'] as const;
 export const MEMBER_VY_TABLE_MODES = ['read', 'write'] as const;
 export const MCP_MEMBER_TABLE_MODES = ['read'] as const;
+export const MEMBER_BRIEFING_TABLE_MODES = ['read'] as const;
 // The write scopes an MCP proposal may be listed under (ludy_kernel.mcp_proposal_command, #3858 slice d): the same three as the grant's CHECK.
 export const MCP_PROPOSAL_COMMAND_SCOPES = ['ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft'] as const;
 export const MEMBER_VY_RESULT_STATUSES = ['running', 'ready', 'failed'] as const;
@@ -1070,6 +1071,7 @@ export type ConversationComposingTable = Refine<G.KernelConversationComposingTab
 export type MemberPermissionOverrideTable = Refine<G.KernelMemberPermissionOverrideTable, { permission: (typeof MEMBER_PERMISSION_OVERRIDE_PERMISSIONS)[number] }>;
 export type MemberVyTableTable = Refine<G.KernelMemberVyTableTable, { mode: (typeof MEMBER_VY_TABLE_MODES)[number] }>;
 export type McpMemberTableTable = Refine<G.KernelMcpMemberTableTable, { mode: (typeof MCP_MEMBER_TABLE_MODES)[number] }>;
+export type MemberBriefingTableTable = Refine<G.KernelMemberBriefingTableTable, { mode: (typeof MEMBER_BRIEFING_TABLE_MODES)[number] }>;
 export type McpWakeEventTypeTable = Refine<G.KernelMcpWakeEventTypeTable, { scope: (typeof MCP_PROPOSAL_COMMAND_SCOPES)[number] }>;
 export type McpProposalCommandTable = Refine<G.KernelMcpProposalCommandTable, { scope: (typeof MCP_PROPOSAL_COMMAND_SCOPES)[number] }>;
 export type PermissionDefaultTable = Refine<G.KernelPermissionDefaultTable, { base_role: MemberRole }>;
@@ -1474,6 +1476,11 @@ export type MeetingsMeetingTable = Refine<
 // A member's own opt-in to the alert when a tracked word comes up in a new meeting (#4873): the language of their mail is one of the two the CHECK allows.
 export type MeetingsTrackerAlertTable = Refine<G.MeetingsTrackerAlertTable, { language: Generated<MeetingLanguage> }>;
 
+// The morning briefing delivery setting of a member (#5080): content mode is 'count' (titles omitted in mail body) or 'full'.
+export const MORNING_NOTICE_CONTENTS = ['count', 'full'] as const;
+export type MorningNoticeContent = (typeof MORNING_NOTICE_CONTENTS)[number];
+export type MeetingsMorningNoticeTable = Refine<G.MeetingsMorningNoticeTable, { content: Generated<MorningNoticeContent> }>;
+
 // The transcript of a meeting (#2578): a segment is a draft, the recorder's own copy, until the recorder publishes it.
 export const TRANSCRIPT_STAGES = ['draft', 'published'] as const;
 export type TranscriptStageValue = (typeof TRANSCRIPT_STAGES)[number];
@@ -1661,6 +1668,21 @@ export type ProjectsProjectTriageItemTable = Refine<
     source_type: ProjectTriageSourceType;
     status: Generated<ProjectTriageStatus>;
     priority: Generated<ProjectTriagePriority>;
+  }
+>;
+
+export const GITHUB_TASK_LINK_KINDS = ['issue', 'pull_request'] as const;
+export type GithubTaskLinkKind = (typeof GITHUB_TASK_LINK_KINDS)[number];
+export const GITHUB_EXTERNAL_STATES = ['open', 'closed', 'merged', 'draft'] as const;
+export type GithubExternalState = (typeof GITHUB_EXTERNAL_STATES)[number];
+export const GITHUB_LINK_SOURCES = ['manual', 'mention', 'branch'] as const;
+export type GithubLinkSource = (typeof GITHUB_LINK_SOURCES)[number];
+export type ProjectsGithubTaskLinkTable = Refine<
+  G.ProjectsGithubTaskLinkTable,
+  {
+    kind: GithubTaskLinkKind;
+    external_state: GithubExternalState;
+    link_source: GithubLinkSource;
   }
 >;
 
@@ -1944,6 +1966,7 @@ type Refined = Tables<{
   'ludy_meetings.meeting_chapter': MeetingsMeetingChapterTable;
   'ludy_meetings.meeting_result': MeetingsMeetingResultTable;
   'ludy_meetings.minutes_version': MeetingsMinutesVersionTable;
+  'ludy_meetings.morning_notice': MeetingsMorningNoticeTable;
   'ludy_meetings.tracker_alert': MeetingsTrackerAlertTable;
   'ludy_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'ludy_meetings.translation': MeetingsTranslationTable;
@@ -1953,6 +1976,7 @@ type Refined = Tables<{
   'ludy_notes.note_template': NotesNoteTemplateTable;
   'ludy_notes.notebook': NotesNotebookTable;
   'ludy_notes.todo': NotesTodoTable;
+  'ludy_projects.github_task_link': ProjectsGithubTaskLinkTable;
   'ludy_projects.project': ProjectsProjectTable;
   'ludy_projects.project_column': ProjectsProjectColumnTable;
   'ludy_projects.project_cycle': ProjectsProjectCycleTable;
@@ -2026,6 +2050,7 @@ type Refined = Tables<{
   'ludy_kernel.member_vy_result': MemberVyResultTable;
   'ludy_kernel.member_vy_table': MemberVyTableTable;
   'ludy_kernel.mcp_member_table': McpMemberTableTable;
+  'ludy_kernel.member_briefing_table': MemberBriefingTableTable;
   'ludy_kernel.mcp_proposal_command': McpProposalCommandTable;
   'ludy_kernel.mcp_wake_event_type': McpWakeEventTypeTable;
   'ludy_kernel.permission_default': PermissionDefaultTable;

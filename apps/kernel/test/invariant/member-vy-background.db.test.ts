@@ -150,6 +150,9 @@ const BRIEFING_SEALED_CLOSED_POLICIES = [
   { t: "crove_projects.roadmap_vote", n: "briefing_sealed_closed", cmd: "*", perm: false, expectedCount: 2 },
   { t: "crove_projects.task_dependency", n: "briefing_sealed_closed", cmd: "*", perm: false, expectedCount: 2 },
   { t: "crove_projects.time_entry", n: "briefing_sealed_closed", cmd: "*", perm: false, expectedCount: 2 },
+  { t: "crove_projects.github_project_binding", n: "briefing_sealed_closed", cmd: "*", perm: false, expectedCount: 2 },
+  { t: "crove_projects.github_project_repo", n: "briefing_sealed_closed", cmd: "*", perm: false, expectedCount: 2 },
+  { t: "crove_projects.github_task_link", n: "briefing_sealed_closed", cmd: "*", perm: false, expectedCount: 2 },
 ] as const;
 const BRIEFING_ALLOWLISTED_TABLES = new Set<string>([
   "crove_meetings.action_item",
@@ -423,6 +426,7 @@ const fnCallRe = (qualifiedName: string) => {
 
 type SealedPolicyInput = {
   t: string;
+  rawT?: string | undefined;
   n: string;
   text: string;
   cmd?: string;
@@ -473,7 +477,7 @@ function isAllowedBriefingPolicy(
   p: SealedPolicyInput,
   briefingAllowedTables?: ReadonlySet<string>,
 ): boolean {
-  return Boolean(briefingAllowedTables?.has(canonTable) && p.cmd === "r" && p.perm === false);
+  return Boolean(briefingAllowedTables?.has(p.rawT ?? canonTable) && p.cmd === "r" && p.perm === false);
 }
 
 function hasForbiddenBriefingHelperText(text: string, briefingOk: boolean): boolean {
@@ -670,8 +674,11 @@ async function scanPolicyContextReads(
   readers: string[];
   sealReaders: string[];
   taintedViews: string[];
+  taintedViewRawNames: string[];
   scannedViews: Array<{
     name: string;
+    rawName: string;
+    isTainted: boolean;
     def: string;
     hasActiveOrgBindDep: boolean;
     taintedViewDeps: string[];
@@ -871,6 +878,8 @@ async function scanPolicyContextReads(
     const deps = depsByView.get(v.oid) ?? [];
     return {
       name: toCanonTable(v.name),
+      rawName: v.name,
+      isTainted: taintedViewOids.has(v.oid),
       def: v.def,
       hasActiveOrgBindDep: deps.some(
         (d) => d.refclass === "pg_proc" && procByOid.get(d.ref_oid)?.sig === `${activeKernelSchema}.ctx_org_id()`,
@@ -898,6 +907,10 @@ async function scanPolicyContextReads(
     readers,
     sealReaders,
     taintedViews: [...taintedViewOids].map((oid) => toCanonTable(viewByOid.get(oid)!.name)).sort(),
+    taintedViewRawNames: scannedViews
+      .filter((v) => v.isTainted)
+      .map((v) => v.rawName)
+      .sort(),
     scannedViews,
   };
 }
@@ -1306,34 +1319,61 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   ): Promise<{
     entry: string[];
     helper: string[];
+    hasCatalog: boolean;
+    catalogTables: string[];
     allowedTables: Set<string>;
+    allowedRawTables: Set<string>;
     allowedLookupViews: string[];
+    allowedLookupRawViews: string[];
   }> => {
     const runQuery = <T>(fn: (c: pg.Client) => Promise<T>) => (client ? fn(client) : admin(fn));
-    const found = await runQuery((c) =>
-      c.query<{ entry: boolean; helper: boolean; catalog: boolean }>(
-        `SELECT to_regprocedure('crove_kernel.enter_member_briefing_context(uuid,uuid,uuid)') IS NOT NULL AS entry,
-                to_regprocedure('crove_kernel.ctx_briefing_user_id()') IS NOT NULL AS helper,
-                to_regclass('crove_kernel.member_briefing_table') IS NOT NULL AS catalog`,
+    const activeKernelSchema = dbIds ? dbIds.schema("kernel") : "crove_kernel";
+    const activeTable = (name: string) => (dbIds ? dbIds.table(name) : name);
+    const toCanon = (name: string) => (dbIds ? dbIds.toCanonicalTable(name) : name);
+    const [found, catalogClassRes] = await Promise.all([
+      runQuery((c) =>
+        c.query<{ entry: boolean; helper: boolean; catalog: boolean }>(
+          `SELECT to_regprocedure('crove_kernel.enter_member_briefing_context(uuid,uuid,uuid)') IS NOT NULL AS entry,
+                  to_regprocedure('crove_kernel.ctx_briefing_user_id()') IS NOT NULL AS helper,
+                  to_regclass('crove_kernel.member_briefing_table') IS NOT NULL AS catalog`,
+        ),
       ),
-    );
+      runQuery((c) =>
+        rawQuery<{ name: string }>(
+          c,
+          `SELECT n.nspname || '.' || c.relname AS name
+           FROM pg_catalog.pg_class c
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
+             AND c.relname = 'member_briefing_table'
+           ORDER BY 1`,
+        ),
+      ),
+    ]);
     const row = found.rows[0];
+    const catalogTables = catalogClassRes.rows.map((r) => r.name);
     const allowedTables = new Set<string>();
+    const allowedRawTables = new Set<string>();
     const allowedLookupViews: string[] = [];
+    const allowedLookupRawViews: string[] = [];
     if (row?.helper) {
       expect(row.catalog, "member_briefing_table must exist whenever ctx_briefing_user_id exists").toBe(true);
-      const toCanon = (name: string) => (dbIds ? dbIds.toCanonicalTable(name) : name);
       if (row.catalog) {
         const catalogRows = await runQuery((c) =>
-          c.query<{ table_name: string; mode: string }>(
-            `SELECT table_name, mode FROM crove_kernel.member_briefing_table ORDER BY 1`,
+          rawQuery<{ table_name: string; mode: string }>(
+            c,
+            `SELECT table_name, mode FROM ${activeKernelSchema}.member_briefing_table ORDER BY 1`,
           ),
         );
         const meetingsCatalog = new Set<string>();
-        const lookupEntries: string[] = [];
+        const lookupEntries: Array<{ raw: string; canon: string }> = [];
         for (const cat of catalogRows.rows) {
           expect(cat.mode, `member_briefing_table(${cat.table_name}) mode must be 'read'`).toBe("read");
           const canon = toCanon(cat.table_name);
+          expect(
+            cat.table_name,
+            `member_briefing_table(${cat.table_name}) must name the active schema`,
+          ).toBe(activeTable(canon));
           expect(BRIEFING_FORBIDDEN_TABLES.has(canon), `${canon} is forbidden in member_briefing_table`).toBe(false);
           expect(
             BRIEFING_FORBIDDEN_PREFIXES.some((prefix) => canon.startsWith(prefix)),
@@ -1346,14 +1386,16 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             ).toBe(true);
             meetingsCatalog.add(canon);
           } else {
-            lookupEntries.push(canon);
+            lookupEntries.push({ raw: cat.table_name, canon });
           }
         }
         expect(lookupEntries.length, "at most one narrow lookup table/view in member_briefing_table").toBeLessThanOrEqual(1);
-        for (const t of meetingsCatalog) allowedTables.add(t);
+        for (const t of meetingsCatalog) {
+          allowedTables.add(t);
+          allowedRawTables.add(activeTable(t));
+        }
         if (lookupEntries.length === 1) {
-          const lookupCanon = lookupEntries[0]!;
-          const activeLookup = dbIds ? dbIds.table(lookupCanon) : lookupCanon;
+          const { raw: activeLookup, canon: lookupCanon } = lookupEntries[0]!;
           const dot = activeLookup.indexOf(".");
           const lookupSchema = activeLookup.slice(0, dot);
           const lookupRel = activeLookup.slice(dot + 1);
@@ -1377,20 +1419,19 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             ),
           );
           const meta = lookupMeta.rows[0];
-          expect(meta, `cataloged lookup ${lookupCanon} must exist`).toBeDefined();
-          expect((meta?.cols ?? []).length, `cataloged lookup ${lookupCanon} must expose at least one column`).toBeGreaterThan(0);
+          expect(meta, `cataloged lookup ${activeLookup} (${lookupCanon}) must exist`).toBeDefined();
+          expect((meta?.cols ?? []).length, `cataloged lookup ${activeLookup} must expose at least one column`).toBeGreaterThan(0);
           for (const col of meta?.cols ?? []) {
             expect(
               BRIEFING_ALLOWED_LOOKUP_COLUMNS.has(col),
-              `cataloged lookup ${lookupCanon}.${col} exceeds narrow display-name allowlist`,
+              `cataloged lookup ${activeLookup}.${col} exceeds narrow display-name allowlist`,
             ).toBe(true);
           }
           if (meta?.relkind === "v") {
-            const activeKernelSchema = dbIds ? dbIds.schema("kernel") : "crove_kernel";
             const scanResult = preScan ?? (await runQuery((c) => scanPolicyContextReads(c, dbIds)));
-            const scannedView = scanResult.scannedViews.find((v) => v.name === lookupCanon);
-            expect(scannedView, `cataloged lookup view ${lookupCanon} must appear in scanned views`).toBeDefined();
-            if (!scannedView) throw new Error(`cataloged lookup view ${lookupCanon} missing from scannedViews`);
+            const scannedView = scanResult.scannedViews.find((v) => v.rawName === activeLookup);
+            expect(scannedView, `cataloged lookup view ${activeLookup} must appear in scanned views`).toBeDefined();
+            if (!scannedView) throw new Error(`cataloged lookup view ${activeLookup} missing from scannedViews`);
             const prettyOk = isAllowedBriefingLookupView({
               viewDef: meta.view_def ?? "",
               reloptions: meta.reloptions,
@@ -1410,18 +1451,22 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             const viewOk = Boolean(meta.view_def && prettyOk && unprettyOk);
             expect(
               viewOk,
-              `cataloged lookup view ${lookupCanon} must set security_invoker=true, enforce org/briefing binding when using ctx_briefing_user_id, and stay clean of forbidden sealed reads/deps`,
+              `cataloged lookup view ${activeLookup} must set security_invoker=true, enforce org/briefing binding when using ctx_briefing_user_id, and stay clean of forbidden sealed reads/deps`,
             ).toBe(true);
-            if (viewOk) allowedLookupViews.push(lookupCanon);
+            if (viewOk) {
+              allowedLookupViews.push(lookupCanon);
+              allowedLookupRawViews.push(activeLookup);
+            }
           } else {
             const isTable = ["r", "p"].includes(meta?.relkind ?? "");
-            expect(isTable, `cataloged lookup ${lookupCanon} must be a regular/partitioned table or view`).toBe(true);
-            expect(meta, `lookup table ${lookupCanon} must enable and force RLS`).toMatchObject({
+            expect(isTable, `cataloged lookup ${activeLookup} must be a regular/partitioned table or view`).toBe(true);
+            expect(meta, `lookup table ${activeLookup} must enable and force RLS`).toMatchObject({
               relrowsecurity: true,
               relforcerowsecurity: true,
             });
             if (isTable && meta?.relrowsecurity && meta?.relforcerowsecurity) {
               allowedTables.add(lookupCanon);
+              allowedRawTables.add(activeLookup);
             }
           }
         }
@@ -1430,8 +1475,12 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     return {
       entry: row?.entry ? ["crove_kernel.enter_member_briefing_context(uuid,uuid,uuid)"] : [],
       helper: row?.helper ? ["crove_kernel.ctx_briefing_user_id()"] : [],
+      hasCatalog: row?.catalog === true,
+      catalogTables,
       allowedTables,
+      allowedRawTables,
       allowedLookupViews: allowedLookupViews.sort(),
+      allowedLookupRawViews: allowedLookupRawViews.sort(),
     };
   };
 
@@ -1623,8 +1672,24 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const entry = "crove_kernel.enter_member_briefing_context(uuid,uuid,uuid)";
     const found = await admin((c) => c.query<{ ok: boolean }>(`SELECT to_regprocedure('${entry}') IS NOT NULL AS ok`));
     if (found.rows[0]?.ok !== true) return;
+    const activeKernelSchema = dbIds ? dbIds.schema("kernel") : "crove_kernel";
     await admin(async (c) => {
-      const { rows: logins, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, entry, ["crove_worker"], "brand");
+      const entryProcs = await rawQuery<{ sig: string }>(
+        c,
+        `SELECT CASE WHEN pg_catalog.split_part(p.oid::pg_catalog.regprocedure::text, '(', 1) LIKE '%.%'
+                     THEN p.oid::pg_catalog.regprocedure::text
+                     ELSE n.nspname || '.' || p.oid::pg_catalog.regprocedure::text END AS sig
+         FROM pg_catalog.pg_proc p
+         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
+           AND p.proname = 'enter_member_briefing_context'
+         ORDER BY 1`,
+      );
+      expect(
+        entryProcs.rows.map((r) => r.sig).sort(),
+        "enter_member_briefing_context must be a singleton in the active kernel schema across all non-system schemas",
+      ).toEqual([`${activeKernelSchema}.enter_member_briefing_context(uuid,uuid,uuid)`]);
+      const { rows: logins, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, entry, ["crove_worker"], "non_system");
       expect(logins.length).toBeGreaterThan(0);
       expect(logins.some((r) => r.rolname === activeAllowed[0] && r.ok), `active role ${activeAllowed[0]} execute the briefing entry`).toBe(true);
       for (const { rolname, ok, expected } of logins) {
@@ -1677,7 +1742,23 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const helper = "crove_kernel.ctx_briefing_user_id()";
     const found = await admin((c) => c.query<{ ok: boolean }>(`SELECT to_regprocedure('${helper}') IS NOT NULL AS ok`));
     if (found.rows[0]?.ok !== true) return;
+    const activeKernelSchema = dbIds ? dbIds.schema("kernel") : "crove_kernel";
     await admin(async (c) => {
+      const helperProcs = await rawQuery<{ sig: string }>(
+        c,
+        `SELECT CASE WHEN pg_catalog.split_part(p.oid::pg_catalog.regprocedure::text, '(', 1) LIKE '%.%'
+                     THEN p.oid::pg_catalog.regprocedure::text
+                     ELSE n.nspname || '.' || p.oid::pg_catalog.regprocedure::text END AS sig
+         FROM pg_catalog.pg_proc p
+         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
+           AND p.proname = 'ctx_briefing_user_id'
+         ORDER BY 1`,
+      );
+      expect(
+        helperProcs.rows.map((r) => r.sig).sort(),
+        "ctx_briefing_user_id must be a singleton in the active kernel schema across all non-system schemas",
+      ).toEqual([`${activeKernelSchema}.ctx_briefing_user_id()`]);
       const row = (
         await c.query<{ proconfig: string[] | null; secdef: boolean; provolatile: string; def: string }>(
           `SELECT proconfig, prosecdef AS secdef, provolatile::text AS provolatile, pg_get_functiondef(oid) AS def
@@ -1833,7 +1914,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       "functions that read the sealed member directly",
     ).toEqual(["crove_kernel.ctx_acting_user_id()", ...(await mcpMemberObjects()).helper, ...briefing.helper].sort());
     expect(
-      found.taintedViews.filter((v) => !briefing.allowedLookupViews.includes(v)),
+      found.taintedViewRawNames.filter((v) => !briefing.allowedLookupRawViews.includes(v)),
       "views or materialized views that touch the sealed context",
     ).toEqual([]);
     const meetingHelpers = await admin((c) =>
@@ -1868,27 +1949,33 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       );
       expect([p.cmd, p.perm], `${p.t}.${p.n}: exact command and restrictive flag`).toEqual([entry.cmd, entry.perm]);
     }
-    if (briefing.entry.length > 0 || briefing.helper.length > 0) {
-      expect(briefing.entry.length, "enter_member_briefing_context must exist when ctx_briefing_user_id exists").toBe(1);
-      expect(briefing.helper.length, "ctx_briefing_user_id must exist when enter_member_briefing_context exists").toBe(1);
+    const activeTable = (canonTable: string) => (dbIds ? dbIds.table(canonTable) : canonTable);
+    if (briefing.entry.length > 0 || briefing.helper.length > 0 || briefing.hasCatalog || briefing.catalogTables.length > 0) {
+      expect(briefing.entry.length, "enter_member_briefing_context must exist when briefing primitives exist").toBe(1);
+      expect(briefing.helper.length, "ctx_briefing_user_id must exist when briefing primitives exist").toBe(1);
+      expect(briefing.hasCatalog, "member_briefing_table must exist when briefing primitives exist").toBe(true);
+      expect(
+        briefing.catalogTables,
+        "member_briefing_table must be a singleton in the active kernel schema",
+      ).toEqual([`${activeKernelSchema}.member_briefing_table`]);
     }
     // The named briefing-closed policies, when they exist (and across all pinned tables once briefing primitives exist), read only the exact 'member_briefing' kind exclusion via ctx_verified() ->> 'kind' IS DISTINCT FROM 'member_briefing'.
     const briefingClosedPolicies = found.policies.filter((x) =>
-      BRIEFING_SEALED_CLOSED_POLICIES.some((entry) => entry.t === x.t && entry.n === x.n),
+      BRIEFING_SEALED_CLOSED_POLICIES.some((entry) => activeTable(entry.t) === x.rawT && entry.n === x.n),
     );
-    if (briefing.entry.length > 0 || briefing.helper.length > 0) {
+    if (briefing.entry.length > 0 || briefing.helper.length > 0 || briefing.hasCatalog || briefing.catalogTables.length > 0) {
       expect(
-        briefingClosedPolicies.map((p) => `${p.t}.${p.n}`).sort(),
+        briefingClosedPolicies.map((p) => `${p.rawT}.${p.n}`).sort(),
         "every BRIEFING_SEALED_CLOSED_POLICIES table must enforce briefing_sealed_closed once member_briefing exists",
-      ).toEqual(BRIEFING_SEALED_CLOSED_POLICIES.map((e) => `${e.t}.${e.n}`).sort());
+      ).toEqual(BRIEFING_SEALED_CLOSED_POLICIES.map((e) => `${activeTable(e.t)}.${e.n}`).sort());
     }
     for (const p of briefingClosedPolicies) {
-      const entry = BRIEFING_SEALED_CLOSED_POLICIES.find((e) => e.t === p.t && e.n === p.n)!;
-      expect([...p.text.matchAll(BRIEFING_SEALED_CLOSED)].length, `${p.t}.${p.n}: expected briefing_sealed_closed checks`).toBe(entry.expectedCount);
-      expect([...p.rawText.matchAll(activeBriefingSealedClosed)].length, `${p.t}.${p.n}: uses active kernel schema ${activeKernelSchema}`).toBe(
+      const entry = BRIEFING_SEALED_CLOSED_POLICIES.find((e) => activeTable(e.t) === p.rawT && e.n === p.n)!;
+      expect([...p.text.matchAll(BRIEFING_SEALED_CLOSED)].length, `${p.rawT}.${p.n}: expected briefing_sealed_closed checks`).toBe(entry.expectedCount);
+      expect([...p.rawText.matchAll(activeBriefingSealedClosed)].length, `${p.rawT}.${p.n}: uses active kernel schema ${activeKernelSchema}`).toBe(
         entry.expectedCount,
       );
-      expect([p.cmd, p.perm], `${p.t}.${p.n}: exact command and restrictive flag`).toEqual([entry.cmd, entry.perm]);
+      expect([p.cmd, p.perm], `${p.rawT}.${p.n}: exact command and restrictive flag`).toEqual([entry.cmd, entry.perm]);
     }
     const byTablePolicy = (a: readonly (string | boolean)[], b: readonly (string | boolean)[]) => {
       const ta = String(a[0]);
@@ -1902,14 +1989,14 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const expectedPolicyKeys = new Set(expectedPolicies.map(([t, n]) => `${t}.${n}`));
     expect(
       found.policies
-        .filter((p) => readsSealedMember([p], undefined, briefing.allowedTables).length > 0)
+        .filter((p) => readsSealedMember([p], undefined, briefing.allowedRawTables).length > 0)
         .map((p) => [p.t, p.n, p.cmd, p.perm])
         .sort(byTablePolicy),
       "policies that read the helper: (table, policy, command, permissive)",
     ).toEqual([...expectedPolicies].sort(byTablePolicy));
     expect(
       found.policies
-        .filter((p) => hasForbiddenSealedRead(p, expectedPolicyKeys, undefined, briefing.allowedTables))
+        .filter((p) => hasForbiddenSealedRead(p, expectedPolicyKeys, undefined, briefing.allowedRawTables))
         .map((p) => `${p.t}.${p.n}`)
         .sort(),
       "policies reading ctx_acting_user_id must have zero forbidden sealed-context reads",
@@ -2156,11 +2243,26 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       },
       { label: "extra ctx_verified in standalone", p: { ...validStandaloneBriefing, text: `${validStandaloneBriefing.text} AND ${compare}` } },
       { label: "permissive on COMPANY_READ_POLICIES", p: { ...validCombinedCompanyBriefing, perm: true } },
+      {
+        label: "brand-twin rawT ludy_meetings mismatch against crove_meetings allowlist",
+        p: { ...validStandaloneBriefing, rawT: "ludy_meetings.morning_brief_lines" },
+      },
+      {
+        label: "brand-twin rawT ludy_kernel mismatch against crove_kernel lookup allowlist",
+        p: { ...validLookupBriefing, rawT: "ludy_kernel.member_briefing_directory" },
+      },
     ] as const;
     for (const { label, p } of tamperedBriefingPolicies) {
       expect(readsSealedMember([p], undefined, briefingAllowed), `readsSealedMember:${label}`).toHaveLength(1);
       expect(hasForbiddenSealedRead(p, new Set(), undefined, briefingAllowed), `hasForbiddenSealedRead:${label}`).toBe(true);
     }
+    const briefingAllowedLudy = new Set(["ludy_meetings.morning_brief_lines", "ludy_kernel.member_briefing_directory"]);
+    const ludyActivePolicy = { ...validStandaloneBriefing, rawT: "ludy_meetings.morning_brief_lines" };
+    const croveTwinPolicy = { ...validStandaloneBriefing, rawT: "crove_meetings.morning_brief_lines" };
+    expect(readsSealedMember([ludyActivePolicy], undefined, briefingAllowedLudy)).toEqual([]);
+    expect(hasForbiddenSealedRead(ludyActivePolicy, new Set(), undefined, briefingAllowedLudy)).toBe(false);
+    expect(readsSealedMember([croveTwinPolicy], undefined, briefingAllowedLudy)).toHaveLength(1);
+    expect(hasForbiddenSealedRead(croveTwinPolicy, new Set(), undefined, briefingAllowedLudy)).toBe(true);
     // Tampered mcp_sealed_closed policies are caught (wrong count, missing WITH CHECK, extra OR predicate, reply exception added elsewhere, wrong cmd/perm, or unlisted table).
     expect(readsSealedMember([{ t: "crove_kernel.mail_event", n: "mcp_sealed_closed", cmd: "*", perm: false, text: prefixClosed }])).toHaveLength(1);
     expect(readsSealedMember([{ t: "crove_kernel.mail_event", n: "mcp_sealed_closed", cmd: "*", perm: false, text: `${prefixClosed} (${prefixClosed} OR true)` }])).toHaveLength(1);
@@ -2711,14 +2813,18 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         );
         const scan = await scanPolicyContextReads(c, dbIds);
         const briefingForProbe = await briefingObjects(scan, c);
+        const toCanonView = (name: string) => (dbIds ? dbIds.toCanonicalTable(name) : name);
         return {
-          taintedViews: scan.taintedViews.filter((v) => !briefingForProbe.allowedLookupViews.includes(v)),
+          taintedViews: scan.taintedViewRawNames
+            .filter((v) => !briefingForProbe.allowedLookupRawViews.includes(v))
+            .map(toCanonView)
+            .sort(),
           readers: scan.readers,
-          flagged: readsSealedMember(scan.policies, undefined, briefingForProbe.allowedTables)
+          flagged: readsSealedMember(scan.policies, undefined, briefingForProbe.allowedRawTables)
             .map((p) => `${p.t}.${p.n}`)
             .sort(),
           policies: scan.policies,
-          briefingAllowedTables: briefingForProbe.allowedTables,
+          briefingAllowedTables: briefingForProbe.allowedRawTables,
         };
       } finally {
         await rawQuery(c, "ROLLBACK").catch(() => {});
@@ -2941,6 +3047,172 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         }
       } finally {
         await rawQuery(c, "ROLLBACK").catch(() => {});
+      }
+
+      if (activeKernel !== "crove_kernel") {
+        await rawQuery(c, "BEGIN");
+        try {
+          const preTwin = (
+            await rawQuery<{ has_helper: boolean; has_catalog: boolean }>(
+              c,
+              `SELECT to_regprocedure($1) IS NOT NULL AS has_helper,
+                      to_regclass($2) IS NOT NULL AS has_catalog`,
+              [`${activeKernel}.ctx_briefing_user_id()`, `${activeKernel}.member_briefing_table`],
+            )
+          ).rows[0]!;
+          if (!preTwin.has_helper) {
+            await rawQuery(
+              c,
+              `CREATE FUNCTION ${activeKernel}.ctx_briefing_user_id() RETURNS uuid LANGUAGE sql STABLE AS $$
+                 SELECT CASE WHEN (${activeKernel}.ctx_verified() ->> 'kind') = 'member_briefing'
+                             THEN (${activeKernel}.ctx_verified() ->> 'member')::uuid
+                             ELSE NULL::uuid END
+               $$`,
+            );
+          }
+          await rawQuery(
+            c,
+            `CREATE SCHEMA probe_brief_twin;
+             CREATE TABLE probe_brief_twin.src (org_id uuid, user_id uuid, display_name text);
+             CREATE SCHEMA IF NOT EXISTS crove_kernel;
+             CREATE VIEW ${activeKernel}.v_probe_twin_lookup WITH (security_invoker = true, security_barrier = true) AS
+               SELECT org_id, user_id, display_name
+               FROM probe_brief_twin.src
+               WHERE org_id = (SELECT ${activeKernel}.ctx_org_id())
+                 AND user_id = (SELECT ${activeKernel}.ctx_briefing_user_id());
+             CREATE VIEW crove_kernel.v_probe_twin_lookup WITH (security_barrier = true) AS
+               SELECT org_id, user_id, display_name
+               FROM probe_brief_twin.src
+               WHERE org_id = (SELECT ${activeKernel}.ctx_org_id())
+                 AND user_id = (SELECT ${activeKernel}.ctx_briefing_user_id());`,
+          );
+          let catalogPrepared = false;
+          if (!preTwin.has_catalog) {
+            await rawQuery(
+              c,
+              `CREATE TABLE ${activeKernel}.member_briefing_table (table_name text PRIMARY KEY, mode text NOT NULL);
+               INSERT INTO ${activeKernel}.member_briefing_table (table_name, mode)
+               VALUES ('${activeKernel}.v_probe_twin_lookup', 'read');`,
+            );
+            catalogPrepared = true;
+          } else {
+            const existingLookup = await rawQuery<{ table_name: string }>(
+              c,
+              `SELECT table_name FROM ${activeKernel}.member_briefing_table
+               WHERE table_name !~ '^(crove|ludy)_meetings\\.'
+               ORDER BY 1`,
+            );
+            if (existingLookup.rows.length === 1) {
+              await rawQuery(
+                c,
+                `UPDATE ${activeKernel}.member_briefing_table SET table_name = $1 WHERE table_name = $2`,
+                [`${activeKernel}.v_probe_twin_lookup`, existingLookup.rows[0]!.table_name],
+              );
+              catalogPrepared = true;
+            } else if (existingLookup.rows.length === 0) {
+              const catCols = (
+                await rawQuery<{ column_name: string }>(
+                  c,
+                  `SELECT column_name FROM information_schema.columns
+                   WHERE table_schema = $1 AND table_name = 'member_briefing_table'`,
+                  [activeKernel],
+                )
+              ).rows.map((r) => r.column_name);
+              if (catCols.includes("adr")) {
+                await rawQuery(
+                  c,
+                  `INSERT INTO ${activeKernel}.member_briefing_table (table_name, mode, adr)
+                   VALUES ($1, 'read', 'ADR-0049')`,
+                  [`${activeKernel}.v_probe_twin_lookup`],
+                );
+                catalogPrepared = true;
+              } else if (catCols.includes("table_name") && catCols.includes("mode")) {
+                await rawQuery(
+                  c,
+                  `INSERT INTO ${activeKernel}.member_briefing_table (table_name, mode)
+                   VALUES ($1, 'read')`,
+                  [`${activeKernel}.v_probe_twin_lookup`],
+                );
+                catalogPrepared = true;
+              }
+            }
+          }
+          const twinScan = await scanPolicyContextReads(c, dbIds);
+          const activeTwinScanned = twinScan.scannedViews.find(
+            (v) => v.rawName === `${activeKernel}.v_probe_twin_lookup`,
+          );
+          const rogueTwinScanned = twinScan.scannedViews.find(
+            (v) => v.rawName === "crove_kernel.v_probe_twin_lookup",
+          );
+          expect(activeTwinScanned, "active-schema clean twin view must appear by rawName").toBeDefined();
+          expect(rogueTwinScanned, "crove_kernel non-invoker twin view must appear by rawName").toBeDefined();
+          expect(
+            twinScan.taintedViewRawNames,
+            "active-schema clean twin view appears in raw tainted views before allowlisting",
+          ).toContain(`${activeKernel}.v_probe_twin_lookup`);
+          expect(
+            twinScan.taintedViewRawNames,
+            "crove_kernel non-invoker twin view appears in raw tainted views",
+          ).toContain("crove_kernel.v_probe_twin_lookup");
+          if (!activeTwinScanned || !rogueTwinScanned) {
+            throw new Error("brand-twin views missing from scannedViews");
+          }
+          const readTwinMeta = async (schema: string, viewName: string) =>
+            (
+              await rawQuery<{ reloptions: string[] | null; view_def: string | null }>(
+                c,
+                `SELECT c.reloptions, pg_catalog.pg_get_viewdef(c.oid, true) AS view_def
+                 FROM pg_catalog.pg_class c
+                 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                 WHERE n.nspname = $1 AND c.relname = $2`,
+                [schema, viewName],
+              )
+            ).rows[0]!;
+          const activeTwinMeta = await readTwinMeta(activeKernel, "v_probe_twin_lookup");
+          const rogueTwinMeta = await readTwinMeta("crove_kernel", "v_probe_twin_lookup");
+          expect(
+            isAllowedBriefingLookupView({
+              viewDef: activeTwinMeta.view_def ?? "",
+              reloptions: activeTwinMeta.reloptions,
+              taintedViewDeps: activeTwinScanned.taintedViewDeps,
+              taintedFnDeps: activeTwinScanned.taintedFnDeps,
+              hasActiveOrgBindDep: activeTwinScanned.hasActiveOrgBindDep,
+              activeKernelSchema: activeKernel,
+            }),
+            "active-schema clean invoker twin passes lookup view audit",
+          ).toBe(true);
+          expect(
+            isAllowedBriefingLookupView({
+              viewDef: rogueTwinMeta.view_def ?? "",
+              reloptions: rogueTwinMeta.reloptions,
+              taintedViewDeps: rogueTwinScanned.taintedViewDeps,
+              taintedFnDeps: rogueTwinScanned.taintedFnDeps,
+              hasActiveOrgBindDep: rogueTwinScanned.hasActiveOrgBindDep,
+              activeKernelSchema: activeKernel,
+            }),
+            "same-name crove_kernel non-invoker twin fails lookup view audit",
+          ).toBe(false);
+          if (catalogPrepared) {
+            const twinBriefing = await briefingObjects(twinScan, c);
+            expect(
+              twinBriefing.allowedLookupRawViews,
+              "briefingObjects admits only active-schema clean lookup twin",
+            ).toEqual([`${activeKernel}.v_probe_twin_lookup`]);
+            const unexcusedTaintedRaw = twinScan.taintedViewRawNames.filter(
+              (v) => !twinBriefing.allowedLookupRawViews.includes(v),
+            );
+            expect(
+              unexcusedTaintedRaw,
+              "same-name crove_kernel non-invoker twin stays flagged after raw-name filtering",
+            ).toContain("crove_kernel.v_probe_twin_lookup");
+            expect(
+              unexcusedTaintedRaw,
+              "active-schema clean lookup twin is excluded after raw-name filtering",
+            ).not.toContain(`${activeKernel}.v_probe_twin_lookup`);
+          }
+        } finally {
+          await rawQuery(c, "ROLLBACK").catch(() => {});
+        }
       }
     });
   });

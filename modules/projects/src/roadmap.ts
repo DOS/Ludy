@@ -3,6 +3,7 @@
 // All mutations go through Runtime.execute(); public submissions keep tainted = true; private projects (#2604) are refused.
 import { sql } from 'kysely';
 import { z } from 'zod';
+import { allocateProjectTaskNumber } from './github.ts';
 import {
   ROADMAP_ANNOUNCEMENTS_LIMIT,
   ROADMAP_BOARDS_LIMIT,
@@ -1175,12 +1176,15 @@ export const roadmapItemConvertToTask = defineCommand({
     const project = await assertPublicProjectAllowed(ctx.trx, ctx.orgId, targetProjectId, true);
     assertNotArchived(project);
 
+    const taskNumber = await allocateProjectTaskNumber(ctx.trx, ctx.orgId, project.id, ctx.now);
+
     await ctx.trx
       .insertInto('ludy_projects.project_task')
       .values({
         org_id: ctx.orgId,
         project_id: project.id,
         task_id: taskId,
+        task_number: taskNumber,
         added_by: userId,
         created_at: ctx.now,
       })

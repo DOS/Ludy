@@ -560,9 +560,10 @@ function ConnectionItem({
   );
 }
 
-// What a member or viewer sees: which accounts bring in transactions, and when each was last synced.
+// What a member or viewer sees: which accounts bring in transactions, when each was last synced, and any cut-over day.
 function ReadOnlyList({ accounts }: { accounts: readonly BankFeedAccountView[] }) {
   const t = useTranslations('bankFeeds');
+  const f = useFormat();
   return (
     <Card className="block p-4" aria-label={t('title')}>
       <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
@@ -570,11 +571,13 @@ function ReadOnlyList({ accounts }: { accounts: readonly BankFeedAccountView[] }
       <ul className="mt-3 divide-y">
         {accounts.map((a) => (
           <li key={a.id} className="py-2 text-sm">
-            <p className="text-foreground">
-              {a.connectionName}
+            <p className="flex flex-wrap items-center gap-2 text-foreground">
+              <span>{a.connectionName}</span>
+              {a.connectionStatus !== 'active' && <Badge variant="secondary">{t(`status.${a.connectionStatus}`)}</Badge>}
             </p>
             <p className="text-xs text-subtle-foreground">
               {t('mappedTo', { account: a.bankAccount })} · <LastSynced account={a} />
+              {a.feedFrom && ` · ${t('feedFromOn', { date: f.date(a.feedFrom) })}`}
             </p>
             <PullReason account={a} />
           </li>

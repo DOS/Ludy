@@ -430,13 +430,17 @@ const resetPasswordRoute = createRoute({
   component: ResetPasswordPage,
 });
 
-// Where a channel provider's OAuth dialog sends the browser back (Social plan S6). One address for every org: the
-// attempt remembers its org (lib/oauth.ts).
+// Where a channel provider's OAuth dialog or GitHub App setup sends the browser back (<APP_URL>/channels/oauth/<provider>/callback).
+// One address for every org: the attempt remembers its org (lib/oauth.ts). GitHub App OAuth belongs to Projects even when Social is off.
 const oauthCallbackRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/channels/oauth/$provider/callback',
-  beforeLoad: async ({ matches }) => {
-    requireInstalledOutside(matches);
+  beforeLoad: async ({ matches, params }) => {
+    if (params.provider === 'github_app') {
+      if (!getConfig().modules.includes('projects')) throw notFound();
+    } else {
+      requireInstalledOutside(matches);
+    }
     await requireAuth();
   },
   component: OAuthCallbackPage,

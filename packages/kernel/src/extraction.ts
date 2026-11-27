@@ -8,7 +8,7 @@
 // A pending run is at most one per file (partial UNIQUE index), and the database numbers versions.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { STAGED_STATEMENT_MAX_BYTES, zCheck, zId } from '@ludy/kernel-contract';
+import { STAGED_STATEMENT_MAX_BYTES, zCheck, zId, zLocalDate } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { actorRef, addAuthor, eligibleApprovers, parseAuthors, type ActorRef } from './approval.ts';
@@ -761,9 +761,10 @@ export const statementState = defineCommand({
   input: z.object({
     fileId: zId,
     state: z.enum(['imported', 'rejected']),
-    // What an import stored: the lines new to the account, the lines it already had, and the import.
+    // What an import stored: the lines new to the account, the lines it already had, the cut-over-skipped lines, and the import.
     newLines: z.number().int().nonnegative().optional(),
     duplicateLines: z.number().int().nonnegative().optional(),
+    feed: z.object({ from: zLocalDate, leftOut: z.number().int().nonnegative() }).nullable().optional(),
     importId: zId.optional(),
   }),
   risk: 'R1',
@@ -792,6 +793,7 @@ export const statementState = defineCommand({
       state: input.state,
       ...(input.newLines !== undefined ? { newLines: input.newLines } : {}),
       ...(input.duplicateLines !== undefined ? { duplicateLines: input.duplicateLines } : {}),
+      ...(input.feed !== undefined ? { feed: input.feed } : {}),
       ...(input.importId !== undefined ? { importId: input.importId } : {}),
     };
     await ctx.trx
@@ -807,7 +809,11 @@ export const statementState = defineCommand({
         completed_at: ctx.now,
       })
       .execute();
-    ctx.audit({ state: input.state, ...(input.newLines !== undefined ? { new_lines: input.newLines } : {}) });
+    ctx.audit({
+      state: input.state,
+      ...(input.newLines !== undefined ? { new_lines: input.newLines } : {}),
+      ...(input.feed && input.feed.leftOut > 0 ? { feed_from: input.feed.from, feed_skipped: input.feed.leftOut } : {}),
+    });
     const orders = kind === 'marketplace_orders';
     const income = kind === 'marketplace_income';
     await ctx.activity(
@@ -819,7 +825,7 @@ export const statementState = defineCommand({
           ? `Đã nhập báo cáo thu nhập: ${input.newLines ?? 0} dòng`
           : orders
             ? `Đã nhập báo cáo đơn hàng: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có`
-            : `Đã nhập sao kê: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có`
+            : `Đã nhập sao kê: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có${input.feed && input.feed.leftOut > 0 ? `, ${input.feed.leftOut} dòng bỏ qua (nguồn tự động từ ${input.feed.from})` : ''}`
         : income
           ? 'Đã bỏ qua báo cáo thu nhập; không có gì được nhập'
           : orders

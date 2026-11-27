@@ -26,6 +26,7 @@ import { MeetingChatPost } from './meeting-chat.tsx';
 import { MinutesLinkPanel } from './minutes-link.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
 import { MeetingCatchUp } from './meeting-catch-up.tsx';
+import { MeetingNotesMinutes } from './meeting-notes-minutes.tsx';
 import { MinutesVersionPublisher, MinutesVersionSwitch } from './meeting-minutes-version.tsx';
 import { MeetingVoiceCues } from './meeting-voice-cues.tsx';
 import { clock } from './meeting-transcript.tsx';
@@ -813,6 +814,14 @@ export function MeetingResults({
         {/* Cues spoken to Vy in the meeting (#4807): the recorder's click drafts a marked item for each, found by code */}
         {isRecorder && <MeetingVoiceCues key={`cues-${meetingId}`} meetingId={meetingId} />}
         {isRecorder && <VySummary key={`vy-${effectiveRedactedEpoch}`} meetingId={meetingId} hasModelDraft={(draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted)} />}
+        {isRecorder && (
+          <MeetingNotesMinutes
+            key={`notes-minutes-${meetingId}-${effectiveRedactedEpoch}`}
+            meetingId={meetingId}
+            template={template}
+            minutesTemplate={minutesTemplate}
+          />
+        )}
         {isRecorder && (
           <section className="space-y-2">
             <h3 className="flex items-center gap-2 text-xs font-medium text-muted-foreground">

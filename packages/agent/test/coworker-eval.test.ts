@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_FEATURE_KEYS,
   AdsCampaignWriter,
+  AskBooksCoworker,
   ConversationWriter,
   ExpenseVarianceCoworker,
   InboxReader,
@@ -106,6 +107,12 @@ function createStubRuntime() {
       } else if (feature === 'meetings.catch_up') {
         text = JSON.stringify({
           lines: [{ text: 'Nhom chot ke hoach ban hang va giu dung tien do da de ra.', cite: { kind: 'decision', index: 1 } }],
+        });
+      } else if (feature === 'meetings.notes_minutes') {
+        text = JSON.stringify({
+          summary: 'Nhom chot ke hoach ban hang quy 4.',
+          decisions: [{ text: 'Chot ke hoach ban hang quy 4.', noteLine: 1 }],
+          items: [{ title: 'Gui bao gia cho khach', who: 'Lan', when: 'thu Sau', noteLine: 2 }],
         });
       } else if (feature === 'meetings.sales_insight') {
         if (prompt.user.includes('11111111-1111-4111-8111-111111111102')) {
@@ -402,6 +409,10 @@ function createStubRuntime() {
     scheduling: new SchedulingReader(STUB_CONFIG, async () => ({ asksForMeeting: true, windows: [{ date: '2026-10-08', from: '14:00', to: '15:00' }] })),
     expenseVariance: new ExpenseVarianceCoworker(STUB_CONFIG, async () => ({
       output: { notes: [{ row: 1, text: 'Co the do hoa don tu nha cung cap tang so voi ky truoc.' }] },
+      usage: zeroUsage,
+    })),
+    askBooks: new AskBooksCoworker(STUB_CONFIG, async () => ({
+      output: { entry: 'profit_loss', period: 'named', lead: 'Day la bao cao ket qua kinh doanh cua ky duoc chon.' },
       usage: zeroUsage,
     })),
     payroll: new PayrollCoworker(STUB_CONFIG, {

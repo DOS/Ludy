@@ -549,6 +549,10 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       );
       expect(projTables.map((r) => r.table_name)).toEqual(
         expect.arrayContaining([
+          'github_project_binding',
+          'github_project_repo',
+          'github_sync_delivery',
+          'github_task_link',
           'project',
           'project_column',
           'project_cycle',
@@ -561,49 +565,6 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         ]),
       );
       for (const row of projTables) {
-        expect(row.relrowsecurity, `${row.table_name} RLS enabled`).toBe(true);
-        expect(row.has_policy, `${row.table_name} RESTRICTIVE project_visibility policy`).toBe(true);
-      }
-
-      // #5157 Step 0 / #5158 Slice 1 (Projects GitHub Integration, ADR-0060): pre-registered project_id-bearing
-      // tables. Returns zero rows while absent on dev; once created in Slice 1, each MUST carry project_id, RLS,
-      // and RESTRICTIVE project_visibility (#2604) even if ALSO in MACHINERY (REVOKE ALL) like github_sync_delivery.
-      // Slice 1 moves them into the required arrayContaining list above and adds actor-matrix probes.
-      const PENDING_GITHUB_PROJECT_TABLES = [
-        'github_project_binding',
-        'github_project_repo',
-        'github_sync_delivery',
-        'github_task_link',
-      ] as const;
-      const { rows: pendingGithubTables } = await c.query<{
-        table_name: string;
-        relrowsecurity: boolean;
-        has_project_id: boolean;
-        has_policy: boolean;
-      }>(
-        `SELECT t.relname AS table_name,
-                t.relrowsecurity,
-                EXISTS (
-                  SELECT 1 FROM pg_catalog.pg_attribute a
-                   WHERE a.attrelid = t.oid AND a.attname = 'project_id' AND NOT a.attisdropped
-                ) AS has_project_id,
-                EXISTS (
-                  SELECT 1 FROM pg_catalog.pg_policy p
-                   WHERE p.polrelid = t.oid
-                     AND p.polname = 'project_visibility'
-                     AND NOT p.polpermissive
-                     AND p.polcmd = '*'
-                ) AS has_policy
-           FROM pg_catalog.pg_class t
-           JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
-          WHERE n.nspname = 'crove_projects'
-            AND t.relkind IN ('r', 'p')
-            AND t.relname = ANY($1::text[])
-          ORDER BY t.relname`,
-        [[...PENDING_GITHUB_PROJECT_TABLES]],
-      );
-      for (const row of pendingGithubTables) {
-        expect(row.has_project_id, `${row.table_name} carries project_id`).toBe(true);
         expect(row.relrowsecurity, `${row.table_name} RLS enabled`).toBe(true);
         expect(row.has_policy, `${row.table_name} RESTRICTIVE project_visibility policy`).toBe(true);
       }
@@ -1725,5 +1686,167 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         await c.query('ROLLBACK').catch(() => {});
       }
     });
+  });
+
+  it('enforces #2604 private-project visibility across github_* tables (#5158)', async () => {
+    const sealed = 'AAECAwQFBgcICQoLDA0ODw==';
+    const conn = await appRt.execute<{ connectionId: string }>(
+      'kernel.channel.connect',
+      {
+        provider: 'github_app',
+        externalAccountId: `inst-${randomUUID().slice(0, 8)}`,
+        displayName: 'acme-private',
+        scopes: [],
+        expiresAt: null,
+        credential: { keyId: 'k1', envelope: sealed },
+      },
+      { actor: asUser(users.owner), orgId, idempotencyKey: randomUUID() },
+    );
+
+    await appRt.execute(
+      'projects.github.binding.save',
+      {
+        projectId: privateProjectId,
+        channelConnectionId: conn.connectionId,
+        githubEnabled: true,
+        taskKeyPrefix: 'PRIV',
+      },
+      { actor: asUser(users.owner), orgId, idempotencyKey: randomUUID() },
+    );
+
+    await appRt.execute(
+      'projects.github.repo.bind',
+      {
+        projectId: privateProjectId,
+        githubRepoId: '99887766',
+        repoFullName: 'acme/private-repo',
+        defaultBranch: 'main',
+      },
+      { actor: asUser(users.owner), orgId, idempotencyKey: randomUUID() },
+    );
+
+    const added = await appRt.execute<{ link: { id: string } }>(
+      'projects.github.link.add',
+      {
+        projectId: privateProjectId,
+        taskId: privateTaskId,
+        repoFullName: 'acme/private-repo',
+        kind: 'pull_request',
+        externalNumber: 42,
+        externalUrl: 'https://github.com/acme/private-repo/pull/42',
+        externalTitle: 'Private PR',
+        externalState: 'open',
+      },
+      { actor: asUser(users.owner), orgId, idempotencyKey: randomUUID() },
+    );
+
+    const workerDeliveryClient = createDbClient({ connectionString: workerUrl }, dbIds);
+    await workerDeliveryClient.connect();
+    try {
+      await workerDeliveryClient.query('BEGIN');
+      await systemActor.enter(workerDeliveryClient);
+      const begin = await workerDeliveryClient.query<{ id: string }>(
+        `SELECT crove_projects.github_sync_delivery_begin($1::uuid, $2::uuid, 'inbound', $3, 'pull_request', 'acme/private-repo', 42) AS id`,
+        [orgId, privateProjectId, `del-${randomUUID()}`],
+      );
+      const deliveryId = begin.rows[0]?.id;
+      expect(deliveryId).toBeTruthy();
+      await workerDeliveryClient.query(
+        `SELECT crove_projects.github_sync_delivery_finish($1::uuid, $2::uuid, 'applied', $3::uuid, NULL::text, 'Private delivery')`,
+        [orgId, deliveryId, privateTaskId],
+      );
+      await workerDeliveryClient.query('COMMIT');
+    } catch (err) {
+      await workerDeliveryClient.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      await workerDeliveryClient.end();
+    }
+
+    // Project owner/creator, org owner, invited member, and invited viewer can read private links & sync log.
+    for (const reader of [users.owner, users.creator, users.invitedMember, users.invitedViewer]) {
+      const linksRes = await appRt.query<{ links: Array<{ id: string }> }>(
+        'projects.github.task_links',
+        { projectId: privateProjectId, taskId: privateTaskId },
+        { actor: asUser(reader), orgId },
+      );
+      expect(linksRes.links.map((l) => l.id)).toContain(added.link.id);
+
+      const logRes = await appRt.query<{ entries: unknown[] }>(
+        'projects.github.sync_log',
+        { projectId: privateProjectId, limit: 10 },
+        { actor: asUser(reader), orgId },
+      );
+      expect(logRes.entries.length).toBeGreaterThan(0);
+    }
+
+    // Org admin bypasses private-project visibility (project_visible + actor_bypasses_private_projects) for audit/admin oversight.
+    const adminActor = userActor('non-member admin', () => orgId, () => users.admin);
+    expect(
+      await attemptSql(adminActor, `SELECT id FROM crove_projects.github_project_binding WHERE org_id = $1 AND project_id = $2`, [orgId, privateProjectId]),
+    ).toEqual({ ok: true, rowCount: 1 });
+    expect(
+      await attemptSql(adminActor, `SELECT * FROM crove_projects.github_sync_delivery_list($1::uuid, 10)`, [privateProjectId]),
+    ).toEqual({ ok: true, rowCount: 1 });
+    expect(
+      await attemptSql(adminActor, `SELECT * FROM crove_projects.github_webhook_hook_status($1::uuid)`, [conn.connectionId]),
+    ).toEqual({ ok: true, rowCount: 1 });
+
+    // Non-project actors (member + viewer + non-member Vy + non-member MCP + unassigned agent) cannot see or mutate any github_* rows.
+    const nonProjectActors = [
+      userActor('non-member member', () => orgId, () => users.nonMemberMember),
+      userActor('non-member viewer', () => orgId, () => users.nonMemberViewer),
+      vyActor('Vy non-member', () => vyNonMember),
+      mcpActor('MCP non-member', () => mcpNonMemberGrantId),
+      orgAgentActor('unassigned agent', () => unassignedAgent),
+    ];
+    for (const actor of nonProjectActors) {
+      expect(
+        await attemptSql(actor, `SELECT id FROM crove_projects.github_project_binding WHERE org_id = $1 AND project_id = $2`, [orgId, privateProjectId]),
+      ).toEqual({ ok: true, rowCount: 0 });
+      expect(
+        await attemptSql(actor, `SELECT id FROM crove_projects.github_project_repo WHERE org_id = $1 AND project_id = $2`, [orgId, privateProjectId]),
+      ).toEqual({ ok: true, rowCount: 0 });
+      expect(
+        await attemptSql(actor, `SELECT id FROM crove_projects.github_task_link WHERE org_id = $1 AND project_id = $2`, [orgId, privateProjectId]),
+      ).toEqual({ ok: true, rowCount: 0 });
+      expect(
+        await attemptSql(actor, `SELECT * FROM crove_projects.github_sync_delivery_list($1::uuid, 10)`, [privateProjectId]),
+      ).toEqual({ ok: true, rowCount: 0 });
+      expect(
+        await attemptSql(actor, `SELECT * FROM crove_projects.github_webhook_hook_status($1::uuid)`, [conn.connectionId]),
+      ).toMatchObject({ ok: false, code: '42501' });
+
+      const insLink = await attemptSql(
+        actor,
+        `INSERT INTO crove_projects.github_task_link (org_id, project_id, task_id, repo_full_name, kind, external_number, external_url, external_title, external_state, link_source)
+         VALUES ($1, $2, $3, 'acme/private-repo', 'issue', 99, 'https://github.com/acme/private-repo/issues/99', 'Injected', 'open', 'manual')`,
+        [orgId, privateProjectId, privateTaskId],
+      );
+      expect(insLink).toMatchObject({ ok: false, code: '42501' });
+      expect(
+        await attemptSql(actor, `DELETE FROM crove_projects.github_task_link WHERE org_id = $1 AND id = $2`, [orgId, added.link.id]),
+      ).toEqual({ ok: true, rowCount: 0 });
+    }
+
+    for (const uid of [users.nonMemberMember, users.nonMemberViewer]) {
+      await expect(
+        appRt.query('projects.github.task_links', { projectId: privateProjectId, taskId: privateTaskId }, { actor: asUser(uid), orgId }),
+      ).rejects.toThrow();
+      await expect(
+        appRt.query('projects.github.sync_log', { projectId: privateProjectId, limit: 10 }, { actor: asUser(uid), orgId }),
+      ).rejects.toThrow();
+    }
+
+    // Even invited project members/viewers can read hook status for their visible project, yet cannot execute SQL hook_set (owner/admin only).
+    for (const uid of [users.invitedMember, users.invitedViewer]) {
+      const invitedActor = userActor(`invited-${uid.slice(0, 6)}`, () => orgId, () => uid);
+      expect(
+        await attemptSql(invitedActor, `SELECT * FROM crove_projects.github_webhook_hook_status($1::uuid)`, [conn.connectionId]),
+      ).toEqual({ ok: true, rowCount: 1 });
+      expect(
+        await attemptSql(invitedActor, `SELECT * FROM crove_projects.github_webhook_hook_set($1::uuid, $2)`, [conn.connectionId, 'a'.repeat(64)]),
+      ).toMatchObject({ ok: false, code: '42501' });
+    }
   });
 });

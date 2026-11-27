@@ -186,17 +186,26 @@ describe('BankFeedsCard for an owner or admin', () => {
 describe('BankFeedsCard for a member or viewer', () => {
   beforeEach(() => client.current.clear());
 
-  it.each<Role>(['member', 'viewer'])('as %s: only reads which accounts are mapped, with nothing to change', (role) => {
-    const html = card(role, { mapped: [account('m1', 'SBX-001', { lastSyncedAt: '2026-10-30T08:00:00.000Z' })] });
+  it.each<Role>(['member', 'viewer'])('as %s: only reads which accounts are mapped, with nothing to change, and sees the cut-over day when set (#4223)', (role) => {
+    const html = card(role, { mapped: [account('m1', 'SBX-001', { lastSyncedAt: '2026-10-30T08:00:00.000Z', feedFrom: '2026-10-15' })] });
     expect(html).toContain(en.bankFeeds.readOnlyIntro);
     expect(html).toContain('Ngân hàng thử');
     // The provider's account number is for those who map it.
     expect(html).not.toContain('SBX-001');
     expect(html).toContain('Goes to bank account 1121');
+    expect(html).toContain('The feed supplies lines from');
     expect(html).not.toContain('<form');
     expect(html).not.toContain('<button');
     expect(html).not.toContain('<select');
     expect(html).not.toContain(en.bankFeeds.connectTitle);
+
+    const viHtml = card(role, { locale: 'vi', mapped: [account('m1', 'SBX-001', { feedFrom: '2026-10-15' })] });
+    expect(viHtml).toContain('Nguồn tự động lấy giao dịch từ ngày');
+    expect(viHtml).toContain('15/10/2026');
+
+    const withoutCutover = card(role, { mapped: [account('m1', 'SBX-001', { feedFrom: null, connectionStatus: 'expired' })] });
+    expect(withoutCutover).not.toContain('The feed supplies lines from');
+    expect(withoutCutover).toContain(`>${en.bankFeeds.status.expired}<`);
   });
 
   it.each<Role>(['member', 'viewer'])('as %s: draws nothing when no account is mapped', (role) => {

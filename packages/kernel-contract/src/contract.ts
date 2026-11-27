@@ -5,6 +5,7 @@ import { zSpeakingStyle, zSpeakingStyleInput } from './meeting-speaking-style.ts
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
 import { zSalesInsightAnswer, zSalesInsightStatus } from './meeting-sales-insight.ts';
 import { zCatchUpAnswer, zCatchUpStatus } from './meeting-catch-up.ts';
+import { zNotesMinutesAnswer, zNotesMinutesStatus } from './meeting-notes-minutes.ts';
 import { ORG_KINDS } from './apps.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
@@ -224,6 +225,7 @@ import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
 import { zCashForecast, zCashForecastExplanation, zFinanceCashForecastExplainAsk, zFinanceCashForecastInput } from './finance-cash-forecast.ts';
+import { zAskBooksAnswer, zFinanceAskBooksInput } from './finance-ask-books.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
 import { zFinanceHomeMoney, zFinanceHomeMoneyInput } from './finance-home-money.ts';
 import { zFinanceMonthCloseExplainAsk, zFinanceMonthCloseInput, zMonthClose, zMonthCloseNote } from './finance-month-close.ts';
@@ -914,6 +916,32 @@ import {
   zProjectTriageReopenInput,
   zProjectTriageSnoozeInput,
 } from './projects-triage.ts';
+import {
+  zGithubAppOAuthStartRpcInput,
+  zGithubAppOAuthStartRpcResult,
+  zGithubBindingGetInput,
+  zGithubBindingGetResult,
+  zGithubBindingSaveInput,
+  zGithubBindingSaveResult,
+  zGithubConnectAppRpcInput,
+  zGithubConnectAppRpcResult,
+  zGithubConnectPatRpcInput,
+  zGithubConnectPatRpcResult,
+  zGithubListAvailableReposRpcInput,
+  zGithubListAvailableReposRpcResult,
+  zGithubProjectBindingView,
+  zGithubRepoBindInput,
+  zGithubRepoUnbindInput,
+  zGithubRotatePatHookRpcInput,
+  zGithubRotatePatHookRpcResult,
+  zGithubSyncLogQueryInput,
+  zGithubSyncLogQueryResult,
+  zGithubTaskLinkAddRpcInput,
+  zGithubTaskLinkAddRpcResult,
+  zGithubTaskLinkRemoveInput,
+  zGithubTaskLinksQueryInput,
+  zGithubTaskLinksQueryResult,
+} from './projects-github.ts';
 import { zDealUpdateAnswer, zDealUpdateAsk, zDealUpdateConfirmCall, zDealUpdateConfirmed, zDealUpdateStatus } from './meeting-deal-update.ts';
 import { zFollowupDraft, zFollowupDraftAsk, zFollowupNoteAnswer, zFollowupNoteAsk, zFollowupNoteStatus, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
@@ -2032,6 +2060,11 @@ export const contract = {
     catchUp: {
       status: oc.input(zMeetingRef).output(zCatchUpStatus),
       write: oc.input(zMeetingRef).output(zCatchUpAnswer),
+    },
+    // Draft minutes from typed notes for an unrecorded meeting (#5129, L32): only the recorder, only when zero transcript segments exist, and only returns a cited draft proposal without applying or publishing automatically.
+    notesMinutes: {
+      status: oc.input(zMeetingRef).output(zNotesMinutesStatus),
+      write: oc.input(zMeetingRef).output(zNotesMinutesAnswer),
     },
     // Sales call insights for a meeting linked to an open deal (#4920, L26): `status` feeds the button (recorder + linked open deal + transcript), `analyze` runs the recorder's own Vy once to extract
     // customer concerns, buying signals and agreed next steps citing existing transcript line IDs, plus code-computed customer talk-time share from mapped speakers. Results stay tainted and ephemeral.
@@ -3643,6 +3676,10 @@ export const contract = {
     get: oc.input(zFinanceCashForecastInput).output(zCashForecast),
     explain: oc.input(zFinanceCashForecastExplainAsk).output(zCashForecastExplanation),
   },
+  // "Ask the books in plain words" (#5181): a question typed in words, or a report picked on the card; the answer is a card with every figure from an existing read, run as the asking member.
+  financeAskBooks: {
+    ask: oc.input(zFinanceAskBooksInput).output(zAskBooksAnswer),
+  },
   financeOverview: {
     get: oc.input(zFinanceOverviewInput).output(zFinanceOverview),
     explain: oc.input(zFinanceOverviewExplainAsk).output(zOverviewExplanation),
@@ -4206,6 +4243,29 @@ export const contract = {
         .input(zProjectTriageReopenInput.extend({ idempotencyKey: zId }))
         .output(zProjectTriageMutateResult),
       assist: oc.input(zProjectTriageAssistInput).output(zProjectTriageAssistResult),
+    },
+    github: {
+      bindingGet: oc.input(zGithubBindingGetInput).output(zGithubBindingGetResult),
+      bindingSave: oc
+        .input(zGithubBindingSaveInput.extend({ idempotencyKey: zId }))
+        .output(zGithubBindingSaveResult),
+      connectPat: oc.input(zGithubConnectPatRpcInput).output(zGithubConnectPatRpcResult),
+      appOAuthStart: oc.input(zGithubAppOAuthStartRpcInput).output(zGithubAppOAuthStartRpcResult),
+      connectApp: oc.input(zGithubConnectAppRpcInput).output(zGithubConnectAppRpcResult),
+      rotatePatHook: oc.input(zGithubRotatePatHookRpcInput).output(zGithubRotatePatHookRpcResult),
+      listAvailableRepos: oc.input(zGithubListAvailableReposRpcInput).output(zGithubListAvailableReposRpcResult),
+      repoBind: oc
+        .input(zGithubRepoBindInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ binding: zGithubProjectBindingView })),
+      repoUnbind: oc
+        .input(zGithubRepoUnbindInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ binding: zGithubProjectBindingView })),
+      taskLinks: oc.input(zGithubTaskLinksQueryInput).output(zGithubTaskLinksQueryResult),
+      taskLinkAdd: oc.input(zGithubTaskLinkAddRpcInput).output(zGithubTaskLinkAddRpcResult),
+      taskLinkRemove: oc
+        .input(zGithubTaskLinkRemoveInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ removed: z.boolean() })),
+      syncLog: oc.input(zGithubSyncLogQueryInput).output(zGithubSyncLogQueryResult),
     },
   },
   // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via LUDY_MODULES and org_app_on.

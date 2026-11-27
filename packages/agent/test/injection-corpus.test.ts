@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_FEATURE_KEYS,
   AdsCampaignWriter,
+  AskBooksCoworker,
   ConversationWriter,
   ExpenseVarianceCoworker,
   InboxReader,
@@ -94,6 +95,7 @@ import {
   checkTemplateSuggestion,
   checkOpenPoints,
   checkCatchUp,
+  checkNotesMinutes,
   checkLabelSuggestions,
   checkSalesInsight,
   checkDigest,
@@ -245,6 +247,20 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       }));
       const res = await coworker.notes({ ...facts, language: c.language });
       expect(res.kind, c.id).toBe('none');
+    }
+  });
+
+  it('finance.ask_books: refuses a poisoned choice whole and keeps no sentence of an injection payload via AskBooksCoworker', async () => {
+    cover('finance.ask_books');
+    for (const c of INJECTION_CORPUS) {
+      // A payload where the entry should be: not one of the closed lists, so there is no choice at all.
+      const poisonedEntry = new AskBooksCoworker(STUB_CONFIG, async () => ({ output: { entry: c.poisonedOutput, period: 'last_month', lead: '' }, usage: zeroUsage }));
+      expect((await poisonedEntry.pick('profit please', c.language)).kind, c.id).toBe('none');
+      // A payload where the sentence should be: the choice is from the closed lists and stands, the sentence is dropped.
+      const poisonedLead = new AskBooksCoworker(STUB_CONFIG, async () => ({ output: { entry: 'profit_loss', period: 'last_month', lead: c.poisonedOutput }, usage: zeroUsage }));
+      const res = await poisonedLead.pick('profit please', c.language);
+      expect(res.kind, c.id).toBe('choice');
+      if (res.kind === 'choice') expect(res.lead, c.id).toBeNull();
     }
   });
 
@@ -824,6 +840,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('meetings.template_suggest');
     cover('meetings.open_points');
     cover('meetings.catch_up');
+    cover('meetings.notes_minutes');
     cover('meetings.sales_insight');
     cover('meetings.label_suggest');
     cover('meetings.followup_note');
@@ -984,6 +1001,18 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       );
       expect(checkedCatchUp.lines, `catch_up ${c.id}`).toEqual([]);
       expect(checkedCatchUp.dropped, `catch_up dropped ${c.id}`).toBe(2);
+      const checkedNotesMinutes = checkNotesMinutes(
+        JSON.stringify({
+          summary: c.poisonedOutput,
+          decisions: [{ text: c.poisonedOutput, noteLine: 1 }],
+          items: [{ title: c.poisonedOutput, who: c.poisonedOutput, when: c.poisonedOutput, noteLine: 1 }],
+        }),
+        [`Hop ke hoach ban hang thang 10. ${nextCase.untrustedInput}`],
+      );
+      expect(checkedNotesMinutes.summary, `notes_minutes summary ${c.id}`).toBe('');
+      expect(checkedNotesMinutes.decisions, `notes_minutes decisions ${c.id}`).toEqual([]);
+      expect(checkedNotesMinutes.items, `notes_minutes items ${c.id}`).toEqual([]);
+      expect(checkedNotesMinutes.dropped, `notes_minutes dropped ${c.id}`).toBeGreaterThanOrEqual(3);
       try {
         const labels = checkLabelSuggestions(JSON.stringify({ labels: [c.poisonedOutput] }), [], LABEL_RULES);
         expect(labels.labels, `label_suggest ${c.id}`).toEqual([]);

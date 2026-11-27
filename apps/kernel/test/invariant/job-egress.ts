@@ -56,6 +56,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   extractor: ['provider:ai'],
   // The speech to text endpoint of packages/agent (#2578, M4b): the recorder's audio goes to the provider the deployment names, in the recorder's own Vy run.
   meetingsTranscribe: ['provider:ai'],
+  // Daily Vy meeting brief writer (ADR-0049 amendment, #5073 Step 2b-2): invokes writeBrief over member-scoped facts
+  // through the deployment's AI endpoint, bound in kernel.ts via member-vy-ports.ts.
+  meetingsBriefWriter: ['provider:ai'],
   // The audio extraction of a video-only meeting platform recording (C2a, #3306): the import job streams the video into crove-media, a service of the stack itself (its network has no route out), which returns
   // mono Opus. The job's call to the platform still goes through guardedStream; this field reaches only crove-media, so it classifies as nothing. Classified before the field exists (step 0, the PENDING_DEPS pattern).
   meetingsImportExtractor: [],
@@ -159,7 +162,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
 // directory runs from the base branch on a protected-path PR, so a new field lands in two steps (#1663): its
 // classification here first, which passes both the PR's own copy and the base one, then the field in a later PR, whose
 // base copy already knows it. Remove the entry once the field is on the base branch.
-export const PENDING_DEPS: Readonly<Record<string, string>> = {};
+export const PENDING_DEPS: Readonly<Record<string, string>> = {
+  meetingsBriefWriter: '#5073',
+};
 
 // What the classification of WorkerDeps gets wrong (#1663), given its top-level fields: a field DEPS_REACH does not
 // classify fails (the safety direction: a new dependency is classified before it is used), and so does an entry for a

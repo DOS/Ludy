@@ -64,7 +64,8 @@ export type PersonalDataHandling = (typeof PERSONAL_DATA_HANDLINGS)[number];
 // among which a value may be written (a note's body, an activity line, a comment, a description; #1678, #1948), matched
 // by freeTextMatch below.
 // account_number: a bank account number kept as its digits (6 to 20), compared with a searched code of digits (#2402).
-export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'account_number', 'other'] as const;
+// national_id: a person's national ID (CCCD, 12 digits) matched by digits (#3682); ASCII letters stay significant so alphanumeric IDs (passports) do not match digit probes.
+export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'account_number', 'national_id', 'other'] as const;
 export type PersonalDataKind = (typeof PERSONAL_DATA_KINDS)[number];
 
 // The handlings of personal data held in the org's own tables: what the finder reports and an erasure reads.
@@ -252,7 +253,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'ludy_finance.einvoice_draft.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'ludy_finance.einvoice_draft.buyer_name': { kind: 'name', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'ludy_finance.einvoice_draft.buyer_address': { kind: 'address', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
-  'ludy_finance.einvoice_draft.buyer_identity': { kind: 'other', handling: 'keep_legal', reason: "The CCCD, passport number or budget-relation unit code an individual buyer gave on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)" },
+  'ludy_finance.einvoice_draft.buyer_identity': { kind: 'national_id', handling: 'keep_legal', reason: "The CCCD, passport number or budget-relation unit code an individual buyer gave on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)" },
   'ludy_finance.einvoice_draft.buyer_nationality': { kind: 'other', handling: 'keep_legal', reason: "The nationality a foreign buyer gave with a passport on a sales e-invoice draft (Decree 254 Appendix point 4.b, #3709), which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41); it is classified with the identity it belongs to" },
   'ludy_finance.einvoice_draft.buyer_email': { kind: 'email', handling: 'keep_legal', reason: 'Where the buyer asked for the invoice on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   // A sent quote (#2694): the buyer as the customer's contact was when the quote was sent. The quote is frozen once sent (a guard trigger), so the erase command cannot change it;
@@ -463,6 +464,15 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'free_text',
     handling: 'erase',
     reason: "A draft of what was said in a meeting being recorded, which may name or describe a person: read by its recorder alone, replaced by the transcript after the meeting, deleted with the meeting (its recorder, an owner, or the retention job), 30 days after it was made, and 30 days after its recorder was removed (the former-member purge of their Vy data)",
+  },
+  // Short-lived Vy daily briefing prep lines (#5080, ADR-0049): held privately for the opted-in member for at most 36 hours.
+  // No finder reads them; counts per org are reported via morning_brief_lines_counts(), matching rows are erased via
+  // morning_brief_lines_erase() and personal_erase(), and rows cascade with meeting deletion, member removal, retention purge, and org purge.
+  'ludy_meetings.morning_brief_lines.lines': {
+    kind: 'free_text',
+    handling: 'erase',
+    privateRows: 'always',
+    reason: 'Short-lived Vy daily briefing prep lines of each member (auto-expire within 36 hours): held privately for that member, deleted on meeting delete, member removal, retention purge, archive shred, org purge, or personal-data erasure',
   },
   // The machine translation of a meeting's summary (meetings integrations E1, issue #3184): a member's own Vy's translation of the summary, its decisions and its item titles, private to the
   // member who asked. No finder, owner or admin reads it; it goes with the meeting, with the summary it translated, and an erasure that touches the meeting DROPS it (never redacts it:
@@ -742,6 +752,46 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'free_text',
     handling: 'erase',
     reason: 'A project triage item decline reason written by a member, which may name a person: mentions are replaced with a redaction marker',
+  },
+  // Projects GitHub integration (#5158, ADR-0060): repository slugs are org operational configuration, whereas
+  // external GitHub titles/authors and buffered PAT notices may quote a person and erase when matched.
+  'ludy_projects.github_project_repo.repo_full_name': {
+    kind: 'other',
+    handling: 'not_personal',
+    reason: 'Bound GitHub repository slug (owner/repo) configured for project sync, not a personal-data record',
+  },
+  'ludy_projects.github_task_link.repo_full_name': {
+    kind: 'other',
+    handling: 'not_personal',
+    reason: 'Bound GitHub repository slug (owner/repo) on a linked issue or pull request, not a personal-data record',
+  },
+  'ludy_projects.github_sync_delivery.repo_full_name': {
+    kind: 'other',
+    handling: 'not_personal',
+    machinery: true,
+    reason: 'Definer-only delivery ledger repository slug (owner/repo), not a personal-data record',
+  },
+  'ludy_projects.github_task_link.external_title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Linked GitHub issue or pull request title, which may quote a person: mentions are replaced with a redaction marker',
+  },
+  'ludy_projects.github_task_link.author_login': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'External GitHub handle on a linked issue or pull request; cleared to NULL when matched by an erasure probe',
+  },
+  'ludy_projects.github_webhook_notice.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    machinery: true,
+    reason: 'Transient raw PAT GitHub webhook body deleted on claim and 10m sweep; deleted on erasure via ludy_projects.personal_data_erase_github_notice',
+  },
+  'ludy_projects.github_webhook_pending.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    machinery: true,
+    reason: 'Transient orgless GitHub App webhook payload deleted on worker claim and within 10 minutes by github_webhook_sweep',
   },
   // eSign (#3323, #3427): unsealed signers (draft, voided, expired, or declined with sealed_file_id IS NULL) are removed on erasure; active, completed, and sealed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
   'ludy_sign.signer.name': {
@@ -1037,6 +1087,7 @@ function columnMatch(kind: PersonalDataKind, probe: Probe, column: RawBuilder<un
   }
   const digits = sql`pg_catalog.regexp_replace(${column}, '[^0-9]', '', 'g')`;
   if (kind === 'tax_code' || kind === 'account_number') return sql<boolean>`${digits} = ${probe.digits}`;
+  if (kind === 'national_id') return sql<boolean>`pg_catalog.regexp_replace(${column}, '[^0-9A-Za-z]', '', 'g') = ${probe.digits}`;
   if (kind === 'phone') {
     const local = probe.digits.startsWith('84') ? `0${probe.digits.slice(2)}` : probe.digits;
     const international = local.startsWith('0') ? `84${local.slice(1)}` : local;
@@ -1489,6 +1540,8 @@ export const MEMBER_TRANSLATION_REASON =
   "Machine translations of meetings (the row count is all of the organization's, not this person's) are held privately for the member who asked and cannot be read here; they go with their meeting, and 30 days after that member is removed";
 export const MEMBER_LIVE_LINE_REASON =
   "Live preview lines of meetings being recorded or not yet transcribed (the row count is all of the organization's, not this person's) are held privately for the recorder and cannot be read here; they are replaced by the transcript, expire 30 days after they were made, go with their meeting, and go 30 days after their recorder is removed";
+export const MEMBER_BRIEF_LINES_REASON =
+  "Short-lived Vy daily briefing prep lines (the row count is all of the organization's, not this person's) are held privately for the opted-in member and cannot be read here; matching lines were erased, and remaining lines auto-expire within 36 hours, go with their meeting, and go when that member is removed";
 export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[], hidden: number): string {
   const first = [...dates].sort()[0];
   const word = kind === 'audio' ? 'The audio' : 'The video';
@@ -1533,6 +1586,8 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'ludy_projects.project_triage_item.title',
   'ludy_projects.project_triage_item.description',
   'ludy_projects.project_triage_item.decline_reason',
+  'ludy_projects.github_task_link.external_title',
+  'ludy_projects.github_task_link.author_login',
   'ludy_hr.candidate.notes',
 ]);
 // The meeting text columns the redaction of ludy_meetings.personal_erase would change, left as they are for a short number (#3064).
@@ -1968,6 +2023,11 @@ export const personalDataErase = defineCommand({
       SELECT ludy_finance.personal_data_erase_marketplace_hook_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
     add('ludy_finance.marketplace_hook_notice.body', Number(marketplaceNotices[0]?.rows ?? 0));
 
+    // Transient raw GitHub webhook notice waiting for worker claim (#5158): deleted when its text mentions the value.
+    const { rows: githubNotices } = await sql<{ rows: number }>`
+      SELECT ludy_projects.personal_data_erase_github_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+    add('ludy_projects.github_webhook_notice.body', Number(githubNotices[0]?.rows ?? 0));
+
     // Sender-side KYC attachment checks (#4443, PDPL Law 91/2025/QH15; summary counts #4510): delete any
     // kyc_check row in the org whose findings_json quotes the value (including 8/9-digit legacy CMND numbers
     // and rows on attendees-only meeting_minutes envelopes via the owner-only definer), detach matching unsealed
@@ -2136,6 +2196,17 @@ export const personalDataErase = defineCommand({
     // A number of fewer than 10 digits may as well be a date or a figure in the text (#3064), and a redaction cannot be undone: the definer is not called, nothing of the meeting text (nor its
     // follow-up mails, nor the retention dates it would have reported) changes, and the rows are counted below, as the activity lines and tasks are (ACTIVITY_REDACT_MIN_DIGITS).
     const shortNumber = probe.kind === 'digits' && probe.digits.length < ACTIVITY_REDACT_MIN_DIGITS;
+    const briefLinesErased = shortNumber
+      ? 0
+      : await meetingScan(ctx.trx, async () =>
+          Number(
+            (
+              await sql<{ erased: string }>`
+                SELECT ludy_meetings.morning_brief_lines_erase(${probe.kind}, ${probeValue(probe)})::text AS erased`.execute(ctx.trx)
+            ).rows[0]?.erased ?? 0,
+          ),
+        );
+    add('ludy_meetings.morning_brief_lines.lines', briefLinesErased ?? 0);
     const redaction = shortNumber
       ? []
       : await meetingScan(ctx.trx, async () =>
@@ -2688,6 +2759,24 @@ export const personalDataErase = defineCommand({
          RETURNING ${freeTextMatch(probe, sql.ref('o.note'))} AS note`.execute(ctx.trx);
       add('ludy_projects.time_entry.note', timeEntries.filter((e) => e.note).length);
 
+      const githubLinkTitle = freeTextMatch(probe, sql.ref('gtl.external_title'));
+      const githubLinkAuthor = freeTextMatch(probe, sql.ref('gtl.author_login'));
+      const { rows: githubLinkRows } = await sql<{ external_title: boolean; author_login: boolean }>`
+        UPDATE ludy_projects.github_task_link gtl
+           SET external_title = CASE WHEN ${githubLinkTitle} THEN COALESCE(
+                 NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('gtl.external_title'), REDACTED_MARK)}, 300)), ''),
+                 ${REDACTED_MARK}
+               ) ELSE gtl.external_title END,
+               author_login = CASE WHEN gtl.author_login IS NOT NULL AND ${githubLinkAuthor} THEN NULL ELSE gtl.author_login END,
+               updated_at = ${ctx.now}
+          FROM ludy_projects.github_task_link o
+         WHERE o.org_id = gtl.org_id AND o.id = gtl.id AND gtl.org_id = ${ctx.orgId}::uuid
+           AND (${githubLinkTitle} OR (gtl.author_login IS NOT NULL AND ${githubLinkAuthor}))
+         RETURNING ${freeTextMatch(probe, sql.ref('o.external_title'))} AS external_title,
+                   (o.author_login IS NOT NULL AND ${freeTextMatch(probe, sql.ref('o.author_login'))}) AS author_login`.execute(ctx.trx);
+      add('ludy_projects.github_task_link.external_title', githubLinkRows.filter((r) => r.external_title).length);
+      add('ludy_projects.github_task_link.author_login', githubLinkRows.filter((r) => r.author_login).length);
+
       // Recruiting candidate notes that quote the person (#3425): replace mentions, bounded to 2000 chars.
       const candidateNotes = freeTextMatch(probe, sql.ref('c.notes'));
       const { rows: candidateNoteRows } = await sql<{ notes: boolean }>`
@@ -2816,6 +2905,10 @@ export const personalDataErase = defineCommand({
     if (vyTranslations > 0) kept.set('ludy_meetings.translation.body', { column: 'ludy_meetings.translation.body', rows: vyTranslations, reason: MEMBER_TRANSLATION_REASON });
     const vyLiveLines = Number(meetingCounts?.live_lines ?? 0);
     if (vyLiveLines > 0) kept.set('ludy_meetings.live_line.text', { column: 'ludy_meetings.live_line.text', rows: vyLiveLines, reason: MEMBER_LIVE_LINE_REASON });
+    const vyBriefLines = Number(
+      (await sql<{ n: string }>`SELECT COALESCE(pg_catalog.sum(brief_lines), 0)::text AS n FROM ludy_meetings.morning_brief_lines_counts()`.execute(ctx.trx)).rows[0]?.n ?? 0,
+    );
+    if (vyBriefLines > 0) kept.set('ludy_meetings.morning_brief_lines.lines', { column: 'ludy_meetings.morning_brief_lines.lines', rows: vyBriefLines, reason: MEMBER_BRIEF_LINES_REASON });
     // Private items no notice named: counted, never listed (the finder's privateItems after the erasure).
     if (untold.notes > 0) kept.set('ludy_notes.note', { column: 'ludy_notes.note', rows: untold.notes, reason: UNTOLD_PRIVATE_REASON });
     if (untold.todos > 0) kept.set('ludy_notes.todo', { column: 'ludy_notes.todo', rows: untold.todos, reason: UNTOLD_PRIVATE_REASON });

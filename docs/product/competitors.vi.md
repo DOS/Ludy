@@ -49,7 +49,7 @@ Trạng thái của Ludy: **đã có** (trên nhánh main), **đang xây** (có 
 | Đơn tạo ngay trong chat, nối đơn vị vận chuyển, nhắn hàng loạt cho khách | Chưa có | Pancake (mạnh nhất) |
 | Landing page, website bán hàng | Chưa có | Pancake (Webcake), HubSpot, Odoo |
 | Chatbot AI trả lời khách không cần người | Chưa có (và đang trái quy tắc người duyệt mọi tin nhắn gửi đi) | Pancake (Botcake), HubSpot |
-| Ký điện tử | Mới lên kế hoạch | MISA, Base, Odoo |
+| Ký điện tử | Đã chạy đến Giai đoạn 6d (CA công cộng chờ #62; xem [esign-competitors-and-ai-2026.vi.md](../research/esign-competitors-and-ai-2026.vi.md)) | MISA AMIS WeSign/eSign, Base, Odoo |
 | Mua hàng, sản xuất, POS, tuyển dụng, OKR, chat nội bộ | Chưa có | MISA, Base, Odoo, Pancake (POS, chat nội bộ) |
 | Mã nguồn mở, tự cài | Đã có | Chỉ Odoo Community |
 | AI nằm trong từng quy trình, con người duyệt, có hạn mức chi tiêu AI | Đã có phần lớn (Vy, Ly, Dy, Uy) | HubSpot (có AI nhưng tính tiền theo credits), MISA (AVA, OneAI), Pancake (Botcake) |
@@ -87,7 +87,7 @@ Trạng thái của Ludy: **đã có** (trên nhánh main), **đang xây** (có 
 | POS bán tại quầy và nhà hàng | Khác với đơn online: quầy thu tiền, biên lai, ca làm. MISA, Odoo, Pancake đã chiếm | Thấp |
 | Sản xuất, bảo trì, đội xe | Thiên về doanh nghiệp lớn, ngoài cổng sàng lọc | Thấp |
 | Sổ sách hợp tác xã | Thị trường hẹp | Thấp |
-| Chữ ký số (CA), nộp thuế trực tiếp, kiểm toán, vay vốn | Cần giấy phép hoặc hợp đồng đối tác; ký điện tử đã có kế hoạch | Thấp |
+| Chữ ký số (CA), nộp thuế trực tiếp, kiểm toán, vay vốn | Cần giấy phép hoặc hợp đồng đối tác; Ludy eSign đã chạy đến 6d trên dev/main (bật CA thật chờ #62) | Thấp |
 | Gói theo ngành | Để sau khi các app lõi chạy | Thấp |
 | Chợ ứng dụng và API công khai | Cần khi có đối tác muốn tích hợp; máy chủ OAuth mới ở mức đề xuất | Thấp |
 | Công cụ tự dựng AI hoặc ứng dụng | Không dành cho OPC; các trợ lý có tên mới là sản phẩm | Thấp |

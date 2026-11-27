@@ -168,8 +168,7 @@ const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'finance-misa-amis-push handler': '#3902',
   // The weekly meetings notice sweep (#4967, step 0 of 2): the site and its command land in the table's own PR, which removes this entry.
   'meetings-weekly handler': '#4967',
-  // Projects GitHub integration (#5157 Step 0 of 2): send sites and projects.github.binding.save land in #5158 (webhook) and #5159 (sweep), which remove these entries.
-  'projects-github-webhook handler': '#5158',
+  // Projects GitHub integration (#5157 Step 0 of 2): webhook handler landed in #5158; sweep handler remains pending until #5159.
   'projects-github-sweep handler': '#5159',
 };
 
