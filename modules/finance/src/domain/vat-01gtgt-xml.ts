@@ -150,16 +150,35 @@ function periodElements(period: VatPeriod): XmlElement[] {
   ];
 }
 
+export const VAT_01_DECLARATION_KINDS = ['C', 'B'] as const;
+export type Vat01DeclarationKind = (typeof VAT_01_DECLARATION_KINDS)[number];
+
 export interface Vat01Options extends Vat01Values {
   // The day the file is made, YYYY-MM-DD (Vietnam time, @ludy/kernel-contract vietnamToday); it is the return's date
   // and the signing date.
   today: string;
+  // C: a first return for the period (default); B: a supplementary return (khai bổ sung, #3541).
+  declarationKind?: Vat01DeclarationKind;
+  // Sequence number (soLan): 'C' forces 0; 'B' requires a positive integer >= 1 (default 1).
+  supplementaryCount?: number;
 }
 
 /** The 01/GTGT return of `input.period` for `taxpayer`, as the UTF-8 XML text HTKK reads. */
 export function buildForm01Xml(input: Vat01Input, taxpayer: Vat01Taxpayer, options: Vat01Options): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(options.today)) throw new Error(`not a date: ${JSON.stringify(options.today)}`);
   if (!/^(\d{10}(-\d{3})?|\d{12})$/.test(taxpayer.taxCode)) throw new Error('the taxpayer has no valid tax code');
+  const declarationKind: Vat01DeclarationKind = options.declarationKind ?? 'C';
+  if (declarationKind !== 'C' && declarationKind !== 'B') {
+    throw new Error(`unsupported declaration kind: ${String(declarationKind)}`);
+  }
+  let soLan = '0';
+  if (declarationKind === 'B') {
+    const count = options.supplementaryCount ?? 1;
+    if (!Number.isSafeInteger(count) || count < 1) {
+      throw new Error(`supplementaryCount must be a positive integer: ${String(options.supplementaryCount)}`);
+    }
+    soLan = String(count);
+  }
   const ct = form01XmlValues(input.indicators, options);
   const c = (code: Form01Code) => el(`ct${code}`, ct[code]);
   const empty = (...names: string[]) => names.map((name) => el(name, ''));
@@ -177,9 +196,10 @@ export function buildForm01Xml(input: Vat01Input, taxpayer: Vat01Taxpayer, optio
         el('tenTKhai', f.formName),
         el('moTaBMau', f.formBasis),
         el('pbanTKhaiXML', f.xmlVersion),
-        // C: a first return for the period (B would be a supplementary one).
-        el('loaiTKhai', 'C'),
-        el('soLan', '0'),
+        // C: a first return for the period; B: a supplementary return (khai bổ sung, #3541). PLuc (PL01_KHBS /
+        // PL01_1_KHBS) is omitted (minOccurs="0" in KHBS_01_GTGT_TT80_283.xsd) until live HTKK / maGiaoDich capture.
+        el('loaiTKhai', declarationKind),
+        el('soLan', soLan),
         el('KyKKhaiThue', periodElements(input.period)),
         ...empty('maCQTNoiNop', 'tenCQTNoiNop'),
         el('ngayLapTKhai', options.today),

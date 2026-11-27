@@ -893,6 +893,8 @@ export const KERNEL_ERROR_CODES = [
   'MONTH_NOT_ENDED',
   // Marking an entry as reviewed on the unusual entries card needs the entry to be a hit of that month (#5182).
   'NOT_A_HIT',
+  // The quarter card sums only a quarter that has ended (#5183).
+  'QUARTER_NOT_ENDED',
   'LEGAL_ENTITY_MISMATCH',
   'LEGAL_ENTITY_MOVE_REFUSED',
   // A VND invoice with an amount below one dong that was not rounded to the dong (#1308, #2235).

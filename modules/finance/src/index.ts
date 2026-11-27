@@ -46,6 +46,7 @@ import { financeHomeMoneyQuery } from './home-money.ts';
 import { financeMonthCloseQuery } from './month-close.ts';
 import { financeExpenseVarianceQuery } from './expense-variance.ts';
 import { financeUnusualEntriesQuery, unusualEntriesReview } from './unusual-entries.ts';
+import { financeQuarterSummaryQuery } from './quarter-summary.ts';
 import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoice-connections.ts';
 import { marketplaceColumnsCommands, marketplaceColumnsQueries } from './marketplace-columns.ts';
 import { marketplaceConnectionCommands, marketplaceConnectionQueries } from './marketplace-connections.ts';
@@ -226,7 +227,7 @@ export { foldVietnamese, portalStatus } from './domain/portal-status.ts';
 export { buildJournalWorkbook } from './export.ts';
 export { buildSupplierPaymentBankFileWorkbook } from './supplier-payment-bank-file-xlsx.ts';
 export { buildVatWorkbook, VAT_RATE_LABELS, VAT_WARNING_LABELS } from './vat-export.ts';
-export { buildVat01Xml, xmlCarryForward, type XmlCarryForwardSource } from './vat-xml.ts';
+export { buildVat01Xml, xmlCarryForward, type Vat01XmlOptions, type XmlCarryForwardSource } from './vat-xml.ts';
 export { buildLedgerWorkbook } from './ledger-export.ts';
 export { buildStatementsWorkbook } from './statements-export.ts';
 export { buildStatementsHtkkXml, type StatementsFiling } from './statements-htkk.ts';
@@ -344,6 +345,7 @@ export const financeQueries = [
   financeMonthCloseQuery,
   financeExpenseVarianceQuery,
   financeUnusualEntriesQuery,
+  financeQuarterSummaryQuery,
   openingBalancePreview,
   vouchersList,
   cashVouchers,

@@ -39,6 +39,8 @@ export {
 export * from './unusual-entries.ts';
 export * from './unusual-entries-coworker.ts';
 export * from './expense-variance-coworker.ts';
+export * from './quarter-summary.ts';
+export * from './quarter-summary-coworker.ts';
 export * from './ask-books.ts';
 export * from './ask-books-coworker.ts';
 export * from './vat-late.ts';

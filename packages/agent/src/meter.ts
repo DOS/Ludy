@@ -49,6 +49,8 @@ export const AI_FEATURES = {
   'finance.expense_variance_note': 'finance',
   // The finance coworker's possible thing to look at per hit of the monthly review of unusual posted entries (#5182): code found the entries by five deterministic rules and computed every figure; the model is told fixed labels only (no figure, date, account code, voucher number or name) and its note is refused when it states a number, a date or a name, says the entry is wrong, advises or is not marked as a possibility.
   'finance.unusual_entries_note': 'finance',
+  // The finance coworker's sentences on the quarter card (#5183): code computed every figure and how each moved; the model is told only fixed row names and movement labels (rose, fell, steady, first time, none), never a figure, a date, a code or a name, and a sentence is dropped when it states any of those, a cause, a promise or advice. A read; a person decides.
+  'finance.quarter_summary_note': 'finance',
   // The accounting coworker's note on the 30/60/90-day cash forecast (#4391): written from the figures and dates code computed, in words only (it states no figure and no date, the card carries them), and refused
   // when it holds a digit, a link, advice about money or a promise.
   'finance.cash_forecast_explain': 'finance',

@@ -10,6 +10,7 @@ import {
   UnusualEntriesCoworker,
   InboxReader,
   PayrollCoworker,
+  QuarterSummaryCoworker,
   SchedulingReader,
   SignAcceptanceReader,
   SignAiReader,
@@ -414,6 +415,16 @@ function createStubRuntime() {
     })),
     unusualEntries: new UnusualEntriesCoworker(STUB_CONFIG, async () => ({
       output: { notes: [{ row: 1, text: 'Co the khoan mua nay lon hon muc thuong cua mot nha cung cap.' }] },
+      usage: zeroUsage,
+    })),
+    quarterSummary: new QuarterSummaryCoworker(STUB_CONFIG, async () => ({
+      output: {
+        notes: [
+          { row: 1, text: 'Sales revenue rose against the previous quarter and the same quarter last year.' },
+          { row: 2, text: 'Costs rose against the previous quarter but stayed steady against the same quarter last year.' },
+          { row: 3, text: 'Cash fell against the previous quarter and the same quarter last year.' },
+        ],
+      },
       usage: zeroUsage,
     })),
     askBooks: new AskBooksCoworker(STUB_CONFIG, async () => ({

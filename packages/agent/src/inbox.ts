@@ -116,6 +116,8 @@ import { checkVatLateSentence, vatLateInstructions, vatLatePrompt, vatLateQuiet,
 import { checkMonthCloseNote, monthCloseInstructions, monthClosePrompt, monthCloseQuiet, type MonthCloseFacts, type MonthCloseNoteResult } from './month-close.ts';
 import { ExpenseVarianceCoworker } from './expense-variance-coworker.ts';
 import { UnusualEntriesCoworker } from './unusual-entries-coworker.ts';
+import { QuarterSummaryCoworker } from './quarter-summary-coworker.ts';
+import type { QuarterSummaryNoteFacts, QuarterSummaryNotesResult } from './quarter-summary.ts';
 import { AskBooksCoworker } from './ask-books-coworker.ts';
 import type { AskBooksResult } from './ask-books.ts';
 import type { ExpenseVarianceNoteFacts, ExpenseVarianceNotesResult } from './expense-variance.ts';
@@ -478,6 +480,7 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
   private readonly expenseVariance: ExpenseVarianceCoworker;
   private readonly unusualEntries: UnusualEntriesCoworker;
+  private readonly quarterSummary: QuarterSummaryCoworker;
   private readonly askBooks: AskBooksCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
@@ -485,6 +488,7 @@ export class InboxReader {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.expenseVariance = new ExpenseVarianceCoworker(config);
     this.unusualEntries = new UnusualEntriesCoworker(config);
+    this.quarterSummary = new QuarterSummaryCoworker(config);
     this.askBooks = new AskBooksCoworker(config);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
@@ -926,6 +930,12 @@ export class InboxReader {
    * says the entry is wrong, claims certainty, advises or is not marked as a possibility is dropped (unusual-entries.ts). onUsage gets the tokens the call used. */
   unusualEntriesNotes(facts: UnusualEntriesNoteFacts, onUsage?: (usage: AiUsage) => void): Promise<UnusualEntriesNotesResult> {
     return this.unusualEntries.notes(facts, onUsage);
+  }
+
+  /** The finance coworker's sentences on the quarter card (#5183), one per figure row code asked, told fixed row names and movement labels only (no figure, date, code or name); a sentence that states any of those, a
+   * cause, a promise or advice, or says a direction its row does not have, is dropped, and a set below its floor is dropped whole (quarter-summary.ts). onUsage gets the tokens the call used. */
+  quarterSummaryNotes(facts: QuarterSummaryNoteFacts, onUsage?: (usage: AiUsage) => void): Promise<QuarterSummaryNotesResult> {
+    return this.quarterSummary.notes(facts, onUsage);
   }
 
   /** The accounting coworker's choice of one catalogue report and period kind for a question about the books (#5181), from the redacted question only; a choice outside the closed lists is refused whole and a sentence that

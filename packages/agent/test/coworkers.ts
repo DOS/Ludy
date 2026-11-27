@@ -13,6 +13,7 @@ import {
   InboxReader,
   InvoiceExtractor,
   PayrollCoworker,
+  QuarterSummaryCoworker,
   SchedulingReader,
   SignAcceptanceReader,
   SignAiReader,
@@ -52,6 +53,7 @@ import {
   type PayrollFigures,
   type PayrollMatchFacts,
   type PayrollSheet,
+  type QuarterSummaryNoteFacts,
   type PayslipExplainRequest,
   type ProjectCycleSummaryFacts,
   type ProjectTriageAssistFacts,
@@ -132,6 +134,7 @@ export interface CoworkerEvalRuntime {
   scheduling: SchedulingReader;
   expenseVariance: ExpenseVarianceCoworker;
   unusualEntries: UnusualEntriesCoworker;
+  quarterSummary: QuarterSummaryCoworker;
   askBooks: AskBooksCoworker;
   payroll: PayrollCoworker;
   signAi: SignAiReader;
@@ -311,6 +314,7 @@ export function createCoworkerEvalRuntime(
     scheduling: overrides.scheduling ?? new SchedulingReader(config),
     expenseVariance: overrides.expenseVariance ?? new ExpenseVarianceCoworker(config),
     unusualEntries: overrides.unusualEntries ?? new UnusualEntriesCoworker(config),
+    quarterSummary: overrides.quarterSummary ?? new QuarterSummaryCoworker(config),
     askBooks: overrides.askBooks ?? new AskBooksCoworker(config),
     payroll: overrides.payroll ?? new PayrollCoworker(config),
     signAi: overrides.signAi ?? new SignAiReader(config),
@@ -550,6 +554,21 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
   cases.push(
     cleanCase('finance.unusual_entries_note.clean', 'finance.unusual_entries_note', 'vi', (rt) =>
       runCleanChecked(() => unmetered(() => rt.unusualEntries.notes(unusualFacts)), isKindNotNone, 'unusual_entries_note'),
+    ),
+  );
+
+  const quarterFacts: QuarterSummaryNoteFacts = {
+    language: 'en',
+    entity: 'company',
+    rows: [
+      { row: 'revenue', vsPrevious: 'rose', vsLastYear: 'rose', overdue: false },
+      { row: 'costs', vsPrevious: 'rose', vsLastYear: 'steady', overdue: false },
+      { row: 'cash', vsPrevious: 'fell', vsLastYear: 'fell', overdue: false },
+    ],
+  };
+  cases.push(
+    cleanCase('finance.quarter_summary_note.clean', 'finance.quarter_summary_note', 'en', (rt) =>
+      runCleanChecked(() => unmetered(() => rt.quarterSummary.notes(quarterFacts)), isKindNotNone, 'quarter_summary_note'),
     ),
   );
 

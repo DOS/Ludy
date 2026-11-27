@@ -134,6 +134,8 @@ import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainMonthClose, monthCloseAi } from './finance-month-close-ai.ts';
 import { explainExpenseVariance, expenseVarianceAi } from './finance-expense-variance-ai.ts';
 import { explainUnusualEntries, unusualEntriesAi } from './finance-unusual-entries-ai.ts';
+import { explainQuarterSummary, quarterSummaryAi } from './finance-quarter-summary-ai.ts';
+import type { FinanceQuarterSummary } from '@ludy/kernel-contract';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { marketplaceColumnsAi, proposeMarketplaceColumns } from './finance-marketplace-columns-ai.ts';
 import { explainMarketplaceFees, marketplaceFeeNoteAi } from './finance-marketplace-fee-note-ai.ts';
@@ -581,6 +583,8 @@ export function createRpcHandler(
   const financeExpenseVarianceAi = expenseVarianceAi(conversationReader?.expenseVarianceNotes ? { expenseVarianceNotes: conversationReader.expenseVarianceNotes.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's possible thing to look at per hit of the monthly review of unusual entries (#5182): the same reader and model, a budget of its own; told fixed labels only, no figure, date, code or name.
   const financeUnusualEntriesAi = unusualEntriesAi(conversationReader?.unusualEntriesNotes ? { unusualEntriesNotes: conversationReader.unusualEntriesNotes.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's sentences on the quarter card (#5183): the same reader and model, a budget of its own; told fixed row names and movement labels, never a figure, a date, a code or a name.
+  const financeQuarterSummaryAi = quarterSummaryAi(conversationReader?.quarterSummaryNotes ? { quarterSummaryNotes: conversationReader.quarterSummaryNotes.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   // The accounting coworker's one sentence on why a money-in bank line may match a completed eSign deposit request (#4723): non-PII facts only.
@@ -3952,6 +3956,17 @@ export function createRpcHandler(
       ),
       // A person marks one hit as reviewed: an audited, idempotent command that touches no ledger table.
       review: os.financeUnusualEntries.review.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.unusual_entries.review', input, { actor, orgId }))),
+    },
+    financeQuarterSummary: {
+      get: os.financeQuarterSummary.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<FinanceQuarterSummary>('finance.quarter_summary', input, { actor, orgId }))),
+      // The sentences are asked of the model outside any transaction, from the figures the summary read in the member's own one (their legal entities only); code picks the rows and the model is told labels only.
+      explain: os.financeQuarterSummary.explain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const summary = await runtime.query<FinanceQuarterSummary>('finance.quarter_summary', ask, { actor, orgId });
+          return explainQuarterSummary(financeQuarterSummaryAi, orgId, actor.userId, summary, lang ?? 'vi');
+        }),
+      ),
     },
     supplierBank: {
       list: os.supplierBank.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_bank_account.list', input, { actor, orgId }))),
