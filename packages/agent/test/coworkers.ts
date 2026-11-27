@@ -66,6 +66,7 @@ import {
   type RoadmapChangelogDraftFacts,
   type RoadmapDedupeFacts,
   type RoadmapSignalMatchFacts,
+  type ShiftCoverageSuggestInput,
   type SignAcceptanceDraftRequest,
   type StockSurplusFacts,
   type SupplierPayableLineFacts,
@@ -2142,6 +2143,56 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
       { title: 'Kiểm thử luồng đối soát', completed: false },
     ],
   };
+  const shiftCoverageInput: ShiftCoverageSuggestInput = {
+    weekStart: '2026-10-05',
+    weekEnd: '2026-10-11',
+    language: 'vi',
+    conflicts: [
+      {
+        assignmentId: 'assign-1',
+        employeeId: 'emp-1',
+        employeeName: 'Nguyen Van A',
+        departmentId: 'dept-1',
+        departmentName: 'Cửa hàng 1',
+        shiftTemplateId: 'tpl-1',
+        shiftCode: 'CA_SANG',
+        shiftName: 'Ca sáng',
+        workDate: '2026-10-06',
+        kind: 'approved_leave',
+        detail: 'Nguyen Van A có đơn nghỉ phép đã duyệt trong ngày 2026-10-06',
+      },
+    ],
+    gaps: [
+      {
+        date: '2026-10-06',
+        departmentId: 'dept-1',
+        departmentName: 'Cửa hàng 1',
+        shiftCode: 'CA_SANG',
+        shiftName: 'Ca sáng',
+        reason: 'Nghỉ phép đã duyệt',
+        candidates: [
+          {
+            employeeId: 'emp-2',
+            employeeName: 'Tran Thi B',
+            departmentId: 'dept-1',
+            departmentName: 'Cửa hàng 1',
+            weeklyShiftCount: 2,
+            hasAdjacentRestGap: false,
+          },
+        ],
+      },
+    ],
+    eligibleCandidates: [
+      {
+        employeeId: 'emp-2',
+        employeeName: 'Tran Thi B',
+        departmentId: 'dept-1',
+        departmentName: 'Cửa hàng 1',
+        weeklyShiftCount: 2,
+        hasAdjacentRestGap: false,
+      },
+    ],
+  };
   cases.push(
     cleanCase('hr.recruiting_brief.clean', 'hr.recruiting_brief', 'vi', (rt) =>
       runCleanChecked(() => unmetered(() => rt.inbox.recruitingBrief(recruitingInput)), isAiOk, 'hr.recruiting_brief'),
@@ -2257,6 +2308,9 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
           }),
         ),
       ),
+    ),
+    cleanCase('hr.shift_coverage_suggest.clean', 'hr.shift_coverage_suggest', 'vi', (rt) =>
+      runCleanChecked(() => unmetered(() => rt.inbox.shiftCoverageSuggest(shiftCoverageInput)), isAiOk, 'hr.shift_coverage_suggest'),
     ),
   );
 

@@ -33,6 +33,7 @@ import { HrSelfAssetsCard } from '../components/hr-stage6c-panels.tsx';
 import { HrOkrPanel } from '../components/hr-okr-panel.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { HrAttendanceCheckinCard } from '../components/hr-attendance-checkin-card.tsx';
+import { HrSelfShiftsCard } from '../components/hr-self-shifts-card.tsx';
 import { splitBonusAndRetroPay } from '../lib/hr-payslip.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
@@ -399,6 +400,7 @@ export function HrSelfServicePage() {
           </Card>
 
           <HrAttendanceCheckinCard enabled={linked} />
+          <HrSelfShiftsCard enabled={linked} />
 
           <Card className="mb-6 block space-y-4 p-4" data-testid="hr-my-leave-card">
             <div className="flex flex-wrap items-center justify-between gap-2">

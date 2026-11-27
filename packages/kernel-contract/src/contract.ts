@@ -490,6 +490,32 @@ import {
   zHrOkrTreeAsk,
   zHrOkrTreeResult,
 } from './hr-okr.ts';
+import {
+  zHrSelfShiftSwapCancel,
+  zHrSelfShiftSwapSubmit,
+  zHrSelfShiftsList,
+  zHrSelfShiftsResult,
+  zHrShiftAssignmentDelete,
+  zHrShiftAssignmentDeleteResult,
+  zHrShiftAssignmentUpsert,
+  zHrShiftAssignmentView,
+  zHrShiftCoverageAsk,
+  zHrShiftCoverageBrief,
+  zHrShiftRosterGet,
+  zHrShiftRosterResult,
+  zHrShiftSwapDecide,
+  zHrShiftSwapList,
+  zHrShiftSwapListResult,
+  zHrShiftSwapView,
+  zHrShiftTemplateArchive,
+  zHrShiftTemplateCreate,
+  zHrShiftTemplateList,
+  zHrShiftTemplateListResult,
+  zHrShiftTemplateSeedDefaults,
+  zHrShiftTemplateSeedResult,
+  zHrShiftTemplateUpdate,
+  zHrShiftTemplateView,
+} from './hr-shifts.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
   zHrCandidateAdd,
@@ -1618,6 +1644,35 @@ export const contract = {
       policyQa: oc.input(zHrSelfPolicyQaAsk).output(zHrSelfPolicyQaResult),
       assets: {
         list: oc.input(z.strictObject({})).output(z.array(zHrSelfAssetView)),
+      },
+      shifts: {
+        list: oc.input(zHrSelfShiftsList).output(zHrSelfShiftsResult),
+        swapSubmit: oc.input(zHrSelfShiftSwapSubmit).output(zHrShiftSwapView),
+        swapCancel: oc.input(zHrSelfShiftSwapCancel).output(zHrShiftSwapView),
+      },
+    },
+    shifts: {
+      templates: {
+        list: oc.input(zHrShiftTemplateList).output(zHrShiftTemplateListResult),
+        create: oc.input(zHrShiftTemplateCreate).output(zHrShiftTemplateView),
+        update: oc.input(zHrShiftTemplateUpdate).output(zHrShiftTemplateView),
+        archive: oc.input(zHrShiftTemplateArchive).output(zHrShiftTemplateView),
+        seedDefaults: oc.input(zHrShiftTemplateSeedDefaults).output(zHrShiftTemplateSeedResult),
+      },
+      roster: {
+        get: oc.input(zHrShiftRosterGet).output(zHrShiftRosterResult),
+      },
+      assignments: {
+        upsert: oc.input(zHrShiftAssignmentUpsert).output(zHrShiftAssignmentView),
+        delete: oc.input(zHrShiftAssignmentDelete).output(zHrShiftAssignmentDeleteResult),
+      },
+      swaps: {
+        list: oc.input(zHrShiftSwapList).output(zHrShiftSwapListResult),
+        approve: oc.input(zHrShiftSwapDecide).output(zHrShiftSwapView),
+        reject: oc.input(zHrShiftSwapDecide).output(zHrShiftSwapView),
+      },
+      coverage: {
+        suggest: oc.input(zHrShiftCoverageAsk).output(zHrShiftCoverageBrief),
       },
     },
     attendance: {
