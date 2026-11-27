@@ -32,7 +32,7 @@ export const financeManifest = defineModule({
       channel_settlement_line: columns(['org_id', 'id', 'legal_entity_id', 'settlement_id', 'order_id', 'line_key', 'sales', 'seller_discount', 'commission', 'service_fee', 'payment_fee', 'shipping', 'tax_withheld', 'refund', 'other', 'net', 'source_row', 'adjustment', 'created_at']),
       chart: columns(['regime', 'version', 'name']),
       chart_account: columns(['regime', 'version', 'code', 'name', 'parent_code']),
-      collection_setting: columns(['org_id', 'id', 'terms_days', 'weekly_item', 'set_by', 'created_at', 'updated_at']),
+      collection_setting: columns(['org_id', 'id', 'terms_days', 'weekly_item', 'stock_lead_days', 'set_by', 'created_at', 'updated_at']),
       customer_collection: columns(['org_id', 'id', 'party_id', 'terms_days', 'paused_until', 'set_by', 'created_at', 'updated_at']),
       depreciation_line: columns(['org_id', 'id', 'asset_id', 'month', 'amount', 'entry_id', 'created_at', 'legal_entity_id']),
       einvoice_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'provider', 'last_test_state', 'last_tested_at', 'created_by', 'created_at'], { seller_tax_code: 'national_id_if_individual' }),

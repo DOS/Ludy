@@ -4680,6 +4680,10 @@ export function createRpcHandler(
         }),
       ),
       low: os.stock.low.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.low', input ?? {}, { actor, orgId }))),
+      settings: {
+        get: os.stock.settings.get.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_setting.get', {}, { actor, orgId }))),
+        set: os.stock.settings.set.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_setting.set', input, { actor, orgId }))),
+      },
       reorderDraft: os.stock.reorderDraft.handler(({ context, input }) =>
         inFinance(context, async (orgId, actor) => {
           const source = await runtime.query<ReorderSource>('finance.stock.reorder_source', input, { actor, orgId });

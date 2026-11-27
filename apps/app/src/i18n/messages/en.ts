@@ -3854,7 +3854,7 @@ export const en = {
     // Items running low and the reorder message (#2514).
     low: {
       title: 'Running low',
-      subtitle: "Items whose stock will not last the supplier's delivery time (14 days by default) at the pace of the last 8 weeks. The suggested quantity covers two delivery times of sales, and you can change it. The reorder message is only a draft: you read it, edit it and send it yourself.",
+      subtitle: "Items whose stock will not last the supplier's delivery time ({days, plural, one {# day} other {# days}}) at the pace of the last 8 weeks. The suggested quantity covers two delivery times of sales, and you can change it. The reorder message is only a draft: you read it, edit it and send it yourself.",
       capped: 'Showing the {count, number} items that run out first; deal with some for the others to show.',
       code: 'Code',
       name: 'Name',
@@ -19571,6 +19571,10 @@ export const en = {
         list: 'View the stock moves of an item',
         reverse: 'Reverse a stock move',
         return: 'Return part of the goods of a sale',
+      },
+      stock_setting: {
+        get: "View the org's supplier delivery lead time",
+        set: "Change the org's supplier delivery lead time",
       },
       einvoice_series: {
         list: 'View the invoice series',

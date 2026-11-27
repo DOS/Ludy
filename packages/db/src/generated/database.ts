@@ -1168,6 +1168,7 @@ export interface FinanceCollectionSettingTable {
   set_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  stock_lead_days: Generated<number>;
 }
 
 /** ludy_finance.customer_collection */
