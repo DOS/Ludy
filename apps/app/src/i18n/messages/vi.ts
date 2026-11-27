@@ -17868,6 +17868,7 @@ export const vi = {
       LEGAL_ENTITY_REQUIRED: 'Hãy chọn pháp nhân trước khi xem hoặc ghi sổ',
       LEGAL_ENTITY_NOT_ALLOWED: 'Bạn không có quyền với sổ sách của pháp nhân này',
       MONTH_NOT_ENDED: 'Tháng này chưa kết thúc. Hãy chọn một tháng đã qua để so sánh chi phí',
+      QUARTER_NOT_ENDED: 'Quý này chưa kết thúc. Hãy chọn một quý đã qua.',
       SOURCE_LEGAL_ENTITY: 'Chứng từ này đã ghi sổ ở một pháp nhân khác; không ghi lại sang pháp nhân khác được',
       LEGAL_ENTITY_MISMATCH: 'Đề xuất ghi vào một pháp nhân khác pháp nhân của nó',
       LEGAL_ENTITY_MOVE_REFUSED: 'Đề xuất này thuộc một pháp nhân khác nên không chuyển được. Hãy từ chối đề xuất rồi tải chứng từ lên lại ở pháp nhân cần ghi sổ',
