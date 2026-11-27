@@ -54,7 +54,7 @@ test('creating a push address moves focus to the read-only field, Close returns 
   exec(
     `INSERT INTO ludy_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform)
      VALUES (:'orgId'::uuid, :'connectionId'::uuid, :'channelId'::uuid, 'marketplace_tiktok_shop', 'tiktok_shop')`,
-    { orgId, connectionId },
+    { orgId, connectionId, channelId },
   );
 
   const issuedSecrets: Array<{ key: string; keyHash: string; address: string }> = [];
