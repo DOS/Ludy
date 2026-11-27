@@ -1788,8 +1788,8 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
     expect(
       await attemptSql(
         adminActor,
-        `INSERT INTO crove_projects.github_task_link (org_id, project_id, task_id, repo_full_name, kind, external_number, external_url, external_title, external_state)
-         VALUES ($1, $2, $3, 'acme/private-repo', 'issue', 98, 'https://github.com/acme/private-repo/issues/98', 'Admin Injected', 'open')`,
+        `INSERT INTO crove_projects.github_task_link (org_id, project_id, task_id, repo_full_name, kind, external_number, external_url, external_title, external_state, link_source)
+         VALUES ($1, $2, $3, 'acme/private-repo', 'issue', 98, 'https://github.com/acme/private-repo/issues/98', 'Admin Injected', 'open', 'manual')`,
         [orgId, privateProjectId, privateTaskId],
       ),
     ).toMatchObject({ ok: false, code: '42501' });
@@ -1818,8 +1818,8 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
 
       const insLink = await attemptSql(
         actor,
-        `INSERT INTO crove_projects.github_task_link (org_id, project_id, task_id, repo_full_name, kind, external_number, external_url, external_title, external_state)
-         VALUES ($1, $2, $3, 'acme/private-repo', 'issue', 99, 'https://github.com/acme/private-repo/issues/99', 'Injected', 'open')`,
+        `INSERT INTO crove_projects.github_task_link (org_id, project_id, task_id, repo_full_name, kind, external_number, external_url, external_title, external_state, link_source)
+         VALUES ($1, $2, $3, 'acme/private-repo', 'issue', 99, 'https://github.com/acme/private-repo/issues/99', 'Injected', 'open', 'manual')`,
         [orgId, privateProjectId, privateTaskId],
       );
       expect(insLink).toMatchObject({ ok: false, code: '42501' });
