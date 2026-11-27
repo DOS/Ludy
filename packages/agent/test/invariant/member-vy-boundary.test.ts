@@ -2912,11 +2912,20 @@ const PROTO_ACCESS_HOSTS = new Set(['Object', 'Reflect', 'Function', 'Array', ..
 const PROTO_REFLECT_OR_OBJECT_METHODS = new Set([
   'get',
   'set',
+  'assign',
   'defineProperty',
   'defineProperties',
   'getOwnPropertyDescriptor',
+  'getOwnPropertyDescriptors',
   'getPrototypeOf',
   'setPrototypeOf',
+]);
+const PROTO_MUTATING_METHODS = new Set(['assign', 'defineProperty', 'defineProperties', 'set', 'setPrototypeOf']);
+const PROTO_REFLECTIVE_READ_METHODS = new Set([
+  'get',
+  'getOwnPropertyDescriptor',
+  'getOwnPropertyDescriptors',
+  'getPrototypeOf',
 ]);
 
 function isAstProtoBearingHost(expr: tsType.Expression): boolean {
@@ -4025,6 +4034,53 @@ function extractAstFacts(
   const nonSafeBaseAliases = new Map<string, Set<string>>();
   const seedEscapedSafeKillBases = new Set<string>();
   let hasProtoMutation = false;
+  let hasAnyMemberOrObjectMutation = false;
+  let hasConstructorRead = false;
+  let hasReflectiveReadCall = false;
+  let disallowGlobalSafeKillBases = false;
+  const lhsMemberWriteRoots: Array<{ expr: tsType.Expression; scope: AstLexScope }> = [];
+  const lhsHasMemberWriteChain = (expr: tsType.Expression, evalScope: AstLexScope): boolean => {
+    const work: tsType.Node[] = [expr];
+    let found = false;
+    while (work.length > 0) {
+      const cur = work.pop()!;
+      if (
+        ts.isParenthesizedExpression(cur) ||
+        ts.isNonNullExpression(cur) ||
+        ts.isAsExpression(cur) ||
+        ts.isTypeAssertionExpression(cur) ||
+        ts.isSatisfiesExpression(cur) ||
+        ts.isSpreadElement(cur) ||
+        ts.isSpreadAssignment(cur)
+      ) {
+        work.push(cur.expression);
+      } else if (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
+        found = true;
+        let root: tsType.Expression = cur.expression;
+        while (true) {
+          const unwrappedRoot = unwrapAstExpr(root, true);
+          if (ts.isPropertyAccessExpression(unwrappedRoot) || ts.isElementAccessExpression(unwrappedRoot)) {
+            root = unwrappedRoot.expression;
+            continue;
+          }
+          lhsMemberWriteRoots.push({ expr: unwrappedRoot, scope: evalScope });
+          break;
+        }
+      } else if (ts.isArrayLiteralExpression(cur)) {
+        for (const el of cur.elements) {
+          if (!ts.isOmittedExpression(el)) work.push(el);
+        }
+      } else if (ts.isObjectLiteralExpression(cur)) {
+        for (const prop of cur.properties) {
+          if (ts.isPropertyAssignment(prop)) work.push(prop.initializer);
+          else if (ts.isSpreadAssignment(prop)) work.push(prop.expression);
+        }
+      } else if (ts.isBinaryExpression(cur) && cur.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        work.push(cur.left);
+      }
+    }
+    return found;
+  };
   const protoElementAccessCandidates: Array<{ hostExpr: tsType.Expression; scope: AstLexScope }> = [];
   const protoMethodCallCandidates: Array<{
     calleeExpr: tsType.Expression;
@@ -4380,10 +4436,15 @@ function extractAstFacts(
     }
   }
   const seedProtoMethods = new Set<string>();
+  const seedProtoMutatingMethods = new Set<string>();
+  const seedProtoReflectiveReadMethods = new Set<string>();
   for (const objName of ['Reflect', 'Object']) {
     const objKey = astVarKey(rootScope, objName);
     for (const mName of PROTO_REFLECT_OR_OBJECT_METHODS) {
-      seedProtoMethods.add(`prop:${objKey}\0${mName}`);
+      const mKey = `prop:${objKey}\0${mName}`;
+      seedProtoMethods.add(mKey);
+      if (PROTO_MUTATING_METHODS.has(mName)) seedProtoMutatingMethods.add(mKey);
+      if (PROTO_REFLECTIVE_READ_METHODS.has(mName)) seedProtoReflectiveReadMethods.add(mKey);
     }
   }
   seedBlockShadowIdentifiers(sf, rootScope);
@@ -4986,15 +5047,24 @@ function extractAstFacts(
               for (const name of collectAstBindingIdentifiers(decl.name)) {
                 targetLoopScope.declaredNames.add(name);
                 targetLoopScope.constStrings.set(name, null);
-                blockedSafeKillVars.add(astVarKey(targetLoopScope, name));
+                const loopVarKey = astVarKey(targetLoopScope, name);
+                blockedSafeKillVars.add(loopVarKey);
+                seedNonSafeKillBases.add(loopVarKey);
+                seedEscapedSafeKillBases.add(loopVarKey);
               }
             }
           } else {
+            if (lhsHasMemberWriteChain(node.initializer, nextScope)) {
+              hasAnyMemberOrObjectMutation = true;
+            }
             if (lhsTargetHasUnresolvedElementAccess(node.initializer, nextScope)) {
               hasProtoMutation = true;
             }
             for (const idName of collectAstLhsTargetIdentNames(node.initializer)) {
-              blockedSafeKillVars.add(astVarKey(nextScope, idName));
+              const lhsVarKey = astVarKey(nextScope, idName);
+              blockedSafeKillVars.add(lhsVarKey);
+              seedNonSafeKillBases.add(lhsVarKey);
+              seedEscapedSafeKillBases.add(lhsVarKey);
             }
           }
         }
@@ -5004,7 +5074,10 @@ function extractAstFacts(
           for (const name of collectAstBindingIdentifiers(node.variableDeclaration.name)) {
             nextScope.declaredNames.add(name);
             nextScope.constStrings.set(name, null);
-            blockedSafeKillVars.add(astVarKey(nextScope, name));
+            const catchVarKey = astVarKey(nextScope, name);
+            blockedSafeKillVars.add(catchVarKey);
+            seedNonSafeKillBases.add(catchVarKey);
+            seedEscapedSafeKillBases.add(catchVarKey);
           }
         }
       } else if (ts.isFunctionLike(node)) {
@@ -5198,7 +5271,12 @@ function extractAstFacts(
       }
       if (inLoopHeader || !ts.isIdentifier(node.name)) {
         for (const idName of collectAstBindingIdentifiers(node.name)) {
-          blockedSafeKillVars.add(astVarKey(varDeclScope, idName));
+          const declKey = astVarKey(varDeclScope, idName);
+          blockedSafeKillVars.add(declKey);
+          if (inLoopHeader) {
+            seedNonSafeKillBases.add(declKey);
+            seedEscapedSafeKillBases.add(declKey);
+          }
         }
       }
 
@@ -5257,6 +5335,21 @@ function extractAstFacts(
     }
 
     if (
+      !nextInTypePos &&
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
+      const lhsMutExpr = unwrapAstExpr(node.left, false);
+      if (lhsHasMemberWriteChain(lhsMutExpr, nextScope)) {
+        hasAnyMemberOrObjectMutation = true;
+      }
+      if (lhsTargetHasUnresolvedElementAccess(lhsMutExpr, nextScope)) {
+        hasProtoMutation = true;
+      }
+    }
+
+    if (
       ts.isBinaryExpression(node) &&
       (node.operatorToken.kind === ts.SyntaxKind.EqualsToken ||
         node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionEqualsToken ||
@@ -5265,9 +5358,6 @@ function extractAstFacts(
     ) {
       const isPlainEquals = node.operatorToken.kind === ts.SyntaxKind.EqualsToken;
       const lhsExpr = unwrapAstExpr(node.left, false);
-      if (!nextInTypePos && lhsTargetHasUnresolvedElementAccess(lhsExpr, nextScope)) {
-        hasProtoMutation = true;
-      }
       let lhsTarget: string[] = [];
       if (ts.isIdentifier(lhsExpr)) {
         const lhsKey = astVarKey(nextScope, lhsExpr.text);
@@ -5383,19 +5473,7 @@ function extractAstFacts(
         if (mem.memberName === 'get' && ts.isIdentifier(recv) && recv.text === 'Reflect') {
           reflectGetCallNodes.push({ call: node, scope: nextScope });
         }
-        const isReflectOrObjRecv =
-          (ts.isIdentifier(recv) && (recv.text === 'Reflect' || recv.text === 'Object')) ||
-          ((ts.isPropertyAccessExpression(recv) || ts.isElementAccessExpression(recv)) && isAstProtoBearingHost(recv.expression));
-        if (mem.memberName !== null && PROTO_REFLECT_OR_OBJECT_METHODS.has(mem.memberName) && isReflectOrObjRecv) {
-          if (mem.memberName === 'getPrototypeOf' || mem.memberName === 'setPrototypeOf') {
-            hasProtoMutation = true;
-          } else if (node.arguments.length >= 2 && isAstProtoBearingHost(node.arguments[0]!)) {
-            const keyArg = resolveAstConstString(node.arguments[1]!, nextScope, 'full_const');
-            if (keyArg === null || keyArg === 'prototype' || keyArg === '__proto__') {
-              hasProtoMutation = true;
-            }
-          }
-        } else if (mem.memberName === null || PROTO_REFLECT_OR_OBJECT_METHODS.has(mem.memberName)) {
+        if (mem.memberName === null || PROTO_REFLECT_OR_OBJECT_METHODS.has(mem.memberName)) {
           protoMethodCallCandidates.push({
             calleeExpr: directCallee,
             calleeHost: mem.host,
@@ -5427,11 +5505,16 @@ function extractAstFacts(
         mem.memberName === 'getPrototypeOf'
       ) {
         hasProtoMutation = true;
+      } else if (mem.memberName === 'constructor') {
+        hasConstructorRead = true;
       } else if (ts.isElementAccessExpression(node) && mem.memberName === null) {
-        if (isAstProtoBearingHost(mem.host)) {
-          hasProtoMutation = true;
-        } else {
-          protoElementAccessCandidates.push({ hostExpr: mem.host, scope: nextScope });
+        const argNorm = unwrapAstExpr(node.argumentExpression, false);
+        if (!ts.isNumericLiteral(argNorm)) {
+          if (isAstProtoBearingHost(mem.host)) {
+            hasProtoMutation = true;
+          } else {
+            protoElementAccessCandidates.push({ hostExpr: mem.host, scope: nextScope });
+          }
         }
       }
       const hostNorm = unwrapAstExpr(mem.host, true);
@@ -5473,6 +5556,8 @@ function extractAstFacts(
         boundKey === 'getPrototypeOf'
       ) {
         hasProtoMutation = true;
+      } else if (boundKey === 'constructor') {
+        hasConstructorRead = true;
       } else if (boundKey === null && node.propertyName && ts.isComputedPropertyName(node.propertyName)) {
         let owner: tsType.Node | undefined = node.parent;
         while (owner && (ts.isObjectBindingPattern(owner) || ts.isArrayBindingPattern(owner) || ts.isBindingElement(owner))) {
@@ -5800,9 +5885,17 @@ function extractAstFacts(
   }
   const nonSafeKillValues = propagateAliases(seedNonSafeKillValues, aliasEdges);
   const escapedSafeKillBases = propagateAliases(seedEscapedSafeKillBases, aliasEdges, nonSafeBaseAliases);
-  if (!hasProtoMutation) {
+  for (const wRoot of lhsMemberWriteRoots) {
+    if (anyAstBranchMatchesSet(wRoot.expr, wRoot.scope, requireHosts)) {
+      disallowGlobalSafeKillBases = true;
+      break;
+    }
+  }
+  if (!hasProtoMutation || !disallowGlobalSafeKillBases) {
     let protoAliasHosts = propagateAliases(seedProtoHosts, aliasEdges);
     let protoMethodAliases = propagateAliases(seedProtoMethods, aliasEdges);
+    let protoMutatingMethodAliases = propagateAliases(seedProtoMutatingMethods, aliasEdges);
+    let protoReflectiveReadMethodAliases = propagateAliases(seedProtoReflectiveReadMethods, aliasEdges);
     let protoChanged = true;
     let protoPass = 0;
     while (protoChanged && protoPass < 4) {
@@ -5828,12 +5921,22 @@ function extractAstFacts(
               seedProtoMethods.add(t);
               protoChanged = true;
             }
+            if (PROTO_MUTATING_METHODS.has(cand.propName) && !seedProtoMutatingMethods.has(t)) {
+              seedProtoMutatingMethods.add(t);
+              protoChanged = true;
+            }
+            if (PROTO_REFLECTIVE_READ_METHODS.has(cand.propName) && !seedProtoReflectiveReadMethods.has(t)) {
+              seedProtoReflectiveReadMethods.add(t);
+              protoChanged = true;
+            }
           }
         }
       }
       if (protoChanged) {
         protoAliasHosts = propagateAliases(seedProtoHosts, aliasEdges);
         protoMethodAliases = propagateAliases(seedProtoMethods, aliasEdges);
+        protoMutatingMethodAliases = propagateAliases(seedProtoMutatingMethods, aliasEdges);
+        protoReflectiveReadMethodAliases = propagateAliases(seedProtoReflectiveReadMethods, aliasEdges);
       }
     }
     const isProtoHostResolved = (expr: tsType.Expression, scope: AstLexScope): boolean => {
@@ -5841,15 +5944,59 @@ function extractAstFacts(
       if (anyAstBranchMatchesSet(expr, scope, protoAliasHosts)) return true;
       const norm = unwrapAstExpr(expr, true);
       if (ts.isPropertyAccessExpression(norm) || ts.isElementAccessExpression(norm)) {
+        if (extractAstMemberName(norm, scope).memberName === 'constructor') return true;
         const base = unwrapAstExpr(norm.expression, true);
         if (anyAstBranchMatchesSet(base, scope, protoAliasHosts) || isAstProtoBearingHost(base)) return true;
       }
       return false;
     };
-    for (const cand of protoElementAccessCandidates) {
-      if (isProtoHostResolved(cand.hostExpr, cand.scope)) {
-        hasProtoMutation = true;
-        break;
+    for (const cand of protoMethodCallCandidates) {
+      const isDirectProtoHostCall =
+        cand.calleeHost !== null &&
+        isProtoHostResolved(cand.calleeHost, cand.scope) &&
+        (cand.methodName === null || PROTO_REFLECT_OR_OBJECT_METHODS.has(cand.methodName));
+      const calleeIdentKey =
+        cand.calleeHost === null && ts.isIdentifier(cand.calleeExpr)
+          ? astVarKey(cand.scope, cand.calleeExpr.text)
+          : null;
+      const isMethodAliasCall = calleeIdentKey !== null && protoMethodAliases.has(calleeIdentKey);
+      if (!isDirectProtoHostCall && !isMethodAliasCall) continue;
+      const isMutatingMethod = isDirectProtoHostCall
+        ? cand.methodName === null || PROTO_MUTATING_METHODS.has(cand.methodName)
+        : calleeIdentKey !== null && protoMutatingMethodAliases.has(calleeIdentKey);
+      const isReflectiveReadMethod = isDirectProtoHostCall
+        ? cand.methodName === null || PROTO_REFLECTIVE_READ_METHODS.has(cand.methodName)
+        : calleeIdentKey !== null && protoReflectiveReadMethodAliases.has(calleeIdentKey);
+      if (isMutatingMethod) {
+        hasAnyMemberOrObjectMutation = true;
+        if (cand.arg0 && anyAstBranchMatchesSet(cand.arg0, cand.scope, requireHosts)) {
+          disallowGlobalSafeKillBases = true;
+        }
+      }
+      if (isReflectiveReadMethod) {
+        hasReflectiveReadCall = true;
+      }
+      if (!hasProtoMutation) {
+        if (cand.methodName === 'getPrototypeOf' || cand.methodName === 'setPrototypeOf') {
+          hasProtoMutation = true;
+        } else if (cand.arg0 && isProtoHostResolved(cand.arg0, cand.scope)) {
+          if (cand.methodName === 'getOwnPropertyDescriptors' || !cand.keyArg) {
+            hasProtoMutation = true;
+          } else {
+            const keyVal = resolveAstConstString(cand.keyArg, cand.scope, 'full_const');
+            if (keyVal === null || keyVal === 'prototype' || keyVal === '__proto__') {
+              hasProtoMutation = true;
+            }
+          }
+        }
+      }
+    }
+    if (!hasProtoMutation) {
+      for (const cand of protoElementAccessCandidates) {
+        if (isProtoHostResolved(cand.hostExpr, cand.scope)) {
+          hasProtoMutation = true;
+          break;
+        }
       }
     }
     if (!hasProtoMutation) {
@@ -5860,30 +6007,15 @@ function extractAstFacts(
         }
       }
     }
-    if (!hasProtoMutation) {
-      for (const cand of protoMethodCallCandidates) {
-        const isMethodMatch = cand.calleeHost
-          ? isProtoHostResolved(cand.calleeHost, cand.scope) &&
-            (cand.methodName === null || PROTO_REFLECT_OR_OBJECT_METHODS.has(cand.methodName))
-          : ts.isIdentifier(cand.calleeExpr) &&
-            protoMethodAliases.has(astVarKey(cand.scope, cand.calleeExpr.text));
-        if (!isMethodMatch) continue;
-        if (cand.methodName === 'getPrototypeOf' || cand.methodName === 'setPrototypeOf') {
-          hasProtoMutation = true;
-          break;
-        }
-        if (cand.arg0 && isProtoHostResolved(cand.arg0, cand.scope)) {
-          if (!cand.keyArg) {
-            hasProtoMutation = true;
-            break;
-          }
-          const keyVal = resolveAstConstString(cand.keyArg, cand.scope, 'full_const');
-          if (keyVal === null || keyVal === 'prototype' || keyVal === '__proto__') {
-            hasProtoMutation = true;
-            break;
-          }
-        }
-      }
+    if (
+      !hasProtoMutation &&
+      hasAnyMemberOrObjectMutation &&
+      (hasConstructorRead ||
+        hasReflectiveReadCall ||
+        protoElementAccessCandidates.length > 0 ||
+        protoDestructureCandidates.length > 0)
+    ) {
+      hasProtoMutation = true;
     }
   }
   const isSafeKillExpr = (
@@ -5914,6 +6046,7 @@ function extractAstFacts(
       const base = unwrapAstExpr(cur.expression, true);
       if (!ts.isIdentifier(base)) return false;
       const baseKey = astVarKey(evalScope, base.text);
+      if (disallowGlobalSafeKillBases && baseKey.startsWith('global:')) return false;
       return !requireHosts.has(baseKey) && !nonSafeKillBases.has(baseKey) && !escapedSafeKillBases.has(baseKey);
     }
     if (ts.isConditionalExpression(cur)) {
@@ -6482,8 +6615,12 @@ function skipLeadingTypeAssertionTokens(
   templateTail?: Int32Array,
 ): number {
   const first = tokens[startIdx];
-  if (!first || first.kind !== 'punct' || first.value !== '<' || startIdx + 2 >= maxIdx) return -1;
+  if (!first || first.kind !== 'punct' || first.value !== '<') return -1;
   if (tokens[startIdx + 1]?.kind === 'punct' && tokens[startIdx + 1]?.value === '/') return -1;
+  if (startIdx + 2 >= maxIdx) {
+    if (maxIsCapped && cappedOut) cappedOut.value = true;
+    return -1;
+  }
   let ad = 1;
   let pd = 0;
   let bd = 0;
@@ -6571,7 +6708,12 @@ function skipLeadingTypeAssertionTokens(
         else if (tk.value === '>') ad -= 1;
         else if (tk.value === '>>' && ad >= 2) ad -= 2;
         else if (tk.value === '>>>' && ad >= 3) ad -= 3;
-        if (ad === 0) return idx > startIdx + 1 && idx + 1 < maxIdx ? idx + 1 : -1;
+        if (ad === 0) {
+          if (idx <= startIdx + 1) return -1;
+          if (idx + 1 < maxIdx) return idx + 1;
+          if (maxIsCapped && cappedOut) cappedOut.value = true;
+          return -1;
+        }
       }
     }
   }
@@ -7243,7 +7385,13 @@ function findTypeDeclStop(
       ) {
         return p;
       }
-    } else if (td === 0 && ad === 0 && cur.kind === 'ident' && SKIP_DECL_STOP_KW.has(cur.value)) {
+    } else if (
+      td === 0 &&
+      ad === 0 &&
+      cur.kind === 'ident' &&
+      SKIP_DECL_STOP_KW.has(cur.value) &&
+      !isMemberPrev(tokens, p)
+    ) {
       return p;
     }
     p += 1;
@@ -7342,7 +7490,20 @@ function findDeclInitEnd(
       td === 0 &&
       cur.kind === 'ident' &&
       SKIP_DECL_STOP_KW.has(cur.value) &&
-      !(cur.value === 'const' && prevTok?.kind === 'ident' && prevTok.value === 'as')
+      !isMemberPrev(tokens, q) &&
+      !(cur.value === 'const' && prevTok?.kind === 'ident' && prevTok.value === 'as') &&
+      !(
+        (cur.value === 'function' || cur.value === 'class') &&
+        (cur.line === lastLine ||
+          (prevTok?.kind === 'punct' && LINE_CONT_PUNCTS.has(prevTok.value)) ||
+          (prevTok?.kind === 'ident' &&
+            (prevTok.value === 'async' ||
+              prevTok.value === 'export' ||
+              prevTok.value === 'default' ||
+              prevTok.value === 'await' ||
+              prevTok.value === 'yield' ||
+              prevTok.value === 'new')))
+      )
     ) {
       return { endIdx: q, truncated: false };
     }
@@ -10520,7 +10681,11 @@ function hasTokenResolvedWorkspaceTarget(
       let prefixDone = false;
       for (let step = 0; step < 16 && cur < maxEnd; step += 1) {
         const tk = tokens[cur]!;
-        if (tk.kind === 'ident' && !tk.escaped && tk.value === 'await' && cur + 1 < maxEnd) {
+        if (tk.kind === 'ident' && !tk.escaped && tk.value === 'await') {
+          if (cur + 1 >= maxEnd) {
+            if (maxIsCapped) cappedOut.value = true;
+            return -1;
+          }
           cur += 1;
           continue;
         }
@@ -14488,5 +14653,109 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     ).toContain('calls the network directly');
     expect(memberVyViolations('let read = globalThis.fetch;\nread = cache.fetch;\nread(key);')).toEqual([]);
     expect(memberVyViolations('let read = globalThis.fetch;\nread = cache.fetch.bind(cache);\nread(key);')).toEqual([]);
+
+    // Platform PO Round 6 regressions: BF-1a global host mutation, BF-1b loop/catch bases, BF-1c Reflect/constructor/split computed reads, BF-2 decl init/type keywords, BF-3 maxEnd boundaries
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\n(globalThis as any).cache = { fetch: read };\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst g = globalThis;\n(g as any).cache = { fetch: read };\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nObject.assign(globalThis, { cache: { fetch: read } });\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nReflect.set(globalThis, 'cache', { fetch: read });\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nfor (const cache of [{ fetch: read }]) {\n  read = cache.fetch;\n  read('https://x.test');\n}",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\ntry {\n  throw { fetch: read };\n} catch (cache: any) {\n  read = cache.fetch;\n  read('https://x.test');\n}",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst O = Object;\nlet p = 'proto';\np += 'type';\nconst proto: any = Reflect.get(O, p);\nproto.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst obj: any = {};\nlet k = '__pro';\nk += 'to__';\nconst proto = obj[k];\nproto.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst obj: any = {};\nlet k = '__pro';\nk += 'to__';\nconst { [k]: proto } = obj;\nproto.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nlet p = 'proto';\np += 'type';\n(({} as any).constructor[p] as any).fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nlet p = 'proto';\np += 'type';\nconst proto: any = (getObj() as any)[p];\nproto.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nlet p = 'proto';\np += 'type';\n(Object.getOwnPropertyDescriptors(Object) as any)[p].value.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      workspaceAdapterLeakViolations(
+        "const x = function() {}, a = 'gen', b = 'er', c = a + b + 'ate' + 'Note' + 'Sum' + 'maryText';\nexport { c };",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        "declare const obj: { if: string };\nconst a: typeof obj.if = 'gen', b = a + 'er' + 'ateNote' + 'Sum' + 'maryText';\nexport { b };",
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    const pad60 = Array.from({ length: 60 }, () => "''").join(' + ');
+    const pad61 = Array.from({ length: 61 }, () => "''").join(' + ');
+    expect(
+      workspaceAdapterLeakViolations(
+        `export const awaitBoundaryLeak = async () => ('gen')! + ${pad61} + await 'er' + 'ateNote' + 'Sum' + 'maryText';`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `export const angleStartBoundaryLeak = ('gen') + ${pad61} + <any>'er' + 'ateNote' + 'Sum' + 'maryText';`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `export const angleCloseBoundaryLeak = ('gen')! + ${pad60} + <any>'er' + 'ateNote' + 'Sum' + 'maryText';`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst items = ['a', 'b'];\nconst idx = Math.floor(Math.random() * 2);\nconst picked = items[idx];\nread = cache.fetch;\nread(picked);",
+      ),
+    ).toEqual([]);
   }, 30_000);
 });
