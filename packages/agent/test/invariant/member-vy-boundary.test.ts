@@ -8216,7 +8216,7 @@ function findDeclInitEnd(
   let td = 0;
   let lastLine = tokens[exprStart - 1]?.line ?? (tokens[exprStart]?.line ?? 1);
   let prevTok: Token | undefined = tokens[exprStart - 1];
-  let prevBangWasPrefix = false;
+  let prevBangWasPrefix: boolean = false;
   let prevTokIsMemberIdent = false;
   let prev2Tok: Token | undefined = exprStart >= 2 ? tokens[exprStart - 2] : undefined;
   let prev2WasMemberIdent = false;
@@ -8377,7 +8377,7 @@ function findDeclInitEnd(
     ) {
       inFnOrClassHeader = true;
     }
-    const curBangWasPrefix =
+    const curBangWasPrefix: boolean =
       cur.kind === 'punct' &&
       cur.value === '!' &&
       (prevTok?.kind === 'punct' && prevTok.value === '!'
@@ -15937,10 +15937,10 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       ),
     ).toContain('calls the network directly');
     expect(memberVyViolations("const R = Reflect;\nR.apply(execute, null, ['x']);")).toContain(
-      'runs commands directly',
+      'calls execute()',
     );
     expect(memberVyViolations("const R = Reflect;\nR.apply(require, null, ['node:https']);")).toContain(
-      'calls the network directly',
+      'imports node:https',
     );
     expect(meteredNotes("const R = Reflect;\nR.apply(metered, null, ['notes.secret', fn]);")).toEqual([
       'notes.secret',
