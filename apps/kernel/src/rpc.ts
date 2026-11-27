@@ -1,5 +1,5 @@
 // oRPC implementation of @ludy/kernel-contract. Handlers only call the runtime (execute/query).
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
 import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MARKETPLACE_PUSH_ADAPTERS, marketplaceHookAddress, marketplaceHookBaseUsable, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@ludy/kernel-contract';
@@ -453,6 +453,10 @@ function githubFailure(error: unknown): DomainError {
     default:
       return new DomainError('GITHUB_UPSTREAM_FAILED', 503, 'Không thể kết nối tới GitHub lúc này; hãy thử lại sau');
   }
+}
+
+function githubOAuthStateHash(stateToken: string, projectId: string): string {
+  return `sha256:${createHmac('sha256', projectId).update(stateToken, 'utf8').digest('hex')}`;
 }
 
 // A meeting platform's refusal or failure during the connect step, as the answer the user sees: a fixed text, never the platform's words (the adapter's error carries only a short code).
@@ -5526,26 +5530,26 @@ export function createRpcHandler(
               { projectId: input.projectId },
               { actor, orgId },
             );
-            const attempt = newOAuthAttempt(false);
+            const oauthStateToken = randomBytes(32).toString('base64url');
             const begun = await runtime.execute<{ attemptId: string; expiresAt: string }>(
               'kernel.channel.oauth_begin',
               {
                 provider: 'github_app',
-                stateHash: oauthStateHash(`${attempt.state}:${input.projectId}`),
+                stateHash: githubOAuthStateHash(oauthStateToken, input.projectId),
                 codeVerifier: null,
               },
               { actor, orgId },
             );
             const authorizeUrl = current.appSlug
-              ? `https://github.com/apps/${encodeURIComponent(current.appSlug)}/installations/new?state=${encodeURIComponent(attempt.state)}`
+              ? `https://github.com/apps/${encodeURIComponent(current.appSlug)}/installations/new?state=${encodeURIComponent(oauthStateToken)}`
               : `https://github.com/login/oauth/authorize?${new URLSearchParams({
                   client_id: channels.github.oauthClientId,
                   redirect_uri: oauthRedirectUri('github_app'),
-                  state: attempt.state,
+                  state: oauthStateToken,
                 }).toString()}`;
             return {
               authorizeUrl,
-              state: attempt.state,
+              state: oauthStateToken,
               expiresAt: begun.expiresAt,
             };
           }),
@@ -5562,7 +5566,7 @@ export function createRpcHandler(
             // Consume single-use state bound to projectId BEFORE making any GitHub OAuth/API calls.
             await runtime.execute<{ codeVerifier: string | null }>(
               'kernel.channel.oauth_consume',
-              { provider: 'github_app', stateHash: oauthStateHash(`${input.state}:${input.projectId}`) },
+              { provider: 'github_app', stateHash: githubOAuthStateHash(input.state, input.projectId) },
               { actor, orgId },
             );
             const userAccessToken = await channels.github
