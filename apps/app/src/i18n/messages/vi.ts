@@ -20143,6 +20143,7 @@ export const vi = {
         set: 'Bật hoặc tắt thông báo sáng thứ Hai về các cuộc họp trong tuần, và chọn giờ',
       },
       brief: {
+        daily_facts: 'Xem dữ kiện chuẩn bị trong ngày cho Vy cá nhân trước các cuộc họp',
         facts: 'Xem những gì đã chốt, việc còn dở và cơ hội đang mở của khách trước một cuộc họp',
         start: 'Nhờ Vy viết vài câu chuẩn bị trước một cuộc họp',
         status: 'Xem Vy có viết được phần chuẩn bị cho cuộc họp không',

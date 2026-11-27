@@ -248,6 +248,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.ask.lines',
       'meetings.ask.status',
       'meetings.brief.facts',
+      'meetings.brief.daily_facts',
       'meetings.brief.status',
       'meetings.digest.facts',
       'meetings.digest.status',
@@ -306,6 +307,17 @@ describe('meetings commands and queries construction', () => {
     expect(meetingAudioRead.name).toBe('meetings.meeting.audio_read');
     expect(meetingVideoRead.name).toBe('meetings.meeting.video_read');
     expect(meetingMediaMeta.name).toBe('meetings.meeting.media_meta');
+  });
+
+  it('opts only meetings.brief.daily_facts into memberVy with narrow CRM reads and no sensitive, stream, or mcp flags', () => {
+    const optedIn = meetingsQueries.filter((q) => q.memberVy !== undefined);
+    expect(optedIn.map((q) => q.name)).toEqual(['meetings.brief.daily_facts']);
+    const dailyFacts = optedIn[0]!;
+    expect(dailyFacts.access).toEqual(['owner', 'admin', 'member']);
+    expect(dailyFacts.memberVy).toEqual({ reads: ['crm.deal.get', 'crm.deal.list', 'crm.stage.list'] });
+    expect(dailyFacts.sensitive).toBeUndefined();
+    expect(dailyFacts.stream).toBeUndefined();
+    expect(dailyFacts.mcp).toBeUndefined();
   });
 });
 

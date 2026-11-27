@@ -13,12 +13,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The checks run in parallel jobs (#1041): lint, typecheck and unit tests here, the database tests in `db` split in
-  # eight balanced shards plus a heavy-files job, and `check` below, the required "Lint, typecheck, test", passes only when every one of them passed.
+  # The checks run in parallel jobs (#1041, #5169): lint, typecheck, generated database types and web build run in
+  # `static`, unit tests run in `unit` across two parallel shards, the database tests in `db` split in eight balanced
+  # shards plus a heavy-files job, and `check` below, the required "Lint, typecheck, test", passes only when every one of them passed.
   static:
-    name: Lint, typecheck, unit tests
+    name: Lint, typecheck, build
     runs-on: ubuntu-latest
-    # 25 minutes (#3995): successful runs take 8 to 14 minutes, and the 15-minute limit cancelled unrelated PRs mid-typecheck.
+    # 25 minutes (#3995, #5169): lint, typecheck, generated types and web build run here while unit tests run in `unit`.
     timeout-minutes: 25
     services:
       postgres:
@@ -42,7 +43,7 @@ jobs:
       - name: Install pnpm
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
 
-      # Every module, also one the kernel does not import yet: typecheck and unit tests run over all of them, and the
+      # Every module, also one the kernel does not import yet: typecheck runs over all of them, and the
       # marketing site, which pnpm typecheck covers with its tests (#1629).
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "@ludy/app..." --filter "./modules/*" --filter "@ludy/e2e" --filter "@ludy/web" --filter "@ludy/extension" --filter "@ludy/desktop" --filter "@ludy/mobile" --filter "@ludy/media..." --filter "ludy-monorepo"
@@ -81,6 +82,40 @@ jobs:
             exit 1
           fi
 
+      - name: Build web app
+        run: pnpm --filter @ludy/app build
+
+      # Kernel plan §9 (#1518): every browser downloads the SPA, so no kernel secret name used as code and no
+      # secret-shaped value may be in the build.
+      - name: No kernel secret in the web app build
+        run: node tools/ci/spa-secrets.mjs apps/app/dist apps/kernel/src/config.ts
+
+  # Unit tests split across two parallel shards (#5169) so they stay well under the 25-minute runner limit
+  # without competing with typecheck and the web app build. No PostgreSQL service is needed here; only S3 tests use MinIO.
+  unit:
+    name: Unit tests (shard ${{ matrix.shard }} of 2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      # Every module, also one the kernel does not import yet: unit tests run over all of them, and the marketing site (#1629).
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "@ludy/app..." --filter "./modules/*" --filter "@ludy/e2e" --filter "@ludy/web" --filter "@ludy/extension" --filter "@ludy/desktop" --filter "@ludy/mobile" --filter "@ludy/media..." --filter "ludy-monorepo"
+
       # S3-compatible server for the S3BlobStore integration tests (External-tenant gate T7). minio/minio is no
       # longer published on Docker Hub; pgsty/minio is a community build of the same server, pinned by digest.
       - name: Start MinIO
@@ -92,15 +127,8 @@ jobs:
       - name: Unit tests (S3 tests against MinIO)
         env:
           LUDY_TEST_S3_URL: http://ludy-ci:ludy-ci-minio@127.0.0.1:9000/ludy-test
-        run: pnpm exec vitest run --project unit
-
-      - name: Build web app
-        run: pnpm --filter @ludy/app build
-
-      # Kernel plan §9 (#1518): every browser downloads the SPA, so no kernel secret name used as code and no
-      # secret-shaped value may be in the build.
-      - name: No kernel secret in the web app build
-        run: node tools/ci/spa-secrets.mjs apps/app/dist apps/kernel/src/config.ts
+          SHARD: ${{ matrix.shard }}
+        run: pnpm exec vitest run --project unit --shard="$SHARD/2"
 
   # The database tests run one file at a time (fileParallelism: false) and took 17 minutes in one job (#1041). Two
   # files take 44% of that (finance-search on 50,000 documents, about 260 s; archive, about 150 s), so they run in a
@@ -396,19 +424,20 @@ jobs:
       - name: Load the unpacked extension in Chromium
         run: pnpm --filter @ludy/extension test:e2e -- --trace off
 
-  # The required check: it passes only when the static job, knip, the marketing site, the extension, every database part, the shared-database
-  # invariants, the Supabase image (T17), the kernel, extract and media images (T12), the split stack (T7) and the backup drill passed, so a
+  # The required check: it passes only when the static job, both unit test shards, knip, the marketing site, the extension, every database part, the shared-database
+  # invariants, the Supabase image (T17), the kernel, extract and media images (T12), the split stack (T7), the backup drill and MCP conformance passed, so a
   # failed, cancelled or skipped part fails it (#3974: before, a red T12 or T17 job blocked neither a merge nor a release).
   check:
     name: Lint, typecheck, test
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [static, knip, web, db, shared-mode-invariants, supabase-stack, kernel-image, extract-image, media-image, split-stack, backup-drill, extension, mcp-conformance]
+    needs: [static, unit, knip, web, db, shared-mode-invariants, supabase-stack, kernel-image, extract-image, media-image, split-stack, backup-drill, extension, mcp-conformance]
     if: always()
     steps:
       - name: Every part passed
         env:
           STATIC: ${{ needs.static.result }}
+          UNIT: ${{ needs.unit.result }}
           KNIP: ${{ needs.knip.result }}
           WEB: ${{ needs.web.result }}
           DB: ${{ needs.db.result }}
@@ -422,9 +451,9 @@ jobs:
           BACKUP: ${{ needs.backup-drill.result }}
           MCP: ${{ needs.mcp-conformance.result }}
         run: |
-          echo "static: $STATIC, knip: $KNIP, marketing site: $WEB, database tests: $DB, media: $MEDIA, extension: $EXTENSION"
+          echo "static: $STATIC, unit: $UNIT, knip: $KNIP, marketing site: $WEB, database tests: $DB, media: $MEDIA, extension: $EXTENSION"
           echo "shared-mode invariants: $SHARED, Supabase image: $SUPABASE, kernel image: $KERNEL, extract image: $EXTRACT, split stack: $SPLIT, backup drill: $BACKUP, MCP conformance: $MCP"
-          for result in "$STATIC" "$KNIP" "$WEB" "$DB" "$MEDIA" "$EXTENSION" "$SHARED" "$SUPABASE" "$KERNEL" "$EXTRACT" "$SPLIT" "$BACKUP" "$MCP"; do
+          for result in "$STATIC" "$UNIT" "$KNIP" "$WEB" "$DB" "$MEDIA" "$EXTENSION" "$SHARED" "$SUPABASE" "$KERNEL" "$EXTRACT" "$SPLIT" "$BACKUP" "$MCP"; do
             test "$result" = success
           done
 

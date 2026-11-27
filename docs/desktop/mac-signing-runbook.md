@@ -48,7 +48,7 @@ How CI handles credentials safely: `desktop-package.yml` decodes the `.p12` (and
 
 ## Step 4. Cut and verify a signed and notarized macOS release (owner-approved run)
 
-1. Bump `"version"` in `apps/desktop/package.json` on `main` via a merged PR and confirm `Lint, typecheck, unit tests`, `Windows build (unsigned)`, `Windows install smoke`, and `macOS build (unsigned, arm64 & x64), tests and size` are green on that commit (if the commit did not touch desktop path triggers, run `desktop-build.yml` manually on that commit first).
+1. Bump `"version"` in `apps/desktop/package.json` on `main` via a merged PR and confirm `Lint, typecheck, test`, `Windows build (unsigned)`, `Windows install smoke`, and `macOS build (unsigned, arm64 & x64), tests and size` are green on that commit (if the commit did not touch desktop path triggers, run `desktop-build.yml` manually on that commit first).
 2. Create and push tag `desktop-vX.Y.Z` on that `main` commit, then trigger **desktop-package** (`desktop-package.yml`) on `main` with `mode=signed`, `platform=macos` (or `all`; `platform` defaults to `windows`), and `tag=desktop-vX.Y.Z`.
 3. Approve the pending `desktop-release` environment gate in GitHub Actions.
 4. Confirm `build-mac-signed` passes every check:
