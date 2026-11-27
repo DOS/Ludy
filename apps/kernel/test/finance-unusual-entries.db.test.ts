@@ -46,6 +46,7 @@ suite('monthly review of unusual entries (#5182)', () => {
   let adminUrl = '';
   let kyselyPool: pg.Pool;
   let rt: Runtime;
+  let db: ReturnType<typeof createDb>;
   let orgId = '';
   let owner = '';
   let member = '';
@@ -225,7 +226,7 @@ suite('monthly review of unusual entries (#5182)', () => {
     await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     kyselyPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 3 });
     tap(kyselyPool);
-    const db = createDb(kyselyPool);
+    db = createDb(kyselyPool);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
     const person = (name: string) => upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@unusual-entries.test`, name: null });
     owner = await person('owner');
@@ -627,6 +628,27 @@ suite('monthly review of unusual entries (#5182)', () => {
       expect(await refusal(mark({ entryId: entry, rule: 'amount_outlier', legalEntityId: main }))).toMatchObject({ code: 'NOT_FOUND', status: 404 });
       expect(await refusal(mark({ entryId: randomUUID(), rule: 'amount_outlier', legalEntityId: capped }))).toMatchObject({ code: 'NOT_FOUND', status: 404 });
       expect(await refusal(mark({ entryId: entry, rule: 'not_a_rule', legalEntityId: capped }))).toMatchObject({ code: 'VALIDATION', status: 422 });
+      expect((await counts()).marks).toBe(before.marks);
+    });
+
+    it('refuses an entry of another org as the runtime login and writes no mark for it', async () => {
+      // The matrix of the RLS invariants declares no own-org insert control for this table (a mark needs a journal entry, which a login role cannot create), so the insert as the runtime login is proved here.
+      const stranger = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `stranger-${randomUUID().slice(0, 8)}@unusual-entries.test`, name: null });
+      const other = (await createOrg(rt, asUser(stranger), 'Tổ chức khác')).orgId;
+      const foreign = await admin(async (a) => {
+        await a.query('SET session_replication_role = replica');
+        const entity = String((await a.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [other])).rows[0]?.id);
+        return String(
+          (
+            await a.query<{ id: string }>(
+              `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, DATE '2026-07-10', 'org khác', 'test.review', gen_random_uuid(), $2::uuid) RETURNING id`,
+              [other, entity],
+            )
+          ).rows[0]?.id,
+        );
+      });
+      const before = await counts();
+      expect(await refusal(mark({ entryId: foreign, rule: 'amount_outlier' }))).toMatchObject({ code: 'NOT_FOUND', status: 404 });
       expect((await counts()).marks).toBe(before.marks);
     });
 
