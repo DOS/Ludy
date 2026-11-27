@@ -79,12 +79,13 @@ BEGIN
     FROM ludy_kernel.conversation_inbound_first_seen f WHERE f.key = ANY (v_keys);
   END IF;
 
-  -- A bounded batch of keys past their 7 days (the index is on first_seen_at), so the table stays small without a job.
+  -- A small bounded batch of keys past their 7 days (the index is on first_seen_at; SKIP LOCKED so it never waits on the worker's purge), so the table stays
+  -- small even without the worker, and the serialized section stays short. WhatsApp must come through this function, never the plain enqueue.
   DELETE FROM ludy_kernel.conversation_inbound_first_seen f
   WHERE f.key IN (
     SELECT o.key FROM ludy_kernel.conversation_inbound_first_seen o
     WHERE o.first_seen_at < pg_catalog.now() - pg_catalog.make_interval(days => 7)
-    ORDER BY o.first_seen_at LIMIT 200
+    ORDER BY o.first_seen_at LIMIT 20 FOR UPDATE SKIP LOCKED
   );
 
   BEGIN
@@ -124,7 +125,7 @@ BEGIN
   WHERE f.key IN (
     SELECT o.key FROM ludy_kernel.conversation_inbound_first_seen o
     WHERE o.first_seen_at < pg_catalog.now() - pg_catalog.make_interval(days => 7)
-    ORDER BY o.first_seen_at LIMIT pg_catalog.least(pg_catalog.greatest(COALESCE(p_limit, 1), 1), 5000)
+    ORDER BY o.first_seen_at LIMIT pg_catalog.least(pg_catalog.greatest(COALESCE(p_limit, 1), 1), 5000) FOR UPDATE SKIP LOCKED
   );
   GET DIAGNOSTICS v_n = ROW_COUNT;
   RETURN v_n;
