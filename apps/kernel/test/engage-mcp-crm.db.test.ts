@@ -28,6 +28,8 @@ const HIDDEN_IN_LINE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 // A zero-width space, a right-to-left override and a bell: what a typed text must not carry out.
 const DIRTY = '​‮';
 const DECIMAL = /^-?\d+(\.\d+)?$/;
+// A decimal string without trailing fraction zeros, so amounts compare as strings whatever scale the column prints (never through Number, #4099).
+const dec = (value: unknown): string => String(value).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 
 // Every deal, quote and booking says `tainted: true`: its text is typed by people or visitors and reaches the client as data.
 const DEAL_KEYS = ['amount', 'closedAt', 'createdAt', 'currency', 'expectedClose', 'followUp', 'id', 'lostReason', 'ownerUserId', 'partyId', 'partyName', 'stageId', 'stageKind', 'tainted', 'title', 'updatedAt', 'version'].sort();
@@ -84,6 +86,7 @@ interface Booking {
 interface Bookings {
   bookings: Booking[];
   truncated: boolean;
+  next: { startsAt: string; id: string } | null;
 }
 
 suite('the CRM MCP reads (#3860)', () => {
@@ -351,7 +354,7 @@ suite('the CRM MCP reads (#3860)', () => {
       }
       const json = JSON.stringify(listed);
       for (const leak of ['created_by', 'createdBy', 'canDelete', 'partyDuplicateOf']) expect(json, leak).not.toContain(leak);
-      expect(Number(listed.deals.find((d) => d.id === deal.d2)?.amount)).toBe(7500000.5);
+      expect(dec(listed.deals.find((d) => d.id === deal.d2)?.amount)).toBe('7500000.5');
       expect(listed.deals.find((d) => d.id === deal.d1)).toMatchObject({ stageKind: 'open', stageId: stage.open, partyId: party.a1, followUp: null, closedAt: null, lostReason: null });
       expect(listed.deals.find((d) => d.id === deal.d3)).toMatchObject({ stageKind: 'won', stageId: stage.won });
       expect(listed.deals.find((d) => d.id === deal.d3)?.closedAt).not.toBeNull();
@@ -482,9 +485,9 @@ suite('the CRM MCP reads (#3860)', () => {
       const sent = listed.quotes.find((q) => q.id === quote.q2) as McpQuote;
       expect(sent).toMatchObject({ status: 'sent', sentVia: 'link', dealId: deal.d2, partyId: party.a2, dealTitle: 'Gói nhân sự', partyName: 'Công ty XYZ', revision: 1, expired: false, lineCount: 1, firstViewedAt: null });
       expect(sent.number).toMatch(/^BG-\d{4}-\d{4}$/);
-      expect(Number(sent.subtotal)).toBe(3000000);
-      expect(Number(sent.vatAmount)).toBe(300000);
-      expect(Number(sent.total)).toBe(3300000);
+      expect(dec(sent.subtotal)).toBe('3000000');
+      expect(dec(sent.vatAmount)).toBe('300000');
+      expect(dec(sent.total)).toBe('3300000');
       expect(sent.sentAt).not.toBeNull();
       const draft = listed.quotes.find((q) => q.id === quote.q1) as McpQuote;
       expect(draft).toMatchObject({ status: 'draft', number: null, sentAt: null, sentVia: null, dealTitle: 'Gói kế toán năm', partyName: 'Công ty ABC', lineCount: 2 });
@@ -552,8 +555,8 @@ suite('the CRM MCP reads (#3860)', () => {
         expect(typeof l.amount).toBe('string');
         expect(typeof l.vatAmount).toBe('string');
       }
-      expect(Number(lines[0]?.amount)).toBe(2700000);
-      expect(Number(lines[0]?.vatAmount)).toBe(270000);
+      expect(dec(lines[0]?.amount)).toBe('2700000');
+      expect(dec(lines[0]?.vatAmount)).toBe('270000');
       expect(JSON.stringify(full)).not.toContain('stockItemId');
       expect(JSON.stringify(full)).not.toContain('stock_item');
     });
@@ -577,7 +580,7 @@ suite('the CRM MCP reads (#3860)', () => {
       const owner = await oneQuote('owner', 'company', { quoteId: quote.q3 });
       expect(await oneQuote('admin', 'company', { quoteId: quote.q3 })).toEqual(owner);
       for (const money of [owner.subtotal, owner.vatAmount, owner.total]) expect(money as string).toMatch(DECIMAL);
-      expect(Number(owner.total)).toBe(3000000);
+      expect(dec(owner.total)).toBe('3000000');
       expect(owner.lines[0]).toMatchObject({ vatRate: 'KCT', vatAmount: '0' });
     });
 
@@ -655,6 +658,35 @@ suite('the CRM MCP reads (#3860)', () => {
       // Another org's deal matches nothing here, and org B reads only its own booking.
       expect((await bookings('owner', 'company', { dealId: deal.b1 })).bookings).toEqual([]);
       expect(bookingKeys(await bookings('foreign', 'company', {}, orgB))).toEqual(['b1']);
+    });
+
+    it('pages on a cursor (starts_at, id): upcoming forward and past backward, with no gap and no repeat (#4099)', async () => {
+      const first = await bookings('owner', 'company', { limit: 1 });
+      expect(bookingKeys(first)).toEqual(['up2']);
+      expect(first.next).toEqual({ startsAt: first.bookings[0]?.startsAt, id: first.bookings[0]?.id });
+      const second = await bookings('owner', 'company', { limit: 1, cursor: first.next });
+      expect(bookingKeys(second)).toEqual(['up1']);
+      expect(second.truncated).toBe(true);
+      const third = await bookings('owner', 'company', { limit: 1, cursor: second.next });
+      expect(bookingKeys(third)).toEqual(['cancelled']);
+      expect(third.truncated).toBe(false);
+      expect(third.next).toBeNull();
+      // Two at a time reads the same three, in the same order.
+      const twoA = await bookings('owner', 'company', { limit: 2 });
+      const twoB = await bookings('owner', 'company', { limit: 2, cursor: twoA.next });
+      expect([...bookingKeys(twoA), ...bookingKeys(twoB)]).toEqual(['up2', 'up1', 'cancelled']);
+      expect(twoB.next).toBeNull();
+      // Past: the latest first, the cursor goes further back.
+      const pastA = await bookings('owner', 'company', { period: 'past', limit: 1 });
+      expect(bookingKeys(pastA)).toEqual(['past1']);
+      const pastB = await bookings('owner', 'company', { period: 'past', limit: 1, cursor: pastA.next });
+      expect(bookingKeys(pastB)).toEqual(['past2']);
+      expect(pastB.next).toBeNull();
+      // A page that is not cut has no cursor, and a cursor carries no other org's rows or a bad key.
+      expect((await bookings('owner', 'company', { limit: 3 })).next).toBeNull();
+      expect(bookingKeys(await bookings('foreign', 'company', { cursor: first.next }, orgB))).toEqual(['b1']);
+      await refusal(bookings('owner', 'company', { cursor: { startsAt: 'not a time', id: booking.up1 } }));
+      await refusal(bookings('owner', 'company', { cursor: { startsAt: first.bookings[0]?.startsAt, id: booking.up1, extra: 1 } }));
     });
 
     it('cuts a page at the limit and says so, and refuses a limit above 50 or an unknown key', async () => {
