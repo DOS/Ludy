@@ -14,6 +14,7 @@ import { DomainError, Runtime } from '@ludy/kernel-runtime';
 import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import {
+  briefDailyFailureCode,
   purgeExpiredMorningBriefLines,
   runMeetingsBriefDailySweep,
   type MeetingsBriefWriter,
@@ -64,6 +65,7 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
     budgetSpent: '',
     injection: '',
     revokeMidRun: '',
+    killMidRun: '',
   };
 
   const conns: Record<string, string> = {};
@@ -963,5 +965,85 @@ suite('daily morning briefing Vy prep lines worker & definers (#5073 Step 2b-2)'
       expect(remaining.rows.map((r) => r.lines)).toContainEqual(['Con han']);
       expect(remaining.rows.every((r) => !r.lines[0]?.startsWith('Het han'))).toBe(true);
     });
+  });
+
+  it('halts cleanly on mid-run kill switch engagement (KILL_SWITCH_ON -> AI_STOPPED) and stores zero lines', async () => {
+    expect(briefDailyFailureCode(new DomainError('KILL_SWITCH_ON', 403, 'stopped'))).toBe('AI_STOPPED');
+    expect(briefDailyFailureCode(new DomainError('KILL_SWITCH', 403, 'stopped'))).toBe('AI_STOPPED');
+    expect(briefDailyFailureCode(new DomainError('USER_DISABLED', 403, 'disabled'))).toBe('MEMBER_NOT_ACTIVE');
+
+    const series1 = randomUUID();
+    const series2 = randomUUID();
+    const killId = randomUUID();
+    const eventTimeSql = `('${daytimeDay}'::timestamp + interval '19 hours') AT TIME ZONE '${daytimeZone}'`;
+
+    await admin(async (c) => {
+      await c.query(`UPDATE ludy_meetings.morning_notice SET enabled = false WHERE org_id = $1`, [orgId]);
+      await seedNoticePref(c, users.killMidRun, { sendMinute: daytimeMinute + 5 });
+      await seedMeetingWithFacts(c, {
+        recorderId: users.owner,
+        seriesId: series1,
+        title: 'Cuoc hop kill switch 1',
+        startedAt: new Date(Date.now() - 4 * 86_400_000).toISOString(),
+        decision: 'Chot bao gia 20.000.000 dong.',
+      });
+      await seedMeetingWithFacts(c, {
+        recorderId: users.owner,
+        seriesId: series2,
+        title: 'Cuoc hop kill switch 2',
+        startedAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+        decision: 'Chot lich ban giao.',
+      });
+      await seedAgendaEvent(c, { connectionId: conns.killMidRun!, userId: users.killMidRun, startsAtSql: eventTimeSql, seriesId: series1 });
+      await seedAgendaEvent(c, { connectionId: conns.killMidRun!, userId: users.killMidRun, startsAtSql: eventTimeSql, seriesId: series2 });
+    });
+
+    let writerCalls = 0;
+    const killSwitchWriter: MeetingsBriefWriter = {
+      writeDailyBrief: async () => {
+        writerCalls += 1;
+        await admin(async (c) => {
+          await c.query(
+            `INSERT INTO ludy_kernel.kill_switch (id, org_id, scope, target, reason, tripped_by)
+             VALUES ($1, $2, 'module', 'meetings', 'mid-run kill switch test', $3)`,
+            [killId, orgId, users.owner],
+          );
+        });
+        return { sentences: ['Chot bao gia 20.000.000 dong.'], dropped: 0 };
+      },
+    };
+
+    try {
+      const halted = await runMeetingsBriefDailySweep({
+        runtime: worker,
+        workerDb,
+        writer: killSwitchWriter,
+        orgId,
+        userId: users.killMidRun,
+        day: daytimeDay,
+      });
+      expect(halted).toEqual({ found: 1, prepared: 0, skipped: 0, failures: 1 });
+      expect(writerCalls).toBe(1);
+
+      await admin(async (c) => {
+        const stored = await c.query(
+          `SELECT id FROM ludy_meetings.morning_brief_lines WHERE org_id = $1 AND user_id = $2`,
+          [orgId, users.killMidRun],
+        );
+        expect(stored.rows).toEqual([]);
+
+        const run = await c.query<{ status: string; error: string | null }>(
+          `SELECT r.status, r.error FROM ludy_kernel.ai_run r JOIN ludy_kernel.agent a ON a.org_id = r.org_id AND a.id = r.agent_id
+           WHERE r.org_id = $1 AND a.member_user_id = $2 AND r.feature = 'meetings.brief_daily' ORDER BY r.started_at DESC LIMIT 1`,
+          [orgId, users.killMidRun],
+        );
+        expect(run.rows[0]?.status).toBe('failed');
+        expect(run.rows[0]?.error).toBe('AI_STOPPED');
+      });
+    } finally {
+      await admin(async (c) => {
+        await c.query(`DELETE FROM ludy_kernel.kill_switch WHERE org_id = $1 AND id = $2`, [orgId, killId]);
+      });
+    }
   });
 });

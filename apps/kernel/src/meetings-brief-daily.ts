@@ -107,9 +107,10 @@ export function briefDailyFailureCode(error: unknown): MemberVyRunErrorCode {
   let code = 'TRANSCRIBE_FAILED';
   if (error instanceof DomainError) {
     if (error.code === 'BUDGET_EXHAUSTED') code = 'AI_BUDGET_EXHAUSTED';
-    else if (error.code === 'KILL_SWITCH' || error.code === 'MODULE_OFF') code = 'AI_STOPPED';
+    else if (error.code === 'KILL_SWITCH_ON' || error.code === 'KILL_SWITCH' || error.code === 'MODULE_OFF') code = 'AI_STOPPED';
     else if (error.code === 'BRIEF_LINES_NOT_ELIGIBLE') code = 'VY_NOT_ALLOWED';
     else if (error.code === 'VY_RUN_NOT_LIVE') code = 'AGENT_RUN_NOT_LIVE';
+    else if (error.code === 'USER_DISABLED') code = 'MEMBER_NOT_ACTIVE';
     else code = error.code;
   } else if (typeof error === 'string') {
     code = error === 'BRIEF_TIMEOUT' ? 'TRANSCRIBE_TIMEOUT' : error;
