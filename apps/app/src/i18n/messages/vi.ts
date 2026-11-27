@@ -6969,6 +6969,28 @@ export const vi = {
       updated_asc: 'Sửa lâu nhất trước',
       updated_desc: 'Sửa gần nhất trước',
     },
+    taxLookup: {
+      trigger: 'Tra cứu mã số thuế',
+      title: 'Đề xuất từ tra cứu mã số thuế',
+      loading: 'Đang tra cứu mã số thuế…',
+      notFound: 'Không tìm thấy mã số thuế này trong dữ liệu tra cứu; hãy nhập tên và địa chỉ',
+      fetchedOn: 'Tra cứu ngày {date}',
+      statusPrefix: 'Trạng thái',
+      status: {
+        active: 'Đang hoạt động',
+        inactive: 'Ngừng hoạt động',
+        unknown: 'Không rõ',
+      },
+      fields: {
+        name: 'Tên',
+        address: 'Địa chỉ',
+      },
+      fill: 'Điền',
+      fillField: 'Điền {field}',
+      currentValue: 'Đang nhập',
+      lookedUpValue: 'Từ tra cứu',
+      emptyValue: 'Chưa có',
+    },
   },
   savedViews: {
     label: 'Chế độ xem đã lưu',

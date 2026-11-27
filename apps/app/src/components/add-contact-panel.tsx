@@ -17,6 +17,7 @@ import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@ludy/ui/components/sheet';
 import { refreshParties } from './party-edit.tsx';
+import { TaxCodeFieldRow, TaxLookupCard, usePartyTaxLookup } from './tax-lookup-card.tsx';
 import { ErrorText, FieldError, fieldControl, focusFirstInvalid, isEmailAddress, useFieldErrors } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { SEARCH_VALUE_MAX, duplicateKey, duplicateSearch, findDuplicate, type DuplicateHit, type DuplicateKey } from '../lib/contact-duplicate.ts';
@@ -174,6 +175,7 @@ function AddContactForm({ kind, onSaved, onOpenExisting, onCancel }: { kind: Kin
   }, []);
 
   const dupField = person ? 'email' : 'taxCode';
+  const taxLookup = usePartyTaxLookup(form.taxCode, !person);
   const key = duplicateKey(dupField, form[dupField], isEmailAddress);
   const paused = useDebounced(form[dupField], PAUSE_MS);
   const settled = duplicateKey(dupField, paused, isEmailAddress);
@@ -198,12 +200,43 @@ function AddContactForm({ kind, onSaved, onOpenExisting, onCancel }: { kind: Kin
     const id = `add-contact-${name}`;
     const checked = name === 'name' || name === 'taxCode' || name === 'email' ? name : null;
     const error = checked ? fields.of(checked) : undefined;
+    const renderInput = (className: string | undefined) => (
+      <Input
+        {...fieldControl(id, { hint: false, error: Boolean(error) })}
+        className={className}
+        value={form[name]}
+        onChange={(e) => set(name, e.target.value)}
+        onBlur={(e) => {
+          if (checked) fields.blur(checked, e.target.value);
+          if (name === 'taxCode' && !person) taxLookup.triggerOnBlur(e.target.value);
+        }}
+        {...props}
+      />
+    );
     return (
       <div className="flex flex-col gap-1">
         <Label htmlFor={id}>{t(`fields.${name}`)}</Label>
-        <Input {...fieldControl(id, { hint: false, error: Boolean(error) })} value={form[name]} onChange={(e) => set(name, e.target.value)} onBlur={(e) => checked && fields.blur(checked, e.target.value)} {...props} />
+        {name === 'taxCode' && !person ? <TaxCodeFieldRow lookup={taxLookup}>{renderInput}</TaxCodeFieldRow> : renderInput(undefined)}
         <FieldError id={id}>{error}</FieldError>
         {name === dupField && shown && key && <DuplicateNotice field={dupField} hit={shown} kind={kind} confirmed={confirmed === key.value} onConfirm={() => setConfirmed(key.value)} onOpen={onOpenExisting} />}
+        {name === 'taxCode' && !person && taxLookup.deployed && (
+          <TaxLookupCard
+            lookup={taxLookup}
+            currentName={form.name}
+            currentAddress={form.address}
+            className="mt-1"
+            onFillName={(nextName) => {
+              setForm((cur) => (cur.name.trim() === '' ? { ...cur, name: nextName } : cur));
+              fields.edit('name');
+              setError(null);
+            }}
+            onFillAddress={(nextAddress) => {
+              setForm((cur) => (cur.address.trim() === '' ? { ...cur, address: nextAddress } : cur));
+              setMore(true);
+              setError(null);
+            }}
+          />
+        )}
       </div>
     );
   };
@@ -265,6 +298,7 @@ function AddContactForm({ kind, onSaved, onOpenExisting, onCancel }: { kind: Kin
         setCompany(null);
         setConfirmed(null);
         fields.reset();
+        taxLookup.reset();
         setNote(t('panel.saved', { name: added.name }));
         root.current?.querySelector<HTMLInputElement>('input')?.focus();
       }

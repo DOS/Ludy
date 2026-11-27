@@ -10,6 +10,7 @@ import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { TaxCodeFieldRow, TaxLookupCard, usePartyTaxLookup } from './tax-lookup-card.tsx';
 import { ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, isEmailAddress, useFieldErrors } from './ui.tsx';
 
 export type PartyScreen = 'vendors' | 'customers' | 'contacts';
@@ -51,6 +52,7 @@ export function EditParty({ party, ns, onDone, kind }: { party: EditableFields; 
     }),
   );
   const taxCodeLocked = party.taxCode !== null;
+  const taxLookup = usePartyTaxLookup(form.taxCode);
   // The name, a new tax code and the email are checked here, each error under its field, on leaving it and on submit
   // (DESIGN.md §4.2, #2004); the server checks again.
   const fields = useFieldErrors<'name' | 'taxCode' | 'email'>((key) => {
@@ -62,19 +64,26 @@ export function EditParty({ party, ns, onDone, kind }: { party: EditableFields; 
     const id = `party-${party.id}-${key}`;
     const checked = key === 'name' || key === 'taxCode' || key === 'email' ? key : null;
     const error = checked ? fields.of(checked) : undefined;
+    const renderInput = (className: string | undefined) => (
+      <Input
+        {...fieldControl(id, { hint, error: Boolean(error) })}
+        className={className}
+        value={form[key]}
+        onChange={(e) => {
+          setForm({ ...form, [key]: e.target.value });
+          if (checked) fields.edit(checked);
+        }}
+        onBlur={(e) => {
+          if (checked) fields.blur(checked, e.target.value);
+          if (key === 'taxCode' && !taxCodeLocked) taxLookup.triggerOnBlur(e.target.value);
+        }}
+        {...props}
+      />
+    );
     return (
       <div className="flex flex-col gap-1">
         <Label htmlFor={id}>{t(`fields.${key}`)}</Label>
-        <Input
-          {...fieldControl(id, { hint, error: Boolean(error) })}
-          value={form[key]}
-          onChange={(e) => {
-            setForm({ ...form, [key]: e.target.value });
-            if (checked) fields.edit(checked);
-          }}
-          onBlur={(e) => checked && fields.blur(checked, e.target.value)}
-          {...props}
-        />
+        {key === 'taxCode' ? <TaxCodeFieldRow lookup={taxLookup}>{renderInput}</TaxCodeFieldRow> : renderInput(undefined)}
         <FieldError id={id}>{error}</FieldError>
       </div>
     );
@@ -108,6 +117,21 @@ export function EditParty({ party, ns, onDone, kind }: { party: EditableFields; 
           </p>
         )}
       </div>
+      {taxLookup.deployed && (
+        <TaxLookupCard
+          lookup={taxLookup}
+          currentName={form.name}
+          currentAddress={form.address}
+          className="sm:col-span-2"
+          onFillName={(nextName) => {
+            setForm((cur) => (cur.name.trim() === '' ? { ...cur, name: nextName } : cur));
+            fields.edit('name');
+          }}
+          onFillAddress={(nextAddress) => {
+            setForm((cur) => (cur.address.trim() === '' ? { ...cur, address: nextAddress } : cur));
+          }}
+        />
+      )}
       {field('address', { maxLength: 500 })}
       {field('email', { type: 'email', maxLength: 254 })}
       {field('phone', { type: 'tel', maxLength: 30 })}

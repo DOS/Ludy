@@ -6971,6 +6971,28 @@ export const en = {
       updated_asc: 'Least recently edited first',
       updated_desc: 'Most recently edited first',
     },
+    taxLookup: {
+      trigger: 'Look up tax code',
+      title: 'Tax-code lookup proposal',
+      loading: 'Looking up tax code…',
+      notFound: 'This tax code is not in the lookup data; enter the name and address.',
+      fetchedOn: 'Checked {date}',
+      statusPrefix: 'Status',
+      status: {
+        active: 'Active',
+        inactive: 'Inactive',
+        unknown: 'Unknown',
+      },
+      fields: {
+        name: 'Name',
+        address: 'Address',
+      },
+      fill: 'Fill',
+      fillField: 'Fill {field}',
+      currentValue: 'Current',
+      lookedUpValue: 'Looked up',
+      emptyValue: 'None',
+    },
   },
   savedViews: {
     label: 'Saved views',
