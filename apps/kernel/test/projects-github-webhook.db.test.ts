@@ -1907,15 +1907,15 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     expect((ownerSaveOutbound.body?.binding as { outboundCloseIssueOnDone: boolean })?.outboundCloseIssueOnDone).toBe(true);
 
     // Materialize default board columns before looking up Done / Todo columns for move_column.
-    await runtime.query<ProjectBoard>('projects.board', { projectId }, { actor: asUser(owner.userId), orgId: s2Org.orgId });
+    const defaults = await runtime.execute<{ columns: Array<{ id: string; taskStatus: string }> }>(
+      'projects.column.init_defaults',
+      { projectId, language: 'en' },
+      { actor: asUser(owner.userId), orgId: s2Org.orgId, idempotencyKey: randomUUID() },
+    );
 
     // 2) Opt-in Done -> closes 'issue' #77 ONLY via PATCH (never touches 'pull_request' #101).
-    const cols = await rows<{ id: string; task_status: string }>(
-      'SELECT id, task_status FROM ludy_projects.project_column WHERE org_id = $1 AND project_id = $2',
-      [s2Org.orgId, projectId],
-    );
-    const doneCol = cols.find((c) => c.task_status === 'done');
-    const todoCol = cols.find((c) => c.task_status === 'todo');
+    const doneCol = defaults.columns.find((c) => c.taskStatus === 'done');
+    const todoCol = defaults.columns.find((c) => c.taskStatus === 'todo');
     expect(doneCol && todoCol).toBeTruthy();
 
     await runtime.execute(
