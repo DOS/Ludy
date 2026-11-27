@@ -451,11 +451,11 @@ export const morningMailContent = defineQuery({
         : (
             await sql<{ agenda_id: string; previous_meeting_id: string }>`
               SELECT q.agenda_id, p.id AS previous_meeting_id
-              FROM pg_catalog.unnest(
-                ${sql.val(seriesTargets.map((s) => s.agendaId))}::uuid[],
-                ${sql.val(seriesTargets.map((s) => s.seriesId))}::uuid[],
-                ${sql.val(seriesTargets.map((s) => s.beforeAt.toISOString()))}::timestamptz[],
-                ${sql.val(seriesTargets.map((s) => s.excludeId))}::uuid[]
+              FROM ROWS FROM (
+                pg_catalog.unnest(${sql.val(seriesTargets.map((s) => s.agendaId))}::uuid[]),
+                pg_catalog.unnest(${sql.val(seriesTargets.map((s) => s.seriesId))}::uuid[]),
+                pg_catalog.unnest(${sql.val(seriesTargets.map((s) => s.beforeAt.toISOString()))}::timestamptz[]),
+                pg_catalog.unnest(${sql.val(seriesTargets.map((s) => s.excludeId))}::uuid[])
               ) AS q(agenda_id, series_id, before_at, exclude_id)
               CROSS JOIN LATERAL (
                 SELECT m.id
