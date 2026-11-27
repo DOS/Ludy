@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_FEATURE_KEYS,
   AdsCampaignWriter,
+  AskBooksCoworker,
   ConversationWriter,
   ExpenseVarianceCoworker,
   InboxReader,
@@ -408,6 +409,10 @@ function createStubRuntime() {
     scheduling: new SchedulingReader(STUB_CONFIG, async () => ({ asksForMeeting: true, windows: [{ date: '2026-10-08', from: '14:00', to: '15:00' }] })),
     expenseVariance: new ExpenseVarianceCoworker(STUB_CONFIG, async () => ({
       output: { notes: [{ row: 1, text: 'Co the do hoa don tu nha cung cap tang so voi ky truoc.' }] },
+      usage: zeroUsage,
+    })),
+    askBooks: new AskBooksCoworker(STUB_CONFIG, async () => ({
+      output: { entry: 'profit_loss', period: 'named', lead: 'Day la bao cao ket qua kinh doanh cua ky duoc chon.' },
       usage: zeroUsage,
     })),
     payroll: new PayrollCoworker(STUB_CONFIG, {

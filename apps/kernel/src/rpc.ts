@@ -129,6 +129,7 @@ import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeeting
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type MarketplaceProposalFacts, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
 import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.ts';
+import { askBooks, askBooksAi } from './finance-ask-books.ts';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainMonthClose, monthCloseAi } from './finance-month-close-ai.ts';
 import { explainExpenseVariance, expenseVarianceAi } from './finance-expense-variance-ai.ts';
@@ -571,6 +572,8 @@ export function createRpcHandler(
   const financeMonthCloseAi = monthCloseAi(conversationReader?.monthCloseNote ? { monthCloseNote: conversationReader.monthCloseNote.bind(conversationReader) } : null, suggestionBudget());
   // The accounting coworker's note on the 30/60/90-day cash forecast (#4391): the same reader and model, a budget of its own; told the computed figures and dates only.
   const financeCashForecastAi = cashForecastAi(conversationReader?.cashForecastSentence ? { cashForecastSentence: conversationReader.cashForecastSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The accounting coworker that reads a question about the books (#5181): the same reader and model, a budget of its own; told only the owner's question with its dates and numbers blanked out, and it chooses an entry of a closed catalogue.
+  const financeAskBooksAi = askBooksAi(conversationReader?.askBooksPick ? { askBooksPick: conversationReader.askBooksPick.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's sentence naming the late sales invoices of a VAT working (#3540): the same reader and model, a budget of its own; told invoice numbers and periods only.
   const financeVatLateAi = vatLateAi(conversationReader?.vatLateSentence ? { vatLateSentence: conversationReader.vatLateSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's possible reason per flagged expense line (#4392): the same reader and model, a budget of its own; told no figure at all.
@@ -3915,6 +3918,12 @@ export function createRpcHandler(
           const checklist = await runtime.query<MonthClose>('finance.month_close', ask, { actor, orgId });
           return explainMonthClose(financeMonthCloseAi, orgId, actor.userId, checklist, lang ?? 'vi');
         }),
+      ),
+    },
+    // "Ask the books in plain words" (#5181): the coworker only chooses a report and a kind of period; the report is then read as the asking member, in their own transaction, so the read's own role list, scope and refusal apply unchanged.
+    financeAskBooks: {
+      ask: os.financeAskBooks.ask.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => askBooks(financeAskBooksAi, <T>(name: string, ask: Record<string, unknown>) => runtime.query<T>(name, ask, { actor, orgId }), orgId, actor.userId, input)),
       ),
     },
     financeExpenseVariance: {
