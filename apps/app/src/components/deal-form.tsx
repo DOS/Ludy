@@ -16,6 +16,7 @@ import { NewPartyGroup } from './deal-party-new.tsx';
 import { ErrorText, Field, focusFirstInvalid, useFieldErrors } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { dealFormValues, type DealFormEdits } from '../lib/deal-form-values.ts';
 import { normalizeAmount } from '../lib/vouchers.ts';
 
 export const refreshDeals = () => {
@@ -126,19 +127,22 @@ function PartyPicker({ value, onPick, invalid, describedBy, locked }: { value: P
 }
 
 // presetParty: a new deal for this party, chosen and not changeable (the contact panel's "Thêm cơ hội", #3292). plain: the form sits in a side sheet (#3648), which frames it: one column, no border of its own.
+// The form is not keyed by the deal's version: a newer version keeps the typed edits (see dealFormValues) and the next save carries that version.
 export function DealForm({ deal, members, onDone, presetParty = null, plain = false }: { deal: Deal | null; members: readonly Member[]; onDone: () => void; presetParty?: PartyChoice | null; plain?: boolean }) {
   const t = useTranslations('deals');
-  const [title, setTitle] = useState(deal?.title ?? '');
-  const [party, setParty] = useState<PartyChoice | null>(deal ? { id: deal.partyId, name: deal.partyName, kind: 'organization', taxCode: null } : presetParty);
-  const [amount, setAmount] = useState(deal ? deal.amount.replace(/\.00$/, '') : '');
-  const [expectedClose, setExpectedClose] = useState(deal?.expectedClose ?? '');
-  const [ownerUserId, setOwnerUserId] = useState(deal ? (deal.ownerUserId ?? '') : 'me');
+  const [edits, setEdits] = useState<DealFormEdits>({});
+  const { title, party, amount, expectedClose, ownerUserId } = dealFormValues(deal, presetParty, edits);
+  const setTitle = (v: string) => setEdits((e) => ({ ...e, title: v }));
+  const setParty = (v: PartyChoice | null) => setEdits((e) => ({ ...e, party: v }));
+  const setAmount = (v: string) => setEdits((e) => ({ ...e, amount: v }));
+  const setExpectedClose = (v: string) => setEdits((e) => ({ ...e, expectedClose: v }));
+  const setOwnerUserId = (v: string) => setEdits((e) => ({ ...e, ownerUserId: v }));
   const done = () => {
     refreshDeals();
     onDone();
   };
   const create = useMutation(orpc.crm.deals.create.mutationOptions({ onSuccess: done }));
-  // A refused edit (someone saved first) reloads the list; the form is keyed by the deal's version, so it reopens on the new one.
+  // A refused edit (someone saved first) reloads the deal: untouched fields show the new values, typed ones stay, and saving again sends the new version.
   const update = useMutation(orpc.crm.deals.update.mutationOptions({ onSuccess: done, onError: refreshDeals }));
   const pending = create.isPending || update.isPending;
   const fields = useFieldErrors<FormField>((field) => {

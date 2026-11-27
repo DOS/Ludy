@@ -14,6 +14,7 @@ import { DealQuotes } from './deal-quotes.tsx';
 import { LinkedMeetings, meetingsInstalled } from './linked-meetings.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { orpc } from '../lib/api.ts';
+import { newerDeal } from '../lib/deal-form-values.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
 import { installedModules } from '../lib/org-modules.ts';
 import { AiWrittenBadge } from './ai-written-badge.tsx';
@@ -39,10 +40,10 @@ export function DealSheet({ target, members, canEdit, onClose }: { target: DealS
   const common = useTranslations('common');
   const { locale } = useLocaleSetting();
   const [roadmapSignalOpen, setRoadmapSignalOpen] = useState(false);
-  // The deal as it is now: a quote's offer or a move made in the sheet changes it, and a stale version would refuse the next edit. The row or card it was opened from is the first answer.
+  // The deal as it is now: a quote's offer or a move made in the sheet changes it, and a stale version would refuse the next edit. The row or card it was opened from is the first answer, and a cached read older than it never replaces it (#5015).
   const opened = target.kind === 'deal' ? target.deal : null;
   const fresh = useQuery({ ...orpc.crm.deals.get.queryOptions({ input: { dealId: opened?.id ?? '00000000-0000-0000-0000-000000000000' } }), enabled: opened !== null, ...(opened ? { placeholderData: opened } : {}) });
-  const deal = opened === null ? null : (fresh.data ?? opened);
+  const deal = opened === null ? null : newerDeal(opened, fresh.data);
   const stages = useQuery(orpc.crm.pipeline.stages.queryOptions({ input: {} }));
   const stageName = deal ? stages.data?.find((s) => s.id === deal.stageId)?.name : undefined;
   return (
@@ -62,7 +63,7 @@ export function DealSheet({ target, members, canEdit, onClose }: { target: DealS
             <>
               <Section id="deal-sheet-details" title={t('sheet.details')}>
                 {canEdit ? (
-                  <DealForm key={deal.version} plain deal={deal} members={members} onDone={onClose} />
+                  <DealForm key={deal.id} plain deal={deal} members={members} onDone={onClose} />
                 ) : (
                   <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
                     <div>

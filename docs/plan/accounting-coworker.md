@@ -8,6 +8,7 @@ One scope line per owner-approved feature, each linked to its issue. Code comput
 | Month-close checklist | For one legal entity and month, on the Tổng quan: seven items counted by code (pending proposals dated in the month, tax-portal invoices that match no voucher, unbooked bank lines, marketplace settlements and payouts not recorded, the stock close not run, the VAT return not marked as filed, the period lock not covering the month), each with a count, a link and fixed text. The coworker is told which items are open and no count or date, puts them in order and says why in one short note; the order is accepted only if it is exactly the open items. | [#4390](https://github.com/DOS/Ludy/issues/4390) | [below](#month-close-checklist-4390) |
 | Cost variance | A read-only card on the Tổng quan: expense lines that moved against last month and the 3-month average, flagged by code under the entity's books; the coworker's possible reason per line states no figure, date or name. | [#4392](https://github.com/DOS/Ludy/issues/4392) | the section below |
 | Unusual posted entries | A monthly review of POSTED entries on the Tổng quan, for one legal entity and an ended month: five rules find them (a repeat of an invoice, a manual voucher on a control account, an amount far outside the usual range, an account never used with this supplier or kind of voucher, an entry keyed on a day off), ranked and capped in SQL; the coworker's one possible thing to look at per hit states no figure, date, code or name and never says the entry is wrong; a person may mark a hit as reviewed (audited, idempotent, no ledger write). | [#5182](https://github.com/DOS/Ludy/issues/5182) | the last section below |
+| Ask the books in plain words | A read-only card on the Tổng quan: the owner types a question ("Tháng 10 lãi bao nhiêu?") or picks a report. The coworker only chooses one entry of a closed catalogue of six existing reads (profit and loss, cash and bank, receivables, payables, VAT, stock value) and a kind of period; code resolves the period, runs that read as the asking member and shows every figure with a link to the full report. A question outside the catalogue gets a fixed list of what can be asked. | [#5181](https://github.com/DOS/Ludy/issues/5181) | [below](#ask-the-books-in-plain-words-5181) |
 
 ## Month-close checklist (#4390)
 
@@ -122,3 +123,28 @@ the same, without sentences and without a notice.
 (contract in `packages/kernel-contract/src/finance-unusual-entries.ts`), the query in `modules/finance/src/unusual-entries.ts`,
 its pure parts in `modules/finance/src/domain/unusual-entries.ts`, the note in `packages/agent/src/unusual-entries.ts` under
 the key `finance.unusual_entries_note`, the card in `apps/app/src/routes/unusual-entries-card.tsx`.
+
+## Ask the books in plain words (#5181)
+
+**What the coworker does.** It reads the owner's question and returns a structured choice: one entry of the catalogue (or "none"), a kind of period (`this_month`, `last_month`, `this_quarter`, `last_quarter`, `this_year`, `last_year`, `named`, `as_of_today`) and at most one short sentence. It never returns a figure, a date, SQL or a name. Everything else is code, and the core works with AI off: the question box is hidden and the list of reports below it does the same job, without the sentence.
+
+**The catalogue.** Each entry is backed by a read the Kế toán screens already use, run through the runtime as the asking member, so that read's own role list, row security, legal-entity scope and refusal apply unchanged.
+
+| Entry | Read | Period | Card |
+|---|---|---|---|
+| `profit_loss` | `finance.statements.period` (B02 lines 10, 11, 50, 60) | month, quarter, year | revenue, cost of goods, profit before and after tax |
+| `cash_balance` | `finance.statements.period` (B01 line 110) | month, quarter, year | cash and bank at the period's end |
+| `receivables_top` | `finance.ledger.period` (131 per party) | month, quarter, year | total and the 5 largest balances at the period's end |
+| `payables_top` | `finance.ledger.period` (331 per party) | month, quarter, year | total and the 5 largest balances at the period's end |
+| `vat_position` | `finance.vat.period` | month, quarter | output, input, difference, carry-forward |
+| `stock_value` | `finance.stock.report` | month | closing value summed over the items |
+
+Not in the catalogue, because no existing read ranks them: the top customers by sales and the top suppliers by purchases. They get the "none" card (a follow-up if the owner wants them).
+
+**What the model reads.** Only the owner's question, and only after code found any month, quarter or year in it with its own parser and replaced every period phrase with `[period]` and every number with `[number]`. A name the owner typed can still reach the model as part of their own question; an echo guard refuses a sentence that repeats a typed word outside the catalogue's vocabulary. The period is resolved by code: from the books' day for a relative word, from the parser for a named one, and a list to pick from when it is unclear, not allowed for the entry (a year for VAT, a quarter for stock) or not begun.
+
+**The sentence's checks** (NFKC text): no digit of any script, number words in both languages, date words, invisible marks and look-alike scripts, links, promises, done-claims, advice about money, causes, markup, or echo of a typed word; a refused sentence is dropped and the card keeps its fixed text.
+
+**What is kept.** For 30 minutes, the coworker's validated choice (the entry and the kind of period) for a redacted question, by org and language; never a figure, a card or a sentence. The read runs again on every request as the member who asks.
+
+**Where.** `finance.ask_books` is the metered key (`packages/agent/src/meter.ts`); the question's preparation, the prompt and every check are in `packages/agent/src/ask-books.ts`, the call in `ask-books-coworker.ts`; the contract and the period resolver in `packages/kernel-contract/src/finance-ask-books.ts`; the orchestration in `apps/kernel/src/finance-ask-books.ts` (`financeAskBooks.ask` in `rpc.ts`); the card in `apps/app/src/components/ask-books-card.tsx`. The eval set (more than 40 questions in Vietnamese and English) is `apps/kernel/test/finance-ask-books-eval-cases.ts`; it runs in CI with a fake model, so it proves the plumbing, the validator and the catalogue contract, not how well a live model chooses.

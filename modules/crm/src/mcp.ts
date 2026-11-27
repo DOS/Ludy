@@ -57,6 +57,7 @@ export const zMcpBookingsInput = z.strictObject({
   period: z.enum(['upcoming', 'past']).default('upcoming').describe('upcoming (not ended yet, the earliest first) or past (ended, the latest first).'),
   dealId: zId.optional().describe('Only bookings linked to this deal.'),
   limit: zLimit,
+  cursor: z.strictObject({ startsAt: z.iso.datetime({ offset: true }), id: zId }).optional().describe('The `next` of the previous answer, to read the following page (leave the other inputs as they were).'),
 });
 
 const line = (value: string | null, max = TEXT_MAX): string | null => {
@@ -299,6 +300,8 @@ export interface McpBooking {
 export interface McpBookings {
   bookings: McpBooking[];
   truncated: boolean;
+  // Set when more were left out: pass it as `cursor` to read the following page (#4099).
+  next: { startsAt: string; id: string } | null;
 }
 
 export const mcpBookings = defineQuery({
@@ -321,7 +324,9 @@ export const mcpBookings = defineQuery({
       .where('b.status', 'in', ['confirmed', 'cancelled'])
       .where('b.ends_at', upcoming ? '>' : '<=', new Date());
     if (input.dealId) q = q.where('b.deal_id', '=', input.dealId);
-    const rows = await q.orderBy('b.starts_at', upcoming ? 'asc' : 'desc').orderBy('b.id').limit(input.limit + 1).execute();
+    // The page key is (starts_at, id), in the direction of the list: after the cursor going forward (upcoming), before it going back (past).
+    if (input.cursor) q = q.where(sql<boolean>`(b.starts_at, b.id) ${sql.raw(upcoming ? '>' : '<')} (${new Date(input.cursor.startsAt)}::timestamptz, ${input.cursor.id}::uuid)`);
+    const rows = await q.orderBy('b.starts_at', upcoming ? 'asc' : 'desc').orderBy('b.id', upcoming ? 'asc' : 'desc').limit(input.limit + 1).execute();
     const bookings = rows.slice(0, input.limit).map(
       (r): McpBooking => ({
         id: r.id,
@@ -338,7 +343,9 @@ export const mcpBookings = defineQuery({
         meetingState: r.meeting_state,
       }),
     );
-    return { bookings, truncated: rows.length > bookings.length };
+    const last = bookings.at(-1);
+    const truncated = rows.length > bookings.length;
+    return { bookings, truncated, next: truncated && last ? { startsAt: last.startsAt, id: last.id } : null };
   },
 });
 

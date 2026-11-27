@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_FEATURE_KEYS,
   AdsCampaignWriter,
+  AskBooksCoworker,
   ConversationWriter,
   ExpenseVarianceCoworker,
   UnusualEntriesCoworker,
@@ -413,6 +414,10 @@ function createStubRuntime() {
     })),
     unusualEntries: new UnusualEntriesCoworker(STUB_CONFIG, async () => ({
       output: { notes: [{ row: 1, text: 'Co the khoan mua nay lon hon muc thuong cua mot nha cung cap.' }] },
+      usage: zeroUsage,
+    })),
+    askBooks: new AskBooksCoworker(STUB_CONFIG, async () => ({
+      output: { entry: 'profit_loss', period: 'named', lead: 'Day la bao cao ket qua kinh doanh cua ky duoc chon.' },
       usage: zeroUsage,
     })),
     payroll: new PayrollCoworker(STUB_CONFIG, {

@@ -116,6 +116,8 @@ import { checkVatLateSentence, vatLateInstructions, vatLatePrompt, vatLateQuiet,
 import { checkMonthCloseNote, monthCloseInstructions, monthClosePrompt, monthCloseQuiet, type MonthCloseFacts, type MonthCloseNoteResult } from './month-close.ts';
 import { ExpenseVarianceCoworker } from './expense-variance-coworker.ts';
 import { UnusualEntriesCoworker } from './unusual-entries-coworker.ts';
+import { AskBooksCoworker } from './ask-books-coworker.ts';
+import type { AskBooksResult } from './ask-books.ts';
 import type { ExpenseVarianceNoteFacts, ExpenseVarianceNotesResult } from './expense-variance.ts';
 import type { UnusualEntriesNoteFacts, UnusualEntriesNotesResult } from './unusual-entries.ts';
 import { checkCashForecastSentence, cashForecastInstructions, cashForecastPrompt, cashForecastQuiet, type CashForecastFacts, type CashForecastSentenceResult } from './cash-forecast.ts';
@@ -476,12 +478,14 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
   private readonly expenseVariance: ExpenseVarianceCoworker;
   private readonly unusualEntries: UnusualEntriesCoworker;
+  private readonly askBooks: AskBooksCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
   constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; signDepositMatch?: SignDepositMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; roadmapSignalMatch?: RoadmapSignalMatchGenerator; projectTriageAssist?: ProjectTriageAssistGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; hrRequestDraft?: HrSelfRequestDraftGenerator; hrPolicyQa?: HrSelfPolicyQaGenerator; hrAddendumCheck?: HrAddendumCheckGenerator; hrOkrCheckinDraft?: HrOkrCheckinDraftGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.expenseVariance = new ExpenseVarianceCoworker(config);
     this.unusualEntries = new UnusualEntriesCoworker(config);
+    this.askBooks = new AskBooksCoworker(config);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
     this.generateAttendanceAnomalies = generators.attendanceAnomalies ?? createAttendanceAnomalyGenerator(config);
@@ -922,6 +926,12 @@ export class InboxReader {
    * says the entry is wrong, claims certainty, advises or is not marked as a possibility is dropped (unusual-entries.ts). onUsage gets the tokens the call used. */
   unusualEntriesNotes(facts: UnusualEntriesNoteFacts, onUsage?: (usage: AiUsage) => void): Promise<UnusualEntriesNotesResult> {
     return this.unusualEntries.notes(facts, onUsage);
+  }
+
+  /** The accounting coworker's choice of one catalogue report and period kind for a question about the books (#5181), from the redacted question only; a choice outside the closed lists is refused whole and a sentence that
+   * holds a number, date, name, link, advice or promise is dropped (ask-books.ts). onUsage gets the tokens the call used. */
+  askBooksPick(redactedQuestion: string, language: 'vi' | 'en', onUsage?: (usage: AiUsage) => void): Promise<AskBooksResult> {
+    return this.askBooks.pick(redactedQuestion, language, onUsage);
   }
 
   /** The finance coworker's sentence on the Kế toán overview (#2631) from its aggregated figures, or why there is none: when nothing moved the model is not asked,
