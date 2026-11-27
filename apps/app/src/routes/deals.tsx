@@ -4,7 +4,7 @@
 // moves and deletes deals; owners and admins edit the stages; a viewer reads. The board is the default on a wide screen,
 // the list on a phone. Amounts are decimal strings and are shown as the reader's language groups them.
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { Link, useParams, useSearch } from '@tanstack/react-router';
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { DEAL_LOST_REASON_MAX, type Deal, type DealCursor, type FilterAst, type PipelineStage, type SavedViewSort } from '@ludy/kernel-contract';
@@ -26,7 +26,7 @@ import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { EMPTY_DEAL_FILTER, astToDealFilter, dealFilterToAst, type DealFilterState } from '../lib/deal-filter.ts';
-import { isDealOverdue, isEmptyBoard, readDealTarget, readDealView, showAllClosed, withDealView, withoutDealTarget, type DealView } from '../lib/deal-board.ts';
+import { isDealOverdue, isEmptyBoard, readDealTarget, readDealView, showAllClosed, withDealView, type DealView } from '../lib/deal-board.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { AiWrittenBadge } from '../components/ai-written-badge.tsx';
@@ -181,6 +181,7 @@ export function DealsPage() {
   const [sheet, setSheet] = useState<DealSheetTarget | null>(null);
   const [dismissedDealId, setDismissedDealId] = useState<string | null>(null);
   const { slug } = useParams({ strict: false }) as { slug: string };
+  const navigate = useNavigate();
   const routeSearch = useSearch({ strict: false }) as { deal?: string; quote?: string } | undefined;
   const fallbackTarget = (() => {
     try {
@@ -207,11 +208,34 @@ export function DealsPage() {
     setSheet(null);
     if (deepDealId) {
       setDismissedDealId(deepDealId);
+      let currentTab: DealView | undefined;
+      let startPath = '';
       try {
-        window.history.replaceState(window.history.state, '', `${window.location.pathname}${withoutDealTarget(window.location.search)}${window.location.hash}`);
+        currentTab = readDealView(window.location.search);
+        startPath = window.location.pathname;
       } catch {
-        // Ignore when running outside a browser window.
+        currentTab = undefined;
       }
+      // Clear deal/quote via TanStack Router so useSearch and browser history stay synchronized.
+      void navigate({
+        to: '/o/$slug/deals',
+        params: { slug },
+        search: {},
+        replace: true,
+        resetScroll: false,
+      })
+        .then(() => {
+          if (currentTab) {
+            try {
+              if (window.location.pathname === startPath) {
+                window.history.replaceState(window.history.state, '', `${window.location.pathname}${withDealView(window.location.search, currentTab)}${window.location.hash}`);
+              }
+            } catch {
+              // Ignore when running outside a browser window.
+            }
+          }
+        })
+        .catch(() => {});
     }
   };
   const [view, setViewState] = useState<View>(() => {

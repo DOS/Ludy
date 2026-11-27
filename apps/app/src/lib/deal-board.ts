@@ -33,14 +33,6 @@ export function readDealTarget(search: string): { dealId: string; quoteId: strin
   return { dealId: deal.toLowerCase(), quoteId: quote && UUID_PATTERN.test(quote) ? quote.toLowerCase() : null };
 }
 
-export function withoutDealTarget(search: string): string {
-  const params = new URLSearchParams(search);
-  params.delete('deal');
-  params.delete('quote');
-  const next = params.toString();
-  return next ? `?${next}` : '';
-}
-
 // An open deal past its expected close, by the calendar day in Vietnam (#3649): between 00:00 and 07:00 there the UTC date is still yesterday's, and a flag a day late is a deal nobody chased.
 export const isDealOverdue = (deal: Pick<Deal, 'stageKind' | 'expectedClose'>, today: string = vietnamToday()): boolean => deal.stageKind === 'open' && deal.expectedClose !== null && deal.expectedClose < today;
 
