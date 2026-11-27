@@ -608,6 +608,11 @@ export const KERNEL_ERROR_CODES = [
   'TEMPLATE_SUGGEST_NOT_NEEDED',
   // Vy listing what a meeting left open (#4768).
   'OPEN_POINTS_BUSY',
+  // Catch-up summary for a member who missed a meeting (#5130).
+  'CATCH_UP_OFF',
+  'CATCH_UP_BUSY',
+  'CATCH_UP_NOT_PUBLISHED',
+  'CATCH_UP_REDACTED',
   // Sales call insights (#4920).
   'SALES_INSIGHT_BUSY',
   'MEETING_TITLE_EMPTY',

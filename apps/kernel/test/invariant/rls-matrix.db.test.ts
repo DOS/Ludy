@@ -124,6 +124,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  // #5073 / #5080 (ADR-0049 #5108): short-lived 36h prep lines for opted-in members, strict user + member_briefing RLS.
+  'crove_meetings.morning_brief_lines',
   'crove_projects.github_project_binding',
   'crove_projects.github_project_repo',
   'crove_projects.github_sync_delivery',
@@ -243,6 +245,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.meeting_video', () => 'false'], // As above.
   ['crove_meetings.minutes_link', () => 'false'], // The recorder's own links to the published minutes, read by the recorder (and owners and admins), users (#4822); an agent context reads none.
   ['crove_meetings.minutes_version', () => 'false'], // The recorder's published second-language version of the minutes, read by the meeting's readers, users (#4777).
+  ['crove_meetings.morning_brief_lines', () => 'false'], // Short-lived 36h prep lines for opted-in members, read in user and member_briefing contexts only (#5073 / #5080, ADR-0049 #5108); member_vy reads none.
   ['crove_meetings.morning_notice', () => 'false'], // A member's own opt-in to the morning notice of the day's meetings, read by that member, a user (#3955).
   ['crove_meetings.tracker_alert', () => 'false'], // A member's own opt-in to the alert when a tracked keyword comes up in a new meeting, read by that member, a user (meetings tracker alerts, #4873); an agent context reads none.
   ['crove_meetings.tracker_term', () => 'false'], // The org's tracked keywords, read by the members of the org, users (meetings trackers, #4818); an agent context reads none.
@@ -384,6 +387,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.minutes_link', 'false'],
   // The recorder's published second-language version of a meeting's minutes (#4777): read by the meeting's readers, users only; worker system context reads and writes nothing.
   ['crove_meetings.minutes_version', 'false'],
+  // Short-lived 36h Vy briefing prep lines (#5073 / #5080, ADR-0049 #5108): user + member_briefing only; worker system context reads and writes nothing.
+  ['crove_meetings.morning_brief_lines', 'false'],
   // A member's own morning notice setting (#3955): the member's alone; worker system context reads and writes nothing (its one reader is a definer).
   ['crove_meetings.morning_notice', 'false'],
   // A member's own opt-in to tracker alerts (#4873): the member's alone, users only; worker system context reads and writes nothing (its one reader is a definer).
@@ -3791,6 +3796,24 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           source_hash: 'b'.repeat(64),
           body: '[{"key":"summary","text":"RLS matrix version"}]',
           published_by: o.owner,
+        },
+      };
+    },
+  },
+  // #5073 / #5080 (ADR-0049 #5108): short-lived 36h Vy briefing prep lines for opted-in members, readable in user and member_briefing contexts only;
+  // worker system context and member_vy read none. Lands in PENDING_TABLES before its migration.
+  'crove_meetings.morning_brief_lines': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          user_id: o.owner,
+          meeting_id: meeting.id,
+          lines: JSON.stringify(['RLS matrix briefing prep line']),
+          expires_at: new Date(Date.now() + 36 * 60 * 60 * 1000).toISOString(),
         },
       };
     },
