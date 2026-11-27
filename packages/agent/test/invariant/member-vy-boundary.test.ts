@@ -9429,6 +9429,8 @@ const WORKSPACE_TS_TYPE_PREFIX_IDENTS = new Set([
   'infer',
   'is',
   'asserts',
+  'new',
+  'abstract',
 ]);
 
 function skipWorkspaceTypeAssertion(toks: readonly Token[], typeStart: number, limit: number): number {
@@ -9458,6 +9460,10 @@ function skipWorkspaceTypeAssertion(toks: readonly Token[], typeStart: number, l
       continue;
     }
     if (expectTypeOperand) {
+      if (tk.kind === 'punct' && (tk.value === '|' || tk.value === '&')) {
+        j += 1;
+        continue;
+      }
       if (
         tk.kind === 'template_head' ||
         (tk.kind === 'punct' && (tk.value === '(' || tk.value === '[' || tk.value === '{' || tk.value === '<'))
@@ -9484,7 +9490,7 @@ function skipWorkspaceTypeAssertion(toks: readonly Token[], typeStart: number, l
       return j;
     }
     if (tk.kind === 'punct') {
-      if (tk.value === '<' || tk.value === '[') {
+      if (tk.value === '<' || tk.value === '[' || tk.value === '(') {
         td = 1;
         j += 1;
         continue;
@@ -12484,6 +12490,34 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
         'apps/web/src/C.tsx',
       ),
     ).toContain('uses computed dynamic import or require');
+    expect(
+      workspaceAdapterLeakViolations(
+        `export const fn = (String as | any)['from' + 'CharCode'](${genNoteCharCodes});`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `export const fn = (String as & any)['from' + 'CodePoint'](${genNoteCharCodes});`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `export const fn = (String as new () => any)['from' + 'CharCode'](${genNoteCharCodes});`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `export const fn = (String as <T>(x: T) => any)['from' + 'CharCode'](${genNoteCharCodes});`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
     expect(
       workspaceAdapterLeakViolations(
         'const p = String.fromCharCode(64,108,117,100,121,47,97,103,101,110,116); import(p);',
