@@ -60,6 +60,8 @@ describe('parseNamedPeriod', () => {
     expect(parseNamedPeriod('tháng 10 hay quý 3')).toEqual({ kind: 'ambiguous' });
     expect(parseNamedPeriod('lãi tháng 13')).toEqual({ kind: 'ambiguous' });
     expect(parseNamedPeriod('Q5')).toEqual({ kind: 'ambiguous' });
+    // A month number said in two words is not the first of them.
+    expect(parseNamedPeriod('tháng ba mươi')).toEqual({ kind: 'ambiguous' });
     // A year said as a word beside a month is a list too, never a guess at the offset.
     expect(parseNamedPeriod('tháng ba năm ngoái')).toEqual({ kind: 'ambiguous' });
     expect(parseNamedPeriod('profit in March last year')).toEqual({ kind: 'ambiguous' });
@@ -79,6 +81,25 @@ describe('prepareAskBooksQuestion', () => {
       expect(/\p{N}/u.test(redacted), redacted).toBe(false);
     }
     expect(prepareAskBooksQuestion('Số dư tài khoản 131 là bao nhiêu').redacted).toBe('Số dư tài khoản [number] là bao nhiêu');
+  });
+
+  it.each([
+    ['mười hai triệu doanh thu', '[number] doanh thu'],
+    ['TK một ba một', 'TK [number]'],
+    ['nợ ngày mười lăm tháng mười', 'nợ ngày [number] [period]'],
+    ['tháng Ⅻ', 'tháng [number]'],
+    ['twelve million', '[number]'],
+    ['mườihai triệu', '[number]'],
+    ['twentyfive and fivehundred', '[number] and [number]'],
+    ['m\u200bười hai', '[number]'],
+    ['one hundred twenty', '[number]'],
+  ])('blanks out a number written in words or as a Roman numeral: %s', (question, redacted) => {
+    expect(prepareAskBooksQuestion(question).redacted).toBe(redacted);
+  });
+
+  it('keeps "last year" and "this year" and the pronoun "I", which are not figures', () => {
+    expect(prepareAskBooksQuestion('Doanh thu năm ngoái').redacted).toBe('Doanh thu năm ngoái');
+    expect(prepareAskBooksQuestion('How much did I make last year').redacted).toBe('How much did I make last year');
   });
 
   it('drops invisible characters and quotes, collapses spaces, and caps the length', () => {
@@ -132,6 +153,25 @@ describe('askBooksLeadProblem', () => {
   it('refuses an invisible character and a text that is too long', () => {
     expect(askBooksLeadProblem('Profit​ report', question)).not.toBeNull();
     expect(askBooksLeadProblem('a '.repeat(ASK_BOOKS_LEAD_MAX), question)).toBe('TOO_LONG');
+  });
+
+  it.each([
+    ['Nguyen', 'Nguyễn nợ bao nhiêu'],
+    ['Le', 'Lê nợ bao nhiêu'],
+    ['Ha', 'Hà còn nợ bao nhiêu'],
+    ['An', 'An còn nợ bao nhiêu'],
+    ['Vo', 'Võ nợ bao nhiêu'],
+    ['Vu', 'Vũ nợ bao nhiêu'],
+    ['Ly', 'Lý nợ bao nhiêu'],
+  ])('refuses a sentence that repeats the typed name %s, with or without its marks and whatever its length', (name, question) => {
+    expect(askBooksLeadProblem(`Báo cáo công nợ của ${name}.`, `[period] ${question}`)).toBe('ECHO');
+  });
+
+  it('does not take a name that only looks like a catalogue word for that word', () => {
+    // "Bảo" folds to "bao", as the "báo" of "báo cáo" does; the catalogue's word is exempt as written, the name is not.
+    expect(askBooksLeadProblem('Công nợ của Bảo.', 'Bao còn nợ bao nhiêu')).toBe('ECHO');
+    expect(askBooksLeadProblem('Đây là báo cáo công nợ phải thu.', 'Ai còn nợ mình nhiều nhất')).toBeNull();
+    expect(askBooksLeadProblem('Đây là báo cáo kết quả kinh doanh của kỳ được chọn.', '[period] lãi bao nhiêu')).toBeNull();
   });
 
   it('refuses a word the owner typed that is not part of the catalogue, so a name is not repeated back', () => {

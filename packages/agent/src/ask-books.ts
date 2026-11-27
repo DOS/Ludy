@@ -4,7 +4,7 @@
 // the asking member and draws the card with every figure.
 //
 // What the model reads is the owner's question and nothing from the books: before the call, code finds an explicit month, quarter or year in the question with its own parser (the result stays in code
-// and never goes back to the model) and replaces every period phrase with [period] and every digit run with [number], so no figure, date or account code the owner typed reaches the model. A name the
+// and never goes back to the model) and replaces every period phrase with [period] and every number, as digits, as words in either language (joined forms too) or as a Roman numeral, with [number], so no figure, date or account code the owner typed reaches the model. A name the
 // owner typed can still reach it as part of their own question; an echo guard refuses a sentence that repeats such a word. The model's answer is tainted and checked after the call, whatever the
 // instructions say: an entry or a period outside the closed lists, an unknown key or a wrong pair refuses the whole choice (nothing is repaired); a sentence that holds a number or a number word, a date
 // word, an invisible mark, a link, a promise or a done-claim, advice about money, a cause, markup, or an echo of a typed word is dropped and the card keeps its fixed text.
@@ -69,8 +69,11 @@ const ENTRY_HINT: Record<AskBooksEntry, string> = {
 };
 
 // The words the sentence may repeat from the question: the catalogue's own vocabulary, the placeholders and a few plain words. Any other word the owner typed (a name) is not repeated back.
-const LEAD_WORDS = 'here is the report for this question shown below figures are on card period number đây là báo cáo của câu hỏi này các số liệu nằm trên thẻ bên dưới kỳ';
+const LEAD_WORDS = 'here is the report for this question shown below figures are on card period number to in and or of đây là báo cáo của câu hỏi này các số liệu nằm trên thẻ bên dưới kỳ được chọn và';
 const words = (text: string): string[] => text.normalize('NFKC').toLowerCase().match(/\p{L}+/gu) ?? [];
+// A word without its marks and with đ as d, so "Nguyen" is "Nguyễn" and "Le" is "Lê".
+const fold = (word: string): string => word.normalize('NFKD').replace(/\p{M}/gu, '').replace(/đ/gu, 'd');
+// What the sentence may say whatever the owner typed: the catalogue's own words and a few plain ones, compared as written (not folded), so a name that only looks like one of them ("Bảo" beside "báo") is still caught.
 const VOCAB: ReadonlySet<string> = new Set(words([...Object.values(ASK_BOOKS_LABEL.vi), ...Object.values(ASK_BOOKS_LABEL.en), LEAD_WORDS].join(' ')));
 
 // ---- Period phrases of the question, found by code ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -90,6 +93,7 @@ const YEAR_PREFIXED = /(?<![\p{L}])(?:năm|nam|year|fy)\s*(20\d{2})(?![\p{L}\p{N
 const YEAR_BARE = /(?<![\p{L}\p{N}.,])(20\d{2})(?![\p{L}\p{N}])/gu;
 // A year said as a word beside a month or quarter ("tháng ba năm ngoái", "March last year"): the offset is not applied by guess, the owner picks.
 const YEAR_WORD = /(?<![\p{L}])(?:năm\s+(?:ngoái|trước|nay|này)|(?:last|this|previous)\s+year)(?![\p{L}])/iu;
+const MONTH_COMPOUND = /(?<![\p{L}])(?:tháng|thang)\s+(?:một|hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười)\s+(?:mươi|muời|mốt|lăm|rưỡi)(?![\p{L}])/iu;
 // Every pattern above, in the order they are blanked out of the text the model reads.
 const PERIOD_PATTERNS: readonly RegExp[] = [MONTH_VI, MONTH_NUMBERED, MONTH_SLASH_YEAR, QUARTER, QUARTER_ORDINAL, YEAR_PREFIXED, MONTH_EN, YEAR_BARE];
 
@@ -131,6 +135,8 @@ export function parseNamedPeriod(question: string): AskBooksNamedResult {
   for (const m of text.matchAll(QUARTER_ORDINAL)) quarter(EN_ORDINAL[(m[1] ?? '').toLowerCase()] ?? 0);
   for (const m of text.matchAll(YEAR_PREFIXED)) years.add(Number(m[1]));
   for (const m of text.matchAll(YEAR_BARE)) bareYears.add(Number(m[1]));
+  // "tháng ba mươi" is a month number said in two words, not March: the owner picks.
+  if (MONTH_COMPOUND.test(text)) invalid = true;
   if (invalid) return { kind: 'ambiguous' };
   if (YEAR_WORD.test(text) && months.size + quarters.size > 0 && years.size === 0) return { kind: 'ambiguous' };
   // A bare 20xx is a year only beside a month or a quarter; alone it may be any number.
@@ -152,15 +158,39 @@ export interface AskBooksQuestion {
   named: AskBooksNamedResult;
 }
 
-/** The question prepared for the call: the period found by code first, then every period phrase and every digit run blanked out of the text the model gets. */
+// Numbers said in words, English one to twelve ("zero" to "twelve", a dozen, half, twice); the larger ones and the Vietnamese ones come from the shared checks of the notes (month-close.ts), which also catch the joined forms.
+const EN_SMALL_NUMBER = /(?<![\p{L}])(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozens?|half|twice|thrice)(?![\p{L}])/giu;
+// A Roman numeral on its own ("XII", "IV"); the pronoun "I" is left alone.
+const ROMAN_NUMERAL = /(?<![\p{L}])(?=[IVXLCDM])(?:M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3}))(?![\p{L}])/gu;
+// "năm" before ngoái, trước, nay or này is "last year" or "this year", which the model is allowed to read; the other "năm" is the number five.
+const YEAR_WORD_KEEP = /năm(?=\s+(?:ngoái|trước|nay|này)(?![\p{L}]))/giu;
+const KEPT = '\uE000';
+
+function blankNumberWords(input: string): string {
+  const shared = [NOTE_CHECKS.VI_NUMBER, ...NOTE_CHECKS.EN_NUMBER].map((re) => new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`));
+  let text = input.replace(YEAR_WORD_KEEP, KEPT);
+  // Joined forms ("mườihai", "twentyfive") leave a piece behind that only shows once its neighbour is gone, so it runs until nothing changes.
+  for (let pass = 0; pass < 6; pass += 1) {
+    const before = text;
+    for (const re of [...shared, EN_SMALL_NUMBER]) text = text.replace(re, ' [number] ');
+    text = text.replace(ROMAN_NUMERAL, (m) => (m === 'I' ? m : ' [number] '));
+    if (text === before) break;
+  }
+  return text.replaceAll(KEPT, 'năm').replace(/(?:\[number\]\s*){2,}/g, '[number] ');
+}
+
+/** The question prepared for the call: invisible characters gone, the period found by code, then every period phrase and every number (digits, words, Roman numerals) blanked out of the text the model gets. */
 export function prepareAskBooksQuestion(question: string): AskBooksQuestion {
-  const capped = Array.from(question.normalize('NFKC')).slice(0, ASK_BOOKS_QUESTION_MAX * 2).join('');
+  // Invisible characters first: one inside a word ("mư\u200bời") would hide it from every check below.
+  const capped = Array.from(question.normalize('NFKC'))
+    .slice(0, ASK_BOOKS_QUESTION_MAX * 2)
+    .join('')
+    .replace(/[\p{Cf}\p{Default_Ignorable_Code_Point}]+/gu, '')
+    .replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ');
   const named = parseNamedPeriod(capped);
   let text = capped;
   for (const pattern of PERIOD_PATTERNS) text = text.replace(pattern, ' [period] ');
-  text = text
-    .replace(/\p{N}+(?:[.,\s]\p{N}+)*/gu, ' [number] ')
-    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]+/gu, ' ')
+  text = blankNumberWords(text.replace(/\p{N}+(?:[.,\s]\p{N}+)*/gu, ' [number] '))
     .replace(/["“”`]/gu, "'")
     .replace(/\s+/g, ' ')
     .trim();
@@ -214,8 +244,9 @@ export function askBooksLeadProblem(text: string, redactedQuestion: string): Ask
   if (CAUSE.test(read)) return 'CAUSE';
   if (FORMATTED.test(text) || FOREIGN_SCRIPT.test(read) || HIDDEN.test(read)) return 'FORMAT';
   // A word the owner typed that is not part of the catalogue's vocabulary (a name) is not repeated back.
-  const asked = new Set(words(redactedQuestion));
-  if (words(read).some((word) => word.length >= 3 && asked.has(word) && !VOCAB.has(word))) return 'ECHO';
+  // Compared folded, whatever the length: "Nguyen" repeats "Nguyễn" and "Hà" or "An" repeat themselves.
+  const asked = new Set(words(redactedQuestion).map(fold));
+  if (words(read).some((word) => asked.has(fold(word)) && !VOCAB.has(word))) return 'ECHO';
   return null;
 }
 
