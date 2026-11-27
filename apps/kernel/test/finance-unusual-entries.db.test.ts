@@ -251,8 +251,10 @@ suite('monthly review of unusual entries (#5182)', () => {
       await a.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`, [orgId, member, viewer]);
       // The member reads the TT99 entity only.
       await a.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, member, tt99, owner]);
-      // The TT99 entity keeps TT99 books for all of 2026; the switching one from the start of May.
+      // The TT99 entity keeps TT99 books for all of 2026; the switching one from the start of May. The books guard only lets a chart begin on a fiscal year start, so the mid-year switch is seeded with triggers off, like the entries (what is under test is how the review reads the chart start, not the guard).
+      await a.query(`SET session_replication_role = replica`);
       await a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2026-01-01'), ($1, $3, 'tt99', '2026.1', '2026-05-01')`, [orgId, tt99, switched]);
+      await a.query(`RESET session_replication_role`);
     });
   }, 180_000);
 
