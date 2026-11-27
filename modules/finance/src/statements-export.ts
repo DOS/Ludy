@@ -7,11 +7,14 @@
 // Vietnamese in every locale.
 import ExcelJS from 'exceljs';
 import { setMoneyCell as setMoney, setTextCell as setText } from './export.ts';
+import { b01For } from './domain/tt99-reports.ts';
 import type { ColumnAmounts, FinancialStatements, StatementLine, UnmappedRow } from './statements.ts';
 
 export const DRAFT_NOTICE = 'BẢN NHÁP: mã chỉ tiêu và cách lấy số liệu từ tài khoản chưa được kế toán kiểm tra; không dùng để nộp.';
 // B02 read under the TT99 chart (#5187): the line codes and the account map come from secondary sources, not the official text.
-export const TT99_NOTICE = 'Kết quả hoạt động kinh doanh (B02) đọc theo hệ thống tài khoản Thông tư 99; báo cáo tình hình tài chính (B01) vẫn theo mẫu Thông tư 133 cho đến khi có mẫu Thông tư 99.';
+export const TT99_NOTICE = 'Kết quả hoạt động kinh doanh (B02) đọc theo hệ thống tài khoản Thông tư 99, mã chỉ tiêu lấy từ nguồn thứ cấp, chưa đối chiếu văn bản chính thức.';
+// The fixed label of a TT99 B01 (#5204): every placement of an account on a line is Ludy's own, until the accountant confirms it (#61). It sits under the draft notice at the top of the sheet.
+export const B01_TT99_DRAFT = 'Bản nháp, kế toán chưa xác nhận cách lập';
 export const MIXED_CHARTS_NOTICE = 'Cảnh báo: kỳ này hoặc một cột so sánh có phần ghi sổ theo hệ thống tài khoản khác; mọi cột đọc theo hệ thống của ngày cuối kỳ nên số liệu có thể lệch.';
 
 // A column beside the period's own: its heading, and the amount of each line by code (a line the column's period has no
@@ -32,6 +35,10 @@ function statementSheet(
   lines: readonly StatementLine[],
   unmapped: readonly UnmappedRow[],
   comparisons: readonly ComparisonColumn[] = [],
+  // Fixed lines under the draft notice (the TT99 B01's draft label).
+  notices: readonly string[] = [],
+  // The codes of total assets and total sources the unbalanced warnings of the columns name.
+  totals: { assets: string; sources: string } = { assets: '200', sources: '500' },
 ): ExcelJS.Worksheet {
   const sheet = workbook.addWorksheet(name);
   sheet.columns = [
@@ -43,6 +50,11 @@ function statementSheet(
   const notice = sheet.addRow([]);
   setText(notice.getCell('label'), DRAFT_NOTICE);
   notice.font = { bold: true, color: { argb: 'FFB45309' } };
+  for (const text of notices) {
+    const extra = sheet.addRow([]);
+    setText(extra.getCell('label'), text);
+    extra.font = { bold: true, color: { argb: 'FFB45309' } };
+  }
   const heading = sheet.addRow([]);
   setText(heading.getCell('label'), title);
   heading.font = { bold: true };
@@ -52,7 +64,7 @@ function statementSheet(
   setText(head.getCell('amount'), column);
   comparisons.forEach((c, i) => setText(head.getCell(`compare${i}`), c.header));
   head.font = { bold: true };
-  sheet.views = [{ state: 'frozen', ySplit: 3 }];
+  sheet.views = [{ state: 'frozen', ySplit: 3 + notices.length }];
   for (const line of lines) {
     const row = sheet.addRow([]);
     setText(row.getCell('label'), line.label);
@@ -76,7 +88,7 @@ function statementSheet(
   // A comparison column that is incomplete or does not balance says so, as the sheet's own figures do.
   for (const c of comparisons) {
     if (c.balanced === false) {
-      setText(sheet.addRow([]).getCell('label'), `Cảnh báo: tổng tài sản (mã 200) và tổng nguồn vốn (mã 500) của cột ${c.header} không bằng nhau`);
+      setText(sheet.addRow([]).getCell('label'), `Cảnh báo: tổng tài sản (mã ${totals.assets}) và tổng nguồn vốn (mã ${totals.sources}) của cột ${c.header} không bằng nhau`);
     }
     if (c.unmapped > 0) {
       setText(sheet.addRow([]).getCell('label'), `Cảnh báo: cột ${c.header} có số dư chưa được chỉ tiêu nào đọc, báo cáo chưa đầy đủ`);
@@ -92,24 +104,29 @@ export async function buildStatementsWorkbook(statements: FinancialStatements, o
   workbook.title = `Báo cáo tài chính ${statements.period.period} ${orgName}`;
   const { startOfYear, lastYear, previous } = statements.comparison;
   const tt99 = statements.regime === 'tt99';
+  // The form's own name: B01-DNN / B02-DNN under Circular 133, B 01-DN / B 02-DN under Circular 99.
+  const form = tt99 ? 'DN' : 'DNN';
+  const totals = b01For(statements.regime ?? 'tt133');
   const b01 = statementSheet(
     workbook,
-    'B01-DNN',
-    `Báo cáo tình hình tài chính (B01-DNN) tại ngày ${statements.b01.asOf}`,
+    `B01-${form}`,
+    `Báo cáo tình hình tài chính (B01-${form}) tại ngày ${statements.b01.asOf}`,
     `Số cuối kỳ (${statements.b01.asOf})`,
     statements.b01.lines,
     statements.b01.unmapped,
     startOfYear ? [{ header: `Số đầu năm (${startOfYear.asOf})`, amounts: startOfYear.amounts, balanced: startOfYear.balanced, unmapped: startOfYear.unmapped }] : [],
+    tt99 ? [B01_TT99_DRAFT] : [],
+    totals,
   );
   if (!statements.b01.balanced) {
     const note = b01.addRow([]);
-    setText(note.getCell('label'), 'Cảnh báo: tổng tài sản (mã 200) và tổng nguồn vốn (mã 500) không bằng nhau');
+    setText(note.getCell('label'), `Cảnh báo: tổng tài sản (mã ${totals.assets}) và tổng nguồn vốn (mã ${totals.sources}) không bằng nhau`);
     note.font = { bold: true };
   }
   const b02 = statementSheet(
     workbook,
-    'B02-DNN',
-    `Báo cáo kết quả hoạt động kinh doanh (B02-DNN), kỳ ${statements.period.period} (${statements.b02.from} đến ${statements.b02.to})`,
+    `B02-${form}`,
+    `Báo cáo kết quả hoạt động kinh doanh (B02-${form}), kỳ ${statements.period.period} (${statements.b02.from} đến ${statements.b02.to})`,
     `Kỳ này`,
     statements.b02.lines,
     statements.b02.unmapped,
@@ -118,8 +135,8 @@ export async function buildStatementsWorkbook(statements: FinancialStatements, o
       ...(previous ? [{ header: `Kỳ liền trước (${previous.period})`, amounts: previous.amounts, unmapped: previous.unmapped }] : []),
     ],
   );
+  if (tt99) setText(b02.addRow([]).getCell('label'), TT99_NOTICE);
   for (const sheet of [b01, b02]) {
-    if (tt99) setText(sheet.addRow([]).getCell('label'), TT99_NOTICE);
     if (statements.mixedCharts === true) setText(sheet.addRow([]).getCell('label'), MIXED_CHARTS_NOTICE);
   }
   return new Uint8Array(await workbook.xlsx.writeBuffer());

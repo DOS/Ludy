@@ -6,8 +6,8 @@
 import { money, type DecimalValue } from '@ludy/l10n-vn';
 import { OVERVIEW_EXPENSE_GROUPS, OVERVIEW_MONTHS, type FinanceOverview, type OverviewComparison, type OverviewExpense, type OverviewFigure, type OverviewMonth, type OverviewRange } from '@ludy/kernel-contract';
 import { canonical } from './money.ts';
-import { B01_LINES, buildB01, buildB02, type Report, type ReportEntry } from './tt133-reports.ts';
-import { B02_ROLES, b02LinesFor, type StatementsRegime } from './tt99-reports.ts';
+import { buildB01, buildB02, type Report, type ReportEntry } from './tt133-reports.ts';
+import { B01_ROLES, B02_ROLES, b01For, b02LinesFor, type StatementsRegime } from './tt99-reports.ts';
 
 export interface OverviewPeriods {
   from: string;
@@ -154,18 +154,18 @@ export interface OverviewSource {
   regime?: StatementsRegime;
 }
 
-// Only the lines the overview reads: if the statement mapping changes a code, this fails loudly rather than reading 0.
-const NEEDED_B01 = ['110', '131', '311'];
-
 export function buildOverview(source: OverviewSource): FinanceOverview {
   const { periods, legalEntityId } = source;
-  for (const code of NEEDED_B01) if (!B01_LINES.some((d) => d.code === code)) throw new Error(`B01 has no line ${code}`);
   const regime = source.regime ?? 'tt133';
   const defs = b02LinesFor(regime);
   const roles = B02_ROLES[regime];
+  const setup = b01For(regime);
+  const balanceRoles = B01_ROLES[regime];
+  // Only the lines the overview reads: if a statement mapping changes a code, this fails loudly rather than reading 0.
+  for (const code of Object.values(balanceRoles)) if (!setup.defs.some((d) => d.code === code)) throw new Error(`B01 has no line ${code}`);
   for (const code of [roles.netRevenue, ...roles.financeRevenue, roles.otherIncome, roles.profit]) if (!defs.some((d) => d.code === code)) throw new Error(`B02 has no line ${code}`);
-  const b01Now = buildB01(source.balancesNow, legalEntityId, periods.to);
-  const b01Before = buildB01(source.balancesBefore, legalEntityId, periods.previousTo);
+  const b01Now = buildB01(source.balancesNow, legalEntityId, periods.to, 'VND', setup);
+  const b01Before = buildB01(source.balancesBefore, legalEntityId, periods.previousTo, 'VND', setup);
   const b02Now = buildB02(source.resultsNow, legalEntityId, periods.from, periods.to, 'VND', defs);
   const b02Before = buildB02(source.resultsBefore, legalEntityId, periods.previousFrom, periods.previousTo, 'VND', defs);
   const inPeriod = (entries: ReportEntry[], from: string, to: string) => entries.filter((e) => e.entryDate >= from && e.entryDate <= to);
@@ -173,10 +173,10 @@ export function buildOverview(source: OverviewSource): FinanceOverview {
     range: source.range,
     ...periods,
     empty: source.empty,
-    cash: overviewFigure(line(b01Now, '110').toFixed(), line(b01Before, '110').toFixed()),
+    cash: overviewFigure(line(b01Now, balanceRoles.cash).toFixed(), line(b01Before, balanceRoles.cash).toFixed()),
     profit: overviewFigure(line(b02Now, roles.profit).toFixed(), line(b02Before, roles.profit).toFixed()),
-    receivables: overviewFigure(line(b01Now, '131').toFixed(), line(b01Before, '131').toFixed()),
-    payables: overviewFigure(line(b01Now, '311').toFixed(), line(b01Before, '311').toFixed()),
+    receivables: overviewFigure(line(b01Now, balanceRoles.receivables).toFixed(), line(b01Before, balanceRoles.receivables).toFixed()),
+    payables: overviewFigure(line(b01Now, balanceRoles.payables).toFixed(), line(b01Before, balanceRoles.payables).toFixed()),
     months: source.monthly.map((m) => overviewMonth(m.month, buildB02(inPeriod(m.entries, m.from, m.to), legalEntityId, m.from, m.to, 'VND', defs), regime)),
     expenses: expenseMix(inPeriod(source.resultsNow, periods.from, periods.to), inPeriod(source.resultsBefore, periods.previousFrom, periods.previousTo)),
     unmapped: b02Now.unmapped.length,

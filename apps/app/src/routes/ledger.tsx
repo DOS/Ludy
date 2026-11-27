@@ -372,6 +372,9 @@ function Statements({ period }: { period: string }) {
   const data = query.data;
   if (!data) return null;
   const { startOfYear } = data.comparison;
+  // The forms are B01-DNN and B02-DNN under Circular 133 and B 01-DN and B 02-DN under Circular 99.
+  const tt99 = data.regime === 'tt99';
+  const form = tt99 ? 'DN' : 'DNN';
   const against = b02Comparison(data.comparison, compare);
   const isYear = data.period.kind === 'year';
   const b02Extra: ExtraColumn[] = against
@@ -396,7 +399,7 @@ function Statements({ period }: { period: string }) {
       {exportXlsx.error && <ErrorText>{errorMessage(exportXlsx.error)}</ErrorText>}
       {data.regime === 'tt99' && (
         <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
-          {t('statementsTt99')}
+          <strong>{t('statementsB01Draft')}</strong> {t('statementsTt99')}
         </Alert>
       )}
       {data.mixedCharts === true && (
@@ -407,11 +410,11 @@ function Statements({ period }: { period: string }) {
       {/^\d{4}$/.test(period) && data.regime !== 'tt99' && <HtkkStatements year={Number(period)} />}
       {!data.b01.balanced && (
         <Alert className="border-warning/30 bg-warning/10 text-warning" role="status">
-          {t('statementsUnbalanced')}
+          {t('statementsUnbalanced', { assets: tt99 ? '280' : '200', sources: tt99 ? '440' : '500' })}
         </Alert>
       )}
       <StatementTable
-        title={t('b01Title', { date: f.date(data.b01.asOf) })}
+        title={t('b01Title', { form, date: f.date(data.b01.asOf) })}
         amountHead={t('columns.endOfPeriod')}
         extra={
           startOfYear
@@ -422,7 +425,7 @@ function Statements({ period }: { period: string }) {
         unmapped={data.b01.unmapped}
       />
       <StatementTable
-        title={t('b02Title', { from: f.date(data.b02.from), to: f.date(data.b02.to) })}
+        title={t('b02Title', { form, from: f.date(data.b02.from), to: f.date(data.b02.to) })}
         control={
           data.comparison.previous && (
             <label className="block text-xs">

@@ -30,7 +30,8 @@ import { ledgerPeriod, type LedgerPeriod } from './domain/ledger-reports.ts';
 import { canonical } from './domain/money.ts';
 import { balanceColumn, basisThere, buildFigures, lockStateOf, overdueSummary, quarterEnded, resultColumn, type BalanceColumn, type ResultColumn } from './domain/quarter-summary.ts';
 import { comparisonPlan } from './domain/statement-comparison.ts';
-import { buildB01, buildB02 } from './domain/tt133-reports.ts';
+import { buildB01, buildB02, type B01Setup } from './domain/tt133-reports.ts';
+import { b01For } from './domain/tt99-reports.ts';
 import { booksRows } from './expense-variance.ts';
 import { householdCnkd } from './household-return.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -43,7 +44,7 @@ import { loadVatReport } from './vat.ts';
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
 // The accounts B01's cash (110), receivables (131) and payables (311) lines read; the balances query needs nothing else.
-const BALANCE_PREFIXES = ['111', '112', '131', '331'];
+const BALANCE_PREFIXES = ['111', '112', '113', '131', '331'];
 
 export const quarterNotEnded = () => new DomainError('QUARTER_NOT_ENDED', 422, 'Quý này chưa kết thúc; hãy chọn một quý đã qua để xem tóm tắt');
 
@@ -82,8 +83,9 @@ function results(rows: Rows, name: string, period: LedgerPeriod, entity: string)
   return resultColumn(report.lines, report.unmapped);
 }
 
-function balancesAt(rows: Rows, name: string, period: LedgerPeriod, entity: string): BalanceColumn {
-  return balanceColumn(buildB01(asEntries(rows[name] ?? [], period.to, entity), entity, period.to).lines);
+// The balance sheet lines are read under the regime of the quarter's last day (#5204), so a TT99 entity's cash counts 113, money in transit.
+function balancesAt(rows: Rows, name: string, period: LedgerPeriod, entity: string, setup: B01Setup): BalanceColumn {
+  return balanceColumn(buildB01(asEntries(rows[name] ?? [], period.to, entity), entity, period.to, 'VND', setup).lines);
 }
 
 // The VAT working of the quarter, from the VAT screen's own read: the indicators [35] (VAT on sales) and [24] (VAT on purchases), their difference before any carry-forward, and whether the return is marked filed.
@@ -153,9 +155,9 @@ export async function financeQuarterSummary(ctx: QueryContext, input: { quarter:
     household,
     results: { now, previous, lastYear },
     balances: {
-      now: balancesAt(rows, 'bal_now', period, entity),
-      previous: previousPeriod ? balancesAt(rows, 'bal_previous', previousPeriod, entity) : null,
-      lastYear: lastYearPeriod ? balancesAt(rows, 'bal_last_year', lastYearPeriod, entity) : null,
+      now: balancesAt(rows, 'bal_now', period, entity, b01For(books.regime)),
+      previous: previousPeriod ? balancesAt(rows, 'bal_previous', previousPeriod, entity, b01For(books.regime)) : null,
+      lastYear: lastYearPeriod ? balancesAt(rows, 'bal_last_year', lastYearPeriod, entity, b01For(books.regime)) : null,
     },
     stock: stockNow ? { now: stockNow.value, previous: stockBefore ? stockBefore.value : null } : null,
   });

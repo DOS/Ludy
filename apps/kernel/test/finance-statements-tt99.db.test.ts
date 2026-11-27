@@ -31,6 +31,8 @@ suite('the income statement under the entity\'s chart (#5187)', () => {
   let owner = '';
   let main = '';
   let tt99 = '';
+  let supplier = '';
+  let customer = '';
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
@@ -50,7 +52,7 @@ suite('the income statement under the entity\'s chart (#5187)', () => {
   };
 
   // A balanced entry of one entity through the posting function, in the owner's context.
-  async function post(entity: string, date: string, lines: Array<[account: string, debit: string, credit: string]>): Promise<void> {
+  async function post(entity: string, date: string, lines: Array<[account: string, debit: string, credit: string, party?: string]>): Promise<void> {
     const c = await appPool.connect();
     try {
       await c.query('BEGIN');
@@ -58,7 +60,7 @@ suite('the income statement under the entity\'s chart (#5187)', () => {
       await c.query(`SELECT ludy_finance.post_journal_entry($1::date, 'Bút toán thử', 'test.statements', $2::uuid, $3::jsonb, NULL, 1, $4::uuid)`, [
         date,
         randomUUID(),
-        JSON.stringify(lines.map(([account, debit, credit], i) => ({ line_no: i + 1, account_code: account, debit, credit }))),
+        JSON.stringify(lines.map(([account, debit, credit, party], i) => ({ line_no: i + 1, account_code: account, debit, credit, ...(party ? { party_id: party } : {}) }))),
         entity,
       ]);
       await c.query('COMMIT');
@@ -97,6 +99,8 @@ suite('the income statement under the entity\'s chart (#5187)', () => {
       // The TT99 company keeps its books under TT99 for all of 2026, set before it has any entry.
       // The HTKK file needs the org's tax code before it reads anything else.
       await a.query(`UPDATE ludy_kernel.tenant SET tax_code = '0101234564' WHERE org_id = $1`, [orgId]);
+      supplier = String((await a.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name, tax_code) VALUES ($1, 'Nhà cung cấp ứng trước', '0101234564') RETURNING id`, [orgId])).rows[0]?.id);
+      customer = String((await a.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name, tax_code) VALUES ($1, 'Khách trả trước', '0309876543') RETURNING id`, [orgId])).rows[0]?.id);
       await a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2026-01-01')`, [orgId, tt99]);
     });
 
@@ -111,6 +115,10 @@ suite('the income statement under the entity\'s chart (#5187)', () => {
     await post(tt99, '2026-08-11', [['6421', '4000000', '0'], ['331', '0', '4000000']]);
     await post(tt99, '2026-09-15', [['112', '1000000', '0'], ['515', '0', '1000000']]);
     await post(tt99, '2026-12-31', [['8211', '3000000', '0'], ['3334', '0', '3000000']]);
+    // Q4, for the balance sheet (#5204): an advance of 7,000,000 to a supplier (331 debit, line 132), a prepayment of 9,000,000 from a customer (131 credit, line 312) and 2,000,000 moved from the bank to money in transit (113).
+    await post(tt99, '2026-10-05', [['331', '7000000', '0', supplier], ['112', '0', '7000000']]);
+    await post(tt99, '2026-10-06', [['112', '9000000', '0'], ['131', '0', '9000000', customer]]);
+    await post(tt99, '2026-10-07', [['113', '2000000', '0'], ['112', '0', '2000000']]);
     // The TT133 company (no row): the same quarter's sales and an administration cost.
     await post(main, '2026-07-10', [['131', '50000000', '0'], ['5111', '0', '50000000']]);
     await post(main, '2026-08-11', [['6422', '4000000', '0'], ['331', '0', '4000000']]);
@@ -169,6 +177,27 @@ suite('the income statement under the entity\'s chart (#5187)', () => {
     expect((await overviewAt('2026-08-31', tt99)).unmapped).toBe(0);
     const augustMain = await statements('2026-08', main);
     expect((await overviewAt('2026-08-31', main)).profit.amount).toBe(line(augustMain, '50'));
+  });
+
+  it('reads the TT99 balance sheet and balances (280 = 440) with a supplier advance and a customer prepayment', async () => {
+    const s = await statements('2026', tt99);
+    const b01 = (code: string) => s.b01.lines.find((l) => l.code === code)?.amount;
+    // 131 without a party 10 + 20 + 50 - 5 = 75M; the prepayment is C's own credit on 131 (line 312, 9M), the advance S's own debit on 331 (line 132, 7M); 331 without a party 4 + 12 + 4 = 20M credit (311).
+    // Cash: 112 1 - 7 + 9 - 2 = 1M and 113 2M: 111 and 110 = 3M. Assets: 3 + 75 + 7 = 85M. Sources: 311 20M, 312 9M, 314 3M (3334), 420 53M (the unclosed result of 2025 and 2026): 85M.
+    expect(['110', '111', '131', '132', '311', '312', '314', '420b', '280', '440'].map(b01)).toEqual(['3000000', '3000000', '75000000', '7000000', '20000000', '9000000', '3000000', '53000000', '85000000', '85000000']);
+    expect(s.b01.balanced).toBe(true);
+    expect(s.b01.unmapped).toEqual([]);
+    // The statement is read under the TT99 form: its own codes, in the form's order (a total before its parts).
+    expect(s.b01.lines[0]).toMatchObject({ code: '100', total: true });
+    expect(s.b01.lines.at(-1)).toMatchObject({ code: '440', total: true });
+    // The start-of-year column (31 December 2025) is a TT133 date, so the statement says the charts are mixed.
+    expect(s.mixedCharts).toBe(true);
+  });
+
+  it('gives the overview the same cash as line 110 of the TT99 balance sheet, money in transit included', async () => {
+    const statementsCash = (await statements('2026-10', tt99)).b01.lines.find((l) => l.code === '110')?.amount;
+    expect(statementsCash).toBe('3000000');
+    expect((await overviewAt('2026-10-31', tt99)).cash.amount).toBe('3000000');
   });
 
   it('refuses the HTKK file for a TT99 year and leaves a TT133 year alone', async () => {
