@@ -7,9 +7,9 @@ import {
   ITEM_TITLE_MAX,
   NOTES_BODY_MAX,
   RESULT_DECISION_MAX,
-  zId,
   zMeetingLanguage,
 } from './meetings.ts';
+import { zId } from './schemas.ts';
 
 export const NOTES_MINUTES_LINES_MAX = NOTES_BODY_MAX;
 export const NOTES_MINUTES_SUMMARY_MAX = 1200;

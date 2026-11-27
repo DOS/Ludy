@@ -6,16 +6,12 @@ import { IntlProvider } from 'use-intl';
 import type { NotesMinutesAnswer, NotesMinutesStatus } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import {
-  MeetingNotesMinutes,
-  NotesMinutesBody,
-  buildApplySummaryPayload,
-  notesMinutesRunCodeOf,
-} from '../src/components/meeting-notes-minutes.tsx';
 
-const client: { current: QueryClient } = { current: new QueryClient() };
+const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
 vi.mock('../src/lib/api.ts', async () => {
+  const { QueryClient: QC } = await import('@tanstack/react-query');
+  client.current = new QC();
   const node = (path: string[]): unknown =>
     new Proxy(() => {}, {
       get: (_target, prop) => {
@@ -27,6 +23,13 @@ vi.mock('../src/lib/api.ts', async () => {
     });
   return { orpc: node([]), queryClient: client.current, errorMessage: String };
 });
+
+const {
+  MeetingNotesMinutes,
+  NotesMinutesBody,
+  buildApplySummaryPayload,
+  notesMinutesRunCodeOf,
+} = await import('../src/components/meeting-notes-minutes.tsx');
 
 const escaped = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -79,6 +82,22 @@ describe('MeetingNotesMinutes (#5129)', () => {
       );
       expect(html, `reason ${reason}`).toBe('');
     }
+    const readyQc = new QueryClient();
+    client.current = readyQc;
+    readyQc.setQueryData(['meetings', 'notesMinutes', 'status', { meetingId: MEETING_ID }], {
+      meetingId: MEETING_ID,
+      available: true,
+      reason: null,
+      estimate: { inputTokens: 1800, outputTokens: 600, cost: null },
+    } satisfies NotesMinutesStatus);
+    const readyHtml = renderToStaticMarkup(
+      <IntlProvider locale="vi" messages={viMessages}>
+        <QueryClientProvider client={readyQc}>
+          <MeetingNotesMinutes meetingId={MEETING_ID} template="general" />
+        </QueryClientProvider>
+      </IntlProvider>,
+    );
+    expect(readyHtml).toContain(escaped(viMessages.meetings.notesMinutes.button));
   });
 
   it('shows blocked notes/redacted/forbidden/paused/budget messages without action button', () => {
