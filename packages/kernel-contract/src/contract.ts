@@ -225,10 +225,12 @@ import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
 import { zCashForecast, zCashForecastExplanation, zFinanceCashForecastExplainAsk, zFinanceCashForecastInput } from './finance-cash-forecast.ts';
+import { zAskBooksAnswer, zFinanceAskBooksInput } from './finance-ask-books.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
 import { zFinanceHomeMoney, zFinanceHomeMoneyInput } from './finance-home-money.ts';
 import { zFinanceMonthCloseExplainAsk, zFinanceMonthCloseInput, zMonthClose, zMonthCloseNote } from './finance-month-close.ts';
 import { zExpenseVarianceExplanation, zFinanceExpenseVariance, zFinanceExpenseVarianceExplainAsk, zFinanceExpenseVarianceInput } from './finance-expense-variance.ts';
+import { zFinanceQuarterSummary, zFinanceQuarterSummaryExplainAsk, zFinanceQuarterSummaryInput, zQuarterSummaryExplanation } from './finance-quarter-summary.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zFilterAstShape, zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared, zSavedViewSortShape } from './saved-view.ts';
 import {
@@ -3675,6 +3677,10 @@ export const contract = {
     get: oc.input(zFinanceCashForecastInput).output(zCashForecast),
     explain: oc.input(zFinanceCashForecastExplainAsk).output(zCashForecastExplanation),
   },
+  // "Ask the books in plain words" (#5181): a question typed in words, or a report picked on the card; the answer is a card with every figure from an existing read, run as the asking member.
+  financeAskBooks: {
+    ask: oc.input(zFinanceAskBooksInput).output(zAskBooksAnswer),
+  },
   financeOverview: {
     get: oc.input(zFinanceOverviewInput).output(zFinanceOverview),
     explain: oc.input(zFinanceOverviewExplainAsk).output(zOverviewExplanation),
@@ -3698,6 +3704,13 @@ export const contract = {
   financeExpenseVariance: {
     get: oc.input(zFinanceExpenseVarianceInput).output(zFinanceExpenseVariance),
     explain: oc.input(zFinanceExpenseVarianceExplainAsk).output(zExpenseVarianceExplanation),
+  },
+  // The quarter in plain words (#5183), every role, read only: get answers the figures of one ended quarter of one legal entity (revenue, costs, profit, cash, receivables, payables, VAT or the household's tax,
+  // stock) with their comparison labels; explain is the finance coworker's three to five sentences, each tied to one figure row, asked of the model outside any transaction from fixed labels only (no figure,
+  // date, code or name), and a sentence that states a number, a date, a cause, a promise or advice is dropped.
+  financeQuarterSummary: {
+    get: oc.input(zFinanceQuarterSummaryInput).output(zFinanceQuarterSummary),
+    explain: oc.input(zFinanceQuarterSummaryExplainAsk).output(zQuarterSummaryExplanation),
   },
   // Ledger reports of a month, quarter or year (issue #321): the trial balance and the receivables and payables per
   // party, and the general ledger of one account. The Excel workbook is GET /api/export/ledger.xlsx?period=<period>.

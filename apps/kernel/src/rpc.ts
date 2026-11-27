@@ -129,9 +129,12 @@ import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeeting
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type MarketplaceProposalFacts, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
 import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.ts';
+import { askBooks, askBooksAi } from './finance-ask-books.ts';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainMonthClose, monthCloseAi } from './finance-month-close-ai.ts';
 import { explainExpenseVariance, expenseVarianceAi } from './finance-expense-variance-ai.ts';
+import { explainQuarterSummary, quarterSummaryAi } from './finance-quarter-summary-ai.ts';
+import type { FinanceQuarterSummary } from '@ludy/kernel-contract';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { marketplaceColumnsAi, proposeMarketplaceColumns } from './finance-marketplace-columns-ai.ts';
 import { explainMarketplaceFees, marketplaceFeeNoteAi } from './finance-marketplace-fee-note-ai.ts';
@@ -571,10 +574,14 @@ export function createRpcHandler(
   const financeMonthCloseAi = monthCloseAi(conversationReader?.monthCloseNote ? { monthCloseNote: conversationReader.monthCloseNote.bind(conversationReader) } : null, suggestionBudget());
   // The accounting coworker's note on the 30/60/90-day cash forecast (#4391): the same reader and model, a budget of its own; told the computed figures and dates only.
   const financeCashForecastAi = cashForecastAi(conversationReader?.cashForecastSentence ? { cashForecastSentence: conversationReader.cashForecastSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The accounting coworker that reads a question about the books (#5181): the same reader and model, a budget of its own; told only the owner's question with its dates and numbers blanked out, and it chooses an entry of a closed catalogue.
+  const financeAskBooksAi = askBooksAi(conversationReader?.askBooksPick ? { askBooksPick: conversationReader.askBooksPick.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's sentence naming the late sales invoices of a VAT working (#3540): the same reader and model, a budget of its own; told invoice numbers and periods only.
   const financeVatLateAi = vatLateAi(conversationReader?.vatLateSentence ? { vatLateSentence: conversationReader.vatLateSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's possible reason per flagged expense line (#4392): the same reader and model, a budget of its own; told no figure at all.
   const financeExpenseVarianceAi = expenseVarianceAi(conversationReader?.expenseVarianceNotes ? { expenseVarianceNotes: conversationReader.expenseVarianceNotes.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's sentences on the quarter card (#5183): the same reader and model, a budget of its own; told fixed row names and movement labels, never a figure, a date, a code or a name.
+  const financeQuarterSummaryAi = quarterSummaryAi(conversationReader?.quarterSummaryNotes ? { quarterSummaryNotes: conversationReader.quarterSummaryNotes.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   // The accounting coworker's one sentence on why a money-in bank line may match a completed eSign deposit request (#4723): non-PII facts only.
@@ -3917,6 +3924,12 @@ export function createRpcHandler(
         }),
       ),
     },
+    // "Ask the books in plain words" (#5181): the coworker only chooses a report and a kind of period; the report is then read as the asking member, in their own transaction, so the read's own role list, scope and refusal apply unchanged.
+    financeAskBooks: {
+      ask: os.financeAskBooks.ask.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => askBooks(financeAskBooksAi, <T>(name: string, ask: Record<string, unknown>) => runtime.query<T>(name, ask, { actor, orgId }), orgId, actor.userId, input)),
+      ),
+    },
     financeExpenseVariance: {
       get: os.financeExpenseVariance.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<FinanceExpenseVariance>('finance.expense_variance', input, { actor, orgId }))),
       // The notes are asked of the model outside any transaction, from the flagged lines the variance read in the member's own one (their legal entities only).
@@ -3925,6 +3938,17 @@ export function createRpcHandler(
           const { lang, ...ask } = input;
           const variance = await runtime.query<FinanceExpenseVariance>('finance.expense_variance', ask, { actor, orgId });
           return explainExpenseVariance(financeExpenseVarianceAi, orgId, actor.userId, variance, lang ?? 'vi');
+        }),
+      ),
+    },
+    financeQuarterSummary: {
+      get: os.financeQuarterSummary.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<FinanceQuarterSummary>('finance.quarter_summary', input, { actor, orgId }))),
+      // The sentences are asked of the model outside any transaction, from the figures the summary read in the member's own one (their legal entities only); code picks the rows and the model is told labels only.
+      explain: os.financeQuarterSummary.explain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const summary = await runtime.query<FinanceQuarterSummary>('finance.quarter_summary', ask, { actor, orgId });
+          return explainQuarterSummary(financeQuarterSummaryAi, orgId, actor.userId, summary, lang ?? 'vi');
         }),
       ),
     },

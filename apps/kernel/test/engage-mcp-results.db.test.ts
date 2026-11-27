@@ -249,6 +249,9 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
     post.long = await published(orgs.a, users.owner as string, conn.a1, 2 * 86_400, longText, { reach: 600, reactions: 30 }, { url: 'https://facebook.example/p/1', clicks: 5 });
     post.short = await published(orgs.a, users.owner as string, conn.a1, 5 * 86_400, 'Bài ngắn', { reach: 100 });
     post.ten = await published(orgs.a, users.owner as string, conn.a2, 10 * 86_400, 'Bài mười ngày', { reach: 40, views: 4 });
+    // #4099: the channel's signature ends what goes out, so it ends the excerpt too (a short post shows it whole); a channel left without it (false) shows the text alone.
+    await sqlAdmin(`UPDATE ludy_social.post_variant SET settings = settings || '{"signature": "Hotline 0900 123 456"}'::jsonb WHERE org_id = $1 AND post_id = $2`, [orgs.a, post.short]);
+    await sqlAdmin(`UPDATE ludy_social.post_variant SET settings = settings || '{"signature": false}'::jsonb WHERE org_id = $1 AND post_id = $2`, [orgs.a, post.ten]);
     post.old = await published(orgs.a, users.owner as string, conn.a1, 40 * 86_400, 'Bài cũ', { reach: 9 });
     // Never shown: a draft, an archived draft, a channel cancelled, and another org's published post.
     const create = async (orgId: string, owner: string, connectionId: string, body: string) =>
@@ -345,6 +348,12 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
       expect(JSON.stringify(got)).not.toContain(CANARY);
       expect(JSON.stringify(got)).not.toMatch(HIDDEN);
       for (const r of got.rows) expect(r.excerpt, r.postId).not.toMatch(HIDDEN);
+    });
+
+    it('ends the excerpt with the channel\'s signature, as the posts list does, and leaves a post without one as it is', async () => {
+      const got = await summary();
+      expect((got.rows.find((r) => r.postId === post.short) as MetricsRow).excerpt).toBe('Bài ngắn Hotline 0900 123 456');
+      expect((got.rows.find((r) => r.postId === post.ten) as MetricsRow).excerpt).toBe('Bài mười ngày');
     });
 
     it('filters by days and by post (a post is found whenever it went out)', async () => {
@@ -519,7 +528,8 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
       expect(s.days.map((d) => d.day)).toEqual(s.days.map((d) => d.day).sort());
       for (const d of s.days) expect(d.spend).toBe('10000');
       expect(s.months.length).toBeGreaterThanOrEqual(1);
-      expect(s.months.reduce((sum, m) => sum + Number(m.spend), 0)).toBe(200000);
+      // Whole-dong amounts as decimal strings: summed as integers, never through a JS number.
+      expect(s.months.reduce((sum, m) => sum + BigInt(m.spend), 0n)).toBe(200000n);
       // Campaign one spent 14 x 100 000 and 3 x 300 000; campaign two 17 x 100 000: the one that spent more is first.
       expect(s.campaigns.map((c) => [c.externalObjectId, c.spend])).toEqual([
         ['c1', '2300000'],

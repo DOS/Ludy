@@ -6,7 +6,7 @@
 import ExcelJS from 'exceljs';
 import { money } from '@ludy/l10n-vn';
 import { setMoneyCell as setMoney, setTextCell as setText } from './export.ts';
-import type { VatRate } from './domain/vat-return.ts';
+import { addSideTotals, type VatRate } from './domain/vat-return.ts';
 import type { VatInvoiceView, VatReport, VatSide, VatWarning } from './vat.ts';
 
 export const VAT_RATE_LABELS: Readonly<Record<VatRate, string>> = {
@@ -54,7 +54,9 @@ function invoiceSheet(workbook: ExcelJS.Workbook, name: string, side: VatSide, p
     return;
   }
   side.documents.forEach((doc: VatInvoiceView, index) => {
-    const note = doc.warnings.map((w) => VAT_WARNING_LABELS[w]).join('; ');
+    const parts = doc.saleDate ? [`Ngày bán ${doc.saleDate}`] : [];
+    for (const w of doc.warnings) parts.push(VAT_WARNING_LABELS[w]);
+    const note = parts.join('; ');
     for (const rate of doc.rates) {
       const row = sheet.addRow([]);
       row.getCell('no').value = index + 1;
@@ -71,6 +73,26 @@ function invoiceSheet(workbook: ExcelJS.Workbook, name: string, side: VatSide, p
   });
   const total = sheet.addRow([]);
   setText(total.getCell('partyName'), 'Tổng cộng');
+  setMoney(total.getCell('taxable'), side.totals.taxable);
+  setMoney(total.getCell('vat'), side.totals.vat);
+  total.font = { bold: true };
+}
+
+function rateTotalsTable(summary: ExcelJS.Worksheet, title: string, side: Pick<VatSide, 'available' | 'totals'>, brand: string): void {
+  summary.addRow([]);
+  const head = summary.addRow([]);
+  setText(head.getCell('label'), title);
+  setText(head.getCell('taxable'), 'Giá trị chưa có thuế');
+  setText(head.getCell('vat'), 'Thuế GTGT');
+  head.font = { bold: true };
+  for (const rate of side.totals.byRate) {
+    const row = summary.addRow([]);
+    setText(row.getCell('label'), VAT_RATE_LABELS[rate.rate]);
+    setMoney(row.getCell('taxable'), rate.taxable);
+    setMoney(row.getCell('vat'), rate.vat);
+  }
+  const total = summary.addRow([]);
+  setText(total.getCell('label'), side.available ? `Tổng cộng (${side.totals.documents} hóa đơn)` : noTaxCode(brand));
   setMoney(total.getCell('taxable'), side.totals.taxable);
   setMoney(total.getCell('vat'), side.totals.vat);
   total.font = { bold: true };
@@ -115,30 +137,34 @@ export async function buildVatWorkbook(report: VatReport, orgName: string, brand
     setMoney(row.getCell('taxable'), otherSales);
   }
 
-  for (const [title, side] of [
-    ['Hóa đơn bán ra theo thuế suất', report.output],
-    ['Hóa đơn mua vào theo thuế suất', report.input],
-  ] as const) {
-    summary.addRow([]);
-    const head = summary.addRow([]);
-    setText(head.getCell('label'), title);
-    setText(head.getCell('taxable'), 'Giá trị chưa có thuế');
-    setText(head.getCell('vat'), 'Thuế GTGT');
-    head.font = { bold: true };
-    for (const rate of side.totals.byRate) {
+  rateTotalsTable(summary, 'Hóa đơn bán ra theo thuế suất', report.output, brand);
+  rateTotalsTable(summary, 'Hóa đơn mua vào theo thuế suất', report.input, brand);
+
+  if (report.supplementary.documents.length > 0) {
+    rateTotalsTable(summary, 'Hóa đơn bán ra cần kê khai bổ sung theo thuế suất', { available: true, totals: report.supplementary.totals }, brand);
+    const combinedOutput = addSideTotals(report.output.totals, report.supplementary.totals);
+    const combinedRow = summary.addRow([]);
+    setText(combinedRow.getCell('label'), `Tổng bán ra sau bổ sung (${combinedOutput.documents} hóa đơn)`);
+    setMoney(combinedRow.getCell('taxable'), combinedOutput.taxable);
+    setMoney(combinedRow.getCell('vat'), combinedOutput.vat);
+    combinedRow.font = { bold: true };
+    const suppNote = summary.addRow([]);
+    setText(
+      suppNote.getCell('label'),
+      'Các hóa đơn cần kê khai bổ sung nằm ngoài bảng kê bán ra và chỉ tiêu [26] đến [35] ở trên (kỳ đã khóa sổ hoặc đã nộp tờ khai); số tổng sau bổ sung dùng để đối chiếu khi lập tờ khai bổ sung.',
+    );
+    const otherSupplementary = report.supplementary.totals.byRate.find((r) => r.rate === 'other')?.taxable ?? '0';
+    if (!money(otherSupplementary).isZero()) {
       const row = summary.addRow([]);
-      setText(row.getCell('label'), VAT_RATE_LABELS[rate.rate]);
-      setMoney(row.getCell('taxable'), rate.taxable);
-      setMoney(row.getCell('vat'), rate.vat);
+      setText(row.getCell('label'), 'Doanh thu bán ra cần kê khai bổ sung chưa rõ thuế suất, không nằm trong chỉ tiêu nào: kiểm tra các hóa đơn đó trước khi nộp tờ khai bổ sung');
+      setMoney(row.getCell('taxable'), otherSupplementary);
     }
-    const total = summary.addRow([]);
-    setText(total.getCell('label'), side.available ? `Tổng cộng (${side.totals.documents} hóa đơn)` : noTaxCode(brand));
-    setMoney(total.getCell('taxable'), side.totals.taxable);
-    setMoney(total.getCell('vat'), side.totals.vat);
-    total.font = { bold: true };
   }
 
   invoiceSheet(workbook, 'Bán ra', report.output, 'Tên người mua', 'MST người mua', brand);
   invoiceSheet(workbook, 'Mua vào', report.input, 'Tên người bán', 'MST người bán', brand);
+  if (report.supplementary.documents.length > 0) {
+    invoiceSheet(workbook, 'Kê khai bổ sung', { available: true, ...report.supplementary }, 'Tên người mua', 'MST người mua', brand);
+  }
   return new Uint8Array(await workbook.xlsx.writeBuffer());
 }

@@ -6,11 +6,13 @@ import {
   AI_FEATURES,
   AI_FEATURE_KEYS,
   AdsCampaignWriter,
+  AskBooksCoworker,
   ConversationWriter,
   ExpenseVarianceCoworker,
   InboxReader,
   InvoiceExtractor,
   PayrollCoworker,
+  QuarterSummaryCoworker,
   SchedulingReader,
   SignAcceptanceReader,
   SignAiReader,
@@ -20,6 +22,7 @@ import {
   chatModel,
   classifyAiError,
   parseTranscription,
+  prepareAskBooksQuestion,
   type AiConfig,
   type AiFeature,
   type BankCandidatesLineFacts,
@@ -48,6 +51,7 @@ import {
   type PayrollFigures,
   type PayrollMatchFacts,
   type PayrollSheet,
+  type QuarterSummaryNoteFacts,
   type PayslipExplainRequest,
   type ProjectCycleSummaryFacts,
   type ProjectTriageAssistFacts,
@@ -127,6 +131,8 @@ export interface CoworkerEvalRuntime {
   weekly: WeeklyWriter;
   scheduling: SchedulingReader;
   expenseVariance: ExpenseVarianceCoworker;
+  quarterSummary: QuarterSummaryCoworker;
+  askBooks: AskBooksCoworker;
   payroll: PayrollCoworker;
   signAi: SignAiReader;
   signAcceptance: SignAcceptanceReader;
@@ -304,6 +310,8 @@ export function createCoworkerEvalRuntime(
     weekly: overrides.weekly ?? new WeeklyWriter(config),
     scheduling: overrides.scheduling ?? new SchedulingReader(config),
     expenseVariance: overrides.expenseVariance ?? new ExpenseVarianceCoworker(config),
+    quarterSummary: overrides.quarterSummary ?? new QuarterSummaryCoworker(config),
+    askBooks: overrides.askBooks ?? new AskBooksCoworker(config),
     payroll: overrides.payroll ?? new PayrollCoworker(config),
     signAi: overrides.signAi ?? new SignAiReader(config),
     signAcceptance: overrides.signAcceptance ?? new SignAcceptanceReader(config),
@@ -522,6 +530,12 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
     ),
   );
 
+  cases.push(
+    cleanCase('finance.ask_books.clean', 'finance.ask_books', 'vi', (rt) =>
+      runCleanChecked(() => unmetered(() => rt.askBooks.pick(prepareAskBooksQuestion('Tháng 10 lãi bao nhiêu?').redacted, 'vi')), isKindNotNone, 'ask_books'),
+    ),
+  );
+
   const varianceFacts: ExpenseVarianceNoteFacts = {
     language: 'vi',
     lines: [{ expenseKind: '641', direction: 'up', against: 'previous', isNew: false, contributors: [{ kind: 'supplier', sourceKind: 'invoice', vouchers: 'several' }] }],
@@ -529,6 +543,21 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
   cases.push(
     cleanCase('finance.expense_variance_note.clean', 'finance.expense_variance_note', 'vi', (rt) =>
       runCleanChecked(() => unmetered(() => rt.expenseVariance.notes(varianceFacts)), isKindNotNone, 'expense_variance_note'),
+    ),
+  );
+
+  const quarterFacts: QuarterSummaryNoteFacts = {
+    language: 'en',
+    entity: 'company',
+    rows: [
+      { row: 'revenue', vsPrevious: 'rose', vsLastYear: 'rose', overdue: false },
+      { row: 'costs', vsPrevious: 'rose', vsLastYear: 'steady', overdue: false },
+      { row: 'cash', vsPrevious: 'fell', vsLastYear: 'fell', overdue: false },
+    ],
+  };
+  cases.push(
+    cleanCase('finance.quarter_summary_note.clean', 'finance.quarter_summary_note', 'en', (rt) =>
+      runCleanChecked(() => unmetered(() => rt.quarterSummary.notes(quarterFacts)), isKindNotNone, 'quarter_summary_note'),
     ),
   );
 

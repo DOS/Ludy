@@ -97,13 +97,21 @@ const ALLOWED: Record<string, Record<string, string>> = {
     'name <- name = input.name ?? account.name': "the new name of an account of the org's chart (ludy_finance.account.name, internal)",
   },
   // Not classified before the meetings transcript's `text` column (#2578) made the name one; neither fact carries a classified value.
-  'modules/finance/src/cash-voucher.ts': { 'learned_bank_rule <- learned.text': "the id of the ludy_finance.bank_party_rule row the voucher taught (learnFromVoucher returns the new row's id as `text`), not a keyword or a statement line" },
+  'modules/finance/src/cash-voucher.ts': {
+    'learned_bank_rule <- learned.text': "the id of the ludy_finance.bank_party_rule row the voucher taught (learnFromVoucher returns the new row's id as `text`), not a keyword or a statement line",
+    'amount <- total = voucherTotal(payload.lines)': 'total cash voucher amount computed from voucher lines, never classified briefing line text',
+    'lines <- payload.lines.length': 'count of cash voucher accounting lines',
+  },
   'modules/finance/src/categorization.ts': { 'matchText <- text = keywordRuleText(input.keyword)': "the keyword of a categorization rule of the org's chart (ludy_finance.categorization_rule, internal)" },
   // The posting date of a sale or purchase recorded late: `late` is why it was posted late, the word `opening` or `locked`, not the free text of ludy_finance.einvoice_draft.late_reason that shares the name (#3535).
-  'modules/finance/src/record.ts': { 'late_reason <- late = lateDate ? await lateReason(ctx, legalEntityId, invoice.issueDate, lateDate) : null': 'why a document was posted on a later date, the word opening or locked (ludy_finance.purchase_document.late_reason, a closed set)' },
+  'modules/finance/src/record.ts': {
+    'late_reason <- late = lateDate ? await lateReason(ctx, legalEntityId, invoice.issueDate, lateDate) : null': 'why a document was posted on a later date, the word opening or locked (ludy_finance.purchase_document.late_reason, a closed set)',
+    'learned_rules <- learned = sale ? [] : await learnFromApproval(ctx, { partyId, documentId: document.id, lines })': 'vendor account-rule ids learned from invoice lines, never classified briefing line text',
+  },
   'modules/finance/src/bank.ts': {
     'bankAccount <- input.bankAccount': 'the chart account code (112x) the statement is for, not a bank account number',
     'filename <- input.filename': 'the filename of a bank statement import (internal, not personal data)',
+    'to <- dates.at(-1)': 'end date of the bank feed batch derived from feed line dates, never classified briefing line text',
   },
   'modules/finance/src/bank-account-number.ts': {
     'bankAccount <- input.bankAccount': 'the chart account code (112x) a bank account number is recorded on, not the number',
@@ -112,6 +120,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'modules/finance/src/bank-feed.ts': {
     'bankAccount <- input.bankAccount': 'the chart account code (112x) a bank feed account maps to, not a bank account number',
     'bankAccount <- removed.bank_account': 'the chart account code (112x) the removed mapping pointed at, not a bank account number',
+    'lines <- 0': 'zero-line count when a bank feed pull leaves no new lines after cut-over',
   },
   'modules/finance/src/missing-invoices.ts': { 'skipped <- skipped': 'the periods too large to reconcile' },
   'modules/finance/src/portal-list.ts': { 'skipped <- input.skippedCount': "the count of the portal list's skipped rows, not the rows" },
@@ -135,7 +144,10 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'packages/kernel/src/commands.ts': { 'signature_reason <- signature.reason': "the reason of an inbound mail's signature check, a code of the verifier (a closed set)" },
   'packages/kernel/src/numbering.ts': { 'reason <- input.reason': "the reason a document number was voided, a member's free text, in the audit log as before and not in the personal-data registry: #4109" },
   'modules/ads/src/launch-run.ts': { 'reason <- reason': "why a launch step was dropped, 'stale' or 'settled'" },
-  'modules/crm/src/sales-orders.ts': { 'hasReason <- reason !== null': 'whether a decline gave a reason, a boolean' },
+  'modules/crm/src/sales-orders.ts': {
+    'hasReason <- reason !== null': 'whether a decline gave a reason, a boolean',
+    'lines <- lines.length': 'count of sales order lines copied from an accepted quote',
+  },
   'modules/finance/src/period-lock.ts': { 'reason <- input.reason': "why a period was locked, a member's free text, in the audit log as before and not in the personal-data registry: #4109" },
   'modules/meetings/src/links.ts': { "reason <- ' '": 'the code DEAL_DELETED written out at the call' },
   'modules/meetings/src/meetings.ts': { 'reason <- input.reason': "why a recording was stopped, the command's own input, in the audit log as before; free text not in the personal-data registry: #4109" },
@@ -150,7 +162,40 @@ const ALLOWED: Record<string, Record<string, string>> = {
     "notes <- items(' ')": 'list of matched note id:revision pairs',
     "event <- event = named.length > 0 ? await ctx.emit(' ', { authors: named.map((a) => ({ userId: a.authorUserId, notes: a.notes, todos: a.todos, meetings: a.meetings })) }) : null": 'the outbox notification event id holding author counts',
     'notes <- privateRows.flatMap((r) => r.note_ids)': 'ids of deleted private notes',
+    'meeting_text <- result.meetingText === null ? null : { recorders: result.meetingText.length, meetings: result.meetingText.reduce((n, m) => n + m.meetings, 0), lines: result.meetingText.reduce((n, m) => n + m.lines, 0) }': 'counts of matched meeting text recorders, meetings, and lines per recorder',
+    'lines <- result.meetingText.reduce((n, m) => n + m.lines, 0)': 'count of matched meeting transcript lines, never transcript or briefing text',
   },
+  // Not classified before ludy_meetings.morning_brief_lines.lines (#5080) made the name `lines` one; each fact below holds an invoice, voucher, stock, payroll, or meeting line count or batch metadata, never morning briefing lines.
+  'modules/crm/src/quotes.ts': {
+    'lines <- computed.rows.length': 'count of quote lines saved',
+    'lines <- rows.length': 'count of quote lines copied into a revision',
+  },
+  'modules/finance/src/einvoice-drafts.ts': { 'lines <- computed.lines.length': 'count of e-invoice draft lines' },
+  'modules/finance/src/journal-voucher.ts': {
+    'total <- total = journalVoucherTotal(payload.lines)': 'total journal voucher amount computed from payload lines, never classified line text',
+    'lines <- payload.lines.length': 'count of journal voucher lines',
+  },
+  'modules/finance/src/ledger-reports.ts': { 'lines <- input.lines': 'validated integer count of exported ledger rows' },
+  'modules/finance/src/marketplace-income.ts': {
+    'lines <- staged.lines.length': 'count of imported marketplace settlement lines',
+    'orders <- new Set(staged.lines.map((l) => l.orderNo)).size': 'distinct order count derived from marketplace settlement lines',
+  },
+  'modules/finance/src/opening-balance.ts': { 'lines <- lines.length': 'count of opening-balance lines posted' },
+  'modules/finance/src/order-handoff.ts': { 'lines <- computed.lines.length': 'count of e-invoice draft lines created from a sales order' },
+  'modules/finance/src/stock-count.ts': {
+    'lines <- input.lines.length': 'count of stock-count lines recorded',
+    'lines <- lines.length': 'count of stock-count lines confirmed',
+  },
+  'modules/hr/src/payroll-posting.ts': { 'lines <- built.lines': 'count of employee payroll lines summarized in the posting proposal' },
+  'modules/hr/src/payroll-run.ts': {
+    'lines <- people.length': 'count of employee payroll lines generated in the run',
+    'lines <- lines.length': 'count of employee payroll lines approved in the run',
+  },
+  'modules/meetings/src/live-notes.ts': { 'lines <- lines = 0': 'count of live transcript lines copied in this tick' },
+  'modules/meetings/src/live-run.ts': { 'lines <- pending.lines.length': 'count of pending live transcript lines queued for summary' },
+  'modules/meetings/src/results.ts': { 'lines <- lines = 0': 'count of draft transcript lines published' },
+  'modules/meetings/src/speaker.ts': { 'lines <- renamed.length': 'count of draft transcript lines updated when naming a speaker' },
+  'modules/meetings/src/translate-run.ts': { 'lines <- batch.length': 'count of transcript lines queued in this translation batch' },
 };
 
 // An expression with every auditValue(...) call cut out (blanked, so offsets keep).

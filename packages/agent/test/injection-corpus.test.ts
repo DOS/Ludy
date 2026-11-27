@@ -8,10 +8,12 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_FEATURE_KEYS,
   AdsCampaignWriter,
+  AskBooksCoworker,
   ConversationWriter,
   ExpenseVarianceCoworker,
   InboxReader,
   PayrollCoworker,
+  QuarterSummaryCoworker,
   SchedulingReader,
   SignAcceptanceReader,
   SignAiReader,
@@ -64,6 +66,7 @@ import {
   type PayrollFigures,
   type PayrollMatchFacts,
   type PayrollSheet,
+  type QuarterSummaryNoteFacts,
   type PayslipExplainRequest,
   type ProjectCycleSummaryFacts,
   type ProjectTriageAssistFacts,
@@ -246,6 +249,37 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       }));
       const res = await coworker.notes({ ...facts, language: c.language });
       expect(res.kind, c.id).toBe('none');
+    }
+  });
+
+  it('finance.quarter_summary_note: refuses every injection payload via QuarterSummaryCoworker', async () => {
+    cover('finance.quarter_summary_note');
+    const facts: QuarterSummaryNoteFacts = {
+      language: 'vi',
+      entity: 'company',
+      rows: [{ row: 'revenue', vsPrevious: 'rose', vsLastYear: 'rose', overdue: false }],
+    };
+    for (const c of INJECTION_CORPUS) {
+      const coworker = new QuarterSummaryCoworker(STUB_CONFIG, async () => ({
+        output: { notes: [{ row: 1, text: c.poisonedOutput }] },
+        usage: zeroUsage,
+      }));
+      const res = await coworker.notes({ ...facts, language: c.language });
+      expect(res.kind, c.id).toBe('none');
+    }
+  });
+
+  it('finance.ask_books: refuses a poisoned choice whole and keeps no sentence of an injection payload via AskBooksCoworker', async () => {
+    cover('finance.ask_books');
+    for (const c of INJECTION_CORPUS) {
+      // A payload where the entry should be: not one of the closed lists, so there is no choice at all.
+      const poisonedEntry = new AskBooksCoworker(STUB_CONFIG, async () => ({ output: { entry: c.poisonedOutput, period: 'last_month', lead: '' }, usage: zeroUsage }));
+      expect((await poisonedEntry.pick('profit please', c.language)).kind, c.id).toBe('none');
+      // A payload where the sentence should be: the choice is from the closed lists and stands, the sentence is dropped.
+      const poisonedLead = new AskBooksCoworker(STUB_CONFIG, async () => ({ output: { entry: 'profit_loss', period: 'last_month', lead: c.poisonedOutput }, usage: zeroUsage }));
+      const res = await poisonedLead.pick('profit please', c.language);
+      expect(res.kind, c.id).toBe('choice');
+      if (res.kind === 'choice') expect(res.lead, c.id).toBeNull();
     }
   });
 

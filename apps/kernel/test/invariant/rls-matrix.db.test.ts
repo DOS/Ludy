@@ -124,6 +124,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  // #5182 (monthly review of unusual posted entries): a person's mark that a hit was looked at; its factory lands here before its migration (step 0).
+  'crove_finance.entry_review_mark',
   // #5073 / #5080 (ADR-0049 #5108): short-lived 36h prep lines for opted-in members, strict user + member_briefing RLS.
   'crove_meetings.morning_brief_lines',
 ]);
@@ -462,6 +464,8 @@ const APPEND_ONLY = new Set<string>([
   'crove_crm.sales_order_line',
   'crove_finance.channel_settlement',
   'crove_finance.channel_settlement_line',
+  // #5182: a person's mark that one hit of the monthly review of unusual entries was looked at; a second mark is a no-op and nothing edits or deletes one (insert-only grant).
+  'crove_finance.entry_review_mark',
   // The household profile of an entity (#2517): a change of tax group, method or trades is a new row from its effective date, never an edit of an earlier one.
   'crove_finance.household_profile',
   // #4037 (slice 2 of #3850): a confirmed mapping of a marketplace report's columns is a new row per org and platform, the latest wins; an earlier one is never edited or deleted.
@@ -1729,6 +1733,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // The register of fixed assets and prepaid costs (#919): one row per asset, never deleted. Tenant roles update only
   // the end of its schedule (a column grant), so the update probes assign end_reason to itself.
+  // #5182 (step 0, the migration follows): a person's mark that one hit of the monthly review of unusual entries was looked at: one row per (entry, rule), append-only, its entity filled from its entry by the
+  // legal-entity trigger. The entry is created in the same transaction (its balancing lines complete it), as for a journal line.
+  'crove_finance.entry_review_mark': {
+    make: (o) => {
+      const entry = randomUUID();
+      return {
+        setup: [journalEntry(o.id, entry)],
+        row: { org_id: o.id, id: randomUUID(), entry_id: entry, rule: 'amount_outlier', marked_by: o.owner },
+        complete: [balancingLine(o.id, entry, 1, 'debit'), balancingLine(o.id, entry, 2, 'credit')],
+      };
+    },
+  },
   'crove_finance.fixed_asset': {
     update: { set: 'end_reason = end_reason' },
     make: (o) => ({ row: fixedAssetRow(o) }),

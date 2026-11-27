@@ -891,6 +891,8 @@ export const KERNEL_ERROR_CODES = [
   'SOURCE_LEGAL_ENTITY',
   // The expense variance card compares only a month that has ended (#4392).
   'MONTH_NOT_ENDED',
+  // The quarter card sums only a quarter that has ended (#5183).
+  'QUARTER_NOT_ENDED',
   'LEGAL_ENTITY_MISMATCH',
   'LEGAL_ENTITY_MOVE_REFUSED',
   // A VND invoice with an amount below one dong that was not rounded to the dong (#1308, #2235).
