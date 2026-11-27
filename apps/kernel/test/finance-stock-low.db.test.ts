@@ -11,6 +11,7 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -53,17 +54,19 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
   }
   const rows = <T extends pg.QueryResultRow = Record<string, unknown>>(text: string, values: unknown[] = []) => admin(async (c) => (await c.query<T>(text, values)).rows);
   const identity = (name: string) => upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@low.test`, name: null });
-  type Org = { orgId: string; owner: string; member: string; viewer: string; entity: string };
+  type Org = { orgId: string; owner: string; admin: string; member: string; viewer: string; entity: string };
   async function org(): Promise<Org> {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Kho ${randomUUID().slice(0, 6)}`);
-    const [member, viewer] = await Promise.all([identity('member'), identity('viewer')]);
-    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    const [adminUser, member, viewer] = await Promise.all([identity('admin'), identity('member'), identity('viewer')]);
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]));
     const [entity] = await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]);
-    return { orgId, owner, member, viewer, entity: entity?.id ?? '' };
+    return { orgId, owner, admin: adminUser, member, viewer, entity: entity?.id ?? '' };
   }
   const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const query = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.query<T>(name, input, { actor: asUser(user), orgId: o.orgId });
+  const auditOf = (o: Org, command: string) =>
+    rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at", [o.orgId, command]).then((r) => r.map((x) => x.detail));
   const makeItem = (o: Org, code: string, extra: Record<string, unknown> = {}) =>
     execute<{ id: string }>(o, 'finance.stock_item.save', { itemId: null, legalEntityId: null, code, name: `Hàng ${code}`, unit: 'cái', stockAccount: '156', trade: 'goods', ...extra }).then((r) => r.id);
   const party = (o: Org, name: string, email: string | null = null) =>
@@ -317,6 +320,93 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
       await expect(ask([{ itemId: off, quantity: '1' }])).rejects.toMatchObject({ code: 'STOCK_ITEM_INACTIVE' });
       await expect(ask([{ itemId: a, quantity: '1' }], { supplierPartyId: randomUUID() })).rejects.toMatchObject({ code: 'PARTY_NOT_FOUND' });
       await expect(ask([{ itemId: a, quantity: '1' }], {}, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    });
+  });
+
+  describe('finance.stock_setting (#2685)', () => {
+    it('defaults to 14 days with no row made by reading, and is set by owner or admin with only leadDays audited', async () => {
+      const o = await org();
+      for (const user of [o.owner, o.admin, o.member, o.viewer]) {
+        expect(await query<{ leadDays: number }>(o, 'finance.stock_setting.get', {}, user)).toEqual({ leadDays: 14 });
+      }
+      expect(await rows('SELECT 1 FROM ludy_finance.collection_setting WHERE org_id = $1', [o.orgId])).toEqual([]);
+
+      expect(await execute<{ leadDays: number }>(o, 'finance.stock_setting.set', { leadDays: 7 })).toEqual({ leadDays: 7 });
+      expect(await execute<{ leadDays: number }>(o, 'finance.stock_setting.set', { leadDays: 21 }, o.admin)).toEqual({ leadDays: 21 });
+      for (const user of [o.owner, o.admin, o.member, o.viewer]) {
+        expect(await query<{ leadDays: number }>(o, 'finance.stock_setting.get', {}, user)).toEqual({ leadDays: 21 });
+      }
+      await expect(execute(o, 'finance.stock_setting.set', { leadDays: 10 }, o.member)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      await expect(execute(o, 'finance.stock_setting.set', { leadDays: 10 }, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      for (const leadDays of [0, 91, 1.5, -1]) {
+        await expect(execute(o, 'finance.stock_setting.set', { leadDays })).rejects.toMatchObject({ code: 'VALIDATION' });
+      }
+      expect(await query<{ leadDays: number }>(o, 'finance.stock_setting.get', {})).toEqual({ leadDays: 21 });
+
+      const audit = await auditOf(o, 'finance.stock_setting.set');
+      expect(audit).toEqual([{ leadDays: 7 }, { leadDays: 21 }]);
+    });
+
+    it('shortens finance.stock.low and Home when set to 7, while an explicit leadDays parameter overrides it', async () => {
+      const { o } = await stocked();
+      const flags = async (user = o.owner) => (await query<TodayItem[]>(o, 'finance.today', {}, user)).filter((i) => i.title.key === 'financeStockLow');
+
+      expect((await low(o)).map((i) => i.code)).toEqual(['E1', 'A1']);
+      expect(await flags()).toEqual([expect.objectContaining({ count: 2, title: { key: 'financeStockLow', params: { count: 2 } } })]);
+
+      await execute(o, 'finance.stock_setting.set', { leadDays: 7 });
+      // A1 (10 days of cover) drops out and E1 suggests 2 * 7 - 2 = 12 units, matching finance.stock.low({ leadDays: 7 }).
+      const shortened = await low(o);
+      expect(shortened).toEqual(await low(o, { leadDays: 7 }));
+      expect(shortened.map((i) => i.code)).toEqual(['E1']);
+      expect(shortened[0]).toMatchObject({ code: 'E1', coverDays: 2, suggestedQuantity: '12' });
+      expect(await flags()).toEqual([expect.objectContaining({ count: 1, title: { key: 'financeStockLow', params: { count: 1 } } })]);
+
+      // Passing leadDays explicitly overrides the org setting; setting leadDays to 1 clears E1 (coverDays: 2) from both.
+      expect((await low(o, { leadDays: 14 })).map((i) => i.code)).toEqual(['E1', 'A1']);
+      await execute(o, 'finance.stock_setting.set', { leadDays: 1 });
+      expect(await low(o)).toEqual([]);
+      expect(await flags()).toEqual([]);
+    });
+
+    it('holds SQL row policies, column grants, CHECK bounds, org isolation, and coexists with collection_setting', async () => {
+      const a = await org();
+      const b = await org();
+      await execute(a, 'finance.collection_setting.set', { termsDays: 45, weeklyItem: true });
+      await execute(a, 'finance.stock_setting.set', { leadDays: 7 });
+      expect(await query<{ termsDays: number; weeklyItem: boolean }>(a, 'finance.collection_setting.get', {})).toEqual({ termsDays: 45, weeklyItem: true });
+      expect(await query<{ leadDays: number }>(b, 'finance.stock_setting.get', {})).toEqual({ leadDays: 14 });
+      // Updating collection_setting preserves stock_lead_days, and updating stock_setting preserves terms_days and weekly_item.
+      await execute(a, 'finance.collection_setting.set', { termsDays: 60, weeklyItem: false });
+      expect(await query<{ leadDays: number }>(a, 'finance.stock_setting.get', {})).toEqual({ leadDays: 7 });
+
+      async function inContext<T>(who: string, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
+        const c = await pool.connect();
+        try {
+          await c.query('BEGIN');
+          await enterUser(c, who, a.orgId);
+          return await fn(c);
+        } finally {
+          await c.query('ROLLBACK').catch(() => undefined);
+          c.release();
+        }
+      }
+      const refused = (who: string, sqlText: string, params: unknown[], code: string) =>
+        inContext(who, (c) => expect(c.query(sqlText, params)).rejects.toMatchObject({ code }));
+      const changed = (who: string, sqlText: string, params: unknown[]) =>
+        inContext(who, async (c) => (await c.query(sqlText, params)).rowCount);
+
+      for (const who of [a.owner, a.admin]) {
+        expect(await changed(who, 'UPDATE ludy_finance.collection_setting SET stock_lead_days = 10 WHERE org_id = $1', [a.orgId]), who).toBe(1);
+      }
+      for (const who of [a.member, a.viewer]) {
+        expect(await changed(who, 'UPDATE ludy_finance.collection_setting SET stock_lead_days = 10 WHERE org_id = $1', [a.orgId]), who).toBe(0);
+        await refused(who, 'INSERT INTO ludy_finance.collection_setting (org_id, stock_lead_days) VALUES ($1, 10)', [a.orgId], '42501');
+      }
+      await refused(a.owner, 'UPDATE ludy_finance.collection_setting SET stock_lead_days = 0 WHERE org_id = $1', [a.orgId], '23514');
+      await refused(a.owner, 'UPDATE ludy_finance.collection_setting SET stock_lead_days = 91 WHERE org_id = $1', [a.orgId], '23514');
+      await refused(a.owner, 'UPDATE ludy_finance.collection_setting SET org_id = org_id WHERE org_id = $1', [a.orgId], '42501');
+      await refused(a.owner, 'DELETE FROM ludy_finance.collection_setting WHERE org_id = $1', [a.orgId], '42501');
     });
   });
 });

@@ -5,7 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { STOCK_LOW_MAX, STOCK_REORDER_HINT_MAX, STOCK_REORDER_ITEMS_MAX, STOCK_SUGGEST_LINES_MAX, type MarketplaceUnassignedLine, type StockAiState, type StockItem, type StockLowItem, type StockUnassignedLine } from '@ludy/kernel-contract';
+import { STOCK_LEAD_DAYS_DEFAULT, STOCK_LOW_MAX, STOCK_REORDER_HINT_MAX, STOCK_REORDER_ITEMS_MAX, STOCK_SUGGEST_LINES_MAX, type MarketplaceUnassignedLine, type StockAiState, type StockItem, type StockLowItem, type StockUnassignedLine } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
@@ -324,13 +324,15 @@ export function LowStock({ legalEntityId, ready, canWrite }: { legalEntityId: st
   const t = useTranslations('stock.low');
   // All of them, up to the most one read returns, the shortest cover first; when the list is cut the section says so.
   const low = useQuery({ ...orpc.stock.low.queryOptions({ input: { legalEntityId, limit: STOCK_LOW_MAX } }), enabled: ready });
+  const setting = useQuery({ ...orpc.stock.settings.get.queryOptions(), enabled: ready });
   if (low.error) return <ErrorText>{errorMessage(low.error)}</ErrorText>;
   const items = low.data ?? [];
   if (items.length === 0) return null;
+  const leadDays = setting.data?.leadDays ?? STOCK_LEAD_DAYS_DEFAULT;
   return (
     <section className="mb-8" aria-label={t('title')} data-testid="stock-low">
       <h2 className="text-base font-medium text-foreground">{t('title')}</h2>
-      <p className="mb-3 text-sm text-subtle-foreground">{t('subtitle')}</p>
+      <p className="mb-3 text-sm text-subtle-foreground" data-testid="stock-low-subtitle">{t('subtitle', { days: leadDays })}</p>
       {items.length >= STOCK_LOW_MAX && (
         <p className="mb-3 text-sm text-subtle-foreground" data-testid="stock-low-capped">
           {t('capped', { count: STOCK_LOW_MAX })}

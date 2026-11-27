@@ -3601,7 +3601,7 @@ export const vi = {
     // Items running low and the reorder message (#2514).
     low: {
       title: 'Hàng sắp hết',
-      subtitle: 'Các mặt hàng mà số còn lại không đủ bán cho thời gian nhà cung cấp giao hàng (mặc định 14 ngày), tính theo tốc độ bán 8 tuần gần nhất. Số lượng gợi ý đủ bán thêm hai chu kỳ giao hàng, bạn sửa được. Tin đặt hàng chỉ là bản nháp: bạn đọc, sửa rồi tự gửi.',
+      subtitle: 'Các mặt hàng mà số còn lại không đủ bán cho thời gian nhà cung cấp giao hàng ({days, plural, other {# ngày}}), tính theo tốc độ bán 8 tuần gần nhất. Số lượng gợi ý đủ bán thêm hai chu kỳ giao hàng, bạn sửa được. Tin đặt hàng chỉ là bản nháp: bạn đọc, sửa rồi tự gửi.',
       capped: 'Đang hiện {count, number} mặt hàng sắp hết nhất; xử lý bớt để các mặt hàng còn lại hiện ra.',
       code: 'Mã',
       name: 'Tên',
@@ -19261,6 +19261,10 @@ export const vi = {
         list: 'Xem phát sinh kho của mặt hàng',
         reverse: 'Đảo một phát sinh kho',
         return: 'Ghi nhận trả lại một phần hàng đã bán',
+      },
+      stock_setting: {
+        get: 'Xem thời gian nhà cung cấp giao hàng của tổ chức',
+        set: 'Đổi thời gian nhà cung cấp giao hàng của tổ chức',
       },
       einvoice_series: {
         list: 'Xem ký hiệu hóa đơn',
