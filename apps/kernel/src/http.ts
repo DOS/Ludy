@@ -589,6 +589,8 @@ export interface HttpDeps {
   aiPrice?: { inputPerMTok: string; outputPerMTok: string };
   // The public tax registry lookup for onboarding (issue #324); unset: off (TAX_CODE_LOOKUP_URL).
   taxLookup?: TaxCodeLookup;
+  // Pluggable enterprise tax-code lookup for parties (issue #4988, TC1); false when TAX_LOOKUP_PROVIDER=off.
+  partyTaxLookup?: boolean;
   // The assisted purchase-invoice sync from the tax portal (issue #325); unset: off (TAX_PORTAL_SYNC).
   portalSync?: PortalSync;
   // Realtime invalidation (issue #69). Unset: /api/stream answers 404 and the app keeps polling.
@@ -1215,6 +1217,8 @@ export function createHttpApp(deps: HttpDeps) {
       statusPage: Boolean(config.STATUS_FILE),
       // Onboarding offers "look up" next to the tax code only when the server has a registry to ask (issue #324).
       taxCodeLookup: Boolean(deps.taxLookup),
+      // CRM party enterprise tax-code lookup (issue #4988, TC1); false when TAX_LOOKUP_PROVIDER=off.
+      partyTaxLookup: Boolean(deps.partyTaxLookup),
       // The reconciliation screen offers "Lấy danh sách từ cổng thuế" only when the deployment turned it on (issue #325).
       taxPortalSync: Boolean(deps.portalSync),
       // The SPA shows the menus of these modules only (plan Decision 12).

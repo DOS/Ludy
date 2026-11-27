@@ -72,6 +72,7 @@ import { offboardingCommands } from './offboarding.ts';
 import { memberProfiles } from './profiles.ts';
 import { setAddress, setContactEmail } from './org-address.ts';
 import { partyCommands } from './parties.ts';
+import { taxLookupCommands } from './tax-lookup.ts';
 import { setTaxCode, setVatFilingPeriod } from './tax-code.ts';
 import { setApprovalPreset } from './approval-preset.ts';
 import { setAppCommand, type AppBusyProbe, type OrgAppsOptions } from './org-apps.ts';
@@ -1313,6 +1314,7 @@ export function buildKernelCommands(
       ? inviteCreateCommand(options.inviteLimits, { messageIdDomain: options.messageIdDomain })
       : createInvite,
     ...otherKernelCommands,
+    ...taxLookupCommands,
     ...homeLayoutCommands(options.apps ? { apps: options.apps } : {}),
     setAppCommand({ ...(options.shippedModules ? { shipped: options.shippedModules } : {}), ...(options.appBusy ? { busy: options.appBusy } : {}) }),
     options.uploadBeginLimits ? beginUploadCommand(options.uploadBeginLimits) : beginUpload,

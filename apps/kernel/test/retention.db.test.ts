@@ -126,6 +126,14 @@ suite('retention purges on PostgreSQL (#38)', () => {
         );
       }
       await c.query('SET LOCAL session_replication_role = origin');
+      // Tax-code lookup cache (#4988): two expired entries (purged) and one unexpired entry (kept).
+      await c.query(
+        `INSERT INTO ludy_kernel.tax_lookup_cache (org_id, tax_code, found, name, address, source, fetched_at, expires_at) VALUES
+           ($1, '0100000001', true, 'Cong ty Het Han', 'Ha Noi', 'casso', now() - interval '25 hours', now() - interval '1 hour'),
+           ($1, '0309876546', false, NULL, NULL, 'casso', now() - interval '2 hours', now() - interval '1 minute'),
+           ($1, '0100000005', true, 'Cong ty Con Han', 'TP HCM', 'casso', now() - interval '1 hour', now() + interval '23 hours')`,
+        [orgId],
+      );
       // Kept for good: an audit row, an outbox event and a balanced ledger entry, all years old.
       await c.query(
         `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, command, command_id, outcome, input_sha256)
@@ -166,9 +174,17 @@ suite('retention purges on PostgreSQL (#38)', () => {
     // One row per table per batch: the loop keeps calling until nothing expired is left.
     const result = await runRetention(workerDb, 1, silent);
     expect(result).toEqual({
-      deleted: { 'kernel.idempotency_key': 5, 'kernel.inbound_drop': 1, 'kernel.member_invite': 2, 'kernel.file_upload': 2 },
+      deleted: {
+        'kernel.idempotency_key': 5,
+        'kernel.inbound_drop': 1,
+        'kernel.member_invite': 2,
+        'kernel.file_upload': 2,
+        'kernel.tax_lookup_cache': 2,
+      },
       remaining: [],
     });
+    expect(await count('ludy_kernel.tax_lookup_cache')).toBe(1);
+    expect(await count('ludy_kernel.tax_lookup_cache', "tax_code = '0100000005'")).toBe(1);
     expect(await count('ludy_kernel.idempotency_key', `org_id = '${orgId}' AND command = 'kernel.test'`)).toBe(1);
     expect(await count('ludy_kernel.idempotency_key', `key = 'fresh'`)).toBe(1);
     expect(await count('ludy_kernel.inbound_drop')).toBe(1);

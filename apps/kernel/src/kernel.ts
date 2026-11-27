@@ -61,7 +61,17 @@ import {
 import { createExtractClient } from '@ludy/extract-contract';
 import { MEETING_PLATFORM_VIDEO_MAX_BYTES, type ModuleManifest } from '@ludy/kernel-contract';
 import { assertRlsEnforced, assertSystemContextAccess, createDb, createPool, singleCell, type CellResolver, type Db } from '@ludy/db';
-import { buildKernelCommands, kernelManifest, kernelQueries, setMeetingPlatformVideoImport, setMessageIdDomain, type OverviewContribution } from '@ludy/kernel';
+import {
+  buildKernelCommands,
+  kernelManifest,
+  kernelQueries,
+  offTaxLookupProvider,
+  setMeetingPlatformVideoImport,
+  setMessageIdDomain,
+  type OverviewContribution,
+  type PartyTaxLookupOptions,
+  type TaxLookupProvider,
+} from '@ludy/kernel';
 import {
   LocalDiskStore,
   egressFetch,
@@ -134,6 +144,7 @@ import { StreamHub, createDbTicketStore, createPgNotificationSource } from './st
 import { createPexels } from './stock-photos.ts';
 import { createMediaUrls } from './media-urls.ts';
 import { createTaxCodeLookup } from './tax-lookup.ts';
+import { bindPartyTaxLookupAdapter, createGuardedCassoTaxLookupProvider } from './tax-lookup-casso.ts';
 import { createPortalSync } from './portal-sync.ts';
 import { createTaxPortalClient, testPortalAllowed } from './tax-portal.ts';
 import { setInboundAuthservId } from './inbound.ts';
@@ -228,6 +239,8 @@ export interface KernelAdapters {
   billing?: Billing;
   // Open mobile native push sender (#4883); unset on self-host so native push stays disabled with no vendor SDKs or secrets.
   nativePush?: NativePushSender | null;
+  // Pluggable enterprise tax-code lookup for parties (#4988, TC1); unset resolves from TAX_LOOKUP_PROVIDER (default off).
+  partyTaxLookup?: PartyTaxLookupOptions | null;
 }
 
 export type ResolvedAdapters = Required<KernelAdapters>;
@@ -292,7 +305,19 @@ export function summaryEnabled(config: Pick<Config, 'MEETINGS_SUMMARY'>): boolea
 // absentModules buildRuntime passes), and the
 // routes and jobs that ask Runtime.installed() are not registered either.
 // `billing` answers the org's entitlements for kernel.org.apps (ADR-0053); self-host grants every module.
-export function moduleDefinitions(config: Config, billing: Billing = selfHostBilling): ModuleDefinitions {
+export function defaultPartyTaxLookupProvider(
+  config: Pick<Config, 'TAX_LOOKUP_PROVIDER' | 'CASSO_CLIENT_ID' | 'CASSO_CLIENT_SECRET'>,
+): TaxLookupProvider {
+  if (config.TAX_LOOKUP_PROVIDER === 'casso' && config.CASSO_CLIENT_ID && config.CASSO_CLIENT_SECRET) {
+    return createGuardedCassoTaxLookupProvider({ appId: config.CASSO_CLIENT_ID, appSecret: config.CASSO_CLIENT_SECRET });
+  }
+  return offTaxLookupProvider;
+}
+
+export function moduleDefinitions(
+  config: Config,
+  billing: Billing = selfHostBilling,
+): ModuleDefinitions {
   // Mail a module queues (the scheduled report, #704) gets the deployment's Message-ID domain too.
   setMessageIdDomain(messageIdDomain(config));
   setInboundAuthservId(config.INBOUND_AUTHSERV_ID);
@@ -397,8 +422,15 @@ function subjectVaultOf(config: Config): SubjectVault | null {
 
 // `billing` answers the org's entitlements to the per-org app gate (ADR-0053): the runtime is always given its function, so a caller cannot
 // leave the gate without one (it would hold every app for every org); self-host's port grants `full`.
-export function serverRuntime(cells: CellResolver, config: Config, options: Omit<RuntimeOptions, 'absentModules' | 'manifests' | 'entitlements'> & { billing?: Billing }): Runtime {
-  const { billing, ...runtimeOptions } = options;
+export function serverRuntime(
+  cells: CellResolver,
+  config: Config,
+  options: Omit<RuntimeOptions, 'absentModules' | 'manifests' | 'entitlements'> & {
+    billing?: Billing;
+    partyTaxLookup?: PartyTaxLookupOptions | null;
+  },
+): Runtime {
+  const { billing, partyTaxLookup, ...runtimeOptions } = options;
   // Modules this build ships that LUDY_MODULES leaves out (ADR-0031).
   const absentModules = AVAILABLE_MODULES.filter((module) => !config.LUDY_MODULES.includes(module));
   const runtime = new Runtime(cells, {
@@ -420,6 +452,9 @@ export function serverRuntime(cells: CellResolver, config: Config, options: Omit
   // A command registry that does not fit together (a reviser naming no proposal command, two revisers for one
   // command) fails the boot (#216). Revisers of commands in modules this deployment leaves out are not checked.
   runtime.validate({ absentModules });
+  if (partyTaxLookup) {
+    bindPartyTaxLookupAdapter(runtime, partyTaxLookup);
+  }
   return runtime;
 }
 
@@ -787,15 +822,28 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     connectors: adapters.connectors ?? [],
     billing: adapters.billing ?? selfHostBilling,
     nativePush: adapters.nativePush ?? null,
+    partyTaxLookup: adapters.partyTaxLookup ?? {
+      provider: defaultPartyTaxLookupProvider(config),
+      onQuotaWarning: ({ orgId, provider, usedPercent }) => {
+        console.warn(`[tax-lookup] WARNING org=${orgId} provider=${provider} quotaUsedPercent=${usedPercent}`);
+      },
+    },
   };
 
-  function buildRuntime(connectionString: string, applicationName: string, max: number, mcpEntry?: 'worker') {
+  function buildRuntime(
+    connectionString: string,
+    applicationName: string,
+    max: number,
+    mcpEntry?: 'worker',
+    partyTaxLookup?: PartyTaxLookupOptions | null,
+  ) {
     const pool = createPool({ connectionString, applicationName, max, resetOnRelease: config.DB_RESET_ON_RELEASE === 'true', discardTemp: config.LUDY_SHARED_DATABASE === 'true' });
     const db = createDb(pool);
     // One database is the control plane and the only cell (Decision 14, plan §3.6).
     const runtime = serverRuntime(singleCell(db), config, {
       // The org's entitlements, for kernel.org.apps (ADR-0053).
       billing: resolved.billing,
+      ...(partyTaxLookup ? { partyTaxLookup } : {}),
       // Approval audit rows name the build their policy ran under (plan §4.7, #1402).
       build: config.LUDY_BUILD ?? 'dev',
       // Audit and idempotency rows hash a command's input under the deployment's key (#1732), so an exported or
@@ -858,7 +906,13 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
 
     try {
       if (api) {
-        const { pool, db, runtime } = buildRuntime(config.DATABASE_URL, 'crove-api', config.DATABASE_POOL_MAX);
+        const { pool, db, runtime } = buildRuntime(
+          config.DATABASE_URL,
+          'crove-api',
+          config.DATABASE_POOL_MAX,
+          undefined,
+          resolved.partyTaxLookup,
+        );
         stops.push(() => pool.end());
         await assertRlsEnforced(pool);
         await assertSystemContextAccess(pool, 'denied');
@@ -907,6 +961,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           ...(resolved.signAi ? { signAi: resolved.signAi } : {}),
           aiPrice: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK },
           ...(config.TAX_CODE_LOOKUP_URL ? { taxLookup: createTaxCodeLookup(config.TAX_CODE_LOOKUP_URL) } : {}),
+          partyTaxLookup: (resolved.partyTaxLookup?.provider?.id ?? 'off') !== 'off',
           ...(config.TAX_PORTAL_SYNC === 'true' ? { portalSync: createPortalSync({ runtime, store, broker: resolved.broker, stepMs: config.TAX_PORTAL_STEP_SECONDS * 1000, client: createTaxPortalClient(config.TAX_PORTAL_URL ? { baseUrl: config.TAX_PORTAL_URL } : {}) }) } : {}),
           mailer: resolved.mail,
           // Meta's data deletion callback for the Ads connection (plan section 9): with the Meta ads app configured.

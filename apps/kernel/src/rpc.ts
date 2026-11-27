@@ -47,10 +47,16 @@ import {
 import { CAPABILITIES, isProvider as isSocialProvider, strictestAltTextLimit } from '@ludy/mod-social/contract';
 import { channelNotAllowed, periodSummaryInput, voiceNotes, type BrandVoice, type PeriodSummaryData } from '@ludy/mod-social';
 import {
+  TAX_LOOKUP_QUOTA_WARN_PERCENT,
+  TAX_LOOKUP_TIMEOUT_MS,
   TODAY_WEEKLY_READ,
+  TaxLookupLimiter,
+  TaxLookupUpstreamError,
   clientOverviews,
   createOrg,
+  isHouseholdTaxLookupResult,
   myOrgs,
+  offTaxLookupProvider,
   previewInvite,
   revokeOwnSessionsWithoutOrg,
   sessionOrgs,
@@ -58,11 +64,15 @@ import {
   type AcceptedInvite,
   type BulkApproveResult,
   type ChannelConnectInput,
+  type PartyTaxLookupPrepareResult,
+  type TaxLookupResult,
   type ContactCandidates,
   type DirectMail,
   type IntentSource,
   type OrgSummary,
 } from '@ludy/kernel';
+import type { PartyTaxLookupResult } from '@ludy/kernel-contract';
+import { getPartyTaxLookupAdapter } from './tax-lookup-casso.ts';
 import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@ludy/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@ludy/mod-crm';
@@ -542,6 +552,7 @@ export function createRpcHandler(
   // deployment a few more, so a loop of made-up credentials cannot use up the budget the workers' syncs share.
   const tingeeConnectsPerOrg = new RateLimiter({ perMinute: 5 });
   const tingeeConnectsAll = new RateLimiter({ perMinute: 30, maxKeys: 1 });
+  const defaultTaxLookupLimiter = new TaxLookupLimiter();
   // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
   const briefs = new DraftBudget();
   // "Tuần này" has a rate limit of its own, apart from the brief's, so the two cards of Home never make each other wait.
@@ -3712,6 +3723,109 @@ export function createRpcHandler(
       ),
       setCompany: os.parties.setCompany.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.party.set_company', input, { actor, orgId }))),
       duplicateHints: os.parties.duplicateHints.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.party.duplicate_hints', {}, { actor, orgId }))),
+      taxLookup: os.parties.taxLookup.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const adapter = getPartyTaxLookupAdapter(runtime);
+          const provider = adapter?.provider ?? offTaxLookupProvider;
+          const limiter = adapter?.limiter ?? defaultTaxLookupLimiter;
+
+          // 1. Short read tx (closes before any outbound HTTP): enforces role/actor, code rules,
+          // deployment/org toggles, and reads fresh org-scoped cache.
+          const prepared = await runtime.query<PartyTaxLookupPrepareResult>(
+            'kernel.party.tax_lookup_prepare',
+            { taxCode: input.taxCode, deploymentEnabled: provider.id !== 'off' },
+            { actor, orgId },
+          );
+
+          if (prepared.status === 'hit') {
+            return runtime.execute<PartyTaxLookupResult>(
+              'kernel.party.tax_lookup',
+              { mode: 'hit', taxCode: prepared.normalized, provider: provider.id },
+              { actor, orgId },
+            );
+          }
+
+          // 2. External HTTPS lookup outside any PostgreSQL transaction.
+          const backoff = limiter.isBackedOff();
+          if (backoff.backedOff) {
+            throw new DomainError(
+              'TAX_LOOKUP_UNAVAILABLE',
+              503,
+              'Tạm thời không tra được mã số thuế, hãy nhập thủ công hoặc thử lại sau',
+              { retryAfterSeconds: backoff.retryAfterSeconds },
+            );
+          }
+
+          const acquired = limiter.tryAcquire(orgId, actor.userId);
+          if (!acquired.ok) {
+            if (acquired.scope === 'backoff') {
+              throw new DomainError(
+                'TAX_LOOKUP_UNAVAILABLE',
+                503,
+                'Tạm thời không tra được mã số thuế, hãy nhập thủ công hoặc thử lại sau',
+                { retryAfterSeconds: acquired.retryAfterSeconds },
+              );
+            }
+            const message =
+              acquired.scope === 'member'
+                ? 'Bạn tra cứu mã số thuế quá nhanh, hãy thử lại sau ít phút'
+                : 'Tổ chức đã đạt giới hạn tra cứu mã số thuế (tối đa 30 lượt/giờ và 200 lượt/ngày); kết quả lưu tạm không tính lượt';
+            throw new DomainError('TAX_LOOKUP_RATE_LIMIT', 429, message, {
+              scope: acquired.scope,
+              retryAfterSeconds: acquired.retryAfterSeconds,
+            });
+          }
+
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), TAX_LOOKUP_TIMEOUT_MS);
+          let answer: TaxLookupResult;
+          try {
+            answer = await provider.lookup(prepared.normalized, controller.signal);
+          } catch (error) {
+            if (error instanceof DomainError) throw error;
+            if (error instanceof TaxLookupUpstreamError && error.kind === 'rate_limited') {
+              limiter.triggerBackoff(error.retryAfterSeconds !== undefined ? error.retryAfterSeconds * 1000 : undefined);
+            }
+            throw new DomainError(
+              'TAX_LOOKUP_UNAVAILABLE',
+              503,
+              'Tạm thời không tra được mã số thuế, hãy nhập thủ công hoặc thử lại sau',
+            );
+          } finally {
+            clearTimeout(timer);
+          }
+
+          const household = isHouseholdTaxLookupResult(answer);
+          const orgPercent = Math.round((acquired.orgDailyCount / acquired.orgDailyLimit) * 100);
+          const effectivePercent = Math.max(orgPercent, answer.quotaUsedPercent ?? 0);
+          const quotaWarning = effectivePercent >= TAX_LOOKUP_QUOTA_WARN_PERCENT;
+          if (quotaWarning && limiter.shouldEmitQuotaWarning(orgId)) {
+            adapter?.onQuotaWarning?.({ orgId, provider: provider.id, usedPercent: effectivePercent });
+          }
+
+          // 3. Short write + metadata-only audit tx after external call completes.
+          return runtime.execute<PartyTaxLookupResult>(
+            'kernel.party.tax_lookup',
+            {
+              mode: 'miss',
+              taxCode: prepared.normalized,
+              provider: provider.id,
+              found: answer.found,
+              name: answer.name,
+              address: answer.address,
+              statusText: answer.statusText,
+              source: answer.source,
+              household,
+              quotaWarning,
+            },
+            { actor, orgId },
+          );
+        }),
+      ),
+      taxLookupSwitch: {
+        get: os.parties.taxLookupSwitch.get.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.party.tax_lookup_switch.get', {}, { actor, orgId }))),
+        set: os.parties.taxLookupSwitch.set.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.party.tax_lookup_switch.set', input, { actor, orgId }))),
+      },
     },
     documents: {
       list: os.documents.list.handler(({ context, input }) =>

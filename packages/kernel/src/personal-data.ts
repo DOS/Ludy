@@ -161,6 +161,23 @@ export const PERSONAL_DATA_COLUMNS = {
   'ludy_kernel.tenant.tax_code': { kind: 'tax_code', handling: 'keep_org', reason: "The business's own tax code" },
   'ludy_kernel.tenant.address': { kind: 'address', handling: 'keep_org', reason: "The business's registered address, printed on its returns" },
   'ludy_kernel.tenant.contact_email': { kind: 'email', handling: 'erase', reason: 'A contact person of the business' },
+  // Org-scoped tax-code lookup cache (#4988, TC1): caches enterprise lookups only (household businesses are never cached),
+  // expires within 24h (hit) or 1h (not found), and deletes on matching erasure or org purge.
+  'ludy_kernel.tax_lookup_cache.tax_code': {
+    kind: 'tax_code',
+    handling: 'erase',
+    reason: 'Cached tax-code lookup entry; deleted when erasing matching tax code, name or address and by retention or org purge',
+  },
+  'ludy_kernel.tax_lookup_cache.name': {
+    kind: 'name',
+    handling: 'erase',
+    reason: 'Cached company name from tax-code lookup; deleted with the cache row on erasure and by retention or org purge',
+  },
+  'ludy_kernel.tax_lookup_cache.address': {
+    kind: 'address',
+    handling: 'erase',
+    reason: 'Cached business address from tax-code lookup; deleted with the cache row on erasure and by retention or org purge',
+  },
   // Legal entities (#1278): the companies, branches and household businesses the org keeps books for. In an accounting
   // firm's org they are its clients, and a household's name and 12-digit code are usually its owner's name and national
   // ID number, so only the default entity, the org itself, is the org's own identity (#1312).
@@ -1764,6 +1781,25 @@ export const personalDataErase = defineCommand({
 
     // Parties the value identifies, and whether the books name them.
     const partyMatch = sql<boolean>`(${match('email', 'p.email') ?? never} OR ${match('phone', 'p.phone') ?? never} OR ${match('tax_code', 'p.tax_code') ?? never})`;
+    // Tax-code lookup cache (#4988, TC1): delete rows matching the probed tax code OR belonging to a party matched by this erasure (before party.tax_code is cleared below).
+    const taxLookupMatch = match('tax_code', 'c.tax_code');
+    const { rows: erasedTaxLookupCache } = await sql<{ name: boolean; address: boolean }>`
+      DELETE FROM ludy_kernel.tax_lookup_cache c
+       WHERE c.org_id = ${ctx.orgId}::uuid
+         AND (
+           ${taxLookupMatch ?? never}
+           OR c.tax_code IN (
+             SELECT p.tax_code
+               FROM ludy_kernel.party p
+              WHERE p.org_id = ${ctx.orgId}::uuid
+                AND ${partyMatch}
+                AND p.tax_code IS NOT NULL
+           )
+         )
+       RETURNING c.name IS NOT NULL AS name, c.address IS NOT NULL AS address`.execute(ctx.trx);
+    add('ludy_kernel.tax_lookup_cache.tax_code', erasedTaxLookupCache.length);
+    add('ludy_kernel.tax_lookup_cache.name', erasedTaxLookupCache.filter((r) => r.name).length);
+    add('ludy_kernel.tax_lookup_cache.address', erasedTaxLookupCache.filter((r) => r.address).length);
     const { rows: parties } = await sql<{ id: string; email: boolean; phone: boolean; address: boolean; tax_code: boolean; company: boolean; documented: boolean }>`
       SELECT p.id, p.email IS NOT NULL AS email, p.phone IS NOT NULL AS phone, p.address IS NOT NULL AS address,
              p.tax_code IS NOT NULL AS tax_code, p.company_id IS NOT NULL AS company,

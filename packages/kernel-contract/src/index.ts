@@ -8,6 +8,7 @@ export * from './misa-amis-preview.ts';
 export * from './misa-amis-push.ts';
 export * from './misa-goods.ts';
 export * from './tax-code.ts';
+export * from './tax-lookup.ts';
 export * from './legal-entity.ts';
 export * from './roles.ts';
 export * from './cash-voucher.ts';
