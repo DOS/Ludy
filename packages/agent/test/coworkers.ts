@@ -6,6 +6,7 @@ import {
   AI_FEATURES,
   AI_FEATURE_KEYS,
   AdsCampaignWriter,
+  AskBooksCoworker,
   ConversationWriter,
   ExpenseVarianceCoworker,
   InboxReader,
@@ -20,6 +21,7 @@ import {
   chatModel,
   classifyAiError,
   parseTranscription,
+  prepareAskBooksQuestion,
   type AiConfig,
   type AiFeature,
   type BankCandidatesLineFacts,
@@ -127,6 +129,7 @@ export interface CoworkerEvalRuntime {
   weekly: WeeklyWriter;
   scheduling: SchedulingReader;
   expenseVariance: ExpenseVarianceCoworker;
+  askBooks: AskBooksCoworker;
   payroll: PayrollCoworker;
   signAi: SignAiReader;
   signAcceptance: SignAcceptanceReader;
@@ -304,6 +307,7 @@ export function createCoworkerEvalRuntime(
     weekly: overrides.weekly ?? new WeeklyWriter(config),
     scheduling: overrides.scheduling ?? new SchedulingReader(config),
     expenseVariance: overrides.expenseVariance ?? new ExpenseVarianceCoworker(config),
+    askBooks: overrides.askBooks ?? new AskBooksCoworker(config),
     payroll: overrides.payroll ?? new PayrollCoworker(config),
     signAi: overrides.signAi ?? new SignAiReader(config),
     signAcceptance: overrides.signAcceptance ?? new SignAcceptanceReader(config),
@@ -519,6 +523,12 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
   cases.push(
     cleanCase('finance.month_close_explain.clean', 'finance.month_close_explain', 'vi', (rt) =>
       runCleanChecked(() => unmetered(() => rt.inbox.monthCloseNote(monthCloseFacts)), isKindNotNone, 'month_close_explain'),
+    ),
+  );
+
+  cases.push(
+    cleanCase('finance.ask_books.clean', 'finance.ask_books', 'vi', (rt) =>
+      runCleanChecked(() => unmetered(() => rt.askBooks.pick(prepareAskBooksQuestion('Tháng 10 lãi bao nhiêu?').redacted, 'vi')), isKindNotNone, 'ask_books'),
     ),
   );
 
