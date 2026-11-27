@@ -79,7 +79,7 @@ Ludy cells give the status first. Competitor cells give yes, partial or no, with
 | Notes and documents | Shipped: Notes | Yes: Ghi chép | Yes: Documents, Knowledge | Not confirmed | Yes: Docs | No |
 | Approvals and request forms | Partial: approval of AI and posting proposals only | Yes: Quy trình | Yes: Approvals | Not confirmed | Yes: Request | No |
 | Workflow and automation builder | Missing | Yes: Workflow | Yes: Studio | Partial: chatbot flows and CRM automations | Yes: Workflow, Automation | Yes: Workflow Automation |
-| Electronic signature and contracts | Planned: `sign` module in the kernel plan | Yes: Hợp đồng điện tử | Yes: Sign | Not confirmed | Yes: E-Sign, Contract | Partial: quote e-signatures |
+| Electronic signature and contracts | Shipped (Slices 1-6d, live VN CAs gated `#62`): [esign-competitors-and-ai-2026.md](../research/esign-competitors-and-ai-2026.md) | Yes: Hợp đồng điện tử (AMIS WeSign + MISA eSign) | Yes: Sign | Not confirmed | Yes: E-Sign, Contract | Partial: quote e-signatures |
 | Records and incoming documents (văn thư) | Partial: files and evidence storage | Yes: Văn thư | Partial: Documents | Not confirmed | Yes: E-Office, Drive | No |
 | **People and HR** | | | | | | |
 | Payroll, social insurance, personal income tax | In build: plan and issues; will be the HR app, module `hr` | Yes: Tiền lương, BHXH, Thuế TNCN | Partial: Payroll app; Vietnam payroll not confirmed | Partial: Fintab has Tiền lương; social insurance and personal income tax depth not confirmed | Yes: Payroll | No |
@@ -164,12 +164,12 @@ These are capabilities that at least one competitor has and that Ludy has neithe
 | Point of sale for counter sales, and restaurant | MISA Cửa hàng and Nhà hàng, Odoo POS, Pancake POS (retail stores) | A different product from an online order: a till, receipts and shifts. Household shops may need it, but MISA, Odoo and Pancake own it | Low |
 | Manufacturing, maintenance, fleet | MISA Sản xuất, Odoo Manufacturing, Maintenance and Fleet | Enterprise-leaning; outside the gate | Low |
 | Cooperative (HTX) books | MISA Kế toán HTX | Narrow market | Low |
-| Digital signature (CA), direct tax filing, audit and loan marketplace | MISA Chữ ký số, Thuế điện tử, Kiểm toán, Vay vốn | Partner services that need licences or contracts; assisted filing and e-signature (`sign`) are already planned in part | Low |
+| Digital signature (CA), direct tax filing, audit and loan marketplace | MISA Chữ ký số (MISA eSign), Thuế điện tử, Kiểm toán, Vay vốn | Partner services that need licences or contracts; Ludy eSign (`sign`) ships Slices 1-6d on `dev`/`main` with live VN public CAs gated on #62; assisted filing is planned in part | Low |
 | Industry packs | MISA Giải pháp (20+ industries), Odoo, Pancake (solutions for fashion, education, beauty, retail) | Later, once the core apps are live | Low |
 | App marketplace and public API | MISA Chợ ứng dụng, HubSpot marketplace, Odoo External API | Needed once partners want to integrate; OAuth server is only proposed | Low |
 | Own AI app or agent builder | HubSpot AI Studio, Odoo Studio, Base Studio (coming soon) | Not for an OPC; the named coworkers are the product | Low |
 
-Missing items that are decided against or already counted above are not repeated: tickets and SLA (decided against on 2026-11-03), sign (planned), email marketing (planned, epic in the Icebox).
+Missing items that are decided against or already counted above are not repeated: tickets and SLA (decided against on 2026-11-03), standalone e-signature (`sign` shipped through Slice 6d; deeper benchmark in [esign-competitors-and-ai-2026.md](../research/esign-competitors-and-ai-2026.md)), email marketing (planned, epic in the Icebox).
 
 ### What Pancake changes in the priorities
 
