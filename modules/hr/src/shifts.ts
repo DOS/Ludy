@@ -1536,13 +1536,13 @@ export const selfShiftSwapSubmit = defineCommand({
       throw new DomainError('FORBIDDEN', 403, 'Chỉ được đổi ca với đồng nghiệp cùng pháp nhân');
     }
 
+    // lockShiftEmployee serializes writers; FOR SHARE triggers UPDATE RLS which excludes staff.
     const reqAssignment = await ctx.trx
       .selectFrom('ludy_hr.shift_assignment')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', parsed.requesterAssignmentId)
       .where('employee_id', '=', reqEmp.id)
-      .forShare()
       .executeTakeFirst();
     if (!reqAssignment) {
       throw assignmentNotFound();
