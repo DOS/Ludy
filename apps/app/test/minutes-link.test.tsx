@@ -340,12 +340,12 @@ describe('org-wide live minutes links list in MinutesLinkSwitchCard (#4952)', ()
     ...over,
   });
 
-  function switchWithOrgList(enabled: boolean, role: 'owner' | 'admin' | 'member' | 'viewer', orgList: OrgMinutesLinkList | null, locale: 'en' | 'vi' = 'vi', slug: string | undefined = 'acme') {
+  function switchWithOrgList(enabled: boolean, role: 'owner' | 'admin' | 'member' | 'viewer', orgList: OrgMinutesLinkList | null, locale: 'en' | 'vi' = 'vi', slug: string | null = 'acme') {
     client.current.clear();
     client.current.setQueryData(['meetings', 'minutesLink', 'switch', 'get'], { enabled });
     client.current.setQueryData(['org', 'get'], { role });
     if (orgList) client.current.setQueryData(['meetings', 'minutesLink', 'orgList'], orgList);
-    return renderToStaticMarkup(wrap(<MinutesLinkSwitchCard slug={slug} />, locale));
+    return renderToStaticMarkup(wrap(<MinutesLinkSwitchCard {...(slug ? { slug } : {})} />, locale));
   }
 
   it('shows readable meetings as links, unreadable attendees-only meetings as muted private fallback with zero leakage, and 44px revoke buttons for owner and admin', () => {
@@ -392,7 +392,7 @@ describe('org-wide live minutes links list in MinutesLinkSwitchCard (#4952)', ()
   });
 
   it('shows plain title when slug is absent, keeps listing when org switch is off, and shows empty note when none are live', () => {
-    const noSlug = switchWithOrgList(false, 'admin', { items: [orgItem(1)] }, 'vi', undefined);
+    const noSlug = switchWithOrgList(false, 'admin', { items: [orgItem(1)] }, 'vi', null);
     expect(noSlug).toContain('Họp giao ban tuần');
     expect(noSlug).not.toContain('<a ');
 
