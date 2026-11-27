@@ -805,6 +805,13 @@ const schema = z.object({
       })
       .optional(),
   ),
+  // Pluggable enterprise tax-code lookup provider for parties (#4988, TC1): off (default; no network) or casso.
+  TAX_LOOKUP_PROVIDER: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : typeof v === 'string' ? v.trim() : v),
+    z.enum(['off', 'casso']).default('off'),
+  ),
+  CASSO_CLIENT_ID: optional,
+  CASSO_CLIENT_SECRET: optional,
   // The assisted purchase-invoice sync from the tax portal (issue #325, ADR-0036): the accountant types the client's
   // portal password and solves the portal's CAPTCHA in Ludy, and the API fetches the period's purchase list and invoice
   // XML from hoadondientu.gdt.gov.vn. Off unless true: it logs in to a government portal on a client's behalf, which
@@ -971,6 +978,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // A widget without the secret could not be checked, and a secret without the widget would refuse every booking.
   if (Boolean(config.TURNSTILE_SITE_KEY) !== Boolean(config.TURNSTILE_SECRET)) {
     throw new Error('set both TURNSTILE_SITE_KEY and TURNSTILE_SECRET, or neither');
+  }
+  if (Boolean(config.CASSO_CLIENT_ID) !== Boolean(config.CASSO_CLIENT_SECRET)) {
+    throw new Error('set both CASSO_CLIENT_ID and CASSO_CLIENT_SECRET, or neither');
+  }
+  if (config.CASSO_CLIENT_ID?.startsWith('trial-app_')) {
+    throw new Error('CASSO_CLIENT_ID must not use the shared Casso Public Starter Key; bring deployment-owned credentials');
+  }
+  if (config.TAX_LOOKUP_PROVIDER === 'casso' && (!config.CASSO_CLIENT_ID || !config.CASSO_CLIENT_SECRET)) {
+    throw new Error('TAX_LOOKUP_PROVIDER=casso needs CASSO_CLIENT_ID and CASSO_CLIENT_SECRET');
   }
   const githubAppVars = [
     config.GITHUB_APP_ID,

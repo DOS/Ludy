@@ -137,6 +137,10 @@ export const KERNEL_ERROR_CODES = [
   'TAX_CODE_NOT_FOUND',
   'TAX_LOOKUP_UNAVAILABLE',
   'TAX_LOOKUP_DISABLED',
+  // Pluggable enterprise tax-code lookup for parties (#4988, TC1).
+  'CITIZEN_ID_NOT_ALLOWED',
+  'TAX_LOOKUP_ORG_DISABLED',
+  'TAX_LOOKUP_RATE_LIMIT',
   'INVALID_ADDRESS',
   // The member's calendar (#1313).
   'WORKING_HOURS_EMPTY',

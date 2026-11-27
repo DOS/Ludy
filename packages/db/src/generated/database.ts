@@ -224,6 +224,7 @@ export interface LudyKernelSchema {
   'ludy_kernel.saved_view': KernelSavedViewTable;
   'ludy_kernel.task': KernelTaskTable;
   'ludy_kernel.task_comment': KernelTaskCommentTable;
+  'ludy_kernel.tax_lookup_cache': KernelTaxLookupCacheTable;
   'ludy_kernel.tax_obligation_done': KernelTaxObligationDoneTable;
   'ludy_kernel.tax_profile': KernelTaxProfileTable;
   'ludy_kernel.tenant': KernelTenantTable;
@@ -3728,6 +3729,22 @@ export interface KernelTaskTable {
   completed_by: string | null;
 }
 
+/** ludy_kernel.tax_lookup_cache */
+export interface KernelTaxLookupCacheTable {
+  org_id: string;
+  id: Generated<string>;
+  tax_code: string;
+  found: boolean;
+  name: string | null;
+  address: string | null;
+  status_text: string | null;
+  source: string | null;
+  fetched_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  expires_at: ColumnType<Date, Date | string, Date | string>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** ludy_kernel.tax_obligation_done */
 export interface KernelTaxObligationDoneTable {
   org_id: string;
@@ -3788,6 +3805,7 @@ export interface KernelTenantTable {
   meeting_minutes_esign: Generated<boolean>;
   hr_overtime_require_l1: Generated<boolean>;
   meeting_minutes_link: Generated<boolean>;
+  tax_lookup_enabled: Generated<boolean>;
 }
 
 /** ludy_kernel.today_mail */

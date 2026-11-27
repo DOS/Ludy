@@ -48,6 +48,8 @@ const TS_TENANT_LOCKS: Readonly<Record<string, string>> = {
   'packages/kernel/src/personal-data.ts': "an erasure clears the org's contact email (a raw UPDATE of the tenant row); its only row lock, the parties FOR UPDATE, comes before, and it touches no member or position row",
   'packages/kernel/src/member-vy.ts':
     "kernel.member_vy.run.start_daily runs non-locking tenant status and module checks before locking, then locks tenant_member FOR SHARE FIRST and tenant FOR SHARE SECOND (zero member, assignment or position rows locked after tenant, matching the canonical member-then-tenant order of #1943), then locks the member's agent FOR SHARE before inserting ai_run (#5073)",
+  'packages/kernel/src/tax-lookup.ts':
+    "the org's enterprise tax-code lookup switch (#4988, TC1): an UPDATE of the tenant row only; touches no member, assignment or position row",
 };
 
 const DEFINITION = /CREATE (?:OR REPLACE )?FUNCTION\s+([a-z_]+\.[a-z_0-9]+)\s*\(([^)]*)\)[\s\S]*?\$\$([\s\S]*?)\$\$/gi;
