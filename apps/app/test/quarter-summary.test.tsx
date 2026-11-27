@@ -29,6 +29,7 @@ const DATA: FinanceQuarterSummary = {
   kind: 'company',
   regime: 'tt99',
   booksStart: '2025-08-10',
+  partialBasis: false,
   previousQuarter: '2026-Q2',
   lastYearQuarter: '2025-Q3',
   steadyPercent: '5',
@@ -133,6 +134,14 @@ describe('the table of figures', () => {
     expect(render('vi', DATA)).toContain('chưa ánh xạ');
     expect(render('en', DATA)).toContain('does not yet map');
     expect(render('vi', { ...DATA, includesUnmapped: false })).not.toContain('quarter-unmapped');
+  });
+
+  it('says when the books begin inside a quarter that is compared with, and only then', () => {
+    const partial = render('vi', { ...DATA, partialBasis: true });
+    expect(partial).toContain('data-testid="quarter-partial"');
+    expect(partial).toContain('chỉ gồm một phần của quý ấy');
+    expect(render('en', { ...DATA, partialBasis: true })).toContain('covers only part of that quarter');
+    expect(render('vi', DATA)).not.toContain('quarter-partial');
   });
 
   it('shows the state of the books, whatever it is (open, partly locked, locked)', () => {

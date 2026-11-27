@@ -47,7 +47,7 @@ function FigureRow({ figure, data, noted }: { figure: QuarterSummaryFigure; data
     <tr className="border-b align-top" data-testid={`quarter-row-${row}`} data-has-note={noted} aria-describedby={noted ? `quarter-note-${row}` : undefined}>
       <th scope="row" className="py-3 pr-3 text-left text-sm font-medium">
         <span className="block text-foreground">
-          {noted && <span aria-hidden="true">● </span>}
+          {noted && <span aria-hidden="true">◆ </span>}
           {t(`rows.${row}`)}
         </span>
         {row === 'cash' && figure.previous !== null && <span className="mt-0.5 block text-xs font-normal text-subtle-foreground">{t('cashStart', { amount: f.money(figure.previous) })}</span>}
@@ -167,6 +167,11 @@ export function QuarterSummaryTable({ data, notes }: { data: FinanceQuarterSumma
             </tbody>
           </table>
         </div>
+      )}
+      {data.partialBasis && !data.empty && (
+        <p className="mt-2 text-xs text-warning" data-testid="quarter-partial">
+          {t('partial', { date: f.date(data.booksStart ?? data.from) })}
+        </p>
       )}
       {data.includesUnmapped && (
         <p className="mt-2 text-xs text-warning" data-testid="quarter-unmapped">

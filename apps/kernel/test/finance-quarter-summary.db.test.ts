@@ -239,7 +239,7 @@ suite('the quarter in plain words (#5183)', () => {
 
   it('gives a TT133 company its figures against the previous quarter and the same quarter last year', async () => {
     const s = await summary({ legalEntityId: main });
-    expect(s).toMatchObject({ quarter: QUARTER, from: '2026-07-01', to: '2026-09-30', legalEntityId: main, kind: 'company', regime: 'tt133', booksStart: '2025-08-10', previousQuarter: '2026-Q2', lastYearQuarter: '2025-Q3', steadyPercent: '5', empty: false, includesUnmapped: false });
+    expect(s).toMatchObject({ quarter: QUARTER, from: '2026-07-01', to: '2026-09-30', legalEntityId: main, kind: 'company', regime: 'tt133', booksStart: '2025-08-10', partialBasis: true, previousQuarter: '2026-Q2', lastYearQuarter: '2025-Q3', steadyPercent: '5', empty: false, includesUnmapped: false });
     expect(s.figures.map((f) => f.key)).toEqual(['revenue', 'other_income', 'costs', 'profit', 'cash', 'receivables', 'payables']);
     expect(figure(s, 'revenue')).toEqual({ key: 'revenue', amount: '100000000', previous: '50000000', lastYear: '100000000', vsPrevious: 'rose', vsLastYear: 'steady' });
     expect(figure(s, 'other_income')).toEqual({ key: 'other_income', amount: '0', previous: '0', lastYear: '0', vsPrevious: 'none', vsLastYear: 'none' });
@@ -293,7 +293,7 @@ suite('the quarter in plain words (#5183)', () => {
 
   it('adds the TT99 costs and deduction the income statement does not read, and says so', async () => {
     const s = await summary({ legalEntityId: tt99 });
-    expect(s).toMatchObject({ legalEntityId: tt99, kind: 'company', regime: 'tt99', booksStart: '2026-05-10', previousQuarter: '2026-Q2', lastYearQuarter: '2025-Q3', includesUnmapped: true });
+    expect(s).toMatchObject({ legalEntityId: tt99, kind: 'company', regime: 'tt99', booksStart: '2026-05-10', partialBasis: true, previousQuarter: '2026-Q2', lastYearQuarter: '2025-Q3', includesUnmapped: true });
     // 511 of 50,000,000 less the 521 deduction of 5,000,000; costs 6421 (642, a B02 line) 4,000,000 and 6417 (641, unmapped) 12,000,000; profit = 45 - 16.
     expect(figure(s, 'revenue')).toMatchObject({ amount: '45000000', previous: '20000000', lastYear: null, vsPrevious: 'rose', vsLastYear: 'none' });
     expect(figure(s, 'costs')).toMatchObject({ amount: '16000000', previous: '4000000', lastYear: null, vsPrevious: 'rose', vsLastYear: 'none' });

@@ -26,7 +26,7 @@ export const QUARTER_SUMMARY_ROWS = ['revenue', 'other_income', 'costs', 'profit
 export const zQuarterSummaryRow = z.enum(QUARTER_SUMMARY_ROWS);
 export type QuarterSummaryRow = z.infer<typeof zQuarterSummaryRow>;
 
-// How a figure moved against a basis, decided by code from the exact amounts: rose, fell, steady (inside the steady percent), first_time (the basis is 0 and the figure is not), none (nothing to say: both are 0,
+// How a figure moved against a basis, decided by code from the exact amounts: rose, fell, steady (inside the steady percent), first_time (the basis is 0 and the figure is positive; from 0 to a loss is fell), none (nothing to say: both are 0,
 // or the basis is not there because the entity's books begin after it).
 export const QUARTER_TRENDS = ['rose', 'fell', 'steady', 'first_time', 'none'] as const;
 export const zQuarterTrend = z.enum(QUARTER_TRENDS);
@@ -85,6 +85,8 @@ export const zFinanceQuarterSummary = z.object({
   regime: z.enum(['tt133', 'tt99']),
   // The first day the entity's books hold an entry (null when none): a basis that ends before it is not 0, it is not there.
   booksStart: zLocalDate.nullable(),
+  // True when the books begin inside a quarter that is compared with: that comparison covers only part of it. The card says so.
+  partialBasis: z.boolean(),
   previousQuarter: zQuarterSummaryQuarter.nullable(),
   lastYearQuarter: zQuarterSummaryQuarter.nullable(),
   steadyPercent: z.string(),

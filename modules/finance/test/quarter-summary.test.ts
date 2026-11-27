@@ -61,7 +61,11 @@ describe('how a figure moved', () => {
 
   it('says first time when the basis is 0 and the figure is not', () => {
     expect(trendOf('5', '0')).toBe('first_time');
-    expect(trendOf('-5', '0')).toBe('first_time');
+  });
+
+  it('says fell, never first time, for a loss or an overdraft that comes from nothing', () => {
+    expect(trendOf('-5', '0')).toBe('fell');
+    expect(trendOf('-0.01', '0')).toBe('fell');
   });
 
   it('says steady inside the steady percent of the basis and rose or fell from it (exact decimals)', () => {

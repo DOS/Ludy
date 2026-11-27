@@ -795,7 +795,7 @@ export const vi = {
         caution: 'Đây là một khả năng, chưa phải kết luận. Bạn xem chứng từ rồi quyết định.',
       },
     },
-    // Tóm tắt quý bằng lời dễ hiểu (#5183): mọi số liệu và nhãn đều đọc từ sổ; câu của trợ lý kế toán chỉ diễn đạt các nhãn và nằm cạnh tên dòng của nó.
+    // Tóm tắt quý bằng lời dễ hiểu (#5183): mọi số liệu và nhãn đều đọc từ sổ; câu của đồng nghiệp AI kế toán chỉ diễn đạt các nhãn và nằm cạnh tên dòng của nó.
     quarter: {
       title: 'Quý này nói gì',
       subtitle: 'Cho một quý đã qua: doanh thu, chi phí và lợi nhuận, tiền, công nợ, thuế và kho, so với quý trước và cùng kỳ năm trước.',
@@ -862,6 +862,7 @@ export const vi = {
       stockProvisional: 'Tạm tính cho đến khi chốt tháng trong kho.',
       stockNoLastYear: 'Chưa so sánh',
       stockBasis: 'Tồn kho chỉ được so với quý trước.',
+      partial: 'Sổ bắt đầu từ ngày {date}, nằm trong một quý được dùng để so sánh, nên phép so sánh đó chỉ gồm một phần của quý ấy.',
       unmapped: 'Lợi nhuận ở đây gồm cả chi phí và các khoản giảm trừ doanh thu mà báo cáo kết quả kinh doanh chưa ánh xạ, nên có thể khác báo cáo đó (B02).',
       steady: 'Một số liệu được coi là đi ngang khi nó nhích dưới {percent}% so với số liệu được so sánh. Đây là mức mặc định cho mọi doanh nghiệp.',
     },

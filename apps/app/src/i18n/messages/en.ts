@@ -863,6 +863,7 @@ export const en = {
       stockProvisional: 'Provisional until the month is closed in the stock.',
       stockNoLastYear: 'Not compared',
       stockBasis: 'The stock is compared with the quarter before only.',
+      partial: 'The books begin on {date}, inside a quarter this one is compared with, so that comparison covers only part of that quarter.',
       unmapped: 'The profit here includes costs, and deductions from revenue, that the income statement does not yet map, so it can differ from the income statement (B02).',
       steady: 'A figure counts as steady when it moved by less than {percent}% of the figure it is compared with. This is the default for every business.',
     },

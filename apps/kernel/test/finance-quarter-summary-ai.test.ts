@@ -19,6 +19,7 @@ const SUMMARY: FinanceQuarterSummary = {
   kind: 'company',
   regime: 'tt99',
   booksStart: '2025-08-10',
+  partialBasis: false,
   previousQuarter: '2026-Q2',
   lastYearQuarter: '2025-Q3',
   steadyPercent: '5',

@@ -37,13 +37,14 @@ export const quarterEnded = (to: string, today: string): boolean => to < today;
 /** Whether a basis ending on `basisTo` is there: the entity's books begin on or before its last day. A basis that ends before the first entry is not 0, it is not there. */
 export const basisThere = (booksStart: string | null, basisTo: string): boolean => booksStart !== null && booksStart <= basisTo;
 
-/** How `current` moved against `basis`: none (no basis, or both 0), first_time (basis 0, figure not), steady (inside the steady percent of the basis), else rose or fell. Exact decimals, never the rounded percent. */
+/** How `current` moved against `basis`: none (no basis, or both 0), first_time (basis 0, figure positive; a negative figure from 0 is `fell`), steady (inside the steady percent of the basis), else rose or fell. Exact decimals, never the rounded percent. */
 export function trendOf(current: string, basis: string | null, steadyPercent: string = QUARTER_SUMMARY_STEADY_PERCENT): QuarterTrend {
   if (basis === null) return 'none';
   const now = money(current);
   const before = money(basis);
   if (now.isZero() && before.isZero()) return 'none';
-  if (before.isZero()) return 'first_time';
+  // A figure that was nothing and is now something is new only when it is positive: a loss or an overdraft from nothing is a fall, never a rise.
+  if (before.isZero()) return now.greaterThan(0) ? 'first_time' : 'fell';
   const change = now.minus(before);
   if (change.abs().times(100).lessThan(before.abs().times(steadyPercent))) return 'steady';
   return change.greaterThan(0) ? 'rose' : 'fell';

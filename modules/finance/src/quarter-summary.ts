@@ -95,7 +95,7 @@ async function vatOf(ctx: QueryContext, entity: string, quarter: string): Promis
   return { output: canonical(output), input: canonical(input), difference: canonical(output.minus(input)), filed: report.filed !== null };
 }
 
-// A household's tax for the quarter, from its 01/CNKD worksheet. A refusal of the worksheet (a group that files no quarterly return, the income method, a profile that changes inside the quarter, a rate not set) is
+// A household's tax for the quarter, from its 01/CNKD worksheet. A refusal of the worksheet (a group that files no quarterly return, the income method, a profile that changes inside the quarter, a rate not set, a window too large) is
 // the state `not_required`, never an error of the card.
 async function householdTaxOf(ctx: QueryContext, entity: string, period: LedgerPeriod): Promise<QuarterSummaryHouseholdTax> {
   const year = Number(period.from.slice(0, 4));
@@ -105,7 +105,8 @@ async function householdTaxOf(ctx: QueryContext, entity: string, period: LedgerP
     if (sheet.totals === null) return { state: 'held', tax: null, due: null, overpaid: null, commentary: sheet.commentary };
     return { state: 'ready', tax: sheet.totals.tax, due: sheet.due, overpaid: sheet.overpaid, commentary: sheet.commentary };
   } catch (error: unknown) {
-    if (error instanceof DomainError && error.code.startsWith('HOUSEHOLD_')) return { state: 'not_required', tax: null, due: null, overpaid: null, commentary: false };
+    // Any refusal of the worksheet (its own HOUSEHOLD_ ones, or a ledger window too large for it) leaves the card with the state, never with an error.
+    if (error instanceof DomainError) return { state: 'not_required', tax: null, due: null, overpaid: null, commentary: false };
     throw error;
   }
 }
@@ -174,6 +175,7 @@ export async function financeQuarterSummary(ctx: QueryContext, input: { quarter:
     kind: household ? 'household' : 'company',
     regime: books.regime,
     booksStart,
+    partialBasis: (previousPeriod !== null && booksStart !== null && booksStart > previousPeriod.from) || (lastYearPeriod !== null && booksStart !== null && booksStart > lastYearPeriod.from),
     previousQuarter: plan.previous?.period ?? null,
     lastYearQuarter: plan.lastYear?.period ?? null,
     steadyPercent: QUARTER_SUMMARY_STEADY_PERCENT,

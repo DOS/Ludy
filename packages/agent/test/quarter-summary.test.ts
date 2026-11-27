@@ -160,7 +160,61 @@ describe('names, causes, certainty, promises and advice refuse the sentence', ()
   });
 });
 
-describe('a direction the row does not have refuses the sentence', () => {
+describe('a direction the row does not have, or says against the wrong basis, refuses the sentence', () => {
+  it.each([
+    ['was down', 'Sales revenue was down against the previous quarter.'],
+    ['slipped', 'Sales revenue slipped against the previous quarter.'],
+    ['eased', 'Sales revenue eased against the previous quarter.'],
+    ['weakened', 'Sales revenue weakened against the previous quarter.'],
+    ['a Vietnamese fall', 'Doanh thu đi xuống so với quý trước.'],
+    ['a Vietnamese slump', 'Doanh thu lao dốc so với quý trước.'],
+    ['a negated fall', 'Sales revenue did not fall against the previous quarter.'],
+    ['a Vietnamese negation', 'Doanh thu không giảm so với quý trước.'],
+  ])('refuses %s on a row that rose', (_name, text) => {
+    expect(stands(text, row('revenue', 'rose', 'rose'))).toBe(false);
+  });
+
+  it.each([
+    ['climbed', 'Sales revenue climbed against the previous quarter.'],
+    ['was up', 'Sales revenue was up against the previous quarter.'],
+    ['improved', 'Sales revenue improved against the previous quarter.'],
+    ['a Vietnamese rise', 'Doanh thu đi lên so với quý trước.'],
+    ['a Vietnamese gain', 'Doanh thu khởi sắc so với quý trước.'],
+  ])('refuses %s on a row that fell', (_name, text) => {
+    expect(stands(text, row('revenue', 'fell', 'fell'))).toBe(false);
+  });
+
+  it('holds each direction to the basis it is said against', () => {
+    const mixed = row('revenue', 'rose', 'fell');
+    expect(stands('Sales revenue rose against the previous quarter but fell against the same quarter last year.', mixed)).toBe(true);
+    expect(stands('Sales revenue fell against the previous quarter but rose against the same quarter last year.', mixed)).toBe(false);
+    expect(stands('Doanh thu giảm so với quý trước nhưng tăng so với cùng kỳ năm trước.', mixed)).toBe(false);
+    expect(stands('Doanh thu tăng so với quý trước nhưng giảm so với cùng kỳ năm trước.', mixed)).toBe(true);
+    // One direction said against both bases needs both to agree.
+    expect(stands('Sales revenue rose against the previous quarter and the same quarter last year.', mixed)).toBe(false);
+    expect(stands('Sales revenue rose against the previous quarter and the same quarter last year.', row('revenue', 'rose', 'rose'))).toBe(true);
+    expect(stands('Sales revenue rose against both the previous quarter and the same quarter last year.', row('revenue', 'rose', 'rose'))).toBe(true);
+    // A direction before its phrase waits for the next clause that has one.
+    expect(stands('Against the previous quarter, sales revenue fell.', mixed)).toBe(false);
+    expect(stands('Against the previous quarter, sales revenue rose.', mixed)).toBe(true);
+  });
+
+  it('refuses two directions in one clause', () => {
+    expect(stands('Sales revenue rose then fell against the previous quarter.', row('revenue', 'rose', 'fell'))).toBe(false);
+  });
+
+  it('does not call a loss from nothing a rise: the label is fell', () => {
+    expect(stands('Profit before tax rose against the previous quarter.', row('profit', 'fell', 'none'))).toBe(false);
+    expect(stands('Profit before tax fell against the previous quarter.', row('profit', 'fell', 'none'))).toBe(true);
+  });
+
+  it('allows the words a payables or receivables line needs, and refuses vague counts and month abbreviations', () => {
+    expect(stands('What customers owe rose, and some invoices were past due.', row('receivables', 'rose', 'rose', true))).toBe(true);
+    expect(stands('Sales revenue rose in oct.', row('revenue', 'rose', 'rose'))).toBe(false);
+    expect(stands('Sales revenue rose in sept and dec.', row('revenue', 'rose', 'rose'))).toBe(false);
+    expect(stands('A few customers paid late.', row('receivables', 'rose', 'rose'))).toBe(false);
+  });
+
   it('refuses up when nothing rose or appeared', () => {
     expect(stands('Sales revenue rose against the previous quarter.', row('revenue', 'fell', 'steady'))).toBe(false);
   });
