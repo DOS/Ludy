@@ -12,18 +12,34 @@ export const CRM_FOLLOWUP_HINT_MAX = 200;
 export const CRM_FOLLOWUP_TEXT_MAX = 4000;
 // used: Dy wrote the lead-in and the closing. off, busy, budget, failed: the fixed template words stand (the model is off, the member asked too often, the AI budget is spent,
 // the call failed or its words were refused by the checks).
+export const CRM_FOLLOWUP_REASONS = [...DEAL_NEXT_STEP_REASONS, 'quote_viewed', 'customer_replied'] as const;
+export type CrmFollowupReason = (typeof CRM_FOLLOWUP_REASONS)[number];
+
 export const CRM_FOLLOWUP_STATES = ['used', 'off', 'busy', 'budget', 'failed'] as const;
 export type CrmFollowupState = (typeof CRM_FOLLOWUP_STATES)[number];
 
-export const zFollowupDraftInput = z.strictObject({
-  nextStepId: zId,
-  hint: z.string().trim().max(CRM_FOLLOWUP_HINT_MAX).optional(),
-});
+export const zFollowupDraftInput = z.union([
+  z.strictObject({
+    nextStepId: zId,
+    hint: z.string().trim().max(CRM_FOLLOWUP_HINT_MAX).optional(),
+  }),
+  z.strictObject({
+    reason: z.literal('quote_viewed'),
+    quoteId: zId,
+    hint: z.string().trim().max(CRM_FOLLOWUP_HINT_MAX).optional(),
+  }),
+  z.strictObject({
+    reason: z.literal('customer_replied'),
+    partyId: zId,
+    conversationId: zId,
+    hint: z.string().trim().max(CRM_FOLLOWUP_HINT_MAX).optional(),
+  }),
+]);
 export type FollowupDraftInput = z.infer<typeof zFollowupDraftInput>;
 
 export const zFollowupDrafted = z.strictObject({
   ai: z.enum(CRM_FOLLOWUP_STATES),
-  reason: z.enum(DEAL_NEXT_STEP_REASONS),
+  reason: z.enum(CRM_FOLLOWUP_REASONS),
   // The subject of an email draft, and the text of the message (greeting, words, facts, closing). The person edits both.
   subject: z.string().max(200),
   text: z.string().min(1).max(CRM_FOLLOWUP_TEXT_MAX),

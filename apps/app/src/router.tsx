@@ -740,7 +740,15 @@ const companiesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'comp
 // Importing contacts from a CSV (#2229).
 const contactImportRoute = createRoute({ getParentRoute: () => orgRoute, path: 'contacts/import', component: ContactImportPage });
 // The org's deals (#2225), with the crm module.
-const dealsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'deals', component: DealsPage });
+const dealsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: 'deals',
+  validateSearch: (search: Record<string, unknown>): { deal?: string; quote?: string } => ({
+    ...(typeof search.deal === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(search.deal) ? { deal: search.deal.toLowerCase() } : {}),
+    ...(typeof search.quote === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(search.quote) ? { quote: search.quote.toLowerCase() } : {}),
+  }),
+  component: DealsPage,
+});
 // Members' notes (#1671), with the notes module: ?list= a list, ?q= a search, ?note= the note open.
 const notesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'notes', validateSearch: parseNotesSearch, component: NotesPage });
 // The member's own to-dos (#1673), with the notes module.

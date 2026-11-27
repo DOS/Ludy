@@ -1005,6 +1005,11 @@ export type CrmSalesOrderLineTable = Refine<G.CrmSalesOrderLineTable, { kind: (t
 // The next step a stale deal raises (#2381): why it was raised, whether it is open, done by a person or closed by the deal's own change, and why it
 // closed. Written by the stale-deal rule (system context) and by the commands that mark it done, snooze it or close it.
 export const DEAL_NEXT_STEP_REASONS = ['no_activity', 'past_close', 'quote_unanswered', 'quote_expiring'] as const;
+export const PARTY_ATTENTION_KINDS = ['quote_viewed', 'quote_expiring', 'quote_unanswered', 'customer_replied'] as const;
+export type CrmPartyAttentionSeenTable = Refine<
+  G.CrmPartyAttentionSeenTable,
+  { kind: (typeof PARTY_ATTENTION_KINDS)[number] }
+>;
 export const DEAL_NEXT_STEP_STATUSES = ['open', 'done', 'closed'] as const;
 export const DEAL_NEXT_STEP_CLOSE_REASONS = ['deal_edited', 'deal_moved', 'deal_closed', 'quote_decided'] as const;
 export type CrmDealNextStepTable = Refine<
@@ -1969,6 +1974,7 @@ type Refined = Tables<{
   'ludy_crm.event_type': CrmEventTypeTable;
   'ludy_crm.import_batch': CrmImportBatchTable;
   'ludy_crm.import_row': CrmImportRowTable;
+  'ludy_crm.party_attention_seen': CrmPartyAttentionSeenTable;
   'ludy_crm.pipeline_stage': CrmPipelineStageTable;
   'ludy_crm.quote': CrmQuoteTable;
   'ludy_crm.quote_line': CrmQuoteLineTable;

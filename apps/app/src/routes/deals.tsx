@@ -4,7 +4,7 @@
 // moves and deletes deals; owners and admins edit the stages; a viewer reads. The board is the default on a wide screen,
 // the list on a phone. Amounts are decimal strings and are shown as the reader's language groups them.
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { Link, useParams } from '@tanstack/react-router';
+import { Link, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { DEAL_LOST_REASON_MAX, type Deal, type DealCursor, type FilterAst, type PipelineStage, type SavedViewSort } from '@ludy/kernel-contract';
@@ -26,7 +26,7 @@ import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { EMPTY_DEAL_FILTER, astToDealFilter, dealFilterToAst, type DealFilterState } from '../lib/deal-filter.ts';
-import { isDealOverdue, isEmptyBoard, readDealView, showAllClosed, withDealView, type DealView } from '../lib/deal-board.ts';
+import { isDealOverdue, isEmptyBoard, readDealTarget, readDealView, showAllClosed, withDealView, withoutDealTarget, type DealView } from '../lib/deal-board.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { AiWrittenBadge } from '../components/ai-written-badge.tsx';
@@ -179,7 +179,41 @@ export function DealsPage() {
   const members = org.data?.members ?? [];
   const canManage = role === 'owner' || role === 'admin';
   const [sheet, setSheet] = useState<DealSheetTarget | null>(null);
+  const [dismissedDealId, setDismissedDealId] = useState<string | null>(null);
   const { slug } = useParams({ strict: false }) as { slug: string };
+  const routeSearch = useSearch({ strict: false }) as { deal?: string; quote?: string } | undefined;
+  const fallbackTarget = (() => {
+    try {
+      return readDealTarget(window.location.search);
+    } catch {
+      return null;
+    }
+  })();
+  const deepDealId = routeSearch?.deal ?? fallbackTarget?.dealId ?? null;
+  const deepQuoteId = routeSearch?.quote ?? fallbackTarget?.quoteId ?? null;
+  useEffect(() => {
+    if (deepDealId === null) setDismissedDealId(null);
+  }, [deepDealId]);
+  const deepDealQuery = useQuery({
+    ...orpc.crm.deals.get.queryOptions({ input: { dealId: deepDealId ?? '00000000-0000-0000-0000-000000000000' } }),
+    enabled: deepDealId !== null && sheet === null && dismissedDealId !== deepDealId,
+  });
+  const activeSheet: DealSheetTarget | null =
+    sheet ??
+    (deepDealQuery.data && deepDealId === deepDealQuery.data.id && dismissedDealId !== deepDealId
+      ? { kind: 'deal', deal: deepDealQuery.data, focusQuotes: deepQuoteId !== null }
+      : null);
+  const closeSheet = () => {
+    setSheet(null);
+    if (deepDealId) {
+      setDismissedDealId(deepDealId);
+      try {
+        window.history.replaceState(window.history.state, '', `${window.location.pathname}${withoutDealTarget(window.location.search)}${window.location.hash}`);
+      } catch {
+        // Ignore when running outside a browser window.
+      }
+    }
+  };
   const [view, setViewState] = useState<View>(() => {
     try {
       return readDealView(window.location.search) ?? (wideScreen() ? 'board' : 'list');
@@ -263,6 +297,9 @@ export function DealsPage() {
           </div>
         }
       />
+      {deepDealId !== null && dismissedDealId !== deepDealId && deepDealQuery.isError && (
+        <ErrorText>{errorMessage(deepDealQuery.error)}</ErrorText>
+      )}
       {view === 'next' ? (
         <DealNextSteps canEdit={canEdit} />
       ) : (
@@ -323,7 +360,7 @@ export function DealsPage() {
       )}
         </>
       )}
-      {sheet && <DealSheet target={sheet} members={members} canEdit={canEdit} onClose={() => setSheet(null)} />}
+      {activeSheet && <DealSheet target={activeSheet} members={members} canEdit={canEdit} onClose={closeSheet} />}
     </>
   );
 }

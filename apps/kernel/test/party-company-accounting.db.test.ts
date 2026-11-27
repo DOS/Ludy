@@ -276,6 +276,8 @@ suite('the company of a person and the accounting (#2438)', () => {
       'ludy_projects.roadmap_signal.source_party_id',
       // A member's private pre-meeting draft (#4991 PM1) cascades on party deletion and never reads party.kind.
       'ludy_meetings.meeting_brief_draft.party_id',
+      // SG1 per-member seen markers (#4993) store party_id only to attach seen markers to a contact/party page; they never read party.kind.
+      'ludy_crm.party_attention_seen.party_id',
     ];
     const { rows } = await admin((c) =>
       c.query<{ ref: string }>(

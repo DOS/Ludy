@@ -165,10 +165,12 @@ export const KERNEL_ERROR_CODES = [
   'IMPORT_NOT_STAGED',
   // Deals and the pipeline of the crm module (#2225); quotes (#2693) follow the deal codes below.
   'DEAL_NOT_FOUND',
-  // The follow-up draft of a next step (#3101).
+  // The follow-up draft of a next step (#3101) and contact attention items (#4993).
   'NEXT_STEP_NOT_FOUND',
   'NEXT_STEP_NOT_OPEN',
   'QUOTE_NOT_WAITING',
+  'QUOTE_NOT_VIEWED',
+  'ATTENTION_ITEM_NOT_FOUND',
   'DEAL_OWNER_INVALID',
   'DEAL_STAGE_CLOSED',
   'DEAL_LOST_REASON_INVALID',

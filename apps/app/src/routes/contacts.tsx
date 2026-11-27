@@ -17,6 +17,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { AddContactPanel } from '../components/add-contact-panel.tsx';
 import { CompanyPeople, PersonCompany } from '../components/company-link.tsx';
+import { ContactAttention } from '../components/contact-attention.tsx';
 import { ContactDeals } from '../components/contact-deals.tsx';
 import { LinkedMeetings, meetingsInstalled } from '../components/linked-meetings.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
@@ -154,6 +155,7 @@ function ContactPanel({ contact, canEdit, columns }: { contact: Contact; canEdit
           </Button>
         )}
         {contact.kind === 'person' ? <PersonCompany person={contact} canEdit={canEdit} /> : <CompanyPeople company={contact} canEdit={canEdit} />}
+        <ContactAttention partyId={contact.id} canEdit={canEdit} />
         <ContactDeals contact={contact} canEdit={canEdit} />
         {meetingsInstalled() && <LinkedMeetings kind="party" targetId={contact.id} />}
         {notesInstalled() && <RecordNotesPanel slug={slug} target={{ targetType: 'kernel.party', targetId: contact.id }} headingId={`notes-${contact.id}`} label={tn('panel.toggleOf', { name: contact.name })} />}

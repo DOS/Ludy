@@ -2,7 +2,7 @@
 // The deal's side sheet (#3648, the owner's rule of 2026-11-17, DESIGN.md 4.5): adding a deal, and everything about one (its details to edit, its quotes with the orders, its bookings
 // and meetings) in one panel at the right edge, in place of forms and panels that opened above the whole board or under a table row. Focus moves into the sheet, Tab stays inside,
 // Escape or the close button closes it and focus returns to the card or the row that opened it. A stray click on the dimmed page does not close it: a form or a quote may be half typed.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
 import type { Deal, PartyChoice } from '@ludy/kernel-contract';
@@ -21,7 +21,7 @@ import { AiWrittenBadge } from './ai-written-badge.tsx';
 import { RoadmapSignalModal } from './roadmap-signal-modal.tsx';
 
 // What the sheet shows: a new deal (for a customer already chosen, from a contact's panel, or not), or a deal that exists.
-export type DealSheetTarget = { kind: 'new'; presetParty?: PartyChoice | null } | { kind: 'deal'; deal: Deal };
+export type DealSheetTarget = { kind: 'new'; presetParty?: PartyChoice | null } | { kind: 'deal'; deal: Deal; focusQuotes?: boolean };
 
 function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
@@ -46,6 +46,11 @@ export function DealSheet({ target, members, canEdit, onClose }: { target: DealS
   const deal = opened === null ? null : newerDeal(opened, fresh.data);
   const stages = useQuery(orpc.crm.pipeline.stages.queryOptions({ input: {} }));
   const stageName = deal ? stages.data?.find((s) => s.id === deal.stageId)?.name : undefined;
+  const focusQuotes = target.kind === 'deal' && target.focusQuotes === true;
+  useEffect(() => {
+    if (!focusQuotes || deal === null) return;
+    document.getElementById('deal-sheet-quotes')?.scrollIntoView?.({ block: 'start' });
+  }, [focusQuotes, deal]);
   return (
     <Sheet open disablePointerDismissal onOpenChange={(open) => !open && onClose()}>
       <SheetContent closeLabel={common('close')} className="sm:max-w-2xl" data-testid="deal-sheet">
