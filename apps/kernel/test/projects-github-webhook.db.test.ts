@@ -2586,26 +2586,37 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
       { actor: asUser(billingOwner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
     );
 
-    // Drop 'projects' from Cloud entitlements (t.apps_off stays empty so SQL org_app_on = true).
+    // Drop 'projects' from Cloud entitlements (t.apps_off stays empty so SQL org_app_on = true) and use fresh
+    // Runtime instances without stale 60s #entitlementCache entries from setup.
     entitledOrgs.delete(unentitledOrg.orgId);
+    const postDowngradeRuntime = new Runtime(appDb, {
+      manifests: TEST_MANIFESTS,
+      sessions: createSessionStatusSource('off'),
+      stepUp: 'off',
+      entitlements: async (orgId) => (entitledOrgs.has(orgId) ? ['full'] : ['notes']),
+    }).register(billingRegistry);
+    const postDowngradeWorkerRuntime = new Runtime(workerDb, {
+      manifests: TEST_MANIFESTS,
+      entitlements: async (orgId) => (entitledOrgs.has(orgId) ? ['full'] : ['notes']),
+    }).register(billingRegistry);
 
     // Blocker 1: BOTH human and org-chart agent Done/reopen transitions succeed without 404 MODULE_OFF or held outbox events.
-    await billingRuntime.execute(
+    await postDowngradeRuntime.execute(
       'kernel.task.set_status',
       { id: tUnentHuman, status: 'done' },
       { actor: asUser(member.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
     );
-    await billingRuntime.execute(
+    await postDowngradeRuntime.execute(
       'kernel.task.set_status',
       { id: tUnentHuman, status: 'todo' },
       { actor: asUser(member.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
     );
-    await billingRuntime.execute(
+    await postDowngradeRuntime.execute(
       'kernel.task.set_status',
       { id: tStandalone, status: 'done' },
       { actor: asUser(member.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
     );
-    await billingWorkerRuntime.execute(
+    await postDowngradeWorkerRuntime.execute(
       'kernel.task.set_status',
       { id: tUnentAgent, fence: unentAgentLease.fence, status: 'done' },
       { actor: unentAgentActor, orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
@@ -2770,7 +2781,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     const activeSweptJobs: Array<{ orgId: string; deliveryId: string }> = [];
     const starvationSweep = await runGithubOutboundSweep({
       workerDb,
-      runtime: billingWorkerRuntime,
+      runtime: postDowngradeWorkerRuntime,
       sendOutbound: async (j) => {
         activeSweptJobs.push(j);
       },
@@ -2781,7 +2792,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     expect(activeSweptJobs).toEqual([{ orgId: activeOrg.orgId, deliveryId: activeDeliveryId }]);
 
     expect(
-      await runGithubOutboundJob({ runtime: billingWorkerRuntime, workerDb, broker: vault, github: githubClient }, activeSweptJobs[0]!),
+      await runGithubOutboundJob({ runtime: postDowngradeWorkerRuntime, workerDb, broker: vault, github: githubClient }, activeSweptJobs[0]!),
     ).toBe('applied');
     expect(remoteItems.get('/repos/octo-org/core-api/issues/302')?.state).toBe('closed');
 
@@ -2803,7 +2814,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     const expiredDispatchJobs: unknown[] = [];
     await runGithubOutboundSweep({
       workerDb,
-      runtime: billingWorkerRuntime,
+      runtime: postDowngradeWorkerRuntime,
       sendOutbound: async (j) => {
         expiredDispatchJobs.push(j);
       },
