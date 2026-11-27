@@ -1626,11 +1626,12 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
       channels: { broker: { id: 'none' } as unknown as CredentialBroker, sandbox: false, publicUrl: 'http://localhost:8080' },
       githubWebhook: { appWebhookSecret: APP_WEBHOOK_SECRET },
     });
+    expect(appNoBroker.routes.some((r) => r.path === GITHUB_PAT_WEBHOOK_PATH)).toBe(false);
     const patNoBrokerRes = await appNoBroker.request(GITHUB_PAT_WEBHOOK_PATH.replace(':hookKey', 'A'.repeat(32)), {
       method: 'POST',
       headers: { 'x-github-event': 'ping', 'x-github-delivery': randomUUID(), 'x-hub-signature-256': 'sha256=' + '0'.repeat(64) },
       body: '{}',
     });
-    expect(patNoBrokerRes.status).toBe(404);
+    expect(patNoBrokerRes.status).toBe(401);
   });
 });

@@ -1,11 +1,11 @@
 // oRPC implementation of @ludy/kernel-contract. Handlers only call the runtime (execute/query).
-import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
 import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MARKETPLACE_PUSH_ADAPTERS, marketplaceHookAddress, marketplaceHookBaseUsable, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@ludy/kernel-contract';
 import { TingeeError, sandboxBankFeed, type BankFeedProvider } from '@ludy/bank-feed';
 import { GithubError, type GithubClient } from '@ludy/github';
-import { githubHookKeyHash } from './projects-github-webhook.ts';
+import { githubHookKeyHash, githubOAuthStateDigest } from './projects-github-webhook.ts';
 import { RateLimiter } from './rate-limit.ts';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@ludy/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@ludy/einvoice';
@@ -453,10 +453,6 @@ function githubFailure(error: unknown): DomainError {
     default:
       return new DomainError('GITHUB_UPSTREAM_FAILED', 503, 'Không thể kết nối tới GitHub lúc này; hãy thử lại sau');
   }
-}
-
-function githubOAuthStateHash(stateToken: string, projectId: string): string {
-  return `sha256:${createHmac('sha256', projectId.toLowerCase()).update(stateToken, 'utf8').digest('hex')}`;
 }
 
 // A meeting platform's refusal or failure during the connect step, as the answer the user sees: a fixed text, never the platform's words (the adapter's error carries only a short code).
@@ -5530,26 +5526,26 @@ export function createRpcHandler(
               { projectId: input.projectId },
               { actor, orgId },
             );
-            const oauthStateToken = randomBytes(32).toString('base64url');
+            const nonce = randomBytes(32).toString('base64url');
             const begun = await runtime.execute<{ attemptId: string; expiresAt: string }>(
               'kernel.channel.oauth_begin',
               {
                 provider: 'github_app',
-                stateHash: githubOAuthStateHash(oauthStateToken, input.projectId),
+                stateHash: githubOAuthStateDigest(nonce, input.projectId),
                 codeVerifier: null,
               },
               { actor, orgId },
             );
             const authorizeUrl = current.appSlug
-              ? `https://github.com/apps/${encodeURIComponent(current.appSlug)}/installations/new?state=${encodeURIComponent(oauthStateToken)}`
+              ? `https://github.com/apps/${encodeURIComponent(current.appSlug)}/installations/new?state=${encodeURIComponent(nonce)}`
               : `https://github.com/login/oauth/authorize?${new URLSearchParams({
                   client_id: channels.github.oauthClientId,
                   redirect_uri: oauthRedirectUri('github_app'),
-                  state: oauthStateToken,
+                  state: nonce,
                 }).toString()}`;
             return {
               authorizeUrl,
-              state: oauthStateToken,
+              state: nonce,
               expiresAt: begun.expiresAt,
             };
           }),
@@ -5566,7 +5562,7 @@ export function createRpcHandler(
             // Consume single-use state bound to projectId BEFORE making any GitHub OAuth/API calls.
             await runtime.execute<{ codeVerifier: string | null }>(
               'kernel.channel.oauth_consume',
-              { provider: 'github_app', stateHash: githubOAuthStateHash(input.state, input.projectId) },
+              { provider: 'github_app', stateHash: githubOAuthStateDigest(input.state, input.projectId) },
               { actor, orgId },
             );
             const userAccessToken = await channels.github

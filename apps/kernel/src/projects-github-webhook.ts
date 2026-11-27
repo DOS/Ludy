@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Public GitHub webhook HTTP intake handlers (App global HMAC intake and PAT per-hook intake; #5158, ADR-0060).
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { sql } from 'kysely';
 import {
   MAX_GITHUB_WEBHOOK_BYTES,
@@ -39,6 +39,9 @@ export const isGithubHookKey = (hookKey: string): boolean => HOOK_KEY_RE.test(ho
 
 export const githubHookKeyHash = (hookKey: string): string =>
   createHash('sha256').update(hookKey, 'utf8').digest('hex');
+
+export const githubOAuthStateDigest = (nonce: string, projectId: string): string =>
+  `sha256:${createHmac('sha256', projectId.toLowerCase()).update(nonce, 'utf8').digest('hex')}`;
 
 export interface GithubAppWebhookConfig {
   readonly appWebhookSecret: string;
