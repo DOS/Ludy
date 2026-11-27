@@ -136,6 +136,8 @@ const { NewPartyGroup } = await import('../src/components/deal-party-new.tsx');
 const valueSetter = Object.getOwnPropertyDescriptor(FakeDomNode.prototype, 'value')!.set!;
 
 function setInputValue(node: FakeDomNode, nextValue: string): void {
+  // React 19's isTextInputElement rejects <input> when node.type is ''; HTML DOM defaults untyped inputs to 'text'.
+  if (node.tagName === 'INPUT' && node.type === '') node.type = 'text';
   valueSetter.call(node, nextValue);
   node.dispatchEvent({ type: 'input', bubbles: true, cancelable: true });
 }
@@ -576,6 +578,50 @@ describe('tax lookup UI across EditParty, AddContactPanel, and NewPartyGroup (#4
     });
     expect(testState.updateCalls).toHaveLength(1);
     expect(testState.updateCalls[0]).toMatchObject({ name: 'Công ty Tự Nhập', taxCode: '0101234564' });
+  });
+
+  it('allows blur retry on the same tax code after a failed lookup, and stops refetching once it succeeds', async () => {
+    let shouldFail = true;
+    testState.lookupImpl = async () => {
+      if (shouldFail) {
+        throw Object.assign(new Error('Tạm thời không tra được mã số thuế, hãy nhập thủ công hoặc thử lại sau'), { code: 'TAX_LOOKUP_UNAVAILABLE' });
+      }
+      return ACTIVE_RESULT;
+    };
+
+    const { container, render } = mount(
+      <EditParty party={{ id: 'p-retry', name: '', taxCode: null, address: null, email: null, phone: null, version: 1 }} ns="contacts" onDone={() => undefined} />,
+    );
+    await render();
+
+    const taxInput = container.querySelector('#party-p-retry-taxCode')!;
+    await act(async () => {
+      setInputValue(taxInput, '0101234564');
+    });
+
+    // First blur fails: error renders and blur dedup resets so the user can retry on blur.
+    await act(async () => {
+      blurNode(taxInput);
+      await flushMicrotasks();
+    });
+    await waitUntil(() => container.querySelector('[data-testid="tax-lookup-error"]') !== null, 'blur error renders');
+    expect(testState.lookupCalls).toHaveLength(1);
+
+    // Second blur on the same unchanged tax code retries lookup and succeeds.
+    shouldFail = false;
+    await act(async () => {
+      blurNode(taxInput);
+      await flushMicrotasks();
+    });
+    await waitUntil(() => container.querySelector('[data-testid="tax-lookup-card"]') !== null, 'blur retry card renders');
+    expect(testState.lookupCalls).toHaveLength(2);
+
+    // Third blur after success does not duplicate lookup for the already-loaded snapshot.
+    await act(async () => {
+      blurNode(taxInput);
+      await flushMicrotasks();
+    });
+    expect(testState.lookupCalls).toHaveLength(2);
   });
 
   it('discards stale response when taxCode changes while a lookup request is pending', async () => {

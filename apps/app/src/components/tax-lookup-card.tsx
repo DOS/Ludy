@@ -138,6 +138,9 @@ export function usePartyTaxLookup(rawTaxCode: string, enabled = true): UsePartyT
         setSnapshot({ taxCode: targetCode, result, fetchedDate: vietnamToday() });
       })
       .catch((error: unknown) => {
+        if (requestSeqRef.current === seq && autoBlurredCodeRef.current === targetCode) {
+          autoBlurredCodeRef.current = null;
+        }
         if (!aliveRef.current || requestSeqRef.current !== seq || currentCodeRef.current !== targetCode) return;
         setSnapshot(null);
         setErrorState({ taxCode: targetCode, error });
