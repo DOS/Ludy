@@ -1734,8 +1734,9 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // The register of fixed assets and prepaid costs (#919): one row per asset, never deleted. Tenant roles update only
   // the end of its schedule (a column grant), so the update probes assign end_reason to itself.
   // #5182 (step 0, the migration follows): a person's mark that one hit of the monthly review of unusual entries was looked at: one row per (entry, rule), append-only, its entity filled from its entry by the
-  // legal-entity trigger. The entry is created in the same transaction (its balancing lines complete it), as for a journal line.
+  // legal-entity trigger. Seeding builds the entry as the database owner (its balancing lines complete it).
   'crove_finance.entry_review_mark': {
+    noInsertControl: 'a mark points at a journal entry, which only the posting definers write (tenant roles hold no INSERT on journal_entry), so the own-org insert control cannot build the entry in its own transaction as a login role; finance-unusual-entries.db.test.ts tests the insert as the runtime login, a mark for another org\'s entry included',
     make: (o) => {
       const entry = randomUUID();
       return {
