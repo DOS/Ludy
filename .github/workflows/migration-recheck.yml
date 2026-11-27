@@ -30,11 +30,11 @@ jobs:
       contents: read
       actions: write # re-run a PR's Docs check workflow run
       checks: write # fallback: a failing "Docs check" check run on a PR head whose run cannot be re-run usefully
-      pull-requests: read # list the open PRs into main
+      pull-requests: read # list open PRs targeting the pushed branch (dev or main)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Full history of main, so every open PR head has a merge base with it.
+          # Full history of the pushed branch (dev or main), so every open PR head has a merge base with it.
           fetch-depth: 0
           persist-credentials: false
 
