@@ -152,6 +152,20 @@ export const hrManifest = defineModule({
         ['org_id', 'id', 'legal_entity_id', 'employee_id', 'department_id', 'month', 'amount', 'status', 'l1_approver_user_id', 'l1_acted_at', 'final_acted_by', 'final_acted_at', 'payroll_run_id', 'created_by', 'created_at', 'updated_at'],
         { reason: 'pii', decision_note: 'pii' },
       ),
+      // Weekly employee shift roster assignments (#5216 Stage 7A).
+      shift_assignment: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'department_id', 'shift_template_id', 'work_date', 'created_by', 'created_at', 'updated_at'],
+        { note: 'pii' },
+      ),
+      // 1-step shift swap requests approved by active L1 department manager or HR admin (#5216 Stage 7A).
+      shift_swap_request: columns(
+        ['org_id', 'id', 'legal_entity_id', 'requester_employee_id', 'target_employee_id', 'requester_assignment_id', 'target_assignment_id', 'department_id', 'work_date', 'status', 'decided_by', 'decided_at', 'created_by', 'created_at', 'updated_at'],
+        { reason: 'pii', decision_note: 'pii' },
+      ),
+      // SME configurable shift templates including overnight crosses_midnight support (#5216 Stage 7A).
+      shift_template: columns(
+        ['org_id', 'id', 'legal_entity_id', 'code', 'name', 'start_minute', 'end_minute', 'break_minutes', 'grace_late_minutes', 'grace_early_minutes', 'crosses_midnight', 'archived_at', 'created_by', 'created_at', 'updated_at'],
+      ),
     },
   },
   // The one permission a command can name. Its risk is that of the highest command that names it: approving a month is R3. Declared with no default role: owners and admins pass by their base role, and the database's owner_admin policy enforces the same, so
@@ -190,6 +204,10 @@ export const hrManifest = defineModule({
     { type: 'hr.probation_review', table: 'probation_review', legalEntityScoped: true, audit: 'command' },
     // Employee salary advance requests (#4527 Stage 6B).
     { type: 'hr.salary_advance_request', table: 'salary_advance_request', legalEntityScoped: true, audit: 'command' },
+    // SME shift templates, weekly roster assignments, and 1-step shift swap requests (#5216 Stage 7A).
+    { type: 'hr.shift_assignment', table: 'shift_assignment', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.shift_swap_request', table: 'shift_swap_request', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.shift_template', table: 'shift_template', legalEntityScoped: true, audit: 'command' },
   ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @ludy/kernel-contract.
   ...MODULE_SCREENS.hr,

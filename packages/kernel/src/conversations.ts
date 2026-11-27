@@ -1198,16 +1198,22 @@ export const conversationList = defineQuery({
       const pairs = input.posts.map((p) => sql`(c.channel_connection_id = ${p.connectionId}::uuid AND c.external_post_id = ${p.externalPostId})`);
       where.push(sql`(${sql.join(pairs, sql` OR `)})`);
     }
-    if (input.before) {
-      // Newest first, threads with no message last: the key is (last_message_at, id) descending with nulls last.
-      where.push(
-        input.before.at === null
-          ? sql`(c.last_message_at IS NULL AND c.id < ${input.before.id}::uuid)`
-          : sql`(c.last_message_at IS NULL OR c.last_message_at < ${input.before.at}::timestamptz OR (c.last_message_at = ${input.before.at}::timestamptz AND c.id < ${input.before.id}::uuid))`,
-      );
+    // Newest first, threads with no message last: the key is (last_message_at, id) descending with nulls last. A cursor on a dated thread is read in two steps, each of which
+    // can seek into conversation_recent_idx (an OR with IS NULL could not, #5188): the dated threads past the cursor by a row comparison, then, only if the page is not full yet,
+    // the threads with no message.
+    const page = (extra: ReturnType<typeof sql>, take: number) =>
+      sql<SummaryRow>`${summarySelect(ctx.orgId, me)} AND ${sql.join([...where, extra], sql` AND `)}
+        ORDER BY c.last_message_at DESC NULLS LAST, c.id DESC LIMIT ${take}`.execute(ctx.trx);
+    const take = input.limit + 1;
+    let rows: SummaryRow[];
+    if (!input.before) {
+      rows = (await page(sql`TRUE`, take)).rows;
+    } else if (input.before.at === null) {
+      rows = (await page(sql`(c.last_message_at IS NULL AND c.id < ${input.before.id}::uuid)`, take)).rows;
+    } else {
+      rows = (await page(sql`((c.last_message_at, c.id) < (${input.before.at}::timestamptz, ${input.before.id}::uuid))`, take)).rows;
+      if (rows.length < take) rows = [...rows, ...(await page(sql`c.last_message_at IS NULL`, take - rows.length)).rows];
     }
-    const { rows } = await sql<SummaryRow>`${summarySelect(ctx.orgId, me)} AND ${sql.join(where, sql` AND `)}
-      ORDER BY c.last_message_at DESC NULLS LAST, c.id DESC LIMIT ${input.limit + 1}`.execute(ctx.trx);
     const more = rows.length > input.limit;
     return { conversations: rows.slice(0, input.limit).map(toSummary), more };
   },

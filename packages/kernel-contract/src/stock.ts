@@ -206,6 +206,9 @@ export type StockCloseCheck = z.infer<typeof zStockCloseCheck>;
 // How many days a supplier takes to deliver when the org has not said (a week count of the average sales is read against it), and the bounds a person may set.
 export const STOCK_LEAD_DAYS_DEFAULT = 14;
 export const STOCK_LEAD_DAYS_MAX = 90;
+export const zStockLeadDays = z.number().int().min(1).max(STOCK_LEAD_DAYS_MAX);
+export const zStockSetting = z.strictObject({ leadDays: zStockLeadDays });
+export type StockSetting = z.infer<typeof zStockSetting>;
 // Lines asked about in one call and items a reorder message names; the agent reads the same bounds (packages/agent stock.ts).
 export const STOCK_SUGGEST_LINES_MAX = 10;
 export const STOCK_REORDER_ITEMS_MAX = 20;
@@ -234,7 +237,7 @@ export type StockSuggested = z.infer<typeof zStockSuggested>;
 export const STOCK_LOW_MAX = 200;
 export const zStockLowInput = z.strictObject({
   legalEntityId: zId.optional(),
-  leadDays: z.number().int().min(1).max(STOCK_LEAD_DAYS_MAX).optional(),
+  leadDays: zStockLeadDays.optional(),
   limit: z.number().int().min(1).max(STOCK_LOW_MAX).optional(),
 });
 export const zStockLowItem = z.object({

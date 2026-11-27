@@ -85,6 +85,9 @@ export interface MarketplaceOrderLine {
   quantity: string;
   unitPrice: string;
   amount: string;
+  // True when a parcel collected by the carrier was later lost, damaged or scrapped by 3PL (#4265).
+  // Kept beside the CSV rows (never in platform columns); clears once a later status indicates goods returned.
+  lostParcel?: boolean | undefined;
 }
 
 export interface MarketplaceOrder {
@@ -394,11 +397,16 @@ export function marketplaceOrdersCsv(platform: MarketplacePlatformKey, orders: r
   if (marketplaceCsvRows(platform, orders) > MARKETPLACE_CSV_MAX_ROWS) throw new Error('the page writes more rows than one file may carry');
   const rows: string[][] = [];
   if (connectionId !== undefined) rows.push([`Ludy marketplace connection ${connectionId}`]);
-  rows.push([...layout.head]);
+  const lostRows: number[] = [];
+  const dataRows: string[][] = [];
+  let dataRow = 0;
   for (const order of orders) {
     for (const line of order.lines) {
+      const isLost = order.stage === 'shipped' && line.lostParcel === true;
       if (!layout.rowPerUnit) {
-        rows.push(layout.row(order, line, { index: 1, amount: line.amount }, marketplaceCellText));
+        dataRow += 1;
+        if (isLost) lostRows.push(dataRow);
+        dataRows.push(layout.row(order, line, { index: 1, amount: line.amount }, marketplaceCellText));
         continue;
       }
       const units = wholeUnits(line.quantity);
@@ -408,10 +416,15 @@ export function marketplaceOrdersCsv(platform: MarketplacePlatformKey, orders: r
       const share = total.dividedBy(units).toDecimalPlaces(4, 1);
       const last = total.minus(share.times(units - 1));
       for (let unit = 1; unit <= units; unit += 1) {
-        rows.push(layout.row(order, { ...line, quantity: String(units) }, { index: unit, amount: toMoney(unit === units ? last : share) }, marketplaceCellText));
+        dataRow += 1;
+        if (isLost) lostRows.push(dataRow);
+        dataRows.push(layout.row(order, { ...line, quantity: String(units) }, { index: unit, amount: toMoney(unit === units ? last : share) }, marketplaceCellText));
       }
     }
   }
+  if (lostRows.length > 0) rows.push([`Ludy marketplace lost parcel ${lostRows.join(',')}`]);
+  rows.push([...layout.head]);
+  rows.push(...dataRows);
   return `${rows.map((r) => r.map(cell).join(',')).join('\n')}\n`;
 }
 
@@ -460,11 +473,12 @@ export const zMarketplaceOrderPage = z.strictObject({
               quantity: zQuantity,
               unitPrice: zAmount,
               amount: zAmount,
+              lostParcel: z.boolean().optional(),
             }),
           )
           .min(1)
           .max(500),
-      }),
+      }).refine((order) => order.stage === 'shipped' || order.lines.every((line) => line.lostParcel !== true), 'lostParcel may only be set on shipped orders'),
     )
     .max(1000),
   nextCursor: z.string().max(200).nullable(),

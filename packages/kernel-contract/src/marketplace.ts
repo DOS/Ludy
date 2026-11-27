@@ -28,6 +28,7 @@ export const zMarketplaceSummary = z.object({
   stages: z.object({ placed: z.number().int(), shipped: z.number().int(), completed: z.number().int(), cancelled: z.number().int(), returned: z.number().int(), unknown: z.number().int() }),
   unknownStatuses: z.array(z.string().max(100)).max(20),
   ignoredRows: z.number().int().nonnegative(),
+  lostParcels: z.number().int().nonnegative().optional(),
   newLines: z.number().int().nonnegative().optional(),
   updatedLines: z.number().int().nonnegative().optional(),
   duplicateLines: z.number().int().nonnegative().optional(),
@@ -85,6 +86,7 @@ export const zMarketplaceOrder = z.object({
       unitPrice: z.string().nullable(),
       amount: z.string().nullable(),
       stage: zMarketplaceStage,
+      lostParcel: z.boolean(),
       shippedAt: zLocalDate.nullable(),
       // The stock item the line moved, by its code, or null while it moved nothing.
       itemCode: z.string().nullable(),

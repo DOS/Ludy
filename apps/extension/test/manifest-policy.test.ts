@@ -1,37 +1,59 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The manifest against the fixed permission list (meetings plan section 5.7): the base install and the meetings feature
-// ask for nothing beyond it, and a permission added without changing the list fails.
+// The manifest against the fixed permission list (meetings plan section 5.7): the Chrome Web Store package locks to
+// Ludy Cloud (`https://api.ludy.vn/*` for host_permissions, `https://app.ludy.vn/*` for web_accessible_resources, and
+// zero optional_host_permissions), and any permission added or loosened without changing the list fails.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_LOCALE, localeViolations, manifestViolations, OPTIONAL_PERMISSIONS, WEB_CLIPPER_OPTIONAL_PERMISSIONS } from '../src/manifest-policy.ts';
+import { DEFAULT_APP_MATCHES, DEFAULT_HOST_PERMISSIONS, DEFAULT_LOCALE, localeViolations, manifestViolations, OPTIONAL_PERMISSIONS, WEB_ACCESSIBLE_PAGE, WEB_CLIPPER_OPTIONAL_PERMISSIONS } from '../src/manifest-policy.ts';
 import { FEATURES } from '../src/features.ts';
 
 const manifest = (): Record<string, unknown> => JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8')) as Record<string, unknown>;
 
 describe('manifest permission list', () => {
-  it('the shipped manifest keeps it', () => {
+  it('the shipped manifest keeps the Ludy Cloud policy', () => {
     expect(manifestViolations(manifest())).toEqual([]);
   });
 
-  it('the shipped manifest declares exactly the sign-in landing page (#4662, step 2)', () => {
-    expect(manifest().web_accessible_resources).toEqual([{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*', 'http://localhost/*'] }]);
+  it('the shipped manifest declares exactly the sign-in landing page for app.ludy.vn only (#4662, #5224)', () => {
+    expect(DEFAULT_APP_MATCHES).toEqual(['https://app.ludy.vn/*']);
+    expect(manifest().web_accessible_resources).toEqual([{ resources: [WEB_ACCESSIBLE_PAGE], matches: ['https://app.ludy.vn/*'] }]);
   });
 
-  it('no web accessible resource at all, or exactly the sign-in landing page for the cloud address and localhost, keeps the list (#4662)', () => {
+  it('no web accessible resource at all, or exactly the sign-in landing page for the app origin, keeps the list', () => {
     const without = { ...manifest() };
     delete without.web_accessible_resources;
     expect(manifestViolations(without)).toEqual([]);
-    const pinned = { ...manifest(), web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*', 'http://localhost/*'] }] };
+    const pinned = { ...manifest(), web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*'] }] };
     expect(manifestViolations(pinned)).toEqual([]);
-    // The order of the lists does not matter; anything else does.
-    const reordered = { ...manifest(), web_accessible_resources: [{ matches: ['http://localhost/*', 'https://app.ludy.vn/*'], resources: ['connected.html'] }] };
-    expect(manifestViolations(reordered)).toEqual([]);
   });
 
-  it('the base install asks for storage and identity and one host, nothing else', () => {
+  it('the base install asks for storage, identity, and api.ludy.vn only, with no optional_host_permissions', () => {
     const m = manifest();
+    expect(DEFAULT_HOST_PERMISSIONS).toEqual(['https://api.ludy.vn/*']);
     expect(m.permissions).toEqual(['storage', 'identity']);
-    expect(m.host_permissions).toEqual(['https://app.ludy.vn/*']);
+    expect(m.host_permissions).toEqual(['https://api.ludy.vn/*']);
+    expect('optional_host_permissions' in m).toBe(false);
+  });
+
+  it('accepts custom app/api match patterns only when explicitly checked for a self-host build', () => {
+    const selfHost = {
+      ...manifest(),
+      host_permissions: ['https://api.company.example/*'],
+      web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://app.company.example/*'] }],
+    };
+    expect(manifestViolations(selfHost).length).toBeGreaterThan(0);
+    expect(
+      manifestViolations(selfHost, {
+        hostPermissions: ['https://api.company.example/*'],
+        appMatches: ['https://app.company.example/*'],
+      }),
+    ).toEqual([]);
+    expect(
+      manifestViolations(
+        { ...selfHost, optional_host_permissions: ['https://*/*'] },
+        { hostPermissions: ['https://api.company.example/*'], appMatches: ['https://app.company.example/*'] },
+      ).length,
+    ).toBeGreaterThan(0);
   });
 
   it('meetings and web clipper add only their declared optional permissions, and Quick Capture adds none', () => {
@@ -53,20 +75,24 @@ describe('manifest permission list', () => {
     ['scripting as a required permission', { permissions: ['storage', 'identity', 'scripting'] }],
     ['history', { optional_permissions: ['tabCapture', 'offscreen', 'activeTab', 'scripting', 'history'] }],
     ['missing scripting from optional_permissions', { optional_permissions: ['tabCapture', 'offscreen', 'activeTab'] }],
-    ['all_urls as a host', { host_permissions: ['https://app.ludy.vn/*', '<all_urls>'] }],
-    ['all_urls as an optional host', { optional_host_permissions: ['<all_urls>'] }],
-    ['a meeting site', { host_permissions: ['https://app.ludy.vn/*', 'https://meet.google.com/*'] }],
+    ['optional_host_permissions wildcard', { optional_host_permissions: ['https://*/*'] }],
+    ['optional_host_permissions localhost', { optional_host_permissions: ['http://localhost/*'] }],
+    ['empty optional_host_permissions', { optional_host_permissions: [] }],
+    ['all_urls as a host', { host_permissions: ['https://api.ludy.vn/*', '<all_urls>'] }],
+    ['app.ludy.vn instead of api.ludy.vn as host', { host_permissions: ['https://app.ludy.vn/*'] }],
+    ['a meeting site', { host_permissions: ['https://api.ludy.vn/*', 'https://meet.google.com/*'] }],
     ['a content script', { content_scripts: [{ matches: ['https://meet.google.com/*'], js: ['x.js'] }] }],
     ['externally_connectable', { externally_connectable: { matches: ['https://*/*'] } }],
     ['web_accessible_resources for every site', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://*/*'] }] }],
     ['web_accessible_resources for all urls', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['<all_urls>'] }] }],
-    ['a second web accessible page', { web_accessible_resources: [{ resources: ['connected.html', 'popup.html'], matches: ['https://app.ludy.vn/*', 'http://localhost/*'] }] }],
-    ['web_accessible_resources of a second entry', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*', 'http://localhost/*'] }, { resources: ['popup.html'], matches: ['https://app.ludy.vn/*'] }] }],
-    ['web_accessible_resources limited to extension ids', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*', 'http://localhost/*'], extension_ids: ['*'] }] }],
-    ['web_accessible_resources with a dynamic url', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*', 'http://localhost/*'], use_dynamic_url: true }] }],
+    ['web_accessible_resources with localhost in store manifest', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*', 'http://localhost/*'] }] }],
+    ['a second web accessible page', { web_accessible_resources: [{ resources: ['connected.html', 'popup.html'], matches: ['https://app.ludy.vn/*'] }] }],
+    ['web_accessible_resources of a second entry', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*'] }, { resources: ['popup.html'], matches: ['https://app.ludy.vn/*'] }] }],
+    ['web_accessible_resources limited to extension ids', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*'], extension_ids: ['*'] }] }],
+    ['web_accessible_resources with a dynamic url', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*'], use_dynamic_url: true }] }],
     ['web_accessible_resources that is not a list', { web_accessible_resources: {} }],
     ['an empty web_accessible_resources list', { web_accessible_resources: [] }],
-    ['the cloud address missing from web_accessible_resources', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['http://localhost/*'] }] }],
+    ['the cloud app address missing from web_accessible_resources', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['http://localhost/*'] }] }],
     ['a missing permission', { permissions: ['storage'] }],
     ['manifest v2', { manifest_version: 2 }],
     ['unsafe-eval', { content_security_policy: { extension_pages: "script-src 'self' 'unsafe-eval'" } }],

@@ -149,6 +149,7 @@ export * from './crm.ts';
 export * from './hr.ts';
 export * from './hr-leave.ts';
 export * from './hr-attendance.ts';
+export * from './hr-shifts.ts';
 export * from './hr-onboarding.ts';
 export * from './hr-overtime.ts';
 export * from './hr-self-coworker.ts';

@@ -93,6 +93,57 @@ describe('the button', () => {
     expect(page(results({ published }), 'vi')).toContain(viMessages.meetings.minutes.docx);
     expect(en.kernelErrors.codes.MINUTES_NOT_PUBLISHED).toBeTruthy();
     expect(viMessages.kernelErrors.codes.MINUTES_NOT_PUBLISHED).toBeTruthy();
+    expect(en.kernelErrors.codes.MINUTES_VERSION_NOT_FOUND).toBeTruthy();
+    expect(viMessages.kernelErrors.codes.MINUTES_VERSION_NOT_FOUND).toBeTruthy();
+    expect(en.kernelErrors.codes.MINUTES_VERSION_STAGE).toBeTruthy();
+    expect(viMessages.kernelErrors.codes.MINUTES_VERSION_STAGE).toBeTruthy();
+  });
+
+  it('shows a language selector with 44px touch targets only when a published vi/en minutes version exists (#5225)', () => {
+    expect(page(results({ published }))).not.toContain('data-testid="minutes-docx-language"');
+
+    client.current.clear();
+    client.current.setQueryData(['meetings', 'minutesVersion', 'get'], {
+      meetingId: 'm1',
+      from: 'vi',
+      versions: [{ language: 'zh', publishedAt: '2026-11-25T03:00:00.000Z', segments: [{ key: 'summary', text: '摘要' }] }],
+    });
+    expect(page(results({ published }))).not.toContain('data-testid="minutes-docx-language"');
+
+    client.current.clear();
+    client.current.setQueryData(['meetings', 'minutesVersion', 'get'], {
+      meetingId: 'm1',
+      from: 'vi',
+      versions: [{ language: 'en', publishedAt: '2026-11-25T03:00:00.000Z', segments: [{ key: 'summary', text: 'Delivered.' }] }],
+    });
+    const html = page(results({ published }), 'en');
+    expect(html).toContain('data-testid="minutes-docx-language"');
+    expect(html).toContain('data-testid="minutes-docx-lang-original"');
+    expect(html).toContain('data-testid="minutes-docx-lang-en"');
+    expect(html).toContain('Original (Tiếng Việt)');
+    expect(html).toContain('English');
+    expect(html).toContain('min-h-11');
+
+    client.current.clear();
+    client.current.setQueryData(['meetings', 'minutesVersion', 'get'], {
+      meetingId: 'm1',
+      from: 'vi',
+      versions: [{ language: 'en', publishedAt: '2026-11-25T03:00:00.000Z', segments: [{ key: 'summary', text: 'Delivered.' }] }],
+    });
+    const viHtml = page(results({ published }), 'vi');
+    expect(viHtml).toContain('Bản gốc (Tiếng Việt)');
+    expect(viHtml).toContain('English');
+
+    client.current.clear();
+    client.current.setQueryData(['meetings', 'minutesVersion', 'get'], {
+      meetingId: 'm1',
+      from: 'en',
+      versions: [{ language: 'vi', publishedAt: '2026-11-25T03:00:00.000Z', segments: [{ key: 'summary', text: 'Đã giao.' }] }],
+    });
+    const enOrigHtml = page(results({ published }), 'en');
+    expect(enOrigHtml).toContain('data-testid="minutes-docx-lang-vi"');
+    expect(enOrigHtml).toContain('Original (English)');
+    expect(enOrigHtml).toContain('Tiếng Việt');
   });
 });
 

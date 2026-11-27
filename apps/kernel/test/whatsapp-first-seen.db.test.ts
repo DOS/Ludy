@@ -98,6 +98,29 @@ suite('WhatsApp durable first-seen tracking (#5085)', () => {
     });
   }
 
+  // A body with several customer messages (a Meta batch), each with its own wamid and timestamp.
+  function noticeMany(phoneId: string, messages: { waId: string; wamid: string; timestamp: string }[]): string {
+    return JSON.stringify({
+      object: 'whatsapp_business_account',
+      entry: [
+        {
+          id: WABA,
+          changes: [
+            {
+              field: 'messages',
+              value: {
+                messaging_product: 'whatsapp',
+                metadata: { display_phone_number: '84000000098', phone_number_id: phoneId },
+                contacts: messages.map((m) => ({ profile: { name: 'Khách' }, wa_id: m.waId })),
+                messages: messages.map((m) => ({ from: m.waId, id: m.wamid, timestamp: m.timestamp, type: 'text', text: { body: 'Xin chào first-seen' } })),
+              },
+            },
+          ],
+        },
+      ],
+    });
+  }
+
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -177,6 +200,29 @@ suite('WhatsApp durable first-seen tracking (#5085)', () => {
     expect(durableEventKey(`${phoneId}:in:m:${wamid}`)).toBe(expected.toString('hex'));
     const table = await rows<{ dump: string }>('SELECT row_to_json(f)::text AS dump FROM ludy_kernel.conversation_inbound_first_seen f');
     expect(table.map((t) => t.dump).join('')).not.toContain(wamid);
+  });
+
+  it('parks a signed body with more than 1000 events instead of answering 500 (#5188)', async () => {
+    const phoneId = `1070000000${String(1000 + phoneCounter++)}`;
+    const at = String(Math.floor(Date.now() / 1000));
+    const messages = Array.from({ length: 1001 }, (_, i) => ({ waId: `8400000${String(i).padStart(5, '0')}`, wamid: `wamid.many-${randomUUID().slice(0, 12)}-${i}`, timestamp: at }));
+    expect(await acceptWhatsAppWebhook(api, config, signed(noticeMany(phoneId, messages)), new WhatsAppReplayCache())).toEqual({ status: 200, parked: true });
+  });
+
+  it('counts and logs the events a first-seen date cuts off when a retry mixes an event seen earlier with a later one (#5188)', async () => {
+    const org = await makeOrg('seen-mixed');
+    const phoneId = `1070000000${String(1000 + phoneCounter++)}`;
+    await connect(org.orgId, org.owner, phoneId);
+    const old = { waId: '84000000401', wamid: `wamid.mixed-old-${randomUUID().slice(0, 12)}`, timestamp: String(Math.floor((Date.now() - 31 * 60_000) / 1000)) };
+    const fresh = { waId: '84000000402', wamid: `wamid.mixed-new-${randomUUID().slice(0, 12)}`, timestamp: String(Math.floor(Date.now() / 1000)) };
+    // The old event was first seen 30 minutes ago.
+    expect(await acceptWhatsAppWebhook(api, config, signed(noticeMany(phoneId, [old])), new WhatsAppReplayCache())).toEqual({ status: 200, parked: true });
+    await rows(`UPDATE ludy_kernel.conversation_inbound_first_seen SET first_seen_at = now() - interval '30 minutes' WHERE key = decode($1, 'hex')`, [durableEventKey(`${phoneId}:in:m:${old.wamid}`)]);
+    // Meta re-batches it with a new event: the body is dated 30 minutes ago, so the new event falls outside the skew window.
+    expect(await acceptWhatsAppWebhook(api, config, signed(noticeMany(phoneId, [old, fresh])), new WhatsAppReplayCache())).toEqual({ status: 200, parked: true });
+    const lines: string[] = [];
+    await runConversationIntake({ workerDb, runtime: worker, log: (m) => lines.push(m) });
+    expect(lines.some((l) => /whatsapp\): 1 event\(s\) dated after its first-seen time/.test(l))).toBe(true);
   });
 
   async function asLogin<T>(url: string, fn: (client: pg.Client) => Promise<T>): Promise<T> {

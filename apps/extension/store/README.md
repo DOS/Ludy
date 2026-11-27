@@ -17,7 +17,7 @@ Other brand files that can be useful for the listing:
 
 All images are PNG with no alpha channel (24-bit RGB), because the store refuses transparency.
 
-- Screenshots 1 and 2 are the real popup. The script loads it unpacked in Chromium against the e2e fake Ludy, so it holds no customer data. The fake server's local address is shown as `https://app.ludy.vn`, the address a Ludy Cloud member sees.
+- Screenshots 1 and 2 are the real popup. The script builds a temporary unpacked package pointed at the e2e fake Ludy (`--origin`), loads it in Chromium so it holds no customer data, and snapshots the Vietnamese and English popup states.
 - Screenshot 3, the consent step, is text only. The consent form needs the `tabCapture` permission, which automation cannot grant.
 
 ## Regenerate
@@ -27,7 +27,6 @@ Regenerate the images after the popup changes, then upload the new set:
 ```
 pnpm install --frozen-lockfile --filter "@ludy/extension..."
 cd apps/extension
-node scripts/build.mjs
 node scripts/store-art.mjs
 ```
 

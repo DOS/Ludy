@@ -83,6 +83,7 @@ import {
   type RoadmapChangelogDraftFacts,
   type RoadmapDedupeFacts,
   type RoadmapSignalMatchFacts,
+  type ShiftCoverageSuggestInput,
   type SignAcceptanceDraftRequest,
   type SignVersionDiffAiResult,
   type StockSurplusFacts,
@@ -1517,6 +1518,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('hr.policy_qa');
     cover('hr.addendum_check');
     cover('hr.okr_checkin_draft');
+    cover('hr.shift_coverage_suggest');
 
     const recruitingInput: RecruitingBriefInput = {
       language: 'vi',
@@ -1590,6 +1592,56 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       totalLinkedTasks: 4,
       linkedTaskTitles: [{ title: 'Kết nối đơn vị vận chuyển', completed: true }],
     };
+    const shiftCoverageInput: ShiftCoverageSuggestInput = {
+      weekStart: '2026-10-05',
+      weekEnd: '2026-10-11',
+      language: 'vi',
+      conflicts: [
+        {
+          assignmentId: 'assign-1',
+          employeeId: 'emp-1',
+          employeeName: 'Nguyen Van A',
+          departmentId: 'dept-1',
+          departmentName: 'Cửa hàng 1',
+          shiftTemplateId: 'tpl-1',
+          shiftCode: 'CA_SANG',
+          shiftName: 'Ca sáng',
+          workDate: '2026-10-06',
+          kind: 'approved_leave',
+          detail: 'Nghỉ phép đã duyệt',
+        },
+      ],
+      gaps: [
+        {
+          date: '2026-10-06',
+          departmentId: 'dept-1',
+          departmentName: 'Cửa hàng 1',
+          shiftCode: 'CA_SANG',
+          shiftName: 'Ca sáng',
+          reason: 'Nghỉ phép đã duyệt',
+          candidates: [
+            {
+              employeeId: 'emp-2',
+              employeeName: 'Tran Thi B',
+              departmentId: 'dept-1',
+              departmentName: 'Cửa hàng 1',
+              weeklyShiftCount: 2,
+              hasAdjacentRestGap: false,
+            },
+          ],
+        },
+      ],
+      eligibleCandidates: [
+        {
+          employeeId: 'emp-2',
+          employeeName: 'Tran Thi B',
+          departmentId: 'dept-1',
+          departmentName: 'Cửa hàng 1',
+          weeklyShiftCount: 2,
+          hasAdjacentRestGap: false,
+        },
+      ],
+    };
 
     for (const c of INJECTION_CORPUS) {
       const reader = new InboxReader(STUB_CONFIG, {
@@ -1624,6 +1676,10 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
           output: { draft: c.poisonedOutput },
           usage: zeroUsage,
         }),
+        shiftCoverageSuggest: async () => ({
+          output: { summary: c.poisonedOutput, highlights: [c.poisonedOutput], suggestions: [] },
+          usage: zeroUsage,
+        }),
       });
 
       const recRes = await reader.recruitingBrief({ ...recruitingInput, notes: [c.untrustedInput] });
@@ -1652,6 +1708,9 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       const okrRes = await reader.hrOkrCheckinDraft({ ...okrCheckinInput, language: c.language, lastCheckinNote: c.untrustedInput });
       expect(okrRes.ai.ok, `okr ai.ok ${c.id}`).toBe(false);
       expect(okrRes.draft, `okr draft ${c.id}`).toBeNull();
+
+      const shiftRes = await reader.shiftCoverageSuggest({ ...shiftCoverageInput, language: c.language });
+      expect(shiftRes.ai.ok, `shiftCoverage ai.ok ${c.id}`).toBe(false);
     }
 
     const requestDraftBase: HrSelfRequestDraftInput = {

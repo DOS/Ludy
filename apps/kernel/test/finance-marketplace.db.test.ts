@@ -11,10 +11,16 @@ import type { ExtractClient } from '@ludy/extract-contract';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
-import { financeCommands, financeQueries, readMarketplaceFile } from '@ludy/mod-finance';
+import { financeCommands, financeQueries, marketplaceOrdersCsv, parseMarketplaceOrderPage, readMarketplaceFile } from '@ludy/mod-finance';
 import { fileURLToPath } from 'node:url';
 import { buildXlsx, type XlsxCell } from '../../extract/test/xlsx-fixture.ts';
+import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
+import { LAZADA_HOSTS, lazadaMarketplace } from '../src/marketplace-lazada.ts';
+import { TIKTOK_HOSTS } from '../src/marketplace-tiktok.ts';
+import { tiktokMarketplace } from '../src/marketplace-tiktok-orders.ts';
 import { inProcessExtract } from './extract-service.ts';
+import { fakeLazada, fakeOrder as fakeLazadaOrder } from './fake-lazada.ts';
+import { fakeLine as fakeTiktokLine, fakeOrder as fakeTiktokOrder, fakeReturn as fakeTiktokReturn, fakeShop as fakeTiktokShop, fakeTiktok } from './fake-tiktok.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -81,20 +87,20 @@ suite('marketplace order reports (#2515)', () => {
   const orderRows = (o: Org) => rows<{ order_no: string; stage: string; quantity: string }>('SELECT o.order_no, l.stage, l.quantity::text FROM ludy_finance.channel_order_line l JOIN ludy_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id WHERE l.org_id = $1 ORDER BY o.order_no, l.line_key', [o.orgId]);
   const lineOf = async (o: Org, orderNo: string) =>
     (await rows<{ id: string }>('SELECT l.id::text AS id FROM ludy_finance.channel_order_line l JOIN ludy_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id WHERE l.org_id = $1 AND o.order_no = $2', [o.orgId, orderNo]))[0]?.id as string;
-  async function ingest(o: Org, bytes: Uint8Array) {
+  async function ingest(o: Org, bytes: Uint8Array, filename = 'don-hang.xlsx', contentType = 'application/zip') {
     const sha256 = sha256Hex(bytes);
     const storageKey = fileKey(o.orgId, sha256);
     const generation = await store.put(storageKey, bytes);
     const { fileId } = await rt.execute<{ fileId: string }>(
       'kernel.file.ingest',
-      { filename: 'don-hang.xlsx', contentType: 'application/zip', sizeBytes: bytes.byteLength, sha256, storageKey, generation, source: 'upload' },
+      { filename, contentType, sizeBytes: bytes.byteLength, sha256, storageKey, generation, source: 'upload' },
       { actor: asUser(o.owner), orgId: o.orgId },
     );
     return fileId;
   }
   // The worker's side: the file is read as an order report; handled is false for a file that is none.
-  async function read(o: Org, bytes: Uint8Array) {
-    const fileId = await ingest(o, bytes);
+  async function read(o: Org, bytes: Uint8Array, filename = 'don-hang.xlsx', contentType = 'application/zip') {
+    const fileId = await ingest(o, bytes, filename, contentType);
     const result = await readMarketplaceFile({ runtime: worker, store, extract }, o.orgId, fileId);
     return { fileId, ...result };
   }
@@ -665,5 +671,174 @@ suite('marketplace order reports (#2515)', () => {
     const other = await org();
     expect(await orderRows(other)).toEqual([]);
     expect(await query(other, 'finance.marketplace.staged', {}, other.member)).toEqual([]);
+  });
+
+  it('flags TikTok system-cancelled post-collection parcels as lostParcel, never restocks until a return arrives, and enforces SQL/return guards', async () => {
+    const o = await org();
+    const lostSku = 'TT-LOST-SKU';
+    const okSku = 'TT-OK-SKU';
+    const lostItem = await makeItem(o, lostSku);
+    const okItem = await makeItem(o, okSku);
+
+    const TT_KEY = { appKey: '123abc', appSecret: 'helloworld', accessToken: 'TTP_access_token_1' };
+    const TT_CIPHER = 'GCP_XF90igAAAABh00qsWgtvOiGFNqyubMt3';
+    const TT_SECRET = JSON.stringify({ ...TT_KEY, shopCipher: TT_CIPHER, shopId: '7000714532876273420' });
+    const TT_NOW = Date.parse('2026-11-21T08:00:00Z');
+    const sec = Math.floor(TT_NOW / 1000) - 3600;
+
+    const lostLine = fakeTiktokLine({ seller_sku: lostSku, display_status: 'CANCELLED', cancel_user: 'SYSTEM' });
+    const lostOrder = fakeTiktokOrder({ id: '576461413038710001', status: 'CANCELLED', update_time: sec + 10, collection_time: sec - 500, rts_time: sec - 900, line_items: [lostLine] });
+    const okOrder = fakeTiktokOrder({ id: '576461413038710002', status: 'IN_TRANSIT', update_time: sec + 20, collection_time: sec - 400, rts_time: sec - 800, line_items: [fakeTiktokLine({ seller_sku: okSku, display_status: 'IN_TRANSIT' })] });
+    const preOrder = fakeTiktokOrder({ id: '576461413038710003', status: 'CANCELLED', update_time: sec + 30, line_items: [fakeTiktokLine({ seller_sku: lostSku, display_status: 'CANCELLED', cancel_user: 'SYSTEM' })] });
+
+    const fake1 = fakeTiktok({ ...TT_KEY, shops: [fakeTiktokShop()], now: () => TT_NOW, orders: [lostOrder, okOrder, preOrder] });
+    const provider1 = tiktokMarketplace({ fetch: hostBoundFetch(TIKTOK_HOSTS, fake1.fetch), now: () => new Date(TT_NOW), sleep: async () => undefined });
+    const page1 = parseMarketplaceOrderPage(await provider1.listOrders(TT_SECRET, 'tiktok_shop', null));
+    expect(page1).not.toBeNull();
+    const csv1 = marketplaceOrdersCsv('tiktok_shop', page1!.orders, '0192a000-0000-7000-8000-000000000001');
+
+    const read1 = await read(o, new TextEncoder().encode(csv1), 'tiktok-poll-1.csv', 'text/csv');
+    expect(read1.handled).toBe(true);
+    const staged1 = await query<Array<{ fileId: string; summary: { lostParcels?: number } }>>(o, 'finance.marketplace.staged', {}, o.member);
+    expect(staged1[0]?.summary.lostParcels).toBe(1);
+    expect(await confirm(o, read1.fileId)).toMatchObject({ newLines: 3, stockMoves: 2 });
+
+    expect(await onHand(o, lostItem)).toBe('-1');
+    expect(await onHand(o, okItem)).toBe('-1');
+    expect(await moves(o, lostItem)).toEqual([{ order_move: 'ship', quantity: '-1.000000' }]);
+
+    const orders1 = await query<Array<{ orderNo: string; stage: string; lines: Array<{ id: string; stage: string; lostParcel: boolean }> }>>(o, 'finance.marketplace.orders', { platform: 'tiktok_shop' }, o.member);
+    const lostRow = orders1.find((ord) => ord.orderNo === '576461413038710001')?.lines[0];
+    const okRow = orders1.find((ord) => ord.orderNo === '576461413038710002')?.lines[0];
+    const preRow = orders1.find((ord) => ord.orderNo === '576461413038710003')?.lines[0];
+    expect(lostRow).toMatchObject({ stage: 'shipped', lostParcel: true });
+    expect(okRow).toMatchObject({ stage: 'shipped', lostParcel: false });
+    expect(preRow).toMatchObject({ stage: 'cancelled', lostParcel: false });
+
+    // Lost parcel is never offered for return-to-stock and decide refuses it.
+    const worklist1 = await query<{ returns: Array<{ orderLineId: string }> }>(o, 'finance.marketplace.worklist', {}, o.member);
+    expect(worklist1.returns.map((r) => r.orderLineId)).not.toContain(lostRow!.id);
+    await expect(execute(o, 'finance.marketplace_return.decide', { orderLineId: lostRow!.id, decision: 'back' }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_NOT_OFFERED' });
+
+    // Database guards refuse cancelling a lost line or writing a return stock move while lost_parcel is true.
+    await expect(rows("UPDATE ludy_finance.channel_order_line SET stage = 'cancelled' WHERE org_id = $1 AND id = $2", [o.orgId, lostRow!.id])).rejects.toThrow(/CHANNEL_ORDER_STAGE/);
+    await expect(
+      rows(
+        "INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt) SELECT org_id, legal_entity_id, $3, '2026-11-21'::date, 1, 'order_line', id, 'return', attempt FROM ludy_finance.channel_order_line WHERE org_id = $1 AND id = $2",
+        [o.orgId, lostRow!.id, lostItem],
+      ),
+    ).rejects.toThrow(/STOCK_ORDER_STAGE/);
+
+    // A later report with Cancelled for the same order does not overwrite lost_parcel or restock.
+    const staleCsv = marketplaceOrdersCsv(
+      'tiktok_shop',
+      [{ orderNo: '576461413038710001', orderedAt: '2026-11-20', shippedAt: null, deliveredAt: null, stage: 'cancelled', lines: [{ lineKey: String(lostLine.id), sku: lostSku, itemName: 'Áo thun mẫu', quantity: '1', unitPrice: '180000', amount: '150000' }] }],
+      '0192a000-0000-7000-8000-000000000002',
+    );
+    const readStale = await read(o, new TextEncoder().encode(staleCsv), 'tiktok-stale.csv', 'text/csv');
+    expect(await confirm(o, readStale.fileId)).toMatchObject({ newLines: 0, updatedLines: 0, duplicateLines: 1, stockMoves: 0 });
+    expect(await onHand(o, lostItem)).toBe('-1');
+
+    // A later RETURN_AND_REFUND (goods back) from TikTok moves stage to returned and clears lost_parcel, allowing a person to decide goods_back.
+    const fake2 = fakeTiktok({
+      ...TT_KEY,
+      shops: [fakeTiktokShop()],
+      now: () => TT_NOW,
+      orders: [lostOrder],
+      returns: [fakeTiktokReturn({ order_id: lostOrder.id, update_time: sec + 50, return_line_items: [{ order_line_item_id: lostLine.id }] })],
+    });
+    const provider2 = tiktokMarketplace({ fetch: hostBoundFetch(TIKTOK_HOSTS, fake2.fetch), now: () => new Date(TT_NOW), sleep: async () => undefined });
+    const page2 = parseMarketplaceOrderPage(await provider2.listOrders(TT_SECRET, 'tiktok_shop', null));
+    const csv2 = marketplaceOrdersCsv('tiktok_shop', page2!.orders, '0192a000-0000-7000-8000-000000000003');
+    const read2 = await read(o, new TextEncoder().encode(csv2), 'tiktok-poll-2.csv', 'text/csv');
+    expect(await confirm(o, read2.fileId)).toMatchObject({ newLines: 0, updatedLines: 1, stockMoves: 0 });
+
+    const orders2 = await query<Array<{ orderNo: string; stage: string; lines: Array<{ id: string; stage: string; lostParcel: boolean }> }>>(o, 'finance.marketplace.orders', { platform: 'tiktok_shop' }, o.member);
+    expect(orders2.find((ord) => ord.orderNo === '576461413038710001')?.lines[0]).toMatchObject({ stage: 'returned', lostParcel: false });
+
+    const worklist2 = await query<{ returns: Array<{ orderLineId: string }> }>(o, 'finance.marketplace.worklist', {}, o.member);
+    expect(worklist2.returns.map((r) => r.orderLineId)).toContain(lostRow!.id);
+    await execute(o, 'finance.marketplace_return.decide', { orderLineId: lostRow!.id, decision: 'back' }, o.member);
+    expect(await onHand(o, lostItem)).toBe('0');
+
+    // Zero buyer/reason free text stored anywhere in orders, extractions, or audits.
+    const dump = await rows<{ t: string }>(
+      `SELECT (SELECT coalesce(jsonb_agg(to_jsonb(l)), '[]'::jsonb) FROM ludy_finance.channel_order_line l WHERE l.org_id = $1)::text || (SELECT coalesce(jsonb_agg(e.result), '[]'::jsonb) FROM ludy_kernel.extraction e WHERE e.org_id = $1)::text AS t`,
+      [o.orgId],
+    );
+    expect(dump[0]?.t).not.toContain('Nguyễn Văn Thử');
+    expect(dump[0]?.t).not.toContain('Không vừa');
+  });
+
+  it('flags Lazada lost/damaged/scrapped parcels across poll updates with zero duplicate ship move, zero restock, and clears on shipped_back_success', async () => {
+    const o = await org();
+    const skuA = 'LZ-SKU-1';
+    const skuB = 'LZ-SKU-2';
+    const itemA = await makeItem(o, skuA);
+    const itemB = await makeItem(o, skuB);
+
+    const LZ_KEY = { appKey: '123456', appSecret: 'helloworld', accessToken: '50000000001abcDEF' };
+    const LZ_SECRET = JSON.stringify(LZ_KEY);
+    const LZ_NOW = Date.parse('2026-11-10T03:00:00Z');
+    const LZ_CONN = '0192a000-0000-7000-8000-000000000009';
+
+    // Poll 1: order 1 starts shipping (not yet lost), order 2 arrives directly as package_scrapped, order 3 arrives as lost_by_3pl.
+    const fake1 = fakeLazada({
+      ...LZ_KEY,
+      orders: [
+        fakeLazadaOrder({ id: '9001', number: '9109000001', updatedAt: '2026-11-09T10:00:00+07:00' }, [{ id: '900101', sku: skuA, status: 'shipping' }]),
+        fakeLazadaOrder({ id: '9002', number: '9109000002', updatedAt: '2026-11-09T10:05:00+07:00' }, [{ id: '900201', sku: skuB, status: 'package_scrapped' }]),
+        fakeLazadaOrder({ id: '9003', number: '9109000003', updatedAt: '2026-11-09T10:06:00+07:00' }, [{ id: '900301', sku: skuB, status: 'lost_by_3pl' }]),
+      ],
+    });
+    const lp1 = parseMarketplaceOrderPage(await lazadaMarketplace({ fetch: hostBoundFetch(LAZADA_HOSTS, fake1.fetch), now: () => new Date(LZ_NOW), sleep: async () => undefined }).listOrders(LZ_SECRET, 'lazada', null));
+    const csv1 = marketplaceOrdersCsv('lazada', lp1!.orders, LZ_CONN);
+    const r1 = await read(o, new TextEncoder().encode(csv1), 'lazada-poll-1.csv', 'text/csv');
+    expect(await confirm(o, r1.fileId)).toMatchObject({ newLines: 3, stockMoves: 3 });
+    expect(await onHand(o, itemA)).toBe('-1');
+    expect(await onHand(o, itemB)).toBe('-2');
+
+    // Poll 2: order 1 updates from shipping to damaged_by_3pl (same stage `shipped`, now flagged lostParcel: true); bytes differ only via preamble row.
+    const fake2 = fakeLazada({
+      ...LZ_KEY,
+      orders: [fakeLazadaOrder({ id: '9001', number: '9109000001', updatedAt: '2026-11-09T12:00:00+07:00' }, [{ id: '900101', sku: skuA, status: 'damaged_by_3pl' }])],
+    });
+    const lp2 = parseMarketplaceOrderPage(await lazadaMarketplace({ fetch: hostBoundFetch(LAZADA_HOSTS, fake2.fetch), now: () => new Date(LZ_NOW), sleep: async () => undefined }).listOrders(LZ_SECRET, 'lazada', null));
+    const csv2 = marketplaceOrdersCsv('lazada', lp2!.orders, LZ_CONN);
+    const r2 = await read(o, new TextEncoder().encode(csv2), 'lazada-poll-2.csv', 'text/csv');
+    expect(await confirm(o, r2.fileId)).toMatchObject({ newLines: 0, updatedLines: 1, stockMoves: 0 });
+    expect(await onHand(o, itemA)).toBe('-1');
+
+    const listed = await query<Array<{ orderNo: string; lines: Array<{ id: string; stage: string; lostParcel: boolean }> }>>(o, 'finance.marketplace.orders', { platform: 'lazada' }, o.member);
+    expect(listed.find((x) => x.orderNo === '9109000001')?.lines[0]).toMatchObject({ stage: 'shipped', lostParcel: true });
+    expect(listed.find((x) => x.orderNo === '9109000002')?.lines[0]).toMatchObject({ stage: 'shipped', lostParcel: true });
+    expect(listed.find((x) => x.orderNo === '9109000003')?.lines[0]).toMatchObject({ stage: 'shipped', lostParcel: true });
+    expect(await moves(o, itemA)).toEqual([{ order_move: 'ship', quantity: '-1.000000' }]);
+
+    // Poll 3: order 2 returns via shipped_back_success (stage returned) and order 3 ends delivered (stage completed); both clear lost_parcel to false.
+    const fake3 = fakeLazada({
+      ...LZ_KEY,
+      orders: [
+        fakeLazadaOrder({ id: '9002', number: '9109000002', updatedAt: '2026-11-09T14:00:00+07:00' }, [{ id: '900201', sku: skuB, status: 'shipped_back_success' }]),
+        fakeLazadaOrder({ id: '9003', number: '9109000003', updatedAt: '2026-11-09T14:05:00+07:00' }, [{ id: '900301', sku: skuB, status: 'delivered' }]),
+      ],
+    });
+    const lp3 = parseMarketplaceOrderPage(await lazadaMarketplace({ fetch: hostBoundFetch(LAZADA_HOSTS, fake3.fetch), now: () => new Date(LZ_NOW), sleep: async () => undefined }).listOrders(LZ_SECRET, 'lazada', null));
+    const csv3 = marketplaceOrdersCsv('lazada', lp3!.orders, LZ_CONN);
+    const r3 = await read(o, new TextEncoder().encode(csv3), 'lazada-poll-3.csv', 'text/csv');
+    expect(await confirm(o, r3.fileId)).toMatchObject({ newLines: 0, updatedLines: 2, stockMoves: 0 });
+
+    const listedAfter = await query<Array<{ orderNo: string; lines: Array<{ id: string; stage: string; lostParcel: boolean }> }>>(o, 'finance.marketplace.orders', { platform: 'lazada' }, o.member);
+    expect(listedAfter.find((x) => x.orderNo === '9109000002')?.lines[0]).toMatchObject({ stage: 'returned', lostParcel: false });
+    expect(listedAfter.find((x) => x.orderNo === '9109000003')?.lines[0]).toMatchObject({ stage: 'completed', lostParcel: false });
+    expect(await onHand(o, itemB)).toBe('-2');
+
+    // Buyer details planted in fakeLazada never reach stored DB rows.
+    const stored = await rows<{ t: string }>(
+      `SELECT (SELECT coalesce(jsonb_agg(to_jsonb(l)), '[]'::jsonb) FROM ludy_finance.channel_order_line l WHERE l.org_id = $1)::text || (SELECT coalesce(jsonb_agg(c), '[]'::jsonb) FROM ludy_finance.channel_order c WHERE c.org_id = $1)::text AS t`,
+      [o.orgId],
+    );
+    expect(stored[0]?.t).not.toContain('Nguyễn Văn Thử');
+    expect(stored[0]?.t).not.toContain('0912345678');
   });
 });

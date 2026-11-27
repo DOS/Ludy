@@ -32,6 +32,8 @@ const DECIMAL = /^-?\d+(\.\d+)?$/;
 const dec = (value: unknown): string => String(value).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 
 // Every deal, quote and booking says `tainted: true`: its text is typed by people or visitors and reaches the client as data.
+// The page cursor of deals and quotes carries created_at to the microsecond (#5188).
+const MICRO_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 const DEAL_KEYS = ['amount', 'closedAt', 'createdAt', 'currency', 'expectedClose', 'followUp', 'id', 'lostReason', 'ownerUserId', 'partyId', 'partyName', 'stageId', 'stageKind', 'tainted', 'title', 'updatedAt', 'version'].sort();
 const QUOTE_KEYS = ['createdAt', 'dealId', 'dealTitle', 'expired', 'firstViewedAt', 'id', 'lineCount', 'number', 'partyId', 'partyName', 'revision', 'sentAt', 'sentVia', 'status', 'subtotal', 'tainted', 'total', 'updatedAt', 'validUntil', 'vatAmount', 'version'].sort();
 const QUOTE_FULL_KEYS = [...QUOTE_KEYS, 'buyer', 'lines', 'notes', 'terms'].sort();
@@ -381,10 +383,32 @@ suite('the CRM MCP reads (#3860)', () => {
       expect((await deals('owner', 'company', { partyId: party.b1 })).deals).toEqual([]);
     });
 
+    it('pages with no gap and no repeat when rows share a millisecond but not a microsecond (#5188)', async () => {
+      const stamps = ['.123400', '.123500', '.123600', '.123700'];
+      for (const [i, key] of ['d1', 'd2', 'd3', 'd4'].entries()) {
+        await sqlAdmin(`UPDATE ludy_crm.deal SET created_at = $3::timestamptz WHERE org_id = $1 AND id = $2`, [orgA, deal[key], `2026-01-01T00:00:00${stamps[i]}Z`]);
+      }
+      try {
+        const seen: (string | undefined)[] = [];
+        let cursor: { createdAt: string; id: string } | null = null;
+        for (let page = 0; page < 6; page += 1) {
+          const got: Deals = await deals('owner', 'company', cursor ? { limit: 1, cursor } : { limit: 1 });
+          seen.push(...dealKeys(got));
+          cursor = got.next;
+          if (cursor === null) break;
+        }
+        expect(seen).toEqual(['d4', 'd3', 'd2', 'd1']);
+      } finally {
+        for (const [i, key] of ['d1', 'd2', 'd3', 'd4'].entries()) {
+          await sqlAdmin(`UPDATE ludy_crm.deal SET created_at = now() - make_interval(hours => $3) WHERE org_id = $1 AND id = $2`, [orgA, deal[key], 10 - i]);
+        }
+      }
+    });
+
     it('pages with the `next` of the previous page, 25 by default, and refuses a limit above 50 or an unknown key', async () => {
       const first = await deals('owner', 'company', { limit: 2 });
       expect(dealKeys(first)).toEqual(['d4', 'd3']);
-      expect(first.next).toEqual({ createdAt: first.deals[1]?.createdAt, id: deal.d3 });
+      expect(first.next).toEqual({ createdAt: expect.stringMatching(MICRO_ISO), id: deal.d3 });
       const second = await deals('owner', 'company', { limit: 2, cursor: first.next });
       expect(dealKeys(second)).toEqual(['d2', 'd1']);
       expect(second.next).toBeNull();
@@ -508,10 +532,32 @@ suite('the CRM MCP reads (#3860)', () => {
       expect((await quotes('owner', 'company', { partyId: party.b1 })).quotes).toEqual([]);
     });
 
+    it('pages with no gap and no repeat when rows share a millisecond but not a microsecond (#5188)', async () => {
+      const stamps = ['.123400', '.123500', '.123600'];
+      for (const [i, key] of ['q1', 'q2', 'q3'].entries()) {
+        await sqlAdmin(`UPDATE ludy_crm.quote SET created_at = $3::timestamptz WHERE org_id = $1 AND id = $2`, [orgA, quote[key], `2026-01-01T00:00:00${stamps[i]}Z`]);
+      }
+      try {
+        const seen: (string | undefined)[] = [];
+        let cursor: { createdAt: string; id: string } | null = null;
+        for (let page = 0; page < 5; page += 1) {
+          const got: Quotes = await quotes('owner', 'company', cursor ? { limit: 1, cursor } : { limit: 1 });
+          seen.push(...quoteKeys(got));
+          cursor = got.next;
+          if (cursor === null) break;
+        }
+        expect(seen).toEqual(['q3', 'q2', 'q1']);
+      } finally {
+        for (const [i, key] of ['q1', 'q2', 'q3'].entries()) {
+          await sqlAdmin(`UPDATE ludy_crm.quote SET created_at = now() - make_interval(hours => $3) WHERE org_id = $1 AND id = $2`, [orgA, quote[key], 10 - i]);
+        }
+      }
+    });
+
     it('pages with the `next` of the previous page and refuses a limit above 50 or an unknown key', async () => {
       const first = await quotes('owner', 'company', { limit: 2 });
       expect(quoteKeys(first)).toEqual(['q3', 'q2']);
-      expect(first.next).toEqual({ createdAt: first.quotes[1]?.createdAt, id: quote.q2 });
+      expect(first.next).toEqual({ createdAt: expect.stringMatching(MICRO_ISO), id: quote.q2 });
       const second = await quotes('owner', 'company', { limit: 2, cursor: first.next });
       expect(quoteKeys(second)).toEqual(['q1']);
       expect(second.next).toBeNull();

@@ -455,13 +455,14 @@ export const zExtractedMarketplaceOrders = z.strictObject({
         // A staged read stored before this field existed has none: it reads as null.
         deliveredAt: zLocalDate.nullable().default(null),
         stage: z.enum(MARKETPLACE_ORDER_STAGES),
+        lostParcel: z.boolean().optional(),
         statusLabel: z.string().max(100).nullable(),
         sku: z.string().max(100).nullable(),
         itemName: z.string().max(200).nullable(),
         quantity: z.string().regex(/^\d{1,14}(\.\d{1,6})?$/, 'positive decimal string'),
         unitPrice: zMoney.nullable(),
         amount: zMoney.nullable(),
-      }),
+      }).refine((line) => line.lostParcel !== true || line.stage === 'shipped', 'lostParcel may only be set on shipped lines'),
     )
     .max(EXTRACT_LIMITS.maxOrderLines),
   skipped: z.array(z.strictObject({ rowNo: z.number().int().positive().max(1_048_576), reason: z.enum(MARKETPLACE_SKIP_REASONS) })).max(EXTRACT_LIMITS.maxOrderSkipped),

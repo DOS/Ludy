@@ -62,6 +62,11 @@ export const zHrAttendanceLogView = z.object({
   status: z.enum(HR_ATTENDANCE_STATUSES),
   note: z.string().nullable(),
   anomalies: z.array(z.enum(HR_ATTENDANCE_ANOMALY_KINDS)),
+  shiftTemplateCode: z.string().nullable().optional(),
+  shiftTemplateName: z.string().nullable().optional(),
+  lateMinutes: z.number().int().min(0).optional(),
+  earlyLeaveMinutes: z.number().int().min(0).optional(),
+  nightMinutes: z.number().int().min(0).optional(),
   updatedAt: z.string(),
 });
 export type HrAttendanceLogView = z.infer<typeof zHrAttendanceLogView>;
@@ -72,6 +77,9 @@ export const zHrAttendanceSummary = z.object({
   missingCheckoutDays: z.number().int().min(0),
   adjustedDays: z.number().int().min(0),
   totalWorkedMinutes: z.number().int().min(0),
+  totalLateMinutes: z.number().int().min(0).optional(),
+  totalEarlyLeaveMinutes: z.number().int().min(0).optional(),
+  totalNightMinutes: z.number().int().min(0).optional(),
 });
 export type HrAttendanceSummary = z.infer<typeof zHrAttendanceSummary>;
 

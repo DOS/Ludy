@@ -9,7 +9,7 @@
 // The sales pace counts what left through a posted sale or a shipped marketplace order, net of its reversals and returns, each dated by the move it undoes (a return by the shipment of
 // its line); counts, manual moves and purchases are not sales.
 import { sql } from 'kysely';
-import { zStockLowInput, zStockReorderAsk, zStockSuggestInput, STOCK_LEAD_DAYS_DEFAULT, STOCK_REORDER_ITEMS_MAX, type StockLowItem } from '@ludy/kernel-contract';
+import { zStockLowInput, zStockReorderAsk, zStockSuggestInput, STOCK_REORDER_ITEMS_MAX, type StockLowItem } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { money } from '@ludy/l10n-vn';
@@ -18,6 +18,7 @@ import { plainQuantity } from './domain/stock.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { oneLine } from './missing-invoices.ts';
 import { databaseToday } from './period-lock.ts';
+import { readStockLeadDays } from './stock-settings.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -78,7 +79,8 @@ async function suppliersOf(ctx: Ctx, itemIds: readonly string[]): Promise<Map<st
 
 /** The items running low (see the header), the shortest cover first, then by code; `legalEntityId` limits the read to one entity (the caller's row policies keep an entity they may not
  * see out of it either way). */
-export async function lowStockItems(ctx: Ctx, options: { legalEntityId?: string | undefined; leadDays: number; limit: number; suppliers?: boolean }): Promise<StockLowItem[]> {
+export async function lowStockItems(ctx: Ctx, options: { legalEntityId?: string | undefined; leadDays?: number | undefined; limit: number; suppliers?: boolean }): Promise<StockLowItem[]> {
+  const leadDays = options.leadDays ?? (await readStockLeadDays(ctx));
   const today = await databaseToday(ctx.trx);
   const entity = options.legalEntityId ?? null;
   const { rows } = await sql<PaceRow>`
@@ -121,7 +123,7 @@ export async function lowStockItems(ctx: Ctx, options: { legalEntityId?: string 
     ORDER BY i.code, i.id`.execute(ctx.trx);
   const low = rows
     .flatMap((row) => {
-      const figures = lowFigures({ onHand: row.on_hand, sold: row.sold, days: observedDays(today, row.first_move), leadDays: options.leadDays });
+      const figures = lowFigures({ onHand: row.on_hand, sold: row.sold, days: observedDays(today, row.first_move), leadDays });
       return figures === null ? [] : [{ row, figures }];
     })
     .sort((a, b) => a.figures.coverDays - b.figures.coverDays || a.row.code.localeCompare(b.row.code))
@@ -147,7 +149,7 @@ export const stockLow = defineQuery({
   input: zStockLowInput,
   access: ALL,
   handler: async (ctx, input): Promise<StockLowItem[]> =>
-    lowStockItems(ctx, { legalEntityId: input.legalEntityId, leadDays: input.leadDays ?? STOCK_LEAD_DAYS_DEFAULT, limit: input.limit ?? 50 }),
+    lowStockItems(ctx, { legalEntityId: input.legalEntityId, leadDays: input.leadDays, limit: input.limit ?? 50 }),
 });
 
 // What the model may see of the lines a person asked about, and of the items to choose among.

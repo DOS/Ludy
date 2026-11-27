@@ -52,16 +52,15 @@ The built manifest, and what each entry is for. These are the fixed list of `app
 
 | Where | Entry | Used for |
 |---|---|---|
-| `permissions` | `storage` | Keeps, in the extension's own storage, the Ludy address, one connected account per org (the extension token, the org's name for the address bar, when the token ends) and which features the member turned on (`src/state.ts`). Recordings in progress are kept on the device until uploaded (the recorder's chunk store, `@ludy/meeting-recorder`) |
-| `permissions` | `identity` | `chrome.identity.launchWebAuthFlow` only, now the fallback of the sign-in tab (#4662): opens the Ludy sign-in page in a browser window (for a self-hosted address, or when the tab cannot be opened) so the member signs in to Ludy and approves the extension for one org, without the extension ever seeing a password or the app's session (`src/popup.ts`, `src/auth.ts`) |
-| `host_permissions` | `https://app.ludy.vn/*` | Calls from the extension to the Ludy Cloud address: sign-in code exchange, the list of features, creating the meeting, the upload (`src/api.ts`) |
+| `permissions` | `storage` | Keeps, in the extension's own storage, the Ludy App and API origins, one connected account per org (the extension token, the org's name for the switcher, when the token ends) and which features the member turned on (`src/state.ts`). Recordings in progress are kept on the device until uploaded (the recorder's chunk store, `@ludy/meeting-recorder`) |
+| `permissions` | `identity` | `chrome.identity.launchWebAuthFlow` only, now the fallback of the sign-in tab (#4662): opens the Ludy sign-in page (`https://app.ludy.vn/-/extension/connect`) in a browser window when the tab cannot be opened, so the member signs in to Ludy and approves the extension for one org, without the extension ever seeing a password or the app's session (`src/popup.ts`, `src/auth.ts`) |
+| `host_permissions` | `https://api.ludy.vn/*` | Calls from the extension to the Ludy Cloud API origin: `/api/config`, sign-in code exchange, `/api/extension/me`, creating the meeting, quick notes/clips, and the upload (`src/api.ts`) |
 | `optional_permissions` | `tabCapture` | Records the audio of the tab where the member clicks "Bắt đầu ghi", after the consent step. Asked when the member turns on the meetings feature, and given back when they turn it off |
 | `optional_permissions` | `offscreen` | Opens the offscreen document in which the tab's audio and the microphone are mixed and recorded (a Manifest V3 service worker cannot hold a media stream). Asked together with `tabCapture` |
 | `optional_permissions` | `activeTab` | Asked when the member turns on Meetings (reads the active `https` tab origin and path when clicking "Start recording", before checking whether it is a recognized call, to detect duplicate captures, #4123, `src/popup.ts`, `src/messages.ts`) or turns on Web Clipper inside Notes (grants click-scoped access to the active `http`/`https` tab for "Clip & save this page" and "Capture into form", #3696, `src/page-capture.ts`). Released via `permissionsToRemove` (`src/features.ts`) only when both Meetings and Web Clipper are off |
 | `optional_permissions` | `scripting` | Asked only when the member explicitly turns on Web Clipper inside Notes (#3696), and released as soon as Web Clipper is turned off (even if Meetings stays on). Runs solely inside an explicit popup click of "Clip & save this page" or "Capture into form" via `chrome.scripting.executeScript` on an active `http` or `https` tab to extract its title, URL, and selected text or sanitized main content (`src/page-capture.ts`) |
-| `optional_host_permissions` | `https://*/*`, `http://localhost/*` | Asked at run time for **one origin only**: the address a self-hosting member types at setup (their company's Ludy), or `localhost` for the `docker compose up` stack on their own machine. Never granted by default and never used for any site the member browses (API calls only; page clipping runs on click via `activeTab` and `scripting`, with no background content scripts) |
 
-Not requested, by rule of plan section 5.7: `<all_urls>`, `tabs`, `cookies`, `history`, background content scripts, `externally_connectable`, remote code. (`activeTab` and `scripting` are strictly `optional_permissions`, gated by opt-in toggles and explicit popup clicks, and pinned in `apps/extension/src/manifest-policy.ts`.) One web accessible resource, `connected.html`, listed for `https://app.ludy.vn/*` and `http://localhost/*` only (#4662): it is the landing page of the sign-in tab, it is not a permission, and Chrome and Edge show no install or update warning for it; `manifestViolations` pins that exact entry.
+Not requested, by rule of plan section 5.7 and #5224 (2026-11-27 owner decision A1): `optional_host_permissions`, `<all_urls>`, `tabs`, `cookies`, `history`, background content scripts, `externally_connectable`, remote code. (`activeTab` and `scripting` are strictly `optional_permissions`, gated by opt-in toggles and explicit popup clicks, and pinned in `apps/extension/src/manifest-policy.ts`.) One web accessible resource, `connected.html`, listed for `https://app.ludy.vn/*` only (#4662, #5224): it is the landing page of the sign-in tab, it is not a permission, and Chrome and Edge show no install or update warning for it; `manifestViolations` pins that exact entry. Self-hosters build from source with `node apps/extension/scripts/build.mjs --origin <url>` (or `--app-origin` and `--api-origin`).
 
 ## Single-purpose statement
 
@@ -79,14 +78,13 @@ The tab asks for a justification of each permission, whether remote code is used
 
 | Permission | Justification |
 |---|---|
-| `storage` | Stores the member's Ludy address, their sign-in token for each workspace and which features they turned on, in the extension's own storage. Also holds a recording on the device until it has been uploaded, so a closed tab does not lose it. |
-| `identity` | Opens the Ludy sign-in page in a browser window (`launchWebAuthFlow`) when the sign-in tab cannot be used (a self-hosted address, or a browser that blocks the tab), so the member can sign in and approve the extension. The extension never sees the member's password. |
-| Host permission `https://app.ludy.vn/*` | The extension sends the member's recording, meeting details, and member-created notes or clipped pages to the member's Ludy workspace at this address, and gets the list of features the workspace allows. It contacts no other address. |
+| `storage` | Stores the Ludy Cloud origins, the member's sign-in token for each workspace and which features they turned on, in the extension's own storage. Also holds a recording on the device until it has been uploaded, so a closed tab does not lose it. |
+| `identity` | Opens the Ludy sign-in page in a browser window (`launchWebAuthFlow`) only when the sign-in tab cannot be opened, so the member can sign in and approve the extension. The extension never sees the member's password. |
+| Host permission `https://api.ludy.vn/*` | The extension sends the member's recording, meeting details, and member-created notes or clipped pages to the member's Ludy Cloud workspace via this API origin, exchanges the sign-in code, and gets the list of features the workspace allows. It contacts no other API address. |
 | `tabCapture` (optional) | Records the audio of the meeting tab where the member clicked "Start recording", after they confirmed the consent notice. It is requested only when the member turns meeting recording on, and released when they turn it off. It never records another tab and never starts by itself. |
 | `offscreen` (optional) | A Manifest V3 service worker cannot hold a media stream, so the recording and the mixing of the tab's audio with the microphone run in an offscreen document. Requested together with `tabCapture`. |
 | `activeTab` (optional) | Requested only when the member turns on meeting recording or Web Clipper inside Notes, and released when both are turned off (turning off Web Clipper while meeting recording stays on removes `scripting` and keeps `activeTab` until meeting recording is also turned off). Used solely on an explicit click in the popup: (1) when clicking "Start recording", to read the active https tab's origin and path (without query parameters or fragments) once before the server checks whether it matches a recognized call so duplicate captures can be blocked; and (2) when clicking "Clip & save this page" or "Capture into form" in Web Clipper, to grant click-scoped access to the active http or https tab. Never accesses tabs automatically or in the background. |
 | `scripting` (optional) | Requested only when the member explicitly turns on Web Clipper inside Notes, and released immediately when Web Clipper is turned off. Used solely on an explicit click of "Clip & save this page" or "Capture into form" in the popup (`chrome.scripting.executeScript` on the active http or https tab) to read the page title, URL, and selected text or main content into sanitized Markdown (either sending immediately on "Clip & save this page" or filling the local draft on "Capture into form" until the member clicks Save). Never injects content scripts in the background. |
-| Optional host permissions `https://*/*` and `http://localhost/*` | Only for companies that run Ludy on their own server: the member types their server's address and the browser asks for that single origin for API calls to that server. It is never requested for any site the member visits or browses. |
 
 ### Remote code
 
@@ -98,11 +96,11 @@ What the extension handles, from `src/api.ts`, `src/state.ts`, `src/auth.ts`, `s
 
 | Store category | Tick? | Why |
 |---|---|---|
-| Authentication information | Yes | The extension token, kept in the extension's storage and sent to the member's Ludy address with each request. Its scope is one workspace, one member and the turned-on features; it expires after 90 days and the member can revoke it in Ludy |
+| Authentication information | Yes | The extension token, kept in the extension's storage and sent to `https://api.ludy.vn` with each request. Its scope is one workspace, one member and the turned-on features; it expires after 90 days and the member can revoke it in Ludy |
 | Personal communications | Yes | The audio of a meeting the member chooses to record, with their microphone, and the video only when they tick "Ghi cả video"; with "Ghi chú trực tiếp" ticked, pieces of the audio are sent while recording and not only at the end. The member confirms that participants were told before anything is recorded |
-| Personally identifiable information | Yes | The meeting's name the member types, the title and time of the member's next calendar meetings (only when they turned calendar reading on in Ludy; shown in the popup, used to fill in the meeting title and not kept by the extension), and the voices (and, with video, the faces) of participants in the recording. The extension also sends a device name such as "Tiện ích Ludy, Chrome trên Windows" (browser and operating system, never an address or serial number) so the member can see and revoke the device in Ludy. It is also said in the popup's sign-in step, before the button (`signInDeviceNote` in `strings.ts`, #3273), so the disclosure is at the point of collection. Declared on the side of more disclosure (Meetings PO decision, 2026-11-11) |
+| Personally identifiable information | Yes | The meeting's name the member types, the title and time of the member's next calendar meetings (only when they turned calendar reading on in Ludy; shown in the popup, used to fill in the meeting title and not kept by the extension), and the voices (and, with video, the faces) of participants in the recording. The extension also sends a device name such as "Tiện ích Ludy, Chrome trên Windows" (browser and operating system, never an address or serial number) so the member can see and revoke the device in Ludy; the device name is disclosed on `https://app.ludy.vn/-/extension/connect` before the member approves the connection, as well as on the privacy page and in this runbook. Declared on the side of more disclosure (Meetings PO decision, 2026-11-11) |
 | Website content | Yes | Optional, click-triggered only. When the member turns on Web Clipper inside Notes and clicks in the popup on an active `http` or `https` page, "Clip & save this page" reads the page URL, title, and selected text (or sanitized main content in Markdown) and sends it immediately to Ludy Notes, while "Capture into form" reads the same content only into the local draft form in the popup until the member clicks Save (`src/page-capture.ts`; manual Quick Capture reads no page). Additionally, clicking "Start recording" with `activeTab` granted reads the active `https` tab origin and path (with query parameters and fragments removed) and sends it once to the server before it checks whether the URL matches a recognized call to detect duplicate captures; the server does not keep it (`src/messages.ts`). Never reads pages automatically or in the background |
-| Web history, location, financial and payment information, health information, user activity | No | Not independently collected or tracked: there is no analytics, telemetry, advertising identifier, or background tracking (`apps/extension/src` has no such code; every request goes only to the configured Ludy address). Note honestly that user-selected recordings or Web Clipper captures (`Personal communications` / `Website content` above) may contain financial, health, or location information if present in the meeting or page the member explicitly chooses to record or save to their own Ludy workspace |
+| Web history, location, financial and payment information, health information, user activity | No | Not independently collected or tracked: there is no analytics, telemetry, advertising identifier, or background tracking (`apps/extension/src` has no such code; every request goes only to `https://api.ludy.vn` or the member's chosen storage upload grant). Note honestly that user-selected recordings or Web Clipper captures (`Personal communications` / `Website content` above) may contain financial, health, or location information if present in the meeting or page the member explicitly chooses to record or save to their own Ludy workspace |
 
 ### The three certifications
 
@@ -139,7 +137,7 @@ The listing's short description comes from the package's manifest `description`,
 Ludy là hệ điều hành doanh nghiệp mã nguồn mở cho cá nhân và doanh nghiệp nhỏ tại Việt Nam. Tiện ích này ghi lại cuộc họp trên trình duyệt (Google Meet, và Teams hoặc Zoom bản web) vào tổ chức Ludy của bạn.
 
 Cách hoạt động
-- Kết nối với Ludy Cloud hoặc với máy chủ Ludy của công ty bạn, rồi đăng nhập và chọn tổ chức. Tiện ích không bao giờ thấy mật khẩu của bạn.
+- Đăng nhập qua Ludy Cloud (app.ludy.vn) và chọn tổ chức. Tiện ích không bao giờ thấy mật khẩu của bạn.
 - Bật "Ghi cuộc họp". Trình duyệt sẽ xin quyền ghi tab và micro, chỉ khi bạn bật tính năng này.
 - Trước khi ghi, bạn phải xác nhận đã thông báo cho tất cả người tham gia rằng cuộc họp được ghi âm. Không có xác nhận thì không bắt đầu được.
 - Khi ghi, biểu tượng hiện REC và đồng hồ chạy. Bản ghi được lưu trên máy bạn khi đang ghi, nên đóng tab nhầm không làm mất.
@@ -151,7 +149,7 @@ Cách hoạt động
 
 Quyền riêng tư
 - Tiện ích chỉ ghi tab bạn đang mở khi bấm "Bắt đầu ghi" và chỉ đọc trang web khi bạn chủ động bật Web Clipper rồi bấm nút cắt; không chạy nền trên các trang bạn duyệt, không có theo dõi hay quảng cáo.
-- Mọi yêu cầu chỉ đi đến địa chỉ Ludy bạn đã cấu hình.
+- Mọi yêu cầu mạng chỉ đi đến Ludy Cloud (api.ludy.vn).
 - Bạn có thể thu hồi tiện ích bất cứ lúc nào ở Cài đặt, mục thiết bị đã kết nối, trong Ludy.
 - Mã nguồn mở theo giấy phép AGPL-3.0.
 
@@ -164,7 +162,7 @@ Cần có tài khoản Ludy và tổ chức đã bật tính năng cuộc họp.
 Ludy is the open-source business OS for one-person companies and small businesses in Vietnam. This extension records a meeting that is open in your browser (Google Meet, and the web versions of Teams or Zoom) into your Ludy workspace.
 
 How it works
-- Connect to Ludy Cloud, or to your company's own Ludy server, sign in and pick your workspace. The extension never sees your password.
+- Sign in through Ludy Cloud (app.ludy.vn) and pick your workspace. The extension never sees your password.
 - Turn on "Record meetings". The browser asks for permission to record the tab and your microphone, and only when you turn this feature on.
 - Before recording, you must confirm that you told every participant the meeting is recorded. Without that confirmation it cannot start.
 - While recording, the icon shows REC and a timer runs. The recording is kept on your device as it goes, so closing the tab by mistake does not lose it.
@@ -176,7 +174,7 @@ How it works
 
 Privacy
 - The extension records only the tab you have open when you click "Start recording" and reads a web page only when you explicitly turn on Web Clipper and click Clip; no background content scripts run and it has no tracking or advertising.
-- Every request goes only to the Ludy address you configured.
+- Every network request goes only to Ludy Cloud (api.ludy.vn).
 - You can revoke the extension at any time in Ludy under Settings, connected devices.
 - Open source under the AGPL-3.0 licence.
 
@@ -278,12 +276,12 @@ The extension's e2e tests launch the browser Playwright installs as `chromium` (
 
 From general knowledge of the store, not checked here:
 
-- A first review usually takes from a day to a few days. An item that asks for powerful permissions (`tabCapture` and broad optional host permissions are the likely triggers) or a change that adds a permission can wait longer, up to a few weeks in a bad case. The store emails the developer account's address with the result.
+- A first review usually takes from a day to a few days. An item that asks for powerful permissions (`tabCapture`) or a change that adds a permission can wait longer, up to a few weeks in a bad case. The store emails the developer account's address with the result.
 - Plan a release with room: the plan's risk list says a store review adds days to any fix (plan section 13). The in-app recorder and the upload keep working without the extension, so a stuck review does not stop recording.
 - **If approved:** publish (if manual), then check the store page from a fresh Chrome profile and install it. Install it also in Edge from the same store page (Edge asks to allow extensions from another store). Sign in on a test server whose `EXTENSION_IDS` or default list holds the store id (gap 2): the connect page must accept it. Then close #2584's first acceptance item ("installable from the store") with that evidence.
 - **If rejected:** the email names a policy and often the permission or the text at fault. Do not resubmit unchanged. Read the cited policy page, then fix the smallest thing that answers it:
   - a permission justification too vague: rewrite it from "Permissions" above and resubmit with the same package;
-  - the optional host permission `https://*/*` objected to: **the planned response (Meetings PO decision, 2026-11-11) is a Cloud-only build**, not an open question. First reply on the dashboard with the justification (one origin, typed by the member, for self-hosting) and keep the first submission as it is. If the review still rejects it, release a store build whose manifest has `optional_host_permissions` of `http://localhost/*` only, or none, and serves Ludy Cloud only (`host_permissions` stays `https://app.ludy.vn/*`); self-hosters keep the unpacked build from the release zip and list its id in `EXTENSION_IDS`. That build changes `manifest-policy.ts` (its fixed list) and so needs the security review and a changed `check:manifest`; do it in a PR for that purpose, never by editing the manifest on the side. Do not widen or rename a permission to get past a review;
+  - host permissions questioned: the store build is already locked strictly to Ludy Cloud (`https://api.ludy.vn/*` for `host_permissions` and `https://app.ludy.vn/*` for `web_accessible_resources`, with zero `optional_host_permissions`, owner decision 2026-11-27 #1210 / #5224); self-hosters build from source with `node apps/extension/scripts/build.mjs --origin <url>` (or `--app-origin` / `--api-origin`); do not widen or rename a permission to get past a review;
   - the single purpose or the listing text misleading: align the texts with the manifest `description` (`_locales`);
   - the privacy policy page missing or not matching: fix the page, not only the form.
   Keep each rejection email (without the account address) on the issue. An appeal goes through the dashboard's support form, from the owner's account, only when the owner believes the rejection is wrong; say what the extension does and cite the manifest.

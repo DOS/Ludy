@@ -5,25 +5,34 @@
 //   meetings.minutes_link.create   (the recorder; R2, it hands a way in to people outside) refuses while the org setting is off, a meeting with no published minutes and a meeting that already has 10 live links.
 //   meetings.minutes_link.revoke   (the recorder, or an owner or admin) once, in the revoker's name; a second time is the same answer.
 //   meetings.minutes_link.list     (the recorder) the links of the meeting with their state and how often each was opened, never a token.
+//   meetings.minutes_link.org_list (owner or admin) all live links across the org; unreadable meetings return null title and canOpenMeeting=false under RLS.
 //   meetings.minutes_link.switch.get / .set   the org setting "Chia sẻ biên bản ra ngoài", off by default; every member reads it, an owner or admin changes it (a guard trigger holds every other writer).
 // The audit rows hold ids only. No AI part: a person decides what to share and with whom, and the core works with AI off.
 import { createHash, randomBytes } from 'node:crypto';
+import { sql } from 'kysely';
 import type { MemberRole } from '@ludy/db';
 import {
   MINUTES_LINKS_MAX,
   MINUTES_LINK_DAYS,
   MINUTES_PAGE_PATH,
+  ORG_MINUTES_LINKS_MAX,
   zMinutesLinkCreate,
   zMinutesLinkList,
   zMinutesLinkRevoke,
   zMinutesLinkSwitch,
   zMinutesLinkSwitchGet,
+  zOrgMinutesLinkList,
+  zOrgMinutesLinkListInput,
   type MinutesLinkCreated,
   type MinutesLinkItems,
   type MinutesLinkRevoked,
   type MinutesLinkSwitch,
+  type OrgMinutesLinkItem,
+  type OrgMinutesLinkList,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { dayText, vnDay } from './retention.ts';
+import { cleanName } from './speaker.ts';
 import { lockMeeting, openMeeting } from './transcript.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -189,5 +198,72 @@ export const meetingMinutesLinkList = defineQuery({
   },
 });
 
+export const meetingMinutesLinkOrgList = defineQuery({
+  name: 'meetings.minutes_link.org_list',
+  input: zOrgMinutesLinkListInput,
+  access: ['owner', 'admin'],
+  sensitive: true,
+  handler: async (ctx): Promise<OrgMinutesLinkList> => {
+    const userId = userOf(ctx.actor);
+    const member = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).executeTakeFirst();
+    if (member?.role !== 'owner' && member?.role !== 'admin') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được danh sách liên kết toàn tổ chức');
+    }
+    const today = vnDay(new Date());
+    // LEFT JOIN under ludy_tenant RLS hides unreadable attendees-only meetings (m.* becomes NULL) without any SECURITY DEFINER bypass.
+    const rows = await ctx.trx
+      .selectFrom('ludy_meetings.minutes_link as l')
+      .leftJoin('ludy_meetings.meeting as m', (join) => join.onRef('m.org_id', '=', 'l.org_id').onRef('m.id', '=', 'l.meeting_id'))
+      .select([
+        'l.id',
+        'l.meeting_id',
+        'l.created_by',
+        'l.created_at',
+        'l.expires_at',
+        'l.views',
+        'l.first_viewed_at',
+        'm.id as readable_meeting_id',
+        'm.title as meeting_title',
+        sql<string | null>`m.text_retention_date::text`.as('meeting_text_day'),
+      ])
+      .where('l.org_id', '=', ctx.orgId)
+      .where('l.revoked_at', 'is', null)
+      .where('l.expires_at', '>', sql<Date>`pg_catalog.now()`)
+      .orderBy('l.created_at', 'desc')
+      .orderBy('l.id', 'desc')
+      .limit(ORG_MINUTES_LINKS_MAX)
+      .execute();
+    const creatorIds = [...new Set(rows.map((r) => r.created_by))];
+    const names = new Map<string, string>();
+    if (creatorIds.length > 0) {
+      const { rows: profiles } = await sql<{ user_id: string; display_name: string | null }>`
+        SELECT user_id, display_name FROM ludy_kernel.member_profiles(${creatorIds}::uuid[])
+      `.execute(ctx.trx);
+      for (const p of profiles) {
+        const name = cleanName(p.display_name);
+        if (name !== '') names.set(p.user_id, name);
+      }
+    }
+    const items: OrgMinutesLinkItem[] = rows.map((r) => {
+      const readable =
+        r.readable_meeting_id !== null &&
+        r.meeting_title !== null &&
+        (r.meeting_text_day === null || dayText(r.meeting_text_day) > today);
+      return {
+        id: r.id,
+        meetingId: r.meeting_id,
+        meetingTitle: readable ? r.meeting_title : null,
+        canOpenMeeting: readable,
+        createdByName: names.get(r.created_by) ?? null,
+        createdAt: new Date(r.created_at).toISOString(),
+        expiresAt: new Date(r.expires_at).toISOString(),
+        views: r.views,
+        firstViewedAt: r.first_viewed_at === null ? null : new Date(r.first_viewed_at).toISOString(),
+      };
+    });
+    return zOrgMinutesLinkList.parse({ items });
+  },
+});
+
 export const minutesLinkCommands = [meetingMinutesLinkSwitchSet, meetingMinutesLinkCreate, meetingMinutesLinkRevoke];
-export const minutesLinkQueries = [meetingMinutesLinkSwitchGet, meetingMinutesLinkList];
+export const minutesLinkQueries = [meetingMinutesLinkSwitchGet, meetingMinutesLinkList, meetingMinutesLinkOrgList];

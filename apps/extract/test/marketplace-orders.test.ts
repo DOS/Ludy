@@ -172,3 +172,25 @@ describe('through the parser and the sandbox', () => {
     expect(zExtractResponse.parse(await response.json())).toMatchObject({ ok: false, code: 'too_large' });
   });
 });
+
+describe('lost-parcel preamble beside the report', () => {
+  it('reads lostParcel only on shipped rows named in the Ludy preamble and drops any flag on non-shipped stages', () => {
+    const csv = [
+      '"Ludy marketplace connection 0192a000-0000-7000-8000-00000000000a"',
+      '"Ludy marketplace lost parcel 1,3"',
+      '"Order ID","Order Status","Order Substatus","Seller SKU","Product Name","Quantity","SKU Unit Original Price","SKU Subtotal After Discount","Created Time","Shipped Time","Delivered Time"',
+      '"TT-LOST-1","In transit","In transit","SKU-LOST","Ao khoac","1","200000","200000","2026-11-20","2026-11-21",""',
+      '"TT-OK-2","In transit","In transit","SKU-OK","Ao thun","1","100000","100000","2026-11-20","2026-11-21",""',
+      '"TT-RET-3","Returned","Returned","SKU-RET","Quan bo","1","300000","300000","2026-11-20","2026-11-21","2026-11-25"',
+    ].join('\n');
+    const parsed = zExtractResponse.parse({ ok: true, kind: 'marketplace_orders', orders: readMarketplaceOrders(new TextEncoder().encode(csv)) });
+    expect(parsed).toMatchObject({ ok: true, kind: 'marketplace_orders' });
+    if (!parsed.ok || parsed.kind !== 'marketplace_orders') throw new Error('expected orders');
+    expect(parsed.orders.platform).toBe('tiktok_shop');
+    expect(parsed.orders.lines.map((l) => [l.orderNo, l.stage, l.lostParcel ?? false])).toEqual([
+      ['TT-LOST-1', 'shipped', true],
+      ['TT-OK-2', 'shipped', false],
+      ['TT-RET-3', 'returned', false],
+    ]);
+  });
+});

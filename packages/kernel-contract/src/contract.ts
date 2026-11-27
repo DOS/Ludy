@@ -1,5 +1,5 @@
 import { oc } from '@orpc/contract';
-import { zMinutesLinkCreate, zMinutesLinkCreated, zMinutesLinkItems, zMinutesLinkList, zMinutesLinkRevoke, zMinutesLinkRevoked, zMinutesLinkSwitch, zMinutesLinkSwitchGet } from './meeting-minutes-link.ts';
+import { zMinutesLinkCreate, zMinutesLinkCreated, zMinutesLinkItems, zMinutesLinkList, zMinutesLinkRevoke, zMinutesLinkRevoked, zMinutesLinkSwitch, zMinutesLinkSwitchGet, zOrgMinutesLinkList, zOrgMinutesLinkListInput } from './meeting-minutes-link.ts';
 import { z } from 'zod';
 import { zSpeakingStyle, zSpeakingStyleInput } from './meeting-speaking-style.ts';
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
@@ -215,7 +215,7 @@ import { zMarketplaceColumnsCheckAsk, zMarketplaceColumnsCheckQueued, zMarketpla
 import { zMarketplaceColumnProfile, zMarketplaceColumnProfileQuery, zMarketplaceColumnsConfirm, zMarketplaceColumnsConfirmed } from './marketplace-column-profile.ts';
 import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceFeeNotes, zMarketplaceFeeNotesAsk, zMarketplaceProposalNoteAsk, zMarketplaceProposalNote, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceReturnDecide, zMarketplaceReturnDecided, zMarketplaceFeeClearingRequest, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePayoutRequest, zMarketplacePreview, zMarketplaceSettlementRequest, zMarketplaceStaged, zMarketplaceSuggested, zMarketplaceSuggestInput, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
-import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseCheck, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggested, zStockSuggestInput, zStockSurplusNote, zStockSurplusNoteInput, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
+import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseCheck, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSetting, zStockSuggested, zStockSuggestInput, zStockSurplusNote, zStockSurplusNoteInput, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
 import { zBankSupplierMatch, zSupplierPayableLine, zSupplierPayableLineAsk, zSupplierPayableList, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentPrepare, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
 import { zEInvoiceNotice, zEInvoiceNoticeList, zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeStep } from './einvoice-notice.ts';
@@ -490,6 +490,32 @@ import {
   zHrOkrTreeAsk,
   zHrOkrTreeResult,
 } from './hr-okr.ts';
+import {
+  zHrSelfShiftSwapCancel,
+  zHrSelfShiftSwapSubmit,
+  zHrSelfShiftsList,
+  zHrSelfShiftsResult,
+  zHrShiftAssignmentDelete,
+  zHrShiftAssignmentDeleteResult,
+  zHrShiftAssignmentUpsert,
+  zHrShiftAssignmentView,
+  zHrShiftCoverageAsk,
+  zHrShiftCoverageBrief,
+  zHrShiftRosterGet,
+  zHrShiftRosterResult,
+  zHrShiftSwapDecide,
+  zHrShiftSwapList,
+  zHrShiftSwapListResult,
+  zHrShiftSwapView,
+  zHrShiftTemplateArchive,
+  zHrShiftTemplateCreate,
+  zHrShiftTemplateList,
+  zHrShiftTemplateListResult,
+  zHrShiftTemplateSeedDefaults,
+  zHrShiftTemplateSeedResult,
+  zHrShiftTemplateUpdate,
+  zHrShiftTemplateView,
+} from './hr-shifts.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
   zHrCandidateAdd,
@@ -1619,6 +1645,35 @@ export const contract = {
       assets: {
         list: oc.input(z.strictObject({})).output(z.array(zHrSelfAssetView)),
       },
+      shifts: {
+        list: oc.input(zHrSelfShiftsList).output(zHrSelfShiftsResult),
+        swapSubmit: oc.input(zHrSelfShiftSwapSubmit).output(zHrShiftSwapView),
+        swapCancel: oc.input(zHrSelfShiftSwapCancel).output(zHrShiftSwapView),
+      },
+    },
+    shifts: {
+      templates: {
+        list: oc.input(zHrShiftTemplateList).output(zHrShiftTemplateListResult),
+        create: oc.input(zHrShiftTemplateCreate).output(zHrShiftTemplateView),
+        update: oc.input(zHrShiftTemplateUpdate).output(zHrShiftTemplateView),
+        archive: oc.input(zHrShiftTemplateArchive).output(zHrShiftTemplateView),
+        seedDefaults: oc.input(zHrShiftTemplateSeedDefaults).output(zHrShiftTemplateSeedResult),
+      },
+      roster: {
+        get: oc.input(zHrShiftRosterGet).output(zHrShiftRosterResult),
+      },
+      assignments: {
+        upsert: oc.input(zHrShiftAssignmentUpsert).output(zHrShiftAssignmentView),
+        delete: oc.input(zHrShiftAssignmentDelete).output(zHrShiftAssignmentDeleteResult),
+      },
+      swaps: {
+        list: oc.input(zHrShiftSwapList).output(zHrShiftSwapListResult),
+        approve: oc.input(zHrShiftSwapDecide).output(zHrShiftSwapView),
+        reject: oc.input(zHrShiftSwapDecide).output(zHrShiftSwapView),
+      },
+      coverage: {
+        suggest: oc.input(zHrShiftCoverageAsk).output(zHrShiftCoverageBrief),
+      },
     },
     attendance: {
       list: oc.input(zHrAttendanceList).output(zHrAttendanceListResult),
@@ -2002,6 +2057,7 @@ export const contract = {
       create: oc.input(zMinutesLinkCreate).output(zMinutesLinkCreated),
       revoke: oc.input(zMinutesLinkRevoke).output(zMinutesLinkRevoked),
       list: oc.input(zMinutesLinkList).output(zMinutesLinkItems),
+      orgList: oc.input(zOrgMinutesLinkListInput).output(zOrgMinutesLinkList),
     },
     // A member's own webhook for the minutes they publish (A6, #3164): the card reads `get`, `set` makes or changes it (the secret comes back once, when it is made), `rotateSecret`, `clear` and
     // `test` (a `ping` with no meeting data). The owner's `switch` (off by default) gates all of it; nothing is sent while it is off.
@@ -3582,10 +3638,15 @@ export const contract = {
     closeCheck: oc.input(zStockCloseRequest).output(zStockCloseCheck),
     // The finance coworker on stock (#2514), all read-only. suggest: the item each unassigned line is most likely about (the model sees the line's description and unit and the
     // entity's item codes, names and units, nothing else; a person still assigns, which teaches the name); ai says why there is none. low: the items whose stock will not last the lead
-    // days at the pace of the last eight weeks, with the supplier they were last bought from. reorderDraft: the message to that supplier (the model's, or the fixed template when there is
+    // days at the pace of the last eight weeks (from the org's setting unless leadDays is given), with the supplier they were last bought from. reorderDraft: the message to that supplier (the model's, or the fixed template when there is
     // none), to copy or send from the person's own mail. STOCK_ITEM_NOT_FOUND and PARTY_NOT_FOUND (404), STOCK_ITEM_ENTITY_MISMATCH and STOCK_ITEM_INACTIVE (422/409).
     suggest: oc.input(zStockSuggestInput).output(zStockSuggested),
     low: oc.input(zStockLowInput.optional()).output(z.array(zStockLowItem)),
+    // How many days a supplier takes to deliver (#2685): every role reads (14 until the org sets another), owners and admins set (R1, audited).
+    settings: {
+      get: oc.output(zStockSetting),
+      set: oc.input(zStockSetting).output(zStockSetting),
+    },
     reorderDraft: oc.input(zStockReorderAsk).output(zStockReorderDraft),
     // Counts of stock (#2513 part b), newest first (every role reads). create makes a draft with what was counted (owners, admins, members; STOCK_COUNT_FUTURE (422), STOCK_COUNT_CLOSED,
     // STOCK_COUNT_DUPLICATE_ITEM, STOCK_COUNT_ITEM_INACTIVE (409), STOCK_ITEM_NOT_FOUND (404), STOCK_COUNT_ITEM_ENTITY (422)); cancel drops a draft; confirmEmpty confirms a count that differs from the

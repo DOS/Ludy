@@ -30,9 +30,24 @@ export function stripInvisibleFormat(text: string): string {
   return stripStealthControls(text).replace(EXTRA_INVISIBLE_FORMAT_GLOBAL_RE, '');
 }
 
-/** Strips stealth, invisible, format, filler, private-use, unassigned, and surrogate chars, collapses whitespace to one line, and bounds by code point. */
+// Variation selectors (U+FE00 to U+FE0F, U+E0100 to U+E01EF) carry hidden bytes after a visible character ("emoji smuggling", #4099). The same rule as `@ludy/kernel-contract`'s
+// `plainLine` (packages/kernel-contract/src/plain-line.ts): this package takes no dependency on the contract, so the rule is mirrored here. Keep the two in step.
+const SELECTOR_RE = /[\ufe00-\ufe0f\u{e0100}-\u{e01ef}]/u;
+const SELECTOR_RUN_RE = /([^\ufe00-\ufe0f\u{e0100}-\u{e01ef}]?)([\ufe00-\ufe0f\u{e0100}-\u{e01ef}]+)/gsu;
+const EMOJI_FORM_RE = /^\p{Extended_Pictographic}$/u;
+// Drops every variation selector but one U+FE0E or U+FE0F straight after a character with an emoji form (that emoji's own presentation).
+function dropVariationSelectors(value: string): string {
+  if (!SELECTOR_RE.test(value)) return value;
+  return value.replace(SELECTOR_RUN_RE, (_all, base: string, run: string) => {
+    const first = run.codePointAt(0);
+    const keep = base !== '' && EMOJI_FORM_RE.test(base) && (first === 0xfe0e || first === 0xfe0f) ? run.slice(0, 1) : '';
+    return base + keep;
+  });
+}
+
+/** Strips stealth, invisible, format, filler, private-use, unassigned, surrogate and variation-selector chars, collapses whitespace to one line, and bounds by code point. */
 export function plainLine(value: string, max: number): string {
-  const cleaned = stripInvisibleFormat(value)
+  const cleaned = dropVariationSelectors(stripInvisibleFormat(value))
     .replace(/[\p{Cc}\p{Zl}\p{Zp}\s]+/gu, ' ')
     .trim();
   return Array.from(cleaned).slice(0, max).join('').trim();

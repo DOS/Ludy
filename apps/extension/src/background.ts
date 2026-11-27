@@ -49,7 +49,7 @@ async function markLost(lost: LostState): Promise<void> {
     loadState(chrome.storage.local),
   ]);
   const existing = storedRec[RECORDING_KEY] as RecordingState | undefined;
-  const address = existing?.address ?? state.address;
+  const address = existing?.address ?? state.apiAddress;
   const scopedLost: LostState =
     existing && existing.meetingId === lost.meetingId
       ? {
@@ -131,7 +131,7 @@ async function start(request: StartRequest): Promise<StartReply> {
   const account = activeAccount(state);
   if (!account || state.enabled.meetings !== true) return { ok: false, reason: 'signedOut' };
   if (!(await chrome.permissions.contains({ permissions: ['tabCapture', 'offscreen'] }))) return { ok: false, reason: 'permission' };
-  const client = createClient(state.address, account.token);
+  const client = createClient(state.apiAddress, account.token);
   const [{ uploads }, me] = await Promise.all([
     client.config({ signal: AbortSignal.timeout(START_NETWORK_TIMEOUT_MS) }).catch(() => ({ uploads: 'direct' as const })),
     client.me({ signal: AbortSignal.timeout(START_NETWORK_TIMEOUT_MS) }).catch(() => null),
@@ -152,7 +152,7 @@ async function start(request: StartRequest): Promise<StartReply> {
   const message: CaptureStart = {
     target: 'offscreen',
     type: 'capture-start',
-    address: state.address,
+    address: state.apiAddress,
     token: account.token,
     orgId: account.orgId,
     uploads,
@@ -172,7 +172,7 @@ async function start(request: StartRequest): Promise<StartReply> {
   await chrome.storage.local.remove(LOST_KEY);
   const scope: RecordingScope = {
     orgId: account.orgId,
-    address: state.address,
+    address: state.apiAddress,
     tokenId: me.tokenId,
   };
   const recording: RecordingState = {

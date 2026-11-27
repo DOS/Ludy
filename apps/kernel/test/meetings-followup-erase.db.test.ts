@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { MORNING_MAIL_SOURCE, SUMMARY_READY_MAIL_SOURCE, type FollowupDraft, type PersonalDataErasure, type PersonalDataResult } from '@ludy/kernel-contract';
+import { MORNING_MAIL_SOURCE, SUMMARY_READY_MAIL_SOURCE, type FollowupDraft, type PersonalDataErasure, type PersonalDataResult, type TranslationSource } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -811,6 +811,68 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         expect((await mail(erasedDraft))[0]?.payload).toMatchObject({ style: 'personal_note' });
         await erase(PERSONAL_NOTE_MENTION);
         expect((await mail(erasedDraft))[0]).toMatchObject({ payload: null, subject: null, status: 'queued' });
+      });
+
+      it('drops queued bilingual follow-up mail payload and subject on meeting delete and personal_data.erase (#5225)', async () => {
+        const seedBilingualSent = async (recorder: string, viSummary: string, enSummary: string) => {
+          const meetingId = randomUUID();
+          await sqlAdmin(
+            `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+             VALUES ($1, $2, 'Họp song ngữ xóa', 'vi', now(), now() + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
+            [orgId, meetingId, users[recorder]],
+          );
+          await exec(recorder, 'meetings.summary.save', { meetingId, summary: viSummary, decisions: [] });
+          await exec(recorder, 'meetings.result.publish', { meetingId, confirmed: true });
+          const src = await query<TranslationSource>(recorder, 'meetings.translation.source', { meetingId, stage: 'published', to: 'en' });
+          await exec(recorder, 'meetings.minutes_version.publish', {
+            meetingId,
+            language: 'en',
+            hash: src.hash,
+            segments: [{ key: 'summary', text: enSummary }],
+          });
+          const enDraft = await query<FollowupDraft>(recorder, 'meetings.followup.draft', { meetingId, versionLanguage: 'en' });
+          await exec(
+            recorder,
+            'meetings.followup.send',
+            {
+              meetingId,
+              stage: 'published',
+              versionLanguage: 'en',
+              factsKey: enDraft.factsKey,
+              subject: enDraft.words.subject,
+              greeting: enDraft.words.greeting,
+              lead: enDraft.words.lead,
+              closing: enDraft.words.closing,
+              recipients: ['attendee@erase.test'],
+              confirmedOutsiders: ['attendee@erase.test'],
+              confirmRepeat: false,
+              fromVy: false,
+              reviewed: false,
+            },
+            randomUUID(),
+          );
+          return meetingId;
+        };
+
+        const deletedBilingual = await seedBilingualSent('recorder', 'Chốt báo giá.', 'Quote agreed.');
+        expect((await mail(deletedBilingual))[0]?.payload).toMatchObject({ lang: 'en' });
+        await exec('recorder', 'meetings.meeting.delete', { meetingId: deletedBilingual });
+        expect((await mail(deletedBilingual))[0]).toMatchObject({ payload: null, subject: null, status: 'queued' });
+
+        const BILINGUAL_MENTION = 'khach.song.ngu@erase.test';
+        const erasedBilingual = await seedBilingualSent(
+          'owner',
+          `Chốt báo giá cho ${BILINGUAL_MENTION}.`,
+          `Quote agreed for ${BILINGUAL_MENTION}.`,
+        );
+        expect((await mail(erasedBilingual))[0]?.payload).toMatchObject({ lang: 'en' });
+        await erase(BILINGUAL_MENTION);
+        const remainingVersions = await sqlAdmin<{ id: string }>(
+          'SELECT id FROM ludy_meetings.minutes_version WHERE org_id = $1 AND meeting_id = $2',
+          [orgId, erasedBilingual],
+        );
+        expect(remainingVersions.rows).toEqual([]);
+        expect((await mail(erasedBilingual))[0]).toMatchObject({ payload: null, subject: null, status: 'queued' });
       });
     });
   });

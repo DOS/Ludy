@@ -124,10 +124,12 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  // #5216 (HR Stage 7A): SME shift templates, weekly roster assignments, and 1-step shift swap requests (step 0).
-  'crove_hr.shift_assignment',
-  'crove_hr.shift_swap_request',
-  'crove_hr.shift_template',
+  // #4993 (CRM SG1): per-member seen marks on contact attention items (step 0).
+  'crove_crm.party_attention_seen',
+  // #4988 (TC1): org-scoped tax-code lookup cache with 24h hit / 1h not-found TTL (step 0).
+  'crove_kernel.tax_lookup_cache',
+  // #4991 (PM1 step 0): per-member pre-meeting facts drafts scoped to a user + contact.
+  'crove_meetings.meeting_brief_draft',
   // #5073 / #5080 (ADR-0049 #5108): short-lived 36h prep lines for opted-in members, strict user + member_briefing RLS.
   'crove_meetings.morning_brief_lines',
 ]);
@@ -176,6 +178,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
       `NOT EXISTS (SELECT 1 FROM crove_kernel.agent a WHERE a.org_id OPERATOR(pg_catalog.=) t.org_id AND a.id OPERATOR(pg_catalog.=) t.agent_id AND a.kind OPERATOR(pg_catalog.=) 'member_vy' AND a.member_user_id OPERATOR(pg_catalog.<>) '${m}'::uuid)`,
   ],
   // The tables below are not in the catalog and are keyed to a user (ctx_user_id), which member mode does not have: it reads none of their rows.
+  ['crove_crm.party_attention_seen', () => 'false'], // A member's own attention acknowledgements (#4993); read in user context alone, an agent context reads none.
   ['crove_hr.attendance_log', () => 'false'], // HR is for owners and admins or linked self employees in a user context (ADR-0046); an agent context reads none.
   ['crove_hr.attendance_qr_config', () => 'false'], // HR, as above.
   ['crove_hr.business_trip_request', () => 'false'], // HR, as above.
@@ -236,6 +239,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.live_chunk', () => 'false'], // The recorder's own live pieces, read by the recorder, a user (ADR-0052 L4a, #3109).
   ['crove_meetings.live_line', () => 'false'], // The live preview of a recording, read by the recorder, a user (ADR-0052 L4a, #3110).
   ['crove_meetings.meeting', () => 'false'], // As above.
+  ['crove_meetings.meeting_brief_draft', () => 'false'], // A member's own pre-meeting facts draft for an event (#4991): read by that member alone in a user context; an agent context reads none.
   ['crove_meetings.meeting_chapter', () => 'false'], // The chapters of a meeting, read by the recorder and, once published, the readers of the meeting, users (meetings chapters, #3844).
   ['crove_meetings.meeting_highlight', () => 'false'], // The highlights of a meeting, read by its readers and recorder, users (meetings highlights, #4819).
   ['crove_meetings.meeting_label', () => 'false'], // The labels the recorder puts on a meeting, read by the recorder and the readers of the meeting, users (meeting labels, #4955); an agent context reads none.
@@ -317,6 +321,8 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
   ['crove_notes.note', ['update']],
 ]);
 const AUTHOR_ONLY = new Map<string, string>([
+  // Per-member seen marks on contact attention items (#4993): user context only; the system context sees and changes none of it.
+  ['crove_crm.party_attention_seen', 'false'],
   // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
   // Departments and lightweight recruiting (#3403), Stage 5C attendance (#4447), Stage 6 HR (#4527, #4528, #4529), and Stage 7A shifts (#5216): user-context only; system and agent contexts read and write none.
   ['crove_hr.attendance_log', 'false'],
@@ -372,6 +378,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.live_line', 'false'],
   // Meeting records (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting', 'false'],
+  // Per-member pre-meeting facts draft (#4991): read and written by that member alone in a user context; worker system context reads and writes nothing.
+  ['crove_meetings.meeting_brief_draft', 'false'],
   // The chapters of a meeting (meetings chapters, #3844): the recorder reads every stage and the readers the published ones, users; worker system context reads and writes nothing.
   ['crove_meetings.meeting_chapter', 'false'],
   // The highlights of a meeting (meetings highlights, #4819): read by the readers and the recorder, written by them, users only; worker system context reads and writes nothing.
@@ -716,6 +724,8 @@ const socialShortLinkRows = (o: { id: string; owner: string }) => {
 let portalListYear = 2000;
 // A tax obligation is marked done once per period (#921): each row its own year.
 let taxObligationYear = 2000;
+// A cached tax-code lookup is unique per org (#4988): each factory row takes a distinct 10-digit tax code.
+let taxLookupCodeSeq = 1;
 // A legal entity's books take a regime from the first day of a fiscal year (#1403): each row its own year.
 let legalEntityBooksYear = 2000;
 // Active bookings of one member never overlap (#1313): each calendar event row its own hour.
@@ -1345,6 +1355,21 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, id: randomUUID(), batch_id: batch, row_no: importRowNo++, name: 'RLS matrix import row', outcome: 'new' },
       };
     },
+  },
+  // Per-member seen mark for a contact attention item (#4993): user context alone for owner/admin/member, column update on seen_event_at/seen_at, no delete.
+  'crove_crm.party_attention_seen': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        user_id: o.owner,
+        party_id: o.party,
+        kind: 'quote_viewed',
+        target_id: randomUUID(),
+        seen_event_at: '2026-10-01T00:00:00Z',
+      },
+    }),
+    update: { set: 'seen_event_at = seen_event_at' },
   },
   // A stage of the CRM pipeline (#2225): open stages only here, since an org has one won and one lost stage at most.
   'crove_crm.pipeline_stage': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } }) },
@@ -3510,6 +3535,20 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // Cached tax-code lookup entry per org (#4988), storing hit/not-found expiry and never household records.
+  'crove_kernel.tax_lookup_cache': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        tax_code: String(100_000_000 + taxLookupCodeSeq++).padStart(10, '0'),
+        found: 'true',
+        name: 'RLS matrix company',
+        address: 'RLS matrix address',
+        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      },
+    }),
+  },
   // A tax obligation of the org's calendar marked done for a period (#921), one per obligation and period.
   'crove_kernel.tax_obligation_done': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), obligation: 'license_fee', period: String(taxObligationYear++), done_by: o.owner } }),
@@ -3753,6 +3792,22 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => ({
       setup: [{ table: 'crove_meetings.meeting', values: meetingsMeetingRow(o, 'org') }],
       row: meetingsMeetingRow(o, 'attendees'),
+    }),
+  },
+  // #4991 (PM1 step 0): a member's own pre-meeting facts draft for an agenda event, booking, or meeting, bound to a contact.
+  // Read, inserted, updated, and deleted by that member alone in a user context; worker system context and agent contexts read and write none.
+  'crove_meetings.meeting_brief_draft': {
+    update: { set: 'body = body' },
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        user_id: o.owner,
+        target_kind: 'agenda',
+        target_id: randomUUID(),
+        party_id: o.party,
+        body: 'RLS matrix meeting brief draft',
+      },
     }),
   },
   // #3844 (meetings chapters): one chapter of a meeting's table of contents, a title and the second of the transcript line it starts at; a draft (born tainted when it comes from a run of the recorder's

@@ -17,6 +17,7 @@ import {
   SocialWriter,
   TodayWriter,
   WeeklyWriter,
+  suggestShiftCoverage,
   toParsed,
   type AiConfig,
 } from '../src/index.ts';
@@ -388,6 +389,30 @@ function createStubRuntime() {
       output: { draft: 'Trong quý 2026-Q4, P1 đã đạt 3/4 công việc (75%) cho dự án Vận hành Q4.' },
       usage: zeroUsage,
     }),
+    shiftCoverageSuggest: async ({ prompt }) => {
+      const parsed = JSON.parse(prompt) as {
+        conflicts?: Array<{ alias: string; workDate: string; shiftCode: string }>;
+        gaps?: Array<{ workDate: string; candidateAliases?: Array<{ alias: string }> }>;
+      };
+      const targetAlias = parsed.conflicts?.[0]?.alias ?? 'E1';
+      const workDate = parsed.conflicts?.[0]?.workDate ?? '2026-10-06';
+      const candAlias = parsed.gaps?.[0]?.candidateAliases?.[0]?.alias ?? 'E2';
+      return {
+        output: {
+          summary: `Tuần này ghi nhận 1 xung đột ca cần bố trí người thay cho ${targetAlias}.`,
+          highlights: [`${targetAlias} trùng lịch ngày ${workDate}.`],
+          suggestions: [
+            {
+              workDate,
+              targetAlias,
+              candidateAlias: candAlias,
+              note: `Đề xuất ${candAlias} hỗ trợ ca ${parsed.conflicts?.[0]?.shiftCode ?? 'CA_SANG'} ngày ${workDate}.`,
+            },
+          ],
+        },
+        usage: zeroUsage,
+      };
+    },
   });
 
   return createCoworkerEvalRuntime(STUB_CONFIG, {
@@ -631,5 +656,104 @@ describe('coworker eval suite and per-feature reporter (#3977)', () => {
         ],
       }),
     ).toBe(true);
+  });
+
+  it('refuses shift coverage model outputs that claim auto-approval or already-assigned changes (#5216)', async () => {
+    const baseInput = {
+      weekStart: '2027-04-05',
+      weekEnd: '2027-04-11',
+      language: 'vi' as const,
+      conflicts: [
+        {
+          assignmentId: '00000000-0000-7000-8000-000000000001',
+          employeeId: '00000000-0000-7000-8000-000000000011',
+          employeeName: 'Nguyen Van An',
+          departmentId: null,
+          departmentName: null,
+          shiftTemplateId: '00000000-0000-7000-8000-000000000021',
+          shiftCode: 'CA_SANG',
+          shiftName: 'Ca sang',
+          workDate: '2027-04-06',
+          kind: 'approved_leave' as const,
+          detail: 'Nghi phep da duyet',
+        },
+      ],
+      gaps: [
+        {
+          date: '2027-04-06',
+          departmentId: null,
+          departmentName: null,
+          shiftCode: 'CA_SANG',
+          shiftName: 'Ca sang',
+          reason: 'Thieu nguoi truc ca sang',
+          candidates: [
+            {
+              employeeId: '00000000-0000-7000-8000-000000000012',
+              employeeName: 'Tran Thi Binh',
+              departmentId: null,
+              departmentName: null,
+              weeklyShiftCount: 1,
+              hasAdjacentRestGap: false,
+            },
+          ],
+        },
+      ],
+      eligibleCandidates: [
+        {
+          employeeId: '00000000-0000-7000-8000-000000000012',
+          employeeName: 'Tran Thi Binh',
+          departmentId: null,
+          departmentName: null,
+          weeklyShiftCount: 1,
+          hasAdjacentRestGap: false,
+        },
+      ],
+    };
+
+    for (const forbiddenClaim of [
+      'Ly đã gán E2 vào ca ngày 2027-04-06.',
+      'Yêu cầu đổi ca đã duyệt cho E2.',
+      'Hệ thống đã đổi ca cho E1 sang E2.',
+      'Already assigned E2 to cover 2027-04-06.',
+      'Swap auto-approved for E2 on 2027-04-06.',
+    ]) {
+      const res = await suggestShiftCoverage(baseInput, {
+        generate: async ({ prompt }) => {
+          const parsed = JSON.parse(prompt) as {
+            conflicts: Array<{ alias: string }>;
+            gaps: Array<{ candidateAliases: Array<{ alias: string }> }>;
+          };
+          const e1 = parsed.conflicts[0]!.alias;
+          const e2 = parsed.gaps[0]!.candidateAliases[0]!.alias;
+          return {
+            output: {
+              summary: forbiddenClaim.replace(/E1/g, e1).replace(/E2/g, e2),
+              highlights: [],
+              suggestions: [],
+            },
+          };
+        },
+      });
+      expect(res.ai, forbiddenClaim).toEqual({ ok: false, reason: 'refused' });
+    }
+
+    const okRes = await suggestShiftCoverage(baseInput, {
+      generate: async ({ prompt }) => {
+        const parsed = JSON.parse(prompt) as {
+          conflicts: Array<{ alias: string; workDate: string }>;
+          gaps: Array<{ candidateAliases: Array<{ alias: string }> }>;
+        };
+        const e1 = parsed.conflicts[0]!.alias;
+        const e2 = parsed.gaps[0]!.candidateAliases[0]!.alias;
+        return {
+          output: {
+            summary: `${e1} có nghỉ phép đã duyệt ngày ${parsed.conflicts[0]!.workDate}, gợi ý ${e2} thay thế.`,
+            highlights: [],
+            suggestions: [],
+          },
+        };
+      },
+    });
+    expect(okRes.ai).toEqual({ ok: true, reason: 'ok' });
   });
 });

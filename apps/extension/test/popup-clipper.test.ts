@@ -273,7 +273,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         ? {}
         : {
             'ludy-extension-state': {
-              address: 'https://ludy.example',
+              address: 'https://api.ludy.vn',
               accounts: {
                 org1: {
                   orgId: 'org1',
@@ -488,7 +488,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
     await waitForUi(() => {
       if (opts.signedOut || opts.expireMe) {
         expect(
-          findButtonsByText(root, VIETNAMESE.signIn).length + findButtonsByText(root, VIETNAMESE.save).length,
+          findButtonsByText(root, VIETNAMESE.signIn).length,
         ).toBeGreaterThan(0);
       } else if (opts.rejectMe) {
         expect(findAlerts(root).map((a) => a.textContentValue())).toContain(VIETNAMESE.loadFailed);
@@ -644,7 +644,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         keepVideo: false,
         micMissing: false,
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         tokenId: 'tok-1',
       },
     });
@@ -678,7 +678,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         keepVideo: false,
         micMissing: false,
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
       },
     });
     try {
@@ -708,7 +708,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         keepVideo: false,
         micMissing: true,
         orgId: 'org-other',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
       },
     });
     try {
@@ -736,7 +736,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         keepVideo: false,
         micMissing: false,
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
       },
     });
     try {
@@ -766,7 +766,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         keepVideo: false,
         micMissing: true,
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         tokenId: 'tok-1',
       },
     });
@@ -793,7 +793,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         keepVideo: false,
         micMissing: true,
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         tokenId: 'tok-other',
       },
     });
@@ -827,7 +827,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
           keepVideo: false,
           micMissing: true,
           orgId: 'org1',
-          address: 'https://ludy.example',
+          address: 'https://api.ludy.vn',
           tokenId: mode.tokenId,
         },
       });
@@ -856,7 +856,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
       at: Date.now() - 60_000,
       uploaded: true,
       orgId: 'org1',
-      address: 'https://ludy.example',
+      address: 'https://api.ludy.vn',
       tokenId: 'tok-1',
     };
     const sameLostPopup = await mountPopup({
@@ -935,7 +935,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         keepVideo: false,
         micMissing: false,
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         tokenId: 'tok-1',
       },
     });
@@ -963,7 +963,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         keepVideo: false,
         micMissing: false,
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         tokenId: 'tok-1',
       },
     });
@@ -1000,7 +1000,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
           ...base,
           id: 'rec-own',
           scope: 'org1',
-          address: 'https://ludy.example',
+          address: 'https://api.ludy.vn',
           tokenId: 'tok-1',
           meetingId: 'm-own',
           title: 'Bản lưu chờ tải của tôi',
@@ -1009,7 +1009,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
           ...base,
           id: 'rec-peer',
           scope: 'org1',
-          address: 'https://ludy.example',
+          address: 'https://api.ludy.vn',
           tokenId: 'tok-other',
           meetingId: 'm-peer',
           title: 'Bản lưu bí mật của đồng nghiệp',
@@ -1061,7 +1061,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
       expect(pendingPopup.extensionStatusCalls.sort()).toEqual(['m-legacy-mine', 'm-legacy-other', 'm-legacy-spoofed']);
       expect(pendingPopup.storageData[pendingScopeKey('m-legacy-mine')]).toEqual({
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         tokenId: 'tok-1',
       });
       expect(pendingPopup.storageData[pendingScopeKey('m-legacy-other')]).toBeUndefined();
@@ -1078,7 +1078,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
           ...base,
           id: 'rec-own-fast',
           scope: 'org1',
-          address: 'https://ludy.example',
+          address: 'https://api.ludy.vn',
           tokenId: 'tok-1',
           meetingId: 'm-own-fast',
           title: 'Bản lưu sẵn sàng tức thì',
@@ -1123,7 +1123,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
       expect(recoveredLostPopup.storageData[LOST_KEY]).toMatchObject({
         meetingId: 'm-legacy-lost-mine',
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         tokenId: 'tok-1',
       });
     } finally {
@@ -1143,7 +1143,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         keepVideo: false,
         micMissing: true,
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         tokenId: 'tok-1',
       },
     });
@@ -1175,7 +1175,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         keepVideo: false,
         micMissing: true,
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         tokenId: 'tok-other',
       },
     });
@@ -1200,7 +1200,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         keepVideo: false,
         micMissing: true,
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         tokenId: 'tok-1',
       },
     });
@@ -1241,7 +1241,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
       },
       [pendingScopeKey('mtg-bg-1')]: {
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         tokenId: 'tok-1',
       },
     };
@@ -1389,7 +1389,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
     expect(keptPendingScope.reply).toEqual({ ok: true, uploaded: false, meetingId: 'mtg-bg-1' });
     expect(keptPendingScope.storageData[pendingScopeKey('mtg-bg-1')]).toEqual({
       orgId: 'org1',
-      address: 'https://ludy.example',
+      address: 'https://api.ludy.vn',
       tokenId: 'tok-1',
     });
 
@@ -1444,7 +1444,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
       const started = await sendOffscreen({
         target: 'offscreen',
         type: 'capture-start',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         token: 'crx_test',
         orgId: 'org1',
         uploads: 'direct',
@@ -1473,7 +1473,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
       vi.resetModules();
       const storageData: Record<string, unknown> = {
         'ludy-extension-state': {
-          address: 'https://ludy.example',
+          address: 'https://api.ludy.vn',
           accounts: {
             org1: { orgId: 'org1', orgSlug: 'cong-ty', token: 'crx_test', expiresAt: '2027-01-01T00:00:00Z' },
           },
@@ -1572,12 +1572,12 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
     expect(started.storageData[RECORDING_KEY]).toMatchObject({
       meetingId: 'mtg-start-1',
       orgId: 'org1',
-      address: 'https://ludy.example',
+      address: 'https://api.ludy.vn',
       tokenId: 'tok-bg',
     });
     expect(started.storageData[pendingScopeKey('mtg-start-1')]).toEqual({
       orgId: 'org1',
-      address: 'https://ludy.example',
+      address: 'https://api.ludy.vn',
       tokenId: 'tok-bg',
     });
   });
@@ -1653,7 +1653,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
   it('rejects malformed or incomplete 2xx extensionStatus responses as unknown (#4725)', async () => {
     const { createClient } = await import('../src/api.ts');
     const makeClient = (status: number, body: unknown) =>
-      createClient('https://ludy.example', 'crx_test', async () => new Response(JSON.stringify(body), { status }));
+      createClient('https://api.ludy.vn', 'crx_test', async () => new Response(JSON.stringify(body), { status }));
     expect(await makeClient(200, { html: true }).extensionMeetingOwned('m1')).toBe('unknown');
     expect(await makeClient(200, { json: { meetingId: 'm1', status: 'ready' } }).extensionMeetingOwned('m1')).toBe('unknown');
     expect(await makeClient(200, { json: { meetingId: 'm2', status: 'ready', keepVideo: false, liveNotes: false, hasAudio: false, hasVideo: false } }).extensionMeetingOwned('m1')).toBe('unknown');
@@ -1665,7 +1665,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
     vi.resetModules();
     const storageData: Record<string, unknown> = {
       'ludy-extension-state': {
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         accounts: {
           org1: { orgId: 'org1', orgSlug: 'cong-ty', token: 'crx_test', expiresAt: '2027-01-01T00:00:00Z' },
         },
@@ -1767,7 +1767,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         {
           id: 'rec-no-token-mine',
           scope: 'org1',
-          address: 'https://ludy.example',
+          address: 'https://api.ludy.vn',
           meetingId: 'm-no-token-mine',
           title: 'Bản lưu cũ có scope thiếu tokenId',
           kind: 'audio',
@@ -1780,7 +1780,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         {
           id: 'rec-no-token-other',
           scope: 'org1',
-          address: 'https://ludy.example',
+          address: 'https://api.ludy.vn',
           meetingId: 'm-no-token-other',
           title: 'Bản lưu thiếu tokenId của người khác',
           kind: 'audio',
@@ -1801,7 +1801,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
       expect(text).not.toContain('Bản lưu thiếu tokenId của người khác');
       expect(popup.storageData[pendingScopeKey('m-no-token-mine')]).toEqual({
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         tokenId: 'tok-1',
       });
     } finally {
@@ -1820,7 +1820,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
         keepVideo: false,
         micMissing: true,
         orgId: 'org1',
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         tokenId: 'tok-1',
       },
     });
@@ -1839,7 +1839,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
     vi.resetModules();
     const storageData: Record<string, unknown> = {
       'ludy-extension-state': {
-        address: 'https://ludy.example',
+        address: 'https://api.ludy.vn',
         accounts: {
           org1: { orgId: 'org1', orgSlug: 'cong-ty', token: 'crx_test', expiresAt: '2027-01-01T00:00:00Z' },
         },
@@ -2007,7 +2007,7 @@ describe('popup.ts single-popup meetings-then-Web-Clipper flow (#4638)', () => {
       };
       const started = await startCapture(
         {
-          address: 'https://ludy.example',
+          address: 'https://api.ludy.vn',
           token: 'crx_test',
           orgId: 'org1',
           uploads: 'direct',
