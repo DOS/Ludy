@@ -6,8 +6,8 @@
 // The catalogue (the same as @ludy/agent's ASK_BOOKS_ENTRIES, which the kernel checks it matches):
 // - profit_loss      finance.statements.period, B02 lines 10, 11, 50 and 60, for a month, quarter or year
 // - cash_balance     finance.statements.period, B01 line 110 (111 + 112) at the period's end
-// - receivables_top  finance.ledger.period, the per-party closing balance of 131 at the period's end (the largest TOP)
-// - payables_top     finance.ledger.period, the per-party closing balance of 331 at the period's end (the largest TOP)
+// - receivables_top  finance.ledger.period, the per-party closing balance of 131 at the period's end: the largest debit balances (what is owed), and the credit balances (prepaid by customers) as their own figure, never netted
+// - payables_top     finance.ledger.period, the per-party closing balance of 331 at the period's end: the largest credit balances (what is owed), and the debit balances (advanced to suppliers) as their own figure, never netted
 // - vat_position     finance.vat.period, the output and input VAT of a month or quarter
 // - stock_value      finance.stock.report, the closing value of a month summed over the items
 import { z } from 'zod';
@@ -62,7 +62,7 @@ export const zFinanceAskBooksInput = z
   .refine((v) => (v.question !== undefined) !== (v.pick !== undefined), 'ask a question or pick a report, not both');
 export type FinanceAskBooksInput = z.infer<typeof zFinanceAskBooksInput>;
 
-export const ASK_BOOKS_FIGURES = ['revenue', 'cost_of_goods', 'profit_before_tax', 'profit_after_tax', 'cash', 'total', 'vat_output', 'vat_input', 'vat_difference', 'vat_carry_forward', 'stock_value'] as const;
+export const ASK_BOOKS_FIGURES = ['revenue', 'cost_of_goods', 'profit_before_tax', 'profit_after_tax', 'cash', 'total', 'vat_output', 'vat_input', 'vat_difference', 'vat_carry_forward', 'stock_value', 'advances'] as const;
 export const zAskBooksFigureKey = z.enum(ASK_BOOKS_FIGURES);
 export type AskBooksFigureKey = z.infer<typeof zAskBooksFigureKey>;
 

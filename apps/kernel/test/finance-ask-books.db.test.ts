@@ -124,6 +124,13 @@ suite('ask the books in plain words (#5181)', () => {
     const customer = await party(o, 'Khách hàng A');
     await entry(o, [{ account: '112', debit: '5000000' }, { account: '411', credit: '5000000' }]);
     await entry(o, [{ account: '131', debit: '3000000', party: customer }, { account: '511', credit: '3000000' }]);
+    // A customer who paid ahead (131 on the credit side) and a supplier we advanced money to (331 on the debit side), beside a supplier we really owe.
+    const prepaying = await party(o, 'Khách trả trước');
+    const advanced = await party(o, 'Nhà cung cấp nhận tiền ứng');
+    const owedSupplier = await party(o, 'Nhà cung cấp còn nợ');
+    await entry(o, [{ account: '112', debit: '2000000' }, { account: '131', credit: '2000000', party: prepaying }]);
+    await entry(o, [{ account: '331', debit: '1500000', party: advanced }, { account: '112', credit: '1500000' }]);
+    await entry(o, [{ account: '6422', debit: '7000000' }, { account: '331', credit: '7000000', party: owedSupplier }]);
     const before = await counts(o);
     const ask = (question: string, output: Record<string, unknown>) => askBooks(fakeAi(output), queryAs(o, o.owner), o.orgId, o.owner, { question, lang: 'vi' });
 
@@ -139,15 +146,28 @@ suite('ask the books in plain words (#5181)', () => {
 
     const cash = await ask('Còn bao nhiêu tiền?', { entry: 'cash_balance', period: 'as_of_today', lead: '' });
     expect(cash.card?.figures).toEqual([{ key: 'cash', amount: statements.b01.lines.find((l) => l.code === '110')?.amount }]);
-    expect(cash.card?.figures[0]?.amount).toBe('5000000');
+    // 5,000,000 booked first, 2,000,000 more from the customer who paid ahead, 1,500,000 less to the supplier advanced.
+    expect(cash.card?.figures[0]?.amount).toBe('5500000');
 
     const owed = await ask('Ai còn nợ mình nhiều nhất?', { entry: 'receivables_top', period: 'as_of_today', lead: '' });
     const ledger = await rt.query<LedgerReport>('finance.ledger.period', { period: MONTH }, { actor: asUser(o.owner), orgId: o.orgId });
-    expect(owed.card?.figures).toEqual([{ key: 'total', amount: ledger.receivables.totals.closing }]);
+    // The screen's own total nets the customer who paid ahead (3,000,000 - 2,000,000); the card ranks and totals what is owed only and shows the other side on its own line.
+    expect(ledger.receivables.totals.closing).toBe('1000000');
+    expect(owed.card?.figures).toEqual([
+      { key: 'total', amount: '3000000' },
+      { key: 'advances', amount: '2000000' },
+    ]);
     expect(owed.card?.top).toEqual([{ name: 'Khách hàng A', amount: '3000000' }]);
     expect(owed.card?.partyCount).toBe(1);
 
-    for (const [entryKey, period] of [['payables_top', 'as_of_today'], ['vat_position', 'last_month'], ['stock_value', 'as_of_today']] as const) {
+    const owe = await ask('Mình còn nợ ai nhiều nhất?', { entry: 'payables_top', period: 'as_of_today', lead: '' });
+    expect(owe.card?.figures).toEqual([
+      { key: 'total', amount: '7000000' },
+      { key: 'advances', amount: '1500000' },
+    ]);
+    expect(owe.card?.top).toEqual([{ name: 'Nhà cung cấp còn nợ', amount: '7000000' }]);
+
+    for (const [entryKey, period] of [['vat_position', 'last_month'], ['stock_value', 'as_of_today']] as const) {
       const answer = await ask(`câu hỏi ${entryKey}`, { entry: entryKey, period, lead: '' });
       expect(zAskBooksAnswer.safeParse(answer).success, entryKey).toBe(true);
       expect(answer.state, entryKey).toBe('card');

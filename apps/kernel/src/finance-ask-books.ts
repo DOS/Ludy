@@ -94,14 +94,15 @@ export async function runAskBooksEntry(query: AskBooksQuery, entry: AskBooksEntr
       // The Sổ cái's own per-party balances of 131 or 331 at the period's end, as the ledger screen shows them.
       const report = await query<LedgerReport>('finance.ledger.period', { period: period.value, ...entity });
       const ledger = entry === 'receivables_top' ? report.receivables : report.payables;
-      // Largest balance first; a party with a nil or negative balance (an advance) is not owed. Ties by name, so the order never changes between two reads.
-      const owed = ledger.rows
-        .map((row) => ({ name: row.partyName === null ? null : row.partyName.slice(0, 300), amount: money(row.closing) }))
-        .filter((row) => row.amount.greaterThan(0))
-        .sort((a, b) => b.amount.comparedTo(a.amount) || (a.name ?? '').localeCompare(b.name ?? ''));
+      // A balance is in the account's own direction: positive is what is owed (a customer owes us on 131, we owe a supplier on 331), negative is the other side (a customer who paid ahead, an advance to a supplier). The list
+      // and its total hold what is owed only; the other side is its own figure and is never netted into it. Largest balance first; ties by name, so the order never changes between two reads.
+      const balances = ledger.rows.map((row) => ({ name: row.partyName === null ? null : row.partyName.slice(0, 300), amount: money(row.closing) }));
+      const owed = balances.filter((row) => row.amount.greaterThan(0)).sort((a, b) => b.amount.comparedTo(a.amount) || (a.name ?? '').localeCompare(b.name ?? ''));
+      const owedTotal = owed.reduce((sum, row) => sum.plus(row.amount), money(0));
+      const otherSide = balances.filter((row) => row.amount.isNegative()).reduce((sum, row) => sum.minus(row.amount), money(0));
       return {
         ...base,
-        figures: [figure('total', money(ledger.totals.closing).toFixed())],
+        figures: [figure('total', owedTotal.toFixed()), ...(otherSide.greaterThan(0) ? [figure('advances', otherSide.toFixed())] : [])],
         top: owed.slice(0, ASK_BOOKS_TOP).map((row) => ({ name: row.name, amount: row.amount.toFixed() })),
         partyCount: owed.length,
         notes: [],

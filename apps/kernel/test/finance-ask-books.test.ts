@@ -84,8 +84,9 @@ const READS: Record<string, unknown> = {
       rows: [
         { partyId: 'q1', partyName: 'Nhà cung cấp X', closing: '9000000' },
         { partyId: 'q2', partyName: 'Nhà cung cấp Y', closing: '20000000' },
+        { partyId: 'q3', partyName: 'Nhà cung cấp Z', closing: '-3000000' },
       ],
-      totals: { opening: '0', increase: '0', decrease: '0', closing: '29000000' },
+      totals: { opening: '0', increase: '0', decrease: '0', closing: '26000000' },
     },
   },
   'finance.vat.period': {
@@ -223,9 +224,13 @@ describe('the card of each entry', () => {
     expect(cash.figures).toEqual([{ key: 'cash', amount: '5000000' }]);
   });
 
-  it('receivables_top lists the largest balances first, leaves out an advance and a nil balance, and counts the parties it left below the list', async () => {
+  it('receivables_top lists the largest debit balances first, leaves out a nil balance, and shows what customers paid ahead as its own figure, never netted into the total', async () => {
     const card = await runAskBooksEntry(fakeQuery([]), 'receivables_top', relative(), undefined);
-    expect(card.figures).toEqual([{ key: 'total', amount: '52000000' }]);
+    // The total is what is owed (54,000,000), not the net of the 2,000,000 a customer paid ahead.
+    expect(card.figures).toEqual([
+      { key: 'total', amount: '54000000' },
+      { key: 'advances', amount: '2000000' },
+    ]);
     expect(card.top).toHaveLength(ASK_BOOKS_TOP);
     expect(card.top.map((row) => row.amount)).toEqual(['30000000', '10000000', '5000000', '4000000', '3000000']);
     expect(card.top[0]?.name).toBe('Công ty A');
@@ -235,9 +240,12 @@ describe('the card of each entry', () => {
     expect(card.partyCount).toBe(6);
   });
 
-  it('payables_top reads the 331 side', async () => {
+  it('payables_top reads the 331 side and shows an advance to a supplier as its own figure, never netted', async () => {
     const card = await runAskBooksEntry(fakeQuery([]), 'payables_top', relative(), undefined);
-    expect(card.figures).toEqual([{ key: 'total', amount: '29000000' }]);
+    expect(card.figures).toEqual([
+      { key: 'total', amount: '29000000' },
+      { key: 'advances', amount: '3000000' },
+    ]);
     expect(card.top.map((row) => row.name)).toEqual(['Nhà cung cấp Y', 'Nhà cung cấp X']);
     expect(card.partyCount).toBe(2);
   });

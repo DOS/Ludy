@@ -88,7 +88,7 @@ export function AskBooksPanel({ slug, legalEntityId, ready }: { slug: string; le
 
   const answer: AskBooksAnswer | undefined = ask.data;
   const options = (entry: AskBooksEntry) => askBooksPickOptions(entry, localToday());
-  const figureLabel = (card: AskBooksCard, key: AskBooksFigureKey): string => (key === 'total' ? t(card.entry === 'payables_top' ? 'total.payables_top' : 'total.receivables_top') : t(`figure.${key}`));
+  const figureLabel = (card: AskBooksCard, key: AskBooksFigureKey): string => (key === 'total' ? t(card.entry === 'payables_top' ? 'total.payables_top' : 'total.receivables_top') : key === 'advances' ? t(card.entry === 'payables_top' ? 'advances.payables_top' : 'advances.receivables_top') : t(`figure.${key}`));
 
   return (
     <section className="mt-6" aria-labelledby="ask-books-title" data-testid="ask-books">

@@ -703,8 +703,12 @@ export const vi = {
       stock_value: 'Giá trị hàng tồn cuối tháng',
     },
     total: {
-      receivables_top: 'Tổng phải thu cuối kỳ',
-      payables_top: 'Tổng phải trả cuối kỳ',
+      receivables_top: 'Tổng khách hàng còn nợ cuối kỳ',
+      payables_top: 'Tổng mình còn nợ nhà cung cấp cuối kỳ',
+    },
+    advances: {
+      receivables_top: 'Khách trả trước (không trừ vào số trên)',
+      payables_top: 'Đã trả trước cho người bán (không trừ vào số trên)',
     },
     top: {
       receivables: 'Khách hàng còn nợ nhiều nhất',

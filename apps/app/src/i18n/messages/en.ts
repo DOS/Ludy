@@ -704,8 +704,12 @@ export const en = {
       stock_value: 'Stock value at the end of the month',
     },
     total: {
-      receivables_top: 'Total receivable at the end of the period',
-      payables_top: 'Total payable at the end of the period',
+      receivables_top: 'Total owed by customers at the end of the period',
+      payables_top: 'Total owed to suppliers at the end of the period',
+    },
+    advances: {
+      receivables_top: 'Paid ahead by customers (not netted into the figure above)',
+      payables_top: 'Advanced to suppliers (not netted into the figure above)',
     },
     top: {
       receivables: 'Customers who owe the most',
