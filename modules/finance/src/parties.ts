@@ -12,7 +12,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { CUSTOMER_PAGE_SIZE, zCustomerCursor, zId, type CustomerPage } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
-import { defineQuery } from '@ludy/kernel-runtime';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { RECEIVABLE_ACCOUNT } from '@ludy/l10n-vn';
 import { canonical, parseDecimal } from './domain/money.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -100,3 +100,23 @@ export const customersList = defineQuery({
     };
   },
 });
+
+// Oldest party without a tax code matching `name` case-insensitively (using `party_name_idx`), shared between extraction
+// suggestion and `upsertParty` so both pick the same party when same-name duplicates exist (#1457).
+export async function findPartyByName(
+  ctx: Pick<QueryContext, 'trx' | 'orgId'>,
+  name: string,
+  options: { lock?: boolean | undefined } = {},
+): Promise<{ id: string } | undefined> {
+  let query = ctx.trx
+    .selectFrom('ludy_kernel.party')
+    .select('id')
+    .where('org_id', '=', ctx.orgId)
+    .where('tax_code', 'is', null)
+    .where((eb) => eb(eb.fn('lower', ['name']), '=', name.toLowerCase()))
+    .orderBy('created_at', 'asc')
+    .orderBy('id', 'asc')
+    .limit(1);
+  if (options.lock) query = query.forShare();
+  return query.executeTakeFirst();
+}
