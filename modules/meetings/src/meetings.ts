@@ -16,6 +16,8 @@ import { titleCommands, titleQueries } from './title.ts';
 import { commitmentsCommands, commitmentsQueries } from './commitments.ts';
 import { templateSuggestCommands, templateSuggestQueries } from './template-suggest.ts';
 import { openPointsCommands, openPointsQueries } from './open-points.ts';
+import { catchUpCommands, catchUpQueries } from './catch-up.ts';
+import { notesMinutesCommands, notesMinutesQueries } from './notes-minutes.ts';
 import { salesInsightCommands, salesInsightQueries } from './sales-insight.ts';
 import { labelSuggestCommands, labelSuggestQueries } from './label-suggest.ts';
 import { notesCommands, notesQueries } from './notes.ts';
@@ -1231,6 +1233,8 @@ export const meetingsCommands = [
   ...commitmentsCommands,
   ...templateSuggestCommands,
   ...openPointsCommands,
+  ...catchUpCommands,
+  ...notesMinutesCommands,
   ...salesInsightCommands,
   ...labelSuggestCommands,
   ...summaryCommands,
@@ -1291,6 +1295,8 @@ export const meetingsQueries = [
   ...commitmentsQueries,
   ...templateSuggestQueries,
   ...openPointsQueries,
+  ...catchUpQueries,
+  ...notesMinutesQueries,
   ...salesInsightQueries,
   ...labelSuggestQueries,
   ...summaryQueries,

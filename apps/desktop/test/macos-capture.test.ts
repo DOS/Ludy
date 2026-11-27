@@ -390,4 +390,127 @@ describe('macOS Core Audio capture gating, silent-permission warning, and win32 
     expect(h.startConfigs.at(-1)).toEqual({ source: 'system-audio-and-microphone', mode: 'wasapi', liveNotes: false });
     await mod.stop();
   });
+
+  it('requests macOS microphone permission cleanly before worker launch and blocks mic-only when denied', async () => {
+    const h = makeBridgeHarness();
+    let micChecks = 0;
+    let allowMic = false;
+    const mod = createDesktopCaptureModule({
+      isPackaged: false,
+      resourcesPath: '',
+      platform: 'darwin',
+      darwinRelease: '23.2.0',
+      bridge: h.bridge,
+      requestMicPermission: async () => {
+        micChecks += 1;
+        return allowMic;
+      },
+    });
+
+    await expect(mod.start('microphone', '')).rejects.toThrow(/MICROPHONE_UNAVAILABLE/);
+    expect(micChecks).toBe(1);
+
+    await mod.start('system-audio-and-microphone', '', { allowSystemFallback: true });
+    expect(micChecks).toBe(2);
+    await mod.stop();
+
+    allowMic = true;
+    await mod.start('microphone', '');
+    expect(micChecks).toBe(3);
+    await mod.stop();
+
+    await mod.start('system-audio', '', { allowSystemFallback: true });
+    expect(micChecks).toBe(3);
+    await mod.stop();
+  });
+
+  it('cancels pending macOS capture when cancelConsent() runs during mic permission prompt', async () => {
+    const h = makeBridgeHarness();
+    let resolveMicPrompt: (allowed: boolean) => void = () => undefined;
+    let notifyMicPromptOpened: () => void = () => undefined;
+    const micPromptOpened = new Promise<void>((resolve) => {
+      notifyMicPromptOpened = resolve;
+    });
+    const mod = createDesktopCaptureModule({
+      isPackaged: false,
+      resourcesPath: '',
+      platform: 'darwin',
+      darwinRelease: '23.2.0',
+      bridge: h.bridge,
+      requestMicPermission: () =>
+        new Promise<boolean>((resolve) => {
+          resolveMicPrompt = resolve;
+          notifyMicPromptOpened();
+        }),
+    });
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'ludy-mac-cancel-'));
+    try {
+      const store = createDiskRecordingStore(tempDir);
+      const pillShown: unknown[] = [];
+      const consentClosed: number[] = [];
+      const trayStates: Array<Record<string, unknown>> = [];
+      let createMeetingCalls = 0;
+
+      const controller = createCaptureController({
+        capture: mod,
+        recordingStore: store,
+        listWindows: async () => [],
+        getSession: () => ({
+          ludyUrl: 'https://app.example.vn',
+          token: 'tok',
+          meetingsEnabled: true,
+          agendaEnabled: false,
+          uploads: 'direct',
+        }),
+        onTrayState: (patch) => trayStates.push(patch as Record<string, unknown>),
+        ui: {
+          updateConsentState: () => undefined,
+          closeConsent: () => consentClosed.push(1),
+          showPill: (v) => pillShown.push(v),
+          updatePill: () => undefined,
+          hidePill: () => undefined,
+        },
+        fetch: async () => {
+          createMeetingCalls += 1;
+          return new Response(JSON.stringify({ meetingId: 'm-cancelled' }), { status: 200 });
+        },
+      });
+
+      await controller.openConsent();
+      const pendingStart = controller.startCapture({
+        title: 'Weekly sync',
+        consentMethod: 'told_at_start',
+        consentAgreed: true,
+        source: 'system-audio-and-microphone',
+        allowSystemFallback: true,
+        liveNotes: false,
+        noticeLanguage: 'vi',
+      });
+
+      await micPromptOpened;
+      expect(controller.phase()).toBe('preparing');
+
+      controller.cancelConsent();
+      expect(controller.phase()).toBe('idle');
+      expect(consentClosed).toHaveLength(1);
+
+      const startResult = await pendingStart;
+      expect(startResult.ok).toBe(false);
+
+      // Even if user later grants macOS mic permission in System Settings, worker/meeting/pill must NEVER start
+      resolveMicPrompt(true);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(h.startConfigs).toHaveLength(0);
+      expect(createMeetingCalls).toBe(0);
+      expect(pillShown).toHaveLength(0);
+      expect(h.counts().disarmed).toBe(h.counts().armed);
+      expect(controller.phase()).toBe('idle');
+      expect(trayStates.at(-1)?.phase).toBe('idle');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

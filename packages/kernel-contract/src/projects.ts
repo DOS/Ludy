@@ -361,6 +361,8 @@ export const zProjectDetail = z.object({
   cyclesEnabled: z.boolean().optional(),
   cycleDurationWeeks: zProjectCycleDurationWeeks.optional(),
   pointsEnabled: z.boolean().optional(),
+  githubEnabled: z.boolean().optional(),
+  taskKeyPrefix: z.string().nullable().optional(),
   canManage: z.boolean(),
   canWrite: z.boolean(),
   createdAt: z.string(),
@@ -417,6 +419,9 @@ export const zProjectTaskCard = z.object({
   recurrenceSourceTaskId: zId.nullable().optional(),
   openBlockerCount: z.number().int().nonnegative().optional(),
   blockingCount: z.number().int().nonnegative().optional(),
+  taskNumber: z.number().int().positive().nullable().optional(),
+  taskKey: z.string().nullable().optional(),
+  githubLinkCount: z.number().int().nonnegative().optional(),
 });
 export type ProjectTaskCard = z.infer<typeof zProjectTaskCard>;
 

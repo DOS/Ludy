@@ -13,6 +13,7 @@ import { Button } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
 import { Checkbox } from '@ludy/ui/components/checkbox';
 import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { MarketplacePushHook } from '../components/marketplace-push-hook.tsx';
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
@@ -205,6 +206,7 @@ function ConnectForm({ adapters, platforms, entities }: { adapters: readonly Mar
   const adapterKey = useId();
   const platformKey = useId();
   const entityKey = useId();
+  const fieldsPrefix = useId();
   const entity = entities.find((e) => e.id === entityId) ?? defaultEntity;
   const chosen = served.find((p) => p.platform === platform)?.platform ?? served[0]?.platform;
   const connect = useMutation(
@@ -229,45 +231,66 @@ function ConnectForm({ adapters, platforms, entities }: { adapters: readonly Mar
     <form className="mt-4 space-y-2" onSubmit={submit} aria-label={t('connectTitle')} noValidate>
       <p className="text-xs font-medium text-muted-foreground">{t('connectTitle')}</p>
       {adapter.offline && <p className="text-xs text-subtle-foreground">{t('offlineNote')}</p>}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-end gap-2">
         {adapters.length > 1 && (
-          <NativeSelect id={adapterKey} className="min-w-48" aria-label={t('adapter')} value={adapter.id} onChange={(e) => setAdapterId(e.target.value)}>
-            {adapters.map((a) => (
-              <NativeSelectOption key={a.id} value={a.id}>
-                {a.offline ? t('adapterOffline') : a.id}
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={adapterKey} className="text-xs font-normal text-muted-foreground">
+              {t('adapter')}
+            </Label>
+            <NativeSelect id={adapterKey} className="min-w-48" value={adapter.id} onChange={(e) => setAdapterId(e.target.value)}>
+              {adapters.map((a) => (
+                <NativeSelectOption key={a.id} value={a.id}>
+                  {a.offline ? t('adapterOffline') : a.id}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+        )}
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={platformKey} className="text-xs font-normal text-muted-foreground">
+            {t('platform')}
+          </Label>
+          <NativeSelect id={platformKey} className="min-w-48" value={chosen} onChange={(e) => setPlatform(e.target.value as typeof chosen)}>
+            {served.map((p) => (
+              <NativeSelectOption key={p.platform} value={p.platform}>
+                {t(PLATFORM_KEYS[p.platform])}
               </NativeSelectOption>
             ))}
           </NativeSelect>
-        )}
-        <NativeSelect id={platformKey} className="min-w-48" aria-label={t('platform')} value={chosen} onChange={(e) => setPlatform(e.target.value as typeof chosen)}>
-          {served.map((p) => (
-            <NativeSelectOption key={p.platform} value={p.platform}>
-              {t(PLATFORM_KEYS[p.platform])}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
+        </div>
         {entities.length > 1 && (
-          <NativeSelect id={entityKey} className="min-w-48" aria-label={t('entity')} value={entity?.id ?? ''} onChange={(e) => setEntityId(e.target.value)}>
-            {entities.map((e) => (
-              <NativeSelectOption key={e.id} value={e.id}>
-                {e.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={entityKey} className="text-xs font-normal text-muted-foreground">
+              {t('entity')}
+            </Label>
+            <NativeSelect id={entityKey} className="min-w-48" value={entity?.id ?? ''} onChange={(e) => setEntityId(e.target.value)}>
+              {entities.map((e) => (
+                <NativeSelectOption key={e.id} value={e.id}>
+                  {e.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
         )}
-        {adapter.connectFields.map((name) => (
-          <Input
-            key={name}
-            className="min-w-48"
-            maxLength={500}
-            autoComplete="off"
-            type={fieldIsSecret(name) ? 'password' : 'text'}
-            placeholder={fieldLabel(name)}
-            aria-label={fieldLabel(name)}
-            value={fields[name] ?? ''}
-            onChange={(e) => setFields((previous) => ({ ...previous, [name]: e.target.value }))}
-          />
-        ))}
+        {adapter.connectFields.map((name, index) => {
+          const fieldId = `${fieldsPrefix}-${index}`;
+          return (
+            <div key={name} className="flex flex-col gap-1">
+              <Label htmlFor={fieldId} className="text-xs font-normal text-muted-foreground">
+                {fieldLabel(name)}
+              </Label>
+              <Input
+                id={fieldId}
+                className="min-w-48"
+                maxLength={500}
+                autoComplete="off"
+                type={fieldIsSecret(name) ? 'password' : 'text'}
+                value={fields[name] ?? ''}
+                onChange={(e) => setFields((previous) => ({ ...previous, [name]: e.target.value }))}
+              />
+            </div>
+          );
+        })}
         <Button loading={connect.isPending} type="submit" variant="outline" size="sm">
           {t('connect')}
         </Button>

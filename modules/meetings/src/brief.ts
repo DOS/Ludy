@@ -12,17 +12,24 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import {
+  AGENDA_LIST_MAX,
   BRIEF_DEALS_MAX,
   BRIEF_DECISIONS_MAX,
   BRIEF_ITEMS_MAX,
+  DAILY_BRIEF_MEETINGS_MAX,
   zAskStarted,
   zBriefEmpty,
   zBriefFacts,
   zBriefStatus,
   zBriefTarget,
+  zDailyBriefFacts,
+  zDailyBriefFactsInput,
+  zDailyBriefStoreLinesInput,
   type BriefDeal,
   type BriefFacts,
   type BriefStatus,
+  type DailyBriefFacts,
+  type DailyBriefItem,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { vyReason } from './ask.ts';
@@ -191,5 +198,112 @@ export const briefStart = defineCommand({
   },
 });
 
-export const briefCommands = [briefStart];
-export const briefQueries = [briefFacts, briefStatus];
+const DAILY_BRIEF_SCAN_MAX = 20;
+
+const agendaLinkRank = (row: { meeting_id: string | null; series_id: string | null }): number =>
+  row.meeting_id !== null ? 2 : row.series_id !== null ? 1 : 0;
+
+// Daily briefing facts for a member's own scheduled calendar window (#5073 Step 2b-1):
+// queries ludy_meetings.calendar_agenda directly (calendar_connection RLS hides rows from member-scoped Vy),
+// deduplicates identical provider occurrences across connections, and reuses briefFactsOf under the caller's RLS.
+export const briefDailyFacts = defineQuery({
+  name: 'meetings.brief.daily_facts',
+  input: zDailyBriefFactsInput,
+  access: ROLES,
+  memberVy: { reads: ['crm.deal.get', 'crm.deal.list', 'crm.stage.list'] },
+  handler: async (ctx, input): Promise<DailyBriefFacts> => {
+    if (!ctx.memberVy) throw new DomainError('FORBIDDEN', 403, 'Chỉ Vy cá nhân mới được chạy truy vấn này');
+    if (input.connectionIds !== undefined && input.connectionIds.length === 0) {
+      return zDailyBriefFacts.parse({ items: [] });
+    }
+    let query = ctx.trx
+      .selectFrom('ludy_meetings.calendar_agenda')
+      .select(['id', 'external_id', 'starts_at', 'meeting_id', 'series_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('user_id', '=', ctx.memberVy.memberUserId)
+      .where('starts_at', '>=', new Date(input.from))
+      .where('starts_at', '<', new Date(input.to));
+    if (input.connectionIds !== undefined) {
+      query = query.where('connection_id', 'in', input.connectionIds);
+    }
+    const rows = await query.orderBy('starts_at').orderBy('id').limit(AGENDA_LIST_MAX).execute();
+
+    const deduped = new Map<string, (typeof rows)[number]>();
+    for (const row of rows) {
+      const key = `${row.external_id}\0${row.starts_at.toISOString()}`;
+      const existing = deduped.get(key);
+      if (!existing || agendaLinkRank(row) > agendaLinkRank(existing)) {
+        deduped.set(key, row);
+      }
+    }
+
+    const items: DailyBriefItem[] = [];
+    const stageNames = stageNamesOnce(ctx);
+    for (const row of [...deduped.values()].slice(0, DAILY_BRIEF_SCAN_MAX)) {
+      if (items.length >= DAILY_BRIEF_MEETINGS_MAX) break;
+      let brief: BriefFacts;
+      try {
+        brief = await briefFactsOf(
+          ctx,
+          row.meeting_id !== null ? { meetingId: row.meeting_id, agendaId: null } : { meetingId: null, agendaId: row.id },
+          stageNames,
+        );
+      } catch (error) {
+        if (error instanceof DomainError && (error.code === 'MEETING_NOT_FOUND' || error.code === 'AGENDA_NOT_FOUND')) {
+          continue;
+        }
+        throw error;
+      }
+      if (brief.empty) continue;
+      items.push({
+        agendaId: row.id,
+        meetingId: row.meeting_id,
+        startsAt: row.starts_at.toISOString(),
+        brief,
+      });
+    }
+    return zDailyBriefFacts.parse({ items });
+  },
+});
+
+export const briefStoreLines = defineCommand({
+  name: 'meetings.brief.store_lines',
+  input: zDailyBriefStoreLinesInput,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<{ stored: boolean; lineCount: number }> => {
+    if (ctx.actor.type !== 'system') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới lưu được dòng chuẩn bị buổi sáng');
+    }
+    try {
+      await sql`
+        SELECT ludy_meetings.morning_brief_lines_upsert(
+          ${ctx.orgId}::uuid,
+          ${input.userId}::uuid,
+          ${input.meetingId}::uuid,
+          ${JSON.stringify(input.lines)}::jsonb,
+          ${input.expiresAt}::timestamptz
+        )`.execute(ctx.trx);
+    } catch (error: unknown) {
+      const msg = (error as { message?: string } | null)?.message ?? '';
+      if (msg.includes('BRIEF_LINES_NOT_ELIGIBLE')) {
+        throw new DomainError('BRIEF_LINES_NOT_ELIGIBLE', 403, 'Thành viên không còn đủ điều kiện nhận gợi ý buổi sáng');
+      }
+      if (msg.includes('BRIEF_LINES_MEETING_MISSING')) {
+        throw new DomainError('MEETING_NOT_FOUND', 404, 'Không tìm thấy cuộc họp');
+      }
+      if (msg.includes('BRIEF_LINES_INVALID') || msg.includes('BRIEF_LINES_EXPIRY_INVALID')) {
+        const code = msg.includes('BRIEF_LINES_EXPIRY_INVALID') ? 'BRIEF_LINES_EXPIRY_INVALID' : 'BRIEF_LINES_INVALID';
+        throw new DomainError(code, 422, 'Dữ liệu dòng chuẩn bị buổi sáng không hợp lệ');
+      }
+      throw error;
+    }
+    ctx.audit({ lineCount: input.lines.length });
+    return { stored: true, lineCount: input.lines.length };
+  },
+});
+
+export const briefCommands = [briefStart, briefStoreLines];
+export const briefQueries = [briefFacts, briefDailyFacts, briefStatus];

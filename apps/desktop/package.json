@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-only",
-  "description": "Ludy Desktop (ADR-0055 slice 2): an Electron tray shell for Windows. Signs in as the member with the extension's PKCE flow, keeps the token in the OS key store and updates itself. No capture.",
+  "description": "Ludy Desktop (ADR-0055): Electron tray shell and meeting capture for Windows and macOS. Signs in with PKCE, stores tokens in OS key store, and verifies signed updates.",
   "scripts": {
     "build": "node scripts/build.mjs",
     "package": "node scripts/package.mjs",
+    "package:mac": "node scripts/package-mac.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {

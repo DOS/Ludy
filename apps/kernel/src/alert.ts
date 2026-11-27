@@ -5,7 +5,7 @@
 //             Markdown characters escaped and no @everyone, role or user pings.
 //   telegram  Telegram Bot API sendMessage: {chat_id, text, link_preview_options: {is_disabled: true}} and no
 //             parse_mode, so the text is sent as plain text and needs no escaping.
-//   generic   anything else (Mattermost, Google Chat, a custom receiver): {text, content, crove}, where crove is the
+//   generic   anything else (Mattermost, Google Chat, a custom receiver): {text, content, ludy}, where ludy is the
 //             structured alert.
 // Without a webhook the alert is printed to stdout. The webhook URL usually embeds a secret (Slack and Discord in
 // the path, Telegram's bot token), so it is never logged: only its host is.

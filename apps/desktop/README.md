@@ -1,55 +1,43 @@
 # Ludy Desktop (`@ludy/desktop`)
 
-The Windows tray shell of ADR-0055 slice 2 ([#4515](https://github.com/DOS/Ludy/issues/4515)). Owned by the Platform line. **No capture**: it records nothing and never opens the microphone; meeting capture is slice 3 (Meetings line) and fills the empty slot in `src/capture/`.
+The desktop tray shell of ADR-0055 slices 2 and 3 ([#4515](https://github.com/DOS/Ludy/issues/4515), [#4516](https://github.com/DOS/Ludy/issues/4516), [#4884](https://github.com/DOS/Ludy/issues/4884), [#4885](https://github.com/DOS/Ludy/issues/4885)), for Windows (`win32-x64`) and macOS (`darwin-arm64`, `darwin-x64`). Owned by the Platform line (`line:platform`), with meeting capture behind the off-by-default `MEETINGS_DESKTOP_CAPTURE` flag.
 
-Install and the unsigned-build warning: [docs/desktop/install.md](../../docs/desktop/install.md) (Vietnamese: [install.vi.md](../../docs/desktop/install.vi.md)). Signing and update hosting (owner actions, not done): [signing-runbook.md](../../docs/desktop/signing-runbook.md).
+Install guide: [docs/desktop/install.md](../../docs/desktop/install.md) (Vietnamese: [install.vi.md](../../docs/desktop/install.vi.md)). Windows signing & update hosting: [signing-runbook.md](../../docs/desktop/signing-runbook.md). macOS signing, notarization & update hosting: [mac-signing-runbook.md](../../docs/desktop/mac-signing-runbook.md).
 
 ## What it does
 
-- **Tray only.** No window, no renderer, no remote content. "Mở Ludy" and the sign-in page open in the member's own browser.
-- **Sign-in as the member**, the extension's flow: PKCE (S256) in the system browser, a one-time code back to `http://127.0.0.1:<port>/ludy-desktop/callback` (RFC 8252), traded at `POST /api/extension/token` with `client: "desktop"` for a `crx_` token. The token is one org, one member, and holds **no scope** in this slice, so it reaches `/api/extension/me` alone.
-- **Token storage:** only as a blob encrypted by Electron `safeStorage` (DPAPI on Windows) in the user data folder. If the OS cannot encrypt, nothing is written and the sign-in lasts until the app quits. The stored session is bound to the configured Ludy address.
-- **Revocation:** the token is listed under "thiết bị đã kết nối" next to the extension's devices. The shell checks `GET /api/extension/me` at start and every 15 minutes; a 401 signs it out and deletes the stored token. "Đăng xuất" in the tray removes the token from this computer only (the device stays listed until it is revoked there).
-- **Auto-update:** Electron's built-in `autoUpdater` (Squirrel.Windows) against the deployment's own feed (`LUDY_DESKTOP_UPDATE_URL`), verified before Squirrel runs by `src/update-feed.ts` (HTTPS only outside literal loopback, SSRF IP/host blocks, origin pinning, `RELEASES` and `release-manifest.json` consistency and signature metadata check, fail closed). Checks at start and every 6 hours; a downloaded update waits for the member ("Khởi động lại để cập nhật"); a failed update leaves the running version untouched.
-- **Capture module slot:** `CaptureModule { start(source, meetingKey), pieces, stop() }`, with a stub that refuses (`CAPTURE_NOT_AVAILABLE`).
+- **Tray / menu bar shell:** "Mở Ludy" and browser PKCE sign-in open in the member's own browser; no remote content ever loads inside Electron. Capture windows (`consent.html`, `pill.html`, `worker.html`) load strictly bundled files from `ludy-desktop://ui` with strict CSP, `contextIsolation: true`, `nodeIntegration: false`, and `sandbox: true`.
+- **Sign-in as the member:** PKCE (S256) in the system browser, a one-time code back to `http://127.0.0.1:<port>/ludy-desktop/callback` (RFC 8252), traded at `POST /api/extension/token` with `client: "desktop"` for a `crx_` token. Requests `meetings` / `agenda` scopes only when `MEETINGS_DESKTOP_CAPTURE` is enabled on the deployment.
+- **Token storage:** encrypted blob via Electron `safeStorage` (Windows DPAPI or macOS Keychain) in `session.bin` inside the user data folder (`%APPDATA%\ludy-desktop` on Windows, `~/Library/Application Support/ludy-desktop` on macOS).
+- **Revocation:** listed under "thiết bị đã kết nối". Checks `GET /api/extension/me` at start and every 15 minutes; a 401 signs out and deletes `session.bin`.
+- **Auto-update:** Electron's `autoUpdater` (Squirrel.Windows on Windows; Squirrel.Mac JSON feed on macOS) verified before running by `src/update-feed.ts`, `src/authenticode.ts` (Windows), and `src/codesign.ts` (macOS): HTTPS only outside literal loopback, SSRF IP/host blocks, DNS-pinned fetch, origin pinning, manifest signature/Team ID/thumbprint verification, bounded download, ZIP/PE inspection, fail closed.
+- **Meeting capture (`MEETINGS_DESKTOP_CAPTURE` off by default):** Windows per-app WASAPI loopback (`native/ludy-wasapi-loopback.cpp`) on Win10 20348+ / Win11; macOS 14.2+ Core Audio loopback via Electron (`NSAudioCaptureUsageDescription`, `NSMicrophoneUsageDescription`, minimal entitlements in `entitlements/darwin.plist`) with explicit consent gate and one-meeting lock.
 
 ## Configuration
 
-| Setting | Environment variable | `config.json` key (in the user data folder) |
+| Setting | Environment variable | `config.json` key (in user data folder) |
 |---|---|---|
-| The Ludy deployment (an https origin; http only for localhost, 127.0.0.1, [::1]) | `LUDY_URL` | `ludyUrl` |
-| The update feed folder (https, or relative path on `LUDY_URL`; http only for literal loopback test feeds) | `LUDY_DESKTOP_UPDATE_URL` | `updateUrl` |
+| The Ludy deployment (`https`, or `http` for loopback) | `LUDY_URL` | `ludyUrl` |
+| The update feed folder (`https`, or relative path on `LUDY_URL`) | `LUDY_DESKTOP_UPDATE_URL` | `updateUrl` |
 | Optional pinned origin for the update feed | `LUDY_DESKTOP_UPDATE_ORIGIN` | `updateOrigin` |
-| Optional 40-hex SHA-1 signing certificate thumbprint pin | `LUDY_DESKTOP_UPDATE_PUBLISHER_SHA1` | `updatePublisherThumbprint` |
+| Optional Windows 40-hex SHA-1 signing certificate thumbprint pin | `LUDY_DESKTOP_UPDATE_PUBLISHER_SHA1` | `updatePublisherThumbprint` |
+| Optional macOS 10-character Apple Team ID pin | `LUDY_DESKTOP_UPDATE_TEAM_ID` | `updateTeamId` |
 | A throwaway profile (CI, tests) | `LUDY_DESKTOP_USER_DATA` | none |
 
 There is no default address and no secret in the repository.
 
-## Why Squirrel.Windows and not MSIX
+## Packaging & CI
 
-Electron's `autoUpdater` supports Squirrel.Windows natively: the feed is a folder with a `RELEASES` file and the `.nupkg`, so the deployment can serve it from any static host. MSIX updates need a signing certificate that the OS trusts, an App Installer file and, for the Store, a publisher account: all of that is spending and accounts that owner decision 7 of ADR-0055 defers until this slice is approved. Squirrel works unsigned for development builds and takes a certificate later with no code change.
-
-## Security defaults
-
-No window is created, so `contextIsolation`, `nodeIntegration: false` and `sandbox` do not come into play; any web contents that ever appears is locked down anyway (`will-navigate` and `window.open` denied) and every permission request (microphone, camera, screen, the rest) is refused for the default session. The loopback listener accepts one correct callback (state compared in constant time, exact path and Host), then closes, and gives up after 5 minutes. Only the configured Ludy origin is ever opened. The token is sent only to `<ludyUrl>/api/extension/me`, never followed through a redirect, and secrets are redacted from log lines.
-
-## Windows smoke in CI
-
-The installed build is exercised end to end on a Windows runner (install, tray, single instance, sign-in, DPAPI, update A to B, uninstall): [docs/desktop/windows-smoke.md](../../docs/desktop/windows-smoke.md). The app has a smoke channel for it (`src/smoke.ts`), off unless `LUDY_DESKTOP_SMOKE_DIR` is set and the Ludy address is a loopback one.
-
-## Develop
-
-```bash
-pnpm --filter @ludy/desktop typecheck
-pnpm vitest run --project unit apps/desktop
-```
-
-The Windows installer is built by CI only ([.github/workflows/desktop-build.yml](../../.github/workflows/desktop-build.yml)), never on a shared developer machine: `scripts/package.mjs` refuses to run off Windows. `scripts/build.mjs` strips the types of `src/*.ts` with Node's `stripTypeScriptTypes` (no bundler, no transpiler dependency) into `out/stage/dist`, which is the folder Electron runs.
+- **Windows:** `node apps/desktop/scripts/package.mjs [--version X.Y.Z] [--skip-native] [--sign]` (runs on Windows only).
+- **macOS:** `node apps/desktop/scripts/package-mac.mjs [--version X.Y.Z] [--arch arm64|x64|all] [--sign]` (runs on macOS only).
+- **CI unsigned verification:** [.github/workflows/desktop-build.yml](../../.github/workflows/desktop-build.yml) builds and verifies both Windows and macOS (`arm64` and `x64`) on every desktop PR and `main` commit with zero secrets.
+- **CI signed & notarized release:** [.github/workflows/desktop-package.yml](../../.github/workflows/desktop-package.yml) (`workflow_dispatch` on `main`, protected `desktop-release` environment).
+- **Build staging:** `scripts/build.mjs` strips TypeScript types with Node's `stripTypeScriptTypes` into `out/stage/dist`.
 
 ## Dependencies (all dev, all pinned, in the pnpm catalog)
 
 - `electron` 45.3.4: the runtime of the shell (ADR-0055 decision 3).
-- `@electron/packager` 20.3.0: packs the app folder with Electron into `ludy-desktop.exe`.
+- `@electron/packager` 20.3.0: packs the app folder for Windows and macOS (includes `@electron/osx-sign`).
 - `electron-winstaller` 5.4.4: makes the Squirrel.Windows installer, the full `.nupkg` and `RELEASES`.
 
 Nothing is a runtime dependency of the shell: the main process uses Electron and Node only.

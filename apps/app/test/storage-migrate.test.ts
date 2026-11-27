@@ -5,7 +5,7 @@ import { AUTH_STORAGE_KEY, LEGACY_AUTH_STORAGE_KEY, migrateAuthStorage } from '.
 import { forgetInvite, pendingInvite } from '../src/lib/invite.ts';
 import { keepEntity, keptEntity } from '../src/lib/legal-entity-choice.ts';
 import { pendingInteraction, rememberInteraction } from '../src/lib/oauth-consent.ts';
-import { rememberOAuthAttempt, takeOAuthAttempt } from '../src/lib/oauth.ts';
+import { rememberGithubOAuthAttempt, rememberOAuthAttempt, takeGithubOAuthAttempt, takeOAuthAttempt } from '../src/lib/oauth.ts';
 import { rememberOrgLeft, takeOrgLeft } from '../src/lib/org-access.ts';
 import { pendingDirectSignToken, pendingSignToken, rememberDirectSignToken, rememberSignToken } from '../src/lib/sign-hash.ts';
 import { clearDraft, loadDraft } from '../src/lib/social-draft.ts';
@@ -213,6 +213,10 @@ describe('legacy key migration across app stores (#3966)', () => {
     rememberOAuthAttempt('st2', 'beta');
     expect(session.getItem('ludy.oauth.st2')).not.toBeNull();
     expect(takeOAuthAttempt('st2')).toBe('beta');
+
+    rememberGithubOAuthAttempt('gh1', { slug: 'acme', projectId: 'p1', taskKeyPrefix: 'ACME', backfillTaskNumbers: true });
+    expect(takeGithubOAuthAttempt('gh1')).toEqual({ slug: 'acme', projectId: 'p1', taskKeyPrefix: 'ACME', backfillTaskNumbers: true });
+    expect(takeGithubOAuthAttempt('gh1')).toBeNull();
 
     const uid = 'AbCdEfGhIjKlMnOpQr';
     session.setItem('crove-pending-oauth-interaction', JSON.stringify({ uid, savedAt: Date.now() }));

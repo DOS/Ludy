@@ -98,9 +98,9 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   // #4723 (eSign Slice 6d): ludy_sign.public_deposit_qr_source and public_record_deposit_notice enforce org_app_on + entitlement -> opaque 404.
   '/api/sign/deposit-qr': { app: 'sign', gate: 'sql', why: 'crove_sign.public_deposit_qr_source checks org_app_on + entitlement -> 404 (#4723)' },
   '/api/sign/deposit-notice': { app: 'sign', gate: 'sql', why: 'crove_sign.public_record_deposit_notice checks org_app_on + entitlement -> 404 (#4723)' },
-  // #5158 Slice 1 (Projects GitHub Integration, ADR-0060): pending on main until dev promotion lands the webhook routes.
-  '/api/projects/github/webhook': { app: 'projects', gate: 'pending', why: 'GitHub App webhook receiver (#5158, ADR-0060): pending on main before dev promotion' },
-  '/api/projects/github/webhook/:hookKey': { app: 'projects', gate: 'pending', why: 'GitHub PAT per-connection webhook receiver (#5158, ADR-0060): pending on main before dev promotion' },
+  // #5158 Slice 1 (Projects GitHub Integration, ADR-0060): App webhook drops off/unentitled orgs in worker; PAT :hookKey gates via definer + entitlement -> opaque 404.
+  '/api/projects/github/webhook': { app: 'projects', gate: 'dropped', why: 'GitHub App webhook verifies raw-byte HMAC first and drops off/unentitled orgs in the worker handler (#5158)' },
+  '/api/projects/github/webhook/:hookKey': { app: 'projects', gate: 'sql', why: 'ludy_projects.github_webhook_hook_find + runtime.appOn gate org_app_on + entitlement -> opaque 404 (#5158)' },
 };
 
 // The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`. A line at the key indent that

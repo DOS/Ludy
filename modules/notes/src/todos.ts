@@ -909,6 +909,17 @@ export const todoUpdate = defineCommand({
   },
 });
 
+async function readReadableSourceNoteId(ctx: CommandContext, sourceNoteId: string): Promise<string | null> {
+  const noteRow = await ctx.trx
+    .selectFrom('ludy_notes.note')
+    .select('id')
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', sourceNoteId)
+    .where('deleted_at', 'is', null)
+    .executeTakeFirst();
+  return noteRow?.id ?? null;
+}
+
 // Marks an open to-do done; if it carries a recurrence rule and `stopSeries` is not set, atomically creates the next
 // open occurrence in the same series with reset checklist steps and shifted due/reminder instants.
 export const todoComplete = defineCommand({
@@ -921,7 +932,7 @@ export const todoComplete = defineCommand({
   handler: async (ctx, input): Promise<TodoCompleteResult> => {
     const userId = userOf(ctx.actor);
     const todoId = input.todoId.toLowerCase();
-    // Global lock DAG: notes.erase (S) -> series advisory lock -> todo_list FOR SHARE -> todo_sort_order advisory lock -> todo FOR UPDATE (ordered by id ASC).
+    // Global lock DAG: notes.erase (S) -> series advisory lock -> todo_list FOR SHARE -> todo_sort_order advisory lock -> notes.note (S) -> todo FOR UPDATE (ordered by id ASC).
     // Holding shared notes.erase upfront prevents concurrent private_erase from deleting a sibling between preSiblings and spawn (#5035).
     const seriesKey = await seriesLockKey(ctx, todoId);
     await lockNotesEraseShared(ctx);
@@ -931,10 +942,11 @@ export const todoComplete = defineCommand({
     let precomputedSortKey: string | null = null;
     let preSiblings: SeriesTimeRow[] | null = null;
     let peekCreatedAtUs: string | undefined;
+    let lockedSourceNoteId: string | null = null;
     if (!stopSeries) {
       const peek = await ctx.trx
         .selectFrom('ludy_notes.todo')
-        .select(['id', 'revision', 'status', 'deleted_at', 'list_id', 'recurrence', 'series_id', 'created_at', CREATED_AT_US_SQL.as('created_at_us')])
+        .select(['id', 'revision', 'status', 'deleted_at', 'list_id', 'recurrence', 'series_id', 'source_note_id', 'created_at', CREATED_AT_US_SQL.as('created_at_us')])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', todoId)
         .executeTakeFirst();
@@ -969,6 +981,12 @@ export const todoComplete = defineCommand({
               .executeTakeFirst();
           }
           await lockTodoSortOrder(ctx, userId);
+          if (peek.source_note_id !== null && (await readReadableSourceNoteId(ctx, peek.source_note_id)) !== null) {
+            // Check caller RLS read access before acquiring shared per-note lock (and re-check after locking before insert)
+            // so unreadable/private source notes never wait on author locks; acquire before placeBetween (rebalance takes todo FOR UPDATE).
+            await lockNote(ctx, peek.source_note_id, true);
+            lockedSourceNoteId = peek.source_note_id;
+          }
           const preRows = await ownKeys(ctx, null);
           const at = preRows.findIndex((r) => r.id === todoId);
           precomputedSortKey =
@@ -1137,14 +1155,8 @@ export const todoComplete = defineCommand({
           );
           const resetChecklist = checklistOf(steps(before.checklist).map((s) => ({ text: s.text, done: false })));
           let readableSourceNoteId: string | null = null;
-          if (before.source_note_id !== null) {
-            const noteRow = await ctx.trx
-              .selectFrom('ludy_notes.note')
-              .select('id')
-              .where('org_id', '=', ctx.orgId)
-              .where('id', '=', before.source_note_id)
-              .executeTakeFirst();
-            readableSourceNoteId = noteRow?.id ?? null;
+          if (before.source_note_id !== null && before.source_note_id === lockedSourceNoteId) {
+            readableSourceNoteId = await readReadableSourceNoteId(ctx, before.source_note_id);
           }
           if (precomputedSortKey === null) {
             throw new DomainError('CONFLICT', 409, 'Chuỗi việc lặp vừa thay đổi; vui lòng thử lại');

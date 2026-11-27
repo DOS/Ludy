@@ -18,6 +18,8 @@ export * from './meeting-commitments.ts';
 export * from './meeting-template-suggest.ts';
 export * from './meeting-deal-update.ts';
 export * from './meeting-open-points.ts';
+export * from './meeting-catch-up.ts';
+export * from './meeting-notes-minutes.ts';
 export * from './meeting-sales-insight.ts';
 export * from './meeting-label-suggest.ts';
 export * from './meeting-followup-note.ts';

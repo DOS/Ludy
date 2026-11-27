@@ -37,6 +37,8 @@ const CONTROL_PLANE: ModuleManifest = {
       // The keys of the blobs of deleted images (#2357), emptied by the worker once each object is gone: no tenant column, no personal data.
       conversation_blob_doomed: columns(['storage_key', 'queued_at', 'not_before', 'claimed_until', 'attempts']),
       conversation_deletion_request: columns(['code', 'requested_at', 'completed_at', 'connections', 'sibling_codes', 'next_attempt_at'], { user_hash: 'sensitive' }),
+      // Durable first-seen time of WhatsApp webhook events (#5085): only a SHA-256 key and a timestamp, no id, number or words.
+      conversation_inbound_first_seen: columns(['key', 'first_seen_at']),
       conversation_inbound_pending: columns(['seq', 'provider', 'bucket_key', 'received_at', 'claimed_until', 'attempts'], { body: 'pii' }),
       // The Ludy extension's one-time codes and tokens (#2582): only SHA-256 hashes of secrets, a PKCE challenge, scopes and a device label.
       extension_auth_code: columns(['org_id', 'id', 'user_id', 'code_challenge_method', 'scopes', 'device_name', 'extension_id', 'created_at', 'expires_at', 'consumed_at', 'failed_attempts'], { code_hash: 'sensitive', code_challenge: 'sensitive' }),
@@ -78,6 +80,7 @@ const CLASS_OF_KIND: Record<PersonalDataKind, readonly DataClass[]> = {
   free_text: ['pii'],
   // A bank account number (#2402).
   account_number: ['payment'],
+  national_id: ['national_id'],
   other: ['pii', 'contact', 'payment', 'national_id', 'national_id_if_individual', 'sensitive'],
 };
 const PERSONAL_HANDLINGS: readonly PersonalDataHandling[] = ['erase', 'keep_legal', 'keep_record'];

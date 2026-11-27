@@ -25,6 +25,8 @@ import { MeetingZalo } from './meeting-zalo.tsx';
 import { MeetingChatPost } from './meeting-chat.tsx';
 import { MinutesLinkPanel } from './minutes-link.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
+import { MeetingCatchUp } from './meeting-catch-up.tsx';
+import { MeetingNotesMinutes } from './meeting-notes-minutes.tsx';
 import { MinutesVersionPublisher, MinutesVersionSwitch } from './meeting-minutes-version.tsx';
 import { MeetingVoiceCues } from './meeting-voice-cues.tsx';
 import { clock } from './meeting-transcript.tsx';
@@ -234,7 +236,7 @@ function SummaryEditor({
   );
 }
 
-export function SummaryText({ summary, decisions, template, copy = null }: { summary: string; decisions: string[]; template: MeetingSummaryTemplate; copy?: MinutesTemplateCopy | null }) {
+export function SummaryText({ summary, decisions, template, copy = null, decisionIdPrefix }: { summary: string; decisions: string[]; template: MeetingSummaryTemplate; copy?: MinutesTemplateCopy | null; decisionIdPrefix?: string | undefined }) {
   const t = useTranslations('meetings.results');
   const heading = useSectionHeading(template, copy);
   // A template's text is shown under its headings; text that is not in the template's form is shown whole.
@@ -256,7 +258,7 @@ export function SummaryText({ summary, decisions, template, copy = null }: { sum
           <p className="text-xs font-medium text-muted-foreground">{t('decisions')}</p>
           <ul className="list-disc space-y-1 pl-5">
             {decisions.map((d, i) => (
-              <li key={`${i}-${d}`}>{d}</li>
+              <li key={`${i}-${d}`} {...(decisionIdPrefix ? { id: `${decisionIdPrefix}${i + 1}` } : {})}>{d}</li>
             ))}
           </ul>
         </div>
@@ -374,7 +376,7 @@ function Item({ item, isRecorder, redactedEpoch = 0 }: { item: ActionItemView; i
   const remove = useMutation({ mutationFn: () => orpc.meetings.actionItems.delete.call({ itemId: item.id }), onSuccess: refresh });
   const open = item.status === 'suggested';
   return (
-    <li className="space-y-2 py-3 text-sm" data-testid="action-item">
+    <li {...(item.stage === 'published' ? { id: `meeting-action-${item.id}` } : {})} className="space-y-2 py-3 text-sm" data-testid="action-item">
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         {item.transcriptSeconds !== null && <span className="font-mono">{clock(item.transcriptSeconds)}</span>}
         {item.who && <span>{item.who}</span>}
@@ -752,7 +754,7 @@ export function MeetingResults({
             )}
             {/* The second-language version the recorder published (#4777): readers switch between the original and it; the original shows first. */}
             <MinutesVersionSwitch meetingId={meetingId} original={publishedOriginal}>
-              <SummaryText summary={published.summary} decisions={published.decisions} template={template} copy={minutesTemplate} />
+              <SummaryText summary={published.summary} decisions={published.decisions} template={template} copy={minutesTemplate} decisionIdPrefix="meeting-decision-" />
             </MinutesVersionSwitch>
             {/* Who did the talking (#4765): one line worked out in code from the transcript the reader may read, no AI */}
             <TalkTimeLine meetingId={meetingId} />
@@ -760,6 +762,7 @@ export function MeetingResults({
             {isRecorder && <MinutesVersionPublisher meetingId={meetingId} original={publishedOriginal} />}
           </section>
         )}
+        {!isRecorder && published !== null && <MeetingCatchUp key={`catch-up-${meetingId}-${effectiveRedactedEpoch}`} meetingId={meetingId} />}
         {canSaveAsNote && (
           <SaveSummaryAsNote
             key={meetingId}
@@ -811,6 +814,14 @@ export function MeetingResults({
         {/* Cues spoken to Vy in the meeting (#4807): the recorder's click drafts a marked item for each, found by code */}
         {isRecorder && <MeetingVoiceCues key={`cues-${meetingId}`} meetingId={meetingId} />}
         {isRecorder && <VySummary key={`vy-${effectiveRedactedEpoch}`} meetingId={meetingId} hasModelDraft={(draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted)} />}
+        {isRecorder && (
+          <MeetingNotesMinutes
+            key={`notes-minutes-${meetingId}-${effectiveRedactedEpoch}`}
+            meetingId={meetingId}
+            template={template}
+            minutesTemplate={minutesTemplate}
+          />
+        )}
         {isRecorder && (
           <section className="space-y-2">
             <h3 className="flex items-center gap-2 text-xs font-medium text-muted-foreground">

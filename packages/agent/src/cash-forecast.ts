@@ -146,3 +146,6 @@ export function checkCashForecastSentence(facts: CashForecastFacts, output: { se
   if (PROMISE.some((word) => word.test(read))) return { kind: 'none', code: 'PROMISE' };
   return { kind: 'sentence', text };
 }
+
+// The advice, certainty and date checks of this note, shared with the other coworker notes that hold the same line (ask-books.ts). Additive: nothing here changes how checkCashForecastSentence reads a note.
+export const CASH_FORECAST_CHECKS = { ADVICE, PROMISE, DATE_WORDS, MAY_MONTH } as const;

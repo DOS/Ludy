@@ -64,7 +64,8 @@ export type PersonalDataHandling = (typeof PERSONAL_DATA_HANDLINGS)[number];
 // among which a value may be written (a note's body, an activity line, a comment, a description; #1678, #1948), matched
 // by freeTextMatch below.
 // account_number: a bank account number kept as its digits (6 to 20), compared with a searched code of digits (#2402).
-export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'account_number', 'other'] as const;
+// national_id: a person's national ID (CCCD, 12 digits) matched by digits (#3682); ASCII letters stay significant so alphanumeric IDs (passports) do not match digit probes.
+export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'account_number', 'national_id', 'other'] as const;
 export type PersonalDataKind = (typeof PERSONAL_DATA_KINDS)[number];
 
 // The handlings of personal data held in the org's own tables: what the finder reports and an erasure reads.
@@ -252,7 +253,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'ludy_finance.einvoice_draft.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'ludy_finance.einvoice_draft.buyer_name': { kind: 'name', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'ludy_finance.einvoice_draft.buyer_address': { kind: 'address', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
-  'ludy_finance.einvoice_draft.buyer_identity': { kind: 'other', handling: 'keep_legal', reason: "The CCCD, passport number or budget-relation unit code an individual buyer gave on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)" },
+  'ludy_finance.einvoice_draft.buyer_identity': { kind: 'national_id', handling: 'keep_legal', reason: "The CCCD, passport number or budget-relation unit code an individual buyer gave on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)" },
   'ludy_finance.einvoice_draft.buyer_nationality': { kind: 'other', handling: 'keep_legal', reason: "The nationality a foreign buyer gave with a passport on a sales e-invoice draft (Decree 254 Appendix point 4.b, #3709), which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41); it is classified with the identity it belongs to" },
   'ludy_finance.einvoice_draft.buyer_email': { kind: 'email', handling: 'keep_legal', reason: 'Where the buyer asked for the invoice on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   // A sent quote (#2694): the buyer as the customer's contact was when the quote was sent. The quote is frozen once sent (a guard trigger), so the erase command cannot change it;
@@ -463,6 +464,15 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'free_text',
     handling: 'erase',
     reason: "A draft of what was said in a meeting being recorded, which may name or describe a person: read by its recorder alone, replaced by the transcript after the meeting, deleted with the meeting (its recorder, an owner, or the retention job), 30 days after it was made, and 30 days after its recorder was removed (the former-member purge of their Vy data)",
+  },
+  // Short-lived Vy daily briefing prep lines (#5080, ADR-0049): held privately for the opted-in member for at most 36 hours.
+  // No finder reads them; counts per org are reported via morning_brief_lines_counts(), matching rows are erased via
+  // morning_brief_lines_erase() and personal_erase(), and rows cascade with meeting deletion, member removal, retention purge, and org purge.
+  'ludy_meetings.morning_brief_lines.lines': {
+    kind: 'free_text',
+    handling: 'erase',
+    privateRows: 'always',
+    reason: 'Short-lived Vy daily briefing prep lines of each member (auto-expire within 36 hours): held privately for that member, deleted on meeting delete, member removal, retention purge, archive shred, org purge, or personal-data erasure',
   },
   // The machine translation of a meeting's summary (meetings integrations E1, issue #3184): a member's own Vy's translation of the summary, its decisions and its item titles, private to the
   // member who asked. No finder, owner or admin reads it; it goes with the meeting, with the summary it translated, and an erasure that touches the meeting DROPS it (never redacts it:
@@ -742,6 +752,46 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'free_text',
     handling: 'erase',
     reason: 'A project triage item decline reason written by a member, which may name a person: mentions are replaced with a redaction marker',
+  },
+  // Projects GitHub integration (#5158, ADR-0060): repository slugs are org operational configuration, whereas
+  // external GitHub titles/authors and buffered PAT notices may quote a person and erase when matched.
+  'ludy_projects.github_project_repo.repo_full_name': {
+    kind: 'other',
+    handling: 'not_personal',
+    reason: 'Bound GitHub repository slug (owner/repo) configured for project sync, not a personal-data record',
+  },
+  'ludy_projects.github_task_link.repo_full_name': {
+    kind: 'other',
+    handling: 'not_personal',
+    reason: 'Bound GitHub repository slug (owner/repo) on a linked issue or pull request, not a personal-data record',
+  },
+  'ludy_projects.github_sync_delivery.repo_full_name': {
+    kind: 'other',
+    handling: 'not_personal',
+    machinery: true,
+    reason: 'Definer-only delivery ledger repository slug (owner/repo), not a personal-data record',
+  },
+  'ludy_projects.github_task_link.external_title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Linked GitHub issue or pull request title, which may quote a person: mentions are replaced with a redaction marker',
+  },
+  'ludy_projects.github_task_link.author_login': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'External GitHub handle on a linked issue or pull request; cleared to NULL when matched by an erasure probe',
+  },
+  'ludy_projects.github_webhook_notice.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    machinery: true,
+    reason: 'Transient raw PAT GitHub webhook body deleted on claim and 10m sweep; deleted on erasure via ludy_projects.personal_data_erase_github_notice',
+  },
+  'ludy_projects.github_webhook_pending.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    machinery: true,
+    reason: 'Transient orgless GitHub App webhook payload deleted on worker claim and within 10 minutes by github_webhook_sweep',
   },
   // eSign (#3323, #3427): unsealed signers (draft, voided, expired, or declined with sealed_file_id IS NULL) are removed on erasure; active, completed, and sealed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
   'ludy_sign.signer.name': {
@@ -1037,6 +1087,7 @@ function columnMatch(kind: PersonalDataKind, probe: Probe, column: RawBuilder<un
   }
   const digits = sql`pg_catalog.regexp_replace(${column}, '[^0-9]', '', 'g')`;
   if (kind === 'tax_code' || kind === 'account_number') return sql<boolean>`${digits} = ${probe.digits}`;
+  if (kind === 'national_id') return sql<boolean>`pg_catalog.regexp_replace(${column}, '[^0-9A-Za-z]', '', 'g') = ${probe.digits}`;
   if (kind === 'phone') {
     const local = probe.digits.startsWith('84') ? `0${probe.digits.slice(2)}` : probe.digits;
     const international = local.startsWith('0') ? `84${local.slice(1)}` : local;
@@ -1121,9 +1172,108 @@ async function findPersonalData(
   probe: Probe,
   privateCounts: boolean,
   documentedPartyIds: readonly string[] = [],
+  options: { includePendingNoteAttachments?: boolean } = {},
 ): Promise<PersonalDataResult> {
+  const includePendingNoteAttachments = options.includePendingNoteAttachments ?? true;
   const matches: PersonalDataResult['matches'] = [];
   let truncated = false;
+  let pendingSharedAttachments = 0;
+  let privateItems: PersonalDataResult['privateItems'] = null;
+  let pendingPrivateAttachments: number | null = null;
+  type AttachmentColSpec = {
+    key: string;
+    entry: PersonalDataColumn;
+    schema: string;
+    table: string;
+    match: RawBuilder<unknown>;
+    shared: RawBuilder<unknown>;
+    rowExpr: RawBuilder<unknown>;
+  };
+  const attachmentSpecs: AttachmentColSpec[] = [];
+  let attachmentExecuted = false;
+  const runAttachmentSnapshot = async () => {
+    if (!includePendingNoteAttachments || attachmentExecuted) return;
+    attachmentExecuted = true;
+    // Read shared attachment matches (each capped at 201 rows before JSONB projection, streamed without AS MATERIALIZED),
+    // shared/private pending counts, and (for owners) private_matches() in one MVCC snapshot so concurrent worker extraction
+    // or note visibility flips cannot emit contradictory pending warnings and match counts (#5127).
+    const ctes: RawBuilder<unknown>[] = attachmentSpecs.map((spec, i) => {
+      const cteName = sql.raw(`c_${i}`);
+      return sql`${cteName} AS (
+        SELECT ${spec.rowExpr} AS row
+          FROM ${sql.table(`${spec.schema}.${spec.table}`)} AS t
+         WHERE t.org_id = ${orgId}::uuid AND ${spec.match} ${spec.shared}
+         LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}
+      )`;
+    });
+    ctes.push(sql`shared_pending AS (
+      SELECT pg_catalog.count(*)::text AS n
+        FROM ludy_notes.attachment a
+        JOIN ludy_notes.note n ON n.org_id = a.org_id AND n.id = a.note_id
+       WHERE a.org_id = ${orgId}::uuid
+         AND n.visibility = 'org'
+         AND a.extract_status = 'pending'
+    )`);
+    if (privateCounts) {
+      ctes.push(sql`private_pending AS (
+        SELECT ludy_notes.private_pending_attachment_count()::text AS n
+      )`);
+      ctes.push(sql`private_matched AS (
+        SELECT m.author_user_id, m.notes::text AS notes, m.todos::text AS todos
+          FROM ludy_notes.private_matches(${probe.kind}, ${probeValue(probe)}) m
+      )`);
+    }
+    const branches: RawBuilder<unknown>[] = [
+      privateCounts
+        ? sql`SELECT 'counts'::text AS row_kind, NULL::text AS col_key, sp.n AS pending_shared, pp.n AS pending_private, NULL::jsonb AS row, NULL::uuid AS author_user_id, NULL::text AS notes, NULL::text AS todos FROM shared_pending sp, private_pending pp`
+        : sql`SELECT 'counts'::text AS row_kind, NULL::text AS col_key, sp.n AS pending_shared, NULL::text AS pending_private, NULL::jsonb AS row, NULL::uuid AS author_user_id, NULL::text AS notes, NULL::text AS todos FROM shared_pending sp`,
+      ...attachmentSpecs.map((spec, i) => {
+        const cteName = sql.raw(`c_${i}`);
+        return sql`SELECT 'match'::text AS row_kind, ${spec.key}::text AS col_key, NULL::text AS pending_shared, NULL::text AS pending_private, ${cteName}.row AS row, NULL::uuid AS author_user_id, NULL::text AS notes, NULL::text AS todos FROM ${cteName}`;
+      }),
+      ...(privateCounts
+        ? [
+            sql`SELECT 'private_match'::text AS row_kind, NULL::text AS col_key, NULL::text AS pending_shared, NULL::text AS pending_private, NULL::jsonb AS row, pm.author_user_id, pm.notes, pm.todos FROM private_matched pm`,
+          ]
+        : []),
+    ];
+    const { rows } = await sql<{
+      row_kind: 'counts' | 'match' | 'private_match';
+      col_key: string | null;
+      pending_shared: string | null;
+      pending_private: string | null;
+      row: Record<string, unknown> | null;
+      author_user_id: string | null;
+      notes: string | null;
+      todos: string | null;
+    }>`WITH ${sql.join(ctes, sql`, `)} ${sql.join(branches, sql` UNION ALL `)}`.execute(trx);
+    const countsRow = rows.find((r) => r.row_kind === 'counts');
+    pendingSharedAttachments = Number(countsRow?.pending_shared ?? 0);
+    if (privateCounts) pendingPrivateAttachments = Number(countsRow?.pending_private ?? 0);
+    const byCol = new Map<string, Record<string, unknown>[]>();
+    for (const r of rows) {
+      if (r.row_kind !== 'match' || r.col_key === null || r.row === null) continue;
+      const list = byCol.get(r.col_key);
+      if (list) list.push(r.row);
+      else byCol.set(r.col_key, [r.row]);
+    }
+    for (const spec of attachmentSpecs) {
+      const matchedRows = byCol.get(spec.key) ?? [];
+      if (matchedRows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
+      for (const row of matchedRows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
+        const { handling, reason } = rowHandling(spec.entry, row);
+        if (!searchable(handling)) continue;
+        matches.push({ column: spec.key, handling, reason, rowId: typeof row.id === 'string' ? row.id : null, row });
+      }
+    }
+    if (privateCounts) {
+      privateItems = rows.flatMap((r) =>
+        r.row_kind === 'private_match' && r.author_user_id !== null
+          ? [{ authorUserId: r.author_user_id, notes: Number(r.notes), todos: Number(r.todos) }]
+          : [],
+      );
+    }
+  };
   // Meeting text: the ids of the rows that hold the value and that the actor reads, found by the text first (row security would check every row's meeting before testing
   // the text, which costs seconds on a large transcript); the rows are then read by id, still under row security.
   const meetingRows = new Map<string, string[]>();
@@ -1185,6 +1335,10 @@ async function findPersonalData(
                AND e.sealed_file_id IS NULL
           )`
         : sql<boolean>`false`;
+    if (includePendingNoteAttachments && schema === 'ludy_notes' && table === 'attachment') {
+      attachmentSpecs.push({ key, entry, schema, table, match, shared, rowExpr });
+      continue;
+    }
     const { rows } = await sql<{ row: Record<string, unknown>; is_unsealed: boolean }>`
       SELECT ${rowExpr} AS row, ${isUnsealedExpr} AS is_unsealed
         FROM ${sql.table(`${schema}.${table}`)} AS t
@@ -1204,6 +1358,7 @@ async function findPersonalData(
       matches.push({ column: key, handling, reason, rowId: typeof row.id === 'string' ? row.id : null, row });
     }
   }
+  await runAttachmentSnapshot();
   // Project weekly status mails (#2609): summary and subject are free text typed by a manager or seeded by AI; search both for personal data.
   const weeklyMails = await sql<{ id: string; org_id: string; source: string; source_id: string | null; status: string; subject: string | null; created_at: Date }>`
     SELECT m.id, m.org_id, m.source, m.source_id, m.status, m.subject, m.created_at
@@ -1265,12 +1420,6 @@ async function findPersonalData(
       row: r.row,
     });
   }
-  const privateItems = privateCounts
-    ? (
-        await sql<{ author_user_id: string; notes: string; todos: string }>`
-          SELECT author_user_id, notes, todos FROM ludy_notes.private_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx)
-      ).rows.map((p) => ({ authorUserId: p.author_user_id, notes: Number(p.notes), todos: Number(p.todos) }))
-    : null;
   // Meeting text the owner cannot read (an attendees-only meeting, a draft that is not theirs): counted per recorder, never listed (#2594, ADR-0047 points 2 and 7).
   let meetingText: PersonalDataResult['meetingText'] = null;
   if (privateCounts) {
@@ -1296,7 +1445,25 @@ async function findPersonalData(
       else meetingText.push({ recorderUserId: n.recorder_user_id, meetings: 0, lines: 0, results: 0, items: 0, titles: 0, notes: Number(n.notes) });
     }
   }
-  return { kind: probe.kind === 'email' ? 'email' : 'digits', matches, privateItems, meetingText, meetingTextSkipped, truncated };
+  if (privateCounts && privateItems === null) {
+    privateItems = (
+      await sql<{ author_user_id: string; notes: string; todos: string }>`
+        SELECT author_user_id, notes, todos FROM ludy_notes.private_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx)
+    ).rows.map((p) => ({ authorUserId: p.author_user_id, notes: Number(p.notes), todos: Number(p.todos) }));
+  }
+  const hasPendingNoteAttachments =
+    pendingSharedAttachments > 0 || (pendingPrivateAttachments !== null && pendingPrivateAttachments > 0);
+  return {
+    kind: probe.kind === 'email' ? 'email' : 'digits',
+    matches,
+    privateItems,
+    meetingText,
+    meetingTextSkipped,
+    ...(hasPendingNoteAttachments
+      ? { pendingNoteAttachments: { shared: pendingSharedAttachments, private: pendingPrivateAttachments } }
+      : {}),
+    truncated,
+  };
 }
 
 // The finder (#923), a command so that every search leaves an audit row (#1678 review): the counts of private items are
@@ -1324,6 +1491,10 @@ export const personalDataFind = defineCommand({
       meeting_text: result.meetingText === null
         ? null
         : { recorders: result.meetingText.length, meetings: result.meetingText.reduce((n, m) => n + m.meetings, 0), lines: result.meetingText.reduce((n, m) => n + m.lines, 0) },
+      // Never write pending_note_attachments.private (or depend on private existence) in audit_event, which admins can list/export (#5127).
+      ...(result.pendingNoteAttachments && result.pendingNoteAttachments.shared > 0
+        ? { pending_shared_note_attachments: result.pendingNoteAttachments.shared }
+        : {}),
     });
     return result;
   },
@@ -1335,6 +1506,10 @@ export const PENDING_NOTE_ATTACHMENT_REASON =
   'Text extraction is still pending for shared note attachments, so their extracted text could not be searched yet: search or erase again once extraction completes';
 export const PENDING_PRIVATE_NOTE_ATTACHMENT_REASON =
   'Text extraction is still pending for private note attachments, so their extracted text could not be searched yet (no filenames or notes are disclosed): run find, notify, and erase again once extraction completes';
+export const FAILED_NOTE_ATTACHMENT_REASON =
+  'Text extraction failed for shared note attachments, so their extracted text could not be searched (filenames were still scanned): inspect or remove those attachments manually if they may contain personal data';
+export const FAILED_PRIVATE_NOTE_ATTACHMENT_REASON =
+  'Text extraction failed for private note attachments, so their extracted text could not be searched (filenames were still scanned; no filenames or notes are disclosed): ask note owners to review their failed attachments if needed';
 export const UNTOLD_MEETING_REASON =
   'Text of a meeting the owner cannot read, where no notice covers its recorder and its text as it is now (not sent, the recorder not told 24 hours ago, or the text changed since): send the notice, wait 24 hours, then erase again; the recorder or an owner can also delete the meeting';
 // The statuses of a mail that has left Ludy or may have (the mail table's own set): handed to the worker (sending), outcome unknown (ambiguous), or sent on to its recipient (sent,
@@ -1365,6 +1540,8 @@ export const MEMBER_TRANSLATION_REASON =
   "Machine translations of meetings (the row count is all of the organization's, not this person's) are held privately for the member who asked and cannot be read here; they go with their meeting, and 30 days after that member is removed";
 export const MEMBER_LIVE_LINE_REASON =
   "Live preview lines of meetings being recorded or not yet transcribed (the row count is all of the organization's, not this person's) are held privately for the recorder and cannot be read here; they are replaced by the transcript, expire 30 days after they were made, go with their meeting, and go 30 days after their recorder is removed";
+export const MEMBER_BRIEF_LINES_REASON =
+  "Short-lived Vy daily briefing prep lines (the row count is all of the organization's, not this person's) are held privately for the opted-in member and cannot be read here; matching lines were erased, and remaining lines auto-expire within 36 hours, go with their meeting, and go when that member is removed";
 export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[], hidden: number): string {
   const first = [...dates].sort()[0];
   const word = kind === 'audio' ? 'The audio' : 'The video';
@@ -1409,6 +1586,8 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'ludy_projects.project_triage_item.title',
   'ludy_projects.project_triage_item.description',
   'ludy_projects.project_triage_item.decline_reason',
+  'ludy_projects.github_task_link.external_title',
+  'ludy_projects.github_task_link.author_login',
   'ludy_hr.candidate.notes',
 ]);
 // The meeting text columns the redaction of ludy_meetings.personal_erase would change, left as they are for a short number (#3064).
@@ -1844,6 +2023,11 @@ export const personalDataErase = defineCommand({
       SELECT ludy_finance.personal_data_erase_marketplace_hook_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
     add('ludy_finance.marketplace_hook_notice.body', Number(marketplaceNotices[0]?.rows ?? 0));
 
+    // Transient raw GitHub webhook notice waiting for worker claim (#5158): deleted when its text mentions the value.
+    const { rows: githubNotices } = await sql<{ rows: number }>`
+      SELECT ludy_projects.personal_data_erase_github_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+    add('ludy_projects.github_webhook_notice.body', Number(githubNotices[0]?.rows ?? 0));
+
     // Sender-side KYC attachment checks (#4443, PDPL Law 91/2025/QH15; summary counts #4510): delete any
     // kyc_check row in the org whose findings_json quotes the value (including 8/9-digit legacy CMND numbers
     // and rows on attendees-only meeting_minutes envelopes via the owner-only definer), detach matching unsealed
@@ -1895,8 +2079,14 @@ export const personalDataErase = defineCommand({
     add('ludy_notes.notebook.name', notebooks.filter((b) => b.name).length);
     add('ludy_notes.notebook.stack_name', notebooks.filter((b) => b.stack_name).length);
     // Lock every shared note whose text, snapshot, or attachment names the value first, in id order (#3562, #5035).
-    // Including attachments here ensures personalDataErase locks note -> attachment in the same order as
-    // noteAttachmentDelete, preventing AB-BA deadlocks when only a shared attachment matches.
+    // Keep this two-step explicit query separate from the later DELETE FROM ludy_notes.attachment (#5127):
+    // 1) Locking every matched note upfront in ORDER BY n.id BEFORE updating note/note_template or deleting
+    //    note_version/attachment guarantees canonical notes.erase -> notebook[id ASC] -> note[id ASC] -> attachment
+    //    lock acquisition order (matching noteAttachmentDelete and avoiding AB-BA deadlocks when only a snapshot or
+    //    attachment matches).
+    // 2) Folding this into an un-materialized CTE inside DELETE FROM attachment would let PostgreSQL pipeline/reorder
+    //    joins and lock attachment rows before every parent note is locked, and would skip notes matched only via
+    //    note_version/attachment prior to the note/note_version steps above.
     const { rows: lockedSharedNotes } = await sql<{ id: string }>`
       SELECT n.id FROM ludy_notes.note n
        WHERE n.org_id = ${ctx.orgId}::uuid AND n.visibility = 'org'
@@ -1936,7 +2126,7 @@ export const personalDataErase = defineCommand({
              title = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), ERASED_TEXT_MARK)}, ${NOTE_TITLE_MAX}::int),
              body = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.body'), ERASED_TEXT_MARK)}, ${NOTE_BODY_MAX}::int),
              tags = CASE WHEN ${stillAcross} THEN '{}'::text[] ELSE ${keptTags} END,
-             revision = t.revision + 1, updated_at = ${ctx.now}
+             revision = t.revision + 1, updated_at = GREATEST(t.updated_at, pg_catalog.clock_timestamp(), ${ctx.now})
         FROM ludy_notes.note_template o
        WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
          AND (${mentions('t.name')} OR ${mentions('t.title')} OR ${mentions('t.body')} OR ${freeTextMatch(probe, tagsOf('t'))})
@@ -1975,20 +2165,25 @@ export const personalDataErase = defineCommand({
         .where('id', 'in', touchedSharedNoteIds)
         .execute();
     }
-    const { rows: pendingSharedAttRows } = await sql<{ pending: string }>`
-      SELECT pg_catalog.count(*)::text AS pending
+    const { rows: incompleteSharedAttRows } = await sql<{ pending: string; failed: string }>`
+      SELECT pg_catalog.count(*) FILTER (WHERE a.extract_status = 'pending')::text AS pending,
+             pg_catalog.count(*) FILTER (WHERE a.extract_status = 'failed')::text AS failed
         FROM ludy_notes.attachment a
         JOIN ludy_notes.note n ON n.org_id = a.org_id AND n.id = a.note_id
        WHERE a.org_id = ${ctx.orgId}::uuid
          AND n.visibility = 'org'
-         AND a.extract_status = 'pending'`.execute(ctx.trx);
-    const pendingSharedAttachments = Number(pendingSharedAttRows[0]?.pending ?? 0);
+         AND a.extract_status IN ('pending', 'failed')`.execute(ctx.trx);
+    const pendingSharedAttachments = Number(incompleteSharedAttRows[0]?.pending ?? 0);
+    const failedSharedAttachments = Number(incompleteSharedAttRows[0]?.failed ?? 0);
     const { rows: privateRows } = await sql<{ notes: string; todos: string; untold_notes: string; untold_todos: string; note_ids: string[]; todo_ids: string[] }>`
       SELECT notes, todos, untold_notes, untold_todos, note_ids, todo_ids FROM ludy_notes.private_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
-    // Count still-pending private attachments after private_erase so erased pending rows are not falsely reported in kept[].
+    // Count still-pending and extraction-failed private attachments after private_erase so erased rows are not falsely reported in kept[].
     const { rows: pendingPrivateAttRows } = await sql<{ pending: string }>`
       SELECT ludy_notes.private_pending_attachment_count()::text AS pending`.execute(ctx.trx);
     const pendingPrivateAttachments = Number(pendingPrivateAttRows[0]?.pending ?? 0);
+    const { rows: failedPrivateAttRows } = await sql<{ failed: string }>`
+      SELECT ludy_notes.private_failed_attachment_count()::text AS failed`.execute(ctx.trx);
+    const failedPrivateAttachments = Number(failedPrivateAttRows[0]?.failed ?? 0);
     const sum = (key: 'notes' | 'todos' | 'untold_notes' | 'untold_todos') => privateRows.reduce((n, r) => n + Number(r[key]), 0);
     const privateDeleted = { notes: sum('notes'), todos: sum('todos') };
     const untold = { notes: sum('untold_notes'), todos: sum('untold_todos') };
@@ -2001,6 +2196,17 @@ export const personalDataErase = defineCommand({
     // A number of fewer than 10 digits may as well be a date or a figure in the text (#3064), and a redaction cannot be undone: the definer is not called, nothing of the meeting text (nor its
     // follow-up mails, nor the retention dates it would have reported) changes, and the rows are counted below, as the activity lines and tasks are (ACTIVITY_REDACT_MIN_DIGITS).
     const shortNumber = probe.kind === 'digits' && probe.digits.length < ACTIVITY_REDACT_MIN_DIGITS;
+    const briefLinesErased = shortNumber
+      ? 0
+      : await meetingScan(ctx.trx, async () =>
+          Number(
+            (
+              await sql<{ erased: string }>`
+                SELECT ludy_meetings.morning_brief_lines_erase(${probe.kind}, ${probeValue(probe)})::text AS erased`.execute(ctx.trx)
+            ).rows[0]?.erased ?? 0,
+          ),
+        );
+    add('ludy_meetings.morning_brief_lines.lines', briefLinesErased ?? 0);
     const redaction = shortNumber
       ? []
       : await meetingScan(ctx.trx, async () =>
@@ -2553,6 +2759,24 @@ export const personalDataErase = defineCommand({
          RETURNING ${freeTextMatch(probe, sql.ref('o.note'))} AS note`.execute(ctx.trx);
       add('ludy_projects.time_entry.note', timeEntries.filter((e) => e.note).length);
 
+      const githubLinkTitle = freeTextMatch(probe, sql.ref('gtl.external_title'));
+      const githubLinkAuthor = freeTextMatch(probe, sql.ref('gtl.author_login'));
+      const { rows: githubLinkRows } = await sql<{ external_title: boolean; author_login: boolean }>`
+        UPDATE ludy_projects.github_task_link gtl
+           SET external_title = CASE WHEN ${githubLinkTitle} THEN COALESCE(
+                 NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('gtl.external_title'), REDACTED_MARK)}, 300)), ''),
+                 ${REDACTED_MARK}
+               ) ELSE gtl.external_title END,
+               author_login = CASE WHEN gtl.author_login IS NOT NULL AND ${githubLinkAuthor} THEN NULL ELSE gtl.author_login END,
+               updated_at = ${ctx.now}
+          FROM ludy_projects.github_task_link o
+         WHERE o.org_id = gtl.org_id AND o.id = gtl.id AND gtl.org_id = ${ctx.orgId}::uuid
+           AND (${githubLinkTitle} OR (gtl.author_login IS NOT NULL AND ${githubLinkAuthor}))
+         RETURNING ${freeTextMatch(probe, sql.ref('o.external_title'))} AS external_title,
+                   (o.author_login IS NOT NULL AND ${freeTextMatch(probe, sql.ref('o.author_login'))}) AS author_login`.execute(ctx.trx);
+      add('ludy_projects.github_task_link.external_title', githubLinkRows.filter((r) => r.external_title).length);
+      add('ludy_projects.github_task_link.author_login', githubLinkRows.filter((r) => r.author_login).length);
+
       // Recruiting candidate notes that quote the person (#3425): replace mentions, bounded to 2000 chars.
       const candidateNotes = freeTextMatch(probe, sql.ref('c.notes'));
       const { rows: candidateNoteRows } = await sql<{ notes: boolean }>`
@@ -2566,8 +2790,11 @@ export const personalDataErase = defineCommand({
       add('ludy_hr.candidate.notes', candidateNoteRows.filter((r) => r.notes).length);
     }
 
-    // What stays, with its reason: the finder's answer after the erasure (the cleared values no longer match).
-    const after = await findPersonalData(ctx.trx, ctx.orgId, probe, false, documentedPartyIds);
+    // What stays, with its reason: the finder's answer after the erasure (the cleared values no longer match);
+    // skip recounting pending note attachments here since erase already queried both pending and failed attachment queues.
+    const after = await findPersonalData(ctx.trx, ctx.orgId, probe, false, documentedPartyIds, {
+      includePendingNoteAttachments: false,
+    });
     // Count all unredacted quote_excerpt rows skipped by shortNumber in one org-scoped aggregate (both readable rows
     // beyond PERSONAL_DATA_ROW_LIMIT and unreadable, expired, or deleted meeting rows omitted by findPersonalData),
     // keeping kept[] accurate and count-only without leaking text or meeting IDs (#4600).
@@ -2612,18 +2839,31 @@ export const personalDataErase = defineCommand({
         reason: ACTIVITY_SHORT_NUMBER_REASON,
       });
     }
-    // The original files behind posted entries that name these parties (issue #1009): accounting evidence the erasure
-    // never deletes, held in the bucket for the legal period. Reported with the date the hold runs to, when it is set.
+    // The original files behind posted entries that name these parties (issue #1009, #2334): accounting evidence the
+    // erasure never deletes, held in the bucket for the legal period, including attached original e-invoice XMLs.
     const partyIds = parties.map((p) => p.id);
     if (partyIds.length > 0) {
       const { rows: held } = await sql<{ files: string; until: Date | null }>`
-        SELECT count(DISTINCT f.id) AS files,
+        WITH party_docs AS (
+          SELECT d.org_id, d.source_file_id, d.proposal_id
+            FROM ludy_finance.purchase_document d
+            JOIN ludy_finance.journal_entry e ON e.org_id = d.org_id AND e.source_type = 'finance.purchase_document' AND e.source_id = d.id
+           WHERE d.org_id = ${ctx.orgId}::uuid AND d.party_id = ANY(${partyIds}::uuid[])
+        ), doc_files AS (
+          SELECT pd.org_id, pd.source_file_id AS file_id
+            FROM party_docs pd
+           WHERE pd.source_file_id IS NOT NULL
+          UNION
+          SELECT pd.org_id, x.file_id
+            FROM party_docs pd
+            JOIN ludy_kernel.extraction x ON x.org_id = pd.org_id AND x.original_of_proposal_id = pd.proposal_id
+           WHERE pd.proposal_id IS NOT NULL
+        )
+        SELECT count(*) AS files,
                -- A date only when every file has a recorded hold, and then the earliest: never a date one file lacks.
                CASE WHEN bool_and(f.held_until IS NOT NULL) THEN min(f.held_until) END AS until
-          FROM ludy_finance.purchase_document d
-          JOIN ludy_finance.journal_entry e ON e.org_id = d.org_id AND e.source_type = 'finance.purchase_document' AND e.source_id = d.id
-          JOIN ludy_kernel.file f ON f.org_id = d.org_id AND f.id = d.source_file_id
-         WHERE d.org_id = ${ctx.orgId}::uuid AND d.party_id = ANY(${partyIds}::uuid[])`.execute(ctx.trx);
+          FROM doc_files df
+          JOIN ludy_kernel.file f ON f.org_id = df.org_id AND f.id = df.file_id`.execute(ctx.trx);
       const files = Number(held[0]?.files ?? 0);
       if (files > 0) kept.set('ludy_kernel.file', { column: 'ludy_kernel.file', rows: files, reason: heldFilesReason(held[0]?.until ?? null) });
     }
@@ -2665,6 +2905,10 @@ export const personalDataErase = defineCommand({
     if (vyTranslations > 0) kept.set('ludy_meetings.translation.body', { column: 'ludy_meetings.translation.body', rows: vyTranslations, reason: MEMBER_TRANSLATION_REASON });
     const vyLiveLines = Number(meetingCounts?.live_lines ?? 0);
     if (vyLiveLines > 0) kept.set('ludy_meetings.live_line.text', { column: 'ludy_meetings.live_line.text', rows: vyLiveLines, reason: MEMBER_LIVE_LINE_REASON });
+    const vyBriefLines = Number(
+      (await sql<{ n: string }>`SELECT COALESCE(pg_catalog.sum(brief_lines), 0)::text AS n FROM ludy_meetings.morning_brief_lines_counts()`.execute(ctx.trx)).rows[0]?.n ?? 0,
+    );
+    if (vyBriefLines > 0) kept.set('ludy_meetings.morning_brief_lines.lines', { column: 'ludy_meetings.morning_brief_lines.lines', rows: vyBriefLines, reason: MEMBER_BRIEF_LINES_REASON });
     // Private items no notice named: counted, never listed (the finder's privateItems after the erasure).
     if (untold.notes > 0) kept.set('ludy_notes.note', { column: 'ludy_notes.note', rows: untold.notes, reason: UNTOLD_PRIVATE_REASON });
     if (untold.todos > 0) kept.set('ludy_notes.todo', { column: 'ludy_notes.todo', rows: untold.todos, reason: UNTOLD_PRIVATE_REASON });
@@ -2677,6 +2921,13 @@ export const personalDataErase = defineCommand({
         reason: PENDING_NOTE_ATTACHMENT_REASON,
       });
     }
+    if (failedSharedAttachments > 0) {
+      kept.set('ludy_notes.attachment.extracted_text.failed', {
+        column: 'ludy_notes.attachment.extracted_text',
+        rows: failedSharedAttachments,
+        reason: FAILED_NOTE_ATTACHMENT_REASON,
+      });
+    }
     if (pendingPrivateAttachments > 0) {
       kept.set('ludy_notes.attachment', {
         column: 'ludy_notes.attachment',
@@ -2684,8 +2935,19 @@ export const personalDataErase = defineCommand({
         reason: PENDING_PRIVATE_NOTE_ATTACHMENT_REASON,
       });
     }
+    if (failedPrivateAttachments > 0) {
+      kept.set('ludy_notes.attachment.failed', {
+        column: 'ludy_notes.attachment',
+        rows: failedPrivateAttachments,
+        reason: FAILED_PRIVATE_NOTE_ATTACHMENT_REASON,
+      });
+    }
     const keptRows = new Map<string, number>();
-    for (const k of kept.values()) keptRows.set(k.column, (keptRows.get(k.column) ?? 0) + k.rows);
+    for (const k of kept.values()) {
+      // Never write private attachment counts (ludy_notes.attachment) to audit_event, which admins can list/export (#5127).
+      if (k.column === 'ludy_notes.attachment') continue;
+      keptRows.set(k.column, (keptRows.get(k.column) ?? 0) + k.rows);
+    }
     const result: PersonalDataErasure = {
       erased: [...erased].map(([column, rows]) => ({ column, rows })),
       ...((noteErase ?? []).length > 0 ? { meetingNotes: noteErase ?? [] } : {}),

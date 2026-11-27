@@ -42,6 +42,8 @@ export const QUEUES = {
   socialPush: 'social-push',
   // Created by the generic push subscription migration (20270317160000): the push job of a kernel notification (#3736).
   kernelPush: 'kernel-push',
+  // Created by the native push migration (20270329020000): mobile native push job of a kernel notification (#4883).
+  nativePush: 'kernel-native-push',
   // Created by the team chat alert migration (20261023143000).
   socialChatAlert: 'social-chat-alert',
   // Created by the WORM archive migration (20261023230000).
@@ -87,6 +89,8 @@ export const QUEUES = {
   meetingsMorning: 'meetings-morning',
   // Created by the weekly notice migration (20270327100000): the sweep, every 5 minutes, of the opt-in Monday notices of the week's meetings (counts and a link, never a title; #4967).
   meetingsWeekly: 'meetings-weekly',
+  // Created by the daily morning brief migration (20270331050000): the sweep, every 5 minutes, of member-Vy daily prep lines for members opted into morning brief lines (#5073).
+  meetingsBriefDaily: 'meetings-brief-daily',
   // Meeting platform recordings (meetings integrations C1, #3173): one download of a recording the member chose to import, and the sweep that hands them over, lists suggestions and expires.
   meetingsImport: 'kernel-meeting-import',
   meetingsImportSweep: 'kernel-meeting-import-sweep',
@@ -144,6 +148,11 @@ export const QUEUES = {
   // Created by the eSign webhooks migration (20270316100000): signed HMAC outbound webhook delivery and its minute sweep (#4440).
   signHookDeliver: 'sign-hook-deliver',
   signHookSweep: 'sign-hook-sweep',
+  // Projects GitHub Integration (#5158/#5159, ADR-0060): webhook claim ('none'), inbound hydrate ('provider:github'), outbound sweep ('none'), outbound PATCH ('provider:github').
+  projectsGithubWebhook: 'projects-github-webhook',
+  projectsGithubHydrate: 'projects-github-hydrate',
+  projectsGithubSweep: 'projects-github-sweep',
+  projectsGithubOutbound: 'projects-github-outbound',
   // Created by the dead letter migration (20261103150000): every other queue's dead letters (#1720, dead-letter.ts).
   deadLetter: 'kernel-job.dlq',
 } as const;
@@ -202,6 +211,8 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // A browser's push service endpoint, through guardedRequest (web-push.ts).
   [QUEUES.socialPush]: ['tenant_url'],
   [QUEUES.kernelPush]: ['tenant_url'],
+  // Mobile native push (#4883): optional open NativePushSender interface (unset on self-host), content-free payloads only.
+  [QUEUES.nativePush]: ['provider:native_push'],
   [QUEUES.socialChatAlert]: ['provider:telegram', 'provider:discord'],
   [QUEUES.archiveWrite]: 'none',
   [QUEUES.archiveVerify]: 'none',
@@ -225,6 +236,8 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The sweep reads the database and runs a command that writes an in-app notice and queues a mail (the mail queues send it); it reaches nothing itself.
   [QUEUES.meetingsMorning]: 'none',
   [QUEUES.meetingsWeekly]: 'none',
+  // The sweep prepares checked member-Vy prep lines over calendar events and past meeting facts via the AI brief writer (#5073).
+  [QUEUES.meetingsBriefDaily]: ['provider:ai'],
   [QUEUES.memberVySweep]: 'none',
   // The one request to the receiver URL an org set, through the egress guard (egressFetch, https only): the delivery's only reach. The sweep reads and writes the database and hands jobs over, nothing else.
   [QUEUES.mcpWake]: ['tenant_url'],
@@ -294,6 +307,11 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // eSign outbound webhooks (#4440): one signed HTTPS POST per delivery to an owner/admin-configured receiver URL through postSigned (egressFetch), and a sweep that reads and updates the database only.
   [QUEUES.signHookDeliver]: ['tenant_url'],
   [QUEUES.signHookSweep]: 'none',
+  // Projects GitHub integration (#5158/#5159, ADR-0060): webhook/sweep read/write Postgres only ('none'); hydrate and outbound PATCH call api.github.com via guarded transport ('provider:github').
+  [QUEUES.projectsGithubWebhook]: 'none',
+  [QUEUES.projectsGithubHydrate]: ['provider:github'],
+  [QUEUES.projectsGithubSweep]: 'none',
+  [QUEUES.projectsGithubOutbound]: ['provider:github'],
   [QUEUES.deadLetter]: 'none',
 };
 
@@ -324,6 +342,8 @@ const QUEUE_POLICIES: Partial<Record<QueueName, 'stately' | 'exclusive'>> = {
   [QUEUES.signPdfSeal]: 'exclusive',
   [QUEUES.signCaReconcile]: 'exclusive',
   [QUEUES.signHookDeliver]: 'stately',
+  [QUEUES.projectsGithubHydrate]: 'stately',
+  [QUEUES.projectsGithubOutbound]: 'stately',
 };
 
 // The dead letter queue's own options, as 20261103150000_crove_jobs_dead_letter.sql created it: a few retries, in case

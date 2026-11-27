@@ -40,6 +40,8 @@ describe('vendored pg-boss schema (External-tenant gate T6)', () => {
                 name === QUEUES.meetingHook ||
                 name === QUEUES.meetingChat ||
                 name === QUEUES.meetingsImport ||
+                name === QUEUES.projectsGithubHydrate ||
+                name === QUEUES.projectsGithubOutbound ||
                 name === QUEUES.signHookDeliver
               ? 'stately'
               : 'standard',
@@ -73,7 +75,7 @@ describe('vendored pg-boss schema (External-tenant gate T6)', () => {
       expect(AVAILABLE_MODULES as readonly string[], queue).toContain(queue.split('-')[0]);
     }
     // health() lists the optional modules, whose queues alone can drop out of its job age: every module but kernel that works a queue.
-    const sql = readFileSync(join(MIGRATIONS, '20270316020000_ludy_kernel_health_hr.sql'), 'utf8');
+    const sql = readFileSync(join(MIGRATIONS, '20270330020000_ludy_kernel_health_projects.sql'), 'utf8');
     const listed = /<> ALL \(ARRAY\[([^\]]*)\]\)/.exec(sql)?.[1]?.split(',').map((m) => m.trim().replaceAll("'", ''));
     const working = new Set([...Object.values(QUEUES), ...SOCIAL_PUBLISH_QUEUES, ...MAIL_QUEUES].map((queue) => queue.split('-')[0]));
     expect(listed?.sort()).toEqual(AVAILABLE_MODULES.filter((m) => m !== 'kernel' && working.has(m)).sort());

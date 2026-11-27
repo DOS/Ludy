@@ -150,3 +150,6 @@ export function checkMonthCloseNote(facts: MonthCloseFacts, output: { note?: str
   if (order.length !== wanted.size || new Set(order).size !== order.length || !order.every((key) => known(key) && wanted.has(key))) return { kind: 'none', code: 'ORDER' };
   return { kind: 'note', text, order: order as MonthCloseKey[] };
 }
+
+// The word checks of this note, shared with the other coworker notes that hold the same line (ask-books.ts). Additive: nothing here changes how checkMonthCloseNote reads a note.
+export const NOTE_CHECKS = { VI_NUMBER, EN_NUMBER, FOREIGN_SCRIPT, HIDDEN, DATE_WORDS, FORMATTED, promised, sentencesIn } as const;

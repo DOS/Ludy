@@ -12,6 +12,7 @@ import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
 import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { ErrorText, FieldError, fieldControl, focusFirstInvalid, RowsSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -49,6 +50,7 @@ function ConnectTingeeForm() {
   const [name, setName] = useState('');
   const clientIdId = useId();
   const secretId = useId();
+  const nameId = useId();
   const fields = useFieldErrors<'clientId' | 'secretToken'>((field) => {
     if (field === 'clientId') return clientId.trim() ? null : t('tingee.clientIdNeeded');
     return secretToken.trim() ? null : t('tingee.secretNeeded');
@@ -89,40 +91,51 @@ function ConnectTingeeForm() {
         </ol>
       </div>
       <div className="space-y-2">
-        <Input
-          {...fieldControl(clientIdId, { error: Boolean(fields.of('clientId')) })}
-          className="min-h-11"
-          maxLength={200}
-          autoComplete="off"
-          spellCheck={false}
-          aria-label={t('tingee.clientIdLabel')}
-          placeholder={t('tingee.clientIdLabel')}
-          value={clientId}
-          onChange={(e) => {
-            setClientId(e.target.value);
-            fields.edit('clientId');
-          }}
-          onBlur={(e) => fields.blur('clientId', e.target.value)}
-        />
-        <FieldError id={clientIdId}>{fields.of('clientId')}</FieldError>
-        <Input
-          {...fieldControl(secretId, { error: Boolean(fields.of('secretToken')) })}
-          className="min-h-11"
-          type="password"
-          maxLength={200}
-          autoComplete="new-password"
-          spellCheck={false}
-          aria-label={t('tingee.secretLabel')}
-          placeholder={t('tingee.secretLabel')}
-          value={secretToken}
-          onChange={(e) => {
-            setSecretToken(e.target.value);
-            fields.edit('secretToken');
-          }}
-          onBlur={(e) => fields.blur('secretToken', e.target.value)}
-        />
-        <FieldError id={secretId}>{fields.of('secretToken')}</FieldError>
-        <Input className="min-h-11" maxLength={200} aria-label={t('tingee.nameLabel')} placeholder={t('tingee.nameLabel')} value={name} onChange={(e) => setName(e.target.value)} />
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={clientIdId} className="text-xs font-normal text-muted-foreground">
+            {t('tingee.clientIdLabel')}
+          </Label>
+          <Input
+            {...fieldControl(clientIdId, { error: Boolean(fields.of('clientId')) })}
+            className="min-h-11"
+            maxLength={200}
+            autoComplete="off"
+            spellCheck={false}
+            value={clientId}
+            onChange={(e) => {
+              setClientId(e.target.value);
+              fields.edit('clientId');
+            }}
+            onBlur={(e) => fields.blur('clientId', e.target.value)}
+          />
+          <FieldError id={clientIdId}>{fields.of('clientId')}</FieldError>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={secretId} className="text-xs font-normal text-muted-foreground">
+            {t('tingee.secretLabel')}
+          </Label>
+          <Input
+            {...fieldControl(secretId, { error: Boolean(fields.of('secretToken')) })}
+            className="min-h-11"
+            type="password"
+            maxLength={200}
+            autoComplete="new-password"
+            spellCheck={false}
+            value={secretToken}
+            onChange={(e) => {
+              setSecretToken(e.target.value);
+              fields.edit('secretToken');
+            }}
+            onBlur={(e) => fields.blur('secretToken', e.target.value)}
+          />
+          <FieldError id={secretId}>{fields.of('secretToken')}</FieldError>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={nameId} className="text-xs font-normal text-muted-foreground">
+            {t('tingee.nameLabel')}
+          </Label>
+          <Input id={nameId} className="min-h-11" maxLength={200} value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
       </div>
       <Button loading={connect.isPending} type="submit" variant="outline" className="min-h-11">
         {t('tingee.connect')}
@@ -158,20 +171,23 @@ function ConnectForm() {
     <form className="mt-4 space-y-2" onSubmit={submit} aria-label={t('connectTitle')} noValidate>
       <p className="text-xs font-medium text-muted-foreground">{t('connectTitle')}</p>
       <p className="text-xs text-subtle-foreground">{t('testNote')}</p>
-      <div className="flex flex-wrap gap-2">
-        <Input
-          {...fieldControl(nameId, { error: Boolean(fields.of('name')) })}
-          className="min-w-48 flex-1"
-          maxLength={200}
-          placeholder={t('namePlaceholder')}
-          aria-label={t('nameLabel')}
-          value={name}
-          onChange={(e) => {
-            setName(e.target.value);
-            fields.edit('name');
-          }}
-          onBlur={(e) => fields.blur('name', e.target.value)}
-        />
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="flex min-w-48 flex-1 flex-col gap-1">
+          <Label htmlFor={nameId} className="text-xs font-normal text-muted-foreground">
+            {t('nameLabel')}
+          </Label>
+          <Input
+            {...fieldControl(nameId, { error: Boolean(fields.of('name')) })}
+            maxLength={200}
+            placeholder={t('namePlaceholder')}
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              fields.edit('name');
+            }}
+            onBlur={(e) => fields.blur('name', e.target.value)}
+          />
+        </div>
         <Button loading={connect.isPending} type="submit" variant="outline" size="sm">
           {t('connect')}
         </Button>
@@ -544,9 +560,10 @@ function ConnectionItem({
   );
 }
 
-// What a member or viewer sees: which accounts bring in transactions, and when each was last synced.
+// What a member or viewer sees: which accounts bring in transactions, when each was last synced, and any cut-over day.
 function ReadOnlyList({ accounts }: { accounts: readonly BankFeedAccountView[] }) {
   const t = useTranslations('bankFeeds');
+  const f = useFormat();
   return (
     <Card className="block p-4" aria-label={t('title')}>
       <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
@@ -554,11 +571,13 @@ function ReadOnlyList({ accounts }: { accounts: readonly BankFeedAccountView[] }
       <ul className="mt-3 divide-y">
         {accounts.map((a) => (
           <li key={a.id} className="py-2 text-sm">
-            <p className="text-foreground">
-              {a.connectionName}
+            <p className="flex flex-wrap items-center gap-2 text-foreground">
+              <span>{a.connectionName}</span>
+              {a.connectionStatus !== 'active' && <Badge variant="secondary">{t(`status.${a.connectionStatus}`)}</Badge>}
             </p>
             <p className="text-xs text-subtle-foreground">
               {t('mappedTo', { account: a.bankAccount })} · <LastSynced account={a} />
+              {a.feedFrom && ` · ${t('feedFromOn', { date: f.date(a.feedFrom) })}`}
             </p>
             <PullReason account={a} />
           </li>

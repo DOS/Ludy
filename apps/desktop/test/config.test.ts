@@ -117,8 +117,47 @@ describe('loadUpdateConfig pinning guardrails', () => {
       updateUrl: 'https://app.example.vn/updates/win32',
       allowedUpdateOrigin: 'https://app.example.vn',
       expectedPublisherThumbprint: thumb,
+      expectedTeamId: null,
       problems: [],
     });
+
+    const goodMac = loadUpdateConfig({
+      env: {
+        LUDY_URL: 'https://app.example.vn',
+        LUDY_DESKTOP_UPDATE_URL: '/updates/darwin-arm64',
+        LUDY_DESKTOP_UPDATE_TEAM_ID: 'ab12cd34ef',
+      },
+      configFile: JSON.stringify({ updateTeamId: 'ZZ99YY88XX' }),
+    });
+    expect(goodMac).toEqual({
+      ludyUrl: 'https://app.example.vn',
+      updateUrl: 'https://app.example.vn/updates/darwin-arm64',
+      allowedUpdateOrigin: null,
+      expectedPublisherThumbprint: null,
+      expectedTeamId: 'AB12CD34EF',
+      problems: [],
+    });
+
+    const badTeam = loadUpdateConfig({
+      env: {
+        LUDY_DESKTOP_UPDATE_URL: 'https://updates.example.vn/darwin-arm64',
+        LUDY_DESKTOP_UPDATE_TEAM_ID: 'bad-team',
+      },
+      configFile: null,
+    });
+    expect(badTeam.updateUrl).toBeNull();
+    expect(badTeam.expectedTeamId).toBeNull();
+    expect(badTeam.problems).toHaveLength(1);
+
+    const badTeamFileType = loadUpdateConfig({
+      env: {},
+      configFile: JSON.stringify({
+        updateUrl: 'https://updates.example.vn/darwin-arm64',
+        updateTeamId: 12345,
+      }),
+    });
+    expect(badTeamFileType.updateUrl).toBeNull();
+    expect(badTeamFileType.problems).toHaveLength(1);
 
     const mismatchedOrigin = loadUpdateConfig({
       env: {

@@ -14,7 +14,12 @@ export const KERNEL_ERROR_CODES = [
   'UNAUTHENTICATED',
   'OAUTH_CLIENT_TOKEN_REFUSED',
   'MFA_REQUIRED',
+  'SESSION_REQUIRED',
+  'SESSION_REVOKED',
   'SESSION_REVOKED_IN_ORG',
+  // Mobile native push notifications (#4883).
+  'NATIVE_PUSH_DISABLED',
+  'NATIVE_PUSH_DEVICE_LIMIT',
   'STEP_UP_REQUIRED',
   'NOT_A_MEMBER',
   'USER_DISABLED',
@@ -587,8 +592,6 @@ export const KERNEL_ERROR_CODES = [
   'ASK_BUSY',
   'BRIEF_OFF',
   'BRIEF_BUSY',
-  // Full daily briefing mail (#5080).
-  'BRIEFING_NOT_ENABLED',
   // Vy checking a meeting's agenda against its transcript (#3959).
   'ADHERENCE_OFF',
   'ADHERENCE_BUSY',
@@ -603,6 +606,17 @@ export const KERNEL_ERROR_CODES = [
   'TEMPLATE_SUGGEST_NOT_NEEDED',
   // Vy listing what a meeting left open (#4768).
   'OPEN_POINTS_BUSY',
+  // Catch-up summary for a member who missed a meeting (#5130).
+  'CATCH_UP_OFF',
+  'CATCH_UP_BUSY',
+  'CATCH_UP_NOT_PUBLISHED',
+  'CATCH_UP_REDACTED',
+  // Draft minutes from typed notes for an unrecorded meeting (#5129).
+  'NOTES_MINUTES_OFF',
+  'NOTES_MINUTES_BUSY',
+  'NOTES_MINUTES_HAS_TRANSCRIPT',
+  'NOTES_MINUTES_NO_NOTES',
+  'NOTES_MINUTES_REDACTED',
   // Sales call insights (#4920).
   'SALES_INSIGHT_BUSY',
   'MEETING_TITLE_EMPTY',
@@ -875,6 +889,12 @@ export const KERNEL_ERROR_CODES = [
   'SOURCE_LEGAL_ENTITY',
   // The expense variance card compares only a month that has ended (#4392).
   'MONTH_NOT_ENDED',
+  // Marking an entry as reviewed on the unusual entries card needs the entry to be a hit of that month (#5182).
+  'NOT_A_HIT',
+  // The quarter card sums only a quarter that has ended (#5183).
+  'QUARTER_NOT_ENDED',
+  // The year-end filing file (HTKK) exists only for TT133 books (#5187).
+  'STATEMENTS_HTKK_REGIME',
   'LEGAL_ENTITY_MISMATCH',
   'LEGAL_ENTITY_MOVE_REFUSED',
   // A VND invoice with an amount below one dong that was not rounded to the dong (#1308, #2235).
@@ -1714,6 +1734,30 @@ export const KERNEL_ERROR_CODES = [
   'SIGN_DEPOSIT_QR_FILE_INVALID',
   'SIGN_INVALID_BANK_ACCOUNT',
   'SIGN_INVALID_BANK_CODE',
+  // Projects GitHub integration (#5158).
+  'GITHUB_APP_NOT_CONFIGURED',
+  'GITHUB_BAD_REQUEST',
+  'GITHUB_BINDING_NOT_FOUND',
+  'GITHUB_CONNECTION_NOT_FOUND',
+  'GITHUB_CREDENTIALS_INVALID',
+  'GITHUB_DISABLED',
+  'GITHUB_FORBIDDEN',
+  'GITHUB_HOOK_SET_FAILED',
+  'GITHUB_INSTALLATION_NOT_AUTHORIZED',
+  'GITHUB_MULTIPLE_INSTALLATIONS',
+  'GITHUB_NOT_CONNECTED',
+  'GITHUB_NOT_FOUND',
+  'GITHUB_NO_INSTALLATIONS',
+  'GITHUB_PAT_ONLY',
+  'GITHUB_PAT_REPOS_NEED_TOKEN',
+  'GITHUB_PAT_ROTATE_SECRET_RECONNECT',
+  'GITHUB_RATE_LIMITED',
+  'GITHUB_REPO_LIMIT_REACHED',
+  'GITHUB_REPO_NOT_BOUND',
+  'GITHUB_TASK_PREFIX_TAKEN',
+  'GITHUB_UNAVAILABLE',
+  'GITHUB_UPSTREAM_FAILED',
+  'GITHUB_URL_INVALID',
 ] as const;
 
 export type KernelErrorCode = (typeof KERNEL_ERROR_CODES)[number];

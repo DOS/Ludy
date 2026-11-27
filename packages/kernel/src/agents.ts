@@ -1240,6 +1240,15 @@ export const setTaskStatus = defineCommand({
     } else {
       requireUser(ctx);
     }
+    const existingTask = await ctx.trx
+      .selectFrom('ludy_kernel.task')
+      .select(['status'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!existingTask) throw new DomainError('TASK_NOT_FOUND', 404, 'Không tìm thấy việc này');
+
     const updated = await ctx.trx
       .updateTable('ludy_kernel.task')
       .set(release ? { status: input.status, checkout_run_id: null, lock_expires_at: null } : { status: input.status })
@@ -1252,7 +1261,88 @@ export const setTaskStatus = defineCommand({
     if (ctx.actor.type === 'user' && input.status === 'todo') {
       await requestWakeup(ctx, updated.assignee_position_id, { taskId: input.id, why: 'reopened' }, updated.tainted, updated.request_depth);
     }
+    if (
+      ctx.installed('projects') &&
+      existingTask.status !== input.status &&
+      (input.status === 'done' || (existingTask.status === 'done' && input.status !== 'cancelled'))
+    ) {
+      // Check both org apps_off and Cloud billing entitlements via ctx.appEnabled (#5159, ADR-0053)
+      // so unentitled orgs do not fail task transitions with 404 MODULE_OFF or emit held outbox events.
+      // Keep the offAppsOf fallback (readable by ludy_tenant) while QueryContext.appEnabled remains optional.
+      const projectsEnabled = ctx.appEnabled
+        ? await ctx.appEnabled('projects')
+        : !(await offAppsOf(ctx.trx, ctx.orgId)).includes('projects');
+      if (projectsEnabled) {
+        if (ctx.actor.type === 'user') {
+          // Run projects.github.outbound_enqueue in-tx (aside via its own declared writes) (#5159).
+          await ctx.run('projects.github.outbound_enqueue', {
+            taskId: input.id,
+            previousStatus: existingTask.status,
+            nextStatus: input.status,
+          });
+        } else {
+          // Org-chart agents cannot write ludy_projects.github_sync_delivery directly due to agent_write_guard;
+          // emit a kernel-prefixed IDs/codes-only outbox event relayed via projects-github-sweep (egress: 'none') as 'system'.
+          await ctx.emit('kernel.task.github_transitioned', {
+            taskId: input.id,
+            previousStatus: existingTask.status,
+            nextStatus: input.status,
+          });
+        }
+      }
+    }
     return { taskId: input.id, status: input.status };
+  },
+});
+
+// Internal system-only command used by external integrations (Projects GitHub sync, #5158, ADR-0060) to advance a
+// task's status without usurping an active AI agent lease (checkout_run_id IS NOT NULL AND lock_expires_at > ctx.now).
+export const syncTaskExternalStatus = defineCommand({
+  name: 'kernel.task.sync_external_status',
+  input: z.object({
+    id: zId,
+    status: z.enum(['todo', 'in_progress', 'waiting', 'in_review', 'done']),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  writes: [tableWrite(TASK_TABLES, 'ludy_kernel', 'task', ['status', 'done_at', 'completed_by', 'revision', 'updated_at'])],
+  target: (input) => ({ type: 'kernel.task', id: input.id }),
+  handler: async (ctx, input): Promise<{ taskId: string; status: TaskStatus; applied: boolean; deferred: boolean }> => {
+    if (ctx.actor.type !== 'system') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới đồng bộ được trạng thái từ bên ngoài');
+    }
+    const existing = await ctx.trx
+      .selectFrom('ludy_kernel.task')
+      .select(['id', 'status', 'checkout_run_id', 'lock_expires_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!existing) throw new DomainError('TASK_NOT_FOUND', 404, 'Không tìm thấy việc này');
+
+    if (
+      existing.checkout_run_id !== null &&
+      existing.lock_expires_at !== null &&
+      new Date(existing.lock_expires_at).getTime() > ctx.now.getTime()
+    ) {
+      ctx.audit({ task: input.id, status: existing.status, targetStatus: input.status, deferred: true });
+      return { taskId: input.id, status: existing.status as TaskStatus, applied: false, deferred: true };
+    }
+
+    if (existing.status === input.status) {
+      return { taskId: input.id, status: existing.status as TaskStatus, applied: false, deferred: false };
+    }
+
+    await ctx.trx
+      .updateTable('ludy_kernel.task')
+      .set({ status: input.status })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .execute();
+
+    ctx.audit({ task: input.id, from: existing.status, status: input.status, applied: true });
+    return { taskId: input.id, status: input.status as TaskStatus, applied: true, deferred: false };
   },
 });
 
@@ -2439,6 +2529,7 @@ export const agentCommands = [
   checkoutTask,
   commentTask,
   setTaskStatus,
+  syncTaskExternalStatus,
   escalateTask,
   delegateTask,
   dispatchAgentEvent,

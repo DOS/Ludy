@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { zSpeakingStyle, zSpeakingStyleInput } from './meeting-speaking-style.ts';
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
 import { zSalesInsightAnswer, zSalesInsightStatus } from './meeting-sales-insight.ts';
+import { zCatchUpAnswer, zCatchUpStatus } from './meeting-catch-up.ts';
+import { zNotesMinutesAnswer, zNotesMinutesStatus } from './meeting-notes-minutes.ts';
 import { ORG_KINDS } from './apps.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
@@ -166,6 +168,9 @@ import {
   zPurchaseDocument,
   zDocumentExport,
   zSearchResult,
+  zNativePushRegister,
+  zNativePushStatus,
+  zNativePushUnregister,
   zNotificationKind,
   zNotifications,
   zPushStatus,
@@ -220,10 +225,13 @@ import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
 import { zCashForecast, zCashForecastExplanation, zFinanceCashForecastExplainAsk, zFinanceCashForecastInput } from './finance-cash-forecast.ts';
+import { zAskBooksAnswer, zFinanceAskBooksInput } from './finance-ask-books.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
 import { zFinanceHomeMoney, zFinanceHomeMoneyInput } from './finance-home-money.ts';
 import { zFinanceMonthCloseExplainAsk, zFinanceMonthCloseInput, zMonthClose, zMonthCloseNote } from './finance-month-close.ts';
 import { zExpenseVarianceExplanation, zFinanceExpenseVariance, zFinanceExpenseVarianceExplainAsk, zFinanceExpenseVarianceInput } from './finance-expense-variance.ts';
+import { zFinanceUnusualEntries, zFinanceUnusualEntriesExplainAsk, zFinanceUnusualEntriesInput, zFinanceUnusualEntryReviewInput, zFinanceUnusualEntryReviewOutput, zUnusualEntriesExplanation } from './finance-unusual-entries.ts';
+import { zFinanceQuarterSummary, zFinanceQuarterSummaryExplainAsk, zFinanceQuarterSummaryInput, zQuarterSummaryExplanation } from './finance-quarter-summary.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zFilterAstShape, zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared, zSavedViewSortShape } from './saved-view.ts';
 import {
@@ -910,6 +918,36 @@ import {
   zProjectTriageReopenInput,
   zProjectTriageSnoozeInput,
 } from './projects-triage.ts';
+import {
+  zGithubAppOAuthStartRpcInput,
+  zGithubAppOAuthStartRpcResult,
+  zGithubBindingGetInput,
+  zGithubBindingGetResult,
+  zGithubBindingSaveInput,
+  zGithubBindingSaveResult,
+  zGithubConnectAppRpcInput,
+  zGithubConnectAppRpcResult,
+  zGithubConnectPatRpcInput,
+  zGithubConnectPatRpcResult,
+  zGithubListAvailableReposRpcInput,
+  zGithubListAvailableReposRpcResult,
+  zGithubProjectBindingView,
+  zGithubRepoBindInput,
+  zGithubRepoUnbindInput,
+  zGithubRotatePatHookRpcInput,
+  zGithubRotatePatHookRpcResult,
+  zGithubSyncLogQueryInput,
+  zGithubSyncLogQueryResult,
+  zGithubPrSummaryRpcInput,
+  zGithubPrSummaryRpcResult,
+  zGithubIssueMatchRpcInput,
+  zGithubIssueMatchRpcResult,
+  zGithubTaskLinkAddRpcInput,
+  zGithubTaskLinkAddRpcResult,
+  zGithubTaskLinkRemoveInput,
+  zGithubTaskLinksQueryInput,
+  zGithubTaskLinksQueryResult,
+} from './projects-github.ts';
 import { zDealUpdateAnswer, zDealUpdateAsk, zDealUpdateConfirmCall, zDealUpdateConfirmed, zDealUpdateStatus } from './meeting-deal-update.ts';
 import { zFollowupDraft, zFollowupDraftAsk, zFollowupNoteAnswer, zFollowupNoteAsk, zFollowupNoteStatus, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
@@ -2023,6 +2061,17 @@ export const contract = {
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       list: oc.input(zSummaryRef).output(zOpenPointsAnswer),
     },
+    // Catch-up summary for a member who missed a meeting (#5130, L33): `status` returns whether Vy is available plus code-built `yourItems` (works with AI off),
+    // and `write` has the member's own Vy write up to five concise lines grounded in published minutes only (never transcript/draft/notes). Returned only to the caller; counts only stored.
+    catchUp: {
+      status: oc.input(zMeetingRef).output(zCatchUpStatus),
+      write: oc.input(zMeetingRef).output(zCatchUpAnswer),
+    },
+    // Draft minutes from typed notes for an unrecorded meeting (#5129, L32): only the recorder, only when zero transcript segments exist, and only returns a cited draft proposal without applying or publishing automatically.
+    notesMinutes: {
+      status: oc.input(zMeetingRef).output(zNotesMinutesStatus),
+      write: oc.input(zMeetingRef).output(zNotesMinutesAnswer),
+    },
     // Sales call insights for a meeting linked to an open deal (#4920, L26): `status` feeds the button (recorder + linked open deal + transcript), `analyze` runs the recorder's own Vy once to extract
     // customer concerns, buying signals and agreed next steps citing existing transcript line IDs, plus code-computed customer talk-time share from mapped speakers. Results stay tainted and ephemeral.
     salesInsight: {
@@ -3053,6 +3102,13 @@ export const contract = {
       subscribe: oc.input(zPushSubscribe).output(z.object({ id: zId })),
       unsubscribe: oc.input(z.union([z.strictObject({ endpoint: z.string().min(1).max(2048) }), z.strictObject({ id: zId })])).output(z.object({ removed: z.number().int() })),
     },
+    // Mobile native push (#4883, ADR-0059): APNs/FCM device registration bound to the signed-in session.
+    // register answers NATIVE_PUSH_DISABLED when the deployment leaves the native push sender interface unset.
+    nativePush: {
+      status: oc.input(z.object({})).output(zNativePushStatus),
+      register: oc.input(zNativePushRegister).output(z.object({ id: zId })),
+      unregister: oc.input(zNativePushUnregister).output(z.object({ removed: z.number().int() })),
+    },
   },
   // Saved views of a list (CRM plan 4.3, #2227), the kernel's: named filters and a sort, private or shared with the org, at
   // most 30 per member per scope. Members see their own and the shared ones; the owner changes and deletes a view, and
@@ -3626,6 +3682,10 @@ export const contract = {
     get: oc.input(zFinanceCashForecastInput).output(zCashForecast),
     explain: oc.input(zFinanceCashForecastExplainAsk).output(zCashForecastExplanation),
   },
+  // "Ask the books in plain words" (#5181): a question typed in words, or a report picked on the card; the answer is a card with every figure from an existing read, run as the asking member.
+  financeAskBooks: {
+    ask: oc.input(zFinanceAskBooksInput).output(zAskBooksAnswer),
+  },
   financeOverview: {
     get: oc.input(zFinanceOverviewInput).output(zFinanceOverview),
     explain: oc.input(zFinanceOverviewExplainAsk).output(zOverviewExplanation),
@@ -3649,6 +3709,22 @@ export const contract = {
   financeExpenseVariance: {
     get: oc.input(zFinanceExpenseVarianceInput).output(zFinanceExpenseVariance),
     explain: oc.input(zFinanceExpenseVarianceExplainAsk).output(zExpenseVarianceExplanation),
+  },
+  // The monthly review of posted entries that look unusual (#5182) on the Tổng quan: get answers the entries of one ended month that five rules flag (a second copy of an invoice, a manual voucher on a control
+  // account, an amount far outside the usual range, an account never used with this party or kind of voucher, an entry typed on a day off), ranked and capped in SQL, every role, read only; explain is the finance
+  // coworker's one possible thing to look at per hit, asked of the model outside any transaction, and a note that states a number, a date, a name or says the entry is wrong is dropped; review is a person's
+  // audited, idempotent mark that a hit was looked at (owners, admins and members; it touches no ledger table).
+  financeUnusualEntries: {
+    get: oc.input(zFinanceUnusualEntriesInput).output(zFinanceUnusualEntries),
+    explain: oc.input(zFinanceUnusualEntriesExplainAsk).output(zUnusualEntriesExplanation),
+    review: oc.input(zFinanceUnusualEntryReviewInput).output(zFinanceUnusualEntryReviewOutput),
+  },
+  // The quarter in plain words (#5183), every role, read only: get answers the figures of one ended quarter of one legal entity (revenue, costs, profit, cash, receivables, payables, VAT or the household's tax,
+  // stock) with their comparison labels; explain is the finance coworker's three to five sentences, each tied to one figure row, asked of the model outside any transaction from fixed labels only (no figure,
+  // date, code or name), and a sentence that states a number, a date, a cause, a promise or advice is dropped.
+  financeQuarterSummary: {
+    get: oc.input(zFinanceQuarterSummaryInput).output(zFinanceQuarterSummary),
+    explain: oc.input(zFinanceQuarterSummaryExplainAsk).output(zQuarterSummaryExplanation),
   },
   // Ledger reports of a month, quarter or year (issue #321): the trial balance and the receivables and payables per
   // party, and the general ledger of one account. The Excel workbook is GET /api/export/ledger.xlsx?period=<period>.
@@ -4189,6 +4265,31 @@ export const contract = {
         .input(zProjectTriageReopenInput.extend({ idempotencyKey: zId }))
         .output(zProjectTriageMutateResult),
       assist: oc.input(zProjectTriageAssistInput).output(zProjectTriageAssistResult),
+    },
+    github: {
+      bindingGet: oc.input(zGithubBindingGetInput).output(zGithubBindingGetResult),
+      bindingSave: oc
+        .input(zGithubBindingSaveInput.extend({ idempotencyKey: zId }))
+        .output(zGithubBindingSaveResult),
+      connectPat: oc.input(zGithubConnectPatRpcInput).output(zGithubConnectPatRpcResult),
+      appOAuthStart: oc.input(zGithubAppOAuthStartRpcInput).output(zGithubAppOAuthStartRpcResult),
+      connectApp: oc.input(zGithubConnectAppRpcInput).output(zGithubConnectAppRpcResult),
+      rotatePatHook: oc.input(zGithubRotatePatHookRpcInput).output(zGithubRotatePatHookRpcResult),
+      listAvailableRepos: oc.input(zGithubListAvailableReposRpcInput).output(zGithubListAvailableReposRpcResult),
+      repoBind: oc
+        .input(zGithubRepoBindInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ binding: zGithubProjectBindingView })),
+      repoUnbind: oc
+        .input(zGithubRepoUnbindInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ binding: zGithubProjectBindingView })),
+      taskLinks: oc.input(zGithubTaskLinksQueryInput).output(zGithubTaskLinksQueryResult),
+      taskLinkAdd: oc.input(zGithubTaskLinkAddRpcInput).output(zGithubTaskLinkAddRpcResult),
+      taskLinkRemove: oc
+        .input(zGithubTaskLinkRemoveInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ removed: z.boolean() })),
+      syncLog: oc.input(zGithubSyncLogQueryInput).output(zGithubSyncLogQueryResult),
+      aiPrSummary: oc.input(zGithubPrSummaryRpcInput).output(zGithubPrSummaryRpcResult),
+      aiIssueMatch: oc.input(zGithubIssueMatchRpcInput).output(zGithubIssueMatchRpcResult),
     },
   },
   // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via LUDY_MODULES and org_app_on.

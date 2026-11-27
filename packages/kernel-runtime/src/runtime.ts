@@ -238,6 +238,58 @@ export function memberVyRuntime(runtime: Runtime, orgId: string, actor: Pick<Age
   });
 }
 
+// What enter_member_briefing_context derived for one morning briefing email render: the member the render reads for, their
+// base role (owner, admin, or member; viewers are refused), max_risk R0, and tainted true. Never taken from the caller.
+export interface MemberBriefingGrant {
+  memberUserId: string;
+  mailId: string;
+  role: Exclude<MemberRole, 'viewer'>;
+  maxRisk: 'R0';
+  tainted: true;
+}
+
+// Which queries may run inside the read-only member_briefing context (ADR-0049 amendment): declared alongside `access`,
+// which must admit the member's base role (viewer excluded). `reads` lists nested ctx.query names permitted from this query.
+export interface MemberBriefingAccess {
+  reads?: readonly string[];
+}
+
+export interface MemberBriefingOptions {
+  orgId: string;
+  memberUserId: string;
+  mailId: string;
+}
+
+// The read-only facade of one morning briefing email render: queries bound to one org, member, and queued/sending mail row.
+// Holds no execute() and no Runtime reference, so a caller cannot write or switch org, member, or mail.
+export interface MemberBriefingRuntime {
+  readonly orgId: string;
+  readonly memberUserId: string;
+  readonly mailId: string;
+  query<O = unknown>(name: string, input: unknown): Promise<O>;
+}
+
+export function memberBriefingRuntime(
+  runtime: Runtime,
+  orgId: string,
+  target: { memberUserId: string; mailId: string },
+): MemberBriefingRuntime {
+  const boundOrg = orgId;
+  const boundUser = target.memberUserId;
+  const boundMail = target.mailId;
+  return Object.freeze({
+    orgId: boundOrg,
+    memberUserId: boundUser,
+    mailId: boundMail,
+    query: <O = unknown>(name: string, input: unknown) =>
+      runtime.runAsMemberBriefing<O>(name, input, {
+        orgId: boundOrg,
+        memberUserId: boundUser,
+        mailId: boundMail,
+      }),
+  });
+}
+
 // A copy of a command definition that names no record: the refusal audit of an MCP call to a proposal command takes its record id from nothing the client sent.
 function withoutTarget(def: CommandDef<unknown, unknown>): CommandDef<unknown, unknown> {
   const { target: _target, ...rest } = def;
@@ -424,6 +476,8 @@ export interface QueryDef<I = unknown, O = unknown> {
   agent?: Pick<AgentAccess, 'roles'>;
   // Opens the query to Vy in member mode (absent: never). The `access` roles must also admit the member's base role.
   memberVy?: Pick<MemberVyAccess, 'reads'>;
+  // Opens the query to the read-only render-time member_briefing context (absent: never). `access` must be a role list.
+  memberBriefing?: Pick<MemberBriefingAccess, 'reads'>;
   // Opens the query to a Ludy extension token that holds this scope (absent: an extension token never reads it).
   // Only a query with a role list.
   extension?: ExtensionAccess;
@@ -476,6 +530,8 @@ export interface QueryContext {
   agent: AgentGrant | null;
   // Set exactly when the actor is the Vy of one member in the background.
   memberVy: MemberVyGrant | null;
+  // Set when running inside Runtime.runAsMemberBriefing().
+  memberBriefing?: MemberBriefingGrant | null;
   // Whether this runtime registered the module (CROVE_MODULES, ADR-0031), as Runtime.installed().
   installed(module: string): boolean;
   // Whether this runtime registered `module` and the org has it enabled and entitled (ADR-0053).
@@ -931,6 +987,7 @@ interface Entered {
   role: MemberRole | null;
   agent: AgentGrant | null;
   memberVy: MemberVyGrant | null;
+  memberBriefing?: MemberBriefingGrant | null;
   // Set only by the sealed write and proposal entries of an MCP company grant (#4155): the module whose switches executeIn reads once the context is entered, so a refusal is audited as the grant's.
   mcpSwitchModule?: string;
 }
@@ -1430,6 +1487,7 @@ function snapshotQuery(def: QueryDef<any, any>): QueryDef<unknown, unknown> {
   if (Object.hasOwn(copy, 'access')) copy.access = frozenList(copy.access);
   if (Object.hasOwn(copy, 'agent')) copy.agent = snapshotAgent(copy.agent, `${label}: agent`);
   if (Object.hasOwn(copy, 'memberVy')) copy.memberVy = snapshotMemberVy(copy.memberVy, `${label}: memberVy`);
+  if (Object.hasOwn(copy, 'memberBriefing')) copy.memberBriefing = snapshotMemberVy(copy.memberBriefing, `${label}: memberBriefing`);
   if (Object.hasOwn(copy, 'extension')) copy.extension = snapshotExtension(copy.extension, `${label}: extension`);
   if (Object.hasOwn(copy, 'mcp')) copy.mcp = snapshotMcp(copy.mcp, `${label}: mcp`);
   return Object.freeze(copy) as unknown as QueryDef<unknown, unknown>;
@@ -1848,6 +1906,9 @@ export class Runtime {
           throw new Error(`command ${c.name}: writes ${contactOrPayment.join(', ')}, so Vy in member mode may not run it (P04: it asks for a proposal instead)`);
         }
       }
+      if ((c as { memberBriefing?: unknown }).memberBriefing !== undefined) {
+        throw new Error(`command ${c.name}: member_briefing is strictly read-only and runs no commands (ADR-0049)`);
+      }
       // An MCP grant runs a command only when it declares a write scope (ADR-0051 decision 2, #3227), and only the narrow kind the sealed write context can run: an R1 command with
       // no side effect beyond its transaction, for owners and admins by a role list, that is no extension, agent, member-mode, bootstrap, sensitive or permission command, takes
       // no sealed input and runs under no proposal.
@@ -1947,11 +2008,34 @@ export class Runtime {
       if (q.memberVy !== undefined && q.stream === true) {
         throw new Error(`query ${q.name}: Vy in member mode reads no streamed query (a stream is not a bounded read of the member's own rows)`);
       }
-      if (q.memberVy !== undefined && (!Array.isArray(q.access) || !q.name.startsWith('kernel.member_vy.'))) {
-        throw new Error(`query ${q.name}: Vy in member mode reads only a kernel.member_vy.* query with a role list as access (the member's role must be in it)`);
+      if (q.memberVy !== undefined && q.sensitive === true) {
+        throw new Error(`query ${q.name}: Vy in member mode reads no sensitive query (sensitive reads are user-only and audited before reading)`);
       }
-      if (q.mcp !== undefined && (!Array.isArray(q.access) || q.stream === true || q.sensitive === true || q.memberVy !== undefined || q.extension !== undefined)) {
-        throw new Error(`query ${q.name}: an MCP grant reaches only a query with a role list as access that is neither streamed, sensitive, nor open to member mode or an extension token (ADR-0051 decision 2)`);
+      if (q.memberVy !== undefined && !Array.isArray(q.access)) {
+        throw new Error(`query ${q.name}: Vy in member mode reads only a query with a role list as access (the member's role must be in it)`);
+      }
+      if (q.memberBriefing !== undefined) {
+        if (q.stream === true) {
+          throw new Error(`query ${q.name}: member briefing reads no streamed query (a stream is not a bounded read of the member's own rows)`);
+        }
+        if (q.sensitive === true) {
+          throw new Error(`query ${q.name}: member briefing reads no sensitive query (sensitive reads are user-only and audited before reading)`);
+        }
+        if (q.extension !== undefined) {
+          throw new Error(`query ${q.name}: member briefing cannot combine extension with memberBriefing`);
+        }
+        if (!Array.isArray(q.access)) {
+          throw new Error(`query ${q.name}: member briefing reads only a query with a role list as access (the member's role must be in it)`);
+        }
+        if (
+          q.memberBriefing.reads !== undefined &&
+          (!Array.isArray(q.memberBriefing.reads) || q.memberBriefing.reads.some((r) => typeof r !== 'string' || r.length === 0))
+        ) {
+          throw new Error(`query ${q.name}: memberBriefing.reads lists registered query names`);
+        }
+      }
+      if (q.mcp !== undefined && (!Array.isArray(q.access) || q.stream === true || q.sensitive === true || q.memberVy !== undefined || q.memberBriefing !== undefined || q.extension !== undefined)) {
+        throw new Error(`query ${q.name}: an MCP grant reaches only a query with a role list as access that is neither streamed, sensitive, nor open to member mode, member briefing, or an extension token (ADR-0051 decision 2)`);
       }
       if (q.extension !== undefined && (!Array.isArray(q.access) || q.stream === true)) {
         throw new Error(`query ${q.name}: an extension token reaches only a query with a role list as access, and no streamed one (ADR-0047 point 10)`);
@@ -2145,7 +2229,14 @@ export class Runtime {
   // and the reviser registry.
   // `canOpen`: ctx.open and ctx.openMany work only in a sensitive query, whose read is audited before it starts; in a command, in a nested ctx.query and in
   // any other query they refuse, so a sealed value never reaches an answer or an audit detail without that audit.
-  private queryContext(trx: Transaction<Database>, orgId: string, actor: Actor, entered: Entered, canOpen = false): QueryContext {
+  private queryContext(
+    trx: Transaction<Database>,
+    orgId: string,
+    actor: Actor,
+    entered: Entered,
+    canOpen = false,
+    allowedBriefingReads?: ReadonlySet<string>,
+  ): QueryContext {
     return {
       trx,
       orgId,
@@ -2153,7 +2244,8 @@ export class Runtime {
       role: entered.role,
       agent: entered.agent,
       memberVy: entered.memberVy,
-      query: (name, input) => this.lookup(trx, orgId, actor, entered, name, input),
+      memberBriefing: entered.memberBriefing ?? null,
+      query: (name, input) => this.lookup(trx, orgId, actor, entered, name, input, allowedBriefingReads),
       reviserOf: (command) => this.reviserOf(command),
       installed: (module) => this.installed(module),
       appEnabled: async (module) =>
@@ -2173,6 +2265,7 @@ export class Runtime {
     entered: Entered,
     name: string,
     rawInput: unknown,
+    allowedBriefingReads?: ReadonlySet<string>,
   ): Promise<Lookup<O>> {
     const def = this.#queries.get(name);
     if (!def) {
@@ -2184,17 +2277,33 @@ export class Runtime {
     // An app the org switched off answers the same typed not_installed as one the deployment leaves out.
     if (await this.appIsOff(trx, orgId, entered, actor, def)) return { status: 'not_installed', module: moduleOf(name) };
     const input = parseInput(def.input, rawInput);
+    if (entered.memberBriefing && (allowedBriefingReads === undefined || !allowedBriefingReads.has(def.name))) {
+      throw new DomainError('FORBIDDEN', 403, 'Vy không được xem nội dung này', { rule: 'member_briefing_access' });
+    }
     this.authorizeQuery(def, actor, entered);
     refuseStreamed(def);
     refuseSensitiveLookup(def);
-    const value = (await def.handler(this.queryContext(trx, orgId, actor, entered), input)) as O;
+    const nestedBriefingReads = entered.memberBriefing ? new Set<string>(def.memberBriefing?.reads ?? []) : undefined;
+    const value = (await def.handler(this.queryContext(trx, orgId, actor, entered, false, nestedBriefingReads), input)) as O;
     return { status: 'ok', value };
   }
 
   private authorizeQuery(def: QueryDef<unknown, unknown>, actor: Actor, entered: Entered): void {
     authorizeExtension(def.extension, actor);
     authorizeMcp(def.mcp, actor);
-    const { role, agent, memberVy } = entered;
+    const { role, agent, memberVy, memberBriefing } = entered;
+    if (memberBriefing) {
+      if (
+        def.access === 'system' ||
+        !def.memberBriefing ||
+        def.sensitive === true ||
+        def.stream === true ||
+        !def.access.includes(memberBriefing.role)
+      ) {
+        throw new DomainError('FORBIDDEN', 403, 'Vy không được xem nội dung này', { rule: 'member_briefing_access' });
+      }
+      return;
+    }
     if (actor.type === 'agent' && actor.memberVy === true) {
       // Vy in member mode reads only what a query declares for it, and only what the member's own base role may read (ADR-0049 decision 1).
       if (!memberVy || def.access === 'system' || !def.memberVy || !def.access.includes(memberVy.role)) {
@@ -3637,6 +3746,86 @@ export class Runtime {
       if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, specificRefusal(domain));
       else if (audited && domain.code === 'FORBIDDEN') await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
       if (domain.code === 'INTERNAL') logInternal(`query ${name}`, error, options);
+      throw domain;
+    }
+  }
+
+  /**
+   * Runs a query inside the read-only member_briefing context (ADR-0049 amendment):
+   * enters ludy_kernel.enter_member_briefing_context inside a REPEATABLE READ, READ ONLY transaction
+   * on the worker pool and admits only queries that opt into `memberBriefing` and match the member's role.
+   */
+  async runAsMemberBriefing<O = unknown>(
+    name: string,
+    rawInput: unknown,
+    options: MemberBriefingOptions,
+  ): Promise<O> {
+    const def = this.#queries.get(name);
+    if (!def) throw new DomainError('QUERY_NOT_FOUND', 404, `Không có truy vấn ${name}`);
+    if (!UUID_RE.test(options.orgId) || !UUID_RE.test(options.memberUserId) || !UUID_RE.test(options.mailId)) {
+      throw new DomainError('FORBIDDEN', 403, 'Ngữ cảnh bản tin không hợp lệ', { rule: 'member_briefing_context' });
+    }
+    if (def.stream) {
+      throw new DomainError('FORBIDDEN', 403, 'Vy không được xem nội dung này', { rule: 'member_briefing_access' });
+    }
+    if (def.sensitive) {
+      await this.noteSecurityEvent(name, { type: 'agent', agentId: options.mailId, runId: options.mailId }, options.orgId, 'FORBIDDEN');
+      throw new DomainError('FORBIDDEN', 403, 'Truy vấn này chỉ dành cho người dùng', { rule: 'sensitive_user_only' });
+    }
+    const input = parseInput(def.input, rawInput);
+    const briefingActor: AgentActor = Object.freeze({ type: 'agent', agentId: options.mailId, runId: options.mailId });
+    let reached = false;
+    try {
+      const db = await this.#cells.resolveTenant(options.orgId);
+      return await db
+        .transaction()
+        .setIsolationLevel('repeatable read')
+        .execute(async (trx) => {
+          await sql`SET TRANSACTION READ ONLY`.execute(trx);
+          const { rows } = await sql<{
+            entered: { role: string; member: string; mail: string; maxRisk: string; tainted: boolean };
+          }>`
+            SELECT ludy_kernel.enter_member_briefing_context(${options.orgId}::uuid, ${options.memberUserId}::uuid, ${options.mailId}::uuid) AS entered`.execute(
+            trx,
+          );
+          const got = rows[0]?.entered;
+          const role = got?.role;
+          if (
+            !got ||
+            got.member !== options.memberUserId ||
+            got.mail !== options.mailId ||
+            got.maxRisk !== 'R0' ||
+            got.tainted !== true ||
+            (role !== 'owner' && role !== 'admin' && role !== 'member')
+          ) {
+            throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+          }
+          const entered: Entered = {
+            role: null,
+            agent: null,
+            memberVy: null,
+            memberBriefing: {
+              memberUserId: got.member,
+              mailId: got.mail,
+              role,
+              maxRisk: 'R0',
+              tainted: true,
+            },
+          };
+          reached = true;
+          await this.refuseIfAppOff(trx, options.orgId, entered, briefingActor, def);
+          this.authorizeQuery(def, briefingActor, entered);
+          refuseStreamed(def);
+          const allowedReads = new Set<string>(def.memberBriefing?.reads ?? []);
+          return (await def.handler(
+            this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, briefingActor, entered, false, allowedReads),
+            input,
+          )) as O;
+        });
+    } catch (error) {
+      const domain = toDomainError(error);
+      if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, briefingActor, options.orgId, specificRefusal(domain));
+      if (domain.code === 'INTERNAL') logInternal(`briefing query ${name}`, error, { orgId: options.orgId, actor: briefingActor });
       throw domain;
     }
   }

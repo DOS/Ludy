@@ -11,6 +11,7 @@ import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { MEMBER_VY_FEATURES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
@@ -26,11 +27,20 @@ suite('one live Vy run per member per feature (#3029)', () => {
   let orgId = '';
   let sharedNoteId = '';
   let runtime: Runtime;
+  let workerRuntime: Runtime;
   const users = { owner: '', alice: '', bob: '', carol: '', dave: '', erin: '' };
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
   const exec = <T>(who: string, name: string, input: unknown) => runtime.execute<T>(name, input, { actor: asUser(who), orgId });
   const start = (who: string, feature: string, subjectId?: string) => {
+    const def = MEMBER_VY_FEATURES[feature as keyof typeof MEMBER_VY_FEATURES];
+    if ('systemStartable' in def && def.systemStartable) {
+      return workerRuntime.execute<{ runId: string; resultId: string; expiresAt: string }>(
+        'kernel.member_vy.run.start_daily',
+        subjectId ? { userId: who, feature, subjectId } : { userId: who, feature },
+        { actor: { type: 'system', component: feature }, orgId },
+      );
+    }
     const isNoteFeature =
       feature === 'notes.summary' ||
       feature === 'notes.todo_suggest' ||
@@ -73,12 +83,21 @@ suite('one live Vy run per member per feature (#3029)', () => {
     const url = new URL(adminUrl);
     url.username = 'ludy_app';
     url.password = 'test-app-pw';
+    const workerUrl = new URL(adminUrl);
+    workerUrl.username = 'ludy_worker';
+    workerUrl.password = 'test-worker-pw';
     const pool = createPool({ connectionString: url.toString(), max: 12 });
-    pools.push(pool);
+    const workerPool = createPool({ connectionString: workerUrl.toString(), max: 6 });
+    pools.push(pool, workerPool);
     const db = createDb(pool);
+    const workerDb = createDb(workerPool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
-      commands: [...kernelCommands, ...notesCommands],
-      queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...notesQueries],
+      commands: [...kernelCommands, ...meetingsCommands, ...notesCommands],
+      queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...meetingsQueries, ...notesQueries],
+    });
+    workerRuntime = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register({
+      commands: [...kernelCommands, ...meetingsCommands, ...notesCommands],
+      queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...meetingsQueries, ...notesQueries],
     });
     for (const key of Object.keys(users) as Array<keyof typeof users>) {
       users[key] = await upsertIdentity(db, { issuer: 'vy-per-feature', subject: key, email: `${key}@vy-per-feature.test`, name: null });
@@ -141,9 +160,18 @@ suite('one live Vy run per member per feature (#3029)', () => {
   });
 
   it('bounds a member at one live run per declared feature, whatever the starts', async () => {
-    for (let round = 0; round < 2; round++) for (const feature of FEATURES) await start(users.carol, feature);
+    for (let round = 0; round < 2; round++) {
+      for (const feature of FEATURES) {
+        const def = MEMBER_VY_FEATURES[feature as keyof typeof MEMBER_VY_FEATURES];
+        if (round > 0 && 'systemStartable' in def && def.systemStartable) {
+          await expect(start(users.carol, feature)).rejects.toMatchObject({ code: 'VY_RUN_BUSY' });
+        } else {
+          await start(users.carol, feature);
+        }
+      }
+    }
     expect(await liveOf(users.carol)).toEqual([...FEATURES].sort());
-    expect(FEATURES.length, 'the declared member-mode features, and no per-member cap beyond them (ADR-0049 decision 1)').toBe(25);
+    expect(FEATURES.length, 'the declared member-mode features, and no per-member cap beyond them (ADR-0049 decision 1)').toBe(28);
   });
 
   it('ends every live run of the member, whichever the feature, when vy.use is denied, a kill switch is engaged and the member is removed', async () => {

@@ -4,7 +4,7 @@
 // total to type), and the checks of the invoice's required fields show on the fields as the draft is typed.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useDeferredValue, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { BUYER_IDENTITY_KINDS, BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_RATE_NATURES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerIdentityKind, type BuyerKind, type DraftIssueCode, EINVOICE_NOTICE_FIELDS, einvoiceNoticeText, type EInvoiceCorrection, type EInvoiceCorrectionKind, type EInvoiceNotice, type EInvoiceNoticeField, type EInvoiceNoticeList, type EInvoiceNoticeStep, type EInvoiceRateNature, type EInvoiceReasonSuggested, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@ludy/kernel-contract';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
@@ -252,7 +252,7 @@ function CrmSource({ onAdd }: { onAdd: (sentence: string) => void }) {
 
 /** The coworker's box on the draft form (#2505): a person pastes or types a text about the sale, and the coworker proposes the lines, the VAT rate the text states and the buyer. The form works the same
  * with AI off; a proposal only fills the fields, marked as the coworker's, and issuing keeps its own approval. */
-function CoworkerBox({ date, room, legalEntityId, invoiceSource, buyerPartyId, text, onText, onProposal }: { date: string; room: number; legalEntityId: string | undefined; invoiceSource: { draftId: string; buyerPartyId: string } | null; buyerPartyId: string | null; text: string; onText: (text: string) => void; onProposal: (proposal: EInvoiceSuggested) => void }) {
+export function CoworkerBox({ date, room, legalEntityId, invoiceSource, buyerPartyId, text, onText, onProposal }: { date: string; room: number; legalEntityId: string | undefined; invoiceSource: { draftId: string; buyerPartyId: string } | null; buyerPartyId: string | null; text: string; onText: (text: string) => void; onProposal: (proposal: EInvoiceSuggested) => void }) {
   const t = useTranslations('salesInvoices.ai');
   const tp = useTranslations('salesInvoices.ai.previous');
   const current = useRef(date);
@@ -261,9 +261,17 @@ function CoworkerBox({ date, room, legalEntityId, invoiceSource, buyerPartyId, t
     current.current = date;
   }, [date]);
   const [state, setState] = useState<'filled' | 'partial' | 'stale' | Exclude<EInvoiceSuggested['ai'], 'used'> | null>(null);
+  // Clear a previous status note as soon as the source text or invoice date changes (#4119).
+  const [tracked, setTracked] = useState({ date, text });
+  if (tracked.date !== date || tracked.text !== text) {
+    setTracked({ date, text });
+    if (state !== null) setState(null);
+  }
   const ask = useMutation({
     // The date the request was made for travels in the mutation's variables: the options of a request still pending are replaced on every render, so a date taken from the closure could already be the new one.
     mutationFn: (asked: string) => client.einvoice.drafts.suggest({ text: text.trim(), date: asked === '' ? vietnamToday() : asked, ...(invoiceSource ? { invoiceDraftId: invoiceSource.draftId, buyerPartyId: invoiceSource.buyerPartyId } : {}), ...(buyerPartyId ? { formBuyerPartyId: buyerPartyId } : {}), ...(legalEntityId ? { legalEntityId } : {}) }),
+    // Clear any lingering status note when a new request starts so it never shows during the run or beside a request error (#4119).
+    onMutate: () => setState(null),
     onSuccess: (proposal, asked) => {
       // The VAT rates were checked for the date asked with: if the invoice date was changed meanwhile, nothing is filled.
       if (proposal.ai === 'used' && current.current !== asked) {
@@ -274,24 +282,36 @@ function CoworkerBox({ date, room, legalEntityId, invoiceSource, buyerPartyId, t
       setState(proposal.ai === 'used' ? (proposal.lines.length > room ? 'partial' : 'filled') : proposal.ai);
     },
   });
+  const askRef = useRef(ask);
+  useLayoutEffect(() => {
+    askRef.current = ask;
+  });
+  useEffect(() => {
+    if (!askRef.current.isPending && askRef.current.isError) askRef.current.reset();
+  }, [date, text]);
   return (
-    <div className="mt-3 space-y-2 rounded-lg border border-dashed border-proposal/60 p-3" data-testid="invoice-ai">
-      <Label htmlFor="sales-invoice-ai-text">{t('label')}</Label>
-      {/* Locked while a request is pending (#2713): an answer for the old text would otherwise fill the draft beside a text the person has since changed. */}
-      <Textarea id="sales-invoice-ai-text" rows={2} value={text} maxLength={EINVOICE_SUGGEST_TEXT_MAX} placeholder={t('placeholder')} disabled={ask.isPending} onChange={(e) => onText(e.target.value)} data-testid="invoice-ai-text" />
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="outline" size="sm" loading={ask.isPending} disabled={text.trim() === '' || ask.isPending} onClick={() => ask.mutate(date)} data-testid="invoice-ai-ask">
-          {t('button')}
-        </Button>
-        <p className="text-xs text-subtle-foreground">{t('hint')}</p>
-        {invoiceSource && <p className="text-xs text-subtle-foreground" data-testid="invoice-ai-source">{tp('askNote')}</p>}
+    <div className="mt-3 rounded-lg border border-dashed border-proposal/60 p-3" data-testid="invoice-ai">
+      <div className="space-y-2">
+        <Label htmlFor="sales-invoice-ai-text">{t('label')}</Label>
+        {/* Locked while a request is pending (#2713): an answer for the old text would otherwise fill the draft beside a text the person has since changed. */}
+        <Textarea id="sales-invoice-ai-text" rows={2} value={text} maxLength={EINVOICE_SUGGEST_TEXT_MAX} placeholder={t('placeholder')} disabled={ask.isPending} onChange={(e) => onText(e.target.value)} data-testid="invoice-ai-text" />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" size="sm" loading={ask.isPending} disabled={text.trim() === '' || ask.isPending} onClick={() => ask.mutate(date)} data-testid="invoice-ai-ask">
+            {t('button')}
+          </Button>
+          <p className="text-xs text-subtle-foreground">{t('hint')}</p>
+          {invoiceSource && <p className="text-xs text-subtle-foreground" data-testid="invoice-ai-source">{tp('askNote')}</p>}
+        </div>
       </div>
-      {state !== null && (
-        <p className="text-xs text-foreground" role="status" data-testid="invoice-ai-state" data-state={state}>
-          {t(`state.${state}`)}
-        </p>
-      )}
-      {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
+      {/* Always-mounted live region so screen readers announce every status change while keeping invoice-ai-state absent when cleared. */}
+      <div role="status" aria-live="polite">
+        {state !== null && (
+          <p className="mt-2 text-xs text-foreground" data-testid="invoice-ai-state" data-state={state}>
+            {t(`state.${state}`)}
+          </p>
+        )}
+      </div>
+      {ask.error && <div className="mt-2"><ErrorText>{errorMessage(ask.error)}</ErrorText></div>}
     </div>
   );
 }
@@ -329,7 +349,7 @@ function DraftForm({ initial, series, legalEntityId, originalNumber, handoffPref
   });
   const issues = check.data?.issues ?? [];
   // What cannot be stored yet (a date, a quantity or a price that is not a value): the rest is saved with its issues shown.
-  const unsaveable = issues.some((i) => (['DATE_REQUIRED', 'DATE_INVALID', 'SALE_DATE_INVALID', 'SALE_DATE_AFTER_INVOICE', 'LINE_QUANTITY_INVALID', 'LINE_PRICE_INVALID', 'BUYER_NATIONALITY_REQUIRED', 'BUYER_NATIONALITY_INVALID'] as const).some((c) => c === i.code)) || check.data === undefined;
+  const unsaveable = issues.some((i) => (['DATE_REQUIRED', 'DATE_INVALID', 'SALE_DATE_INVALID', 'SALE_DATE_AFTER_INVOICE', 'RATE_DATE_INVALID', 'LINE_QUANTITY_INVALID', 'LINE_PRICE_INVALID', 'BUYER_NATIONALITY_REQUIRED', 'BUYER_NATIONALITY_INVALID'] as const).some((c) => c === i.code)) || check.data === undefined;
   const bad = (field: string) => issues.some((i) => i.field === field);
   // The error of each of the two late-sale fields sits under it and is linked to it, and a field shows only its own (#3535).
   const saleDateIssue = issues.find((i) => i.field === 'saleDate');

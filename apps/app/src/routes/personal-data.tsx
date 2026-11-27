@@ -23,10 +23,73 @@ import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 const HANDLING_BADGE = { erase: 'warning', keep_legal: 'secondary', keep_org: 'secondary', keep_record: 'secondary' } as const;
 
-// The file goes to the person who asked: their rows only, never how many private items members keep (#1678) or how much text of meetings nobody here may read names them (#2594).
+// The file goes to the person who asked: explicit requester-safe allowlist only, never privateItems (#1678), hidden meetingText (#2594), internal pending attachment counts (#5127), or future internal fields.
+export function personalDataExportBody(value: string, result: PersonalDataResult) {
+  return {
+    value,
+    kind: result.kind,
+    matches: result.matches,
+    meetingTextSkipped: result.meetingTextSkipped,
+    truncated: result.truncated,
+  };
+}
+
+export function PendingNoteAttachmentsWarning({
+  pending,
+}: {
+  pending: NonNullable<PersonalDataResult['pendingNoteAttachments']>;
+}) {
+  const t = useTranslations('personalData');
+  const priv = pending.private ?? 0;
+  const message =
+    pending.shared > 0 && priv > 0
+      ? t('pendingNoteAttachmentsBoth', { shared: pending.shared, private: priv })
+      : priv > 0
+        ? t('pendingNoteAttachmentsPrivate', { private: priv })
+        : pending.shared > 0
+          ? t('pendingNoteAttachmentsShared', { shared: pending.shared })
+          : null;
+  if (!message) return null;
+  return (
+    <p className="mb-2 max-w-3xl text-sm text-warning" data-testid="personal-data-pending-note-attachments">
+      {message}
+    </p>
+  );
+}
+
+export function PersonalDataSearchWarnings({
+  result,
+}: {
+  result: Pick<PersonalDataResult, 'pendingNoteAttachments' | 'meetingTextSkipped' | 'truncated'>;
+}) {
+  const t = useTranslations('personalData');
+  return (
+    <>
+      {result.pendingNoteAttachments && <PendingNoteAttachmentsWarning pending={result.pendingNoteAttachments} />}
+      {result.meetingTextSkipped && (
+        <p className="mb-2 max-w-3xl text-sm text-warning" data-testid="personal-data-meeting-text-skipped">
+          {t('meetingTextSkipped')}
+        </p>
+      )}
+      {result.truncated && <p className="mb-2 max-w-3xl text-sm text-warning">{t('truncated')}</p>}
+    </>
+  );
+}
+
+export function PersonalDataEmptyState({
+  result,
+}: {
+  result: Pick<PersonalDataResult, 'pendingNoteAttachments' | 'meetingTextSkipped'>;
+}) {
+  const t = useTranslations('personalData');
+  const incomplete =
+    Boolean(result.pendingNoteAttachments && (result.pendingNoteAttachments.shared > 0 || (result.pendingNoteAttachments.private ?? 0) > 0)) ||
+    result.meetingTextSkipped;
+  return <Empty title={t(incomplete ? 'noneInSearched' : 'none')} />;
+}
+
 function download(value: string, result: PersonalDataResult) {
-  const { privateItems: _counts, meetingText: _meetings, ...rows } = result;
-  const url = URL.createObjectURL(new Blob([JSON.stringify({ value, ...rows }, null, 2)], { type: 'application/json' }));
+  const url = URL.createObjectURL(new Blob([JSON.stringify(personalDataExportBody(value, result), null, 2)], { type: 'application/json' }));
   const a = document.createElement('a');
   a.href = url;
   a.download = `personal-data-${new Date().toISOString().slice(0, 10)}.json`;
@@ -174,7 +237,7 @@ export function PersonalDataPage() {
           ))}
           {erase.data.kept.length > 0 && <p className="pt-2 font-medium text-foreground">{t('kept')}</p>}
           {erase.data.kept.map((k) => (
-            <p key={k.column} className="text-xs text-muted-foreground">
+            <p key={`${k.column}:${k.reason}`} className="text-xs text-muted-foreground">
               {t('keptRow', { column: k.column, rows: k.rows, reason: k.reason })}
             </p>
           ))}
@@ -221,59 +284,62 @@ export function PersonalDataPage() {
         <TableSkeleton columns={4} />
       ) : found.error ? (
         <ErrorText>{errorMessage(found.error)}</ErrorText>
-      ) : !found.data ? null : !hasAny && (!socialInstalled || (!conversations.isFetching && !conversations.error && conversations.data !== undefined)) ? (
-        <Empty title={t('none')} />
-      ) : !hasAny ? null : (
+      ) : !found.data ? null : (
         <>
-          {found.data.privateItems === null && <p className="mb-4 max-w-3xl text-xs text-muted-foreground">{t('privateOwnersOnly')}</p>}
-          {privateItems.length > 0 && (
-            <div className="mb-4 max-w-3xl space-y-1 rounded-lg border p-3 text-sm" data-testid="private-items">
-              <p className="font-medium text-foreground">
-                {t('privateSummary', {
-                  items: items(
-                    privateItems.reduce((sum, p) => sum + p.notes, 0),
-                    privateItems.reduce((sum, p) => sum + p.todos, 0),
-                  ),
-                  authors: privateItems.length,
-                })}
-              </p>
-              {privateItems.map((p) => (
-                <p key={p.authorUserId} className="text-xs text-muted-foreground">
-                  {t('privateAuthor', { name: nameOf(p.authorUserId), items: items(p.notes, p.todos) })}
-                </p>
-              ))}
-              <p className="pt-1 text-xs text-muted-foreground">{t('privateHint')}</p>
-              {noticeControls}
-            </div>
-          )}
-          {meetingText.length > 0 && (
-            <div className="mb-4 max-w-3xl space-y-1 rounded-lg border p-3 text-sm" data-testid="meeting-text">
-              <p className="font-medium text-foreground">{t('meetingTextSummary', { meetings: meetingText.reduce((sum, m) => sum + m.meetings, 0), recorders: meetingText.length })}</p>
-              {meetingText.map((m) => (
-                <p key={m.recorderUserId} className="text-xs text-muted-foreground">
-                  {t('meetingTextRecorder', { name: nameOf(m.recorderUserId), meetings: m.meetings, lines: m.lines, results: m.results, items: m.items, titles: m.titles })}
-                  {m.notes ? t('meetingTextNotes', { notes: m.notes }) : null}
-                </p>
-              ))}
-              <p className="pt-1 text-xs text-muted-foreground">{t('meetingTextHint')}</p>
-              {privateItems.length === 0 && noticeControls}
-            </div>
-          )}
-          {found.data.meetingTextSkipped && <p className="mb-2 text-sm text-warning">{t('meetingTextSkipped')}</p>}
-          {found.data.truncated && <p className="mb-2 text-sm text-warning">{t('truncated')}</p>}
-          {found.data.matches.length > 0 && (
-            <DataTable head={[t('columns.where'), t('columns.handling'), t('columns.reason'), t('columns.row')]}>
-              {found.data.matches.map((m, i) => (
-                <TableRow key={`${m.column}-${m.rowId ?? i}`}>
-                  <TableCell className="font-mono text-xs text-foreground">{m.column}</TableCell>
-                  <TableCell>
-                    <Badge variant={HANDLING_BADGE[m.handling]}>{t(`handling.${m.handling}`)}</Badge>
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{m.reason}</TableCell>
-                  <TableCell className="font-mono text-xs text-subtle-foreground">{m.rowId ?? '-'}</TableCell>
-                </TableRow>
-              ))}
-            </DataTable>
+          <PersonalDataSearchWarnings result={found.data} />
+          {!hasAny && (!socialInstalled || (!conversations.isFetching && !conversations.error && conversations.data !== undefined)) ? (
+            <PersonalDataEmptyState result={found.data} />
+          ) : !hasAny ? null : (
+            <>
+              {found.data.privateItems === null && <p className="mb-4 max-w-3xl text-xs text-muted-foreground">{t('privateOwnersOnly')}</p>}
+              {privateItems.length > 0 && (
+                <div className="mb-4 max-w-3xl space-y-1 rounded-lg border p-3 text-sm" data-testid="private-items">
+                  <p className="font-medium text-foreground">
+                    {t('privateSummary', {
+                      items: items(
+                        privateItems.reduce((sum, p) => sum + p.notes, 0),
+                        privateItems.reduce((sum, p) => sum + p.todos, 0),
+                      ),
+                      authors: privateItems.length,
+                    })}
+                  </p>
+                  {privateItems.map((p) => (
+                    <p key={p.authorUserId} className="text-xs text-muted-foreground">
+                      {t('privateAuthor', { name: nameOf(p.authorUserId), items: items(p.notes, p.todos) })}
+                    </p>
+                  ))}
+                  <p className="pt-1 text-xs text-muted-foreground">{t('privateHint')}</p>
+                  {noticeControls}
+                </div>
+              )}
+              {meetingText.length > 0 && (
+                <div className="mb-4 max-w-3xl space-y-1 rounded-lg border p-3 text-sm" data-testid="meeting-text">
+                  <p className="font-medium text-foreground">{t('meetingTextSummary', { meetings: meetingText.reduce((sum, m) => sum + m.meetings, 0), recorders: meetingText.length })}</p>
+                  {meetingText.map((m) => (
+                    <p key={m.recorderUserId} className="text-xs text-muted-foreground">
+                      {t('meetingTextRecorder', { name: nameOf(m.recorderUserId), meetings: m.meetings, lines: m.lines, results: m.results, items: m.items, titles: m.titles })}
+                      {m.notes ? t('meetingTextNotes', { notes: m.notes }) : null}
+                    </p>
+                  ))}
+                  <p className="pt-1 text-xs text-muted-foreground">{t('meetingTextHint')}</p>
+                  {privateItems.length === 0 && noticeControls}
+                </div>
+              )}
+              {found.data.matches.length > 0 && (
+                <DataTable head={[t('columns.where'), t('columns.handling'), t('columns.reason'), t('columns.row')]}>
+                  {found.data.matches.map((m, i) => (
+                    <TableRow key={`${m.column}-${m.rowId ?? i}`}>
+                      <TableCell className="font-mono text-xs text-foreground">{m.column}</TableCell>
+                      <TableCell>
+                        <Badge variant={HANDLING_BADGE[m.handling]}>{t(`handling.${m.handling}`)}</Badge>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{m.reason}</TableCell>
+                      <TableCell className="font-mono text-xs text-subtle-foreground">{m.rowId ?? '-'}</TableCell>
+                    </TableRow>
+                  ))}
+                </DataTable>
+              )}
+            </>
           )}
         </>
       )}

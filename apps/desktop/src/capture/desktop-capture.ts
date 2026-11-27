@@ -5,7 +5,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { release as osRelease } from 'node:os';
 import type { CaptureModule, CapturePiece, CaptureSource, CaptureStartOptions } from './interface.ts';
-import { ProcessLoopbackUnsupportedError } from './interface.ts';
+import { CaptureCancelledError, ProcessLoopbackUnsupportedError } from './interface.ts';
 import { createSilenceMonitor } from './levels.ts';
 import { isMacOsCoreAudioSupported } from './macos.ts';
 import { resolveHelperExePath } from './windows.ts';
@@ -80,6 +80,7 @@ export interface DesktopCaptureDeps {
   log?: (line: string) => void;
   spawnHelper?: (exePath: string, args: readonly string[]) => ChildProcessWithoutNullStreams;
   resolveHelperPath?: (options: { isPackaged: boolean; resourcesPath: string }) => string | null;
+  requestMicPermission?: () => Promise<boolean>;
   startupTimeoutMs?: number;
   platform?: NodeJS.Platform;
   darwinRelease?: string;
@@ -110,6 +111,27 @@ export function createPcmFrameChunker(onFrame: (buf: ArrayBuffer) => void) {
       remainder = new Uint8Array(0);
     },
   };
+}
+
+async function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) throw new CaptureCancelledError();
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      reject(new CaptureCancelledError());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 export function createDesktopCaptureModule(deps: DesktopCaptureDeps): CaptureModule {
@@ -147,11 +169,16 @@ export function createDesktopCaptureModule(deps: DesktopCaptureDeps): CaptureMod
   return {
     async start(source: CaptureSource, _meetingKey: string, options?: CaptureStartOptions): Promise<void> {
       if (stopFn) throw new Error('capture already running');
+      const signal = options?.signal;
+      if (signal?.aborted) {
+        throw new CaptureCancelledError();
+      }
       const isDarwin = platform === 'darwin';
       const useWasapi = !isDarwin && source !== 'microphone' && options?.targetPid !== undefined && !options.allowSystemFallback;
       const mode: 'wasapi' | 'system-fallback' | 'mic-only' = source === 'microphone' ? 'mic-only' : useWasapi ? 'wasapi' : 'system-fallback';
 
-      if (isDarwin && source !== 'microphone') {
+      try {
+        if (isDarwin && source !== 'microphone') {
         if (!isMacOsCoreAudioSupported(getDarwinRelease())) {
           throw new ProcessLoopbackUnsupportedError({
             systemFallbackAvailable: false,
@@ -245,6 +272,23 @@ export function createDesktopCaptureModule(deps: DesktopCaptureDeps): CaptureMod
         deps.bridge.armSystemFallback();
       }
 
+        if (isDarwin && source !== 'system-audio' && deps.requestMicPermission) {
+          const micAllowed = await raceAbort(deps.requestMicPermission().catch(() => true), signal);
+          if (signal?.aborted) {
+            throw new CaptureCancelledError();
+          }
+          if (!micAllowed && source === 'microphone') {
+            throw new Error('MICROPHONE_UNAVAILABLE');
+          }
+        }
+        if (signal?.aborted) {
+          throw new CaptureCancelledError();
+        }
+      } catch (error) {
+        cleanupAll();
+        throw error;
+      }
+
       const pieceQueue = new AsyncPieceQueue();
       queue = pieceQueue;
 
@@ -255,7 +299,19 @@ export function createDesktopCaptureModule(deps: DesktopCaptureDeps): CaptureMod
       });
 
       try {
-        const worker = await deps.bridge.openWorkerWindow();
+        const workerPromise = deps.bridge.openWorkerWindow();
+        void workerPromise
+          .then((opened) => {
+            if (signal?.aborted) {
+              try {
+                opened.close();
+              } catch {
+                // ignore late worker close error
+              }
+            }
+          })
+          .catch(() => undefined);
+        const worker = await raceAbort(workerPromise, signal);
         activeCleanup.push(() => worker.close());
 
         if (helper) {
@@ -299,18 +355,21 @@ export function createDesktopCaptureModule(deps: DesktopCaptureDeps): CaptureMod
         });
         activeCleanup.push(offChunk, offLevels, offEnded);
 
-        await new Promise<void>((resolve, reject) => {
-          const offReady = deps.bridge.onWorkerReady((res) => {
-            offReady();
-            if (!res.ok) {
-              reject(new Error(res.error ?? 'CAPTURE_WORKER_FAILED'));
-              return;
-            }
-            if (res.micMissing) options?.onMicMissing?.();
-            resolve();
-          });
-          worker.sendStart({ source, mode, liveNotes: Boolean(options?.onLiveChunk) });
-        });
+        await raceAbort(
+          new Promise<void>((resolve, reject) => {
+            const offReady = deps.bridge.onWorkerReady((res) => {
+              offReady();
+              if (!res.ok) {
+                reject(new Error(res.error ?? 'CAPTURE_WORKER_FAILED'));
+                return;
+              }
+              if (res.micMissing) options?.onMicMissing?.();
+              resolve();
+            });
+            worker.sendStart({ source, mode, liveNotes: Boolean(options?.onLiveChunk) });
+          }),
+          signal,
+        );
 
         let stopping: Promise<void> | null = null;
         stopFn = () => {

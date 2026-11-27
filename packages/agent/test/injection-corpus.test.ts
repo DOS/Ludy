@@ -8,10 +8,13 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_FEATURE_KEYS,
   AdsCampaignWriter,
+  AskBooksCoworker,
   ConversationWriter,
   ExpenseVarianceCoworker,
+  UnusualEntriesCoworker,
   InboxReader,
   PayrollCoworker,
+  QuarterSummaryCoworker,
   SchedulingReader,
   SignAcceptanceReader,
   SignAiReader,
@@ -24,6 +27,8 @@ import {
   checkRoadmapDedupe,
   checkRoadmapSignalMatch,
   checkTriageAssist,
+  checkGithubPrSummary,
+  checkGithubIssueMatch,
   checkSignClauseSummary,
   checkSignContractDraftClauses,
   checkSignKycOutput,
@@ -45,6 +50,7 @@ import {
   type EInvoiceRateFacts,
   type EInvoiceReasonFacts,
   type ExpenseVarianceNoteFacts,
+  type UnusualEntriesNoteFacts,
   type HrAddendumCheckInput,
   type HrOkrCheckinDraftInput,
   type HrProbationSummaryInput,
@@ -64,8 +70,11 @@ import {
   type PayrollFigures,
   type PayrollMatchFacts,
   type PayrollSheet,
+  type QuarterSummaryNoteFacts,
   type PayslipExplainRequest,
   type ProjectCycleSummaryFacts,
+  type ProjectGithubIssueMatchFacts,
+  type ProjectGithubPrSummaryFacts,
   type ProjectTriageAssistFacts,
   type ProjectWeeklyStatusFacts,
   type QuoteSuggestRequest,
@@ -93,6 +102,8 @@ import {
   checkCommitments,
   checkTemplateSuggestion,
   checkOpenPoints,
+  checkCatchUp,
+  checkNotesMinutes,
   checkLabelSuggestions,
   checkSalesInsight,
   checkDigest,
@@ -111,6 +122,7 @@ import {
   noKnowledge,
   summarizeMeeting,
   summarizeNote,
+  writeBrief,
   type MemberRef,
   type Ports,
   type SummarySegment,
@@ -124,6 +136,7 @@ import {
   hasUngroundedMoneyOrScaleWords,
   stripTrustedPhrases,
 } from '../src/injection-guards.ts';
+import { UNIMPLEMENTED_SYSTEM_FEATURES } from './coworkers.ts';
 import { INJECTION_CORPUS } from './fixtures/injection-corpus.ts';
 import { LABEL_RULES } from './fixtures/label-rules.ts';
 
@@ -243,6 +256,50 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       }));
       const res = await coworker.notes({ ...facts, language: c.language });
       expect(res.kind, c.id).toBe('none');
+    }
+  });
+
+  it('finance.unusual_entries_note: refuses every injection payload via UnusualEntriesCoworker', async () => {
+    cover('finance.unusual_entries_note');
+    const facts: UnusualEntriesNoteFacts = { language: 'vi', hits: [{ rule: 'amount_outlier', sourceKind: 'invoice', direction: 'high' }] };
+    for (const c of INJECTION_CORPUS) {
+      const coworker = new UnusualEntriesCoworker(STUB_CONFIG, async () => ({
+        output: { notes: [{ row: 1, text: c.poisonedOutput }] },
+        usage: zeroUsage,
+      }));
+      const res = await coworker.notes({ ...facts, language: c.language });
+      expect(res.kind, c.id).toBe('none');
+    }
+  });
+
+  it('finance.quarter_summary_note: refuses every injection payload via QuarterSummaryCoworker', async () => {
+    cover('finance.quarter_summary_note');
+    const facts: QuarterSummaryNoteFacts = {
+      language: 'vi',
+      entity: 'company',
+      rows: [{ row: 'revenue', vsPrevious: 'rose', vsLastYear: 'rose', overdue: false }],
+    };
+    for (const c of INJECTION_CORPUS) {
+      const coworker = new QuarterSummaryCoworker(STUB_CONFIG, async () => ({
+        output: { notes: [{ row: 1, text: c.poisonedOutput }] },
+        usage: zeroUsage,
+      }));
+      const res = await coworker.notes({ ...facts, language: c.language });
+      expect(res.kind, c.id).toBe('none');
+    }
+  });
+
+  it('finance.ask_books: refuses a poisoned choice whole and keeps no sentence of an injection payload via AskBooksCoworker', async () => {
+    cover('finance.ask_books');
+    for (const c of INJECTION_CORPUS) {
+      // A payload where the entry should be: not one of the closed lists, so there is no choice at all.
+      const poisonedEntry = new AskBooksCoworker(STUB_CONFIG, async () => ({ output: { entry: c.poisonedOutput, period: 'last_month', lead: '' }, usage: zeroUsage }));
+      expect((await poisonedEntry.pick('profit please', c.language)).kind, c.id).toBe('none');
+      // A payload where the sentence should be: the choice is from the closed lists and stands, the sentence is dropped.
+      const poisonedLead = new AskBooksCoworker(STUB_CONFIG, async () => ({ output: { entry: 'profit_loss', period: 'last_month', lead: c.poisonedOutput }, usage: zeroUsage }));
+      const res = await poisonedLead.pick('profit please', c.language);
+      expect(res.kind, c.id).toBe('choice');
+      if (res.kind === 'choice') expect(res.lead, c.id).toBeNull();
     }
   });
 
@@ -813,6 +870,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('meetings.translate');
     cover('meetings.ask');
     cover('meetings.brief');
+    cover('meetings.brief_daily');
     cover('meetings.digest');
     cover('meetings.assignee');
     cover('meetings.adherence');
@@ -821,6 +879,8 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('meetings.commitments');
     cover('meetings.template_suggest');
     cover('meetings.open_points');
+    cover('meetings.catch_up');
+    cover('meetings.notes_minutes');
     cover('meetings.sales_insight');
     cover('meetings.label_suggest');
     cover('meetings.followup_note');
@@ -937,6 +997,23 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
         expect(sameAsk.sentences, `ask same-source ${c.id}`).toEqual([]);
       }
       expect(checkBrief(JSON.stringify({ sentences: [{ text: c.poisonedOutput, cites: [1] }] }), poisonedFacts).sentences, `brief ${c.id}`).toEqual([]);
+      const seenDailyFeatures: string[] = [];
+      const dailyPorts = bindPorts(
+        { orgId: '11111111-1111-4111-8111-111111111111', memberUserId: '22222222-2222-4222-8222-222222222222' },
+        {
+          model: {
+            generate: async (_who, prompt) => {
+              if (prompt.feature) seenDailyFeatures.push(prompt.feature);
+              return { text: JSON.stringify({ sentences: [{ text: c.poisonedOutput, cites: [1] }] }), usage: { inputTokens: 1, outputTokens: 1 } };
+            },
+          },
+          memory: { read: async () => [], write: async () => ({ id: 'm1' }), forget: async () => undefined },
+          knowledge: noKnowledge,
+        },
+      );
+      const dailyChecked = await writeBrief({ facts: [{ kind: 'decision', text: poisonedFacts[0]!.text }], feature: 'meetings.brief_daily' }, dailyPorts);
+      expect(seenDailyFeatures, `brief_daily feature ${c.id}`).toEqual(['meetings.brief_daily']);
+      expect(dailyChecked.answer.sentences, `brief_daily ${c.id}`).toEqual([]);
       expect(checkDigest(JSON.stringify({ sentences: [{ text: c.poisonedOutput, cites: [1] }] }), poisonedFacts).sentences, `digest ${c.id}`).toEqual([]);
 
       expect(() => checkAssignee(JSON.stringify({ n: c.poisonedOutput }), `Giao cho Lan lam. ${nextCase.untrustedInput}`, ['Lan', 'Nam'])).toThrow();
@@ -966,6 +1043,33 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       ).toThrowError('COMMITMENTS_EMPTY');
       expect(() => checkTemplateSuggestion(JSON.stringify({ template: 'customer', reason: c.poisonedOutput, second: 0 }), poisonedSegments)).toThrowError('TEMPLATE_SUGGEST_EMPTY');
       expect(() => checkOpenPoints(JSON.stringify({ points: [{ kind: 'question', text: c.poisonedOutput, second: 0 }] }), poisonedSegments)).toThrowError('OPEN_POINTS_EMPTY');
+      const catchUpItemId = '88888888-8888-4888-8888-888888888801';
+      const checkedCatchUp = checkCatchUp(
+        JSON.stringify({
+          lines: [
+            { text: c.poisonedOutput, cite: { kind: 'decision', index: 1 } },
+            { text: c.poisonedOutput, cite: { kind: 'item', itemId: catchUpItemId } },
+          ],
+        }),
+        {
+          decisions: ['Chot ke hoach giao hang va xac nhan lich hop tuan sau.'],
+          items: [{ id: catchUpItemId, title: 'Gui bao cao tuan', who: 'Lan', when: 'thu Sau' }],
+        },
+      );
+      expect(checkedCatchUp.lines, `catch_up ${c.id}`).toEqual([]);
+      expect(checkedCatchUp.dropped, `catch_up dropped ${c.id}`).toBe(2);
+      const checkedNotesMinutes = checkNotesMinutes(
+        JSON.stringify({
+          summary: c.poisonedOutput,
+          decisions: [{ text: c.poisonedOutput, noteLine: 1 }],
+          items: [{ title: c.poisonedOutput, who: c.poisonedOutput, when: c.poisonedOutput, noteLine: 1 }],
+        }),
+        [`Hop ke hoach ban hang thang 10. ${nextCase.untrustedInput}`],
+      );
+      expect(checkedNotesMinutes.summary, `notes_minutes summary ${c.id}`).toBe('');
+      expect(checkedNotesMinutes.decisions, `notes_minutes decisions ${c.id}`).toEqual([]);
+      expect(checkedNotesMinutes.items, `notes_minutes items ${c.id}`).toEqual([]);
+      expect(checkedNotesMinutes.dropped, `notes_minutes dropped ${c.id}`).toBeGreaterThanOrEqual(3);
       try {
         const labels = checkLabelSuggestions(JSON.stringify({ labels: [c.poisonedOutput] }), [], LABEL_RULES);
         expect(labels.labels, `label_suggest ${c.id}`).toEqual([]);
@@ -1003,6 +1107,8 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('projects.roadmap_changelog_draft');
     cover('projects.roadmap_signal_match');
     cover('projects.triage_assist');
+    cover('projects.github_pr_summary');
+    cover('projects.github_issue_match');
     cover('projects.tasks_from_note');
     cover('projects.tasks_from_source');
 
@@ -1074,6 +1180,49 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
         tasks: [{ taskId: 'task-1', title: 'Xuat bao cao Excel', status: 'in_progress', tainted: false }],
       },
     };
+    const githubPrSummaryFacts: ProjectGithubPrSummaryFacts = {
+      language: 'vi',
+      projectName: 'Web Ban Hang',
+      taskKey: 'WEB-4',
+      taskTitle: 'Xuat bao cao Excel',
+      taskTainted: false,
+      links: [
+        {
+          kind: 'pull_request',
+          repoFullName: 'acme/web',
+          externalNumber: 42,
+          externalState: 'open',
+          externalTitle: 'Them xuat bao cao Excel',
+          branchName: 'feat/WEB-4',
+          authorLogin: 'dev-lan',
+          closesTask: true,
+          tainted: true,
+        },
+      ],
+    };
+    const githubIssueMatchFacts: ProjectGithubIssueMatchFacts = {
+      language: 'vi',
+      projectName: 'Web Ban Hang',
+      task: {
+        id: 'task-1',
+        key: 'WEB-4',
+        title: 'Xuat bao cao Excel',
+        description: 'Can xuat bao cao doanh thu',
+        tainted: false,
+      },
+      candidates: [
+        {
+          candidateId: 'acme/web#42',
+          repoFullName: 'acme/web',
+          externalNumber: 42,
+          externalUrl: 'https://github.com/acme/web/issues/42',
+          externalTitle: 'Xuat bao cao Excel theo thang',
+          authorLogin: 'dev-lan',
+          updatedAt: '2026-10-01T00:00:00Z',
+          tainted: true,
+        },
+      ],
+    };
 
     for (const c of INJECTION_CORPUS) {
       const reader = new InboxReader(STUB_CONFIG, {
@@ -1099,6 +1248,14 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
             duplicateTaskId: null,
             reason: c.poisonedOutput,
           },
+          usage: zeroUsage,
+        }),
+        projectGithubPrSummary: async () => ({
+          output: { summary: c.poisonedOutput },
+          usage: zeroUsage,
+        }),
+        projectGithubIssueMatch: async () => ({
+          output: { matches: [{ candidateId: 'acme/web#42', reason: c.poisonedOutput }] },
           usage: zeroUsage,
         }),
       });
@@ -1161,6 +1318,30 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       expect((await reader.roadmapChangelogDraft({ ...changelogFacts, language: c.language })).kind, `changelog ${c.id}`).toBe('none');
       expect((await reader.roadmapSignalMatch({ ...signalMatchFacts, language: c.language })).kind, `roadmapSignalMatch reason ${c.id}`).toBe('none');
       expect((await reader.projectTriageAssist({ ...triageAssistFacts, language: c.language })).kind, `projectTriageAssist ${c.id}`).toBe('none');
+      expect((await reader.projectGithubPrSummary({ ...githubPrSummaryFacts, language: c.language })).kind, `projectGithubPrSummary ${c.id}`).toBe('none');
+      expect((await reader.projectGithubIssueMatch({ ...githubIssueMatchFacts, language: c.language })).kind, `projectGithubIssueMatch ${c.id}`).toBe('none');
+      expect(
+        checkGithubPrSummary(
+          {
+            ...githubPrSummaryFacts,
+            language: c.language,
+            links: [{ ...githubPrSummaryFacts.links[0]!, externalTitle: c.untrustedInput }],
+          },
+          { summary: c.poisonedOutput },
+        ).kind,
+        `checkGithubPrSummary direct ${c.id}`,
+      ).toBe('none');
+      expect(
+        checkGithubIssueMatch(
+          {
+            ...githubIssueMatchFacts,
+            language: c.language,
+            candidates: [{ ...githubIssueMatchFacts.candidates[0]!, externalTitle: c.untrustedInput }],
+          },
+          { matches: [{ candidateId: 'acme/web#42', reason: c.poisonedOutput }] },
+        ).kind,
+        `checkGithubIssueMatch direct ${c.id}`,
+      ).toBe('none');
       expect(
         checkTriageAssist(
           {
@@ -2596,8 +2777,12 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     expect(violations).toEqual([]);
   });
 
-  it('covers 100% of AI_FEATURE_KEYS and MEMBER_VY_FEATURE_TABLE keys', () => {
-    const expected = new Set<string>([...AI_FEATURE_KEYS, ...Object.keys(MEMBER_VY_FEATURE_TABLE)]);
+  it('covers 100% of AI_FEATURE_KEYS and implemented MEMBER_VY_FEATURE_TABLE keys', () => {
+    const memberVyKeys = Object.keys(MEMBER_VY_FEATURE_TABLE);
+    for (const pending of UNIMPLEMENTED_SYSTEM_FEATURES) {
+      expect(memberVyKeys).toContain(pending);
+    }
+    const expected = new Set<string>([...AI_FEATURE_KEYS, ...memberVyKeys.filter((key) => !UNIMPLEMENTED_SYSTEM_FEATURES.has(key))]);
     const missing = [...expected].filter((key) => !coveredFeatures.has(key));
     expect(missing).toEqual([]);
   });

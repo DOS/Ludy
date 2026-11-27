@@ -4,6 +4,7 @@
 // #2604 private-project isolation, cross-module read verification via ctxQueryFn, and Vy AI assist source assembly.
 import { sql } from 'kysely';
 import { z } from 'zod';
+import { allocateProjectTaskNumber } from './github.ts';
 import {
   PROJECT_TRIAGE_DECLINE_REASON_MAX,
   PROJECT_TRIAGE_DESCRIPTION_MAX,
@@ -770,12 +771,15 @@ export const projectTriageAccept = defineCommand({
       }
     }
 
+    const taskNumber = await allocateProjectTaskNumber(ctx.trx, ctx.orgId, lockedProject.id, ctx.now);
+
     await ctx.trx
       .insertInto('ludy_projects.project_task')
       .values({
         org_id: ctx.orgId,
         project_id: lockedProject.id,
         task_id: created.taskId,
+        task_number: taskNumber,
         column_id: chosenColumnId,
         cycle_id: input.cycleId ?? null,
         added_by: userId,

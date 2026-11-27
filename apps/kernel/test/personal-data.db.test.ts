@@ -685,6 +685,81 @@ suite('finding a person in the org (#923)', () => {
     expect(again.kept).toContainEqual({ column: 'ludy_kernel.file', rows: 2, reason: expect.stringContaining('kept for the legal period') });
   });
 
+  it('includes attached original e-invoice XMLs in the kept evidence count and hold date (#2334)', async () => {
+    const pdfSha = randomUUID().replaceAll('-', '').padEnd(64, '2');
+    const xmlSha = randomUUID().replaceAll('-', '').padEnd(64, '3');
+    const unheldXmlSha = randomUUID().replaceAll('-', '').padEnd(64, '4');
+    const pdfFileId = randomUUID();
+    const xmlFileId = randomUUID();
+    const unheldXmlFileId = randomUUID();
+    const proposalId = randomUUID();
+    const untilPdf = '2036-11-20T00:00:00.000Z';
+    const untilXml = '2036-10-15T00:00:00.000Z';
+
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL session_replication_role = 'replica'");
+      const party = await c.query<{ id: string }>(
+        `INSERT INTO ludy_kernel.party (org_id, kind, name, tax_code, email) VALUES ($1, 'person', 'Trần Thị Gốc', '0398765432', 'goc.tran@example.vn') RETURNING id`,
+        [org.orgId],
+      );
+      const entity = await c.query<{ id: string }>(
+        `SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default LIMIT 1`,
+        [org.orgId],
+      );
+      await c.query(
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, held_until)
+         VALUES ($1, $2, $3, $4, 's3:v1', 'hd-79.pdf', 'application/pdf', 1, 'upload', $5),
+                ($1, $6, $7, $8, 's3:v2', 'hd-79.xml', 'application/xml', 1, 'upload', $9)`,
+        [org.orgId, pdfFileId, pdfSha, `org/${org.orgId}/${pdfSha}`, untilPdf, xmlFileId, xmlSha, `org/${org.orgId}/${xmlSha}`, untilXml],
+      );
+      await c.query(
+        `INSERT INTO ludy_kernel.proposal (org_id, id, kind, command, status, title, payload, source_file_id, legal_entity_id)
+         VALUES ($1, $2, 'finance.purchase_document.record', 'finance.purchase_document.record', 'executed', 'HĐ 79', '{}'::jsonb, $3, $4)`,
+        [org.orgId, proposalId, pdfFileId, entity.rows[0]?.id],
+      );
+      const doc = await c.query<{ id: string }>(
+        `INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, source_file_id, proposal_id)
+         VALUES ($1, $2, 'C26TAB', '79', '2026-09-04', 100, 10, 110, $3, $4) RETURNING id`,
+        [org.orgId, party.rows[0]?.id, pdfFileId, proposalId],
+      );
+      await c.query(
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-04', 'HĐ 79', 'finance.purchase_document', $2)`,
+        [org.orgId, doc.rows[0]?.id],
+      );
+      await c.query(
+        `INSERT INTO ludy_kernel.extraction (org_id, file_id, method, status, version, original_of_proposal_id, original_differs, completed_at)
+         VALUES ($1, $2, 'einvoice_xml', 'done', 1, $3, false, now())`,
+        [org.orgId, xmlFileId, proposalId],
+      );
+      await c.query('COMMIT');
+    });
+
+    // Both the posted PDF and the attached original XML are counted, with the earliest hold date across them.
+    const first = await erase('goc.tran@example.vn');
+    expect(first.kept).toContainEqual({ column: 'ludy_kernel.file', rows: 2, reason: expect.stringContaining('held in storage until 2036-10-15') });
+
+    // Adding a second attached original XML without a recorded hold drops the date claim across the group.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL session_replication_role = 'replica'");
+      await c.query(
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+         VALUES ($1, $2, $3, $4, 's3:v3', 'hd-79-copy.xml', 'application/xml', 1, 'upload')`,
+        [org.orgId, unheldXmlFileId, unheldXmlSha, `org/${org.orgId}/${unheldXmlSha}`],
+      );
+      await c.query(
+        `INSERT INTO ludy_kernel.extraction (org_id, file_id, method, status, version, original_of_proposal_id, original_differs, completed_at)
+         VALUES ($1, $2, 'einvoice_xml', 'done', 1, $3, false, now())`,
+        [org.orgId, unheldXmlFileId, proposalId],
+      );
+      await c.query('COMMIT');
+    });
+
+    const second = await erase('0398765432');
+    expect(second.kept).toContainEqual({ column: 'ludy_kernel.file', rows: 3, reason: expect.stringContaining('kept for the legal period') });
+  });
+
   it('forgets a party the books do not name, drops the mail recipient but keeps its hash, and audits counts only', async () => {
     const result = await erase('mau.nguyen@example.vn');
     expect(Object.fromEntries(result.erased.map((e) => [e.column, e.rows]))).toEqual({
@@ -1252,5 +1327,97 @@ suite('finding a person in the org (#923)', () => {
       await c.query('ROLLBACK').catch(() => {});
       await c.end();
     }
+  });
+
+  // Individual buyer's CCCD on a sales e-invoice draft (#3682): findPersonalData matches it by 12 digits (even when
+  // either probe or stored value has whitespace/punctuation), and personalDataErase keeps the keep_legal column intact
+  // while reporting ludy_finance.einvoice_draft.buyer_identity in kept[].
+  it('finds an individual buyer CCCD on an e-invoice draft and reports it in kept on erase (#3682)', async () => {
+    const cccdPlain = '079092000111';
+    const cccdFormatted = '0790 9200 0222';
+    const passportWithDigits = 'B45678901';
+    const orgEntity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId]))).rows[0]?.id);
+    const otherEntity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [other.orgId]))).rows[0]?.id);
+    const issuedId = randomUUID();
+    const formattedId = randomUUID();
+    const passportId = randomUUID();
+    const otherDraftId = randomUUID();
+
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL session_replication_role = 'replica'");
+      await c.query(
+        `INSERT INTO ludy_finance.einvoice_draft (org_id, id, legal_entity_id, state, provider_ref, issued_number, issued_at, submitted_at, invoice_date, buyer_kind, buyer_name, buyer_identity_kind, buyer_identity, subtotal, vat_amount, total)
+         VALUES ($1, $2, $3, 'issued', 'sbx-cccd-1', '0000001', pg_catalog.now(), pg_catalog.now(), '2026-11-10', 'individual', 'Nguyễn Văn Căn Cước', 'cccd', $4, 100000, 10000, 110000)`,
+        [org.orgId, issuedId, orgEntity, cccdPlain],
+      );
+      await c.query('COMMIT');
+      await c.query(
+        `INSERT INTO ludy_finance.einvoice_draft (org_id, id, legal_entity_id, invoice_date, buyer_kind, buyer_name, buyer_identity_kind, buyer_identity, buyer_nationality, subtotal, vat_amount, total)
+         VALUES ($1, $2, $3, '2026-11-11', 'individual', 'Trần Thị Khoảng Trắng', 'cccd', $4, NULL, 200000, 20000, 220000),
+                ($1, $5, $3, '2026-11-12', 'individual', 'John Passport', 'passport', $6, 'US', 300000, 30000, 330000),
+                ($7, $8, $9, '2026-11-10', 'individual', 'Khách Org Khác', 'cccd', $10, NULL, 100000, 10000, 110000)`,
+        [org.orgId, formattedId, orgEntity, cccdFormatted, passportId, passportWithDigits, other.orgId, otherDraftId, otherEntity, cccdPlain],
+      );
+    });
+
+    // Plain and formatted probes both match the stored CCCD (and only in this org); admins can find too.
+    for (const probeText of ['079092000111', '0790 9200 0111', '0790-9200-0111']) {
+      const found = await find(probeText);
+      expect(found.kind, probeText).toBe('digits');
+      expect(found.matches, probeText).toEqual([
+        expect.objectContaining({
+          column: 'ludy_finance.einvoice_draft.buyer_identity',
+          handling: 'keep_legal',
+          rowId: issuedId,
+          row: expect.objectContaining({ org_id: org.orgId, buyer_identity: cccdPlain }),
+        }),
+      ]);
+    }
+    expect((await find(cccdPlain, org.admin)).matches.map((m) => m.rowId)).toEqual([issuedId]);
+    expect((await find('079092000222')).matches).toEqual([
+      expect.objectContaining({ column: 'ludy_finance.einvoice_draft.buyer_identity', handling: 'keep_legal', rowId: formattedId }),
+    ]);
+    // Alphanumeric passport value containing 8 digits must not match an 8-digit probe.
+    expect((await find('45678901')).matches.filter((m) => m.rowId === passportId)).toEqual([]);
+
+    // CCCD-only erase keeps the column intact in the database and reports it in kept[].
+    const erased = await erase('0790 9200 0111');
+    expect(erased.erased).toEqual([]);
+    expect(erased.kept).toEqual([
+      {
+        column: 'ludy_finance.einvoice_draft.buyer_identity',
+        rows: 1,
+        reason: PERSONAL_DATA_COLUMNS['ludy_finance.einvoice_draft.buyer_identity'].reason,
+      },
+    ]);
+    const stored = (
+      await admin((c) => c.query<{ state: string; buyer_identity_kind: string | null; buyer_identity: string | null }>('SELECT state, buyer_identity_kind, buyer_identity FROM ludy_finance.einvoice_draft WHERE id = $1', [issuedId]))
+    ).rows[0];
+    expect(stored).toEqual({ state: 'issued', buyer_identity_kind: 'cccd', buyer_identity: cccdPlain });
+
+    const erasedFormatted = await erase('079092000222');
+    expect(erasedFormatted.erased).toEqual([]);
+    expect(erasedFormatted.kept).toEqual([
+      {
+        column: 'ludy_finance.einvoice_draft.buyer_identity',
+        rows: 1,
+        reason: PERSONAL_DATA_COLUMNS['ludy_finance.einvoice_draft.buyer_identity'].reason,
+      },
+    ]);
+    const storedFormatted = (
+      await admin((c) => c.query<{ state: string; buyer_identity_kind: string | null; buyer_identity: string | null }>('SELECT state, buyer_identity_kind, buyer_identity FROM ludy_finance.einvoice_draft WHERE id = $1', [formattedId]))
+    ).rows[0];
+    expect(storedFormatted).toEqual({ state: 'draft', buyer_identity_kind: 'cccd', buyer_identity: cccdFormatted });
+
+    const eraseAudit = (
+      await admin((c) =>
+        c.query<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [
+          org.orgId,
+        ]),
+      )
+    ).rows[0];
+    expect(eraseAudit?.detail).toMatchObject({ kind: 'digits', kept: { 'ludy_finance.einvoice_draft.buyer_identity': 1 } });
+    for (const secret of [cccdPlain, '079092000222', cccdFormatted]) expect(JSON.stringify(eraseAudit)).not.toContain(secret);
   });
 });

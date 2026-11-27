@@ -12,11 +12,14 @@ export const financeManifest = defineModule({
       account: columns(['code', 'name', 'parent_code', 'standard']),
       bank_account_number: columns(['org_id', 'id', 'legal_entity_id', 'created_by', 'created_at'], { bank_account: 'payment', account_number: 'payment' }),
       bank_feed_account: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'cursor', 'last_synced_at', 'created_by', 'created_at', 'feed_from', 'last_pull_outcome', 'last_pull_outcome_at', 'last_pull_item'], { bank_account: 'payment', external_account_id: 'payment' }),
-      // The webhook hook key of a bank feed connection (#4203, Tingee S3): only the SHA-256 of the key in the address, the dates and the count of refused notices; definer-only.
-      bank_feed_hook: columns(['org_id', 'id', 'channel_connection_id', 'key_sha256', 'created_at', 'rotated_at', 'last_seen_at', 'rejected_count', 'rejected_window_start', 'stopped_at']),
+      // The webhook hook key of a bank feed connection (#4203, Tingee S3): only the SHA-256 of the key in the address, the dates, generation/reject token (#4225), and the count of refused notices; definer-only.
+      bank_feed_hook: columns(['org_id', 'id', 'channel_connection_id', 'key_sha256', 'generation', 'reject_token', 'created_at', 'rotated_at', 'last_seen_at', 'rejected_count', 'rejected_window_start', 'stopped_at']),
       bank_feed_listed_account: columns(['org_id', 'id', 'channel_connection_id', 'listed_at'], { external_account_id: 'payment', display_name: 'pii' }),
       bank_feed_notice_pending: columns(['seq', 'provider', 'received_at'], { external_account_id: 'payment' }),
-      // A signed notice waiting for the worker (#4203): the request id, the provider's timestamp and signature, and the raw body (a payer's name and the transfer content: personal data), deleted when the worker claims it and, once older than ten minutes, by the next claim or the nightly sweep; definer-only.
+      // Fixed 17-row backlog counter for bank_feed_webhook_notice (#4225): slot 0 tracks cumulative inserts,
+      // slots 1..16 track sharded deletes via SKIP LOCKED under statement triggers; definer-only.
+      bank_feed_webhook_backlog: columns(['slot', 'delta']),
+      // A signed notice waiting for the worker (#4203): the request id, the provider's timestamp and signature, and the raw body (a payer's name and the transfer content: personal data), deleted on claim, and any notice older than ten minutes goes at the next claim or the nightly sweep (it can stay longer while the worker is down, or if Finance or the connector is switched off after it was stored, until the sweep runs again, an erasure or the org purge); definer-only.
       bank_feed_webhook_notice: columns(['org_id', 'id', 'hook_id', 'request_id', 'notice_timestamp', 'signature', 'received_at'], { body: 'pii' }),
       // MISA AMIS's callback results waiting for the worker (#3903): ids, codes and flags, and MISA's own capped text for a refusal (untrusted, never logged), deleted once the relay is done.
       bank_line: columns(['org_id', 'id', 'import_id', 'position', 'value_date', 'amount', 'running_balance', 'bank_ref', 'dedupe_key', 'ambiguous', 'created_by', 'created_at', 'legal_entity_id'], { bank_account: 'payment', counterparty_account: 'payment', description: 'pii' }),
@@ -37,6 +40,7 @@ export const financeManifest = defineModule({
       einvoice_draft_line: columns(['org_id', 'id', 'legal_entity_id', 'draft_id', 'line_no', 'description', 'unit', 'quantity', 'unit_price', 'amount', 'vat_rate', 'vat_amount', 'source_kind', 'source_id', 'source_line_no']),
       einvoice_notice: columns(['org_id', 'id', 'legal_entity_id', 'draft_id', 'field', 'buyer_notice_state', 'buyer_notified_at', 'form_state', 'form_filed_at', 'created_by', 'created_at'], { correct_text: 'pii' }),
       einvoice_series: columns(['org_id', 'id', 'legal_entity_id', 'provider', 'template_no', 'symbol', 'description', 'is_default', 'created_by', 'created_at']),
+      entry_review_mark: columns(['org_id', 'id', 'legal_entity_id', 'entry_id', 'rule', 'marked_by', 'created_at']),
       fixed_asset: columns(['org_id', 'id', 'kind', 'name', 'cost', 'asset_account', 'accumulated_account', 'expense_account', 'start_month', 'months', 'source_document_id', 'source_line_no', 'ended_month', 'end_reason', 'ended_by', 'created_by', 'created_at', 'legal_entity_id']),
       household_expense_group_map: columns(['expense_group', 'account_prefix', 'effective_from', 'source', 'status']),
       household_form_version: columns(['book', 'version', 'effective_from', 'name', 'pit_methods', 'source', 'status']),

@@ -1,13 +1,13 @@
 name: desktop-package
 
-# Ludy Desktop signed Windows packaging workflow (#4884, ADR-0055, docs/desktop/signing-runbook.md):
+# Ludy Desktop signed packaging workflow (#4884 Windows, #4885 macOS, ADR-0055, docs/desktop/signing-runbook.md, docs/desktop/mac-signing-runbook.md):
 # - Dispatched strictly from `refs/heads/main` (`workflow_dispatch`):
-#   - `mode=dry-run` (default) builds the unsigned installer without secrets for verification.
-#   - `mode=signed` validates an existing `desktop-vX.Y.Z` tag on `main` + green CI gates, runs `build-signed` inside
-#     the protected `desktop-release` GitHub environment (main-only deployment branch + owner approval required), signs
-#     the app, native helper, Update.exe and Setup.exe using operator-supplied secrets (failing closed if secrets are
-#     missing or invalid), verifies Authenticode + SHA-256 + RFC 3161 timestamps, generates release-manifest.json and
-#     SHA256SUMS.txt, and creates a draft GitHub Release (`--draft --latest=false`) after re-verifying the live tag SHA.
+#   - `mode=dry-run` (default) builds unsigned installers without secrets for verification.
+#   - `mode=signed` validates an existing `desktop-vX.Y.Z` tag on `main` + green CI gates, runs `build-signed` (Windows) and
+#     `build-mac-signed` (macOS) inside the protected `desktop-release` GitHub environment (main-only deployment branch + owner
+#     approval required), signs and notarizes/verifies outputs using operator-supplied secrets (failing closed if secrets are
+#     missing or invalid), generates release-manifest.json and SHA256SUMS.txt, and creates a draft GitHub Release
+#     (`--draft --latest=false`) after re-verifying the live tag SHA.
 # - No certificate, password, token, or private key is ever stored in this workflow or repository.
 
 on:
@@ -18,6 +18,11 @@ on:
         type: choice
         options: [dry-run, signed]
         default: dry-run
+      platform:
+        description: Target platforms to package (windows, macos, or all)
+        type: choice
+        options: [windows, macos, all]
+        default: windows
       version:
         description: Version X.Y.Z for dry-run builds
         type: string
@@ -50,19 +55,22 @@ jobs:
       version: ${{ steps.target.outputs.version }}
       tag: ${{ steps.target.outputs.tag }}
       sha: ${{ steps.target.outputs.sha }}
+      build_windows: ${{ steps.target.outputs.build_windows }}
+      build_macos: ${{ steps.target.outputs.build_macos }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Validate release tag, version, and main ancestry
+      - name: Validate release tag, version, platform, and main ancestry
         id: target
         env:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
           SHA: ${{ github.sha }}
           INPUT_MODE: ${{ inputs.mode }}
+          INPUT_PLATFORM: ${{ inputs.platform }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_TAG: ${{ inputs.tag }}
         run: |
@@ -71,6 +79,25 @@ jobs:
             echo "::error::desktop-package runs only via workflow_dispatch from refs/heads/main (got $EVENT on $REF)"
             exit 1
           fi
+
+          build_windows='false'
+          build_macos='false'
+          case "${INPUT_PLATFORM:-windows}" in
+            all)
+              build_windows='true'
+              build_macos='true'
+              ;;
+            windows)
+              build_windows='true'
+              ;;
+            macos)
+              build_macos='true'
+              ;;
+            *)
+              echo "::error::unsupported platform selection '$INPUT_PLATFORM'"
+              exit 1
+              ;;
+          esac
 
           mode='dry-run'
           version=''
@@ -112,7 +139,9 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "sha=$target_sha" >> "$GITHUB_OUTPUT"
-          echo "### Ludy Desktop release ($mode): $version (${tag:-no tag}, $target_sha)" >> "$GITHUB_STEP_SUMMARY"
+          echo "build_windows=$build_windows" >> "$GITHUB_OUTPUT"
+          echo "build_macos=$build_macos" >> "$GITHUB_OUTPUT"
+          echo "### Ludy Desktop release ($mode, platform=${INPUT_PLATFORM:-windows}): $version (${tag:-no tag}, $target_sha)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Required CI checks are green on the release commit
         if: steps.target.outputs.mode == 'signed'
@@ -120,6 +149,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ steps.target.outputs.sha }}
+          BUILD_WINDOWS: ${{ steps.target.outputs.build_windows }}
+          BUILD_MACOS: ${{ steps.target.outputs.build_macos }}
         run: |
           set -euo pipefail
           check_workflow_jobs() {
@@ -162,20 +193,26 @@ jobs:
             done
           }
 
+          desktop_jobs=()
+          if [ "$BUILD_WINDOWS" = 'true' ]; then
+            desktop_jobs+=('Windows build (unsigned), tests, size and memory' 'Windows install smoke (tray, sign-in, update A to B, uninstall)')
+          fi
+          if [ "$BUILD_MACOS" = 'true' ]; then
+            desktop_jobs+=('macOS build (unsigned, arm64 & x64), tests and size')
+          fi
+
           deadline=$((SECONDS + 1800))
           while :; do
             pending=()
             failed=()
             check_workflow_jobs "$SHA" '.github/workflows/ci.yml' 'Lint, typecheck, test'
-            check_workflow_jobs "$SHA" '.github/workflows/desktop-build.yml' \
-              'Windows build (unsigned), tests, size and memory' \
-              'Windows install smoke (tray, sign-in, update A to B, uninstall)'
+            check_workflow_jobs "$SHA" '.github/workflows/desktop-build.yml' "${desktop_jobs[@]}"
             if ((${#failed[@]} > 0)); then
               printf '::error::required check not green: %s\n' "${failed[*]}"
               exit 1
             fi
             if ((${#pending[@]} == 0)); then
-              echo "All required CI and Windows desktop checks succeeded on release commit $SHA"
+              echo "All required CI and desktop build checks succeeded on release commit $SHA"
               break
             fi
             if ((SECONDS >= deadline)); then
@@ -189,7 +226,7 @@ jobs:
   build-dry-run:
     name: Windows dry-run build (unsigned, no secrets)
     needs: prepare
-    if: github.ref == 'refs/heads/main' && needs.prepare.outputs.mode == 'dry-run'
+    if: github.ref == 'refs/heads/main' && needs.prepare.outputs.mode == 'dry-run' && needs.prepare.outputs.build_windows == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     permissions:
@@ -249,10 +286,75 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  build-mac-dry-run:
+    name: macOS dry-run build (unsigned, arm64 & x64, no secrets)
+    needs: prepare
+    if: github.ref == 'refs/heads/main' && needs.prepare.outputs.mode == 'dry-run' && needs.prepare.outputs.build_macos == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@ludy/desktop" --filter "ludy-monorepo"
+
+      - name: Typecheck
+        run: pnpm --filter "@ludy/desktop" typecheck
+
+      - name: Unit tests
+        run: pnpm exec vitest run --project unit apps/desktop
+
+      - name: Build unsigned macOS dry-run installers and manifests
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: node apps/desktop/scripts/package-mac.mjs --version "$VERSION" --arch all
+
+      - name: Verify macOS dry-run artifacts and manifests
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          for arch in arm64 x64; do
+            arch_dir="apps/desktop/out/mac/darwin-$arch"
+            dmg="LudyDesktop-${VERSION}-darwin-${arch}.dmg"
+            zip="LudyDesktop-${VERSION}-darwin-${arch}.zip"
+            [ -s "$arch_dir/$dmg" ] || { echo "::error::missing $dmg"; exit 1; }
+            [ -s "$arch_dir/$zip" ] || { echo "::error::missing $zip"; exit 1; }
+            [ -s "$arch_dir/release-manifest.json" ] || { echo "::error::missing release-manifest.json"; exit 1; }
+            [ -s "$arch_dir/SHA256SUMS.txt" ] || { echo "::error::missing SHA256SUMS.txt"; exit 1; }
+            (cd "$arch_dir" && shasum -a 256 -c SHA256SUMS.txt)
+            node -e '
+              const fs = require("node:fs");
+              const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              if (m.version !== process.argv[2] || m.platform !== "darwin" || m.arch !== process.argv[3] || m.signed !== false) {
+                throw new Error("Unexpected dry-run macOS manifest: " + JSON.stringify(m));
+              }
+            ' "$arch_dir/release-manifest.json" "$VERSION" "$arch"
+          done
+
+      - name: Upload macOS dry-run artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ludy-desktop-dry-run-darwin
+          path: apps/desktop/out/mac/
+          retention-days: 7
+          if-no-files-found: error
+
   build-signed:
     name: Build and sign Windows installer
     needs: prepare
-    if: github.ref == 'refs/heads/main' && needs.prepare.outputs.mode == 'signed'
+    if: github.ref == 'refs/heads/main' && needs.prepare.outputs.mode == 'signed' && needs.prepare.outputs.build_windows == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     environment: desktop-release
@@ -483,10 +585,230 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+  build-mac-signed:
+    name: Build, sign, and notarize macOS installers
+    needs: prepare
+    if: github.ref == 'refs/heads/main' && needs.prepare.outputs.mode == 'signed' && needs.prepare.outputs.build_macos == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    environment: desktop-release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@ludy/desktop" --filter "ludy-monorepo"
+
+      # Fail closed early if Apple signing or notarization secrets are missing, partial, malformed, or ambiguous.
+      - name: Validate macOS signing and notarization secret presence
+        env:
+          APPLE_DEVELOPER_ID_CERT_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          raw_p12="${APPLE_DEVELOPER_ID_CERT_P12_BASE64:-}"
+          raw_pwd="${APPLE_DEVELOPER_ID_CERT_PASSWORD:-}"
+          if [ -z "${raw_p12//[[:space:]]/}" ] || [ -z "$raw_pwd" ]; then
+            echo "::error::Both APPLE_DEVELOPER_ID_CERT_P12_BASE64 and APPLE_DEVELOPER_ID_CERT_PASSWORD must be set in desktop-release."
+            exit 1
+          fi
+          team_id="$(printf '%s' "${APPLE_TEAM_ID:-}" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
+          if ! [[ "$team_id" =~ ^[A-Z0-9]{10}$ ]]; then
+            echo "::error::APPLE_TEAM_ID must be a 10-character alphanumeric Team ID in desktop-release."
+            exit 1
+          fi
+
+          raw_api_p8="${APPLE_NOTARY_API_KEY_P8_BASE64:-}"
+          raw_api_id="${APPLE_NOTARY_API_KEY_ID:-}"
+          raw_api_issuer="${APPLE_NOTARY_API_ISSUER_ID:-}"
+          raw_apple_id="${APPLE_ID:-}"
+          raw_apple_pw="${APPLE_APP_SPECIFIC_PASSWORD:-}"
+
+          has_api_p8=0
+          has_api_id=0
+          has_api_issuer=0
+          [ -n "${raw_api_p8//[[:space:]]/}" ] && has_api_p8=1
+          [ -n "${raw_api_id//[[:space:]]/}" ] && has_api_id=1
+          [ -n "${raw_api_issuer//[[:space:]]/}" ] && has_api_issuer=1
+
+          has_apple_id=0
+          has_apple_pw=0
+          [ -n "${raw_apple_id//[[:space:]]/}" ] && has_apple_id=1
+          [ -n "$raw_apple_pw" ] && has_apple_pw=1
+
+          any_api=$((has_api_p8 + has_api_id + has_api_issuer))
+          any_apple=$((has_apple_id + has_apple_pw))
+          if [ "$any_api" -eq 0 ] && [ "$any_apple" -eq 0 ]; then
+            echo "::error::Missing Apple notarization secrets in desktop-release. See docs/desktop/mac-signing-runbook.md."
+            exit 1
+          fi
+          if [ "$any_api" -gt 0 ] && [ "$any_apple" -gt 0 ]; then
+            echo "::error::Ambiguous Apple notarization secrets: configure either App Store Connect API key or Apple ID credentials, not both."
+            exit 1
+          fi
+          if [ "$any_api" -gt 0 ] && [ "$any_api" -lt 3 ]; then
+            echo "::error::APPLE_NOTARY_API_KEY_P8_BASE64, APPLE_NOTARY_API_KEY_ID, and APPLE_NOTARY_API_ISSUER_ID must all be set together."
+            exit 1
+          fi
+          if [ "$any_apple" -gt 0 ] && [ "$any_apple" -lt 2 ]; then
+            echo "::error::APPLE_ID and APPLE_APP_SPECIFIC_PASSWORD must both be set together."
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: pnpm --filter "@ludy/desktop" typecheck
+
+      - name: Unit tests
+        run: pnpm exec vitest run --project unit apps/desktop
+
+      - name: Stage ephemeral macOS signing certificate and API key
+        env:
+          APPLE_DEVELOPER_ID_CERT_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_P12_BASE64 }}
+          APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          p12_file="$RUNNER_TEMP/ludy-apple-devid.p12"
+          SECRET_B64="${APPLE_DEVELOPER_ID_CERT_P12_BASE64:-}" node -e 'const fs = require("node:fs"); const buf = Buffer.from((process.env.SECRET_B64 || "").replace(/\s+/g, ""), "base64"); if (buf.length === 0) throw new Error("Empty .p12 certificate payload"); fs.writeFileSync(process.argv[1], buf, { mode: 0o600 });' "$p12_file"
+          chmod 600 "$p12_file"
+          echo "APPLE_CERT_P12_FILE=$p12_file" >> "$GITHUB_ENV"
+
+          kc_dir="$(mktemp -d "$RUNNER_TEMP/ludy-mac-kc-XXXXXX")"
+          chmod 700 "$kc_dir"
+          kc_dir="$(cd "$kc_dir" && pwd -P)"
+          keychain_file="$kc_dir/ephemeral.keychain-db"
+          owner_marker="$RUNNER_TEMP/ludy-kc-owner.txt"
+          rm -f "$owner_marker"
+          echo "LUDY_MAC_EPHEMERAL_KEYCHAIN=$keychain_file" >> "$GITHUB_ENV"
+          echo "LUDY_MAC_KEYCHAIN_OWNER_MARKER=$owner_marker" >> "$GITHUB_ENV"
+
+          raw_api_p8="${APPLE_NOTARY_API_KEY_P8_BASE64:-}"
+          if [ -n "${raw_api_p8//[[:space:]]/}" ]; then
+            p8_file="$RUNNER_TEMP/ludy-notary-key.p8"
+            SECRET_B64="$raw_api_p8" node -e 'const fs = require("node:fs"); const buf = Buffer.from((process.env.SECRET_B64 || "").replace(/\s+/g, ""), "base64"); if (buf.length === 0) throw new Error("Empty .p8 key payload"); fs.writeFileSync(process.argv[1], buf, { mode: 0o600 });' "$p8_file"
+            chmod 600 "$p8_file"
+            echo "APPLE_API_KEY_FILE=$p8_file" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build, sign, notarize, and staple macOS installers (arm64 and x64)
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_CERT_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: node apps/desktop/scripts/package-mac.mjs --version "$VERSION" --arch all --sign
+
+      - name: Verify signed macOS manifests, checksums, and Gatekeeper
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          team_id="$(printf '%s' "$APPLE_TEAM_ID" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
+          {
+            echo "### Ludy Desktop signed and notarized release (macOS)"
+            echo ""
+            echo "| arch | installer | sha256 | teamId |"
+            echo "|---|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for arch in arm64 x64; do
+            arch_dir="apps/desktop/out/mac/darwin-$arch"
+            dmg="LudyDesktop-${VERSION}-darwin-${arch}.dmg"
+            zip="LudyDesktop-${VERSION}-darwin-${arch}.zip"
+            [ -s "$arch_dir/$dmg" ] || { echo "::error::missing $dmg"; exit 1; }
+            [ -s "$arch_dir/$zip" ] || { echo "::error::missing $zip"; exit 1; }
+            [ -s "$arch_dir/release-manifest.json" ] || { echo "::error::missing release-manifest.json"; exit 1; }
+            [ -s "$arch_dir/SHA256SUMS.txt" ] || { echo "::error::missing SHA256SUMS.txt"; exit 1; }
+
+            (cd "$arch_dir" && shasum -a 256 -c SHA256SUMS.txt)
+            xcrun stapler validate "$arch_dir/$dmg"
+            spctl -a -t open --context context:primary-signature -vv "$arch_dir/$dmg"
+            dmg_sha="$(node -e '
+              const fs = require("node:fs");
+              const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              if (m.version !== process.argv[2] || m.platform !== "darwin" || m.arch !== process.argv[3] || m.signed !== true) {
+                throw new Error("Invalid signed macOS manifest: " + JSON.stringify(m));
+              }
+              if (!m.signing.hardenedRuntime || !m.signing.notarized || m.signing.teamId !== process.argv[4] || m.signing.bundleId !== "vn.ludy.desktop") {
+                throw new Error("Invalid macOS signing fields in manifest: " + JSON.stringify(m.signing));
+              }
+              console.log(m.installer.sha256);
+            ' "$arch_dir/release-manifest.json" "$VERSION" "$arch" "$team_id")"
+            echo "| $arch | \`$dmg\` | \`$dmg_sha\` | \`$team_id\` |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Clean up ephemeral macOS signing credentials and Keychain
+        if: always()
+        run: |
+          set -euo pipefail
+          cleanup_failed=0
+          owned_kc=''
+          if [ -n "${LUDY_MAC_KEYCHAIN_OWNER_MARKER:-}" ] && [ -s "$LUDY_MAC_KEYCHAIN_OWNER_MARKER" ]; then
+            owned_kc="$(cat "$LUDY_MAC_KEYCHAIN_OWNER_MARKER")"
+          fi
+          if [ -n "${LUDY_MAC_EPHEMERAL_KEYCHAIN:-}" ] && [ "$owned_kc" = "$LUDY_MAC_EPHEMERAL_KEYCHAIN" ]; then
+            if [ -e "$LUDY_MAC_EPHEMERAL_KEYCHAIN" ]; then
+              security delete-keychain "$LUDY_MAC_EPHEMERAL_KEYCHAIN" || cleanup_failed=1
+              rm -f "$LUDY_MAC_EPHEMERAL_KEYCHAIN" || cleanup_failed=1
+            fi
+            if security list-keychains -d user | grep -F -q "$LUDY_MAC_EPHEMERAL_KEYCHAIN"; then
+              echo "::error::Ephemeral Keychain remained in search list: $LUDY_MAC_EPHEMERAL_KEYCHAIN"
+              cleanup_failed=1
+            fi
+            if [ -e "$LUDY_MAC_EPHEMERAL_KEYCHAIN" ]; then
+              echo "::error::Ephemeral Keychain file remained on disk: $LUDY_MAC_EPHEMERAL_KEYCHAIN"
+              cleanup_failed=1
+            fi
+            rmdir "$(dirname "$LUDY_MAC_EPHEMERAL_KEYCHAIN")" 2>/dev/null || true
+          fi
+          rm -f "$RUNNER_TEMP/ludy-kc-owner.txt" || true
+          for temp_secret in "$RUNNER_TEMP/ludy-apple-devid.p12" "$RUNNER_TEMP/ludy-notary-key.p8"; do
+            if [ -e "$temp_secret" ]; then
+              rm -f "$temp_secret" || cleanup_failed=1
+            fi
+            if [ -e "$temp_secret" ]; then
+              echo "::error::Temporary Apple credential file remained on disk: $temp_secret"
+              cleanup_failed=1
+            fi
+          done
+          if [ "$cleanup_failed" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Upload signed macOS release artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ludy-desktop-signed-darwin
+          path: apps/desktop/out/mac/
+          retention-days: 30
+          if-no-files-found: error
+
   release:
     name: Create draft GitHub release for signed desktop artifacts
-    needs: [prepare, build-signed]
-    if: github.ref == 'refs/heads/main' && needs.prepare.outputs.mode == 'signed' && needs.prepare.outputs.tag != ''
+    needs: [prepare, build-signed, build-mac-signed]
+    if: ${{ always() && github.ref == 'refs/heads/main' && needs.prepare.result == 'success' && needs.prepare.outputs.mode == 'signed' && needs.prepare.outputs.tag != '' && !cancelled() && (needs.build-signed.result == 'success' || needs.build-signed.result == 'skipped') && (needs.build-mac-signed.result == 'success' || needs.build-mac-signed.result == 'skipped') && (needs.build-signed.result == 'success' || needs.build-mac-signed.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -494,12 +816,21 @@ jobs:
       actions: read
     steps:
       # Holds contents:write with zero repo checkout; verifies SHA256SUMS.txt and re-verifies tag SHA before staging a draft release.
-      - name: Download signed release artifacts
+      - name: Download signed Windows release artifacts
+        if: needs.prepare.outputs.build_windows == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
-        run: gh run download "$RUN_ID" --repo "$REPO" --name ludy-desktop-signed-win32-x64 --dir "$RUNNER_TEMP/desktop-release"
+        run: gh run download "$RUN_ID" --repo "$REPO" --name ludy-desktop-signed-win32-x64 --dir "$RUNNER_TEMP/desktop-release-win"
+
+      - name: Download signed macOS release artifacts
+        if: needs.prepare.outputs.build_macos == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: gh run download "$RUN_ID" --repo "$REPO" --name ludy-desktop-signed-darwin --dir "$RUNNER_TEMP/desktop-release-mac"
 
       - name: Verify checksums and create draft GitHub release
         env:
@@ -508,10 +839,42 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
           EXPECTED_SHA: ${{ needs.prepare.outputs.sha }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          BUILD_WINDOWS: ${{ needs.prepare.outputs.build_windows }}
+          BUILD_MACOS: ${{ needs.prepare.outputs.build_macos }}
         run: |
           set -euo pipefail
-          cd "$RUNNER_TEMP/desktop-release"
-          sha256sum --check SHA256SUMS.txt
+          stage_dir="$RUNNER_TEMP/desktop-release"
+          mkdir -p "$stage_dir"
+          files=()
+
+          if [ "$BUILD_WINDOWS" = 'true' ]; then
+            (cd "$RUNNER_TEMP/desktop-release-win" && sha256sum --check SHA256SUMS.txt)
+            cp "$RUNNER_TEMP/desktop-release-win/"* "$stage_dir/"
+            for f in LudyDesktop-Setup.exe RELEASES release-manifest.json release-manifest.ps1 SHA256SUMS.txt; do
+              files+=("$f")
+            done
+            for nupkg in "$stage_dir/"*.nupkg; do
+              files+=("$(basename "$nupkg")")
+            done
+          fi
+
+          if [ "$BUILD_MACOS" = 'true' ]; then
+            for arch in arm64 x64; do
+              mac_dir="$RUNNER_TEMP/desktop-release-mac/darwin-$arch"
+              (cd "$mac_dir" && sha256sum --check SHA256SUMS.txt)
+              dmg="LudyDesktop-${VERSION}-darwin-${arch}.dmg"
+              zip="LudyDesktop-${VERSION}-darwin-${arch}.zip"
+              manifest="release-manifest-darwin-${arch}.json"
+              sums="SHA256SUMS-darwin-${arch}.txt"
+              cp "$mac_dir/$dmg" "$stage_dir/$dmg"
+              cp "$mac_dir/$zip" "$stage_dir/$zip"
+              cp "$mac_dir/release-manifest.json" "$stage_dir/$manifest"
+              (cd "$stage_dir" && sha256sum "$dmg" "$zip" "$manifest" > "$sums")
+              files+=("$dmg" "$zip" "$manifest" "$sums")
+            done
+          fi
+
+          cd "$stage_dir"
           tag_ref_json="$(gh api "repos/$REPO/git/ref/tags/$TAG")"
           obj_type="$(jq -r '.object.type' <<<"$tag_ref_json")"
           obj_sha="$(jq -r '.object.sha' <<<"$tag_ref_json")"
@@ -529,13 +892,23 @@ jobs:
             exit 1
           fi
           {
-            echo "Ludy Desktop $VERSION for Windows (x64, signed Squirrel.Windows installer and update feed)."
+            echo "Ludy Desktop $VERSION signed desktop release."
             echo
-            echo "Draft release created after Authenticode, SHA-256, and timestamp verification. Complete the clean Windows SmartScreen and A-to-B update check (docs/desktop/windows-smoke.md), upload the feed files (RELEASES, release-manifest.json, release-manifest.ps1, *.nupkg) to your HTTPS feed host, then publish this release (docs/desktop/signing-runbook.md)."
+            echo "Draft release created after code-signing, timestamp, and notarization checks. Complete the clean machine install and A-to-B update verification (docs/desktop/windows-smoke.md, docs/desktop/mac-signing-runbook.md), upload the platform feed files to your HTTPS feed host, then publish this release."
             echo
-            echo '```'
-            cat SHA256SUMS.txt
-            echo '```'
+            if [ "$BUILD_WINDOWS" = 'true' ]; then
+              echo "Windows SHA-256 checksums:"
+              echo '```'
+              cat SHA256SUMS.txt
+              echo '```'
+            fi
+            if [ "$BUILD_MACOS" = 'true' ]; then
+              for arch in arm64 x64; do
+                echo "macOS ($arch) SHA-256 checksums:"
+                echo '```'
+                cat "SHA256SUMS-darwin-${arch}.txt"
+                echo '```'
+              done
+            fi
           } > notes.md
-          files=(LudyDesktop-Setup.exe RELEASES release-manifest.json release-manifest.ps1 SHA256SUMS.txt *.nupkg)
           gh release create "$TAG" --repo "$REPO" --draft --verify-tag --latest=false --title "Desktop $VERSION" --notes-file notes.md "${files[@]}"

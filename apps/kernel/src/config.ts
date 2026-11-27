@@ -831,6 +831,16 @@ const schema = z.object({
   // With them, the page shows the widget and the kernel checks its token with Cloudflare before recording a request.
   TURNSTILE_SITE_KEY: optional.pipe(z.string().regex(/^[0-9A-Za-z_-]{1,100}$/, 'TURNSTILE_SITE_KEY is a Turnstile site key').optional()),
   TURNSTILE_SECRET: optional,
+  // Projects GitHub Integration (#5158, ADR-0060): optional GitHub App credentials, OAuth client credentials, and webhook secrets.
+  // Callback / Setup URL in GitHub App settings: <APP_URL|PUBLIC_URL>/channels/oauth/github_app/callback.
+  // When unset, App OAuth/webhook routes stay inactive while PAT connections remain usable with a credential key.
+  GITHUB_APP_ID: optional.pipe(z.string().regex(/^[1-9][0-9]{0,19}$/, 'GITHUB_APP_ID is a numeric GitHub App ID').optional()),
+  GITHUB_APP_PRIVATE_KEY: optional.transform((v) => (v ? v.replace(/\\n/g, '\n') : undefined)).pipe(z.string().min(64).max(16_384).optional()),
+  GITHUB_APP_CLIENT_ID: optional.pipe(z.string().regex(/^[A-Za-z0-9._-]{4,128}$/, 'GITHUB_APP_CLIENT_ID is a GitHub App OAuth client ID').optional()),
+  GITHUB_APP_CLIENT_SECRET: optional.pipe(z.string().min(16, 'GITHUB_APP_CLIENT_SECRET must be at least 16 characters').max(500).optional()),
+  GITHUB_APP_SLUG: optional.pipe(z.string().regex(/^[a-z0-9-]{1,100}$/, 'GITHUB_APP_SLUG is a GitHub App URL slug').optional()),
+  GITHUB_APP_WEBHOOK_SECRET: optional.pipe(z.string().min(16).max(500).optional()),
+  GITHUB_APP_WEBHOOK_SECRET_PREVIOUS: optional.pipe(z.string().min(16).max(500).optional()),
   // Role passwords applied by `migrate` (self-host).
   LUDY_APP_DB_PASSWORD: optional,
   LUDY_WORKER_DB_PASSWORD: optional,
@@ -961,6 +971,34 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // A widget without the secret could not be checked, and a secret without the widget would refuse every booking.
   if (Boolean(config.TURNSTILE_SITE_KEY) !== Boolean(config.TURNSTILE_SECRET)) {
     throw new Error('set both TURNSTILE_SITE_KEY and TURNSTILE_SECRET, or neither');
+  }
+  const githubAppVars = [
+    config.GITHUB_APP_ID,
+    config.GITHUB_APP_PRIVATE_KEY,
+    config.GITHUB_APP_CLIENT_ID,
+    config.GITHUB_APP_CLIENT_SECRET,
+    config.GITHUB_APP_WEBHOOK_SECRET,
+  ];
+  const githubAppSetCount = githubAppVars.filter(Boolean).length;
+  if (githubAppSetCount > 0 && githubAppSetCount < githubAppVars.length) {
+    throw new Error('set GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_APP_CLIENT_ID, GITHUB_APP_CLIENT_SECRET, and GITHUB_APP_WEBHOOK_SECRET together, or none');
+  }
+  if (config.GITHUB_APP_WEBHOOK_SECRET && /change-?me/i.test(config.GITHUB_APP_WEBHOOK_SECRET)) {
+    throw new Error('GITHUB_APP_WEBHOOK_SECRET still has a sample value');
+  }
+  if (config.GITHUB_APP_CLIENT_SECRET && /change-?me/i.test(config.GITHUB_APP_CLIENT_SECRET)) {
+    throw new Error('GITHUB_APP_CLIENT_SECRET still has a sample value');
+  }
+  if (config.GITHUB_APP_WEBHOOK_SECRET_PREVIOUS) {
+    if (!config.GITHUB_APP_WEBHOOK_SECRET) {
+      throw new Error('GITHUB_APP_WEBHOOK_SECRET_PREVIOUS is set without GITHUB_APP_WEBHOOK_SECRET');
+    }
+    if (config.GITHUB_APP_WEBHOOK_SECRET_PREVIOUS === config.GITHUB_APP_WEBHOOK_SECRET) {
+      throw new Error('GITHUB_APP_WEBHOOK_SECRET_PREVIOUS must differ from GITHUB_APP_WEBHOOK_SECRET');
+    }
+    if (/change-?me/i.test(config.GITHUB_APP_WEBHOOK_SECRET_PREVIOUS)) {
+      throw new Error('GITHUB_APP_WEBHOOK_SECRET_PREVIOUS still has a sample value');
+    }
   }
   // A sign-up policy the deployment cannot enforce, or one set only halfway, stops the boot instead of leaving
   // sign-up more open than the operator meant (#350).
@@ -1285,11 +1323,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (config.AUTH_STEP_UP === 'off') {
       throw new Error('AUTH_STEP_UP=off lets a stolen session approve and change roles without MFA; set it to required');
     }
-    // A provider sends the authorization code to APP_URL (else PUBLIC_URL)/channels/oauth/<provider>/callback (#375), a
+    // A provider sends the authorization code to APP_URL (else PUBLIC_URL)/channels/oauth/<provider>/callback (#375, and /channels/oauth/github_app/callback for GitHub App setup/OAuth #5158), a
     // page of the web app.
-    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_INSTAGRAM_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_GOOGLE_ADS_CLIENT_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID, config.CALENDAR_MICROSOFT_CLIENT_ID];
+    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_INSTAGRAM_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_GOOGLE_ADS_CLIENT_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID, config.CALENDAR_MICROSOFT_CLIENT_ID, config.GITHUB_APP_CLIENT_ID];
     if (oauthApps.some(Boolean) && !appUrl(config).startsWith('https://')) {
-      throw new Error('channel OAuth sends authorization codes back to the web app (APP_URL, else PUBLIC_URL); on a public deployment it must be https when a CHANNEL_* or CALENDAR_* app is set');
+      throw new Error('channel OAuth sends authorization codes back to the web app (APP_URL, else PUBLIC_URL); on a public deployment it must be https when a CHANNEL_*, CALENDAR_*, or GITHUB_APP_CLIENT_ID app is set');
     }
     if (config.APP_URL !== undefined && !config.APP_URL.startsWith('https://')) {
       throw new Error('APP_URL is where people open the app and every link in mail points at it; a public APP_URL must be https');

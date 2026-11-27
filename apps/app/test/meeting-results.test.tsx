@@ -132,6 +132,8 @@ describe('MeetingResults', () => {
     expect(html).not.toContain(en.meetings.results.draftTitle);
     expect(html).not.toContain(en.meetings.results.draftExpiry);
     expect(html).not.toContain(en.meetings.results.delete);
+    expect(html).toContain('id="meeting-decision-1"');
+    expect(html).toContain('id="meeting-action-b"');
   });
 
   it('offers "make the clear tasks" only when an item is clear, flags contact details and says when an attendee holds several seats', () => {

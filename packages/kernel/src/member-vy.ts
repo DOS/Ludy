@@ -9,6 +9,7 @@
 //   kernel.member_vy.memory.save / .delete   what Vy keeps about the member: only what the member typed, never model output;
 //   kernel.member_vy.result.get / kernel.member_vy.memory.list   the member's own rows.
 // Audit rows, activity and events carry ids, an enum and numbers, never text (decision 4): no body, title or subject text reaches them.
+import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { tableWrite, zId } from '@ludy/kernel-contract';
@@ -51,6 +52,8 @@ export const MEMBER_VY_FEATURES = {
   // the member's own search found, the member waiting for it. Its own key, so it never cuts off a transcription, a summary, a translation or live notes (#3029). The run's result row holds counts only, never the answer.
   'meetings.ask': { module: 'meetings', expiryMinutes: 30 },
   'meetings.brief': { module: 'meetings', expiryMinutes: 30 },
+  // The member's Vy preparing checked daily prep lines for up to five meetings on the morning briefing (#5073): system-started only when opted in, counts-only result row, never supersedes an active run.
+  'meetings.brief_daily': { module: 'meetings', expiryMinutes: 30, systemStartable: true },
   'meetings.digest': { module: 'meetings', expiryMinutes: 30 },
   'meetings.assignee': { module: 'meetings', expiryMinutes: 30 },
   'meetings.adherence': { module: 'meetings', expiryMinutes: 30 },
@@ -65,6 +68,10 @@ export const MEMBER_VY_FEATURES = {
   'meetings.deal_update': { module: 'meetings', expiryMinutes: 30 },
   // The recorder's Vy listing what a meeting left open, questions asked and not answered and decisions raised and not taken, from the transcript in the foreground (#4768): one model call, the member waiting for it, the lines shown and never stored (counts only). Its own key, so it never cuts off a transcription, a summary, a translation, a question, a brief, chapters, commitments or a title (#3029).
   'meetings.open_points': { module: 'meetings', expiryMinutes: 30 },
+  // A member's Vy catching them up in a few cited lines on published minutes they missed (#5130, L33): one foreground model call over published minutes only, shown and never stored (counts only).
+  'meetings.catch_up': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy drafting minutes (summary, cited decisions, cited action items) from typed notes when a meeting has no audio recording (#5129, L32): one foreground model call, shown as an unapplied draft proposal (counts only stored).
+  'meetings.notes_minutes': { module: 'meetings', expiryMinutes: 30 },
   // The recorder's Vy extracting sales call insights (customer concerns, buying signals, agreed next steps with cited transcript line IDs) for a meeting linked to an open deal (#4920): one foreground model call, results returned to the recorder alone and stored as counts only.
   'meetings.sales_insight': { module: 'meetings', expiryMinutes: 30 },
   'meetings.label_suggest': { module: 'meetings', expiryMinutes: 30 },
@@ -72,7 +79,49 @@ export const MEMBER_VY_FEATURES = {
   'projects.tasks_from_source': { module: 'projects', expiryMinutes: 30 },
 } as const;
 export type MemberVyFeature = keyof typeof MEMBER_VY_FEATURES;
+type MemberVyFeatureDef = (typeof MEMBER_VY_FEATURES)[MemberVyFeature];
+function isSystemStartableFeature(
+  feature: MemberVyFeatureDef,
+): feature is Extract<MemberVyFeatureDef, { readonly systemStartable: true }> {
+  return 'systemStartable' in feature && feature.systemStartable === true;
+}
+
 const FEATURE_KEYS = Object.keys(MEMBER_VY_FEATURES) as [MemberVyFeature, ...MemberVyFeature[]];
+const CLICK_FEATURE_KEYS = FEATURE_KEYS.filter(
+  (key) => !isSystemStartableFeature(MEMBER_VY_FEATURES[key]),
+) as [MemberVyFeature, ...MemberVyFeature[]];
+
+// Counts-only JSON body check for system-started member-Vy results (ADR-0049 decision 4 amendment, #5073):
+// fixed counter keys only, flat JSON object of 1 to 6 non-negative integers (0..9_999_999_999), <= 160 chars, zero sentence or private key text.
+const DAILY_BRIEF_COUNT_KEYS = new Set(['v', 'meetings', 'facts', 'sentences', 'lines', 'dropped']);
+const COUNTS_ONLY_BODY_RE =
+  /^\{\s*"[a-z_]{1,12}"\s*:\s*(?:0|[1-9][0-9]{0,9})(?:\s*,\s*"[a-z_]{1,12}"\s*:\s*(?:0|[1-9][0-9]{0,9}))*\s*\}$/;
+function isCountsOnlyResultBody(body: string): boolean {
+  if (body.length < 2 || body.length > 160 || !COUNTS_ONLY_BODY_RE.test(body)) return false;
+  const rawKeyTokens = body.match(/"[a-z_]{1,12}"\s*:/g);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return false;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return false;
+  const entries = Object.entries(parsed);
+  return (
+    rawKeyTokens !== null &&
+    rawKeyTokens.length === entries.length &&
+    entries.length >= 1 &&
+    entries.length <= DAILY_BRIEF_COUNT_KEYS.size &&
+    entries.every(
+      ([key, value]) =>
+        DAILY_BRIEF_COUNT_KEYS.has(key) &&
+        typeof value === 'number' &&
+        Number.isInteger(value) &&
+        value >= 0 &&
+        value <= 9_999_999_999,
+    )
+  );
+}
 // Subject-bound Vy features must name a valid target subjectType (preventing 'member' bypass of note locks/RLS).
 const FEATURE_ALLOWED_SUBJECT_TYPES: Partial<Record<MemberVyFeature, ReadonlySet<string>>> = {
   'notes.summary': new Set(['note', 'notes.note']),
@@ -113,6 +162,72 @@ async function mayUseVy(ctx: Pick<CommandContext, 'trx'>): Promise<boolean> {
   return rows[0]?.ok === true;
 }
 
+async function assertVyNotStoppedOrExhausted(ctx: Pick<CommandContext, 'trx' | 'orgId'>, module: string, agentId: string | null): Promise<void> {
+  if ((await stopped(ctx, module, agentId)) || (await budgetSpent(ctx, module, agentId))) throw aiOff();
+}
+
+async function assertVyModuleEnabled(ctx: Pick<CommandContext, 'trx' | 'orgId' | 'installed' | 'appEnabled'>, module: string): Promise<void> {
+  if (!ctx.installed(module)) {
+    throw new DomainError('MODULE_OFF', 404, `Ứng dụng ${module} chưa được bật cho công ty này`, { module });
+  }
+  // Keep the offAppsOf fallback while CommandContext.appEnabled remains optional in kernel-runtime.
+  const enabled = ctx.appEnabled
+    ? await ctx.appEnabled(module)
+    : !(await offAppsOf(ctx.trx, ctx.orgId)).includes(module);
+  if (!enabled) {
+    throw new DomainError('MODULE_OFF', 404, `Ứng dụng ${module} đã được tắt cho công ty này`, { module });
+  }
+}
+
+// Finds or creates the member's own Vy agent atomically, recovering cleanly if concurrent click and system runs race on agent_member_vy_uq.
+async function ensureMemberVyAgent(
+  ctx: Pick<CommandContext, 'trx' | 'orgId'>,
+  module: string,
+  userId: string,
+  forbiddenMessage: string,
+): Promise<{ id: string; status: string }> {
+  let agent = await ctx.trx
+    .selectFrom('ludy_kernel.agent')
+    .select(['id', 'status'])
+    .where('org_id', '=', ctx.orgId)
+    .where('kind', '=', 'member_vy')
+    .where('member_user_id', '=', userId)
+    .forShare()
+    .executeTakeFirst();
+  if (agent && agent.status !== 'active') throw new DomainError('VY_NOT_ALLOWED', 403, forbiddenMessage);
+  await assertVyNotStoppedOrExhausted(ctx, module, agent?.id ?? null);
+  if (!agent) {
+    await sql`SAVEPOINT member_vy_agent_create`.execute(ctx.trx);
+    try {
+      agent = await ctx.trx
+        .insertInto('ludy_kernel.agent')
+        .values({ org_id: ctx.orgId, template_key: 'kernel.member_vy', display_name: 'Vy', kind: 'member_vy', member_user_id: userId, created_by: userId })
+        .returning(['id', 'status'])
+        .executeTakeFirstOrThrow();
+      await sql`RELEASE SAVEPOINT member_vy_agent_create`.execute(ctx.trx);
+    } catch (error: unknown) {
+      const e = error as { code?: string; constraint?: string };
+      if (e.code === '23505' && e.constraint === 'agent_member_vy_uq') {
+        await sql`ROLLBACK TO SAVEPOINT member_vy_agent_create`.execute(ctx.trx);
+        await sql`RELEASE SAVEPOINT member_vy_agent_create`.execute(ctx.trx);
+        agent = await ctx.trx
+          .selectFrom('ludy_kernel.agent')
+          .select(['id', 'status'])
+          .where('org_id', '=', ctx.orgId)
+          .where('kind', '=', 'member_vy')
+          .where('member_user_id', '=', userId)
+          .forShare()
+          .executeTakeFirstOrThrow();
+        if (agent.status !== 'active') throw new DomainError('VY_NOT_ALLOWED', 403, forbiddenMessage);
+        await assertVyNotStoppedOrExhausted(ctx, module, agent.id);
+      } else {
+        throw error;
+      }
+    }
+  }
+  return agent;
+}
+
 // Ends the live runs of a member's Vy (the definer checks that the caller is an owner, an admin or the system): on a removal, a loss of
 // vy.use, a kill switch and a pause. A model call already in flight finishes, but storing its text needs a live run, so it is discarded.
 export async function cancelMemberVyRuns(ctx: Pick<CommandContext, 'trx'>, filter: { agentIds?: readonly string[]; userId?: string; module?: string }, reason: string): Promise<number> {
@@ -130,7 +245,7 @@ export async function cancelMemberVyRunsUnlessAllowed(ctx: Pick<CommandContext, 
 
 export const memberVyRunStart = defineCommand({
   name: 'kernel.member_vy.run.start',
-  input: z.object({ feature: z.enum(FEATURE_KEYS), subjectType: z.string().min(1).max(100), subjectId: zId }),
+  input: z.object({ feature: z.enum(CLICK_FEATURE_KEYS), subjectType: z.string().min(1).max(100), subjectId: zId }),
   risk: 'R1',
   sideEffect: 'internal',
   access: MEMBER_ROLES,
@@ -146,16 +261,8 @@ export const memberVyRunStart = defineCommand({
     //   (note row locks of DELETE) -> adv_lock('ludy.note_vy:<org>') -> ai_run FOR UPDATE -> member_vy_result.
     // Re-verifying the readable non-trashed note under this shared advisory lock prevents orphaned runs after delete.
     if (isNoteSubject) {
-      if (!ctx.installed('notes')) {
-        throw new DomainError('MODULE_OFF', 404, 'Ứng dụng notes chưa được bật cho công ty này', { module: 'notes' });
-      }
       // Enforce org-level app gate and entitlements before acquiring the org lock and without querying notes.note.get.
-      const notesEnabled = ctx.appEnabled
-        ? await ctx.appEnabled('notes')
-        : !(await offAppsOf(ctx.trx, ctx.orgId)).includes('notes');
-      if (!notesEnabled) {
-        throw new DomainError('MODULE_OFF', 404, 'Ứng dụng notes đã được tắt cho công ty này', { module: 'notes' });
-      }
+      await assertVyModuleEnabled(ctx, 'notes');
       await acquireNoteVyLock(ctx.trx, ctx.orgId);
       const note = await ctx.trx
         .selectFrom('ludy_notes.note')
@@ -171,22 +278,10 @@ export const memberVyRunStart = defineCommand({
       }
     }
     const feature = MEMBER_VY_FEATURES[input.feature];
-    let agent = await ctx.trx
-      .selectFrom('ludy_kernel.agent')
-      .select(['id', 'status'])
-      .where('org_id', '=', ctx.orgId)
-      .where('kind', '=', 'member_vy')
-      .where('member_user_id', '=', userId)
-      .executeTakeFirst();
-    if (agent && agent.status !== 'active') throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
-    if ((await stopped(ctx, feature.module, agent?.id ?? null)) || (await budgetSpent(ctx, feature.module, agent?.id ?? null))) throw aiOff();
-    if (!agent) {
-      agent = await ctx.trx
-        .insertInto('ludy_kernel.agent')
-        .values({ org_id: ctx.orgId, template_key: 'kernel.member_vy', display_name: 'Vy', kind: 'member_vy', member_user_id: userId, created_by: userId })
-        .returning(['id', 'status'])
-        .executeTakeFirstOrThrow();
+    if (isSystemStartableFeature(feature)) {
+      throw new DomainError('VALIDATION', 422, 'Tính năng Vy này do hệ thống tự khởi chạy');
     }
+    const agent = await ensureMemberVyAgent(ctx, feature.module, userId, 'Bạn chưa được phép làm việc với Vy');
     // A run abandoned by a crashed request does not block the next one: a member has one live run PER FEATURE (ADR-0049 decision 1, amended 2026-11-12, #3029), so a start
     // supersedes only a running run of the same feature. A run of another feature (a transcription that is still going) is left alone. A run whose result is already stored
     // `ready` (the worker has not closed it yet, or died before it did) is not superseded but closed as succeeded, as the worker's finish would, with the result's private_read
@@ -266,6 +361,123 @@ export const memberVyRunStart = defineCommand({
       .executeTakeFirstOrThrow();
     ctx.audit({ run_id: run.id, result_id: result.id, feature: input.feature, module: feature.module });
     return { runId: run.id, resultId: result.id, expiresAt: expiresAt.toISOString() };
+  },
+});
+
+// Internal worker-only start for system-scheduled member-Vy features declared in MEMBER_VY_FEATURES and ludy_kernel.member_vy_system_feature (#5073, ADR-0049 decisions 1 and 6).
+// Never touches click-only features and never supersedes an active run (VY_RUN_BUSY).
+export const memberVyRunStartDaily = defineCommand({
+  name: 'kernel.member_vy.run.start_daily',
+  input: z.strictObject({
+    userId: zId,
+    feature: z.enum(FEATURE_KEYS),
+    subjectId: zId.optional(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input): Promise<{ agentId: string; runId: string; resultId: string; expiresAt: string }> => {
+    requireSystem(ctx);
+    const feature = MEMBER_VY_FEATURES[input.feature];
+    if (!isSystemStartableFeature(feature)) {
+      throw new DomainError('VALIDATION', 422, 'Tính năng Vy này chỉ bắt đầu khi thành viên bấm');
+    }
+    const catalog = await ctx.trx
+      .selectFrom('ludy_kernel.member_vy_system_feature')
+      .select(['feature', 'module'])
+      .where('feature', '=', input.feature)
+      .where('module', '=', feature.module)
+      .executeTakeFirst();
+    if (!catalog) {
+      throw new DomainError('VALIDATION', 422, 'Tính năng Vy này chưa được mở cho lượt chạy hệ thống');
+    }
+    // Run non-locking tenant status and module availability checks before acquiring any row locks (never hold tenant FOR SHARE across entitlementsOf or ahead of tenant_member).
+    const tenantPre = await ctx.trx
+      .selectFrom('ludy_kernel.tenant')
+      .select('status')
+      .where('org_id', '=', ctx.orgId)
+      .executeTakeFirst();
+    if (!tenantPre || tenantPre.status !== 'active') {
+      throw new DomainError('TENANT_NOT_ACTIVE', 403, 'Công ty này không còn hoạt động');
+    }
+    await assertVyModuleEnabled(ctx, feature.module);
+    // Canonical lock order (#1943, lock-order.test.ts): lock tenant_member FOR SHARE BEFORE tenant FOR SHARE so concurrent member.remove/change_role
+    // (tenant_member FOR UPDATE -> chief_accountant_keep_guard -> tenant FOR NO KEY UPDATE) cannot AB-BA deadlock.
+    const memberRow = await ctx.trx
+      .selectFrom('ludy_kernel.tenant_member')
+      .select('user_id')
+      .where('org_id', '=', ctx.orgId)
+      .where('user_id', '=', input.userId)
+      .forShare()
+      .executeTakeFirst();
+    // Read status and apps_off directly from the FOR SHARE locked tenant row (not STABLE org_app_on()) so PostgreSQL EvalPlanQual returns committed updates.
+    const { rows: gateRows } = await sql<{ status: string | null; apps_off: readonly string[] | null }>`
+      SELECT t.status, t.apps_off
+      FROM ludy_kernel.tenant t
+      WHERE t.org_id = ${ctx.orgId}::uuid
+      FOR SHARE`.execute(ctx.trx);
+    const gate = gateRows[0];
+    if (!gate || gate.status !== 'active') {
+      throw new DomainError('TENANT_NOT_ACTIVE', 403, 'Công ty này không còn hoạt động');
+    }
+    if (gate.apps_off?.includes(feature.module)) {
+      throw new DomainError('MODULE_OFF', 404, `Ứng dụng ${feature.module} đã được tắt cho công ty này`, { module: feature.module });
+    }
+    if (!memberRow) {
+      throw new DomainError('VY_NOT_ALLOWED', 403, 'Thành viên chưa được phép làm việc với Vy');
+    }
+    const { rows: activeRows } = await sql<{ active: boolean }>`
+      SELECT ludy_kernel.member_vy_member_active(${ctx.orgId}::uuid, ${input.userId}::uuid) AS active`.execute(ctx.trx);
+    if (activeRows[0]?.active !== true) {
+      throw new DomainError('VY_NOT_ALLOWED', 403, 'Thành viên chưa được phép làm việc với Vy');
+    }
+    const agent = await ensureMemberVyAgent(ctx, feature.module, input.userId, 'Thành viên chưa được phép làm việc với Vy');
+    // System context cannot read member_vy rows on ai_run (member_vy_read checks ctx_acting_user_id()); this worker-only definer rejects active unexpired runs (false -> VY_RUN_BUSY) and closes expired ones so future days are never stranded.
+    const { rows: slotRows } = await sql<{ ready: boolean }>`
+      SELECT ludy_kernel.member_vy_close_expired_system_run(${agent.id}::uuid, ${input.feature}::text) AS ready`.execute(ctx.trx);
+    if (slotRows[0]?.ready !== true) {
+      throw new DomainError('VY_RUN_BUSY', 409, 'Vy đang làm việc này cho bạn; hãy thử lại sau ít giây');
+    }
+    const runId = randomUUID();
+    const resultId = randomUUID();
+    const subjectId = input.subjectId ?? randomUUID();
+    const expiresAt = new Date(ctx.now.getTime() + feature.expiryMinutes * 60_000);
+    await sql`SAVEPOINT member_vy_run_start_daily`.execute(ctx.trx);
+    try {
+      await ctx.trx
+        .insertInto('ludy_kernel.ai_run')
+        .values({ id: runId, org_id: ctx.orgId, agent_id: agent.id, module: feature.module, feature: input.feature, status: 'running', tainted: true, started_at: ctx.now, expires_at: expiresAt })
+        .execute();
+      await sql`RELEASE SAVEPOINT member_vy_run_start_daily`.execute(ctx.trx);
+    } catch (error: unknown) {
+      const e = error as { code?: string; constraint?: string };
+      if (e.code === '23505' && (e.constraint === 'ai_run_one_running_feature_uq' || e.constraint === 'ai_run_one_running_agent_uq')) {
+        await sql`ROLLBACK TO SAVEPOINT member_vy_run_start_daily`.execute(ctx.trx);
+        throw new DomainError('VY_RUN_BUSY', 409, 'Vy đang làm việc này cho bạn; hãy thử lại sau ít giây');
+      }
+      throw error;
+    }
+    // System context has no SELECT privilege on member_vy_result (member_read uses ctx_acting_user_id()), so use the client-generated id without RETURNING.
+    await ctx.trx
+      .insertInto('ludy_kernel.member_vy_result')
+      .values({
+        id: resultId,
+        org_id: ctx.orgId,
+        member_user_id: input.userId,
+        run_id: runId,
+        feature: input.feature,
+        subject_type: input.feature,
+        subject_id: subjectId,
+        status: 'running',
+        body: null,
+        tainted: true,
+        private_read: true,
+        created_at: ctx.now,
+        expires_at: new Date(ctx.now.getTime() + RESULT_DAYS * 86_400_000),
+      })
+      .execute();
+    ctx.audit({ run_id: runId, result_id: resultId, feature: input.feature, module: feature.module, user_id: input.userId });
+    return { agentId: agent.id, runId, resultId, expiresAt: expiresAt.toISOString() };
   },
 });
 
@@ -360,7 +572,7 @@ export const memberVyResultStore = defineCommand({
     const run = await ctx.trx
       .selectFrom('ludy_kernel.ai_run as r')
       .innerJoin('ludy_kernel.agent as a', (j) => j.onRef('a.org_id', '=', 'r.org_id').onRef('a.id', '=', 'r.agent_id'))
-      .select(['r.id', 'r.module', 'r.agent_id', 'r.status', 'r.expires_at'])
+      .select(['r.id', 'r.module', 'r.feature', 'r.agent_id', 'r.status', 'r.expires_at'])
       .where('r.org_id', '=', ctx.orgId)
       .where('r.id', '=', input.runId)
       .where('a.kind', '=', 'member_vy')
@@ -370,7 +582,7 @@ export const memberVyResultStore = defineCommand({
     const result = run
       ? await ctx.trx
           .selectFrom('ludy_kernel.member_vy_result')
-          .select(['id', 'subject_type', 'subject_id', 'status'])
+          .select(['id', 'feature', 'subject_type', 'subject_id', 'status'])
           .where('org_id', '=', ctx.orgId)
           .where('run_id', '=', input.runId)
           .where('member_user_id', '=', userId)
@@ -378,6 +590,16 @@ export const memberVyResultStore = defineCommand({
       : undefined;
     if (!run || !result || run.status !== 'running' || run.expires_at <= ctx.now || result.status !== 'running') {
       throw new DomainError('VY_RUN_NOT_LIVE', 409, 'Lượt làm việc này của Vy đã kết thúc hoặc không còn hiệu lực');
+    }
+    const featureName = result.feature ?? run.feature;
+    if (
+      input.outcome.status === 'ready' &&
+      featureName &&
+      featureName in MEMBER_VY_FEATURES &&
+      isSystemStartableFeature(MEMBER_VY_FEATURES[featureName as MemberVyFeature]) &&
+      !isCountsOnlyResultBody(input.outcome.body)
+    ) {
+      throw new DomainError('VALIDATION', 422, 'Kết quả của lượt chạy hệ thống chỉ được lưu số đếm');
     }
     // A kill switch or a spent budget since the run started: the text is discarded, not stored.
     const off = (await stopped(ctx, run.module, run.agent_id)) || (await budgetSpent(ctx, run.module, run.agent_id));
@@ -1111,5 +1333,5 @@ export const memberVySubjectResultsDrop = defineCommand({
   },
 });
 
-export const memberVyCommands = [memberVyRunStart, memberVyRunCancel, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterReserve, memberVyMeterRecord, memberVyMeterRelease, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge, memberVySubjectResultsDrop];
+export const memberVyCommands = [memberVyRunStart, memberVyRunStartDaily, memberVyRunCancel, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterReserve, memberVyMeterRecord, memberVyMeterRelease, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge, memberVySubjectResultsDrop];
 export const memberVyQueries = [memberVyResultGet, memberVyMemoryList, memberVyMeterCheck, memberVyRunCheck, memberVyRunLive, memberVyRunLatest];

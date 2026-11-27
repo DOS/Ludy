@@ -311,4 +311,17 @@ suite('the Hộp thư MCP reads (#3860)', () => {
     // Org B has no member-bound grant here: a grant of org A pointed at org B is refused outright.
     await refusal(runtime.query('kernel.mcp.conversations', {}, { actor: (await as('plain', 'member')).actor, orgId: orgB }));
   });
+
+  // #4099: the list orders by (last_message_at DESC NULLS LAST, id DESC) for an org with no filter; without an index of that shape it read every thread of the org (and, for a member-bound grant, ran the
+  // row-level security definer once per row) before the page was cut.
+  it('has a valid index of the list\'s own order, (org_id, last_message_at DESC NULLS LAST, id DESC), on the conversation table', async () => {
+    const found = await sqlAdmin<{ def: string; valid: boolean }>(
+      `SELECT pg_get_indexdef(i.indexrelid) AS def, i.indisvalid AS valid
+         FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE i.indrelid = 'ludy_kernel.conversation'::regclass AND c.relname = 'conversation_recent_idx'`,
+    );
+    expect(found.rows).toHaveLength(1);
+    expect(found.rows[0]?.valid).toBe(true);
+    expect(found.rows[0]?.def).toContain('(org_id, last_message_at DESC NULLS LAST, id DESC)');
+  });
 });

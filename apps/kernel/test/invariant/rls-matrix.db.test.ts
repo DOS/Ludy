@@ -124,19 +124,12 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  'crove_finance.entry_review_mark',
+  // #5216 (HR Stage 7A): SME shift templates, weekly roster assignments, and 1-step shift swap requests (step 0).
   'crove_hr.shift_assignment',
   'crove_hr.shift_swap_request',
   'crove_hr.shift_template',
-  'crove_kernel.native_push_device',
-  'crove_kernel.native_push_sent',
+  // #5073 / #5080 (ADR-0049 #5108): short-lived 36h prep lines for opted-in members, strict user + member_briefing RLS.
   'crove_meetings.morning_brief_lines',
-  'crove_projects.github_project_binding',
-  'crove_projects.github_project_repo',
-  'crove_projects.github_sync_delivery',
-  'crove_projects.github_task_link',
-  'crove_projects.github_webhook_hook',
-  'crove_projects.github_webhook_notice',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -1753,6 +1746,8 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     update: { set: 'is_default = is_default' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), provider: 'sandbox', template_no: '1', symbol: einvoiceSymbol() } }),
   },
+  // The register of fixed assets and prepaid costs (#919): one row per asset, never deleted. Tenant roles update only
+  // the end of its schedule (a column grant), so the update probes assign end_reason to itself.
   // #5182: a person's mark that one hit of the monthly review of unusual entries was looked at: one row per (entry, rule), append-only, its entity filled from its entry by the legal-entity trigger. A mark points at a
   // journal entry, which a login role cannot create (tenant roles hold no INSERT on journal_entry), so a probe's own transaction cannot build one: every row names the org's committed entry (o.entry, the seed's).
   // (entry, rule) is unique and the seed row is the only committed one, so the first row made for an org (the seed's, in beforeAll) takes one rule and every later row (a probe's, rolled back) another.
@@ -1763,8 +1758,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return { row: { org_id: o.id, id: randomUUID(), entry_id: o.entry, rule: seeded ? 'off_day' : 'amount_outlier', marked_by: o.owner } };
     },
   },
-  // The register of fixed assets and prepaid costs (#919): one row per asset, never deleted. Tenant roles update only
-  // the end of its schedule (a column grant), so the update probes assign end_reason to itself.
   'crove_finance.fixed_asset': {
     update: { set: 'end_reason = end_reason' },
     make: (o) => ({ row: fixedAssetRow(o) }),
@@ -3374,7 +3367,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
   },
   // #4883 (mobile native push): a member's own APNs/FCM registration bound to their signed-in session_id, under a restrictive policy like push_subscription.
-  // One row per session/token; the device token is sensitive and never returned by member queries or audit rows. Lands in PENDING_TABLES before its migration.
+  // One row per session/token; the device token is sensitive and never returned by member queries or audit rows.
   'crove_kernel.native_push_device': {
     make: (o) => ({
       row: {
@@ -3388,7 +3381,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       },
     }),
   },
-  // #4883 (mobile native push): worker-only delivery ledger tracking notifications already handed to QUEUES.nativePush; definer-only MACHINERY (zero login role grants). Lands in PENDING_TABLES before its migration.
+  // #4883 (mobile native push): worker-only delivery ledger tracking notifications already handed to QUEUES.nativePush; definer-only MACHINERY (zero login role grants).
   'crove_kernel.native_push_sent': {
     make: (o) => {
       const notification = { org_id: o.id, id: randomUUID(), user_id: o.owner, kind: 'kernel.conversation_new', dedupe_key: `rls-np-${tag()}` };

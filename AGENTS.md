@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Ludy is the open-source Business OS (AGPL). It must run with `docker compose up` and no DOS service. Anything DOS-specific belongs in the private Crove Cloud layer, never here.
+Ludy is the open-source Business OS (AGPL). It must run with `docker compose up` and no DOS service. Anything DOS-specific belongs in the private Ludy Cloud layer, never here.
 
 ## Who Ludy is for: OPC and SME, AI-first (owner decisions 2026-10-31 and 2026-11-02)
 
@@ -29,10 +29,10 @@ Ludy is for one-person companies and SMEs in Vietnam. Every issue, plan and PR m
 - Never edit in the main checkout. Do every task in its own worktree and branch, from a freshly fetched `origin/dev` (use `origin/main` only for a `dev -> main` promotion PR or a main-only docs/CI fix during transition): `.claude/worktrees/<task-name>` (Claude Code), `.codex/worktrees/<task-name>` (Codex), `.cursor/worktrees/<task-name>` (Cursor), `.agents/worktrees/<task-name>` (Antigravity). Never in `.worktrees`, sibling directories, global `_worktrees` folders or temp directories.
 - First check `git worktree list` and open PRs. Never edit another task's or agent's worktree or take over its branch; create a new one. A locked worktree belongs to an active agent.
 - Never `git checkout`, `reset --hard`, `clean` or bare `git stash` in a path another agent may use; set work aside with a WIP commit.
-- Rebase on your target base (`origin/dev` for task PRs; `origin/main` for promotion PRs) right before merging. Never rebase or squash-rewrite shared `dev` commits inside a promotion PR; merge `origin/dev` cleanly into `origin/main`. Resolve conflicts by keeping both sides unless one is clearly superseded.
+- Sync with your target base right before merging: rebase on `origin/dev` for task PRs, and merge `origin/dev` cleanly into `origin/main` for promotion PRs (never rebase or squash-rewrite shared `dev` commits inside a promotion PR). Resolve conflicts by keeping both sides unless one is clearly superseded.
 - After the merge, remove your worktree with `git worktree remove` (never force), only if `git status` is clean.
 
-## Picking up work (GitHub Project "Crove")
+## Picking up work (GitHub Project "Ludy")
 
 - Work comes from the board https://github.com/orgs/DOS/projects/8 (issues in DOS/Ludy). One task = one issue = one worktree = one PR, split by feature and built end to end (migration, server, contract, UI, tests).
 - Work without stopping (owner decision 2026-10-20): the plans and designs are the backlog. When a task merges, start the next in the same session. Never end a turn to ask whether to go on, or make the owner type "continue", "status?" or "allowed".

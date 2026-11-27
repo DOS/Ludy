@@ -18,6 +18,7 @@ import {
 } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { allocateProjectTaskNumbers } from './github.ts';
 
 export const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const ALL_MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -299,13 +300,15 @@ export async function createAndAttachConfirmedTasks(
   await assertSeatsAllowed(ctx.trx, ctx.orgId, project.id, requestedSeats);
 
   if (createdIds.length > 0) {
+    const taskNumbers = await allocateProjectTaskNumbers(ctx.trx, ctx.orgId, project.id, createdIds.length, ctx.now);
     await ctx.trx
       .insertInto('ludy_projects.project_task')
       .values(
-        createdIds.map((taskId) => ({
+        createdIds.map((taskId, index) => ({
           org_id: ctx.orgId,
           project_id: project.id,
           task_id: taskId,
+          task_number: taskNumbers[index] ?? null,
           added_by: userId,
           created_at: ctx.now,
         })),

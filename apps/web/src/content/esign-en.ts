@@ -390,4 +390,99 @@ export const esignEn: EsignCopy = {
       ],
     },
   },
+  comparison: {
+    title: 'How Ludy eSign compares with Documenso, DocuSign and MISA',
+    lead: 'Side-by-side comparison for one-person companies and Vietnamese SMEs: self-hosted AGPL with zero per-seat fees, Zalo and QR signing, pure-JS .docx and 1-5 PDF packets, post-sign VietQR deposits, an SME playbook, and a transparent boundary on live CA credentials awaiting legal review (#62).',
+    caption: 'Feature comparison between Ludy eSign, Documenso, DocuSign, and MISA AMIS WeSign + MISA eSign across 8 Vietnamese SME e-signature capabilities.',
+    capabilityLabel: 'Capability',
+    vendors: [
+      { key: 'ludy', name: 'Ludy eSign', tag: 'AGPL self-host' },
+      { key: 'documenso', name: 'Documenso', tag: 'AGPL + paid Cloud' },
+      { key: 'docusign', name: 'DocuSign', tag: 'Global closed SaaS' },
+      { key: 'misa', name: 'MISA AMIS WeSign + eSign', tag: 'VN SaaS + built-in CA' },
+    ],
+    rows: [
+      {
+        id: 'self-host-licensing',
+        label: 'Self-host & licensing model',
+        values: [
+          'Full AGPL-3.0 self-host via docker compose up with zero per-seat or per-envelope license fees.',
+          'AGPL-3.0 Community Edition for evaluation, plus paid commercial editions or per-user Cloud tiers.',
+          'Closed SaaS only, billed via annual per-user seat plans, envelope caps and IAM tiers.',
+          'Closed Vietnam SaaS billed via annual software license, document packs and MISA eSign CA.',
+        ],
+      },
+      {
+        id: 'zalo-qr-handoff',
+        label: 'Zalo links & phone QR handoff',
+        values: [
+          'Fragment-only # links for Zalo or chat without CAPTCHAs, desktop-to-phone and counter QR scan-to-sign, and Zalo OA Engage Inbox message insertion.',
+          'Email invitations plus direct or public profile links, without Zalo OA or counter QR workflows.',
+          'Email-first delivery with optional SMS or portal passcodes, without Zalo OA integration.',
+          'Email, SMS and paid Zalo ZNS template notifications.',
+        ],
+      },
+      {
+        id: 'docx-multi-doc',
+        label: 'Native Word .docx & multi-doc packets',
+        values: [
+          'Pure-JS sandbox (zero LibreOffice) converts .docx to tagged A4 PDF with Be Vietnam Pro fonts, bundling 1-5 PDF packets up to 200 pages with a unified SHA-256 certificate.',
+          'Server-side LibreOffice conversion for .docx uploads alongside multi-document envelopes.',
+          'Native Word .docx intake and multi-document envelope bundling.',
+          'Word .docx to PDF conversion plus batch and multi-document packet signing.',
+        ],
+      },
+      {
+        id: 'post-sign-vietqr',
+        label: 'Post-sign deposit payment collection',
+        values: [
+          'NAPAS VietQR deposit card after remote signing with an immutable send-time payee snapshot and Ludy Finance bank-statement match suggestions, with zero escrow custody.',
+          'Not included in core e-signing or accounting handoffs.',
+          'Card or ACH payment collection on higher Business Pro plans, without local VietQR.',
+          'Separate billing handled via external AMIS Accounting and meInvoice modules.',
+        ],
+      },
+      {
+        id: 'vn-signatures-kyc',
+        label: 'Vietnam SME signatures & KYC attachments',
+        values: [
+          '1-click all-page initials, red company or title stamp, integrity-checked CCCD, business license or proxy upload and sandbox Tax ID/CCCD extraction for KYC matching.',
+          'Manual initial placement per page, with no built-in company stamp or Vietnam KYC extraction.',
+          'Supports attachments and stamps, with manual initial placement and no Vietnam Tax ID/CCCD extraction.',
+          'First-class initials, corporate seal stamping and CCCD/face eKYC verification.',
+        ],
+      },
+      {
+        id: 'public-ca-decree-337',
+        label: 'Vietnam Public CA (Law 20/2023) & Decree 337/2025',
+        values: [
+          'Offline Sandbox PAdES and VNPT SmartCA, Viettel MySign and MISA WeSign adapters shipped; live CA activation and VNeID or Ministry of Home Affairs sync await legal review (#62).',
+          'Generic X.509 and CSC certificate signing, with no built-in Vietnam public CA providers.',
+          'Supports partner certificate authorities globally, without Ministry of Home Affairs labor contract sync.',
+          'Built-in MISA eSign remote CA, USB Token signing and Ministry of Home Affairs or VNeID portal sync.',
+        ],
+      },
+      {
+        id: 'ai-coworker-parity',
+        label: 'Metered AI coworker with AI-off parity',
+        values: [
+          `10 metered ${N.gm} features across fields, clauses, 6-rule SME playbook, obligations, Vault Q&A and 2-5 PDF packet checks, keeping 100% manual fallback when AI is off.`,
+          'Rate-limited document AI query helper and MCP server, without a Vietnam SME playbook.',
+          'Paid Iris AI and Agent Studio add-ons on IAM tiers, without a local AI-off parity mode.',
+          'Workflow routing and reusable templates without a bundled AI playbook or clause redline review.',
+        ],
+      },
+      {
+        id: 'handoffs-api-mcp',
+        label: 'Suite handoffs, Webhooks, REST API & MCP',
+        values: [
+          'Hands off from Quotes, Meetings, HR and Projects (acceptance into Ludy Finance invoice drafts), paired with HMAC webhooks, scoped /api/v1/sign/* REST API and 4 read-only ludy.read MCP tools.',
+          'Developer-centric TypeScript SDK v2, React embed components, webhooks and MCP ecosystem.',
+          'Maestro workflow orchestration and connectors available on upper commercial tiers.',
+          'Tightly integrated across AMIS Accounting, meInvoice, CRM and social insurance modules.',
+        ],
+      },
+    ],
+    note: 'Comparison note: capabilities for Documenso, DocuSign and MISA AMIS WeSign + MISA eSign reflect publicly documented product scopes as of November 2026. Live Vietnam public CA credentials and statutory Decree 337/2025/ND-CP Ministry of Home Affairs sync in Ludy eSign remain gated on legal review (#62).',
+  },
 };

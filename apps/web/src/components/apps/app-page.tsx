@@ -19,9 +19,10 @@ export interface AppPageProps {
   hero: ReactNode;
   // One visual per group, by the group's id in the copy.
   visuals: Readonly<Record<string, ReactNode>>;
+  comparison?: ReactNode;
 }
 
-export function AppPage({ dict, copy, hero, visuals }: AppPageProps) {
+export function AppPage({ dict, copy, hero, visuals, comparison }: AppPageProps) {
   const home = '/';
   const selfHost = `${home}#tu-host`;
   const { soon, coworker } = copy;
@@ -152,6 +153,8 @@ export function AppPage({ dict, copy, hero, visuals }: AppPageProps) {
             </div>
           </Section>
         ) : null}
+
+        {comparison ?? null}
 
         <Section id="audience" labelledBy="audience-title">
           <SectionHead id="audience-title" title={copy.audience.title} lead={copy.audience.lead} />

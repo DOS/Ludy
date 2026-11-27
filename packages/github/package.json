@@ -1,0 +1,18 @@
+{
+  "name": "@ludy/github",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "GitHub App and Fine-grained PAT REST client, HMAC webhook verifier, mention/branch parser, and untrusted payload sanitizer (#5158, ADR-0060)",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  }
+}

@@ -168,11 +168,6 @@ const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'finance-misa-amis-push handler': '#3902',
   // The weekly meetings notice sweep (#4967, step 0 of 2): the site and its command land in the table's own PR, which removes this entry.
   'meetings-weekly handler': '#4967',
-  // Mobile native push (#4883, step 0 of 2): enqueueNativePushes and kernel.native_push.register land in the feature PR, which removes this entry.
-  enqueueNativePushes: '#4883',
-  // Projects GitHub integration (#5157 Step 0 -> #5158 Slice 1 / #5159 Slice 2, ADR-0060): sites and command land in dev promotion.
-  'projects-github-webhook handler': '#5158',
-  'projects-github-sweep handler': '#5159',
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.

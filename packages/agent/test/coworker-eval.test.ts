@@ -4,10 +4,13 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_FEATURE_KEYS,
   AdsCampaignWriter,
+  AskBooksCoworker,
   ConversationWriter,
   ExpenseVarianceCoworker,
+  UnusualEntriesCoworker,
   InboxReader,
   PayrollCoworker,
+  QuarterSummaryCoworker,
   SchedulingReader,
   SignAcceptanceReader,
   SignAiReader,
@@ -21,6 +24,7 @@ import { MEMBER_VY_FEATURE_TABLE, bindPorts, noKnowledge, type ModelPort, type P
 import {
   ALL_COWORKER_FEATURE_KEYS,
   HR_POLICY_EVAL_NOTE_ID,
+  UNIMPLEMENTED_SYSTEM_FEATURES,
   buildCoworkerEvalCases,
   createCoworkerEvalRuntime,
   formatCoworkerEvalReport,
@@ -78,7 +82,7 @@ function createStubRuntime() {
         text = JSON.stringify({
           sentences: [{ text: 'Nam phu trach quay chup.', cites: [1] }],
         });
-      } else if (feature === 'meetings.brief') {
+      } else if (feature === 'meetings.brief' || feature === 'meetings.brief_daily') {
         text = JSON.stringify({
           sentences: [{ text: 'Nhom da hop va chot lich quay chup vao sang thu Ba.', cites: [1] }],
         });
@@ -102,6 +106,16 @@ function createStubRuntime() {
         text = JSON.stringify({ labels: ['Ke hoach ban hang'] });
       } else if (feature === 'meetings.open_points') {
         text = JSON.stringify({ points: [{ kind: 'question', text: 'Ai se gui bao cao truoc thu Sau?', second: 0 }] });
+      } else if (feature === 'meetings.catch_up') {
+        text = JSON.stringify({
+          lines: [{ text: 'Nhom chot ke hoach ban hang va giu dung tien do da de ra.', cite: { kind: 'decision', index: 1 } }],
+        });
+      } else if (feature === 'meetings.notes_minutes') {
+        text = JSON.stringify({
+          summary: 'Nhom chot ke hoach ban hang quy 4.',
+          decisions: [{ text: 'Chot ke hoach ban hang quy 4.', noteLine: 1 }],
+          items: [{ title: 'Gui bao gia cho khach', who: 'Lan', when: 'thu Sau', noteLine: 2 }],
+        });
       } else if (feature === 'meetings.sales_insight') {
         if (prompt.user.includes('11111111-1111-4111-8111-111111111102')) {
           text = JSON.stringify({
@@ -194,7 +208,7 @@ function createStubRuntime() {
     stockMatch: async () => ({ output: { answers: [{ line: 1, item: 1, reason: 'Trung ten Ca phe Arabica' }] }, usage: zeroUsage }),
     reorder: async () => ({ output: { text: 'De nghi dat them 10 kg Ca phe tu Nha cung cap X.' }, usage: zeroUsage }),
     einvoiceDraft: async () => ({
-      output: { buyer: 1, lines: [{ description: 'Dich vu tu van ke toan', unit: 'Goi', quantity: '1', unitPrice: '100000', vatRate: null }] },
+      output: { buyer: 1, lines: [{ description: 'Dich vu tu van', unit: 'Goi', quantity: '1', unitPrice: '100000', vatRate: null }] },
       usage: zeroUsage,
     }),
     einvoiceRate: async () => ({ output: { sentence: 'Thue suat dieu chinh tu 10% xuong 8% theo quy dinh.' }, usage: zeroUsage }),
@@ -283,6 +297,18 @@ function createStubRuntime() {
         suggestedCycleId: 'cycle-1',
         duplicateTaskId: 'task-1',
         reason: 'Trung voi cong viec Xuat bao cao Excel dang mo trong chu ky hien tai.',
+      },
+      usage: zeroUsage,
+    }),
+    projectGithubPrSummary: async () => ({
+      output: {
+        summary: 'Cong viec dang gan 1 lien ket GitHub: PR #42 tren kho acme/web dang mo va cho duyet.',
+      },
+      usage: zeroUsage,
+    }),
+    projectGithubIssueMatch: async () => ({
+      output: {
+        matches: [{ candidateId: 'acme/web#42', reason: 'Khop voi cong viec xuat bao cao Excel.' }],
       },
       usage: zeroUsage,
     }),
@@ -399,6 +425,24 @@ function createStubRuntime() {
       output: { notes: [{ row: 1, text: 'Co the do hoa don tu nha cung cap tang so voi ky truoc.' }] },
       usage: zeroUsage,
     })),
+    unusualEntries: new UnusualEntriesCoworker(STUB_CONFIG, async () => ({
+      output: { notes: [{ row: 1, text: 'Co the khoan mua nay lon hon muc thuong cua mot nha cung cap.' }] },
+      usage: zeroUsage,
+    })),
+    quarterSummary: new QuarterSummaryCoworker(STUB_CONFIG, async () => ({
+      output: {
+        notes: [
+          { row: 1, text: 'Sales revenue rose against the previous quarter and the same quarter last year.' },
+          { row: 2, text: 'Costs rose against the previous quarter but stayed steady against the same quarter last year.' },
+          { row: 3, text: 'Cash fell against the previous quarter and the same quarter last year.' },
+        ],
+      },
+      usage: zeroUsage,
+    })),
+    askBooks: new AskBooksCoworker(STUB_CONFIG, async () => ({
+      output: { entry: 'profit_loss', period: 'named', lead: 'Day la bao cao ket qua kinh doanh cua ky duoc chon.' },
+      usage: zeroUsage,
+    })),
     payroll: new PayrollCoworker(STUB_CONFIG, {
       prepare: async ({ prompt }) => ({ output: { items: [{ id: firstId(prompt, 'S1'), field: 'allowances', note: 'E1 ket thuc thu viec trong thang, can kiem tra phu cap.' }] }, usage: zeroUsage }),
       flag: async ({ prompt }) => ({ output: { items: [{ id: firstId(prompt, 'A1'), sentence: 'Luong thap hon muc toi thieu vung can kiem tra.' }] }, usage: zeroUsage }),
@@ -495,9 +539,13 @@ function createStubRuntime() {
 }
 
 describe('coworker eval suite and per-feature reporter (#3977)', () => {
-  it('covers 100% of AI_FEATURE_KEYS and MEMBER_VY_FEATURE_TABLE keys', () => {
+  it('covers 100% of AI_FEATURE_KEYS and implemented MEMBER_VY_FEATURE_TABLE keys', () => {
     const cases = buildCoworkerEvalCases();
-    const expected = new Set<string>([...AI_FEATURE_KEYS, ...Object.keys(MEMBER_VY_FEATURE_TABLE)]);
+    const memberVyKeys = Object.keys(MEMBER_VY_FEATURE_TABLE);
+    for (const pending of UNIMPLEMENTED_SYSTEM_FEATURES) {
+      expect(memberVyKeys).toContain(pending);
+    }
+    const expected = new Set<string>([...AI_FEATURE_KEYS, ...memberVyKeys.filter((k) => !UNIMPLEMENTED_SYSTEM_FEATURES.has(k))]);
     const covered = new Set<string>(cases.map((c) => c.feature));
     expect(ALL_COWORKER_FEATURE_KEYS.length).toBe(expected.size);
     expect([...expected].filter((k) => !covered.has(k))).toEqual([]);

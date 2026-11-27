@@ -26,6 +26,26 @@ import { backfillImageSizes, IMAGE_SIZE_SWEEP_MS } from './image-size-backfill.t
 import { EVIDENCE_HOLD_SWEEP_MS, runEvidenceHolds } from './evidence-hold.ts';
 import { PROJECTS_RECURRING_SWEEP_MS, sweepProjectsRecurring } from './projects-recurring-worker.ts';
 import { ROADMAP_ANNOUNCEMENT_NOTIFY_EVENT, dispatchRoadmapAnnouncementNotifications, sweepRoadmapOtpCleanup } from './projects-roadmap-worker.ts';
+import {
+  PROJECTS_GITHUB_OUTBOUND_RETRY_LIMIT,
+  PROJECTS_GITHUB_OUTBOUND_SWEEP_CRON,
+  PROJECTS_GITHUB_OUTBOUND_SWEEP_EXPIRE_SECONDS,
+  PROJECTS_GITHUB_WEBHOOK_SWEEP_CRON,
+  PROJECTS_GITHUB_WEBHOOK_SWEEP_EXPIRE_SECONDS,
+  hasGithubOutboundWork,
+  hasGithubWebhookWork,
+  processGithubWebhookBatch,
+  projectsGithubHydrateJobOptions,
+  projectsGithubOutboundJobOptions,
+  runGithubAgentTransitionEnqueue,
+  runGithubHydrateJob,
+  runGithubOutboundJob,
+  runGithubOutboundSweep,
+  type ProjectsGithubHydrateJob,
+  type ProjectsGithubOutboundJob,
+  type ProjectsGithubSweepJob,
+} from './projects-github-worker.ts';
+import type { GithubClient } from '@ludy/github';
 import { processInboundEmail, type InboundJob } from './inbound.ts';
 import { mailEventJob, processMailEvent, type MailEventJob, type MailEventRow } from './mail-events.ts';
 import { MAIL_BULK_GAP_MS, MAIL_BULK_QUEUE, MAIL_SEND_QUEUE, MAIL_SWEEP_MS, mailErrorCode, purgeMail, runMailJob, sweepMail, type MailJob, type MailQueueDeps } from './mail-queue.ts';
@@ -37,6 +57,7 @@ import { systemMeter } from './ai-meter.ts';
 import { jobGroup, jobKey, systemJobKey } from './job-keys.ts';
 import { runLinkPreviewJob } from './link-preview.ts';
 import { runPushJob, type PushSender } from './web-push.ts';
+import { NATIVE_PUSH_SWEEP_MS, enqueueNativePushes, runNativePushJob, type NativePushJob, type NativePushSender } from './native-push.ts';
 import { DEFAULT_EXPORT_RETENTION_DAYS, runOrgExport } from './org-export.ts';
 import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging, sweepTmpBlobs } from './retention.ts';
@@ -53,6 +74,7 @@ import { engageWakeFeed } from './mcp-wake-engage.ts';
 import { runMeetingHookDelivery, type MeetingHookJob } from './meeting-hook.ts';
 import { MEETINGS_MORNING_CRON, runMeetingsMorningSweep } from './meetings-morning.ts';
 import { MEETINGS_WEEKLY_CRON, runMeetingsWeeklySweep } from './meetings-weekly.ts';
+import { MEETINGS_BRIEF_DAILY_CRON, purgeExpiredMorningBriefLines, runMeetingsBriefDailySweep, type MeetingsBriefWriter } from './meetings-brief-daily.ts';
 import { MEETINGS_SERIES_NUDGE_CRON, runMeetingsSeriesNudgeSweep } from './meetings-series-nudge.ts';
 import { MEETING_HOOK_SWEEP_CRON, MEETING_HOOK_SWEEP_EXPIRE_SECONDS, runMeetingHookSweep } from './meeting-hook-sweep.ts';
 import type { MediaAudioExtractor } from './meetings-extract.ts';
@@ -126,11 +148,11 @@ import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
 import { HELD_SWEEP_MS, holdEvents, planHolds, releaseHeld, releaseHeldOfOrg, type SweepCursor } from './outbox-hold.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
-import { failUndraftable, reconcileTelegramDisplacements, rekeyTelegramWebhooks, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
+import { failUndraftable, reconcileTelegramDisplacements, rekeyTelegramWebhooks, requestDueConversationDrafts, purgeInboundFirstSeen, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
-import { BANK_FEED_HOOK_CLAIM, claimBankFeedHookNotices, rejectBankFeedHook, sweepBankFeedHookNotices, verifyBankFeedHookNotices } from './bank-feed-hook.ts';
+import { BANK_FEED_HOOK_CLAIM, claimBankFeedHookBatch, rejectBankFeedHook, sweepBankFeedHookNotices, verifyBankFeedHookNotices } from './bank-feed-hook.ts';
 import { MARKETPLACE_HOOK_CLAIM, MARKETPLACE_PUSH_SLOT_SECONDS, claimMarketplaceHookNotices, rejectMarketplaceHook, sweepMarketplaceHookNotices, verifyMarketplaceHookNotices } from './marketplace-push-relay.ts';
 import { runAdsDeletions } from './ads-deletion.ts';
 import { runMisaAmisCallbacks } from './misa-amis-callback-relay.ts';
@@ -597,7 +619,98 @@ const CALENDAR_WRITEBACK_RETRY_LIMIT = 3;
 const CALENDAR_WRITEBACK_BUSY_TRIES = 4;
 const CALENDAR_WRITEBACK_BUSY_WAIT_MS = 5_000;
 // One sync a connection per slot for the signed notices that ask for one.
-const BANK_FEED_NOTICE_SLOT_SECONDS = 30;
+export const BANK_FEED_NOTICE_SLOT_SECONDS = 30;
+
+// Shared pg-boss send options for one coalesced bank-feed pull queued from a verified webhook notice.
+// Request-id deduplication covers waiting rows only: once claim deletes a notice, a post-claim replay of a
+// valid notice is accepted again, and this singleton slot coalesces it into one pull per connection.
+export function bankFeedSyncNoticeOptions(orgId: string, connectionId: string): SendOptions {
+  return {
+    singletonKey: jobKey(orgId, QUEUES.bankFeedSync, connectionId),
+    singletonSeconds: BANK_FEED_NOTICE_SLOT_SECONDS,
+    retryLimit: BANK_FEED_SYNC_RETRY_LIMIT,
+    retryDelay: 30,
+    retryBackoff: true,
+  };
+}
+
+export interface CollectBankFeedHookDeps {
+  runtime: Runtime;
+  broker: CredentialBroker;
+  providers: Readonly<Record<string, BankFeedProvider>>;
+  reject: (hookId: string, generation: number) => Promise<void>;
+}
+
+// Claims one bounded batch of waiting hosted-webhook notices inside the relay transaction, verifies HMAC
+// signatures and client ownership, updates tallies, and yields per-row sync targets (with NULL placeholders for
+// dropped notices) so relayBatch's step count matches total popped rows and never stops the relay loop early.
+export async function collectVerifiedBankFeedHookTargets(
+  deps: CollectBankFeedHookDeps,
+  trx: Transaction<Database>,
+  tally: { ok: number; refused: number; dropped: number } = { ok: 0, refused: 0, dropped: 0 },
+): Promise<Array<BankFeedSyncJob | null>> {
+  const { rows, claimed } = await claimBankFeedHookBatch(trx);
+  tally.dropped += claimed - rows.length;
+  const verdicts = await verifyBankFeedHookNotices(deps, rows);
+  const seen = new Set<string>();
+  const targets: Array<BankFeedSyncJob | null> = rows.map((row, i) => {
+    const verdict = verdicts[i] ?? 'dropped';
+    tally[verdict]++;
+    const targetKey = `${row.orgId}:${row.connectionId}`;
+    if (verdict !== 'ok' || seen.has(targetKey)) return null;
+    seen.add(targetKey);
+    return { orgId: row.orgId, connectionId: row.connectionId } satisfies BankFeedSyncJob;
+  });
+  for (let i = rows.length; i < claimed; i++) targets.push(null);
+  return targets;
+}
+
+export interface BankFeedHookRelayDeps {
+  workerDb: Db;
+  boss: JobSender;
+  runtime: Runtime;
+  broker: CredentialBroker;
+  providers: Readonly<Record<string, BankFeedProvider>>;
+}
+
+// Shared production relay round for hosted bank feed webhooks: claims one bounded batch, verifies HMACs and
+// client ownership, enqueues coalesced sync jobs in the same transaction, then tallies post-commit refusals.
+export async function relayBankFeedHookBatch(
+  deps: BankFeedHookRelayDeps,
+): Promise<{ claimed: number; ok: number; refused: number; dropped: number }> {
+  const tally = { ok: 0, refused: 0, dropped: 0 };
+  // The refused notices are counted on their hook generation after the batch commits (see rejectBankFeedHook): one entry per refused notice.
+  const refusedHooks: Array<{ hookId: string; generation: number }> = [];
+  const relay = () =>
+    relayBatch(deps.workerDb, deps.boss, async (trx) => {
+      const targets = await collectVerifiedBankFeedHookTargets(
+        { runtime: deps.runtime, broker: deps.broker, providers: deps.providers, reject: async (hookId, generation) => void refusedHooks.push({ hookId, generation }) },
+        trx,
+        tally,
+      );
+      return targets.map((target) =>
+        target
+          ? (boss: JobSender) => boss.send(QUEUES.bankFeedSync, target, bankFeedSyncNoticeOptions(target.orgId, target.connectionId))
+          : async () => null,
+      );
+    });
+  const claimed = await relay();
+  for (const refused of refusedHooks) await rejectBankFeedHook(deps.workerDb, refused.hookId, refused.generation);
+  return { claimed, ...tally };
+}
+
+// Shared production drain loop for hosted bank feed webhooks: runs bounded relayBankFeedHookBatch
+// rounds until claimed drops below BANK_FEED_HOOK_CLAIM so a full batch of dropped notices never stops early.
+export async function relayBankFeedHookBatches(
+  deps: BankFeedHookRelayDeps,
+  onBatch?: (batch: { claimed: number; ok: number; refused: number; dropped: number }) => void,
+): Promise<void> {
+  for (;;) {
+    const batch = await relayBankFeedHookBatch(deps);
+    onBatch?.(batch);
+    if (batch.claimed < BANK_FEED_HOOK_CLAIM) return;
+  }
+}
 
 export interface WorkerDeps {
   connectionString: string;
@@ -614,6 +727,9 @@ export interface WorkerDeps {
   // The AI coworker's campaign drafts (ads W1b, #2295): the model that reads a member's brief and writes the creative part of a campaign; null runs without
   // AI (a request is settled as none with the code AI_OFF).
   adsCampaignWriter?: Pick<AdsCampaignWriter, 'draft'> | null;
+  // Daily morning briefing Vy prep lines writer (#5073): wraps writeBrief({ feature: 'meetings.brief_daily' }) behind member-vy-ports.ts;
+  // null runs without AI (cron unscheduled, no runs or writes).
+  meetingsBriefWriter?: MeetingsBriefWriter | null;
   // crove-extract (plan §7.6): every PDF, XML and MIME parse happens there, never in this process.
   extract: ExtractClient;
   inboundDomain: string | null;
@@ -698,6 +814,8 @@ export interface WorkerDeps {
     calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
     // The meeting platform adapters this deployment offers (C1, #3173), by provider id: the sandbox, then Google Meet, Zoom and Teams (C2 to C4).
     meetingPlatforms?: Readonly<Partial<Record<string, MeetingPlatformAdapter>>>;
+    // GitHub REST client for Projects GitHub Integration hydration (#5158, ADR-0060).
+    github?: GithubClient;
   };
   // PUBLIC_URL, where Social short links (#706) point.
   publicUrl?: string;
@@ -711,6 +829,8 @@ export interface WorkerDeps {
   // Browser push for Social notifications (#1238): the sender with the deployment's VAPID keys and the product name
   // the push shows as its title. Unset: no push is queued or sent.
   push?: { sender: PushSender; brand: string };
+  // Open mobile native push sender (#4883); unset on self-host keeps native push disabled.
+  nativePush?: NativePushSender;
   // The WORM fact stream (worm.ts, #891): the store batches go to and how long after a row is written it is archived.
   // Unset: nothing is archived.
   // restoreAlertDays: days the verifier alerts on a restore acknowledgement after the store wrote it (#2020).
@@ -986,6 +1106,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const sign = deps.runtime.installed('sign');
   const ads = deps.runtime.installed('ads');
   const hr = deps.runtime.installed('hr');
+  const projects = deps.runtime.installed('projects');
   // A cron job of a module left out (#1471): a schedule a run with the module saved stays in pg-boss, which would queue
   // ticks nobody works and the prober would report as stuck. So it is taken off, and the ticks it queued (no data) go.
   const dropCron = async (queue: string) => {
@@ -1685,6 +1806,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     let failure: unknown;
     let results = 0;
     let former = 0;
+    let briefLinesPurged = 0;
     try {
       results = await sweepMemberVyResults({ runtime: deps.runtime, workerDb: deps.workerDb });
     } catch (error) {
@@ -1695,7 +1817,18 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     } catch (error) {
       failure ??= error;
     }
-    if (results > 0 || former > 0) console.log(`[member-vy-sweep] removed ${results} expired results and ${former} rows of former members`);
+    if (deps.runtime.installed('meetings')) {
+      try {
+        briefLinesPurged = await purgeExpiredMorningBriefLines(deps.workerDb);
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+    if (results > 0 || former > 0 || briefLinesPurged > 0) {
+      console.log(
+        `[member-vy-sweep] removed ${results} expired results, ${former} rows of former members, and ${briefLinesPurged} expired morning brief lines`,
+      );
+    }
     if (failure) throw failure;
   });
   await boss.schedule(QUEUES.memberVySweep, MEMBER_VY_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: MEMBER_VY_SWEEP_EXPIRE_SECONDS });
@@ -1777,6 +1910,23 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   } else {
     await dropCron(QUEUES.meetingsWeekly);
   }
+  // Daily member-Vy prep lines sweep for morning briefings (#5073): every 5 minutes, prepares checked <= 240-char prep lines for
+  // opted-in members in their morning window when AI is enabled, writing through meetings.brief.store_lines and storing counts only.
+  const briefWriter = deps.meetingsBriefWriter;
+  if (deps.runtime.installed('meetings') && briefWriter) {
+    await boss.work(QUEUES.meetingsBriefDaily, { batchSize: 1 }, async () => {
+      const done = await runMeetingsBriefDailySweep({
+        runtime: deps.runtime,
+        workerDb: deps.workerDb,
+        writer: briefWriter,
+        price: deps.aiPrice ? { inputPerMTok: deps.aiPrice.inputPerMTok, outputPerMTok: deps.aiPrice.outputPerMTok } : undefined,
+      });
+      if (done.prepared + done.failures > 0) console.log(`[meetings-brief-daily] prepared ${done.prepared}, failures ${done.failures}`);
+    });
+    await boss.schedule(QUEUES.meetingsBriefDaily, MEETINGS_BRIEF_DAILY_CRON, null, { tz: MEMBER_VY_SWEEP_TZ });
+  } else {
+    await dropCron(QUEUES.meetingsBriefDaily);
+  }
   // A member's minutes webhook (meetings integrations A6, #3164): a sweep every minute hands over the deliveries stored at publish (meeting-hook-sweep.ts), and one job per delivery posts it to the
   // address the member set (meeting-hook.ts, through the signing helper of mcp-wake.ts). The same rule as the wake-up (without a credential key no secret can be opened, so neither runs), and only when the meetings module is installed: its commands are what the sweep and the job run.
   if (deps.runtime.installed('meetings') && wakeBroker && wakeBroker.id !== 'none') {
@@ -1837,6 +1987,74 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.signHookSweep, SIGN_HOOK_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: SIGN_HOOK_SWEEP_EXPIRE_SECONDS });
   } else {
     await dropCron(QUEUES.signHookSweep);
+  }
+
+  // Projects GitHub Integration webhooks and hydration (#5158, ADR-0060):
+  // - projects-github-webhook runs with egress 'none' (database/broker only), sweeps expired >10m raw deliveries every 10m, verifies App/PAT HMACs, applies inbound sync, and enqueues projects-github-hydrate when API enrichment is needed.
+  // - projects-github-hydrate opens stored credentials and calls api.github.com via guarded transport ('provider:github').
+  if (projects) {
+    await boss.work(QUEUES.projectsGithubWebhook, { batchSize: 1 }, async () => {
+      const done = await processGithubWebhookBatch({
+        workerDb: deps.workerDb,
+        runtime: deps.runtime,
+        broker: deps.channels?.broker,
+        sendHydrate: (hydrateJob) =>
+          boss.send(QUEUES.projectsGithubHydrate, hydrateJob, projectsGithubHydrateJobOptions(hydrateJob)),
+      });
+      if (done.swept + done.appProcessed + done.patOk + done.patRefused + done.patDropped > 0) {
+        console.log(
+          `[projects-github-webhook] swept=${done.swept} app=${done.appProcessed} patOk=${done.patOk} patRefused=${done.patRefused} patDropped=${done.patDropped}`,
+        );
+      }
+    });
+    await boss.schedule(QUEUES.projectsGithubWebhook, PROJECTS_GITHUB_WEBHOOK_SWEEP_CRON, null, {
+      tz: RETENTION_TZ,
+      missed: 'once',
+      expireInSeconds: PROJECTS_GITHUB_WEBHOOK_SWEEP_EXPIRE_SECONDS,
+    });
+    await boss.work<ProjectsGithubSweepJob | null>(QUEUES.projectsGithubSweep, { batchSize: 1 }, async ([job]) => {
+      if (job?.data?.mode === 'agent_task_transition') {
+        await runGithubAgentTransitionEnqueue({ runtime: deps.runtime }, job.data);
+      }
+      const done = await runGithubOutboundSweep({
+        workerDb: deps.workerDb,
+        runtime: deps.runtime,
+        sendOutbound: (outboundJob) =>
+          boss.send(QUEUES.projectsGithubOutbound, outboundJob, projectsGithubOutboundJobOptions(outboundJob)),
+      });
+      if (done.handedOver + done.skippedOff > 0) {
+        console.log(`[projects-github-sweep] handedOver=${done.handedOver} skippedOff=${done.skippedOff}`);
+      }
+    });
+    await boss.schedule(QUEUES.projectsGithubSweep, PROJECTS_GITHUB_OUTBOUND_SWEEP_CRON, null, {
+      tz: RETENTION_TZ,
+      missed: 'once',
+      expireInSeconds: PROJECTS_GITHUB_OUTBOUND_SWEEP_EXPIRE_SECONDS,
+    });
+    const hydrateGithub = deps.channels?.github;
+    const hydrateBroker = deps.channels?.broker;
+    if (hydrateGithub && hydrateBroker && hydrateBroker.id !== 'none') {
+      await boss.work<ProjectsGithubHydrateJob>(QUEUES.projectsGithubHydrate, { batchSize: 1 }, async ([job]) => {
+        if (!job) return;
+        const outcome = await runGithubHydrateJob(
+          { runtime: deps.runtime, workerDb: deps.workerDb, broker: hydrateBroker, github: hydrateGithub },
+          job.data,
+        );
+        console.log(`[projects-github-hydrate] ${job.data.mode} ${job.data.projectId.slice(0, 8)}: ${outcome}`);
+      });
+      await boss.work<ProjectsGithubOutboundJob>(QUEUES.projectsGithubOutbound, { batchSize: 1, includeMetadata: true }, async ([job]) => {
+        if (!job) return;
+        const outcome = await runGithubOutboundJob(
+          { runtime: deps.runtime, workerDb: deps.workerDb, broker: hydrateBroker, github: hydrateGithub },
+          job.data,
+          { retryCount: job.retryCount, retryLimit: PROJECTS_GITHUB_OUTBOUND_RETRY_LIMIT },
+        );
+        console.log(`[projects-github-outbound] ${job.data.deliveryId.slice(0, 8)}: ${outcome}`);
+      });
+    }
+  } else {
+    await dropCron(QUEUES.projectsGithubWebhook);
+    await dropCron(QUEUES.projectsGithubSweep);
   }
 
   // Meeting platform recordings (meetings integrations C1, #3173): a sweep every minute hands over the recordings a member chose to import, lists each due connection's finished recordings as suggestions and
@@ -2236,6 +2454,36 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     conversationPublishers && conversationBroker
       ? { broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined) }
       : undefined;
+  let stopped = false;
+  let pushingNative = false;
+  let nativePushFull = false;
+  const nativePushOrgs = new Set<string>();
+  const nativePushSweep = async (orgId?: string) => {
+    if (stopped) return;
+    if (orgId) nativePushOrgs.add(orgId);
+    else nativePushFull = true;
+    if (pushingNative) return;
+    pushingNative = true;
+    try {
+      while (!stopped && (nativePushFull || nativePushOrgs.size > 0)) {
+        if (nativePushFull) {
+          nativePushFull = false;
+          nativePushOrgs.clear();
+          await relayBatch(deps.workerDb, boss, async (trx) => [(onBatch) => enqueueNativePushes(onBatch, trx)]);
+          continue;
+        }
+        const nextOrg = nativePushOrgs.values().next().value;
+        if (!nextOrg) break;
+        nativePushOrgs.delete(nextOrg);
+        await relayBatch(deps.workerDb, boss, async (trx) => [(onBatch) => enqueueNativePushes(onBatch, trx, undefined, nextOrg)]);
+      }
+    } catch (error) {
+      console.warn('[native-push] sweep', error instanceof Error ? error.name : 'error');
+    } finally {
+      pushingNative = false;
+    }
+  };
+
   if (conversationPublishers && conversationBroker) {
     await boss.work<ConversationJob | ConversationSyncJob | ConversationAttachmentJob | ConversationChatJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
@@ -2264,6 +2512,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (job.data.action === 'history' || job.data.action === 'profile') {
         const outcome = await runConversationSync(sendDeps, job.data);
         console.log(`[conversations] ${job.data.action} ${job.data.action === 'profile' ? job.data.identityId : job.data.connectionId}: ${outcome}`);
+        if (deps.nativePush) void nativePushSweep(job.data.orgId);
         return;
       }
       const outcome = await runConversationJob(sendDeps, job.data);
@@ -2327,7 +2576,19 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         console.warn(`[kernel-push] ${job.data.eventId.slice(0, 8)} not queued`, error instanceof Error ? error.name : 'error');
       }
     }
+    if (deps.nativePush && job.data.type === 'kernel.proposal.created') void nativePushSweep(job.data.orgId);
   });
+
+  // Mobile native push (#4883): send content-free notification payloads via the configured NativePushSender adapter.
+  if (deps.nativePush) {
+    const nativePush = deps.nativePush;
+    const nativePushCheckUpstream = deps.runtime.sessionMode === 'db';
+    await boss.work<NativePushJob>(QUEUES.nativePush, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const done = await runNativePushJob({ runtime: deps.runtime, sender: nativePush, orgId: job.data.orgId, notificationId: job.data.notificationId, checkUpstream: nativePushCheckUpstream });
+      if (done.sent + done.gone + done.failed > 0) console.log(`[native-push] ${job.data.notificationId.slice(0, 8)}: sent ${done.sent}, gone ${done.gone}, failed ${done.failed}`);
+    });
+  }
 
   // Browser push of a kernel notification (#3736): read what to send, post it to each of the member's devices, record the answers.
   if (deps.push) {
@@ -2691,6 +2952,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     try {
       const done = await sweepMcpProposalNotices({ runtime: deps.runtime, workerDb: deps.workerDb });
       if (done > 0) console.log(`[mcp-proposal-notice] told the approvers of ${done} proposal(s)`);
+      if (done > 0 && deps.nativePush) void nativePushSweep();
     } catch (error) {
       console.error('[mcp-proposal-notice] sweep', error instanceof Error ? error.name : 'error');
     } finally {
@@ -2699,6 +2961,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   };
   const mcpProposalNoticeTimer = setInterval(() => void mcpProposalNoticeSweep(), MCP_PROPOSAL_NOTICE_SWEEP_MS);
   void mcpProposalNoticeSweep();
+  const nativePushTimer = deps.nativePush ? setInterval(() => void nativePushSweep(), NATIVE_PUSH_SWEEP_MS) : null;
 
   // The Engage reads of an AI app (#4069): a person who connected one before the consent screen named them is told once, in the app.
   let engageNoticing = false;
@@ -3144,7 +3407,6 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       .catch((error: unknown) => console.error(`[social-chat-alert] event ${row.event_id.slice(0, 8)}: not queued (${error instanceof Error ? error.name : typeof error})`));
 
   let running = false;
-  let stopped = false;
   const relay = async () => {
     if (running || stopped) return;
     running = true;
@@ -3779,6 +4041,54 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (row.type === 'projects.recurring.advanced' && typeof row.payload.wakeAgentId === 'string') {
                 return sendAgentWake(boss, row.org_id, row.payload.wakeAgentId);
               }
+              if (
+                projects &&
+                deps.channels?.github &&
+                deps.channels.broker &&
+                deps.channels.broker.id !== 'none' &&
+                row.type === 'projects.github.link_added' &&
+                row.payload.hydrating === true &&
+                typeof row.payload.projectId === 'string' &&
+                typeof row.payload.taskId === 'string' &&
+                typeof row.payload.linkId === 'string' &&
+                (row.payload.kind === 'issue' || row.payload.kind === 'pull_request') &&
+                typeof row.payload.externalNumber === 'number'
+              ) {
+                const hydrateJob: ProjectsGithubHydrateJob = {
+                  mode: 'link_refresh',
+                  orgId: row.org_id,
+                  projectId: row.payload.projectId,
+                  taskId: row.payload.taskId,
+                  linkId: row.payload.linkId,
+                  kind: row.payload.kind,
+                  externalNumber: row.payload.externalNumber,
+                };
+                return boss.send(QUEUES.projectsGithubHydrate, hydrateJob, projectsGithubHydrateJobOptions(hydrateJob));
+              }
+              if (
+                projects &&
+                deps.channels?.github &&
+                deps.channels.broker &&
+                deps.channels.broker.id !== 'none' &&
+                row.type === 'kernel.task.github_transitioned' &&
+                typeof row.payload.taskId === 'string' &&
+                typeof row.payload.previousStatus === 'string' &&
+                typeof row.payload.nextStatus === 'string'
+              ) {
+                const sweepJob: ProjectsGithubSweepJob = {
+                  mode: 'agent_task_transition',
+                  orgId: row.org_id,
+                  taskId: row.payload.taskId,
+                  previousStatus: row.payload.previousStatus,
+                  nextStatus: row.payload.nextStatus,
+                };
+                return boss.send(QUEUES.projectsGithubSweep, sweepJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.projectsGithubSweep, row.event_id),
+                  retryLimit: PROJECTS_GITHUB_OUTBOUND_RETRY_LIMIT,
+                  retryDelay: 10,
+                  retryBackoff: true,
+                });
+              }
               if (Object.hasOwn(AGENT_PROPOSAL_COMMANDS, row.type)) {
                 return boss.send(QUEUES.agentProposal, { orgId: row.org_id, eventId: row.event_id, type: row.type }, {
                   singletonKey: jobKey(row.org_id, QUEUES.agentProposal, row.event_id),
@@ -3886,34 +4196,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       const hostedFeeds = deps.channels?.bankFeedHosted;
       if (finance && deps.channels?.broker && hostedFeeds && Object.keys(hostedFeeds).length > 0) {
         const broker = deps.channels.broker;
-        for (;;) {
-          const tally = { ok: 0, refused: 0, dropped: 0 };
-          // The refused notices are counted on their hooks after the batch commits (see rejectBankFeedHook): one entry per refused notice.
-          const refusedHooks: string[] = [];
-          const claimed = await relayBatch(deps.workerDb, boss, async (trx) => {
-            const rows = await claimBankFeedHookNotices(trx);
-            const verdicts = await verifyBankFeedHookNotices({ runtime: deps.runtime, broker, providers: hostedFeeds, reject: async (hookId) => void refusedHooks.push(hookId) }, rows);
-            const seen = new Set<string>();
-            return rows.map((row, i) => {
-              const verdict = verdicts[i] ?? 'dropped';
-              tally[verdict]++;
-              if (verdict !== 'ok' || seen.has(row.connectionId)) return async () => null;
-              seen.add(row.connectionId);
-              const target = { orgId: row.orgId, connectionId: row.connectionId } satisfies BankFeedSyncJob;
-              return (boss: JobSender) =>
-                boss.send(QUEUES.bankFeedSync, target, {
-                  singletonKey: jobKey(target.orgId, QUEUES.bankFeedSync, target.connectionId),
-                  singletonSeconds: BANK_FEED_NOTICE_SLOT_SECONDS,
-                  retryLimit: BANK_FEED_SYNC_RETRY_LIMIT,
-                  retryDelay: 30,
-                  retryBackoff: true,
-                });
-            });
-          });
-          for (const hookId of refusedHooks) await rejectBankFeedHook(deps.workerDb, hookId);
-          if (claimed > 0) console.log(`[bank-feed-hook] ${claimed} notice(s): ${tally.ok} verified, ${tally.refused} refused, ${tally.dropped} dropped`);
-          if (claimed < BANK_FEED_HOOK_CLAIM) break;
-        }
+        await relayBankFeedHookBatches(
+          { workerDb: deps.workerDb, boss, runtime: deps.runtime, broker, providers: hostedFeeds },
+          ({ claimed, ok, refused, dropped }) => {
+            if (claimed > 0) console.log(`[bank-feed-hook] ${claimed} notice(s): ${ok} verified, ${refused} refused, ${dropped} dropped`);
+          },
+        );
       }
       // A signed push of a marketplace (TikTok Shop, Shopee, Lazada; #4327, S3a of #4315): the route stored the raw push under the hook key of one connection; here the connection's sealed secret is opened, the HMAC is checked
       // (constant-time) and the push must name the connection's own shop or seller, and each connection with a good push gets ONE coalesced poll (ids only: the body is never in a job). A refused one is counted on its hook after the batch
@@ -3966,7 +4254,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (ads) await runAdsDeletions({ runtime: deps.runtime, workerDb: deps.workerDb });
       // The notices the webhook parked (#2303): stored under their connections' orgs, then deleted. Nothing is waiting where
       // no connection has a platform that sends them.
-      await runConversationIntake({ workerDb: deps.workerDb, runtime: deps.runtime, businessLookup });
+      const intake = await runConversationIntake({ workerDb: deps.workerDb, runtime: deps.runtime, businessLookup });
+      if (deps.nativePush && intake.stored > 0) void nativePushSweep();
       // Meta's data deletion requests that name conversations (CV6, #2305), the same callback as the Ads one above.
       await runConversationDeletions({ runtime: deps.runtime, workerDb: deps.workerDb });
       await sweepStaleReplies({ workerDb: deps.workerDb, runtime: deps.runtime });
@@ -3998,6 +4287,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       await sweepConversationDrafts({ workerDb: deps.workerDb });
       // The expired "you are replying" markers of the Inbox (CV3).
       await sweepConversationComposing({ workerDb: deps.workerDb });
+      // The expired first-seen keys of WhatsApp webhook events (#5085).
+      await purgeInboundFirstSeen({ workerDb: deps.workerDb });
       // The campaign draft requests the job never answered (ads W1b): in every deployment, so a member can ask again after 15 minutes.
       await sweepAdsCampaignRequests({ workerDb: deps.workerDb });
       // The new conversations Vy drafts a reply for (CV8): only where a model is configured.
@@ -4006,6 +4297,20 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       await sweepConversationBlobs({ workerDb: deps.workerDb, store: deps.store });
       // Doomed note attachment blobs across all deletion paths (delete, trash_empty, member_items_purge, PDPL erase, org_purge): swept in every deployment.
       await sweepNoteAttachmentBlobs({ workerDb: deps.workerDb, store: deps.store });
+      if (projects && (await hasGithubWebhookWork(deps.workerDb))) {
+        await boss.send(
+          QUEUES.projectsGithubWebhook,
+          { trigger: 'relay' },
+          { singletonKey: systemJobKey(QUEUES.projectsGithubWebhook, 'drain'), singletonSeconds: 5 },
+        );
+      }
+      if (projects && (await hasGithubOutboundWork(deps.workerDb))) {
+        await boss.send(
+          QUEUES.projectsGithubSweep,
+          { trigger: 'relay' },
+          { singletonKey: systemJobKey(QUEUES.projectsGithubSweep, 'drain'), singletonSeconds: 5 },
+        );
+      }
     } catch (error) {
       console.error('[relay]', error);
     } finally {
@@ -4077,6 +4382,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     }
   };
   const heldTimer = setInterval(() => void heldSweep(), HELD_SWEEP_MS);
+  if (nativePushTimer) void nativePushSweep();
   console.log('[worker] started');
 
   return async () => {
@@ -4102,6 +4408,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (missingInvoiceTimer) clearInterval(missingInvoiceTimer);
     clearInterval(proposalNudgeTimer);
     clearInterval(mcpProposalNoticeTimer);
+    if (nativePushTimer) clearInterval(nativePushTimer);
     clearInterval(mcpEngageReadsNoticeTimer);
     clearInterval(securityTimer);
     if (closingTimer) clearInterval(closingTimer);

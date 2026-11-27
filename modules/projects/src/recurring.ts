@@ -20,6 +20,7 @@ import {
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { projectsManifest } from './manifest.ts';
+import { allocateProjectTaskNumber } from './github.ts';
 import { READERS, WRITERS, assertNotArchived, loadProject, taskNotFound, userOf } from './shared.ts';
 
 const DAY_MS = 86_400_000;
@@ -548,12 +549,15 @@ export const projectRecurringAdvance = defineCommand({
       .returning('id')
       .executeTakeFirstOrThrow();
 
+    const taskNumber = await allocateProjectTaskNumber(ctx.trx, ctx.orgId, input.projectId, ctx.now);
+
     await ctx.trx
       .insertInto('ludy_projects.project_task')
       .values({
         org_id: ctx.orgId,
         project_id: input.projectId,
         task_id: insertedTask.id,
+        task_number: taskNumber,
         recurrence: null,
         recurrence_count: 0,
         recurrence_last_due: null,

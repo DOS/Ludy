@@ -6,7 +6,7 @@ import { serve } from '@hono/node-server';
 import type { Server } from 'node:http';
 import { configureUploadTimeouts } from './upload-timeouts.ts';
 import { memberMeter } from './ai-meter.ts';
-import { summaryModelPort, type ModelPort } from './member-vy-ports.ts';
+import { createMeetingsBriefWriter, summaryModelPort, type ModelPort } from './member-vy-ports.ts';
 import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SignAiReader, SocialWriter, TodayWriter, WeeklyWriter, type InvoiceReader } from '@ludy/agent';
 import {
   BlueskyPublisher,
@@ -82,7 +82,9 @@ import { socialAgentPrograms, socialCommands, socialManifest, socialOverviewCont
 import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@ludy/mod-crm';
 import { hrCommands, hrManifest, hrQueries } from '@ludy/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@ludy/mod-notes';
-import { projectsCommands, projectsManifest, projectsQueries } from '@ludy/mod-projects';
+import { projectsCommands, projectsManifest, projectsQueries, setProjectsGithubAppInfo, setProjectsGithubBrokerAvailable } from '@ludy/mod-projects';
+import { createGithubClient } from '@ludy/github';
+import { githubTransport } from './github-transport.ts';
 import { adsBusy, adsCommands, adsManifest, adsQueries } from '@ludy/mod-ads';
 import { meetingsBusy, meetingsCommands, meetingsManifest, meetingsQueries, setMeetingVideoImport, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled, setTranslationTargets } from '@ludy/mod-meetings';
 import {
@@ -141,6 +143,8 @@ import { configureOpsAlerts, flushOpsAlerts } from './ops-alert.ts';
 // How long a stop waits for the queued operational alerts to post (#1993).
 const STOP_FLUSH_MS = 5_000;
 import { createPushSender, loadVapidKeys } from './web-push.ts';
+import type { NativePushOutcome, NativePushPayload, NativePushSender, NativePushTarget } from './native-push.ts';
+export type { NativePushOutcome, NativePushPayload, NativePushSender, NativePushTarget };
 import { WORKER_LAG_EXIT_MS, WORKER_LAG_SUSTAIN_MS, startLagWatchdog } from './back-pressure.ts';
 import { bankFeedHostedProviders, bankFeedProviders, type BankFeedProvider } from '@ludy/bank-feed';
 import { hostBoundFetch } from './marketplace-adapter-kit.ts';
@@ -215,13 +219,15 @@ export interface KernelAdapters {
           >
         >)
     | null;
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'monthCloseNote' | 'expenseVarianceNotes' | 'cashForecastSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'signDepositMatchSentence' | 'marketplaceLineSentence' | 'marketplaceFeeNotes' | 'marketplaceProposalNote' | 'marketplaceColumns' | 'supplierPayableLineSentence' | 'bankCandidatesLineSentence' | 'misaCheckLineSentence' | 'misaAmisBlockerNotes' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'projectCycleSummary' | 'roadmapDedupe' | 'roadmapChangelogDraft' | 'roadmapSignalMatch' | 'projectTriageAssist' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'payrollDiffExplain' | 'laborCheck' | 'recruitingBrief' | 'attendanceAnomalies' | 'cvExtract' | 'hrProbationSummary' | 'hrRequestDraft' | 'hrPolicyQa' | 'hrAddendumCheck' | 'hrOkrCheckinDraft' | 'signAcceptanceDraft'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'monthCloseNote' | 'expenseVarianceNotes' | 'unusualEntriesNotes' | 'quarterSummaryNotes' | 'cashForecastSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'signDepositMatchSentence' | 'marketplaceLineSentence' | 'marketplaceFeeNotes' | 'marketplaceProposalNote' | 'marketplaceColumns' | 'supplierPayableLineSentence' | 'bankCandidatesLineSentence' | 'misaCheckLineSentence' | 'misaAmisBlockerNotes' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'projectCycleSummary' | 'roadmapDedupe' | 'roadmapChangelogDraft' | 'roadmapSignalMatch' | 'projectTriageAssist' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'payrollDiffExplain' | 'laborCheck' | 'recruitingBrief' | 'attendanceAnomalies' | 'cvExtract' | 'hrProbationSummary' | 'hrRequestDraft' | 'hrPolicyQa' | 'hrAddendumCheck' | 'hrOkrCheckinDraft' | 'signAcceptanceDraft'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
   broker?: CredentialBroker;
   connectors?: readonly Connector[];
   billing?: Billing;
+  // Open mobile native push sender (#4883); unset on self-host so native push stays disabled with no vendor SDKs or secrets.
+  nativePush?: NativePushSender | null;
 }
 
 export type ResolvedAdapters = Required<KernelAdapters>;
@@ -304,6 +310,17 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
   const hasCredentialKey = Boolean(config.CREDENTIAL_KEY ?? config.CREDENTIAL_KEY_FILE);
   setSignCaBrokerAvailable(hasCredentialKey);
   setSignWebhookBrokerAvailable(hasCredentialKey);
+  setProjectsGithubBrokerAvailable(hasCredentialKey);
+  setProjectsGithubAppInfo({
+    configured: Boolean(
+      config.GITHUB_APP_ID &&
+        config.GITHUB_APP_PRIVATE_KEY &&
+        config.GITHUB_APP_CLIENT_ID &&
+        config.GITHUB_APP_CLIENT_SECRET &&
+        config.GITHUB_APP_WEBHOOK_SECRET,
+    ),
+    slug: config.GITHUB_APP_SLUG ?? null,
+  });
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({
       commands: buildKernelCommands({
@@ -769,6 +786,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     broker: adapters.broker ?? noCredentialBroker,
     connectors: adapters.connectors ?? [],
     billing: adapters.billing ?? selfHostBilling,
+    nativePush: adapters.nativePush ?? null,
   };
 
   function buildRuntime(connectionString: string, applicationName: string, max: number, mcpEntry?: 'worker') {
@@ -920,7 +938,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           // The marketplaces whose signed push the API stores for the worker (#4346, S2 of #4315): only the adapters this deployment runs (MARKETPLACE_PROVIDERS), and only with a credential broker, as the worker's relay needs one
           // to open the connection's secret: without it the route is not registered and no raw push can be stored.
           ...(resolved.broker.id !== 'none' ? { marketplacePush: { adapters: Object.keys(marketplaceProvidersOf(config)).filter(isMarketplacePushAdapter) } } : {}),
-          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', bankFeedHosted: bankFeedHostedOf(config), einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), misaAmis: Boolean(config.MISA_AMIS_CLIENT_ID), misaAsp: Boolean(config.MISA_ASP_CLIENT_ID), misaAmisPush: Boolean(config.MISA_AMIS_CLIENT_ID) && config.MISA_AMIS_PUSH === 'on', misaAspPush: Boolean(config.MISA_ASP_CLIENT_ID) && config.MISA_ASP_PUSH === 'on', emailSenderCheck: Boolean(config.INBOUND_AUTHSERV_ID), adsLaunchProviders: Object.keys(adWritersOf(config)), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', ...(whatsappApp(config) && config.CHANNEL_WHATSAPP_VERIFY_TOKEN ? { whatsapp: whatsappApp(config) } : {}), connectors: channelConnectors(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), publicUrl: appUrl(config), apiUrl: config.PUBLIC_URL, ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
+          ...(config.GITHUB_APP_WEBHOOK_SECRET ? { githubWebhook: { appWebhookSecret: config.GITHUB_APP_WEBHOOK_SECRET, appWebhookSecretPrevious: config.GITHUB_APP_WEBHOOK_SECRET_PREVIOUS } } : {}),
+          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', bankFeedHosted: bankFeedHostedOf(config), einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), misaAmis: Boolean(config.MISA_AMIS_CLIENT_ID), misaAsp: Boolean(config.MISA_ASP_CLIENT_ID), misaAmisPush: Boolean(config.MISA_AMIS_CLIENT_ID) && config.MISA_AMIS_PUSH === 'on', misaAspPush: Boolean(config.MISA_ASP_CLIENT_ID) && config.MISA_ASP_PUSH === 'on', emailSenderCheck: Boolean(config.INBOUND_AUTHSERV_ID), adsLaunchProviders: Object.keys(adWritersOf(config)), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', ...(whatsappApp(config) && config.CHANNEL_WHATSAPP_VERIFY_TOKEN ? { whatsapp: whatsappApp(config) } : {}), connectors: channelConnectors(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), github: createGithubClient({ transport: githubTransport(), ...(config.GITHUB_APP_ID && config.GITHUB_APP_PRIVATE_KEY ? { app: { appId: config.GITHUB_APP_ID, privateKeyPem: config.GITHUB_APP_PRIVATE_KEY } } : {}), ...(config.GITHUB_APP_CLIENT_ID && config.GITHUB_APP_CLIENT_SECRET ? { appOAuth: { clientId: config.GITHUB_APP_CLIENT_ID, clientSecret: config.GITHUB_APP_CLIENT_SECRET } } : {}) }), publicUrl: appUrl(config), apiUrl: config.PUBLIC_URL, ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}), ...(resolved.nativePush ? { nativePush: true } : {}) },
           ...(stream ? { stream } : {}),
           // An API process of its own waits in /readyz for its workers' build (#1952); the single "all" process is its
           // own worker, so it has none to wait for.
@@ -962,6 +981,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             extractor: resolved.ai,
             conversationWriter: resolved.conversationWriter,
             adsCampaignWriter: resolved.adsCampaignWriter,
+            meetingsBriefWriter: resolved.summaryModel ? createMeetingsBriefWriter(resolved.summaryModel) : null,
             extract: createExtractClient({ url: extractUrl, concurrency: extractConcurrency(config) }),
             inboundDomain: config.INBOUND_DOMAIN ?? null,
             revoker: resolved.identity.revoker,
@@ -974,7 +994,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             // The audio of a video-only platform recording (C2a, #3306): crove-media extracts it; without MEDIA_URL the extractor is not configured and such a recording fails `no_audio`.
             meetingsImportExtractor: mediaAudioExtractorFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS),
             ...(config.MEDIA_MAX_INPUT_BYTES ? { meetingsImportMediaInputBytes: config.MEDIA_MAX_INPUT_BYTES } : {}),
-            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), ...(config.MISA_AMIS_CLIENT_ID ? { misaAmis: misaAmisClientOf(config) as AmisClient, ...(config.MISA_AMIS_PUSH === 'on' ? { misaAmisPush: true } : {}) } : {}), ...(config.MISA_ASP_CLIENT_ID ? { misaAsp: misaAspClientOf(config) as AmisClient, ...(config.MISA_ASP_PUSH === 'on' ? { misaAspPush: true } : {}) } : {}), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), bankFeedHosted: bankFeedHostedOf(config), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config), adManagers: adManagersOf(config), adStateReaders: adStateReadersOf(config) },
+            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), ...(config.MISA_AMIS_CLIENT_ID ? { misaAmis: misaAmisClientOf(config) as AmisClient, ...(config.MISA_AMIS_PUSH === 'on' ? { misaAmisPush: true } : {}) } : {}), ...(config.MISA_ASP_CLIENT_ID ? { misaAsp: misaAspClientOf(config) as AmisClient, ...(config.MISA_ASP_PUSH === 'on' ? { misaAspPush: true } : {}) } : {}), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), github: createGithubClient({ transport: githubTransport(), ...(config.GITHUB_APP_ID && config.GITHUB_APP_PRIVATE_KEY ? { app: { appId: config.GITHUB_APP_ID, privateKeyPem: config.GITHUB_APP_PRIVATE_KEY } } : {}) }), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), bankFeedHosted: bankFeedHostedOf(config), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config), adManagers: adManagersOf(config), adStateReaders: adStateReadersOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,
@@ -987,6 +1007,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             ...(transcribeEnabled(config) ? { meetingsTranscribe: { provider: { baseURL: config.TRANSCRIBE_BASE_URL as string, apiKey: config.TRANSCRIBE_API_KEY ?? null, model: config.TRANSCRIBE_MODEL as string, mode: config.TRANSCRIBE_API_MODE }, measurer: mediaMeasurerFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS) } } : {}),
             outboxLagPauseSeconds: config.OUTBOX_LAG_PAUSE_SECONDS,
             ...(vapid ? { push: { sender: createPushSender(vapid), brand: config.BRAND_NAME } } : {}),
+            ...(resolved.nativePush ? { nativePush: resolved.nativePush } : {}),
           }),
         );
         // The worker watchdog (#894, plan §4.9): a loop blocked over 5 s for 30 s exits the process, which restarts.

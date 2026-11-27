@@ -67,6 +67,9 @@ const NOT_SHOWN: Record<string, string> = {
   TASK_CLOSED: 'agents',
   OUTSIDE_SUBTREE: 'agents',
   DEPTH_LIMIT: 'agents',
+  // System-started daily member-Vy runs (#5073): internal worker-only command, never called from the SPA.
+  TENANT_NOT_ACTIVE: 'worker',
+  BRIEF_LINES_NOT_ELIGIBLE: 'worker',
   // The operator's org-purge command (#1024) runs in the worker's container, never from a browser.
   ORG_PURGE_REFUSED: 'operator',
   ORG_PURGE_BLOB_FAILED: 'operator',

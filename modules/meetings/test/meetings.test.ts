@@ -118,6 +118,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.commitments.start',
       'meetings.template_suggest.start',
       'meetings.open_points.start',
+      'meetings.catch_up.start',
+      'meetings.notes_minutes.start',
       'meetings.sales_insight.start',
       'meetings.label.suggest_start',
       'meetings.summary.copy_result',
@@ -143,6 +145,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.translation.transcript_stop',
       'meetings.ask.start',
       'meetings.brief.start',
+      'meetings.brief.store_lines',
       'meetings.digest.start',
       'meetings.voice_cue.draft',
       'meetings.morning.set',
@@ -224,6 +227,10 @@ describe('meetings commands and queries construction', () => {
       'meetings.template.suggest',
       'meetings.template_suggest.status',
       'meetings.open_points.status',
+      'meetings.catch_up.status',
+      'meetings.catch_up.facts',
+      'meetings.notes_minutes.status',
+      'meetings.notes_minutes.facts',
       'meetings.sales_insight.status',
       'meetings.sales_insight.facts',
       'meetings.label.suggest_status',
@@ -245,6 +252,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.ask.lines',
       'meetings.ask.status',
       'meetings.brief.facts',
+      'meetings.brief.daily_facts',
       'meetings.brief.status',
       'meetings.digest.facts',
       'meetings.digest.status',
@@ -259,6 +267,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.minutes_docx.download',
       'meetings.today.facts',
       'meetings.morning.get',
+      'meetings.morning.mail_content',
       'meetings.weekly.get',
       'meetings.assignee.facts',
       'meetings.assignee.status',
@@ -303,6 +312,17 @@ describe('meetings commands and queries construction', () => {
     expect(meetingAudioRead.name).toBe('meetings.meeting.audio_read');
     expect(meetingVideoRead.name).toBe('meetings.meeting.video_read');
     expect(meetingMediaMeta.name).toBe('meetings.meeting.media_meta');
+  });
+
+  it('opts only meetings.brief.daily_facts into memberVy with narrow CRM reads and no sensitive, stream, or mcp flags', () => {
+    const optedIn = meetingsQueries.filter((q) => q.memberVy !== undefined);
+    expect(optedIn.map((q) => q.name)).toEqual(['meetings.brief.daily_facts']);
+    const dailyFacts = optedIn[0]!;
+    expect(dailyFacts.access).toEqual(['owner', 'admin', 'member']);
+    expect(dailyFacts.memberVy).toEqual({ reads: ['crm.deal.get', 'crm.deal.list', 'crm.stage.list'] });
+    expect(dailyFacts.sensitive).toBeUndefined();
+    expect(dailyFacts.stream).toBeUndefined();
+    expect(dailyFacts.mcp).toBeUndefined();
   });
 });
 

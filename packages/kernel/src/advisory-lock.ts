@@ -39,6 +39,8 @@ export async function acquireAdvisoryXactLockShared(trx: CommandContext['trx'], 
   await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${trimmed}, 0))`.execute(trx);
 }
 
+// Global lock hierarchy for note-bound Vy runs (#4725, synchronized with packages/kernel/src/member-vy.ts):
+//   (note row locks of DELETE) -> adv_lock('ludy.note_vy:<org>') -> ai_run FOR UPDATE -> member_vy_result
 /** Canonical per-org lock key serializing note-bound Vy starts (shared) against note hard-delete trigger (exclusive). */
 export function noteVyLockKey(orgId: string): string {
   return advisoryLockKey('ludy.note_vy', orgId.toLowerCase());
@@ -56,10 +58,22 @@ export async function acquireNoteVyLock(trx: CommandContext['trx'], orgId: strin
   await acquireAdvisoryXactLockShared(trx, noteVyLockKey(orgId));
 }
 
-// Global lock hierarchy for WhatsApp number hand-over (#3152):
-//   1. ludy.whatsapp_handover:<externalAccountId> (cross-org advisory lock)
+// Global lock hierarchy for cross-org exclusive channel accounts (WhatsApp phone numbers #3152, GitHub App installations #5158):
+//   1. ludy.whatsapp_handover:<externalAccountId> or ludy.github_app_handover:<externalAccountId> (cross-org advisory lock)
 //   2. crove.channel:<orgId>:<provider>:<externalAccountId> (per-org advisory lock)
 //   3. SELECT ... FOR UPDATE (row lock acquired by the caller after this helper returns)
+function handoverLockKey(provider: string, externalAccountId: string | null): string | null {
+  const clean = provider.trim();
+  const prefix =
+    clean === 'whatsapp'
+      ? 'ludy.whatsapp_handover'
+      : clean === 'github_app'
+        ? 'ludy.github_app_handover'
+        : null;
+  if (!prefix) return null;
+  return externalAccountId === null ? `${prefix}:` : advisoryLockKey(prefix, externalAccountId);
+}
+
 export async function acquireChannelLocks(
   trx: CommandContext['trx'],
   orgId: string,
@@ -67,7 +81,7 @@ export async function acquireChannelLocks(
   externalAccountId: string,
 ): Promise<void> {
   const channelKey = advisoryLockKey('crove.channel', orgId, provider, externalAccountId);
-  const handoverKey = provider.trim() === 'whatsapp' ? advisoryLockKey('ludy.whatsapp_handover', externalAccountId) : null;
+  const handoverKey = handoverLockKey(provider, externalAccountId);
   if (handoverKey !== null) {
     await acquireAdvisoryXactLock(trx, handoverKey);
   }
@@ -87,8 +101,9 @@ export async function acquireChannelLocksForStoredRow(
     return;
   }
   const channelPrefix = advisoryLockKey('crove.channel', orgId, provider);
-  if (provider.trim() === 'whatsapp') {
-    await acquireAdvisoryXactLock(trx, 'ludy.whatsapp_handover:');
+  const handoverEmptyKey = handoverLockKey(provider, null);
+  if (handoverEmptyKey !== null) {
+    await acquireAdvisoryXactLock(trx, handoverEmptyKey);
   }
   await acquireAdvisoryXactLock(trx, `${channelPrefix}:`);
 }

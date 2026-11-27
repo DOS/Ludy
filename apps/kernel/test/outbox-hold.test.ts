@@ -65,6 +65,7 @@ describe('which events wait', () => {
     expect(heldAppOf('notes.todo.handed_over')).toBeNull();
     expect(heldAppOf('kernel.file.ingested')).toBe('finance');
     expect(heldAppOf('kernel.file.reextract_requested')).toBe('finance');
+    expect(heldAppOf('kernel.task.github_transitioned')).toBe('projects');
   });
 
   it('never parks the keeping events, a takedown, a kernel event, a Meetings event (bound to its time) or a public act a person asked for then', () => {
@@ -100,8 +101,12 @@ describe('which events wait', () => {
       unclassed.push(type);
     }
     expect(unclassed, 'an event of an app that is neither parked nor listed as never parked').toEqual([]);
-    // The two file events are the kernel's only ones with an app's consumer.
-    expect(types.filter((t) => t.startsWith('kernel.') && heldAppOf(t) !== null).sort()).toEqual(['kernel.file.ingested', 'kernel.file.reextract_requested']);
+    // The kernel events that park under an app's consumer (Finance file extraction and Projects GitHub agent task sync).
+    expect(types.filter((t) => t.startsWith('kernel.') && heldAppOf(t) !== null).sort()).toEqual([
+      'kernel.file.ingested',
+      'kernel.file.reextract_requested',
+      'kernel.task.github_transitioned',
+    ]);
   });
 });
 

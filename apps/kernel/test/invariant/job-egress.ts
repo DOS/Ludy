@@ -164,7 +164,6 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
 // base copy already knows it. Remove the entry once the field is on the base branch.
 export const PENDING_DEPS: Readonly<Record<string, string>> = {
   meetingsBriefWriter: '#5073',
-  nativePush: '#4883',
 };
 
 // What the classification of WorkerDeps gets wrong (#1663), given its top-level fields: a field DEPS_REACH does not

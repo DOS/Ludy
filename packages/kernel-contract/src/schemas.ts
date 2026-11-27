@@ -854,6 +854,9 @@ export const zStatementSummary = z.object({
   // Of those, lines whose bank reference the account already holds with another date or amount (#2191): stored flagged,
   // never taken for a duplicate.
   conflictLines: z.number().int().nonnegative().default(0),
+  // Set when the account is fed from a cut-over day on (#4218, #4223): the file's lines on or after `from` are
+  // skipped (not booked twice), `leftOut` of them, kept apart from `duplicateLines` already in the books.
+  feed: z.object({ from: zLocalDate, leftOut: z.number().int().nonnegative() }).nullable().default(null),
   from: zLocalDate.nullable(),
   to: zLocalDate.nullable(),
   totalIn: zMoney,
@@ -1416,8 +1419,12 @@ const zUnmappedRow = z.object({ accountCode: z.string(), accountName: z.string()
 // the warnings of the period's own statement, kept for the column.
 const zColumnAmounts = z.record(z.string(), zMoney);
 const zComparedPeriod = z.object({ period: zLedgerPeriod, from: zLocalDate, to: zLocalDate, amounts: zColumnAmounts, unmapped: z.number().int().nonnegative() });
+// `regime` is the chart the income statement (B02) is read under, the entity's books on the period's last day (#5187; TT133 when left out), and `mixedCharts` says a part of the period or of a comparison column was booked under the other chart.
+// B01 keeps the TT133 layout under both until the TT99 B01-DN map exists (#5204).
 export const zFinancialStatements = z.object({
   period: zLedgerPeriodRange,
+  regime: z.enum(['tt133', 'tt99']).optional(),
+  mixedCharts: z.boolean().optional(),
   b01: z.object({ asOf: zLocalDate, lines: z.array(zStatementLine), unmapped: z.array(zUnmappedRow), balanced: z.boolean() }),
   b02: z.object({ from: zLocalDate, to: zLocalDate, lines: z.array(zStatementLine), unmapped: z.array(zUnmappedRow) }),
   comparison: z.object({
@@ -2825,6 +2832,42 @@ export const zPushSubscribe = z.strictObject({
   auth: z.string().min(1).max(128),
   label: z.string().max(200).optional(),
 });
+
+// Mobile native push (#4883, ADR-0059): scoped APNs/FCM device registration bound to the signed-in session.
+// Tokens are opaque device registration tokens (never returned by queries, never logged or audited).
+export const NATIVE_PUSH_PLATFORMS = ['apns', 'fcm'] as const;
+export const zNativePushPlatform = z.enum(NATIVE_PUSH_PLATFORMS);
+export type NativePushPlatform = z.infer<typeof zNativePushPlatform>;
+
+export const zNativePushDeviceSummary = z.object({
+  id: zId,
+  platform: zNativePushPlatform,
+  label: z.string().nullable(),
+  createdAt: z.string(),
+  lastUsedAt: z.string().nullable(),
+  current: z.boolean(),
+});
+
+export const zNativePushStatus = z.object({
+  enabled: z.boolean(),
+  registered: z.boolean(),
+  devices: z.array(zNativePushDeviceSummary),
+});
+
+const noNulChar = (value: string) => !value.includes('\0');
+const zNativePushToken = z.string().trim().min(16).max(4096).regex(/^\S+$/).refine(noNulChar, 'Invalid control character');
+
+export const zNativePushRegister = z.strictObject({
+  platform: zNativePushPlatform,
+  token: zNativePushToken,
+  label: z.string().trim().min(1).max(120).refine(noNulChar, 'Invalid control character').optional(),
+});
+
+export const zNativePushUnregister = z.union([
+  z.strictObject({ id: zId }),
+  z.strictObject({ platform: zNativePushPlatform, token: zNativePushToken }),
+  z.strictObject({ current: z.literal(true) }),
+]);
 
 // Who follows a channel's account (#1146), as Instagram and Threads give it: shares of the followers by age bucket
 // ("18-24"), gender ("F", "M", "U"), city as the platform names it, and country (ISO 3166-1 alpha-2), each with how

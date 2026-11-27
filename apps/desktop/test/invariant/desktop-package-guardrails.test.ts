@@ -6,7 +6,39 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const WORKFLOW_PATH = fileURLToPath(new URL('../../../../.github/workflows/desktop-package.yml', import.meta.url));
+const BUILD_WORKFLOW_PATH = fileURLToPath(new URL('../../../../.github/workflows/desktop-build.yml', import.meta.url));
 const PACKAGE_SCRIPT_PATH = fileURLToPath(new URL('../../scripts/package.mjs', import.meta.url));
+
+function extractYamlRunBlocks(yamlText: string): Array<{ line: number; body: string }> {
+  const lines = yamlText.split(/\r?\n/);
+  const blocks: Array<{ line: number; body: string }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const m = /^(\s*)run:\s*(.*)$/.exec(line);
+    if (!m) continue;
+    const baseIndent = m[1]!.length;
+    const inline = m[2]!.trim();
+    if (inline === '|' || inline === '|-' || inline === '|+' || inline === '>' || inline === '>-') {
+      const chunk: string[] = [];
+      for (let j = i + 1; j < lines.length; j++) {
+        const nextLine = lines[j]!;
+        if (nextLine.trim() === '') {
+          chunk.push('');
+          continue;
+        }
+        const indentMatch = /^(\s*)/.exec(nextLine);
+        const nextIndent = indentMatch ? indentMatch[1]!.length : 0;
+        if (nextIndent <= baseIndent) break;
+        chunk.push(nextLine);
+        i = j;
+      }
+      blocks.push({ line: i + 1, body: chunk.join('\n') });
+    } else {
+      blocks.push({ line: i + 1, body: inline });
+    }
+  }
+  return blocks;
+}
 
 describe('desktop-package workflow guardrails', () => {
   it('runs only via workflow_dispatch from refs/heads/main and gates signing behind desktop-release environment', () => {
@@ -172,5 +204,95 @@ describe('desktop-package workflow guardrails', () => {
     for (const ref of usesMatches) {
       expect(ref, ref).toMatch(/@[0-9a-f]{40}$/);
     }
+  });
+
+  it('enforces macOS dry-run, signed notarization, Keychain cleanup, zero secrets in desktop-build, and no expression injection in run blocks', () => {
+    const workflow = readFileSync(WORKFLOW_PATH, 'utf8');
+    const buildWorkflow = readFileSync(BUILD_WORKFLOW_PATH, 'utf8');
+    const macSigningScript = readFileSync(fileURLToPath(new URL('../../scripts/macos-signing.mjs', import.meta.url)), 'utf8');
+    const macPackageScript = readFileSync(fileURLToPath(new URL('../../scripts/package-mac.mjs', import.meta.url)), 'utf8');
+
+    // desktop-build.yml must build unsigned macOS arm64 + x64 without any secrets, trigger push on main/dev, and pin all actions to 40-hex SHAs.
+    expect(buildWorkflow).toMatch(/\n\s+push:\s*\n\s+branches:\s*\[main,\s*dev\]/);
+    expect(buildWorkflow).toMatch(/\n\s+macos:\s*\n[\s\S]*?runs-on:\s*macos-latest/);
+    expect(buildWorkflow).toContain('node apps/desktop/scripts/package-mac.mjs --arch all');
+    expect(buildWorkflow).toContain('shasum -a 256 -c SHA256SUMS.txt');
+    expect(buildWorkflow).toContain('hdiutil verify "$arch_dir/$dmg"');
+    expect(buildWorkflow).toContain('inspectZipCentralDirectory(process.argv[1])');
+    expect(buildWorkflow).toContain('verifyZipDecompressedSizeBounds(process.argv[1])');
+    expect(buildWorkflow).toContain('verifyExtractedDirectorySymlinks');
+    const macSmokeIdx = buildWorkflow.indexOf('name: Smoke-start packaged macOS app');
+    const macSummaryIdx = buildWorkflow.indexOf('name: Idle memory report for packaged macOS app');
+    expect(macSmokeIdx).toBeGreaterThan(-1);
+    expect(macSummaryIdx).toBeGreaterThan(macSmokeIdx);
+    expect(buildWorkflow.slice(macSmokeIdx, macSummaryIdx)).not.toContain('continue-on-error: true');
+    expect(buildWorkflow).not.toContain('secrets.');
+    const buildUses = [...buildWorkflow.matchAll(/uses:\s*([^\s#]+)/g)].map((m) => m[1]);
+    expect(buildUses.length).toBeGreaterThan(0);
+    for (const ref of buildUses) {
+      expect(ref, ref).toMatch(/@[0-9a-f]{40}$/);
+    }
+
+    // Zero ${{ ... }} expression interpolation inside any run: block in either desktop workflow.
+    for (const [label, src] of [
+      ['desktop-package.yml', workflow],
+      ['desktop-build.yml', buildWorkflow],
+    ] as const) {
+      const runBlocks = extractYamlRunBlocks(src);
+      expect(runBlocks.length, label).toBeGreaterThan(0);
+      for (const block of runBlocks) {
+        expect(block.body, `${label}:${block.line}`).not.toContain('${{');
+      }
+    }
+
+    // desktop-package.yml must preserve platform choices (defaulting to windows so existing signed runs stay scoped), macOS dry-run, and macOS signed gating in desktop-release.
+    expect(workflow).toContain('options: [windows, macos, all]');
+    expect(workflow).toContain('default: windows');
+    expect(workflow).toContain("'macOS build (unsigned, arm64 & x64), tests and size'");
+    expect(workflow).toContain('build-mac-dry-run:');
+    expect(workflow).toContain('node apps/desktop/scripts/package-mac.mjs --version "$VERSION" --arch all');
+
+    const macSignedIdx = workflow.indexOf('  build-mac-signed:');
+    const macSecretCheckIdx = workflow.indexOf('name: Validate macOS signing and notarization secret presence', macSignedIdx);
+    const macUnitIdx = workflow.indexOf('pnpm exec vitest run --project unit apps/desktop', macSecretCheckIdx);
+    const macStageIdx = workflow.indexOf('name: Stage ephemeral macOS signing certificate and API key', macUnitIdx);
+    const macSignPkgIdx = workflow.indexOf('node apps/desktop/scripts/package-mac.mjs --version "$VERSION" --arch all --sign', macStageIdx);
+    const macCleanupIdx = workflow.indexOf('name: Clean up ephemeral macOS signing credentials and Keychain', macSignPkgIdx);
+    expect(macSignedIdx).toBeGreaterThan(-1);
+    expect(macSecretCheckIdx).toBeGreaterThan(macSignedIdx);
+    expect(macUnitIdx).toBeGreaterThan(macSecretCheckIdx);
+    expect(macStageIdx).toBeGreaterThan(macUnitIdx);
+    expect(macSignPkgIdx).toBeGreaterThan(macStageIdx);
+    expect(macCleanupIdx).toBeGreaterThan(macSignPkgIdx);
+
+    const macSignedBlock = workflow.slice(macSignedIdx, workflow.indexOf('\n  release:', macSignedIdx));
+    expect(macSignedBlock).toContain('environment: desktop-release');
+    expect(macSignedBlock).toContain("if: github.ref == 'refs/heads/main'");
+    expect(macSignedBlock).toContain('xcrun stapler validate');
+    expect(macSignedBlock).toContain('spctl -a -t open --context context:primary-signature -vv');
+    expect(macSignedBlock).toContain('if: always()');
+    expect(macSignedBlock).toContain('LUDY_MAC_KEYCHAIN_OWNER_MARKER');
+    expect(macSignedBlock).toContain('kc_dir="$(cd "$kc_dir" && pwd -P)"');
+    expect(macSignedBlock).not.toContain('| xargs');
+    expect(macSignedBlock).toContain('security delete-keychain "$LUDY_MAC_EPHEMERAL_KEYCHAIN"');
+    expect(macSignedBlock).toContain('$RUNNER_TEMP/ludy-apple-devid.p12');
+    expect(macSignedBlock).toContain('$RUNNER_TEMP/ludy-notary-key.p8');
+
+    // Never ship embedded Apple .p12/.p8 base64 payloads in workflow YAML.
+    expect(workflow).not.toMatch(/APPLE_DEVELOPER_ID_CERT_P12_BASE64:\s*['"]?[A-Za-z0-9+/=]{16,}/);
+    expect(workflow).not.toMatch(/APPLE_NOTARY_API_KEY_P8_BASE64:\s*['"]?[A-Za-z0-9+/=]{16,}/);
+
+    // Release job waits on both build-signed and build-mac-signed and keeps non-colliding per-arch manifests/checksums.
+    expect(workflow).toContain('needs: [prepare, build-signed, build-mac-signed]');
+    expect(workflow).toContain('ludy-desktop-signed-darwin');
+    expect(workflow).toContain('release-manifest-darwin-${arch}.json');
+    expect(workflow).toContain('SHA256SUMS-darwin-${arch}.txt');
+
+    // macOS packaging/signing scripts must never disable continueOnError safety or invoke @electron/notarize with argv passwords.
+    expect(macSigningScript).toContain('continueOnError: false');
+    expect(macSigningScript).toContain('security');
+    expect(macSigningScript).not.toMatch(/['"]--password['"]/);
+    expect(macPackageScript).toContain('verifyMacAppBundle');
+    expect(macPackageScript).toContain('verifyMacSignedPackage');
   });
 });

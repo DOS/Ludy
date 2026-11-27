@@ -16,6 +16,8 @@ import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import {
   createOrg,
+  FAILED_NOTE_ATTACHMENT_REASON,
+  FAILED_PRIVATE_NOTE_ATTACHMENT_REASON,
   kernelCommands,
   kernelQueries,
   PENDING_NOTE_ATTACHMENT_REASON,
@@ -514,6 +516,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     const found = await rt.execute<PersonalDataResult>('kernel.personal_data.find', { value: email }, { actor: asUser(o.owner.id), orgId: o.orgId });
     expect(found.matches.map((m) => m.column).sort()).toEqual(['ludy_notes.attachment.extracted_text']);
     expect(found.privateItems).toEqual([{ authorUserId: o.author.id, notes: 1, todos: 0 }]);
+    expect(found.pendingNoteAttachments).toBeUndefined();
     expect(JSON.stringify(found)).not.toContain('ho-so-');
 
     // Backdate both notes' updated_at so we verify shared- and private-note attachment erasure symmetrically bump updated_at.
@@ -1295,5 +1298,238 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
       await rollingTracker.drain();
       await rollingGate.end().catch(() => undefined);
     }
+  });
+
+  it('surfaces pendingNoteAttachments in personalDataFind with owner-only private counts and zero existence oracle (#5127)', async () => {
+    const o = await org();
+    const probe = 'pending-find-parity@example.com';
+
+    // 0 pending attachments: field is omitted for both owner and admin (100% backward compatible).
+    const ownerEmpty = await rt.execute<PersonalDataResult>('kernel.personal_data.find', { value: probe }, { actor: asUser(o.owner.id), orgId: o.orgId });
+    const adminEmpty = await rt.execute<PersonalDataResult>('kernel.personal_data.find', { value: probe }, { actor: asUser(o.admin.id), orgId: o.orgId });
+    expect(ownerEmpty.pendingNoteAttachments).toBeUndefined();
+    expect(adminEmpty.pendingNoteAttachments).toBeUndefined();
+
+    // Private pending attachment only: owner sees { shared: 0, private: 1 }, admin still sees undefined (no private oracle!).
+    const privNote = await createNote(o, o.author, 'private', 'Ghi chú riêng chờ trích xuất');
+    const privPending = await attached(o, o.author, privNote, pdf('priv-pending'), 'tai-lieu-mat-pending.pdf');
+    const ownerPrivOnly = await rt.execute<PersonalDataResult>('kernel.personal_data.find', { value: probe }, { actor: asUser(o.owner.id), orgId: o.orgId });
+    const adminPrivOnly = await rt.execute<PersonalDataResult>('kernel.personal_data.find', { value: probe }, { actor: asUser(o.admin.id), orgId: o.orgId });
+    expect(ownerPrivOnly.pendingNoteAttachments).toEqual({ shared: 0, private: 1 });
+    expect(adminPrivOnly.pendingNoteAttachments).toBeUndefined();
+    const ownerPrivJson = JSON.stringify(ownerPrivOnly);
+    expect(ownerPrivJson).not.toContain('tai-lieu-mat-pending');
+    expect(ownerPrivJson).not.toContain(privNote);
+    expect(ownerPrivJson).not.toContain(privPending.id);
+    expect(ownerPrivJson).not.toContain(o.author.id);
+
+    // Shared + private pending attachments: owner sees { shared: 1, private: 1 }, admin sees { shared: 1, private: null }.
+    const sharedNote = await createNote(o, o.author, 'org', 'Ghi chú chung chờ trích xuất');
+    const sharedPending = await attached(o, o.author, sharedNote, pdf('shared-pending'), 'tai-lieu-chung-pending.pdf');
+    const ownerBoth = await rt.execute<PersonalDataResult>('kernel.personal_data.find', { value: probe }, { actor: asUser(o.owner.id), orgId: o.orgId });
+    const adminBoth = await rt.execute<PersonalDataResult>('kernel.personal_data.find', { value: probe }, { actor: asUser(o.admin.id), orgId: o.orgId });
+    expect(ownerBoth.pendingNoteAttachments).toEqual({ shared: 1, private: 1 });
+    expect(adminBoth.pendingNoteAttachments).toEqual({ shared: 1, private: null });
+    const adminBothJson = JSON.stringify(adminBoth);
+    expect(adminBothJson).not.toContain('tai-lieu-mat-pending');
+    expect(adminBothJson).not.toContain(privNote);
+    expect(adminBothJson).not.toContain(privPending.id);
+    expect(adminBothJson).not.toContain(o.author.id);
+
+    // Once extracted, pendingNoteAttachments returns to undefined.
+    extract.text = 'Nội dung sạch không khớp';
+    await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: privPending.id });
+    await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: sharedPending.id });
+    const afterExtract = await rt.execute<PersonalDataResult>('kernel.personal_data.find', { value: probe }, { actor: asUser(o.owner.id), orgId: o.orgId });
+    expect(afterExtract.pendingNoteAttachments).toBeUndefined();
+  });
+
+  it('reports failed shared and private note attachments in kept[] alongside pending without disclosing private metadata, and keeps shared note_template updated_at monotonic (#5127)', async () => {
+    const o = await org();
+    const probeEmail = 'failed-parity@example.com';
+
+    // Shared failed + shared pending + private failed + private pending attachments (with unmatching filenames so they remain in kept[]).
+    const sharedNote = await createNote(o, o.author, 'org', `Hồ sơ ${probeEmail}`);
+    const sharedPending = await attached(o, o.author, sharedNote, pdf('s-pend'), 'chung-pending.pdf');
+    const sharedFailed = await attached(o, o.author, sharedNote, pdf('s-fail'), 'chung-failed.pdf');
+    const privNote = await createNote(o, o.author, 'private', 'Ghi chú riêng sạch');
+    const privPending = await attached(o, o.author, privNote, pdf('p-pend'), 'bi-mat-pending.pdf');
+    const privFailed = await attached(o, o.author, privNote, pdf('p-fail'), 'bi-mat-failed.pdf');
+
+    // Mark the two failed attachments via the worker definer.
+    expect(
+      await worker.execute<{ updated: boolean }>(
+        'notes.attachment.extract_record',
+        { attachmentId: sharedFailed.id, status: 'failed', extractedText: null },
+        { actor: SYSTEM, orgId: o.orgId },
+      ),
+    ).toEqual({ updated: true });
+    expect(
+      await worker.execute<{ updated: boolean }>(
+        'notes.attachment.extract_record',
+        { attachmentId: privFailed.id, status: 'failed', extractedText: null },
+        { actor: SYSTEM, orgId: o.orgId },
+      ),
+    ).toEqual({ updated: true });
+
+    // Shared note_template with updated_at ahead of transaction start time must stay monotonic after redaction.
+    const tplRes = await rows<{ id: string }>(
+      `INSERT INTO ludy_notes.note_template (org_id, author_user_id, visibility, name, title, body, tags)
+       VALUES ($1, $2, 'org', $3, $3, 'Nội dung', ARRAY['mau'])
+       RETURNING id`,
+      [o.orgId, o.owner.id, `Mẫu ${probeEmail}`],
+    );
+    const tplId = tplRes[0]!.id;
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `UPDATE ludy_notes.note_template
+            SET updated_at = pg_catalog.clock_timestamp() + interval '10 minutes'
+          WHERE org_id = $1 AND id = $2`,
+        [o.orgId, tplId],
+      );
+      await c.query('COMMIT');
+    });
+    const templateUpdatedAt = async () =>
+      new Date(
+        (await rows<{ updated_at: Date | string }>('SELECT updated_at FROM ludy_notes.note_template WHERE org_id = $1 AND id = $2', [o.orgId, tplId]))[0]!.updated_at,
+      ).getTime();
+    const beforeTplTs = await templateUpdatedAt();
+
+    // Owner-only refusal check on private_failed_attachment_count().
+    await expect(rows('SELECT ludy_notes.private_failed_attachment_count()')).rejects.toThrow();
+    await expect(workerPool.query('SELECT ludy_notes.private_failed_attachment_count()')).rejects.toThrow();
+    const queryFailedCountAs = async (who: Person): Promise<string> => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const ctxToken = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+          userId: who.id,
+          orgId: o.orgId,
+          sessionId: null,
+          aal: 'aal1',
+          mfaAt: null,
+        });
+        await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, ctxToken]);
+        const res = await client.query<{ n: string }>('SELECT ludy_notes.private_failed_attachment_count()::text AS n');
+        return res.rows[0]?.n ?? '';
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    };
+    await expect(queryFailedCountAs(o.admin)).rejects.toMatchObject({ code: '42501', message: 'NOTES_FORBIDDEN' });
+    await expect(queryFailedCountAs(o.author)).rejects.toMatchObject({ code: '42501', message: 'NOTES_FORBIDDEN' });
+    await expect(queryFailedCountAs(o.owner)).resolves.toBe('1');
+
+    const eraseRes = await rt.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: probeEmail },
+      { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(eraseRes.erased).toContainEqual({ column: 'ludy_notes.note_template.name', rows: 1 });
+    expect(await templateUpdatedAt()).toBeGreaterThanOrEqual(beforeTplTs);
+    expect(eraseRes.kept).toEqual(
+      expect.arrayContaining([
+        { column: 'ludy_notes.attachment.extracted_text', rows: 1, reason: PENDING_NOTE_ATTACHMENT_REASON },
+        { column: 'ludy_notes.attachment.extracted_text', rows: 1, reason: FAILED_NOTE_ATTACHMENT_REASON },
+        { column: 'ludy_notes.attachment', rows: 1, reason: PENDING_PRIVATE_NOTE_ATTACHMENT_REASON },
+        { column: 'ludy_notes.attachment', rows: 1, reason: FAILED_PRIVATE_NOTE_ATTACHMENT_REASON },
+      ]),
+    );
+    const eraseJson = JSON.stringify(eraseRes);
+    expect(eraseJson).not.toContain('bi-mat-pending');
+    expect(eraseJson).not.toContain('bi-mat-failed');
+    expect(eraseJson).not.toContain(privNote);
+    expect(eraseJson).not.toContain(privPending.id);
+    expect(eraseJson).not.toContain(privFailed.id);
+    expect(eraseJson).not.toContain(o.author.id);
+
+    // Erase audit row must not expose private attachment counts (ludy_notes.attachment) to admins reading audit_event.
+    const [eraseAudit] = await rows<{ detail: { kept?: Record<string, number> } }>(
+      `SELECT detail FROM ludy_kernel.audit_event
+        WHERE org_id = $1 AND command = 'kernel.personal_data.erase' AND outcome = 'ok'
+        ORDER BY id DESC LIMIT 1`,
+      [o.orgId],
+    );
+    expect(eraseAudit?.detail.kept?.['ludy_notes.attachment.extracted_text']).toBe(2);
+    expect(eraseAudit?.detail.kept).not.toHaveProperty('ludy_notes.attachment');
+
+    // Separate org with ONLY a private failed attachment (0 shared, 0 pending): owner sees kept[], audit_event still omits ludy_notes.attachment.
+    const privOnlyOrg = await org();
+    const privOnlyNote = await createNote(privOnlyOrg, privOnlyOrg.author, 'private', 'Ghi chú riêng lỗi trích xuất');
+    const privOnlyFailed = await attached(privOnlyOrg, privOnlyOrg.author, privOnlyNote, pdf('p-only-fail'), 'mat-only-fail.pdf');
+    await worker.execute(
+      'notes.attachment.extract_record',
+      { attachmentId: privOnlyFailed.id, status: 'failed', extractedText: null },
+      { actor: SYSTEM, orgId: privOnlyOrg.orgId },
+    );
+    const privOnlyErase = await rt.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: 'priv-only-failed@example.com' },
+      { actor: asMfa(privOnlyOrg.owner.id), orgId: privOnlyOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(privOnlyErase.kept).toEqual([
+      { column: 'ludy_notes.attachment', rows: 1, reason: FAILED_PRIVATE_NOTE_ATTACHMENT_REASON },
+    ]);
+    const [privOnlyAudit] = await rows<{ detail: { kept?: Record<string, number> } }>(
+      `SELECT detail FROM ludy_kernel.audit_event
+        WHERE org_id = $1 AND command = 'kernel.personal_data.erase' AND outcome = 'ok'
+        ORDER BY id DESC LIMIT 1`,
+      [privOnlyOrg.orgId],
+    );
+    expect(privOnlyAudit?.detail.kept).not.toHaveProperty('ludy_notes.attachment');
+
+    // Failed attachment whose filename matches the probe is still scanned and erased.
+    const namedFailEmail = 'failed-filename-match@example.com';
+    const cleanShared = await createNote(o, o.author, 'org', 'Ghi chú chung sạch');
+    const sharedNamedFail = await attached(o, o.author, cleanShared, pdf('snf'), `${namedFailEmail} chung.pdf`);
+    await worker.execute(
+      'notes.attachment.extract_record',
+      { attachmentId: sharedNamedFail.id, status: 'failed', extractedText: null },
+      { actor: SYSTEM, orgId: o.orgId },
+    );
+    const cleanPriv = await createNote(o, o.author, 'private', 'Ghi chú riêng sạch');
+    const privNamedFail = await attached(o, o.author, cleanPriv, pdf('pnf'), `${namedFailEmail} rieng.pdf`);
+    await worker.execute(
+      'notes.attachment.extract_record',
+      { attachmentId: privNamedFail.id, status: 'failed', extractedText: null },
+      { actor: SYSTEM, orgId: o.orgId },
+    );
+    await rt.execute<PersonalDataNotice>(
+      'kernel.personal_data.notify',
+      { value: namedFailEmail },
+      { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    const [namedFailEvt] = await rows<{ id: string }>(
+      `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`,
+      [o.orgId],
+    );
+    await worker.execute('kernel.notification.dispatch', { eventId: namedFailEvt?.id }, { actor: SYSTEM, orgId: o.orgId });
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`,
+        [o.orgId],
+      );
+      await c.query(
+        `UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`,
+        [o.orgId],
+      );
+      await c.query('COMMIT');
+    });
+    const erasedFailedByName = await rt.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: namedFailEmail },
+      { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(erasedFailedByName.erased).toContainEqual({ column: 'ludy_notes.attachment.filename', rows: 1 });
+    expect(erasedFailedByName.erased).toContainEqual({ column: 'ludy_notes.note', rows: 1 });
+    expect(await doomed(o)).toEqual(
+      expect.arrayContaining([`notes/${o.orgId}/${sharedNamedFail.id}`, `notes/${o.orgId}/${privNamedFail.id}`]),
+    );
+    expect(sharedPending.id).toBeTruthy();
   });
 });

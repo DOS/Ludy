@@ -27,6 +27,8 @@ export const MEMBER_VY_FEATURE_TABLE = {
   // The member's Vy writing the two or three sentences of the brief before a meeting from facts the member's own reads found, a citation to a fact on every sentence (#3543): one model call over at most 23 short
   // facts, the member waiting for it. Its own key, so it never cuts off a transcription, a summary, a translation, a question or live notes (#3029); the run's result row holds counts only.
   'meetings.brief': { module: 'meetings', expiryMinutes: 30 },
+  // The member's Vy preparing checked daily prep lines for up to five meetings on the morning briefing (#5073): system-started only when opted in, counts-only result row, never supersedes an active run.
+  'meetings.brief_daily': { module: 'meetings', expiryMinutes: 30, systemStartable: true },
   // The recorder's Vy writing the table of contents of one meeting in the foreground (#3844): one model call over the transcript, the member waiting for it. Its own key, so it never cuts off a transcription, a summary, a translation, a question or live notes (#3029).
   'meetings.chapters': { module: 'meetings', expiryMinutes: 30 },
   // The recorder's Vy suggesting up to three titles for one meeting from its transcript in the foreground (#3947): one model call, the member waiting for it, the candidates shown and never stored. Its own key, so it
@@ -42,6 +44,10 @@ export const MEMBER_VY_FEATURE_TABLE = {
   'meetings.deal_update': { module: 'meetings', expiryMinutes: 30 },
   // The recorder's Vy listing what a meeting left open, questions asked and not answered and decisions raised and not taken, from the transcript in the foreground (#4768): one model call, the member waiting for it, the lines shown and never stored (counts only). Its own key, so it never cuts off a transcription, a summary, a translation, a question, a brief, chapters, commitments or a title (#3029).
   'meetings.open_points': { module: 'meetings', expiryMinutes: 30 },
+  // A member's Vy catching them up in a few cited lines on published minutes they missed (#5130, L33): one foreground model call over published minutes only, shown and never stored (counts only). Its own key, so it never cuts off any other meeting feature (#3029).
+  'meetings.catch_up': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy drafting minutes from typed notes when a meeting has no audio recording (#5129, L32): one foreground model call, shown as a cited draft proposal and never auto-saved (counts only). Its own key, so it never cuts off any other meeting feature (#3029).
+  'meetings.notes_minutes': { module: 'meetings', expiryMinutes: 30 },
   // The recorder's Vy extracting sales call insights (customer concerns, buying signals, agreed next steps with cited transcript line IDs) for a meeting linked to an open deal (#4920): one foreground model call, results returned to the recorder alone and stored as counts only.
   'meetings.sales_insight': { module: 'meetings', expiryMinutes: 30 },
   // The recorder's Vy suggesting up to three labels for one meeting from its title and the labels the recorder already reads, no transcript, in the foreground (#5010): one short model call, the recorder waiting for it, the labels shown and never stored (counts only). Its own key, so it never cuts off a transcription, a summary, a translation, a question, a brief, chapters or a title (#3029).

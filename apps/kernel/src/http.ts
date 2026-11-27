@@ -173,6 +173,20 @@ import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
 import { BANK_FEED_HOOKS_PER_MINUTE, MAX_BANK_FEED_HOOK_BYTES, acceptBankFeedHook } from './bank-feed-hook.ts';
 import { MARKETPLACE_PUSHES_PER_MINUTE, MARKETPLACE_PUSH_ADDRESS_PER_MINUTE, MAX_MARKETPLACE_PUSH_BYTES, acceptMarketplacePush, isMarketplaceHookKey } from './marketplace-push-hook.ts';
+import {
+  GITHUB_DELIVERY_HEADER,
+  GITHUB_EVENT_HEADER,
+  GITHUB_PAT_HOOK_BUDGET_PER_MINUTE,
+  GITHUB_PAT_WEBHOOK_PATH,
+  GITHUB_SIGNATURE_HEADER,
+  GITHUB_WEBHOOK_ADDRESS_LIMIT_PER_MINUTE,
+  GITHUB_WEBHOOK_PATH,
+  MAX_GITHUB_WEBHOOK_BYTES,
+  acceptGithubAppWebhook,
+  acceptGithubPatHook,
+  isGithubHookKey,
+  type GithubAppWebhookConfig,
+} from './projects-github-webhook.ts';
 import { MAX_MISA_AMIS_CALLBACK_BYTES, acceptMisaAmisCallback } from './misa-amis-callback.ts';
 import type { AmisCallbackKey } from '@ludy/misa-amis';
 import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, WHATSAPP_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@ludy/channel';
@@ -583,6 +597,9 @@ export interface HttpDeps {
   hrCvWaitMs?: number;
   // Optional wait timeout in ms for worker-side eSign .docx -> PDF conversion before returning 202 pending (#4721).
   signDocxWaitMs?: number;
+  // Projects GitHub Integration (#5158, ADR-0060): App webhook secrets; unset disables App webhook while PAT hooks stay org/module-gated.
+  githubWebhook?: GithubAppWebhookConfig;
+  githubWebhookLimits?: Partial<{ address: RateLimiter; hook: RateLimiter }>;
 }
 
 export interface StreamDeps {
@@ -1512,6 +1529,91 @@ export function createHttpApp(deps: HttpDeps) {
         }
       },
     );
+  }
+
+  // Projects GitHub Integration webhooks (#5158, ADR-0060): public, raw bytes buffered only up to 256 KiB after per-IP rate limiting.
+  // App webhook verifies HMAC-SHA256 before JSON parsing; PAT per-hook route resolves org via definer and fails closed with opaque 404 when Projects is off.
+  if (runtime.installed('projects')) {
+    const githubAddressLimit = deps.githubWebhookLimits?.address ?? new RateLimiter({ perMinute: GITHUB_WEBHOOK_ADDRESS_LIMIT_PER_MINUTE });
+    const githubPatHookBudget = deps.githubWebhookLimits?.hook ?? new RateLimiter({ perMinute: GITHUB_PAT_HOOK_BUDGET_PER_MINUTE });
+    const githubBilling: SignBilling = deps.billing ?? { entitlements: async () => ['full'] };
+    if (deps.githubWebhook) {
+      const appCfg = deps.githubWebhook;
+      app.post(
+        GITHUB_WEBHOOK_PATH,
+        async (c, next) => {
+          const decision = githubAddressLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+          if (!decision.allowed) {
+            warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+            c.header('retry-after', String(decision.retryAfterSeconds));
+            return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+          }
+          await next();
+        },
+        bodyLimit({ maxSize: MAX_GITHUB_WEBHOOK_BYTES }),
+        async (c) => {
+          try {
+            const outcome = await acceptGithubAppWebhook(runtime, appCfg, {
+              signature256: c.req.header(GITHUB_SIGNATURE_HEADER),
+              eventType: c.req.header(GITHUB_EVENT_HEADER),
+              deliveryId: c.req.header(GITHUB_DELIVERY_HEADER),
+              body: new Uint8Array(await c.req.arrayBuffer()),
+            });
+            if (outcome.status === 202) return c.json({ queued: true }, 202);
+            if (outcome.status === 200) return c.json({ ok: true, ignored: true }, 200);
+            return c.json({ code: outcome.code }, outcome.status);
+          } catch (error) {
+            console.error('[projects-github-webhook] request failed:', error instanceof Error ? error.name : 'error');
+            return c.json({ code: 'INTERNAL' }, 500);
+          }
+        },
+      );
+    }
+
+    const githubPatBroker = deps.channels?.broker ?? deps.broker;
+    if (githubPatBroker && githubPatBroker.id !== 'none') {
+      app.post(
+        GITHUB_PAT_WEBHOOK_PATH,
+        async (c, next) => {
+          if (!isGithubHookKey(c.req.param('hookKey'))) return c.json({ code: 'NOT_FOUND' }, 404);
+          const decision = githubAddressLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+          if (!decision.allowed) {
+            warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+            c.header('retry-after', String(decision.retryAfterSeconds));
+            return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+          }
+          await next();
+        },
+        bodyLimit({ maxSize: MAX_GITHUB_WEBHOOK_BYTES }),
+        async (c) => {
+          try {
+            const outcome = await acceptGithubPatHook(
+              runtime,
+              {
+                hookKey: c.req.param('hookKey'),
+                signature256: c.req.header(GITHUB_SIGNATURE_HEADER),
+                eventType: c.req.header(GITHUB_EVENT_HEADER),
+                deliveryId: c.req.header(GITHUB_DELIVERY_HEADER),
+                body: new Uint8Array(await c.req.arrayBuffer()),
+              },
+              githubPatHookBudget,
+              githubBilling,
+            );
+            if (outcome.status === 404) return c.json({ code: 'NOT_FOUND' }, 404);
+            if (outcome.status === 429) {
+              c.header('retry-after', String(outcome.retryAfterSeconds));
+              return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: outcome.retryAfterSeconds }, 429);
+            }
+            if (outcome.status === 202) return c.json({ queued: outcome.queued }, 202);
+            if (outcome.status === 200) return c.json({ ok: true, ignored: true }, 200);
+            return c.json({ code: outcome.code }, outcome.status);
+          } catch (error) {
+            console.error('[projects-github-hook] request failed:', error instanceof Error ? error.name : 'error');
+            return c.json({ code: 'INTERNAL' }, 500);
+          }
+        },
+      );
+    }
   }
 
   // MISA AMIS's callback with the result of a save (#3903, S4 of #3854; MISA ASP posts to it too, #4103): public, checked by the HMAC of its signed `data` before anything else is read, capped in size and rate limited per client

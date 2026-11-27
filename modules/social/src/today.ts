@@ -77,11 +77,12 @@ export const socialToday = defineQuery({
         .select(sql<string>`count(*)`.as('n'))
         .where('org_id', '=', ctx.orgId)
         .where('status', 'in', [...ATTENTION_CHANNEL_STATUSES])
-        // Social and messaging channels only: an ad account's or a bank feed's connection is another module's.
+        // Social and messaging channels only: ads, bank feeds, e-invoice, and GitHub connections belong to other modules.
         .where('provider', 'not like', 'bank\\_%')
         .where('provider', 'not like', '%\\_ads')
         .where('provider', 'not like', 'einvoice\\_%')
         .where('provider', 'not like', 'accounting\\_%')
+        .where('provider', 'not like', 'github\\_%')
         .executeTakeFirstOrThrow();
       const n = Number(channels.n);
       if (n > 0) items.push({ kind: 'flag', app: 'social', id: 'channels', title: { key: 'social.channels', params: { count: n } }, count: n, severity: 'warn', href: '/social/channels' });
