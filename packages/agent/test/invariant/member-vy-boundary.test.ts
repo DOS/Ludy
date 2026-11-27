@@ -2881,6 +2881,7 @@ const normalizeModuleSpecifier = (spec: string): string => {
 };
 
 const decodeRawModulePreCollapse = (spec: string): string => {
+  if (!/[?#\\%\r\n\t ]|^file:/i.test(spec)) return spec;
   const s = spec.trim().replace(/[?#].*$/, '').replace(/\\/g, '/').replace(/^file:\/\/(?:localhost)?/i, '');
   return s === '' ? '' : s.split('/').map(decodeUriSegment).join('/');
 };
@@ -7353,6 +7354,7 @@ function collectMeteredNotesFromTokens(
   },
 ): string[] {
   const out: string[] = [];
+  if (!tokens.some((tk) => tk.kind === 'punct' && tk.value === '(')) return out;
   const delims = pairDelimiters(tokens);
   const { templateTail, templateNext } = buildTemplateMaps(tokens);
   const { scopes, tokenScope } = collectScopedConstBindings(tokens, delims, templateNext, templateTail);
@@ -7576,46 +7578,69 @@ function buildPrecomputedNotesAst(text: string, filePath?: string): PrecomputedN
   };
 }
 
-function collectMeteredNotes(
-  text: string,
-  options?: { includeUnresolved?: boolean },
-  precomputedAst?: PrecomputedNotesAst,
-): string[] {
+interface PrecomputedNotesScan {
+  readonly primary: ScanSourceResult;
+  readonly extraTokens: Token[] | null;
+  readonly textWithoutUnambiguousRegex: string;
+  readonly divisionTokens: Token[] | null;
+}
+
+function buildPrecomputedNotesScan(text: string): PrecomputedNotesScan {
   const primary = scanSource(text, { emitTokens: true, stripCommentsMode: false, stripStrings: false });
   const extraTokens = speculativeRescan(text, primary);
-  const resolvedOpts = { includeUnresolved: Boolean(options?.includeUnresolved) };
-  const resolvedParenStarts = new Set<number>();
-  const handledUnresolvedParenStarts = new Set<number>();
-  const ignoreUnresolvedInRanges = resolvedOpts.includeUnresolved ? primary.unambiguousRegexSpans : [];
-  const validSkipSpans = [
-    ...primary.tokens
-      .filter(
-        (tk) =>
-          tk.kind === 'string' ||
-          tk.kind === 'template' ||
-          tk.kind === 'template_head' ||
-          tk.kind === 'template_middle' ||
-          tk.kind === 'template_tail',
-      )
-      .map((tk) => ({ start: tk.start, end: tk.end })),
-    ...primary.commentSpans,
-    ...primary.unambiguousRegexSpans,
-  ].sort((a, b) => a.start - b.start);
   const textWithoutUnambiguousRegex =
     primary.unambiguousRegexSpans.length > 0
       ? blankTextSpans(text, primary.unambiguousRegexSpans)
       : text;
+  const divisionTokens =
+    primary.unambiguousRegexSpans.length > 0 || primary.tokens.some((t) => t.kind === 'regex')
+      ? tokenize(textWithoutUnambiguousRegex, { scanRegexAsDivision: true })
+      : null;
+  return { primary, extraTokens, textWithoutUnambiguousRegex, divisionTokens };
+}
+
+function collectMeteredNotes(
+  text: string,
+  options?: { includeUnresolved?: boolean },
+  precomputedAst?: PrecomputedNotesAst,
+  precomputedScan?: PrecomputedNotesScan,
+): string[] {
+  const { primary, extraTokens, textWithoutUnambiguousRegex, divisionTokens } =
+    precomputedScan ?? buildPrecomputedNotesScan(text);
+  const resolvedOpts = { includeUnresolved: Boolean(options?.includeUnresolved) };
+  const resolvedParenStarts = new Set<number>();
+  const handledUnresolvedParenStarts = new Set<number>();
+  const ignoreUnresolvedInRanges = resolvedOpts.includeUnresolved ? primary.unambiguousRegexSpans : [];
+  const hasRawMeteredWord = text.includes('metered');
+  const validSkipSpans = hasRawMeteredWord
+    ? [
+        ...primary.tokens
+          .filter(
+            (tk) =>
+              tk.kind === 'string' ||
+              tk.kind === 'template' ||
+              tk.kind === 'template_head' ||
+              tk.kind === 'template_middle' ||
+              tk.kind === 'template_tail',
+          )
+          .map((tk) => ({ start: tk.start, end: tk.end })),
+        ...primary.commentSpans,
+        ...primary.unambiguousRegexSpans,
+      ].sort((a, b) => a.start - b.start)
+    : [];
   const found = new Set<string>([
     ...collectMeteredNotesFromTokens(primary.tokens, text, {
       ...resolvedOpts,
       resolvedParenStarts,
       handledUnresolvedParenStarts,
     }),
-    ...collectMeteredNotesFromTokens(tokenize(textWithoutUnambiguousRegex, { scanRegexAsDivision: true }), text, {
-      ...resolvedOpts,
-      ignoreUnresolvedInRanges,
-      handledUnresolvedParenStarts,
-    }),
+    ...(divisionTokens
+      ? collectMeteredNotesFromTokens(divisionTokens, text, {
+          ...resolvedOpts,
+          ignoreUnresolvedInRanges,
+          handledUnresolvedParenStarts,
+        })
+      : []),
     ...(extraTokens
       ? collectMeteredNotesFromTokens(extraTokens, text, {
           ...resolvedOpts,
@@ -7623,8 +7648,12 @@ function collectMeteredNotes(
           handledUnresolvedParenStarts,
         })
       : []),
-    ...collectRawMeteredNotes(text, resolvedParenStarts, validSkipSpans),
-    ...[...textWithoutUnambiguousRegex.matchAll(/\bmetered\(\s*['"`](notes\.[a-z0-9_]+)['"`]/g)].map((m) => m[1]!),
+    ...(hasRawMeteredWord
+      ? [
+          ...collectRawMeteredNotes(text, resolvedParenStarts, validSkipSpans),
+          ...[...textWithoutUnambiguousRegex.matchAll(/\bmetered\(\s*['"`](notes\.[a-z0-9_]+)['"`]/g)].map((m) => m[1]!),
+        ]
+      : []),
   ]);
 
   const astData = precomputedAst ?? buildPrecomputedNotesAst(text);
@@ -7652,20 +7681,30 @@ export function meteredNotes(text: string, options?: { includeUnresolved?: boole
   return collectMeteredNotes(text, options);
 }
 
-function collectNotesKeyLiterals(text: string, precomputedAst?: PrecomputedNotesAst): string[] {
+function collectNotesKeyLiterals(
+  text: string,
+  precomputedAst?: PrecomputedNotesAst,
+  precomputedScan?: PrecomputedNotesScan,
+): string[] {
   const found = new Set<string>();
-  const primary = scanSource(text, { emitTokens: true, stripCommentsMode: false, stripStrings: false });
-  const extraTokens = speculativeRescan(text, primary);
-  const textWithoutUnambiguousRegex =
-    primary.unambiguousRegexSpans.length > 0
-      ? blankTextSpans(text, primary.unambiguousRegexSpans)
-      : text;
+  const { primary, extraTokens, divisionTokens } = precomputedScan ?? buildPrecomputedNotesScan(text);
   const tokenPasses: ReadonlyArray<readonly Token[]> = [
     primary.tokens,
-    tokenize(textWithoutUnambiguousRegex, { scanRegexAsDivision: true }),
+    ...(divisionTokens ? [divisionTokens] : []),
     ...(extraTokens ? [extraTokens] : []),
   ];
   for (const tokens of tokenPasses) {
+    if (
+      !tokens.some(
+        (t) =>
+          t.kind === 'string' ||
+          t.kind === 'template' ||
+          ((t.kind === 'template_head' || t.kind === 'template_middle' || t.kind === 'template_tail') &&
+            t.value.length > 0),
+      )
+    ) {
+      continue;
+    }
     const delims = pairDelimiters(tokens);
     const { templateTail, templateNext } = buildTemplateMaps(tokens);
     const { scopes, tokenScope } = collectScopedConstBindings(tokens, delims, templateNext, templateTail);
@@ -7739,8 +7778,9 @@ export function notesKeyLiterals(text: string): string[] {
 
 export function disallowedMeteredNotes(relFromSrc: string, text: string): string[] {
   const precomputedAst = buildPrecomputedNotesAst(text, relFromSrc);
-  const calls = collectMeteredNotes(text, { includeUnresolved: true }, precomputedAst);
-  const literals = collectNotesKeyLiterals(text, precomputedAst);
+  const precomputedScan = buildPrecomputedNotesScan(text);
+  const calls = collectMeteredNotes(text, { includeUnresolved: true }, precomputedAst, precomputedScan);
+  const literals = collectNotesKeyLiterals(text, precomputedAst, precomputedScan);
   const all = [...new Set([...calls, ...literals])];
   if (MODEL_ADAPTERS.has(relFromSrc)) return all.filter((key) => !ADAPTER_NOTES_KEYS.has(key));
   if (relFromSrc === 'meter.ts') {
@@ -8894,6 +8934,19 @@ function compactSplitConcatForLeakCheck(raw: string): { compact: string; quotedJ
 }
 
 const isAgentOrAdapterTextValue = (val: string, fromRelPath?: string): boolean => {
+  if (!val) return false;
+  if (
+    !val.includes('agent') &&
+    !val.includes('model') &&
+    !val.includes('ludy') &&
+    !val.includes('crove') &&
+    !val.includes('note-ai') &&
+    !val.includes('index') &&
+    !val.includes('%') &&
+    !(fromRelPath && fromRelPath.includes('packages/agent'))
+  ) {
+    return false;
+  }
   const candidates = [val, decodeRawModulePreCollapse(val), normalizeModuleSpecifier(val)];
   for (const cand of candidates) {
     if (!cand) continue;
@@ -8938,7 +8991,9 @@ function isWorkspaceAdapterLeakRelevant(
 
   const relBaseDir = relFromRoot ? posix.dirname(relFromRoot) : null;
   const resolvesUnderPackages = (frag: string): boolean => {
-    if (!relBaseDir) return false;
+    if (!relBaseDir || !frag) return false;
+    const ch0 = frag.charCodeAt(0);
+    if (ch0 !== 46 && ch0 !== 37 && ch0 !== 92 && ch0 > 32 && !/^file:/i.test(frag)) return false;
     for (const cand of [frag, decodeRawModulePreCollapse(frag), normalizeModuleSpecifier(frag)]) {
       if (!cand.startsWith('.')) continue;
       const resolved = posix.normalize(posix.join(relBaseDir, cand));
@@ -9249,6 +9304,10 @@ function scanDualJsxAndTsPasses(
     const res = scanWorkspaceMode(fileText, false);
     primaryPasses.push({ tokens: res.primary, unambiguousRegexSpans: res.unambiguousRegexSpans });
     speculativePasses.push(...res.speculative);
+  } else if (!fileText.includes('<')) {
+    const nonJsx = scanWorkspaceMode(fileText, false);
+    primaryPasses.push({ tokens: nonJsx.primary, unambiguousRegexSpans: nonJsx.unambiguousRegexSpans });
+    speculativePasses.push(...nonJsx.speculative);
   } else {
     const nonJsx = scanWorkspaceMode(fileText, false);
     const jsx = scanWorkspaceMode(fileText, true);
