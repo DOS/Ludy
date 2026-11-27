@@ -11,28 +11,34 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
   zConversationUnansweredSignal,
+  zCrmAttentionSignal,
   zCrmOpenDealSignal,
   zCrmWonDealSignal,
   zFinanceOverdueReceivableSignal,
   zFinanceSalesSignal,
   zFinanceSupplierBankChangeSignal,
   zFinanceSupplierPaymentsWaitingSignal,
+  zSignOpenedSignal,
 } from '@ludy/kernel-contract';
 import { crmQueries } from '@ludy/mod-crm';
 import { financeQueries } from '@ludy/mod-finance';
+import { signQueries } from '@ludy/mod-sign';
 import { kernelQueries } from '@ludy/kernel';
 
 // The only keys a signal row may have: ids, days, counts and amounts. Adding a key is a change to this protected file and needs a privacy review.
 // `conversationId` and `since` belong to the conversation read of the fourth rule (#3124): the id of the thread and the moment its oldest unanswered customer message arrived, never a word of it.
-const ROW_KEYS = ['amount', 'changedOn', 'conversationId', 'count', 'dealId', 'lastSaleOn', 'oldestDueOn', 'partyId', 'since', 'wonOn'];
+// `envelopeId`, `eventAt`, `kind`, `openedAt`, and `targetId` belong to SG2 (#4994): ids, fixed enum kinds, and timestamps only.
+const ROW_KEYS = ['amount', 'changedOn', 'conversationId', 'count', 'dealId', 'envelopeId', 'eventAt', 'kind', 'lastSaleOn', 'oldestDueOn', 'openedAt', 'partyId', 'since', 'targetId', 'wonOn'];
 
 const ROWS = {
   'finance.signals.sales': zFinanceSalesSignal,
   'crm.signals.won_deals': zCrmWonDealSignal,
   'crm.signals.open_deals': zCrmOpenDealSignal,
+  'crm.signals.attention': zCrmAttentionSignal,
   'finance.signals.overdue_receivables': zFinanceOverdueReceivableSignal,
   'finance.signals.supplier_bank_changes': zFinanceSupplierBankChangeSignal,
   'finance.signals.supplier_payments_waiting': zFinanceSupplierPaymentsWaitingSignal,
+  'sign.signals.opened': zSignOpenedSignal,
   // The inbox's side of the fourth rule (#3124): ids and an instant, never a word of a message.
   'kernel.conversation.signals_unanswered': zConversationUnansweredSignal,
 } as const;
@@ -55,7 +61,17 @@ describe('the signals contract carries ids, dates, counts and amounts only', () 
       // Each value is a uuid, a date, a count or a decimal string: parse a row of the right shape, then the same row with one more key.
       const sample: Record<string, unknown> = {};
       for (const key of keys) {
-        sample[key] = key.endsWith('Id') ? '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b' : key === 'count' ? 1 : key === 'amount' ? '100000' : key === 'since' ? '2026-11-10T09:00:00+07:00' : '2026-11-10';
+        sample[key] = key.endsWith('Id')
+          ? '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b'
+          : key === 'count'
+            ? 1
+            : key === 'amount'
+              ? '100000'
+              : key === 'kind'
+                ? 'quote_viewed'
+                : key === 'since' || key.endsWith('At')
+                  ? '2026-11-10T09:00:00+07:00'
+                  : '2026-11-10';
       }
       const ok = schema.safeParse(sample);
       expect(ok.success, `${read}: ${JSON.stringify(ok.error?.issues)}`).toBe(true);
@@ -69,7 +85,7 @@ describe('the signals contract carries ids, dates, counts and amounts only', () 
 });
 
 describe('a registered signals read is a plain, role-listed, scope-limited query', () => {
-  const all = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...crmQueries] as Array<{
+  const all = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...crmQueries, ...signQueries] as Array<{
     name: string;
     input: z.ZodType;
     access?: unknown;
@@ -79,7 +95,7 @@ describe('a registered signals read is a plain, role-listed, scope-limited query
     extension?: unknown;
     mcp?: { scope: string };
   }>;
-  const signals = all.filter((q) => /^((finance|crm)\.signals\.|kernel\.conversation\.signals_)/.test(q.name));
+  const signals = all.filter((q) => /^((finance|crm|sign)\.signals\.|kernel\.conversation\.signals_)/.test(q.name));
 
   it('has no read outside the names of the contract', () => {
     expect(signals.map((q) => q.name).filter((n) => !(n in ROWS))).toEqual([]);

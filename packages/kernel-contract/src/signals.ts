@@ -155,3 +155,30 @@ export type ConversationUnansweredSignal = z.infer<typeof zConversationUnanswere
 export const zConversationUnansweredSignals = z.array(zConversationUnansweredSignal).max(SIGNALS_MAX_CRM).refine(uniqueParties, 'one row per party');
 
 export const CONVERSATION_UNANSWERED_SIGNALS_READ = 'kernel.conversation.signals_unanswered';
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// SG2 attention signals (#4994, docs/plan/crm.md 10.3): opened signing envelopes and batched CRM attention across contacts.
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+
+export const SIGN_OPENED_DAYS = 7;
+export const CONTACT_ATTENTION_HOME_MAX = 5;
+
+export const SIGN_OPENED_SIGNALS_READ = 'sign.signals.opened';
+export const CRM_ATTENTION_SIGNALS_READ = 'crm.signals.attention';
+
+export const zSignOpenedSignal = z.strictObject({
+  partyId: z.uuid(),
+  envelopeId: z.uuid(),
+  openedAt: z.iso.datetime({ offset: true }),
+});
+export type SignOpenedSignal = z.infer<typeof zSignOpenedSignal>;
+export const zSignOpenedSignals = z.array(zSignOpenedSignal).max(SIGNALS_MAX_CRM).refine(uniqueParties, 'one row per party');
+
+export const zCrmAttentionSignal = z.strictObject({
+  partyId: z.uuid(),
+  kind: z.enum(['quote_viewed', 'quote_expiring', 'quote_unanswered', 'customer_replied']),
+  targetId: z.uuid(),
+  eventAt: z.iso.datetime({ offset: true }),
+});
+export type CrmAttentionSignal = z.infer<typeof zCrmAttentionSignal>;
+export const zCrmAttentionSignals = z.array(zCrmAttentionSignal).max(SIGNALS_MAX_CRM).refine(uniqueParties, 'one row per party');
