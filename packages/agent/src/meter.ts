@@ -135,6 +135,8 @@ export const AI_FEATURES = {
   'meetings.open_points': 'meetings',
   // A member's Vy catching them up in a few cited lines on published minutes they missed (#5130): one call over published minutes only, through their own meter.
   'meetings.catch_up': 'meetings',
+  // The recorder's Vy drafting minutes from typed notes when a meeting has no audio recording (#5129): one call over typed notes only, through their own meter.
+  'meetings.notes_minutes': 'meetings',
   // The recorder's Vy drafting a personal-note follow-up email from the meeting's facts (#4292): one call, the member waiting for it, through their own meter.
   'meetings.followup_note': 'meetings',
   // The recorder's Vy proposing the update of a deal after a meeting linked to it (#4766): one call over the published minutes, the recorder waiting for it, through their own meter.

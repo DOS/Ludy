@@ -4,9 +4,9 @@
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
 import { z } from 'zod';
-import { generateMeetingLabelSuggestText, LABEL_SUGGEST_TIMEOUT_MS, LabelSuggestModelError, generateMeetingDealUpdateText, DEAL_UPDATE_TIMEOUT_MS, DealUpdateModelError, ADHERENCE_TIMEOUT_MS, AdherenceModelError, generateMeetingAdherenceText, ASK_TIMEOUT_MS, DIGEST_TIMEOUT_MS, DigestModelError, generateMeetingDigestText, ASSIGNEE_TIMEOUT_MS, AssigneeModelError, generateMeetingAssigneeText, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, CHAPTERS_TIMEOUT_MS, ChaptersModelError, generateMeetingBriefText, generateMeetingChaptersText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteOrganizeText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoPlanText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter, generateMeetingTitleText, TITLE_TIMEOUT_MS, TitleModelError, generateMeetingCommitmentsText, COMMITMENTS_TIMEOUT_MS, CommitmentsModelError, generateMeetingFollowupNoteText, FOLLOWUP_NOTE_TIMEOUT_MS, FollowupNoteModelError, OPEN_POINTS_TIMEOUT_MS, OpenPointsModelError, generateMeetingOpenPointsText, CATCH_UP_TIMEOUT_MS, CatchUpModelError, generateMeetingCatchUpText, SALES_INSIGHT_TIMEOUT_MS, SalesInsightModelError, generateMeetingSalesInsightText, TEMPLATE_SUGGEST_TIMEOUT_MS, TemplateSuggestModelError, generateMeetingTemplateSuggestText } from '@ludy/agent';
-import { LABEL_SUGGEST_LIMITS, LabelSuggestError, suggestMeetingLabels, type LabelRules, DealUpdateError, proposeDealUpdate, AdherenceError, checkAgenda, NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, DigestError, writeDigest, AssigneeError, pickAssignee, BriefError, writeBrief, ChaptersError, chapterMeeting, NoteAiError, NoteAiModelError, NoteOrganizeError, TodoPlanError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, organizeUnfiledNotes, planTodosForToday, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type NoteOrganizeInputNote, type NoteOrganizeInputNotebook, type Ports, type TaskSourceKind, type TodoPlanInputItem, TitleError, suggestMeetingTitles, CommitmentsError, listCommitments, FollowupNoteError, draftFollowupPersonalNote, OpenPointsError, listOpenPoints, CatchUpError, writeCatchUp, SalesInsightError, analyzeSalesInsight, computeCustomerTalkShare, TemplateSuggestError, suggestMeetingTemplate } from '@ludy/agent/member-vy';
-import { MEETING_LABELS_MAX, cleanLabelText, labelKey, labelProblem, type LabelSuggestAnswer, type MeetingLabels, type MeetingLabelsInUse, type DealUpdateAnswer, type DealUpdateAsk, type DealUpdateStatus, ADHERENCE_ESTIMATE, type AdherenceAnswer, type AdherenceAsk, type AdherenceFacts, type AdherenceStatus, ASK_ESTIMATE, ASK_HITS_MAX, DIGEST_ESTIMATE, digestLines, type DigestAnswer, type DigestAsk, type DigestFacts, type DigestStatus, type AssigneeAnswer, type AssigneeAsk, type AssigneeFacts, type AssigneeStatus, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type FollowupDraft, type FollowupNoteAnswer, type FollowupNoteAsk, type FollowupNoteStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteOrganizeInput, type NoteOrganizeResult, type NoteOrganizeSuggestion, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type TodoPlanFocusItem, type TodoPlanInput, type TodoPlanRescheduleItem, type TodoPlanResult, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationTarget, type TranslationStatus, type TitleAnswer, type CommitmentsAnswer, type OpenPointsAnswer, CATCH_UP_ESTIMATE, type CatchUpAnswer, type CatchUpFacts, type CatchUpStatus, type SalesInsightAnswer, type SalesInsightStatus, type TemplateVyAnswer } from '@ludy/kernel-contract';
+import { generateMeetingLabelSuggestText, LABEL_SUGGEST_TIMEOUT_MS, LabelSuggestModelError, generateMeetingDealUpdateText, DEAL_UPDATE_TIMEOUT_MS, DealUpdateModelError, ADHERENCE_TIMEOUT_MS, AdherenceModelError, generateMeetingAdherenceText, ASK_TIMEOUT_MS, DIGEST_TIMEOUT_MS, DigestModelError, generateMeetingDigestText, ASSIGNEE_TIMEOUT_MS, AssigneeModelError, generateMeetingAssigneeText, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, CHAPTERS_TIMEOUT_MS, ChaptersModelError, generateMeetingBriefText, generateMeetingChaptersText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteOrganizeText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoPlanText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter, generateMeetingTitleText, TITLE_TIMEOUT_MS, TitleModelError, generateMeetingCommitmentsText, COMMITMENTS_TIMEOUT_MS, CommitmentsModelError, generateMeetingFollowupNoteText, FOLLOWUP_NOTE_TIMEOUT_MS, FollowupNoteModelError, OPEN_POINTS_TIMEOUT_MS, OpenPointsModelError, generateMeetingOpenPointsText, CATCH_UP_TIMEOUT_MS, CatchUpModelError, generateMeetingCatchUpText, NOTES_MINUTES_TIMEOUT_MS, NotesMinutesModelError, generateMeetingNotesMinutesText, SALES_INSIGHT_TIMEOUT_MS, SalesInsightModelError, generateMeetingSalesInsightText, TEMPLATE_SUGGEST_TIMEOUT_MS, TemplateSuggestModelError, generateMeetingTemplateSuggestText } from '@ludy/agent';
+import { LABEL_SUGGEST_LIMITS, LabelSuggestError, suggestMeetingLabels, type LabelRules, DealUpdateError, proposeDealUpdate, AdherenceError, checkAgenda, NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, DigestError, writeDigest, AssigneeError, pickAssignee, BriefError, writeBrief, ChaptersError, chapterMeeting, NoteAiError, NoteAiModelError, NoteOrganizeError, TodoPlanError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, organizeUnfiledNotes, planTodosForToday, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type NoteOrganizeInputNote, type NoteOrganizeInputNotebook, type Ports, type TaskSourceKind, type TodoPlanInputItem, TitleError, suggestMeetingTitles, CommitmentsError, listCommitments, FollowupNoteError, draftFollowupPersonalNote, OpenPointsError, listOpenPoints, CatchUpError, writeCatchUp, NotesMinutesError, draftMinutesFromNotes, SalesInsightError, analyzeSalesInsight, computeCustomerTalkShare, TemplateSuggestError, suggestMeetingTemplate } from '@ludy/agent/member-vy';
+import { MEETING_LABELS_MAX, cleanLabelText, labelKey, labelProblem, type LabelSuggestAnswer, type MeetingLabels, type MeetingLabelsInUse, type DealUpdateAnswer, type DealUpdateAsk, type DealUpdateStatus, ADHERENCE_ESTIMATE, type AdherenceAnswer, type AdherenceAsk, type AdherenceFacts, type AdherenceStatus, ASK_ESTIMATE, ASK_HITS_MAX, DIGEST_ESTIMATE, digestLines, type DigestAnswer, type DigestAsk, type DigestFacts, type DigestStatus, type AssigneeAnswer, type AssigneeAsk, type AssigneeFacts, type AssigneeStatus, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type FollowupDraft, type FollowupNoteAnswer, type FollowupNoteAsk, type FollowupNoteStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteOrganizeInput, type NoteOrganizeResult, type NoteOrganizeSuggestion, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type TodoPlanFocusItem, type TodoPlanInput, type TodoPlanRescheduleItem, type TodoPlanResult, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationTarget, type TranslationStatus, type TitleAnswer, type CommitmentsAnswer, type OpenPointsAnswer, CATCH_UP_ESTIMATE, type CatchUpAnswer, type CatchUpFacts, type CatchUpStatus, NOTES_MINUTES_ESTIMATE, type NotesMinutesAnswer, type NotesMinutesFacts, type NotesMinutesStatus, type SalesInsightAnswer, type SalesInsightStatus, type TemplateVyAnswer } from '@ludy/kernel-contract';
 import { readTasksFromSourceData, type SourceQueryFn } from '@ludy/mod-projects';
 import { DomainError, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
@@ -154,6 +154,8 @@ export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_T
           return generateMeetingOpenPointsText(config, prompt, Math.min(timeoutMs, OPEN_POINTS_TIMEOUT_MS));
         case 'meetings.catch_up':
           return generateMeetingCatchUpText(config, prompt, Math.min(timeoutMs, CATCH_UP_TIMEOUT_MS));
+        case 'meetings.notes_minutes':
+          return generateMeetingNotesMinutesText(config, prompt, Math.min(timeoutMs, NOTES_MINUTES_TIMEOUT_MS));
         case 'meetings.sales_insight':
           return generateMeetingSalesInsightText(config, prompt, Math.min(timeoutMs, SALES_INSIGHT_TIMEOUT_MS));
         case 'meetings.label_suggest':
@@ -207,6 +209,8 @@ function codeOf(error: unknown): string {
   if (error instanceof OpenPointsModelError) return error.kind === 'timeout' ? 'OPEN_POINTS_TIMEOUT' : 'OPEN_POINTS_FAILED';
   if (error instanceof CatchUpError) return error.code;
   if (error instanceof CatchUpModelError) return error.kind === 'timeout' ? 'CATCH_UP_TIMEOUT' : 'CATCH_UP_FAILED';
+  if (error instanceof NotesMinutesError) return error.code;
+  if (error instanceof NotesMinutesModelError) return error.kind === 'timeout' ? 'NOTES_MINUTES_TIMEOUT' : 'NOTES_MINUTES_FAILED';
   if (error instanceof SalesInsightError) return error.code;
   if (error instanceof SalesInsightModelError) return error.kind === 'timeout' ? 'SALES_INSIGHT_TIMEOUT' : 'SALES_INSIGHT_FAILED';
   if (error instanceof LabelSuggestError) return error.code;
@@ -283,6 +287,14 @@ function catchUpCodeOf(error: unknown): string {
   if (error instanceof SummaryModelError && error.kind === 'timeout') return 'CATCH_UP_TIMEOUT';
   const code = codeOf(error);
   return code === 'SUMMARY_FAILED' || code === 'SUMMARY_TIMEOUT' ? 'CATCH_UP_FAILED' : code;
+}
+
+function notesMinutesCodeOf(error: unknown): string {
+  if (error instanceof DomainError) return error.code;
+  if (error instanceof NotesMinutesError || error instanceof NotesMinutesModelError) return codeOf(error);
+  if (error instanceof SummaryModelError && error.kind === 'timeout') return 'NOTES_MINUTES_TIMEOUT';
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' || code === 'SUMMARY_TIMEOUT' ? 'NOTES_MINUTES_FAILED' : code;
 }
 
 function salesInsightCodeOf(error: unknown): string {
@@ -3528,6 +3540,144 @@ export async function runMeetingCatchUp(deps: MeetingBriefDeps, orgId: string, a
       state: result.lines.length > 0 ? 'written' : 'none',
       errorCode: null,
       lines: result.lines,
+      dropped: result.dropped,
+    };
+  } finally {
+    ticket.release();
+  }
+}
+
+function notesMinutesEstimate(price: MeetingBriefDeps['price']): NonNullable<NotesMinutesStatus['estimate']> {
+  const priced = price !== undefined && (isPositivePrice(price.inputPerMTok) || isPositivePrice(price.outputPerMTok));
+  return { ...NOTES_MINUTES_ESTIMATE, cost: priced ? aiCost([NOTES_MINUTES_ESTIMATE], price) : null };
+}
+
+/** Recorder-only readiness check for drafting minutes from typed notes when a meeting has no audio transcript (#5129, L32). */
+export async function notesMinutesStatusOf(
+  deps: Pick<MeetingBriefDeps, 'runtime' | 'price' | 'model' | 'meter'>,
+  orgId: string,
+  actor: UserActor,
+  meetingId: string,
+): Promise<NotesMinutesStatus> {
+  const status = await deps.runtime.query<NotesMinutesStatus>('meetings.notes_minutes.status', { meetingId }, { actor, orgId });
+  if (!status.available) return { ...status, estimate: null };
+  if (!deps.model || !deps.meter(actor)) {
+    return { ...status, available: false, reason: 'off', estimate: null };
+  }
+  return { ...status, estimate: notesMinutesEstimate(deps.price) };
+}
+
+/** Runs the recorder's own Vy once under meetings.notes_minutes over typed notes and stores counts only (#5129, L32). */
+export async function runMeetingNotesMinutes(deps: MeetingBriefDeps, orgId: string, actor: UserActor, meetingId: string): Promise<NotesMinutesAnswer> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? NOTES_MINUTES_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  const status = await deps.runtime.query<NotesMinutesStatus>('meetings.notes_minutes.status', { meetingId }, as);
+  if (status.reason === 'not_recorder') throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can draft minutes from notes');
+  if (status.reason === 'has_transcript') throw new DomainError('NOTES_MINUTES_HAS_TRANSCRIPT', 422, 'Meeting already has a transcript');
+  if (status.reason === 'no_notes') throw new DomainError('NOTES_MINUTES_NO_NOTES', 422, 'Add typed notes before drafting minutes');
+  if (status.reason === 'redacted') throw new DomainError('NOTES_MINUTES_REDACTED', 422, 'Meeting notes contain redacted details');
+  if (status.reason === 'forbidden') throw new DomainError('VY_NOT_ALLOWED', 403, 'You do not have permission to use Vy');
+  if (status.reason === 'paused' || status.reason === 'budget') throw new DomainError('AI_BUDGET_EXHAUSTED', 422, 'Vy is paused or out of monthly AI budget');
+  if (status.reason === 'off' || !model || !meter) throw new DomainError('NOTES_MINUTES_OFF', 422, 'Drafting minutes from notes by Vy is not turned on here');
+
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) throw new DomainError('NOTES_MINUTES_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
+
+  const failed = (errorCode: string): NotesMinutesAnswer => ({
+    state: 'failed',
+    errorCode,
+    summary: '',
+    decisions: [],
+    items: [],
+    dropped: 0,
+  });
+
+  try {
+    let started: { meetingId: string; runId: string };
+    try {
+      started = await deps.runtime.execute<{ meetingId: string; runId: string }>('meetings.notes_minutes.start', { meetingId }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'VY_RUN_BUSY' || error.code === 'NOTES_MINUTES_BUSY')) {
+        console.error('[meetings-notes-minutes] run not started: NOTES_MINUTES_BUSY');
+        return failed('NOTES_MINUTES_BUSY');
+      }
+      throw error;
+    }
+    const runId = started.runId;
+    const fail = async (errorCode: string): Promise<NotesMinutesAnswer> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        console.error(`[meetings-notes-minutes] failed result not stored: ${notesMinutesCodeOf(storeError)}`);
+      }
+      console.error(`[meetings-notes-minutes] run failed: ${errorCode}`);
+      return failed(errorCode);
+    };
+
+    let noteLineCount = 0;
+    let result: { summary: string; decisions: NotesMinutesAnswer['decisions']; items: NotesMinutesAnswer['items']; dropped: number };
+    try {
+      const facts = await deps.runtime.query<NotesMinutesFacts>('meetings.notes_minutes.facts', { meetingId }, as);
+      const { terms: glossary } = await deps.runtime.query<{ terms: string[] }>('meetings.glossary.for_meeting', { meetingId }, as);
+      noteLineCount = facts.noteLines.length;
+      const bound = bindPorts({ orgId, memberUserId: actor.userId }, { model, memory: nothingToRemember, knowledge: noKnowledge });
+      result = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter }, () =>
+          draftMinutesFromNotes(
+            {
+              language: facts.language,
+              noteLines: facts.noteLines,
+              attendees: facts.attendees,
+              glossary,
+            },
+            bound,
+          ),
+        ),
+        timeoutMs,
+      );
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') return failed('AI_STOPPED');
+      return await fail(notesMinutesCodeOf(error));
+    }
+
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>(
+        'kernel.member_vy.result.store',
+        {
+          runId,
+          outcome: {
+            status: 'ready',
+            body: JSON.stringify({
+              v: 1,
+              summaryChars: result.summary.length,
+              decisions: result.decisions.length,
+              items: result.items.length,
+              dropped: result.dropped,
+              noteLines: noteLineCount,
+            }),
+          },
+        },
+        as,
+      );
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') return failed('AI_STOPPED');
+      return await fail(notesMinutesCodeOf(error));
+    }
+    if (stored.status === 'failed') {
+      console.error('[meetings-notes-minutes] run failed: AI_STOPPED');
+      return failed('AI_STOPPED');
+    }
+
+    const hasDraftContent = result.summary !== '' || result.decisions.length > 0 || result.items.length > 0;
+    return {
+      state: hasDraftContent ? 'drafted' : 'none',
+      errorCode: null,
+      summary: result.summary,
+      decisions: result.decisions,
+      items: result.items,
       dropped: result.dropped,
     };
   } finally {

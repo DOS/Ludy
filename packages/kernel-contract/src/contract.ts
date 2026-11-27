@@ -5,6 +5,7 @@ import { zSpeakingStyle, zSpeakingStyleInput } from './meeting-speaking-style.ts
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
 import { zSalesInsightAnswer, zSalesInsightStatus } from './meeting-sales-insight.ts';
 import { zCatchUpAnswer, zCatchUpStatus } from './meeting-catch-up.ts';
+import { zNotesMinutesAnswer, zNotesMinutesStatus } from './meeting-notes-minutes.ts';
 import { ORG_KINDS } from './apps.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
@@ -2032,6 +2033,11 @@ export const contract = {
     catchUp: {
       status: oc.input(zMeetingRef).output(zCatchUpStatus),
       write: oc.input(zMeetingRef).output(zCatchUpAnswer),
+    },
+    // Draft minutes from typed notes for an unrecorded meeting (#5129, L32): only the recorder, only when zero transcript segments exist, and only returns a cited draft proposal without applying or publishing automatically.
+    notesMinutes: {
+      status: oc.input(zMeetingRef).output(zNotesMinutesStatus),
+      write: oc.input(zMeetingRef).output(zNotesMinutesAnswer),
     },
     // Sales call insights for a meeting linked to an open deal (#4920, L26): `status` feeds the button (recorder + linked open deal + transcript), `analyze` runs the recorder's own Vy once to extract
     // customer concerns, buying signals and agreed next steps citing existing transcript line IDs, plus code-computed customer talk-time share from mapped speakers. Results stay tainted and ephemeral.

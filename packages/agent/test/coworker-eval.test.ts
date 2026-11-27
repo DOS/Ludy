@@ -107,6 +107,12 @@ function createStubRuntime() {
         text = JSON.stringify({
           lines: [{ text: 'Nhom chot ke hoach ban hang va giu dung tien do da de ra.', cite: { kind: 'decision', index: 1 } }],
         });
+      } else if (feature === 'meetings.notes_minutes') {
+        text = JSON.stringify({
+          summary: 'Nhom chot ke hoach ban hang quy 4.',
+          decisions: [{ text: 'Chot ke hoach ban hang quy 4.', noteLine: 1 }],
+          items: [{ title: 'Gui bao gia cho khach', who: 'Lan', when: 'thu Sau', noteLine: 2 }],
+        });
       } else if (feature === 'meetings.sales_insight') {
         if (prompt.user.includes('11111111-1111-4111-8111-111111111102')) {
           text = JSON.stringify({

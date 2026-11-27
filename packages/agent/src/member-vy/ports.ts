@@ -52,6 +52,7 @@ export type ModelFeature =
   | 'meetings.template_suggest'
   | 'meetings.open_points'
   | 'meetings.catch_up'
+  | 'meetings.notes_minutes'
   | 'meetings.sales_insight'
   | 'meetings.label_suggest'
   | 'meetings.followup_note'

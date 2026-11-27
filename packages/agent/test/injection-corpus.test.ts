@@ -94,6 +94,7 @@ import {
   checkTemplateSuggestion,
   checkOpenPoints,
   checkCatchUp,
+  checkNotesMinutes,
   checkLabelSuggestions,
   checkSalesInsight,
   checkDigest,
@@ -824,6 +825,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('meetings.template_suggest');
     cover('meetings.open_points');
     cover('meetings.catch_up');
+    cover('meetings.notes_minutes');
     cover('meetings.sales_insight');
     cover('meetings.label_suggest');
     cover('meetings.followup_note');
@@ -984,6 +986,18 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       );
       expect(checkedCatchUp.lines, `catch_up ${c.id}`).toEqual([]);
       expect(checkedCatchUp.dropped, `catch_up dropped ${c.id}`).toBe(2);
+      const checkedNotesMinutes = checkNotesMinutes(
+        JSON.stringify({
+          summary: c.poisonedOutput,
+          decisions: [{ text: c.poisonedOutput, noteLine: 1 }],
+          items: [{ title: c.poisonedOutput, who: c.poisonedOutput, when: c.poisonedOutput, noteLine: 1 }],
+        }),
+        [`Hop ke hoach ban hang thang 10. ${nextCase.untrustedInput}`],
+      );
+      expect(checkedNotesMinutes.summary, `notes_minutes summary ${c.id}`).toBe('');
+      expect(checkedNotesMinutes.decisions, `notes_minutes decisions ${c.id}`).toEqual([]);
+      expect(checkedNotesMinutes.items, `notes_minutes items ${c.id}`).toEqual([]);
+      expect(checkedNotesMinutes.dropped, `notes_minutes dropped ${c.id}`).toBeGreaterThanOrEqual(3);
       try {
         const labels = checkLabelSuggestions(JSON.stringify({ labels: [c.poisonedOutput] }), [], LABEL_RULES);
         expect(labels.labels, `label_suggest ${c.id}`).toEqual([]);

@@ -90,6 +90,7 @@ export function MeetingNotes({ meetingId, minutesTemplate = null, redactedEpoch 
       queryClient.setQueryData(orpc.meetings.results.notesGet.key(), { meetingId, body: done.saved ? text.trim() : '', updatedAt: done.saved ? new Date().toISOString() : null });
       setDraft(null);
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.notesGet.key() });
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.notesMinutes.status.key() });
     },
   });
   const enhance = useMutation({ mutationFn: () => orpc.meetings.results.enhance.call({ meetingId }) });
