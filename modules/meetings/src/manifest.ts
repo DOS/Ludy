@@ -38,6 +38,8 @@ export const meetingsManifest = defineModule({
           'meeting_id',
           // A hash of the provider and the recurring event id (md5, kept as a uuid), never the provider's own id (#3542).
           'series_id',
+          // Keyed HMAC-SHA256 hashes (ludy_kernel.email_exact_hash) of synced invitee emails for matching CRM contacts (#4991 PM1); no raw email stored.
+          'attendee_email_hashes',
           'updated_at',
         ],
         { title: 'pii', join_url: 'sensitive' },
@@ -105,6 +107,8 @@ export const meetingsManifest = defineModule({
         ],
         { title: 'pii', place: 'pii' },
       ),
+      // A member's own pre-meeting facts draft for an event or booking tied to a contact (#4991 PM1): read, written, and deleted by that member alone.
+      meeting_brief_draft: columns(['org_id', 'id', 'user_id', 'target_kind', 'target_id', 'party_id', 'created_at', 'updated_at'], { body: 'pii' }),
       // The chapters (table of contents) of a meeting (#3844): a title and the second of the transcript line it starts at; a draft the recorder reads, published for the readers. A title is plain text, personal data.
       meeting_chapter: columns(['org_id', 'id', 'meeting_id', 'stage', 'position', 'start_seconds', 'tainted', 'source_run_id', 'created_at', 'updated_at'], { title: 'pii' }),
       // The highlights of a meeting (#4819): the two seconds a mark covers and who made it; ids and times, no text (the lines are read from the transcript).

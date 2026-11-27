@@ -127,6 +127,8 @@ export const zAgendaReplaceEvent = z.strictObject({
   timeZone: z.string().min(1).max(64),
   joinUrl: z.string().max(500).nullable(),
   invitees: z.number().int().min(0).max(1000),
+  // Case-folded non-self attendee emails kept transiently for sync hashing (#4991); stored only as keyed hashes.
+  attendeeEmails: z.array(z.string().min(3).max(320)).max(50).optional().default([]),
   // The provider's recurring event id when the event is an occurrence of one (#3542); the database keeps a hash of it. Absent or null: not part of a series.
   series: z.string().min(1).max(1024).nullable().default(null),
 });

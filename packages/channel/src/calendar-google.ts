@@ -8,6 +8,7 @@
 // it a few minutes before it runs out. One grant is one Google account, its primary calendar.
 // Busy: POST /calendar/v3/freeBusy for the primary calendar over a range; the answer is a list of start and end
 // instants and nothing else.
+import { normalizeAttendeeEmails } from './calendar-attendees.ts';
 import { revokeGoogleGrant, revokeGoogleGrantBestEffort } from './google-oauth.ts';
 import { ConnectorError, allowlistedFetch, type AuthorizeInput, type ExchangeInput, type Fetch } from './oauth.ts';
 
@@ -67,8 +68,8 @@ export interface CalendarAuthorizeInput extends AuthorizeInput {
   readEvents?: boolean;
 }
 
-// One event of the member's own calendar, as much as B1 keeps: what a person needs to recognize the meeting and nothing about who else is in it. `invitees` is a count; no address, description
-// or attachment is ever asked for. `joinUrl` is a Meet, Zoom or Teams address or null.
+// One event of the member's own calendar: what a person needs to recognize the meeting plus case-folded attendee emails used transiently
+// during sync to compute keyed hashes for CRM contact matching (#4991); raw emails are never stored in calendar_agenda or returned in UI.
 export interface CalendarAgendaEvent {
   id: string;
   title: string;
@@ -77,6 +78,8 @@ export interface CalendarAgendaEvent {
   timeZone: string;
   joinUrl: string | null;
   invitees: number;
+  // Deduplicated normalized lowercase attendee emails (excluding self and resource rooms), capped at 50, discarded after hashing in DB.
+  attendeeEmails?: string[];
   // The id of the recurring event this one is an occurrence of (Google recurringEventId, Outlook seriesMasterId), or null for an event that is not part of a series (#3542). An id the provider
   // owns: the kernel stores only a hash of it, so two meetings recorded from two occurrences can be told to be one series.
   series: string | null;
@@ -182,8 +185,8 @@ export function joinUrlOf(candidate: unknown): string | null {
 // The most events one read returns and the pieces it is asked in.
 const EVENTS_MAX = 300;
 const EVENTS_PAGE = 250;
-// The fields asked for: no attendee address (only the flags of each attendee, counted), no description, no attachment, no location.
-const EVENTS_FIELDS = 'nextPageToken,items(id,status,summary,recurringEventId,start,end,hangoutLink,conferenceData(entryPoints(entryPointType,uri)),attendees(self,responseStatus,optional))';
+// The fields asked for: attendee emails and flags only (no displayName, description, attachment, location, organizer, or creator).
+const EVENTS_FIELDS = 'nextPageToken,items(id,status,summary,recurringEventId,start,end,hangoutLink,conferenceData(entryPoints(entryPointType,uri)),attendees(email,self,responseStatus,optional,resource))';
 
 // One event of the answer as B1 keeps it, or null: an all-day event (it has no time to match a recording to), a cancelled one, one the member declined, or one without a usable id or time.
 // A title the database can hold: no NUL (JSON text with one is refused), no lone surrogate (it makes the whole JSON text invalid), cut at 200 units without splitting a pair. A title that would break
@@ -205,7 +208,7 @@ export function agendaEventOf(event: Record<string, unknown>): CalendarAgendaEve
   const startMs = Date.parse(start.dateTime);
   const endMs = Date.parse(end.dateTime);
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs || endMs - startMs > 31 * 86_400_000) return null;
-  const attendees = Array.isArray(event.attendees) ? (event.attendees as Array<{ self?: unknown; responseStatus?: unknown }>) : [];
+  const attendees = Array.isArray(event.attendees) ? (event.attendees as Array<{ email?: unknown; self?: unknown; responseStatus?: unknown; resource?: unknown }>) : [];
   if (attendees.some((a) => a?.self === true && a.responseStatus === 'declined')) return null;
   const data = event.conferenceData as { entryPoints?: Array<{ entryPointType?: unknown; uri?: unknown }> } | undefined;
   const joinUrl = [event.hangoutLink, ...(data?.entryPoints ?? []).filter((p) => p?.entryPointType === 'video').map((p) => p.uri)].map(joinUrlOf).find((u) => u !== null) ?? null;
@@ -218,6 +221,7 @@ export function agendaEventOf(event: Record<string, unknown>): CalendarAgendaEve
     timeZone: zone,
     joinUrl,
     invitees: Math.min(attendees.length, 1000),
+    attendeeEmails: normalizeAttendeeEmails(attendees, (a) => (a !== null && typeof a === 'object' ? (a as { email?: unknown; self?: unknown; resource?: unknown }) : null)),
     series: seriesOf(event.recurringEventId),
   };
 }

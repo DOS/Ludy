@@ -242,6 +242,7 @@ export interface LudyMeetingsSchema {
   'ludy_meetings.live_chunk': MeetingsLiveChunkTable;
   'ludy_meetings.live_line': MeetingsLiveLineTable;
   'ludy_meetings.meeting': MeetingsMeetingTable;
+  'ludy_meetings.meeting_brief_draft': MeetingsMeetingBriefDraftTable;
   'ludy_meetings.meeting_chapter': MeetingsMeetingChapterTable;
   'ludy_meetings.meeting_highlight': MeetingsMeetingHighlightTable;
   'ludy_meetings.meeting_label': MeetingsMeetingLabelTable;
@@ -3850,6 +3851,7 @@ export interface MeetingsCalendarAgendaTable {
   meeting_id: ColumnType<string | null, NotGranted, string | null>;
   updated_at: ColumnType<Date, NotGranted, NotGranted>;
   series_id: ColumnType<string | null, NotGranted, NotGranted>;
+  attendee_email_hashes: ColumnType<string[], NotGranted, NotGranted>;
 }
 
 /** ludy_meetings.capture_session */
@@ -3932,6 +3934,19 @@ export interface MeetingsLiveLineTable {
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** ludy_meetings.meeting_brief_draft */
+export interface MeetingsMeetingBriefDraftTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  target_kind: ColumnType<string, string, NotGranted>;
+  target_id: ColumnType<string, string, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  body: string;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** ludy_meetings.meeting_chapter */

@@ -128,8 +128,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_crm.party_attention_seen',
   // #4988 (TC1): org-scoped tax-code lookup cache with 24h hit / 1h not-found TTL (step 0).
   'crove_kernel.tax_lookup_cache',
-  // #4991 (PM1 step 0): per-member pre-meeting facts drafts scoped to a user + contact.
-  'crove_meetings.meeting_brief_draft',
   // #5073 / #5080 (ADR-0049 #5108): short-lived 36h prep lines for opted-in members, strict user + member_briefing RLS.
   'crove_meetings.morning_brief_lines',
 ]);

@@ -27,14 +27,17 @@ import {
   zAgendaSuggestInput,
   zAgendaSuggestion,
   zAgendaListInput,
+  zMeetingsAttendeeHashesInput,
+  zMeetingsAttendeeHashesOutput,
   type AgendaEvent,
   type AgendaList,
   type AgendaNext,
   type AgendaSuggestion,
+  type MeetingsAttendeeHashesOutput,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { vnDay, vnDayStart } from './retention.ts';
-import { ROLES, userOf } from './transcript.ts';
+import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 type Trx = QueryContext['trx'];
 const DAY_MS = 86_400_000;
@@ -297,5 +300,78 @@ export const agendaReplace = defineCommand({
   },
 });
 
+// Keyed HMAC hashes of attendee emails of a caller's own calendar event or linked meeting (#4991 PM1); no raw email address leaves or is stored.
+export const agendaAttendeeHashes = defineQuery({
+  name: 'meetings.agenda.attendee_hashes',
+  input: zMeetingsAttendeeHashesInput,
+  access: ROLES,
+  handler: async (ctx, input): Promise<MeetingsAttendeeHashesOutput> => {
+    const userId = userOf(ctx.actor);
+    if (input.targetKind === 'agenda') {
+      const row = await agendaOf(ctx.trx, ctx.orgId, userId)
+        .select('a.attendee_email_hashes')
+        .where('a.id', '=', input.targetId)
+        .executeTakeFirst();
+      if (!row) {
+        return zMeetingsAttendeeHashesOutput.parse({ found: false, linkedMeetingId: null, hashes: [], calendarEventIds: [] });
+      }
+      return zMeetingsAttendeeHashesOutput.parse({
+        found: true,
+        linkedMeetingId: row.meeting_id,
+        hashes: row.attendee_email_hashes.slice(0, 50),
+        calendarEventIds: [],
+      });
+    }
+
+    const meeting = await ctx.trx
+      .selectFrom('ludy_meetings.meeting')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.targetId)
+      .executeTakeFirst();
+    if (!meeting) {
+      return zMeetingsAttendeeHashesOutput.parse({ found: false, linkedMeetingId: null, hashes: [], calendarEventIds: [] });
+    }
+    await openMeeting(ctx.trx, ctx.orgId, input.targetId);
+
+    const agendaRows = await agendaOf(ctx.trx, ctx.orgId, userId)
+      .select('a.attendee_email_hashes')
+      .where('a.meeting_id', '=', input.targetId)
+      .orderBy('a.starts_at', 'desc')
+      .limit(5)
+      .execute();
+
+    const hashes: string[] = [];
+    const seenHashes = new Set<string>();
+    for (const r of agendaRows) {
+      for (const h of r.attendee_email_hashes) {
+        if (seenHashes.has(h)) continue;
+        seenHashes.add(h);
+        hashes.push(h);
+        if (hashes.length >= 50) break;
+      }
+      if (hashes.length >= 50) break;
+    }
+
+    const linkRows = await ctx.trx
+      .selectFrom('ludy_meetings.meeting_link')
+      .select('calendar_event_id')
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.targetId)
+      .where('calendar_event_id', 'is not', null)
+      .orderBy('created_at', 'desc')
+      .limit(10)
+      .execute();
+    const calendarEventIds = [...new Set(linkRows.flatMap((l) => (l.calendar_event_id ? [l.calendar_event_id] : [])))];
+
+    return zMeetingsAttendeeHashesOutput.parse({
+      found: true,
+      linkedMeetingId: input.targetId,
+      hashes,
+      calendarEventIds,
+    });
+  },
+});
+
 export const agendaCommands = [agendaSetReadEvents, agendaClear, agendaLink, agendaReplace];
-export const agendaQueries = [agendaList, agendaNext, agendaSuggest];
+export const agendaQueries = [agendaList, agendaNext, agendaSuggest, agendaAttendeeHashes];

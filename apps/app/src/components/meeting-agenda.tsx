@@ -17,6 +17,7 @@ import { meetingsInstalled } from './linked-meetings.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { BriefBody } from './meeting-brief.tsx';
+import { ContactMeetingFacts } from './contact-meeting-facts.tsx';
 
 // Where a join address leads, by its host: the badge names the service, never the address.
 export function joinService(url: string | null): 'meet' | 'zoom' | 'teams' | null {
@@ -179,6 +180,15 @@ export function TodayAgenda({ slug, showUnconfiguredHint = false }: { slug: stri
                   <BriefBody slug={slug} showSource facts={brief} target={event.meetingId ? { meetingId: event.meetingId, agendaId: null } : { meetingId: null, agendaId: event.id }} />
                 </div>
               )}
+              <ContactMeetingFacts
+                slug={slug}
+                targetKind="agenda"
+                targetId={event.id}
+                linkedMeetingId={event.meetingId}
+                collapsible
+                rowLabel={event.title === '' ? t('untitled') : event.title}
+                className="basis-full pt-1"
+              />
             </li>
           ))}
         </ul>
@@ -286,6 +296,15 @@ export function UpcomingAgenda({ slug, showUnconfiguredHint = false }: { slug: s
                       </Link>
                     )}
                   </div>
+                  <ContactMeetingFacts
+                    slug={slug}
+                    targetKind="agenda"
+                    targetId={event.id}
+                    linkedMeetingId={event.meetingId}
+                    collapsible
+                    rowLabel={event.title === '' ? t('untitled') : event.title}
+                    className="mt-2"
+                  />
                 </TableCell>
               </TableRow>
             );

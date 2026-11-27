@@ -37,6 +37,7 @@ import { transcriptExportQueries } from './transcript-export.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
 import { briefCommands, briefQueries } from './brief.ts';
+import { briefDraftCommands, briefDraftQueries } from './brief-draft.ts';
 import { digestCommands, digestQueries } from './digest.ts';
 import { highlightsCommands, highlightsQueries } from './highlights.ts';
 import { labelsCommands, labelsQueries } from './labels.ts';
@@ -1249,6 +1250,7 @@ export const meetingsCommands = [
   ...translateRunCommands,
   ...askRunCommands,
   ...briefCommands,
+  ...briefDraftCommands,
   ...digestCommands,
   ...voiceCueCommands,
   ...morningCommands,
@@ -1308,6 +1310,7 @@ export const meetingsQueries = [
   ...translateRunQueries,
   ...askRunQueries,
   ...briefQueries,
+  ...briefDraftQueries,
   ...digestQueries,
   ...loadQueries,
   ...trackersQueries,
