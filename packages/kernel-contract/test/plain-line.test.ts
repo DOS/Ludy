@@ -34,6 +34,10 @@ describe('plainLine', () => {
     expect(plainLine(smuggled, 300)).toBe('ABC');
     expect(plainLine('\ufe05Name\u{e0120}', 300)).toBe('Name');
     expect(plainLine('1\ufe0f 2\ufe0e', 300)).toBe('1 2');
+    // A run at the very start (no base character before it) is dropped whole, not all but its first selector.
+    expect(plainLine('\ufe00\ufe01\ufe02Name', 300)).toBe('Name');
+    expect(plainLine('\u{e0100}\u{e0101}\u{e0102}', 300)).toBe('');
+    expect(plainText('\ufe00\ufe01\ufe02Name\n\ufe0f\ufe0f\ufe0fB', 300).text).toBe('Name\nB');
     expect(plainText(smuggled, 300).text).toBe('ABC');
   });
 

@@ -12,7 +12,8 @@ const DROPPED_LINE_CHARS_RE = /[\p{Cf}\p{Co}\p{Cn}\p{Cs}\u115f\u1160\u180b-\u180
 
 // The variation selectors: U+FE00 to U+FE0F and the supplement U+E0100 to U+E01EF (a base character is optional, so a lone or repeated selector is dropped as well).
 const SELECTOR_RE = /[\ufe00-\ufe0f\u{e0100}-\u{e01ef}]/u;
-const SELECTOR_RUN_RE = /(.?)([\ufe00-\ufe0f\u{e0100}-\u{e01ef}]+)/gsu;
+// The base is never a selector itself, so a run at the start of the text is dropped whole.
+const SELECTOR_RUN_RE = /([^\ufe00-\ufe0f\u{e0100}-\u{e01ef}]?)([\ufe00-\ufe0f\u{e0100}-\u{e01ef}]+)/gsu;
 const EMOJI_FORM_RE = /^\p{Extended_Pictographic}$/u;
 // Drops every variation selector but one U+FE0E or U+FE0F after a character with an emoji form: a person's emoji keeps its presentation, a hidden payload (a run of selectors, or selectors after a letter) goes.
 export function dropSelectors(value: string): string {

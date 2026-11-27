@@ -478,8 +478,6 @@ export const metricsInsights = defineQuery({
       metrics: Record<string, number> | null;
     }>`
       SELECT v.id AS variant_id, v.post_id, v.provider, v.channel_connection_id, coalesce(v.body, p.body) AS body,
-           -- Only the signature of the variant's settings (a text, false or absent), as the MCP posts list reads it: the text a channel goes out with ends with it.
-           v.settings -> 'signature' AS signature,
              v.published_at, v.external_url, v.settings->>'postType' AS post_type,
              CASE WHEN jsonb_typeof(v.media) = 'array' THEN (
                SELECT array_agg(f.content_type ORDER BY x.n) FROM jsonb_array_elements(v.media) WITH ORDINALITY x(e, n)
