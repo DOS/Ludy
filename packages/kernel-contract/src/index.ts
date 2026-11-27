@@ -60,6 +60,7 @@ export * from './coworkers.ts';
 export * from './sign.ts';
 export * from './projects-roadmap.ts';
 export * from './projects-triage.ts';
+export * from './projects-github.ts';
 
 export const ORG_HEADER = 'x-ludy-org';
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;

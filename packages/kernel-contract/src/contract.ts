@@ -915,6 +915,32 @@ import {
   zProjectTriageReopenInput,
   zProjectTriageSnoozeInput,
 } from './projects-triage.ts';
+import {
+  zGithubAppOAuthStartRpcInput,
+  zGithubAppOAuthStartRpcResult,
+  zGithubBindingGetInput,
+  zGithubBindingGetResult,
+  zGithubBindingSaveInput,
+  zGithubBindingSaveResult,
+  zGithubConnectAppRpcInput,
+  zGithubConnectAppRpcResult,
+  zGithubConnectPatRpcInput,
+  zGithubConnectPatRpcResult,
+  zGithubListAvailableReposRpcInput,
+  zGithubListAvailableReposRpcResult,
+  zGithubProjectBindingView,
+  zGithubRepoBindInput,
+  zGithubRepoUnbindInput,
+  zGithubRotatePatHookRpcInput,
+  zGithubRotatePatHookRpcResult,
+  zGithubSyncLogQueryInput,
+  zGithubSyncLogQueryResult,
+  zGithubTaskLinkAddRpcInput,
+  zGithubTaskLinkAddRpcResult,
+  zGithubTaskLinkRemoveInput,
+  zGithubTaskLinksQueryInput,
+  zGithubTaskLinksQueryResult,
+} from './projects-github.ts';
 import { zDealUpdateAnswer, zDealUpdateAsk, zDealUpdateConfirmCall, zDealUpdateConfirmed, zDealUpdateStatus } from './meeting-deal-update.ts';
 import { zFollowupDraft, zFollowupDraftAsk, zFollowupNoteAnswer, zFollowupNoteAsk, zFollowupNoteStatus, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
@@ -4212,6 +4238,29 @@ export const contract = {
         .input(zProjectTriageReopenInput.extend({ idempotencyKey: zId }))
         .output(zProjectTriageMutateResult),
       assist: oc.input(zProjectTriageAssistInput).output(zProjectTriageAssistResult),
+    },
+    github: {
+      bindingGet: oc.input(zGithubBindingGetInput).output(zGithubBindingGetResult),
+      bindingSave: oc
+        .input(zGithubBindingSaveInput.extend({ idempotencyKey: zId }))
+        .output(zGithubBindingSaveResult),
+      connectPat: oc.input(zGithubConnectPatRpcInput).output(zGithubConnectPatRpcResult),
+      appOAuthStart: oc.input(zGithubAppOAuthStartRpcInput).output(zGithubAppOAuthStartRpcResult),
+      connectApp: oc.input(zGithubConnectAppRpcInput).output(zGithubConnectAppRpcResult),
+      rotatePatHook: oc.input(zGithubRotatePatHookRpcInput).output(zGithubRotatePatHookRpcResult),
+      listAvailableRepos: oc.input(zGithubListAvailableReposRpcInput).output(zGithubListAvailableReposRpcResult),
+      repoBind: oc
+        .input(zGithubRepoBindInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ binding: zGithubProjectBindingView })),
+      repoUnbind: oc
+        .input(zGithubRepoUnbindInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ binding: zGithubProjectBindingView })),
+      taskLinks: oc.input(zGithubTaskLinksQueryInput).output(zGithubTaskLinksQueryResult),
+      taskLinkAdd: oc.input(zGithubTaskLinkAddRpcInput).output(zGithubTaskLinkAddRpcResult),
+      taskLinkRemove: oc
+        .input(zGithubTaskLinkRemoveInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ removed: z.boolean() })),
+      syncLog: oc.input(zGithubSyncLogQueryInput).output(zGithubSyncLogQueryResult),
     },
   },
   // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via LUDY_MODULES and org_app_on.

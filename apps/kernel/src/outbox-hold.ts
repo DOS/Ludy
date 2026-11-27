@@ -57,6 +57,8 @@ const HOLDING_PREFIXES: Readonly<Record<string, string>> = {
   'hr.': 'hr',
   // Only the attachment extraction requests of Notes (#3561); its other events keep flowing as before.
   'notes.attachment.': 'notes',
+  // Projects GitHub link hydration (#5158): parks while Projects is off and hydrates once Projects switches back on.
+  'projects.github.': 'projects',
   // Signer KYC attachment PDF inspection (#4443); Sign's other events recover via sweepSignPendingWork and sign.docx_convert.pending in SELF_RECOVERING_EVENTS.
   'sign.kyc.': 'sign',
 };

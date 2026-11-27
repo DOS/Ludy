@@ -98,9 +98,9 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   // #4723 (eSign Slice 6d): ludy_sign.public_deposit_qr_source and public_record_deposit_notice enforce org_app_on + entitlement -> opaque 404.
   '/api/sign/deposit-qr': { app: 'sign', gate: 'sql', why: 'crove_sign.public_deposit_qr_source checks org_app_on + entitlement -> 404 (#4723)' },
   '/api/sign/deposit-notice': { app: 'sign', gate: 'sql', why: 'crove_sign.public_record_deposit_notice checks org_app_on + entitlement -> 404 (#4723)' },
-  // #5157 Step 0 / #5158 Slice 1 (Projects GitHub Integration, ADR-0060): webhook routes move to 'dropped' / 'sql' when #5158 lands them.
-  '/api/projects/github/webhook': { app: 'projects', gate: 'pending', why: '#5158 (ADR-0060 GitHub App webhook moves to dropped after raw-byte HMAC check + worker org_app_on + entitlement drop)' },
-  '/api/projects/github/webhook/:hookKey': { app: 'projects', gate: 'pending', why: '#5158 (ADR-0060 PAT per-connection webhook moves to sql via crove_projects hook definer checking org_app_on + entitlement -> 404)' },
+  // #5158 Slice 1 (Projects GitHub Integration, ADR-0060): App webhook drops off/unentitled orgs in worker; PAT :hookKey gates via definer + entitlement -> opaque 404.
+  '/api/projects/github/webhook': { app: 'projects', gate: 'dropped', why: 'GitHub App webhook verifies raw-byte HMAC first and drops off/unentitled orgs in the worker handler (#5158)' },
+  '/api/projects/github/webhook/:hookKey': { app: 'projects', gate: 'sql', why: 'ludy_projects.github_webhook_hook_find + runtime.appOn gate org_app_on + entitlement -> opaque 404 (#5158)' },
 };
 
 // The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`. A line at the key indent that
@@ -136,10 +136,10 @@ describe('public routes against the per-org app gate (ADR-0053, slice c C2)', ()
     expect(Object.keys(CLASSES).filter((p) => !paths.has(p))).toEqual([]);
   });
 
-  it('gates every route of Social, CRM, Finance and Sign in SQL or by dropping, and keeps kernel and pending classes honest', () => {
+  it('gates every route of Social, CRM, Finance, Sign and Projects in SQL or by dropping, and keeps kernel and pending classes honest', () => {
     const { pending } = publicLists();
     for (const [path, c] of Object.entries(CLASSES)) {
-      if (!pending.includes(path) && ['social', 'crm', 'social+crm', 'finance', 'sign'].includes(c.app)) expect(['sql', 'dropped'], path).toContain(c.gate);
+      if (!pending.includes(path) && ['social', 'crm', 'social+crm', 'finance', 'sign', 'projects'].includes(c.app)) expect(['sql', 'dropped'], path).toContain(c.gate);
       // The kernel class belongs to the kernel app and the kernel app to the kernel class: an app's route cannot be filed as kernel.
       expect(c.gate === 'kernel', `${path}: kernel gate and kernel app go together`).toBe(c.app === 'kernel');
       // 'pending' stands only for a route that is still in route-coverage's PENDING list (not in the code yet).

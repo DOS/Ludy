@@ -150,6 +150,9 @@ const BRIEFING_SEALED_CLOSED_POLICIES = [
   { t: "crove_projects.roadmap_vote", n: "briefing_sealed_closed", cmd: "*", perm: false, expectedCount: 2 },
   { t: "crove_projects.task_dependency", n: "briefing_sealed_closed", cmd: "*", perm: false, expectedCount: 2 },
   { t: "crove_projects.time_entry", n: "briefing_sealed_closed", cmd: "*", perm: false, expectedCount: 2 },
+  { t: "crove_projects.github_project_binding", n: "briefing_sealed_closed", cmd: "*", perm: false, expectedCount: 2 },
+  { t: "crove_projects.github_project_repo", n: "briefing_sealed_closed", cmd: "*", perm: false, expectedCount: 2 },
+  { t: "crove_projects.github_task_link", n: "briefing_sealed_closed", cmd: "*", perm: false, expectedCount: 2 },
 ] as const;
 const BRIEFING_ALLOWLISTED_TABLES = new Set<string>([
   "crove_meetings.action_item",

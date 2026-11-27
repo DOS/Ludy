@@ -268,6 +268,9 @@ export interface LudyNotesSchema {
 }
 
 export interface LudyProjectsSchema {
+  'ludy_projects.github_project_binding': ProjectsGithubProjectBindingTable;
+  'ludy_projects.github_project_repo': ProjectsGithubProjectRepoTable;
+  'ludy_projects.github_task_link': ProjectsGithubTaskLinkTable;
   'ludy_projects.project': ProjectsProjectTable;
   'ludy_projects.project_column': ProjectsProjectColumnTable;
   'ludy_projects.project_cycle': ProjectsProjectCycleTable;
@@ -4240,6 +4243,71 @@ export interface NotesTodoTable {
   section_id: string | null;
 }
 
+/** ludy_projects.github_project_binding */
+export interface ProjectsGithubProjectBindingTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  channel_connection_id: string;
+  github_enabled: Generated<boolean>;
+  task_key_prefix: string | null;
+  next_task_number: Generated<number>;
+  auto_sync_inbound: Generated<boolean>;
+  auto_link_mentions: Generated<boolean>;
+  auto_link_branch: Generated<boolean>;
+  inbound_in_progress_on_pr: Generated<boolean>;
+  inbound_done_on_merge: Generated<boolean>;
+  outbound_close_issue_on_done: Generated<boolean>;
+  inbound_col_in_progress: string | null;
+  inbound_col_in_review: string | null;
+  inbound_col_done: string | null;
+  paused_reason: string | null;
+  paused_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_projects.github_project_repo */
+export interface ProjectsGithubProjectRepoTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  binding_id: string;
+  github_repo_id: string;
+  repo_full_name: string;
+  default_branch: Generated<string>;
+  webhook_configured: Generated<boolean>;
+  last_event_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_projects.github_task_link */
+export interface ProjectsGithubTaskLinkTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  task_id: string;
+  repo_full_name: string;
+  kind: string;
+  external_number: number;
+  external_url: string;
+  external_title: string;
+  external_state: string;
+  branch_name: string | null;
+  author_login: string | null;
+  link_source: string;
+  closes_task: Generated<boolean>;
+  hydrating: Generated<boolean>;
+  tainted: Generated<boolean>;
+  last_remote_event_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  last_synced_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** ludy_projects.project_column */
 export interface ProjectsProjectColumnTable {
   org_id: string;
@@ -4346,6 +4414,7 @@ export interface ProjectsProjectTaskTable {
   start_on: string | null;
   cycle_id: string | null;
   story_points: number | null;
+  task_number: number | null;
 }
 
 /** ludy_projects.project_triage_item */

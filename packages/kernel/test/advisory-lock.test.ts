@@ -78,12 +78,15 @@ describe('shared PostgreSQL transaction advisory lock helper (#3447)', () => {
     expect(executed).toHaveLength(0);
 
     await acquireChannelLocks(trx, ' org-1 ', ' whatsapp ', ' 10400000001000 ');
+    await acquireChannelLocks(trx, ' org-1 ', ' github_app ', ' 777123 ');
     await acquireChannelLocks(trx, 'org-2', 'facebook_page', 'page-99');
     await db.destroy();
 
     expect(executed.map((q) => q.parameters)).toEqual([
       ['ludy.whatsapp_handover:10400000001000'],
       ['crove.channel:org-1:whatsapp:10400000001000'],
+      ['ludy.github_app_handover:777123'],
+      ['crove.channel:org-1:github_app:777123'],
       ['crove.channel:org-2:facebook_page:page-99'],
     ]);
   });
@@ -97,16 +100,22 @@ describe('shared PostgreSQL transaction advisory lock helper (#3447)', () => {
     expect(executed).toHaveLength(0);
 
     await acquireChannelLocksForStoredRow(trx, 'org-1', 'whatsapp', '   ');
+    await acquireChannelLocksForStoredRow(trx, 'org-1', 'github_app', '   ');
     await acquireChannelLocksForStoredRow(trx, 'org-2', 'facebook_page', '   ');
     await acquireChannelLocksForStoredRow(trx, ' org-3 ', ' whatsapp ', ' 10400000009999 ');
+    await acquireChannelLocksForStoredRow(trx, ' org-3 ', ' github_app ', ' 999888 ');
     await db.destroy();
 
     expect(executed.map((q) => q.parameters)).toEqual([
       ['ludy.whatsapp_handover:'],
       ['crove.channel:org-1:whatsapp:'],
+      ['ludy.github_app_handover:'],
+      ['crove.channel:org-1:github_app:'],
       ['crove.channel:org-2:facebook_page:'],
       ['ludy.whatsapp_handover:10400000009999'],
       ['crove.channel:org-3:whatsapp:10400000009999'],
+      ['ludy.github_app_handover:999888'],
+      ['crove.channel:org-3:github_app:999888'],
     ]);
   });
 

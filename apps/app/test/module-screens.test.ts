@@ -436,6 +436,11 @@ describe('a module turned off, outside /o/$slug (ADR-0031 §3, #1660)', () => {
     expect(await answer(BOOKING)).toEqual({ path: BOOKING, notFound: true });
     session.modules = ['kernel', 'crm'];
     expect(await answer(BOOKING)).toEqual({ path: BOOKING, notFound: false });
+    // GitHub App OAuth callback belongs to projects even when social is not installed (#5158 B1).
+    expect(await answer('/channels/oauth/github_app/callback')).toEqual({ path: '/channels/oauth/github_app/callback', notFound: true });
+    session.modules = ['kernel', 'projects'];
+    expect(await answer('/channels/oauth/github_app/callback')).toEqual({ path: '/channels/oauth/github_app/callback', notFound: false });
+    expect(await answer('/channels/oauth/x/callback')).toEqual({ path: '/channels/oauth/x/callback', notFound: true });
     // The kernel's own screens open whatever the modules.
     session.modules = ['kernel'];
     expect(outsideInstalled(session.modules, '/clients')).toBe(true);

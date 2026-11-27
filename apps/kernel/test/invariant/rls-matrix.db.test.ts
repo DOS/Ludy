@@ -126,12 +126,6 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   // #5073 / #5080 (ADR-0049 #5108): short-lived 36h prep lines for opted-in members, strict user + member_briefing RLS.
   'crove_meetings.morning_brief_lines',
-  'crove_projects.github_project_binding',
-  'crove_projects.github_project_repo',
-  'crove_projects.github_sync_delivery',
-  'crove_projects.github_task_link',
-  'crove_projects.github_webhook_hook',
-  'crove_projects.github_webhook_notice',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a

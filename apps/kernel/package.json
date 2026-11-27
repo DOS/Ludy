@@ -22,6 +22,7 @@
     "@ludy/db": "workspace:*",
     "@ludy/einvoice": "workspace:*",
     "@ludy/extract-contract": "workspace:*",
+    "@ludy/github": "workspace:*",
     "@ludy/kernel": "workspace:*",
     "@ludy/kernel-contract": "workspace:*",
     "@ludy/kernel-runtime": "workspace:*",

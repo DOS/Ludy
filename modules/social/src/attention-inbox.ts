@@ -43,9 +43,10 @@ export const attentionInbox = defineQuery({
       .select(['id', 'provider', 'display_name', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('status', 'in', ATTENTION_CHANNEL_STATUSES)
-      // An e-invoice provider's connection is the finance module's: its account id holds the seller's tax code, and the screen it links to is Social's.
+      // An e-invoice provider's or GitHub integration's connection belongs to finance/projects, not Social attention.
       .where('provider', 'not like', 'einvoice\\_%')
       .where('provider', 'not like', 'accounting\\_%')
+      .where('provider', 'not like', 'github\\_%')
       .orderBy('updated_at', 'asc')
       .limit(ATTENTION_INBOX_MAX)
       .execute();

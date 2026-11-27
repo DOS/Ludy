@@ -581,6 +581,9 @@ importers:
       '@ludy/extract-contract':
         specifier: workspace:*
         version: link:../../packages/extract-contract
+      '@ludy/github':
+        specifier: workspace:*
+        version: link:../../packages/github
       '@ludy/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
@@ -1076,6 +1079,12 @@ importers:
   packages/einvoice: {}
 
   packages/extract-contract:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.7
+
+  packages/github:
     dependencies:
       zod:
         specifier: 'catalog:'

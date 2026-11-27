@@ -393,6 +393,7 @@ function TaskMetaBadges({
   seats,
   pointsEnabled = false,
   cyclesEnabled = false,
+  githubEnabled = false,
   cycleName,
   canEdit = false,
   onSetTaskPoints,
@@ -401,6 +402,7 @@ function TaskMetaBadges({
   seats: readonly ProjectSeat[];
   pointsEnabled?: boolean;
   cyclesEnabled?: boolean;
+  githubEnabled?: boolean;
   cycleName?: string | undefined;
   canEdit?: boolean;
   onSetTaskPoints?: ((taskId: string, storyPoints: number | null) => void) | undefined;
@@ -465,6 +467,16 @@ function TaskMetaBadges({
           <span>{task.commentCount}</span>
         </span>
       )}
+      {githubEnabled && (task.githubLinkCount ?? 0) > 0 && (
+        <Badge
+          variant="outline"
+          className="h-5 gap-1 px-1.5 text-[11px] tabular-nums"
+          data-testid="task-github-link-count"
+        >
+          <ProjectIcon name="link" className="size-3" />
+          <span>{t('github.cardLinksBadge', { count: task.githubLinkCount ?? 0 })}</span>
+        </Badge>
+      )}
     </div>
   );
 }
@@ -500,6 +512,7 @@ function TaskBoardCard({
   canEdit,
   pointsEnabled,
   cyclesEnabled,
+  githubEnabled,
   cycleName,
   dragging,
   dropEdge,
@@ -528,6 +541,7 @@ function TaskBoardCard({
   canEdit: boolean;
   pointsEnabled: boolean;
   cyclesEnabled: boolean;
+  githubEnabled: boolean;
   cycleName?: string | undefined;
   dragging: boolean;
   dropEdge: 'before' | 'after' | null;
@@ -581,14 +595,25 @@ function TaskBoardCard({
       } ${dragging ? 'opacity-40' : ''} ${dropRing}`}
     >
       <div className="flex items-start justify-between gap-2">
-        <Link
-          to="/o/$slug/tasks/$id"
-          params={{ slug, id: task.id }}
-          draggable={false}
-          className="min-w-0 flex-1 break-words rounded text-sm leading-snug font-medium text-foreground hover:text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-        >
-          {taskTitleText(task)}
-        </Link>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+          {githubEnabled && task.taskKey && (
+            <Badge
+              variant="outline"
+              className="h-5 shrink-0 px-1.5 font-mono text-[11px]"
+              data-testid="task-github-key"
+            >
+              {task.taskKey}
+            </Badge>
+          )}
+          <Link
+            to="/o/$slug/tasks/$id"
+            params={{ slug, id: task.id }}
+            draggable={false}
+            className="min-w-0 break-words rounded text-sm leading-snug font-medium text-foreground hover:text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          >
+            {taskTitleText(task)}
+          </Link>
+        </div>
         {canEdit && (
           <div className="flex shrink-0 items-center gap-0.5">
             {showReorder && (
@@ -649,6 +674,7 @@ function TaskBoardCard({
           seats={seats}
           pointsEnabled={pointsEnabled}
           cyclesEnabled={cyclesEnabled}
+          githubEnabled={githubEnabled}
           cycleName={cycleName}
           canEdit={canEdit}
           onSetTaskPoints={onSetTaskPoints}
@@ -724,6 +750,7 @@ export function ProjectBoardView({
   customSortActive = false,
   cyclesEnabled = false,
   pointsEnabled = false,
+  githubEnabled = false,
   cycleNamesById,
   onSetTaskPoints,
   onMoveStatus,
@@ -744,6 +771,7 @@ export function ProjectBoardView({
   customSortActive?: boolean;
   cyclesEnabled?: boolean;
   pointsEnabled?: boolean;
+  githubEnabled?: boolean;
   cycleNamesById?: ReadonlyMap<string, string>;
   onSetTaskPoints?: ((taskId: string, storyPoints: number | null) => void) | undefined;
   onMoveStatus: (taskId: string, nextStatus: TaskStatus, placement?: TaskPlacement) => void;
@@ -1032,6 +1060,7 @@ export function ProjectBoardView({
                           canEdit={canEdit}
                           pointsEnabled={pointsEnabled}
                           cyclesEnabled={cyclesEnabled}
+                          githubEnabled={githubEnabled}
                           cycleName={task.cycleId ? cycleNamesById?.get(task.cycleId) : undefined}
                           dragging={draggingId === task.id}
                           dropEdge={dropTarget?.anchorId === task.id ? dropTarget.place : null}
@@ -1120,6 +1149,11 @@ export function ProjectBoardView({
                         >
                           {taskTitleText(task)}
                         </Link>
+                        {githubEnabled && task.taskKey && (
+                          <Badge variant="outline" className="h-5 px-1.5 font-mono text-[11px]" data-testid="task-github-key">
+                            {task.taskKey}
+                          </Badge>
+                        )}
                         {task.tainted && (
                           <Badge variant="warning" className="h-5 px-1.5 text-[11px]" title={t('task.taintedHint')}>
                             {t('task.tainted')}
@@ -1178,6 +1212,16 @@ export function ProjectBoardView({
                             <NavIcon name="comments" className="size-3.5" />
                             <span>{t('task.commentsCount', { count: String(task.commentCount) })}</span>
                           </span>
+                        )}
+                        {githubEnabled && (task.githubLinkCount ?? 0) > 0 && (
+                          <Badge
+                            variant="outline"
+                            className="h-5 gap-1 px-1.5 text-[11px] tabular-nums"
+                            data-testid="task-github-link-count"
+                          >
+                            <ProjectIcon name="link" className="size-3" />
+                            <span>{t('github.cardLinksBadge', { count: task.githubLinkCount ?? 0 })}</span>
+                          </Badge>
                         )}
                       </div>
                     </div>

@@ -4,6 +4,8 @@ import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
 import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MARKETPLACE_PUSH_ADAPTERS, marketplaceHookAddress, marketplaceHookBaseUsable, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@ludy/kernel-contract';
 import { TingeeError, sandboxBankFeed, type BankFeedProvider } from '@ludy/bank-feed';
+import { GithubError, type GithubClient } from '@ludy/github';
+import { githubHookKeyHash, githubOAuthStateDigest } from './projects-github-webhook.ts';
 import { RateLimiter } from './rate-limit.ts';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@ludy/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@ludy/einvoice';
@@ -17,6 +19,14 @@ import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
 import { makeSignWebhookSecret } from './sign-hook.ts';
+import {
+  parseGithubItemUrl,
+  type GithubBindingGetResult,
+  type GithubBindingSaveResult,
+  type GithubHookSetResult,
+  type GithubLinkPrepareResult,
+  type GithubTaskLinkView,
+} from '@ludy/kernel-contract';
 import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, BankSignDepositMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceHomeMoney, FinanceOverview, MonthClose, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
@@ -421,6 +431,28 @@ export interface RpcChannels {
   push?: { publicKey: string };
   // Mobile native push (#4883): true when the deployment configures a NativePushSender adapter; unset keeps native push disabled.
   nativePush?: boolean;
+  // Projects GitHub Integration client (#5158, ADR-0060): fixed host api.github.com through guardedRequest.
+  github?: GithubClient;
+}
+
+function githubFailure(error: unknown): DomainError {
+  if (!(error instanceof GithubError)) {
+    return new DomainError('GITHUB_UPSTREAM_FAILED', 503, 'Không thể kết nối tới GitHub lúc này; hãy thử lại sau');
+  }
+  switch (error.kind) {
+    case 'credentials':
+      return new DomainError('GITHUB_CREDENTIALS_INVALID', 422, 'Thông tin xác thực GitHub không hợp lệ hoặc đã hết hạn');
+    case 'forbidden':
+      return new DomainError('GITHUB_FORBIDDEN', 403, 'Token hoặc GitHub App chưa được cấp đủ quyền cho kho mã nguồn này');
+    case 'not_found':
+      return new DomainError('GITHUB_NOT_FOUND', 404, 'Không tìm thấy đối tượng tương ứng trên GitHub');
+    case 'rate_limited':
+      return new DomainError('GITHUB_RATE_LIMITED', 429, 'GitHub đang giới hạn tần suất gọi API; hãy thử lại sau ít phút');
+    case 'bad_request':
+      return new DomainError('GITHUB_BAD_REQUEST', 400, 'Yêu cầu gửi tới GitHub không hợp lệ');
+    default:
+      return new DomainError('GITHUB_UPSTREAM_FAILED', 503, 'Không thể kết nối tới GitHub lúc này; hãy thử lại sau');
+  }
 }
 
 // A meeting platform's refusal or failure during the connect step, as the answer the user sees: a fixed text, never the platform's words (the adapter's error carries only a short code).
@@ -5400,6 +5432,399 @@ export function createRpcHandler(
             );
           }),
         ),
+      },
+      github: {
+        bindingGet: os.projects.github.bindingGet.handler(projectsQuery('projects.github.binding.get')),
+        bindingSave: os.projects.github.bindingSave.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('projects.github.binding.save', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+        connectPat: os.projects.github.connectPat.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được GitHub cho dự án');
+            if (!channels || channels.broker.id === 'none') {
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối trên máy chủ');
+            }
+            if (!channels.github) {
+              throw new DomainError('GITHUB_UNAVAILABLE', 503, 'Kết nối GitHub chưa sẵn sàng trên máy chủ');
+            }
+            const previous = await runtime.query<GithubBindingGetResult>(
+              'projects.github.binding.get',
+              { projectId: input.projectId },
+              { actor, orgId },
+            );
+            const summary = await channels.github.inspectPatAndListRepos(input.accessToken).catch((error: unknown) => {
+              throw githubFailure(error);
+            });
+            const externalAccountId = `${summary.accountId}:${input.projectId}`;
+            const sealed = channels.broker.seal(
+              JSON.stringify({ accessToken: input.accessToken, webhookSecret: input.webhookSecret }),
+              { orgId, provider: 'github_pat', externalAccountId },
+            );
+            const conn = await runtime.execute<{ connectionId: string; reconnected: boolean }>(
+              'kernel.channel.connect',
+              {
+                provider: 'github_pat',
+                externalAccountId,
+                displayName: input.displayName ?? `@${summary.accountLogin}`,
+                scopes: [],
+                expiresAt: null,
+                credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+              } satisfies ChannelConnectInput,
+              { actor, orgId, idempotencyKey: `github-connect:${input.idempotencyKey}` },
+            );
+            let saved: GithubBindingSaveResult;
+            try {
+              saved = await runtime.execute<GithubBindingSaveResult>(
+                'projects.github.binding.save',
+                {
+                  projectId: input.projectId,
+                  channelConnectionId: conn.connectionId,
+                  githubEnabled: true,
+                  ...(input.taskKeyPrefix !== undefined ? { taskKeyPrefix: input.taskKeyPrefix } : {}),
+                  ...(input.backfillTaskNumbers !== undefined ? { backfillTaskNumbers: input.backfillTaskNumbers } : {}),
+                },
+                { actor, orgId, idempotencyKey: input.idempotencyKey },
+              );
+            } catch (error) {
+              if (!conn.reconnected) {
+                await runtime.execute('kernel.channel.disconnect', { connectionId: conn.connectionId }, { actor, orgId }).catch(() => {});
+              }
+              throw error;
+            }
+            const targetConnectionId = saved.binding.channelConnectionId;
+            if (previous.binding?.provider === 'github_pat' && previous.binding.channelConnectionId !== targetConnectionId) {
+              await runtime
+                .execute('kernel.channel.disconnect', { connectionId: previous.binding.channelConnectionId }, { actor, orgId })
+                .catch(() => {});
+            }
+            const hookKey = randomBytes(24).toString('base64url');
+            await runtime.execute<GithubHookSetResult>(
+              'projects.github.hook_set',
+              { connectionId: targetConnectionId, hookKeySha256: githubHookKeyHash(hookKey) },
+              { actor, orgId },
+            );
+            const base = (channels.apiUrl ?? channels.publicUrl ?? '').replace(/\/+$/, '');
+            const webhookUrl = `${base}/api/projects/github/webhook/${hookKey}`;
+            const refreshed = await runtime.query<GithubBindingGetResult>('projects.github.binding.get', { projectId: input.projectId }, { actor, orgId });
+            return {
+              connectionId: targetConnectionId,
+              binding: refreshed.binding ?? saved.binding,
+              webhookUrl,
+              availableRepos: summary.repos.map((r) => ({
+                githubRepoId: r.githubRepoId,
+                repoFullName: r.repoFullName,
+                defaultBranch: r.defaultBranch,
+                privateRepo: r.privateRepo,
+              })),
+              backfilledCount: saved.backfilledCount,
+            };
+          }),
+        ),
+        appOAuthStart: os.projects.github.appOAuthStart.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được GitHub App cho dự án');
+            if (!channels || channels.broker.id === 'none') {
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối trên máy chủ');
+            }
+            if (!channels.github || !channels.github.hasAppCredentials || !channels.github.hasAppOAuth || !channels.github.oauthClientId || !channels.publicUrl) {
+              throw new DomainError('GITHUB_APP_NOT_CONFIGURED', 503, 'Máy chủ chưa cấu hình GitHub App');
+            }
+            const current = await runtime.query<GithubBindingGetResult>(
+              'projects.github.binding.get',
+              { projectId: input.projectId },
+              { actor, orgId },
+            );
+            const nonce = randomBytes(32).toString('base64url');
+            const begun = await runtime.execute<{ attemptId: string; expiresAt: string }>(
+              'kernel.channel.oauth_begin',
+              {
+                provider: 'github_app',
+                stateHash: githubOAuthStateDigest(nonce, input.projectId),
+                codeVerifier: null,
+              },
+              { actor, orgId },
+            );
+            const authorizeUrl = current.appSlug
+              ? `https://github.com/apps/${encodeURIComponent(current.appSlug)}/installations/new?state=${encodeURIComponent(nonce)}`
+              : `https://github.com/login/oauth/authorize?${new URLSearchParams({
+                  client_id: channels.github.oauthClientId,
+                  redirect_uri: oauthRedirectUri('github_app'),
+                  state: nonce,
+                }).toString()}`;
+            return {
+              authorizeUrl,
+              state: nonce,
+              expiresAt: begun.expiresAt,
+            };
+          }),
+        ),
+        connectApp: os.projects.github.connectApp.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được GitHub App cho dự án');
+            if (!channels || channels.broker.id === 'none') {
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối trên máy chủ');
+            }
+            if (!channels.github || !channels.github.hasAppCredentials || !channels.github.hasAppOAuth) {
+              throw new DomainError('GITHUB_APP_NOT_CONFIGURED', 503, 'Máy chủ chưa cấu hình GitHub App');
+            }
+            // Consume single-use state bound to projectId BEFORE making any GitHub OAuth/API calls.
+            await runtime.execute<{ codeVerifier: string | null }>(
+              'kernel.channel.oauth_consume',
+              { provider: 'github_app', stateHash: githubOAuthStateDigest(input.state, input.projectId) },
+              { actor, orgId },
+            );
+            const userAccessToken = await channels.github
+              .exchangeOAuthCode({
+                code: input.code,
+                redirectUri: oauthRedirectUri('github_app'),
+              })
+              .catch((error: unknown) => {
+                throw githubFailure(error);
+              });
+            const userInstallations = await channels.github
+              .listUserInstallations(userAccessToken)
+              .catch((error: unknown) => {
+                throw githubFailure(error);
+              });
+
+            let targetInstallationId: string;
+            if (input.installationId) {
+              if (!userInstallations.some((inst) => inst.installationId === input.installationId)) {
+                throw new DomainError(
+                  'GITHUB_INSTALLATION_NOT_AUTHORIZED',
+                  403,
+                  'Tài khoản GitHub vừa xác thực không có quyền trên bản cài đặt GitHub App này',
+                );
+              }
+              targetInstallationId = input.installationId;
+            } else if (userInstallations.length === 0) {
+              throw new DomainError(
+                'GITHUB_NO_INSTALLATIONS',
+                422,
+                'Tài khoản GitHub này chưa cài đặt ứng dụng Ludy trên tài khoản hoặc tổ chức nào',
+              );
+            } else if (userInstallations.length > 1) {
+              throw new DomainError(
+                'GITHUB_MULTIPLE_INSTALLATIONS',
+                422,
+                'Tài khoản GitHub đang có nhiều bản cài đặt; hãy chọn cụ thể một bản cài đặt trên GitHub rồi thử lại',
+              );
+            } else {
+              targetInstallationId = userInstallations[0]!.installationId;
+            }
+
+            const previous = await runtime.query<GithubBindingGetResult>(
+              'projects.github.binding.get',
+              { projectId: input.projectId },
+              { actor, orgId },
+            );
+            const summary = await channels.github.getInstallation(targetInstallationId).catch((error: unknown) => {
+              throw githubFailure(error);
+            });
+            const repos = await channels.github.listInstallationRepos(summary.installationId).catch((error: unknown) => {
+              throw githubFailure(error);
+            });
+            const sealed = channels.broker.seal(
+              JSON.stringify({ installationId: summary.installationId }),
+              { orgId, provider: 'github_app', externalAccountId: summary.installationId },
+            );
+            const conn = await runtime.execute<{ connectionId: string; reconnected: boolean }>(
+              'kernel.channel.connect',
+              {
+                provider: 'github_app',
+                externalAccountId: summary.installationId,
+                displayName: summary.accountLogin,
+                scopes: [],
+                expiresAt: null,
+                credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+              } satisfies ChannelConnectInput,
+              { actor, orgId, idempotencyKey: `github-connect:${input.idempotencyKey}` },
+            );
+            let saved: GithubBindingSaveResult;
+            try {
+              saved = await runtime.execute<GithubBindingSaveResult>(
+                'projects.github.binding.save',
+                {
+                  projectId: input.projectId,
+                  channelConnectionId: conn.connectionId,
+                  githubEnabled: true,
+                  ...(input.taskKeyPrefix !== undefined ? { taskKeyPrefix: input.taskKeyPrefix } : {}),
+                  ...(input.backfillTaskNumbers !== undefined ? { backfillTaskNumbers: input.backfillTaskNumbers } : {}),
+                },
+                { actor, orgId, idempotencyKey: input.idempotencyKey },
+              );
+            } catch (error) {
+              if (!conn.reconnected) {
+                await runtime.execute('kernel.channel.disconnect', { connectionId: conn.connectionId }, { actor, orgId }).catch(() => {});
+              }
+              throw error;
+            }
+            const targetConnectionId = saved.binding.channelConnectionId;
+            if (previous.binding?.provider === 'github_pat' && previous.binding.channelConnectionId !== targetConnectionId) {
+              await runtime
+                .execute('kernel.channel.disconnect', { connectionId: previous.binding.channelConnectionId }, { actor, orgId })
+                .catch(() => {});
+            }
+            return {
+              connectionId: targetConnectionId,
+              binding: saved.binding,
+              availableRepos: repos.map((r) => ({
+                githubRepoId: r.githubRepoId,
+                repoFullName: r.repoFullName,
+                defaultBranch: r.defaultBranch,
+                privateRepo: r.privateRepo,
+              })),
+              backfilledCount: saved.backfilledCount,
+            };
+          }),
+        ),
+        rotatePatHook: os.projects.github.rotatePatHook.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xoay được webhook GitHub');
+            const current = await runtime.query<GithubBindingGetResult>('projects.github.binding.get', { projectId: input.projectId }, { actor, orgId });
+            if (!current.binding) {
+              throw new DomainError('GITHUB_NOT_CONNECTED', 404, 'Dự án chưa kết nối GitHub');
+            }
+            if (current.binding.provider !== 'github_pat') {
+              throw new DomainError('GITHUB_PAT_ONLY', 409, 'Chỉ kết nối bằng PAT mới dùng đường dẫn webhook riêng');
+            }
+            if (input.webhookSecret !== undefined) {
+              throw new DomainError('GITHUB_PAT_ROTATE_SECRET_RECONNECT', 422, 'Để thay đổi webhook secret, hãy kết nối lại PAT ở biểu mẫu trên');
+            }
+            const hookKey = randomBytes(24).toString('base64url');
+            const setRes = await runtime.execute<GithubHookSetResult>(
+              'projects.github.hook_set',
+              { connectionId: current.binding.channelConnectionId, hookKeySha256: githubHookKeyHash(hookKey) },
+              { actor, orgId },
+            );
+            const base = (channels?.apiUrl ?? channels?.publicUrl ?? '').replace(/\/+$/, '');
+            return {
+              hookId: setRes.hookId,
+              webhookUrl: `${base}/api/projects/github/webhook/${hookKey}`,
+              standing: 'active' as const,
+            };
+          }),
+        ),
+        listAvailableRepos: os.projects.github.listAvailableRepos.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được danh sách kho GitHub');
+            if (!channels?.github) {
+              throw new DomainError('GITHUB_UNAVAILABLE', 503, 'Kết nối GitHub chưa sẵn sàng trên máy chủ');
+            }
+            const current = await runtime.query<GithubBindingGetResult>('projects.github.binding.get', { projectId: input.projectId }, { actor, orgId });
+            if (!current.binding) {
+              throw new DomainError('GITHUB_NOT_CONNECTED', 404, 'Dự án chưa kết nối GitHub');
+            }
+            if (current.binding.provider === 'github_app') {
+              if (!channels.github.hasAppCredentials) {
+                throw new DomainError('GITHUB_APP_NOT_CONFIGURED', 503, 'Máy chủ chưa cấu hình GitHub App');
+              }
+              if (!current.binding.externalAccountId) {
+                throw new DomainError('GITHUB_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối GitHub đang hoạt động');
+              }
+              const repos = await channels.github.listInstallationRepos(current.binding.externalAccountId).catch((error: unknown) => {
+                throw githubFailure(error);
+              });
+              return { repos: repos.map((r) => ({ ...r })) };
+            }
+            if (input.accessToken) {
+              const summary = await channels.github.inspectPatAndListRepos(input.accessToken).catch((error: unknown) => {
+                throw githubFailure(error);
+              });
+              return { repos: summary.repos.map((r) => ({ ...r })) };
+            }
+            throw new DomainError(
+              'GITHUB_PAT_REPOS_NEED_TOKEN',
+              422,
+              'Với kết nối PAT, hãy dán lại PAT để tải danh sách kho mới hoặc chọn từ danh sách đã nạp khi kết nối',
+            );
+          }),
+        ),
+        repoBind: os.projects.github.repoBind.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('projects.github.repo.bind', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+        repoUnbind: os.projects.github.repoUnbind.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('projects.github.repo.unbind', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+        taskLinks: os.projects.github.taskLinks.handler(projectsQuery('projects.github.task_links')),
+        taskLinkAdd: os.projects.github.taskLinkAdd.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const parsed = parseGithubItemUrl(input.url);
+            if (!parsed) {
+              throw new DomainError('GITHUB_URL_INVALID', 400, 'Liên kết phải trỏ tới issue hoặc pull request trên github.com');
+            }
+            const prepared = await runtime.query<GithubLinkPrepareResult>(
+              'projects.github.link.prepare',
+              { projectId: input.projectId, taskId: input.taskId, repoFullName: parsed.repoFullName },
+              { actor, orgId },
+            );
+            let resolvedKind: 'issue' | 'pull_request' = parsed.kind;
+            let resolvedUrl = parsed.canonicalUrl;
+            let externalTitle = `${prepared.repoFullName}#${parsed.externalNumber}`;
+            let externalState: 'open' | 'closed' | 'merged' | 'draft' = 'open';
+            let branchName: string | null = null;
+            let authorLogin: string | null = null;
+            let hydrating = true;
+
+            if (prepared.provider === 'github_app' && channels?.github?.hasAppCredentials) {
+              try {
+                const item = await channels.github.getIssueOrPr(
+                  { kind: 'github_app', installationId: prepared.externalAccountId },
+                  prepared.repoFullName,
+                  parsed.kind,
+                  parsed.externalNumber,
+                );
+                resolvedKind = item.kind;
+                resolvedUrl = item.externalUrl;
+                externalTitle = item.externalTitle;
+                externalState = item.externalState;
+                branchName = item.branchName;
+                authorLogin = item.authorLogin;
+                hydrating = false;
+              } catch (error) {
+                if (error instanceof GithubError && (error.kind === 'not_found' || error.kind === 'forbidden' || error.kind === 'credentials')) {
+                  throw githubFailure(error);
+                }
+              }
+            }
+
+            return runtime.execute<{ link: GithubTaskLinkView }>(
+              'projects.github.link.add',
+              {
+                projectId: input.projectId,
+                taskId: input.taskId,
+                repoFullName: prepared.repoFullName,
+                kind: resolvedKind,
+                externalNumber: parsed.externalNumber,
+                externalUrl: resolvedUrl,
+                externalTitle,
+                externalState,
+                branchName,
+                authorLogin,
+                linkSource: 'manual',
+                closesTask: true,
+                hydrating,
+              },
+              { actor, orgId, idempotencyKey: input.idempotencyKey },
+            );
+          }),
+        ),
+        taskLinkRemove: os.projects.github.taskLinkRemove.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('projects.github.link.remove', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+        syncLog: os.projects.github.syncLog.handler(projectsQuery('projects.github.sync_log')),
       },
     },
     sign: {
