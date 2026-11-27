@@ -89,7 +89,7 @@ export const QUEUES = {
   meetingsMorning: 'meetings-morning',
   // Created by the weekly notice migration (20270327100000): the sweep, every 5 minutes, of the opt-in Monday notices of the week's meetings (counts and a link, never a title; #4967).
   meetingsWeekly: 'meetings-weekly',
-  // Created by the daily morning brief migration (20270329110000): the sweep, every 5 minutes, of member-Vy daily prep lines for members opted into morning brief lines (#5073).
+  // Created by the daily morning brief migration (20270330070000): the sweep, every 5 minutes, of member-Vy daily prep lines for members opted into morning brief lines (#5073).
   meetingsBriefDaily: 'meetings-brief-daily',
   // Meeting platform recordings (meetings integrations C1, #3173): one download of a recording the member chose to import, and the sweep that hands them over, lists suggestions and expires.
   meetingsImport: 'kernel-meeting-import',
