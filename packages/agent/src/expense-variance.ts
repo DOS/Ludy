@@ -11,6 +11,7 @@
 // - certainty ("clearly", "chắc chắn", "in fact"), a claim that something was done or a promise, the future, advice;
 // - no hedge at the start, more than one sentence, too long, a direction that contradicts the row, a row not given or given twice.
 // Nothing here writes: the notes are a draft a person reads beside the table, and the card labels them as possibilities.
+// The text checks below are exported unchanged so the notes of the monthly review of unusual entries (unusual-entries.ts, #5182) apply the very same ones.
 import { draftLinksOutside } from './conversation.ts';
 import { marketplaceLineClaimsDone } from './marketplace-line.ts';
 
@@ -130,55 +131,55 @@ export function expenseVariancePrompt(facts: ExpenseVarianceNoteFacts): string {
   return `${expenseVarianceFactsText(facts)}\n\nWrite one sentence for each row.`;
 }
 
-const fold = (text: string): string => text.normalize('NFKD').replace(/\p{Diacritic}/gu, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
-const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u).filter((s) => s.trim() !== '').length;
+export const fold = (text: string): string => text.normalize('NFKD').replace(/\p{Diacritic}/gu, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+export const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u).filter((s) => s.trim() !== '').length;
 
-const NUMERIC_SYMBOL = /[\p{Nl}\p{No}]/u;
-const PICTOGRAPH = /\p{Extended_Pictographic}/u;
-const MARKUP = /[*_#`<>|[\]{}~\\@]/;
+export const NUMERIC_SYMBOL = /[\p{Nl}\p{No}]/u;
+export const PICTOGRAPH = /\p{Extended_Pictographic}/u;
+export const MARKUP = /[*_#`<>|[\]{}~\\@]/;
 // Characters that do not show but split a word the checks look for ("fi͏ve"), and any combining mark left after NFKC folded the precomposed Vietnamese letters.
-const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}]/u;
-const MARK = /\p{M}/u;
+export const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}]/u;
+export const MARK = /\p{M}/u;
 // Numbers and sizes in English, plural and scaled forms included. "one", "single" and "several" are allowed: they are how the facts say a count.
-const NUMBER_WORDS_EN =
+export const NUMBER_WORDS_EN =
   /\b(?:zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|tens|dozens?|couple|pair|both|hundreds?|thousands?|millions?|billions?|trillions?|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|hundredth|thousandth|millionth|billionth|twice|thrice|doubl\w*|tripl\w*|halv\w*|half|thirds?|quarters?|percent|percentage|per\s*cent|\w+fold)\b/;
 // Numbers and sizes in Vietnamese: the words that are only ever numbers are refused anywhere; "năm" (five or year) and "tư" only before a thing counted; "một" (one, a single) is allowed.
-const NUMBER_WORDS_VI = /(?<![\p{L}])(?:hai|ba|bốn|sáu|bảy|tám|chín|mười|mươi|lăm|mấy|vài|tá|chục|trăm|nghìn|ngàn|triệu|tỷ|tỉ|vạn|gấp|nhân đôi|nhân ba|nửa|rưỡi|phần trăm|phần tư|phần ba)(?![\p{L}])/iu;
+export const NUMBER_WORDS_VI = /(?<![\p{L}])(?:hai|ba|bốn|sáu|bảy|tám|chín|mười|mươi|lăm|mấy|vài|tá|chục|trăm|nghìn|ngàn|triệu|tỷ|tỉ|vạn|gấp|nhân đôi|nhân ba|nửa|rưỡi|phần trăm|phần tư|phần ba)(?![\p{L}])/iu;
 // Number words joined to others ("fivehundred", "twentyfive", "mườihai", "haimươi", the misspelling "muời") have no word boundary for the lists above to find, so these long, unambiguous pieces are refused anywhere in
 // the text. English on the folded text; Vietnamese on the text as written (folded, "ngàn" would be the "ngan" of "ngân hàng"). Checked against ordinary words: none of these pieces is inside a word a cost note
 // needs ("triệu" is also the start of "triệu chứng", a symptom, which a note on costs does not use; such a note is refused, which is the safe side).
-const NUMBER_FRAGMENTS_EN = /hundred|thousand|million|billion|trillion|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|eleven|twelve/;
-const NUMBER_FRAGMENTS_VI = /mười|mươi|muời|triệu|nghìn|ngàn|trăm|chục/iu;
-const NUMBER_UNIT_VI = /(?<![\p{L}])(?:năm|tư)\s+(?:chứng từ|hóa đơn|phiếu|khoản|lần|nhà cung cấp|giao dịch|đợt|ngày|tuần|tháng)(?![\p{L}])/iu;
+export const NUMBER_FRAGMENTS_EN = /hundred|thousand|million|billion|trillion|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|eleven|twelve/;
+export const NUMBER_FRAGMENTS_VI = /mười|mươi|muời|triệu|nghìn|ngàn|trăm|chục/iu;
+export const NUMBER_UNIT_VI = /(?<![\p{L}])(?:năm|tư)\s+(?:chứng từ|hóa đơn|phiếu|khoản|lần|nhà cung cấp|giao dịch|đợt|ngày|tuần|tháng)(?![\p{L}])/iu;
 // A date, by name or by position in the calendar: refused (the note is given none). Accented words are tested on the text as written, because folding turns "năm" (year) into the "nam" of "nằm" and "quý"
 // (quarter) into the "quy" of "quy định".
-const DATES =
+export const DATES =
   /\b(?:today|tonight|yesterday|tomorrow|week|weeks|weekly|weekend|decade|year|years|annual|annually|yearly|quarter|quarterly|january|february|march|april|june|july|august|september|october|november|december|monday|tuesday|wednesday|thursday|friday|saturday|sunday|hom\s+(?:nay|qua|kia)|ngay\s+(?:mai|mot|kia|hom)|tuan\s+(?:truoc|nay|sau|qua|toi)|thang\s+(?:mot|hai|ba|bon|tu|nam|sau|bay|tam|chin|muoi|gieng|chap)|thu\s+(?:hai|ba|tu|nam|sau|bay)|chu\s+nhat)\b/;
-const DATES_VI = /(?<![\p{L}])(?:quý|năm\s+(?:ngoái|trước|nay|sau|rồi)|cả\s+năm|cuối\s+năm|đầu\s+năm)(?![\p{L}])/iu;
+export const DATES_VI = /(?<![\p{L}])(?:quý|năm\s+(?:ngoái|trước|nay|sau|rồi)|cả\s+năm|cuối\s+năm|đầu\s+năm)(?![\p{L}])/iu;
 // Certainty: the note is a possibility. A cause stated after the hedge ("possibly due to", "có thể do") is still a possibility; a cause stated as fact is not.
-const CERTAINTY =
+export const CERTAINTY =
   /\b(?:certain(?:ly)?|clear(?:ly)?|obvious(?:ly)?|definite(?:ly)?|undoubted(?:ly)?|evident(?:ly)?|sure(?:ly)?|guarantee[ds]?|proof|prove[ds]?|proven|confirm\w*|therefore|thus|hence|consequently|actually|in\s+fact|result\s+of|results?\s+from|stem(?:s|med)?\s+from|attribut\w+|could\s+only|only\s+explanation|the\s+(?:reason|cause)\s+(?:is|was|for)|that\s+is\s+why|is\s+why|no\s+doubt|must\s+(?:be|have)|caused?\s+by|chac\s+chan|ro\s+rang|hien\s+nhien|tat\s+nhien|khang\s+dinh|xac\s+nhan|bang\s+chung|chung\s+to|dam\s+bao|nguyen\s+nhan\s+(?:la|chinh)|ly\s+do\s+(?:la|chinh)|chinh\s+la|dung\s+la|gay\s+ra|vi\s+vay|do\s+do|chinh\s+vi|thuc\s+ra|thuc\s+te|ket\s+qua\s+cua|bat\s+nguon|xuat\s+phat\s+tu|han\s+la|chac\s+han|do\s+.{1,40}\s+gay)\b/;
 // A promise, a timing or the future tense.
-const FUTURE = /\b(?:will|shall|going\s+to|soon|shortly|already|se\b|sap\b|chac\s+se|hen\b)/;
+export const FUTURE = /\b(?:will|shall|going\s+to|soon|shortly|already|se\b|sap\b|chac\s+se|hen\b)/;
 // Advice or an order: the note says what may be, not what to do.
-const ADVICE_EN =
+export const ADVICE_EN =
   /\b(?:should|must|need\s+to|needs\s+to|ought|recommend\w*|advise\w*|suggest\s+(?:you|to)|please|make\s+sure|check\w*|review\w*|consider\w*|look\s+into|verif\w*|contact\w*|follow\s+up|investigat\w*|try|trying|reach\s+out|talk\s+to|speak\s+to|double.?check|worth|ask\w*)\b/;
 // "cần thiết" (necessary) and "trở nên" (become) are plain words, not orders; "phải" (as in "phải trả", payable) is not one either.
-const ADVICE_VI =
+export const ADVICE_VI =
   /(?<![\p{L}])(?:hãy|khuyên|đề nghị|kiểm tra|xem lại|rà soát|thử|liên hệ|xác minh|điều tra|theo dõi|trao đổi|hỏi|gọi|nhắc|cần\s+phải)(?![\p{L}])|(?<![\p{L}])cần(?![\p{L}])(?!\s+thiết)|(?<!trở\s)(?<![\p{L}])nên(?![\p{L}])/iu;
 // A word that says up, and one that says down. The accented ones are tested on the text as written: folded, "tặng" (gift) reads as "tăng" (rise) and "giám" (supervisor) as "giảm" (fall).
-const SAYS_UP =
+export const SAYS_UP =
   /\b(?:more|extra|additional|larger|bigger|greater|spike[ds]?|hike[ds]?|nhieu\s+(?:\w+\s+){0,2}hon|phat\s+sinh|bo\s+sung|lon\s+hon|went\s+up|goes\s+up|go\s+up|going\s+up|up\s+by|rose|rise|rises|rising|increase[ds]?|increasing|higher|grew|grow|growing|jump(?:ed)?|surge[ds]?|cao\s+hon)/;
-const SAYS_UP_VI = /(?<![\p{L}])(?:tăng|thêm)(?![\p{L}])/iu;
-const SAYS_DOWN =
+export const SAYS_UP_VI = /(?<![\p{L}])(?:tăng|thêm)(?![\p{L}])/iu;
+export const SAYS_DOWN =
   /\b(?:fewer|less|shrunk|shrank|shrink\w*|dip(?:ped|s)?|sink|sunk|slump\w*|cut|cuts|lighter|sut\b|bot\b|it\s+di\b|it\s+(?:\w+\s+){0,2}hon|ngung|went\s+down|goes\s+down|go\s+down|going\s+down|down\s+by|fell|fall|falls|falling|drop(?:ped|s)?|decrease[ds]?|decreasing|lower|declined?|reduced?|smaller|thap\s+hon|nho\s+hon)/;
-const SAYS_DOWN_VI = /(?<![\p{L}])giảm(?![\p{L}])(?!\s+giá)/iu;
+export const SAYS_DOWN_VI = /(?<![\p{L}])giảm(?![\p{L}])(?!\s+giá)/iu;
 // A hedged claim that something happened still states it: "may have billed".
-const CLAIMED_EXTRA = /\b(?:bill(?:ed|ing)?|charg(?:ed|ing)|invoiced|delivered|shipped|bought|ordered|renewed|signed|booked|purchased)\b/;
+export const CLAIMED_EXTRA = /\b(?:bill(?:ed|ing)?|charg(?:ed|ing)|invoiced|delivered|shipped|bought|ordered|renewed|signed|booked|purchased)\b/;
 // The sentence must open with the hedge, so its first word (capitalised by habit) is never a name the check skips.
-const OPENS_HEDGE = /^(?:possibly|perhaps|maybe|may|might|could|co\s+the|co\s+le|nhieu\s+kha\s+nang)\b/;
+export const OPENS_HEDGE = /^(?:possibly|perhaps|maybe|may|might|could|co\s+the|co\s+le|nhieu\s+kha\s+nang)\b/;
 // A capitalised word that is not the first word of the sentence: a name (none is given) or an acronym.
-const hasUnknownName = (text: string): boolean =>
+export const hasUnknownName = (text: string): boolean =>
   text
     .split(/\s+/)
     .filter((w) => w !== '')

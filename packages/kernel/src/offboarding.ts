@@ -181,6 +181,7 @@ export const EXPORT_TABLES = {
   'finance.einvoice_draft': { from: 'ludy_finance.einvoice_draft', omit: ['idempotency_key'] },
   'finance.einvoice_draft_line': { from: 'ludy_finance.einvoice_draft_line', omit: [] },
   'finance.input_vat_check': { from: 'ludy_finance.input_vat_check', omit: [] },
+  'finance.entry_review_mark': { from: 'ludy_finance.entry_review_mark', omit: [] },
   'finance.vat_return_filed': { from: 'ludy_finance.vat_return_filed', omit: [] },
   'finance.purchase_document_void': { from: 'ludy_finance.purchase_document_void', omit: [] },
   'finance.period_lock': { from: 'ludy_finance.period_lock', omit: [] },

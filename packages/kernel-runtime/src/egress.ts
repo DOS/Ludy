@@ -320,7 +320,7 @@ function redirectTarget(location: string, from: URL, options: EgressOptions): UR
 // answer (status 3xx) for the caller to refuse. Header names are lower-cased; content-length and accept-encoding are
 // the guard's.
 export interface GuardedRequest {
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   headers?: Readonly<Record<string, string>>;
   body?: Buffer;
 }
@@ -516,7 +516,7 @@ export function egressFetch(options: EgressOptions & { httpsOnly?: boolean }): (
     const url = new URL(input);
     if ((options.httpsOnly ?? true) && url.protocol !== 'https:') throw new EgressError('invalid_url', 'only https');
     const method = (init?.method ?? 'GET').toUpperCase();
-    if (method !== 'GET' && method !== 'POST' && method !== 'PUT' && method !== 'DELETE') throw new EgressError('invalid_url', `method ${method} not allowed`);
+    if (method !== 'GET' && method !== 'POST' && method !== 'PUT' && method !== 'DELETE' && method !== 'PATCH') throw new EgressError('invalid_url', `method ${method} not allowed`);
     const headers: Record<string, string> = {};
     new Headers(init?.headers).forEach((value, key) => {
       headers[key] = value;

@@ -40,6 +40,7 @@ export const KEPT: Readonly<Record<string, string>> = {
   'ludy_finance.fixed_asset': 'the rest of the books',
   'ludy_finance.depreciation_line': 'the rest of the books',
   'ludy_finance.input_vat_check': 'the rest of the books',
+  'ludy_finance.entry_review_mark': 'the rest of the books (#5182): a person\'s mark on a ledger entry, kept with it',
   'ludy_finance.period_lock': 'the rest of the books',
   'ludy_finance.period_balance_delta': 'the rest of the books',
   'ludy_finance.vat_return_filed': 'the rest of the books (#1400)',

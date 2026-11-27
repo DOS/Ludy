@@ -232,4 +232,156 @@ describe('@ludy/github', () => {
     await client.listInstallationRepos('555');
     expect(mintSeq).toBe(beforeEvict + 506);
   });
+
+  it('supports PATCH setIssueState (issues only, 401 token cache eviction + retry) and listOpenIssues (excludes PRs)', async () => {
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const pem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const seen: Array<{ method: string; url: string; auth: string; body?: string | undefined; contentType?: string | undefined }> = [];
+    let mintSeq = 0;
+    let firstPatch = true;
+
+    const client = createGithubClient({
+      app: { appId: '4242', privateKeyPem: pem },
+      now: () => 1_700_000_000_000,
+      transport: async (req) => {
+        if (req.url.endsWith('/access_tokens')) {
+          mintSeq += 1;
+          return {
+            status: 201,
+            body: JSON.stringify({ token: `ghs_patch_${mintSeq}_123456`, expires_at: '2023-11-15T00:00:00Z' }),
+          };
+        }
+        seen.push({
+          method: req.method,
+          url: req.url,
+          auth: req.headers.authorization ?? '',
+          body: req.body,
+          contentType: req.headers['content-type'],
+        });
+        if (req.method === 'PATCH' && req.url === 'https://api.github.com/repos/acme/web/issues/42') {
+          if (firstPatch) {
+            firstPatch = false;
+            return { status: 401, body: '{"message":"Bad credentials"}' };
+          }
+          return {
+            status: 200,
+            body: JSON.stringify({
+              number: 42,
+              title: 'Close me <b>safely</b>\u202E',
+              state: 'closed',
+              html_url: 'https://github.com/acme/web/issues/42',
+              updated_at: '2027-02-01T10:00:00Z',
+              user: { login: 'alice' },
+            }),
+          };
+        }
+        if (req.method === 'PATCH' && req.url === 'https://api.github.com/repos/acme/web/issues/99') {
+          return {
+            status: 200,
+            body: JSON.stringify({
+              number: 99,
+              title: 'Actually a PR',
+              state: 'closed',
+              pull_request: { url: 'https://api.github.com/repos/acme/web/pulls/99' },
+            }),
+          };
+        }
+        if (req.method === 'GET' && req.url.startsWith('https://api.github.com/repos/acme/web/issues?')) {
+          return {
+            status: 200,
+            body: JSON.stringify([
+              {
+                number: 7,
+                title: 'Issue 7\u200B',
+                state: 'open',
+                html_url: 'https://github.com/acme/web/issues/7',
+                updated_at: '2027-02-01T09:00:00Z',
+                user: { login: 'bob' },
+              },
+              {
+                number: 8,
+                title: 'PR disguised in issues list',
+                state: 'open',
+                html_url: 'https://github.com/acme/web/pull/8',
+                pull_request: { url: 'https://api.github.com/repos/acme/web/pulls/8' },
+              },
+            ]),
+          };
+        }
+        return { status: 500, body: '{}' };
+      },
+    });
+
+    const updated = await client.setIssueState({
+      auth: { kind: 'github_app', installationId: '777' },
+      owner: 'acme',
+      repo: 'web',
+      issueNumber: 42,
+      state: 'closed',
+      kind: 'issue',
+    });
+    expect(updated).toEqual({
+      kind: 'issue',
+      repoFullName: 'acme/web',
+      number: 42,
+      externalUrl: 'https://github.com/acme/web/issues/42',
+      externalTitle: 'Close me safely',
+      externalState: 'closed',
+      branchName: null,
+      authorLogin: 'alice',
+      updatedAt: '2027-02-01T10:00:00Z',
+    });
+    expect(seen).toEqual([
+      {
+        method: 'PATCH',
+        url: 'https://api.github.com/repos/acme/web/issues/42',
+        auth: 'Bearer ghs_patch_1_123456',
+        body: '{"state":"closed"}',
+        contentType: 'application/json',
+      },
+      {
+        method: 'PATCH',
+        url: 'https://api.github.com/repos/acme/web/issues/42',
+        auth: 'Bearer ghs_patch_2_123456',
+        body: '{"state":"closed"}',
+        contentType: 'application/json',
+      },
+    ]);
+
+    await expect(
+      client.setIssueState({
+        auth: { kind: 'github_app', installationId: '777' },
+        owner: 'acme',
+        repo: 'web',
+        issueNumber: 42,
+        state: 'closed',
+        kind: 'pull_request',
+      }),
+    ).rejects.toMatchObject({ name: 'GithubError', kind: 'bad_request' });
+
+    await expect(
+      client.setIssueState({
+        auth: { kind: 'github_app', installationId: '777' },
+        owner: 'acme',
+        repo: 'web',
+        issueNumber: 99,
+        state: 'closed',
+      }),
+    ).rejects.toMatchObject({ name: 'GithubError', kind: 'bad_request' });
+
+    const issues = await client.listOpenIssues({ kind: 'github_app', installationId: '777' }, 'acme/web', 10);
+    expect(issues).toEqual([
+      {
+        kind: 'issue',
+        repoFullName: 'acme/web',
+        number: 7,
+        externalUrl: 'https://github.com/acme/web/issues/7',
+        externalTitle: 'Issue 7',
+        externalState: 'open',
+        branchName: null,
+        authorLogin: 'bob',
+        updatedAt: '2027-02-01T09:00:00Z',
+      },
+    ]);
+  });
 });

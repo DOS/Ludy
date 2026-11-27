@@ -111,13 +111,17 @@ export interface MeetingsBriefResult {
 }
 
 /** One run of the member's Vy over the facts the member can see: the model is asked once, the checks above decide what shows. */
-export async function writeBrief(input: { facts: readonly BriefFactInput[] }, ports: BoundPorts): Promise<MeetingsBriefResult> {
+export async function writeBrief(
+  input: { facts: readonly BriefFactInput[]; feature?: 'meetings.brief' | 'meetings.brief_daily' | undefined },
+  ports: BoundPorts,
+): Promise<MeetingsBriefResult> {
+  const feature = input.feature ?? 'meetings.brief';
   const facts = input.facts.slice(0, BRIEF_LIMITS.facts);
   if (facts.length === 0) throw new BriefError('BRIEF_NOTHING');
   const data = JSON.stringify({ facts: facts.map((fact, index) => ({ n: index + 1, kind: fact.kind, text: cut(fact.text, BRIEF_LIMITS.factChars) })) });
   // Refused before any call, never cut: half the facts would read as all of them.
   if (new TextEncoder().encode(data).length > BRIEF_LIMITS.sourceBytes) throw new BriefError('BRIEF_TOO_LONG');
-  const out = await runFeature({ instruction: INSTRUCTION, subject: privateText(data), maxSubjectChars: BRIEF_LIMITS.sourceBytes, feature: 'meetings.brief' }, ports);
+  const out = await runFeature({ instruction: INSTRUCTION, subject: privateText(data), maxSubjectChars: BRIEF_LIMITS.sourceBytes, feature }, ports);
   // The checks read the whole text of each fact, not the part the model was given.
   const answer = checkBrief(revealPrivateText(out.text), facts);
   return { answer, usage: out.usage };

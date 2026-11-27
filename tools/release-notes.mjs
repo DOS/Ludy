@@ -3,9 +3,10 @@
 //
 //   Release note (vi): Xuất phiếu thu và phiếu chi sang MISA SME.
 //
-// (the PR template has it). This script lists the PRs squash-merged between two refs, reads their bodies and prints
-// the notes as Markdown for the GitHub Release of the tag. A PR without a note, or with an empty one, is internal and
-// is left out. No dependencies: run it with plain node.
+// (the PR template has it). This script walks non-merge commit subjects in the range (`git log --no-merges`, so
+// `dev -> main` promotion merge commits include every squash-merged PR from `dev` while skipping promotion and sync
+// merge commits themselves), reads their bodies and prints the notes as Markdown for the GitHub Release of the tag. A
+// PR without a note, or with an empty one, is internal and is left out. No dependencies: run it with plain node.
 //
 //   node tools/release-notes.mjs <previous tag or empty> <tag>
 //
@@ -91,16 +92,39 @@ export function releaseNotes({ tag, subjects, body }) {
   return render({ tag, notes });
 }
 
+const REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const USAGE = 'usage: node tools/release-notes.mjs <previous tag or empty> <tag>';
+
+function isValidRef(ref) {
+  return typeof ref === 'string' && REF_PATTERN.test(ref) && !ref.includes('..');
+}
+
+function validateRefs(previous, tag) {
+  if (!isValidRef(tag) || (previous && !isValidRef(previous))) {
+    throw new Error(USAGE);
+  }
+}
+
+/**
+ * Non-merge commit subjects in `previous..tag` (or `tag` when `previous` is empty), newest first.
+ * @param {string} previous
+ * @param {string} tag
+ * @param {{ cwd?: string }} [options]
+ * @returns {string[]}
+ */
+export function readSubjects(previous, tag, { cwd = process.cwd() } = {}) {
+  validateRefs(previous, tag);
+  const range = previous ? `${previous}..${tag}` : tag;
+  const log = execFileSync('git', ['log', '--no-merges', '--format=%s', range, '--'], { cwd, encoding: 'utf8' });
+  return log.split('\n').filter(Boolean);
+}
+
 function main(argv) {
   const [previous = '', tag = ''] = argv;
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(tag) || (previous && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(previous))) {
-    throw new Error('usage: node tools/release-notes.mjs <previous tag or empty> <tag>');
-  }
+  validateRefs(previous, tag);
   const repo = process.env.GITHUB_REPOSITORY ?? '';
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error('GITHUB_REPOSITORY must be owner/name');
-  const range = previous ? `${previous}..${tag}` : tag;
-  const log = execFileSync('git', ['log', '--first-parent', '--format=%s', range], { encoding: 'utf8' });
-  const subjects = log.split('\n').filter(Boolean);
+  const subjects = readSubjects(previous, tag);
   const body = (pr) => {
     try {
       return execFileSync('gh', ['api', `repos/${repo}/pulls/${pr}`, '--jq', '.body // ""'], { encoding: 'utf8' });

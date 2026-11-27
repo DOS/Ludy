@@ -1240,6 +1240,15 @@ export const setTaskStatus = defineCommand({
     } else {
       requireUser(ctx);
     }
+    const existingTask = await ctx.trx
+      .selectFrom('ludy_kernel.task')
+      .select(['status'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!existingTask) throw new DomainError('TASK_NOT_FOUND', 404, 'Không tìm thấy việc này');
+
     const updated = await ctx.trx
       .updateTable('ludy_kernel.task')
       .set(release ? { status: input.status, checkout_run_id: null, lock_expires_at: null } : { status: input.status })
@@ -1251,6 +1260,36 @@ export const setTaskStatus = defineCommand({
     ctx.audit({ task: input.id, status: input.status });
     if (ctx.actor.type === 'user' && input.status === 'todo') {
       await requestWakeup(ctx, updated.assignee_position_id, { taskId: input.id, why: 'reopened' }, updated.tainted, updated.request_depth);
+    }
+    if (
+      ctx.installed('projects') &&
+      existingTask.status !== input.status &&
+      (input.status === 'done' || (existingTask.status === 'done' && input.status !== 'cancelled'))
+    ) {
+      // Check both org apps_off and Cloud billing entitlements via ctx.appEnabled (#5159, ADR-0053)
+      // so unentitled orgs do not fail task transitions with 404 MODULE_OFF or emit held outbox events.
+      // Keep the offAppsOf fallback (readable by ludy_tenant) while QueryContext.appEnabled remains optional.
+      const projectsEnabled = ctx.appEnabled
+        ? await ctx.appEnabled('projects')
+        : !(await offAppsOf(ctx.trx, ctx.orgId)).includes('projects');
+      if (projectsEnabled) {
+        if (ctx.actor.type === 'user') {
+          // Run projects.github.outbound_enqueue in-tx (aside via its own declared writes) (#5159).
+          await ctx.run('projects.github.outbound_enqueue', {
+            taskId: input.id,
+            previousStatus: existingTask.status,
+            nextStatus: input.status,
+          });
+        } else {
+          // Org-chart agents cannot write ludy_projects.github_sync_delivery directly due to agent_write_guard;
+          // emit a kernel-prefixed IDs/codes-only outbox event relayed via projects-github-sweep (egress: 'none') as 'system'.
+          await ctx.emit('kernel.task.github_transitioned', {
+            taskId: input.id,
+            previousStatus: existingTask.status,
+            nextStatus: input.status,
+          });
+        }
+      }
     }
     return { taskId: input.id, status: input.status };
   },

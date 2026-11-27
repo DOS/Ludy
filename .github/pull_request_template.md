@@ -1,4 +1,4 @@
-Closes #
+Refs # <!-- issue number: use Refs # for task PRs to dev; use Closes # only in dev -> main promotion PRs -->
 
 ## What
 

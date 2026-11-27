@@ -160,4 +160,37 @@ describe('migration:rebase in a repository', () => {
     write('a.txt', 'b\n');
     expect(() => rebaseMigrations({ base: 'main', fetch: false, cwd: dir, log: () => {} })).toThrow(/working tree has changes/);
   }, 60_000);
+
+  it('defaults base to origin/dev rather than origin/main when origin/dev has a newer migration', () => {
+    dir = mkdtempSync(join(tmpdir(), 'crove-migration-rebase-'));
+    run('init', '-q', '-b', 'main');
+    run('config', 'user.email', 'test@example.com');
+    run('config', 'user.name', 'test');
+    run('config', 'core.hooksPath', join(dir, '.no-hooks'));
+    run('config', 'core.autocrlf', 'false');
+    write(m('20261101230000'), 'SELECT 1;\n');
+    run('add', '.');
+    run('commit', '-q', '-m', 'base');
+    const mainHead = run('rev-parse', 'HEAD').trim();
+    run('update-ref', 'refs/remotes/origin/main', mainHead);
+
+    run('checkout', '-q', '-b', 'dev');
+    write(m('20261102000000', 'crove_finance_dev'), 'SELECT 2;\n');
+    run('add', '.');
+    run('commit', '-q', '-m', 'dev moves ahead');
+    const devHead = run('rev-parse', 'HEAD').trim();
+    run('update-ref', 'refs/remotes/origin/dev', devHead);
+
+    run('checkout', '-q', '-b', 'feature', mainHead);
+    write(m('20261101233000', 'crove_kernel_feature'), 'SELECT 3;\n');
+    write('docs/feature.md', 'Adds 20261101233000_crove_kernel_feature.sql.\n');
+    run('add', '.');
+    run('commit', '-q', '-m', 'feature');
+
+    const lines: string[] = [];
+    const renames = rebaseMigrations({ fetch: false, cwd: dir, log: (line: string) => lines.push(line) });
+    expect(renames).toEqual([{ from: m('20261101233000', 'crove_kernel_feature'), to: m('20261102010000', 'crove_kernel_feature') }]);
+    expect(readFileSync(join(dir, 'docs/feature.md'), 'utf8')).toBe('Adds 20261102010000_crove_kernel_feature.sql.\n');
+    expect(lines.some((line) => line.includes('20261102010000_crove_kernel_feature'))).toBe(true);
+  }, 60_000);
 });

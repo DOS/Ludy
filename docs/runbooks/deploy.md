@@ -17,7 +17,7 @@ Until an environment has its secrets, a run still builds and pushes the release 
 | Run the workflow by hand, action `rollback` | the one you pick | the release that ran before the current one |
 
 - `pilot` deploys only `v*` tags whose commit is on `main`; any other tag fails the run before anything is built.
-- Task PRs merge into `dev`, which triggers `beta` deployment (`dev-<first 12 characters of the commit>`). Until `beta` host secrets (`DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`) are configured in the GitHub `beta` environment, `deploy.yml` builds cleanly and skips the remote host deploy step.
+- Task PRs merge into `dev`, which triggers `beta` deployment (`dev-<first 12 characters of the commit>`). Until `beta` host secrets (`DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_KNOWN_HOSTS`) are configured in the GitHub `beta` environment, `deploy.yml` builds cleanly and skips the remote host deploy step.
 - The commit must have passed CI: the run waits up to 30 minutes for the check runs named in the variable `DEPLOY_REQUIRED_CHECKS` (one name per line; default `Lint, typecheck, test` and `Playwright on docker compose`) and stops if one did not succeed.
 - One deploy per environment runs at a time; a second one waits. GitHub keeps only one waiting run per environment: when a third arrives, the one that was waiting is cancelled. Check the Actions list after queuing a rollback behind a running deploy.
 - `pilot` runs only commits of `main`, for a rollback too: start a manual run from `main` or from a `v*` tag.

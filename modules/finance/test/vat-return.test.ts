@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { Decimal } from '@ludy/l10n-vn';
 import { zVatPeriod } from '@ludy/kernel-contract';
 import {
+  addSideTotals,
   documentVatByRate,
   form01Indicators,
   normalizeVatRate,
@@ -296,6 +297,31 @@ describe('sideTotals and form01Indicators', () => {
       { rates: [{ rate: '10', taxable: '1', vat: '1' }], allocated: false },
     ];
     expect(indicator(form01Indicators(sideTotals([]), sideTotals(big)), '32')).toBe('9007199254740994');
+  });
+
+  it('adds two side totals by rate without losing precision (#3541)', () => {
+    const main = sideTotals([
+      { rates: [{ rate: '10', taxable: '9007199254740993', vat: '900719925474099' }] },
+      { rates: [{ rate: '5', taxable: '100000', vat: '5000' }] },
+    ]);
+    const supp = sideTotals([
+      { rates: [{ rate: '8', taxable: '200000', vat: '16000' }] },
+      { rates: [{ rate: '10', taxable: '2', vat: '1' }] },
+    ]);
+    const combined = addSideTotals(main, supp);
+    expect(combined.documents).toBe(4);
+    expect(combined.taxable).toBe('9007199255040995');
+    expect(combined.vat).toBe('900719925495100');
+    expect(combined.byRate.find((r) => r.rate === '10')).toEqual({ rate: '10', taxable: '9007199254740995', vat: '900719925474100' });
+    expect(combined.byRate.find((r) => r.rate === '8')).toEqual({ rate: '8', taxable: '200000', vat: '16000' });
+    expect(combined.byRate.find((r) => r.rate === '5')).toEqual({ rate: '5', taxable: '100000', vat: '5000' });
+    // Handles sparse byRate arrays safely.
+    const sparse = addSideTotals(
+      { byRate: [{ rate: '10', taxable: '1000', vat: '100' }], taxable: '1000', vat: '100', documents: 1 },
+      { byRate: [], taxable: '0', vat: '0', documents: 0 },
+    );
+    expect(sparse.byRate.find((r) => r.rate === '10')).toEqual({ rate: '10', taxable: '1000', vat: '100' });
+    expect(sparse.byRate.find((r) => r.rate === '0')).toEqual({ rate: '0', taxable: '0', vat: '0' });
   });
 });
 

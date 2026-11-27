@@ -78,10 +78,15 @@ export function escapeProperty(text) {
   return escapeData(text).replace(/:/g, '%3A').replace(/,/g, '%2C');
 }
 
-function defaultBase() {
+/**
+ * Default comparison ref: `origin/dev` when fetched locally, else `origin/main`.
+ * @param {string} [cwd]
+ * @returns {string}
+ */
+export function defaultBase(cwd = process.cwd()) {
   for (const ref of ['origin/dev', 'origin/main']) {
     try {
-      execFileSync('git', ['rev-parse', '--verify', '--quiet', ref], { stdio: 'ignore' });
+      execFileSync('git', ['rev-parse', '--verify', '--quiet', ref], { cwd, stdio: 'ignore' });
       return ref;
     } catch {
       // Try next candidate ref when the integration branch is not fetched locally.

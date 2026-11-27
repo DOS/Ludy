@@ -5,16 +5,18 @@
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import { buildStatementsWorkbook, ledgerPeriod, type FinancialStatements } from '../src/index.ts';
-import { DRAFT_NOTICE } from '../src/statements-export.ts';
+import { B01_TT99_DRAFT, DRAFT_NOTICE, MIXED_CHARTS_NOTICE, TT99_NOTICE } from '../src/statements-export.ts';
 import { expectExcelSheetNames } from './sheet-names.ts';
 
 const NO_COMPARISON: FinancialStatements['comparison'] = { startOfYear: null, lastYear: null, previous: null };
 
 function statements(
-  overrides: { balanced?: boolean; unmapped?: FinancialStatements['b01']['unmapped']; payable?: string; period?: string; comparison?: FinancialStatements['comparison'] } = {},
+  overrides: { regime?: 'tt133' | 'tt99'; mixedCharts?: boolean; balanced?: boolean; unmapped?: FinancialStatements['b01']['unmapped']; payable?: string; period?: string; comparison?: FinancialStatements['comparison'] } = {},
 ): FinancialStatements {
   return {
     period: ledgerPeriod(overrides.period ?? '2026-09'),
+    ...(overrides.regime ? { regime: overrides.regime } : {}),
+    ...(overrides.mixedCharts !== undefined ? { mixedCharts: overrides.mixedCharts } : {}),
     comparison: overrides.comparison ?? NO_COMPARISON,
     b01: {
       asOf: '2026-09-30',
@@ -74,6 +76,53 @@ describe('buildStatementsWorkbook', () => {
       ['Chi phí quản lý kinh doanh', '24', 1800000, 900000, 1800000],
       ['=SUM(A1)', '60', -1800000, -900000, 0],
     ]);
+  });
+
+  it('names the TT99 sheets B01-DN and B02-DN, and the TT133 ones B01-DNN and B02-DNN', async () => {
+    const tt99 = await readBack(statements({ regime: 'tt99' }));
+    expect(tt99.worksheets.map((sheet) => sheet.name)).toEqual(['B01-DN', 'B02-DN']);
+    expectExcelSheetNames(tt99);
+    const tt133 = await readBack(statements({ regime: 'tt133' }));
+    expect(tt133.worksheets.map((sheet) => sheet.name)).toEqual(['B01-DNN', 'B02-DNN']);
+    expect((await readBack(statements())).worksheets.map((sheet) => sheet.name)).toEqual(['B01-DNN', 'B02-DNN']);
+  });
+
+  it('puts the fixed draft label under the draft notice of a TT99 B01, and nowhere on a TT133 sheet (#5204)', async () => {
+    const tt99 = await readBack(statements({ regime: 'tt99' }));
+    const b01 = rowsOf(tt99.getWorksheet('B01-DN'));
+    expect(b01[0]).toEqual([DRAFT_NOTICE]);
+    expect(b01[1]).toEqual([B01_TT99_DRAFT]);
+    expect(B01_TT99_DRAFT).toBe('Bản nháp, kế toán chưa xác nhận cách lập');
+    // The header row follows the label, and the freeze keeps it with the rows above.
+    expect(b01[3]?.[0]).toBe('Chỉ tiêu');
+    expect(tt99.getWorksheet('B01-DN')?.views[0]).toMatchObject({ state: 'frozen', ySplit: 4 });
+    expect(rowsOf(tt99.getWorksheet('B02-DN'))[1]).not.toEqual([B01_TT99_DRAFT]);
+    const tt133 = await readBack(statements({ regime: 'tt133' }));
+    for (const sheet of tt133.worksheets) expect(rowsOf(sheet).map((row) => row[0])).not.toContain(B01_TT99_DRAFT);
+    expect(tt133.getWorksheet('B01-DNN')?.views[0]).toMatchObject({ ySplit: 3 });
+  });
+
+  it('says on the TT99 B02 sheet that it is read under the TT99 chart, and adds the mixed-chart warning to both sheets only when asked (#5187)', async () => {
+    const tt99 = await readBack(statements({ regime: 'tt99' }));
+    const b02 = rowsOf(tt99.getWorksheet('B02-DN')).map((row) => row[0]);
+    expect(b02).toContain(TT99_NOTICE);
+    expect(b02).not.toContain(MIXED_CHARTS_NOTICE);
+    // The old sentence that B01 keeps the TT133 layout is gone: B01 has its own label instead.
+    expect(TT99_NOTICE).not.toMatch(/Thông tư 133/);
+    const mixed = await readBack(statements({ regime: 'tt99', mixedCharts: true }));
+    for (const name of ['B01-DN', 'B02-DN']) expect(rowsOf(mixed.getWorksheet(name)).map((row) => row[0])).toContain(MIXED_CHARTS_NOTICE);
+    const tt133 = await readBack(statements({ regime: 'tt133' }));
+    expect(rowsOf(tt133.getWorksheet('B02-DNN')).map((row) => row[0])).not.toContain(TT99_NOTICE);
+  });
+
+  it('names the TT99 total lines (280 and 440) in the unbalanced warnings, and the TT133 ones (200 and 500) otherwise', async () => {
+    const column = { startOfYear: { asOf: '2025-12-31', amounts: {}, balanced: false, unmapped: 0 }, lastYear: null, previous: null };
+    const tt99 = await readBack(statements({ regime: 'tt99', balanced: false, comparison: column }));
+    const labels99 = rowsOf(tt99.getWorksheet('B01-DN')).map((row) => String(row[0]));
+    expect(labels99.filter((label) => label.includes('mã 280') && label.includes('mã 440'))).toHaveLength(2);
+    const tt133 = await readBack(statements({ regime: 'tt133', balanced: false, comparison: column }));
+    const labels133 = rowsOf(tt133.getWorksheet('B01-DNN')).map((row) => String(row[0]));
+    expect(labels133.filter((label) => label.includes('mã 200') && label.includes('mã 500'))).toHaveLength(2);
   });
 
   it('warns under a comparison column that does not balance or that no line reads in full', async () => {
