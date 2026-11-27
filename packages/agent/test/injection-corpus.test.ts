@@ -93,6 +93,7 @@ import {
   checkCommitments,
   checkTemplateSuggestion,
   checkOpenPoints,
+  checkCatchUp,
   checkLabelSuggestions,
   checkSalesInsight,
   checkDigest,
@@ -822,6 +823,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('meetings.commitments');
     cover('meetings.template_suggest');
     cover('meetings.open_points');
+    cover('meetings.catch_up');
     cover('meetings.sales_insight');
     cover('meetings.label_suggest');
     cover('meetings.followup_note');
@@ -967,6 +969,21 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       ).toThrowError('COMMITMENTS_EMPTY');
       expect(() => checkTemplateSuggestion(JSON.stringify({ template: 'customer', reason: c.poisonedOutput, second: 0 }), poisonedSegments)).toThrowError('TEMPLATE_SUGGEST_EMPTY');
       expect(() => checkOpenPoints(JSON.stringify({ points: [{ kind: 'question', text: c.poisonedOutput, second: 0 }] }), poisonedSegments)).toThrowError('OPEN_POINTS_EMPTY');
+      const catchUpItemId = '88888888-8888-4888-8888-888888888801';
+      const checkedCatchUp = checkCatchUp(
+        JSON.stringify({
+          lines: [
+            { text: c.poisonedOutput, cite: { kind: 'decision', index: 1 } },
+            { text: c.poisonedOutput, cite: { kind: 'item', itemId: catchUpItemId } },
+          ],
+        }),
+        {
+          decisions: ['Chot ke hoach giao hang va xac nhan lich hop tuan sau.'],
+          items: [{ id: catchUpItemId, title: 'Gui bao cao tuan', who: 'Lan', when: 'thu Sau' }],
+        },
+      );
+      expect(checkedCatchUp.lines, `catch_up ${c.id}`).toEqual([]);
+      expect(checkedCatchUp.dropped, `catch_up dropped ${c.id}`).toBe(2);
       try {
         const labels = checkLabelSuggestions(JSON.stringify({ labels: [c.poisonedOutput] }), [], LABEL_RULES);
         expect(labels.labels, `label_suggest ${c.id}`).toEqual([]);
