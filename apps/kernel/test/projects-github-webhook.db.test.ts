@@ -2442,9 +2442,22 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
         WHERE direction = 'outbound' AND status = 'queued'`,
     );
 
-    const unentitledOrg = await createOrg(billingRuntime, asUser(owner.userId), 'Cong ty Unentitled');
-    const activeOrg = await createOrg(billingRuntime, asUser(owner.userId), 'Cong ty Active Sync');
-    const offOrg = await createOrg(billingRuntime, asUser(owner.userId), 'Cong ty Projects Off');
+    const billingOwner: Person = {
+      subject: `gh-billing-owner-${randomUUID()}`,
+      email: 'gh-billing-owner@ludy.test',
+      session: randomUUID(),
+      userId: '',
+    };
+    billingOwner.userId = await upsertIdentity(appDb, {
+      issuer: ISSUER,
+      subject: billingOwner.subject,
+      email: billingOwner.email,
+      name: 'GH Billing Owner',
+    });
+
+    const unentitledOrg = await createOrg(billingRuntime, asUser(billingOwner.userId), 'Cong ty Unentitled');
+    const activeOrg = await createOrg(billingRuntime, asUser(billingOwner.userId), 'Cong ty Active Sync');
+    const offOrg = await createOrg(billingRuntime, asUser(billingOwner.userId), 'Cong ty Projects Off');
     entitledOrgs.add(unentitledOrg.orgId);
     entitledOrgs.add(activeOrg.orgId);
     entitledOrgs.add(offOrg.orgId);
@@ -2457,12 +2470,12 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     const { projectId: unentitledProjId } = await billingRuntime.execute<{ projectId: string }>(
       'projects.project.create',
       { name: 'Unentitled Downgraded Project', visibility: 'org' },
-      { actor: asUser(owner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+      { actor: asUser(billingOwner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
     );
     const unentPat = await rpc(
       billingApp,
       'projects/github/connectPat',
-      owner,
+      billingOwner,
       {
         projectId: unentitledProjId,
         accessToken: 'github_pat_fake_unentitled',
@@ -2478,7 +2491,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     const unentRepoBind = await rpc(
       billingApp,
       'projects/github/repoBind',
-      owner,
+      billingOwner,
       {
         projectId: unentitledProjId,
         githubRepoId: '1001',
@@ -2493,7 +2506,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     const unentBind = await rpc(
       billingApp,
       'projects/github/bindingSave',
-      owner,
+      billingOwner,
       {
         projectId: unentitledProjId,
         channelConnectionId: unentConnId,
@@ -2510,7 +2523,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     const { taskId: tUnentHuman } = await billingRuntime.execute<{ taskId: string }>(
       'projects.task.create',
       { projectId: unentitledProjId, title: 'Human task during unentitled state', assigneePositionId: null },
-      { actor: asUser(owner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+      { actor: asUser(billingOwner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
     );
     remoteItems.set('/repos/octo-org/core-api/issues/301', {
       number: 301,
@@ -2546,12 +2559,12 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     const agentInstallUnent = await billingRuntime.execute<{ agentId: string; positionId: string }>(
       'kernel.agent.template.install',
       { templateKey: 'finance.chief_accountant' },
-      { actor: asMfa(owner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+      { actor: asMfa(billingOwner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
     );
     const { taskId: tUnentAgent } = await billingRuntime.execute<{ taskId: string }>(
       'projects.task.create',
       { projectId: unentitledProjId, title: 'Agent task while unentitled', assigneePositionId: agentInstallUnent.positionId },
-      { actor: asUser(owner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+      { actor: asUser(billingOwner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
     );
     const unentRunRows = await rows<{ id: string }>(
       `INSERT INTO ludy_kernel.ai_run (org_id, agent_id, module, status, started_at, expires_at)
@@ -2570,7 +2583,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     const { taskId: tStandalone } = await billingRuntime.execute<{ taskId: string }>(
       'kernel.task.create',
       { title: 'Standalone Notes/Finance org task', assigneePositionId: null },
-      { actor: asUser(owner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
+      { actor: asUser(billingOwner.userId), orgId: unentitledOrg.orgId, idempotencyKey: randomUUID() },
     );
 
     // Drop 'projects' from Cloud entitlements (t.apps_off stays empty so SQL org_app_on = true).
@@ -2613,12 +2626,12 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     const { projectId: offProjId } = await billingRuntime.execute<{ projectId: string }>(
       'projects.project.create',
       { name: 'Off App Project', visibility: 'org' },
-      { actor: asUser(owner.userId), orgId: offOrg.orgId, idempotencyKey: randomUUID() },
+      { actor: asUser(billingOwner.userId), orgId: offOrg.orgId, idempotencyKey: randomUUID() },
     );
     await billingRuntime.execute(
       'kernel.org.set_app',
       { module: 'projects', enabled: false },
-      { actor: asUser(owner.userId), orgId: offOrg.orgId, idempotencyKey: randomUUID() },
+      { actor: asUser(billingOwner.userId), orgId: offOrg.orgId, idempotencyKey: randomUUID() },
     );
     const offDeliveryRows = await rows<{ id: string }>(
       `INSERT INTO ludy_projects.github_sync_delivery (
@@ -2656,12 +2669,12 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     const { projectId: activeProjId } = await billingRuntime.execute<{ projectId: string }>(
       'projects.project.create',
       { name: 'Active Org Behind Backlog', visibility: 'org' },
-      { actor: asUser(owner.userId), orgId: activeOrg.orgId, idempotencyKey: randomUUID() },
+      { actor: asUser(billingOwner.userId), orgId: activeOrg.orgId, idempotencyKey: randomUUID() },
     );
     const activePat = await rpc(
       billingApp,
       'projects/github/connectPat',
-      owner,
+      billingOwner,
       {
         projectId: activeProjId,
         accessToken: 'github_pat_fake_active',
@@ -2677,7 +2690,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     const activeRepoBind = await rpc(
       billingApp,
       'projects/github/repoBind',
-      owner,
+      billingOwner,
       {
         projectId: activeProjId,
         githubRepoId: '1001',
@@ -2692,7 +2705,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     const activeBind = await rpc(
       billingApp,
       'projects/github/bindingSave',
-      owner,
+      billingOwner,
       {
         projectId: activeProjId,
         channelConnectionId: activeConnId,
@@ -2709,7 +2722,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
     const { taskId: tActive } = await billingRuntime.execute<{ taskId: string }>(
       'projects.task.create',
       { projectId: activeProjId, title: 'Active org task must sweep immediately', assigneePositionId: null },
-      { actor: asUser(owner.userId), orgId: activeOrg.orgId, idempotencyKey: randomUUID() },
+      { actor: asUser(billingOwner.userId), orgId: activeOrg.orgId, idempotencyKey: randomUUID() },
     );
     remoteItems.set('/repos/octo-org/core-api/issues/302', {
       number: 302,
