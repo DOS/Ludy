@@ -3526,10 +3526,10 @@ function seedFnVarDecls(fnBodyRoot: tsType.Node, fnScope: AstLexScope): void {
 
 function collectAstAssignTargetNames(expr: tsType.Expression): {
   identNames: string[];
-  memberRootBaseNames: string[];
+  memberNodes: Array<tsType.PropertyAccessExpression | tsType.ElementAccessExpression>;
 } {
   const identNames: string[] = [];
-  const memberRootBaseNames: string[] = [];
+  const memberNodes: Array<tsType.PropertyAccessExpression | tsType.ElementAccessExpression> = [];
   const stack: tsType.Node[] = [expr];
   while (stack.length > 0) {
     const cur = stack.pop()!;
@@ -3544,13 +3544,7 @@ function collectAstAssignTargetNames(expr: tsType.Expression): {
     } else if (ts.isIdentifier(cur)) {
       identNames.push(cur.text);
     } else if (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
-      let root: tsType.Expression = unwrapAstExpr(cur.expression, true);
-      while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) {
-        root = unwrapAstExpr(root.expression, true);
-      }
-      if (ts.isIdentifier(root)) {
-        memberRootBaseNames.push(root.text);
-      }
+      memberNodes.push(cur);
     } else if (ts.isArrayLiteralExpression(cur)) {
       for (const el of cur.elements) {
         if (!ts.isOmittedExpression(el)) stack.push(el);
@@ -3579,7 +3573,7 @@ function collectAstAssignTargetNames(expr: tsType.Expression): {
       }
     }
   }
-  return { identNames, memberRootBaseNames };
+  return { identNames, memberNodes };
 }
 
 function isAstKnownSafeFetchKillRhs(expr: tsType.Expression): boolean {
@@ -3765,7 +3759,7 @@ function getAstEnclosingFnNode(node: tsType.Node): tsType.Node {
   let cur: tsType.Node = node;
   while (cur.parent) {
     cur = cur.parent;
-    if (ts.isFunctionLike(cur) || ts.isSourceFile(cur)) return cur;
+    if (ts.isFunctionLike(cur) || ts.isClassStaticBlockDeclaration(cur) || ts.isSourceFile(cur)) return cur;
   }
   return cur;
 }
@@ -3902,8 +3896,50 @@ function extractAstFacts(
   const seedNonSafeKillBases = new Set<string>();
   const seedNonSafeKillValues = new Set<string>();
   const nonSafeBaseAliases = new Map<string, Set<string>>();
+  const seedMutatedObjectBases = new Set<string>();
+  const seedMutatedDynamicHosts = new Set<string>();
+  const mutatedObjectBaseEdges = new Map<string, Set<string>>();
   const blockedSafeKillVars = new Set<string>();
   const safeKillValueCandidates: Array<{ targetKey: string; rhsExpr: tsType.Expression; evalScope: AstLexScope }> = [];
+  const resolveAstMemberKeyPath = (
+    expr: tsType.Expression,
+    evalScope: AstLexScope,
+  ): { key: string | null; dynamicHostKey: string | null; rootIdentName: string | null } => {
+    const segs: string[] = [];
+    let cur = unwrapAstExpr(expr, true);
+    let rootCheck = cur;
+    while (ts.isPropertyAccessExpression(rootCheck) || ts.isElementAccessExpression(rootCheck)) {
+      rootCheck = unwrapAstExpr(rootCheck.expression, true);
+    }
+    const rootIdentName = ts.isIdentifier(rootCheck) ? rootCheck.text : null;
+    while (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
+      const mem = extractAstMemberName(cur, evalScope);
+      let seg = mem.memberName;
+      if (seg === null && ts.isElementAccessExpression(cur)) {
+        const arg = unwrapAstExpr(cur.argumentExpression, false);
+        if (ts.isNumericLiteral(arg)) {
+          const num = Number(arg.text);
+          if (Number.isInteger(num)) seg = String(num);
+        }
+      }
+      if (seg === null) {
+        const inner = resolveAstMemberKeyPath(mem.host, evalScope);
+        return {
+          key: null,
+          dynamicHostKey: inner.key ?? inner.dynamicHostKey,
+          rootIdentName,
+        };
+      }
+      segs.push(seg);
+      cur = unwrapAstExpr(mem.host, true);
+    }
+    if (!ts.isIdentifier(cur)) return { key: null, dynamicHostKey: null, rootIdentName };
+    let outKey = astVarKey(evalScope, cur.text);
+    for (let i = segs.length - 1; i >= 0; i -= 1) {
+      outKey = `prop:${outKey}\0${segs[i]!}`;
+    }
+    return { key: outKey, dynamicHostKey: null, rootIdentName };
+  };
   const localWrapperBindTargets: Array<{ hostExpr: tsType.Expression; targets: string[]; scope: AstLexScope }> = [];
   const seedMeterAliases = new Set<string>(['global:metered']);
   const seedMeterNs = new Set<string>();
@@ -4318,6 +4354,8 @@ function extractAstFacts(
           addAliasEdge(nonSafeBaseAliases, fromKey, toKey);
           addAliasEdge(nonSafeBaseAliases, toKey, fromKey);
         }
+        addAliasEdge(mutatedObjectBaseEdges, fromKey, toKey);
+        addAliasEdge(mutatedObjectBaseEdges, toKey, fromKey);
       } else if (memberAccess) {
         memberBindCandidates.push({
           host: memberAccess.host,
@@ -4331,25 +4369,28 @@ function extractAstFacts(
         const elemIdxArg = ts.isElementAccessExpression(cur) ? unwrapAstExpr(cur.argumentExpression, false) : null;
         const elemNumIdx = elemIdxArg && ts.isNumericLiteral(elemIdxArg) ? Number(elemIdxArg.text) : null;
         for (const br of expandAstBranchExprs(memberAccess.host)) {
-          if (ts.isIdentifier(br)) {
-            if (targetKeys.length === 1) {
-              const effectiveProp =
-                memberAccess.propName !== null
-                  ? memberAccess.propName
-                  : elemNumIdx !== null && Number.isInteger(elemNumIdx)
-                    ? String(elemNumIdx)
-                    : null;
-              if (effectiveProp !== null) {
-                const propKey = `prop:${astVarKey(evalScope, br.text)}\0${effectiveProp}`;
-                const toKey = targetKeys[0]!;
-                addAliasEdge(aliasEdges, propKey, toKey);
-                addPositionalEdge(propKey, toKey, rawPos, cur);
-              }
-            }
-          } else if (ts.isObjectLiteralExpression(br)) {
+          if (ts.isObjectLiteralExpression(br)) {
             forwardObjectLiteralTargets(br, memberAccess.propName, targetKeys, evalScope, assignEndPos, objDepth);
           } else if (ts.isArrayLiteralExpression(br)) {
             forwardArrayLiteralTargets(br, elemNumIdx, targetKeys, evalScope, assignEndPos, objDepth);
+          } else if (targetKeys.length === 1) {
+            const effectiveProp =
+              memberAccess.propName !== null
+                ? memberAccess.propName
+                : elemNumIdx !== null && Number.isInteger(elemNumIdx)
+                  ? String(elemNumIdx)
+                  : null;
+            if (effectiveProp !== null) {
+              const brPath = resolveAstMemberKeyPath(br, evalScope);
+              if (brPath.key !== null) {
+                const propKey = `prop:${brPath.key}\0${effectiveProp}`;
+                const toKey = targetKeys[0]!;
+                addAliasEdge(aliasEdges, propKey, toKey);
+                addPositionalEdge(propKey, toKey, rawPos, cur);
+                addAliasEdge(mutatedObjectBaseEdges, propKey, toKey);
+                addAliasEdge(mutatedObjectBaseEdges, toKey, propKey);
+              }
+            }
           }
         }
       } else if (targetKeys.length === 1 && ts.isObjectLiteralExpression(cur) && objDepth < 4) {
@@ -4390,7 +4431,13 @@ function extractAstFacts(
   };
 
   const recordDestructuredEntries = (
-    entries: ReadonlyArray<{ key: string | null; isComputedBracket: boolean; isTopLevel: boolean; targets: string[] }>,
+    entries: ReadonlyArray<{
+      key: string | null;
+      isComputedBracket: boolean;
+      isTopLevel: boolean;
+      targets: string[];
+      keyPath?: readonly string[] | null;
+    }>,
     rhsExpr: tsType.Expression,
     evalScope: AstLexScope,
     scopeForTargets: AstLexScope | null,
@@ -4399,6 +4446,21 @@ function extractAstFacts(
       const scopedTargets = scopeForTargets
         ? entry.targets.map((n) => astVarKey(scopeForTargets, n))
         : entry.targets;
+      const segs = entry.keyPath ?? (entry.isTopLevel && entry.key !== null ? [entry.key] : null);
+      if (segs && segs.length > 0 && scopedTargets.length > 0) {
+        for (const br of expandAstBranchExprs(rhsExpr)) {
+          if (ts.isObjectLiteralExpression(br)) continue;
+          const brPath = resolveAstMemberKeyPath(br, evalScope);
+          if (brPath.key !== null) {
+            let srcProp = brPath.key;
+            for (const seg of segs) srcProp = `prop:${srcProp}\0${seg}`;
+            for (const t of scopedTargets) {
+              addAliasEdge(mutatedObjectBaseEdges, srcProp, t);
+              addAliasEdge(mutatedObjectBaseEdges, t, srcProp);
+            }
+          }
+        }
+      }
       if (entry.isTopLevel) {
         if (entry.key === 'require' || entry.key === 'createRequire') {
           hasBareRequire = true;
@@ -4567,7 +4629,20 @@ function extractAstFacts(
       }
     }
     for (const br of expandAstBranchExprs(rhsExpr)) {
-      if (!ts.isArrayLiteralExpression(br)) continue;
+      if (!ts.isArrayLiteralExpression(br)) {
+        const brPath = resolveAstMemberKeyPath(br, evalScope);
+        if (brPath.key !== null) {
+          for (let idx = 0; idx < elements.length; idx += 1) {
+            const item = elements[idx];
+            if (!item || item.isRest || !ts.isIdentifier(item.node)) continue;
+            const elKey = `prop:${brPath.key}\0${idx}`;
+            const tgtKey = astVarKey(targetScope, item.node.text);
+            addAliasEdge(mutatedObjectBaseEdges, elKey, tgtKey);
+            addAliasEdge(mutatedObjectBaseEdges, tgtKey, elKey);
+          }
+        }
+        continue;
+      }
       let sawLhsRest = false;
       for (let idx = 0; idx < elements.length; idx += 1) {
         const item = elements[idx];
@@ -4634,11 +4709,13 @@ function extractAstFacts(
   const extractObjectBindingDestructurePairs = (
     pattern: tsType.ObjectBindingPattern,
     scope: AstLexScope,
-  ): Array<{ key: string | null; isComputedBracket: boolean; isTopLevel: boolean; targets: string[] }> => {
-    const out: Array<{ key: string | null; isComputedBracket: boolean; isTopLevel: boolean; targets: string[] }> = [];
-    const bStack: Array<{ bp: tsType.ObjectBindingPattern; isTopLevel: boolean }> = [{ bp: pattern, isTopLevel: true }];
+  ): Array<{ key: string | null; isComputedBracket: boolean; isTopLevel: boolean; targets: string[]; keyPath: readonly string[] | null }> => {
+    const out: Array<{ key: string | null; isComputedBracket: boolean; isTopLevel: boolean; targets: string[]; keyPath: readonly string[] | null }> = [];
+    const bStack: Array<{ bp: tsType.ObjectBindingPattern; isTopLevel: boolean; prefix: readonly string[] | null }> = [
+      { bp: pattern, isTopLevel: true, prefix: [] },
+    ];
     while (bStack.length > 0) {
-      const { bp, isTopLevel } = bStack.pop()!;
+      const { bp, isTopLevel, prefix } = bStack.pop()!;
       for (const el of bp.elements) {
         if (el.dotDotDotToken) {
           out.push({
@@ -4646,6 +4723,7 @@ function extractAstFacts(
             isComputedBracket: true,
             isTopLevel,
             targets: collectAstBindingIdentifiers(el.name).map((n) => astVarKey(scope, n)),
+            keyPath: null,
           });
           continue;
         }
@@ -4654,10 +4732,11 @@ function extractAstFacts(
           : ts.isIdentifier(el.name)
             ? { name: el.name.text, isComputedBracket: false }
             : { name: null, isComputedBracket: false };
+        const nextPath = prefix !== null && keyInfo.name !== null ? [...prefix, keyInfo.name] : null;
         if (ts.isObjectBindingPattern(el.name)) {
-          bStack.push({ bp: el.name, isTopLevel: false });
+          bStack.push({ bp: el.name, isTopLevel: false, prefix: nextPath });
           if (keyInfo.isComputedBracket || keyInfo.name === 'WebSocket' || keyInfo.name === 'XMLHttpRequest') {
-            out.push({ key: keyInfo.name, isComputedBracket: keyInfo.isComputedBracket, isTopLevel, targets: [] });
+            out.push({ key: keyInfo.name, isComputedBracket: keyInfo.isComputedBracket, isTopLevel, targets: [], keyPath: null });
           }
           continue;
         }
@@ -4666,6 +4745,7 @@ function extractAstFacts(
           isComputedBracket: keyInfo.isComputedBracket,
           isTopLevel,
           targets: collectAstBindingIdentifiers(el.name).map((n) => astVarKey(scope, n)),
+          keyPath: nextPath,
         });
       }
     }
@@ -4675,7 +4755,7 @@ function extractAstFacts(
   const getDestructurePairsForRhs = (
     exprNode: tsType.Node,
     scope: AstLexScope,
-  ): Array<{ key: string | null; isComputedBracket: boolean; isTopLevel: boolean; targets: string[] }> => {
+  ): Array<{ key: string | null; isComputedBracket: boolean; isTopLevel: boolean; targets: string[]; keyPath?: readonly string[] | null }> => {
     let cur: tsType.Node = exprNode;
     while (
       cur.parent &&
@@ -4714,6 +4794,41 @@ function extractAstFacts(
     readonly suppressNotesLit: boolean;
   }
 
+  const recordMutatedTargetExpr = (expr: tsType.Expression, evalScope: AstLexScope, isWriteLeafMember: boolean): void => {
+    const { identNames, memberNodes } = collectAstAssignTargetNames(expr);
+    for (const idName of identNames) {
+      if (isWriteLeafMember) {
+        blockedSafeKillVars.add(astVarKey(evalScope, idName));
+      } else {
+        const k = astVarKey(evalScope, idName);
+        seedNonSafeKillBases.add(k);
+        seedMutatedObjectBases.add(k);
+        seedMutatedDynamicHosts.add(k);
+      }
+    }
+    for (const m of memberNodes) {
+      const targetObjExpr = isWriteLeafMember ? m.expression : m;
+      const p = resolveAstMemberKeyPath(targetObjExpr, evalScope);
+      if (p.rootIdentName !== null) {
+        seedNonSafeKillBases.add(astVarKey(evalScope, p.rootIdentName));
+      }
+      if (p.key !== null) {
+        seedMutatedObjectBases.add(p.key);
+        if (isWriteLeafMember && ts.isElementAccessExpression(m)) {
+          const mInfo = extractAstMemberName(m, evalScope);
+          const arg = unwrapAstExpr(m.argumentExpression, false);
+          const hasNumericIdx = ts.isNumericLiteral(arg) && Number.isInteger(Number(arg.text));
+          if (mInfo.memberName === null && !hasNumericIdx) {
+            seedMutatedDynamicHosts.add(p.key);
+          }
+        }
+      }
+      if (p.dynamicHostKey !== null) {
+        seedMutatedDynamicHosts.add(p.dynamicHostKey);
+      }
+    }
+  };
+
   const stack: WalkFrame[] = [{ node: sf, scope: rootScope, inTypePos: false, suppressNotesLit: false }];
   while (stack.length > 0) {
     const { node, scope, inTypePos, suppressNotesLit } = stack.pop()!;
@@ -4728,6 +4843,10 @@ function extractAstFacts(
         if (ts.isModuleBlock(node)) {
           seedFnVarDecls(node, nextScope);
         }
+      } else if (ts.isClassStaticBlockDeclaration(node)) {
+        nextScope = createAstChildScope(scope, true);
+        seedBlockShadowIdentifiers(node.body, nextScope);
+        seedFnVarDecls(node.body, nextScope);
       } else if (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) {
         nextScope = createAstChildScope(scope, false);
         if (ts.isForInStatement(node) || ts.isForOfStatement(node)) {
@@ -4745,13 +4864,7 @@ function extractAstFacts(
               }
             }
           } else {
-            const { identNames, memberRootBaseNames } = collectAstAssignTargetNames(node.initializer);
-            for (const name of identNames) {
-              blockedSafeKillVars.add(astVarKey(nextScope, name));
-            }
-            for (const baseName of memberRootBaseNames) {
-              seedNonSafeKillBases.add(astVarKey(nextScope, baseName));
-            }
+            recordMutatedTargetExpr(node.initializer, nextScope, true);
           }
         }
       } else if (ts.isCatchClause(node)) {
@@ -4780,13 +4893,26 @@ function extractAstFacts(
             blockedSafeKillVars.add(astVarKey(nextScope, name));
           }
         }
-        if (node.body) {
+        if (
+          (ts.isFunctionDeclaration(node) ||
+            ts.isFunctionExpression(node) ||
+            ts.isArrowFunction(node) ||
+            ts.isMethodDeclaration(node) ||
+            ts.isConstructorDeclaration(node) ||
+            ts.isGetAccessorDeclaration(node) ||
+            ts.isSetAccessorDeclaration(node)) &&
+          node.body
+        ) {
           seedFnVarDecls(node.body, nextScope);
         }
       } else if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name) {
-        seedNonSafeKillBases.add(astVarKey(scope, node.name.text));
+        const classKey = astVarKey(scope, node.name.text);
+        seedNonSafeKillBases.add(classKey);
+        seedMutatedObjectBases.add(classKey);
       } else if (ts.isModuleDeclaration(node) && ts.isIdentifier(node.name)) {
-        seedNonSafeKillBases.add(astVarKey(scope, node.name.text));
+        const nsKey = astVarKey(scope, node.name.text);
+        seedNonSafeKillBases.add(nsKey);
+        seedMutatedObjectBases.add(nsKey);
       }
       if (
         ts.isTypeNode(node) ||
@@ -5022,6 +5148,24 @@ function extractAstFacts(
             lhsTarget = [`prop:${hostKey}\0${lhsMem.memberName}`];
           }
         }
+        const hostPath = resolveAstMemberKeyPath(lhsMem.host, nextScope);
+        if (hostPath.rootIdentName !== null) {
+          seedNonSafeKillBases.add(astVarKey(nextScope, hostPath.rootIdentName));
+        }
+        if (hostPath.key !== null) {
+          seedMutatedObjectBases.add(hostPath.key);
+          if (lhsMem.memberName !== null && lhsTarget.length === 0) {
+            lhsTarget = [`prop:${hostPath.key}\0${lhsMem.memberName}`];
+          }
+          if (lhsMem.memberName === null && ts.isElementAccessExpression(lhsExpr)) {
+            const arg = unwrapAstExpr(lhsExpr.argumentExpression, false);
+            const hasNumIdx = ts.isNumericLiteral(arg) && Number.isInteger(Number(arg.text));
+            if (!hasNumIdx) seedMutatedDynamicHosts.add(hostPath.key);
+          }
+        }
+        if (hostPath.dynamicHostKey !== null) {
+          seedMutatedDynamicHosts.add(hostPath.dynamicHostKey);
+        }
       }
       const rhsExpr = recordBindAndMemberTarget(lhsTarget, node.right, nextScope, node.end);
       if (isPlainEquals && ts.isIdentifier(lhsExpr)) {
@@ -5050,13 +5194,7 @@ function extractAstFacts(
         }
       }
       if (ts.isObjectLiteralExpression(lhsExpr) || ts.isArrayLiteralExpression(lhsExpr)) {
-        const { identNames, memberRootBaseNames } = collectAstAssignTargetNames(lhsExpr);
-        for (const idName of identNames) {
-          blockedSafeKillVars.add(astVarKey(nextScope, idName));
-        }
-        for (const baseName of memberRootBaseNames) {
-          seedNonSafeKillBases.add(astVarKey(nextScope, baseName));
-        }
+        recordMutatedTargetExpr(lhsExpr, nextScope, true);
       }
       if (ts.isObjectLiteralExpression(lhsExpr)) {
         recordDestructuredEntries(
@@ -5074,7 +5212,7 @@ function extractAstFacts(
     // 3. Collect all CallExpressions (with outermost wrapper info for bound assignment/member access)
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
       let skipBindThisArg = false;
-      let bindReceiverIdent: string | null = null;
+      let bindReceiverKey: string | null = null;
       if (ts.isCallExpression(node)) {
         const directCalleeForBind = unwrapAstExpr(node.expression, true);
         if (ts.isPropertyAccessExpression(directCalleeForBind) || ts.isElementAccessExpression(directCalleeForBind)) {
@@ -5082,13 +5220,10 @@ function extractAstFacts(
           if (bMem.memberName === 'bind') {
             const bHost = unwrapAstExpr(bMem.host, true);
             if (ts.isPropertyAccessExpression(bHost) || ts.isElementAccessExpression(bHost)) {
-              let root: tsType.Expression = unwrapAstExpr(bHost.expression, true);
-              while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) {
-                root = unwrapAstExpr(root.expression, true);
-              }
-              if (ts.isIdentifier(root)) {
+              const recvKey = resolveAstMemberKeyPath(bHost.expression, nextScope).key;
+              if (recvKey !== null) {
                 skipBindThisArg = true;
-                bindReceiverIdent = root.text;
+                bindReceiverKey = recvKey;
               }
             }
           }
@@ -5097,13 +5232,11 @@ function extractAstFacts(
       if (node.arguments) {
         for (let argIdx = 0; argIdx < node.arguments.length; argIdx += 1) {
           const argNorm = unwrapAstExpr(node.arguments[argIdx]!, false);
-          if (skipBindThisArg && argIdx === 0 && ts.isIdentifier(argNorm) && argNorm.text === bindReceiverIdent) {
-            continue;
+          if (skipBindThisArg && argIdx === 0) {
+            const argKey = resolveAstMemberKeyPath(argNorm, nextScope).key;
+            if (argKey !== null && argKey === bindReceiverKey) continue;
           }
-          const { identNames } = collectAstAssignTargetNames(argNorm);
-          for (const idName of identNames) {
-            seedNonSafeKillBases.add(astVarKey(nextScope, idName));
-          }
+          recordMutatedTargetExpr(argNorm, nextScope, false);
         }
       }
     }
@@ -5461,6 +5594,29 @@ function extractAstFacts(
     if (changedNonSafe) nonSafeKillBases = propagateAliases(seedNonSafeKillBases, aliasEdges, nonSafeBaseAliases);
   }
   const nonSafeKillValues = propagateAliases(seedNonSafeKillValues, aliasEdges);
+  const propKeysByHost = new Map<string, string[]>();
+  for (const k of mutatedObjectBaseEdges.keys()) {
+    if (!k.startsWith('prop:')) continue;
+    const nul = k.lastIndexOf('\0');
+    if (nul <= 5) continue;
+    const host = k.slice(5, nul);
+    let arr = propKeysByHost.get(host);
+    if (!arr) {
+      arr = [];
+      propKeysByHost.set(host, arr);
+    }
+    arr.push(k);
+  }
+  if (seedMutatedDynamicHosts.size > 0 && propKeysByHost.size > 0) {
+    const dynHosts = propagateAliases(seedMutatedDynamicHosts, mutatedObjectBaseEdges);
+    for (const h of dynHosts) {
+      const childProps = propKeysByHost.get(h);
+      if (childProps) {
+        for (const pk of childProps) seedMutatedObjectBases.add(pk);
+      }
+    }
+  }
+  const mutatedObjectBases = propagateAliases(seedMutatedObjectBases, mutatedObjectBaseEdges);
   const isSafeKillExpr = (
     expr: tsType.Expression,
     evalScope: AstLexScope,
@@ -5488,7 +5644,7 @@ function extractAstFacts(
       const base = unwrapAstExpr(cur.expression, true);
       if (!ts.isIdentifier(base)) return false;
       const baseKey = astVarKey(evalScope, base.text);
-      return !requireHosts.has(baseKey) && !nonSafeKillBases.has(baseKey);
+      return !requireHosts.has(baseKey) && !nonSafeKillBases.has(baseKey) && !mutatedObjectBases.has(baseKey);
     }
     if (ts.isConditionalExpression(cur)) {
       return (
@@ -9810,6 +9966,51 @@ function hasTokenResolvedWorkspaceTarget(
         if (v !== null && (symbolSet.has(v) || isAgentOrAdapterTextValue(v, fromRelPath))) return true;
       }
     }
+    const skipPostOperandSuffixes = (
+      startIdx: number,
+      limit: number,
+      limitIsCapped: boolean,
+      allowCloseParen: boolean,
+      cappedOut: { value: boolean },
+    ): number => {
+      let pos = startIdx;
+      let suffixDone = false;
+      for (let step = 0; step < 16 && pos < limit; step += 1) {
+        const suf = tokens[pos]!;
+        if (suf.kind === 'punct' && (suf.value === '!' || (allowCloseParen && suf.value === ')'))) {
+          pos += 1;
+          continue;
+        }
+        if (suf.kind === 'ident' && (suf.value === 'as' || suf.value === 'satisfies')) {
+          const afterAs = skipWorkspaceTypeAssertion(tokens, pos + 1, limit);
+          if (afterAs >= limit && limitIsCapped) {
+            cappedOut.value = true;
+            return -1;
+          }
+          if (afterAs > pos + 1) {
+            pos = afterAs;
+            continue;
+          }
+        }
+        suffixDone = true;
+        break;
+      }
+      if (!suffixDone && pos < limit) {
+        const suf = tokens[pos]!;
+        if (
+          (suf.kind === 'punct' && (suf.value === '!' || (allowCloseParen && suf.value === ')'))) ||
+          (suf.kind === 'ident' && (suf.value === 'as' || suf.value === 'satisfies'))
+        ) {
+          cappedOut.value = true;
+          return -1;
+        }
+      }
+      if (pos >= limit && limitIsCapped) {
+        cappedOut.value = true;
+        return -1;
+      }
+      return pos;
+    };
     const advanceOp = (
       idx: number,
       maxEnd: number,
@@ -9849,7 +10050,11 @@ function hasTokenResolvedWorkspaceTarget(
         if (close > cur && close < maxEnd) {
           end = close + 1;
         } else if (maxIsCapped && close >= maxEnd) {
-          if (inPlusChain || tokens[close + 1]?.value === '+') {
+          const suffixMax = Math.min(tokens.length, close + 1 + 128);
+          const suffixCapped = suffixMax < tokens.length;
+          const afterParenSuffix = skipPostOperandSuffixes(close + 1, suffixMax, suffixCapped, true, cappedOut);
+          if (cappedOut.value) return -1;
+          if (inPlusChain || (afterParenSuffix >= 0 && tokens[afterParenSuffix]?.value === '+')) {
             cappedOut.value = true;
           } else {
             for (let k = cur + 1; k < maxEnd; k += 1) {
@@ -9875,41 +10080,7 @@ function hasTokenResolvedWorkspaceTarget(
         end = cur + 1;
       }
       if (end < 0) return -1;
-      let suffixDone = false;
-      for (let step = 0; step < 16 && end < maxEnd; step += 1) {
-        const suf = tokens[end]!;
-        if (suf.kind === 'punct' && suf.value === '!') {
-          end += 1;
-          continue;
-        }
-        if (suf.kind === 'ident' && (suf.value === 'as' || suf.value === 'satisfies')) {
-          const afterAs = skipWorkspaceTypeAssertion(tokens, end + 1, maxEnd);
-          if (afterAs >= maxEnd && maxIsCapped) {
-            cappedOut.value = true;
-            return -1;
-          }
-          if (afterAs > end + 1) {
-            end = afterAs;
-            continue;
-          }
-        }
-        suffixDone = true;
-        break;
-      }
-      if (!suffixDone && end < maxEnd) {
-        const suf = tokens[end]!;
-        if (
-          (suf.kind === 'punct' && suf.value === '!') ||
-          (suf.kind === 'ident' && (suf.value === 'as' || suf.value === 'satisfies'))
-        ) {
-          cappedOut.value = true;
-          return -1;
-        }
-      }
-      if (end >= maxEnd && maxIsCapped) {
-        cappedOut.value = true;
-      }
-      return end;
+      return skipPostOperandSuffixes(end, maxEnd, maxIsCapped, false, cappedOut);
     };
     const capped = { value: false };
     for (let i = 0; i < tokens.length; i += 1) {
@@ -13405,5 +13576,54 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(
       memberVyViolations('let read = globalThis.fetch;\nread = cache.fetch.bind(cache);\nread(key);'),
     ).toEqual([]);
+
+    // Line PO Round 11 / Platform PO Round 4 follow-up regressions
+    const t123 = `${Array.from({ length: 30 }, (_, idx) => `k${idx}: 1;`).join(' ')} k30: 1;`;
+    const m15 = Array.from({ length: 15 }, (_, idx) => `m${idx}: 1;`).join(' ');
+    const k15 = Array.from({ length: 15 }, (_, idx) => `k${idx}: 1;`).join(' ');
+    expect(
+      workspaceAdapterLeakViolations(
+        `${splitNotePrefix} export const fn = (a as { ${t123} })! + b + c + d + e;`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      workspaceAdapterLeakViolations(
+        `${splitNotePrefix} export const fn = ((<{ ${k15} }>a) as { ${m15} })! + b + c + d + e;`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst obj: any = { c: cache };\nobj.c.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst obj: any = { c: cache };\nconst alias = obj.c;\nalias.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst obj: any = { c: cache };\nconst { c: alias } = obj;\nalias.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst wrap: any = {};\nwrap.c = cache;\nwrap.c.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst arr: any[] = [cache];\narr[0].fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "class Holder {\n  static {\n    let read = globalThis.fetch;\n    fn = read;\n    if (false) {\n      var fn: any = () => null;\n    }\n    read = fn;\n    read('https://x.test');\n  }\n}",
+      ),
+    ).toContain('calls the network directly');
   }, 30_000);
 });
