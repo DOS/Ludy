@@ -85,6 +85,7 @@ const staged: StatementStageOutcome = {
     duplicateLines: 0,
     conflictLines: 0,
     conflictRows: [],
+    feed: null,
     from: '2026-09-01',
     to: '2026-09-03',
     totalIn: '2000000',
@@ -114,6 +115,23 @@ describe('readStatementFile', () => {
       error: null,
       result: { kind: 'bank_statement', summary: { state: 'staged', bankAccount: '1121', lines: 3, newLines: 3, from: '2026-09-01', to: '2026-09-03', totalIn: '2000000', totalOut: '861000' }, rows },
       summary: 'Sao kê tài khoản 1121 chờ nhập: 3 dòng, 3 dòng mới',
+    });
+  });
+
+  it('reads an .xlsx statement the same way when cut-over skips lines, naming the skip in its summary (#4223)', async () => {
+    const withFeed: StatementStageOutcome = {
+      outcome: 'staged',
+      summary: {
+        ...staged.summary,
+        newLines: 1,
+        duplicateLines: 0,
+        feed: { from: '2026-09-02', leftOut: 2 },
+      },
+    };
+    const h = harness(statementXlsx(), ZIP, withFeed);
+    expect(await h.run()).toEqual({ handled: true });
+    expect(h.calls[0]?.input).toMatchObject({
+      summary: 'Sao kê tài khoản 1121 chờ nhập: 3 dòng, 1 dòng mới, 2 dòng bỏ qua (nguồn tự động từ 2026-09-02)',
     });
   });
 

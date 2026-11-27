@@ -54,7 +54,9 @@ function requireUser(ctx: CommandContext): string {
 
 export const zChannelConnect = z.strictObject({
   provider: zProvider,
-  externalAccountId: z.string().min(1).max(200).refine((value) => value.trim().length > 0, 'External account id must not be blank'),
+  // Trimmed before the checks so surrounding whitespace never reaches `channel_connection.external_account_id` and every pod
+  // derives the same advisoryLockKey for the account (#5091); a blank value fails `min(1)` after the trim.
+  externalAccountId: z.string().trim().min(1, 'External account id must not be blank').max(200),
   displayName: z.string().trim().min(1).max(200),
   scopes: z.array(z.string().min(1).max(200)).max(100),
   expiresAt: z.iso.datetime({ offset: true }).nullable(),
