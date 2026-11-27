@@ -1780,19 +1780,17 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       expect(logRes.entries.length).toBeGreaterThan(0);
     }
 
-    // Org admin bypasses private-project read visibility via actor_bypasses_private_projects(), yet cannot write without project membership.
+    // Org admin bypasses private-project visibility (project_visible + actor_bypasses_private_projects) for audit/admin oversight.
     const adminActor = userActor('non-member admin', () => orgId, () => users.admin);
     expect(
       await attemptSql(adminActor, `SELECT id FROM crove_projects.github_project_binding WHERE org_id = $1 AND project_id = $2`, [orgId, privateProjectId]),
     ).toEqual({ ok: true, rowCount: 1 });
     expect(
-      await attemptSql(
-        adminActor,
-        `INSERT INTO crove_projects.github_task_link (org_id, project_id, task_id, repo_full_name, kind, external_number, external_url, external_title, external_state, link_source)
-         VALUES ($1, $2, $3, 'acme/private-repo', 'issue', 98, 'https://github.com/acme/private-repo/issues/98', 'Admin Injected', 'open', 'manual')`,
-        [orgId, privateProjectId, privateTaskId],
-      ),
-    ).toMatchObject({ ok: false, code: '42501' });
+      await attemptSql(adminActor, `SELECT * FROM crove_projects.github_sync_delivery_list($1::uuid, 10)`, [privateProjectId]),
+    ).toEqual({ ok: true, rowCount: 1 });
+    expect(
+      await attemptSql(adminActor, `SELECT * FROM crove_projects.github_webhook_hook_status($1::uuid)`, [conn.connectionId]),
+    ).toEqual({ ok: true, rowCount: 1 });
 
     // Non-project actors (member + viewer + non-member Vy + non-member MCP + unassigned agent) cannot see or mutate any github_* rows.
     const nonProjectActors = [

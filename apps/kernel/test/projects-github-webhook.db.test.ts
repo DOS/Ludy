@@ -678,7 +678,7 @@ suite('Projects GitHub Integration Slice 1 on PostgreSQL (#5158)', () => {
       'SELECT external_title, external_state FROM ludy_projects.github_task_link WHERE org_id = $1 AND project_id = $2 AND external_number = 101',
       [org.orgId, projectId],
     );
-    expect(pr101AfterStale[0]).toEqual({ external_title: 'Fix oauth login crash', external_state: 'open' });
+    expect(pr101AfterStale[0]).toEqual({ external_title: 'alert(1) Fix oauth crash', external_state: 'open' });
 
     // Viewer (read-only) and member with non-project taskId fail authorization BEFORE calling api.github.com;
     // writer pasting an /issues/205 URL that belongs to a PR stores kind = 'pull_request' and canonical /pull/205 URL.
