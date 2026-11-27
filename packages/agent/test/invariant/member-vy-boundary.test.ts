@@ -3455,7 +3455,7 @@ function seedBlockShadowIdentifiers(blockNode: tsType.Node, scope: AstLexScope):
   while (varScope.parent && !varScope.isFnScope) varScope = varScope.parent;
   for (const stmt of stmts) {
     if (ts.isVariableStatement(stmt)) {
-      const isLexical = Boolean(stmt.declarationList.flags & (ts.NodeFlags.Const | ts.NodeFlags.Let));
+      const isLexical = Boolean(stmt.declarationList.flags & (ts.NodeFlags.Const | ts.NodeFlags.Let | ts.NodeFlags.BlockScoped));
       const targetScope = isLexical ? scope : varScope;
       for (const decl of stmt.declarationList.declarations) {
         for (const name of collectAstBindingIdentifiers(decl.name)) {
@@ -3524,12 +3524,8 @@ function seedFnVarDecls(fnBodyRoot: tsType.Node, fnScope: AstLexScope): void {
   }
 }
 
-function collectAstAssignTargetNames(expr: tsType.Expression): {
-  identNames: string[];
-  memberNodes: Array<tsType.PropertyAccessExpression | tsType.ElementAccessExpression>;
-} {
+function collectAstLhsTargetIdentNames(expr: tsType.Expression): string[] {
   const identNames: string[] = [];
-  const memberNodes: Array<tsType.PropertyAccessExpression | tsType.ElementAccessExpression> = [];
   const stack: tsType.Node[] = [expr];
   while (stack.length > 0) {
     const cur = stack.pop()!;
@@ -3543,8 +3539,6 @@ function collectAstAssignTargetNames(expr: tsType.Expression): {
       stack.push(cur.expression);
     } else if (ts.isIdentifier(cur)) {
       identNames.push(cur.text);
-    } else if (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
-      memberNodes.push(cur);
     } else if (ts.isArrayLiteralExpression(cur)) {
       for (const el of cur.elements) {
         if (!ts.isOmittedExpression(el)) stack.push(el);
@@ -3557,23 +3551,130 @@ function collectAstAssignTargetNames(expr: tsType.Expression): {
         else if (ts.isShorthandPropertyAssignment(prop)) identNames.push(prop.name.text);
         else if (ts.isSpreadAssignment(prop)) stack.push(prop.expression);
       }
-    } else if (ts.isConditionalExpression(cur)) {
-      stack.push(cur.whenTrue, cur.whenFalse);
-    } else if (ts.isBinaryExpression(cur)) {
-      if (cur.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-        stack.push(cur.left);
-      } else if (
-        cur.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
-        cur.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
-        cur.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+    } else if (ts.isBinaryExpression(cur) && cur.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      stack.push(cur.left);
+    }
+  }
+  return identNames;
+}
+
+function isAstUnescapedNodeWrapper(n: tsType.Node): boolean {
+  return (
+    ts.isParenthesizedExpression(n) ||
+    ts.isNonNullExpression(n) ||
+    ts.isAsExpression(n) ||
+    ts.isTypeAssertionExpression(n) ||
+    ts.isSatisfiesExpression(n)
+  );
+}
+
+function isAstSafePropertyBaseAccess(propAccess: tsType.PropertyAccessExpression): boolean {
+  let cur: tsType.Node = propAccess;
+  while (cur.parent && isAstUnescapedNodeWrapper(cur.parent)) {
+    cur = cur.parent;
+  }
+  const p = cur.parent;
+  if (!p) return false;
+  if (
+    ts.isBinaryExpression(p) &&
+    p.left === cur &&
+    p.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    p.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  ) {
+    return false;
+  }
+  if (
+    (ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) &&
+    (p.operator === ts.SyntaxKind.PlusPlusToken || p.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    return false;
+  }
+  if (ts.isDeleteExpression(p)) return false;
+  if ((ts.isForInStatement(p) || ts.isForOfStatement(p)) && p.initializer === cur) return false;
+  let dn: tsType.Node = cur;
+  while (dn.parent) {
+    const dp = dn.parent;
+    if (
+      isAstUnescapedNodeWrapper(dp) ||
+      ts.isArrayLiteralExpression(dp) ||
+      ts.isObjectLiteralExpression(dp) ||
+      ts.isSpreadElement(dp) ||
+      ts.isSpreadAssignment(dp) ||
+      (ts.isPropertyAssignment(dp) && dp.initializer === dn)
+    ) {
+      dn = dp;
+      continue;
+    }
+    if (ts.isBinaryExpression(dp) && dp.operatorToken.kind === ts.SyntaxKind.EqualsToken && dp.left === dn) {
+      return false;
+    }
+    if ((ts.isForInStatement(dp) || ts.isForOfStatement(dp)) && dp.initializer === dn) {
+      return false;
+    }
+    break;
+  }
+  if (
+    ((ts.isCallExpression(p) || ts.isNewExpression(p)) && p.expression === cur) ||
+    (ts.isTaggedTemplateExpression(p) && p.tag === cur)
+  ) {
+    return false;
+  }
+  if ((ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p)) && p.expression === cur) {
+    if (!(ts.isPropertyAccessExpression(p) && p.name.text === 'bind')) {
+      return false;
+    }
+    let bindOuter: tsType.Node = p;
+    while (bindOuter.parent && isAstUnescapedNodeWrapper(bindOuter.parent)) {
+      bindOuter = bindOuter.parent;
+    }
+    if (!(bindOuter.parent && ts.isCallExpression(bindOuter.parent) && bindOuter.parent.expression === bindOuter)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isAstSafeKillBaseIdentRead(
+  ident: tsType.Identifier,
+  parent: tsType.Node | undefined,
+  inTypePos: boolean,
+  evalScope: AstLexScope,
+): boolean {
+  if (inTypePos) return true;
+  if (!parent) return false;
+  if (isAstIdentNonValueRequireOrImportKey(ident, parent, inTypePos)) return true;
+  if (
+    (ts.isVariableDeclaration(parent) ||
+      ts.isEnumDeclaration(parent) ||
+      ts.isImportEqualsDeclaration(parent) ||
+      ts.isNamespaceExport(parent)) &&
+    parent.name === ident
+  ) {
+    return true;
+  }
+  if (ts.isJsxClosingElement(parent) || ts.isMetaProperty(parent)) return true;
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === ident) {
+    return isAstSafePropertyBaseAccess(parent);
+  }
+  let wrappedArg: tsType.Node = ident;
+  while (wrappedArg.parent && isAstUnescapedNodeWrapper(wrappedArg.parent)) {
+    wrappedArg = wrappedArg.parent;
+  }
+  if (wrappedArg.parent && ts.isCallExpression(wrappedArg.parent) && wrappedArg.parent.arguments[0] === wrappedArg) {
+    const bindCallee = unwrapAstExpr(wrappedArg.parent.expression, true);
+    if (ts.isPropertyAccessExpression(bindCallee) && bindCallee.name.text === 'bind') {
+      const bindRecv = unwrapAstExpr(bindCallee.expression, true);
+      if (
+        ts.isPropertyAccessExpression(bindRecv) &&
+        ts.isIdentifier(bindRecv.expression) &&
+        astVarKey(evalScope, bindRecv.expression.text) === astVarKey(evalScope, ident.text) &&
+        isAstSafePropertyBaseAccess(bindRecv)
       ) {
-        stack.push(cur.left, cur.right);
-      } else if (cur.operatorToken.kind === ts.SyntaxKind.CommaToken) {
-        stack.push(cur.right);
+        return true;
       }
     }
   }
-  return { identNames, memberNodes };
+  return false;
 }
 
 function isAstKnownSafeFetchKillRhs(expr: tsType.Expression): boolean {
@@ -3896,9 +3997,8 @@ function extractAstFacts(
   const seedNonSafeKillBases = new Set<string>();
   const seedNonSafeKillValues = new Set<string>();
   const nonSafeBaseAliases = new Map<string, Set<string>>();
-  const seedMutatedObjectBases = new Set<string>();
-  const seedMutatedDynamicHosts = new Set<string>();
-  const mutatedObjectBaseEdges = new Map<string, Set<string>>();
+  const seedEscapedSafeKillBases = new Set<string>();
+  let hasProtoMutation = false;
   const blockedSafeKillVars = new Set<string>();
   const safeKillValueCandidates: Array<{ targetKey: string; rhsExpr: tsType.Expression; evalScope: AstLexScope }> = [];
   const resolveAstMemberKeyPath = (
@@ -4354,8 +4454,6 @@ function extractAstFacts(
           addAliasEdge(nonSafeBaseAliases, fromKey, toKey);
           addAliasEdge(nonSafeBaseAliases, toKey, fromKey);
         }
-        addAliasEdge(mutatedObjectBaseEdges, fromKey, toKey);
-        addAliasEdge(mutatedObjectBaseEdges, toKey, fromKey);
       } else if (memberAccess) {
         memberBindCandidates.push({
           host: memberAccess.host,
@@ -4387,8 +4485,6 @@ function extractAstFacts(
                 const toKey = targetKeys[0]!;
                 addAliasEdge(aliasEdges, propKey, toKey);
                 addPositionalEdge(propKey, toKey, rawPos, cur);
-                addAliasEdge(mutatedObjectBaseEdges, propKey, toKey);
-                addAliasEdge(mutatedObjectBaseEdges, toKey, propKey);
               }
             }
           }
@@ -4446,21 +4542,6 @@ function extractAstFacts(
       const scopedTargets = scopeForTargets
         ? entry.targets.map((n) => astVarKey(scopeForTargets, n))
         : entry.targets;
-      const segs = entry.keyPath ?? (entry.isTopLevel && entry.key !== null ? [entry.key] : null);
-      if (segs && segs.length > 0 && scopedTargets.length > 0) {
-        for (const br of expandAstBranchExprs(rhsExpr)) {
-          if (ts.isObjectLiteralExpression(br)) continue;
-          const brPath = resolveAstMemberKeyPath(br, evalScope);
-          if (brPath.key !== null) {
-            let srcProp = brPath.key;
-            for (const seg of segs) srcProp = `prop:${srcProp}\0${seg}`;
-            for (const t of scopedTargets) {
-              addAliasEdge(mutatedObjectBaseEdges, srcProp, t);
-              addAliasEdge(mutatedObjectBaseEdges, t, srcProp);
-            }
-          }
-        }
-      }
       if (entry.isTopLevel) {
         if (entry.key === 'require' || entry.key === 'createRequire') {
           hasBareRequire = true;
@@ -4629,20 +4710,7 @@ function extractAstFacts(
       }
     }
     for (const br of expandAstBranchExprs(rhsExpr)) {
-      if (!ts.isArrayLiteralExpression(br)) {
-        const brPath = resolveAstMemberKeyPath(br, evalScope);
-        if (brPath.key !== null) {
-          for (let idx = 0; idx < elements.length; idx += 1) {
-            const item = elements[idx];
-            if (!item || item.isRest || !ts.isIdentifier(item.node)) continue;
-            const elKey = `prop:${brPath.key}\0${idx}`;
-            const tgtKey = astVarKey(targetScope, item.node.text);
-            addAliasEdge(mutatedObjectBaseEdges, elKey, tgtKey);
-            addAliasEdge(mutatedObjectBaseEdges, tgtKey, elKey);
-          }
-        }
-        continue;
-      }
+      if (!ts.isArrayLiteralExpression(br)) continue;
       let sawLhsRest = false;
       for (let idx = 0; idx < elements.length; idx += 1) {
         const item = elements[idx];
@@ -4794,41 +4862,6 @@ function extractAstFacts(
     readonly suppressNotesLit: boolean;
   }
 
-  const recordMutatedTargetExpr = (expr: tsType.Expression, evalScope: AstLexScope, isWriteLeafMember: boolean): void => {
-    const { identNames, memberNodes } = collectAstAssignTargetNames(expr);
-    for (const idName of identNames) {
-      if (isWriteLeafMember) {
-        blockedSafeKillVars.add(astVarKey(evalScope, idName));
-      } else {
-        const k = astVarKey(evalScope, idName);
-        seedNonSafeKillBases.add(k);
-        seedMutatedObjectBases.add(k);
-        seedMutatedDynamicHosts.add(k);
-      }
-    }
-    for (const m of memberNodes) {
-      const targetObjExpr = isWriteLeafMember ? m.expression : m;
-      const p = resolveAstMemberKeyPath(targetObjExpr, evalScope);
-      if (p.rootIdentName !== null) {
-        seedNonSafeKillBases.add(astVarKey(evalScope, p.rootIdentName));
-      }
-      if (p.key !== null) {
-        seedMutatedObjectBases.add(p.key);
-        if (isWriteLeafMember && ts.isElementAccessExpression(m)) {
-          const mInfo = extractAstMemberName(m, evalScope);
-          const arg = unwrapAstExpr(m.argumentExpression, false);
-          const hasNumericIdx = ts.isNumericLiteral(arg) && Number.isInteger(Number(arg.text));
-          if (mInfo.memberName === null && !hasNumericIdx) {
-            seedMutatedDynamicHosts.add(p.key);
-          }
-        }
-      }
-      if (p.dynamicHostKey !== null) {
-        seedMutatedDynamicHosts.add(p.dynamicHostKey);
-      }
-    }
-  };
-
   const stack: WalkFrame[] = [{ node: sf, scope: rootScope, inTypePos: false, suppressNotesLit: false }];
   while (stack.length > 0) {
     const { node, scope, inTypePos, suppressNotesLit } = stack.pop()!;
@@ -4864,7 +4897,9 @@ function extractAstFacts(
               }
             }
           } else {
-            recordMutatedTargetExpr(node.initializer, nextScope, true);
+            for (const idName of collectAstLhsTargetIdentNames(node.initializer)) {
+              blockedSafeKillVars.add(astVarKey(nextScope, idName));
+            }
           }
         }
       } else if (ts.isCatchClause(node)) {
@@ -4908,17 +4943,18 @@ function extractAstFacts(
       } else if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name) {
         const classKey = astVarKey(scope, node.name.text);
         seedNonSafeKillBases.add(classKey);
-        seedMutatedObjectBases.add(classKey);
+        seedEscapedSafeKillBases.add(classKey);
       } else if (ts.isModuleDeclaration(node) && ts.isIdentifier(node.name)) {
         const nsKey = astVarKey(scope, node.name.text);
         seedNonSafeKillBases.add(nsKey);
-        seedMutatedObjectBases.add(nsKey);
+        seedEscapedSafeKillBases.add(nsKey);
       }
       if (
-        ts.isTypeNode(node) ||
+        (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) ||
         ts.isInterfaceDeclaration(node) ||
         ts.isTypeAliasDeclaration(node) ||
-        ts.isTypeParameterDeclaration(node)
+        ts.isTypeParameterDeclaration(node) ||
+        (ts.isHeritageClause(node) && node.token === ts.SyntaxKind.ImplementsKeyword)
       ) {
         nextInTypePos = true;
       }
@@ -5049,7 +5085,7 @@ function extractAstFacts(
     // 2. Scoped const strings & variable/assignment alias propagation
     if (ts.isVariableDeclaration(node) && node.parent && ts.isVariableDeclarationList(node.parent)) {
       const isConst = Boolean(node.parent.flags & ts.NodeFlags.Const);
-      const isLexical = Boolean(node.parent.flags & (ts.NodeFlags.Const | ts.NodeFlags.Let));
+      const isLexical = Boolean(node.parent.flags & (ts.NodeFlags.Const | ts.NodeFlags.Let | ts.NodeFlags.BlockScoped));
       let varDeclScope = nextScope;
       if (!isLexical) {
         while (varDeclScope.parent && !varDeclScope.isFnScope) varDeclScope = varDeclScope.parent;
@@ -5152,19 +5188,8 @@ function extractAstFacts(
         if (hostPath.rootIdentName !== null) {
           seedNonSafeKillBases.add(astVarKey(nextScope, hostPath.rootIdentName));
         }
-        if (hostPath.key !== null) {
-          seedMutatedObjectBases.add(hostPath.key);
-          if (lhsMem.memberName !== null && lhsTarget.length === 0) {
-            lhsTarget = [`prop:${hostPath.key}\0${lhsMem.memberName}`];
-          }
-          if (lhsMem.memberName === null && ts.isElementAccessExpression(lhsExpr)) {
-            const arg = unwrapAstExpr(lhsExpr.argumentExpression, false);
-            const hasNumIdx = ts.isNumericLiteral(arg) && Number.isInteger(Number(arg.text));
-            if (!hasNumIdx) seedMutatedDynamicHosts.add(hostPath.key);
-          }
-        }
-        if (hostPath.dynamicHostKey !== null) {
-          seedMutatedDynamicHosts.add(hostPath.dynamicHostKey);
+        if (hostPath.key !== null && lhsMem.memberName !== null && lhsTarget.length === 0) {
+          lhsTarget = [`prop:${hostPath.key}\0${lhsMem.memberName}`];
         }
       }
       const rhsExpr = recordBindAndMemberTarget(lhsTarget, node.right, nextScope, node.end);
@@ -5194,7 +5219,9 @@ function extractAstFacts(
         }
       }
       if (ts.isObjectLiteralExpression(lhsExpr) || ts.isArrayLiteralExpression(lhsExpr)) {
-        recordMutatedTargetExpr(lhsExpr, nextScope, true);
+        for (const idName of collectAstLhsTargetIdentNames(lhsExpr)) {
+          blockedSafeKillVars.add(astVarKey(nextScope, idName));
+        }
       }
       if (ts.isObjectLiteralExpression(lhsExpr)) {
         recordDestructuredEntries(
@@ -5210,36 +5237,6 @@ function extractAstFacts(
     }
 
     // 3. Collect all CallExpressions (with outermost wrapper info for bound assignment/member access)
-    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-      let skipBindThisArg = false;
-      let bindReceiverKey: string | null = null;
-      if (ts.isCallExpression(node)) {
-        const directCalleeForBind = unwrapAstExpr(node.expression, true);
-        if (ts.isPropertyAccessExpression(directCalleeForBind) || ts.isElementAccessExpression(directCalleeForBind)) {
-          const bMem = extractAstMemberName(directCalleeForBind, nextScope);
-          if (bMem.memberName === 'bind') {
-            const bHost = unwrapAstExpr(bMem.host, true);
-            if (ts.isPropertyAccessExpression(bHost) || ts.isElementAccessExpression(bHost)) {
-              const recvKey = resolveAstMemberKeyPath(bHost.expression, nextScope).key;
-              if (recvKey !== null) {
-                skipBindThisArg = true;
-                bindReceiverKey = recvKey;
-              }
-            }
-          }
-        }
-      }
-      if (node.arguments) {
-        for (let argIdx = 0; argIdx < node.arguments.length; argIdx += 1) {
-          const argNorm = unwrapAstExpr(node.arguments[argIdx]!, false);
-          if (skipBindThisArg && argIdx === 0) {
-            const argKey = resolveAstMemberKeyPath(argNorm, nextScope).key;
-            if (argKey !== null && argKey === bindReceiverKey) continue;
-          }
-          recordMutatedTargetExpr(argNorm, nextScope, false);
-        }
-      }
-    }
     if (ts.isCallExpression(node)) {
       const unwrapped = unwrapAstCall(node, nextScope);
       let outerAccessExpr: tsType.Expression = node;
@@ -5273,6 +5270,14 @@ function extractAstFacts(
     // 4. Member accesses on hosts & computed destructured require/createRequire/agent
     if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && !nextInTypePos) {
       const mem = extractAstMemberName(node, nextScope);
+      if (
+        mem.memberName === 'prototype' ||
+        mem.memberName === '__proto__' ||
+        mem.memberName === 'setPrototypeOf' ||
+        mem.memberName === 'getPrototypeOf'
+      ) {
+        hasProtoMutation = true;
+      }
       const hostNorm = unwrapAstExpr(mem.host, true);
       if (
         mem.memberName === 'require' ||
@@ -5287,9 +5292,40 @@ function extractAstFacts(
       }
     }
 
+    if (
+      !nextInTypePos &&
+      (ts.isPropertyAssignment(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isGetAccessorDeclaration(node) ||
+        ts.isSetAccessorDeclaration(node))
+    ) {
+      if (resolveAstPropertyName(node.name, nextScope).name === '__proto__') {
+        hasProtoMutation = true;
+      }
+    } else if (!nextInTypePos && ts.isShorthandPropertyAssignment(node) && node.name.text === '__proto__') {
+      hasProtoMutation = true;
+    } else if (!nextInTypePos && ts.isBindingElement(node)) {
+      const boundKey = node.propertyName
+        ? resolveAstPropertyName(node.propertyName, nextScope).name
+        : ts.isIdentifier(node.name)
+          ? node.name.text
+          : null;
+      if (
+        boundKey === 'prototype' ||
+        boundKey === '__proto__' ||
+        boundKey === 'setPrototypeOf' ||
+        boundKey === 'getPrototypeOf'
+      ) {
+        hasProtoMutation = true;
+      }
+    }
+
     // 5. Identifiers, strings, templates, shorthand object props, root '+' concatenations
     if (ts.isIdentifier(node)) {
       const parent = node.parent;
+      if (!isAstSafeKillBaseIdentRead(node, parent, nextInTypePos, nextScope)) {
+        seedEscapedSafeKillBases.add(astVarKey(nextScope, node.text));
+      }
       const isValidDirectExportIdent = validDirectReexportIdentNodes.has(node);
       if (!isValidDirectExportIdent) {
         checkStringOrIdentValue(node.text, false);
@@ -5594,35 +5630,14 @@ function extractAstFacts(
     if (changedNonSafe) nonSafeKillBases = propagateAliases(seedNonSafeKillBases, aliasEdges, nonSafeBaseAliases);
   }
   const nonSafeKillValues = propagateAliases(seedNonSafeKillValues, aliasEdges);
-  const propKeysByHost = new Map<string, string[]>();
-  for (const k of mutatedObjectBaseEdges.keys()) {
-    if (!k.startsWith('prop:')) continue;
-    const nul = k.lastIndexOf('\0');
-    if (nul <= 5) continue;
-    const host = k.slice(5, nul);
-    let arr = propKeysByHost.get(host);
-    if (!arr) {
-      arr = [];
-      propKeysByHost.set(host, arr);
-    }
-    arr.push(k);
-  }
-  if (seedMutatedDynamicHosts.size > 0 && propKeysByHost.size > 0) {
-    const dynHosts = propagateAliases(seedMutatedDynamicHosts, mutatedObjectBaseEdges);
-    for (const h of dynHosts) {
-      const childProps = propKeysByHost.get(h);
-      if (childProps) {
-        for (const pk of childProps) seedMutatedObjectBases.add(pk);
-      }
-    }
-  }
-  const mutatedObjectBases = propagateAliases(seedMutatedObjectBases, mutatedObjectBaseEdges);
+  const escapedSafeKillBases = propagateAliases(seedEscapedSafeKillBases, aliasEdges, nonSafeBaseAliases);
   const isSafeKillExpr = (
     expr: tsType.Expression,
     evalScope: AstLexScope,
     knownSafe: ReadonlySet<string>,
     depth = 0,
   ): boolean => {
+    if (hasProtoMutation) return false;
     if (depth > 16) return false;
     let cur = unwrapAstExpr(expr, true);
     while (ts.isCallExpression(cur)) {
@@ -5644,7 +5659,7 @@ function extractAstFacts(
       const base = unwrapAstExpr(cur.expression, true);
       if (!ts.isIdentifier(base)) return false;
       const baseKey = astVarKey(evalScope, base.text);
-      return !requireHosts.has(baseKey) && !nonSafeKillBases.has(baseKey) && !mutatedObjectBases.has(baseKey);
+      return !requireHosts.has(baseKey) && !nonSafeKillBases.has(baseKey) && !escapedSafeKillBases.has(baseKey);
     }
     if (ts.isConditionalExpression(cur)) {
       return (
@@ -6208,6 +6223,8 @@ function skipLeadingTypeAssertionTokens(
   maxIdx: number,
   cappedOut?: { value: boolean },
   maxIsCapped = false,
+  delims?: DelimiterPairs,
+  templateTail?: Int32Array,
 ): number {
   const first = tokens[startIdx];
   if (!first || first.kind !== 'punct' || first.value !== '<' || startIdx + 2 >= maxIdx) return -1;
@@ -6217,22 +6234,68 @@ function skipLeadingTypeAssertionTokens(
   let bd = 0;
   let cd = 0;
   let td = 0;
-  const limit = Math.min(maxIdx, startIdx + 64);
-  for (let idx = startIdx + 1; idx < limit; idx += 1) {
+  let steps = 0;
+  for (let idx = startIdx + 1; idx < maxIdx; idx += 1) {
+    if (steps >= 64) {
+      if (cappedOut) cappedOut.value = true;
+      return -1;
+    }
+    steps += 1;
     const tk = tokens[idx]!;
-    if (tk.kind === 'template_head') td += 1;
-    else if (tk.kind === 'template_tail' && td > 0) td -= 1;
-    else if (tk.kind === 'punct') {
-      if (tk.value === '(') pd += 1;
-      else if (tk.value === ')') {
+    if (tk.kind === 'template_head') {
+      if (templateTail) {
+        const tl = templateTail[idx] ?? -1;
+        if (tl > idx && tl < maxIdx) {
+          idx = tl;
+          continue;
+        }
+        if (maxIsCapped && cappedOut) cappedOut.value = true;
+        return -1;
+      }
+      td += 1;
+    } else if (tk.kind === 'template_tail' && td > 0) {
+      td -= 1;
+    } else if (tk.kind === 'punct') {
+      if (tk.value === '(') {
+        if (delims) {
+          const cl = delims.paren[idx] ?? -1;
+          if (cl > idx && cl < maxIdx) {
+            idx = cl;
+            continue;
+          }
+          if (maxIsCapped && cappedOut) cappedOut.value = true;
+          return -1;
+        }
+        pd += 1;
+      } else if (tk.value === ')') {
         if (pd === 0 && bd === 0 && cd === 0 && td === 0) return -1;
         if (pd > 0) pd -= 1;
-      } else if (tk.value === '[') bd += 1;
-      else if (tk.value === ']') {
+      } else if (tk.value === '[') {
+        if (delims) {
+          const cl = delims.bracket[idx] ?? -1;
+          if (cl > idx && cl < maxIdx) {
+            idx = cl;
+            continue;
+          }
+          if (maxIsCapped && cappedOut) cappedOut.value = true;
+          return -1;
+        }
+        bd += 1;
+      } else if (tk.value === ']') {
         if (pd === 0 && bd === 0 && cd === 0 && td === 0) return -1;
         if (bd > 0) bd -= 1;
-      } else if (tk.value === '{') cd += 1;
-      else if (tk.value === '}') {
+      } else if (tk.value === '{') {
+        if (delims) {
+          const cl = delims.brace[idx] ?? -1;
+          if (cl > idx && cl < maxIdx) {
+            idx = cl;
+            continue;
+          }
+          if (maxIsCapped && cappedOut) cappedOut.value = true;
+          return -1;
+        }
+        cd += 1;
+      } else if (tk.value === '}') {
         if (pd === 0 && bd === 0 && cd === 0 && td === 0) return -1;
         if (cd > 0) cd -= 1;
       } else if (pd === 0 && bd === 0 && cd === 0 && td === 0) {
@@ -6257,7 +6320,7 @@ function skipLeadingTypeAssertionTokens(
       }
     }
   }
-  if (cappedOut && (startIdx + 64 <= maxIdx || maxIsCapped)) cappedOut.value = true;
+  if (maxIsCapped && cappedOut) cappedOut.value = true;
   return -1;
 }
 
@@ -6291,7 +6354,7 @@ function normalizeValueExprSpan(
       s += 1;
       changed = true;
     } else {
-      const afterType = skipLeadingTypeAssertionTokens(tokens, s, e, cappedOut, endIsCapped);
+      const afterType = skipLeadingTypeAssertionTokens(tokens, s, e, cappedOut, endIsCapped, delims, templateTail);
       if (afterType > s) {
         s = afterType;
         changed = true;
@@ -6353,7 +6416,7 @@ function normalizeValueExprSpan(
           break;
         }
         if (atExprPrefix && tk.value === '<') {
-          const afterType = skipLeadingTypeAssertionTokens(tokens, idx, e, cappedOut, endIsCapped);
+          const afterType = skipLeadingTypeAssertionTokens(tokens, idx, e, cappedOut, endIsCapped, delims, templateTail);
           if (afterType > idx) {
             idx = afterType - 1;
             continue;
@@ -6466,7 +6529,7 @@ function tryResolveConstantStringExpr(
   cappedOut?: { value: boolean },
 ): string | null {
   if (start >= end) return null;
-  if (depth > 16 || end - start > 128) {
+  if (depth > 16) {
     if (cappedOut) cappedOut.value = true;
     return null;
   }
@@ -6475,38 +6538,114 @@ function tryResolveConstantStringExpr(
   const e = trimmed.end;
   if (s >= e) return null;
 
+  if (e - s === 1) {
+    const only = tokens[s]!;
+    if (only.kind === 'string' || only.kind === 'template') return only.value;
+    if (only.kind === 'ident') return constLookup(only.value, s);
+    return null;
+  }
+
+  const head = tokens[s]!;
+  const tail = tokens[e - 1]!;
+  if (head.kind === 'template_head' && tail.kind === 'template_tail' && templateTail && templateTail[s] === e - 1) {
+    const parts: string[] = [head.value];
+    let cur = s;
+    let steps = 0;
+    while (cur >= 0 && cur < e - 1 && steps < 32) {
+      steps += 1;
+      const next = templateNext[cur] ?? -1;
+      if (next <= cur || next >= e) return null;
+      const exprVal = tryResolveConstantStringExpr(
+        tokens,
+        cur + 1,
+        next,
+        delims,
+        templateNext,
+        constLookup,
+        depth + 1,
+        templateTail,
+        cappedOut,
+      );
+      if (exprVal === null) return null;
+      parts.push(exprVal);
+      const nextTok = tokens[next]!;
+      parts.push(nextTok.value);
+      if (nextTok.kind === 'template_tail') {
+        return next === e - 1 ? parts.join('') : null;
+      }
+      cur = next;
+    }
+    if (steps >= 32 && cappedOut) cappedOut.value = true;
+    return null;
+  }
+
   const termRanges: Array<{ start: number; end: number }> = [];
   let termStart = s;
   let parenDepth = 0;
   let bracketDepth = 0;
   let braceDepth = 0;
   let tplDepth = 0;
-
   let atExprPrefix = true;
+  let steps = 0;
 
   for (let idx = s; idx < e; idx += 1) {
+    if (steps >= 128) {
+      if (cappedOut) cappedOut.value = true;
+      return null;
+    }
+    steps += 1;
     const tok = tokens[idx]!;
     if (atExprPrefix && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0 && tplDepth === 0) {
       if (tok.kind === 'ident' && !tok.escaped && tok.value === 'await') {
         continue;
       }
-      const afterType = skipLeadingTypeAssertionTokens(tokens, idx, e, cappedOut);
+      const afterType = skipLeadingTypeAssertionTokens(tokens, idx, e, cappedOut, false, delims, templateTail);
       if (afterType > idx) {
         idx = afterType - 1;
         continue;
       }
       atExprPrefix = false;
     }
-    if (tok.kind === 'template_head') tplDepth += 1;
-    else if (tok.kind === 'template_tail' && tplDepth > 0) tplDepth -= 1;
-    else if (tok.kind === 'punct') {
-      if (tok.value === '(') parenDepth += 1;
-      else if (tok.value === ')' && parenDepth > 0) parenDepth -= 1;
-      else if (tok.value === '[') bracketDepth += 1;
-      else if (tok.value === ']' && bracketDepth > 0) bracketDepth -= 1;
-      else if (tok.value === '{') braceDepth += 1;
-      else if (tok.value === '}' && braceDepth > 0) braceDepth -= 1;
-      else if (tok.value === '+' && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0 && tplDepth === 0) {
+    if (tok.kind === 'template_head') {
+      if (templateTail) {
+        const tl = templateTail[idx] ?? -1;
+        if (tl > idx && tl < e) {
+          idx = tl;
+          continue;
+        }
+      }
+      tplDepth += 1;
+    } else if (tok.kind === 'template_tail' && tplDepth > 0) {
+      tplDepth -= 1;
+    } else if (tok.kind === 'punct') {
+      if (tok.value === '(') {
+        const cl = delims.paren[idx] ?? -1;
+        if (cl > idx && cl < e) {
+          idx = cl;
+          continue;
+        }
+        parenDepth += 1;
+      } else if (tok.value === ')' && parenDepth > 0) {
+        parenDepth -= 1;
+      } else if (tok.value === '[') {
+        const cl = delims.bracket[idx] ?? -1;
+        if (cl > idx && cl < e) {
+          idx = cl;
+          continue;
+        }
+        bracketDepth += 1;
+      } else if (tok.value === ']' && bracketDepth > 0) {
+        bracketDepth -= 1;
+      } else if (tok.value === '{') {
+        const cl = delims.brace[idx] ?? -1;
+        if (cl > idx && cl < e) {
+          idx = cl;
+          continue;
+        }
+        braceDepth += 1;
+      } else if (tok.value === '}' && braceDepth > 0) {
+        braceDepth -= 1;
+      } else if (tok.value === '+' && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0 && tplDepth === 0) {
         if (idx === termStart) return null;
         termRanges.push({ start: termStart, end: idx });
         termStart = idx + 1;
@@ -6537,21 +6676,12 @@ function tryResolveConstantStringExpr(
     return parts.join('');
   }
 
-  if (e - s === 1) {
-    const only = tokens[s]!;
-    if (only.kind === 'string' || only.kind === 'template') return only.value;
-    if (only.kind === 'ident') return constLookup(only.value, s);
-    return null;
-  }
-
-  const head = tokens[s]!;
-  const tail = tokens[e - 1]!;
   if (head.kind === 'template_head' && tail.kind === 'template_tail') {
     const parts: string[] = [head.value];
     let cur = s;
-    let steps = 0;
-    while (cur >= 0 && cur < e - 1 && steps < 32) {
-      steps += 1;
+    let tSteps = 0;
+    while (cur >= 0 && cur < e - 1 && tSteps < 32) {
+      tSteps += 1;
       const next = templateNext[cur] ?? -1;
       if (next <= cur || next >= e) return null;
       const exprVal = tryResolveConstantStringExpr(
@@ -6574,7 +6704,7 @@ function tryResolveConstantStringExpr(
       }
       cur = next;
     }
-    if (steps >= 32 && cappedOut) cappedOut.value = true;
+    if (tSteps >= 32 && cappedOut) cappedOut.value = true;
   }
   return null;
 }
@@ -6796,19 +6926,66 @@ function collectPatternIdents(
 const SKIP_DECL_STOP_KW = new Set(['const', 'let', 'var', 'function', 'class', 'return', 'if', 'for', 'while', 'export', 'import']);
 const LINE_CONT_PUNCTS = new Set(['+', '=', '(', '&&', '||', '??', '?', ':']);
 
-function findTypeDeclStop(tokens: readonly Token[], start: number, maxLookahead = 128): number {
+function findTypeDeclStop(
+  tokens: readonly Token[],
+  start: number,
+  delims?: DelimiterPairs,
+  templateTail?: Int32Array,
+  cappedOut?: { value: boolean },
+  maxSteps = 128,
+): number {
   let p = start;
   let td = 0;
   let ad = 0;
-  const limit = Math.min(tokens.length, start + maxLookahead);
-  while (p < limit) {
+  let steps = 0;
+  while (p < tokens.length) {
+    if (steps >= maxSteps) {
+      if (cappedOut) cappedOut.value = true;
+      return p;
+    }
+    steps += 1;
     const cur = tokens[p]!;
-    if (cur.kind === 'punct') {
-      if (cur.value === '(' || cur.value === '[' || cur.value === '{') td += 1;
-      else if ((cur.value === ')' || cur.value === ']' || cur.value === '}') && td > 0) td -= 1;
-      else if (cur.value === '<') ad += 1;
-      else if (cur.value === '>' && ad > 0) ad -= 1;
-      else if (td === 0 && ad === 0 && (cur.value === '=' || cur.value === ';' || cur.value === ',' || cur.value === '}' || cur.value === ')')) {
+    if (cur.kind === 'template_head') {
+      if (templateTail) {
+        const tl = templateTail[p] ?? -1;
+        if (tl > p) {
+          p = tl + 1;
+          continue;
+        }
+      }
+      td += 1;
+    } else if (cur.kind === 'template_tail' && td > 0) {
+      td -= 1;
+    } else if (cur.kind === 'punct') {
+      if (cur.value === '(' || cur.value === '[' || cur.value === '{') {
+        if (delims) {
+          const cl =
+            cur.value === '('
+              ? (delims.paren[p] ?? -1)
+              : cur.value === '['
+                ? (delims.bracket[p] ?? -1)
+                : (delims.brace[p] ?? -1);
+          if (cl > p) {
+            p = cl + 1;
+            continue;
+          }
+        }
+        td += 1;
+      } else if ((cur.value === ')' || cur.value === ']' || cur.value === '}') && td > 0) {
+        td -= 1;
+      } else if (cur.value === '<') {
+        ad += 1;
+      } else if (cur.value === '>' && ad > 0) {
+        ad -= 1;
+      } else if (cur.value === '>>' && ad >= 2) {
+        ad -= 2;
+      } else if (cur.value === '>>>' && ad >= 3) {
+        ad -= 3;
+      } else if (
+        td === 0 &&
+        ad === 0 &&
+        (cur.value === '=' || cur.value === ';' || cur.value === ',' || cur.value === '}' || cur.value === ')')
+      ) {
         return p;
       }
     } else if (td === 0 && ad === 0 && cur.kind === 'ident' && SKIP_DECL_STOP_KW.has(cur.value)) {
@@ -6819,7 +6996,13 @@ function findTypeDeclStop(tokens: readonly Token[], start: number, maxLookahead 
   return p;
 }
 
-function findDeclInitEnd(tokens: readonly Token[], exprStart: number, maxLookahead = 128): { endIdx: number; truncated: boolean } {
+function findDeclInitEnd(
+  tokens: readonly Token[],
+  exprStart: number,
+  delims?: DelimiterPairs,
+  templateTail?: Int32Array,
+  maxSteps = 128,
+): { endIdx: number; truncated: boolean } {
   let q = exprStart;
   let pd = 0;
   let bd = 0;
@@ -6827,8 +7010,9 @@ function findDeclInitEnd(tokens: readonly Token[], exprStart: number, maxLookahe
   let td = 0;
   let lastLine = tokens[exprStart - 1]?.line ?? (tokens[exprStart]?.line ?? 1);
   let prevTok: Token | undefined = tokens[exprStart - 1];
-  const limit = Math.min(tokens.length, exprStart + maxLookahead);
-  while (q < limit) {
+  let steps = 0;
+  while (q < tokens.length && steps < maxSteps) {
+    steps += 1;
     const cur = tokens[q]!;
     if (pd === 0 && bd === 0 && cd === 0 && td === 0 && cur.line > lastLine) {
       const prevCont = prevTok?.kind === 'punct' && LINE_CONT_PUNCTS.has(prevTok.value);
@@ -6837,19 +7021,60 @@ function findDeclInitEnd(tokens: readonly Token[], exprStart: number, maxLookahe
         (cur.kind === 'ident' && (cur.value === 'as' || cur.value === 'satisfies'));
       if (!prevCont && !nextCont) return { endIdx: q, truncated: false };
     }
-    if (cur.kind === 'template_head') td += 1;
-    else if (cur.kind === 'template_tail' && td > 0) td -= 1;
-    else if (cur.kind === 'punct') {
-      if (cur.value === '(') pd += 1;
-      else if (cur.value === ')') {
+    if (cur.kind === 'template_head') {
+      if (templateTail) {
+        const tl = templateTail[q] ?? -1;
+        if (tl > q) {
+          prevTok = tokens[tl]!;
+          lastLine = prevTok.line;
+          q = tl + 1;
+          continue;
+        }
+      }
+      td += 1;
+    } else if (cur.kind === 'template_tail' && td > 0) {
+      td -= 1;
+    } else if (cur.kind === 'punct') {
+      if (cur.value === '(') {
+        if (delims) {
+          const cl = delims.paren[q] ?? -1;
+          if (cl > q) {
+            prevTok = tokens[cl]!;
+            lastLine = prevTok.line;
+            q = cl + 1;
+            continue;
+          }
+        }
+        pd += 1;
+      } else if (cur.value === ')') {
         if (pd === 0 && bd === 0 && cd === 0 && td === 0) return { endIdx: q, truncated: false };
         if (pd > 0) pd -= 1;
-      } else if (cur.value === '[') bd += 1;
-      else if (cur.value === ']') {
+      } else if (cur.value === '[') {
+        if (delims) {
+          const cl = delims.bracket[q] ?? -1;
+          if (cl > q) {
+            prevTok = tokens[cl]!;
+            lastLine = prevTok.line;
+            q = cl + 1;
+            continue;
+          }
+        }
+        bd += 1;
+      } else if (cur.value === ']') {
         if (bd === 0 && pd === 0 && cd === 0 && td === 0) return { endIdx: q, truncated: false };
         if (bd > 0) bd -= 1;
-      } else if (cur.value === '{') cd += 1;
-      else if (cur.value === '}') {
+      } else if (cur.value === '{') {
+        if (delims) {
+          const cl = delims.brace[q] ?? -1;
+          if (cl > q) {
+            prevTok = tokens[cl]!;
+            lastLine = prevTok.line;
+            q = cl + 1;
+            continue;
+          }
+        }
+        cd += 1;
+      } else if (cur.value === '}') {
         if (cd === 0 && pd === 0 && bd === 0 && td === 0) return { endIdx: q, truncated: false };
         if (cd > 0) cd -= 1;
       } else if (pd === 0 && bd === 0 && cd === 0 && td === 0 && (cur.value === ',' || cur.value === ';')) {
@@ -6870,7 +7095,7 @@ function findDeclInitEnd(tokens: readonly Token[], exprStart: number, maxLookahe
     lastLine = cur.line;
     q += 1;
   }
-  return { endIdx: q, truncated: q >= exprStart + maxLookahead && q < tokens.length };
+  return { endIdx: q, truncated: steps >= maxSteps && q < tokens.length };
 }
 
 function findFnParamBodyTarget(
@@ -7047,10 +7272,11 @@ function collectScopedConstBindings(
   delims: DelimiterPairs,
   templateNext: Int32Array,
   templateTail?: Int32Array,
-): { scopes: LexScope[]; tokenScope: Int32Array; constEqIndices: Set<number> } {
+): { scopes: LexScope[]; tokenScope: Int32Array; constEqIndices: Set<number>; capped: boolean } {
   const scopes: LexScope[] = [{ parent: -1, bindings: new Map() }];
   const tokenScope = new Int32Array(tokens.length);
   const constEqIndices = new Set<number>();
+  const cappedRef = { value: false };
   const scopeStack: number[] = [0];
   const braceSeedBindings = new Map<number, string[]>();
   const conciseEnterAt = new Map<number, string[]>();
@@ -7163,15 +7389,13 @@ function collectScopedConstBindings(
     if (t.kind !== 'ident' || isMemberPrev(tokens, i)) continue;
     if (t.value === 'let' || t.value === 'var') {
       let p = i + 1;
-      let count = 0;
-      while (p < tokens.length && count < 16) {
-        count += 1;
+      while (p < tokens.length) {
         const tk = tokens[p]!;
         if (tk.kind === 'ident') {
           curBindings.set(tk.value, null);
-          p = findTypeDeclStop(tokens, p + 1);
+          p = findTypeDeclStop(tokens, p + 1, delims, templateTail, cappedRef);
           if (tokens[p]?.kind === 'punct' && tokens[p]?.value === '=') {
-            const initRes = findDeclInitEnd(tokens, p + 1);
+            const initRes = findDeclInitEnd(tokens, p + 1, delims, templateTail);
             p = initRes.endIdx;
           }
           if (tokens[p]?.kind === 'punct' && tokens[p]?.value === ',') {
@@ -7202,9 +7426,7 @@ function collectScopedConstBindings(
         tokens[i + 1]?.value === '>');
     if (t.value !== 'const' || isTsConstAssertion) continue;
     let p = i + 1;
-    let declCount = 0;
-    while (p < tokens.length && declCount < 16) {
-      declCount += 1;
+    while (p < tokens.length) {
       const nameTok = tokens[p];
       if (!nameTok) break;
       if (nameTok.kind === 'punct' && (nameTok.value === '{' || nameTok.value === '[')) {
@@ -7215,11 +7437,12 @@ function collectScopedConstBindings(
         for (const n of patNames) curBindings.set(n, null);
         p = closePat + 1;
         if (tokens[p]?.kind === 'punct' && tokens[p]?.value === ':') {
-          p = findTypeDeclStop(tokens, p + 1);
+          p = findTypeDeclStop(tokens, p + 1, delims, templateTail, cappedRef);
         }
         if (tokens[p]?.kind === 'punct' && tokens[p]?.value === '=') {
           constEqIndices.add(p);
-          const initRes = findDeclInitEnd(tokens, p + 1);
+          const initRes = findDeclInitEnd(tokens, p + 1, delims, templateTail);
+          if (initRes.truncated) cappedRef.value = true;
           p = initRes.endIdx;
           if (tokens[p]?.kind === 'punct' && tokens[p]?.value === ',') {
             p += 1;
@@ -7232,7 +7455,7 @@ function collectScopedConstBindings(
       if (nameTok.kind !== 'ident') break;
       p += 1;
       if (tokens[p]?.kind === 'punct' && tokens[p]?.value === ':') {
-        p = findTypeDeclStop(tokens, p + 1);
+        p = findTypeDeclStop(tokens, p + 1, delims, templateTail, cappedRef);
       }
       if (tokens[p]?.kind !== 'punct' || tokens[p]?.value !== '=') {
         curBindings.set(nameTok.value, null);
@@ -7240,7 +7463,8 @@ function collectScopedConstBindings(
       }
       constEqIndices.add(p);
       const exprStart = p + 1;
-      const initRes = findDeclInitEnd(tokens, exprStart);
+      const initRes = findDeclInitEnd(tokens, exprStart, delims, templateTail);
+      if (initRes.truncated) cappedRef.value = true;
       const q = initRes.endIdx;
       const val = !initRes.truncated
         ? tryResolveConstantStringExpr(
@@ -7252,6 +7476,7 @@ function collectScopedConstBindings(
             (n) => lookupScopedConst(scopes, curScopeIdx, n),
             0,
             templateTail,
+            cappedRef,
           )
         : null;
       if (val !== null) {
@@ -7270,7 +7495,7 @@ function collectScopedConstBindings(
       break;
     }
   }
-  return { scopes, tokenScope, constEqIndices };
+  return { scopes, tokenScope, constEqIndices, capped: cappedRef.value };
 }
 
 const isMeterModuleSpecifier = (spec: string): boolean => {
@@ -9940,6 +10165,7 @@ function hasTokenResolvedWorkspaceTarget(
   symbols: readonly string[],
   fromRelPath: string | undefined,
   precomputedDelims?: readonly DelimiterPairs[],
+  isKnownJsxPath = false,
 ): boolean {
   const symbolSet = new Set(symbols);
   for (let pIdx = 0; pIdx < primaryLists.length; pIdx += 1) {
@@ -9959,7 +10185,13 @@ function hasTokenResolvedWorkspaceTarget(
     if (!hasConcatOp || !hasStrOrTpl) continue;
     const delims = precomputedDelims?.[pIdx] ?? pairDelimiters(tokens);
     const { templateTail, templateNext } = buildTemplateMaps(tokens);
-    const { scopes, tokenScope } = collectScopedConstBindings(tokens, delims, templateNext, templateTail);
+    const { scopes, tokenScope, capped: constBindingsCapped } = collectScopedConstBindings(
+      tokens,
+      delims,
+      templateNext,
+      templateTail,
+    );
+    if (constBindingsCapped) return true;
     const constLookup: ConstLookupFn = (name, idx) => lookupScopedConst(scopes, tokenScope[idx] ?? 0, name);
     for (const sc of scopes) {
       for (const v of sc.bindings.values()) {
@@ -9971,6 +10203,7 @@ function hasTokenResolvedWorkspaceTarget(
       limit: number,
       limitIsCapped: boolean,
       allowCloseParen: boolean,
+      inPlusChain: boolean,
       cappedOut: { value: boolean },
     ): number => {
       let pos = startIdx;
@@ -9982,8 +10215,9 @@ function hasTokenResolvedWorkspaceTarget(
           continue;
         }
         if (suf.kind === 'ident' && (suf.value === 'as' || suf.value === 'satisfies')) {
-          const afterAs = skipWorkspaceTypeAssertion(tokens, pos + 1, limit);
-          if (afterAs >= limit && limitIsCapped) {
+          const afterAsCapped = { value: false };
+          const afterAs = skipWorkspaceTypeAssertion(tokens, pos + 1, limit, delims, templateTail, afterAsCapped);
+          if (afterAsCapped.value) {
             cappedOut.value = true;
             return -1;
           }
@@ -9998,7 +10232,8 @@ function hasTokenResolvedWorkspaceTarget(
       if (!suffixDone && pos < limit) {
         const suf = tokens[pos]!;
         if (
-          (suf.kind === 'punct' && (suf.value === '!' || (allowCloseParen && suf.value === ')'))) ||
+          inPlusChain ||
+          (suf.kind === 'punct' && (suf.value === '+' || suf.value === '!' || (allowCloseParen && suf.value === ')'))) ||
           (suf.kind === 'ident' && (suf.value === 'as' || suf.value === 'satisfies'))
         ) {
           cappedOut.value = true;
@@ -10006,8 +10241,16 @@ function hasTokenResolvedWorkspaceTarget(
         }
       }
       if (pos >= limit && limitIsCapped) {
-        cappedOut.value = true;
-        return -1;
+        const nextTok = tokens[pos];
+        if (
+          inPlusChain ||
+          (nextTok?.kind === 'punct' &&
+            (nextTok.value === '+' || nextTok.value === '!' || (allowCloseParen && nextTok.value === ')'))) ||
+          (nextTok?.kind === 'ident' && (nextTok.value === 'as' || nextTok.value === 'satisfies'))
+        ) {
+          cappedOut.value = true;
+          return -1;
+        }
       }
       return pos;
     };
@@ -10026,7 +10269,15 @@ function hasTokenResolvedWorkspaceTarget(
           cur += 1;
           continue;
         }
-        const afterType = skipLeadingTypeAssertionTokens(tokens, cur, maxEnd, cappedOut, maxIsCapped);
+        const afterType = skipLeadingTypeAssertionTokens(
+          tokens,
+          cur,
+          maxEnd,
+          cappedOut,
+          maxIsCapped,
+          delims,
+          templateTail,
+        );
         if (cappedOut.value) return -1;
         if (afterType > cur) {
           cur = afterType;
@@ -10052,17 +10303,17 @@ function hasTokenResolvedWorkspaceTarget(
         } else if (maxIsCapped && close >= maxEnd) {
           const suffixMax = Math.min(tokens.length, close + 1 + 128);
           const suffixCapped = suffixMax < tokens.length;
-          const afterParenSuffix = skipPostOperandSuffixes(close + 1, suffixMax, suffixCapped, true, cappedOut);
+          const afterParenSuffix = skipPostOperandSuffixes(
+            close + 1,
+            suffixMax,
+            suffixCapped,
+            true,
+            inPlusChain,
+            cappedOut,
+          );
           if (cappedOut.value) return -1;
-          if (inPlusChain || (afterParenSuffix >= 0 && tokens[afterParenSuffix]?.value === '+')) {
+          if (inPlusChain || (afterParenSuffix >= 0 && tokens[afterParenSuffix]?.kind === 'punct' && tokens[afterParenSuffix]?.value === '+')) {
             cappedOut.value = true;
-          } else {
-            for (let k = cur + 1; k < maxEnd; k += 1) {
-              if (tokens[k]?.kind === 'punct' && tokens[k]?.value === '+') {
-                cappedOut.value = true;
-                break;
-              }
-            }
           }
         }
       } else if (tk.kind === 'template_head') {
@@ -10070,7 +10321,20 @@ function hasTokenResolvedWorkspaceTarget(
         if (tailIdx > cur && tailIdx < maxEnd) {
           end = tailIdx + 1;
         } else if (maxIsCapped && tailIdx >= maxEnd) {
-          cappedOut.value = true;
+          const suffixMax = Math.min(tokens.length, tailIdx + 1 + 128);
+          const suffixCapped = suffixMax < tokens.length;
+          const afterTplSuffix = skipPostOperandSuffixes(
+            tailIdx + 1,
+            suffixMax,
+            suffixCapped,
+            false,
+            inPlusChain,
+            cappedOut,
+          );
+          if (cappedOut.value) return -1;
+          if (inPlusChain || (afterTplSuffix >= 0 && tokens[afterTplSuffix]?.kind === 'punct' && tokens[afterTplSuffix]?.value === '+')) {
+            cappedOut.value = true;
+          }
         }
       } else if (
         tk.kind === 'string' ||
@@ -10080,7 +10344,7 @@ function hasTokenResolvedWorkspaceTarget(
         end = cur + 1;
       }
       if (end < 0) return -1;
-      return skipPostOperandSuffixes(end, maxEnd, maxIsCapped, false, cappedOut);
+      return skipPostOperandSuffixes(end, maxEnd, maxIsCapped, false, inPlusChain, cappedOut);
     };
     const capped = { value: false };
     for (let i = 0; i < tokens.length; i += 1) {
@@ -10115,6 +10379,35 @@ function hasTokenResolvedWorkspaceTarget(
       ) {
         continue;
       }
+      const prevTok = tokens[i - 1];
+      const prevSameLine = Boolean(prevTok && prevTok.line === t.line);
+      if (t.kind === 'punct' && t.value === '<') {
+        if (isKnownJsxPath) continue;
+        if (prevSameLine && prevTok) {
+          const isPrefixKw = prevTok.kind === 'ident' && !prevTok.escaped && REGEX_PREFIX_KEYWORDS.has(prevTok.value);
+          if (
+            (prevTok.kind === 'ident' && !isPrefixKw) ||
+            prevTok.kind === 'string' ||
+            prevTok.kind === 'number' ||
+            prevTok.kind === 'template' ||
+            prevTok.kind === 'template_tail' ||
+            prevTok.kind === 'regex' ||
+            (prevTok.kind === 'punct' && (prevTok.value === ')' || prevTok.value === ']'))
+          ) {
+            continue;
+          }
+        }
+      }
+      if (t.kind === 'punct' && t.value === '(' && prevSameLine && prevTok) {
+        const isPrefixKw = prevTok.kind === 'ident' && !prevTok.escaped && REGEX_PREFIX_KEYWORDS.has(prevTok.value);
+        if (
+          (prevTok.kind === 'ident' && !isPrefixKw) ||
+          prevTok.kind === 'template_tail' ||
+          (prevTok.kind === 'punct' && (prevTok.value === ')' || prevTok.value === ']'))
+        ) {
+          continue;
+        }
+      }
       const maxEnd = Math.min(tokens.length, i + 128);
       const maxIsCapped = maxEnd < tokens.length;
       const firstEnd = advanceOp(i, maxEnd, maxIsCapped, false, capped);
@@ -10127,7 +10420,13 @@ function hasTokenResolvedWorkspaceTarget(
           if (nextEnd < 0) break;
           cursor = nextEnd;
         }
-        if (cursor >= maxEnd && maxIsCapped) return true;
+        if (
+          cursor >= maxEnd &&
+          maxIsCapped &&
+          (cursor > firstEnd || (tokens[cursor]?.kind === 'punct' && tokens[cursor]?.value === '+'))
+        ) {
+          return true;
+        }
         let hasPlusChain = cursor > firstEnd;
         if (!hasPlusChain && t.kind === 'punct' && t.value === '(') {
           for (let k = i + 1; k < cursor - 1; k += 1) {
@@ -10181,11 +10480,28 @@ const WORKSPACE_TS_TYPE_PREFIX_IDENTS = new Set([
   'abstract',
 ]);
 
-function skipWorkspaceTypeAssertion(toks: readonly Token[], typeStart: number, limit: number): number {
+function skipWorkspaceTypeAssertion(
+  toks: readonly Token[],
+  typeStart: number,
+  limit: number,
+  delims?: DelimiterPairs,
+  templateTail?: Int32Array,
+  cappedOut?: { value: boolean },
+): number {
   let j = typeStart;
   let td = 0;
   let expectTypeOperand = true;
-  while (j < limit) {
+  let steps = 0;
+  const maxSteps = 64;
+  const effectiveLimit = delims ? toks.length : limit;
+  while (j < effectiveLimit) {
+    if (delims) {
+      if (steps >= maxSteps) {
+        if (cappedOut) cappedOut.value = true;
+        return j;
+      }
+      steps += 1;
+    }
     const tk = toks[j]!;
     if (td > 0) {
       if (tk.kind === 'template_head') {
@@ -10212,10 +10528,33 @@ function skipWorkspaceTypeAssertion(toks: readonly Token[], typeStart: number, l
         j += 1;
         continue;
       }
-      if (
-        tk.kind === 'template_head' ||
-        (tk.kind === 'punct' && (tk.value === '(' || tk.value === '[' || tk.value === '{' || tk.value === '<'))
-      ) {
+      if (tk.kind === 'template_head') {
+        if (templateTail) {
+          const tl = templateTail[j] ?? -1;
+          if (tl > j) {
+            expectTypeOperand = false;
+            j = tl + 1;
+            continue;
+          }
+        }
+        td = 1;
+        j += 1;
+        continue;
+      }
+      if (tk.kind === 'punct' && (tk.value === '(' || tk.value === '[' || tk.value === '{' || tk.value === '<')) {
+        if (delims && tk.value !== '<') {
+          const cl =
+            tk.value === '('
+              ? (delims.paren[j] ?? -1)
+              : tk.value === '['
+                ? (delims.bracket[j] ?? -1)
+                : (delims.brace[j] ?? -1);
+          if (cl > j) {
+            expectTypeOperand = false;
+            j = cl + 1;
+            continue;
+          }
+        }
         td = 1;
         j += 1;
         continue;
@@ -10239,6 +10578,13 @@ function skipWorkspaceTypeAssertion(toks: readonly Token[], typeStart: number, l
     }
     if (tk.kind === 'punct') {
       if (tk.value === '<' || tk.value === '[' || tk.value === '(') {
+        if (delims && tk.value !== '<') {
+          const cl = tk.value === '(' ? (delims.paren[j] ?? -1) : (delims.bracket[j] ?? -1);
+          if (cl > j) {
+            j = cl + 1;
+            continue;
+          }
+        }
         td = 1;
         j += 1;
         continue;
@@ -10262,10 +10608,15 @@ function skipWorkspaceTypeAssertion(toks: readonly Token[], typeStart: number, l
     }
     return j;
   }
+  if (delims && td > 0 && cappedOut) cappedOut.value = true;
   return j;
 }
 
-function hasWorkspaceHostBracketOrMember(toks: readonly Token[], startIdx: number): boolean {
+function hasWorkspaceHostBracketOrMember(
+  toks: readonly Token[],
+  startIdx: number,
+  delims?: DelimiterPairs,
+): boolean {
   let j = startIdx + 1;
   let steps = 0;
   const maxSteps = 20;
@@ -10293,8 +10644,9 @@ function hasWorkspaceHostBracketOrMember(toks: readonly Token[], startIdx: numbe
     }
     if (tk.kind === 'ident' && (tk.value === 'as' || tk.value === 'satisfies')) {
       const limit = Math.min(toks.length, j + 96);
-      const nextIdx = skipWorkspaceTypeAssertion(toks, j + 1, limit);
-      if (nextIdx <= j + 1 || (nextIdx >= limit && limit < toks.length)) return true;
+      const asCapped = { value: false };
+      const nextIdx = skipWorkspaceTypeAssertion(toks, j + 1, limit, delims, undefined, asCapped);
+      if (nextIdx <= j + 1 || asCapped.value || (!delims && nextIdx >= limit && limit < toks.length)) return true;
       j = nextIdx;
       continue;
     }
@@ -10309,6 +10661,7 @@ function hasWorkspaceAstTokenTrigger(
   symbols: readonly string[],
   symbolSet: ReadonlySet<string>,
   fromRelPath: string | undefined,
+  primaryDelims?: readonly DelimiterPairs[],
 ): boolean {
   let minSymLen = Infinity;
   for (const sym of symbols) {
@@ -10324,7 +10677,8 @@ function hasWorkspaceAstTokenTrigger(
     }
     return keywordHint;
   };
-  for (const toks of primaryLists) {
+  for (let pIdx = 0; pIdx < primaryLists.length; pIdx += 1) {
+    const toks = primaryLists[pIdx]!;
     for (let i = 0; i < toks.length; i += 1) {
       const t = toks[i]!;
       if (t.kind === 'invalid') {
@@ -10383,7 +10737,7 @@ function hasWorkspaceAstTokenTrigger(
       ) {
         return true;
       }
-      if ((t.value === 'String' || AST_REQUIRE_HOSTS.has(t.value)) && hasWorkspaceHostBracketOrMember(toks, i)) {
+      if ((t.value === 'String' || AST_REQUIRE_HOSTS.has(t.value)) && hasWorkspaceHostBracketOrMember(toks, i, primaryDelims?.[pIdx])) {
         return true;
       }
       if (
@@ -10419,10 +10773,10 @@ function shouldParseWorkspaceAst(
   const relFromRoot = fromRelPath?.replace(/\\/g, '/');
   if (relFromRoot && relFromRoot.startsWith('packages/agent/')) return true;
   if (fromRelPath === undefined && fileText.length < 30_000) return true;
-  if (hasWorkspaceAstTokenTrigger(fileText, primaryLists, symbols, symbolSet, fromRelPath)) {
+  if (hasWorkspaceAstTokenTrigger(fileText, primaryLists, symbols, symbolSet, fromRelPath, primaryDelims)) {
     return true;
   }
-  if (hasTokenResolvedWorkspaceTarget(primaryLists, symbols, fromRelPath, primaryDelims)) {
+  if (hasTokenResolvedWorkspaceTarget(primaryLists, symbols, fromRelPath, primaryDelims, isKnownJsxPath)) {
     return true;
   }
   if (
@@ -10443,6 +10797,53 @@ function shouldParseWorkspaceAst(
     return true;
   }
   return false;
+}
+
+function shouldTriggerWorkspaceAstForFile(
+  fileText: string,
+  symbols: readonly string[],
+  fromRelPath?: string,
+): boolean {
+  const { primaryPasses, speculativePasses, isKnownJsxPath } = scanDualJsxAndTsPasses(fileText, fromRelPath);
+  const primaryLists = primaryPasses.map((p) => p.tokens);
+  const primaryDelims: DelimiterPairs[] = [];
+  const symbolSet = new Set(symbols);
+  const out = new Set<string>();
+  let tokenRelevant = false;
+  const syntaxState = { hasInvalidSyntax: false };
+  for (const pass of primaryPasses) {
+    if (
+      collectWorkspacePass(
+        fileText,
+        pass.tokens,
+        symbolSet,
+        fromRelPath,
+        true,
+        out,
+        pass.unambiguousRegexSpans,
+        syntaxState,
+        primaryDelims,
+      )
+    ) {
+      tokenRelevant = true;
+    }
+  }
+  for (const pass of speculativePasses) {
+    if (collectWorkspacePass(fileText, pass.tokens, symbolSet, fromRelPath, false, out, pass.unambiguousRegexSpans)) {
+      tokenRelevant = true;
+    }
+  }
+  return shouldParseWorkspaceAst(
+    fileText,
+    symbols,
+    symbolSet,
+    fromRelPath,
+    isKnownJsxPath,
+    primaryLists,
+    out.size,
+    tokenRelevant,
+    primaryDelims,
+  );
 }
 
 export function workspaceAdapterLeakViolations(
@@ -13623,6 +14024,85 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(
       memberVyViolations(
         "class Holder {\n  static {\n    let read = globalThis.fetch;\n    fn = read;\n    if (false) {\n      var fn: any = () => null;\n    }\n    read = fn;\n    read('https://x.test');\n  }\n}",
+      ),
+    ).toContain('calls the network directly');
+
+    // Platform PO Round 5 regressions: B1 clean-file AST pre-filter precision, B2 escapedSafeKillBases + prototype guard, B3 const caps, N1 BlockScoped
+    const manyConstDecls = `${Array.from({ length: 16 }, (_, idx) => `c${idx} = 'x${idx}'`).join(', ')}, c16 = 'generateNote', c17 = c16 + 'SummaryText'`;
+    expect(
+      workspaceAdapterLeakViolations(
+        `const ${manyConstDecls};\nexport const leak = c17;`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    let nestedWrap = "'generateNote'";
+    for (let idx = 0; idx < 36; idx += 1) {
+      nestedWrap = idx % 2 === 0 ? `(${nestedWrap})` : `<any>${nestedWrap}`;
+    }
+    expect(
+      workspaceAdapterLeakViolations(
+        `const p1 = ${nestedWrap};\nexport const leak = p1 + 'SummaryText';`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    const t36 = Array.from({ length: 36 }, (_, idx) => `k${idx}: 1;`).join(' ');
+    expect(
+      workspaceAdapterLeakViolations(
+        `const a: { ${t36} } | string = 'gen';\nexport const leak = a + 'erateNoteSummaryText';`,
+        DEFAULT_ADAPTER_EXPORTS,
+        'apps/web/src/leak.ts',
+      ),
+    ).toContain('generateNoteSummaryText');
+    const sqlCols = Array.from({ length: 250 }, (_, idx) => `col_${idx}`).join(', ');
+    const cleanSqlFile = `export function buildQuery(user: { id: string }, a: number, b: number) {\n  const sql = \`SELECT ${sqlCols} FROM items WHERE user_id = \${user.id}\`;\n  const sum = a + b;\n  return { sql, sum };\n}`;
+    expect(shouldTriggerWorkspaceAstForFile(cleanSqlFile, DEFAULT_ADAPTER_EXPORTS, 'apps/web/src/query.ts')).toBe(false);
+    expect(workspaceAdapterLeakViolations(cleanSqlFile, DEFAULT_ADAPTER_EXPORTS, 'apps/web/src/query.ts')).toEqual([]);
+    const cleanJsxFile = `export function Card(x: number, y: number, item: unknown) {\n  const typed = (item as { ${t36} });\n  const ok = x < y + 1;\n  return (<div data-ok={ok} data-sum={x + y} data-typed={Boolean(typed)}>${Array.from({ length: 140 }, () => '<span>ok</span>').join('')}</div>);\n}`;
+    expect(shouldTriggerWorkspaceAstForFile(cleanJsxFile, DEFAULT_ADAPTER_EXPORTS, 'apps/web/src/Card.tsx')).toBe(false);
+    expect(workspaceAdapterLeakViolations(cleanJsxFile, DEFAULT_ADAPTER_EXPORTS, 'apps/web/src/Card.tsx')).toEqual([]);
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst get = () => cache;\nget().fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\n[cache][0].fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\n(true ? cache : ({} as any)).fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nfor (const c of [cache]) c.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst o: any = { ...({ c: cache }) };\no.c.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nconst deep: any = { a: { b: { c: { d: { e: cache } } } } };\ndeep.a.b.c.d.e.fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\n(Object.prototype as any).fetch = read;\nread = cache.fetch;\nread('https://x.test');",
+      ),
+    ).toContain('calls the network directly');
+    expect(memberVyViolations('let read = globalThis.fetch;\nread = cache.fetch;\nread(key);')).toEqual([]);
+    expect(memberVyViolations('let read = globalThis.fetch;\nconst safe = cache.fetch;\nread = safe;\nread(key);')).toEqual([]);
+    expect(memberVyViolations('let read = globalThis.fetch;\nread = cache.fetch.bind(cache);\nread(key);')).toEqual([]);
+    expect(
+      memberVyViolations(
+        "let read = globalThis.fetch;\nfn = read;\n{\n  using fn = (() => {}) as any;\n  void fn;\n}\nread = fn;\nread('https://x.test');",
       ),
     ).toContain('calls the network directly');
   }, 30_000);
