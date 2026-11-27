@@ -229,8 +229,8 @@ suite('meetings.notesMinutes route (#5129, L32)', () => {
     expect(await refuses(runMeetingNotesMinutes(deps(), orgId, asUser('reader'), cleanId))).toMatchObject({ code: 'FORBIDDEN', status: 403 });
     expect(await refuses(notesMinutesStatusOf(deps(), orgId, asUser('outsider'), cleanId))).toMatchObject({ code: 'MEETING_NOT_FOUND', status: 404 });
     expect(await refuses(runMeetingNotesMinutes(deps(), orgId, asUser('outsider'), cleanId))).toMatchObject({ code: 'MEETING_NOT_FOUND', status: 404 });
-    expect(await refuses(notesMinutesStatusOf(deps(), orgId, asUser('stranger'), cleanId))).toMatchObject({ code: 'FORBIDDEN', status: 403 });
-    expect(await refuses(runMeetingNotesMinutes(deps(), orgId, asUser('stranger'), cleanId))).toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    expect(await refuses(notesMinutesStatusOf(deps(), orgId, asUser('stranger'), cleanId))).toMatchObject({ code: 'NOT_A_MEMBER', status: 403 });
+    expect(await refuses(runMeetingNotesMinutes(deps(), orgId, asUser('stranger'), cleanId))).toMatchObject({ code: 'NOT_A_MEMBER', status: 403 });
     expect(await refuses(notesMinutesStatusOf(deps(), orgId, asUser('recorder'), expiredId))).toMatchObject({ code: 'MEETING_NOT_FOUND', status: 404 });
     expect(await refuses(runMeetingNotesMinutes(deps(), orgId, asUser('recorder'), expiredId))).toMatchObject({ code: 'MEETING_NOT_FOUND', status: 404 });
 

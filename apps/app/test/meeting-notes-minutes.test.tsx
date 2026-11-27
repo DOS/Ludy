@@ -6,6 +6,7 @@ import { IntlProvider } from 'use-intl';
 import type { NotesMinutesAnswer, NotesMinutesStatus } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
+import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -43,7 +44,7 @@ function renderBody(
   const qc = new QueryClient();
   client.current = qc;
   return renderToStaticMarkup(
-    <IntlProvider locale={locale} messages={locale === 'vi' ? viMessages : en}>
+    <IntlProvider locale={locale} messages={catalog(locale)}>
       <QueryClientProvider client={qc}>
         <NotesMinutesBody
           meetingId={MEETING_ID}
@@ -74,7 +75,7 @@ describe('MeetingNotesMinutes (#5129)', () => {
         estimate: null,
       } satisfies NotesMinutesStatus);
       const html = renderToStaticMarkup(
-        <IntlProvider locale="vi" messages={viMessages}>
+        <IntlProvider locale="vi" messages={catalog('vi')}>
           <QueryClientProvider client={qc}>
             <MeetingNotesMinutes meetingId={MEETING_ID} template="general" />
           </QueryClientProvider>
@@ -91,12 +92,13 @@ describe('MeetingNotesMinutes (#5129)', () => {
       estimate: { inputTokens: 1800, outputTokens: 600, cost: null },
     } satisfies NotesMinutesStatus);
     const readyHtml = renderToStaticMarkup(
-      <IntlProvider locale="vi" messages={viMessages}>
+      <IntlProvider locale="vi" messages={catalog('vi')}>
         <QueryClientProvider client={readyQc}>
           <MeetingNotesMinutes meetingId={MEETING_ID} template="general" />
         </QueryClientProvider>
       </IntlProvider>,
     );
+    expect(readyHtml).toContain('<button');
     expect(readyHtml).toContain(escaped(viMessages.meetings.notesMinutes.button));
   });
 
@@ -121,7 +123,7 @@ describe('MeetingNotesMinutes (#5129)', () => {
         locale,
       );
       expect(html).toContain(escaped(message));
-      expect(html).not.toContain(escaped((locale === 'vi' ? viMessages : en).meetings.notesMinutes.button));
+      expect(html).not.toContain('<button');
     }
   });
 
@@ -133,6 +135,7 @@ describe('MeetingNotesMinutes (#5129)', () => {
       estimate: { inputTokens: 1800, outputTokens: 600, cost: null },
     };
     const readyHtml = renderBody({ status: readyStatus });
+    expect(readyHtml).toContain('<button');
     expect(readyHtml).toContain(escaped(viMessages.meetings.notesMinutes.button));
     expect(readyHtml).toContain('2400');
 
