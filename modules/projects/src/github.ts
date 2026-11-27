@@ -13,13 +13,18 @@ import {
   zGithubHookSetInput,
   zGithubHookStatusInput,
   zGithubInstallationSyncInput,
+  zGithubIssueMatchRpcInput,
   zGithubLinkPrepareInput,
+  zGithubOutboundContextQueryInput,
+  zGithubPrSummaryRpcInput,
+  zGithubRecordOutboundInput,
   zGithubRepoBindInput,
   zGithubRepoUnbindInput,
   zGithubSyncLogQueryInput,
   zGithubTaskLinkAddInput,
   zGithubTaskLinkRemoveInput,
   zGithubTaskLinksQueryInput,
+  type GithubApplyInboundEventInput,
   type GithubApplyInboundEventResult,
   type GithubBindingGetResult,
   type GithubBindingSaveResult,
@@ -28,8 +33,10 @@ import {
   type GithubHookStatusResult,
   type GithubInstallationSyncResult,
   type GithubLinkPrepareResult,
+  type GithubOutboundContextResult,
   type GithubProjectBindingView,
   type GithubProjectRepoView,
+  type GithubRecordOutboundResult,
   type GithubSyncLogEntry,
   type GithubSyncLogQueryResult,
   type GithubTaskLinkView,
@@ -98,6 +105,8 @@ function toLinkView(row: {
   link_source: 'manual' | 'mention' | 'branch';
   closes_task: boolean;
   hydrating: boolean;
+  last_outbound_state: 'open' | 'closed' | null;
+  last_outbound_at: Date | string | null;
   last_synced_at: Date | string;
   created_at: Date | string;
 }): GithubTaskLinkView {
@@ -117,6 +126,8 @@ function toLinkView(row: {
     closesTask: row.closes_task,
     hydrating: row.hydrating,
     tainted: true,
+    lastOutboundState: row.last_outbound_state ?? null,
+    lastOutboundAt: row.last_outbound_at ? new Date(row.last_outbound_at).toISOString() : null,
     lastSyncedAt: new Date(row.last_synced_at).toISOString(),
     createdAt: new Date(row.created_at).toISOString(),
   };
@@ -312,6 +323,7 @@ export const projectGithubBindingSave = defineCommand({
       'auto_link_branch',
       'inbound_in_progress_on_pr',
       'inbound_done_on_merge',
+      'outbound_close_issue_on_done',
       'inbound_col_in_progress',
       'inbound_col_in_review',
       'inbound_col_done',
@@ -382,6 +394,7 @@ export const projectGithubBindingSave = defineCommand({
             auto_link_branch: input.autoLinkBranch ?? true,
             inbound_in_progress_on_pr: input.inboundInProgressOnPr ?? true,
             inbound_done_on_merge: input.inboundDoneOnMerge ?? true,
+            outbound_close_issue_on_done: input.outboundCloseIssueOnDone ?? false,
             inbound_col_in_progress: input.inboundColInProgress ?? null,
             inbound_col_in_review: input.inboundColInReview ?? null,
             inbound_col_done: input.inboundColDone ?? null,
@@ -402,6 +415,7 @@ export const projectGithubBindingSave = defineCommand({
             auto_link_branch: input.autoLinkBranch ?? existing.auto_link_branch,
             inbound_in_progress_on_pr: input.inboundInProgressOnPr ?? existing.inbound_in_progress_on_pr,
             inbound_done_on_merge: input.inboundDoneOnMerge ?? existing.inbound_done_on_merge,
+            outbound_close_issue_on_done: input.outboundCloseIssueOnDone ?? existing.outbound_close_issue_on_done,
             inbound_col_in_progress:
               input.inboundColInProgress !== undefined ? input.inboundColInProgress : existing.inbound_col_in_progress,
             inbound_col_in_review:
@@ -851,6 +865,8 @@ export const projectGithubTaskLinkAdd = defineCommand({
           closes_task: input.closesTask ?? true,
           hydrating: input.hydrating ?? false,
           tainted: true,
+          last_outbound_state: null,
+          last_outbound_at: null,
           last_synced_at: ctx.now,
           created_by: userId,
           created_at: ctx.now,
@@ -993,16 +1009,6 @@ export const projectGithubApplyInboundEvent = defineCommand({
       return { linkedTaskIds: [], transitionedTaskIds: [], deferredTaskIds: [], status: 'skipped' };
     }
 
-    if (!isManualRefresh) {
-      await ctx.trx
-        .updateTable('ludy_projects.github_project_repo')
-        .set({ last_event_at: ctx.now })
-        .where('org_id', '=', ctx.orgId)
-        .where('project_id', '=', project.id)
-        .where(sql<boolean>`pg_catalog.lower(repo_full_name) = pg_catalog.lower(${input.repoFullName})`)
-        .execute();
-    }
-
     // Resolve tasks matched from mentions/branch/URLs.
     const matchedTasks = new Map<string, { linkSource: 'manual' | 'mention' | 'branch'; closesTask: boolean }>();
     const taskNumbers = input.matches.map((m) => m.taskNumber).filter((n): n is number => typeof n === 'number');
@@ -1110,8 +1116,13 @@ export const projectGithubApplyInboundEvent = defineCommand({
         }
       }
 
+      let echoSkippedExistingCount = 0;
       for (const link of existingLinks) {
         const prevTs = link.last_remote_event_at ? new Date(link.last_remote_event_at) : null;
+        if (isInboundIssueEchoLink(input, link, prevTs, remoteTs, isManualRefresh)) {
+          echoSkippedExistingCount += 1;
+          continue;
+        }
         if (!link.hydrating && prevTs !== null && !Number.isNaN(prevTs.getTime()) && remoteTs !== null && remoteTs.getTime() < prevTs.getTime()) {
           continue;
         }
@@ -1159,6 +1170,8 @@ export const projectGithubApplyInboundEvent = defineCommand({
             hydrating: false,
             tainted: true,
             last_remote_event_at: remoteTs,
+            last_outbound_state: null,
+            last_outbound_at: null,
             last_synced_at: ctx.now,
             created_by: null,
             created_at: ctx.now,
@@ -1169,6 +1182,25 @@ export const projectGithubApplyInboundEvent = defineCommand({
         linkedTaskIds.push(taskId);
         taskClosingEligibility.set(taskId, spec.closesTask);
       }
+
+      // Layer 3 zero-write invariant: if an echoed issue webhook matched existing link(s) and updated nothing, skip even repo last_event_at.
+      if (!isManualRefresh && (linkedTaskIds.length > 0 || echoSkippedExistingCount === 0)) {
+        await ctx.trx
+          .updateTable('ludy_projects.github_project_repo')
+          .set({ last_event_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where('project_id', '=', project.id)
+          .where(sql<boolean>`pg_catalog.lower(repo_full_name) = pg_catalog.lower(${input.repoFullName})`)
+          .execute();
+      }
+    } else if (!isManualRefresh) {
+      await ctx.trx
+        .updateTable('ludy_projects.github_project_repo')
+        .set({ last_event_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('project_id', '=', project.id)
+        .where(sql<boolean>`pg_catalog.lower(repo_full_name) = pg_catalog.lower(${input.repoFullName})`)
+        .execute();
     }
 
     if (linkedTaskIds.length === 0) {
@@ -1388,6 +1420,385 @@ export const projectGithubInstallationSync = defineCommand({
   },
 });
 
+function isInboundIssueEchoLink(
+  input: Pick<GithubApplyInboundEventInput, 'eventKind' | 'action' | 'externalState'>,
+  link: { kind: string; hydrating: boolean; external_state: string },
+  prevTs: Date | null,
+  remoteTs: Date | null,
+  isManualRefresh: boolean,
+): boolean {
+  if (isManualRefresh || link.hydrating || input.eventKind !== 'issue' || link.kind !== 'issue') {
+    return false;
+  }
+  if (prevTs !== null && remoteTs !== null && !Number.isNaN(prevTs.getTime()) && remoteTs.getTime() <= prevTs.getTime()) {
+    return true;
+  }
+  if ((input.action === 'closed' || input.action === 'reopened') && link.external_state === input.externalState) {
+    return true;
+  }
+  return false;
+}
+
+async function loadProjectsAiFlags(
+  trx: QueryContext['trx'],
+  orgId: string,
+): Promise<{ aiStopped: boolean; aiBudgetSpent: boolean }> {
+  const { rows } = await sql<{ ai_stopped: boolean; budget_spent: boolean }>`
+    SELECT
+      (
+        ludy_kernel.global_kill_switch_on('ai')
+        OR EXISTS (
+          SELECT 1 FROM ludy_kernel.kill_switch k
+           WHERE k.org_id = ${orgId}::uuid
+             AND k.released_at IS NULL
+             AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = 'projects'))
+        )
+      ) AS ai_stopped,
+      ludy_kernel.ai_budget_exhausted(${orgId}::uuid, 'projects', NULL::uuid) AS budget_spent`.execute(trx);
+  return {
+    aiStopped: rows[0]?.ai_stopped === true,
+    aiBudgetSpent: rows[0]?.budget_spent === true,
+  };
+}
+
+export interface ProjectGithubPrSummarySource {
+  projectId: string;
+  projectName: string;
+  taskId: string;
+  taskKey: string | null;
+  taskTitle: string;
+  taskTainted: boolean;
+  githubEnabled: boolean;
+  links: GithubTaskLinkView[];
+  aiStopped: boolean;
+  aiBudgetSpent: boolean;
+}
+
+export interface ProjectGithubIssueMatchSource {
+  projectId: string;
+  projectName: string;
+  taskId: string;
+  taskKey: string | null;
+  taskTitle: string;
+  taskDescription: string | null;
+  taskTainted: boolean;
+  githubEnabled: boolean;
+  provider: 'github_app' | 'github_pat' | null;
+  externalAccountId: string | null;
+  repos: ReadonlyArray<{ repoFullName: string }>;
+  existingLinkKeys: readonly string[];
+  cachedIssues: ReadonlyArray<{
+    repoFullName: string;
+    externalNumber: number;
+    externalUrl: string;
+    externalTitle: string;
+    authorLogin: string | null;
+    updatedAt: string;
+  }>;
+  aiStopped: boolean;
+  aiBudgetSpent: boolean;
+}
+
+export const projectGithubOutboundContext = defineQuery({
+  name: 'projects.github.outbound_context',
+  input: zGithubOutboundContextQueryInput,
+  access: READERS,
+  handler: async (ctx, input): Promise<GithubOutboundContextResult> => {
+    if (ctx.actor.type !== 'system') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới đọc được ngữ cảnh đồng bộ GitHub ra ngoài');
+    }
+    const project = await ctx.trx
+      .selectFrom('ludy_projects.project')
+      .select(['id', 'status', 'is_template'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.projectId)
+      .executeTakeFirst();
+    if (!project) {
+      return { projectArchived: true, taskStatus: null, binding: null, repoBound: false, link: null };
+    }
+    const taskRow = await ctx.trx
+      .selectFrom('ludy_projects.project_task as pt')
+      .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
+      .select(['t.status'])
+      .where('pt.org_id', '=', ctx.orgId)
+      .where('pt.project_id', '=', project.id)
+      .where('pt.task_id', '=', input.taskId)
+      .executeTakeFirst();
+    const binding = await loadBindingView(ctx.trx, ctx.orgId, project.id, true);
+    const linkRow = await ctx.trx
+      .selectFrom('ludy_projects.github_task_link')
+      .selectAll()
+      .where('org_id', '=', ctx.orgId)
+      .where('project_id', '=', project.id)
+      .where('task_id', '=', input.taskId)
+      .where('id', '=', input.linkId)
+      .executeTakeFirst();
+    let repoBound = false;
+    if (linkRow) {
+      const boundRow = await ctx.trx
+        .selectFrom('ludy_projects.github_project_repo')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('project_id', '=', project.id)
+        .where(sql<boolean>`pg_catalog.lower(repo_full_name) = pg_catalog.lower(${linkRow.repo_full_name})`)
+        .executeTakeFirst();
+      repoBound = Boolean(boundRow);
+    }
+    return {
+      projectArchived: project.status === 'archived' || project.is_template,
+      taskStatus: taskRow?.status ?? null,
+      binding,
+      repoBound,
+      link: linkRow ? toLinkView(linkRow) : null,
+    };
+  },
+});
+
+export const projectGithubRecordOutbound = defineCommand({
+  name: 'projects.github.record_outbound',
+  input: zGithubRecordOutboundInput,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  writes: [
+    tableWrite(TABLES, 'ludy_projects', 'github_task_link', [
+      'external_state',
+      'external_title',
+      'last_outbound_state',
+      'last_outbound_at',
+      'last_remote_event_at',
+      'last_synced_at',
+      'updated_at',
+    ]),
+  ],
+  target: (input) => ({ type: 'projects.github_task_link', id: input.linkId }),
+  handler: async (ctx, input): Promise<GithubRecordOutboundResult> => {
+    if (ctx.actor.type !== 'system') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới ghi nhận kết quả đồng bộ GitHub ra ngoài');
+    }
+    const existing = await ctx.trx
+      .selectFrom('ludy_projects.github_task_link')
+      .selectAll()
+      .where('org_id', '=', ctx.orgId)
+      .where('project_id', '=', input.projectId)
+      .where('task_id', '=', input.taskId)
+      .where('id', '=', input.linkId)
+      .where('kind', '=', 'issue')
+      .forUpdate()
+      .executeTakeFirst();
+    if (!existing) {
+      return { updated: false, link: null };
+    }
+
+    const prevTs = existing.last_remote_event_at ? new Date(existing.last_remote_event_at) : null;
+    const remoteTs =
+      input.remoteUpdatedAt && !Number.isNaN(Date.parse(input.remoteUpdatedAt))
+        ? new Date(input.remoteUpdatedAt)
+        : null;
+    const nextRemoteTs =
+      remoteTs && prevTs && !Number.isNaN(prevTs.getTime())
+        ? remoteTs.getTime() > prevTs.getTime()
+          ? remoteTs
+          : prevTs
+        : remoteTs ?? (prevTs && !Number.isNaN(prevTs.getTime()) ? prevTs : ctx.now);
+
+    const saved = await ctx.trx
+      .updateTable('ludy_projects.github_task_link')
+      .set({
+        external_state: input.externalState,
+        external_title: input.externalTitle ?? existing.external_title,
+        last_outbound_state: input.externalState,
+        last_outbound_at: ctx.now,
+        last_remote_event_at: nextRemoteTs,
+        last_synced_at: ctx.now,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', existing.id)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    ctx.audit({
+      projectId: input.projectId,
+      taskId: input.taskId,
+      linkId: existing.id,
+      externalNumber: existing.external_number,
+      externalState: input.externalState,
+    });
+    await ctx.emit('projects.github.outbound_synced', {
+      projectId: input.projectId,
+      taskId: input.taskId,
+      linkId: existing.id,
+      externalState: input.externalState,
+    });
+    return { updated: true, link: toLinkView(saved) };
+  },
+});
+
+export const projectGithubAiPrSummarySource = defineQuery({
+  name: 'projects.github.ai_pr_summary_source',
+  input: zGithubPrSummaryRpcInput.pick({ projectId: true, taskId: true }),
+  access: READERS,
+  handler: async (ctx, input): Promise<ProjectGithubPrSummarySource> => {
+    userOf(ctx.actor);
+    const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
+    const visibleTask = await ctx.trx
+      .selectFrom('ludy_projects.project_task as pt')
+      .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
+      .select(['pt.task_id', 'pt.task_number', 't.title', 't.tainted'])
+      .where('pt.org_id', '=', ctx.orgId)
+      .where('pt.project_id', '=', project.id)
+      .where('pt.task_id', '=', input.taskId)
+      .executeTakeFirst();
+    if (!visibleTask) throw taskNotFound();
+
+    const binding = await ctx.trx
+      .selectFrom('ludy_projects.github_project_binding')
+      .select(['github_enabled', 'task_key_prefix'])
+      .where('org_id', '=', ctx.orgId)
+      .where('project_id', '=', project.id)
+      .executeTakeFirst();
+
+    const aiFlags = await loadProjectsAiFlags(ctx.trx, ctx.orgId);
+    if (!binding || !binding.github_enabled) {
+      return {
+        projectId: project.id,
+        projectName: project.name,
+        taskId: visibleTask.task_id,
+        taskKey: null,
+        taskTitle: visibleTask.title,
+        taskTainted: Boolean(visibleTask.tainted),
+        githubEnabled: false,
+        links: [],
+        ...aiFlags,
+      };
+    }
+
+    const links = await ctx.trx
+      .selectFrom('ludy_projects.github_task_link')
+      .selectAll()
+      .where('org_id', '=', ctx.orgId)
+      .where('project_id', '=', project.id)
+      .where('task_id', '=', visibleTask.task_id)
+      .orderBy('created_at', 'desc')
+      .orderBy('id', 'desc')
+      .limit(25)
+      .execute();
+
+    return {
+      projectId: project.id,
+      projectName: project.name,
+      taskId: visibleTask.task_id,
+      taskKey: formatProjectTaskKey(binding.task_key_prefix, visibleTask.task_number),
+      taskTitle: visibleTask.title,
+      taskTainted: Boolean(visibleTask.tainted),
+      githubEnabled: true,
+      links: links.map(toLinkView),
+      ...aiFlags,
+    };
+  },
+});
+
+export const projectGithubAiIssueMatchSource = defineQuery({
+  name: 'projects.github.ai_issue_match_source',
+  input: zGithubIssueMatchRpcInput.pick({ projectId: true, taskId: true }),
+  access: READERS,
+  handler: async (ctx, input): Promise<ProjectGithubIssueMatchSource> => {
+    userOf(ctx.actor);
+    const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
+    const visibleTask = await ctx.trx
+      .selectFrom('ludy_projects.project_task as pt')
+      .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
+      .select(['pt.task_id', 'pt.task_number', 't.title', 't.description', 't.tainted'])
+      .where('pt.org_id', '=', ctx.orgId)
+      .where('pt.project_id', '=', project.id)
+      .where('pt.task_id', '=', input.taskId)
+      .executeTakeFirst();
+    if (!visibleTask) throw taskNotFound();
+
+    const aiFlags = await loadProjectsAiFlags(ctx.trx, ctx.orgId);
+    const binding = await loadBindingView(ctx.trx, ctx.orgId, project.id, true);
+    if (!binding || !binding.githubEnabled) {
+      return {
+        projectId: project.id,
+        projectName: project.name,
+        taskId: visibleTask.task_id,
+        taskKey: null,
+        taskTitle: visibleTask.title,
+        taskDescription: visibleTask.description,
+        taskTainted: Boolean(visibleTask.tainted),
+        githubEnabled: false,
+        provider: null,
+        externalAccountId: null,
+        repos: [],
+        existingLinkKeys: [],
+        cachedIssues: [],
+        ...aiFlags,
+      };
+    }
+
+    const existingOnTask = await ctx.trx
+      .selectFrom('ludy_projects.github_task_link')
+      .select(['repo_full_name', 'kind', 'external_number'])
+      .where('org_id', '=', ctx.orgId)
+      .where('project_id', '=', project.id)
+      .where('task_id', '=', visibleTask.task_id)
+      .execute();
+    const existingKeys = existingOnTask
+      .filter((l) => l.kind === 'issue')
+      .map((l) => `${l.repo_full_name.toLowerCase()}#${l.external_number}`);
+
+    const repoNamesLower = new Set(binding.repos.map((r) => r.repoFullName.toLowerCase()));
+    const existingSet = new Set(existingKeys);
+
+    const projectLinks = await ctx.trx
+      .selectFrom('ludy_projects.github_task_link')
+      .select(['repo_full_name', 'external_number', 'external_url', 'external_title', 'author_login', 'last_synced_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('project_id', '=', project.id)
+      .where('kind', '=', 'issue')
+      .where('external_state', '=', 'open')
+      .orderBy('last_synced_at', 'desc')
+      .limit(40)
+      .execute();
+
+    const seenCached = new Set<string>();
+    const cachedIssues: ProjectGithubIssueMatchSource['cachedIssues'][number][] = [];
+    for (const row of projectLinks) {
+      const key = `${row.repo_full_name.toLowerCase()}#${row.external_number}`;
+      if (!repoNamesLower.has(row.repo_full_name.toLowerCase()) || existingSet.has(key) || seenCached.has(key)) {
+        continue;
+      }
+      seenCached.add(key);
+      cachedIssues.push({
+        repoFullName: row.repo_full_name,
+        externalNumber: row.external_number,
+        externalUrl: row.external_url,
+        externalTitle: row.external_title,
+        authorLogin: row.author_login,
+        updatedAt: new Date(row.last_synced_at).toISOString(),
+      });
+    }
+
+    return {
+      projectId: project.id,
+      projectName: project.name,
+      taskId: visibleTask.task_id,
+      taskKey: formatProjectTaskKey(binding.taskKeyPrefix, visibleTask.task_number),
+      taskTitle: visibleTask.title,
+      taskDescription: visibleTask.description,
+      taskTainted: Boolean(visibleTask.tainted),
+      githubEnabled: true,
+      provider: binding.provider,
+      externalAccountId: binding.externalAccountId,
+      repos: binding.repos.map((r) => ({ repoFullName: r.repoFullName })),
+      existingLinkKeys: existingKeys,
+      cachedIssues,
+      ...aiFlags,
+    };
+  },
+});
+
 export const projectGithubCommands = [
   projectGithubBindingSave,
   projectGithubRepoBind,
@@ -1397,12 +1808,16 @@ export const projectGithubCommands = [
   projectGithubTaskLinkRemove,
   projectGithubApplyInboundEvent,
   projectGithubInstallationSync,
+  projectGithubRecordOutbound,
 ];
 
 export const projectGithubQueries = [
   projectGithubBindingGet,
   projectGithubHookStatus,
   projectGithubLinkPrepare,
+  projectGithubOutboundContext,
   projectGithubTaskLinks,
   projectGithubSyncLog,
+  projectGithubAiPrSummarySource,
+  projectGithubAiIssueMatchSource,
 ];

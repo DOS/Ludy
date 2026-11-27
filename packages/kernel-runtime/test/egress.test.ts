@@ -225,7 +225,14 @@ describe('guardedRequest and egressFetch', () => {
     expect(multipart.type).toMatch(/^multipart\/form-data; boundary=/);
     expect(multipart.body).toContain('name="description"');
     expect(multipart.body).toContain('filename="a.png"');
+    const patched = await plain(`${base}/statuses`, { method: 'PATCH', headers: { 'content-type': 'application/json', authorization: 'Bearer t' }, body: JSON.stringify({ state: 'closed' }) });
+    expect(patched.status).toBe(201);
+    expect(await patched.json()).toMatchObject({ method: 'PATCH', type: 'application/json', body: '{"state":"closed"}' });
+    const guardedPatch = await guardedRequest(`${base}/statuses`, { method: 'PATCH', headers: { 'content-type': 'application/json', authorization: 'Bearer t' }, body: Buffer.from('{"state":"open"}') }, opts());
+    expect(guardedPatch.status).toBe(201);
+    expect(JSON.parse(guardedPatch.body.toString('utf8'))).toMatchObject({ method: 'PATCH', body: '{"state":"open"}' });
+    await expect(guardedRequest(`${base}/moved`, { method: 'PATCH', headers: { authorization: 'Bearer t' } }, opts()).then((r) => r.status)).resolves.toBe(302);
     await expect(egressFetch(opts())(`${base}/statuses`)).rejects.toMatchObject({ code: 'invalid_url' });
-    await expect(plain(`${base}/x`, { method: 'PATCH' })).rejects.toMatchObject({ code: 'invalid_url' });
+    await expect(plain(`${base}/x`, { method: 'TRACE' })).rejects.toMatchObject({ code: 'invalid_url' });
   });
 });

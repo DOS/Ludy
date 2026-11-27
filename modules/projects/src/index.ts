@@ -156,6 +156,8 @@ export {
 } from './columns.ts';
 import { roadmapCommands, roadmapQueries } from './roadmap.ts';
 import {
+  projectGithubAiIssueMatchSource,
+  projectGithubAiPrSummarySource,
   projectGithubApplyInboundEvent,
   projectGithubBindingGet,
   projectGithubBindingSave,
@@ -163,7 +165,9 @@ import {
   projectGithubHookSet,
   projectGithubHookStatus,
   projectGithubLinkPrepare,
+  projectGithubOutboundContext,
   projectGithubQueries,
+  projectGithubRecordOutbound,
   projectGithubRepoBind,
   projectGithubRepoUnbind,
   projectGithubSyncLog,
@@ -172,14 +176,20 @@ import {
   projectGithubTaskLinks,
   setProjectsGithubAppInfo,
   setProjectsGithubBrokerAvailable,
+  type ProjectGithubIssueMatchSource,
+  type ProjectGithubPrSummarySource,
 } from './github.ts';
 export {
+  projectGithubAiIssueMatchSource,
+  projectGithubAiPrSummarySource,
   projectGithubApplyInboundEvent,
   projectGithubBindingGet,
   projectGithubBindingSave,
   projectGithubHookSet,
   projectGithubHookStatus,
   projectGithubLinkPrepare,
+  projectGithubOutboundContext,
+  projectGithubRecordOutbound,
   projectGithubRepoBind,
   projectGithubRepoUnbind,
   projectGithubSyncLog,
@@ -188,6 +198,8 @@ export {
   projectGithubTaskLinks,
   setProjectsGithubAppInfo,
   setProjectsGithubBrokerAvailable,
+  type ProjectGithubIssueMatchSource,
+  type ProjectGithubPrSummarySource,
 };
 import { roadmapMcpQueries } from './roadmap-mcp.ts';
 import {

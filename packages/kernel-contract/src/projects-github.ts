@@ -141,6 +141,7 @@ export const zGithubBindingSaveInput = z.strictObject({
   autoLinkBranch: z.boolean().optional(),
   inboundInProgressOnPr: z.boolean().optional(),
   inboundDoneOnMerge: z.boolean().optional(),
+  outboundCloseIssueOnDone: z.boolean().optional(),
   inboundColInProgress: zId.nullable().optional(),
   inboundColInReview: zId.nullable().optional(),
   inboundColDone: zId.nullable().optional(),
@@ -211,6 +212,8 @@ export const zGithubTaskLinkView = z.object({
   closesTask: z.boolean(),
   hydrating: z.boolean(),
   tainted: z.literal(true),
+  lastOutboundState: z.enum(['open', 'closed']).nullable(),
+  lastOutboundAt: z.string().nullable(),
   lastSyncedAt: z.string(),
   createdAt: z.string(),
 });
@@ -417,3 +420,84 @@ export const zGithubTaskLinkAddRpcInput = z.strictObject({
 export const zGithubTaskLinkAddRpcResult = z.object({
   link: zGithubTaskLinkView,
 });
+
+// Outbound worker runtime context query and recording schemas (#5159 Slice 2).
+export const zGithubOutboundContextQueryInput = z.strictObject({
+  projectId: zId,
+  taskId: zId,
+  linkId: zId,
+});
+export type GithubOutboundContextQueryInput = z.infer<typeof zGithubOutboundContextQueryInput>;
+
+export interface GithubOutboundContextResult {
+  projectArchived: boolean;
+  taskStatus: string | null;
+  binding: GithubProjectBindingView | null;
+  repoBound: boolean;
+  link: GithubTaskLinkView | null;
+}
+
+export const zGithubRecordOutboundInput = z.strictObject({
+  projectId: zId,
+  taskId: zId,
+  linkId: zId,
+  externalState: z.enum(['open', 'closed']),
+  externalTitle: z.string().trim().min(1).max(300).optional(),
+  remoteUpdatedAt: z.string().trim().min(10).max(64).nullable().optional(),
+});
+export type GithubRecordOutboundInput = z.infer<typeof zGithubRecordOutboundInput>;
+
+export const zGithubRecordOutboundResult = z.object({
+  updated: z.boolean(),
+  link: zGithubTaskLinkView.nullable(),
+});
+export type GithubRecordOutboundResult = z.infer<typeof zGithubRecordOutboundResult>;
+
+// Metered Vy AI coworker schemas for GitHub integration (#5159 Slice 2, ADR-0060 D6).
+export const GITHUB_AI_STATES = ['used', 'off', 'paused', 'budget', 'busy', 'refused', 'empty', 'failed'] as const;
+export type GithubAiState = (typeof GITHUB_AI_STATES)[number];
+export const zGithubAiState = z.enum(GITHUB_AI_STATES);
+
+export const zGithubPrSummaryRpcInput = z.strictObject({
+  projectId: zId,
+  taskId: zId,
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type GithubPrSummaryRpcInput = z.infer<typeof zGithubPrSummaryRpcInput>;
+
+export const zGithubPrSummaryRpcResult = z.object({
+  ai: zGithubAiState,
+  summary: z.string().nullable(),
+  fallbackSummary: z.string().nullable(),
+  linkCount: z.number().int().nonnegative(),
+  tainted: z.literal(true),
+});
+export type GithubPrSummaryRpcResult = z.infer<typeof zGithubPrSummaryRpcResult>;
+
+export const zGithubIssueMatchCandidate = z.object({
+  candidateId: z.string().min(1).max(200),
+  repoFullName: z.string(),
+  externalNumber: z.number().int().positive(),
+  externalUrl: z.string(),
+  externalTitle: z.string(),
+  authorLogin: z.string().nullable(),
+  updatedAt: z.string().nullable(),
+  reason: z.string().nullable(),
+  tainted: z.literal(true),
+  deterministic: z.boolean(),
+});
+export type GithubIssueMatchCandidate = z.infer<typeof zGithubIssueMatchCandidate>;
+
+export const zGithubIssueMatchRpcInput = z.strictObject({
+  projectId: zId,
+  taskId: zId,
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type GithubIssueMatchRpcInput = z.infer<typeof zGithubIssueMatchRpcInput>;
+
+export const zGithubIssueMatchRpcResult = z.object({
+  ai: zGithubAiState,
+  candidates: z.array(zGithubIssueMatchCandidate),
+  inspectedCount: z.number().int().nonnegative(),
+});
+export type GithubIssueMatchRpcResult = z.infer<typeof zGithubIssueMatchRpcResult>;

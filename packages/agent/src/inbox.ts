@@ -201,6 +201,22 @@ import {
   type ProjectTriageAssistGenerator,
 } from './project-triage.ts';
 import {
+  checkGithubIssueMatch,
+  checkGithubPrSummary,
+  githubIssueMatchInstructions,
+  githubIssueMatchPrompt,
+  githubPrSummaryInstructions,
+  githubPrSummaryPrompt,
+  zProjectGithubIssueMatchOut,
+  zProjectGithubPrSummaryOut,
+  type ProjectGithubIssueMatchCheckResult,
+  type ProjectGithubIssueMatchFacts,
+  type ProjectGithubIssueMatchGenerator,
+  type ProjectGithubPrSummaryCheckResult,
+  type ProjectGithubPrSummaryFacts,
+  type ProjectGithubPrSummaryGenerator,
+} from './project-github.ts';
+import {
   createSignAcceptanceDraftGenerator,
   draftSignAcceptanceSummary,
   type SignAcceptanceDraftGenerator,
@@ -467,6 +483,8 @@ export class InboxReader {
   private readonly generateRoadmapChangelogDraft: RoadmapChangelogDraftGenerator;
   private readonly generateRoadmapSignalMatch: RoadmapSignalMatchGenerator;
   private readonly generateProjectTriageAssist: ProjectTriageAssistGenerator;
+  private readonly generateProjectGithubPrSummary: ProjectGithubPrSummaryGenerator;
+  private readonly generateProjectGithubIssueMatch: ProjectGithubIssueMatchGenerator;
   private readonly generateLaborCheck: LaborComplianceGenerator;
   private readonly generateRecruitingBrief: RecruitingBriefGenerator;
   private readonly generateAttendanceAnomalies: AttendanceAnomalyGenerator;
@@ -484,7 +502,7 @@ export class InboxReader {
   private readonly askBooks: AskBooksCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; signDepositMatch?: SignDepositMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; roadmapSignalMatch?: RoadmapSignalMatchGenerator; projectTriageAssist?: ProjectTriageAssistGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; hrRequestDraft?: HrSelfRequestDraftGenerator; hrPolicyQa?: HrSelfPolicyQaGenerator; hrAddendumCheck?: HrAddendumCheckGenerator; hrOkrCheckinDraft?: HrOkrCheckinDraftGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; signDepositMatch?: SignDepositMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; roadmapSignalMatch?: RoadmapSignalMatchGenerator; projectTriageAssist?: ProjectTriageAssistGenerator; projectGithubPrSummary?: ProjectGithubPrSummaryGenerator; projectGithubIssueMatch?: ProjectGithubIssueMatchGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; hrRequestDraft?: HrSelfRequestDraftGenerator; hrPolicyQa?: HrSelfPolicyQaGenerator; hrAddendumCheck?: HrAddendumCheckGenerator; hrOkrCheckinDraft?: HrOkrCheckinDraftGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.expenseVariance = new ExpenseVarianceCoworker(config);
     this.unusualEntries = new UnusualEntriesCoworker(config);
@@ -770,6 +788,22 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('projects.triage_assist', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zProjectTriageAssistOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateProjectGithubPrSummary =
+      generators.projectGithubPrSummary ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('projects.github_pr_summary', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zProjectGithubPrSummaryOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateProjectGithubIssueMatch =
+      generators.projectGithubIssueMatch ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('projects.github_issue_match', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zProjectGithubIssueMatchOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -1211,5 +1245,33 @@ export class InboxReader {
     });
     if (usage) onUsage?.(usage);
     return checkTriageAssist(facts, output);
+  }
+
+  /** Vy's transient status summary of GitHub PRs and issues linked to one task (#5159, ADR-0060 D6). */
+  async projectGithubPrSummary(
+    facts: ProjectGithubPrSummaryFacts,
+    onUsage?: (usage: AiUsage) => void,
+  ): Promise<ProjectGithubPrSummaryCheckResult> {
+    if (facts.links.length === 0) return { kind: 'none', code: 'EMPTY' };
+    const { output, usage } = await this.generateProjectGithubPrSummary({
+      system: githubPrSummaryInstructions(facts.language),
+      prompt: githubPrSummaryPrompt(facts),
+    });
+    if (usage) onUsage?.(usage);
+    return checkGithubPrSummary(facts, output);
+  }
+
+  /** Vy's read-only ranking of up to 3 candidate open GitHub issues for one task (#5159, ADR-0060 D6). */
+  async projectGithubIssueMatch(
+    facts: ProjectGithubIssueMatchFacts,
+    onUsage?: (usage: AiUsage) => void,
+  ): Promise<ProjectGithubIssueMatchCheckResult> {
+    if (facts.candidates.length === 0) return { kind: 'none', code: 'EMPTY' };
+    const { output, usage } = await this.generateProjectGithubIssueMatch({
+      system: githubIssueMatchInstructions(facts.language),
+      prompt: githubIssueMatchPrompt(facts),
+    });
+    if (usage) onUsage?.(usage);
+    return checkGithubIssueMatch(facts, output);
   }
 }

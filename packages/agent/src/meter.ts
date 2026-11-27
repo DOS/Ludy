@@ -166,6 +166,10 @@ export const AI_FEATURES = {
   'projects.roadmap_signal_match': 'projects',
   // Vy's triage proposal for one triage inbox item (#4493, ADR-0058): proposes priority, seat, cycle, or duplicate from allowlisted candidate IDs only; human accepts/merges/declines.
   'projects.triage_assist': 'projects',
+  // Vy's transient GitHub PR/issue status summary on one project task (#5159, ADR-0060 D6): zero tools, <<< >>> fenced external data, checked by summaryNumbersOutside/draftLinksOutside/injection guards; never stored.
+  'projects.github_pr_summary': 'projects',
+  // Vy's read-only GitHub issue match ranking on one project task (#5159, ADR-0060 D6): zero tools, allowlisted candidateId checks (UNKNOWN_ID fails closed); human clicks Confirm Link via taskLinkAdd.
+  'projects.github_issue_match': 'projects',
   // Member-scoped Vy proposing project tasks from one note (projects P7, #2598, ADR-0049): one call over the note text and project members' active seats; nothing is created until explicit human confirmation.
   'projects.tasks_from_note': 'projects',
   // Member-scoped Vy proposing project tasks from a note, meeting, or conversation (#2608, ADR-0049): one call over caller-readable source text and project members' active seats; nothing is created until explicit human confirmation.

@@ -67,10 +67,10 @@ import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@ludy/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@ludy/mod-crm';
 import type { MeetingResults, Notes, Transcript } from '@ludy/kernel-contract';
-import type { ProjectCycleSummarySource, ProjectTriageAssistSource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource, RoadmapAiSignalMatchSource } from '@ludy/mod-projects';
+import type { ProjectCycleSummarySource, ProjectGithubIssueMatchSource, ProjectGithubPrSummarySource, ProjectTriageAssistSource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource, RoadmapAiSignalMatchSource } from '@ludy/mod-projects';
 import { enrichMeetingSignalMatchSource } from '@ludy/mod-projects';
 import { sql } from 'kysely';
-import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@ludy/agent';
+import { AiBudgetExhaustedError, GITHUB_ISSUE_MATCH_CANDIDATES_MAX, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type ProjectGithubIssueMatchCandidateInput, type WeeklyFacts, type WeeklyResult } from '@ludy/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
@@ -111,6 +111,7 @@ import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-wee
 import { prepareProjectCycleSummary, projectCycleSummaryAi } from './project-cycle-summary-ai.ts';
 import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, prepareRoadmapSignalMatch, projectRoadmapAi } from './project-roadmap-ai.ts';
 import { prepareProjectTriageAssist, projectTriageAi } from './project-triage-ai.ts';
+import { prepareProjectGithubIssueMatch, prepareProjectGithubPrSummary, projectGithubAi } from './project-github-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
   analyzeSignPacketConsistency,
@@ -724,6 +725,19 @@ export function createRpcHandler(
   );
   const projectTriageCoworker = projectTriageAi(
     conversationReader?.projectTriageAssist ? { projectTriageAssist: conversationReader.projectTriageAssist.bind(conversationReader) } : null,
+    suggestionBudget(),
+  );
+  const projectGithubCoworker = projectGithubAi(
+    conversationReader
+      ? {
+          ...(conversationReader.projectGithubPrSummary
+            ? { projectGithubPrSummary: conversationReader.projectGithubPrSummary.bind(conversationReader) }
+            : {}),
+          ...(conversationReader.projectGithubIssueMatch
+            ? { projectGithubIssueMatch: conversationReader.projectGithubIssueMatch.bind(conversationReader) }
+            : {}),
+        }
+      : null,
     suggestionBudget(),
   );
   const signCoworker = signAi(
@@ -5865,6 +5879,104 @@ export function createRpcHandler(
           }),
         ),
         syncLog: os.projects.github.syncLog.handler(projectsQuery('projects.github.sync_log')),
+        aiPrSummary: os.projects.github.aiPrSummary.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const source = await runtime.query<ProjectGithubPrSummarySource>(
+              'projects.github.ai_pr_summary_source',
+              { projectId: input.projectId, taskId: input.taskId },
+              { actor, orgId },
+            );
+            return prepareProjectGithubPrSummary(
+              projectGithubCoworker,
+              orgId,
+              actor.userId,
+              source,
+              input.language ?? 'vi',
+            );
+          }),
+        ),
+        aiIssueMatch: os.projects.github.aiIssueMatch.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const source = await runtime.query<ProjectGithubIssueMatchSource>(
+              'projects.github.ai_issue_match_source',
+              { projectId: input.projectId, taskId: input.taskId },
+              { actor, orgId },
+            );
+            const existingSet = new Set(source.existingLinkKeys);
+            const candidateMap = new Map<string, ProjectGithubIssueMatchCandidateInput>();
+            const pushCandidate = (c: {
+              repoFullName: string;
+              externalNumber: number;
+              externalUrl: string;
+              externalTitle: string;
+              authorLogin: string | null;
+              updatedAt: string | null;
+            }) => {
+              const dedupeKey = `${c.repoFullName.toLowerCase()}#${c.externalNumber}`;
+              if (existingSet.has(dedupeKey) || candidateMap.has(dedupeKey)) return;
+              if (candidateMap.size >= GITHUB_ISSUE_MATCH_CANDIDATES_MAX) return;
+              candidateMap.set(dedupeKey, {
+                candidateId: `${c.repoFullName}#${c.externalNumber}`,
+                repoFullName: c.repoFullName,
+                externalNumber: c.externalNumber,
+                externalUrl: c.externalUrl,
+                externalTitle: c.externalTitle,
+                authorLogin: c.authorLogin,
+                updatedAt: c.updatedAt,
+                tainted: true,
+              });
+            };
+
+            if (
+              source.githubEnabled &&
+              source.provider === 'github_app' &&
+              source.externalAccountId &&
+              channels?.github?.hasAppCredentials
+            ) {
+              for (const repo of source.repos.slice(0, 5)) {
+                const fetched = await channels.github
+                  .listOpenIssues({ kind: 'github_app', installationId: source.externalAccountId }, repo.repoFullName, 20)
+                  .catch(() => []);
+                for (const item of fetched) {
+                  pushCandidate({
+                    repoFullName: item.repoFullName,
+                    externalNumber: item.number,
+                    externalUrl: item.externalUrl,
+                    externalTitle: item.externalTitle,
+                    authorLogin: item.authorLogin,
+                    updatedAt: item.updatedAt,
+                  });
+                }
+              }
+            }
+            for (const cached of source.cachedIssues) {
+              pushCandidate(cached);
+            }
+
+            return prepareProjectGithubIssueMatch(
+              projectGithubCoworker,
+              orgId,
+              actor.userId,
+              {
+                language: input.language ?? 'vi',
+                projectName: source.projectName,
+                task: {
+                  id: source.taskId,
+                  key: source.taskKey,
+                  title: source.taskTitle,
+                  description: source.taskDescription,
+                  tainted: source.taskTainted,
+                },
+                candidates: [...candidateMap.values()],
+              },
+              {
+                githubEnabled: source.githubEnabled,
+                aiStopped: source.aiStopped,
+                aiBudgetSpent: source.aiBudgetSpent,
+              },
+            );
+          }),
+        ),
       },
     },
     sign: {

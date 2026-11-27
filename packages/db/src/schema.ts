@@ -1687,6 +1687,7 @@ export type ProjectsGithubTaskLinkTable = Refine<
   {
     kind: GithubTaskLinkKind;
     external_state: GithubExternalState;
+    last_outbound_state: 'open' | 'closed' | null;
     link_source: GithubLinkSource;
   }
 >;

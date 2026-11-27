@@ -1240,6 +1240,15 @@ export const setTaskStatus = defineCommand({
     } else {
       requireUser(ctx);
     }
+    const existingTask = await ctx.trx
+      .selectFrom('ludy_kernel.task')
+      .select(['status'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!existingTask) throw new DomainError('TASK_NOT_FOUND', 404, 'Không tìm thấy việc này');
+
     const updated = await ctx.trx
       .updateTable('ludy_kernel.task')
       .set(release ? { status: input.status, checkout_run_id: null, lock_expires_at: null } : { status: input.status })
@@ -1251,6 +1260,15 @@ export const setTaskStatus = defineCommand({
     ctx.audit({ task: input.id, status: input.status });
     if (ctx.actor.type === 'user' && input.status === 'todo') {
       await requestWakeup(ctx, updated.assignee_position_id, { taskId: input.id, why: 'reopened' }, updated.tainted, updated.request_depth);
+    }
+    if (
+      ctx.installed('projects') &&
+      existingTask.status !== input.status &&
+      (input.status === 'done' || (existingTask.status === 'done' && input.status !== 'cancelled'))
+    ) {
+      // Enqueue outbound Done <-> Close/Reopen deliveries inside the same tx only when projects is installed;
+      // the definer further gates on org_app_on('projects'), opt-in outbound_close_issue_on_done, 'issue' links, and Layer 2 state equality (#5159).
+      await sql`SELECT ludy_projects.github_outbound_enqueue_for_task(${input.id}::uuid, ${existingTask.status}, ${input.status}, ${ctx.now}::timestamptz)`.execute(ctx.trx);
     }
     return { taskId: input.id, status: input.status };
   },

@@ -17,6 +17,8 @@ import {
 import type {
   GithubApplyInboundEventResult,
   GithubBindingGetResult,
+  GithubOutboundContextResult,
+  GithubRecordOutboundResult,
   GithubTaskLinksQueryResult,
 } from '@ludy/kernel-contract';
 import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
@@ -26,6 +28,9 @@ import { QUEUES } from './jobs-schema.ts';
 export const PROJECTS_GITHUB_WEBHOOK_SWEEP_CRON = '*/10 * * * *';
 export const PROJECTS_GITHUB_WEBHOOK_SWEEP_EXPIRE_SECONDS = 300;
 export const PROJECTS_GITHUB_HYDRATE_RETRY_LIMIT = 3;
+export const PROJECTS_GITHUB_OUTBOUND_SWEEP_CRON = '* * * * *';
+export const PROJECTS_GITHUB_OUTBOUND_SWEEP_EXPIRE_SECONDS = 55;
+export const PROJECTS_GITHUB_OUTBOUND_RETRY_LIMIT = 3;
 
 const WEBHOOK_CLAIM_BATCH = 50;
 const WEBHOOK_LEASE_SECONDS = 120;
@@ -119,6 +124,53 @@ export async function sweepGithubWebhooks(workerDb: Db): Promise<number> {
 export async function hasGithubWebhookWork(workerDb: Db): Promise<boolean> {
   const { rows } = await sql<{ ready: boolean }>`SELECT ludy_projects.github_webhook_has_work() AS ready`.execute(workerDb);
   return rows[0]?.ready === true;
+}
+
+export async function hasGithubOutboundWork(workerDb: Db): Promise<boolean> {
+  const { rows } = await sql<{ ready: boolean }>`SELECT ludy_projects.github_outbound_has_work() AS ready`.execute(workerDb);
+  return rows[0]?.ready === true;
+}
+
+export interface ProjectsGithubOutboundJob {
+  readonly orgId: string;
+  readonly deliveryId: string;
+}
+
+export function projectsGithubOutboundJobOptions(job: ProjectsGithubOutboundJob) {
+  return {
+    singletonKey: jobKey(job.orgId, QUEUES.projectsGithubOutbound, job.deliveryId),
+    retryLimit: PROJECTS_GITHUB_OUTBOUND_RETRY_LIMIT,
+    retryDelay: 20,
+    retryBackoff: true,
+  };
+}
+
+async function resolveGithubBindingAuth(
+  deps: { readonly runtime: Runtime; readonly broker: CredentialBroker },
+  orgId: string,
+  channelConnectionId: string,
+): Promise<{ kind: 'github_pat'; token: string } | { kind: 'github_app'; installationId: string } | null> {
+  try {
+    const sealed = await deps.runtime.query<SealedChannelCredential>(
+      'kernel.channel.credential',
+      { connectionId: channelConnectionId },
+      { actor: SYSTEM, orgId },
+    );
+    const opened = deps.broker.open(
+      { keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') },
+      { orgId, provider: sealed.provider, externalAccountId: sealed.externalAccountId },
+    );
+    const decoded = JSON.parse(opened) as { accessToken?: unknown; installationId?: unknown };
+    if (sealed.provider === 'github_app' && typeof decoded.installationId === 'string') {
+      return { kind: 'github_app', installationId: decoded.installationId };
+    }
+    if (sealed.provider === 'github_pat' && typeof decoded.accessToken === 'string') {
+      return { kind: 'github_pat', token: decoded.accessToken };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function collectMatchesForEvent(
@@ -584,26 +636,8 @@ export async function runGithubHydrateJob(
     return 'skipped';
   }
 
-  let auth: { kind: 'github_pat'; token: string } | { kind: 'github_app'; installationId: string };
-  try {
-    const sealed = await deps.runtime.query<SealedChannelCredential>(
-      'kernel.channel.credential',
-      { connectionId: binding.channelConnectionId },
-      { actor: SYSTEM, orgId: job.orgId },
-    );
-    const opened = deps.broker.open(
-      { keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') },
-      { orgId: job.orgId, provider: sealed.provider, externalAccountId: sealed.externalAccountId },
-    );
-    const decoded = JSON.parse(opened) as { accessToken?: unknown; installationId?: unknown };
-    if (sealed.provider === 'github_app' && typeof decoded.installationId === 'string') {
-      auth = { kind: 'github_app', installationId: decoded.installationId };
-    } else if (sealed.provider === 'github_pat' && typeof decoded.accessToken === 'string') {
-      auth = { kind: 'github_pat', token: decoded.accessToken };
-    } else {
-      return 'skipped';
-    }
-  } catch {
+  const auth = await resolveGithubBindingAuth(deps, job.orgId, binding.channelConnectionId);
+  if (!auth) {
     return 'skipped';
   }
 
@@ -672,6 +706,263 @@ export async function runGithubHydrateJob(
   } catch (error) {
     if (error instanceof GithubError && error.kind === 'not_found') {
       return 'skipped';
+    }
+    throw error;
+  }
+}
+
+interface OutboundSweepRow {
+  id: string;
+  org_id: string;
+  project_id: string;
+  task_id: string | null;
+  link_id: string | null;
+  repo_full_name: string | null;
+  external_number: number | null;
+  target_remote_state: string | null;
+}
+
+interface ClaimedOutboundRow {
+  id: string;
+  project_id: string;
+  task_id: string | null;
+  link_id: string | null;
+  repo_full_name: string | null;
+  external_number: number | null;
+  target_remote_state: string | null;
+  attempt_count: number;
+}
+
+export async function runGithubOutboundSweep(deps: {
+  readonly workerDb: Db;
+  readonly runtime: Runtime;
+  readonly sendOutbound: (job: ProjectsGithubOutboundJob) => Promise<unknown>;
+  readonly limit?: number | undefined;
+}): Promise<{ handedOver: number; skippedOff: number }> {
+  const batchLimit = deps.limit ?? 100;
+  const { rows } = await sql<OutboundSweepRow>`
+    SELECT id, org_id, project_id, task_id, link_id, repo_full_name, external_number, target_remote_state
+      FROM ludy_projects.github_outbound_sweep(${batchLimit}::int)`.execute(deps.workerDb);
+
+  const appOnByOrg = new Map<string, boolean>();
+  let handedOver = 0;
+  let skippedOff = 0;
+
+  for (const row of rows) {
+    let projectsOn = appOnByOrg.get(row.org_id);
+    if (projectsOn === undefined) {
+      projectsOn = await deps.runtime.appOn(row.org_id, 'projects', { fresh: true });
+      appOnByOrg.set(row.org_id, projectsOn);
+    }
+    if (!projectsOn) {
+      skippedOff += 1;
+      continue;
+    }
+    await deps.sendOutbound({ orgId: row.org_id, deliveryId: row.id });
+    handedOver += 1;
+  }
+
+  return { handedOver, skippedOff };
+}
+
+async function finishOutboundDelivery(
+  workerDb: Db,
+  orgId: string,
+  deliveryId: string,
+  status: 'applied' | 'skipped' | 'failed',
+  taskId: string | null,
+  errorCode: string | null,
+  summary: string,
+): Promise<void> {
+  await sql`
+    SELECT ludy_projects.github_sync_delivery_finish(
+      ${orgId}::uuid,
+      ${deliveryId}::uuid,
+      ${status},
+      ${taskId === null ? sql`NULL::uuid` : sql`${taskId}::uuid`},
+      ${errorCode},
+      ${summary}
+    )`.execute(workerDb);
+}
+
+export async function runGithubOutboundJob(
+  deps: {
+    readonly runtime: Runtime;
+    readonly workerDb: Db;
+    readonly broker: CredentialBroker;
+    readonly github: GithubClient;
+  },
+  job: ProjectsGithubOutboundJob,
+  meta?: { readonly retryCount?: number | undefined; readonly retryLimit?: number | undefined },
+): Promise<'applied' | 'skipped' | 'failed'> {
+  // Enforce fresh app gate upfront before touching credentials, DB claims/mutations, or api.github.com (ADR-0053, #5159).
+  if (!(await deps.runtime.appOn(job.orgId, 'projects', { fresh: true }))) {
+    return 'skipped';
+  }
+
+  const { rows: claimRows } = await sql<ClaimedOutboundRow>`
+    SELECT id, project_id, task_id, link_id, repo_full_name, external_number, target_remote_state, attempt_count
+      FROM ludy_projects.github_outbound_delivery_claim(${job.orgId}::uuid, ${job.deliveryId}::uuid)`.execute(deps.workerDb);
+  const claimed = claimRows[0];
+  if (!claimed) {
+    return 'skipped';
+  }
+
+  const targetState =
+    claimed.target_remote_state === 'open' || claimed.target_remote_state === 'closed'
+      ? claimed.target_remote_state
+      : null;
+  if (!claimed.task_id || !claimed.link_id || !targetState) {
+    await finishOutboundDelivery(
+      deps.workerDb,
+      job.orgId,
+      claimed.id,
+      'skipped',
+      claimed.task_id,
+      'INVALID_TARGET',
+      'Outbound delivery missing task, link, or target state',
+    );
+    return 'skipped';
+  }
+
+  const outCtx = await deps.runtime.query<GithubOutboundContextResult>(
+    'projects.github.outbound_context',
+    { projectId: claimed.project_id, taskId: claimed.task_id, linkId: claimed.link_id },
+    { actor: SYSTEM, orgId: job.orgId },
+  );
+
+  if (
+    outCtx.projectArchived ||
+    !outCtx.binding ||
+    !outCtx.binding.githubEnabled ||
+    !outCtx.binding.outboundCloseIssueOnDone ||
+    outCtx.binding.pausedAt !== null ||
+    outCtx.binding.connectionStatus !== 'active' ||
+    !outCtx.binding.channelConnectionId ||
+    !outCtx.repoBound ||
+    !outCtx.link ||
+    outCtx.link.kind !== 'issue'
+  ) {
+    await finishOutboundDelivery(
+      deps.workerDb,
+      job.orgId,
+      claimed.id,
+      'skipped',
+      claimed.task_id,
+      'PRECONDITION_SKIPPED',
+      'Opt-in outbound sync disabled, paused, unbound, or link is not an issue',
+    );
+    return 'skipped';
+  }
+
+  const taskMatchesTarget =
+    (targetState === 'closed' && outCtx.taskStatus === 'done') ||
+    (targetState === 'open' && outCtx.taskStatus !== null && outCtx.taskStatus !== 'done' && outCtx.taskStatus !== 'cancelled');
+  if (!taskMatchesTarget) {
+    await finishOutboundDelivery(
+      deps.workerDb,
+      job.orgId,
+      claimed.id,
+      'skipped',
+      claimed.task_id,
+      'TASK_STATE_CHANGED',
+      'Task status changed before outbound delivery ran',
+    );
+    return 'skipped';
+  }
+
+  // Layer 2 check before credential open and PATCH: skip cleanly if remote link state already matches target.
+  if (outCtx.link.externalState === targetState) {
+    await finishOutboundDelivery(
+      deps.workerDb,
+      job.orgId,
+      claimed.id,
+      'skipped',
+      claimed.task_id,
+      null,
+      `Issue ${outCtx.link.repoFullName}#${outCtx.link.externalNumber} already ${targetState}`,
+    );
+    return 'skipped';
+  }
+
+  const auth = await resolveGithubBindingAuth(deps, job.orgId, outCtx.binding.channelConnectionId);
+  if (!auth) {
+    await finishOutboundDelivery(
+      deps.workerDb,
+      job.orgId,
+      claimed.id,
+      'failed',
+      claimed.task_id,
+      'CREDENTIALS_UNAVAILABLE',
+      'GitHub credentials could not be opened for outbound sync',
+    );
+    return 'failed';
+  }
+
+  const slashIdx = outCtx.link.repoFullName.indexOf('/');
+  const owner = slashIdx > 0 ? outCtx.link.repoFullName.slice(0, slashIdx) : '';
+  const repo = slashIdx > 0 ? outCtx.link.repoFullName.slice(slashIdx + 1) : '';
+
+  try {
+    const updatedItem = await deps.github.setIssueState({
+      auth,
+      owner,
+      repo,
+      issueNumber: outCtx.link.externalNumber,
+      state: targetState,
+      kind: 'issue',
+    });
+
+    const recorded = await deps.runtime.execute<GithubRecordOutboundResult>(
+      'projects.github.record_outbound',
+      {
+        projectId: claimed.project_id,
+        taskId: claimed.task_id,
+        linkId: claimed.link_id,
+        externalState: updatedItem.externalState === 'closed' ? 'closed' : 'open',
+        externalTitle: updatedItem.externalTitle,
+        remoteUpdatedAt: updatedItem.updatedAt,
+      },
+      { actor: SYSTEM, orgId: job.orgId },
+    );
+
+    await finishOutboundDelivery(
+      deps.workerDb,
+      job.orgId,
+      claimed.id,
+      recorded.updated ? 'applied' : 'skipped',
+      claimed.task_id,
+      null,
+      `Set ${outCtx.link.repoFullName}#${outCtx.link.externalNumber} state=${targetState}`,
+    );
+    return recorded.updated ? 'applied' : 'skipped';
+  } catch (error) {
+    const isPermanentGithub =
+      error instanceof GithubError &&
+      (error.kind === 'not_found' || error.kind === 'forbidden' || error.kind === 'credentials' || error.kind === 'bad_request');
+    const code =
+      error instanceof GithubError
+        ? `GITHUB_${error.kind.toUpperCase()}`
+        : error instanceof DomainError
+          ? error.code
+          : error instanceof Error
+            ? error.name
+            : 'ERROR';
+    const retriesExhausted =
+      claimed.attempt_count >= 5 ||
+      (meta?.retryCount !== undefined && meta?.retryLimit !== undefined && meta.retryCount >= meta.retryLimit);
+
+    if (isPermanentGithub || retriesExhausted) {
+      await finishOutboundDelivery(
+        deps.workerDb,
+        job.orgId,
+        claimed.id,
+        'failed',
+        claimed.task_id,
+        code.slice(0, 64),
+        'Outbound GitHub issue state sync failed',
+      ).catch(() => {});
+      if (isPermanentGithub) return 'failed';
     }
     throw error;
   }

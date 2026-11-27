@@ -938,6 +938,10 @@ import {
   zGithubRotatePatHookRpcResult,
   zGithubSyncLogQueryInput,
   zGithubSyncLogQueryResult,
+  zGithubPrSummaryRpcInput,
+  zGithubPrSummaryRpcResult,
+  zGithubIssueMatchRpcInput,
+  zGithubIssueMatchRpcResult,
   zGithubTaskLinkAddRpcInput,
   zGithubTaskLinkAddRpcResult,
   zGithubTaskLinkRemoveInput,
@@ -4284,6 +4288,8 @@ export const contract = {
         .input(zGithubTaskLinkRemoveInput.extend({ idempotencyKey: zId }))
         .output(z.strictObject({ removed: z.boolean() })),
       syncLog: oc.input(zGithubSyncLogQueryInput).output(zGithubSyncLogQueryResult),
+      aiPrSummary: oc.input(zGithubPrSummaryRpcInput).output(zGithubPrSummaryRpcResult),
+      aiIssueMatch: oc.input(zGithubIssueMatchRpcInput).output(zGithubIssueMatchRpcResult),
     },
   },
   // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via LUDY_MODULES and org_app_on.

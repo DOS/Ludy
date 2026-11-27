@@ -4341,6 +4341,8 @@ export interface ProjectsGithubTaskLinkTable {
   created_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  last_outbound_state: string | null;
+  last_outbound_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** ludy_projects.project_column */

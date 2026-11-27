@@ -73,7 +73,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'packages/db/src/schema.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'], why: 'refinements of the generated table types (CHECK unions, trigger-set columns); types only, no SQL' },
   'packages/kernel/src/agents.ts': {
     modules: ['projects'],
-    why: 'kernel.projects_roadmap.otp_cleanup prunes expired/invalidated public roadmap OTP challenges older than 24 hours through crove_projects.cleanup_roadmap_otp_org (#4399, ADR-0053, ADR-0057) whether or not projects is switched on, so email addresses left behind before projects was turned off still expire nightly',
+    why: 'kernel.projects_roadmap.otp_cleanup prunes expired/invalidated public roadmap OTP challenges older than 24 hours through crove_projects.cleanup_roadmap_otp_org (#4399, ADR-0053, ADR-0057) whether or not projects is switched on, and kernel.task.set_status calls ludy_projects.github_outbound_enqueue_for_task only when projects is installed (#5159, ADR-0060)',
   },
   'packages/kernel/src/engage-view.ts': {
     modules: ['ads', 'crm', 'social'],
@@ -139,7 +139,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/notes-worker.ts': { modules: ['notes'], why: 'the notes jobs, worked and scheduled only when notes is installed (worker.ts)' },
   'apps/kernel/src/projects-public-roadmap.ts': { modules: ['projects'], why: 'the orgless public roadmap board view, OTP request/verify, idea submission, vote toggle, and unsubscribe routes (crove_projects.public_roadmap_* definers, #4399), registered only when projects is installed (http.ts)' },
   'apps/kernel/src/projects-github-webhook.ts': { modules: ['projects'], why: 'public GitHub webhook intake routes calling ludy_projects.github_webhook_* definers (#5158), registered only when projects is installed (http.ts)' },
-  'apps/kernel/src/projects-github-worker.ts': { modules: ['projects'], why: 'projects-github-webhook intake drain/sweep and projects-github-hydrate job calling ludy_projects.github_* definers (#5158), worked only when projects is installed (worker.ts)' },
+  'apps/kernel/src/projects-github-worker.ts': { modules: ['projects'], why: 'projects-github-webhook intake drain/sweep, projects-github-hydrate, projects-github-sweep, and projects-github-outbound calling ludy_projects.github_* definers (#5158, #5159), worked only when projects is installed (worker.ts)' },
   'apps/kernel/src/projects-recurring-worker.ts': { modules: ['projects'], why: 'the recurring project task sweep (crove_projects.recurring_tasks_due), worked and scheduled only when projects is installed (worker.ts)' },
   'apps/kernel/src/projects-roadmap-worker.ts': { modules: ['projects'], why: 'the nightly public roadmap OTP retention sweep (crove_projects.cleanup_roadmap_otp_due_orgs, #4399), worked and scheduled only when projects is installed (worker.ts)' },
   'apps/kernel/src/sign-hook.ts': { modules: ['sign'], why: 'the minute sweep of queued eSign outbound webhooks (#4440): the worker-only ludy_sign.webhook_open definer lists queued deliveries, worked and scheduled only when sign is installed (worker.ts)' },
