@@ -261,7 +261,14 @@ export async function importStatement(ctx: CommandContext, input: BankStatementI
     });
   }
   const importId = await storeLines(ctx, legalEntityId, input.bankAccount, lines);
-  const result = { importId, counts: preview.counts, breaks: preview.breaks };
+  const result: BankImportResult = {
+    importId,
+    counts: preview.counts,
+    breaks: preview.breaks,
+    ...(preview.feed ? { feed: preview.feed } : {}),
+  };
+  const feedSkipped = preview.feed?.leftOut ?? 0;
+  const plainDuplicates = preview.counts.duplicate - feedSkipped;
   ctx.audit({
     bankAccount: input.bankAccount,
     importId,
@@ -278,7 +285,7 @@ export async function importStatement(ctx: CommandContext, input: BankStatementI
     'finance.bank_account',
     importId,
     'bank.statement_imported',
-    `Nhập sao kê ${input.bankAccount}: ${preview.counts.new + preview.counts.ambiguous + preview.counts.conflict} dòng mới, ${preview.counts.duplicate} dòng đã có${preview.counts.conflict > 0 ? `, ${preview.counts.conflict} dòng trùng mã tham chiếu nhưng khác ngày hoặc số tiền` : ''}`,
+    `Nhập sao kê ${input.bankAccount}: ${preview.counts.new + preview.counts.ambiguous + preview.counts.conflict} dòng mới, ${plainDuplicates} dòng đã có${feedSkipped > 0 && preview.feed ? `, ${feedSkipped} dòng bỏ qua (nguồn tự động từ ${preview.feed.from})` : ''}${preview.counts.conflict > 0 ? `, ${preview.counts.conflict} dòng trùng mã tham chiếu nhưng khác ngày hoặc số tiền` : ''}`,
     // An import with no new line stores no bank_line to take the entity from (#1728).
     { legalEntityId },
   );
