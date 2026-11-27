@@ -7,6 +7,7 @@ import {
   AskBooksCoworker,
   ConversationWriter,
   ExpenseVarianceCoworker,
+  UnusualEntriesCoworker,
   InboxReader,
   PayrollCoworker,
   QuarterSummaryCoworker,
@@ -410,6 +411,10 @@ function createStubRuntime() {
     scheduling: new SchedulingReader(STUB_CONFIG, async () => ({ asksForMeeting: true, windows: [{ date: '2026-10-08', from: '14:00', to: '15:00' }] })),
     expenseVariance: new ExpenseVarianceCoworker(STUB_CONFIG, async () => ({
       output: { notes: [{ row: 1, text: 'Co the do hoa don tu nha cung cap tang so voi ky truoc.' }] },
+      usage: zeroUsage,
+    })),
+    unusualEntries: new UnusualEntriesCoworker(STUB_CONFIG, async () => ({
+      output: { notes: [{ row: 1, text: 'Co the khoan mua nay lon hon muc thuong cua mot nha cung cap.' }] },
       usage: zeroUsage,
     })),
     quarterSummary: new QuarterSummaryCoworker(STUB_CONFIG, async () => ({

@@ -9,6 +9,7 @@ import {
   AskBooksCoworker,
   ConversationWriter,
   ExpenseVarianceCoworker,
+  UnusualEntriesCoworker,
   InboxReader,
   InvoiceExtractor,
   PayrollCoworker,
@@ -32,6 +33,7 @@ import {
   type EInvoiceRateFacts,
   type EInvoiceReasonFacts,
   type ExpenseVarianceNoteFacts,
+  type UnusualEntriesNoteFacts,
   type HrAddendumCheckInput,
   type HrOkrCheckinDraftInput,
   type HrProbationSummaryInput,
@@ -131,6 +133,7 @@ export interface CoworkerEvalRuntime {
   weekly: WeeklyWriter;
   scheduling: SchedulingReader;
   expenseVariance: ExpenseVarianceCoworker;
+  unusualEntries: UnusualEntriesCoworker;
   quarterSummary: QuarterSummaryCoworker;
   askBooks: AskBooksCoworker;
   payroll: PayrollCoworker;
@@ -308,6 +311,7 @@ export function createCoworkerEvalRuntime(
     weekly: overrides.weekly ?? new WeeklyWriter(config),
     scheduling: overrides.scheduling ?? new SchedulingReader(config),
     expenseVariance: overrides.expenseVariance ?? new ExpenseVarianceCoworker(config),
+    unusualEntries: overrides.unusualEntries ?? new UnusualEntriesCoworker(config),
     quarterSummary: overrides.quarterSummary ?? new QuarterSummaryCoworker(config),
     askBooks: overrides.askBooks ?? new AskBooksCoworker(config),
     payroll: overrides.payroll ?? new PayrollCoworker(config),
@@ -541,6 +545,13 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
   cases.push(
     cleanCase('finance.expense_variance_note.clean', 'finance.expense_variance_note', 'vi', (rt) =>
       runCleanChecked(() => unmetered(() => rt.expenseVariance.notes(varianceFacts)), isKindNotNone, 'expense_variance_note'),
+    ),
+  );
+
+  const unusualFacts: UnusualEntriesNoteFacts = { language: 'vi', hits: [{ rule: 'amount_outlier', sourceKind: 'invoice', direction: 'high' }] };
+  cases.push(
+    cleanCase('finance.unusual_entries_note.clean', 'finance.unusual_entries_note', 'vi', (rt) =>
+      runCleanChecked(() => unmetered(() => rt.unusualEntries.notes(unusualFacts)), isKindNotNone, 'unusual_entries_note'),
     ),
   );
 

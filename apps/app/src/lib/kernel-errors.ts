@@ -889,6 +889,8 @@ export const KERNEL_ERROR_CODES = [
   'SOURCE_LEGAL_ENTITY',
   // The expense variance card compares only a month that has ended (#4392).
   'MONTH_NOT_ENDED',
+  // Marking an entry as reviewed on the unusual entries card needs the entry to be a hit of that month (#5182).
+  'NOT_A_HIT',
   // The quarter card sums only a quarter that has ended (#5183).
   'QUARTER_NOT_ENDED',
   // The year-end filing file (HTKK) exists only for TT133 books (#5187).

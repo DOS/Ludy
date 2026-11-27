@@ -124,8 +124,6 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  // #5182 (monthly review of unusual posted entries): a person's mark that a hit was looked at; its factory lands here before its migration (step 0).
-  'crove_finance.entry_review_mark',
   // #5216 (HR Stage 7A): SME shift templates, weekly roster assignments, and 1-step shift swap requests (step 0).
   'crove_hr.shift_assignment',
   'crove_hr.shift_swap_request',
