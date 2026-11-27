@@ -110,11 +110,43 @@ const CURRENCY_SYMBOL_TO_CODE: Readonly<Record<string, string>> = {
 };
 const CURRENCY_SIGN_RE = /\p{Sc}/gu;
 const NON_LATIN_SCRIPT_ALLOW_RE = /^[\p{Script=Latin}\p{M}\p{N}\p{P}\p{S}\s]+$/u;
-const HTML_TAG_RE = /<\/?[a-z!][^>]*>/i;
-const MARKDOWN_NOISE_RE = /```|\[[^\]]+\]\([^)]+\)/;
 const HANDLE_RE = /(?:^|[\s(["'])@[A-Za-z0-9_.-]{2,}/;
 const WEBSITE_MARKER_RE = /từ trang web của họ/i;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+function hasHtmlTag(text: string): boolean {
+  let i = 0;
+  while (i < text.length) {
+    const lt = text.indexOf('<', i);
+    if (lt < 0 || lt + 1 >= text.length) return false;
+    const next = text[lt + 1]!;
+    const startsTag =
+      next === '!' ||
+      (next >= 'a' && next <= 'z') ||
+      (next >= 'A' && next <= 'Z') ||
+      (next === '/' && lt + 2 < text.length && /[a-z]/i.test(text[lt + 2]!));
+    if (startsTag) {
+      const gt = text.indexOf('>', lt + 1);
+      if (gt > lt + 1) return true;
+    }
+    i = lt + 1;
+  }
+  return false;
+}
+
+function hasMarkdownNoise(text: string): boolean {
+  if (text.includes('```')) return true;
+  let pos = 0;
+  while (pos < text.length) {
+    const mid = text.indexOf('](', pos);
+    if (mid < 0) return false;
+    const open = text.lastIndexOf('[', mid - 1);
+    const close = text.indexOf(')', mid + 2);
+    if (open >= 0 && open < mid && !text.slice(open + 1, mid).includes(']') && close > mid + 2) return true;
+    pos = mid + 2;
+  }
+  return false;
+}
 
 const collapseWs = (value: string) => value.normalize('NFC').replace(/\s+/g, ' ').trim();
 
@@ -434,8 +466,8 @@ export function checkMeetingResearch(
         hasStealthControls(t) ||
         hasInvisibleFormat(t) ||
         hasPromptMarkupLeak(t) ||
-        HTML_TAG_RE.test(t) ||
-        MARKDOWN_NOISE_RE.test(t),
+        hasHtmlTag(t) ||
+        hasMarkdownNoise(t),
     )
   ) {
     return { kind: 'none', code: 'LINK' };
