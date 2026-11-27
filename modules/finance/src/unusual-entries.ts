@@ -58,7 +58,7 @@ async function booksRows(ctx: QueryContext, entity: string): Promise<BooksRow[]>
   return rows.map((r) => ({ regime: r.regime, chartVersion: r.chart_version, effectiveFrom: String(r.effective_from).slice(0, 10) }));
 }
 
-// An invoice number as the intake compares it (l10n-vn normalizeNumber): spaces dropped, then leading zeros dropped when it is all digits, else upper case. POSIX classes keep the template free of backslashes.
+// An invoice number as the tax portal reconciliation compares it (l10n-vn normalizeNumber; the intake itself compares series and number exactly, so this finds what the intake lets through: the same number under another series or written another way): spaces dropped, then leading zeros dropped when it is all digits, else upper case. POSIX classes keep the template free of backslashes.
 const invoiceKey = (column: string) => {
   const squeezed = sql`pg_catalog.regexp_replace(pg_catalog.btrim(${sql.ref(column)}), '[[:space:]]+', '', 'g')`;
   return sql`CASE WHEN ${squeezed} ~ '^[0-9]+$' THEN pg_catalog.regexp_replace(${squeezed}, '^0+(?=[0-9])', '') ELSE pg_catalog.upper(${squeezed}) END`;
@@ -97,7 +97,9 @@ async function hitRows(ctx: QueryContext, entity: string, regime: 'tt133' | 'tt9
   const org = ctx.orgId;
   const { rows } = await sql<HitRow>`
     WITH ln AS (
-      SELECT e.id AS entry_id, e.entry_date, e.source_type, e.source_id, e.description, l.account_code, l.party_id, l.debit, l.credit,
+      SELECT e.id AS entry_id, e.entry_date, e.source_type, e.source_id, e.description, l.account_code, l.debit, l.credit,
+        -- The party of a line is its own, or the one party the whole entry names: an invoice posts the party on its payable or receivable line only (record.ts), not on the expense line the rules look at.
+        COALESCE(l.party_id, CASE WHEN pg_catalog.min(l.party_id::text) OVER w = pg_catalog.max(l.party_id::text) OVER w THEN (pg_catalog.min(l.party_id::text) OVER w)::uuid END) AS party_id,
         CASE WHEN ${regime}::text = 'tt133' AND l.account_code ~ '^64[0-9][0-9]' THEN pg_catalog.left(l.account_code, 4) ELSE pg_catalog.left(l.account_code, 3) END AS grp,
         CASE
           WHEN e.source_type = 'finance.purchase_document' THEN 'invoice'
@@ -114,6 +116,7 @@ async function hitRows(ctx: QueryContext, entity: string, regime: 'tt133' | 'tt9
         AND e.reverses_entry_id IS NULL
         AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_entry rv WHERE rv.org_id = e.org_id AND rv.reverses_entry_id = e.id)
         AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_line c WHERE c.org_id = e.org_id AND c.entry_id = e.id AND c.account_code LIKE '911%')
+      WINDOW w AS (PARTITION BY e.id)
     ),
     em AS (
       SELECT entry_id, pg_catalog.min(entry_date) AS entry_date, pg_catalog.min(source_type) AS source_type, pg_catalog.min(source_id::text)::uuid AS source_id, pg_catalog.min(kind) AS kind,
@@ -149,7 +152,7 @@ async function hitRows(ctx: QueryContext, entity: string, regime: 'tt133' | 'tt9
       JOIN med m ON m.party_id = c.party_id AND m.grp = c.grp
       JOIN mad s ON s.party_id = c.party_id AND s.grp = c.grp
       WHERE c.entry_date >= ${span.from}::date AND m.n >= ${UNUSUAL_AMOUNT_MIN_HISTORY} AND m.median > 0
-        AND (c.amt >= m.median * ${UNUSUAL_AMOUNT_FACTOR}::numeric OR c.amt <= m.median / ${UNUSUAL_AMOUNT_FACTOR}::numeric)
+        AND (c.amt >= m.median * ${UNUSUAL_AMOUNT_FACTOR}::numeric OR (c.amt > 0 AND c.amt <= m.median / ${UNUSUAL_AMOUNT_FACTOR}::numeric))
         AND pg_catalog.abs(c.amt - m.median) >= ${UNUSUAL_AMOUNT_MIN_DIFF}::numeric
         AND (s.mad = 0 OR pg_catalog.abs(c.amt - m.median) >= ${UNUSUAL_MAD_FACTOR}::numeric * s.mad)
       ORDER BY c.entry_id, pg_catalog.abs(c.amt - m.median) DESC, c.grp
@@ -197,7 +200,7 @@ async function hitRows(ctx: QueryContext, entity: string, regime: 'tt133' | 'tt9
       WHERE e.kind IN ('manual', 'cash_bank') AND e.amount >= ${UNUSUAL_OFF_DAY_MIN_AMOUNT}::numeric
         AND (e.entry_date = ANY (${[...holidays]}::text[]::date[]) OR pg_catalog.date_part('isodow', e.entry_date) IN (6, 7))
     ),
-    -- duplicate_invoice: a purchase document that has an earlier copy in force (same supplier, same invoice number as the intake compares it, same total), unless the pair is a replacement or a correction.
+    -- duplicate_invoice: a purchase document that has an earlier copy in force (same supplier, same invoice number once spaces and leading zeros are normalized, the series may differ, same total), unless the pair is a replacement or a correction.
     hd AS (
       SELECT DISTINCT ON (e.entry_id) e.entry_id AS entry_id, 'duplicate_invoice'::text AS rule, d1.party_id AS party_id, NULL::text AS grp, NULL::numeric AS d_amount, NULL::numeric AS d_median,
         NULL::bigint AS d_count, NULL::text AS d_direction, NULL::text AS d_basis, NULL::text AS d_day, NULL::text AS d_control, d1.invoice_number AS d_number, o.entry_id AS d_other,

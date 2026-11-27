@@ -119,7 +119,8 @@ suite('monthly review of unusual entries (#5182)', () => {
       date: a.date,
       description: a.description ?? 'H',
       ...(a.sourceType ? { sourceType: a.sourceType } : {}),
-      lines: [{ account: a.account, debit: a.amount, ...(a.party ? { party: a.party } : {}) }, { account: '331', credit: a.amount }],
+      // As an invoice posts it (record.ts): the party is on the payable line only, the cost line has none.
+      lines: [{ account: a.account, debit: a.amount }, { account: '331', credit: a.amount, ...(a.party ? { party: a.party } : {}) }],
     });
   // The reversal of an entry made by spend(): a new entry that names the original and mirrors its lines with the sides swapped.
   const unspend = (a: { entity: string; original: string; date: string; account: string; amount: string; party?: string }) =>
@@ -128,7 +129,7 @@ suite('monthly review of unusual entries (#5182)', () => {
       date: a.date,
       description: 'Đảo',
       reverses: a.original,
-      lines: [{ account: a.account, credit: a.amount, ...(a.party ? { party: a.party } : {}) }, { account: '331', debit: a.amount }],
+      lines: [{ account: a.account, credit: a.amount }, { account: '331', debit: a.amount, ...(a.party ? { party: a.party } : {}) }],
     });
   // A supplier with a steady history: one entry per date.
   const history = async (entity: string, party: string, account: string, amounts: readonly string[] | string, dates: readonly string[] = SEVEN) => {
@@ -171,7 +172,7 @@ suite('monthly review of unusual entries (#5182)', () => {
         description: `HD ${a.series}/${a.number}`,
         sourceType: 'finance.purchase_document',
         sourceId: doc.id,
-        lines: [{ account: '6422', debit: a.total, party: a.party }, { account: '331', credit: a.total }],
+        lines: [{ account: '6422', debit: a.total }, { account: '331', credit: a.total, party: a.party }],
       });
       return { document: doc.id, entry };
     });

@@ -70,8 +70,9 @@ runs in the member's own transaction, every statement filters org and entity, an
 the hits reads the last 24 months of one entity at most.
 
 **Rules (codes in `packages/kernel-contract/src/finance-unusual-entries.ts`, thresholds are defaults, not settings).**
-- `duplicate_invoice`: a purchase document in force with the same supplier, the same invoice number (as the intake compares
-  it: spaces dropped, leading zeros dropped when it is all digits, else upper case) and the same total as an earlier one in
+- `duplicate_invoice`: a purchase document in force with the same supplier, the same invoice number (spaces dropped, leading
+  zeros dropped when it is all digits, else upper case; the series may differ, which is what the intake's own exact check of
+  series and number lets through) and the same total as an earlier one in
   force; a replacement or a correction of it is not a duplicate. The later copy is the hit.
 - `control_manual`: a voucher a person typed (no payroll, settlement, payout, stock, closing, surplus or fee link) with a
   line on 131, 331, 133, 333 or 334.
@@ -85,6 +86,10 @@ the hits reads the last 24 months of one entity at most.
 - `off_day`: an entry a person keyed (a manual voucher or a cash or bank voucher) of 5,000,000 dong or more, dated on a
   Saturday, a Sunday or a public holiday of the shared calendar (#4387: the fixed dates, Tết and the Hùng Kings day for the
   years in its lunar table). Days the government moves are not in that calendar and the 2027 table is unconfirmed (#2520).
+
+**Who an entry is about.** A line's party is its own or the one party the whole entry names: an invoice posts the party on
+its payable line only, so the expense line takes the entry's party (an entry that names several parties leaves its lines as
+they are).
 
 **Left out everywhere (candidates and history).** An entry with a line on 911 (both regimes); an entry that has a reversal
 and a reversal entry itself, whatever their dates. This is stricter than the cost variance, which only drops a pair when

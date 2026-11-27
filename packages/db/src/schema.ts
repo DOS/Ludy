@@ -491,6 +491,11 @@ export type InputVatCheckTable = Refine<
   'legal_entity_id'
 >;
 
+// A person's mark that one hit of the monthly review of unusual entries was looked at (#5182): one row per (entry, rule); insert-only for the tenant role.
+export const ENTRY_REVIEW_RULES = ['duplicate_invoice', 'control_manual', 'amount_outlier', 'new_account', 'off_day'] as const;
+export type EntryReviewRule = (typeof ENTRY_REVIEW_RULES)[number];
+export type EntryReviewMarkTable = Refine<G.FinanceEntryReviewMarkTable, { rule: ColumnType<EntryReviewRule, EntryReviewRule, never> }>;
+
 // The VAT return 01/GTGT marked filed for a period (#1400), with [22], [25] and [43] as filed. Append-only; the latest
 // row of a period is its state. source: 'entered' on the VAT screen, 'computed' when marked done from the tax calendar.
 export const VAT_RETURN_FILED_STATUSES = ['filed', 'withdrawn'] as const;
@@ -2095,7 +2100,7 @@ type Refined = Tables<{
   'ludy_finance.chart': ChartTable;
   'ludy_finance.legal_entity_books': LegalEntityBooksTable;
   'ludy_finance.input_vat_check': InputVatCheckTable;
-  'ludy_finance.entry_review_mark': G.FinanceEntryReviewMarkTable;
+  'ludy_finance.entry_review_mark': EntryReviewMarkTable;
   'ludy_finance.vat_return_filed': VatReturnFiledTable;
   'ludy_finance.journal_voucher': JournalVoucherTable;
   'ludy_finance.portal_invoice_list': PortalInvoiceListTable;
