@@ -1,0 +1,122 @@
+# Temporary audited workflow for #5113 (owner approval 2026-11-27):
+# ensures the pilot smoke account owns the `ludy-smoke-test` organization through
+# the standard HTTPS RPC write path (`org/create`) and verifies end-to-end smoke
+# upload/extraction/rejection against `ludy-smoke-test` without touching host SSH
+# or exposing pilot secrets. Removed right after `SMOKE_ORG` switches.
+name: Pilot smoke org migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Required exact confirmation phrase (ensure-ludy-smoke-org)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-pilot
+  cancel-in-progress: false
+
+jobs:
+  migrate-smoke-org:
+    name: Ensure ludy-smoke-test org on pilot
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: pilot
+    env:
+      INPUT_CONFIRM: ${{ inputs.confirm }}
+      GIT_REF: ${{ github.ref }}
+      PUBLIC_URL: ${{ vars.DEPLOY_PUBLIC_URL }}
+      MODULES_ENV: ${{ vars.DEPLOY_MODULES_ENVIRONMENT }}
+      DEPLOY_MODULES: ${{ vars.DEPLOY_LUDY_MODULES }}
+    steps:
+      - name: Verify main branch, confirmation phrase, and public URL
+        run: |
+          set -euo pipefail
+          if [ "$GIT_REF" != 'refs/heads/main' ]; then
+            echo "::error::May run from refs/heads/main only (got '$GIT_REF')"
+            exit 1
+          fi
+          if [ "$INPUT_CONFIRM" != 'ensure-ludy-smoke-org' ]; then
+            echo '::error::Set confirm=ensure-ludy-smoke-org to run this workflow'
+            exit 1
+          fi
+          case "$PUBLIC_URL" in
+            https://*) ;;
+            *)
+              echo '::error::DEPLOY_PUBLIC_URL must be an https:// URL'
+              exit 1
+              ;;
+          esac
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Ensure ludy-smoke-test org exists via kernel.org.create RPC
+        env:
+          SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in SMOKE_EMAIL SMOKE_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required pilot secret: $name"
+              exit 1
+            fi
+          done
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          (
+            umask 077
+            base="${PUBLIC_URL%/}"
+            answer="$(jq -n '{email: env.SMOKE_EMAIL, password: env.SMOKE_PASSWORD}' |
+              curl --silent --show-error --fail --max-time 15 --request POST \
+                --header 'content-type: application/json' \
+                --data-binary @- "$base/auth/v1/token?grant_type=password")"
+            token="$(jq -r '.access_token // empty' <<<"$answer")"
+            if [[ ! "$token" =~ ^[A-Za-z0-9._-]+$ ]]; then
+              echo '::error::Sign-in answered without a valid access token'
+              exit 1
+            fi
+            headers="$work/headers"
+            printf 'authorization: Bearer %s\n' "$token" >"$headers"
+
+            me_json="$(curl --silent --show-error --fail --max-time 30 \
+              --header "@$headers" --request POST \
+              --header 'content-type: application/json' \
+              --data-binary '{}' "$base/api/rpc/me/get")"
+            existing="$(jq -r '.json.orgs[]? | select(.slug == "ludy-smoke-test") | .slug' <<<"$me_json" | head -n 1)"
+            if [ "$existing" = 'ludy-smoke-test' ]; then
+              echo 'ludy-smoke-test already exists for the smoke account'
+              exit 0
+            fi
+
+            create_json="$(curl --silent --show-error --fail --max-time 30 \
+              --header "@$headers" --request POST \
+              --header 'content-type: application/json' \
+              --data-binary '{"json":{"name":"Ludy smoke test","idempotencyKey":"11111111-5113-4000-8000-000000005113"}}' \
+              "$base/api/rpc/org/create")"
+            created_slug="$(jq -r '.json.slug // empty' <<<"$create_json")"
+            if [ "$created_slug" != 'ludy-smoke-test' ]; then
+              echo "::error::Expected created org slug ludy-smoke-test, got '${created_slug:-empty}'"
+              exit 1
+            fi
+            echo 'Created ludy-smoke-test org cleanly via kernel.org.create'
+          )
+
+      - name: Verify full end-to-end smoke check against ludy-smoke-test
+        env:
+          SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+          SMOKE_ORG: ludy-smoke-test
+        run: |
+          set -euo pipefail
+          if [ "$MODULES_ENV" = pilot ] && [ -n "$DEPLOY_MODULES" ]; then
+            export SMOKE_EXPECT_MODULES="$DEPLOY_MODULES"
+          fi
+          bash tools/deploy/deploy.sh smoke "$PUBLIC_URL"
