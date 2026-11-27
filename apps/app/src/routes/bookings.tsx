@@ -18,6 +18,7 @@ import { BookingLinkBlock, BookingSettingsLink, useBookingLink } from '../compon
 import { useMe } from '../components/conversation-inbox.tsx';
 import { meetingsInstalled } from '../components/linked-meetings.tsx';
 import { BookingSuggestCard } from '../components/booking-suggest.tsx';
+import { ContactMeetingFacts } from '../components/contact-meeting-facts.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
@@ -94,6 +95,7 @@ function BookingRow({
   locale,
   now,
   nameOf,
+  editor,
 }: {
   b: BookingItem;
   slug: string;
@@ -101,6 +103,7 @@ function BookingRow({
   locale: Parameters<typeof whenOf>[2];
   now: number;
   nameOf: (userId: string) => string | null;
+  editor: boolean;
 }) {
   const t = useTranslations('bookings');
   const tn = useTranslations('notes');
@@ -129,6 +132,17 @@ function BookingRow({
           {b.status === 'confirmed' && b.meeting.state === 'pending' && <p className="text-xs text-muted-foreground">{t('meet.pending')}</p>}
           {/* The deal of the booking, or Dy's suggestion of one (#3103): a person links it with a click. */}
           <BookingDeal booking={b} />
+          {b.status === 'confirmed' && (
+            <ContactMeetingFacts
+              slug={slug}
+              targetKind="booking"
+              targetId={b.id}
+              collapsible
+              rowLabel={b.visitor.name ?? b.eventType.title}
+              canRead={editor}
+              className="mt-2"
+            />
+          )}
           {b.status === 'confirmed' && b.meeting.state === 'failed' && (
             <Badge variant="warning" data-testid="booking-meet-failed">
               {t('meet.failed')}
@@ -290,7 +304,7 @@ export function BookingsPage() {
       ) : (
         <DataTable stacked head={[t('colWhen'), t('colType'), t('colVisitor'), t('colStatus'), '']}>
           {bookings.data.map((b) => (
-            <BookingRow key={b.id} b={b} slug={slug} zone={zone} locale={locale} now={now} nameOf={nameOf} />
+            <BookingRow key={b.id} b={b} slug={slug} zone={zone} locale={locale} now={now} nameOf={nameOf} editor={editor} />
           ))}
         </DataTable>
       )}

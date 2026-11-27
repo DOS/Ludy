@@ -194,7 +194,7 @@ describe('MicrosoftCalendarAdapter, events', () => {
     const { calls, fetchImpl } = microsoft({ [VIEW]: [{ body: { value: [graphEvent()] } }] });
     const answer = await new MicrosoftCalendarAdapter(APP, fetchImpl).events(SECRET, new Date('2026-11-13T03:00:00Z'), new Date('2026-11-21T03:00:00Z'));
     expect(answer).toEqual({
-      events: [{ id: 'AAMkAGI2', title: 'Họp giao ban', startsAt: '2026-11-14T04:00:00.000Z', endsAt: '2026-11-14T05:00:00.000Z', timeZone: 'UTC', joinUrl: 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc/0?context=%7b%7d', invitees: 2, series: null }],
+      events: [{ id: 'AAMkAGI2', title: 'Họp giao ban', startsAt: '2026-11-14T04:00:00.000Z', endsAt: '2026-11-14T05:00:00.000Z', timeZone: 'UTC', joinUrl: 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc/0?context=%7b%7d', invitees: 2, attendeeEmails: ['dong.nghiep@congty.example', 'khach@congty.example'], series: null }],
     });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.auth).toBe('Bearer eyJ.access-1');
@@ -209,20 +209,45 @@ describe('MicrosoftCalendarAdapter, events', () => {
     expect(calls[0]?.url.href).not.toContain('eyJ.access-1');
   });
 
-  it('puts no \'@\' anywhere in what the adapter returns but the join address, whatever the answer holds', async () => {
-    const { fetchImpl } = microsoft({ [VIEW]: [{ body: { value: [graphEvent({ subject: 'Họp giao ban', organizer: { emailAddress: { address: 'chu.tri@congty.example' } }, attendees: [{ emailAddress: { address: 'a@x.example' } }, { emailAddress: { address: 'b@y.example' } }, { emailAddress: { address: 'c@z.example' } }] })] } }] });
+  it('keeps normalized attendee emails and excludes organizer, names, description, raw location or attachment', async () => {
+    const { fetchImpl } = microsoft({
+      [VIEW]: [
+        {
+          body: {
+            value: [
+              graphEvent({
+                subject: 'Họp giao ban',
+                organizer: { emailAddress: { address: 'chu.tri@congty.example', name: 'Chủ trì' } },
+                attendees: [
+                  { type: 'required', emailAddress: { address: 'A@X.example', name: 'Anh A' } },
+                  { type: 'optional', emailAddress: { address: 'b@y.example' } },
+                  { type: 'resource', emailAddress: { address: 'room@z.example', name: 'Room 1' } },
+                ],
+              }),
+            ],
+          },
+        },
+      ],
+    });
     const answer = await new MicrosoftCalendarAdapter(APP, fetchImpl).events(SECRET, new Date('2026-11-13T03:00:00Z'), new Date('2026-11-21T03:00:00Z'));
     expect('events' in answer && answer.events).toHaveLength(1);
-    const events = ('events' in answer ? answer.events : []).map((e) => ({ ...e, joinUrl: null }));
-    expect(JSON.stringify(events)).not.toContain('@');
+    expect('events' in answer && answer.events[0]?.attendeeEmails).toEqual(['a@x.example', 'b@y.example']);
+    expect(JSON.stringify(answer)).not.toMatch(/chu\.tri@|Chủ trì|Anh A|room@z\.example|Room 1/);
     expect('events' in answer && answer.events[0]?.invitees).toBe(3);
   });
 
-  it('keeps no invitee address, description, raw location or attachment in what it returns', async () => {
-    const event = graphEvent({ body: { content: 'PRIVATE DESCRIPTION', contentType: 'text' }, bodyPreview: 'PRIVATE', hasAttachments: true, attachments: [{ name: 'secret.pdf' }], location: { displayName: 'Phòng họp kín' } });
+  it('keeps no attendee name, organizer, description, raw location or attachment in what it returns', async () => {
+    const event = graphEvent({
+      organizer: { emailAddress: { address: 'boss@congty.example' } },
+      body: { content: 'PRIVATE DESCRIPTION', contentType: 'text' },
+      bodyPreview: 'PRIVATE',
+      hasAttachments: true,
+      attachments: [{ name: 'secret.pdf' }],
+      location: { displayName: 'Phòng họp kín' },
+    });
     const kept = JSON.stringify(agendaEventOfGraph(event));
-    expect(kept).not.toMatch(/PRIVATE|secret\.pdf|khach@|dong\.nghiep@|congty\.example|kín/);
-    expect(Object.keys(agendaEventOfGraph(event) ?? {}).sort()).toEqual(['endsAt', 'id', 'invitees', 'joinUrl', 'series', 'startsAt', 'timeZone', 'title']);
+    expect(kept).not.toMatch(/PRIVATE|secret\.pdf|boss@|Khách|kín/);
+    expect(Object.keys(agendaEventOfGraph(event) ?? {}).sort()).toEqual(['attendeeEmails', 'endsAt', 'id', 'invitees', 'joinUrl', 'series', 'startsAt', 'timeZone', 'title']);
     const withoutOnlineMeeting = agendaEventOfGraph({ ...event, onlineMeeting: null });
     expect(withoutOnlineMeeting?.joinUrl).toBeNull();
     expect(JSON.stringify(withoutOnlineMeeting)).not.toMatch(/Phòng họp kín|kín/);

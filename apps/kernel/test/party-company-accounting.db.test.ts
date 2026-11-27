@@ -274,6 +274,8 @@ suite('the company of a person and the accounting (#2438)', () => {
       'ludy_finance.supplier_payment.party_id',
       // An omnichannel roadmap signal (#4492) stores source_party_id only for PDPL attribution when a deal or conversation changes party; it never reads party.kind.
       'ludy_projects.roadmap_signal.source_party_id',
+      // A member's private pre-meeting draft (#4991 PM1) cascades on party deletion and never reads party.kind.
+      'ludy_meetings.meeting_brief_draft.party_id',
     ];
     const { rows } = await admin((c) =>
       c.query<{ ref: string }>(

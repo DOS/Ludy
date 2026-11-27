@@ -13,6 +13,7 @@
 //
 // Not offered here: writing events (the booking write-back is Google's) and revoking a grant (Microsoft has no token revocation endpoint for this; a disconnect removes the connection and the
 // member removes the app's access in their Microsoft account, which the screen says).
+import { normalizeAttendeeEmails } from './calendar-attendees.ts';
 import { ConnectorError, allowlistedFetch, type ExchangeInput, type Fetch } from './oauth.ts';
 import {
   joinUrlOf,
@@ -201,7 +202,8 @@ export function agendaEventOfGraph(event: Record<string, unknown>): CalendarAgen
   const response = (event.responseStatus as { response?: unknown } | undefined)?.response;
   if (response === 'declined') return null;
   const meeting = event.onlineMeeting as { joinUrl?: unknown } | null | undefined;
-  const attendees = Array.isArray(event.attendees) ? event.attendees.length : 0;
+  const rawAttendees = Array.isArray(event.attendees) ? (event.attendees as Array<{ type?: unknown; emailAddress?: { address?: unknown } }>) : [];
+  const attendees = rawAttendees.length;
   return {
     id: event.id,
     title: titleOf(event.subject),
@@ -211,6 +213,11 @@ export function agendaEventOfGraph(event: Record<string, unknown>): CalendarAgen
     timeZone: 'UTC',
     joinUrl: joinUrlOf(meeting?.joinUrl) ?? joinUrlFromLocation(event.location),
     invitees: Math.min(attendees, 1000),
+    attendeeEmails: normalizeAttendeeEmails(rawAttendees, (a) => {
+      if (a === null || typeof a !== 'object') return null;
+      const entry = a as { type?: unknown; emailAddress?: { address?: unknown } };
+      return { email: entry.emailAddress?.address, resource: entry.type === 'resource' };
+    }),
     series: seriesOf(event.seriesMasterId),
   };
 }

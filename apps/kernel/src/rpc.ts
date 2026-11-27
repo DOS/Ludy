@@ -2046,6 +2046,12 @@ export function createRpcHandler(
           inMeetings(context, (orgId, actor) => runMeetingBrief({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingBriefs, price: aiPrice }, orgId, actor, input)),
         ),
       },
+      briefDraft: {
+        list: os.meetings.briefDraft.list.handler(meetingsQuery('meetings.brief_draft.list')),
+        save: os.meetings.briefDraft.save.handler(meetingsCommand('meetings.brief_draft.save')),
+        remove: os.meetings.briefDraft.remove.handler(meetingsCommand('meetings.brief_draft.remove')),
+        putToNotes: os.meetings.briefDraft.putToNotes.handler(meetingsCommand('meetings.brief_draft.put_to_notes')),
+      },
       // The recorder's Vy suggesting a title from the transcript (#3947): `status` feeds the button, `suggest` runs the recorder's own Vy once and returns up to three checked candidates to the browser; nothing
       // is stored. The pick is `rename`. See member-vy-ports.ts.
       title: {
@@ -2292,6 +2298,7 @@ export function createRpcHandler(
       contacts: {
         list: os.crm.contacts.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.contact.list', input, { actor, orgId }))),
         conversations: os.crm.contacts.conversations.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.conversations', input, { actor, orgId }))),
+        meetingFacts: os.crm.contacts.meetingFacts.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.contact.meeting_facts', input, { actor, orgId }))),
         // The company a person may work at (#2438): the three rules read in the member's own transaction, then the model orders the names outside it, through the
         // AI meter. Nothing is stored or linked. The org's switch for AI on its customers' messages covers it too (the names of its contacts reach the model):
         // with it off the companies come in their own order and the answer says `off`.
