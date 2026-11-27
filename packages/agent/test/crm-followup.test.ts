@@ -120,7 +120,7 @@ describe('the words of the model', () => {
 });
 
 describe('the fixed words', () => {
-  it.each(['no_activity', 'past_close', 'quote_unanswered', 'quote_expiring'] as CrmFollowupReason[])('%s holds no figure, link or name, so they pass the same check', (reason) => {
+  it.each(['no_activity', 'past_close', 'quote_unanswered', 'quote_expiring', 'quote_viewed', 'customer_replied'] as CrmFollowupReason[])('%s holds no figure, link or name, so they pass the same check', (reason) => {
     expect(checkCrmFollowupWords(NAMES, CRM_FOLLOWUP_TEMPLATE[reason])).toEqual({ kind: 'words', words: CRM_FOLLOWUP_TEMPLATE[reason] });
   });
 });
@@ -169,6 +169,28 @@ describe('the draft', () => {
   it('says an expiring quote by the days left, and the last day in words', () => {
     expect(buildCrmFollowupDraft(facts({ reason: 'quote_expiring', days: 2 }), null).text).toContain('Báo giá còn hiệu lực 2 ngày nữa.');
     expect(buildCrmFollowupDraft(facts({ reason: 'quote_expiring', days: 0 }), null).text).toContain('Hôm nay là ngày cuối báo giá còn hiệu lực.');
+  });
+
+  it('supports quote_viewed and customer_replied attention reasons with code-supplied facts only', () => {
+    const viewedToday = buildCrmFollowupDraft(facts({ reason: 'quote_viewed', days: 0 }), WORDS);
+    expect(viewedToday.aiWords).toBe(true);
+    expect(viewedToday.text).toContain('Khách vừa xem báo giá hôm nay và báo giá chưa có trả lời.');
+    expect(viewedToday.text).toContain('19.800.000 đồng');
+    expect(viewedToday.text).toContain(URL);
+    expect(viewedToday.subject).toBe('Về báo giá số BG-2026-0007-R2');
+
+    const viewedAgo = buildCrmFollowupDraft(facts({ reason: 'quote_viewed', days: 3 }), null);
+    expect(viewedAgo.aiWords).toBe(false);
+    expect(viewedAgo.text).toContain('Khách vừa xem báo giá cách đây 3 ngày và báo giá chưa có trả lời.');
+    expect(viewedAgo.text).toContain(CRM_FOLLOWUP_TEMPLATE.quote_viewed.lead);
+
+    const replied = buildCrmFollowupDraft(facts({ reason: 'customer_replied', days: 9, quote: null }), WORDS);
+    expect(replied.aiWords).toBe(true);
+    expect(replied.text).toContain('Khách vừa nhắn lại sau 9 ngày hai bên chưa trao đổi.');
+    expect(replied.text).not.toContain('http');
+    expect(replied.subject).toBe('Tiếp nối trao đổi của anh/chị');
+    expect(crmFollowupPrompt({ reason: 'quote_viewed' })).toContain('opened');
+    expect(crmFollowupPrompt({ reason: 'customer_replied' })).toContain('quiet stretch');
   });
 
   it('uses the fixed words when the model gave none, and the facts stay the same', () => {

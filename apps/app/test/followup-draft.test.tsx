@@ -5,7 +5,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { CRM_FOLLOWUP_STATES, DEAL_NEXT_STEP_REASONS } from '@ludy/kernel-contract';
+import { CRM_FOLLOWUP_REASONS, CRM_FOLLOWUP_STATES } from '@ludy/kernel-contract';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { catalog, setActiveLocale } from '../src/i18n/runtime.ts';
 
@@ -70,7 +70,7 @@ describe('the copy', () => {
     it(`has a sentence for every state and every reason the server answers, in ${locale}, with no leftover placeholder and no "assistant"`, () => {
       const copy = (catalog(locale) as unknown as { deals: { nextSteps: { followup: { state: Record<string, string>; reason: Record<string, string> } } } }).deals.nextSteps.followup;
       expect(Object.keys(copy.state).sort()).toEqual([...CRM_FOLLOWUP_STATES].sort());
-      expect(Object.keys(copy.reason)).toHaveLength(DEAL_NEXT_STEP_REASONS.length);
+      expect(Object.keys(copy.reason)).toHaveLength(CRM_FOLLOWUP_REASONS.length);
       const all = JSON.stringify(copy);
       expect(all).not.toContain('{sales}');
       expect(all).not.toMatch(/assistant|trợ lý/i);

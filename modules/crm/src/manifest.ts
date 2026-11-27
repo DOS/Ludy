@@ -17,6 +17,7 @@ export const crmManifest = defineModule({
       event_type: columns(['org_id', 'id', 'slug', 'title', 'description', 'duration_min', 'buffer_before_min', 'buffer_after_min', 'min_notice_min', 'horizon_days', 'daily_limit', 'location_kind', 'location_value', 'host_user_id', 'active', 'created_by', 'created_at', 'updated_by', 'updated_at', 'assignment', 'co_host_user_ids']),
       import_batch: columns(['org_id', 'id', 'filename', 'status', 'on_duplicate', 'total_rows', 'new_rows', 'duplicate_rows', 'conflict_rows', 'invalid_rows', 'created_rows', 'updated_rows', 'new_companies', 'created_companies', 'linked_rows', 'created_by', 'created_at', 'decided_at']),
       import_row: columns(['org_id', 'id', 'batch_id', 'row_no', 'kind', 'outcome', 'reason', 'match_party_id', 'company_state', 'company_party_id'], { name: 'pii', company_name: 'pii', tax_code: 'national_id_if_individual', address: 'contact', email: 'contact', phone: 'contact' }),
+      party_attention_seen: columns(['org_id', 'id', 'user_id', 'party_id', 'kind', 'target_id', 'seen_event_at', 'seen_at']),
       pipeline_stage: columns(['org_id', 'id', 'name', 'kind', 'position', 'created_at', 'updated_at']),
       // The quote's free text is `remarks` (the API and the screens say notes): a column named `notes` is a personal-data fact of its own. Every text column is free text a
       // person typed and may name someone, so it is pii; the number, the status and the amounts are internal.

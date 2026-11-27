@@ -10,7 +10,7 @@
     "./member-vy": "./src/member-vy/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "../../node_modules/.bin/tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "catalog:",
@@ -21,6 +21,7 @@
   "devDependencies": {
     "@ludy/extract": "workspace:*",
     "@ludy/extract-contract": "workspace:*",
-    "@ludy/media": "workspace:*"
+    "@ludy/media": "workspace:*",
+    "typescript-api": "catalog:"
   }
 }

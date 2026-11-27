@@ -2247,7 +2247,13 @@ export function createRpcHandler(
         snooze: os.crm.nextSteps.snooze.handler(crmCommand('crm.next_step.snooze')),
         draft: os.crm.nextSteps.draft.handler(({ context, input }) =>
           inCrm(context, async (orgId, actor) => {
-            const source = await runtime.query<FollowupSource>('crm.followup.source', { nextStepId: input.nextStepId }, { actor, orgId });
+            const queryInput =
+              'nextStepId' in input
+                ? { nextStepId: input.nextStepId }
+                : input.reason === 'quote_viewed'
+                  ? { reason: 'quote_viewed' as const, quoteId: input.quoteId }
+                  : { reason: 'customer_replied' as const, partyId: input.partyId, conversationId: input.conversationId };
+            const source = await runtime.query<FollowupSource>('crm.followup.source', queryInput, { actor, orgId });
             const makeLink = (quoteId: string) => runtime.execute<QuoteLinkCreated>('crm.quote.create_link', { quoteId }, { actor, orgId });
             return draftCrmFollowup({ ai: followupCoworker, publicUrl: channels?.publicUrl ?? '', makeLink }, orgId, actor.userId, source, input.hint);
           }),
@@ -2310,6 +2316,8 @@ export function createRpcHandler(
             }),
           ),
         ),
+        attention: os.crm.contacts.attention.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.attention', input, { actor, orgId }))),
+        markAttentionSeen: os.crm.contacts.markAttentionSeen.handler(crmCommand('crm.party.attention_seen')),
         // The company a person may work at (#2438): the three rules read in the member's own transaction, then the model orders the names outside it, through the
         // AI meter. Nothing is stored or linked. The org's switch for AI on its customers' messages covers it too (the names of its contacts reach the model):
         // with it off the companies come in their own order and the answer says `off`.

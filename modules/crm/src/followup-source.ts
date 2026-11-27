@@ -7,31 +7,64 @@
 // (crm.quote.create_link) when the draft is asked for, so its audit row says who made it; the model is asked outside any transaction, by the API.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, type DealNextStepReason } from '@ludy/kernel-contract';
+import { zId, type CrmFollowupReason, type DealNextStepReason } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineQuery } from '@ludy/kernel-runtime';
+import { findCustomerReplyForFollowup, findQuoteViewedForFollowup } from './attention.ts';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
 export interface FollowupSource {
-  nextStepId: string;
-  reason: DealNextStepReason;
-  dealId: string;
+  nextStepId: string | null;
+  reason: CrmFollowupReason;
+  dealId: string | null;
   contactName: string;
   contactEmail: string | null;
   // The org's own name: the words of a draft never say it.
   orgName: string;
-  // The days quiet; since the expected close; since the sent quote of the draft was sent; for an expiring quote the days left (0 on its last day). Never below 0.
+  // The days quiet; since the expected close; since the sent quote of the draft was sent; for an expiring quote the days left (0 on its last day); since the quote was viewed; or quiet days before customer reply. Never below 0.
   days: number;
-  // The deal's current sent quote, if it has one; null for a deal with none.
+  // The deal's current sent quote, if it has one; null for a deal with none or a reply-based draft.
   quote: { id: string; label: string; total: string; validUntil: string } | null;
 }
 
+const zFollowupSourceInput = z.union([
+  z.strictObject({ nextStepId: zId }),
+  z.strictObject({ reason: z.literal('quote_viewed'), quoteId: zId }),
+  z.strictObject({ reason: z.literal('customer_replied'), partyId: zId, conversationId: zId }),
+]);
+
 export const followupSource = defineQuery({
   name: 'crm.followup.source',
-  input: z.strictObject({ nextStepId: zId }),
+  input: zFollowupSourceInput,
   access: EDITORS,
   handler: async (ctx, input): Promise<FollowupSource> => {
+    if ('reason' in input) {
+      if (input.reason === 'quote_viewed') {
+        const viewed = await findQuoteViewedForFollowup(ctx, input.quoteId);
+        return {
+          nextStepId: null,
+          reason: 'quote_viewed',
+          dealId: viewed.dealId,
+          contactName: viewed.contactName,
+          contactEmail: viewed.contactEmail,
+          orgName: viewed.orgName,
+          days: viewed.days,
+          quote: { id: viewed.quoteId, label: viewed.label, total: viewed.total, validUntil: viewed.validUntil },
+        };
+      }
+      const reply = await findCustomerReplyForFollowup(ctx, input.partyId, input.conversationId);
+      return {
+        nextStepId: null,
+        reason: 'customer_replied',
+        dealId: null,
+        contactName: reply.contactName,
+        contactEmail: reply.contactEmail,
+        orgName: reply.orgName,
+        days: reply.quietDays,
+        quote: null,
+      };
+    }
     const found = await sql<{ id: string; deal_id: string; party_id: string; reason: DealNextStepReason; status: string; party_name: string; party_email: string | null; days: number; org_name: string; closed: boolean }>`
       SELECT n.id, n.deal_id, d.party_id, n.reason, n.status, p.name AS party_name, p.email AS party_email, d.closed_at IS NOT NULL AS closed,
              greatest(((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - n.since_on), 0)::int AS days,

@@ -45,6 +45,7 @@ export * from './marketplace-column-profile.ts';
 export * from './timeline.ts';
 export * from './audit.ts';
 export * from './sort-key.ts';
+export * from './crm-attention.ts';
 export * from './crm-deals.ts';
 export * from './crm-followup.ts';
 export * from './crm-meeting-brief.ts';

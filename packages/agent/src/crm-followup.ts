@@ -15,7 +15,7 @@ import { money } from '@ludy/l10n-vn';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import { reminderTextProblem } from './reminder.ts';
 
-export type CrmFollowupReason = 'no_activity' | 'past_close' | 'quote_unanswered' | 'quote_expiring';
+export type CrmFollowupReason = 'no_activity' | 'past_close' | 'quote_unanswered' | 'quote_expiring' | 'quote_viewed' | 'customer_replied';
 
 export interface CrmFollowupWordsRequest {
   reason: CrmFollowupReason;
@@ -68,6 +68,8 @@ const REASON_TEXT = {
   past_close: 'a deal whose expected closing time has passed without a decision: the person wants to ask where things stand and what the customer needs next',
   quote_unanswered: 'a quote that was sent and has had no answer: the person wants to ask whether the customer has seen it and whether anything needs clarifying',
   quote_expiring: 'a quote that is about to expire: the person wants to remind the customer kindly and ask whether anything needs adjusting before it does',
+  quote_viewed: 'a sent quote whose link the customer recently opened while it is still unanswered: the person wants to ask kindly if anything needs clarifying',
+  customer_replied: 'a customer who just replied after a quiet stretch of a week or more: the person wants to acknowledge the message warmly and keep the talk moving',
 } as const;
 
 export function crmFollowupInstructions(): string {
@@ -104,6 +106,14 @@ export const CRM_FOLLOWUP_TEMPLATE: Readonly<Record<CrmFollowupReason, CrmFollow
     lead: 'Bên mình nhắn để nhắc anh/chị về báo giá sắp hết hạn và hỏi xem anh/chị có cần điều chỉnh gì không.',
     closing: 'Nếu cần thêm thời gian hoặc điều chỉnh, anh/chị cứ cho bên mình biết nhé. Cảm ơn anh/chị.',
   },
+  quote_viewed: {
+    lead: 'Bên mình thấy anh/chị vừa xem báo giá nên nhắn hỏi thăm xem có điều gì cần bên mình làm rõ thêm không.',
+    closing: 'Nếu cần điều chỉnh hạng mục hay giải đáp thêm, anh/chị cứ nhắn lại cho bên mình nhé. Cảm ơn anh/chị.',
+  },
+  customer_replied: {
+    lead: 'Cảm ơn anh/chị đã nhắn lại cho bên mình.',
+    closing: 'Anh/chị cho bên mình biết thêm nhu cầu hiện tại để bên mình hỗ trợ anh/chị kịp thời nhé.',
+  },
 };
 
 // Dong with dots between the thousands, from the decimal string as stored: "1980000.00" -> "1.980.000 đồng". Never a JS number.
@@ -132,6 +142,10 @@ function reasonLine(facts: CrmFollowupFacts): string {
       return `Bên mình đã gửi báo giá cách đây ${days} ngày và chưa nhận được phản hồi.`;
     case 'quote_expiring':
       return facts.days > 0 ? `Báo giá còn hiệu lực ${days} ngày nữa.` : 'Hôm nay là ngày cuối báo giá còn hiệu lực.';
+    case 'quote_viewed':
+      return facts.days > 0 ? `Khách vừa xem báo giá cách đây ${days} ngày và báo giá chưa có trả lời.` : 'Khách vừa xem báo giá hôm nay và báo giá chưa có trả lời.';
+    case 'customer_replied':
+      return `Khách vừa nhắn lại sau ${days} ngày hai bên chưa trao đổi.`;
   }
 }
 
@@ -148,7 +162,8 @@ export function composeCrmFollowup(facts: CrmFollowupFacts, words: CrmFollowupWo
 
 /** The subject of an email draft. Holds no figure but the quote's own label. */
 export function crmFollowupSubject(facts: CrmFollowupFacts): string {
-  return facts.quote ? `Về báo giá số ${facts.quote.label}` : 'Hỏi thăm và theo dõi trao đổi';
+  if (facts.quote) return `Về báo giá số ${facts.quote.label}`;
+  return facts.reason === 'customer_replied' ? 'Tiếp nối trao đổi của anh/chị' : 'Hỏi thăm và theo dõi trao đổi';
 }
 
 const plain = (value: string): string => value.normalize('NFD').replace(/\p{M}+/gu, '').replace(/đ/gi, 'd').toLowerCase();

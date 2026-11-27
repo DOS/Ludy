@@ -156,6 +156,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_kernel_org_purge_hr_stage7a.sql',
       // #4991 (PM1): org_purge restates the full table list with meeting_brief_draft added.
       'ludy_kernel_org_purge_meeting_brief_draft.sql',
+      // #4993 (SG1 contact attention seen): org_purge restates the full table list with ludy_crm.party_attention_seen added.
+      'ludy_kernel_org_purge_party_attention_seen.sql',
     ]);
   });
 });
