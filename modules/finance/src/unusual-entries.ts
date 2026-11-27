@@ -6,9 +6,10 @@
 // row_number(), never percentile_cont, which returns double precision) and decimal strings out.
 //
 // What each part of the statement reads, and the index it uses (no new index on the ledger):
-// - `ln` (the valid lines of the last 24 months and the month): journal_entry by journal_entry_date_idx (org_id, entry_date) and the entity (journal_entry_legal_entity_idx), then journal_line by its key (org_id,
-//   entry_id, line_no); the reversal check by journal_entry_reverses_uq (org_id, reverses_entry_id), the 911 check by the same line key; the journal_voucher join by its key (org_id, id). It is read once (referenced
-//   by several parts, so it is materialized) and is bounded by 24 months of ONE entity, whatever the org holds.
+// - `we` (the entries of the last 24 months and the month, materialized): journal_entry by journal_entry_date_idx (org_id, entry_date) and the entity (journal_entry_legal_entity_idx); the reversal check by
+//   journal_entry_reverses_uq (org_id, reverses_entry_id); the 911 check by a correlated scalar subquery on the line key (org_id, entry_id, line_no). `ln` (their lines) is driven FROM `we` by a lateral join
+//   on that key, so a line is only ever fetched for an entry of the window (journal_line has no date column and must never be scanned); the journal_voucher join is by its key (org_id, id). `ln` is read once
+//   (referenced by several parts, so it is materialized) and is bounded by 24 months of ONE entity, whatever the org holds.
 // - amount_outlier: `ga` and its medians read only `ln` rows of the last 6 months, per group (party and account line); a group with fewer than 6 earlier entries raises nothing.
 // - new_account: the history is `ln` rows of the last 24 months (the party basis and the kind basis share it), counted and tested per party or per kind: bounded by the same window.
 // - duplicate_invoice: the entries of the month's documents (journal_entry by the source key (org_id, source_type, source_id)), their twins by purchase_document_party_idx (org_id, party_id, direction); the void
@@ -102,7 +103,18 @@ interface HitRow {
 function hitsHead(ctx: QueryContext, entity: string, regime: 'tt133' | 'tt99', span: ReturnType<typeof reviewWindow>, holidays: readonly string[], entryId: string | null) {
   const org = ctx.orgId;
   return sql`
-    WITH ln AS (
+    -- The entries of the window, driven from journal_entry by org, entity and date (journal_entry_date_idx); journal_line has no date column, so its lines are fetched per entry below, never scanned.
+    -- The 911 check is a correlated scalar subquery on the line key, which the planner runs per entry (an EXISTS could be planned as a hash anti join over every line of the org).
+    WITH we AS MATERIALIZED (
+      SELECT e.org_id, e.id, e.entry_date, e.source_type, e.source_id, e.description
+      FROM ludy_finance.journal_entry e
+      WHERE e.org_id = ${org}::uuid AND e.legal_entity_id = ${entity}::uuid
+        AND e.entry_date >= ${span.newAccountFrom}::date AND e.entry_date <= ${span.to}::date
+        AND e.reverses_entry_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_entry rv WHERE rv.org_id = e.org_id AND rv.reverses_entry_id = e.id)
+        AND (SELECT pg_catalog.bool_or(c.account_code LIKE '911%') FROM ludy_finance.journal_line c WHERE c.org_id = e.org_id AND c.entry_id = e.id) IS NOT TRUE
+    ),
+    ln AS (
       SELECT e.id AS entry_id, e.entry_date, e.source_type, e.source_id, e.description, l.account_code, l.debit, l.credit,
         -- The party of a line is its own, or the one party the whole entry names: an invoice posts the party on its payable or receivable line only (record.ts), not on the expense line the rules look at.
         COALESCE(l.party_id, CASE WHEN pg_catalog.min(l.party_id::text) OVER w = pg_catalog.max(l.party_id::text) OVER w THEN (pg_catalog.min(l.party_id::text) OVER w)::uuid END) AS party_id,
@@ -114,14 +126,9 @@ function hitsHead(ctx: QueryContext, entity: string, regime: 'tt133' | 'tt99', s
           WHEN e.source_type = 'finance.journal_voucher' AND jv.id IS NOT NULL AND ${MANUAL_VOUCHER} THEN 'manual'
           ELSE 'other'
         END AS kind
-      FROM ludy_finance.journal_entry e
-      JOIN ludy_finance.journal_line l ON l.org_id = e.org_id AND l.entry_id = e.id
+      FROM we e
+      CROSS JOIN LATERAL (SELECT jl.account_code, jl.debit, jl.credit, jl.party_id FROM ludy_finance.journal_line jl WHERE jl.org_id = e.org_id AND jl.entry_id = e.id) l
       LEFT JOIN ludy_finance.journal_voucher jv ON jv.org_id = e.org_id AND e.source_type = 'finance.journal_voucher' AND jv.id = e.source_id
-      WHERE e.org_id = ${org}::uuid AND e.legal_entity_id = ${entity}::uuid
-        AND e.entry_date >= ${span.newAccountFrom}::date AND e.entry_date <= ${span.to}::date
-        AND e.reverses_entry_id IS NULL
-        AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_entry rv WHERE rv.org_id = e.org_id AND rv.reverses_entry_id = e.id)
-        AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_line c WHERE c.org_id = e.org_id AND c.entry_id = e.id AND c.account_code LIKE '911%')
       WINDOW w AS (PARTITION BY e.id)
     ),
     em AS (
