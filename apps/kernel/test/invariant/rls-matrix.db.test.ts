@@ -3542,7 +3542,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         org_id: o.id,
         id: randomUUID(),
         tax_code: String(100_000_000 + taxLookupCodeSeq++).padStart(10, '0'),
-        found: true,
+        found: 'true',
         name: 'RLS matrix company',
         address: 'RLS matrix address',
         expires_at: new Date(Date.now() + 86_400_000).toISOString(),
