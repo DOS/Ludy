@@ -63,6 +63,7 @@ export const projectsManifest = defineModule({
         'error_code',
         'summary',
         'received_at',
+        'next_attempt_at',
         'processed_at',
       ]),
       github_task_link: columns(
