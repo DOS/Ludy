@@ -613,6 +613,12 @@ export const KERNEL_ERROR_CODES = [
   'CATCH_UP_BUSY',
   'CATCH_UP_NOT_PUBLISHED',
   'CATCH_UP_REDACTED',
+  // Draft minutes from typed notes for an unrecorded meeting (#5129).
+  'NOTES_MINUTES_OFF',
+  'NOTES_MINUTES_BUSY',
+  'NOTES_MINUTES_HAS_TRANSCRIPT',
+  'NOTES_MINUTES_NO_NOTES',
+  'NOTES_MINUTES_REDACTED',
   // Sales call insights (#4920).
   'SALES_INSIGHT_BUSY',
   'MEETING_TITLE_EMPTY',

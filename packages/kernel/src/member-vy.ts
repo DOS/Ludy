@@ -70,6 +70,8 @@ export const MEMBER_VY_FEATURES = {
   'meetings.open_points': { module: 'meetings', expiryMinutes: 30 },
   // A member's Vy catching them up in a few cited lines on published minutes they missed (#5130, L33): one foreground model call over published minutes only, shown and never stored (counts only).
   'meetings.catch_up': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy drafting minutes (summary, cited decisions, cited action items) from typed notes when a meeting has no audio recording (#5129, L32): one foreground model call, shown as an unapplied draft proposal (counts only stored).
+  'meetings.notes_minutes': { module: 'meetings', expiryMinutes: 30 },
   // The recorder's Vy extracting sales call insights (customer concerns, buying signals, agreed next steps with cited transcript line IDs) for a meeting linked to an open deal (#4920): one foreground model call, results returned to the recorder alone and stored as counts only.
   'meetings.sales_insight': { module: 'meetings', expiryMinutes: 30 },
   'meetings.label_suggest': { module: 'meetings', expiryMinutes: 30 },

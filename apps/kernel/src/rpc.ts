@@ -115,7 +115,7 @@ import {
   type SignAi,
 } from './sign-ai.ts';
 import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
-import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments, runMeetingLabelSuggest, runMeetingOpenPoints, catchUpStatusOf, runMeetingCatchUp, runMeetingSalesInsight, salesInsightStatusOf, runMeetingTemplateSuggest } from './member-vy-ports.ts';
+import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments, runMeetingLabelSuggest, runMeetingOpenPoints, catchUpStatusOf, runMeetingCatchUp, notesMinutesStatusOf, runMeetingNotesMinutes, runMeetingSalesInsight, salesInsightStatusOf, runMeetingTemplateSuggest } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type MarketplaceProposalFacts, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
 import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.ts';
@@ -519,6 +519,8 @@ export function createRpcHandler(
   const meetingAssignees = new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
   // Checking a meeting's agenda against its transcript (#3959) reads a whole transcript: its own budget, a few a minute, so it never makes a summary or a question wait.
   const meetingAdherence = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // Drafting minutes from typed notes for an unrecorded meeting (#5129): one call per click, own budget so it does not contend with other Vy calls.
+  const meetingNotesMinutes = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   // Proposing project tasks from a note (#2598): one call per click, own budget so it does not contend with meetings.
   const noteTaskProposals = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   // Notes N8 (#1677): independent budgets for summarizing notes and suggesting personal to-dos.
@@ -1981,6 +1983,15 @@ export function createRpcHandler(
         ),
         write: os.meetings.catchUp.write.handler(({ context, input }) =>
           inMeetings(context, (orgId, actor) => runMeetingCatchUp({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingBriefs, price: aiPrice }, orgId, actor, input.meetingId)),
+        ),
+      },
+      // Draft minutes from typed notes for an unrecorded meeting (#5129, L32): recorder-only, zero transcript segments, returns cited proposal and stores counts only.
+      notesMinutes: {
+        status: os.meetings.notesMinutes.status.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => notesMinutesStatusOf({ runtime, price: aiPrice, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor, input.meetingId)),
+        ),
+        write: os.meetings.notesMinutes.write.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingNotesMinutes({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingNotesMinutes, price: aiPrice }, orgId, actor, input.meetingId)),
         ),
       },
       // Sales call insights for a meeting linked to an open deal (#4920, L26): recorder-only foreground Vy run with cited transcript line IDs and code-computed customer talk share.
