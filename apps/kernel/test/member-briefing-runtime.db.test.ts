@@ -384,7 +384,12 @@ suite('member_briefing runtime execution (#5080 Slice A1)', () => {
       ]),
     );
 
-    await admin((c) => c.query(`UPDATE ludy_kernel.mail_message SET status = 'sent' WHERE id = $1`, [memberMailId]));
+    await admin(async (c) => {
+      await c.query(`UPDATE ludy_kernel.mail_message SET status = 'sending' WHERE id = $1`, [memberMailId]);
+      await c.query(`UPDATE ludy_kernel.mail_message SET status = 'sent', sent_at = now() WHERE id = $1`, [
+        memberMailId,
+      ]);
+    });
     await expect(facade.query('meetings.t_briefing_nested_leaf', {})).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
