@@ -94,6 +94,11 @@ describe('the table of figures', () => {
     expect(html).toContain('<caption class="sr-only">Quý này nói gì</caption>');
   });
 
+  it('puts the sideways scroller of the table in the tab order with a name, so a keyboard can scroll it (axe: scrollable-region-focusable)', () => {
+    const html = render('vi', DATA);
+    expect(html).toMatch(/<div role="region" tabindex="0" aria-label="Quý này nói gì" class="[^"]*overflow-x-auto[^"]*">/);
+  });
+
   it('is in English too, with the name of the coworker never typed in the copy', () => {
     const html = render('en', DATA, [{ row: 'revenue', text: 'Sales revenue rose against the previous quarter.' }]);
     for (const text of ['Sales revenue', 'Cash at the end', 'Rose', 'First time', 'The quarter before (Quarter 2/2026)']) expect(html, text).toContain(text);
