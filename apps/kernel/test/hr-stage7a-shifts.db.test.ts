@@ -340,13 +340,16 @@ suite('HR Stage 7A shifts, weekly roster, 1-step swaps, night rollup & Ly covera
       o.exec(o.manager, 'hr.shift_swap.approve', { swapId: selfSwapMgr.id }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
 
-    // Cross-dept L1 manager (otherMgr) cannot see or approve deptStore swap (RLS hides row -> 404 NOT_FOUND);
-    // visible swap participant without L1 manager authority (staffB) is refused with 403 FORBIDDEN.
+    // Cross-dept L1 manager (otherMgr) is hidden by SELECT RLS (404); target (staffB) lacks UPDATE RLS on FOR UPDATE (404);
+    // requester (staffA) passes FOR UPDATE RLS and is refused by assertCanManageDepartment (403 FORBIDDEN).
     await expect(
       o.exec(o.otherMgr, 'hr.shift_swap.approve', { swapId: swapAB.id }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
     await expect(
       o.exec(o.staffB, 'hr.shift_swap.approve', { swapId: swapAB.id }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
+    await expect(
+      o.exec(o.staffA, 'hr.shift_swap.approve', { swapId: swapAB.id }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
 
     // Authorized L1 manager approves swapAB in 1 step -> shift_assignment rows swap templates atomically!
