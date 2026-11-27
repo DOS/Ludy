@@ -64,7 +64,8 @@ export type PersonalDataHandling = (typeof PERSONAL_DATA_HANDLINGS)[number];
 // among which a value may be written (a note's body, an activity line, a comment, a description; #1678, #1948), matched
 // by freeTextMatch below.
 // account_number: a bank account number kept as its digits (6 to 20), compared with a searched code of digits (#2402).
-export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'account_number', 'other'] as const;
+// national_id: a person's national ID (CCCD, 12 digits) matched by digits (#3682); ASCII letters stay significant so alphanumeric IDs (passports) do not match digit probes.
+export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'account_number', 'national_id', 'other'] as const;
 export type PersonalDataKind = (typeof PERSONAL_DATA_KINDS)[number];
 
 // The handlings of personal data held in the org's own tables: what the finder reports and an erasure reads.
@@ -252,7 +253,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'ludy_finance.einvoice_draft.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'ludy_finance.einvoice_draft.buyer_name': { kind: 'name', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'ludy_finance.einvoice_draft.buyer_address': { kind: 'address', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
-  'ludy_finance.einvoice_draft.buyer_identity': { kind: 'other', handling: 'keep_legal', reason: "The CCCD, passport number or budget-relation unit code an individual buyer gave on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)" },
+  'ludy_finance.einvoice_draft.buyer_identity': { kind: 'national_id', handling: 'keep_legal', reason: "The CCCD, passport number or budget-relation unit code an individual buyer gave on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)" },
   'ludy_finance.einvoice_draft.buyer_nationality': { kind: 'other', handling: 'keep_legal', reason: "The nationality a foreign buyer gave with a passport on a sales e-invoice draft (Decree 254 Appendix point 4.b, #3709), which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41); it is classified with the identity it belongs to" },
   'ludy_finance.einvoice_draft.buyer_email': { kind: 'email', handling: 'keep_legal', reason: 'Where the buyer asked for the invoice on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   // A sent quote (#2694): the buyer as the customer's contact was when the quote was sent. The quote is frozen once sent (a guard trigger), so the erase command cannot change it;
@@ -463,6 +464,15 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'free_text',
     handling: 'erase',
     reason: "A draft of what was said in a meeting being recorded, which may name or describe a person: read by its recorder alone, replaced by the transcript after the meeting, deleted with the meeting (its recorder, an owner, or the retention job), 30 days after it was made, and 30 days after its recorder was removed (the former-member purge of their Vy data)",
+  },
+  // Short-lived Vy daily briefing prep lines (#5080, ADR-0049): held privately for the opted-in member for at most 36 hours.
+  // No finder reads them; counts per org are reported via morning_brief_lines_counts(), matching rows are erased via
+  // morning_brief_lines_erase() and personal_erase(), and rows cascade with meeting deletion, member removal, retention purge, and org purge.
+  'ludy_meetings.morning_brief_lines.lines': {
+    kind: 'free_text',
+    handling: 'erase',
+    privateRows: 'always',
+    reason: 'Short-lived Vy daily briefing prep lines of each member (auto-expire within 36 hours): held privately for that member, deleted on meeting delete, member removal, retention purge, archive shred, org purge, or personal-data erasure',
   },
   // The machine translation of a meeting's summary (meetings integrations E1, issue #3184): a member's own Vy's translation of the summary, its decisions and its item titles, private to the
   // member who asked. No finder, owner or admin reads it; it goes with the meeting, with the summary it translated, and an erasure that touches the meeting DROPS it (never redacts it:
@@ -1077,6 +1087,7 @@ function columnMatch(kind: PersonalDataKind, probe: Probe, column: RawBuilder<un
   }
   const digits = sql`pg_catalog.regexp_replace(${column}, '[^0-9]', '', 'g')`;
   if (kind === 'tax_code' || kind === 'account_number') return sql<boolean>`${digits} = ${probe.digits}`;
+  if (kind === 'national_id') return sql<boolean>`pg_catalog.regexp_replace(${column}, '[^0-9A-Za-z]', '', 'g') = ${probe.digits}`;
   if (kind === 'phone') {
     const local = probe.digits.startsWith('84') ? `0${probe.digits.slice(2)}` : probe.digits;
     const international = local.startsWith('0') ? `84${local.slice(1)}` : local;
@@ -1529,6 +1540,8 @@ export const MEMBER_TRANSLATION_REASON =
   "Machine translations of meetings (the row count is all of the organization's, not this person's) are held privately for the member who asked and cannot be read here; they go with their meeting, and 30 days after that member is removed";
 export const MEMBER_LIVE_LINE_REASON =
   "Live preview lines of meetings being recorded or not yet transcribed (the row count is all of the organization's, not this person's) are held privately for the recorder and cannot be read here; they are replaced by the transcript, expire 30 days after they were made, go with their meeting, and go 30 days after their recorder is removed";
+export const MEMBER_BRIEF_LINES_REASON =
+  "Short-lived Vy daily briefing prep lines (the row count is all of the organization's, not this person's) are held privately for the opted-in member and cannot be read here; matching lines were erased, and remaining lines auto-expire within 36 hours, go with their meeting, and go when that member is removed";
 export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[], hidden: number): string {
   const first = [...dates].sort()[0];
   const word = kind === 'audio' ? 'The audio' : 'The video';
@@ -2183,6 +2196,17 @@ export const personalDataErase = defineCommand({
     // A number of fewer than 10 digits may as well be a date or a figure in the text (#3064), and a redaction cannot be undone: the definer is not called, nothing of the meeting text (nor its
     // follow-up mails, nor the retention dates it would have reported) changes, and the rows are counted below, as the activity lines and tasks are (ACTIVITY_REDACT_MIN_DIGITS).
     const shortNumber = probe.kind === 'digits' && probe.digits.length < ACTIVITY_REDACT_MIN_DIGITS;
+    const briefLinesErased = shortNumber
+      ? 0
+      : await meetingScan(ctx.trx, async () =>
+          Number(
+            (
+              await sql<{ erased: string }>`
+                SELECT ludy_meetings.morning_brief_lines_erase(${probe.kind}, ${probeValue(probe)})::text AS erased`.execute(ctx.trx)
+            ).rows[0]?.erased ?? 0,
+          ),
+        );
+    add('ludy_meetings.morning_brief_lines.lines', briefLinesErased ?? 0);
     const redaction = shortNumber
       ? []
       : await meetingScan(ctx.trx, async () =>
@@ -2881,6 +2905,10 @@ export const personalDataErase = defineCommand({
     if (vyTranslations > 0) kept.set('ludy_meetings.translation.body', { column: 'ludy_meetings.translation.body', rows: vyTranslations, reason: MEMBER_TRANSLATION_REASON });
     const vyLiveLines = Number(meetingCounts?.live_lines ?? 0);
     if (vyLiveLines > 0) kept.set('ludy_meetings.live_line.text', { column: 'ludy_meetings.live_line.text', rows: vyLiveLines, reason: MEMBER_LIVE_LINE_REASON });
+    const vyBriefLines = Number(
+      (await sql<{ n: string }>`SELECT COALESCE(pg_catalog.sum(brief_lines), 0)::text AS n FROM ludy_meetings.morning_brief_lines_counts()`.execute(ctx.trx)).rows[0]?.n ?? 0,
+    );
+    if (vyBriefLines > 0) kept.set('ludy_meetings.morning_brief_lines.lines', { column: 'ludy_meetings.morning_brief_lines.lines', rows: vyBriefLines, reason: MEMBER_BRIEF_LINES_REASON });
     // Private items no notice named: counted, never listed (the finder's privateItems after the erasure).
     if (untold.notes > 0) kept.set('ludy_notes.note', { column: 'ludy_notes.note', rows: untold.notes, reason: UNTOLD_PRIVATE_REASON });
     if (untold.todos > 0) kept.set('ludy_notes.todo', { column: 'ludy_notes.todo', rows: untold.todos, reason: UNTOLD_PRIVATE_REASON });

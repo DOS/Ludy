@@ -78,6 +78,7 @@ const CLASS_OF_KIND: Record<PersonalDataKind, readonly DataClass[]> = {
   free_text: ['pii'],
   // A bank account number (#2402).
   account_number: ['payment'],
+  national_id: ['national_id'],
   other: ['pii', 'contact', 'payment', 'national_id', 'national_id_if_individual', 'sensitive'],
 };
 const PERSONAL_HANDLINGS: readonly PersonalDataHandling[] = ['erase', 'keep_legal', 'keep_record'];

@@ -11,8 +11,9 @@
 // silently: see its comment).
 //
 // Rule 4 (#3124) adds the fourth: a customer conversation unanswered past its reply window (24 hours) whose contact has an open deal (`kernel.signals.conversation_unanswered`).
-// The inbox answers `kernel.conversation.signals_unanswered` (ids and a moment, no text) and the CRM's open deals are the other side. It is the one rule that cannot run for an AI app's grant
-// (conversations are outside a grant's reach), so there it is `not_available`, never an empty "all clear".
+// The inbox answers `kernel.conversation.signals_unanswered` (ids and a moment, no text) and the CRM's open deals are the other side. It is the one rule that cannot run for an AI app's grant: a
+// grant reads threads only through the two Hộp thư tools (`kernel.mcp.conversations` and `kernel.mcp.conversation`, #4068), each a bounded projection under the grant's own scope, and this rule's
+// inbox read is not one of them, so there its status is `unavailable`, never an empty "all clear".
 //
 // Fail closed: with no answer from either side (its read is not registered yet, its module is off, it refuses the member's role, or its answer does
 // not match the contract) the rule shows nothing. A member who cannot read the invoices gets no item, never one claiming "no invoice" because it could
@@ -268,7 +269,7 @@ export function supplierBankChangedQuery(options: { now?: () => Date; log?: Pick
 // answers, for each, the thread that has waited longest and since when. One flag per contact (a contact with several open deals or threads is one item), `dueAt` the moment the wait
 // crossed the window so the longest wait comes first on Home, and a link to that thread in Hộp thư. The item carries a key and a number of hours: no message, no name, no channel.
 //
-// It never looks at the inbox for an AI app's grant (its context reads no conversation), and a thread the member may not read is not listed by the inbox read, so no item can come from
+// It never looks at the inbox for an AI app's grant (a grant's own reads of a thread are the two Hộp thư MCP tools, #4068, which are not this rule's read), and a thread the member may not read is not listed by the inbox read, so no item can come from
 // one. A line with no answer (not registered, off, refusing, outside its contract) gives no item and a status that says it could not check.
 export async function checkConversationUnanswered(ctx: QueryContext, now?: () => Date): Promise<RuleCheck> {
   if (ctx.actor.type === 'user' && ctx.actor.mcp !== undefined) return { items: [], status: 'unavailable' };
