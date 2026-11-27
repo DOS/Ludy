@@ -3,7 +3,7 @@
 // on every version, which reset the inputs when the fresh read landed after the card's copy and let a save send the stale title.
 import { describe, expect, it } from 'vitest';
 import type { Deal, PartyChoice } from '@ludy/kernel-contract';
-import { dealFormValues, newerDeal } from '../src/components/deal-form.tsx';
+import { dealFormValues, newerDeal } from '../src/lib/deal-form-values.ts';
 
 const deal = (over: Partial<Deal> = {}): Deal =>
   ({
