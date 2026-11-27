@@ -4025,22 +4025,6 @@ function extractAstFacts(
   const nonSafeBaseAliases = new Map<string, Set<string>>();
   const seedEscapedSafeKillBases = new Set<string>();
   let hasProtoMutation = false;
-  const seedProtoHosts = new Set<string>();
-  for (const h of PROTO_ACCESS_HOSTS) {
-    seedProtoHosts.add(astVarKey(rootScope, h));
-  }
-  for (const reqHost of AST_REQUIRE_HOSTS) {
-    for (const pHost of ['Object', 'Reflect', 'Function', 'Array']) {
-      seedProtoHosts.add(`prop:${astVarKey(rootScope, reqHost)}\0${pHost}`);
-    }
-  }
-  const seedProtoMethods = new Set<string>();
-  for (const objName of ['Reflect', 'Object']) {
-    const objKey = astVarKey(rootScope, objName);
-    for (const mName of PROTO_REFLECT_OR_OBJECT_METHODS) {
-      seedProtoMethods.add(`prop:${objKey}\0${mName}`);
-    }
-  }
   const protoElementAccessCandidates: Array<{ hostExpr: tsType.Expression; scope: AstLexScope }> = [];
   const protoMethodCallCandidates: Array<{
     calleeExpr: tsType.Expression;
@@ -4386,6 +4370,22 @@ function extractAstFacts(
     declaredNames: new Set<string>(),
     constStrings: new Map<string, string | null>(),
   };
+  const seedProtoHosts = new Set<string>();
+  for (const h of PROTO_ACCESS_HOSTS) {
+    seedProtoHosts.add(astVarKey(rootScope, h));
+  }
+  for (const reqHost of AST_REQUIRE_HOSTS) {
+    for (const pHost of ['Object', 'Reflect', 'Function', 'Array']) {
+      seedProtoHosts.add(`prop:${astVarKey(rootScope, reqHost)}\0${pHost}`);
+    }
+  }
+  const seedProtoMethods = new Set<string>();
+  for (const objName of ['Reflect', 'Object']) {
+    const objKey = astVarKey(rootScope, objName);
+    for (const mName of PROTO_REFLECT_OR_OBJECT_METHODS) {
+      seedProtoMethods.add(`prop:${objKey}\0${mName}`);
+    }
+  }
   seedBlockShadowIdentifiers(sf, rootScope);
   seedFnVarDecls(sf, rootScope);
 
