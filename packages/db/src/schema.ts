@@ -2095,6 +2095,7 @@ type Refined = Tables<{
   'ludy_finance.chart': ChartTable;
   'ludy_finance.legal_entity_books': LegalEntityBooksTable;
   'ludy_finance.input_vat_check': InputVatCheckTable;
+  'ludy_finance.entry_review_mark': G.FinanceEntryReviewMarkTable;
   'ludy_finance.vat_return_filed': VatReturnFiledTable;
   'ludy_finance.journal_voucher': JournalVoucherTable;
   'ludy_finance.portal_invoice_list': PortalInvoiceListTable;

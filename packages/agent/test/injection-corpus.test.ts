@@ -10,6 +10,7 @@ import {
   AdsCampaignWriter,
   ConversationWriter,
   ExpenseVarianceCoworker,
+  UnusualEntriesCoworker,
   InboxReader,
   PayrollCoworker,
   SchedulingReader,
@@ -45,6 +46,7 @@ import {
   type EInvoiceRateFacts,
   type EInvoiceReasonFacts,
   type ExpenseVarianceNoteFacts,
+  type UnusualEntriesNoteFacts,
   type HrAddendumCheckInput,
   type HrOkrCheckinDraftInput,
   type HrProbationSummaryInput,
@@ -241,6 +243,19 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     };
     for (const c of INJECTION_CORPUS) {
       const coworker = new ExpenseVarianceCoworker(STUB_CONFIG, async () => ({
+        output: { notes: [{ row: 1, text: c.poisonedOutput }] },
+        usage: zeroUsage,
+      }));
+      const res = await coworker.notes({ ...facts, language: c.language });
+      expect(res.kind, c.id).toBe('none');
+    }
+  });
+
+  it('finance.unusual_entries_note: refuses every injection payload via UnusualEntriesCoworker', async () => {
+    cover('finance.unusual_entries_note');
+    const facts: UnusualEntriesNoteFacts = { language: 'vi', hits: [{ rule: 'amount_outlier', sourceKind: 'invoice', direction: 'high' }] };
+    for (const c of INJECTION_CORPUS) {
+      const coworker = new UnusualEntriesCoworker(STUB_CONFIG, async () => ({
         output: { notes: [{ row: 1, text: c.poisonedOutput }] },
         usage: zeroUsage,
       }));

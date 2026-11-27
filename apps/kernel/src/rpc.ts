@@ -27,7 +27,7 @@ import {
   type GithubLinkPrepareResult,
   type GithubTaskLinkView,
 } from '@ludy/kernel-contract';
-import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, BankSignDepositMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceHomeMoney, FinanceOverview, MonthClose, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
+import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, BankSignDepositMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceUnusualEntries, FinanceHomeMoney, FinanceOverview, MonthClose, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformConsentError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@ludy/channel';
@@ -132,6 +132,7 @@ import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainMonthClose, monthCloseAi } from './finance-month-close-ai.ts';
 import { explainExpenseVariance, expenseVarianceAi } from './finance-expense-variance-ai.ts';
+import { explainUnusualEntries, unusualEntriesAi } from './finance-unusual-entries-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { marketplaceColumnsAi, proposeMarketplaceColumns } from './finance-marketplace-columns-ai.ts';
 import { explainMarketplaceFees, marketplaceFeeNoteAi } from './finance-marketplace-fee-note-ai.ts';
@@ -575,6 +576,8 @@ export function createRpcHandler(
   const financeVatLateAi = vatLateAi(conversationReader?.vatLateSentence ? { vatLateSentence: conversationReader.vatLateSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's possible reason per flagged expense line (#4392): the same reader and model, a budget of its own; told no figure at all.
   const financeExpenseVarianceAi = expenseVarianceAi(conversationReader?.expenseVarianceNotes ? { expenseVarianceNotes: conversationReader.expenseVarianceNotes.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's possible thing to look at per hit of the monthly review of unusual entries (#5182): the same reader and model, a budget of its own; told fixed labels only, no figure, date, code or name.
+  const financeUnusualEntriesAi = unusualEntriesAi(conversationReader?.unusualEntriesNotes ? { unusualEntriesNotes: conversationReader.unusualEntriesNotes.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   // The accounting coworker's one sentence on why a money-in bank line may match a completed eSign deposit request (#4723): non-PII facts only.
@@ -3927,6 +3930,19 @@ export function createRpcHandler(
           return explainExpenseVariance(financeExpenseVarianceAi, orgId, actor.userId, variance, lang ?? 'vi');
         }),
       ),
+    },
+    financeUnusualEntries: {
+      get: os.financeUnusualEntries.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<FinanceUnusualEntries>('finance.unusual_entries', input, { actor, orgId }))),
+      // The notes are asked of the model outside any transaction, from the hits the review read in the member's own one (their legal entities only).
+      explain: os.financeUnusualEntries.explain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const review = await runtime.query<FinanceUnusualEntries>('finance.unusual_entries', ask, { actor, orgId });
+          return explainUnusualEntries(financeUnusualEntriesAi, orgId, actor.userId, review, lang ?? 'vi');
+        }),
+      ),
+      // A person marks one hit as reviewed: an audited, idempotent command that touches no ledger table.
+      review: os.financeUnusualEntries.review.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.unusual_entries.review', input, { actor, orgId }))),
     },
     supplierBank: {
       list: os.supplierBank.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_bank_account.list', input, { actor, orgId }))),

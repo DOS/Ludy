@@ -7,6 +7,7 @@ One scope line per owner-approved feature, each linked to its issue. Code comput
 | Cash-flow forecast, 30/60/90 days | A read-only card on the Tổng quan: booked cash, receipts and payments dated from the books, the lowest balance and its day; the coworker's note on the low point states no figure and no date. | [#4391](https://github.com/DOS/Ludy/issues/4391) | [cash-forecast.md](cash-forecast.md) |
 | Month-close checklist | For one legal entity and month, on the Tổng quan: seven items counted by code (pending proposals dated in the month, tax-portal invoices that match no voucher, unbooked bank lines, marketplace settlements and payouts not recorded, the stock close not run, the VAT return not marked as filed, the period lock not covering the month), each with a count, a link and fixed text. The coworker is told which items are open and no count or date, puts them in order and says why in one short note; the order is accepted only if it is exactly the open items. | [#4390](https://github.com/DOS/Ludy/issues/4390) | [below](#month-close-checklist-4390) |
 | Cost variance | A read-only card on the Tổng quan: expense lines that moved against last month and the 3-month average, flagged by code under the entity's books; the coworker's possible reason per line states no figure, date or name. | [#4392](https://github.com/DOS/Ludy/issues/4392) | the section below |
+| Unusual posted entries | A monthly review of POSTED entries on the Tổng quan, for one legal entity and an ended month: five rules find them (a repeat of an invoice, a manual voucher on a control account, an amount far outside the usual range, an account never used with this supplier or kind of voucher, an entry keyed on a day off), ranked and capped in SQL; the coworker's one possible thing to look at per hit states no figure, date, code or name and never says the entry is wrong; a person may mark a hit as reviewed (audited, idempotent, no ledger write). | [#5182](https://github.com/DOS/Ludy/issues/5182) | the last section below |
 
 ## Month-close checklist (#4390)
 
@@ -59,3 +60,57 @@ month's balance (the line's own figure nets a pair either way). The note check w
 `packages/kernel-contract/src/finance-expense-variance.ts`), the rules in `modules/finance/src/domain/expense-variance.ts`,
 the note in `packages/agent/src/expense-variance.ts` under the key `finance.expense_variance_note`, the card in
 `apps/app/src/routes/expense-variance-card.tsx`.
+
+## Unusual posted entries (#5182)
+
+Owner decision 2026-11-27 (JOY, Accounting PO, AI round 2). A monthly review of entries already **posted**, for one legal
+entity and one ended month. It differs from the flags of #2380, which fire on a proposal before a payment is approved; the
+thresholds that fit are reused from it and from the cost variance. It reads, never writes the books: `finance.unusual_entries`
+runs in the member's own transaction, every statement filters org and entity, and the one statement that finds, ranks and caps
+the hits reads the last 24 months of one entity at most.
+
+**Rules (codes in `packages/kernel-contract/src/finance-unusual-entries.ts`, thresholds are defaults, not settings).**
+- `duplicate_invoice`: a purchase document in force with the same supplier, the same invoice number (as the intake compares
+  it: spaces dropped, leading zeros dropped when it is all digits, else upper case) and the same total as an earlier one in
+  force; a replacement or a correction of it is not a duplicate. The later copy is the hit.
+- `control_manual`: a voucher a person typed (no payroll, settlement, payout, stock, closing, surplus or fee link) with a
+  line on 131, 331, 133, 333 or 334.
+- `amount_outlier`: an entry's amount on a group (supplier or customer and account line: 4 digits for 64xx under TT133, 3
+  under TT99) is at least 3 times, or at most a third of, the median of the group's earlier entries of the last 6 months,
+  differs from it by at least 5,000,000 dong and by at least 5 times the median absolute deviation; judged only with at
+  least 6 earlier entries. Median and spread are computed over NUMERIC in SQL (never `percentile_cont`, which is a double).
+- `new_account`: an account line that a supplier with at least 3 earlier entries, or, for a line with no supplier, a kind of
+  voucher (invoice, cash or bank voucher, manual) with at least 10, has not used in the last 24 months. The window is bounded
+  on purpose: the approved design said "ever", and the PO's condition that the history reads stay bounded replaced it.
+- `off_day`: an entry a person keyed (a manual voucher or a cash or bank voucher) of 5,000,000 dong or more, dated on a
+  Saturday, a Sunday or a public holiday of the shared calendar (#4387: the fixed dates, Tết and the Hùng Kings day for the
+  years in its lunar table). Days the government moves are not in that calendar and the 2027 table is unconfirmed (#2520).
+
+**Left out everywhere (candidates and history).** An entry with a line on 911 (both regimes); an entry that has a reversal
+and a reversal entry itself, whatever their dates. This is stricter than the cost variance, which only drops a pair when
+both sides fall inside its window, because a hit asks whether an entry is worth a look and a cancelled pair is not. History
+rows from before the day the entity's current chart began are not read (TT133 and TT99 codes do not translate).
+
+**Ranking and cap.** In SQL: rule order (the list above), then amount, then the later day. At most 6 hits per rule and 30 in
+all; hits already marked reviewed are taken out before the ranking, so they never use a place, and are counted.
+
+**The reviewed mark.** `finance.unusual_entries.review` (R1, user actors only, owners, admins and members) inserts one row of
+`ludy_finance.entry_review_mark` per (org, entry, rule); the unique key makes it idempotent and the runtime audits every run
+(entry id, rule, whether it was already marked, no figure or text). No ledger table is touched and there is no unmark in this
+slice. The table is insert-only for the tenant role, under RLS and the legal-entity scope. It is not purged with the org's
+tenant data: it follows the ledger entry it points at, which `ludy_kernel.org_purge` reads and never deletes, as
+`input_vat_check` does, so no `ludy_kernel` function is replaced.
+
+**What the coworker does.** One sentence per hit (at most 12), a possibility to look at, never a finding. It is told, per
+hit, the rule as a fixed phrase, a fixed kind of voucher and one fixed detail (far above or far below the usual, new for the
+supplier or the kind of voucher, a day off without saying which, the control group); no figure, date, account code, voucher
+number, name or memo. The note is checked after the call with the very same text checks as the cost variance (hedge first,
+no digit or number in words, no date, no name, no certainty, no done-claim, no promise, no advice) plus a refusal of words
+that say the entry is wrong and of advice to move money or undo an entry, and an amount note must agree with its direction.
+The card shows every figure and an "Open voucher" action; with AI off, the budget spent or every note refused, the list is
+the same, without sentences and without a notice.
+
+**Where.** `finance.unusual_entries`, `finance.unusual_entries.review` and `financeUnusualEntries.{get,explain,review}`
+(contract in `packages/kernel-contract/src/finance-unusual-entries.ts`), the query in `modules/finance/src/unusual-entries.ts`,
+its pure parts in `modules/finance/src/domain/unusual-entries.ts`, the note in `packages/agent/src/unusual-entries.ts` under
+the key `finance.unusual_entries_note`, the card in `apps/app/src/routes/unusual-entries-card.tsx`.

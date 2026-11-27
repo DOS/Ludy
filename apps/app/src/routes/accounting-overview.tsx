@@ -16,6 +16,7 @@ import { CashForecastCard } from '../components/cash-forecast-card.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { MonthCloseCard } from '../components/month-close-card.tsx';
 import { ExpenseVarianceCard } from './expense-variance-card.tsx';
+import { UnusualEntriesCard } from './unusual-entries-card.tsx';
 import { CardSkeleton, Empty, ErrorText, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
@@ -282,6 +283,7 @@ export function AccountingOverviewPage() {
               <ExpenseMix expenses={data.expenses} />
               <MonthCloseCard slug={slug} />
               <ExpenseVarianceCard legalEntityId={entity.legalEntityId} ready={entity.ready} />
+              <UnusualEntriesCard slug={slug} legalEntityId={entity.legalEntityId} ready={entity.ready} />
             </>
           )}
         </>
