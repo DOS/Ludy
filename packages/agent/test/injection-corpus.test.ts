@@ -13,6 +13,7 @@ import {
   ExpenseVarianceCoworker,
   InboxReader,
   PayrollCoworker,
+  QuarterSummaryCoworker,
   SchedulingReader,
   SignAcceptanceReader,
   SignAiReader,
@@ -65,6 +66,7 @@ import {
   type PayrollFigures,
   type PayrollMatchFacts,
   type PayrollSheet,
+  type QuarterSummaryNoteFacts,
   type PayslipExplainRequest,
   type ProjectCycleSummaryFacts,
   type ProjectTriageAssistFacts,
@@ -242,6 +244,23 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     };
     for (const c of INJECTION_CORPUS) {
       const coworker = new ExpenseVarianceCoworker(STUB_CONFIG, async () => ({
+        output: { notes: [{ row: 1, text: c.poisonedOutput }] },
+        usage: zeroUsage,
+      }));
+      const res = await coworker.notes({ ...facts, language: c.language });
+      expect(res.kind, c.id).toBe('none');
+    }
+  });
+
+  it('finance.quarter_summary_note: refuses every injection payload via QuarterSummaryCoworker', async () => {
+    cover('finance.quarter_summary_note');
+    const facts: QuarterSummaryNoteFacts = {
+      language: 'vi',
+      entity: 'company',
+      rows: [{ row: 'revenue', vsPrevious: 'rose', vsLastYear: 'rose', overdue: false }],
+    };
+    for (const c of INJECTION_CORPUS) {
+      const coworker = new QuarterSummaryCoworker(STUB_CONFIG, async () => ({
         output: { notes: [{ row: 1, text: c.poisonedOutput }] },
         usage: zeroUsage,
       }));

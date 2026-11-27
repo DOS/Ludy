@@ -45,6 +45,7 @@ import { financeOverviewQuery } from './overview.ts';
 import { financeHomeMoneyQuery } from './home-money.ts';
 import { financeMonthCloseQuery } from './month-close.ts';
 import { financeExpenseVarianceQuery } from './expense-variance.ts';
+import { financeQuarterSummaryQuery } from './quarter-summary.ts';
 import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoice-connections.ts';
 import { marketplaceColumnsCommands, marketplaceColumnsQueries } from './marketplace-columns.ts';
 import { marketplaceConnectionCommands, marketplaceConnectionQueries } from './marketplace-connections.ts';
@@ -342,6 +343,7 @@ export const financeQueries = [
   financeHomeMoneyQuery,
   financeMonthCloseQuery,
   financeExpenseVarianceQuery,
+  financeQuarterSummaryQuery,
   openingBalancePreview,
   vouchersList,
   cashVouchers,
