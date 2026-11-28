@@ -9,6 +9,11 @@ import { BANK_MATCH_REASONS, zAccountCode, zBankMatchedBy, zId, zLocalDate, zMon
 // A month of a busy account has a few thousand lines; the cap keeps a request well under the API's body limit.
 export const BANK_IMPORT_MAX_ROWS = 5000;
 
+// Days after a member's decision (import or skip) when the staged rows of a bank statement (counterparty names, descriptions, the other side's account numbers) are deleted from the Inbox's
+// extraction versions (#2195, the pattern of MARKETPLACE_ORIGINAL_RETENTION_DAYS). The decision's summary, the file and its original, and the lines already booked stay. The database
+// (ludy_finance.bank_statement_rows_*) refuses anything shorter than 90, so a bug in the job can never delete early.
+export const BANK_STATEMENT_ROWS_RETENTION_DAYS = 90;
+
 // One line of the file as read, cells as text: a number cell's stored value as is (an Excel date is its serial
 // number), a text cell as typed. moneyIn is the statement's credit ("ghi có"), moneyOut its debit ("ghi nợ"); a file
 // with one signed amount column sends it as moneyIn. balance and reference are '' when the file has no such column.

@@ -753,9 +753,10 @@ export const recordExtraction = defineCommand({
 // rejected (skipped, nothing stored). A finished run never changes (extraction_guard), so the decision is a NEW run of the
 // file, with the staged summary in its new state and no rows: it is the file's newest run, the one the Inbox shows and the
 // one a second decision finds, so a statement is decided once; its audit row names the member who decided (a run inserted
-// already finished has no requester). The staged run keeps its rows, like any run keeps its
-// result. Run by finance.bank.statement_confirm and .statement_reject, as the member who decided; the finance module takes
-// a lock on the file first, so two members cannot both decide it.
+// already finished has no requester). The staged run keeps its rows, like any run keeps its result, until the system
+// command finance.bank.statement_rows_purge deletes it 90 days after the decision (#2195). Run by
+// finance.bank.statement_confirm and .statement_reject, as the member who decided; the finance module takes a lock on
+// the file first, so two members cannot both decide it.
 export const statementState = defineCommand({
   name: 'kernel.extraction.statement_state',
   input: z.object({
