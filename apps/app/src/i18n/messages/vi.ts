@@ -20087,7 +20087,9 @@ export const vi = {
         list: 'Xem pháp nhân cho màn hình kế toán',
       },
       mcp: {
+        cash_forecast: 'Cho ứng dụng AI xem dự báo dòng tiền 30, 60 và 90 ngày',
         invoices: 'Cho ứng dụng AI xem danh sách hóa đơn đã ghi sổ',
+        month_close: 'Cho ứng dụng AI xem những việc còn mở khi chốt sổ một tháng',
         open_balances: 'Cho ứng dụng AI xem công nợ phải thu và phải trả còn mở theo từng đối tác',
         overview: 'Cho ứng dụng AI xem tổng quan tiền, lãi lỗ, công nợ phải thu và phải trả của một kỳ',
         payment_reminder: 'Cho ứng dụng AI xem bản nháp nhắc nợ của một khách hàng quá hạn',
