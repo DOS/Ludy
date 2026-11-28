@@ -8518,6 +8518,8 @@ export const en = {
     symbolUncoded: 'not coded',
     symbolYear: 'year {year}',
     symbolType: 'type {letter}',
+    registrationNotice:
+      '{brand} cannot see your business\'s e-invoice registration at this provider. Ask the provider, or check with the tax authority, whether the business is registered. Registration and any change to it (form 01/ĐKTĐ-HĐĐT) are made through the provider or the tax system.',
   },
   marketplaceVatRate: {
     title: 'Marketplaces: VAT on your sales',
