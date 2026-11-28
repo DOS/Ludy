@@ -5944,6 +5944,7 @@ export function createHttpApp(deps: HttpDeps) {
     // The 01/CNKD quarterly return worksheet of a household business (#2518), POST with a JSON body { legalEntityId, year, quarter } and, for a household with several trades, split: [{ trade, revenue }] (and, from the yearly rule,
     // splitBefore: [{ trade, revenue }] and deductionTrade). The query checks the year and quarter, the roles, the profile and the split, and refuses (422) while revenue is unassigned (forExport), so the file only ever holds
     // whole figures. While a row behind the figures is still unconfirmed the file is given and every figure in it carries the provisional label (#2518). The audit row is recorded before the file is sent. A worksheet: Ludy files nothing.
+    // The export slot (app.use above) is taken before bodyLimit reads the body, as on the upload routes: a member who sends a slow body holds at most their own two slots until the request times out.
     app.post('/api/export/household-cnkd.xlsx', bodyLimit({ maxSize: 8 * 1024 }), async (c) => {
       try {
         const user = c.get('user');
