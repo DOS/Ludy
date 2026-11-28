@@ -49,6 +49,7 @@ import {
   zHrDeclarationDocument,
   type MisaGoodsCode,
   type HouseholdCnkd,
+  type HouseholdQtt,
   type HouseholdS1a,
   type HouseholdS2a,
   type HouseholdS2b,
@@ -104,6 +105,7 @@ import {
   buildFixedAssetsWorkbook,
   buildStockWorkbook,
   buildCnkdWorkbook,
+  buildQttWorkbook,
   buildS1aWorkbook,
   buildS2aWorkbook,
   buildS2bWorkbook,
@@ -5967,6 +5969,39 @@ export function createHttpApp(deps: HttpDeps) {
           headers: {
             'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'to-khai-01-cnkd', `${year}-Q${quarter}`, ORG_SLUG], 'xlsx'),
+            'cache-control': 'private, no-store',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // The 02/CNKD-TNCN-QTT annual PIT finalization worksheet of a household on the income method (#5285), ?legalEntityId=<household>&year=2026 and, when the household typed them, &withheld=<dong>&prepaid=<dong>&noPaymentRevenue=<dong>
+    // (whole dong; an empty or fractional value is a 422). The query checks the year, the roles, the profile, the amounts and refuses (422 HOUSEHOLD_RETURN_HELD) while anything is held (forExport), so the file only ever holds
+    // whole figures. While a row behind the figures is still unconfirmed the file is given and every figure that depends on it carries the provisional label. The audit row is recorded before the file is sent. A worksheet: Ludy files nothing.
+    app.get('/api/export/household-qtt.xlsx', async (c) => {
+      try {
+        const user = c.get('user');
+        const orgSlug = readOrgHeader(c);
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const actor = actorOf(user);
+        const legalEntityId = c.req.query('legalEntityId') ?? '';
+        const year = Number(c.req.query('year') ?? '');
+        const withheld = c.req.query('withheld');
+        const prepaid = c.req.query('prepaid');
+        const noPaymentRevenue = c.req.query('noPaymentRevenue');
+        const sheetData = await runtime.query<HouseholdQtt>(
+          'finance.household.qtt',
+          { legalEntityId, year, ...(withheld !== undefined ? { withheld } : {}), ...(prepaid !== undefined ? { prepaid } : {}), ...(noPaymentRevenue !== undefined ? { noPaymentRevenue } : {}), forExport: true },
+          { actor, orgId },
+        );
+        const bytes = await buildQttWorkbook(sheetData, config.BRAND_NAME);
+        await runtime.execute('finance.household.export', { legalEntityId, book: '02/CNKD-TNCN-QTT', period: String(year), rows: sheetData.lines.length }, { actor, orgId });
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'to-khai-02-cnkd-tncn-qtt', String(year), ORG_SLUG], 'xlsx'),
             'cache-control': 'private, no-store',
           },
         });

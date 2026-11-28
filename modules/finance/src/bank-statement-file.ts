@@ -204,10 +204,10 @@ export const bankStatementReject = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới bỏ qua được sao kê');
     await lockStatement(ctx, input.fileId);
     if (!(await stagedRun(ctx, input.fileId, true))) throw notStaged();
-    // Nothing was stored in the account, and every dedupe key stays free. The rows themselves stay in the finished run's
-    // result, which nothing may change (extraction_guard) and no tenant role may delete, until the org is purged: they
-    // are bounded (STAGED_STATEMENT_MAX_BYTES) and read by no screen once the statement is skipped. Dropping them after a
-    // retention period needs a purge function in a migration; the rule proposed in #2191 is in its PR.
+    // Nothing was stored in the account, and every dedupe key stays free. The rows themselves stay in the staged run's
+    // result, which nothing may change (extraction_guard) and no tenant role may delete: they are bounded
+    // (STAGED_STATEMENT_MAX_BYTES) and read by no screen once the statement is skipped. The nightly worker deletes that
+    // staged version BANK_STATEMENT_ROWS_RETENTION_DAYS after the decision (bank-statement-rows-retention.ts, #2195).
     await ctx.run('kernel.extraction.statement_state', { fileId: input.fileId, state: 'rejected' });
     ctx.audit({ fileId: input.fileId });
     return { fileId: input.fileId };

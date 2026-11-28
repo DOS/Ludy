@@ -62,6 +62,7 @@ import { DEFAULT_EXPORT_RETENTION_DAYS, runOrgExport } from './org-export.ts';
 import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging, sweepTmpBlobs } from './retention.ts';
 import { pruneMarketplaceColumnChecks, runMarketplacePurge, runMarketplaceRetention } from './marketplace-retention.ts';
+import { runBankStatementRetention } from './bank-statement-retention.ts';
 import { runMeetingsTranscribe, type MeetingsTranscribeDeps, type MeetingsTranscribeJob } from './meetings-transcribe.ts';
 import { runMeetingsLiveNotes, type MeetingsLiveNotesDeps, type MeetingsLiveNotesJob } from './meetings-live-notes.ts';
 import { createShredRefSync, pruneStaleCalendarAgenda, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
@@ -1413,6 +1414,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         // The column checks of unrecognised order reports older than a week, with their previews (#4036): personal data kept seven days at most.
         await pruneMarketplaceColumnChecks({ workerDb: deps.workerDb }).catch((error: unknown) => {
           opsAlert('[marketplace-retention] ALERT the nightly deletion of column checks failed; the error is in the worker log', error);
+        });
+        // The staged rows of bank statements a member decided 90 days ago (#2195): the names, descriptions and account numbers of the other side. The decision's summary and the booked lines stay;
+        // its own failure is alerted and never stops the rest.
+        await runBankStatementRetention({ runtime: deps.runtime, workerDb: deps.workerDb }).catch((error: unknown) => {
+          opsAlert('[bank-statement-retention] ALERT the nightly deletion of staged statement rows failed; the error is in the worker log', error);
         });
       }
       if (deps.runtime.installed('projects')) {

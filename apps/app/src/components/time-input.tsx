@@ -45,7 +45,7 @@ export function TimeInput({
         autoComplete="off"
         placeholder={t('timePlaceholder')}
         aria-invalid={partial || undefined}
-        className={cn('w-full pr-9 tabular-nums', inputClassName)}
+        className={cn('w-full pr-11 tabular-nums md:pr-9', inputClassName)}
         value={text}
         onChange={(e) => {
           setText(e.target.value);
@@ -63,7 +63,7 @@ export function TimeInput({
         tabIndex={-1}
         aria-hidden="true"
         form={NO_FORM}
-        className="pointer-events-none absolute inset-y-0 right-0 w-9 opacity-0"
+        className="pointer-events-none absolute inset-y-0 right-0 w-11 opacity-0 md:w-9"
         value={formatTimeValue(value)}
         onChange={(e) => {
           const time = parseTimeText(e.target.value);
@@ -73,7 +73,7 @@ export function TimeInput({
       {!locked && (
         <button
           type="button"
-          className="absolute inset-y-0 right-0 grid w-9 place-items-center rounded-r-lg text-muted-foreground hover:text-foreground"
+          className="absolute inset-y-0 right-0 grid w-11 place-items-center rounded-r-lg text-muted-foreground hover:text-foreground md:w-9"
           // Its name shares no word with a field's label ("Giờ", "Time"), so a lookup by that label finds the field alone.
           aria-label={t('openClock')}
           onClick={() => {
