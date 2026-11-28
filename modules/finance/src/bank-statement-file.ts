@@ -266,10 +266,11 @@ const TOO_LARGE = 'Tệp sao kê quá lớn (tối đa 10 MB); hãy chia thành 
 const TOO_BIG = 'Sao kê có quá nhiều dữ liệu để chờ nhập (tối đa 4 MB nội dung các dòng); hãy chia thành nhiều tệp theo tháng';
 const TOO_MANY = `Sao kê có hơn ${vnNumber(EXTRACT_LIMITS.maxStatementRows)} dòng; hãy chia thành nhiều tệp theo tháng`;
 
+// The statement's own account number is shown masked (#2211): the text is kept in the file's read result and shown in the Inbox, and the last digits, the file name and the card's source line say which account is meant.
 export function unmappedMessage(accountNumber: string | null): string {
   return accountNumber === null
     ? 'Không tìm thấy số tài khoản trong sao kê (dòng "Số tài khoản" phía trên bảng); hãy nhập sao kê ở màn Ngân hàng và chọn tài khoản'
-    : `Số tài khoản ${accountNumber} chưa được liên kết với tài khoản ngân hàng nào của tổ chức; nếu đây đúng là số tài khoản của tổ chức, hãy ghi số vào tài khoản ngân hàng ở Cài đặt, mục Số tài khoản ngân hàng (hoặc liên kết nguồn giao dịch ngân hàng), rồi bấm Đọc lại ở tệp này; thư gửi đến không chứng minh người gửi là ai`;
+    : `Số tài khoản ${maskAccountNumber(accountNumber)} chưa được liên kết với tài khoản ngân hàng nào của tổ chức; nếu đây đúng là số tài khoản của tổ chức, hãy ghi số vào tài khoản ngân hàng ở Cài đặt, mục Số tài khoản ngân hàng (hoặc liên kết nguồn giao dịch ngân hàng), rồi bấm Đọc lại ở tệp này; thư gửi đến không chứng minh người gửi là ai`;
 }
 
 function failureMessage(outcome: Exclude<StatementStageOutcome, { outcome: 'staged' }>): string {
@@ -277,7 +278,7 @@ function failureMessage(outcome: Exclude<StatementStageOutcome, { outcome: 'stag
     case 'unmapped':
       return unmappedMessage(outcome.accountNumber);
     case 'ambiguous':
-      return `Số tài khoản ${outcome.accountNumber} được liên kết với nhiều tài khoản ngân hàng; hãy gỡ liên kết thừa trong Cài đặt rồi bấm Đọc lại ở tệp này`;
+      return `Số tài khoản ${maskAccountNumber(outcome.accountNumber)} được liên kết với nhiều tài khoản ngân hàng; hãy gỡ liên kết thừa trong Cài đặt rồi bấm Đọc lại ở tệp này`;
     case 'refused':
       return outcome.code === 'BANK_IMPORT_INVALID'
         ? `Sao kê có dòng không đọc được${outcome.rows.length > 0 ? ` (dòng ${outcome.rows.join(', ')} của tệp)` : ''}; hãy nhập sao kê ở màn Ngân hàng để xem từng dòng`

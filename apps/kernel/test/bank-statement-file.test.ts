@@ -167,8 +167,24 @@ describe('readStatementFile', () => {
     const record = h.calls.at(-1);
     expect(record?.name).toBe('kernel.extraction.record');
     expect(record?.input).toMatchObject({ status: 'failed', proposal: null, result: null });
-    expect(String(record?.input['error'])).toContain(STATEMENT_ACCOUNT);
-    expect(String(record?.input['error'])).toContain('chưa được liên kết');
+    // The number is shown masked, last four digits only (#2211): the text is kept in the file's read result, the whole number is not.
+    const error = String(record?.input['error']);
+    expect(error).toContain('*******1234');
+    expect(error).not.toContain(STATEMENT_ACCOUNT);
+    expect(error).not.toContain('1988');
+    expect(error).toContain('chưa được liên kết');
+  });
+
+  it('masks the account number in the failed read of a number linked to several bank accounts too (#2211)', async () => {
+    const h = harness(statementXlsx(), ZIP, { outcome: 'ambiguous', accountNumber: STATEMENT_ACCOUNT });
+    expect(await h.run()).toEqual({ handled: true });
+    const record = h.calls.at(-1);
+    expect(record?.name).toBe('kernel.extraction.record');
+    expect(record?.input).toMatchObject({ status: 'failed', proposal: null, result: null });
+    const error = String(record?.input['error']);
+    expect(error).toContain('*******1234');
+    expect(error).not.toContain(STATEMENT_ACCOUNT);
+    expect(error).toContain('nhiều tài khoản ngân hàng');
   });
 
   it('records a statement with no account number as a failed read, and stores nothing', async () => {
