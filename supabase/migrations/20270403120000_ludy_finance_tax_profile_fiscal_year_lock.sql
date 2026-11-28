@@ -32,7 +32,7 @@
 -- commit next to a first set_books_regime() that read no row and took December. Both sides now take the transaction advisory lock
 -- the save command already takes, pg_advisory_xact_lock(hashtext('ludy_kernel.tax_profile:' || org)), before they read or write the
 -- month: this guard when the month changes to another than December (the lock is re-entrant, so the save command, which holds it
--- already, does not wait for itself), and set_books_regime() (restated in 20270403100000) before it reads the profile. The save, or
+-- already, does not wait for itself), and set_books_regime() (restated in 20270403130000) before it reads the profile. The save, or
 -- the switch, that comes second waits for the first to commit and then reads its committed rows. Any other writer that updates an
 -- existing row without the lock first can meet a deadlock with a switch; PostgreSQL ends one of the two (40P01) and the refusal
 -- is never a silent pass.

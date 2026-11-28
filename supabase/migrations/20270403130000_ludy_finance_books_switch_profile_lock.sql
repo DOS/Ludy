@@ -2,7 +2,7 @@
 -- Ludy finance (issue #5311, follow-up of #1403 TT99 books phase B): ludy_finance.set_books_regime() takes the advisory lock of the
 -- org's tax profile before it reads the profile. Idempotent; applied files stay untouched.
 --
--- 20270403090000 guards the month a fiscal year ends while an org keeps Circular 99 books. An org with no tax_profile row yet has no
+-- 20270403120000 guards the month a fiscal year ends while an org keeps Circular 99 books. An org with no tax_profile row yet has no
 -- row for this function's FOR SHARE to wait on, so its first save (an INSERT of a month other than 12) could commit next to its
 -- first switch. kernel.tax_profile.save already takes pg_advisory_xact_lock(hashtext('ludy_kernel.tax_profile:' || org)) first; the
 -- switch now takes the same lock before reading the profile, and the guard takes it when the month changes (a re-entrant lock for
