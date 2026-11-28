@@ -492,6 +492,22 @@ export type InputVatCheckTable = Refine<
   'legal_entity_id'
 >;
 
+// The items an owner enters into the 90-day cash forecast (#5326): the words their CHECK constraints allow. Tenant roles insert, delete and update the editable columns (category, direction and recurrence among them).
+export const CASH_FORECAST_ITEM_CATEGORIES = ['payroll', 'insurance', 'tax', 'rent', 'loan', 'other'] as const;
+export type CashForecastItemCategory = (typeof CASH_FORECAST_ITEM_CATEGORIES)[number];
+export const CASH_FORECAST_ITEM_DIRECTIONS = ['out', 'in'] as const;
+export type CashForecastItemDirection = (typeof CASH_FORECAST_ITEM_DIRECTIONS)[number];
+export const CASH_FORECAST_ITEM_RECURRENCES = ['once', 'monthly', 'quarterly'] as const;
+export type CashForecastItemRecurrence = (typeof CASH_FORECAST_ITEM_RECURRENCES)[number];
+export type CashForecastItemTable = Refine<
+  G.FinanceCashForecastItemTable,
+  {
+    category: ColumnType<CashForecastItemCategory, CashForecastItemCategory, CashForecastItemCategory>;
+    direction: ColumnType<CashForecastItemDirection, CashForecastItemDirection, CashForecastItemDirection>;
+    recurrence: ColumnType<CashForecastItemRecurrence, CashForecastItemRecurrence, CashForecastItemRecurrence>;
+  }
+>;
+
 // A person's mark that one hit of the monthly review of unusual entries was looked at (#5182): one row per (entry, rule); insert-only for the tenant role.
 export const ENTRY_REVIEW_RULES = ['duplicate_invoice', 'control_manual', 'amount_outlier', 'new_account', 'off_day'] as const;
 export type EntryReviewRule = (typeof ENTRY_REVIEW_RULES)[number];
@@ -2136,6 +2152,7 @@ type Refined = Tables<{
   'ludy_finance.channel_settlement': ChannelSettlementTable;
   'ludy_finance.channel_settlement_line': ChannelSettlementLineTable;
   'ludy_finance.stock_alias': StockAliasTable;
+  'ludy_finance.cash_forecast_item': CashForecastItemTable;
   'ludy_finance.household_profile': HouseholdProfileTable;
   'ludy_finance.marketplace_vat_rate': MarketplaceVatRateTable;
   'ludy_finance.household_threshold': HouseholdThresholdTable;

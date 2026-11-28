@@ -472,6 +472,8 @@ export const KERNEL_ERROR_CODES = [
   'HOUSEHOLD_RETURN_NOT_REQUIRED',
   'HOUSEHOLD_RETURN_METHOD',
   'HOUSEHOLD_RETURN_PROFILE_CHANGED',
+  // The items an owner enters into the 90-day cash forecast (#5326).
+  'CASH_FORECAST_ITEM_LIMIT',
   // The 02/CNKD-TNCN-QTT annual finalization worksheet (#5285).
   'HOUSEHOLD_RETURN_HELD',
   'HOUSEHOLD_QTT_INPUT',
