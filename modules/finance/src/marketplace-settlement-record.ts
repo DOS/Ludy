@@ -25,6 +25,7 @@ import {
 import { money, sum, toMoney } from '@ludy/l10n-vn';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { stampBooks } from './books-stamp.ts';
 import { assertUsableAccounts } from './accounts.ts';
 import { journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
@@ -267,7 +268,7 @@ export function createMarketplaceSettlementCommands(options: { maps?: Maps } = {
       const built = await buildSettlement(ctx, maps, input.settlementId, false);
       await assertUsableAccounts(ctx, built.months.flatMap((m) => m.lines.map((l) => l.account)));
       const payload = proposalPayload(built);
-      return { kind: JOURNAL_VOUCHER_KIND, command: MARKETPLACE_SETTLEMENT_COMMAND, title: journalVoucherTitle(payload), payload };
+      return { kind: JOURNAL_VOUCHER_KIND, command: MARKETPLACE_SETTLEMENT_COMMAND, title: journalVoucherTitle(payload), payload: await stampBooks(ctx, payload) };
     },
   });
 

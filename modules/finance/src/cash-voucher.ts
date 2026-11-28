@@ -42,6 +42,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { PAYROLL_POSTING_MAPS, journalIsBalanced, type PayrollRegime } from '@ludy/l10n-vn';
+import { refuseChangedBooks, stampBooks } from './books-stamp.ts';
 import { assertUsableAccounts } from './accounts.ts';
 import { checkBankLineVoucher, lineMatchFor, lockBankLine, readParties, type StoredBankLine } from './bank-match.ts';
 import {
@@ -272,7 +273,7 @@ export async function buildVoucherProposal(
     });
   }
   const payload = parsed.data;
-  return { kind: VOUCHER_KIND, command: VOUCHER_COMMAND, title: voucherTitle(payload), payload };
+  return { kind: VOUCHER_KIND, command: VOUCHER_COMMAND, title: voucherTitle(payload), payload: await stampBooks(ctx, payload) };
 }
 
 export const prepareVoucher = defineCommand({
@@ -323,6 +324,7 @@ export async function recordVoucherPayload(
   }
   // Posting: the entity's books are locked before the first read of them (the accounts below, the pay checks after): a switch of regime cannot commit in between.
   await lockBooks(ctx, legalEntityId);
+  await refuseChangedBooks(ctx, payload, legalEntityId, [payload.cashAccount, ...payload.lines.map((l) => l.account)]);
   await checkVoucherAccounts(ctx, payload, { legalEntityId, date: payload.date });
   const party = partyId ? await findParty(ctx, partyId, true) : null;
   const journal = buildVoucherJournal(payload);

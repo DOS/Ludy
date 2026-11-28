@@ -17,6 +17,7 @@ import { JOURNAL_VOUCHER_KIND, MARKETPLACE_PAYOUT_COMMAND, zMarketplacePayoutPro
 import { Decimal, money } from '@ludy/l10n-vn';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
+import { stampBooks } from './books-stamp.ts';
 import { assertUsableAccounts } from './accounts.ts';
 import { bankLineStates, findBankLine, lockBankLine, type StoredBankLine } from './bank-match.ts';
 import { journalVoucherTitle } from './domain/journal-voucher.ts';
@@ -265,7 +266,7 @@ export function createMarketplacePayoutCommands(options: { maps?: Maps } = {}) {
       const built = await buildPayout(ctx, maps, input.settlementId, input.bankLineId, false, input.adjustments ?? []);
       await assertUsableAccounts(ctx, built.proposal.lines.map((l) => l.account));
       const payload = proposalPayload(built);
-      return { kind: JOURNAL_VOUCHER_KIND, command: MARKETPLACE_PAYOUT_COMMAND, title: journalVoucherTitle(payload), payload };
+      return { kind: JOURNAL_VOUCHER_KIND, command: MARKETPLACE_PAYOUT_COMMAND, title: journalVoucherTitle(payload), payload: await stampBooks(ctx, payload) };
     },
   });
 

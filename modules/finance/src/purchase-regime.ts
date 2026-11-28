@@ -41,6 +41,22 @@ export function approvalRegimeRefused(input: {
   return input.current !== undefined && input.accounts.some((account) => TT133_CODES_CHANGED_IN_TT99.includes(account));
 }
 
+// Whether approving a voucher (cash or journal) is refused. One prepared under books that were not TT133 2026.1 carries them and is posted only while the books are still those, the same chart version included
+// (a carried regime without a version is held to the regime alone). One that carries none was prepared under TT133: under other books it is refused only when a line is on a code the two circulars use for
+// different things (211, 3386, 6421, 6422), as a purchase with no regime is.
+export function voucherRegimeRefused(input: {
+  carried: string | undefined;
+  carriedVersion: string | undefined;
+  current: PostingBooks;
+  accounts: readonly string[];
+}): boolean {
+  if (input.carried !== undefined) {
+    return input.current.regime !== input.carried || (input.carriedVersion !== undefined && input.current.version !== input.carriedVersion);
+  }
+  const tt133 = input.current.regime === 'tt133' && input.current.version === '2026.1';
+  return !tt133 && input.accounts.some((account) => TT133_CODES_CHANGED_IN_TT99.includes(account));
+}
+
 // Whether moving a line from one chart to another is refused: the books changed chart between the two dates, and a line is on a code the two
 // circulars use for different things (211, 3386, 6421, 6422). Reversing an entry into the books of another chart would cancel such a line under
 // a different meaning than it was posted with, and so would depreciating an asset whose accounts were chosen under the earlier chart. A code only

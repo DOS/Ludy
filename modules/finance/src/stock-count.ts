@@ -29,6 +29,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { money } from '@ludy/l10n-vn';
+import { stampBooks } from './books-stamp.ts';
 import { assertUsableAccounts } from './accounts.ts';
 import { lockBooks } from './books.ts';
 import { journalVoucherProblems, journalVoucherTitle } from './domain/journal-voucher.ts';
@@ -380,7 +381,7 @@ export const prepareStockCount = defineCommand({
     await assertLedgerOpen(ctx, head.count_date, head.legal_entity_id);
     await assertPostable(ctx, built);
     const payload = proposalOf(built);
-    return { kind: JOURNAL_VOUCHER_KIND, command: STOCK_COUNT_COMMAND, title: journalVoucherTitle(payload), payload };
+    return { kind: JOURNAL_VOUCHER_KIND, command: STOCK_COUNT_COMMAND, title: journalVoucherTitle(payload), payload: await stampBooks(ctx, payload) };
   },
 });
 
