@@ -414,6 +414,13 @@ export const financeQueries = [
   ...categorizationQueries,
 ];
 export {
+  EINVOICE_NOTICE_MAIL_SOURCE,
+  EINVOICE_NOTICE_MAIL_TEMPLATE,
+  renderEInvoiceNoticeMail,
+  zEInvoiceNoticeMail,
+  type EInvoiceNoticeMail,
+} from './einvoice-notice-mail.ts';
+export {
   PAYMENT_REMINDER_INVOICES_MAX,
   PAYMENT_REMINDER_SOURCE,
   PAYMENT_REMINDER_TEMPLATE,

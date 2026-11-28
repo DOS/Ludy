@@ -238,7 +238,7 @@ import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceReturnDecide
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseCheck, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSetting, zStockSuggested, zStockSuggestInput, zStockSurplusNote, zStockSurplusNoteInput, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
 import { zBankSupplierMatch, zSupplierPayableLine, zSupplierPayableLineAsk, zSupplierPayableList, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentPrepare, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
-import { zEInvoiceNotice, zEInvoiceNoticeList, zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeStep } from './einvoice-notice.ts';
+import { zEInvoiceNotice, zEInvoiceNoticeList, zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeSend, zEInvoiceNoticeSendResult, zEInvoiceNoticeStep } from './einvoice-notice.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceCorrectionOptions, zEInvoiceCorrectionRateExplained, zEInvoiceCorrectionRateInput, zEInvoiceReasonInput, zEInvoiceReasonSuggested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStartCorrection, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
@@ -3490,10 +3490,11 @@ export const contract = {
       // The accounting coworker's proposal of the reason code of an adjusting or replacing invoice (#3690): a read that never stores; the code is one of the entered list, picked by number and checked in code,
       // and the person confirms by starting the correction (`ai` says why there is none). The note typed is never stored or logged. Owners, admins and members.
       suggestReason: oc.input(zEInvoiceReasonInput).output(zEInvoiceReasonSuggested),
-      // An error only in the non-core content of an issued invoice (#2504): records it with the text that is right, and the two steps the seller does outside Ludy (tell the buyer; file the
-      // form 04/SS-HĐĐT, a working answer of #2506 not confirmed by the accountant). Ludy sends nothing. Owners, admins and members.
+      // An error only in the non-core content of an issued invoice (#2504, #3697): records it with the text that is right, sends the code-built buyer notice through Ludy's mail queue once a
+      // person approves, or lets a person tick both steps manually (form 04/SS-HĐĐT stays filed outside Ludy). Owners, admins and members.
       noticeOpen: oc.input(zEInvoiceNoticeOpen).output(zEInvoiceNotice),
       noticeStep: oc.input(zEInvoiceNoticeStep).output(zEInvoiceNotice),
+      noticeSend: oc.input(zEInvoiceNoticeSend).output(zEInvoiceNoticeSendResult),
       noticeList: oc.input(zEInvoiceNoticeListInput).output(zEInvoiceNoticeList),
       // The draft of a sales order (#2818, ADR-0050): the hand-off Engage's crm.salesOrders.handoff read, with the line numbers to invoice (none: every open item line); whole lines only. Owners, admins and members;
       // the idempotency key replays the same draft. ORDER_PAYLOAD_MISMATCH, ORDER_LINE_UNKNOWN, ORDER_LINE_NOT_INVOICEABLE, ORDER_LINE_DISCOUNTED, ORDER_TOO_MANY_LINES, EINVOICE_TOTAL_TOO_LARGE (422),

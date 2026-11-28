@@ -45,8 +45,8 @@ const draft: EInvoiceDraftSummary = {
   correctedBy: null,
   replaced: false,
 };
-const list = (over: Partial<EInvoiceNoticeList['notices'][number]> = {}): EInvoiceNoticeList => ({
-  reference: { number: '0000007', templateNo: '1', symbol: 'C26TAA', date: '2026-11-17', buyerName: 'Công ty Mua Thử', buyerEmail: 'ketoan@muathu.example' },
+const list = (over: Partial<EInvoiceNoticeList['notices'][number]> = {}, refOver: Partial<EInvoiceNoticeList['reference']> = {}): EInvoiceNoticeList => ({
+  reference: { number: '0000007', templateNo: '1', symbol: 'C26TAA', date: '2026-11-17', buyerName: 'Công ty Mua Thử', buyerEmail: 'ketoan@muathu.example', ...refOver },
   notices: [
     {
       id: '00000000-0000-4000-8000-0000000000b1',
@@ -55,9 +55,13 @@ const list = (over: Partial<EInvoiceNoticeList['notices'][number]> = {}): EInvoi
       correctText: '12 Lê Lợi, Quận 1',
       buyerNoticeState: 'todo',
       buyerNotifiedAt: null,
+      buyerNoticeMailId: null,
+      buyerNoticeMailStatus: null,
+      buyerNoticeMailErrorCode: null,
       formState: 'todo',
       formFiledAt: null,
       createdAt: '2026-11-17T10:05:00.000Z',
+      reviewHash: 'a'.repeat(64),
       ...over,
     },
   ],
@@ -125,5 +129,37 @@ describe('the notice panel of an issued invoice', () => {
     expect(html).toContain('Any other mistake needs an adjustment or a replacement');
     expect(html).toContain('File form 04/SS-HĐĐT');
     expect(html).not.toContain('Sai sót khác phải điều chỉnh');
+  });
+
+  it('shows send-email action only with a buyer email, shows queue/failure statuses for retry, and hides retry once delivered', () => {
+    const withEmail = render(<NoticeAction draft={draft} openWith />, list());
+    expect(withEmail).toContain('data-testid="invoice-notice-send-open"');
+    expect(withEmail).toContain('Gửi email cho người mua');
+    expect(withEmail).not.toMatch(/Hủy|Cancel/);
+
+    const noEmail = render(<NoticeAction draft={draft} openWith />, list({}, { buyerEmail: null }));
+    expect(noEmail).not.toContain('data-testid="invoice-notice-send-open"');
+    expect(noEmail).toContain('hãy gửi bằng cách khác');
+
+    const queued = render(<NoticeAction draft={draft} openWith />, list({ buyerNoticeMailId: '00000000-0000-4000-8000-0000000000c1', buyerNoticeMailStatus: 'queued' }));
+    expect(queued).not.toContain('data-testid="invoice-notice-send-open"');
+    expect(queued).toContain('data-testid="invoice-notice-mail-status"');
+    expect(queued).toContain('hàng đợi');
+
+    const failed = render(<NoticeAction draft={draft} openWith />, list({ buyerNoticeMailId: '00000000-0000-4000-8000-0000000000c2', buyerNoticeMailStatus: 'failed' }));
+    expect(failed).toContain('data-testid="invoice-notice-mail-status"');
+    expect(failed).toContain('data-testid="invoice-notice-send-open"');
+    expect(failed).toContain('Gửi lại email cho người mua');
+
+    const sentViaMail = render(
+      <NoticeAction draft={draft} openWith />,
+      list({ buyerNoticeState: 'sent', buyerNotifiedAt: '2026-11-17T11:00:00.000Z', buyerNoticeMailId: '00000000-0000-4000-8000-0000000000c3', buyerNoticeMailStatus: 'sent' }),
+    );
+    expect(sentViaMail).toContain('data-testid="invoice-notice-mail-status"');
+    expect(sentViaMail).not.toContain('data-testid="invoice-notice-send-open"');
+    for (const html of [withEmail, noEmail, queued, failed, sentViaMail]) {
+      expect(html).not.toMatch(/Hủy|Cancel/);
+      expect(html.split('data-testid="invoice-notice"')[1] ?? html).not.toMatch(/\b\d+\s*(ngày|days?)\b/);
+    }
   });
 });
