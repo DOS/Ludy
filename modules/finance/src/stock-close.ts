@@ -26,6 +26,7 @@ import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { closeDescription, closeMonth, monthEnd, stockMoveLockKey, type CloseItem, type CloseResult } from './domain/stock-close.ts';
 import { assertUsableAccounts } from './accounts.ts';
+import { lockBooks } from './books.ts';
 import { nextMonth, previousMonth } from './domain/stock-cost.ts';
 import { journalVoucherProblems, journalVoucherTitle } from './domain/journal-voucher.ts';
 import { postJournalVoucher } from './journal-voucher.ts';
@@ -249,6 +250,8 @@ export const recordStockClose = defineCommand({
     const month = payload.closingMonth;
     const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
     await lockEntityMoves(ctx, legalEntityId);
+    // The books are read under the entity's lock: a switch of regime cannot commit between the chart read here and this posting's commit.
+    await lockBooks(ctx, legalEntityId);
     const built = await build(ctx, month, legalEntityId);
     await assertLedgerOpen(ctx, month, legalEntityId);
     await assertPostable(ctx, built);
@@ -273,6 +276,7 @@ export const closeEmptyStockMonth = defineCommand({
   handler: async (ctx, { month, legalEntityId: requested }): Promise<StockCloseEmptyResult> => {
     const legalEntityId = await resolveLegalEntity(ctx, requested);
     await lockEntityMoves(ctx, legalEntityId);
+    await lockBooks(ctx, legalEntityId);
     const built = await build(ctx, month, legalEntityId);
     if (built.worked.lines.length > 0) {
       throw new DomainError('STOCK_CLOSE_HAS_COST', 409, `Tháng ${label(month)} có giá vốn cần ghi sổ; hãy lập đề xuất đóng sổ kho để chủ sở hữu hoặc quản trị viên duyệt`);

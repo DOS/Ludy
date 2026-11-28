@@ -23,7 +23,7 @@ import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.
 import { feeClearingProposal, type FeeClearingProposal } from './marketplace-fee-clearing-posting.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
-import { booksOn } from './payroll-posting.ts';
+import { booksOn, lockBooks } from './books.ts';
 import { dateLabel, periodLockedThrough } from './period-lock.ts';
 import { latestRevision, reversedSource } from './source-entry.ts';
 
@@ -216,6 +216,8 @@ async function buildClearing(ctx: QueryContext, maps: Maps, documentId: string, 
   if (!link) throw notUsable('NOT_PLATFORM');
   if (lock) {
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`channel_settlement:${ctx.orgId}:${doc.legal_entity_id}:${link.platform}`}, 0))`.execute(ctx.trx);
+    // Posting: the entity's books are locked before the first read of them, so a switch of regime cannot commit between that read and the posting's commit.
+    await lockBooks(ctx, doc.legal_entity_id);
   }
   // The invoice's standing entry (its latest revision, not reversed) and its credit to 331 naming the platform: what it has to clear. An invoice paid another way credits no 331 and clears nothing.
   const entry = await standingInvoiceEntry(ctx, doc.id);

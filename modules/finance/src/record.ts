@@ -29,7 +29,7 @@ import {
 import { assertUsableAccounts, isInactiveDefaultRefusal } from './accounts.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
-import { booksOn } from './payroll-posting.ts';
+import { booksOn, isTt133Books, lockBooks, type BooksOn } from './books.ts';
 import { approvalRegimeRefused, booksRegimeChanged, learnsRules, reviseRegimeRefused } from './purchase-regime.ts';
 import { latestRevision } from './source-entry.ts';
 import { learnFromApproval } from './categorization.ts';
@@ -51,11 +51,12 @@ export function invoiceJournal(direction: DocumentDirection, lines: ProposedLine
   return direction === 'sale' ? buildSalesJournal(lines, vatTotal, memo, regime) : buildPurchaseJournal(lines, vatTotal, memo);
 }
 
-// The books regime a document is posted under: the entity's books row in force on the day of the entry. A sale always names it (#3712 slice 4: a Circular 99 sale debits its revenue deductions to 521); a purchase only
-// when it is not TT133 (#1403), so every TT133 proposal stays as it was. A proposal that carries a regime is posted only while the entity's books are still that regime.
-async function documentRegime(ctx: CommandContext, direction: DocumentDirection, legalEntityId: string | null | undefined, date: string): Promise<string | undefined> {
-  const regime = (await booksOn(ctx, await resolveLegalEntity(ctx, legalEntityId), date)).regime;
-  return direction === 'sale' || regime !== 'tt133' ? regime : undefined;
+// The books a document is posted under: the entity's books row in force on the day of the entry. A sale always names the regime (#3712 slice 4: a Circular 99 sale debits its revenue deductions to 521); a purchase only
+// when it is not TT133 2026.1 (#1403), so every TT133 proposal stays as it was. A proposal that carries a regime is posted only while the entity's books are still that regime and chart version.
+// The entity is the one already resolved, and the caller has locked its books (lockBooks) when it posts.
+async function documentBooks(ctx: CommandContext, direction: DocumentDirection, legalEntityId: string, date: string): Promise<BooksOn | undefined> {
+  const books = await booksOn(ctx, legalEntityId, date);
+  return direction === 'sale' || !isTt133Books(books) ? books : undefined;
 }
 
 // The legal entity a proposal was stamped with (#1538: the entity of the reading it came from), none for a call that is not an approval.
@@ -192,7 +193,7 @@ async function correctedDocument(ctx: CommandContext, legalEntityId: string, dir
 async function documentEntry(ctx: CommandContext, documentId: string) {
   const entry = await ctx.trx
     .selectFrom('ludy_finance.journal_entry as e')
-    .select(['e.id', 'e.entry_date', 'e.description', 'e.source_type', 'e.source_id'])
+    .select(['e.id', 'e.entry_date', 'e.description', 'e.source_type', 'e.source_id', 'e.legal_entity_id'])
     .where('e.org_id', '=', ctx.orgId)
     .where('e.source_type', '=', 'finance.purchase_document')
     .where('e.source_id', '=', documentId)
@@ -371,16 +372,21 @@ export const revisePurchase = defineCommand({
     assertDirectionAccounts(directionOf(payload), chosen);
     // In the chart of the entity's books on the invoice's date (#1403): the entity of the proposal, else the one resolved for the caller.
     const reviseEntity = await resolveLegalEntity(ctx, payload.legalEntityId ?? (await proposalEntity(ctx)));
+    // The books are read under the entity's lock: a switch of regime cannot commit between this read and the revision's own commit.
+    await lockBooks(ctx, reviseEntity);
     await assertUsableAccounts(ctx, chosen.map((l) => l.debitAccount), { legalEntityId: reviseEntity, date: payload.invoice.issueDate });
     // The accounts check (#2091) names the lines still waiting for an account, so it follows the picks: the
     // proposal carries one only when extraction found a line no rule matched.
     const classification = payload.checks.some((c) => c.id === 'accounts') ? classificationCheck(lines) : null;
     const checks = classification ? payload.checks.map((c) => (c.id === 'accounts' ? classification : c)) : payload.checks;
-    const regime = await documentRegime(ctx, directionOf(payload), reviseEntity, payload.invoice.issueDate);
+    const books = await documentBooks(ctx, directionOf(payload), reviseEntity, payload.invoice.issueDate);
+    const regime = books?.regime;
     // Only the lines a person changed are checked above, so a purchase is revised only under the regime it carries: stamping another one here would let
     // the lines left alone pass as the other circular's accounts (a sale always names the regime in force, as before).
-    if (directionOf(payload) === 'purchase' && reviseRegimeRefused(payload.regime, regime)) throw booksRegimeChanged(payload.regime, regime);
-    const revised = { ...payload, lines, checks, ...(regime ? { regime } : {}), journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload), regime) };
+    if (directionOf(payload) === 'purchase' && reviseRegimeRefused({ regime: payload.regime, version: payload.chartVersion }, books)) {
+      throw booksRegimeChanged(payload.regime, regime, { proposed: payload.chartVersion, current: books?.version });
+    }
+    const revised = { ...payload, lines, checks, ...(books ? { regime: books.regime, chartVersion: books.version } : {}), journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload), regime) };
     return { changed: true as const, payload: revised };
   },
 });
@@ -485,14 +491,20 @@ export const recordPurchase = defineCommand({
     // was carried has none and keeps the earlier posting (Dr 511). The rules for a purchase are in purchase-regime.ts. Refusals are named errors: the proposal is rejected and read again. Checked before the accounts, which the new chart may not have.
     const postingDay = lateDate ?? invoice.issueDate;
     const regime = payload.regime;
-    // The regime in force on the day the entry is posted; the vendor default and the learned rules follow it, not the proposal's.
+    // The entity whose books the document goes to, resolved first so its books are locked before the first read of them: a switch of regime cannot commit between the regime read here and this approval's own
+    // commit (it waits for this approval, or this approval waits for it and reads the new books). The accounts below and the regime are read under that lock.
+    const accountsEntity = await resolveLegalEntity(ctx, payload.legalEntityId ?? (await proposalEntity(ctx)));
+    await lockBooks(ctx, accountsEntity);
+    // The books in force on the day the entry is posted; the vendor default and the learned rules follow them, not the proposal's.
     let postingRegime: string | undefined;
     if (regime !== undefined || !sale) {
-      postingRegime = await documentRegime(ctx, direction, payload.legalEntityId ?? (await proposalEntity(ctx)), postingDay);
-      if (approvalRegimeRefused({ carried: regime, current: postingRegime, accounts: lines.map((l) => l.debitAccount) })) throw booksRegimeChanged(regime, postingRegime);
+      const postingBooks = await documentBooks(ctx, direction, accountsEntity, postingDay);
+      postingRegime = postingBooks?.regime;
+      if (approvalRegimeRefused({ carried: regime, carriedVersion: payload.chartVersion, current: postingBooks, accounts: lines.map((l) => l.debitAccount) })) {
+        throw booksRegimeChanged(regime, postingRegime, { proposed: payload.chartVersion, current: postingBooks?.version });
+      }
     }
     // The accounts are in the chart of the entity's books on the day of the invoice (the document's lines are checked by the database on that day) and on the day of the entry (its lines are).
-    const accountsEntity = await resolveLegalEntity(ctx, payload.legalEntityId ?? (await proposalEntity(ctx)));
     const accountCodes = lines.map((l) => l.debitAccount);
     await assertUsableAccounts(ctx, accountCodes, { legalEntityId: accountsEntity, date: invoice.issueDate });
     if (postingDay !== invoice.issueDate) await assertUsableAccounts(ctx, accountCodes, { legalEntityId: accountsEntity, date: postingDay });

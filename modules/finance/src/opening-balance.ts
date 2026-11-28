@@ -19,7 +19,7 @@ import { sql } from 'kysely';
 import { zOpeningBalanceImport, type OpeningBalanceImport } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { chartOfAccounts } from './accounts.ts';
-import { dayAfter } from './books.ts';
+import { dayAfter, lockBooks } from './books.ts';
 import { OPENING_BALANCE_SOURCE, checkOpeningBalance, type LedgerFacts, type OpeningCheck, type OpeningParty } from './domain/opening-balance.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -88,6 +88,8 @@ export const openingBalancePost = defineCommand({
     // The opening entry of one legal entity (#1280); posts of one org and entity are serialized.
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`${OPENING_BALANCE_SOURCE}:${ctx.orgId}:${legalEntityId}`}, 0))`.execute(ctx.trx);
+    // The books are read under the entity's lock: a switch of regime cannot commit between the chart read in the check and this post's commit.
+    await lockBooks(ctx, legalEntityId);
     const { preview, lines } = await check(ctx, input, legalEntityId);
     if (preview.openingEntry) {
       throw new DomainError('OPENING_BALANCE_EXISTS', 409, 'Đã có bút toán số dư đầu kỳ; hãy đảo bút toán đó trước khi nhập lại', {
