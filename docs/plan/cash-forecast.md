@@ -31,4 +31,4 @@ At most 500 customers and 500 suppliers (largest balances first), 10,000 sales i
 - Payroll and tax amounts computed from the books (the owner enters them as items instead). Importing items from a file, and items shared across entities.
 - Supplier payment terms on a purchase invoice, so the payable date is real: [#4395](https://github.com/DOS/Ludy/issues/4395) (Icebox, P3).
 - A chart of the daily series (the card shows the three checkpoints and the low point; the daily series is in the answer).
-- MCP exposure and a client-facing page.
+- A client-facing page. (MCP exposure is built, #5346: `ludy_finance_cash_forecast`, the checkpoints, the low point and the left-out line of a company grant, no daily series, no party name and no word of an item the owner entered; see [Vy](vy.md).)

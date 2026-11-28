@@ -13,6 +13,8 @@ import { z } from 'zod';
 import { plainLine, zLocalDate } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineQuery } from '@ludy/kernel-runtime';
+import { mcpCashForecast } from './mcp-cash-forecast.ts';
+import { mcpMonthClose } from './mcp-month-close.ts';
 import { mcpOpenBalances } from './mcp-open-balances.ts';
 import { mcpPaymentReminder } from './mcp-payment-reminder.ts';
 import { mcpOverview } from './mcp-overview.ts';
@@ -139,4 +141,4 @@ export const mcpInvoices = defineQuery({
   },
 });
 
-export const mcpFinanceQueries = [mcpInvoices, mcpOverview, mcpOpenBalances, mcpPaymentReminder];
+export const mcpFinanceQueries = [mcpInvoices, mcpOverview, mcpOpenBalances, mcpPaymentReminder, mcpCashForecast, mcpMonthClose];
