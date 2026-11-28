@@ -142,7 +142,7 @@ suite('the books regime has one write path, and only an owner opens it (#1403 sl
           )
         ).rows,
       );
-      expect(grantees.map((g) => [g.grantee, g.privilege]), signature).toEqual([[dbIds ? dbIds.roleName('crove_tenant') : 'crove_tenant', 'EXECUTE']]);
+      expect(grantees.map((g) => [g.grantee, g.privilege]), signature).toEqual([['crove_tenant', 'EXECUTE']]);
     }
   });
 
