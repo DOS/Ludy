@@ -17880,6 +17880,7 @@ export const en = {
       INTERNAL_SERVER_ERROR: 'Something went wrong on the server.',
       LAST_OWNER: 'The organization must keep at least one owner.',
       PIT_FILING_PERIOD_REQUIRED: 'Choose the PIT withholding period (month or quarter).',
+      FISCAL_YEAR_END_LOCKED: 'The organization has chosen Circular 99 books, so the month its fiscal year ends cannot change. Keep the month as it is to save the other changes to the tax calendar.',
       TAX_PERIOD_MISMATCH: 'This obligation has no such period.',
       MEMBER_NOT_FOUND: 'This member is not in the organization.',
       CANNOT_REMOVE_SELF: 'You cannot remove yourself from the organization.',

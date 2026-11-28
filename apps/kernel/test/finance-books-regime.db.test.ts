@@ -31,6 +31,9 @@ suite('finance books regime per legal entity (#1403)', () => {
   let member = '';
   let defaultEntity = '';
   let branch = '';
+  // Kept for the tests that need an org of their own.
+  let db: ReturnType<typeof createDb>;
+  let runtime: Runtime;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
@@ -95,8 +98,8 @@ suite('finance books regime per legal entity (#1403)', () => {
     await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     appPool = new pg.Pool({ connectionString: login('ludy_app', 'test-app-pw'), max: 3 });
     kyselyPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 2 });
-    const db = createDb(kyselyPool);
-    const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
+    db = createDb(kyselyPool);
+    runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...financeCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
     });
@@ -299,20 +302,24 @@ suite('finance books regime per legal entity (#1403)', () => {
   });
 
   it('follows the fiscal year of the org', async () => {
-    await admin((a) => a.query(`INSERT INTO ludy_kernel.tax_profile (org_id, fiscal_year_end_month, updated_by) VALUES ($1, 3, $2)`, [orgId, owner]));
+    // An org of its own: the org of the other tests keeps Circular 99 books by now, and the month its fiscal year ends cannot change then (#5311).
+    const march = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'march@books-regime.test', name: null });
+    const { orgId: marchOrg } = await createOrg(runtime, asUser(march), 'Năm tài chính kết thúc tháng 3');
+    const marchEntity = await admin(async (a) => (await a.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [marchOrg])).rows[0]?.id as string);
+    await admin((a) => a.query(`INSERT INTO ludy_kernel.tax_profile (org_id, fiscal_year_end_month, updated_by) VALUES ($1, 3, $2)`, [marchOrg, march]));
     const books = (from: string) =>
       refusal(
         admin((a) =>
           a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt133', '2026.1', $3)`, [
-            orgId,
-            defaultEntity,
+            marchOrg,
+            marchEntity,
             from,
           ]),
         ),
       );
     expect(await books('2031-01-01')).toMatchObject({ message: 'BOOKS_NOT_FISCAL_YEAR_START' });
     expect(await books('2031-04-01')).toBeNull();
-    await admin((a) => a.query(`DELETE FROM ludy_kernel.tax_profile WHERE org_id = $1`, [orgId]));
+    await admin((a) => a.query(`DELETE FROM ludy_kernel.tax_profile WHERE org_id = $1`, [marchOrg]));
   });
 
   it('waits for a posting in flight and then refuses the year it booked', async () => {
@@ -342,6 +349,10 @@ suite('finance books regime per legal entity (#1403)', () => {
   });
 
   it('shows each actor the books rows of its own entities only, and lets no runtime role write them', async () => {
+    // The default entity needs a row of its own to be seen: a TT133 row from a 1 January (the fiscal year ends in December), after the branch's TT99 row of 2027.
+    await admin((a) =>
+      a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt133', '2026.1', '2031-01-01')`, [orgId, defaultEntity]),
+    );
     const seen = (userId: string) =>
       asApp(userId, async (c) => (await c.query<{ e: string }>('SELECT legal_entity_id AS e FROM ludy_finance.legal_entity_books ORDER BY effective_from')).rows.map((r) => r.e));
     expect(await seen(owner)).toEqual([branch, defaultEntity]);
