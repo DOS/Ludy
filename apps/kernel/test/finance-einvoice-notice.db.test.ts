@@ -343,20 +343,21 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     expect(firstSend.notice).toMatchObject({ buyerNoticeState: 'todo', buyerNotifiedAt: null, buyerNoticeMailId: firstSend.mailId, buyerNoticeMailStatus: 'queued' });
     expect(await refusal(execute(o, 'finance.einvoice.notice_send', { noticeId: notice.id, approved: true, expectedHash: notice.reviewHash }))).toBe('EINVOICE_NOTICE_MAIL_PENDING');
 
-    const failMailer = mockMailer([{ status: 'rejected', error: 'invalid_recipient', code: 'smtp_550' }]);
-    expect(await runNoticeMail(o.orgId, firstSend.mailId, failMailer.mailer)).toMatchObject({ action: 'recorded', outcome: 'failed', code: 'SMTP_550' });
+    const failMailer = mockMailer([{ status: 'rejected', error: 'bad_request', code: 'smtp_554' }]);
+    expect(await runNoticeMail(o.orgId, firstSend.mailId, failMailer.mailer)).toMatchObject({ action: 'recorded', outcome: 'failed', code: 'SMTP_554' });
     const afterFail = await rt.query<{ notices: Notice[] }>('finance.einvoice.notice_list', { draftId: original.draftId }, { actor: asUser(o.owner), orgId: o.orgId });
     expect(afterFail.notices.find((n) => n.id === notice.id)).toMatchObject({
       buyerNoticeState: 'todo',
       buyerNotifiedAt: null,
       buyerNoticeMailId: firstSend.mailId,
       buyerNoticeMailStatus: 'failed',
-      buyerNoticeMailErrorCode: 'SMTP_550',
+      buyerNoticeMailErrorCode: 'SMTP_554',
     });
 
     // Retry queues a fresh mail; ambiguous leaves buyer_notice_state = 'todo'.
     const secondSend = await execute<SendOut>(o, 'finance.einvoice.notice_send', { noticeId: notice.id, approved: true, expectedHash: notice.reviewHash });
     expect(secondSend.mailId).not.toBe(firstSend.mailId);
+    expect(secondSend.mailStatus).toBe('queued');
     const ambMailer = mockMailer([{ status: 'unknown', code: 'http_502' }]);
     expect(await runNoticeMail(o.orgId, secondSend.mailId, ambMailer.mailer)).toMatchObject({ action: 'recorded', outcome: 'ambiguous', code: 'HTTP_502' });
     const afterAmb = await rt.query<{ notices: Notice[] }>('finance.einvoice.notice_list', { draftId: original.draftId }, { actor: asUser(o.owner), orgId: o.orgId });
