@@ -23,6 +23,7 @@ import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { journalIsBalanced } from '@ludy/l10n-vn';
 import { assertUsableAccounts } from './accounts.ts';
+import { lockBooks } from './books.ts';
 import {
   JOURNAL_VOUCHER_LABEL,
   JOURNAL_VOUCHER_SOURCE,
@@ -59,7 +60,10 @@ export async function checkJournalVoucherLines(
   const problems = journalVoucherProblems(lines);
   const first = problems[0];
   if (first) throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, PROBLEM_MESSAGES[first], { problems });
-  await assertUsableAccounts(ctx, lines.map((l) => l.account), entry ? { legalEntityId: await resolveLegalEntity(ctx, entry.legalEntityId), date: entry.date } : undefined);
+  const books = entry ? { legalEntityId: await resolveLegalEntity(ctx, entry.legalEntityId), date: entry.date } : undefined;
+  // Posting (lock): the entity's books are locked before the first read of them, so a switch of regime cannot commit between this check and the posting's commit.
+  if (lock && books) await lockBooks(ctx, books.legalEntityId);
+  await assertUsableAccounts(ctx, lines.map((l) => l.account), books);
   const ids = [...new Set(lines.flatMap((l) => (l.partyId ? [l.partyId] : [])))];
   const parties = new Map<string, { id: string; name: string; tax_code: string | null }>();
   if (ids.length > 0) {

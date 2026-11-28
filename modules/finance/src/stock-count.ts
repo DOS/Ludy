@@ -30,6 +30,7 @@ import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { money } from '@ludy/l10n-vn';
 import { assertUsableAccounts } from './accounts.ts';
+import { lockBooks } from './books.ts';
 import { journalVoucherProblems, journalVoucherTitle } from './domain/journal-voucher.ts';
 import { stockMoveLockKey } from './domain/stock-close.ts';
 import { surplusAmount } from './domain/stock-surplus.ts';
@@ -397,6 +398,8 @@ export const confirmStockCount = defineCommand({
     const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
     if (legalEntityId !== head.legal_entity_id) throw new DomainError('STOCK_COUNT_STALE', 409, 'Đề xuất không còn khớp lần kiểm kê; hãy từ chối đề xuất này và lập lại');
     await lockEntityMoves(ctx, legalEntityId);
+    // The books are read under the entity's lock: a switch of regime cannot commit between the chart read below and this posting's commit.
+    await lockBooks(ctx, legalEntityId);
     await assertOpenDate(ctx, legalEntityId, head.count_date);
     await assertCountOrder(ctx, legalEntityId, head.id, head.count_date);
     const built = await buildCount(ctx, head, lines);

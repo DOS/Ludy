@@ -28,12 +28,14 @@ import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { money } from '@ludy/l10n-vn';
 import { assertUsableAccounts } from './accounts.ts';
+import { booksOn, lockBooks, type BooksOn } from './books.ts';
 import { lastMonth, monthAmount, monthsBetween, remainingValue } from './domain/depreciation.ts';
 import { journalVoucherTitle, journalVoucherTotal } from './domain/journal-voucher.ts';
 import { canonical } from './domain/money.ts';
 import { postJournalVoucher } from './journal-voucher.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { dateLabel, periodLockedThrough } from './period-lock.ts';
+import { chartChangeRefused } from './purchase-regime.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const REQUESTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -109,6 +111,8 @@ export const createFixedAsset = defineCommand({
     }
     // The register of one legal entity (#1280); an entry from a purchase line must be of the document's entity.
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+    // The books are read under the entity's lock: a switch of regime cannot commit between this check and the asset's own commit.
+    await lockBooks(ctx, legalEntityId);
     // In the chart of the entity's books in the month the asset starts (#1403): its first monthly entry is dated that month's last day.
     await assertUsableAccounts(ctx, [input.assetAccount, input.expenseAccount, ...(accumulated ? [accumulated] : [])], { legalEntityId, date: firstDay(input.startMonth) });
     const source = input.source ?? null;
@@ -245,6 +249,8 @@ export const fixedAssetsQuery = defineQuery({
 // with nothing to post, and a month already posted.
 async function buildDepreciation(ctx: QueryContext, month: string, legalEntityId: string): Promise<DepreciationProposal> {
   const date = lastDay(month);
+  // The books are read under the entity's lock, so a switch of regime cannot commit between this read and the posting (commands only).
+  await lockBooks(ctx, legalEntityId);
   const lockedThrough = await periodLockedThrough(ctx, legalEntityId);
   if (lockedThrough && date <= lockedThrough) {
     throw new DomainError('PERIOD_LOCKED', 409, `Sổ đã khóa đến hết ngày ${dateLabel(lockedThrough)}, nên không ghi được bút toán ngày ${dateLabel(date)}`, {
@@ -265,6 +271,26 @@ async function buildDepreciation(ctx: QueryContext, month: string, legalEntityId
   const posted = new Set(done.map((d) => d.asset_id));
   const open = due.filter((d) => !posted.has(d.asset.id));
   if (open.length === 0) throw new DomainError('DEPRECIATION_DONE', 409, `Tháng ${monthLabel(month)} đã khấu hao và phân bổ rồi`);
+  // An asset's accounts were chosen under the books of the month it starts (registering checks them there). Where the books changed chart since and one of its accounts is one the two circulars use for
+  // different things (211, 3386, 6421, 6422), its entry would post that account under the new meaning: the month is not posted, and the message names the assets, so the accountant decides what they become.
+  const monthBooks = await booksOn(ctx, legalEntityId, date);
+  const startBooks = new Map<string, BooksOn>();
+  const moved: Array<{ id: string; name: string }> = [];
+  for (const { asset } of open) {
+    const start = firstDay(monthOf(asset.start_month));
+    const from = startBooks.get(start) ?? (await booksOn(ctx, legalEntityId, start));
+    startBooks.set(start, from);
+    const accounts = [asset.asset_account, asset.expense_account, ...(asset.accumulated_account ? [asset.accumulated_account] : [])];
+    if (chartChangeRefused({ from, to: monthBooks, accounts })) moved.push({ id: asset.id, name: asset.name });
+  }
+  if (moved.length > 0) {
+    throw new DomainError(
+      'DEPRECIATION_BOOKS_CHANGED',
+      409,
+      `Chế độ kế toán của sổ đã đổi từ khi đăng ký ${moved.length} tài sản; tài khoản của chúng được hiểu khác nhau giữa hai thông tư nên chưa khấu hao tháng ${monthLabel(month)} được: ${moved.map((m) => m.name).join(', ')}. Hãy nhờ kế toán xác nhận tài khoản của các tài sản này theo chế độ mới`,
+      { month, assets: moved },
+    );
+  }
   // Amounts are whole dong (zJournalAmount): a cost with a fraction of a dong is refused below.
   const debit = new Map<string, ReturnType<typeof money>>();
   const credit = new Map<string, ReturnType<typeof money>>();

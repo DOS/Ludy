@@ -65,7 +65,7 @@ export function DateInput({
         placeholder={kind === 'day' ? t('datePlaceholder') : t('monthPlaceholder')}
         // Invalid when its own text is, or when the form's check says so (an error the form shows under it).
         aria-invalid={error !== null || invalid === true || invalid === 'true' || undefined}
-        className={cn('w-full pr-9 tabular-nums', inputClassName)}
+        className={cn('w-full pr-11 tabular-nums md:pr-9', inputClassName)}
         value={text}
         onChange={(e) => {
           setText(e.target.value);
@@ -84,7 +84,7 @@ export function DateInput({
         aria-hidden="true"
         // No form owns it (no element has this id): its min and max limit the picker, never a submit.
         form={NO_FORM}
-        className="pointer-events-none absolute inset-y-0 right-0 w-9 opacity-0"
+        className="pointer-events-none absolute inset-y-0 right-0 w-11 opacity-0 md:w-9"
         value={value}
         {...(min !== undefined ? { min } : {})}
         {...(max !== undefined ? { max } : {})}
@@ -93,7 +93,7 @@ export function DateInput({
       {!locked && (
         <button
           type="button"
-          className="absolute inset-y-0 right-0 grid w-9 place-items-center rounded-r-lg text-muted-foreground hover:text-foreground"
+          className="absolute inset-y-0 right-0 grid w-11 place-items-center rounded-r-lg text-muted-foreground hover:text-foreground md:w-9"
           // Its name shares no word with a field's label, so a lookup by that label finds the field alone.
           aria-label={t('openCalendar')}
           onClick={() => {

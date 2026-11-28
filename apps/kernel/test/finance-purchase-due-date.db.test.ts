@@ -250,6 +250,10 @@ suite('purchase payment due_date (#4395)', () => {
     await expect(
       runtime.execute('kernel.proposal.edit', { id, revision: 1, dueDate: '2026-10-20' }, { actor: asUser(owner), orgId: orgA }),
     ).rejects.toMatchObject({ code: 'DUE_DATE_PURCHASE_ONLY', status: 422 });
+    // Clearing a due date a sale never had is refused the same way, not taken as "no change" (#5257).
+    await expect(
+      runtime.execute('kernel.proposal.edit', { id, revision: 1, dueDate: null }, { actor: asUser(owner), orgId: orgA }),
+    ).rejects.toMatchObject({ code: 'DUE_DATE_PURCHASE_ONLY', status: 422 });
 
     const recorded = await runtime.execute<{ documentId: string }>(
       'kernel.proposal.approve',

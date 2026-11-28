@@ -19,7 +19,7 @@ import { chartAccounts } from './accounts.ts';
 import { rulesForSuggestion } from './categorization.ts';
 import { HISTORY_WINDOW, anomalyChecks, type VendorHistory } from './domain/anomaly.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
-import { booksOn } from './books.ts';
+import { booksOn, isTt133Books } from './books.ts';
 import { rulesForBooks } from './purchase-regime.ts';
 import {
   bookableLines,
@@ -102,6 +102,8 @@ export interface InvoiceLookup {
   ownTaxCode?: string | null;
   // The books regime the document is posted under on the invoice's issue date ('tt133', 'tt99'); set only when the issue date was asked for: for a sale always (#3712 slice 4), for a purchase only when it is not TT133 (#1403).
   regime?: string;
+  // The version of that regime's chart on the issue date, carried with the regime (#1403).
+  chartVersion?: string;
   vendorDefault: string | null;
   // The learned account rules of the vendor and of every vendor (#1399), for a purchase; none for a sale.
   learnedRules?: LearnedRule[];
@@ -297,10 +299,10 @@ export const purchaseLookup = defineQuery({
       party ?? (!sale && !input.sellerTaxCode && input.sellerName.trim() ? await findPartyByName(ctx, input.sellerName.trim()) : undefined);
     // A sale names its regime whichever it is; a purchase only when it is not TT133, so every TT133 proposal stays as it was (#1403).
     const books = input.issueDate ? await booksOn(ctx, entityId, input.issueDate) : undefined;
-    const regime = books && (sale || books.regime !== 'tt133') ? books.regime : undefined;
+    const stamped = books && (sale || !isTt133Books(books)) ? books : undefined;
     let vendorDefault = rule?.debit_account ?? null;
     let learnedRules = sale ? [] : await rulesForSuggestion(ctx, ruleParty?.id ?? null, entityId);
-    if (!sale && books && input.issueDate && books.regime !== 'tt133') {
+    if (!sale && books && input.issueDate && !isTt133Books(books)) {
       // The vendor default and the learned rules were made under TT133, whose chart is org-wide; only those naming an account the entity's chart has, and means the same by, are offered (#1403).
       const asked = [...new Set([...(vendorDefault ? [vendorDefault] : []), ...learnedRules.map((r) => r.account)])];
       const chart = await chartAccounts(ctx, asked, { legalEntityId: entityId, date: input.issueDate });
@@ -309,7 +311,7 @@ export const purchaseLookup = defineQuery({
     return {
       direction: sale ? 'sale' : 'purchase',
       ownTaxCode,
-      ...(regime ? { regime } : {}),
+      ...(stamped ? { regime: stamped.regime, chartVersion: stamped.version } : {}),
       vendorDefault,
       learnedRules,
       duplicateDocumentId: document?.id ?? null,
@@ -778,7 +780,7 @@ export async function extractAndPropose(
       ...(converted ? { foreign: { ...converted.foreign, source: 'invoice' as const } } : {}),
     },
     lines,
-    ...(lookup.regime ? { regime: lookup.regime } : {}),
+    ...(lookup.regime ? { regime: lookup.regime, ...(lookup.chartVersion ? { chartVersion: lookup.chartVersion } : {}) } : {}),
     journal: sale ? buildSalesJournal(lines, booked.vatTotal, memo, lookup.regime) : buildPurchaseJournal(lines, booked.vatTotal, memo),
     checks,
     sourceFileId: fileId,

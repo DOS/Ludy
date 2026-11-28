@@ -130,4 +130,25 @@ describe('e-invoice XML', () => {
     expect(parseEInvoiceXml(withTag('<SoNgayThanhToan>3651</SoNgayThanhToan>')).dueDate).toBeNull();
     expect(parseEInvoiceXml(withTag('<SoNgayThanhToan>thỏa thuận</SoNgayThanhToan>')).dueDate).toBeNull();
   });
+
+  it('falls through a due-date tag that holds no date to the explicit term in days, and keeps a valid date first (#5257)', () => {
+    const withTag = (tagXml: string) =>
+      new TextEncoder().encode(fixture.toString('utf8').replace('<HTTToan>TM/CK</HTTToan>', `<HTTToan>TM/CK</HTTToan>${tagXml}`));
+    // A placeholder in the date tag, a term in days in the next tag (the invoice is dated 2026-09-15): the term is better data than none.
+    expect(parseEInvoiceXml(withTag('<HanThanhToan>theo hop dong</HanThanhToan><SoNgayThanhToan>30</SoNgayThanhToan>')).dueDate).toBe('2026-10-15');
+    // The same through the extra fields, whose date label comes before the term label.
+    expect(
+      parseEInvoiceXml(
+        withTag(
+          '<HanThanhToan>theo hop dong</HanThanhToan><TTKhac><TTin><TTruong>Số ngày thanh toán</TTruong><DLieu>30 ngày</DLieu></TTin></TTKhac>',
+        ),
+      ).dueDate,
+    ).toBe('2026-10-15');
+    // A date before the invoice date is no date either.
+    expect(parseEInvoiceXml(withTag('<HanThanhToan>2026-09-10</HanThanhToan><SoNgayThanhToan>30</SoNgayThanhToan>')).dueDate).toBe('2026-10-15');
+    // An explicit valid date still comes first, whatever term follows it.
+    expect(parseEInvoiceXml(withTag('<HanThanhToan>2026-10-20</HanThanhToan><SoNgayThanhToan>30</SoNgayThanhToan>')).dueDate).toBe('2026-10-20');
+    // Nothing valid anywhere stays null.
+    expect(parseEInvoiceXml(withTag('<HanThanhToan>theo hop dong</HanThanhToan><SoNgayThanhToan>thỏa thuận</SoNgayThanhToan>')).dueDate).toBeNull();
+  });
 });

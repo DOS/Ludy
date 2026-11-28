@@ -2,42 +2,71 @@
 // The regime rules of a purchase proposal (issue #1403, TT99 books): approval, revision, learning and the offered rules.
 import { describe, expect, it } from 'vitest';
 import { DomainError } from '@ludy/kernel-runtime';
-import { approvalRegimeRefused, booksRegimeChanged, learnsRules, reviseRegimeRefused, rulesForBooks } from '../src/purchase-regime.ts';
+import { approvalRegimeRefused, booksRegimeChanged, learnsRules, chartChangeRefused, reviseRegimeRefused, rulesForBooks } from '../src/purchase-regime.ts';
+
+const TT99 = { regime: 'tt99', version: '2026.1' };
+const TT99_NEXT = { regime: 'tt99', version: '2027.1' };
+const TT133 = { regime: 'tt133', version: '2026.1' };
 
 describe('approvalRegimeRefused', () => {
   it('refuses a purchase with no regime on a code the circulars define differently once the books are TT99', () => {
     for (const code of ['211', '3386', '6421', '6422']) {
-      expect(approvalRegimeRefused({ carried: undefined, current: 'tt99', accounts: ['156', code] })).toBe(true);
+      expect(approvalRegimeRefused({ carried: undefined, current: TT99, accounts: ['156', code] })).toBe(true);
     }
   });
 
   it('lets a purchase with no regime post under TT99 on accounts both charts share, and under TT133 whatever the accounts', () => {
-    expect(approvalRegimeRefused({ carried: undefined, current: 'tt99', accounts: ['156', '6427', '642'] })).toBe(false);
+    expect(approvalRegimeRefused({ carried: undefined, current: TT99, accounts: ['156', '6427', '642'] })).toBe(false);
     expect(approvalRegimeRefused({ carried: undefined, current: undefined, accounts: ['6421', '211'] })).toBe(false);
   });
 
   it('refuses a proposal that carries a regime once the books are another one, or back to TT133', () => {
     expect(approvalRegimeRefused({ carried: 'tt99', current: undefined, accounts: ['156'] })).toBe(true);
-    expect(approvalRegimeRefused({ carried: 'tt99', current: 'tt133', accounts: ['156'] })).toBe(true);
-    expect(approvalRegimeRefused({ carried: 'tt133', current: 'tt99', accounts: ['156'] })).toBe(true);
+    expect(approvalRegimeRefused({ carried: 'tt99', current: TT133, accounts: ['156'] })).toBe(true);
+    expect(approvalRegimeRefused({ carried: 'tt133', current: TT99, accounts: ['156'] })).toBe(true);
   });
 
   it('posts a proposal that carries the regime still in force, whatever the accounts (the account check decides those)', () => {
-    expect(approvalRegimeRefused({ carried: 'tt99', current: 'tt99', accounts: ['6421'] })).toBe(false);
-    expect(approvalRegimeRefused({ carried: 'tt133', current: 'tt133', accounts: ['6421'] })).toBe(false);
+    expect(approvalRegimeRefused({ carried: 'tt99', current: TT99, accounts: ['6421'] })).toBe(false);
+    expect(approvalRegimeRefused({ carried: 'tt133', current: TT133, accounts: ['6421'] })).toBe(false);
+  });
+
+  it('holds a proposal to the version of the chart it carries, and to the regime alone when it carries none', () => {
+    expect(approvalRegimeRefused({ carried: 'tt99', carriedVersion: '2026.1', current: TT99_NEXT, accounts: ['156'] })).toBe(true);
+    expect(approvalRegimeRefused({ carried: 'tt99', carriedVersion: '2026.1', current: TT99, accounts: ['156'] })).toBe(false);
+    expect(approvalRegimeRefused({ carried: 'tt99', current: TT99_NEXT, accounts: ['156'] })).toBe(false);
+  });
+});
+
+describe('chartChangeRefused', () => {
+  it('refuses a mirror of a line on a changed-meaning code into the books of another chart', () => {
+    for (const code of ['211', '3386', '6421', '6422']) {
+      expect(chartChangeRefused({ from: TT133, to: TT99, accounts: ['156', code] })).toBe(true);
+      expect(chartChangeRefused({ from: TT99, to: TT99_NEXT, accounts: [code] })).toBe(true);
+    }
+  });
+
+  it('lets the mirror through when the chart is the same, or no line is on a changed-meaning code', () => {
+    expect(chartChangeRefused({ from: TT99, to: TT99, accounts: ['6421'] })).toBe(false);
+    expect(chartChangeRefused({ from: TT133, to: TT99, accounts: ['156', '331', '6427'] })).toBe(false);
   });
 });
 
 describe('reviseRegimeRefused', () => {
   it('refuses a revision across a regime change, in both directions and from none', () => {
-    expect(reviseRegimeRefused(undefined, 'tt99')).toBe(true);
-    expect(reviseRegimeRefused('tt99', undefined)).toBe(true);
-    expect(reviseRegimeRefused('tt99', 'tt133')).toBe(true);
+    expect(reviseRegimeRefused({ regime: undefined, version: undefined }, TT99)).toBe(true);
+    expect(reviseRegimeRefused({ regime: 'tt99', version: '2026.1' }, undefined)).toBe(true);
+    expect(reviseRegimeRefused({ regime: 'tt99', version: '2026.1' }, TT133)).toBe(true);
   });
 
   it('accepts a revision under the regime the proposal carries', () => {
-    expect(reviseRegimeRefused(undefined, undefined)).toBe(false);
-    expect(reviseRegimeRefused('tt99', 'tt99')).toBe(false);
+    expect(reviseRegimeRefused({ regime: undefined, version: undefined }, undefined)).toBe(false);
+    expect(reviseRegimeRefused({ regime: 'tt99', version: '2026.1' }, TT99)).toBe(false);
+    expect(reviseRegimeRefused({ regime: 'tt99', version: undefined }, TT99)).toBe(false);
+  });
+
+  it('refuses a revision under another version of the chart the proposal carries', () => {
+    expect(reviseRegimeRefused({ regime: 'tt99', version: '2026.1' }, TT99_NEXT)).toBe(true);
   });
 });
 
@@ -46,6 +75,10 @@ describe('booksRegimeChanged', () => {
     const error = booksRegimeChanged('tt99', undefined);
     expect(error).toBeInstanceOf(DomainError);
     expect(error).toMatchObject({ code: 'BOOKS_REGIME_CHANGED', status: 409, details: { proposed: 'tt99', current: null } });
+  });
+
+  it('names the versions when it is given them', () => {
+    expect(booksRegimeChanged('tt99', 'tt99', { proposed: '2026.1', current: '2027.1' })).toMatchObject({ details: { proposedVersion: '2026.1', currentVersion: '2027.1' } });
   });
 });
 

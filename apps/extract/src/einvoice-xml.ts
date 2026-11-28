@@ -244,7 +244,7 @@ function extraFieldNodes(container: unknown): Node[] {
 }
 
 // Payment due date or net-day terms (#4395): read only explicit payment-due tags or TTKhac/TTin metadata entries on
-// the invoice header/totals (never line-item descriptions), returning null if absent, invalid, or before issueDate.
+// the invoice header/totals (never line-item descriptions), returning null if none is present and valid (a value that is no date, or is before issueDate, is skipped and the next explicit field is read, #5257).
 function extractDueDate(containers: readonly unknown[], issueDate: string): string | null {
   const issueDay = issueDate.slice(0, 10);
   if (!isCalendarDate(issueDay)) return null;
@@ -255,7 +255,8 @@ function extractDueDate(containers: readonly unknown[], issueDate: string): stri
         const raw = text(container, tag);
         if (raw === null) continue;
         const parsed = parseDueDateValue(raw, issueDay);
-        return parsed.valid ? parsed.date : null;
+        // Text that is no date (a placeholder such as "theo hop dong") is not an answer: the next tag may hold an explicit term in days, which is better data than none (#5257).
+        if (parsed.valid) return parsed.date;
       }
     }
   }
@@ -268,7 +269,7 @@ function extractDueDate(containers: readonly unknown[], issueDate: string): stri
         const raw = text(entry, 'DLieu') ?? text(entry, 'GiaTri');
         if (raw === null) continue;
         const parsed = parseDueDateValue(raw, issueDay);
-        return parsed.valid ? parsed.date : null;
+        if (parsed.valid) return parsed.date;
       }
     }
   }

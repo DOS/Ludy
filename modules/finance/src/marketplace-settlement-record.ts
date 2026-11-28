@@ -33,7 +33,7 @@ import { householdTaxRate } from './marketplace-household-tax.ts';
 import { postingsOf, settlementMonthsFor } from './marketplace-settlement-months.ts';
 import { isEmptyEntry, settlementProposal, type SettlementProposal, type SettlementVatRate } from './marketplace-settlement-posting.ts';
 import { vatRatesOfMonth } from './marketplace-settlement-vat.ts';
-import { booksOn } from './payroll-posting.ts';
+import { booksOn, lockBooks } from './books.ts';
 import { dateLabel, periodLockedThrough } from './period-lock.ts';
 
 const REQUESTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -80,6 +80,8 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
   const periodFrom = String(settlement.period_start).slice(0, 10);
   const periodTo = String(settlement.period_end).slice(0, 10);
   // The chart of the entity on the day the entry is dated, then the gate: the accountant has not confirmed the map, nothing is requested or posted.
+  // Posting: the entity's books are locked first, so a switch of regime cannot commit between this read and the posting's commit.
+  if (lock) await lockBooks(ctx, settlement.legal_entity_id);
   const regime = (await booksOn(ctx, settlement.legal_entity_id, periodTo)).regime;
   // The early gate asks for the sales path; settlementProposal asks again for the household tax rows when the settlement carries withheld tax.
   const map = requireConfirmedMarketplaceMap(regime, maps, ['sales']);

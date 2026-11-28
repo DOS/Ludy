@@ -77,8 +77,12 @@ export function useNotificationLine(wantsTrackerWords = false) {
         return n.detail.count
           ? t('text.tasks_rerouted', { count: Number(n.detail.count) })
           : t('text.task_rerouted', { title: taskTitleText({ title: n.detail.title ?? '', tainted: n.tainted }) });
-      case 'finance.bank_attention':
-        return t('text.bank_attention', { account: n.detail.bankAccount ?? '', lines: Number(n.detail.lines ?? 0) });
+      case 'finance.bank_attention': {
+        const lines = Number(n.detail.lines ?? 0);
+        const conflicts = Number(n.detail.conflicts ?? 0);
+        // Some of the lines are references that came back with another date or amount (#2197): the text says so, with the number.
+        return conflicts > 0 ? t('text.bank_attention_conflicts', { account: n.detail.bankAccount ?? '', lines, conflicts }) : t('text.bank_attention', { account: n.detail.bankAccount ?? '', lines });
+      }
       case 'finance.portal_attention': {
         const period = formatPeriod(n.detail.period, t);
         if (n.detail.failed === 'true') return t('text.portal_failed', { period });
