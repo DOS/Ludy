@@ -67,6 +67,13 @@ function booksRefusal(error: unknown): never {
         `Pháp nhân có bút toán số dư đầu kỳ ngày ${label(detail.entryDate)} (đã đảo hay chưa đều vậy), nên năm bắt đầu từ ngày hôm sau chưa chọn được; năm gần nhất chọn được bắt đầu từ ${label(detail.nextEffectiveFrom)}`,
         detail,
       );
+    case 'BOOKS_PENDING_PROPOSALS':
+      throw new DomainError(
+        'BOOKS_PENDING_PROPOSALS',
+        409,
+        'Pháp nhân còn đề xuất ghi sổ đang chờ duyệt (hóa đơn, phiếu thu chi, bút toán, đảo bút toán hay thanh toán nhà cung cấp) từ ngày này trở đi; hãy duyệt hoặc từ chối các đề xuất đó trước khi chọn chế độ kế toán',
+        detail,
+      );
     case 'BOOKS_REGIME_IN_USE':
       throw new DomainError(
         'BOOKS_REGIME_IN_USE',

@@ -62,6 +62,9 @@ interface AssetRow {
   end_reason: string | null;
   source_document_id: string | null;
   source_line_no: number | null;
+  // The books its accounts were checked under when it was registered.
+  regime: string;
+  chart_version: string;
 }
 
 // The register of one legal entity (#1280), or every entity the caller sees when none is named (a lookup by id).
@@ -82,6 +85,8 @@ function assetRows(ctx: QueryContext, legalEntityId?: string) {
       'end_reason',
       'source_document_id',
       'source_line_no',
+      'regime',
+      'chart_version',
     ])
     .where('org_id', '=', ctx.orgId);
   return legalEntityId === undefined ? rows : rows.where('legal_entity_id', '=', legalEntityId);
@@ -115,6 +120,8 @@ export const createFixedAsset = defineCommand({
     await lockBooks(ctx, legalEntityId);
     // In the chart of the entity's books in the month the asset starts (#1403): its first monthly entry is dated that month's last day.
     await assertUsableAccounts(ctx, [input.assetAccount, input.expenseAccount, ...(accumulated ? [accumulated] : [])], { legalEntityId, date: firstDay(input.startMonth) });
+    // The books those accounts were checked under are kept with the entry: depreciation judges a later month against them, whatever books are added afterwards.
+    const registeredUnder = await booksOn(ctx, legalEntityId, firstDay(input.startMonth));
     const source = input.source ?? null;
     if (source) {
       // A live purchase of the org and entity whose line was posted to this asset account, for this cost.
@@ -150,6 +157,8 @@ export const createFixedAsset = defineCommand({
         months: input.months,
         source_document_id: source?.documentId ?? null,
         source_line_no: source?.lineNo ?? null,
+        regime: registeredUnder.regime,
+        chart_version: registeredUnder.version,
         created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
       })
       .returning('id')
@@ -271,15 +280,12 @@ async function buildDepreciation(ctx: QueryContext, month: string, legalEntityId
   const posted = new Set(done.map((d) => d.asset_id));
   const open = due.filter((d) => !posted.has(d.asset.id));
   if (open.length === 0) throw new DomainError('DEPRECIATION_DONE', 409, `Tháng ${monthLabel(month)} đã khấu hao và phân bổ rồi`);
-  // An asset's accounts were chosen under the books of the month it starts (registering checks them there). Where the books changed chart since and one of its accounts is one the two circulars use for
-  // different things (211, 3386, 6421, 6422), its entry would post that account under the new meaning: the month is not posted, and the message names the assets, so the accountant decides what they become.
+  // An asset's accounts were checked under the books in force in its start month when it was registered, and those are kept with it. Where the books of this month are another chart and one of its accounts is one the
+  // two circulars use for different things (211, 3386, 6421, 6422), its entry would post that account under the new meaning: the month is not posted, and the message names the assets, so the accountant decides what they become.
   const monthBooks = await booksOn(ctx, legalEntityId, date);
-  const startBooks = new Map<string, BooksOn>();
   const moved: Array<{ id: string; name: string }> = [];
   for (const { asset } of open) {
-    const start = firstDay(monthOf(asset.start_month));
-    const from = startBooks.get(start) ?? (await booksOn(ctx, legalEntityId, start));
-    startBooks.set(start, from);
+    const from: BooksOn = { regime: asset.regime, version: asset.chart_version };
     const accounts = [asset.asset_account, asset.expense_account, ...(asset.accumulated_account ? [asset.accumulated_account] : [])];
     if (chartChangeRefused({ from, to: monthBooks, accounts })) moved.push({ id: asset.id, name: asset.name });
   }

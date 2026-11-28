@@ -41,7 +41,7 @@ export const financeManifest = defineModule({
       einvoice_notice: columns(['org_id', 'id', 'legal_entity_id', 'draft_id', 'field', 'buyer_notice_state', 'buyer_notified_at', 'buyer_notice_mail_id', 'form_state', 'form_filed_at', 'created_by', 'created_at'], { correct_text: 'pii' }),
       einvoice_series: columns(['org_id', 'id', 'legal_entity_id', 'provider', 'template_no', 'symbol', 'description', 'is_default', 'created_by', 'created_at']),
       entry_review_mark: columns(['org_id', 'id', 'legal_entity_id', 'entry_id', 'rule', 'marked_by', 'created_at']),
-      fixed_asset: columns(['org_id', 'id', 'kind', 'name', 'cost', 'asset_account', 'accumulated_account', 'expense_account', 'start_month', 'months', 'source_document_id', 'source_line_no', 'ended_month', 'end_reason', 'ended_by', 'created_by', 'created_at', 'legal_entity_id']),
+      fixed_asset: columns(['org_id', 'id', 'kind', 'name', 'cost', 'asset_account', 'accumulated_account', 'expense_account', 'start_month', 'months', 'source_document_id', 'source_line_no', 'ended_month', 'end_reason', 'ended_by', 'created_by', 'created_at', 'legal_entity_id', 'regime', 'chart_version']),
       household_expense_group_map: columns(['expense_group', 'account_prefix', 'effective_from', 'source', 'status']),
       household_form_version: columns(['book', 'version', 'effective_from', 'name', 'pit_methods', 'source', 'status']),
       household_income_rate: columns(['revenue_over', 'effective_from', 'percent', 'source', 'status']),

@@ -18843,6 +18843,7 @@ export const en = {
       BOOKS_NOT_FOUND: 'There is no Circular 99 choice starting on this date.',
       BOOKS_OPENING_ENTRY_BLOCKS: 'The entity has an opening-balance entry dated 31 December (reversed or not), so the year starting the next day cannot be chosen; choose the year after.',
       BOOKS_REGIME_IN_USE: 'The entity already has entries in that year; the regime can only be chosen for a year starting after the last entry, or a choice for a year with no entries can be cancelled.',
+      BOOKS_PENDING_PROPOSALS: 'The entity still has posting proposals waiting for approval dated from this date on; approve or reject them before choosing the accounting regime.',
       STOCK_SURPLUS_STALE: 'The surplus figures changed since the proposal was made; reject this proposal and ask again.',
       STOCK_COUNT_ENTRY: 'This entry posted the difference of a stock count, so it cannot be reversed; count again.',
       STOCK_COUNT_ITEM_INACTIVE: 'This item is no longer in use; switch it back on before counting it.',

@@ -22,6 +22,10 @@
 --                                                 under this row, reversed or not (a reversal of an opening entry is dated
 --                                                 on the opening's own date), so reversing it does not free that 1 January.
 --                                                 The detail names the entry and the next 1 January that is free.
+--         BOOKS_PENDING_PROPOSALS          P0001  a posting proposal of the entity (a purchase, a cash voucher, a journal voucher, a
+--                                                 reversal, a supplier payment) waits for approval and is dated on or after the
+--                                                 date, or carries no date to tell. Vouchers carry no regime to hold them to, so a
+--                                                 switch waits until they are approved or rejected. The detail lists up to 20 ids.
 --         BOOKS_REGIME_IN_USE              23514  an entry of the entity dated on or after the date: the guard, unchanged,
 --                                                 is the last word.
 --   ludy_finance.cancel_books_regime(p_legal_entity_id uuid, p_effective_from date) RETURNS boolean
@@ -41,9 +45,18 @@
 --   - the org's tax profile is read FOR SHARE (set only), so the fiscal-year end cannot change under the choice;
 --   - the entity's period_lock row is taken FOR UPDATE, the row every posting reads before it writes (the guard takes it
 --     too), before anything about the entity's entries is read.
+--
+-- ludy_finance.fixed_asset.regime, chart_version: the books the accounts of a register entry were checked under when it was registered (the
+-- entity's books in its start month). Monthly depreciation posts an entry's accounts into a month whose chart differs only when none of them
+-- is a code the two circulars use for different things (modules/finance/src/fixed-assets.ts), and reads the chart the accounts were chosen
+-- under from these columns, not from the books of the start month as they read later (a switch added after the registration would change
+-- that). Rows that exist are TT133 2026.1: no entity could keep other books before this migration.
 -- The command that calls them is finance.books.set_regime (R3, owner only) and finance.books.cancel_regime (R3, owner or
 -- admin), in modules/finance/src/books-regime.ts. check_account_ref and legal_entity_books_guard are not touched.
 SET LOCAL lock_timeout = '2s';
+
+ALTER TABLE ludy_finance.fixed_asset ADD COLUMN IF NOT EXISTS regime text NOT NULL DEFAULT 'tt133';
+ALTER TABLE ludy_finance.fixed_asset ADD COLUMN IF NOT EXISTS chart_version text NOT NULL DEFAULT '2026.1';
 
 CREATE OR REPLACE FUNCTION ludy_finance.set_books_regime(p_legal_entity_id uuid, p_effective_from date) RETURNS date
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
@@ -58,6 +71,8 @@ DECLARE
   v_opening_id uuid;
   v_opening_date date;
   v_opening_reversed boolean;
+  v_pending uuid[];
+  v_pending_count integer;
 BEGIN
   IF v_org IS NULL THEN
     RAISE EXCEPTION 'NO_CONTEXT' USING ERRCODE = '42501';
@@ -106,6 +121,17 @@ BEGIN
     RAISE EXCEPTION 'BOOKS_OPENING_ENTRY_BLOCKS' USING ERRCODE = '23514',
       DETAIL = pg_catalog.json_build_object('entryId', v_opening_id, 'entryDate', v_opening_date, 'reversed', v_opening_reversed,
                                             'nextEffectiveFrom', (p_effective_from + pg_catalog.make_interval(years => 1))::date)::text;
+  END IF;
+  -- Posting proposals that carry no regime (vouchers, reversals, payments) and wait for approval are not carried across the switch. One with no date to read is held too.
+  SELECT pg_catalog.array_agg(x.id), pg_catalog.count(*) INTO v_pending, v_pending_count FROM (
+    SELECT pr.id FROM ludy_kernel.proposal pr
+    WHERE pr.org_id = v_org AND pr.legal_entity_id = v_entity AND pr.status IN ('pending', 'approved')
+      AND pr.kind IN ('finance.purchase', 'finance.cash_voucher', 'finance.journal_voucher', 'finance.journal_reversal', 'finance.supplier_payment')
+      AND (coalesce(pr.payload #>> '{invoice,issueDate}', pr.payload ->> 'date', pr.payload ->> 'entryDate') IS NULL
+           OR coalesce(pr.payload #>> '{invoice,issueDate}', pr.payload ->> 'date', pr.payload ->> 'entryDate') >= pg_catalog.to_char(p_effective_from, 'YYYY-MM-DD'))
+    ORDER BY pr.id LIMIT 20) x;
+  IF v_pending_count > 0 THEN
+    RAISE EXCEPTION 'BOOKS_PENDING_PROPOSALS' USING DETAIL = pg_catalog.json_build_object('proposalIds', v_pending)::text;
   END IF;
   -- The guard (BOOKS_REGIME_IN_USE) refuses when an entry of the entity falls on or after the date.
   INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from, created_by)

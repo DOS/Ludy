@@ -192,6 +192,41 @@ suite('an owner chooses Circular 99 for an entity (#1403 slice B1)', () => {
     expect(await rowsOf(entity)).toHaveLength(1);
   });
 
+  it('holds the switch while a posting proposal dated on or after it waits for approval, or carries no date, and lets one dated before it be', async () => {
+    const proposal = (entity: string, payload: Record<string, unknown>) =>
+      admin(
+        async (a) =>
+          (await a.query<{ id: string }>(`INSERT INTO ludy_kernel.proposal (org_id, kind, command, title, payload, legal_entity_id) VALUES ($1, 'finance.cash_voucher', 'finance.voucher.record', 'Phiếu thử', $2::jsonb, $3) RETURNING id`, [orgId, JSON.stringify(payload), entity])).rows[0]?.id as string,
+      );
+    const dated = await newEntity('Đề xuất đề ngày sau');
+    const waiting = await proposal(dated, { date: '2041-03-01' });
+    expect(await refusal(setRegime(dated, '2041-01-01'))).toMatchObject({ code: 'BOOKS_PENDING_PROPOSALS', status: 409, details: { proposalIds: [waiting] } });
+    expect(await rowsOf(dated)).toEqual([]);
+    const undated = await newEntity('Đề xuất không có ngày');
+    await proposal(undated, {});
+    expect(await refusal(setRegime(undated, '2041-01-01'))).toMatchObject({ code: 'BOOKS_PENDING_PROPOSALS' });
+    const before = await newEntity('Đề xuất đề ngày trước');
+    await proposal(before, { date: '2040-06-01' });
+    await setRegime(before, '2041-01-01');
+    expect(await rowsOf(before)).toHaveLength(1);
+  });
+
+  it('keeps the books an asset was registered under, so a switch added later holds its depreciation back', async () => {
+    const entity = await newEntity('Tài sản đăng ký trước khi chuyển');
+    await rt.execute(
+      'finance.fixed_asset.create',
+      { kind: 'prepaid_cost', name: 'Bản quyền phần mềm', cost: '12000000', assetAccount: '242', expenseAccount: '6421', startMonth: '2041-02', months: 12, legalEntityId: entity },
+      { actor: asUser(who.owner), orgId },
+    );
+    const stored = await admin(async (a) => (await a.query<{ regime: string; chart_version: string }>(`SELECT regime, chart_version FROM ludy_finance.fixed_asset WHERE org_id = $1 AND legal_entity_id = $2`, [orgId, entity])).rows);
+    expect(stored).toEqual([{ regime: 'tt133', chart_version: '2026.1' }]);
+    // The switch starts before the asset's first month, after it was registered: no entry is under it, so it is accepted.
+    await setRegime(entity, '2041-01-01');
+    const request = (month: string) =>
+      rt.execute('kernel.proposal.request', { command: 'finance.depreciation.record', input: { month, legalEntityId: entity } }, { actor: asUser(who.owner), orgId, idempotencyKey: randomUUID() });
+    expect(await refusal(request('2041-02'))).toMatchObject({ code: 'DEPRECIATION_BOOKS_CHANGED', status: 409 });
+  });
+
   it('keeps the books table closed to every login role: no one writes it but through the two functions', async () => {
     const entity = await newEntity('Không ghi trực tiếp');
     const write = (sql: string) =>
