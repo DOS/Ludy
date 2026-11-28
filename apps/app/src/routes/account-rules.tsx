@@ -303,6 +303,7 @@ export function AddKeywordRuleDialog({
   const incomplete = !entity.ready || !keyword.trim() || !accountCode;
   function handleDirectionChange(next: DocumentDirection) {
     setDirection(next);
+    setVendorError(null);
     if (accountCode && isRevenueAccount(accountCode) !== (next === 'sale')) {
       setAccountCode('');
     }
@@ -478,7 +479,7 @@ export function AccountRulesCard({ canManage }: { canManage: boolean }) {
   const filteredRules = filterRulesByVendor(directionFiltered, validFilter);
 
   const partyScope =
-    directionFilter === 'sale' || (!hasPurchase && hasSale)
+    directionFilter === 'sale' || (directionFilter === '' && !hasPurchase && hasSale)
       ? { filterLabel: t('filterCustomer'), sharedLabel: t('allCustomers'), emptyText: t('filteredEmptyCustomer') }
       : directionFilter === '' && hasPurchase && hasSale
         ? { filterLabel: t('filterParty'), sharedLabel: t('allParties'), emptyText: t('filteredEmptyParty') }
