@@ -135,18 +135,45 @@ const RULES: Array<{ account: string; pattern: RegExp; reason: string }> = [
   { account: '156', pattern: /hàng hóa|sản phẩm|hàng/i, reason: 'Hàng hóa' },
 ];
 
+// The built-in keyword list under Circular 99 (#1403): the same words, with the expense accounts TT99 has. TT99 splits 641 and 642 by nature where TT133 splits them by function, and its 6421 and 6422 mean staff and materials
+// of administration. So TT133's 6421 (selling) becomes 6418 for advertising and introducing products and 6417 for transport and agents' commission, and 6422 (administration) becomes 6427 (outside services of
+// administration), except stationery, which Appendix II puts in 6422 itself (vật liệu quản lý, "văn phòng phẩm"). Read from the account principles of 641 and 642 in Circular 99/2025/TT-BTC (Công báo 1573 + 1574,
+// pages 64 to 70); no accountant has confirmed these picks, and a reviewer changes any line.
+const RULES_TT99: Array<{ account: string; pattern: RegExp; reason: string }> = [
+  { account: '6418', pattern: /quảng cáo|marketing|khuyến mãi|ads|facebook|google/i, reason: 'Chi phí bán hàng: quảng cáo, giới thiệu sản phẩm' },
+  { account: '6417', pattern: /vận chuyển|giao hàng|hoa hồng/i, reason: 'Chi phí bán hàng: dịch vụ mua ngoài (vận chuyển, hoa hồng)' },
+  { account: '153', pattern: /công cụ|dụng cụ|bàn|ghế|kệ|tủ|dao|kéo|chuột|bàn phím/i, reason: 'Công cụ, dụng cụ' },
+  { account: '152', pattern: /nguyên liệu|vật liệu|nguyên vật liệu|phụ liệu/i, reason: 'Nguyên liệu, vật liệu' },
+  { account: '6422', pattern: /văn phòng phẩm/i, reason: 'Chi phí quản lý doanh nghiệp: vật liệu quản lý (văn phòng phẩm)' },
+  {
+    account: '6427',
+    pattern: /dịch vụ|phí|cước|điện|nước|internet|viễn thông|thuê|bảo trì|sửa chữa|phần mềm|hosting|tên miền|tư vấn|kế toán|kiểm toán/i,
+    reason: 'Chi phí quản lý doanh nghiệp: dịch vụ mua ngoài',
+  },
+  { account: '156', pattern: /hàng hóa|sản phẩm|hàng/i, reason: 'Hàng hóa' },
+];
+
+// The accounts a Circular 133 chart and the Circular 99 chart both have but mean differently (#1403): a vendor default or a learned rule that names one was made under TT133 and must not be read as the TT99 account
+// of the same code. 211 held every fixed asset under TT133 and only tangible ones under TT99; 3386 was deposits received and is unemployment insurance; 6421 and 6422 were selling and administration expenses and
+// are staff and materials of administration.
+export const TT133_CODES_CHANGED_IN_TT99: readonly string[] = ['211', '3386', '6421', '6422'];
+
 const ASSET_PATTERN = /máy|thiết bị|xe |ô tô|laptop|máy tính|server|điều hòa/i;
 
 // The account proposed for a line (#1399), most specific first: a learned rule of this vendor (the same item, then a
 // keyword), the vendor's default account, a learned rule for every vendor, then the built-in keyword list. The
 // vendor's own rules come before its default: the default is one account for the whole vendor, and a vendor that sells
 // both goods and services needs its lines told apart.
+// Under the books regime `tt99` (#1403) the built-in list is TT99's (RULES_TT99) and a declared discount is not guessed: its account depends on what it reduces, which no accountant has said, so the line waits for a reviewer.
+// The caller passes only the default and the rules whose account is in the regime's chart.
 export function suggestDebitAccount(
   line: InvoiceLine,
   vendorDefault: string | null,
   rules: readonly LearnedRule[] = [],
   // Whether the line's nature was declared by the invoice (an e-invoice's TChat) and not read by a model.
   declared = false,
+  // The books regime the purchase is posted under on its date; none is TT133.
+  regime?: string,
 ): AccountSuggestion {
   const own = matchLearnedRule(line.description, rules, true);
   if (own) return learnedSuggestion(own);
@@ -157,13 +184,14 @@ export function suggestDebitAccount(
   if (ASSET_PATTERN.test(line.description) && money(line.amount).greaterThanOrEqualTo(FIXED_ASSET_THRESHOLD)) {
     return { account: '211', reason: 'Giá trị từ 30 triệu, có thể là tài sản cố định', rule: builtin };
   }
-  for (const rule of RULES) {
+  const tt99 = regime === 'tt99';
+  for (const rule of tt99 ? RULES_TT99 : RULES) {
     if (rule.pattern.test(line.description)) return { account: rule.account, reason: rule.reason, rule: builtin };
   }
   // A line the invoice itself declares a discount (TChat 3) is not a guess: it keeps the built-in account it always had,
   // shown as built-in on the line, for the reviewer to change. A nature a model read from a photo or PDF is not a
   // declaration (injected text could set it), so that line is unclassified like any other no rule matches.
-  if (declared && line.nature === 'discount') return { account: '6422', reason: 'Chiết khấu ghi giảm chi phí quản lý doanh nghiệp', rule: builtin };
+  if (declared && line.nature === 'discount' && !tt99) return { account: '6422', reason: 'Chiết khấu ghi giảm chi phí quản lý doanh nghiệp', rule: builtin };
   // No rule matched: never a guessed account (#2091). The line carries a placeholder no chart holds, which finance
   // refuses to post, so a reviewer has to choose the account. AI never picks it.
   return { account: UNCLASSIFIED_ACCOUNT, reason: UNCLASSIFIED_REASON, rule: { source: 'unclassified' } };
@@ -230,11 +258,11 @@ export interface JournalLineDraft {
 }
 
 // Lines that carry value for bookkeeping (notes and promotions with no amount are dropped).
-export function bookableLines(invoice: ParsedInvoice, vendorDefault: string | null, rules: readonly LearnedRule[] = []): ProposedLine[] {
+export function bookableLines(invoice: ParsedInvoice, vendorDefault: string | null, rules: readonly LearnedRule[] = [], regime?: string): ProposedLine[] {
   return invoice.lines
     .filter((l) => !money(lineContribution(l)).isZero())
     .map((l) => {
-      const suggestion = suggestDebitAccount(l, vendorDefault, rules, invoice.source === 'einvoice_xml');
+      const suggestion = suggestDebitAccount(l, vendorDefault, rules, invoice.source === 'einvoice_xml', regime);
       return {
         lineNo: l.lineNo,
         description: l.description,

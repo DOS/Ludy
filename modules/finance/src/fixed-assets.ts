@@ -107,9 +107,10 @@ export const createFixedAsset = defineCommand({
     if (!prefix(input.expenseAccount, '6', '8', '154')) {
       throw new DomainError('ASSET_ACCOUNTS', 422, 'Tài khoản chi phí phải là 154, tài khoản loại 6 hoặc loại 8');
     }
-    await assertUsableAccounts(ctx, [input.assetAccount, input.expenseAccount, ...(accumulated ? [accumulated] : [])]);
     // The register of one legal entity (#1280); an entry from a purchase line must be of the document's entity.
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+    // In the chart of the entity's books in the month the asset starts (#1403): its first monthly entry is dated that month's last day.
+    await assertUsableAccounts(ctx, [input.assetAccount, input.expenseAccount, ...(accumulated ? [accumulated] : [])], { legalEntityId, date: firstDay(input.startMonth) });
     const source = input.source ?? null;
     if (source) {
       // A live purchase of the org and entity whose line was posted to this asset account, for this cost.

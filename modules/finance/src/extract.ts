@@ -15,10 +15,12 @@ import { BOOK_CURRENCY, convertInvoice, type ForeignAmounts } from './domain/for
 const zAmount = z.string().regex(/^-?\d{1,20}(\.\d{1,6})?$/);
 import { isOwnTaxCode, loadOwnTaxCodes, ownTaxCodeForEntity, readSeller } from './own-tax-code.ts';
 import { findPartyByName } from './parties.ts';
+import { chartAccounts } from './accounts.ts';
 import { rulesForSuggestion } from './categorization.ts';
 import { HISTORY_WINDOW, anomalyChecks, type VendorHistory } from './domain/anomaly.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
-import { booksOn } from './payroll-posting.ts';
+import { booksOn } from './books.ts';
+import { rulesForBooks } from './purchase-regime.ts';
 import {
   bookableLines,
   classificationCheck,
@@ -98,7 +100,7 @@ export interface InvoiceLookup {
   direction: DocumentDirection;
   // The own tax code of the legal entity the invoice is read in (#899); null when neither the entity nor the org has one.
   ownTaxCode?: string | null;
-  // The books regime the sale is posted under on the invoice's issue date ('tt133', 'tt99'); set only for a sale whose issue date was asked for (#3712 slice 4).
+  // The books regime the document is posted under on the invoice's issue date ('tt133', 'tt99'); set only when the issue date was asked for: for a sale always (#3712 slice 4), for a purchase only when it is not TT133 (#1403).
   regime?: string;
   vendorDefault: string | null;
   // The learned account rules of the vendor and of every vendor (#1399), for a purchase; none for a sale.
@@ -293,13 +295,23 @@ export const purchaseLookup = defineQuery({
     // finance.purchase.record finds or creates the party it learns for (upsertParty).
     const ruleParty =
       party ?? (!sale && !input.sellerTaxCode && input.sellerName.trim() ? await findPartyByName(ctx, input.sellerName.trim()) : undefined);
-    const regime = sale && input.issueDate ? (await booksOn(ctx, entityId, input.issueDate)).regime : undefined;
+    // A sale names its regime whichever it is; a purchase only when it is not TT133, so every TT133 proposal stays as it was (#1403).
+    const books = input.issueDate ? await booksOn(ctx, entityId, input.issueDate) : undefined;
+    const regime = books && (sale || books.regime !== 'tt133') ? books.regime : undefined;
+    let vendorDefault = rule?.debit_account ?? null;
+    let learnedRules = sale ? [] : await rulesForSuggestion(ctx, ruleParty?.id ?? null, entityId);
+    if (!sale && books && input.issueDate && books.regime !== 'tt133') {
+      // The vendor default and the learned rules were made under TT133, whose chart is org-wide; only those naming an account the entity's chart has, and means the same by, are offered (#1403).
+      const asked = [...new Set([...(vendorDefault ? [vendorDefault] : []), ...learnedRules.map((r) => r.account)])];
+      const chart = await chartAccounts(ctx, asked, { legalEntityId: entityId, date: input.issueDate });
+      ({ vendorDefault, learnedRules } = rulesForBooks({ vendorDefault, learnedRules, inChart: (code) => chart.has(code) }));
+    }
     return {
       direction: sale ? 'sale' : 'purchase',
       ownTaxCode,
       ...(regime ? { regime } : {}),
-      vendorDefault: rule?.debit_account ?? null,
-      learnedRules: sale ? [] : await rulesForSuggestion(ctx, ruleParty?.id ?? null, entityId),
+      vendorDefault,
+      learnedRules,
       duplicateDocumentId: document?.id ?? null,
       duplicateProposalId: duplicate?.id ?? null,
       // Only when the pending PDF or photo reading is the one match: another proposal of the same invoice (a second one, in
@@ -704,7 +716,7 @@ export async function extractAndPropose(
     const buyerCheck = buyerTaxCodeCheck(invoice.buyer.taxCode, lookup.ownTaxCode);
     if (buyerCheck) checks.push(buyerCheck);
   }
-  const lines = sale ? bookableSaleLines(booked) : bookableLines(booked, lookup.vendorDefault, lookup.learnedRules ?? []);
+  const lines = sale ? bookableSaleLines(booked) : bookableLines(booked, lookup.vendorDefault, lookup.learnedRules ?? [], lookup.regime);
   if (lines.length === 0) return fail('Hóa đơn không có dòng hàng hóa, dịch vụ để hạch toán', checks);
   // A purchase line no rule matched has no account yet (#2091): a warning names those lines, and recording refuses them
   // until a reviewer picks the account. A sale's lines are all revenue, so it has none. Nothing is added when every
@@ -766,7 +778,7 @@ export async function extractAndPropose(
       ...(converted ? { foreign: { ...converted.foreign, source: 'invoice' as const } } : {}),
     },
     lines,
-    ...(sale && lookup.regime ? { regime: lookup.regime } : {}),
+    ...(lookup.regime ? { regime: lookup.regime } : {}),
     journal: sale ? buildSalesJournal(lines, booked.vatTotal, memo, lookup.regime) : buildPurchaseJournal(lines, booked.vatTotal, memo),
     checks,
     sourceFileId: fileId,

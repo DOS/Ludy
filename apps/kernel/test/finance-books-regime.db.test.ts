@@ -223,6 +223,56 @@ suite('finance books regime per legal entity (#1403)', () => {
     expect(await refusal(postAsOwner({ entity: defaultEntity, date: '2027-02-01', debit: '1283', credit: '331' }))).toMatchObject({ code: '23503' });
   });
 
+  it('checks the lines of a document against the chart of its entity on the invoice date (#1403)', async () => {
+    const partyId = (await admin((a) => a.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'organization', 'Nhà cung cấp hai chế độ') RETURNING id`, [orgId]))).rows[0]
+      ?.id as string;
+    let number = 0;
+    // A purchase document with one line per account, written as the superuser: only the database's own checks apply.
+    const document = (entity: string, date: string, accounts: string[]) =>
+      refusal(
+        admin(async (a) => {
+          await a.query('BEGIN');
+          try {
+            const id = randomUUID();
+            await a.query(
+              `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
+               VALUES ($1, $2, $3, 'C27TAA', $4, $5, 'VND', 1000000, 0, 1000000, 'purchase', $6)`,
+              [orgId, id, partyId, String(++number), date, entity],
+            );
+            for (const [i, account] of accounts.entries()) {
+              await a.query(`INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account) VALUES ($1, $2, $3, 'Dòng', 1000, $4)`, [orgId, id, i + 1, account]);
+            }
+            // The document's journal entry, in the same transaction (a purchase document cannot commit without it): one debit per
+            // line and the payable. A line the chart refuses has already failed above.
+            const entryId = (
+              await a.query<{ id: string }>(
+                `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id)
+                 VALUES ($1, $2, 'Mua hàng', 'finance.purchase_document', $3, $4) RETURNING id`,
+                [orgId, date, id, entity],
+              )
+            ).rows[0]?.id as string;
+            for (const [i, account] of accounts.entries()) {
+              await a.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, 1000, 0)`, [orgId, entryId, i + 1, account]);
+            }
+            await a.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, '331', 0, $4)`, [orgId, entryId, accounts.length + 1, accounts.length * 1000]);
+            await a.query('COMMIT');
+          } catch (error) {
+            await a.query('ROLLBACK');
+            throw error;
+          }
+        }),
+      );
+    // The branch keeps TT99 books from 2027: its documents of that year name TT99 accounts only (the same rule as its journal lines).
+    expect(await document(branch, '2027-02-01', ['6427', '156'])).toBeNull();
+    expect(await document(branch, '2027-02-01', ['611'])).toMatchObject({ code: '23503', message: expect.stringContaining('tt99 2026.1 chart of accounts') });
+    expect(await document(branch, '2027-02-01', ['331.A'])).toMatchObject({ code: '23503' });
+    // Its 2026 documents are TT133 ones, and the default entity keeps TT133 whatever the date.
+    expect(await document(branch, '2026-12-31', ['611'])).toBeNull();
+    expect(await document(branch, '2026-12-31', ['6427'])).toMatchObject({ code: '23503' });
+    expect(await document(defaultEntity, '2027-02-01', ['611'])).toBeNull();
+    expect(await document(defaultEntity, '2027-02-01', ['6427'])).toMatchObject({ code: '23503' });
+  });
+
   it('never changes the regime of a year with entries', async () => {
     const edit = (sql: string) => refusal(admin((a) => a.query(sql, [orgId, branch])));
     expect(await edit(`UPDATE ludy_finance.legal_entity_books SET effective_from = '2028-01-01' WHERE org_id = $1 AND legal_entity_id = $2`)).toMatchObject({

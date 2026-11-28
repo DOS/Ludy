@@ -30,6 +30,7 @@ import { assertUsableAccounts, isInactiveDefaultRefusal } from './accounts.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { booksOn } from './payroll-posting.ts';
+import { approvalRegimeRefused, booksRegimeChanged, learnsRules, reviseRegimeRefused } from './purchase-regime.ts';
 import { latestRevision } from './source-entry.ts';
 import { learnFromApproval } from './categorization.ts';
 import { postReversal } from './reversal.ts';
@@ -50,11 +51,11 @@ export function invoiceJournal(direction: DocumentDirection, lines: ProposedLine
   return direction === 'sale' ? buildSalesJournal(lines, vatTotal, memo, regime) : buildPurchaseJournal(lines, vatTotal, memo);
 }
 
-// The books regime a sale is posted under (#3712 slice 4): the entity's books row in force on the day of the entry. Only a sale needs it (a Circular 99 sale debits its revenue deductions to 521);
-// a purchase has none.
-async function saleRegime(ctx: CommandContext, direction: DocumentDirection, legalEntityId: string | null | undefined, date: string): Promise<string | undefined> {
-  if (direction !== 'sale') return undefined;
-  return (await booksOn(ctx, await resolveLegalEntity(ctx, legalEntityId), date)).regime;
+// The books regime a document is posted under: the entity's books row in force on the day of the entry. A sale always names it (#3712 slice 4: a Circular 99 sale debits its revenue deductions to 521); a purchase only
+// when it is not TT133 (#1403), so every TT133 proposal stays as it was. A proposal that carries a regime is posted only while the entity's books are still that regime.
+async function documentRegime(ctx: CommandContext, direction: DocumentDirection, legalEntityId: string | null | undefined, date: string): Promise<string | undefined> {
+  const regime = (await booksOn(ctx, await resolveLegalEntity(ctx, legalEntityId), date)).regime;
+  return direction === 'sale' || regime !== 'tt133' ? regime : undefined;
 }
 
 // The legal entity a proposal was stamped with (#1538: the entity of the reading it came from), none for a call that is not an approval.
@@ -367,12 +368,17 @@ export const revisePurchase = defineCommand({
     if (chosen.length === 0 && !exchangeRate && !movesEntity && !changesDueDate) return { changed: false as const, payload };
     // The accounts the user picked now; the others are checked again when the proposal is approved.
     assertDirectionAccounts(directionOf(payload), chosen);
-    await assertUsableAccounts(ctx, chosen.map((l) => l.debitAccount));
+    // In the chart of the entity's books on the invoice's date (#1403): the entity of the proposal, else the one resolved for the caller.
+    const reviseEntity = await resolveLegalEntity(ctx, payload.legalEntityId ?? (await proposalEntity(ctx)));
+    await assertUsableAccounts(ctx, chosen.map((l) => l.debitAccount), { legalEntityId: reviseEntity, date: payload.invoice.issueDate });
     // The accounts check (#2091) names the lines still waiting for an account, so it follows the picks: the
     // proposal carries one only when extraction found a line no rule matched.
     const classification = payload.checks.some((c) => c.id === 'accounts') ? classificationCheck(lines) : null;
     const checks = classification ? payload.checks.map((c) => (c.id === 'accounts' ? classification : c)) : payload.checks;
-    const regime = await saleRegime(ctx, directionOf(payload), payload.legalEntityId ?? (await proposalEntity(ctx)), payload.invoice.issueDate);
+    const regime = await documentRegime(ctx, directionOf(payload), reviseEntity, payload.invoice.issueDate);
+    // Only the lines a person changed are checked above, so a purchase is revised only under the regime it carries: stamping another one here would let
+    // the lines left alone pass as the other circular's accounts (a sale always names the regime in force, as before).
+    if (directionOf(payload) === 'purchase' && reviseRegimeRefused(payload.regime, regime)) throw booksRegimeChanged(payload.regime, regime);
     const revised = { ...payload, lines, checks, ...(regime ? { regime } : {}), journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload), regime) };
     return { changed: true as const, payload: revised };
   },
@@ -474,21 +480,25 @@ export const recordPurchase = defineCommand({
     // deactivated since the proposal was made is refused here, with its code.
     const { lines } = payload;
     assertDirectionAccounts(direction, lines);
-    await assertUsableAccounts(ctx, lines.map((l) => l.debitAccount));
+    // The entry the approver saw is the entry posted (DESIGN.md 5.1): a document posts under the regime its proposal carries, the one its preview and its accounts were worked out with. A sale raised before the regime
+    // was carried has none and keeps the earlier posting (Dr 511). The rules for a purchase are in purchase-regime.ts. Refusals are named errors: the proposal is rejected and read again. Checked before the accounts, which the new chart may not have.
+    const postingDay = lateDate ?? invoice.issueDate;
+    const regime = payload.regime;
+    // The regime in force on the day the entry is posted; the vendor default and the learned rules follow it, not the proposal's.
+    let postingRegime: string | undefined;
+    if (regime !== undefined || !sale) {
+      postingRegime = await documentRegime(ctx, direction, payload.legalEntityId ?? (await proposalEntity(ctx)), postingDay);
+      if (approvalRegimeRefused({ carried: regime, current: postingRegime, accounts: lines.map((l) => l.debitAccount) })) throw booksRegimeChanged(regime, postingRegime);
+    }
+    // The accounts are in the chart of the entity's books on the day of the invoice (the document's lines are checked by the database on that day) and on the day of the entry (its lines are).
+    const accountsEntity = await resolveLegalEntity(ctx, payload.legalEntityId ?? (await proposalEntity(ctx)));
+    const accountCodes = lines.map((l) => l.debitAccount);
+    await assertUsableAccounts(ctx, accountCodes, { legalEntityId: accountsEntity, date: invoice.issueDate });
+    if (postingDay !== invoice.issueDate) await assertUsableAccounts(ctx, accountCodes, { legalEntityId: accountsEntity, date: postingDay });
 
     // A foreign-currency invoice says what it was in its entry's description, which the journal and the MISA export
     // show (#918).
     const memo = foreign ? `${journalMemo(payload)} (${foreignNote(foreign)})` : journalMemo(payload);
-    // The entry the approver saw is the entry posted (DESIGN.md 5.1): a sale posts under the regime its proposal carries, the one its preview was worked out with. A proposal raised before the regime
-    // was carried has none and keeps the earlier posting (Dr 511). If the entity's books have changed since the proposal was made, the entry would no longer be the one shown, so it is refused
-    // with a named error and the proposal is rejected and read again.
-    const regime = sale ? payload.regime : undefined;
-    if (regime !== undefined) {
-      const current = await saleRegime(ctx, direction, payload.legalEntityId ?? (await proposalEntity(ctx)), lateDate ?? invoice.issueDate);
-      if (current !== regime) {
-        throw new DomainError('BOOKS_REGIME_CHANGED', 409, 'Chế độ kế toán của sổ đã đổi từ khi lập đề xuất nên bút toán sẽ khác bản đã xem; hãy từ chối đề xuất này và đọc lại hóa đơn', { proposed: regime, current });
-      }
-    }
     const journal = invoiceJournal(direction, lines, invoice.vatTotal, memo, regime);
     if (!journalIsBalanced(journal)) throw new DomainError('UNBALANCED', 422, 'Bút toán không cân');
     // The payable (purchase) or receivable (sale) booked must equal the invoice total exactly.
@@ -653,8 +663,9 @@ export const recordPurchase = defineCommand({
       lines.map((l) => ({ lineNo: l.lineNo, description: l.description, unit: l.unit, quantity: l.quantity, amount: l.amount, account: l.debitAccount, source: carried(l) })),
     );
 
-    // Remember the debit account carrying the largest amount (either sign) for this vendor. Sales remember nothing.
-    const main = sale ? undefined : [...lines].sort((a, b) => money(b.amount).abs().comparedTo(money(a.amount).abs()))[0];
+    // Remember the debit account carrying the largest amount (either sign) for this vendor. Sales remember nothing, nor does a purchase of a TT99 entity (#1403): the default is one account for the whole org,
+    // checked against the TT133 chart, and it would carry a TT99 code into TT133 books.
+    const main = !learnsRules(sale, postingRegime) ? undefined : [...lines].sort((a, b) => money(b.amount).abs().comparedTo(money(a.amount).abs()))[0];
     if (main) {
       await ctx.trx
         .insertInto('ludy_finance.vendor_account_rule')
@@ -679,8 +690,8 @@ export const recordPurchase = defineCommand({
         });
     }
 
-    // The accounts a user chose on this revision teach the vendor's learned rules (#1399). Sales learn nothing.
-    const learned = sale ? [] : await learnFromApproval(ctx, { partyId, documentId: document.id, lines });
+    // The accounts a user chose on this revision teach the vendor's learned rules (#1399). Sales learn nothing, nor does a TT99 entity's purchase (#1403, as for the vendor default above).
+    const learned = !learnsRules(sale, postingRegime) ? [] : await learnFromApproval(ctx, { partyId, documentId: document.id, lines });
 
     ctx.audit({
       direction,

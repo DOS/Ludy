@@ -13,6 +13,7 @@ import {
   normalizeRuleText,
   RULE_TEXT_MAX,
   suggestDebitAccount,
+  TT133_CODES_CHANGED_IN_TT99,
   type InvoiceLine,
   type LearnedRule,
   type ParsedInvoice,
@@ -170,5 +171,42 @@ describe('classification check (#2091)', () => {
   it('leaves a sale untouched: its lines are built-in revenue', () => {
     const lines = bookableSaleLines(invoice(['Khoản lạ']));
     expect(unclassifiedLineNos(lines)).toEqual([]);
+  });
+});
+
+describe('suggestDebitAccount under Circular 99 (#1403)', () => {
+  it('proposes TT99 expense accounts for the built-in keywords, and TT133 ones without a regime', () => {
+    const tt99 = (text: string, declared = false) => suggestDebitAccount(line(text), null, [], declared, 'tt99');
+    expect(tt99('Phí quảng cáo Facebook')).toMatchObject({ account: '6418', rule: { source: 'builtin' } });
+    expect(tt99('Cước vận chuyển hàng')).toMatchObject({ account: '6417', rule: { source: 'builtin' } });
+    expect(tt99('Cước internet tháng 10')).toMatchObject({ account: '6427', rule: { source: 'builtin' } });
+    expect(tt99('Văn phòng phẩm')).toMatchObject({ account: '6422', rule: { source: 'builtin' } });
+    // The same on both sides of the split: tools, materials and goods keep their accounts.
+    expect(tt99('Nguyên vật liệu')).toMatchObject({ account: '152' });
+    expect(tt99('Hàng hóa nhập kho')).toMatchObject({ account: '156' });
+    expect(suggestDebitAccount(line('Máy tính xách tay', '35000000'), null, [], false, 'tt99')).toMatchObject({ account: '211' });
+    expect(suggestDebitAccount(line('Phí quảng cáo Facebook'), null, [], false)).toMatchObject({ account: '6421' });
+    expect(suggestDebitAccount(line('Phí quảng cáo Facebook'), null, [], false, 'tt133')).toMatchObject({ account: '6421' });
+    expect(suggestDebitAccount(line('Dịch vụ lạ'), null, [], false, 'tt133')).toMatchObject({ account: '6422' });
+  });
+
+  it('leaves a declared discount for a reviewer, which TT133 books to 6422', () => {
+    const discount = { ...line('Chiết khấu thương mại'), nature: 'discount' as const };
+    expect(suggestDebitAccount(discount, null, [], true, 'tt133')).toMatchObject({ account: '6422' });
+    expect(suggestDebitAccount(discount, null, [], true, 'tt99')).toMatchObject({ account: UNCLASSIFIED_ACCOUNT, rule: { source: 'unclassified' } });
+  });
+
+  it('passes a vendor default and a learned rule through: the caller filters them by the chart', () => {
+    expect(suggestDebitAccount(line('Phí quảng cáo Google'), '6418', [], false, 'tt99')).toMatchObject({ account: '6418', rule: { source: 'vendor_default' } });
+  });
+
+  it('names the TT133 codes whose meaning TT99 changed', () => {
+    expect([...TT133_CODES_CHANGED_IN_TT99].sort()).toEqual(['211', '3386', '6421', '6422']);
+  });
+
+  it('proposes a purchase line under the regime it is given', () => {
+    const invoice = { source: 'einvoice_xml', lines: [line('Cước internet')] } as unknown as ParsedInvoice;
+    expect(bookableLines(invoice, null, [], 'tt99')[0]).toMatchObject({ debitAccount: '6427' });
+    expect(bookableLines(invoice, null, [])[0]).toMatchObject({ debitAccount: '6422' });
   });
 });
