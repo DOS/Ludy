@@ -1596,24 +1596,26 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     // Seed an active prior release so .deploy/current and .deploy/project exist.
     expect(deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth ludy', STUB_VOLUMES: 'ludy_db-data' }).status).toBe(0);
 
-    // 1) Mixed owned + stale non-existent pre-rename dir with live stale db mounting ludy_db-data succeeds and uses --force-recreate only for stale services.
+    // 1) Mixed owned + stale non-existent pre-rename dir with live stale db mounting ludy_db-data succeeds and uses --force-recreate only for stale services (including mixed up "${rest[@]}").
     writeFileSync(log, '');
     const staleRecreate = deploy('v1.1.0', 'b', {
-      STUB_SERVICES: 'db migrate auth ludy',
+      STUB_SERVICES: 'db migrate auth mailpit ludy-extract ludy',
       STUB_VOLUMES: 'ludy_db-data',
-      STUB_WORKDIR_CONTAINERS: `${dir}|ludy|own-ludy-1`,
-      STUB_PROJECT_CONTAINERS: 'ludy|own-ludy-1 ludy|stale-db-1 ludy|stale-auth-1',
-      STUB_RUNNING_CONTAINERS: 'own-ludy-1 stale-db-1 stale-auth-1',
-      STUB_INSPECT_WORKDIRS: `own-ludy-1|${dir} stale-db-1|${staleDir} stale-auth-1|${staleDir}`,
-      STUB_INSPECT_SERVICES: 'own-ludy-1|ludy|False|true stale-db-1|db|False|true stale-auth-1|auth|False|true',
+      STUB_WORKDIR_CONTAINERS: `${dir}|ludy|own-ludy-1 ${dir}|ludy-extract|own-extract-1`,
+      STUB_PROJECT_CONTAINERS: 'ludy|own-ludy-1 ludy|own-extract-1 ludy|stale-db-1 ludy|stale-auth-1 ludy|stale-mailpit-1',
+      STUB_RUNNING_CONTAINERS: 'own-ludy-1 own-extract-1 stale-db-1 stale-auth-1 stale-mailpit-1',
+      STUB_INSPECT_WORKDIRS: `own-ludy-1|${dir} own-extract-1|${dir} stale-db-1|${staleDir} stale-auth-1|${staleDir} stale-mailpit-1|${staleDir}`,
+      STUB_INSPECT_SERVICES: 'own-ludy-1|ludy|False|true own-extract-1|ludy-extract|False|true stale-db-1|db|False|true stale-auth-1|auth|False|true stale-mailpit-1|mailpit|False|true',
       STUB_INSPECT_MOUNTS: 'stale-db-1|ludy|volume|ludy_db-data||/var/lib/postgresql/data',
     });
     expect(staleRecreate.status, staleRecreate.out).toBe(0);
     const c1 = calls();
     expect(c1).toContain('compose up --detach --no-build --no-deps --force-recreate --wait --wait-timeout 600 db');
     expect(c1).toContain('compose up --detach --no-build --no-deps --force-recreate --wait --wait-timeout 600 auth');
+    expect(c1).toContain('compose up --detach --no-build --no-deps --force-recreate --wait --wait-timeout 600 mailpit');
+    expect(c1).toContain('compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy-extract');
     expect(c1).toContain('compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy');
-    expect(c1.some((l) => l.includes('--force-recreate') && l.endsWith(' ludy'))).toBe(false);
+    expect(c1.some((l) => l.includes('--force-recreate') && (l.endsWith(' ludy') || l.includes('ludy-extract')))).toBe(false);
 
     // Stale pre-rename db PGDATA is still inspected by detect_prev_container_mounts before recreation.
     const stalePgdataCheck = deploy('v1.2.0', 'c', {
@@ -1713,6 +1715,103 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     const cStoppedOneoff = calls();
     expect(cStoppedOneoff).toContain('compose up --detach --no-build --no-deps --wait --wait-timeout 600 db');
     expect(cStoppedOneoff.some((l) => l.includes('--force-recreate'))).toBe(false);
+
+    // 7) Security hardening checks:
+    // (a) Unsearchable foreign parent directory (0o000 / 0o600) is still refused.
+    if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+      const unsearchableParent = `${root}/locked-parent`;
+      mkdirSync(unsearchableParent, { mode: 0o700 });
+      const maskedPath = `${unsearchableParent}/crove-masked`;
+      for (const mode of [0o000, 0o600]) {
+        try {
+          chmodSync(unsearchableParent, mode);
+          const maskedRefused = deploy('v1.4.0', 'e', {
+            STUB_SERVICES: 'db migrate auth ludy',
+            STUB_PROJECT_CONTAINERS: 'ludy|own-ludy-1 ludy|foreign-masked-1',
+            STUB_INSPECT_WORKDIRS: `own-ludy-1|${dir} foreign-masked-1|${maskedPath}`,
+            STUB_INSPECT_SERVICES: 'own-ludy-1|ludy|False|true foreign-masked-1|db|False|true',
+          });
+          expect(maskedRefused.status, `mode ${mode.toString(8)}: ${maskedRefused.out}`).toBe(1);
+          expect(maskedRefused.out).toContain(`Compose project 'ludy' is already owned by another installation at ${maskedPath}`);
+        } finally {
+          chmodSync(unsearchableParent, 0o700);
+        }
+      }
+    }
+
+    // (b) Dangling symlink ancestor (/dangling/. and /dangling/sub) and regular-file ancestor (/file/sub) are still refused.
+    const regFileAncestor = `${root}/regfile-ancestor`;
+    writeFileSync(regFileAncestor, 'x');
+    for (const badWdir of [`${danglingForeignLink}/.`, `${danglingForeignLink}/sub`, `${regFileAncestor}/sub`]) {
+      const ancRefused = deploy('v1.4.0', 'e', {
+        STUB_SERVICES: 'db migrate auth ludy',
+        STUB_PROJECT_CONTAINERS: 'ludy|own-ludy-1 ludy|foreign-anc-1',
+        STUB_INSPECT_WORKDIRS: `own-ludy-1|${dir} foreign-anc-1|${badWdir}`,
+        STUB_INSPECT_SERVICES: 'own-ludy-1|ludy|False|true foreign-anc-1|db|False|true',
+      });
+      expect(ancRefused.status, `${badWdir}: ${ancRefused.out}`).toBe(1);
+      expect(ancRefused.out).toContain("Compose project 'ludy' is already owned by another installation at");
+    }
+
+    // (c) Delimiter-smuggled STUB_INSPECT_SERVICES and unexpected oneoff/running values are still refused.
+    for (const badMeta of [
+      'stale-meta-1|db|False|True|true',
+      'stale-meta-1|db|maybe|false',
+      'stale-meta-1|db|False|restarting',
+    ]) {
+      const badMetaRefused = deploy('v1.4.0', 'e', {
+        STUB_SERVICES: 'db migrate auth ludy',
+        STUB_PROJECT_CONTAINERS: 'ludy|own-ludy-1 ludy|stale-meta-1',
+        STUB_INSPECT_WORKDIRS: `own-ludy-1|${dir} stale-meta-1|${staleDir}`,
+        STUB_INSPECT_SERVICES: `own-ludy-1|ludy|False|true ${badMeta}`,
+      });
+      expect(badMetaRefused.status, `${badMeta}: ${badMetaRefused.out}`).toBe(1);
+      expect(badMetaRefused.out).toContain(`Compose project 'ludy' is already owned by another installation at ${staleDir}`);
+    }
+
+    // (e) Unrelated-project container mounting ludy_db-data stays blocked by check_storage_free even while stale containers of ludy are admitted.
+    writeFileSync(log, '');
+    const unrelatedHeld = deploy('v1.4.0', 'e', {
+      STUB_SERVICES: 'db migrate auth ludy',
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_WORKDIR_CONTAINERS: `${dir}|ludy|own-ludy-1`,
+      STUB_PROJECT_CONTAINERS: 'ludy|own-ludy-1 ludy|stale-db-1',
+      STUB_RUNNING_CONTAINERS: 'own-ludy-1 stale-db-1 other-db-1',
+      STUB_INSPECT_WORKDIRS: `own-ludy-1|${dir} stale-db-1|${staleDir} other-db-1|/opt/other`,
+      STUB_INSPECT_SERVICES: 'own-ludy-1|ludy|False|true stale-db-1|db|False|true',
+      STUB_INSPECT_MOUNTS: 'stale-db-1|ludy|volume|ludy_db-data||/var/lib/postgresql/data other-db-1|other|volume|ludy_db-data||/var/lib/postgresql/data',
+    });
+    expect(unrelatedHeld.status, unrelatedHeld.out).toBe(1);
+    expect(unrelatedHeld.out).toContain('database storage ludy_db-data is still mounted by a running container outside project ludy');
+    expect(calls().some((l) => l.startsWith('compose up'))).toBe(false);
+
+    // (f) Conflicting PGDATA between an owned DB container and an admitted stale DB container is refused before any container recreation.
+    writeFileSync(log, '');
+    const conflictingPgdataRefused = deploy('v1.4.0', 'e', {
+      STUB_SERVICES: 'db migrate auth ludy',
+      STUB_VOLUMES: 'ludy_db-data',
+      STUB_WORKDIR_CONTAINERS: `${dir}|db|own-db-1 ${dir}|ludy|own-ludy-1`,
+      STUB_PROJECT_CONTAINERS: 'ludy|own-db-1 ludy|own-ludy-1 ludy|stale-db-1',
+      STUB_RUNNING_CONTAINERS: 'own-db-1 own-ludy-1 stale-db-1',
+      STUB_INSPECT_WORKDIRS: `own-db-1|${dir} own-ludy-1|${dir} stale-db-1|${staleDir}`,
+      STUB_INSPECT_SERVICES: 'own-db-1|db|False|true own-ludy-1|ludy|False|true stale-db-1|db|False|true',
+      STUB_INSPECT_MOUNTS: 'own-db-1|ludy|volume|ludy_db-data||/var/lib/postgresql/data stale-db-1|ludy|volume|ludy_db-data||/var/lib/postgresql/data',
+      STUB_INSPECT_ENV: 'own-db-1|PGDATA=/var/lib/postgresql/data stale-db-1|PGDATA=/var/lib/postgresql/data/oldpg',
+    });
+    expect(conflictingPgdataRefused.status, conflictingPgdataRefused.out).toBe(1);
+    expect(conflictingPgdataRefused.out).toContain('unsupported PGDATA path');
+    expect(calls().some((l) => l.startsWith('compose up'))).toBe(false);
+
+    // (d) Fresh install without .deploy/current refuses stale pre-rename containers even when an owned container exists.
+    rmSync(`${dir}/.deploy/current`, { force: true });
+    const noCurrentRefused = deploy('v1.4.0', 'e', {
+      STUB_SERVICES: 'db migrate auth ludy',
+      STUB_PROJECT_CONTAINERS: 'ludy|own-ludy-1 ludy|stale-db-1',
+      STUB_INSPECT_WORKDIRS: `own-ludy-1|${dir} stale-db-1|${staleDir}`,
+      STUB_INSPECT_SERVICES: 'own-ludy-1|ludy|False|true stale-db-1|db|False|true',
+    });
+    expect(noCurrentRefused.status, noCurrentRefused.out).toBe(1);
+    expect(noCurrentRefused.out).toContain(`Compose project 'ludy' is already owned by another installation at ${staleDir}`);
   });
 
   describe('build check', () => {

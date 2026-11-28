@@ -2641,16 +2641,41 @@ clear_stale_ownership_service() {
   fi
 }
 
-# Returns 0 iff normalized working_dir $1 (canonicalized $2) is a removed non-root absolute path with no traversal or symlink (#3972).
+# Returns 0 when $1 does not exist on disk and its nearest existing ancestor is a searchable directory (not a dangling symlink, non-directory, or EACCES-masked directory) (#3972).
+removed_path_ancestor_searchable() {
+  local p="${1:-}" anc='' parent=''
+  [ -n "$p" ] && [[ "$p" == /* ]] && [ "$p" != '/' ] || return 1
+  [ ! -e "$p" ] && [ ! -L "$p" ] || return 1
+  anc="$(dirname -- "$p")"
+  while [ -n "$anc" ]; do
+    if [ -L "$anc" ] && [ ! -d "$anc" ]; then
+      return 1
+    fi
+    if [ -e "$anc" ]; then
+      [ -d "$anc" ] && [ -x "$anc" ] && return 0
+      return 1
+    fi
+    [ "$anc" != '/' ] || return 1
+    parent="$(dirname -- "$anc")"
+    [ "$parent" != "$anc" ] || return 1
+    anc="$parent"
+  done
+  return 1
+}
+
+# Returns 0 iff normalized working_dir $1 (canonicalized $2) is a removed non-root absolute path whose nearest existing ancestor is a searchable directory, rejecting traversal, dangling symlinks, non-directory ancestors, and EACCES-masked directories (#3972).
 is_removed_pre_rename_wdir() {
   local c_wdir="${1:-}" c_wdir_canon="${2:-}"
   [ -n "$c_wdir" ] || return 1
   [[ "$c_wdir" == /* ]] || return 1
   [ "$c_wdir" != '/' ] && [ "$c_wdir_canon" != '/' ] || return 1
   case "/$c_wdir/" in
-    */../*) return 1 ;;
+    */../* | */./*) return 1 ;;
   esac
-  [ ! -e "$c_wdir" ] && [ ! -L "$c_wdir" ] && [ ! -e "$c_wdir_canon" ] && [ ! -L "$c_wdir_canon" ]
+  case "/$c_wdir_canon/" in
+    */../* | */./*) return 1 ;;
+  esac
+  removed_path_ancestor_searchable "$c_wdir" && removed_path_ancestor_searchable "$c_wdir_canon"
 }
 
 # Inspects service/oneoff/running labels of stale container $1. Sets STALE_META_SVC and STALE_META_ONEOFF.
@@ -2658,7 +2683,7 @@ is_removed_pre_rename_wdir() {
 STALE_META_SVC=''
 STALE_META_ONEOFF=0
 inspect_stale_container_meta() {
-  local cid="$1" svc_out='' c_svc='' c_oneoff='' c_running='' still_exists=''
+  local cid="$1" svc_out='' c_svc='' c_oneoff='' c_running='' c_extra='' still_exists=''
   STALE_META_SVC=''
   STALE_META_ONEOFF=0
   if ! svc_out="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}|{{index .Config.Labels "com.docker.compose.oneoff"}}|{{.State.Running}}' "$cid" 2>/dev/null)"; then
@@ -2666,12 +2691,24 @@ inspect_stale_container_meta() {
     [ -z "$still_exists" ] || return 2
     return 3
   fi
+  [[ "$svc_out" != *$'\n'* ]] || return 1
   svc_out="${svc_out%$'\r'}"
-  IFS='|' read -r c_svc c_oneoff c_running <<<"$svc_out"
+  [[ "$svc_out" != *$'\r'* ]] || return 1
+  [[ "$svc_out" == *'|'*'|'* ]] && [[ "$svc_out" != *'|'*'|'*'|'* ]] || return 1
+  IFS='|' read -r c_svc c_oneoff c_running c_extra <<<"$svc_out"
+  [ -z "$c_extra" ] || return 1
   c_svc="${c_svc%$'\r'}"
   c_oneoff="${c_oneoff%$'\r'}"
   c_running="${c_running%$'\r'}"
   [[ "$c_svc" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
+  case "${c_oneoff,,}" in
+    '' | false | true) ;;
+    *) return 1 ;;
+  esac
+  case "${c_running,,}" in
+    true | false) ;;
+    *) return 1 ;;
+  esac
   if [ "${c_oneoff,,}" = true ]; then
     [ "${c_running,,}" = false ] || return 1
     STALE_META_ONEOFF=1
@@ -2952,7 +2989,7 @@ detect_prev_container_mounts() {
           fi
         done <<<"$hc_subpaths"
       fi
-      if ((has_db_mount)) && ((PREV_CTR_PGDATA_SET == 0)); then
+      if ((has_db_mount)) && [[ "$PREV_CTR_PGDATA" != __invalid__:* ]]; then
         if ! env_out="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$cid" 2>/dev/null)"; then
           still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 1
           [ -z "$still_exists" ] || return 1
@@ -2967,11 +3004,16 @@ detect_prev_container_mounts() {
         done <<<"$env_out"
         if ((found_pg)); then
           if norm_pg="$(normalize_pgdata_subpath "$raw_pg")"; then
-            PREV_CTR_PGDATA="$norm_pg"
+            if ((PREV_CTR_PGDATA_SET == 0)); then
+              PREV_CTR_PGDATA="$norm_pg"
+              PREV_CTR_PGDATA_SET=1
+            elif [ "$norm_pg" != "$PREV_CTR_PGDATA" ]; then
+              PREV_CTR_PGDATA="__invalid__:conflicting PGDATA (${PREV_CTR_PGDATA:-default} vs ${norm_pg:-default})"
+            fi
           else
             PREV_CTR_PGDATA="__invalid__:$raw_pg"
+            PREV_CTR_PGDATA_SET=1
           fi
-          PREV_CTR_PGDATA_SET=1
         fi
       fi
   done
