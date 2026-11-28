@@ -471,4 +471,32 @@ describe('checkPortalList for a sales list', () => {
     expect(checkPortalList(list([row()], { buyerTaxCode: SELLER }), OTHER, 'sale')).toMatchObject({ ok: true });
     expect(checkPortalList(list([row()]), OTHER)).toEqual({ ok: false, error: expect.stringContaining('bán ra') });
   });
+
+  it("checks both sales and purchase lists against the legal entity's own tax code (#2158)", () => {
+    const BRANCH = `${OTHER}-001`;
+    const SIBLING = `${OTHER}-002`;
+    // A branch entity (13-digit sub-tax-code) matches only itself: default/parent and sibling entities are refused.
+    expect(checkPortalList(list([row({ sellerTaxCode: BRANCH })]), BRANCH, 'sale')).toMatchObject({ ok: true, rows: [expect.objectContaining({ sellerTaxCode: BRANCH })] });
+    expect(checkPortalList(list([row({ sellerTaxCode: OTHER })]), BRANCH, 'sale')).toEqual({ ok: false, error: expect.stringContaining(`mã số thuế ${OTHER}`) });
+    expect(checkPortalList(list([row({ sellerTaxCode: SIBLING })]), BRANCH, 'sale')).toEqual({ ok: false, error: expect.stringContaining(`mã số thuế ${SIBLING}`) });
+    expect(checkPortalList(list([row({ sellerTaxCode: SELLER, buyerTaxCode: BRANCH })]), BRANCH, 'sale')).toEqual({ ok: false, error: expect.stringContaining('hóa đơn mua vào') });
+
+    const purchaseRow = (extra: Partial<ExtractedPortalList['rows'][number]> = {}) => row({ sellerTaxCode: SELLER, buyerTaxCode: BRANCH, ...extra });
+    expect(checkPortalList(list([purchaseRow()], { buyerTaxCode: BRANCH }), BRANCH, 'purchase')).toMatchObject({ ok: true });
+    expect(checkPortalList(list([purchaseRow({ buyerTaxCode: OTHER })]), BRANCH, 'purchase')).toEqual({ ok: false, error: expect.stringContaining(`mã số thuế ${OTHER}`) });
+    expect(checkPortalList(list([purchaseRow()], { buyerTaxCode: OTHER }), BRANCH, 'purchase')).toEqual({ ok: false, error: expect.stringContaining(`mã số thuế ${OTHER}`) });
+    expect(checkPortalList(list([purchaseRow({ buyerTaxCode: SIBLING })]), BRANCH, 'purchase')).toEqual({ ok: false, error: expect.stringContaining(`mã số thuế ${SIBLING}`) });
+    expect(checkPortalList(list([row({ sellerTaxCode: BRANCH })]), BRANCH, 'purchase')).toEqual({ ok: false, error: expect.stringContaining('bán ra') });
+    // Inter-entity purchase: head office sells to the branch.
+    expect(checkPortalList(list([purchaseRow({ sellerTaxCode: OTHER, buyerTaxCode: BRANCH })]), BRANCH, 'purchase')).toMatchObject({ ok: true });
+
+    // A parent 10-digit enterprise code accepts its branch sub-code on purchases as well as sales, while refusing another 10-digit entity.
+    expect(checkPortalList(list([purchaseRow({ buyerTaxCode: BRANCH })], { buyerTaxCode: BRANCH }), OTHER, 'purchase')).toMatchObject({ ok: true });
+    expect(checkPortalList(list([row({ sellerTaxCode: BRANCH })]), OTHER, 'purchase')).toEqual({ ok: false, error: expect.stringContaining('bán ra') });
+    expect(checkPortalList(list([purchaseRow({ buyerTaxCode: '0109998887' })]), OTHER, 'purchase')).toEqual({ ok: false, error: expect.stringContaining('0109998887') });
+    expect(checkPortalList(list([row({ sellerTaxCode: '0109998887' })]), OTHER, 'sale')).toEqual({ ok: false, error: expect.stringContaining('0109998887') });
+
+    // A bare entity without a tax code (null) is refused for both directions.
+    expect(checkPortalList(list([row()]), null, 'sale')).toEqual({ ok: false, error: expect.stringContaining('mã số thuế của công ty trong Cài đặt') });
+  });
 });

@@ -44,7 +44,7 @@ import { PORTAL_SYNC_CONTENT_TYPE, readSyncedList } from './domain/portal-api.ts
 import { reconcilePortalList, type LudyInvoice, type PortalRow, type Reconciliation } from './domain/portal-reconcile.ts';
 import { vatPeriod, type VatPeriod } from './domain/vat-return.ts';
 import { defaultLegalEntityId, resolveLegalEntity } from './legal-entity.ts';
-import { isOwnTaxCode } from './own-tax-code.ts';
+import { isOwnTaxCode, loadOwnTaxCodes, ownTaxCodeForEntity } from './own-tax-code.ts';
 import { latestRevision } from './source-entry.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -89,12 +89,12 @@ export const portalListImport = defineCommand({
       throw new DomainError('UNSUPPORTED_TYPE', 415, 'Danh sách hóa đơn phải là tệp Excel .xlsx tải lên ở màn hình đối chiếu với cổng thuế');
     }
     if (Number(file.size_bytes) > MAX_IMPORT_BYTES) throw new DomainError('TOO_LARGE', 413, 'Tệp danh sách vượt quá 10 MB');
-    // A purchase list is told apart from another company's or the sales list by the org's tax code (checkPortalList).
-    const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
-    if (!tenant?.tax_code) {
+    const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+    // A portal list is told apart from another company's or the other direction's list by the entity's own tax code (checkPortalList).
+    const ownTaxCode = ownTaxCodeForEntity(legalEntityId, await loadOwnTaxCodes(ctx));
+    if (!ownTaxCode) {
       throw new DomainError('TAX_CODE_REQUIRED', 409, 'Hãy nhập mã số thuế của công ty trong Cài đặt trước khi nhập danh sách hóa đơn từ cổng thuế');
     }
-    const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     // Serializes imports of one period, so the count below and the unique index agree.
     await portalPeriodLock(ctx.orgId, legalEntityId, input.period).execute(ctx.trx);
     const active = await ctx.trx
@@ -168,20 +168,21 @@ export const portalListSource = defineQuery({
     const row = await ctx.trx
       .selectFrom('ludy_finance.portal_invoice_list as l')
       .innerJoin('ludy_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'l.org_id').onRef('f.id', '=', 'l.file_id'))
-      .innerJoin('ludy_kernel.tenant as t', 't.org_id', 'l.org_id')
-      .select(['l.id', 'l.status', 'l.period', 'l.direction', 'f.storage_key', 'f.generation', 'f.sha256', 'f.content_type', 't.tax_code'])
+      .select(['l.id', 'l.status', 'l.period', 'l.direction', 'l.legal_entity_id', 'f.storage_key', 'f.generation', 'f.sha256', 'f.content_type'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.id', '=', input.listId)
       // A file whose original was deleted (#2516) is never read again.
       .where('f.original_deleted_at', 'is', null)
       .executeTakeFirst();
     if (!row) return null;
+    const ownTaxCode = ownTaxCodeForEntity(row.legal_entity_id, await loadOwnTaxCodes(ctx));
     return {
       id: row.id,
       pending: row.status === 'pending',
       period: row.period,
       direction: row.direction,
-      orgTaxCode: row.tax_code,
+      legalEntityId: row.legal_entity_id,
+      ownTaxCode,
       file: { key: row.storage_key, generation: row.generation, sha256: row.sha256 },
       // An uploaded workbook, or the portal answer a sync stored (#325).
       contentType: row.content_type,
@@ -581,7 +582,8 @@ interface ListSource {
   pending: boolean;
   period: string;
   direction: PortalListDirection;
-  orgTaxCode: string | null;
+  legalEntityId: string;
+  ownTaxCode: string | null;
   file: { key: string; generation: string | null; sha256: string };
   contentType: string;
 }
@@ -624,19 +626,19 @@ export interface CheckedPortalList {
 
 export function checkPortalList(
   list: ExtractedPortalList,
-  orgTaxCode: string | null,
+  ownTaxCode: string | null,
   direction: PortalListDirection = 'purchase',
 ): CheckedPortalList | { ok: false; error: string } {
-  const own = parseTaxCode(orgTaxCode)?.normalized ?? null;
+  const own = parseTaxCode(ownTaxCode)?.normalized ?? null;
   const sale = direction === 'sale';
-  // Without the org's tax code any company's list, or the other direction's list, would pass as the org's.
+  // Without the entity's own tax code any company's list, or the other direction's list, would pass as its own.
   if (!own) return { ok: false, error: 'Hãy nhập mã số thuế của công ty trong Cài đặt rồi nhập lại danh sách' };
   const preamble = parseTaxCode(list.buyerTaxCode)?.normalized ?? null;
   const otherCompany = (code: string) =>
     `Danh sách này của mã số thuế ${code}, không phải của công ty này (${own}); hãy kiểm tra đã chọn đúng khách hàng chưa`;
-  // The line above the header names the buyer (the purchase list's owner); a sales list has the org as seller, which
+  // The line above the header names the buyer (the purchase list's owner); a sales list has the entity as seller, which
   // the rows below tell.
-  if (!sale && own && preamble && own !== preamble) return { ok: false, error: otherCompany(preamble) };
+  if (!sale && preamble && !isOwnTaxCode(preamble, own)) return { ok: false, error: otherCompany(preamble) };
   for (const date of [list.listFrom, list.listTo]) {
     if (date !== null && !isCalendarDate(date)) return { ok: false, error: `Khoảng ngày tra cứu trong tệp có ngày không hợp lệ (${date}); hãy xuất lại danh sách từ cổng thuế` };
   }
@@ -669,18 +671,18 @@ export function checkPortalList(
     if (!seller) return { ok: false, error: `Dòng ${r.rowNo}: mã số thuế người bán không hợp lệ` };
     const buyer = parseTaxCode(r.buyerTaxCode)?.normalized ?? null;
     if (sale) {
-      // A sale is the org's own invoice: the seller is the org or one of its branches (#686).
+      // A sale is the entity's own invoice: the seller matches the entity's tax code (or a branch of it when 10-digit, #686, #2158).
       if (!isOwnTaxCode(seller, own)) {
-        if (buyer === own) otherDirection += 1;
+        if (buyer && isOwnTaxCode(buyer, own)) otherDirection += 1;
         else foreignParties.set(seller, (foreignParties.get(seller) ?? 0) + 1);
         continue;
       }
     } else {
-      if (seller === own) {
+      if (isOwnTaxCode(seller, own)) {
         otherDirection += 1;
         continue;
       }
-      if (buyer && buyer !== own) {
+      if (buyer && !isOwnTaxCode(buyer, own)) {
         foreignParties.set(buyer, (foreignParties.get(buyer) ?? 0) + 1);
         continue;
       }
@@ -749,7 +751,7 @@ export async function importPortalList(deps: PortalListDeps, orgId: string, list
     }
     list = result.list;
   }
-  const checked = checkPortalList(list, source.orgTaxCode, source.direction);
+  const checked = checkPortalList(list, source.ownTaxCode, source.direction);
   if (!checked.ok) {
     await recordPortalListFailure(deps.runtime, orgId, listId, checked.error);
     return null;
