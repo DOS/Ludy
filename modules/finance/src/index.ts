@@ -242,7 +242,7 @@ export * from './domain/statements-htkk-xml.ts';
 export { buildFixedAssetsWorkbook } from './fixed-assets-export.ts';
 export { buildStockWorkbook } from './stock-export.ts';
 export { MARKETPLACE_FEE_CYCLE_DAYS } from './domain/marketplace-fee-age.ts';
-export { buildCnkdWorkbook, buildS1aWorkbook, buildS2aWorkbook, buildS2bWorkbook, buildS2cWorkbook, buildS2dWorkbook, buildS2eWorkbook } from './household-export.ts';
+export { buildCnkdWorkbook, buildQttWorkbook, buildS1aWorkbook, buildS2aWorkbook, buildS2bWorkbook, buildS2cWorkbook, buildS2dWorkbook, buildS2eWorkbook } from './household-export.ts';
 export {
   MISA_SME_BANK_CREDIT,
   MISA_SME_BANK_DEBIT,
