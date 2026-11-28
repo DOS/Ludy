@@ -287,7 +287,7 @@ export function createMarketplacePayoutCommands(options: { maps?: Maps } = {}) {
       if (wrong) throw mismatch(wrong);
       const voucher: JournalVoucherProposal = { date: rebuilt.date, description: rebuilt.description, lines: rebuilt.lines, total: rebuilt.total, legalEntityId: rebuilt.legalEntityId };
       // The shape, the accounts and the parties checked as any voucher's, the parties read FOR SHARE so they stay as read until commit.
-      await checkJournalVoucherLines(ctx, voucher.lines.map((l) => ({ account: l.account, partyId: l.party?.id ?? null, debit: l.debit, credit: l.credit })), true);
+      await checkJournalVoucherLines(ctx, voucher.lines.map((l) => ({ account: l.account, partyId: l.party?.id ?? null, debit: l.debit, credit: l.credit })), true, { legalEntityId: voucher.legalEntityId, date: voucher.date });
       return postJournalVoucher(ctx, voucher, null, null, null, null, null, { settlementId: built.settlementId, bankLineId: built.bankLineId });
     },
   });

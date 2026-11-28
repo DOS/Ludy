@@ -90,11 +90,14 @@ async function findParty(ctx: QueryContext, partyId: string, lock: boolean) {
   return party;
 }
 
-// Every check of a voucher, when it is asked for and again when it is posted: its shape, its accounts (in the org's
-// chart and in use) and its party.
-async function checkVoucher(ctx: QueryContext, voucher: { type: VoucherType; cashAccount: string; partyId: string | null; lines: CashVoucherProposal['lines'] }) {
+// The checks of a voucher that need no entity: its shape. Its accounts follow the books of the entity the voucher goes to, which is known only once that entity is resolved (checkVoucherAccounts).
+function checkVoucher(voucher: { type: VoucherType; cashAccount: string; partyId: string | null; lines: CashVoucherProposal['lines'] }) {
   refuseProblems(voucher.type, voucherProblems(voucher));
-  await assertUsableAccounts(ctx, [voucher.cashAccount, ...voucher.lines.map((l) => l.account)]);
+}
+
+// The accounts of a voucher, when it is asked for and again when it is posted: in the chart of the entity's books on the voucher's date (the org's TT133 chart and in use, or the regime's own chart, #1403).
+async function checkVoucherAccounts(ctx: QueryContext, voucher: { cashAccount: string; lines: CashVoucherProposal['lines'] }, books: { legalEntityId: string; date: string }) {
+  await assertUsableAccounts(ctx, [voucher.cashAccount, ...voucher.lines.map((l) => l.account)], books);
 }
 
 // The match recorded on a voucher made from a bank line: `suggested` only when the matcher, run now on the line, suggests this very
@@ -219,7 +222,7 @@ export async function buildVoucherProposal(
   options: { plainVoucher?: boolean } = {},
 ) {
   const partyId = input.partyId ?? null;
-  await checkVoucher(ctx, { type: input.type, cashAccount: input.cashAccount, partyId, lines: input.lines });
+  checkVoucher({ type: input.type, cashAccount: input.cashAccount, partyId, lines: input.lines });
   // The legal entity whose books the voucher goes to (#1280): a bank line's own, else the one resolved for the caller.
   // It is stored with the proposal, so the approver posts it there.
   let legalEntityId: string;
@@ -238,6 +241,7 @@ export async function buildVoucherProposal(
   } else {
     legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
   }
+  await checkVoucherAccounts(ctx, input, { legalEntityId, date: input.date });
   const party = partyId ? await findParty(ctx, partyId, false) : null;
   const total = voucherTotal(input.lines);
   const checks = [...(await voucherChecks(ctx, input.type, input.date, partyId, input.lines, total, legalEntityId, options.plainVoucher === true)), ...extraChecks];
@@ -291,7 +295,7 @@ export async function recordVoucherPayload(
   const partyId = payload.party?.id ?? null;
   // The stored payload is checked as if new: a sub-account deactivated or a party gone since it was asked for is
   // refused here. The total is the lines' sum, never taken from the payload as is.
-  await checkVoucher(ctx, { type: payload.type, cashAccount: payload.cashAccount, partyId, lines: payload.lines });
+  checkVoucher({ type: payload.type, cashAccount: payload.cashAccount, partyId, lines: payload.lines });
   const total = voucherTotal(payload.lines);
   if (total !== payload.total) throw new DomainError('VOUCHER_INVALID', 422, 'Tổng số tiền không khớp các dòng của chứng từ', { problems: ['TOTAL_MISMATCH'] });
   // The line it settles is checked again: another voucher may have settled it since the proposal was made. The
@@ -316,6 +320,7 @@ export async function recordVoucherPayload(
   } else {
     legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
   }
+  await checkVoucherAccounts(ctx, payload, { legalEntityId, date: payload.date });
   const party = partyId ? await findParty(ctx, partyId, true) : null;
   const journal = buildVoucherJournal(payload);
   if (!journalIsBalanced(journal)) throw new DomainError('UNBALANCED', 422, 'Bút toán không cân');

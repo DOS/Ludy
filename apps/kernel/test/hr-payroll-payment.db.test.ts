@@ -1002,10 +1002,11 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     // Under TT99, 3386 is unemployment insurance, so a pending insurance payment warns when a plain voucher debits 3386.
     const o99 = await org('tt99', 'solo');
     const posted99 = await postedRun(o99);
-    await pay(o99, posted99.runId, 'insurance');
+    // The bank account is a TT99 one (112): TT133's 1121 is not in the TT99 chart, which the voucher's accounts are now checked against (#1403).
+    await pay(o99, posted99.runId, 'insurance', { cashAccount: '112' });
     const plain99 = await rt.execute<{ proposalId: string }>(
       'kernel.proposal.request',
-      { command: 'finance.voucher.record', input: { type: 'bank_debit', date: '2026-03-31', cashAccount: '1121', description: 'Nộp bảo hiểm tay', lines: [{ account: '3386', amount: '100000' }] } },
+      { command: 'finance.voucher.record', input: { type: 'bank_debit', date: '2026-03-31', cashAccount: '112', description: 'Nộp bảo hiểm tay', lines: [{ account: '3386', amount: '100000' }] } },
       { actor: asUser(o99.owner), orgId: o99.orgId, idempotencyKey: randomUUID() },
     );
     const [checks99] = await rows<{ checks: { code?: string; params?: Record<string, string> }[] }>(
