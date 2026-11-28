@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { vietnamToday, type PaymentReminderDraft, type PaymentReminderList, type PaymentReminderSent } from '@ludy/kernel-contract';
+import { vietnamToday, type CustomerCollectionList, type PaymentReminderDraft, type PaymentReminderList, type PaymentReminderSent } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { addDays, financeCommands, financeQueries, paymentReminderSource, renderPaymentReminderMail, zPaymentReminderMail } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -412,6 +412,32 @@ suite('customer payment reminders (#2488)', () => {
     expect(d.invoices[0]).toMatchObject({ dueDate: addDays(addDays(TODAY, -40), 15), daysOverdue: 25 });
     await execute(o, 'finance.customer_collection.set', { partyId: a, termsDays: 20, pausedUntil: null });
     expect(await draft(o, a)).toMatchObject({ termsDays: 20, ownTermsDays: 20, level: 2 });
+  });
+
+  it('keeps a customer whose raised custom terms cleared all overdue invoices visible in custom terms list, and clearing returns it to org terms (#2544)', async () => {
+    const o = await org();
+    const p = await customer(o, 'Công ty Nâng Hạn', 'nanghan@example.test');
+    // 40 days old: 10 days overdue under the org's 30-day terms.
+    await sale(o, p, 'NH-1', addDays(TODAY, -40), '1200000');
+    expect((await list(o)).customers.map((c) => c.partyId)).toEqual([p]);
+
+    // Raise custom terms to 90 days: customer now has 0 overdue invoices and leaves payment_reminders.list and draft.
+    await execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 90 }, o.member);
+    expect((await list(o)).customers).toEqual([]);
+    await expect(draft(o, p)).rejects.toMatchObject({ code: 'NOTHING_OVERDUE' });
+
+    // Customer still appears in customer_collection.list for all roles including viewer, and viewer cannot clear it.
+    expect(await query<CustomerCollectionList>(o, 'finance.customer_collection.list', {}, o.viewer)).toEqual({
+      orgTermsDays: 30,
+      customers: [{ partyId: p, name: 'Công ty Nâng Hạn', termsDays: 90, pausedUntil: null, paused: false }],
+      more: false,
+    });
+    await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: null }, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    // Clearing custom terms returns the customer to org terms (30 days) and back onto the overdue list.
+    await execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: null }, o.member);
+    expect((await query<CustomerCollectionList>(o, 'finance.customer_collection.list', {})).customers).toEqual([]);
+    expect((await list(o)).customers.map((c) => [c.partyId, c.daysOverdue])).toEqual([[p, 10]]);
   });
 
   it('keeps a paused customer out of the list, the draft and the send, lists it apart, and brings it back when the pause ends', async () => {

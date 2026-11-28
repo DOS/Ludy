@@ -69,6 +69,11 @@ export function daysBetween(from: string, to: string): number {
   return Math.round((utcDay(to) - utcDay(from)) / DAY_MS);
 }
 
+// Whether a customer's pause date (YYYY-MM-DD, inclusive) covers `today` (YYYY-MM-DD).
+export function isCollectionPaused(pausedUntil: string | null, today: string): boolean {
+  return pausedUntil !== null && pausedUntil >= today;
+}
+
 // The newest invoice first: later date, then the larger number (a numeric series compares as a number), then the id, so the order never
 // depends on how the rows came out of the database.
 function newestFirst(a: SaleInvoice, b: SaleInvoice): number {
