@@ -16,13 +16,13 @@ export const esignEn: EsignCopy = {
   hero: {
     title: 'Sign PDFs from PDF or .docx uploads via Zalo or QR scan, sealed with SHA-256.',
     lead: `Upload PDFs or Word (.docx), bundle 1-5 PDF packets, reuse templates or hand off from Engage, Meetings, Projects and HR, with 10 optional suggestions from ${N.gm} inside your AI budget. Send via Zalo OA or QR scan-to-sign, attach post-sign VietQR deposits, check an SME playbook and verify offline.`,
-    primary: 'Self-host for free',
-    secondary: 'Sign in',
-    note: 'Open source under the AGPL. Ludy eSign is in the self-hosted edition. On Ludy Cloud: coming soon.',
+    primary: 'Start free trial',
+    secondary: 'Self-host for free',
+    note: 'Start free on Ludy Cloud with zero setup, or self-host open source under AGPL-3.0.',
   },
   how: {
     title: 'Four steps from template to sealed packet, deposit and renewal tracking',
-    lead: 'Runs out of the box when you self-host with docker compose, with no paid keys or external provider accounts.',
+    lead: 'Works out of the box on Ludy Cloud or self-hosted via Docker Compose, with no paid keys or external provider accounts.',
     steps: [
       {
         name: 'Prepare & inspect',
@@ -211,9 +211,9 @@ export const esignEn: EsignCopy = {
   },
   cta: {
     title: 'Try Ludy eSign across your agreement lifecycle',
-    body: 'Self-host for free with a single docker compose command. Already have an account? Sign in.',
-    primary: 'See how to self-host',
-    secondary: 'Sign in',
+    body: 'Create a free Ludy Cloud trial account in a minute, or run the full open-source stack on your own server with Docker Compose.',
+    primary: 'Start free trial',
+    secondary: 'See how to self-host',
   },
   fragments: {
     sample: 'Example data',

@@ -15,14 +15,14 @@ export const teamworkVi = {
   ogTitle: 'Việc của tôi, việc nhóm, ghi chú và cuộc họp, trong một ứng dụng.',
   crumbLabel: 'Đường dẫn',
   hero: {
-    title: 'Việc của tôi, việc nhóm, ghi chú và cuộc họp, trong một ứng dụng.',
-    lead: `Ludy Cộng tác gom bốn màn hình làm việc hằng ngày vào một chỗ: Việc của tôi, Việc nhóm, Ghi chú và Cuộc họp. Ghi chú viết ngay trên màn hình khách hàng, nhà cung cấp hay chứng từ; bản ghi cuộc họp có thể nhờ ${N.gm} soạn chép lời và tóm tắt nháp riêng cho người ghi.`,
-    primary: 'Tự cài đặt miễn phí',
-    secondary: 'Đăng nhập',
-    note: 'Mã nguồn mở AGPL. Ludy Cộng tác có trong bản tự cài đặt. Trên Ludy Cloud: sắp ra mắt.',
+    title: 'Việc cá nhân, việc nhóm, ghi chú và cuộc họp trong một nơi.',
+    lead: `Ludy Cộng tác gom bốn công cụ làm việc hằng ngày vào một chỗ: Việc của tôi, Việc nhóm, Ghi chú và Cuộc họp. Ghi chú gắn thẳng vào khách hàng hay chứng từ; cuộc họp có ${N.gm} chép lời và tóm tắt nháp khi bật AI.`,
+    primary: 'Dùng thử miễn phí',
+    secondary: 'Tự host miễn phí',
+    note: 'Dùng thử miễn phí trên Ludy Cloud không cần cài đặt, hoặc tự host mã nguồn mở AGPL-3.0.',
   },
   how: {
-    title: 'Bốn màn hình của Ludy Cộng tác',
+    title: 'Bốn màn hình cho nhịp làm việc hằng ngày',
     lead: 'Từ việc riêng của từng người đến việc giao cho cả nhóm, ghi chú theo bản ghi và biên bản cuộc họp.',
     steps: [
       { name: 'Việc của tôi', body: 'Thêm việc riêng có hạn, giờ nhắc và các bước con.', outcome: 'Chỉ mình bạn thấy', tone: 'neutral' },
@@ -138,10 +138,10 @@ export const teamworkVi = {
     ],
   },
   cta: {
-    title: 'Thử Ludy Cộng tác với công việc hằng ngày của bạn',
-    body: 'Tự cài đặt miễn phí chỉ với một lệnh docker compose. Đã có tài khoản thì đăng nhập.',
-    primary: 'Xem cách tự cài đặt',
-    secondary: 'Đăng nhập',
+    title: 'Trải nghiệm Ludy Cộng tác cho đội ngũ của bạn',
+    body: 'Tạo tài khoản Ludy Cloud dùng thử miễn phí trong 1 phút, hoặc tự cài đặt toàn bộ mã nguồn trên máy chủ của bạn bằng Docker Compose.',
+    primary: 'Dùng thử miễn phí',
+    secondary: 'Xem cách tự host',
   },
   // What the page draws of the product, as example data (the home page's sample company, Gạo Sạch Mekong).
   fragments: {
