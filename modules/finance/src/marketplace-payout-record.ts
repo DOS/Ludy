@@ -27,7 +27,7 @@ import { goodsBackOnLines } from './marketplace-return.ts';
 import { postedSettlementTax, postingsOf, settlementPosted } from './marketplace-settlement-months.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
-import { booksOn } from './payroll-posting.ts';
+import { booksOn, lockBooks } from './books.ts';
 import { dateLabel, periodLockedThrough } from './period-lock.ts';
 
 const REQUESTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -90,6 +90,8 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
   const periodFrom = String(settlement.period_start).slice(0, 10);
   const periodTo = String(settlement.period_end).slice(0, 10);
   // The chart of the entity on the day the entry is dated (the day of the transfer), then the gate: the accountant has not confirmed the map, nothing is requested or posted.
+  // Posting: the entity's books are locked first, so a switch of regime cannot commit between this read and the posting's commit.
+  if (lock) await lockBooks(ctx, settlement.legal_entity_id);
   const regime = (await booksOn(ctx, settlement.legal_entity_id, line.date)).regime;
   // The early gate asks for the payout path (and the adjustment rows when a person classified lines); payoutProposal asks again for the household tax rows when the settlement posted tax lines.
   const map = requireConfirmedMarketplaceMap(regime, maps, payoutPaths(false, adjustments.length > 0));

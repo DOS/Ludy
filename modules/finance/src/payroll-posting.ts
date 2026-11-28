@@ -15,7 +15,7 @@ import { JOURNAL_VOUCHER_KIND, JOURNAL_VOUCHER_MAX_LINES, PAYROLL_REGIMES, zAcco
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 import { assertUsableAccounts } from './accounts.ts';
-import { booksOn } from './books.ts';
+import { booksOn, lockBooks } from './books.ts';
 import { JOURNAL_VOUCHER_SOURCE, journalVoucherProblems, journalVoucherTotal } from './domain/journal-voucher.ts';
 import { postJournalVoucher } from './journal-voucher.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -43,6 +43,8 @@ async function checkPostingLines(ctx: QueryContext, input: PostingLines): Promis
   const problems = journalVoucherProblems(input.lines.map((l) => ({ ...l, partyId: null })));
   if (problems.length > 0) throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Bút toán lương không hợp lệ: các dòng phải cân và mỗi dòng ghi một bên', { problems });
   const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+  // The books are read under the entity's lock: a switch of regime cannot commit between this check and the posting's commit.
+  await lockBooks(ctx, legalEntityId);
   const books = await booksOn(ctx, legalEntityId, input.date);
   if (books.regime !== input.regime) {
     throw new DomainError('HR_POSTING_MISMATCH', 422, 'Chế độ kế toán của pháp nhân đã thay đổi từ khi lập bút toán; hãy lập lại đề xuất', { what: 'regime' });

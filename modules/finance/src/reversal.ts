@@ -17,9 +17,12 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { zJournalReversal, type DocumentDirection, type JournalReversal } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
+import { assertUsableAccounts } from './accounts.ts';
+import { booksOn, dayAfter, lockBooks, type BooksOn } from './books.ts';
 import { OPENING_BALANCE_SOURCE } from './domain/opening-balance.ts';
 import { postNewEntry } from './ledger.ts';
 import { marketplaceReversalNotes } from './marketplace-reversal-guard.ts';
+import { chartChangeRefused } from './purchase-regime.ts';
 import { refuseSupplierPaymentReversal } from './supplier-payment-settle.ts';
 import { reverseDocumentStock } from './stock-lines.ts';
 
@@ -88,6 +91,33 @@ async function reversibleEntry(ctx: CommandContext, reversal: JournalReversal) {
   return entry;
 }
 
+// The chart an entry's lines are checked under: its date's books, and for an opening entry the day after (20270403010000: the entry opens the next day's books).
+const chartDay = (entry: { entry_date: string; source_type: string }, date: string) => (entry.source_type === OPENING_BALANCE_SOURCE ? dayAfter(date) : date);
+
+// The mirror is posted under the books in force on its own date, which may not be the entity's books when the entry was posted (a switch of regime came between). Every line is then checked against the
+// new chart, and a line on a code the two circulars use for different things is refused: the mirror would cancel it under another meaning than it was posted with (BOOKS_REGIME_CHANGED, the same refusal as
+// approving a proposal made under other books). The entity's books are locked first, so a switch cannot commit between this check and the reversal's own commit. An opening entry is reversed on its own date, so
+// it never changes chart. When the chart is the same nothing is checked here (the database checks every line), so an account since deactivated still reverses.
+async function refuseRegimeChange(ctx: CommandContext, entry: { id: string; entry_date: string; source_type: string; legal_entity_id: string }, entryDate: string): Promise<void> {
+  await lockBooks(ctx, entry.legal_entity_id);
+  const original = await booksOn(ctx, entry.legal_entity_id, chartDay(entry, entry.entry_date));
+  const mirror = await booksOn(ctx, entry.legal_entity_id, chartDay(entry, entryDate));
+  const same = (a: BooksOn, b: BooksOn) => a.regime === b.regime && a.version === b.version;
+  if (same(original, mirror)) return;
+  const accounts = (
+    await ctx.trx.selectFrom('ludy_finance.journal_line').select('account_code').distinct().where('org_id', '=', ctx.orgId).where('entry_id', '=', entry.id).execute()
+  ).map((l) => l.account_code);
+  if (chartChangeRefused({ from: original, to: mirror, accounts })) {
+    throw new DomainError(
+      'BOOKS_REGIME_CHANGED',
+      409,
+      'Chế độ kế toán của sổ đã đổi từ khi ghi bút toán này; một dòng của nó dùng tài khoản mà hai thông tư hiểu khác nhau nên không đảo được. Hãy ghi một bút toán mới thay vì đảo',
+      { proposed: original.regime, current: mirror.regime, proposedVersion: original.version, currentVersion: mirror.version },
+    );
+  }
+  await assertUsableAccounts(ctx, accounts, { legalEntityId: entry.legal_entity_id, date: chartDay(entry, entryDate) });
+}
+
 // A reversal already asked for and waiting for approval (#254): a second request for the same entry is refused, as its
 // approval could only fail with ALREADY_REVERSED once the first is approved. Requests for one entry are serialized by
 // a transaction-level advisory lock, so two at once cannot both pass: the second waits for the first to commit, then
@@ -147,6 +177,7 @@ export const prepareReversal = defineCommand({
     const request = { ...input, entryId: input.entryId.toLowerCase() };
     await refuseOpenReversal(ctx, request.entryId);
     const entry = await reversibleEntry(ctx, request);
+    await refuseRegimeChange(ctx, entry, request.entryDate);
     // A marketplace settlement's or payout's entry: refused while the payout stands or the period is closed, and noted in the title for the approver (#3329).
     const notes = await marketplaceReversalNotes(ctx, entry, request.entryDate);
     // The voucher of a settled supplier payment is not reversed while the payment is paid (#3700 S3c).
@@ -185,11 +216,13 @@ export const reverseEntry = defineCommand({
 // the entry may be reversed on that date; the database checks it again.
 export async function postReversal(
   ctx: CommandContext,
-  entry: { id: string; entry_date: string; description: string; source_type: string; source_id: string },
+  entry: { id: string; entry_date: string; description: string; source_type: string; source_id: string; legal_entity_id: string },
   entryDate: string,
   reason: string,
 ) {
   if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
+  // Under the entity's lock and the books of the day of the mirror, for every poster of a reversal (the approval of one and a replacement invoice).
+  await refuseRegimeChange(ctx, entry, entryDate);
   const lines = await ctx.trx
     .selectFrom('ludy_finance.journal_line')
     .select(['line_no', 'account_code', 'debit', 'credit', 'party_id', 'memo'])

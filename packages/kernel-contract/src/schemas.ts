@@ -245,6 +245,9 @@ export const zPurchaseProposal = z.object({
   // The books regime a sale is posted under on its issue date ('tt133', 'tt99'), for the Inbox preview of the journal (#3712 slice 4: a Circular 99 sale debits its revenue deductions to 521). Display
   // only: the posting reads the books again. Absent on purchases and on proposals raised before it existed (read as Circular 133).
   regime: z.string().max(20).optional(),
+  // The version of the chart of accounts the regime was in on that date ('2026.1'), carried with the regime so an approval refuses a proposal when the books moved to another version
+  // of the same regime. Absent where the regime is absent, and on proposals raised before it existed (those are held to the regime alone).
+  chartVersion: z.string().max(20).optional(),
   seller: zPartyRef,
   buyer: zPartyRef,
   invoice: z.object({

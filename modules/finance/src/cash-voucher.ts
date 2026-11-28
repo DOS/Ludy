@@ -58,7 +58,7 @@ import { HISTORY_WINDOW, amountCheck, payrollLiabilityCheck } from './domain/ano
 import { learnFromVoucher } from './bank-rules.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
-import { booksOn } from './payroll-posting.ts';
+import { booksOn, lockBooks } from './books.ts';
 import { latestRevision, reversedSource } from './source-entry.ts';
 import type { CashVoucher } from './misa.ts';
 import { JOURNAL_EXPORT_LIMIT } from './queries.ts';
@@ -241,6 +241,8 @@ export async function buildVoucherProposal(
   } else {
     legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
   }
+  // The entity's books are locked before the first read of them (the accounts below, the pay checks after): a switch of regime cannot commit in between.
+  await lockBooks(ctx, legalEntityId);
   await checkVoucherAccounts(ctx, input, { legalEntityId, date: input.date });
   const party = partyId ? await findParty(ctx, partyId, false) : null;
   const total = voucherTotal(input.lines);
@@ -320,6 +322,7 @@ export async function recordVoucherPayload(
   } else {
     legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
   }
+  await lockBooks(ctx, legalEntityId);
   await checkVoucherAccounts(ctx, payload, { legalEntityId, date: payload.date });
   const party = partyId ? await findParty(ctx, partyId, true) : null;
   const journal = buildVoucherJournal(payload);
