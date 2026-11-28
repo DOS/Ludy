@@ -199,18 +199,24 @@ function parseDueDateValue(raw: string, issueDay: string): DueDateCandidate {
   const trimmed = raw.trim();
   const iso = /^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$/.exec(trimmed);
   if (iso) {
-    const ymd = `${iso[1]}-${iso[2]}-${iso[3]}`;
+    const [, year, month, day] = iso;
+    if (!year || !month || !day) return { valid: false };
+    const ymd = `${year}-${month}-${day}`;
     return isCalendarDate(ymd) && ymd >= issueDay ? { valid: true, date: ymd } : { valid: false };
   }
   const dmy = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s.*)?$/.exec(trimmed);
   if (dmy) {
-    const ymd = `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+    const [, day, month, year] = dmy;
+    if (!day || !month || !year) return { valid: false };
+    const ymd = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
     return isCalendarDate(ymd) && ymd >= issueDay ? { valid: true, date: ymd } : { valid: false };
   }
   const norm = normalizeTermText(trimmed);
   const terms = /^(?:(?:thanh toan|tra)\s+)?(?:trong(?:\s+vong)?\s+|net\s+)?(\d{1,5})(?:\s*(?:ngay|days?))?(?:\s+ke tu ngay.*)?$/.exec(norm);
   if (terms) {
-    const days = Number(terms[1]);
+    const daysText = terms[1];
+    if (!daysText) return { valid: false };
+    const days = Number(daysText);
     if (Number.isInteger(days) && days >= 0 && days <= MAX_TERM_DAYS) {
       const date = addCalendarDays(issueDay, days);
       return date ? { valid: true, date } : { valid: false };

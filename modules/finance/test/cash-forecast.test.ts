@@ -205,8 +205,8 @@ describe('allocatePayable', () => {
     ];
     const pool = allocatePayable(withTerms, '1000', [], TODAY);
     expect(pool.open.map((o) => [o.id, o.dueDate, o.dueDateEstimated])).toEqual([
-      ['2', '2026-12-15', true],
       ['1', '2026-12-20', false],
+      ['2', '2026-12-15', true],
     ]);
     // Concrete dueDate is already past TODAY (2026-12-01), so daysOverdue reflects the real dueDate.
     const overdueConcrete = allocatePayable([{ ...invoice('3', '2026-11-20', '300'), dueDate: '2026-11-25' }], '300', [], TODAY);
