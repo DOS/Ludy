@@ -8389,6 +8389,7 @@ export const vi = {
     qttPrepaid: '[15] Thuế đã tạm nộp trong năm (đồng)',
     qttNoPayment: '[09c] Doanh thu trên sàn không có chức năng thanh toán (đồng)',
     qttInvalid: 'Chỉ nhập số đồng nguyên, không có dấu phân cách và không có phần lẻ.',
+    qttFile: 'to-khai-02-cnkd-tncn-qtt-{year}-{org}.xlsx',
     qttDraft: 'Các số này là số liệu tạm: những quy tắc dưới đây còn chờ kế toán đối chiếu. Mỗi con số phụ thuộc vào chúng đều ghi rõ là số liệu tạm.',
     qttUnconfirmedRate: 'Thuế suất {key} của bậc doanh thu, từ {date}',
     qttPeriod: 'Năm {year}, từ {from} đến {to}',
