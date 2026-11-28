@@ -184,10 +184,10 @@ describe('Ludy eSign landing page (#4605, #5109)', () => {
     expect(vi.modules.sign.body).toContain('quét mã QR');
     expect(vi.modules.sign.body).toContain('1-5');
 
-    const numbersSource = readFileSync(join(WEB_SRC, 'components', 'landing', 'numbers.tsx'), 'utf8');
-    expect(numbersSource).toContain('md:grid-cols-5');
-    expect(numbersSource).toContain('md:text-base');
-    expect(numbersSource).toContain('lg:text-2xl');
+    const trustSource = readFileSync(join(WEB_SRC, 'components', 'landing', 'trust.tsx'), 'utf8');
+    expect(trustSource).toContain('grid-cols-2');
+    expect(trustSource).toContain('md:grid-cols-4');
+    expect(trustSource).toContain('sm:text-3xl');
   });
 
   it('includes a bilingual 4-vendor x 8-row comparison section as a pure Server Component (#5209)', () => {

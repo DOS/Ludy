@@ -14,7 +14,7 @@ vi.mock('../src/lib/auth.ts', async (importActual) => ({
   getConfig: () => ({ authUrl: 'http://localhost', authAnonKey: null, supportUrl: null, authProviders: [], hostedLogin: null }),
 }));
 
-const { AuthPage } = await import('../src/routes/auth.tsx');
+const { AuthPage, initialModeFromSearch } = await import('../src/routes/auth.tsx');
 const { PasswordInput } = await import('../src/components/password-input.tsx');
 
 const render = (node: React.ReactNode, locale: 'en' | 'vi') =>
@@ -78,5 +78,16 @@ describe('the catalogs of the screens, with diacritics', () => {
     expect(vi.common.passwordShow).toBe('Hiện');
     expect(vi.common.passwordHide).toBe('Ẩn');
     expect(vi.common.networkError).toBe('Không kết nối được máy chủ. Thử lại sau ít phút.');
+  });
+});
+
+describe('initialModeFromSearch (?mode=signup | reset)', () => {
+  it('opens the sign-up or password-reset tab when requested by query parameter and falls back to login', () => {
+    expect(initialModeFromSearch('?mode=signup')).toBe('signup');
+    expect(initialModeFromSearch('?utm_source=landing&mode=signup')).toBe('signup');
+    expect(initialModeFromSearch('?mode=reset')).toBe('reset');
+    expect(initialModeFromSearch('?mode=login')).toBe('login');
+    expect(initialModeFromSearch('?mode=unknown')).toBe('login');
+    expect(initialModeFromSearch('')).toBe('login');
   });
 });

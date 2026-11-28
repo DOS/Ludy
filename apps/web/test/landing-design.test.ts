@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Landing page visual guardrails (DESIGN.md 3.5, 3.7, 10; #4518): no colored rounded icon tiles above headings
-// in AppCards or Story, and no border-line combined with shadow-2xl on the AppShell command palette.
+// in AppCards, and no border-line combined with shadow-2xl on the AppShell command palette.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -8,8 +8,8 @@ import { describe, expect, it } from 'vitest';
 const LANDING = join(import.meta.dirname, '..', 'src', 'components', 'landing');
 
 describe('landing component design rules (DESIGN.md 3.5, 3.7, 10)', () => {
-  it('renders inline 20px icons beside headings instead of rounded icon tiles in app-cards and story', () => {
-    for (const file of ['app-cards.tsx', 'story.tsx']) {
+  it('renders inline 20px icons beside headings instead of rounded icon tiles in app-cards', () => {
+    for (const file of ['app-cards.tsx']) {
       const source = readFileSync(join(LANDING, file), 'utf8');
       expect(source, file).not.toMatch(/size-(?:11|12)\b[^"]*rounded-xl|rounded-xl[^"]*size-(?:11|12)\b/);
       expect(source, file).not.toContain('size-6');

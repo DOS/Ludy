@@ -616,7 +616,7 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
         aal: 'aal1',
         mcp: { grantId: claims.grantId, clientId: claims.clientId, clientName: grant.clientName, scopes: grant.scopes, kind: grant.kind },
       };
-      const tools = toolsFor(runtime, actor, grant.orgId, draftBudget, writeBudget);
+      const tools = toolsFor(runtime, actor, grant.orgId, draftBudget, writeBudget, { perGrant: config.MCP_GRANT_DAILY_DRAFTS, perOrg: config.MCP_ORG_DAILY_DRAFTS });
       // The tools of an app the org switched off (or does not hold) are not listed; a call into one still runs, and the runtime answers MODULE_OFF (ADR-0053, slice e).
       // If the read fails the list is not trimmed (every call is still gated by the runtime itself), so one failed read does not take the whole endpoint down.
       const effective = await runtime.effectiveModules(grant.orgId).then(
@@ -666,6 +666,9 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
           }
           if (error instanceof DomainError && error.status === 429) {
             const wait = (error.details as { retryAfterSeconds?: unknown } | undefined)?.retryAfterSeconds;
+            if (typeof wait === 'number' && (error.details as { what?: unknown } | undefined)?.what === 'daily_drafts') {
+              return { code: RPC_INTERNAL, message: `The daily limit of drafts this connection, or this organization's connections together, may make is used up; it starts again at midnight UTC (in ${Math.max(1, Math.ceil(wait))} seconds)` };
+            }
             if (typeof wait === 'number') {
               const writes = (error.details as { what?: unknown } | undefined)?.what === 'writes';
               return { code: RPC_INTERNAL, message: `${writes ? 'Too many changes' : 'Too many drafts'} just now; try again in ${Math.max(1, Math.ceil(wait))} seconds` };
@@ -773,7 +776,14 @@ const MEETING_REQUIRED = ['id', 'title', 'startedAt', 'lengthSeconds', 'language
 
 // The tools: `ludy_about` (kernel.mcp.about) and, from slice 1b, `ludy_parties_list` (kernel.mcp.parties) and `ludy_invoices_list` (finance.mcp.invoices), from step S4 `ludy_signals` (kernel.mcp.signals), and from #3227 `ludy_social_posts_list` and `ludy_social_review_queue` (social.mcp.posts, social.mcp.review_queue). A tool is a
 // descriptor over one query; the endpoint never builds SQL and runs nothing that is not on this list. Each query's own comment is the privacy review of its output.
-export function toolsFor(runtime: Runtime, actor: UserActor, orgId: string, draftBudget: DraftBudget, writeBudget: McpWriteBudget): ToolDescriptor[] {
+// The daily number of drafts a grant, and all the grants of its org together, may make (#3253): `MCP_GRANT_DAILY_DRAFTS` and `MCP_ORG_DAILY_DRAFTS`, charged in the database before the draft command runs.
+export interface DraftDailyCaps {
+  perGrant: number;
+  perOrg: number;
+}
+export const DEFAULT_DRAFT_DAILY_CAPS: DraftDailyCaps = { perGrant: 40, perOrg: 120 };
+
+export function toolsFor(runtime: Runtime, actor: UserActor, orgId: string, draftBudget: DraftBudget, writeBudget: McpWriteBudget, draftCaps: DraftDailyCaps = DEFAULT_DRAFT_DAILY_CAPS): ToolDescriptor[] {
   // The one write tool is listed, and runnable, only for a company grant that holds the draft scope; the runtime and the database check the same again, so this list is a courtesy, not the control.
   const tools: ToolDescriptor[] = [
     {
@@ -1272,7 +1282,7 @@ export function toolsFor(runtime: Runtime, actor: UserActor, orgId: string, draf
             rows: (value: Record<string, unknown>) => Math.max(1, rowCount(value.items)),
           } satisfies ToolDescriptor,
         ]),
-    draftTool(runtime, actor, orgId, draftBudget),
+    draftTool(runtime, actor, orgId, draftBudget, draftCaps),
     ...engageWriteTools(runtime, actor, orgId, writeBudget),
     // What an AI app asks a person for (E4 #3863): each runs the proposal-only twin of an Engage command, which leaves a pending proposal and nothing else.
     ...engageProposalTools(runtime, actor, orgId),
@@ -2153,17 +2163,31 @@ export function visibleTools(tools: readonly ToolDescriptor[], actor: UserActor)
   return tools.filter((tool) => (tool.writeScope !== undefined ? holdsWriteScope(actor, tool.writeScope) : tool.annotations.readOnlyHint));
 }
 
+// Charges one draft against the grant's and the org's daily caps (`ludy_kernel.mcp_drafts_charge`) and answers 0, or the seconds to the next midnight UTC when a cap is used up. A grant that is no longer
+// valid (revoked between the token check and now) is answered as the rest of the endpoint answers it, 401.
+async function chargeDailyDraft(runtime: Runtime, orgId: string, grantId: string, caps: DraftDailyCaps): Promise<number> {
+  return await runtime.orgless(async (db) => {
+    try {
+      const { rows } = await sql<{ wait: number }>`SELECT ludy_kernel.mcp_drafts_charge(${grantId}::uuid, ${orgId}::uuid, ${caps.perGrant}::int, ${caps.perOrg}::int) AS wait`.execute(db);
+      return rows[0]?.wait ?? 0;
+    } catch (error) {
+      if ((error as { code?: unknown } | null)?.code === '22023') throw new DomainError('UNAUTHENTICATED', 401, 'Quyền kết nối không còn hiệu lực');
+      throw error;
+    }
+  });
+}
+
 // The one write an AI app has (#3227, plan section 3.8, owner decision 2026-11-14): a draft Social post that waits, marked as an AI's and not trusted, for a person to send to review and approve in
 // Ludy. It runs the command `social.mcp.draft_create` as the grant, in the grant's sealed write context. The drafts budget (#386) is taken first, as for a person's own draft, keyed on the grant's
 // consenting user, so a client that loops is answered 429 with the seconds to wait before anything runs. No idempotency key is passed: a second call is a second draft, which the description says.
-function draftTool(runtime: Runtime, actor: UserActor, orgId: string, draftBudget: DraftBudget): ToolDescriptor {
+function draftTool(runtime: Runtime, actor: UserActor, orgId: string, draftBudget: DraftBudget, caps: DraftDailyCaps): ToolDescriptor {
   return {
     name: 'ludy_social_draft_create',
     module: 'social',
     writeScope: MCP_DRAFT_SCOPE,
     title: 'Create a Social draft for review',
     description:
-      'Creates ONE draft Social post in the organization, for a person to review: the text, optionally a title, a link, a time zone and a proposed time (only a suggestion: nothing is scheduled), and 1 to 20 channels (connectionId: the id of a channel, which ludy_social_channels_list lists; each channel may have its own text and title). The draft is marked as written by an AI app and as not trusted. It stays a draft: nobody is notified, and a person must send it to review and approve every channel in Ludy before anything is published. This tool cannot approve, schedule, publish, edit or delete anything, upload media, or connect a channel. Every successful call makes a new draft, so do not repeat one that succeeded. A few drafts a minute at most; over that the answer says how long to wait.',
+      'Creates ONE draft Social post in the organization, for a person to review: the text, optionally a title, a link, a time zone and a proposed time (only a suggestion: nothing is scheduled), and 1 to 20 channels (connectionId: the id of a channel, which ludy_social_channels_list lists; each channel may have its own text and title). The draft is marked as written by an AI app and as not trusted. It stays a draft: nobody is notified, and a person must send it to review and approve every channel in Ludy before anything is published. This tool cannot approve, schedule, publish, edit or delete anything, upload media, or connect a channel. Every successful call makes a new draft, so do not repeat one that succeeded. A few drafts a minute at most, and a limited number a day; over either the answer says how long to wait (the daily limit starts again at midnight UTC).',
     inputSchema: schemaOf(zMcpDraftCreate),
     argsSchema: zMcpDraftCreate,
     outputSchema: {
@@ -2181,6 +2205,12 @@ function draftTool(runtime: Runtime, actor: UserActor, orgId: string, draftBudge
       const ticket = draftBudget.take(orgId, actor.userId);
       if (!ticket.allowed) throw new DomainError('RATE_LIMITED', 429, 'Quá nhiều bản nháp trong một lúc, hãy thử lại sau', { retryAfterSeconds: ticket.retryAfterSeconds });
       try {
+        // The daily cap (#3253), in the database so it holds across API instances and restarts: one draft charged to the grant and the org before the command runs (the draft's own transaction may write
+        // nothing but the draft). Used up: the seconds to midnight UTC, refused as rate limited, which the endpoint audits as such; the minute budget's one-at-a-time slot is released by the `finally` below (its token stays spent).
+        const grantId = actor.mcp?.grantId;
+        if (grantId === undefined) throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP mới dùng được công cụ này');
+        const wait = await chargeDailyDraft(runtime, orgId, grantId, caps);
+        if (wait > 0) throw new DomainError('RATE_LIMITED', 429, 'Đã hết số bản nháp trong ngày, sẽ được tính lại từ 0 giờ UTC', { retryAfterSeconds: wait, what: 'daily_drafts' });
         const made = await runtime.execute<{ postId: string; revision: number; variants: Array<{ variantId: string; connectionId: string }> }>('social.mcp.draft_create', args, { actor, orgId });
         // Only what a client needs to find the draft again: the ids, never the stored rows.
         return { postId: made.postId, revision: made.revision, status: 'draft', variants: made.variants.map((v) => ({ variantId: v.variantId, connectionId: v.connectionId })) };

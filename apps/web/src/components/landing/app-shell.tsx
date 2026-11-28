@@ -97,9 +97,9 @@ export function AppShell({ dict }: { dict: Dictionary }) {
   const d = shell.detail;
 
   return (
-    <figure ref={root} className="mx-auto mt-14 w-full max-w-[1200px] sm:mt-16">
+    <figure ref={root} className="mx-auto mt-10 w-full max-w-[1200px] sm:mt-12">
       <div role="group" aria-label={shell.label} className="relative overflow-hidden rounded-lg border border-line bg-surface text-[13px] leading-normal text-fg">
-        <div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:grid-cols-[220px_minmax(0,1fr)_minmax(0,1.15fr)]">
+        <div aria-hidden={paletteOpen || undefined} className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:grid-cols-[220px_minmax(0,1fr)_minmax(0,1.15fr)]">
           {/* Sidebar */}
           <aside className="hidden min-w-0 flex-col gap-0.5 border-r border-line bg-surface-2/50 p-3 lg:flex" aria-hidden="true">
             <div className="mb-2 flex items-center gap-2 rounded-md px-2 py-1.5 font-semibold">
@@ -363,7 +363,7 @@ export function AppShell({ dict }: { dict: Dictionary }) {
           </div>
         ) : null}
       </div>
-      <figcaption className="mt-3 flex items-center justify-between gap-3 text-xs text-subtle">
+      <figcaption className="mt-3 flex min-h-8 items-center justify-between gap-3 text-xs text-subtle">
         <span>{tour.sample}</span>
         {showReplay ? (
           // Stays mounted while the run plays, so a keyboard user keeps focus on it; clicks wait until the run ends.
