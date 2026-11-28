@@ -24,7 +24,7 @@ export function Landing({ dict }: { dict: Dictionary }) {
         <Agents dict={dict} />
         <Trust dict={dict} />
         <Pricing dict={dict} />
-        <Faq dict={dict} showClosingCta />
+        <Faq dict={dict} showClosingCta tinted={false} />
       </main>
       <SiteFooter dict={dict} />
     </>

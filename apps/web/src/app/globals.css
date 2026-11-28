@@ -197,9 +197,8 @@
   }
 }
 
-/* Light motion (DESIGN.md 3.6): a proposal travelling up the dashed line from an agent to its manager in the hero
-   chart, and the fixed checks ticking as the pipeline scrolls into view (only the check marks move; the text is
-   always visible). Both stop for reduced motion. */
+/* Light motion (DESIGN.md 3.6): a proposal travelling up the dashed line from an agent to its manager in the org
+   chart. Stops when reduced motion is preferred. */
 @keyframes ludy-travel-up {
   0% {
     transform: translate(-50%, 3rem);

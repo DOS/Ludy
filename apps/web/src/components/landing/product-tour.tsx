@@ -36,7 +36,9 @@ export function ProductTour({ dict }: { dict: Dictionary }) {
               <h3 className="mt-3 font-display text-lg font-semibold text-fg">{step.title}</h3>
               <p className="mt-1.5 text-sm text-muted">{step.body}</p>
               <div className="mt-4 pt-1 md:mt-auto">
-                <Chip tone={toneOf(step.tone)}>{step.chip}</Chip>
+                <Chip tone={toneOf(step.tone)} className={step.key === 'approve' ? 'border border-ok/30 bg-surface' : ''}>
+                  {step.chip}
+                </Chip>
               </div>
             </li>
           );

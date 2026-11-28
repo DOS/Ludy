@@ -21,11 +21,11 @@ export function Trust({ dict }: { dict: Dictionary }) {
           const value = STATS[metric.key as keyof typeof STATS];
           return (
             <div key={metric.key} className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-4 sm:p-5">
-              <dd className={`num font-display text-2xl leading-none font-semibold tracking-[-0.02em] sm:text-3xl ${i % 2 === 0 ? 'text-accent-ink' : 'text-ok'}`}>
+              <dt className="mt-2.5 text-sm font-semibold text-fg">{metric.label}</dt>
+              <dd className={`order-first num font-display text-2xl leading-none font-semibold tracking-[-0.02em] sm:text-3xl ${i % 2 === 0 ? 'text-accent-ink' : 'text-ok'}`}>
                 {format.format(value)}
                 {ROUNDED.has(metric.key) ? '+' : ''}
               </dd>
-              <dt className="mt-2.5 text-sm font-semibold text-fg">{metric.label}</dt>
               <dd className="mt-1 text-xs text-muted">{metric.hint}</dd>
             </div>
           );

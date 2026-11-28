@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Landing page visual guardrails (DESIGN.md 3.5, 3.7, 10; #4518): no colored rounded icon tiles above headings
-// in AppCards or Story, and no border-line combined with shadow-2xl on the AppShell command palette.
+// in AppCards, and no border-line combined with shadow-2xl on the AppShell command palette.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
