@@ -4,7 +4,7 @@
 import { z } from 'zod';
 import { zMonth } from './journal-voucher.ts';
 import { MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX } from './marketplace.ts';
-import { zId, zLocalDate, zMoney } from './schemas.ts';
+import { zId, zJournalAmount, zLocalDate, zMoney } from './schemas.ts';
 
 export const zMarketplaceBalanceInput = z.strictObject({ legalEntityId: zId.optional() });
 export type MarketplaceBalanceInput = z.infer<typeof zMarketplaceBalanceInput>;
@@ -99,7 +99,9 @@ export const zMarketplacePayoutToMatch = z.object({
   proposalId: zId.nullable(),
   // The lines a person must classify before asking for the payout (#4303 S4): a line with money the report does not explain (`other`, above zero) or tax withheld from a seller that is no household
   // (`withheld`). Empty when nothing needs it. The payout command refuses the request until every one of them is classified (finance.marketplace_payout.record, `adjustments`).
-  adjustable: z.array(z.strictObject({ lineId: zId, source: z.enum(['other', 'withheld']), amount: zMoney })).max(MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX),
+  // For `other`, `suggestedCostAmount` (#4337, option B) carries quantity x average cost at the ship date's month in whole dong when the order has live ship moves with a priced unit cost; the screen
+  // prefills `costAmount` with it for the person to confirm or edit, and the server never fills `costAmount` itself.
+  adjustable: z.array(z.strictObject({ lineId: zId, source: z.enum(['other', 'withheld']), amount: zMoney, suggestedCostAmount: zJournalAmount.optional() })).max(MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX),
 });
 export type MarketplacePayoutToMatch = z.infer<typeof zMarketplacePayoutToMatch>;
 // A platform's fee invoice that can clear fees waiting on 1388: `clearable` is what a clearing would take now (the smaller of what the invoice still has to clear and the platform's 1388 balance).

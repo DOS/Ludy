@@ -17,7 +17,7 @@ import { plainQuantity } from './domain/stock.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
-interface MoveRow {
+export interface StockCostMoveRow {
   id: string;
   item_id: string;
   move_date: string;
@@ -31,9 +31,14 @@ interface MoveRow {
 
 // The moves of the org's items (an entity's, or every entity the caller sees) up to the end of `month`, in order, each with the value it brought in.
 // `from` leaves out the moves before that date (a close reads only the months after the last closed one, whose figures are stored).
-export async function movesUpTo(ctx: Pick<QueryContext, 'trx' | 'orgId'>, month: string, filter: { legalEntityId?: string | undefined; itemId?: string | undefined; from?: string | undefined }): Promise<MoveRow[]> {
+export async function movesUpTo(
+  ctx: Pick<QueryContext, 'trx' | 'orgId'>,
+  month: string,
+  filter: { legalEntityId?: string | undefined; itemId?: string | undefined; itemIds?: readonly string[] | undefined; from?: string | undefined },
+): Promise<StockCostMoveRow[]> {
+  if (filter.itemIds && filter.itemIds.length === 0) return [];
   const before = `${nextMonth(month)}-01`;
-  const { rows } = await sql<MoveRow>`
+  const { rows } = await sql<StockCostMoveRow>`
     SELECT m.id::text AS id, m.item_id::text AS item_id, m.move_date::text AS move_date, m.quantity::text AS quantity, m.source_type, m.document_id::text AS document_id, m.line_no,
            CASE
              WHEN m.source_type = 'document_line' THEN (
@@ -53,11 +58,12 @@ export async function movesUpTo(ctx: Pick<QueryContext, 'trx' | 'orgId'>, month:
       AND (${filter.from ?? null}::date IS NULL OR m.move_date >= ${filter.from ?? null}::date)
       AND (${filter.legalEntityId ?? null}::uuid IS NULL OR i.legal_entity_id = ${filter.legalEntityId ?? null}::uuid)
       AND (${filter.itemId ?? null}::uuid IS NULL OR m.item_id = ${filter.itemId ?? null}::uuid)
+      ${filter.itemIds ? sql`AND m.item_id = ANY (${[...filter.itemIds]}::uuid[])` : sql``}
     ORDER BY m.item_id, m.move_date, m.id`.execute(ctx.trx);
   return rows;
 }
 
-export const costOf = (move: MoveRow): CostMove => ({ date: move.move_date, quantity: move.quantity, value: move.value });
+export const costOf = (move: StockCostMoveRow): CostMove => ({ date: move.move_date, quantity: move.quantity, value: move.value });
 
 // What a close stored of one item for one month, as the figures of a month.
 interface SnapshotRow {
@@ -81,7 +87,12 @@ export interface ClosedMonths {
   snapshots: Map<string, SnapshotRow>;
 }
 
-export async function closedMonths(ctx: Pick<QueryContext, 'trx' | 'orgId'>, month: string, legalEntityId: string | undefined): Promise<ClosedMonths> {
+export async function closedMonths(
+  ctx: Pick<QueryContext, 'trx' | 'orgId'>,
+  month: string,
+  legalEntityId: string | undefined,
+  itemIds?: readonly string[] | undefined,
+): Promise<ClosedMonths> {
   const { rows: periods } = await sql<{ id: string; legal_entity_id: string; month: string }>`
     SELECT p.id::text AS id, p.legal_entity_id::text AS legal_entity_id, pg_catalog.to_char(p.period_month, 'YYYY-MM') AS month
     FROM ludy_finance.stock_period p
@@ -94,14 +105,15 @@ export async function closedMonths(ctx: Pick<QueryContext, 'trx' | 'orgId'>, mon
   }
   const last = periods.filter((p) => lastByEntity.get(p.legal_entity_id) === p.month).map((p) => p.id);
   const snapshots = new Map<string, SnapshotRow>();
-  if (last.length > 0) {
+  if (last.length > 0 && (!itemIds || itemIds.length > 0)) {
     const { rows } = await sql<SnapshotRow>`
       SELECT i.item_id::text AS item_id, i.legal_entity_id::text AS legal_entity_id, pg_catalog.to_char(p.period_month, 'YYYY-MM') AS month,
              i.opening_quantity::text AS opening_quantity, i.opening_value::text AS opening_value, i.in_quantity::text AS in_quantity, i.in_value::text AS in_value,
              i.out_quantity::text AS out_quantity, i.out_value::text AS out_value, i.closing_quantity::text AS closing_quantity, i.closing_value::text AS closing_value,
              i.unit_cost::text AS unit_cost
       FROM ludy_finance.stock_period_item i JOIN ludy_finance.stock_period p ON p.org_id = i.org_id AND p.id = i.period_id
-      WHERE i.org_id = ${ctx.orgId}::uuid AND i.period_id = ANY (${last}::uuid[])`.execute(ctx.trx);
+      WHERE i.org_id = ${ctx.orgId}::uuid AND i.period_id = ANY (${last}::uuid[])
+        ${itemIds ? sql`AND i.item_id = ANY (${[...itemIds]}::uuid[])` : sql``}`.execute(ctx.trx);
     for (const r of rows) snapshots.set(r.item_id, r);
   }
   return { lastByEntity, snapshots };
@@ -129,7 +141,7 @@ function fromSnapshot(s: SnapshotRow): MonthFigures {
 
 // An item's figures for `month`: what the close stored when its entity closed that month, else the months folded from the balance of the entity's last closed month before it (the
 // moves of the months up to it are not folded again), else every move folded from the first. `closed` is true for the first.
-export function figuresOf(moves: readonly MoveRow[], month: string, itemId: string, entityId: string, closed: ClosedMonths): { figures: MonthFigures | null; closed: boolean } {
+export function figuresOf(moves: readonly StockCostMoveRow[], month: string, itemId: string, entityId: string, closed: ClosedMonths): { figures: MonthFigures | null; closed: boolean } {
   const last = closed.lastByEntity.get(entityId);
   if (last === undefined) return { figures: monthFigures(moves.map(costOf), month), closed: false };
   const snapshot = closed.snapshots.get(itemId);
@@ -150,7 +162,7 @@ export async function stockReportRows(ctx: Pick<QueryContext, 'trx' | 'orgId'>, 
     .execute();
   const moves = await movesUpTo(ctx, month, { legalEntityId: legalEntityId });
   const closed = await closedMonths(ctx, month, legalEntityId);
-  const byItem = new Map<string, MoveRow[]>();
+  const byItem = new Map<string, StockCostMoveRow[]>();
   for (const move of moves) {
     const bucket = byItem.get(move.item_id);
     if (bucket) bucket.push(move);

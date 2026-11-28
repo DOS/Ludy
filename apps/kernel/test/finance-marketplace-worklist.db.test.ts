@@ -189,7 +189,7 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
       postingConfirmed: boolean;
       salesPostingConfirmed: boolean;
       settlements: { id: string; platform: string; platformName: string; periodFrom: string; periodTo: string; months: string[]; net: string; waitingLines: number; proposalId: string | null }[];
-      payouts: { settlementId: string; received: string; proposalId: string | null; candidates: { id: string; date: string; amount: string; reference: string | null }[]; adjustable: { lineId: string; source: string; amount: string }[] }[];
+      payouts: { settlementId: string; received: string; proposalId: string | null; candidates: { id: string; date: string; amount: string; reference: string | null }[]; adjustable: { lineId: string; source: string; amount: string; suggestedCostAmount?: string }[] }[];
       invoices: { documentId: string; clearable: string; invoice: string; proposalId: string | null }[];
     }>('finance.marketplace.worklist', legalEntityId === undefined ? {} : { legalEntityId }, { actor: asUser(o.owner), orgId: o.orgId });
   const facts = (o: Org) => rt.query<{ settlementsToPost: number; payoutsToMatch: number }>('finance.marketplace.facts', {}, { actor: asUser(o.owner), orgId: o.orgId });
@@ -375,6 +375,195 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     await post(many, s4);
     await bankLine(many, '2026-10-20', '102010');
     expect((await worklist(many)).payouts).toEqual([]);
+  });
+
+  it('suggests lost-goods cost from ship-date weighted average stock cost for other lines only, respecting closed months and unassignment (#4337)', async () => {
+    const o = await org('tt133', false);
+    const makeItem = (code: string) =>
+      rt.execute<{ id: string }>(
+        'finance.stock_item.save',
+        { itemId: null, legalEntityId: null, code, name: `Hàng ${code}`, unit: 'cái', stockAccount: '156', trade: 'goods' },
+        { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() },
+      ).then((r) => r.id);
+    const purchase = (itemId: string, date: string, quantity: number, amount: number) =>
+      withAdmin(async (c) => {
+        await c.query('BEGIN');
+        try {
+          const [sup] = (await c.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'NCC Kho') RETURNING id", [o.orgId])).rows;
+          const [doc] = (
+            await c.query<{ id: string }>(
+              "INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, 'AA', $3, $4, $5, 0, $5, 'purchase', $6) RETURNING id",
+              [o.orgId, sup?.id, randomUUID().slice(0, 8), date, amount, o.entity],
+            )
+          ).rows;
+          const docId = doc?.id as string;
+          await c.query("INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account) VALUES ($1, $2, 1, 'Nhập hàng', $3, '156')", [o.orgId, docId, amount]);
+          await c.query(
+            "INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, $3, $4, $5, 'document_line', $6, 1, 1)",
+            [o.orgId, o.entity, itemId, date, quantity, docId],
+          );
+          const [je] = (
+            await c.query<{ id: string }>(
+              "INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, 'Mua hàng', 'finance.purchase_document', $3, $4) RETURNING id",
+              [o.orgId, date, docId, o.entity],
+            )
+          ).rows;
+          await c.query(
+            "INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '156', $3, 0), ($1, $2, 2, '331', 0, $3)",
+            [o.orgId, je?.id, amount],
+          );
+          await c.query('COMMIT');
+        } catch (err) {
+          await c.query('ROLLBACK');
+          throw err;
+        }
+      });
+    const shipMove = (itemId: string, date: string, quantity: number, orderLineId: string) =>
+      rows(
+        "INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt) VALUES ($1, $2, $3, $4, $5, 'order_line', $6, 'ship', 1)",
+        [o.orgId, o.entity, itemId, date, quantity, orderLineId],
+      );
+
+    const itemA = await makeItem('SP-A');
+    const itemB = await makeItem('SP-B');
+    const itemC = await makeItem('SP-C');
+    // September: 10 units @ 10,000 = 100,000.
+    await purchase(itemA, '2026-09-05', 10, 100000);
+
+    const s = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [
+      { sales: '100000', other: '6000' }, // K0: shipped 2 of A in closed 2026-09 -> 20000
+      { sales: '100000', other: '4000' }, // K1: multi-line Oct ship (1*10000.5 + 3*5000 = 25000.5) -> 25001
+      { sales: '50000', other: '2000' }, // K2: priced B + unpriced C -> omitted
+      { sales: '50000', other: '700' }, // K3: no ship move -> omitted
+      { sales: '50000', other: '900' }, // K4: unassigned after ship -> omitted
+      { sales: '50000', tax: '1500' }, // K5: withheld tax line, never gets suggestedCostAmount
+      { sales: '50000', other: '800' }, // K6: multi-line order where one shipped line is unassigned -> whole order omitted
+      { sales: '50000', other: '600' }, // K7: multi-line order where L2 was cancelled before shipping -> L1 cost suggested
+    ]);
+    const seeded = await rows<{ sl_id: string; line_key: string; order_id: string; ol_id: string }>(
+      `SELECT sl.id AS sl_id, sl.line_key, sl.order_id, ol.id AS ol_id
+       FROM ludy_finance.channel_settlement_line sl
+       JOIN ludy_finance.channel_order_line ol ON ol.org_id = sl.org_id AND ol.order_id = sl.order_id
+       WHERE sl.org_id = $1 AND sl.settlement_id = $2
+       ORDER BY sl.line_key`,
+      [o.orgId, s],
+    );
+    const byKey = new Map(seeded.map((r) => [r.line_key, r]));
+
+    // Close 2026-09 with K0's September ship move included: unitCost = 10000, closing = 8 units / 80000.
+    await shipMove(itemA, '2026-09-20', -2, byKey.get('K0')?.ol_id as string);
+    const closeAsk = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: 'finance.stock.close_period', input: { month: '2026-09' } },
+      { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    const closeDetail = await rt.query<{ revision: number }>('kernel.inbox.get', { id: closeAsk.proposalId }, { actor: asUser(o.owner), orgId: o.orgId });
+    await rt.execute('kernel.proposal.approve', { id: closeAsk.proposalId, revision: closeDetail.revision }, { actor: asMfa(o.owner), orgId: o.orgId });
+
+    // October purchases + later November purchases that must not leak into October's average:
+    // Item A in Oct: opening (8 / 80000) + purchase (2 / 20005) = 10 / 100005 -> unitCost 10000.5.
+    // Item B in Oct: 10 / 50000 -> unitCost 5000. Item C: no purchases.
+    await purchase(itemA, '2026-10-05', 2, 20005);
+    await purchase(itemA, '2026-11-01', 10, 990000);
+    await purchase(itemB, '2026-10-04', 10, 50000);
+    await purchase(itemB, '2026-11-01', 5, 95000);
+
+    // K1 gets a second order line so one order combines item A and item B across two ship moves.
+    const k1SecondLine = (
+      await rows<{ id: string }>(
+        "INSERT INTO ludy_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L2', 1, 'completed', '2026-10-01') RETURNING id",
+        [o.orgId, byKey.get('K1')?.order_id],
+      )
+    )[0]?.id as string;
+    await shipMove(itemA, '2026-10-10', -1, byKey.get('K1')?.ol_id as string);
+    await shipMove(itemB, '2026-10-10', -3, k1SecondLine);
+
+    // K2 ships a priced item and an unpriced item: missing unit cost omits the whole order's suggestion.
+    const k2SecondLine = (
+      await rows<{ id: string }>(
+        "INSERT INTO ludy_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L2', 1, 'completed', '2026-10-01') RETURNING id",
+        [o.orgId, byKey.get('K2')?.order_id],
+      )
+    )[0]?.id as string;
+    await shipMove(itemB, '2026-10-10', -1, byKey.get('K2')?.ol_id as string);
+    await shipMove(itemC, '2026-10-10', -1, k2SecondLine);
+
+    // K4 ships item A, then is unassigned so its old ship move is reversed and no longer live.
+    await shipMove(itemA, '2026-10-10', -1, byKey.get('K4')?.ol_id as string);
+    await rt.execute('finance.marketplace.unassign', { lineId: byKey.get('K4')?.ol_id }, { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() });
+
+    // K5 has withheld tax and also a priced ship move: withheld items must never carry suggestedCostAmount.
+    await shipMove(itemA, '2026-10-10', -1, byKey.get('K5')?.ol_id as string);
+
+    // K6 has two completed lines: L1 stays shipped with itemA, L2 is unassigned (no live ship move) -> whole order omitted instead of under-suggesting L1 alone.
+    const k6SecondLine = (
+      await rows<{ id: string }>(
+        "INSERT INTO ludy_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L2', 1, 'completed', '2026-10-01') RETURNING id",
+        [o.orgId, byKey.get('K6')?.order_id],
+      )
+    )[0]?.id as string;
+    await shipMove(itemA, '2026-10-10', -1, byKey.get('K6')?.ol_id as string);
+    await shipMove(itemB, '2026-10-10', -1, k6SecondLine);
+    await rt.execute('finance.marketplace.unassign', { lineId: k6SecondLine }, { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() });
+
+    // K7 has L1 shipped with itemB and L2 cancelled before shipping (no ship move): L2 does not block suggesting L1's cost.
+    await shipMove(itemB, '2026-10-10', -1, byKey.get('K7')?.ol_id as string);
+    await rows(
+      "INSERT INTO ludy_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L2', 1, 'cancelled', NULL)",
+      [o.orgId, byKey.get('K7')?.order_id],
+    );
+
+    await post(o, s);
+    await bankLine(o, '2026-10-20', '513500');
+
+    const [payout] = (await worklist(o)).payouts;
+    expect(payout?.settlementId).toBe(s);
+    const adjById = new Map((payout?.adjustable ?? []).map((a) => [a.lineId, a]));
+    expect(adjById.get(byKey.get('K0')?.sl_id as string)).toEqual({
+      lineId: byKey.get('K0')?.sl_id,
+      source: 'other',
+      amount: '6000',
+      suggestedCostAmount: '20000',
+    });
+    expect(adjById.get(byKey.get('K1')?.sl_id as string)).toEqual({
+      lineId: byKey.get('K1')?.sl_id,
+      source: 'other',
+      amount: '4000',
+      suggestedCostAmount: '25001',
+    });
+    expect(adjById.get(byKey.get('K2')?.sl_id as string)).toEqual({
+      lineId: byKey.get('K2')?.sl_id,
+      source: 'other',
+      amount: '2000',
+    });
+    expect(adjById.get(byKey.get('K3')?.sl_id as string)).toEqual({
+      lineId: byKey.get('K3')?.sl_id,
+      source: 'other',
+      amount: '700',
+    });
+    expect(adjById.get(byKey.get('K4')?.sl_id as string)).toEqual({
+      lineId: byKey.get('K4')?.sl_id,
+      source: 'other',
+      amount: '900',
+    });
+    expect(adjById.get(byKey.get('K5')?.sl_id as string)).toEqual({
+      lineId: byKey.get('K5')?.sl_id,
+      source: 'withheld',
+      amount: '1500',
+    });
+    expect(adjById.get(byKey.get('K6')?.sl_id as string)).toEqual({
+      lineId: byKey.get('K6')?.sl_id,
+      source: 'other',
+      amount: '800',
+    });
+    expect(adjById.get(byKey.get('K7')?.sl_id as string)).toEqual({
+      lineId: byKey.get('K7')?.sl_id,
+      source: 'other',
+      amount: '600',
+      suggestedCostAmount: '5000',
+    });
+    // Cross-org isolation: another org sees none of these payouts or suggested costs.
+    expect((await worklist(await org('tt133', false))).payouts).toEqual([]);
   });
 
   it("lists the platform's fee invoices that can clear while fees wait, with the amount a clearing would take, and drops them once cleared", async () => {

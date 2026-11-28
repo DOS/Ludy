@@ -3630,6 +3630,8 @@ export const vi = {
     adjustKind_carrier_compensation: 'Bồi thường hàng bị mất hoặc hỏng',
     adjustKind_withheld_in_error: 'Sàn khấu trừ nhầm (doanh nghiệp không bị khấu trừ)',
     adjustCost: 'Giá vốn hàng mất (đồng)',
+    adjustCostSuggested: 'Gợi ý từ giá vốn kho lúc giao ({amount}): xác nhận hoặc sửa lại.',
+    adjustCostNoSuggestion: 'Chưa có giá vốn kho lúc giao: bạn tự nhập giá vốn.',
     adjustCostInvalid: 'Nhập số đồng nguyên, ví dụ 1500000 hoặc 1.500.000',
     adjustIncentiveNote: 'Chưa chắc (#2520): khoản thưởng của sàn tính vào thu nhập khác (711). Nếu thực ra là voucher của sàn cho một đơn hàng thì nó thuộc doanh thu (quy tắc 1), không phải 711; kế toán sẽ kiểm tra.',
     adjustPending: 'Chọn loại cho từng dòng (và nhập giá vốn cho khoản bồi thường) thì mới lập được đề xuất.',

@@ -20,6 +20,7 @@ import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { bankLineStates } from './bank-match.ts';
 import { balanceOf, resolveInvoiceClearingState, standingInvoiceEntry } from './marketplace-fee-clearing-record.ts';
 import { payoutOfBankLine } from './marketplace-payout-line.ts';
+import { suggestCompensationCosts } from './marketplace-payout-cost.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { feeAccrualOffers } from './marketplace-fee-accrual.ts';
 import { returnsToConfirm } from './marketplace-return.ts';
@@ -189,6 +190,17 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
           proposalId: await pendingOf(ctx, 'finance.marketplace_payout.record', 'settlementId', p.id),
           adjustable,
         });
+      }
+      const otherLineIds = payouts.flatMap((p) => p.adjustable.filter((a) => a.source === 'other').map((a) => a.lineId));
+      if (otherLineIds.length > 0) {
+        const suggestedCosts = await suggestCompensationCosts(ctx, otherLineIds);
+        for (const p of payouts) {
+          p.adjustable = p.adjustable.map((a) => {
+            if (a.source !== 'other') return a;
+            const suggestedCostAmount = suggestedCosts.get(a.lineId.toLowerCase());
+            return suggestedCostAmount === undefined ? a : { ...a, suggestedCostAmount };
+          });
+        }
       }
 
       // The platforms' fee invoices that still have something to clear while fees wait on 1388.

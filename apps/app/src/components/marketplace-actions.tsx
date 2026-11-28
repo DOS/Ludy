@@ -121,27 +121,50 @@ function parseCost(raw: string): string | null {
   return null;
 }
 
-function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) {
-  const t = useTranslations('marketplaceActions');
-  const f = useFormat();
-  const [chosen, setChosen] = useState('');
-  // The kind and, for a compensation, the cost of the goods the person states, by line and source (a line can carry both an `other` amount and a withheld tax).
-  const [kinds, setKinds] = useState<Record<string, string>>({});
-  const [costs, setCosts] = useState<Record<string, string>>({});
-  const bankLineId = chosen !== '' && p.candidates.some((c) => c.id === chosen) ? chosen : (p.candidates[0]?.id ?? '');
-  const slot = (a: MarketplacePayoutToMatch['adjustable'][number]) => `${a.lineId}:${a.source}`;
+const adjustmentSlot = (a: MarketplacePayoutToMatch['adjustable'][number]) => `${a.lineId}:${a.source}`;
+
+// Computes the classified payout adjustments and whether every adjustable line has a valid classification.
+// For `carrier_compensation`, uses the person's entered cost when present (including an explicit empty clear) and falls back to the suggested stock cost until edited (#4337).
+export function buildPayoutAdjustments(
+  adjustable: MarketplacePayoutToMatch['adjustable'],
+  kinds: Readonly<Record<string, string>>,
+  costs: Readonly<Record<string, string>>,
+): { adjustments: MarketplacePayoutAdjustment[]; ready: boolean } {
   const adjustments: MarketplacePayoutAdjustment[] = [];
   let ready = true;
-  for (const a of p.adjustable) {
-    const kind = kinds[slot(a)] ?? '';
+  for (const a of adjustable) {
+    const key = adjustmentSlot(a);
+    const kind = kinds[key] ?? '';
     const allowed: readonly string[] = KINDS[a.source];
     if (!allowed.includes(kind)) ready = false;
     else if (kind === 'carrier_compensation') {
-      const costAmount = parseCost(costs[slot(a)] ?? '');
+      const costAmount = parseCost(costs[key] ?? a.suggestedCostAmount ?? '');
       if (costAmount !== null) adjustments.push({ kind: 'carrier_compensation', lineId: a.lineId, amount: a.amount.replace(/\.0+$/, ''), costAmount });
       else ready = false;
     } else adjustments.push({ kind: kind as 'incentive' | 'withheld_in_error', lineId: a.lineId, amount: a.amount.replace(/\.0+$/, '') });
   }
+  return { adjustments, ready };
+}
+
+export function PayoutRow({
+  p,
+  open,
+  initialKinds,
+  initialCosts,
+}: {
+  p: MarketplacePayoutToMatch;
+  open: boolean;
+  initialKinds?: Record<string, string>;
+  initialCosts?: Record<string, string>;
+}) {
+  const t = useTranslations('marketplaceActions');
+  const f = useFormat();
+  const [chosen, setChosen] = useState('');
+  // The kind and, for a compensation, the cost of the goods the person states, by line and source (a line can carry both an `other` amount and a withheld tax).
+  const [kinds, setKinds] = useState<Record<string, string>>(() => initialKinds ?? {});
+  const [costs, setCosts] = useState<Record<string, string>>(() => initialCosts ?? {});
+  const bankLineId = chosen !== '' && p.candidates.some((c) => c.id === chosen) ? chosen : (p.candidates[0]?.id ?? '');
+  const { adjustments, ready } = buildPayoutAdjustments(p.adjustable, kinds, costs);
   return (
     <>
       <TableRow data-testid="marketplace-action-payout">
@@ -191,13 +214,18 @@ function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) 
             )}
             <ul className="flex flex-col gap-2">
               {p.adjustable.map((a) => {
-                const kind = kinds[slot(a)] ?? '';
+                const key = adjustmentSlot(a);
+                const kind = kinds[key] ?? '';
+                const rawCost = costs[key] ?? a.suggestedCostAmount ?? '';
+                const costInvalid = rawCost.trim() !== '' && parseCost(rawCost) === null;
+                const hintId = `${key}-cost-hint`;
+                const errorId = `${key}-cost-error`;
                 return (
-                  <li key={slot(a)} className="flex flex-wrap items-center gap-2" data-testid="marketplace-adjustment">
+                  <li key={key} className="flex flex-wrap items-center gap-2" data-testid="marketplace-adjustment">
                     <span className="min-w-40 tabular-nums">{t(a.source === 'other' ? 'adjustOther' : 'adjustWithheld', { amount: f.money(a.amount) })}</span>
                     <NativeSelect
                       value={kind}
-                      onChange={(e) => setKinds({ ...kinds, [slot(a)]: e.target.value })}
+                      onChange={(e) => setKinds({ ...kinds, [key]: e.target.value })}
                       aria-label={t('adjustKindLabel', { amount: f.money(a.amount) })}
                       className="max-md:min-h-11"
                       data-testid="marketplace-adjustment-kind"
@@ -213,17 +241,26 @@ function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) 
                       <>
                         <Input
                           inputMode="numeric"
-                          value={costs[slot(a)] ?? ''}
-                          onChange={(e) => setCosts({ ...costs, [slot(a)]: e.target.value })}
+                          value={rawCost}
+                          onChange={(e) => setCosts({ ...costs, [key]: e.target.value })}
                           aria-label={t('adjustCostLabel', { amount: f.money(a.amount) })}
-                          aria-invalid={(costs[slot(a)] ?? '').trim() !== '' && parseCost(costs[slot(a)] ?? '') === null}
-                          aria-describedby={`${slot(a)}-cost-error`}
+                          aria-invalid={costInvalid}
+                          aria-describedby={costInvalid ? `${hintId} ${errorId}` : hintId}
                           placeholder={t('adjustCost')}
                           className="w-48 max-md:min-h-11"
                           data-testid="marketplace-adjustment-cost"
                         />
-                        {(costs[slot(a)] ?? '').trim() !== '' && parseCost(costs[slot(a)] ?? '') === null && (
-                          <span id={`${slot(a)}-cost-error`} role="alert" className="text-xs text-destructive" data-testid="marketplace-adjustment-cost-error">
+                        <span
+                          id={hintId}
+                          className="text-xs text-subtle-foreground"
+                          data-testid={a.suggestedCostAmount !== undefined ? 'marketplace-adjustment-cost-suggestion' : 'marketplace-adjustment-cost-no-suggestion'}
+                        >
+                          {a.suggestedCostAmount !== undefined
+                            ? t('adjustCostSuggested', { amount: f.money(a.suggestedCostAmount) })
+                            : t('adjustCostNoSuggestion')}
+                        </span>
+                        {costInvalid && (
+                          <span id={errorId} role="alert" className="text-xs text-destructive" data-testid="marketplace-adjustment-cost-error">
                             {t('adjustCostInvalid')}
                           </span>
                         )}
