@@ -7,5 +7,8 @@
 /** The most characters one sentence of an expense variance note may have. */
 export const EXPENSE_VARIANCE_NOTE_MAX = 220;
 
-/** The most characters one sentence of a note on an unusual posted entry may have: the same limit as the expense variance note, its text checks being the same. */
-export const UNUSUAL_ENTRIES_NOTE_MAX = EXPENSE_VARIANCE_NOTE_MAX;
+/**
+ * The most characters one sentence of a note on an unusual posted entry may have: the same limit as the expense variance note, its text checks being the same. A literal of its own, not an alias of the
+ * constant above (knip reports an alias as a duplicate export); packages/agent/test/unusual-entries-direct.test.ts asserts the two are equal.
+ */
+export const UNUSUAL_ENTRIES_NOTE_MAX = 220;

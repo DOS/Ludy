@@ -30,5 +30,7 @@ describe('direct module imports of the two note modules (#5257)', () => {
     const index = await import('../src/index.ts');
     expect(limits.EXPENSE_VARIANCE_NOTE_MAX).toBe(index.EXPENSE_VARIANCE_NOTE_MAX);
     expect(limits.UNUSUAL_ENTRIES_NOTE_MAX).toBe(index.UNUSUAL_ENTRIES_NOTE_MAX);
+    // The two notes share their text checks, so they share their limit.
+    expect(limits.UNUSUAL_ENTRIES_NOTE_MAX).toBe(limits.EXPENSE_VARIANCE_NOTE_MAX);
   });
 });
