@@ -27,7 +27,7 @@ import {
   type GithubLinkPrepareResult,
   type GithubTaskLinkView,
 } from '@ludy/kernel-contract';
-import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, BankSignDepositMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceUnusualEntries, FinanceHomeMoney, FinanceOverview, MonthClose, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
+import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, BankSignDepositMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceUnusualEntries, FinanceHomeMoney, FinanceOverview, MonthClose, YearEnd, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformConsentError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@ludy/channel';
@@ -150,6 +150,7 @@ import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.
 import { askBooks, askBooksAi } from './finance-ask-books.ts';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainMonthClose, monthCloseAi } from './finance-month-close-ai.ts';
+import { explainYearEnd, yearEndAi } from './finance-year-end-ai.ts';
 import { explainExpenseVariance, expenseVarianceAi } from './finance-expense-variance-ai.ts';
 import { explainUnusualEntries, unusualEntriesAi } from './finance-unusual-entries-ai.ts';
 import { explainQuarterSummary, quarterSummaryAi } from './finance-quarter-summary-ai.ts';
@@ -592,6 +593,8 @@ export function createRpcHandler(
   const financeOverviewAi = overviewAi(conversationReader?.overviewSentence ? { overviewSentence: conversationReader.overviewSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's note on the month-close checklist: the same reader and model, a budget of its own; told which items are open and no count or date.
   const financeMonthCloseAi = monthCloseAi(conversationReader?.monthCloseNote ? { monthCloseNote: conversationReader.monthCloseNote.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's note on the year-end checklist (#5283): the same reader and model, a budget of its own; told which items are open and can be done now, and no count or date.
+  const financeYearEndAi = yearEndAi(conversationReader?.yearEndNote ? { yearEndNote: conversationReader.yearEndNote.bind(conversationReader) } : null, suggestionBudget());
   // The accounting coworker's note on the 30/60/90-day cash forecast (#4391): the same reader and model, a budget of its own; told the computed figures and dates only.
   const financeCashForecastAi = cashForecastAi(conversationReader?.cashForecastSentence ? { cashForecastSentence: conversationReader.cashForecastSentence.bind(conversationReader) } : null, suggestionBudget());
   // The accounting coworker that reads a question about the books (#5181): the same reader and model, a budget of its own; told only the owner's question with its dates and numbers blanked out, and it chooses an entry of a closed catalogue.
@@ -4146,6 +4149,19 @@ export function createRpcHandler(
           if (!financeMonthCloseAi.reader) return { ai: 'off' as const, text: null, order: [] };
           const checklist = await runtime.query<MonthClose>('finance.month_close', ask, { actor, orgId });
           return explainMonthClose(financeMonthCloseAi, orgId, actor.userId, checklist, lang ?? 'vi');
+        }),
+      ),
+    },
+    financeYearEnd: {
+      get: os.financeYearEnd.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<YearEnd>('finance.year_end', input, { actor, orgId }))),
+      // The note is asked of the model outside any transaction, from which items the checklist found open and ready in the member's own one (their legal entities only).
+      explain: os.financeYearEnd.explain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          // With no model there is nothing to ask, so the checklist is not read a second time for a note that cannot come.
+          if (!financeYearEndAi.reader) return { ai: 'off' as const, text: null, order: [] };
+          const checklist = await runtime.query<YearEnd>('finance.year_end', ask, { actor, orgId });
+          return explainYearEnd(financeYearEndAi, orgId, actor.userId, checklist, lang ?? 'vi');
         }),
       ),
     },

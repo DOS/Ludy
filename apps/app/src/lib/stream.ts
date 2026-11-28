@@ -62,7 +62,10 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
         path === 'financeCashForecast.get' ||
         path === 'financeCashForecast.explain' ||
         path === 'financeMonthClose.get' ||
-        path === 'financeMonthClose.explain'
+        path === 'financeMonthClose.explain' ||
+        // The year-end checklist reads the same entries (balances, depreciation, the closing entry, the lock).
+        path === 'financeYearEnd.get' ||
+        path === 'financeYearEnd.explain'
       )
         return true;
       if (path === 'journal.get') return inputId(query) === id;

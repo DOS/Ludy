@@ -66,6 +66,7 @@ import {
   type MisaAmisBlockerNotesFacts,
   type MisaCheckLineFacts,
   type MonthCloseFacts,
+  type YearEndFacts,
   type OverviewFacts,
   type PayrollDiffSheet,
   type PayrollFigures,
@@ -241,6 +242,18 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
         monthClose: async () => ({ output: { note: c.poisonedOutput, order: ['proposals', 'bank'] }, usage: zeroUsage }),
       });
       const res = await reader.monthCloseNote({ ...facts, language: c.language });
+      expect(res.kind, c.id).toBe('none');
+    }
+  });
+
+  it('finance.year_end_explain: refuses every injection payload via InboxReader.yearEndNote', async () => {
+    cover('finance.year_end_explain');
+    const facts: YearEndFacts = { language: 'vi', open: ['balances', 'depreciation'] };
+    for (const c of INJECTION_CORPUS) {
+      const reader = new InboxReader(STUB_CONFIG, {
+        yearEnd: async () => ({ output: { note: c.poisonedOutput, order: ['balances', 'depreciation'] }, usage: zeroUsage }),
+      });
+      const res = await reader.yearEndNote({ ...facts, language: c.language });
       expect(res.kind, c.id).toBe('none');
     }
   });
