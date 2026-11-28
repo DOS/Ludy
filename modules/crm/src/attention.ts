@@ -24,6 +24,8 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const DAY_MS = 86_400_000;
 const CONVERSATION_SCAN_MAX = 25;
+const CONVERSATION_BATCH_PAGE_SIZE = SIGNALS_MAX_CRM;
+const CONVERSATION_BATCH_MAX_PAGES = 5;
 const MESSAGE_SCAN_PER_CONV = 200;
 
 type Reader = Pick<QueryContext, 'trx' | 'orgId' | 'actor'>;
@@ -247,6 +249,21 @@ interface RawCustomerReplyRow extends RawAttentionRow {
   prev_sent_at: Date | string;
 }
 
+interface CustomerReplyPageRow {
+  page_count: number;
+  cursor_msg_at: Date | string | null;
+  cursor_id: string | null;
+  party_id: string | null;
+  kind: PartyAttentionKind | null;
+  target_id: string | null;
+  event_at: Date | string | null;
+  deal_id: string | null;
+  quote_id: string | null;
+  next_step_id: string | null;
+  conversation_id: string | null;
+  prev_sent_at: Date | string | null;
+}
+
 async function loadCustomerReplied(
   ctx: Reader,
   opts: {
@@ -258,104 +275,200 @@ async function loadCustomerReplied(
   },
 ): Promise<RawCustomerReplyRow[]> {
   // Runs under ludy_kernel.conversation and ludy_kernel.conversation_message RLS so unreadable threads yield zero rows.
-  // For a single contact card, cap to the 25 most recent threads; for the batched org-wide signals read (opts.partyId === null),
-  // avoid capping conversations before quiet-spell and seen filtering so active chatter cannot hide qualifying replies (#4994).
-  const { rows } = await sql<RawCustomerReplyRow>`
-    WITH party_convs AS (
-      SELECT
-        c.id,
-        c.channel_connection_id,
-        c.kind,
-        c.party_id AS raw_party_id,
-        kp.id AS kept_party_id,
-        coalesce(co.duplicate_of, co.id) AS company_kept_id
-      FROM ludy_kernel.conversation c
-      JOIN ludy_kernel.party p ON p.org_id = c.org_id AND p.id = c.party_id
-      JOIN ludy_kernel.party kp ON kp.org_id = p.org_id AND kp.id = coalesce(p.duplicate_of, p.id) AND kp.duplicate_of IS NULL
-      LEFT JOIN ludy_kernel.party co ON co.org_id = kp.org_id AND co.id = kp.company_id
-      WHERE c.org_id = ${ctx.orgId}::uuid
-        AND c.party_id IS NOT NULL
-        AND c.last_inbound_at IS NOT NULL
-        AND (${opts.onlyConversationId}::uuid IS NULL OR c.id = ${opts.onlyConversationId}::uuid)
-        AND (
-          ${opts.keepId}::uuid IS NULL
-          OR kp.id = ${opts.keepId}::uuid
-          OR coalesce(co.duplicate_of, co.id) = ${opts.keepId}::uuid
-        )
-      ${opts.partyId !== null ? sql`ORDER BY c.last_inbound_at DESC NULLS LAST, c.id DESC LIMIT ${CONVERSATION_SCAN_MAX}` : sql``}
-    ),
-    recent_msgs AS (
-      SELECT pc.id AS conversation_id, pc.raw_party_id, pc.kept_party_id, pc.company_kept_id, m.direction, m.sent_at, m.seq, m.id
-      FROM party_convs pc
-      CROSS JOIN LATERAL (
-        SELECT cm.direction, cm.sent_at, cm.seq, cm.id
-        FROM ludy_kernel.conversation_message cm
-        WHERE cm.org_id = ${ctx.orgId}::uuid
-          AND cm.conversation_id = pc.id
-          AND cm.channel_connection_id = pc.channel_connection_id
-          AND cm.kind = pc.kind
-          AND cm.platform_removed_at IS NULL
-          AND cm.hidden_at IS NULL
-        ORDER BY cm.sent_at DESC, cm.seq DESC, cm.id DESC
-        LIMIT ${MESSAGE_SCAN_PER_CONV}
-      ) m
-    ),
-    sequenced AS (
-      SELECT
-        rm.conversation_id,
-        rm.raw_party_id,
-        rm.kept_party_id,
-        rm.company_kept_id,
-        rm.direction,
-        rm.sent_at,
-        lag(rm.sent_at) OVER (PARTITION BY rm.conversation_id ORDER BY rm.sent_at ASC, rm.seq ASC, rm.id ASC) AS prev_sent_at
-      FROM recent_msgs rm
-    ),
-    latest_per_conv AS (
-      SELECT DISTINCT ON (sq.conversation_id)
-        sq.conversation_id,
-        sq.raw_party_id,
-        sq.kept_party_id,
-        sq.company_kept_id,
-        sq.sent_at AS event_at,
-        sq.prev_sent_at
-      FROM sequenced sq
-      WHERE sq.direction = 'in'
-        AND sq.prev_sent_at IS NOT NULL
-        AND sq.sent_at - sq.prev_sent_at >= (${PARTY_ATTENTION_DAYS}::int * interval '1 day')
-      ORDER BY sq.conversation_id, sq.sent_at DESC
-    ),
-    candidates AS (
-      SELECT
-        coalesce(${opts.partyId}::uuid, l.kept_party_id) AS party_id,
-        'customer_replied'::text AS kind,
-        l.conversation_id AS target_id,
-        l.event_at,
-        NULL::uuid AS deal_id,
-        NULL::uuid AS quote_id,
-        NULL::uuid AS next_step_id,
-        l.conversation_id,
-        l.prev_sent_at
-      FROM latest_per_conv l
-      WHERE ${opts.skipSeenFilter}::boolean
-         OR NOT EXISTS (
-           SELECT 1 FROM ludy_crm.party_attention_seen s
-           WHERE s.org_id = ${ctx.orgId}::uuid
-             AND s.user_id = ${opts.userId}::uuid
-             AND s.kind = 'customer_replied'
-             AND s.target_id = l.conversation_id
-             AND (
-               (${opts.partyId}::uuid IS NOT NULL AND s.party_id = ${opts.partyId}::uuid)
-               OR (
-                 ${opts.partyId}::uuid IS NULL
-                 AND (s.party_id = l.raw_party_id OR s.party_id = l.kept_party_id OR s.party_id = l.company_kept_id)
+  // Single contact: scan the newest 25 threads once. Org-wide batched signals (opts.partyId === null): page through
+  // `conversation_recent_idx` in bounded 500-thread slices (capped at 5 pages = 2,500 threads) so active chatter cannot
+  // hide qualifying quiet-spell replies while pathological archives stay bounded on Home's 60s poll (#4994).
+  const pageLimit = opts.partyId === null ? CONVERSATION_BATCH_PAGE_SIZE : CONVERSATION_SCAN_MAX;
+  const maxPages = opts.partyId === null ? CONVERSATION_BATCH_MAX_PAGES : 1;
+  const byParty = new Map<string, RawCustomerReplyRow>();
+  const collected: RawCustomerReplyRow[] = [];
+  let cursorMsgAt: Date | null = null;
+  let cursorId: string | null = null;
+
+  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+    const { rows } = await sql<CustomerReplyPageRow>`
+      WITH page AS (
+        SELECT
+          c.id,
+          c.channel_connection_id,
+          c.kind,
+          c.last_message_at,
+          c.party_id AS raw_party_id,
+          kp.id AS kept_party_id,
+          coalesce(co.duplicate_of, co.id) AS company_kept_id
+        FROM ludy_kernel.conversation c
+        JOIN ludy_kernel.party p ON p.org_id = c.org_id AND p.id = c.party_id
+        JOIN ludy_kernel.party kp ON kp.org_id = p.org_id AND kp.id = coalesce(p.duplicate_of, p.id) AND kp.duplicate_of IS NULL
+        LEFT JOIN ludy_kernel.party co ON co.org_id = kp.org_id AND co.id = kp.company_id
+        WHERE c.org_id = ${ctx.orgId}::uuid
+          AND c.party_id IS NOT NULL
+          AND c.last_inbound_at IS NOT NULL
+          AND (${opts.onlyConversationId}::uuid IS NULL OR c.id = ${opts.onlyConversationId}::uuid)
+          AND (
+            ${opts.keepId}::uuid IS NULL
+            OR kp.id = ${opts.keepId}::uuid
+            OR coalesce(co.duplicate_of, co.id) = ${opts.keepId}::uuid
+          )
+          AND (
+            (${cursorMsgAt}::timestamptz IS NULL AND ${cursorId}::uuid IS NULL)
+            OR CASE
+              WHEN ${cursorMsgAt}::timestamptz IS NULL THEN c.last_message_at IS NULL AND c.id < ${cursorId}::uuid
+              ELSE c.last_message_at < ${cursorMsgAt}::timestamptz
+                OR (c.last_message_at = ${cursorMsgAt}::timestamptz AND c.id < ${cursorId}::uuid)
+                OR c.last_message_at IS NULL
+            END
+          )
+        ORDER BY c.last_message_at DESC NULLS LAST, c.id DESC
+        LIMIT ${pageLimit}
+      ),
+      tail AS (
+        SELECT
+          (SELECT COUNT(*)::int FROM page) AS page_count,
+          pg.last_message_at AS cursor_msg_at,
+          pg.id AS cursor_id
+        FROM page pg
+        ORDER BY pg.last_message_at ASC NULLS FIRST, pg.id ASC
+        LIMIT 1
+      ),
+      recent_msgs AS (
+        SELECT pc.id AS conversation_id, pc.raw_party_id, pc.kept_party_id, pc.company_kept_id, m.direction, m.sent_at, m.seq, m.id
+        FROM page pc
+        CROSS JOIN LATERAL (
+          SELECT cm.direction, cm.sent_at, cm.seq, cm.id
+          FROM ludy_kernel.conversation_message cm
+          WHERE cm.org_id = ${ctx.orgId}::uuid
+            AND cm.conversation_id = pc.id
+            AND cm.channel_connection_id = pc.channel_connection_id
+            AND cm.kind = pc.kind
+            AND cm.platform_removed_at IS NULL
+            AND cm.hidden_at IS NULL
+          ORDER BY cm.sent_at DESC, cm.seq DESC, cm.id DESC
+          LIMIT ${MESSAGE_SCAN_PER_CONV}
+        ) m
+      ),
+      sequenced AS (
+        SELECT
+          rm.conversation_id,
+          rm.raw_party_id,
+          rm.kept_party_id,
+          rm.company_kept_id,
+          rm.direction,
+          rm.sent_at,
+          lag(rm.sent_at) OVER (PARTITION BY rm.conversation_id ORDER BY rm.sent_at ASC, rm.seq ASC, rm.id ASC) AS prev_sent_at
+        FROM recent_msgs rm
+      ),
+      latest_per_conv AS (
+        SELECT DISTINCT ON (sq.conversation_id)
+          sq.conversation_id,
+          sq.raw_party_id,
+          sq.kept_party_id,
+          sq.company_kept_id,
+          sq.sent_at AS event_at,
+          sq.prev_sent_at
+        FROM sequenced sq
+        WHERE sq.direction = 'in'
+          AND sq.prev_sent_at IS NOT NULL
+          AND sq.sent_at - sq.prev_sent_at >= (${PARTY_ATTENTION_DAYS}::int * interval '1 day')
+        ORDER BY sq.conversation_id, sq.sent_at DESC
+      ),
+      candidates AS (
+        SELECT
+          coalesce(${opts.partyId}::uuid, l.kept_party_id) AS party_id,
+          'customer_replied'::text AS kind,
+          l.conversation_id AS target_id,
+          l.event_at,
+          NULL::uuid AS deal_id,
+          NULL::uuid AS quote_id,
+          NULL::uuid AS next_step_id,
+          l.conversation_id,
+          l.prev_sent_at
+        FROM latest_per_conv l
+        WHERE ${opts.skipSeenFilter}::boolean
+           OR NOT EXISTS (
+             SELECT 1 FROM ludy_crm.party_attention_seen s
+             WHERE s.org_id = ${ctx.orgId}::uuid
+               AND s.user_id = ${opts.userId}::uuid
+               AND s.kind = 'customer_replied'
+               AND s.target_id = l.conversation_id
+               AND (
+                 (${opts.partyId}::uuid IS NOT NULL AND s.party_id = ${opts.partyId}::uuid)
+                 OR (
+                   ${opts.partyId}::uuid IS NULL
+                   AND (s.party_id = l.raw_party_id OR s.party_id = l.kept_party_id OR s.party_id = l.company_kept_id)
+                 )
                )
-             )
-             AND pg_catalog.date_trunc('milliseconds', l.event_at) <= pg_catalog.date_trunc('milliseconds', s.seen_event_at)
-         )
-    )
-    ${candidateTailSql(opts.partyId)}`.execute(ctx.trx);
-  return rows;
+               AND pg_catalog.date_trunc('milliseconds', l.event_at) <= pg_catalog.date_trunc('milliseconds', s.seen_event_at)
+           )
+      ),
+      scoped AS (
+        ${candidateTailSql(opts.partyId)}
+      )
+      SELECT
+        t.page_count,
+        t.cursor_msg_at,
+        t.cursor_id,
+        s.party_id,
+        s.kind,
+        s.target_id,
+        s.event_at,
+        s.deal_id,
+        s.quote_id,
+        s.next_step_id,
+        s.conversation_id,
+        s.prev_sent_at
+      FROM tail t
+      LEFT JOIN scoped s ON true`.execute(ctx.trx);
+
+    const head = rows[0];
+    if (!head) break;
+
+    for (const r of rows) {
+      if (r.party_id === null || r.kind === null || r.target_id === null || r.event_at === null || r.prev_sent_at === null) {
+        continue;
+      }
+      const item: RawCustomerReplyRow = {
+        party_id: r.party_id,
+        kind: r.kind,
+        target_id: r.target_id,
+        event_at: r.event_at,
+        deal_id: r.deal_id,
+        quote_id: r.quote_id,
+        next_step_id: r.next_step_id,
+        conversation_id: r.conversation_id,
+        prev_sent_at: r.prev_sent_at,
+      };
+      if (opts.partyId !== null) {
+        collected.push(item);
+      } else {
+        const prev = byParty.get(item.party_id);
+        const itemMs = toDate(item.event_at).getTime();
+        const prevMs = prev ? toDate(prev.event_at).getTime() : -1;
+        if (!prev || itemMs > prevMs || (itemMs === prevMs && item.target_id > prev.target_id)) {
+          byParty.set(item.party_id, item);
+        }
+      }
+    }
+
+    if (opts.partyId !== null || head.page_count < pageLimit || head.cursor_id === null) break;
+    const nextCursorMsgAt = head.cursor_msg_at !== null ? toDate(head.cursor_msg_at) : null;
+    if (byParty.size >= SIGNALS_MAX_CRM && nextCursorMsgAt !== null) {
+      const topCutoff = [...byParty.values()]
+        .map((r) => toDate(r.event_at).getTime())
+        .sort((a, b) => b - a)[SIGNALS_MAX_CRM - 1];
+      if (topCutoff !== undefined && topCutoff >= nextCursorMsgAt.getTime()) break;
+    }
+    cursorMsgAt = nextCursorMsgAt;
+    cursorId = head.cursor_id;
+  }
+
+  if (opts.partyId !== null) return collected;
+  return [...byParty.values()]
+    .sort((a, b) => {
+      const diff = toDate(b.event_at).getTime() - toDate(a.event_at).getTime();
+      if (diff !== 0) return diff;
+      return a.party_id < b.party_id ? -1 : a.party_id > b.party_id ? 1 : 0;
+    })
+    .slice(0, SIGNALS_MAX_CRM);
 }
 
 const toAttentionItem = (partyId: string, row: RawAttentionRow): PartyAttentionItem => ({
