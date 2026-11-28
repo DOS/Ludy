@@ -9,10 +9,11 @@
 // date under each; the provisional CIT is the one whose date changed, so it has a row per law, split by the first day of the
 // quarter (a quarter that began before 2026-07-01 keeps the 30th, the earlier date, so the date shown is never later than the real one).
 //
-// A due date that falls on a Saturday or a Sunday moves to the next Monday (Civil Code 2015, Article 148(5)), as for
-// the VAT return (vat-deadline.ts). Public holidays are not applied, so the date shown is never later than the real one.
+// A due date that falls on a Saturday, a Sunday or a public holiday moves to the next working day (Decree 252/2026/NĐ-CP,
+// Article 3(7); deadline-day.ts), as for the VAT return (vat-deadline.ts).
 // Dates are calendar dates (YYYY-MM-DD) in Vietnam time.
 import { z } from 'zod';
+import { onOrAfterWorkingDay } from './deadline-day.ts';
 import type { VatFilingPeriod } from './vat-deadline.ts';
 
 export const TAX_OBLIGATIONS = ['vat_return', 'pit_withholding', 'cit_provisional', 'cit_finalization', 'pit_finalization', 'financial_statements', 'license_fee'] as const;
@@ -175,7 +176,7 @@ export interface TaxDue {
   period: string;
   periodStart: string;
   periodEnd: string;
-  // After the weekend rule.
+  // After the day-off rule.
   dueDate: string;
   legalBasis: string;
   confirmed: boolean;
@@ -196,13 +197,6 @@ function parseDate(text: string): Date {
   const date = new Date(`${text}T00:00:00Z`);
   if (Number.isNaN(date.getTime()) || iso(date) !== text) throw new Error(`not a calendar date: ${text}`);
   return date;
-}
-
-// Saturday and Sunday move to the following Monday.
-export function afterWeekend(date: string): string {
-  const d = parseDate(date);
-  const weekday = d.getUTCDay();
-  return weekday === 6 ? iso(new Date(d.getTime() + 2 * DAY_MS)) : weekday === 0 ? iso(new Date(d.getTime() + DAY_MS)) : date;
 }
 
 interface Period {
@@ -245,7 +239,7 @@ function dueOf(rule: TaxRule, period: Period): string {
   } else {
     date = dateOf(monthIndex(yearOf(period.last), due.month), due.day);
   }
-  return afterWeekend(date);
+  return onOrAfterWorkingDay(date);
 }
 
 // The rules an org's profile turns on.

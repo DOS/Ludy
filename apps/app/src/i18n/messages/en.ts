@@ -1428,7 +1428,7 @@ export const en = {
     daysLeft: '{days, plural, =0 {due today} one {# day left} other {# days left}}',
     noFilingPeriod: 'Filing period not set',
     chooseFilingPeriod: 'Choose filing period',
-    deadlineNote: 'A deadline on a Saturday or Sunday moves to the Monday; {brand} does not count public holidays yet.',
+    deadlineNote: 'A deadline on a Saturday, a Sunday or a public holiday moves to the next working day; {brand} does not have the compensatory days off or the extra days the government sets each year.',
     empty: 'You are not part of any company yet',
     emptyHint: 'Create your first company to get started.',
     create: 'Create a company',

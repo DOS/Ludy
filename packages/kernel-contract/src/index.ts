@@ -18,6 +18,7 @@ export * from './journal-voucher.ts';
 export * from './personal-data.ts';
 export * from './portal-list.ts';
 export * from './portal-sync.ts';
+export * from './deadline-day.ts';
 export * from './vat-deadline.ts';
 export * from './vat-late.ts';
 export * from './tax-calendar.ts';

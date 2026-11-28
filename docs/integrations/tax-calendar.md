@@ -33,7 +33,7 @@ A member marks an obligation done for a period, and it leaves the list.
 
 ## The table
 
-A due date on a Saturday or a Sunday moves to the next Monday (Civil Code 2015, Article 148(5)), as for the VAT return. Public holidays are not applied, so the date shown is never later than the real one.
+A due date on a Saturday, a Sunday or a public holiday moves to the next working day (Decree 252/2026/NĐ-CP, Article 3(7), pages 7-8 of the signed text: when the last day of a filing or payment deadline falls on a day off, the last day is the working day right after it; before 2026-07-01 the Civil Code 2015, Article 148(5)). The VAT return uses the same function (`packages/kernel-contract/src/deadline-day.ts`) and the shared holiday calendar (`holidays.ts`): the fixed dates every year, and Tet and the Hung Kings day for 2026 to 2028. The government also sets compensatory days off and extra days each year by decision, and the calendar does not carry them, so a day it lacks shows an earlier date than the real one (the safe side). A day it lists wrongly shows a later one: the 2027 table is uncertain until the accountant confirms it (#2520).
 
 | Obligation | Frequency | Due | Legal basis (as recorded) |
 |---|---|---|---|
@@ -59,7 +59,7 @@ How periods are named:
 ## Not covered, and unconfirmed
 
 - **Not covered:**
-  - Public holidays and Tet, and extensions (gia hạn).
+  - Compensatory days off and the extra days the government sets each year, and extensions (gia hạn).
   - Returns filed per event rather than per period (on cessation, on a change of ownership).
   - The obligations of household businesses.
 - **Law 108/2025/QH15 (from 2026-07-01):** it replaces Law 38/2019/QH14 (see htkk-01gtgt-xml.md); the table cites Decree 252/2026/NĐ-CP for the periods from that date (see above). Whether the accountant reads the transition the same way is **unconfirmed**; that is question 1 below.

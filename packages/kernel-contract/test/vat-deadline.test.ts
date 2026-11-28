@@ -49,7 +49,8 @@ describe('nextVatDeadline, quarterly returns', () => {
     // 2027-01-31 is a Sunday.
     expect(nextVatDeadline('quarter', '2026-11-03')).toEqual({ period: '2026-Q4', dueDate: '2027-02-01', daysLeft: 90 });
     expect(nextVatDeadline('quarter', '2027-01-15')).toEqual({ period: '2026-Q4', dueDate: '2027-02-01', daysLeft: 17 });
-    expect(nextVatDeadline('quarter', '2027-02-02')).toEqual({ period: '2027-Q1', dueDate: '2027-04-30', daysLeft: 87 });
+    // 2027-04-30 is a Friday and a public holiday, and the weekend follows: Monday 2027-05-03.
+    expect(nextVatDeadline('quarter', '2027-02-02')).toEqual({ period: '2027-Q1', dueDate: '2027-05-03', daysLeft: 90 });
   });
 
   it('refuses a date that is not a calendar date', () => {
