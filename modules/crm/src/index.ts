@@ -38,7 +38,7 @@ export * from './booking-feed.ts';
 export * from './contacts.ts';
 export * from './mcp.ts';
 export { mcpDealCreate, mcpDealMove, mcpQuoteSave, mcpQuoteRevise, mcpNextStepDone, mcpNextStepSnooze } from './mcp-write.ts';
-export { importCancel, importCommands, importCommit, importExpire, importPreview, importQueries, importStage } from './import.ts';
+export { importCancel, importCommands, importCommit, importExpire, importFillTaxSuggestions, importPreview, importQueries, importStage, importTaxLookupCandidates, type ImportTaxLookupCandidate, type ImportTaxLookupCandidatesResult } from './import.ts';
 
 export { dealSettingGet, dealSettingSet, nextStepCommands, nextStepDone, nextStepList, nextStepQueries, nextStepRaise, nextStepSnooze, staleDays } from './next-steps.ts';
 

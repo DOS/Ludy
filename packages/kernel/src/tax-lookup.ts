@@ -500,6 +500,69 @@ function userOf(actor: CommandContext['actor']): string {
   return actor.userId;
 }
 
+/** Returns true when a normalized tax code is an enterprise 10-digit or 10-3 branch code (never 12-digit citizen ID). */
+export function isEnterpriseTaxCode(normalized: string | null): normalized is string {
+  return normalized !== null && /^\d{10}(-\d{3})?$/.test(normalized);
+}
+
+function normalizeLookupTaxCode(raw: string): string {
+  const normalized = normalizeTaxCode(raw);
+  if (!normalized) {
+    throw new DomainError(
+      'INVALID_TAX_CODE',
+      422,
+      'Mã số thuế không hợp lệ: cần 10 chữ số hoặc 10 chữ số kèm 3 chữ số đơn vị phụ thuộc',
+    );
+  }
+  if (/^\d{12}$/.test(normalized)) {
+    throw new DomainError(
+      'CITIZEN_ID_NOT_ALLOWED',
+      422,
+      'Không tra cứu mã định danh cá nhân 12 chữ số qua dịch vụ tra cứu mã số thuế',
+    );
+  }
+  return normalized;
+}
+
+export interface CachedTaxLookupEntry {
+  found: boolean;
+  taxCode: string;
+  name: string | null;
+  address: string | null;
+  statusText: string | null;
+  source: string | null;
+}
+
+/** Reads non-expired, non-household cache entries for an org's enterprise tax codes inside an existing transaction. */
+export async function readTaxLookupCacheBatch(
+  trx: QueryContext['trx'],
+  orgId: string,
+  taxCodes: readonly string[],
+): Promise<Map<string, CachedTaxLookupEntry>> {
+  const unique = [...new Set(taxCodes.map((c) => normalizeTaxCode(c)).filter(isEnterpriseTaxCode))];
+  if (unique.length === 0) return new Map();
+  const rows = await trx
+    .selectFrom('ludy_kernel.tax_lookup_cache')
+    .select(['tax_code', 'found', 'name', 'address', 'status_text', 'source'])
+    .where('org_id', '=', orgId)
+    .where('tax_code', 'in', unique)
+    .where(sql<boolean>`expires_at > pg_catalog.now()`)
+    .execute();
+  const out = new Map<string, CachedTaxLookupEntry>();
+  for (const r of rows) {
+    if (isHouseholdTaxLookupResult({ name: r.name, statusText: r.status_text })) continue;
+    out.set(r.tax_code, {
+      found: r.found,
+      taxCode: r.tax_code,
+      name: r.found ? r.name : null,
+      address: r.found ? r.address : null,
+      statusText: r.found ? r.status_text : null,
+      source: r.source,
+    });
+  }
+  return out;
+}
+
 /** Reads whether the org enabled external tax-code lookup (default false). */
 export async function readTaxLookupSwitch(trx: QueryContext['trx'], orgId: string): Promise<boolean> {
   const row = await trx
@@ -579,21 +642,7 @@ export const partyTaxLookupPrepare = defineQuery({
   access: WRITERS,
   handler: async (ctx, input): Promise<PartyTaxLookupPrepareResult> => {
     userOf(ctx.actor);
-    const normalized = normalizeTaxCode(input.taxCode);
-    if (!normalized) {
-      throw new DomainError(
-        'INVALID_TAX_CODE',
-        422,
-        'Mã số thuế không hợp lệ: cần 10 chữ số hoặc 10 chữ số kèm 3 chữ số đơn vị phụ thuộc',
-      );
-    }
-    if (/^\d{12}$/.test(normalized)) {
-      throw new DomainError(
-        'CITIZEN_ID_NOT_ALLOWED',
-        422,
-        'Không tra cứu mã định danh cá nhân 12 chữ số qua dịch vụ tra cứu mã số thuế',
-      );
-    }
+    const normalized = normalizeLookupTaxCode(input.taxCode);
     if (input.deploymentEnabled === false) {
       throw new DomainError('TAX_LOOKUP_DISABLED', 404, 'Máy chủ chưa bật tra cứu mã số thuế');
     }
@@ -607,27 +656,14 @@ export const partyTaxLookupPrepare = defineQuery({
     }
 
     const codeKind = normalized.length === 10 ? 'enterprise_10' : 'branch_13';
-    const cachedRow = await ctx.trx
-      .selectFrom('ludy_kernel.tax_lookup_cache')
-      .select(['tax_code', 'found', 'name', 'address', 'status_text', 'source'])
-      .where('org_id', '=', ctx.orgId)
-      .where('tax_code', '=', normalized)
-      .where(sql<boolean>`expires_at > pg_catalog.now()`)
-      .executeTakeFirst();
-
-    if (cachedRow && !isHouseholdTaxLookupResult({ name: cachedRow.name, statusText: cachedRow.status_text })) {
+    const cachedMap = await readTaxLookupCacheBatch(ctx.trx, ctx.orgId, [normalized]);
+    const cachedHit = cachedMap.get(normalized);
+    if (cachedHit) {
       return {
         status: 'hit',
         normalized,
         codeKind,
-        result: {
-          found: cachedRow.found,
-          taxCode: cachedRow.tax_code,
-          name: cachedRow.found ? cachedRow.name : null,
-          address: cachedRow.found ? cachedRow.address : null,
-          statusText: cachedRow.found ? cachedRow.status_text : null,
-          source: cachedRow.source,
-        },
+        result: cachedHit,
       };
     }
 
@@ -637,6 +673,16 @@ export const partyTaxLookupPrepare = defineQuery({
       codeKind,
     };
   },
+});
+
+const zPartyTaxLookupMissPayload = z.strictObject({
+  taxCode: z.string().trim().max(40),
+  found: z.boolean(),
+  name: z.string().max(4000).nullable(),
+  address: z.string().max(4000).nullable(),
+  statusText: z.string().max(1000).nullable(),
+  source: z.string().max(200).nullable(),
+  household: z.boolean(),
 });
 
 const zPartyTaxLookupRecordInput = z.discriminatedUnion('mode', [
@@ -659,6 +705,75 @@ const zPartyTaxLookupRecordInput = z.discriminatedUnion('mode', [
   }),
 ]);
 
+async function writeTaxLookupCacheMiss(
+  trx: CommandContext['trx'],
+  orgId: string,
+  normalized: string,
+  provider: TaxLookupProviderId,
+  input: z.infer<typeof zPartyTaxLookupMissPayload>,
+): Promise<{
+  found: boolean;
+  name: string | null;
+  address: string | null;
+  statusText: string | null;
+  source: string;
+  household: boolean;
+}> {
+  const companyName = input.found ? cleanText(input.name, 500) : null;
+  const companyAddress = input.found ? cleanText(input.address, 1000) : null;
+  const statusText = input.found ? cleanText(input.statusText, 200) : null;
+  const source = cleanText(input.source ?? provider, 40) ?? provider;
+  const household = Boolean(input.household) || isHouseholdTaxLookupResult({ name: companyName, statusText });
+  const found = input.found && companyName !== null;
+
+  if (household) {
+    await trx
+      .deleteFrom('ludy_kernel.tax_lookup_cache')
+      .where('org_id', '=', orgId)
+      .where('tax_code', '=', normalized)
+      .execute();
+  } else {
+    const ttlSeconds = found ? TAX_LOOKUP_HIT_TTL_SECONDS : TAX_LOOKUP_MISS_TTL_SECONDS;
+    const ttlInterval = sql<Date>`pg_catalog.now() + pg_catalog.make_interval(secs => ${ttlSeconds}::int)`;
+    await trx
+      .insertInto('ludy_kernel.tax_lookup_cache')
+      .values({
+        org_id: orgId,
+        tax_code: normalized,
+        found,
+        name: found ? companyName : null,
+        address: found ? companyAddress : null,
+        status_text: found ? statusText : null,
+        source,
+        fetched_at: sql<Date>`pg_catalog.now()`,
+        expires_at: ttlInterval,
+        updated_at: sql<Date>`pg_catalog.now()`,
+      })
+      .onConflict((oc) =>
+        oc.columns(['org_id', 'tax_code']).doUpdateSet({
+          found,
+          name: found ? companyName : null,
+          address: found ? companyAddress : null,
+          status_text: found ? statusText : null,
+          source,
+          fetched_at: sql<Date>`pg_catalog.now()`,
+          expires_at: ttlInterval,
+          updated_at: sql<Date>`pg_catalog.now()`,
+        }),
+      )
+      .execute();
+  }
+
+  return {
+    found,
+    name: found ? companyName : null,
+    address: found ? companyAddress : null,
+    statusText: found ? statusText : null,
+    source,
+    household,
+  };
+}
+
 /**
  * Step 3 of TC1 (#4988): short write + metadata-only audit transaction after out-of-transaction lookup.
  * Re-verifies actor/role, code format, deployment provider, and org switch; deletes household rows or upserts 24h/1h org cache.
@@ -671,21 +786,7 @@ export const partyTaxLookup = defineCommand({
   access: WRITERS,
   handler: async (ctx, input): Promise<PartyTaxLookupResult> => {
     userOf(ctx.actor);
-    const normalized = normalizeTaxCode(input.taxCode);
-    if (!normalized) {
-      throw new DomainError(
-        'INVALID_TAX_CODE',
-        422,
-        'Mã số thuế không hợp lệ: cần 10 chữ số hoặc 10 chữ số kèm 3 chữ số đơn vị phụ thuộc',
-      );
-    }
-    if (/^\d{12}$/.test(normalized)) {
-      throw new DomainError(
-        'CITIZEN_ID_NOT_ALLOWED',
-        422,
-        'Không tra cứu mã định danh cá nhân 12 chữ số qua dịch vụ tra cứu mã số thuế',
-      );
-    }
+    const normalized = normalizeLookupTaxCode(input.taxCode);
     if (input.provider === 'off') {
       throw new DomainError('TAX_LOOKUP_DISABLED', 404, 'Máy chủ chưa bật tra cứu mã số thuế');
     }
@@ -761,74 +862,84 @@ export const partyTaxLookup = defineCommand({
       };
     }
 
-    const companyName = input.found ? cleanText(input.name, 500) : null;
-    const companyAddress = input.found ? cleanText(input.address, 1000) : null;
-    const statusText = input.found ? cleanText(input.statusText, 200) : null;
-    const source = cleanText(input.source ?? input.provider, 40) ?? input.provider;
-    const household =
-      Boolean(input.household) || isHouseholdTaxLookupResult({ name: companyName, statusText });
-    const found = input.found && companyName !== null;
-
-    if (household) {
-      await ctx.trx
-        .deleteFrom('ludy_kernel.tax_lookup_cache')
-        .where('org_id', '=', ctx.orgId)
-        .where('tax_code', '=', normalized)
-        .execute();
-    } else {
-      const ttlSeconds = found ? TAX_LOOKUP_HIT_TTL_SECONDS : TAX_LOOKUP_MISS_TTL_SECONDS;
-      const ttlInterval = sql<Date>`pg_catalog.now() + pg_catalog.make_interval(secs => ${ttlSeconds}::int)`;
-      await ctx.trx
-        .insertInto('ludy_kernel.tax_lookup_cache')
-        .values({
-          org_id: ctx.orgId,
-          tax_code: normalized,
-          found,
-          name: found ? companyName : null,
-          address: found ? companyAddress : null,
-          status_text: found ? statusText : null,
-          source,
-          fetched_at: sql<Date>`pg_catalog.now()`,
-          expires_at: ttlInterval,
-          updated_at: sql<Date>`pg_catalog.now()`,
-        })
-        .onConflict((oc) =>
-          oc.columns(['org_id', 'tax_code']).doUpdateSet({
-            found,
-            name: found ? companyName : null,
-            address: found ? companyAddress : null,
-            status_text: found ? statusText : null,
-            source,
-            fetched_at: sql<Date>`pg_catalog.now()`,
-            expires_at: ttlInterval,
-            updated_at: sql<Date>`pg_catalog.now()`,
-          }),
-        )
-        .execute();
-    }
+    const written = await writeTaxLookupCacheMiss(ctx.trx, ctx.orgId, normalized, input.provider, input);
 
     ctx.audit({
       provider: input.provider,
       codeKind,
-      found: found ? true : false,
+      found: written.found,
       cached: false,
-      household: household ? true : false,
+      household: written.household,
       quotaWarning: input.quotaWarning ? true : false,
     });
 
     return {
-      found,
+      found: written.found,
       taxCode: normalized,
-      name: found ? companyName : null,
-      address: found ? companyAddress : null,
-      statusText: found ? statusText : null,
-      source,
+      name: written.name,
+      address: written.address,
+      statusText: written.statusText,
+      source: written.source,
       cached: false,
-      household,
+      household: written.household,
       ...(input.quotaWarning ? { quotaWarning: true } : {}),
     };
   },
 });
 
-export const taxLookupCommands = [taxLookupSwitchSet, partyTaxLookup];
+const zPartyTaxLookupBatchInput = z.strictObject({
+  provider: z.enum(TAX_LOOKUP_PROVIDERS),
+  hits: z.array(z.string().trim().max(40)).max(100),
+  misses: z.array(zPartyTaxLookupMissPayload).max(100),
+  quotaWarning: z.boolean().optional(),
+});
+
+/**
+ * Step 3 of TC3 (#4990): short batch write + metadata-only audit transaction after out-of-transaction batch lookups.
+ * Stores 24h/1h org cache entries (never household) and audits counts only.
+ */
+export const partyTaxLookupBatch = defineCommand({
+  name: 'kernel.party.tax_lookup_batch',
+  input: zPartyTaxLookupBatchInput,
+  risk: 'R2',
+  sideEffect: 'external',
+  access: WRITERS,
+  handler: async (ctx, input): Promise<{ hitCount: number; missCount: number }> => {
+    userOf(ctx.actor);
+    if (input.provider === 'off') {
+      throw new DomainError('TAX_LOOKUP_DISABLED', 404, 'Máy chủ chưa bật tra cứu mã số thuế');
+    }
+    const orgEnabled = await readTaxLookupSwitch(ctx.trx, ctx.orgId);
+    if (!orgEnabled) {
+      throw new DomainError(
+        'TAX_LOOKUP_ORG_DISABLED',
+        409,
+        'Tổ chức chưa bật tra cứu mã số thuế; bật công tắc đồng nghĩa cho phép gửi mã số thuế tới nhà cung cấp',
+      );
+    }
+
+    const hits = input.hits.map(normalizeLookupTaxCode);
+    let foundCount = 0;
+    let householdCount = 0;
+    for (const miss of input.misses) {
+      const normalized = normalizeLookupTaxCode(miss.taxCode);
+      const written = await writeTaxLookupCacheMiss(ctx.trx, ctx.orgId, normalized, input.provider, miss);
+      if (written.found) foundCount += 1;
+      if (written.household) householdCount += 1;
+    }
+
+    ctx.audit({
+      provider: input.provider,
+      hitCount: hits.length,
+      missCount: input.misses.length,
+      foundCount,
+      householdCount,
+      quotaWarning: input.quotaWarning ? true : false,
+    });
+
+    return { hitCount: hits.length, missCount: input.misses.length };
+  },
+});
+
+export const taxLookupCommands = [taxLookupSwitchSet, partyTaxLookup, partyTaxLookupBatch];
 export const taxLookupQueries = [taxLookupSwitchGet, partyTaxLookupPrepare];
