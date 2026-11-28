@@ -5,12 +5,11 @@
 // number for the answer to get wrong (the screen shows the counts from the list itself). The answer is a closed shape, one note per kind, and is checked after the call: a note for a kind that is not on the list or a
 // kind given twice is dropped, and so is a note that is empty, too long, more than one sentence, has a digit or a number in words, a link, a script other than Latin, says something was done, uses the future tense or promises a result.
 // Nothing is cut or repaired, and each note stands or falls on its own. The notes are a draft the person reads: they never change the list of blockers, never decide what is sent, and nothing here writes.
+import { MISA_AMIS_BLOCKER_KINDS, type MisaAmisBlockerKind } from './misa-amis-blocker-kinds.ts';
 import { claimsDone } from './misa-check-line.ts';
 import { statedFiguresProblem } from './overview.ts';
 
-// The blocker kinds of the AMIS mapper, as the preview names them (packages/kernel-contract misa-amis-preview.ts; a test keeps the two lists equal).
-export const MISA_AMIS_BLOCKER_KINDS = ['branch_missing', 'party_code_unknown', 'party_code_ambiguous', 'item_code_unknown', 'stock_missing', 'stock_unknown', 'unit_unknown', 'unit_ambiguous', 'vat_rate_unmapped', 'voucher_number_too_long', 'no_lines'] as const;
-export type MisaAmisBlockerKind = (typeof MISA_AMIS_BLOCKER_KINDS)[number];
+export { MISA_AMIS_BLOCKER_KINDS, type MisaAmisBlockerKind } from './misa-amis-blocker-kinds.ts';
 
 export const MISA_AMIS_BLOCKER_NOTE_MAX = 240;
 
