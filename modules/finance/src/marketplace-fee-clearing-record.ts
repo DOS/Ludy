@@ -17,7 +17,7 @@ import { JOURNAL_VOUCHER_KIND, MARKETPLACE_FEE_CLEARING_COMMAND, zMarketplaceFee
 import { money } from '@ludy/l10n-vn';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
-import { stampBooks } from './books-stamp.ts';
+import { refuseChangedBooksFirst, stampBooks } from './books-stamp.ts';
 import { assertUsableAccounts } from './accounts.ts';
 import { JOURNAL_VOUCHER_SOURCE, journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
@@ -326,9 +326,11 @@ export function createMarketplaceFeeClearingCommands(options: { maps?: Maps; ret
       // the preparer (raw SQL) cannot clear more than the invoice and the waiting fees allow, nor into another entity.
       const built = await buildClearing(ctx, maps, payload.purchaseDocumentId, true);
       const rebuilt = proposalPayload(built);
+      // The books the proposal was prepared under (stamped when they are not TT133 2026.1) are held before anything is compared with them (#5320).
+      await refuseChangedBooksFirst(ctx, { date: rebuilt.date, legalEntityId: rebuilt.legalEntityId, regime: payload.regime, chartVersion: payload.chartVersion }, rebuilt.lines.map((l) => l.account));
       const wrong = feeClearingProposalMismatch(payload, rebuilt);
       if (wrong) throw mismatch(wrong);
-      const voucher: JournalVoucherProposal = { date: rebuilt.date, description: rebuilt.description, lines: rebuilt.lines, total: rebuilt.total, legalEntityId: rebuilt.legalEntityId };
+      const voucher: JournalVoucherProposal = { date: rebuilt.date, description: rebuilt.description, lines: rebuilt.lines, total: rebuilt.total, legalEntityId: rebuilt.legalEntityId, regime: payload.regime, chartVersion: payload.chartVersion };
       // The shape, the accounts and the parties checked as any voucher's, the parties read FOR SHARE so they stay as read until commit.
       await checkJournalVoucherLines(ctx, voucher.lines.map((l) => ({ account: l.account, partyId: l.party?.id ?? null, debit: l.debit, credit: l.credit })), true, { legalEntityId: voucher.legalEntityId, date: voucher.date });
       return postJournalVoucher(ctx, voucher, null, null, null, null, null, null, built.documentId);

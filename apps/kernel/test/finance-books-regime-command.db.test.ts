@@ -247,6 +247,44 @@ suite('an owner chooses Circular 99 for an entity (#1403 slice B1)', () => {
     expect(await refusal(approveVoucher(late))).toMatchObject({ code: 'BOOKS_REGIME_CHANGED', status: 409 });
   });
 
+  // A second version of the TT99 chart with no account in it, and the entity's books moved to it: the regime is the same, the version is not (the version branch of voucherRegimeRefused), and the accounts the voucher
+  // names are not in the new chart, so only the order of the two checks tells BOOKS_REGIME_CHANGED from UNKNOWN_ACCOUNT (#5320).
+  const moveToNewVersion = (entity: string) =>
+    admin(async (a) => {
+      await a.query(`INSERT INTO ludy_finance.chart (regime, version, name) VALUES ('tt99', '2026.9', 'Bản thử nghiệm') ON CONFLICT (regime, version) DO NOTHING`);
+      await a.query(`UPDATE ludy_finance.legal_entity_books SET chart_version = '2026.9' WHERE org_id = $1 AND legal_entity_id = $2`, [orgId, entity]);
+    });
+  const storedPayload = (proposalId: string) => admin(async (a) => (await a.query<{ payload: Record<string, unknown> }>(`SELECT payload FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, proposalId])).rows[0]?.payload);
+  const vouchersOf = (table: 'journal_voucher' | 'cash_voucher', entity: string) =>
+    admin(async (a) => (await a.query(`SELECT 1 FROM ludy_finance.${table} WHERE org_id = $1 AND legal_entity_id = $2`, [orgId, entity])).rowCount);
+
+  it('refuses a journal voucher prepared under one version of the TT99 chart and approved under another, as BOOKS_REGIME_CHANGED and not as an unknown account', async () => {
+    const entity = await newEntity('Phiếu kế toán đổi phiên bản hệ thống tài khoản');
+    await setRegime(entity, '2041-01-01');
+    const proposalId = await askVoucher(entity, '2041-03-01');
+    expect(await storedPayload(proposalId)).toMatchObject({ regime: 'tt99', chartVersion: '2026.1' });
+    await moveToNewVersion(entity);
+    expect(await refusal(approveVoucher(proposalId))).toMatchObject({ code: 'BOOKS_REGIME_CHANGED', status: 409, details: { proposed: 'tt99', current: 'tt99', proposedVersion: '2026.1', currentVersion: '2026.9' } });
+    expect(await vouchersOf('journal_voucher', entity)).toBe(0);
+  });
+
+  it('refuses a cash voucher prepared under one version of the TT99 chart and approved under another, as BOOKS_REGIME_CHANGED, and posts nothing', async () => {
+    const entity = await newEntity('Phiếu chi đổi phiên bản hệ thống tài khoản');
+    await setRegime(entity, '2041-01-01');
+    const { proposalId } = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      {
+        command: 'finance.voucher.record',
+        input: { type: 'cash_payment', date: '2041-03-01', cashAccount: '111', personName: 'Nguyễn Văn An', description: 'Chi tiền văn phòng phẩm', lines: [{ account: '6422', amount: '450000' }], legalEntityId: entity },
+      },
+      { actor: asUser(who.member), orgId, idempotencyKey: randomUUID() },
+    );
+    expect(await storedPayload(proposalId)).toMatchObject({ regime: 'tt99', chartVersion: '2026.1' });
+    await moveToNewVersion(entity);
+    expect(await refusal(approveVoucher(proposalId))).toMatchObject({ code: 'BOOKS_REGIME_CHANGED', status: 409, details: { proposedVersion: '2026.1', currentVersion: '2026.9' } });
+    expect(await vouchersOf('cash_voucher', entity)).toBe(0);
+  });
+
   it('refuses to take a choice back while a posting proposal is dated from it on', async () => {
     const entity = await newEntity('Hủy khi còn phiếu chờ');
     await setRegime(entity, '2041-01-01');

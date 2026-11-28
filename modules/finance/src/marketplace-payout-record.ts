@@ -17,7 +17,7 @@ import { JOURNAL_VOUCHER_KIND, MARKETPLACE_PAYOUT_COMMAND, zMarketplacePayoutPro
 import { Decimal, money } from '@ludy/l10n-vn';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
-import { stampBooks } from './books-stamp.ts';
+import { refuseChangedBooksFirst, stampBooks } from './books-stamp.ts';
 import { assertUsableAccounts } from './accounts.ts';
 import { bankLineStates, findBankLine, lockBankLine, type StoredBankLine } from './bank-match.ts';
 import { journalVoucherTitle } from './domain/journal-voucher.ts';
@@ -286,9 +286,11 @@ export function createMarketplacePayoutCommands(options: { maps?: Maps } = {}) {
       // compared line by line with the stored one below, so a changed cost, amount or kind that no longer yields the stored lines is refused.
       const built = await buildPayout(ctx, maps, payload.settlementId, payload.bankLineId, true, payload.adjustments);
       const rebuilt = proposalPayload(built);
+      // The books the proposal was prepared under (stamped when they are not TT133 2026.1) are held before anything is compared with them (#5320).
+      await refuseChangedBooksFirst(ctx, { date: rebuilt.date, legalEntityId: rebuilt.legalEntityId, regime: payload.regime, chartVersion: payload.chartVersion }, rebuilt.lines.map((l) => l.account));
       const wrong = payoutProposalMismatch(payload, rebuilt);
       if (wrong) throw mismatch(wrong);
-      const voucher: JournalVoucherProposal = { date: rebuilt.date, description: rebuilt.description, lines: rebuilt.lines, total: rebuilt.total, legalEntityId: rebuilt.legalEntityId };
+      const voucher: JournalVoucherProposal = { date: rebuilt.date, description: rebuilt.description, lines: rebuilt.lines, total: rebuilt.total, legalEntityId: rebuilt.legalEntityId, regime: payload.regime, chartVersion: payload.chartVersion };
       // The shape, the accounts and the parties checked as any voucher's, the parties read FOR SHARE so they stay as read until commit.
       await checkJournalVoucherLines(ctx, voucher.lines.map((l) => ({ account: l.account, partyId: l.party?.id ?? null, debit: l.debit, credit: l.credit })), true, { legalEntityId: voucher.legalEntityId, date: voucher.date });
       return postJournalVoucher(ctx, voucher, null, null, null, null, null, { settlementId: built.settlementId, bankLineId: built.bankLineId });

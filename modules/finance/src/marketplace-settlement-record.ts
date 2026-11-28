@@ -25,7 +25,7 @@ import {
 import { money, sum, toMoney } from '@ludy/l10n-vn';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
-import { stampBooks } from './books-stamp.ts';
+import { refuseChangedBooksFirst, stampBooks } from './books-stamp.ts';
 import { assertUsableAccounts } from './accounts.ts';
 import { journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
@@ -292,7 +292,9 @@ export function createMarketplaceSettlementCommands(options: { maps?: Maps } = {
       // Every month's voucher in this one transaction, oldest first, each naming the settlement and its month (unique together): the settlement is posted in full or, if one of them is refused, not at all.
       const posted: Array<Awaited<ReturnType<typeof postJournalVoucher>>> = [];
       for (const m of built.months) {
-        const voucher: JournalVoucherProposal = { date: m.date, description: m.description, lines: monthLines(built, m, party), total: m.total, legalEntityId: built.legalEntityId };
+        // The books the proposal was prepared under (stamped when they are not TT133 2026.1) are the books of every month's voucher, held before its accounts are read (#5320).
+        const voucher: JournalVoucherProposal = { date: m.date, description: m.description, lines: monthLines(built, m, party), total: m.total, legalEntityId: built.legalEntityId, regime: payload.regime, chartVersion: payload.chartVersion };
+        await refuseChangedBooksFirst(ctx, voucher, voucher.lines.map((l) => l.account));
         // The shape, the accounts and the parties checked as any voucher's, the parties read FOR SHARE so they stay as read until commit.
         await checkJournalVoucherLines(ctx, voucher.lines.map((l) => ({ account: l.account, partyId: l.party?.id ?? null, debit: l.debit, credit: l.credit })), true, { legalEntityId: voucher.legalEntityId, date: voucher.date });
         posted.push(await postJournalVoucher(ctx, voucher, null, null, null, null, built.settlementId, null, null, m.month));
