@@ -104,13 +104,13 @@ function ItemDialog({ legalEntityId, item, onClose }: { legalEntityId: string; i
   };
   return (
     <Dialog open onOpenChange={(open) => !open && !save.isPending && onClose()}>
-      <DialogContent>
+      <DialogContent closeLabel={common('close')}>
         <form onSubmit={submit} noValidate className="space-y-4" data-testid="cash-forecast-item-form">
           <DialogHeader>
             <DialogTitle>{item ? t('form.editTitle') : t('form.addTitle')}</DialogTitle>
             <DialogDescription>{t('form.description')}</DialogDescription>
           </DialogHeader>
-          <Field label={t('form.label')} error={bad.label ? t('errors.label', { max: CASH_FORECAST_ITEM_LABEL_MAX }) : undefined}>
+          <Field label={t('form.label')} error={bad.label ? t('errors.label', { max: String(CASH_FORECAST_ITEM_LABEL_MAX) }) : undefined}>
             {(control) => <Input {...control} value={draft.label} maxLength={CASH_FORECAST_ITEM_LABEL_MAX} autoComplete="off" onChange={(e) => set('label', e.target.value)} />}
           </Field>
           <div className="grid gap-4 sm:grid-cols-2">
