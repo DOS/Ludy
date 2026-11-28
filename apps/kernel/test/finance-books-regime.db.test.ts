@@ -223,6 +223,34 @@ suite('finance books regime per legal entity (#1403)', () => {
     expect(await refusal(postAsOwner({ entity: defaultEntity, date: '2027-02-01', debit: '1283', credit: '331' }))).toMatchObject({ code: '23503' });
   });
 
+  it('checks a reversal of an opening entry against the chart of its own date unless it is dated on the opening entry (#1403)', async () => {
+    const entity = (
+      await admin((a) =>
+        a.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Công ty đảo số dư', 'company', $2) RETURNING id`, [orgId, owner]),
+      )
+    ).rows[0]?.id as string;
+    const lines = (debit: string, credit: string, reverse = false) =>
+      JSON.stringify([
+        { line_no: 1, account_code: debit, debit: reverse ? '0' : '100000', credit: reverse ? '100000' : '0' },
+        { line_no: 2, account_code: credit, debit: reverse ? '100000' : '0', credit: reverse ? '0' : '100000' },
+      ]);
+    const entry = (c: pg.PoolClient, date: string, source: string, json: string, reverses: string | null) =>
+      c
+        .query<{ id: string }>(`SELECT ludy_finance.post_journal_entry($1::date, 'rev', $2, $3::uuid, $4::jsonb, $5::uuid, 1, $6::uuid) AS id`, [date, source, randomUUID(), json, reverses, entity])
+        .then((r) => r.rows[0]?.id as string);
+    // An opening entry of 31 December 2024 on a TT133-only account, in TT133 books.
+    const opening = await asApp(owner, (c) => entry(c, '2024-12-31', 'finance.opening_balance', lines('5111', '331'), null), true);
+    // The entity then keeps TT99 books from 2026: the opening entry is under TT133 (the day after it, 1 January 2025, is).
+    await admin((a) =>
+      a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2026-01-01')`, [orgId, entity]),
+    );
+    // A reversal dated the day before the TT99 year is checked on its own date, TT133: the mirrored TT133-only account is accepted. Were the rule of an opening entry's reversal applied to it (the day after, TT99), it would be refused.
+    const reversal = await refusal(asApp(owner, (c) => entry(c, '2025-12-31', 'kernel.proposal', lines('5111', '331', true), opening), true));
+    expect(reversal).toBeNull();
+    // The row goes again, so the tests below see the books rows they expect.
+    await admin((a) => a.query(`DELETE FROM ludy_finance.legal_entity_books WHERE org_id = $1 AND legal_entity_id = $2`, [orgId, entity]));
+  });
+
   it('never changes the regime of a year with entries', async () => {
     const edit = (sql: string) => refusal(admin((a) => a.query(sql, [orgId, branch])));
     expect(await edit(`UPDATE ludy_finance.legal_entity_books SET effective_from = '2028-01-01' WHERE org_id = $1 AND legal_entity_id = $2`)).toMatchObject({
