@@ -17546,6 +17546,9 @@ export const vi = {
       checksum: 'MST người bán {taxCode} sai số kiểm tra',
       ok: 'MST người bán {taxCode} hợp lệ',
     },
+    buyer_tax_code: {
+      other: 'MST người mua {taxCode} khác MST của tổ chức; kiểm tra trước khi duyệt',
+    },
     issue_date: { invalid: 'Ngày lập hóa đơn không hợp lệ', future: 'Ngày lập hóa đơn ở tương lai', ok: 'Ngày lập {date}' },
     tax_authority_code: { present: 'Có mã của cơ quan thuế', missing: 'Không có mã của cơ quan thuế' },
     signature: {

@@ -17546,6 +17546,9 @@ export const en = {
       checksum: "The seller's tax code {taxCode} fails its check digit",
       ok: "The seller's tax code {taxCode} is valid",
     },
+    buyer_tax_code: {
+      other: "The buyer's tax code {taxCode} does not match the organization's tax code; check before approving",
+    },
     issue_date: { invalid: 'The issue date is not a valid date', future: 'The issue date is in the future', ok: 'Issued on {date}' },
     tax_authority_code: { present: "Has the tax authority's code", missing: "No tax authority's code" },
     signature: {
