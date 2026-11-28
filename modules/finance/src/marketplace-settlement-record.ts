@@ -291,7 +291,7 @@ export function createMarketplaceSettlementCommands(options: { maps?: Maps } = {
       for (const m of built.months) {
         const voucher: JournalVoucherProposal = { date: m.date, description: m.description, lines: monthLines(built, m, party), total: m.total, legalEntityId: built.legalEntityId };
         // The shape, the accounts and the parties checked as any voucher's, the parties read FOR SHARE so they stay as read until commit.
-        await checkJournalVoucherLines(ctx, voucher.lines.map((l) => ({ account: l.account, partyId: l.party?.id ?? null, debit: l.debit, credit: l.credit })), true);
+        await checkJournalVoucherLines(ctx, voucher.lines.map((l) => ({ account: l.account, partyId: l.party?.id ?? null, debit: l.debit, credit: l.credit })), true, { legalEntityId: voucher.legalEntityId, date: voucher.date });
         posted.push(await postJournalVoucher(ctx, voucher, null, null, null, null, built.settlementId, null, null, m.month));
       }
       // The first month's voucher answers as one voucher does; every month's is listed.

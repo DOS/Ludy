@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { isTaggedCode, subAccountCodeProblem, zAccountCode, zId } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
+import { booksOn, isTt133Books, regimeLabel, type BooksScope } from './books.ts';
 import type { OpeningChartAccount } from './domain/opening-balance.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -31,8 +32,20 @@ export interface OrgChartAccount {
 }
 
 // The org's chart, or the accounts of it named in `codes`: TT133 accounts first match, then the org's sub-accounts.
-export async function chartAccounts(ctx: QueryContext, codes?: readonly string[]): Promise<Map<string, OrgChartAccount>> {
+// With `books` (the entity and the date of a posting), the chart is the one the entity keeps its books under on that date (#1403): TT133 2026.1 as above, or another regime's own chart
+// (ludy_finance.chart_account), which has no sub-accounts of the org (the database refuses them) and no inactive accounts. Without it, TT133 as before.
+export async function chartAccounts(ctx: QueryContext, codes?: readonly string[], books?: BooksScope): Promise<Map<string, OrgChartAccount>> {
   if (codes && codes.length === 0) return new Map();
+  if (books) {
+    const on = await booksOn(ctx, books.legalEntityId, books.date);
+    if (!isTt133Books(on)) {
+      let regimeChart = ctx.trx.selectFrom('ludy_finance.chart_account').select(['code', 'name', 'parent_code']).where('regime', '=', on.regime).where('version', '=', on.version);
+      if (codes) regimeChart = regimeChart.where('code', 'in', [...codes]);
+      const chart = new Map<string, OrgChartAccount>();
+      for (const a of await regimeChart.execute()) chart.set(a.code, { code: a.code, name: a.name, parentCode: a.parent_code, rootCode: a.code, active: true, custom: false });
+      return chart;
+    }
+  }
   let tt133 = ctx.trx.selectFrom('ludy_finance.account').select(['code', 'name', 'parent_code']);
   let own = ctx.trx
     .selectFrom('ludy_finance.org_account')
@@ -75,17 +88,24 @@ export function mergeChart(tt133: readonly Tt133AccountRow[], own: readonly OrgA
 
 // The org's chart as the opening balance check reads it (#320): every account it may name, with whether it is in use.
 // A firm imports its opening balances onto TT133 accounts and its own active sub-accounts; an inactive one is flagged.
-export async function chartOfAccounts(ctx: QueryContext): Promise<Map<string, OpeningChartAccount>> {
-  return new Map([...(await chartAccounts(ctx)).values()].map((a) => [a.code, { code: a.code, name: a.name, active: a.active }]));
+// With `books`, the chart the entity keeps its books under on that date (chartAccounts).
+export async function chartOfAccounts(ctx: QueryContext, books?: BooksScope): Promise<Map<string, OpeningChartAccount>> {
+  return new Map([...(await chartAccounts(ctx, undefined, books)).values()].map((a) => [a.code, { code: a.code, name: a.name, active: a.active }]));
 }
 
 // Refuses a code that is not in the org's chart, or a sub-account that is no longer in use, for a new posting or a
 // vendor default. (A reversal posts on the accounts of the entry it reverses, whatever their state.)
-export async function assertUsableAccounts(ctx: QueryContext, codes: readonly string[]): Promise<void> {
+// With `books` (the entity and the date of the posting), the accounts are those of the chart the entity keeps its books under on that date (#1403): a TT99 entity posts on TT99 accounts only, and a
+// TT133-only account is refused here with the regime named, before the database's own check says it less kindly.
+export async function assertUsableAccounts(ctx: QueryContext, codes: readonly string[], books?: BooksScope): Promise<void> {
   const unique = [...new Set(codes)];
-  const chart = await chartAccounts(ctx, unique);
+  const chart = await chartAccounts(ctx, unique, books);
   const unknown = unique.filter((c) => !chart.has(c));
   if (unknown.length > 0) {
+    const on = books ? await booksOn(ctx, books.legalEntityId, books.date) : null;
+    if (on && !isTt133Books(on)) {
+      throw new DomainError('UNKNOWN_ACCOUNT', 422, `Tài khoản ${unknown.join(', ')} không có trong hệ thống tài khoản theo ${regimeLabel(on.regime)} của pháp nhân`, { codes: unknown, regime: on.regime });
+    }
     throw new DomainError('UNKNOWN_ACCOUNT', 422, `Tài khoản ${unknown.join(', ')} không có trong hệ thống tài khoản của tổ chức`, { codes: unknown });
   }
   const inactive = unique.filter((c) => chart.get(c)?.active === false);

@@ -19,6 +19,7 @@ import { sql } from 'kysely';
 import { zOpeningBalanceImport, type OpeningBalanceImport } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { chartOfAccounts } from './accounts.ts';
+import { dayAfter } from './books.ts';
 import { OPENING_BALANCE_SOURCE, checkOpeningBalance, type LedgerFacts, type OpeningCheck, type OpeningParty } from './domain/opening-balance.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -64,8 +65,10 @@ async function ledgerFacts(ctx: QueryContext, legalEntityId: string): Promise<Le
   };
 }
 
+// The accounts are those of the chart the entity keeps its books under the day AFTER the date of the balances (#1403): they are the trial balance as at the end of that date, which the next day's entries
+// carry on, and the database picks the chart of an opening entry the same way (20270403010000). An entity that starts TT99 books on 1 January opens its balances as at 31 December on TT99 accounts.
 async function check(ctx: QueryContext, input: OpeningBalanceImport, legalEntityId: string): Promise<OpeningCheck> {
-  return checkOpeningBalance(input, await chartOfAccounts(ctx), await ledgerFacts(ctx, legalEntityId));
+  return checkOpeningBalance(input, await chartOfAccounts(ctx, { legalEntityId, date: dayAfter(input.asOf) }), await ledgerFacts(ctx, legalEntityId));
 }
 
 export const openingBalancePreview = defineQuery({
