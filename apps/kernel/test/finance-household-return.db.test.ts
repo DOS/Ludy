@@ -451,7 +451,7 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
     await entry(o.household, o.orgId, '2026-02-10', 'Bán Q1', [['111', 500000, 0], ['511', 0, 500000]]);
     await entry(o.household, o.orgId, '2026-06-30', 'Bán cuối Q2', [['111', 200000, 0], ['5111', 0, 200000]]);
 
-    // Inside Q3: TT133 sub-accounts, active and later-deactivated org sub-accounts, reversal, debit return, non-511 accounts, 521, and boundary days.
+    // Inside Q3: TT133 sub-accounts, active and later-deactivated org sub-accounts, reversal, debit return, non-511 accounts, and boundary days.
     await entry(o.household, o.orgId, '2026-07-01', 'Bán đầu Q3', [['111', 1000000, 0], ['511', 0, 1000000]]);
     await entry(o.household, o.orgId, '2026-07-15', 'Bán Shopee', [['112', 400000, 0], ['511.SHOPEE', 0, 400000]]);
     await entry(o.household, o.orgId, '2026-07-20', 'Bán Live', [['112', 300000, 0], ['5111.LIVE', 0, 300000]]);
@@ -508,6 +508,7 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
     // Q3 has > 50,000 non-511 lines (25,001 entries x 2 lines on 642/112) plus a few 511 entries; Q4 has > 50,000 lines directly on 511 entries.
     await admin(async (a) => {
       await a.query('BEGIN');
+      await a.query('SET LOCAL session_replication_role = replica');
       await a.query(
         `CREATE TEMP TABLE bulk_entries ON COMMIT DROP AS
          SELECT g, ludy_kernel.uuid_v7() AS entry_id, ludy_kernel.uuid_v7() AS source_id,
@@ -521,11 +522,11 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
         [o.orgId, o.household],
       );
       await a.query(
-        `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit)
-         SELECT $1::uuid, entry_id, 1, CASE WHEN is_sales THEN '111' ELSE '642' END, CASE WHEN is_sales THEN 100 ELSE 1000 END, 0 FROM bulk_entries
+        `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, legal_entity_id)
+         SELECT $1::uuid, entry_id, 1, CASE WHEN is_sales THEN '111' ELSE '642' END, CASE WHEN is_sales THEN 100 ELSE 1000 END, 0, $2::uuid FROM bulk_entries
          UNION ALL
-         SELECT $1::uuid, entry_id, 2, CASE WHEN is_sales THEN '511' ELSE '112' END, 0, CASE WHEN is_sales THEN 100 ELSE 1000 END FROM bulk_entries`,
-        [o.orgId],
+         SELECT $1::uuid, entry_id, 2, CASE WHEN is_sales THEN '511' ELSE '112' END, 0, CASE WHEN is_sales THEN 100 ELSE 1000 END, $2::uuid FROM bulk_entries`,
+        [o.orgId, o.household],
       );
       await a.query('COMMIT');
     });
