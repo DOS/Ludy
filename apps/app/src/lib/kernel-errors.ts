@@ -1185,6 +1185,8 @@ export const KERNEL_ERROR_CODES = [
   'STOCK_SURPLUS_STALE',
   // The books of the entity changed since a sale was proposed (#3712 slice 4).
   'BOOKS_REGIME_CHANGED',
+  // A month of depreciation is not built across a change of the books' chart for an asset on an account the two circulars use differently (#1403).
+  'DEPRECIATION_BOOKS_CHANGED',
   // The choice of Circular 99 for an entity's books (#1403, slice B1).
   'BOOKS_DATE_INVALID',
   'BOOKS_FISCAL_YEAR_UNSUPPORTED',
@@ -1192,8 +1194,8 @@ export const KERNEL_ERROR_CODES = [
   'BOOKS_LATER_ROW',
   'BOOKS_NOT_FOUND',
   'BOOKS_OPENING_ENTRY_BLOCKS',
-  'BOOKS_REGIME_IN_USE',
   'BOOKS_PENDING_PROPOSALS',
+  'BOOKS_REGIME_IN_USE',
   'STOCK_COUNT_ENTRY',
   'STOCK_COUNT_ITEM_INACTIVE',
   'STOCK_COUNT_ITEM_ENTITY',

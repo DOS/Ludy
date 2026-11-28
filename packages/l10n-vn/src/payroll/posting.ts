@@ -2,8 +2,9 @@
 // The posting of a pay run (issue #2532; payroll plan docs/plan/payroll.md section 6.4 and row 18, ADR-0046). Pure: the totals of an approved run in, the lines of its posting proposal, the
 // amounts of the payments that settle it, the rows of the bank's bulk-salary file and the cash flag out. No database, no model.
 //
-// The accounts come from a map per regime (`tt133`, `tt99`) held as data, below. Every row of it is `commentary` until the accountant reads it against the primary texts (#2535, plan row 18),
-// as the payroll rules are; the run's approval already refuses a month while a rule is unconfirmed, and the posting proposal carries the map's status so the approver sees it.
+// The accounts come from a map per regime (`tt133`, `tt99`) held as data, below. A map is `commentary` until its accounts have been read against the primary text (#2535, plan row 18), as the payroll rules are; the
+// TT99 map was read against Circular 99/2025/TT-BTC in two independent passes (#1403, owner decision 2026-11-21 on #61) and is `confirmed`, with the points the text leaves open written in its `cite`. The TT133 map
+// stays `commentary`. The run's approval already refuses a month while a rule is unconfirmed, and the posting proposal carries the map's status so the approver sees it.
 // The facts the map rests on are in the repo's charts: unemployment insurance is 3385 in the TT133 chart and 3386 in the TT99 chart, TT99 has no 3385 and no sub-accounts of 334.
 import { money, toMoney, type Money } from '../money.ts';
 import type { InsuranceFund } from './rules/index.ts';
@@ -69,8 +70,15 @@ export const PAYROLL_POSTING_MAPS: Record<PayrollRegime, PostingMap> = {
   },
   tt99: {
     regime: 'tt99',
-    status: 'commentary',
-    cite: 'Circular 99/2025 chart as in ludy_finance.chart_account (3386 unemployment insurance, no 3385, no sub-accounts of 334); the expense accounts are commentary (AMIS, MISA) until the accountant confirms row 18.',
+    status: 'confirmed',
+    cite:
+      'Circular 99/2025/TT-BTC, Phụ lục II, read in the signed Công báo 1565 + 1566 to 1573 + 1574 of 16-11-2025 by two independent passes that agree; the chart is ludy_finance.chart_account. ' +
+      'Read and found as mapped: 334 has no sub-accounts (the accrual is Dr 622, 623, 627, 641, 642, 241 / Cr 334, TK 334 3a); the funds are 3382 union fee, 3383 social insurance, 3384 health insurance and 3386 unemployment insurance, with no 3385 ' +
+      '(TK 338 3.2: Dr the expense and Dr 334 for the employee share / Cr 338); the employer share of the insurance and the union fee goes to the same expense account as the wages (6421 administration, 6411 sales, ' +
+      '622 direct production, 6271 workshop staff); PIT withheld is Dr 334 / Cr 3335 (TK 334 3e); advances are recovered to 141; pay is Dr 334 / Cr 111 or 112. ' +
+      'Open, for the accountant: (1) the other deductions go to 3388, which the text defines only as the residual of 338; it names 138 (1388) for the compensation of damage deducted from pay and gives no sub-account for the court-ordered deductions it lists in 338, ' +
+      'so a damage compensation deducted here should clear 1388 and does not; (2) construction (241) is named by the text only as a debit of the wages, which is silent on the employer share of the insurance on 241, and for construction contractors 622, 623 and 627 ' +
+      'put the machine crews and the insurance on them elsewhere (TK 622 1c, 627 1b); (3) bonuses and holiday pay change the entry when the enterprise has a reward fund or accrues holiday pay (TK 334 3b, 3d), which a run does not carry.',
     expense: { admin: '6421', sales: '6411', production: '622', overhead: '6271', construction: '241' },
     wages: '334',
     social: '3383',

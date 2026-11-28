@@ -188,7 +188,8 @@ suite('an entity switches its books to Circular 99, end to end (#1403 slice B3)'
     const shared = await propose(entity, '9202', '2027-01-16');
     expect((await detailOf(onCharge)).payload?.regime).toBeUndefined();
     await classify(onCharge, '6421');
-    await classify(shared, '6427');
+    // 156 is in both charts and means the same in both; 6427 is TT99's own (TT133 has no such account, so it could not be picked before the switch).
+    await classify(shared, '156');
     await switchToTt99(entity);
     expect(await refusal(approve(onCharge))).toMatchObject({ code: 'BOOKS_REGIME_CHANGED' });
     expect(await documents(entity)).toBe(0);

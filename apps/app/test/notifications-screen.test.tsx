@@ -231,6 +231,18 @@ describe('a run of the same kind is one row', () => {
     expect(mixed.match(/The statement of account 1121 has 3 lines to look at/g)).toHaveLength(2);
   });
 
+  it('says in the bank notice how many lines are references that came back with other figures, in English and Vietnamese (#2197)', () => {
+    const conflict = (n: number, conflicts: string): Item => ({ ...bank(n), detail: { bankAccount: '1121', lines: '3', conflicts } });
+    const en = page({ items: [conflict(1, '1')] });
+    expect(en).toContain('The statement of account 1121 has 3 lines to look at, 1 of them has a reference that is already there with another date or amount');
+    expect(page({ items: [conflict(1, '2')] })).toContain('2 of them have a reference that is already there with another date or amount');
+    const vi = page({ items: [conflict(1, '2')] }, 'vi');
+    expect(vi).toContain('Sao kê tài khoản 1121 có 3 dòng cần xem lại, trong đó 2 dòng có mã tham chiếu đã có nhưng khác ngày hoặc số tiền');
+    // With no conflict the text is the plain one, as before.
+    expect(page({ items: [bank(1)] })).toContain('The statement of account 1121 has 3 lines to look at');
+    expect(page({ items: [bank(1)] })).not.toContain('of them');
+  });
+
   it('counts what still waits: decided proposals (read) stay plain rows and are not in the count', () => {
     const html = page({ items: [...approvals(3), ...approvals(4, true).map((n, i) => ({ ...n, id: `00000000-0000-4000-b000-00000000000${i}` }))] });
     expect(html).toContain('3 proposals wait for your approval');

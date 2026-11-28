@@ -325,13 +325,15 @@ suite('opening balances from Excel (#320)', () => {
   // The opening entry stays first for every writer (#366): the posting guard refuses an entry dated on or before the
   // opening entry in force, and an opening entry dated on or after another entry, whatever the path.
   // Waits until a backend of this database posting through post_journal_entry() waits on a lock (a row lock of the
-  // guard), so a test knows the posting is held by the lock under test rather than by a timer.
+  // guard), so a test knows the posting is held by the lock under test rather than by a timer. A posting command takes the
+  // entity's period_lock row FOR SHARE (period_lock_share) before it reads the books (#1403), the same row the guard holds,
+  // so it may be held there, before it reaches post_journal_entry(): either wait is the posting held by the lock under test.
   async function waitForPostingLock() {
     await admin(async (c) => {
       for (let i = 0; i < 400; i++) {
         const { rows } = await c.query<{ n: number }>(
           `SELECT count(*)::int AS n FROM pg_catalog.pg_stat_activity
-           WHERE datname = pg_catalog.current_database() AND wait_event_type = 'Lock' AND query LIKE '%post_journal_entry%'`,
+           WHERE datname = pg_catalog.current_database() AND wait_event_type = 'Lock' AND (query LIKE '%post_journal_entry%' OR query LIKE '%period_lock_share%')`,
         );
         if ((rows[0]?.n ?? 0) > 0) return;
         await new Promise((resolve) => setTimeout(resolve, 25));
