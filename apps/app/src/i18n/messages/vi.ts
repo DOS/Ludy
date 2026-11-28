@@ -8517,7 +8517,7 @@ export const vi = {
     symbolYear: 'năm {year}',
     symbolType: 'loại {letter}',
     registrationNotice:
-      '{brand} không xem được việc đăng ký sử dụng hóa đơn điện tử của doanh nghiệp bạn ở nhà cung cấp này. Hãy hỏi nhà cung cấp, hoặc kiểm tra với cơ quan thuế, xem doanh nghiệp đã đăng ký chưa. Việc đăng ký và mọi thay đổi (mẫu 01/ĐKTĐ-HĐĐT) làm qua nhà cung cấp hoặc hệ thống thuế.',
+      '{brand} không xem được việc đăng ký sử dụng hóa đơn điện tử của bạn ở nhà cung cấp này. Hãy hỏi nhà cung cấp, hoặc kiểm tra với cơ quan thuế, xem bạn đã đăng ký chưa. Việc đăng ký và mọi thay đổi (mẫu 01/ĐKTĐ-HĐĐT) làm qua nhà cung cấp hoặc hệ thống thuế.',
   },
   marketplaceVatRate: {
     title: 'Sàn: thuế GTGT trên doanh thu bán hàng',
