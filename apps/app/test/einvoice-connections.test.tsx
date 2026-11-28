@@ -113,6 +113,24 @@ describe('EInvoiceConnectionsCard', () => {
     expect(html).not.toContain(`aria-label="${en.einvoiceConnections.connectTitle}"`);
   });
 
+  it.each([['sandbox'], ['misa']])('says on every connection (%s) that the registration cannot be seen and to ask the provider, in words only (#5277)', (provider) => {
+    for (const locale of ['en', 'vi'] as const) {
+      for (const role of ['owner', 'viewer'] as const) {
+        const html = card(role, { locale, connections: [connection({ provider }), connection({ id: 'k2', connectionId: 'c2', provider, status: 'revoked' })] });
+        const notice = esc(catalog(locale).einvoiceConnections.registrationNotice);
+        // One line per connection, whatever its status, in a plain paragraph: no button, link or field inside it.
+        const lines = [...html.matchAll(/<p data-testid="einvoice-registration"[^>]*>([^<]*)<\/p>/g)].map((m) => m[1]);
+        expect(lines, `${provider} ${locale} ${role}`).toEqual([notice, notice]);
+        expect(html.match(/data-testid="einvoice-registration"/g)).toHaveLength(2);
+      }
+    }
+    // It sends the seller to its provider (or the tax authority) and names the registration form; it states nothing about this seller.
+    expect(en.einvoiceConnections.registrationNotice).toContain('Ask the provider');
+    expect(en.einvoiceConnections.registrationNotice).toContain('01/ĐKTĐ-HĐĐT');
+    expect(viMessages.einvoiceConnections.registrationNotice).toContain('Hãy hỏi nhà cung cấp');
+    expect(viMessages.einvoiceConnections.registrationNotice).toContain('01/ĐKTĐ-HĐĐT');
+  });
+
   it('says what the last test found, in words and never in the provider\'s own text', () => {
     for (const state of ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable', 'signing_needs_person'] as const) {
       const html = card('owner', { connections: [connection({ lastTestState: state, lastTestedAt: at })] });

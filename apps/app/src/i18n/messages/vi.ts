@@ -8486,7 +8486,7 @@ export const vi = {
   },
   einvoiceConnections: {
     title: 'Hóa đơn điện tử: nhà cung cấp của bạn',
-    intro: 'Hóa đơn bán ra được phát hành ở nhà cung cấp hóa đơn điện tử mà doanh nghiệp bạn đã đăng ký. {brand} chỉ kết nối vào tài khoản đó và không tạo ký hiệu hóa đơn thay bạn: chưa có ký hiệu thì hãy tạo ở trang của nhà cung cấp trước.',
+    intro: 'Hóa đơn bán ra được phát hành ở nhà cung cấp hóa đơn điện tử mà bạn đã đăng ký. {brand} chỉ kết nối vào tài khoản đó và không tạo ký hiệu hóa đơn thay bạn: chưa có ký hiệu thì hãy tạo ở trang của nhà cung cấp trước.',
     noConnections: 'Chưa kết nối nhà cung cấp nào.',
     connectTitle: 'Kết nối nhà cung cấp',
     offlineNote: 'Nhà cung cấp thử chạy ngay trong hệ thống này, không gọi ra ngoài và không ghi gì vào sổ sách.',
@@ -8533,6 +8533,8 @@ export const vi = {
     symbolUncoded: 'không có mã',
     symbolYear: 'năm {year}',
     symbolType: 'loại {letter}',
+    registrationNotice:
+      '{brand} không xem được việc đăng ký sử dụng hóa đơn điện tử của bạn ở nhà cung cấp này. Hãy hỏi nhà cung cấp, hoặc kiểm tra với cơ quan thuế, xem bạn đã đăng ký chưa. Việc đăng ký và mọi thay đổi (mẫu 01/ĐKTĐ-HĐĐT) làm qua nhà cung cấp hoặc hệ thống thuế.',
   },
   marketplaceVatRate: {
     title: 'Sàn: thuế GTGT trên doanh thu bán hàng',

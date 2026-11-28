@@ -73,6 +73,10 @@ function ConnectionItem({ connection, series, entities, canManage }: { connectio
       <p className="mt-1 text-sm text-muted-foreground">
         {connection.lastTestState ? `${t(STATE_KEYS[connection.lastTestState])}${connection.lastTestedAt ? ` · ${t('testedAt', { when: f.dateTime(connection.lastTestedAt) })}` : ''}` : t('neverTested')}
       </p>
+      {/* Registration (Decree 254, Circular 91 Art. 6): no adapter reports one today, so every connection says so in words and sends the seller to its provider; never a claim that the seller is registered (#5277). */}
+      <p data-testid="einvoice-registration" className="mt-1 text-xs text-muted-foreground">
+        {t('registrationNotice')}
+      </p>
       {canManage && (
         <div className="mt-2 flex flex-wrap gap-2">
           {live && (
