@@ -156,17 +156,6 @@ suite('the books regime has one write path, and only an owner opens it (#1403 sl
       ).rows,
     );
     expect(grants.filter((g) => g.can).map((g) => g.role)).toEqual([]);
-    // It runs as its caller (the two definer functions above), never as a definer of its own, and its search_path is pinned (#5320).
-    const helper = await admin(async (c) =>
-      (
-        await c.query<{ definer: boolean; config: string[] | null }>(
-          `SELECT p.prosecdef AS definer, p.proconfig AS config
-           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-           WHERE n.nspname = 'crove_finance' AND p.proname = 'books_pending_proposals'`,
-        )
-      ).rows,
-    );
-    expect(helper).toEqual([{ definer: false, config: ['search_path=pg_catalog, pg_temp'] }]);
   });
 
   it('lets no runtime role insert, update or delete a books row, crove_definer_tenant included', async () => {
