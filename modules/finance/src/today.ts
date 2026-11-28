@@ -73,7 +73,7 @@ export const financeToday = defineQuery({
     if (ACTORS.includes(ctx.role)) {
       items.push(...(await proposalTodayItems(ctx, userId, to)));
       items.push(...(await einvoiceItems(ctx, to)));
-      items.push(...(await originalItems(ctx)));
+      items.push(...(await originalItems(ctx, userId)));
       items.push(...(await bankItems(ctx, entities, to)));
       items.push(...(await reminderItems(ctx, entities, today, to)));
       items.push(...(await lowStockToday(ctx, to)));
@@ -272,18 +272,18 @@ async function einvoiceItems(ctx: QueryContext, to: Link): Promise<TodayItem[]> 
 // The originals still to fetch (a mail with only a lookup link or code, #2286: the kernel's read answers owners, admins
 // and members of the whole org only) and the originals attached to a posted invoice that differ from it or are not
 // verified, which the caller was told about and has not opened yet (#2335).
-async function originalItems(ctx: QueryContext): Promise<TodayItem[]> {
+async function originalItems(ctx: QueryContext, userId: string): Promise<TodayItem[]> {
   const items: TodayItem[] = [];
   const needed = await ctx.query<{ total: number }>('kernel.inbox.originals', {});
   if (needed.status === 'ok' && needed.value.total > 0) {
     items.push({ kind: 'flag', app: 'finance', id: 'originals-needed', title: { key: 'financeOriginalsNeeded', params: { count: needed.value.total } }, count: needed.value.total, severity: 'info', href: '/inbox' });
   }
-  // The caller's own unread notices of that kind (the policy keeps a member to their own rows), counted here rather than read
-  // from kernel.notification.list, which stops at its newest 30.
+  // The caller's own unread notices of that kind (filtered explicitly by caller and entity scope via RLS), counted
+  // here rather than read from kernel.notification.list, which stops at its newest 30.
   const { rows } = await sql<{ n: string; subject: string | null }>`
     SELECT pg_catalog.count(*)::text AS n, pg_catalog.min(subject_id::text) AS subject
     FROM ludy_kernel.notification
-    WHERE org_id = ${ctx.orgId} AND kind = ${ORIGINAL_FLAGGED} AND read_at IS NULL`.execute(ctx.trx);
+    WHERE org_id = ${ctx.orgId} AND user_id = ${userId}::uuid AND kind = ${ORIGINAL_FLAGGED} AND read_at IS NULL`.execute(ctx.trx);
   const flagged = Number(rows[0]?.n ?? 0);
   if (flagged > 0) {
     items.push({
