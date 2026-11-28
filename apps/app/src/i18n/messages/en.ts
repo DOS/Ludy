@@ -8392,6 +8392,7 @@ export const en = {
     qttPrepaid: '[15] Tax prepaid in the year (dong)',
     qttNoPayment: '[09c] Revenue on platforms with no payment function (dong)',
     qttInvalid: 'Type whole dong only, with no separators and no fraction.',
+    qttFile: '02-cnkd-tncn-qtt-{year}-{org}.xlsx',
     qttDraft: 'These figures are provisional: the rules below are still waiting for the accountant. Every figure that depends on them says so.',
     qttUnconfirmedRate: 'The tax rate {key} of the revenue band, from {date}',
     qttPeriod: 'Year {year}, from {from} to {to}',
