@@ -28,7 +28,17 @@ export function normalizeSalesTotal(raw: string | null | undefined): string {
 
 function salesLines(ctx: Ctx, entity: string) {
   return ctx.trx
-    .selectFrom('ludy_finance.journal_line as l')
+    .with(
+      (cte) => cte('custom_511').materialized(),
+      (db) =>
+        db
+          .selectFrom('ludy_finance.org_account')
+          .select(sql<string[]>`coalesce(array_agg(code), '{}'::text[])`.as('codes'))
+          .where('org_id', '=', ctx.orgId)
+          .where('root_code', '=', '511'),
+    )
+    .selectFrom('custom_511 as c')
+    .crossJoin('ludy_finance.journal_line as l')
     .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
     .where('l.org_id', '=', ctx.orgId)
     .where('l.legal_entity_id', '=', entity)
@@ -36,7 +46,8 @@ function salesLines(ctx: Ctx, entity: string) {
     .where((eb) =>
       eb.or([
         eb('l.account_code', 'like', '511%'),
-        eb('l.account_code', 'in', eb.selectFrom('ludy_finance.org_account').select('code').where('org_id', '=', ctx.orgId).where('root_code', '=', '511')),
+        // Precompute org_account codes once in a materialized CTE so OR does not trigger a per-row RLS SubPlan over 50k+ lines (#3216).
+        sql<boolean>`l.account_code = ANY(c.codes)`,
       ]),
     );
 }
