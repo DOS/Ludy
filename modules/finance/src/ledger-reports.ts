@@ -76,6 +76,8 @@ interface LedgerDataRow {
   parties: Array<{ id: string; name: string; tax_code: string | null }>;
 }
 
+const periodTooLarge = () => new DomainError('PERIOD_TOO_LARGE', 422, `Kỳ này có hơn ${LEDGER_LINE_LIMIT} dòng bút toán; hãy chọn kỳ ngắn hơn`);
+
 // The chart, the opening balance, the period's lines and their parties in ONE statement (#365): a statement sees one
 // snapshot even in the query's READ COMMITTED transaction, so an entry posted while the report reads is in all of it or
 // in none (four statements could show a reversal in the period without the entry it undoes in the opening balance).
@@ -83,6 +85,20 @@ interface LedgerDataRow {
 // those of one legal entity (#1280); the chart and the parties are the org's.
 async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntityId: string): Promise<LedgerData> {
   const period = ledgerPeriod(periodText);
+  // A period over the limit is decided here, before the statement below sorts the lines and aggregates them into JSON just to count them in JavaScript (#5300): a probe stops at one
+  // line past the limit, reads no sort key and builds no JSON, so the refusal is cheap even at 50,000 lines. The count on the loaded lines below stays, since the lines may change between the two
+  // statements (the single statement is what keeps one snapshot, #365).
+  const probe = await sql<{ n: string }>`
+    SELECT count(*)::text AS n FROM (
+      SELECT 1 FROM ludy_finance.journal_entry AS j
+      INNER JOIN ludy_finance.journal_line AS l ON l.org_id = j.org_id AND l.entry_id = j.id
+      WHERE j.org_id = ${ctx.orgId} AND j.legal_entity_id = ${legalEntityId} AND j.entry_date >= ${period.from} AND j.entry_date <= ${period.to}
+      LIMIT ${LEDGER_LINE_LIMIT + 1}
+    ) AS probe
+  `.execute(ctx.trx);
+  if (Number(probe.rows[0]?.n ?? 0) > LEDGER_LINE_LIMIT) {
+    throw periodTooLarge();
+  }
   // The org's whole chart (#319): the TT133 accounts and the org's sub-accounts, inactive ones included (posted lines
   // may name them). A sub-account's parent is its parent_code, so it rolls up into its parent like a TT133 account.
   const tt133 = ctx.trx.selectFrom('ludy_finance.account').select(['code', 'name', 'parent_code']);
@@ -162,7 +178,7 @@ async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntity
   const data = rows[0];
   if (!data) throw new Error('the ledger statement returned no row');
   if (data.lines.length > LEDGER_LINE_LIMIT) {
-    throw new DomainError('PERIOD_TOO_LARGE', 422, `Kỳ này có hơn ${LEDGER_LINE_LIMIT} dòng bút toán; hãy chọn kỳ ngắn hơn`);
+    throw periodTooLarge();
   }
 
   const chart = [...mergeChart(data.tt133, data.own).values()]
