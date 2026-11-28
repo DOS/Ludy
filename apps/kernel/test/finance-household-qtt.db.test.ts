@@ -225,7 +225,8 @@ suite('the 02/CNKD-TNCN-QTT annual worksheet of a household business (#5285)', (
     const o = await org();
     await setProfile(o);
     await entry(o.household, o.orgId, '2026-05-05', 'Bán hàng', [['111', 1_500_000_000, 0], ['511', 0, 1_500_000_000]]);
-    await entry(o.household, o.orgId, '2026-06-05', 'Chi phí bán hàng', [['641', 5_000_000, 0], ['111', 0, 5_000_000]]);
+    // Account 821 (corporate income tax expense) is in the chart and in no expense group of the seeded map.
+    await entry(o.household, o.orgId, '2026-06-05', 'Chi phí thuế', [['821', 5_000_000, 0], ['111', 0, 5_000_000]]);
     const unmapped = await qtt(o);
     expect(unmapped.holds).toEqual(['unmapped_costs']);
     expect(unmapped.unmappedCosts).toBe('5000000');
