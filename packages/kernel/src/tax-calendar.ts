@@ -164,7 +164,7 @@ export const taxProfileGet = defineQuery({
   handler: async (ctx): Promise<StoredTaxProfile> => readTaxProfile(ctx),
 });
 
-// The table's guard (ludy_finance.tax_profile_fiscal_year_guard, #5311, trigger on ludy_kernel.tax_profile) refuses a change of the month the fiscal year ends while the org keeps Circular 99
+// The table's guard (the finance module's tax_profile_fiscal_year_guard trigger on ludy_kernel.tax_profile, #5311) refuses a change of the month the fiscal year ends while the org keeps Circular 99
 // books, which start on a 1 January; any other error is rethrown for the runtime to map.
 function fiscalYearRefusal(error: unknown): never {
   const e = error as { code?: unknown; message?: unknown } | null;
