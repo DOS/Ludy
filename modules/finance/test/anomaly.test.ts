@@ -153,4 +153,23 @@ describe('anomalyChecks', () => {
   it('raises nothing on a normal invoice', () => {
     expect(anomalyChecks({ sellerBankAccount: '0011000000000', total: '1100000', lines: [{ description: 'Giấy A4', unitPrice: '62000' }] }, history)).toEqual([]);
   });
+
+  it('skips the amount rule on an adjustment or replacement invoice while keeping bank account and price checks (#2425)', () => {
+    // A small positive delta would trip the low-amount rule on a regular invoice.
+    expect(amountCheck('100000', history.totals)?.params).toMatchObject({ direction: 'low', usual: '1000000', count: '5' });
+
+    const adjustment = { kind: 'adjustment' as const, template: '1', series: 'C26TAB', number: '1234', issueDate: '2026-09-15', note: null };
+    const replacement = { ...adjustment, kind: 'replacement' as const };
+    expect(anomalyChecks({ sellerBankAccount: '0011000000000', total: '100000', lines: [{ description: 'Giấy A4', unitPrice: '60000' }], related: adjustment }, history)).toEqual([]);
+    expect(
+      anomalyChecks({ sellerBankAccount: '0987654321', total: '100000', lines: [{ description: 'Giấy A4', unitPrice: '90000' }], related: replacement }, history).map((c) => c.id),
+    ).toEqual(['anomaly_bank', 'anomaly_price']);
+    expect(anomalyChecks({ sellerBankAccount: '0011000000000', total: '100000', lines: [{ description: 'Giấy A4', unitPrice: '60000' }], related: true }, history)).toEqual([]);
+    expect(anomalyChecks({ sellerBankAccount: '0011000000000', total: '100000', lines: [{ description: 'Giấy A4', unitPrice: '60000' }], related: false }, history).map((c) => c.id)).toEqual([
+      'anomaly_amount',
+    ]);
+    expect(anomalyChecks({ sellerBankAccount: '0011000000000', total: '100000', lines: [{ description: 'Giấy A4', unitPrice: '60000' }], related: null }, history).map((c) => c.id)).toEqual([
+      'anomaly_amount',
+    ]);
+  });
 });
