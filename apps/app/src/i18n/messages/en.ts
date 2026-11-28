@@ -10686,7 +10686,7 @@ export const en = {
     statementsExport: 'Export financial statements to Excel',
     statementsFile: '{brandSlug}-bao-cao-tai-chinh-{period}-{org}.xlsx',
     statementsB01Draft: 'Draft, the accountant has not confirmed how it is built',
-    statementsTt99: 'The income statement (B02) is read under the Circular 99 chart of accounts (line codes come from secondary sources, not checked against the official text). The HTKK file exists only for books under Circular 133.',
+    statementsTt99: 'The income statement (B02) is read under the Circular 99 chart of accounts (line codes were checked against the official text; the accountant has not confirmed them). The HTKK file exists only for books under Circular 133.',
     statementsMixedCharts: 'This period or a comparison column was partly booked under the other chart of accounts. Every column is read under the chart of the last day, so figures may be off: check with your accountant.',
     statementsUnbalanced: 'Total assets (code {assets}) and total sources (code {sources}) differ: check the account balances.',
     htkkTitle: 'Financial statements {year} for HTKK',
