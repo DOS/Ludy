@@ -667,7 +667,7 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
           if (error instanceof DomainError && error.status === 429) {
             const wait = (error.details as { retryAfterSeconds?: unknown } | undefined)?.retryAfterSeconds;
             if (typeof wait === 'number' && (error.details as { what?: unknown } | undefined)?.what === 'daily_drafts') {
-              return { code: RPC_INTERNAL, message: `The daily limit of drafts this connection may make is used up; it starts again at midnight UTC (in ${Math.max(1, Math.ceil(wait))} seconds)` };
+              return { code: RPC_INTERNAL, message: `The daily limit of drafts this connection, or this organization's connections together, may make is used up; it starts again at midnight UTC (in ${Math.max(1, Math.ceil(wait))} seconds)` };
             }
             if (typeof wait === 'number') {
               const writes = (error.details as { what?: unknown } | undefined)?.what === 'writes';
