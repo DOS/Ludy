@@ -39,7 +39,16 @@ export async function booksOn(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEnt
 // under the same row FOR UPDATE (legal_entity_books_guard), so a switch of regime cannot commit between the moment a posting reads the books and the
 // moment it commits: the switch waits for the posting, or the posting waits for the switch and then reads the new books. Every posting takes it first,
 // with the entity already resolved, before the first read of the books. Commands only: a share lock is refused in a read-only transaction.
+// A database from before that migration has no such function and no command that switches books (set_books_regime is later), so there is nothing to
+// wait for and the lock is skipped; this is only seen by the tests that run the current code on an old schema (activity-legal-entity.db.test.ts). Once
+// the function has been seen it is never looked for again.
+let lockFunctionSeen = false;
 export async function lockBooks(ctx: Pick<QueryContext, 'trx'>, legalEntityId: string): Promise<void> {
+  if (!lockFunctionSeen) {
+    const { rows } = await sql<{ present: boolean }>`SELECT pg_catalog.to_regprocedure('ludy_finance.period_lock_share(uuid)') IS NOT NULL AS present`.execute(ctx.trx);
+    if (rows[0]?.present !== true) return;
+    lockFunctionSeen = true;
+  }
   await sql`SELECT ludy_finance.period_lock_share(${legalEntityId}::uuid)`.execute(ctx.trx);
 }
 
