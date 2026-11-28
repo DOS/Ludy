@@ -349,6 +349,10 @@ suite('finance books regime per legal entity (#1403)', () => {
   });
 
   it('shows each actor the books rows of its own entities only, and lets no runtime role write them', async () => {
+    // The default entity needs a row of its own to be seen: a TT133 row from a 1 January (the fiscal year ends in December), after the branch's TT99 row of 2027.
+    await admin((a) =>
+      a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt133', '2026.1', '2031-01-01')`, [orgId, defaultEntity]),
+    );
     const seen = (userId: string) =>
       asApp(userId, async (c) => (await c.query<{ e: string }>('SELECT legal_entity_id AS e FROM ludy_finance.legal_entity_books ORDER BY effective_from')).rows.map((r) => r.e));
     expect(await seen(owner)).toEqual([branch, defaultEntity]);
