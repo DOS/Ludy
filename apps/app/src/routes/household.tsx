@@ -831,6 +831,22 @@ function QttReturn({ entityId }: { entityId: string }) {
   });
   // A figure typed wrongly never leaves the last good answer on the screen: the figures would leave that amount out.
   const data = bad ? undefined : sheet.data;
+  // The file is the worksheet as the screen shows it (the same typed amounts); a held worksheet has no file, and the server refuses it too.
+  const download = useMutation({
+    mutationFn: async () => {
+      const query = new URLSearchParams({ legalEntityId: entityId, year });
+      if (withheld !== '') query.set('withheld', withheld);
+      if (prepaid !== '') query.set('prepaid', prepaid);
+      if (noPayment !== '') query.set('noPaymentRevenue', noPayment);
+      const response = await apiFetch(`/api/export/household-qtt.xlsx?${query.toString()}`);
+      const url = URL.createObjectURL(await response.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = t('qttFile', { year, org: getCurrentOrg() ?? 'org' });
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+  });
   const provisional = (code: string, amount: string | null) =>
     data?.commentary && amount !== null && QTT_RULE_LINES.has(code) ? (
       <span className="block text-xs text-muted-foreground" data-testid="household-qtt-provisional">
@@ -840,7 +856,7 @@ function QttReturn({ entityId }: { entityId: string }) {
   const field = (id: string, label: string, value: string, set: (next: string) => void) => (
     <div className="space-y-1">
       <Label htmlFor={id}>{label}</Label>
-      <Input id={id} className="w-56" inputMode="numeric" value={value} onChange={(e) => set(e.target.value)} aria-invalid={isBadDong(value.trim())} />
+      <Input id={id} className="w-56" inputMode="numeric" value={value} onChange={(e) => set(e.target.value)} aria-invalid={isBadDong(value.trim())} aria-describedby={isBadDong(value.trim()) ? 'qtt-amounts-error' : undefined} />
     </div>
   );
   const reduction = data?.reduction ?? null;
@@ -848,15 +864,21 @@ function QttReturn({ entityId }: { entityId: string }) {
     <Card className="mb-6 block p-4" data-testid="household-qtt">
       <h2 className="text-sm font-semibold text-foreground">{t('qttTitle')}</h2>
       <p className="mb-3 text-sm text-muted-foreground">{t('qttHint')}</p>
-      <div className="mb-3 space-y-1">
-        <Label htmlFor="qtt-year">{t('kinds.year')}</Label>
-        <Input id="qtt-year" className="w-24" inputMode="numeric" maxLength={4} value={year} onChange={(e) => setYear(e.target.value)} />
+      <div className="mb-3 flex flex-wrap items-end gap-3">
+        <div className="space-y-1">
+          <Label htmlFor="qtt-year">{t('kinds.year')}</Label>
+          <Input id="qtt-year" className="w-24" inputMode="numeric" maxLength={4} value={year} onChange={(e) => setYear(e.target.value)} aria-invalid={!valid} />
+        </div>
+        <Button variant="outline" loading={download.isPending} disabled={!valid || !data || data.holds.length > 0 || bad} onClick={() => download.mutate()} data-testid="household-qtt-download">
+          {t('download')}
+        </Button>
       </div>
+      {download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
       <fieldset className="mb-3" data-testid="household-qtt-entered">
         <legend className="mb-1 text-xs text-subtle-foreground">{t('qttEntered')}</legend>
         <p className="mb-2 text-xs text-muted-foreground">{t('qttEnteredHint')}</p>
         {bad && (
-          <p className="mb-2 text-xs text-destructive" role="alert" data-testid="household-qtt-invalid">
+          <p id="qtt-amounts-error" className="mb-2 text-xs text-destructive" role="alert" data-testid="household-qtt-invalid">
             {t('qttInvalid')}
           </p>
         )}

@@ -30,6 +30,7 @@ const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 const LABEL_EN = 'Provisional figures: the accountant has not confirmed the percentages yet';
 const LABEL_VI = 'Số liệu tạm, kế toán chưa xác nhận tỷ lệ';
 const E = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
+const DOWNLOAD_DISABLED = /<button[^>]*data-testid="household-qtt-download"[^>]*\sdisabled=""|<button[^>]*\sdisabled=""[^>]*data-testid="household-qtt-download"/;
 const count = (html: string, text: string) => html.split(text).length - 1;
 const plain = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
 
@@ -183,9 +184,38 @@ describe('the 02/CNKD-TNCN-QTT worksheet on the household screen (#5285)', () =>
     expect(text).toContain('[15] Tax prepaid in the year (dong)');
     expect(text).toContain('[09c] Revenue on platforms with no payment function (dong)');
     expect(html).not.toContain('data-testid="household-qtt-invalid"');
-    // There is no file to download yet (the Excel file is the next step), and the percentage method's worksheet is not here.
-    expect(html).not.toContain('household-qtt-download');
+    // The file is there to download, and the percentage method's worksheet is not here.
+    expect(html).toContain('data-testid="household-qtt-download"');
+    expect(html).not.toMatch(DOWNLOAD_DISABLED);
     expect(html).not.toContain('data-testid="household-cnkd"');
+  });
+
+  it('marks a year that is not valid and links a wrongly typed amount to its error (labels, not colour, carry the state)', () => {
+    const input = (html: string, id: string) => html.match(new RegExp(`<input[^>]*\\bid="${id}"[^>]*>`))?.[0] ?? '';
+    vi.useFakeTimers();
+    try {
+      // A valid year and amounts: nothing is flagged and no field points at an error text.
+      vi.setSystemTime(new Date('2026-11-28T05:00:00Z'));
+      const valid = page();
+      expect(input(valid, 'qtt-year')).toContain('aria-invalid="false"');
+      for (const id of ['qtt-withheld', 'qtt-prepaid', 'qtt-no-payment']) {
+        expect(input(valid, id), id).toContain('aria-invalid="false"');
+        expect(input(valid, id), id).not.toContain('aria-describedby');
+      }
+      // A year before the first one the form covers is flagged, and there is no file to download for it.
+      vi.setSystemTime(new Date('2025-06-01T05:00:00Z'));
+      cache.current.clear();
+      const early = page();
+      expect(input(early, 'qtt-year')).toContain('aria-invalid="true"');
+      expect(early).toMatch(DOWNLOAD_DISABLED);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('has no file to download while the worksheet is held (the server refuses it too)', () => {
+    const html = page({ qtt: qtt({ holds: ['below_threshold'], rate: null, reduction: null }) });
+    expect(html).toMatch(DOWNLOAD_DISABLED);
   });
 
   it('labels every figure that depends on a rule while a row behind it is unconfirmed, and lists the rows', () => {
