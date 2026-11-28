@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { INVOICE_CHECK_CODES, zCheck } from '@ludy/kernel-contract';
 import { checkInvoice, classificationCheck, enterpriseCheckDigit, SIGNATURE_REASONS, type InvoiceCheck, type ParsedInvoice } from '@ludy/l10n-vn';
-import { relatedCheck } from '../src/extract.ts';
+import { buyerTaxCodeCheck, relatedCheck } from '../src/extract.ts';
 import { enteredRateCheck } from '../src/record.ts';
 import { anomalyChecks, payrollCashCheck, payrollLiabilityCheck } from '../src/domain/anomaly.ts';
 
@@ -90,6 +90,8 @@ describe('invoice check codes', () => {
     related('adjustment', ORIGINAL),
     related('replacement', null),
     related('adjustment', null),
+    // And when a purchase invoice names another company's tax code as buyer (#899).
+    buyerTaxCodeCheck(VALID_CODE, '0101234564')!,
     // And the reviser this one, for a rate the accountant entered (#918).
     enteredRateCheck('USD', '25450'),
     // And the account check (#2091): lines no rule matched, and every line with its account.
@@ -123,6 +125,7 @@ describe('invoice check codes', () => {
     expect(byCode.get('currency.rate_entered')?.params).toEqual({ currency: 'USD', rate: '25450' });
     expect(byCode.get('lines_sum.mismatch')?.params).toEqual({ lines: expect.any(String), subtotal: '1' });
     expect(byCode.get('seller_tax_code.ok')?.params).toEqual({ taxCode: VALID_CODE });
+    expect(byCode.get('buyer_tax_code.other')?.params).toEqual({ taxCode: VALID_CODE });
     expect(byCode.get('issue_date.ok')?.params).toEqual({ date: parsed.issueDate });
     expect(byCode.get('amount_scale.fraction')?.params).toEqual({ amount: '1980000.5' });
     expect(byCode.get('amount_scale.rounded')?.params).toEqual({ amount: '1000000.4', difference: '1', line: '1' });

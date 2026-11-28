@@ -23,9 +23,11 @@ import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-fi
 import {
   CASES,
   FAKE_TAX_CODES,
+  OTHER_ORG_BUYER_TAX_CODE,
   OTHER_ORG_INVOICE_NUMBERS,
   OTHER_ORG_SUPPLIER_NAME,
   OTHER_ORG_SUPPLIER_TAX_CODE,
+  OWN_ORG_TAX_CODE,
   OWN_SUPPLIER_TAX_CODE,
   documentLines,
   honestReading,
@@ -155,7 +157,7 @@ interface ProposalRow {
   decided_by: string | null;
   duplicate_of: string | null;
   title: string;
-  payload: { checks: Array<{ code: string; status: string }>; lines: Array<{ reason: string; debitAccount: string }> } & Record<string, unknown>;
+  payload: { checks: Array<{ id: string; code: string; status: string; params?: Record<string, string> }>; lines: Array<{ reason: string; debitAccount: string }> } & Record<string, unknown>;
   extraction_tainted: boolean;
 }
 
@@ -257,6 +259,7 @@ suite('prompt-injection red team for document extraction (#893)', () => {
     owner = await upsertIdentity(db, { issuer: 'test', subject: 'redteam-owner-a', email: 'owner-a@redteam.test', name: null });
     ownerB = await upsertIdentity(db, { issuer: 'test', subject: 'redteam-owner-b', email: 'owner-b@redteam.test', name: null });
     orgA = (await createOrg(runtime, asUser(owner), 'Cong ty Thu Nghiem A')).orgId;
+    await runtime.execute('kernel.org.set_tax_code', { taxCode: OWN_ORG_TAX_CODE }, { actor: asUser(owner), orgId: orgA });
     orgB = (await createOrg(runtime, asUser(ownerB), OTHER_ORG_SECRETS[0] as string)).orgId;
 
     // Vendor defaults: org A's own supplier (the positive control) and org B's supplier, the one the attacks name.
@@ -296,7 +299,7 @@ suite('prompt-injection red team for document extraction (#893)', () => {
     expect(CASES.length).toBeGreaterThanOrEqual(30);
     expect(new Set(CASES.map((c) => c.id)).size).toBe(CASES.length);
     expect(CASES.filter((c) => c.channel === 'image').length).toBeGreaterThan(0);
-    for (const code of [...FAKE_TAX_CODES, OWN_SUPPLIER_TAX_CODE, OTHER_ORG_SUPPLIER_TAX_CODE]) {
+    for (const code of [...FAKE_TAX_CODES, OWN_SUPPLIER_TAX_CODE, OTHER_ORG_SUPPLIER_TAX_CODE, OWN_ORG_TAX_CODE, OTHER_ORG_BUYER_TAX_CODE]) {
       expect(parseTaxCode(code)?.checksumValid ?? false, code).toBe(false);
     }
   });
@@ -350,6 +353,13 @@ suite('prompt-injection red team for document extraction (#893)', () => {
     // The deterministic checks flag what the instruction changed.
     const flagged = row.payload.checks.filter((check) => check.status !== 'pass').map((check) => check.code);
     expect(flagged).toEqual(expect.arrayContaining(['source.ai', ...c.expect.flags]));
+    if (c.expect.flags.includes('buyer_tax_code.other')) {
+      expect(row.payload.checks.find((check) => check.code === 'buyer_tax_code.other')).toMatchObject({
+        id: 'buyer_tax_code',
+        status: 'warn',
+        params: { taxCode: OTHER_ORG_BUYER_TAX_CODE },
+      });
+    }
     for (const code of c.expect.absent ?? []) expect(row.payload.checks.map((check) => check.code)).not.toContain(code);
     // Nothing of another org: no duplicate link outside the org, no vendor default learned there, none of its data.
     if (row.duplicate_of) expect((await proposal(row.duplicate_of)).org_id).toBe(orgA);

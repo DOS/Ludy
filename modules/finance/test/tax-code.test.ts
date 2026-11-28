@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizeTaxCode } from '@ludy/kernel-contract';
 import { parseTaxCode } from '@ludy/l10n-vn';
 import { journalMemo } from '../src/memo.ts';
-import { isOwnTaxCode, readSeller, type OwnTaxCodes } from '../src/own-tax-code.ts';
+import { isOwnTaxCode, ownTaxCodeForEntity, readSeller, type OwnTaxCodes } from '../src/own-tax-code.ts';
 
 describe('the org tax code and the invoice seller tax code', () => {
   it('normalize every input the same way', () => {
@@ -116,5 +116,14 @@ describe('what an invoice is to the books of one legal entity (#2502)', () => {
     expect(reading(HEAD, STRANGER, 'gone', { tenant: HEAD, entities: [] })).toBe('sale');
     expect(reading(STRANGER, HEAD, 'gone', { tenant: HEAD, entities: [] })).toBe('purchase');
     expect(reading(HEAD, STRANGER, 'head', { tenant: null, entities: [{ id: 'head', taxCode: null }] })).toBe('purchase');
+  });
+
+  it('resolves the own tax code of a visible entity, keeps null for a bare entity, and falls back to tenant when unseen', () => {
+    expect(ownTaxCodeForEntity('head', own)).toBe(HEAD);
+    expect(ownTaxCodeForEntity('branch', own)).toBe(BRANCH);
+    expect(ownTaxCodeForEntity('other', own)).toBe(OTHER);
+    expect(ownTaxCodeForEntity('bare', own)).toBeNull();
+    expect(ownTaxCodeForEntity('gone', own)).toBe(HEAD);
+    expect(ownTaxCodeForEntity('gone', { tenant: null, entities: [] })).toBeNull();
   });
 });

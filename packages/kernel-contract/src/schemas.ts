@@ -54,6 +54,8 @@ export const INVOICE_CHECK_CODES = [
   'seller_tax_code.unreadable',
   'seller_tax_code.checksum',
   'seller_tax_code.ok',
+  // Buyer tax code on a purchase invoice does not belong to this org/entity or its branches (#899): non-blocking warning.
+  'buyer_tax_code.other',
   'issue_date.invalid',
   'issue_date.future',
   'issue_date.ok',
