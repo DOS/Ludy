@@ -92,7 +92,7 @@ const LABELS: Record<string, string> = {
   '20': 'Nộp thừa',
 };
 const FULL: Record<string, string> = {
-  '09': '1800000000',
+  '09': String(1_800_000_000),
   '09a': '1500000000',
   '09b': '300000000',
   '09c': '0',
