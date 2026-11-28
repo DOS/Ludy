@@ -15,6 +15,7 @@ import { JOURNAL_VOUCHER_KIND, JOURNAL_VOUCHER_MAX_LINES, PAYROLL_REGIMES, zAcco
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 import { assertUsableAccounts } from './accounts.ts';
+import { booksOn } from './books.ts';
 import { JOURNAL_VOUCHER_SOURCE, journalVoucherProblems, journalVoucherTotal } from './domain/journal-voucher.ts';
 import { postJournalVoucher } from './journal-voucher.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -23,20 +24,7 @@ import { reversedSource } from './source-entry.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
-// The chart an entity keeps its books under on a date: its books row in force (the newest that starts on or before the date), TT133 2026.1 when there is none (the only regime before the
-// books rows existed). The database's own check of every journal line follows the same rule (ludy_finance.check_account_ref).
-export async function booksOn(ctx: QueryContext, legalEntityId: string, date: string): Promise<{ regime: string; version: string }> {
-  const row = await ctx.trx
-    .selectFrom('ludy_finance.legal_entity_books')
-    .select(['regime', 'chart_version'])
-    .where('org_id', '=', ctx.orgId)
-    .where('legal_entity_id', '=', legalEntityId)
-    .where('effective_from', '<=', date)
-    .orderBy('effective_from', 'desc')
-    .limit(1)
-    .executeTakeFirst();
-  return row ? { regime: row.regime, version: row.chart_version } : { regime: 'tt133', version: '2026.1' };
-}
+export { booksOn };
 
 interface PostingLines {
   date: string;
