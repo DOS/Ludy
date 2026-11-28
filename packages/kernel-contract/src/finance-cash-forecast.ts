@@ -24,10 +24,11 @@ export const CASH_FORECAST_TOP_ITEMS = 5;
 // What the forecast leaves out, always shown: the money these would move is not in the figures.
 export const CASH_FORECAST_NOT_INCLUDED = ['payroll', 'insurance', 'tax', 'rent', 'loans', 'recurring'] as const;
 export const zCashForecastNotIncluded = z.enum(CASH_FORECAST_NOT_INCLUDED);
+export type CashForecastNotIncluded = z.infer<typeof zCashForecastNotIncluded>;
 
 // receipt: an open sales invoice on its due date. payable: an open purchase invoice on its estimated date (an overdue one on day 0). approved_payment: an approved supplier payment on the first
-// day its bank file may go. unlinked_payable: the part of 331 no purchase invoice covers, on day 0.
-export const CASH_FORECAST_ITEM_KINDS = ['receipt', 'payable', 'approved_payment', 'unlinked_payable'] as const;
+// day its bank file may go. unlinked_payable: the part of 331 no purchase invoice covers, on day 0. entered_in and entered_out: an occurrence of an item the owner entered (#5326), money coming in or going out.
+export const CASH_FORECAST_ITEM_KINDS = ['receipt', 'payable', 'approved_payment', 'unlinked_payable', 'entered_in', 'entered_out'] as const;
 export const zCashForecastItemKind = z.enum(CASH_FORECAST_ITEM_KINDS);
 export type CashForecastItemKind = z.infer<typeof zCashForecastItemKind>;
 
@@ -52,8 +53,12 @@ export type CashForecastCheckpoint = z.infer<typeof zCashForecastCheckpoint>;
 export const zCashForecastTaxMarker = z.object({ obligation: z.string().min(1).max(64), period: z.string().min(1).max(32), dueDate: zLocalDate });
 export type CashForecastTaxMarker = z.infer<typeof zCashForecastTaxMarker>;
 
-// asOf is day 0 (the database's today, in Vietnam, when left out); the screen leaves it out.
-export const zFinanceCashForecastInput = z.object({ asOf: zLocalDate.optional(), legalEntityId: zId.optional() });
+// asOf is day 0 (the database's today, in Vietnam, when left out); the screen leaves it out. It lies between these days: past the year 9999 a date has no four-digit text and the forecast's own day series (addDays)
+// would answer odd dates, and no books reach so far (the same bounds as the dates of an entered item below).
+const CASH_FORECAST_AS_OF_FIRST_DAY = '2000-01-01';
+const CASH_FORECAST_AS_OF_LAST_DAY = '2100-12-31';
+const zForecastAsOf = zLocalDate.refine((d) => d >= CASH_FORECAST_AS_OF_FIRST_DAY && d <= CASH_FORECAST_AS_OF_LAST_DAY, 'between 2000-01-01 and 2100-12-31');
+export const zFinanceCashForecastInput = z.object({ asOf: zForecastAsOf.optional(), legalEntityId: zId.optional() });
 export type FinanceCashForecastInput = z.infer<typeof zFinanceCashForecastInput>;
 
 export const zCashForecast = z.object({

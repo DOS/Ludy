@@ -10,7 +10,8 @@ import { amountText, statedFiguresProblem } from './overview.ts';
 export const CASH_FORECAST_SENTENCE_MAX = 480;
 export const CASH_FORECAST_SENTENCES_MAX = 3;
 
-export type CashForecastFactItemKind = 'receipt' | 'payable' | 'approved_payment' | 'unlinked_payable';
+// entered_in and entered_out are the items the owner entered (#5326): the note is told the kind only, never the owner's label or its category.
+export type CashForecastFactItemKind = 'receipt' | 'payable' | 'approved_payment' | 'unlinked_payable' | 'entered_in' | 'entered_out';
 export type CashForecastNotIncluded = 'payroll' | 'insurance' | 'tax' | 'rent' | 'loans' | 'recurring';
 
 // What the note is written from: the opening cash, the lowest balance and its day, the three checkpoints and the largest items up to the low day, as decimal strings and ISO dates.
@@ -40,12 +41,16 @@ const KIND_LABEL = {
     payable: 'khoản phải trả người bán (hạn ước tính)',
     approved_payment: 'khoản thanh toán nhà cung cấp đã duyệt',
     unlinked_payable: 'phần phải trả (331) chưa gắn với hóa đơn mua',
+    entered_in: 'khoản thu dự kiến do chủ doanh nghiệp nhập',
+    entered_out: 'khoản chi dự kiến do chủ doanh nghiệp nhập',
   },
   en: {
     receipt: 'receipt from a sales invoice falling due',
     payable: 'payment to a supplier (estimated due date)',
     approved_payment: 'approved supplier payment',
     unlinked_payable: 'part of payables (331) not tied to a purchase invoice',
+    entered_in: 'expected receipt entered by the owner',
+    entered_out: 'expected cost entered by the owner',
   },
 } as const;
 const PAYABLE_CONCRETE_LABEL = {
