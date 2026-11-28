@@ -35,7 +35,7 @@ Let a member of an org publish a booking page, so a client books a meeting in a 
 | Reminders | pg-boss jobs | a reminder job per booking |
 | Public page | the public route pattern of the bio page (`/b/:slug`, #707) and the status page | `/-/b/...`, on the reasoned public list |
 | Abuse | `RateLimiter`, per-IP and per-org budgets | an optional Turnstile check when the deployment sets keys |
-| Holidays | none: the tax calendar does not apply public holidays (#921) | a Vietnamese public holiday list in `@crove/kernel-contract` (fixed dates plus a yearly table for Tết and Hùng Kings, which follow the lunar calendar), and an org's own dates off; the tax calendar can use it later |
+| Holidays | none at the time of writing; the tax calendar now applies the shared holiday list to a deadline on a day off (Decree 252/2026/NĐ-CP, Art. 3(7)) | a Vietnamese public holiday list in `@crove/kernel-contract` (fixed dates plus a yearly table for Tết and Hùng Kings, which follow the lunar calendar), and an org's own dates off; the tax calendar can use it later |
 | Calendar feed | the Social calendar feed (`/cal/:file`) | a member's booking feed later |
 
 ## 3. Design
