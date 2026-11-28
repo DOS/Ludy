@@ -117,7 +117,8 @@ describe('the year-end checklist card', () => {
   it('shows the due date of a return from the answer, with its legal basis, and none for the other items', async () => {
     const html = await render(CHECKLIST, NONE('off'), 'en');
     expect(html).toContain(`Due ${formatDate('2027-03-31', 'en')}`);
-    expect(html.match(/data-testid="year-end-due-/g)).toHaveLength(2);
+    // The due line of the two returns; the hint under the list has its own test id.
+    expect(html.match(/data-testid="year-end-due-(?:statements|cit|pit|household_return)"/g)).toHaveLength(2);
     expect(html).toContain('Annual financial statements: 90 days after the year ends (Law on Accounting, Art. 29(3))');
     expect(html).toContain('Annual corporate income tax finalization: the last day of the third month after the year (Decree 252/2026/NĐ-CP, Art. 10(5)(a))');
     expect(html).toContain('data-testid="year-end-due-hint"');
