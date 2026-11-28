@@ -37,6 +37,8 @@ export interface AccountRule {
   prefixes: readonly string[];
   // Prefixes the rule leaves out of the accounts `prefixes` match (TT99's line 51 reads 821 but not its deferred-tax account 8212, which line 52 reads). No TT133 rule uses it.
   exclude?: readonly string[];
+  // B02 only: an entry with a line on any of these account prefixes is left out of what THIS rule reads (B01 ignores it). TT99's line 02 reads the 511 debit that pairs with a 521 credit, and the period-end entry Dr 511 / Cr 521 (which does not touch 911) must not be read on top of the 521 debit it closes. No TT133 rule uses it.
+  skipEntriesTouching?: readonly string[];
   take: Take;
   // -1 for the lines the form marks (*): contra accounts shown as negative amounts.
   sign?: -1;
@@ -315,9 +317,22 @@ export function buildB02(
   );
   const activity = buckets(inPeriod, false);
   const rules = defs.flatMap((d) => d.rules ?? []);
+  // The activity a rule reads: all of it, or (skipEntriesTouching) what is left once the entries touching those accounts are out; worked out once per distinct list.
+  const skippedActivity = new Map<string, Bucket[]>();
+  const activityOf = (rule: AccountRule): Bucket[] => {
+    const skip = rule.skipEntriesTouching;
+    if (skip === undefined) return activity;
+    const key = JSON.stringify(skip);
+    let kept = skippedActivity.get(key);
+    if (kept === undefined) {
+      kept = buckets(inPeriod.filter((e) => !e.lines.some((l) => skip.some((p) => l.accountCode.startsWith(p)))), false);
+      skippedActivity.set(key, kept);
+    }
+    return kept;
+  };
   const ruleValue = (rule: AccountRule): DecimalValue => {
     let value = money(0);
-    for (const b of activity.filter((x) => matches(rule, x.accountCode))) {
+    for (const b of activityOf(rule).filter((x) => matches(rule, x.accountCode))) {
       if (rule.take === 'debitTurnover') value = value.plus(b.debit);
       else if (rule.take === 'creditTurnover') value = value.plus(b.credit);
       else if (rule.take === 'netDebit') value = value.plus(b.debit.minus(b.credit));

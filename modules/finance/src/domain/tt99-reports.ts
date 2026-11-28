@@ -1,29 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// DRAFT: the TT99 (Circular 99/2025/TT-BTC, which replaces Circular 200/2014 for fiscal years from 1 January 2026) income statement B 02-DN as a map of lines to accounts, for the entities whose books on the period's
-// last day are TT99 (legal_entity_books). The line codes, labels and formulas are the form's as printed on two public pages, https://ketoanleanh.edu.vn/kinh-nghiem-ke-toan/mau-bao-cao-ket-qua-hoat-dong-kinh-doanh-theo-thong-tu-99-2025-tt-btc.html
-// (the whole table) and https://amis.misa.vn/251687/so-sanh-ve-bieu-mau-bao-cao-tai-chinh-giua-thong-tu-99-va-thong-tu-200/ (lines 21 to 24 and 30), which agree. BOTH ARE SECONDARY SOURCES: the official text (Phụ lục IV) has not been read, and
-// an accountant has not verified the map or the accounts below (issue #61, #5187); until then these statements are not for filing, as for tt133-reports.ts. The mapping is data: a correction is a change to this table.
+// DRAFT: the TT99 (Circular 99/2025/TT-BTC, which replaces Circular 200/2014 for fiscal years from 1 January 2026) income statement B 02-DN and statement of financial position B 01-DN as maps of lines to accounts, for the entities whose
+// books on the period's last day are TT99 (legal_entity_books). The mapping is data: a correction is a change to these tables. The accountant has NOT confirmed the maps (issue #61), so the statements are not for filing, as for tt133-reports.ts.
+//
+// SOURCE (#5269, 2026-11-28): the line codes, labels, formulas and the accounts each line reads were checked against the OFFICIAL text, Circular 99 Phụ lục IV in Công báo điện tử numbers 1577+1578 (the forms, pp. 33 to 47) and 1579+1580
+// (the "phương pháp lập", pp. 56 to 96) of 16 November 2025, with Phụ lục II (the chart) and the sections of TK 521, 217 and 411; the table with every item and its citation is https://github.com/DOS/Ludy/issues/61#issuecomment-7236284209.
+// The first version of the B02 map (#5187) came from two secondary pages (ketoanleanh.edu.vn and amis.misa.vn) and the B01 map (#5204) from a Google Docs copy of the form; the official text agrees with their codes and labels.
 //
 // What differs from the TT133 map (tt133-reports.ts), so a code is never read across the two: line 21 is new (the gain or loss on selling investment property), financial revenue is 22 (TT133: 21), financial expense 23 (TT133: 22),
 // borrowing cost 24 (TT133: 23), selling expense has its own line 25 (TT133 folds it into 24), administration is 26 (TT133: 24), and line 52 (deferred income tax) is new. Lines 01, 02, 10, 11, 20, 30, 31, 32, 40, 50, 51 and 60 keep
 // their codes. Lines 70 and 71 (earnings per share, joint-stock companies only) are left out, as the TT133 map leaves them out.
 //
-// Open points the accountant decides: line 21 reads no account (the TT99 chart seed has no sub-account for it), and line 24 reads 6351, the same Ludy convention as TT133 line 23 (the chart has no standard sub-account for it); line 24
-// is a "of which" line and is in no formula. Class 5 to 8 accounts no line reads (621, 622, 623 and 627, production costs normally closed to 154 and 632 before the period ends) stay in `unmapped`.
+// B02 open points, all recorded as uncertain in #61: line 21 reads no account (the official text defines it from detail on 511 and 632 that the chart has no sub-account for, and lines 01 and 11 still include an investment-property sale); line 24
+// reads 6351, a Ludy convention (the official text says only "the detail ledger of TK 635", and the chart has no sub-account of 635); the official netting of exchange-rate gains and losses on lines 22 and 23 is not done. Line 02 reads the 521 debit
+// and a 511 debit only from an entry that does not touch 521, because the period-end entry Dr 511 / Cr 521 closes the 521 debit (official line 02: the 511 debit that pairs with a 521 credit). Class 6 to 8 accounts no line reads (621, 622, 623 and
+// 627 are closed to 154 and 632 before the period ends, and have no ending balance in the circular) stay in `unmapped`.
 //
-// The statement of financial position B 01-DN (#5204) is below, with the same status and a weaker footing. Its codes and labels are the form's as printed in a third-party copy of the annex (a Google Docs copy headed "Kèm theo Thông tư
-// số 99/2025/TT-BTC ngày 27/10/2025") and agree with the MISA comparison page where the two overlap (lines 123 to 126, 135 to 137, 142, 150 to 153, 160 and 161); the official annex was NOT read (thuvienphapluat.vn answered 403).
-// NO source read says which accounts feed each line: every placement is Ludy's own derivation from the TT99 chart names (supabase/migrations/20261103020000_crove_finance_books_regime.sql), a DRAFT the accountant has not confirmed (#61).
-// Ludy holds no maturity data, so an account the form splits into short and long term is read on the SHORT-term line and the long-term line reads nothing (the TT133 map does the same); only accounts long-term by nature feed
-// long-term lines. Placements the chart does not decide, all on the accountant's list: 1281 on 123 (not on cash equivalents), 244 on 215, 1361 on 213, 344 on 338. A balance no line reads stays in `unmapped`.
+// B01 open points, all recorded as uncertain in #61: Ludy holds no maturity data, so an account the form splits into short and long term is read on the SHORT-term line and the long-term line reads nothing (the TT133 map does the same); only accounts
+// long-term by nature feed long-term lines. This covers 1281 (the form puts a term deposit of at most 3 months on 112, the rest on 123 or 265), 244 and 344 (the form reads each on a short and a long line), 2288 (165 or 274) and the provision 2292
+// (124, 126 or 264). A preferred share (41112) is read as equity (411b); the form puts one classified as a liability on 341. Line 420b also takes the unclosed result of earlier years (the form has only 4211 and 4212). A balance no line reads
+// stays in `unmapped`.
 import { B01_TT133, B02_LINES, type B01Setup, type ReportLineDef } from './tt133-reports.ts';
 
 export type StatementsRegime = 'tt133' | 'tt99';
 
 export const B02_LINES_TT99: readonly ReportLineDef[] = [
   { code: '01', label: 'Doanh thu bán hàng và cung cấp dịch vụ', rules: [{ prefixes: ['511'], take: 'creditTurnover' }] },
-  // A deduction booked on 521, and a return booked straight on 511 (as TT133 reads it).
-  { code: '02', label: 'Các khoản giảm trừ doanh thu', rules: [{ prefixes: ['521'], take: 'debitTurnover' }, { prefixes: ['511'], take: 'debitTurnover' }] },
+  // Official: the 511 debit that pairs with a 521 credit (the period-end entry Dr 511 / Cr 521), which is the 521 debit turnover; 521 has no closing balance. So the 521 debit is read, and a 511 debit is read only from an entry that does not touch 521:
+  // that leaves out the closing entry (it does not touch 911, so the engine would read it on top of the 521 debit, twice the deduction in a closed period) and keeps a return booked straight on 511 (as TT133 reads it).
+  { code: '02', label: 'Các khoản giảm trừ doanh thu', rules: [{ prefixes: ['521'], take: 'debitTurnover' }, { prefixes: ['511'], skipEntriesTouching: ['521'], take: 'debitTurnover' }] },
   { code: '10', label: 'Doanh thu thuần về bán hàng và cung cấp dịch vụ', formula: [[1, '01'], [-1, '02']] },
   { code: '11', label: 'Giá vốn hàng bán', rules: [{ prefixes: ['632'], take: 'netDebit' }] },
   { code: '20', label: 'Lợi nhuận gộp về bán hàng và cung cấp dịch vụ', formula: [[1, '10'], [-1, '11']] },
@@ -83,7 +87,7 @@ export const B01_LINES_TT99: readonly ReportLineDef[] = [
   { code: '132', label: 'Trả trước cho người bán ngắn hạn', rules: [{ prefixes: ['331'], take: 'debit', byParty: true }] },
   { code: '133', label: 'Phải thu nội bộ ngắn hạn', rules: [{ prefixes: ['136'], exclude: ['1361'], take: 'debit' }] },
   { code: '134', label: 'Phải thu theo tiến độ hợp đồng xây dựng', rules: [{ prefixes: ['337'], take: 'debit' }] },
-  { code: '135', label: 'Phải thu ngắn hạn khác', rules: [{ prefixes: ['138', '141', '334', '338'], exclude: ['1381'], take: 'debit' }] },
+  { code: '135', label: 'Phải thu ngắn hạn khác', rules: [{ prefixes: ['138', '141', '334', '338'], exclude: ['1381', '1383'], take: 'debit' }] },
   { code: '136', label: 'Dự phòng phải thu ngắn hạn khó đòi (*)', rules: [{ prefixes: ['2293'], take: 'credit', sign: -1 }] },
   { code: '137', label: 'Tài sản thiếu chờ xử lý', rules: [{ prefixes: ['1381'], take: 'debit' }] },
   { code: '140', label: 'Hàng tồn kho', formula: sum('141', '142') },
@@ -96,9 +100,11 @@ export const B01_LINES_TT99: readonly ReportLineDef[] = [
   { code: '160', label: 'Tài sản ngắn hạn khác', formula: sum(...range(161, 165)) },
   { code: '161', label: 'Chi phí chờ phân bổ ngắn hạn', rules: [{ prefixes: ['242'], take: 'debit' }] },
   { code: '162', label: 'Thuế GTGT được khấu trừ', rules: [{ prefixes: ['133'], take: 'debit' }] },
-  { code: '163', label: 'Thuế và các khoản khác phải thu Nhà nước', rules: [{ prefixes: ['333'], take: 'debit' }] },
+  // Official: the debit of 1383 (special consumption tax on imported goods) and of 333.
+  { code: '163', label: 'Thuế và các khoản khác phải thu Nhà nước', rules: [{ prefixes: ['333', '1383'], take: 'debit' }] },
   { code: '164', label: 'Giao dịch mua bán lại trái phiếu Chính phủ', rules: [{ prefixes: ['171'], take: 'debit' }] },
-  { code: '165', label: 'Tài sản ngắn hạn khác' },
+  // Official: the debit of 2288 (other investments), short term; its long-term part is line 274. Ludy holds no maturity data, so all of it is read here, and line 274 reads nothing.
+  { code: '165', label: 'Tài sản ngắn hạn khác', rules: [{ prefixes: ['2288'], take: 'debit' }] },
   { code: '200', label: 'TÀI SẢN DÀI HẠN', formula: sum('210', '220', '230', '240', '250', '260', '270') },
   { code: '210', label: 'Các khoản phải thu dài hạn', formula: sum(...range(211, 216)) },
   { code: '211', label: 'Phải thu dài hạn của khách hàng' },
@@ -135,7 +141,7 @@ export const B01_LINES_TT99: readonly ReportLineDef[] = [
   { code: '260', label: 'Đầu tư tài chính dài hạn', formula: sum(...range(261, 266)) },
   { code: '261', label: 'Đầu tư vào công ty con', rules: [{ prefixes: ['221'], take: 'debit' }] },
   { code: '262', label: 'Đầu tư vào công ty liên doanh, liên kết', rules: [{ prefixes: ['222'], take: 'debit' }] },
-  { code: '263', label: 'Đầu tư góp vốn vào đơn vị khác', rules: [{ prefixes: ['228'], take: 'debit' }] },
+  { code: '263', label: 'Đầu tư góp vốn vào đơn vị khác', rules: [{ prefixes: ['2281'], take: 'debit' }] },
   { code: '264', label: 'Dự phòng tổn thất đầu tư vào đơn vị khác dài hạn (*)', rules: [{ prefixes: ['2292'], take: 'credit', sign: -1 }] },
   { code: '265', label: 'Đầu tư nắm giữ đến ngày đáo hạn dài hạn' },
   { code: '266', label: 'Dự phòng đầu tư nắm giữ đến ngày đáo hạn dài hạn (*)' },

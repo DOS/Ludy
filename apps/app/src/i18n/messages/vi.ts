@@ -10683,7 +10683,7 @@ export const vi = {
     statementsExport: 'Xuất Excel báo cáo tài chính',
     statementsFile: '{brandSlug}-bao-cao-tai-chinh-{period}-{org}.xlsx',
     statementsB01Draft: 'Bản nháp, kế toán chưa xác nhận cách lập',
-    statementsTt99: 'Kết quả hoạt động kinh doanh (B02) đang đọc theo hệ thống tài khoản Thông tư 99 (mã chỉ tiêu lấy từ nguồn thứ cấp, chưa đối chiếu văn bản chính thức). Tệp HTKK chỉ có cho sổ theo Thông tư 133.',
+    statementsTt99: 'Kết quả hoạt động kinh doanh (B02) đang đọc theo hệ thống tài khoản Thông tư 99 (mã chỉ tiêu đã đối chiếu với văn bản chính thức, kế toán chưa xác nhận). Tệp HTKK chỉ có cho sổ theo Thông tư 133.',
     statementsMixedCharts: 'Kỳ này hoặc một cột so sánh có phần ghi sổ theo hệ thống tài khoản khác. Mọi cột đọc theo hệ thống của ngày cuối kỳ nên số liệu có thể lệch: hãy kiểm tra với kế toán.',
     statementsUnbalanced: 'Tổng tài sản (mã {assets}) và tổng nguồn vốn (mã {sources}) không bằng nhau: hãy kiểm tra số dư các tài khoản.',
     htkkTitle: 'Báo cáo tài chính năm {year} cho HTKK',
