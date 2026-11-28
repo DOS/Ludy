@@ -18,6 +18,7 @@ const portal = (number: string, extra: Partial<PortalRow> = {}): PortalRow => ({
   sellerTaxCode: SELLER,
   sellerName: 'Nhà cung cấp',
   buyerTaxCode: null,
+  buyerName: null,
   template: '1',
   series: 'C26TAA',
   number,
@@ -393,6 +394,16 @@ describe('sales list', () => {
       ['2', 'void'],
     ]);
   });
+
+  it('carries portal buyerName on a missing sale without a buyer tax code', () => {
+    const result = reconcilePortalList([sale('10', { buyerTaxCode: null, buyerName: 'Nguyễn Văn An' })], [], PERIOD);
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        outcome: 'missing',
+        portal: expect.objectContaining({ number: '10', buyerTaxCode: null, buyerName: 'Nguyễn Văn An' }),
+      }),
+    ]);
+  });
 });
 
 describe('checkPortalList for a sales list', () => {
@@ -401,6 +412,7 @@ describe('checkPortalList for a sales list', () => {
     sellerTaxCode: OTHER,
     sellerName: 'Công ty',
     buyerTaxCode: SELLER,
+    buyerName: 'CÔNG TY NGƯỜI MUA',
     template: '1',
     series: 'C26TAA',
     number: '1',
@@ -428,15 +440,25 @@ describe('checkPortalList for a sales list', () => {
 
   it('keeps the org as the seller with the customer on the row, and counts what it leaves out', () => {
     const checked = checkPortalList(
-      list([row(), row({ rowNo: 5, buyerTaxCode: null }), row({ rowNo: 6, sellerTaxCode: SELLER, buyerTaxCode: OTHER }), row({ rowNo: 7, sellerTaxCode: SELLER, buyerTaxCode: '0100109107' })]),
+      list([
+        row(),
+        row({ rowNo: 5, buyerTaxCode: null, buyerName: '  Nguyễn Văn An  ' }),
+        row({ rowNo: 6, buyerTaxCode: null, buyerName: '   ' }),
+        row({ rowNo: 7, sellerTaxCode: SELLER, buyerTaxCode: OTHER }),
+        row({ rowNo: 8, sellerTaxCode: SELLER, buyerTaxCode: '0100109107' }),
+      ]),
       OTHER,
       'sale',
     );
     expect(checked).toMatchObject({ ok: true, ownSales: 1, otherBuyers: 1 });
-    expect(checked.ok && checked.rows.map((r) => [r.rowNo, r.sellerTaxCode, r.buyerTaxCode])).toEqual([
-      [4, OTHER, SELLER],
-      [5, OTHER, null],
+    expect(checked.ok && checked.rows.map((r) => [r.rowNo, r.sellerTaxCode, r.buyerTaxCode, r.buyerName])).toEqual([
+      [4, OTHER, SELLER, 'CÔNG TY NGƯỜI MUA'],
+      [5, OTHER, null, 'Nguyễn Văn An'],
+      [6, OTHER, null, null],
     ]);
+    // A purchase list leaves buyerName and buyerTaxCode null on the row (the org itself is the buyer).
+    const purchase = checkPortalList(list([row({ sellerTaxCode: SELLER, buyerTaxCode: OTHER, buyerName: 'Org' })]), OTHER, 'purchase');
+    expect(purchase.ok && purchase.rows[0]).toMatchObject({ buyerTaxCode: null, buyerName: null });
   });
 
   it("accepts an invoice of the org's branch and refuses the other direction and another company's list", () => {

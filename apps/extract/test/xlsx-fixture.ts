@@ -162,6 +162,7 @@ export interface PortalInvoiceSpec {
   sellerTaxCode: string;
   sellerName?: string;
   buyerTaxCode?: string | null;
+  buyerName?: string | null;
   subtotal?: string | number;
   vat?: string | number;
   total?: string | number;
@@ -184,7 +185,7 @@ export function portalRow(n: number, invoice: PortalInvoiceSpec): XlsxCell[] {
     invoice.sellerTaxCode,
     invoice.sellerName ?? 'CÔNG TY TNHH NHÀ CUNG CẤP',
     invoice.buyerTaxCode === undefined ? FIXTURE_BUYER : invoice.buyerTaxCode,
-    'CÔNG TY CỔ PHẦN NGƯỜI MUA MẪU',
+    invoice.buyerName === undefined ? 'CÔNG TY CỔ PHẦN NGƯỜI MUA MẪU' : invoice.buyerName,
     '2 Đường Thử, TP Hồ Chí Minh',
     invoice.subtotal ?? null,
     invoice.vat ?? null,

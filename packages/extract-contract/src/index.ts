@@ -341,6 +341,7 @@ export const PORTAL_LIST_FIELDS = [
   'template',
   'sellerName',
   'buyerTaxCode',
+  'buyerName',
   'subtotal',
   'vatAmount',
   'total',
@@ -374,8 +375,9 @@ export const zExtractedPortalList = z.strictObject({
         rowNo: z.number().int().positive().max(1_048_576),
         sellerTaxCode: zTaxCode,
         sellerName: z.string().max(500),
-        // The buyer's tax code on the row (the portal's list names both parties); null when the column is absent.
+        // The buyer's tax code and name on the row (the portal's list names both parties); null when absent.
         buyerTaxCode: zTaxCode.nullable(),
+        buyerName: z.string().max(500).nullable().optional(),
         template: z.string().regex(/^[0-9A-Z]{1,11}$/).nullable(),
         series: z.string().min(1).max(20),
         number: z.string().min(1).max(20),

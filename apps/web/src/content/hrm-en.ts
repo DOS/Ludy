@@ -16,9 +16,9 @@ export const hrmEn: HrmCopy = {
   hero: {
     title: 'Employee records, timekeeping, payroll and recruiting in one place.',
     lead: `Ludy HR keeps individual salaries restricted to owners and admins, calculates monthly pay with fixed rules and lets your AI coworker ${N.finance} flag changes on pseudonymized figures before handing aggregate entries to Ludy Finance.`,
-    primary: 'Self-host for free',
-    secondary: 'Sign in',
-    note: 'Open source under the AGPL. Ludy HR is in the self-hosted edition. On Ludy Cloud: coming soon.',
+    primary: 'Start free trial',
+    secondary: 'Self-host for free',
+    note: 'Start free on Ludy Cloud with zero setup, or self-host open source under AGPL-3.0.',
   },
   how: {
     title: 'Four steps from employee records to monthly payroll',
@@ -191,9 +191,9 @@ export const hrmEn: HrmCopy = {
   },
   cta: {
     title: 'Try Ludy HR with your team',
-    body: 'Self-host for free with a single docker compose command. Already have an account? Sign in.',
-    primary: 'See how to self-host',
-    secondary: 'Sign in',
+    body: 'Create a free Ludy Cloud trial account in a minute, or run the full open-source stack on your own server with Docker Compose.',
+    primary: 'Start free trial',
+    secondary: 'See how to self-host',
   },
   fragments: {
     sample: 'Example data',

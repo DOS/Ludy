@@ -18,15 +18,15 @@ export const esignVi = {
   ogTitle: 'Ký PDF từ tệp PDF hoặc .docx qua Zalo hay quét mã QR, từ soạn mẫu đến đặt cọc VietQR và gia hạn.',
   crumbLabel: 'Đường dẫn',
   hero: {
-    title: 'Ký PDF từ tệp PDF hoặc .docx qua Zalo hay quét mã QR, niêm phong SHA-256.',
-    lead: `Tải PDF hay tệp Word (.docx), ghép bộ 1-5 tài liệu, lưu mẫu dùng lại hoặc chuyển từ Engage, Cuộc họp, Dự án và Nhân sự, với 10 tính năng gợi ý từ ${N.gm} theo ngân sách AI. Gửi link Zalo OA, quét mã QR chuyển sang điện thoại, gắn đặt cọc VietQR sau ký, kiểm tra sổ tay SME và tự xác minh ngoại tuyến.`,
-    primary: 'Tự cài đặt miễn phí',
-    secondary: 'Đăng nhập',
-    note: 'Mã nguồn mở AGPL. Ludy eSign có trong bản tự cài đặt. Trên Ludy Cloud: sắp ra mắt.',
+    title: 'Ký PDF từ PDF hoặc Word (.docx) qua Zalo và mã QR, niêm phong SHA-256.',
+    lead: `Tải PDF hay tệp Word (.docx), ghép bộ 1-5 tài liệu, lấy mẫu dùng lại hoặc chuyển từ Engage, Cuộc họp, Dự án và Nhân sự, với 10 gợi ý tuỳ chọn từ ${N.gm}. Gửi link Zalo OA, quét mã QR, nhận đặt cọc VietQR sau ký và tự xác minh ngoại tuyến.`,
+    primary: 'Dùng thử miễn phí',
+    secondary: 'Tự host miễn phí',
+    note: 'Dùng thử miễn phí trên Ludy Cloud không cần cài đặt, hoặc tự host mã nguồn mở AGPL-3.0.',
   },
   how: {
     title: 'Bốn bước từ soạn mẫu đến bản niêm phong, đặt cọc và theo dõi',
-    lead: 'Chạy trọn vẹn khi tự cài đặt với docker compose, không cần khoá trả phí hay tài khoản bên thứ ba.',
+    lead: 'Chạy ngay trên Ludy Cloud hoặc tự cài đặt bằng Docker Compose, không cần khoá trả phí từ bên thứ ba.',
     steps: [
       {
         name: 'Chuẩn bị & kiểm tra',
@@ -214,10 +214,10 @@ export const esignVi = {
     ],
   },
   cta: {
-    title: 'Thử Ludy eSign cho trọn vòng đời hợp đồng của bạn',
-    body: 'Tự cài đặt miễn phí chỉ với một lệnh docker compose. Đã có tài khoản thì đăng nhập.',
-    primary: 'Xem cách tự cài đặt',
-    secondary: 'Đăng nhập',
+    title: 'Ký kết hợp đồng nhanh và minh bạch hơn với Ludy eSign',
+    body: 'Tạo tài khoản Ludy Cloud dùng thử miễn phí trong 1 phút, hoặc tự cài đặt toàn bộ mã nguồn trên máy chủ của bạn bằng Docker Compose.',
+    primary: 'Dùng thử miễn phí',
+    secondary: 'Xem cách tự host',
   },
   // What the page draws of the product, as example data (the home page's sample company, Gạo Sạch Mekong).
   fragments: {

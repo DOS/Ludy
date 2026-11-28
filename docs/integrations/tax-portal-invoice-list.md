@@ -53,8 +53,8 @@ books a missing sale as any other, from its XML in the Inbox.
   number (and a template that does not contradict), when exactly one portal invoice of the period has them: the rule
   for an invoice without a tax code. Two branches' invoices of the same series and number are therefore flagged (each
   "missing", the booked one "not on the portal"), never merged into one. The screen does not repeat "matched without
-  tax code" on sales. The customer's tax code (`buyer_tax_code` on the row) and the customer's name from the recorded
-  sale are shown.
+  tax code" on sales. The customer's tax code (`buyer_tax_code` on the row) and name (`buyer_name` on the row, or from the recorded
+  sale when absent) are shown.
 - **Flags:** "missing" (on the portal, not in the books), "amount_mismatch" (another total, VAT or currency; one dong
   of rounding is allowed), "void_in_ludy" (cancelled or replaced on the portal but still booked), "not_on_portal"
   (booked in the period, on none of the lists). A sale on two lists of the period counts once, so importing the same
@@ -104,7 +104,7 @@ The purchase and the sales export have the same columns.
 | F | MST người bán/MST người xuất hàng | `sellerTaxCode` (required) | Confirmed |
 | G | Tên người bán/Tên người xuất hàng | `sellerName` | Confirmed |
 | H | MST người mua/MST người nhận hàng | `buyerTaxCode` | Confirmed |
-| I | Tên người mua/Tên người nhận hàng | not read | Confirmed |
+| I | Tên người mua/Tên người nhận hàng | `buyerName` | Confirmed |
 | J | Địa chỉ người mua | not read | Confirmed (A, C, F; not in D) |
 | K | Tổng tiền chưa thuế | `subtotal` | Confirmed |
 | L | Tổng tiền thuế | `vatAmount` | Confirmed |

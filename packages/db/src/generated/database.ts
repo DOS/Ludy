@@ -1781,6 +1781,7 @@ export interface FinancePortalInvoiceRowTable {
   check_result: ColumnType<string | null, string | null, NotGranted>;
   legal_entity_id: ColumnType<string, string, NotGranted>;
   buyer_tax_code: ColumnType<string | null, string | null, NotGranted>;
+  buyer_name: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** ludy_finance.purchase_document */

@@ -39,8 +39,9 @@ export interface PortalRow {
   rowNo: number;
   sellerTaxCode: string;
   sellerName: string;
-  // The buyer on a sales list's row (null on a purchase row).
+  // The buyer on a sales list's row (null on a purchase row, and where the list has none).
   buyerTaxCode: string | null;
+  buyerName: string | null;
   template: string | null;
   series: string;
   number: string;

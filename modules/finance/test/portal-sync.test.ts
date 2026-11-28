@@ -72,8 +72,8 @@ describe('normalizePortalInvoices', () => {
   });
 
   it('keeps amounts as the decimal text the portal sent', () => {
-    const { list } = normalizePortalInvoices([{ query: 'purchase_5', rows: [row({ tgtcthue: '123456789012.5', tgtthue: '0', tgtttbso: '123456789012.5', dvtte: 'usd' })] }], PERIOD);
-    expect(list.rows[0]).toMatchObject({ subtotal: '123456789012.5', vatAmount: '0', total: '123456789012.5', currency: 'USD' });
+    const { list } = normalizePortalInvoices([{ query: 'purchase_5', rows: [row({ tgtcthue: '123456789012.5', tgtthue: '0', tgtttbso: '123456789012.5', dvtte: 'usd', nmten: '  Khách hàng A  ' })] }], PERIOD);
+    expect(list.rows[0]).toMatchObject({ subtotal: '123456789012.5', vatAmount: '0', total: '123456789012.5', currency: 'USD', buyerName: 'Khách hàng A' });
   });
 
   it('skips a row that names an invoice but cannot be read, with the reason, and ignores empty rows', () => {

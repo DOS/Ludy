@@ -261,4 +261,9 @@ describe('personal-data registry: buyer identity CCCD (#3682)', () => {
     expect(financeManifest.tables.ludy_finance.einvoice_draft.buyer_identity).toBe('national_id');
     expect(personalDataProbe('0790-9200-0111')).toEqual({ kind: 'digits', digits: '079092000111' });
   });
+
+  it('registers portal_invoice_row.buyer_name as name/keep_legal with pii in finance manifest (#2151)', () => {
+    expect(entries['ludy_finance.portal_invoice_row.buyer_name']).toMatchObject({ kind: 'name', handling: 'keep_legal' });
+    expect(financeManifest.tables.ludy_finance.portal_invoice_row.buyer_name).toBe('pii');
+  });
 });
