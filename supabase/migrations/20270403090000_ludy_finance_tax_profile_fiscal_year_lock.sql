@@ -22,8 +22,9 @@
 --
 -- SECURITY DEFINER, keeping the migration owner as the other books functions do: it reads legal_entity_books for the row's org
 -- (NEW.org_id, an explicit filter) whatever the writer's grants and row security allow, and search_path is pinned. EXECUTE is
--- revoked from every role: a trigger function runs as the trigger's owner of the table, nobody calls it. No role gets a new
--- privilege on any table.
+-- revoked from every role: only the trigger fires the function, and being SECURITY DEFINER it runs as its owner. No role gets a new
+-- privilege on any table. The trigger is ENABLE ALWAYS, as the other guards of the books (b_legal_entity on legal_entity_books): a
+-- session_replication_role of replica, which only a superuser sets, does not skip it.
 --
 -- One case is not serialized: an org with no tax_profile row yet whose first save (a month other than 12) runs at the same time
 -- as its first switch. An UPDATE of an existing row waits for set_books_regime()'s FOR SHARE on that row and then sees its
@@ -57,3 +58,5 @@ DROP TRIGGER IF EXISTS tax_profile_fiscal_year_guard ON ludy_kernel.tax_profile;
 -- migration-lint: cross-module the guard of the fiscal-year month is a finance rule (Circular 99 books start on a 1 January) on the kernel's tax profile (#5311)
 CREATE TRIGGER tax_profile_fiscal_year_guard BEFORE INSERT OR UPDATE OF fiscal_year_end_month ON ludy_kernel.tax_profile
   FOR EACH ROW EXECUTE FUNCTION ludy_finance.tax_profile_fiscal_year_guard();
+-- migration-lint: cross-module the guard of the fiscal-year month is a finance rule (Circular 99 books start on a 1 January) on the kernel's tax profile (#5311)
+ALTER TABLE ludy_kernel.tax_profile ENABLE ALWAYS TRIGGER tax_profile_fiscal_year_guard;

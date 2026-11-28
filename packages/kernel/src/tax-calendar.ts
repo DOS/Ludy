@@ -167,8 +167,9 @@ export const taxProfileGet = defineQuery({
 // The table's guard (ludy_finance.tax_profile_fiscal_year_guard, #5311, trigger on ludy_kernel.tax_profile) refuses a change of the month the fiscal year ends while the org keeps Circular 99
 // books, which start on a 1 January; any other error is rethrown for the runtime to map.
 function fiscalYearRefusal(error: unknown): never {
-  if ((error as { message?: unknown } | null)?.message === 'FISCAL_YEAR_END_LOCKED') {
-    throw new DomainError('FISCAL_YEAR_END_LOCKED', 409, 'Tổ chức đã dùng sổ theo Thông tư 99 nên chưa đổi được tháng kết thúc năm tài chính');
+  const e = error as { code?: unknown; message?: unknown } | null;
+  if (e?.code === 'P0001' && e.message === 'FISCAL_YEAR_END_LOCKED') {
+    throw new DomainError('FISCAL_YEAR_END_LOCKED', 409, 'Tổ chức đã chọn sổ theo Thông tư 99 nên chưa đổi được tháng kết thúc năm tài chính');
   }
   throw error;
 }
