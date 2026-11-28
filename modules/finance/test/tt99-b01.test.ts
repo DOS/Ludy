@@ -100,6 +100,27 @@ describe('TT99 B01-DN, liabilities', () => {
   });
 });
 
+describe('TT99 B01-DN, the credit side of 171 and of 138 (official method text, #5274)', () => {
+  it('reads a credit balance on 171 (government bond repurchase, the seller) on line 325 and a debit balance on line 164', () => {
+    const credit = amounts([cr('171', 7)]);
+    expect(pick(credit, ['164', '325', '310', '300'])).toEqual({ '164': '0', '325': '7', '310': '7', '300': '7' });
+    // Against cash, so nothing else is left unread: before this line 325 read nothing and the 171 credit stayed in unmapped.
+    expect(buildB01([entry([['112', 7, 0], ['171', 0, 7]])], LE, DAY, 'VND', B01_TT99).unmapped).toEqual([]);
+    const debit = amounts([dr('171', 3)]);
+    expect(pick(debit, ['164', '325'])).toEqual({ '164': '3', '325': '0' });
+  });
+
+  it('reads a credit balance on 138 (1381, 1383, 1388) with 338 on line 320, and keeps its debit balances on lines 137, 163 and 135', () => {
+    const credits = [cr('1381', 2), cr('1383', 3), cr('1388', 5), cr('338', 1), cr('3387', 4)];
+    const a = amounts(credits);
+    // 3387 is line 319, not 320; every other credit is 320 = 2 + 3 + 5 + 1 = 11.
+    expect(pick(a, ['319', '320', '135', '137', '163'])).toEqual({ '319': '4', '320': '11', '135': '0', '137': '0', '163': '0' });
+    expect(buildB01([entry([['112', 15, 0], ['1381', 0, 2], ['1383', 0, 3], ['1388', 0, 5], ['338', 0, 1], ['3387', 0, 4]])], LE, DAY, 'VND', B01_TT99).unmapped).toEqual([]);
+    const debits = amounts([dr('1381', 4), dr('1383', 6), dr('1388', 8)]);
+    expect(pick(debits, ['135', '137', '163', '320'])).toEqual({ '135': '8', '137': '4', '163': '6', '320': '0' });
+  });
+});
+
 describe('TT99 B01-DN, equity', () => {
   // Equity is put in against cash 112. 4111 500 and 41111 50 (411a = 550), 41112 100 (411b): 411 = 650. 4112 20, 4113 5, 4118 6, 419 debit 10 (415, negative), 412 4, 413 3, 414 7, 418 8.
   // Retained: 4211 100 (420a); 420b is 4212 10 plus the result not yet closed: 511 150 less 632 60 less 642 18 = 72, 82 in all; 420 = 182. 400 = 650 + 20 + 5 + 6 - 10 + 4 + 3 + 7 + 8 + 182 = 875.
