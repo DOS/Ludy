@@ -140,6 +140,14 @@ const SIGNALS = [
 // does not require it). A name outside this list still fails, and so do the checks below on every query that carries `mcp`: never sensitive, streamed, role-less or open to member mode or an extension token.
 // Must never be returned by any of them (each tool PR pins it under test/invariant/): a customer's email or phone, the org's bank account numbers or holders (the reminder read leaves out `payTo`), the lines of an invoice, anything from a query that is `sensitive`.
 const FINANCE_READS: readonly string[] = [
+  // The two finance reads of #5346 (plan docs/plan/cash-forecast.md "Not built: MCP exposure", ADR-0051; the Accounting PO's design review on the issue), step 0 of the landing: this list lets the names in before their
+  // queries exist, so the base copy of this test does not reject them in the next PR. `ludy_finance_cash_forecast` (`finance.mcp.cash_forecast`): the org's whole-org forecast figures (opening cash, the low point, the
+  // 30/60/90 checkpoints, the largest items by kind, what the forecast leaves out, the tax due dates) and only a COUNT of the items the owner entered, never their label or category; no series, no note, no party.
+  // `ludy_finance_month_close` (`finance.mcp.month_close`): the month-close checklist of one month as counts, no amount and no name. Both: a company grant of an owner or admin only, the whole-org guard of
+  // `finance.mcp.overview` (a partial view or more than one legal entity is refused SIGNAL_PARTIAL_VIEW), no input but the month. Each graduates into REACHABLE once its query is registered; their projection pins
+  // land under test/invariant/ with the queries.
+  'finance.mcp.cash_forecast:ludy.read',
+  'finance.mcp.month_close:ludy.read',
 ];
 
 // Graduated into REACHABLE in #4441 (Slice 5c).
