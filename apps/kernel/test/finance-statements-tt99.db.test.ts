@@ -73,7 +73,8 @@ suite('the income statement under the entity\'s chart (#5187)', () => {
   }
 
   const statements = (period: string, legalEntityId: string) => rt.query<FinancialStatements>('finance.statements.period', { period, legalEntityId }, { actor: asUser(owner), orgId });
-  const overviewAt = (asOf: string, legalEntityId: string) => rt.query<FinanceOverview>('finance.overview', { range: 'this_month', asOf, legalEntityId }, { actor: asUser(owner), orgId });
+  const overviewAt = (asOf: string, legalEntityId: string, range: FinanceOverview['range'] = 'this_month') =>
+    rt.query<FinanceOverview>('finance.overview', { range, asOf, legalEntityId }, { actor: asUser(owner), orgId });
   const line = (s: FinancialStatements, code: string) => s.b02.lines.find((l) => l.code === code)?.amount;
   const refusal = (p: Promise<unknown>) => p.then(() => null, (e: unknown) => e as { code?: string; status?: number });
 
@@ -177,6 +178,19 @@ suite('the income statement under the entity\'s chart (#5187)', () => {
     expect((await overviewAt('2026-08-31', tt99)).unmapped).toBe(0);
     const augustMain = await statements('2026-08', main);
     expect((await overviewAt('2026-08-31', main)).profit.amount).toBe(line(augustMain, '50'));
+  });
+
+  it('flags mixedCharts on the overview only when its comparison period or six months reach across a chart change (#5214)', async () => {
+    // May 2026 (this_month): current and previous months are both TT99, while the six-month chart reaches back to 2025-12 (TT133).
+    expect((await overviewAt('2026-05-31', tt99, 'this_month')).mixedCharts).toBe(true);
+    // August 2026: this_month compares with July (2026-03..2026-08 all TT99), so false; this_year compares against 2025 (TT133, 10M profit), so true.
+    expect((await overviewAt('2026-08-31', tt99, 'this_month')).mixedCharts).toBe(false);
+    const yearView = await overviewAt('2026-08-31', tt99, 'this_year');
+    expect(yearView.mixedCharts).toBe(true);
+    expect(yearView.profit).toMatchObject({ amount: '45000000', previous: '10000000' });
+    // Before the TT99 switch, and for a TT133 entity with no books row, the overview is never flagged.
+    expect((await overviewAt('2025-08-31', tt99, 'this_month')).mixedCharts).toBe(false);
+    expect((await overviewAt('2026-08-31', main, 'this_year')).mixedCharts).toBe(false);
   });
 
   it('reads the TT99 balance sheet and balances (280 = 440) with a supplier advance and a customer prepayment', async () => {

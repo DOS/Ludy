@@ -2,8 +2,9 @@
 // The Tổng quan's rules (#2631) as pure functions: the periods the picker stands for and the one compared with each, the six months, a card's change, the
 // expense mix and the overview built from entries. The books themselves are checked in apps/kernel/test/finance-overview.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { buildOverview, expenseMix, overviewFigure, overviewMonth, overviewMonths, overviewPeriods } from '../src/domain/overview.ts';
+import { buildOverview, expenseMix, overviewFigure, overviewMonth, overviewMonths, overviewPeriods, overviewSpans } from '../src/domain/overview.ts';
 import type { ReportEntry } from '../src/domain/tt133-reports.ts';
+import { statementsBooksOf } from '../src/statements-regime.ts';
 
 const ENTITY = 'le-1';
 const entry = (entryDate: string, lines: Array<[string, string, string]>, reversal = false): ReportEntry => ({
@@ -190,5 +191,39 @@ describe('buildOverview', () => {
 
   it('counts the balances of the period that no B02 line reads', () => {
     expect(buildOverview({ ...base, resultsNow: [entry('2026-10-21', [['8888', '5', '0']])] }).unmapped).toBe(1);
+  });
+
+  it('carries mixedCharts from the source and defaults to false', () => {
+    expect(buildOverview(base).mixedCharts).toBe(false);
+    expect(buildOverview({ ...base, regime: 'tt99', mixedCharts: true }).mixedCharts).toBe(true);
+  });
+});
+
+describe('overviewSpans and mixedCharts (#5214)', () => {
+  const tt99From2026 = [{ regime: 'tt99', chartVersion: '2026.1', effectiveFrom: '2026-01-01' }];
+  const booksFor = (rows: typeof tt99From2026, range: Parameters<typeof overviewPeriods>[0], today: string) => {
+    const p = overviewPeriods(range, today);
+    return statementsBooksOf(rows, p.to, overviewSpans(p, overviewMonths(p.to)));
+  };
+
+  it('flags when the comparison period reaches back into the TT133 year while the six months do not', () => {
+    // On 2026-08-15, this_year compares 2026-01-01..2026-08-15 with 2025-01-01..2025-08-15; its six months are 2026-03..2026-08.
+    expect(booksFor(tt99From2026, 'this_year', '2026-08-15')).toEqual({ regime: 'tt99', mixedCharts: true });
+  });
+
+  it('flags when the six-month chart reaches back into the TT133 year while period and comparison stay in TT99', () => {
+    // On 2026-05-15, this_month compares 2026-05 with 2026-04 (both TT99), while the six months start at 2025-12 (TT133).
+    expect(booksFor(tt99From2026, 'this_month', '2026-05-15')).toEqual({ regime: 'tt99', mixedCharts: true });
+  });
+
+  it('flags when the current period itself crosses the chart change', () => {
+    // On 2026-01-15, last_30_days starts on 2025-12-17.
+    expect(booksFor(tt99From2026, 'last_30_days', '2026-01-15')).toEqual({ regime: 'tt99', mixedCharts: true });
+  });
+
+  it('stays unflagged when every span sits in one chart, before a later switch, or without a books row', () => {
+    expect(booksFor(tt99From2026, 'this_month', '2026-06-15')).toEqual({ regime: 'tt99', mixedCharts: false });
+    expect(booksFor(tt99From2026, 'this_year', '2025-11-04')).toEqual({ regime: 'tt133', mixedCharts: false });
+    expect(booksFor([], 'this_year', '2026-08-15')).toEqual({ regime: 'tt133', mixedCharts: false });
   });
 });

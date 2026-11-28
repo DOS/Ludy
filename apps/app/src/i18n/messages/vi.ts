@@ -794,6 +794,7 @@ export const vi = {
     was: { days: '30 ngày trước đó', month: 'tháng trước', quarter: 'quý trước', year: 'cùng kỳ năm trước' },
     wasCap: { days: '30 ngày trước đó', month: 'Tháng trước', quarter: 'Quý trước', year: 'Cùng kỳ năm trước' },
     unmapped: '{count, plural, other {# số dư}} của kỳ chưa nằm trong dòng nào của báo cáo kết quả, nên lợi nhuận có thể chưa đủ. Xem ở Sổ sách, Báo cáo tài chính.',
+    mixedCharts: 'Kỳ này, kỳ so sánh hoặc 6 tháng gần nhất có phần ghi sổ theo hệ thống tài khoản khác; mọi số liệu đang đọc theo hệ thống của ngày cuối kỳ nên có thể lệch.',
     range: {
       label: 'Kỳ xem',
       last_30_days: '30 ngày qua',

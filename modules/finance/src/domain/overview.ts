@@ -87,6 +87,11 @@ export function overviewMonths(to: string): Array<{ month: string; from: string;
   return out;
 }
 
+// Every period the overview reads (this period, the period before and each of the six months), so the books check can flag a span under another chart (#5214).
+export function overviewSpans(periods: OverviewPeriods, months: ReadonlyArray<{ from: string; to: string }>): Array<{ from: string; to: string }> {
+  return [{ from: periods.from, to: periods.to }, { from: periods.previousFrom, to: periods.previousTo }, ...months.map((m) => ({ from: m.from, to: m.to }))];
+}
+
 // A figure against the one before: the difference and, when the earlier figure is not 0, the difference in percent of its size, to one decimal.
 export function overviewFigure(current: string, previous: string): OverviewFigure {
   const now = money(current);
@@ -152,6 +157,8 @@ export interface OverviewSource {
   empty: boolean;
   // The chart the income statement is read under (the entity's books on the period's last day); TT133 when left out.
   regime?: StatementsRegime;
+  // True when the period, the comparison period or the six-month chart spans a change of chart of accounts (#5214).
+  mixedCharts?: boolean;
 }
 
 export function buildOverview(source: OverviewSource): FinanceOverview {
@@ -173,6 +180,7 @@ export function buildOverview(source: OverviewSource): FinanceOverview {
     range: source.range,
     ...periods,
     empty: source.empty,
+    mixedCharts: source.mixedCharts ?? false,
     cash: overviewFigure(line(b01Now, balanceRoles.cash).toFixed(), line(b01Before, balanceRoles.cash).toFixed()),
     profit: overviewFigure(line(b02Now, roles.profit).toFixed(), line(b02Before, roles.profit).toFixed()),
     receivables: overviewFigure(line(b01Now, balanceRoles.receivables).toFixed(), line(b01Before, balanceRoles.receivables).toFixed()),

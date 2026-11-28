@@ -9,7 +9,7 @@ import { zFinanceOverviewInput, type FinanceOverview } from '@ludy/kernel-contra
 import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
-import { buildOverview, overviewMonths, overviewPeriods } from './domain/overview.ts';
+import { buildOverview, overviewMonths, overviewPeriods, overviewSpans } from './domain/overview.ts';
 import { asEntries, balances, type BalanceRow } from './statements.ts';
 import { statementsBooks } from './statements-regime.ts';
 
@@ -53,8 +53,8 @@ export async function financeOverview(ctx: QueryContext, input: { range: Finance
   const periods = overviewPeriods(input.range, today);
   const months = overviewMonths(periods.to);
   const rows = await overviewRows(ctx, entity, periods, months);
-  // The income statement is read under the chart the entity's books have on the period's last day (the line codes differ between the two).
-  const books = await statementsBooks(ctx, entity, periods.to, []);
+  // The cards and charts are read under the chart the entity's books have on the period's last day; flag when the period, comparison or six months cross a chart change (#5214).
+  const books = await statementsBooks(ctx, entity, periods.to, overviewSpans(periods, months));
   const any = await ctx.trx.selectFrom('ludy_finance.journal_entry').select('id').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', entity).limit(1).executeTakeFirst();
   return buildOverview({
     range: input.range,
@@ -67,6 +67,7 @@ export async function financeOverview(ctx: QueryContext, input: { range: Finance
     monthly: months.map((m, i) => ({ ...m, entries: asEntries(rows[`month_${i}`] ?? [], m.from, entity) })),
     empty: any === undefined,
     regime: books.regime,
+    mixedCharts: books.mixedCharts,
   });
 }
 
