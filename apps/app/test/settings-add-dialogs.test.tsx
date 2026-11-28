@@ -76,8 +76,11 @@ describe('Settings cards hold a button, not an open form (#3608)', () => {
   });
 
   it('chart of accounts: a button for a sub-account, only for who manages', () => {
-    expect(render(<ChartOfAccountsCard canManage />)).not.toContain('<form');
-    expect(render(<ChartOfAccountsCard canManage />)).toContain(`>${en.accounts.addTitle}<`);
+    const html = render(<ChartOfAccountsCard canManage />);
+    expect(html).toContain('role="region"');
+    expect(html).toContain(`aria-label="${en.accounts.title}"`);
+    expect(html).not.toContain('<form');
+    expect(html).toContain(`>${en.accounts.addTitle}<`);
     expect(render(<ChartOfAccountsCard canManage={false} />)).not.toContain(`>${en.accounts.addTitle}<`);
   });
 

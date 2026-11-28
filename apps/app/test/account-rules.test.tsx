@@ -143,6 +143,8 @@ describe('AccountRulesCard vendor display, filtering, and viewer scoping', () =>
       ['en', en],
     ] as const) {
       const html = render(<AccountRulesCard canManage />, locale);
+      expect(html).toContain('role="region"');
+      expect(html).toContain(`aria-label="${msgs.accountRules.title}"`);
       expect(html).toContain(msgs.accountRules.allVendors);
       expect(html).toContain('VNPT Hà Nội');
       expect(html).toContain('Điện lực TP.HCM');

@@ -60,7 +60,7 @@ interface Seed {
   entities?: LegalEntity[];
   locale?: 'en' | 'vi';
 }
-const connection = (status: 'active' | 'expired' | 'error' = 'active') => ({ id: 'c1', provider: 'bank_sandbox', displayName: 'Ngân hàng thử', status, connectedAt: at });
+const connection = (status: 'active' | 'expired' | 'revoked' | 'error' = 'active') => ({ id: 'c1', provider: 'bank_sandbox', displayName: 'Ngân hàng thử', status, connectedAt: at });
 const listedAccounts = [
   { externalAccountId: 'SBX-001', displayName: 'Tài khoản thanh toán', listedAt: at },
   { externalAccountId: 'SBX-002', displayName: 'Tài khoản tiết kiệm', listedAt: at },
@@ -97,6 +97,7 @@ describe('BankFeedsCard for an owner or admin', () => {
 
   it.each<Role>(['owner', 'admin'])('as %s: lists the connection with its status, the connect form and the accounts to map', (role) => {
     const html = card(role);
+    expect(html).toContain(`role="region"`);
     expect(html).toContain(`aria-label="${en.bankFeeds.title}"`);
     expect(html).toContain('Ngân hàng thử');
     expect(html).toContain(`>${en.bankFeeds.status.active}<`);
@@ -159,11 +160,42 @@ describe('BankFeedsCard for an owner or admin', () => {
     expect(html).not.toContain(`aria-label="${en.bankFeeds.mapForm.replace('{name}', 'SBX-001')}"`);
   });
 
+  function expectEnabledUnmapButton(html: string, accountName: string, messages: { unmapOf: string; unmap: string }) {
+    const tag = new RegExp(`<button\\b[^>]*aria-label="${rx(messages.unmapOf.replace('{name}', accountName))}"[^>]*>${rx(messages.unmap)}<`).exec(html)?.[0] ?? '';
+    expect(tag).toContain('min-h-11');
+    expect(tag).not.toContain('disabled=');
+  }
+
   it('asks an expired connection to be connected again, and cannot map to it', () => {
-    const html = card('owner', { connections: [connection('expired')] });
+    const html = card('owner', { connections: [connection('expired')], mapped: [account('m1', 'SBX-001', { connectionStatus: 'expired' })] });
     expect(html).toContain(`>${en.bankFeeds.status.expired}<`);
     expect(html).toContain(en.bankFeeds.expiredHint);
     expect(html).toContain('disabled=""');
+    expectEnabledUnmapButton(html, 'Tài khoản thanh toán', en.bankFeeds);
+
+    const emptyExpired = card('owner', { connections: [connection('expired')], listed: [], mapped: [] });
+    expect(emptyExpired).not.toContain(en.bankFeeds.waiting);
+    expect(emptyExpired).not.toContain(`>${en.bankFeeds.refresh}<`);
+  });
+
+  it('shows a mapped revoked connection with its hint, only mapped accounts, and a 44 px unmap control (#2127)', () => {
+    for (const [locale, msgs] of [
+      ['en', en],
+      ['vi', viMessages],
+    ] as const) {
+      const html = card('owner', {
+        locale,
+        connections: [connection('revoked')],
+        mapped: [account('m1', 'SBX-001', { connectionStatus: 'revoked' })],
+      });
+      expect(html).toContain(`>${msgs.bankFeeds.status.revoked}<`);
+      expect(html).toContain(msgs.bankFeeds.revokedHint);
+      expect(html).toContain('Tài khoản thanh toán');
+      expect(html).not.toContain('Tài khoản tiết kiệm');
+      expect(html).not.toContain(`aria-label="${msgs.bankFeeds.mapForm.replace('{name}', 'Tài khoản thanh toán')}"`);
+      expect(html).not.toContain(msgs.bankFeeds.gone);
+      expectEnabledUnmapButton(html, 'Tài khoản thanh toán', msgs.bankFeeds);
+    }
   });
 
   it('offers the legal entity choice only to an org with several, and locks it on a mapped account', () => {
@@ -175,6 +207,7 @@ describe('BankFeedsCard for an owner or admin', () => {
   });
 
   it('has words for the whole card in both languages and offers nothing to pay', () => {
+    expect(Object.keys(viMessages.bankFeeds).sort()).toEqual(Object.keys(en.bankFeeds).sort());
     const inVi = card('owner', { locale: 'vi', mapped: [account('m1', 'SBX-001')] });
     expect(inVi).toContain(viMessages.bankFeeds.title);
     expect(inVi).toContain(`>${viMessages.bankFeeds.status.active}<`);
@@ -188,6 +221,8 @@ describe('BankFeedsCard for a member or viewer', () => {
 
   it.each<Role>(['member', 'viewer'])('as %s: only reads which accounts are mapped, with nothing to change, and sees the cut-over day when set (#4223)', (role) => {
     const html = card(role, { mapped: [account('m1', 'SBX-001', { lastSyncedAt: '2026-10-30T08:00:00.000Z', feedFrom: '2026-10-15' })] });
+    expect(html).toContain(`role="region"`);
+    expect(html).toContain(`aria-label="${en.bankFeeds.title}"`);
     expect(html).toContain(en.bankFeeds.readOnlyIntro);
     expect(html).toContain('Ngân hàng thử');
     // The provider's account number is for those who map it.
