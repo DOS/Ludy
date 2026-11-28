@@ -2,7 +2,7 @@
 -- Ludy finance (issue #2199, follow-up of the conflict check of #2191): an index for the lookup of an account's keyless, flagged bank lines by their reference.
 -- Idempotent; applied files stay untouched.
 --
--- The conflict check (modules/finance/src/bank.ts, storedFacts) looks the lines a batch meets up in two ways: the keyed ones through the unique index bank_line_dedupe_uq, and, next to them, the
+-- The conflict check (modules/finance/src/bank.ts, storedAround) looks the lines a batch meets up in two ways: the keyed ones through the unique index bank_line_dedupe_uq, and, next to them, the
 -- keyless lines that were stored flagged `ambiguous` (a line stored as a conflict has no key, #2191) by their reference:
 --     WHERE org_id = $1 AND legal_entity_id = $2 AND bank_account = $3 AND dedupe_key IS NULL AND ambiguous = true AND bank_ref IN (...)
 -- No index covered bank_ref, so that lookup read the account's lines through bank_line_account_date_idx, as far as the account's history goes, once per preview, stage, confirm, feed pull and opening of

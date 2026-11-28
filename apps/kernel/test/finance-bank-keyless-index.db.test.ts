@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The index of the keyless conflict lookup (#2199, follow-up of #2191), on PostgreSQL 17: bank_line_keyless_ref_idx is a partial index on exactly what the lookup in modules/finance/src/bank.ts
 // filters (org, legal entity, bank account, bank reference, for the keyless lines flagged ambiguous), and the planner chooses it for that lookup, so the lookup is bounded by the conflicts and not
-// by the account's history. The lookup is the one `storedFacts` runs; its keyless branch is written here as plain SQL.
+// by the account's history. The lookup is the one `storedAround` runs; its keyless branch is written here as plain SQL.
 // Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
