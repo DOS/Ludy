@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Pure helpers for the Settings learned account-rules card and add dialog (#1453): vendor filter choices from the
-// listed rules, filtering the rules by vendor, and folding Vietnamese accents to search org parties by name or tax code.
+// Pure helpers for the Settings learned account-rules card and add dialog (#1453, #1452): direction and vendor filter
+// choices from the listed rules, filtering the rules, and folding Vietnamese accents to search org parties by name or tax code.
+import type { DocumentDirection } from '@ludy/kernel-contract';
 import { fold } from './palette.ts';
 
 export const ACCOUNT_RULE_EVERY_VENDOR = '__every__';
@@ -36,6 +37,12 @@ export function ruleVendorOptions(rules: ReadonlyArray<{ vendor: { partyId: stri
     .map(([partyId, name]) => ({ partyId, name }))
     .sort((a, b) => a.name.localeCompare(b.name, 'vi') || a.partyId.localeCompare(b.partyId));
   return { hasEveryVendor, vendors };
+}
+
+/** Filters learned rules by direction choice: '' for all directions, 'purchase', or 'sale'. */
+export function filterRulesByDirection<T extends { direction: DocumentDirection }>(rules: readonly T[], directionFilter: '' | DocumentDirection): T[] {
+  if (directionFilter === '') return [...rules];
+  return rules.filter((r) => r.direction === directionFilter);
 }
 
 /** Filters learned rules by vendor choice: '' for all rules, ACCOUNT_RULE_EVERY_VENDOR for shared rules, or a partyId. */

@@ -146,11 +146,18 @@ export const zAccountRule = z.object({
 });
 export type AccountRule = z.infer<typeof zAccountRule>;
 
-// A learned account rule as Settings lists it (#1399): what it matches (matchText in normalized form, label as people
-// wrote it), for which vendor (null: every vendor), the account, and its provenance: who confirmed it (their name while
-// they are a member), when, and the invoice whose approval taught it (null for a rule added in Settings).
+// A purchase invoice (the org is the buyer) or a sales invoice (the org is the seller, issue #313).
+export const DOCUMENT_DIRECTIONS = ['purchase', 'sale'] as const;
+export const zDocumentDirection = z.enum(DOCUMENT_DIRECTIONS);
+export type DocumentDirection = z.infer<typeof zDocumentDirection>;
+
+// A learned account rule as Settings lists it (#1399, #1452): what it matches (matchText in normalized form, label as
+// people wrote it), whether it is for purchases or sales, for which vendor or customer (null: every vendor/customer),
+// the account, and its provenance: who confirmed it (their name while they are a member), when, and the invoice whose
+// approval taught it (null for a rule added in Settings).
 export const zCategorizationRule = z.object({
   id: zId,
+  direction: zDocumentDirection,
   vendor: z.object({ partyId: zId, name: z.string() }).nullable(),
   matchKind: zRuleMatchKind,
   matchText: z.string(),
@@ -178,15 +185,10 @@ export const zProposedLine = z.object({
   debitAccount: zAccountCode,
   reason: z.string().max(500),
   // What chose debitAccount (#1399): a learned rule (ludy_finance.categorization_rule, with its id and whether it is
-  // the vendor's own or every vendor's), the vendor's default account, the built-in keyword list, or a user who picked
-  // it on a revision. Absent on proposals made before #1399.
+  // the vendor's/customer's own or every vendor's/customer's), the vendor's default account, the built-in keyword list,
+  // or a user who picked it on a revision. Absent on proposals made before #1399.
   accountRule: zAccountRule.optional(),
 });
-
-// A purchase invoice (the org is the buyer) or a sales invoice (the org is the seller, issue #313).
-export const DOCUMENT_DIRECTIONS = ['purchase', 'sale'] as const;
-export const zDocumentDirection = z.enum(DOCUMENT_DIRECTIONS);
-export type DocumentDirection = z.infer<typeof zDocumentDirection>;
 
 export const zJournalLineDraft = z.object({
   lineNo: z.number().int().positive(),

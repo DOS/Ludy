@@ -73,10 +73,16 @@ export function reviseRegimeRefused(carried: { regime: string | undefined; versi
   return carried.regime !== now?.regime || (carried.version !== undefined && carried.version !== now?.version);
 }
 
-// Whether a purchase teaches the vendor default and the learned rules: not when it posts under other books than TT133
-// (the rules are per organisation and not per regime), and never a sale.
-export function learnsRules(sale: boolean, postingRegime: string | undefined): boolean {
-  return !sale && postingRegime === undefined;
+// Whether a purchase teaches the vendor default account: only purchases posting under TT133 (the default is one
+// account for the whole org, checked against the TT133 chart, and sales have no customer default account).
+export function learnsVendorDefault(sale: boolean, postingRegime: string | undefined): boolean {
+  return !sale && (postingRegime === undefined || postingRegime === 'tt133');
+}
+
+// Whether an invoice teaches learned line categorization rules (#1399, #1452): both purchases and sales under TT133
+// (the rules are checked against the TT133 chart and the org's sub-accounts, not another regime's chart).
+export function learnsRules(postingRegime: string | undefined): boolean {
+  return postingRegime === undefined || postingRegime === 'tt133';
 }
 
 // The vendor default and the learned rules a TT99 purchase is offered. They were made under TT133, whose chart is org-wide, so

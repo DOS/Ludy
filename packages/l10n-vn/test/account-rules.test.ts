@@ -13,6 +13,7 @@ import {
   normalizeRuleText,
   RULE_TEXT_MAX,
   suggestDebitAccount,
+  suggestSalesAccount,
   TT133_CODES_CHANGED_IN_TT99,
   type InvoiceLine,
   type LearnedRule,
@@ -136,6 +137,61 @@ describe('suggestDebitAccount order (#1399)', () => {
       lines: [line('Dịch vụ tư vấn')],
     } as unknown as ParsedInvoice;
     expect(bookableSaleLines(invoice)[0]).toMatchObject({ debitAccount: '511', accountRule: { source: 'builtin' } });
+  });
+
+  it('proposes learned sales rules by specificity and customer scope, ignoring purchase and non-revenue rules', () => {
+    const rules: LearnedRule[] = [
+      { id: 'p-desc', vendor: true, kind: 'description', text: 'dich vu tu van', label: null, account: '6422', direction: 'purchase' },
+      { id: 's-nonrev', vendor: true, kind: 'description', text: 'dich vu tu van', label: null, account: '6422', direction: 'sale' },
+      { id: 's-org-kw', vendor: false, kind: 'keyword', text: 'tu van', label: 'tư vấn', account: '5118', direction: 'sale' },
+      { id: 's-cust-kw-short', vendor: true, kind: 'keyword', text: 'dich vu', label: 'dịch vụ', account: '5111', direction: 'sale' },
+      { id: 's-cust-kw-long', vendor: true, kind: 'keyword', text: 'dich vu tu', label: 'dịch vụ tư', account: '5112', direction: 'sale' },
+      { id: 's-cust-desc', vendor: true, kind: 'description', text: 'dich vu tu van', label: null, account: '5113', direction: 'sale' },
+    ];
+    // Customer description beats customer keywords and org rules, with customer phrasing.
+    const descMatch = suggestSalesAccount(line('Dịch vụ tư vấn 11/2026'), rules);
+    expect(descMatch).toMatchObject({
+      account: '5113',
+      rule: { source: 'learned', ruleId: 's-cust-desc', scope: 'vendor', matchKind: 'description' },
+    });
+    expect(descMatch.reason).toContain('của khách hàng này');
+
+    // Longest customer keyword beats shorter customer keyword and org rule.
+    const custKwMatch = suggestSalesAccount(line('Dịch vụ tư liệu'), rules);
+    expect(custKwMatch).toMatchObject({
+      account: '5112',
+      rule: { source: 'learned', ruleId: 's-cust-kw-long', scope: 'vendor', matchKind: 'keyword' },
+    });
+    expect(custKwMatch.reason).toContain('của khách hàng này');
+
+    // Org-wide sales rule applies when no customer rule matches, without customer phrasing.
+    const orgMatch = suggestSalesAccount(line('Hỗ trợ tư vấn'), rules);
+    expect(orgMatch).toMatchObject({
+      account: '5118',
+      rule: { source: 'learned', ruleId: 's-org-kw', scope: 'org', matchKind: 'keyword' },
+    });
+    expect(orgMatch.reason).not.toContain('của khách hàng này');
+
+    // bookableSaleLines threads learned sales rules while skipping purchase/non-revenue rules.
+    const invoice = {
+      lines: [line('Dịch vụ tư vấn 11/2026'), line('Sản phẩm khác')],
+    } as unknown as ParsedInvoice;
+    const proposed = bookableSaleLines(invoice, rules);
+    expect(proposed[0]).toMatchObject({ debitAccount: '5113', accountRule: { source: 'learned', ruleId: 's-cust-desc' } });
+    expect(proposed[1]).toMatchObject({ debitAccount: '511', accountRule: { source: 'builtin' } });
+  });
+
+  it('ignores sales rules on purchase suggestions and allows valid non-511 revenue accounts on sales', () => {
+    const rules: LearnedRule[] = [
+      { id: 's-711', vendor: true, kind: 'keyword', text: 'thanh ly', label: 'thanh lý', account: '711', direction: 'sale' },
+      { id: 's-3387', vendor: false, kind: 'keyword', text: 'doanh thu chua thuc hien', label: null, account: '3387', direction: 'sale' },
+      { id: 's-515', vendor: false, kind: 'keyword', text: 'lai tien gui', label: null, account: '515', direction: 'sale' },
+    ];
+    expect(suggestSalesAccount(line('Thanh lý tài sản'), rules)).toMatchObject({ account: '711', rule: { source: 'learned', ruleId: 's-711' } });
+    expect(suggestSalesAccount(line('Doanh thu chưa thực hiện 2027'), rules)).toMatchObject({ account: '3387', rule: { source: 'learned', ruleId: 's-3387' } });
+    expect(suggestSalesAccount(line('Lãi tiền gửi kỳ hạn'), rules)).toMatchObject({ account: '515', rule: { source: 'learned', ruleId: 's-515' } });
+    // Purchase suggestions ignore direction: 'sale' rules.
+    expect(suggestDebitAccount(line('Thanh lý dịch vụ'), null, rules)).toMatchObject({ account: '6422', rule: { source: 'builtin' } });
   });
 });
 

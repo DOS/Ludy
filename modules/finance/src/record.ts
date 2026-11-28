@@ -30,7 +30,7 @@ import { assertUsableAccounts, isInactiveDefaultRefusal } from './accounts.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { booksOn, isTt133Books, lockBooks, type BooksOn } from './books.ts';
-import { approvalRegimeRefused, booksRegimeChanged, learnsRules, reviseRegimeRefused } from './purchase-regime.ts';
+import { approvalRegimeRefused, booksRegimeChanged, learnsRules, learnsVendorDefault, reviseRegimeRefused } from './purchase-regime.ts';
 import { latestRevision } from './source-entry.ts';
 import { learnFromApproval } from './categorization.ts';
 import { postReversal } from './reversal.ts';
@@ -496,10 +496,9 @@ export const recordPurchase = defineCommand({
     const accountsEntity = await resolveLegalEntity(ctx, payload.legalEntityId ?? (await proposalEntity(ctx)));
     await lockBooks(ctx, accountsEntity);
     // The books in force on the day the entry is posted; the vendor default and the learned rules follow them, not the proposal's.
-    let postingRegime: string | undefined;
+    const postingBooks = regime !== undefined || !sale ? await documentBooks(ctx, direction, accountsEntity, postingDay) : await booksOn(ctx, accountsEntity, postingDay);
+    const postingRegime = postingBooks?.regime;
     if (regime !== undefined || !sale) {
-      const postingBooks = await documentBooks(ctx, direction, accountsEntity, postingDay);
-      postingRegime = postingBooks?.regime;
       if (approvalRegimeRefused({ carried: regime, carriedVersion: payload.chartVersion, current: postingBooks, accounts: lines.map((l) => l.debitAccount) })) {
         throw booksRegimeChanged(regime, postingRegime, { proposed: payload.chartVersion, current: postingBooks?.version });
       }
@@ -676,9 +675,9 @@ export const recordPurchase = defineCommand({
       lines.map((l) => ({ lineNo: l.lineNo, description: l.description, unit: l.unit, quantity: l.quantity, amount: l.amount, account: l.debitAccount, source: carried(l) })),
     );
 
-    // Remember the debit account carrying the largest amount (either sign) for this vendor. Sales remember nothing, nor does a purchase of a TT99 entity (#1403): the default is one account for the whole org,
+    // Remember the debit account carrying the largest amount (either sign) for this vendor. Sales have no customer default, nor does a purchase of a TT99 entity (#1403): the default is one account for the whole org,
     // checked against the TT133 chart, and it would carry a TT99 code into TT133 books.
-    const main = !learnsRules(sale, postingRegime) ? undefined : [...lines].sort((a, b) => money(b.amount).abs().comparedTo(money(a.amount).abs()))[0];
+    const main = !learnsVendorDefault(sale, postingRegime) ? undefined : [...lines].sort((a, b) => money(b.amount).abs().comparedTo(money(a.amount).abs()))[0];
     if (main) {
       await ctx.trx
         .insertInto('ludy_finance.vendor_account_rule')
@@ -703,8 +702,8 @@ export const recordPurchase = defineCommand({
         });
     }
 
-    // The accounts a user chose on this revision teach the vendor's learned rules (#1399). Sales learn nothing, nor does a TT99 entity's purchase (#1403, as for the vendor default above).
-    const learned = !learnsRules(sale, postingRegime) ? [] : await learnFromApproval(ctx, { partyId, documentId: document.id, lines });
+    // The accounts a user chose on this revision teach the vendor's or customer's learned rules (#1399, #1452), when posting under TT133 (#1403).
+    const learned = !learnsRules(postingRegime) ? [] : await learnFromApproval(ctx, { direction, partyId, documentId: document.id, lines });
 
     ctx.audit({
       direction,

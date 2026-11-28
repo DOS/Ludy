@@ -11,7 +11,8 @@ import type { CategorizationRule } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
-import { ACCOUNT_RULE_EVERY_VENDOR, filterPartyChoices, filterRulesByVendor, ruleVendorOptions } from '../src/lib/account-rules.ts';
+import { ACCOUNT_RULE_EVERY_VENDOR, filterPartyChoices, filterRulesByDirection, filterRulesByVendor, ruleVendorOptions } from '../src/lib/account-rules.ts';
+import { duplicateKeywordRule } from '../src/lib/duplicates.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -44,6 +45,7 @@ const { AccountRulesCard, AddKeywordRuleDialog } = await import('../src/routes/a
 const sampleRules: CategorizationRule[] = [
   {
     id: 'r1',
+    direction: 'purchase',
     vendor: null,
     matchKind: 'keyword',
     matchText: 'chiet khau',
@@ -56,6 +58,7 @@ const sampleRules: CategorizationRule[] = [
   },
   {
     id: 'r2',
+    direction: 'purchase',
     vendor: { partyId: 'p-vnpt', name: 'VNPT Hà Nội' },
     matchKind: 'description',
     matchText: 'cuoc internet thang',
@@ -68,6 +71,7 @@ const sampleRules: CategorizationRule[] = [
   },
   {
     id: 'r3',
+    direction: 'purchase',
     vendor: { partyId: 'p-evn', name: 'Điện lực TP.HCM' },
     matchKind: 'keyword',
     matchText: 'tien dien',
@@ -128,6 +132,30 @@ describe('account rules vendor helpers (#1453)', () => {
     expect(capped.items).toHaveLength(2);
     expect(capped.total).toBe(3);
   });
+
+  it('filters rules by direction and checks duplicates per direction (#1452)', () => {
+    const saleRule: CategorizationRule = {
+      id: 'r-sale',
+      direction: 'sale',
+      vendor: null,
+      matchKind: 'keyword',
+      matchText: 'chiet khau',
+      label: 'Chiết khấu bán hàng',
+      accountCode: '5111',
+      confirmedBy: 'an@example.test',
+      confirmedAt: '2026-11-23T00:00:00.000Z',
+      sourceDocument: null,
+      corrections: 0,
+    };
+    const mixed = [...sampleRules, saleRule];
+    expect(filterRulesByDirection(mixed, '')).toHaveLength(4);
+    expect(filterRulesByDirection(mixed, 'purchase').map((r) => r.id)).toEqual(['r1', 'r2', 'r3']);
+    expect(filterRulesByDirection(mixed, 'sale').map((r) => r.id)).toEqual(['r-sale']);
+    // Same keyword for 'sale' collides with saleRule, not with 'purchase' r1.
+    expect(duplicateKeywordRule(mixed, 'Chiết khấu', null, 'sale')?.id).toBe('r-sale');
+    expect(duplicateKeywordRule(sampleRules, 'Chiết khấu', null, 'sale')).toBeNull();
+    expect(duplicateKeywordRule(mixed, 'Chiết khấu', null, 'purchase')?.id).toBe('r1');
+  });
 });
 
 describe('AccountRulesCard vendor display, filtering, and viewer scoping', () => {
@@ -146,8 +174,12 @@ describe('AccountRulesCard vendor display, filtering, and viewer scoping', () =>
       expect(html).toContain(msgs.accountRules.allVendors);
       expect(html).toContain('VNPT Hà Nội');
       expect(html).toContain('Điện lực TP.HCM');
+      expect(html).toContain(`>${msgs.accountRules.filterDirection}</label>`);
+      const directionMatch = /<label[^>]*for="([^"]+)"[^>]*>[^<]*<\/label>(?:(?!<\/select>).)*?<select[^>]*id="([^"]+)"[^>]*data-testid="account-rules-direction-filter"/.exec(html);
+      expect(directionMatch?.[1]).toBeTruthy();
+      expect(directionMatch?.[1]).toBe(directionMatch?.[2]);
       expect(html).toContain(`>${msgs.accountRules.filterVendor}</label>`);
-      const filterMatch = /<label[^>]*for="([^"]+)"[^>]*>[^<]*<\/label>.*?<select[^>]*id="([^"]+)"[^>]*data-testid="account-rules-vendor-filter"/.exec(html);
+      const filterMatch = /<label[^>]*for="([^"]+)"[^>]*>[^<]*<\/label>(?:(?!<\/select>).)*?<select[^>]*id="([^"]+)"[^>]*data-testid="account-rules-vendor-filter"/.exec(html);
       expect(filterMatch?.[1]).toBeTruthy();
       expect(filterMatch?.[1]).toBe(filterMatch?.[2]);
       expect(html).toMatch(new RegExp(`value=""[^>]*>${msgs.accountRules.filterAll}</option>`));
@@ -215,5 +247,80 @@ describe('AddKeywordRuleDialog vendor picker accessibility and keyboard/clear wi
     expect(src).toContain('data-testid="account-rule-vendor-clear"');
     expect(src).toContain('data-testid="account-rules-vendor-filter-clear"');
     expect(src).toContain("setVendorError(t('vendorPickRequired'))");
+    expect(src).toContain("setVendorError(t('customerPickRequired'))");
+    expect(src).toContain('data-testid="account-rule-direction-select"');
+    expect(src).toContain("pickableAccounts(accounts.data ?? [], null, direction)");
+  });
+
+  it('renders the direction selector in AddKeywordRuleDialog and supports sales rules alongside purchase rules (#1452)', () => {
+    client.current.setQueryData(
+      ['accounts', 'list'],
+      [
+        { code: '6422', name: 'Chi phí QLDN', parentCode: null, rootCode: '642', active: true, custom: false },
+        { code: '5113', name: 'Doanh thu cung cấp dịch vụ', parentCode: '511', rootCode: '511', active: true, custom: false },
+      ],
+    );
+    for (const [locale, msgs] of [
+      ['vi', viMessages],
+      ['en', en],
+    ] as const) {
+      const dialogHtml = render(<AddKeywordRuleDialog rules={[]} onClose={() => undefined} />, locale);
+      expect(dialogHtml).toContain('data-testid="account-rule-direction-select"');
+      expect(dialogHtml).toContain(msgs.accountRules.ruleDirection);
+      expect(dialogHtml).toContain(`<option value="purchase" selected="">${msgs.accountRules.directionPurchase}</option>`);
+      expect(dialogHtml).toContain(`<option value="sale">${msgs.accountRules.directionSale}</option>`);
+      // Default direction is 'purchase': expense 6422 is offered and revenue 5113 is excluded.
+      expect(dialogHtml).toContain('value="6422"');
+      expect(dialogHtml).not.toContain('value="5113"');
+
+      // Sales-only rule list uses customer wording and sales badge.
+      const salesOnly: CategorizationRule[] = [
+        {
+          id: 's1',
+          direction: 'sale',
+          vendor: null,
+          matchKind: 'keyword',
+          matchText: 'tu van',
+          label: 'Tư vấn',
+          accountCode: '5113',
+          confirmedBy: 'an@example.test',
+          confirmedAt: '2026-11-23T00:00:00.000Z',
+          sourceDocument: null,
+          corrections: 0,
+        },
+        {
+          id: 's2',
+          direction: 'sale',
+          vendor: { partyId: 'p-fpt', name: 'FPT Telecom' },
+          matchKind: 'description',
+          matchText: 'dich vu thiet ke',
+          label: 'Dịch vụ thiết kế tháng 11/2026',
+          accountCode: '5113',
+          confirmedBy: 'an@example.test',
+          confirmedAt: '2026-11-24T00:00:00.000Z',
+          sourceDocument: { documentId: 'd2', series: 'K26T', number: '0009', invoiceDate: '2026-11-01' },
+          corrections: 0,
+        },
+      ];
+      client.current.setQueryData(['accountRules', 'list'], salesOnly);
+      const salesHtml = render(<AccountRulesCard canManage />, locale);
+      expect(salesHtml).toContain(msgs.accountRules.directionSale);
+      expect(salesHtml).toContain(msgs.accountRules.allCustomers);
+      expect(salesHtml).toContain(`>${msgs.accountRules.filterCustomer}</label>`);
+      expect(salesHtml).toContain('FPT Telecom');
+      expect(salesHtml).toContain('5113');
+
+      // Mixed list uses party wording and shows both Purchase and Sales badges and filters.
+      client.current.setQueryData(['accountRules', 'list'], [...sampleRules, ...salesOnly]);
+      const mixedHtml = render(<AccountRulesCard canManage={false} />, locale);
+      expect(mixedHtml).toContain(msgs.accountRules.directionPurchase);
+      expect(mixedHtml).toContain(msgs.accountRules.directionSale);
+      expect(mixedHtml).toContain(msgs.accountRules.allVendors);
+      expect(mixedHtml).toContain(msgs.accountRules.allCustomers);
+      expect(mixedHtml).toContain(`>${msgs.accountRules.filterParty}</label>`);
+      expect(mixedHtml).toContain(`value="${ACCOUNT_RULE_EVERY_VENDOR}">${msgs.accountRules.allParties}</option>`);
+      expect(mixedHtml).not.toContain(`>${msgs.accountRules.addTitle}<`);
+      expect(mixedHtml).not.toContain(`>${msgs.accountRules.remove}<`);
+    }
   });
 });

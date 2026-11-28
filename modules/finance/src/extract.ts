@@ -105,7 +105,7 @@ export interface InvoiceLookup {
   // The version of that regime's chart on the issue date, carried with the regime (#1403).
   chartVersion?: string;
   vendorDefault: string | null;
-  // The learned account rules of the vendor and of every vendor (#1399), for a purchase; none for a sale.
+  // The learned account rules of the vendor/customer and of every vendor/customer (#1399, #1452).
   learnedRules?: LearnedRule[];
   duplicateDocumentId: string | null;
   duplicateProposalId: string | null;
@@ -193,8 +193,9 @@ export const purchaseLookup = defineQuery({
     related: z.object({ series: z.string(), number: z.string() }).nullable().default(null),
     // The legal entity the invoice is read in (#1280, #2502): its learned rules apply, and the invoice is a sale or a purchase of its books; omitted, the org's default entity.
     legalEntityId: zId.optional(),
-    // The buyer's tax code, to tell a purchase from another entity of the org (an invoice between two entities is a purchase in the buyer's books).
+    // The buyer's tax code and name, to tell a purchase from another entity of the org (an invoice between two entities is a purchase in the buyer's books) and to resolve a sale's customer rules (#1452).
     buyerTaxCode: z.string().nullable().default(null),
+    buyerName: z.string().optional(),
     // The invoice's issue date, to read the books regime the sale is posted under (#3712 slice 4); omitted, no regime is named.
     issueDate: zLocalDate.optional(),
     // The amounts of the reading being recorded (an original, #2320), to tell whether they are the posted document's: in
@@ -204,10 +205,11 @@ export const purchaseLookup = defineQuery({
   }),
   access: 'system',
   handler: async (ctx, input): Promise<InvoiceLookup> => {
-    // A sale (issue #313): the org issued the invoice and numbers its own invoices, so a duplicate is the same series
-    // and number whoever the customer is, and no account is remembered per customer. It is a sale of the legal entity it is
-    // read in when the seller is that entity (#2502); issued as another entity of the org it is never a purchase from a
-    // supplier: a sale of that entity (refused where it would be booked), or a purchase when this entity is its buyer.
+    // A sale (issue #313, #1452): the org issued the invoice and numbers its own invoices, so a duplicate is the same
+    // series and number whoever the customer is, and no vendor default is remembered per customer (learned sales rules
+    // still apply per customer or org-wide). It is a sale of the legal entity it is read in when the seller is that
+    // entity (#2502); issued as another entity of the org it is never a purchase from a supplier: a sale of that entity
+    // (refused where it would be booked), or a purchase when this entity is its buyer.
     const entityId = await resolveLegalEntity(ctx, input.legalEntityId);
     const own = await loadOwnTaxCodes(ctx);
     const ownTaxCode = ownTaxCodeForEntity(entityId, own);
@@ -293,16 +295,28 @@ export const purchaseLookup = defineQuery({
       .limit(2)
       .execute();
     const [duplicate, anotherDuplicate] = duplicates;
-    // The vendor whose learned rules apply: by tax code as above, or, for an invoice without one, by name as
+    // The vendor or customer whose learned rules apply: by tax code, or, for an invoice without one, by name as
     // finance.purchase.record finds or creates the party it learns for (upsertParty).
-    const ruleParty =
-      party ?? (!sale && !input.sellerTaxCode && input.sellerName.trim() ? await findPartyByName(ctx, input.sellerName.trim()) : undefined);
+    const buyerTaxCode = sale ? (parseTaxCode(input.buyerTaxCode)?.normalized ?? null) : null;
+    const customer =
+      sale && buyerTaxCode
+        ? await ctx.trx
+            .selectFrom('ludy_kernel.party')
+            .select('id')
+            .where('org_id', '=', ctx.orgId)
+            .where('tax_code', '=', buyerTaxCode)
+            .executeTakeFirst()
+        : undefined;
+    const buyerName = input.buyerName?.trim() ?? '';
+    const ruleParty = sale
+      ? (customer ?? (!buyerTaxCode && buyerName ? await findPartyByName(ctx, buyerName) : undefined))
+      : (party ?? (!input.sellerTaxCode && input.sellerName.trim() ? await findPartyByName(ctx, input.sellerName.trim()) : undefined));
     // A sale names its regime whichever it is; a purchase only when it is not TT133, so every TT133 proposal stays as it was (#1403).
     const books = input.issueDate ? await booksOn(ctx, entityId, input.issueDate) : undefined;
     const stamped = books && (sale || !isTt133Books(books)) ? books : undefined;
     let vendorDefault = rule?.debit_account ?? null;
-    let learnedRules = sale ? [] : await rulesForSuggestion(ctx, ruleParty?.id ?? null, entityId);
-    if (!sale && books && input.issueDate && !isTt133Books(books)) {
+    let learnedRules = await rulesForSuggestion(ctx, ruleParty?.id ?? null, entityId, sale ? 'sale' : 'purchase');
+    if (books && input.issueDate && !isTt133Books(books)) {
       // The vendor default and the learned rules were made under TT133, whose chart is org-wide; only those naming an account the entity's chart has, and means the same by, are offered (#1403).
       const asked = [...new Set([...(vendorDefault ? [vendorDefault] : []), ...learnedRules.map((r) => r.account)])];
       const chart = await chartAccounts(ctx, asked, { legalEntityId: entityId, date: input.issueDate });
@@ -692,6 +706,7 @@ export async function extractAndPropose(
     number: invoice.number,
     related: invoice.related ? { series: invoice.related.series, number: invoice.related.number } : null,
     buyerTaxCode: invoice.buyer.taxCode ? (parseTaxCode(invoice.buyer.taxCode)?.normalized ?? invoice.buyer.taxCode) : null,
+    buyerName: invoice.buyer.name,
     ...(file.legalEntityId ? { legalEntityId: file.legalEntityId } : {}),
     // Only a well-formed date: a malformed one must not fail the lookup (the invoice's own checks name it).
     ...(zLocalDate.safeParse(invoice.issueDate).success ? { issueDate: invoice.issueDate } : {}),
@@ -718,7 +733,7 @@ export async function extractAndPropose(
     const buyerCheck = buyerTaxCodeCheck(invoice.buyer.taxCode, lookup.ownTaxCode);
     if (buyerCheck) checks.push(buyerCheck);
   }
-  const lines = sale ? bookableSaleLines(booked) : bookableLines(booked, lookup.vendorDefault, lookup.learnedRules ?? [], lookup.regime);
+  const lines = sale ? bookableSaleLines(booked, lookup.learnedRules ?? []) : bookableLines(booked, lookup.vendorDefault, lookup.learnedRules ?? [], lookup.regime);
   if (lines.length === 0) return fail('Hóa đơn không có dòng hàng hóa, dịch vụ để hạch toán', checks);
   // A purchase line no rule matched has no account yet (#2091): a warning names those lines, and recording refuses them
   // until a reviewer picks the account. A sale's lines are all revenue, so it has none. Nothing is added when every

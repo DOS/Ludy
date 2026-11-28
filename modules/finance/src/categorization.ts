@@ -1,19 +1,23 @@
-// Learned per-line account rules (issue #1399, plan §8.6 "Memory": learned deterministic rules stored as rows with
-// provenance, applied before the LLM). A rule maps an invoice line to the account it is posted to, by the line's whole
-// item description (normalized) or by a keyword in it, for one vendor or for every vendor.
-// - Learning: when a purchase invoice is approved (finance.purchase.record), every line whose account a user chose on
-//   the approved revision (finance.purchase.revise marks it) writes or updates the vendor's description rule, with the
-//   approver, the time and the new document as provenance, in the same audited command.
-// - Suggesting: extraction reads the vendor's rules and every vendor's rules (rulesForSuggestion) and @ludy/l10n-vn
-//   (suggestDebitAccount) applies them in order: the vendor's own rules, the vendor's default account, every vendor's
-//   rules, then the built-in keyword list. A rule only proposes an account: the approver confirms every line and the
-//   posting checks the account again.
-// - Settings: every role lists the rules; owners and admins add a keyword rule and remove any rule (R1, audited).
+// Learned per-line account rules (issue #1399, #1452, plan §8.6 "Memory": learned deterministic rules stored as rows
+// with provenance, applied before the LLM). A rule maps an invoice line to the account it is posted to, by the line's
+// whole item description (normalized) or by a keyword in it, for purchases or sales, for one vendor/customer or for
+// every vendor/customer.
+// - Learning: when a purchase or sales invoice is approved under TT133 (finance.purchase.record), every line whose
+//   account a user chose on the approved revision (finance.purchase.revise marks it) writes or updates the counterparty's
+//   description rule for that direction, with the approver, the time and the new document as provenance, in the same
+//   audited command.
+// - Suggesting: extraction reads the counterparty's rules and every counterparty's rules for that direction
+//   (rulesForSuggestion) and @ludy/l10n-vn applies them: for purchases (suggestDebitAccount) in order of vendor's own
+//   rules, vendor's default account, every vendor's rules, then built-in keywords; for sales (suggestSalesAccount) in
+//   order of customer's own sales rules, every customer's sales rules, then built-in 511. A rule only proposes an
+//   account: the approver confirms every line and the posting checks the account again.
+// - Settings: every role lists the rules; owners and admins add a purchase or sales keyword rule and remove any rule
+//   (R1, audited).
 // Matching is plain string comparison on normalized text (normalizeRuleText): no pattern from user input is compiled,
 // and the lookup reads at most LEARNED_RULE_LIMIT rules of each scope.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { isRevenueAccount, zAccountCode, zId, type CategorizationRule } from '@ludy/kernel-contract';
+import { isRevenueAccount, zAccountCode, zDocumentDirection, zId, type CategorizationRule, type DocumentDirection } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { descriptionRuleText, keywordRuleText, money, type LearnedRule, type ProposedLine } from '@ludy/l10n-vn';
@@ -29,17 +33,25 @@ export const RULE_LIST_LIMIT = 500;
 // The reason finance.purchase.revise gave a line a user picked before #1399 marked it with accountRule.
 const USER_CHOSEN_REASON = 'Người dùng chọn';
 
-// The rules a suggestion reads for an invoice of `partyId` (null: a vendor not yet in the books): the vendor's own and
-// every vendor's, each newest first, skipping a rule whose sub-account was deactivated since. Rules are learned per
-// legal entity (#1280), so only those of the invoice's entity are read.
-export async function rulesForSuggestion(ctx: QueryContext, partyId: string | null, legalEntityId: string): Promise<LearnedRule[]> {
+// The rules a suggestion reads for an invoice of `partyId` (null: a vendor/customer not yet in the books) and
+// `direction`: the party's own and every party's, each newest first, skipping a rule whose sub-account was deactivated
+// since or whose account mismatches `direction`. Rules are learned per legal entity (#1280), so only those of the
+// invoice's entity are read.
+export async function rulesForSuggestion(
+  ctx: QueryContext,
+  partyId: string | null,
+  legalEntityId: string,
+  direction: DocumentDirection = 'purchase',
+): Promise<LearnedRule[]> {
+  const sale = direction === 'sale';
   const load = async (vendor: boolean) => {
     if (vendor && partyId === null) return [];
     const rows = await ctx.trx
       .selectFrom('ludy_finance.categorization_rule as r')
-      .select(['r.id', 'r.match_kind', 'r.match_text', 'r.label', 'r.debit_account'])
+      .select(['r.id', 'r.direction', 'r.match_kind', 'r.match_text', 'r.label', 'r.debit_account'])
       .where('r.org_id', '=', ctx.orgId)
       .where('r.legal_entity_id', '=', legalEntityId)
+      .where('r.direction', '=', direction)
       .where((eb) => (vendor && partyId !== null ? eb('r.vendor_party_id', '=', partyId) : eb('r.vendor_party_id', 'is', null)))
       .where(({ or, exists, selectFrom }) =>
         or([
@@ -57,28 +69,38 @@ export async function rulesForSuggestion(ctx: QueryContext, partyId: string | nu
       .orderBy('r.id', 'desc')
       .limit(LEARNED_RULE_LIMIT)
       .execute();
-    return rows.map((r) => ({ id: r.id, vendor, kind: r.match_kind, text: r.match_text, label: r.label, account: r.debit_account }));
+    return rows
+      .filter((r) => isRevenueAccount(r.debit_account) === sale)
+      .map((r) => ({ id: r.id, direction: r.direction, vendor, kind: r.match_kind, text: r.match_text, label: r.label, account: r.debit_account }));
   };
   return [...(await load(true)), ...(await load(false))];
 }
 
-// The lines of an approved purchase whose account a user chose: marked by finance.purchase.revise, or, on a revision
-// made before #1399, by its reason.
+// The lines of an approved purchase or sale whose account a user chose: marked by finance.purchase.revise, or, on a
+// revision made before #1399, by its reason.
 export function userChosenLines<L extends Pick<ProposedLine, 'reason' | 'accountRule'>>(lines: readonly L[]): L[] {
   return lines.filter((l) => l.accountRule?.source === 'user' || (l.accountRule === undefined && l.reason === USER_CHOSEN_REASON));
 }
 
-// Writes or updates the vendor's description rule for every line whose account a user chose (#1399), inside
-// finance.purchase.record. Lines with the same item text teach one rule: the line with the largest amount (either sign)
-// decides, the first line on a tie. Written in text order, so two approvals for one vendor take the rows' locks in the
-// same order. Only a user's approval teaches; returns what it wrote, for the audit row.
+// Writes or updates the vendor's or customer's description rule for every line whose account a user chose (#1399,
+// #1452), inside finance.purchase.record. Lines with the same item text teach one rule: the line with the largest
+// amount (either sign) decides, the first line on a tie. Written in text order, so two approvals for one party take
+// the rows' locks in the same order. Only a user's approval teaches; returns what it wrote, for the audit row.
 export async function learnFromApproval(
   ctx: CommandContext,
-  input: { partyId: string; documentId: string; lines: ReadonlyArray<Pick<ProposedLine, 'lineNo' | 'description' | 'amount' | 'debitAccount' | 'reason' | 'accountRule'>> },
+  input: {
+    direction?: DocumentDirection;
+    partyId: string;
+    documentId: string;
+    lines: ReadonlyArray<Pick<ProposedLine, 'lineNo' | 'description' | 'amount' | 'debitAccount' | 'reason' | 'accountRule'>>;
+  },
 ): Promise<Array<{ ruleId: string; lineNo: number; account: string; created: boolean }>> {
   if (ctx.actor.type !== 'user') return [];
+  const direction = input.direction ?? 'purchase';
+  const sale = direction === 'sale';
   const byText = new Map<string, (typeof input.lines)[number]>();
   for (const line of userChosenLines(input.lines)) {
+    if (isRevenueAccount(line.debitAccount) !== sale) continue;
     const text = descriptionRuleText(line.description);
     if (text === null) continue;
     const kept = byText.get(text);
@@ -95,7 +117,7 @@ export async function learnFromApproval(
     };
     const row = await ctx.trx
       .insertInto('ludy_finance.categorization_rule')
-      .values({ org_id: ctx.orgId, vendor_party_id: input.partyId, match_kind: 'description', match_text: text, ...provenance })
+      .values({ org_id: ctx.orgId, direction, vendor_party_id: input.partyId, match_kind: 'description', match_text: text, ...provenance })
       .onConflict((oc) => oc.constraint('categorization_rule_match_uq').doUpdateSet(provenance))
       .returning(['id', sql<boolean>`(xmax = 0)`.as('created')])
       .executeTakeFirstOrThrow();
@@ -117,6 +139,7 @@ export const categorizationRulesList = defineQuery({
       .leftJoin('ludy_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'r.org_id').onRef('d.id', '=', 'r.source_document_id'))
       .select([
         'r.id',
+        'r.direction',
         'r.vendor_party_id',
         'p.name as vendor_name',
         'r.match_kind',
@@ -159,6 +182,7 @@ export const categorizationRulesList = defineQuery({
     }
     return rows.map((r) => ({
       id: r.id,
+      direction: r.direction,
       vendor: r.vendor_party_id ? { partyId: r.vendor_party_id, name: r.vendor_name ?? '' } : null,
       matchKind: r.match_kind,
       matchText: r.match_text,
@@ -180,7 +204,8 @@ export const createCategorizationRule = defineCommand({
   input: z.object({
     keyword: z.string().trim().min(1).max(500),
     accountCode: zAccountCode,
-    // Omitted or null: the rule applies to every vendor.
+    direction: zDocumentDirection.default('purchase'),
+    // Omitted or null: the rule applies to every vendor or every customer.
     vendorPartyId: zId.nullable().optional(),
     // The legal entity whose invoices the rule is for (#1280), as in zLegalEntityChoice.
     legalEntityId: zId.optional(),
@@ -193,24 +218,34 @@ export const createCategorizationRule = defineCommand({
     if (text === null) {
       throw new DomainError('RULE_TEXT_TOO_SHORT', 422, 'Từ khóa cần có ít nhất hai chữ cái hoặc chữ số');
     }
-    // A learned rule proposes the account of a purchase line, which never goes to a revenue account (#430).
-    if (isRevenueAccount(input.accountCode)) {
+    const sale = input.direction === 'sale';
+    // Purchase rules never propose revenue accounts; sales rules propose only revenue accounts (#430, #1452).
+    if (!sale && isRevenueAccount(input.accountCode)) {
       throw new DomainError('REVENUE_ACCOUNT_ON_PURCHASE', 422, `Quy tắc dùng cho hàng hóa, dịch vụ mua vào nên không chọn tài khoản doanh thu ${input.accountCode}`, {
         account: input.accountCode,
       });
+    }
+    if (sale && !isRevenueAccount(input.accountCode)) {
+      throw new DomainError(
+        'NOT_REVENUE_ACCOUNT',
+        422,
+        `Quy tắc dùng cho hàng hóa, dịch vụ bán ra nên phải chọn tài khoản doanh thu (511, 515, 711, 3387 hoặc tài khoản con của chúng), không phải ${input.accountCode}`,
+        { account: input.accountCode },
+      );
     }
     await assertUsableAccounts(ctx, [input.accountCode]);
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     const vendorPartyId = input.vendorPartyId ?? null;
     if (vendorPartyId !== null) {
       const party = await ctx.trx.selectFrom('ludy_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', vendorPartyId).executeTakeFirst();
-      if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy nhà cung cấp');
+      if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, sale ? 'Không tìm thấy khách hàng' : 'Không tìm thấy nhà cung cấp');
     }
     const row = await ctx.trx
       .insertInto('ludy_finance.categorization_rule')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
+        direction: input.direction,
         vendor_party_id: vendorPartyId,
         match_kind: 'keyword',
         match_text: text,
@@ -223,7 +258,7 @@ export const createCategorizationRule = defineCommand({
       .returning('id')
       .executeTakeFirst();
     if (!row) throw new DomainError('RULE_EXISTS', 409, `Đã có quy tắc cho từ khóa "${input.keyword}"; hãy xóa quy tắc cũ trước nếu muốn đổi tài khoản`);
-    ctx.audit({ ruleId: row.id, matchKind: 'keyword', matchText: text, accountCode: input.accountCode, vendorPartyId, legalEntityId });
+    ctx.audit({ ruleId: row.id, direction: input.direction, matchKind: 'keyword', matchText: text, accountCode: input.accountCode, vendorPartyId, legalEntityId });
     return { id: row.id };
   },
 });
@@ -240,12 +275,13 @@ export const removeCategorizationRule = defineCommand({
       .deleteFrom('ludy_finance.categorization_rule')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', id)
-      .returning(['vendor_party_id', 'match_kind', 'match_text', 'debit_account', 'confirmed_by', 'source_document_id'])
+      .returning(['direction', 'vendor_party_id', 'match_kind', 'match_text', 'debit_account', 'confirmed_by', 'source_document_id'])
       .executeTakeFirst();
     if (!removed) throw new DomainError('RULE_NOT_FOUND', 404, 'Không tìm thấy quy tắc này; có thể đã có người xóa');
     // The audit row keeps what the rule said and where it came from.
     ctx.audit({
       ruleId: id,
+      direction: removed.direction,
       vendorPartyId: removed.vendor_party_id,
       matchKind: removed.match_kind,
       matchText: removed.match_text,

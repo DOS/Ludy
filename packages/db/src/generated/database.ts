@@ -1081,6 +1081,7 @@ export interface FinanceCategorizationRuleTable {
   source_document_id: string | null;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   legal_entity_id: ColumnType<string, string, NotGranted>;
+  direction: ColumnType<string, string | undefined, NotGranted>;
 }
 
 /** ludy_finance.channel_order_line */
