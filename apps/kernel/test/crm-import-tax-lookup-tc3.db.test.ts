@@ -162,13 +162,16 @@ suite('TC3 CRM contact import tax-code suggestions (#4990)', () => {
     };
   }
 
-  async function tokenFor(who: Account) {
+  async function tokenFor(who: Account, options: { mfa?: boolean } = {}) {
+    const now = Math.floor(Date.now() / 1000);
+    const mfa = options.mfa ? { aal: 'aal2', amr: [{ method: 'totp', timestamp: now }] } : {};
     return new SignJWT({
       role: 'authenticated',
       email: who.email,
       session_id: who.session,
       aal: 'aal1',
       is_anonymous: false,
+      ...mfa,
     })
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(who.subject)
@@ -185,8 +188,9 @@ suite('TC3 CRM contact import tax-code suggestions (#4990)', () => {
     who: Account | null,
     input: unknown,
     slug: string | null = orgA.slug,
+    options: { mfa?: boolean } = {},
   ): Promise<{ status: number; body: T & { code?: string } }> {
-    const token = who ? await tokenFor(who) : null;
+    const token = who ? await tokenFor(who, options) : null;
     const response = await target.request(`/api/rpc/${path}`, {
       method: 'POST',
       headers: {
@@ -320,7 +324,7 @@ suite('TC3 CRM contact import tax-code suggestions (#4990)', () => {
       [otherMember, 'member'],
       [viewer, 'viewer'],
     ] as const) {
-      const invite = await rpc(batchApp, 'org/invite', owner, { email: who.email, role }, orgA.slug);
+      const invite = await rpc(batchApp, 'org/invite', owner, { email: who.email, role }, orgA.slug, { mfa: true });
       expect(invite.status).toBe(200);
       const token = String(invite.body.acceptPath).split('#')[1];
       const accepted = await rpc(batchApp, 'invites/accept', who, { token }, null);
@@ -693,7 +697,7 @@ suite('TC3 CRM contact import tax-code suggestions (#4990)', () => {
   it('expires staged rows filled by tax suggestions after 7 days and on cancel', async () => {
     const cancelledBatch = await rpc<ImportPreview>(batchApp, 'crm/contactImport/stage', member, {
       filename: 'cancel-after-fill.csv',
-      rows: [row({ name: '', taxCode: '0107770001' })],
+      rows: [row({ name: '', taxCode: '0107770003' })],
     });
     expect(
       await rpc<ImportFillTaxSuggestionsResult>(batchApp, 'crm/contactImport/fillTaxSuggestions', member, {

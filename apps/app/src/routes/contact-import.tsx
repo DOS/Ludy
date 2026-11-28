@@ -71,7 +71,7 @@ function templateBook(label: (field: ImportField) => string, sample: { sheet: st
 // Back to the screen the import was opened from, People or Companies (#3650); the People list when the page was opened with no screen behind it (a link, a new tab).
 function BackLink({ slug, label }: { slug: string; label: string }) {
   const router = useRouter();
-  const cameFromApp = ((window.history.state as { __TSR_index?: number } | null)?.__TSR_index ?? 0) > 0;
+  const cameFromApp = typeof window !== 'undefined' && ((window.history.state as { __TSR_index?: number } | null)?.__TSR_index ?? 0) > 0;
   if (!cameFromApp) {
     return (
       <Link to="/o/$slug/contacts" params={{ slug }} className={`text-link underline ${PHONE_TARGET}`}>
@@ -395,7 +395,7 @@ export function ContactImportPreview({
           </span>
         </label>
       )}
-      {(actionError || fillError) && <ErrorText>{errorMessage(actionError ?? fillError)}</ErrorText>}
+      {Boolean(actionError || fillError) && <ErrorText>{errorMessage(actionError ?? fillError)}</ErrorText>}
       {counts.newRows === 0 && !(onDuplicate === 'fill_empty' && counts.duplicateRows > 0) && (
         <p className="text-xs text-muted-foreground" role="status">
           {t(counts.duplicateRows > 0 ? 'preview.nothingNewDuplicates' : 'preview.nothingNew')}
@@ -508,7 +508,7 @@ export function ContactImportPage() {
       let extraHas: boolean | null = null;
       if (liveOutcome === 'all' && totalLoadedAll > IMPORT_PREVIEW_PAGE && firstPage.more) {
         let cursor = firstPage.rows.at(-1)?.rowNo ?? 0;
-        let hasNext = firstPage.more;
+        let hasNext: boolean = firstPage.more;
         while (hasNext && firstPage.rows.length + extraRows.length < totalLoadedAll) {
           const nextPage = await client.crm.contactImport.preview({ batchId: vars.batchId, after: cursor, limit: IMPORT_PREVIEW_PAGE });
           extraRows.push(...nextPage.rows);

@@ -54,7 +54,7 @@ const wrap = (locale: 'vi' | 'en', node: ReactNode) => {
   return (
     <I18nProvider>
       <QueryClientProvider client={queryClientState.current}>
-        <IntlProvider locale={locale} messages={catalog(locale)}>
+        <IntlProvider locale={locale} timeZone="Asia/Ho_Chi_Minh" messages={catalog(locale)}>
           {node}
         </IntlProvider>
       </QueryClientProvider>
@@ -99,7 +99,7 @@ const samplePreview: ImportPreview = {
       rowNo: 2,
       kind: 'organization',
       name: 'Công ty Đã Có Tên',
-      taxCode: '0101234565',
+      taxCode: '0101234567',
       email: null,
       phone: null,
       address: null,
@@ -143,7 +143,7 @@ const sampleLookup: ImportTaxLookupResult = {
     },
     {
       rowNo: 2,
-      taxCode: '0101234565',
+      taxCode: '0101234567',
       status: 'suggested',
       suggestedName: 'Tên Bị Bỏ Qua',
       suggestedAddress: '12 Lê Lợi, Quận 1',

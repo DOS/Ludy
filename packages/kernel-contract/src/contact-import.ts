@@ -167,27 +167,6 @@ export const zImportCommitted = z.object({
   skipped: z.array(z.object({ rowNo: z.number().int(), reason: z.enum(IMPORT_REASONS) })),
 });
 
-export interface ImportTaxLookupItem {
-  rowNo: number;
-  taxCode: string;
-  status: ImportTaxLookupStatus;
-  suggestedName: string | null;
-  suggestedAddress: string | null;
-  statusText: string | null;
-  cached: boolean;
-  household: boolean;
-}
-
-export interface ImportTaxLookupResult {
-  expired: boolean;
-  items: ImportTaxLookupItem[];
-  lookedUpRows: number;
-  providerCalls: number;
-  stopReason: ImportTaxLookupStopReason | null;
-  retryAfterSeconds?: number;
-  quotaWarning?: boolean;
-}
-
 export const zImportTaxLookupItem = z.object({
   rowNo: z.number().int().min(1),
   taxCode: z.string(),
@@ -198,6 +177,7 @@ export const zImportTaxLookupItem = z.object({
   cached: z.boolean(),
   household: z.boolean(),
 });
+export type ImportTaxLookupItem = z.infer<typeof zImportTaxLookupItem>;
 
 export const zImportTaxLookupResult = z.object({
   expired: z.boolean(),
@@ -208,6 +188,7 @@ export const zImportTaxLookupResult = z.object({
   retryAfterSeconds: z.number().int().positive().optional(),
   quotaWarning: z.boolean().optional(),
 });
+export type ImportTaxLookupResult = z.infer<typeof zImportTaxLookupResult>;
 
 export const zImportFillTaxSuggestionRow = z
   .strictObject({
