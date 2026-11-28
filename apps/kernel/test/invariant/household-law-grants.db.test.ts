@@ -22,7 +22,6 @@ const TABLES: ReadonlyArray<readonly [table: string, column: string]> = [
   ['household_form_version', 'source'],
   ['household_return_form_version', 'source'],
   ['household_tax_reduction', 'source'],
-  ['household_income_rate', 'source'],
   ['household_profile', 'tax_group'],
 ];
 
