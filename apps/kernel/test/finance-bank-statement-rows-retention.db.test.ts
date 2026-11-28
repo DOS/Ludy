@@ -153,7 +153,9 @@ suite('retention of the staged rows of a decided bank statement (#2195)', () => 
     expect((await rows<{ n: string }>("SELECT count(*) AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.extraction.statement_state'", [orgId]))[0]?.n).toBe(decisionAudit[0]?.n);
     const purges = await rows<{ target_id: string; detail: Record<string, unknown> }>("SELECT target_id::text, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.bank.statement_rows_purge' AND outcome = 'ok' ORDER BY occurred_at", [orgId]);
     expect(purges.map((p) => p.target_id).sort()).toEqual([imported, rejected].sort());
-    for (const p of purges) expect(p.detail).toEqual({ fileId: p.target_id, applied: true, versions: 1 });
+    for (const p of purges) expect(p.detail).toMatchObject({ fileId: p.target_id, applied: true, versions: 1 });
+    // Ids, a flag and counts, plus what the runtime adds for a system actor: nothing of the statement.
+    for (const p of purges) expect(Object.keys(p.detail).sort()).toEqual(['applied', 'component', 'fileId', 'versions', 'workerInstance']);
     expect(JSON.stringify(purges)).not.toContain(COUNTERPARTY);
     expect(JSON.stringify(purges)).not.toContain(FILENAME);
     // The log has ids' prefixes and counts, never a name, an account number or an amount.

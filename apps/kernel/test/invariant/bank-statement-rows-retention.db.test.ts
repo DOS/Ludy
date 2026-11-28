@@ -88,6 +88,11 @@ suite('retention of the staged rows of a decided bank statement (#2195)', () => 
     );
     await admin(async (c) => {
       for (const v of versions) {
+        if (v.state === 'failed') {
+          // A read that failed: no result, no kind.
+          await c.query("INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, result, checks, error) VALUES ($1, $2, 'unsupported', 'failed', NULL, '[]', 'read failed')", [org, fileId]);
+          continue;
+        }
         const summary = { state: v.state, filename: 'sao-ke.xlsx', bankAccount: '1121', accountNumber: '19880001234', lines: 2 };
         const result = v.state !== 'staged' ? { kind: v.kind, summary } : { kind: v.kind, summary, rows: [{ rowNo: 2, description: COUNTERPARTY, counterpartyAccount: COUNTERPARTY_ACCOUNT, moneyIn: '1000', moneyOut: '', balance: '', reference: 'FT1', date: '01/09/2026' }] };
         await c.query("INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, result, checks) VALUES ($1, $2, 'unsupported', 'done', $3::jsonb, $4::jsonb)", [org, fileId, JSON.stringify(result), JSON.stringify(v.state === 'staged' ? [{ check: COUNTERPARTY }] : [])]);
@@ -102,7 +107,7 @@ suite('retention of the staged rows of a decided bank statement (#2195)', () => 
     return fileId;
   }
   const decided = (state: 'imported' | 'rejected' = 'imported'): Version[] => [{ kind: 'bank_statement', state: 'staged' }, { kind: 'bank_statement', state }];
-  const versionsOf = (fileId: string) => admin(async (c) => (await c.query<{ id: string; version: number; kind: string; state: string; result: unknown }>("SELECT id, version, result ->> 'kind' AS kind, result -> 'summary' ->> 'state' AS state, result FROM crove_kernel.extraction WHERE file_id = $1 ORDER BY version", [fileId])).rows);
+  const versionsOf = (fileId: string) => admin(async (c) => (await c.query<{ id: string; version: number; kind: string | null; state: string | null; result: unknown }>("SELECT id, version, result ->> 'kind' AS kind, result -> 'summary' ->> 'state' AS state, result FROM crove_kernel.extraction WHERE file_id = $1 ORDER BY version", [fileId])).rows);
   const fileRow = (fileId: string) => admin(async (c) => (await c.query('SELECT * FROM crove_kernel.file WHERE id = $1', [fileId])).rows[0]);
   const auditCount = (org: string) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1', [org])).rows[0]?.n));
 
@@ -183,7 +188,8 @@ suite('retention of the staged rows of a decided bank statement (#2195)', () => 
     // The worker: `due` only with no context at all; `apply` only in the system context of the file's own org.
     expect(await outcome(inContext(workerUrl, system(orgId), (c) => c.query('SELECT * FROM crove_finance.bank_statement_rows_due(90, 10)')))).toMatchObject({ ok: false, code: '42501' });
     expect(await outcome(inContext(workerUrl, noContext, (c) => c.query('SELECT * FROM crove_finance.bank_statement_rows_apply($1::uuid, $2::uuid, 90)', [orgId, f])))).toMatchObject({ ok: false, code: '42501' });
-    expect(await outcome(apply(otherOrgId, f))).toMatchObject({ ok: false, code: '42501' });
+    // Same org in the context and the argument, but the file is not that org's: nothing found, nothing deleted.
+    expect(await outcome(apply(otherOrgId, f))).toMatchObject({ ok: true, value: { applied: false, versions: 0 } });
     expect(await outcome(inContext(workerUrl, system(otherOrgId), (c) => c.query('SELECT * FROM crove_finance.bank_statement_rows_apply($1::uuid, $2::uuid, 90)', [orgId, f])))).toMatchObject({ ok: false, code: '42501' });
     // Nothing was deleted by any of them.
     expect((await versionsOf(f)).length).toBe(2);
@@ -226,7 +232,6 @@ suite('retention of the staged rows of a decided bank statement (#2195)', () => 
     const before = await versionsOf(target);
     const decisionBefore = before[2];
     const fileBefore = await fileRow(target);
-    const auditBefore = await auditCount(orgId);
     // The others are refused, and nothing changes in any of them.
     const notDue = {
       young: await file(orgId, users.owner, decided(), 89),
@@ -246,6 +251,7 @@ suite('retention of the staged rows of a decided bank statement (#2195)', () => 
     expect(await apply(orgId, foreign, 90, true)).toEqual({ applied: false, versions: 0 });
     expect((await versionsOf(foreign)).length).toBe(2);
 
+    const auditBefore = await auditCount(orgId);
     expect(await apply(orgId, target, 90, true)).toEqual({ applied: true, versions: 2 });
     const after = await versionsOf(target);
     expect(after.map((v) => v.version)).toEqual([decisionBefore?.version]);
@@ -262,9 +268,9 @@ suite('retention of the staged rows of a decided bank statement (#2195)', () => 
   });
 
   it('keeps an older version of another kind, or a failed run, of the same file', async () => {
-    const f = await file(orgId, users.owner, [{ kind: 'invoice', state: 'staged' }, { kind: 'bank_statement', state: 'staged' }, { kind: 'bank_statement', state: 'rejected' }], 200);
+    const f = await file(orgId, users.owner, [{ kind: 'none', state: 'failed' }, { kind: 'invoice', state: 'staged' }, { kind: 'bank_statement', state: 'staged' }, { kind: 'bank_statement', state: 'rejected' }], 200);
     expect(await apply(orgId, f, 90, true)).toEqual({ applied: true, versions: 1 });
-    expect((await versionsOf(f)).map((v) => v.kind)).toEqual(['invoice', 'bank_statement']);
+    expect((await versionsOf(f)).map((v) => [v.version, v.kind])).toEqual([[1, null], [2, 'invoice'], [4, 'bank_statement']]);
   });
 
   it('still refuses to change a finished version, and no tenant role can delete one', async () => {

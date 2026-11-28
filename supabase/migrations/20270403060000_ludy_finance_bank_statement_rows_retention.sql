@@ -3,7 +3,8 @@
 -- the Inbox is first staged: the extraction run keeps its parsed rows (counterparty names, descriptions, amounts, the other side's account numbers) so the member can look at them before
 -- deciding. A decision (finance.bank.statement_confirm or statement_reject, through kernel.extraction.statement_state) does not edit that run: it inserts a NEW, finished version of the file
 -- whose result is the summary only (file name, the org's own account number, counts, totals, the import id). The staged versions stay older than it, still holding the rows.
--- This migration deletes those OLDER versions 90 days after the decision. extraction_guard is untouched: a finished version still never changes, and a tenant role still has no DELETE on
+-- This migration deletes those OLDER versions 90 days after the decision (every older bank_statement version of the file: after a re-read and a second decision that includes the first
+-- decision's summary, whose facts the audit trail keeps; the newest version, the current decision, always stays). extraction_guard is untouched: a finished version still never changes, and a tenant role still has no DELETE on
 -- extraction; only the worker-only definers below delete, as the marketplace retention does.
 --
 --   1. ludy_finance.bank_statement_rows_due(days, limit)          worker only: the decided statements whose staged rows are older than `days` (never fewer than 90).
