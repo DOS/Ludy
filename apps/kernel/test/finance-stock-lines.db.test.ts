@@ -285,6 +285,30 @@ suite('stock from document lines (#2512)', () => {
     expect(await unassigned(o)).toEqual([]);
   });
 
+  // Circular 99 has 511 with no level-2 accounts (5111 is Circular 133's goods revenue), so the default of a sale line works as it does under Circular 133 without a rule of its own (#1403, A2-2 dropped as a code slice).
+  it('on an entity whose books are Circular 99, a sale line left on 511 that names an item takes stock out and posts to 131, 511 and 3331, never 5111', async () => {
+    const o = await org({ sellerOf: true });
+    // The entity's books are Circular 99 from the start of the invoice's year (written as the superuser, as finance-opening-balance.db.test.ts does).
+    const [entity] = await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]);
+    expect(entity?.id).toEqual(expect.any(String));
+    await rows(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2026-01-01')`, [o.orgId, entity?.id]);
+    const item = await makeItem(o);
+    await teach(o, item, LINE_TWO);
+    const posted = await post(o, invoice('7501'), '511');
+    expect((await rows<{ regime: string }>('SELECT regime FROM ludy_finance.legal_entity_books WHERE org_id = $1', [o.orgId])).map((r) => r.regime)).toEqual(['tt99']);
+    // The entry: the customer owes the invoice total (131), the sales sit on 511 and the output VAT on 3331; nothing is booked to Circular 133's 5111.
+    const lines = await journal(posted.journalEntryId);
+    const accounts = lines.map((l) => l.account_code);
+    expect(accounts).toEqual(expect.arrayContaining(['131', '511', '3331']));
+    expect(accounts).not.toContain('5111');
+    expect(lines.find((l) => l.account_code === '131')?.debit).toMatch(/^1980000(\.0+)?$/);
+    expect(lines.find((l) => l.account_code === '3331')?.credit).toMatch(/^180000(\.0+)?$/);
+    // The stock move out of the item for the document line, and no line left in the "Chưa gán hàng" list.
+    expect(await moves(o, item)).toEqual([expect.objectContaining({ quantity: '-2', source: 'document_line', documentId: posted.documentId, lineNo: 2 })]);
+    expect(await onHand(o, item)).toBe('-2');
+    expect(await unassigned(o)).toEqual([]);
+  });
+
   it('applies the factor of a name only to the unit it was taught in', async () => {
     const o = await org();
     const item = await makeItem(o, { unit: 'chai' });

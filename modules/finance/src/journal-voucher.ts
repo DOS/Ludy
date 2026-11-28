@@ -22,7 +22,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { journalIsBalanced } from '@ludy/l10n-vn';
-import { refuseChangedBooks, stampBooks } from './books-stamp.ts';
+import { refuseChangedBooks, refuseChangedBooksFirst, stampBooks } from './books-stamp.ts';
 import { assertUsableAccounts } from './accounts.ts';
 import { lockBooks } from './books.ts';
 import {
@@ -226,6 +226,8 @@ export const recordJournalVoucher = defineCommand({
   handler: async (ctx, { payload }) => {
     if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
     const lines = payload.lines.map((l) => ({ account: l.account, partyId: l.party?.id ?? null, debit: l.debit, credit: l.credit }));
+    // Books switched since the voucher was prepared: refused as such before its accounts are read in the new chart (#5320).
+    await refuseChangedBooksFirst(ctx, payload, payload.lines.map((l) => l.account));
     // The stored payload is checked as if new: a sub-account deactivated or a party gone since it was asked for is
     // refused here. The total is the lines' sum, never taken from the payload as is.
     await checkJournalVoucherLines(ctx, lines, true, { legalEntityId: payload.legalEntityId, date: payload.date });
