@@ -110,7 +110,7 @@ async function loadDraftRef(ctx: Ctx, draftId: string, lockShare = false): Promi
     .select(['d.legal_entity_id', 'd.state', 'd.issued_number', 'd.invoice_date', 'd.buyer_name', 'd.buyer_email', 's.template_no', 's.symbol'])
     .where('d.org_id', '=', ctx.orgId)
     .where('d.id', '=', draftId);
-  return (lockShare ? base.forShare().of('d') : base).executeTakeFirst();
+  return (lockShare ? base.forShare('d') : base).executeTakeFirst();
 }
 
 async function loadMailStates(ctx: Ctx, mailIds: readonly string[]): Promise<Map<string, MailState>> {
