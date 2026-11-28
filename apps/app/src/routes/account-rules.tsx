@@ -428,7 +428,7 @@ export function AccountRulesCard({ canManage }: { canManage: boolean }) {
   };
 
   return (
-    <Card className="block p-4" aria-label={t('title')}>
+    <Card className="block p-4" role="region" aria-label={t('title')}>
       <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
       <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
       {rules.isPending ? (

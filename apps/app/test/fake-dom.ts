@@ -3,6 +3,56 @@
 import { act } from 'react';
 import type { Root } from 'react-dom/client';
 
+function splitTopLevelCommas(selector: string): string[] {
+  const out: string[] = [];
+  let paren = 0;
+  let bracket = 0;
+  let quote: string | null = null;
+  let start = 0;
+  for (let i = 0; i < selector.length; i += 1) {
+    const ch = selector[i]!;
+    if (quote) {
+      if (ch === quote && selector[i - 1] !== '\\') quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === '(') {
+      paren += 1;
+    } else if (ch === ')' && paren > 0) {
+      paren -= 1;
+    } else if (ch === '[') {
+      bracket += 1;
+    } else if (ch === ']' && bracket > 0) {
+      bracket -= 1;
+    } else if (ch === ',' && paren === 0 && bracket === 0) {
+      const part = selector.slice(start, i).trim();
+      if (part) out.push(part);
+      start = i + 1;
+    }
+  }
+  const tail = selector.slice(start).trim();
+  if (tail) out.push(tail);
+  return out;
+}
+
+function readParenGroup(text: string, openIndex: number): { inner: string; nextIndex: number } | null {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = openIndex; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (quote) {
+      if (ch === quote && text[i - 1] !== '\\') quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === '(') {
+      depth += 1;
+    } else if (ch === ')') {
+      depth -= 1;
+      if (depth === 0) return { inner: text.slice(openIndex + 1, i), nextIndex: i + 1 };
+    }
+  }
+  return null;
+}
+
 export class FakeDomNode {
   static DOCUMENT_POSITION_DISCONNECTED = 1;
   static DOCUMENT_POSITION_PRECEDING = 2;
@@ -189,6 +239,7 @@ export class FakeDomNode {
   removeAttribute(name: string): void {
     this.attrs.delete(name);
     if (name === 'class') this.className = '';
+    else if (name === 'type') this.type = '';
     else if (name === 'disabled') this.disabled = false;
     else if (name === 'checked') this.checked = false;
     else if (name === 'selected') this.selected = false;
@@ -196,16 +247,19 @@ export class FakeDomNode {
   getAttribute(name: string): string | null {
     if (name === 'class') return this.className || this.attrs.get('class') || null;
     if (name === 'disabled') return this.disabled ? (this.attrs.get('disabled') ?? '') : null;
+    if (name === 'type') return this.attrs.get('type') ?? (this.type || null);
     return this.attrs.get(name) ?? null;
   }
   hasAttribute(name: string): boolean {
     if (name === 'disabled') return this.disabled;
+    if (name === 'type') return this.attrs.has('type') || this.type !== '';
     return this.attrs.has(name) || (name === 'class' && this.className !== '');
   }
   getAttributeNames(): string[] {
     const names = new Set(this.attrs.keys());
     if (this.className !== '') names.add('class');
     if (this.disabled) names.add('disabled');
+    if (this.type !== '') names.add('type');
     return [...names];
   }
   addEventListener(type: string, fn: (e: unknown) => void, options?: boolean | { capture?: boolean }): void {
@@ -349,10 +403,7 @@ export class FakeDomNode {
   }
   matches(selector: string): boolean {
     if (this.nodeType !== 1) return false;
-    const parts = selector
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const parts = splitTopLevelCommas(selector);
     if (parts.length === 0) return false;
     return parts.some((part) => {
       let rest = part;
@@ -379,6 +430,16 @@ export class FakeDomNode {
           const clsMatch = /^\.([a-zA-Z0-9_-]+)/.exec(rest);
           if (!clsMatch || !this.classList.contains(clsMatch[1]!)) return false;
           rest = rest.slice(clsMatch[0].length);
+        } else if (rest.startsWith(':disabled')) {
+          if (!this.disabled) return false;
+          rest = rest.slice(':disabled'.length);
+        } else if (rest.startsWith(':is(') || rest.startsWith(':not(')) {
+          const isNeg = rest.startsWith(':not(');
+          const group = readParenGroup(rest, isNeg ? 4 : 3);
+          if (!group) return false;
+          const ok = this.matches(group.inner);
+          if (isNeg ? ok : !ok) return false;
+          rest = rest.slice(group.nextIndex);
         } else {
           return false;
         }
