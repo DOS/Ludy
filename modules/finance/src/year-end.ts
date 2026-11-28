@@ -111,7 +111,7 @@ async function einvoiceSeries(ctx: QueryContext, entity: string, year: number): 
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)
-    .where(sql<string>`pg_catalog.substring(symbol FROM 2 FOR 2)`, '=', next)
+    .where(sql<string>`pg_catalog.substr(symbol, 2, 2)`, '=', next)
     .limit(1)
     .executeTakeFirst();
   return { connected: true, nextYearSeries: series !== undefined };

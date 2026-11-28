@@ -69,6 +69,16 @@ suite('the year-end checklist', () => {
     });
   }
 
+  // A confirmed count as it stands once the command has confirmed it. The command needs counted lines and a voucher or a match with the books, which is not what this suite is about, so the
+  // row is written with the triggers off (the guard that makes a count start as a draft, and the deferred one that ties a confirmed count to its voucher), as other suites write such rows.
+  const confirmedCount = (date: string) =>
+    admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL session_replication_role = 'replica'");
+      await c.query("INSERT INTO ludy_finance.stock_count (org_id, legal_entity_id, count_date, status, confirmed_at, confirmed_by, created_by) VALUES ($1, $2, $3, 'confirmed', now(), $4, $4)", [o.orgId, defaultEntity, date, o.owner]);
+      await c.query('COMMIT');
+    });
+
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -149,12 +159,12 @@ suite('the year-end checklist', () => {
     await admin((c) =>
       c.query(
         `INSERT INTO ludy_finance.fixed_asset (org_id, id, kind, name, cost, asset_account, accumulated_account, expense_account, start_month, months, legal_entity_id)
-         VALUES ($1, $2, 'fixed_asset', 'Máy in', 1200000, '211', '214', '6424', '2024-01-01', 12, $3)`,
+         VALUES ($1, $2, 'fixed_asset', 'Máy in', 1200000, '211', '214', '6422', '2024-01-01', 12, $3)`,
         [o.orgId, asset, defaultEntity],
       ),
     );
     const post = async (month: string) => {
-      const id = await entry(`${month.slice(0, 8)}28`, [{ account: '6424', debit: '100000' }, { account: '214', credit: '100000' }]);
+      const id = await entry(`${month.slice(0, 8)}28`, [{ account: '6422', debit: '100000' }, { account: '214', credit: '100000' }]);
       await admin((c) => c.query('INSERT INTO ludy_finance.depreciation_line (org_id, asset_id, month, amount, entry_id, legal_entity_id) VALUES ($1, $2, $3, 100000, $4, $5)', [o.orgId, asset, month, id, defaultEntity]));
     };
     // Twelve months, none posted: all of them have ended in 2024.
@@ -174,9 +184,9 @@ suite('the year-end checklist', () => {
     expect(item(await yearEnd(2024), 'stock_count')).toEqual({ key: 'stock_count', state: 'open', waiting: false, count: 1, due: null });
     // A draft, a count dated in November and a cancelled one are not it.
     await admin((c) => c.query("INSERT INTO ludy_finance.stock_count (org_id, legal_entity_id, count_date, created_by) VALUES ($1, $2, '2024-12-20', $3)", [o.orgId, defaultEntity, o.owner]));
-    await admin((c) => c.query("INSERT INTO ludy_finance.stock_count (org_id, legal_entity_id, count_date, status, confirmed_at, created_by) VALUES ($1, $2, '2024-11-30', 'confirmed', now(), $3)", [o.orgId, defaultEntity, o.owner]));
+    await confirmedCount('2024-11-30');
     expect(item(await yearEnd(2024), 'stock_count')?.state).toBe('open');
-    await admin((c) => c.query("INSERT INTO ludy_finance.stock_count (org_id, legal_entity_id, count_date, status, confirmed_at, created_by) VALUES ($1, $2, '2024-12-30', 'confirmed', now(), $3)", [o.orgId, defaultEntity, o.owner]));
+    await confirmedCount('2024-12-30');
     expect(item(await yearEnd(2024), 'stock_count')).toEqual({ key: 'stock_count', state: 'done', waiting: false, count: 0, due: null });
     // The branch keeps no stock.
     expect(item(await yearEnd(2024, o.owner, o.orgId, branch), 'stock_count')?.state).toBe('na');
