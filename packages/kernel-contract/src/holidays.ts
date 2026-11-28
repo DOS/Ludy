@@ -51,3 +51,39 @@ export function isVietnamHoliday(date: string): boolean {
   }
   return dates.has(date);
 }
+
+// The compensatory days off of a year (Labor Code 45/2019/QH14, Article 111(3): when the weekly rest day coincides with a public holiday of Article 112(1), the worker takes the weekly rest day
+// off on the next working day). A holiday that falls on a Saturday or a Sunday, the weekly rest days of a state agency's five-day week (the tax authority's), moves one day off to the next day that is
+// neither a Saturday, a Sunday, a holiday nor already a compensatory day. It is a separate list, used by the tax deadline rule (deadline-day.ts) only: isVietnamHoliday above, which the
+// calendar and the e-invoice code read, is unchanged. The government also fixes the exact days of Tet and National Day each year (Article 112(3)) and may arrange the days around them differently;
+// those moved days are not here, so the table is a default, not the notice.
+const compensatoryDates = new Map<number, Set<string>>();
+const isWeekend = (date: string): boolean => {
+  const day = new Date(`${date}T00:00:00Z`).getUTCDay();
+  return day === 0 || day === 6;
+};
+const dayAfter = (date: string): string => new Date(new Date(`${date}T00:00:00Z`).getTime() + 86_400_000).toISOString().slice(0, 10);
+
+/** The compensatory days off of the year's public holidays that fall on a Saturday or a Sunday, in date order. */
+export function vietnamCompensatoryDays(year: number): string[] {
+  const holidays = new Set(vietnamHolidays(year).map((h) => h.date));
+  const out: string[] = [];
+  for (const holiday of [...holidays].sort()) {
+    if (!isWeekend(holiday)) continue;
+    let day = dayAfter(holiday);
+    while (isWeekend(day) || holidays.has(day) || out.includes(day)) day = dayAfter(day);
+    out.push(day);
+  }
+  return out;
+}
+
+/** True when `date` (YYYY-MM-DD) is the compensatory day off of a public holiday that fell on a Saturday or a Sunday. */
+export function isCompensatoryDayOff(date: string): boolean {
+  const year = Number(date.slice(0, 4));
+  let dates = compensatoryDates.get(year);
+  if (!dates) {
+    dates = new Set(vietnamCompensatoryDays(year));
+    compensatoryDates.set(year, dates);
+  }
+  return dates.has(date);
+}

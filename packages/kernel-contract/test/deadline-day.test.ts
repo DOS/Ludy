@@ -31,8 +31,22 @@ describe('onOrAfterWorkingDay', () => {
     expect(onOrAfterWorkingDay('2026-02-20')).toBe('2026-02-23');
     // 30 April and 1 May 2026 are a Thursday and a Friday, then the weekend.
     expect(onOrAfterWorkingDay('2026-04-30')).toBe('2026-05-04');
-    // 30 April 2027 is a Friday, then the weekend.
-    expect(onOrAfterWorkingDay('2027-04-30')).toBe('2027-05-03');
+    // 30 April 2027 is a Friday, 1 May a Saturday: Monday 3 May is the compensatory day (Labor Code Art. 111(3)), so Tuesday 4 May.
+    expect(onOrAfterWorkingDay('2027-04-30')).toBe('2027-05-04');
+  });
+
+  it('moves a deadline on a compensatory day off to the next working day', () => {
+    expect(isDayOff('2027-05-03')).toBe(true);
+    expect(isDayOff('2027-05-04')).toBe(false);
+    expect(onOrAfterWorkingDay('2027-05-01')).toBe('2027-05-04');
+    expect(onOrAfterWorkingDay('2027-05-03')).toBe('2027-05-04');
+    // The Hùng Kings day, 26 April 2026, is a Sunday: Monday 27 April is off.
+    expect(isDayOff('2026-04-27')).toBe(true);
+    expect(onOrAfterWorkingDay('2026-04-26')).toBe('2026-04-28');
+    // Tết 2027 runs from Friday 5 to Tuesday 9 February, two of them on the weekend: Wednesday 10 and Thursday 11 are off.
+    expect(onOrAfterWorkingDay('2027-02-05')).toBe('2027-02-12');
+    // 1 January 2028 is a Saturday: Monday 3 January is off.
+    expect(onOrAfterWorkingDay('2028-01-01')).toBe('2028-01-04');
   });
 
   it('refuses a date that is not a calendar date', () => {
