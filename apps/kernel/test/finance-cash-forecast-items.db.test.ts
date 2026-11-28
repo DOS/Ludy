@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { CASH_FORECAST_ITEMS_MAX, type CashForecastItems, type CashForecastItemView } from '@ludy/kernel-contract';
+import { CASH_FORECAST_ITEMS_MAX, type CashForecastItems, type CashForecastItemView, type PersonalDataErasure, type PersonalDataResult } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -280,5 +280,23 @@ suite('the owner-entered items of the cash forecast (#5326)', () => {
     for (const r of outcomes.filter((x) => x.status === 'rejected')) expect((r as PromiseRejectedResult).reason).toMatchObject({ code: 'CASH_FORECAST_ITEM_LIMIT' });
     const held = await admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_finance.cash_forecast_item WHERE org_id = $1 AND legal_entity_id = $2', [o.orgId, o.entity])).rows[0]?.n));
     expect(held).toBe(CASH_FORECAST_ITEMS_MAX);
+  });
+
+  it('finds and erases a person\'s number written in a label (PDPL), keeping the item itself', async () => {
+    const o = await org();
+    const named = await setItem(o, { ...rent, label: 'Thuê nhà chị Lan 0901234567' });
+    const other = await setItem(o, { ...rent, label: 'Thuê kho', amount: '2000000' });
+    const found = await execute<PersonalDataResult>(o, 'kernel.personal_data.find', { value: '0901234567' });
+    expect(found.matches.filter((m) => m.column === 'ludy_finance.cash_forecast_item.label').map((m) => m.rowId)).toEqual([named.id]);
+    const erased = await execute<PersonalDataErasure>(o, 'kernel.personal_data.erase', { value: '0901234567' });
+    expect(erased.erased.find((e) => e.column === 'ludy_finance.cash_forecast_item.label')?.rows).toBe(1);
+    const after = (await list(o)).items;
+    expect(after).toHaveLength(2);
+    const edited = after.find((i) => i.id === named.id) as CashForecastItemView;
+    expect(edited.label).toContain('[đã xóa]');
+    expect(edited.label).not.toContain('0901234567');
+    // The item keeps its money and dates; the other item is untouched.
+    expect(edited).toMatchObject({ amount: rent.amount, firstDate: rent.firstDate, recurrence: 'monthly' });
+    expect(after.find((i) => i.id === other.id)?.label).toBe('Thuê kho');
   });
 });
