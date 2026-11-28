@@ -47,9 +47,9 @@ describe('salesTotalsOf (#3216)', () => {
     expect(queries).toHaveLength(1);
     const q = queries[0]!;
     expect(q.sql).toContain('SUM(l.credit - l.debit) FILTER');
-    expect(q.sql).toContain('ludy_finance.journal_line');
-    expect(q.sql).toContain('ludy_finance.journal_entry');
-    expect(q.sql).toContain('ludy_finance.org_account');
+    expect(q.sql).toContain('"ludy_finance"."journal_line"');
+    expect(q.sql).toContain('"ludy_finance"."journal_entry"');
+    expect(q.sql).toContain('"ludy_finance"."org_account"');
     expect(q.sql).toContain('"l"."org_id" =');
     expect(q.sql).toContain('"l"."legal_entity_id" =');
     expect(q.sql).toContain('"j"."legal_entity_id" =');

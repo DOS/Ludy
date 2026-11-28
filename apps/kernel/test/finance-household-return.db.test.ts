@@ -457,7 +457,7 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
     await entry(o.household, o.orgId, '2026-07-20', 'Bán Live', [['112', 300000, 0], ['5111.LIVE', 0, 300000]]);
     await execute(o, 'finance.account.update', { code: '5111.LIVE', active: false });
     const sale = await entry(o.household, o.orgId, '2026-08-05', 'Bán dịch vụ', [['131', 250000, 0], ['5113', 0, 250000]]);
-    await entry(o.household, o.orgId, '2026-08-06', 'Đảo bán dịch vụ', [['5113', 250000, 0], ['131', 0, 250000]], { reverses: sale });
+    await entry(o.household, o.orgId, '2026-08-06', 'Đảo bán dịch vụ', [['131', 0, 250000], ['5113', 250000, 0]], { reverses: sale });
     await entry(o.household, o.orgId, '2026-08-10', 'Giảm trừ ghi nợ 5111', [['5111', 150000, 0], ['111', 0, 150000]]);
     await entry(o.household, o.orgId, '2026-08-15', 'Doanh thu tài chính 515', [['112', 80000, 0], ['515', 0, 80000]]);
     await entry(o.household, o.orgId, '2026-08-15', 'Thu nhập khác 711', [['111', 40000, 0], ['711', 0, 40000]]);
@@ -534,7 +534,7 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
     await entry(o.household, o.orgId, '2026-07-10', 'Bán lẻ Q3', [['111', 1000000, 0], ['511', 0, 1000000]]);
     await entry(o.household, o.orgId, '2026-08-12', 'Bán Shopee Q3', [['112', 500000, 0], ['511.SHOPEE', 0, 500000]]);
     const reversed = await entry(o.household, o.orgId, '2026-09-01', 'Bán nhầm Q3', [['131', 200000, 0], ['5111', 0, 200000]]);
-    await entry(o.household, o.orgId, '2026-09-02', 'Đảo bán Q3', [['5111', 200000, 0], ['131', 0, 200000]], { reverses: reversed });
+    await entry(o.household, o.orgId, '2026-09-02', 'Đảo bán Q3', [['131', 0, 200000], ['5111', 200000, 0]], { reverses: reversed });
 
     // Confirm both quarters actually exceed LEDGER_LINE_LIMIT in the ledger report path.
     await expect(query(o, 'finance.ledger.account', { period: '2026-Q3', legalEntityId: o.household, accountCode: '511' })).rejects.toMatchObject({ code: 'PERIOD_TOO_LARGE' });
