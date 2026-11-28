@@ -248,7 +248,7 @@ import { zCollectionSetting, zCustomerCollection, zCustomerCollectionList, zCust
 import { zContact, zContactGet, zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
-import { zCashForecast, zCashForecastExplanation, zFinanceCashForecastExplainAsk, zFinanceCashForecastInput } from './finance-cash-forecast.ts';
+import { zCashForecast, zCashForecastExplanation, zCashForecastItemRemove, zCashForecastItems, zCashForecastItemSet, zCashForecastItemView, zFinanceCashForecastExplainAsk, zFinanceCashForecastInput } from './finance-cash-forecast.ts';
 import { zAskBooksAnswer, zFinanceAskBooksInput } from './finance-ask-books.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
 import { zFinanceHomeMoney, zFinanceHomeMoneyInput } from './finance-home-money.ts';
@@ -3809,6 +3809,10 @@ export const contract = {
   financeCashForecast: {
     get: oc.input(zFinanceCashForecastInput).output(zCashForecast),
     explain: oc.input(zFinanceCashForecastExplainAsk).output(zCashForecastExplanation),
+    // The items an owner enters into the forecast (#5326): items (every role) lists an entity's; setItem and removeItem (owners and admins, user actors only) create, edit and delete one.
+    items: oc.input(zFinanceCashForecastInput).output(zCashForecastItems),
+    setItem: oc.input(zCashForecastItemSet).output(zCashForecastItemView),
+    removeItem: oc.input(zCashForecastItemRemove).output(zCashForecastItemRemove),
   },
   // "Ask the books in plain words" (#5181): a question typed in words, or a report picked on the card; the answer is a card with every figure from an existing read, run as the asking member.
   financeAskBooks: {

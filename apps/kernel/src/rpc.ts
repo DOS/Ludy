@@ -4123,6 +4123,10 @@ export function createRpcHandler(
           return explainCashForecast(financeCashForecastAi, orgId, actor.userId, forecast, lang ?? 'vi');
         }),
       ),
+      // The items an owner enters into the forecast (#5326): a read for every role, and two audited R1 commands for owners and admins (a user only).
+      items: os.financeCashForecast.items.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.cash_forecast_items', input, { actor, orgId }))),
+      setItem: os.financeCashForecast.setItem.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.cash_forecast_item_set', input, { actor, orgId }))),
+      removeItem: os.financeCashForecast.removeItem.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.cash_forecast_item_remove', input, { actor, orgId }))),
     },
     // The three money tiles on Home (#4785): finance.home_money answers `available: false` for a member who may not see the org's money totals.
     financeHomeMoney: {

@@ -18209,6 +18209,7 @@ export const en = {
       HOUSEHOLD_RETURN_NOT_REQUIRED: 'This household does not file this return in the period chosen (no profile yet, or a profile whose method this return does not cover)',
       HOUSEHOLD_RETURN_METHOD: 'This return does not fit the household\'s tax method: the quarterly 01/CNKD is for the percentage-of-revenue method, the annual finalization 02/CNKD-TNCN-QTT is for the income method; for any other the accountant prepares the return',
       HOUSEHOLD_RETURN_PROFILE_CHANGED: 'The household profile changes inside this period, so the worksheet cannot be made; ask the accountant',
+      CASH_FORECAST_ITEM_LIMIT: 'An entity holds at most 100 expected items; remove one before adding another.',
       HOUSEHOLD_RETURN_HELD: 'The worksheet is held (revenue not above the tax-free threshold, a loss, costs with no group, a platform revenue split that does not match, or a year closed to 911); see the reason on the worksheet, so no file can be made yet',
       HOUSEHOLD_QTT_INPUT: 'The amounts entered by hand (tax withheld, tax prepaid, revenue of platforms with no payment function) must be whole dong and not negative',
       HOUSEHOLD_RATE_MISSING: 'There is no tax percentage for one of the trades in the profile',
@@ -20096,6 +20097,9 @@ export const en = {
       },
       overview: 'View the accounting overview: cash, profit, receivables, payables',
       cash_forecast: 'View the 30, 60 and 90-day cash forecast',
+      cash_forecast_items: 'View the expected items entered into the cash forecast',
+      cash_forecast_item_set: 'Enter or edit an expected item in the cash forecast',
+      cash_forecast_item_remove: 'Remove an expected item from the cash forecast',
       home_money: 'See what customers owe, what you owe and the bank balance on Home',
       payroll: {
         settlement: 'See where the posting and the payments of an approved pay month stand',

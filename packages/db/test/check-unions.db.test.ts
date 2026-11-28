@@ -15,6 +15,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '../src/migrate.ts';
 import {
   ACTOR_ORIGINS,
+  CASH_FORECAST_ITEM_CATEGORIES,
+  CASH_FORECAST_ITEM_DIRECTIONS,
+  CASH_FORECAST_ITEM_RECURRENCES,
   ACTOR_TYPES,
   EVENT_TYPE_ASSIGNMENTS,
   EVENT_TYPE_LOCATION_KINDS,
@@ -622,6 +625,9 @@ const UNIONS = unions({
   'ludy_finance.marketplace_connection.platform': CHANNEL_PLATFORMS,
   'ludy_finance.marketplace_column_profile.platform': CHANNEL_PLATFORMS,
   'ludy_finance.channel_order.platform': CHANNEL_PLATFORMS,
+  'ludy_finance.cash_forecast_item.category': CASH_FORECAST_ITEM_CATEGORIES,
+  'ludy_finance.cash_forecast_item.direction': CASH_FORECAST_ITEM_DIRECTIONS,
+  'ludy_finance.cash_forecast_item.recurrence': CASH_FORECAST_ITEM_RECURRENCES,
   'ludy_finance.channel_order_line.stage': CHANNEL_STAGES,
   'ludy_finance.channel_settlement.platform': CHANNEL_PLATFORMS,
   'ludy_finance.household_expense_group_map.expense_group': HOUSEHOLD_EXPENSE_GROUPS,
