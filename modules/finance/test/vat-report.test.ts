@@ -123,9 +123,11 @@ describe('loadVatReport single-statement SQL (#613)', () => {
         expect(normalizedSql).toContain(table);
       }
 
-      // Limit gating runs before child aggregation using set-based CTE JOINs, never per-row child SubPlans or unhashed ANY(ARRAY(...)) scans.
+      // Limit gating runs before child aggregation using set-based CTE JOINs and LIMIT 1 LATERAL probes, never per-row child SubPlans or unhashed ANY(ARRAY(...)) scans.
       expect(query.parameters).toContain(VAT_PERIOD_LIMIT + 1);
       expect(query.parameters).toContain(VAT_PERIOD_LIMIT);
+      expect(sqlLower).toContain('cross join lateral');
+      expect(sqlLower).toContain('left join lateral');
       expect(normalizedSql).toContain('FROM purchase_docs pd');
       expect(normalizedSql).toContain('FROM sale_docs pd');
       expect(normalizedSql).not.toContain('ANY (ARRAY(');

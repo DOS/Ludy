@@ -46,7 +46,6 @@ import {
   type VatPeriod,
 } from './domain/vat-return.ts';
 import { legalEntityNotAllowed, resolveLegalEntity } from './legal-entity.ts';
-import { latestRevision } from './source-entry.ts';
 import { needsPaymentCheck, nonCashThreshold, paymentMethodKind, type PaymentMethodKind } from './domain/non-cash-payment.ts';
 import { HtkkAmountError, form01XmlValues } from './domain/vat-01gtgt-xml.ts';
 import { salesNumberGaps, type SalesNumberGaps } from './domain/number-gaps.ts';
@@ -491,45 +490,86 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
   const lookedFor = previousVatPeriods(period);
   const staticReturnPeriods = [...new Set([period.period, ...lookedFor, ...declaringPeriods(period)])];
 
-  const baseDocuments = (direction: DocumentDirection) =>
+  // Pin single-row lookups (document by id, party by id, void by document_id, and latest journal_entry revision by
+  // source) inside LIMIT 1 LATERAL subqueries so PostgreSQL probes primary/unique keys even on un-analyzed tables
+  // instead of falling back to full-org Nested Loops with Join Filters.
+  const partyLateral = () =>
     ctx.trx
-      .selectFrom('ludy_finance.purchase_document as d')
-      .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-      .where('d.org_id', '=', ctx.orgId)
-      .where('d.legal_entity_id', '=', legalEntityId)
-      .where('d.direction', '=', direction)
-      .where(({ not, exists, selectFrom }) =>
-        not(exists(selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
-      );
+      .selectFrom('ludy_kernel.party as party')
+      .select(['party.name', 'party.tax_code'])
+      .where('party.org_id', '=', sql.ref<string>('d.org_id'))
+      .where('party.id', '=', sql.ref<string>('d.party_id'))
+      .limit(1)
+      .as('p');
+
+  const voidLateral = () =>
+    ctx.trx
+      .selectFrom('ludy_finance.purchase_document_void as pv')
+      .select(sql<number>`1`.as('voided'))
+      .where('pv.org_id', '=', sql.ref<string>('d.org_id'))
+      .where('pv.document_id', '=', sql.ref<string>('d.id'))
+      .limit(1)
+      .as('v');
 
   // The sale date of the e-invoice draft a sales invoice was issued from (#3535), or null: the draft of the same
   // entity, issued, with the invoice's symbol and normalized number. Earliest issued_at answers, so a row is never
   // doubled and an earlier draft without a sale date never borrows a later draft's.
   const baseSalesDocs = () =>
-    baseDocuments('sale').leftJoinLateral(
-      (eb) =>
-        eb
-          .selectFrom('ludy_finance.einvoice_draft as e')
-          .innerJoin('ludy_finance.einvoice_series as es', (join) => join.onRef('es.org_id', '=', 'e.org_id').onRef('es.id', '=', 'e.series_id'))
-          .select('e.sale_date')
-          .whereRef('e.org_id', '=', 'd.org_id')
-          .whereRef('e.legal_entity_id', '=', 'd.legal_entity_id')
-          .where('e.state', '=', 'issued')
-          .whereRef('es.symbol', '=', 'd.invoice_series')
-          .where(
-            sql<boolean>`CASE WHEN pg_catalog.btrim(e.issued_number) ~ '^[0-9]+$' THEN pg_catalog.regexp_replace(pg_catalog.btrim(e.issued_number), '^0+(?=[0-9])', '') ELSE pg_catalog.upper(pg_catalog.btrim(e.issued_number)) END = d.invoice_number`,
-          )
-          .orderBy('e.issued_at')
-          .orderBy('e.id')
-          .limit(1)
-          .as('sd'),
-      (join) => join.onTrue(),
-    );
+    ctx.trx
+      .selectFrom('ludy_finance.purchase_document as d')
+      .leftJoinLateral(
+        (eb) =>
+          eb
+            .selectFrom('ludy_finance.einvoice_draft as e')
+            .innerJoin('ludy_finance.einvoice_series as es', (join) => join.onRef('es.org_id', '=', 'e.org_id').onRef('es.id', '=', 'e.series_id'))
+            .select('e.sale_date')
+            .whereRef('e.org_id', '=', 'd.org_id')
+            .whereRef('e.legal_entity_id', '=', 'd.legal_entity_id')
+            .where('e.state', '=', 'issued')
+            .whereRef('es.symbol', '=', 'd.invoice_series')
+            .where(
+              sql<boolean>`CASE WHEN pg_catalog.btrim(e.issued_number) ~ '^[0-9]+$' THEN pg_catalog.regexp_replace(pg_catalog.btrim(e.issued_number), '^0+(?=[0-9])', '') ELSE pg_catalog.upper(pg_catalog.btrim(e.issued_number)) END = d.invoice_number`,
+            )
+            .orderBy('e.issued_at')
+            .orderBy('e.id')
+            .limit(1)
+            .as('sd'),
+        (join) => join.onTrue(),
+      )
+      .where('d.org_id', '=', ctx.orgId)
+      .where('d.legal_entity_id', '=', legalEntityId)
+      .where('d.direction', '=', 'sale');
 
-  const purchaseDocs = baseDocuments('purchase')
-    .innerJoin('ludy_finance.journal_entry as j', (join) =>
-      join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
+  const purchaseDocs = ctx.trx
+    .selectFrom('ludy_finance.journal_entry as j')
+    .crossJoinLateral((eb) =>
+      eb
+        .selectFrom('ludy_finance.purchase_document as doc')
+        .select([
+          'doc.id',
+          'doc.org_id',
+          'doc.party_id',
+          'doc.legal_entity_id',
+          'doc.direction',
+          'doc.invoice_date',
+          'doc.invoice_series',
+          'doc.invoice_number',
+          'doc.subtotal',
+          'doc.vat_amount',
+          'doc.total',
+          'doc.payment_method',
+          'doc.created_at',
+          'doc.correction_kind',
+          'doc.corrected_series',
+          'doc.corrected_number',
+        ])
+        .whereRef('doc.org_id', '=', 'j.org_id')
+        .whereRef('doc.id', '=', 'j.source_id')
+        .limit(1)
+        .as('d'),
     )
+    .crossJoinLateral(partyLateral())
+    .leftJoinLateral(voidLateral(), (join) => join.onTrue())
     .select([
       'd.id',
       'd.invoice_date',
@@ -547,8 +587,16 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
       'd.corrected_series',
       'd.corrected_number',
     ])
+    .where('j.org_id', '=', ctx.orgId)
+    .where('j.source_type', '=', 'finance.purchase_document')
     .where('j.entry_date', '>=', period.from)
     .where('j.entry_date', '<=', period.to)
+    .where('d.legal_entity_id', '=', legalEntityId)
+    .where('d.direction', '=', 'purchase')
+    .where(
+      sql<boolean>`j.source_revision = (SELECT later.source_revision FROM ludy_finance.journal_entry AS later WHERE later.org_id = j.org_id AND later.source_type = j.source_type AND later.source_id = j.source_id ORDER BY later.source_revision DESC LIMIT 1)`,
+    )
+    .where('v.voided', 'is', null)
     .orderBy('j.entry_date')
     .orderBy('d.invoice_date')
     .orderBy('d.invoice_series')
@@ -558,9 +606,19 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
 
   const salePeriodDate = sql<string>`COALESCE(sd.sale_date, d.invoice_date)`;
   const saleDocs = baseSalesDocs()
-    .innerJoin('ludy_finance.journal_entry as j', (join) =>
-      join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
+    .crossJoinLateral((eb) =>
+      eb
+        .selectFrom('ludy_finance.journal_entry as je')
+        .select('je.entry_date')
+        .whereRef('je.org_id', '=', 'd.org_id')
+        .where('je.source_type', '=', 'finance.purchase_document')
+        .whereRef('je.source_id', '=', 'd.id')
+        .orderBy('je.source_revision', 'desc')
+        .limit(1)
+        .as('j'),
     )
+    .crossJoinLateral(partyLateral())
+    .leftJoinLateral(voidLateral(), (join) => join.onTrue())
     .select([
       'd.id',
       'd.invoice_date',
@@ -582,6 +640,7 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
     .where(sql<boolean>`(SELECT pg_catalog.count(*) FROM purchase_docs) <= ${VAT_PERIOD_LIMIT}`)
     .where(salePeriodDate, '>=', period.from)
     .where(salePeriodDate, '<=', period.to)
+    .where('v.voided', 'is', null)
     .orderBy(salePeriodDate)
     .orderBy('d.invoice_date')
     .orderBy('d.invoice_series')
@@ -590,6 +649,8 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
     .limit(VAT_PERIOD_LIMIT + 1);
 
   const lateSaleDocs = baseSalesDocs()
+    .crossJoinLateral(partyLateral())
+    .leftJoinLateral(voidLateral(), (join) => join.onTrue())
     .select([
       'd.id',
       'd.invoice_series',
@@ -606,6 +667,7 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
     .where('d.invoice_date', '>=', period.from)
     .where('d.invoice_date', '<=', period.to)
     .where('sd.sale_date', '<', period.from)
+    .where('v.voided', 'is', null)
     .orderBy('d.invoice_date')
     .orderBy('d.invoice_series')
     .orderBy('d.invoice_number')
@@ -616,9 +678,9 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
     (SELECT purchase_count <= ${VAT_PERIOD_LIMIT} AND sale_count <= ${VAT_PERIOD_LIMIT} AND late_sale_count <= ${VAT_PERIOD_LIMIT} FROM within_limits)
   `;
 
-  // Every document id in purchase_docs / sale_docs is unique (latestRevision and LATERAL LIMIT 1 yield at most one row
-  // per document), so JOIN preserves child row cardinality while letting PostgreSQL hash-join or probe PKs instead of
-  // falling back to an unhashed linear ANY(ARRAY(...)) scan on un-analyzed tables.
+  // Every document id in purchase_docs / sale_docs is unique (ORDER BY source_revision DESC LIMIT 1 and LATERAL
+  // LIMIT 1 yield at most one row per document), so JOIN preserves child row cardinality while letting PostgreSQL
+  // hash-join or probe PKs instead of falling back to an unhashed linear ANY(ARRAY(...)) scan on un-analyzed tables.
   const docLinesJson = (cte: 'purchase_docs' | 'sale_docs', countCol: 'purchase_count' | 'sale_count') => {
     const cteRef = sql.id(cte);
     const countRef = sql.id(countCol);
@@ -732,13 +794,17 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
           '[]'::json
         )
         FROM (
-          SELECT DISTINCT ON (c.document_id) c.document_id, c.outcome, c.voucher_id, c.note, c.created_at
+          SELECT m.document_id, m.outcome, m.voucher_id, m.note, m.created_at
           FROM purchase_docs pd
-          JOIN ludy_finance.input_vat_check c
-            ON c.org_id = ${ctx.orgId}::uuid
-           AND c.document_id = pd.id
+          CROSS JOIN LATERAL (
+            SELECT c.document_id, c.outcome, c.voucher_id, c.note, c.created_at
+            FROM ludy_finance.input_vat_check c
+            WHERE c.org_id = ${ctx.orgId}::uuid
+              AND c.document_id = pd.id
+            ORDER BY c.created_at DESC, c.id DESC
+            LIMIT 1
+          ) m
           WHERE (SELECT purchase_count BETWEEN 1 AND ${VAT_PERIOD_LIMIT} AND sale_count <= ${VAT_PERIOD_LIMIT} AND late_sale_count <= ${VAT_PERIOD_LIMIT} FROM within_limits)
-          ORDER BY c.document_id, c.created_at DESC, c.id DESC
         ) m
       ) AS purchase_marks,
       (
