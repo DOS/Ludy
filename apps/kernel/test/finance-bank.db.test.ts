@@ -1529,8 +1529,8 @@ suite('bank statement import (#326)', () => {
       worker.execute<BankImportResult>('finance.bank.ingest', { bankAccount: '1121.VCB', legalEntityId: await defaultEntity(), source: 'sandbox', lines: [line] }, { actor: SYSTEM, orgId });
 
     it('flags a staged line whose reference the books already hold with another amount, shows it before Import, and stores it flagged instead of dropping it', async () => {
-      // The real transaction arrives first, from the feed.
-      await feedOne(feedLine('2026-09-01', '2000000', 'FT-REAL-1', '12000000', 'Khách trả tiền'));
+      // The real transaction arrives first, from the feed (distinct amount from earlier 2026-09-01 file fixtures so #4227 does not flag it as cross-source ambiguous).
+      await feedOne(feedLine('2026-09-01', '2500000', 'FT-REAL-1', '12500000', 'Khách trả tiền'));
       // A forged statement reuses that reference with a larger amount, next to a line that is genuinely new.
       const forged = [row('01/09/2026', '9000000', '', '19000000', 'FT-REAL-1', 'Chuyển khoản lạ'), row('04/09/2026', '1000', '', '19001000', 'FT-REAL-NEW')];
       const outcome = await stage(forged);
@@ -1549,7 +1549,7 @@ suite('bank statement import (#326)', () => {
       expect(listed.status).toBe(200);
       expect(listed.body).toMatchObject({ total: 2, conflicts: 1 });
       expect((listed.body.lines as Array<{ reference: string; status: string; clash: unknown }>).map((l) => [l.reference, l.status, l.clash])).toEqual([
-        ['FT-REAL-1', 'conflict', { date: '2026-09-01', amount: '2000000' }],
+        ['FT-REAL-1', 'conflict', { date: '2026-09-01', amount: '2500000' }],
         ['FT-REAL-NEW', 'new', null],
       ]);
       // A viewer decides nothing and sees no lines; nothing was stored by looking.
@@ -1561,7 +1561,7 @@ suite('bank statement import (#326)', () => {
       expect(done.body.counts).toMatchObject({ new: 1, conflict: 1, duplicate: 0 });
       const kept = (await stored('1121.VCB')).filter((l) => l.bank_ref?.startsWith('FT-REAL'));
       expect(kept.map((l) => [l.bank_ref, Number(l.amount), l.dedupe_key, l.ambiguous])).toEqual([
-        ['FT-REAL-1', 2000000, 'ref:FT-REAL-1', false],
+        ['FT-REAL-1', 2500000, 'ref:FT-REAL-1', false],
         ['FT-REAL-1', 9000000, null, true],
         ['FT-REAL-NEW', 1000, 'ref:FT-REAL-NEW', false],
       ]);
