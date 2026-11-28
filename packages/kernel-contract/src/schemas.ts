@@ -250,6 +250,9 @@ export const zPurchaseProposal = z.object({
     series: z.string().max(50),
     number: z.string().max(50),
     issueDate: zLocalDate,
+    // Payment due date (YYYY-MM-DD, #4395), read from e-invoice XML or set/cleared by a revision; null or absent means
+    // the forecast falls back to +30 days from issueDate as an estimate.
+    dueDate: zLocalDate.nullable().optional(),
     currency: z.string().max(10),
     paymentMethod: z.string().max(100).nullable(),
     taxAuthorityCode: z.string().max(100).nullable(),
@@ -1005,6 +1008,7 @@ export const zPurchaseDocument = z.object({
   series: z.string(),
   number: z.string(),
   issueDate: zLocalDate,
+  dueDate: zLocalDate.nullable().optional(),
   subtotal: zMoney,
   vatAmount: zMoney,
   total: zMoney,

@@ -138,6 +138,11 @@ export async function runMailJob(deps: MailQueueDeps, job: MailJob): Promise<Mai
     },
     ctx,
   );
+  if (result.outcome === 'sent' && begun.source === 'finance.einvoice.notice_send' && deps.runtime.installed('finance')) {
+    await deps.runtime
+      .execute('finance.einvoice.notice_mail_settle', { mailId: job.messageId }, ctx)
+      .catch((error: unknown) => console.error(`[mail] einvoice notice ${job.messageId.slice(0, 8)} not settled: ${mailErrorCode(error)}`));
+  }
   return { action: 'recorded', outcome: result.outcome, code: result.outcome === 'sent' ? null : result.code };
 }
 

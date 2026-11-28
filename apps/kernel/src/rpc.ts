@@ -4372,6 +4372,7 @@ export function createRpcHandler(
         correctionOptions: os.einvoice.drafts.correctionOptions.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.correction_options', input, { actor, orgId }))),
         noticeOpen: os.einvoice.drafts.noticeOpen.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.notice_open', input, { actor, orgId }))),
         noticeStep: os.einvoice.drafts.noticeStep.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.notice_step', input, { actor, orgId }))),
+        noticeSend: os.einvoice.drafts.noticeSend.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.notice_send', input, { actor, orgId }))),
         noticeList: os.einvoice.drafts.noticeList.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.notice_list', input, { actor, orgId }))),
         issueRequest: os.einvoice.drafts.issueRequest.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.issue_request', input, { actor, orgId }))),
         // The coworker's proposal for the form (#2505): the model is asked outside any transaction, from what the member's own read said it may see.

@@ -714,6 +714,10 @@ export async function extractAndPropose(
       lookupHints = [];
     }
   }
+  const dueDate =
+    !sale && typeof invoice.dueDate === 'string' && zLocalDate.safeParse(invoice.dueDate).success && invoice.dueDate >= invoice.issueDate
+      ? invoice.dueDate
+      : null;
   const memo = journalMemo({ ...direction, seller, buyer, invoice });
   const payload: PurchaseProposal = {
     ...direction,
@@ -724,6 +728,7 @@ export async function extractAndPropose(
       series: invoice.series,
       number: invoice.number,
       issueDate: invoice.issueDate,
+      dueDate,
       // Upper case, as the document stores it (purchase_document_foreign_amounts compares it with 'VND').
       currency: invoice.currency.toUpperCase(),
       paymentMethod: invoice.paymentMethod,

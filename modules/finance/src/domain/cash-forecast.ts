@@ -6,8 +6,9 @@
 // - Day 0 is the as-of day. The opening cash is the booked 111 + 112 on it, so the balance of day 0 is that cash plus the items dated day 0.
 // - A receipt is an open sales invoice on its due date (invoice date + terms). A receipt already overdue is NOT counted (its money has not come): it is returned apart. The part of 131 no
 //   invoice covers is also not counted.
-// - A payable is an open purchase invoice on its invoice date + PAYABLE_TERMS_DAYS (a received invoice has no due date), and an overdue one on day 0: a debt owed is expected to be paid, a
-//   receivable that is late is not expected. The part of 331 no purchase invoice covers is counted on day 0.
+// - A payable is an open purchase invoice dated on its due_date when present (#4395), else its invoice date + PAYABLE_TERMS_DAYS
+//   (flagged as an estimate), and an overdue one on day 0: a debt owed is expected to be paid, a receivable that is late is not expected.
+//   The part of 331 no purchase invoice covers is counted on day 0.
 // - An approved supplier payment is dated on the first day its bank file may go. Its amount is still inside the party's 331 until a bank line is matched, so it is taken out of that
 //   party's pool first (and its invoice out of the allocation): nothing is counted twice. What it counts for is capped by the party's 331 balance, so a payment already booked by hand does not
 //   leave twice.
@@ -35,8 +36,16 @@ export interface ApprovedPayment {
   payableOn: string;
 }
 
+export interface PayableDocument extends SaleInvoice {
+  dueDate?: string | null | undefined;
+}
+
+export interface OpenPayable extends OpenInvoice {
+  dueDateEstimated: boolean;
+}
+
 export interface PayablePool {
-  open: OpenInvoice[];
+  open: OpenPayable[];
   // The 331 balance no purchase invoice covers (positive), counted on day 0.
   unlinked: string;
   // The approved payments that count, each capped so that together they never exceed the party's 331 balance.
@@ -45,9 +54,9 @@ export interface PayablePool {
 
 // Lays one supplier's 331 balance (credit minus debit, a decimal string) over its purchase invoices, after taking its approved payments out: the payments count first, in the order of their day, up to the
 // balance, and what each counts for comes off its own invoice (the whole invoice leaves the allocation only when the payment covers all of it; a partial payment leaves the rest of the invoice to be laid
-// over). A balance at or below zero (nothing owed, or overpaid) counts nothing, and neither does an approved payment of a supplier with no positive balance. Invoice dates are the document's own; the date
-// of each open one is the invoice date + PAYABLE_TERMS_DAYS.
-export function allocatePayable(documents: readonly SaleInvoice[], balance: string, approved: readonly ApprovedPayment[], today: string): PayablePool {
+// over). A balance at or below zero (nothing owed, or overpaid) counts nothing, and neither does an approved payment of a supplier with no positive balance. Open invoices use their explicit dueDate when
+// present, else invoice date + PAYABLE_TERMS_DAYS (flagged dueDateEstimated).
+export function allocatePayable(documents: readonly PayableDocument[], balance: string, approved: readonly ApprovedPayment[], today: string): PayablePool {
   let left = Decimal.max(new Decimal(balance), 0);
   const counted: ApprovedPayment[] = [];
   const paidOn = new Map<string, DecimalValue>();
@@ -65,8 +74,19 @@ export function allocatePayable(documents: readonly SaleInvoice[], balance: stri
     const rest = new Decimal(d.total).minus(paid);
     return rest.greaterThan(0) ? [{ ...d, total: rest.toFixed() }] : [];
   });
+  const byId = new Map(remaining.map((d) => [d.id, d]));
   const rest = allocateReceivable(remaining, left.toFixed(), today, PAYABLE_TERMS_DAYS);
-  return { open: rest.open, unlinked: rest.other, approved: counted };
+  const open: OpenPayable[] = rest.open.map((inv) => {
+    const docDue = byId.get(inv.id)?.dueDate ?? null;
+    const dueDate = docDue ?? inv.dueDate;
+    return {
+      ...inv,
+      dueDate,
+      daysOverdue: daysBetween(dueDate, today),
+      dueDateEstimated: docDue === null,
+    };
+  });
+  return { open, unlinked: rest.other, approved: counted };
 }
 
 export interface CashForecastInput {
@@ -80,7 +100,7 @@ export interface CashForecastInput {
   receivables: readonly { dueDate: string; amountDue: string }[];
   unlinkedReceivables: string;
   // The open purchase invoices of every supplier, from allocatePayable, the 331 no invoice covers and the approved payments that count.
-  payables: readonly { dueDate: string; amountDue: string }[];
+  payables: readonly { dueDate: string; amountDue: string; estimated?: boolean | undefined }[];
   unlinkedPayables: string;
   approvedPayments: readonly ApprovedPayment[];
   taxMarkers: readonly CashForecastTaxMarker[];
@@ -104,12 +124,17 @@ export function buildCashForecast(input: CashForecastInput): CashForecast {
     if (at < 0) overdueReceipts = overdueReceipts.plus(amount);
     else if (at <= CASH_FORECAST_DAYS) items.push({ kind: 'receipt', date: r.dueDate, amount: canonical(amount) });
   }
+  let estimatedPayables = false;
   for (const p of input.payables) {
     const amount = new Decimal(p.amountDue);
     if (amount.lessThanOrEqualTo(0)) continue;
     const at = indexOf(today, p.dueDate);
     // An overdue payable is expected to be paid at once: day 0.
-    if (at <= CASH_FORECAST_DAYS) items.push({ kind: 'payable', date: at < 0 ? today : p.dueDate, amount: canonical(amount) });
+    if (at <= CASH_FORECAST_DAYS) {
+      const estimated = p.estimated ?? true;
+      if (estimated) estimatedPayables = true;
+      items.push({ kind: 'payable', date: at < 0 ? today : p.dueDate, amount: canonical(amount), estimated });
+    }
   }
   const unlinkedPayables = new Decimal(input.unlinkedPayables);
   if (unlinkedPayables.greaterThan(0)) items.push({ kind: 'unlinked_payable', date: today, amount: canonical(unlinkedPayables) });
@@ -162,6 +187,7 @@ export function buildCashForecast(input: CashForecastInput): CashForecast {
     overdueReceiptsNotCounted: canonical(overdueReceipts),
     unlinkedReceivablesNotCounted: canonical(unlinkedReceivables),
     payableTermsDays: PAYABLE_TERMS_DAYS,
+    estimatedPayables,
     notIncluded: [...CASH_FORECAST_NOT_INCLUDED],
     taxMarkers: [...input.taxMarkers].sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.obligation.localeCompare(b.obligation)),
     truncated: input.truncated,

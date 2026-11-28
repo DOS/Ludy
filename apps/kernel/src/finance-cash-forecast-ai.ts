@@ -36,7 +36,7 @@ export function cashForecastFacts(forecast: CashForecast, language: 'vi' | 'en')
     openingCash: forecast.openingCash,
     low: { date: forecast.low.date, balance: forecast.low.balance },
     checkpoints: forecast.checkpoints.map((c) => ({ days: c.days, date: c.date, balance: c.balance, receipts: c.receipts, payments: c.payments })),
-    topItems: forecast.topItems.map((i) => ({ kind: i.kind, date: i.date, amount: i.amount })),
+    topItems: forecast.topItems.map((i) => ({ kind: i.kind, date: i.date, amount: i.amount, ...(i.estimated !== undefined ? { estimated: i.estimated } : {}) })),
     overdueReceiptsNotCounted: forecast.overdueReceiptsNotCounted,
     unlinkedReceivablesNotCounted: forecast.unlinkedReceivablesNotCounted,
     notIncluded: forecast.notIncluded,

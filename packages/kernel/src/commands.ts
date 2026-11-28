@@ -745,7 +745,7 @@ export const editProposal = defineCommand({
   name: 'kernel.proposal.edit',
   proposalEditor: true,
   // lineAccounts, an exchangeRate for a foreign-currency invoice read without one (#918), the legal entity whose books
-  // the invoice goes to (#1280, only the proposal's own since #1764), or several of them.
+  // the invoice goes to (#1280, only the proposal's own since #1764), a purchase invoice dueDate (#4395), or several of them.
   input: z
     .object({
       id: zId,
@@ -753,8 +753,12 @@ export const editProposal = defineCommand({
       lineAccounts: zLineAccounts.min(1).optional(),
       exchangeRate: zExchangeRate.optional(),
       legalEntityId: zId.optional(),
+      dueDate: zLocalDate.nullable().optional(),
     })
-    .refine((v) => v.lineAccounts !== undefined || v.exchangeRate !== undefined || v.legalEntityId !== undefined, 'lineAccounts, exchangeRate or legalEntityId'),
+    .refine(
+      (v) => v.lineAccounts !== undefined || v.exchangeRate !== undefined || v.legalEntityId !== undefined || v.dueDate !== undefined,
+      'lineAccounts, exchangeRate, legalEntityId or dueDate',
+    ),
   risk: 'R1',
   sideEffect: 'internal',
   access: MEMBERS,
@@ -778,6 +782,7 @@ export const editProposal = defineCommand({
         lineAccounts: input.lineAccounts ?? [],
         ...(input.exchangeRate ? { exchangeRate: input.exchangeRate } : {}),
         ...(input.legalEntityId ? { legalEntityId: input.legalEntityId } : {}),
+        ...(input.dueDate !== undefined ? { dueDate: input.dueDate } : {}),
       },
       { proposalId: proposal.id },
     );

@@ -197,6 +197,7 @@ describe('Wave P2-3 Peek Sheets across Documents, SignEnvelopes, TodayList, and 
         number: '000123',
         partyName: 'Công ty Minh Anh',
         issueDate: '2026-11-20',
+        dueDate: '2026-12-20',
         subtotal: '1000000',
         vatAmount: '100000',
         total: '1100000',
@@ -248,6 +249,8 @@ describe('Wave P2-3 Peek Sheets across Documents, SignEnvelopes, TodayList, and 
     const mobileOpenHtml = renderScreen(<DocumentsPage />);
     expect(mobileOpenHtml).toContain('data-testid="document-peek-sheet"');
     expect(mobileOpenHtml).toContain('1C26TAA-000123');
+    expect(mobileOpenHtml).toContain('data-testid="document-peek-due-date"');
+    expect(mobileOpenHtml).toContain('20/12/2026');
     expect(mobileOpenHtml).toContain('hoa-don-minh-anh.pdf');
     expect(mobileOpenHtml).toContain('data-testid="document-peek-provenance"');
     expect(mobileOpenHtml).toContain('Hạch toán hóa đơn đầu vào Minh Anh');

@@ -534,7 +534,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
       const initialized = await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', method: 'notifications/initialized' });
       expect(initialized.status).toBe(202);
       const list = (await (await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', id: 2, method: 'tools/list' })).json()) as any;
-      expect(list.result.tools.map((t: any) => t.name)).toEqual(['ludy_about', 'ludy_bookings_list', 'ludy_conversation', 'ludy_conversations_list', 'ludy_deal', 'ludy_deals_list', 'ludy_finance_open_balances', 'ludy_finance_overview', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_payment_reminder_draft', 'ludy_projects_roadmap_demand_summary', 'ludy_projects_roadmap_ideas', 'ludy_projects_triage_summary', 'ludy_quote', 'ludy_quotes_list', 'ludy_signals', 'ludy_social_metrics_summary', 'ludy_social_metrics_totals', 'ludy_social_posts_list', 'ludy_social_review_queue']);
+      expect(list.result.tools.map((t: any) => t.name)).toEqual(['ludy_about', 'ludy_bookings_list', 'ludy_conversation', 'ludy_conversations_list', 'ludy_deal', 'ludy_deals_list', 'ludy_finance_open_balances', 'ludy_finance_overview', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_payment_reminder_draft', 'ludy_projects_roadmap_demand_summary', 'ludy_projects_roadmap_ideas', 'ludy_projects_triage_summary', 'ludy_quote', 'ludy_quotes_list', 'ludy_signals', 'ludy_social_channels_list', 'ludy_social_metrics_summary', 'ludy_social_metrics_totals', 'ludy_social_posts_list', 'ludy_social_review_queue']);
       for (const tool of list.result.tools) expect(tool.annotations, tool.name).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true });
       const called = (await (await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ludy_about', arguments: {} } })).json()) as any;
       expect(called.result.structuredContent.clientName).toBe('Test MCP client');
@@ -650,12 +650,13 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const owner = { type: 'user' as const, userId: ownerId, aal: 'aal2' as const, sessionId: '7e1c2b4a-5d6f-4a8b-9c0d-1e2f3a4b5c6d', mfaAt: Math.floor(Date.now() / 1000) };
     const setApp = (enabled: boolean) => sharedRuntime.execute('kernel.org.set_app', { module: 'social', enabled }, { actor: owner, orgId, idempotencyKey: randomUUID() });
     const names = async () => (((await mcpModern(c.access, 'tools/list')).body?.result?.tools ?? []) as Array<{ name: string }>).map((t) => t.name);
-    expect(await names()).toEqual(expect.arrayContaining(['ludy_social_posts_list', 'ludy_social_review_queue']));
+    expect(await names()).toEqual(expect.arrayContaining(['ludy_social_posts_list', 'ludy_social_review_queue', 'ludy_social_channels_list']));
     await setApp(false);
     try {
       const listed = await names();
       expect(listed).not.toContain('ludy_social_posts_list');
       expect(listed).not.toContain('ludy_social_review_queue');
+      expect(listed).not.toContain('ludy_social_channels_list');
       // The other tools are untouched.
       expect(listed).toEqual(expect.arrayContaining(['ludy_about', 'ludy_parties_list', 'ludy_invoices_list', 'ludy_signals']));
       const called = await mcpModern(c.access, 'tools/call', { name: 'ludy_social_posts_list', arguments: {} }, 'ludy_social_posts_list');
@@ -675,7 +676,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     } finally {
       await setApp(true);
     }
-    expect(await names()).toEqual(expect.arrayContaining(['ludy_social_posts_list', 'ludy_social_review_queue']));
+    expect(await names()).toEqual(expect.arrayContaining(['ludy_social_posts_list', 'ludy_social_review_queue', 'ludy_social_channels_list']));
     const back = await mcpModern(c.access, 'tools/call', { name: 'ludy_social_posts_list', arguments: {} }, 'ludy_social_posts_list');
     expect(back.body?.result?.isError).toBe(false);
   });
@@ -739,7 +740,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(client.getServerVersion()?.name).toBe('ludy');
     expect(client.getServerCapabilities()?.tools).toBeDefined();
     const listed = await client.listTools();
-    expect(listed.tools.map((t) => t.name)).toEqual(['ludy_about', 'ludy_bookings_list', 'ludy_conversation', 'ludy_conversations_list', 'ludy_deal', 'ludy_deals_list', 'ludy_finance_open_balances', 'ludy_finance_overview', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_payment_reminder_draft', 'ludy_projects_roadmap_demand_summary', 'ludy_projects_roadmap_ideas', 'ludy_projects_triage_summary', 'ludy_quote', 'ludy_quotes_list', 'ludy_signals', 'ludy_social_metrics_summary', 'ludy_social_metrics_totals', 'ludy_social_posts_list', 'ludy_social_review_queue']);
+    expect(listed.tools.map((t) => t.name)).toEqual(['ludy_about', 'ludy_bookings_list', 'ludy_conversation', 'ludy_conversations_list', 'ludy_deal', 'ludy_deals_list', 'ludy_finance_open_balances', 'ludy_finance_overview', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_payment_reminder_draft', 'ludy_projects_roadmap_demand_summary', 'ludy_projects_roadmap_ideas', 'ludy_projects_triage_summary', 'ludy_quote', 'ludy_quotes_list', 'ludy_signals', 'ludy_social_channels_list', 'ludy_social_metrics_summary', 'ludy_social_metrics_totals', 'ludy_social_posts_list', 'ludy_social_review_queue']);
     expect(listed.tools[0]?.annotations).toMatchObject({ readOnlyHint: true });
     const called = await client.callTool({ name: 'ludy_about', arguments: {} });
     expect(called.isError).toBeFalsy();

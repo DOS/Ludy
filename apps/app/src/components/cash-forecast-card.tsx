@@ -91,7 +91,7 @@ export function CashForecastView({ data, version }: { data: CashForecast; versio
         </div>
         <Explanation legalEntityId={data.legalEntityId} version={version} />
         <ul className="mt-4 space-y-1 text-xs text-subtle-foreground">
-          <li>{t('estimates', { days: String(data.payableTermsDays) })}</li>
+          <li>{data.estimatedPayables === false ? t('termsConcrete') : t('estimates', { days: String(data.payableTermsDays) })}</li>
           {!isZero(data.overdueReceiptsNotCounted) && <li>{t('overdue', { amount: f.money(data.overdueReceiptsNotCounted) })}</li>}
           {!isZero(data.unlinkedReceivablesNotCounted) && <li>{t('unlinked', { amount: f.money(data.unlinkedReceivablesNotCounted) })}</li>}
           <li>{t('notIncluded.line', { items: left })}</li>
