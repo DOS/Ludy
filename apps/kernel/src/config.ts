@@ -402,6 +402,10 @@ const schema = z.object({
   MCP_GRANT_WRITES_PER_MINUTE: z.coerce.number().int().min(1).max(600).default(20),
   // Rows of business data one grant may read per UTC day (the sum of the rows its tool calls return). A call that starts under the budget may end over it by one answer.
   MCP_GRANT_DAILY_ROWS: z.coerce.number().int().min(1).max(1_000_000).default(2000),
+  // Drafts one grant, and all the grants of one organization together, may make per UTC day through ludy_social_draft_create (#3253): a database-backed cap on top of the per-minute budget, so a client that
+  // loops cannot flood the Review tab. Each draft is one row a person must review or archive; an attempt that fails after the charge counts too. A refusal says it starts again at midnight UTC.
+  MCP_GRANT_DAILY_DRAFTS: z.coerce.number().int().min(1).max(100_000).default(40),
+  MCP_ORG_DAILY_DRAFTS: z.coerce.number().int().min(1).max(1_000_000).default(120),
   // Dynamic client registrations one address may make per minute, and all addresses together (RFC 7591 is public by protocol).
   OAUTH_REGISTER_PER_MINUTE: z.coerce.number().int().min(1).max(10_000).default(10),
   OAUTH_REGISTER_GLOBAL_PER_MINUTE: z.coerce.number().int().min(1).max(100_000).default(120),
