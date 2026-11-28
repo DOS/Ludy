@@ -1468,7 +1468,7 @@ export const en = {
     nothingDue: 'Nothing due in 30 days',
     empty: 'No tax obligation due in the next 30 days',
     emptyHint: "Choose the company's VAT filing period and the obligations that apply to it in Settings to see its calendar here.",
-    unconfirmed: 'Deadlines per the Law on Tax Administration 108/2025/QH15 and Decree 252/2026/NĐ-CP (before 2026-07-01: Law 38/2019/QH14); the table is not confirmed by an accountant yet. A deadline on a Saturday or Sunday moves to the Monday; public holidays are not taken into account.',
+    unconfirmed: 'Deadlines per the Law on Tax Administration 108/2025/QH15 and Decree 252/2026/NĐ-CP (before 2026-07-01: Law 38/2019/QH14); the table is not confirmed by an accountant yet. A deadline on a Saturday, a Sunday, a public holiday or a compensatory day off moves to the next working day.',
   },
   documents: {
     title: 'Documents',
