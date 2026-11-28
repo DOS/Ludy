@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The aging of receivables and payables (#5338): every bucket and every ranking is decided by pure functions, so each rule is a test here (the reads and the database are in apps/kernel/test/finance-aging.db.test.ts). The
+// The aging of receivables and payables (#5338): every bucket and every ranking is decided by pure functions, so each rule is a test here (the reads and the database are in apps/kernel/test/finance-aging-ranking.db.test.ts). The
 // buckets follow the days past due as of the day asked; the largest overdue parties are the sum of their invoices past due, largest first, ties by name then id.
 import { describe, expect, it } from 'vitest';
 import { AGING_BUCKETS, AGING_TOP, agingBucketOf, buildAging, type AgingInvoice } from '../src/domain/aging.ts';
