@@ -24,8 +24,8 @@ import type { VatFilingPeriod } from '@ludy/kernel-contract';
 import { taxDuesOf } from '@ludy/kernel';
 import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { Decimal, PAYABLE_ACCOUNT, type DecimalValue } from '@ludy/l10n-vn';
-import { buildCashForecast, allocatePayable, type ApprovedPayment } from './domain/cash-forecast.ts';
-import { addDays, type SaleInvoice } from './domain/payment-reminder.ts';
+import { buildCashForecast, allocatePayable, type ApprovedPayment, type PayableDocument } from './domain/cash-forecast.ts';
+import { addDays } from './domain/payment-reminder.ts';
 import { canonical } from './domain/money.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
@@ -92,7 +92,7 @@ async function partylessPayables(ctx: QueryContext, entity: string, today: strin
 }
 
 // The purchase invoices still in the books (not voided) of these suppliers, newest first, at most `limit`.
-async function purchaseDocuments(ctx: QueryContext, entity: string, asOf: string, partyIds: readonly string[], limit: number): Promise<Array<SaleInvoice & { partyId: string }>> {
+async function purchaseDocuments(ctx: QueryContext, entity: string, asOf: string, partyIds: readonly string[], limit: number): Promise<Array<PayableDocument & { partyId: string }>> {
   if (partyIds.length === 0) return [];
   const kept = sql<string>`coalesce(x.duplicate_of, x.id)`;
   const rows = await ctx.trx
@@ -100,7 +100,7 @@ async function purchaseDocuments(ctx: QueryContext, entity: string, asOf: string
     .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.id', '=', 'd.party_id'))
     .leftJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
     .select(kept.as('party_id'))
-    .select(['d.id', 'd.invoice_series', 'd.invoice_number', 'd.invoice_date', 'd.total', 'd.currency'])
+    .select(['d.id', 'd.invoice_series', 'd.invoice_number', 'd.invoice_date', 'd.due_date', 'd.total', 'd.currency'])
     .where('d.org_id', '=', ctx.orgId)
     .where('d.legal_entity_id', '=', entity)
     .where('d.direction', '=', 'purchase')
@@ -113,7 +113,7 @@ async function purchaseDocuments(ctx: QueryContext, entity: string, asOf: string
     .orderBy('d.id')
     .limit(limit)
     .execute();
-  return rows.map((r) => ({ partyId: r.party_id, id: r.id, series: r.invoice_series, number: r.invoice_number, date: r.invoice_date, total: r.total, currency: r.currency }));
+  return rows.map((r) => ({ partyId: r.party_id, id: r.id, series: r.invoice_series, number: r.invoice_number, date: r.invoice_date, dueDate: r.due_date, total: r.total, currency: r.currency }));
 }
 
 // The approved supplier payments of the entity (#3113), in the book currency (a payment in another currency cannot be added to the books' cash, and its invoice stays in the 331 pool), by the
@@ -183,13 +183,13 @@ export async function financeCashForecast(ctx: QueryContext, input: FinanceCashF
   const documents = probed.slice(0, CASH_FORECAST_DOCUMENTS_MAX);
   const approved = await approvedPayments(ctx, entity, today, currency, CASH_FORECAST_PAYMENTS_MAX + 1);
   if (approved.length > CASH_FORECAST_PAYMENTS_MAX) truncated = true;
-  const payables: Array<{ dueDate: string; amountDue: string }> = [];
+  const payables: Array<{ dueDate: string; amountDue: string; estimated: boolean }> = [];
   const counted: ApprovedPayment[] = [];
   let unlinkedPayables = partyless.greaterThan(0) ? partyless : new Decimal(0);
   for (const supplier of suppliers) {
     const mine = documents.filter((d) => d.partyId === supplier.partyId);
     const pool = allocatePayable(mine, supplier.balance, approved.slice(0, CASH_FORECAST_PAYMENTS_MAX).filter((a) => a.partyId === supplier.partyId), today);
-    payables.push(...pool.open.map((i) => ({ dueDate: i.dueDate, amountDue: i.amountDue })));
+    payables.push(...pool.open.map((i) => ({ dueDate: i.dueDate, amountDue: i.amountDue, estimated: i.dueDateEstimated })));
     unlinkedPayables = unlinkedPayables.plus(pool.unlinked);
     counted.push(...pool.approved);
   }

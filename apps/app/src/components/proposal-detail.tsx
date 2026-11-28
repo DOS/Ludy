@@ -2,7 +2,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { BLOCKING_CHECK_IDS, UNCLASSIFIED_ACCOUNT_CODE, isEngageProposalKind, vietnamToday, type CashVoucherProposal, type JournalVoucherProposal } from '@ludy/kernel-contract';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -452,6 +452,8 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
   const org = useQuery(orpc.org.get.queryOptions());
   const canReadAudit = org.data?.role === 'owner' || org.data?.role === 'admin';
   const [lineAccounts, setLineAccounts] = useState<Record<number, string>>({});
+  const [dueDateDraft, setDueDateDraft] = useState<string | null>(null);
+  const dueDateInputId = useId();
   const [idempotencyKey] = useState(() => crypto.randomUUID());
   // The rate typed for a foreign-currency invoice read without one (#918).
   const [exchangeRate, setExchangeRate] = useState('');
@@ -563,11 +565,16 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
     }
   }, [stepUp, approve.isPending]);
   const reject = useMutation(orpc.inbox.reject.mutationOptions({ onSuccess: () => done(ads || issue ? t(ads ? 'rejectedAdsToast' : 'rejectedIssueToast') : engage ? t('rejectedEngageToast') : t('rejectedToast', { name: partyName() })) }));
+  useEffect(() => {
+    setDueDateDraft(null);
+  }, [id]);
+
   // Saving an edit creates a new revision authored by this user; the page then reloads the server's decision.
   const edit = useMutation(
     orpc.inbox.edit.mutationOptions({
-      onSuccess: async () => {
-        setLineAccounts({});
+      onSuccess: async (_data, variables) => {
+        if (variables.lineAccounts || variables.exchangeRate) setLineAccounts({});
+        if (variables.dueDate !== undefined) setDueDateDraft(null);
         await queryClient.invalidateQueries();
       },
     }),
@@ -578,6 +585,7 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
     orpc.files.reextract.mutationOptions({
       onSuccess: async () => {
         setLineAccounts({});
+        setDueDateDraft(null);
         await queryClient.invalidateQueries();
       },
     }),
@@ -595,7 +603,14 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
       },
     }),
   );
-  const dirty = (payload?.lines ?? []).some((l) => (lineAccounts[l.lineNo] ?? l.debitAccount) !== l.debitAccount);
+  const accountsDirty = (payload?.lines ?? []).some((l) => (lineAccounts[l.lineNo] ?? l.debitAccount) !== l.debitAccount);
+  const isPurchase = payload !== null && payload.direction !== 'sale';
+  const savedDueDate = isPurchase ? (payload.invoice.dueDate ?? null) : null;
+  const dueDateValue = dueDateDraft ?? (savedDueDate ?? '');
+  const dueDateNormalized = dueDateValue.trim() === '' ? null : dueDateValue.trim();
+  const dueDateDirty = isPurchase && dueDateDraft !== null && dueDateNormalized !== savedDueDate;
+  const dueDateValid = !isPurchase || dueDateNormalized === null || (payload !== null && dueDateNormalized >= payload.invoice.issueDate);
+  const dirty = accountsDirty || dueDateDirty;
   const busy = approve.isPending || reject.isPending || edit.isPending || reextract.isPending || resubmit.isPending;
 
   const item = detail.data;
@@ -794,13 +809,14 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
             loading={edit.isPending}
             variant="outline"
             size="lg"
-            disabled={busy}
+            disabled={busy || (dueDateDirty && !dueDateValid)}
             onClick={() =>
               edit.mutate({
                 id,
                 revision: item.revision,
                 idempotencyKey: crypto.randomUUID(),
-                lineAccounts: lines.map((l) => ({ lineNo: l.lineNo, debitAccount: l.debitAccount })),
+                ...(accountsDirty ? { lineAccounts: lines.map((l) => ({ lineNo: l.lineNo, debitAccount: l.debitAccount })) } : {}),
+                ...(dueDateDirty ? { dueDate: dueDateNormalized } : {}),
               })
             }
           >
@@ -1254,6 +1270,59 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
                     )}
                     <p className="w-full text-xs text-subtle-foreground">{t('exchangeRateHint')}</p>
                   </form>
+                )}
+                {!sale && pending && item?.canEdit && (
+                  <form
+                    className="flex flex-wrap items-end gap-2 border-t pt-3 sm:col-span-3"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!item || !dueDateDirty || !dueDateValid) return;
+                      edit.mutate({ id, revision: item.revision, idempotencyKey: crypto.randomUUID(), dueDate: dueDateNormalized });
+                    }}
+                  >
+                    <div className="space-y-1">
+                      <Label htmlFor={dueDateInputId} className="text-xs">
+                        {t('dueDate')}
+                      </Label>
+                      <DateInput
+                        id={dueDateInputId}
+                        className="w-44"
+                        inputClassName="min-h-11"
+                        min={payload.invoice.issueDate}
+                        disabled={busy}
+                        value={dueDateValue}
+                        onChange={setDueDateDraft}
+                      />
+                    </div>
+                    <Button type="submit" variant="outline" className="min-h-11" disabled={busy || !dueDateDirty || !dueDateValid}>
+                      {t('saveDueDate')}
+                    </Button>
+                    {savedDueDate !== null && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="min-h-11"
+                        disabled={busy}
+                        onClick={() => edit.mutate({ id, revision: item.revision, idempotencyKey: crypto.randomUUID(), dueDate: null })}
+                      >
+                        {t('clearDueDate')}
+                      </Button>
+                    )}
+                    {!dueDateValid && (
+                      <p className="w-full text-xs text-destructive" aria-live="polite">
+                        {t('dueDateInvalid', { date: f.date(payload.invoice.issueDate) })}
+                      </p>
+                    )}
+                    <p className="w-full text-xs text-subtle-foreground">{t('dueDateHint')}</p>
+                  </form>
+                )}
+                {!sale && (!pending || !item?.canEdit) && (
+                  <div className="sm:col-span-3">
+                    <p className="text-xs text-subtle-foreground">{t('dueDateReadOnly')}</p>
+                    <p className="text-sm tabular-nums text-foreground">
+                      {payload.invoice.dueDate ? f.date(payload.invoice.dueDate) : t('dueDateNotSet')}
+                    </p>
+                  </div>
                 )}
               </div>
             </Card>

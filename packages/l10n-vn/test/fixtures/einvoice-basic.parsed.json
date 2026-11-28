@@ -5,6 +5,7 @@
   "series": "C26TAB",
   "number": "1234",
   "issueDate": "2026-09-15",
+  "dueDate": null,
   "currency": "VND",
   "exchangeRate": "1",
   "paymentMethod": "TM/CK",

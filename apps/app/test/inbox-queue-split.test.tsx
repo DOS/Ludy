@@ -493,4 +493,31 @@ describe('ProposalDetail and InboxDetailPage', () => {
     expect(embedded).not.toContain('lg:grid-cols-5');
     expect(embedded).toContain(catalog('vi').inbox.preview.openDetail);
   });
+
+  it('renders an editable due-date input with 44px touch targets on purchase proposals, and read-only when not editable (#4395)', () => {
+    seedInboxBase();
+    const withDue = pendingDetail('p1', 'NCC Alpha');
+    withDue.payload.invoice = { ...withDue.payload.invoice, dueDate: '2026-12-20' } as typeof withDue.payload.invoice;
+    state.qc.setQueryData(['inbox', 'get', { id: 'p1' }], withDue);
+    const editableHtml = renderNode(<ProposalDetail slug="demo" id="p1" mode="embedded" />, 'en');
+    expect(editableHtml).toContain(catalog('en').inboxDetail.dueDate);
+    expect(editableHtml).toContain('20/12/2026');
+    expect(editableHtml).toContain('min-h-11');
+    expect(editableHtml).toContain(catalog('en').inboxDetail.saveDueDate);
+    expect(editableHtml).toContain(catalog('en').inboxDetail.clearDueDate);
+
+    // Non-editable (e.g. executed) shows due date read-only with no edit controls.
+    state.qc.setQueryData(['inbox', 'get', { id: 'p1' }], { ...withDue, status: 'executed', canEdit: false, canApprove: false, canReject: false });
+    const readOnlyHtml = renderNode(<ProposalDetail slug="demo" id="p1" mode="embedded" />, 'en');
+    expect(readOnlyHtml).toContain(catalog('en').inboxDetail.dueDateReadOnly);
+    expect(readOnlyHtml).toContain('20/12/2026');
+    expect(readOnlyHtml).not.toContain(catalog('en').inboxDetail.saveDueDate);
+
+    // Sales invoices omit purchase due-date controls.
+    const saleDetail = pendingDetail('p1', 'KH Beta');
+    saleDetail.payload = { ...saleDetail.payload, direction: 'sale' };
+    state.qc.setQueryData(['inbox', 'get', { id: 'p1' }], saleDetail);
+    const saleHtml = renderNode(<ProposalDetail slug="demo" id="p1" mode="embedded" />, 'en');
+    expect(saleHtml).not.toContain(catalog('en').inboxDetail.saveDueDate);
+  });
 });

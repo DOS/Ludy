@@ -132,6 +132,8 @@ export interface ParsedInvoice {
   series: string;
   number: string;
   issueDate: string;
+  // Payment due date (YYYY-MM-DD) when stated on an e-invoice XML (#4395); null or omitted when absent.
+  dueDate?: string | null | undefined;
   currency: string;
   exchangeRate: Money | null;
   paymentMethod: string | null;
@@ -188,6 +190,16 @@ export function isCalendarDate(value: string): boolean {
   if (value < '0001-01-01') return false;
   const date = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value);
+}
+
+// Adds whole days to a YYYY-MM-DD calendar date in UTC, returning null if invalid or out of range.
+export function addCalendarDays(date: string, days: number): string | null {
+  if (!isCalendarDate(date) || !Number.isInteger(days)) return null;
+  const parsed = new Date(`${date}T00:00:00Z`);
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const iso = parsed.toISOString().slice(0, 10);
+  return isCalendarDate(iso) ? iso : null;
 }
 
 // The exchange rate a foreign-currency invoice is booked at (#918), or null: only an e-invoice XML's own TGia, positive,

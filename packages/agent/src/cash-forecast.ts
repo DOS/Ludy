@@ -20,7 +20,7 @@ export interface CashForecastFacts {
   openingCash: string;
   low: { date: string; balance: string };
   checkpoints: ReadonlyArray<{ days: number; date: string; balance: string; receipts: string; payments: string }>;
-  topItems: ReadonlyArray<{ kind: CashForecastFactItemKind; date: string; amount: string }>;
+  topItems: ReadonlyArray<{ kind: CashForecastFactItemKind; date: string; amount: string; estimated?: boolean | undefined }>;
   overdueReceiptsNotCounted: string;
   unlinkedReceivablesNotCounted: string;
   notIncluded: readonly CashForecastNotIncluded[];
@@ -48,6 +48,16 @@ const KIND_LABEL = {
     unlinked_payable: 'part of payables (331) not tied to a purchase invoice',
   },
 } as const;
+const PAYABLE_CONCRETE_LABEL = {
+  vi: 'khoản phải trả người bán theo hạn thanh toán',
+  en: 'payment to a supplier on its due date',
+} as const;
+
+function itemLabel(language: 'vi' | 'en', item: CashForecastFacts['topItems'][number]): string {
+  if (item.kind === 'payable' && item.estimated === false) return PAYABLE_CONCRETE_LABEL[language];
+  return KIND_LABEL[language][item.kind];
+}
+
 const NOT_INCLUDED_LABEL = {
   vi: { payroll: 'lương', insurance: 'bảo hiểm xã hội', tax: 'thuế phải nộp', rent: 'tiền thuê', loans: 'khoản vay', recurring: 'chi phí định kỳ khác' },
   en: { payroll: 'payroll', insurance: 'social insurance', tax: 'tax payments', rent: 'rent', loans: 'loans', recurring: 'other recurring costs' },
@@ -72,7 +82,7 @@ export function cashForecastFactsText(facts: CashForecastFacts): string {
   }
   if (facts.topItems.length > 0) {
     lines.push(vi ? 'Các khoản lớn nhất đến hết ngày số dư thấp nhất:' : 'The largest items up to the lowest day:');
-    for (const item of facts.topItems) lines.push(`- ${item.date}: ${KIND_LABEL[facts.language][item.kind]}, ${money(item.amount)}`);
+    for (const item of facts.topItems) lines.push(`- ${item.date}: ${itemLabel(facts.language, item)}, ${money(item.amount)}`);
   }
   if (!new Decimal(facts.overdueReceiptsNotCounted).isZero()) {
     lines.push(vi ? `- Hóa đơn bán đã quá hạn, không tính vào dự báo: ${money(facts.overdueReceiptsNotCounted)}` : `- Sales invoices already overdue, not counted: ${money(facts.overdueReceiptsNotCounted)}`);

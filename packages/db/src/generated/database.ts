@@ -1804,6 +1804,7 @@ export interface FinancePurchaseDocumentTable {
   foreign_vat_amount: ColumnType<string | null, string | null, NotGranted>;
   foreign_total: ColumnType<string | null, string | null, NotGranted>;
   legal_entity_id: ColumnType<string, string, NotGranted>;
+  due_date: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** ludy_finance.purchase_document_void */

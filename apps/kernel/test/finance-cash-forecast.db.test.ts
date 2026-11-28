@@ -56,16 +56,16 @@ suite('the cash-flow forecast (#4391)', () => {
   const secondEntity = (o: Org) => admin(async (c) => (await c.query<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [o.orgId, o.owner])).rows[0]?.id as string);
 
   // One journal entry of two or more lines, as the commands write one (a document without its entry is refused at commit, an entry must balance).
-  async function entry(o: Org, date: string, lines: Array<{ account: string; debit?: string; credit?: string; party?: string | null }>, entity: string = o.entity, document: { number: string; direction: 'sale' | 'purchase'; party: string; total: string; invoiceDate?: string } | null = null): Promise<string | null> {
+  async function entry(o: Org, date: string, lines: Array<{ account: string; debit?: string; credit?: string; party?: string | null }>, entity: string = o.entity, document: { number: string; direction: 'sale' | 'purchase'; party: string; total: string; invoiceDate?: string; dueDate?: string | null } | null = null): Promise<string | null> {
     return admin(async (c) => {
       await c.query('BEGIN');
       let doc: string | null = null;
       if (document) {
         doc = randomUUID();
         await c.query(
-          `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
-           VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', $6, 0, $6, $7, $8)`,
-          [o.orgId, doc, document.party, document.number, document.invoiceDate ?? date, document.total, document.direction, entity],
+          `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, due_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
+           VALUES ($1, $2, $3, 'C26TAA', $4, $5, $6, 'VND', $7, 0, $7, $8, $9)`,
+          [o.orgId, doc, document.party, document.number, document.invoiceDate ?? date, document.dueDate ?? null, document.total, document.direction, entity],
         );
       }
       const id = randomUUID();
@@ -79,8 +79,8 @@ suite('the cash-flow forecast (#4391)', () => {
   const cash = (o: Org, date: string, amount: string, entity?: string) => entry(o, date, [{ account: '112', debit: amount }, { account: '411', credit: amount }], entity);
   const sale = (o: Org, p: string, number: string, date: string, total: string, entity?: string) =>
     entry(o, date, [{ account: '131', debit: total, party: p }, { account: '511', credit: total }], entity, { number, direction: 'sale', party: p, total });
-  const purchase = (o: Org, p: string, number: string, date: string, total: string, entity?: string) =>
-    entry(o, date, [{ account: '6422', debit: total }, { account: '331', credit: total, party: p }], entity, { number, direction: 'purchase', party: p, total });
+  const purchase = (o: Org, p: string, number: string, date: string, total: string, entity?: string, dueDate: string | null = null) =>
+    entry(o, date, [{ account: '6422', debit: total }, { account: '331', credit: total, party: p }], entity, { number, direction: 'purchase', party: p, total, dueDate });
   // An approved supplier payment, written with the table's triggers set aside (no command could write it here without a vault, a bank account and an approved proposal; those are tested in finance-supplier-payment).
   async function approvedPayment(o: Org, p: string, doc: string, amount: string, over: { payableAfter?: string | null; currency?: string } = {}): Promise<void> {
     await admin(async (c) => {
@@ -398,5 +398,41 @@ suite('the cash-flow forecast (#4391)', () => {
     await forecast(o);
     await forecast(o, { asOf: day(3) });
     expect(await count()).toBe(before);
+  });
+
+  it('dates purchase documents on their real due_date when present, falling back to +30 days only when unset (#4395)', async () => {
+    const o = await org();
+    await cash(o, day(-15), '5000000');
+    const concreteSupplier = await party(o, 'NCC Có hạn');
+    // Invoice dated 10 days ago with real due_date 45 days from today (not day 20 from +30 fallback).
+    await purchase(o, concreteSupplier, 'D1', day(-10), '1200000', o.entity, day(45));
+    const concreteOnly = await forecast(o);
+    expect(concreteOnly.estimatedPayables).toBe(false);
+    expect(at(concreteOnly, day(20))).toBe('5000000');
+    expect(at(concreteOnly, day(44))).toBe('5000000');
+    expect(at(concreteOnly, day(45))).toBe('3800000');
+    expect(concreteOnly.topItems).toEqual([{ kind: 'payable', date: day(45), amount: '1200000', estimated: false }]);
+
+    // Adding an invoice without due_date keeps +30 fallback for that invoice and flips estimatedPayables to true.
+    const fallbackSupplier = await party(o, 'NCC Chưa có hạn');
+    await purchase(o, fallbackSupplier, 'D2', day(-10), '800000', o.entity, null);
+    const mixed = await forecast(o);
+    expect(mixed.estimatedPayables).toBe(true);
+    expect(at(mixed, day(20))).toBe('4200000');
+    expect(at(mixed, day(45))).toBe('3000000');
+    expect(mixed.topItems).toEqual([
+      { kind: 'payable', date: day(45), amount: '1200000', estimated: false },
+      { kind: 'payable', date: day(20), amount: '800000', estimated: true },
+    ]);
+
+    // An overdue concrete due_date counts on day 0 with estimated: false.
+    const overdueOrg = await org();
+    await cash(overdueOrg, day(-15), '3000000');
+    const overdueSupplier = await party(overdueOrg, 'NCC Quá hạn');
+    await purchase(overdueOrg, overdueSupplier, 'D3', day(-10), '500000', overdueOrg.entity, day(-2));
+    const overdueForecast = await forecast(overdueOrg);
+    expect(overdueForecast.estimatedPayables).toBe(false);
+    expect(at(overdueForecast, TODAY)).toBe('2500000');
+    expect(overdueForecast.topItems).toEqual([{ kind: 'payable', date: TODAY, amount: '500000', estimated: false }]);
   });
 });

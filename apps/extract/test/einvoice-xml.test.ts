@@ -99,4 +99,35 @@ describe('e-invoice XML', () => {
   it('rejects XML that is not an invoice', () => {
     expect(() => parseEInvoiceXml(new TextEncoder().encode('<root><a>1</a></root>'))).toThrow(/HDon/);
   });
+
+  it('reads explicit due dates and net-day payment terms without failing on invalid values (#4395)', () => {
+    const withTag = (tagXml: string) =>
+      new TextEncoder().encode(fixture.toString('utf8').replace('<HTTToan>TM/CK</HTTToan>', `<HTTToan>TM/CK</HTTToan>${tagXml}`));
+    expect(parseEInvoiceXml(withTag('<HanThanhToan>2026-10-20</HanThanhToan>')).dueDate).toBe('2026-10-20');
+    expect(parseEInvoiceXml(withTag('<HanThanhToan>20/10/2026</HanThanhToan>')).dueDate).toBe('2026-10-20');
+    expect(parseEInvoiceXml(withTag('<HanThanhToan>2026-10-20T14:30:00</HanThanhToan>')).dueDate).toBe('2026-10-20');
+    expect(
+      parseEInvoiceXml(
+        withTag('<TTKhac><TTin><TTruong>Hạn thanh toán</TTruong><DLieu>15/10/2026</DLieu></TTin></TTKhac>'),
+      ).dueDate,
+    ).toBe('2026-10-15');
+    expect(
+      parseEInvoiceXml(
+        withTag('<TTKhac><TTin><TTruong>Số ngày thanh toán</TTruong><DLieu>30 ngày</DLieu></TTin></TTKhac>'),
+      ).dueDate,
+    ).toBe('2026-10-15');
+    expect(
+      parseEInvoiceXml(
+        withTag('<TTKhac><TTin><TTruong>Điều khoản thanh toán</TTruong><DLieu>Net 0</DLieu></TTin></TTKhac>'),
+      ).dueDate,
+    ).toBe('2026-09-15');
+    expect(parseEInvoiceXml(withTag('<SoNgayThanhToan>3650</SoNgayThanhToan>')).dueDate).toBe('2036-09-12');
+
+    // Invalid, before issueDate, or out-of-range terms return null cleanly rather than rejecting the invoice.
+    expect(parseEInvoiceXml(withTag('<HanThanhToan>2026-09-10</HanThanhToan>')).dueDate).toBeNull();
+    expect(parseEInvoiceXml(withTag('<HanThanhToan>2026-02-30</HanThanhToan>')).dueDate).toBeNull();
+    expect(parseEInvoiceXml(withTag('<SoNgayThanhToan>-5</SoNgayThanhToan>')).dueDate).toBeNull();
+    expect(parseEInvoiceXml(withTag('<SoNgayThanhToan>3651</SoNgayThanhToan>')).dueDate).toBeNull();
+    expect(parseEInvoiceXml(withTag('<SoNgayThanhToan>thỏa thuận</SoNgayThanhToan>')).dueDate).toBeNull();
+  });
 });

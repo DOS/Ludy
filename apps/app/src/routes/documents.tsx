@@ -94,6 +94,14 @@ function DocumentPeekContent({
           <dt className="text-xs text-subtle-foreground">{t('columns.issueDate')}</dt>
           <dd className="tabular-nums text-foreground">{f.date(doc.issueDate)}</dd>
         </div>
+        {doc.direction === 'purchase' && doc.dueDate ? (
+          <div>
+            <dt className="text-xs text-subtle-foreground">{t('columns.dueDate')}</dt>
+            <dd className="tabular-nums text-foreground" data-testid="document-peek-due-date">
+              {f.date(doc.dueDate)}
+            </dd>
+          </div>
+        ) : null}
         <div>
           <dt className="text-xs text-subtle-foreground">{t('columns.subtotal')}</dt>
           <dd className="tabular-nums text-foreground">{f.money(doc.subtotal)}</dd>

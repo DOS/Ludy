@@ -197,4 +197,49 @@ describe('allocatePayable', () => {
     expect(pool.unlinked).toBe('0');
     expect(allocatePayable(docs, '0', approved, TODAY).approved).toEqual([]);
   });
+
+  it('uses an explicit purchase dueDate when present and falls back to +30 days only when absent (#4395)', () => {
+    const withTerms = [
+      { ...invoice('1', '2026-11-01', '400'), dueDate: '2026-12-20' },
+      { ...invoice('2', '2026-11-15', '600'), dueDate: null },
+    ];
+    const pool = allocatePayable(withTerms, '1000', [], TODAY);
+    expect(pool.open.map((o) => [o.id, o.dueDate, o.dueDateEstimated])).toEqual([
+      ['2', '2026-12-15', true],
+      ['1', '2026-12-20', false],
+    ]);
+    // Concrete dueDate is already past TODAY (2026-12-01), so daysOverdue reflects the real dueDate.
+    const overdueConcrete = allocatePayable([{ ...invoice('3', '2026-11-20', '300'), dueDate: '2026-11-25' }], '300', [], TODAY);
+    expect(overdueConcrete.open[0]).toMatchObject({ dueDate: '2026-11-25', daysOverdue: 6, dueDateEstimated: false });
+
+    const allConcrete = buildCashForecast(
+      input({
+        openingCash: '1000',
+        payables: [
+          { dueDate: day(15), amountDue: '300', estimated: false },
+          { dueDate: day(-2), amountDue: '100', estimated: false },
+        ],
+      }),
+    );
+    expect(allConcrete.estimatedPayables).toBe(false);
+    expect(allConcrete.topItems).toEqual([
+      { kind: 'payable', date: day(15), amount: '300', estimated: false },
+      { kind: 'payable', date: TODAY, amount: '100', estimated: false },
+    ]);
+
+    const mixed = buildCashForecast(
+      input({
+        openingCash: '1000',
+        payables: [
+          { dueDate: day(15), amountDue: '300', estimated: false },
+          { dueDate: day(20), amountDue: '400', estimated: true },
+        ],
+      }),
+    );
+    expect(mixed.estimatedPayables).toBe(true);
+    expect(mixed.topItems).toEqual([
+      { kind: 'payable', date: day(20), amount: '400', estimated: true },
+      { kind: 'payable', date: day(15), amount: '300', estimated: false },
+    ]);
+  });
 });

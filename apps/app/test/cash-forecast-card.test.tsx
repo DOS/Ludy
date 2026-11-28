@@ -85,9 +85,20 @@ describe('CashForecastView', () => {
     const html = card(FORECAST);
     expect(html).toContain('Not in these figures: payroll, social insurance, tax payments, rent, loans, other recurring costs.');
     expect(html).toContain('30 days after the invoice date');
-    expect(html).toContain('These dates are estimates.');
+    expect(html).toContain('Unset dates are estimates.');
     expect(html).toMatch(/Tax due dates in the next 30 days \(no amount is counted\):.*VAT return/);
     expect(html).toMatch(/4,000,000.* of sales invoices are already past their due date/);
+  });
+
+  it('uses concrete wording when every counted payable carries a real due date (#4395)', () => {
+    const concreteEn = card({ ...FORECAST, estimatedPayables: false });
+    expect(concreteEn).toContain('counted supplier invoices use their own payment due dates');
+    expect(concreteEn).not.toContain('30 days after the invoice date');
+    expect(concreteEn).not.toContain('estimate');
+    const concreteVi = card({ ...FORECAST, estimatedPayables: false }, null, 'vi');
+    expect(concreteVi).toContain('đều dùng hạn thanh toán riêng');
+    expect(concreteVi).not.toContain('30 ngày sau ngày hóa đơn');
+    expect(concreteVi).not.toContain('ước tính');
   });
 
   it('says a low point below zero in words as well as colour, and a partial forecast', () => {
