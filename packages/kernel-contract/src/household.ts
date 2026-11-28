@@ -148,9 +148,11 @@ export const HOUSEHOLD_PROVISIONAL_LABEL = 'Số liệu tạm, kế toán chưa 
 export const HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL = 'Số liệu tạm, kế toán chưa xác nhận bố cục sổ';
 export const HOUSEHOLD_RETURN_FORMS = ['01/CNKD', '02/CNKD-TNCN-QTT'] as const;
 export const zHouseholdReturnForm = z.enum(HOUSEHOLD_RETURN_FORMS);
+// The last year a return worksheet can be asked for: the export's audit row names the year as a ledger period (LEDGER_PERIOD_PATTERN, 20xx), so a later year would pass the query and fail at the audit step.
+const HOUSEHOLD_RETURN_MAX_YEAR = 2099;
 export const zHouseholdCnkdGet = z.strictObject({
   legalEntityId: zId,
-  year: z.number().int().min(2026).max(2100),
+  year: z.number().int().min(2026).max(HOUSEHOLD_RETURN_MAX_YEAR),
   quarter: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
   split: z.array(z.strictObject({ trade: zHouseholdTrade, revenue: zMoney })).max(HOUSEHOLD_TRADES.length).optional(),
   // With several trades: the split of the year's revenue before the quarter (per ask, nothing stored), and the trade that takes the threshold deduction (#3710 slice 3).
@@ -197,7 +199,7 @@ export const HOUSEHOLD_QTT_NOTES = ['withheld_not_entered', 'prepaid_not_entered
 const zWholeDong = z.string().regex(/^-?\d{1,16}$/, 'whole dong');
 export const zHouseholdQttGet = z.strictObject({
   legalEntityId: zId,
-  year: z.number().int().min(2026).max(2100),
+  year: z.number().int().min(2026).max(HOUSEHOLD_RETURN_MAX_YEAR),
   withheld: zWholeDong.optional(),
   prepaid: zWholeDong.optional(),
   noPaymentRevenue: zWholeDong.optional(),

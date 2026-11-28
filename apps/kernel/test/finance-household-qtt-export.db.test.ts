@@ -49,16 +49,27 @@ suite('the 02/CNKD-TNCN-QTT worksheet download (#5285)', () => {
   let percentage = '';
   const owner = { subject: randomUUID(), email: 'owner@qtt-export.test', session: randomUUID() };
 
-  const token = () =>
-    new SignJWT({ role: 'authenticated', email: owner.email, session_id: owner.session, aal: 'aal1', is_anonymous: false })
+  const viewer = { subject: randomUUID(), email: 'viewer@qtt-export.test', session: randomUUID() };
+  // Someone with an account who is in no org of this test, as another company's user is.
+  const outsider = { subject: randomUUID(), email: 'outsider@qtt-export.test', session: randomUUID() };
+  const tokenOf = (who: { subject: string; email: string; session: string }) =>
+    new SignJWT({ role: 'authenticated', email: who.email, session_id: who.session, aal: 'aal1', is_anonymous: false })
       .setProtectedHeader({ alg: 'HS256' })
-      .setSubject(owner.subject)
+      .setSubject(who.subject)
       .setIssuer(ISSUER)
       .setAudience('authenticated')
       .setIssuedAt()
       .setExpirationTime('15m')
       .sign(new TextEncoder().encode(SECRET));
-  const download = async (query: string) => app.request(`/api/export/household-qtt.xlsx?${query}`, { headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug } });
+  const token = () => tokenOf(owner);
+  const download = async (query: string, who: { subject: string; email: string; session: string } = owner) =>
+    app.request(`/api/export/household-qtt.xlsx?${query}`, { headers: { authorization: `Bearer ${await tokenOf(who)}`, 'x-ludy-org': slug } });
+  // The first request of an account makes its identity; the user id is what a membership row names.
+  const userIdOf = async (who: { subject: string; email: string; session: string }) => {
+    const response = await app.request('/api/rpc/me/get', { method: 'POST', headers: { authorization: `Bearer ${await tokenOf(who)}`, 'content-type': 'application/json' }, body: '{}' });
+    expect(response.status).toBe(200);
+    return String(((await response.json()) as { json: { userId: string } }).json.userId);
+  };
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
     const client = new pg.Client({ connectionString: adminUrl });
     await client.connect();
@@ -180,7 +191,7 @@ suite('the 02/CNKD-TNCN-QTT worksheet download (#5285)', () => {
     expect(await audits()).toHaveLength(before);
   });
 
-  it('refuses amounts that are not whole dong, an empty amount, a year that is not one, and an entity that is not a household', async () => {
+  it('refuses amounts that are not whole dong, an empty amount, a year that is not one or is past the last the audit can name, and an entity that is not a household', async () => {
     const before = (await audits()).length;
     const queries = [
       `legalEntityId=${income}&year=2026&withheld=0.5`,
@@ -189,6 +200,8 @@ suite('the 02/CNKD-TNCN-QTT worksheet download (#5285)', () => {
       `legalEntityId=${income}&year=2026&withheld=-1`,
       `legalEntityId=${income}&year=2026&withheld=`,
       `legalEntityId=${income}&year=abc`,
+      // The audit row names the year as a ledger period (20xx), so the last year the worksheet accepts is 2099: 2100 is a 4xx at the query, never a server error at the audit step.
+      `legalEntityId=${income}&year=2100`,
       `legalEntityId=${income}`,
       'legalEntityId=not-an-id&year=2026',
     ];
@@ -199,6 +212,24 @@ suite('the 02/CNKD-TNCN-QTT worksheet download (#5285)', () => {
       expect(response.headers.get('content-type'), query).not.toBe(XLSX);
     }
     expect(await audits()).toHaveLength(before);
+  });
+
+  it('gives the file to a viewer, as to everyone who reads the ledger, and refuses someone who is not a member of the org, with no audit row for the refusal', async () => {
+    const viewerId = await userIdOf(viewer);
+    await userIdOf(outsider);
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewerId]));
+    const before = (await audits()).length;
+    const asViewer = await download(`legalEntityId=${income}&year=2026`, viewer);
+    expect(asViewer.status).toBe(200);
+    expect(asViewer.headers.get('content-type')).toBe(XLSX);
+    expect((await audits()).slice(before)).toEqual([{ book: '02/CNKD-TNCN-QTT', legalEntityId: income, period: '2026', rows: 21 }]);
+    const afterViewer = (await audits()).length;
+    const refused = await download(`legalEntityId=${income}&year=2026`, outsider);
+    expect(refused.status).toBe(403);
+    expect(refused.headers.get('content-type')).not.toBe(XLSX);
+    expect(refused.headers.get('content-disposition')).toBeNull();
+    expect(await refused.json()).toMatchObject({ code: 'NOT_A_MEMBER' });
+    expect(await audits()).toHaveLength(afterViewer);
   });
 
   it('refuses a request with no token', async () => {
