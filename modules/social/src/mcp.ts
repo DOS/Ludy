@@ -280,6 +280,7 @@ export const mcpChannels = defineQuery({
       .where('provider', 'in', [...PROVIDERS])
       .orderBy('display_name')
       .orderBy('id')
+      .limit(MCP_CHANNELS_MAX + 1)
       .execute();
     const visible = rows.filter((r) => mayUse(scope, r.id));
     const channels = visible.slice(0, MCP_CHANNELS_MAX).map((r): McpChannel => ({ connectionId: r.id, provider: plainLine(r.provider, 40), channelName: plainLine(r.display_name, 200), status: plainLine(r.status, 40) }));
