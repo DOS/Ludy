@@ -340,6 +340,18 @@ describe('Clarify-style 2-column Notifications master-detail (#4927)', () => {
     read: true,
     createdAt: '2026-11-24T14:20:00.000Z',
   });
+  const portalVoidNotice = (direction: 'purchase' | 'sale', counts: { missing?: string; amountMismatch?: string; voidInLudy?: string }): Item => ({
+    id: direction === 'sale' ? '00000000-0000-4000-8000-000000000104' : '00000000-0000-4000-8000-000000000105',
+    kind: 'finance.portal_attention',
+    subjectId: direction === 'sale' ? '00000000-0000-4000-9000-000000000104' : '00000000-0000-4000-9000-000000000105',
+    detail: {
+      period: '2026-09',
+      ...(direction === 'sale' ? { direction: 'sale' } : {}),
+      ...counts,
+    },
+    read: false,
+    createdAt: '2026-11-24T14:20:00.000Z',
+  });
 
   it('renders 2-column layout on desktop (>= lg) and auto-selects the first visible row without selected param', () => {
     state.desktop = true;
@@ -515,5 +527,62 @@ describe('Clarify-style 2-column Notifications master-detail (#4927)', () => {
         expect(html, `${desktop}-${locale}`).not.toMatch(/[\u2013\u2014]/);
       }
     }
+  });
+
+  it('renders portal voidInLudy notifications in vi and en for both sales and purchases and stays backward-compatible without detail.voidInLudy (#2152)', () => {
+    state.desktop = true;
+    const saleVoid = portalVoidNotice('sale', { missing: '0', amountMismatch: '0', voidInLudy: '2' });
+    const purchaseVoid = portalVoidNotice('purchase', { missing: '0', amountMismatch: '0', voidInLudy: '1' });
+    const legacy = portalNotice();
+
+    state.search = { selected: saleVoid.id };
+    const saleVi = page({ items: [saleVoid] }, 'vi');
+    expect(saleVi).toContain('2 hóa đơn đã hủy hoặc thay thế trên cổng thuế nhưng vẫn còn trong Ludy');
+    expect(saleVi).toContain(catalog('vi').notifications.detail.fields.voidInLudy);
+    expect(saleVi).toContain('href="/o/hoa-mai/portal-invoices?direction=sale&amp;period=2026-09"');
+    expect(saleVi).not.toContain('NaN');
+    expect(saleVi).not.toContain('undefined');
+
+    const saleEn = page({ items: [saleVoid] }, 'en');
+    expect(saleEn).toContain('2 sales cancelled or replaced on the portal but still in Ludy');
+    expect(saleEn).toContain(catalog('en').notifications.detail.fields.voidInLudy);
+    expect(saleEn).not.toContain('NaN');
+
+    state.search = { selected: purchaseVoid.id };
+    const purchaseVi = page({ items: [purchaseVoid] }, 'vi');
+    expect(purchaseVi).toContain('1 hóa đơn đã hủy hoặc thay thế trên cổng thuế nhưng vẫn còn trong Ludy');
+    expect(purchaseVi).toContain('href="/o/hoa-mai/portal-invoices?period=2026-09"');
+
+    const purchaseEn = page({ items: [purchaseVoid] }, 'en');
+    expect(purchaseEn).toContain('1 invoice cancelled or replaced on the portal but still in Ludy');
+    expect(purchaseEn).toContain(catalog('en').notifications.detail.fields.voidInLudy);
+
+    // Older stored notification without voidInLudy renders missing + mismatch cleanly with no voidInLudy field, NaN, or undefined.
+    state.search = { selected: legacy.id };
+    const legacyEn = page({ items: [legacy] }, 'en');
+    expect(legacyEn).toContain('2 sales not in Ludy, 1 sale with a different amount');
+    expect(legacyEn).not.toContain(catalog('en').notifications.detail.fields.voidInLudy);
+    expect(legacyEn).not.toContain('NaN');
+    expect(legacyEn).not.toContain('undefined');
+
+    const legacyVi = page({ items: [legacy] }, 'vi');
+    expect(legacyVi).toContain('2 hóa đơn chưa có trong Ludy, 1 hóa đơn lệch số tiền');
+    expect(legacyVi).not.toContain(catalog('vi').notifications.detail.fields.voidInLudy);
+    expect(legacyVi).not.toContain('NaN');
+    expect(legacyVi).not.toContain('undefined');
+
+    // Mixed counts and malformed detail.voidInLudy stay clean without NaN/undefined.
+    const mixedPurchase = portalVoidNotice('purchase', { missing: '1', amountMismatch: '2', voidInLudy: '3' });
+    state.search = { selected: mixedPurchase.id };
+    const mixedEn = page({ items: [mixedPurchase] }, 'en');
+    expect(mixedEn).toContain('1 invoice not in Ludy, 2 invoices with a different amount, 3 invoices cancelled or replaced on the portal but still in Ludy');
+
+    const malformed = portalVoidNotice('purchase', { voidInLudy: 'not-a-number' });
+    state.search = { selected: malformed.id };
+    const malformedEn = page({ items: [malformed] }, 'en');
+    expect(malformedEn).toContain('Tax portal check for month 09/2026 needs review');
+    expect(malformedEn).not.toContain(catalog('en').notifications.detail.fields.voidInLudy);
+    expect(malformedEn).not.toContain('NaN');
+    expect(malformedEn).not.toContain('undefined');
   });
 });

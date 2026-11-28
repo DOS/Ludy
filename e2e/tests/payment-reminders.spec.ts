@@ -164,4 +164,32 @@ test('lists an overdue customer, drafts the reminder, sends it on a click with t
     await settings.getByRole('button', { name: 'Lưu' }).click();
     await expect(page.getByTestId('reminder-row').filter({ hasText: BUYER })).toBeVisible();
   });
+
+  await test.step('raising a customer\'s own terms removes it from overdue reminders, lists it under own terms, and editing or clearing returns it (#2544)', async () => {
+    const row = page.getByTestId('reminder-row').filter({ hasText: BUYER });
+    await row.getByRole('button', { name: `Soạn thư nhắc cho ${BUYER}` }).click();
+    const draft = page.getByTestId('reminder-draft');
+    await draft.getByText('Hạn thanh toán riêng và tạm dừng nhắc khách này').click();
+    await draft.getByLabel('Hạn thanh toán riêng của khách (ngày)').fill('365');
+    await draft.getByTestId('reminder-customer-save').click();
+
+    await expect(page.getByText('Không có khách hàng nào quá hạn thanh toán.')).toBeVisible();
+    await expect(page.getByTestId('reminder-row').filter({ hasText: BUYER })).toHaveCount(0);
+
+    const customTerms = page.getByTestId('reminder-custom-terms');
+    await expect(customTerms).toContainText(BUYER);
+    await expect(customTerms).toContainText('365 ngày');
+
+    await customTerms.getByRole('button', { name: `Sửa hạn thanh toán riêng của ${BUYER}` }).click();
+    const editForm = customTerms.getByRole('form', { name: `Sửa hạn riêng cho ${BUYER}` });
+    await editForm.getByLabel('Hạn thanh toán riêng của khách (ngày)').fill('20');
+    await editForm.getByRole('button', { name: 'Lưu' }).click();
+    await expect(editForm).toBeHidden();
+    await expect(customTerms).toContainText('20 ngày');
+    await expect(page.getByTestId('reminder-row').filter({ hasText: BUYER })).toBeVisible();
+
+    await customTerms.getByRole('button', { name: `Bỏ hạn thanh toán riêng của ${BUYER}` }).click();
+    await expect(customTerms).toHaveCount(0);
+    await expect(page.getByTestId('reminder-row').filter({ hasText: BUYER })).toBeVisible();
+  });
 });

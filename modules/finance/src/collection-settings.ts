@@ -2,6 +2,7 @@
 // What the org sets for its payment reminders ("nhắc thu nợ", #2488, slice 3): the payment terms, a customer's own terms and a pause, and the weekly item.
 // - finance.collection_setting.get (every role): the org's terms in days (30 until it sets another) and whether the weekly "Hôm nay cần bạn" item is on.
 // - finance.collection_setting.set (owners and admins; R1, audited): the org's terms and the weekly switch.
+// - finance.customer_collection.list (every role): the customers holding their own payment terms (bounded, by name), whether or not anything is overdue.
 // - finance.customer_collection.get (every role): one customer's own terms and its pause, with the terms that apply to it.
 // - finance.customer_collection.set (owners, admins and members; R1, audited): a customer's own terms (null: the org's) and the date up to which no reminder
 //   is drafted for it (null: not paused).
@@ -10,9 +11,11 @@
 // never a name.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zCustomerCollectionSet, zId, zTermsDays } from '@ludy/kernel-contract';
+import { CUSTOMER_COLLECTION_MAX, zCustomerCollectionSet, zId, zTermsDays, type CustomerCollectionList, type CustomerCollectionSummary } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { isCollectionPaused } from './domain/payment-reminder.ts';
+import { databaseToday } from './period-lock.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -138,6 +141,62 @@ export const collectionSettingSet = defineCommand({
   },
 });
 
+export const customerCollectionList = defineQuery({
+  name: 'finance.customer_collection.list',
+  input: z.object({}),
+  access: ALL,
+  handler: async (ctx): Promise<CustomerCollectionList> => {
+    // Distinct kept parties whose duplicate group holds at least one custom terms row, ordered deterministically and bounded.
+    const { rows: groups } = await sql<{ party_id: string; name: string }>`
+      SELECT DISTINCT k.id AS party_id, k.name
+      FROM ludy_finance.customer_collection c
+      JOIN ludy_kernel.party x ON x.org_id = c.org_id AND x.id = c.party_id
+      JOIN ludy_kernel.party k ON k.org_id = x.org_id AND k.id = coalesce(x.duplicate_of, x.id)
+      WHERE c.org_id = ${ctx.orgId}::uuid AND c.terms_days IS NOT NULL
+      ORDER BY k.name, k.id
+      LIMIT ${CUSTOMER_COLLECTION_MAX + 1}`.execute(ctx.trx);
+
+    const setting = await readCollectionSetting(ctx);
+    if (groups.length === 0) return { orgTermsDays: setting.termsDays, customers: [], more: false };
+
+    const more = groups.length > CUSTOMER_COLLECTION_MAX;
+    const shown = groups.slice(0, CUSTOMER_COLLECTION_MAX);
+    const ids = shown.map((g) => g.party_id);
+    const today = await databaseToday(ctx.trx);
+    const kept = sql<string>`coalesce(x.duplicate_of, x.id)`;
+    const rows = await ctx.trx
+      .selectFrom('ludy_finance.customer_collection as c')
+      .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'c.org_id').onRef('x.id', '=', 'c.party_id'))
+      .select([kept.as('group_id'), 'c.party_id', 'c.terms_days', 'c.paused_until'])
+      .where('c.org_id', '=', ctx.orgId)
+      .where(sql<boolean>`coalesce(x.duplicate_of, x.id) = ANY(${sql.val(ids)}::uuid[])`)
+      .orderBy('c.party_id')
+      .execute();
+
+    const byGroup = new Map<string, Array<{ party_id: string; terms_days: number | null; paused_until: string | null }>>();
+    for (const r of rows) {
+      const list = byGroup.get(r.group_id);
+      if (list) list.push(r);
+      else byGroup.set(r.group_id, [r]);
+    }
+
+    const customers: CustomerCollectionSummary[] = [];
+    for (const g of shown) {
+      const merged = mergeGroupRows(byGroup.get(g.party_id) ?? [], g.party_id);
+      if (!merged || merged.terms_days === null) continue;
+      customers.push({
+        partyId: g.party_id,
+        name: g.name,
+        termsDays: merged.terms_days,
+        pausedUntil: merged.paused_until,
+        paused: isCollectionPaused(merged.paused_until, today),
+      });
+    }
+
+    return { orgTermsDays: setting.termsDays, customers, more };
+  },
+});
+
 export const customerCollectionGet = defineQuery({
   name: 'finance.customer_collection.get',
   input: z.object({ partyId: zId }),
@@ -192,4 +251,4 @@ export const customerCollectionSet = defineCommand({
 });
 
 export const collectionSettingCommands = [collectionSettingSet, customerCollectionSet];
-export const collectionSettingQueries = [collectionSettingGet, customerCollectionGet];
+export const collectionSettingQueries = [collectionSettingGet, customerCollectionGet, customerCollectionList];

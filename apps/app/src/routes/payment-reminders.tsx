@@ -4,9 +4,9 @@
 // finance.payment_reminder.send, which rebuilds the invoices, amounts and bank account from the books at that moment. The screen shows those facts as
 // the mail will carry them and lets a person edit only the words around them.
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { vietnamToday, type PausedCustomer, type PaymentReminderCustomer, type PaymentReminderDraft } from '@ludy/kernel-contract';
+import { vietnamToday, type CustomerCollectionSummary, type PausedCustomer, type PaymentReminderCustomer, type PaymentReminderDraft } from '@ludy/kernel-contract';
 import { PAYMENT_REMINDER_HINT_MAX, PAYMENT_REMINDER_SUBJECT_MAX, PAYMENT_REMINDER_TEXT_MAX } from '@ludy/kernel-contract';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
@@ -20,7 +20,7 @@ import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { Textarea } from '@ludy/ui/components/textarea';
 import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
-import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton, fieldControl, fieldErrorId, fieldHintId } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 
@@ -477,6 +477,7 @@ function Row({ customer, checked, onCheck, onOpen, currency }: { customer: Payme
 const refreshReminders = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.paymentReminders.list.key() });
   void queryClient.invalidateQueries({ queryKey: orpc.paymentReminders.draft.key() });
+  void queryClient.invalidateQueries({ queryKey: orpc.paymentReminders.customer.list.key() });
 };
 
 function SettingsCard({ canManage }: { canManage: boolean }) {
@@ -620,6 +621,195 @@ function PausedCustomers({ paused, currency, canEdit }: { paused: PausedCustomer
   );
 }
 
+function CustomerTermsRow({
+  item,
+  orgTermsDays,
+  canEdit,
+  onCleared,
+}: {
+  item: CustomerCollectionSummary;
+  orgTermsDays: number;
+  canEdit: boolean;
+  onCleared: () => void;
+}) {
+  const t = useTranslations('paymentReminders');
+  const tc = useTranslations('common');
+  const f = useFormat();
+  const [editing, setEditing] = useState(false);
+  const [terms, setTerms] = useState(String(item.termsDays));
+  const editButtonRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  const closeEditing = () => {
+    setEditing(false);
+    requestAnimationFrame(() => editButtonRef.current?.focus());
+  };
+
+  const save = useMutation(
+    orpc.paymentReminders.customer.set.mutationOptions({
+      onSuccess: (_data, vars) => {
+        if (vars.termsDays === null) {
+          setEditing(false);
+          onCleared();
+        } else {
+          closeEditing();
+        }
+        refreshReminders();
+      },
+    }),
+  );
+  const clear = useMutation(
+    orpc.paymentReminders.customer.set.mutationOptions({
+      onSuccess: () => {
+        onCleared();
+        refreshReminders();
+      },
+    }),
+  );
+
+  const days = terms.trim() === '' ? null : Number(terms);
+  const valid = days === null || (Number.isInteger(days) && days >= 1 && days <= 365);
+  const busy = save.isPending || clear.isPending;
+  const inputId = `reminder-custom-terms-${item.partyId}`;
+
+  return (
+    <li className="px-4 py-3 text-sm" data-testid="reminder-custom-terms-row">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="break-words text-foreground">{item.name}</p>
+          <p className="mt-1 text-xs text-subtle-foreground">
+            {t('customTerms.days', { days: item.termsDays, orgDays: orgTermsDays })}
+            {item.paused && item.pausedUntil ? ` · ${t('customTerms.pausedUntil', { date: f.date(item.pausedUntil) })}` : ''}
+          </p>
+        </div>
+        {canEdit && !editing && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              ref={editButtonRef}
+              variant="outline"
+              size="sm"
+              className="max-md:min-h-11"
+              disabled={busy}
+              aria-label={t('customTerms.editOf', { name: item.name })}
+              onClick={() => {
+                setTerms(String(item.termsDays));
+                save.reset();
+                clear.reset();
+                setEditing(true);
+              }}
+            >
+              {t('customTerms.edit')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="max-md:min-h-11"
+              loading={clear.isPending}
+              disabled={busy}
+              aria-label={t('customTerms.clearOf', { name: item.name })}
+              onClick={() => {
+                save.reset();
+                clear.mutate({ partyId: item.partyId, termsDays: null });
+              }}
+            >
+              {t('customTerms.clear')}
+            </Button>
+          </div>
+        )}
+      </div>
+      {canEdit && editing && (
+        <form
+          noValidate
+          aria-label={t('customTerms.editFormOf', { name: item.name })}
+          className="mt-3 space-y-2 rounded-lg border border-dashed p-3"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && !busy) closeEditing();
+          }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (busy || !valid || days === item.termsDays) return;
+            save.mutate({ partyId: item.partyId, termsDays: days });
+          }}
+        >
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1">
+              <Label htmlFor={inputId}>{t('customer.terms')}</Label>
+              <Input
+                {...fieldControl(inputId, { hint: true, error: !valid })}
+                ref={inputRef}
+                className="w-28 max-md:min-h-11"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={365}
+                placeholder={String(orgTermsDays)}
+                value={terms}
+                disabled={busy}
+                onChange={(e) => {
+                  setTerms(e.target.value);
+                  save.reset();
+                }}
+              />
+            </div>
+            <Button type="submit" size="sm" className="max-md:min-h-11" loading={save.isPending} disabled={!valid || days === item.termsDays || clear.isPending}>
+              {t('settings.save')}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" className="max-md:min-h-11" disabled={busy} onClick={closeEditing}>
+              {tc('cancel')}
+            </Button>
+          </div>
+          <p id={fieldHintId(inputId)} className="text-xs text-subtle-foreground">
+            {t('customer.termsHint')}
+          </p>
+          {!valid && <ErrorText id={fieldErrorId(inputId)}>{t('settings.termsInvalid')}</ErrorText>}
+          {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
+        </form>
+      )}
+      {clear.error && (
+        <div className="mt-2">
+          <ErrorText>{errorMessage(clear.error)}</ErrorText>
+        </div>
+      )}
+    </li>
+  );
+}
+
+// Customers holding their own payment terms (#2544): visible and editable even when no invoice is currently overdue.
+export function CustomerTermsSection({ canEdit }: { canEdit: boolean }) {
+  const t = useTranslations('paymentReminders');
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const customTerms = useQuery(orpc.paymentReminders.customer.list.queryOptions());
+  if (customTerms.isPending) return null;
+  if (customTerms.error) {
+    return (
+      <section className="mt-6" aria-label={t('customTerms.title', { count: 0 })} data-testid="reminder-custom-terms">
+        <ErrorText>{errorMessage(customTerms.error)}</ErrorText>
+      </section>
+    );
+  }
+  const { orgTermsDays, customers, more } = customTerms.data;
+  if (customers.length === 0) return null;
+  const focusHeading = () => requestAnimationFrame(() => headingRef.current?.focus());
+  return (
+    <section className="mt-6" aria-label={t('customTerms.title', { count: customers.length })} data-testid="reminder-custom-terms">
+      <h2 ref={headingRef} tabIndex={-1} className="text-sm font-medium text-muted-foreground outline-none">
+        {t('customTerms.title', { count: customers.length })}
+      </h2>
+      <p className="mt-1 text-xs text-subtle-foreground">{t('customTerms.subtitle', { days: orgTermsDays })}</p>
+      <ul className="mt-2 divide-y rounded-xl border bg-card">
+        {customers.map((c) => (
+          <CustomerTermsRow key={c.partyId} item={c} orgTermsDays={orgTermsDays} canEdit={canEdit} onCleared={focusHeading} />
+        ))}
+      </ul>
+      {more && <p className="mt-2 text-xs text-subtle-foreground">{t('customTerms.more')}</p>}
+    </section>
+  );
+}
+
 export function PaymentRemindersPage() {
   const t = useTranslations('paymentReminders');
   const entity = useChosenEntity();
@@ -684,6 +874,7 @@ export function PaymentRemindersPage() {
         </>
       )}
       {list.data && <PausedCustomers paused={list.data.paused} currency={currency} canEdit={canSend} />}
+      <CustomerTermsSection canEdit={canSend} />
       {reviewing && canSend && <Review key={`${reviewing.opened}:${entity.legalEntityId ?? ''}`} ids={reviewing.ids} legalEntityId={entity.legalEntityId} onClose={() => setReviewing(null)} />}
     </>
   );

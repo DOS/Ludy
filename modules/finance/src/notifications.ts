@@ -2,8 +2,8 @@
 // - finance.bank_attention: a bank statement import left lines that need a look (ambiguous ones: the bank's file could
 //   not tell them apart from lines already there). The owners and admins, never the person who imported it.
 // - finance.portal_attention: the tax portal's purchase (or, with detail.direction 'sale', sales, #2141) list of a period was read, and the period has invoices the
-//   portal lists and Ludy does not, or whose amounts differ; or the list could not be read. The member who imported
-//   it, and the owners and admins.
+//   portal lists and Ludy does not, whose amounts differ, or that were cancelled or replaced on the portal while still in Ludy (#2152); or the list could not be read.
+//   The member who imported it, and the owners and admins.
 // - finance.period_closing: the VAT return of a period is due within PERIOD_CLOSING_DAYS days and the period is not
 //   locked yet. The owners and admins, once per period, from an hourly sweep (sweepPeriodClosing).
 import { sql } from 'kysely';
@@ -19,6 +19,26 @@ export const PERIOD_CLOSING = 'finance.period_closing';
 
 // The events finance.notification.dispatch handles.
 export const FINANCE_NOTIFYING_EVENTS = ['finance.bank.imported', 'finance.portal_list.recorded'] as const;
+
+// Builds the detail payload for a finance.portal_attention notice, or null when nothing needs a look.
+export function portalAttentionDetail(
+  list: { period: string; status: string; direction: string },
+  summary?: Pick<PortalReconciliation['summary'], 'missing' | 'amountMismatch' | 'voidInLudy'> | undefined,
+): Record<string, string> | null {
+  const dir = list.direction === 'sale' ? { direction: 'sale' } : {};
+  if (list.status === 'failed') return { period: list.period, failed: 'true', ...dir };
+  if (list.status !== 'done' || !summary) return null;
+  const { missing, amountMismatch, voidInLudy } = summary;
+  // Everything on the portal matches Ludy with no cancelled-but-held invoices: nothing to look at.
+  if (missing + amountMismatch + voidInLudy === 0) return null;
+  return {
+    period: list.period,
+    missing: String(missing),
+    amountMismatch: String(amountMismatch),
+    voidInLudy: String(voidInLudy),
+    ...dir,
+  };
+}
 
 export const notificationDispatch = defineCommand({
   name: 'finance.notification.dispatch',
@@ -54,7 +74,7 @@ export const notificationDispatch = defineCommand({
           .where('id', '=', e.data.listId)
           .executeTakeFirst();
         if (!list || list.removed_at !== null || list.status === 'pending') return { sent: 0 };
-        let detail: Record<string, string> = { period: list.period, failed: 'true', ...(list.direction === 'sale' ? { direction: 'sale' } : {}) };
+        let summary: PortalReconciliation['summary'] | undefined;
         if (list.status === 'done') {
           // The reconciliation of the list's legal entity (#1280).
           const found = await ctx.query<PortalReconciliation>('finance.portal_list.reconcile', {
@@ -63,11 +83,10 @@ export const notificationDispatch = defineCommand({
             direction: list.direction,
           });
           if (found.status !== 'ok') return { sent: 0 };
-          const { missing, amountMismatch } = found.value.summary;
-          // Everything on the portal is in Ludy: nothing to look at.
-          if (missing + amountMismatch === 0) return { sent: 0 };
-          detail = { period: list.period, missing: String(missing), amountMismatch: String(amountMismatch), ...(list.direction === 'sale' ? { direction: 'sale' } : {}) };
+          summary = found.value.summary;
         }
+        const detail = portalAttentionDetail(list, summary);
+        if (!detail) return { sent: 0 };
         const sent = await notifyMembers(ctx, {
           kind: PORTAL_ATTENTION,
           users: [...(list.created_by ? [list.created_by] : []), ...(await ownersAndAdmins(ctx))],

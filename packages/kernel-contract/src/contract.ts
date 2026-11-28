@@ -240,7 +240,7 @@ import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountEras
 import { zBankSupplierMatch, zSupplierPayableLine, zSupplierPayableLineAsk, zSupplierPayableList, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentPrepare, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
 import { zEInvoiceNotice, zEInvoiceNoticeList, zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeSend, zEInvoiceNoticeSendResult, zEInvoiceNoticeStep } from './einvoice-notice.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceCorrectionOptions, zEInvoiceCorrectionRateExplained, zEInvoiceCorrectionRateInput, zEInvoiceReasonInput, zEInvoiceReasonSuggested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStartCorrection, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
-import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
+import { zCollectionSetting, zCustomerCollection, zCustomerCollectionList, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContact, zContactGet, zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
@@ -3438,9 +3438,10 @@ export const contract = {
       get: oc.output(zCollectionSetting),
       set: oc.input(zCollectionSetting).output(zCollectionSetting),
     },
-    // One customer's own terms (null: the org's) and its pause (the last day with no reminder; null: not paused): get for every role, set for owners, admins and
+    // One customer's own terms (null: the org's) and its pause (the last day with no reminder; null: not paused): list and get for every role, set for owners, admins and
     // members (R1, audited). The settings sit on the kept party of a duplicate group. PARTY_NOT_FOUND (404), PAUSE_DATE_INVALID and PAUSE_TOO_LONG (422).
     customer: {
+      list: oc.output(zCustomerCollectionList),
       get: oc.input(z.object({ partyId: zId })).output(zCustomerCollection),
       set: oc.input(zCustomerCollectionSet).output(zCustomerCollection),
     },
