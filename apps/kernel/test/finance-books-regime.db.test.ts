@@ -223,7 +223,6 @@ suite('finance books regime per legal entity (#1403)', () => {
     expect(await refusal(postAsOwner({ entity: defaultEntity, date: '2027-02-01', debit: '1283', credit: '331' }))).toMatchObject({ code: '23503' });
   });
 
-<<<<<<< HEAD
   it('checks the lines of a document against the chart of its entity on the invoice date (#1403)', async () => {
     const partyId = (await admin((a) => a.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'organization', 'Nhà cung cấp hai chế độ') RETURNING id`, [orgId]))).rows[0]
       ?.id as string;
@@ -259,7 +258,8 @@ suite('finance books regime per legal entity (#1403)', () => {
     expect(await document(branch, '2026-12-31', ['6427'])).toMatchObject({ code: '23503' });
     expect(await document(defaultEntity, '2027-02-01', ['5111'])).toBeNull();
     expect(await document(defaultEntity, '2027-02-01', ['6427'])).toMatchObject({ code: '23503' });
-=======
+  });
+
   it('checks a reversal of an opening entry against the chart of its own date unless it is dated on the opening entry (#1403)', async () => {
     const entity = (
       await admin((a) =>
@@ -286,7 +286,6 @@ suite('finance books regime per legal entity (#1403)', () => {
     expect(reversal).toBeNull();
     // The row goes again, so the tests below see the books rows they expect.
     await admin((a) => a.query(`DELETE FROM ludy_finance.legal_entity_books WHERE org_id = $1 AND legal_entity_id = $2`, [orgId, entity]));
->>>>>>> origin/acct/1403-tt99-books-b
   });
 
   it('never changes the regime of a year with entries', async () => {
