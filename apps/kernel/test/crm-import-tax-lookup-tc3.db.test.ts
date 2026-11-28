@@ -68,7 +68,7 @@ const row = (over: Partial<ImportRowInput> = {}): ImportRowInput => ({
   ...over,
 });
 
-const batchCode = (index: number) => `010000${String(index).padStart(4, '0')}`;
+const batchCode = (index: number) => `010500${String(index).padStart(4, '0')}`;
 
 const suite = ADMIN ? describe : describe.skip;
 
