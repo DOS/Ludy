@@ -124,6 +124,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  // #5326 (step 0 of the owner-entered expected items of the 90-day cash forecast, plan docs/plan/cash-forecast.md "Not built"): its table lands in the next step, which removes this entry.
+  'crove_finance.cash_forecast_item',
   // #5073 / #5080 (ADR-0049 #5108): short-lived 36h prep lines for opted-in members, strict user + member_briefing RLS.
   'crove_meetings.morning_brief_lines',
 ]);
@@ -1620,6 +1622,16 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // Cash and bank vouchers (#327): append-only, numbered per org and type by the insert trigger (the row gives no
   // number). By commit a voucher must have its journal entry, on its date, moving the cash account by its amount, so
   // seeding completes it with that entry (written as the database owner); the probes roll back before that check.
+  // #5326 (step 0): an item the owner entered into the 90-day cash forecast (rent, a loan, payroll, a one-off): a label, a category, the direction of the money, an amount, a first date, a recurrence and an
+  // optional end date, per legal entity. Tenant roles read, insert, update the editable columns (a column grant: never org_id, id, the entity or the author) and delete; the owner's and an admin's write is
+  // the command's own access (finance.cash_forecast.item_set and item_remove), as for the other finance settings. The entity is the org's default, by its trigger (b_legal_entity); the columns
+  // with a default or that may be empty (the end date, the author, the two dates of the row) are left out. Lands in PENDING_TABLES before its migration.
+  'crove_finance.cash_forecast_item': {
+    update: { set: 'label = label' },
+    make: (o) => ({
+      row: { org_id: o.id, id: randomUUID(), label: `RLS matrix item ${tag()}`, category: 'rent', direction: 'out', amount: '1000000', first_date: '2026-12-05', recurrence: 'once' },
+    }),
+  },
   'crove_finance.cash_voucher': {
     make: (o) => {
       const id = randomUUID();
