@@ -212,7 +212,7 @@ export function TaxLookupButton({ isPending, onClick }: { isPending: boolean; on
   );
 }
 
-/** Places the lookup button beside the tax-code input when lookup is available for a 10- or 13-digit code. */
+/** Places the lookup button beside the tax-code input while keeping the input mounted as code length changes. */
 export function TaxCodeFieldRow({
   lookup,
   children,
@@ -220,11 +220,11 @@ export function TaxCodeFieldRow({
   lookup: UsePartyTaxLookupResult;
   children: (inputClassName: string | undefined) => ReactNode;
 }) {
-  if (!lookup.deployed || !lookup.canLookup) return <>{children(undefined)}</>;
+  if (!lookup.deployed) return <>{children(undefined)}</>;
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {children('min-w-36 flex-1 font-mono')}
-      <TaxLookupButton isPending={lookup.isPending} onClick={lookup.lookUpNow} />
+      {children(lookup.canLookup ? 'min-w-36 flex-1 font-mono' : 'min-w-0 flex-1')}
+      {lookup.canLookup && <TaxLookupButton isPending={lookup.isPending} onClick={lookup.lookUpNow} />}
     </div>
   );
 }

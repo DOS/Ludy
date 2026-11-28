@@ -325,10 +325,11 @@ describe('tax lookup UI across EditParty, AddContactPanel, and NewPartyGroup (#4
     });
     expect(testState.lookupCalls).toEqual([]);
 
-    // Valid 10-digit tax code shows button and looks up once on blur.
+    // Valid 10-digit tax code shows button without remounting the input and looks up once on blur.
     await act(async () => {
       setInputValue(taxInput, '0101234564');
     });
+    expect(container.querySelector('#party-p1-taxCode')).toBe(taxInput);
     const triggerBtn = container.querySelector('[data-testid="tax-lookup-trigger"]');
     expect(triggerBtn).not.toBeNull();
     expect(triggerBtn?.className).toContain('max-md:min-h-11');
