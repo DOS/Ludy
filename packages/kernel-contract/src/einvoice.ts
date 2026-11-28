@@ -290,7 +290,7 @@ export const zEInvoiceDraftSummary = z.object({
   // The buyer's kind: a business buyer needs the signed agreement before a correction (#2504).
   buyerKind: z.enum(BUYER_KINDS),
   // The buyer has a tax code: with the kind it decides whether the screen asks for the agreement (#5266). Never the code itself.
-  buyerHasTaxCode: z.boolean().default(false),
+  buyerHasTaxCode: z.boolean(),
   // Set on an adjusting or a replacing invoice (#2504): its method and the issued draft it corrects.
   correction: z.strictObject({ kind: z.enum(EINVOICE_CORRECTION_KINDS), originalDraftId: zId }).nullable().default(null),
   // On an issued invoice: the method of the first correction that was issued for it, so the screen offers only that one for the next (#2504); null when none was issued.

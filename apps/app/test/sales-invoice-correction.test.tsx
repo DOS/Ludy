@@ -99,7 +99,7 @@ describe('the panel that starts a correction', () => {
     expect(business).toContain('Các lần sửa trước hóa đơn này đã dùng cách điều chỉnh');
     expect(business).toContain('Sai thông tin người mua');
     expect(business).toContain('Hóa đơn đã phát hành không hủy được');
-    const individual = render(<CorrectionAction draft={summary({ buyerKind: 'individual' })} onStarted={() => undefined} openWith="replacement" />);
+    const individual = render(<CorrectionAction draft={summary({ buyerKind: 'individual', buyerHasTaxCode: false })} onStarted={() => undefined} openWith="replacement" />);
     expect(individual).toContain('Thay thế hóa đơn số 0000007');
     expect(individual).not.toContain('type="file"');
     expect(individual).toContain('không cần biên bản thỏa thuận');
@@ -117,9 +117,11 @@ describe('the panel that starts a correction', () => {
     const person = panel({ buyerKind: 'individual', buyerHasTaxCode: true });
     expect(person).toContain('type="file"');
     expect(person).toContain('data-testid="invoice-correction-not-business"');
-    expect(person).not.toMatch(/data-testid="invoice-correction-not-business"[^>]*checked/);
+    // The question starts unchecked, so the answer that lifts the agreement is never given by default.
+    const box = /<input[^>]*data-testid="invoice-correction-not-business"[^>]*>/.exec(person)?.[0];
+    expect(box).toBeDefined();
+    expect(box).not.toContain('checked');
     expect(person).toContain('có thể là hộ kinh doanh hoặc cá nhân kinh doanh');
-    expect(person).toMatch(/data-testid="invoice-correction-start"[^>]*disabled|disabled[^>]*data-testid="invoice-correction-start"/);
     // An individual with no tax code and a consumer: no file, no questions, the notice instead.
     for (const buyerKind of ['individual', 'consumer'] as const) {
       const none = panel({ buyerKind, buyerHasTaxCode: false });

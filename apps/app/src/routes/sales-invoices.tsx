@@ -758,13 +758,13 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
           )}
           <div className="mt-2">
             {personWithTaxCode && (
-              <label className="mb-2 flex items-start gap-2 text-xs" data-testid="invoice-correction-not-business-row">
+              <label className="mb-2 flex min-h-11 items-center gap-2 text-xs" data-testid="invoice-correction-not-business-row">
                 <input type="checkbox" checked={notBusiness} onChange={(e) => setNotBusiness(e.target.checked)} data-testid="invoice-correction-not-business" />
                 <span>{t('correction.buyerNotBusiness')}</span>
               </label>
             )}
             {platformOffered && (
-              <label className="mb-2 flex items-start gap-2 text-xs" data-testid="invoice-correction-platform-row">
+              <label className="mb-2 flex min-h-11 items-center gap-2 text-xs" data-testid="invoice-correction-platform-row">
                 <input type="checkbox" checked={platformSale} onChange={(e) => setPlatformSale(e.target.checked)} data-testid="invoice-correction-platform" />
                 <span>{t('correction.platformSale')}</span>
               </label>

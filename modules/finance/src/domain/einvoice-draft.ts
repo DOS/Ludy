@@ -80,7 +80,8 @@ export function nextWorkingDay(date: string): string {
   return day;
 }
 
-// A sale invoiced after its next working day (Decree 254 Art. 9, as read by the accountant of #2506: signed and sent for the code by the next working day) is a late invoice:
+// A sale invoiced after its next working day is a late invoice. The invoice date is the Art. 9 moment of the sale, and signing and sending for the code may follow it by the next working day at the latest
+// (Decree 254 Appendix item 7; Art. 9(5) gives that day only to night sales without automatic software; plan einvoice-issue.md section 3d row A, #5266):
 // the fine is heavy, and the sale still belongs to the VAT period of its own date (#3535).
 export function isLateSale(saleDate: string | null, invoiceDate: string): boolean {
   if (!saleDate || !isCalendarDate(saleDate) || !isCalendarDate(invoiceDate) || saleDate >= invoiceDate) return false;
