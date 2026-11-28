@@ -706,7 +706,7 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
     });
   });
 
-  it('surfaces qualifying customer_replied past 500 newer non-qualifying conversations in crm.signals.attention', async () => {
+  it('surfaces qualifying customer_replied across keyset pages (past 25 active threads) and resolves merged-duplicate quotes/steps end-to-end', async () => {
     const o = await setupOrg();
     const channelId = (
       await rows<{ id: string }>(
@@ -727,7 +727,8 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
       )
     )[0]!.id;
 
-    // Seed 505 newer conversations (daily 1h chat, no >= 7d quiet gap) + 1 older conversation with a >= 9d quiet-spell reply.
+    // Seed 30 newer conversations (daily 1h chat, no >= 7d quiet gap) + 1 older conversation with a >= 9d quiet-spell reply
+    // so page 1 (25 threads) yields 0 qualifying items and keyset page 2 (threads 26..31) surfaces pTarget cleanly.
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query(
@@ -735,7 +736,7 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
            INSERT INTO ludy_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id, party_id, status, last_seq, last_inbound_at, last_message_at)
            SELECT $1::uuid, $2::uuid, 'comment_thread', 'noise-' || g, $3::uuid, 'new', 2,
                   now() - make_interval(mins => g), now() - make_interval(mins => g)
-           FROM generate_series(1, 505) AS g
+           FROM generate_series(1, 30) AS g
            RETURNING org_id, id, channel_connection_id, last_inbound_at
          )
          INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, send_state)
@@ -766,5 +767,76 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
 
     const crmRows = await rt.query<CrmAttentionSignal[]>(CRM_ATTENTION_SIGNALS_READ, {}, { actor: asUser(o.member), orgId: o.orgId });
     expect(crmRows).toEqual([expect.objectContaining({ partyId: pTarget, kind: 'customer_replied' })]);
+
+    // Merged duplicate quote_viewed and quote_unanswered must appear on Home (/contacts?c=<keptId>),
+    // render in crm.party.attention({ partyId: keptId }), and clear from both after crm.party.attention_seen({ partyId: keptId }).
+    const pKeptDup = (
+      await rows<{ id: string }>(
+        "INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'organization', 'Kept Canonical Co') RETURNING id",
+        [o.orgId],
+      )
+    )[0]!.id;
+    const pDupSource = (
+      await rows<{ id: string }>(
+        "INSERT INTO ludy_kernel.party (org_id, kind, name, duplicate_of) VALUES ($1, 'organization', 'Merged Duplicate Co', $2) RETURNING id",
+        [o.orgId, pKeptDup],
+      )
+    )[0]!.id;
+
+    const makeDupSentQuote = async (sentDaysAgo: number, validInDays: number, num: string) => {
+      const deal = await rt.execute<Deal>('crm.deal.create', { partyId: pDupSource, title: `Dup Deal ${num}`, amount: '4000000', expectedClose: null }, { actor: asUser(o.member), orgId: o.orgId });
+      const saved = await rt.execute<{ id: string }>(
+        'crm.quote.save',
+        { dealId: deal.id, lines: [{ kind: 'item', description: 'Line', unit: 'pcs', quantity: '1', unitPrice: '4000000', vatRate: '10%' }] },
+        { actor: asUser(o.member), orgId: o.orgId },
+      );
+      await rows(
+        "UPDATE ludy_crm.quote SET status = 'sent', number = $3, sent_at = now() - make_interval(days => $4), sent_via = 'link', valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + $5::int WHERE org_id = $1 AND id = $2",
+        [o.orgId, saved.id, num, sentDaysAgo, validInDays],
+      );
+      return saved.id;
+    };
+
+    const qDupViewed = await makeDupSentQuote(2, 14, 'BG-SG2-DUP-1');
+    const qDupLink = await rt.execute<QuoteLinkCreated>('crm.quote.create_link', { quoteId: qDupViewed }, { actor: asUser(o.member), orgId: o.orgId });
+    await appPool.query('SELECT ludy_crm.quote_link_view($1::text) AS page', [qDupLink.token]);
+    await rows("UPDATE ludy_crm.quote SET first_viewed_at = now() - interval '2 hours' WHERE org_id = $1 AND id = $2", [o.orgId, qDupViewed]);
+    await rows("UPDATE ludy_crm.quote_link SET first_viewed_at = now() - interval '2 hours' WHERE org_id = $1 AND quote_id = $2", [o.orgId, qDupViewed]);
+
+    await makeDupSentQuote(8, 10, 'BG-SG2-DUP-2');
+    await worker.execute('crm.next_step.raise', {}, { actor: SYSTEM_CRM, orgId: o.orgId });
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        "UPDATE ludy_crm.deal_next_step n SET raised_at = now() - interval '1 day' FROM ludy_crm.deal d WHERE n.org_id = d.org_id AND n.deal_id = d.id AND n.org_id = $1 AND d.party_id = $2",
+        [o.orgId, pDupSource],
+      );
+      await c.query('COMMIT');
+    });
+
+    const homeBeforeSeen = await rt.query<TodayItem[]>('kernel.signals.contact_attention', {}, { actor: asUser(o.member), orgId: o.orgId });
+    expect(homeBeforeSeen.map((i) => [i.id, i.href])).toContainEqual([
+      `signal:contact-attention:quote_viewed:${pKeptDup}`,
+      `/contacts?c=${pKeptDup}`,
+    ]);
+
+    const cardBeforeSeen = await rt.query<{ items: PartyAttentionItem[] }>('crm.party.attention', { partyId: pKeptDup }, { actor: asUser(o.member), orgId: o.orgId });
+    expect(cardBeforeSeen.items.map((i) => i.kind)).toEqual(['quote_viewed', 'quote_unanswered']);
+
+    for (const item of cardBeforeSeen.items) {
+      await rt.execute(
+        'crm.party.attention_seen',
+        { partyId: pKeptDup, kind: item.kind, targetId: item.targetId, eventAt: item.eventAt },
+        { actor: asUser(o.member), orgId: o.orgId },
+      );
+    }
+
+    const cardAfterSeen = await rt.query<{ items: PartyAttentionItem[] }>('crm.party.attention', { partyId: pKeptDup }, { actor: asUser(o.member), orgId: o.orgId });
+    expect(cardAfterSeen.items).toEqual([]);
+
+    const homeAfterSeen = await rt.query<TodayItem[]>('kernel.signals.contact_attention', {}, { actor: asUser(o.member), orgId: o.orgId });
+    expect(homeAfterSeen.some((i) => i.href === `/contacts?c=${pKeptDup}`)).toBe(false);
+    expect(homeAfterSeen.map((i) => i.href)).toEqual([`/contacts?c=${pTarget}`]);
   });
 });

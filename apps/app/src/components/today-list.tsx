@@ -201,6 +201,8 @@ export function TodayList({ slug }: { slug: string }) {
     );
   }
 
+  if (!today.data) return null;
+
   if (groups.length === 0 && attentionItems.length === 0) {
     return (
       <section aria-labelledby="overview-today">
@@ -287,7 +289,7 @@ export function TodayList({ slug }: { slug: string }) {
             </div>
           ))}
           {attentionItems.length > 0 && (
-            <div data-testid="today-contact-attention" aria-labelledby="today-contact-attention-heading">
+            <section data-testid="today-contact-attention" aria-labelledby="today-contact-attention-heading">
               <div className="flex flex-wrap items-center gap-2 bg-muted/30 px-4 py-2">
                 <h3 id="today-contact-attention-heading" className="flex items-baseline gap-2 text-sm font-semibold text-foreground">
                   {t('contactAttention.title')}
@@ -308,7 +310,7 @@ export function TodayList({ slug }: { slug: string }) {
                   />
                 ))}
               </ul>
-            </div>
+            </section>
           )}
         </div>
         {rows > QUEUE_ROWS && (

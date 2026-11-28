@@ -24,9 +24,10 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const DAY_MS = 86_400_000;
 const CONVERSATION_SCAN_MAX = 25;
-const CONVERSATION_BATCH_PAGE_SIZE = SIGNALS_MAX_CRM;
-const CONVERSATION_BATCH_MAX_PAGES = 5;
+const CONVERSATION_BATCH_PAGE_SIZE = 25;
+const CONVERSATION_BATCH_MAX_PAGES = 2;
 const MESSAGE_SCAN_PER_CONV = 200;
+const MESSAGE_SCAN_BATCH_PER_CONV = 50;
 
 type Reader = Pick<QueryContext, 'trx' | 'orgId' | 'actor'>;
 
@@ -98,6 +99,7 @@ async function loadQuoteViewed(
   opts: {
     userId: string | null;
     partyId: string | null;
+    keepId: string | null;
     skipSeenFilter: boolean;
     onlyQuoteId: string | null;
   },
@@ -122,7 +124,7 @@ async function loadQuoteViewed(
        AND ql.quote_id = q.id
        AND ql.first_viewed_at IS NOT NULL
       WHERE q.org_id = ${ctx.orgId}::uuid
-        AND (${opts.partyId}::uuid IS NULL OR q.party_id = ${opts.partyId}::uuid)
+        AND (${opts.keepId}::uuid IS NULL OR k.id = ${opts.keepId}::uuid)
         AND q.status = 'sent'
         AND q.number IS NOT NULL
         AND d.closed_at IS NULL
@@ -155,10 +157,7 @@ async function loadQuoteViewed(
                AND s.user_id = ${opts.userId}::uuid
                AND s.kind = 'quote_viewed'
                AND s.target_id = vq.quote_id
-               AND (
-                 (${opts.partyId}::uuid IS NOT NULL AND s.party_id = ${opts.partyId}::uuid)
-                 OR (${opts.partyId}::uuid IS NULL AND (s.party_id = vq.raw_party_id OR s.party_id = vq.kept_party_id))
-               )
+               AND (s.party_id = vq.raw_party_id OR s.party_id = vq.kept_party_id)
                AND pg_catalog.date_trunc('milliseconds', vq.event_at) <= pg_catalog.date_trunc('milliseconds', s.seen_event_at)
            )
          )
@@ -172,6 +171,7 @@ async function loadQuoteSteps(
   opts: {
     userId: string | null;
     partyId: string | null;
+    keepId: string | null;
     skipSeenFilter: boolean;
     only?: { kind: 'quote_expiring' | 'quote_unanswered'; nextStepId: string };
   },
@@ -207,7 +207,7 @@ async function loadQuoteSteps(
       JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
       JOIN ludy_kernel.party k ON k.org_id = d.org_id AND k.id = coalesce(p.duplicate_of, p.id) AND k.duplicate_of IS NULL
       WHERE n.org_id = ${ctx.orgId}::uuid
-        AND (${opts.partyId}::uuid IS NULL OR d.party_id = ${opts.partyId}::uuid)
+        AND (${opts.keepId}::uuid IS NULL OR k.id = ${opts.keepId}::uuid)
         AND d.closed_at IS NULL
         AND n.status = 'open'
         AND (n.snoozed_until IS NULL OR n.snoozed_until <= pg_catalog.now())
@@ -232,10 +232,7 @@ async function loadQuoteSteps(
                 AND s.user_id = ${opts.userId}::uuid
                 AND s.kind = n.reason
                 AND s.target_id = n.id
-                AND (
-                  (${opts.partyId}::uuid IS NOT NULL AND s.party_id = ${opts.partyId}::uuid)
-                  OR (${opts.partyId}::uuid IS NULL AND (s.party_id = d.party_id OR s.party_id = k.id))
-                )
+                AND (s.party_id = d.party_id OR s.party_id = k.id)
                 AND pg_catalog.date_trunc('milliseconds', n.raised_at) <= pg_catalog.date_trunc('milliseconds', s.seen_event_at)
             )
           )
@@ -275,18 +272,19 @@ async function loadCustomerReplied(
   },
 ): Promise<RawCustomerReplyRow[]> {
   // Runs under ludy_kernel.conversation and ludy_kernel.conversation_message RLS so unreadable threads yield zero rows.
-  // Single contact: scan the newest 25 threads once. Org-wide batched signals (opts.partyId === null): page through
-  // `conversation_recent_idx` in bounded 500-thread slices (capped at 5 pages = 2,500 threads) so active chatter cannot
-  // hide qualifying quiet-spell replies while pathological archives stay bounded on Home's 60s poll (#4994).
+  // Single contact: scan the newest 25 threads once (up to 200 messages each). Org-wide batched signals (opts.partyId === null):
+  // page through `conversation_recent_idx` in 25-thread slices x at most 2 pages (max 50 threads x 50 messages = 2,500 rows)
+  // while concurrent conversation indexes are tracked in follow-up issue #5264 (#4994).
   const pageLimit = opts.partyId === null ? CONVERSATION_BATCH_PAGE_SIZE : CONVERSATION_SCAN_MAX;
   const maxPages = opts.partyId === null ? CONVERSATION_BATCH_MAX_PAGES : 1;
+  const msgLimit = opts.partyId === null ? MESSAGE_SCAN_BATCH_PER_CONV : MESSAGE_SCAN_PER_CONV;
   const byParty = new Map<string, RawCustomerReplyRow>();
   const collected: RawCustomerReplyRow[] = [];
   let cursorMsgAt: Date | null = null;
   let cursorId: string | null = null;
 
   for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-    const { rows } = await sql<CustomerReplyPageRow>`
+    const { rows }: { rows: CustomerReplyPageRow[] } = await sql<CustomerReplyPageRow>`
       WITH page AS (
         SELECT
           c.id,
@@ -343,7 +341,7 @@ async function loadCustomerReplied(
             AND cm.platform_removed_at IS NULL
             AND cm.hidden_at IS NULL
           ORDER BY cm.sent_at DESC, cm.seq DESC, cm.id DESC
-          LIMIT ${MESSAGE_SCAN_PER_CONV}
+          LIMIT ${msgLimit}
         ) m
       ),
       sequenced AS (
@@ -419,7 +417,7 @@ async function loadCustomerReplied(
       FROM tail t
       LEFT JOIN scoped s ON true`.execute(ctx.trx);
 
-    const head = rows[0];
+    const head: CustomerReplyPageRow | undefined = rows[0];
     if (!head) break;
 
     for (const r of rows) {
@@ -450,7 +448,7 @@ async function loadCustomerReplied(
     }
 
     if (opts.partyId !== null || head.page_count < pageLimit || head.cursor_id === null) break;
-    const nextCursorMsgAt = head.cursor_msg_at !== null ? toDate(head.cursor_msg_at) : null;
+    const nextCursorMsgAt: Date | null = head.cursor_msg_at !== null ? toDate(head.cursor_msg_at) : null;
     if (byParty.size >= SIGNALS_MAX_CRM && nextCursorMsgAt !== null) {
       const topCutoff = [...byParty.values()]
         .map((r) => toDate(r.event_at).getTime())
@@ -500,6 +498,7 @@ export async function findQuoteViewedForFollowup(ctx: Reader, quoteId: string): 
     id: string;
     deal_id: string;
     party_id: string;
+    keep_id: string;
     status: string;
     number: string | null;
     revision: number;
@@ -510,7 +509,7 @@ export async function findQuoteViewedForFollowup(ctx: Reader, quoteId: string): 
     party_email: string | null;
     org_name: string;
   }>`
-    SELECT q.id, q.deal_id, q.party_id, q.status, q.number, q.revision, q.total::text AS total,
+    SELECT q.id, q.deal_id, q.party_id, coalesce(p.duplicate_of, p.id) AS keep_id, q.status, q.number, q.revision, q.total::text AS total,
            q.valid_until::text AS valid_until, d.closed_at IS NOT NULL AS closed,
            p.name AS party_name, p.email AS party_email,
            (SELECT t.name FROM ludy_kernel.tenant t WHERE t.org_id = q.org_id) AS org_name
@@ -527,6 +526,7 @@ export async function findQuoteViewedForFollowup(ctx: Reader, quoteId: string): 
   const viewed = await loadQuoteViewed(ctx, {
     userId,
     partyId: q.party_id,
+    keepId: q.keep_id,
     skipSeenFilter: true,
     onlyQuoteId: q.id,
   });
@@ -599,8 +599,8 @@ export const partyAttention = defineQuery({
     const party = await requireParty(ctx, input.partyId);
     const keepId = party.duplicateOf ?? party.id;
     const [viewed, steps, replies] = await Promise.all([
-      loadQuoteViewed(ctx, { userId, partyId: party.id, skipSeenFilter: false, onlyQuoteId: null }),
-      loadQuoteSteps(ctx, { userId, partyId: party.id, skipSeenFilter: false }),
+      loadQuoteViewed(ctx, { userId, partyId: party.id, keepId, skipSeenFilter: false, onlyQuoteId: null }),
+      loadQuoteSteps(ctx, { userId, partyId: party.id, keepId, skipSeenFilter: false }),
       loadCustomerReplied(ctx, { userId, partyId: party.id, keepId, skipSeenFilter: false, onlyConversationId: null }),
     ]);
     const combined = [...viewed, ...steps, ...replies]
@@ -630,8 +630,8 @@ export const crmAttentionSignals = defineQuery({
 
     // Under MCP, omit customer_replied so a grant never reads conversation activity and skip user-bound party_attention_seen.
     const [viewed, steps, replies] = await Promise.all([
-      loadQuoteViewed(ctx, { userId, partyId: null, skipSeenFilter, onlyQuoteId: null }),
-      loadQuoteSteps(ctx, { userId, partyId: null, skipSeenFilter }),
+      loadQuoteViewed(ctx, { userId, partyId: null, keepId: null, skipSeenFilter, onlyQuoteId: null }),
+      loadQuoteSteps(ctx, { userId, partyId: null, keepId: null, skipSeenFilter }),
       isMcp
         ? Promise.resolve<RawCustomerReplyRow[]>([])
         : loadCustomerReplied(ctx, {
@@ -687,12 +687,13 @@ export const partyAttentionSeen = defineCommand({
     const keepId = party.duplicateOf ?? party.id;
     let match: RawAttentionRow | undefined;
     if (input.kind === 'quote_viewed') {
-      match = (await loadQuoteViewed(ctx, { userId, partyId: party.id, skipSeenFilter: true, onlyQuoteId: input.targetId }))[0];
+      match = (await loadQuoteViewed(ctx, { userId, partyId: party.id, keepId, skipSeenFilter: true, onlyQuoteId: input.targetId }))[0];
     } else if (input.kind === 'quote_expiring' || input.kind === 'quote_unanswered') {
       match = (
         await loadQuoteSteps(ctx, {
           userId,
           partyId: party.id,
+          keepId,
           skipSeenFilter: true,
           only: { kind: input.kind, nextStepId: input.targetId },
         })
