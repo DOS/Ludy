@@ -19,12 +19,17 @@ type Mode = 'login' | 'signup' | 'reset';
 // The notices the screen shows after sending an email, by message key: state holds no translated text (issue #215).
 type SentNotice = 'signupSent' | 'resetSent';
 
-// `initialMode` is for tests; the router renders the page without it.
-export function AuthPage({ initialMode = 'login' }: { initialMode?: Mode } = {}) {
+export function initialModeFromSearch(search: string): Mode {
+  const mode = new URLSearchParams(search).get('mode');
+  return mode === 'signup' || mode === 'reset' ? mode : 'login';
+}
+
+// `initialMode` is for tests; the router renders the page without it and reads `?mode=` on load.
+export function AuthPage({ initialMode }: { initialMode?: Mode } = {}) {
   const navigate = useNavigate();
   const root = useTranslations();
   const t = useTranslations('auth');
-  const [mode, setMode] = useState<Mode>(initialMode);
+  const [mode, setMode] = useState<Mode>(() => initialMode ?? (typeof window !== 'undefined' ? initialModeFromSearch(window.location.search) : 'login'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);

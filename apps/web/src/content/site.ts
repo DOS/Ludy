@@ -8,6 +8,7 @@ export const SECURITY_URL = `${GITHUB_URL}/blob/main/SECURITY.md`;
 export const LICENSE_URL = `${GITHUB_URL}/blob/main/LICENSE`;
 export const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://app.ludy.vn').replace(/\/+$/, '');
 export const SIGN_IN_URL = `${APP_URL}/login`;
+export const SIGN_UP_URL = `${APP_URL}/login?mode=signup`;
 export const SITE_URL = 'https://ludy.vn';
 
 // The apps that have a page of their own (DESIGN.md 1.1 and 6.4), in the switcher's order (#3225, #3235), each with its

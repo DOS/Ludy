@@ -1,5 +1,5 @@
 import type { Dictionary } from '../../content/vi';
-import { DOCS_URL, SIGN_IN_URL } from '../../content/site';
+import { DOCS_URL, SIGN_IN_URL, SIGN_UP_URL } from '../../content/site';
 import { LANG_PARAM } from '../../lib/language';
 import { MobileMenu } from './mobile-menu';
 import { ThemeToggle } from './theme-toggle';
@@ -52,11 +52,11 @@ export function SiteHeader({ dict, linkToHome = false }: { dict: Dictionary; lin
           <a href={SIGN_IN_URL} className="hidden h-9 items-center rounded-md px-3 text-sm text-muted transition-colors hover:text-fg sm:inline-flex">
             {nav.signIn}
           </a>
-          <a href={`${base}#tu-host`} className="hidden h-9 items-center rounded-md bg-accent px-3 text-sm font-medium whitespace-nowrap text-accent-fg transition-colors hover:bg-accent/90 sm:inline-flex">
+          <a href={SIGN_UP_URL} className="hidden h-9 items-center rounded-md bg-accent px-3 text-sm font-medium whitespace-nowrap text-accent-fg transition-colors hover:bg-accent/90 sm:inline-flex">
             {nav.cta}
           </a>
           <MobileMenu
-            links={[...sections, { label: nav.signIn, href: SIGN_IN_URL }, { label: nav.cta, href: `${base}#tu-host` }]}
+            links={[...sections, { label: nav.signIn, href: SIGN_IN_URL }, { label: nav.cta, href: SIGN_UP_URL }]}
             openLabel={nav.openMenu}
             closeLabel={nav.closeMenu}
           />
