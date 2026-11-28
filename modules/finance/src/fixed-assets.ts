@@ -27,6 +27,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { money } from '@ludy/l10n-vn';
+import { stampBooks } from './books-stamp.ts';
 import { assertUsableAccounts } from './accounts.ts';
 import { booksOn, lockBooks, type BooksOn } from './books.ts';
 import { lastMonth, monthAmount, monthsBetween, remainingValue } from './domain/depreciation.ts';
@@ -337,7 +338,7 @@ export const prepareDepreciation = defineCommand({
   handler: async (ctx, { month, legalEntityId: requested }) => {
     // The legal entity whose register is depreciated (#1280), stored with the proposal so the approver posts it there.
     const payload = await buildDepreciation(ctx, month, await resolveLegalEntity(ctx, requested));
-    return { kind: JOURNAL_VOUCHER_KIND, command: DEPRECIATION_COMMAND, title: journalVoucherTitle(payload), payload };
+    return { kind: JOURNAL_VOUCHER_KIND, command: DEPRECIATION_COMMAND, title: journalVoucherTitle(payload), payload: await stampBooks(ctx, payload) };
   },
 });
 

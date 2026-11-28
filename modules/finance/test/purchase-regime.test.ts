@@ -2,7 +2,7 @@
 // The regime rules of a purchase proposal (issue #1403, TT99 books): approval, revision, learning and the offered rules.
 import { describe, expect, it } from 'vitest';
 import { DomainError } from '@ludy/kernel-runtime';
-import { approvalRegimeRefused, booksRegimeChanged, learnsRules, chartChangeRefused, reviseRegimeRefused, rulesForBooks } from '../src/purchase-regime.ts';
+import { approvalRegimeRefused, booksRegimeChanged, chartChangeRefused, learnsRules, reviseRegimeRefused, rulesForBooks, voucherRegimeRefused } from '../src/purchase-regime.ts';
 
 const TT99 = { regime: 'tt99', version: '2026.1' };
 const TT99_NEXT = { regime: 'tt99', version: '2027.1' };
@@ -67,6 +67,23 @@ describe('reviseRegimeRefused', () => {
 
   it('refuses a revision under another version of the chart the proposal carries', () => {
     expect(reviseRegimeRefused({ regime: 'tt99', version: '2026.1' }, TT99_NEXT)).toBe(true);
+  });
+});
+
+describe('voucherRegimeRefused', () => {
+  it('holds a stamped voucher to the books it was prepared under, the chart version included when it carries one', () => {
+    expect(voucherRegimeRefused({ carried: 'tt99', carriedVersion: '2026.1', current: TT99, accounts: ['6421'] })).toBe(false);
+    expect(voucherRegimeRefused({ carried: 'tt99', carriedVersion: '2026.1', current: TT133, accounts: ['156'] })).toBe(true);
+    expect(voucherRegimeRefused({ carried: 'tt99', carriedVersion: '2026.1', current: TT99_NEXT, accounts: ['156'] })).toBe(true);
+    expect(voucherRegimeRefused({ carried: 'tt99', carriedVersion: undefined, current: TT99_NEXT, accounts: ['156'] })).toBe(false);
+  });
+
+  it('refuses an unstamped voucher under other books only on a code the two circulars define differently', () => {
+    for (const code of ['211', '3386', '6421', '6422']) {
+      expect(voucherRegimeRefused({ carried: undefined, carriedVersion: undefined, current: TT99, accounts: ['111', code] })).toBe(true);
+      expect(voucherRegimeRefused({ carried: undefined, carriedVersion: undefined, current: TT133, accounts: [code] })).toBe(false);
+    }
+    expect(voucherRegimeRefused({ carried: undefined, carriedVersion: undefined, current: TT99, accounts: ['111', '156', '331'] })).toBe(false);
   });
 });
 

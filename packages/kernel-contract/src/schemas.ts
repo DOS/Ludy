@@ -685,6 +685,10 @@ export const zCashVoucherProposal = z.object({
   // The legal entity whose books the voucher is posted in (#1280), resolved when it was asked for. Absent on proposals
   // made before #1280: the entity resolved for the approver.
   legalEntityId: zId.optional(),
+  // The books the voucher was prepared under (#1403), set only when they are not TT133 2026.1, as on a purchase: the regime and the chart version of the entity on the voucher's date. It is posted only while the
+  // books are still those; one with none was prepared under TT133 and is refused under other books only if a line is on a code the two circulars use for different things (211, 3386, 6421, 6422).
+  regime: z.string().max(20).optional(),
+  chartVersion: z.string().max(20).optional(),
 });
 export type CashVoucherProposal = z.infer<typeof zCashVoucherProposal>;
 
@@ -719,6 +723,10 @@ export const zJournalVoucherProposal = z.object({
   // The confirmed count of stock whose surplus (3381) this voucher resolves (#3712 slice 2a): written only by finance's own preparer, never by a requester, and
   // checked again at approval (modules/finance/src/stock-surplus.ts).
   surplusCountId: zId.optional(),
+  // The books the voucher was prepared under (#1403), set only when they are not TT133 2026.1, as on a purchase: the regime and the chart version of the entity on the voucher's date. It is posted only while the
+  // books are still those; one with none was prepared under TT133 and is refused under other books only if a line is on a code the two circulars use for different things (211, 3386, 6421, 6422).
+  regime: z.string().max(20).optional(),
+  chartVersion: z.string().max(20).optional(),
 });
 export type JournalVoucherProposal = z.infer<typeof zJournalVoucherProposal>;
 
@@ -1392,7 +1400,7 @@ export const zBooksRegimeResult = z.object({ legalEntityId: zId, regime: z.strin
 export type BooksRegimeResult = z.infer<typeof zBooksRegimeResult>;
 // Why a switch is not offered, or only from a later year. FISCAL_YEAR_UNSUPPORTED: the org's fiscal year does not end in December. ALREADY_TT99: a Circular 99 row exists (in force or for a year to
 // come); effectiveFrom is its date. ENTRIES_ON_OR_AFTER: the entity has entries up to lastEntryDate, so only a year starting after it can be chosen (nextSwitchDate). OPENING_ENTRY_BLOCKS: an opening entry dated
-// the day before a 1 January (reversed or not) keeps that year on the old chart; entryId, entryDate and reversed name it, nextSwitchDate is the next free 1 January.
+// the day before a 1 January (reversed or not) keeps that year on the old chart; entryId, entryDate and reversed name it, nextSwitchDate is the earliest 1 January that can be chosen.
 export const BOOKS_SWITCH_BLOCKERS = ['FISCAL_YEAR_UNSUPPORTED', 'ALREADY_TT99', 'ENTRIES_ON_OR_AFTER', 'OPENING_ENTRY_BLOCKS'] as const;
 export const zBooksBlocker = z.object({
   code: z.enum(BOOKS_SWITCH_BLOCKERS),

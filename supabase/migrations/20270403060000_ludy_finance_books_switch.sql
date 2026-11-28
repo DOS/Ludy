@@ -21,17 +21,20 @@
 --                                                 TT133 (the chart of the day after, 20270403010000), and the guard counts it
 --                                                 under this row, reversed or not (a reversal of an opening entry is dated
 --                                                 on the opening's own date), so reversing it does not free that 1 January.
---                                                 The detail names the entry and the next 1 January that is free.
+--                                                 The detail names the entry and the earliest 1 January that can be chosen.
 --         BOOKS_PENDING_PROPOSALS          P0001  a posting proposal of the entity (a purchase, a cash voucher, a journal voucher, a
 --                                                 reversal, a supplier payment) waits for approval and is dated on or after the
---                                                 date, or carries no date to tell. Vouchers carry no regime to hold them to, so a
---                                                 switch waits until they are approved or rejected. The detail lists up to 20 ids.
+--                                                 date, or carries no date to tell. The detail lists up to 20 ids. A proposal
+--                                                 prepared in the instant between this read and the commit is not seen here: a
+--                                                 voucher carries the books it was prepared under and is refused at approval if they
+--                                                 changed (modules/finance/src/books-stamp.ts), as a purchase is.
 --         BOOKS_REGIME_IN_USE              23514  an entry of the entity dated on or after the date: the guard, unchanged,
 --                                                 is the last word.
 --   ludy_finance.cancel_books_regime(p_legal_entity_id uuid, p_effective_from date) RETURNS boolean
 --       An owner or an admin deletes that tt99 row while no entry of the entity falls under it (the guard decides, again
---       BOOKS_REGIME_IN_USE), so a wrong choice for a year to come is undone until the year is used. A row that is not there,
---       or is not a tt99 row, is BOOKS_NOT_FOUND (P0001): TT133, which every entity without a row keeps, is never deleted.
+--       BOOKS_REGIME_IN_USE) and no pending posting proposal is dated on or after it (BOOKS_PENDING_PROPOSALS, as for set), so a
+--       wrong choice for a year to come is undone until the year is used. A row that is not there, or is not a tt99 row, is
+--       BOOKS_NOT_FOUND (P0001): TT133, which every entity without a row keeps, is never deleted.
 --
 -- Both are SECURITY DEFINER and keep the migration owner, as lock_period and unlock_period do: the owner already writes the
 -- table, so no role gets a new privilege on it (a login role, ludy_definer_tenant included, still cannot insert, update or
@@ -58,6 +61,20 @@ SET LOCAL lock_timeout = '2s';
 ALTER TABLE ludy_finance.fixed_asset ADD COLUMN IF NOT EXISTS regime text NOT NULL DEFAULT 'tt133';
 ALTER TABLE ludy_finance.fixed_asset ADD COLUMN IF NOT EXISTS chart_version text NOT NULL DEFAULT '2026.1';
 
+-- The pending posting proposals of an entity dated on or after a date, or carrying no date (up to 20 ids; null when there are none). Internal: called by the two functions below, which run as the
+-- migration owner; no role has EXECUTE on it.
+CREATE OR REPLACE FUNCTION ludy_finance.books_pending_proposals(p_org uuid, p_entity uuid, p_from date) RETURNS uuid[]
+LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
+  SELECT pg_catalog.array_agg(x.id) FROM (
+    SELECT pr.id FROM ludy_kernel.proposal pr
+    WHERE pr.org_id = p_org AND pr.legal_entity_id = p_entity AND pr.status IN ('pending', 'approved')
+      AND pr.kind IN ('finance.purchase', 'finance.cash_voucher', 'finance.journal_voucher', 'finance.journal_reversal', 'finance.supplier_payment')
+      AND (coalesce(pr.payload #>> '{invoice,issueDate}', pr.payload ->> 'date', pr.payload ->> 'entryDate') IS NULL
+           OR coalesce(pr.payload #>> '{invoice,issueDate}', pr.payload ->> 'date', pr.payload ->> 'entryDate') >= pg_catalog.to_char(p_from, 'YYYY-MM-DD'))
+    ORDER BY pr.id LIMIT 20) x
+$$;
+REVOKE ALL ON FUNCTION ludy_finance.books_pending_proposals(uuid, uuid, date) FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+
 CREATE OR REPLACE FUNCTION ludy_finance.set_books_regime(p_legal_entity_id uuid, p_effective_from date) RETURNS date
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
@@ -72,7 +89,6 @@ DECLARE
   v_opening_date date;
   v_opening_reversed boolean;
   v_pending uuid[];
-  v_pending_count integer;
 BEGIN
   IF v_org IS NULL THEN
     RAISE EXCEPTION 'NO_CONTEXT' USING ERRCODE = '42501';
@@ -122,15 +138,9 @@ BEGIN
       DETAIL = pg_catalog.json_build_object('entryId', v_opening_id, 'entryDate', v_opening_date, 'reversed', v_opening_reversed,
                                             'nextEffectiveFrom', (p_effective_from + pg_catalog.make_interval(years => 1))::date)::text;
   END IF;
-  -- Posting proposals that carry no regime (vouchers, reversals, payments) and wait for approval are not carried across the switch. One with no date to read is held too.
-  SELECT pg_catalog.array_agg(x.id), pg_catalog.count(*) INTO v_pending, v_pending_count FROM (
-    SELECT pr.id FROM ludy_kernel.proposal pr
-    WHERE pr.org_id = v_org AND pr.legal_entity_id = v_entity AND pr.status IN ('pending', 'approved')
-      AND pr.kind IN ('finance.purchase', 'finance.cash_voucher', 'finance.journal_voucher', 'finance.journal_reversal', 'finance.supplier_payment')
-      AND (coalesce(pr.payload #>> '{invoice,issueDate}', pr.payload ->> 'date', pr.payload ->> 'entryDate') IS NULL
-           OR coalesce(pr.payload #>> '{invoice,issueDate}', pr.payload ->> 'date', pr.payload ->> 'entryDate') >= pg_catalog.to_char(p_effective_from, 'YYYY-MM-DD'))
-    ORDER BY pr.id LIMIT 20) x;
-  IF v_pending_count > 0 THEN
+  -- Posting proposals waiting for approval and dated from the switch on (or with no date) are not carried across it.
+  v_pending := ludy_finance.books_pending_proposals(v_org, v_entity, p_effective_from);
+  IF v_pending IS NOT NULL THEN
     RAISE EXCEPTION 'BOOKS_PENDING_PROPOSALS' USING DETAIL = pg_catalog.json_build_object('proposalIds', v_pending)::text;
   END IF;
   -- The guard (BOOKS_REGIME_IN_USE) refuses when an entry of the entity falls on or after the date.
@@ -145,6 +155,7 @@ DECLARE
   v_org uuid := ludy_kernel.ctx_org_id();
   v_entity uuid;
   v_deleted integer;
+  v_pending uuid[];
 BEGIN
   IF v_org IS NULL THEN
     RAISE EXCEPTION 'NO_CONTEXT' USING ERRCODE = '42501';
@@ -157,6 +168,11 @@ BEGIN
   END IF;
   INSERT INTO ludy_finance.period_lock (org_id, legal_entity_id) VALUES (v_org, v_entity) ON CONFLICT (org_id, legal_entity_id) DO NOTHING;
   PERFORM 1 FROM ludy_finance.period_lock p WHERE p.org_id = v_org AND p.legal_entity_id = v_entity FOR UPDATE;
+  -- The entries under the row revert to TT133 when it goes: a posting proposal waiting for approval from that date on would post under other books than those it was prepared under.
+  v_pending := ludy_finance.books_pending_proposals(v_org, v_entity, p_effective_from);
+  IF v_pending IS NOT NULL THEN
+    RAISE EXCEPTION 'BOOKS_PENDING_PROPOSALS' USING DETAIL = pg_catalog.json_build_object('proposalIds', v_pending)::text;
+  END IF;
   -- Only a tt99 row of this org, this entity and this date; the guard refuses (BOOKS_REGIME_IN_USE) once an entry falls under it.
   DELETE FROM ludy_finance.legal_entity_books b
   WHERE b.org_id = v_org AND b.legal_entity_id = v_entity AND b.effective_from = p_effective_from AND b.regime = 'tt99';

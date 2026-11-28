@@ -19,6 +19,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 import { sql } from 'kysely';
+import { stampBooks } from './books-stamp.ts';
 import { JOURNAL_VOUCHER_SOURCE, journalVoucherTitle, journalVoucherTotal } from './domain/journal-voucher.ts';
 import { closingDescription, closingLines, type AccountBalance, type ClosingLine } from './domain/year-closing.ts';
 import { postJournalVoucher } from './journal-voucher.ts';
@@ -117,7 +118,7 @@ export const prepareYearClosing = defineCommand({
     const legalEntityId = await resolveLegalEntity(ctx, requested);
     await assertClosable(ctx, year, legalEntityId);
     const payload = await buildClosing(ctx, year, legalEntityId);
-    return { kind: JOURNAL_VOUCHER_KIND, command: YEAR_CLOSING_COMMAND, title: journalVoucherTitle(payload), payload };
+    return { kind: JOURNAL_VOUCHER_KIND, command: YEAR_CLOSING_COMMAND, title: journalVoucherTitle(payload), payload: await stampBooks(ctx, payload) };
   },
 });
 

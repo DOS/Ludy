@@ -24,6 +24,7 @@ import {
 } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { stampBooks } from './books-stamp.ts';
 import { closeDescription, closeMonth, monthEnd, stockMoveLockKey, type CloseItem, type CloseResult } from './domain/stock-close.ts';
 import { assertUsableAccounts } from './accounts.ts';
 import { lockBooks } from './books.ts';
@@ -234,7 +235,7 @@ export const prepareStockClose = defineCommand({
     await assertLedgerOpen(ctx, month, legalEntityId);
     await assertPostable(ctx, built);
     const payload = proposalOf(built);
-    return { kind: JOURNAL_VOUCHER_KIND, command: STOCK_CLOSE_COMMAND, title: journalVoucherTitle(payload), payload };
+    return { kind: JOURNAL_VOUCHER_KIND, command: STOCK_CLOSE_COMMAND, title: journalVoucherTitle(payload), payload: await stampBooks(ctx, payload) };
   },
 });
 

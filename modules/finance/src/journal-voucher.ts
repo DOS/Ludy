@@ -22,6 +22,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { journalIsBalanced } from '@ludy/l10n-vn';
+import { refuseChangedBooks, stampBooks } from './books-stamp.ts';
 import { assertUsableAccounts } from './accounts.ts';
 import { lockBooks } from './books.ts';
 import {
@@ -135,7 +136,7 @@ export const prepareJournalVoucher = defineCommand({
       });
     }
     const payload = parsed.data;
-    return { kind: JOURNAL_VOUCHER_KIND, command: JOURNAL_VOUCHER_COMMAND, title: journalVoucherTitle(payload), payload };
+    return { kind: JOURNAL_VOUCHER_KIND, command: JOURNAL_VOUCHER_COMMAND, title: journalVoucherTitle(payload), payload: await stampBooks(ctx, payload) };
   },
 });
 
@@ -158,6 +159,9 @@ export async function postJournalVoucher(
 ) {
   if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
   const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
+  // Posting: the books are locked, and a voucher prepared under other books than those on its date is refused (books-stamp.ts).
+  await lockBooks(ctx, legalEntityId);
+  await refuseChangedBooks(ctx, payload, legalEntityId, payload.lines.map((l) => l.account));
   const total = journalVoucherTotal(payload.lines);
   const journal = buildJournalVoucherJournal(payload);
   if (!journalIsBalanced(journal)) throw new DomainError('UNBALANCED', 422, 'Bút toán không cân');

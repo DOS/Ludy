@@ -54,6 +54,7 @@ suite('an owner chooses Circular 99 for an entity (#1403 slice B1)', () => {
     );
   const cancel = (entity: string, effectiveFrom: string, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asMfa(who.admin)) =>
     rt.execute('finance.books.cancel_regime', { legalEntityId: entity, effectiveFrom }, { actor, orgId, idempotencyKey: randomUUID() });
+  const detailOf = (id: string) => rt.query<{ payload: Record<string, unknown> | null }>('kernel.inbox.get', { id }, { actor: asUser(who.owner), orgId });
   const stateOf = async (entity: string) =>
     (await rt.query<BooksRegimeState>('finance.books.regime_state', {}, { actor: asUser(who.viewer), orgId })).entities.find((e) => e.legalEntityId === entity);
   const rowsOf = (entity: string) =>
@@ -209,6 +210,46 @@ suite('an owner chooses Circular 99 for an entity (#1403 slice B1)', () => {
     await proposal(before, { date: '2040-06-01' });
     await setRegime(before, '2041-01-01');
     expect(await rowsOf(before)).toHaveLength(1);
+  });
+
+  // A journal voucher asked for by a member, approved by the owner (four-eyes, fresh MFA): the two steps a switch of books can come between.
+  const askVoucher = async (entity: string, date: string) => {
+    const { proposalId } = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      {
+        command: 'finance.journal_voucher.record',
+        input: { date, description: 'Trích trước chi phí', lines: [{ account: '6422', debit: '450000', credit: '0' }, { account: '3388', debit: '0', credit: '450000' }], legalEntityId: entity },
+      },
+      { actor: asUser(who.member), orgId, idempotencyKey: randomUUID() },
+    );
+    return proposalId;
+  };
+  const approveVoucher = async (proposalId: string) => {
+    const detail = await rt.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(who.owner), orgId });
+    return rt.execute('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(who.owner), orgId });
+  };
+
+  it('refuses a voucher prepared under TT133 and approved after the entity switched, and one prepared under TT99 and approved after the choice was taken back', async () => {
+    // The switch is written as the superuser, as it would be by one that commits in the instant after a voucher was prepared (the function itself holds the switch while a proposal waits).
+    const before = await newEntity('Phiếu lập trước khi chuyển');
+    const early = await askVoucher(before, '2041-03-01');
+    await admin((a) => a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2041-01-01')`, [orgId, before]));
+    expect(await refusal(approveVoucher(early))).toMatchObject({ code: 'BOOKS_REGIME_CHANGED', status: 409 });
+
+    const after = await newEntity('Phiếu lập khi đã chuyển');
+    await setRegime(after, '2041-01-01');
+    const late = await askVoucher(after, '2041-03-01');
+    expect((await detailOf(late)).payload).toMatchObject({ regime: 'tt99', chartVersion: '2026.1' });
+    await admin((a) => a.query(`DELETE FROM ludy_finance.legal_entity_books WHERE org_id = $1 AND legal_entity_id = $2`, [orgId, after]));
+    expect(await refusal(approveVoucher(late))).toMatchObject({ code: 'BOOKS_REGIME_CHANGED', status: 409 });
+  });
+
+  it('refuses to take a choice back while a posting proposal is dated from it on', async () => {
+    const entity = await newEntity('Hủy khi còn phiếu chờ');
+    await setRegime(entity, '2041-01-01');
+    const waiting = await askVoucher(entity, '2041-05-01');
+    expect(await refusal(cancel(entity, '2041-01-01'))).toMatchObject({ code: 'BOOKS_PENDING_PROPOSALS', status: 409, details: { proposalIds: [waiting] } });
+    expect(await rowsOf(entity)).toHaveLength(1);
   });
 
   it('keeps the books an asset was registered under, so a switch added later holds its depreciation back', async () => {

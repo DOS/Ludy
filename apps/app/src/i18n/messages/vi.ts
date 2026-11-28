@@ -18858,7 +18858,7 @@ export const vi = {
       BOOKS_LATER_ROW: 'Pháp nhân đã có một lựa chọn chế độ kế toán cho năm sau ngày này.',
       BOOKS_NOT_FOUND: 'Không có lựa chọn Thông tư 99 nào bắt đầu từ ngày này.',
       BOOKS_OPENING_ENTRY_BLOCKS: 'Pháp nhân có bút toán số dư đầu kỳ ngày 31 tháng 12 (đã đảo hay chưa đều vậy), nên năm bắt đầu từ ngày hôm sau chưa chọn được; hãy chọn năm sau đó.',
-      BOOKS_PENDING_PROPOSALS: 'Pháp nhân còn đề xuất ghi sổ đang chờ duyệt từ ngày này trở đi; hãy duyệt hoặc từ chối các đề xuất đó trước khi chọn chế độ kế toán.',
+      BOOKS_PENDING_PROPOSALS: 'Pháp nhân còn đề xuất ghi sổ đang chờ duyệt từ ngày này trở đi; hãy duyệt hoặc từ chối các đề xuất đó trước khi chọn hay hủy chế độ kế toán.',
       BOOKS_REGIME_IN_USE: 'Pháp nhân đã có bút toán trong năm đó; chỉ chọn được chế độ cho năm bắt đầu sau bút toán cuối cùng, hoặc hủy lựa chọn của một năm chưa ghi sổ.',
       STOCK_SURPLUS_STALE: 'Số liệu hàng thừa đã thay đổi từ khi lập đề xuất; hãy từ chối đề xuất này và lập lại.',
       STOCK_COUNT_ENTRY: 'Bút toán này ghi chênh lệch của một lần kiểm kê kho nên không đảo được; hãy kiểm kê lại.',

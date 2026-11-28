@@ -145,6 +145,18 @@ suite('the books regime has one write path, and only an owner opens it (#1403 sl
     }
   });
 
+  it('keeps the pending-proposal helper of the two functions out of every role\'s reach', async () => {
+    const grants = await admin(async (c) =>
+      (
+        await c.query<{ role: string; can: boolean }>(
+          `SELECT r.role, has_function_privilege(r.role, 'crove_finance.books_pending_proposals(uuid,uuid,date)', 'EXECUTE') AS can
+           FROM (VALUES ('crove_app'), ('crove_worker'), ('crove_tenant'), ('crove_definer_tenant'), ('public')) AS r(role)`,
+        )
+      ).rows,
+    );
+    expect(grants.filter((g) => g.can).map((g) => g.role)).toEqual([]);
+  });
+
   it('lets no runtime role insert, update or delete a books row, crove_definer_tenant included', async () => {
     const privileges = await admin(async (c) =>
       (
