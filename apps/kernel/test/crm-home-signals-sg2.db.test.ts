@@ -148,6 +148,7 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
     sourceId?: string | null;
     signerEmail: string;
     signerRole?: 'signer' | 'approver' | 'cc';
+    extraCcEmail?: string;
     openLink?: boolean;
     expiresAt?: string | null;
   }) {
@@ -212,6 +213,23 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
         { actor: asUser(opts.creatorId), orgId: opts.orgId, idempotencyKey: randomUUID() },
       );
     }
+    let ccSignerId: string | null = null;
+    if (opts.extraCcEmail) {
+      const addedCc = await rt.execute<{ signerId: string }>(
+        'sign.signer.add',
+        {
+          envelopeId: created.envelopeId,
+          signerRole: 'cc',
+          roleLabel: 'CC',
+          name: 'CC Watcher',
+          email: opts.extraCcEmail,
+          deliveryMode: 'link',
+          requireEmailOtp: false,
+        },
+        { actor: asUser(opts.creatorId), orgId: opts.orgId, idempotencyKey: randomUUID() },
+      );
+      ccSignerId = addedCc.signerId;
+    }
     const sent = await rt.execute<{ envelopeId: string; links: Array<{ signerId: string; token: string }> }>(
       'sign.envelope.send',
       { envelopeId: created.envelopeId },
@@ -225,7 +243,7 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
         `.execute(orglessDb);
       });
     }
-    return { envelopeId: created.envelopeId, signerId: added.signerId, fileId: sourceFileId };
+    return { envelopeId: created.envelopeId, signerId: added.signerId, ccSignerId, fileId: sourceFileId };
   }
 
   beforeAll(async () => {
@@ -340,12 +358,19 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
     // 2. Unmatched signer email -> omitted.
     await sendAndOpenEnvelope({ orgId: o.orgId, creatorId: o.member, title: 'Unknown Signer', signerEmail: 'nobody@acme.test' });
 
-    // 3. CC signer viewed -> excluded.
-    const ccEnv = await sendAndOpenEnvelope({ orgId: o.orgId, creatorId: o.member, title: 'CC Env', signerEmail: 'cc@acme.test', signerRole: 'cc', openLink: false });
+    // 3. CC signer viewed -> excluded (alongside an unviewed primary signer with no matching party).
+    const ccEnv = await sendAndOpenEnvelope({
+      orgId: o.orgId,
+      creatorId: o.member,
+      title: 'CC Env',
+      signerEmail: 'unused-primary@other.test',
+      extraCcEmail: 'cc@acme.test',
+      openLink: false,
+    });
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query("UPDATE ludy_sign.signer SET status = 'viewed', viewed_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, ccEnv.signerId]);
+      await c.query("UPDATE ludy_sign.signer SET status = 'viewed', viewed_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, ccEnv.ccSignerId]);
       await c.query('COMMIT');
     });
 
@@ -522,14 +547,19 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
     await makeSentQuote(p4Expiring, 1, 1, 'BG-SG2-4');
     await makeSentQuote(p6Unanswered, 8, 10, 'BG-SG2-6');
     await worker.execute('crm.next_step.raise', {}, { actor: SYSTEM_CRM, orgId: o.orgId });
-    await rows(
-      "UPDATE ludy_crm.deal_next_step n SET raised_at = now() - interval '12 hours' FROM ludy_crm.deal d WHERE n.org_id = d.org_id AND n.deal_id = d.id AND n.org_id = $1 AND d.party_id = $2",
-      [o.orgId, p4Expiring],
-    );
-    await rows(
-      "UPDATE ludy_crm.deal_next_step n SET raised_at = now() - interval '4 days' FROM ludy_crm.deal d WHERE n.org_id = d.org_id AND n.deal_id = d.id AND n.org_id = $1 AND d.party_id = $2",
-      [o.orgId, p6Unanswered],
-    );
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        "UPDATE ludy_crm.deal_next_step n SET raised_at = now() - interval '12 hours' FROM ludy_crm.deal d WHERE n.org_id = d.org_id AND n.deal_id = d.id AND n.org_id = $1 AND d.party_id = $2",
+        [o.orgId, p4Expiring],
+      );
+      await c.query(
+        "UPDATE ludy_crm.deal_next_step n SET raised_at = now() - interval '4 days' FROM ludy_crm.deal d WHERE n.org_id = d.org_id AND n.deal_id = d.id AND n.org_id = $1 AND d.party_id = $2",
+        [o.orgId, p6Unanswered],
+      );
+      await c.query('COMMIT');
+    });
 
     // p5Overdue (overdue 1 day) and p7OldOverdue (overdue 15 days) via open deals + sale invoices on default entity.
     await rt.execute<Deal>('crm.deal.create', { partyId: p5Overdue, title: 'Open P5', amount: '1000000', expectedClose: null }, { actor: asUser(o.member), orgId: o.orgId });
