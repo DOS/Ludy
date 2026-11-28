@@ -2553,6 +2553,9 @@ check_storage_free() {
           continue
         fi
       fi
+      if [ "$PROJECT_STALE_PROJ" = "$allowed_proj" ] && stale_cid_admitted "$cid"; then
+        continue
+      fi
     fi
     if ! mounts_out="$(docker inspect --format '{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Source}}{{"\n"}}{{end}}' "$cid" 2>/dev/null)"; then
       still_running="$(docker ps -q --filter status=running --filter status=paused --filter status=restarting --filter "id=$cid" 2>/dev/null)" || return 2
@@ -2596,14 +2599,133 @@ check_storage_free() {
 }
 
 # Checks that no existing container (running, paused, restarting, or stopped) uses Compose project name $target_proj
-# from another working directory than $DEPLOY_DIR. Returns: 0 = owned cleanly, 1 = foreign project collision, 2 = inspect error (#3972).
+# from another working directory than $DEPLOY_DIR, while admitting stale pre-rename containers whose old
+# working_dir no longer exists on disk when $DEPLOY_DIR already holds an active release and at least one owned
+# container. Returns: 0 = owned cleanly (or stale services recorded for recreation), 1 = foreign project collision,
+# 2 = inspect error (#3972).
 PROJECT_CONFLICT_WDIR=''
 PROJECT_CONFLICT_CID=''
+PROJECT_STALE_PROJ=''
+PROJECT_STALE_CIDS=''
+PROJECT_STALE_SERVICES=''
+
+# Returns 0 when container ID $1 was admitted as a stale pre-rename container in the current check_project_ownership pass (#3972).
+stale_cid_admitted() {
+  local cid="${1:-}"
+  [ -n "$cid" ] && [ -n "$PROJECT_STALE_CIDS" ] || return 1
+  printf '%s\n' "$PROJECT_STALE_CIDS" | grep -qx -F -- "$cid"
+}
+
+# Returns 0 when service $1 has an admitted stale pre-rename container in the active Compose project (#3972).
+is_stale_ownership_service() {
+  local svc="${1:-}" cur_proj=''
+  [ -n "$svc" ] && [ -n "$PROJECT_STALE_PROJ" ] && [ -n "$PROJECT_STALE_SERVICES" ] || return 1
+  cur_proj="$(compose_project 2>/dev/null || true)"
+  [ -n "$cur_proj" ] && [ "$PROJECT_STALE_PROJ" = "$cur_proj" ] || return 1
+  printf '%s\n' "$PROJECT_STALE_SERVICES" | grep -qx -F -- "$svc"
+}
+
+# Drops service $1 from PROJECT_STALE_SERVICES after recreation, clearing stale ownership state once empty (#3972).
+clear_stale_ownership_service() {
+  local svc="${1:-}" kept='' line=''
+  [ -n "$svc" ] && [ -n "$PROJECT_STALE_SERVICES" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [ "$line" = "$svc" ] && continue
+    kept="$(append_unique_line "$kept" "$line")"
+  done <<<"$PROJECT_STALE_SERVICES"
+  PROJECT_STALE_SERVICES="$kept"
+  if [ -z "$PROJECT_STALE_SERVICES" ]; then
+    PROJECT_STALE_PROJ=''
+    PROJECT_STALE_CIDS=''
+  fi
+}
+
+# Returns 0 when $1 does not exist on disk and its nearest existing ancestor is a searchable directory (not a dangling symlink, non-directory, or EACCES-masked directory) (#3972).
+removed_path_ancestor_searchable() {
+  local p="${1:-}" anc='' parent=''
+  [ -n "$p" ] && [[ "$p" == /* ]] && [ "$p" != '/' ] || return 1
+  [ ! -e "$p" ] && [ ! -L "$p" ] || return 1
+  anc="$(dirname -- "$p")"
+  while [ -n "$anc" ]; do
+    if [ -L "$anc" ] && [ ! -d "$anc" ]; then
+      return 1
+    fi
+    if [ -e "$anc" ]; then
+      [ -d "$anc" ] && [ -x "$anc" ] && return 0
+      return 1
+    fi
+    [ "$anc" != '/' ] || return 1
+    parent="$(dirname -- "$anc")"
+    [ "$parent" != "$anc" ] || return 1
+    anc="$parent"
+  done
+  return 1
+}
+
+# Returns 0 iff normalized working_dir $1 (canonicalized $2) is a removed non-root absolute path whose nearest existing ancestor is a searchable directory, rejecting traversal, dangling symlinks, non-directory ancestors, and EACCES-masked directories (#3972).
+is_removed_pre_rename_wdir() {
+  local c_wdir="${1:-}" c_wdir_canon="${2:-}"
+  [ -n "$c_wdir" ] || return 1
+  [[ "$c_wdir" == /* ]] || return 1
+  [ "$c_wdir" != '/' ] && [ "$c_wdir_canon" != '/' ] || return 1
+  case "/$c_wdir/" in
+    */../* | */./*) return 1 ;;
+  esac
+  case "/$c_wdir_canon/" in
+    */../* | */./*) return 1 ;;
+  esac
+  removed_path_ancestor_searchable "$c_wdir" && removed_path_ancestor_searchable "$c_wdir_canon"
+}
+
+# Inspects service/oneoff/running labels of stale container $1. Sets STALE_META_SVC and STALE_META_ONEOFF.
+# Returns: 0 = valid (non-oneoff or stopped oneoff), 1 = invalid service or running oneoff, 2 = inspect error, 3 = vanished (#3972).
+STALE_META_SVC=''
+STALE_META_ONEOFF=0
+inspect_stale_container_meta() {
+  local cid="$1" svc_out='' c_svc='' c_oneoff='' c_running='' c_extra='' still_exists=''
+  STALE_META_SVC=''
+  STALE_META_ONEOFF=0
+  if ! svc_out="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}|{{index .Config.Labels "com.docker.compose.oneoff"}}|{{.State.Running}}' "$cid" 2>/dev/null)"; then
+    still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 2
+    [ -z "$still_exists" ] || return 2
+    return 3
+  fi
+  [[ "$svc_out" != *$'\n'* ]] || return 1
+  svc_out="${svc_out%$'\r'}"
+  [[ "$svc_out" != *$'\r'* ]] || return 1
+  [[ "$svc_out" == *'|'*'|'* ]] && [[ "$svc_out" != *'|'*'|'*'|'* ]] || return 1
+  IFS='|' read -r c_svc c_oneoff c_running c_extra <<<"$svc_out"
+  [ -z "$c_extra" ] || return 1
+  c_svc="${c_svc%$'\r'}"
+  c_oneoff="${c_oneoff%$'\r'}"
+  c_running="${c_running%$'\r'}"
+  [[ "$c_svc" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
+  case "${c_oneoff,,}" in
+    '' | false | true) ;;
+    *) return 1 ;;
+  esac
+  case "${c_running,,}" in
+    true | false) ;;
+    *) return 1 ;;
+  esac
+  if [ "${c_oneoff,,}" = true ]; then
+    [ "${c_running,,}" = false ] || return 1
+    STALE_META_ONEOFF=1
+  fi
+  STALE_META_SVC="$c_svc"
+  return 0
+}
+
 check_project_ownership() {
   local target_proj="$1" deploy_dir_norm='' canon_deploy_dir='' ps_out='' cid='' c_wdir='' c_wdir_canon='' still_exists=''
-  local -a cids=()
+  local owned_count=0 idx=0 meta_rc=0
+  local -a cids=() stale_cids=() stale_wdirs=()
   PROJECT_CONFLICT_WDIR=''
   PROJECT_CONFLICT_CID=''
+  PROJECT_STALE_PROJ=''
+  PROJECT_STALE_CIDS=''
+  PROJECT_STALE_SERVICES=''
   [ -n "$target_proj" ] || return 0
   deploy_dir_norm="${DEPLOY_DIR%/}"
   [ -n "$deploy_dir_norm" ] || deploy_dir_norm='/'
@@ -2613,23 +2735,68 @@ check_project_ownership() {
   mapfile -t cids <<<"$ps_out"
   for cid in "${cids[@]}"; do
     [ -n "$cid" ] || continue
+    c_wdir=''
+    c_wdir_canon=''
     if ! c_wdir="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$cid" 2>/dev/null)"; then
       still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 2
       [ -z "$still_exists" ] || return 2
       continue
     fi
+    c_wdir="${c_wdir%$'\r'}"
     if [ -n "$c_wdir" ]; then
       c_wdir="${c_wdir%/}"
       [ -n "$c_wdir" ] || c_wdir='/'
       c_wdir_canon="$(canonicalize_bind_path "$c_wdir")"
       if [ "$c_wdir" = "$deploy_dir_norm" ] || [ "$c_wdir" = "$canon_deploy_dir" ] || [ "$c_wdir_canon" = "$canon_deploy_dir" ]; then
+        owned_count=$((owned_count + 1))
         continue
       fi
     fi
-    PROJECT_CONFLICT_WDIR="${c_wdir:-unknown}"
-    PROJECT_CONFLICT_CID="$cid"
-    return 1
+    if ! is_removed_pre_rename_wdir "$c_wdir" "$c_wdir_canon"; then
+      PROJECT_CONFLICT_WDIR="${c_wdir:-unknown}"
+      PROJECT_CONFLICT_CID="$cid"
+      return 1
+    fi
+    stale_cids+=("$cid")
+    stale_wdirs+=("$c_wdir")
   done
+  if ((${#stale_cids[@]} == 0)); then
+    return 0
+  fi
+  if [ -z "$(read_state current)" ] || ((owned_count == 0)); then
+    PROJECT_CONFLICT_WDIR="${stale_wdirs[0]}"
+    PROJECT_CONFLICT_CID="${stale_cids[0]}"
+    return 1
+  fi
+  for idx in "${!stale_cids[@]}"; do
+    cid="${stale_cids[$idx]}"
+    c_wdir="${stale_wdirs[$idx]}"
+    meta_rc=0
+    inspect_stale_container_meta "$cid" || meta_rc=$?
+    if ((meta_rc == 2)); then
+      PROJECT_STALE_CIDS=''
+      PROJECT_STALE_SERVICES=''
+      return 2
+    elif ((meta_rc == 3)); then
+      continue
+    elif ((meta_rc != 0)); then
+      PROJECT_CONFLICT_WDIR="$c_wdir"
+      PROJECT_CONFLICT_CID="$cid"
+      PROJECT_STALE_CIDS=''
+      PROJECT_STALE_SERVICES=''
+      return 1
+    fi
+    if ((STALE_META_ONEOFF)); then
+      log "ignoring stopped one-off container $cid ($STALE_META_SVC) left from removed directory $c_wdir"
+    else
+      PROJECT_STALE_CIDS="$(append_unique_line "$PROJECT_STALE_CIDS" "$cid")"
+      PROJECT_STALE_SERVICES="$(append_unique_line "$PROJECT_STALE_SERVICES" "$STALE_META_SVC")"
+      log "admitting stale pre-rename container $cid (service $STALE_META_SVC, old working_dir $c_wdir) for recreation under $DEPLOY_DIR"
+    fi
+  done
+  if [ -n "$PROJECT_STALE_CIDS" ]; then
+    PROJECT_STALE_PROJ="$target_proj"
+  fi
   return 0
 }
 
@@ -2658,9 +2825,12 @@ mount_data_migrated() {
 # Inspects existing Docker containers belonging to $DEPLOY_DIR (scoped to $target_proj when given) and captures their actual mounted sources and PGDATA (#3972).
 PREV_CTR_DB='' PREV_CTR_FILES='' PREV_CTR_KEYS='' PREV_CTR_ARCHIVE='' PREV_CTR_PGDATA='' PREV_CTR_PGDATA_SET=0 PREV_CTR_NESTED_DB=''
 detect_prev_container_mounts() {
-  local target_proj="${1:-}" wdir canon_dir ps_out cid c_proj mounts_out hc_json hc_subpaths env_out env_line still_exists m_dst m_type m_name m_src spec subpath h_tgt h_type h_src h_sub seen_specs has_db_mount found_pg raw_pg norm_pg
-  local -a dirs=("$DEPLOY_DIR") cids=()
+  local target_proj="${1:-}" wdir canon_dir deploy_dir_norm='' canon_deploy_dir='' ps_out cid c_proj c_wdir c_wdir_canon mounts_out hc_json hc_subpaths env_out env_line still_exists m_dst m_type m_name m_src spec subpath h_tgt h_type h_src h_sub seen_specs seen_cids='' has_db_mount found_pg raw_pg norm_pg proj_owned=0 stale_ok=1 meta_rc=0
+  local -a dirs=("$DEPLOY_DIR") cids=() inspect_cids=() stale_cand_cids=()
   PREV_CTR_DB='' PREV_CTR_FILES='' PREV_CTR_KEYS='' PREV_CTR_ARCHIVE='' PREV_CTR_PGDATA='' PREV_CTR_PGDATA_SET=0 PREV_CTR_NESTED_DB=''
+  deploy_dir_norm="${DEPLOY_DIR%/}"
+  [ -n "$deploy_dir_norm" ] || deploy_dir_norm='/'
+  canon_deploy_dir="$(canonicalize_bind_path "$deploy_dir_norm")"
   canon_dir="$(cd -P "$DEPLOY_DIR" 2>/dev/null && pwd -P || true)"
   if [ -n "$canon_dir" ] && [ "$canon_dir" != "$DEPLOY_DIR" ]; then
     dirs+=("$canon_dir")
@@ -2671,6 +2841,10 @@ detect_prev_container_mounts() {
     mapfile -t cids <<<"$ps_out"
     for cid in "${cids[@]}"; do
       [ -n "$cid" ] || continue
+      if [ -n "$seen_cids" ] && printf '%s\n' "$seen_cids" | grep -qx -F -- "$cid"; then
+        continue
+      fi
+      seen_cids="$(append_unique_line "$seen_cids" "$cid")"
       if ! c_proj="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$cid" 2>/dev/null)"; then
         still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 1
         [ -z "$still_exists" ] || return 1
@@ -2682,6 +2856,70 @@ detect_prev_container_mounts() {
       if [ -n "$target_proj" ] && [ "$c_proj" != "$target_proj" ]; then
         continue
       fi
+      inspect_cids+=("$cid")
+    done
+  done
+  case "$target_proj" in
+    '' | *-restore-test | crove-restore-* | ludy-restore-*) ;;
+    *)
+      if [ -n "$(read_state current)" ]; then
+        ps_out="$(docker ps -a -q --filter "label=com.docker.compose.project=$target_proj" 2>/dev/null)" || return 1
+        if [ -n "$ps_out" ]; then
+          mapfile -t cids <<<"$ps_out"
+          for cid in "${cids[@]}"; do
+            [ -n "$cid" ] || continue
+            c_wdir=''
+            c_wdir_canon=''
+            if ! c_wdir="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$cid" 2>/dev/null)"; then
+              still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 1
+              [ -z "$still_exists" ] || return 1
+              continue
+            fi
+            c_wdir="${c_wdir%$'\r'}"
+            if [ -n "$c_wdir" ]; then
+              c_wdir="${c_wdir%/}"
+              [ -n "$c_wdir" ] || c_wdir='/'
+              c_wdir_canon="$(canonicalize_bind_path "$c_wdir")"
+              if [ "$c_wdir" = "$deploy_dir_norm" ] || [ "$c_wdir" = "$canon_deploy_dir" ] || [ "$c_wdir_canon" = "$canon_deploy_dir" ]; then
+                proj_owned=1
+                continue
+              fi
+            fi
+            if ! is_removed_pre_rename_wdir "$c_wdir" "$c_wdir_canon"; then
+              stale_ok=0
+              break
+            fi
+            meta_rc=0
+            inspect_stale_container_meta "$cid" || meta_rc=$?
+            if ((meta_rc == 2)); then
+              return 1
+            elif ((meta_rc == 3)); then
+              continue
+            elif ((meta_rc != 0)); then
+              stale_ok=0
+              break
+            fi
+            if ((STALE_META_ONEOFF == 0)); then
+              stale_cand_cids+=("$cid")
+            fi
+          done
+          if ((proj_owned)) && ((stale_ok)) && ((${#stale_cand_cids[@]} > 0)); then
+            for cid in "${stale_cand_cids[@]}"; do
+              if [ -n "$seen_cids" ] && printf '%s\n' "$seen_cids" | grep -qx -F -- "$cid"; then
+                continue
+              fi
+              seen_cids="$(append_unique_line "$seen_cids" "$cid")"
+              inspect_cids+=("$cid")
+            done
+          fi
+        fi
+      fi
+      ;;
+  esac
+  if ((${#inspect_cids[@]} == 0)); then
+    return 0
+  fi
+  for cid in "${inspect_cids[@]}"; do
       if ! mounts_out="$(docker inspect --format '{{range .Mounts}}{{.Destination}}|{{.Type}}|{{.Name}}|{{.Source}}{{"\n"}}{{end}}' "$cid" 2>/dev/null)"; then
         still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 1
         [ -z "$still_exists" ] || return 1
@@ -2751,7 +2989,7 @@ detect_prev_container_mounts() {
           fi
         done <<<"$hc_subpaths"
       fi
-      if ((has_db_mount)) && ((PREV_CTR_PGDATA_SET == 0)); then
+      if ((has_db_mount)) && [[ "$PREV_CTR_PGDATA" != __invalid__:* ]]; then
         if ! env_out="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$cid" 2>/dev/null)"; then
           still_exists="$(docker ps -a -q --filter "id=$cid" 2>/dev/null)" || return 1
           [ -z "$still_exists" ] || return 1
@@ -2766,14 +3004,18 @@ detect_prev_container_mounts() {
         done <<<"$env_out"
         if ((found_pg)); then
           if norm_pg="$(normalize_pgdata_subpath "$raw_pg")"; then
-            PREV_CTR_PGDATA="$norm_pg"
+            if ((PREV_CTR_PGDATA_SET == 0)); then
+              PREV_CTR_PGDATA="$norm_pg"
+              PREV_CTR_PGDATA_SET=1
+            elif [ "$norm_pg" != "$PREV_CTR_PGDATA" ]; then
+              PREV_CTR_PGDATA="__invalid__:conflicting PGDATA (${PREV_CTR_PGDATA:-default} vs ${norm_pg:-default})"
+            fi
           else
             PREV_CTR_PGDATA="__invalid__:$raw_pg"
+            PREV_CTR_PGDATA_SET=1
           fi
-          PREV_CTR_PGDATA_SET=1
         fi
       fi
-    done
   done
   return 0
 }
@@ -3247,7 +3489,27 @@ wait_ready() {
   return 1
 }
 
-up() { dc up --detach --no-build --no-deps --wait --wait-timeout "$WAIT_TIMEOUT" "$@"; }
+up() {
+  local arg='' s=''
+  local -a stale_svcs=() normal_svcs=()
+  for arg in "$@"; do
+    if [[ "$arg" != -* ]] && is_stale_ownership_service "$arg"; then
+      stale_svcs+=("$arg")
+    else
+      normal_svcs+=("$arg")
+    fi
+  done
+  if ((${#stale_svcs[@]} > 0)); then
+    log "recreating stale pre-rename service(s) under $DEPLOY_DIR: ${stale_svcs[*]}"
+    dc up --detach --no-build --no-deps --force-recreate --wait --wait-timeout "$WAIT_TIMEOUT" "${stale_svcs[@]}" || return 1
+    for s in "${stale_svcs[@]}"; do
+      clear_stale_ownership_service "$s"
+    done
+  fi
+  if ((${#normal_svcs[@]} > 0)); then
+    dc up --detach --no-build --no-deps --wait --wait-timeout "$WAIT_TIMEOUT" "${normal_svcs[@]}" || return 1
+  fi
+}
 
 # The build time an image carries (LUDY_BUILD_TIME, #1952), in seconds since the epoch; nothing when it has none or
 # the image is not on the host.
@@ -3285,7 +3547,13 @@ env_lists_allowed_emails() {
 # Rolls the worker of the active release when it runs as its own service, and checks it stays up.
 roll_worker() {
   log 'rolling the worker'
-  dc up --detach --no-build --no-deps worker || return 1
+  if is_stale_ownership_service worker; then
+    log "recreating stale pre-rename service worker under $DEPLOY_DIR"
+    dc up --detach --no-build --no-deps --force-recreate worker || return 1
+    clear_stale_ownership_service worker
+  else
+    dc up --detach --no-build --no-deps worker || return 1
+  fi
   sleep "$WORKER_SETTLE"
   if ! dc ps --status running --services | grep -qx worker; then
     err 'the worker is not running'

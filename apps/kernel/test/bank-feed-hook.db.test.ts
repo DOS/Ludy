@@ -752,6 +752,8 @@ suite('Bank feed webhook (#4203)', () => {
       "INSERT INTO ludy_finance.bank_feed_webhook_notice (org_id, hook_id, request_id, notice_timestamp, signature, body, received_at) SELECT $1, $2, 'active-' || n, $3, $4, $5, now() - interval '1 minute' + (n * interval '1 millisecond') FROM generate_series(1, $6) n",
       [orgId, activeHookId, FRESH, 'a'.repeat(128), BODY, activeCount],
     );
+    // Refresh statistics on the full backlog so Postgres plans against >100 rows instead of stale stats (#5262).
+    await rows('ANALYZE ludy_finance.bank_feed_webhook_notice');
 
     const pgBoss = new PgBoss({
       connectionString: workerUrl,
@@ -791,6 +793,49 @@ suite('Bank feed webhook (#4203)', () => {
       expect(enqueued.length).toBeGreaterThanOrEqual(1);
     } finally {
       await pgBoss.stop({ graceful: false }).catch(() => {});
+    }
+  });
+
+  it('enforces p_limit deterministically after ANALYZE on a backlog exceeding one batch', async () => {
+    await admin((c) => c.query('DELETE FROM ludy_finance.bank_feed_webhook_notice'));
+    const limitConnId = await connectChannel(orgId, owner.userId);
+    expect((await hookSet(owner, limitConnId)).status).toBe(200);
+    const limitHookId = (
+      await rows<{ id: string }>(
+        'SELECT id FROM ludy_finance.bank_feed_hook WHERE org_id = $1 AND channel_connection_id = $2',
+        [orgId, limitConnId],
+      )
+    )[0]!.id;
+
+    const total = BANK_FEED_HOOK_CLAIM + 25;
+    try {
+      await rows(
+        "INSERT INTO ludy_finance.bank_feed_webhook_notice (org_id, hook_id, request_id, notice_timestamp, signature, body, received_at) SELECT $1, $2, 'limit-' || n, $3, $4, $5, now() - interval '2 minutes' + (n * interval '1 millisecond') FROM generate_series(1, $6) n",
+        [orgId, limitHookId, FRESH, 'a'.repeat(128), BODY, total],
+      );
+      await rows('ANALYZE ludy_finance.bank_feed_webhook_notice');
+
+      const nullBatch = await asWorker<{ request_id: string }>('SELECT request_id FROM ludy_finance.bank_feed_hook_claim(NULL)');
+      expect(nullBatch.map((r) => r.request_id)).toEqual(['limit-1']);
+
+      const zeroBatch = await asWorker<{ request_id: string }>('SELECT request_id FROM ludy_finance.bank_feed_hook_claim(0)');
+      expect(zeroBatch.map((r) => r.request_id)).toEqual(['limit-2']);
+
+      const negBatch = await asWorker<{ request_id: string }>('SELECT request_id FROM ludy_finance.bank_feed_hook_claim(-5)');
+      expect(negBatch.map((r) => r.request_id)).toEqual(['limit-3']);
+
+      const firstBatch = await asWorker<{ request_id: string }>('SELECT request_id FROM ludy_finance.bank_feed_hook_claim($1::int)', [BANK_FEED_HOOK_CLAIM]);
+      expect(firstBatch).toHaveLength(BANK_FEED_HOOK_CLAIM);
+      expect(firstBatch[0]?.request_id).toBe('limit-4');
+      expect(firstBatch[firstBatch.length - 1]?.request_id).toBe(`limit-${BANK_FEED_HOOK_CLAIM + 3}`);
+
+      const remaining = await asWorker<{ request_id: string }>('SELECT request_id FROM ludy_finance.bank_feed_hook_claim($1::int)', [BANK_FEED_HOOK_CLAIM]);
+      expect(remaining).toHaveLength(total - 3 - BANK_FEED_HOOK_CLAIM);
+      expect(remaining[0]?.request_id).toBe(`limit-${BANK_FEED_HOOK_CLAIM + 4}`);
+      expect(remaining[remaining.length - 1]?.request_id).toBe(`limit-${total}`);
+      expect(await notices()).toEqual([]);
+    } finally {
+      await admin((c) => c.query('DELETE FROM ludy_finance.bank_feed_webhook_notice')).catch(() => {});
     }
   });
 

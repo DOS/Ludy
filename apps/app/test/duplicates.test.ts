@@ -61,9 +61,16 @@ describe('duplicateKeywordRule', () => {
   });
   it('flags only a rule for every vendor: a vendor\'s own rule may stand beside the new one', () => {
     expect(duplicateKeywordRule(rules, 'vận chuyển')).toBeNull();
+    expect(duplicateKeywordRule(rules, 'vận chuyển', null)).toBeNull();
+  });
+  it('flags a duplicate keyword rule for the same vendor, while allowing the same keyword for another vendor or every vendor', () => {
+    expect(duplicateKeywordRule(rules, 'Vận   Chuyển', 'p1')).toBe(rules[2]);
+    expect(duplicateKeywordRule(rules, 'vận chuyển', 'p2')).toBeNull();
+    expect(duplicateKeywordRule(rules, 'Cước Internet', 'p1')).toBeNull();
   });
   it('compares keyword rules only, not what an approval taught for one item', () => {
     expect(duplicateKeywordRule(rules, 'cước internet vnpt')).toBeNull();
+    expect(duplicateKeywordRule([...rules, { matchKind: 'description', matchText: 'van chuyen noi thanh', accountCode: '6421', vendor: { partyId: 'p1', name: 'Công ty ABC' } }], 'van chuyen noi thanh', 'p1')).toBeNull();
   });
   it('is quiet for a new keyword or an empty field', () => {
     expect(duplicateKeywordRule(rules, 'tiền điện')).toBeNull();

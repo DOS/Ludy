@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// DRAFT TT99 B01-DN map (#5204) on synthetic ledgers worked out by hand, a section at a time. The map is Ludy's own placement of accounts on the form's lines (no source read gives the placement, and the official annex was not
-// read), so these tests pin what the code does with it, not that it is the official layout.
+// DRAFT TT99 B01-DN map (#5204) on synthetic ledgers worked out by hand, a section at a time. The line codes and the accounts of most lines were checked against the official text (domain/tt99-reports.ts, #5269); where the form
+// splits an account by maturity Ludy's placement is its own, and the accountant has not confirmed the map, so these tests pin what the code does with it.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { B01_LINES, B01_LINES_TT99, B01_ROLES, B01_TT133, B01_TT99, b01For, buildB01, type B01Setup, type ReportEntry } from '../src/index.ts';
@@ -43,6 +43,11 @@ describe('TT99 B01-DN, current assets', () => {
     expect(pick(a, ['131', '132', '133', '134', '135', '136', '137', '130'])).toEqual({ '131': '150', '132': '25', '133': '5', '134': '7', '135': '11', '136': '-5', '137': '3', '130': '196' });
     expect(pick(a, ['141', '142', '140', '151', '152', '153', '150'])).toEqual({ '141': '90', '142': '-1', '140': '89', '151': '14', '152': '1', '153': '-1', '150': '14' });
     expect(pick(a, ['161', '162', '163', '164', '165', '160', '100'])).toEqual({ '161': '9', '162': '12', '163': '2', '164': '3', '165': '0', '160': '26', '100': '515' });
+  });
+
+  it('reads special consumption tax on imports (1383) on line 163, not on other short-term receivables (135), and other investments (2288) on line 165 (official method text, #5269)', () => {
+    const a = amounts([dr('1383', 4), dr('1388', 6), dr('2288', 9)]);
+    expect(pick(a, ['135', '163', '165', '160', '263', '274'])).toEqual({ '135': '6', '163': '4', '165': '9', '160': '13', '263': '0', '274': '0' });
   });
 
   it('counts money in transit (113) as cash, which the TT133 map does not', () => {

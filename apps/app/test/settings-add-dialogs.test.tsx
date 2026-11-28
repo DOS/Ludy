@@ -129,7 +129,7 @@ describe('duplicate lines are wired to the dialogs and worded in both languages'
     expect(read('routes/bank-account-numbers.tsx')).toContain('submitDisabled={repeated !== null}');
     expect(read('routes/accounts.tsx')).toContain('duplicateAccountCode(accounts, code)');
     expect(read('routes/accounts.tsx')).toContain('repeated !== null');
-    expect(read('routes/account-rules.tsx')).toContain('duplicateKeywordRule(rules, keyword)');
+    expect(read('routes/account-rules.tsx')).toContain('duplicateKeywordRule(rules, keyword, vendorPartyId)');
     expect(read('routes/account-rules.tsx')).toContain('repeated !== null');
     expect(read('routes/settings/members-card.tsx')).toContain('invitedEmailState(email, members, pendingInvites.data ?? [])');
     // An address with an invitation waiting may be invited again (the new one replaces it); only a member is refused.
@@ -157,6 +157,9 @@ describe('duplicate lines are wired to the dialogs and worded in both languages'
       expect(c.bankAccountNumbers.duplicate).toContain('{account}');
       expect(c.accounts.duplicate).toContain('{code}');
       expect(c.accountRules.duplicate).toContain('{keyword}');
+      expect(c.accountRules.duplicateForVendor).toContain('{keyword}');
+      expect(c.accountRules.duplicateForVendor).toContain('{vendor}');
+      expect(c.accountRules.duplicateForVendor).toContain('{code}');
       expect(c.settings.inviteAlreadyMember).toContain('{email}');
       expect(c.settings.inviteAlreadyInvited).toContain('{email}');
       expect(c.workingHours.dayOffOverlap).toContain('{from}');

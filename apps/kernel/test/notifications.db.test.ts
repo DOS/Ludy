@@ -272,7 +272,143 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
       { actor: SYSTEM, orgId: org.orgId },
     );
     expect(await dispatch('finance.portal_list.recorded')).toBe(3);
-    expect((await list(people.owner)).items[0]).toMatchObject({ kind: 'finance.portal_attention', subjectId: done, detail: { period: '2026-09', missing: '1' } });
+    expect((await list(people.owner)).items[0]).toMatchObject({ kind: 'finance.portal_attention', subjectId: done, detail: { period: '2026-09', missing: '1', amountMismatch: '0', voidInLudy: '0' } });
+  });
+
+  it('notifies for portal-cancelled invoices still in Ludy on both sales and purchases, and skips clean 0/0/0 lists (#2152)', async () => {
+    await runtime.execute('kernel.org.set_tax_code', { taxCode: '0309876546' }, { actor: asUser(people.owner), orgId: org.orgId });
+    const book = async (xml: string) => {
+      const fileId = await ingest(people.member, new TextEncoder().encode(xml), 'hd-portal.xml');
+      const { proposalId } = await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-17' }, org.orgId, fileId);
+      if (!proposalId) throw new Error('the invoice raised no proposal');
+      await runtime.execute(
+        'kernel.proposal.approve',
+        { id: proposalId, revision: 1, acceptUnverifiedSignature: true },
+        { actor: asMfa(people.admin), orgId: org.orgId, idempotencyKey: randomUUID() },
+      );
+    };
+    const purchaseXml = (num: string, date: string) => FIXTURE.replace('<SHDon>1234</SHDon>', `<SHDon>${num}</SHDon>`).replace('<NLap>2026-09-15</NLap>', `<NLap>${date}</NLap>`);
+    const saleXml = (num: string, date: string) =>
+      purchaseXml(num, date)
+        .replace('<MST>0101234564</MST>', '<MST>__SELLER__</MST>')
+        .replace('<MST>0309876546</MST>', '<MST>0101234564</MST>')
+        .replace('<MST>__SELLER__</MST>', '<MST>0309876546</MST>');
+    await book(saleXml('7201', '2026-07-12'));
+    await book(purchaseXml('7101', '2026-08-10'));
+    await book(purchaseXml('7301', '2026-06-15'));
+
+    const pendingList = async (period: string, direction: 'purchase' | 'sale') => {
+      const fileId = await ingest(people.member, new TextEncoder().encode(`list ${randomUUID()}`), 'bang-ke.xlsx');
+      return admin(
+        async (c) =>
+          (
+            await c.query<{ id: string }>(
+              `INSERT INTO ludy_finance.portal_invoice_list (org_id, period, direction, file_id, filename, created_by) VALUES ($1, $2, $3, $4, 'bang-ke.xlsx', $5) RETURNING id`,
+              [org.orgId, period, direction, fileId, people.member],
+            )
+          ).rows[0]?.id as string,
+      );
+    };
+
+    // (a) Sale portal list with only voidInLudy > 0 triggers notification with voidInLudy and direction: 'sale'.
+    const saleVoid = await pendingList('2026-07', 'sale');
+    await workerRuntime.execute(
+      'finance.portal_list.record',
+      {
+        listId: saleVoid,
+        status: 'done',
+        listFrom: '2026-07-01',
+        listTo: '2026-07-31',
+        buyerTaxCode: null,
+        rows: [
+          { rowNo: 1, sellerTaxCode: '0309876546', sellerName: 'Công ty Thông báo', buyerTaxCode: '0101234564', template: '1', series: 'C26TAB', number: '7201', issueDate: '2026-07-12', currency: 'VND', subtotal: '1800000', vatAmount: '180000', total: '1980000', status: 'cancelled', statusLabel: 'Hóa đơn đã bị hủy', checkResult: null },
+        ],
+        ownSalesCount: 0,
+        otherBuyerCount: 0,
+        skippedCount: 0,
+        skipped: [],
+      },
+      { actor: SYSTEM, orgId: org.orgId },
+    );
+    expect(await dispatch('finance.portal_list.recorded')).toBe(3);
+    expect((await list(people.owner)).items.find((i) => i.subjectId === saleVoid)).toMatchObject({
+      kind: 'finance.portal_attention',
+      subjectId: saleVoid,
+      detail: { period: '2026-07', direction: 'sale', missing: '0', amountMismatch: '0', voidInLudy: '1' },
+    });
+    expect((await list(people.member)).items.find((i) => i.subjectId === saleVoid)).toBeDefined();
+
+    // (b) Purchase portal list with only voidInLudy > 0 triggers notification with voidInLudy and no direction.
+    const purchaseVoid = await pendingList('2026-08', 'purchase');
+    await workerRuntime.execute(
+      'finance.portal_list.record',
+      {
+        listId: purchaseVoid,
+        status: 'done',
+        listFrom: '2026-08-01',
+        listTo: '2026-08-31',
+        buyerTaxCode: '0309876546',
+        rows: [
+          { rowNo: 1, sellerTaxCode: '0101234564', sellerName: 'CÔNG TY TNHH DỊCH VỤ MẪU', template: '1', series: 'C26TAB', number: '7101', issueDate: '2026-08-10', currency: 'VND', subtotal: '1800000', vatAmount: '180000', total: '1980000', status: 'replaced', statusLabel: 'Hóa đơn đã bị thay thế', checkResult: null },
+        ],
+        ownSalesCount: 0,
+        otherBuyerCount: 0,
+        skippedCount: 0,
+        skipped: [],
+      },
+      { actor: SYSTEM, orgId: org.orgId },
+    );
+    expect(await dispatch('finance.portal_list.recorded')).toBe(3);
+    const purchaseNotice = (await list(people.owner)).items.find((i) => i.subjectId === purchaseVoid);
+    expect(purchaseNotice).toMatchObject({
+      kind: 'finance.portal_attention',
+      subjectId: purchaseVoid,
+      detail: { period: '2026-08', missing: '0', amountMismatch: '0', voidInLudy: '1' },
+    });
+    expect(purchaseNotice?.detail.direction).toBeUndefined();
+
+    // (c) Clean lists (0/0/0: matched purchase, and cancelled-not-in-books sale) write zero notifications.
+    const cleanPurchase = await pendingList('2026-06', 'purchase');
+    await workerRuntime.execute(
+      'finance.portal_list.record',
+      {
+        listId: cleanPurchase,
+        status: 'done',
+        listFrom: '2026-06-01',
+        listTo: '2026-06-30',
+        buyerTaxCode: '0309876546',
+        rows: [
+          { rowNo: 1, sellerTaxCode: '0101234564', sellerName: 'CÔNG TY TNHH DỊCH VỤ MẪU', template: '1', series: 'C26TAB', number: '7301', issueDate: '2026-06-15', currency: 'VND', subtotal: '1800000', vatAmount: '180000', total: '1980000', status: 'original', statusLabel: null, checkResult: null },
+        ],
+        ownSalesCount: 0,
+        otherBuyerCount: 0,
+        skippedCount: 0,
+        skipped: [],
+      },
+      { actor: SYSTEM, orgId: org.orgId },
+    );
+    const cleanSale = await pendingList('2026-06', 'sale');
+    await workerRuntime.execute(
+      'finance.portal_list.record',
+      {
+        listId: cleanSale,
+        status: 'done',
+        listFrom: '2026-06-01',
+        listTo: '2026-06-30',
+        buyerTaxCode: null,
+        rows: [
+          { rowNo: 1, sellerTaxCode: '0309876546', sellerName: 'Công ty Thông báo', buyerTaxCode: '0101234564', template: '1', series: 'C26TAB', number: '7399', issueDate: '2026-06-16', currency: 'VND', subtotal: '1800000', vatAmount: '180000', total: '1980000', status: 'cancelled', statusLabel: 'Hóa đơn đã bị hủy', checkResult: null },
+        ],
+        ownSalesCount: 0,
+        otherBuyerCount: 0,
+        skippedCount: 0,
+        skipped: [],
+      },
+      { actor: SYSTEM, orgId: org.orgId },
+    );
+    expect(await dispatch('finance.portal_list.recorded')).toBe(0);
+    const ownerItems = (await list(people.owner)).items;
+    expect(ownerItems.some((i) => i.subjectId === cleanPurchase || i.subjectId === cleanSale)).toBe(false);
   });
 
   it('tells the owners and admins once when a VAT return is near and its period is not locked', async () => {

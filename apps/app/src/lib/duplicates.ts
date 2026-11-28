@@ -25,11 +25,22 @@ export function duplicateAccountCode<T extends { code: string }>(accounts: reado
 // A keyword rule's text as the server stores it (accents, case, punctuation and spacing do not count), so "Cước-Internet" repeats "cuoc internet".
 export const keywordKey = (input: string): string => keywordRuleText(input) ?? '';
 
-// The keyword rule for every vendor that the typed one repeats: the dialog adds a rule of that scope, and a rule of one vendor's own may stand beside it.
-export function duplicateKeywordRule<T extends { matchKind: string; matchText: string; vendor: unknown }>(rules: readonly T[], typed: string): T | null {
+function vendorPartyIdOf(vendor: unknown): string | null {
+  if (vendor && typeof vendor === 'object' && 'partyId' in vendor && typeof vendor.partyId === 'string') {
+    return vendor.partyId;
+  }
+  return null;
+}
+
+// The keyword rule of the chosen scope (every vendor when vendorPartyId is null, or that vendor's own) that the typed one repeats.
+export function duplicateKeywordRule<T extends { matchKind: string; matchText: string; vendor: unknown }>(
+  rules: readonly T[],
+  typed: string,
+  vendorPartyId: string | null = null,
+): T | null {
   const key = keywordKey(typed);
   if (key === '') return null;
-  return rules.find((rule) => rule.matchKind === 'keyword' && rule.vendor == null && rule.matchText === key) ?? null;
+  return rules.find((rule) => rule.matchKind === 'keyword' && rule.matchText === key && vendorPartyIdOf(rule.vendor) === vendorPartyId) ?? null;
 }
 
 // An invited address that already belongs to a member, or that already has an invitation waiting.

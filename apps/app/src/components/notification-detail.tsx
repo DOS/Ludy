@@ -45,6 +45,12 @@ function formatPeriod(period: string | undefined, t: ReturnType<typeof useTransl
   return t(parts.kind === 'month' ? 'month' : 'quarter', { label: parts.label });
 }
 
+function portalDetailCount(raw: string | undefined): number {
+  if (!raw?.trim()) return 0;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 0;
+}
+
 // `wantsTrackerWords`: the page shows a tracker alert, whose words are written from the live list of tracked words (the notice keeps ids and counts only, so a deleted word is simply left out; #4873).
 export function useNotificationLine(wantsTrackerWords = false) {
   const t = useTranslations('notifications');
@@ -73,14 +79,26 @@ export function useNotificationLine(wantsTrackerWords = false) {
           : t('text.task_rerouted', { title: taskTitleText({ title: n.detail.title ?? '', tainted: n.tainted }) });
       case 'finance.bank_attention':
         return t('text.bank_attention', { account: n.detail.bankAccount ?? '', lines: Number(n.detail.lines ?? 0) });
-      case 'finance.portal_attention':
-        return n.detail.failed === 'true'
-          ? t('text.portal_failed', { period: formatPeriod(n.detail.period, t) })
-          : t(n.detail.direction === 'sale' ? 'text.portal_attention_sale' : 'text.portal_attention', {
-              period: formatPeriod(n.detail.period, t),
-              missing: Number(n.detail.missing ?? 0),
-              mismatch: Number(n.detail.amountMismatch ?? 0),
-            });
+      case 'finance.portal_attention': {
+        const period = formatPeriod(n.detail.period, t);
+        if (n.detail.failed === 'true') return t('text.portal_failed', { period });
+        const sale = n.detail.direction === 'sale';
+        const missing = portalDetailCount(n.detail.missing);
+        const mismatch = portalDetailCount(n.detail.amountMismatch);
+        const voidInLudy = portalDetailCount(n.detail.voidInLudy);
+        const clauses = [
+          missing > 0 ? t(sale ? 'text.portal_attention_sale_missing' : 'text.portal_attention_missing', { count: missing }) : null,
+          mismatch > 0 ? t(sale ? 'text.portal_attention_sale_mismatch' : 'text.portal_attention_mismatch', { count: mismatch }) : null,
+          voidInLudy > 0 ? t(sale ? 'text.portal_attention_sale_void' : 'text.portal_attention_void', { count: voidInLudy }) : null,
+        ].filter((part): part is string => part !== null);
+        if (clauses.length === 0) {
+          return period ? t(sale ? 'text.portal_attention_sale_empty' : 'text.portal_attention_empty', { period }) : t('detail.titles.finance_portal_attention');
+        }
+        return t(sale ? 'text.portal_attention_sale' : 'text.portal_attention', {
+          period,
+          summary: clauses.join(', '),
+        });
+      }
       case 'finance.period_closing':
         return t('text.period_closing', { period: formatPeriod(n.detail.period, t), due: n.detail.dueDate ? f.date(n.detail.dueDate) : '' });
       case 'notes.todo_due':
@@ -400,18 +418,21 @@ function useMetadataEntries(item: WorkNotification): MetadataEntry[] {
     });
   }
   if (item.kind === 'finance.portal_attention' && d.failed !== 'true') {
-    if (d.missing && !Number.isNaN(Number(d.missing))) {
+    const portalCounts = [
+      { key: 'missing', label: t('detail.fields.missing'), raw: d.missing, showZero: true },
+      { key: 'amountMismatch', label: t('detail.fields.amountMismatch'), raw: d.amountMismatch, showZero: true },
+      { key: 'voidInLudy', label: t('detail.fields.voidInLudy'), raw: d.voidInLudy, showZero: false },
+    ] as const;
+    for (const entry of portalCounts) {
+      if (!entry.raw?.trim()) continue;
+      const value = Number(entry.raw);
+      if (!Number.isFinite(value) || value < 0) continue;
+      const truncated = Math.trunc(value);
+      if (!entry.showZero && truncated === 0) continue;
       entries.push({
-        key: 'missing',
-        label: t('detail.fields.missing'),
-        value: <span className="tabular-nums">{f.number(Number(d.missing))}</span>,
-      });
-    }
-    if (d.amountMismatch && !Number.isNaN(Number(d.amountMismatch))) {
-      entries.push({
-        key: 'amountMismatch',
-        label: t('detail.fields.amountMismatch'),
-        value: <span className="tabular-nums">{f.number(Number(d.amountMismatch))}</span>,
+        key: entry.key,
+        label: entry.label,
+        value: <span className="tabular-nums">{f.number(truncated)}</span>,
       });
     }
   }
