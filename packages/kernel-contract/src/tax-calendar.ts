@@ -3,10 +3,17 @@
 // of the table. The partner's accountant (#61) has not confirmed the table yet: `confirmed` stays false until they do,
 // and the screen says so. docs/integrations/tax-calendar.md lists the sources.
 //
-// A due date that falls on a Saturday or a Sunday moves to the next Monday (Civil Code 2015, Article 148(5)), as for
-// the VAT return (vat-deadline.ts). Public holidays are not applied, so the date shown is never later than the real one.
+// Law 108/2025/QH15 replaced Law 38/2019/QH14 on 2026-07-01 and left the filing deadlines to the Government: Decree
+// 252/2026/NĐ-CP, Article 10 (monthly the 20th, quarterly and provisional CIT the last day of the first month after the
+// period, finalization the last day of the 3rd month after it) and Article 24(2). A rule that cites both laws gives the same
+// date under each; the provisional CIT is the one whose date changed, so it has a row per law, split by the first day of the
+// quarter (a quarter that began before 2026-07-01 keeps the 30th, the earlier date, so the date shown is never later than the real one).
+//
+// A due date that falls on a Saturday, a Sunday or a public holiday moves to the next working day (Decree 252/2026/NĐ-CP,
+// Article 3(7); deadline-day.ts), as for the VAT return (vat-deadline.ts).
 // Dates are calendar dates (YYYY-MM-DD) in Vietnam time.
 import { z } from 'zod';
+import { onOrAfterWorkingDay } from './deadline-day.ts';
 import type { VatFilingPeriod } from './vat-deadline.ts';
 
 export const TAX_OBLIGATIONS = ['vat_return', 'pit_withholding', 'cit_provisional', 'cit_finalization', 'pit_finalization', 'financial_statements', 'license_fee'] as const;
@@ -41,6 +48,8 @@ export interface TaxRule {
 }
 
 const LAW_38 = '2020-07-01';
+// The first day of the periods under Law 108/2025/QH15 and Decree 252/2026/NĐ-CP.
+const LAW_108 = '2026-07-01';
 
 export const TAX_RULES: readonly TaxRule[] = [
   {
@@ -50,7 +59,7 @@ export const TAX_RULES: readonly TaxRule[] = [
     due: { kind: 'afterEnd', months: 1, day: 20 },
     effectiveFrom: LAW_38,
     effectiveTo: null,
-    legalBasis: 'Luật Quản lý thuế 38/2019/QH14, Điều 44 khoản 1 điểm a',
+    legalBasis: 'Nghị định 252/2026/NĐ-CP, Điều 10 khoản 2 (từ 2026-07-01); trước đó Luật Quản lý thuế 38/2019/QH14, Điều 44 khoản 1 điểm a',
     confirmed: false,
   },
   {
@@ -60,7 +69,7 @@ export const TAX_RULES: readonly TaxRule[] = [
     due: { kind: 'afterEnd', months: 1, day: 'last' },
     effectiveFrom: LAW_38,
     effectiveTo: null,
-    legalBasis: 'Luật Quản lý thuế 38/2019/QH14, Điều 44 khoản 1 điểm b',
+    legalBasis: 'Nghị định 252/2026/NĐ-CP, Điều 10 khoản 3 (từ 2026-07-01); trước đó Luật Quản lý thuế 38/2019/QH14, Điều 44 khoản 1 điểm b',
     confirmed: false,
   },
   {
@@ -70,7 +79,7 @@ export const TAX_RULES: readonly TaxRule[] = [
     due: { kind: 'afterEnd', months: 1, day: 20 },
     effectiveFrom: LAW_38,
     effectiveTo: null,
-    legalBasis: 'Luật Quản lý thuế 38/2019/QH14, Điều 44 khoản 1 điểm a; Nghị định 126/2020/NĐ-CP, Điều 8 khoản 1',
+    legalBasis: 'Nghị định 252/2026/NĐ-CP, Điều 10 khoản 2 (từ 2026-07-01); trước đó Luật Quản lý thuế 38/2019/QH14, Điều 44 khoản 1 điểm a và Nghị định 126/2020/NĐ-CP, Điều 8 khoản 1',
     confirmed: false,
   },
   {
@@ -80,18 +89,29 @@ export const TAX_RULES: readonly TaxRule[] = [
     due: { kind: 'afterEnd', months: 1, day: 'last' },
     effectiveFrom: LAW_38,
     effectiveTo: null,
-    legalBasis: 'Luật Quản lý thuế 38/2019/QH14, Điều 44 khoản 1 điểm b; Nghị định 126/2020/NĐ-CP, Điều 9',
+    legalBasis: 'Nghị định 252/2026/NĐ-CP, Điều 10 khoản 3 (từ 2026-07-01); trước đó Luật Quản lý thuế 38/2019/QH14, Điều 44 khoản 1 điểm b và Nghị định 126/2020/NĐ-CP, Điều 9',
     confirmed: false,
   },
   {
-    // Paid, not filed: the provisional CIT of a quarter of the fiscal year.
+    // Paid, not filed: the provisional CIT of a quarter of the fiscal year. Until 2026-06-30 the 30th of the first month
+    // after the quarter; from 2026-07-01 its last day (Decree 252/2026/NĐ-CP, Article 24(2)).
     obligation: 'cit_provisional',
     frequency: 'quarter',
     basis: 'fiscal',
     due: { kind: 'afterEnd', months: 1, day: 30 },
     effectiveFrom: LAW_38,
-    effectiveTo: null,
+    effectiveTo: '2026-06-30',
     legalBasis: 'Luật Quản lý thuế 38/2019/QH14, Điều 55 khoản 1',
+    confirmed: false,
+  },
+  {
+    obligation: 'cit_provisional',
+    frequency: 'quarter',
+    basis: 'fiscal',
+    due: { kind: 'afterEnd', months: 1, day: 'last' },
+    effectiveFrom: LAW_108,
+    effectiveTo: null,
+    legalBasis: 'Nghị định 252/2026/NĐ-CP, Điều 24 khoản 2',
     confirmed: false,
   },
   {
@@ -101,18 +121,19 @@ export const TAX_RULES: readonly TaxRule[] = [
     due: { kind: 'afterEnd', months: 3, day: 'last' },
     effectiveFrom: LAW_38,
     effectiveTo: null,
-    legalBasis: 'Luật Quản lý thuế 38/2019/QH14, Điều 44 khoản 2 điểm a',
+    legalBasis: 'Nghị định 252/2026/NĐ-CP, Điều 10 khoản 5 điểm a (từ 2026-07-01); trước đó Luật Quản lý thuế 38/2019/QH14, Điều 44 khoản 2 điểm a',
     confirmed: false,
   },
   {
-    // The finalization an employer files for the PIT it withheld, by calendar year.
+    // The finalization an employer files for the PIT it withheld, by calendar year. The 30 April date of Article 10(5)(c) is for
+    // an individual who files their own wage-income finalization, not an obligation of the org, so it has no row here.
     obligation: 'pit_finalization',
     frequency: 'year',
     basis: 'calendar',
     due: { kind: 'afterEnd', months: 3, day: 'last' },
     effectiveFrom: LAW_38,
     effectiveTo: null,
-    legalBasis: 'Luật Quản lý thuế 38/2019/QH14, Điều 44 khoản 2 điểm a',
+    legalBasis: 'Nghị định 252/2026/NĐ-CP, Điều 10 khoản 5 điểm a (từ 2026-07-01); trước đó Luật Quản lý thuế 38/2019/QH14, Điều 44 khoản 2 điểm a',
     confirmed: false,
   },
   {
@@ -122,7 +143,7 @@ export const TAX_RULES: readonly TaxRule[] = [
     due: { kind: 'daysAfterEnd', days: 90 },
     effectiveFrom: '2017-01-01',
     effectiveTo: null,
-    legalBasis: 'Thông tư 133/2016/TT-BTC, Điều 80 khoản 1',
+    legalBasis: 'Luật Kế toán 88/2015/QH13, Điều 29 khoản 3; Thông tư 99/2025/TT-BTC, Điều 25; Thông tư 133/2016/TT-BTC, Điều 80 khoản 1; Thông tư 58/2026/TT-BTC, Điều 10 khoản 1 (doanh nghiệp siêu nhỏ)',
     confirmed: false,
   },
   {
@@ -155,7 +176,7 @@ export interface TaxDue {
   period: string;
   periodStart: string;
   periodEnd: string;
-  // After the weekend rule.
+  // After the day-off rule.
   dueDate: string;
   legalBasis: string;
   confirmed: boolean;
@@ -176,13 +197,6 @@ function parseDate(text: string): Date {
   const date = new Date(`${text}T00:00:00Z`);
   if (Number.isNaN(date.getTime()) || iso(date) !== text) throw new Error(`not a calendar date: ${text}`);
   return date;
-}
-
-// Saturday and Sunday move to the following Monday.
-export function afterWeekend(date: string): string {
-  const d = parseDate(date);
-  const weekday = d.getUTCDay();
-  return weekday === 6 ? iso(new Date(d.getTime() + 2 * DAY_MS)) : weekday === 0 ? iso(new Date(d.getTime() + DAY_MS)) : date;
 }
 
 interface Period {
@@ -225,7 +239,7 @@ function dueOf(rule: TaxRule, period: Period): string {
   } else {
     date = dateOf(monthIndex(yearOf(period.last), due.month), due.day);
   }
-  return afterWeekend(date);
+  return onOrAfterWorkingDay(date);
 }
 
 // The rules an org's profile turns on.
