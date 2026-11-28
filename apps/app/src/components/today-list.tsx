@@ -173,20 +173,6 @@ export function TodayList({ slug }: { slug: string }) {
   });
   const activeItem = peek.activeItem;
 
-  if (today.isPending) {
-    return (
-      <section aria-labelledby="overview-today">
-        <h2 id="overview-today" className="flex items-baseline gap-2 text-base font-semibold text-foreground">
-          {t('title')}
-        </h2>
-        <p className="mt-1 text-xs text-subtle-foreground">{t('subtitle')}</p>
-        <div className="mt-3">
-          <ListSkeleton rows={2} />
-        </div>
-      </section>
-    );
-  }
-
   if (today.isError) {
     return (
       <section aria-labelledby="overview-today">
@@ -201,7 +187,19 @@ export function TodayList({ slug }: { slug: string }) {
     );
   }
 
-  if (!today.data) return null;
+  if (today.isPending || !today.data) {
+    return (
+      <section aria-labelledby="overview-today">
+        <h2 id="overview-today" className="flex items-baseline gap-2 text-base font-semibold text-foreground">
+          {t('title')}
+        </h2>
+        <p className="mt-1 text-xs text-subtle-foreground">{t('subtitle')}</p>
+        <div className="mt-3">
+          <ListSkeleton rows={2} />
+        </div>
+      </section>
+    );
+  }
 
   if (groups.length === 0 && attentionItems.length === 0) {
     return (

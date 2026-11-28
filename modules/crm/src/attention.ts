@@ -261,7 +261,7 @@ interface CustomerReplyPageRow {
   prev_sent_at: Date | string | null;
 }
 
-async function loadCustomerReplied(
+async function fetchCustomerReplyPage(
   ctx: Reader,
   opts: {
     userId: string;
@@ -269,22 +269,14 @@ async function loadCustomerReplied(
     keepId: string | null;
     skipSeenFilter: boolean;
     onlyConversationId: string | null;
+    cursorMsgAt: Date | null;
+    cursorId: string | null;
+    pageLimit: number;
+    msgLimit: number;
   },
-): Promise<RawCustomerReplyRow[]> {
+): Promise<CustomerReplyPageRow[]> {
   // Runs under ludy_kernel.conversation and ludy_kernel.conversation_message RLS so unreadable threads yield zero rows.
-  // Single contact: scan the newest 25 threads once (up to 200 messages each). Org-wide batched signals (opts.partyId === null):
-  // page through `conversation_recent_idx` in 25-thread slices x at most 2 pages (max 50 threads x 50 messages = 2,500 rows)
-  // while concurrent conversation indexes are tracked in follow-up issue #5264 (#4994).
-  const pageLimit = opts.partyId === null ? CONVERSATION_BATCH_PAGE_SIZE : CONVERSATION_SCAN_MAX;
-  const maxPages = opts.partyId === null ? CONVERSATION_BATCH_MAX_PAGES : 1;
-  const msgLimit = opts.partyId === null ? MESSAGE_SCAN_BATCH_PER_CONV : MESSAGE_SCAN_PER_CONV;
-  const byParty = new Map<string, RawCustomerReplyRow>();
-  const collected: RawCustomerReplyRow[] = [];
-  let cursorMsgAt: Date | null = null;
-  let cursorId: string | null = null;
-
-  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-    const { rows }: { rows: CustomerReplyPageRow[] } = await sql<CustomerReplyPageRow>`
+  const { rows } = await sql<CustomerReplyPageRow>`
       WITH page AS (
         SELECT
           c.id,
@@ -308,16 +300,16 @@ async function loadCustomerReplied(
             OR coalesce(co.duplicate_of, co.id) = ${opts.keepId}::uuid
           )
           AND (
-            (${cursorMsgAt}::timestamptz IS NULL AND ${cursorId}::uuid IS NULL)
+            (${opts.cursorMsgAt}::timestamptz IS NULL AND ${opts.cursorId}::uuid IS NULL)
             OR CASE
-              WHEN ${cursorMsgAt}::timestamptz IS NULL THEN c.last_message_at IS NULL AND c.id < ${cursorId}::uuid
-              ELSE c.last_message_at < ${cursorMsgAt}::timestamptz
-                OR (c.last_message_at = ${cursorMsgAt}::timestamptz AND c.id < ${cursorId}::uuid)
+              WHEN ${opts.cursorMsgAt}::timestamptz IS NULL THEN c.last_message_at IS NULL AND c.id < ${opts.cursorId}::uuid
+              ELSE c.last_message_at < ${opts.cursorMsgAt}::timestamptz
+                OR (c.last_message_at = ${opts.cursorMsgAt}::timestamptz AND c.id < ${opts.cursorId}::uuid)
                 OR c.last_message_at IS NULL
             END
           )
         ORDER BY c.last_message_at DESC NULLS LAST, c.id DESC
-        LIMIT ${pageLimit}
+        LIMIT ${opts.pageLimit}
       ),
       tail AS (
         SELECT
@@ -341,7 +333,7 @@ async function loadCustomerReplied(
             AND cm.platform_removed_at IS NULL
             AND cm.hidden_at IS NULL
           ORDER BY cm.sent_at DESC, cm.seq DESC, cm.id DESC
-          LIMIT ${msgLimit}
+          LIMIT ${opts.msgLimit}
         ) m
       ),
       sequenced AS (
@@ -416,8 +408,34 @@ async function loadCustomerReplied(
         s.prev_sent_at
       FROM tail t
       LEFT JOIN scoped s ON true`.execute(ctx.trx);
+  return rows;
+}
 
-    const head: CustomerReplyPageRow | undefined = rows[0];
+async function loadCustomerReplied(
+  ctx: Reader,
+  opts: {
+    userId: string;
+    partyId: string | null;
+    keepId: string | null;
+    skipSeenFilter: boolean;
+    onlyConversationId: string | null;
+  },
+): Promise<RawCustomerReplyRow[]> {
+  // Single contact: scan the newest 25 threads once (up to 200 messages each). Org-wide batched signals (opts.partyId === null):
+  // page through `conversation_recent_idx` in 25-thread slices x at most 2 pages (max 50 threads x 50 messages = 2,500 rows)
+  // while concurrent conversation indexes are tracked in follow-up issue #5264 (#4994).
+  const pageLimit = opts.partyId === null ? CONVERSATION_BATCH_PAGE_SIZE : CONVERSATION_SCAN_MAX;
+  const maxPages = opts.partyId === null ? CONVERSATION_BATCH_MAX_PAGES : 1;
+  const msgLimit = opts.partyId === null ? MESSAGE_SCAN_BATCH_PER_CONV : MESSAGE_SCAN_PER_CONV;
+  const byParty = new Map<string, RawCustomerReplyRow>();
+  const collected: RawCustomerReplyRow[] = [];
+  let cursorMsgAt: Date | null = null;
+  let cursorId: string | null = null;
+
+  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+    const rows = await fetchCustomerReplyPage(ctx, { ...opts, cursorMsgAt, cursorId, pageLimit, msgLimit });
+
+    const head = rows[0];
     if (!head) break;
 
     for (const r of rows) {
