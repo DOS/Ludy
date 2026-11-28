@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The arithmetic of the annual PIT finalization 02/CNKD-TNCN-QTT of a household on the income method (#5285), worked out by hand: the form's own formulas for lines [09] to [20] (Circular 89/2026 Phụ lục I),
 // the band of the income-method rate (Luật TNCN 109/2025 Art. 7(2): a band applies ABOVE its bound), the 50,000 VND exemption, the cases that are held and the 30% cut of Decree 398/2026 on both sides.
-import { HOUSEHOLD_EXPENSE_GROUPS } from '@ludy/kernel-contract';
+import { HOUSEHOLD_EXPENSE_GROUPS, zHouseholdQttGet } from '@ludy/kernel-contract';
 import { describe, expect, it } from 'vitest';
 import { bandFor, computeQtt, QTT_CODES, QTT_COST_LINES, QTT_LABELS, reductionMemo, settle, type QttInput } from '../src/domain/household-qtt.ts';
 
@@ -196,5 +196,17 @@ describe('the 30% PIT cut of Decree 398/2026, which the form has no line for', (
     expect(above.after).toEqual(above.before);
     expect(reductionMemo({ ...cut, revenue: '10000000000' }).applies).toBe(true);
     expect(reductionMemo({ ...cut, percent: '0' }).applies).toBe(false);
+  });
+});
+
+describe('the amounts the household enters', () => {
+  const base = { legalEntityId: '11111111-1111-4111-8111-111111111111', year: 2026 };
+
+  it('takes whole dong only for [14], [15] and [09c]: a fraction would run on into [17] to [20]', () => {
+    expect(zHouseholdQttGet.safeParse({ ...base, withheld: '10000000', prepaid: '0', noPaymentRevenue: '5' }).success).toBe(true);
+    for (const field of ['withheld', 'prepaid', 'noPaymentRevenue']) {
+      expect(zHouseholdQttGet.safeParse({ ...base, [field]: '0.5' }).success, field).toBe(false);
+      expect(zHouseholdQttGet.safeParse({ ...base, [field]: '12.00000001' }).success, field).toBe(false);
+    }
   });
 });

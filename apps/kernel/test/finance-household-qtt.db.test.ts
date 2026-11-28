@@ -282,6 +282,8 @@ suite('the 02/CNKD-TNCN-QTT annual worksheet of a household business (#5285)', (
     const o = await org();
     await setProfile(o);
     await expect(qtt(o, { withheld: '-1' })).rejects.toMatchObject({ code: 'HOUSEHOLD_QTT_INPUT' });
+    // A fraction of a dong is refused for each of the three entered amounts (the contract rejects it before the query runs).
+    for (const field of ['withheld', 'prepaid', 'noPaymentRevenue']) await expect(qtt(o, { [field]: '0.5' }), field).rejects.toMatchObject({ code: 'VALIDATION' });
     // A year before the first profile is outside the return.
     await expect(qtt(o, { year: 2026 })).resolves.toBeDefined();
     const late = await org();

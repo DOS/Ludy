@@ -94,6 +94,10 @@ export const householdQtt = defineQuery({
       prepaid: toMoney(money(input.prepaid ?? '0')),
       noPaymentRevenue: toMoney(money(input.noPaymentRevenue ?? '0')),
     };
+    // Whole dong too: the form's amounts are whole dong, and a fraction would run on into [17] to [20] (the contract refuses one first; this keeps the rule where the money is worked out).
+    for (const raw of [input.withheld, input.prepaid, input.noPaymentRevenue]) {
+      if (raw !== undefined && !money(raw).isInteger()) throw new DomainError('HOUSEHOLD_QTT_INPUT', 422, 'Số tiền nhập vào phải là số đồng nguyên');
+    }
     for (const value of Object.values(entered)) {
       if (money(value).lt(0)) throw new DomainError('HOUSEHOLD_QTT_INPUT', 422, 'Số tiền nhập vào không được âm');
     }

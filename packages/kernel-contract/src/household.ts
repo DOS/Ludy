@@ -193,12 +193,14 @@ export type HouseholdCnkd = z.infer<typeof zHouseholdCnkd>;
 export const HOUSEHOLD_QTT_FORM = '02/CNKD-TNCN-QTT' as const;
 export const HOUSEHOLD_QTT_HOLDS = ['below_threshold', 'loss', 'unmapped_costs', 'platform_split', 'rate_missing', 'closing_entries'] as const;
 export const HOUSEHOLD_QTT_NOTES = ['withheld_not_entered', 'prepaid_not_entered', 'costs_not_checked', 'year_not_ended', 'reduction_not_in_form'] as const;
+// What the household enters on the worksheet is whole dong (the form's amounts are whole dong): a fraction would carry into [17] to [20]. The sign is checked by the query, which says why.
+const zWholeDong = z.string().regex(/^-?\d{1,16}$/, 'whole dong');
 export const zHouseholdQttGet = z.strictObject({
   legalEntityId: zId,
   year: z.number().int().min(2026).max(2100),
-  withheld: zMoney.optional(),
-  prepaid: zMoney.optional(),
-  noPaymentRevenue: zMoney.optional(),
+  withheld: zWholeDong.optional(),
+  prepaid: zWholeDong.optional(),
+  noPaymentRevenue: zWholeDong.optional(),
   forExport: z.boolean().optional(),
 });
 export const zHouseholdQttLine = z.strictObject({ code: z.string(), label: z.string(), amount: zMoney.nullable() });
