@@ -146,7 +146,7 @@ export type HouseholdYearToDate = z.infer<typeof zHouseholdYearToDate>;
 export const HOUSEHOLD_PROVISIONAL_LABEL = 'Số liệu tạm, kế toán chưa xác nhận tỷ lệ';
 // The same for the books no percentage stands behind (S2d and S2e: stock and cash facts from the ledger): only the layout of the book waits for the accountant, so the label says so (PO nit on #3987, 2026-11-19).
 export const HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL = 'Số liệu tạm, kế toán chưa xác nhận bố cục sổ';
-export const HOUSEHOLD_RETURN_FORMS = ['01/CNKD'] as const;
+export const HOUSEHOLD_RETURN_FORMS = ['01/CNKD', '02/CNKD-TNCN-QTT'] as const;
 export const zHouseholdReturnForm = z.enum(HOUSEHOLD_RETURN_FORMS);
 export const zHouseholdCnkdGet = z.strictObject({
   legalEntityId: zId,
@@ -181,6 +181,57 @@ export const zHouseholdCnkd = z.strictObject({
   commentary: z.boolean(),
 });
 export type HouseholdCnkd = z.infer<typeof zHouseholdCnkd>;
+
+// 02/CNKD-TNCN-QTT, the annual PIT finalization of a household on the income method (#5285; Decree 68/2026 Art. 8(3)(c): by 31 March of the next year; Circular 18/2026 Art. 4(1)(c); the form in the layout of
+// Circular 89/2026 Phụ lục I, Art. 99(5)), a WORKSHEET over the household's books of the year: Ludy never files and never calls the tax authority. Part A of the form, lines [09] to [20], with the form's own
+// codes and labels (`lines`: `amount` null where the line is held). [09] is the ledger's movement of account 511 over the year (the same source as S1a and 01/CNKD), [09b] the revenue of the stored platform
+// settlements of the year, [09c] what the household enters, [09a] the rest; [10a] to [10e] are the expense lines of S2c by group (an expense account no group covers holds the income back); [12] is the row of
+// `household_income_rate` for the year's revenue; [14] (tax the platforms withheld), [15] (tax prepaid in the year) and [09c] are entered by the household per ask, nothing stored (`entered`). [21] to [24] (refund
+// and offset) and parts B to D are the person's at filing. What cannot be worked out safely is held (`holds`) and `notes` say what the figures do not know. The 30% PIT cut (NQ 43/2026, Decree 398/2026) has NO line on
+// this form: `lines` [13] to [20] are BEFORE it and `reduction` gives the tax, the amount to pay and the overpayment before and after it. `commentary` is true while a row behind the figures is not confirmed by the
+// accountant (#61): the screen and the Excel file then carry HOUSEHOLD_PROVISIONAL_LABEL.
+export const HOUSEHOLD_QTT_FORM = '02/CNKD-TNCN-QTT' as const;
+export const HOUSEHOLD_QTT_HOLDS = ['below_threshold', 'loss', 'unmapped_costs', 'platform_split', 'rate_missing', 'closing_entries'] as const;
+export const HOUSEHOLD_QTT_NOTES = ['withheld_not_entered', 'prepaid_not_entered', 'costs_not_checked', 'year_not_ended', 'reduction_not_in_form'] as const;
+// What the household enters on the worksheet is whole dong (the form's amounts are whole dong): a fraction would carry into [17] to [20]. The sign is checked by the query, which says why.
+const zWholeDong = z.string().regex(/^-?\d{1,16}$/, 'whole dong');
+export const zHouseholdQttGet = z.strictObject({
+  legalEntityId: zId,
+  year: z.number().int().min(2026).max(2100),
+  withheld: zWholeDong.optional(),
+  prepaid: zWholeDong.optional(),
+  noPaymentRevenue: zWholeDong.optional(),
+  forExport: z.boolean().optional(),
+});
+export const zHouseholdQttLine = z.strictObject({ code: z.string(), label: z.string(), amount: zMoney.nullable() });
+export const zHouseholdQttSettled = z.strictObject({ tax: zMoney, payable: zMoney, exempt: zMoney, due: zMoney, overpaid: zMoney });
+export const zHouseholdQtt = z.strictObject({
+  period: z.strictObject({ year: z.number().int(), from: zLocalDate, to: zLocalDate, ended: z.boolean() }),
+  household: z.strictObject({ name: z.string(), taxCode: z.string().nullable(), representativeName: z.string().nullable() }),
+  form: z.strictObject({ form: zHouseholdReturnForm, version: z.string(), name: z.string(), status: zHouseholdRuleStatus }),
+  lines: z.array(zHouseholdQttLine),
+  rate: z.strictObject({ revenueOver: zMoney, percent: z.string(), effectiveFrom: zLocalDate, status: zHouseholdRuleStatus }).nullable(),
+  threshold: zMoney,
+  unmappedCosts: zMoney,
+  holds: z.array(z.enum(HOUSEHOLD_QTT_HOLDS)),
+  notes: z.array(z.enum(HOUSEHOLD_QTT_NOTES)),
+  entered: z.strictObject({ withheld: zMoney, prepaid: zMoney, noPaymentRevenue: zMoney }),
+  reduction: z
+    .strictObject({
+      percent: z.string(),
+      ceiling: zMoney.nullable(),
+      applies: z.boolean(),
+      cut: zMoney,
+      before: zHouseholdQttSettled,
+      after: zHouseholdQttSettled,
+      effectiveFrom: zLocalDate,
+      status: zHouseholdRuleStatus,
+    })
+    .nullable(),
+  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate', 'group', 'reduction', 'threshold']), key: z.string(), effectiveFrom: zLocalDate })),
+  commentary: z.boolean(),
+});
+export type HouseholdQtt = z.infer<typeof zHouseholdQtt>;
 
 // S2a-HKD, the revenue book of a household that pays a percentage of revenue (Circular 152/2025/TT-BTC; plan 8.5 and 12 row 6, #2517 slice 2a): S1a with the revenue split by business line, and the VAT and PIT
 // of each line by the percentages in force on the period's last day, each rounded to a whole dong. It is a view of the ledger like S1a: one row per entry that touched account 511, so `total` is the

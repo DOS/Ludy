@@ -97,6 +97,7 @@ import { stockExportCommands } from './stock-export.ts';
 import { householdCommands, householdQueries } from './household.ts';
 import { householdBookCommands, householdBookQueries } from './household-books.ts';
 import { householdReturnQueries } from './household-return.ts';
+import { householdQttQueries } from './household-qtt.ts';
 import { householdS2aQueries } from './household-s2a.ts';
 import { householdS2bQueries } from './household-s2b.ts';
 import { householdS2cQueries } from './household-s2c.ts';
@@ -313,6 +314,7 @@ export const financeQueries = [
   ...householdQueries,
   ...householdBookQueries,
   ...householdReturnQueries,
+  ...householdQttQueries,
   ...householdS2aQueries,
   ...householdS2bQueries,
   ...householdS2cQueries,

@@ -74,6 +74,7 @@ export interface LudyFinanceSchema {
   'ludy_finance.fixed_asset': FinanceFixedAssetTable;
   'ludy_finance.household_expense_group_map': FinanceHouseholdExpenseGroupMapTable;
   'ludy_finance.household_form_version': FinanceHouseholdFormVersionTable;
+  'ludy_finance.household_income_rate': FinanceHouseholdIncomeRateTable;
   'ludy_finance.household_profile': FinanceHouseholdProfileTable;
   'ludy_finance.household_return_form_version': FinanceHouseholdReturnFormVersionTable;
   'ludy_finance.household_tax_reduction': FinanceHouseholdTaxReductionTable;
@@ -1368,6 +1369,15 @@ export interface FinanceHouseholdFormVersionTable {
   effective_from: ColumnType<string, NotGranted, NotGranted>;
   name: ColumnType<string, NotGranted, NotGranted>;
   pit_methods: ColumnType<string[], NotGranted, NotGranted>;
+  source: ColumnType<string, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** ludy_finance.household_income_rate */
+export interface FinanceHouseholdIncomeRateTable {
+  revenue_over: ColumnType<string, NotGranted, NotGranted>;
+  effective_from: ColumnType<string, NotGranted, NotGranted>;
+  percent: ColumnType<string, NotGranted, NotGranted>;
   source: ColumnType<string, NotGranted, NotGranted>;
   status: ColumnType<string, NotGranted, NotGranted>;
 }
