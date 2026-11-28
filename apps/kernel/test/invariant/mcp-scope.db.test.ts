@@ -127,6 +127,10 @@ const SIGNALS = [
   'finance.signals.supplier_payments_waiting:ludy.read',
   'crm.signals.won_deals:ludy.read',
   'crm.signals.open_deals:ludy.read',
+  // Step 1 of 2 for #4994 (SG2 Home contact attention): IDs, enum kind, and timestamps only.
+  'kernel.signals.contact_attention:ludy.read',
+  'crm.signals.attention:ludy.read',
+  'sign.signals.opened:ludy.read',
   // The one query behind the `ludy_signals` tool (step S4): it runs the three rules above as the grant and returns their items.
   'kernel.mcp.signals:ludy.read',
 ];
