@@ -2,7 +2,7 @@
 import { Check, Minus } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { AppPageCopy } from '../../content/app-page';
-import { SIGN_IN_URL } from '../../content/site';
+import { SIGN_UP_URL } from '../../content/site';
 import type { Dictionary } from '../../content/vi';
 import { Faq } from '../landing/faq';
 import { SiteFooter } from '../landing/site-footer';
@@ -51,8 +51,8 @@ export function AppPage({ dict, copy, hero, visuals, comparison }: AppPageProps)
               </h1>
               <p className="mx-auto mt-6 max-w-[62ch] text-base text-muted sm:text-lg">{copy.hero.lead}</p>
               <div className="mt-8 flex flex-wrap justify-center gap-3">
-                <ButtonLink href={selfHost}>{copy.hero.primary}</ButtonLink>
-                <ButtonLink href={SIGN_IN_URL} variant="secondary">
+                <ButtonLink href={SIGN_UP_URL} className="min-h-11 px-5">{copy.hero.primary}</ButtonLink>
+                <ButtonLink href={selfHost} variant="secondary" className="min-h-11 px-5">
                   {copy.hero.secondary}
                 </ButtonLink>
               </div>
@@ -177,8 +177,8 @@ export function AppPage({ dict, copy, hero, visuals, comparison }: AppPageProps)
             </h2>
             <p className="mx-auto mt-4 max-w-[56ch] text-base text-muted sm:text-lg">{copy.cta.body}</p>
             <div className="mt-8 flex flex-wrap justify-center gap-3">
-              <ButtonLink href={selfHost}>{copy.cta.primary}</ButtonLink>
-              <ButtonLink href={SIGN_IN_URL} variant="secondary">
+              <ButtonLink href={SIGN_UP_URL} className="min-h-11 px-5">{copy.cta.primary}</ButtonLink>
+              <ButtonLink href={selfHost} variant="secondary" className="min-h-11 px-5">
                 {copy.cta.secondary}
               </ButtonLink>
             </div>

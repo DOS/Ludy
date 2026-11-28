@@ -16,9 +16,9 @@ export const accountingEn: AccountingCopy = {
   hero: {
     title: 'Invoices in, Ludy drafts the entry. You approve before anything posts.',
     lead: 'Ludy Finance reads e-invoices, checks every number with fixed rules and proposes a journal entry under Circular 133. An entry reaches the books only when a person with the authority approves it with a two-factor code.',
-    primary: 'Self-host for free',
-    secondary: 'Sign in',
-    note: 'Open source under the AGPL. Ludy Finance is in the self-hosted edition. On Ludy Cloud: coming soon.',
+    primary: 'Start free trial',
+    secondary: 'Self-host for free',
+    note: 'Start free on Ludy Cloud with zero setup, or self-host open source under AGPL-3.0.',
   },
   how: {
     title: 'Four steps from the inbox to the ledger',
@@ -158,9 +158,9 @@ export const accountingEn: AccountingCopy = {
   },
   cta: {
     title: 'Try Ludy Finance on your own invoices',
-    body: 'Self-host for free with a single docker compose command. If you already have an account, sign in.',
-    primary: 'See how to self-host',
-    secondary: 'Sign in',
+    body: 'Create a free Ludy Cloud trial account in a minute, or run the full open-source stack on your own server with Docker Compose.',
+    primary: 'Start free trial',
+    secondary: 'See how to self-host',
   },
   fragments: {
     sample: 'Example data',

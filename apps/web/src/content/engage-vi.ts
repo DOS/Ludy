@@ -19,11 +19,11 @@ export const engageVi = {
   ogTitle: 'Hộp thư, CRM và marketing, trong một ứng dụng.',
   crumbLabel: 'Đường dẫn',
   hero: {
-    title: 'Hộp thư, CRM và marketing, trong một ứng dụng.',
-    lead: `Ludy Engage gom tin nhắn của khách, nhóm CRM (người liên hệ, công ty, cơ hội bán hàng, lịch hẹn), bài đăng và quảng cáo về một nơi, mỗi phần có báo cáo riêng. ${N.sales} lo Hộp thư và CRM, ${N.marketing} lo Marketing, bạn duyệt.`,
-    primary: 'Tự cài đặt miễn phí',
-    secondary: 'Đăng nhập',
-    note: 'Mã nguồn mở AGPL. Ludy Engage có trong bản tự cài đặt. Trên Ludy Cloud: sắp ra mắt.',
+    title: 'Hộp thư khách hàng, CRM và marketing trên một dòng chảy.',
+    lead: `Ludy Engage gom tin nhắn khách hàng, danh bạ công ty, cơ hội bán hàng, lịch hẹn, bài đăng và quảng cáo về một chỗ. ${N.sales} phụ trách Hộp thư và CRM, ${N.marketing} lo Marketing, bạn kiểm soát và duyệt.`,
+    primary: 'Dùng thử miễn phí',
+    secondary: 'Tự host miễn phí',
+    note: 'Dùng thử miễn phí trên Ludy Cloud không cần cài đặt, hoặc tự host mã nguồn mở AGPL-3.0.',
   },
   how: {
     title: 'Từ tin nhắn của khách đến báo cáo của bạn',
@@ -171,10 +171,10 @@ export const engageVi = {
     ],
   },
   cta: {
-    title: 'Thử Ludy Engage với khách hàng của bạn',
-    body: 'Tự cài đặt miễn phí chỉ với một lệnh docker compose. Đã có tài khoản thì đăng nhập.',
-    primary: 'Xem cách tự cài đặt',
-    secondary: 'Đăng nhập',
+    title: 'Kết nối hộp thư và chăm sóc khách hàng trên Ludy Engage',
+    body: 'Tạo tài khoản Ludy Cloud dùng thử miễn phí trong 1 phút, hoặc tự cài đặt toàn bộ mã nguồn trên máy chủ của bạn bằng Docker Compose.',
+    primary: 'Dùng thử miễn phí',
+    secondary: 'Xem cách tự host',
   },
   // What the page draws of the product, as example data (the home page's sample company, Gạo Sạch Mekong).
   fragments: {
