@@ -18836,6 +18836,7 @@ export const en = {
       STOCK_SURPLUS_RESOLVED: 'The surplus of this count has already been resolved.',
       STOCK_SURPLUS_PENDING: 'A proposal to resolve the surplus of this count is already waiting for approval.',
       BOOKS_REGIME_CHANGED: 'The accounting regime of the books changed since the proposal was made, so the entry would differ from the one shown; reject this proposal and read the invoice again.',
+      DEPRECIATION_BOOKS_CHANGED: 'The accounting regime of the books changed since some assets were registered, and their accounts mean different things in the two circulars, so this month cannot be depreciated yet; ask your accountant to confirm the accounts of those assets under the new regime.',
       STOCK_SURPLUS_STALE: 'The surplus figures changed since the proposal was made; reject this proposal and ask again.',
       STOCK_COUNT_ENTRY: 'This entry posted the difference of a stock count, so it cannot be reversed; count again.',
       STOCK_COUNT_ITEM_INACTIVE: 'This item is no longer in use; switch it back on before counting it.',

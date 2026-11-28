@@ -18850,6 +18850,7 @@ export const vi = {
       STOCK_SURPLUS_RESOLVED: 'Hàng thừa của lần kiểm kê này đã được xử lý.',
       STOCK_SURPLUS_PENDING: 'Đã có đề xuất xử lý hàng thừa của lần kiểm kê này đang chờ duyệt.',
       BOOKS_REGIME_CHANGED: 'Chế độ kế toán của sổ đã đổi từ khi lập đề xuất nên bút toán sẽ khác bản đã xem; hãy từ chối đề xuất này và đọc lại hóa đơn.',
+      DEPRECIATION_BOOKS_CHANGED: 'Chế độ kế toán của sổ đã đổi từ khi đăng ký một số tài sản và tài khoản của chúng được hai thông tư hiểu khác nhau, nên chưa khấu hao tháng này được; hãy nhờ kế toán xác nhận tài khoản của các tài sản đó theo chế độ mới.',
       STOCK_SURPLUS_STALE: 'Số liệu hàng thừa đã thay đổi từ khi lập đề xuất; hãy từ chối đề xuất này và lập lại.',
       STOCK_COUNT_ENTRY: 'Bút toán này ghi chênh lệch của một lần kiểm kê kho nên không đảo được; hãy kiểm kê lại.',
       STOCK_COUNT_ITEM_INACTIVE: 'Mặt hàng này đã ngừng dùng; hãy bật lại trước khi kiểm kê.',

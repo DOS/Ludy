@@ -35,7 +35,7 @@ interface PostingLines {
 
 // Every check of a pay run's entry, when it is asked for and again when it is posted: its shape (balanced, one side a line), the entity's chart is the regime the HR module built it for, its
 // accounts are in that chart (the org's chart and in use for TT133; the regime's own chart otherwise: the accounts of TT99 are not in the TT133 table), and the month is not closed.
-async function checkPostingLines(ctx: QueryContext, input: PostingLines): Promise<{ legalEntityId: string; total: string }> {
+async function checkPostingLines(ctx: QueryContext, input: PostingLines, lock: boolean): Promise<{ legalEntityId: string; total: string }> {
   // The accountant has not confirmed this chart's map of pay accounts (#2535): nothing is requested or posted from it. The HR module holds the same gate when it builds the proposal.
   if (PAYROLL_POSTING_MAPS[input.regime as keyof typeof PAYROLL_POSTING_MAPS]?.status !== 'confirmed') {
     throw new DomainError('HR_POSTING_MAP_UNCONFIRMED', 409, 'Bảng tài khoản hạch toán lương của chế độ kế toán này chưa được kế toán xác nhận; chưa hạch toán được', { regime: input.regime });
@@ -43,8 +43,8 @@ async function checkPostingLines(ctx: QueryContext, input: PostingLines): Promis
   const problems = journalVoucherProblems(input.lines.map((l) => ({ ...l, partyId: null })));
   if (problems.length > 0) throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Bút toán lương không hợp lệ: các dòng phải cân và mỗi dòng ghi một bên', { problems });
   const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
-  // The books are read under the entity's lock: a switch of regime cannot commit between this check and the posting's commit.
-  await lockBooks(ctx, legalEntityId);
+  // Posting: the books are read under the entity's lock, so a switch of regime cannot commit between this check and the posting's commit. Asking for the entry writes nothing (its command declares none) and is checked again here when it is approved.
+  if (lock) await lockBooks(ctx, legalEntityId);
   const books = await booksOn(ctx, legalEntityId, input.date);
   if (books.regime !== input.regime) {
     throw new DomainError('HR_POSTING_MISMATCH', 422, 'Chế độ kế toán của pháp nhân đã thay đổi từ khi lập bút toán; hãy lập lại đề xuất', { what: 'regime' });
@@ -97,7 +97,7 @@ export const checkPayrollPosting = defineCommand({
     // Only a live posting ends the request: one whose entry was reversed frees the run to be posted again (#2931).
     const posted = await livePosting(ctx, input.payrollRunId);
     if (posted) throw new DomainError('HR_POSTING_DONE', 409, 'Bảng lương này đã được hạch toán');
-    const checked = await checkPostingLines(ctx, input);
+    const checked = await checkPostingLines(ctx, input, false);
     const payload: JournalVoucherProposal = {
       date: input.date,
       description: input.description,
@@ -140,7 +140,7 @@ export const recordPayrollPosting = defineCommand({
     const lines = payload.lines.map((l) => ({ account: l.account, debit: l.debit, credit: l.credit }));
     // The payload names its entity: it is built so, and one without is refused, never read as the default.
     if (!payload.legalEntityId) throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất hạch toán lương không nêu pháp nhân', { what: 'legalEntityId' });
-    const checked = await checkPostingLines(ctx, { date: payload.date, legalEntityId: payload.legalEntityId, regime: payload.regime, lines });
+    const checked = await checkPostingLines(ctx, { date: payload.date, legalEntityId: payload.legalEntityId, regime: payload.regime, lines }, true);
     if (checked.total !== payload.total) {
       throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Tổng số tiền không khớp các dòng của phiếu', { problems: ['TOTAL_MISMATCH'] });
     }
