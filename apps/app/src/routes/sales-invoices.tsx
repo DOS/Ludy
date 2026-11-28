@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { BUYER_IDENTITY_KINDS, BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_RATE_NATURES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerIdentityKind, type BuyerKind, type DraftIssueCode, EINVOICE_NOTICE_FIELDS, einvoiceNoticeSubject, einvoiceNoticeText, type EInvoiceCorrection, type EInvoiceCorrectionKind, type EInvoiceNotice, type EInvoiceNoticeField, type EInvoiceNoticeList, type EInvoiceNoticeMailStatus, type EInvoiceNoticeStep, type EInvoiceRateNature, type EInvoiceReasonSuggested, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@ludy/kernel-contract';
+import { agreementRequirement, BUYER_IDENTITY_KINDS, BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_RATE_NATURES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerIdentityKind, type BuyerKind, type DraftIssueCode, EINVOICE_NOTICE_FIELDS, einvoiceNoticeSubject, einvoiceNoticeText, type EInvoiceCorrection, type EInvoiceCorrectionKind, type EInvoiceNotice, type EInvoiceNoticeField, type EInvoiceNoticeList, type EInvoiceNoticeMailStatus, type EInvoiceNoticeStep, type EInvoiceRateNature, type EInvoiceReasonSuggested, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@ludy/kernel-contract';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -601,7 +601,7 @@ export function CorrectionBanner({ correction, originalNumber }: { correction: E
 }
 
 // "Điều chỉnh" and "Thay thế" on an issued invoice (#2504). The method of an earlier correction is kept, the reason is one of Appendix XVII's (the list is empty until it is entered, and the
-// panel says so), a business buyer needs the signed agreement attached and an individual none. It makes a draft: issuing it is the same request and approval as any invoice. There is no cancel.
+// panel says so), the signed agreement is attached when the buyer is a business or may be one (the shared rule, kernel-contract einvoice-agreement.ts, #5266). It makes a draft: issuing it is the same request and approval as any invoice. There is no cancel.
 export function CorrectionAction({ draft, onStarted, openWith = null }: { draft: EInvoiceDraftSummary; onStarted: (draftId: string) => void; openWith?: EInvoiceCorrectionKind | null }) {
   const t = useTranslations('salesInvoices');
   const id = useId();
@@ -633,7 +633,15 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
   const [rateConfirmed, setRateConfirmed] = useState(false);
   const rate = useQuery({ ...orpc.einvoice.drafts.correctionRate.queryOptions({ input: { originalDraftId: draft.id, nature: nature === '' ? 'no_amount_change' : nature } }), enabled: kind !== null && nature !== '' });
   const proposal = nature !== '' && rate.data?.nature === nature ? rate.data : null;
-  const business = draft.buyerKind === 'business';
+  // Whether the buyer's signed agreement is required (Circular 91 Art. 10(1)(b), #5266): the one rule of the contract, fed by the invoice and by two answers of the person. An individual with a tax code
+  // may be a business household or a sole trader, so the screen asks for the agreement until the person says the buyer is not a business; a platform sale is attested, never guessed.
+  const [notBusiness, setNotBusiness] = useState(false);
+  const [platformSale, setPlatformSale] = useState(false);
+  const personWithTaxCode = draft.buyerKind === 'individual' && draft.buyerHasTaxCode;
+  const buyerIsBusiness = personWithTaxCode && notBusiness ? false : null;
+  const needsAgreement = agreementRequirement({ buyerKind: draft.buyerKind, buyerHasTaxCode: draft.buyerHasTaxCode, buyerIsBusiness, platformSale }).needed;
+  // The attestation is offered only where the agreement would otherwise be asked.
+  const platformOffered = agreementRequirement({ buyerKind: draft.buyerKind, buyerHasTaxCode: draft.buyerHasTaxCode, buyerIsBusiness, platformSale: false }).needed;
   const reasons = options.data?.reasonCodes ?? [];
   const start = useMutation({
     mutationFn: async (method: EInvoiceCorrectionKind) => {
@@ -641,14 +649,17 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
       // The invoice belongs to the organization on screen when the person pressed the button: if it changed while the agreement was uploading, nothing is started (the file is the first
       // organization's, the draft would be made in the second).
       const org = getCurrentOrg();
-      const agreementFileId = file ? await uploadAgreement(file) : null;
+      // A file picked and then hidden (the person attested a platform sale, or said the buyer is no business) is not uploaded.
+      const agreementFileId = needsAgreement && file ? await uploadAgreement(file) : null;
       if (getCurrentOrg() !== org) throw new ClientError('salesInvoices.correction.orgChanged', (tr) => tr('salesInvoices.correction.orgChanged'));
-      return client.einvoice.drafts.startCorrection({ originalDraftId: draft.id, kind: method, reasonCode: reason, agreementFileId, rateNature: nature, rateBasis: proposal.basis });
+      return client.einvoice.drafts.startCorrection({ originalDraftId: draft.id, kind: method, reasonCode: reason, agreementFileId, buyerIsBusiness, platformSale: platformSale && platformOffered, rateNature: nature, rateBasis: proposal.basis });
     },
     onSuccess: async (made) => {
       await refresh();
       setKind(null);
       setFile(null);
+      setNotBusiness(false);
+      setPlatformSale(false);
       setNature('');
       setRateConfirmed(false);
       ticket.current += 1;
@@ -746,12 +757,26 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
             </div>
           )}
           <div className="mt-2">
-            {business ? (
+            {personWithTaxCode && (
+              <label className="mb-2 flex items-start gap-2 text-xs" data-testid="invoice-correction-not-business-row">
+                <input type="checkbox" checked={notBusiness} onChange={(e) => setNotBusiness(e.target.checked)} data-testid="invoice-correction-not-business" />
+                <span>{t('correction.buyerNotBusiness')}</span>
+              </label>
+            )}
+            {platformOffered && (
+              <label className="mb-2 flex items-start gap-2 text-xs" data-testid="invoice-correction-platform-row">
+                <input type="checkbox" checked={platformSale} onChange={(e) => setPlatformSale(e.target.checked)} data-testid="invoice-correction-platform" />
+                <span>{t('correction.platformSale')}</span>
+              </label>
+            )}
+            {needsAgreement ? (
               <>
                 <Label htmlFor={`${id}-file`}>{t('correction.agreement')}</Label>
                 <Input id={`${id}-file`} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(e) => setFile(e.target.files?.[0] ?? null)} data-testid="invoice-correction-file" />
-                <p className="mt-1 text-xs text-subtle-foreground">{t('correction.agreementHint')}</p>
+                <p className="mt-1 text-xs text-subtle-foreground">{personWithTaxCode ? t('correction.agreementHintUnclear') : t('correction.agreementHint')}</p>
               </>
+            ) : platformSale ? (
+              <p className="text-xs text-subtle-foreground" data-testid="invoice-correction-platform-none">{t('correction.agreementNonePlatform')}</p>
             ) : (
               <p className="text-xs text-subtle-foreground">{t('correction.agreementNone')}</p>
             )}
@@ -799,7 +824,7 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
           </div>
           {start.error && <ErrorText>{errorMessage(start.error)}</ErrorText>}
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button size="sm" loading={start.isPending} disabled={reason === '' || (business && file === null) || proposal === null || !rateConfirmed} onClick={() => start.mutate(kind)} data-testid="invoice-correction-start">
+            <Button size="sm" loading={start.isPending} disabled={reason === '' || (needsAgreement && file === null) || proposal === null || !rateConfirmed} onClick={() => start.mutate(kind)} data-testid="invoice-correction-start">
               {t('correction.start')}
             </Button>
             <Button
@@ -809,6 +834,8 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
                 // Closing forgets the agreement picked: a reopened panel shows an empty picker, so nothing hidden is uploaded.
                 setKind(null);
                 setFile(null);
+                setNotBusiness(false);
+                setPlatformSale(false);
                 setNature('');
                 setRateConfirmed(false);
                 ticket.current += 1;

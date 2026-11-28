@@ -234,6 +234,7 @@ export const einvoiceDraftList = defineQuery({
         evidenceStored: row.signed_file_id !== null,
         updatedAt: new Date(row.updated_at).toISOString(),
         buyerKind: row.buyer_kind,
+        buyerHasTaxCode: row.buyer_tax_code !== null && row.buyer_tax_code !== '',
         correction:
           (row.correction_kind === 'adjustment' || row.correction_kind === 'replacement') && row.original_draft_id ? { kind: row.correction_kind, originalDraftId: row.original_draft_id } : null,
         correctedBy: firstKind.get(row.id) ?? null,

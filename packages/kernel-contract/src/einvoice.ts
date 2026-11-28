@@ -164,6 +164,11 @@ export const zEInvoiceStartCorrection = z.strictObject({
   kind: z.enum(EINVOICE_CORRECTION_KINDS),
   reasonCode: z.string().trim().min(1).max(50),
   agreementFileId: zId.nullable().default(null),
+  // The person's answers that decide whether the buyer's signed agreement is required (#5266, einvoice-agreement.ts). `buyerIsBusiness` is for a buyer entered as an individual with a tax code:
+  // false says the buyer is not a business household or sole trader (no agreement), true or null (no answer) requires it. `platformSale` attests that the goods were sold on an e-commerce or
+  // other digital platform (no agreement). Both are recorded in the audit as codes.
+  buyerIsBusiness: z.boolean().nullable().default(null),
+  platformSale: z.boolean().default(false),
   rateNature: z.enum(EINVOICE_RATE_NATURES),
   rateBasis: z.enum(EINVOICE_RATE_BASES),
 });
@@ -284,6 +289,8 @@ export const zEInvoiceDraftSummary = z.object({
   updatedAt: z.string(),
   // The buyer's kind: a business buyer needs the signed agreement before a correction (#2504).
   buyerKind: z.enum(BUYER_KINDS),
+  // The buyer has a tax code: with the kind it decides whether the screen asks for the agreement (#5266). Never the code itself.
+  buyerHasTaxCode: z.boolean().default(false),
   // Set on an adjusting or a replacing invoice (#2504): its method and the issued draft it corrects.
   correction: z.strictObject({ kind: z.enum(EINVOICE_CORRECTION_KINDS), originalDraftId: zId }).nullable().default(null),
   // On an issued invoice: the method of the first correction that was issued for it, so the screen offers only that one for the next (#2504); null when none was issued.

@@ -191,9 +191,13 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     return approved.documentId;
   }
   // An invoice issued and posted the ordinary way: the draft, and the document in the ledger.
-  async function issued(o: Org, p: ReturnType<typeof sandbox>, buyer: 'business' | 'individual' = 'business'): Promise<{ draftId: string; documentId: string }> {
+  async function issued(o: Org, p: ReturnType<typeof sandbox>, buyer: 'business' | 'individual' | 'individual_taxed' = 'business'): Promise<{ draftId: string; documentId: string }> {
     const base = form(o);
-    const input = buyer === 'business' ? base : { ...base, buyer: { kind: 'individual', partyId: null, taxCode: null, name: 'Anh Nam', address: null, email: null } };
+    // An individual with a tax code (a made-up 12-digit one, the shape of a personal code) may be a business household or a sole trader (#5266).
+    const input =
+      buyer === 'business'
+        ? base
+        : { ...base, buyer: { kind: 'individual', partyId: null, taxCode: buyer === 'individual_taxed' ? '012345678901' : null, name: 'Anh Nam', address: null, email: null } };
     const draft = await execute<{ id: string }>(o, 'finance.einvoice_draft.save', input);
     await approve(o, draft.id);
     expect(await run(o, draft.id, p.provider)).toMatchObject({ state: 'issued' });
@@ -214,7 +218,7 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     o: Org,
     originalDraftId: string,
     kind: 'adjustment' | 'replacement',
-    extra: { reasonCode?: string; agreementFileId?: string | null; rateNature?: string; rateBasis?: string } = {},
+    extra: { reasonCode?: string; agreementFileId?: string | null; buyerIsBusiness?: boolean | null; platformSale?: boolean; rateNature?: string; rateBasis?: string } = {},
   ) => execute<Corrected>(o, 'finance.einvoice.start_correction', { originalDraftId, kind, reasonCode: '1', agreementFileId: null, rateNature: 'no_amount_change', rateBasis: 'original', ...extra });
   // The correcting draft with the lines the person typed: the buyer and the series are the copy's.
   async function fill(o: Org, corrected: Corrected & { buyer: Record<string, unknown>; seriesId: string }, lines: Array<{ description: string; unit: string | null; quantity: string; unitPrice: string; vatRate: string }>) {
@@ -261,6 +265,35 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     const file = await agreementFile(o);
     const b = await start(o, company.draftId, 'replacement', { agreementFileId: file });
     expect(b.correction).toEqual({ kind: 'replacement', originalDraftId: company.draftId, reasonCode: '1', agreementFileId: file, rateBasis: 'original' });
+  });
+
+  it('fails safe for an individual with a tax code, takes the person\'s answer, and waives the agreement for an attested platform sale, recording codes only (#5266)', async () => {
+    const o = await org();
+    const p = sandbox();
+    const taxed = await issued(o, p, 'individual_taxed');
+    // No answer, or "a business household or sole trader": the agreement is required, and a refused start makes no draft.
+    expect(await refusal(start(o, taxed.draftId, 'adjustment'))).toBe('EINVOICE_AGREEMENT_REQUIRED');
+    expect(await refusal(start(o, taxed.draftId, 'adjustment', { buyerIsBusiness: true }))).toBe('EINVOICE_AGREEMENT_REQUIRED');
+    expect(await rows('SELECT 1 FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND original_draft_id IS NOT NULL', [o.orgId])).toHaveLength(0);
+    // The person says the buyer is not a business: no file is asked.
+    const notBusiness = await start(o, taxed.draftId, 'adjustment', { buyerIsBusiness: false });
+    expect(notBusiness.correction).toMatchObject({ kind: 'adjustment', originalDraftId: taxed.draftId, agreementFileId: null });
+    // A business buyer is waived only by the attestation of a platform sale; an attached file is still linked when there is one.
+    const company = await issued(o, p);
+    expect(await refusal(start(o, company.draftId, 'adjustment', { buyerIsBusiness: false }))).toBe('EINVOICE_AGREEMENT_REQUIRED');
+    const platform = await start(o, company.draftId, 'adjustment', { platformSale: true });
+    expect(platform.correction).toMatchObject({ originalDraftId: company.draftId, agreementFileId: null });
+    const taxedPlatform = await issued(o, p, 'individual_taxed');
+    expect((await start(o, taxedPlatform.draftId, 'replacement', { platformSale: true })).correction).toMatchObject({ kind: 'replacement', agreementFileId: null });
+    // The audit names the basis and the two answers, and nothing of the buyer.
+    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.start_correction' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId]);
+    expect(audit.map((a) => [a.detail.agreementBasis, a.detail.buyerIsBusiness ?? null, a.detail.platformSale])).toEqual([
+      ['individual_not_business', false, false],
+      ['platform_sale_attested', null, true],
+      ['platform_sale_attested', null, true],
+    ]);
+    const text = JSON.stringify(audit);
+    for (const secret of ['012345678901', 'Anh Nam', 'Công ty Mua Thử', BUYER_TAX_CODE]) expect(text).not.toContain(secret);
   });
 
   it('adjusts up and down: the original stays in force, each adjusting invoice is linked to it and posts only the difference, and the same method is kept', async () => {

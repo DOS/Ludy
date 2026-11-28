@@ -42,6 +42,7 @@ const summary = (over: Partial<EInvoiceDraftSummary> = {}): EInvoiceDraftSummary
   evidenceStored: true,
   updatedAt: '2026-11-17T10:00:00.000Z',
   buyerKind: 'business',
+  buyerHasTaxCode: true,
   correction: null,
   correctedBy: null,
   replaced: false,
@@ -102,6 +103,31 @@ describe('the panel that starts a correction', () => {
     expect(individual).toContain('Thay thế hóa đơn số 0000007');
     expect(individual).not.toContain('type="file"');
     expect(individual).toContain('không cần biên bản thỏa thuận');
+  });
+
+  it('asks for the agreement of every buyer the text names, and fails safe for an individual with a tax code (#5266)', () => {
+    const panel = (over: Partial<EInvoiceDraftSummary>) => render(<CorrectionAction draft={summary(over)} onStarted={() => undefined} openWith="adjustment" />);
+    // A business buyer: the file, the platform attestation, and no question about the buyer being a business.
+    const business = panel({ buyerKind: 'business', buyerHasTaxCode: true });
+    expect(business).toContain('type="file"');
+    expect(business).toContain('data-testid="invoice-correction-platform"');
+    expect(business).not.toContain('invoice-correction-not-business');
+    expect(business).toContain('tổ chức, hộ kinh doanh hoặc cá nhân kinh doanh');
+    // An individual with a tax code may be a household or a sole trader: the agreement is asked, with the question that can lift it, and the start waits for the file.
+    const person = panel({ buyerKind: 'individual', buyerHasTaxCode: true });
+    expect(person).toContain('type="file"');
+    expect(person).toContain('data-testid="invoice-correction-not-business"');
+    expect(person).not.toMatch(/data-testid="invoice-correction-not-business"[^>]*checked/);
+    expect(person).toContain('có thể là hộ kinh doanh hoặc cá nhân kinh doanh');
+    expect(person).toMatch(/data-testid="invoice-correction-start"[^>]*disabled|disabled[^>]*data-testid="invoice-correction-start"/);
+    // An individual with no tax code and a consumer: no file, no questions, the notice instead.
+    for (const buyerKind of ['individual', 'consumer'] as const) {
+      const none = panel({ buyerKind, buyerHasTaxCode: false });
+      expect(none).not.toContain('type="file"');
+      expect(none).not.toContain('invoice-correction-not-business');
+      expect(none).not.toContain('invoice-correction-platform');
+      expect(none).toContain('không cần biên bản thỏa thuận');
+    }
   });
 
   it('asks what the error is before it proposes a rate, and starts nothing until the proposal is confirmed (#3709)', () => {

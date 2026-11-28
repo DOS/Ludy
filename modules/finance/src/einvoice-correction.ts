@@ -5,7 +5,7 @@
 // transaction that posts it (#916). There is no cancel action: an issued invoice is only ever corrected by one of the two.
 // - finance.einvoice.start_correction (owners, admins, members; R1): refused unless the original is issued here and is the invoice in force (not itself replaced, not an adjusting invoice);
 //   one correction of an original is open at a time; a later correction keeps the method of the first (adjust stays adjust); the reason code is one of Appendix XVII (refused while the list
-//   is empty, #3571); a buyer with a tax code needs the signed agreement file ("biên bản thỏa thuận", the accountant's answer to #2506 question 2), an individual buyer none. The person also says what
+//   is empty, #3571); the signed agreement file ("biên bản thỏa thuận", the accountant's answer to #2506 question 2 and Circular 91 Art. 10(1)(b)) is required by the shared rule of kernel-contract einvoice-agreement.ts (#5266): for a business buyer, and, failing safe, an individual with a tax code the person has not confirmed as no business; never for an individual without a tax code or a consumer; waived by the person's platform-sale attestation. The person also says what
 //   the correction is about (`rateNature`) and confirms the basis the screen proposed for the VAT rate (`rateBasis`, #3709): the code works the basis out from the nature (domain/einvoice-correction-rate.ts)
 //   and refuses a different one, and a replacement copy carries the rate that basis gives.
 // - finance.einvoice.correction_rate (owners, admins, members; read only): the proposal for a nature, with the fixed reason and the precedent note (#3709).
@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { computeLineTotals, money, normalizeVatRate, sumLineTotals } from '@ludy/l10n-vn';
 import { ADJUST_REPLACE_REASON_CODES, isReasonCode, type ReasonCode } from '@ludy/einvoice';
-import { zEInvoiceCorrectionRateInput, zEInvoiceReasonSourceInput, zEInvoiceStartCorrection, type EInvoiceCorrectionOptions, type EInvoiceCorrectionRate, type EInvoiceDraft, type EInvoiceRateNature, type EInvoiceReasonSource } from '@ludy/kernel-contract';
+import { agreementRequirement, zEInvoiceCorrectionRateInput, zEInvoiceReasonSourceInput, zEInvoiceStartCorrection, type EInvoiceCorrectionOptions, type EInvoiceCorrectionRate, type EInvoiceDraft, type EInvoiceRateNature, type EInvoiceReasonSource } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { CORRECTION_RATE_PRECEDENT_NOTE, correctionRateReason, proposeCorrectionRate, proposeCorrectionRates, reducedEnd, type CorrectionRateProposal } from './domain/einvoice-correction-rate.ts';
@@ -88,14 +88,17 @@ export const einvoiceStartCorrection = defineCommand({
       throw new DomainError('EINVOICE_REASON_CODE_INVALID', 422, list.length === 0 ? 'Chưa có danh sách mã lý do điều chỉnh hoặc thay thế, nên chưa lập được' : 'Mã lý do không có trong danh sách');
     }
 
-    // A buyer with a tax code (a business) signs an agreement first; an individual needs none.
+    // The buyer's signed agreement (Circular 91 Art. 10(1)(b), #5266): required for an organization, a business household or a sole trader, and, failing safe, for an individual with a tax code
+    // unless the person confirms the buyer is not a business; waived when the person attests a platform sale. The rule is shared with the screen (kernel-contract einvoice-agreement.ts). The summary-table
+    // exemption of the same paragraph is not applicable to an invoice made here (explained there). A file that is attached is always checked and linked, required or not.
+    const rule = agreementRequirement({ buyerKind: original.buyer_kind, buyerHasTaxCode: original.buyer_tax_code !== null && original.buyer_tax_code !== '', buyerIsBusiness: input.buyerIsBusiness, platformSale: input.platformSale });
     let agreement: string | null = null;
     if (input.agreementFileId) {
       agreement = input.agreementFileId.toLowerCase();
       const file = await ctx.trx.selectFrom('ludy_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', agreement).where('source', '=', 'agreement').executeTakeFirst();
       if (!file) throw new DomainError('EINVOICE_AGREEMENT_FILE_NOT_FOUND', 404, 'Không tìm thấy tệp biên bản thỏa thuận');
-    } else if (original.buyer_kind === 'business') {
-      throw new DomainError('EINVOICE_AGREEMENT_REQUIRED', 422, 'Người mua là doanh nghiệp: hãy đính kèm biên bản thỏa thuận đã ký của hai bên trước khi điều chỉnh hoặc thay thế');
+    } else if (rule.needed) {
+      throw new DomainError('EINVOICE_AGREEMENT_REQUIRED', 422, 'Người mua là tổ chức, hộ kinh doanh hoặc cá nhân kinh doanh (hoặc chưa rõ là cá nhân không kinh doanh): hãy đính kèm biên bản thỏa thuận đã ký của hai bên trước khi điều chỉnh hoặc thay thế', { basis: rule.basis });
     }
 
     const today = await databaseToday(ctx.trx);
@@ -166,8 +169,8 @@ export const einvoiceStartCorrection = defineCommand({
         })
         .execute();
     }
-    // Ids and the method only: no buyer detail, no amount.
-    ctx.audit({ draftId, originalDraftId: originalId, kind: input.kind, reasonCode: input.reasonCode, agreementFileId: agreement, legalEntityId: original.legal_entity_id, rateNature: input.rateNature, rateBasis: proposal.basis });
+    // Ids, the method and codes only: no buyer detail, no amount. `agreementBasis` names why the agreement was or was not asked, and the two answers of the person that fed it.
+    ctx.audit({ draftId, originalDraftId: originalId, kind: input.kind, reasonCode: input.reasonCode, agreementFileId: agreement, agreementBasis: rule.basis, buyerIsBusiness: input.buyerIsBusiness, platformSale: input.platformSale, legalEntityId: original.legal_entity_id, rateNature: input.rateNature, rateBasis: proposal.basis });
     return loadDraft(ctx, draftId, today);
   },
 });
