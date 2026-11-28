@@ -82,8 +82,21 @@ describe('BooksRegimeCard', () => {
     expect(html).toContain('2027');
     expect(html).not.toContain('Công ty TNHH Mẫu');
     expect(html).not.toContain(b.ownerOnly);
-    expect(html).not.toContain('<form');
+    // The form of a choice is closed until the button is pressed.
     expect(html).not.toContain(b.ack);
+    expect(html).toContain('aria-expanded="false"');
+    // The place the done message is announced from is on the page, empty.
+    expect(html).toMatch(/role="status"[^>]*data-testid="books-regime-done"[^>]*><\/p>|data-testid="books-regime-done"[^>]*role="status"[^>]*><\/p>/);
+  });
+
+  // The kernel refuses a choice while a posting proposal waits (after the second factor), so the card names the date and the proposals and offers no button.
+  it('does not offer the switch while a posting proposal holds it, though a date is named', () => {
+    const html = render([entity({ blockers: [{ code: 'PENDING_PROPOSALS', proposalIds: [idA], nextSwitchDate: '2027-01-01' }] })], 'owner');
+    expect(html).toContain(prefix(b.offered));
+    expect(html).toContain(b.blockersTitle);
+    expect(html).toContain('1 posting proposal is not finished');
+    expect(html).toContain('Open proposal 1');
+    expect(html).not.toContain(prefix(b.choose));
   });
 
   it('gives a member and a viewer the state and no button, and says who chooses', () => {
@@ -99,14 +112,16 @@ describe('BooksRegimeCard', () => {
   it('gives an admin the way to take a waiting choice back, and not the choice', () => {
     const waiting = entity({ nextSwitchDate: null, scheduled: { effectiveFrom: '2027-01-01', cancellable: true } });
     const html = render([waiting], 'admin');
-    expect(html).toContain(prefix(b.scheduledOpen));
+    // The two sentences share their beginning, so the part that differs is compared.
+    expect(html).toContain('No entry falls under it yet');
     expect(html).toContain(prefix(b.takeBack));
     expect(html).not.toContain(prefix(b.choose));
     expect(html).not.toContain(b.ownerOnly);
     // An owner too; neither once entries fall under the choice.
     expect(render([waiting], 'owner')).toContain(prefix(b.takeBack));
     const locked = render([entity({ nextSwitchDate: null, scheduled: { effectiveFrom: '2027-01-01', cancellable: false } })], 'owner');
-    expect(locked).toContain(prefix(b.scheduledLocked));
+    expect(locked).toContain('Entries already fall under it');
+    expect(locked).not.toContain('No entry falls under it yet');
     expect(locked).not.toContain(prefix(b.takeBack));
   });
 
@@ -128,7 +143,7 @@ describe('BooksRegimeCard', () => {
     expect(html).toContain(b.notOffered);
     for (const code of ['FISCAL_YEAR_UNSUPPORTED', 'ENTRIES_ON_OR_AFTER', 'OPENING_ENTRY_BLOCKS', 'PENDING_PROPOSALS']) expect(html, code).toContain(`data-testid="books-blocker-${code}"`);
     expect(html).toContain(b.blockers.FISCAL_YEAR_UNSUPPORTED);
-    expect(html).toContain('2 posting proposals are waiting for approval');
+    expect(html).toContain('2 posting proposals are not finished');
     expect(html).toContain('Open proposal 1');
     expect(html).toContain('Open proposal 2');
     // Nothing to choose while no date is offered.
@@ -148,6 +163,8 @@ describe('BooksRegimeCard', () => {
     expect(html).not.toContain(b.current133);
     expect(html).toContain('data-testid="books-blocker-ALREADY_TT99"');
     expect(html).not.toContain(prefix(b.choose));
+    // Nobody is told to ask an owner for what no longer needs choosing.
+    expect(render([entity({ regime: 'tt99', since: '2027-01-01', nextSwitchDate: null })], 'member')).not.toContain(b.ownerOnly);
   });
 });
 
@@ -160,20 +177,24 @@ describe('ChooseForm', () => {
     );
   // The opening tag of the button whose label is the given text.
   const buttonOf = (html: string, label: string) => html.split('<button').find((chunk) => chunk.includes(`>${label}<`)) ?? '';
+  // The attribute itself: every Button carries the class names disabled:opacity-50 and the like, so the word alone proves nothing.
+  const isDisabled = (button: string) => /\s(?:disabled=""|aria-disabled="true")/.test(button);
 
   it('keeps the confirm button off until the tax authority is said to be told, and says Ludy sends nothing to it', () => {
     const confirm = b.confirmChoose.replace('{date}', '01/01/2027');
     expect(form(false)).toContain(b.ack);
     expect(form(false)).toContain(b.ackHint);
-    expect(buttonOf(form(false), confirm)).toContain('disabled');
-    expect(buttonOf(form(true), confirm)).not.toContain('disabled');
+    expect(buttonOf(form(false), confirm)).not.toBe('');
+    expect(isDisabled(buttonOf(form(false), confirm))).toBe(true);
+    expect(isDisabled(buttonOf(form(true), confirm))).toBe(false);
     // Never twice while a request is out.
-    expect(buttonOf(form(true, true), confirm)).toContain('disabled');
+    expect(isDisabled(buttonOf(form(true, true), confirm))).toBe(true);
   });
 
   it('labels the group by its title and has a button to close it without a change', () => {
     const html = form(false);
     expect(html).toContain(`aria-label="${b.chooseTitle.replace('{date}', '01/01/2027')}"`);
-    expect(buttonOf(html, b.cancel)).not.toContain('disabled');
+    expect(buttonOf(html, b.cancel)).not.toBe('');
+    expect(isDisabled(buttonOf(html, b.cancel))).toBe(false);
   });
 });

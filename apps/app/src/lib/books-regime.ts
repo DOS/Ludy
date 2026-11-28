@@ -3,10 +3,14 @@
 // switch to Circular 99 is not offered. The kernel decides every rule again (finance.books.set_regime and cancel_regime); this only shapes the screen.
 import type { BooksBlocker, BooksRegimeEntity } from '@ludy/kernel-contract';
 
-// An owner chooses Circular 99, from the date the state offers and while no choice is waiting; an owner or an admin takes a waiting choice back while no entry falls under it yet.
-export function booksRegimeActions(role: string | null | undefined, entity: Pick<BooksRegimeEntity, 'nextSwitchDate' | 'scheduled'>): { canChoose: boolean; canTakeBack: boolean } {
+// An owner chooses Circular 99, from the date the state offers, while no choice is waiting and no posting proposal holds the switch (the kernel refuses it then, BOOKS_PENDING_PROPOSALS, so it is not offered);
+// an owner or an admin takes a waiting choice back while no entry falls under it yet.
+export function booksRegimeActions(
+  role: string | null | undefined,
+  entity: Pick<BooksRegimeEntity, 'nextSwitchDate' | 'scheduled' | 'blockers'>,
+): { canChoose: boolean; canTakeBack: boolean } {
   return {
-    canChoose: role === 'owner' && entity.nextSwitchDate !== null && entity.scheduled === null,
+    canChoose: role === 'owner' && entity.nextSwitchDate !== null && entity.scheduled === null && !entity.blockers.some((b) => b.code === 'PENDING_PROPOSALS'),
     canTakeBack: (role === 'owner' || role === 'admin') && entity.scheduled?.cancellable === true,
   };
 }

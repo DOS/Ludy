@@ -6,22 +6,30 @@ import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';
 import { blockerWording, booksRegimeActions, waitingProposalIds } from '../src/lib/books-regime.ts';
 
-const offered = { nextSwitchDate: '2027-01-01', scheduled: null };
-const waiting = { nextSwitchDate: null, scheduled: { effectiveFrom: '2027-01-01', cancellable: true } };
+const offered = { nextSwitchDate: '2027-01-01', scheduled: null, blockers: [] as BooksBlocker[] };
+const waiting = { nextSwitchDate: null, scheduled: { effectiveFrom: '2027-01-01', cancellable: true }, blockers: [] as BooksBlocker[] };
 
 describe('booksRegimeActions', () => {
   it('offers the choice to an owner alone, while a date is offered and no choice waits', () => {
     expect(booksRegimeActions('owner', offered)).toEqual({ canChoose: true, canTakeBack: false });
     for (const role of ['admin', 'member', 'viewer', null, undefined]) expect(booksRegimeActions(role, offered).canChoose, String(role)).toBe(false);
-    expect(booksRegimeActions('owner', { nextSwitchDate: null, scheduled: null }).canChoose).toBe(false);
-    expect(booksRegimeActions('owner', { nextSwitchDate: '2028-01-01', scheduled: waiting.scheduled }).canChoose).toBe(false);
+    expect(booksRegimeActions('owner', { ...offered, nextSwitchDate: null }).canChoose).toBe(false);
+    expect(booksRegimeActions('owner', { ...offered, nextSwitchDate: '2028-01-01', scheduled: waiting.scheduled }).canChoose).toBe(false);
+  });
+
+  // The kernel refuses a choice while a posting proposal waits (BOOKS_PENDING_PROPOSALS), after the second factor: the screen does not offer what it would refuse.
+  it('does not offer the choice while a posting proposal holds the switch, and still offers it past the other blockers that come with a date', () => {
+    const held = { ...offered, blockers: [{ code: 'PENDING_PROPOSALS', proposalIds: ['00000000-0000-7000-8000-00000000000a'], nextSwitchDate: '2027-01-01' }] satisfies BooksBlocker[] };
+    expect(booksRegimeActions('owner', held)).toEqual({ canChoose: false, canTakeBack: false });
+    const later = { ...offered, nextSwitchDate: '2028-01-01', blockers: [{ code: 'ENTRIES_ON_OR_AFTER', lastEntryDate: '2027-03-01' }] satisfies BooksBlocker[] };
+    expect(booksRegimeActions('owner', later).canChoose).toBe(true);
   });
 
   it('offers taking a choice back to an owner or an admin, while no entry falls under it', () => {
     expect(booksRegimeActions('owner', waiting)).toEqual({ canChoose: false, canTakeBack: true });
     expect(booksRegimeActions('admin', waiting)).toEqual({ canChoose: false, canTakeBack: true });
     for (const role of ['member', 'viewer', null, undefined]) expect(booksRegimeActions(role, waiting).canTakeBack, String(role)).toBe(false);
-    expect(booksRegimeActions('owner', { nextSwitchDate: null, scheduled: { effectiveFrom: '2027-01-01', cancellable: false } }).canTakeBack).toBe(false);
+    expect(booksRegimeActions('owner', { ...waiting, scheduled: { effectiveFrom: '2027-01-01', cancellable: false } }).canTakeBack).toBe(false);
     expect(booksRegimeActions('owner', offered).canTakeBack).toBe(false);
   });
 });

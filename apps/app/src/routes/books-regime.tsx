@@ -87,6 +87,8 @@ function EntityBooks({ entity, role, named }: { entity: BooksRegimeEntity; role:
         setDone(t('doneChoose', { date: f.date(result.effectiveFrom) }));
         void queryClient.invalidateQueries();
       },
+      // A refusal can mean the state moved since it was read (a date no longer valid, a choice locked meanwhile): read it again.
+      onError: () => void queryClient.invalidateQueries({ queryKey: orpc.booksRegime.state.key() }),
     }),
   );
   const cancel = useMutation(
@@ -97,12 +99,14 @@ function EntityBooks({ entity, role, named }: { entity: BooksRegimeEntity; role:
         setDone(t('doneTakeBack'));
         void queryClient.invalidateQueries();
       },
+      onError: () => void queryClient.invalidateQueries({ queryKey: orpc.booksRegime.state.key() }),
     }),
   );
 
-  // The focus moves into the form when it opens, and back to the button that opened it when it is closed without a change.
+  // The focus moves into the form when it opens: onto the checkbox of a choice, onto "Đóng" of a take back (never onto the button that changes the books, so Enter right away does nothing).
+  // The buttons that open a form stay on the page, so Close gives the focus back to the one that opened it.
   useEffect(() => {
-    if (mode) form.current?.querySelector<HTMLElement>('[role="checkbox"], button')?.focus();
+    if (mode) form.current?.querySelector<HTMLElement>('[role="checkbox"], [data-initial-focus]')?.focus();
   }, [mode]);
   const open = (next: Mode, button: HTMLElement) => {
     opener.current = button;
@@ -157,16 +161,17 @@ function EntityBooks({ entity, role, named }: { entity: BooksRegimeEntity; role:
           )}
         </div>
       )}
-      {role !== 'owner' && !actions.canTakeBack && <p className="mt-2 text-xs text-subtle-foreground">{t('ownerOnly')}</p>}
+      {/* Only where a choice could be made: not once Circular 99 is in force or chosen. */}
+      {role !== 'owner' && entity.regime === 'tt133' && !scheduled && <p className="mt-2 text-xs text-subtle-foreground">{t('ownerOnly')}</p>}
 
       <div className="mt-3 flex flex-wrap gap-2">
-        {actions.canChoose && offered && mode !== 'choose' && (
-          <Button type="button" variant="outline" className="max-md:min-h-11 pointer-coarse:min-h-11" onClick={(e) => open('choose', e.currentTarget)}>
+        {actions.canChoose && offered && (
+          <Button type="button" variant="outline" aria-expanded={mode === 'choose'} className="max-md:min-h-11 pointer-coarse:min-h-11" onClick={(e) => open('choose', e.currentTarget)}>
             {t('choose', { date: f.date(offered) })}
           </Button>
         )}
-        {actions.canTakeBack && scheduled && mode !== 'takeBack' && (
-          <Button type="button" variant="ghost" className="max-md:min-h-11 pointer-coarse:min-h-11" onClick={(e) => open('takeBack', e.currentTarget)}>
+        {actions.canTakeBack && scheduled && (
+          <Button type="button" variant="ghost" aria-expanded={mode === 'takeBack'} className="max-md:min-h-11 pointer-coarse:min-h-11" onClick={(e) => open('takeBack', e.currentTarget)}>
             {t('takeBack', { date: f.date(scheduled.effectiveFrom) })}
           </Button>
         )}
@@ -200,7 +205,7 @@ function EntityBooks({ entity, role, named }: { entity: BooksRegimeEntity; role:
               onClick={() => cancel.mutate({ legalEntityId: entity.legalEntityId, effectiveFrom: scheduled.effectiveFrom, idempotencyKey: cancelKey })}>
               {t('confirmTakeBack')}
             </Button>
-            <Button type="button" variant="ghost" className="max-md:min-h-11 pointer-coarse:min-h-11" onClick={close}>
+            <Button type="button" variant="ghost" data-initial-focus className="max-md:min-h-11 pointer-coarse:min-h-11" onClick={close}>
               {t('cancel')}
             </Button>
           </div>
@@ -215,11 +220,10 @@ function EntityBooks({ entity, role, named }: { entity: BooksRegimeEntity; role:
         </div>
       )}
 
-      {done && (
-        <p className="mt-3 text-sm text-foreground" role="status" data-testid="books-regime-done">
-          {done}
-        </p>
-      )}
+      {/* Always on the page, so a screen reader announces the text when it is filled in. */}
+      <p className={done ? 'mt-3 text-sm text-foreground' : 'sr-only'} role="status" data-testid="books-regime-done">
+        {done}
+      </p>
     </section>
   );
 }
