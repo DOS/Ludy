@@ -10841,6 +10841,10 @@ export const en = {
     supplier: {
       candidate: 'May be a supplier payment: {name}, invoice {invoice}, {amount}',
       reason: { amount_note: 'Amount and invoice number match', amount: 'Amount matches' },
+      ambiguousBadge: 'Ambiguous match',
+      ambiguousCandidateBadge: 'Verify before settling',
+      ambiguousReason:
+        'This bank line carries no beneficiary account number, and {count, plural, one {# approved, exported supplier payment matches} other {# approved, exported supplier payments match}} the exact same amount. Check the supplier and invoice or statement reference before sending a settlement request.',
       ask: 'Ask to record this payment',
       confirm: 'This sends a request to record a bank debit advice for the line dated {date}. When the statement shows the account the money went to, it is compared with the approved account; when it shows none, check the beneficiary yourself. The request waits in the Inbox for someone who may approve. Ludy moves no money.',
       send: 'Send request',
