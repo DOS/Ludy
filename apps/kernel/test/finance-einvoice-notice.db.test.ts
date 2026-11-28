@@ -292,7 +292,11 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     expect(await refusal(execute(o, 'finance.einvoice.notice_send', { noticeId: noticeNoEmail.id, approved: true, expectedHash: '0'.repeat(64) }))).toBe('EINVOICE_NOTICE_STALE');
     expect(await refusal(execute(o, 'finance.einvoice.notice_send', { noticeId: noticeNoEmail.id, approved: true, expectedHash: noticeNoEmail.reviewHash }))).toBe('BUYER_EMAIL_REQUIRED');
 
-    const badEmail = await issued(o, sandbox(), 'business', 'not-an-email');
+    const badEmail = await issued(o, sandbox(), 'business', 'ketoan@muathu.example');
+    await admin(async (c) => {
+      await c.query('SET session_replication_role = replica');
+      await c.query("UPDATE ludy_finance.einvoice_draft SET buyer_email = 'not-an-email' WHERE org_id = $1 AND id = $2", [o.orgId, badEmail.draftId]);
+    });
     const noticeBadEmail = await open(o, badEmail.draftId, 'buyer_name', 'Tên Mới');
     expect(await refusal(execute(o, 'finance.einvoice.notice_send', { noticeId: noticeBadEmail.id, approved: true, expectedHash: noticeBadEmail.reviewHash }))).toBe('BUYER_EMAIL_REQUIRED');
 

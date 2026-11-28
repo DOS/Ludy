@@ -27,7 +27,6 @@ const input = (over: Partial<MailTemplateInput> = {}): MailTemplateInput => ({
   payload,
   publicUrl: 'https://app.example.test',
   inboundAddress: 'intake-token@in.example.test',
-  conversationAddress: 'conversation-token@in.example.test',
   brand: 'Ludy',
   execute: (async () => ({})) as MailTemplateInput['execute'],
   ...over,
@@ -44,7 +43,7 @@ describe('einvoice notice mail (#3697)', () => {
   });
 
   it('renders code-built Vietnamese notice text, escapes HTML, and sets Reply-To only to conversationAddress', async () => {
-    const rendered = await einvoiceNoticeMailTemplate.render(input());
+    const rendered = await einvoiceNoticeMailTemplate.render(input({ conversationAddress: 'conversation-token@in.example.test' }));
     expect(rendered).not.toBeNull();
     expect(rendered?.replyTo).toBe('conversation-token@in.example.test');
     expect(rendered?.text).toContain('Kính gửi Công ty Mua <Thử> & Cộng sự,');
@@ -58,9 +57,7 @@ describe('einvoice notice mail (#3697)', () => {
 
   it('omits Reply-To when conversationAddress is missing even if inboundAddress exists', async () => {
     for (const conversationAddress of [null, undefined]) {
-      const rendered = await einvoiceNoticeMailTemplate.render(
-        input(conversationAddress === undefined ? { conversationAddress: undefined } : { conversationAddress }),
-      );
+      const rendered = await einvoiceNoticeMailTemplate.render(input(conversationAddress === undefined ? {} : { conversationAddress }));
       expect(rendered).not.toBeNull();
       expect(rendered?.replyTo).toBeUndefined();
     }
