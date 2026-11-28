@@ -26,7 +26,7 @@ import { zMcpPartiesInput, zMcpConversationsInput, zMcpConversationInput, zMcpSe
 import { MCP_WRITE_SCOPE_IDS, SIGNAL_PARTIAL_VIEW_CODE, type McpWriteScopeId, zMcpDecisionsInput, zMcpMeetingsInput, zMcpOpenActionsInput, zMcpSearchInput, zMcpSeriesOpenItemsInput, zMcpMinutesInput, zMcpSignEnvelopeGetInput, zMcpSignEnvelopesInput, zMcpSignRenewalsInput, zMcpSignTemplatesInput } from '@ludy/kernel-contract';
 import { zMcpAdsFlagsInput, zMcpAdsLaunchesInput, zMcpAdsPagesInput, zMcpAdsSpendInput, zMcpAdsTodayInput } from '@ludy/mod-ads';
 import { zMcpBookingsInput, zMcpDealInput, zMcpDealsInput, zMcpQuoteInput, zMcpQuotesInput } from '@ludy/mod-crm';
-import { zMcpInvoicesInput, zMcpOpenBalancesInput, zMcpOverviewInput, zMcpPaymentReminderInput } from '@ludy/mod-finance';
+import { zMcpCashForecastInput, zMcpInvoicesInput, zMcpMonthCloseInput, zMcpOpenBalancesInput, zMcpOverviewInput, zMcpPaymentReminderInput } from '@ludy/mod-finance';
 import { zMcpChannelsInput, zMcpDraftCreate, zMcpMetricsSummaryInput, zMcpMetricsTotalsInput, zMcpPostsInput, zMcpReviewQueueInput } from '@ludy/mod-social';
 import { zMcpRoadmapDemandSummaryInput, zMcpRoadmapIdeasInput, zMcpTriageSummaryInput } from '@ludy/mod-projects';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -882,6 +882,77 @@ export function toolsFor(runtime: Runtime, actor: UserActor, orgId: string, draf
       annotations: READ_ONLY,
       read: async (args) => await runtime.query<Record<string, unknown>>('finance.mcp.invoices', args, { actor, orgId }),
       rows: (value) => rowCount(value.invoices),
+    },
+    {
+      name: 'ludy_finance_cash_forecast',
+      module: 'finance',
+      title: 'Cash forecast for the next 90 days',
+      description:
+        'The 90-day cash forecast of the organization, the figures of the Kế toán cash forecast card: `openingCash` (booked cash, accounts 111 and 112, today), the lowest balance of the 90 days and its day (`low`), the balance at day 30, 60 and 90 with what comes in and goes out up to it (`checkpoints`), the largest items up to the low day (`topItems`: kind, date and amount only), the sales invoices already overdue and the unlinked receivables that are NOT counted, `estimatedPayables` (a counted supplier payment fell back to invoice date plus 30 days because no due date is recorded), `notIncluded` (what the forecast still leaves out: the money of those kinds is not in the figures, say so when you answer), `taxMarkers` (tax due dates of the next 30 days, no amount), `enteredItems.count` (how many expected items the owner entered; they are in the figures, their words are not returned) and `truncated` (the figures are partial). Money is a decimal string in VND. No input: the day 0 is today. Read only, no party names and no document ids. It answers only for a grant that sees the whole organization and an organization with one legal entity (otherwise SIGNAL_PARTIAL_VIEW). It is a forecast from the books, not a promise: state `notIncluded` and `truncated` when you rely on a figure.',
+      inputSchema: schemaOf(zMcpCashForecastInput),
+      argsSchema: zMcpCashForecastInput,
+      outputSchema: {
+        type: 'object',
+        properties: {
+          asOf: { type: 'string' },
+          openingCash: { type: 'string' },
+          low: { type: 'object', properties: { date: { type: 'string' }, balance: { type: 'string' } }, required: ['date', 'balance'] },
+          checkpoints: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { days: { enum: [30, 60, 90] }, date: { type: 'string' }, balance: { type: 'string' }, receipts: { type: 'string' }, payments: { type: 'string' } },
+              required: ['days', 'date', 'balance', 'receipts', 'payments'],
+            },
+          },
+          topItems: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { kind: { enum: ['receipt', 'payable', 'approved_payment', 'unlinked_payable', 'entered_in', 'entered_out'] }, date: { type: 'string' }, amount: { type: 'string' }, estimated: { type: 'boolean' } },
+              required: ['kind', 'date', 'amount'],
+            },
+          },
+          overdueReceiptsNotCounted: { type: 'string' },
+          unlinkedReceivablesNotCounted: { type: 'string' },
+          estimatedPayables: { type: 'boolean' },
+          notIncluded: { type: 'array', items: { enum: ['payroll', 'insurance', 'tax', 'rent', 'loans', 'recurring'] } },
+          taxMarkers: { type: 'array', items: { type: 'object', properties: { obligation: { type: 'string' }, period: { type: 'string' }, dueDate: { type: 'string' } }, required: ['obligation', 'period', 'dueDate'] } },
+          enteredItems: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'] },
+          truncated: { type: 'boolean' },
+        },
+        required: ['asOf', 'openingCash', 'low', 'checkpoints', 'topItems', 'overdueReceiptsNotCounted', 'unlinkedReceivablesNotCounted', 'estimatedPayables', 'notIncluded', 'taxMarkers', 'enteredItems', 'truncated'],
+      },
+      annotations: READ_ONLY,
+      read: async (args) => await runtime.query<Record<string, unknown>>('finance.mcp.cash_forecast', args, { actor, orgId }),
+      rows: () => 1,
+    },
+    {
+      name: 'ludy_finance_month_close',
+      module: 'finance',
+      title: 'Month-close checklist',
+      description:
+        'What is still open before one calendar month of the books can be closed, the checklist of the Kế toán screen: `month` ("YYYY-MM", required: say which month you mean) and the `items` that apply to it, each with its `key` (proposals: finance proposals waiting for a decision; invoices: tax-portal invoices that match no voucher; bank: bank statement lines not booked; marketplace: marketplace settlements or payouts not recorded; stock: the stock close not run; vat: the VAT return not marked as filed; lock: the period lock does not yet cover the month), `count` (how many are open; 0 means done; stock, vat and lock are 1 while open) and `period` (the VAT period an item refers to, else null). Counts only: no amount, no name, no free text. An item that does not apply to the month is absent, not zero. Read only. It answers only for a grant that sees the whole organization and an organization with one legal entity (otherwise SIGNAL_PARTIAL_VIEW).',
+      inputSchema: schemaOf(zMcpMonthCloseInput),
+      argsSchema: zMcpMonthCloseInput,
+      outputSchema: {
+        type: 'object',
+        properties: {
+          month: { type: 'string' },
+          items: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { key: { enum: ['proposals', 'invoices', 'bank', 'marketplace', 'stock', 'vat', 'lock'] }, count: { type: 'integer' }, period: { type: ['string', 'null'] } },
+              required: ['key', 'count', 'period'],
+            },
+          },
+        },
+        required: ['month', 'items'],
+      },
+      annotations: READ_ONLY,
+      read: async (args) => await runtime.query<Record<string, unknown>>('finance.mcp.month_close', args, { actor, orgId }),
+      rows: () => 1,
     },
     {
       name: 'ludy_finance_overview',

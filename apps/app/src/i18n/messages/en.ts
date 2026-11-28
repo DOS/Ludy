@@ -20107,7 +20107,9 @@ export const en = {
         list: 'List legal entities for the finance screens',
       },
       mcp: {
+        cash_forecast: 'Let an AI app read the 30, 60 and 90-day cash forecast',
         invoices: 'Show an AI app the list of recorded invoices',
+        month_close: 'Let an AI app read what is still open for a month close',
         open_balances: 'Let an AI app read the open receivables and payables per party',
         overview: 'Let an AI app read the cash, profit, receivables and payables overview of a period',
         payment_reminder: 'Let an AI app read the payment reminder draft of one overdue customer',
