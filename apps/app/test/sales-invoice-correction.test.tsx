@@ -42,6 +42,7 @@ const summary = (over: Partial<EInvoiceDraftSummary> = {}): EInvoiceDraftSummary
   evidenceStored: true,
   updatedAt: '2026-11-17T10:00:00.000Z',
   buyerKind: 'business',
+  buyerHasTaxCode: true,
   correction: null,
   correctedBy: null,
   replaced: false,
@@ -98,10 +99,37 @@ describe('the panel that starts a correction', () => {
     expect(business).toContain('Các lần sửa trước hóa đơn này đã dùng cách điều chỉnh');
     expect(business).toContain('Sai thông tin người mua');
     expect(business).toContain('Hóa đơn đã phát hành không hủy được');
-    const individual = render(<CorrectionAction draft={summary({ buyerKind: 'individual' })} onStarted={() => undefined} openWith="replacement" />);
+    const individual = render(<CorrectionAction draft={summary({ buyerKind: 'individual', buyerHasTaxCode: false })} onStarted={() => undefined} openWith="replacement" />);
     expect(individual).toContain('Thay thế hóa đơn số 0000007');
     expect(individual).not.toContain('type="file"');
     expect(individual).toContain('không cần biên bản thỏa thuận');
+  });
+
+  it('asks for the agreement of every buyer the text names, and fails safe for an individual with a tax code (#5266)', () => {
+    const panel = (over: Partial<EInvoiceDraftSummary>) => render(<CorrectionAction draft={summary(over)} onStarted={() => undefined} openWith="adjustment" />);
+    // A business buyer: the file, the platform attestation, and no question about the buyer being a business.
+    const business = panel({ buyerKind: 'business', buyerHasTaxCode: true });
+    expect(business).toContain('type="file"');
+    expect(business).toContain('data-testid="invoice-correction-platform"');
+    expect(business).not.toContain('invoice-correction-not-business');
+    expect(business).toContain('tổ chức, hộ kinh doanh hoặc cá nhân kinh doanh');
+    // An individual with a tax code may be a household or a sole trader: the agreement is asked, with the question that can lift it, and the start waits for the file.
+    const person = panel({ buyerKind: 'individual', buyerHasTaxCode: true });
+    expect(person).toContain('type="file"');
+    expect(person).toContain('data-testid="invoice-correction-not-business"');
+    // The question starts unchecked, so the answer that lifts the agreement is never given by default.
+    const box = /<input[^>]*data-testid="invoice-correction-not-business"[^>]*>/.exec(person)?.[0];
+    expect(box).toBeDefined();
+    expect(box).not.toContain('checked');
+    expect(person).toContain('có thể là hộ kinh doanh hoặc cá nhân kinh doanh');
+    // An individual with no tax code and a consumer: no file, no questions, the notice instead.
+    for (const buyerKind of ['individual', 'consumer'] as const) {
+      const none = panel({ buyerKind, buyerHasTaxCode: false });
+      expect(none).not.toContain('type="file"');
+      expect(none).not.toContain('invoice-correction-not-business');
+      expect(none).not.toContain('invoice-correction-platform');
+      expect(none).toContain('không cần biên bản thỏa thuận');
+    }
   });
 
   it('asks what the error is before it proposes a rate, and starts nothing until the proposal is confirmed (#3709)', () => {

@@ -41,6 +41,7 @@ const draft: EInvoiceDraftSummary = {
   evidenceStored: true,
   updatedAt: '2026-11-17T10:00:00.000Z',
   buyerKind: 'business',
+  buyerHasTaxCode: true,
   correction: null,
   correctedBy: null,
   replaced: false,
