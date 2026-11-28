@@ -409,6 +409,48 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
   });
 
+  it('stamps the chart version on the proposal and refuses a posting whose entity moved to a newer version of the same regime after the request (#5317)', async () => {
+    const o = await org('tt99');
+    const { runId } = await approvedRun(o);
+    const first = await ask(o, runId);
+    const stamped = async (proposalId: string) => (await rows<{ v: string | null }>(`SELECT payload ->> 'chartVersion' AS v FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`, [o.orgId, proposalId]))[0]?.v;
+    expect(await stamped(first.proposalId)).toBe('2026.1');
+    // A second version of the TT99 chart (the same accounts) and the entity's books move to it for the whole year: the regime is the same, the version is not.
+    await withAdmin(async (c) => {
+      await c.query(`INSERT INTO ludy_finance.chart (regime, version, name) VALUES ('tt99', '2026.2', 'Test revision') ON CONFLICT DO NOTHING`);
+      await c.query(
+        `INSERT INTO ludy_finance.chart_account (regime, version, code, name, parent_code)
+         SELECT regime, '2026.2', code, name, parent_code FROM ludy_finance.chart_account WHERE regime = 'tt99' AND version = '2026.1' ON CONFLICT DO NOTHING`,
+      );
+      await c.query(`UPDATE ludy_finance.legal_entity_books SET chart_version = '2026.2' WHERE org_id = $1 AND regime = 'tt99'`, [o.orgId]);
+    });
+    await expect(approve(o, first.proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'chartVersion' } });
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
+    // A new request is built under the new version and posts.
+    await o.exec(o.owner, 'kernel.proposal.reject', { id: first.proposalId });
+    const again = await ask(o, runId);
+    expect(await stamped(again.proposalId)).toBe('2026.2');
+    const posted = await approve(o, again.proposalId);
+    expect(posted.voucherId).toBeTruthy();
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(1);
+  });
+
+  it('holds a proposal made before the version was stamped to the regime alone, and refuses a stamped one that names another version than the books keep (#5317)', async () => {
+    const o = await org('tt99');
+    const { runId } = await approvedRun(o);
+    const old = await ask(o, runId);
+    // The shape before this change: no chartVersion in the payload. The regime is the same, so it posts.
+    await rows(`UPDATE ludy_kernel.proposal SET payload = payload - 'chartVersion' WHERE org_id = $1 AND id = $2`, [o.orgId, old.proposalId]);
+    expect((await approve(o, old.proposalId)).voucherId).toBeTruthy();
+    // A stored proposal that names a version the entity does not keep is refused even though nothing changed in the books (the check holds the books to what the entry was built under).
+    const o2 = await org('tt99');
+    const run2 = await approvedRun(o2);
+    const forged = await ask(o2, run2.runId);
+    await rows(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{chartVersion}', '"2025.9"') WHERE org_id = $1 AND id = $2`, [o2.orgId, forged.proposalId]);
+    await expect(approve(o2, forged.proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'chartVersion' } });
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o2.orgId, run2.runId])).toHaveLength(0);
+  });
+
   it('counts the person who approved the run as a co-author of its posting: they do not approve it while another may (#2736)', async () => {
     const o = await org('tt133', 'trio');
     const { runId } = await approvedRun(o);
@@ -556,7 +598,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const { proposalId } = await ask(o, runId, o.admin);
     const verified = await o.exec<{ lines: { account: string; debit: string; credit: string }[] }>(o.owner, 'hr.payroll.posting.verify', { runId });
     expect(JSON.stringify(verified)).not.toMatch(/canary/i);
-    expect(Object.keys(verified).sort()).toEqual(['approvedBy', 'date', 'legalEntityId', 'lines', 'month', 'regime', 'runId']);
+    expect(Object.keys(verified).sort()).toEqual(['approvedBy', 'chartVersion', 'date', 'legalEntityId', 'lines', 'month', 'regime', 'runId']);
     // The verification equals the entry the preparer built from the people's lines (the same run, two readings).
     const [stored] = await rows<{ payload: { lines: { account: string; debit: string; credit: string }[] } }>(`SELECT payload FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`, [o.orgId, proposalId]);
     const proposed = (stored?.payload.lines ?? []).map((l) => `${l.account}:${l.debit}:${l.credit}`).sort();
