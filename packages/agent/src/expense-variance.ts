@@ -14,8 +14,10 @@
 // The text checks below are exported unchanged so the notes of the monthly review of unusual entries (unusual-entries.ts, #5182) apply the very same ones.
 import { draftLinksOutside } from './conversation.ts';
 import { marketplaceLineClaimsDone } from './marketplace-line.ts';
+import { EXPENSE_VARIANCE_NOTE_MAX } from './note-limits.ts';
 
-export const EXPENSE_VARIANCE_NOTE_MAX = 220;
+// Still exported from here (src/index.ts re-exports it); the value lives in note-limits.ts so unusual-entries.ts need not read it from this module (#5257).
+export { EXPENSE_VARIANCE_NOTE_MAX };
 
 type Language = 'vi' | 'en';
 const LANGUAGE = { vi: 'Vietnamese', en: 'English' } as const;

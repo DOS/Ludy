@@ -340,11 +340,12 @@ export const revisePurchase = defineCommand({
   handler: async (ctx, { payload: before, lineAccounts, exchangeRate, legalEntityId, dueDate }) => {
     const currentDueDate = before.invoice.dueDate ?? null;
     const changesDueDate = dueDate !== undefined && dueDate !== currentDueDate;
-    if (dueDate !== undefined && dueDate !== null) {
+    if (dueDate !== undefined) {
+      // A sale has no payment due date to set or to clear: null is refused too, not taken as "no change" (#5257).
       if (directionOf(before) === 'sale') {
         throw new DomainError('DUE_DATE_PURCHASE_ONLY', 422, 'Chỉ hóa đơn mua mới có hạn thanh toán');
       }
-      if (dueDate < before.invoice.issueDate) {
+      if (dueDate !== null && dueDate < before.invoice.issueDate) {
         throw new DomainError('INVALID_DUE_DATE', 422, 'Hạn thanh toán không được trước ngày lập hóa đơn');
       }
     }
