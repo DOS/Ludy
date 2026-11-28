@@ -128,20 +128,21 @@ suite('the books regime has one write path, and only an owner opens it (#1403 sl
       expect(fn.owner, fn.name).not.toMatch(/definer_tenant|_app$|_worker$|_tenant$/);
       expect(fn.config, fn.name).toEqual(['search_path=pg_catalog, pg_temp']);
     }
+    // The grants on the function itself (its ACL), not has_function_privilege: crove_definer_tenant is a member of crove_tenant
+    // (20261014090000), so it reaches every tenant grant by inheritance, as for lock_period and unlock_period.
     for (const signature of ['crove_finance.set_books_regime(uuid,date)', 'crove_finance.cancel_books_regime(uuid,date)']) {
-      const grants = await admin(async (c) =>
+      const grantees = await admin(async (c) =>
         (
-          await c.query<{ role: string; can: boolean }>(
-            `SELECT r.role, has_function_privilege(r.role, $1, 'EXECUTE') AS can FROM (VALUES ('crove_tenant'), ('crove_definer_tenant'), ('public')) AS r(role)`,
+          await c.query<{ grantee: string; privilege: string }>(
+            `SELECT CASE WHEN a.grantee = 0 THEN 'public' ELSE pg_get_userbyid(a.grantee) END AS grantee, a.privilege_type AS privilege
+             FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+             WHERE p.oid = $1::regprocedure AND a.grantee <> p.proowner
+             ORDER BY 1, 2`,
             [signature],
           )
         ).rows,
       );
-      expect(grants.map((g) => [g.role, g.can]), signature).toEqual([
-        ['crove_tenant', true],
-        ['crove_definer_tenant', false],
-        ['public', false],
-      ]);
+      expect(grantees.map((g) => [g.grantee, g.privilege]), signature).toEqual([[dbIds ? dbIds.roleName('crove_tenant') : 'crove_tenant', 'EXECUTE']]);
     }
   });
 
