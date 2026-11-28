@@ -68,3 +68,36 @@ describe('the next occurrence', () => {
     expect(nextOccurrence(item({ endDate: '2026-12-04' }), '2026-12-01')).toBeNull();
   });
 });
+
+describe('a window that reaches the end of the calendar (year 9999)', () => {
+  // addDays answers an extended year ('+010000-01') past the 9999-12-31, which is no date to compare as text: the window then ends on 9999-12-31, and a repeating item with no end date stops there instead of
+  // counting months for ninety thousand years.
+  it('stops a monthly item at 9999-12-31 and finds the dates before it, from the day whose window ends on it and from days whose 90 days run past it', () => {
+    const monthly = item({ firstDate: '2026-01-31' });
+    expect(occurrencesOf(monthly, '9999-10-03')).toEqual(['9999-10-31', '9999-11-30', '9999-12-31']);
+    expect(occurrencesOf(monthly, '9999-10-02')).toEqual(['9999-10-31', '9999-11-30', '9999-12-31']);
+    expect(occurrencesOf(monthly, '9999-11-01')).toEqual(['9999-11-30', '9999-12-31']);
+    expect(occurrencesOf(monthly, '9999-12-31')).toEqual(['9999-12-31']);
+  });
+
+  it('does the same for a quarterly item and for a window whose 90 days end exactly on 9999-12-31', () => {
+    const quarterly = item({ firstDate: '2026-01-31', recurrence: 'quarterly' });
+    expect(occurrencesOf(quarterly, '9999-10-02')).toEqual(['9999-10-31']);
+    expect(occurrencesOf(quarterly, '9999-12-31')).toEqual([]);
+    // 9999-10-02 plus 90 days is 9999-12-31 itself (still a four-digit date).
+    expect(occurrencesOf(item({ firstDate: '2026-12-31' }), '9999-10-02')).toEqual(['9999-10-31', '9999-11-30', '9999-12-31']);
+  });
+
+  it('finds a one-off and the next occurrence there, and none past the year 9999', () => {
+    expect(occurrencesOf(item({ recurrence: 'once', firstDate: '2100-01-01' }), '9999-10-03')).toEqual([]);
+    expect(nextOccurrence(item({ firstDate: '2026-01-31' }), '9999-10-03')).toBe('9999-10-31');
+    expect(nextOccurrence(item({ firstDate: '2026-01-31' }), '9999-12-31')).toBe('9999-12-31');
+  });
+
+  it('answers at once even for the day the reviewers found: a hundred items from 9999-10-02 take no noticeable time', () => {
+    const started = Date.now();
+    for (let n = 0; n < 100; n++) occurrencesOf(item({ firstDate: '2026-01-31' }), '9999-10-02');
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+});
+
