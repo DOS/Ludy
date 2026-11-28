@@ -375,7 +375,10 @@ export const revisePurchase = defineCommand({
     const classification = payload.checks.some((c) => c.id === 'accounts') ? classificationCheck(lines) : null;
     const checks = classification ? payload.checks.map((c) => (c.id === 'accounts' ? classification : c)) : payload.checks;
     const regime = await documentRegime(ctx, directionOf(payload), reviseEntity, payload.invoice.issueDate);
-    const revised = { ...payload, lines, checks, ...(regime ? { regime } : {}), journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload), regime) };
+    // The regime the proposal carried is dropped first: when the books on the invoice date are TT133 now, a revised purchase
+    // names none, and the old key must not stay behind and make the approval refuse a revision made under the current books.
+    const { regime: _carried, ...unregimed } = payload;
+    const revised = { ...unregimed, lines, checks, ...(regime ? { regime } : {}), journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload), regime) };
     return { changed: true as const, payload: revised };
   },
 });
