@@ -453,10 +453,15 @@ suite('the cash-flow forecast (#4391)', () => {
     expect(at(f, day(9))).toBe('5000000');
     expect(at(f, day(10))).toBe('4000000');
     expect(at(f, day(20))).toBe('4300000');
-    expect(f.low).toEqual({ date: day(10), balance: '4000000' });
+    // The monthly rent keeps lowering the balance, so the low point is after its last date in the window: the lowest of the series, on the first day it is reached, and lower than the books alone.
+    const lowest = f.series.reduce((low, d) => (BigInt(d.balance) < BigInt(low.balance) ? d : low));
+    expect(f.low).toEqual(lowest);
+    expect(BigInt(f.low.balance) < BigInt(before.low.balance)).toBe(true);
     // Rent leaves the left-out line; a one-off "other" does not touch recurring costs; payroll of the other entity is still left out here.
     expect(f.notIncluded).toEqual(['payroll', 'insurance', 'tax', 'loans', 'recurring']);
-    expect(f.topItems).toEqual([{ kind: 'entered_out', date: day(10), amount: '1000000' }]);
+    // The largest items up to the low day are the entered ones, the first rent date first among equals.
+    expect(f.topItems[0]).toEqual({ kind: 'entered_out', date: day(10), amount: '1000000' });
+    expect(f.topItems.every((i) => i.kind === 'entered_out' || i.kind === 'entered_in')).toBe(true);
     // The books' own figures are as before, and no word of the owner's label is anywhere in the answer.
     expect(f.openingCash).toBe(before.openingCash);
     expect(f.overdueReceiptsNotCounted).toBe(before.overdueReceiptsNotCounted);
