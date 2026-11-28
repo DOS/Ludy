@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // finance.cash_forecast (#4391): the 30/60/90-day cash-flow forecast of ONE legal entity, read only. The books as of day 0 are read here, in the caller's one transaction; every figure is decided by
 // domain/cash-forecast.ts (pure, tested), and nothing is posted, paid or stored. Booked cash (111 + 112), the open sales invoices (the reminders' own loader, loadCustomers), the 331 balance laid over the
-// open purchase invoices, the approved supplier payments and the tax due dates (markers, no amount) are what it reads; payroll, insurance, tax payments and recurring costs are not in it, and the answer says so.
+// open purchase invoices, the approved supplier payments and the tax due dates (markers, no amount) are what it reads; payroll, insurance, tax payments and recurring costs are in it only as items the owner entered (#5326, finance.cash_forecast_items), and the answer says what is still left out.
 //
 // Cost (performance is on the review checklist): four aggregate reads on ludy_finance.journal_line by (org_id, legal_entity_id, account_code prefix, entry_date <= day 0), the same predicates the overview and the
 // customers list already run, then the invoices of the parties found. The reads are bounded: at most CASH_FORECAST_PARTIES_MAX customers and as many suppliers (the largest balances first), CASH_FORECAST_DOCUMENTS_MAX
@@ -12,6 +12,7 @@ import type { MemberRole } from '@ludy/db';
 import {
   CASH_FORECAST_DAYS,
   CASH_FORECAST_DOCUMENTS_MAX,
+  CASH_FORECAST_ITEMS_MAX,
   CASH_FORECAST_PARTIES_MAX,
   CASH_FORECAST_PAYMENTS_MAX,
   VIETNAM_TIME_ZONE,
@@ -24,7 +25,7 @@ import type { VatFilingPeriod } from '@ludy/kernel-contract';
 import { taxDuesOf } from '@ludy/kernel';
 import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { Decimal, PAYABLE_ACCOUNT, type DecimalValue } from '@ludy/l10n-vn';
-import { buildCashForecast, allocatePayable, type ApprovedPayment, type PayableDocument } from './domain/cash-forecast.ts';
+import { buildCashForecast, allocatePayable, type ApprovedPayment, type EnteredForecastItem, type PayableDocument } from './domain/cash-forecast.ts';
 import { addDays } from './domain/payment-reminder.ts';
 import { canonical } from './domain/money.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -137,6 +138,19 @@ async function approvedPayments(ctx: QueryContext, entity: string, today: string
   return rows.map((r) => ({ partyId: r.party_id, documentId: r.purchase_document_id, amount: r.amount, payableOn: r.payable_on !== null && r.payable_on > today ? r.payable_on : today }));
 }
 
+// The items the owner entered for this entity (#5326), without their label: the figures never need the owner's words. At most CASH_FORECAST_ITEMS_MAX rows (the table's own cap), read by the entity index.
+async function enteredItems(ctx: QueryContext, entity: string): Promise<EnteredForecastItem[]> {
+  const rows = await ctx.trx
+    .selectFrom('ludy_finance.cash_forecast_item')
+    .select(['category', 'direction', 'amount', 'first_date', 'recurrence', 'end_date'])
+    .where('org_id', '=', ctx.orgId)
+    .where('legal_entity_id', '=', entity)
+    .orderBy('id')
+    .limit(CASH_FORECAST_ITEMS_MAX)
+    .execute();
+  return rows.map((r) => ({ category: r.category, direction: r.direction, amount: new Decimal(r.amount).toFixed(), firstDate: r.first_date, recurrence: r.recurrence, endDate: r.end_date }));
+}
+
 // The tax due dates of the horizon as markers with no amount: the tax calendar's own window (the next 30 days, so fewer than the 90 days), of this entity; none when the org has not set its VAT filing period.
 async function taxMarkers(ctx: QueryContext, entity: string, today: string): Promise<CashForecastTaxMarker[]> {
   const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirst();
@@ -205,6 +219,7 @@ export async function financeCashForecast(ctx: QueryContext, input: FinanceCashF
     unlinkedPayables: unlinkedPayables.toFixed(),
     approvedPayments: counted,
     taxMarkers: await taxMarkers(ctx, entity, today),
+    entered: await enteredItems(ctx, entity),
     truncated,
   });
 }

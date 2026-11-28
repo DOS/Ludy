@@ -24,10 +24,11 @@ export const CASH_FORECAST_TOP_ITEMS = 5;
 // What the forecast leaves out, always shown: the money these would move is not in the figures.
 export const CASH_FORECAST_NOT_INCLUDED = ['payroll', 'insurance', 'tax', 'rent', 'loans', 'recurring'] as const;
 export const zCashForecastNotIncluded = z.enum(CASH_FORECAST_NOT_INCLUDED);
+export type CashForecastNotIncluded = z.infer<typeof zCashForecastNotIncluded>;
 
 // receipt: an open sales invoice on its due date. payable: an open purchase invoice on its estimated date (an overdue one on day 0). approved_payment: an approved supplier payment on the first
-// day its bank file may go. unlinked_payable: the part of 331 no purchase invoice covers, on day 0.
-export const CASH_FORECAST_ITEM_KINDS = ['receipt', 'payable', 'approved_payment', 'unlinked_payable'] as const;
+// day its bank file may go. unlinked_payable: the part of 331 no purchase invoice covers, on day 0. entered_in and entered_out: an occurrence of an item the owner entered (#5326), money coming in or going out.
+export const CASH_FORECAST_ITEM_KINDS = ['receipt', 'payable', 'approved_payment', 'unlinked_payable', 'entered_in', 'entered_out'] as const;
 export const zCashForecastItemKind = z.enum(CASH_FORECAST_ITEM_KINDS);
 export type CashForecastItemKind = z.infer<typeof zCashForecastItemKind>;
 
