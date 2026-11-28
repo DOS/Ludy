@@ -169,6 +169,8 @@ export { NOT_A_REPORT, readMarketplaceFile, recordMarketplaceReadFailure, type M
 export { readWithSavedColumns, type SavedMapping } from './marketplace-column-apply.ts';
 export { createMarketplaceSettlementCommands } from './marketplace-settlement-record.ts';
 export { createMarketplacePayoutCommands } from './marketplace-payout-record.ts';
+export { suggestCompensationCosts } from './marketplace-payout-cost.ts';
+export { suggestOrderLostCost, type ShipMoveCostInput } from './domain/marketplace-payout-cost.ts';
 export { createMarketplaceFeeClearingCommands } from './marketplace-fee-clearing-record.ts';
 export { createMarketplaceWorklist } from './marketplace-worklist.ts';
 export { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';

@@ -3632,6 +3632,8 @@ export const en = {
     adjustKind_carrier_compensation: 'Compensation for goods lost or damaged',
     adjustKind_withheld_in_error: 'Withheld by mistake (a company is not withheld)',
     adjustCost: 'Cost of the lost goods (dong)',
+    adjustCostSuggested: 'Suggested from stock at shipment ({amount}): confirm or edit.',
+    adjustCostNoSuggestion: 'No stock cost at shipment yet: enter the cost yourself.',
     adjustCostInvalid: 'Enter whole dong, for example 1500000 or 1.500.000',
     adjustIncentiveNote: 'Uncertain (#2520): an incentive from the platform is other income (711). If it is really a platform voucher for an order, it is revenue (rule 1), not 711; the accountant will check.',
     adjustPending: 'Choose a kind for every line (and enter the cost for a compensation) before asking for the proposal.',

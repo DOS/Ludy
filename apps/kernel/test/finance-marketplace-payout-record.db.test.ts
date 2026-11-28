@@ -764,6 +764,109 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
       expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
     });
 
+    it('never auto-fills costAmount on the server even when worklist has a suggestion, and posts the person-confirmed or edited costAmount (#4337)', async () => {
+      const addPurchase = (targetOrg: Org, legalEntityId: string, itemId: string, date: string, qty: number, amount: number) =>
+        withAdmin(async (c) => {
+          await c.query('BEGIN');
+          try {
+            const [sup] = (await c.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'NCC Kho') RETURNING id", [targetOrg.orgId])).rows;
+            const [doc] = (
+              await c.query<{ id: string }>(
+                "INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, 'AA', $3, $4, $5, 0, $5, 'purchase', $6) RETURNING id",
+                [targetOrg.orgId, sup?.id, randomUUID().slice(0, 8), date, amount, legalEntityId],
+              )
+            ).rows;
+            const docId = doc?.id as string;
+            await c.query("INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account) VALUES ($1, $2, 1, 'Nhập', $3, '156')", [targetOrg.orgId, docId, amount]);
+            await c.query(
+              "INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, $3, $4, $5, 'document_line', $6, 1, 1)",
+              [targetOrg.orgId, legalEntityId, itemId, date, qty, docId],
+            );
+            const [je] = (
+              await c.query<{ id: string }>(
+                "INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, 'Mua hàng', 'finance.purchase_document', $3, $4) RETURNING id",
+                [targetOrg.orgId, date, docId, legalEntityId],
+              )
+            ).rows;
+            await c.query(
+              "INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '156', $3, 0), ($1, $2, 2, '331', 0, $3)",
+              [targetOrg.orgId, je?.id, amount],
+            );
+            await c.query('COMMIT');
+          } catch (err) {
+            await c.query('ROLLBACK');
+            throw err;
+          }
+        });
+
+      const { o, settlement, line, ids, party } = await company([{ sales: '100000', other: '6000' }], '106000');
+      const slId = ids[0] as string;
+      const [found] = await rows<{ id: string; legal_entity_id: string }>(
+        'SELECT l.id, l.legal_entity_id FROM ludy_finance.channel_order_line l JOIN ludy_finance.channel_settlement_line sl ON sl.org_id = l.org_id AND sl.order_id = l.order_id WHERE sl.org_id = $1 AND sl.id = $2',
+        [o.orgId, slId],
+      );
+      const entityId = found?.legal_entity_id as string;
+      const item = await rt.execute<{ id: string }>(
+        'finance.stock_item.save',
+        { itemId: null, legalEntityId: null, code: `CC-${randomUUID().slice(0, 6)}`, name: 'Hàng mất', unit: 'cái', stockAccount: '156', trade: 'goods' },
+        { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() },
+      );
+      await addPurchase(o, entityId, item.id, '2026-10-03', 4, 10000); // unit cost 2500
+      await rows(
+        "INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt) VALUES ($1, $2, $3, '2026-10-08', -2, 'order_line', $4, 'ship', 1)",
+        [o.orgId, entityId, item.id, found?.id],
+      );
+
+      // Worklist provides suggestedCostAmount = 2 * 2500 = '5000'.
+      const wl = await rt.query<{ payouts: { settlementId: string; adjustable: { lineId: string; suggestedCostAmount?: string }[] }[] }>(
+        'finance.marketplace.worklist',
+        {},
+        { actor: asUser(o.owner), orgId: o.orgId },
+      );
+      expect(wl.payouts.find((p) => p.settlementId === settlement)?.adjustable).toEqual([{ lineId: slId, source: 'other', amount: '6000', suggestedCostAmount: '5000' }]);
+
+      // Critical invariant: omitting costAmount on carrier_compensation is STILL rejected with 422 VALIDATION.
+      await expect(askWith(o, settlement, line, [{ kind: 'carrier_compensation', lineId: slId, amount: '6000' }])).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+      expect(await payoutsOf(o, settlement)).toHaveLength(0);
+
+      // Even if a person edits costAmount (4200 instead of 5000) and a later purchase changes October's stock average before approval,
+      // the entry posts the person's explicit costAmount (4200 to 632 and 1800 to 711).
+      const edited: Adjustment[] = [{ kind: 'carrier_compensation', lineId: slId, amount: '6000', costAmount: '4200' }];
+      const { proposalId } = await askWith(o, settlement, line, edited);
+      await addPurchase(o, entityId, item.id, '2026-10-15', 4, 30000);
+      const done = await approve(o, proposalId);
+      const expected = [['1121', '106000', '0', null], ['131', '0', '100000', party], ['632', '0', '4200', null], ['711', '0', '1800', null]];
+      expect(rowsOf(await entryOf(o, done.journalEntryId))).toEqual(expected);
+
+      // Confirming the suggested costAmount directly on another order posts 632 for the suggested amount and 711 for the rest.
+      const second = await company([{ sales: '100000', other: '6000' }], '106000', 'tiktok_shop');
+      const [found2] = await rows<{ id: string; legal_entity_id: string }>(
+        'SELECT l.id, l.legal_entity_id FROM ludy_finance.channel_order_line l JOIN ludy_finance.channel_settlement_line sl ON sl.org_id = l.org_id AND sl.order_id = l.order_id WHERE sl.org_id = $1 AND sl.id = $2',
+        [second.o.orgId, second.ids[0]],
+      );
+      const entityId2 = found2?.legal_entity_id as string;
+      const item2 = await rt.execute<{ id: string }>(
+        'finance.stock_item.save',
+        { itemId: null, legalEntityId: null, code: `CC2-${randomUUID().slice(0, 6)}`, name: 'Hàng mất 2', unit: 'cái', stockAccount: '156', trade: 'goods' },
+        { actor: asUser(second.o.owner), orgId: second.o.orgId, idempotencyKey: randomUUID() },
+      );
+      await addPurchase(second.o, entityId2, item2.id, '2026-10-03', 2, 5000);
+      await rows(
+        "INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt) VALUES ($1, $2, $3, '2026-10-08', -2, 'order_line', $4, 'ship', 1)",
+        [second.o.orgId, entityId2, item2.id, found2?.id],
+      );
+      const wl2 = await rt.query<{ payouts: { settlementId: string; adjustable: { lineId: string; suggestedCostAmount?: string }[] }[] }>(
+        'finance.marketplace.worklist',
+        {},
+        { actor: asUser(second.o.owner), orgId: second.o.orgId },
+      );
+      const suggested = wl2.payouts.find((p) => p.settlementId === second.settlement)?.adjustable[0]?.suggestedCostAmount;
+      expect(suggested).toBe('5000');
+      const confirmed = await askWith(second.o, second.settlement, second.line, [{ kind: 'carrier_compensation', lineId: second.ids[0], amount: '6000', costAmount: suggested }]);
+      const done2 = await approve(second.o, confirmed.proposalId);
+      expect(rowsOf(await entryOf(second.o, done2.journalEntryId))).toEqual([['1121', '106000', '0', null], ['131', '0', '100000', second.party], ['632', '0', '5000', null], ['711', '0', '1000', null]]);
+    });
+
     // The order line of a settlement line, made a returned one with its shipment out of an item (the stage moves forward from completed), and optionally its return move.
     async function cameBack(o: Org, settlementLineId: string, withReturn = false) {
       const [found] = await rows<{ id: string; legal_entity_id: string }>(

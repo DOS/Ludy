@@ -34,7 +34,7 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   };
 });
 
-const { MarketplaceActions } = await import('../src/components/marketplace-actions.tsx');
+const { MarketplaceActions, PayoutRow, buildPayoutAdjustments } = await import('../src/components/marketplace-actions.tsx');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 
@@ -212,6 +212,92 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
     expect(disabled(plain, 'marketplace-record')).toBe(false);
     // Vietnamese too.
     expect(render({ ...base, payouts: [{ ...payout, adjustable: [{ lineId: lineA, source: 'other', amount: '6000' }] }] }, 'vi')).toContain('Bồi thường hàng bị mất hoặc hỏng');
+  });
+
+  it('prefills costAmount from suggestedCostAmount when carrier compensation is chosen, allows editing/clearing, and shows EN/VI labels (#4337)', () => {
+    const base = FULL();
+    const payout = base.payouts[0]!;
+    const renderPayout = (
+      adjustable: MarketplaceWorklist['payouts'][number]['adjustable'],
+      locale: 'vi' | 'en' = 'en',
+      initialKinds?: Record<string, string>,
+      initialCosts?: Record<string, string>,
+    ) => {
+      setActiveLocale(locale);
+      return renderToStaticMarkup(
+        <QueryClientProvider client={cache.current}>
+          <I18nProvider>
+            <table>
+              <tbody>
+                <PayoutRow
+                  p={{ ...payout, adjustable }}
+                  open
+                  {...(initialKinds ? { initialKinds } : {})}
+                  {...(initialCosts ? { initialCosts } : {})}
+                />
+              </tbody>
+            </table>
+          </I18nProvider>
+        </QueryClientProvider>,
+      );
+    };
+
+    const withSuggestion = [{ lineId: lineA, source: 'other' as const, amount: '250000', suggestedCostAmount: '150000' }];
+    const prefilledEn = renderPayout(withSuggestion, 'en', { [`${lineA}:other`]: 'carrier_compensation' });
+    expect(prefilledEn).toContain('data-testid="marketplace-adjustment-cost"');
+    expect(prefilledEn).toContain('value="150000"');
+    expect(prefilledEn).toContain('data-testid="marketplace-adjustment-cost-suggestion"');
+    expect(prefilledEn).toContain('Suggested from stock at shipment');
+    expect(prefilledEn).toContain('confirm or edit');
+    expect(prefilledEn).toContain(`aria-describedby="${lineA}:other-cost-hint"`);
+    expect(disabled(prefilledEn, 'marketplace-record')).toBe(false);
+
+    const prefilledVi = renderPayout(withSuggestion, 'vi', { [`${lineA}:other`]: 'carrier_compensation' });
+    expect(prefilledVi).toContain('Gợi ý từ giá vốn kho lúc giao');
+    expect(prefilledVi).toContain('xác nhận hoặc sửa lại');
+
+    // Without a suggestion, the input starts empty, explains why, and keeps the submit button disabled until the person types whole dong.
+    const withoutSuggestion = [{ lineId: lineA, source: 'other' as const, amount: '250000' }];
+    const missingEn = renderPayout(withoutSuggestion, 'en', { [`${lineA}:other`]: 'carrier_compensation' });
+    expect(missingEn).toContain('value=""');
+    expect(missingEn).toContain('data-testid="marketplace-adjustment-cost-no-suggestion"');
+    expect(missingEn).toContain('No stock cost at shipment yet: enter the cost yourself.');
+    expect(disabled(missingEn, 'marketplace-record')).toBe(true);
+    const missingVi = renderPayout(withoutSuggestion, 'vi', { [`${lineA}:other`]: 'carrier_compensation' });
+    expect(missingVi).toContain('Chưa có giá vốn kho lúc giao: bạn tự nhập giá vốn.');
+
+    // Editing overrides the suggestion; clearing to '' leaves the field empty and disables submit; invalid decimals show the alert error.
+    const edited = renderPayout(withSuggestion, 'en', { [`${lineA}:other`]: 'carrier_compensation' }, { [`${lineA}:other`]: '90000' });
+    expect(edited).toContain('value="90000"');
+    expect(disabled(edited, 'marketplace-record')).toBe(false);
+
+    const cleared = renderPayout(withSuggestion, 'en', { [`${lineA}:other`]: 'carrier_compensation' }, { [`${lineA}:other`]: '' });
+    expect(cleared).toContain('value=""');
+    expect(disabled(cleared, 'marketplace-record')).toBe(true);
+
+    const invalid = renderPayout(withSuggestion, 'en', { [`${lineA}:other`]: 'carrier_compensation' }, { [`${lineA}:other`]: '12.5' });
+    expect(invalid).toContain('aria-invalid="true"');
+    expect(invalid).toContain('data-testid="marketplace-adjustment-cost-error"');
+    expect(invalid).toContain(`aria-describedby="${lineA}:other-cost-hint ${lineA}:other-cost-error"`);
+    expect(disabled(invalid, 'marketplace-record')).toBe(true);
+
+    // Pure adjustment builder checks: confirmed prefill, zero suggestion, explicit edit, and explicit clear.
+    expect(buildPayoutAdjustments(withSuggestion, { [`${lineA}:other`]: 'carrier_compensation' }, {})).toEqual({
+      adjustments: [{ kind: 'carrier_compensation', lineId: lineA, amount: '250000', costAmount: '150000' }],
+      ready: true,
+    });
+    expect(buildPayoutAdjustments([{ lineId: lineA, source: 'other', amount: '250000', suggestedCostAmount: '0' }], { [`${lineA}:other`]: 'carrier_compensation' }, {})).toEqual({
+      adjustments: [{ kind: 'carrier_compensation', lineId: lineA, amount: '250000', costAmount: '0' }],
+      ready: true,
+    });
+    expect(buildPayoutAdjustments(withSuggestion, { [`${lineA}:other`]: 'carrier_compensation' }, { [`${lineA}:other`]: '1.200.000' })).toEqual({
+      adjustments: [{ kind: 'carrier_compensation', lineId: lineA, amount: '250000', costAmount: '1200000' }],
+      ready: true,
+    });
+    expect(buildPayoutAdjustments(withSuggestion, { [`${lineA}:other`]: 'carrier_compensation' }, { [`${lineA}:other`]: '' })).toEqual({
+      adjustments: [],
+      ready: false,
+    });
   });
 
   it('shows the months of delivery of a settlement in one row, and a settlement that waits for a delivery day with no button', () => {
