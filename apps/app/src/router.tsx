@@ -733,10 +733,14 @@ const aiConnectionsRoute = createRoute({ getParentRoute: () => orgRoute, path: '
 const tasksRoute = createRoute({ getParentRoute: () => orgRoute, path: 'tasks', validateSearch: parseTasksSearch, component: TasksPage });
 // The bookings of the public booking page (#1320), with the crm module.
 const bookingsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'bookings', component: BookingsPage });
+const parseContactTargetSearch = (search: Record<string, unknown>): { c?: string } =>
+  typeof search.c === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(search.c)
+    ? { c: search.c.toLowerCase() }
+    : {};
 // The contacts of the CRM (#2228): the org's parties with search, filters and saved views.
-const contactsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'contacts', component: ContactsPage });
+const contactsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'contacts', validateSearch: parseContactTargetSearch, component: ContactsPage });
 // The companies, apart from the people (#2438): the same list with the kind fixed.
-const companiesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'companies', component: CompaniesPage });
+const companiesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'companies', validateSearch: parseContactTargetSearch, component: CompaniesPage });
 // Importing contacts from a CSV (#2229).
 const contactImportRoute = createRoute({ getParentRoute: () => orgRoute, path: 'contacts/import', component: ContactImportPage });
 // The org's deals (#2225), with the crm module.

@@ -52,11 +52,12 @@ const ITEMS = [
   { ...base, app: 'ads', kind: 'flag', id: 'f2', severity: 'warn', amount: '120', currency: 'USD', title: { key: 'ads.pace' }, href: '/o/acme/ads' },
 ];
 
-function render(opts: { data?: unknown; error?: boolean; locale?: 'en' | 'vi'; brief?: unknown } = {}): string {
+function render(opts: { data?: unknown; attention?: TodayItem[]; error?: boolean; locale?: 'en' | 'vi'; brief?: unknown; useCatalogItems?: boolean } = {}): string {
   const qc = client.current;
   qc.clear();
   const key = ['today', 'list'];
   if (opts.data !== undefined) qc.setQueryData(key, opts.data);
+  if (opts.attention !== undefined) qc.setQueryData(['today', 'contactAttention'], opts.attention);
   if (opts.brief !== undefined) {
     // Vy's brief is cached by day, language and the list it was written from; seed both languages.
     const items = (opts.data as { items: TodayItem[] }).items;
@@ -65,12 +66,14 @@ function render(opts: { data?: unknown; error?: boolean; locale?: 'en' | 'vi'; b
   if (opts.error) void qc.fetchQuery({ queryKey: key, queryFn: () => Promise.reject(new Error('boom')), retry: false }).catch(() => undefined);
   const locale = opts.locale ?? 'en';
   const messages = structuredClone(catalog(locale)) as unknown as { today: { items: Record<string, unknown> } };
-  // Two lines' keys, as a line adds them to the catalog with its read.
-  messages.today.items = {
-    finance: { byVendor: locale === 'en' ? '{vendor}: proposals waiting' : '{vendor}: đề xuất chờ duyệt', unbalanced: locale === 'en' ? 'A voucher does not balance' : 'Có chứng từ lệch' },
-    ads: { pace: locale === 'en' ? 'Ad spend is running ahead' : 'Chi quảng cáo đang vượt tiến độ' },
-    tax: { vat: locale === 'en' ? 'VAT return due' : 'Hạn tờ khai GTGT' },
-  };
+  if (!opts.useCatalogItems) {
+    // Two lines' keys, as a line adds them to the catalog with its read.
+    messages.today.items = {
+      finance: { byVendor: locale === 'en' ? '{vendor}: proposals waiting' : '{vendor}: đề xuất chờ duyệt', unbalanced: locale === 'en' ? 'A voucher does not balance' : 'Có chứng từ lệch' },
+      ads: { pace: locale === 'en' ? 'Ad spend is running ahead' : 'Chi quảng cáo đang vượt tiến độ' },
+      tax: { vat: locale === 'en' ? 'VAT return due' : 'Hạn tờ khai GTGT' },
+    };
+  }
   // useFormat() follows the app's active locale: pinned, so the amount reads in the rendered language on every runtime
   // (navigator.languages is the machine's on Node and empty on Bun).
   setActiveLocale(locale);
@@ -269,5 +272,65 @@ describe('TodayList', () => {
     const html = render({ data: { items: [], coworkers: NAMES, dropped: 0 } });
     expect(html).toContain('aria-labelledby="overview-today"');
     expect(html).toContain('id="overview-today"');
+  });
+
+  it('shows the capped newest-first CRM contact attention subsection when crm is installed, even with an empty main queue', () => {
+    modules.installed = ['crm', 'finance', 'sign'];
+    const p1 = '11111111-1111-4111-8111-111111111111';
+    const p2 = '22222222-2222-4222-8222-222222222222';
+    const p3 = '33333333-3333-4333-8333-333333333333';
+    const attention: TodayItem[] = [
+      {
+        kind: 'flag',
+        app: 'crm',
+        id: `signal:contact-attention:envelope_opened:${p1}`,
+        title: { key: 'signals.contactAttention.envelopeOpened' },
+        severity: 'warn',
+        dueAt: '2026-11-27T10:00:00Z',
+        href: `/contacts?c=${p1}`,
+      },
+      {
+        kind: 'flag',
+        app: 'crm',
+        id: `signal:contact-attention:invoice_overdue:${p2}`,
+        title: { key: 'signals.contactAttention.invoiceOverdue', params: { days: 4 } },
+        severity: 'warn',
+        dueAt: '2026-11-23T00:00:00+07:00',
+        href: `/contacts?c=${p2}`,
+      },
+      {
+        kind: 'flag',
+        app: 'crm',
+        id: `signal:contact-attention:quote_viewed:${p3}`,
+        title: { key: 'signals.contactAttention.quoteViewed' },
+        severity: 'warn',
+        dueAt: '2026-11-22T09:00:00Z',
+        href: `/contacts?c=${p3}`,
+      },
+    ];
+
+    const html = render({
+      data: { items: [], coworkers: NAMES, dropped: 0 },
+      attention,
+      locale: 'vi',
+      useCatalogItems: true,
+    });
+    expect(html).toContain('data-testid="today-hero-card"');
+    expect(html).toContain('data-testid="today-contact-attention"');
+    expect(html).toContain('Cần chú ý');
+    expect(html).toContain('Người ký vừa mở hồ sơ ký');
+    expect(html).toContain('Hóa đơn quá hạn 4 ngày');
+    expect(html).toContain('Khách vừa xem báo giá');
+    expect(html).toContain('Từ Dy');
+    expect(html).toContain('max-md:min-h-11');
+    // Preserves newest-first order without calling sortTodayItems (which sorts ascending by dueAt).
+    const links = [...html.matchAll(/<a href="([^"]*)"/g)].map((m) => m[1]);
+    expect(links).toEqual([`/o/acme/contacts?c=${p1}`, `/o/acme/contacts?c=${p2}`, `/o/acme/contacts?c=${p3}`]);
+
+    // Hidden when crm module is not installed.
+    modules.installed = ['finance'];
+    const noCrm = render({ data: { items: [], coworkers: NAMES, dropped: 0 }, attention, locale: 'vi', useCatalogItems: true });
+    expect(noCrm).not.toContain('today-contact-attention');
+    expect(noCrm).toContain(viMessages.today.empty);
   });
 });

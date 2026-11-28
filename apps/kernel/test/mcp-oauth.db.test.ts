@@ -626,8 +626,11 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(JSON.stringify(out)).not.toContain('Khach Signals');
     // The three rules that could look are `checked` (rule 3, the supplier bank change, reads `finance.signals.supplier_bank_changes` since #3113 S1; none here, so no item).
     expect(out.checked).toEqual(['deal_without_invoice', 'receivable_with_open_deal', 'supplier_bank_changed']);
-    // The conversation rule (#3124) never looks over MCP: a grant's context reads no conversation, so it is named unchecked, never an empty "all clear".
-    expect(out.unchecked).toEqual([{ rule: 'conversation_unanswered', reason: 'not_available' }]);
+    // The conversation rule (#3124) never looks over MCP, and contact_attention stays unchecked while eSign (`sign`) is absent from this runtime: an empty list is never "all clear".
+    expect(out.unchecked).toEqual([
+      { rule: 'conversation_unanswered', reason: 'not_available' },
+      { rule: 'contact_attention', reason: 'not_available' },
+    ]);
     // One row of the daily budget per item, and the audit row names the tool.
     expect((await used()) - before).toBe(1);
     const audited = await admin((client) => client.query(`SELECT DISTINCT detail ->> 'tool' AS tool FROM ludy_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpGrant' IS NOT NULL`));

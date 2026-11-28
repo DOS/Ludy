@@ -19,6 +19,7 @@ import {
 } from '@ludy/kernel-contract';
 import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { isSignAiStoppedOnTrx } from './ai.ts';
+import { signSignalQueries } from './signals.ts';
 import { signApiKeyQueries } from './api-keys.ts';
 import { renderStarterContractPdf } from './contract-drafter.ts';
 import { formatEnvelopeDeposit, signDepositQueries } from './deposit.ts';
@@ -1257,4 +1258,5 @@ export const signQueries = [
   ...signDocxConvertQueries,
   ...signEnvelopeDocumentQueries,
   ...signDepositQueries,
+  ...signSignalQueries,
 ];

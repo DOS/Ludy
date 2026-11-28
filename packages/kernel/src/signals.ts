@@ -20,6 +20,8 @@
 // not look. Nothing is written, no model is called, and no text crosses: the item is a message key with a number of days, the deal's amount and a link.
 import { z } from 'zod';
 import {
+  CONTACT_ATTENTION_HOME_MAX,
+  CRM_ATTENTION_SIGNALS_READ,
   CRM_OPEN_DEALS_SIGNALS_READ,
   CRM_WON_DEALS_SIGNALS_READ,
   CONVERSATION_REPLY_WINDOW_HOURS,
@@ -29,10 +31,13 @@ import {
   FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ,
   FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ,
   OVERDUE_RECEIVABLE_MIN_DAYS,
+  SIGNALS_MAX_CRM,
   SIGNAL_PARTIAL_VIEW_CODE,
+  SIGN_OPENED_SIGNALS_READ,
   SUPPLIER_BANK_CHANGE_DAYS,
   WON_DEAL_NO_INVOICE_DAYS,
   vietnamToday,
+  zCrmAttentionSignals,
   zCrmOpenDealSignals,
   zCrmWonDealSignals,
   zConversationUnansweredSignals,
@@ -40,6 +45,7 @@ import {
   zFinanceSalesSignals,
   zFinanceSupplierBankChangeSignals,
   zFinanceSupplierPaymentsWaitingSignals,
+  zSignOpenedSignals,
   type TodayItem,
 } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
@@ -55,6 +61,7 @@ export const DEAL_WITHOUT_INVOICE_READ = 'kernel.signals.deal_without_invoice';
 export const RECEIVABLE_WITH_OPEN_DEAL_READ = 'kernel.signals.receivable_with_open_deal';
 export const SUPPLIER_BANK_CHANGED_READ = 'kernel.signals.supplier_bank_changed';
 export const CONVERSATION_UNANSWERED_READ = 'kernel.signals.conversation_unanswered';
+export const CONTACT_ATTENTION_READ = 'kernel.signals.contact_attention';
 
 // The start (Vietnam time) of the day a win turns 7 days old.
 const dueAt = (wonOn: string): string => `${new Date(Date.parse(`${wonOn}T00:00:00Z`) + WON_DEAL_NO_INVOICE_DAYS * DAY_MS).toISOString().slice(0, 10)}T00:00:00+07:00`;
@@ -314,6 +321,152 @@ export function conversationUnansweredQuery(options: { now?: () => Date } = {}) 
       // A grant's context reads no conversation, so there is nothing to answer: refuse, never an empty list that could read as "all clear".
       if (ctx.actor.type === 'user' && ctx.actor.mcp !== undefined) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
       return (await checkConversationUnanswered(ctx, options.now)).items;
+    },
+  });
+}
+
+const CONTACT_ATTENTION_TITLE_KEYS: Record<
+  'quote_viewed' | 'quote_expiring' | 'quote_unanswered' | 'customer_replied' | 'envelope_opened' | 'invoice_overdue',
+  string
+> = {
+  quote_viewed: 'signals.contactAttention.quoteViewed',
+  quote_expiring: 'signals.contactAttention.quoteExpiring',
+  quote_unanswered: 'signals.contactAttention.quoteUnanswered',
+  customer_replied: 'signals.contactAttention.customerReplied',
+  envelope_opened: 'signals.contactAttention.envelopeOpened',
+  invoice_overdue: 'signals.contactAttention.invoiceOverdue',
+};
+
+// Rule 5 (#4994 SG2): Home's newest contact attention items across CRM attention reads, opened eSign envelopes,
+// and overdue receivables joined by canonical party id. One batched read per source, one item per contact (newest
+// wins), capped at CONTACT_ATTENTION_HOME_MAX (5) newest-first.
+// Human Home omits overdue invoices or opened envelopes fail-closed when Finance or eSign is unavailable or partial;
+// over MCP (`ludy_signals`), any restricted or unavailable source still emits available items while marking
+// `contact_attention` unchecked so an empty or partial answer never reads as all clear.
+export async function checkContactAttention(ctx: QueryContext, now?: () => Date): Promise<RuleCheck> {
+  const [crmAttention, signOpened, openDeals] = await Promise.all([
+    readSignals(ctx, CRM_ATTENTION_SIGNALS_READ, zCrmAttentionSignals),
+    readSignals(ctx, SIGN_OPENED_SIGNALS_READ, zSignOpenedSignals),
+    readSignals(ctx, CRM_OPEN_DEALS_SIGNALS_READ, zCrmOpenDealSignals),
+  ]);
+
+  const candidateSet = new Set<string>();
+  const pushCandidate = (partyId: string) => {
+    if (candidateSet.size < SIGNALS_MAX_CRM) candidateSet.add(partyId);
+  };
+  if (crmAttention.status === 'ok') {
+    for (const r of crmAttention.rows) pushCandidate(r.partyId);
+  }
+  if (signOpened.status === 'ok') {
+    for (const r of signOpened.rows) pushCandidate(r.partyId);
+  }
+  if (openDeals.status === 'ok') {
+    for (const r of openDeals.rows) pushCandidate(r.partyId);
+  }
+
+  const partyIds = [...candidateSet];
+  const receivables =
+    partyIds.length > 0
+      ? await readSignals(ctx, FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ, zFinanceOverdueReceivableSignals, { partyIds })
+      : ({ status: 'ok', rows: [] } as const);
+
+  const sources = [crmAttention, signOpened, openDeals, receivables];
+  const status: RuleStatus = sources.some((s) => s.status === 'partial')
+    ? 'partial'
+    : sources.some((s) => s.status !== 'ok')
+      ? 'unavailable'
+      : 'ok';
+
+  const today = vietnamToday(now?.() ?? new Date());
+  type CandidateEvent = {
+    partyId: string;
+    kind: keyof typeof CONTACT_ATTENTION_TITLE_KEYS;
+    eventAt: string;
+    eventMs: number;
+    days?: number;
+  };
+  const newestByParty = new Map<string, CandidateEvent>();
+  const consider = (cand: CandidateEvent) => {
+    const prev = newestByParty.get(cand.partyId);
+    if (!prev || cand.eventMs > prev.eventMs || (cand.eventMs === prev.eventMs && cand.kind < prev.kind)) {
+      newestByParty.set(cand.partyId, cand);
+    }
+  };
+
+  if (crmAttention.status === 'ok') {
+    for (const r of crmAttention.rows) {
+      consider({
+        partyId: r.partyId,
+        kind: r.kind,
+        eventAt: r.eventAt,
+        eventMs: Date.parse(r.eventAt),
+      });
+    }
+  }
+  if (signOpened.status === 'ok') {
+    for (const r of signOpened.rows) {
+      consider({
+        partyId: r.partyId,
+        kind: 'envelope_opened',
+        eventAt: r.openedAt,
+        eventMs: Date.parse(r.openedAt),
+      });
+    }
+  }
+  if (receivables.status === 'ok') {
+    for (const r of receivables.rows) {
+      if (!candidateSet.has(r.partyId)) continue;
+      const days = daysBetween(r.oldestDueOn, today);
+      if (days < OVERDUE_RECEIVABLE_MIN_DAYS) continue;
+      const overdueAt = `${r.oldestDueOn}T00:00:00+07:00`;
+      consider({
+        partyId: r.partyId,
+        kind: 'invoice_overdue',
+        eventAt: overdueAt,
+        eventMs: Date.parse(overdueAt),
+        days,
+      });
+    }
+  }
+
+  const ordered = [...newestByParty.values()]
+    .sort((a, b) => b.eventMs - a.eventMs || (a.partyId < b.partyId ? -1 : a.partyId > b.partyId ? 1 : 0))
+    .slice(0, CONTACT_ATTENTION_HOME_MAX);
+
+  const items: TodayItem[] = ordered.map((r) => ({
+    kind: 'flag',
+    app: 'crm',
+    id: `signal:contact-attention:${r.kind}:${r.partyId}`,
+    title:
+      r.kind === 'invoice_overdue'
+        ? { key: CONTACT_ATTENTION_TITLE_KEYS.invoice_overdue, params: { days: r.days ?? OVERDUE_RECEIVABLE_MIN_DAYS } }
+        : { key: CONTACT_ATTENTION_TITLE_KEYS[r.kind] },
+    severity: 'warn',
+    dueAt: r.eventAt,
+    href: `/contacts?c=${r.partyId}`,
+  }));
+
+  return { items, status };
+}
+
+export function contactAttentionQuery(options: { now?: () => Date } = {}) {
+  return defineQuery({
+    name: CONTACT_ATTENTION_READ,
+    input: z.strictObject({}),
+    access: ALL,
+    mcp: { scope: 'ludy.read' },
+    handler: async (ctx): Promise<TodayItem[]> => {
+      const found = await checkContactAttention(ctx, options.now);
+      if (ctx.actor.type === 'user' && ctx.actor.mcp !== undefined && found.status !== 'ok') {
+        throw new DomainError(
+          found.status === 'partial' ? SIGNAL_PARTIAL_VIEW_CODE : 'FORBIDDEN',
+          403,
+          found.status === 'partial'
+            ? 'Bạn chỉ xem được một phần dữ liệu nên chưa kiểm tra đủ danh sách cần chú ý'
+            : 'Không thể đọc đủ dữ liệu cần chú ý qua kết nối này',
+        );
+      }
+      return found.items;
     },
   });
 }
