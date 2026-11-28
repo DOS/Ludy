@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The arithmetic of the annual PIT finalization 02/CNKD-TNCN-QTT of a household on the income method (#5285), worked out by hand: the form's own formulas for lines [09] to [20] (Circular 89/2026 Phụ lục I),
 // the band of the income-method rate (Luật TNCN 109/2025 Art. 7(2): a band applies ABOVE its bound), the 50,000 VND exemption, the cases that are held and the 30% cut of Decree 398/2026 on both sides.
-import { HOUSEHOLD_EXPENSE_GROUPS, zHouseholdQttGet } from '@ludy/kernel-contract';
+import { HOUSEHOLD_EXPENSE_GROUPS, zHouseholdCnkdGet, zHouseholdQttGet } from '@ludy/kernel-contract';
 import { describe, expect, it } from 'vitest';
 import { bandFor, computeQtt, QTT_CODES, QTT_COST_LINES, QTT_LABELS, reductionMemo, settle, type QttInput } from '../src/domain/household-qtt.ts';
 
@@ -201,6 +201,13 @@ describe('the 30% PIT cut of Decree 398/2026, which the form has no line for', (
 
 describe('the amounts the household enters', () => {
   const base = { legalEntityId: '11111111-1111-4111-8111-111111111111', year: 2026 };
+
+  it('asks for no later year than the export can audit: 2099 passes, 2100 is refused at the schema (a 4xx), not at the audit step (a 5xx)', () => {
+    expect(zHouseholdQttGet.safeParse({ ...base, year: 2099 }).success).toBe(true);
+    expect(zHouseholdQttGet.safeParse({ ...base, year: 2100 }).success).toBe(false);
+    expect(zHouseholdCnkdGet.safeParse({ ...base, year: 2099, quarter: 1 }).success).toBe(true);
+    expect(zHouseholdCnkdGet.safeParse({ ...base, year: 2100, quarter: 1 }).success).toBe(false);
+  });
 
   it('takes whole dong only for [14], [15] and [09c]: a fraction would run on into [17] to [20]', () => {
     expect(zHouseholdQttGet.safeParse({ ...base, withheld: '10000000', prepaid: '0', noPaymentRevenue: '5' }).success).toBe(true);

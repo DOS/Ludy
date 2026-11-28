@@ -153,7 +153,7 @@ export async function buildCnkdWorkbook(sheetData: HouseholdCnkd, brand = 'Ludy'
   };
   line(`HỘ, CÁ NHÂN KINH DOANH: ${sheetData.household.name}`, true);
   line(`Mã số thuế: ${sheetData.household.taxCode ?? ''}`);
-  line(`BẢNG TÍNH TỜ KHAI ${sheetData.form.name.toUpperCase()}`, true);
+  line(`BẢNG TÍNH ${sheetData.form.name.toUpperCase()}`, true);
   line(`Phiên bản mẫu: ${sheetData.form.version}`);
   line(`Kỳ tính thuế: quý ${sheetData.period.quarter} năm ${sheetData.period.year} (từ ${dateLabel(sheetData.period.from)} đến ${dateLabel(sheetData.period.to)})`);
   line('Đây là bảng tính để kê khai trên cổng thuế hoặc eTax Mobile. Ludy không nộp tờ khai và không gửi dữ liệu cho cơ quan thuế.');
@@ -274,7 +274,7 @@ export async function buildQttWorkbook(sheetData: HouseholdQtt, brand = 'Ludy'):
   };
   line(`HỘ, CÁ NHÂN KINH DOANH: ${sheetData.household.name}`, true);
   line(`Mã số thuế: ${sheetData.household.taxCode ?? ''}`);
-  line(`BẢNG TÍNH TỜ KHAI ${sheetData.form.name.toUpperCase()}`, true);
+  line(`BẢNG TÍNH ${sheetData.form.name.toUpperCase()}`, true);
   line(`Phiên bản mẫu: ${sheetData.form.version}`);
   line(`Kỳ tính thuế: năm ${sheetData.period.year} (từ ${dateLabel(sheetData.period.from)} đến ${dateLabel(sheetData.period.to)})`);
   line(`Đây là bảng tính để kê khai trên cổng thuế hoặc eTax Mobile. ${brand} không nộp tờ khai và không gửi dữ liệu cho cơ quan thuế.`);
@@ -310,6 +310,8 @@ export async function buildQttWorkbook(sheetData: HouseholdQtt, brand = 'Ludy'):
     setTextCell(memoHead.getCell('label'), 'Khoản');
     setTextCell(memoHead.getCell('amount'), 'Trước khi giảm');
     setTextCell(memoHead.getCell('after'), 'Sau khi giảm');
+    // The rows below carry the label of an unconfirmed rule in this column, so it is headed like the table above.
+    if (provisional) setTextCell(memoHead.getCell('note'), 'Ghi chú');
     memoHead.font = { bold: true };
     const rows: Array<[string, 'tax' | 'cut' | 'payable' | 'exempt' | 'due' | 'overpaid']> = [
       ['Thuế phát sinh [13]', 'tax'],

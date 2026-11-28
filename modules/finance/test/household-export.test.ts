@@ -112,7 +112,9 @@ describe('the 01/CNKD worksheet workbook', () => {
     const all = texts(await cnkdSheet(sheetData()));
     expect(all).toContain('HỘ, CÁ NHÂN KINH DOANH: Hộ kinh doanh Nguyễn Văn A');
     expect(all).toContain('Mã số thuế: 001234567890');
-    expect(all).toContain('BẢNG TÍNH TỜ KHAI TỜ KHAI THUẾ ĐỐI VỚI HỘ KINH DOANH (01/CNKD)');
+    expect(all).toContain('BẢNG TÍNH TỜ KHAI THUẾ ĐỐI VỚI HỘ KINH DOANH (01/CNKD)');
+    // The form's own name already begins with "Tờ khai": the title does not say it twice.
+    expect(all.some((t) => t.includes('TỜ KHAI TỜ KHAI'))).toBe(false);
     expect(all).toContain('Phiên bản mẫu: 2026.2');
     expect(all).toContain('Kỳ tính thuế: quý 4 năm 2026 (từ 01/10/2026 đến 31/12/2026)');
     expect(all.some((t) => t.includes('Ludy không nộp tờ khai'))).toBe(true);
@@ -338,7 +340,8 @@ describe('the 02/CNKD-TNCN-QTT annual worksheet workbook', () => {
     const all = texts(await qttSheet(qttData()));
     expect(all).toContain('HỘ, CÁ NHÂN KINH DOANH: Hộ kinh doanh Nguyễn Văn A');
     expect(all).toContain('Mã số thuế: 001234567890');
-    expect(all).toContain('BẢNG TÍNH TỜ KHAI TỜ KHAI QUYẾT TOÁN THUẾ THU NHẬP CÁ NHÂN (02/CNKD-TNCN-QTT)');
+    expect(all).toContain('BẢNG TÍNH TỜ KHAI QUYẾT TOÁN THUẾ THU NHẬP CÁ NHÂN (02/CNKD-TNCN-QTT)');
+    expect(all.some((t) => t.includes('TỜ KHAI TỜ KHAI'))).toBe(false);
     expect(all).toContain('Phiên bản mẫu: 2026.1');
     expect(all).toContain('Kỳ tính thuế: năm 2026 (từ 01/01/2026 đến 31/12/2026)');
     expect(all.some((t) => t.includes('Ludy không nộp tờ khai'))).toBe(true);
@@ -406,6 +409,17 @@ describe('the 02/CNKD-TNCN-QTT annual worksheet workbook', () => {
     expect(all).toContain('  Chưa xác nhận: thuế suất 15% của bậc doanh thu, từ 01/01/2026');
     expect(all).toContain('  Chưa xác nhận: nhóm chi phí của tài khoản 632, từ 01/01/2026');
     expect(all).toContain('  Chưa xác nhận: mức giảm thuế TNCN theo Nghị định 398, từ 01/01/2026');
+    // The memo table of the 30% cut is headed "Ghi chú" too, since its rows carry the label; the confirmed file has no such column header there.
+    const memoHeadOf = (target: ExcelJS.Worksheet) => {
+      const heads: ExcelJS.Row[] = [];
+      target.eachRow((row) => {
+        if (row.getCell(2).value === 'Khoản') heads.push(row);
+      });
+      return heads[0];
+    };
+    expect(memoHeadOf(sheet)?.getCell(5).value).toBe('Ghi chú');
+    expect(memoHeadOf(sheet)?.getCell(3).value).toBe('Trước khi giảm');
+    expect(memoHeadOf(await qttSheet(confirmed))?.getCell(5).value ?? null).toBeNull();
     const rows = qttRows(sheet);
     // The revenue [09] is the ledger's own movement of 511 and depends on no rule: no label. The tax [13] and what is left to pay [17] do.
     expect(rows.get('[09]')?.getCell(5).value ?? null).toBeNull();
