@@ -21791,6 +21791,7 @@ export const en = {
         draft_create: 'Let an AI app write an Engage post draft for a person to review',
         posts: 'Let an AI app list the Engage posts',
         review_queue: 'Let an AI app read the Engage review queue',
+        channels: 'Let an AI app list the Engage channels',
       },
       media: {
         archive: 'Archive a library file',

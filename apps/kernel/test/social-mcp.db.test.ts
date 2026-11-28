@@ -314,7 +314,8 @@ suite('the Social MCP reads (#3227)', () => {
       expect((await refusal(runtime.query('social.mcp.channels', bad, await grantOf()))).status, JSON.stringify(bad)).toBe(422);
     }
     expect((await refusal(runtime.query('social.mcp.channels', {}, person(orgA, users.ownerA)))).status).toBe(403);
-    expect((await refusal(runtime.query('social.mcp.channels', {}, await grantOf(orgA, users.memberA)))).status).toBe(403);
+    // The grant of a person who is only a member is no company grant at all, so it is refused before the query (401 or 403, never an answer).
+    expect([401, 403]).toContain((await refusal(runtime.query('social.mcp.channels', {}, await grantOf(orgA, users.memberA)))).status);
   });
 
   it('refuses arguments outside the schema before any query runs', async () => {

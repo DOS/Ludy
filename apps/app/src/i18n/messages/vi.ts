@@ -21791,6 +21791,7 @@ export const vi = {
         draft_create: 'Cho ứng dụng AI soạn bản nháp bài đăng Engage chờ người duyệt',
         posts: 'Cho ứng dụng AI xem danh sách bài đăng Engage',
         review_queue: 'Cho ứng dụng AI xem hàng chờ duyệt của Engage',
+        channels: 'Cho ứng dụng AI xem danh sách kênh đăng của Engage',
       },
       media: {
         archive: 'Lưu trữ tệp trong thư viện',
