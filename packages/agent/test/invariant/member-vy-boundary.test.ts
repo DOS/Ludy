@@ -32,10 +32,11 @@ const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', '.next', 'generated',
 function sources(dir: string): string[] {
   if (!existsSync(dir)) return [];
   const out: string[] = [];
-  for (const name of readdirSync(dir)) {
-    const path = join(dir, name);
-    if (statSync(path).isDirectory()) out.push(...sources(path));
-    else if (SOURCE_EXT_RE.test(name)) out.push(path);
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    const isDir = entry.isDirectory() || (entry.isSymbolicLink() && statSync(path).isDirectory());
+    if (isDir) out.push(...sources(path));
+    else if (SOURCE_EXT_RE.test(entry.name)) out.push(path);
   }
   return out;
 }
@@ -44,13 +45,14 @@ export function workspaceNonTestSources(rootDir: string): string[] {
   const out: string[] = [];
   const walk = (dir: string): void => {
     if (!existsSync(dir)) return;
-    for (const name of readdirSync(dir)) {
-      const path = join(dir, name);
-      if (statSync(path).isDirectory()) {
-        if (!SKIP_DIRS.has(name)) walk(path);
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      const isDir = entry.isDirectory() || (entry.isSymbolicLink() && statSync(path).isDirectory());
+      if (isDir) {
+        if (!SKIP_DIRS.has(entry.name)) walk(path);
         continue;
       }
-      if (!SOURCE_EXT_RE.test(name)) continue;
+      if (!SOURCE_EXT_RE.test(entry.name)) continue;
       const rel = relative(rootDir, path).replace(/\\/g, '/');
       if (/(^|\/)test\//.test(rel)) continue;
       out.push(path);
@@ -279,8 +281,6 @@ function decodeRawStringContent(inner: string): string | null {
   return chunks.join('');
 }
 
-const MULTI_CHAR_PUNCTS = ['...', '===', '!==', '=>', '==', '!=', '<=', '++', '--', '&&', '||', '??', '?.', '+=', '-=', '*=', '/=', '**'] as const;
-
 const isJsxTagNameChar = (code: number): boolean =>
   isAsciiIdentPart(code) || code === 45 /* - */ || code === 46 /* . */ || code === 58 /* : */;
 
@@ -303,6 +303,95 @@ function isJsxOpenTagHead(text: string, ltIdx: number): boolean {
   return true;
 }
 
+const AS_TYPE_PREFIX_IDENTS = new Set([
+  'keyof',
+  'typeof',
+  'readonly',
+  'infer',
+  'unique',
+  'abstract',
+  'new',
+  'asserts',
+]);
+
+const SCAN_FLAG_INVALID = 1 << 0;
+const SCAN_FLAG_STRING_OR_TPL = 1 << 1;
+const SCAN_FLAG_PLUS = 1 << 2;
+const SCAN_FLAG_TPL_HEAD = 1 << 3;
+const SCAN_FLAG_CONST = 1 << 4;
+const SCAN_FLAG_MOD_OR_REQ_KW = 1 << 5;
+const SCAN_FLAG_REQ_OR_HOST = 1 << 6;
+const SCAN_FLAG_METERED_MATCH = 1 << 7;
+const SCAN_FLAG_OPEN_PAREN = 1 << 8;
+const SCAN_FLAG_OPEN_BRACKET = 1 << 9;
+const SCAN_FLAG_DYNAMIC_IMPORT = 1 << 10;
+
+const MOD_OR_REQ_SCAN_IDENTS = new Set([
+  'import',
+  'export',
+  'require',
+  'createRequire',
+  'globalThis',
+  'window',
+  'self',
+  'module',
+  'global',
+]);
+
+const REQ_OR_HOST_SCAN_IDENTS = new Set([
+  'require',
+  'createRequire',
+  'globalThis',
+  'window',
+  'self',
+  'module',
+  'global',
+]);
+
+const REQ_OR_HOST_SCAN_STRS = new Set(['require', 'createRequire', 'node:module', 'module']);
+
+const isDynamicImportParen = (tokens: readonly Token[], openParenIdx: number): boolean => {
+  let k = openParenIdx - 1;
+  while (k > 0 && tokens[k]?.kind === 'punct' && tokens[k]?.value === '!') k -= 1;
+  const prev = tokens[k];
+  return prev?.kind === 'ident' && prev.value === 'import';
+};
+
+function computeTokenFlags(tokens: readonly Token[]): number {
+  let flags = 0;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const tok = tokens[i]!;
+    if (tok.kind === 'invalid') {
+      flags |= SCAN_FLAG_INVALID;
+    } else if (tok.kind === 'string' || tok.kind === 'template') {
+      flags |= SCAN_FLAG_STRING_OR_TPL;
+      if (tok.value === 'metered') flags |= SCAN_FLAG_METERED_MATCH;
+      else if (REQ_OR_HOST_SCAN_STRS.has(tok.value)) flags |= SCAN_FLAG_REQ_OR_HOST;
+    } else if (tok.kind === 'template_head') {
+      flags |= SCAN_FLAG_STRING_OR_TPL | SCAN_FLAG_TPL_HEAD;
+    } else if (tok.kind === 'template_middle' || tok.kind === 'template_tail') {
+      flags |= SCAN_FLAG_STRING_OR_TPL;
+    } else if (tok.kind === 'punct') {
+      if (tok.value === '+') flags |= SCAN_FLAG_PLUS;
+      else if (tok.value === '(') {
+        flags |= SCAN_FLAG_OPEN_PAREN;
+        if (isDynamicImportParen(tokens, i)) flags |= SCAN_FLAG_DYNAMIC_IMPORT;
+      } else if (tok.value === '[') flags |= SCAN_FLAG_OPEN_BRACKET | SCAN_FLAG_METERED_MATCH;
+    } else if (tok.kind === 'ident') {
+      const v = tok.value;
+      if (v === 'const') flags |= SCAN_FLAG_CONST;
+      if (MOD_OR_REQ_SCAN_IDENTS.has(v)) {
+        flags |= SCAN_FLAG_MOD_OR_REQ_KW;
+        if (REQ_OR_HOST_SCAN_IDENTS.has(v)) flags |= SCAN_FLAG_REQ_OR_HOST;
+        if (v === 'import' || v === 'require') flags |= SCAN_FLAG_METERED_MATCH;
+      } else if (v === 'metered') {
+        flags |= SCAN_FLAG_METERED_MATCH;
+      }
+    }
+  }
+  return flags;
+}
+
 interface ScanSourceResult {
   tokens: Token[];
   stripped: string;
@@ -310,6 +399,7 @@ interface ScanSourceResult {
   suspiciousRegexStarts: Set<number>;
   unambiguousRegexSpans: Array<{ start: number; end: number }>;
   commentSpans: Array<{ start: number; end: number }>;
+  tokenFlags: number;
 }
 
 function scanSource(
@@ -356,16 +446,7 @@ function scanSource(
   let asTypeBrace = 0;
   let asTypeAngle = 0;
   let lastTokenWasTypeVoid = false;
-  const AS_TYPE_PREFIX_IDENTS = new Set([
-    'keyof',
-    'typeof',
-    'readonly',
-    'infer',
-    'unique',
-    'abstract',
-    'new',
-    'asserts',
-  ]);
+  let tokenFlags = 0;
   // Fail-closed brace classifier (#5035): every `{ ... }` pushes `true` (expression/division-possible on `}`),
   // matching origin/main strictness, UNLESS its `{` unambiguously begins a JS control-flow statement block.
   const braceExprStack: boolean[] = [];
@@ -570,13 +651,44 @@ function scanSource(
   const emit = (tok: Token): void => {
     trackAsTypeToken(tok);
     trackBraceExprToken(tok);
-    if (options.emitTokens) tokens.push(tok);
+    if (options.emitTokens) {
+      if (tok.kind === 'invalid') {
+        tokenFlags |= SCAN_FLAG_INVALID;
+      } else if (tok.kind === 'string' || tok.kind === 'template') {
+        tokenFlags |= SCAN_FLAG_STRING_OR_TPL;
+        if (tok.value === 'metered') tokenFlags |= SCAN_FLAG_METERED_MATCH;
+        else if (REQ_OR_HOST_SCAN_STRS.has(tok.value)) tokenFlags |= SCAN_FLAG_REQ_OR_HOST;
+      } else if (tok.kind === 'template_head') {
+        tokenFlags |= SCAN_FLAG_STRING_OR_TPL | SCAN_FLAG_TPL_HEAD;
+      } else if (tok.kind === 'template_middle' || tok.kind === 'template_tail') {
+        tokenFlags |= SCAN_FLAG_STRING_OR_TPL;
+      } else if (tok.kind === 'punct') {
+        if (tok.value === '+') tokenFlags |= SCAN_FLAG_PLUS;
+        else if (tok.value === '(') {
+          tokenFlags |= SCAN_FLAG_OPEN_PAREN;
+          if (isDynamicImportParen(tokens, tokens.length)) tokenFlags |= SCAN_FLAG_DYNAMIC_IMPORT;
+        } else if (tok.value === '[') tokenFlags |= SCAN_FLAG_OPEN_BRACKET | SCAN_FLAG_METERED_MATCH;
+      } else if (tok.kind === 'ident') {
+        const v = tok.value;
+        if (v === 'const') tokenFlags |= SCAN_FLAG_CONST;
+        if (MOD_OR_REQ_SCAN_IDENTS.has(v)) {
+          tokenFlags |= SCAN_FLAG_MOD_OR_REQ_KW;
+          if (REQ_OR_HOST_SCAN_IDENTS.has(v)) tokenFlags |= SCAN_FLAG_REQ_OR_HOST;
+          if (v === 'import' || v === 'require') tokenFlags |= SCAN_FLAG_METERED_MATCH;
+        } else if (v === 'metered') {
+          tokenFlags |= SCAN_FLAG_METERED_MATCH;
+        }
+      }
+      tokens.push(tok);
+    }
   };
 
   const countNewlines = (s: string): number => {
     let n = 0;
     for (let k = 0; k < s.length; k += 1) {
-      n += lineDeltaAt(s, k);
+      const c = s.charCodeAt(k);
+      if (c === 10 || c === 0x2028 || c === 0x2029) n += 1;
+      else if (c === 13 && s.charCodeAt(k + 1) !== 10) n += 1;
     }
     return n;
   };
@@ -585,8 +697,11 @@ function scanSource(
     if (options.jsx && jsxStack[jsxStack.length - 1]?.mode === 'elem') {
       const textStart = i;
       let j = i;
-      while (j < text.length && text[j] !== '<' && text[j] !== '{') {
-        line += lineDeltaAt(text, j);
+      while (j < text.length) {
+        const c = text.charCodeAt(j);
+        if (c === 60 || c === 123) break;
+        if (c === 10 || c === 0x2028 || c === 0x2029) line += 1;
+        else if (c === 13 && text.charCodeAt(j + 1) !== 10) line += 1;
         j += 1;
       }
       if (j > textStart && options.stripCommentsMode) chunks.push(text.slice(textStart, j));
@@ -699,21 +814,41 @@ function scanSource(
     const code = ch.charCodeAt(0);
     const next = text[i + 1] ?? '';
 
-    if (isWhitespaceCode(code)) {
+    if (code === 32 || code === 9 || code === 10 || code === 13 || code === 11 || code === 12 || (code > 127 && isWhitespaceCode(code))) {
       let j = i;
-      while (j < text.length && isWhitespaceCode(text.charCodeAt(j))) {
-        line += lineDeltaAt(text, j);
-        j += 1;
+      while (j < text.length) {
+        const c = text.charCodeAt(j);
+        if (c === 32 || c === 9) {
+          j += 1;
+          continue;
+        }
+        if (c === 10 || c === 0x2028 || c === 0x2029) {
+          line += 1;
+          j += 1;
+          continue;
+        }
+        if (c === 13) {
+          if (text.charCodeAt(j + 1) !== 10) line += 1;
+          j += 1;
+          continue;
+        }
+        if (c === 11 || c === 12 || (c > 127 && isWhitespaceCode(c))) {
+          j += 1;
+          continue;
+        }
+        break;
       }
       if (options.stripCommentsMode) chunks.push(text.slice(i, j));
       i = j;
       continue;
     }
 
-    if (ch === '/' && next === '/') {
+    if (code === 47 && next === '/') {
       markCommentOnCurrentLine();
       let stop = i + 2;
-      while (stop < text.length && !isLineTerminatorCode(text.charCodeAt(stop))) {
+      while (stop < text.length) {
+        const c = text.charCodeAt(stop);
+        if (c === 10 || c === 13 || c === 0x2028 || c === 0x2029) break;
         stop += 1;
       }
       commentSpans.push({ start: i, end: stop });
@@ -722,7 +857,7 @@ function scanSource(
       continue;
     }
 
-    if (ch === '/' && next === '*') {
+    if (code === 47 && next === '*') {
       markCommentOnCurrentLine();
       const startLine = line;
       const close = text.indexOf('*/', i + 2);
@@ -743,12 +878,12 @@ function scanSource(
       continue;
     }
 
-    if (ch === "'" || ch === '"') {
+    if (code === 39 || code === 34) {
       const start = i;
       const startLine = line;
       const topJsxOpen = options.jsx ? jsxStack[jsxStack.length - 1] : undefined;
       const isJsxAttrString = Boolean(topJsxOpen?.mode === 'openTag' && topJsxOpen.angleDepth === 0);
-      const valueChunks: string[] = [];
+      let valueChunks: string[] | null = null;
       let j = i + 1;
       let plainStart = j;
       let valid = true;
@@ -756,17 +891,17 @@ function scanSource(
       let closed = false;
 
       while (j < text.length) {
-        const cur = text[j] ?? '';
-        const curCode = cur.charCodeAt(0);
-        if (cur === ch) {
-          if (j > plainStart) valueChunks.push(text.slice(plainStart, j));
+        const curCode = text.charCodeAt(j);
+        if (curCode === code) {
+          if (valueChunks !== null && j > plainStart) valueChunks.push(text.slice(plainStart, j));
           j += 1;
           closed = true;
           break;
         }
         if (isJsxAttrString) {
           // JSX attribute string literals allow raw newlines and treat backslashes literally.
-          line += lineDeltaAt(text, j);
+          if (curCode === 10 || curCode === 0x2028 || curCode === 0x2029) line += 1;
+          else if (curCode === 13 && text.charCodeAt(j + 1) !== 10) line += 1;
           j += 1;
           continue;
         }
@@ -774,8 +909,9 @@ function scanSource(
           valid = false;
           break;
         }
-        if (cur === '\\') {
+        if (curCode === 92) {
           sawEscape = true;
+          if (valueChunks === null) valueChunks = [];
           if (j > plainStart) valueChunks.push(text.slice(plainStart, j));
           const dec = decodeStringEscape(text, j);
           if (!dec.ok) valid = false;
@@ -801,10 +937,17 @@ function scanSource(
           chunks.push(raw);
         }
       }
+      const strValue = !valid
+        ? 'invalid or unclosed string literal'
+        : valueChunks !== null
+          ? valueChunks.join('')
+          : closed
+            ? text.slice(start + 1, j - 1)
+            : text.slice(start + 1, j);
       emit({
         kind: valid ? 'string' : 'invalid',
         raw,
-        value: valid ? valueChunks.join('') : 'invalid or unclosed string literal',
+        value: strValue,
         escaped: sawEscape,
         start,
         end: j,
@@ -822,12 +965,12 @@ function scanSource(
       continue;
     }
 
-    const resumingTemplate = ch === '}' && templates.length > 0 && templates[templates.length - 1] === 0;
-    if (ch === '`' || resumingTemplate) {
+    const resumingTemplate = code === 125 && templates.length > 0 && templates[templates.length - 1] === 0;
+    if (code === 96 || resumingTemplate) {
       if (resumingTemplate) templates.pop();
       const start = i;
       const startLine = line;
-      const valueChunks: string[] = [];
+      let valueChunks: string[] | null = null;
       let j = i + 1;
       let plainStart = j;
       let valid = true;
@@ -836,23 +979,23 @@ function scanSource(
       let hitBacktick = false;
 
       while (j < text.length) {
-        const cur = text[j] ?? '';
-        const curCode = cur.charCodeAt(0);
-        if (cur === '`') {
-          if (j > plainStart) valueChunks.push(text.slice(plainStart, j));
+        const curCode = text.charCodeAt(j);
+        if (curCode === 96) {
+          if (valueChunks !== null && j > plainStart) valueChunks.push(text.slice(plainStart, j));
           j += 1;
           hitBacktick = true;
           break;
         }
-        if (cur === '$' && text[j + 1] === '{') {
-          if (j > plainStart) valueChunks.push(text.slice(plainStart, j));
+        if (curCode === 36 && text.charCodeAt(j + 1) === 123) {
+          if (valueChunks !== null && j > plainStart) valueChunks.push(text.slice(plainStart, j));
           j += 2;
           hitInterpolation = true;
           templates.push(0);
           break;
         }
-        if (cur === '\\') {
+        if (curCode === 92) {
           sawEscape = true;
+          if (valueChunks === null) valueChunks = [];
           if (j > plainStart) valueChunks.push(text.slice(plainStart, j));
           const dec = decodeStringEscape(text, j);
           if (!dec.ok) valid = false;
@@ -863,6 +1006,7 @@ function scanSource(
           continue;
         }
         if (curCode === 13) {
+          if (valueChunks === null) valueChunks = [];
           if (j > plainStart) valueChunks.push(text.slice(plainStart, j));
           valueChunks.push('\n');
           line += 1;
@@ -897,10 +1041,19 @@ function scanSource(
           : hitInterpolation
             ? 'template_head'
             : 'template';
+      const tplValue = !valid
+        ? 'invalid or unclosed template literal'
+        : valueChunks !== null
+          ? valueChunks.join('')
+          : hitInterpolation
+            ? text.slice(start + 1, j - 2)
+            : hitBacktick
+              ? text.slice(start + 1, j - 1)
+              : text.slice(start + 1, j);
       emit({
         kind,
         raw,
-        value: valid ? valueChunks.join('') : 'invalid or unclosed template literal',
+        value: tplValue,
         escaped: sawEscape,
         start,
         end: j,
@@ -1054,57 +1207,62 @@ function scanSource(
     }
 
     // Identifiers and unicode-escaped identifiers
-    const startCp = text.codePointAt(i) ?? 0;
-    const startChar = String.fromCodePoint(startCp);
-    if (isIdentStartChar(startChar) || (ch === '\\' && next === 'u')) {
+    const isAsciiStart = isAsciiIdentStart(code);
+    if (isAsciiStart) {
       const start = i;
-      const valChunks: string[] = [];
-      let j = i;
-      let valid = true;
-      let sawEscape = false;
-
-      if (ch === '\\') {
-        sawEscape = true;
-        const dec = decodeIdentUnicodeEscape(text, j);
-        if (!dec.ok || !isIdentStartChar(dec.char)) {
-          valid = false;
-        } else {
-          valChunks.push(dec.char);
-        }
-        j = dec.next;
-      } else {
-        valChunks.push(startChar);
-        j += startChar.length;
-      }
-
-      while (j < text.length && valid) {
-        const c = text[j] ?? '';
-        if (c === '\\') {
-          if (text[j + 1] !== 'u') {
-            valid = false;
-            j += 1;
-            break;
-          }
-          sawEscape = true;
-          const dec = decodeIdentUnicodeEscape(text, j);
-          if (!dec.ok || !isIdentPartChar(dec.char)) {
-            valid = false;
-            j = dec.next;
-            break;
-          }
-          valChunks.push(dec.char);
-          j = dec.next;
+      let j = i + 1;
+      while (j < text.length) {
+        const c = text.charCodeAt(j);
+        if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 36 || c === 95) {
+          j += 1;
           continue;
         }
-        const cp = text.codePointAt(j) ?? 0;
-        const unit = String.fromCodePoint(cp);
-        if (!isIdentPartChar(unit)) break;
-        valChunks.push(unit);
-        j += unit.length;
+        break;
       }
-
-      const raw = text.slice(start, j);
-      const value = valChunks.join('');
+      const stopCode = j < text.length ? text.charCodeAt(j) : 0;
+      let raw: string;
+      let value: string;
+      let valid = true;
+      let sawEscape = false;
+      if (stopCode !== 92 && stopCode <= 127) {
+        raw = text.slice(start, j);
+        value = raw;
+      } else {
+        const valChunks: string[] = [text.slice(start, j)];
+        while (j < text.length && valid) {
+          const c = text.charCodeAt(j);
+          if (c === 92) {
+            if (text.charCodeAt(j + 1) !== 117) {
+              valid = false;
+              j += 1;
+              break;
+            }
+            sawEscape = true;
+            const dec = decodeIdentUnicodeEscape(text, j);
+            if (!dec.ok || !isIdentPartChar(dec.char)) {
+              valid = false;
+              j = dec.next;
+              break;
+            }
+            valChunks.push(dec.char);
+            j = dec.next;
+            continue;
+          }
+          if (c <= 127) {
+            if (!isAsciiIdentPart(c)) break;
+            valChunks.push(text[j]!);
+            j += 1;
+            continue;
+          }
+          const cp = text.codePointAt(j) ?? 0;
+          const unit = String.fromCodePoint(cp);
+          if (!isIdentPartChar(unit)) break;
+          valChunks.push(unit);
+          j += unit.length;
+        }
+        raw = text.slice(start, j);
+        value = valChunks.join('');
+      }
       if (options.stripCommentsMode) chunks.push(raw);
       const topJsxOpen = options.jsx ? jsxStack[jsxStack.length - 1] : undefined;
       const inJsxOpenTag = Boolean(valid && topJsxOpen?.mode === 'openTag' && topJsxOpen.angleDepth === 0);
@@ -1148,6 +1306,102 @@ function scanSource(
       continue;
     }
 
+    if (code > 127 || (code === 92 && next === 'u')) {
+      const startCp = text.codePointAt(i) ?? 0;
+      const startChar = String.fromCodePoint(startCp);
+      if (isIdentStartChar(startChar) || (ch === '\\' && next === 'u')) {
+        const start = i;
+        const valChunks: string[] = [];
+        let j = i;
+        let valid = true;
+        let sawEscape = false;
+
+        if (ch === '\\') {
+          sawEscape = true;
+          const dec = decodeIdentUnicodeEscape(text, j);
+          if (!dec.ok || !isIdentStartChar(dec.char)) {
+            valid = false;
+          } else {
+            valChunks.push(dec.char);
+          }
+          j = dec.next;
+        } else {
+          valChunks.push(startChar);
+          j += startChar.length;
+        }
+
+        while (j < text.length && valid) {
+          const c = text[j] ?? '';
+          if (c === '\\') {
+            if (text[j + 1] !== 'u') {
+              valid = false;
+              j += 1;
+              break;
+            }
+            sawEscape = true;
+            const dec = decodeIdentUnicodeEscape(text, j);
+            if (!dec.ok || !isIdentPartChar(dec.char)) {
+              valid = false;
+              j = dec.next;
+              break;
+            }
+            valChunks.push(dec.char);
+            j = dec.next;
+            continue;
+          }
+          const cp = text.codePointAt(j) ?? 0;
+          const unit = String.fromCodePoint(cp);
+          if (!isIdentPartChar(unit)) break;
+          valChunks.push(unit);
+          j += unit.length;
+        }
+
+        const raw = text.slice(start, j);
+        const value = valChunks.join('');
+        if (options.stripCommentsMode) chunks.push(raw);
+        const topJsxOpen = options.jsx ? jsxStack[jsxStack.length - 1] : undefined;
+        const inJsxOpenTag = Boolean(valid && topJsxOpen?.mode === 'openTag' && topJsxOpen.angleDepth === 0);
+        emit({
+          kind: valid ? 'ident' : 'invalid',
+          raw,
+          value: valid ? value : raw,
+          escaped: sawEscape || raw !== value,
+          start,
+          end: j,
+          line,
+          ...(inJsxOpenTag ? { inJsxOpenTag: true } : {}),
+        });
+        if (valid) {
+          const topParen = parenAllowsRegexStack[parenAllowsRegexStack.length - 1];
+          const isForOfHead =
+            !prevWasDot &&
+            value === 'of' &&
+            Boolean(topParen?.inForHeader && !topParen.semiSeen && topParen.depthInParen === 0);
+          prevAllowsRegex = !prevWasDot && !lastTokenWasTypeVoid && REGEX_PREFIX_KEYWORDS.has(value);
+          // Unary `void` opens a regex literal, whereas type `void` in `as ...` / `satisfies ...` ends an expression that `/` divides.
+          prevCouldBeDivision = !prevWasDot && !lastTokenWasTypeVoid && (value === 'await' || value === 'yield' || (value === 'of' && !isForOfHead));
+          prevMaySpeculativelyDivide = !prevWasDot && (value === 'await' || value === 'yield' || value === 'of' || value === 'void');
+          prevControlKeyword =
+            !prevWasDot && value === 'await' && prevControlKeyword === 'for'
+              ? 'for await'
+              : !prevWasDot && CONTROL_KEYWORDS.has(value)
+                ? value
+                : '';
+        } else {
+          prevAllowsRegex = false;
+          prevCouldBeDivision = false;
+          prevMaySpeculativelyDivide = false;
+          prevControlKeyword = '';
+        }
+        prevWasDot = false;
+        prevWasLt = false;
+        prevWasGt = false;
+        prevWasRBrace = false;
+        i = j;
+        continue;
+      }
+    }
+
     // Track braces inside template interpolations before emitting punctuator
     if (templates.length > 0 && ch === '{') {
       templates[templates.length - 1] = (templates[templates.length - 1] ?? 0) + 1;
@@ -1189,12 +1443,35 @@ function scanSource(
       }
     }
 
+    const nextCode = text.charCodeAt(i + 1);
     let punct = ch;
-    for (const multi of MULTI_CHAR_PUNCTS) {
-      if (text.startsWith(multi, i)) {
-        punct = multi;
-        break;
-      }
+    if (code === 61 /* = */) {
+      if (nextCode === 61) punct = text.charCodeAt(i + 2) === 61 ? '===' : '==';
+      else if (nextCode === 62) punct = '=>';
+    } else if (code === 46 /* . */) {
+      if (nextCode === 46 && text.charCodeAt(i + 2) === 46) punct = '...';
+    } else if (code === 33 /* ! */) {
+      if (nextCode === 61) punct = text.charCodeAt(i + 2) === 61 ? '!==' : '!=';
+    } else if (code === 60 /* < */) {
+      if (nextCode === 61) punct = '<=';
+    } else if (code === 43 /* + */) {
+      if (nextCode === 43) punct = '++';
+      else if (nextCode === 61) punct = '+=';
+    } else if (code === 45 /* - */) {
+      if (nextCode === 45) punct = '--';
+      else if (nextCode === 61) punct = '-=';
+    } else if (code === 38 /* & */) {
+      if (nextCode === 38) punct = '&&';
+    } else if (code === 124 /* | */) {
+      if (nextCode === 124) punct = '||';
+    } else if (code === 63 /* ? */) {
+      if (nextCode === 63) punct = '??';
+      else if (nextCode === 46) punct = '?.';
+    } else if (code === 42 /* * */) {
+      if (nextCode === 42) punct = '**';
+      else if (nextCode === 61) punct = '*=';
+    } else if (code === 47 /* / */) {
+      if (nextCode === 61) punct = '/=';
     }
     if (options.stripCommentsMode) chunks.push(punct);
     emit({ kind: 'punct', raw: punct, value: punct, escaped: false, start: i, end: i + punct.length, line });
@@ -1327,6 +1604,7 @@ function scanSource(
     suspiciousRegexStarts,
     unambiguousRegexSpans,
     commentSpans,
+    tokenFlags,
   };
 }
 
@@ -1334,7 +1612,7 @@ function speculativeRescanWithSpans(
   text: string,
   primaryScan: Pick<ScanSourceResult, 'suspiciousDivisionStarts' | 'suspiciousRegexStarts'>,
   jsx = false,
-): { tokens: Token[]; unambiguousRegexSpans: Array<{ start: number; end: number }> } | null {
+): { tokens: Token[]; unambiguousRegexSpans: Array<{ start: number; end: number }>; tokenFlags: number } | null {
   if (primaryScan.suspiciousDivisionStarts.size === 0 && primaryScan.suspiciousRegexStarts.size === 0) {
     return null;
   }
@@ -1346,7 +1624,7 @@ function speculativeRescanWithSpans(
     skipRegexStarts: primaryScan.suspiciousRegexStarts,
     ...(jsx ? { jsx: true } : {}),
   });
-  return { tokens: res.tokens, unambiguousRegexSpans: res.unambiguousRegexSpans };
+  return { tokens: res.tokens, unambiguousRegexSpans: res.unambiguousRegexSpans, tokenFlags: res.tokenFlags };
 }
 
 function speculativeRescan(
@@ -1390,21 +1668,22 @@ function createNextQuoteFinder(text: string): (fromIdx: number) => number {
 }
 
 function collectRawCallSpecifiers(text: string, keyword: 'import(' | 'require(', out: string[]): void {
+  let pos = text.indexOf(keyword, 0);
+  if (pos < 0) return;
   const len = text.length;
   const kwLen = keyword.length;
   const nextQuote = createNextQuoteFinder(text);
-  let pos = 0;
-  while ((pos = text.indexOf(keyword, pos)) >= 0) {
+  while (pos >= 0) {
     const hasWordBefore = pos > 0 && isRegexWordCode(text.charCodeAt(pos - 1));
     let p = pos + kwLen;
     if (hasWordBefore) {
-      pos += kwLen;
+      pos = text.indexOf(keyword, pos + kwLen);
       continue;
     }
     while (p < len && isWhitespaceCode(text.charCodeAt(p))) p += 1;
     const q1 = text.charCodeAt(p);
     if (q1 !== 39 && q1 !== 34) {
-      pos = p;
+      pos = text.indexOf(keyword, p);
       continue;
     }
     const q2Pos = nextQuote(p + 1);
@@ -1414,66 +1693,69 @@ function collectRawCallSpecifiers(text: string, keyword: 'import(' | 'require(',
       while (r < len && isWhitespaceCode(text.charCodeAt(r))) r += 1;
       if (text.charCodeAt(r) === 41) out.push(text.slice(p + 1, q2Pos));
     }
-    pos += kwLen;
+    pos = text.indexOf(keyword, pos + kwLen);
   }
 }
 
 // O(N) linear superset scanner replacing the quadratic `(?:^|\n)\s*(?:import|export)\b[^;]*?\bfrom\s*...` regex.
 export function linearRawSpecifiers(text: string): string[] {
   const out: string[] = [];
-  const len = text.length;
-  const nextQuote = createNextQuoteFinder(text);
-  let inClause = false;
-  let i = 0;
-  while (i < len) {
-    if (!inClause) {
-      if (i > 0 && text.charCodeAt(i - 1) !== 10) {
+  const hasFrom = text.includes('from') && (text.includes('import') || text.includes('export'));
+  if (hasFrom) {
+    const len = text.length;
+    const nextQuote = createNextQuoteFinder(text);
+    let inClause = false;
+    let i = 0;
+    while (i < len) {
+      if (!inClause) {
+        if (i > 0 && text.charCodeAt(i - 1) !== 10) {
+          const nl = text.indexOf('\n', i);
+          if (nl < 0) break;
+          i = nl + 1;
+          continue;
+        }
+        while (i < len && isWhitespaceCode(text.charCodeAt(i))) i += 1;
+        if (i >= len) break;
+        if (
+          (text.startsWith('import', i) || text.startsWith('export', i)) &&
+          (i + 6 >= len || !isRegexWordCode(text.charCodeAt(i + 6)))
+        ) {
+          inClause = true;
+          i += 6;
+          continue;
+        }
         const nl = text.indexOf('\n', i);
         if (nl < 0) break;
         i = nl + 1;
         continue;
       }
-      while (i < len && isWhitespaceCode(text.charCodeAt(i))) i += 1;
-      if (i >= len) break;
-      if (
-        (text.startsWith('import', i) || text.startsWith('export', i)) &&
-        (i + 6 >= len || !isRegexWordCode(text.charCodeAt(i + 6)))
-      ) {
-        inClause = true;
-        i += 6;
+      const code = text.charCodeAt(i);
+      if (code === 59 /* ; */) {
+        inClause = false;
+        i += 1;
         continue;
       }
-      const nl = text.indexOf('\n', i);
-      if (nl < 0) break;
-      i = nl + 1;
-      continue;
-    }
-    const code = text.charCodeAt(i);
-    if (code === 59 /* ; */) {
-      inClause = false;
-      i += 1;
-      continue;
-    }
-    if (code === 102 /* f */ && (i === 0 || !isRegexWordCode(text.charCodeAt(i - 1))) && text.startsWith('from', i)) {
-      let p = i + 4;
-      while (p < len && isWhitespaceCode(text.charCodeAt(p))) p += 1;
-      const q1 = text.charCodeAt(p);
-      if (q1 === 39 || q1 === 34) {
-        const q2Pos = nextQuote(p + 1);
-        if (q2Pos < 0) break;
-        if (q2Pos === p + 1) {
+      if (code === 102 /* f */ && (i === 0 || !isRegexWordCode(text.charCodeAt(i - 1))) && text.startsWith('from', i)) {
+        let p = i + 4;
+        while (p < len && isWhitespaceCode(text.charCodeAt(p))) p += 1;
+        const q1 = text.charCodeAt(p);
+        if (q1 === 39 || q1 === 34) {
+          const q2Pos = nextQuote(p + 1);
+          if (q2Pos < 0) break;
+          if (q2Pos === p + 1) {
+            i = q2Pos + 1;
+            continue;
+          }
+          out.push(text.slice(p + 1, q2Pos));
+          inClause = false;
           i = q2Pos + 1;
           continue;
         }
-        out.push(text.slice(p + 1, q2Pos));
-        inClause = false;
-        i = q2Pos + 1;
+        i = p;
         continue;
       }
-      i = p;
-      continue;
+      i += 1;
     }
-    i += 1;
   }
   collectRawCallSpecifiers(text, 'import(', out);
   collectRawCallSpecifiers(text, 'require(', out);
@@ -2586,7 +2868,33 @@ function analyzeTokenAliases(
   };
 }
 
-function scanModuleTokens(tokens: readonly Token[], delimsInput?: DelimiterPairs): ModuleScanResult {
+const EMPTY_MODULE_ALIAS_EDGES = new Map<string, Set<string>>();
+
+function scanModuleTokens(
+  tokens: readonly Token[],
+  delimsInput?: DelimiterPairs,
+  flagsInput?: number,
+): ModuleScanResult {
+  const tokenFlags = flagsInput ?? computeTokenFlags(tokens);
+  const hasInvalidSyntaxInitial = (tokenFlags & SCAN_FLAG_INVALID) !== 0;
+  const hasComputedDestructureCandidate =
+    (tokenFlags & (SCAN_FLAG_OPEN_BRACKET | SCAN_FLAG_STRING_OR_TPL)) === (SCAN_FLAG_OPEN_BRACKET | SCAN_FLAG_STRING_OR_TPL);
+  const mightNeedAliases =
+    (tokenFlags & (SCAN_FLAG_REQ_OR_HOST | SCAN_FLAG_DYNAMIC_IMPORT)) !== 0;
+
+  if (!mightNeedAliases && !hasComputedDestructureCandidate && (tokenFlags & SCAN_FLAG_MOD_OR_REQ_KW) === 0) {
+    return {
+      specifiers: [],
+      hasComputedDynamic: false,
+      hasBareRequire: false,
+      hasInvalidSyntax: hasInvalidSyntaxInitial,
+      importDecls: [],
+      exportDecls: [],
+      dynamicCalls: [],
+      aliasEdges: EMPTY_MODULE_ALIAS_EDGES,
+    };
+  }
+
   const delims = delimsInput ?? pairDelimiters(tokens);
   let lazyTplMaps: ReturnType<typeof buildTemplateMaps> | null = null;
   let lazyScoped: ReturnType<typeof collectScopedConstBindings> | null = null;
@@ -2612,6 +2920,181 @@ function scanModuleTokens(tokens: readonly Token[], delimsInput?: DelimiterPairs
     );
   };
 
+  let needsAliases = mightNeedAliases;
+  if (!needsAliases && hasComputedDestructureCandidate) {
+    for (let i = 0; i < tokens.length; i += 1) {
+      if (tokens[i]!.kind === 'punct' && tokens[i]!.value === '{') {
+        const closeBrace = delims.brace[i] ?? -1;
+        if (closeBrace > i + 2) {
+          let hasBracketInside = false;
+          for (let k = i + 1; k < closeBrace; k += 1) {
+            if (tokens[k]!.kind === 'punct' && tokens[k]!.value === '[') {
+              hasBracketInside = true;
+              break;
+            }
+          }
+          if (
+            hasBracketInside &&
+            isDestructuringBraceContext(tokens, i, closeBrace, delims) &&
+            extractDestructuredMatches(tokens, i, closeBrace, delims, REQUIRE_DESTRUCTURE_KEYS, resolveStaticStr, getTplTail()).length > 0
+          ) {
+            needsAliases = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  const specs: string[] = [];
+  const importDecls: ModuleScanResult['importDecls'] = [];
+  const exportDecls: ModuleScanResult['exportDecls'] = [];
+  const dynamicCalls: ModuleScanResult['dynamicCalls'] = [];
+  let hasComputedDynamic = false;
+  let hasBareRequire = false;
+  let hasInvalidSyntax = hasInvalidSyntaxInitial;
+
+  const parseImportExportDecl = (i: number, value: string): void => {
+    if (value === 'import') {
+      const next = tokens[i + 1];
+      if (!next) return;
+      if (next.kind === 'string' || next.kind === 'template') {
+        specs.push(next.value);
+        importDecls.push({ specifier: next.value, isNamespace: false, isDefault: false, isSideEffect: true, barrelBindings: [] });
+        return;
+      }
+
+      // Inspect import clause in O(1) using precomputed brace pairing
+      let p = i + 1;
+      if (tokens[p]?.kind === 'ident' && tokens[p]?.value === 'type') {
+        const afterType = tokens[p + 1];
+        if (
+          afterType &&
+          ((afterType.kind === 'punct' && (afterType.value === '{' || afterType.value === '*')) ||
+            (afterType.kind === 'ident' && !isFromKeywordAt(tokens, p + 1)))
+        ) {
+          p += 1;
+        }
+      }
+      let isNamespace = false;
+      let isDefault = false;
+      const barrelBindings: string[] = [];
+      if (tokens[p]?.kind === 'punct' && tokens[p]?.value === '*') {
+        isNamespace = true;
+        if (tokens[p + 1]?.kind === 'ident' && tokens[p + 1]?.value === 'as' && tokens[p + 2]?.kind === 'ident') {
+          barrelBindings.push(tokens[p + 2]!.value);
+        }
+      } else if (tokens[p]?.kind === 'ident' && !isFromKeywordAt(tokens, p)) {
+        isDefault = true;
+        barrelBindings.push(tokens[p]!.value);
+      }
+
+      while (p < tokens.length) {
+        const cur = tokens[p]!;
+        if (cur.kind === 'punct') {
+          if (cur.value === '{') {
+            const close = delims.brace[p] ?? -1;
+            if (close < 0) break;
+            for (let m = p + 1; m + 2 < close; m += 1) {
+              const item = tokens[m]!;
+              if (
+                (item.kind === 'ident' || item.kind === 'string') &&
+                item.value === 'default' &&
+                tokens[m + 1]?.kind === 'ident' &&
+                tokens[m + 1]?.value === 'as' &&
+                tokens[m + 2]?.kind === 'ident'
+              ) {
+                isDefault = true;
+                barrelBindings.push(tokens[m + 2]!.value);
+              }
+            }
+            p = close + 1;
+            continue;
+          }
+          if (cur.value === ';' || cur.value === '=>') break;
+          if (cur.value === '*') {
+            isNamespace = true;
+            if (tokens[p + 1]?.kind === 'ident' && tokens[p + 1]?.value === 'as' && tokens[p + 2]?.kind === 'ident') {
+              barrelBindings.push(tokens[p + 2]!.value);
+            }
+          }
+        } else if (cur.kind === 'ident') {
+          if (isFromKeywordAt(tokens, p)) {
+            const specTok = tokens[p + 1];
+            if (specTok && (specTok.kind === 'string' || specTok.kind === 'template')) {
+              specs.push(specTok.value);
+              importDecls.push({ specifier: specTok.value, isNamespace, isDefault, isSideEffect: false, barrelBindings });
+            }
+            break;
+          }
+          if (cur.value === 'import' || cur.value === 'export' || cur.value === 'function' || cur.value === 'class') break;
+        }
+        p += 1;
+      }
+      return;
+    }
+
+    if (value === 'export') {
+      let p = i + 1;
+      if (tokens[p]?.kind === 'ident' && tokens[p]?.value === 'type') p += 1;
+      let isStar = false;
+      if (tokens[p]?.kind === 'punct' && tokens[p]?.value === '*') {
+        isStar = true;
+        p += 1;
+        if (tokens[p]?.kind === 'ident' && tokens[p]?.value === 'as') p += 2;
+      } else if (tokens[p]?.kind === 'punct' && tokens[p]?.value === '{') {
+        const close = delims.brace[p] ?? -1;
+        if (close < 0) return;
+        p = close + 1;
+      } else {
+        return;
+      }
+      if (isFromKeywordAt(tokens, p)) {
+        const specTok = tokens[p + 1];
+        if (specTok && (specTok.kind === 'string' || specTok.kind === 'template')) {
+          specs.push(specTok.value);
+          exportDecls.push({ specifier: specTok.value, isStar });
+        }
+      }
+    }
+  };
+
+  if (!needsAliases) {
+    if ((tokenFlags & SCAN_FLAG_MOD_OR_REQ_KW) !== 0) {
+      for (let i = 0; i < tokens.length; i += 1) {
+        const t = tokens[i]!;
+        if (t.kind !== 'ident') continue;
+        if ((t.value === 'import' || t.value === 'export') && !isMemberPrev(tokens, i)) {
+          parseImportExportDecl(i, t.value);
+        }
+      }
+    }
+    const needsAliasEdgesForBarrel = importDecls.some(
+      (d) =>
+        d.barrelBindings.length > 0 &&
+        (d.specifier.includes('agent') ||
+          d.specifier.includes('note-ai') ||
+          d.specifier.includes('index') ||
+          d.specifier.includes('%') ||
+          d.specifier.startsWith('.')),
+    );
+    if (!needsAliasEdgesForBarrel) {
+      return {
+        specifiers: specs,
+        hasComputedDynamic,
+        hasBareRequire,
+        hasInvalidSyntax,
+        importDecls,
+        exportDecls,
+        dynamicCalls,
+        aliasEdges: EMPTY_MODULE_ALIAS_EDGES,
+      };
+    }
+    specs.length = 0;
+    importDecls.length = 0;
+    exportDecls.length = 0;
+  }
+
   const {
     requireAliases,
     hasBareRequire: initialBareRequire,
@@ -2621,13 +3104,7 @@ function scanModuleTokens(tokens: readonly Token[], delimsInput?: DelimiterPairs
     nodeModuleNamespaces,
     requireHosts,
   } = analyzeTokenAliases(tokens, delims, resolveStaticStr, getTplTail);
-  const specs: string[] = [];
-  const importDecls: ModuleScanResult['importDecls'] = [];
-  const exportDecls: ModuleScanResult['exportDecls'] = [];
-  const dynamicCalls: ModuleScanResult['dynamicCalls'] = [];
-  let hasComputedDynamic = false;
-  let hasBareRequire = initialBareRequire;
-  let hasInvalidSyntax = false;
+  hasBareRequire = initialBareRequire;
 
   const findCallParenAfter = (startIdx: number): number => {
     let idx = startIdx;
@@ -2716,100 +3193,12 @@ function scanModuleTokens(tokens: readonly Token[], delimsInput?: DelimiterPairs
         recordDynamicCall('import', i + 1);
         continue;
       }
-      if (next.kind === 'string' || next.kind === 'template') {
-        specs.push(next.value);
-        importDecls.push({ specifier: next.value, isNamespace: false, isDefault: false, isSideEffect: true, barrelBindings: [] });
-        continue;
-      }
-
-      // Inspect import clause in O(1) using precomputed brace pairing
-      let p = i + 1;
-      if (tokens[p]?.kind === 'ident' && tokens[p]?.value === 'type') {
-        const afterType = tokens[p + 1];
-        if (afterType && ((afterType.kind === 'punct' && (afterType.value === '{' || afterType.value === '*')) || (afterType.kind === 'ident' && !isFromKeywordAt(tokens, p + 1)))) {
-          p += 1;
-        }
-      }
-      let isNamespace = false;
-      let isDefault = false;
-      const barrelBindings: string[] = [];
-      if (tokens[p]?.kind === 'punct' && tokens[p]?.value === '*') {
-        isNamespace = true;
-        if (tokens[p + 1]?.kind === 'ident' && tokens[p + 1]?.value === 'as' && tokens[p + 2]?.kind === 'ident') {
-          barrelBindings.push(tokens[p + 2]!.value);
-        }
-      } else if (tokens[p]?.kind === 'ident' && !isFromKeywordAt(tokens, p)) {
-        isDefault = true;
-        barrelBindings.push(tokens[p]!.value);
-      }
-
-      while (p < tokens.length) {
-        const cur = tokens[p]!;
-        if (cur.kind === 'punct') {
-          if (cur.value === '{') {
-            const close = delims.brace[p] ?? -1;
-            if (close < 0) break;
-            for (let m = p + 1; m + 2 < close; m += 1) {
-              const item = tokens[m]!;
-              if (
-                (item.kind === 'ident' || item.kind === 'string') &&
-                item.value === 'default' &&
-                tokens[m + 1]?.kind === 'ident' &&
-                tokens[m + 1]?.value === 'as' &&
-                tokens[m + 2]?.kind === 'ident'
-              ) {
-                isDefault = true;
-                barrelBindings.push(tokens[m + 2]!.value);
-              }
-            }
-            p = close + 1;
-            continue;
-          }
-          if (cur.value === ';' || cur.value === '=>') break;
-          if (cur.value === '*') {
-            isNamespace = true;
-            if (tokens[p + 1]?.kind === 'ident' && tokens[p + 1]?.value === 'as' && tokens[p + 2]?.kind === 'ident') {
-              barrelBindings.push(tokens[p + 2]!.value);
-            }
-          }
-        } else if (cur.kind === 'ident') {
-          if (isFromKeywordAt(tokens, p)) {
-            const specTok = tokens[p + 1];
-            if (specTok && (specTok.kind === 'string' || specTok.kind === 'template')) {
-              specs.push(specTok.value);
-              importDecls.push({ specifier: specTok.value, isNamespace, isDefault, isSideEffect: false, barrelBindings });
-            }
-            break;
-          }
-          if (cur.value === 'import' || cur.value === 'export' || cur.value === 'function' || cur.value === 'class') break;
-        }
-        p += 1;
-      }
+      parseImportExportDecl(i, 'import');
       continue;
     }
 
     if (t.value === 'export') {
-      let p = i + 1;
-      if (tokens[p]?.kind === 'ident' && tokens[p]?.value === 'type') p += 1;
-      let isStar = false;
-      if (tokens[p]?.kind === 'punct' && tokens[p]?.value === '*') {
-        isStar = true;
-        p += 1;
-        if (tokens[p]?.kind === 'ident' && tokens[p]?.value === 'as') p += 2;
-      } else if (tokens[p]?.kind === 'punct' && tokens[p]?.value === '{') {
-        const close = delims.brace[p] ?? -1;
-        if (close < 0) continue;
-        p = close + 1;
-      } else {
-        continue;
-      }
-      if (isFromKeywordAt(tokens, p)) {
-        const specTok = tokens[p + 1];
-        if (specTok && (specTok.kind === 'string' || specTok.kind === 'template')) {
-          specs.push(specTok.value);
-          exportDecls.push({ specifier: specTok.value, isStar });
-        }
-      }
+      parseImportExportDecl(i, 'export');
       continue;
     }
 
@@ -2857,8 +3246,9 @@ function specifiers(
   precomputedTokens?: readonly Token[],
   precomputedDelims?: DelimiterPairs,
   skipRawSpans?: ReadonlyArray<{ start: number; end: number }>,
+  tokenFlags?: number,
 ): { specifiers: string[]; scan: ModuleScanResult } {
-  const scan = scanModuleTokens(precomputedTokens ?? tokenize(text), precomputedDelims);
+  const scan = scanModuleTokens(precomputedTokens ?? tokenize(text), precomputedDelims, tokenFlags);
   const rawInput = skipRawSpans && skipRawSpans.length > 0 ? blankTextSpans(text, skipRawSpans) : text;
   const rawMain = linearRawSpecifiers(rawInput);
   const all = new Set<string>();
@@ -2872,6 +3262,7 @@ function specifiers(
 }
 
 const decodeUriSegment = (seg: string): string => {
+  if (!seg.includes('%')) return seg;
   try {
     return decodeURIComponent(seg);
   } catch {
@@ -2882,19 +3273,27 @@ const decodeUriSegment = (seg: string): string => {
 };
 
 const normalizeModuleSpecifier = (spec: string): string => {
-  let s = spec.trim().replace(/[?#].*$/, '').replace(/\\/g, '/').replace(/^file:\/\/(?:localhost)?/i, '');
+  let s = spec.trim();
   if (s === '') return '';
+  if (/[?#\\]|^file:/i.test(s) || s.includes('%')) {
+    s = s.replace(/[?#].*$/, '').replace(/\\/g, '/').replace(/^file:\/\/(?:localhost)?/i, '');
+    if (s === '') return '';
+    const isRel = s.startsWith('./') || s.startsWith('../') || s === '.' || s === '..';
+    s = posix.normalize(s);
+    if (s.includes('%')) s = s.split('/').map(decodeUriSegment).join('/');
+    const norm = posix.normalize(s);
+    return isRel && !norm.startsWith('.') && !norm.startsWith('/') ? `./${norm}` : norm;
+  }
   const isRel = s.startsWith('./') || s.startsWith('../') || s === '.' || s === '..';
-  s = posix.normalize(s);
-  s = s.split('/').map(decodeUriSegment).join('/');
   const norm = posix.normalize(s);
   return isRel && !norm.startsWith('.') && !norm.startsWith('/') ? `./${norm}` : norm;
 };
 
 const decodeRawModulePreCollapse = (spec: string): string => {
-  if (!/[?#\\%\s]|^file:/i.test(spec)) return spec;
+  if (!/[?#\\%]|^\s|\s$|^file:/i.test(spec)) return spec;
   const s = spec.trim().replace(/[?#].*$/, '').replace(/\\/g, '/').replace(/^file:\/\/(?:localhost)?/i, '');
-  return s === '' ? '' : s.split('/').map(decodeUriSegment).join('/');
+  if (s === '') return '';
+  return s.includes('%') ? s.split('/').map(decodeUriSegment).join('/') : s;
 };
 
 const findMatchingSpecifier = (spec: string, re: RegExp): string | null => {
@@ -3107,14 +3506,15 @@ const astParseCache = new Map<string, AstParsedResult>();
 function parseAstCandidates(text: string, filePath?: string | undefined): AstParsedResult {
   const isExplicitJsxPath = Boolean(filePath && /\.[jt]sx$/i.test(filePath));
   const isExplicitNonJsxPath = Boolean(filePath && /\.(?:[cm]?ts|[cm]?js)$/i.test(filePath));
-  const cacheMode = isExplicitJsxPath ? 'jsx' : isExplicitNonJsxPath ? 'ts' : 'auto';
+  const needsDualPass = !isExplicitJsxPath && !isExplicitNonJsxPath && text.includes('<');
+  const cacheMode = isExplicitJsxPath ? 'jsx' : isExplicitNonJsxPath || !needsDualPass ? 'ts' : 'auto';
   const cacheKey = `${cacheMode}\0${text}`;
   const cached = astParseCache.get(cacheKey);
   if (cached) return cached;
 
   const candidates: Array<{ name: string; kind: tsType.ScriptKind }> = isExplicitJsxPath
     ? [{ name: filePath ?? 'input.tsx', kind: ts.ScriptKind.TSX }]
-    : isExplicitNonJsxPath
+    : isExplicitNonJsxPath || !needsDualPass
       ? [{ name: filePath ?? 'input.ts', kind: ts.ScriptKind.TS }]
       : [
           { name: 'input.tsx', kind: ts.ScriptKind.TSX },
@@ -3571,6 +3971,36 @@ function unwrapAstCall(
   let hasExplicitFirstArg = args.length > 0;
   let missingApplyFirstArg = false;
   let isIndirect = calleeExpr !== call.expression;
+
+  if (
+    !hooksOrReflectPred &&
+    (ts.isIdentifier(calleeExpr) ||
+      (ts.isPropertyAccessExpression(calleeExpr) &&
+        calleeExpr.name.text !== 'call' &&
+        calleeExpr.name.text !== 'apply'))
+  ) {
+    const posArgs: Array<tsType.Expression | null> = [];
+    let hasUnknownPosArgs = false;
+    for (let ai = 0; ai < args.length; ai += 1) {
+      const el = args[ai]!;
+      if (el.kind === ts.SyntaxKind.OmittedExpression || ts.isSpreadElement(el)) {
+        hasUnknownPosArgs = true;
+        posArgs.push(null);
+      } else if (hasUnknownPosArgs || !ts.isExpression(el)) {
+        posArgs.push(null);
+      } else {
+        posArgs.push(el);
+      }
+    }
+    return {
+      calleeExpr,
+      firstArgExpr,
+      missingApplyFirstArg: false,
+      isIndirect,
+      posArgs,
+      hasUnknownPosArgs,
+    };
+  }
 
   const hooks: AstCallUnwrapHooks =
     typeof hooksOrReflectPred === 'function' ? { isReflectApply: hooksOrReflectPred } : (hooksOrReflectPred ?? {});
@@ -4514,7 +4944,9 @@ function extractAstFacts(
   sf: TsSourceFileWithDiagnostics,
   symbolSet: ReadonlySet<string>,
   fromRelPath?: string | undefined,
+  options?: { readonly skipFetchTaint?: boolean },
 ): AstFileFacts {
+  const trackFetchTaint = !options?.skipFetchTaint;
   const specifiersOut: string[] = [];
   const importDecls: AstImportDeclFact[] = [];
   const exportDecls: AstExportDeclFact[] = [];
@@ -4631,6 +5063,7 @@ function extractAstFacts(
     hostExpr: tsType.Expression | null,
     evalScope: AstLexScope,
   ): void => {
+    if (!trackFetchTaint) return;
     if (
       keyName === 'prototype' ||
       keyName === '__proto__' ||
@@ -4888,9 +5321,11 @@ function extractAstFacts(
   };
 
   const seedFetchGlobal = (varKey: string): void => {
+    if (!trackFetchTaint) return;
     addFetchTaintEvent(varKey, { fnNode: null, rawStart: 0, effStart: 0, loopNode: null });
   };
   const seedFetchAtNode = (varKey: string, assignNode: tsType.Node, assignEndPos?: number): void => {
+    if (!trackFetchTaint) return;
     const fnNode = getAstEnclosingFnNode(assignNode);
     const loopNode = getAstEnclosingLoopInFn(assignNode, fnNode);
     const rawPos = assignEndPos ?? assignNode.getStart(sf);
@@ -5071,6 +5506,7 @@ function extractAstFacts(
     rawPos: number,
     rhsNode: tsType.Node,
   ): void => {
+    if (!trackFetchTaint) return;
     const edgeFnNode = getAstEnclosingFnNode(rhsNode);
     const loopNode = getAstEnclosingLoopInFn(rhsNode, edgeFnNode);
     const edge: PositionalAliasEdge = {
@@ -5195,11 +5631,13 @@ function extractAstFacts(
         continue;
       }
       if (!ts.isIdentifier(cur)) {
-        const isSafeRhs = isAstKnownSafeFetchKillRhs(cur);
-        for (const tk of targetKeys) {
-          if (!tk.startsWith('prop:')) seedNonSafeKillBases.add(tk);
-          if (!isSafeRhs && !ts.isPropertyAccessExpression(cur)) {
-            seedNonSafeKillValues.add(tk);
+        if (trackFetchTaint) {
+          const isSafeRhs = isAstKnownSafeFetchKillRhs(cur);
+          for (const tk of targetKeys) {
+            if (!tk.startsWith('prop:')) seedNonSafeKillBases.add(tk);
+            if (!isSafeRhs && !ts.isPropertyAccessExpression(cur)) {
+              seedNonSafeKillValues.add(tk);
+            }
           }
         }
       }
@@ -5217,7 +5655,7 @@ function extractAstFacts(
         const toKey = targetKeys[0]!;
         addAliasEdge(aliasEdges, fromKey, toKey);
         addPositionalEdge(fromKey, toKey, assignEndPos ?? cur.getStart(sf), cur);
-        if (!toKey.startsWith('prop:')) {
+        if (!toKey.startsWith('prop:') && trackFetchTaint) {
           addAliasEdge(nonSafeBaseAliases, fromKey, toKey);
           addAliasEdge(nonSafeBaseAliases, toKey, fromKey);
         }
@@ -5345,7 +5783,7 @@ function extractAstFacts(
           rhsExpr,
         });
       }
-      if (scopedTargets.length > 0 && !entry.isTopLevel) {
+      if (scopedTargets.length > 0 && !entry.isTopLevel && trackFetchTaint) {
         localWrapperBindTargets.push({ hostExpr: rhsExpr, targets: scopedTargets, scope: evalScope });
       }
     }
@@ -5468,7 +5906,7 @@ function extractAstFacts(
     depth = 0,
   ): void => {
     const allTargets = collectAssignTargetIdentifiers(pattern, targetScope);
-    if (allTargets.length > 0) {
+    if (allTargets.length > 0 && trackFetchTaint) {
       localWrapperBindTargets.push({ hostExpr: rhsExpr, targets: allTargets, scope: evalScope });
     }
     if (depth >= 4) return;
@@ -5659,6 +6097,10 @@ function extractAstFacts(
   }
 
   const stack: WalkFrame[] = [{ node: sf, scope: rootScope, inTypePos: false, suppressNotesLit: false }];
+  const childrenScratch: tsType.Node[] = [];
+  const pushChildNode = (child: tsType.Node): void => {
+    childrenScratch.push(child);
+  };
   while (stack.length > 0) {
     const { node, scope, inTypePos, suppressNotesLit } = stack.pop()!;
     let nextScope = scope;
@@ -5690,12 +6132,14 @@ function extractAstFacts(
                 targetLoopScope.declaredNames.add(name);
                 targetLoopScope.constStrings.set(name, null);
                 const loopVarKey = astVarKey(targetLoopScope, name);
-                blockedSafeKillVars.add(loopVarKey);
-                seedNonSafeKillBases.add(loopVarKey);
-                seedEscapedSafeKillBases.add(loopVarKey);
+                if (trackFetchTaint) {
+                  blockedSafeKillVars.add(loopVarKey);
+                  seedNonSafeKillBases.add(loopVarKey);
+                  seedEscapedSafeKillBases.add(loopVarKey);
+                }
               }
             }
-          } else {
+          } else if (trackFetchTaint) {
             if (lhsHasMemberWriteChain(node.initializer, nextScope)) {
               hasAnyMemberOrObjectMutation = true;
             }
@@ -5716,10 +6160,12 @@ function extractAstFacts(
           for (const name of collectAstBindingIdentifiers(node.variableDeclaration.name)) {
             nextScope.declaredNames.add(name);
             nextScope.constStrings.set(name, null);
-            const catchVarKey = astVarKey(nextScope, name);
-            blockedSafeKillVars.add(catchVarKey);
-            seedNonSafeKillBases.add(catchVarKey);
-            seedEscapedSafeKillBases.add(catchVarKey);
+            if (trackFetchTaint) {
+              const catchVarKey = astVarKey(nextScope, name);
+              blockedSafeKillVars.add(catchVarKey);
+              seedNonSafeKillBases.add(catchVarKey);
+              seedEscapedSafeKillBases.add(catchVarKey);
+            }
           }
         }
       } else if (ts.isFunctionLike(node)) {
@@ -5738,10 +6184,12 @@ function extractAstFacts(
           for (const name of collectAstBindingIdentifiers(param.name)) {
             nextScope.declaredNames.add(name);
             nextScope.constStrings.set(name, null);
-            const paramKey = astVarKey(nextScope, name);
-            blockedSafeKillVars.add(paramKey);
-            seedNonSafeKillBases.add(paramKey);
-            seedEscapedSafeKillBases.add(paramKey);
+            if (trackFetchTaint) {
+              const paramKey = astVarKey(nextScope, name);
+              blockedSafeKillVars.add(paramKey);
+              seedNonSafeKillBases.add(paramKey);
+              seedEscapedSafeKillBases.add(paramKey);
+            }
           }
         }
         if (
@@ -5757,13 +6205,17 @@ function extractAstFacts(
           seedFnVarDecls(node.body, nextScope);
         }
       } else if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name) {
-        const classKey = astVarKey(scope, node.name.text);
-        seedNonSafeKillBases.add(classKey);
-        seedEscapedSafeKillBases.add(classKey);
+        if (trackFetchTaint) {
+          const classKey = astVarKey(scope, node.name.text);
+          seedNonSafeKillBases.add(classKey);
+          seedEscapedSafeKillBases.add(classKey);
+        }
       } else if (ts.isModuleDeclaration(node) && ts.isIdentifier(node.name)) {
-        const nsKey = astVarKey(scope, node.name.text);
-        seedNonSafeKillBases.add(nsKey);
-        seedEscapedSafeKillBases.add(nsKey);
+        if (trackFetchTaint) {
+          const nsKey = astVarKey(scope, node.name.text);
+          seedNonSafeKillBases.add(nsKey);
+          seedEscapedSafeKillBases.add(nsKey);
+        }
       }
       if (
         (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) ||
@@ -5938,7 +6390,7 @@ function extractAstFacts(
           }
         }
       }
-      if (inLoopHeader || !ts.isIdentifier(node.name)) {
+      if (trackFetchTaint && (inLoopHeader || !ts.isIdentifier(node.name))) {
         for (const idName of collectAstBindingIdentifiers(node.name)) {
           const declKey = astVarKey(varDeclScope, idName);
           blockedSafeKillVars.add(declKey);
@@ -5952,7 +6404,7 @@ function extractAstFacts(
       if (node.initializer) {
         const rhsTarget = ts.isIdentifier(node.name) ? [astVarKey(varDeclScope, node.name.text)] : [];
         const rhsExpr = recordBindAndMemberTarget(rhsTarget, node.initializer, nextScope, node.end);
-        if (!inLoopHeader && ts.isIdentifier(node.name)) {
+        if (trackFetchTaint && !inLoopHeader && ts.isIdentifier(node.name)) {
           safeKillValueCandidates.push({
             targetKey: astVarKey(varDeclScope, node.name.text),
             rhsExpr,
@@ -5960,6 +6412,7 @@ function extractAstFacts(
           });
         }
         if (
+          trackFetchTaint &&
           !isLexical &&
           ts.isIdentifier(node.name) &&
           node.parent.parent &&
@@ -5988,8 +6441,10 @@ function extractAstFacts(
     }
 
     if (ts.isParameter(node) || ts.isBindingElement(node)) {
-      for (const idName of collectAstBindingIdentifiers(node.name)) {
-        blockedSafeKillVars.add(astVarKey(nextScope, idName));
+      if (trackFetchTaint) {
+        for (const idName of collectAstBindingIdentifiers(node.name)) {
+          blockedSafeKillVars.add(astVarKey(nextScope, idName));
+        }
       }
       if (node.initializer) {
         const rhsTarget = ts.isIdentifier(node.name) ? [astVarKey(nextScope, node.name.text)] : [];
@@ -6004,6 +6459,7 @@ function extractAstFacts(
     }
 
     if (
+      trackFetchTaint &&
       !nextInTypePos &&
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
@@ -6031,19 +6487,19 @@ function extractAstFacts(
       if (ts.isIdentifier(lhsExpr)) {
         const lhsKey = astVarKey(nextScope, lhsExpr.text);
         lhsTarget = [lhsKey];
-        if (!isPlainEquals) blockedSafeKillVars.add(lhsKey);
+        if (trackFetchTaint && !isPlainEquals) blockedSafeKillVars.add(lhsKey);
       } else if (ts.isPropertyAccessExpression(lhsExpr) || ts.isElementAccessExpression(lhsExpr)) {
         const lhsMem = extractAstMemberName(lhsExpr, nextScope);
         const lhsHost = unwrapAstExpr(lhsMem.host, true);
         if (ts.isIdentifier(lhsHost)) {
           const hostKey = astVarKey(nextScope, lhsHost.text);
-          seedNonSafeKillBases.add(hostKey);
+          if (trackFetchTaint) seedNonSafeKillBases.add(hostKey);
           if (lhsMem.memberName !== null) {
             lhsTarget = [`prop:${hostKey}\0${lhsMem.memberName}`];
           }
         }
         const hostPath = resolveAstMemberKeyPath(lhsMem.host, nextScope);
-        if (hostPath.rootIdentName !== null) {
+        if (trackFetchTaint && hostPath.rootIdentName !== null) {
           seedNonSafeKillBases.add(astVarKey(nextScope, hostPath.rootIdentName));
         }
         if (hostPath.key !== null && lhsMem.memberName !== null && lhsTarget.length === 0) {
@@ -6051,14 +6507,14 @@ function extractAstFacts(
         }
       }
       const rhsExpr = recordBindAndMemberTarget(lhsTarget, node.right, nextScope, node.end);
-      if (isPlainEquals && ts.isIdentifier(lhsExpr)) {
+      if (trackFetchTaint && isPlainEquals && ts.isIdentifier(lhsExpr)) {
         safeKillValueCandidates.push({
           targetKey: astVarKey(nextScope, lhsExpr.text),
           rhsExpr,
           evalScope: nextScope,
         });
       }
-      if (isPlainEquals && ts.isIdentifier(lhsExpr) && node.parent) {
+      if (trackFetchTaint && isPlainEquals && ts.isIdentifier(lhsExpr) && node.parent) {
         let stmtCur: tsType.Node = node.parent;
         while (ts.isParenthesizedExpression(stmtCur)) stmtCur = stmtCur.parent;
         if (
@@ -6076,36 +6532,38 @@ function extractAstFacts(
           });
         }
       }
-      if (ts.isObjectLiteralExpression(lhsExpr) || ts.isArrayLiteralExpression(lhsExpr)) {
+      if (trackFetchTaint && (ts.isObjectLiteralExpression(lhsExpr) || ts.isArrayLiteralExpression(lhsExpr))) {
         for (const idName of collectAstLhsTargetIdentNames(lhsExpr)) {
           blockedSafeKillVars.add(astVarKey(nextScope, idName));
         }
       }
       if (ts.isObjectLiteralExpression(lhsExpr)) {
         let hasComputedOrProtoKey = false;
-        const checkObjProps: tsType.ObjectLiteralExpression[] = [lhsExpr];
-        while (checkObjProps.length > 0) {
-          const obj = checkObjProps.pop()!;
-          for (const prop of obj.properties) {
-            if (ts.isPropertyAssignment(prop)) {
-              const keyName = resolveAstPropertyName(prop.name, nextScope).name;
-              if (!nextInTypePos) {
-                recordReflectOrProtoKeyAccess(keyName, obj === lhsExpr ? node.right : null, nextScope);
-              }
-              if (ts.isComputedPropertyName(prop.name)) {
-                if (keyName === null || keyName === 'prototype' || keyName === '__proto__') {
-                  hasComputedOrProtoKey = true;
+        if (trackFetchTaint) {
+          const checkObjProps: tsType.ObjectLiteralExpression[] = [lhsExpr];
+          while (checkObjProps.length > 0) {
+            const obj = checkObjProps.pop()!;
+            for (const prop of obj.properties) {
+              if (ts.isPropertyAssignment(prop)) {
+                const keyName = resolveAstPropertyName(prop.name, nextScope).name;
+                if (!nextInTypePos) {
+                  recordReflectOrProtoKeyAccess(keyName, obj === lhsExpr ? node.right : null, nextScope);
                 }
+                if (ts.isComputedPropertyName(prop.name)) {
+                  if (keyName === null || keyName === 'prototype' || keyName === '__proto__') {
+                    hasComputedOrProtoKey = true;
+                  }
+                }
+                if (ts.isObjectLiteralExpression(prop.initializer)) checkObjProps.push(prop.initializer);
+              } else if (ts.isShorthandPropertyAssignment(prop) && !nextInTypePos) {
+                recordReflectOrProtoKeyAccess(prop.name.text, obj === lhsExpr ? node.right : null, nextScope);
               }
-              if (ts.isObjectLiteralExpression(prop.initializer)) checkObjProps.push(prop.initializer);
-            } else if (ts.isShorthandPropertyAssignment(prop) && !nextInTypePos) {
-              recordReflectOrProtoKeyAccess(prop.name.text, obj === lhsExpr ? node.right : null, nextScope);
             }
           }
-        }
-        if (hasComputedOrProtoKey) {
-          if (isAstProtoBearingHost(node.right)) hasProtoMutation = true;
-          else protoDestructureCandidates.push({ rhsExpr: node.right, scope: nextScope });
+          if (hasComputedOrProtoKey) {
+            if (isAstProtoBearingHost(node.right)) hasProtoMutation = true;
+            else protoDestructureCandidates.push({ rhsExpr: node.right, scope: nextScope });
+          }
         }
         recordDestructuredEntries(
           collectDestructuringTargetsAndRefs(lhsExpr, nextScope).entries,
@@ -6143,63 +6601,67 @@ function extractAstFacts(
         boundTargets: getScopedAssignmentTargets(node, nextScope),
         outerAccessExpr,
       });
-      const directCallee = unwrapped.calleeExpr;
-      const callArg0 = unwrapped.posArgs[0] ?? null;
-      const callArg1 = unwrapped.posArgs[1] ?? null;
-      if (!nextInTypePos && (ts.isPropertyAccessExpression(directCallee) || ts.isElementAccessExpression(directCallee))) {
-        const mem = extractAstMemberName(directCallee, nextScope);
-        protoMethodCallCandidates.push({
-          calleeExpr: directCallee,
-          calleeHost: mem.host,
-          methodName: mem.memberName,
-          arg0: callArg0,
-          keyArg: callArg1,
-          hasUnknownArgs: unwrapped.hasUnknownPosArgs,
-          callSiteIndex,
-          scope: nextScope,
-        });
-      } else if (!nextInTypePos) {
-        protoMethodCallCandidates.push({
-          calleeExpr: directCallee,
-          calleeHost: null,
-          methodName: null,
-          arg0: callArg0,
-          keyArg: callArg1,
-          hasUnknownArgs: unwrapped.hasUnknownPosArgs,
-          callSiteIndex,
-          scope: nextScope,
-        });
+      if (trackFetchTaint && !nextInTypePos) {
+        const directCallee = unwrapped.calleeExpr;
+        const callArg0 = unwrapped.posArgs[0] ?? null;
+        const callArg1 = unwrapped.posArgs[1] ?? null;
+        if (ts.isPropertyAccessExpression(directCallee) || ts.isElementAccessExpression(directCallee)) {
+          const mem = extractAstMemberName(directCallee, nextScope);
+          protoMethodCallCandidates.push({
+            calleeExpr: directCallee,
+            calleeHost: mem.host,
+            methodName: mem.memberName,
+            arg0: callArg0,
+            keyArg: callArg1,
+            hasUnknownArgs: unwrapped.hasUnknownPosArgs,
+            callSiteIndex,
+            scope: nextScope,
+          });
+        } else {
+          protoMethodCallCandidates.push({
+            calleeExpr: directCallee,
+            calleeHost: null,
+            methodName: null,
+            arg0: callArg0,
+            keyArg: callArg1,
+            hasUnknownArgs: unwrapped.hasUnknownPosArgs,
+            callSiteIndex,
+            scope: nextScope,
+          });
+        }
       }
     }
 
     // 4. Member accesses on hosts & computed destructured require/createRequire/agent
     if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && !nextInTypePos) {
       const mem = extractAstMemberName(node, nextScope);
-      if (mem.memberName !== null) {
-        recordReflectOrProtoKeyAccess(mem.memberName, mem.host, nextScope);
-        if (PROTO_ACCESS_HOSTS.has(mem.memberName)) {
-          let wrappedMember: tsType.Node = node;
-          while (wrappedMember.parent && isAstUnescapedNodeWrapper(wrappedMember.parent)) {
-            wrappedMember = wrappedMember.parent;
+      if (trackFetchTaint) {
+        if (mem.memberName !== null) {
+          recordReflectOrProtoKeyAccess(mem.memberName, mem.host, nextScope);
+          if (PROTO_ACCESS_HOSTS.has(mem.memberName)) {
+            let wrappedMember: tsType.Node = node;
+            while (wrappedMember.parent && isAstUnescapedNodeWrapper(wrappedMember.parent)) {
+              wrappedMember = wrappedMember.parent;
+            }
+            const mParent = wrappedMember.parent;
+            const isMemberBase = Boolean(
+              mParent &&
+                (ts.isPropertyAccessExpression(mParent) || ts.isElementAccessExpression(mParent)) &&
+                mParent.expression === wrappedMember,
+            );
+            if (!isMemberBase) {
+              hasProtoHostValueRef = true;
+              if (mem.memberName === 'Reflect') hasReflectValueRef = true;
+            }
           }
-          const mParent = wrappedMember.parent;
-          const isMemberBase = Boolean(
-            mParent &&
-              (ts.isPropertyAccessExpression(mParent) || ts.isElementAccessExpression(mParent)) &&
-              mParent.expression === wrappedMember,
-          );
-          if (!isMemberBase) {
-            hasProtoHostValueRef = true;
-            if (mem.memberName === 'Reflect') hasReflectValueRef = true;
-          }
-        }
-      } else if (ts.isElementAccessExpression(node)) {
-        const argNorm = unwrapAstExpr(node.argumentExpression, false);
-        if (!ts.isNumericLiteral(argNorm)) {
-          if (isAstProtoBearingHost(mem.host)) {
-            hasProtoMutation = true;
-          } else {
-            protoElementAccessCandidates.push({ hostExpr: mem.host, scope: nextScope });
+        } else if (ts.isElementAccessExpression(node)) {
+          const argNorm = unwrapAstExpr(node.argumentExpression, false);
+          if (!ts.isNumericLiteral(argNorm)) {
+            if (isAstProtoBearingHost(mem.host)) {
+              hasProtoMutation = true;
+            } else {
+              protoElementAccessCandidates.push({ hostExpr: mem.host, scope: nextScope });
+            }
           }
         }
       }
@@ -6217,45 +6679,46 @@ function extractAstFacts(
       }
     }
 
-    if (
-      !nextInTypePos &&
-      (ts.isPropertyAssignment(node) ||
+    if (trackFetchTaint && !nextInTypePos) {
+      if (
+        ts.isPropertyAssignment(node) ||
         ts.isMethodDeclaration(node) ||
         ts.isGetAccessorDeclaration(node) ||
-        ts.isSetAccessorDeclaration(node))
-    ) {
-      if (resolveAstPropertyName(node.name, nextScope).name === '__proto__') {
+        ts.isSetAccessorDeclaration(node)
+      ) {
+        if (resolveAstPropertyName(node.name, nextScope).name === '__proto__') {
+          hasProtoMutation = true;
+        }
+      } else if (ts.isShorthandPropertyAssignment(node) && node.name.text === '__proto__') {
         hasProtoMutation = true;
-      }
-    } else if (!nextInTypePos && ts.isShorthandPropertyAssignment(node) && node.name.text === '__proto__') {
-      hasProtoMutation = true;
-    } else if (!nextInTypePos && ts.isBindingElement(node)) {
-      const boundKey = node.propertyName
-        ? resolveAstPropertyName(node.propertyName, nextScope).name
-        : ts.isIdentifier(node.name)
-          ? node.name.text
-          : null;
-      let owner: tsType.Node | undefined = node.parent;
-      while (owner && (ts.isObjectBindingPattern(owner) || ts.isArrayBindingPattern(owner) || ts.isBindingElement(owner))) {
-        owner = owner.parent;
-      }
-      const directInit =
-        owner &&
-        (ts.isVariableDeclaration(owner) || ts.isParameter(owner)) &&
-        owner.initializer &&
-        owner.name === node.parent
-          ? owner.initializer
-          : null;
-      if (boundKey !== null) {
-        recordReflectOrProtoKeyAccess(boundKey, directInit, nextScope);
-      } else if (node.propertyName && ts.isComputedPropertyName(node.propertyName)) {
-        if (
+      } else if (ts.isBindingElement(node)) {
+        const boundKey = node.propertyName
+          ? resolveAstPropertyName(node.propertyName, nextScope).name
+          : ts.isIdentifier(node.name)
+            ? node.name.text
+            : null;
+        let owner: tsType.Node | undefined = node.parent;
+        while (owner && (ts.isObjectBindingPattern(owner) || ts.isArrayBindingPattern(owner) || ts.isBindingElement(owner))) {
+          owner = owner.parent;
+        }
+        const directInit =
           owner &&
           (ts.isVariableDeclaration(owner) || ts.isParameter(owner)) &&
-          owner.initializer
-        ) {
-          if (isAstProtoBearingHost(owner.initializer)) hasProtoMutation = true;
-          else protoDestructureCandidates.push({ rhsExpr: owner.initializer, scope: nextScope });
+          owner.initializer &&
+          owner.name === node.parent
+            ? owner.initializer
+            : null;
+        if (boundKey !== null) {
+          recordReflectOrProtoKeyAccess(boundKey, directInit, nextScope);
+        } else if (node.propertyName && ts.isComputedPropertyName(node.propertyName)) {
+          if (
+            owner &&
+            (ts.isVariableDeclaration(owner) || ts.isParameter(owner)) &&
+            owner.initializer
+          ) {
+            if (isAstProtoBearingHost(owner.initializer)) hasProtoMutation = true;
+            else protoDestructureCandidates.push({ rhsExpr: owner.initializer, scope: nextScope });
+          }
         }
       }
     }
@@ -6263,10 +6726,11 @@ function extractAstFacts(
     // 5. Identifiers, strings, templates, shorthand object props, root '+' concatenations
     if (ts.isIdentifier(node)) {
       const parent = node.parent;
-      if (!isAstSafeKillBaseIdentRead(node, parent, nextInTypePos, nextScope)) {
+      if (trackFetchTaint && !isAstSafeKillBaseIdentRead(node, parent, nextInTypePos, nextScope)) {
         seedEscapedSafeKillBases.add(astVarKey(nextScope, node.text));
       }
       if (
+        trackFetchTaint &&
         !nextInTypePos &&
         PROTO_ACCESS_HOSTS.has(node.text) &&
         astVarKey(nextScope, node.text) === `global:${node.text}` &&
@@ -6369,13 +6833,11 @@ function extractAstFacts(
     }
 
     // Push children in reverse source order so pre-order statement scoping stays sequential.
-    const children: tsType.Node[] = [];
-    ts.forEachChild(node, (child) => {
-      children.push(child);
-    });
-    for (let idx = children.length - 1; idx >= 0; idx -= 1) {
+    childrenScratch.length = 0;
+    ts.forEachChild(node, pushChildNode);
+    for (let idx = childrenScratch.length - 1; idx >= 0; idx -= 1) {
       stack.push({
-        node: children[idx]!,
+        node: childrenScratch[idx]!,
         scope: nextScope,
         inTypePos: nextInTypePos,
         suppressNotesLit: nextSuppressNotesLit,
@@ -6534,6 +6996,7 @@ function extractAstFacts(
     seedReflectHosts.add(`prop:${reqH}\0Reflect`);
   }
   let reflectHostAliases = propagateAliases(seedReflectHosts, aliasEdges);
+  let hasStage2CallAlias = reflectHostAliases.size > seedReflectHosts.size;
   for (let rfPass = 0; rfPass < 4; rfPass += 1) {
     let rfChanged = false;
     for (const cand of memberBindCandidates) {
@@ -6547,7 +7010,9 @@ function extractAstFacts(
       }
     }
     if (!rfChanged) break;
+    hasStage2CallAlias = true;
     reflectHostAliases = propagateAliases(seedReflectHosts, aliasEdges);
+    if (reflectHostAliases.size > seedReflectHosts.size) hasStage2CallAlias = true;
   }
   const isAliasReflectHost = (expr: tsType.Expression, scope: AstLexScope): boolean => {
     for (const br of expandAstBranchExprs(expr)) {
@@ -6582,6 +7047,7 @@ function extractAstFacts(
     seedReflectGet.add(`prop:${rh}\0get`);
   }
   let reflectApplyAliases = propagateAliases(seedReflectApply, aliasEdges);
+  if (reflectApplyAliases.size > seedReflectApply.size) hasStage2CallAlias = true;
   for (let raPass = 0; raPass < 4; raPass += 1) {
     let raChanged = false;
     for (const cand of memberBindCandidates) {
@@ -6595,7 +7061,9 @@ function extractAstFacts(
       }
     }
     if (!raChanged) break;
+    hasStage2CallAlias = true;
     reflectApplyAliases = propagateAliases(seedReflectApply, aliasEdges);
+    if (reflectApplyAliases.size > seedReflectApply.size) hasStage2CallAlias = true;
   }
   let reflectGetMethodAliases = propagateAliases(seedReflectGet, aliasEdges);
   for (let rgPass = 0; rgPass < 4; rgPass += 1) {
@@ -6644,6 +7112,7 @@ function extractAstFacts(
     seedFnHosts.add(`prop:${reqH}\0Function`);
   }
   let fnHostAliases = propagateAliases(seedFnHosts, aliasEdges);
+  if (fnHostAliases.size > seedFnHosts.size) hasStage2CallAlias = true;
   for (let fhPass = 0; fhPass < 4; fhPass += 1) {
     let fhChanged = false;
     for (const cand of memberBindCandidates) {
@@ -6657,13 +7126,16 @@ function extractAstFacts(
       }
     }
     if (!fhChanged) break;
+    hasStage2CallAlias = true;
     fnHostAliases = propagateAliases(seedFnHosts, aliasEdges);
+    if (fnHostAliases.size > seedFnHosts.size) hasStage2CallAlias = true;
   }
   const seedFnProtoHosts = new Set<string>();
   for (const fh of fnHostAliases) {
     seedFnProtoHosts.add(`prop:${fh}\0prototype`);
   }
   let fnProtoAliases = propagateAliases(seedFnProtoHosts, aliasEdges);
+  if (fnProtoAliases.size > seedFnProtoHosts.size) hasStage2CallAlias = true;
   for (let fpPass = 0; fpPass < 4; fpPass += 1) {
     let fpChanged = false;
     for (const cand of memberBindCandidates) {
@@ -6677,7 +7149,9 @@ function extractAstFacts(
       }
     }
     if (!fpChanged) break;
+    hasStage2CallAlias = true;
     fnProtoAliases = propagateAliases(seedFnProtoHosts, aliasEdges);
+    if (fnProtoAliases.size > seedFnProtoHosts.size) hasStage2CallAlias = true;
   }
   const knownFnVars = propagateAliases(seedKnownFnVars, aliasEdges);
   const seedFnCall = new Set<string>();
@@ -6688,6 +7162,9 @@ function extractAstFacts(
   }
   let fnCallAliases: Set<string> = propagateAliases(seedFnCall, aliasEdges);
   let fnApplyAliases: Set<string> = propagateAliases(seedFnApply, aliasEdges);
+  if (fnCallAliases.size > seedFnCall.size || fnApplyAliases.size > seedFnApply.size) {
+    hasStage2CallAlias = true;
+  }
   const isFnPrototypeBearingExpr = (expr: tsType.Expression, scope: AstLexScope): boolean => {
     for (const br of expandAstBranchExprs(expr)) {
       if (ts.isArrowFunction(br) || ts.isFunctionExpression(br)) return true;
@@ -6741,8 +7218,12 @@ function extractAstFacts(
       }
     }
     if (!fmChanged) break;
+    hasStage2CallAlias = true;
     fnCallAliases = propagateAliases(seedFnCall, aliasEdges);
     fnApplyAliases = propagateAliases(seedFnApply, aliasEdges);
+    if (fnCallAliases.size > seedFnCall.size || fnApplyAliases.size > seedFnApply.size) {
+      hasStage2CallAlias = true;
+    }
   }
   const isAliasFnCallCallee = (calleeExpr: tsType.Expression, scope: AstLexScope): boolean => {
     for (const br of expandAstBranchExprs(calleeExpr)) {
@@ -6771,29 +7252,32 @@ function extractAstFacts(
     return false;
   };
   const boundMetaCallByVarKey = new Map<string, AstBoundMetaCallInfo>();
-  for (const rec of fnBindRecords) {
-    let kind: 'call' | 'apply' | null = null;
-    if (isAliasFnCallCallee(rec.bindHost, rec.scope)) kind = 'call';
-    else if (isAliasFnApplyCallee(rec.bindHost, rec.scope) && !isAliasReflectApplyCallee(rec.bindHost, rec.scope)) {
-      kind = 'apply';
-    }
-    if (kind !== null) {
-      const info: AstBoundMetaCallInfo = { kind, targetFn: rec.thisArg, boundArgs: rec.boundArgs };
-      for (const tk of rec.targets) boundMetaCallByVarKey.set(tk, info);
-    }
-  }
-  const boundMetaQueue = [...boundMetaCallByVarKey.keys()];
-  for (let bmq = 0; bmq < boundMetaQueue.length; bmq += 1) {
-    const srcKey = boundMetaQueue[bmq]!;
-    const info = boundMetaCallByVarKey.get(srcKey)!;
-    const outs = aliasEdges.get(srcKey);
-    if (!outs) continue;
-    for (const dstKey of outs) {
-      if (!boundMetaCallByVarKey.has(dstKey)) {
-        boundMetaCallByVarKey.set(dstKey, info);
-        boundMetaQueue.push(dstKey);
+  if (fnBindRecords.length > 0) {
+    for (const rec of fnBindRecords) {
+      let kind: 'call' | 'apply' | null = null;
+      if (isAliasFnCallCallee(rec.bindHost, rec.scope)) kind = 'call';
+      else if (isAliasFnApplyCallee(rec.bindHost, rec.scope) && !isAliasReflectApplyCallee(rec.bindHost, rec.scope)) {
+        kind = 'apply';
+      }
+      if (kind !== null) {
+        const info: AstBoundMetaCallInfo = { kind, targetFn: rec.thisArg, boundArgs: rec.boundArgs };
+        for (const tk of rec.targets) boundMetaCallByVarKey.set(tk, info);
       }
     }
+    const boundMetaQueue = [...boundMetaCallByVarKey.keys()];
+    for (let bmq = 0; bmq < boundMetaQueue.length; bmq += 1) {
+      const srcKey = boundMetaQueue[bmq]!;
+      const info = boundMetaCallByVarKey.get(srcKey)!;
+      const outs = aliasEdges.get(srcKey);
+      if (!outs) continue;
+      for (const dstKey of outs) {
+        if (!boundMetaCallByVarKey.has(dstKey)) {
+          boundMetaCallByVarKey.set(dstKey, info);
+          boundMetaQueue.push(dstKey);
+        }
+      }
+    }
+    if (boundMetaCallByVarKey.size > 0) hasStage2CallAlias = true;
   }
   const resolveBoundMetaCall = (calleeExpr: tsType.Expression, scope: AstLexScope): AstBoundMetaCallInfo | null => {
     const norm = unwrapAstExpr(calleeExpr, true);
@@ -6854,6 +7338,18 @@ function extractAstFacts(
   const updatedCallSiteIndices = new Set<number>();
   for (let siteIdx = 0; siteIdx < callSites.length; siteIdx += 1) {
     const site = callSites[siteIdx]!;
+    if (!hasStage2CallAlias && !site.isIndirect) {
+      const ce = site.calleeExpr;
+      if (
+        ts.isIdentifier(ce) ||
+        (ts.isPropertyAccessExpression(ce) &&
+          ce.name.text !== 'call' &&
+          ce.name.text !== 'apply' &&
+          ce.name.text !== 'bind')
+      ) {
+        continue;
+      }
+    }
     const reUnwrapped = unwrapAstCall(site.call, site.scope, callUnwrapHooks);
     if (
       reUnwrapped.calleeExpr !== site.calleeExpr ||
@@ -6880,7 +7376,7 @@ function extractAstFacts(
       }
     }
   }
-  if (updatedCallSiteIndices.size > 0) {
+  if (trackFetchTaint && updatedCallSiteIndices.size > 0) {
     for (let j = 0; j < protoMethodCallCandidates.length; j += 1) {
       const pCand = protoMethodCallCandidates[j]!;
       if (!updatedCallSiteIndices.has(pCand.callSiteIndex)) continue;
@@ -7054,6 +7550,7 @@ function extractAstFacts(
   const agentBindings = propagateAliases(seedAgentBindings, aliasEdges);
   const executeAliases = propagateAliases(seedExecuteAliases, aliasEdges);
   if (
+    trackFetchTaint &&
     (fetchTaintsByVarAndFn.size > 0 || fetchGlobalVars.size > 0) &&
     (fetchKillCandidates.length > 0 || positionalEdgesBySource.size > 0)
   ) {
@@ -7575,7 +8072,7 @@ function extractAstFacts(
           isIndirectRequire = true;
         }
         if (executeAliases.has(calleeKey)) callsExecute = true;
-        if (isFetchTaintedAtCall(calleeKey, brCallee)) callsFetch = true;
+        if (trackFetchTaint && isFetchTaintedAtCall(calleeKey, brCallee)) callsFetch = true;
         if (meterAliases.has(calleeKey)) isMeterCall = true;
       } else if (ts.isPropertyAccessExpression(brCallee) || ts.isElementAccessExpression(brCallee)) {
         const memKey = resolveAstMemberKeyPath(brCallee, site.scope).key;
@@ -7585,7 +8082,7 @@ function extractAstFacts(
             isIndirectRequire = true;
           }
           if (executeAliases.has(memKey)) callsExecute = true;
-          if (isFetchTaintedAtCall(memKey, brCallee)) callsFetch = true;
+          if (trackFetchTaint && isFetchTaintedAtCall(memKey, brCallee)) callsFetch = true;
           if (meterAliases.has(memKey)) isMeterCall = true;
         }
         const mem = extractAstMemberName(brCallee, site.scope);
@@ -7595,7 +8092,7 @@ function extractAstFacts(
           isIndirectRequire = true;
         } else if (mem.memberName === 'execute') {
           callsExecute = true;
-        } else if (mem.memberName === 'fetch') {
+        } else if (trackFetchTaint && mem.memberName === 'fetch') {
           if (anyAstBranchMatchesSet(h, site.scope, requireHosts)) {
             callsFetch = true;
           } else {
@@ -7614,10 +8111,12 @@ function extractAstFacts(
             isMeterCall = true;
           }
         } else if (mem.memberName !== null) {
-          for (const br of expandAstBranchExprs(h)) {
-            const brKey = ts.isIdentifier(br) ? astVarKey(site.scope, br.text) : resolveAstMemberKeyPath(br, site.scope).key;
-            if (brKey !== null && isFetchTaintedAtCall(`prop:${brKey}\0${mem.memberName}`, brCallee)) {
-              callsFetch = true;
+          if (trackFetchTaint) {
+            for (const br of expandAstBranchExprs(h)) {
+              const brKey = ts.isIdentifier(br) ? astVarKey(site.scope, br.text) : resolveAstMemberKeyPath(br, site.scope).key;
+              if (brKey !== null && isFetchTaintedAtCall(`prop:${brKey}\0${mem.memberName}`, brCallee)) {
+                callsFetch = true;
+              }
             }
           }
           if (mem.memberName === 'get' && isAliasReflectHost(h, site.scope)) {
@@ -7679,7 +8178,7 @@ function extractAstFacts(
               if (rg.propName === 'require') {
                 dynKind = 'require';
                 isIndirectRequire = true;
-              } else if (rg.propName === 'fetch') {
+              } else if (trackFetchTaint && rg.propName === 'fetch') {
                 callsFetch = true;
               }
             }
@@ -7703,7 +8202,7 @@ function extractAstFacts(
                 }
                 if (executeAliases.has(rgPropKey)) callsExecute = true;
                 if (meterAliases.has(rgPropKey)) isMeterCall = true;
-                if (isFetchTaintedAtCall(rgPropKey, brCallee)) callsFetch = true;
+                if (trackFetchTaint && isFetchTaintedAtCall(rgPropKey, brCallee)) callsFetch = true;
               }
             }
           }
@@ -7793,8 +8292,9 @@ function collectMemberVyTokenPass(
   out: Set<string>,
   assertSyntax: boolean,
   unambiguousRegexSpans?: ReadonlyArray<{ start: number; end: number }>,
+  tokenFlags?: number,
 ): void {
-  const { specifiers: specs, scan } = specifiers(text, tokens, undefined, unambiguousRegexSpans);
+  const { specifiers: specs, scan } = specifiers(text, tokens, undefined, unambiguousRegexSpans, tokenFlags);
   for (const spec of specs) {
     const matched = findMatchingSpecifier(spec, BANNED_IMPORT);
     if (matched !== null) out.add(`imports ${matched}`);
@@ -7823,21 +8323,27 @@ function collectMemberVyTokenPass(
   }
 }
 
+const AST_EMPTY_SYMS = new Set<string>();
+
 function collectAstModuleBoundaryHits(
   text: string,
   bannedRe: RegExp,
   out: Set<string>,
   filePath?: string,
   preParsed?: AstParsedResult,
+  includeFetchTaint = false,
+  preFacts?: readonly AstFileFacts[],
 ): AstFileFacts[] {
   const parsed = preParsed ?? parseAstCandidates(text, filePath);
   if (parsed.hadRangeError || parsed.hasLexicalUnclosed || parsed.hasJsxUnclosed) {
     out.add('contains invalid or unclosed syntax');
   }
   const factsList: AstFileFacts[] = [];
-  const emptySyms = new Set<string>();
-  for (const sf of parsed.sources) {
-    const facts = extractAstFacts(sf, emptySyms, filePath);
+  for (let i = 0; i < parsed.sources.length; i += 1) {
+    const sf = parsed.sources[i]!;
+    const facts =
+      preFacts?.[i] ??
+      extractAstFacts(sf, AST_EMPTY_SYMS, filePath, includeFetchTaint ? undefined : { skipFetchTaint: true });
     factsList.push(facts);
     for (const spec of facts.specifiers) {
       const matched = findMatchingSpecifier(spec, bannedRe);
@@ -7866,12 +8372,12 @@ export function memberVyViolations(text: string, filePath?: string): string[] {
   const assertTokenSyntax = parsed.hadRangeError || !parsed.hasCleanParse;
   const { primaryPasses, speculativePasses } = scanDualJsxAndTsPasses(text, filePath);
   for (const pass of primaryPasses) {
-    collectMemberVyTokenPass(text, pass.tokens, out, assertTokenSyntax, pass.unambiguousRegexSpans);
+    collectMemberVyTokenPass(text, pass.tokens, out, assertTokenSyntax, pass.unambiguousRegexSpans, pass.tokenFlags);
   }
   for (const pass of speculativePasses) {
-    collectMemberVyTokenPass(text, pass.tokens, out, false, pass.unambiguousRegexSpans);
+    collectMemberVyTokenPass(text, pass.tokens, out, false, pass.unambiguousRegexSpans, pass.tokenFlags);
   }
-  for (const facts of collectAstModuleBoundaryHits(text, BANNED_IMPORT, out, filePath, parsed)) {
+  for (const facts of collectAstModuleBoundaryHits(text, BANNED_IMPORT, out, filePath, parsed, true)) {
     for (const match of facts.stringAndIdentMatches) {
       if (match.startsWith('cmd:')) out.add(`names the command or path ${match.slice(4)}`);
       else if (match === 'table:crove_') out.add('names a crove_ table');
@@ -7896,8 +8402,9 @@ function collectOrgFeatureTokenPass(
   out: Set<string>,
   assertSyntax: boolean,
   unambiguousRegexSpans?: ReadonlyArray<{ start: number; end: number }>,
+  tokenFlags?: number,
 ): void {
-  const { specifiers: specs, scan } = specifiers(text, tokens, undefined, unambiguousRegexSpans);
+  const { specifiers: specs, scan } = specifiers(text, tokens, undefined, unambiguousRegexSpans, tokenFlags);
   for (const spec of specs) {
     const matched = findMatchingSpecifier(spec, /(^|\/)member-vy(\/|$)|(^|\/)private-text(?:\.[cm]?[jt]s)?$/);
     if (matched !== null) out.add(`imports ${matched}`);
@@ -7913,24 +8420,28 @@ function collectOrgFeatureTokenPass(
 const ORG_FEATURE_BANNED_IMPORT = /(^|\/)member-vy(\/|$)|(^|\/)private-text(?:\.[cm]?[jt]s)?$/;
 
 // What org-level features outside member-vy/ must never reach for: a member-Vy module, or the private-text brand.
-export function orgFeatureViolations(text: string, filePath?: string): string[] {
-  const body = stripComments(text);
+export function orgFeatureViolations(text: string, filePath?: string, repoBundle?: RepoSourceBundle): string[] {
   const out = new Set<string>();
-  const parsed = parseAstCandidates(text, filePath);
+  const parsed = repoBundle ? getOrBuildRepoParsed(repoBundle) : parseAstCandidates(text, filePath);
   const assertTokenSyntax = parsed.hadRangeError || !parsed.hasCleanParse;
-  const { primaryPasses, speculativePasses } = scanDualJsxAndTsPasses(text, filePath);
+  const { primaryPasses, speculativePasses } = repoBundle
+    ? getOrBuildRepoDualPasses(repoBundle)
+    : scanDualJsxAndTsPasses(text, filePath);
   for (const pass of primaryPasses) {
-    collectOrgFeatureTokenPass(text, pass.tokens, out, assertTokenSyntax, pass.unambiguousRegexSpans);
+    collectOrgFeatureTokenPass(text, pass.tokens, out, assertTokenSyntax, pass.unambiguousRegexSpans, pass.tokenFlags);
   }
   for (const pass of speculativePasses) {
-    collectOrgFeatureTokenPass(text, pass.tokens, out, false, pass.unambiguousRegexSpans);
+    collectOrgFeatureTokenPass(text, pass.tokens, out, false, pass.unambiguousRegexSpans, pass.tokenFlags);
   }
-  for (const facts of collectAstModuleBoundaryHits(text, ORG_FEATURE_BANNED_IMPORT, out, filePath, parsed)) {
+  const preFacts = repoBundle
+    ? getOrBuildRepoFactsList(repoBundle, DEFAULT_ADAPTER_EXPORTS, DEFAULT_ADAPTER_EXPORT_SET)
+    : undefined;
+  for (const facts of collectAstModuleBoundaryHits(text, ORG_FEATURE_BANNED_IMPORT, out, filePath, parsed, false, preFacts)) {
     if (facts.stringAndIdentMatches.has('PrivateText')) {
       out.add('names PrivateText');
     }
   }
-  if (/\bPrivateText\b/.test(text) || /\bPrivateText\b/.test(body)) {
+  if (/\bPrivateText\b/.test(text)) {
     out.add('names PrivateText');
   }
   return [...out];
@@ -7947,24 +8458,64 @@ const ADAPTER_FUNCTION_NOTES_KEYS = new Map<string, string>([
 ]);
 const ADAPTER_NOTES_KEYS = new Set(ADAPTER_FUNCTION_NOTES_KEYS.values());
 const ADAPTER_NOTE_IMPORT_RE = /(?:^|\/)note-ai-model(?:\.[cm]?[jt]s)?$/;
-const isNoteAiModelSpecifier = (spec: string): boolean => ADAPTER_NOTE_IMPORT_RE.test(normalizeModuleSpecifier(spec));
+const isNoteAiModelSpecifier = (spec: string): boolean =>
+  (spec.includes('model') || spec.includes('%')) && ADAPTER_NOTE_IMPORT_RE.test(normalizeModuleSpecifier(spec));
 const DEFAULT_ADAPTER_EXPORTS: readonly string[] = [...ADAPTER_FUNCTION_NOTES_KEYS.keys()];
+const DEFAULT_ADAPTER_EXPORT_SET = new Set(DEFAULT_ADAPTER_EXPORTS);
+const MEMBER_VY_NAMES_SET = new Set(['memberVy', 'member_vy', 'PrivateText']);
+const MEMBER_VY_FAST_TEXT_RE = /memberVy|member_vy|PrivateText|[+`\\[\]]|from(?:CharCode|CodePoint)|\bString\b/;
 
-export function memberVyNames(text: string, filePath?: string): string[] {
-  const names = new Set(['memberVy', 'member_vy', 'PrivateText']);
-  const found = new Set<string>();
-  for (const name of names) {
-    if (new RegExp(`\\b${name}\\b`).test(text)) found.add(name);
+interface CompiledSymbols {
+  readonly symbolSet: ReadonlySet<string>;
+  readonly minSymLen: number;
+  readonly escapedRegexps: readonly { readonly sym: string; readonly re: RegExp }[];
+}
+
+const compiledSymbolsCache = new Map<string, CompiledSymbols>();
+
+const encodeSymbolListKey = (symbols: readonly string[]): string =>
+  symbols.map((s) => `${s.length}:${s}`).join('\0');
+
+function getCompiledSymbols(symbols: readonly string[]): CompiledSymbols {
+  const key = encodeSymbolListKey(symbols);
+  let entry = compiledSymbolsCache.get(key);
+  if (!entry) {
+    let minSymLen = Infinity;
+    const escapedRegexps: Array<{ sym: string; re: RegExp }> = [];
+    for (const sym of symbols) {
+      if (sym.length < minSymLen) minSymLen = sym.length;
+      const escaped = sym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      escapedRegexps.push({ sym, re: new RegExp(`(?:^|[^\\w$])${escaped}(?![\\w$])`) });
+    }
+    entry = { symbolSet: new Set(symbols), minSymLen, escapedRegexps };
+    if (compiledSymbolsCache.size >= 64) {
+      const oldest = compiledSymbolsCache.keys().next();
+      if (!oldest.done) compiledSymbolsCache.delete(oldest.value);
+    }
+    compiledSymbolsCache.set(key, entry);
   }
-  for (const tok of tokenize(text)) {
-    if ((tok.kind === 'ident' || tok.kind === 'string' || tok.kind === 'template') && names.has(tok.value)) {
+  return entry;
+}
+
+export function memberVyNames(text: string, filePath?: string, repoBundle?: RepoSourceBundle): string[] {
+  if (!repoBundle && !MEMBER_VY_FAST_TEXT_RE.test(text)) return [];
+  const found = new Set<string>();
+  if (/\bmemberVy\b/.test(text)) found.add('memberVy');
+  if (/\bmember_vy\b/.test(text)) found.add('member_vy');
+  if (/\bPrivateText\b/.test(text)) found.add('PrivateText');
+  const tokens = repoBundle ? getOrBuildRepoNonJsxPrimary(repoBundle).tokens : tokenize(text);
+  for (const tok of tokens) {
+    if ((tok.kind === 'ident' || tok.kind === 'string' || tok.kind === 'template') && MEMBER_VY_NAMES_SET.has(tok.value)) {
       found.add(tok.value);
     }
   }
-  const parsed = parseAstCandidates(text, filePath);
-  for (const sf of parsed.sources) {
-    const facts = extractAstFacts(sf, names, filePath);
-    for (const name of names) {
+  const factsList = repoBundle
+    ? getOrBuildRepoFactsList(repoBundle, DEFAULT_ADAPTER_EXPORTS, DEFAULT_ADAPTER_EXPORT_SET)
+    : parseAstCandidates(text, filePath).sources.map((sf) =>
+        extractAstFacts(sf, MEMBER_VY_NAMES_SET, filePath, { skipFetchTaint: true }),
+      );
+  for (const facts of factsList) {
+    for (const name of MEMBER_VY_NAMES_SET) {
       if (facts.stringAndIdentMatches.has(name)) found.add(name);
     }
   }
@@ -8573,8 +9124,10 @@ function constantLeadingPrefix(
 
 interface LexScope {
   parent: number;
-  bindings: Map<string, string | null>;
+  bindings: Map<string, string | null> | null;
 }
+
+const EMPTY_CONST_LOOKUP: ConstLookupFn = () => null;
 
 function lookupScopedConst(scopes: readonly LexScope[], scopeIdx: number, name: string): string | null {
   let cur = scopeIdx;
@@ -8582,7 +9135,7 @@ function lookupScopedConst(scopes: readonly LexScope[], scopeIdx: number, name: 
   while (cur >= 0 && hops < 64) {
     hops += 1;
     const scope = scopes[cur]!;
-    if (scope.bindings.has(name)) {
+    if (scope.bindings !== null && scope.bindings.has(name)) {
       return scope.bindings.get(name) ?? null;
     }
     cur = scope.parent;
@@ -8596,13 +9149,15 @@ function invalidateScopedBinding(scopes: readonly LexScope[], scopeIdx: number, 
   while (cur >= 0 && hops < 64) {
     hops += 1;
     const scope = scopes[cur]!;
-    if (scope.bindings.has(name)) {
+    if (scope.bindings !== null && scope.bindings.has(name)) {
       scope.bindings.set(name, null);
       return;
     }
     cur = scope.parent;
   }
-  scopes[scopeIdx]!.bindings.set(name, null);
+  const target = scopes[scopeIdx]!;
+  if (target.bindings === null) target.bindings = new Map();
+  target.bindings.set(name, null);
 }
 
 const PARAM_MODIFIERS = new Set(['public', 'private', 'protected', 'readonly', 'override']);
@@ -9279,16 +9834,17 @@ function findFnParamBodyTarget(
   closeParen: number,
   delims: DelimiterPairs,
 ): { targetKind: 'brace' | 'concise'; targetIdx: number } | null {
+  const afterClose = tokens[closeParen + 1];
+  if (afterClose?.kind !== 'punct') return null;
+  const afterVal = afterClose.value;
+  if (afterVal !== ':' && afterVal !== '=>' && afterVal !== '{') return null;
+
   const prev = tokens[openParen - 1];
   if (prev?.kind === 'ident' && prev.value === 'catch') {
-    return tokens[closeParen + 1]?.kind === 'punct' && tokens[closeParen + 1]?.value === '{'
-      ? { targetKind: 'brace', targetIdx: closeParen + 1 }
-      : null;
+    return afterVal === '{' ? { targetKind: 'brace', targetIdx: closeParen + 1 } : null;
   }
   if (prev?.kind === 'ident' && NON_PARAM_PARENS.has(prev.value)) return null;
-  const p = tokens[closeParen + 1]?.kind === 'punct' && tokens[closeParen + 1]?.value === ':'
-    ? skipOptionalTypeForward(tokens, closeParen + 1, delims)
-    : closeParen + 1;
+  const p = afterVal === ':' ? skipOptionalTypeForward(tokens, closeParen + 1, delims) : closeParen + 1;
   const next = tokens[p];
   if (next?.kind === 'punct' && next.value === '=>') {
     const body = tokens[p + 1];
@@ -9447,32 +10003,46 @@ function collectScopedConstBindings(
   delims: DelimiterPairs,
   templateNext: Int32Array,
   templateTail?: Int32Array,
-): { scopes: LexScope[]; tokenScope: Int32Array; constEqIndices: Set<number>; capped: boolean } {
-  const scopes: LexScope[] = [{ parent: -1, bindings: new Map() }];
+): { scopes: LexScope[]; tokenScope: Int32Array; constEqIndices: Set<number>; constStringNames: Set<string>; capped: boolean } {
+  const scopes: LexScope[] = [{ parent: -1, bindings: null }];
   const tokenScope = new Int32Array(tokens.length);
   const constEqIndices = new Set<number>();
+  const constStringNames = new Set<string>();
   const cappedRef = { value: false };
   const scopeStack: number[] = [0];
-  const braceSeedBindings = new Map<number, string[]>();
-  const conciseEnterAt = new Map<number, string[]>();
-  const scopePopAt = new Map<number, number>();
-  const forParenCloseToScope = new Map<number, number>();
-  const braceReuseScope = new Map<number, number>();
+  let braceSeedBindings: Map<number, string[]> | null = null;
+  let conciseEnterAt: Map<number, string[]> | null = null;
+  const scopePopAt = new Int32Array(tokens.length + 1);
+  let forParenCloseToScope: Map<number, number> | null = null;
+  let braceReuseScope: Map<number, number> | null = null;
 
-  const seedNames = (map: Map<number, string[]>, idx: number, names: readonly string[]): void => {
-    if (names.length === 0) return;
-    const prev = map.get(idx);
+  const ensureScopeBindings = (scopeIdx: number): Map<string, string | null> => {
+    const sc = scopes[scopeIdx]!;
+    if (sc.bindings === null) sc.bindings = new Map<string, string | null>();
+    return sc.bindings;
+  };
+
+  const seedNames = (
+    map: Map<number, string[]> | null,
+    idx: number,
+    names: readonly string[],
+  ): Map<number, string[]> | null => {
+    if (names.length === 0) return map;
+    const target = map ?? new Map<number, string[]>();
+    const prev = target.get(idx);
     if (prev) prev.push(...names);
-    else map.set(idx, [...names]);
+    else target.set(idx, [...names]);
+    return target;
   };
 
   for (let i = 0; i < tokens.length; i += 1) {
-    const popCount = scopePopAt.get(i) ?? 0;
-    for (let k = 0; k < popCount; k += 1) {
+    let popCount = scopePopAt[i]!;
+    while (popCount > 0) {
+      popCount -= 1;
       if (scopeStack.length > 1) scopeStack.pop();
     }
 
-    const conciseNames = conciseEnterAt.get(i);
+    const conciseNames = conciseEnterAt?.get(i);
     if (conciseNames) {
       const parent = scopeStack[scopeStack.length - 1]!;
       const childIdx = scopes.length;
@@ -9481,26 +10051,27 @@ function collectScopedConstBindings(
       scopes.push({ parent, bindings });
       scopeStack.push(childIdx);
       const endIdx = findConciseArrowEnd(tokens, i);
-      scopePopAt.set(endIdx, (scopePopAt.get(endIdx) ?? 0) + 1);
+      scopePopAt[endIdx] = (scopePopAt[endIdx] ?? 0) + 1;
     }
 
     const t = tokens[i]!;
     if (t.kind === 'punct' && t.value === '{') {
       const closeBrace = delims.brace[i] ?? -1;
       if (closeBrace > i) {
-        const reused = braceReuseScope.get(i);
+        const reused = braceReuseScope?.get(i);
         const childIdx = reused !== undefined ? reused : scopes.length;
         if (reused === undefined) {
           const parent = scopeStack[scopeStack.length - 1]!;
-          const bindings = new Map<string, string | null>();
-          const seeded = braceSeedBindings.get(i);
+          const seeded = braceSeedBindings?.get(i);
+          let bindings: Map<string, string | null> | null = null;
           if (seeded) {
+            bindings = new Map<string, string | null>();
             for (const n of seeded) bindings.set(n, null);
           }
           scopes.push({ parent, bindings });
         }
         scopeStack.push(childIdx);
-        scopePopAt.set(closeBrace + 1, (scopePopAt.get(closeBrace + 1) ?? 0) + 1);
+        scopePopAt[closeBrace + 1] = (scopePopAt[closeBrace + 1] ?? 0) + 1;
       }
     }
 
@@ -9511,29 +10082,34 @@ function collectScopedConstBindings(
         if (prev?.kind === 'ident' && (prev.value === 'for' || (prev.value === 'await' && tokens[i - 2]?.value === 'for'))) {
           const parent = scopeStack[scopeStack.length - 1]!;
           const forIdx = scopes.length;
-          scopes.push({ parent, bindings: new Map() });
+          scopes.push({ parent, bindings: null });
           scopeStack.push(forIdx);
+          if (!forParenCloseToScope) forParenCloseToScope = new Map<number, number>();
           forParenCloseToScope.set(closeParen, forIdx);
         } else {
           const fnTarget = findFnParamBodyTarget(tokens, i, closeParen, delims);
           if (fnTarget) {
             const paramNames: string[] = [];
             collectPatternIdents(tokens, i + 1, closeParen, delims, paramNames, false, templateTail);
-            if (fnTarget.targetKind === 'brace') seedNames(braceSeedBindings, fnTarget.targetIdx, paramNames);
-            else seedNames(conciseEnterAt, fnTarget.targetIdx, paramNames);
+            if (fnTarget.targetKind === 'brace') {
+              braceSeedBindings = seedNames(braceSeedBindings, fnTarget.targetIdx, paramNames);
+            } else {
+              conciseEnterAt = seedNames(conciseEnterAt, fnTarget.targetIdx, paramNames);
+            }
           }
         }
       }
     }
 
-    if (t.kind === 'punct' && t.value === ')' && forParenCloseToScope.has(i)) {
+    if (t.kind === 'punct' && t.value === ')' && forParenCloseToScope?.has(i)) {
       const forIdx = forParenCloseToScope.get(i)!;
       if (tokens[i + 1]?.kind === 'punct' && tokens[i + 1]?.value === '{' && (delims.brace[i + 1] ?? -1) > i + 1) {
+        if (!braceReuseScope) braceReuseScope = new Map<number, number>();
         braceReuseScope.set(i + 1, forIdx);
         if (scopeStack.length > 1) scopeStack.pop();
       } else if (i + 1 < tokens.length) {
         const endIdx = findBracelessStatementEnd(tokens, i + 1, delims, templateTail);
-        scopePopAt.set(endIdx, (scopePopAt.get(endIdx) ?? 0) + 1);
+        scopePopAt[endIdx] = (scopePopAt[endIdx] ?? 0) + 1;
       } else if (scopeStack.length > 1) {
         scopeStack.pop();
       }
@@ -9541,14 +10117,13 @@ function collectScopedConstBindings(
 
     const curScopeIdx = scopeStack[scopeStack.length - 1]!;
     tokenScope[i] = curScopeIdx;
-    const curBindings = scopes[curScopeIdx]!.bindings;
 
     if (t.kind === 'ident' && !isMemberPrev(tokens, i) && tokens[i + 1]?.kind === 'punct' && tokens[i + 1]?.value === '=>') {
       const afterArrow = tokens[i + 2];
       if (afterArrow?.kind === 'punct' && afterArrow.value === '{') {
-        seedNames(braceSeedBindings, i + 2, [t.value]);
+        braceSeedBindings = seedNames(braceSeedBindings, i + 2, [t.value]);
       } else {
-        seedNames(conciseEnterAt, i + 2, [t.value]);
+        conciseEnterAt = seedNames(conciseEnterAt, i + 2, [t.value]);
       }
       continue;
     }
@@ -9563,6 +10138,7 @@ function collectScopedConstBindings(
 
     if (t.kind !== 'ident' || isMemberPrev(tokens, i)) continue;
     if (t.value === 'let' || t.value === 'var') {
+      const curBindings = ensureScopeBindings(curScopeIdx);
       let p = i + 1;
       while (p < tokens.length) {
         const tk = tokens[p]!;
@@ -9600,6 +10176,7 @@ function collectScopedConstBindings(
         tokens[i + 1]?.kind === 'punct' &&
         tokens[i + 1]?.value === '>');
     if (t.value !== 'const' || isTsConstAssertion) continue;
+    const curBindings = ensureScopeBindings(curScopeIdx);
     let p = i + 1;
     while (p < tokens.length) {
       const nameTok = tokens[p];
@@ -9648,7 +10225,9 @@ function collectScopedConstBindings(
             q,
             delims,
             templateNext,
-            (n) => lookupScopedConst(scopes, curScopeIdx, n),
+            constStringNames.size > 0
+              ? (n) => (constStringNames.has(n) ? lookupScopedConst(scopes, curScopeIdx, n) : null)
+              : EMPTY_CONST_LOOKUP,
             0,
             templateTail,
             cappedRef,
@@ -9659,6 +10238,7 @@ function collectScopedConstBindings(
           if (curBindings.get(nameTok.value) !== val) curBindings.set(nameTok.value, null);
         } else {
           curBindings.set(nameTok.value, val);
+          constStringNames.add(nameTok.value);
         }
       } else {
         curBindings.set(nameTok.value, null);
@@ -9670,7 +10250,7 @@ function collectScopedConstBindings(
       break;
     }
   }
-  return { scopes, tokenScope, constEqIndices, capped: cappedRef.value };
+  return { scopes, tokenScope, constEqIndices, constStringNames, capped: cappedRef.value };
 }
 
 const isMeterModuleSpecifier = (spec: string): boolean => {
@@ -10307,21 +10887,45 @@ function collectMeteredNotesFromTokens(
     ignoreUnresolvedInRanges?: ReadonlyArray<{ start: number; end: number }>;
     resolvedParenStarts?: Set<number>;
     handledUnresolvedParenStarts?: Set<number>;
+    tokenFlags?: number;
+    passCache?: Map<readonly Token[], PrecomputedNotesTokenPass>;
   },
 ): string[] {
   const out: string[] = [];
-  if (!tokens.some((tk) => tk.kind === 'punct' && tk.value === '(')) return out;
-  const delims = pairDelimiters(tokens);
-  const { templateTail, templateNext } = buildTemplateMaps(tokens);
-  const { scopes, tokenScope } = collectScopedConstBindings(tokens, delims, templateNext, templateTail);
-  const closeMaps: ClosePairMaps = {
-    parenOpenFromClose: invertPairs(delims.paren, tokens.length),
-    bracketOpenFromClose: invertPairs(delims.bracket, tokens.length),
-    braceOpenFromClose: invertPairs(delims.brace, tokens.length),
-    templateHeadFromTail: invertPairs(templateTail, tokens.length),
-  };
+  if (options?.tokenFlags !== undefined) {
+    if ((options.tokenFlags & SCAN_FLAG_OPEN_PAREN) === 0 || (options.tokenFlags & SCAN_FLAG_METERED_MATCH) === 0) {
+      return out;
+    }
+  } else {
+    let hasParen = false;
+    let hasMeterTrigger = false;
+    for (let k = 0; k < tokens.length; k += 1) {
+      const tk = tokens[k]!;
+      if (tk.kind === 'punct') {
+        if (tk.value === '(') hasParen = true;
+        else if (tk.value === '[') hasMeterTrigger = true;
+      } else if (tk.kind === 'ident') {
+        if (tk.value === 'metered' || tk.value === 'import' || tk.value === 'require') hasMeterTrigger = true;
+      } else if ((tk.kind === 'string' || tk.kind === 'template') && tk.value === 'metered') {
+        hasMeterTrigger = true;
+      }
+      if (hasParen && hasMeterTrigger) break;
+    }
+    if (!hasParen || !hasMeterTrigger) return out;
+  }
+
+  const passData = getOrBuildNotesTokenPass(tokens, options?.passCache, true, true);
+  const delims = passData.delims;
+  const templateTail = passData.templateTail;
+  const templateNext = passData.templateNext;
+  const scoped = passData.scoped!;
+  const closeMaps = passData.closeMaps!;
+  const { scopes, tokenScope, constStringNames } = scoped;
   const { meterAliases, meterNamespaces } = collectMeterAliasInfo(tokens, delims, closeMaps, templateTail, templateNext, scopes, tokenScope);
-  const constLookup: ConstLookupFn = (name, idx) => lookupScopedConst(scopes, tokenScope[idx] ?? 0, name);
+  const constLookup: ConstLookupFn =
+    constStringNames.size === 0
+      ? EMPTY_CONST_LOOKUP
+      : (name, idx) => (constStringNames.has(name) ? lookupScopedConst(scopes, tokenScope[idx] ?? 0, name) : null);
 
   const gtToLt = new Int32Array(tokens.length).fill(-1);
   const ltIdxStack: number[] = [];
@@ -10340,6 +10944,16 @@ function collectMeteredNotesFromTokens(
   for (let i = 0; i < tokens.length; i += 1) {
     const t = tokens[i]!;
     if (t.kind !== 'punct' || t.value !== '(' || i === 0) continue;
+    const prevTok = tokens[i - 1]!;
+    if (
+      prevTok.kind === 'ident' &&
+      prevTok.value !== 'metered' &&
+      prevTok.value !== 'call' &&
+      prevTok.value !== 'apply' &&
+      !meterAliases.has(prevTok.value)
+    ) {
+      continue;
+    }
     const callArg = unwrapMeteredCallKeySpan(
       tokens,
       i,
@@ -10527,11 +11141,45 @@ function hasNotesMeterTrigger(text: string): boolean {
 function buildPrecomputedNotesAst(text: string, filePath?: string): PrecomputedNotesAst {
   if (!hasNotesMeterTrigger(text)) return EMPTY_PRECOMPUTED_NOTES_AST;
   const parsed = parseAstCandidates(text, filePath);
-  const emptySyms = new Set<string>();
   return {
-    factsList: parsed.sources.map((sf) => extractAstFacts(sf, emptySyms, filePath)),
+    factsList: parsed.sources.map((sf) => extractAstFacts(sf, AST_EMPTY_SYMS, filePath, { skipFetchTaint: true })),
     hadRangeError: parsed.hadRangeError,
   };
+}
+
+interface PrecomputedNotesTokenPass {
+  readonly delims: DelimiterPairs;
+  readonly templateTail: Int32Array;
+  readonly templateNext: Int32Array;
+  scoped: ReturnType<typeof collectScopedConstBindings> | null;
+  closeMaps: ClosePairMaps | null;
+}
+
+function getOrBuildNotesTokenPass(
+  tokens: readonly Token[],
+  passCache?: Map<readonly Token[], PrecomputedNotesTokenPass>,
+  needScoped = true,
+  needCloseMaps = false,
+): PrecomputedNotesTokenPass {
+  let entry = passCache?.get(tokens);
+  if (!entry) {
+    const delims = pairDelimiters(tokens);
+    const { templateTail, templateNext } = buildTemplateMaps(tokens);
+    entry = { delims, templateTail, templateNext, scoped: null, closeMaps: null };
+    passCache?.set(tokens, entry);
+  }
+  if (needScoped && !entry.scoped) {
+    entry.scoped = collectScopedConstBindings(tokens, entry.delims, entry.templateNext, entry.templateTail);
+  }
+  if (needCloseMaps && !entry.closeMaps) {
+    entry.closeMaps = {
+      parenOpenFromClose: invertPairs(entry.delims.paren, tokens.length),
+      bracketOpenFromClose: invertPairs(entry.delims.bracket, tokens.length),
+      braceOpenFromClose: invertPairs(entry.delims.brace, tokens.length),
+      templateHeadFromTail: invertPairs(entry.templateTail, tokens.length),
+    };
+  }
+  return entry;
 }
 
 interface PrecomputedNotesScan {
@@ -10539,10 +11187,11 @@ interface PrecomputedNotesScan {
   readonly extraTokens: Token[] | null;
   readonly textWithoutUnambiguousRegex: string;
   readonly divisionTokens: Token[] | null;
+  readonly passCache: Map<readonly Token[], PrecomputedNotesTokenPass>;
 }
 
-function buildPrecomputedNotesScan(text: string): PrecomputedNotesScan {
-  const primary = scanSource(text, { emitTokens: true, stripCommentsMode: false, stripStrings: false });
+function buildPrecomputedNotesScan(text: string, prePrimary?: ScanSourceResult): PrecomputedNotesScan {
+  const primary = prePrimary ?? scanSource(text, { emitTokens: true, stripCommentsMode: false, stripStrings: false });
   const extraTokens = speculativeRescan(text, primary);
   const textWithoutUnambiguousRegex =
     primary.unambiguousRegexSpans.length > 0
@@ -10555,7 +11204,13 @@ function buildPrecomputedNotesScan(text: string): PrecomputedNotesScan {
     )
       ? tokenize(textWithoutUnambiguousRegex, { scanRegexAsDivision: true })
       : null;
-  return { primary, extraTokens, textWithoutUnambiguousRegex, divisionTokens };
+  return {
+    primary,
+    extraTokens,
+    textWithoutUnambiguousRegex,
+    divisionTokens,
+    passCache: new Map<readonly Token[], PrecomputedNotesTokenPass>(),
+  };
 }
 
 function collectMeteredNotes(
@@ -10564,7 +11219,7 @@ function collectMeteredNotes(
   precomputedAst?: PrecomputedNotesAst,
   precomputedScan?: PrecomputedNotesScan,
 ): string[] {
-  const { primary, extraTokens, textWithoutUnambiguousRegex, divisionTokens } =
+  const { primary, extraTokens, textWithoutUnambiguousRegex, divisionTokens, passCache } =
     precomputedScan ?? buildPrecomputedNotesScan(text);
   const resolvedOpts = { includeUnresolved: Boolean(options?.includeUnresolved) };
   const resolvedParenStarts = new Set<number>();
@@ -10592,12 +11247,15 @@ function collectMeteredNotes(
       ...resolvedOpts,
       resolvedParenStarts,
       handledUnresolvedParenStarts,
+      tokenFlags: primary.tokenFlags,
+      passCache,
     }),
     ...(divisionTokens
       ? collectMeteredNotesFromTokens(divisionTokens, text, {
           ...resolvedOpts,
           ignoreUnresolvedInRanges,
           handledUnresolvedParenStarts,
+          passCache,
         })
       : []),
     ...(extraTokens
@@ -10605,6 +11263,7 @@ function collectMeteredNotes(
           ...resolvedOpts,
           resolvedParenStarts,
           handledUnresolvedParenStarts,
+          passCache,
         })
       : []),
     ...(hasRawMeteredWord
@@ -10646,28 +11305,34 @@ function collectNotesKeyLiterals(
   precomputedScan?: PrecomputedNotesScan,
 ): string[] {
   const found = new Set<string>();
-  const { primary, extraTokens, divisionTokens } = precomputedScan ?? buildPrecomputedNotesScan(text);
-  const tokenPasses: ReadonlyArray<readonly Token[]> = [
-    primary.tokens,
-    ...(divisionTokens ? [divisionTokens] : []),
-    ...(extraTokens ? [extraTokens] : []),
+  const { primary, extraTokens, divisionTokens, passCache } = precomputedScan ?? buildPrecomputedNotesScan(text);
+  const tokenPasses: ReadonlyArray<{ tokens: readonly Token[]; flags: number }> = [
+    { tokens: primary.tokens, flags: primary.tokenFlags },
+    ...(divisionTokens ? [{ tokens: divisionTokens, flags: computeTokenFlags(divisionTokens) }] : []),
+    ...(extraTokens ? [{ tokens: extraTokens, flags: computeTokenFlags(extraTokens) }] : []),
   ];
-  for (const tokens of tokenPasses) {
-    if (
-      !tokens.some(
-        (t) =>
-          t.kind === 'string' ||
-          t.kind === 'template' ||
-          ((t.kind === 'template_head' || t.kind === 'template_middle' || t.kind === 'template_tail') &&
-            t.value.length > 0),
-      )
-    ) {
+  for (const { tokens, flags } of tokenPasses) {
+    if ((flags & SCAN_FLAG_STRING_OR_TPL) === 0) continue;
+    const hasPlus = (flags & SCAN_FLAG_PLUS) !== 0;
+    const hasTplHead = (flags & SCAN_FLAG_TPL_HEAD) !== 0;
+    if (!hasPlus && !hasTplHead) {
+      for (let i = 0; i < tokens.length; i += 1) {
+        const t = tokens[i]!;
+        if ((t.kind === 'string' || t.kind === 'template') && t.value.startsWith('notes.')) {
+          found.add(t.value);
+        }
+      }
       continue;
     }
-    const delims = pairDelimiters(tokens);
-    const { templateTail, templateNext } = buildTemplateMaps(tokens);
-    const { scopes, tokenScope } = collectScopedConstBindings(tokens, delims, templateNext, templateTail);
-    const constLookup: ConstLookupFn = (name, idx) => lookupScopedConst(scopes, tokenScope[idx] ?? 0, name);
+
+    const hasConst = (flags & SCAN_FLAG_CONST) !== 0;
+    const passData = getOrBuildNotesTokenPass(tokens, passCache, hasConst, false);
+    const { delims, templateTail, templateNext, scoped } = passData;
+    const constStringNames = scoped?.constStringNames;
+    const constLookup: ConstLookupFn =
+      hasConst && scoped && constStringNames && constStringNames.size > 0
+        ? (name, idx) => (constStringNames.has(name) ? lookupScopedConst(scoped.scopes, scoped.tokenScope[idx] ?? 0, name) : null)
+        : EMPTY_CONST_LOOKUP;
 
     const advanceConcatOperand = (idx: number, maxEnd: number): number => {
       if (idx >= maxEnd) return -1;
@@ -10688,21 +11353,24 @@ function collectNotesKeyLiterals(
 
     for (let i = 0; i < tokens.length; i += 1) {
       const t = tokens[i]!;
-      const maxChainEnd = Math.min(tokens.length, i + 128);
-      const firstEnd = advanceConcatOperand(i, maxChainEnd);
-      if (firstEnd > i) {
-        let cursor = firstEnd;
-        while (cursor < maxChainEnd && tokens[cursor]?.kind === 'punct' && tokens[cursor]?.value === '+') {
-          const nextEnd = advanceConcatOperand(cursor + 1, maxChainEnd);
-          if (nextEnd < 0) break;
-          cursor = nextEnd;
-        }
-        if (cursor > firstEnd || (t.kind === 'punct' && t.value === '(')) {
-          const resolvedChain = tryResolveConstantStringExpr(tokens, i, cursor, delims, templateNext, constLookup, 0, templateTail);
-          if (resolvedChain !== null && resolvedChain.startsWith('notes.')) {
-            found.add(resolvedChain);
-            i = cursor - 1;
-            continue;
+      const isParenStart = t.kind === 'punct' && t.value === '(';
+      if (isParenStart || (hasPlus && (t.kind === 'template_head' || ((t.kind === 'string' || t.kind === 'template' || (t.kind === 'ident' && Boolean(constStringNames?.has(t.value)))) && tokens[i + 1]?.kind === 'punct' && tokens[i + 1]?.value === '+')))) {
+        const maxChainEnd = Math.min(tokens.length, i + 128);
+        const firstEnd = advanceConcatOperand(i, maxChainEnd);
+        if (firstEnd > i) {
+          let cursor = firstEnd;
+          while (cursor < maxChainEnd && tokens[cursor]?.kind === 'punct' && tokens[cursor]?.value === '+') {
+            const nextEnd = advanceConcatOperand(cursor + 1, maxChainEnd);
+            if (nextEnd < 0) break;
+            cursor = nextEnd;
+          }
+          if (cursor > firstEnd || isParenStart) {
+            const resolvedChain = tryResolveConstantStringExpr(tokens, i, cursor, delims, templateNext, constLookup, 0, templateTail);
+            if (resolvedChain !== null && resolvedChain.startsWith('notes.')) {
+              found.add(resolvedChain);
+              i = cursor - 1;
+              continue;
+            }
           }
         }
       }
@@ -10735,9 +11403,23 @@ export function notesKeyLiterals(text: string): string[] {
   return collectNotesKeyLiterals(text);
 }
 
-export function disallowedMeteredNotes(relFromSrc: string, text: string): string[] {
-  const precomputedAst = buildPrecomputedNotesAst(text, relFromSrc);
-  const precomputedScan = buildPrecomputedNotesScan(text);
+export function disallowedMeteredNotes(relFromSrc: string, text: string, repoBundle?: RepoSourceBundle): string[] {
+  let precomputedAst: PrecomputedNotesAst;
+  if (repoBundle) {
+    if (!hasNotesMeterTrigger(text)) {
+      precomputedAst = EMPTY_PRECOMPUTED_NOTES_AST;
+    } else {
+      precomputedAst = repoBundle.precomputedNotesAst ??= {
+        factsList: getOrBuildRepoFactsList(repoBundle, DEFAULT_ADAPTER_EXPORTS, DEFAULT_ADAPTER_EXPORT_SET),
+        hadRangeError: getOrBuildRepoParsed(repoBundle).hadRangeError,
+      };
+    }
+  } else {
+    precomputedAst = buildPrecomputedNotesAst(text, relFromSrc);
+  }
+  const precomputedScan = repoBundle
+    ? (repoBundle.precomputedNotesScan ??= buildPrecomputedNotesScan(text, getOrBuildRepoNonJsxPrimary(repoBundle)))
+    : buildPrecomputedNotesScan(text);
   const calls = collectMeteredNotes(text, { includeUnresolved: true }, precomputedAst, precomputedScan);
   const literals = collectNotesKeyLiterals(text, precomputedAst, precomputedScan);
   const all = [...new Set([...calls, ...literals])];
@@ -11408,14 +12090,21 @@ function collectSymbolTokenMatches(
   tokens: readonly Token[],
   symbolSet: ReadonlySet<string>,
   found: Set<string>,
+  tokenFlags?: number,
 ): void {
+  const canChainPlus = tokenFlags === undefined || (tokenFlags & SCAN_FLAG_PLUS) !== 0;
   for (let i = 0; i < tokens.length; i += 1) {
     const t = tokens[i]!;
     if ((t.kind === 'ident' || t.kind === 'string' || t.kind === 'template') && symbolSet.has(t.value)) {
       found.add(t.value);
     }
     // Check adjacent constant string/no-subst-template '+' concatenation chains.
-    if (t.kind === 'string' || t.kind === 'template') {
+    if (
+      canChainPlus &&
+      (t.kind === 'string' || t.kind === 'template') &&
+      tokens[i + 1]?.kind === 'punct' &&
+      tokens[i + 1]?.value === '+'
+    ) {
       let acc = t.value;
       let j = i;
       let chained = false;
@@ -11442,31 +12131,39 @@ export function adapterSymbolReferences(
   fileText: string,
   precomputedTokens?: readonly Token[],
   filePath?: string,
+  repoBundle?: RepoSourceBundle,
 ): string[] {
   if (symbols.length === 0) return [];
-  const symbolSet = new Set(symbols);
+  const compiled = getCompiledSymbols(symbols);
   const found = new Set<string>();
-  collectSymbolTokenMatches(precomputedTokens ?? tokenize(fileText), symbolSet, found);
-  const parsed = parseAstCandidates(fileText, filePath);
-  for (const sf of parsed.sources) {
-    const facts = extractAstFacts(sf, symbolSet, filePath);
+  const toks = precomputedTokens ?? (repoBundle ? getOrBuildRepoNonJsxPrimary(repoBundle).tokens : tokenize(fileText));
+  collectSymbolTokenMatches(toks, compiled.symbolSet, found, repoBundle && !precomputedTokens ? getOrBuildRepoNonJsxPrimary(repoBundle).tokenFlags : undefined);
+  const factsList = repoBundle
+    ? getOrBuildRepoFactsList(repoBundle, symbols, compiled.symbolSet)
+    : parseAstCandidates(fileText, filePath).sources.map((sf) =>
+        extractAstFacts(sf, compiled.symbolSet, filePath, { skipFetchTaint: true }),
+      );
+  for (const facts of factsList) {
     for (const sym of symbols) {
       if (facts.stringAndIdentMatches.has(sym) || facts.interpolatedSymbolMatches.has(sym)) found.add(sym);
     }
   }
-  for (const sym of symbols) {
+  for (const { sym, re } of compiled.escapedRegexps) {
     if (found.has(sym)) continue;
-    const escaped = sym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`(?:^|[^\\w$])${escaped}(?![\\w$])`);
     if (re.test(fileText)) found.add(sym);
   }
   return symbols.filter((sym) => found.has(sym));
 }
 
-export function importsNoteAiModel(fileText: string, filePath?: string): boolean {
-  const primary = scanSource(fileText, { emitTokens: true, stripCommentsMode: false, stripStrings: false });
+const IMPORTS_NOTE_AI_MODEL_FAST_RE = /(?:model|[+`\\[\]%]|from(?:CharCode|CodePoint)|eval|Function|Reflect)/;
+
+export function importsNoteAiModel(fileText: string, filePath?: string, repoBundle?: RepoSourceBundle): boolean {
+  if (!repoBundle && !IMPORTS_NOTE_AI_MODEL_FAST_RE.test(fileText)) return false;
+  const primary = repoBundle
+    ? getOrBuildRepoNonJsxPrimary(repoBundle)
+    : scanSource(fileText, { emitTokens: true, stripCommentsMode: false, stripStrings: false });
   if (
-    specifiers(fileText, primary.tokens, undefined, primary.unambiguousRegexSpans).specifiers.some((spec) =>
+    specifiers(fileText, primary.tokens, undefined, primary.unambiguousRegexSpans, primary.tokenFlags).specifiers.some((spec) =>
       isNoteAiModelSpecifier(spec),
     )
   ) {
@@ -11475,16 +12172,18 @@ export function importsNoteAiModel(fileText: string, filePath?: string): boolean
   const extra = speculativeRescanWithSpans(fileText, primary);
   if (
     extra !== null &&
-    specifiers(fileText, extra.tokens, undefined, primary.unambiguousRegexSpans).specifiers.some((spec) =>
+    specifiers(fileText, extra.tokens, undefined, primary.unambiguousRegexSpans, extra.tokenFlags).specifiers.some((spec) =>
       isNoteAiModelSpecifier(spec),
     )
   ) {
     return true;
   }
-  const parsed = parseAstCandidates(fileText, filePath);
-  const emptySyms = new Set<string>();
-  for (const sf of parsed.sources) {
-    const facts = extractAstFacts(sf, emptySyms, filePath);
+  const factsList = repoBundle
+    ? getOrBuildRepoFactsList(repoBundle, DEFAULT_ADAPTER_EXPORTS, DEFAULT_ADAPTER_EXPORT_SET)
+    : parseAstCandidates(fileText, filePath).sources.map((sf) =>
+        extractAstFacts(sf, AST_EMPTY_SYMS, filePath, { skipFetchTaint: true }),
+      );
+  for (const facts of factsList) {
     if (facts.specifiers.some((spec) => isNoteAiModelSpecifier(spec))) return true;
     for (const call of facts.dynamicCalls) {
       const s = call.resolvedSpec ?? call.inlineConcatSpec ?? call.literalSpec;
@@ -11739,7 +12438,7 @@ export function indexReexportViolations(indexText: string, symbols: readonly str
     astOut.add('contains invalid or unclosed syntax');
   }
   for (const sf of parsed?.sources ?? []) {
-    const facts = extractAstFacts(sf, symbolSet, 'packages/agent/src/index.ts');
+    const facts = extractAstFacts(sf, symbolSet, 'packages/agent/src/index.ts', { skipFetchTaint: true });
     if (facts.hasComputedDynamic) astOut.add('uses computed dynamic import or require inside index.ts');
     if (facts.hasBareRequire) astOut.add('uses require alias or bare require reference inside index.ts');
     for (const spec of facts.specifiers) {
@@ -11795,6 +12494,9 @@ export function indexReexportViolations(indexText: string, symbols: readonly str
 }
 
 const isAgentBarrel = (spec: string, fromRelPath?: string): boolean => {
+  if (!spec.includes('agent') && !spec.includes('index') && !spec.includes('%') && !spec.includes('.')) {
+    return false;
+  }
   const normalizedSpec = normalizeModuleSpecifier(spec).replace(/\.[cm]?js$|\.[cm]ts$/, '.ts');
   if (
     normalizedSpec === '@ludy/agent' ||
@@ -11974,14 +12676,18 @@ function isWorkspaceAdapterLeakRelevant(
   const recordFragmentFlags = (frag: string): boolean => {
     if (isAgentOrAdapterTextValue(frag, fromRelPath)) return true;
     if (frag.includes('packages/agent')) return true;
-    if (frag.startsWith('@ludy/') && '@ludy/agent'.startsWith(frag)) return true;
-    if (frag.startsWith('@crove/') && '@crove/agent'.startsWith(frag)) return true;
-    if (frag.startsWith('note-ai') && 'note-ai-model'.startsWith(frag)) return true;
+    const c0 = frag.charCodeAt(0);
+    if (c0 === 64) {
+      if (frag.startsWith('@ludy/') && '@ludy/agent'.startsWith(frag)) return true;
+      if (frag.startsWith('@crove/') && '@crove/agent'.startsWith(frag)) return true;
+      if (frag === '@ludy' || (frag.length >= 2 && '@ludy/'.startsWith(frag))) sawLudyAt = true;
+      if (frag === '@crove' || (frag.length >= 3 && '@crove/'.startsWith(frag))) sawCroveAt = true;
+    } else if (c0 === 110 && frag.startsWith('note-ai') && 'note-ai-model'.startsWith(frag)) {
+      return true;
+    }
 
-    if (frag === '@ludy' || (frag.length >= 2 && '@ludy/'.startsWith(frag))) sawLudyAt = true;
-    if (frag === '@crove' || (frag.length >= 3 && '@crove/'.startsWith(frag))) sawCroveAt = true;
-    if (AGENT_PATH_SEGMENT_RE.test(frag)) sawAgentWord = true;
-    if (PACKAGES_DIR_RE.test(frag) || resolvesUnderPackages(frag)) sawPackagesPath = true;
+    if (frag.includes('agent') && AGENT_PATH_SEGMENT_RE.test(frag)) sawAgentWord = true;
+    if ((frag.includes('packages') && PACKAGES_DIR_RE.test(frag)) || resolvesUnderPackages(frag)) sawPackagesPath = true;
     if (frag === 'note') sawNote = true;
     else if (frag === 'ai') sawAi = true;
     else if (frag === 'note-ai') sawNoteAi = true;
@@ -12011,7 +12717,11 @@ function isWorkspaceAdapterLeakRelevant(
     if (v.length > 0) literalPieces.push(decodeRawModulePreCollapse(v));
     if (recordFragmentFlags(v)) return true;
 
-    if (t.kind === 'string' || t.kind === 'template') {
+    if (
+      (t.kind === 'string' || t.kind === 'template') &&
+      toks[i + 1]?.kind === 'punct' &&
+      toks[i + 1]?.value === '+'
+    ) {
       let acc = v;
       let j = i;
       while (j + 2 < toks.length && j - i < 32) {
@@ -12029,9 +12739,21 @@ function isWorkspaceAdapterLeakRelevant(
   }
 
   if (literalPieces.length > 0) {
-    const joinedNoSep = literalPieces.join('');
-    if (COMPACT_AGENT_OR_ADAPTER_RE.test(joinedNoSep)) return true;
-    if (fromRelPath) {
+    const joinedNoSep = literalPieces.length === 1 ? literalPieces[0]! : literalPieces.join('');
+    if ((joinedNoSep.includes('agent') || joinedNoSep.includes('model')) && COMPACT_AGENT_OR_ADAPTER_RE.test(joinedNoSep)) {
+      return true;
+    }
+    if (
+      fromRelPath &&
+      joinedNoSep.includes('.') &&
+      (joinedNoSep.includes('agent') ||
+        joinedNoSep.includes('model') ||
+        joinedNoSep.includes('ludy') ||
+        joinedNoSep.includes('crove') ||
+        joinedNoSep.includes('note-ai') ||
+        joinedNoSep.includes('index') ||
+        joinedNoSep.includes('%'))
+    ) {
       for (const m of joinedNoSep.matchAll(RELATIVE_SEGMENT_RE)) {
         if (isAgentOrAdapterTextValue(m[0], fromRelPath)) return true;
       }
@@ -12187,9 +12909,17 @@ function collectComputedBindingAccess(
   }
 }
 
+interface WorkspaceTokenPass {
+  readonly tokens: Token[];
+  readonly tokenFlags: number;
+  readonly unambiguousRegexSpans: Array<{ start: number; end: number }>;
+}
+
 function scanWorkspaceMode(fileText: string, jsx: boolean): {
   primary: Token[];
-  speculative: Array<{ tokens: Token[]; unambiguousRegexSpans: Array<{ start: number; end: number }> }>;
+  primaryFlags: number;
+  firstPass: ScanSourceResult;
+  speculative: WorkspaceTokenPass[];
   unambiguousRegexSpans: Array<{ start: number; end: number }>;
 } {
   const firstPass = scanSource(fileText, {
@@ -12228,62 +12958,204 @@ function scanWorkspaceMode(fileText: string, jsx: boolean): {
       })
     : null;
   const primary = fallback ? fallback.tokens : tokens;
+  const primaryFlags = fallback ? fallback.tokenFlags : firstPass.tokenFlags;
   const unambiguousRegexSpans = (fallback ?? firstPass).unambiguousRegexSpans;
-  const speculative: Array<{ tokens: Token[]; unambiguousRegexSpans: Array<{ start: number; end: number }> }> = [];
-  if (fallback && !tokens.some((t) => t.kind === 'invalid')) {
-    speculative.push({ tokens, unambiguousRegexSpans: firstPass.unambiguousRegexSpans });
+  const speculative: WorkspaceTokenPass[] = [];
+  if (fallback && (firstPass.tokenFlags & SCAN_FLAG_INVALID) === 0) {
+    speculative.push({
+      tokens,
+      tokenFlags: firstPass.tokenFlags,
+      unambiguousRegexSpans: firstPass.unambiguousRegexSpans,
+    });
   }
-  const firstSpec = speculativeRescan(fileText, firstPass, jsx);
-  if (firstSpec) speculative.push({ tokens: firstSpec, unambiguousRegexSpans: firstPass.unambiguousRegexSpans });
+  const firstSpec = speculativeRescanWithSpans(fileText, firstPass, jsx);
+  if (firstSpec) {
+    speculative.push({
+      tokens: firstSpec.tokens,
+      tokenFlags: firstSpec.tokenFlags,
+      unambiguousRegexSpans: firstPass.unambiguousRegexSpans,
+    });
+  }
   if (fallback) {
-    const fallbackSpec = speculativeRescan(fileText, fallback, jsx);
-    if (fallbackSpec) speculative.push({ tokens: fallbackSpec, unambiguousRegexSpans: fallback.unambiguousRegexSpans });
+    const fallbackSpec = speculativeRescanWithSpans(fileText, fallback, jsx);
+    if (fallbackSpec) {
+      speculative.push({
+        tokens: fallbackSpec.tokens,
+        tokenFlags: fallbackSpec.tokenFlags,
+        unambiguousRegexSpans: fallback.unambiguousRegexSpans,
+      });
+    }
   }
-  return { primary, speculative, unambiguousRegexSpans };
+  return { primary, primaryFlags, firstPass, speculative, unambiguousRegexSpans };
 }
 
 function scanDualJsxAndTsPasses(
   fileText: string,
   knownPath?: string,
 ): {
-  primaryPasses: Array<{ tokens: Token[]; unambiguousRegexSpans: Array<{ start: number; end: number }> }>;
-  speculativePasses: Array<{ tokens: Token[]; unambiguousRegexSpans: Array<{ start: number; end: number }> }>;
+  primaryPasses: WorkspaceTokenPass[];
+  speculativePasses: WorkspaceTokenPass[];
   isKnownJsxPath: boolean;
+  nonJsxFirstPass: ScanSourceResult | null;
 } {
   const isKnownJsxPath = Boolean(knownPath && /\.[jt]sx$/i.test(knownPath));
   const isKnownNonJsxPath = Boolean(knownPath && /\.(?:[cm]?ts|[cm]?js)$/i.test(knownPath));
-  const primaryPasses: Array<{ tokens: Token[]; unambiguousRegexSpans: Array<{ start: number; end: number }> }> = [];
-  const speculativePasses: Array<{ tokens: Token[]; unambiguousRegexSpans: Array<{ start: number; end: number }> }> = [];
+  const primaryPasses: WorkspaceTokenPass[] = [];
+  const speculativePasses: WorkspaceTokenPass[] = [];
+  let nonJsxFirstPass: ScanSourceResult | null = null;
 
   if (isKnownJsxPath) {
     const res = scanWorkspaceMode(fileText, true);
-    primaryPasses.push({ tokens: res.primary, unambiguousRegexSpans: res.unambiguousRegexSpans });
+    primaryPasses.push({
+      tokens: res.primary,
+      tokenFlags: res.primaryFlags,
+      unambiguousRegexSpans: res.unambiguousRegexSpans,
+    });
     speculativePasses.push(...res.speculative);
   } else if (isKnownNonJsxPath) {
     const res = scanWorkspaceMode(fileText, false);
-    primaryPasses.push({ tokens: res.primary, unambiguousRegexSpans: res.unambiguousRegexSpans });
+    nonJsxFirstPass = res.firstPass;
+    primaryPasses.push({
+      tokens: res.primary,
+      tokenFlags: res.primaryFlags,
+      unambiguousRegexSpans: res.unambiguousRegexSpans,
+    });
     speculativePasses.push(...res.speculative);
   } else if (!fileText.includes('<')) {
     const nonJsx = scanWorkspaceMode(fileText, false);
-    primaryPasses.push({ tokens: nonJsx.primary, unambiguousRegexSpans: nonJsx.unambiguousRegexSpans });
+    nonJsxFirstPass = nonJsx.firstPass;
+    primaryPasses.push({
+      tokens: nonJsx.primary,
+      tokenFlags: nonJsx.primaryFlags,
+      unambiguousRegexSpans: nonJsx.unambiguousRegexSpans,
+    });
     speculativePasses.push(...nonJsx.speculative);
   } else {
     const nonJsx = scanWorkspaceMode(fileText, false);
+    nonJsxFirstPass = nonJsx.firstPass;
     const jsx = scanWorkspaceMode(fileText, true);
-    const nonJsxInvalid = nonJsx.primary.some((t) => t.kind === 'invalid');
-    const jsxInvalid = jsx.primary.some((t) => t.kind === 'invalid');
-    if (!nonJsxInvalid) primaryPasses.push({ tokens: nonJsx.primary, unambiguousRegexSpans: nonJsx.unambiguousRegexSpans });
-    if (!jsxInvalid) primaryPasses.push({ tokens: jsx.primary, unambiguousRegexSpans: jsx.unambiguousRegexSpans });
+    const nonJsxInvalid = (nonJsx.primaryFlags & SCAN_FLAG_INVALID) !== 0;
+    const jsxInvalid = (jsx.primaryFlags & SCAN_FLAG_INVALID) !== 0;
+    if (!nonJsxInvalid) {
+      primaryPasses.push({
+        tokens: nonJsx.primary,
+        tokenFlags: nonJsx.primaryFlags,
+        unambiguousRegexSpans: nonJsx.unambiguousRegexSpans,
+      });
+    }
+    if (!jsxInvalid) {
+      primaryPasses.push({
+        tokens: jsx.primary,
+        tokenFlags: jsx.primaryFlags,
+        unambiguousRegexSpans: jsx.unambiguousRegexSpans,
+      });
+    }
     if (nonJsxInvalid && jsxInvalid) {
       primaryPasses.push(
-        { tokens: nonJsx.primary, unambiguousRegexSpans: nonJsx.unambiguousRegexSpans },
-        { tokens: jsx.primary, unambiguousRegexSpans: jsx.unambiguousRegexSpans },
+        { tokens: nonJsx.primary, tokenFlags: nonJsx.primaryFlags, unambiguousRegexSpans: nonJsx.unambiguousRegexSpans },
+        { tokens: jsx.primary, tokenFlags: jsx.primaryFlags, unambiguousRegexSpans: jsx.unambiguousRegexSpans },
       );
     }
     speculativePasses.push(...nonJsx.speculative, ...jsx.speculative);
   }
 
-  return { primaryPasses, speculativePasses, isKnownJsxPath };
+  return { primaryPasses, speculativePasses, isKnownJsxPath, nonJsxFirstPass };
+}
+
+interface RepoSourceBundle {
+  readonly text: string;
+  readonly relFromRoot: string;
+  dualPasses?: ReturnType<typeof scanDualJsxAndTsPasses>;
+  nonJsxPrimaryScan?: ScanSourceResult;
+  precomputedNotesScan?: PrecomputedNotesScan;
+  parsed?: AstParsedResult;
+  factsCache?: { readonly key: string; readonly factsList: readonly AstFileFacts[] };
+  precomputedNotesAst?: PrecomputedNotesAst;
+}
+
+const repoSourcesCache = new Map<string, string[]>();
+const getRepoSources = (dir: string): readonly string[] => {
+  let list = repoSourcesCache.get(dir);
+  if (!list) {
+    list = sources(dir);
+    repoSourcesCache.set(dir, list);
+  }
+  return list;
+};
+
+let repoWorkspaceSourcesCache: string[] | null = null;
+const getRepoWorkspaceSources = (): readonly string[] => {
+  if (!repoWorkspaceSourcesCache) repoWorkspaceSourcesCache = workspaceNonTestSources(ROOT);
+  return repoWorkspaceSourcesCache;
+};
+
+const repoFileTextCache = new Map<string, string>();
+const readRepoFile = (file: string): string => {
+  let text = repoFileTextCache.get(file);
+  if (text === undefined) {
+    text = readFileSync(file, 'utf8');
+    repoFileTextCache.set(file, text);
+  }
+  return text;
+};
+
+const repoBundleCache = new Map<string, RepoSourceBundle>();
+const getRepoSourceBundle = (relFromRoot: string, text: string): RepoSourceBundle => {
+  const prev = repoBundleCache.get(relFromRoot);
+  if (prev && prev.text === text) return prev;
+  const fresh: RepoSourceBundle = { text, relFromRoot };
+  repoBundleCache.set(relFromRoot, fresh);
+  return fresh;
+};
+
+function getOrBuildRepoDualPasses(bundle: RepoSourceBundle): ReturnType<typeof scanDualJsxAndTsPasses> {
+  if (!bundle.dualPasses) {
+    bundle.dualPasses = scanDualJsxAndTsPasses(bundle.text, bundle.relFromRoot);
+    if (!bundle.nonJsxPrimaryScan && bundle.dualPasses.nonJsxFirstPass) {
+      bundle.nonJsxPrimaryScan = bundle.dualPasses.nonJsxFirstPass;
+    }
+  }
+  return bundle.dualPasses;
+}
+
+function getOrBuildRepoNonJsxPrimary(bundle: RepoSourceBundle): ScanSourceResult {
+  if (!bundle.nonJsxPrimaryScan) {
+    if (!bundle.dualPasses && !/\.[jt]sx$/i.test(bundle.relFromRoot)) {
+      getOrBuildRepoDualPasses(bundle);
+    }
+    if (!bundle.nonJsxPrimaryScan) {
+      bundle.nonJsxPrimaryScan = scanSource(bundle.text, {
+        emitTokens: true,
+        stripCommentsMode: false,
+        stripStrings: false,
+      });
+    }
+  }
+  return bundle.nonJsxPrimaryScan;
+}
+
+function getOrBuildRepoParsed(bundle: RepoSourceBundle): AstParsedResult {
+  if (!bundle.parsed) {
+    bundle.parsed = parseAstCandidates(bundle.text, bundle.relFromRoot);
+  }
+  return bundle.parsed;
+}
+
+function getOrBuildRepoFactsList(
+  bundle: RepoSourceBundle,
+  symbols: readonly string[],
+  symbolSet: ReadonlySet<string>,
+): readonly AstFileFacts[] {
+  const key = encodeSymbolListKey(symbols);
+  if (bundle.factsCache && bundle.factsCache.key === key) {
+    return bundle.factsCache.factsList;
+  }
+  const parsed = getOrBuildRepoParsed(bundle);
+  const factsList = parsed.sources.map((sf) =>
+    extractAstFacts(sf, symbolSet, bundle.relFromRoot, { skipFetchTaint: true }),
+  );
+  bundle.factsCache = { key, factsList };
+  return factsList;
 }
 
 function collectWorkspacePass(
@@ -12295,11 +13167,16 @@ function collectWorkspacePass(
   out: Set<string>,
   unambiguousRegexSpans?: ReadonlyArray<{ start: number; end: number }>,
   deferredSyntaxState?: { hasInvalidSyntax: boolean },
-  delimsOut?: DelimiterPairs[],
+  delimsOut?: Array<DelimiterPairs | undefined>,
+  tokenFlagsInput?: number,
 ): boolean {
-  const delims = pairDelimiters(toks);
+  const tokenFlags = tokenFlagsInput ?? computeTokenFlags(toks);
+  const needsModuleDelims =
+    (tokenFlags & (SCAN_FLAG_MOD_OR_REQ_KW | SCAN_FLAG_REQ_OR_HOST | SCAN_FLAG_DYNAMIC_IMPORT)) !== 0 ||
+    (tokenFlags & (SCAN_FLAG_OPEN_BRACKET | SCAN_FLAG_STRING_OR_TPL)) === (SCAN_FLAG_OPEN_BRACKET | SCAN_FLAG_STRING_OR_TPL);
+  let delims = needsModuleDelims ? pairDelimiters(toks) : undefined;
   if (delimsOut) delimsOut.push(delims);
-  const { specifiers: specs, scan } = specifiers(fileText, toks, delims, unambiguousRegexSpans);
+  const { specifiers: specs, scan } = specifiers(fileText, toks, delims, unambiguousRegexSpans, tokenFlags);
   if (specs.some((spec) => isNoteAiModelSpecifier(spec))) {
     out.add('imports note-ai-model');
   }
@@ -12319,7 +13196,7 @@ function collectWorkspacePass(
       hasUnresolvedDynamic = true;
     }
   }
-  collectSymbolTokenMatches(toks, symbolSet, out);
+  collectSymbolTokenMatches(toks, symbolSet, out, tokenFlags);
 
   if (!isWorkspaceAdapterLeakRelevant(fileText, toks, specs, scan, symbolSet, fromRelPath, out)) {
     return false;
@@ -12331,46 +13208,74 @@ function collectWorkspacePass(
   }
   if (hasUnresolvedDynamic) out.add('uses computed dynamic import or require');
   if (scan.hasBareRequire) out.add('uses require alias or bare require reference');
+  if (!delims) {
+    delims = pairDelimiters(toks);
+    if (delimsOut && delimsOut.length > 0) delimsOut[delimsOut.length - 1] = delims;
+  }
   collectComputedBindingAccess(toks, delims, scan, fromRelPath, out);
   return true;
 }
+
+const EMPTY_INT32_ARRAY = new Int32Array(0);
 
 function hasTokenResolvedWorkspaceTarget(
   primaryLists: ReadonlyArray<readonly Token[]>,
   symbols: readonly string[],
   fromRelPath: string | undefined,
-  precomputedDelims?: readonly DelimiterPairs[],
+  precomputedDelims?: ReadonlyArray<DelimiterPairs | undefined>,
   isKnownJsxPath = false,
+  primaryTokenFlags?: readonly number[],
+  symbolSetInput?: ReadonlySet<string>,
 ): boolean {
-  const symbolSet = new Set(symbols);
+  const symbolSet = symbolSetInput ?? getCompiledSymbols(symbols).symbolSet;
   for (let pIdx = 0; pIdx < primaryLists.length; pIdx += 1) {
     const tokens = primaryLists[pIdx]!;
+    const flags = primaryTokenFlags?.[pIdx];
     let hasConcatOp = false;
     let hasPlusOp = false;
     let hasStrOrTpl = false;
-    for (let i = 0; i < tokens.length; i += 1) {
-      const tk = tokens[i]!;
-      if (tk.kind === 'template_head') hasConcatOp = true;
-      else if (tk.kind === 'punct' && tk.value === '+') {
-        hasConcatOp = true;
-        hasPlusOp = true;
-      } else if (tk.kind === 'string' || tk.kind === 'template') hasStrOrTpl = true;
-      if (hasConcatOp && hasPlusOp && hasStrOrTpl) break;
+    let hasConstKw = false;
+    let hasTplHead = false;
+    if (flags !== undefined) {
+      hasPlusOp = (flags & SCAN_FLAG_PLUS) !== 0;
+      hasTplHead = (flags & SCAN_FLAG_TPL_HEAD) !== 0;
+      hasConcatOp = hasPlusOp || hasTplHead;
+      hasStrOrTpl = (flags & SCAN_FLAG_STRING_OR_TPL) !== 0;
+      hasConstKw = (flags & SCAN_FLAG_CONST) !== 0;
+    } else {
+      for (let i = 0; i < tokens.length; i += 1) {
+        const tk = tokens[i]!;
+        if (tk.kind === 'template_head') {
+          hasConcatOp = true;
+          hasTplHead = true;
+        } else if (tk.kind === 'punct' && tk.value === '+') {
+          hasConcatOp = true;
+          hasPlusOp = true;
+        } else if (tk.kind === 'string' || tk.kind === 'template') hasStrOrTpl = true;
+        else if (tk.kind === 'ident' && tk.value === 'const') hasConstKw = true;
+      }
     }
     if (!hasConcatOp || !hasStrOrTpl) continue;
     const delims = precomputedDelims?.[pIdx] ?? pairDelimiters(tokens);
-    const { templateTail, templateNext } = buildTemplateMaps(tokens);
-    const { scopes, tokenScope, capped: constBindingsCapped } = collectScopedConstBindings(
-      tokens,
-      delims,
-      templateNext,
-      templateTail,
-    );
-    if (constBindingsCapped) return true;
-    const constLookup: ConstLookupFn = (name, idx) => lookupScopedConst(scopes, tokenScope[idx] ?? 0, name);
-    for (const sc of scopes) {
-      for (const v of sc.bindings.values()) {
-        if (v !== null && (symbolSet.has(v) || isAgentOrAdapterTextValue(v, fromRelPath))) return true;
+    const { templateTail, templateNext } = hasTplHead
+      ? buildTemplateMaps(tokens)
+      : { templateTail: EMPTY_INT32_ARRAY, templateNext: EMPTY_INT32_ARRAY };
+    let constStringNames: ReadonlySet<string> | null = null;
+    let constLookup: ConstLookupFn = EMPTY_CONST_LOOKUP;
+    if (hasConstKw) {
+      const scopedRes = collectScopedConstBindings(tokens, delims, templateNext, templateTail);
+      if (scopedRes.capped) return true;
+      const { scopes, tokenScope } = scopedRes;
+      constStringNames = scopedRes.constStringNames;
+      if (constStringNames.size > 0) {
+        const namesSet = constStringNames;
+        constLookup = (name, idx) => (namesSet.has(name) ? lookupScopedConst(scopes, tokenScope[idx] ?? 0, name) : null);
+        for (const sc of scopes) {
+          if (sc.bindings === null) continue;
+          for (const v of sc.bindings.values()) {
+            if (v !== null && (symbolSet.has(v) || isAgentOrAdapterTextValue(v, fromRelPath))) return true;
+          }
+        }
       }
     }
     const skipPostOperandSuffixes = (
@@ -12553,10 +13458,28 @@ function hasTokenResolvedWorkspaceTarget(
           t.kind === 'string' ||
           t.kind === 'template' ||
           (t.kind === 'punct' && (t.value === '(' || t.value === '<')) ||
-          (t.kind === 'ident' && ((!t.escaped && t.value === 'await') || constLookup(t.value, i) !== null))
+          (t.kind === 'ident' &&
+            ((!t.escaped && t.value === 'await') ||
+              (constStringNames !== null && constStringNames.has(t.value) && constLookup(t.value, i) !== null)))
         )
       ) {
         continue;
+      }
+      if (
+        t.kind === 'string' ||
+        t.kind === 'template' ||
+        (t.kind === 'ident' && !(!t.escaped && t.value === 'await'))
+      ) {
+        const nextTk = tokens[i + 1];
+        if (
+          !nextTk ||
+          !(
+            (nextTk.kind === 'punct' && (nextTk.value === '+' || nextTk.value === '!')) ||
+            (nextTk.kind === 'ident' && (nextTk.value === 'as' || nextTk.value === 'satisfies'))
+          )
+        ) {
+          continue;
+        }
       }
       const prevTok = tokens[i - 1];
       const prevSameLine = Boolean(prevTok && prevTok.line === t.line);
@@ -12947,18 +13870,22 @@ function isStandaloneWorkspaceHostOrStringValue(toks: readonly Token[], idx: num
   return prev.kind === 'ident' && prev.value === 'return' && !isMemberPrev(toks, idx - 1);
 }
 
+const WORKSPACE_AST_TEXT_HINT_RE =
+  /@(?:ludy|crove)|note-ai|packages\/agent|generate(?:Note|Todo)|SummaryText|TodoSuggest|TodoPlan|NoteOrganize/;
+
 function hasWorkspaceAstTokenTrigger(
   fileText: string,
   primaryLists: ReadonlyArray<readonly Token[]>,
   symbols: readonly string[],
   symbolSet: ReadonlySet<string>,
   fromRelPath: string | undefined,
-  primaryDelims?: readonly DelimiterPairs[],
+  primaryDelims?: ReadonlyArray<DelimiterPairs | undefined>,
+  minSymLenInput?: number,
 ): boolean {
-  let minSymLen = Infinity;
-  for (const sym of symbols) {
-    if (sym.length < minSymLen) minSymLen = sym.length;
-  }
+  const minSymLen = minSymLenInput ?? getCompiledSymbols(symbols).minSymLen;
+  const fileHasWorkspaceTextOrSym =
+    WORKSPACE_AST_TEXT_HINT_RE.test(fileText) ||
+    symbols.some((sym) => sym.includes('\n') || fileText.includes(sym));
   let keywordHint: boolean | null = null;
   const getKeywordHint = (): boolean => {
     if (keywordHint === null) {
@@ -12995,11 +13922,12 @@ function hasWorkspaceAstTokenTrigger(
         t.kind === 'template_middle' ||
         t.kind === 'template_tail'
       ) {
+        if (t.escaped && WORKSPACE_AST_ESCAPE_RE.test(t.raw)) return true;
         if (
-          WORKSPACE_AST_TEXT_TRIGGER_RE.test(t.value) ||
-          WORKSPACE_AST_ESCAPE_RE.test(t.raw) ||
-          symbolSet.has(t.value) ||
-          (t.value.length >= minSymLen && symbols.some((sym) => t.value.includes(sym)))
+          (t.escaped || fileHasWorkspaceTextOrSym) &&
+          (WORKSPACE_AST_TEXT_TRIGGER_RE.test(t.value) ||
+            symbolSet.has(t.value) ||
+            (t.value.length >= minSymLen && symbols.some((sym) => t.value.includes(sym))))
         ) {
           return true;
         }
@@ -13037,15 +13965,16 @@ function hasWorkspaceAstTokenTrigger(
         return true;
       }
       if (
-        symbolSet.has(t.value) ||
-        (t.value.length >= 8 &&
-          (t.value.includes('generateNote') ||
-            t.value.includes('generateTodo') ||
-            t.value.includes('SummaryText') ||
-            t.value.includes('TodoSuggest') ||
-            t.value.includes('TodoPlan') ||
-            t.value.includes('NoteOrganize'))) ||
-        (t.value.length >= minSymLen && symbols.some((sym) => t.value.includes(sym)))
+        (t.escaped || fileHasWorkspaceTextOrSym) &&
+        (symbolSet.has(t.value) ||
+          (t.value.length >= 8 &&
+            (t.value.includes('generateNote') ||
+              t.value.includes('generateTodo') ||
+              t.value.includes('SummaryText') ||
+              t.value.includes('TodoSuggest') ||
+              t.value.includes('TodoPlan') ||
+              t.value.includes('NoteOrganize'))) ||
+          (t.value.length >= minSymLen && symbols.some((sym) => t.value.includes(sym))))
       ) {
         return true;
       }
@@ -13063,16 +13992,28 @@ function shouldParseWorkspaceAst(
   primaryLists: ReadonlyArray<readonly Token[]>,
   outSize: number,
   tokenRelevant: boolean,
-  primaryDelims?: readonly DelimiterPairs[],
+  primaryDelims?: ReadonlyArray<DelimiterPairs | undefined>,
+  primaryTokenFlags?: readonly number[],
+  minSymLenInput?: number,
 ): boolean {
   if (tokenRelevant || outSize > 0) return true;
   const relFromRoot = fromRelPath?.replace(/\\/g, '/');
   if (relFromRoot && relFromRoot.startsWith('packages/agent/')) return true;
   if (fromRelPath === undefined && fileText.length < 30_000) return true;
-  if (hasWorkspaceAstTokenTrigger(fileText, primaryLists, symbols, symbolSet, fromRelPath, primaryDelims)) {
+  if (hasWorkspaceAstTokenTrigger(fileText, primaryLists, symbols, symbolSet, fromRelPath, primaryDelims, minSymLenInput)) {
     return true;
   }
-  if (hasTokenResolvedWorkspaceTarget(primaryLists, symbols, fromRelPath, primaryDelims, isKnownJsxPath)) {
+  if (
+    hasTokenResolvedWorkspaceTarget(
+      primaryLists,
+      symbols,
+      fromRelPath,
+      primaryDelims,
+      isKnownJsxPath,
+      primaryTokenFlags,
+      symbolSet,
+    )
+  ) {
     return true;
   }
   if (
@@ -13095,19 +14036,28 @@ function shouldParseWorkspaceAst(
   return false;
 }
 
-function shouldTriggerWorkspaceAstForFile(
+function collectAllWorkspacePasses(
   fileText: string,
-  symbols: readonly string[],
-  fromRelPath?: string,
-): boolean {
-  const { primaryPasses, speculativePasses, isKnownJsxPath } = scanDualJsxAndTsPasses(fileText, fromRelPath);
-  const primaryLists = primaryPasses.map((p) => p.tokens);
-  const primaryDelims: DelimiterPairs[] = [];
-  const symbolSet = new Set(symbols);
-  const out = new Set<string>();
+  primaryPasses: readonly WorkspaceTokenPass[],
+  speculativePasses: readonly WorkspaceTokenPass[],
+  symbolSet: ReadonlySet<string>,
+  fromRelPath: string | undefined,
+  out: Set<string>,
+): {
+  primaryLists: Token[][];
+  primaryFlags: number[];
+  primaryDelims: Array<DelimiterPairs | undefined>;
+  tokenRelevant: boolean;
+  syntaxState: { hasInvalidSyntax: boolean };
+} {
+  const primaryLists: Token[][] = [];
+  const primaryFlags: number[] = [];
+  const primaryDelims: Array<DelimiterPairs | undefined> = [];
   let tokenRelevant = false;
   const syntaxState = { hasInvalidSyntax: false };
   for (const pass of primaryPasses) {
+    primaryLists.push(pass.tokens);
+    primaryFlags.push(pass.tokenFlags);
     if (
       collectWorkspacePass(
         fileText,
@@ -13119,16 +14069,50 @@ function shouldTriggerWorkspaceAstForFile(
         pass.unambiguousRegexSpans,
         syntaxState,
         primaryDelims,
+        pass.tokenFlags,
       )
     ) {
       tokenRelevant = true;
     }
   }
   for (const pass of speculativePasses) {
-    if (collectWorkspacePass(fileText, pass.tokens, symbolSet, fromRelPath, false, out, pass.unambiguousRegexSpans)) {
+    if (
+      collectWorkspacePass(
+        fileText,
+        pass.tokens,
+        symbolSet,
+        fromRelPath,
+        false,
+        out,
+        pass.unambiguousRegexSpans,
+        undefined,
+        undefined,
+        pass.tokenFlags,
+      )
+    ) {
       tokenRelevant = true;
     }
   }
+  return { primaryLists, primaryFlags, primaryDelims, tokenRelevant, syntaxState };
+}
+
+function shouldTriggerWorkspaceAstForFile(
+  fileText: string,
+  symbols: readonly string[],
+  fromRelPath?: string,
+): boolean {
+  const { primaryPasses, speculativePasses, isKnownJsxPath } = scanDualJsxAndTsPasses(fileText, fromRelPath);
+  const compiled = getCompiledSymbols(symbols);
+  const symbolSet = compiled.symbolSet;
+  const out = new Set<string>();
+  const { primaryLists, primaryFlags, primaryDelims, tokenRelevant } = collectAllWorkspacePasses(
+    fileText,
+    primaryPasses,
+    speculativePasses,
+    symbolSet,
+    fromRelPath,
+    out,
+  );
   return shouldParseWorkspaceAst(
     fileText,
     symbols,
@@ -13139,6 +14123,8 @@ function shouldTriggerWorkspaceAstForFile(
     out.size,
     tokenRelevant,
     primaryDelims,
+    primaryFlags,
+    compiled.minSymLen,
   );
 }
 
@@ -13146,37 +14132,22 @@ export function workspaceAdapterLeakViolations(
   fileText: string,
   symbols: readonly string[],
   fromRelPath?: string,
+  repoBundle?: RepoSourceBundle,
 ): string[] {
-  const { primaryPasses, speculativePasses, isKnownJsxPath } = scanDualJsxAndTsPasses(fileText, fromRelPath);
-  const primaryLists = primaryPasses.map((p) => p.tokens);
-  const primaryDelims: DelimiterPairs[] = [];
-
-  const symbolSet = new Set(symbols);
+  const { primaryPasses, speculativePasses, isKnownJsxPath } = repoBundle
+    ? getOrBuildRepoDualPasses(repoBundle)
+    : scanDualJsxAndTsPasses(fileText, fromRelPath);
+  const compiled = getCompiledSymbols(symbols);
+  const symbolSet = compiled.symbolSet;
   const out = new Set<string>();
-  let tokenRelevant = false;
-  const syntaxState = { hasInvalidSyntax: false };
-  for (const pass of primaryPasses) {
-    if (
-      collectWorkspacePass(
-        fileText,
-        pass.tokens,
-        symbolSet,
-        fromRelPath,
-        true,
-        out,
-        pass.unambiguousRegexSpans,
-        syntaxState,
-        primaryDelims,
-      )
-    ) {
-      tokenRelevant = true;
-    }
-  }
-  for (const pass of speculativePasses) {
-    if (collectWorkspacePass(fileText, pass.tokens, symbolSet, fromRelPath, false, out, pass.unambiguousRegexSpans)) {
-      tokenRelevant = true;
-    }
-  }
+  const { primaryLists, primaryFlags, primaryDelims, tokenRelevant, syntaxState } = collectAllWorkspacePasses(
+    fileText,
+    primaryPasses,
+    speculativePasses,
+    symbolSet,
+    fromRelPath,
+    out,
+  );
 
   if (
     shouldParseWorkspaceAst(
@@ -13189,17 +14160,21 @@ export function workspaceAdapterLeakViolations(
       out.size,
       tokenRelevant,
       primaryDelims,
+      primaryFlags,
+      compiled.minSymLen,
     )
   ) {
-    const parsed = parseAstCandidates(fileText, fromRelPath);
+    const parsed = repoBundle ? getOrBuildRepoParsed(repoBundle) : parseAstCandidates(fileText, fromRelPath);
     const astFailedParse = parsed.hadRangeError || !parsed.hasCleanParse;
     let astRelevant = tokenRelevant || out.size > 0 || Boolean(fromRelPath && fromRelPath.replace(/\\/g, '/').startsWith('packages/agent/'));
     let astHasUnresolvedDynamic = false;
     let astHasBareRequire = false;
     let astHasComputedAccess = false;
     const astInterpolatedSymbols = new Set<string>();
-    for (const sf of parsed.sources) {
-      const facts = extractAstFacts(sf, symbolSet, fromRelPath);
+    const factsList = repoBundle
+      ? getOrBuildRepoFactsList(repoBundle, symbols, symbolSet)
+      : parsed.sources.map((sf) => extractAstFacts(sf, symbolSet, fromRelPath, { skipFetchTaint: true }));
+    for (const facts of factsList) {
       if (facts.specifiers.some((spec) => isNoteAiModelSpecifier(spec))) {
         out.add('imports note-ai-model');
         astRelevant = true;
@@ -13353,19 +14328,20 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
   });
 
   it('keeps every module under packages/agent/src/member-vy pure', () => {
-    const bad = sources(MEMBER_VY).flatMap((file) => {
+    const bad = getRepoSources(MEMBER_VY).flatMap((file) => {
       const rel = relative(ROOT, file);
-      return memberVyViolations(readFileSync(file, 'utf8'), rel).map((v) => `${rel}: ${v}`);
+      return memberVyViolations(readRepoFile(file), rel).map((v) => `${rel}: ${v}`);
     });
     expect(bad).toEqual([]);
   });
 
   it('keeps every org-level feature to plain strings: none imports a member-Vy module or the PrivateText brand', () => {
-    const bad = sources(SRC)
+    const bad = getRepoSources(SRC)
       .filter((file) => !file.startsWith(`${MEMBER_VY}/`) && !file.endsWith('/private-text.ts'))
       .flatMap((file) => {
-        const rel = relative(ROOT, file);
-        return orgFeatureViolations(readFileSync(file, 'utf8'), rel).map((v) => `${rel}: ${v}`);
+        const rel = relative(ROOT, file).replace(/\\/g, '/');
+        const text = readRepoFile(file);
+        return orgFeatureViolations(text, rel, getRepoSourceBundle(rel, text)).map((v) => `${rel}: ${v}`);
       });
     expect(bad).toEqual([]);
   });
@@ -15071,24 +16047,25 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
   it('keeps the member-Vy names inside packages/agent/src/member-vy (and the three files that join it to the rest)', () => {
     const JOINTS = new Set(['meter.ts', 'index.ts', 'private-text.ts']);
     const relFromSrc = (file: string): string => relative(SRC, file).replace(/\\/g, '/');
-    const srcFiles = sources(SRC);
-    const fileTextCache = new Map<string, string>();
-    const readText = (file: string): string => {
-      let text = fileTextCache.get(file);
-      if (text === undefined) {
-        text = readFileSync(file, 'utf8');
-        fileTextCache.set(file, text);
-      }
-      return text;
+    const relFromRoot = (file: string): string => relative(ROOT, file).replace(/\\/g, '/');
+    const srcFiles = getRepoSources(SRC);
+    const readText = readRepoFile;
+    const bundleFor = (file: string): RepoSourceBundle => {
+      const rel = relFromRoot(file);
+      return getRepoSourceBundle(rel, readText(file));
     };
     const outside = srcFiles.filter((file) => !file.startsWith(`${MEMBER_VY}/`));
     const names = outside
       .filter((file) => !JOINTS.has(relFromSrc(file)))
-      .flatMap((file) => memberVyNames(readText(file), file).map((n) => `${relative(ROOT, file)}: ${n}`));
+      .flatMap((file) =>
+        memberVyNames(readText(file), file, bundleFor(file)).map((n) => `${relative(ROOT, file)}: ${n}`),
+      );
     expect(names, 'a member-Vy feature or its private type outside member-vy/').toEqual([]);
     // The notes feature keys of N8 are metered only from member-vy/ or the Stage A ModelPort adapter (note-ai-model.ts).
     const keys = outside.flatMap((file) =>
-      disallowedMeteredNotes(relFromSrc(file), readText(file)).map((n) => `${relative(ROOT, file)}: metered('${n}')`),
+      disallowedMeteredNotes(relFromSrc(file), readText(file), bundleFor(file)).map(
+        (n) => `${relative(ROOT, file)}: metered('${n}')`,
+      ),
     );
     expect(keys, 'a notes feature (N8) metered outside member-vy/ or note-ai-model.ts').toEqual([]);
     // Every notes ModelPort adapter stays thin (allowed imports only, no tools, no DB/commands/direct fetch) and is exported only via index.ts.
@@ -15100,7 +16077,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(adapterBad, 'notes ModelPort adapter violates thin-adapter rules').toEqual([]);
     const adapterImporters = srcFiles
       .filter((file) => relFromSrc(file) !== 'index.ts' && relFromSrc(file) !== 'note-ai-model.ts')
-      .filter((file) => importsNoteAiModel(readText(file), file))
+      .filter((file) => importsNoteAiModel(readText(file), file, bundleFor(file)))
       .map((file) => relative(ROOT, file));
     expect(adapterImporters, 'only packages/agent/src/index.ts may import note-ai-model').toEqual([]);
 
@@ -15125,7 +16102,9 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     const intraPkgRefs = srcFiles
       .filter((file) => relFromSrc(file) !== 'index.ts' && relFromSrc(file) !== 'note-ai-model.ts')
       .flatMap((file) =>
-        adapterSymbolReferences(seededExports, readText(file), undefined, file).map((sym) => `${relative(ROOT, file)}: ${sym}`),
+        adapterSymbolReferences(seededExports, readText(file), undefined, file, bundleFor(file)).map(
+          (sym) => `${relative(ROOT, file)}: ${sym}`,
+        ),
       );
     expect(intraPkgRefs, 'intra-package files must not re-import note-ai-model exports via index.ts').toEqual([]);
 
@@ -15134,11 +16113,13 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       'packages/agent/src/index.ts',
       'apps/kernel/src/member-vy-ports.ts',
     ]);
-    const workspaceLeaks = workspaceNonTestSources(ROOT)
-      .filter((file) => !ALLOWED_WORKSPACE_USERS.has(relative(ROOT, file).replace(/\\/g, '/')))
+    const workspaceLeaks = getRepoWorkspaceSources()
+      .filter((file) => !ALLOWED_WORKSPACE_USERS.has(relFromRoot(file)))
       .flatMap((file) => {
-        const rel = relative(ROOT, file).replace(/\\/g, '/');
-        return workspaceAdapterLeakViolations(readText(file), seededExports, rel).map((v) => `${rel}: ${v}`);
+        const rel = relFromRoot(file);
+        const text = readText(file);
+        const bundle = rel.startsWith('packages/agent/') ? getRepoSourceBundle(rel, text) : undefined;
+        return workspaceAdapterLeakViolations(text, seededExports, rel, bundle).map((v) => `${rel}: ${v}`);
       });
     expect(
       workspaceLeaks,
@@ -15148,9 +16129,9 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
 
   it('has member-vy source files once the store command exists in the kernel', () => {
     const kernelSrc = join(ROOT, 'packages/kernel/src');
-    const stores = sources(kernelSrc).some((file) => readFileSync(file, 'utf8').includes('kernel.member_vy.result.store'));
-    if (stores) expect(sources(MEMBER_VY).length, 'the store command exists but no feature module is under packages/agent/src/member-vy').toBeGreaterThan(0);
-    else expect(sources(MEMBER_VY).length, 'member-vy modules before the store command exists').toBe(0);
+    const stores = getRepoSources(kernelSrc).some((file) => readRepoFile(file).includes('kernel.member_vy.result.store'));
+    if (stores) expect(getRepoSources(MEMBER_VY).length, 'the store command exists but no feature module is under packages/agent/src/member-vy').toBeGreaterThan(0);
+    else expect(getRepoSources(MEMBER_VY).length, 'member-vy modules before the store command exists').toBe(0);
   });
 
   it('closes parser P3 gaps without relaxing rules or degrading O(N) scaling (#3518, #5035)', () => {
@@ -17264,5 +18245,111 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(
       workspaceAdapterLeakViolations(p3Clean, DEFAULT_ADAPTER_EXPORTS, 'apps/web/src/clean.tsx'),
     ).toEqual([]);
+
+    // #5221 regressions: (a) repeated synthetic calls with same fromRelPath must never return stale cached results,
+    // and (b) adversarial payloads resembling narrowed prefilters still trigger identical violations.
+    const sameRel = 'apps/web/src/leak.ts';
+    expect(
+      workspaceAdapterLeakViolations('export const ok = "hello world";', DEFAULT_ADAPTER_EXPORTS, sameRel),
+    ).toEqual([]);
+    expect(
+      workspaceAdapterLeakViolations("import * as agent from '@ludy/agent';", DEFAULT_ADAPTER_EXPORTS, sameRel),
+    ).toEqual(['namespace import from @ludy/agent']);
+    expect(
+      workspaceAdapterLeakViolations(
+        "const entry = '@ludy/agent'; const a = await import(entry);",
+        DEFAULT_ADAPTER_EXPORTS,
+        sameRel,
+      ),
+    ).toEqual(['uses computed dynamic import or require']);
+    expect(
+      workspaceAdapterLeakViolations('export const okAgain = 42;', DEFAULT_ADAPTER_EXPORTS, sameRel),
+    ).toEqual([]);
+    expect(
+      workspaceAdapterLeakViolations('export const leakedSym = customLeakSym();', ['customLeakSym'], sameRel),
+    ).toEqual(['customLeakSym']);
+    expect(
+      workspaceAdapterLeakViolations('export const leakedSym = customLeakSym();', ['otherSym'], sameRel),
+    ).toEqual([]);
+
+    expect(orgFeatureViolations('export const label = "plain ok";', sameRel)).toEqual([]);
+    expect(orgFeatureViolations("import { x } from './member-vy/foo bar/%2e%2e/x.ts?v=1';", sameRel)).toEqual([
+      'imports ./member-vy/x.ts',
+    ]);
+    expect(orgFeatureViolations('export const label = "clean again";', sameRel)).toEqual([]);
+
+    expect(memberVyNames('export const a = 1;', sameRel)).toEqual([]);
+    expect(
+      memberVyNames('export const b = String.fromCharCode(109, 101, 109, 98, 101, 114, 86, 121);', sameRel),
+    ).toEqual(['memberVy']);
+    expect(memberVyNames('export const c = 2;', sameRel)).toEqual([]);
+
+    expect(importsNoteAiModel('export const clean = "no model import";', sameRel)).toBe(false);
+    expect(importsNoteAiModel("import { x } from './%6eote-ai-model.ts';", sameRel)).toBe(true);
+    expect(importsNoteAiModel('export const clean2 = "still clean";', sameRel)).toBe(false);
+
+    // Narrowed module-scan / computed-destructure / template-key / prefilter adversarial vectors
+    const computedDestructureLeak = workspaceAdapterLeakViolations(
+      "const { ['req' + 'uire']: r } = box; r('@ludy/agent');",
+      DEFAULT_ADAPTER_EXPORTS,
+      sameRel,
+    );
+    expect(computedDestructureLeak).toContain('dynamic require from @ludy/agent');
+    expect(computedDestructureLeak).toContain('uses require alias or bare require reference');
+    expect(
+      workspaceAdapterLeakViolations("const { 'require': r } = box; r('@ludy/agent');", DEFAULT_ADAPTER_EXPORTS, sameRel),
+    ).toContain('dynamic require from @ludy/agent');
+    expect(
+      workspaceAdapterLeakViolations("global.require('@ludy/agent');", DEFAULT_ADAPTER_EXPORTS, sameRel),
+    ).toContain('dynamic require from @ludy/agent');
+    expect(
+      memberVyViolations("import * as nm from `node:module`; nm.createRequire(import.meta.url)('@ludy/db');"),
+    ).toContain('imports @ludy/db');
+    expect(
+      disallowedMeteredNotes('other.ts', "const { ['met' + 'ered']: m } = box; m('notes.secret', fn);"),
+    ).toEqual(['notes.secret']);
+    expect(disallowedMeteredNotes('other.ts', 'export const k = `notes.${"secret"}`;')).toEqual(['notes.secret']);
+    expect(
+      workspaceAdapterLeakViolations(
+        `${p3Pad}export const f = () => '\\u0067enerateNoteSummaryText';`,
+        DEFAULT_ADAPTER_EXPORTS,
+        sameRel,
+      ),
+    ).toEqual(['generateNoteSummaryText']);
+    expect(
+      workspaceAdapterLeakViolations(
+        `${p3Pad}export const leak = import(['\\u0040lu', 'dy/ag', 'ent'].join(''));`,
+        DEFAULT_ADAPTER_EXPORTS,
+        sameRel,
+      ),
+    ).toContain('uses computed dynamic import or require');
+    expect(
+      shouldTriggerWorkspaceAstForFile(
+        `${p3Pad}const p = 'packages/agent/'; const q = p + 'src/index'; export const x = q;`,
+        DEFAULT_ADAPTER_EXPORTS,
+        sameRel,
+      ),
+    ).toBe(true);
+    expect(
+      workspaceAdapterLeakViolations(
+        `${p3Pad}const p = 'packages/agent/'; const q = p + 'src/index'; export const leak = import(q);`,
+        DEFAULT_ADAPTER_EXPORTS,
+        sameRel,
+      ),
+    ).toContain('uses computed dynamic import or require');
+    expect(
+      workspaceAdapterLeakViolations(
+        `${p3Pad}export const leak = import('packages/agent/' + 'src/index');`,
+        DEFAULT_ADAPTER_EXPORTS,
+        sameRel,
+      ),
+    ).toContain('dynamic import from @ludy/agent');
+    const brokenAliasedBarrel = workspaceAdapterLeakViolations(
+      "import agent from '@ludy/agent'; const a = agent; const x = a[dynKey]; if ({",
+      DEFAULT_ADAPTER_EXPORTS,
+      sameRel,
+    );
+    expect(brokenAliasedBarrel).toContain('default import from @ludy/agent');
+    expect(brokenAliasedBarrel).toContain('uses computed property access on @ludy/agent binding');
   }, 30_000);
 });
