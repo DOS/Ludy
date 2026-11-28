@@ -53,7 +53,7 @@ export function isVietnamHoliday(date: string): boolean {
 }
 
 // The compensatory days off of a year (Labor Code 45/2019/QH14, Article 111(3): when the weekly rest day coincides with a public holiday of Article 112(1), the worker takes the weekly rest day
-// off on the next working day). A holiday that falls on a Saturday or a Sunday, the weekly rest days of a state agency's five-day week (the tax authority's), moves one day off to the next day that is
+// off on the next working day). A holiday that falls on a Saturday or a Sunday, the weekly rest days of a state agency's five-day week (Decision 188/1999/QĐ-TTg, Article 1, for cadres, civil servants and employees of administrative agencies such as the tax authority; read in a secondary copy only, and its present validity is not confirmed, so compensating a Saturday holiday is an inference: Article 111(2) leaves the weekly rest day to the employer, and a private employer with a Sunday-only rest day gives none), moves one day off to the next day that is
 // neither a Saturday, a Sunday, a holiday nor already a compensatory day. It is a separate list, used by the tax deadline rule (deadline-day.ts) only: isVietnamHoliday above, which the
 // calendar and the e-invoice code read, is unchanged. The government also fixes the exact days of Tet and National Day each year (Article 112(3)) and may arrange the days around them differently;
 // those moved days are not here, so the table is a default, not the notice.
