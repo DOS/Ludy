@@ -160,13 +160,18 @@ describe('BankFeedsCard for an owner or admin', () => {
     expect(html).not.toContain(`aria-label="${en.bankFeeds.mapForm.replace('{name}', 'SBX-001')}"`);
   });
 
+  function expectEnabledUnmapButton(html: string, accountName: string, messages: { unmapOf: string; unmap: string }) {
+    const tag = new RegExp(`<button\\b[^>]*aria-label="${rx(messages.unmapOf.replace('{name}', accountName))}"[^>]*>${rx(messages.unmap)}<`).exec(html)?.[0] ?? '';
+    expect(tag).toContain('min-h-11');
+    expect(tag).not.toContain('disabled=');
+  }
+
   it('asks an expired connection to be connected again, and cannot map to it', () => {
     const html = card('owner', { connections: [connection('expired')], mapped: [account('m1', 'SBX-001', { connectionStatus: 'expired' })] });
     expect(html).toContain(`>${en.bankFeeds.status.expired}<`);
     expect(html).toContain(en.bankFeeds.expiredHint);
     expect(html).toContain('disabled=""');
-    expect(html).toMatch(new RegExp(`<button[^>]*min-h-11[^>]*aria-label="${rx(en.bankFeeds.unmapOf.replace('{name}', 'Tài khoản thanh toán'))}"[^>]*>${rx(en.bankFeeds.unmap)}<`));
-    expect(html).not.toMatch(new RegExp(`<button[^>]*disabled=""[^>]*aria-label="${rx(en.bankFeeds.unmapOf.replace('{name}', 'Tài khoản thanh toán'))}"`));
+    expectEnabledUnmapButton(html, 'Tài khoản thanh toán', en.bankFeeds);
 
     const emptyExpired = card('owner', { connections: [connection('expired')], listed: [], mapped: [] });
     expect(emptyExpired).not.toContain(en.bankFeeds.waiting);
@@ -189,7 +194,7 @@ describe('BankFeedsCard for an owner or admin', () => {
       expect(html).not.toContain('Tài khoản tiết kiệm');
       expect(html).not.toContain(`aria-label="${msgs.bankFeeds.mapForm.replace('{name}', 'Tài khoản thanh toán')}"`);
       expect(html).not.toContain(msgs.bankFeeds.gone);
-      expect(html).toMatch(new RegExp(`<button[^>]*min-h-11[^>]*aria-label="${rx(msgs.bankFeeds.unmapOf.replace('{name}', 'Tài khoản thanh toán'))}"[^>]*>${rx(msgs.bankFeeds.unmap)}<`));
+      expectEnabledUnmapButton(html, 'Tài khoản thanh toán', msgs.bankFeeds);
     }
   });
 
