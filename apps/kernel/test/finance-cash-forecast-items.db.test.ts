@@ -4,7 +4,7 @@
 // NEVER the label, the entries are checked (whole dong, the dates, no end date for a one-off) and by the table's own checks, and an entity holds at most CASH_FORECAST_ITEMS_MAX items even when writers race.
 // The recurrence rules are unit-tested (modules/finance/test/cash-forecast-items.test.ts) and the generic row-level-security cases run in the invariant rls-matrix.
 // Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -26,6 +26,9 @@ suite('the owner-entered items of the cash forecast (#5326)', () => {
   let pool: pg.Pool;
   let db: Db;
   let rt: Runtime;
+  // The worker's own pool and runtime: an AI agent and Vy in member mode enter only through it.
+  let workerPool: pg.Pool;
+  let worker: Runtime;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, mfaAt: Math.floor(Date.now() / 1000) });
   const SYSTEM = { type: 'system' as const, component: 'finance.cash_forecast_items.test' };
 
@@ -77,14 +80,18 @@ suite('the owner-entered items of the cash forecast (#5326)', () => {
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 8 });
     db = createDb(pool);
-    rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
-      commands: [...kernelCommands, ...financeCommands],
-      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
-    });
+    const register = (d: Db) => new Runtime(d, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
+    rt = register(db);
+    const workerUrl = new URL(adminUrl);
+    workerUrl.username = 'ludy_worker';
+    workerUrl.password = 'test-worker-pw';
+    workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
+    worker = register(createDb(workerPool));
   }, 120_000);
 
   afterAll(async () => {
     await pool?.end();
+    await workerPool?.end();
     if (!ADMIN) return;
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -140,20 +147,20 @@ suite('the owner-entered items of the cash forecast (#5326)', () => {
     for (const who of [o.member, o.viewer]) {
       await expect(setItem(o, rent, who)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     }
-    await expect(rt.execute('finance.cash_forecast_item_set', rent, { actor: SYSTEM, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toBeTruthy();
+    await expect(rt.execute('finance.cash_forecast_item_set', rent, { actor: SYSTEM, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
     expect((await list(o)).items).toEqual([]);
     const item = await setItem(o, rent);
     for (const who of [o.member, o.viewer]) {
       await expect(execute(o, 'finance.cash_forecast_item_remove', { id: item.id }, who)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     }
-    await expect(rt.execute('finance.cash_forecast_item_remove', { id: item.id }, { actor: SYSTEM, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toBeTruthy();
+    await expect(rt.execute('finance.cash_forecast_item_remove', { id: item.id }, { actor: SYSTEM, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
     expect((await list(o)).items).toHaveLength(1);
   });
 
   it('lets every member read the list', async () => {
     const o = await org();
     const item = await setItem(o, rent);
-    for (const who of [o.admin, o.member, o.viewer]) {
+    for (const who of [o.owner, o.admin, o.member, o.viewer]) {
       expect((await list(o, {}, who)).items.map((i) => i.id)).toEqual([item.id]);
     }
   });
@@ -298,5 +305,113 @@ suite('the owner-entered items of the cash forecast (#5326)', () => {
     // The item keeps its money and dates; the other item is untouched.
     expect(edited).toMatchObject({ amount: rent.amount, firstDate: rent.firstDate, recurrence: 'monthly' });
     expect(after.find((i) => i.id === other.id)?.label).toBe('Thuê kho');
+  });
+
+  // The callers that are not a person at the keyboard. Each is built the way the runtime meets it for real: an AI agent of the org chart and Vy in member mode enter through the worker (rows an agent run
+  // needs), an MCP grant and an extension token are rows the runtime reads in the request's own transaction. None of them declares a scope, a role or a Vy access on these commands and this query, so every one
+  // is refused FORBIDDEN (403) on all three, and nothing is written.
+  async function strangers(o: Org) {
+    const orgAgent = randomUUID();
+    const orgRun = randomUUID();
+    const vyAgent = randomUUID();
+    const vyRun = randomUUID();
+    const position = randomUUID();
+    const grant = randomUUID();
+    const token = randomUUID();
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query("INSERT INTO ludy_kernel.agent (org_id, id, template_key, display_name, created_by, kind) VALUES ($1, $2, 'finance.chief_accountant', 'Ly', $3, 'org_chart')", [o.orgId, orgAgent, o.owner]);
+      await c.query("INSERT INTO ludy_kernel.position (org_id, id, title, module, role_key, holder_agent_id, status) VALUES ($1, $2, 'Finance', 'finance', 'finance.chief_accountant', $3, 'active')", [o.orgId, position, orgAgent]);
+      await c.query(
+        "INSERT INTO ludy_kernel.ai_run (org_id, id, agent_id, module, feature, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'finance', 'finance.home', 'running', true, pg_catalog.now(), pg_catalog.now() + interval '4 hours')",
+        [o.orgId, orgRun, orgAgent],
+      );
+      await c.query("INSERT INTO ludy_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)", [o.orgId, vyAgent, o.owner]);
+      await c.query(
+        "INSERT INTO ludy_kernel.ai_run (org_id, id, agent_id, module, feature, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'notes.summary', 'running', true, pg_catalog.now(), pg_catalog.now() + interval '4 hours')",
+        [o.orgId, vyRun, vyAgent],
+      );
+      await c.query('COMMIT');
+    });
+    await admin((c) =>
+      c.query(
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+         VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3)`,
+        [o.orgId, grant, o.owner, `oauth-${grant}`, `client-${grant}`],
+      ),
+    );
+    await admin((c) =>
+      c.query(
+        `INSERT INTO ludy_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by, client)
+         VALUES ($1, $2, $3, $4, 'Test device', ARRAY['meetings']::text[], now(), now() + interval '30 days', $3, 'extension')`,
+        [o.orgId, token, o.owner, createHash('sha256').update(randomBytes(32)).digest()],
+      ),
+    );
+    const base = { type: 'user' as const, userId: o.owner, aal: 'aal2' as const, mfaAt: Math.floor(Date.now() / 1000) };
+    return {
+      'an AI agent of the org chart': { runtime: worker, actor: { type: 'agent' as const, agentId: orgAgent, runId: orgRun } },
+      'Vy in member mode': { runtime: worker, actor: { type: 'agent' as const, agentId: vyAgent, runId: vyRun, memberVy: true as const } },
+      'an MCP grant': { runtime: rt, actor: { ...base, mcp: { grantId: grant, clientId: `client-${grant}`, clientName: 'Test client', scopes: ['ludy.read'] } } },
+      'an extension token': { runtime: rt, actor: { ...base, extension: { tokenId: token, scopes: ['meetings'], client: 'extension' as const } } },
+    };
+  }
+
+  it('refuses an AI agent, Vy in member mode, an MCP grant and an extension token on both commands and on the list, with FORBIDDEN, and writes nothing', async () => {
+    const o = await org();
+    const item = await setItem(o, rent);
+    for (const [who, { runtime, actor }] of Object.entries(await strangers(o))) {
+      const refused = { code: 'FORBIDDEN', status: 403 };
+      await expect(runtime.execute('finance.cash_forecast_item_set', rent, { actor, orgId: o.orgId, idempotencyKey: randomUUID() }), `${who}: set`).rejects.toMatchObject(refused);
+      await expect(runtime.execute('finance.cash_forecast_item_set', { ...rent, id: item.id, amount: '1' }, { actor, orgId: o.orgId, idempotencyKey: randomUUID() }), `${who}: edit`).rejects.toMatchObject(refused);
+      await expect(runtime.execute('finance.cash_forecast_item_remove', { id: item.id }, { actor, orgId: o.orgId, idempotencyKey: randomUUID() }), `${who}: remove`).rejects.toMatchObject(refused);
+      await expect(runtime.query('finance.cash_forecast_items', {}, { actor, orgId: o.orgId }), `${who}: list`).rejects.toMatchObject(refused);
+    }
+    // Nothing changed: the one item is as it was, and the owner still reads it (the list is open to every role of a person).
+    const held = await list(o);
+    expect(held.items).toHaveLength(1);
+    expect(held.items[0]).toMatchObject({ id: item.id, amount: '15000000', label: 'Tiền thuê nhà ông Nam' });
+    expect(await audits(o, 'finance.cash_forecast_item_remove')).toEqual([]);
+  });
+
+  it('audits what an edit replaced as the row stood once the lock was won: two edits at once chain their previous values', async () => {
+    const o = await org();
+    const item = await setItem(o, rent);
+    await Promise.all([setItem(o, { ...rent, id: item.id, amount: '111' }), setItem(o, { ...rent, id: item.id, amount: '222' })]);
+    const edits = (await audits(o, 'finance.cash_forecast_item_set')).filter((r) => r.created === false) as Array<{ amount: string; previous_amount: string }>;
+    expect(edits).toHaveLength(2);
+    // Whichever won the lock first replaced the original amount; the other replaced the first one's result (not the original it read before waiting).
+    const first = edits.find((e) => e.previous_amount === '15000000');
+    const second = edits.find((e) => e !== first);
+    expect(first, 'one edit replaced the original').toBeDefined();
+    expect(second?.previous_amount).toBe(first?.amount);
+    expect((await list(o)).items[0]?.amount).toBe(second?.amount);
+  });
+
+  it('answers a member let in for one entity with that entity\'s items, and refuses the other', async () => {
+    const o = await org();
+    await setItem(o, rent);
+    const there = await setItem(o, { ...rent, label: 'Thuê chi nhánh', legalEntityId: o.branch });
+    const limited = await identity('limited');
+    await admin(async (c) => {
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, limited]);
+      await c.query("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, limited, o.branch, o.owner]);
+    });
+    const mine = await list(o, {}, limited);
+    expect(mine.legalEntityId).toBe(o.branch);
+    expect(mine.items.map((i) => i.id)).toEqual([there.id]);
+    await expect(list(o, { legalEntityId: o.entity }, limited)).rejects.toMatchObject({ code: 'LEGAL_ENTITY_NOT_ALLOWED', status: 403 });
+  });
+
+  it('erases a number from the labels of the org that asked only: another org keeps its own label', async () => {
+    const a = await org();
+    const b = await org();
+    const labelA = await setItem(a, { ...rent, label: 'Thuê nhà chị Lan 0987654321' });
+    await setItem(b, { ...rent, label: 'Thuê nhà chị Lan 0987654321' });
+    const erased = await execute<PersonalDataErasure>(b, 'kernel.personal_data.erase', { value: '0987654321' });
+    expect(erased.erased.find((e) => e.column === 'ludy_finance.cash_forecast_item.label')?.rows).toBe(1);
+    // Org A's label is untouched, and so is the row's updated_at (nothing of A was written).
+    expect((await list(a)).items.find((i) => i.id === labelA.id)?.label).toBe('Thuê nhà chị Lan 0987654321');
+    expect((await list(b)).items[0]?.label).toContain('[đã xóa]');
   });
 });
