@@ -68,30 +68,89 @@ test('an approver teaches a line rule, Settings lists and removes rules, and the
     await expect(provenance).toContainText('khi duyệt hóa đơn C26TAB/4101');
   });
 
-  await test.step('an owner adds a keyword rule for every vendor, then removes it', async () => {
+  await test.step('an owner adds keyword rules for every vendor and for one vendor, filters by vendor, and removes them', async () => {
     // The form is a dialog behind a button (#3608).
     await card.getByRole('button', { name: 'Thêm quy tắc theo từ khóa' }).click();
     const add = page.getByRole('form', { name: 'Thêm quy tắc theo từ khóa' });
     await add.getByLabel('Từ khóa').fill('Chiết khấu');
     await add.getByLabel('Tài khoản').selectOption('6422');
     await add.getByRole('button', { name: 'Thêm', exact: true }).click();
-    const rule = card.getByRole('listitem').filter({ hasText: 'Chiết khấu' });
-    await expect(rule.getByText('Từ khóa', { exact: true })).toBeVisible();
-    await expect(rule.getByText('Mọi nhà cung cấp')).toBeVisible();
-    await expect(rule.getByText('Ghi vào TK 6422')).toBeVisible();
+    const sharedRule = card.getByRole('listitem').filter({ hasText: 'Chiết khấu' });
+    await expect(sharedRule.getByText('Từ khóa', { exact: true })).toBeVisible();
+    await expect(sharedRule.getByText('Mọi nhà cung cấp')).toBeVisible();
+    await expect(sharedRule.getByText('Ghi vào TK 6422')).toBeVisible();
 
-    // The same words without marks are the same rule: flagged while typing, before anything is saved.
+    // Add a keyword rule scoped to one existing org party via the vendor search picker (#1453).
+    await card.getByRole('button', { name: 'Thêm quy tắc theo từ khóa' }).click();
+    await add.getByLabel('Từ khóa').fill('Vận chuyển');
+    const vendorInput = add.getByLabel('Nhà cung cấp (không bắt buộc)');
+    await vendorInput.fill('Dịch vụ mẫu');
+    await add.getByRole('option', { name: new RegExp(SELLER) }).click();
+    await expect(vendorInput).toHaveValue(SELLER);
+    await expect(add.getByTestId('account-rule-vendor-clear')).toBeVisible();
+    await add.getByLabel('Tài khoản').selectOption('6421');
+    await add.getByRole('button', { name: 'Thêm', exact: true }).click();
+    const vendorRule = card.getByRole('listitem').filter({ hasText: 'Vận chuyển' });
+    await expect(vendorRule.getByText('Từ khóa', { exact: true })).toBeVisible();
+    await expect(vendorRule.getByText(SELLER)).toBeVisible();
+    await expect(vendorRule.getByText('Ghi vào TK 6421')).toBeVisible();
+
+    // Filter the rules list by vendor (shared rules, specific vendor, and reset to all).
+    await expect(card.getByRole('listitem')).toHaveCount(3);
+    const vendorFilter = card.getByLabel('Lọc theo nhà cung cấp');
+    await vendorFilter.selectOption({ label: 'Mọi nhà cung cấp' });
+    await expect(card.getByRole('listitem')).toHaveCount(1);
+    await expect(card.getByRole('listitem').first()).toContainText('Chiết khấu');
+    await vendorFilter.selectOption({ label: SELLER });
+    await expect(card.getByRole('listitem')).toHaveCount(2);
+    await expect(card.getByRole('listitem').filter({ hasText: 'Chiết khấu' })).toHaveCount(0);
+    await card.getByTestId('account-rules-vendor-filter-clear').click();
+    await expect(card.getByRole('listitem')).toHaveCount(3);
+
+    // The same words without marks are the same rule: flagged while typing per vendor scope, before anything is saved.
     await card.getByRole('button', { name: 'Thêm quy tắc theo từ khóa' }).click();
     await add.getByLabel('Từ khóa').fill('chiet khau');
     await add.getByLabel('Tài khoản').selectOption('6422');
     await expect(add.getByTestId('keyword-rule-duplicate')).toContainText('Đã có quy tắc cho từ khóa');
     await expect(add.getByRole('button', { name: 'Thêm', exact: true })).toBeDisabled();
+
+    // Picking a vendor lets the org-wide keyword stand beside a vendor-specific rule; Escape closes only the listbox,
+    // ArrowDown+Enter picks via keyboard, and Clear resets cleanly without reopening the listbox.
+    const dupVendorInput = add.getByLabel('Nhà cung cấp (không bắt buộc)');
+    await dupVendorInput.fill('Dịch vụ mẫu');
+    await expect(add.getByRole('listbox')).toBeVisible();
+    await dupVendorInput.press('Escape');
+    await expect(add.getByRole('listbox')).toHaveCount(0);
+    await expect(add).toBeVisible();
+    await dupVendorInput.press('ArrowDown');
+    await expect(add.getByRole('listbox')).toBeVisible();
+    await dupVendorInput.press('Enter');
+    await expect(dupVendorInput).toHaveValue(SELLER);
+    await expect(add.getByTestId('keyword-rule-duplicate')).toHaveCount(0);
+    await add.getByLabel('Từ khóa').fill('van chuyen');
+    await expect(add.getByTestId('keyword-rule-duplicate')).toContainText(`của ${SELLER}`);
+    await expect(add.getByRole('button', { name: 'Thêm', exact: true })).toBeDisabled();
+    await add.getByTestId('account-rule-vendor-clear').click();
+    await expect(add.getByRole('listbox')).toHaveCount(0);
+    await expect(add.getByTestId('keyword-rule-duplicate')).toHaveCount(0);
+
+    // Unpicked vendor search text refuses submit with inline guidance until cleared or picked.
+    await dupVendorInput.fill('Không tồn tại');
+    await add.getByLabel('Từ khóa').fill('phi moi');
+    await add.getByRole('button', { name: 'Thêm', exact: true }).click();
+    await expect(add.getByText('Hãy chọn một nhà cung cấp từ danh sách')).toBeVisible();
+    await add.getByTestId('account-rule-vendor-clear').click();
+
     await add.getByRole('button', { name: 'Hủy' }).click();
     await page.getByRole('button', { name: 'Bỏ thay đổi' }).click();
     await expect(add).toHaveCount(0);
 
-    await rule.getByRole('button', { name: 'Xóa quy tắc Chiết khấu' }).click();
-    await rule.getByRole('button', { name: 'Xóa quy tắc', exact: true }).click();
+    await vendorRule.getByRole('button', { name: 'Xóa quy tắc Vận chuyển' }).click();
+    await vendorRule.getByRole('button', { name: 'Xóa quy tắc', exact: true }).click();
+    await expect(card.getByRole('listitem').filter({ hasText: 'Vận chuyển' })).toHaveCount(0);
+
+    await sharedRule.getByRole('button', { name: 'Xóa quy tắc Chiết khấu' }).click();
+    await sharedRule.getByRole('button', { name: 'Xóa quy tắc', exact: true }).click();
     await expect(card.getByRole('listitem').filter({ hasText: 'Chiết khấu' })).toHaveCount(0);
     await expect(card.getByRole('listitem')).toHaveCount(1);
   });
