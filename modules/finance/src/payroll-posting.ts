@@ -30,6 +30,8 @@ interface PostingLines {
   date: string;
   legalEntityId: string;
   regime: string;
+  // The version of the chart the entry was built under (the entity's books on that date), when the proposal names one: a proposal made before it was recorded is held to the regime alone.
+  chartVersion?: string | undefined;
   lines: ReadonlyArray<{ account: string; debit: string; credit: string }>;
 }
 
@@ -48,6 +50,10 @@ async function checkPostingLines(ctx: QueryContext, input: PostingLines, lock: b
   const books = await booksOn(ctx, legalEntityId, input.date);
   if (books.regime !== input.regime) {
     throw new DomainError('HR_POSTING_MISMATCH', 422, 'Chế độ kế toán của pháp nhân đã thay đổi từ khi lập bút toán; hãy lập lại đề xuất', { what: 'regime' });
+  }
+  // The same regime can move to a newer chart (a new version from a 1 January): accounts built for the old one are not read against the new, so the entry is asked for again.
+  if (input.chartVersion !== undefined && books.version !== input.chartVersion) {
+    throw new DomainError('HR_POSTING_MISMATCH', 422, 'Hệ thống tài khoản của pháp nhân đã đổi phiên bản từ khi lập bút toán; hãy lập lại đề xuất', { what: 'chartVersion' });
   }
   const codes = [...new Set(input.lines.map((l) => l.account))];
   if (books.regime === 'tt133' && books.version === '2026.1') {
@@ -85,6 +91,8 @@ export const checkPayrollPosting = defineCommand({
     description: z.string().trim().min(1).max(300),
     legalEntityId: zId,
     regime: z.enum(PAYROLL_REGIMES),
+    // The chart version the HR module built the entry under (finance.payroll_posting.regime answers it); finance refuses the entry when the entity's books are on another by then.
+    chartVersion: z.string().min(1).max(20).optional(),
     // The run the entry posts: a run with a posting already is refused here, so the HR module reads no finance table.
     payrollRunId: zId,
     lines: z.array(z.strictObject({ account: zAccountCode, debit: zJournalAmount, credit: zJournalAmount })).min(2).max(JOURNAL_VOUCHER_MAX_LINES),
@@ -121,7 +129,8 @@ export const payrollPostingRegime = defineCommand({
   writes: [],
   handler: async (ctx, input) => {
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
-    return { regime: (await booksOn(ctx, legalEntityId, input.date)).regime };
+    const books = await booksOn(ctx, legalEntityId, input.date);
+    return { regime: books.regime, chartVersion: books.version };
   },
 });
 
@@ -140,7 +149,7 @@ export const recordPayrollPosting = defineCommand({
     const lines = payload.lines.map((l) => ({ account: l.account, debit: l.debit, credit: l.credit }));
     // The payload names its entity: it is built so, and one without is refused, never read as the default.
     if (!payload.legalEntityId) throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất hạch toán lương không nêu pháp nhân', { what: 'legalEntityId' });
-    const checked = await checkPostingLines(ctx, { date: payload.date, legalEntityId: payload.legalEntityId, regime: payload.regime, lines }, true);
+    const checked = await checkPostingLines(ctx, { date: payload.date, legalEntityId: payload.legalEntityId, regime: payload.regime, chartVersion: payload.chartVersion, lines }, true);
     if (checked.total !== payload.total) {
       throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Tổng số tiền không khớp các dòng của phiếu', { problems: ['TOTAL_MISMATCH'] });
     }
@@ -150,7 +159,7 @@ export const recordPayrollPosting = defineCommand({
     // row not written by the preparer (raw SQL) cannot post lines the run does not hold.
     // The HR module rebuilds it from the run's totals by cost department, never from a person's line (#2751), so whoever may approve the posting can check it: an owner, an admin, or a member
     // holding the approval permission (a chief accountant). Anyone else is refused by the approval policy before this runs.
-    const expected = await ctx.run<{ runId: string; month: string; date: string; regime: string; legalEntityId: string; approvedBy: string | null; lines: { account: string; debit: string; credit: string }[] }>(
+    const expected = await ctx.run<{ runId: string; month: string; date: string; regime: string; chartVersion: string; legalEntityId: string; approvedBy: string | null; lines: { account: string; debit: string; credit: string }[] }>(
       'hr.payroll.posting.verify',
       { runId: payload.payrollRunId },
     );
@@ -164,6 +173,10 @@ export const recordPayrollPosting = defineCommand({
       if (!(own?.co_authors ?? []).map((id) => id.toLowerCase()).includes(expected.approvedBy.toLowerCase())) {
         throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất hạch toán không ghi người đã duyệt bảng lương là đồng tác giả; hãy lập lại đề xuất', { what: 'coAuthors' });
       }
+    }
+    // The version the run's entry is rebuilt under now must be the one the proposal was built under (a payload without one is held to the regime alone, as before it was recorded).
+    if (payload.chartVersion !== undefined && expected.chartVersion !== payload.chartVersion) {
+      throw new DomainError('HR_POSTING_MISMATCH', 422, 'Hệ thống tài khoản của pháp nhân đã đổi phiên bản từ khi lập bút toán; hãy lập lại đề xuất', { what: 'chartVersion' });
     }
     const key = (l: { account: string; debit: string; credit: string }) => `${l.account}|${money(l.debit).toFixed(0)}|${money(l.credit).toFixed(0)}`;
     const stored = payload.lines.map(key).sort();

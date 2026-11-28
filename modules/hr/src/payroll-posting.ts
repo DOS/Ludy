@@ -57,6 +57,7 @@ export interface BuiltPosting {
   payrollRun: { id: string; legal_entity_id: string; month: string; approved_by: string | null };
   date: string;
   regime: PayrollRegime;
+  chartVersion: string;
   result: ReturnType<typeof buildPosting>;
   lines: number;
   // How many correction lines the run carries.
@@ -73,11 +74,12 @@ async function finishPosting(
   run: { legal_entity_id: string; month: string; approval: unknown },
   lines: readonly PostingLine[],
   hasAdjustments: boolean,
-): Promise<{ date: string; regime: PayrollRegime; result: ReturnType<typeof buildPosting> }> {
+): Promise<{ date: string; regime: PayrollRegime; chartVersion: string; result: ReturnType<typeof buildPosting> }> {
   // The chart of the entity on the last day of the month: finance alone reads its books (TT133 when none is on record).
   const date = monthEnd(run.month);
-  const regime = (await ctx.run<{ regime: PayrollRegime }>('finance.payroll_posting.regime', { legalEntityId: run.legal_entity_id, date })).regime;
-  if (!(PAYROLL_REGIMES as readonly string[]).includes(regime)) throw mismatch('chế độ kế toán');
+  const books = await ctx.run<{ regime: PayrollRegime; chartVersion: string }>('finance.payroll_posting.regime', { legalEntityId: run.legal_entity_id, date });
+  const { regime, chartVersion } = books;
+  if (!(PAYROLL_REGIMES as readonly string[]).includes(regime) || typeof chartVersion !== 'string' || chartVersion === '') throw mismatch('chế độ kế toán');
   // The gate of the pay run's approval, for the account map: while the accountant has not confirmed the map of this chart (#2535), nothing is posted (finance's record command holds the same gate).
   if (PAYROLL_POSTING_MAPS[regime].status !== 'confirmed') {
     throw new DomainError('HR_POSTING_MAP_UNCONFIRMED', 409, 'Bảng tài khoản hạch toán lương của chế độ kế toán này chưa được kế toán xác nhận; chưa hạch toán được', { regime });
@@ -109,7 +111,7 @@ async function finishPosting(
   ) {
     throw mismatch('tổng so với lúc duyệt');
   }
-  return { date, regime, result };
+  return { date, regime, chartVersion, result };
 }
 
 // The entry of an approved pay run, built from its frozen lines in the caller's context: the same build the proposal rests on and the posting is checked against (hr.payroll.posting.verify),
@@ -167,8 +169,8 @@ export async function buildRunPosting(ctx: CommandContext, runId: string, lock: 
     };
   });
 
-  const { date, regime, result } = await finishPosting(ctx, run, lines, stored.some((l) => l.kind !== 'pay'));
-  return { payrollRun: run, date, regime, result, lines: stored.length, adjustments: stored.filter((l) => l.kind !== 'pay').length, nets: netsByPerson(stored) };
+  const { date, regime, chartVersion, result } = await finishPosting(ctx, run, lines, stored.some((l) => l.kind !== 'pay'));
+  return { payrollRun: run, date, regime, chartVersion, result, lines: stored.length, adjustments: stored.filter((l) => l.kind !== 'pay').length, nets: netsByPerson(stored) };
 }
 
 // The same entry rebuilt from the run's totals by cost department (ludy_hr.payroll_run_totals), never from a person's line: what the verification of a posting or of a payment reads, so
@@ -178,6 +180,7 @@ export interface BuiltTotals {
   payrollRun: { id: string; legal_entity_id: string; month: string; approved_by: string | null };
   date: string;
   regime: PayrollRegime;
+  chartVersion: string;
   result: ReturnType<typeof buildPosting>;
   // How many people's net pay is at the cash limit or above: a number only.
   cashLarge: number;
@@ -239,8 +242,8 @@ export async function buildRunPostingFromTotals(ctx: CommandContext, runId: stri
     };
   });
   const run = { id: t.runId, legal_entity_id: t.legalEntityId, month: t.month, approved_by: t.approvedBy, approval: { totals: t.approvalTotals } };
-  const { date, regime, result } = await finishPosting(ctx, run, lines, (c.adjustments ?? 0) > 0);
-  return { payrollRun: { id: run.id, legal_entity_id: run.legal_entity_id, month: run.month, approved_by: run.approved_by }, date, regime, result, cashLarge: c.cashLarge ?? 0, adjustments: c.adjustments ?? 0 };
+  const { date, regime, chartVersion, result } = await finishPosting(ctx, run, lines, (c.adjustments ?? 0) > 0);
+  return { payrollRun: { id: run.id, legal_entity_id: run.legal_entity_id, month: run.month, approved_by: run.approved_by }, date, regime, chartVersion, result, cashLarge: c.cashLarge ?? 0, adjustments: c.adjustments ?? 0 };
 }
 
 export const prepareRunPosting = defineCommand({
@@ -253,7 +256,7 @@ export const prepareRunPosting = defineCommand({
   handler: async (ctx, { runId }) => {
     // The run's row is held to the end of the request, so two requests for the same run take turns: the second sees the proposal the first made and is refused below.
     const built = await buildRunPosting(ctx, runId, true);
-    const { payrollRun, date, regime, result } = built;
+    const { payrollRun, date, regime, chartVersion, result } = built;
     // One proposal per run: another still open ends it, and one already posted is refused by finance's check (a rejected or expired one does not).
     const open = await ctx.trx
       .selectFrom('ludy_kernel.proposal')
@@ -273,10 +276,11 @@ export const prepareRunPosting = defineCommand({
       description,
       legalEntityId: payrollRun.legal_entity_id,
       regime,
+      chartVersion,
       payrollRunId: runId,
       lines: result.lines.map((l) => ({ account: l.account, debit: l.debit, credit: l.credit })),
     });
-    const payload = { ...draft.payload, payrollRunId: runId, month: payrollRun.month, regime, mapStatus: result.mapStatus } as PayrollPostingProposal;
+    const payload = { ...draft.payload, payrollRunId: runId, month: payrollRun.month, regime, chartVersion, mapStatus: result.mapStatus } as PayrollPostingProposal;
     ctx.audit({ runId, month: payrollRun.month, regime, accounts: result.lines.length, lines: built.lines });
     // The person who approved and froze the run's figures is a co-author of its posting (four-eyes, #2736): they do not approve it while another eligible approver exists.
     return { kind: JOURNAL_VOUCHER_KIND, command: PAYROLL_POSTING_COMMAND, title: `Hạch toán lương tháng ${monthLabel(payrollRun.month)}`, payload, ...(payrollRun.approved_by ? { coAuthors: [payrollRun.approved_by] } : {}) };
@@ -295,12 +299,13 @@ export const verifyRunPosting = defineCommand({
   permission: 'finance.proposal.approve',
   writes: [],
   handler: async (ctx, { runId }) => {
-    const { payrollRun, date, regime, result } = await buildRunPostingFromTotals(ctx, runId);
+    const { payrollRun, date, regime, chartVersion, result } = await buildRunPostingFromTotals(ctx, runId);
     return {
       runId,
       month: payrollRun.month,
       date,
       regime,
+      chartVersion,
       // The run's entity and the person who approved it: the posting must name this entity, and its proposal must list this person as a co-author (finance's record checks both).
       legalEntityId: payrollRun.legal_entity_id,
       approvedBy: payrollRun.approved_by,
