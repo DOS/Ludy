@@ -1018,7 +1018,7 @@ import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure,
 import { zAdsBoostDraftCall, zAdsBoostDrafted, zAdsBoostOptions, zAdsBoostStatesInput, zAdsBoostStateView } from './ads-boost.ts';
 import { zAdsBudgetLowerCall, zAdsManageCancelCall, zAdsManageChanged, zAdsManageStateView, zAdsManageSuggestion, zAdsObjectCall, zAdsScheduleShortenCall } from './ads-manage.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
-import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdS2d, zHouseholdS2dGet, zHouseholdS2e, zHouseholdS2eGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
+import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdQtt, zHouseholdQttGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdS2d, zHouseholdS2dGet, zHouseholdS2e, zHouseholdS2eGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
 import { zBankCandidatesLine, zBankCandidatesLineAsk, zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectTingee, zBankFeedConnectionView, zBankFeedHookCreated, zBankFeedHookSet, zBankFeedHookStatus, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankSignDepositExplainAsk, zBankSignDepositExplanation, zBankSignDepositMatch, zBankSignDepositMatches, zBankSignDepositMatchesInput, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -3389,6 +3389,7 @@ export const contract = {
     s1a: oc.input(zHouseholdS1aGet).output(zHouseholdS1a),
     // The 01/CNKD return worksheet of a household that pays by a percentage of revenue, one quarter (#2518); a worksheet, never filed by Ludy.
     cnkd: oc.input(zHouseholdCnkdGet).output(zHouseholdCnkd),
+    qtt: oc.input(zHouseholdQttGet).output(zHouseholdQtt),
     // S2a-HKD, the revenue book of a household that pays a percentage of revenue: S1a split by business line, with VAT and PIT per line (#2517 slice 2a); labelled provisional while its rows are unconfirmed.
     s2a: oc.input(zHouseholdS2aGet).output(zHouseholdS2a),
     // S2b-HKD, the revenue book of a household that pays PIT on income: the S2a split by business line with the VAT per line and no PIT column, labelled provisional while its rows are `commentary` (#2517 slice 2c).

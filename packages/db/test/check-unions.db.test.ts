@@ -631,6 +631,7 @@ const UNIONS = unions({
   'ludy_finance.household_profile.pit_method': HOUSEHOLD_PIT_METHODS,
   'ludy_finance.household_profile.vat_cut_eligible': HOUSEHOLD_VAT_CUT_ANSWERS,
   'ludy_finance.marketplace_vat_rate.method': MARKETPLACE_VAT_METHODS,
+  'ludy_finance.household_income_rate.status': HOUSEHOLD_RULE_STATUSES,
   'ludy_finance.household_return_form_version.form': HOUSEHOLD_RETURN_FORMS,
   'ludy_finance.household_return_form_version.status': HOUSEHOLD_RULE_STATUSES,
   'ludy_finance.household_tax_reduction.kind': HOUSEHOLD_REDUCTION_KINDS,

@@ -44,6 +44,7 @@ export const financeManifest = defineModule({
       fixed_asset: columns(['org_id', 'id', 'kind', 'name', 'cost', 'asset_account', 'accumulated_account', 'expense_account', 'start_month', 'months', 'source_document_id', 'source_line_no', 'ended_month', 'end_reason', 'ended_by', 'created_by', 'created_at', 'legal_entity_id']),
       household_expense_group_map: columns(['expense_group', 'account_prefix', 'effective_from', 'source', 'status']),
       household_form_version: columns(['book', 'version', 'effective_from', 'name', 'pit_methods', 'source', 'status']),
+      household_income_rate: columns(['revenue_over', 'effective_from', 'percent', 'source', 'status']),
       household_profile: columns(['org_id', 'id', 'legal_entity_id', 'effective_from', 'tax_group', 'pit_method', 'trades', 'einvoice_registered', 'vat_cut_eligible', 'created_by', 'created_at'], { representative_name: 'pii' }),
       household_return_form_version: columns(['form', 'version', 'effective_from', 'name', 'pit_methods', 'source', 'status']),
       household_tax_reduction: columns(['kind', 'effective_from', 'cut_percent', 'revenue_ceiling', 'source', 'status']),

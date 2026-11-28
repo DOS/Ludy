@@ -4243,6 +4243,7 @@ export function createRpcHandler(
       rules: os.household.rules.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.rules', input ?? {}, { actor, orgId }))),
       s1a: os.household.s1a.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s1a', input, { actor, orgId }))),
       cnkd: os.household.cnkd.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.cnkd', input, { actor, orgId }))),
+      qtt: os.household.qtt.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.qtt', input, { actor, orgId }))),
       s2a: os.household.s2a.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2a', input, { actor, orgId }))),
       s2b: os.household.s2b.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2b', input, { actor, orgId }))),
       s2c: os.household.s2c.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2c', input, { actor, orgId }))),

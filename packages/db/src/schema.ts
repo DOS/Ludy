@@ -542,7 +542,7 @@ export type HouseholdVatCutAnswer = (typeof HOUSEHOLD_VAT_CUT_ANSWERS)[number];
 export const HOUSEHOLD_RULE_STATUSES = ['commentary', 'confirmed'] as const;
 export const HOUSEHOLD_EXPENSE_GROUPS = ['materials_goods', 'wages_insurance', 'depreciation', 'outside_services', 'interest', 'other'] as const;
 export const HOUSEHOLD_BOOKS = ['S1a', 'S2a', 'S2b', 'S2c', 'S2d', 'S2e', 'S3a'] as const;
-export const HOUSEHOLD_RETURN_FORMS = ['01/CNKD'] as const;
+export const HOUSEHOLD_RETURN_FORMS = ['01/CNKD', '02/CNKD-TNCN-QTT'] as const;
 export type HouseholdPitMethod = (typeof HOUSEHOLD_PIT_METHODS)[number];
 export type HouseholdRuleStatus = (typeof HOUSEHOLD_RULE_STATUSES)[number];
 export type HouseholdExpenseGroup = (typeof HOUSEHOLD_EXPENSE_GROUPS)[number];
@@ -571,6 +571,8 @@ export type HouseholdThresholdTable = Refine<G.FinanceHouseholdThresholdTable, {
 export const HOUSEHOLD_REDUCTION_KINDS = ['vat', 'pit'] as const;
 export type HouseholdReductionKind = (typeof HOUSEHOLD_REDUCTION_KINDS)[number];
 export type HouseholdTaxReductionTable = Refine<G.FinanceHouseholdTaxReductionTable, { kind: HouseholdReductionKind; status: HouseholdRuleStatus }>;
+// The PIT rate of the income method by band of the year's revenue (#5285): a global law table like the others.
+export type HouseholdIncomeRateTable = Refine<G.FinanceHouseholdIncomeRateTable, { status: HouseholdRuleStatus }>;
 export type HouseholdTradeRateTable = Refine<G.FinanceHouseholdTradeRateTable, { trade: StockTrade; status: HouseholdRuleStatus }>;
 export type HouseholdExpenseGroupMapTable = Refine<G.FinanceHouseholdExpenseGroupMapTable, { expense_group: HouseholdExpenseGroup; status: HouseholdRuleStatus }>;
 export type HouseholdFormVersionTable = Refine<G.FinanceHouseholdFormVersionTable, { book: HouseholdBook; pit_methods: Array<'none' | HouseholdPitMethod>; status: HouseholdRuleStatus }>;
@@ -2139,6 +2141,7 @@ type Refined = Tables<{
   'ludy_finance.household_threshold': HouseholdThresholdTable;
   'ludy_finance.household_trade_rate': HouseholdTradeRateTable;
   'ludy_finance.household_tax_reduction': HouseholdTaxReductionTable;
+  'ludy_finance.household_income_rate': HouseholdIncomeRateTable;
   'ludy_finance.household_expense_group_map': HouseholdExpenseGroupMapTable;
   'ludy_finance.household_form_version': HouseholdFormVersionTable;
   'ludy_finance.household_return_form_version': HouseholdReturnFormVersionTable;
