@@ -23,20 +23,27 @@ const STEP_MONTHS: Readonly<Record<CashForecastEnteredRecurrence, number>> = { o
 const daysInMonth = (year: number, month: number): number => new Date(Date.UTC(year, month, 0)).getUTCDate();
 const two = (n: number): string => String(n).padStart(2, '0');
 
-// The nth occurrence (0 is the first date) of a repeating item, counted from the first date: the first date's day in the month `n * step` months on, clamped to that month's last day.
-function nthOccurrence(firstDate: string, stepMonths: number, n: number): string {
+// The last day a date can be written as YYYY-MM-DD (four digits of year). Past it a date has no such text and compares wrongly as a string ('10000-01-05' sorts before '9999-12-31').
+const LAST_DAY = '9999-12-31';
+const FOUR_DIGIT_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+// The nth occurrence (0 is the first date) of a repeating item, counted from the first date: the first date's day in the month `n * step` months on, clamped to that month's last day. Null past the year 9999.
+function nthOccurrence(firstDate: string, stepMonths: number, n: number): string | null {
   const year = Number(firstDate.slice(0, 4));
   const month = Number(firstDate.slice(5, 7));
   const day = Number(firstDate.slice(8, 10));
   const index = year * 12 + (month - 1) + n * stepMonths;
   const y = Math.floor(index / 12);
+  if (y > 9999) return null;
   const m = (index % 12) + 1;
   return `${String(y).padStart(4, '0')}-${two(m)}-${two(Math.min(day, daysInMonth(y, m)))}`;
 }
 
 // The dates on which the item falls from `today` to day CASH_FORECAST_DAYS, oldest first. An item whose first date is after the window, or whose end date is before day 0, has none.
 export function occurrencesOf(item: RepeatingItem, today: string, days: number = CASH_FORECAST_DAYS): string[] {
-  const last = addDays(today, days);
+  // A window that reaches past the year 9999 ends on the last day that can be written (addDays then answers an extended year such as '+010000-01', which is no date to compare with).
+  const reached = addDays(today, days);
+  const last = FOUR_DIGIT_DATE.test(reached) ? reached : LAST_DAY;
   const endsOn = item.endDate !== null && item.endDate < last ? item.endDate : last;
   if (item.recurrence === 'once') return item.firstDate >= today && item.firstDate <= endsOn ? [item.firstDate] : [];
   const step = STEP_MONTHS[item.recurrence];
@@ -46,7 +53,7 @@ export function occurrencesOf(item: RepeatingItem, today: string, days: number =
   const dates: string[] = [];
   for (;;) {
     const date = nthOccurrence(item.firstDate, step, n);
-    if (date > endsOn) break;
+    if (date === null || date > endsOn) break;
     if (date >= today) dates.push(date);
     n += 1;
   }
