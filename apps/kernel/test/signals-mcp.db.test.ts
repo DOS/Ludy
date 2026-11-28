@@ -193,8 +193,9 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     expect(answer.items.map((i) => i.id).sort()).toEqual([
       ...((await run(whole, 'kernel.signals.deal_without_invoice')) as Array<{ id: string }>),
       ...((await run(whole, 'kernel.signals.receivable_with_open_deal')) as Array<{ id: string }>),
+      { id: `signal:contact-attention:invoice_overdue:${partyIds[1]}` },
     ].map((i) => i.id).sort());
-    expect(answer.items).toHaveLength(2);
+    expect(answer.items).toHaveLength(3);
     expect(answer.checked).toEqual(['deal_without_invoice', 'receivable_with_open_deal', 'supplier_bank_changed']);
     expect(answer.unchecked).toEqual([
       { rule: 'conversation_unanswered', reason: 'not_available' },

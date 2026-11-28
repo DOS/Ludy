@@ -231,13 +231,12 @@ export function ContactsPage({ mode = 'people' }: { mode?: 'people' | 'companies
   const clearDeepContact = () => {
     if (deepContactId === null) return;
     setDismissedDeepId(deepContactId);
-    void navigate({
-      to: mode === 'companies' ? '/o/$slug/companies' : '/o/$slug/contacts',
-      params: { slug },
-      search: {},
-      replace: true,
-      resetScroll: false,
-    }).catch(() => {});
+    const navOpts = { params: { slug }, search: {}, replace: true, resetScroll: false } as const;
+    void (
+      mode === 'companies'
+        ? navigate({ to: '/o/$slug/companies', ...navOpts })
+        : navigate({ to: '/o/$slug/contacts', ...navOpts })
+    ).catch(() => {});
   };
   const toggleContact = (id: string) => {
     const next = activeOpenId === id ? null : id;

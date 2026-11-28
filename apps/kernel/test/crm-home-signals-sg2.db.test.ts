@@ -52,13 +52,17 @@ class MemoryStore implements BlobStore {
 
   async put(key: string, bytes: Uint8Array) {
     this.blobs.set(key, bytes);
-    return '1';
+    return `content:${sha256Hex(bytes)}`;
   }
 
   async get(key: string) {
     const found = this.blobs.get(key);
     if (!found) throw new Error(`Missing blob ${key}`);
     return found;
+  }
+
+  async delete(key: string) {
+    this.blobs.delete(key);
   }
 }
 
@@ -325,6 +329,12 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
       await c.query('COMMIT');
     });
     const newerEnv = await sendAndOpenEnvelope({ orgId: o.orgId, creatorId: o.member, title: 'Newer Env', signerEmail: 'ALICE@ACME.TEST' });
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query("UPDATE ludy_sign.signer SET viewed_at = now() - interval '1 hour' WHERE org_id = $1 AND id = $2", [o.orgId, newerEnv.signerId]);
+      await c.query('COMMIT');
+    });
     const dupEnv = await sendAndOpenEnvelope({ orgId: o.orgId, creatorId: o.member, title: 'Dup Env', signerEmail: 'dup@acme.test' });
 
     // 2. Unmatched signer email -> omitted.
@@ -372,7 +382,7 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
            page_dimensions_json, retained_org_visible, created_by
          )
          SELECT $1::uuid, $2::uuid, 'Board Minutes', 'sent', 'parallel', 'meeting_minutes', $3::uuid, f.id,
-                f.storage_key, f.generation, f.sha256, 'passed', 1, '[{"pageNumber":1,"widthPt":595,"heightPt":842}]'::jsonb, true, $4::uuid
+                f.storage_key, f.generation, f.sha256, 'passed', 1, '[{"page":1,"widthPt":595,"heightPt":842,"rotation":0}]'::jsonb, true, $4::uuid
          FROM ludy_kernel.file f WHERE f.org_id = $1::uuid AND f.id = $5::uuid`,
         [o.orgId, mmEnvId, randomUUID(), o.owner, newerEnv.fileId],
       );

@@ -16,7 +16,7 @@ const searchState = vi.hoisted(() => ({ current: {} as { c?: string } }));
 
 vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
-  qcState.current = new QC();
+  qcState.current = new QC({ defaultOptions: { queries: { retryOnMount: false } } });
   const node = (path: string[]): unknown =>
     new Proxy(() => undefined, {
       get: (_t, prop: string) => {
