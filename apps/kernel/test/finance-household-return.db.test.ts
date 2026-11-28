@@ -529,6 +529,9 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
         [o.orgId, o.household],
       );
       await a.query('COMMIT');
+      // The load runs with triggers off and nothing has analyzed the tables yet, so the planner would work from empty-table statistics (reltuples 0, one row per scan) and choose nested loops over
+      // 100,000 lines: about 500,000 buffer hits for the opening balance instead of about 2,600 with statistics (#5300). A ledger this size is analyzed by autovacuum in production; do the same here.
+      await a.query('ANALYZE ludy_finance.journal_entry, ludy_finance.journal_line');
     });
 
     await entry(o.household, o.orgId, '2026-07-10', 'Bán lẻ Q3', [['111', 1000000, 0], ['511', 0, 1000000]]);
