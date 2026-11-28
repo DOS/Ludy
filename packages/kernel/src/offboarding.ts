@@ -189,9 +189,9 @@ export const EXPORT_TABLES = {
   'finance.legal_entity_books': { from: 'ludy_finance.legal_entity_books', omit: [] },
   'finance.household_profile': { from: 'ludy_finance.household_profile', omit: [] },
   'finance.marketplace_vat_rate': { from: 'ludy_finance.marketplace_vat_rate', omit: [] },
-  // How long a customer has to pay, and the weekly reminder item.
   // The items an owner entered into the 90-day cash forecast (#5326): planning input, the label in the owner's own words.
   'finance.cash_forecast_item': { from: 'ludy_finance.cash_forecast_item', omit: [] },
+  // How long a customer has to pay, and the weekly reminder item.
   'finance.collection_setting': { from: 'ludy_finance.collection_setting', omit: [] },
   'finance.customer_collection': { from: 'ludy_finance.customer_collection', omit: [] },
   // The crm module's event types (#1314).

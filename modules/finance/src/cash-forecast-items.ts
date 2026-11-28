@@ -142,6 +142,9 @@ const cashForecastItemSet = defineCommand({
       const before = await itemById(ctx, input.id);
       if (!before || (input.legalEntityId !== undefined && input.legalEntityId !== before.legal_entity_id)) throw itemNotFound();
       await lockEntity(ctx, before.legal_entity_id);
+      // Read again under the lock: a writer that held it first may have changed or removed the item since, and the audit's previous values are what this edit replaced.
+      const current = await itemById(ctx, input.id);
+      if (!current) throw itemNotFound();
       const row = (await ctx.trx
         .updateTable('ludy_finance.cash_forecast_item')
         .set({ ...values, updated_at: ctx.now })
@@ -150,7 +153,7 @@ const cashForecastItemSet = defineCommand({
         .returning([...COLUMNS])
         .executeTakeFirst()) as unknown as ItemRow | undefined;
       if (!row) throw itemNotFound();
-      ctx.audit({ item_id: row.id, created: false, ...auditOf(row), ...auditOf(before, 'previous_') });
+      ctx.audit({ item_id: row.id, created: false, ...auditOf(row), ...auditOf(current, 'previous_') });
       return viewOf(row, today);
     }
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
@@ -183,9 +186,12 @@ const cashForecastItemRemove = defineCommand({
     const before = await itemById(ctx, input.id);
     if (!before) throw itemNotFound();
     await lockEntity(ctx, before.legal_entity_id);
+    // Read again under the lock (see the edit): the audit holds what was removed, not what it was before the wait.
+    const current = await itemById(ctx, input.id);
+    if (!current) throw itemNotFound();
     const gone = await ctx.trx.deleteFrom('ludy_finance.cash_forecast_item').where('org_id', '=', ctx.orgId).where('id', '=', input.id).returning('id').executeTakeFirst();
     if (!gone) throw itemNotFound();
-    ctx.audit({ item_id: input.id, ...auditOf(before) });
+    ctx.audit({ item_id: input.id, ...auditOf(current) });
     return { id: input.id };
   },
 });
