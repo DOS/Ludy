@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The S1a-HKD workbook (#2517) and the 01/CNKD worksheet workbook (#2518): the household's name and tax code, the book's title, the period and the day the books were opened, the rows with exact amounts, a total and a place for the
+// The S1a-HKD workbook (#2517), the 01/CNKD worksheet workbook (#2518) and the 02/CNKD-TNCN-QTT annual worksheet workbook (#5285): the household's name and tax code, the book's title, the period and the day the books were opened, the rows with exact amounts, a total and a place for the
 // signature; text is never read as a formula; the note about the unchecked layout shows while the book's row is `commentary`.
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import type { HouseholdCnkd, HouseholdS1a, HouseholdYearToDate } from '@ludy/kernel-contract';
+import type { HouseholdCnkd, HouseholdQtt, HouseholdS1a, HouseholdYearToDate } from '@ludy/kernel-contract';
 import { HOUSEHOLD_PROVISIONAL_LABEL } from '@ludy/kernel-contract';
-import { buildCnkdWorkbook, buildS1aWorkbook } from '../src/household-export.ts';
+import { buildCnkdWorkbook, buildQttWorkbook, buildS1aWorkbook } from '../src/household-export.ts';
 
 const book = (over: Partial<HouseholdS1a> = {}): HouseholdS1a => ({
   period: { period: '2026-09', from: '2026-09-01', to: '2026-09-30' },
@@ -278,5 +278,142 @@ describe('the 01/CNKD worksheet and the yearly rule (#3710 slice 3)', () => {
     const all = await allText(d);
     expect(all).toContain('  Chưa xác nhận: ngưỡng doanh thu năm, từ 01/01/2026');
     expect(all).toContain('  Chưa xác nhận: mức giảm thuế TNCN theo Nghị định 398, từ 01/07/2026');
+  });
+});
+
+const QTT_LABELS: Record<string, string> = {
+  '09': 'Doanh thu',
+  '10': 'Các khoản chi được trừ',
+  '11': 'Thu nhập tính thuế',
+  '12': 'Thuế suất',
+  '13': 'Số thuế phát sinh',
+  '14': 'Thuế đã khấu trừ',
+  '15': 'Thuế đã tạm nộp',
+  '17': 'Tổng số thuế còn phải nộp',
+  '19': 'Còn phải nộp sau miễn',
+};
+const QTT_AMOUNTS: Record<string, string> = { '09': '1800000000', '10': '870000000', '11': '930000000', '12': '15', '13': '139500000', '14': '10000000', '15': '50000000', '17': '79500000', '19': '79500000' };
+const qttData = (over: Partial<HouseholdQtt> = {}): HouseholdQtt => ({
+  period: { year: 2026, from: '2026-01-01', to: '2026-12-31', ended: true },
+  household: { name: 'Hộ kinh doanh Nguyễn Văn A', taxCode: '001234567890', representativeName: 'Nguyễn Văn A' },
+  form: { form: '02/CNKD-TNCN-QTT', version: '2026.1', name: 'Tờ khai quyết toán thuế thu nhập cá nhân (02/CNKD-TNCN-QTT)', status: 'confirmed' },
+  lines: Object.keys(QTT_LABELS).map((code) => ({ code, label: QTT_LABELS[code] ?? code, amount: QTT_AMOUNTS[code] ?? '0' })),
+  rate: { revenueOver: '0', percent: '15', effectiveFrom: '2026-01-01', status: 'confirmed' },
+  threshold: '1000000000',
+  unmappedCosts: '0',
+  holds: [],
+  notes: ['costs_not_checked', 'reduction_not_in_form'],
+  entered: { withheld: '10000000', prepaid: '50000000', noPaymentRevenue: '0' },
+  reduction: {
+    percent: '30',
+    ceiling: '10000000000',
+    applies: true,
+    cut: '41850000',
+    before: { tax: '139500000', payable: '79500000', exempt: '0', due: '79500000', overpaid: '0' },
+    after: { tax: '97650000', payable: '37650000', exempt: '0', due: '37650000', overpaid: '0' },
+    effectiveFrom: '2026-01-01',
+    status: 'confirmed',
+  },
+  unconfirmed: [],
+  commentary: false,
+  ...over,
+});
+
+async function qttSheet(d: HouseholdQtt): Promise<ExcelJS.Worksheet> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load((await buildQttWorkbook(d)) as unknown as ArrayBuffer);
+  const sheet = workbook.getWorksheet('02-CNKD-TNCN-QTT');
+  if (!sheet) throw new Error('no sheet');
+  return sheet;
+}
+// The row of a line by its code, as the file prints it ("[13]").
+const qttRows = (sheet: ExcelJS.Worksheet) => {
+  const rows = new Map<string, ExcelJS.Row>();
+  sheet.eachRow((row) => rows.set(String(row.getCell(1).value), row));
+  return rows;
+};
+
+describe('the 02/CNKD-TNCN-QTT annual worksheet workbook', () => {
+  it('heads the worksheet with the household, the form and the year, and says it is a worksheet that Ludy does not file', async () => {
+    const all = texts(await qttSheet(qttData()));
+    expect(all).toContain('HỘ, CÁ NHÂN KINH DOANH: Hộ kinh doanh Nguyễn Văn A');
+    expect(all).toContain('Mã số thuế: 001234567890');
+    expect(all).toContain('BẢNG TÍNH TỜ KHAI TỜ KHAI QUYẾT TOÁN THUẾ THU NHẬP CÁ NHÂN (02/CNKD-TNCN-QTT)');
+    expect(all).toContain('Phiên bản mẫu: 2026.1');
+    expect(all).toContain('Kỳ tính thuế: năm 2026 (từ 01/01/2026 đến 31/12/2026)');
+    expect(all.some((t) => t.includes('Ludy không nộp tờ khai'))).toBe(true);
+    expect(all).toContain('(Ký, họ tên)');
+  });
+
+  it('writes every line with its code and label, money as exact numbers and the rate as a percentage', async () => {
+    const rows = qttRows(await qttSheet(qttData()));
+    expect([rows.get('[09]')?.getCell(2).value, rows.get('[09]')?.getCell(3).value]).toEqual(['Doanh thu', 1800000000]);
+    expect(rows.get('[11]')?.getCell(3).value).toBe(930000000);
+    expect(rows.get('[12]')?.getCell(3).value).toBe('15%');
+    expect(rows.get('[13]')?.getCell(3).value).toBe(139500000);
+    expect(rows.get('[17]')?.getCell(3).value).toBe(79500000);
+    expect(rows.get('[19]')?.getCell(3).value).toBe(79500000);
+  });
+
+  it('gives the 30% cut before and after, says the lines are before it, and does not repeat the note about it', async () => {
+    const sheet = await qttSheet(qttData());
+    const all = texts(sheet);
+    expect(all).toContain('Giảm 30% thuế thu nhập cá nhân (Nghị định 398/2026): số trước và sau khi giảm');
+    expect(all.some((t) => t.includes('các dòng [13] đến [20] ở trên là số TRƯỚC khi giảm'))).toBe(true);
+    const memo = new Map<string, ExcelJS.Row>();
+    sheet.eachRow((row) => memo.set(String(row.getCell(2).value), row));
+    expect([memo.get('Thuế phát sinh [13]')?.getCell(3).value, memo.get('Thuế phát sinh [13]')?.getCell(4).value]).toEqual([139500000, 97650000]);
+    expect([memo.get('Số được giảm')?.getCell(3).value, memo.get('Số được giảm')?.getCell(4).value]).toEqual([0, 41850000]);
+    expect([memo.get('Còn phải nộp [17]')?.getCell(3).value, memo.get('Còn phải nộp [17]')?.getCell(4).value]).toEqual([79500000, 37650000]);
+    expect(all).not.toContain('Ghi chú: Tờ khai không có dòng cho khoản giảm thuế; các dòng [13] đến [20] là số trước khi giảm.');
+    expect(all).toContain('Ghi chú: Ludy chưa kiểm tra khoản chi nào có được trừ hay không; kế toán cần xem lại từng khoản.');
+  });
+
+  it('says there is no cut above the ceiling, and keeps the note about the cut when there is no memo', async () => {
+    const above = texts(await qttSheet(qttData({ reduction: { ...qttData().reduction!, applies: false, cut: '0', after: qttData().reduction!.before } })));
+    expect(above).toContain('Doanh thu năm vượt 10000000000 đồng nên không được giảm.');
+    const none = texts(await qttSheet(qttData({ reduction: null })));
+    expect(none).not.toContain('Giảm 30% thuế thu nhập cá nhân (Nghị định 398/2026): số trước và sau khi giảm');
+    expect(none).toContain('Ghi chú: Tờ khai không có dòng cho khoản giảm thuế; các dòng [13] đến [20] là số trước khi giảm.');
+  });
+
+  it('carries no provisional label when every row is confirmed, and labels the lines that depend on a rule while one is not', async () => {
+    const confirmed = qttData();
+    expect(texts(await qttSheet(confirmed))).not.toContain(HOUSEHOLD_PROVISIONAL_LABEL);
+    const d = qttData({
+      commentary: true,
+      unconfirmed: [
+        { kind: 'form', key: '02/CNKD-TNCN-QTT 2026.1', effectiveFrom: '2026-07-01' },
+        { kind: 'rate', key: '15%', effectiveFrom: '2026-01-01' },
+        { kind: 'group', key: '632', effectiveFrom: '2026-01-01' },
+        { kind: 'reduction', key: 'pit', effectiveFrom: '2026-01-01' },
+      ],
+    });
+    const sheet = await qttSheet(d);
+    const all = texts(sheet);
+    expect(all).toContain(HOUSEHOLD_PROVISIONAL_LABEL.toUpperCase());
+    expect(all).toContain('  Chưa xác nhận: mẫu 02/CNKD-TNCN-QTT 2026.1, hiệu lực từ 01/07/2026');
+    expect(all).toContain('  Chưa xác nhận: thuế suất 15% của bậc doanh thu, từ 01/01/2026');
+    expect(all).toContain('  Chưa xác nhận: nhóm chi phí của tài khoản 632, từ 01/01/2026');
+    expect(all).toContain('  Chưa xác nhận: mức giảm thuế TNCN theo Nghị định 398, từ 01/01/2026');
+    const rows = qttRows(sheet);
+    // The revenue [09] is the ledger's own movement of 511 and depends on no rule: no label. The tax [13] and what is left to pay [17] do.
+    expect(rows.get('[09]')?.getCell(5).value ?? null).toBeNull();
+    expect(rows.get('[13]')?.getCell(5).value).toBe(HOUSEHOLD_PROVISIONAL_LABEL);
+    expect(rows.get('[17]')?.getCell(5).value).toBe(HOUSEHOLD_PROVISIONAL_LABEL);
+  });
+
+  it('never reads a household name as a formula', async () => {
+    const sheet = await qttSheet(qttData({ household: { name: '=HYPERLINK("http://evil")', taxCode: null, representativeName: null } }));
+    let found = false;
+    sheet.eachRow((row) => {
+      const cell = row.getCell(1);
+      if (typeof cell.value === 'string' && cell.value.includes('=HYPERLINK')) {
+        found = true;
+        expect(cell.type).toBe(ExcelJS.ValueType.String);
+        expect(cell.numFmt).toBe('@');
+      }
+    });
+    expect(found).toBe(true);
   });
 });
