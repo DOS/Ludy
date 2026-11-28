@@ -67,6 +67,8 @@ interface LedgerData {
 // What the one statement of loadLedgerData answers: each part a JSON array, money and dates as text (a JSON number
 // would lose a NUMERIC's digits in JavaScript; the text is what the driver returns for a NUMERIC or a date column).
 interface LedgerDataRow {
+  // The period has more lines than LEDGER_LINE_LIMIT, so the lines and the parties are left out (#5300).
+  too_large: boolean;
   tt133: Tt133AccountRow[];
   own: OrgAccountRow[];
   opening: Array<{ account_code: string; party_id: string | null; debit: string | null; credit: string | null }>;
@@ -85,20 +87,6 @@ const periodTooLarge = () => new DomainError('PERIOD_TOO_LARGE', 422, `Kỳ này
 // those of one legal entity (#1280); the chart and the parties are the org's.
 async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntityId: string): Promise<LedgerData> {
   const period = ledgerPeriod(periodText);
-  // A period over the limit is decided here, before the statement below sorts the lines and aggregates them into JSON just to count them in JavaScript (#5300): a probe stops at one
-  // line past the limit, reads no sort key and builds no JSON, so the refusal is cheap even at 50,000 lines. The count on the loaded lines below stays, since the lines may change between the two
-  // statements (the single statement is what keeps one snapshot, #365).
-  const probe = await sql<{ n: string }>`
-    SELECT count(*)::text AS n FROM (
-      SELECT 1 FROM ludy_finance.journal_entry AS j
-      INNER JOIN ludy_finance.journal_line AS l ON l.org_id = j.org_id AND l.entry_id = j.id
-      WHERE j.org_id = ${ctx.orgId} AND j.legal_entity_id = ${legalEntityId} AND j.entry_date >= ${period.from} AND j.entry_date <= ${period.to}
-      LIMIT ${LEDGER_LINE_LIMIT + 1}
-    ) AS probe
-  `.execute(ctx.trx);
-  if (Number(probe.rows[0]?.n ?? 0) > LEDGER_LINE_LIMIT) {
-    throw periodTooLarge();
-  }
   // The org's whole chart (#319): the TT133 accounts and the org's sub-accounts, inactive ones included (posted lines
   // may name them). A sub-account's parent is its parent_code, so it rolls up into its parent like a TT133 account.
   const tt133 = ctx.trx.selectFrom('ludy_finance.account').select(['code', 'name', 'parent_code']);
@@ -160,24 +148,39 @@ async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntity
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', sql<string>`(SELECT party_id FROM opening WHERE party_id IS NOT NULL UNION SELECT party_id FROM lines WHERE party_id IS NOT NULL)`);
 
+  // The limit is decided INSIDE the one statement (#5300, and the test of #365 holds that a report reads in one statement): `probe` counts the period's lines up to one past the limit, without
+  // the sort or the JSON, and a period over the limit leaves `lines` and `parties` unread (a CTE nothing reads is not run), so the refusal is cheap even at 50,000 lines.
   const { rows } = await sql<LedgerDataRow>`
-    WITH opening AS ${opening}, lines AS ${lines}
+    WITH opening AS ${opening},
+    probe AS (
+      SELECT count(*) AS n FROM (
+        SELECT 1 FROM ludy_finance.journal_entry AS j
+        INNER JOIN ludy_finance.journal_line AS l ON l.org_id = j.org_id AND l.entry_id = j.id
+        WHERE j.org_id = ${ctx.orgId} AND j.legal_entity_id = ${legalEntityId} AND j.entry_date >= ${period.from} AND j.entry_date <= ${period.to}
+        LIMIT ${LEDGER_LINE_LIMIT + 1}
+      ) AS counted
+    ),
+    lines AS ${lines}
     SELECT
+      (SELECT n > ${LEDGER_LINE_LIMIT} FROM probe) AS too_large,
       (SELECT coalesce(json_agg(json_build_object('code', a.code, 'name', a.name, 'parent_code', a.parent_code)), '[]') FROM ${tt133} AS a) AS tt133,
       (SELECT coalesce(json_agg(json_build_object('code', a.code, 'name', a.name, 'parent_code', a.parent_code, 'root_code', a.root_code, 'active', a.active)), '[]')
          FROM ${own} AS a) AS own,
       (SELECT coalesce(json_agg(json_build_object('account_code', o.account_code, 'party_id', o.party_id, 'debit', o.debit::text, 'credit', o.credit::text)
                                 ORDER BY o.account_code), '[]')
          FROM opening AS o) AS opening,
-      (SELECT coalesce(json_agg(json_build_array(r.id, r.entry_date::text, r.description, r.reverses_entry_id, r.invoice_series, r.invoice_number,
-                                                 r.line_no, r.account_code, r.party_id, r.debit::text, r.credit::text)
-                                ORDER BY r.entry_date, r.created_at, r.id, r.line_no), '[]')
-         FROM lines AS r) AS lines,
-      (SELECT coalesce(json_agg(json_build_object('id', p.id, 'name', p.name, 'tax_code', p.tax_code)), '[]') FROM ${parties} AS p) AS parties
+      (SELECT CASE WHEN (SELECT n FROM probe) > ${LEDGER_LINE_LIMIT} THEN '[]'::json
+         ELSE (SELECT coalesce(json_agg(json_build_array(r.id, r.entry_date::text, r.description, r.reverses_entry_id, r.invoice_series, r.invoice_number,
+                                                         r.line_no, r.account_code, r.party_id, r.debit::text, r.credit::text)
+                                        ORDER BY r.entry_date, r.created_at, r.id, r.line_no), '[]')
+               FROM lines AS r) END) AS lines,
+      (SELECT CASE WHEN (SELECT n FROM probe) > ${LEDGER_LINE_LIMIT} THEN '[]'::json
+         ELSE (SELECT coalesce(json_agg(json_build_object('id', p.id, 'name', p.name, 'tax_code', p.tax_code)), '[]') FROM ${parties} AS p) END) AS parties
   `.execute(ctx.trx);
   const data = rows[0];
   if (!data) throw new Error('the ledger statement returned no row');
-  if (data.lines.length > LEDGER_LINE_LIMIT) {
+  // The count on the loaded lines stays as it was: the probe and the lines are one statement, so it cannot disagree, but it is the check the rest of the code was written against.
+  if (data.too_large || data.lines.length > LEDGER_LINE_LIMIT) {
     throw periodTooLarge();
   }
 
