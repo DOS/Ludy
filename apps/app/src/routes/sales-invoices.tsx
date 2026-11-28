@@ -856,6 +856,9 @@ function NoticeCard({ notice, reference, draftId }: { notice: EInvoiceNotice; re
   const t = useTranslations('salesInvoices');
   const [copied, setCopied] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const sendOpenRef = useRef<HTMLButtonElement>(null);
+  const confirmPanelRef = useRef<HTMLDivElement>(null);
+  const confirmHeadingId = useId();
   const text = einvoiceNoticeText({ ...reference, field: notice.field, correctText: notice.correctText });
   const buyerEmail = reference.buyerEmail?.trim() ?? '';
   const subject = einvoiceNoticeSubject({ number: reference.number, symbol: reference.symbol });
@@ -874,6 +877,15 @@ function NoticeCard({ notice, reference, draftId }: { notice: EInvoiceNotice; re
       await queryClient.invalidateQueries({ queryKey: orpc.einvoice.drafts.noticeList.key({ input: { draftId } }) });
     },
   });
+  const openConfirm = () => {
+    sendMail.reset();
+    setConfirmOpen(true);
+    requestAnimationFrame(() => confirmPanelRef.current?.focus());
+  };
+  const closeConfirm = () => {
+    setConfirmOpen(false);
+    requestAnimationFrame(() => sendOpenRef.current?.focus());
+  };
   const copy = () => {
     // The clipboard can be refused (an older app view); the text stays selectable in the box.
     void navigator.clipboard.writeText(text).then(
@@ -896,7 +908,7 @@ function NoticeCard({ notice, reference, draftId }: { notice: EInvoiceNotice; re
           {copied ? t('notice.copied') : t('notice.copy')}
         </Button>
         {canSendEmail && !confirmOpen && (
-          <Button size="sm" onClick={() => { sendMail.reset(); setConfirmOpen(true); }} data-testid="invoice-notice-send-open">
+          <Button ref={sendOpenRef} size="sm" onClick={openConfirm} data-testid="invoice-notice-send-open">
             {notice.buyerNoticeMailStatus ? t('notice.sendRetry') : t('notice.sendOpen')}
           </Button>
         )}
@@ -905,8 +917,8 @@ function NoticeCard({ notice, reference, draftId }: { notice: EInvoiceNotice; re
         )}
       </div>
       {canSendEmail && confirmOpen && (
-        <div className="mt-2 space-y-2 rounded-md border border-border p-3" data-testid="invoice-notice-send-confirm">
-          <p className="text-sm font-medium">{t('notice.sendConfirmTitle')}</p>
+        <div ref={confirmPanelRef} tabIndex={-1} role="group" aria-labelledby={confirmHeadingId} className="mt-2 space-y-2 rounded-md border border-border p-3 outline-none focus-visible:ring-2 focus-visible:ring-ring/50" data-testid="invoice-notice-send-confirm">
+          <p id={confirmHeadingId} className="text-sm font-medium">{t('notice.sendConfirmTitle')}</p>
           <p className="text-xs text-subtle-foreground">{t('notice.sendSubject', { subject })}</p>
           <p className="text-xs text-subtle-foreground">{t('notice.sendConfirmNote', { email: buyerEmail })}</p>
           {sendMail.error && <ErrorText>{errorMessage(sendMail.error)}</ErrorText>}
@@ -914,14 +926,14 @@ function NoticeCard({ notice, reference, draftId }: { notice: EInvoiceNotice; re
             <Button size="sm" loading={sendMail.isPending} onClick={() => sendMail.mutate()} data-testid="invoice-notice-send-confirm-button">
               {t('notice.sendConfirm')}
             </Button>
-            <Button size="sm" variant="ghost" disabled={sendMail.isPending} onClick={() => setConfirmOpen(false)}>
+            <Button size="sm" variant="ghost" disabled={sendMail.isPending} onClick={closeConfirm}>
               {t('notice.close')}
             </Button>
           </div>
         </div>
       )}
       {mailStatusKey && (
-        <p className="mt-2 text-xs text-subtle-foreground" data-testid="invoice-notice-mail-status">
+        <p className="mt-2 text-xs text-subtle-foreground" role="status" data-testid="invoice-notice-mail-status">
           {t(mailStatusKey)}
         </p>
       )}
@@ -965,7 +977,11 @@ export function NoticeAction({ draft, openWith = false }: { draft: EInvoiceDraft
   const [open, setOpen] = useState(openWith);
   const [field, setField] = useState<EInvoiceNoticeField>('buyer_name');
   const [correctText, setCorrectText] = useState('');
-  const list = useQuery({ ...orpc.einvoice.drafts.noticeList.queryOptions({ input: { draftId: draft.id } }), enabled: open });
+  const list = useQuery({
+    ...orpc.einvoice.drafts.noticeList.queryOptions({ input: { draftId: draft.id } }),
+    enabled: open,
+    refetchInterval: (query) => (query.state.data?.notices.some((n) => n.buyerNoticeMailStatus === 'queued' || n.buyerNoticeMailStatus === 'sending') ? 3000 : false),
+  });
   const record = useMutation({
     mutationFn: (sent: string) => client.einvoice.drafts.noticeOpen({ draftId: draft.id, field, correctText: sent }),
     onSuccess: async (_data, sent) => {

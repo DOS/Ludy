@@ -227,11 +227,11 @@ export const einvoiceNoticeSend = defineCommand({
     if (!PLAIN_ADDRESS.test(email) || !isMailAddress(email)) {
       throw new DomainError('BUYER_EMAIL_REQUIRED', 422, 'Hóa đơn này chưa có email hợp lệ của người mua; hãy kiểm tra lại hoặc dùng cách gửi thủ công');
     }
-    const org = await orgName(ctx, existing.legal_entity_id);
+    const org = (await orgName(ctx, existing.legal_entity_id)) || 'Đơn vị phát hành';
     const payload: EInvoiceNoticeMail = {
       legalEntityId: existing.legal_entity_id,
       org,
-      buyerName: draft.buyer_name?.trim() ? oneLine(draft.buyer_name, 200) : null,
+      buyerName: draft.buyer_name?.trim() ? oneLine(draft.buyer_name, 400) : null,
       number: oneLine(draft.issued_number, 50),
       templateNo: draft.template_no?.trim() ? oneLine(draft.template_no, 50) : null,
       symbol: draft.symbol?.trim() ? oneLine(draft.symbol, 50) : null,

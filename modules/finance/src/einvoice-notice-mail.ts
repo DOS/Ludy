@@ -12,7 +12,7 @@ export const EINVOICE_NOTICE_MAIL_SOURCE = 'finance.einvoice.notice_send';
 export const zEInvoiceNoticeMail = z.object({
   legalEntityId: zId.optional(),
   org: z.string().trim().min(1).max(200),
-  buyerName: z.string().max(200).nullable(),
+  buyerName: z.string().max(400).nullable(),
   number: z.string().trim().min(1).max(50),
   templateNo: z.string().max(50).nullable(),
   symbol: z.string().max(50).nullable(),
