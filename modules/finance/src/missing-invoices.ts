@@ -310,12 +310,13 @@ export const missingInvoicesRemind = defineCommand({
     if (!tenant.contact_email) return { action: 'no_contact' };
     const today = vnToday(ctx.now);
     const cutoff = new Date(Date.parse(`${today}T00:00:00Z`) - REMINDER_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
-    // The lists of every legal entity (#1280): the mail goes to the company, and lists what each entity still lacks.
+    // The purchase lists of every legal entity (#1280, #2158): the mail goes to the company, and lists what each entity still lacks.
     const listed = await ctx.trx
       .selectFrom('ludy_finance.portal_invoice_list')
       .select(['period', 'legal_entity_id'])
       .distinct()
       .where('org_id', '=', ctx.orgId)
+      .where('direction', '=', 'purchase')
       .where('status', '=', 'done')
       .where('removed_at', 'is', null)
       .execute();
