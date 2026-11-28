@@ -130,25 +130,34 @@ const HISTORY_DOCUMENTS = HISTORY_WINDOW;
 // The check a duplicate invoice carries: from the lookup before the record, or from the record's own (#2137).
 const DUPLICATE_CHECK: Readonly<InvoiceCheck> = Object.freeze({ id: 'duplicate', status: 'fail', code: 'duplicate.found', message: 'Hóa đơn này đã có trong Inbox hoặc đã ghi sổ' });
 
-// What the books remember of a vendor (#2380): the totals, the line unit prices and the bank accounts of its last
-// HISTORY_DOCUMENTS invoices in force, newest first, without the invoice being read (a re-reading of it is not its own
-// history). The bank accounts are those its earlier proposals carried, from an XML or a PDF read but not a photo (#2426).
+// What the books remember of a vendor (#2380): the totals of its last HISTORY_DOCUMENTS non-correction invoices in force
+// (#2425), and the line unit prices and bank accounts of its last HISTORY_DOCUMENTS invoices in force, newest first,
+// without the invoice being read (a re-reading of it is not its own history). The bank accounts are those its earlier
+// proposals carried, from an XML or a PDF read but not a photo (#2426).
 async function vendorHistory(ctx: QueryContext, partyId: string, current: { series: string; number: string }): Promise<VendorHistory> {
-  const documents = await ctx.trx
-    .selectFrom('ludy_finance.purchase_document as d')
-    .select(['d.id', 'd.total', 'd.proposal_id'])
-    .where('d.org_id', '=', ctx.orgId)
-    .where('d.party_id', '=', partyId)
-    .where('d.direction', '=', 'purchase')
-    .where((eb) => eb.not(eb.and([eb('d.invoice_series', '=', current.series), eb('d.invoice_number', '=', current.number)])))
-    .where(({ not, exists, selectFrom }) =>
-      not(exists(selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
-    )
-    .orderBy('d.invoice_date', 'desc')
-    .orderBy('d.id', 'desc')
-    .limit(HISTORY_DOCUMENTS)
-    .execute();
+  const historyDocs = (normalOnly: boolean) => {
+    const query = ctx.trx
+      .selectFrom('ludy_finance.purchase_document as d')
+      .where('d.org_id', '=', ctx.orgId)
+      .where('d.party_id', '=', partyId)
+      .where('d.direction', '=', 'purchase')
+      .where((eb) => eb.not(eb.and([eb('d.invoice_series', '=', current.series), eb('d.invoice_number', '=', current.number)])))
+      .where(({ not, exists, selectFrom }) =>
+        not(exists(selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
+      )
+      .orderBy('d.invoice_date', 'desc')
+      .orderBy('d.id', 'desc')
+      .limit(HISTORY_DOCUMENTS);
+    return normalOnly ? query.where('d.correction_kind', 'is', null) : query;
+  };
+  const documents = await historyDocs(false).select(['d.id', 'd.total', 'd.proposal_id', 'd.correction_kind']).execute();
   if (documents.length === 0) return { totals: [], prices: [], bankAccounts: [] };
+  // Adjustments and replacements carry deltas or reissued totals, so exclude correction_kind IS NOT NULL from totals
+  // (#2425). Only re-query when corrections filled part of the window and may have pushed older normal invoices past it.
+  const totals =
+    documents.length === HISTORY_DOCUMENTS && documents.some((d) => d.correction_kind !== null)
+      ? (await historyDocs(true).select('d.total').execute()).map((d) => d.total)
+      : documents.flatMap((d) => (d.correction_kind === null ? [d.total] : []));
   const order = new Map(documents.map((d, i) => [d.id, i]));
   const lines = await ctx.trx
     .selectFrom('ludy_finance.purchase_line as l')
@@ -171,7 +180,7 @@ async function vendorHistory(ctx: QueryContext, partyId: string, current: { seri
           .execute();
   const byProposal = new Map(accounts.map((a) => [a.id, a.account]));
   return {
-    totals: documents.map((d) => d.total),
+    totals,
     prices: lines.flatMap((l) => (l.unit_price === null ? [] : [{ description: l.description, unitPrice: l.unit_price }])),
     bankAccounts: documents.flatMap((d) => {
       const account = d.proposal_id ? byProposal.get(d.proposal_id) : null;
@@ -735,7 +744,10 @@ export async function extractAndPropose(
   const bankAccount = sellerAccount && sellerAccount.length <= PARTY_BANK_ACCOUNT_MAX ? sellerAccount : undefined;
   if (!sale) {
     checks.push(
-      ...anomalyChecks({ sellerBankAccount: bankAccount, total: inDong ? booked.total : null, lines: inDong ? lines : [] }, lookup.history ?? null),
+      ...anomalyChecks(
+        { sellerBankAccount: bankAccount, total: inDong ? booked.total : null, lines: inDong ? lines : [], related: invoice.related },
+        lookup.history ?? null,
+      ),
     );
   }
 
