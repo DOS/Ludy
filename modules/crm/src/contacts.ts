@@ -14,6 +14,7 @@ import {
   CONTACT_PAGE_DEFAULT,
   phoneKey,
   vietnamToday,
+  zContactGet,
   zContactList,
   type Contact,
   type ContactPage,
@@ -106,7 +107,7 @@ function decodeCursor(raw: string): Cursor {
   throw new DomainError('VALIDATION', 422, 'Con trỏ trang không hợp lệ', { issues: [{ path: 'cursor', code: 'bad_cursor' }] });
 }
 
-interface Row {
+interface ContactRow {
   id: string;
   kind: 'organization' | 'person';
   name: string;
@@ -122,8 +123,40 @@ interface Row {
   open_deals: number;
   actor_origin: 'ui' | 'mcp';
   tainted: boolean;
+}
+
+interface Row extends ContactRow {
   sort_value: string;
 }
+
+const CONTACT_DETAILS_SELECT = sql`
+  p.id, p.kind, p.name, p.tax_code, p.address, p.email, p.phone, p.version, p.created_at, p.actor_origin, p.tainted,
+  -- The company of a person, through a merge to the one kept (#2438).
+  c.id AS company_id, c.name AS company_name,
+  -- The people who work at a company (the lists' columns), and the open deals of the party.
+  (SELECT count(*)::int FROM ludy_kernel.party x
+    WHERE x.org_id = p.org_id AND x.duplicate_of IS NULL AND p.kind = 'organization'
+      AND (x.company_id = p.id OR x.company_id IN (SELECT m.id FROM ludy_kernel.party m WHERE m.org_id = p.org_id AND m.duplicate_of = p.id))) AS people_count,
+  (SELECT count(*)::int FROM ludy_crm.deal dl JOIN ludy_crm.pipeline_stage st ON st.org_id = dl.org_id AND st.id = dl.stage_id
+    WHERE dl.org_id = p.org_id AND dl.party_id = p.id AND st.kind = 'open') AS open_deals
+`;
+
+const toContact = (r: ContactRow): Contact => ({
+  id: r.id,
+  kind: r.kind,
+  name: r.name,
+  taxCode: r.tax_code,
+  address: r.address,
+  email: r.email,
+  phone: r.phone,
+  version: r.version,
+  createdAt: r.created_at.toISOString(),
+  company: r.company_id === null || r.company_name === null ? null : { id: r.company_id, name: r.company_name },
+  peopleCount: r.people_count,
+  openDeals: r.open_deals,
+  actorOrigin: r.actor_origin,
+  tainted: r.tainted,
+});
 
 export const contactList = defineQuery({
   name: 'crm.contact.list',
@@ -158,15 +191,7 @@ export const contactList = defineQuery({
     }
 
     const result = await sql<Row>`
-      SELECT p.id, p.kind, p.name, p.tax_code, p.address, p.email, p.phone, p.version, p.created_at, p.actor_origin, p.tainted, (${by.text}) AS sort_value,
-        -- The company of a person, through a merge to the one kept (#2438).
-        c.id AS company_id, c.name AS company_name,
-        -- The people who work at a company (the ones linked to a company merged into it too), and the open deals of the party.
-        (SELECT count(*)::int FROM ludy_kernel.party x
-          WHERE x.org_id = p.org_id AND x.duplicate_of IS NULL AND p.kind = 'organization'
-            AND (x.company_id = p.id OR x.company_id IN (SELECT m.id FROM ludy_kernel.party m WHERE m.org_id = p.org_id AND m.duplicate_of = p.id))) AS people_count,
-        (SELECT count(*)::int FROM ludy_crm.deal dl JOIN ludy_crm.pipeline_stage st ON st.org_id = dl.org_id AND st.id = dl.stage_id
-          WHERE dl.org_id = p.org_id AND dl.party_id = p.id AND st.kind = 'open') AS open_deals
+      SELECT ${CONTACT_DETAILS_SELECT}, (${by.text}) AS sort_value
       FROM ludy_kernel.party p
       LEFT JOIN ludy_kernel.party c0 ON c0.org_id = p.org_id AND c0.id = p.company_id
       LEFT JOIN ludy_kernel.party c ON c.org_id = c0.org_id AND c.id = coalesce(c0.duplicate_of, c0.id)
@@ -177,24 +202,27 @@ export const contactList = defineQuery({
     const rows = result.rows.slice(0, limit);
     const last = rows.at(-1);
     const more = result.rows.length > limit && last !== undefined;
-    const items: Contact[] = rows.map((r) => ({
-      id: r.id,
-      kind: r.kind,
-      name: r.name,
-      taxCode: r.tax_code,
-      address: r.address,
-      email: r.email,
-      phone: r.phone,
-      version: r.version,
-      createdAt: r.created_at.toISOString(),
-      company: r.company_id === null || r.company_name === null ? null : { id: r.company_id, name: r.company_name },
-      peopleCount: r.people_count,
-      openDeals: r.open_deals,
-      actorOrigin: r.actor_origin,
-      tainted: r.tainted,
-    }));
+    const items: Contact[] = rows.map(toContact);
     return { items, next: more ? encodeCursor({ f: sorted.field, d: sorted.dir, id: last.id, v: last.sort_value }) : null };
   },
 });
 
-export const contactQueries = [contactList];
+export const contactGet = defineQuery({
+  name: 'crm.contact.get',
+  input: zContactGet,
+  access: ALL,
+  handler: async (ctx, input): Promise<Contact> => {
+    const result = await sql<ContactRow>`
+      SELECT ${CONTACT_DETAILS_SELECT}
+      FROM ludy_kernel.party src
+      JOIN ludy_kernel.party p ON p.org_id = src.org_id AND p.id = coalesce(src.duplicate_of, src.id)
+      LEFT JOIN ludy_kernel.party c0 ON c0.org_id = p.org_id AND c0.id = p.company_id
+      LEFT JOIN ludy_kernel.party c ON c.org_id = c0.org_id AND c.id = coalesce(c0.duplicate_of, c0.id)
+      WHERE src.org_id = ${ctx.orgId}::uuid AND src.id = ${input.partyId}::uuid AND p.duplicate_of IS NULL`.execute(ctx.trx);
+    const row = result.rows[0];
+    if (!row) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy liên hệ hoặc công ty này');
+    return toContact(row);
+  },
+});
+
+export const contactQueries = [contactList, contactGet];

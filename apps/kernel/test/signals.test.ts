@@ -5,6 +5,8 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
+  CONTACT_ATTENTION_HOME_MAX,
+  CRM_ATTENTION_SIGNALS_READ,
   CRM_OPEN_DEALS_SIGNALS_READ,
   CRM_WON_DEALS_SIGNALS_READ,
   FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ,
@@ -12,11 +14,31 @@ import {
   FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ,
   FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ,
   OVERDUE_RECEIVABLE_MIN_DAYS,
+  SIGNALS_MAX_CRM,
   SIGNAL_PARTIAL_VIEW_CODE,
+  SIGN_OPENED_DAYS,
+  SIGN_OPENED_SIGNALS_READ,
   SUPPLIER_BANK_CHANGE_DAYS,
-  WON_DEAL_NO_INVOICE_DAYS, sortTodayItems, zCrmWonDealSignal, zCrmWonDealSignals, zFinanceSalesSignal, zTodayItems } from '@ludy/kernel-contract';
+  WON_DEAL_NO_INVOICE_DAYS,
+  sortTodayItems,
+  zCrmWonDealSignal,
+  zCrmWonDealSignals,
+  zFinanceSalesSignal,
+  zTodayItems,
+} from '@ludy/kernel-contract';
 import { DomainError, type Lookup, type QueryContext } from '@ludy/kernel-runtime';
-import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SIGNAL_ITEMS_MAX, SUPPLIER_BANK_CHANGED_READ, dealWithoutInvoiceQuery, receivableWithOpenDealQuery, supplierBankChangedQuery } from '@ludy/kernel';
+import {
+  CONTACT_ATTENTION_READ,
+  DEAL_WITHOUT_INVOICE_READ,
+  RECEIVABLE_WITH_OPEN_DEAL_READ,
+  SIGNAL_ITEMS_MAX,
+  SUPPLIER_BANK_CHANGED_READ,
+  checkContactAttention,
+  contactAttentionQuery,
+  dealWithoutInvoiceQuery,
+  receivableWithOpenDealQuery,
+  supplierBankChangedQuery,
+} from '@ludy/kernel';
 
 // 00:30 on 2026-11-20 in Vietnam, still 2026-11-19 in UTC: the days are counted on the Vietnam calendar.
 const NOW = new Date('2026-11-19T17:30:00Z');
@@ -391,5 +413,188 @@ describe('the supplier bank account changed with a payment waiting rule (Vy C4, 
 
   it('lets a database error through', async () => {
     await expect(runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: () => { throw new Error('connection lost'); } })).rejects.toThrow('connection lost');
+  });
+});
+
+// ---- SG2: contact attention on Home across CRM, Sign, and Finance -----------------------------------------------------------------------------
+
+const crmSignal = (over: Record<string, unknown> = {}) => ({
+  partyId: party,
+  kind: 'quote_viewed',
+  targetId: randomUUID(),
+  eventAt: '2026-11-19T10:00:00Z',
+  ...over,
+});
+const signSignal = (over: Record<string, unknown> = {}) => ({
+  partyId: party,
+  envelopeId: randomUUID(),
+  openedAt: '2026-11-19T12:00:00Z',
+  ...over,
+});
+const runContactAttention = (
+  reads: Reads,
+  options: { absent?: readonly string[]; asked?: string[]; inputs?: Record<string, unknown>; mcp?: { grantId: string; kind: 'company' | 'member' } } = {},
+) => {
+  const ctx = contextOf(reads, options.absent, options.asked, options.inputs);
+  (ctx as { actor: unknown }).actor = options.mcp
+    ? { type: 'user', userId: randomUUID(), aal: 'aal1', mcp: { grantId: options.mcp.grantId, kind: options.mcp.kind } }
+    : { type: 'user', userId: randomUUID(), aal: 'aal1' };
+  return contactAttentionQuery({ now: () => NOW }).handler(ctx, {});
+};
+const checkAttention = (
+  reads: Reads,
+  options: { absent?: readonly string[]; asked?: string[]; inputs?: Record<string, unknown>; mcp?: { grantId: string; kind: 'company' | 'member' } } = {},
+) => {
+  const ctx = contextOf(reads, options.absent, options.asked, options.inputs);
+  (ctx as { actor: unknown }).actor = options.mcp
+    ? { type: 'user', userId: randomUUID(), aal: 'aal1', mcp: { grantId: options.mcp.grantId, kind: options.mcp.kind } }
+    : { type: 'user', userId: randomUUID(), aal: 'aal1' };
+  return checkContactAttention(ctx, () => NOW);
+};
+
+describe('Home contact attention signals composition (#4994 SG2)', () => {
+  it('registers kernel.signals.contact_attention with the expected SG2 constants', () => {
+    expect(contactAttentionQuery().name).toBe(CONTACT_ATTENTION_READ);
+    expect(CONTACT_ATTENTION_HOME_MAX).toBe(5);
+    expect(SIGN_OPENED_DAYS).toBe(7);
+  });
+
+  it('batches one read per source, dedupes to newest event per contact, sorts newest-first, caps at 5, and drops oldest', async () => {
+    const p1 = randomUUID();
+    const p2 = randomUUID();
+    const p3 = randomUUID();
+    const p4 = randomUUID();
+    const p5 = randomUUID();
+    const p6 = randomUUID();
+    const p7 = randomUUID();
+    const asked: string[] = [];
+    const inputs: Record<string, unknown> = {};
+
+    const items = await runContactAttention(
+      {
+        [CRM_ATTENTION_SIGNALS_READ]: [
+          crmSignal({ partyId: p1, kind: 'quote_viewed', eventAt: '2026-11-18T08:00:00Z' }),
+          crmSignal({ partyId: p6, kind: 'quote_unanswered', eventAt: '2026-11-12T08:00:00Z' }),
+        ],
+        [SIGN_OPENED_SIGNALS_READ]: [
+          signSignal({ partyId: p1, openedAt: '2026-11-19T16:00:00Z' }),
+          signSignal({ partyId: p2, openedAt: '2026-11-19T14:00:00Z' }),
+        ],
+        [CRM_OPEN_DEALS_SIGNALS_READ]: [openDeal({ partyId: p3 }), openDeal({ partyId: p4 }), openDeal({ partyId: p5 }), openDeal({ partyId: p7 })],
+        [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: [
+          overdue({ partyId: p3, oldestDueOn: '2026-11-19', amount: '9999999' }),
+          overdue({ partyId: p4, oldestDueOn: '2026-11-17' }),
+          overdue({ partyId: p5, oldestDueOn: '2026-11-15' }),
+          overdue({ partyId: p7, oldestDueOn: '2026-11-10' }),
+        ],
+      },
+      { asked, inputs },
+    );
+
+    expect(asked).toEqual([
+      CRM_ATTENTION_SIGNALS_READ,
+      SIGN_OPENED_SIGNALS_READ,
+      CRM_OPEN_DEALS_SIGNALS_READ,
+      FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ,
+    ]);
+    expect((inputs[FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ] as { partyIds: string[] }).partyIds).toEqual([p1, p6, p2, p3, p4, p5, p7]);
+    expect(zTodayItems.safeParse(items).success).toBe(true);
+    expect(items).toHaveLength(CONTACT_ATTENTION_HOME_MAX);
+    // p1 newest is envelope_opened (2026-11-19T16:00Z), followed by p2 (14:00Z), p3 (11-19T00:00+07 = 11-18T17:00Z), p4 (11-17), p5 (11-15); p6 and p7 (oldest) are dropped.
+    expect(items.map((i) => i.href)).toEqual([
+      `/contacts?c=${p1}`,
+      `/contacts?c=${p2}`,
+      `/contacts?c=${p3}`,
+      `/contacts?c=${p4}`,
+      `/contacts?c=${p5}`,
+    ]);
+    expect(items[0]).toMatchObject({ id: `signal:contact-attention:envelope_opened:${p1}`, title: { key: 'signals.contactAttention.envelopeOpened' } });
+    expect(items[2]).toMatchObject({
+      id: `signal:contact-attention:invoice_overdue:${p3}`,
+      title: { key: 'signals.contactAttention.invoiceOverdue', params: { days: 1 } },
+    });
+    expect(JSON.stringify(items)).not.toContain('9999999');
+    expect(items.every((i) => i.amount === undefined && i.currency === undefined)).toBe(true);
+  });
+
+  it('caps Finance partyIds batch to SIGNALS_MAX_CRM (500) without dropping newer CRM or Sign items', async () => {
+    const extraDeals = Array.from({ length: SIGNALS_MAX_CRM + 10 }, () => openDeal({ partyId: randomUUID() }));
+    const inputs: Record<string, unknown> = {};
+    const items = await runContactAttention(
+      {
+        [CRM_ATTENTION_SIGNALS_READ]: [crmSignal({ partyId: party, kind: 'customer_replied', eventAt: '2026-11-19T17:00:00Z' })],
+        [SIGN_OPENED_SIGNALS_READ]: [],
+        [CRM_OPEN_DEALS_SIGNALS_READ]: extraDeals,
+        [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: [],
+      },
+      { inputs },
+    );
+    expect((inputs[FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ] as { partyIds: string[] }).partyIds).toHaveLength(SIGNALS_MAX_CRM);
+    expect(items.map((i) => i.href)).toEqual([`/contacts?c=${party}`]);
+  });
+
+  it('fails closed in browser Home when Finance or Sign is partial or unavailable while keeping allowed CRM items', async () => {
+    const partial = () => {
+      throw new DomainError(SIGNAL_PARTIAL_VIEW_CODE, 403, 'partial');
+    };
+    const items = await runContactAttention({
+      [CRM_ATTENTION_SIGNALS_READ]: [crmSignal({ partyId: party, kind: 'quote_viewed' })],
+      [SIGN_OPENED_SIGNALS_READ]: () => {
+        throw new DomainError('FORBIDDEN', 403, 'no sign');
+      },
+      [CRM_OPEN_DEALS_SIGNALS_READ]: [openDeal({ partyId: other })],
+      [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: partial,
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ id: `signal:contact-attention:quote_viewed:${party}`, href: `/contacts?c=${party}` });
+  });
+
+  it('marks contact_attention unchecked over MCP when books are partial or Sign is restricted, and checked when allowed', async () => {
+    const partial = () => {
+      throw new DomainError(SIGNAL_PARTIAL_VIEW_CODE, 403, 'partial');
+    };
+    const baseReads: Reads = {
+      [CRM_ATTENTION_SIGNALS_READ]: [crmSignal({ partyId: party, kind: 'quote_expiring' })],
+      [SIGN_OPENED_SIGNALS_READ]: [signSignal({ partyId: other })],
+      [CRM_OPEN_DEALS_SIGNALS_READ]: [openDeal({ partyId: party })],
+      [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: [overdue({ partyId: party })],
+    };
+
+    const checked = await checkAttention(baseReads, { mcp: { grantId: 'g1', kind: 'company' } });
+    expect(checked.status).toBe('ok');
+    expect(checked.items).toHaveLength(2);
+
+    const partialCheck = await checkAttention(
+      { ...baseReads, [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: partial },
+      { mcp: { grantId: 'g2', kind: 'member' } },
+    );
+    expect(partialCheck).toEqual({ items: [], status: 'partial' });
+
+    const signRestricted = await checkAttention(
+      {
+        ...baseReads,
+        [SIGN_OPENED_SIGNALS_READ]: () => {
+          throw new DomainError('FORBIDDEN', 403, 'company only');
+        },
+      },
+      { mcp: { grantId: 'g3', kind: 'member' } },
+    );
+    expect(signRestricted).toEqual({ items: [], status: 'unavailable' });
+
+    await expect(
+      runContactAttention(
+        { ...baseReads, [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: partial },
+        { mcp: { grantId: 'g2', kind: 'member' } },
+      ),
+    ).rejects.toMatchObject({ code: SIGNAL_PARTIAL_VIEW_CODE });
+  });
+
+  it('ignores free-text contract violations from child signal reads cleanly', async () => {
+    const items = await runContactAttention({
+      [CRM_ATTENTION_SIGNALS_READ]: [crmSignal({ partyName: 'Secret Name' })],
+      [SIGN_OPENED_SIGNALS_READ]: [signSignal({ signerEmail: 'leak@example.test' })],
+      [CRM_OPEN_DEALS_SIGNALS_READ]: [],
+    });
+    expect(items).toEqual([]);
   });
 });

@@ -57,3 +57,6 @@ export type Contact = z.infer<typeof zContact>;
 
 export const zContactPage = z.object({ items: z.array(zContact), next: z.string().nullable() });
 export type ContactPage = z.infer<typeof zContactPage>;
+
+export const zContactGet = z.strictObject({ partyId: zId });
+export type ContactGet = z.infer<typeof zContactGet>;

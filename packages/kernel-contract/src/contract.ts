@@ -241,7 +241,7 @@ import { zBankSupplierMatch, zSupplierPayableLine, zSupplierPayableLineAsk, zSup
 import { zEInvoiceNotice, zEInvoiceNoticeList, zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeStep } from './einvoice-notice.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceCorrectionOptions, zEInvoiceCorrectionRateExplained, zEInvoiceCorrectionRateInput, zEInvoiceReasonInput, zEInvoiceReasonSuggested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStartCorrection, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
-import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
+import { zContact, zContactGet, zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
 import { zCashForecast, zCashForecastExplanation, zFinanceCashForecastExplainAsk, zFinanceCashForecastInput } from './finance-cash-forecast.ts';
@@ -329,7 +329,7 @@ import { zDepreciationRequest, zJournalVoucherRequest, zSurplusResolutionRequest
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
 import { zStatementsHtkkCheck, zStatementsHtkkYear } from './statements-htkk.ts';
 import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
-import { zSinceYesterday, zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting, zTodayWeekly, zTodayWeeklyInput } from './today.ts';
+import { zSinceYesterday, zTodayBrief, zTodayBriefInput, zTodayItems, zTodayList, zTodayMailSet, zTodayMailSetting, zTodayWeekly, zTodayWeeklyInput } from './today.ts';
 import { zHomeLayoutSaveInput, zHomeLayoutView } from './home-layout.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
@@ -1207,6 +1207,7 @@ export const contract = {
   // today read and ordered flags first. Every role; each line shows only what the member could open there. Reads only.
   today: {
     list: oc.output(zTodayList),
+    contactAttention: oc.output(zTodayItems),
     // What each AI coworker prepared over the last day, counts only, for the rows the member can open (#3256). Every role; no model.
     sinceYesterday: oc.output(zSinceYesterday),
     // Vy's brief of the same list: a few checked sentences, or the plain template, or none (#2383). One model call at most, counted
@@ -1523,6 +1524,7 @@ export const contract = {
     // Filter AST of the `crm.party` scope (a saved view stores the same), a page at a time. Every role reads.
     contacts: {
       list: oc.input(zContactList).output(zContactPage),
+      get: oc.input(zContactGet).output(zContact),
       // The companies a person may work at (#2438): the sales coworker's suggestion, read only; a person links one with a click.
       companySuggestions: oc.input(zCompanySuggest).output(zCompanySuggested),
       // The conversations linked to the contact (#2333; for a company, its people's too), newest activity first, with no message body.

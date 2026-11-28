@@ -196,7 +196,10 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     ].map((i) => i.id).sort());
     expect(answer.items).toHaveLength(2);
     expect(answer.checked).toEqual(['deal_without_invoice', 'receivable_with_open_deal', 'supplier_bank_changed']);
-    expect(answer.unchecked).toEqual([{ rule: 'conversation_unanswered', reason: 'not_available' }]);
+    expect(answer.unchecked).toEqual([
+      { rule: 'conversation_unanswered', reason: 'not_available' },
+      { rule: 'contact_attention', reason: 'not_available' },
+    ]);
     // A branch-limited member's grant gets no item, and is told in so many words that the two CRM rules could not be checked: an empty list is never "all clear". Rule 3 reads the org's bank changes (ids and days, no branch scope), so it is checked.
     const branch = mcp(users.branchMember, await grant(users.branchMember, { kind: 'member' }), 'member');
     const limited = (await run(branch, 'kernel.mcp.signals')) as unknown as { items: unknown[]; checked: string[]; unchecked: Array<{ rule: string; reason: string }> };
@@ -206,6 +209,7 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
       { rule: 'deal_without_invoice', reason: 'partial_view' },
       { rule: 'receivable_with_open_deal', reason: 'partial_view' },
       { rule: 'conversation_unanswered', reason: 'not_available' },
+      { rule: 'contact_attention', reason: 'partial_view' },
     ]);
   });
 

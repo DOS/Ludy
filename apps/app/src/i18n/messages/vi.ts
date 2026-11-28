@@ -299,6 +299,10 @@ export const vi = {
     due: 'Hạn {when}',
     open: 'Mở',
     from: 'Từ {name}',
+    contactAttention: {
+      title: 'Cần chú ý',
+      when: 'Lúc {when}',
+    },
     peek: {
       inspect: 'Xem nhanh',
       inspectItem: 'Xem nhanh {title}',
@@ -307,6 +311,7 @@ export const vi = {
       count: 'Số lượng',
       amount: 'Số tiền',
       due: 'Hạn xử lý',
+      when: 'Thời điểm',
       destination: 'Màn hình xử lý',
       humanHint: 'Mọi thao tác duyệt, ghi sổ hay gửi đi vẫn do bạn xác nhận trực tiếp tại màn hình chức năng.',
     },
@@ -336,6 +341,14 @@ export const vi = {
         supplierBankChangedPartial: 'Bạn chỉ xem được một phần dữ liệu nhà cung cấp, nên chưa kiểm tra đủ việc đổi tài khoản ngân hàng: hãy tự xem các khoản thanh toán đang chờ trước khi trả',
         conversationUnanswered: 'Khách này nhắn đã {hours, plural, other {# giờ}} mà chưa được trả lời, và vẫn còn deal đang mở',
         conversationUnansweredMore: '{count, plural, other {# khách khác}} nhắn quá 24 giờ chưa được trả lời mà vẫn còn deal đang mở',
+        contactAttention: {
+          quoteViewed: 'Khách vừa xem báo giá',
+          quoteExpiring: 'Báo giá sắp hết hạn',
+          quoteUnanswered: 'Báo giá đã gửi quá 7 ngày chưa có trả lời',
+          customerReplied: 'Khách nhắn lại sau thời gian dài',
+          envelopeOpened: 'Người ký vừa mở hồ sơ ký',
+          invoiceOverdue: 'Hóa đơn quá hạn {days, plural, other {# ngày}}',
+        },
       },
       crm: {
         noActivity: 'Nhắc: deal này đã {days, plural, other {# ngày}} chưa có cập nhật',
@@ -19297,6 +19310,7 @@ export const vi = {
       },
       contact: {
         company_candidates: 'Tìm các công ty một người liên hệ có thể làm việc',
+        get: 'Xem chi tiết một liên hệ hoặc công ty',
         list: 'Xem danh sách liên hệ',
         meeting_facts: 'Đọc cơ hội, báo giá, tóm tắt hóa đơn và tin nhắn mới nhất của liên hệ cho một cuộc họp',
         meeting_research_source: 'Đọc thông tin liên hệ và trạng thái AI cho lượt chuẩn bị trước họp của Dy',
@@ -19399,6 +19413,7 @@ export const vi = {
         reorder: 'Sắp xếp lại các giai đoạn của quy trình bán hàng',
       },
       signals: {
+        attention: 'Xem các liên hệ đang cần chú ý trong CRM theo mã và thời điểm',
         open_deals: 'Xem các deal đang mở, để đối chiếu với công nợ quá hạn',
         won_deals: 'Xem các deal đã thắng, để đối chiếu với hóa đơn bán hàng',
       },
@@ -20745,6 +20760,7 @@ export const vi = {
         list: 'Xem các phiên đăng nhập',
       },
       signals: {
+        contact_attention: 'Xem tối đa 5 liên hệ cần chú ý mới nhất từ CRM, Ký kết và Kế toán',
         deal_without_invoice: 'Xem các deal đã thắng mà chưa có hóa đơn bán hàng',
         receivable_with_open_deal: 'Xem các khách có công nợ quá hạn mà vẫn còn deal đang mở',
         supplier_bank_changed: 'Xem các nhà cung cấp đổi tài khoản ngân hàng khi còn khoản thanh toán đang chờ',
@@ -21583,6 +21599,9 @@ export const vi = {
         remove: 'Gỡ người nhận khỏi bản nháp hồ sơ ký',
         reorder: 'Đổi thứ tự ký trên bản nháp hồ sơ',
         start_in_person: 'Bắt đầu phiên ký trực tiếp tại quầy cho người đang tới lượt ký',
+      },
+      signals: {
+        opened: 'Xem các hồ sơ ký vừa được người ký mở trong 7 ngày qua theo mã liên hệ và thời điểm',
       },
       stamp: {
         archive: 'Lưu trữ con dấu của tổ chức',

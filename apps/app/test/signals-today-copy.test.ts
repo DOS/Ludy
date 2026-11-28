@@ -15,6 +15,12 @@ const TITLES: Array<{ key: string; params: Record<string, string | number> }> = 
   { key: 'signals.supplierBankChangedPartial', params: {} },
   { key: 'signals.conversationUnanswered', params: { hours: 26 } },
   { key: 'signals.conversationUnansweredMore', params: { count: 4 } },
+  { key: 'signals.contactAttention.quoteViewed', params: {} },
+  { key: 'signals.contactAttention.quoteExpiring', params: {} },
+  { key: 'signals.contactAttention.quoteUnanswered', params: {} },
+  { key: 'signals.contactAttention.customerReplied', params: {} },
+  { key: 'signals.contactAttention.envelopeOpened', params: {} },
+  { key: 'signals.contactAttention.invoiceOverdue', params: { days: 5 } },
 ];
 
 type Say = (key: string, values?: Record<string, string | number>) => string;
@@ -38,5 +44,8 @@ describe('the cross-app flag of Home, in words', () => {
     expect(sayIn('en')('today.items.signals.wonDealNoInvoice', { days: 9 })).toContain('9 days ago');
     expect(sayIn('en')('today.items.signals.wonDealNoInvoiceMore', { count: 1 })).toContain('1 more deal ');
     expect(sayIn('vi')('today.items.signals.wonDealNoInvoice', { days: 9 })).toContain('9 ngày');
+    expect(sayIn('en')('today.items.signals.contactAttention.invoiceOverdue', { days: 1 })).toContain('1 day');
+    expect(sayIn('en')('today.items.signals.contactAttention.invoiceOverdue', { days: 4 })).toContain('4 days');
+    expect(sayIn('vi')('today.items.signals.contactAttention.invoiceOverdue', { days: 4 })).toContain('4 ngày');
   });
 });

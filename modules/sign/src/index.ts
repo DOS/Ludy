@@ -74,6 +74,7 @@ export {
   type SignSealJobData,
   type SignSealJobDocument,
 } from './queries.ts';
+export { signOpenedSignals, signSignalQueries } from './signals.ts';
 export {
   computeSignVersionDiff,
   splitPageIntoClauses,

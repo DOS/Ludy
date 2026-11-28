@@ -1164,6 +1164,7 @@ export function createRpcHandler(
     },
     today: {
       list: os.today.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.today', {}, { actor, orgId }))),
+      contactAttention: os.today.contactAttention.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.signals.contact_attention', {}, { actor, orgId }))),
       // What each AI coworker prepared over the last day: counts of the member's readable activity rows (#3256), no model.
       sinceYesterday: os.today.sinceYesterday.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.since_yesterday', {}, { actor, orgId }))),
       // Vy's brief (#2383): written from the member's own list only (the same query, in their context), so it can say
@@ -2318,6 +2319,7 @@ export function createRpcHandler(
       },
       contacts: {
         list: os.crm.contacts.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.contact.list', input, { actor, orgId }))),
+        get: os.crm.contacts.get.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.contact.get', input, { actor, orgId }))),
         conversations: os.crm.contacts.conversations.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.conversations', input, { actor, orgId }))),
         meetingFacts: os.crm.contacts.meetingFacts.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.contact.meeting_facts', input, { actor, orgId }))),
         meetingResearch: os.crm.contacts.meetingResearch.handler(({ context, input }) =>

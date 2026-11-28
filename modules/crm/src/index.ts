@@ -50,7 +50,7 @@ export { dealHasQuotes, dealQuotes, quoteCommands, quoteDefaults, quoteDeleteDra
 export { QUOTE_MAIL_SOURCE, QUOTE_MAIL_TEMPLATE, renderQuoteMail, zQuoteMail } from './quote-mail.ts';
 
 export { quoteSuggestSource, type QuoteSuggestSource } from './quote-suggest.ts';
-export { attentionCommands, attentionQueries, partyAttention, partyAttentionSeen } from './attention.ts';
+export { attentionCommands, attentionQueries, crmAttentionSignals, partyAttention, partyAttentionSeen } from './attention.ts';
 export { followupQueries, followupSource, type FollowupSource } from './followup-source.ts';
 export { meetingBriefQueries, meetingBriefSourceQuery, type MeetingBriefSource } from './meeting-brief.ts';
 export { quoteReport } from './quote-report.ts';

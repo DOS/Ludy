@@ -13,11 +13,11 @@ import { z } from 'zod';
 import { zTodayItem, type TodayItem } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineQuery } from '@ludy/kernel-runtime';
-import { checkConversationUnanswered, checkDealWithoutInvoice, checkReceivableWithOpenDeal, checkSupplierBankChanged, type RuleCheck } from './signals.ts';
+import { checkContactAttention, checkConversationUnanswered, checkDealWithoutInvoice, checkReceivableWithOpenDeal, checkSupplierBankChanged, type RuleCheck } from './signals.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
-export const SIGNAL_RULE_KEYS = ['deal_without_invoice', 'receivable_with_open_deal', 'supplier_bank_changed', 'conversation_unanswered'] as const;
+export const SIGNAL_RULE_KEYS = ['deal_without_invoice', 'receivable_with_open_deal', 'supplier_bank_changed', 'conversation_unanswered', 'contact_attention'] as const;
 export type SignalRuleKey = (typeof SIGNAL_RULE_KEYS)[number];
 export type SignalUncheckedReason = 'partial_view' | 'not_available';
 
@@ -40,6 +40,7 @@ export const mcpSignals = defineQuery({
       ['receivable_with_open_deal', () => checkReceivableWithOpenDeal(ctx)],
       ['supplier_bank_changed', () => checkSupplierBankChanged(ctx)],
       ['conversation_unanswered', () => checkConversationUnanswered(ctx)],
+      ['contact_attention', () => checkContactAttention(ctx)],
     ];
     const out: McpSignals = { items: [], checked: [], unchecked: [] };
     for (const [rule, run] of runs) {

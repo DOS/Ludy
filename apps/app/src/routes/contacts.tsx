@@ -5,8 +5,8 @@
 // members add a contact in a side panel (components/add-contact-panel.tsx) and edit one on its row (a tax code can be added, never changed); viewers read. A row opens a panel with the
 // contact's details, its notes (with the notes module) and its timeline.
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { Link, useParams } from '@tanstack/react-router';
-import { useState } from 'react';
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
+import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { Contact, FilterAst, SavedViewSort } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
@@ -27,6 +27,7 @@ import { ConditionChips } from '../components/condition-chips.tsx';
 import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
+import { PHONE_TARGET } from '../lib/touch-target.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import {
   CONTACT_SORT_OPTIONS,
@@ -167,9 +168,41 @@ function ContactPanel({ contact, canEdit, columns }: { contact: Contact; canEdit
 
 const TRI: Tri[] = ['', 'yes', 'no'];
 
+const CONTACT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function readContactTarget(search: string): string | null {
+  const raw = new URLSearchParams(search).get('c');
+  return raw && CONTACT_UUID_RE.test(raw) ? raw.toLowerCase() : null;
+}
+
 // mode: the people (the default) or the companies (#2438): the kind of party the list holds, set by the screen and not by the filter bar.
 export function ContactsPage({ mode = 'people' }: { mode?: 'people' | 'companies' }) {
   const { slug } = useParams({ strict: false }) as { slug: string };
+  const navigate = useNavigate();
+  const routeSearch = useSearch({ strict: false }) as { c?: string } | undefined;
+  const fallbackContactId = (() => {
+    try {
+      return readContactTarget(window.location.search);
+    } catch {
+      return null;
+    }
+  })();
+  const deepContactId = routeSearch?.c ?? fallbackContactId ?? null;
+  const [dismissedDeepId, setDismissedDeepId] = useState<string | null>(null);
+  useEffect(() => {
+    if (deepContactId === null) setDismissedDeepId(null);
+  }, [deepContactId]);
+  const deepContactQuery = useQuery({
+    ...orpc.crm.contacts.get.queryOptions({
+      input: { partyId: deepContactId ?? '00000000-0000-0000-0000-000000000000' },
+    }),
+    enabled: deepContactId !== null && dismissedDeepId !== deepContactId,
+    retry: false,
+  });
+  const deepContact =
+    deepContactQuery.data && deepContactId !== null && dismissedDeepId !== deepContactId
+      ? deepContactQuery.data
+      : null;
   const kind = mode === 'companies' ? ('organization' as const) : ('person' as const);
   const t = useTranslations('contacts');
   const org = useQuery(orpc.org.get.queryOptions());
@@ -193,6 +226,24 @@ export function ContactsPage({ mode = 'people' }: { mode?: 'people' | 'companies
     }),
   );
   const rows = contacts.data?.pages.flatMap((p) => p.items) ?? [];
+  const displayRows = deepContact && !rows.some((r) => r.id === deepContact.id) ? [deepContact, ...rows] : rows;
+  const activeOpenId = openId ?? (deepContact ? deepContact.id : null);
+  const clearDeepContact = () => {
+    if (deepContactId === null) return;
+    setDismissedDeepId(deepContactId);
+    void navigate({
+      to: mode === 'companies' ? '/o/$slug/companies' : '/o/$slug/contacts',
+      params: { slug },
+      search: {},
+      replace: true,
+      resetScroll: false,
+    }).catch(() => {});
+  };
+  const toggleContact = (id: string) => {
+    const next = activeOpenId === id ? null : id;
+    setOpenId(next);
+    if (deepContactId !== null) clearDeepContact();
+  };
   const filtered = filters.all.length > 0;
   // The name is the open control (#3649), so there is no column of "Mở" buttons; a person's row also says how many deals are open.
   const head = mode === 'companies' ? [t('columns.name'), t('columns.taxCode'), t('columns.people'), t('columns.openDeals')] : [t('columns.name'), t('columns.company'), t('columns.phone'), t('columns.email'), t('columns.openDeals')];
@@ -202,6 +253,7 @@ export function ContactsPage({ mode = 'people' }: { mode?: 'people' | 'companies
     setBar({ ...EMPTY_CONTACT_FILTER, search: search.slice(0, 100) });
     setSort(null);
     setOpenId(id);
+    clearDeepContact();
   };
   const saved = (added: { partyId: string; name: string }, another: boolean) => {
     if (another) return;
@@ -219,6 +271,7 @@ export function ContactsPage({ mode = 'people' }: { mode?: 'people' | 'companies
     setBar({ ...applied, kind: '', ...(mode === 'companies' ? { email: '', phone: '' } : { taxCode: '' }) });
     setSort(nextSort);
     setOpenId(null);
+    clearDeepContact();
   };
   const triSelect = (key: 'email' | 'phone' | 'taxCode', label: string) => (
     <div className="flex flex-col gap-1">
@@ -284,17 +337,22 @@ export function ContactsPage({ mode = 'people' }: { mode?: 'people' | 'companies
         )}
       </div>
       <ConditionChips scope="party" rest={bar.rest} onChange={(rest) => setBar({ ...bar, rest })} listLabel={t('filters.other')} removeLabel={(condition) => t('filters.remove', { condition })} />
-      {contacts.isPending ? (
+      {deepContactId !== null && dismissedDeepId !== deepContactId && deepContactQuery.isError && (
+        <div className="mb-3">
+          <ErrorText>{errorMessage(deepContactQuery.error)}</ErrorText>
+        </div>
+      )}
+      {contacts.isPending && displayRows.length === 0 ? (
         <TableSkeleton columns={head.length} />
-      ) : contacts.error && rows.length === 0 ? (
+      ) : contacts.error && displayRows.length === 0 ? (
         <ErrorText>{errorMessage(contacts.error)}</ErrorText>
-      ) : rows.length === 0 ? (
+      ) : displayRows.length === 0 ? (
         <Empty title={filtered ? (mode === 'companies' ? t('companiesNoMatch') : t('noMatch')) : mode === 'companies' ? t('companiesEmpty') : t('empty')} hint={filtered ? undefined : mode === 'companies' ? t('companiesEmptyHint') : t('emptyHint')} />
       ) : (
         <>
           <DataTable head={head} stacked>
-            {rows.map((c) => (
-              <ContactRows key={c.id} mode={mode} contact={c} open={openId === c.id} onToggle={() => setOpenId(openId === c.id ? null : c.id)} canEdit={canEdit} columns={head.length} />
+            {displayRows.map((c) => (
+              <ContactRows key={c.id} mode={mode} contact={c} open={activeOpenId === c.id} onToggle={() => toggleContact(c.id)} canEdit={canEdit} columns={head.length} />
             ))}
           </DataTable>
           {contacts.error && (
@@ -329,7 +387,7 @@ export function ContactRows({ mode, contact, open, onToggle, canEdit, columns }:
       <TableRow>
         <TableCell className="min-w-48">
           {/* The name opens the contact (#3649); its panel is the row below. */}
-          <button type="button" onClick={onToggle} aria-expanded={open} aria-label={t('openOf', { name: contact.name })} className="rounded-sm text-left font-medium text-foreground outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
+          <button type="button" onClick={onToggle} aria-expanded={open} aria-label={t('openOf', { name: contact.name })} className={`rounded-sm text-left font-medium text-foreground outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 ${PHONE_TARGET}`}>
             {contact.name}
           </button>{' '}
           <AiWrittenBadge actorOrigin={contact.actorOrigin} tainted={contact.tainted} />

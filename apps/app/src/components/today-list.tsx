@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useRef, useState, type MouseEvent } from 'react';
 import { Link, useRouter } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { todayCoworkerKey, todayCount, type TodayCoworkers, type TodayItem, type TodaySeverity } from '@ludy/kernel-contract';
+import { CONTACT_ATTENTION_HOME_MAX, todayCoworkerKey, todayCount, type TodayCoworkers, type TodayItem, type TodaySeverity } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button, buttonVariants } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
@@ -59,6 +59,7 @@ function TodayRow({
   slug,
   coworkers,
   selected,
+  dueAsEvent = false,
   onInspect,
   onRowClick,
 }: {
@@ -66,6 +67,7 @@ function TodayRow({
   slug: string;
   coworkers: TodayCoworkers;
   selected: boolean;
+  dueAsEvent?: boolean;
   onInspect: (id: string) => void;
   onRowClick: (id: string, event: MouseEvent<HTMLElement>) => void;
 }) {
@@ -76,6 +78,7 @@ function TodayRow({
   const itemKey = todayItemId(item);
   const itemTitle = title(item);
   const path = todayPath(slug, item.href);
+  const isEventTimestamp = dueAsEvent && !item.id.includes(':invoice_overdue:');
   // A plain click moves inside the app without a reload; a new tab, a copied link and the keyboard use the real href.
   const go = (event: MouseEvent<HTMLAnchorElement>) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -106,7 +109,13 @@ function TodayRow({
               {item.severity && <Badge variant={SEVERITY_VARIANT[item.severity]}>{t(`severity.${item.severity}`)}</Badge>}
               {item.count !== undefined && <span className="tabular-nums">{t('count', { count: item.count })}</span>}
               {item.amount !== undefined && <span className="font-mono tabular-nums">{f.money(item.amount, item.currency)}</span>}
-              {item.dueAt !== undefined && <span className="tabular-nums">{t('due', { when: item.kind === 'message' ? f.dateTime(item.dueAt) : f.date(item.dueAt) })}</span>}
+              {item.dueAt !== undefined && (
+                <span className="tabular-nums">
+                  {isEventTimestamp
+                    ? t('contactAttention.when', { when: f.dateTime(item.dueAt) })
+                    : t('due', { when: item.kind === 'message' ? f.dateTime(item.dueAt) : f.date(item.dueAt) })}
+                </span>
+              )}
             </span>
           </span>
           {/* The whole row is the link; on a phone the word would only squeeze the title. */}
@@ -116,6 +125,7 @@ function TodayRow({
           type="button"
           size="xs"
           variant="ghost"
+          className={PHONE_TARGET}
           data-peek-trigger={itemKey}
           data-testid="today-peek-btn"
           aria-label={t('peek.inspectItem', { title: itemTitle })}
@@ -135,18 +145,25 @@ export function TodayList({ slug }: { slug: string }) {
   const router = useRouter();
   const title = useTitle();
   const live = useStreamLive();
+  const crmInstalled = installedModules().includes('crm');
   const today = useQuery({ ...orpc.today.list.queryOptions(), refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
+  const contactAttention = useQuery({
+    ...orpc.today.contactAttention.queryOptions(),
+    enabled: crmInstalled,
+    refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS),
+  });
   const [all, setAll] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const items = today.data?.items ?? [];
+  const attentionItems = crmInstalled ? (contactAttention.data ?? []).slice(0, CONTACT_ATTENTION_HOME_MAX) : [];
   // One count per thing (#3591): a flag about proposals already listed is a chip on them, not a row, and the number beside the title is the
   // same one the summary says.
   const allGroups = groupToday(queueRows(items));
   const rows = allGroups.reduce((n, g) => n + g.items.length, 0);
   const groups = all ? allGroups : limitGroups(allGroups, QUEUE_ROWS);
   const chips = proposalChips(items);
-  const total = todayCount(items);
-  const visibleItems = groups.flatMap((group) => group.items);
+  const total = todayCount(items) + todayCount(attentionItems);
+  const visibleItems = [...groups.flatMap((group) => group.items), ...attentionItems];
   const peek = useListPeekNav({
     items: visibleItems,
     getId: todayItemId,
@@ -184,7 +201,7 @@ export function TodayList({ slug }: { slug: string }) {
     );
   }
 
-  if (groups.length === 0) {
+  if (groups.length === 0 && attentionItems.length === 0) {
     return (
       <section aria-labelledby="overview-today">
         <h2 id="overview-today" className="flex items-baseline gap-2 text-base font-semibold text-foreground">
@@ -269,6 +286,30 @@ export function TodayList({ slug }: { slug: string }) {
               </ul>
             </div>
           ))}
+          {attentionItems.length > 0 && (
+            <div data-testid="today-contact-attention" aria-labelledby="today-contact-attention-heading">
+              <div className="flex flex-wrap items-center gap-2 bg-muted/30 px-4 py-2">
+                <h3 id="today-contact-attention-heading" className="flex items-baseline gap-2 text-sm font-semibold text-foreground">
+                  {t('contactAttention.title')}
+                  <span className="font-mono text-xs font-normal tabular-nums text-subtle-foreground">{attentionItems.length}</span>
+                </h3>
+              </div>
+              <ul className="divide-y">
+                {attentionItems.map((item) => (
+                  <TodayRow
+                    key={todayItemId(item)}
+                    item={item}
+                    slug={slug}
+                    coworkers={today.data.coworkers}
+                    selected={peek.selectedId === todayItemId(item)}
+                    dueAsEvent
+                    onInspect={peek.openPeek}
+                    onRowClick={peek.onRowClick}
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
         {rows > QUEUE_ROWS && (
           <div className="border-t px-4 py-2.5">
@@ -354,9 +395,13 @@ export function TodayList({ slug }: { slug: string }) {
               ) : null}
               {activeItem.dueAt !== undefined ? (
                 <div>
-                  <dt className="text-subtle-foreground">{t('peek.due')}</dt>
+                  <dt className="text-subtle-foreground">
+                    {t(activeItem.id.startsWith('signal:contact-attention:') && !activeItem.id.includes(':invoice_overdue:') ? 'peek.when' : 'peek.due')}
+                  </dt>
                   <dd className="tabular-nums text-muted-foreground">
-                    {activeItem.kind === 'message' ? f.dateTime(activeItem.dueAt) : f.date(activeItem.dueAt)}
+                    {activeItem.kind === 'message' || (activeItem.id.startsWith('signal:contact-attention:') && !activeItem.id.includes(':invoice_overdue:'))
+                      ? f.dateTime(activeItem.dueAt)
+                      : f.date(activeItem.dueAt)}
                   </dd>
                 </div>
               ) : null}

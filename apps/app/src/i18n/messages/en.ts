@@ -300,6 +300,10 @@ export const en = {
     due: 'Due {when}',
     open: 'Open',
     from: 'From {name}',
+    contactAttention: {
+      title: 'Needs attention',
+      when: 'At {when}',
+    },
     peek: {
       inspect: 'Inspect',
       inspectItem: 'Inspect {title}',
@@ -308,6 +312,7 @@ export const en = {
       count: 'Count',
       amount: 'Amount',
       due: 'Due',
+      when: 'Recorded',
       destination: 'Action screen',
       humanHint: 'Approvals, postings, and outbound sends always remain explicit human actions on the owning screen.',
     },
@@ -337,6 +342,14 @@ export const en = {
         supplierBankChangedPartial: 'You can see only part of the supplier data, so bank account changes could not be fully checked: look at the waiting payments yourself before paying',
         conversationUnanswered: 'This customer wrote {hours, plural, one {# hour} other {# hours}} ago and has had no answer, and still has an open deal',
         conversationUnansweredMore: '{count, plural, one {# more customer has} other {# more customers have}} waited over 24 hours for an answer and still have an open deal',
+        contactAttention: {
+          quoteViewed: 'Contact viewed a quote',
+          quoteExpiring: 'Quote is expiring soon',
+          quoteUnanswered: 'Sent quote has no reply after 7 days',
+          customerReplied: 'Contact replied after a quiet spell',
+          envelopeOpened: 'Signer opened the signing envelope',
+          invoiceOverdue: 'Invoice overdue by {days, plural, one {# day} other {# days}}',
+        },
       },
       crm: {
         noActivity: 'Reminder: this deal has had no update for {days, plural, one {# day} other {# days}}',
@@ -19297,6 +19310,7 @@ export const en = {
       },
       contact: {
         company_candidates: 'Find the companies a contact may work at',
+        get: 'Read one contact or company',
         list: 'View the contact list',
         meeting_facts: 'Read deals, quotes, invoice summary, and latest messages of contacts for a meeting',
         meeting_research_source: 'Read contact facts and AI state for Dy pre-meeting preparation',
@@ -19399,6 +19413,7 @@ export const en = {
         reorder: 'Reorder the stages of the sales pipeline',
       },
       signals: {
+        attention: 'Read the contacts needing attention in CRM (IDs and timestamps only)',
         open_deals: 'Read the open deals, to check them against overdue receivables',
         won_deals: 'Read the won deals, to check them against sales invoices',
       },
@@ -20745,6 +20760,7 @@ export const en = {
         list: 'List sessions',
       },
       signals: {
+        contact_attention: 'Read up to 5 newest contacts needing attention across CRM, eSign, and Accounting',
         deal_without_invoice: 'Read the won deals that have no sales invoice',
         receivable_with_open_deal: 'Read the customers with an overdue receivable and an open deal',
         supplier_bank_changed: 'Read the suppliers that changed a bank account while a payment is waiting',
@@ -21583,6 +21599,9 @@ export const en = {
         remove: 'Remove a recipient from a draft signing envelope',
         reorder: 'Update the signing order on a draft envelope',
         start_in_person: 'Start a short-lived in-person host signing session for a due signer',
+      },
+      signals: {
+        opened: 'Read signing envelopes opened by a signer in the last 7 days (IDs and timestamps only)',
       },
       stamp: {
         archive: 'Archive an organization stamp',
