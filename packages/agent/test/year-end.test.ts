@@ -104,6 +104,50 @@ describe('checkYearEndNote: the note', () => {
     expect(check('Xem lại bút toán kết chuyển trước, vì khóa sổ nằm sau nó.').kind).toBe('note');
   });
 
+  it('refuses advice to pay tax, in Vietnamese and English', () => {
+    for (const text of ['Xem lại khấu hao trước rồi nộp tiền thuế.', 'Xem lại bút toán trước rồi nộp thuế.', 'Xem lại bút toán trước rồi đóng thuế.', 'Xem lại bút toán trước rồi chuyển tiền.', 'Review the balances first, then pay the tax.', 'Review the balances first, then remit the tax.']) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'ADVICE' });
+    }
+  });
+
+  it('refuses certainty and reassurance about the books', () => {
+    for (const text of ['There is no risk in the balances.', 'Xem lại số dư trước vì không có rủi ro.', 'Xem lại số dư trước vì không rủi ro.', 'The closing entry is safe to make.', 'Bút toán kết chuyển an toàn.', 'Xem lại số dư vì chắc là ổn.', 'The balances will surely match.']) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'PROMISE' });
+    }
+  });
+
+  it('refuses a Roman numeral, a month or a quarter in Roman figures, but not the pronoun "I"', () => {
+    for (const text of ['Xem lại sổ tháng XII trước.', 'Xem lại sổ quý IV trước.', 'Review Q.IV first.', 'Review month XII first.', 'Review the books of tháng xii first.']) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'FIGURES' });
+    }
+    expect(check('I would review the balances first, because they change the closing entry.').kind).toBe('note');
+  });
+
+  it('refuses urgency, which the model cannot know without a date', () => {
+    for (const text of ['Review the balances immediately.', 'Review the balances soon.', 'Review the balances right away.', 'Review the balances urgently.', 'Review the balances ASAP.', 'Xem lại số dư ngay.', 'Xem lại số dư gấp.', 'Xem lại số dư sớm.', 'Xem lại số dư liền.', 'Xem lại số dư khẩn.']) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'URGENCY' });
+    }
+  });
+
+  it('refuses a word that a step is complete or done, even in a clause that sets a condition', () => {
+    for (const text of ['The depreciation is complete.', 'The depreciation completed.', 'Once the depreciation is completed, review the balances.', 'Sau khi khấu hao hoàn tất, xem lại số dư.', 'Sau khi khấu hao hoàn thành, xem lại số dư.', 'Xem lại số dư khi khấu hao xong.']) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'PROMISE' });
+    }
+  });
+
+  it('refuses a holiday named as a date', () => {
+    for (const text of ['Review the balances before Christmas.', 'Review the balances before New Year.', 'Xem lại số dư trước Giáng sinh.', 'Xem lại số dư trước Tết.', 'Xem lại số dư trước Noel.']) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'DATE' });
+    }
+  });
+
+  it('keeps the plain year words and Vietnamese written in decomposed form', () => {
+    const facts: YearEndFacts = { language: 'vi', open: ['depreciation'] };
+    const text = 'Xem lại khấu hao trước, vì bút toán kết chuyển cuối năm bắt đầu từ đó.';
+    expect(checkYearEndNote(facts, { note: text.normalize('NFD'), order: ['depreciation'] }).kind).toBe('note');
+    expect(checkYearEndNote(facts, { note: text, order: ['depreciation'] }).kind).toBe('note');
+  });
+
   it('refuses markdown, a list, an emoji, an empty text, a long text and more than two sentences', () => {
     expect(check('**Start** with the balances.')).toEqual({ kind: 'none', code: 'FORMAT' });
     expect(check('- Start with the balances.')).toEqual({ kind: 'none', code: 'FORMAT' });
