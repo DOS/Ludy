@@ -120,6 +120,19 @@ describe('TimeInput and DateTimeInput', () => {
     expect(catalog('vi').common.dateTooEarly).toBe('Không được trước {min}');
   });
 
+  it('makes the calendar button 44 px wide where the text field is 44 px high, and 36 px from md up (#5306)', () => {
+    // The base Input is `max-md:min-h-11`, so the button, which takes the field's height, is 44 px high below md whatever height a caller passes; its width, the picker overlay and the text padding change at the same breakpoint.
+    const html = render(<DateInput aria-label="Date" value="2026-10-20" inputClassName="h-7" onChange={() => undefined} />);
+    const classOf = (tag: string | undefined) => /\bclass="([^"]*)"/.exec(tag ?? '')?.[1] ?? '';
+    const button = classOf(/<button[^>]*aria-label="Open the calendar"[^>]*>/.exec(html)?.[0]);
+    const picker = classOf((html.match(/<input[^>]*>/g) ?? []).find((tag) => tag.includes('type="date"')));
+    const field = classOf((html.match(/<input[^>]*>/g) ?? []).find((tag) => tag.includes('aria-label="Date"') && !tag.includes('type="date"')));
+    expect(button.split(' ')).toEqual(expect.arrayContaining(['w-11', 'md:w-9']));
+    expect(picker.split(' ')).toEqual(expect.arrayContaining(['w-11', 'md:w-9']));
+    expect(field.split(' ')).toEqual(expect.arrayContaining(['pr-11', 'md:pr-9', 'h-7']));
+    for (const classes of [button, picker, field]) expect(classes).not.toMatch(/\bsm:(?:w|pr)-9\b/);
+  });
+
   it('names the date half by the id a label points to', () => {
     const html = render(<DateTimeInput id="post-due" aria-labelledby="post-due-label" value="" onChange={() => undefined} />);
     expect(html).toContain('aria-labelledby="post-due-label"');
