@@ -218,6 +218,10 @@ import {
   zYearArchive,
   zYearArchives,
   zPeriodUnlockInput,
+  zBooksRegimeCancelInput,
+  zBooksRegimeResult,
+  zBooksRegimeSetInput,
+  zBooksRegimeState,
   zTaxRegistryEntry,
   zVoucherType,
   zSocialMemberFilter,
@@ -3887,6 +3891,13 @@ export const contract = {
     state: oc.input(zLegalEntityChoice.optional()).output(zPeriodLockState),
     lock: oc.input(zPeriodLockInput.extend({ idempotencyKey: zId })).output(zPeriodLockState),
     unlock: oc.input(zPeriodUnlockInput.extend({ idempotencyKey: zId })).output(zPeriodLockState),
+  },
+  // The regime of each legal entity's books (#1403): every member reads what is in force and why a switch is or is not possible; an owner chooses Circular 99 from a fiscal year start (R3, fresh MFA, after
+  // saying the tax authority has been told) and an owner or an admin takes back a choice for a year nobody has posted in yet. A retry with the same idempotencyKey returns the first result.
+  booksRegime: {
+    state: oc.output(zBooksRegimeState),
+    set: oc.input(zBooksRegimeSetInput.extend({ idempotencyKey: zId })).output(zBooksRegimeResult),
+    cancel: oc.input(zBooksRegimeCancelInput.extend({ idempotencyKey: zId })).output(zBooksRegimeResult),
   },
   // The register of fixed assets and prepaid costs (#919): every member reads it with what each asset has posted and
   // what is left; owners, admins and members add an entry (from an approved purchase line or by hand) and stop one

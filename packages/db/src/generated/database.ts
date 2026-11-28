@@ -1369,6 +1369,8 @@ export interface FinanceFixedAssetTable {
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   legal_entity_id: ColumnType<string, string, NotGranted>;
+  regime: ColumnType<string, string | undefined, NotGranted>;
+  chart_version: ColumnType<string, string | undefined, NotGranted>;
 }
 
 /** ludy_finance.household_expense_group_map */

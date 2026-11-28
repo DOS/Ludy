@@ -17,6 +17,7 @@ import { JOURNAL_VOUCHER_KIND, MARKETPLACE_FEE_CLEARING_COMMAND, zMarketplaceFee
 import { money } from '@ludy/l10n-vn';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
+import { stampBooks } from './books-stamp.ts';
 import { assertUsableAccounts } from './accounts.ts';
 import { JOURNAL_VOUCHER_SOURCE, journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
@@ -306,7 +307,7 @@ export function createMarketplaceFeeClearingCommands(options: { maps?: Maps; ret
       const built = await buildClearing(ctx, maps, input.purchaseDocumentId, true);
       await assertUsableAccounts(ctx, built.proposal.lines.map((l) => l.account));
       const payload = proposalPayload(built);
-      return { kind: JOURNAL_VOUCHER_KIND, command: MARKETPLACE_FEE_CLEARING_COMMAND, title: journalVoucherTitle(payload), payload };
+      return { kind: JOURNAL_VOUCHER_KIND, command: MARKETPLACE_FEE_CLEARING_COMMAND, title: journalVoucherTitle(payload), payload: await stampBooks(ctx, payload) };
     },
   });
 

@@ -19,6 +19,8 @@ const POLICY_R3 = ['kernel.member.change_role', 'kernel.member.invite.create', '
 // Finance commands whose risk is policy, above what their side effect derives (pinned so an annotation cannot lower
 // them): the period lock and unlock of ADR-0021 section 7.
 const FINANCE_POLICY = { 'finance.period.lock': 'R2', 'finance.period.unlock': 'R3' } as const;
+// The choice of Circular 99 for an entity's books and the taking back of a choice (#1403): legal, which the runtime holds at R3 (fresh second factor), pinned so an annotation cannot lower either.
+const BOOKS_REGIME_POLICY = ['finance.books.set_regime', 'finance.books.cancel_regime'] as const;
 
 const all = (): Array<CommandDef<unknown, unknown>> =>
   [...kernelCommands, orgPurgeCommand({ store: {} as never }), numberReseedCommand(), ...financeCommands, ...socialCommands, ...crmCommands, ...adsCommands] as Array<CommandDef<unknown, unknown>>;
@@ -149,6 +151,11 @@ describe('declared risk and side effects (#1563)', () => {
   it('keeps the finance period lock and unlock at their policy risk', () => {
     const byName = new Map(all().map((c) => [c.name, c]));
     for (const [name, risk] of Object.entries(FINANCE_POLICY)) expect(byName.get(name), name).toMatchObject({ risk, sideEffect: 'internal' });
+  });
+
+  it('keeps the books regime commands legal, at R3', () => {
+    const byName = new Map(all().map((c) => [c.name, c]));
+    for (const name of BOOKS_REGIME_POLICY) expect(byName.get(name), name).toMatchObject({ risk: 'R3', sideEffect: 'legal' });
   });
 
   it('keeps the membership and role commands at R3', () => {

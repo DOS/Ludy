@@ -2,7 +2,7 @@
 // export command after the file is built, and only then answers with the file. Here the export commands fail as a
 // failed audit write would, and each route must answer an error instead of a file: the journal, the MISA exports, the
 // VAT working and its HTKK XML (finance.vat.export), the ledger reports (finance.ledger.export), the financial
-// statements, also as HTKK XML (#920), and the register of fixed assets (#919). On a real PostgreSQL 17; the commands
+// statements, also as HTKK XML (#920), the register of fixed assets (#919) and the household worksheets, the 02/CNKD-TNCN-QTT one included (#5285). On a real PostgreSQL 17; the commands
 // themselves are covered by the export tests of each report. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run
 // creates and drops its own database.
 import { randomUUID } from 'node:crypto';
@@ -67,6 +67,7 @@ suite('finance exports: no audit row, no download (#365)', () => {
   let orgId = '';
   let household = '';
   let percentageHousehold = '';
+  let incomeHousehold = '';
   const owner = { subject: randomUUID(), email: 'owner@export-audit.test', session: randomUUID() };
 
   const token = () =>
@@ -131,6 +132,14 @@ suite('finance exports: no audit row, no download (#365)', () => {
       await admin.query("INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method) VALUES ($1, $2, '2026-01-01', 2, 'percentage')", [orgId, percentageHousehold]);
       await admin.query("INSERT INTO ludy_finance.household_return_form_version (form, version, effective_from, name, pit_methods, source, status) VALUES ('01/CNKD', '2026.2', DATE '2026-10-01', 'Tờ khai 01/CNKD', ARRAY['percentage'], 'test', 'confirmed') ON CONFLICT DO NOTHING");
       await admin.query("INSERT INTO ludy_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ('goods', DATE '2026-10-01', 1, 0.5, 'test', 'confirmed') ON CONFLICT DO NOTHING");
+      // The 02/CNKD-TNCN-QTT worksheet (#5285) needs a household on the income method whose year is above the tax-free threshold, or the route refuses it as held before the export command runs: 1.5 billion of revenue in one entry (an entry needs its lines at commit).
+      incomeHousehold = randomUUID();
+      await admin.query("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Quyết toán', 'household', $3)", [orgId, incomeHousehold, owner]);
+      await admin.query("INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 3, 'income', ARRAY['goods'])", [orgId, incomeHousehold]);
+      await admin.query('BEGIN');
+      const entryId = (await admin.query<{ id: string }>("INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, '2026-03-10', 'Sổ cái', 'finance.journal_voucher', $2, $3) RETURNING id", [orgId, randomUUID(), incomeHousehold])).rows[0]?.id;
+      await admin.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '111', 1500000000, 0), ($1, $2, 2, '511', 0, 1500000000)", [orgId, entryId]);
+      await admin.query('COMMIT');
     } finally {
       await admin.end();
     }
@@ -198,6 +207,16 @@ suite('finance exports: no audit row, no download (#365)', () => {
   it('does not refuse the 01/CNKD worksheet while a row behind it is unconfirmed (its figures are labelled): the audit write is reached before any file (#2518)', async () => {
     reached.length = 0;
     const response = await app.request(`/api/export/household-cnkd.xlsx?legalEntityId=${percentageHousehold}&year=2026&quarter=3`, { headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug } });
+    expect(reached).toEqual(['finance.household.export']);
+    expect(response.status).toBe(500);
+    expect(response.headers.get('content-type')).not.toBe(XLSX);
+    expect(response.headers.get('content-disposition')).toBeNull();
+    expect(await response.json()).toMatchObject({ code: 'INTERNAL' });
+  });
+
+  it('answers an error, not a file, for the 02/CNKD-TNCN-QTT worksheet when the audit row cannot be written (#5285)', async () => {
+    reached.length = 0;
+    const response = await app.request(`/api/export/household-qtt.xlsx?legalEntityId=${incomeHousehold}&year=2026`, { headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug } });
     expect(reached).toEqual(['finance.household.export']);
     expect(response.status).toBe(500);
     expect(response.headers.get('content-type')).not.toBe(XLSX);
