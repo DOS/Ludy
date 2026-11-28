@@ -1453,7 +1453,7 @@ export const vi = {
     nothingDue: 'Không có việc trong 30 ngày',
     empty: 'Không có việc thuế nào trong 30 ngày tới',
     emptyHint: 'Chọn kỳ khai thuế GTGT và các việc áp dụng cho doanh nghiệp trong Cài đặt để lịch thuế hiện ở đây.',
-    unconfirmed: 'Hạn theo Luật Quản lý thuế 38/2019/QH14 và các văn bản hướng dẫn; bảng hạn chưa được kế toán xác nhận. Hạn rơi vào thứ Bảy hoặc Chủ nhật được lùi sang thứ Hai; chưa tính ngày nghỉ lễ, Tết.',
+    unconfirmed: 'Hạn theo Luật Quản lý thuế 108/2025/QH15 và Nghị định 252/2026/NĐ-CP (trước 2026-07-01: Luật 38/2019/QH14); bảng hạn chưa được kế toán xác nhận. Hạn rơi vào thứ Bảy hoặc Chủ nhật được lùi sang thứ Hai; chưa tính ngày nghỉ lễ, Tết.',
   },
   documents: {
     title: 'Chứng từ',

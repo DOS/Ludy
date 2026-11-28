@@ -37,14 +37,19 @@ A due date on a Saturday or a Sunday moves to the next Monday (Civil Code 2015, 
 
 | Obligation | Frequency | Due | Legal basis (as recorded) |
 |---|---|---|---|
-| VAT return (`vat_return`) | month | 20th of the next month | Law 38/2019/QH14, Art. 44(1)(a) |
-| | quarter | last day of the first month of the next quarter | Law 38/2019/QH14, Art. 44(1)(b) |
-| PIT withholding return (`pit_withholding`) | month or quarter, per the org | as the VAT return | Law 38/2019/QH14, Art. 44(1); Decree 126/2020/NĐ-CP, Art. 8 and 9 |
-| Provisional CIT (`cit_provisional`, a payment) | quarter of the fiscal year | 30th of the first month of the next quarter | Law 38/2019/QH14, Art. 55(1) |
-| CIT finalization (`cit_finalization`) | fiscal year | last day of the third month after the fiscal year | Law 38/2019/QH14, Art. 44(2)(a) |
-| PIT finalization (`pit_finalization`) | calendar year | last day of the third month after the year | Law 38/2019/QH14, Art. 44(2)(a) |
-| Annual financial statements (`financial_statements`) | fiscal year | 90 days after the fiscal year ends | Circular 133/2016/TT-BTC, Art. 80(1) |
+| VAT return (`vat_return`) | month | 20th of the next month | Decree 252/2026/NĐ-CP, Art. 10(2), from 2026-07-01; before that Law 38/2019/QH14, Art. 44(1)(a) |
+| | quarter | last day of the first month of the next quarter | Decree 252/2026/NĐ-CP, Art. 10(3); before that Law 38/2019/QH14, Art. 44(1)(b) |
+| PIT withholding return (`pit_withholding`) | month or quarter, per the org | as the VAT return | Decree 252/2026/NĐ-CP, Art. 10(2) and (3); before that Law 38/2019/QH14, Art. 44(1) and Decree 126/2020/NĐ-CP, Art. 8 and 9 |
+| Provisional CIT (`cit_provisional`, a payment) | quarter of the fiscal year, quarter began before 2026-07-01 | 30th of the first month of the next quarter | Law 38/2019/QH14, Art. 55(1) |
+| | quarter of the fiscal year, quarter began on or after 2026-07-01 | last day of the first month of the next quarter | Decree 252/2026/NĐ-CP, Art. 24(2) |
+| CIT finalization (`cit_finalization`) | fiscal year | last day of the third month after the fiscal year | Decree 252/2026/NĐ-CP, Art. 10(5)(a); before that Law 38/2019/QH14, Art. 44(2)(a) |
+| PIT finalization (`pit_finalization`, the employer's) | calendar year | last day of the third month after the year | Decree 252/2026/NĐ-CP, Art. 10(5)(a); before that Law 38/2019/QH14, Art. 44(2)(a) |
+| Annual financial statements (`financial_statements`) | fiscal year | 90 days after the fiscal year ends | Law 88/2015/QH13, Art. 29(3); Circular 99/2025/TT-BTC, Art. 25; Circular 133/2016/TT-BTC, Art. 80(1); Circular 58/2026/TT-BTC, Art. 10(1) for micro enterprises |
 | Business license fee (`license_fee`) | calendar year, 2020 to 2025 | 30 January of the year | Decree 139/2016/NĐ-CP, Art. 6(3), amended by Decree 22/2020/NĐ-CP; abolished from 2026 by Resolution 198/2025/QH15 |
+
+Law 108/2025/QH15 took effect on 2026-07-01 and replaced Law 38/2019/QH14; it leaves the filing deadlines to the Government, which set them in Decree 252/2026/NĐ-CP (Art. 10 and 24). Every date above is the same under both laws except the provisional CIT, which moved from the 30th to the last day of the month, so that obligation has a row per law, split by the first day of the quarter. A quarter that began before 2026-07-01 keeps the 30th even where its payment falls after the change: the earlier date, so the date shown is never later than the real one (the transition rule for it is not read). The 30 April deadline of Art. 10(5)(c) is for an individual who files their own wage-income finalization, not for an org, so it has no row. The Art. 24(3)(a) rule that four provisional quarters must reach 80% of the finalized tax is not modelled.
+
+Read from the signed official text (Decree 252/2026/NĐ-CP, pages 21 and 48); the clauses of Art. 10 and 24 were checked on the page images. Law 88/2015/QH13, Circular 99/2025/TT-BTC and Circular 133/2016/TT-BTC were read once, from copies that are not the signed scan; Circular 58/2026/TT-BTC, Art. 10(1) twice.
 
 How periods are named:
 
@@ -57,13 +62,13 @@ How periods are named:
   - Public holidays and Tet, and extensions (gia hạn).
   - Returns filed per event rather than per period (on cessation, on a change of ownership).
   - The obligations of household businesses.
-- **Law 108/2025/QH15 (from 2026-07-01):** it replaces Law 38/2019/QH14 (see htkk-01gtgt-xml.md), and the table still cites Law 38. Whether the new law and its circulars keep the same deadlines is **unconfirmed**; that is question 1 below.
+- **Law 108/2025/QH15 (from 2026-07-01):** it replaces Law 38/2019/QH14 (see htkk-01gtgt-xml.md); the table cites Decree 252/2026/NĐ-CP for the periods from that date (see above). Whether the accountant reads the transition the same way is **unconfirmed**; that is question 1 below.
 - **Every line is `confirmed: false`,** and the screen says the table is not confirmed yet.
 
 ## Questions for the partner's accountant
 
 1. Do the deadlines above still hold for periods from July 2026 under Law 108/2025/QH15 and Circular 89/2026? Which articles should the table cite instead?
-2. Is the provisional CIT due by the 30th of the first month of the next quarter for every client? How do you track a client whose fiscal year is not the calendar year?
+2. Is the provisional CIT due on the last day of the first month of the next quarter (Decree 252/2026/NĐ-CP, Art. 24(2)) for every client, including the second quarter of 2026? How do you track a client whose fiscal year is not the calendar year?
 3. Is 90 days after the year end the right deadline for the financial statements of your clients (30 days for a sole proprietorship)? Do you treat it as the same day as the CIT finalization?
 4. Should the calendar add other recurring obligations your clients have, such as the land rental fee, the environmental fee, or the statistics reports?
 5. With the license fee abolished from 2026 (Resolution 198/2025/QH15), is there anything left to file for it?
