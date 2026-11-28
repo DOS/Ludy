@@ -68,8 +68,10 @@ describe('payroll posting (#2532)', () => {
     expect(r.obligations[1]?.debits).toEqual([{ account: '3383', amount: '10200000' }, { account: '3384', amount: '1800000' }, { account: '3386', amount: '800000' }]);
   });
 
-  it('keeps every row of the map unconfirmed until the accountant reads it', () => {
-    expect(Object.values(PAYROLL_POSTING_MAPS).map((m) => m.status)).toEqual(['commentary', 'commentary']);
+  it('keeps the TT133 map unconfirmed and the TT99 map confirmed, as read against the primary text (#1403)', () => {
+    expect(Object.values(PAYROLL_POSTING_MAPS).map((m) => [m.regime, m.status])).toEqual([['tt133', 'commentary'], ['tt99', 'confirmed']]);
+    // What the text leaves open is written in the map's cite.
+    expect(PAYROLL_POSTING_MAPS.tt99.cite).toContain('Open, for the accountant');
     expect(PAYROLL_POSTING_MAPS.tt99.unemployment).toBe('3386');
     expect(PAYROLL_POSTING_MAPS.tt133.unemployment).toBe('3385');
     // How a correction of an earlier month is booked (the period and the sign) is a rule of its own, and waits for the accountant too.
