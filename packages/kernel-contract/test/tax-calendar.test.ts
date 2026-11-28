@@ -69,7 +69,8 @@ describe('tax calendar rules', () => {
 
   it('keeps the 30th for a quarter that began before 2026-07-01 and uses the last day from the next quarter', () => {
     const calendar = profile({ obligations: ['cit_provisional'] });
-    expect(dues(calendar, '2026-04-01', '2026-04-30')).toEqual([['cit_provisional', '2026-Q1', '2026-04-30']]);
+    // The first quarter of 2026 keeps the 30th, 30 April 2026, a holiday (1 May is a holiday and the weekend follows): Monday 4 May.
+    expect(dues(calendar, '2026-04-01', '2026-05-31')).toEqual([['cit_provisional', '2026-Q1', '2026-05-04']]);
     // The second quarter of 2026 began on 1 April: still the 30th, Thursday 30 July (the last day, 31 July, is a Friday).
     expect(dues(calendar, '2026-07-01', '2026-07-31')).toEqual([['cit_provisional', '2026-Q2', '2026-07-30']]);
     // The third quarter of 2027: the last day, 31 October, is a Sunday, so Monday 1 November.
