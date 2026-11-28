@@ -47,7 +47,7 @@ export function fold(text: string): string {
 // that, the first field one of whose words it contains (in this order, so "ký hiệu mẫu số" is the template before
 // "ký hiệu" can be the series, and "MST người bán" the seller before a bare "MST"). The portal's own JSON names
 // (khmshdon, shdon, nbmst...) are accepted too, since tools that rebuild the list from its API use them.
-const ALIASES: ReadonlyArray<readonly [PortalListField | 'buyer', readonly string[]]> = [
+const ALIASES: ReadonlyArray<readonly [PortalListField, readonly string[]]> = [
   ['template', ['ky hieu mau so', 'ky hieu mau so hoa don', 'mau so', 'mau so hoa don', 'ky hieu mau', 'khmshdon']],
   ['series', ['ky hieu hoa don', 'ky hieu', 'seri', 'serial', 'khhdon']],
   ['number', ['so hoa don', 'so hd', 'shdon']],
@@ -58,7 +58,7 @@ const ALIASES: ReadonlyArray<readonly [PortalListField | 'buyer', readonly strin
   ],
   ['sellerName', ['ten nguoi ban', 'ten nguoi ban ten nguoi xuat hang', 'ten nguoi xuat hang', 'ten ben ban', 'ten don vi ban', 'nguoi ban', 'nbten']],
   ['buyerTaxCode', ['mst nguoi mua mst nguoi nhan hang', 'mst nguoi mua', 'ma so thue nguoi mua', 'mst nguoi nhan hang', 'nmmst']],
-  ['buyer', ['ten nguoi mua', 'ten nguoi mua ten nguoi nhan hang', 'nmten']],
+  ['buyerName', ['ten nguoi mua', 'ten nguoi mua ten nguoi nhan hang', 'ten nguoi nhan hang', 'ten ben mua', 'ten don vi mua', 'nguoi mua', 'nmten']],
   ['subtotal', ['tong tien chua thue', 'tien chua thue', 'thanh tien chua thue', 'tong tien hang', 'tgtcthue']],
   ['vatAmount', ['tong tien thue', 'tien thue', 'tien thue gtgt', 'thue gtgt', 'tgtthue']],
   ['total', ['tong tien thanh toan', 'tong thanh toan', 'tong cong tien thanh toan', 'tien thanh toan', 'tgtttbso']],
@@ -69,8 +69,9 @@ const ALIASES: ReadonlyArray<readonly [PortalListField | 'buyer', readonly strin
 
 // Columns that sound like a field but are not one: "Tổng tiền chiết khấu thương mại" contains "tiền", "Tổng tiền phí"
 // is not the total, "Số thứ tự" is not the number.
-// "Địa chỉ người bán" names the seller but is not the name; "Tỷ giá" and "Căn cước công dân" are not read.
-const NOT_FIELDS = ['chiet khau', 'tien phi', 'so thu tu', 'stt', 'lien quan', 'goc bi', 'dia chi', 'ty gia', 'can cuoc'];
+// "Địa chỉ người bán" names the seller but is not the name; "Tỷ giá", "Căn cước công dân", and split group titles
+// ("Thông tin người bán/người mua") are not read.
+const NOT_FIELDS = ['chiet khau', 'tien phi', 'so thu tu', 'stt', 'lien quan', 'goc bi', 'dia chi', 'ty gia', 'can cuoc', 'thong tin'];
 
 // A bare "MST" or "Mã số thuế" names the seller when the sheet has no seller-specific column (some tools export the
 // purchase list that way).
@@ -84,6 +85,7 @@ const FIELD_NAMES: Readonly<Record<PortalListField, string>> = {
   template: 'Ký hiệu mẫu số',
   sellerName: 'Tên người bán',
   buyerTaxCode: 'MST người mua',
+  buyerName: 'Tên người mua',
   subtotal: 'Tổng tiền chưa thuế',
   vatAmount: 'Tổng tiền thuế',
   total: 'Tổng tiền thanh toán',
@@ -99,10 +101,9 @@ function cellText(cell: SheetCell | undefined): string {
 interface ColumnMap {
   fields: Map<PortalListField, number>;
   headers: Map<PortalListField, string>;
-  buyer: boolean;
 }
 
-function fieldFor(label: string): PortalListField | 'buyer' | null {
+function fieldFor(label: string): PortalListField | null {
   if (label === '' || NOT_FIELDS.some((w) => label === w || label.includes(w))) return null;
   for (const [field, words] of ALIASES) if (words.includes(label)) return field;
   for (const [field, words] of ALIASES) {
@@ -120,7 +121,6 @@ function fieldFor(label: string): PortalListField | 'buyer' | null {
 function mapColumns(top: SheetRow, sub: SheetRow | null): ColumnMap {
   const fields = new Map<PortalListField, number>();
   const headers = new Map<PortalListField, string>();
-  let buyer = false;
   const columns = new Set<number>([...top.cells.keys(), ...(sub ? sub.cells.keys() : [])]);
   const bare: Array<{ column: number; header: string }> = [];
   for (const column of [...columns].sort((a, b) => a - b)) {
@@ -129,10 +129,6 @@ function mapColumns(top: SheetRow, sub: SheetRow | null): ColumnMap {
     for (const header of candidates) {
       const label = fold(header);
       const field = fieldFor(label);
-      if (field === 'buyer') {
-        buyer = true;
-        break;
-      }
       if (field && !fields.has(field)) {
         fields.set(field, column);
         headers.set(field, header.slice(0, 200));
@@ -145,11 +141,11 @@ function mapColumns(top: SheetRow, sub: SheetRow | null): ColumnMap {
     }
   }
   const first = bare[0];
-  if (!fields.has('sellerTaxCode') && !buyer && !fields.has('buyerTaxCode') && first) {
+  if (!fields.has('sellerTaxCode') && !fields.has('buyerName') && !fields.has('buyerTaxCode') && first) {
     fields.set('sellerTaxCode', first.column);
     headers.set('sellerTaxCode', first.header);
   }
-  return { fields, headers, buyer };
+  return { fields, headers };
 }
 
 function score(map: ColumnMap): number {
@@ -187,7 +183,7 @@ function findHeader(rows: SheetRow[]): Header {
     if (s === PORTAL_LIST_REQUIRED_FIELDS.length) break;
   }
   if (best && bestScore === PORTAL_LIST_REQUIRED_FIELDS.length) return best;
-  if ((bestMap?.buyer || bestMap?.fields.has('buyerTaxCode')) && !bestMap.fields.has('sellerTaxCode')) {
+  if ((bestMap?.fields.has('buyerName') || bestMap?.fields.has('buyerTaxCode')) && !bestMap.fields.has('sellerTaxCode')) {
     throw new PortalListError('Đây là danh sách hóa đơn bán ra; hãy tra cứu ở mục "Hóa đơn điện tử mua vào" rồi xuất lại');
   }
   if (bestMap && bestScore >= 2) {
@@ -383,6 +379,7 @@ export function readPortalList(bytes: Uint8Array): ExtractedPortalList {
       sellerTaxCode: taxCode.normalized,
       sellerName: readText(at(row, 'sellerName'), 500) ?? '',
       buyerTaxCode: parseTaxCode(readTaxCode(at(row, 'buyerTaxCode')))?.normalized ?? null,
+      buyerName: readText(at(row, 'buyerName'), 500),
       template: readTemplate(at(row, 'template')),
       series,
       number,

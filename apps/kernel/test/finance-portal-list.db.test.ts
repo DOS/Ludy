@@ -683,4 +683,43 @@ suite('tax portal purchase list (#465)', () => {
     const june = await rpc('portalList/reconcile', await tokenFor(owner), { period: '2025-06', direction: 'sale' });
     expect(june.body.lists).toEqual([expect.objectContaining({ id: foreign.listId, status: 'failed', error: expect.stringContaining('0100109107') })]);
   }, 60_000);
+
+  it('stores and returns buyer_name on a missing sale without a buyer tax code, and leaves it null on purchases (#2151)', async () => {
+    const { listId: saleListId } = await importList(
+      [
+        saleSpec('8201', '05/09/2025', { buyerTaxCode: null, buyerName: '  Nguyễn   Văn An  ' }),
+        saleSpec('8202', '06/09/2025', { buyerTaxCode: SELLER, buyerName: 'CÔNG TY TNHH DỊCH VỤ MẪU' }),
+        saleSpec('8203', '07/09/2025', { buyerTaxCode: SELLER, buyerName: '   ' }),
+      ],
+      '2025-09',
+      'sale',
+    );
+    const storedSaleRows = await admin(async (c) =>
+      (await c.query<{ number: string; buyer_tax_code: string | null; buyer_name: string | null }>(
+        'SELECT number, buyer_tax_code, buyer_name FROM ludy_finance.portal_invoice_row WHERE list_id = $1 ORDER BY row_no',
+        [saleListId],
+      )).rows,
+    );
+    expect(storedSaleRows).toEqual([
+      { number: '8201', buyer_tax_code: null, buyer_name: 'Nguyễn Văn An' },
+      { number: '8202', buyer_tax_code: SELLER, buyer_name: 'CÔNG TY TNHH DỊCH VỤ MẪU' },
+      { number: '8203', buyer_tax_code: SELLER, buyer_name: null },
+    ]);
+
+    const result = await rpc('portalList/reconcile', await tokenFor(viewer), { period: '2025-09', direction: 'sale' });
+    expect(result.status, JSON.stringify(result.body)).toBe(200);
+    const byNumber = new Map<string, any>(result.body.items.map((i: any) => [i.portal?.number, i]));
+    expect(byNumber.get('8201')).toMatchObject({ outcome: 'missing', portal: { buyerTaxCode: null, buyerName: 'Nguyễn Văn An' } });
+    expect(byNumber.get('8202')).toMatchObject({ outcome: 'missing', portal: { buyerTaxCode: SELLER, buyerName: 'CÔNG TY TNHH DỊCH VỤ MẪU' } });
+    expect(byNumber.get('8203')).toMatchObject({ outcome: 'missing', portal: { buyerTaxCode: SELLER, buyerName: null } });
+
+    const { listId: purchaseListId } = await importList([spec('8204', '08/09/2025', { buyerName: 'Công ty Người Mua Mẫu' })], '2025-09', 'purchase');
+    const storedPurchaseRows = await admin(async (c) =>
+      (await c.query<{ buyer_tax_code: string | null; buyer_name: string | null }>(
+        'SELECT buyer_tax_code, buyer_name FROM ludy_finance.portal_invoice_row WHERE list_id = $1',
+        [purchaseListId],
+      )).rows,
+    );
+    expect(storedPurchaseRows).toEqual([{ buyer_tax_code: null, buyer_name: null }]);
+  }, 60_000);
 });

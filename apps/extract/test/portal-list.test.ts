@@ -31,6 +31,7 @@ describe('readPortalList', () => {
       'sellerTaxCode',
       'sellerName',
       'buyerTaxCode',
+      'buyerName',
       'subtotal',
       'vatAmount',
       'total',
@@ -44,6 +45,7 @@ describe('readPortalList', () => {
         sellerTaxCode: SELLER,
         sellerName: 'CÔNG TY TNHH NHÀ CUNG CẤP',
         buyerTaxCode: FIXTURE_BUYER,
+        buyerName: 'CÔNG TY CỔ PHẦN NGƯỜI MUA MẪU',
         template: '1',
         series: 'C26TAA',
         number: '123',
@@ -123,7 +125,7 @@ describe('readPortalList', () => {
     const list = readPortalList(buildXlsx([[], [], ['DANH SÁCH HÓA ĐƠN MÁY TÍNH TIỀN'], ['Từ ngày 01/09/2026 đến ngày 30/09/2026'], [], PORTAL_SCO_HEADER, row], { strings: 'inline' }));
     expect(list.columns.find((c) => c.field === 'sellerName')?.header).toBe('Tên người bán/Tên người xuất hàng');
     expect(list.rows).toEqual([
-      expect.objectContaining({ template: '2', series: 'C26MAA', number: '15', sellerName: 'Quán ăn', buyerTaxCode: FIXTURE_BUYER, currency: 'VND', total: '108000', statusLabel: 'Hóa đơn mới' }),
+      expect.objectContaining({ template: '2', series: 'C26MAA', number: '15', sellerName: 'Quán ăn', buyerTaxCode: FIXTURE_BUYER, buyerName: 'Người mua', currency: 'VND', total: '108000', statusLabel: 'Hóa đơn mới' }),
     ]);
   });
 
@@ -157,6 +159,29 @@ describe('readPortalList', () => {
     expect(() => readPortalList(doctype)).toThrow(/DOCTYPE/);
     const many = Array.from({ length: EXTRACT_LIMITS.maxPortalListRows + 1 }, (_, i) => portalRow(i + 1, { series: 'C26TAA', number: i + 1, date: '01/09/2026', sellerTaxCode: SELLER }));
     expect(() => readPortalList(buildXlsx([PORTAL_HEADER, ...many], { strings: 'inline' }))).toThrow(/hơn 20000 hóa đơn/);
+  });
+
+  it("extracts 'Tên người mua' into buyerName (including individual buyers without a tax code, blank as null, and absent column as null)", () => {
+    const withBuyer = readPortalList(
+      portalListXlsx([
+        { series: 'C26TAA', number: 1, date: '05/09/2026', sellerTaxCode: SELLER, buyerTaxCode: null, buyerName: '  Nguyễn   Văn  An  ' },
+        { series: 'C26TAA', number: 2, date: '06/09/2026', sellerTaxCode: SELLER, buyerTaxCode: null, buyerName: '   ' },
+      ]),
+    );
+    expect(withBuyer.rows).toEqual([
+      expect.objectContaining({ number: '1', buyerTaxCode: null, buyerName: 'Nguyễn Văn An' }),
+      expect.objectContaining({ number: '2', buyerTaxCode: null, buyerName: null }),
+    ]);
+
+    const jsonNames = readPortalList(buildXlsx([['khhdon', 'shdon', 'tdlap', 'nbmst', 'nmmst', 'nmten'], ['C26TAA', '3', '2026-09-07', SELLER, '', 'Khách lẻ B']]));
+    expect(jsonNames.rows).toEqual([expect.objectContaining({ number: '3', buyerTaxCode: null, buyerName: 'Khách lẻ B' })]);
+
+    const withoutBuyerName = readPortalList(buildXlsx([['Ký hiệu hóa đơn', 'Số hóa đơn', 'Ngày lập', 'MST người bán'], ['C26TAA', '4', '08/09/2026', SELLER]]));
+    expect(withoutBuyerName.rows).toEqual([expect.objectContaining({ number: '4', buyerTaxCode: null, buyerName: null })]);
+
+    expect(() =>
+      readPortalList(buildXlsx([['STT', 'Ký hiệu hóa đơn', 'Số hóa đơn', 'Ngày lập', 'Tên người mua'], [1, 'C26TAA', 5, '09/09/2026', 'Nguyễn Văn C']])),
+    ).toThrow(/danh sách hóa đơn bán ra/);
   });
 });
 
