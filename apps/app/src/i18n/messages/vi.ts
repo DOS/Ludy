@@ -19716,6 +19716,7 @@ export const vi = {
         statement_confirm: 'Nhập sao kê ngân hàng đã đọc từ tệp (thư gửi đến hoặc tải vào Chứng từ chờ duyệt)',
         statement_lines: 'Xem các dòng của sao kê ngân hàng đọc từ tệp trước khi nhập',
         statement_reject: 'Bỏ qua sao kê ngân hàng đã đọc từ tệp',
+        statement_rows_purge: 'Xóa các dòng đã đọc của sao kê ngân hàng đã quyết định quá 90 ngày',
         statement_stage: 'Chuẩn bị sao kê ngân hàng đọc từ tệp để thành viên xem và nhập',
         suggestions: 'Xem gợi ý đối chiếu sao kê',
       },

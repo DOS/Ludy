@@ -19716,6 +19716,7 @@ export const en = {
         statement_confirm: 'Import a bank statement read from a file (sent by email or dropped in the Inbox)',
         statement_lines: 'See the lines of a bank statement read from a file before importing it',
         statement_reject: 'Skip a bank statement read from a file',
+        statement_rows_purge: 'Delete the staged rows of a bank statement decided over 90 days ago',
         statement_stage: 'Prepare a bank statement read from a file for a member to check and import',
         suggestions: 'Read bank matching suggestions',
       },
