@@ -165,6 +165,9 @@ suite('the daily cap on MCP drafts (#3253)', () => {
     const other = await freshOrg('Cap other org');
     const first = await grantOf(orgId);
     const second = await grantOf(orgId);
+    // A grant that made its drafts on an earlier day is left out of today's sum.
+    const old = await grantOf(orgId);
+    await admin((c) => c.query(`UPDATE ludy_kernel.agent_grant SET drafts_day = (now() AT TIME ZONE 'UTC')::date - 1, drafts_used = 50 WHERE org_id = $1 AND id = $2`, [orgId, old]));
     await draftTool(orgId, first, { perGrant: 10, perOrg: 3 })(connectionId);
     await draftTool(orgId, first, { perGrant: 10, perOrg: 3 })(connectionId);
     // Disconnecting the app and connecting it again does not start the day over: the revoked grant's two drafts still count.
@@ -208,6 +211,20 @@ suite('the daily cap on MCP drafts (#3253)', () => {
     for (const r of results) {
       if (r.status === 'rejected') expect(r.reason).toMatchObject({ code: 'RATE_LIMITED', details: { what: 'daily_drafts' } });
     }
+  });
+
+  it('is executable by the application role alone', async () => {
+    const roles = (
+      await admin((c) =>
+        c.query(
+          `SELECT r.rolname FROM pg_catalog.pg_roles r
+           WHERE pg_catalog.has_function_privilege(r.oid, 'ludy_kernel.mcp_drafts_charge(uuid, uuid, integer, integer)'::regprocedure, 'EXECUTE') AND NOT r.rolsuper
+           ORDER BY r.rolname`,
+        ),
+      )
+    ).rows.map((r) => r.rolname as string);
+    expect(roles).toEqual(['ludy_app']);
+    expect((await admin((c) => c.query(`SELECT pg_catalog.has_function_privilege('public', 'ludy_kernel.mcp_drafts_charge(uuid, uuid, integer, integer)'::regprocedure, 'EXECUTE') AS ok`))).rows[0].ok).toBe(false);
   });
 
   it('refuses a cap or a grant the function cannot take, and charges nothing', async () => {

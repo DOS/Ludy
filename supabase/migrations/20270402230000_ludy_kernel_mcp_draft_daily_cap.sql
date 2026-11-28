@@ -42,7 +42,7 @@ BEGIN
   SELECT CASE WHEN g.drafts_day = v_today THEN g.drafts_used ELSE 0 END INTO v_grant_used
   FROM ludy_kernel.agent_grant g
   WHERE g.org_id = p_org_id AND g.id = p_grant_id AND g.revoked_at IS NULL
-  FOR UPDATE;
+  FOR NO KEY UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'MCP_INVALID' USING ERRCODE = '22023';
   END IF;
