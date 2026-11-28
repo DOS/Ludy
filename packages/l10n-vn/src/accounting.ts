@@ -136,13 +136,15 @@ const RULES: Array<{ account: string; pattern: RegExp; reason: string }> = [
 ];
 
 // The built-in keyword list under Circular 99 (#1403): the same words, with the expense accounts TT99 has. TT99 splits 641 and 642 by nature where TT133 splits them by function, and its 6421 and 6422 mean staff and materials
-// of administration, so TT133's 6421 (selling) becomes 6417 (outside services of selling) and 6422 (administration) becomes 6427 (outside services of administration); stationery has its own account, 6423. Read from
-// Appendix II of Circular 99/2025/TT-BTC; no accountant has confirmed these picks, and a reviewer changes any line.
+// of administration. So TT133's 6421 (selling) becomes 6418 for advertising and introducing products and 6417 for transport and agents' commission, and 6422 (administration) becomes 6427 (outside services of
+// administration), except stationery, which Appendix II puts in 6422 itself (vật liệu quản lý, "văn phòng phẩm"). Read from the account principles of 641 and 642 in Circular 99/2025/TT-BTC (Công báo 1573 + 1574,
+// pages 64 to 70); no accountant has confirmed these picks, and a reviewer changes any line.
 const RULES_TT99: Array<{ account: string; pattern: RegExp; reason: string }> = [
-  { account: '6417', pattern: /quảng cáo|marketing|vận chuyển|giao hàng|hoa hồng|khuyến mãi|ads|facebook|google/i, reason: 'Chi phí bán hàng: dịch vụ mua ngoài' },
+  { account: '6418', pattern: /quảng cáo|marketing|khuyến mãi|ads|facebook|google/i, reason: 'Chi phí bán hàng: quảng cáo, giới thiệu sản phẩm' },
+  { account: '6417', pattern: /vận chuyển|giao hàng|hoa hồng/i, reason: 'Chi phí bán hàng: dịch vụ mua ngoài (vận chuyển, hoa hồng)' },
   { account: '153', pattern: /công cụ|dụng cụ|bàn|ghế|kệ|tủ|dao|kéo|chuột|bàn phím/i, reason: 'Công cụ, dụng cụ' },
   { account: '152', pattern: /nguyên liệu|vật liệu|nguyên vật liệu|phụ liệu/i, reason: 'Nguyên liệu, vật liệu' },
-  { account: '6423', pattern: /văn phòng phẩm/i, reason: 'Chi phí quản lý doanh nghiệp: đồ dùng văn phòng' },
+  { account: '6422', pattern: /văn phòng phẩm/i, reason: 'Chi phí quản lý doanh nghiệp: vật liệu quản lý (văn phòng phẩm)' },
   {
     account: '6427',
     pattern: /dịch vụ|phí|cước|điện|nước|internet|viễn thông|thuê|bảo trì|sửa chữa|phần mềm|hosting|tên miền|tư vấn|kế toán|kiểm toán/i,

@@ -177,9 +177,10 @@ describe('classification check (#2091)', () => {
 describe('suggestDebitAccount under Circular 99 (#1403)', () => {
   it('proposes TT99 expense accounts for the built-in keywords, and TT133 ones without a regime', () => {
     const tt99 = (text: string, declared = false) => suggestDebitAccount(line(text), null, [], declared, 'tt99');
-    expect(tt99('Phí quảng cáo Facebook')).toMatchObject({ account: '6417', rule: { source: 'builtin' } });
+    expect(tt99('Phí quảng cáo Facebook')).toMatchObject({ account: '6418', rule: { source: 'builtin' } });
+    expect(tt99('Cước vận chuyển hàng')).toMatchObject({ account: '6417', rule: { source: 'builtin' } });
     expect(tt99('Cước internet tháng 10')).toMatchObject({ account: '6427', rule: { source: 'builtin' } });
-    expect(tt99('Văn phòng phẩm')).toMatchObject({ account: '6423', rule: { source: 'builtin' } });
+    expect(tt99('Văn phòng phẩm')).toMatchObject({ account: '6422', rule: { source: 'builtin' } });
     // The same on both sides of the split: tools, materials and goods keep their accounts.
     expect(tt99('Nguyên vật liệu')).toMatchObject({ account: '152' });
     expect(tt99('Hàng hóa nhập kho')).toMatchObject({ account: '156' });
@@ -196,7 +197,7 @@ describe('suggestDebitAccount under Circular 99 (#1403)', () => {
   });
 
   it('passes a vendor default and a learned rule through: the caller filters them by the chart', () => {
-    expect(suggestDebitAccount(line('Phí quảng cáo Google'), '6417', [], false, 'tt99')).toMatchObject({ account: '6417', rule: { source: 'vendor_default' } });
+    expect(suggestDebitAccount(line('Phí quảng cáo Google'), '6418', [], false, 'tt99')).toMatchObject({ account: '6418', rule: { source: 'vendor_default' } });
   });
 
   it('names the TT133 codes whose meaning TT99 changed', () => {
