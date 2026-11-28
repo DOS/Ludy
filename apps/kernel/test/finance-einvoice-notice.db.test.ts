@@ -286,13 +286,14 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
 
   it('queues buyer notice email after explicit approval, keeps todo on failure/ambiguous/suppression for retry, settles sent on delivery, and enforces DB guards (#3697)', async () => {
     const o = await org();
+    const p = sandbox();
     // 1. Missing or invalid buyer_email refuses with BUYER_EMAIL_REQUIRED, stale reviewHash refuses with EINVOICE_NOTICE_STALE, viewer/system refused.
-    const noEmail = await issued(o, sandbox(), 'business', null);
+    const noEmail = await issued(o, p, 'business', null);
     const noticeNoEmail = await open(o, noEmail.draftId, 'buyer_address', '10 Lê Lợi, Q1');
     expect(await refusal(execute(o, 'finance.einvoice.notice_send', { noticeId: noticeNoEmail.id, approved: true, expectedHash: '0'.repeat(64) }))).toBe('EINVOICE_NOTICE_STALE');
     expect(await refusal(execute(o, 'finance.einvoice.notice_send', { noticeId: noticeNoEmail.id, approved: true, expectedHash: noticeNoEmail.reviewHash }))).toBe('BUYER_EMAIL_REQUIRED');
 
-    const badEmail = await issued(o, sandbox(), 'business', 'ketoan@muathu.example');
+    const badEmail = await issued(o, p, 'business', 'ketoan@muathu.example');
     await admin(async (c) => {
       await c.query('SET session_replication_role = replica');
       await c.query("UPDATE ludy_finance.einvoice_draft SET buyer_email = 'not-an-email' WHERE org_id = $1 AND id = $2", [o.orgId, badEmail.draftId]);
@@ -300,7 +301,7 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     const noticeBadEmail = await open(o, badEmail.draftId, 'buyer_name', 'Tên Mới');
     expect(await refusal(execute(o, 'finance.einvoice.notice_send', { noticeId: noticeBadEmail.id, approved: true, expectedHash: noticeBadEmail.reviewHash }))).toBe('BUYER_EMAIL_REQUIRED');
 
-    const original = await issued(o, sandbox(), 'business', 'ketoan@muathu.example');
+    const original = await issued(o, p, 'business', 'ketoan@muathu.example');
     const notice = await open(o, original.draftId, 'buyer_address', '88 Hai Bà Trưng, Q1');
     const viewer = await identity('notice-viewer');
     await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [o.orgId, viewer]);
