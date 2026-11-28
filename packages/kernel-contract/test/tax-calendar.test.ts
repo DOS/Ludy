@@ -49,11 +49,12 @@ describe('tax calendar rules', () => {
     ]);
   });
 
-  it('dues the provisional CIT on the 30th after each quarter of the fiscal year, and the year-end filings after it', () => {
+  it('dues the provisional CIT on the last day of the month after each quarter from 2026-07-01, and the year-end filings after it', () => {
     const calendar = profile({ obligations: ['cit_provisional', 'cit_finalization', 'pit_finalization', 'financial_statements'] });
-    expect(dues(calendar, '2026-10-01', '2026-10-31')).toEqual([['cit_provisional', '2026-Q3', '2026-10-30']]);
+    // Decree 252/2026/NĐ-CP Article 24(2): the last day, 31 October 2026, a Saturday, so Monday 2 November.
+    expect(dues(calendar, '2026-10-01', '2026-11-30')).toEqual([['cit_provisional', '2026-Q3', '2026-11-02']]);
     expect(dues(calendar, '2027-01-01', '2027-04-30')).toEqual([
-      // 30 January 2027 is a Saturday.
+      // 31 January 2027 is a Sunday.
       ['cit_provisional', '2026-Q4', '2027-02-01'],
       ['cit_finalization', '2026', '2027-03-31'],
       ['pit_finalization', '2026', '2027-03-31'],
@@ -62,6 +63,26 @@ describe('tax calendar rules', () => {
     ]);
     // 90 days after 31 December 2027 is 30 March 2028, a leap year.
     expect(dues(calendar, '2028-03-01', '2028-03-31').filter(([o]) => o === 'financial_statements')).toEqual([['financial_statements', '2027', '2028-03-30']]);
+  });
+
+  it('keeps the 30th for a quarter that began before 2026-07-01 and uses the last day from the next quarter', () => {
+    const calendar = profile({ obligations: ['cit_provisional'] });
+    expect(dues(calendar, '2026-04-01', '2026-04-30')).toEqual([['cit_provisional', '2026-Q1', '2026-04-30']]);
+    // The second quarter of 2026 began on 1 April: still the 30th, Thursday 30 July (the last day, 31 July, is a Friday).
+    expect(dues(calendar, '2026-07-01', '2026-07-31')).toEqual([['cit_provisional', '2026-Q2', '2026-07-30']]);
+    // The third quarter of 2027: the last day, 31 October, is a Sunday, so Monday 1 November.
+    expect(dues(calendar, '2027-10-01', '2027-11-30')).toEqual([['cit_provisional', '2027-Q3', '2027-11-01']]);
+  });
+
+  it('has no two rules of one obligation and frequency that cover the same first day', () => {
+    for (const a of TAX_RULES) {
+      for (const b of TAX_RULES) {
+        if (a === b || a.obligation !== b.obligation || a.frequency !== b.frequency) continue;
+        const aEnd = a.effectiveTo ?? '9999-12-31';
+        const bEnd = b.effectiveTo ?? '9999-12-31';
+        expect(a.effectiveFrom <= bEnd && b.effectiveFrom <= aEnd, `${a.obligation} ${a.frequency}`).toBe(false);
+      }
+    }
   });
 
   it('counts a fiscal year ending in March by its own quarters, and names it by the year it ends in', () => {
