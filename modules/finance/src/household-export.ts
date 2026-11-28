@@ -4,7 +4,7 @@
 // checks it against the appendix of the circular (#2520), and the file says so while the book's row is still `commentary`. Same cell rules as the other exports (export.ts): amounts exact,
 // text never read as a formula. Labels stay Vietnamese in every locale.
 import ExcelJS from 'exceljs';
-import { HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL, HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdS1a, type HouseholdS2a, type HouseholdS2b, type HouseholdS2c, type HouseholdS2d, type HouseholdS2e, type HouseholdYearToDate } from '@ludy/kernel-contract';
+import { HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL, HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdQtt, type HouseholdS1a, type HouseholdS2a, type HouseholdS2b, type HouseholdS2c, type HouseholdS2d, type HouseholdS2e, type HouseholdYearToDate } from '@ludy/kernel-contract';
 import { money as decimal, toMoney } from '@ludy/l10n-vn';
 import { setMoneyCell, setTextCell } from './export.ts';
 
@@ -223,6 +223,120 @@ export async function buildCnkdWorkbook(sheetData: HouseholdCnkd, brand = 'Ludy'
   line(sheetData.household.representativeName ?? '');
   sheet.addRow([]);
   line('Ghi chú: phần doanh thu được trừ theo ngưỡng được tính ở mục thuế theo doanh thu cả năm, từ doanh thu lũy kế từ đầu năm; Ludy không nộp tờ khai thay hộ kinh doanh.');
+  return new Uint8Array(await workbook.xlsx.writeBuffer());
+}
+
+// Excel export of the 02/CNKD-TNCN-QTT annual finalization worksheet (#5285): the household's name and tax code, the form and the year, the lines [09] to [20] with their codes (the form's own labels), the rate
+// band, the 30% PIT cut of Decree 398 before and after (the form has no line for it, so the lines above are BEFORE it), what the household had to type and did not, a place for the representative's signature. It
+// says on its face that it is a worksheet to file from through the tax portal or eTax Mobile and that Ludy files nothing. While a row behind the figures is `commentary` the file says so on top, lists the rows,
+// and puts HOUSEHOLD_PROVISIONAL_LABEL in a note column on every line that depends on them. The query refuses the ask while anything is held (forExport), so the figures here are always whole. Same cell rules
+// as the other exports (exact amounts, text never a formula).
+const QTT_RULE_LINES = new Set(['10', '10a', '10b', '10c', '10d', '10đ', '10e', '11', '12', '13', '17', '18', '19', '20']);
+const QTT_NOTES: Readonly<Record<HouseholdQtt['notes'][number], string>> = {
+  withheld_not_entered: 'Chưa nhập thuế sàn đã khấu trừ [14], nên số tính là 0.',
+  prepaid_not_entered: 'Chưa nhập thuế đã tạm nộp trong năm [15], nên số tính là 0.',
+  costs_not_checked: 'Ludy chưa kiểm tra khoản chi nào có được trừ hay không; kế toán cần xem lại từng khoản.',
+  year_not_ended: 'Năm chưa kết thúc nên các số còn thay đổi.',
+  reduction_not_in_form: 'Tờ khai không có dòng cho khoản giảm thuế; các dòng [13] đến [20] là số trước khi giảm.',
+};
+function qttUnconfirmedLine(u: HouseholdQtt['unconfirmed'][number]): string {
+  const from = dateLabel(u.effectiveFrom);
+  if (u.kind === 'form') return `  Chưa xác nhận: mẫu ${u.key}, hiệu lực từ ${from}`;
+  if (u.kind === 'threshold') return `  Chưa xác nhận: ngưỡng doanh thu năm, từ ${from}`;
+  if (u.kind === 'reduction') return `  Chưa xác nhận: mức giảm thuế TNCN theo Nghị định 398, từ ${from}`;
+  if (u.kind === 'rate') return `  Chưa xác nhận: thuế suất ${u.key} của bậc doanh thu, từ ${from}`;
+  return `  Chưa xác nhận: nhóm chi phí của tài khoản ${u.key}, từ ${from}`;
+}
+export async function buildQttWorkbook(sheetData: HouseholdQtt, brand = 'Ludy'): Promise<Uint8Array> {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = brand;
+  workbook.title = `${sheetData.form.name} năm ${sheetData.period.year} ${sheetData.household.name}`;
+  const sheet = workbook.addWorksheet('02-CNKD-TNCN-QTT');
+  sheet.columns = [
+    { key: 'code', width: 10 },
+    { key: 'label', width: 84 },
+    { key: 'amount', width: 24 },
+    { key: 'after', width: 24 },
+    { key: 'note', width: 46 },
+  ];
+  const provisional = sheetData.commentary;
+  // The label on a figure's row, only while the rows behind it are unconfirmed.
+  const mark = (row: ExcelJS.Row) => {
+    if (provisional) setTextCell(row.getCell('note'), HOUSEHOLD_PROVISIONAL_LABEL);
+  };
+  const line = (text: string, bold = false) => {
+    const row = sheet.addRow([]);
+    setTextCell(row.getCell(1), text);
+    if (bold) row.font = { bold: true };
+    return row;
+  };
+  line(`HỘ, CÁ NHÂN KINH DOANH: ${sheetData.household.name}`, true);
+  line(`Mã số thuế: ${sheetData.household.taxCode ?? ''}`);
+  line(`BẢNG TÍNH TỜ KHAI ${sheetData.form.name.toUpperCase()}`, true);
+  line(`Phiên bản mẫu: ${sheetData.form.version}`);
+  line(`Kỳ tính thuế: năm ${sheetData.period.year} (từ ${dateLabel(sheetData.period.from)} đến ${dateLabel(sheetData.period.to)})`);
+  line('Đây là bảng tính để kê khai trên cổng thuế hoặc eTax Mobile. Ludy không nộp tờ khai và không gửi dữ liệu cho cơ quan thuế.');
+  if (provisional) {
+    line(HOUSEHOLD_PROVISIONAL_LABEL.toUpperCase(), true);
+    for (const u of sheetData.unconfirmed) line(qttUnconfirmedLine(u));
+  }
+  sheet.addRow([]);
+  const head = sheet.addRow([]);
+  setTextCell(head.getCell('code'), 'Chỉ tiêu');
+  setTextCell(head.getCell('label'), 'Nội dung');
+  setTextCell(head.getCell('amount'), 'Số tiền');
+  if (provisional) setTextCell(head.getCell('note'), 'Ghi chú');
+  head.font = { bold: true };
+  for (const l of sheetData.lines) {
+    const row = sheet.addRow([]);
+    setTextCell(row.getCell('code'), `[${l.code}]`);
+    setTextCell(row.getCell('label'), l.label);
+    // The rate is a percentage, never money; a held line (the query refuses the file while anything is held) would say so rather than show a figure.
+    if (l.amount === null) setTextCell(row.getCell('amount'), 'Tạm giữ');
+    else if (l.code === '12') setTextCell(row.getCell('amount'), `${l.amount}%`);
+    else setMoneyCell(row.getCell('amount'), l.amount);
+    if (QTT_RULE_LINES.has(l.code) && l.amount !== null) mark(row);
+  }
+  if (sheetData.rate) line(`Thuế suất [12] là ${sheetData.rate.percent}% (bậc doanh thu trên ${sheetData.rate.revenueOver} đồng)`);
+  const reduction = sheetData.reduction;
+  if (reduction) {
+    sheet.addRow([]);
+    line(`Giảm ${reduction.percent}% thuế thu nhập cá nhân (Nghị định 398/2026): số trước và sau khi giảm`, true);
+    line('Tờ khai không có dòng cho khoản giảm này, nên các dòng [13] đến [20] ở trên là số TRƯỚC khi giảm. Cách khai khoản giảm đang chờ kế toán xác nhận.');
+    if (!reduction.applies) line(`Doanh thu năm vượt ${reduction.ceiling ?? ''} đồng nên không được giảm.`);
+    const memoHead = sheet.addRow([]);
+    setTextCell(memoHead.getCell('label'), 'Khoản');
+    setTextCell(memoHead.getCell('amount'), 'Trước khi giảm');
+    setTextCell(memoHead.getCell('after'), 'Sau khi giảm');
+    memoHead.font = { bold: true };
+    const rows: Array<[string, 'tax' | 'cut' | 'payable' | 'exempt' | 'due' | 'overpaid']> = [
+      ['Thuế phát sinh [13]', 'tax'],
+      ['Số được giảm', 'cut'],
+      ['Còn phải nộp [17]', 'payable'],
+      ['Miễn từ 50.000 đồng trở xuống [18]', 'exempt'],
+      ['Còn phải nộp sau miễn [19]', 'due'],
+      ['Nộp thừa [20]', 'overpaid'],
+    ];
+    for (const [label, key] of rows) {
+      const row = sheet.addRow([]);
+      setTextCell(row.getCell('label'), label);
+      setMoneyCell(row.getCell('amount'), key === 'cut' ? '0' : reduction.before[key]);
+      setMoneyCell(row.getCell('after'), key === 'cut' ? reduction.cut : reduction.after[key]);
+      mark(row);
+    }
+  }
+  sheet.addRow([]);
+  for (const note of sheetData.notes) {
+    if (note === 'reduction_not_in_form' && reduction) continue;
+    line(`Ghi chú: ${QTT_NOTES[note]}`);
+  }
+  sheet.addRow([]);
+  line('Người đại diện hộ kinh doanh', true);
+  line('(Ký, họ tên)');
+  sheet.addRow([]);
+  line(sheetData.household.representativeName ?? '');
+  sheet.addRow([]);
+  line('Ludy không nộp tờ khai thay hộ kinh doanh.');
   return new Uint8Array(await workbook.xlsx.writeBuffer());
 }
 
