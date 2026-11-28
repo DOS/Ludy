@@ -26,10 +26,14 @@ export interface OwnTaxCodes {
 // a sale that is not this entity's, so it is booked in the books of the entity that issued it, never as a purchase from a supplier and never here.
 export type SellerReading = 'sale' | 'purchase' | 'sale_other_entity';
 
-export function readSeller(invoice: { seller: string | null | undefined; buyer: string | null | undefined; entityId: string }, own: OwnTaxCodes): SellerReading {
-  const entity = own.entities.find((e) => e.id === invoice.entityId);
+export function ownTaxCodeForEntity(entityId: string, own: OwnTaxCodes): string | null {
+  const entity = own.entities.find((e) => e.id === entityId);
   // An entity the writer cannot see reads as the org (the single-entity way, as before).
-  const entityCode = entity ? entity.taxCode : own.tenant;
+  return (entity ? entity.taxCode : own.tenant) ?? null;
+}
+
+export function readSeller(invoice: { seller: string | null | undefined; buyer: string | null | undefined; entityId: string }, own: OwnTaxCodes): SellerReading {
+  const entityCode = ownTaxCodeForEntity(invoice.entityId, own);
   if (isOwnTaxCode(invoice.seller, entityCode)) return 'sale';
   // The org's own code counts even when the entity that holds it (the default one) is out of the writer's scope, so a scoped member cannot book it as a stranger's.
   const another = isOwnTaxCode(invoice.seller, own.tenant) || own.entities.some((e) => e.id !== invoice.entityId && isOwnTaxCode(invoice.seller, e.taxCode));

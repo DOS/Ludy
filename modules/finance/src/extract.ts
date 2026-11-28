@@ -13,7 +13,7 @@ import { BOOK_CURRENCY, convertInvoice, type ForeignAmounts } from './domain/for
 
 // A decimal string a lookup is given to compare amounts with (#2320): the money helpers parse it, so it is refused here when it is not one.
 const zAmount = z.string().regex(/^-?\d{1,20}(\.\d{1,6})?$/);
-import { loadOwnTaxCodes, readSeller } from './own-tax-code.ts';
+import { isOwnTaxCode, loadOwnTaxCodes, ownTaxCodeForEntity, readSeller } from './own-tax-code.ts';
 import { findPartyByName } from './parties.ts';
 import { chartAccounts } from './accounts.ts';
 import { rulesForSuggestion } from './categorization.ts';
@@ -98,6 +98,8 @@ export interface InvoiceLookup {
   // 'sale' when the seller is the legal entity the invoice is read in or one of its branches (its tax code, which is ludy_kernel.tenant.tax_code for the default entity,
   // #313, #686), or another entity of the org that the buyer is not (#2502: a sale that is booked in the issuing entity's books, refused in this one).
   direction: DocumentDirection;
+  // The own tax code of the legal entity the invoice is read in (#899); null when neither the entity nor the org has one.
+  ownTaxCode?: string | null;
   // The books regime the document is posted under on the invoice's issue date ('tt133', 'tt99'); set only when the issue date was asked for: for a sale always (#3712 slice 4), for a purchase only when it is not TT133 (#1403).
   regime?: string;
   vendorDefault: string | null;
@@ -205,7 +207,9 @@ export const purchaseLookup = defineQuery({
     // read in when the seller is that entity (#2502); issued as another entity of the org it is never a purchase from a
     // supplier: a sale of that entity (refused where it would be booked), or a purchase when this entity is its buyer.
     const entityId = await resolveLegalEntity(ctx, input.legalEntityId);
-    const reading = readSeller({ seller: input.sellerTaxCode, buyer: input.buyerTaxCode, entityId }, await loadOwnTaxCodes(ctx));
+    const own = await loadOwnTaxCodes(ctx);
+    const ownTaxCode = ownTaxCodeForEntity(entityId, own);
+    const reading = readSeller({ seller: input.sellerTaxCode, buyer: input.buyerTaxCode, entityId }, own);
     const sale = reading !== 'purchase';
     const party =
       !sale && input.sellerTaxCode
@@ -304,6 +308,7 @@ export const purchaseLookup = defineQuery({
     }
     return {
       direction: sale ? 'sale' : 'purchase',
+      ownTaxCode,
       ...(regime ? { regime } : {}),
       vendorDefault,
       learnedRules,
@@ -390,6 +395,22 @@ function relatedCheck(related: RelatedInvoiceRef): InvoiceCheck {
         params: { invoice },
         message: `Hóa đơn điều chỉnh cho hóa đơn ${invoice}: ghi sổ phần chênh lệch, liên kết với hóa đơn gốc`,
       };
+}
+
+// Exported for the check-code test (#899).
+// For a purchase invoice: when the org (or target legal entity) has an own tax code and the extracted buyer.taxCode
+// parses to a valid tax code that is not the org's own (nor one of its branches, per isOwnTaxCode), warn the reviewer.
+export function buyerTaxCodeCheck(buyerTaxCode: string | null | undefined, ownTaxCode: string | null | undefined): InvoiceCheck | null {
+  const own = parseTaxCode(ownTaxCode);
+  const buyer = parseTaxCode(buyerTaxCode);
+  if (!own || !buyer || isOwnTaxCode(buyer.normalized, own.normalized)) return null;
+  return {
+    id: 'buyer_tax_code',
+    status: 'warn',
+    code: 'buyer_tax_code.other',
+    params: { taxCode: buyer.normalized },
+    message: `MST người mua ${buyer.normalized} khác MST của tổ chức; kiểm tra trước khi duyệt`,
+  };
 }
 
 export interface ExtractDeps {
@@ -691,6 +712,10 @@ export async function extractAndPropose(
   if (related) checks.push(relatedCheck(related));
   // A sale (issue #313) books every line to revenue; a purchase proposes an expense or asset account per line.
   const sale = lookup.direction === 'sale';
+  if (!sale) {
+    const buyerCheck = buyerTaxCodeCheck(invoice.buyer.taxCode, lookup.ownTaxCode);
+    if (buyerCheck) checks.push(buyerCheck);
+  }
   const lines = sale ? bookableSaleLines(booked) : bookableLines(booked, lookup.vendorDefault, lookup.learnedRules ?? [], lookup.regime);
   if (lines.length === 0) return fail('Hóa đơn không có dòng hàng hóa, dịch vụ để hạch toán', checks);
   // A purchase line no rule matched has no account yet (#2091): a warning names those lines, and recording refuses them

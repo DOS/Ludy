@@ -48,6 +48,9 @@ describe('invoice check wording', () => {
     const en = translatorFor('en');
     expect(invoiceCheckMessage(check('lines_sum.mismatch'), vi, format)).toBe('Tổng các dòng (<1800000>) lệch tiền trước thuế (<1900000>)');
     expect(invoiceCheckMessage(check('seller_tax_code.checksum'), en, format)).toBe("The seller's tax code 0101234564 fails its check digit");
+    expect(invoiceCheckMessage(check('buyer_tax_code.other'), vi, format)).toBe('MST người mua 0101234564 khác MST của tổ chức; kiểm tra trước khi duyệt');
+    expect(invoiceCheckMessage(check('buyer_tax_code.other'), en, format)).toBe("The buyer's tax code 0101234564 does not match the organization's tax code; check before approving");
+    expect(invoiceCheckMessage(check('buyer_tax_code.other', null), en, format)).toBe('STORED');
     expect(invoiceCheckMessage(check('currency.unsupported'), en, format)).toContain('USD');
     // The date goes through the date formatter (dd/mm/yyyy in the app, #1332).
     expect(invoiceCheckMessage(check('issue_date.ok'), vi, format)).toBe('Ngày lập [2026-10-13]');
