@@ -1,7 +1,7 @@
 // The tax calendar rules (issue #921): each obligation's periods and due dates across year boundaries, the weekend
 // rule, a fiscal year that is not the calendar year, the periods a rule covers, and what the profile turns on.
 import { describe, expect, it } from 'vitest';
-import { TAX_OBLIGATIONS, TAX_RULES, afterWeekend, taxDues, type TaxProfileSettings } from '../src/tax-calendar.ts';
+import { TAX_OBLIGATIONS, TAX_RULES, taxDues, type TaxProfileSettings } from '../src/tax-calendar.ts';
 
 const profile = (over: Partial<TaxProfileSettings> = {}): TaxProfileSettings => ({
   obligations: [],
@@ -13,11 +13,12 @@ const profile = (over: Partial<TaxProfileSettings> = {}): TaxProfileSettings => 
 const dues = (p: TaxProfileSettings, from: string, to: string) => taxDues(p, from, to).map((d) => [d.obligation, d.period, d.dueDate]);
 
 describe('tax calendar rules', () => {
-  it('moves a Saturday or a Sunday to the next Monday', () => {
-    expect(afterWeekend('2026-09-19')).toBe('2026-09-21');
-    expect(afterWeekend('2026-09-20')).toBe('2026-09-21');
-    expect(afterWeekend('2026-10-20')).toBe('2026-10-20');
-    expect(() => afterWeekend('2026-02-30')).toThrow(/not a calendar date/);
+  it('moves a due date on a public holiday to the next working day (Decree 252/2026/NĐ-CP, Art. 3(7))', () => {
+    const p = profile({ vatFilingPeriod: 'month' });
+    // 20 February 2026 is a Friday and the last day of Tết: the January return is due on Monday 23 February.
+    expect(dues(p, '2026-02-01', '2026-02-28')).toEqual([['vat_return', '2026-01', '2026-02-23']]);
+    // 30 April 2027 is a Friday and a holiday, 1 May a Saturday holiday, and Monday 3 May its compensatory day off: the first quarter is due on Tuesday 4 May.
+    expect(dues(profile({ vatFilingPeriod: 'quarter' }), '2027-04-01', '2027-05-31')).toEqual([['vat_return', '2027-Q1', '2027-05-04']]);
   });
 
   it('dues the monthly VAT and PIT returns on the 20th of the next month, across the year end and the weekend', () => {
@@ -53,13 +54,14 @@ describe('tax calendar rules', () => {
     const calendar = profile({ obligations: ['cit_provisional', 'cit_finalization', 'pit_finalization', 'financial_statements'] });
     // Decree 252/2026/NĐ-CP Article 24(2): the last day, 31 October 2026, a Saturday, so Monday 2 November.
     expect(dues(calendar, '2026-10-01', '2026-11-30')).toEqual([['cit_provisional', '2026-Q3', '2026-11-02']]);
-    expect(dues(calendar, '2027-01-01', '2027-04-30')).toEqual([
+    expect(dues(calendar, '2027-01-01', '2027-05-31')).toEqual([
       // 31 January 2027 is a Sunday.
       ['cit_provisional', '2026-Q4', '2027-02-01'],
       ['cit_finalization', '2026', '2027-03-31'],
       ['pit_finalization', '2026', '2027-03-31'],
       ['financial_statements', '2026', '2027-03-31'],
-      ['cit_provisional', '2027-Q1', '2027-04-30'],
+      // 30 April 2027 is a Friday and a holiday, then a weekend and the compensatory day of 1 May.
+      ['cit_provisional', '2027-Q1', '2027-05-04'],
     ]);
     // 90 days after 31 December 2027 is 30 March 2028, a leap year.
     expect(dues(calendar, '2028-03-01', '2028-03-31').filter(([o]) => o === 'financial_statements')).toEqual([['financial_statements', '2027', '2028-03-30']]);
@@ -67,7 +69,8 @@ describe('tax calendar rules', () => {
 
   it('keeps the 30th for a quarter that began before 2026-07-01 and uses the last day from the next quarter', () => {
     const calendar = profile({ obligations: ['cit_provisional'] });
-    expect(dues(calendar, '2026-04-01', '2026-04-30')).toEqual([['cit_provisional', '2026-Q1', '2026-04-30']]);
+    // The first quarter of 2026 keeps the 30th, 30 April 2026, a holiday (1 May is a holiday and the weekend follows): Monday 4 May.
+    expect(dues(calendar, '2026-04-01', '2026-05-31')).toEqual([['cit_provisional', '2026-Q1', '2026-05-04']]);
     // The second quarter of 2026 began on 1 April: still the 30th, Thursday 30 July (the last day, 31 July, is a Friday).
     expect(dues(calendar, '2026-07-01', '2026-07-31')).toEqual([['cit_provisional', '2026-Q2', '2026-07-30']]);
     // The third quarter of 2027: the last day, 31 October, is a Sunday, so Monday 1 November.
@@ -93,7 +96,8 @@ describe('tax calendar rules', () => {
     // Its finalization is due at the end of June 2027; the PIT finalization stays on the calendar year.
     expect(dues(march, '2027-03-01', '2027-06-30')).toEqual([
       ['pit_finalization', '2026', '2027-03-31'],
-      ['cit_provisional', '2027-Q4', '2027-04-30'],
+      // 30 April 2027, a holiday.
+      ['cit_provisional', '2027-Q4', '2027-05-04'],
       ['cit_finalization', '2027', '2027-06-30'],
     ]);
   });

@@ -1426,7 +1426,7 @@ export const vi = {
     daysLeft: '{days, plural, =0 {hạn cuối là hôm nay} other {còn # ngày}}',
     noFilingPeriod: 'Chưa chọn kỳ khai thuế',
     chooseFilingPeriod: 'Chọn kỳ khai',
-    deadlineNote: 'Hạn rơi vào thứ Bảy hoặc Chủ nhật được lùi sang thứ Hai; {brand} chưa tính các ngày nghỉ lễ, Tết.',
+    deadlineNote: 'Hạn rơi vào thứ Bảy, Chủ nhật hoặc ngày nghỉ lễ, Tết được lùi sang ngày làm việc kế tiếp; {brand} chưa có ngày nghỉ bù hay ngày nghỉ thêm do Chính phủ quyết định từng năm.',
     empty: 'Bạn chưa thuộc doanh nghiệp nào',
     emptyHint: 'Tạo doanh nghiệp đầu tiên của bạn để bắt đầu.',
     create: 'Tạo doanh nghiệp',
@@ -1466,7 +1466,7 @@ export const vi = {
     nothingDue: 'Không có việc trong 30 ngày',
     empty: 'Không có việc thuế nào trong 30 ngày tới',
     emptyHint: 'Chọn kỳ khai thuế GTGT và các việc áp dụng cho doanh nghiệp trong Cài đặt để lịch thuế hiện ở đây.',
-    unconfirmed: 'Hạn theo Luật Quản lý thuế 108/2025/QH15 và Nghị định 252/2026/NĐ-CP (trước 2026-07-01: Luật 38/2019/QH14); bảng hạn chưa được kế toán xác nhận. Hạn rơi vào thứ Bảy hoặc Chủ nhật được lùi sang thứ Hai; chưa tính ngày nghỉ lễ, Tết.',
+    unconfirmed: 'Hạn theo Luật Quản lý thuế 108/2025/QH15 và Nghị định 252/2026/NĐ-CP (trước 2026-07-01: Luật 38/2019/QH14); bảng hạn chưa được kế toán xác nhận. Hạn rơi vào thứ Bảy, Chủ nhật, ngày nghỉ lễ, Tết hoặc ngày nghỉ bù được lùi sang ngày làm việc kế tiếp.',
   },
   documents: {
     title: 'Chứng từ',
