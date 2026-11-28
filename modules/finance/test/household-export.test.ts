@@ -319,9 +319,9 @@ const qttData = (over: Partial<HouseholdQtt> = {}): HouseholdQtt => ({
   ...over,
 });
 
-async function qttSheet(d: HouseholdQtt): Promise<ExcelJS.Worksheet> {
+async function qttSheet(d: HouseholdQtt, brand?: string): Promise<ExcelJS.Worksheet> {
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load((await buildQttWorkbook(d)) as unknown as ArrayBuffer);
+  await workbook.xlsx.load((await buildQttWorkbook(d, brand)) as unknown as ArrayBuffer);
   const sheet = workbook.getWorksheet('02-CNKD-TNCN-QTT');
   if (!sheet) throw new Error('no sheet');
   return sheet;
@@ -343,6 +343,16 @@ describe('the 02/CNKD-TNCN-QTT annual worksheet workbook', () => {
     expect(all).toContain('Kỳ tính thuế: năm 2026 (từ 01/01/2026 đến 31/12/2026)');
     expect(all.some((t) => t.includes('Ludy không nộp tờ khai'))).toBe(true);
     expect(all).toContain('(Ký, họ tên)');
+  });
+
+  it('names the product by the brand it is given in every line that speaks for it, never a fixed name', async () => {
+    const all = texts(await qttSheet(qttData(), 'Acme'));
+    expect(all.some((t) => t.includes('Acme không nộp tờ khai và không gửi dữ liệu'))).toBe(true);
+    expect(all).toContain('Ghi chú: Acme chưa kiểm tra khoản chi nào có được trừ hay không; kế toán cần xem lại từng khoản.');
+    expect(all).toContain('Acme không nộp tờ khai thay hộ kinh doanh.');
+    expect(all.some((t) => t.includes('Ludy'))).toBe(false);
+    // Without a brand the default product name is used, as in the other workbooks.
+    expect(texts(await qttSheet(qttData())).some((t) => t.includes('Ludy không nộp tờ khai thay hộ kinh doanh.'))).toBe(true);
   });
 
   it('writes every line with its code and label, money as exact numbers and the rate as a percentage', async () => {

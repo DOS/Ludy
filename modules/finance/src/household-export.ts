@@ -232,13 +232,14 @@ export async function buildCnkdWorkbook(sheetData: HouseholdCnkd, brand = 'Ludy'
 // and puts HOUSEHOLD_PROVISIONAL_LABEL in a note column on every line that depends on them. The query refuses the ask while anything is held (forExport), so the figures here are always whole. Same cell rules
 // as the other exports (exact amounts, text never a formula).
 const QTT_RULE_LINES = new Set(['10', '10a', '10b', '10c', '10d', '10đ', '10e', '11', '12', '13', '17', '18', '19', '20']);
-const QTT_NOTES: Readonly<Record<HouseholdQtt['notes'][number], string>> = {
+// The notes, with the product name users see (BRAND_NAME, #1045) where one speaks.
+const qttNotes = (brand: string): Readonly<Record<HouseholdQtt['notes'][number], string>> => ({
   withheld_not_entered: 'Chưa nhập thuế sàn đã khấu trừ [14], nên số tính là 0.',
   prepaid_not_entered: 'Chưa nhập thuế đã tạm nộp trong năm [15], nên số tính là 0.',
-  costs_not_checked: 'Ludy chưa kiểm tra khoản chi nào có được trừ hay không; kế toán cần xem lại từng khoản.',
+  costs_not_checked: `${brand} chưa kiểm tra khoản chi nào có được trừ hay không; kế toán cần xem lại từng khoản.`,
   year_not_ended: 'Năm chưa kết thúc nên các số còn thay đổi.',
   reduction_not_in_form: 'Tờ khai không có dòng cho khoản giảm thuế; các dòng [13] đến [20] là số trước khi giảm.',
-};
+});
 function qttUnconfirmedLine(u: HouseholdQtt['unconfirmed'][number]): string {
   const from = dateLabel(u.effectiveFrom);
   if (u.kind === 'form') return `  Chưa xác nhận: mẫu ${u.key}, hiệu lực từ ${from}`;
@@ -260,6 +261,7 @@ export async function buildQttWorkbook(sheetData: HouseholdQtt, brand = 'Ludy'):
     { key: 'note', width: 46 },
   ];
   const provisional = sheetData.commentary;
+  const notes = qttNotes(brand);
   // The label on a figure's row, only while the rows behind it are unconfirmed.
   const mark = (row: ExcelJS.Row) => {
     if (provisional) setTextCell(row.getCell('note'), HOUSEHOLD_PROVISIONAL_LABEL);
@@ -275,7 +277,7 @@ export async function buildQttWorkbook(sheetData: HouseholdQtt, brand = 'Ludy'):
   line(`BẢNG TÍNH TỜ KHAI ${sheetData.form.name.toUpperCase()}`, true);
   line(`Phiên bản mẫu: ${sheetData.form.version}`);
   line(`Kỳ tính thuế: năm ${sheetData.period.year} (từ ${dateLabel(sheetData.period.from)} đến ${dateLabel(sheetData.period.to)})`);
-  line('Đây là bảng tính để kê khai trên cổng thuế hoặc eTax Mobile. Ludy không nộp tờ khai và không gửi dữ liệu cho cơ quan thuế.');
+  line(`Đây là bảng tính để kê khai trên cổng thuế hoặc eTax Mobile. ${brand} không nộp tờ khai và không gửi dữ liệu cho cơ quan thuế.`);
   if (provisional) {
     line(HOUSEHOLD_PROVISIONAL_LABEL.toUpperCase(), true);
     for (const u of sheetData.unconfirmed) line(qttUnconfirmedLine(u));
@@ -328,7 +330,7 @@ export async function buildQttWorkbook(sheetData: HouseholdQtt, brand = 'Ludy'):
   sheet.addRow([]);
   for (const note of sheetData.notes) {
     if (note === 'reduction_not_in_form' && reduction) continue;
-    line(`Ghi chú: ${QTT_NOTES[note]}`);
+    line(`Ghi chú: ${notes[note]}`);
   }
   sheet.addRow([]);
   line('Người đại diện hộ kinh doanh', true);
@@ -336,7 +338,7 @@ export async function buildQttWorkbook(sheetData: HouseholdQtt, brand = 'Ludy'):
   sheet.addRow([]);
   line(sheetData.household.representativeName ?? '');
   sheet.addRow([]);
-  line('Ludy không nộp tờ khai thay hộ kinh doanh.');
+  line(`${brand} không nộp tờ khai thay hộ kinh doanh.`);
   return new Uint8Array(await workbook.xlsx.writeBuffer());
 }
 
