@@ -900,7 +900,7 @@ function QttReturn({ entityId }: { entityId: string }) {
               <AlertDescription>{t(`qttHolds.${hold}`, { amount: hold === 'unmapped_costs' ? f.money(data.unmappedCosts) : f.money(data.threshold) })}</AlertDescription>
             </Alert>
           ))}
-          <p className="mb-2 text-sm text-muted-foreground">{t('qttPeriod', { year: data.period.year, from: f.date(data.period.from), to: f.date(data.period.to) })}</p>
+          <p className="mb-2 text-sm text-muted-foreground">{t('qttPeriod', { year: String(data.period.year), from: f.date(data.period.from), to: f.date(data.period.to) })}</p>
           <DataTable stickyFirstCol numeric={[2]} head={[t('qttColumns.code'), t('qttColumns.label'), t('qttColumns.amount')]}>
             {data.lines.map((l) => (
               <TableRow key={l.code} data-testid={`household-qtt-line-${l.code}`}>
