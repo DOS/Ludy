@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The Social reads an MCP grant may run (ADR-0051 decision 2, issue #3227, plan section 3.8): `ludy_social_posts_list` (social.mcp.posts) and
-// `ludy_social_review_queue` (social.mcp.review_queue). Both are R0 reads for the grant's consenting owner or admin; the grant's scope is `ludy.read`.
+// The Social reads an MCP grant may run (ADR-0051 decision 2, issue #3227, plan section 3.8): `ludy_social_posts_list` (social.mcp.posts),
+// `ludy_social_review_queue` (social.mcp.review_queue) and `ludy_social_channels_list` (social.mcp.channels, #3250). All are R0 reads for the grant's consenting owner or admin; the grant's scope is `ludy.read`.
+//
+// The channel list adds one projection (`social.mcp.channels`): the org's live channels (a connection that is not revoked and whose provider Social posts to, the rows `social.post.create` accepts), each as its
+// connection id, provider, display name and status, so a first draft can name a channel. The display name is the account's own words, so it is cut to one plain line like every text below. Never returned:
+// tokens, scopes, the platform's account id, the connection's settings, who connected it, when it expires, why it needs attention, the sync state, and any channel limit of a member (an owner or admin has none).
 //
 // The projection below is these tools' privacy review, by the finance tools' rule: an AI app the owner connected sees what the consenting owner or admin sees in Social,
 // the fields below and no others. Per post: its id, title, text (one plain line of at most MCP_TEXT_MAX characters, with `textTruncated`), link, status, who wrote it
@@ -17,7 +21,8 @@ import { z } from 'zod';
 import { plainLine, zId } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
-import { channelScope, connectionInScope, postInScope, type ChannelScope } from './channel-access.ts';
+import { channelScope, connectionInScope, mayUse, postInScope, type ChannelScope } from './channel-access.ts';
+import { PROVIDERS } from './domain/channels.ts';
 import { withSignature } from './domain/signature.ts';
 import { postFilterQuery } from './post-filter.ts';
 import { currentAndPrevious, latestMetrics, spanTotals, type WindowTotals } from './metrics.ts';
@@ -40,6 +45,9 @@ export const zMcpPostsInput = z.strictObject({
 });
 
 export const zMcpReviewQueueInput = z.strictObject({ limit: zLimit });
+// The channel list takes no argument: it is the org's whole list (at most MCP_CHANNELS_MAX).
+export const zMcpChannelsInput = z.strictObject({});
+export const MCP_CHANNELS_MAX = 50;
 
 export interface McpChannelRow {
   variantId: string;
@@ -242,6 +250,43 @@ export const mcpPosts = defineQuery({
   },
 });
 
+export interface McpChannel {
+  connectionId: string;
+  provider: string;
+  channelName: string;
+  status: string;
+}
+export interface McpChannels {
+  channels: McpChannel[];
+  truncated: boolean;
+}
+
+// `ludy_social_channels_list`: the org's live channels, so an AI app can name one as the target of its first draft without an existing post to read the id from. "Live" is what a post may be made on
+// (`liveConnections` in posts.ts): not revoked, and a provider Social posts to; `status` says whether it is connected or needs attention. By name, then id. A member's channel limit (#1081) is
+// still asked, so the answer can never be wider than the screen's (an owner or admin, the only grantors, have none).
+export const mcpChannels = defineQuery({
+  name: 'social.mcp.channels',
+  input: zMcpChannelsInput,
+  access: GRANTORS,
+  mcp: { scope: 'ludy.read' },
+  handler: async (ctx): Promise<McpChannels> => {
+    requireGrant(ctx);
+    const scope = await channelScope(ctx);
+    const rows = await ctx.trx
+      .selectFrom('ludy_kernel.channel_connection')
+      .select(['id', 'provider', 'display_name', 'status'])
+      .where('org_id', '=', ctx.orgId)
+      .where('status', '<>', 'revoked')
+      .where('provider', 'in', [...PROVIDERS])
+      .orderBy('display_name')
+      .orderBy('id')
+      .execute();
+    const visible = rows.filter((r) => mayUse(scope, r.id));
+    const channels = visible.slice(0, MCP_CHANNELS_MAX).map((r): McpChannel => ({ connectionId: r.id, provider: plainLine(r.provider, 40), channelName: plainLine(r.display_name, 200), status: plainLine(r.status, 40) }));
+    return { channels, truncated: visible.length > channels.length };
+  },
+});
+
 // `ludy_social_review_queue`: what waits for a person. `inReview`: the posts with a channel in review, the one waiting longest first. `aiDrafts`: the drafts an AI wrote with a
 // channel nobody has sent to review yet and none waiting in review (a draft an MCP client creates lands here until a person submits it, then moves to `inReview`).
 export const mcpReviewQueue = defineQuery({
@@ -418,4 +463,4 @@ export const mcpMetricsTotals = defineQuery({
   },
 });
 
-export const mcpSocialQueries = [mcpPosts, mcpReviewQueue, mcpMetricsSummary, mcpMetricsTotals];
+export const mcpSocialQueries = [mcpPosts, mcpReviewQueue, mcpChannels, mcpMetricsSummary, mcpMetricsTotals];
