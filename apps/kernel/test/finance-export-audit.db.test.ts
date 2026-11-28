@@ -196,7 +196,7 @@ suite('finance exports: no audit row, no download (#365)', () => {
 
   it('answers an error, not a file, for the 01/CNKD worksheet when the audit row cannot be written', async () => {
     reached.length = 0;
-    const response = await app.request(`/api/export/household-cnkd.xlsx?legalEntityId=${percentageHousehold}&year=2026&quarter=4`, { headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug } });
+    const response = await app.request('/api/export/household-cnkd.xlsx', { method: 'POST', headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug, 'content-type': 'application/json' }, body: JSON.stringify({ legalEntityId: percentageHousehold, year: 2026, quarter: 4 }) });
     expect(reached).toEqual(['finance.household.export']);
     expect(response.status).toBe(500);
     expect(response.headers.get('content-type')).not.toBe(XLSX);
@@ -206,7 +206,7 @@ suite('finance exports: no audit row, no download (#365)', () => {
 
   it('does not refuse the 01/CNKD worksheet while a row behind it is unconfirmed (its figures are labelled): the audit write is reached before any file (#2518)', async () => {
     reached.length = 0;
-    const response = await app.request(`/api/export/household-cnkd.xlsx?legalEntityId=${percentageHousehold}&year=2026&quarter=3`, { headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug } });
+    const response = await app.request('/api/export/household-cnkd.xlsx', { method: 'POST', headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug, 'content-type': 'application/json' }, body: JSON.stringify({ legalEntityId: percentageHousehold, year: 2026, quarter: 3 }) });
     expect(reached).toEqual(['finance.household.export']);
     expect(response.status).toBe(500);
     expect(response.headers.get('content-type')).not.toBe(XLSX);
@@ -216,7 +216,7 @@ suite('finance exports: no audit row, no download (#365)', () => {
 
   it('answers an error, not a file, for the 02/CNKD-TNCN-QTT worksheet when the audit row cannot be written (#5285)', async () => {
     reached.length = 0;
-    const response = await app.request(`/api/export/household-qtt.xlsx?legalEntityId=${incomeHousehold}&year=2026`, { headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug } });
+    const response = await app.request('/api/export/household-qtt.xlsx', { method: 'POST', headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug, 'content-type': 'application/json' }, body: JSON.stringify({ legalEntityId: incomeHousehold, year: 2026 }) });
     expect(reached).toEqual(['finance.household.export']);
     expect(response.status).toBe(500);
     expect(response.headers.get('content-type')).not.toBe(XLSX);

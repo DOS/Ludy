@@ -20,6 +20,7 @@ import { DateInput } from '../components/date-input.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
+import { worksheetRequest } from '../lib/household-worksheet.ts';
 
 type Kind = 'month' | 'quarter' | 'year';
 
@@ -816,15 +817,17 @@ function QttReturn({ entityId }: { entityId: string }) {
   const noPayment = noPaymentText.trim();
   const valid = /^20\d{2}$/.test(year) && Number(year) >= 2026;
   const bad = isBadDong(withheld) || isBadDong(prepaid) || isBadDong(noPayment);
+  // What the screen asks for, and what the file is built from: the same input, so the file is the worksheet as the screen shows it. The typed amounts go to the server in the body of a POST, never in a URL (#5324).
+  const worksheetInput = {
+    legalEntityId: entityId,
+    year: Number(year),
+    ...(withheld !== '' && !isBadDong(withheld) ? { withheld } : {}),
+    ...(prepaid !== '' && !isBadDong(prepaid) ? { prepaid } : {}),
+    ...(noPayment !== '' && !isBadDong(noPayment) ? { noPaymentRevenue: noPayment } : {}),
+  };
   const sheet = useQuery({
     ...orpc.household.qtt.queryOptions({
-      input: {
-        legalEntityId: entityId,
-        year: Number(year),
-        ...(withheld !== '' && !isBadDong(withheld) ? { withheld } : {}),
-        ...(prepaid !== '' && !isBadDong(prepaid) ? { prepaid } : {}),
-        ...(noPayment !== '' && !isBadDong(noPayment) ? { noPaymentRevenue: noPayment } : {}),
-      },
+      input: worksheetInput,
     }),
     enabled: valid && !bad,
     retry: false,
@@ -834,11 +837,7 @@ function QttReturn({ entityId }: { entityId: string }) {
   // The file is the worksheet as the screen shows it (the same typed amounts); a held worksheet has no file, and the server refuses it too.
   const download = useMutation({
     mutationFn: async () => {
-      const query = new URLSearchParams({ legalEntityId: entityId, year });
-      if (withheld !== '') query.set('withheld', withheld);
-      if (prepaid !== '') query.set('prepaid', prepaid);
-      if (noPayment !== '') query.set('noPaymentRevenue', noPayment);
-      const response = await apiFetch(`/api/export/household-qtt.xlsx?${query.toString()}`);
+      const response = await apiFetch(...worksheetRequest('/api/export/household-qtt.xlsx', worksheetInput));
       const url = URL.createObjectURL(await response.blob());
       const a = document.createElement('a');
       a.href = url;
@@ -995,28 +994,26 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
   const partsBefore = askBefore ? trades.filter((x) => MONEY_INPUT.test((splitBefore[x] ?? '').trim())).map((x) => ({ trade: x, revenue: (splitBefore[x] ?? '').trim() })) : [];
   const badBefore = askBefore && trades.some((x) => (splitBefore[x] ?? '').trim() !== '' && !MONEY_INPUT.test((splitBefore[x] ?? '').trim()));
   type TradeRevenue = Array<{ trade: (typeof HOUSEHOLD_TRADES)[number]; revenue: string }>;
+  // What the screen asks for, and what the file is built from: the same input, so the file is the worksheet as the screen shows it. The split by trade and the yearly rule's inputs go to the server in the body of a POST, never in a URL (#5324).
+  const worksheetInput = {
+    legalEntityId: entityId,
+    year: Number(year),
+    quarter,
+    ...(parts.length > 0 ? { split: parts as TradeRevenue } : {}),
+    ...(partsBefore.length > 0 ? { splitBefore: partsBefore as TradeRevenue } : {}),
+    ...(deductionTrade !== '' ? { deductionTrade: deductionTrade as (typeof HOUSEHOLD_TRADES)[number] } : {}),
+  };
   const sheet = useQuery({
     ...orpc.household.cnkd.queryOptions({
-      input: {
-        legalEntityId: entityId,
-        year: Number(year),
-        quarter,
-        ...(parts.length > 0 ? { split: parts as TradeRevenue } : {}),
-        ...(partsBefore.length > 0 ? { splitBefore: partsBefore as TradeRevenue } : {}),
-        ...(deductionTrade !== '' ? { deductionTrade: deductionTrade as (typeof HOUSEHOLD_TRADES)[number] } : {}),
-      },
+      input: worksheetInput,
     }),
     enabled: valid,
     retry: false,
   });
   const download = useMutation({
     mutationFn: async () => {
-      const query = new URLSearchParams({ legalEntityId: entityId, year, quarter: String(quarter) });
-      if (parts.length > 0) query.set('split', parts.map((x) => `${x.trade}:${x.revenue}`).join(','));
       // The yearly rule's inputs travel with the file, as with the screen: the split before the quarter and the trade that takes the threshold deduction.
-      if (partsBefore.length > 0) query.set('splitBefore', partsBefore.map((x) => `${x.trade}:${x.revenue}`).join(','));
-      if (deductionTrade !== '') query.set('deductionTrade', deductionTrade);
-      const response = await apiFetch(`/api/export/household-cnkd.xlsx?${query.toString()}`);
+      const response = await apiFetch(...worksheetRequest('/api/export/household-cnkd.xlsx', worksheetInput));
       const url = URL.createObjectURL(await response.blob());
       const a = document.createElement('a');
       a.href = url;
