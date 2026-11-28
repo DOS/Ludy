@@ -454,6 +454,8 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
   const [lineAccounts, setLineAccounts] = useState<Record<number, string>>({});
   const [dueDateDraft, setDueDateDraft] = useState<string | null>(null);
   const dueDateInputId = useId();
+  const dueDateHintId = useId();
+  const dueDateErrorId = useId();
   const [idempotencyKey] = useState(() => crypto.randomUUID());
   // The rate typed for a foreign-currency invoice read without one (#918).
   const [exchangeRate, setExchangeRate] = useState('');
@@ -1292,6 +1294,9 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
                         disabled={busy}
                         value={dueDateValue}
                         onChange={setDueDateDraft}
+                        // The hint is read with the field, and the error too while there is one (#5257).
+                        aria-describedby={dueDateValid ? dueDateHintId : `${dueDateHintId} ${dueDateErrorId}`}
+                        aria-invalid={!dueDateValid || undefined}
                       />
                     </div>
                     <Button type="submit" variant="outline" className="min-h-11" disabled={busy || !dueDateDirty || !dueDateValid}>
@@ -1309,11 +1314,13 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
                       </Button>
                     )}
                     {!dueDateValid && (
-                      <p className="w-full text-xs text-destructive" aria-live="polite">
+                      <p id={dueDateErrorId} className="w-full text-xs text-destructive" aria-live="polite">
                         {t('dueDateInvalid', { date: f.date(payload.invoice.issueDate) })}
                       </p>
                     )}
-                    <p className="w-full text-xs text-subtle-foreground">{t('dueDateHint')}</p>
+                    <p id={dueDateHintId} className="w-full text-xs text-subtle-foreground">
+                      {t('dueDateHint')}
+                    </p>
                   </form>
                 )}
                 {!sale && (!pending || !item?.canEdit) && (

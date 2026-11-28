@@ -505,6 +505,17 @@ describe('ProposalDetail and InboxDetailPage', () => {
     expect(editableHtml).toContain('min-h-11');
     expect(editableHtml).toContain(catalog('en').inboxDetail.saveDueDate);
     expect(editableHtml).toContain(catalog('en').inboxDetail.clearDueDate);
+    // The field is described by its hint (#5257): the input named by the label carries an aria-describedby that is the id of the hint paragraph.
+    const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const dueLabel = new RegExp(`<label[^>]*\\bfor="([^"]+)"[^>]*>\\s*${escapeRe(catalog('en').inboxDetail.dueDate)}\\s*</label>`).exec(editableHtml);
+    expect(dueLabel).not.toBeNull();
+    const dueInput = new RegExp(`<input[^>]*\\bid="${escapeRe(dueLabel?.[1] ?? '')}"[^>]*>`).exec(editableHtml)?.[0] ?? '';
+    const describedBy = /\baria-describedby="([^"]+)"/.exec(dueInput)?.[1] ?? '';
+    expect(describedBy).not.toBe('');
+    // A date that is not before the invoice date raises no error, so the hint is the only description, and it is the paragraph with that text.
+    const hint = new RegExp(`<p[^>]*\\bid="${escapeRe(describedBy)}"[^>]*>${escapeRe(catalog('en').inboxDetail.dueDateHint)}</p>`).exec(editableHtml);
+    expect(hint).not.toBeNull();
+    expect(dueInput).not.toContain('aria-invalid="true"');
 
     // Non-editable (e.g. executed) shows due date read-only with no edit controls.
     state.qc.setQueryData(['inbox', 'get', { id: 'p1' }], { ...withDue, status: 'executed', canEdit: false, canApprove: false, canReject: false });

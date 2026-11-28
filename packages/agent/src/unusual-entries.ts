@@ -17,7 +17,6 @@ import {
   CLAIMED_EXTRA,
   DATES,
   DATES_VI,
-  EXPENSE_VARIANCE_NOTE_MAX,
   FUTURE,
   ADVICE_EN,
   ADVICE_VI,
@@ -42,8 +41,10 @@ import {
   type ExpenseVarianceKind,
 } from './expense-variance.ts';
 import { marketplaceLineClaimsDone } from './marketplace-line.ts';
+import { UNUSUAL_ENTRIES_NOTE_MAX } from './note-limits.ts';
 
-export const UNUSUAL_ENTRIES_NOTE_MAX = EXPENSE_VARIANCE_NOTE_MAX;
+// Still exported from here (src/index.ts re-exports this module); the value lives in note-limits.ts, which has no import, so it is initialized whichever module of the cycle is imported first (#5257).
+export { UNUSUAL_ENTRIES_NOTE_MAX };
 
 type Language = 'vi' | 'en';
 const LANGUAGE = { vi: 'Vietnamese', en: 'English' } as const;
