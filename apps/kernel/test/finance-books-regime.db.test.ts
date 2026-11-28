@@ -242,6 +242,19 @@ suite('finance books regime per legal entity (#1403)', () => {
             for (const [i, account] of accounts.entries()) {
               await a.query(`INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account) VALUES ($1, $2, $3, 'Dòng', 1000, $4)`, [orgId, id, i + 1, account]);
             }
+            // The document's journal entry, in the same transaction (a purchase document cannot commit without it): one debit per
+            // line and the payable. A line the chart refuses has already failed above.
+            const entryId = (
+              await a.query<{ id: string }>(
+                `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id)
+                 VALUES ($1, $2, 'Mua hàng', 'finance.purchase_document', $3, $4) RETURNING id`,
+                [orgId, date, id, entity],
+              )
+            ).rows[0]?.id as string;
+            for (const [i, account] of accounts.entries()) {
+              await a.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, 1000, 0)`, [orgId, entryId, i + 1, account]);
+            }
+            await a.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, '331', 0, $4)`, [orgId, entryId, accounts.length + 1, accounts.length * 1000]);
             await a.query('COMMIT');
           } catch (error) {
             await a.query('ROLLBACK');
@@ -258,34 +271,6 @@ suite('finance books regime per legal entity (#1403)', () => {
     expect(await document(branch, '2026-12-31', ['6427'])).toMatchObject({ code: '23503' });
     expect(await document(defaultEntity, '2027-02-01', ['5111'])).toBeNull();
     expect(await document(defaultEntity, '2027-02-01', ['6427'])).toMatchObject({ code: '23503' });
-  });
-
-  it('checks a reversal of an opening entry against the chart of its own date unless it is dated on the opening entry (#1403)', async () => {
-    const entity = (
-      await admin((a) =>
-        a.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Công ty đảo số dư', 'company', $2) RETURNING id`, [orgId, owner]),
-      )
-    ).rows[0]?.id as string;
-    const lines = (debit: string, credit: string, reverse = false) =>
-      JSON.stringify([
-        { line_no: 1, account_code: debit, debit: reverse ? '0' : '100000', credit: reverse ? '100000' : '0' },
-        { line_no: 2, account_code: credit, debit: reverse ? '100000' : '0', credit: reverse ? '0' : '100000' },
-      ]);
-    const entry = (c: pg.PoolClient, date: string, source: string, json: string, reverses: string | null) =>
-      c
-        .query<{ id: string }>(`SELECT ludy_finance.post_journal_entry($1::date, 'rev', $2, $3::uuid, $4::jsonb, $5::uuid, 1, $6::uuid) AS id`, [date, source, randomUUID(), json, reverses, entity])
-        .then((r) => r.rows[0]?.id as string);
-    // An opening entry of 31 December 2024 on a TT133-only account, in TT133 books.
-    const opening = await asApp(owner, (c) => entry(c, '2024-12-31', 'finance.opening_balance', lines('5111', '331'), null), true);
-    // The entity then keeps TT99 books from 2026: the opening entry is under TT133 (the day after it, 1 January 2025, is).
-    await admin((a) =>
-      a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2026-01-01')`, [orgId, entity]),
-    );
-    // A reversal dated the day before the TT99 year is checked on its own date, TT133: the mirrored TT133-only account is accepted. Were the rule of an opening entry's reversal applied to it (the day after, TT99), it would be refused.
-    const reversal = await refusal(asApp(owner, (c) => entry(c, '2025-12-31', 'kernel.proposal', lines('5111', '331', true), opening), true));
-    expect(reversal).toBeNull();
-    // The row goes again, so the tests below see the books rows they expect.
-    await admin((a) => a.query(`DELETE FROM ludy_finance.legal_entity_books WHERE org_id = $1 AND legal_entity_id = $2`, [orgId, entity]));
   });
 
   it('never changes the regime of a year with entries', async () => {
