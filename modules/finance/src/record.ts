@@ -16,6 +16,7 @@ import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-ru
 import {
   PAYABLE_ACCOUNT,
   RECEIVABLE_ACCOUNT,
+  TT133_CODES_CHANGED_IN_TT99,
   buildPurchaseJournal,
   buildSalesJournal,
   classificationCheck,
@@ -480,13 +481,15 @@ export const recordPurchase = defineCommand({
     const { lines } = payload;
     assertDirectionAccounts(direction, lines);
     // The entry the approver saw is the entry posted (DESIGN.md 5.1): a document posts under the regime its proposal carries, the one its preview and its accounts were worked out with. A sale raised before the regime
-    // was carried has none and keeps the earlier posting (Dr 511); a purchase with none was raised under TT133. If the entity's books have changed since the proposal was made, the entry would no longer be the one
-    // shown, so it is refused with a named error and the proposal is rejected and read again. Checked before the accounts, which the new chart may not have.
+    // was carried has none and keeps the earlier posting (Dr 511). A purchase with none was raised under TT133, and its journal does not depend on the regime, so it still posts once the books are TT99 as long as every
+    // account is in the TT99 chart (checked below) and none of them is a code the two circulars use for different things (211, 3386, 6421, 6422), where the approver saw one meaning and the entry would carry another.
+    // A proposal that carries a regime is posted only while the books are still that regime. Refusals are named errors: the proposal is rejected and read again. Checked before the accounts, which the new chart may not have.
     const postingDay = lateDate ?? invoice.issueDate;
     const regime = payload.regime;
     if (regime !== undefined || !sale) {
       const current = await documentRegime(ctx, direction, payload.legalEntityId ?? (await proposalEntity(ctx)), postingDay);
-      if (current !== regime) {
+      const changed = regime !== undefined ? current !== regime : current !== undefined && lines.some((l) => TT133_CODES_CHANGED_IN_TT99.includes(l.debitAccount));
+      if (changed) {
         throw new DomainError('BOOKS_REGIME_CHANGED', 409, 'Chế độ kế toán của sổ đã đổi từ khi lập đề xuất nên bút toán sẽ khác bản đã xem; hãy từ chối đề xuất này và đọc lại hóa đơn', { proposed: regime ?? null, current: current ?? null });
       }
     }
