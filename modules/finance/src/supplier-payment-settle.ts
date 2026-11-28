@@ -107,14 +107,22 @@ async function checkSettleable(ctx: CommandContext, p: PaymentRow, line: StoredB
   await beneficiaryIsApproved(ctx, p, line);
 }
 
+const ACCOUNT_DIGITS = /^[0-9]{6,20}$/;
+
+function accountDigits(value: string | null): string | null {
+  if (value === null) return null;
+  const digits = value.replace(/[\s.-]/g, '');
+  return ACCOUNT_DIGITS.test(digits) ? digits : null;
+}
+
 // Condition 2: the account the money went to is the account that was approved. The statement's number, when it has a whole one, is hashed under the pinned account's hash scheme (the supplier's
 // subject key for new accounts, or the legacy credential key id) and compared; the number is never stored, shown or logged. A line with no usable number says nothing either way. A shredded subject key
 // or retired legacy credential key cannot compare, which refuses (the safe side).
 async function beneficiaryIsApproved(ctx: CommandContext, p: PaymentRow, line: StoredBankLine): Promise<void> {
   if (line.counterpartyAccount === null) return;
-  const digits = line.counterpartyAccount.replace(/[\s.-]/g, '');
+  const digits = accountDigits(line.counterpartyAccount);
   // A number that is there but not a whole one cannot be compared: it refuses (the statement's own check keeps it to 6 to 20 digits, so this is the safe side, not a case).
-  const same = /^[0-9]{6,20}$/.test(digits) && (await matchesAccountHash(ctx, p.party_id, digits, p));
+  const same = digits !== null && (await matchesAccountHash(ctx, p.party_id, digits, p));
   if (!same) {
     throw new DomainError('SUPPLIER_PAYMENT_ACCOUNT_MISMATCH', 409, 'Tài khoản trên sao kê không khớp được với tài khoản đã duyệt (khác tài khoản, hoặc không đối chiếu được); không tự ghi sổ. Hãy kiểm tra với ngân hàng và nhà cung cấp', { paymentId: p.id });
   }
@@ -209,6 +217,7 @@ export const supplierPaymentSettleRecord = defineCommand({
 });
 
 // The payments an open money-out line may be. Code decides by the amount and the rules above; the invoice number in the description only ranks. Read only.
+// When the line carries no beneficiary account number and two or more approved, exported payments match its exact amount on that legal entity, `ambiguous` is true (#3788).
 export const bankSupplierMatch = defineQuery({
   name: 'finance.bank.supplier_match',
   input: z.object({ bankLineId: zId }),
@@ -216,29 +225,42 @@ export const bankSupplierMatch = defineQuery({
   handler: async (ctx, input): Promise<BankSupplierMatch> => {
     const line = await findBankLine(ctx, input.bankLineId);
     if (!line) throw new DomainError('BANK_LINE_NOT_FOUND', 404, 'Không tìm thấy dòng sao kê; hãy tải lại trang ngân hàng');
-    const none: BankSupplierMatch = { bankLineId: line.id, date: line.date, candidates: [] };
+    const none: BankSupplierMatch = { bankLineId: line.id, date: line.date, candidates: [], ambiguous: false, matchCount: 0 };
     const out = new Decimal(line.amount);
     if (!out.isNegative() || out.isZero()) return none;
+    const wanted = out.abs();
+    const wantedText = wanted.toFixed();
+    if (!wanted.isInteger() || !WHOLE_VND.test(wantedText)) return none;
     if (((await bankLineStates(ctx, [line.id])).get(line.id)?.status ?? 'open') !== 'open') return none;
-    const wanted = out.abs().toFixed();
-    const { rows } = await sql<{ id: string; party_id: string; party_name: string | null; invoice_number: string | null; amount: string; exported_at: Date | string }>`
-      SELECT p.id, p.party_id, pa.name AS party_name, d.invoice_number, p.amount::text AS amount, p.exported_at
+    const { rows } = await sql<{
+      id: string;
+      party_id: string;
+      party_name: string | null;
+      invoice_number: string | null;
+      amount: string;
+      exported_at: Date | string;
+      total_matches: number;
+    }>`
+      SELECT p.id, p.party_id, pa.name AS party_name, d.invoice_number, p.amount::text AS amount, p.exported_at,
+             count(*) OVER ()::int AS total_matches
         FROM ludy_finance.supplier_payment p
         JOIN ludy_finance.supplier_bank_account a ON a.org_id = p.org_id AND a.id = p.bank_account_id
-          AND a.status = 'active' AND a.number_hash = p.number_hash AND a.hash_key_id = p.hash_key_id
+          AND a.status = 'active' AND a.number_hash = p.number_hash AND a.hash_key_id = p.hash_key_id AND a.party_id = p.party_id
         LEFT JOIN ludy_finance.purchase_document d ON d.org_id = p.org_id AND d.id = p.purchase_document_id
         LEFT JOIN ludy_kernel.party pa ON pa.org_id = p.org_id AND pa.id = p.party_id
        WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${line.legalEntityId}::uuid AND p.status = 'approved' AND p.currency = 'VND'
-         AND p.exported_at IS NOT NULL AND (p.payable_after IS NULL OR p.payable_after <= pg_catalog.now())
-         AND p.amount = ${wanted}::numeric
+         AND p.exported_at IS NOT NULL AND p.export_count > 0 AND p.first_exported_at IS NOT NULL
+         AND (p.payable_after IS NULL OR p.payable_after <= pg_catalog.now())
+         AND p.amount = ${wantedText}::numeric
          AND (p.first_exported_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= ${line.date}::date AND p.amount = trunc(p.amount)
          AND NOT EXISTS (SELECT 1 FROM ludy_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id)
          AND NOT EXISTS (SELECT 1 FROM ludy_kernel.proposal q WHERE q.org_id = p.org_id AND q.command = ${SUPPLIER_PAYMENT_SETTLE_COMMAND} AND q.status = 'pending'
                            AND pg_catalog.lower(q.payload->'supplierPayment'->>'paymentId') = p.id::text)
        ORDER BY (d.invoice_number IS NOT NULL AND d.invoice_number <> '' AND pg_catalog.strpos(pg_catalog.lower(${line.description}), pg_catalog.lower(d.invoice_number)) > 0) DESC, p.exported_at DESC, p.id
        LIMIT 20`.execute(ctx.trx);
+    const matchedRows = rows.filter((r) => money(r.amount).equals(wanted));
     const description = line.description.toLowerCase();
-    const candidates: BankSupplierCandidate[] = rows.map((r) => ({
+    const candidates: BankSupplierCandidate[] = matchedRows.map((r) => ({
       paymentId: r.id,
       partyId: r.party_id,
       partyName: r.party_name ?? '',
@@ -248,7 +270,10 @@ export const bankSupplierMatch = defineQuery({
       reason: r.invoice_number && description.includes(r.invoice_number.toLowerCase()) ? 'amount_note' : 'amount',
     }));
     candidates.sort((a, b) => Number(b.reason === 'amount_note') - Number(a.reason === 'amount_note'));
-    return zBankSupplierMatch.parse({ bankLineId: line.id, date: line.date, candidates });
+    const matchCount = matchedRows.length > 0 ? Math.max(matchedRows.length, matchedRows[0]?.total_matches ?? 0) : 0;
+    const hasBeneficiaryAccount = accountDigits(line.counterpartyAccount) !== null;
+    const ambiguous = !hasBeneficiaryAccount && matchCount >= 2;
+    return zBankSupplierMatch.parse({ bankLineId: line.id, date: line.date, candidates, ambiguous, matchCount });
   },
 });
 

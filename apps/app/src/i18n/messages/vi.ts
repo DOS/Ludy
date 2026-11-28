@@ -10838,6 +10838,10 @@ export const vi = {
     supplier: {
       candidate: 'Có thể là khoản chi cho nhà cung cấp: {name}, hóa đơn {invoice}, {amount}',
       reason: { amount_note: 'Khớp số tiền và số hóa đơn', amount: 'Khớp số tiền' },
+      ambiguousBadge: 'Khớp mơ hồ',
+      ambiguousCandidateBadge: 'Cần tự đối chiếu',
+      ambiguousReason:
+        'Dòng sao kê này không có số tài khoản người nhận, trong khi có {count, number} khoản chi nhà cung cấp đã duyệt và đã xuất file khớp đúng số tiền này. Hãy kiểm tra kỹ tên nhà cung cấp và số hóa đơn hoặc nội dung tham chiếu trước khi gửi đề xuất ghi sổ.',
       ask: 'Xin ghi sổ khoản chi này',
       confirm: 'Việc này gửi đề xuất ghi sổ giấy báo Nợ cho dòng ngày {date}. Khi sao kê có ghi tài khoản nhận tiền, hệ thống đối chiếu với tài khoản đã duyệt; khi sao kê không ghi, hãy tự kiểm tra người nhận. Đề xuất chờ người có quyền duyệt trong Hộp thư. Ludy không chuyển tiền.',
       send: 'Gửi đề xuất',

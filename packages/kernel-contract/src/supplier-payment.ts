@@ -130,7 +130,15 @@ export const zBankSupplierCandidate = z.strictObject({
   reason: z.enum(['amount', 'amount_note']),
 });
 export type BankSupplierCandidate = z.infer<typeof zBankSupplierCandidate>;
-export const zBankSupplierMatch = z.strictObject({ bankLineId: zId, date: zLocalDate, candidates: z.array(zBankSupplierCandidate) });
+export const zBankSupplierMatch = z.strictObject({
+  bankLineId: zId,
+  date: zLocalDate,
+  candidates: z.array(zBankSupplierCandidate),
+  // True when the line carries no beneficiary account number and 2+ approved, exported payments match its exact amount (#3788).
+  ambiguous: z.boolean(),
+  // Total approved, exported payments matching this line's amount, date and legal entity (may exceed candidates.length when > 20 match).
+  matchCount: z.number().int().min(0),
+});
 export type BankSupplierMatch = z.infer<typeof zBankSupplierMatch>;
 
 

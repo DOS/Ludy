@@ -8,11 +8,32 @@ import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { BankLine, BankSupplierCandidate } from '@ludy/kernel-contract';
+import { Alert, AlertDescription, AlertTitle } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
+import { cn } from '@ludy/ui/lib/utils';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isServerRefusal } from '../lib/errors.ts';
+
+function WarningIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className={className}
+    >
+      <path d="M8 2.25 1.75 13.25h12.5L8 2.25Z" />
+      <path d="M8 6.5v3" />
+      <path d="M8 11.25h.01" />
+    </svg>
+  );
+}
 
 // What a request changes: the state of the line (proposed), the open-line counts, the candidates, the Inbox. Not the payroll matches, which it never touches.
 const refresh = () =>
@@ -24,7 +45,17 @@ const refresh = () =>
     queryClient.invalidateQueries({ queryKey: orpc.inbox.list.key() }),
   ]);
 
-function Candidate({ line, candidate, onAsked }: { line: BankLine; candidate: BankSupplierCandidate; onAsked: (candidate: BankSupplierCandidate, proposalId: string) => void }) {
+function Candidate({
+  line,
+  candidate,
+  ambiguous,
+  onAsked,
+}: {
+  line: BankLine;
+  candidate: BankSupplierCandidate;
+  ambiguous: boolean;
+  onAsked: (candidate: BankSupplierCandidate, proposalId: string) => void;
+}) {
   const t = useTranslations('bank.supplier');
   const f = useFormat();
   const [open, setOpen] = useState(false);
@@ -42,10 +73,16 @@ function Candidate({ line, candidate, onAsked }: { line: BankLine; candidate: Ba
     },
   });
   return (
-    <li className="mt-2 rounded-md border border-border p-2 text-xs" data-testid="bank-supplier-candidate">
+    <li className={cn('mt-2 rounded-md border p-2 text-xs', ambiguous ? 'border-warning/40 bg-warning/5' : 'border-border')} data-testid="bank-supplier-candidate">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium text-foreground">{t('candidate', { name: candidate.partyName, invoice: candidate.invoiceNumber, amount: f.money(candidate.amount) })}</span>
         <Badge variant="secondary">{t(`reason.${candidate.reason}`)}</Badge>
+        {ambiguous && (
+          <Badge variant="warning" data-testid="bank-supplier-candidate-ambiguous">
+            <WarningIcon />
+            {t('ambiguousCandidateBadge')}
+          </Badge>
+        )}
       </div>
       {!open && (
         <div className="mt-2">
@@ -85,7 +122,7 @@ function Candidate({ line, candidate, onAsked }: { line: BankLine; candidate: Ba
 
 // Nothing renders for a line that equals no supplier payment (and while the answer is loading, or if it fails): the line keeps its ordinary "Enter voucher" button. The caller passes only open money-out
 // lines to owners and admins, as the query is theirs alone. A request that was made stays shown here, above the list: the refreshed list no longer offers that payment (its request is pending), and the
-// person still needs the link to the proposal.
+// person still needs the link to the proposal. When the line carries no beneficiary account number and 2+ payments match its amount, an explicit warning explains why the match is ambiguous (#3788).
 export function BankSupplierLine({ slug, line }: { slug: string; line: BankLine }) {
   const t = useTranslations('bank.supplier');
   const f = useFormat();
@@ -94,22 +131,41 @@ export function BankSupplierLine({ slug, line }: { slug: string; line: BankLine 
   const candidates = (match.data?.candidates ?? []).filter((c) => !asked[c.paymentId]);
   const requests = Object.values(asked);
   if (candidates.length === 0 && requests.length === 0) return null;
+  const showAmbiguous = Boolean(match.data?.ambiguous) && candidates.length > 0;
+  const ambiguousCount = Math.max(match.data?.matchCount ?? 0, candidates.length);
   return (
-    <ul className="mt-1" data-testid="bank-supplier-candidates">
-      {requests.map(({ candidate, proposalId }) => (
-        <li key={candidate.paymentId} className="mt-2 rounded-md border border-border p-2 text-xs" data-testid="bank-supplier-candidate">
-          <span className="font-medium text-foreground">{t('candidate', { name: candidate.partyName, invoice: candidate.invoiceNumber, amount: f.money(candidate.amount) })}</span>
-          <p className="mt-2 text-foreground" data-testid="bank-supplier-asked">
-            {t('asked')}{' '}
-            <Link to="/o/$slug/inbox/$id" params={{ slug, id: proposalId }} className="text-link underline">
-              {t('openProposal')}
-            </Link>
-          </p>
-        </li>
-      ))}
-      {candidates.map((c) => (
-        <Candidate key={c.paymentId} line={line} candidate={c} onAsked={(candidate, proposalId) => setAsked((prev) => ({ ...prev, [candidate.paymentId]: { candidate, proposalId } }))} />
-      ))}
-    </ul>
+    <div className="mt-1 space-y-2">
+      {showAmbiguous && (
+        <Alert role="note" className="mt-2 border-warning/40 bg-warning/10 text-foreground" data-testid="bank-supplier-ambiguous">
+          <WarningIcon className="text-warning" />
+          <AlertTitle className="flex flex-wrap items-center gap-1.5 text-xs text-foreground">
+            <Badge variant="warning">{t('ambiguousBadge')}</Badge>
+          </AlertTitle>
+          <AlertDescription className="text-xs text-foreground">{t('ambiguousReason', { count: ambiguousCount })}</AlertDescription>
+        </Alert>
+      )}
+      <ul data-testid="bank-supplier-candidates">
+        {requests.map(({ candidate, proposalId }) => (
+          <li key={candidate.paymentId} className="mt-2 rounded-md border border-border p-2 text-xs" data-testid="bank-supplier-candidate">
+            <span className="font-medium text-foreground">{t('candidate', { name: candidate.partyName, invoice: candidate.invoiceNumber, amount: f.money(candidate.amount) })}</span>
+            <p className="mt-2 text-foreground" data-testid="bank-supplier-asked">
+              {t('asked')}{' '}
+              <Link to="/o/$slug/inbox/$id" params={{ slug, id: proposalId }} className="text-link underline max-md:inline-flex max-md:min-h-11 max-md:items-center">
+                {t('openProposal')}
+              </Link>
+            </p>
+          </li>
+        ))}
+        {candidates.map((c) => (
+          <Candidate
+            key={c.paymentId}
+            line={line}
+            candidate={c}
+            ambiguous={showAmbiguous}
+            onAsked={(candidate, proposalId) => setAsked((prev) => ({ ...prev, [candidate.paymentId]: { candidate, proposalId } }))}
+          />
+        ))}
+      </ul>
+    </div>
   );
 }
