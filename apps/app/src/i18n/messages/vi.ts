@@ -10647,7 +10647,7 @@ export const vi = {
       ALREADY_TT99: 'Pháp nhân này đã chọn Thông tư 99 từ ngày {date}.',
       ENTRIES_ON_OR_AFTER: 'Đã có bút toán đến ngày {date}, nên chỉ chuyển được từ ngày 1 tháng 1 sau ngày đó.',
       OPENING_ENTRY_BLOCKS: 'Có bút toán số dư đầu kỳ ngày {date}, nên năm kế tiếp vẫn ghi theo hệ thống tài khoản cũ và chưa chuyển được từ năm đó.',
-      PENDING_PROPOSALS: 'Còn {count} đề xuất ghi sổ chưa xong (đang chờ duyệt hoặc chờ ghi sổ). Xử lý chúng trước khi chuyển.',
+      PENDING_PROPOSALS: '{count, plural, other {Còn # đề xuất ghi sổ chưa xong (đang chờ duyệt hoặc chờ ghi sổ). Xử lý chúng trước khi chuyển.}}',
     },
     openProposal: 'Mở đề xuất {n}',
     choose: 'Chuyển sang Thông tư 99 từ {date}',

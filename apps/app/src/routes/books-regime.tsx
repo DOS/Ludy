@@ -153,7 +153,7 @@ function EntityBooks({ entity, role, named }: { entity: BooksRegimeEntity; role:
               {waiting.map((id, i) => (
                 <li key={id}>
                   <Link to="/o/$slug/inbox/$id" params={{ slug, id }} className="inline-flex min-h-6 items-center text-link hover:underline max-md:min-h-11 pointer-coarse:min-h-11">
-                    {t('openProposal', { n: i + 1 })}
+                    {t('openProposal', { n: String(i + 1) })}
                   </Link>
                 </li>
               ))}
