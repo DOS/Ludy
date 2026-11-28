@@ -264,12 +264,12 @@ suite('finance books regime per legal entity (#1403)', () => {
       );
     // The branch keeps TT99 books from 2027: its documents of that year name TT99 accounts only (the same rule as its journal lines).
     expect(await document(branch, '2027-02-01', ['6427', '156'])).toBeNull();
-    expect(await document(branch, '2027-02-01', ['5111'])).toMatchObject({ code: '23503', message: expect.stringContaining('tt99 2026.1 chart of accounts') });
+    expect(await document(branch, '2027-02-01', ['611'])).toMatchObject({ code: '23503', message: expect.stringContaining('tt99 2026.1 chart of accounts') });
     expect(await document(branch, '2027-02-01', ['331.A'])).toMatchObject({ code: '23503' });
     // Its 2026 documents are TT133 ones, and the default entity keeps TT133 whatever the date.
-    expect(await document(branch, '2026-12-31', ['5111'])).toBeNull();
+    expect(await document(branch, '2026-12-31', ['611'])).toBeNull();
     expect(await document(branch, '2026-12-31', ['6427'])).toMatchObject({ code: '23503' });
-    expect(await document(defaultEntity, '2027-02-01', ['5111'])).toBeNull();
+    expect(await document(defaultEntity, '2027-02-01', ['611'])).toBeNull();
     expect(await document(defaultEntity, '2027-02-01', ['6427'])).toMatchObject({ code: '23503' });
   });
 
