@@ -342,7 +342,7 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
         for (let i = 0; i < 35; i += 1) {
           await c.query(
             `INSERT INTO ludy_kernel.notification (org_id, user_id, kind, dedupe_key, subject_type, subject_id, legal_entity_id, detail, created_at)
-             VALUES ($1, $2, 'kernel.file_unreadable', $3, 'kernel.file', $4, $5, '{}', now() - interval '10 minutes' + ($6::int * interval '1 second'))`,
+             VALUES ($1, $2, 'kernel.file_unreadable', $3, 'kernel.file', $4, $5, '{}', now() + interval '1 minute' + ($6::int * interval '1 second'))`,
             [orgId, users.owner, `t2396:other:${i}`, randomUUID(), defaultEntity, i],
           );
         }
