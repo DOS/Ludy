@@ -14,6 +14,7 @@ import { Button } from '@ludy/ui/components/button';
 import { Input } from '@ludy/ui/components/input';
 import { NativeSelect } from '@ludy/ui/components/native-select';
 import { refreshParties } from './party-edit.tsx';
+import { TaxCodeFieldRow, TaxLookupCard, usePartyTaxLookup } from './tax-lookup-card.tsx';
 import { ErrorText, Field, focusFirstInvalid, isEmailAddress, useFieldErrors } from './ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { resolveNewParty, type PhoneHit } from '../lib/new-party.ts';
@@ -33,6 +34,8 @@ export function NewPartyGroup({ initialName, onCreated, onCancel }: { initialNam
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [taxCode, setTaxCode] = useState(searchedTaxCode);
+  const [address, setAddress] = useState('');
+  const taxLookup = usePartyTaxLookup(taxCode, kind === 'organization');
   // The lists refresh when the contact exists, even if this group was closed before the answer came.
   const root = useRef<HTMLDivElement>(null);
   const create = useMutation(orpc.parties.create.mutationOptions({ onSuccess: refreshParties }));
@@ -58,7 +61,15 @@ export function NewPartyGroup({ initialName, onCreated, onCancel }: { initialNam
       const result = await resolveNewParty({
         phone: orNull(phone),
         search: async (filters) => (await queryClient.fetchQuery({ ...orpc.crm.contacts.list.queryOptions({ input: { filters } }), staleTime: 0 })).items,
-        create: () => create.mutateAsync({ kind, name: name.trim(), taxCode: tax, email: orNull(email), phone: orNull(phone) }),
+        create: () =>
+          create.mutateAsync({
+            kind,
+            name: name.trim(),
+            taxCode: tax,
+            address: kind === 'organization' ? orNull(address) : null,
+            email: orNull(email),
+            phone: orNull(phone),
+          }),
       });
       if (result.status === 'existing') setExisting(result.party);
       else onCreated({ id: result.value.partyId, name: name.trim(), kind, taxCode: tax });
@@ -83,7 +94,16 @@ export function NewPartyGroup({ initialName, onCreated, onCancel }: { initialNam
       </Field>
       <Field label={tc('fields.kind')}>
         {(c) => (
-          <NativeSelect {...c} className="w-full" value={kind} onChange={(e) => setKind(e.target.value === 'organization' ? 'organization' : 'person')}>
+          <NativeSelect
+            {...c}
+            className="w-full"
+            value={kind}
+            onChange={(e) => {
+              const nextKind = e.target.value === 'organization' ? 'organization' : 'person';
+              setKind(nextKind);
+              if (nextKind === 'person') taxLookup.reset();
+            }}
+          >
             <option value="person">{tc('kind.person')}</option>
             <option value="organization">{tc('kind.organization')}</option>
           </NativeSelect>
@@ -94,9 +114,53 @@ export function NewPartyGroup({ initialName, onCreated, onCancel }: { initialNam
         {(c) => <Input {...c} type="email" maxLength={254} value={email} onChange={(e) => (setEmail(e.target.value), fields.edit('email'))} onBlur={(e) => fields.blur('email', e.target.value)} />}
       </Field>
       {kind === 'organization' && (
-        <Field label={tc('fields.taxCode')} error={fields.of('taxCode')}>
-          {(c) => <Input {...c} maxLength={20} value={taxCode} onChange={(e) => (setTaxCode(e.target.value), fields.edit('taxCode'))} onBlur={(e) => fields.blur('taxCode', e.target.value)} />}
-        </Field>
+        <>
+          <Field label={tc('fields.taxCode')} error={fields.of('taxCode')} className="sm:col-span-2">
+            {(c) => (
+              <TaxCodeFieldRow lookup={taxLookup}>
+                {(className) => (
+                  <Input
+                    {...c}
+                    className={className}
+                    maxLength={20}
+                    value={taxCode}
+                    onChange={(e) => (setTaxCode(e.target.value), fields.edit('taxCode'))}
+                    onBlur={(e) => {
+                      fields.blur('taxCode', e.target.value);
+                      taxLookup.triggerOnBlur(e.target.value);
+                    }}
+                  />
+                )}
+              </TaxCodeFieldRow>
+            )}
+          </Field>
+          {taxLookup.deployed && (
+            <TaxLookupCard
+              lookup={taxLookup}
+              currentName={name}
+              currentAddress={address}
+              className="sm:col-span-2"
+              onFillName={(nextName) => {
+                setName((cur) => (cur.trim() === '' ? nextName : cur));
+                fields.edit('name');
+              }}
+              onFillAddress={(nextAddress) => {
+                setAddress((cur) => (cur.trim() === '' ? nextAddress : cur));
+              }}
+            />
+          )}
+          <Field label={tc('fields.address')} className="sm:col-span-2">
+            {(c) => (
+              <Input
+                {...c}
+                maxLength={500}
+                placeholder={tc('panel.placeholder.address')}
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+              />
+            )}
+          </Field>
+        </>
       )}
       {existing && (
         <div role="status" className="flex flex-wrap items-center gap-2 text-sm sm:col-span-2" data-testid="deal-new-party-existing">
