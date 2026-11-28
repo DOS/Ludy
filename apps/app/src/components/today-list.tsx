@@ -173,21 +173,7 @@ export function TodayList({ slug }: { slug: string }) {
   });
   const activeItem = peek.activeItem;
 
-  if (today.isError) {
-    return (
-      <section aria-labelledby="overview-today">
-        <h2 id="overview-today" className="flex items-baseline gap-2 text-base font-semibold text-foreground">
-          {t('title')}
-        </h2>
-        <p className="mt-1 text-xs text-subtle-foreground">{t('subtitle')}</p>
-        <div className="mt-3">
-          <ErrorText>{errorMessage(today.error)}</ErrorText>
-        </div>
-      </section>
-    );
-  }
-
-  if (today.isPending || !today.data) {
+  if (today.isPending || (!today.data && !today.isError)) {
     return (
       <section aria-labelledby="overview-today">
         <h2 id="overview-today" className="flex items-baseline gap-2 text-base font-semibold text-foreground">
@@ -196,6 +182,20 @@ export function TodayList({ slug }: { slug: string }) {
         <p className="mt-1 text-xs text-subtle-foreground">{t('subtitle')}</p>
         <div className="mt-3">
           <ListSkeleton rows={2} />
+        </div>
+      </section>
+    );
+  }
+
+  if (!today.data) {
+    return (
+      <section aria-labelledby="overview-today">
+        <h2 id="overview-today" className="flex items-baseline gap-2 text-base font-semibold text-foreground">
+          {t('title')}
+        </h2>
+        <p className="mt-1 text-xs text-subtle-foreground">{t('subtitle')}</p>
+        <div className="mt-3">
+          <ErrorText>{errorMessage(today.error)}</ErrorText>
         </div>
       </section>
     );
