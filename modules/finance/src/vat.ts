@@ -455,7 +455,7 @@ async function filedReturns(ctx: QueryContext, legalEntityId: string, periods: s
 // Each distinct original period of the late sales issued in `period` (#3535), with its date span, lock month, and
 // alternate-kind filing period so return filings and lock timestamps join in the same statement.
 function lateSalePeriodsSql(kind: VatPeriod['kind']) {
-  const quarterExpr = sql`(((pg_catalog.extract(month FROM ls.sale_date)::int - 1) / 3) + 1)`;
+  const quarterExpr = sql`(((pg_catalog.extract('month'::text, ls.sale_date)::int - 1) / 3) + 1)`;
   const quarterCode = sql`(pg_catalog.to_char(ls.sale_date, 'YYYY') || '-Q' || ${quarterExpr}::text)`;
   const quarterLastMonth = sql`(pg_catalog.to_char(ls.sale_date, 'YYYY') || '-' || pg_catalog.lpad((${quarterExpr} * 3)::text, 2, '0'))`;
   const monthCode = sql`pg_catalog.to_char(ls.sale_date, 'YYYY-MM')`;
@@ -865,6 +865,8 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
   for (const row of data.lock_events) {
     if (row.at !== null) lockEvents.set(row.period, new Date(row.at));
   }
+  // period_lock keeps one row per entity with no per-month history: finance.period.lock writes a month-keyed
+  // audit_event (read in lock_events above), and lock_updated_at is only the pre-#613 fallback when no event exists.
   const lockFallbackAt = data.lock_updated_at ? new Date(data.lock_updated_at) : null;
 
   // When a period was declared (#3535): the earlier of the moment its return was last marked filed (under its own key or

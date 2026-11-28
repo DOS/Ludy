@@ -103,23 +103,24 @@ describe('loadVatReport single-statement SQL (#613)', () => {
       expect(sqlLower).toContain('lock_row as materialized');
       expect(sqlLower).toContain('lock_targets as materialized');
 
+      const normalizedSql = query.sql.replace(/"/g, '');
       for (const table of [
-        '"ludy_kernel"."legal_entity"',
-        '"ludy_kernel"."tenant"',
-        '"ludy_finance"."purchase_document"',
-        '"ludy_finance"."purchase_line"',
-        '"ludy_finance"."purchase_tax_rate"',
-        '"ludy_finance"."input_vat_check"',
-        '"ludy_finance"."vat_return_filed"',
-        '"ludy_finance"."period_lock"',
-        '"ludy_kernel"."audit_event"',
-        '"ludy_finance"."einvoice_draft"',
-        '"ludy_finance"."einvoice_series"',
-        '"ludy_finance"."journal_entry"',
-        '"ludy_kernel"."party"',
-        '"ludy_finance"."purchase_document_void"',
+        'ludy_kernel.legal_entity',
+        'ludy_kernel.tenant',
+        'ludy_finance.purchase_document',
+        'ludy_finance.purchase_line',
+        'ludy_finance.purchase_tax_rate',
+        'ludy_finance.input_vat_check',
+        'ludy_finance.vat_return_filed',
+        'ludy_finance.period_lock',
+        'ludy_kernel.audit_event',
+        'ludy_finance.einvoice_draft',
+        'ludy_finance.einvoice_series',
+        'ludy_finance.journal_entry',
+        'ludy_kernel.party',
+        'ludy_finance.purchase_document_void',
       ]) {
-        expect(query.sql).toContain(table);
+        expect(normalizedSql).toContain(table);
       }
 
       // Limit gating runs before child aggregation using set-based ANY(ARRAY(...)) probes, never per-row child SubPlans.
