@@ -23,7 +23,7 @@
 // from, found by the entity, the symbol and the number. When that earlier period was already locked or its return filed when the invoice was recorded, nothing reopens it: the invoice is listed as a
 // supplementary item of that period (cần kê khai bổ sung), apart from its figures, and it is in no main total of either period, but only if the invoice was recorded after the period was
 // declared (declaredAt): one recorded before was in the figures that were filed and stays in them.
-import { sql, type RawBuilder } from 'kysely';
+import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@ludy/db';
 import { INPUT_VAT_CHECK_OUTCOMES, VAT_WARNINGS, zId, zVatPeriod, zVatReturnMark, type DocumentDirection } from '@ludy/kernel-contract';
@@ -45,8 +45,7 @@ import {
   type SideTotals,
   type VatPeriod,
 } from './domain/vat-return.ts';
-import { resolveLegalEntity } from './legal-entity.ts';
-import { periodLockedThrough } from './period-lock.ts';
+import { legalEntityNotAllowed, resolveLegalEntity } from './legal-entity.ts';
 import { latestRevision } from './source-entry.ts';
 import { needsPaymentCheck, nonCashThreshold, paymentMethodKind, type PaymentMethodKind } from './domain/non-cash-payment.ts';
 import { HtkkAmountError, form01XmlValues } from './domain/vat-01gtgt-xml.ts';
@@ -223,10 +222,10 @@ function invoiceView(
 }
 
 // The recorded documents of one direction in the period, except those voided by a reversal (#165), oldest first:
-// purchases for the input side, by posting date (#478), and sales (#313) for the output side, by invoice date. The
-// party is the supplier or the customer. Each document has one entry in force: of its revisions (#1283) the join keeps
-// the latest (#1338), and a document commits only together with its entry (purchase_document_entry, #560), so the
-// inner join drops none. A reversal is an entry of another source.
+// purchases for the input side, by posting date (#478), and sales (#313) for the output side, by sale date when one
+// differs from the invoice date (#3535), else invoice date. The party is the supplier or the customer. Each document has
+// one entry in force: of its revisions (#1283) the join keeps the latest (#1338), and a document commits only together
+// with its entry (purchase_document_entry, #560), so the inner join drops none. A reversal is an entry of another source.
 interface PeriodInvoice {
   view: VatInvoiceView;
   paymentMethod: string | null;
@@ -234,117 +233,106 @@ interface PeriodInvoice {
   recordedAt: Date;
 }
 
-// The sale date of the e-invoice draft a sales invoice was issued from (#3535), or null: the draft of the same entity, issued, with the invoice's symbol and number (the number as the
-// intake normalizes it: digits without leading zeros). Of two drafts that meet one invoice (a symbol and a number under two template numbers) the one issued first answers, so a row
-// is never doubled, and its own answer stands: a draft with no sale date of its own gives none, it never borrows the other's.
-const SALE_DATE: RawBuilder<string | null> = sql`(
-  SELECT e.sale_date FROM ludy_finance.einvoice_draft e
-  JOIN ludy_finance.einvoice_series es ON es.org_id = e.org_id AND es.id = e.series_id
-  WHERE e.org_id = d.org_id AND e.legal_entity_id = d.legal_entity_id AND e.state = 'issued'
-    AND es.symbol = d.invoice_series
-    AND CASE WHEN pg_catalog.btrim(e.issued_number) ~ '^[0-9]+$' THEN pg_catalog.regexp_replace(pg_catalog.btrim(e.issued_number), '^0+(?=[0-9])', '') ELSE pg_catalog.upper(pg_catalog.btrim(e.issued_number)) END = d.invoice_number
-  ORDER BY e.issued_at, e.id LIMIT 1)`;
-
-// The sales whose sale date is in an earlier period than `period` but that were issued in it (#3535): issued here, declared there.
-async function lateSalesIssuedIn(ctx: QueryContext, period: VatPeriod, legalEntityId: string): Promise<Array<{ id: string; series: string; number: string; partyName: string; issueDate: string; saleDate: string; total: string; vatAmount: string; recordedAt: Date }>> {
-  const rows = await ctx.trx
-    .selectFrom('ludy_finance.purchase_document as d')
-    .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-    .select(['d.id', 'd.invoice_series', 'd.invoice_number', 'd.invoice_date', 'd.vat_amount', 'd.total', 'd.created_at', 'p.name'])
-    .select(SALE_DATE.as('sale_date'))
-    .where('d.org_id', '=', ctx.orgId)
-    .where('d.legal_entity_id', '=', legalEntityId)
-    .where('d.direction', '=', 'sale')
-    .where('d.invoice_date', '>=', period.from)
-    .where('d.invoice_date', '<=', period.to)
-    .where(({ not, exists, selectFrom }) =>
-      not(
-        exists(
-          selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'),
-        ),
-      ),
-    )
-    .where(sql<boolean>`${SALE_DATE} < ${period.from}::date`)
-    .orderBy('d.invoice_date')
-    .orderBy('d.invoice_series')
-    .orderBy('d.invoice_number')
-    .orderBy('d.id')
-    .limit(VAT_PERIOD_LIMIT + 1)
-    .execute();
-  if (rows.length > VAT_PERIOD_LIMIT) throw new DomainError('PERIOD_TOO_LARGE', 422, `Kỳ này có hơn ${VAT_PERIOD_LIMIT} hóa đơn; hệ thống chưa lập được bảng kê lớn như vậy`);
-  return rows.map((r) => ({ id: r.id, series: r.invoice_series, number: r.invoice_number, partyName: r.name, issueDate: r.invoice_date, saleDate: r.sale_date as string, total: r.total, vatAmount: r.vat_amount, recordedAt: new Date(r.created_at) }));
+interface VatDocumentRow {
+  id: string;
+  invoice_date: string;
+  sale_date?: string | null;
+  entry_date: string;
+  invoice_series: string;
+  invoice_number: string;
+  subtotal: string;
+  vat_amount: string;
+  total: string;
+  payment_method: string | null;
+  created_at: Date | string;
+  name: string;
+  tax_code: string | null;
+  correction_kind: string | null;
+  corrected_series: string | null;
+  corrected_number: string | null;
 }
 
-async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: DocumentDirection, legalEntityId: string): Promise<PeriodInvoice[]> {
-  // A sale is in the period of its sale date when it has one (#3535), else of its invoice date.
-  const periodDate = direction === 'purchase' ? sql<string>`j.entry_date` : sql<string>`COALESCE(${SALE_DATE}, d.invoice_date)`;
-  const docs = await ctx.trx
-    .selectFrom('ludy_finance.purchase_document as d')
-    .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-    .innerJoin('ludy_finance.journal_entry as j', (join) =>
-      join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
-    )
-    .select(['d.id', 'd.invoice_date', 'j.entry_date', 'd.invoice_series', 'd.invoice_number', 'd.subtotal', 'd.vat_amount', 'd.total', 'd.payment_method', 'd.created_at', 'p.name', 'p.tax_code', 'd.correction_kind', 'd.corrected_series', 'd.corrected_number'])
-    .select(direction === 'purchase' ? sql<string | null>`NULL::date`.as('sale_date') : SALE_DATE.as('sale_date'))
-    .where('d.org_id', '=', ctx.orgId)
-    .where('d.legal_entity_id', '=', legalEntityId)
-    .where('d.direction', '=', direction)
-    .where(periodDate, '>=', period.from)
-    .where(periodDate, '<=', period.to)
-    .where(({ not, exists, selectFrom }) =>
-      not(
-        exists(
-          selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'),
-        ),
-      ),
-    )
-    .orderBy(periodDate)
-    .orderBy('d.invoice_date')
-    .orderBy('d.invoice_series')
-    .orderBy('d.invoice_number')
-    .orderBy('d.id')
-    .limit(VAT_PERIOD_LIMIT + 1)
-    .execute();
-  if (docs.length > VAT_PERIOD_LIMIT) {
-    throw new DomainError('PERIOD_TOO_LARGE', 422, `Kỳ này có hơn ${VAT_PERIOD_LIMIT} hóa đơn; hệ thống chưa lập được bảng kê lớn như vậy`);
-  }
+type VatLineTuple = [documentId: string, amount: string, vatRate: string | null];
+type VatRateTuple = [documentId: string, vatRate: string, taxableAmount: string, vatAmount: string];
+
+interface CheckMarkRow {
+  document_id: string;
+  outcome: string;
+  voucher_id: string | null;
+  note: string | null;
+  created_at: Date | string;
+}
+
+interface FiledReturnRow {
+  period: string;
+  status: string;
+  source: string | null;
+  carried_in_amount: string | null;
+  deductible_amount: string | null;
+  carried_out_amount: string | null;
+  created_at: Date | string;
+}
+
+interface LateSaleRow {
+  id: string;
+  invoice_series: string;
+  invoice_number: string;
+  name: string;
+  invoice_date: string;
+  sale_date: string;
+  total: string;
+  vat_amount: string;
+  created_at: Date | string;
+}
+
+interface LockEventRow {
+  period: string;
+  at: Date | string | null;
+}
+
+interface VatReportDataRow {
+  entity_allowed: boolean;
+  tax_code: string | null;
+  purchase_over: boolean;
+  sale_over: boolean;
+  late_sale_over: boolean;
+  purchases: VatDocumentRow[];
+  purchase_lines: VatLineTuple[];
+  purchase_rates: VatRateTuple[];
+  purchase_marks: CheckMarkRow[];
+  sales: VatDocumentRow[];
+  sale_lines: VatLineTuple[];
+  sale_rates: VatRateTuple[];
+  late_sales: LateSaleRow[];
+  filed_returns: FiledReturnRow[];
+  locked_through: string | null;
+  lock_updated_at: Date | string | null;
+  lock_events: LockEventRow[];
+}
+
+function periodTooLargeError(): DomainError {
+  return new DomainError('PERIOD_TOO_LARGE', 422, `Kỳ này có hơn ${VAT_PERIOD_LIMIT} hóa đơn; hệ thống chưa lập được bảng kê lớn như vậy`);
+}
+
+function buildPeriodInvoices(
+  period: VatPeriod,
+  direction: DocumentDirection,
+  docs: readonly VatDocumentRow[],
+  lineRows: readonly VatLineTuple[],
+  rateRows: readonly VatRateTuple[],
+): PeriodInvoice[] {
   if (docs.length === 0) return [];
-  const lines = await ctx.trx
-    .selectFrom('ludy_finance.purchase_line')
-    .select(['document_id', 'amount', 'vat_rate'])
-    .where('org_id', '=', ctx.orgId)
-    .where(
-      'document_id',
-      'in',
-      docs.map((d) => d.id),
-    )
-    .orderBy('document_id')
-    .orderBy('line_no')
-    .execute();
   const byDocument = new Map<string, Array<{ amount: string; vatRate: string | null }>>();
-  for (const line of lines) {
-    const list = byDocument.get(line.document_id) ?? [];
-    list.push({ amount: line.amount, vatRate: line.vat_rate });
-    byDocument.set(line.document_id, list);
+  for (const [documentId, amount, vatRate] of lineRows) {
+    const list = byDocument.get(documentId) ?? [];
+    list.push({ amount, vatRate });
+    byDocument.set(documentId, list);
   }
-  // The invoice's own VAT table, for the documents recorded from e-invoice XML since #685.
-  const rateRows = await ctx.trx
-    .selectFrom('ludy_finance.purchase_tax_rate')
-    .select(['document_id', 'vat_rate', 'taxable_amount', 'vat_amount'])
-    .where('org_id', '=', ctx.orgId)
-    .where(
-      'document_id',
-      'in',
-      docs.map((d) => d.id),
-    )
-    .orderBy('document_id')
-    .orderBy('row_no')
-    .execute();
   const ratesByDocument = new Map<string, InvoiceRateInput[]>();
-  for (const row of rateRows) {
-    const list = ratesByDocument.get(row.document_id) ?? [];
-    list.push({ rate: row.vat_rate, taxable: row.taxable_amount, vat: row.vat_amount });
-    ratesByDocument.set(row.document_id, list);
+  for (const [documentId, rate, taxable, vat] of rateRows) {
+    const list = ratesByDocument.get(documentId) ?? [];
+    list.push({ rate, taxable, vat });
+    ratesByDocument.set(documentId, list);
   }
   return docs.map((d) => ({
     paymentMethod: d.payment_method,
@@ -354,7 +342,7 @@ async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: D
       {
         id: d.id,
         issueDate: d.invoice_date,
-        saleDate: d.sale_date,
+        saleDate: d.sale_date ?? null,
         postingDate: d.entry_date,
         series: d.invoice_series,
         number: d.invoice_number,
@@ -380,23 +368,17 @@ function side(available: boolean, documents: VatInvoiceView[]): VatSide {
 
 type CheckMark = NonNullable<VatPaymentCheck['mark']>;
 
-// The latest mark of each of the org's documents in ids (#917); a cleared mark counts as none.
-async function latestMarks(ctx: QueryContext, ids: string[]): Promise<Map<string, CheckMark>> {
+// The latest mark of each input document (#917); a cleared mark counts as none.
+function toMarksMap(rows: readonly CheckMarkRow[]): Map<string, CheckMark> {
   const marks = new Map<string, CheckMark>();
-  if (ids.length === 0) return marks;
-  const rows = await ctx.trx
-    .selectFrom('ludy_finance.input_vat_check')
-    .select(['document_id', 'outcome', 'voucher_id', 'note', 'created_at'])
-    .distinctOn('document_id')
-    .where('org_id', '=', ctx.orgId)
-    .where('document_id', 'in', ids)
-    .orderBy('document_id')
-    .orderBy('created_at', 'desc')
-    .orderBy('id', 'desc')
-    .execute();
   for (const row of rows) {
-    if (row.outcome === 'cleared') continue;
-    marks.set(row.document_id, { outcome: row.outcome, voucherId: row.voucher_id, note: row.note, markedAt: new Date(row.created_at).toISOString() });
+    if (row.outcome !== 'paid_by_bank' && row.outcome !== 'not_deductible') continue;
+    marks.set(row.document_id, {
+      outcome: row.outcome,
+      voucherId: row.voucher_id,
+      note: row.note,
+      markedAt: new Date(row.created_at).toISOString(),
+    });
   }
   return marks;
 }
@@ -436,24 +418,10 @@ function paymentChecks(input: PeriodInvoice[], marks: Map<string, CheckMark>, va
   };
 }
 
-// The latest mark of each of `periods` (#1400) of one legal entity (#1280: each entity files its own returns, so [22]
-// comes from the same entity's previous return); a withdrawn one counts as none.
-async function filedReturns(ctx: QueryContext, legalEntityId: string, periods: string[]): Promise<Map<string, VatFiledReturn>> {
+function toFiledReturnsMap(rows: readonly FiledReturnRow[]): Map<string, VatFiledReturn> {
   const out = new Map<string, VatFiledReturn>();
-  if (periods.length === 0) return out;
-  const rows = await ctx.trx
-    .selectFrom('ludy_finance.vat_return_filed')
-    .select(['period', 'status', 'source', 'carried_in_amount', 'deductible_amount', 'carried_out_amount', 'created_at'])
-    .distinctOn('period')
-    .where('org_id', '=', ctx.orgId)
-    .where('legal_entity_id', '=', legalEntityId)
-    .where('period', 'in', periods)
-    .orderBy('period')
-    .orderBy('created_at', 'desc')
-    .orderBy('id', 'desc')
-    .execute();
   for (const row of rows) {
-    if (row.status !== 'filed' || row.source === null) continue;
+    if (row.status !== 'filed' || (row.source !== 'entered' && row.source !== 'computed')) continue;
     out.set(row.period, {
       period: row.period,
       source: row.source,
@@ -466,112 +434,492 @@ async function filedReturns(ctx: QueryContext, legalEntityId: string, periods: s
   return out;
 }
 
-// The period's own filed return of the legal entity, and the [22] the entity's return just before it carries in.
-async function returnChain(ctx: QueryContext, period: VatPeriod, legalEntityId: string): Promise<{ carryForward: VatCarryForward; filed: VatFiledReturn | null }> {
-  const lookedFor = previousVatPeriods(period);
-  const filed = await filedReturns(ctx, legalEntityId, [period.period, ...lookedFor]);
-  const previous = lookedFor.map((p) => filed.get(p)).find((r) => r !== undefined) ?? null;
-  return { carryForward: { amount: previous?.carriedOut ?? '0', previous, lookedFor }, filed: filed.get(period.period) ?? null };
+// The latest mark of each of `periods` (#1400) of one legal entity (#1280: each entity files its own returns, so [22]
+// comes from the same entity's previous return); a withdrawn one counts as none.
+async function filedReturns(ctx: QueryContext, legalEntityId: string, periods: string[]): Promise<Map<string, VatFiledReturn>> {
+  if (periods.length === 0) return new Map();
+  const rows = await ctx.trx
+    .selectFrom('ludy_finance.vat_return_filed')
+    .select(['period', 'status', 'source', 'carried_in_amount', 'deductible_amount', 'carried_out_amount', 'created_at'])
+    .distinctOn('period')
+    .where('org_id', '=', ctx.orgId)
+    .where('legal_entity_id', '=', legalEntityId)
+    .where('period', 'in', periods)
+    .orderBy('period')
+    .orderBy('created_at', 'desc')
+    .orderBy('id', 'desc')
+    .execute();
+  return toFiledReturnsMap(rows);
 }
 
-// The VAT working of one legal entity (#1280).
+// Each distinct original period of the late sales issued in `period` (#3535), with its date span, lock month, and
+// alternate-kind filing period so return filings and lock timestamps join in the same statement.
+function lateSalePeriodsSql(kind: VatPeriod['kind']) {
+  const quarterExpr = sql`(((pg_catalog.extract(month FROM ls.sale_date)::int - 1) / 3) + 1)`;
+  const quarterCode = sql`(pg_catalog.to_char(ls.sale_date, 'YYYY') || '-Q' || ${quarterExpr}::text)`;
+  const quarterLastMonth = sql`(pg_catalog.to_char(ls.sale_date, 'YYYY') || '-' || pg_catalog.lpad((${quarterExpr} * 3)::text, 2, '0'))`;
+  const monthCode = sql`pg_catalog.to_char(ls.sale_date, 'YYYY-MM')`;
+  if (kind === 'month') {
+    return sql`
+      SELECT DISTINCT
+        ${monthCode} AS original_period,
+        pg_catalog.date_trunc('month', ls.sale_date)::date AS from_date,
+        ((pg_catalog.date_trunc('month', ls.sale_date) + interval '1 month')::date - 1) AS to_date,
+        ${monthCode} AS lock_month,
+        ${quarterCode} AS other_period
+      FROM late_sale_docs ls
+      WHERE (SELECT purchase_count <= ${VAT_PERIOD_LIMIT} AND sale_count <= ${VAT_PERIOD_LIMIT} AND late_sale_count <= ${VAT_PERIOD_LIMIT} FROM within_limits)
+    `;
+  }
+  return sql`
+    SELECT DISTINCT
+      ${quarterCode} AS original_period,
+      pg_catalog.date_trunc('quarter', ls.sale_date)::date AS from_date,
+      ((pg_catalog.date_trunc('quarter', ls.sale_date) + interval '3 months')::date - 1) AS to_date,
+      ${quarterLastMonth} AS lock_month,
+      ${quarterLastMonth} AS other_period
+    FROM late_sale_docs ls
+    WHERE (SELECT purchase_count <= ${VAT_PERIOD_LIMIT} AND sale_count <= ${VAT_PERIOD_LIMIT} AND late_sale_count <= ${VAT_PERIOD_LIMIT} FROM within_limits)
+  `;
+}
+
+// The VAT working of one legal entity (#1280), read in ONE statement (#613) so purchases, sales, lines, tax rates,
+// payment marks, the tenant tax code, filed returns, period lock timestamps, and late sales all see one snapshot even
+// in the query's READ COMMITTED transaction. Money and dates go through JSON as text so values keep full precision.
 export async function loadVatReport(ctx: QueryContext, periodText: string, legalEntityId: string): Promise<VatReport> {
   const period = vatPeriod(periodText);
-  const purchases = await periodInvoices(ctx, period, 'purchase', legalEntityId);
-  const marks = await latestMarks(
-    ctx,
-    purchases.map((p) => p.view.id),
-  );
+  const lookedFor = previousVatPeriods(period);
+  const staticReturnPeriods = [...new Set([period.period, ...lookedFor, ...declaringPeriods(period)])];
+
+  const baseDocuments = (direction: DocumentDirection) =>
+    ctx.trx
+      .selectFrom('ludy_finance.purchase_document as d')
+      .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
+      .where('d.org_id', '=', ctx.orgId)
+      .where('d.legal_entity_id', '=', legalEntityId)
+      .where('d.direction', '=', direction)
+      .where(({ not, exists, selectFrom }) =>
+        not(exists(selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
+      );
+
+  // The sale date of the e-invoice draft a sales invoice was issued from (#3535), or null: the draft of the same
+  // entity, issued, with the invoice's symbol and normalized number. Earliest issued_at answers, so a row is never
+  // doubled and an earlier draft without a sale date never borrows a later draft's.
+  const baseSalesDocs = () =>
+    baseDocuments('sale').leftJoinLateral(
+      (eb) =>
+        eb
+          .selectFrom('ludy_finance.einvoice_draft as e')
+          .innerJoin('ludy_finance.einvoice_series as es', (join) => join.onRef('es.org_id', '=', 'e.org_id').onRef('es.id', '=', 'e.series_id'))
+          .select('e.sale_date')
+          .whereRef('e.org_id', '=', 'd.org_id')
+          .whereRef('e.legal_entity_id', '=', 'd.legal_entity_id')
+          .where('e.state', '=', 'issued')
+          .whereRef('es.symbol', '=', 'd.invoice_series')
+          .where(
+            sql<boolean>`CASE WHEN pg_catalog.btrim(e.issued_number) ~ '^[0-9]+$' THEN pg_catalog.regexp_replace(pg_catalog.btrim(e.issued_number), '^0+(?=[0-9])', '') ELSE pg_catalog.upper(pg_catalog.btrim(e.issued_number)) END = d.invoice_number`,
+          )
+          .orderBy('e.issued_at')
+          .orderBy('e.id')
+          .limit(1)
+          .as('sd'),
+      (join) => join.onTrue(),
+    );
+
+  const purchaseDocs = baseDocuments('purchase')
+    .innerJoin('ludy_finance.journal_entry as j', (join) =>
+      join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
+    )
+    .select([
+      'd.id',
+      'd.invoice_date',
+      'j.entry_date',
+      'd.invoice_series',
+      'd.invoice_number',
+      'd.subtotal',
+      'd.vat_amount',
+      'd.total',
+      'd.payment_method',
+      'd.created_at',
+      'p.name',
+      'p.tax_code',
+      'd.correction_kind',
+      'd.corrected_series',
+      'd.corrected_number',
+    ])
+    .where('j.entry_date', '>=', period.from)
+    .where('j.entry_date', '<=', period.to)
+    .orderBy('j.entry_date')
+    .orderBy('d.invoice_date')
+    .orderBy('d.invoice_series')
+    .orderBy('d.invoice_number')
+    .orderBy('d.id')
+    .limit(VAT_PERIOD_LIMIT + 1);
+
+  const salePeriodDate = sql<string>`COALESCE(sd.sale_date, d.invoice_date)`;
+  const saleDocs = baseSalesDocs()
+    .innerJoin('ludy_finance.journal_entry as j', (join) =>
+      join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
+    )
+    .select([
+      'd.id',
+      'd.invoice_date',
+      'sd.sale_date',
+      'j.entry_date',
+      'd.invoice_series',
+      'd.invoice_number',
+      'd.subtotal',
+      'd.vat_amount',
+      'd.total',
+      'd.payment_method',
+      'd.created_at',
+      'p.name',
+      'p.tax_code',
+      'd.correction_kind',
+      'd.corrected_series',
+      'd.corrected_number',
+    ])
+    .where(sql<boolean>`(SELECT pg_catalog.count(*) FROM purchase_docs) <= ${VAT_PERIOD_LIMIT}`)
+    .where(salePeriodDate, '>=', period.from)
+    .where(salePeriodDate, '<=', period.to)
+    .orderBy(salePeriodDate)
+    .orderBy('d.invoice_date')
+    .orderBy('d.invoice_series')
+    .orderBy('d.invoice_number')
+    .orderBy('d.id')
+    .limit(VAT_PERIOD_LIMIT + 1);
+
+  const lateSaleDocs = baseSalesDocs()
+    .select([
+      'd.id',
+      'd.invoice_series',
+      'd.invoice_number',
+      'd.invoice_date',
+      'd.vat_amount',
+      'd.total',
+      'd.created_at',
+      'p.name',
+      'sd.sale_date',
+    ])
+    .where(sql<boolean>`(SELECT pg_catalog.count(*) FROM purchase_docs) <= ${VAT_PERIOD_LIMIT}`)
+    .where(sql<boolean>`(SELECT pg_catalog.count(*) FROM sale_docs) <= ${VAT_PERIOD_LIMIT}`)
+    .where('d.invoice_date', '>=', period.from)
+    .where('d.invoice_date', '<=', period.to)
+    .where('sd.sale_date', '<', period.from)
+    .orderBy('d.invoice_date')
+    .orderBy('d.invoice_series')
+    .orderBy('d.invoice_number')
+    .orderBy('d.id')
+    .limit(VAT_PERIOD_LIMIT + 1);
+
+  const allWithinLimits = sql`
+    (SELECT purchase_count <= ${VAT_PERIOD_LIMIT} AND sale_count <= ${VAT_PERIOD_LIMIT} AND late_sale_count <= ${VAT_PERIOD_LIMIT} FROM within_limits)
+  `;
+
+  const docLinesJson = (cte: 'purchase_docs' | 'sale_docs', countCol: 'purchase_count' | 'sale_count') => {
+    const cteRef = sql.id(cte);
+    const countRef = sql.id(countCol);
+    return sql`
+      SELECT coalesce(
+        json_agg(json_build_array(l.document_id, l.amount::text, l.vat_rate) ORDER BY l.document_id, l.line_no),
+        '[]'::json
+      )
+      FROM ludy_finance.purchase_line l
+      WHERE (SELECT ${countRef} BETWEEN 1 AND ${VAT_PERIOD_LIMIT} AND purchase_count <= ${VAT_PERIOD_LIMIT} AND sale_count <= ${VAT_PERIOD_LIMIT} AND late_sale_count <= ${VAT_PERIOD_LIMIT} FROM within_limits)
+        AND l.org_id = ${ctx.orgId}::uuid
+        AND l.document_id = ANY (ARRAY(SELECT id FROM ${cteRef}))
+    `;
+  };
+
+  const docRatesJson = (cte: 'purchase_docs' | 'sale_docs', countCol: 'purchase_count' | 'sale_count') => {
+    const cteRef = sql.id(cte);
+    const countRef = sql.id(countCol);
+    return sql`
+      SELECT coalesce(
+        json_agg(json_build_array(r.document_id, r.vat_rate, r.taxable_amount::text, r.vat_amount::text) ORDER BY r.document_id, r.row_no),
+        '[]'::json
+      )
+      FROM ludy_finance.purchase_tax_rate r
+      WHERE (SELECT ${countRef} BETWEEN 1 AND ${VAT_PERIOD_LIMIT} AND purchase_count <= ${VAT_PERIOD_LIMIT} AND sale_count <= ${VAT_PERIOD_LIMIT} AND late_sale_count <= ${VAT_PERIOD_LIMIT} FROM within_limits)
+        AND r.org_id = ${ctx.orgId}::uuid
+        AND r.document_id = ANY (ARRAY(SELECT id FROM ${cteRef}))
+    `;
+  };
+
+  const { rows } = await sql<VatReportDataRow>`
+    WITH
+      purchase_docs AS MATERIALIZED ${purchaseDocs},
+      sale_docs AS MATERIALIZED ${saleDocs},
+      late_sale_docs AS MATERIALIZED ${lateSaleDocs},
+      within_limits AS MATERIALIZED (
+        SELECT
+          (SELECT pg_catalog.count(*) FROM purchase_docs) AS purchase_count,
+          (SELECT pg_catalog.count(*) FROM sale_docs) AS sale_count,
+          (SELECT pg_catalog.count(*) FROM late_sale_docs) AS late_sale_count
+      ),
+      late_sale_periods AS MATERIALIZED (${lateSalePeriodsSql(period.kind)}),
+      lock_row AS MATERIALIZED (
+        SELECT pl.locked_through, pl.updated_at
+        FROM ludy_finance.period_lock pl
+        WHERE ${allWithinLimits}
+          AND pl.org_id = ${ctx.orgId}::uuid
+          AND pl.legal_entity_id = ${legalEntityId}::uuid
+      ),
+      lock_targets AS MATERIALIZED (
+        SELECT t.period_key, t.from_date, t.to_date, t.lock_month
+        FROM (
+          SELECT ${period.period}::text AS period_key, ${period.from}::date AS from_date, ${period.to}::date AS to_date, ${period.to.slice(0, 7)}::text AS lock_month
+          UNION
+          SELECT original_period, from_date, to_date, lock_month
+          FROM late_sale_periods
+        ) t
+        JOIN lock_row l ON l.locked_through IS NOT NULL AND l.locked_through >= t.to_date
+      )
+    SELECT
+      EXISTS (
+        SELECT 1 FROM ludy_kernel.legal_entity le
+        WHERE le.org_id = ${ctx.orgId}::uuid AND le.id = ${legalEntityId}::uuid
+      ) AS entity_allowed,
+      (SELECT t.tax_code FROM ludy_kernel.tenant t WHERE t.org_id = ${ctx.orgId}::uuid) AS tax_code,
+      (SELECT purchase_count > ${VAT_PERIOD_LIMIT} FROM within_limits) AS purchase_over,
+      (SELECT sale_count > ${VAT_PERIOD_LIMIT} FROM within_limits) AS sale_over,
+      (SELECT late_sale_count > ${VAT_PERIOD_LIMIT} FROM within_limits) AS late_sale_over,
+      (
+        SELECT coalesce(
+          json_agg(
+            json_build_object(
+              'id', d.id,
+              'invoice_date', d.invoice_date::text,
+              'entry_date', d.entry_date::text,
+              'invoice_series', d.invoice_series,
+              'invoice_number', d.invoice_number,
+              'subtotal', d.subtotal::text,
+              'vat_amount', d.vat_amount::text,
+              'total', d.total::text,
+              'payment_method', d.payment_method,
+              'created_at', d.created_at,
+              'name', d.name,
+              'tax_code', d.tax_code,
+              'correction_kind', d.correction_kind,
+              'corrected_series', d.corrected_series,
+              'corrected_number', d.corrected_number
+            )
+            ORDER BY d.entry_date, d.invoice_date, d.invoice_series, d.invoice_number, d.id
+          ),
+          '[]'::json
+        )
+        FROM purchase_docs d
+        WHERE ${allWithinLimits}
+      ) AS purchases,
+      (${docLinesJson('purchase_docs', 'purchase_count')}) AS purchase_lines,
+      (${docRatesJson('purchase_docs', 'purchase_count')}) AS purchase_rates,
+      (
+        SELECT coalesce(
+          json_agg(
+            json_build_object(
+              'document_id', m.document_id,
+              'outcome', m.outcome,
+              'voucher_id', m.voucher_id,
+              'note', m.note,
+              'created_at', m.created_at
+            )
+          ),
+          '[]'::json
+        )
+        FROM (
+          SELECT DISTINCT ON (c.document_id) c.document_id, c.outcome, c.voucher_id, c.note, c.created_at
+          FROM ludy_finance.input_vat_check c
+          WHERE (SELECT purchase_count BETWEEN 1 AND ${VAT_PERIOD_LIMIT} AND sale_count <= ${VAT_PERIOD_LIMIT} AND late_sale_count <= ${VAT_PERIOD_LIMIT} FROM within_limits)
+            AND c.org_id = ${ctx.orgId}::uuid
+            AND c.document_id = ANY (ARRAY(SELECT id FROM purchase_docs))
+          ORDER BY c.document_id, c.created_at DESC, c.id DESC
+        ) m
+      ) AS purchase_marks,
+      (
+        SELECT coalesce(
+          json_agg(
+            json_build_object(
+              'id', d.id,
+              'invoice_date', d.invoice_date::text,
+              'sale_date', d.sale_date::text,
+              'entry_date', d.entry_date::text,
+              'invoice_series', d.invoice_series,
+              'invoice_number', d.invoice_number,
+              'subtotal', d.subtotal::text,
+              'vat_amount', d.vat_amount::text,
+              'total', d.total::text,
+              'payment_method', d.payment_method,
+              'created_at', d.created_at,
+              'name', d.name,
+              'tax_code', d.tax_code,
+              'correction_kind', d.correction_kind,
+              'corrected_series', d.corrected_series,
+              'corrected_number', d.corrected_number
+            )
+            ORDER BY COALESCE(d.sale_date, d.invoice_date), d.invoice_date, d.invoice_series, d.invoice_number, d.id
+          ),
+          '[]'::json
+        )
+        FROM sale_docs d
+        WHERE ${allWithinLimits}
+      ) AS sales,
+      (${docLinesJson('sale_docs', 'sale_count')}) AS sale_lines,
+      (${docRatesJson('sale_docs', 'sale_count')}) AS sale_rates,
+      (
+        SELECT coalesce(
+          json_agg(
+            json_build_object(
+              'id', d.id,
+              'invoice_series', d.invoice_series,
+              'invoice_number', d.invoice_number,
+              'name', d.name,
+              'invoice_date', d.invoice_date::text,
+              'sale_date', d.sale_date::text,
+              'total', d.total::text,
+              'vat_amount', d.vat_amount::text,
+              'created_at', d.created_at
+            )
+            ORDER BY d.invoice_date, d.invoice_series, d.invoice_number, d.id
+          ),
+          '[]'::json
+        )
+        FROM late_sale_docs d
+        WHERE ${allWithinLimits}
+      ) AS late_sales,
+      (
+        SELECT coalesce(
+          json_agg(
+            json_build_object(
+              'period', f.period,
+              'status', f.status,
+              'source', f.source,
+              'carried_in_amount', f.carried_in_amount::text,
+              'deductible_amount', f.deductible_amount::text,
+              'carried_out_amount', f.carried_out_amount::text,
+              'created_at', f.created_at
+            )
+          ),
+          '[]'::json
+        )
+        FROM (
+          SELECT DISTINCT ON (r.period)
+            r.period, r.status, r.source, r.carried_in_amount, r.deductible_amount, r.carried_out_amount, r.created_at
+          FROM ludy_finance.vat_return_filed r
+          WHERE ${allWithinLimits}
+            AND r.org_id = ${ctx.orgId}::uuid
+            AND r.legal_entity_id = ${legalEntityId}::uuid
+            AND r.period = ANY (
+              ARRAY(
+                SELECT p FROM pg_catalog.unnest(${staticReturnPeriods}::text[]) AS p
+                UNION
+                SELECT original_period FROM late_sale_periods
+                UNION
+                SELECT other_period FROM late_sale_periods
+              )
+            )
+          ORDER BY r.period, r.created_at DESC, r.id DESC
+        ) f
+      ) AS filed_returns,
+      (SELECT locked_through::text FROM lock_row) AS locked_through,
+      (SELECT updated_at FROM lock_row) AS lock_updated_at,
+      (
+        SELECT coalesce(json_agg(json_build_object('period', m.period_key, 'at', m.at)), '[]'::json)
+        FROM (
+          SELECT t.period_key, pg_catalog.max(e.occurred_at) AS at
+          FROM lock_targets t
+          JOIN ludy_kernel.audit_event e
+            ON e.org_id = ${ctx.orgId}::uuid
+           AND e.command = 'finance.period.lock'
+           AND e.outcome = 'ok'
+           AND e.occurred_at >= t.from_date
+           AND e.detail ->> 'month' = t.lock_month
+           AND e.detail ->> 'legalEntityId' = ${legalEntityId}::uuid::text
+          WHERE EXISTS (SELECT 1 FROM lock_targets)
+            AND e.occurred_at >= (SELECT pg_catalog.min(lt.from_date) FROM lock_targets lt)
+            AND (e.detail ->> 'month') = ANY (ARRAY(SELECT lt.lock_month FROM lock_targets lt))
+          GROUP BY t.period_key
+        ) m
+      ) AS lock_events
+  `.execute(ctx.trx);
+
+  const data = rows[0];
+  if (!data) throw new Error('the VAT report statement returned no row');
+  if (!data.entity_allowed) throw legalEntityNotAllowed();
+  if (data.purchase_over || data.sale_over || data.late_sale_over) throw periodTooLargeError();
+
+  const purchases = buildPeriodInvoices(period, 'purchase', data.purchases, data.purchase_lines, data.purchase_rates);
+  const marks = toMarksMap(data.purchase_marks);
   const input = side(
     true,
     purchases.map((p) => p.view),
   );
-  // Sales are told apart by the org's tax code (#313). Without one Ludy cannot know them, so the output side says it
-  // is not available, unless sales were recorded while a tax code was set (they stay in the books and count).
-  const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
-  const allSalesRows = await periodInvoices(ctx, period, 'sale', legalEntityId);
+
+  const allSalesRows = buildPeriodInvoices(period, 'sale', data.sales, data.sale_lines, data.sale_rates);
   const allSales = allSalesRows.map((p) => p.view);
-  // A sale of this period invoiced after it (#3535) is a supplementary item only if it was RECORDED after the period was declared (see declaredAt): an invoice recorded before was
-  // in the figures that were filed, so it stays in the period's main figures and the working keeps matching what was declared. One recorded after cannot reopen a locked period or
-  // change a filed return in silence: it is listed apart, in no main total of either period.
-  const chain = await returnChain(ctx, period, legalEntityId);
-  const lockedThrough = await periodLockedThrough(ctx, legalEntityId);
-  const filings = await filingTimes(ctx, legalEntityId, [period.period]);
-  const closedAt = await declaredAt(ctx, period, legalEntityId, filings.get(period.period) ?? null, lockedThrough);
+  const filedMap = toFiledReturnsMap(data.filed_returns);
+  const previous = lookedFor.map((p) => filedMap.get(p)).find((r) => r !== undefined) ?? null;
+  const carryForward: VatCarryForward = { amount: previous?.carriedOut ?? '0', previous, lookedFor };
+  const filed = filedMap.get(period.period) ?? null;
+
+  const lockEvents = new Map<string, Date>();
+  for (const row of data.lock_events) {
+    if (row.at !== null) lockEvents.set(row.period, new Date(row.at));
+  }
+  const lockFallbackAt = data.lock_updated_at ? new Date(data.lock_updated_at) : null;
+
+  // When a period was declared (#3535): the earlier of the moment its return was last marked filed (under its own key or
+  // the other kind's, declaringPeriods) and, when its last month is locked, the moment that month was locked; null when neither.
+  const declaredAtOf = (target: VatPeriod): Date | null => {
+    const filedMarkedAt = declaringPeriods(target).map((k) => filedMap.get(k)?.markedAt).find((m) => m !== undefined) ?? null;
+    const filedAt = filedMarkedAt === null ? null : new Date(filedMarkedAt);
+    const locked = data.locked_through === null || data.locked_through < target.to ? null : (lockEvents.get(target.period) ?? lockFallbackAt);
+    if (filedAt === null) return locked;
+    return locked === null || filedAt.getTime() <= locked.getTime() ? filedAt : locked;
+  };
+
+  // A sale of this period invoiced after it (#3535) is a supplementary item only if it was RECORDED after the period was
+  // declared: an invoice recorded before stays in the main figures so the working keeps matching what was declared.
+  const closedAt = declaredAtOf(period);
   const recorded = new Map(allSalesRows.map((p) => [p.view.id, p.recordedAt]));
   const isSupplementary = (v: VatInvoiceView) => v.saleDate !== null && v.issueDate > period.to && closedAt !== null && (recorded.get(v.id) as Date) > closedAt;
   const supplementaryDocuments = allSales.filter(isSupplementary);
   const sales = allSales.filter((v) => !isSupplementary(v));
-  const output = side(Boolean(org?.tax_code) || allSales.length > 0, sales);
+  // Sales are told apart by the org's tax code (#313). Without one Ludy cannot know them, so the output side says it
+  // is not available, unless sales were recorded while a tax code was set (they stay in the books and count).
+  const output = side(Boolean(data.tax_code) || allSales.length > 0, sales);
+
+  const closedByOriginal = new Map<string, Date | null>();
+  const lateSales: VatLateSale[] = data.late_sales.map((r) => {
+    const original = vatPeriodOf(r.sale_date, period.kind);
+    if (!closedByOriginal.has(original)) {
+      closedByOriginal.set(original, declaredAtOf(vatPeriod(original)));
+    }
+    const closed = closedByOriginal.get(original) ?? null;
+    return {
+      documentId: r.id,
+      series: r.invoice_series,
+      number: r.invoice_number,
+      partyName: r.name,
+      issueDate: r.invoice_date,
+      saleDate: r.sale_date,
+      originalPeriod: original,
+      total: money(r.total).toFixed(),
+      vatAmount: money(r.vat_amount).toFixed(),
+      supplementary: closed !== null && new Date(r.created_at) > closed,
+    };
+  });
+
   return {
     period,
     input,
     output,
     supplementary: { documents: supplementaryDocuments, totals: sideTotals(supplementaryDocuments) },
-    lateSales: await lateSales(ctx, period, legalEntityId, lockedThrough),
+    lateSales,
     indicators: form01Indicators(input.totals, output.totals),
     paymentChecks: paymentChecks(purchases, marks, input.totals.vat),
-    ...chain,
+    carryForward,
+    filed,
   };
-}
-
-// When a period was declared (#3535): the earlier of the moment its return was last marked filed (under its own key or the other kind's, declaringPeriods) and, when its last month is
-// locked, the moment that month was locked; the one that exists when only one does; null when neither (not declared). Either closes the period to what is recorded after it: an invoice
-// recorded after the lock or after the filing, whichever came first, is a supplementary item. period_lock keeps one row per entity with
-// the time of its last change and no history, so the lock's own time is the latest successful `finance.period.lock` of the period's last month in the audit log (the month and the
-// entity are in its facts), and the row's time only where no such event exists (a lock the posting guard made). A month unlocked and locked again counts from the new lock. A lock
-// is never reopened here: it only decides which side of it a document was recorded on.
-async function declaredAt(ctx: QueryContext, period: VatPeriod, legalEntityId: string, filedMarkedAt: string | null, lockedThrough: string | null): Promise<Date | null> {
-  const filed = filedMarkedAt === null ? null : new Date(filedMarkedAt);
-  const locked = await lockedAt(ctx, period, legalEntityId, lockedThrough);
-  if (filed === null) return locked;
-  return locked === null || filed.getTime() <= locked.getTime() ? filed : locked;
-}
-
-// The moment each of `periods` (texts) was last marked filed (#3535), by its own return or, failing that, by the other kind's that declares it (declaringPeriods): null when none.
-async function filingTimes(ctx: QueryContext, legalEntityId: string, periods: string[]): Promise<Map<string, string | null>> {
-  const keys = new Map(periods.map((p) => [p, declaringPeriods(vatPeriod(p))]));
-  const filed = await filedReturns(ctx, legalEntityId, [...new Set([...keys.values()].flat())]);
-  return new Map(periods.map((p) => [p, (keys.get(p) ?? []).map((k) => filed.get(k)?.markedAt).find((m) => m !== undefined) ?? null]));
-}
-
-// When the last month of `period` was locked, or null when it is not locked.
-async function lockedAt(ctx: QueryContext, period: VatPeriod, legalEntityId: string, lockedThrough: string | null): Promise<Date | null> {
-  if (lockedThrough === null || lockedThrough < period.to) return null;
-  const { rows } = await sql<{ at: Date | null }>`
-    SELECT pg_catalog.max(e.occurred_at) AS at FROM ludy_kernel.audit_event e
-    WHERE e.org_id = ${ctx.orgId}::uuid AND e.command = 'finance.period.lock' AND e.outcome = 'ok'
-      AND e.occurred_at >= ${period.from}::date AND e.detail->>'month' = ${period.to.slice(0, 7)}::text AND e.detail->>'legalEntityId' = ${legalEntityId}::text`.execute(ctx.trx);
-  if (rows[0]?.at) return new Date(rows[0].at);
-  const row = await ctx.trx.selectFrom('ludy_finance.period_lock').select('updated_at').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', legalEntityId).executeTakeFirst();
-  return row ? new Date(row.updated_at) : null;
-}
-
-// The sales issued in `period` for a sale of an earlier period, each with that period and whether it is already declared there (#3535).
-async function lateSales(ctx: QueryContext, period: VatPeriod, legalEntityId: string, lockedThrough: string | null): Promise<VatLateSale[]> {
-  const rows = await lateSalesIssuedIn(ctx, period, legalEntityId);
-  if (rows.length === 0) return [];
-  const originals = [...new Set(rows.map((r) => vatPeriodOf(r.saleDate, period.kind)))];
-  const filings = await filingTimes(ctx, legalEntityId, originals);
-  // When each original period was declared (declaredAt); an invoice is a supplementary item there only if it was recorded after that, never one that was in what was declared.
-  const closed = new Map<string, Date | null>();
-  for (const original of originals) closed.set(original, await declaredAt(ctx, vatPeriod(original), legalEntityId, filings.get(original) ?? null, lockedThrough));
-  return rows.map((r) => {
-    const original = vatPeriodOf(r.saleDate, period.kind);
-    const at = closed.get(original) ?? null;
-    return {
-      documentId: r.id,
-      series: r.series,
-      number: r.number,
-      partyName: r.partyName,
-      issueDate: r.issueDate,
-      saleDate: r.saleDate,
-      originalPeriod: original,
-      total: money(r.total).toFixed(),
-      vatAmount: money(r.vatAmount).toFixed(),
-      supplementary: at !== null && r.recordedAt > at,
-    };
-  });
 }
 
 export const vatPeriodQuery = defineQuery({
