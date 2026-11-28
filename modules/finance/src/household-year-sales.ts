@@ -37,11 +37,12 @@ function salesLines(ctx: Ctx, entity: string) {
           .where('org_id', '=', ctx.orgId)
           .where('root_code', '=', '511'),
     )
-    .selectFrom('custom_511 as c')
-    .crossJoin('ludy_finance.journal_line as l')
-    .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
-    .where('l.org_id', '=', ctx.orgId)
-    .where('l.legal_entity_id', '=', entity)
+    // Drive from journal_entry (mirroring loadLedgerData.lines): filtering l.legal_entity_id alongside j lets un-analyzed
+    // tables pick a nested loop over both *_legal_entity_idx indexes instead of journal_line_pkey (#3216).
+    .selectFrom('ludy_finance.journal_entry as j')
+    .innerJoin('ludy_finance.journal_line as l', (join) => join.onRef('l.org_id', '=', 'j.org_id').onRef('l.entry_id', '=', 'j.id'))
+    .crossJoin('custom_511 as c')
+    .where('j.org_id', '=', ctx.orgId)
     .where('j.legal_entity_id', '=', entity)
     .where((eb) =>
       eb.or([

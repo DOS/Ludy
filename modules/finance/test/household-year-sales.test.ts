@@ -53,9 +53,9 @@ describe('salesTotalsOf (#3216)', () => {
     expect(q.sql).toContain('"ludy_finance"."org_account"');
     expect(q.sql).toContain('l.account_code = ANY(c.codes)');
     expect(q.sql).not.toContain('"l"."account_code" in');
-    expect(q.sql).toContain('"l"."org_id" =');
-    expect(q.sql).toContain('"l"."legal_entity_id" =');
+    expect(q.sql).toContain('"j"."org_id" =');
     expect(q.sql).toContain('"j"."legal_entity_id" =');
+    expect(q.sql).not.toContain('"l"."legal_entity_id" =');
     expect(q.sql).toContain('"l"."account_code" like');
     expect(q.sql).not.toContain('limit');
     expect(q.sql).not.toContain('911');
