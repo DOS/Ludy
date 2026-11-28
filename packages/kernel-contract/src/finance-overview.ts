@@ -59,6 +59,8 @@ export const zFinanceOverview = z.object({
   expenses: z.array(zOverviewExpense),
   // B02 balances of the period no line reads: the profit may then be incomplete (the statements screen lists them).
   unmapped: z.number().int().nonnegative(),
+  // True when the period, the comparison period or the six-month chart spans a change of chart of accounts (TT133 and TT99; #5214).
+  mixedCharts: z.boolean().optional(),
 });
 export type FinanceOverview = z.infer<typeof zFinanceOverview>;
 

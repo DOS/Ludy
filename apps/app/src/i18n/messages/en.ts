@@ -795,6 +795,7 @@ export const en = {
     was: { days: 'the 30 days before', month: 'last month', quarter: 'last quarter', year: 'the same period last year' },
     wasCap: { days: 'The 30 days before', month: 'Last month', quarter: 'Last quarter', year: 'Same period last year' },
     unmapped: '{count, plural, one {# balance} other {# balances}} of the period sit in no line of the income statement, so the profit may be incomplete. See Ledger, Financial statements.',
+    mixedCharts: 'This period, the comparison period or the last 6 months were partly booked under the other chart of accounts; everything is read under the chart of the last day, so figures may be off.',
     range: {
       label: 'Period',
       last_30_days: 'Last 30 days',
