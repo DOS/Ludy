@@ -27,7 +27,10 @@ suite('the daily cap on MCP drafts (#3253)', () => {
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;
-  let owner = '';
+  let db: ReturnType<typeof createDb>;
+  // Each org has an owner of its own: one person may create only 5 orgs a day.
+  const ownerOf = new Map<string, string>();
+  let seq = 0;
 
   const browser = (userId: string): UserActor => ({ type: 'user', userId, aal: 'aal1' });
 
@@ -43,7 +46,9 @@ suite('the daily cap on MCP drafts (#3253)', () => {
 
   // A fresh org with one sandbox channel, so each test has its own counters.
   async function freshOrg(name: string) {
+    const owner = await upsertIdentity(db, { issuer: 'mcp-draft-cap', subject: `owner-${seq++}`, email: `owner-${seq}@mcp-draft-cap.test`, name: null });
     const orgId = (await createOrg(runtime, browser(owner), name)).orgId;
+    ownerOf.set(orgId, owner);
     const connectionId = randomUUID();
     await admin((c) =>
       c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, connectionId, 'sandbox', `acct-${connectionId.slice(0, 8)}`, 'Kênh thử', owner]),
@@ -53,6 +58,7 @@ suite('the daily cap on MCP drafts (#3253)', () => {
 
   // One grant of the org's owner. The live-grant index allows one per client, so each grant has its own client.
   async function grantOf(orgId: string) {
+    const owner = ownerOf.get(orgId) as string;
     const id = randomUUID();
     await admin((c) =>
       c.query(
@@ -66,7 +72,7 @@ suite('the daily cap on MCP drafts (#3253)', () => {
 
   // The draft tool as the endpoint builds it for a grant, with its own minute budget (the burst of six is never what these tests reach) and the caps under test.
   function draftTool(orgId: string, grantId: string, caps: { perGrant: number; perOrg: number }) {
-    const actor: UserActor = { type: 'user', userId: owner, aal: 'aal1', mcp: { grantId, clientId: `client-${grantId}`, clientName: 'Test client', scopes: SCOPES, kind: 'company' } };
+    const actor: UserActor = { type: 'user', userId: ownerOf.get(orgId) as string, aal: 'aal1', mcp: { grantId, clientId: `client-${grantId}`, clientName: 'Test client', scopes: SCOPES, kind: 'company' } };
     const tool = toolsFor(runtime, actor, orgId, new DraftBudget(), new McpWriteBudget(), caps).find((t) => t.name === 'ludy_social_draft_create');
     if (!tool) throw new Error('the draft tool is not listed');
     return (connectionId: string) => tool.read({ body: 'Bản nháp do ứng dụng AI soạn', channels: [{ connectionId }] });
@@ -106,9 +112,8 @@ suite('the daily cap on MCP drafts (#3253)', () => {
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 8 });
     pools.push(pool);
-    const db = createDb(pool);
+    db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...socialQueries] });
-    owner = await upsertIdentity(db, { issuer: 'mcp-draft-cap', subject: 'owner', email: 'owner@mcp-draft-cap.test', name: null });
   }, 180_000);
 
   afterAll(async () => {
