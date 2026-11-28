@@ -3,7 +3,7 @@
 // yet, and every member reads where an entity stands.
 // - finance.books.set_regime: owner only, R3 (the legal side effect: the choice binds the entity before the tax authority for at least a year, so a fresh second factor is required and no later edit lowers it), no
 //   proposal, as for the period unlock. It says the tax authority has been told (taxAuthorityNotified, only `true` is accepted); Ludy sends nothing to it, the audit row, which cannot be edited, keeps the
-//   acknowledgement. The database does the work and the checks in ludy_finance.set_books_regime (20270403060000), the one write path to the books rows.
+//   acknowledgement. The database does the work and the checks in ludy_finance.set_books_regime (20270403080000), the one write path to the books rows.
 // - finance.books.cancel_regime: owner or admin, R3, deletes a Circular 99 row while no entry falls under it (ludy_finance.cancel_books_regime).
 // - finance.books.regime_state: every member reads, under their own entity scope and the row security of the entries, what is in force, a choice for a year to come, why a switch is not offered, and the first 1
 //   January it can start from (domain/books-switch.ts holds the rules, the database enforces the same ones).
