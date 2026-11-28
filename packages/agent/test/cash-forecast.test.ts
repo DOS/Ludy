@@ -52,6 +52,22 @@ describe('cashForecastFactsText', () => {
     expect(cashForecastInstructions('en')).toContain('Write in English');
     expect(cashForecastInstructions('vi')).toContain('never "will" or "sẽ"');
   });
+
+  it('distinguishes concrete supplier due dates from estimated ones in both languages (#4395)', () => {
+    const concrete: CashForecastFacts = {
+      ...FACTS,
+      topItems: [
+        { kind: 'payable', date: '2026-12-18', amount: '8000000', estimated: false },
+        { kind: 'payable', date: '2026-12-20', amount: '2000000', estimated: true },
+      ],
+    };
+    const viText = cashForecastFactsText(concrete);
+    expect(viText).toContain('2026-12-18: khoản phải trả người bán theo hạn thanh toán, 8.000.000 đồng');
+    expect(viText).toContain('2026-12-20: khoản phải trả người bán (hạn ước tính), 2.000.000 đồng');
+    const enText = cashForecastFactsText({ ...concrete, language: 'en' });
+    expect(enText).toContain('2026-12-18: payment to a supplier on its due date, 8,000,000 dong');
+    expect(enText).toContain('2026-12-20: payment to a supplier (estimated due date), 2,000,000 dong');
+  });
 });
 
 describe('cashForecastQuiet', () => {

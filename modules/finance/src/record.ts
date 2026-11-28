@@ -328,15 +328,28 @@ export const revisePurchase = defineCommand({
     // The legal entity whose books the invoice is recorded in (#1280): the editor must see it; approval posts it there.
     // Only the proposal's own since #1764: kernel.proposal.edit and the database refuse another.
     legalEntityId: zId.optional(),
+    // Optional payment due date for purchase invoices (#4395): null clears it, undefined keeps the current value.
+    dueDate: zLocalDate.nullable().optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
   access: 'proposal_revision',
   revises: 'finance.purchase.record',
-  handler: async (ctx, { payload: before, lineAccounts, exchangeRate, legalEntityId }) => {
+  handler: async (ctx, { payload: before, lineAccounts, exchangeRate, legalEntityId, dueDate }) => {
+    const currentDueDate = before.invoice.dueDate ?? null;
+    const changesDueDate = dueDate !== undefined && dueDate !== currentDueDate;
+    if (dueDate !== undefined && dueDate !== null) {
+      if (directionOf(before) === 'sale') {
+        throw new DomainError('DUE_DATE_PURCHASE_ONLY', 422, 'Chỉ hóa đơn mua mới có hạn thanh toán');
+      }
+      if (dueDate < before.invoice.issueDate) {
+        throw new DomainError('INVALID_DUE_DATE', 422, 'Hạn thanh toán không được trước ngày lập hóa đơn');
+      }
+    }
     const rated = exchangeRate ? withEnteredRate(before, exchangeRate) : before;
     const movesEntity = legalEntityId !== undefined && legalEntityId !== before.legalEntityId;
-    const payload = movesEntity ? { ...rated, legalEntityId: await resolveLegalEntity(ctx, legalEntityId) } : rated;
+    const withEntity = movesEntity ? { ...rated, legalEntityId: await resolveLegalEntity(ctx, legalEntityId) } : rated;
+    const payload = changesDueDate ? { ...withEntity, invoice: { ...withEntity.invoice, dueDate } } : withEntity;
     const lineNos = new Set(payload.lines.map((l) => l.lineNo));
     if (lineAccounts.some((l) => !lineNos.has(l.lineNo))) throw new DomainError('UNKNOWN_LINE', 422, 'Có dòng không thuộc hóa đơn này');
     const overrides = new Map(lineAccounts.map((l) => [l.lineNo, l.debitAccount]));
@@ -351,7 +364,7 @@ export const revisePurchase = defineCommand({
       const corrected = was?.source === 'learned' ? was.ruleId : was?.source === 'user' ? was.correctedRuleId : undefined;
       return { ...l, debitAccount: account, reason: 'Người dùng chọn', accountRule: { source: 'user' as const, ...(corrected ? { correctedRuleId: corrected } : {}) } };
     });
-    if (chosen.length === 0 && !exchangeRate && !movesEntity) return { changed: false as const, payload };
+    if (chosen.length === 0 && !exchangeRate && !movesEntity && !changesDueDate) return { changed: false as const, payload };
     // The accounts the user picked now; the others are checked again when the proposal is approved.
     assertDirectionAccounts(directionOf(payload), chosen);
     await assertUsableAccounts(ctx, chosen.map((l) => l.debitAccount));
@@ -413,6 +426,9 @@ export const recordPurchase = defineCommand({
     const { invoice } = payload;
     const direction = directionOf(payload);
     const sale = direction === 'sale';
+    if (!sale && invoice.dueDate !== undefined && invoice.dueDate !== null && invoice.dueDate < invoice.issueDate) {
+      throw new DomainError('INVALID_DUE_DATE', 422, 'Hạn thanh toán không được trước ngày lập hóa đơn');
+    }
     // Posted later than its invoice date (#478); the invoice date itself is the ordinary case.
     const lateDate = postingDate !== undefined && postingDate !== invoice.issueDate ? postingDate : null;
     if (lateDate) {
@@ -523,6 +539,7 @@ export const recordPurchase = defineCommand({
         invoice_series: invoice.series,
         invoice_number: invoice.number,
         invoice_date: invoice.issueDate,
+        due_date: sale ? null : (invoice.dueDate ?? null),
         // Upper case: a proposal read before #918 may carry 'vnd', which the CHECK constraint compares with 'VND'.
         currency: invoice.currency.toUpperCase(),
         ...(foreign

@@ -211,6 +211,8 @@ export const zExtractedInvoice = z.strictObject({
   series: zText,
   number: zText,
   issueDate: zText,
+  // Payment due date (YYYY-MM-DD) when stated on an e-invoice XML (#4395); optional so a worker accepts older sandboxes.
+  dueDate: zText.nullable().optional(),
   currency: zText,
   exchangeRate: zMoney.nullable(),
   paymentMethod: zText.nullable(),

@@ -123,6 +123,9 @@ export const KERNEL_ERROR_CODES = [
   // Foreign-currency invoices booked in VND (#918).
   'FOREIGN_MISMATCH',
   'RATE_NOT_EDITABLE',
+  // Purchase invoice payment due date (#4395).
+  'DUE_DATE_PURCHASE_ONLY',
+  'INVALID_DUE_DATE',
   'TOTAL_MISMATCH',
   // Sales invoices and the org's tax code (#313).
   'NOT_OWN_SALE',

@@ -32,7 +32,13 @@ export const zCashForecastItemKind = z.enum(CASH_FORECAST_ITEM_KINDS);
 export type CashForecastItemKind = z.infer<typeof zCashForecastItemKind>;
 
 // amount is positive; the kind says which way the money goes. Every date is derived (terms, the first day a file may go), none is stated by a document.
-export const zCashForecastItem = z.object({ kind: zCashForecastItemKind, date: zLocalDate, amount: zMoney });
+export const zCashForecastItem = z.object({
+  kind: zCashForecastItemKind,
+  date: zLocalDate,
+  amount: zMoney,
+  // For kind === 'payable': false when a purchase document carries a concrete due_date, true when falling back to +30 days (#4395).
+  estimated: z.boolean().optional(),
+});
 export type CashForecastItem = z.infer<typeof zCashForecastItem>;
 
 export const zCashForecastDay = z.object({ date: zLocalDate, balance: zMoney });
@@ -68,6 +74,8 @@ export const zCashForecast = z.object({
   overdueReceiptsNotCounted: zMoney,
   unlinkedReceivablesNotCounted: zMoney,
   payableTermsDays: z.literal(PAYABLE_TERMS_DAYS),
+  // True when at least one counted payable fell back to invoice date + payableTermsDays; false when all counted payables carry a real due date (#4395).
+  estimatedPayables: z.boolean().optional(),
   notIncluded: z.array(zCashForecastNotIncluded),
   taxMarkers: z.array(zCashForecastTaxMarker),
   // True when the entity has more customers, suppliers, invoices or approved payments than one forecast reads: the figures are then partial.

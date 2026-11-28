@@ -11,6 +11,8 @@
 // money helpers and checks it shares with the worker stay in @ludy/l10n-vn, which holds no parser.
 import { XMLParser } from 'fast-xml-parser';
 import {
+  addCalendarDays,
+  isCalendarDate,
   lineContribution,
   money,
   normalizeNumber,
@@ -128,6 +130,152 @@ function related(general: Node): RelatedInvoice | null {
   };
 }
 
+const MAX_TERM_DAYS = 3650;
+const DUE_DATE_TAGS = ['HanThanhToan', 'HanTT', 'NgayHanThanhToan', 'NgayHanTT', 'HanTraTien', 'NgayHetHanThanhToan', 'NgayDenHan', 'NgayDenHanTT', 'DueDate'] as const;
+const TERM_DAYS_TAGS = ['SoNgayThanhToan', 'SoNgayTT', 'SoNgayNo', 'SoNgayCongNo', 'ThoiHanThanhToan', 'HanThanhToanNgay', 'PaymentTerms', 'PaymentTermDays'] as const;
+const DUE_DATE_LABELS = new Set([
+  'han thanh toan',
+  'han tt',
+  'ngay han thanh toan',
+  'ngay han tt',
+  'ngay den han',
+  'ngay den han thanh toan',
+  'ngay het han thanh toan',
+  'han tra tien',
+  'thoi han thanh toan',
+  'due date',
+  'payment due date',
+  'hanthanhtoan',
+  'hantt',
+  'ngayhanthanhtoan',
+  'ngaydenhan',
+  'duedate',
+  'paymentduedate',
+]);
+const TERM_DAYS_LABELS = new Set([
+  'so ngay thanh toan',
+  'so ngay tt',
+  'so ngay no',
+  'so ngay cong no',
+  'thoi han cong no',
+  'dieu khoan thanh toan',
+  'payment terms',
+  'payment term',
+  'payment terms days',
+  'payment term days',
+  'net days',
+  'songaythanhtoan',
+  'songayno',
+  'paymentterms',
+  'paymenttermdays',
+]);
+
+function normalizeXmlLabel(raw: string): string {
+  return raw
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeTermText(raw: string): string {
+  return raw
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+type DueDateCandidate = { valid: true; date: string } | { valid: false };
+
+function parseDueDateValue(raw: string, issueDay: string): DueDateCandidate {
+  const trimmed = raw.trim();
+  const iso = /^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$/.exec(trimmed);
+  if (iso) {
+    const [, year, month, day] = iso;
+    if (!year || !month || !day) return { valid: false };
+    const ymd = `${year}-${month}-${day}`;
+    return isCalendarDate(ymd) && ymd >= issueDay ? { valid: true, date: ymd } : { valid: false };
+  }
+  const dmy = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s.*)?$/.exec(trimmed);
+  if (dmy) {
+    const [, day, month, year] = dmy;
+    if (!day || !month || !year) return { valid: false };
+    const ymd = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    return isCalendarDate(ymd) && ymd >= issueDay ? { valid: true, date: ymd } : { valid: false };
+  }
+  const norm = normalizeTermText(trimmed);
+  const terms = /^(?:(?:thanh toan|tra)\s+)?(?:trong(?:\s+vong)?\s+|net\s+)?(\d{1,5})(?:\s*(?:ngay|days?))?(?:\s+ke tu ngay.*)?$/.exec(norm);
+  if (terms) {
+    const daysText = terms[1];
+    if (!daysText) return { valid: false };
+    const days = Number(daysText);
+    if (Number.isInteger(days) && days >= 0 && days <= MAX_TERM_DAYS) {
+      const date = addCalendarDays(issueDay, days);
+      return date ? { valid: true, date } : { valid: false };
+    }
+  }
+  return { valid: false };
+}
+
+function extraFieldNodes(container: unknown): Node[] {
+  if (!isNode(container)) return [];
+  const raw = container.TTKhac;
+  const blocks = (Array.isArray(raw) ? raw : [raw]).filter(isNode);
+  const entries: Node[] = [];
+  for (const block of blocks) {
+    const items = block.TTin;
+    if (Array.isArray(items)) {
+      for (const item of items) {
+        if (isNode(item)) entries.push(item);
+      }
+    } else if (isNode(items)) {
+      entries.push(items);
+    }
+  }
+  return entries;
+}
+
+// Payment due date or net-day terms (#4395): read only explicit payment-due tags or TTKhac/TTin metadata entries on
+// the invoice header/totals (never line-item descriptions), returning null if absent, invalid, or before issueDate.
+function extractDueDate(containers: readonly unknown[], issueDate: string): string | null {
+  const issueDay = issueDate.slice(0, 10);
+  if (!isCalendarDate(issueDay)) return null;
+
+  for (const tags of [DUE_DATE_TAGS, TERM_DAYS_TAGS]) {
+    for (const container of containers) {
+      for (const tag of tags) {
+        const raw = text(container, tag);
+        if (raw === null) continue;
+        const parsed = parseDueDateValue(raw, issueDay);
+        return parsed.valid ? parsed.date : null;
+      }
+    }
+  }
+
+  for (const labels of [DUE_DATE_LABELS, TERM_DAYS_LABELS]) {
+    for (const container of containers) {
+      for (const entry of extraFieldNodes(container)) {
+        const name = text(entry, 'TTruong');
+        if (name === null || !labels.has(normalizeXmlLabel(name))) continue;
+        const raw = text(entry, 'DLieu') ?? text(entry, 'GiaTri');
+        if (raw === null) continue;
+        const parsed = parseDueDateValue(raw, issueDay);
+        return parsed.valid ? parsed.date : null;
+      }
+    }
+  }
+
+  return null;
+}
+
 export interface EInvoiceParseOptions {
   // The certificates signatures are checked against; the national roots shipped with Ludy unless a test passes its own.
   trust?: TrustStore;
@@ -188,6 +336,7 @@ export function parseEInvoiceXml(bytes: Uint8Array, options: EInvoiceParseOption
   const series = normalizeSeries(text(general, 'KHHDon') ?? '');
   const seller = party(content.NBan);
   const taxAuthorityCode = typeof hdon.MCCQT === 'string' ? hdon.MCCQT : text(hdon, 'MCCQT');
+  const dueDate = extractDueDate([general, totals, content, data, hdon], issueDate);
   const signature = verifyEInvoiceSignatures(xml, { sellerTaxCode: seller.taxCode, issueDate: issueDate.slice(0, 10), series, taxAuthorityCode }, options.trust ?? shippedTrustStore());
 
   return {
@@ -197,6 +346,7 @@ export function parseEInvoiceXml(bytes: Uint8Array, options: EInvoiceParseOption
     series,
     number: normalizeNumber(number),
     issueDate: issueDate.slice(0, 10),
+    dueDate,
     currency: text(general, 'DVTTe') ?? 'VND',
     exchangeRate: amount(general, 'TGia'),
     paymentMethod: text(general, 'HTTToan'),

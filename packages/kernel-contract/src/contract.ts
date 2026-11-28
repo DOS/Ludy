@@ -3044,9 +3044,9 @@ export const contract = {
           ),
         }),
       ),
-    // Saves changed line accounts, or the exchange rate of a foreign-currency invoice read without one (#918), as a new
-    // revision authored by the caller (who then cannot approve it, P10); it never approves. RATE_NOT_EDITABLE (422):
-    // the invoice is in VND or already has its rate.
+    // Saves changed line accounts, the exchange rate of a foreign-currency invoice read without one (#918), or a
+    // purchase invoice's payment due date (#4395) as a new revision authored by the caller (who then cannot approve it,
+    // P10); it never approves. RATE_NOT_EDITABLE (422): the invoice is in VND or already has its rate.
     edit: oc
       .input(
         z.object({
@@ -3056,6 +3056,8 @@ export const contract = {
           exchangeRate: zExchangeRate.optional(),
           // The legal entity whose books a purchase or sale invoice is recorded in (#1280); approval then posts it there.
           legalEntityId: zId.optional(),
+          // Optional payment due date for purchase invoices (#4395); null clears it, undefined keeps current value.
+          dueDate: zLocalDate.nullable().optional(),
           idempotencyKey: zId,
         }),
       )
