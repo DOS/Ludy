@@ -16,7 +16,6 @@ import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-ru
 import {
   PAYABLE_ACCOUNT,
   RECEIVABLE_ACCOUNT,
-  TT133_CODES_CHANGED_IN_TT99,
   buildPurchaseJournal,
   buildSalesJournal,
   classificationCheck,
@@ -31,6 +30,7 @@ import { assertUsableAccounts, isInactiveDefaultRefusal } from './accounts.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { booksOn } from './payroll-posting.ts';
+import { approvalRegimeRefused, booksRegimeChanged, learnsRules, reviseRegimeRefused } from './purchase-regime.ts';
 import { latestRevision } from './source-entry.ts';
 import { learnFromApproval } from './categorization.ts';
 import { postReversal } from './reversal.ts';
@@ -376,10 +376,10 @@ export const revisePurchase = defineCommand({
     const classification = payload.checks.some((c) => c.id === 'accounts') ? classificationCheck(lines) : null;
     const checks = classification ? payload.checks.map((c) => (c.id === 'accounts' ? classification : c)) : payload.checks;
     const regime = await documentRegime(ctx, directionOf(payload), reviseEntity, payload.invoice.issueDate);
-    // The regime the proposal carried is dropped first: when the books on the invoice date are TT133 now, a revised purchase
-    // names none, and the old key must not stay behind and make the approval refuse a revision made under the current books.
-    const { regime: _carried, ...unregimed } = payload;
-    const revised = { ...unregimed, lines, checks, ...(regime ? { regime } : {}), journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload), regime) };
+    // Only the lines a person changed are checked above, so a purchase is revised only under the regime it carries: stamping another one here would let
+    // the lines left alone pass as the other circular's accounts (a sale always names the regime in force, as before).
+    if (directionOf(payload) === 'purchase' && reviseRegimeRefused(payload.regime, regime)) throw booksRegimeChanged(payload.regime, regime);
+    const revised = { ...payload, lines, checks, ...(regime ? { regime } : {}), journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload), regime) };
     return { changed: true as const, payload: revised };
   },
 });
@@ -481,17 +481,14 @@ export const recordPurchase = defineCommand({
     const { lines } = payload;
     assertDirectionAccounts(direction, lines);
     // The entry the approver saw is the entry posted (DESIGN.md 5.1): a document posts under the regime its proposal carries, the one its preview and its accounts were worked out with. A sale raised before the regime
-    // was carried has none and keeps the earlier posting (Dr 511). A purchase with none was raised under TT133, and its journal does not depend on the regime, so it still posts once the books are TT99 as long as every
-    // account is in the TT99 chart (checked below) and none of them is a code the two circulars use for different things (211, 3386, 6421, 6422), where the approver saw one meaning and the entry would carry another.
-    // A proposal that carries a regime is posted only while the books are still that regime. Refusals are named errors: the proposal is rejected and read again. Checked before the accounts, which the new chart may not have.
+    // was carried has none and keeps the earlier posting (Dr 511). The rules for a purchase are in purchase-regime.ts. Refusals are named errors: the proposal is rejected and read again. Checked before the accounts, which the new chart may not have.
     const postingDay = lateDate ?? invoice.issueDate;
     const regime = payload.regime;
+    // The regime in force on the day the entry is posted; the vendor default and the learned rules follow it, not the proposal's.
+    let postingRegime: string | undefined;
     if (regime !== undefined || !sale) {
-      const current = await documentRegime(ctx, direction, payload.legalEntityId ?? (await proposalEntity(ctx)), postingDay);
-      const changed = regime !== undefined ? current !== regime : current !== undefined && lines.some((l) => TT133_CODES_CHANGED_IN_TT99.includes(l.debitAccount));
-      if (changed) {
-        throw new DomainError('BOOKS_REGIME_CHANGED', 409, 'Chế độ kế toán của sổ đã đổi từ khi lập đề xuất nên bút toán sẽ khác bản đã xem; hãy từ chối đề xuất này và đọc lại hóa đơn', { proposed: regime ?? null, current: current ?? null });
-      }
+      postingRegime = await documentRegime(ctx, direction, payload.legalEntityId ?? (await proposalEntity(ctx)), postingDay);
+      if (approvalRegimeRefused({ carried: regime, current: postingRegime, accounts: lines.map((l) => l.debitAccount) })) throw booksRegimeChanged(regime, postingRegime);
     }
     // The accounts are in the chart of the entity's books on the day of the invoice (the document's lines are checked by the database on that day) and on the day of the entry (its lines are).
     const accountsEntity = await resolveLegalEntity(ctx, payload.legalEntityId ?? (await proposalEntity(ctx)));
@@ -668,7 +665,7 @@ export const recordPurchase = defineCommand({
 
     // Remember the debit account carrying the largest amount (either sign) for this vendor. Sales remember nothing, nor does a purchase of a TT99 entity (#1403): the default is one account for the whole org,
     // checked against the TT133 chart, and it would carry a TT99 code into TT133 books.
-    const main = sale || regime !== undefined ? undefined : [...lines].sort((a, b) => money(b.amount).abs().comparedTo(money(a.amount).abs()))[0];
+    const main = !learnsRules(sale, postingRegime) ? undefined : [...lines].sort((a, b) => money(b.amount).abs().comparedTo(money(a.amount).abs()))[0];
     if (main) {
       await ctx.trx
         .insertInto('ludy_finance.vendor_account_rule')
@@ -694,7 +691,7 @@ export const recordPurchase = defineCommand({
     }
 
     // The accounts a user chose on this revision teach the vendor's learned rules (#1399). Sales learn nothing, nor does a TT99 entity's purchase (#1403, as for the vendor default above).
-    const learned = sale || regime !== undefined ? [] : await learnFromApproval(ctx, { partyId, documentId: document.id, lines });
+    const learned = !learnsRules(sale, postingRegime) ? [] : await learnFromApproval(ctx, { partyId, documentId: document.id, lines });
 
     ctx.audit({
       direction,

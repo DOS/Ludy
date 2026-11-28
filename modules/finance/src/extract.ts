@@ -20,6 +20,7 @@ import { rulesForSuggestion } from './categorization.ts';
 import { HISTORY_WINDOW, anomalyChecks, type VendorHistory } from './domain/anomaly.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { booksOn } from './books.ts';
+import { rulesForBooks } from './purchase-regime.ts';
 import {
   bookableLines,
   classificationCheck,
@@ -34,7 +35,6 @@ import {
   parseTaxCode,
   readLookupHints,
   roundInvoiceToDong,
-  TT133_CODES_CHANGED_IN_TT99,
   type InvoiceCheck,
   type LearnedRule,
   type ParsedInvoice,
@@ -300,9 +300,7 @@ export const purchaseLookup = defineQuery({
       // The vendor default and the learned rules were made under TT133, whose chart is org-wide; only those naming an account the entity's chart has, and means the same by, are offered (#1403).
       const asked = [...new Set([...(vendorDefault ? [vendorDefault] : []), ...learnedRules.map((r) => r.account)])];
       const chart = await chartAccounts(ctx, asked, { legalEntityId: entityId, date: input.issueDate });
-      const usable = (code: string) => chart.has(code) && !TT133_CODES_CHANGED_IN_TT99.includes(code);
-      if (vendorDefault && !usable(vendorDefault)) vendorDefault = null;
-      learnedRules = learnedRules.filter((r) => usable(r.account));
+      ({ vendorDefault, learnedRules } = rulesForBooks({ vendorDefault, learnedRules, inChart: (code) => chart.has(code) }));
     }
     return {
       direction: sale ? 'sale' : 'purchase',
