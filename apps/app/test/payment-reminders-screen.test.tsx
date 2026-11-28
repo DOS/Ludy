@@ -54,7 +54,10 @@ function renderSection(canEdit: boolean, locale: 'vi' | 'en' = 'vi'): string {
 }
 
 describe('CustomerTermsSection (#2544)', () => {
-  beforeEach(() => client.current.clear());
+  beforeEach(() => {
+    client.current.clear();
+    client.current.setDefaultOptions({});
+  });
 
   it('renders nothing while loading or when no customer holds custom terms', () => {
     expect(renderSection(true)).toBe('');
@@ -63,10 +66,9 @@ describe('CustomerTermsSection (#2544)', () => {
   });
 
   it('shows an error alert when the custom-terms query fails', () => {
-    client.current
-      .getQueryCache()
-      .build(client.current, { queryKey: [...KEY] })
-      .setState({ data: undefined, error: new Error('network down'), status: 'error', fetchStatus: 'idle' } as never);
+    client.current.setDefaultOptions({ queries: { retryOnMount: false } });
+    const query = client.current.getQueryCache().build(client.current, { queryKey: [...KEY] });
+    query.setState({ ...query.state, status: 'error', fetchStatus: 'idle', error: new Error('network down'), data: undefined, errorUpdateCount: 1 } as never);
     const html = renderSection(true, 'en');
     expect(html).toContain('role="alert"');
     expect(html).toContain('network down');
