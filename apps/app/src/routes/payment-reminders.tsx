@@ -625,10 +625,12 @@ function CustomerTermsRow({
   item,
   orgTermsDays,
   canEdit,
+  onCleared,
 }: {
   item: CustomerCollectionSummary;
   orgTermsDays: number;
   canEdit: boolean;
+  onCleared: () => void;
 }) {
   const t = useTranslations('paymentReminders');
   const tc = useTranslations('common');
@@ -649,15 +651,23 @@ function CustomerTermsRow({
 
   const save = useMutation(
     orpc.paymentReminders.customer.set.mutationOptions({
-      onSuccess: () => {
-        closeEditing();
+      onSuccess: (_data, vars) => {
+        if (vars.termsDays === null) {
+          setEditing(false);
+          onCleared();
+        } else {
+          closeEditing();
+        }
         refreshReminders();
       },
     }),
   );
   const clear = useMutation(
     orpc.paymentReminders.customer.set.mutationOptions({
-      onSuccess: refreshReminders,
+      onSuccess: () => {
+        onCleared();
+        refreshReminders();
+      },
     }),
   );
 
@@ -684,7 +694,6 @@ function CustomerTermsRow({
               size="sm"
               className="max-md:min-h-11"
               disabled={busy}
-              aria-expanded={false}
               aria-label={t('customTerms.editOf', { name: item.name })}
               onClick={() => {
                 setTerms(String(item.termsDays));
@@ -722,7 +731,7 @@ function CustomerTermsRow({
           }}
           onSubmit={(e) => {
             e.preventDefault();
-            if (!valid || days === item.termsDays) return;
+            if (busy || !valid || days === item.termsDays) return;
             save.mutate({ partyId: item.partyId, termsDays: days });
           }}
         >
@@ -772,6 +781,7 @@ function CustomerTermsRow({
 // Customers holding their own payment terms (#2544): visible and editable even when no invoice is currently overdue.
 export function CustomerTermsSection({ canEdit }: { canEdit: boolean }) {
   const t = useTranslations('paymentReminders');
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const customTerms = useQuery(orpc.paymentReminders.customer.list.queryOptions());
   if (customTerms.isPending) return null;
   if (customTerms.error) {
@@ -783,13 +793,16 @@ export function CustomerTermsSection({ canEdit }: { canEdit: boolean }) {
   }
   const { orgTermsDays, customers, more } = customTerms.data;
   if (customers.length === 0) return null;
+  const focusHeading = () => requestAnimationFrame(() => headingRef.current?.focus());
   return (
     <section className="mt-6" aria-label={t('customTerms.title', { count: customers.length })} data-testid="reminder-custom-terms">
-      <h2 className="text-sm font-medium text-muted-foreground">{t('customTerms.title', { count: customers.length })}</h2>
+      <h2 ref={headingRef} tabIndex={-1} className="text-sm font-medium text-muted-foreground outline-none">
+        {t('customTerms.title', { count: customers.length })}
+      </h2>
       <p className="mt-1 text-xs text-subtle-foreground">{t('customTerms.subtitle', { days: orgTermsDays })}</p>
       <ul className="mt-2 divide-y rounded-xl border bg-card">
         {customers.map((c) => (
-          <CustomerTermsRow key={c.partyId} item={c} orgTermsDays={orgTermsDays} canEdit={canEdit} />
+          <CustomerTermsRow key={c.partyId} item={c} orgTermsDays={orgTermsDays} canEdit={canEdit} onCleared={focusHeading} />
         ))}
       </ul>
       {more && <p className="mt-2 text-xs text-subtle-foreground">{t('customTerms.more')}</p>}

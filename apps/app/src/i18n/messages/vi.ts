@@ -19578,6 +19578,7 @@ export const vi = {
         set: 'Đổi cài đặt nhắc thu nợ của tổ chức',
       },
       customer_collection: {
+        list: 'Xem danh sách khách hàng có hạn thanh toán riêng',
         get: 'Xem cài đặt nhắc thu nợ của một khách hàng',
         set: 'Đổi kỳ hạn hoặc tạm dừng nhắc thu nợ của một khách hàng',
       },

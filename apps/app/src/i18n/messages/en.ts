@@ -19578,6 +19578,7 @@ export const en = {
         set: 'Change the org\'s payment reminder settings',
       },
       customer_collection: {
+        list: 'List customers with their own payment terms',
         get: 'View a customer\'s payment reminder settings',
         set: 'Change a customer\'s payment terms or pause its reminders',
       },
