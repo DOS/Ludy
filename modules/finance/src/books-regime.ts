@@ -19,6 +19,8 @@ import { z } from 'zod';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const TT99 = { regime: 'tt99', chartVersion: '2026.1' } as const;
+// The proposals that post to the books and carry no regime of their own to be held to (the same list as ludy_finance.books_pending_proposals).
+const POSTING_PROPOSAL_KINDS = ['finance.purchase', 'finance.cash_voucher', 'finance.journal_voucher', 'finance.journal_reversal', 'finance.supplier_payment'];
 
 interface PgError {
   code?: string;
@@ -190,7 +192,24 @@ export const booksRegimeState = defineQuery({
         lastOrdinaryDate: last?.entry_date ?? null,
         openingEntries: openings.map((o) => ({ id: o.id, entryDate: o.entry_date, reversed: o.reversed === true })),
       });
-      out.push({ legalEntityId: entity.id, name: entity.name, isDefault: entity.is_default, ...state });
+      // The posting proposals that wait for approval from that date on hold the switch, as set_books_regime() holds it (BOOKS_PENDING_PROPOSALS); seen as far as the caller may see proposals.
+      let blockers = state.blockers;
+      if (state.nextSwitchDate !== null) {
+        const proposalDate = sql<string | null>`coalesce(payload #>> '{invoice,issueDate}', payload ->> 'date', payload ->> 'entryDate')`;
+        const pending = await ctx.trx
+          .selectFrom('ludy_kernel.proposal')
+          .select('id')
+          .where('org_id', '=', ctx.orgId)
+          .where('legal_entity_id', '=', entity.id)
+          .where('status', 'in', ['pending', 'approved'])
+          .where('kind', 'in', POSTING_PROPOSAL_KINDS)
+          .where((eb) => eb.or([eb(proposalDate, 'is', null), eb(proposalDate, '>=', state.nextSwitchDate as string)]))
+          .orderBy('id')
+          .limit(20)
+          .execute();
+        if (pending.length > 0) blockers = [...blockers, { code: 'PENDING_PROPOSALS', proposalIds: pending.map((p) => p.id), nextSwitchDate: state.nextSwitchDate }];
+      }
+      out.push({ legalEntityId: entity.id, name: entity.name, isDefault: entity.is_default, ...state, blockers });
     }
     return { entities: out };
   },

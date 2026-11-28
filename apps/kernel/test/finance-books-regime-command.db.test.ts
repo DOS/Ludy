@@ -56,7 +56,7 @@ suite('an owner chooses Circular 99 for an entity (#1403 slice B1)', () => {
     rt.execute('finance.books.cancel_regime', { legalEntityId: entity, effectiveFrom }, { actor, orgId, idempotencyKey: randomUUID() });
   const detailOf = (id: string) => rt.query<{ payload: Record<string, unknown> | null }>('kernel.inbox.get', { id }, { actor: asUser(who.owner), orgId });
   const stateOf = async (entity: string) =>
-    (await rt.query<BooksRegimeState>('finance.books.regime_state', {}, { actor: asUser(who.viewer), orgId })).entities.find((e) => e.legalEntityId === entity);
+    (await rt.query<BooksRegimeState>('finance.books.regime_state', {}, { actor: asUser(who.owner), orgId })).entities.find((e) => e.legalEntityId === entity);
   const rowsOf = (entity: string) =>
     admin(async (a) => (await a.query<{ regime: string; effective_from: string; created_by: string | null }>(`SELECT regime, effective_from::text AS effective_from, created_by FROM ludy_finance.legal_entity_books WHERE org_id = $1 AND legal_entity_id = $2 ORDER BY effective_from`, [orgId, entity])).rows);
   const refusal = (p: Promise<unknown>) => p.then(() => null, (e: unknown) => e as { code?: string; status?: number; details?: Record<string, unknown> });
@@ -203,6 +203,8 @@ suite('an owner chooses Circular 99 for an entity (#1403 slice B1)', () => {
     const waiting = await proposal(dated, { date: '2041-03-01' });
     expect(await refusal(setRegime(dated, '2041-01-01'))).toMatchObject({ code: 'BOOKS_PENDING_PROPOSALS', status: 409, details: { proposalIds: [waiting] } });
     expect(await rowsOf(dated)).toEqual([]);
+    // The state says so before the owner tries, instead of offering the date.
+    expect((await stateOf(dated))?.blockers).toEqual([{ code: 'PENDING_PROPOSALS', proposalIds: [waiting], nextSwitchDate: '2026-01-01' }]);
     const undated = await newEntity('Đề xuất không có ngày');
     await proposal(undated, {});
     expect(await refusal(setRegime(undated, '2041-01-01'))).toMatchObject({ code: 'BOOKS_PENDING_PROPOSALS' });

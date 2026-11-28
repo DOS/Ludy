@@ -1401,7 +1401,7 @@ export type BooksRegimeResult = z.infer<typeof zBooksRegimeResult>;
 // Why a switch is not offered, or only from a later year. FISCAL_YEAR_UNSUPPORTED: the org's fiscal year does not end in December. ALREADY_TT99: a Circular 99 row exists (in force or for a year to
 // come); effectiveFrom is its date. ENTRIES_ON_OR_AFTER: the entity has entries up to lastEntryDate, so only a year starting after it can be chosen (nextSwitchDate). OPENING_ENTRY_BLOCKS: an opening entry dated
 // the day before a 1 January (reversed or not) keeps that year on the old chart; entryId, entryDate and reversed name it, nextSwitchDate is the earliest 1 January that can be chosen.
-export const BOOKS_SWITCH_BLOCKERS = ['FISCAL_YEAR_UNSUPPORTED', 'ALREADY_TT99', 'ENTRIES_ON_OR_AFTER', 'OPENING_ENTRY_BLOCKS'] as const;
+export const BOOKS_SWITCH_BLOCKERS = ['FISCAL_YEAR_UNSUPPORTED', 'ALREADY_TT99', 'ENTRIES_ON_OR_AFTER', 'OPENING_ENTRY_BLOCKS', 'PENDING_PROPOSALS'] as const;
 export const zBooksBlocker = z.object({
   code: z.enum(BOOKS_SWITCH_BLOCKERS),
   fiscalYearEndMonth: z.number().int().min(1).max(12).optional(),
@@ -1410,6 +1410,8 @@ export const zBooksBlocker = z.object({
   entryId: zId.optional(),
   entryDate: zLocalDate.optional(),
   reversed: z.boolean().optional(),
+  // PENDING_PROPOSALS: the posting proposals (as many as the caller may see, up to 20) that wait for approval dated from nextSwitchDate on, or with no date; they are approved or rejected before the switch.
+  proposalIds: z.array(zId).max(20).optional(),
   nextSwitchDate: zLocalDate.nullable().optional(),
 });
 export type BooksBlocker = z.infer<typeof zBooksBlocker>;
