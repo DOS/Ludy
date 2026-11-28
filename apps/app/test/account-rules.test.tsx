@@ -81,8 +81,8 @@ const sampleRules: CategorizationRule[] = [
 ];
 
 const sampleParties = [
-  { id: 'p-evn', name: 'Điện lực TP.HCM', taxCode: '0300942001', duplicates: [] },
-  { id: 'p-vnpt', name: 'VNPT Hà Nội', taxCode: '0100684378', duplicates: [{ name: 'Bưu điện Hà Nội', taxCode: '0100684378-001' }] },
+  { id: 'p-evn', name: 'Điện lực TP.HCM', taxCode: '0300942002', duplicates: [] },
+  { id: 'p-vnpt', name: 'VNPT Hà Nội', taxCode: '0100684371', duplicates: [{ name: 'Bưu điện Hà Nội', taxCode: '0100684371-001' }] },
   { id: 'p-fpt', name: 'FPT Telecom', taxCode: null, duplicates: [] },
 ];
 
@@ -121,7 +121,7 @@ describe('account rules vendor helpers (#1453)', () => {
 
   it('searches parties by Vietnamese-folded name, tax code, and duplicate aliases with prefix priority', () => {
     expect(filterPartyChoices(sampleParties, 'dien luc').items.map((p) => p.id)).toEqual(['p-evn']);
-    expect(filterPartyChoices(sampleParties, '0100684378').items.map((p) => p.id)).toEqual(['p-vnpt']);
+    expect(filterPartyChoices(sampleParties, '0100684371').items.map((p) => p.id)).toEqual(['p-vnpt']);
     expect(filterPartyChoices(sampleParties, 'buu dien').items.map((p) => p.id)).toEqual(['p-vnpt']);
     expect(filterPartyChoices(sampleParties, '').total).toBe(3);
     const capped = filterPartyChoices(sampleParties, '', 2);
@@ -150,7 +150,7 @@ describe('AccountRulesCard vendor display, filtering, and viewer scoping', () =>
       const filterMatch = /<label[^>]*for="([^"]+)"[^>]*>[^<]*<\/label>.*?<select[^>]*id="([^"]+)"[^>]*data-testid="account-rules-vendor-filter"/.exec(html);
       expect(filterMatch?.[1]).toBeTruthy();
       expect(filterMatch?.[1]).toBe(filterMatch?.[2]);
-      expect(html).toContain(`value="">${msgs.accountRules.filterAll}</option>`);
+      expect(html).toMatch(new RegExp(`value=""[^>]*>${msgs.accountRules.filterAll}</option>`));
       expect(html).toContain(`value="${ACCOUNT_RULE_EVERY_VENDOR}">${msgs.accountRules.allVendors}</option>`);
       expect(html).toContain('value="p-vnpt">VNPT Hà Nội</option>');
       expect(html).toContain('max-md:min-h-11');
