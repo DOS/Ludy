@@ -94,7 +94,7 @@ export const zCashForecastExplanation = z.object({
 export type CashForecastExplanation = z.infer<typeof zCashForecastExplanation>;
 
 // The items the owner enters into the forecast (#5326): the costs and receipts it cannot read from the books (rent, a loan, payroll, a one-off). One row per item of ONE legal entity, written by owners and admins
-// (finance.cash_forecast.item_set and item_remove), read by every member with the forecast. The label is the owner's own words: it is shown to the owner, never written to an audit row and never sent to the model.
+// (finance.cash_forecast_item_set and finance.cash_forecast_item_remove), read by every member with the forecast. The label is the owner's own words: it is shown to the owner, never written to an audit row and never sent to the model.
 // category is what the forecast's "left out" line drops once an item of it is entered (loan drops "loans"; other drops "recurring costs" only when it repeats). direction says which way the money goes
 // (the amount is above zero). recurrence: once (on the first date), monthly (the day of the first date each month, a short month on its last day) or quarterly (the same every third month); endDate, inclusive,
 // only for a repeating item.

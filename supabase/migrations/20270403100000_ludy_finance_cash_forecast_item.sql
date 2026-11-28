@@ -5,7 +5,7 @@
 -- ludy_finance.cash_forecast_item   per org and legal entity: a label (the owner's own words, never sent to a model and never written to an audit row), a category (payroll, insurance, tax, rent,
 --                                   loan, other: it is what the "left out" line of the forecast drops), the direction of the money (out or in), an amount (VND, above zero), a first date, a
 --                                   recurrence (once, monthly or quarterly: the day of the first date each month or third month, a short month on its last day) and an optional end date.
---                                   finance.cash_forecast.item_set (R1, owner and admin, user actors only) creates and edits a row and finance.cash_forecast.item_remove deletes it; both are audited
+--                                   finance.cash_forecast_item_set (R1, owner and admin, user actors only) creates and edits a row and finance.cash_forecast_item_remove deletes it; both are audited
 --                                   (ids, category, direction, recurrence, amount and dates, never the label) and take an advisory lock per entity, so the cap of 100 items an entity (checked in the
 --                                   command) holds under concurrent writers. Every member reads, as the forecast is read.
 -- The entity of a row is the org's default unless the writer names one (trigger b_legal_entity with legal_entity_fill; the entity never changes after the insert), and le_scope narrows reads and writes

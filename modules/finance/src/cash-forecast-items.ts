@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The items an owner enters into the 90-day cash forecast (#5326, plan docs/plan/cash-forecast.md "Not built"): the costs and receipts the books cannot show (rent, a loan, payroll, a one-off), one row per item
-// of ONE legal entity. finance.cash_forecast.item_set creates (no id) or edits (id) an item and finance.cash_forecast.item_remove deletes it: both R1 (nothing is posted, paid or sent), for owners and admins,
+// of ONE legal entity. finance.cash_forecast_item_set creates (no id) or edits (id) an item and finance.cash_forecast_item_remove deletes it: both R1 (nothing is posted, paid or sent), for owners and admins,
 // and for a user only (an agent, Vy or an MCP client writes none). The runtime audits every run; the audit holds the item's id, category, direction, recurrence, amount and dates (and the previous ones on an
-// edit), NEVER the label: it is the owner's own words, often a person's name, and an audit row cannot be erased. finance.cash_forecast.items lists an entity's items for the card, for every role. An entity
+// edit), NEVER the label: it is the owner's own words, often a person's name, and an audit row cannot be erased. finance.cash_forecast_items lists an entity's items for the card, for every role. An entity
 // holds at most CASH_FORECAST_ITEMS_MAX items; the count and the write run under one advisory lock per entity, so two writers cannot both take the last place. The forecast read that merges the items into its
 // figures is a later step of the same issue.
 import { sql } from 'kysely';
@@ -104,7 +104,7 @@ const lockEntity = (ctx: CommandContext, entity: string) =>
   sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.cash_forecast_item:${ctx.orgId}:${entity}`}, 0))`.execute(ctx.trx);
 
 const cashForecastItemsQuery = defineQuery({
-  name: 'finance.cash_forecast.items',
+  name: 'finance.cash_forecast_items',
   input: zFinanceCashForecastInput,
   access: ALL,
   handler: async (ctx, input): Promise<CashForecastItems> => {
@@ -112,13 +112,14 @@ const cashForecastItemsQuery = defineQuery({
     const today = input.asOf ?? (await databaseToday(ctx.trx));
     const items = (await itemsOf(ctx, entity)).map((row) => viewOf(row, today));
     // The next occurrence first, those with none (finished, or later than day 90) last, then by id.
-    items.sort((a, b) => (a.nextDate ?? '9999-99-99').localeCompare(b.nextDate ?? '9999-99-99') || a.id.localeCompare(b.id));
+    const key = (i: CashForecastItemView) => `${i.nextDate ?? '9999-99-99'} ${i.id}`;
+    items.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
     return zCashForecastItems.parse({ legalEntityId: entity, asOf: today, items, limit: CASH_FORECAST_ITEMS_MAX });
   },
 });
 
 const cashForecastItemSet = defineCommand({
-  name: 'finance.cash_forecast.item_set',
+  name: 'finance.cash_forecast_item_set',
   input: zCashForecastItemSet,
   // Nothing is posted, paid or sent: the item only feeds the forecast the owner reads.
   risk: 'R1',
@@ -172,7 +173,7 @@ const cashForecastItemSet = defineCommand({
 });
 
 const cashForecastItemRemove = defineCommand({
-  name: 'finance.cash_forecast.item_remove',
+  name: 'finance.cash_forecast_item_remove',
   input: zCashForecastItemRemove,
   risk: 'R1',
   sideEffect: 'internal',
