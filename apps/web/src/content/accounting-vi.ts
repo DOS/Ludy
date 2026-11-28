@@ -17,11 +17,11 @@ export const accountingVi = {
   ogTitle: 'Hoá đơn về, Ludy soạn bút toán đề xuất. Bạn duyệt rồi mới ghi sổ.',
   crumbLabel: 'Đường dẫn',
   hero: {
-    title: 'Hoá đơn về, Ludy soạn bút toán đề xuất. Bạn duyệt rồi mới ghi sổ.',
-    lead: 'Ludy Tài chính đọc hoá đơn điện tử, kiểm tra từng con số bằng quy tắc cố định và đề xuất bút toán theo Thông tư 133. Chỉ khi người có thẩm quyền duyệt bằng mã hai lớp, bút toán mới vào sổ.',
-    primary: 'Tự cài đặt miễn phí',
-    secondary: 'Đăng nhập',
-    note: 'Mã nguồn mở AGPL. Ludy Tài chính có trong bản tự cài đặt. Trên Ludy Cloud: sắp ra mắt.',
+    title: 'Hoá đơn về, Ludy soạn sẵn bút toán. Bạn duyệt rồi mới ghi sổ.',
+    lead: 'Ludy Tài chính đọc hoá đơn điện tử, kiểm số liệu bằng quy tắc cố định và đề xuất bút toán theo Thông tư 133. Chỉ khi người có thẩm quyền xác nhận bằng mã hai lớp, bút toán mới vào sổ.',
+    primary: 'Dùng thử miễn phí',
+    secondary: 'Tự host miễn phí',
+    note: 'Dùng thử miễn phí trên Ludy Cloud không cần cài đặt, hoặc tự host mã nguồn mở AGPL-3.0.',
   },
   how: {
     title: 'Bốn bước từ hộp thư đến sổ cái',
@@ -77,12 +77,12 @@ export const accountingVi = {
       {
         id: 'so-sach',
         title: 'Sổ sách & Thuế: Bút toán, Sổ sách, Tài sản, khoá sổ và xuất file',
-        lead: 'Bút toán, Sổ sách, Tài sản, Phiếu thu chi và Sao kê ngân hàng dùng chung một nguồn sổ cái. Cuối kỳ khoá sổ; cuối năm kết chuyển và lưu gói chứng từ.',
+        lead: 'Bút toán, Sổ sách, Tài sản, Phiếu thu chi và Sao kê ngân hàng dùng chung một nguồn sổ cái. Cuối kỳ khoá sổ; cuối năm kết chuyển và lưu bộ chứng từ.',
         points: [
           'Bút toán (sổ nhật ký chung), Sổ sách (sổ cái), Phiếu thu chi, Tài sản cố định với khấu hao hằng tháng, số dư đầu kỳ nhập từ Excel, và sổ doanh thu S1a cho pháp nhân Hộ kinh doanh (ngưỡng thuế đang chờ xác nhận kế toán)',
           'Sao kê ngân hàng nhập từ file Excel hoặc CSV, hoặc gửi qua email; thành viên xác nhận các dòng trước khi vào sổ. Kết nối ngân hàng trực tiếp chưa có',
           'Khoá sổ theo từng tháng, theo thứ tự. Mở khoá bắt đầu từ tháng khoá cuối cùng và cần chủ sở hữu hoặc kế toán trưởng, mã hai lớp và lý do',
-          'Cuối năm: kết chuyển doanh thu và chi phí sang 911, rồi kết quả sang 4212, là một bút toán đề xuất cần duyệt bằng mã hai lớp. Sau khi duyệt và khoá đủ 12 tháng, chủ sở hữu tạo gói lưu trữ năm tài chính kèm file gốc của chứng từ',
+          'Cuối năm: kết chuyển doanh thu và chi phí sang 911, rồi kết quả sang 4212, là một bút toán đề xuất cần duyệt bằng mã hai lớp. Sau khi duyệt và khoá đủ 12 tháng, chủ sở hữu tạo bộ lưu trữ năm tài chính kèm file gốc của chứng từ',
           'Xuất Excel theo mẫu nhập liệu MISA SME cho hoá đơn mua dịch vụ, mua hàng hoá, bán hàng, phiếu thu và phiếu chi; mã nhà cung cấp và khách hàng để kế toán điền, còn mã mặt hàng và kho đặt trong Cài đặt. Việc nhập vào MISA thật đang được kiểm tra cùng kế toán đối tác',
           'Báo cáo B01-DNN và B02-DNN là bản nháp, cách ánh xạ tài khoản chưa được kế toán kiểm tra. Mỗi pháp nhân có sổ, số chứng từ, khoá sổ và tờ khai riêng, với hệ thống tài khoản TT133',
           'Tìm theo tên, mã số thuế, số hoá đơn hay số tiền, gõ không cần dấu',
@@ -160,10 +160,10 @@ export const accountingVi = {
     ],
   },
   cta: {
-    title: 'Thử Ludy Tài chính với hoá đơn của bạn',
-    body: 'Tự cài đặt miễn phí chỉ với một lệnh docker compose. Đã có tài khoản thì đăng nhập.',
-    primary: 'Xem cách tự cài đặt',
-    secondary: 'Đăng nhập',
+    title: 'Dùng thử Ludy Tài chính với chứng từ thực tế',
+    body: 'Tạo tài khoản Ludy Cloud dùng thử miễn phí trong 1 phút, hoặc tự cài đặt toàn bộ mã nguồn trên máy chủ của bạn bằng Docker Compose.',
+    primary: 'Dùng thử miễn phí',
+    secondary: 'Xem cách tự host',
   },
   // What the page draws of the product, as example data (the home page's sample company, Gạo Sạch Mekong).
   fragments: {

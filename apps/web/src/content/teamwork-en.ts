@@ -16,9 +16,9 @@ export const teamworkEn: TeamworkCopy = {
   hero: {
     title: 'My work, team tasks, notes and meetings, in one app.',
     lead: `Ludy Teamwork brings four everyday screens into one place: My work, Team tasks, Notes and Meetings. Notes sit right on the screens of your customers, vendors and documents; meeting recordings can get an optional draft transcript and summary from ${N.gm}, private to the recorder until published.`,
-    primary: 'Self-host for free',
-    secondary: 'Sign in',
-    note: 'Open source under the AGPL. Ludy Teamwork is in the self-hosted edition. On Ludy Cloud: coming soon.',
+    primary: 'Start free trial',
+    secondary: 'Self-host for free',
+    note: 'Start free on Ludy Cloud with zero setup, or self-host open source under AGPL-3.0.',
   },
   how: {
     title: 'Four screens in Ludy Teamwork',
@@ -138,9 +138,9 @@ export const teamworkEn: TeamworkCopy = {
   },
   cta: {
     title: 'Try Ludy Teamwork with your everyday work',
-    body: 'Self-host for free with a single docker compose command. If you already have an account, sign in.',
-    primary: 'See how to self-host',
-    secondary: 'Sign in',
+    body: 'Create a free Ludy Cloud trial account in a minute, or run the full open-source stack on your own server with Docker Compose.',
+    primary: 'Start free trial',
+    secondary: 'See how to self-host',
   },
   fragments: {
     sample: 'Example data',

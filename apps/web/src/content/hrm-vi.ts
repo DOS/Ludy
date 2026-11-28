@@ -17,11 +17,11 @@ export const hrmVi = {
   ogTitle: 'Hồ sơ nhân viên, chấm công, bảng lương và tuyển dụng gọn trong một nơi.',
   crumbLabel: 'Đường dẫn',
   hero: {
-    title: 'Hồ sơ nhân viên, chấm công, bảng lương và tuyển dụng gọn trong một nơi.',
-    lead: `Ludy Nhân sự giữ kín lương cá nhân cho chủ sở hữu và quản trị viên, tính kỳ lương tháng bằng quy tắc cố định và nhờ đồng nghiệp AI ${N.finance} rà biến động trên số liệu ẩn danh trước khi chuyển bút toán tổng hợp sang Ludy Tài chính.`,
-    primary: 'Tự cài đặt miễn phí',
-    secondary: 'Đăng nhập',
-    note: 'Mã nguồn mở AGPL. Ludy Nhân sự có trong bản tự cài đặt. Trên Ludy Cloud: sắp ra mắt.',
+    title: 'Hồ sơ nhân sự, chấm công, bảng lương và tuyển dụng gọn cho SME.',
+    lead: `Ludy Nhân sự giữ kín mức lương cá nhân theo quyền chủ sở hữu và quản trị viên, tính lương theo quy tắc cố định và để ${N.finance} rà biến động trên dữ liệu ẩn danh trước khi chuyển bút toán sang Ludy Tài chính.`,
+    primary: 'Dùng thử miễn phí',
+    secondary: 'Tự host miễn phí',
+    note: 'Dùng thử miễn phí trên Ludy Cloud không cần cài đặt, hoặc tự host mã nguồn mở AGPL-3.0.',
   },
   how: {
     title: 'Bốn bước từ hồ sơ nhân sự đến bảng lương tháng',
@@ -193,10 +193,10 @@ export const hrmVi = {
     ],
   },
   cta: {
-    title: 'Thử Ludy Nhân sự cho đội ngũ của bạn',
-    body: 'Tự cài đặt miễn phí chỉ với một lệnh docker compose. Đã có tài khoản thì đăng nhập.',
-    primary: 'Xem cách tự cài đặt',
-    secondary: 'Đăng nhập',
+    title: 'Quản lý nhân sự và kỳ lương gọn gàng với Ludy Nhân sự',
+    body: 'Tạo tài khoản Ludy Cloud dùng thử miễn phí trong 1 phút, hoặc tự cài đặt toàn bộ mã nguồn trên máy chủ của bạn bằng Docker Compose.',
+    primary: 'Dùng thử miễn phí',
+    secondary: 'Xem cách tự host',
   },
   // Example data rendered in components/apps/hrm-visuals.tsx (sample company: Gạo Sạch Mekong).
   fragments: {
