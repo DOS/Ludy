@@ -17,8 +17,8 @@ describe('tax calendar rules', () => {
     const p = profile({ vatFilingPeriod: 'month' });
     // 20 February 2026 is a Friday and the last day of Tết: the January return is due on Monday 23 February.
     expect(dues(p, '2026-02-01', '2026-02-28')).toEqual([['vat_return', '2026-01', '2026-02-23']]);
-    // 30 April 2027 is a Friday and a holiday, then a weekend: the first quarter is due on Monday 3 May.
-    expect(dues(profile({ vatFilingPeriod: 'quarter' }), '2027-04-01', '2027-05-31')).toEqual([['vat_return', '2027-Q1', '2027-05-03']]);
+    // 30 April 2027 is a Friday and a holiday, 1 May a Saturday holiday, and Monday 3 May its compensatory day off: the first quarter is due on Tuesday 4 May.
+    expect(dues(profile({ vatFilingPeriod: 'quarter' }), '2027-04-01', '2027-05-31')).toEqual([['vat_return', '2027-Q1', '2027-05-04']]);
   });
 
   it('dues the monthly VAT and PIT returns on the 20th of the next month, across the year end and the weekend', () => {
@@ -59,8 +59,8 @@ describe('tax calendar rules', () => {
       ['cit_finalization', '2026', '2027-03-31'],
       ['pit_finalization', '2026', '2027-03-31'],
       ['financial_statements', '2026', '2027-03-31'],
-      // 30 April 2027 is a Friday and a holiday, then a weekend.
-      ['cit_provisional', '2027-Q1', '2027-05-03'],
+      // 30 April 2027 is a Friday and a holiday, then a weekend and the compensatory day of 1 May.
+      ['cit_provisional', '2027-Q1', '2027-05-04'],
     ]);
     // 90 days after 31 December 2027 is 30 March 2028, a leap year.
     expect(dues(calendar, '2028-03-01', '2028-03-31').filter(([o]) => o === 'financial_statements')).toEqual([['financial_statements', '2027', '2028-03-30']]);
@@ -75,7 +75,7 @@ describe('tax calendar rules', () => {
     expect(dues(march, '2027-03-01', '2027-06-30')).toEqual([
       ['pit_finalization', '2026', '2027-03-31'],
       // 30 April 2027, a holiday.
-      ['cit_provisional', '2027-Q4', '2027-05-03'],
+      ['cit_provisional', '2027-Q4', '2027-05-04'],
       ['cit_finalization', '2027', '2027-06-30'],
     ]);
   });
