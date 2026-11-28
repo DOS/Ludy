@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { BUYER_IDENTITY_KINDS, BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_RATE_NATURES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerIdentityKind, type BuyerKind, type DraftIssueCode, EINVOICE_NOTICE_FIELDS, einvoiceNoticeText, type EInvoiceCorrection, type EInvoiceCorrectionKind, type EInvoiceNotice, type EInvoiceNoticeField, type EInvoiceNoticeList, type EInvoiceNoticeStep, type EInvoiceRateNature, type EInvoiceReasonSuggested, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@ludy/kernel-contract';
+import { BUYER_IDENTITY_KINDS, BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_RATE_NATURES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerIdentityKind, type BuyerKind, type DraftIssueCode, EINVOICE_NOTICE_FIELDS, einvoiceNoticeSubject, einvoiceNoticeText, type EInvoiceCorrection, type EInvoiceCorrectionKind, type EInvoiceNotice, type EInvoiceNoticeField, type EInvoiceNoticeList, type EInvoiceNoticeMailStatus, type EInvoiceNoticeStep, type EInvoiceRateNature, type EInvoiceReasonSuggested, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@ludy/kernel-contract';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -830,14 +830,49 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
 
 const NOTICE_FIELD_KEY = { buyer_name: 'notice.fieldBuyerName', buyer_address: 'notice.fieldBuyerAddress', amount_in_words: 'notice.fieldAmountInWords' } as const;
 
-// One recorded error: the text of the notice to the buyer (built by code, read and sent by the person) and the two steps, each ticked once (#2504).
+function noticeMailStatusKey(status: EInvoiceNoticeMailStatus | null) {
+  switch (status) {
+    case 'queued':
+    case 'sending':
+      return 'notice.mailQueued' as const;
+    case 'sent':
+    case 'delivered':
+      return 'notice.mailSent' as const;
+    case 'suppressed':
+      return 'notice.mailSuppressed' as const;
+    case 'ambiguous':
+      return 'notice.mailAmbiguous' as const;
+    case 'failed':
+    case 'bounced':
+    case 'complained':
+      return 'notice.mailFailed' as const;
+    case null:
+      return null;
+  }
+}
+
+// One recorded error: the text of the notice to the buyer (built by code, reviewed by the person, queued through Ludy's mail queue on approval or ticked manually) and the two steps (#2504, #3697).
 function NoticeCard({ notice, reference, draftId }: { notice: EInvoiceNotice; reference: EInvoiceNoticeList['reference']; draftId: string }) {
   const t = useTranslations('salesInvoices');
   const [copied, setCopied] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const text = einvoiceNoticeText({ ...reference, field: notice.field, correctText: notice.correctText });
+  const buyerEmail = reference.buyerEmail?.trim() ?? '';
+  const subject = einvoiceNoticeSubject({ number: reference.number, symbol: reference.symbol });
+  const mailStatusKey = noticeMailStatusKey(notice.buyerNoticeMailStatus);
+  const mailInFlight = notice.buyerNoticeMailStatus === 'queued' || notice.buyerNoticeMailStatus === 'sending';
+  const mailDelivered = notice.buyerNoticeMailStatus === 'sent' || notice.buyerNoticeMailStatus === 'delivered';
+  const canSendEmail = notice.buyerNoticeState === 'todo' && buyerEmail !== '' && !mailInFlight && !mailDelivered;
   const tick = useMutation({
     mutationFn: (step: EInvoiceNoticeStep) => client.einvoice.drafts.noticeStep({ noticeId: notice.id, step }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: orpc.einvoice.drafts.noticeList.key({ input: { draftId } }) }),
+  });
+  const sendMail = useMutation({
+    mutationFn: () => client.einvoice.drafts.noticeSend({ noticeId: notice.id, approved: true, expectedHash: notice.reviewHash }),
+    onSuccess: async () => {
+      setConfirmOpen(false);
+      await queryClient.invalidateQueries({ queryKey: orpc.einvoice.drafts.noticeList.key({ input: { draftId } }) });
+    },
   });
   const copy = () => {
     // The clipboard can be refused (an older app view); the text stays selectable in the box.
@@ -855,13 +890,41 @@ function NoticeCard({ notice, reference, draftId }: { notice: EInvoiceNotice; re
         {t('notice.textLabel')}
       </Label>
       <Textarea id={`notice-${notice.id}`} readOnly rows={7} value={text} data-testid="invoice-notice-text" />
-      <p className="mt-1 text-xs text-subtle-foreground">{reference.buyerEmail ? t('notice.buyerEmail', { email: reference.buyerEmail }) : t('notice.noEmail')}</p>
+      <p className="mt-1 text-xs text-subtle-foreground">{buyerEmail ? t('notice.buyerEmail', { email: buyerEmail }) : t('notice.noEmail')}</p>
       <div className="mt-1 flex flex-wrap items-center gap-2">
         <Button size="sm" variant="outline" onClick={copy}>
           {copied ? t('notice.copied') : t('notice.copy')}
         </Button>
-        <span className="text-xs text-subtle-foreground">{t('notice.notSent')}</span>
+        {canSendEmail && !confirmOpen && (
+          <Button size="sm" onClick={() => { sendMail.reset(); setConfirmOpen(true); }} data-testid="invoice-notice-send-open">
+            {notice.buyerNoticeMailStatus ? t('notice.sendRetry') : t('notice.sendOpen')}
+          </Button>
+        )}
+        {notice.buyerNoticeState === 'todo' && !mailStatusKey && !canSendEmail && (
+          <span className="text-xs text-subtle-foreground">{t('notice.notSent')}</span>
+        )}
       </div>
+      {canSendEmail && confirmOpen && (
+        <div className="mt-2 space-y-2 rounded-md border border-border p-3" data-testid="invoice-notice-send-confirm">
+          <p className="text-sm font-medium">{t('notice.sendConfirmTitle')}</p>
+          <p className="text-xs text-subtle-foreground">{t('notice.sendSubject', { subject })}</p>
+          <p className="text-xs text-subtle-foreground">{t('notice.sendConfirmNote', { email: buyerEmail })}</p>
+          {sendMail.error && <ErrorText>{errorMessage(sendMail.error)}</ErrorText>}
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" loading={sendMail.isPending} onClick={() => sendMail.mutate()} data-testid="invoice-notice-send-confirm-button">
+              {t('notice.sendConfirm')}
+            </Button>
+            <Button size="sm" variant="ghost" disabled={sendMail.isPending} onClick={() => setConfirmOpen(false)}>
+              {t('notice.close')}
+            </Button>
+          </div>
+        </div>
+      )}
+      {mailStatusKey && (
+        <p className="mt-2 text-xs text-subtle-foreground" data-testid="invoice-notice-mail-status">
+          {t(mailStatusKey)}
+        </p>
+      )}
       <ul className="mt-3 space-y-2">
         <li className="flex flex-wrap items-center gap-2" data-testid="invoice-notice-step-buyer">
           {notice.buyerNoticeState === 'sent' ? (

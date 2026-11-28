@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The notice of an error only in the non-core content of an issued sales e-invoice (#2504, plan einvoice-issue.md section 8): the buyer's name or address, or the amount in words. No new
-// invoice is made. The error is recorded with the text that is right and two steps the seller does outside Ludy (tell the buyer; file the form 04/SS-HĐĐT, a working answer of #2506), each
-// ticked once by a person. Nothing is sent. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
+// The notice of an error only in the non-core content of an issued sales e-invoice (#2504, #3697, plan einvoice-issue.md section 8): the buyer's name or address, or the amount in words. No new
+// invoice is made. The error is recorded with the text that is right and two steps (tell the buyer manually or via Ludy's mail queue after human review; file the form 04/SS-HĐĐT, a working answer of #2506). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -13,8 +12,11 @@ import { enterpriseCheckDigit } from '@ludy/l10n-vn';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime, sha256Hex, type BlobStore, type CredentialBroker } from '@ludy/kernel-runtime';
+import type { MailProvider, OutboundMail, SendResult } from '@ludy/mail';
 import { extractAndPropose, financeCommands, financeQueries, useCorrectionReasonCodes } from '@ludy/mod-finance';
 import { runEInvoiceIssue } from '../src/einvoice-issue-job.ts';
+import { runMailJob } from '../src/mail-queue.ts';
+import { MAIL_TEMPLATES } from '../src/mail-templates.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -104,12 +106,12 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     return o;
   }
   const execute = <T>(o: { orgId: string; owner: string }, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
-  const form = (o: Org) => ({
+  const form = (o: Org, email: string | null = null) => ({
     draftId: null,
     legalEntityId: null,
     date: today(),
     seriesId: o.seriesId,
-    buyer: { kind: 'business', partyId: null, taxCode: BUYER_TAX_CODE, name: 'Công ty Mua Thử', address: '1 Phố Thử, Hà Nội', email: null },
+    buyer: { kind: 'business', partyId: null, taxCode: BUYER_TAX_CODE, name: 'Công ty Mua Thử', address: '1 Phố Thử, Hà Nội', email },
     lines: [
       { description: 'Hàng A', unit: 'cái', quantity: '2', unitPrice: '100000', vatRate: '10%' },
       { description: 'Hàng B', unit: null, quantity: '1.5', unitPrice: '33333', vatRate: '8%' },
@@ -181,17 +183,46 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     return approved.documentId;
   }
   // An invoice issued and posted the ordinary way: the draft, and the document in the ledger.
-  async function issued(o: Org, p: ReturnType<typeof sandbox>, buyer: 'business' | 'individual' = 'business'): Promise<{ draftId: string; documentId: string }> {
-    const base = form(o);
-    const input = buyer === 'business' ? base : { ...base, buyer: { kind: 'individual', partyId: null, taxCode: null, name: 'Anh Nam', address: null, email: null } };
+  async function issued(o: Org, p: ReturnType<typeof sandbox>, buyer: 'business' | 'individual' = 'business', email: string | null = null): Promise<{ draftId: string; documentId: string }> {
+    const base = form(o, email);
+    const input = buyer === 'business' ? base : { ...base, buyer: { kind: 'individual', partyId: null, taxCode: null, name: 'Anh Nam', address: null, email } };
     const draft = await execute<{ id: string }>(o, 'finance.einvoice_draft.save', input);
     await approve(o, draft.id);
     expect(await run(o, draft.id, p.provider)).toMatchObject({ state: 'issued' });
     return { draftId: draft.id, documentId: await post(o, draft.id) };
   }
   const refusal = async (promise: Promise<unknown>) => promise.then(() => 'accepted', (error: { code?: string }) => error.code);
-  type Notice = { id: string; draftId: string; field: string; correctText: string; buyerNoticeState: string; buyerNotifiedAt: string | null; formState: string; formFiledAt: string | null };
+  type Notice = {
+    id: string;
+    draftId: string;
+    field: string;
+    correctText: string;
+    buyerNoticeState: string;
+    buyerNotifiedAt: string | null;
+    buyerNoticeMailId: string | null;
+    buyerNoticeMailStatus: string | null;
+    buyerNoticeMailErrorCode: string | null;
+    formState: string;
+    formFiledAt: string | null;
+    reviewHash: string;
+  };
+  type SendOut = { notice: Notice; mailId: string; mailStatus: 'queued' | 'suppressed' };
   const open = (o: Org, draftId: string, field = 'buyer_name', correctText = 'Công ty Mua Thử Mới', user = o.owner) => execute<Notice>(o, 'finance.einvoice.notice_open', { draftId, field, correctText }, user);
+  const mockMailer = (answers: SendResult[]) => {
+    const sent: OutboundMail[] = [];
+    const mailer: MailProvider = {
+      name: 'resend',
+      enabled: true,
+      sendRetrySafety: 'idempotent',
+      send: async (mail) => {
+        sent.push(mail);
+        return answers.shift() ?? { status: 'accepted', providerMessageId: `em_${randomUUID()}` };
+      },
+    };
+    return { mailer, sent };
+  };
+  const runNoticeMail = (orgId: string, messageId: string, mailer: MailProvider) =>
+    runMailJob({ runtime: worker, mailer, templates: MAIL_TEMPLATES, publicUrl: 'https://app.example.test', bounceDomain: null, sleep: async () => {} }, { orgId, messageId });
 
   it('records an error on an issued invoice with the right text and two steps to do, ticks each once, and makes no new invoice', async () => {
     const o = await org();
@@ -251,5 +282,114 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     await rows('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, author]);
     const [row] = await rows<{ created_by: string | null; correct_text: string }>('SELECT created_by, correct_text FROM ludy_finance.einvoice_notice WHERE org_id = $1 AND id = $2', [o.orgId, notice.id]);
     expect(row).toEqual({ created_by: null, correct_text: 'Tên Mới' });
+  });
+
+  it('queues buyer notice email after explicit approval, keeps todo on failure/ambiguous/suppression for retry, settles sent on delivery, and enforces DB guards (#3697)', async () => {
+    const o = await org();
+    // 1. Missing or invalid buyer_email refuses with BUYER_EMAIL_REQUIRED, stale reviewHash refuses with EINVOICE_NOTICE_STALE, viewer/system refused.
+    const noEmail = await issued(o, sandbox(), 'business', null);
+    const noticeNoEmail = await open(o, noEmail.draftId, 'buyer_address', '10 Lê Lợi, Q1');
+    expect(await refusal(execute(o, 'finance.einvoice.notice_send', { noticeId: noticeNoEmail.id, approved: true, expectedHash: '0'.repeat(64) }))).toBe('EINVOICE_NOTICE_STALE');
+    expect(await refusal(execute(o, 'finance.einvoice.notice_send', { noticeId: noticeNoEmail.id, approved: true, expectedHash: noticeNoEmail.reviewHash }))).toBe('BUYER_EMAIL_REQUIRED');
+
+    const badEmail = await issued(o, sandbox(), 'business', 'not-an-email');
+    const noticeBadEmail = await open(o, badEmail.draftId, 'buyer_name', 'Tên Mới');
+    expect(await refusal(execute(o, 'finance.einvoice.notice_send', { noticeId: noticeBadEmail.id, approved: true, expectedHash: noticeBadEmail.reviewHash }))).toBe('BUYER_EMAIL_REQUIRED');
+
+    const original = await issued(o, sandbox(), 'business', 'ketoan@muathu.example');
+    const notice = await open(o, original.draftId, 'buyer_address', '88 Hai Bà Trưng, Q1');
+    const viewer = await identity('notice-viewer');
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [o.orgId, viewer]);
+    expect(await refusal(execute(o, 'finance.einvoice.notice_send', { noticeId: notice.id, approved: true, expectedHash: notice.reviewHash }, viewer))).toBe('FORBIDDEN');
+    expect(await refusal(rt.execute('finance.einvoice.notice_send', { noticeId: notice.id, approved: true, expectedHash: notice.reviewHash }, { actor: { type: 'system', component: 'test.mail' }, orgId: o.orgId }))).toBe('FORBIDDEN');
+
+    // Also restrict another member to a secondary legal entity to verify legal-entity scope enforcement.
+    const secondEntity = (await execute<{ id: string }>(o, 'kernel.legal_entity.create', { name: 'Chi nhánh 2', kind: 'branch', taxCode: null, parentId: null })).id;
+    const scopedMember = await identity('scoped');
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, scopedMember]);
+    await rows("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [
+      o.orgId,
+      scopedMember,
+      secondEntity,
+      o.owner,
+    ]);
+    expect(await refusal(execute(o, 'finance.einvoice.notice_send', { noticeId: notice.id, approved: true, expectedHash: notice.reviewHash }, scopedMember))).toBe('EINVOICE_NOTICE_NOT_FOUND');
+
+    // Non-system actors cannot call notice_mail_settle.
+    expect(await refusal(execute(o, 'finance.einvoice.notice_mail_settle', { mailId: randomUUID() }))).toBe('FORBIDDEN');
+    // Guard forbids non-null buyer_notice_mail_id on insert.
+    await expect(
+      rows(
+        "INSERT INTO ludy_finance.einvoice_notice (org_id, legal_entity_id, draft_id, field, correct_text, buyer_notice_mail_id) VALUES ($1, $2, $3, 'buyer_name', 'x', $4)",
+        [o.orgId, o.entityId, original.draftId, randomUUID()],
+      ),
+    ).rejects.toThrow();
+
+    // 2. Suppressed recipient keeps buyerNoticeState = 'todo' and allows retry once lifted.
+    await execute(o, 'kernel.mail.suppression.add', { email: 'ketoan@muathu.example', scope: 'all' });
+    const suppressedSend = await execute<SendOut>(o, 'finance.einvoice.notice_send', { noticeId: notice.id, approved: true, expectedHash: notice.reviewHash });
+    expect(suppressedSend.mailStatus).toBe('suppressed');
+    expect(suppressedSend.notice).toMatchObject({ buyerNoticeState: 'todo', buyerNotifiedAt: null, buyerNoticeMailId: suppressedSend.mailId, buyerNoticeMailStatus: 'suppressed' });
+    await execute(o, 'kernel.mail.suppression.lift', { email: 'ketoan@muathu.example', scope: 'all', reason: 'Người mua xác nhận mở lại' });
+
+    // 3. Valid send queues mail, enforces duplicate pending guard, keeps state todo when worker fails, then retries and keeps todo on ambiguous.
+    const firstSend = await execute<SendOut>(o, 'finance.einvoice.notice_send', { noticeId: notice.id, approved: true, expectedHash: notice.reviewHash });
+    expect(firstSend.mailStatus).toBe('queued');
+    expect(firstSend.notice).toMatchObject({ buyerNoticeState: 'todo', buyerNotifiedAt: null, buyerNoticeMailId: firstSend.mailId, buyerNoticeMailStatus: 'queued' });
+    expect(await refusal(execute(o, 'finance.einvoice.notice_send', { noticeId: notice.id, approved: true, expectedHash: notice.reviewHash }))).toBe('EINVOICE_NOTICE_MAIL_PENDING');
+
+    const failMailer = mockMailer([{ status: 'rejected', error: 'invalid_recipient', code: 'smtp_550' }]);
+    expect(await runNoticeMail(o.orgId, firstSend.mailId, failMailer.mailer)).toMatchObject({ action: 'recorded', outcome: 'failed', code: 'SMTP_550' });
+    const afterFail = await rt.query<{ notices: Notice[] }>('finance.einvoice.notice_list', { draftId: original.draftId }, { actor: asUser(o.owner), orgId: o.orgId });
+    expect(afterFail.notices.find((n) => n.id === notice.id)).toMatchObject({
+      buyerNoticeState: 'todo',
+      buyerNotifiedAt: null,
+      buyerNoticeMailId: firstSend.mailId,
+      buyerNoticeMailStatus: 'failed',
+      buyerNoticeMailErrorCode: 'SMTP_550',
+    });
+
+    // Retry queues a fresh mail; ambiguous leaves buyer_notice_state = 'todo'.
+    const secondSend = await execute<SendOut>(o, 'finance.einvoice.notice_send', { noticeId: notice.id, approved: true, expectedHash: notice.reviewHash });
+    expect(secondSend.mailId).not.toBe(firstSend.mailId);
+    const ambMailer = mockMailer([{ status: 'unknown', code: 'http_502' }]);
+    expect(await runNoticeMail(o.orgId, secondSend.mailId, ambMailer.mailer)).toMatchObject({ action: 'recorded', outcome: 'ambiguous', code: 'HTTP_502' });
+    const afterAmb = await rt.query<{ notices: Notice[] }>('finance.einvoice.notice_list', { draftId: original.draftId }, { actor: asUser(o.owner), orgId: o.orgId });
+    expect(afterAmb.notices.find((n) => n.id === notice.id)).toMatchObject({
+      buyerNoticeState: 'todo',
+      buyerNotifiedAt: null,
+      buyerNoticeMailId: secondSend.mailId,
+      buyerNoticeMailStatus: 'ambiguous',
+      buyerNoticeMailErrorCode: 'HTTP_502',
+    });
+
+    // Guard forbids clearing buyer_notice_mail_id once set.
+    await expect(rows('UPDATE ludy_finance.einvoice_notice SET buyer_notice_mail_id = NULL WHERE org_id = $1 AND id = $2', [o.orgId, notice.id])).rejects.toThrow();
+
+    // 4. Retry and deliver cleanly: runMailJob settles buyer_notice_state = 'sent' via finance.einvoice.notice_mail_settle, audit stays free of PII.
+    const thirdSend = await execute<SendOut>(o, 'finance.einvoice.notice_send', { noticeId: notice.id, approved: true, expectedHash: notice.reviewHash });
+    const okMailer = mockMailer([{ status: 'accepted', providerMessageId: 'em_notice_ok' }]);
+    expect(await runNoticeMail(o.orgId, thirdSend.mailId, okMailer.mailer)).toEqual({ action: 'recorded', outcome: 'sent', code: null });
+    expect(okMailer.sent).toHaveLength(1);
+    expect(okMailer.sent[0]?.to).toBe('ketoan@muathu.example');
+    expect(okMailer.sent[0]?.subject).toContain('Thông báo sai sót hóa đơn điện tử số');
+    expect(okMailer.sent[0]?.text).toContain('Địa chỉ người mua đúng là: 88 Hai Bà Trưng, Q1.');
+    const settledList = await rt.query<{ notices: Notice[] }>('finance.einvoice.notice_list', { draftId: original.draftId }, { actor: asUser(o.owner), orgId: o.orgId });
+    const settled = settledList.notices.find((n) => n.id === notice.id)!;
+    expect(settled).toMatchObject({ buyerNoticeState: 'sent', buyerNotifiedAt: expect.any(String), buyerNoticeMailId: thirdSend.mailId, buyerNoticeMailStatus: 'sent', buyerNoticeMailErrorCode: null });
+
+    // Once sent, notice_send refuses, manual notice_step is idempotent, DB forbids mutating buyer_notice_mail_id, and audit excludes PII.
+    expect(await refusal(execute(o, 'finance.einvoice.notice_send', { noticeId: notice.id, approved: true, expectedHash: settled.reviewHash }))).toBe('EINVOICE_NOTICE_ALREADY_SENT');
+    const stepAgain = await execute<Notice>(o, 'finance.einvoice.notice_step', { noticeId: notice.id, step: 'buyer_notice' });
+    expect(stepAgain.buyerNotifiedAt).toBe(settled.buyerNotifiedAt);
+    await expect(rows('UPDATE ludy_finance.einvoice_notice SET buyer_notice_mail_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, notice.id, secondSend.mailId])).rejects.toThrow();
+
+    const auditBlob = JSON.stringify(
+      await rows("SELECT (detail::text || coalesce(target_id::text, '') || coalesce(input_sha256, '')) AS blob FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.einvoice.notice%'", [o.orgId]),
+    );
+    expect(auditBlob).toContain(thirdSend.mailId);
+    expect(auditBlob).not.toContain('88 Hai Bà Trưng');
+    expect(auditBlob).not.toContain('ketoan@muathu.example');
+    expect(auditBlob).not.toContain('Công ty Mua Thử');
   });
 });

@@ -4,6 +4,7 @@ import type { MailTemplates } from './mail-queue.ts';
 import { bookingMailTemplate } from './booking-mail.ts';
 import { conversationReplyMailTemplate } from './conversation-reply-mail.ts';
 import { digestMailTemplate } from './digest-mail.ts';
+import { EINVOICE_NOTICE_MAIL_TEMPLATE, einvoiceNoticeMailTemplate } from './einvoice-notice-mail.ts';
 import { FOLLOWUP_MAIL_TEMPLATE, followupMailTemplate } from './followup-mail.ts';
 import { MISSING_INVOICE_TEMPLATE, missingInvoiceMailTemplate } from './missing-invoice-mail.ts';
 import { notificationMailTemplate } from './notification-mail.ts';
@@ -36,6 +37,8 @@ export const MAIL_TEMPLATES: MailTemplates = {
   [MISSING_INVOICE_TEMPLATE]: missingInvoiceMailTemplate,
   // Finance's reminder to a customer of its overdue invoices, sent by a person's click (#2488).
   [PAYMENT_REMINDER_TEMPLATE]: paymentReminderMailTemplate,
+  // Finance's e-invoice non-core error notice to the buyer, queued after human review (#3697).
+  [EINVOICE_NOTICE_MAIL_TEMPLATE]: einvoiceNoticeMailTemplate,
   // An org over a daily abuse limit (#675).
   'kernel.usage.deferred': usageDeferredMailTemplate,
   // The daily "Hôm nay cần bạn" mail of a member who opted in, counts and links only (#2406).

@@ -349,7 +349,7 @@ export async function orgName(ctx: QueryContext, entity: string): Promise<string
 }
 
 // One plain address: no space, comma, semicolon or angle bracket, so a party's email can never name a second recipient.
-const PLAIN_ADDRESS = /^[^\s,;<>@"()[\]\\]+@[^\s,;<>@"()[\]\\]+\.[^\s,;<>@"()[\]\\]+$/;
+export const PLAIN_ADDRESS = /^[^\s,;<>@"()[\]\\]+@[^\s,;<>@"()[\]\\]+\.[^\s,;<>@"()[\]\\]+$/;
 
 // A digest of the very invoices of a draft (their ids, sorted): the draft carries it, the send recomputes it, so a customer with any number of invoices is held to the
 // set the person reviewed without sending the ids back.
