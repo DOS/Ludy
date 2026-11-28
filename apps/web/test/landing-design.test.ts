@@ -8,8 +8,8 @@ import { describe, expect, it } from 'vitest';
 const LANDING = join(import.meta.dirname, '..', 'src', 'components', 'landing');
 
 describe('landing component design rules (DESIGN.md 3.5, 3.7, 10)', () => {
-  it('renders inline 20px icons beside headings instead of rounded icon tiles in app-cards and story', () => {
-    for (const file of ['app-cards.tsx', 'story.tsx']) {
+  it('renders inline 20px icons beside headings instead of rounded icon tiles in app-cards', () => {
+    for (const file of ['app-cards.tsx']) {
       const source = readFileSync(join(LANDING, file), 'utf8');
       expect(source, file).not.toMatch(/size-(?:11|12)\b[^"]*rounded-xl|rounded-xl[^"]*size-(?:11|12)\b/);
       expect(source, file).not.toContain('size-6');

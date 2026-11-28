@@ -97,7 +97,7 @@ export function AppShell({ dict }: { dict: Dictionary }) {
   const d = shell.detail;
 
   return (
-    <figure ref={root} className="mx-auto mt-14 w-full max-w-[1200px] sm:mt-16">
+    <figure ref={root} className="mx-auto mt-10 w-full max-w-[1200px] sm:mt-12">
       <div role="group" aria-label={shell.label} className="relative overflow-hidden rounded-lg border border-line bg-surface text-[13px] leading-normal text-fg">
         <div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:grid-cols-[220px_minmax(0,1fr)_minmax(0,1.15fr)]">
           {/* Sidebar */}
