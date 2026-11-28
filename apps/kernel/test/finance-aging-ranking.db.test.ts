@@ -72,10 +72,12 @@ suite('the aging and the ranking of parties (#5338)', () => {
       if (document) {
         doc = randomUUID();
         const vat = document.vat ?? '0';
+        // The total is the sum of the net and the VAT (a table check), worked out here so no parameter is used with two types.
+        const total = String(Number(document.subtotal) + Number(vat));
         await c.query(
           `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, due_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
-           VALUES ($1, $2, $3, 'C26TAA', $4, $5, $6, 'VND', $7, $8, $7::numeric + $8::numeric, $9, $10)`,
-          [o.orgId, doc, document.party, document.number, date, document.dueDate ?? null, document.subtotal, vat, document.direction, entity],
+           VALUES ($1, $2, $3, 'C26TAA', $4, $5, $6, 'VND', $7, $8, $9, $10, $11)`,
+          [o.orgId, doc, document.party, document.number, date, document.dueDate ?? null, document.subtotal, vat, total, document.direction, entity],
         );
       }
       const id = randomUUID();
