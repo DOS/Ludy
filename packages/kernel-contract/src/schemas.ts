@@ -1384,6 +1384,45 @@ export const zPeriodLockState = z.object({
 });
 export type PeriodLockState = z.infer<typeof zPeriodLockState>;
 
+// The regime of an entity's books (issue #1403, slice B1). An owner chooses Circular 99 from the first day of a fiscal year (R3, fresh MFA) after saying the tax authority has been told; Ludy sends nothing to it,
+// the acknowledgement is kept in the audit row. An owner or an admin takes back a choice for a year nobody has posted in yet. Both name the entity as in zLegalEntityChoice.
+export const zBooksRegimeSetInput = z.object({ legalEntityId: zId.optional(), effectiveFrom: zLocalDate, taxAuthorityNotified: z.literal(true) });
+export const zBooksRegimeCancelInput = z.object({ legalEntityId: zId.optional(), effectiveFrom: zLocalDate });
+export const zBooksRegimeResult = z.object({ legalEntityId: zId, regime: z.string(), chartVersion: z.string(), effectiveFrom: zLocalDate });
+export type BooksRegimeResult = z.infer<typeof zBooksRegimeResult>;
+// Why a switch is not offered, or only from a later year. FISCAL_YEAR_UNSUPPORTED: the org's fiscal year does not end in December. ALREADY_TT99: a Circular 99 row exists (in force or for a year to
+// come); effectiveFrom is its date. ENTRIES_ON_OR_AFTER: the entity has entries up to lastEntryDate, so only a year starting after it can be chosen (nextSwitchDate). OPENING_ENTRY_BLOCKS: an opening entry dated
+// the day before a 1 January (reversed or not) keeps that year on the old chart; entryId, entryDate and reversed name it, nextSwitchDate is the next free 1 January.
+export const BOOKS_SWITCH_BLOCKERS = ['FISCAL_YEAR_UNSUPPORTED', 'ALREADY_TT99', 'ENTRIES_ON_OR_AFTER', 'OPENING_ENTRY_BLOCKS'] as const;
+export const zBooksBlocker = z.object({
+  code: z.enum(BOOKS_SWITCH_BLOCKERS),
+  fiscalYearEndMonth: z.number().int().min(1).max(12).optional(),
+  effectiveFrom: zLocalDate.optional(),
+  lastEntryDate: zLocalDate.optional(),
+  entryId: zId.optional(),
+  entryDate: zLocalDate.optional(),
+  reversed: z.boolean().optional(),
+  nextSwitchDate: zLocalDate.nullable().optional(),
+});
+export type BooksBlocker = z.infer<typeof zBooksBlocker>;
+export const zBooksRegimeEntity = z.object({
+  legalEntityId: zId,
+  name: z.string(),
+  isDefault: z.boolean(),
+  // The books in force today and since when (null: no row, TT133 as before the rows existed).
+  regime: z.string(),
+  chartVersion: z.string(),
+  since: zLocalDate.nullable(),
+  // A Circular 99 row for a year to come, and whether it can still be taken back (no entry falls under it yet).
+  scheduled: z.object({ effectiveFrom: zLocalDate, cancellable: z.boolean() }).nullable(),
+  // The first 1 January a switch can start from, null when none is offered (see the blockers).
+  nextSwitchDate: zLocalDate.nullable(),
+  blockers: z.array(zBooksBlocker),
+});
+export type BooksRegimeEntity = z.infer<typeof zBooksRegimeEntity>;
+export const zBooksRegimeState = z.object({ entities: z.array(zBooksRegimeEntity) });
+export type BooksRegimeState = z.infer<typeof zBooksRegimeState>;
+
 // A fiscal year's archive package (issue #922, plan §7.9). The fiscal year is the calendar year. Owners ask for it once
 // every month of the year is locked; the worker builds it once, and it is kept for the legal retention period.
 export const zArchiveYear = z.number().int().min(2000).max(2100);

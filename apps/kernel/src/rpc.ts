@@ -5006,6 +5006,21 @@ export function createRpcHandler(
         }),
       ),
     },
+    booksRegime: {
+      state: os.booksRegime.state.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.books.regime_state', {}, { actor, orgId }))),
+      set: os.booksRegime.set.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.books.set_regime', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      cancel: os.booksRegime.cancel.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.books.cancel_regime', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+    },
     bank: {
       preview: os.bank.preview.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.preview', input, { actor, orgId })),
