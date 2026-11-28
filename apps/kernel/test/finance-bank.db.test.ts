@@ -567,43 +567,43 @@ suite('bank statement import (#326)', () => {
     expect(createdOrg.status).toBe(200);
     const testSlug = String(createdOrg.body?.slug);
     const testOrgId = String(createdOrg.body?.orgId);
-    for (const [who, role] of [
-      [testAdmin, 'admin'],
-      [testMember, 'member'],
-      [testViewer, 'viewer'],
-    ] as const) {
-      const invite = await rpc('org/invite', await tokenFor(testOwner, { mfa: true }), { email: who.email, role }, testSlug);
-      expect(invite.status).toBe(200);
-      expect((await rpc('invites/accept', await tokenFor(who), { token: String(invite.body?.acceptPath).split('#')[1] }, null)).status).toBe(200);
-    }
-    const feedOn = async (path: string, who: Account, input?: unknown) => rpc(`bankFeeds/${path}`, await tokenFor(who), input, testSlug, feedApp);
-    const connectSbx = async (displayName: string) => {
-      const res = await feedOn('connectSandbox', testOwner, { displayName });
-      expect(res.status).toBe(200);
-      return String(res.body.connectionId);
-    };
-
-    const cRevMapped = await connectSbx('Kết nối đã ngắt có gắn');
-    const cRevUnmapped = await connectSbx('Kết nối đã ngắt trống');
-    const cExpMapped = await connectSbx('Kết nối hết hạn có gắn');
-    const cActiveUnmapped = await connectSbx('Kết nối mới chưa gắn');
-
-    expect((await sync(cRevMapped, testOrgId)).accounts).toBe(2);
-    expect((await sync(cExpMapped, testOrgId)).accounts).toBe(2);
-    const mRevRes = await feedOn('map', testOwner, { connectionId: cRevMapped, externalAccountId: 'SBX-001', bankAccount: '1121', idempotencyKey: randomUUID() });
-    const mExpRes = await feedOn('map', testOwner, { connectionId: cExpMapped, externalAccountId: 'SBX-001', bankAccount: '1121', idempotencyKey: randomUUID() });
-    expect(mRevRes.status).toBe(200);
-    expect(mExpRes.status).toBe(200);
-    const mRev = String(mRevRes.body.feedAccountId);
-    const mExp = String(mExpRes.body.feedAccountId);
-
-    // Revoke cRevMapped and cRevUnmapped through the real disconnect command, expire cExpMapped, and make cActiveUnmapped strictly newer.
-    expect((await rpc('channels/disconnect', await tokenFor(testOwner), { connectionId: cRevMapped, idempotencyKey: randomUUID() }, testSlug, feedApp)).status).toBe(200);
-    expect((await rpc('channels/disconnect', await tokenFor(testOwner), { connectionId: cRevUnmapped, idempotencyKey: randomUUID() }, testSlug, feedApp)).status).toBe(200);
-    await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE org_id = $1 AND id = $2`, [testOrgId, cExpMapped]));
-    await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET connected_at = pg_catalog.now() + interval '5 minutes' WHERE org_id = $1 AND id = $2`, [testOrgId, cActiveUnmapped]));
-
     try {
+      for (const [who, role] of [
+        [testAdmin, 'admin'],
+        [testMember, 'member'],
+        [testViewer, 'viewer'],
+      ] as const) {
+        const invite = await rpc('org/invite', await tokenFor(testOwner, { mfa: true }), { email: who.email, role }, testSlug);
+        expect(invite.status).toBe(200);
+        expect((await rpc('invites/accept', await tokenFor(who), { token: String(invite.body?.acceptPath).split('#')[1] }, null)).status).toBe(200);
+      }
+      const feedOn = async (path: string, who: Account, input?: unknown) => rpc(`bankFeeds/${path}`, await tokenFor(who), input, testSlug, feedApp);
+      const connectSbx = async (displayName: string) => {
+        const res = await feedOn('connectSandbox', testOwner, { displayName });
+        expect(res.status).toBe(200);
+        return String(res.body.connectionId);
+      };
+
+      const cRevMapped = await connectSbx('Kết nối đã ngắt có gắn');
+      const cRevUnmapped = await connectSbx('Kết nối đã ngắt trống');
+      const cExpMapped = await connectSbx('Kết nối hết hạn có gắn');
+      const cActiveUnmapped = await connectSbx('Kết nối mới chưa gắn');
+
+      expect((await sync(cRevMapped, testOrgId)).accounts).toBe(2);
+      expect((await sync(cExpMapped, testOrgId)).accounts).toBe(2);
+      const mRevRes = await feedOn('map', testOwner, { connectionId: cRevMapped, externalAccountId: 'SBX-001', bankAccount: '1121', idempotencyKey: randomUUID() });
+      const mExpRes = await feedOn('map', testOwner, { connectionId: cExpMapped, externalAccountId: 'SBX-001', bankAccount: '1121', idempotencyKey: randomUUID() });
+      expect(mRevRes.status).toBe(200);
+      expect(mExpRes.status).toBe(200);
+      const mRev = String(mRevRes.body.feedAccountId);
+      const mExp = String(mExpRes.body.feedAccountId);
+
+      // Revoke cRevMapped and cRevUnmapped through the real disconnect command, expire cExpMapped, and make cActiveUnmapped strictly newer.
+      expect((await rpc('channels/disconnect', await tokenFor(testOwner), { connectionId: cRevMapped, idempotencyKey: randomUUID() }, testSlug, feedApp)).status).toBe(200);
+      expect((await rpc('channels/disconnect', await tokenFor(testOwner), { connectionId: cRevUnmapped, idempotencyKey: randomUUID() }, testSlug, feedApp)).status).toBe(200);
+      await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE org_id = $1 AND id = $2`, [testOrgId, cExpMapped]));
+      await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET connected_at = pg_catalog.now() + interval '5 minutes' WHERE org_id = $1 AND id = $2`, [testOrgId, cActiveUnmapped]));
+
       // Both owner and admin see mapped revoked/expired connections ahead of the newer unmapped active one; unmapped revoked stays hidden.
       for (const manager of [testOwner, testAdmin]) {
         const list = (await feedOn('connections', manager)).body as Array<{ id: string; status: string }>;
@@ -646,13 +646,18 @@ suite('bank statement import (#326)', () => {
 
       expect(await feedOn('unmap', testOwner, { feedAccountId: mExp, idempotencyKey: randomUUID() })).toMatchObject({ status: 200, body: { feedAccountId: mExp } });
       expect((await feedOn('accounts', testViewer)).body).toEqual([]);
-    } finally {
-      await admin((c) => c.query(`DELETE FROM ludy_kernel.channel_connection WHERE org_id = $1 AND external_account_id LIKE 'sbx-bulk-2127-%'`, [testOrgId]));
-    }
 
-    const afterCleanup = (await feedOn('connections', testOwner)).body as Array<{ id: string; status: string }>;
-    expect(afterCleanup.map((c) => c.id)).toEqual([cActiveUnmapped, cExpMapped]);
-    expect(afterCleanup.find((c) => c.id === cExpMapped)?.status).toBe('expired');
+      await admin((c) => c.query(`DELETE FROM ludy_kernel.channel_connection WHERE org_id = $1 AND external_account_id LIKE 'sbx-bulk-2127-%'`, [testOrgId]));
+      const afterCleanup = (await feedOn('connections', testOwner)).body as Array<{ id: string; status: string }>;
+      expect(afterCleanup.map((c) => c.id)).toEqual([cActiveUnmapped, cExpMapped]);
+      expect(afterCleanup.find((c) => c.id === cExpMapped)?.status).toBe('expired');
+    } finally {
+      await admin(async (c) => {
+        await c.query(`DELETE FROM ludy_kernel.channel_connection WHERE org_id = $1 AND external_account_id LIKE 'sbx-bulk-2127-%'`, [testOrgId]);
+        await c.query(`UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND status = 'active'`, [testOrgId]);
+        await c.query(`UPDATE ludy_kernel.tenant SET status = 'closed' WHERE org_id = $1`, [testOrgId]);
+      });
+    }
   });
 
   it('skips the statement lines on or after the day a feed takes over, with a warning, and keeps the earlier ones (#4218)', async () => {
