@@ -4409,8 +4409,8 @@ export const en = {
   accountRules: {
     title: 'Learned account rules',
     intro:
-      "When an approver changes the account of a line and then approves the invoice (purchase or sales), {brand} remembers that item for the vendor or customer and proposes the same account next time. Rules apply in this order: the party's own rules, the vendor's default account (purchases only), rules for every party, then the built-in keyword list. A rule only proposes; the approver still confirms every line.",
-    empty: 'No rules yet. A rule appears when an approver changes the account of a line and then approves a purchase or sales invoice.',
+      "When an approver changes a line's account and approves, {brand} remembers that item for the vendor or customer next time. Order: the party's own rules, vendor default (purchases only), rules for every party, then built-in keywords. Approvers still confirm every line.",
+    empty: 'No rules yet. A rule is learned when an approver changes a line account and approves a purchase or sales invoice.',
     directionPurchase: 'Purchase',
     directionSale: 'Sales',
     ruleDirection: 'Invoice type',

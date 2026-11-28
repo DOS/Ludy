@@ -4407,8 +4407,8 @@ export const vi = {
   accountRules: {
     title: 'Quy tắc định khoản đã học',
     intro:
-      'Khi người duyệt đổi tài khoản của một dòng rồi duyệt hóa đơn (mua vào hoặc bán ra), {brand} ghi nhớ mặt hàng đó cho nhà cung cấp hoặc khách hàng và lần sau đề xuất đúng tài khoản ấy. Thứ tự áp dụng: quy tắc riêng của đối tác, tài khoản mặc định của nhà cung cấp (chỉ với hóa đơn mua), quy tắc chung cho mọi đối tác, rồi đến danh sách từ khóa có sẵn. Quy tắc chỉ là đề xuất, người duyệt vẫn xác nhận từng dòng.',
-    empty: 'Chưa có quy tắc nào. Quy tắc sẽ có khi người duyệt đổi tài khoản của một dòng rồi duyệt hóa đơn mua vào hoặc bán ra.',
+      'Khi người duyệt đổi tài khoản của một dòng rồi duyệt hóa đơn, {brand} ghi nhớ mặt hàng cho nhà cung cấp hoặc khách hàng để lần sau đề xuất lại. Thứ tự: quy tắc riêng của đối tác, mặc định của nhà cung cấp (chỉ đơn mua), quy tắc chung, rồi danh sách có sẵn. Người duyệt vẫn xác nhận từng dòng.',
+    empty: 'Chưa có quy tắc nào. Quy tắc được tạo khi duyệt hóa đơn có chỉnh sửa tài khoản.',
     directionPurchase: 'Mua hàng',
     directionSale: 'Bán hàng',
     ruleDirection: 'Loại hóa đơn',

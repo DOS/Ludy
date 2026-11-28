@@ -267,8 +267,8 @@ describe('AddKeywordRuleDialog vendor picker accessibility and keyboard/clear wi
       const dialogHtml = render(<AddKeywordRuleDialog rules={[]} onClose={() => undefined} />, locale);
       expect(dialogHtml).toContain('data-testid="account-rule-direction-select"');
       expect(dialogHtml).toContain(msgs.accountRules.ruleDirection);
-      expect(dialogHtml).toContain(`<option value="purchase" selected="">${msgs.accountRules.directionPurchase}</option>`);
-      expect(dialogHtml).toContain(`<option value="sale">${msgs.accountRules.directionSale}</option>`);
+      expect(dialogHtml).toMatch(new RegExp(`<option[^>]*value="purchase"[^>]*selected="">${msgs.accountRules.directionPurchase}</option>`));
+      expect(dialogHtml).toMatch(new RegExp(`<option[^>]*value="sale"[^>]*>${msgs.accountRules.directionSale}</option>`));
       // Default direction is 'purchase': expense 6422 is offered and revenue 5113 is excluded.
       expect(dialogHtml).toContain('value="6422"');
       expect(dialogHtml).not.toContain('value="5113"');
