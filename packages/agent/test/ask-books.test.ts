@@ -25,7 +25,7 @@ const LEAD_EN = 'This is the profit and loss report for the period shown on the 
 
 describe('the catalogue', () => {
   it('is closed, labelled in both languages, and "none" is only a choice, never an entry', () => {
-    expect([...ASK_BOOKS_ENTRIES]).toEqual(['profit_loss', 'cash_balance', 'receivables_top', 'payables_top', 'vat_position', 'stock_value']);
+    expect([...ASK_BOOKS_ENTRIES]).toEqual(['profit_loss', 'cash_balance', 'receivables_top', 'payables_top', 'receivables_aging', 'payables_aging', 'customers_top_sales', 'suppliers_top_purchases', 'vat_position', 'stock_value']);
     expect([...ASK_BOOKS_CHOICES]).toEqual([...ASK_BOOKS_ENTRIES, 'none']);
     for (const language of ['vi', 'en'] as const) for (const entry of ASK_BOOKS_ENTRIES) expect(ASK_BOOKS_LABEL[language][entry].length).toBeGreaterThan(0);
     expect(ASK_BOOKS_PERIODS).toContain('named');
@@ -121,6 +121,16 @@ describe('the prompt', () => {
     expect(askBooksInstructions('vi')).toContain('Vietnamese');
     expect(askBooksInstructions('en')).toContain('English');
     for (const entry of ASK_BOOKS_ENTRIES) expect(askBooksInstructions('en')).toContain(`"${entry}"`);
+  });
+
+  it('tells the model what an aging and a ranking answer, apart from the balances, and the period a ranking with none named gets (#5338)', () => {
+    const text = askBooksInstructions('en');
+    expect(text).toContain('overdue customer debts');
+    expect(text).toContain('overdue supplier debts');
+    expect(text).toContain('which customers bought the most');
+    expect(text).toContain('which suppliers the business bought the most from');
+    expect(text).toContain('the biggest debtor by balance');
+    expect(text).toContain('"this_year" when a ranking of customers or suppliers names no period');
   });
 });
 

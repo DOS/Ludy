@@ -23,6 +23,7 @@ import {
   resolvePickedPeriod,
   resolveRelativePeriod,
   zAskBooksAnswer,
+  zAskBooksCard,
   zFinanceAskBooksInput,
   type AskBooksEntry,
 } from '@ludy/kernel-contract';
@@ -44,6 +45,10 @@ const READ_OF: Record<AskBooksEntry, string> = {
   cash_balance: 'finance.statements.period',
   receivables_top: 'finance.ledger.period',
   payables_top: 'finance.ledger.period',
+  receivables_aging: 'finance.aging',
+  payables_aging: 'finance.aging',
+  customers_top_sales: 'finance.party_ranking',
+  suppliers_top_purchases: 'finance.party_ranking',
   vat_position: 'finance.vat.period',
   stock_value: 'finance.stock.report',
 };
@@ -88,6 +93,39 @@ const READS: Record<string, unknown> = {
       ],
       totals: { opening: '0', increase: '0', decrease: '0', closing: '26000000' },
     },
+  },
+  // The aging and the ranking as their own reads give them (#5338), cut to what the card reads.
+  'finance.aging': {
+    side: 'receivable',
+    asOf: '2026-10-31',
+    legalEntityId: ENTITY,
+    buckets: { not_due: '8000000', overdue_1_30: '5000000', overdue_31_60: '3000000', overdue_61_90: '0', overdue_over_90: '1000000' },
+    undated: '2000000',
+    advances: '500000',
+    overdue: {
+      total: '9000000',
+      partyCount: 7,
+      parties: [
+        { name: 'Công ty A', amount: '4000000' },
+        { name: null, amount: '3000000' },
+        { name: 'Công ty B', amount: '2000000' },
+      ],
+    },
+    estimatedDueDates: false,
+    truncated: false,
+  },
+  'finance.party_ranking': {
+    side: 'sales',
+    period: '2026-10',
+    from: '2026-10-01',
+    to: '2026-10-31',
+    total: '90000000',
+    partyCount: 8,
+    parties: [
+      { name: 'Công ty A', amount: '40000000' },
+      { name: 'Công ty B', amount: '25000000' },
+      { name: 'Công ty C', amount: '10000000' },
+    ],
   },
   'finance.vat.period': {
     output: { available: true, totals: { vat: '12000000' } },
@@ -193,7 +231,21 @@ describe('the eval set', () => {
       expect(answer.card?.period.value).toBe(c.expect.period);
       expect(answer.card?.period.partial).toBe(c.expect.partial ?? false);
       // The one read of the catalogue, for the period code resolved, and nothing else.
-      expect(calls).toEqual([{ name: READ_OF[entry], input: entry === 'stock_value' ? { month: c.expect.period } : { period: c.expect.period } }]);
+      const value = c.expect.period;
+      const asOf = answer.card?.period.to;
+      const input =
+        entry === 'stock_value'
+          ? { month: value }
+          : entry === 'receivables_aging'
+            ? { side: 'receivable', asOf }
+            : entry === 'payables_aging'
+              ? { side: 'payable', asOf }
+              : entry === 'customers_top_sales'
+                ? { side: 'sales', period: value }
+                : entry === 'suppliers_top_purchases'
+                  ? { side: 'purchases', period: value }
+                  : { period: value };
+      expect(calls).toEqual([{ name: READ_OF[entry], input }]);
       expect(answer.pick).toBeNull();
     } else {
       expect(calls).toEqual([]);
@@ -278,6 +330,57 @@ describe('the card of each entry', () => {
     ]);
     expect(card.top.map((row) => row.name)).toEqual(['Nhà cung cấp Y', 'Nhà cung cấp X']);
     expect(card.partyCount).toBe(2);
+  });
+
+  it('receivables_aging and payables_aging read finance.aging as of the period\'s end and show the five buckets, the undated part and the other side as their own figures, never netted', async () => {
+    const calls: Call[] = [];
+    const card = await runAskBooksEntry(fakeQuery(calls), 'receivables_aging', relative(), undefined);
+    expect(calls).toEqual([{ name: 'finance.aging', input: { side: 'receivable', asOf: '2026-10-31' } }]);
+    expect(card.figures).toEqual([
+      { key: 'overdue', amount: '9000000' },
+      { key: 'not_due', amount: '8000000' },
+      { key: 'overdue_1_30', amount: '5000000' },
+      { key: 'overdue_31_60', amount: '3000000' },
+      { key: 'overdue_61_90', amount: '0' },
+      { key: 'overdue_over_90', amount: '1000000' },
+      { key: 'undated', amount: '2000000' },
+      { key: 'advances', amount: '500000' },
+    ]);
+    // The largest overdue parties as the read gave them, with the name of a balance no party is named on left null.
+    expect(card.top).toEqual([
+      { name: 'Công ty A', amount: '4000000' },
+      { name: null, amount: '3000000' },
+      { name: 'Công ty B', amount: '2000000' },
+    ]);
+    expect(card.partyCount).toBe(7);
+    expect(card.notes).toEqual([]);
+    // The payable side asks the same read for the other side, with the entity when there is one.
+    const payCalls: Call[] = [];
+    await runAskBooksEntry(fakeQuery(payCalls), 'payables_aging', relative(), ENTITY);
+    expect(payCalls).toEqual([{ name: 'finance.aging', input: { side: 'payable', asOf: '2026-10-31', legalEntityId: ENTITY } }]);
+    expect(zAskBooksCard.safeParse(card).success).toBe(true);
+  });
+
+  it('an aging leaves the other side out when nothing is on it, and says when due dates are estimated or a bound was hit', async () => {
+    const aging = READS['finance.aging'] as Record<string, unknown>;
+    const reads = { ...READS, 'finance.aging': { ...aging, advances: '0', estimatedDueDates: true, truncated: true } };
+    const card = await runAskBooksEntry(fakeQuery([], reads), 'payables_aging', relative(), undefined);
+    expect(card.figures.map((fig) => fig.key)).toEqual(['overdue', 'not_due', 'overdue_1_30', 'overdue_31_60', 'overdue_61_90', 'overdue_over_90', 'undated']);
+    expect(card.notes).toEqual(['estimated_due_dates', 'truncated']);
+  });
+
+  it('customers_top_sales and suppliers_top_purchases read finance.party_ranking for the period and show the total and the largest parties, as the read gave them', async () => {
+    const calls: Call[] = [];
+    const sales = await runAskBooksEntry(fakeQuery(calls), 'customers_top_sales', relative(), undefined);
+    expect(calls).toEqual([{ name: 'finance.party_ranking', input: { side: 'sales', period: '2026-10' } }]);
+    expect(sales.figures).toEqual([{ key: 'total', amount: '90000000' }]);
+    expect(sales.top.map((row) => row.name)).toEqual(['Công ty A', 'Công ty B', 'Công ty C']);
+    expect(sales.top.map((row) => row.amount)).toEqual(['40000000', '25000000', '10000000']);
+    expect(sales.partyCount).toBe(8);
+    const purchaseCalls: Call[] = [];
+    await runAskBooksEntry(fakeQuery(purchaseCalls), 'suppliers_top_purchases', relative(), ENTITY);
+    expect(purchaseCalls).toEqual([{ name: 'finance.party_ranking', input: { side: 'purchases', period: '2026-10', legalEntityId: ENTITY } }]);
+    expect(zAskBooksCard.safeParse(sales).success).toBe(true);
   });
 
   it('vat_position shows the output, the input, their difference and the carry-forward, and says when the sales side is missing', async () => {

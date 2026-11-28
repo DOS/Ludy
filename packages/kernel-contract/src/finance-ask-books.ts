@@ -8,12 +8,16 @@
 // - cash_balance     finance.statements.period, B01 line 110 (111 + 112) at the period's end
 // - receivables_top  finance.ledger.period, the per-party closing balance of 131 at the period's end: the largest debit balances (what is owed), and the credit balances (prepaid by customers) as their own figure, never netted
 // - payables_top     finance.ledger.period, the per-party closing balance of 331 at the period's end: the largest credit balances (what is owed), and the debit balances (advanced to suppliers) as their own figure, never netted
+// - receivables_aging finance.aging (receivable), the open 131 as of the period's end in the buckets not due, 1-30, 31-60, 61-90 and over 90 days past due, and the largest overdue customers (#5338)
+// - payables_aging   finance.aging (payable), the same for the open 331 (a purchase invoice with no due date is dated by the standard terms and said to be an estimate)
+// - customers_top_sales finance.party_ranking (sales), the customers with the most sales (invoiced documents, net of VAT) in the period, the largest first
+// - suppliers_top_purchases finance.party_ranking (purchases), the suppliers with the most purchases (invoiced documents, net of VAT) in the period, the largest first
 // - vat_position     finance.vat.period, the output and input VAT of a month or quarter
 // - stock_value      finance.stock.report, the closing value of a month summed over the items
 import { z } from 'zod';
 import { zId, zLedgerPeriod, zLocalDate, zMoney } from './schemas.ts';
 
-export const ASK_BOOKS_ENTRIES = ['profit_loss', 'cash_balance', 'receivables_top', 'payables_top', 'vat_position', 'stock_value'] as const;
+export const ASK_BOOKS_ENTRIES = ['profit_loss', 'cash_balance', 'receivables_top', 'payables_top', 'receivables_aging', 'payables_aging', 'customers_top_sales', 'suppliers_top_purchases', 'vat_position', 'stock_value'] as const;
 export const zAskBooksEntry = z.enum(ASK_BOOKS_ENTRIES);
 export type AskBooksEntry = z.infer<typeof zAskBooksEntry>;
 
@@ -27,6 +31,10 @@ export const ASK_BOOKS_ALLOWED_KINDS: Record<AskBooksEntry, readonly AskBooksPer
   cash_balance: ['month', 'quarter', 'year'],
   receivables_top: ['month', 'quarter', 'year'],
   payables_top: ['month', 'quarter', 'year'],
+  receivables_aging: ['month', 'quarter', 'year'],
+  payables_aging: ['month', 'quarter', 'year'],
+  customers_top_sales: ['month', 'quarter', 'year'],
+  suppliers_top_purchases: ['month', 'quarter', 'year'],
   vat_position: ['month', 'quarter'],
   stock_value: ['month'],
 };
@@ -62,12 +70,34 @@ export const zFinanceAskBooksInput = z
   .refine((v) => (v.question !== undefined) !== (v.pick !== undefined), 'ask a question or pick a report, not both');
 export type FinanceAskBooksInput = z.infer<typeof zFinanceAskBooksInput>;
 
-export const ASK_BOOKS_FIGURES = ['revenue', 'cost_of_goods', 'profit_before_tax', 'profit_after_tax', 'cash', 'total', 'vat_output', 'vat_input', 'vat_difference', 'vat_carry_forward', 'stock_value', 'advances'] as const;
+// not_due to overdue_over_90 are the five aging buckets (days past due as of the period's end); undated is what no invoice dates; overdue is the total past due.
+export const ASK_BOOKS_FIGURES = [
+  'revenue',
+  'cost_of_goods',
+  'profit_before_tax',
+  'profit_after_tax',
+  'cash',
+  'total',
+  'vat_output',
+  'vat_input',
+  'vat_difference',
+  'vat_carry_forward',
+  'stock_value',
+  'advances',
+  'not_due',
+  'overdue_1_30',
+  'overdue_31_60',
+  'overdue_61_90',
+  'overdue_over_90',
+  'undated',
+  'overdue',
+] as const;
 export const zAskBooksFigureKey = z.enum(ASK_BOOKS_FIGURES);
 export type AskBooksFigureKey = z.infer<typeof zAskBooksFigureKey>;
 
-// provisional: the stock month is not closed for every item. sales_side_unavailable: Ludy has no source for the output VAT yet, so the difference is not the return's.
-export const ASK_BOOKS_NOTES = ['provisional', 'sales_side_unavailable'] as const;
+// provisional: the stock month is not closed for every item. sales_side_unavailable: Ludy has no source for the output VAT yet, so the difference is not the return's. estimated_due_dates: some due date of the payables is the
+// invoice date plus the standard terms, not the invoice's own. truncated: a bound of the read was hit, so the figures are of the largest balances and the newest invoices.
+export const ASK_BOOKS_NOTES = ['provisional', 'sales_side_unavailable', 'estimated_due_dates', 'truncated'] as const;
 
 export const zAskBooksResolvedPeriod = z.object({
   kind: zAskBooksPeriodKind,
@@ -83,10 +113,10 @@ export type AskBooksResolvedPeriod = z.infer<typeof zAskBooksResolvedPeriod>;
 export const zAskBooksCard = z.object({
   entry: zAskBooksEntry,
   period: zAskBooksResolvedPeriod,
-  figures: z.array(z.object({ key: zAskBooksFigureKey, amount: zMoney })).max(6),
-  // The largest balances of receivables_top and payables_top, largest first (a null name is a balance no party is named on); empty for the other entries.
+  figures: z.array(z.object({ key: zAskBooksFigureKey, amount: zMoney })).max(8),
+  // The largest balances of receivables_top and payables_top, the largest overdue parties of the two agings and the largest parties of the two rankings, largest first (a null name is a balance no party is named on); empty for the other entries.
   top: z.array(z.object({ name: z.string().max(300).nullable(), amount: zMoney })).max(ASK_BOOKS_TOP),
-  // How many parties hold a balance in that direction (so the card can say "and N more").
+  // How many parties hold a balance in that direction, are overdue or are ranked (so the card can say "and N more").
   partyCount: z.number().int().nonnegative(),
   notes: z.array(z.enum(ASK_BOOKS_NOTES)),
 });

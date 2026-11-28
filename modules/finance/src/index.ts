@@ -42,8 +42,10 @@ import { financeNotificationCommands } from './notifications.ts';
 import { collectionSettingCommands, collectionSettingQueries } from './collection-settings.ts';
 import { stockSettingCommands, stockSettingQueries } from './stock-settings.ts';
 import { paymentReminderCommands, paymentReminderQueries } from './payment-reminders.ts';
+import { financeAgingQuery } from './aging.ts';
 import { financeCashForecastQuery } from './cash-forecast.ts';
 import { cashForecastItemCommands, cashForecastItemQueries } from './cash-forecast-items.ts';
+import { financePartyRankingQuery } from './party-ranking.ts';
 import { financeOverviewQuery } from './overview.ts';
 import { financeHomeMoneyQuery } from './home-money.ts';
 import { financeMonthCloseQuery } from './month-close.ts';
@@ -308,6 +310,8 @@ export { FINANCE_NOTIFYING_EVENTS, PERIOD_CLOSING_SWEEP_MS, sweepPeriodClosing }
 export { SEARCH_LIMIT, searchAmount, type SearchResult } from './search.ts';
 export { ARCHIVE_FORMAT, type ArchiveSource, type ArchiveSourceFile, type RecordedArchive } from './year-archive.ts';
 export { type FinancialStatements, type StatementLine, type UnmappedRow } from './statements.ts';
+export { type FinanceAging } from './aging.ts';
+export { type FinancePartyRanking } from './party-ranking.ts';
 
 export const financeCommands = [recordPurchase, revisePurchase, prepareReversal, reverseEntry, journalExport, vatExport, ledgerExport, statementsExport, openingBalancePost, periodLock, periodUnlock, booksRegimeSet, booksRegimeCancel, bankImport, bankIngest, bankStatementConfirm, bankStatementReject, createAccount, updateAccount, setVendorDefaultAccount, prepareVoucher, recordVoucher, prepareJournalVoucher, recordJournalVoucher, prepareYearClosing, recordYearClosing, portalListImport, portalListRemove, portalListRecord, missingInvoicesRequest, missingInvoicesReminderSet, missingInvoicesRemind, vatPaymentMark, vatReturnMark, ...portalSyncCommands, ...financeNotificationCommands, ...yearArchiveCommands, ...fixedAssetCommands, ...misaGoodsCodeCommands, ...cashForecastItemCommands, ...categorizationCommands, ...bankFeedCommands, ...bankAccountNumberCommands, ...bankPartyRuleCommands, ...paymentReminderCommands, ...collectionSettingCommands, ...stockSettingCommands, ...einvoiceCommands, ...einvoiceConnectionCommands, ...marketplaceConnectionCommands, ...marketplaceVatRateCommands, ...misaAmisConnectionCommands, ...misaAmisMatchCommands, ...misaAmisPushCommands, ...einvoiceIssueCommands, ...einvoiceCorrectionCommands, ...einvoiceNoticeCommands, ...supplierBankAccountCommands, ...supplierPaymentCommands, ...supplierPaymentBankFileCommands, ...supplierPaymentSettleCommands, ...einvoiceJobCommands, ...stockCommands, ...stockLineCommands, ...orderHandoffCommands, ...stockCloseCommands, ...payrollPostingCommands, ...payrollPaymentCommands, ...stockCountCommands, ...stockExportCommands, ...marketplaceCommands, ...marketplaceReturnCommands, ...marketplaceColumnsCommands, ...marketplaceColumnProfileCommands, ...marketplaceIncomeCommands, ...marketplaceRetentionCommands, ...bankStatementRowsRetentionCommands, ...marketplaceSettlementCommands, ...marketplacePayoutCommands, ...marketplaceFeeClearingCommands, ...householdCommands, ...householdBookCommands, unusualEntriesReview];
 export const financeQueries = [
@@ -352,6 +356,8 @@ export const financeQueries = [
   statementsPeriodQuery,
   financeCashForecastQuery,
   ...cashForecastItemQueries,
+  financeAgingQuery,
+  financePartyRankingQuery,
   financeOverviewQuery,
   financeHomeMoneyQuery,
   financeMonthCloseQuery,
