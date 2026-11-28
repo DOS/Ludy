@@ -36,7 +36,6 @@ const ORG_LEVEL = new Map<string, string>([
 // Record types whose record names no entity, written with the entity the action was for at every call (#1725). Sorted.
 const ENTITY_NAMED = new Map<string, string>([
   ['finance.archive', "a year's package: one row per entity whose books it holds"],
-  ['finance.books', "one entity's choice of accounting regime, made or taken back"],
   ['finance.period', "one entity's month, locked or unlocked"],
   ['kernel.mail_message', "a missing-invoice request about one entity's purchases, or a reminder row per entity"],
 ]);

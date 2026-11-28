@@ -112,7 +112,8 @@ export const booksRegimeSet = defineCommand({
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
     ctx.audit({ legalEntityId: entity, regime: TT99.regime, chartVersion: TT99.chartVersion, effectiveFrom: input.effectiveFrom, taxAuthorityNotified: input.taxAuthorityNotified });
     await call(ctx, 'set_books_regime', entity, input.effectiveFrom);
-    await ctx.activity('finance.books', entity, 'books.regime_set', `Chọn Thông tư 99 từ ${dateLabel(input.effectiveFrom)}`, { legalEntityId: entity });
+    // The record is the entity itself: the trigger on activity maps kernel.legal_entity to its own id, so the row is scoped to it.
+    await ctx.activity('kernel.legal_entity', entity, 'books.regime_set', `Chọn Thông tư 99 từ ${dateLabel(input.effectiveFrom)}`);
     await ctx.emit('finance.books.regime_set', { legalEntityId: entity, regime: TT99.regime, effectiveFrom: input.effectiveFrom });
     return { legalEntityId: entity, regime: TT99.regime, chartVersion: TT99.chartVersion, effectiveFrom: input.effectiveFrom };
   },
@@ -129,7 +130,7 @@ export const booksRegimeCancel = defineCommand({
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
     ctx.audit({ legalEntityId: entity, regime: TT99.regime, chartVersion: TT99.chartVersion, effectiveFrom: input.effectiveFrom });
     await call(ctx, 'cancel_books_regime', entity, input.effectiveFrom);
-    await ctx.activity('finance.books', entity, 'books.regime_cancelled', `Hủy lựa chọn Thông tư 99 từ ${dateLabel(input.effectiveFrom)}`, { legalEntityId: entity });
+    await ctx.activity('kernel.legal_entity', entity, 'books.regime_cancelled', `Hủy lựa chọn Thông tư 99 từ ${dateLabel(input.effectiveFrom)}`);
     await ctx.emit('finance.books.regime_cancelled', { legalEntityId: entity, regime: TT99.regime, effectiveFrom: input.effectiveFrom });
     return { legalEntityId: entity, regime: TT99.regime, chartVersion: TT99.chartVersion, effectiveFrom: input.effectiveFrom };
   },
