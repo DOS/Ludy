@@ -1387,6 +1387,7 @@ export const en = {
       task_rerouted: 'A task moved to you: {title}',
       tasks_rerouted: '{count, plural, one {# task} other {# tasks}} moved to you',
       bank_attention: 'The statement of account {account} has {lines, plural, one {# line} other {# lines}} to look at',
+      bank_attention_conflicts: 'The statement of account {account} has {lines, plural, one {# line} other {# lines}} to look at, {conflicts, plural, one {# of them has} other {# of them have}} a reference that is already there with another date or amount',
       portal_attention: 'Tax portal check for {period}: {summary}',
       portal_attention_sale: 'Tax portal sales check for {period}: {summary}',
       portal_attention_missing: '{count, plural, one {# invoice} other {# invoices}} not in {brand}',
