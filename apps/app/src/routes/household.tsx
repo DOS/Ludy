@@ -869,7 +869,7 @@ function QttReturn({ entityId }: { entityId: string }) {
           <Label htmlFor="qtt-year">{t('kinds.year')}</Label>
           <Input id="qtt-year" className="w-24" inputMode="numeric" maxLength={4} value={year} onChange={(e) => setYear(e.target.value)} aria-invalid={!valid} />
         </div>
-        <Button variant="outline" loading={download.isPending} disabled={!data || data.holds.length > 0 || bad} onClick={() => download.mutate()} data-testid="household-qtt-download">
+        <Button variant="outline" loading={download.isPending} disabled={!valid || !data || data.holds.length > 0 || bad} onClick={() => download.mutate()} data-testid="household-qtt-download">
           {t('download')}
         </Button>
       </div>
