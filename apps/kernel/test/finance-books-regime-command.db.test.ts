@@ -46,13 +46,13 @@ suite('an owner chooses Circular 99 for an entity (#1403 slice B1)', () => {
       async (a) =>
         (await a.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'company', $3) RETURNING id`, [orgId, name, who.owner])).rows[0]?.id as string,
     );
-  const setRegime = (entity: string, effectiveFrom: string, actor = asMfa(who.owner), extra: Record<string, unknown> = {}) =>
+  const setRegime = (entity: string, effectiveFrom: string, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asMfa(who.owner), extra: Record<string, unknown> = {}) =>
     rt.execute<{ legalEntityId: string; regime: string; chartVersion: string; effectiveFrom: string }>(
       'finance.books.set_regime',
       { legalEntityId: entity, effectiveFrom, taxAuthorityNotified: true, ...extra },
       { actor, orgId, idempotencyKey: randomUUID() },
     );
-  const cancel = (entity: string, effectiveFrom: string, actor = asMfa(who.admin)) =>
+  const cancel = (entity: string, effectiveFrom: string, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asMfa(who.admin)) =>
     rt.execute('finance.books.cancel_regime', { legalEntityId: entity, effectiveFrom }, { actor, orgId, idempotencyKey: randomUUID() });
   const stateOf = async (entity: string) =>
     (await rt.query<BooksRegimeState>('finance.books.regime_state', {}, { actor: asUser(who.viewer), orgId })).entities.find((e) => e.legalEntityId === entity);
