@@ -16,7 +16,7 @@ import type { ExtractClient } from '@ludy/extract-contract';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { kernelCommands, kernelQueries } from '@ludy/kernel';
 import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
+import { extractAndPropose, financeCommands, financeQueries, VAT_PERIOD_LIMIT, type VatReport } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -59,6 +59,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('VAT working per month or quarter (#316)', () => {
   const dbName = `ludy_test_vat_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let appUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;
   let runtime: Runtime;
@@ -113,21 +114,46 @@ suite('VAT working per month or quarter (#316)', () => {
     new TextEncoder().encode(FIXTURE.replace('<SHDon>1234</SHDon>', `<SHDon>${number}</SHDon>`).replace('<NLap>2026-09-15</NLap>', `<NLap>${date}</NLap>`));
 
   // Uploads, reads and approves one invoice; returns its document and journal entry.
-  async function record(number: string, date: string, bytes = invoice(number, date)) {
+  async function record(number: string, date: string, bytes = invoice(number, date), targetOrgId = org.orgId) {
     const sha256 = sha256Hex(bytes);
-    const storageKey = fileKey(org.orgId, sha256);
+    const storageKey = fileKey(targetOrgId, sha256);
     const generation = await store.put(storageKey, bytes);
     const { fileId } = await runtime.execute<{ fileId: string }>(
       'kernel.file.ingest',
       { filename: 'hd.xml', contentType: 'application/xml', sizeBytes: bytes.byteLength, sha256, storageKey, generation, source: 'upload' },
-      { actor: asUser(owner.userId), orgId: org.orgId },
+      { actor: asUser(owner.userId), orgId: targetOrgId },
     );
-    const { proposalId } = await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-17' }, org.orgId, fileId);
+    const { proposalId } = await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-17' }, targetOrgId, fileId);
     return runtime.execute<{ documentId: string; journalEntryId: string }>(
       'kernel.proposal.approve',
       { acceptUnverifiedSignature: true, id: proposalId, revision: 1 },
-      { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+      { actor: asMfa(owner.userId), orgId: targetOrgId, idempotencyKey: randomUUID() },
     );
+  }
+
+  // A runtime of its own pool whose connection runs `between` once, right after the first statement that reads
+  // purchase_document has returned (#613): a multi-statement VAT loader sees writes committed in between, whereas a
+  // single-statement loader has already read one consistent snapshot.
+  function pausedRuntime(between: () => Promise<void>) {
+    let pending: (() => Promise<void>) | null = between;
+    const paused = createPool({ connectionString: appUrl, max: 1 });
+    paused.on('connect', (client) => {
+      const query = client.query.bind(client) as (...args: unknown[]) => unknown;
+      client.query = (async (...args: unknown[]) => {
+        const result = await query(...args);
+        if (pending && typeof args[0] === 'string' && args[0].includes('purchase_document')) {
+          const run = pending;
+          pending = null;
+          await run();
+        }
+        return result;
+      }) as typeof client.query;
+    });
+    const reader = new Runtime(createDb(paused), { manifests: TEST_MANIFESTS }).register({
+      commands: [...kernelCommands, ...financeCommands],
+      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
+    });
+    return { runtime: reader, ran: () => pending === null, end: () => paused.end() };
   }
 
   const exportFile = async (token: string, period: string, slug = org.slug) =>
@@ -153,7 +179,7 @@ suite('VAT working per month or quarter (#316)', () => {
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('ludy_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     const db: Db = createDb(pool);
     workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
@@ -772,5 +798,144 @@ suite('VAT working per month or quarter (#316)', () => {
     expect(await attempt(null)).toBe('VAT_RETURN_UNAUDITED');
     expect(await attempt(defaultEntity)).toBeNull();
     expect(await attempt(defaultEntity.toUpperCase())).toBeNull();
+  });
+
+  it('reads purchases, sales, payment marks, and return filings at one snapshot while concurrent writes commit (#613)', async () => {
+    const owned = await tokenFor(owner);
+    const created = await rpc('org/create', owned, { name: 'Công ty GTGT Một thời điểm', idempotencyKey: randomUUID() }, null);
+    expect(created.status).toBe(200);
+    const fresh = { slug: String(created.body?.slug), orgId: String(created.body?.orgId) };
+    expect((await rpc('org/setTaxCode', owned, { taxCode: BUYER_TAX_CODE }, fresh.slug)).status).toBe(200);
+
+    const saleBytes = (num: string, date: string) =>
+      new TextEncoder().encode(new TextDecoder().decode(mixedSale(num, true)).replace('<NLap>2026-06-10</NLap>', `<NLap>${date}</NLap>`));
+
+    const p1 = await record('7001', '2026-09-10', bigPurchase('7001', '2026-09-10', 'TM'), fresh.orgId);
+    await record('7002', '2026-09-12', saleBytes('7002', '2026-09-12'), fresh.orgId);
+
+    const actor = { actor: asUser(owner.userId), orgId: fresh.orgId };
+    const before = await runtime.query<VatReport>('finance.vat.period', { period: '2026-09' }, actor);
+    expect(before.input.documents.map((d) => d.number)).toEqual(['7001']);
+    expect(before.output.documents.map((d) => d.number)).toEqual(['7002']);
+
+    const paused = pausedRuntime(async () => {
+      await record('7003', '2026-09-15', bigPurchase('7003', '2026-09-15', 'TM'), fresh.orgId);
+      await record('7004', '2026-09-16', saleBytes('7004', '2026-09-16'), fresh.orgId);
+      await runtime.execute(
+        'finance.vat.payment_mark',
+        { documentId: p1.documentId, outcome: 'not_deductible' },
+        { actor: asUser(owner.userId), orgId: fresh.orgId, idempotencyKey: randomUUID() },
+      );
+      await runtime.execute(
+        'finance.vat.return_mark',
+        { period: '2026-08', done: true, figures: { carriedIn: '0', deductible: '0', carriedOut: '123456' } },
+        { actor: asUser(owner.userId), orgId: fresh.orgId, idempotencyKey: randomUUID() },
+      );
+    });
+
+    let during: unknown;
+    try {
+      during = await paused.runtime.query('finance.vat.period', { period: '2026-09' }, actor);
+    } finally {
+      await paused.end();
+    }
+    expect(paused.ran()).toBe(true);
+    // The single statement sees one snapshot: neither the concurrent purchase, sale, payment mark, nor prior filing appears.
+    expect(during).toEqual(before);
+
+    const after = await runtime.query<VatReport>('finance.vat.period', { period: '2026-09' }, actor);
+    expect(after.input.documents.map((d) => d.number)).toEqual(['7001', '7003']);
+    expect(after.output.documents.map((d) => d.number)).toEqual(['7002', '7004']);
+    expect(after.paymentChecks.notDeductibleVat).toBe('900000');
+    expect(after.carryForward.amount).toBe('123456');
+
+    // Declaration and exports match the exact same period state.
+    const decl = await runtime.query<{ report: VatReport }>('finance.vat.declaration', { period: '2026-09' }, actor);
+    const { filable: _, ...withoutFilable } = after;
+    expect(decl.report).toEqual(withoutFilable);
+
+    const xlsx = await exportFile(owned, '2026-09', fresh.slug);
+    expect(xlsx.status).toBe(200);
+    const xmlRes = await exportXml(owned, '2026-09', fresh.slug);
+    expect(xmlRes.status).toBe(200);
+    const xml = await xmlRes.text();
+    expect(valueOf(xml, 'ct22')).toBe('123456');
+    expect(valueOf(xml, 'ct24')).toBe('1800000');
+    expect(valueOf(xml, 'ct35')).toBe('166668');
+  });
+
+  it('enforces VAT_PERIOD_LIMIT (5,000) per side at the exact boundary (#613)', { timeout: 90_000 }, async () => {
+    const owned = await tokenFor(owner);
+    const created = await rpc('org/create', owned, { name: 'Công ty Giới hạn GTGT', idempotencyKey: randomUUID() }, null);
+    expect(created.status).toBe(200);
+    const bulk = { slug: String(created.body?.slug), orgId: String(created.body?.orgId) };
+    expect((await rpc('org/setTaxCode', owned, { taxCode: BUYER_TAX_CODE }, bulk.slug)).status).toBe(200);
+
+    const entityId = (await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [bulk.orgId]))).rows[0]?.id as string;
+    const partyId = randomUUID();
+
+    const insertBatch = async (direction: 'purchase' | 'sale', date: string, start: number, end: number) => {
+      const subtotal = direction === 'purchase' ? '1000' : '2000';
+      const vat = direction === 'purchase' ? '100' : '200';
+      const total = direction === 'purchase' ? '1100' : '2200';
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        await c.query('SET LOCAL session_replication_role = replica');
+        await c.query(
+          `CREATE TEMP TABLE bulk_vat_docs ON COMMIT DROP AS
+           SELECT g, ludy_kernel.uuid_v7() AS doc_id, ludy_kernel.uuid_v7() AS entry_id
+           FROM pg_catalog.generate_series($1::int, $2::int) g`,
+          [start, end],
+        );
+        await c.query(
+          `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id)
+           SELECT $1::uuid, doc_id, $2::uuid, $3::text, g::text, $4::date, $5::numeric, $6::numeric, $7::numeric, $8::text, $9::uuid
+           FROM bulk_vat_docs`,
+          [bulk.orgId, partyId, direction === 'purchase' ? 'M' : 'B', date, subtotal, vat, total, direction, entityId],
+        );
+        await c.query(
+          `INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, amount, vat_rate, vat_amount, debit_account, credit_account, legal_entity_id)
+           SELECT $1::uuid, doc_id, 1, 'Hàng hóa', $2::numeric, '10%', $3::numeric, $4::text, $5::text, $6::uuid
+           FROM bulk_vat_docs`,
+          [bulk.orgId, subtotal, vat, direction === 'purchase' ? '642' : null, direction === 'sale' ? '511' : null, entityId],
+        );
+        await c.query(
+          `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id)
+           SELECT $1::uuid, entry_id, $2::date, 'Bút toán lô', 'finance.purchase_document', doc_id, $3::uuid
+           FROM bulk_vat_docs`,
+          [bulk.orgId, date, entityId],
+        );
+        await c.query('COMMIT');
+      });
+    };
+
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1::uuid, $2::uuid, 'Đối tác hàng loạt')`, [bulk.orgId, partyId]);
+      await c.query('COMMIT');
+    });
+
+    await insertBatch('purchase', '2025-01-15', 1, VAT_PERIOD_LIMIT);
+    await insertBatch('sale', '2025-02-15', 1, VAT_PERIOD_LIMIT);
+
+    const bulkActor = { actor: asUser(owner.userId), orgId: bulk.orgId };
+    const jan = await runtime.query<VatReport>('finance.vat.period', { period: '2025-01' }, bulkActor);
+    expect(jan.input.totals).toMatchObject({ documents: VAT_PERIOD_LIMIT, taxable: '5000000', vat: '500000' });
+    const janDecl = await runtime.query<{ report: VatReport }>('finance.vat.declaration', { period: '2025-01' }, bulkActor);
+    const { filable: _, ...janWithoutFilable } = jan;
+    expect(janDecl.report).toEqual(janWithoutFilable);
+
+    const feb = await runtime.query<VatReport>('finance.vat.period', { period: '2025-02' }, bulkActor);
+    expect(feb.output.totals).toMatchObject({ documents: VAT_PERIOD_LIMIT, taxable: '10000000', vat: '1000000' });
+
+    // Exceeding VAT_PERIOD_LIMIT on either side fails closed with PERIOD_TOO_LARGE.
+    await insertBatch('purchase', '2025-01-15', VAT_PERIOD_LIMIT + 1, VAT_PERIOD_LIMIT + 1);
+    await insertBatch('sale', '2025-02-15', VAT_PERIOD_LIMIT + 1, VAT_PERIOD_LIMIT + 1);
+
+    for (const p of ['2025-01', '2025-02', '2025-Q1']) {
+      await expect(runtime.query('finance.vat.period', { period: p }, bulkActor)).rejects.toMatchObject({ code: 'PERIOD_TOO_LARGE', status: 422 });
+      await expect(runtime.query('finance.vat.declaration', { period: p }, bulkActor)).rejects.toMatchObject({ code: 'PERIOD_TOO_LARGE', status: 422 });
+    }
   });
 });

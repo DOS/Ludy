@@ -97,6 +97,13 @@ suite('bank statement import (#326)', () => {
     }
   }
 
+  // The payload of the finance.bank.imported event an import wrote: what the owners' and admins' notice is built from.
+  const importedEvent = (importId: string) =>
+    admin(
+      async (c) =>
+        (await c.query<{ payload: Record<string, unknown> }>(`SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.bank.imported' AND payload ->> 'importId' = $2`, [orgId, importId])).rows[0]?.payload,
+    );
+
   async function tokenFor(who: Account, options: { mfa?: boolean } = {}) {
     const now = Math.floor(Date.now() / 1000);
     const mfa = options.mfa ? { aal: 'aal2', amr: [{ method: 'totp', timestamp: now }] } : {};
@@ -930,6 +937,8 @@ suite('bank statement import (#326)', () => {
         { actor: SYSTEM, orgId },
       );
       expect(pull1.counts).toEqual({ new: 0, duplicate: 0, ambiguous: 1, conflict: 0, invalid: 0 });
+      // The event that tells the owners and admins counts the line to look at and names no conflict (#2197).
+      expect(await importedEvent(pull1.importId)).toEqual({ importId: pull1.importId, bankAccount: '1121.XSRC', ambiguous: 1 });
       expect((await stored('1121.XSRC')).map((l) => [l.value_date, Number(l.amount), l.bank_ref, l.dedupe_key, l.ambiguous])).toEqual([
         ['2026-10-10', 1500000, 'FILE-4227-1', 'ref:FILE-4227-1', false],
         ['2026-10-10', 1500000, 'FEED-4227-1', null, true],
@@ -1006,6 +1015,8 @@ suite('bank statement import (#326)', () => {
         { actor: SYSTEM, orgId },
       );
       expect(pullConflict.counts).toEqual({ new: 0, duplicate: 0, ambiguous: 0, conflict: 1, invalid: 0 });
+      // A conflict is a line to look at too, and the event says how many of the lines are references that came back with other figures (#2197).
+      expect(await importedEvent(pullConflict.importId)).toEqual({ importId: pullConflict.importId, bankAccount: '1121.XSRC', ambiguous: 1, conflicts: 1 });
     } finally {
       await feed('unmap', owner, { feedAccountId, idempotencyKey: randomUUID() });
       await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));

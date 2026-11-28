@@ -237,8 +237,31 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
       ]),
     );
     expect(await dispatch('finance.bank.imported')).toBe(1);
-    expect((await list(people.owner)).items[0]).toMatchObject({ kind: 'finance.bank_attention', subjectId: importId, detail: { bankAccount: '1121', lines: '2' } });
+    const plain = (await list(people.owner)).items[0];
+    expect(plain).toMatchObject({ kind: 'finance.bank_attention', subjectId: importId, detail: { bankAccount: '1121', lines: '2' } });
+    // An event written before the conflicts count existed (or with no conflict) gives no `conflicts` in the notice.
+    expect(plain?.detail).not.toHaveProperty('conflicts');
     expect(await kinds(people.admin)).not.toContain('finance.bank_attention');
+  });
+
+  it('says in the bank notice how many of the lines are references that came back with other figures (#2197)', async () => {
+    const emit = async (payload: Record<string, unknown>) => {
+      await admin((c) =>
+        c.query(`INSERT INTO ludy_kernel.outbox_event (org_id, type, payload, actor_type, actor_id) VALUES ($1, 'finance.bank.imported', $2, 'user', $3)`, [org.orgId, JSON.stringify(payload), people.admin]),
+      );
+      expect(await dispatch('finance.bank.imported')).toBe(1);
+      return (await list(people.owner)).items[0];
+    };
+    const importId = randomUUID();
+    expect(await emit({ importId, bankAccount: '1121', ambiguous: 3, conflicts: 1 })).toMatchObject({ kind: 'finance.bank_attention', subjectId: importId, detail: { bankAccount: '1121', lines: '3', conflicts: '1' } });
+    // The count is of lines among the ones to look at: it never reads higher than they are.
+    const capped = randomUUID();
+    expect(await emit({ importId: capped, bankAccount: '1121', ambiguous: 2, conflicts: 5 })).toMatchObject({ subjectId: capped, detail: { lines: '2', conflicts: '2' } });
+    // A count that is not a positive whole number is no event of this kind: nothing is sent.
+    await admin((c) =>
+      c.query(`INSERT INTO ludy_kernel.outbox_event (org_id, type, payload, actor_type, actor_id) VALUES ($1, 'finance.bank.imported', $2, 'user', $3)`, [org.orgId, JSON.stringify({ importId: randomUUID(), bankAccount: '1121', ambiguous: 2, conflicts: -1 }), people.admin]),
+    );
+    expect(await dispatch('finance.bank.imported')).toBe(0);
   });
 
   it('tells the importer and the owners and admins about a portal list with missing invoices or that failed to read', async () => {
