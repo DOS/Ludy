@@ -80,13 +80,20 @@ const ENTRY_HINT: Record<AskBooksEntry, string> = {
   stock_value: 'the value of the goods in stock, inventory value',
 };
 
-// The words the sentence may repeat from the question: the catalogue's own vocabulary, the placeholders and a few plain words. Any other word the owner typed (a name) is not repeated back.
-const LEAD_WORDS = 'here is the report for this question shown below figures are on card period number to in and or of đây là báo cáo của câu hỏi này các số liệu nằm trên thẻ bên dưới kỳ được chọn và';
+// The words the sentence may repeat from the question: a FIXED list (the placeholders, a few plain words and the words of the first six catalogue labels), written out here on purpose. It must not be built from ASK_BOOKS_LABEL: every entry added to the catalogue would then widen it and let a typed name that happens to be a label word ("Theo", "Hóa", "Đơn") be repeated back. Any other word the owner typed (a name) is not repeated back.
+const ECHO_EXEMPT_WORDS = [
+  // the plain words of the lead sentence
+  'here', 'is', 'the', 'report', 'for', 'this', 'question', 'shown', 'below', 'figures', 'are', 'on', 'card', 'period', 'number', 'to', 'in', 'and', 'or', 'of',
+  'đây', 'là', 'báo', 'cáo', 'của', 'câu', 'hỏi', 'này', 'các', 'số', 'liệu', 'nằm', 'trên', 'thẻ', 'bên', 'dưới', 'kỳ', 'được', 'chọn', 'và',
+  // the words of the first six labels (profit and loss, cash, receivables, payables, VAT, stock)
+  'kết', 'quả', 'kinh', 'doanh', 'thu', 'chi', 'phí', 'lợi', 'nhuận', 'tiền', 'mặt', 'gửi', 'ngân', 'hàng', 'công', 'nợ', 'phải', 'khách', 'còn', 'nhiều', 'nhất', 'trả', 'nhà', 'cung', 'cấp', 'mình', 'thuế', 'gtgt', 'giá', 'trị', 'tồn', 'kho',
+  'profit', 'loss', 'revenue', 'costs', 'cash', 'bank', 'balance', 'receivables', 'customers', 'who', 'owe', 'most', 'payables', 'suppliers', 'owed', 'vat', 'value', 'stock',
+] as const;
 const words = (text: string): string[] => text.normalize('NFKC').toLowerCase().match(/\p{L}+/gu) ?? [];
 // A word without its marks and with đ as d, so "Nguyen" is "Nguyễn" and "Le" is "Lê".
 const fold = (word: string): string => word.normalize('NFKD').replace(/\p{M}/gu, '').replace(/đ/gu, 'd');
-// What the sentence may say whatever the owner typed: the catalogue's own words and a few plain ones, compared as written (not folded), so a name that only looks like one of them ("Bảo" beside "báo") is still caught.
-const VOCAB: ReadonlySet<string> = new Set(words([...Object.values(ASK_BOOKS_LABEL.vi), ...Object.values(ASK_BOOKS_LABEL.en), LEAD_WORDS].join(' ')));
+// What the sentence may say whatever the owner typed, compared as written (not folded), so a name that only looks like one of them ("Bảo" beside "báo") is still caught.
+const VOCAB: ReadonlySet<string> = new Set(ECHO_EXEMPT_WORDS);
 
 // ---- Period phrases of the question, found by code ----------------------------------------------------------------------------------------------------------------------------------------------------
 

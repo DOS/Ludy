@@ -184,6 +184,31 @@ describe('askBooksLeadProblem', () => {
     expect(askBooksLeadProblem('Đây là báo cáo kết quả kinh doanh của kỳ được chọn.', '[period] lãi bao nhiêu')).toBeNull();
   });
 
+  it.each([
+    ['Theo', 'Theo còn nợ quá hạn bao nhiêu'],
+    ['Hóa', 'Hóa nợ quá hạn bao nhiêu ngày'],
+    ['Hoa', 'Hóa nợ quá hạn bao nhiêu ngày'],
+    ['Đơn', 'Đơn mua nhiều nhất là ai'],
+    ['Mua', 'Mua nợ mình bao nhiêu'],
+    ['Quá', 'Quá nợ mình bao nhiêu'],
+    ['Hạn', 'Hạn nợ mình bao nhiêu'],
+    ['Ngày', 'Ngày nợ mình bao nhiêu'],
+    ['Ra', 'Ra nợ mình bao nhiêu'],
+  ])('refuses a typed name that is a word of the newer catalogue labels (%s), as the fixed word list does not grow with the catalogue', (name, question) => {
+    expect(askBooksLeadProblem(`Báo cáo công nợ của ${name}.`, `[period] ${question}`)).toBe('ECHO');
+  });
+
+  it('refuses the English words of the newer labels typed as names', () => {
+    expect(askBooksLeadProblem('Report for Due.', '[period] Due owes us how much')).toBe('ECHO');
+    expect(askBooksLeadProblem('Report for Sales.', '[period] Sales owes us how much')).toBe('ECHO');
+    expect(askBooksLeadProblem('Report for We.', '[period] We owe how much')).toBe('ECHO');
+  });
+
+  it('refuses a word of the question that only a newer label has, even when the sentence is plain', () => {
+    // "quá" and "hạn" are in the question and not in the fixed list: a sentence repeating them is dropped, never shown.
+    expect(askBooksLeadProblem('Đây là báo cáo nợ quá hạn.', 'Ai nợ quá hạn nhiều nhất')).toBe('ECHO');
+  });
+
   it('refuses a word the owner typed that is not part of the catalogue, so a name is not repeated back', () => {
     expect(askBooksLeadProblem('Báo cáo công nợ của Nam.', '[period] Nam còn nợ bao nhiêu')).toBe('ECHO');
     // The same word is fine when it is the catalogue's own.
