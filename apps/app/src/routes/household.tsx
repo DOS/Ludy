@@ -797,6 +797,152 @@ const MONEY_INPUT = /^\d{1,16}(\.\d{1,4})?$/;
 // A decimal string that is zero (the amounts are strings, never numbers).
 const isZeroAmount = (value: string) => /^-?0+(\.0+)?$/.test(value);
 
+// The yearly PIT finalization worksheet 02/CNKD-TNCN-QTT (#5285) of a household on the income method: the year's revenue and costs from the ledger and the rate of the revenue band, plus three amounts the
+// household types for the ask only (the tax the platforms withheld [14], the tax prepaid in the year [15] and the revenue of platforms with no payment function [09c]: whole dong, never stored). A worksheet,
+// never filed by Ludy: what the figures cannot know is held or said (holds, notes), and the 30% PIT cut, which the form has no line for, is shown before and after.
+const WHOLE_DONG = /^\d{1,16}$/;
+const isBadDong = (value: string) => value !== '' && !WHOLE_DONG.test(value);
+// The lines whose figures depend on a rule (the rate, a cost group, the form) that may still wait for the accountant.
+const QTT_RULE_LINES = new Set(['10', '10a', '10b', '10c', '10d', '10đ', '10e', '11', '12', '13', '17', '18', '19', '20']);
+function QttReturn({ entityId }: { entityId: string }) {
+  const t = useTranslations('household');
+  const f = useFormat();
+  const [year, setYear] = useState(vietnamToday().slice(0, 4));
+  const [withheldText, setWithheldText] = useState('');
+  const [prepaidText, setPrepaidText] = useState('');
+  const [noPaymentText, setNoPaymentText] = useState('');
+  const withheld = withheldText.trim();
+  const prepaid = prepaidText.trim();
+  const noPayment = noPaymentText.trim();
+  const valid = /^20\d{2}$/.test(year) && Number(year) >= 2026;
+  const bad = isBadDong(withheld) || isBadDong(prepaid) || isBadDong(noPayment);
+  const sheet = useQuery({
+    ...orpc.household.qtt.queryOptions({
+      input: {
+        legalEntityId: entityId,
+        year: Number(year),
+        ...(withheld !== '' && !isBadDong(withheld) ? { withheld } : {}),
+        ...(prepaid !== '' && !isBadDong(prepaid) ? { prepaid } : {}),
+        ...(noPayment !== '' && !isBadDong(noPayment) ? { noPaymentRevenue: noPayment } : {}),
+      },
+    }),
+    enabled: valid && !bad,
+    retry: false,
+  });
+  // A figure typed wrongly never leaves the last good answer on the screen: the figures would leave that amount out.
+  const data = bad ? undefined : sheet.data;
+  const provisional = (code: string, amount: string | null) =>
+    data?.commentary && amount !== null && QTT_RULE_LINES.has(code) ? (
+      <span className="block text-xs text-muted-foreground" data-testid="household-qtt-provisional">
+        {t('cnkdProvisional')}
+      </span>
+    ) : null;
+  const field = (id: string, label: string, value: string, set: (next: string) => void) => (
+    <div className="space-y-1">
+      <Label htmlFor={id}>{label}</Label>
+      <Input id={id} className="w-56" inputMode="numeric" value={value} onChange={(e) => set(e.target.value)} aria-invalid={isBadDong(value.trim())} />
+    </div>
+  );
+  const reduction = data?.reduction ?? null;
+  return (
+    <Card className="mb-6 block p-4" data-testid="household-qtt">
+      <h2 className="text-sm font-semibold text-foreground">{t('qttTitle')}</h2>
+      <p className="mb-3 text-sm text-muted-foreground">{t('qttHint')}</p>
+      <div className="mb-3 space-y-1">
+        <Label htmlFor="qtt-year">{t('kinds.year')}</Label>
+        <Input id="qtt-year" className="w-24" inputMode="numeric" maxLength={4} value={year} onChange={(e) => setYear(e.target.value)} />
+      </div>
+      <fieldset className="mb-3" data-testid="household-qtt-entered">
+        <legend className="mb-1 text-xs text-subtle-foreground">{t('qttEntered')}</legend>
+        <p className="mb-2 text-xs text-muted-foreground">{t('qttEnteredHint')}</p>
+        {bad && (
+          <p className="mb-2 text-xs text-destructive" role="alert" data-testid="household-qtt-invalid">
+            {t('qttInvalid')}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-3">
+          {field('qtt-withheld', t('qttWithheld'), withheldText, setWithheldText)}
+          {field('qtt-prepaid', t('qttPrepaid'), prepaidText, setPrepaidText)}
+          {field('qtt-no-payment', t('qttNoPayment'), noPaymentText, setNoPaymentText)}
+        </div>
+      </fieldset>
+      {sheet.isLoading && valid && !bad && <CardSkeleton />}
+      {sheet.error && !bad && <ErrorText>{errorMessage(sheet.error)}</ErrorText>}
+      {data && (
+        <>
+          <Alert className="mb-3" data-testid="household-qtt-notice">
+            <AlertDescription>{t('cnkdNotice')}</AlertDescription>
+          </Alert>
+          {data.commentary && (
+            <Alert className="mb-3" data-testid="household-qtt-draft">
+              <AlertDescription>
+                {t('qttDraft')}
+                <ul className="mt-1 list-disc pl-5">
+                  {data.unconfirmed.map((u) => (
+                    <li key={`${u.kind}-${u.key}`}>
+                      {u.kind === 'form'
+                        ? t('cnkdUnconfirmedForm', { key: u.key, date: f.date(u.effectiveFrom) })
+                        : u.kind === 'threshold'
+                          ? t('cnkdUnconfirmedThreshold', { date: f.date(u.effectiveFrom) })
+                          : u.kind === 'reduction'
+                            ? t('cnkdUnconfirmedPitReduction', { date: f.date(u.effectiveFrom) })
+                            : u.kind === 'rate'
+                              ? t('qttUnconfirmedRate', { key: u.key, date: f.date(u.effectiveFrom) })
+                              : t('s2cUnconfirmedGroup', { key: u.key, date: f.date(u.effectiveFrom) })}
+                    </li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+          {data.holds.map((hold) => (
+            <Alert key={hold} className="mb-3" data-testid={`household-qtt-hold-${hold}`}>
+              <AlertDescription>{t(`qttHolds.${hold}`, { amount: hold === 'unmapped_costs' ? f.money(data.unmappedCosts) : f.money(data.threshold) })}</AlertDescription>
+            </Alert>
+          ))}
+          <p className="mb-2 text-sm text-muted-foreground">{t('qttPeriod', { year: String(data.period.year), from: f.date(data.period.from), to: f.date(data.period.to) })}</p>
+          <DataTable stickyFirstCol numeric={[2]} head={[t('qttColumns.code'), t('qttColumns.label'), t('qttColumns.amount')]}>
+            {data.lines.map((l) => (
+              <TableRow key={l.code} data-testid={`household-qtt-line-${l.code}`}>
+                <TableCell className="whitespace-nowrap text-foreground">{`[${l.code}]`}</TableCell>
+                <TableCell className="text-foreground">{l.label}</TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {l.amount === null ? t('qttHeld') : l.code === '12' ? `${l.amount}%` : f.money(l.amount)}
+                  {provisional(l.code, l.amount)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </DataTable>
+          {data.rate && <p className="mt-2 text-sm text-muted-foreground">{t('qttRate', { percent: data.rate.percent, over: f.money(data.rate.revenueOver) })}</p>}
+          {reduction && (
+            <section className="mt-4" data-testid="household-qtt-cut">
+              <h3 className="text-sm font-semibold text-foreground">{t('qttCutTitle', { percent: reduction.percent })}</h3>
+              <p className="mb-2 text-xs text-muted-foreground">{t('qttCutHint')}</p>
+              {!reduction.applies && <p className="mb-2 text-sm text-foreground">{t('qttCutNotApplies', { ceiling: reduction.ceiling === null ? '' : f.money(reduction.ceiling) })}</p>}
+              <DataTable numeric={[1, 2]} head={[t('qttCutColumns.item'), t('qttCutColumns.before'), t('qttCutColumns.after')]}>
+                {(['tax', 'cut', 'payable', 'exempt', 'due', 'overpaid'] as const).map((row) => (
+                  <TableRow key={row} data-testid={`household-qtt-cut-${row}`}>
+                    <TableCell className="text-foreground">{t(`qttCutRows.${row}`)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{f.money(row === 'cut' ? '0' : reduction.before[row])}</TableCell>
+                    <TableCell className="text-right tabular-nums">{f.money(row === 'cut' ? reduction.cut : reduction.after[row])}</TableCell>
+                  </TableRow>
+                ))}
+              </DataTable>
+            </section>
+          )}
+          <ul className="mt-3 list-disc pl-5 text-xs text-muted-foreground" data-testid="household-qtt-notes">
+            {data.notes
+              .filter((note) => !(note === 'reduction_not_in_form' && reduction))
+              .map((note) => (
+                <li key={note}>{t(`qttNotes.${note}`)}</li>
+              ))}
+          </ul>
+        </>
+      )}
+    </Card>
+  );
+}
+
 // The quarterly worksheet 01/CNKD (#2518): a household with one trade has all revenue on it; with several it types the split, which the screen keeps for the ask only and the server never stores.
 // While a row behind the figures is unconfirmed (#2520) every figure that depends on it carries "Số liệu tạm, kế toán chưa xác nhận tỷ lệ" and the Excel file says the same; the label goes when the rows are
 // confirmed, with no code change. Totals wait for every dong of revenue to have a trade.
@@ -1329,6 +1475,8 @@ export function HouseholdPage() {
   const hasS2e = view.data?.books.some((b) => b.book === 'S2e') ?? false;
   // The quarterly worksheet is for the percentage method alone today (the income method and group 1 have no quarterly worksheet here).
   const cnkdTrades = view.data?.profile?.pitMethod === 'percentage' ? view.data.profile.trades : null;
+  // The yearly finalization worksheet is for the income method alone (the percentage method files the quarterly 01/CNKD).
+  const qttIncome = view.data?.profile?.pitMethod === 'income';
   return (
     <>
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
@@ -1360,6 +1508,7 @@ export function HouseholdPage() {
           {hasS2d && <S2dBook key={`${entity.id}-s2d`} entityId={entity.id} />}
           {hasS2e && <S2eBook key={`${entity.id}-s2e`} entityId={entity.id} />}
           {cnkdTrades && <CnkdReturn key={entity.id} entityId={entity.id} trades={cnkdTrades} />}
+          {qttIncome && <QttReturn key={`${entity.id}-qtt`} entityId={entity.id} />}
         </>
       )}
     </>
