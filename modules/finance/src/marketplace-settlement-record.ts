@@ -292,7 +292,8 @@ export function createMarketplaceSettlementCommands(options: { maps?: Maps } = {
       // Every month's voucher in this one transaction, oldest first, each naming the settlement and its month (unique together): the settlement is posted in full or, if one of them is refused, not at all.
       const posted: Array<Awaited<ReturnType<typeof postJournalVoucher>>> = [];
       for (const m of built.months) {
-        // The books the proposal was prepared under (stamped when they are not TT133 2026.1) are the books of every month's voucher, held before its accounts are read (#5320).
+        // The books the proposal was prepared under (stamped when they are not TT133 2026.1) are the books of every month's voucher, held before its accounts are read (#5320). One map builds every month's lines
+        // (the regime at the period's end), so a settlement whose months fall under other books than that is refused here, as it should be, rather than posted with accounts of the wrong chart.
         const voucher: JournalVoucherProposal = { date: m.date, description: m.description, lines: monthLines(built, m, party), total: m.total, legalEntityId: built.legalEntityId, regime: payload.regime, chartVersion: payload.chartVersion };
         await refuseChangedBooksFirst(ctx, voucher, voucher.lines.map((l) => l.account));
         // The shape, the accounts and the parties checked as any voucher's, the parties read FOR SHARE so they stay as read until commit.
