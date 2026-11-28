@@ -705,4 +705,66 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
       code: 'PARTY_NOT_FOUND',
     });
   });
+
+  it('surfaces qualifying customer_replied past 500 newer non-qualifying conversations in crm.signals.attention', async () => {
+    const o = await setupOrg();
+    const channelId = (
+      await rows<{ id: string }>(
+        "INSERT INTO ludy_kernel.channel_connection (org_id, provider, external_account_id, display_name, connected_by) VALUES ($1, 'sandbox', $2, 'Batch Ch', $3) RETURNING id",
+        [o.orgId, `sg2-batch-${randomUUID().slice(0, 6)}`, o.owner],
+      )
+    )[0]!.id;
+    const pNoise = (
+      await rows<{ id: string }>(
+        "INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'person', 'Noise Contact') RETURNING id",
+        [o.orgId],
+      )
+    )[0]!.id;
+    const pTarget = (
+      await rows<{ id: string }>(
+        "INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'person', 'Quiet Reply Contact') RETURNING id",
+        [o.orgId],
+      )
+    )[0]!.id;
+
+    // Seed 505 newer conversations (daily 1h chat, no >= 7d quiet gap) + 1 older conversation with a >= 9d quiet-spell reply.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query(
+        `WITH inserted AS (
+           INSERT INTO ludy_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id, party_id, status, last_seq, last_inbound_at, last_message_at)
+           SELECT $1::uuid, $2::uuid, 'comment_thread', 'noise-' || g, $3::uuid, 'new', 2,
+                  now() - make_interval(mins => g), now() - make_interval(mins => g)
+           FROM generate_series(1, 505) AS g
+           RETURNING org_id, id, channel_connection_id, last_inbound_at
+         )
+         INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, send_state)
+         SELECT ins.org_id, ins.id, ins.channel_connection_id, 'comment_thread', msg.seq, msg.dir,
+                ins.last_inbound_at - msg.lag, ins.last_inbound_at - msg.lag, msg.author, msg.body, msg.state
+         FROM inserted ins
+         CROSS JOIN (
+           VALUES (1, 'out', '1 hour'::interval, 'system', 'Out', 'sent'),
+                  (2, 'in', '0 seconds'::interval, 'contact', 'In', NULL)
+         ) AS msg(seq, dir, lag, author, body, state)`,
+        [o.orgId, channelId, pNoise],
+      );
+      const targetConv = randomUUID();
+      await c.query(
+        `INSERT INTO ludy_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, party_id, status, last_seq, last_inbound_at, last_message_at)
+         VALUES ($1, $2, $3, 'comment_thread', 'target-quiet', $4, 'new', 2, now() - interval '10 hours', now() - interval '10 hours')`,
+        [o.orgId, targetConv, channelId, pTarget],
+      );
+      await c.query(
+        `INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, body, send_state)
+         VALUES
+           ($1, $2, $3, 'comment_thread', 1, 'out', now() - interval '10 days', now() - interval '10 days', 'system', 'Old ping', 'sent'),
+           ($1, $2, $3, 'comment_thread', 2, 'in', now() - interval '10 hours', now() - interval '10 hours', 'contact', 'Back after quiet spell', NULL)`,
+        [o.orgId, targetConv, channelId],
+      );
+      await c.query('COMMIT');
+    });
+
+    const crmRows = await rt.query<CrmAttentionSignal[]>(CRM_ATTENTION_SIGNALS_READ, {}, { actor: asUser(o.member), orgId: o.orgId });
+    expect(crmRows).toEqual([expect.objectContaining({ partyId: pTarget, kind: 'customer_replied' })]);
+  });
 });

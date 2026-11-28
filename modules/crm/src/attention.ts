@@ -24,7 +24,6 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const DAY_MS = 86_400_000;
 const CONVERSATION_SCAN_MAX = 25;
-const CONVERSATION_BATCH_MAX = SIGNALS_MAX_CRM;
 const MESSAGE_SCAN_PER_CONV = 200;
 
 type Reader = Pick<QueryContext, 'trx' | 'orgId' | 'actor'>;
@@ -258,8 +257,9 @@ async function loadCustomerReplied(
     onlyConversationId: string | null;
   },
 ): Promise<RawCustomerReplyRow[]> {
-  const convScanLimit = opts.partyId === null ? CONVERSATION_BATCH_MAX : CONVERSATION_SCAN_MAX;
   // Runs under ludy_kernel.conversation and ludy_kernel.conversation_message RLS so unreadable threads yield zero rows.
+  // For a single contact card, cap to the 25 most recent threads; for the batched org-wide signals read (opts.partyId === null),
+  // avoid capping conversations before quiet-spell and seen filtering so active chatter cannot hide qualifying replies (#4994).
   const { rows } = await sql<RawCustomerReplyRow>`
     WITH party_convs AS (
       SELECT
@@ -275,14 +275,14 @@ async function loadCustomerReplied(
       LEFT JOIN ludy_kernel.party co ON co.org_id = kp.org_id AND co.id = kp.company_id
       WHERE c.org_id = ${ctx.orgId}::uuid
         AND c.party_id IS NOT NULL
+        AND c.last_inbound_at IS NOT NULL
         AND (${opts.onlyConversationId}::uuid IS NULL OR c.id = ${opts.onlyConversationId}::uuid)
         AND (
           ${opts.keepId}::uuid IS NULL
           OR kp.id = ${opts.keepId}::uuid
           OR coalesce(co.duplicate_of, co.id) = ${opts.keepId}::uuid
         )
-      ORDER BY c.last_inbound_at DESC NULLS LAST, c.id DESC
-      LIMIT ${convScanLimit}
+      ${opts.partyId !== null ? sql`ORDER BY c.last_inbound_at DESC NULLS LAST, c.id DESC LIMIT ${CONVERSATION_SCAN_MAX}` : sql``}
     ),
     recent_msgs AS (
       SELECT pc.id AS conversation_id, pc.raw_party_id, pc.kept_party_id, pc.company_kept_id, m.direction, m.sent_at, m.seq, m.id

@@ -590,6 +590,17 @@ describe('Home contact attention signals composition (#4994 SG2)', () => {
     expect(signRestricted.status).toBe('unavailable');
     expect(signRestricted.items.map((i) => i.href)).toEqual([`/contacts?c=${party}`]);
 
+    const crmPartialCheck = await checkAttention(
+      { ...baseReads, [CRM_ATTENTION_SIGNALS_READ]: partial },
+      { mcp: { grantId: 'g4', kind: 'member' } },
+    );
+    expect(crmPartialCheck.status).toBe('partial');
+    expect(crmPartialCheck.items.map((i) => i.href)).toEqual([`/contacts?c=${other}`, `/contacts?c=${party}`]);
+    expect(crmPartialCheck.items.map((i) => i.id)).toEqual([
+      `signal:contact-attention:envelope_opened:${other}`,
+      `signal:contact-attention:invoice_overdue:${party}`,
+    ]);
+
     await expect(
       runContactAttention(
         { ...baseReads, [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: partial },

@@ -349,13 +349,14 @@ export async function checkContactAttention(ctx: QueryContext, now?: () => Date)
     readSignals(ctx, SIGN_OPENED_SIGNALS_READ, zSignOpenedSignals),
     readSignals(ctx, CRM_OPEN_DEALS_SIGNALS_READ, zCrmOpenDealSignals),
   ]);
-  if (crmAttention.status !== 'ok') return { items: [], status: statusOf(crmAttention) };
 
   const candidateSet = new Set<string>();
   const pushCandidate = (partyId: string) => {
     if (candidateSet.size < SIGNALS_MAX_CRM) candidateSet.add(partyId);
   };
-  for (const r of crmAttention.rows) pushCandidate(r.partyId);
+  if (crmAttention.status === 'ok') {
+    for (const r of crmAttention.rows) pushCandidate(r.partyId);
+  }
   if (signOpened.status === 'ok') {
     for (const r of signOpened.rows) pushCandidate(r.partyId);
   }
@@ -369,12 +370,12 @@ export async function checkContactAttention(ctx: QueryContext, now?: () => Date)
       ? await readSignals(ctx, FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ, zFinanceOverdueReceivableSignals, { partyIds })
       : ({ status: 'ok', rows: [] } as const);
 
-  const status: RuleStatus =
-    signOpened.status === 'partial' || openDeals.status === 'partial' || receivables.status === 'partial'
-      ? 'partial'
-      : signOpened.status !== 'ok' || openDeals.status !== 'ok' || receivables.status !== 'ok'
-        ? 'unavailable'
-        : 'ok';
+  const sources = [crmAttention, signOpened, openDeals, receivables];
+  const status: RuleStatus = sources.some((s) => s.status === 'partial')
+    ? 'partial'
+    : sources.some((s) => s.status !== 'ok')
+      ? 'unavailable'
+      : 'ok';
 
   const today = vietnamToday(now?.() ?? new Date());
   type CandidateEvent = {
@@ -392,13 +393,15 @@ export async function checkContactAttention(ctx: QueryContext, now?: () => Date)
     }
   };
 
-  for (const r of crmAttention.rows) {
-    consider({
-      partyId: r.partyId,
-      kind: r.kind,
-      eventAt: r.eventAt,
-      eventMs: Date.parse(r.eventAt),
-    });
+  if (crmAttention.status === 'ok') {
+    for (const r of crmAttention.rows) {
+      consider({
+        partyId: r.partyId,
+        kind: r.kind,
+        eventAt: r.eventAt,
+        eventMs: Date.parse(r.eventAt),
+      });
+    }
   }
   if (signOpened.status === 'ok') {
     for (const r of signOpened.rows) {
