@@ -62,14 +62,16 @@ export async function bankAccount(ctx: QueryContext, code: string, active: boole
 type Chain = { before: StoredChainLine | null; within: StoredChainLine[] };
 
 // What the account already has around a batch of lines, whatever its source: the stored keys among the batch's, the
-// date and amount of stored lines on its days, the last stored line before its first day and the stored lines of its
-// days, in import order. Of one legal entity (#1280): a bank account's lines are deduplicated and chained per entity.
+// date and amount of stored lines on its days, optionally the date and amount of stored file-imported lines
+// (`created_by IS NOT NULL`, #4227), the last stored line before its first day and the stored lines of its days, in
+// import order. Of one legal entity (#1280): a bank account's lines are deduplicated and chained per entity.
 async function storedAround(
   ctx: QueryContext,
   legalEntityId: string,
   bankAccountCode: string,
   lines: ReadonlyArray<{ date: string; reference: string | null }>,
   keys: ReadonlyArray<string | null>,
+  options?: { flagStoredFileMatches?: boolean },
 ): Promise<{ stored: StoredFacts; chain: Chain }> {
   const dates = lines.map((l) => l.date).sort();
   const from = dates[0];
@@ -104,12 +106,12 @@ async function storedAround(
     if (r.bank_ref === null) continue;
     refs.set(r.bank_ref, [...(refs.get(r.bank_ref) ?? []), { date: r.value_date, amount: new Decimal(r.amount).toFixed() }]);
   }
-  let within: Array<StoredChainLine> = [];
+  let within: Array<StoredChainLine & { created_by: string | null }> = [];
   let before: StoredChainLine | null = null;
   if (from && to) {
     within = await ctx.trx
       .selectFrom('ludy_finance.bank_line')
-      .select(['value_date as date', 'amount', 'running_balance as balance'])
+      .select(['value_date as date', 'amount', 'running_balance as balance', 'created_by'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
       .where('bank_account', '=', bankAccountCode)
@@ -132,12 +134,26 @@ async function storedAround(
         .orderBy('position', 'desc')
         .executeTakeFirst()) ?? null;
   }
-  const dateAmounts = new Set(within.map((l) => `${l.date}|${new Decimal(l.amount).toFixed()}`));
+  const dateAmounts = new Set<string>();
+  const fileDateAmounts = options?.flagStoredFileMatches ? new Set<string>() : undefined;
+  const chainWithin: StoredChainLine[] = [];
+  for (const l of within) {
+    const amount = new Decimal(l.amount).toFixed();
+    const key = `${l.date}|${amount}`;
+    dateAmounts.add(key);
+    if (fileDateAmounts && l.created_by !== null) fileDateAmounts.add(key);
+    chainWithin.push({ date: l.date, amount, balance: l.balance === null ? null : new Decimal(l.balance).toFixed() });
+  }
   return {
-    stored: { keys: new Set(storedKeys.map((k) => k.dedupe_key as string)), dateAmounts, refs },
+    stored: {
+      keys: new Set(storedKeys.map((k) => k.dedupe_key as string)),
+      dateAmounts,
+      refs,
+      ...(fileDateAmounts ? { fileDateAmounts } : {}),
+    },
     chain: {
       before: before && { ...before, amount: new Decimal(before.amount).toFixed(), balance: before.balance === null ? null : new Decimal(before.balance).toFixed() },
-      within: within.map((l) => ({ ...l, amount: new Decimal(l.amount).toFixed(), balance: l.balance === null ? null : new Decimal(l.balance).toFixed() })),
+      within: chainWithin,
     },
   };
 }
@@ -323,7 +339,7 @@ export async function ingestFeedLines(ctx: CommandContext, input: BankFeedIngest
   const read = readFeedLines(input.lines);
   if (!read.ok) throw new DomainError('BANK_FEED_INVALID', 422, 'Nguồn giao dịch ngân hàng gửi dòng không hợp lệ', { rows: read.rows });
   await lockAccount(ctx, legalEntityId, input.bankAccount);
-  const { stored, chain } = await storedAround(ctx, legalEntityId, input.bankAccount, read.lines, read.keys);
+  const { stored, chain } = await storedAround(ctx, legalEntityId, input.bankAccount, read.lines, read.keys, { flagStoredFileMatches: true });
   const { statuses, toStore, breaks } = checkLines(read.lines, read.keys, stored, chain);
   const importId = await storeLines(ctx, legalEntityId, input.bankAccount, toStore);
   // A batch the account already has stores nothing; its importId then names no line, as an import of a known file.
@@ -339,7 +355,7 @@ export async function ingestFeedLines(ctx: CommandContext, input: BankFeedIngest
       'finance.bank_account',
       importId,
       'bank.feed_received',
-      `Nhận giao dịch ngân hàng ${input.bankAccount} (${input.source}): ${storedCount} dòng mới, ${counts.duplicate} dòng đã có${counts.conflict > 0 ? `, ${counts.conflict} dòng trùng mã tham chiếu nhưng khác ngày hoặc số tiền` : ''}`,
+      `Nhận giao dịch ngân hàng ${input.bankAccount} (${input.source}): ${storedCount} dòng mới, ${counts.duplicate} dòng đã có${counts.ambiguous > 0 ? `, ${counts.ambiguous} dòng cần kiểm tra` : ''}${counts.conflict > 0 ? `, ${counts.conflict} dòng trùng mã tham chiếu nhưng khác ngày hoặc số tiền` : ''}`,
       { legalEntityId },
     );
   }

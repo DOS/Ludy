@@ -251,6 +251,82 @@ describe('readFeedLines', () => {
   });
 });
 
+describe('cross-source feed/file ambiguous (#4227)', () => {
+  const line = (date: string, amount: string, reference: string, balance: string | null = null) => ({ date, description: ' Giao dịch ', amount, balance, reference });
+
+  it('flags a referenced feed line matching a stored file date and amount as ambiguous with key null and preserved reference', () => {
+    const read = readFeedLines([line('2026-11-02', '1000.00', 'FEED-1')]);
+    if (!read.ok) throw new Error('read');
+    const stored = { keys: new Set(['ref:FILE-1']), dateAmounts: new Set(['2026-11-02|1000']), fileDateAmounts: new Set(['2026-11-02|1000']) };
+    expect(judge(read.lines, read.keys, stored)).toEqual([{ status: 'ambiguous', clash: null }]);
+    const checked = checkLines(read.lines, read.keys, stored, { before: null, within: [] });
+    expect(checked.statuses).toEqual(['ambiguous']);
+    expect(checked.toStore).toHaveLength(1);
+    expect(checked.toStore[0]).toMatchObject({ date: '2026-11-02', amount: '1000', reference: 'FEED-1', key: null, ambiguous: true });
+  });
+
+  it('deduplicates a repeated reference in the same feed batch and flags a differing amount as conflict', () => {
+    const read = readFeedLines([line('2026-11-02', '1000', 'FEED-1'), line('2026-11-02', '1000', 'FEED-1'), line('2026-11-02', '2000', 'FEED-1')]);
+    if (!read.ok) throw new Error('read');
+    const stored = { keys: new Set(['ref:FILE-1']), dateAmounts: new Set(['2026-11-02|1000']), fileDateAmounts: new Set(['2026-11-02|1000']) };
+    const verdicts = judge(read.lines, read.keys, stored);
+    expect(verdicts).toEqual([
+      { status: 'ambiguous', clash: null },
+      { status: 'duplicate', clash: null },
+      { status: 'conflict', clash: { date: '2026-11-02', amount: '1000' } },
+    ]);
+    const checked = checkLines(read.lines, read.keys, stored, { before: null, within: [] });
+    expect(checked.toStore.map((l) => [l.reference, l.amount, l.key, l.ambiguous])).toEqual([
+      ['FEED-1', '1000', null, true],
+      ['FEED-1', '2000', null, true],
+    ]);
+  });
+
+  it('deduplicates a second pull of a cross-source ambiguous feed line via stored.refs and preserves same-ref precedence', () => {
+    const read = readFeedLines([line('2026-11-02', '1000', 'FEED-1'), line('2026-11-02', '1000', 'FEED-KEY-ONLY'), line('2026-11-02', '1000', 'FEED-CFL')]);
+    if (!read.ok) throw new Error('read');
+    const stored = {
+      keys: new Set(['ref:FILE-1', 'ref:FEED-KEY-ONLY', 'ref:FEED-CFL']),
+      dateAmounts: new Set(['2026-11-02|1000']),
+      fileDateAmounts: new Set(['2026-11-02|1000']),
+      refs: new Map([
+        ['FEED-1', [{ date: '2026-11-02', amount: '1000' }]],
+        ['FEED-CFL', [{ date: '2026-11-02', amount: '2000' }]],
+      ]),
+    };
+    expect(judge(read.lines, read.keys, stored)).toEqual([
+      { status: 'duplicate', clash: null },
+      { status: 'duplicate', clash: null },
+      { status: 'conflict', clash: { date: '2026-11-02', amount: '2000' } },
+    ]);
+  });
+
+  it('keeps referenced lines new when fileDateAmounts is omitted or does not match', () => {
+    const read = readFeedLines([line('2026-11-02', '1000', 'FEED-A'), line('2026-11-02', '1000', 'FEED-B'), line('2026-11-03', '1000', 'FEED-C')]);
+    if (!read.ok) throw new Error('read');
+    const withoutFileSet = checkLines(read.lines, read.keys, { keys: new Set(['ref:FILE-1']), dateAmounts: new Set(['2026-11-02|1000']) }, { before: null, within: [] });
+    expect(withoutFileSet.statuses).toEqual(['new', 'new', 'new']);
+    expect(withoutFileSet.toStore.map((l) => [l.key, l.ambiguous])).toEqual([
+      ['ref:FEED-A', false],
+      ['ref:FEED-B', false],
+      ['ref:FEED-C', false],
+    ]);
+
+    const emptyFileSet = checkLines(
+      read.lines,
+      read.keys,
+      { keys: new Set(), dateAmounts: new Set(['2026-11-02|1000']), fileDateAmounts: new Set(['2026-11-04|999']) },
+      { before: null, within: [] },
+    );
+    expect(emptyFileSet.statuses).toEqual(['new', 'new', 'new']);
+    expect(emptyFileSet.toStore.map((l) => [l.key, l.ambiguous])).toEqual([
+      ['ref:FEED-A', false],
+      ['ref:FEED-B', false],
+      ['ref:FEED-C', false],
+    ]);
+  });
+});
+
 describe('skipFedLines (#4218)', () => {
   const checked = () => {
     const rows = [row('2026-10-10', '100', '', '', 'F-A'), row('2026-10-15', '200', '', '', 'F-B'), row('2026-10-20', '300', '', '', 'F-C')];

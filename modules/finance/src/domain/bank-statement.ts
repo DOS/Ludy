@@ -31,11 +31,14 @@ export interface StoredDateAmount {
 // What the account already has, as the classification needs it: the dedupe keys among the file's keys, and the date
 // and amount (`${date}|${amount}`) of its stored lines in the file's date range. refs (#2191): the lines it holds under
 // each bank reference among the file's, whatever their key (a line stored as a conflict has none), so a reference that
-// comes again with another date or amount is told from the same transaction coming twice.
+// comes again with another date or amount is told from the same transaction coming twice. fileDateAmounts (#4227): on
+// the bank feed pull path, the date and amount (`${date}|${amount}`) of stored file-imported lines in the batch's date
+// range so a feed line with a different reference is flagged as ambiguous rather than stored unflagged.
 export interface StoredFacts {
   keys: ReadonlySet<string>;
   dateAmounts: ReadonlySet<string>;
   refs?: ReadonlyMap<string, readonly StoredDateAmount[]>;
+  fileDateAmounts?: ReadonlySet<string>;
 }
 
 // A stored line of the account, for the running balance check.
@@ -171,9 +174,10 @@ export interface LineVerdict {
   clash: StoredDateAmount | null;
 }
 
-// new, duplicate (the account or the file already has the key) or ambiguous (no key, and a stored line has the same
-// date and amount). Identical lines without a key inside one file are all new: each has its own place in the file.
-// A line with a reference (#2191, ADR-0021 section 6 keeps the key `ref:<reference>`, without the amount, so that a
+// new, duplicate (the account or the file already has the key) or ambiguous (no key and a stored line has the same
+// date and amount, or on a feed pull a referenced line matches a stored file-imported line's date and amount under a
+// different reference, #4227). Identical lines without a key inside one file are all new: each has its own place in the
+// file. A line with a reference (#2191, ADR-0021 section 6 keeps the key `ref:<reference>`, without the amount, so that a
 // transaction seen from a feed and again in a file is one line) is a duplicate only when the account or the file holds
 // that reference with the same amount on the same day or within SAME_TRANSACTION_DAYS of it; with another amount, or a
 // date further off, it is a conflict, never silently dropped as a duplicate, which is what let a forged statement keep a
@@ -201,6 +205,7 @@ export function judge(lines: readonly Line[], keys: ReadonlyArray<string | null>
       // Stored under the key with no facts about it (a caller that gave none): the key decides, as it always did.
       if (stored.keys.has(key)) return { status: 'duplicate', clash: null };
       refsInFile.set(line.reference, [{ date: line.date, amount: line.amount }]);
+      if (stored.fileDateAmounts?.has(`${line.date}|${line.amount}`)) return { status: 'ambiguous', clash: null };
       return { status: 'new', clash: null };
     }
     if (key !== null) {
@@ -242,8 +247,9 @@ export function balanceBreaks(chain: ReadonlyArray<{ date: string; amount: Money
 
 export interface StatementCheck {
   preview: BankImportPreview;
-  // The lines to store (new, ambiguous and conflicting), oldest first, with their keys. A conflict is stored keyless and
-  // flagged (ambiguous), as the unique key would refuse a second line under its reference.
+  // The lines to store (new, ambiguous and conflicting), oldest first, with their keys. Ambiguous and conflicting lines
+  // are stored keyless (key: null, satisfying bank_line_ambiguous_keyless) and flagged (ambiguous: true), while keeping
+  // bank_ref so subsequent pulls still deduplicate via stored.refs.
   lines: Array<StatementLine & { key: string | null; ambiguous: boolean }>;
   // Every parsed line's key, for looking up the stored ones.
   keys: string[];
@@ -329,8 +335,10 @@ export function readFeedLines(feed: readonly BankFeedLine[]): { ok: true; lines:
 }
 
 // What a batch of lines, oldest first with their keys, adds to an account, whatever its source (a statement file, a
-// bank feed; ADR-0039): each line's status against the stored facts, the lines to store (new and ambiguous) with their
-// place in the batch, and the breaks in the account's running balance once they are stored.
+// bank feed; ADR-0039): each line's status against the stored facts, the lines to store (new, ambiguous and
+// conflicting) with their place in the batch, and the breaks in the account's running balance once they are stored.
+// Ambiguous and conflicting lines are stored keyless (key: null) to satisfy bank_line_ambiguous_keyless while keeping
+// bank_ref so subsequent pulls still deduplicate via stored.refs.
 export function checkLines(
   lines: readonly Line[],
   keys: ReadonlyArray<string | null>,
@@ -342,7 +350,11 @@ export function checkLines(
   const toStore = lines
     .map((line, i) => ({ ...line, position: i + 1, key: keys[i] ?? null, status: statuses[i] as BankLineStatus }))
     .filter((line) => line.status !== 'duplicate')
-    .map(({ status, ...line }) => ({ ...line, key: status === 'conflict' ? null : line.key, ambiguous: status === 'ambiguous' || status === 'conflict' }));
+    .map(({ status, ...line }) => ({
+      ...line,
+      key: status === 'ambiguous' || status === 'conflict' ? null : line.key,
+      ambiguous: status === 'ambiguous' || status === 'conflict',
+    }));
   // Stored lines first within a day (they came earlier), then this batch's, each in order.
   const merged = [
     ...(chain.before ? [{ ...chain.before, rowNo: null, group: 0, seq: -1 }] : []),

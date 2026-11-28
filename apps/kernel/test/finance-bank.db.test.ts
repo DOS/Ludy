@@ -910,6 +910,108 @@ suite('bank statement import (#326)', () => {
     expect((await admin(async (c) => (await c.query<{ cursor: string }>('SELECT cursor FROM ludy_finance.bank_feed_account WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId])).rows[0]?.cursor))).toBe(at);
   });
 
+  it('flags a feed line matching a stored file line on account, date and amount when references differ, dedupes re-pulls, and leaves same-source pairs unflagged (#4227)', async () => {
+    expect((await rpc('accounts/create', await tokenFor(owner), { parentCode: '1121', code: '1121.XSRC', name: 'Cross-source dedupe' })).status).toBe(200);
+    const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng đối chiếu chéo' })).body.connectionId);
+    await sync(connectionId);
+    const mapped = await feed('map', owner, { connectionId, externalAccountId: 'SBX-001', bankAccount: '1121.XSRC', idempotencyKey: randomUUID() });
+    expect(mapped.status).toBe(200);
+    const feedAccountId = String(mapped.body.feedAccountId);
+
+    try {
+      // 1. File statement imported first (user actor -> created_by IS NOT NULL).
+      const imported = await importFile([row('10/10/2026', '1.500.000', '', '', 'FILE-4227-1', 'Khách chuyển khoản')], '1121.XSRC');
+      expect(imported).toMatchObject({ status: 200, body: { counts: { new: 1, duplicate: 0, ambiguous: 0 } } });
+
+      // Feed pull brings a line with a different reference on the same (date, amount): stored keyless and flagged ambiguous, preserving bank_ref.
+      const pull1 = await worker.execute<BankImportResult>(
+        'finance.bank_feed.record_pull',
+        { feedAccountId, fromCursor: null, cursor: '2026-10-10', lines: [feedLine('2026-10-10', '1500000', 'FEED-4227-1', null, 'Thanh toán qua feed')] },
+        { actor: SYSTEM, orgId },
+      );
+      expect(pull1.counts).toEqual({ new: 0, duplicate: 0, ambiguous: 1, conflict: 0, invalid: 0 });
+      expect((await stored('1121.XSRC')).map((l) => [l.value_date, Number(l.amount), l.bank_ref, l.dedupe_key, l.ambiguous])).toEqual([
+        ['2026-10-10', 1500000, 'FILE-4227-1', 'ref:FILE-4227-1', false],
+        ['2026-10-10', 1500000, 'FEED-4227-1', null, true],
+      ]);
+
+      const feedActivity = await admin(
+        async (c) =>
+          (
+            await c.query<{ summary: string }>(
+              `SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_type = 'finance.bank_account' AND record_id = $2 AND kind = 'bank.feed_received'`,
+              [orgId, pull1.importId],
+            )
+          ).rows[0]?.summary,
+      );
+      expect(feedActivity).toContain('1 dòng cần kiểm tra');
+      const openSummary = (await rpc('bank/openLines', await tokenFor(viewer), undefined)).body.accounts.find((a: { bankAccount: string }) => a.bankAccount === '1121.XSRC');
+      expect(openSummary).toMatchObject({ bankAccount: '1121.XSRC', open: 2, ambiguous: 1 });
+      expect((await lines('2026-10', '1121.XSRC')).body.lines.map((l: { reference: string; ambiguous: boolean }) => [l.reference, l.ambiguous])).toEqual([
+        ['FILE-4227-1', false],
+        ['FEED-4227-1', true],
+      ]);
+
+      // 2. Second pull of the exact same feed line dedupes as duplicate via stored.refs without re-inserting.
+      const pull2 = await worker.execute<BankImportResult>(
+        'finance.bank_feed.record_pull',
+        { feedAccountId, fromCursor: '2026-10-10', cursor: '2026-10-11', lines: [feedLine('2026-10-10', '1500000', 'FEED-4227-1', null, 'Thanh toán qua feed')] },
+        { actor: SYSTEM, orgId },
+      );
+      expect(pull2.counts).toEqual({ new: 0, duplicate: 1, ambiguous: 0, conflict: 0, invalid: 0 });
+      expect(await stored('1121.XSRC')).toHaveLength(2);
+
+      // 3. Two distinct feed lines with distinct references on the same (date, amount) with no stored file line stay new (ambiguous: false),
+      //    and a subsequent feed line on that same (date, amount) also stays new because stored feed lines have created_by IS NULL.
+      const legalEntityId = await defaultEntity();
+      const feedBatch = await worker.execute<BankImportResult>(
+        'finance.bank.ingest',
+        {
+          bankAccount: '1121.XSRC',
+          legalEntityId,
+          source: 'sandbox',
+          lines: [
+            feedLine('2026-10-15', '500000', 'FEED-4227-A', null, 'Chuyển khoản 1'),
+            feedLine('2026-10-15', '500000', 'FEED-4227-B', null, 'Chuyển khoản 2'),
+          ],
+        },
+        { actor: SYSTEM, orgId },
+      );
+      expect(feedBatch.counts).toEqual({ new: 2, duplicate: 0, ambiguous: 0, conflict: 0, invalid: 0 });
+
+      const feedNext = await worker.execute<BankImportResult>(
+        'finance.bank.ingest',
+        { bankAccount: '1121.XSRC', legalEntityId, source: 'sandbox', lines: [feedLine('2026-10-15', '500000', 'FEED-4227-C', null, 'Chuyển khoản 3')] },
+        { actor: SYSTEM, orgId },
+      );
+      expect(feedNext.counts).toEqual({ new: 1, duplicate: 0, ambiguous: 0, conflict: 0, invalid: 0 });
+      expect((await stored('1121.XSRC')).filter((l) => l.value_date === '2026-10-15').map((l) => [l.bank_ref, l.dedupe_key, l.ambiguous])).toEqual([
+        ['FEED-4227-A', 'ref:FEED-4227-A', false],
+        ['FEED-4227-B', 'ref:FEED-4227-B', false],
+        ['FEED-4227-C', 'ref:FEED-4227-C', false],
+      ]);
+
+      // 4. Two distinct file lines with distinct references on the same (date, amount) stay new (non-feed callers do not set fileDateAmounts).
+      expect(await importFile([row('20/10/2026', '300000', '', '', 'FILE-4227-A')], '1121.XSRC')).toMatchObject({ status: 200, body: { counts: { new: 1, ambiguous: 0 } } });
+      expect(await importFile([row('20/10/2026', '300000', '', '', 'FILE-4227-B')], '1121.XSRC')).toMatchObject({ status: 200, body: { counts: { new: 1, ambiguous: 0 } } });
+      expect((await stored('1121.XSRC')).filter((l) => l.value_date === '2026-10-20').map((l) => [l.bank_ref, l.dedupe_key, l.ambiguous])).toEqual([
+        ['FILE-4227-A', 'ref:FILE-4227-A', false],
+        ['FILE-4227-B', 'ref:FILE-4227-B', false],
+      ]);
+
+      // 5. A mutated amount under the cross-source ambiguous feed line's bank_ref triggers conflict rather than duplicate.
+      const pullConflict = await worker.execute<BankImportResult>(
+        'finance.bank_feed.record_pull',
+        { feedAccountId, fromCursor: '2026-10-11', cursor: '2026-10-12', lines: [feedLine('2026-10-10', '1600000', 'FEED-4227-1', null, 'Số tiền khác')] },
+        { actor: SYSTEM, orgId },
+      );
+      expect(pullConflict.counts).toEqual({ new: 0, duplicate: 0, ambiguous: 0, conflict: 1, invalid: 0 });
+    } finally {
+      await feed('unmap', owner, { feedAccountId, idempotencyKey: randomUUID() });
+      await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
+    }
+  });
+
   // #4244: why the last pull stopped is a closed kind (and a line position for a page with a line it cannot store), kept
   // on the mapped account, and the next good pull clears it in the same transaction as the cursor move.
   it('records why a pull stopped per kind on the mapped account, and clears it after a good pull', async () => {
@@ -1427,8 +1529,8 @@ suite('bank statement import (#326)', () => {
       worker.execute<BankImportResult>('finance.bank.ingest', { bankAccount: '1121.VCB', legalEntityId: await defaultEntity(), source: 'sandbox', lines: [line] }, { actor: SYSTEM, orgId });
 
     it('flags a staged line whose reference the books already hold with another amount, shows it before Import, and stores it flagged instead of dropping it', async () => {
-      // The real transaction arrives first, from the feed.
-      await feedOne(feedLine('2026-09-01', '2000000', 'FT-REAL-1', '12000000', 'Khách trả tiền'));
+      // The real transaction arrives first, from the feed (distinct amount from earlier 2026-09-01 file fixtures so #4227 does not flag it as cross-source ambiguous).
+      await feedOne(feedLine('2026-09-01', '2500000', 'FT-REAL-1', '12500000', 'Khách trả tiền'));
       // A forged statement reuses that reference with a larger amount, next to a line that is genuinely new.
       const forged = [row('01/09/2026', '9000000', '', '19000000', 'FT-REAL-1', 'Chuyển khoản lạ'), row('04/09/2026', '1000', '', '19001000', 'FT-REAL-NEW')];
       const outcome = await stage(forged);
@@ -1447,7 +1549,7 @@ suite('bank statement import (#326)', () => {
       expect(listed.status).toBe(200);
       expect(listed.body).toMatchObject({ total: 2, conflicts: 1 });
       expect((listed.body.lines as Array<{ reference: string; status: string; clash: unknown }>).map((l) => [l.reference, l.status, l.clash])).toEqual([
-        ['FT-REAL-1', 'conflict', { date: '2026-09-01', amount: '2000000' }],
+        ['FT-REAL-1', 'conflict', { date: '2026-09-01', amount: '2500000' }],
         ['FT-REAL-NEW', 'new', null],
       ]);
       // A viewer decides nothing and sees no lines; nothing was stored by looking.
@@ -1459,7 +1561,7 @@ suite('bank statement import (#326)', () => {
       expect(done.body.counts).toMatchObject({ new: 1, conflict: 1, duplicate: 0 });
       const kept = (await stored('1121.VCB')).filter((l) => l.bank_ref?.startsWith('FT-REAL'));
       expect(kept.map((l) => [l.bank_ref, Number(l.amount), l.dedupe_key, l.ambiguous])).toEqual([
-        ['FT-REAL-1', 2000000, 'ref:FT-REAL-1', false],
+        ['FT-REAL-1', 2500000, 'ref:FT-REAL-1', false],
         ['FT-REAL-1', 9000000, null, true],
         ['FT-REAL-NEW', 1000, 'ref:FT-REAL-NEW', false],
       ]);
