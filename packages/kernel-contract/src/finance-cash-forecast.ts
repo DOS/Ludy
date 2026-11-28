@@ -53,8 +53,12 @@ export type CashForecastCheckpoint = z.infer<typeof zCashForecastCheckpoint>;
 export const zCashForecastTaxMarker = z.object({ obligation: z.string().min(1).max(64), period: z.string().min(1).max(32), dueDate: zLocalDate });
 export type CashForecastTaxMarker = z.infer<typeof zCashForecastTaxMarker>;
 
-// asOf is day 0 (the database's today, in Vietnam, when left out); the screen leaves it out.
-export const zFinanceCashForecastInput = z.object({ asOf: zLocalDate.optional(), legalEntityId: zId.optional() });
+// asOf is day 0 (the database's today, in Vietnam, when left out); the screen leaves it out. It lies between these days: past the year 9999 a date has no four-digit text and the forecast's own day series (addDays)
+// would answer odd dates, and no books reach so far (the same bounds as the dates of an entered item below).
+const CASH_FORECAST_AS_OF_FIRST_DAY = '2000-01-01';
+const CASH_FORECAST_AS_OF_LAST_DAY = '2100-12-31';
+const zForecastAsOf = zLocalDate.refine((d) => d >= CASH_FORECAST_AS_OF_FIRST_DAY && d <= CASH_FORECAST_AS_OF_LAST_DAY, 'between 2000-01-01 and 2100-12-31');
+export const zFinanceCashForecastInput = z.object({ asOf: zForecastAsOf.optional(), legalEntityId: zId.optional() });
 export type FinanceCashForecastInput = z.infer<typeof zFinanceCashForecastInput>;
 
 export const zCashForecast = z.object({

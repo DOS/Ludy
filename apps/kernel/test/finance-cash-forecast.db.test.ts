@@ -474,4 +474,14 @@ suite('the cash-flow forecast (#4391)', () => {
     expect(other.notIncluded).toEqual(['insurance', 'tax', 'rent', 'loans', 'recurring']);
     expect(await forecast(o, {}, o.viewer)).toEqual(f);
   });
+
+  it('refuses an as-of day outside 2000-01-01 to 2100-12-31 on the forecast and on the items list, and answers the edges (#5326)', async () => {
+    const o = await org();
+    for (const asOf of ['9999-10-02', '9999-12-31', '1999-12-31', '2101-01-01']) {
+      await expect(forecast(o, { asOf }), `forecast ${asOf}`).rejects.toMatchObject({ code: 'VALIDATION' });
+      await expect(rt.query('finance.cash_forecast_items', { asOf }, { actor: asUser(o.owner), orgId: o.orgId }), `items ${asOf}`).rejects.toMatchObject({ code: 'VALIDATION' });
+    }
+    expect((await forecast(o, { asOf: '2100-12-31' })).series).toHaveLength(91);
+    expect((await forecast(o, { asOf: '2000-01-01' })).asOf).toBe('2000-01-01');
+  });
 });
