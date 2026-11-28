@@ -162,12 +162,14 @@ export const B01_LINES_TT99: readonly ReportLineDef[] = [
   { code: '317', label: 'Phải trả nội bộ ngắn hạn', rules: [{ prefixes: ['336'], exclude: ['3361'], take: 'credit' }] },
   { code: '318', label: 'Phải trả theo tiến độ hợp đồng xây dựng ngắn hạn', rules: [{ prefixes: ['337'], take: 'credit' }] },
   { code: '319', label: 'Doanh thu chờ phân bổ ngắn hạn', rules: [{ prefixes: ['3387'], take: 'credit' }] },
-  { code: '320', label: 'Phải trả ngắn hạn khác', rules: [{ prefixes: ['338', '1388'], exclude: ['3387'], take: 'credit' }] },
+  // Official (#5274, Công báo 1579+1580, method of line 320): the credit of 338, 138 and 344 (344 is read on 338 below). The credit side of 138 is read here; its debit side is read on 135, 137 and 163. 3387 is line 319.
+  { code: '320', label: 'Phải trả ngắn hạn khác', rules: [{ prefixes: ['338', '138'], exclude: ['3387'], take: 'credit' }] },
   { code: '321', label: 'Vay và nợ thuê tài chính ngắn hạn', rules: [{ prefixes: ['341'], take: 'credit' }] },
   { code: '322', label: 'Dự phòng phải trả ngắn hạn', rules: [{ prefixes: ['352'], take: 'credit' }] },
   { code: '323', label: 'Quỹ khen thưởng, phúc lợi', rules: [{ prefixes: ['353'], take: 'credit' }] },
   { code: '324', label: 'Quỹ bình ổn giá', rules: [{ prefixes: ['357'], take: 'credit' }] },
-  { code: '325', label: 'Giao dịch mua bán lại trái phiếu Chính phủ' },
+  // Official (#5274, Công báo 1579+1580, method of line 325): the credit of TK 171 (its debit is line 164).
+  { code: '325', label: 'Giao dịch mua bán lại trái phiếu Chính phủ', rules: [{ prefixes: ['171'], take: 'credit' }] },
   { code: '330', label: 'Nợ dài hạn', formula: sum(...range(331, 344)) },
   { code: '331', label: 'Phải trả người bán dài hạn' },
   { code: '332', label: 'Người mua trả tiền trước dài hạn' },
