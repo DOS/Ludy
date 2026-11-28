@@ -164,6 +164,15 @@ export const taxProfileGet = defineQuery({
   handler: async (ctx): Promise<StoredTaxProfile> => readTaxProfile(ctx),
 });
 
+// The table's guard (ludy_finance.tax_profile_fiscal_year_guard, #5311, trigger on ludy_kernel.tax_profile) refuses a change of the month the fiscal year ends while the org keeps Circular 99
+// books, which start on a 1 January; any other error is rethrown for the runtime to map.
+function fiscalYearRefusal(error: unknown): never {
+  if ((error as { message?: unknown } | null)?.message === 'FISCAL_YEAR_END_LOCKED') {
+    throw new DomainError('FISCAL_YEAR_END_LOCKED', 409, 'Tổ chức đã dùng sổ theo Thông tư 99 nên chưa đổi được tháng kết thúc năm tài chính');
+  }
+  throw error;
+}
+
 export const taxProfileSave = defineCommand({
   name: 'kernel.tax_profile.save',
   input: zTaxProfile,
@@ -179,9 +188,13 @@ export const taxProfileSave = defineCommand({
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_kernel.tax_profile:${ctx.orgId}`}))`.execute(ctx.trx);
     const before = await readTaxProfile(ctx);
     const values = { obligations, pit_filing_period: input.pitFilingPeriod, fiscal_year_end_month: input.fiscalYearEndMonth, updated_by: ctx.actor.userId, updated_at: ctx.now };
-    const updated = await ctx.trx.updateTable('ludy_kernel.tax_profile').set(values).where('org_id', '=', ctx.orgId).executeTakeFirst();
-    if (Number(updated.numUpdatedRows) === 0) {
-      await ctx.trx.insertInto('ludy_kernel.tax_profile').values({ org_id: ctx.orgId, ...values, created_at: ctx.now }).execute();
+    try {
+      const updated = await ctx.trx.updateTable('ludy_kernel.tax_profile').set(values).where('org_id', '=', ctx.orgId).executeTakeFirst();
+      if (Number(updated.numUpdatedRows) === 0) {
+        await ctx.trx.insertInto('ludy_kernel.tax_profile').values({ org_id: ctx.orgId, ...values, created_at: ctx.now }).execute();
+      }
+    } catch (error) {
+      fiscalYearRefusal(error);
     }
     const { since: _since, ...previous } = before;
     ctx.audit({ previous, profile: { obligations, pitFilingPeriod: input.pitFilingPeriod, fiscalYearEndMonth: input.fiscalYearEndMonth } });

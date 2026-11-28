@@ -17811,6 +17811,7 @@ export const vi = {
       INTERNAL_SERVER_ERROR: 'Lỗi hệ thống',
       LAST_OWNER: 'Tổ chức phải còn ít nhất một chủ sở hữu',
       PIT_FILING_PERIOD_REQUIRED: 'Hãy chọn kỳ khai thuế TNCN khấu trừ (tháng hoặc quý)',
+      FISCAL_YEAR_END_LOCKED: 'Tổ chức đã dùng sổ theo Thông tư 99 nên chưa đổi được tháng kết thúc năm tài chính. Các thay đổi khác của lịch thuế vẫn lưu được.',
       TAX_PERIOD_MISMATCH: 'Việc thuế này không có kỳ đó',
       MEMBER_NOT_FOUND: 'Không tìm thấy thành viên này trong tổ chức',
       CANNOT_REMOVE_SELF: 'Bạn không thể tự xóa mình khỏi tổ chức',

@@ -128,18 +128,27 @@ suite('an owner chooses Circular 99 for an entity (#1403 slice B1)', () => {
   });
 
   it('refuses a date that is not a 1 January, or is before 2026, and an org whose fiscal year does not end in December', async () => {
-    const entity = await newEntity('Ngày không hợp lệ');
-    for (const date of ['2027-07-01', '2027-01-02', '2025-01-01']) {
-      expect(await refusal(setRegime(entity, date)), date).toMatchObject({ code: 'BOOKS_DATE_INVALID', status: 422 });
-    }
-    await admin((a) => a.query(`INSERT INTO ludy_kernel.tax_profile (org_id, fiscal_year_end_month, updated_by) VALUES ($1, 6, $2)`, [orgId, who.owner]));
+    // An org of its own: an org that keeps Circular 99 books cannot move its fiscal-year month (#5311), and the org of the other tests does by now.
+    const shared = orgId;
+    const june = await upsertIdentity(db, { issuer: 'test', subject: 'june-owner', email: 'june-owner@books-switch.test', name: null });
+    ({ orgId } = await createOrg(rt, asUser(june), 'Công ty năm tài chính tháng 6'));
     try {
-      expect(await refusal(setRegime(entity, '2027-01-01'))).toMatchObject({ code: 'BOOKS_FISCAL_YEAR_UNSUPPORTED', status: 422 });
-      expect((await stateOf(entity))?.blockers).toEqual([{ code: 'FISCAL_YEAR_UNSUPPORTED', fiscalYearEndMonth: 6 }]);
+      await admin((a) => a.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'owner')`, [orgId, who.owner]));
+      const entity = await newEntity('Ngày không hợp lệ');
+      for (const date of ['2027-07-01', '2027-01-02', '2025-01-01']) {
+        expect(await refusal(setRegime(entity, date)), date).toMatchObject({ code: 'BOOKS_DATE_INVALID', status: 422 });
+      }
+      await admin((a) => a.query(`INSERT INTO ludy_kernel.tax_profile (org_id, fiscal_year_end_month, updated_by) VALUES ($1, 6, $2)`, [orgId, who.owner]));
+      try {
+        expect(await refusal(setRegime(entity, '2027-01-01'))).toMatchObject({ code: 'BOOKS_FISCAL_YEAR_UNSUPPORTED', status: 422 });
+        expect((await stateOf(entity))?.blockers).toEqual([{ code: 'FISCAL_YEAR_UNSUPPORTED', fiscalYearEndMonth: 6 }]);
+      } finally {
+        await admin((a) => a.query(`DELETE FROM ludy_kernel.tax_profile WHERE org_id = $1`, [orgId]));
+      }
+      expect(await rowsOf(entity)).toEqual([]);
     } finally {
-      await admin((a) => a.query(`DELETE FROM ludy_kernel.tax_profile WHERE org_id = $1`, [orgId]));
+      orgId = shared;
     }
-    expect(await rowsOf(entity)).toEqual([]);
   });
 
   it('writes the row, keeps who chose it and the acknowledgement, answers a repeat without a second row, and takes the choice back', async () => {
