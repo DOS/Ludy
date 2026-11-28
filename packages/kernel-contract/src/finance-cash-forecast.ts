@@ -92,3 +92,83 @@ export const zCashForecastExplanation = z.object({
   text: z.string().nullable(),
 });
 export type CashForecastExplanation = z.infer<typeof zCashForecastExplanation>;
+
+// The items the owner enters into the forecast (#5326): the costs and receipts it cannot read from the books (rent, a loan, payroll, a one-off). One row per item of ONE legal entity, written by owners and admins
+// (finance.cash_forecast.item_set and item_remove), read by every member with the forecast. The label is the owner's own words: it is shown to the owner, never written to an audit row and never sent to the model.
+// category is what the forecast's "left out" line drops once an item of it is entered (loan drops "loans"; other drops "recurring costs" only when it repeats). direction says which way the money goes
+// (the amount is above zero). recurrence: once (on the first date), monthly (the day of the first date each month, a short month on its last day) or quarterly (the same every third month); endDate, inclusive,
+// only for a repeating item.
+export const CASH_FORECAST_ENTERED_CATEGORIES = ['payroll', 'insurance', 'tax', 'rent', 'loan', 'other'] as const;
+export const zCashForecastEnteredCategory = z.enum(CASH_FORECAST_ENTERED_CATEGORIES);
+export type CashForecastEnteredCategory = z.infer<typeof zCashForecastEnteredCategory>;
+export const CASH_FORECAST_ENTERED_DIRECTIONS = ['out', 'in'] as const;
+export const zCashForecastEnteredDirection = z.enum(CASH_FORECAST_ENTERED_DIRECTIONS);
+export type CashForecastEnteredDirection = z.infer<typeof zCashForecastEnteredDirection>;
+export const CASH_FORECAST_ENTERED_RECURRENCES = ['once', 'monthly', 'quarterly'] as const;
+export const zCashForecastEnteredRecurrence = z.enum(CASH_FORECAST_ENTERED_RECURRENCES);
+export type CashForecastEnteredRecurrence = z.infer<typeof zCashForecastEnteredRecurrence>;
+// At most this many items an entity (a bound on the work of every forecast read; the 101st is refused CASH_FORECAST_ITEM_LIMIT).
+export const CASH_FORECAST_ITEMS_MAX = 100;
+export const CASH_FORECAST_ITEM_LABEL_MAX = 80;
+// The first and the end date of an item lie between these days (the table's own check).
+export const CASH_FORECAST_ITEM_FIRST_DAY = '2000-01-01';
+export const CASH_FORECAST_ITEM_LAST_DAY = '2100-12-31';
+
+// Whole dong, above zero, at most 15 digits (the table allows up to 10^15).
+const zItemAmount = z.string().regex(/^[1-9]\d{0,14}$/, 'whole dong above zero');
+const zItemDate = zLocalDate.refine((d) => d >= CASH_FORECAST_ITEM_FIRST_DAY && d <= CASH_FORECAST_ITEM_LAST_DAY, 'between 2000-01-01 and 2100-12-31');
+const zItemLabel = z
+  .string()
+  .trim()
+  .min(1)
+  .max(CASH_FORECAST_ITEM_LABEL_MAX)
+  .refine((label) => !/\p{Cc}/u.test(label), 'no control characters');
+
+// Creates an item (no id) or edits one (id); the entity is the org's default or the one the caller sees when left out, as for the forecast read. An edit keeps the item's entity.
+export const zCashForecastItemSet = z
+  .object({
+    id: zId.optional(),
+    legalEntityId: zId.optional(),
+    label: zItemLabel,
+    category: zCashForecastEnteredCategory,
+    direction: zCashForecastEnteredDirection,
+    amount: zItemAmount,
+    firstDate: zItemDate,
+    recurrence: zCashForecastEnteredRecurrence,
+    endDate: zItemDate.nullable().optional(),
+  })
+  .superRefine((item, ctx) => {
+    const end = item.endDate ?? null;
+    if (end === null) return;
+    if (item.recurrence === 'once') ctx.addIssue({ code: 'custom', path: ['endDate'], message: 'a one-off item has no end date' });
+    else if (end < item.firstDate) ctx.addIssue({ code: 'custom', path: ['endDate'], message: 'the end date is before the first date' });
+  });
+export type CashForecastItemSet = z.infer<typeof zCashForecastItemSet>;
+
+export const zCashForecastItemRemove = z.object({ id: zId });
+export type CashForecastItemRemove = z.infer<typeof zCashForecastItemRemove>;
+
+// An item as the owner sees it: what they entered and its next occurrence on or after day 0 within the 91 days of the forecast (null when none falls in it: finished, or later than day 90).
+export const zCashForecastItemView = z.object({
+  id: zId,
+  legalEntityId: zId,
+  label: z.string(),
+  category: zCashForecastEnteredCategory,
+  direction: zCashForecastEnteredDirection,
+  amount: zItemAmount,
+  firstDate: zLocalDate,
+  recurrence: zCashForecastEnteredRecurrence,
+  endDate: zLocalDate.nullable(),
+  nextDate: zLocalDate.nullable(),
+});
+export type CashForecastItemView = z.infer<typeof zCashForecastItemView>;
+
+export const zCashForecastItems = z.object({
+  legalEntityId: zId,
+  // Day 0 the next dates are counted from.
+  asOf: zLocalDate,
+  // The items of the entity, the next occurrence first (those with none last), at most CASH_FORECAST_ITEMS_MAX.
+  items: z.array(zCashForecastItemView).max(CASH_FORECAST_ITEMS_MAX),
+  limit: z.literal(CASH_FORECAST_ITEMS_MAX),
+});
+export type CashForecastItems = z.infer<typeof zCashForecastItems>;
