@@ -663,6 +663,7 @@ const UNIONS = unions({
   'ludy_finance.vat_return_filed.status': VAT_RETURN_FILED_STATUSES,
   'ludy_finance.vat_return_filed.source': VAT_RETURN_FILED_SOURCES,
   'ludy_finance.fixed_asset.kind': FIXED_ASSET_KINDS,
+  'ludy_finance.categorization_rule.direction': DOCUMENT_DIRECTIONS,
   'ludy_finance.categorization_rule.match_kind': CATEGORIZATION_RULE_MATCH_KINDS,
   'ludy_finance.bank_party_rule.kind': BANK_PARTY_RULE_KINDS,
   'ludy_finance.bank_feed_account.last_pull_outcome': BANK_FEED_PULL_OUTCOMES,

@@ -2,7 +2,16 @@
 // The regime rules of a purchase proposal (issue #1403, TT99 books): approval, revision, learning and the offered rules.
 import { describe, expect, it } from 'vitest';
 import { DomainError } from '@ludy/kernel-runtime';
-import { approvalRegimeRefused, booksRegimeChanged, chartChangeRefused, learnsRules, reviseRegimeRefused, rulesForBooks, voucherRegimeRefused } from '../src/purchase-regime.ts';
+import {
+  approvalRegimeRefused,
+  booksRegimeChanged,
+  chartChangeRefused,
+  learnsRules,
+  learnsVendorDefault,
+  reviseRegimeRefused,
+  rulesForBooks,
+  voucherRegimeRefused,
+} from '../src/purchase-regime.ts';
 
 const TT99 = { regime: 'tt99', version: '2026.1' };
 const TT99_NEXT = { regime: 'tt99', version: '2027.1' };
@@ -99,12 +108,18 @@ describe('booksRegimeChanged', () => {
   });
 });
 
-describe('learnsRules', () => {
-  it('learns only from a purchase that posts under TT133', () => {
-    expect(learnsRules(false, undefined)).toBe(true);
-    expect(learnsRules(false, 'tt99')).toBe(false);
-    expect(learnsRules(true, undefined)).toBe(false);
-    expect(learnsRules(true, 'tt99')).toBe(false);
+describe('learnsVendorDefault and learnsRules', () => {
+  it('learns a vendor default only from a purchase that posts under TT133', () => {
+    expect(learnsVendorDefault(false, undefined)).toBe(true);
+    expect(learnsVendorDefault(false, 'tt99')).toBe(false);
+    expect(learnsVendorDefault(true, undefined)).toBe(false);
+    expect(learnsVendorDefault(true, 'tt99')).toBe(false);
+  });
+
+  it('learns line categorization rules only under TT133', () => {
+    expect(learnsRules(undefined)).toBe(true);
+    expect(learnsRules('tt133')).toBe(true);
+    expect(learnsRules('tt99')).toBe(false);
   });
 });
 
@@ -116,6 +131,13 @@ describe('rulesForBooks', () => {
     const offered = rulesForBooks({ vendorDefault: '156', learnedRules: rules, inChart: (code) => chart.has(code) });
     expect(offered.vendorDefault).toBe('156');
     expect(offered.learnedRules).toEqual([{ account: '6427' }, { account: '156' }]);
+  });
+
+  it('drops TT133 revenue sub-accounts on a TT99 sales chart while keeping shared revenue codes', () => {
+    const tt99SalesChart = new Set(['511', '515', '711', '3387']);
+    const salesRules = [{ account: '5113' }, { account: '5111' }, { account: '511' }, { account: '711' }];
+    const offered = rulesForBooks({ vendorDefault: null, learnedRules: salesRules, inChart: (code) => tt99SalesChart.has(code) });
+    expect(offered.learnedRules).toEqual([{ account: '511' }, { account: '711' }]);
   });
 
   it('drops a vendor default the chart lacks or that changed meaning, and keeps none as none', () => {

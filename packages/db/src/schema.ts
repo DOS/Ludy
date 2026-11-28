@@ -750,13 +750,17 @@ export type MarketplaceConnectionTable = Refine<
 >;
 export type BankPartyRuleTable = Refine<G.FinanceBankPartyRuleTable, { kind: ColumnType<BankPartyRuleKind, BankPartyRuleKind, never>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 
-// Learned account rules (#1399): the line's whole item description, normalized, or a keyword in it. What a rule matches
-// never changes in place.
+// Learned account rules (#1399, #1452): the line's whole item description, normalized, or a keyword in it, for
+// purchases or sales. What a rule matches and its direction never change in place.
 export const CATEGORIZATION_RULE_MATCH_KINDS = ['description', 'keyword'] as const;
 export type CategorizationRuleMatchKind = (typeof CATEGORIZATION_RULE_MATCH_KINDS)[number];
 export type CategorizationRuleTable = Refine<
   G.FinanceCategorizationRuleTable,
-  { match_kind: ColumnType<CategorizationRuleMatchKind, CategorizationRuleMatchKind, never>; legal_entity_id: LegalEntityColumn },
+  {
+    direction: ColumnType<DocumentDirection, DocumentDirection | undefined, never>;
+    match_kind: ColumnType<CategorizationRuleMatchKind, CategorizationRuleMatchKind, never>;
+    legal_entity_id: LegalEntityColumn;
+  },
   'legal_entity_id'
 >;
 

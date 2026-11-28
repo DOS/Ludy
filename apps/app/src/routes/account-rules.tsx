@@ -1,11 +1,11 @@
-// Learned account rules in Settings (issue #1399): what the approvals taught (a vendor's item and the account it was
-// approved to) and the keyword rules owners and admins added, each with its provenance. Owners and admins remove any
-// rule and add keyword rules; every role reads them. The server enforces every rule; the screen only offers what can
-// succeed and shows the server's reason otherwise.
+// Learned account rules in Settings (issue #1399, #1452): what purchase and sales approvals taught (a vendor's or
+// customer's item and the account it was approved to) and the keyword rules owners and admins added, each with its
+// provenance. Owners and admins remove any rule and add purchase or sales keyword rules; every role reads them. The
+// server enforces every rule; the screen only offers what can succeed and shows the server's reason otherwise.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
-import type { CategorizationRule, Party } from '@ludy/kernel-contract';
+import { isRevenueAccount, type CategorizationRule, type DocumentDirection, type Party } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
@@ -19,7 +19,7 @@ import { DuplicateHint } from '../components/form-panel.tsx';
 import { ErrorText, Field, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { accountLabel, pickableAccounts } from '../lib/accounts.ts';
-import { ACCOUNT_RULE_EVERY_VENDOR, filterPartyChoices, filterRulesByVendor, ruleVendorOptions } from '../lib/account-rules.ts';
+import { ACCOUNT_RULE_EVERY_VENDOR, filterPartyChoices, filterRulesByDirection, filterRulesByVendor, ruleVendorOptions } from '../lib/account-rules.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { duplicateKeywordRule } from '../lib/duplicates.ts';
 import { fold } from '../lib/palette.ts';
@@ -33,6 +33,7 @@ type SelectedVendor = Pick<Party, 'id' | 'name' | 'taxCode'>;
 type VendorOption = { kind: 'all'; id: string; label: string } | { kind: 'party'; id: string; party: Party };
 
 function VendorPicker({
+  direction,
   selected,
   query,
   error,
@@ -40,6 +41,7 @@ function VendorPicker({
   onSelect,
   onQueryChange,
 }: {
+  direction: DocumentDirection;
   selected: SelectedVendor | null;
   query: string;
   error: string | null;
@@ -52,6 +54,26 @@ function VendorPicker({
   const [activeIndex, setActiveIndex] = useState(0);
   const ignoreNextFocusRef = useRef(false);
   const listId = useId();
+  const copy =
+    direction === 'sale'
+      ? {
+          label: t('customer'),
+          hint: t('customerHint'),
+          all: t('allCustomers'),
+          clearAria: t('clearCustomerAria'),
+          results: t('customerResults'),
+          loading: t('customerLoading'),
+          noMatch: t('customerNoMatch'),
+        }
+      : {
+          label: t('vendor'),
+          hint: t('vendorHint'),
+          all: t('allVendors'),
+          clearAria: t('clearVendorAria'),
+          results: t('vendorResults'),
+          loading: t('vendorLoading'),
+          noMatch: t('vendorNoMatch'),
+        };
   // All org parties (every role reads; AddKeywordRuleDialog only mounts for owners/admins). When >= 500 exist, also query server q search.
   const initialParties = useQuery(orpc.parties.list.queryOptions({ input: { all: true } }));
   const serverCapped = (initialParties.data?.length ?? 0) >= SERVER_PARTY_LIST_CAP;
@@ -73,9 +95,9 @@ function VendorPicker({
   const partiesPending = initialParties.isPending || searchSettling || (serverCapped && debouncedSearch !== '' && searchedParties.isPending);
   const partiesError = initialParties.error ?? (serverCapped && debouncedSearch !== '' ? searchedParties.error : null);
   const matched = filterPartyChoices(partySource, searchText);
-  const showEveryVendorOption = searchText.trim() === '' || fold(t('allVendors')).includes(fold(searchText.trim()));
+  const showEveryVendorOption = searchText.trim() === '' || fold(copy.all).includes(fold(searchText.trim()));
   const options: VendorOption[] = [
-    ...(showEveryVendorOption ? [{ kind: 'all' as const, id: `${listId}-all`, label: t('allVendors') }] : []),
+    ...(showEveryVendorOption ? [{ kind: 'all' as const, id: `${listId}-all`, label: copy.all }] : []),
     ...matched.items.map((party) => ({ kind: 'party' as const, id: `${listId}-p-${party.id}`, party })),
   ];
   const clampedActive = options.length === 0 ? -1 : Math.min(activeIndex, options.length - 1);
@@ -141,10 +163,10 @@ function VendorPicker({
     ? selected.taxCode
       ? t('vendorSelectedWithTaxCode', { name: selected.name, taxCode: selected.taxCode })
       : t('vendorSelected', { name: selected.name })
-    : t('vendorHint');
+    : copy.hint;
 
   return (
-    <Field label={t('vendor')} hint={hint} error={error ?? undefined}>
+    <Field label={copy.label} hint={hint} error={error ?? undefined}>
       {(control) => (
         <div
           className="relative"
@@ -184,7 +206,7 @@ function VendorPicker({
               onKeyDown={handleKeyDown}
             />
             {(selected !== null || query !== '') && (
-              <Button type="button" variant="ghost" size="sm" className="shrink-0" aria-label={t('clearVendorAria')} data-testid="account-rule-vendor-clear" onClick={resetToAll}>
+              <Button type="button" variant="ghost" size="sm" className="shrink-0" aria-label={copy.clearAria} data-testid="account-rule-vendor-clear" onClick={resetToAll}>
                 {t('clearVendor')}
               </Button>
             )}
@@ -196,7 +218,7 @@ function VendorPicker({
               ) : (
                 <>
                   {options.length > 0 ? (
-                    <ul id={listId} role="listbox" aria-label={t('vendorResults')}>
+                    <ul id={listId} role="listbox" aria-label={copy.results}>
                       {options.map((option, index) => {
                         const isActive = index === clampedActive;
                         return (
@@ -226,11 +248,11 @@ function VendorPicker({
                       })}
                     </ul>
                   ) : !partiesPending ? (
-                    <p className="px-2.5 py-1.5 text-xs text-muted-foreground">{t('vendorNoMatch')}</p>
+                    <p className="px-2.5 py-1.5 text-xs text-muted-foreground">{copy.noMatch}</p>
                   ) : null}
                   {partiesPending && (
                     <p className="px-2.5 py-1.5 text-xs text-muted-foreground" role="status">
-                      {t('vendorLoading')}
+                      {copy.loading}
                     </p>
                   )}
                   {matched.total > matched.items.length && (
@@ -252,11 +274,12 @@ export function AddKeywordRuleDialog({
   onClose,
 }: {
   rules: readonly CategorizationRule[];
-  onCreated?: (vendorPartyId: string | null) => void;
+  onCreated?: (vendorPartyId: string | null, direction: DocumentDirection) => void;
   onClose: () => void;
 }) {
   const t = useTranslations('accountRules');
   const accounts = useQuery(orpc.accounts.list.queryOptions());
+  const [direction, setDirection] = useState<DocumentDirection>('purchase');
   const [keyword, setKeyword] = useState('');
   const [selectedVendor, setSelectedVendor] = useState<SelectedVendor | null>(null);
   const [vendorQuery, setVendorQuery] = useState('');
@@ -269,26 +292,35 @@ export function AddKeywordRuleDialog({
     orpc.accountRules.create.mutationOptions({
       onSuccess: (_data, variables) => {
         refresh();
-        onCreated?.(variables.vendorPartyId ?? null);
+        onCreated?.(variables.vendorPartyId ?? null, variables.direction ?? 'purchase');
         onClose();
       },
     }),
   );
   const vendorPartyId = selectedVendor?.id ?? null;
-  // The same keyword already listed for the chosen scope (the list is the chosen entity's), flagged while it is typed.
-  const repeated = duplicateKeywordRule(rules, keyword, vendorPartyId);
+  // The same keyword already listed for the chosen direction and scope (the list is the chosen entity's), flagged while typed.
+  const repeated = duplicateKeywordRule(rules, keyword, vendorPartyId, direction);
   const incomplete = !entity.ready || !keyword.trim() || !accountCode;
+  function handleDirectionChange(next: DocumentDirection) {
+    setDirection(next);
+    setVendorError(null);
+    if (accountCode && isRevenueAccount(accountCode) !== (next === 'sale')) {
+      setAccountCode('');
+    }
+  }
   function submit(event: FormEvent) {
     event.preventDefault();
     if (incomplete || repeated) return;
     if (selectedVendor === null && vendorQuery.trim() !== '') {
-      setVendorError(t('vendorPickRequired'));
+      if (direction === 'sale') setVendorError(t('customerPickRequired'));
+      else setVendorError(t('vendorPickRequired'));
       vendorInputRef.current?.focus();
       return;
     }
     create.mutate({
       keyword: keyword.trim(),
       accountCode,
+      direction,
       ...(vendorPartyId ? { vendorPartyId } : {}),
       legalEntityId: entity.legalEntityId,
     });
@@ -298,16 +330,40 @@ export function AddKeywordRuleDialog({
       title={t('addTitle')}
       description={t('addHint')}
       busy={create.isPending}
-      dirty={keyword.trim() !== '' || accountCode !== '' || selectedVendor !== null || vendorQuery.trim() !== ''}
+      dirty={direction !== 'purchase' || keyword.trim() !== '' || accountCode !== '' || selectedVendor !== null || vendorQuery.trim() !== ''}
       submitLabel={t('add')}
       submitDisabled={incomplete || repeated !== null}
       onClose={onClose}
       onSubmit={submit}
     >
+      <Field label={t('ruleDirection')}>
+        {(control) => (
+          <NativeSelect
+            {...control}
+            className="max-md:min-h-11"
+            data-testid="account-rule-direction-select"
+            value={direction}
+            onChange={(e) => handleDirectionChange(e.target.value as DocumentDirection)}
+          >
+            <NativeSelectOption value="purchase">{t('directionPurchase')}</NativeSelectOption>
+            <NativeSelectOption value="sale">{t('directionSale')}</NativeSelectOption>
+          </NativeSelect>
+        )}
+      </Field>
       <Field label={t('keyword')}>
-        {(control) => <Input {...control} required maxLength={500} placeholder={t('keywordPlaceholder')} value={keyword} onChange={(e) => setKeyword(e.target.value)} />}
+        {(control) => (
+          <Input
+            {...control}
+            required
+            maxLength={500}
+            placeholder={direction === 'sale' ? t('keywordPlaceholderSale') : t('keywordPlaceholder')}
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+          />
+        )}
       </Field>
       <VendorPicker
+        direction={direction}
         selected={selectedVendor}
         query={vendorQuery}
         error={vendorError}
@@ -330,10 +386,10 @@ export function AddKeywordRuleDialog({
       </DuplicateHint>
       <Field label={t('account')}>
         {(control) => (
-          <NativeSelect {...control} required value={accountCode} onChange={(e) => setAccountCode(e.target.value)}>
+          <NativeSelect {...control} required className="max-md:min-h-11" value={accountCode} onChange={(e) => setAccountCode(e.target.value)}>
             <NativeSelectOption value="">{t('pickAccount')}</NativeSelectOption>
-            {/* Accounts a purchase line may go to (#430), in use. */}
-            {pickableAccounts(accounts.data ?? [], null, 'purchase').map((a) => (
+            {/* Purchase rules allow expense/asset/inventory accounts; sales rules allow revenue accounts (#430, #1452). */}
+            {pickableAccounts(accounts.data ?? [], null, direction).map((a) => (
               <NativeSelectOption key={a.code} value={a.code}>
                 {accountLabel(a)}
               </NativeSelectOption>
@@ -356,14 +412,18 @@ function RuleRow({ rule, canManage }: { rule: CategorizationRule; canManage: boo
   const name = rule.confirmedBy ?? t('formerMember');
   const date = f.date(rule.confirmedAt);
   const invoice = rule.sourceDocument ? [rule.sourceDocument.series, rule.sourceDocument.number].filter(Boolean).join('/') : null;
+  const partyLabel = rule.vendor ? rule.vendor.name : rule.direction === 'sale' ? t('allCustomers') : t('allVendors');
   return (
     <li className="py-2 text-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="break-words text-foreground">{text}</p>
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-subtle-foreground">
+            <Badge variant={rule.direction === 'sale' ? 'secondary' : 'outline'} data-testid="rule-direction">
+              {rule.direction === 'sale' ? t('directionSale') : t('directionPurchase')}
+            </Badge>
             <Badge variant="secondary">{rule.matchKind === 'description' ? t('kindDescription') : t('kindKeyword')}</Badge>
-            <span data-testid="rule-vendor">{rule.vendor ? rule.vendor.name : t('allVendors')}</span>
+            <span data-testid="rule-vendor">{partyLabel}</span>
             <span aria-hidden>·</span>
             <span className="font-mono">{t('toAccount', { code: rule.accountCode })}</span>
             <span aria-hidden>·</span>
@@ -399,22 +459,35 @@ export function AccountRulesCard({ canManage }: { canManage: boolean }) {
   const entity = useChosenEntity();
   const rules = useQuery({ ...orpc.accountRules.list.queryOptions({ input: { legalEntityId: entity.legalEntityId } }), enabled: entity.ready });
   const [adding, setAdding] = useState(false);
+  const [directionFilter, setDirectionFilter] = useState<'' | DocumentDirection>('');
   const [vendorFilter, setVendorFilter] = useState('');
+  const directionFilterId = useId();
   const filterId = useId();
   const filterRef = useRef<HTMLSelectElement>(null);
 
   const allRules = rules.data ?? [];
-  const { hasEveryVendor, vendors } = ruleVendorOptions(allRules);
+  const hasPurchase = allRules.some((r) => r.direction !== 'sale');
+  const hasSale = allRules.some((r) => r.direction === 'sale');
+  const directionFiltered = filterRulesByDirection(allRules, directionFilter);
+  const { hasEveryVendor, vendors } = ruleVendorOptions(directionFiltered);
   const validFilter =
     vendorFilter === '' ||
     (vendorFilter === ACCOUNT_RULE_EVERY_VENDOR && hasEveryVendor) ||
     vendors.some((v) => v.partyId === vendorFilter)
       ? vendorFilter
       : '';
-  const filteredRules = filterRulesByVendor(allRules, validFilter);
+  const filteredRules = filterRulesByVendor(directionFiltered, validFilter);
 
-  // Clear stale filter state when switching entities or after deleting a vendor's last rule so it never reactivates later.
+  const partyScope =
+    directionFilter === 'sale' || (directionFilter === '' && !hasPurchase && hasSale)
+      ? { filterLabel: t('filterCustomer'), sharedLabel: t('allCustomers'), emptyText: t('filteredEmptyCustomer') }
+      : directionFilter === '' && hasPurchase && hasSale
+        ? { filterLabel: t('filterParty'), sharedLabel: t('allParties'), emptyText: t('filteredEmptyParty') }
+        : { filterLabel: t('filterVendor'), sharedLabel: t('allVendors'), emptyText: t('filteredEmpty') };
+
+  // Clear stale filter state when switching entities or after deleting a party's last rule so it never reactivates later.
   useEffect(() => {
+    setDirectionFilter('');
     setVendorFilter('');
   }, [entity.legalEntityId]);
 
@@ -423,6 +496,7 @@ export function AccountRulesCard({ canManage }: { canManage: boolean }) {
   }, [rules.isPending, validFilter, vendorFilter]);
 
   const clearFilter = () => {
+    setDirectionFilter('');
     setVendorFilter('');
     filterRef.current?.focus();
   };
@@ -440,33 +514,47 @@ export function AccountRulesCard({ canManage }: { canManage: boolean }) {
       ) : (
         <>
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Label htmlFor={directionFilterId} className="text-xs font-normal text-subtle-foreground">
+              {t('filterDirection')}
+            </Label>
+            <NativeSelect
+              id={directionFilterId}
+              className="w-full max-md:min-h-11 sm:w-auto sm:max-w-xs"
+              value={directionFilter}
+              onChange={(e) => setDirectionFilter(e.target.value as '' | DocumentDirection)}
+              data-testid="account-rules-direction-filter"
+            >
+              <NativeSelectOption value="">{t('directionAll')}</NativeSelectOption>
+              <NativeSelectOption value="purchase">{t('directionPurchase')}</NativeSelectOption>
+              <NativeSelectOption value="sale">{t('directionSale')}</NativeSelectOption>
+            </NativeSelect>
             <Label htmlFor={filterId} className="text-xs font-normal text-subtle-foreground">
-              {t('filterVendor')}
+              {partyScope.filterLabel}
             </Label>
             <NativeSelect
               ref={filterRef}
               id={filterId}
-              className="w-full sm:w-auto sm:max-w-xs"
+              className="w-full max-md:min-h-11 sm:w-auto sm:max-w-xs"
               value={validFilter}
               onChange={(e) => setVendorFilter(e.target.value)}
               data-testid="account-rules-vendor-filter"
             >
               <NativeSelectOption value="">{t('filterAll')}</NativeSelectOption>
-              {hasEveryVendor && <NativeSelectOption value={ACCOUNT_RULE_EVERY_VENDOR}>{t('allVendors')}</NativeSelectOption>}
+              {hasEveryVendor && <NativeSelectOption value={ACCOUNT_RULE_EVERY_VENDOR}>{partyScope.sharedLabel}</NativeSelectOption>}
               {vendors.map((v) => (
                 <NativeSelectOption key={v.partyId} value={v.partyId}>
                   {v.name}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            {validFilter !== '' && (
+            {(validFilter !== '' || directionFilter !== '') && (
               <Button type="button" variant="ghost" size="sm" onClick={clearFilter} data-testid="account-rules-vendor-filter-clear">
                 {t('clearFilter')}
               </Button>
             )}
           </div>
           {filteredRules.length === 0 ? (
-            <p className="mt-3 text-sm text-subtle-foreground">{t('filteredEmpty')}</p>
+            <p className="mt-3 text-sm text-subtle-foreground">{partyScope.emptyText}</p>
           ) : (
             <ul className="mt-3 divide-y">
               {filteredRules.map((r) => (
@@ -486,7 +574,8 @@ export function AccountRulesCard({ canManage }: { canManage: boolean }) {
       {adding && (
         <AddKeywordRuleDialog
           rules={allRules}
-          onCreated={(createdVendorPartyId) => {
+          onCreated={(createdVendorPartyId, createdDirection) => {
+            if (directionFilter !== '' && directionFilter !== createdDirection) setDirectionFilter('');
             if (validFilter === '') return;
             const matchesCurrentFilter = validFilter === ACCOUNT_RULE_EVERY_VENDOR ? createdVendorPartyId === null : createdVendorPartyId === validFilter;
             if (!matchesCurrentFilter) setVendorFilter('');
