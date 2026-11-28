@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The 02/CNKD-TNCN-QTT worksheet's Excel download (#5285) through the HTTP route a user calls, on PostgreSQL 17: a household on the income method whose year is above the tax-free threshold gets the file and
+// The 02/CNKD-TNCN-QTT worksheet's Excel download (#5285) through the HTTP route a user calls (a POST with a JSON body, #5324: the typed amounts never travel in a URL, and the GET variant is gone), on PostgreSQL 17: a household on the income method whose year is above the tax-free threshold gets the file and
 // one audit row (the entity, the form, the year, the number of lines); a worksheet that is held (revenue at or under the threshold) is refused (422 HOUSEHOLD_RETURN_HELD) and writes no audit row; a household on
 // the percentage method is refused (422 HOUSEHOLD_RETURN_METHOD); the amounts the household types must be whole dong; a request with no token is refused (401). The cells and the provisional label are covered
 // by the workbook unit tests and the figures by finance-household-qtt.db.test.ts; this file covers the route, the roles and the audit row.
@@ -62,8 +62,13 @@ suite('the 02/CNKD-TNCN-QTT worksheet download (#5285)', () => {
       .setExpirationTime('15m')
       .sign(new TextEncoder().encode(SECRET));
   const token = () => tokenOf(owner);
-  const download = async (query: string, who: { subject: string; email: string; session: string } = owner) =>
-    app.request(`/api/export/household-qtt.xlsx?${query}`, { headers: { authorization: `Bearer ${await tokenOf(who)}`, 'x-ludy-org': slug } });
+  // The worksheet is asked for by POST with a JSON body (#5324): the typed amounts never travel in a URL. `raw` sends the text as it is, for a body that is not JSON.
+  const download = async (input: Record<string, unknown> | string, who: { subject: string; email: string; session: string } = owner) =>
+    app.request('/api/export/household-qtt.xlsx', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${await tokenOf(who)}`, 'x-ludy-org': slug, 'content-type': 'application/json' },
+      body: typeof input === 'string' ? input : JSON.stringify(input),
+    });
   // The first request of an account makes its identity; the user id is what a membership row names.
   const userIdOf = async (who: { subject: string; email: string; session: string }) => {
     const response = await app.request('/api/rpc/me/get', { method: 'POST', headers: { authorization: `Bearer ${await tokenOf(who)}`, 'content-type': 'application/json' }, body: '{}' });
@@ -155,7 +160,7 @@ suite('the 02/CNKD-TNCN-QTT worksheet download (#5285)', () => {
   });
 
   it('answers the file and writes one audit row, with the amounts the household typed', async () => {
-    const response = await download(`legalEntityId=${income}&year=2026&withheld=10000000&prepaid=50000000&noPaymentRevenue=0`);
+    const response = await download({ legalEntityId: income, year: 2026, withheld: '10000000', prepaid: '50000000', noPaymentRevenue: '0' });
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe(XLSX);
     expect(response.headers.get('content-disposition')).toContain('to-khai-02-cnkd-tncn-qtt-2026');
@@ -168,7 +173,7 @@ suite('the 02/CNKD-TNCN-QTT worksheet download (#5285)', () => {
 
   it('answers the file when the household typed nothing (the notes in it say so)', async () => {
     const before = (await audits()).length;
-    const response = await download(`legalEntityId=${income}&year=2026`);
+    const response = await download({ legalEntityId: income, year: 2026 });
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe(XLSX);
     expect((await audits()).slice(before)).toEqual([{ book: '02/CNKD-TNCN-QTT', legalEntityId: income, period: '2026', rows: 21 }]);
@@ -176,7 +181,7 @@ suite('the 02/CNKD-TNCN-QTT worksheet download (#5285)', () => {
 
   it('refuses a held worksheet and writes no audit row', async () => {
     const before = (await audits()).length;
-    const response = await download(`legalEntityId=${small}&year=2026`);
+    const response = await download({ legalEntityId: small, year: 2026 });
     expect(response.status).toBe(422);
     expect(response.headers.get('content-type')).not.toBe(XLSX);
     expect(await response.json()).toMatchObject({ code: 'HOUSEHOLD_RETURN_HELD' });
@@ -185,7 +190,7 @@ suite('the 02/CNKD-TNCN-QTT worksheet download (#5285)', () => {
 
   it('refuses a household on the percentage method, which files the quarterly 01/CNKD', async () => {
     const before = (await audits()).length;
-    const response = await download(`legalEntityId=${percentage}&year=2026`);
+    const response = await download({ legalEntityId: percentage, year: 2026 });
     expect(response.status).toBe(422);
     expect(await response.json()).toMatchObject({ code: 'HOUSEHOLD_RETURN_METHOD' });
     expect(await audits()).toHaveLength(before);
@@ -193,23 +198,36 @@ suite('the 02/CNKD-TNCN-QTT worksheet download (#5285)', () => {
 
   it('refuses amounts that are not whole dong, an empty amount, a year that is not one or is past the last the audit can name, and an entity that is not a household', async () => {
     const before = (await audits()).length;
-    const queries = [
-      `legalEntityId=${income}&year=2026&withheld=0.5`,
-      `legalEntityId=${income}&year=2026&prepaid=1.000.000`,
-      `legalEntityId=${income}&year=2026&noPaymentRevenue=abc`,
-      `legalEntityId=${income}&year=2026&withheld=-1`,
-      `legalEntityId=${income}&year=2026&withheld=`,
-      `legalEntityId=${income}&year=abc`,
+    const bodies: Array<Record<string, unknown> | string> = [
+      { legalEntityId: income, year: 2026, withheld: '0.5' },
+      { legalEntityId: income, year: 2026, prepaid: '1.000.000' },
+      { legalEntityId: income, year: 2026, noPaymentRevenue: 'abc' },
+      { legalEntityId: income, year: 2026, withheld: '-1' },
+      { legalEntityId: income, year: 2026, withheld: '' },
+      // A number where the amount is text, and text where the year is a number: the body is checked field by field, as the query is.
+      { legalEntityId: income, year: 2026, withheld: 10000000 },
+      { legalEntityId: income, year: '2026' },
+      { legalEntityId: income, year: 'abc' },
       // A year past 2099 is a 4xx at the query (the audit row names the year as a ledger period, 20xx; the cap itself is pinned by the schema test in modules/finance/test/household-qtt.test.ts).
-      `legalEntityId=${income}&year=2100`,
-      `legalEntityId=${income}`,
-      'legalEntityId=not-an-id&year=2026',
+      { legalEntityId: income, year: 2100 },
+      { legalEntityId: income },
+      { legalEntityId: 'not-an-id', year: 2026 },
+      // A key the query does not know is refused, and forExport is the route's own: a body that names it is refused too.
+      { legalEntityId: income, year: 2026, other: 'x' },
+      { legalEntityId: income, year: 2026, forExport: false },
+      // Not an object, not JSON, nothing at all.
+      '[]',
+      'null',
+      '"text"',
+      'not json',
+      '',
     ];
-    for (const query of queries) {
-      const response = await download(query);
-      expect(response.status, query).toBeGreaterThanOrEqual(400);
-      expect(response.status, query).toBeLessThan(500);
-      expect(response.headers.get('content-type'), query).not.toBe(XLSX);
+    for (const body of bodies) {
+      const response = await download(body);
+      const label = JSON.stringify(body);
+      expect(response.status, label).toBeGreaterThanOrEqual(400);
+      expect(response.status, label).toBeLessThan(500);
+      expect(response.headers.get('content-type'), label).not.toBe(XLSX);
     }
     expect(await audits()).toHaveLength(before);
   });
@@ -219,12 +237,12 @@ suite('the 02/CNKD-TNCN-QTT worksheet download (#5285)', () => {
     await userIdOf(outsider);
     await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewerId]));
     const before = (await audits()).length;
-    const asViewer = await download(`legalEntityId=${income}&year=2026`, viewer);
+    const asViewer = await download({ legalEntityId: income, year: 2026 }, viewer);
     expect(asViewer.status).toBe(200);
     expect(asViewer.headers.get('content-type')).toBe(XLSX);
     expect((await audits()).slice(before)).toEqual([{ book: '02/CNKD-TNCN-QTT', legalEntityId: income, period: '2026', rows: 21 }]);
     const afterViewer = (await audits()).length;
-    const refused = await download(`legalEntityId=${income}&year=2026`, outsider);
+    const refused = await download({ legalEntityId: income, year: 2026 }, outsider);
     expect(refused.status).toBe(403);
     expect(refused.headers.get('content-type')).not.toBe(XLSX);
     expect(refused.headers.get('content-disposition')).toBeNull();
@@ -232,8 +250,23 @@ suite('the 02/CNKD-TNCN-QTT worksheet download (#5285)', () => {
     expect(await audits()).toHaveLength(afterViewer);
   });
 
+  it('has no GET variant any more, so the typed amounts cannot be sent in a URL, and refuses a body past the limit', async () => {
+    const before = (await audits()).length;
+    const asGet = await app.request(`/api/export/household-qtt.xlsx?legalEntityId=${income}&year=2026&withheld=10000000`, { headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug } });
+    expect([404, 405]).toContain(asGet.status);
+    expect(asGet.headers.get('content-type')).not.toBe(XLSX);
+    // A query string on the POST is not read: the body decides.
+    const queryOnly = await app.request(`/api/export/household-qtt.xlsx?legalEntityId=${income}&year=2026`, { method: 'POST', headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug, 'content-type': 'application/json' }, body: '{}' });
+    expect(queryOnly.status).toBeGreaterThanOrEqual(400);
+    expect(queryOnly.status).toBeLessThan(500);
+    const tooLarge = await download({ legalEntityId: income, year: 2026, withheld: '1'.repeat(20 * 1024) });
+    expect(tooLarge.status).toBeGreaterThanOrEqual(400);
+    expect(tooLarge.status).toBeLessThan(500);
+    expect(await audits()).toHaveLength(before);
+  });
+
   it('refuses a request with no token', async () => {
-    const response = await app.request(`/api/export/household-qtt.xlsx?legalEntityId=${income}&year=2026`, { headers: { 'x-ludy-org': slug } });
+    const response = await app.request('/api/export/household-qtt.xlsx', { method: 'POST', headers: { 'x-ludy-org': slug, 'content-type': 'application/json' }, body: JSON.stringify({ legalEntityId: income, year: 2026 }) });
     expect(response.status).toBe(401);
   });
 });

@@ -57,7 +57,9 @@ suite('the 01/CNKD worksheet download (#2518)', () => {
       .setIssuedAt()
       .setExpirationTime('15m')
       .sign(new TextEncoder().encode(SECRET));
-  const download = async (query: string) => app.request(`/api/export/household-cnkd.xlsx?${query}`, { headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug } });
+  // The worksheet is asked for by POST with a JSON body (#5324): the split by trade the household typed never travels in a URL.
+  const download = async (input: Record<string, unknown> | string) =>
+    app.request('/api/export/household-cnkd.xlsx', { method: 'POST', headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug, 'content-type': 'application/json' }, body: typeof input === 'string' ? input : JSON.stringify(input) });
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
     const client = new pg.Client({ connectionString: adminUrl });
     await client.connect();
@@ -152,7 +154,7 @@ suite('the 01/CNKD worksheet download (#2518)', () => {
   });
 
   it('answers the file and writes one audit row', async () => {
-    const response = await download(`legalEntityId=${single}&year=2026&quarter=4`);
+    const response = await download({ legalEntityId: single, year: 2026, quarter: 4 });
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe(XLSX);
     expect(response.headers.get('content-disposition')).toContain('to-khai-01-cnkd-2026-Q4');
@@ -164,11 +166,11 @@ suite('the 01/CNKD worksheet download (#2518)', () => {
 
   it('asks a household with several trades for the split, and answers the file with it', async () => {
     const before = (await audits()).length;
-    const open = await download(`legalEntityId=${several}&year=2026&quarter=4`);
+    const open = await download({ legalEntityId: several, year: 2026, quarter: 4 });
     expect(open.status).toBe(422);
     expect(await open.json()).toMatchObject({ code: 'HOUSEHOLD_SPLIT_INVALID' });
     // Two trades with revenue: the yearly rule (#3710 slice 3) also needs the trade that takes the threshold deduction.
-    const response = await download(`legalEntityId=${several}&year=2026&quarter=4&split=goods:1000000,services:600000&deductionTrade=goods`);
+    const response = await download({ legalEntityId: several, year: 2026, quarter: 4, split: [{ trade: 'goods', revenue: '1000000' }, { trade: 'services', revenue: '600000' }], deductionTrade: 'goods' });
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe(XLSX);
     expect(Buffer.from(await response.arrayBuffer()).subarray(0, 2).toString()).toBe('PK');
@@ -178,8 +180,15 @@ suite('the 01/CNKD worksheet download (#2518)', () => {
 
   it('refuses a split whose amount is not a plain amount, even with a colon inside it', async () => {
     const before = (await audits()).length;
-    for (const split of ['goods:1:2', 'goods:1.000.000', 'goods', 'services:600000,goods:abc']) {
-      const response = await download(`legalEntityId=${several}&year=2026&quarter=4&split=${encodeURIComponent(split)}`);
+    const splits: Array<Array<Record<string, unknown>>> = [
+      [{ trade: 'goods', revenue: '1:2' }],
+      [{ trade: 'goods', revenue: '1.000.000' }],
+      [{ trade: 'goods' }],
+      [{ trade: 'services', revenue: '600000' }, { trade: 'goods', revenue: 'abc' }],
+      [{ trade: 'goods', revenue: 1000000 }],
+    ];
+    for (const split of splits) {
+      const response = await download({ legalEntityId: several, year: 2026, quarter: 4, split });
       expect(response.status).toBeGreaterThanOrEqual(400);
       expect(response.status).toBeLessThan(500);
       expect(response.headers.get('content-type')).not.toBe(XLSX);
@@ -189,7 +198,7 @@ suite('the 01/CNKD worksheet download (#2518)', () => {
 
   it('answers the file and writes its audit row while a row behind the figures is still commentary (its cells say the figures are provisional)', async () => {
     const before = (await audits()).length;
-    const response = await download(`legalEntityId=${unconfirmed}&year=2026&quarter=3`);
+    const response = await download({ legalEntityId: unconfirmed, year: 2026, quarter: 3 });
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe(XLSX);
     expect(Buffer.from(await response.arrayBuffer()).subarray(0, 2).toString()).toBe('PK');
@@ -197,11 +206,33 @@ suite('the 01/CNKD worksheet download (#2518)', () => {
   });
 
   it('refuses a year or quarter that is not one, and an entity that is not a household', async () => {
-    for (const query of [`legalEntityId=${single}&year=2026&quarter=5`, `legalEntityId=${single}&year=abc&quarter=1`, `legalEntityId=${single}&quarter=1`, 'legalEntityId=not-an-id&year=2026&quarter=4']) {
-      const response = await download(query);
-      expect(response.status).toBeGreaterThanOrEqual(400);
-      expect(response.status).toBeLessThan(500);
-      expect(response.headers.get('content-type')).not.toBe(XLSX);
+    const bodies: Array<Record<string, unknown> | string> = [
+      { legalEntityId: single, year: 2026, quarter: 5 },
+      { legalEntityId: single, year: 'abc', quarter: 1 },
+      { legalEntityId: single, quarter: 1 },
+      { legalEntityId: 'not-an-id', year: 2026, quarter: 4 },
+      // A year past 2099 is a 4xx at the query (the audit row names the period as a ledger period, 20xx).
+      { legalEntityId: single, year: 2100, quarter: 1 },
+      { legalEntityId: single, year: 2026, quarter: 4, forExport: false },
+      { legalEntityId: single, year: 2026, quarter: 4, other: 'x' },
+      '[]',
+      'not json',
+      '',
+    ];
+    for (const body of bodies) {
+      const response = await download(body);
+      const label = JSON.stringify(body);
+      expect(response.status, label).toBeGreaterThanOrEqual(400);
+      expect(response.status, label).toBeLessThan(500);
+      expect(response.headers.get('content-type'), label).not.toBe(XLSX);
     }
+  });
+
+  it('has no GET variant any more, so the split by trade cannot be sent in a URL', async () => {
+    const before = (await audits()).length;
+    const response = await app.request(`/api/export/household-cnkd.xlsx?legalEntityId=${single}&year=2026&quarter=4`, { headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug } });
+    expect([404, 405]).toContain(response.status);
+    expect(response.headers.get('content-type')).not.toBe(XLSX);
+    expect(await audits()).toHaveLength(before);
   });
 });

@@ -20,6 +20,7 @@ import { ChartOfAccountsCard } from '../accounts.tsx';
 import { ApprovalPresetCard } from '../approval-preset.tsx';
 import { BankAccountNumbersCard } from '../bank-account-numbers.tsx';
 import { BankPartyRulesCard } from '../bank-party-rules.tsx';
+import { BooksRegimeCard } from '../books-regime.tsx';
 import { EventTypesCard } from '../event-types.tsx';
 import { IntegrationsSection } from '../integrations.tsx';
 import { MarketplaceVatRateCard } from '../marketplace-vat-rate.tsx';
@@ -203,6 +204,10 @@ export function SettingsAccountingPage() {
     <SettingsFrame>
       {({ org, canManage }) => (
         <>
+          {/* The regime the books follow, Circular 133 or 99, and the switch (#1403). Every member reads it; an owner chooses, an owner or an admin takes a choice back. */}
+          <Anchor id={SETTINGS_CARD.booksRegime}>
+            <BooksRegimeCard key={`books-regime:${org.slug}`} role={org.role} />
+          </Anchor>
           {/* The chart of accounts belongs to the finance module (#319). */}
           <Anchor id={SETTINGS_CARD.chartOfAccounts}>
             <ChartOfAccountsCard canManage={canManage} />
