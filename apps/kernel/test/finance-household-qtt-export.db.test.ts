@@ -200,7 +200,7 @@ suite('the 02/CNKD-TNCN-QTT worksheet download (#5285)', () => {
       `legalEntityId=${income}&year=2026&withheld=-1`,
       `legalEntityId=${income}&year=2026&withheld=`,
       `legalEntityId=${income}&year=abc`,
-      // The audit row names the year as a ledger period (20xx), so the last year the worksheet accepts is 2099: 2100 is a 4xx at the query, never a server error at the audit step.
+      // A year past 2099 is a 4xx at the query (the audit row names the year as a ledger period, 20xx; the cap itself is pinned by the schema test in modules/finance/test/household-qtt.test.ts).
       `legalEntityId=${income}&year=2100`,
       `legalEntityId=${income}`,
       'legalEntityId=not-an-id&year=2026',
