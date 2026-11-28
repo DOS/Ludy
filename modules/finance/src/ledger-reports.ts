@@ -67,7 +67,7 @@ interface LedgerData {
 // What the one statement of loadLedgerData answers: each part a JSON array, money and dates as text (a JSON number
 // would lose a NUMERIC's digits in JavaScript; the text is what the driver returns for a NUMERIC or a date column).
 interface LedgerDataRow {
-  // The period has more lines than LEDGER_LINE_LIMIT, so the lines and the parties are left out (#5300).
+  // The period has more lines than LEDGER_LINE_LIMIT, so the opening balance, the lines and the parties are left out (#5300).
   too_large: boolean;
   tt133: Tt133AccountRow[];
   own: OrgAccountRow[];
@@ -149,7 +149,8 @@ async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntity
     .where('id', 'in', sql<string>`(SELECT party_id FROM opening WHERE party_id IS NOT NULL UNION SELECT party_id FROM lines WHERE party_id IS NOT NULL)`);
 
   // The limit is decided INSIDE the one statement (#5300, and the test of #365 holds that a report reads in one statement): `probe` counts the period's lines up to one past the limit, without
-  // the sort or the JSON, and a period over the limit leaves `lines` and `parties` unread (a CTE nothing reads is not run), so the refusal is cheap even at 50,000 lines.
+  // the sort or the JSON, and a period over the limit leaves `lines`, `parties` and the opening balance unread (a CTE nothing reads is not run), so the refusal is cheap even at 50,000 lines: the
+  // opening balance of a late period sums every earlier line of the entity (about 50,000 lines and 500,000 buffer hits on the test's ledger without statistics), work a refused report must not do.
   const { rows } = await sql<LedgerDataRow>`
     WITH opening AS ${opening},
     probe AS (
@@ -166,9 +167,10 @@ async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntity
       (SELECT coalesce(json_agg(json_build_object('code', a.code, 'name', a.name, 'parent_code', a.parent_code)), '[]') FROM ${tt133} AS a) AS tt133,
       (SELECT coalesce(json_agg(json_build_object('code', a.code, 'name', a.name, 'parent_code', a.parent_code, 'root_code', a.root_code, 'active', a.active)), '[]')
          FROM ${own} AS a) AS own,
-      (SELECT coalesce(json_agg(json_build_object('account_code', o.account_code, 'party_id', o.party_id, 'debit', o.debit::text, 'credit', o.credit::text)
-                                ORDER BY o.account_code), '[]')
-         FROM opening AS o) AS opening,
+      (SELECT CASE WHEN (SELECT n FROM probe) > ${LEDGER_LINE_LIMIT} THEN '[]'::json
+         ELSE (SELECT coalesce(json_agg(json_build_object('account_code', o.account_code, 'party_id', o.party_id, 'debit', o.debit::text, 'credit', o.credit::text)
+                                        ORDER BY o.account_code), '[]')
+               FROM opening AS o) END) AS opening,
       (SELECT CASE WHEN (SELECT n FROM probe) > ${LEDGER_LINE_LIMIT} THEN '[]'::json
          ELSE (SELECT coalesce(json_agg(json_build_array(r.id, r.entry_date::text, r.description, r.reverses_entry_id, r.invoice_series, r.invoice_number,
                                                          r.line_no, r.account_code, r.party_id, r.debit::text, r.credit::text)
