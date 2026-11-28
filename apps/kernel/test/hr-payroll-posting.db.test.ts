@@ -598,7 +598,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const { proposalId } = await ask(o, runId, o.admin);
     const verified = await o.exec<{ lines: { account: string; debit: string; credit: string }[] }>(o.owner, 'hr.payroll.posting.verify', { runId });
     expect(JSON.stringify(verified)).not.toMatch(/canary/i);
-    expect(Object.keys(verified).sort()).toEqual(['approvedBy', 'date', 'legalEntityId', 'lines', 'month', 'regime', 'runId']);
+    expect(Object.keys(verified).sort()).toEqual(['approvedBy', 'chartVersion', 'date', 'legalEntityId', 'lines', 'month', 'regime', 'runId']);
     // The verification equals the entry the preparer built from the people's lines (the same run, two readings).
     const [stored] = await rows<{ payload: { lines: { account: string; debit: string; credit: string }[] } }>(`SELECT payload FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`, [o.orgId, proposalId]);
     const proposed = (stored?.payload.lines ?? []).map((l) => `${l.account}:${l.debit}:${l.credit}`).sort();
