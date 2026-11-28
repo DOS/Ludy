@@ -34,7 +34,7 @@ BEGIN
       WHERE b.org_id = e.org_id AND b.legal_entity_id = e.legal_entity_id
         AND b.effective_from <= e.entry_date + (CASE WHEN e.source_type = 'finance.opening_balance'
                                                        OR EXISTS (SELECT 1 FROM ludy_finance.journal_entry o
-                                                                  WHERE o.org_id = e.org_id AND o.id = e.reverses_entry_id AND o.source_type = 'finance.opening_balance')
+                                                                  WHERE o.org_id = e.org_id AND o.id = e.reverses_entry_id AND o.source_type = 'finance.opening_balance' AND o.entry_date = e.entry_date)
                                                      THEN 1 ELSE 0 END)
       ORDER BY b.effective_from DESC LIMIT 1) b ON true
     WHERE e.org_id = NEW.org_id AND e.id = NEW.entry_id;

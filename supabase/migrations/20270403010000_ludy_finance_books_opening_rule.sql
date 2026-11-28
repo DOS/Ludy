@@ -10,7 +10,8 @@
 -- unemployment insurance) could not be opened and a TT133-only one (2112, 3385) could.
 --
 -- From now on, for an opening entry, and for the reversal of one (it is dated the same day and mirrors the lines), the
--- date that picks the chart is the day after the entry's date. Every other entry is unchanged: its own date. For an
+-- date that picks the chart is the day after the entry's date (a reversal only when it is dated on its opening entry's own date, as the period guard and reversal.ts already require; one dated otherwise is checked
+-- against its own date like any entry). Every other entry is unchanged: its own date. For an
 -- opening entry dated on any other day both days are under the same chart, so nothing changes there either.
 --
 -- ludy_finance.check_account_ref()         the body of 20261103020000_crove_finance_books_regime.sql (names as renamed by
@@ -73,11 +74,11 @@ BEGIN
   WHERE e.org_id = v_row.org_id AND e.legal_entity_id = v_row.legal_entity_id
     AND e.entry_date + (CASE WHEN e.source_type = 'finance.opening_balance'
                                OR EXISTS (SELECT 1 FROM ludy_finance.journal_entry o
-                                          WHERE o.org_id = e.org_id AND o.id = e.reverses_entry_id AND o.source_type = 'finance.opening_balance')
+                                          WHERE o.org_id = e.org_id AND o.id = e.reverses_entry_id AND o.source_type = 'finance.opening_balance' AND o.entry_date = e.entry_date)
                              THEN 1 ELSE 0 END) >= v_from
     AND (v_to IS NULL OR e.entry_date + (CASE WHEN e.source_type = 'finance.opening_balance'
                                                 OR EXISTS (SELECT 1 FROM ludy_finance.journal_entry o
-                                                           WHERE o.org_id = e.org_id AND o.id = e.reverses_entry_id AND o.source_type = 'finance.opening_balance')
+                                                           WHERE o.org_id = e.org_id AND o.id = e.reverses_entry_id AND o.source_type = 'finance.opening_balance' AND o.entry_date = e.entry_date)
                                               THEN 1 ELSE 0 END) < v_to);
   IF v_first IS NOT NULL THEN
     RAISE EXCEPTION 'BOOKS_REGIME_IN_USE' USING ERRCODE = '23514',
@@ -108,7 +109,7 @@ BEGIN
       WHERE b.org_id = e.org_id AND b.legal_entity_id = e.legal_entity_id
         AND b.effective_from <= e.entry_date + (CASE WHEN e.source_type = 'finance.opening_balance'
                                                        OR EXISTS (SELECT 1 FROM ludy_finance.journal_entry o
-                                                                  WHERE o.org_id = e.org_id AND o.id = e.reverses_entry_id AND o.source_type = 'finance.opening_balance')
+                                                                  WHERE o.org_id = e.org_id AND o.id = e.reverses_entry_id AND o.source_type = 'finance.opening_balance' AND o.entry_date = e.entry_date)
                                                      THEN 1 ELSE 0 END)
       ORDER BY b.effective_from DESC LIMIT 1) b ON true
     WHERE e.org_id = NEW.org_id AND e.id = NEW.entry_id;
