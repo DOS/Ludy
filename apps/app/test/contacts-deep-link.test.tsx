@@ -87,13 +87,13 @@ const mkContact = (over: Partial<Contact> = {}): Contact => ({
   ...over,
 });
 
-function renderContacts(opts: { mode?: 'people' | 'companies'; target?: Contact; listItems?: Contact[]; errorTargetId?: string }): string {
+async function renderContacts(opts: { mode?: 'people' | 'companies'; target?: Contact; listItems?: Contact[]; errorTargetId?: string }): Promise<string> {
   const qc = qcState.current;
   qc.clear();
   qc.setQueryData(['org', 'get', {}], { role: 'member' });
   const askedKind = opts.mode === 'companies' ? 'organization' : 'person';
   qc.setQueryData(
-    ['crm', 'contacts', 'list', 'infinite', { filters: { all: [{ field: 'kind', op: 'is', value: askedKind }] } }],
+    ['crm', 'contacts', 'list', 'infinite', { filters: { v: 1, all: [{ field: 'kind', op: 'is', value: askedKind }] } }],
     { pages: [{ items: opts.listItems ?? [], next: null }], pageParams: [undefined] },
   );
   if (opts.target) {
@@ -101,7 +101,7 @@ function renderContacts(opts: { mode?: 'people' | 'companies'; target?: Contact;
     qc.setQueryData(['crm', 'contacts', 'get', { partyId: opts.target.id }], opts.target);
   } else if (opts.errorTargetId) {
     searchState.current = { c: opts.errorTargetId };
-    void qc
+    await qc
       .fetchQuery({
         queryKey: ['crm', 'contacts', 'get', { partyId: opts.errorTargetId }],
         queryFn: () => Promise.reject(new Error('Không tìm thấy liên hệ')),
@@ -129,29 +129,29 @@ beforeEach(() => {
 });
 
 describe('Contacts & Companies ?c=<partyId> deep-link (#4994 SG2)', () => {
-  it('opens a deep-linked person on /contacts even when absent from paginated list, keeping 44 px phone targets', () => {
+  it('opens a deep-linked person on /contacts even when absent from paginated list, keeping 44 px phone targets', async () => {
     const person = mkContact({ id: PERSON_ID, name: 'Trần Thị B' });
-    const html = renderContacts({ target: person, listItems: [] });
+    const html = await renderContacts({ target: person, listItems: [] });
     expect(html).toContain('Trần Thị B');
     expect(html).toContain('aria-expanded="true"');
     expect(html).toContain(`data-testid="contact-attention-stub" data-party="${PERSON_ID}"`);
     expect(html).toContain('max-md:min-h-11');
   });
 
-  it('opens an organization linked from Home onto /contacts?c=<orgId> and supports /companies?c=<orgId>', () => {
+  it('opens an organization linked from Home onto /contacts?c=<orgId> and supports /companies?c=<orgId>', async () => {
     const org = mkContact({ id: ORG_ID, kind: 'organization', name: 'Công ty Ánh Dương', taxCode: '0301234567', peopleCount: 3 });
-    const onContacts = renderContacts({ mode: 'people', target: org, listItems: [] });
+    const onContacts = await renderContacts({ mode: 'people', target: org, listItems: [] });
     expect(onContacts).toContain('Công ty Ánh Dương');
     expect(onContacts).toContain(`data-party="${ORG_ID}"`);
 
-    const onCompanies = renderContacts({ mode: 'companies', target: org, listItems: [org] });
+    const onCompanies = await renderContacts({ mode: 'companies', target: org, listItems: [org] });
     expect(onCompanies).toContain('Công ty Ánh Dương');
     expect(onCompanies).toContain('0301234567');
   });
 
-  it('shows the deep-link lookup error without crashing when ?c=<id> does not exist', () => {
+  it('shows the deep-link lookup error without crashing when ?c=<id> does not exist', async () => {
     const missingId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
-    const html = renderContacts({ errorTargetId: missingId, listItems: [mkContact()] });
+    const html = await renderContacts({ errorTargetId: missingId, listItems: [mkContact()] });
     expect(html).toContain('Không tìm thấy liên hệ');
     expect(html).toContain('Nguyễn Văn A');
   });

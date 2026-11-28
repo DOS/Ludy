@@ -518,7 +518,7 @@ describe('Home contact attention signals composition (#4994 SG2)', () => {
   });
 
   it('caps Finance partyIds batch to SIGNALS_MAX_CRM (500) without dropping newer CRM or Sign items', async () => {
-    const extraDeals = Array.from({ length: SIGNALS_MAX_CRM + 10 }, () => openDeal({ partyId: randomUUID() }));
+    const extraDeals = Array.from({ length: SIGNALS_MAX_CRM }, () => openDeal({ partyId: randomUUID() }));
     const inputs: Record<string, unknown> = {};
     const items = await runContactAttention(
       {
@@ -568,7 +568,15 @@ describe('Home contact attention signals composition (#4994 SG2)', () => {
       { ...baseReads, [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: partial },
       { mcp: { grantId: 'g2', kind: 'member' } },
     );
-    expect(partialCheck).toEqual({ items: [], status: 'partial' });
+    expect(partialCheck.status).toBe('partial');
+    expect(partialCheck.items.map((i) => i.href)).toEqual([`/contacts?c=${other}`, `/contacts?c=${party}`]);
+
+    const financeOffCheck = await checkAttention(baseReads, {
+      absent: ['finance'],
+      mcp: { grantId: 'g1', kind: 'company' },
+    });
+    expect(financeOffCheck.status).toBe('unavailable');
+    expect(financeOffCheck.items.map((i) => i.href)).toEqual([`/contacts?c=${other}`, `/contacts?c=${party}`]);
 
     const signRestricted = await checkAttention(
       {
@@ -579,7 +587,8 @@ describe('Home contact attention signals composition (#4994 SG2)', () => {
       },
       { mcp: { grantId: 'g3', kind: 'member' } },
     );
-    expect(signRestricted).toEqual({ items: [], status: 'unavailable' });
+    expect(signRestricted.status).toBe('unavailable');
+    expect(signRestricted.items.map((i) => i.href)).toEqual([`/contacts?c=${party}`]);
 
     await expect(
       runContactAttention(

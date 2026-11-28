@@ -38,7 +38,6 @@ import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { addDays, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { hashSigningToken, signCommands, signQueries } from '@ludy/mod-sign';
 import { AVAILABLE_MODULES } from '../src/config.ts';
-import { createSessionStatusSource } from '../src/sessions.ts';
 import { SIGN_ACTOR } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -85,7 +84,7 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
     type: 'user',
     userId,
     aal: 'aal1',
-    mcp: { grantId, kind, scopes: ['ludy.read'] },
+    mcp: { grantId, clientId: 'sg2-client', clientName: 'SG2 Client', scopes: ['ludy.read'], kind },
   });
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
@@ -251,12 +250,12 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
     const kernelCmds = buildKernelCommands({ shippedModules: AVAILABLE_MODULES });
     const allCommands = [...kernelCmds, ...crmCommands, ...financeCommands, ...signCommands];
     const allQueries = [...kernelQueries({ inboundDomain: null }), ...crmQueries, ...financeQueries, ...signQueries];
-    rt = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
+    rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
       commands: allCommands,
       queries: allQueries,
     });
     rt.validate();
-    worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
+    worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({
       commands: allCommands,
       queries: allQueries,
     });
@@ -635,7 +634,7 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
       `/contacts?c=${p6Unanswered}`,
     ]);
 
-    // MCP under branch-limited member grant (`limited`): contact_attention answers unchecked (`partial_view`).
+    // MCP under branch-limited member grant (`limited`): contact_attention preserves verified CRM items while answering unchecked (`partial_view`).
     const limitedGrant = await grant(o.orgId, o.limited, 'member');
     const mcpLimited = await rt.query<{ items: TodayItem[]; checked: string[]; unchecked: Array<{ rule: string; reason: string }> }>(
       'kernel.mcp.signals',
@@ -643,6 +642,7 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
       { actor: asMcp(o.limited, limitedGrant, 'member'), orgId: o.orgId },
     );
     expect(mcpLimited.unchecked).toContainEqual({ rule: 'contact_attention', reason: 'partial_view' });
+    expect(mcpLimited.items.some((i) => i.id.startsWith('signal:contact-attention:'))).toBe(true);
 
     // crm.contact.get fetches both person and organization (and resolves merged duplicate -> canonical kept), rejecting unknown IDs.
     const gotPerson = await rt.query<Contact>('crm.contact.get', { partyId: p2Opened }, { actor: asUser(o.member), orgId: o.orgId });

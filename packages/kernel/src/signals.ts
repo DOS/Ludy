@@ -341,10 +341,9 @@ const CONTACT_ATTENTION_TITLE_KEYS: Record<
 // and overdue receivables joined by canonical party id. One batched read per source, one item per contact (newest
 // wins), capped at CONTACT_ATTENTION_HOME_MAX (5) newest-first.
 // Human Home omits overdue invoices or opened envelopes fail-closed when Finance or eSign is unavailable or partial;
-// over MCP (`ludy_signals`), any restricted or unavailable source marks `contact_attention` unchecked so an empty
-// answer never reads as all clear.
+// over MCP (`ludy_signals`), any restricted or unavailable source still emits available items while marking
+// `contact_attention` unchecked so an empty or partial answer never reads as all clear.
 export async function checkContactAttention(ctx: QueryContext, now?: () => Date): Promise<RuleCheck> {
-  const isMcp = ctx.actor.type === 'user' && ctx.actor.mcp !== undefined;
   const [crmAttention, signOpened, openDeals] = await Promise.all([
     readSignals(ctx, CRM_ATTENTION_SIGNALS_READ, zCrmAttentionSignals),
     readSignals(ctx, SIGN_OPENED_SIGNALS_READ, zSignOpenedSignals),
@@ -370,19 +369,12 @@ export async function checkContactAttention(ctx: QueryContext, now?: () => Date)
       ? await readSignals(ctx, FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ, zFinanceOverdueReceivableSignals, { partyIds })
       : ({ status: 'ok', rows: [] } as const);
 
-  if (isMcp) {
-    if (
-      crmAttention.status === 'partial' ||
-      signOpened.status === 'partial' ||
-      openDeals.status === 'partial' ||
-      receivables.status === 'partial'
-    ) {
-      return { items: [], status: 'partial' };
-    }
-    if (signOpened.status !== 'ok' || openDeals.status !== 'ok' || receivables.status !== 'ok') {
-      return { items: [], status: 'unavailable' };
-    }
-  }
+  const status: RuleStatus =
+    signOpened.status === 'partial' || openDeals.status === 'partial' || receivables.status === 'partial'
+      ? 'partial'
+      : signOpened.status !== 'ok' || openDeals.status !== 'ok' || receivables.status !== 'ok'
+        ? 'unavailable'
+        : 'ok';
 
   const today = vietnamToday(now?.() ?? new Date());
   type CandidateEvent = {
@@ -451,7 +443,7 @@ export async function checkContactAttention(ctx: QueryContext, now?: () => Date)
     href: `/contacts?c=${r.partyId}`,
   }));
 
-  return { items, status: 'ok' };
+  return { items, status };
 }
 
 export function contactAttentionQuery(options: { now?: () => Date } = {}) {
