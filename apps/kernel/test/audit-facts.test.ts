@@ -106,7 +106,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   // The posting date of a sale or purchase recorded late: `late` is why it was posted late, the word `opening` or `locked`, not the free text of ludy_finance.einvoice_draft.late_reason that shares the name (#3535).
   'modules/finance/src/record.ts': {
     'late_reason <- late = lateDate ? await lateReason(ctx, legalEntityId, invoice.issueDate, lateDate) : null': 'why a document was posted on a later date, the word opening or locked (ludy_finance.purchase_document.late_reason, a closed set)',
-    'learned_rules <- learned = sale ? [] : await learnFromApproval(ctx, { partyId, documentId: document.id, lines })': 'vendor account-rule ids learned from invoice lines, never classified briefing line text',
+    'learned_rules <- learned = sale || regime !== undefined ? [] : await learnFromApproval(ctx, { partyId, documentId: document.id, lines })': 'vendor account-rule ids learned from invoice lines, never classified briefing line text',
   },
   'modules/finance/src/bank.ts': {
     'bankAccount <- input.bankAccount': 'the chart account code (112x) the statement is for, not a bank account number',
