@@ -20176,6 +20176,8 @@ export const en = {
       cash_forecast_items: 'View the expected items entered into the cash forecast',
       cash_forecast_item_set: 'Enter or edit an expected item in the cash forecast',
       cash_forecast_item_remove: 'Remove an expected item from the cash forecast',
+      aging: 'View receivables or payables by days past due',
+      party_ranking: 'View the customers who bought the most or the suppliers bought from the most in a period',
       home_money: 'See what customers owe, what you owe and the bank balance on Home',
       payroll: {
         settlement: 'See where the posting and the payments of an approved pay month stand',

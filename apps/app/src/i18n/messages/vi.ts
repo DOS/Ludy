@@ -20176,6 +20176,8 @@ export const vi = {
       cash_forecast_items: 'Xem các khoản dự kiến đã nhập vào dự báo dòng tiền',
       cash_forecast_item_set: 'Nhập hoặc sửa một khoản dự kiến trong dự báo dòng tiền',
       cash_forecast_item_remove: 'Xóa một khoản dự kiến khỏi dự báo dòng tiền',
+      aging: 'Xem công nợ phải thu hoặc phải trả theo số ngày quá hạn',
+      party_ranking: 'Xem các khách hàng bán nhiều nhất hoặc nhà cung cấp mua nhiều nhất của một kỳ',
       home_money: 'Xem số tiền chưa thu, chưa trả và tiền ngân hàng trên Trang chủ',
       payroll: {
         settlement: 'Xem bút toán và các khoản chi của tháng lương đã duyệt đang ở bước nào',
