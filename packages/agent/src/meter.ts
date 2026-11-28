@@ -45,6 +45,8 @@ export const AI_FEATURES = {
   'finance.overview_explain': 'finance',
   // The finance coworker's note on the month-close checklist: it puts the open items in the order to do them and says why, told which items are open and no count or date; refused when it states a number, a date, a link, a promise or a done step, or when its order is not exactly the open items.
   'finance.month_close_explain': 'finance',
+  // The finance coworker's note on the year-end checklist (#5283): it puts the open items that can be done now in the order to do them and says why, told which items are open and no count, date or amount; refused when it states a number, a date, a link, a promise or a certainty, a done step or advice about money, or when its order is not exactly the open items.
+  'finance.year_end_explain': 'finance',
   // The finance coworker's possible reason per flagged expense line on the expense variance card (#4392): code found which costs moved and who is behind them; the model is told no figure at all (a fixed kind of expense, the direction, a supplier name when it may be told, the kind of voucher, single or several) and a note is dropped when it states any number, date or name it was not given, claims certainty or is not marked as a possibility. A read; a person decides.
   'finance.expense_variance_note': 'finance',
   // The finance coworker's possible thing to look at per hit of the monthly review of unusual posted entries (#5182): code found the entries by five deterministic rules and computed every figure; the model is told fixed labels only (no figure, date, account code, voucher number or name) and its note is refused when it states a number, a date or a name, says the entry is wrong, advises or is not marked as a possibility.

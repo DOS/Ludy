@@ -249,6 +249,7 @@ import { zAskBooksAnswer, zFinanceAskBooksInput } from './finance-ask-books.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
 import { zFinanceHomeMoney, zFinanceHomeMoneyInput } from './finance-home-money.ts';
 import { zFinanceMonthCloseExplainAsk, zFinanceMonthCloseInput, zMonthClose, zMonthCloseNote } from './finance-month-close.ts';
+import { zFinanceYearEndExplainAsk, zFinanceYearEndInput, zYearEnd, zYearEndNote } from './finance-year-end.ts';
 import { zExpenseVarianceExplanation, zFinanceExpenseVariance, zFinanceExpenseVarianceExplainAsk, zFinanceExpenseVarianceInput } from './finance-expense-variance.ts';
 import { zFinanceUnusualEntries, zFinanceUnusualEntriesExplainAsk, zFinanceUnusualEntriesInput, zFinanceUnusualEntryReviewInput, zFinanceUnusualEntryReviewOutput, zUnusualEntriesExplanation } from './finance-unusual-entries.ts';
 import { zFinanceQuarterSummary, zFinanceQuarterSummaryExplainAsk, zFinanceQuarterSummaryInput, zQuarterSummaryExplanation } from './finance-quarter-summary.ts';
@@ -3824,6 +3825,14 @@ export const contract = {
   financeMonthClose: {
     get: oc.input(zFinanceMonthCloseInput).output(zMonthClose),
     explain: oc.input(zFinanceMonthCloseExplainAsk).output(zMonthCloseNote),
+  },
+  // The year-end checklist on the Kế toán screen (#5283), every role and read only: get answers, for one legal entity and one calendar year, each item's state (balances to review,
+  // depreciation through December, the stock count, the closing entry, the period lock, the returns of a company or a household, the e-invoice series of the new year) and the due date of
+  // each return from the tax calendar; explain is the finance coworker's short note ordering the open items, asked of the model outside any transaction from which items are open (no count,
+  // no date) and refused when it states a number, a date, a link, a promise, a done step, advice to move money or a certainty (ai says why there is none).
+  financeYearEnd: {
+    get: oc.input(zFinanceYearEndInput).output(zYearEnd),
+    explain: oc.input(zFinanceYearEndExplainAsk).output(zYearEndNote),
   },
   // The expense variance card of the Tổng quan (#4392), every role, read only: get answers the flagged expense lines of one ended month against the month before and the average of the three
   // before it, with the suppliers or vouchers behind each; explain is the finance coworker's possible reason per flagged line, asked of the model outside any transaction, and a note that states a number,

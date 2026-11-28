@@ -198,6 +198,13 @@ function createStubRuntime() {
       },
       usage: zeroUsage,
     }),
+    yearEnd: async () => ({
+      output: {
+        note: 'Xem lai cac so du cong no truoc, vi chung thay doi diem bat dau cua khau hao va but toan ket chuyen.',
+        order: ['balances', 'depreciation'],
+      },
+      usage: zeroUsage,
+    }),
     cashForecast: async () => ({
       output: {
         sentence:

@@ -45,6 +45,7 @@ import { financeCashForecastQuery } from './cash-forecast.ts';
 import { financeOverviewQuery } from './overview.ts';
 import { financeHomeMoneyQuery } from './home-money.ts';
 import { financeMonthCloseQuery } from './month-close.ts';
+import { financeYearEndQuery } from './year-end.ts';
 import { financeExpenseVarianceQuery } from './expense-variance.ts';
 import { financeUnusualEntriesQuery, unusualEntriesReview } from './unusual-entries.ts';
 import { financeQuarterSummaryQuery } from './quarter-summary.ts';
@@ -348,6 +349,7 @@ export const financeQueries = [
   financeOverviewQuery,
   financeHomeMoneyQuery,
   financeMonthCloseQuery,
+  financeYearEndQuery,
   financeExpenseVarianceQuery,
   financeUnusualEntriesQuery,
   financeQuarterSummaryQuery,

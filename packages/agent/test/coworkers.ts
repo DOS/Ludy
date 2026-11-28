@@ -49,6 +49,7 @@ import {
   type MisaAmisBlockerNotesFacts,
   type MisaCheckLineFacts,
   type MonthCloseFacts,
+  type YearEndFacts,
   type OverviewFacts,
   type PayrollDiffSheet,
   type PayrollFigures,
@@ -533,6 +534,13 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
   cases.push(
     cleanCase('finance.month_close_explain.clean', 'finance.month_close_explain', 'vi', (rt) =>
       runCleanChecked(() => unmetered(() => rt.inbox.monthCloseNote(monthCloseFacts)), isKindNotNone, 'month_close_explain'),
+    ),
+  );
+
+  const yearEndFacts: YearEndFacts = { language: 'vi', open: ['balances', 'depreciation'] };
+  cases.push(
+    cleanCase('finance.year_end_explain.clean', 'finance.year_end_explain', 'vi', (rt) =>
+      runCleanChecked(() => unmetered(() => rt.inbox.yearEndNote(yearEndFacts)), isKindNotNone, 'year_end_explain'),
     ),
   );
 

@@ -19,6 +19,7 @@ export * from './inbox.ts';
 export * from './reminder.ts';
 export * from './followup.ts';
 export * from './month-close.ts';
+export * from './year-end.ts';
 export * from './cash-forecast.ts';
 export * from './overview.ts';
 // The text checks expense-variance.ts exports for unusual-entries.ts are internal to the package: only the feature's own surface is public.

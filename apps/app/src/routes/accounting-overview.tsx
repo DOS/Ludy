@@ -16,6 +16,7 @@ import { AskBooksPanel } from '../components/ask-books-card.tsx';
 import { CashForecastCard } from '../components/cash-forecast-card.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { MonthCloseCard } from '../components/month-close-card.tsx';
+import { YearEndCard } from '../components/year-end-card.tsx';
 import { ExpenseVarianceCard } from './expense-variance-card.tsx';
 import { UnusualEntriesCard } from './unusual-entries-card.tsx';
 import { QuarterSummaryCard } from './quarter-summary-card.tsx';
@@ -296,6 +297,7 @@ export function AccountingOverviewPage() {
               <ResultsChart months={data.months} />
               <ExpenseMix expenses={data.expenses} />
               <MonthCloseCard slug={slug} />
+              <YearEndCard slug={slug} />
               <ExpenseVarianceCard legalEntityId={entity.legalEntityId} ready={entity.ready} />
               <UnusualEntriesCard slug={slug} legalEntityId={entity.legalEntityId} ready={entity.ready} />
               <QuarterSummaryCard legalEntityId={entity.legalEntityId} ready={entity.ready} />

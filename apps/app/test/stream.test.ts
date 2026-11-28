@@ -55,6 +55,8 @@ function seeded() {
     homeMoney: orpc.financeHomeMoney.get.queryKey({ input: {} }),
     monthClose: orpc.financeMonthClose.get.queryKey({ input: { month: '2026-10' } }),
     monthCloseExplain: orpc.financeMonthClose.explain.queryKey({ input: { month: '2026-10' } }),
+    yearEnd: orpc.financeYearEnd.get.queryKey({ input: { year: 2026 } }),
+    yearEndExplain: orpc.financeYearEnd.explain.queryKey({ input: { year: 2026 } }),
     me: orpc.me.get.queryKey(),
     org: orpc.org.get.queryKey(),
     socialList: orpc.social.posts.list.queryKey({ input: {} }),
@@ -110,7 +112,7 @@ describe('invalidateHint', () => {
   it('journal_entry: the journal, that entry, the documents, the ledger reports, the overview, the Home money tiles, the customers and the proposal that posted it', async () => {
     const { qc, stale } = seeded();
     await invalidateHint(qc, { type: 'journal_entry', id: ENTRY });
-    expect(stale()).toEqual(['customers', 'detail1', 'documents', 'entry', 'homeMoney', 'journal', 'ledger', 'ledgerAccount', 'monthClose', 'monthCloseExplain', 'overview', 'overviewExplain']);
+    expect(stale()).toEqual(['customers', 'detail1', 'documents', 'entry', 'homeMoney', 'journal', 'ledger', 'ledgerAccount', 'monthClose', 'monthCloseExplain', 'overview', 'overviewExplain', 'yearEnd', 'yearEndExplain']);
   });
 
   it('document: the documents, the vendors, the customers, the sales number gaps and the proposal that recorded it', async () => {
