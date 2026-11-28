@@ -292,7 +292,7 @@ const QTT_LABELS: Record<string, string> = {
   '17': 'Tổng số thuế còn phải nộp',
   '19': 'Còn phải nộp sau miễn',
 };
-const QTT_AMOUNTS: Record<string, string> = { '09': '1800000000', '10': '870000000', '11': '930000000', '12': '15', '13': '139500000', '14': '10000000', '15': '50000000', '17': '79500000', '19': '79500000' };
+const QTT_AMOUNTS: Record<string, string> = { '09': String(1_800_000_000), '10': '870000000', '11': '930000000', '12': '15', '13': '139500000', '14': '10000000', '15': '50000000', '17': '79500000', '19': '79500000' };
 const qttData = (over: Partial<HouseholdQtt> = {}): HouseholdQtt => ({
   period: { year: 2026, from: '2026-01-01', to: '2026-12-31', ended: true },
   household: { name: 'Hộ kinh doanh Nguyễn Văn A', taxCode: '001234567890', representativeName: 'Nguyễn Văn A' },
@@ -347,7 +347,7 @@ describe('the 02/CNKD-TNCN-QTT annual worksheet workbook', () => {
 
   it('writes every line with its code and label, money as exact numbers and the rate as a percentage', async () => {
     const rows = qttRows(await qttSheet(qttData()));
-    expect([rows.get('[09]')?.getCell(2).value, rows.get('[09]')?.getCell(3).value]).toEqual(['Doanh thu', 1800000000]);
+    expect([rows.get('[09]')?.getCell(2).value, rows.get('[09]')?.getCell(3).value]).toEqual(['Doanh thu', 1_800_000_000]);
     expect(rows.get('[11]')?.getCell(3).value).toBe(930000000);
     expect(rows.get('[12]')?.getCell(3).value).toBe('15%');
     expect(rows.get('[13]')?.getCell(3).value).toBe(139500000);
