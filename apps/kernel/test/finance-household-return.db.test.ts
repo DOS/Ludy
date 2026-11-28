@@ -12,6 +12,7 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import type { HouseholdCnkd, HouseholdProfileView } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
+import { money } from '@ludy/l10n-vn';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -438,5 +439,114 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
       expect(w.vatCut).toMatchObject({ applied: true, total: null, ifEligible: null });
       expect(w.due).toBeNull();
     });
+  });
+
+  it('matches finance.ledger.account across 511 sub-accounts (active and inactive), reversals, returns, closing entries, non-511 accounts, and date boundaries (#3216)', async () => {
+    const o = await org();
+    await percentage(o);
+    await execute(o, 'finance.account.create', { parentCode: '511', code: '511.SHOPEE', name: 'Doanh thu Shopee' });
+    await execute(o, 'finance.account.create', { parentCode: '5111', code: '5111.LIVE', name: 'Doanh thu Livestream' });
+
+    // Before Q3 (feeds year-to-date revenueBefore only).
+    await entry(o.household, o.orgId, '2026-02-10', 'Bán Q1', [['111', 500000, 0], ['511', 0, 500000]]);
+    await entry(o.household, o.orgId, '2026-06-30', 'Bán cuối Q2', [['111', 200000, 0], ['5111', 0, 200000]]);
+
+    // Inside Q3: TT133 sub-accounts, active and later-deactivated org sub-accounts, reversal, debit return, non-511 accounts, 521, and boundary days.
+    await entry(o.household, o.orgId, '2026-07-01', 'Bán đầu Q3', [['111', 1000000, 0], ['511', 0, 1000000]]);
+    await entry(o.household, o.orgId, '2026-07-15', 'Bán Shopee', [['112', 400000, 0], ['511.SHOPEE', 0, 400000]]);
+    await entry(o.household, o.orgId, '2026-07-20', 'Bán Live', [['112', 300000, 0], ['5111.LIVE', 0, 300000]]);
+    await execute(o, 'finance.account.update', { code: '5111.LIVE', active: false });
+    const sale = await entry(o.household, o.orgId, '2026-08-05', 'Bán dịch vụ', [['131', 250000, 0], ['5113', 0, 250000]]);
+    await entry(o.household, o.orgId, '2026-08-06', 'Đảo bán dịch vụ', [['5113', 250000, 0], ['131', 0, 250000]], { reverses: sale });
+    await entry(o.household, o.orgId, '2026-08-10', 'Giảm trừ ghi nợ 5111', [['5111', 150000, 0], ['111', 0, 150000]]);
+    await entry(o.household, o.orgId, '2026-08-15', 'Doanh thu tài chính 515', [['112', 80000, 0], ['515', 0, 80000]]);
+    await entry(o.household, o.orgId, '2026-08-15', 'Thu nhập khác 711', [['111', 40000, 0], ['711', 0, 40000]]);
+    await entry(o.household, o.orgId, '2026-08-15', 'Chi phí 642', [['642', 120000, 0], ['111', 0, 120000]]);
+    await entry(o.household, o.orgId, '2026-09-30', 'Bán cuối Q3', [['111', 250000, 0], ['5118', 0, 250000]]);
+
+    // Inside Q4, including a 911 closing-style entry touching 511.
+    await entry(o.household, o.orgId, '2026-10-01', 'Bán đầu Q4', [['111', 900000, 0], ['511', 0, 900000]]);
+    await entry(o.household, o.orgId, '2026-12-31', 'Kết chuyển cuối năm', [['511', 200000, 0], ['911', 0, 200000]]);
+
+    // Another legal entity and another org must stay isolated.
+    await entry(o.company, o.orgId, '2026-08-15', 'Bán của công ty', [['111', 888000, 0], ['511', 0, 888000]]);
+    const other = await org();
+    await percentage(other);
+    await entry(other.household, other.orgId, '2026-08-15', 'Bán tổ chức khác', [['111', 777000, 0], ['511', 0, 777000]]);
+
+    const q3 = await cnkd(o, 3);
+    const ledgerQ3 = await query<{ debit: string; credit: string }>(o, 'finance.ledger.account', { period: '2026-Q3', legalEntityId: o.household, accountCode: '511' });
+    expect(q3.revenue).toBe(money(ledgerQ3.credit).minus(money(ledgerQ3.debit)).toFixed());
+    expect(q3.revenue).toBe('1800000');
+    expect(q3.yearToDate.revenueBefore).toBe('700000');
+    expect(q3.yearToDate.revenueToDate).toBe('2500000');
+
+    const q4 = await cnkd(o, 4);
+    const ledgerQ4 = await query<{ debit: string; credit: string }>(o, 'finance.ledger.account', { period: '2026-Q4', legalEntityId: o.household, accountCode: '511' });
+    expect(q4.revenue).toBe(money(ledgerQ4.credit).minus(money(ledgerQ4.debit)).toFixed());
+    expect(q4.revenue).toBe('700000');
+    expect(q4.yearToDate.revenueBefore).toBe('2500000');
+    expect(q4.yearToDate.revenueToDate).toBe('3200000');
+
+    // Mid-quarter opening counts entries before `from` in revenueBefore and from `from` onwards in revenue.
+    const mid = await org();
+    await percentage(mid, { effectiveFrom: '2026-08-15' });
+    await entry(mid.household, mid.orgId, '2026-02-10', 'Trước mở sổ Q1', [['111', 300000, 0], ['511', 0, 300000]]);
+    await entry(mid.household, mid.orgId, '2026-08-14', 'Trước mở sổ Q3', [['111', 400000, 0], ['511', 0, 400000]]);
+    await entry(mid.household, mid.orgId, '2026-08-15', 'Ngày mở sổ', [['111', 600000, 0], ['511', 0, 600000]]);
+    const midQ3 = await cnkd(mid, 3);
+    expect(midQ3.revenue).toBe('600000');
+    expect(midQ3.yearToDate.revenueBefore).toBe('700000');
+    expect(midQ3.yearToDate.revenueToDate).toBe('1300000');
+  });
+
+  it('computes 01/CNKD without PERIOD_TOO_LARGE when a quarter exceeds 50,000 ledger lines (#3216)', { timeout: 120_000 }, async () => {
+    const o = await org();
+    await percentage(o);
+    await execute(o, 'finance.account.create', { parentCode: '511', code: '511.SHOPEE', name: 'Doanh thu Shopee' });
+
+    // Q3 has > 50,000 non-511 lines (25,001 entries x 2 lines on 642/112) plus a few 511 entries; Q4 has > 50,000 lines directly on 511 entries.
+    await admin(async (a) => {
+      await a.query('BEGIN');
+      await a.query(
+        `CREATE TEMP TABLE bulk_entries ON COMMIT DROP AS
+         SELECT g, ludy_kernel.uuid_v7() AS entry_id, ludy_kernel.uuid_v7() AS source_id,
+                CASE WHEN g <= 25001 THEN DATE '2026-07-01' + (g % 90) ELSE DATE '2026-10-01' + (g % 90) END AS entry_date,
+                (g > 25001) AS is_sales
+         FROM pg_catalog.generate_series(1, 50002) g`,
+      );
+      await a.query(
+        `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id)
+         SELECT $1, entry_id, entry_date, 'Bút toán lô ' || g, 'finance.journal_voucher', source_id, $2 FROM bulk_entries`,
+        [o.orgId, o.household],
+      );
+      await a.query(
+        `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit)
+         SELECT $1::uuid, entry_id, 1, CASE WHEN is_sales THEN '111' ELSE '642' END, CASE WHEN is_sales THEN 100 ELSE 1000 END, 0 FROM bulk_entries
+         UNION ALL
+         SELECT $1::uuid, entry_id, 2, CASE WHEN is_sales THEN '511' ELSE '112' END, 0, CASE WHEN is_sales THEN 100 ELSE 1000 END FROM bulk_entries`,
+        [o.orgId],
+      );
+      await a.query('COMMIT');
+    });
+
+    await entry(o.household, o.orgId, '2026-07-10', 'Bán lẻ Q3', [['111', 1000000, 0], ['511', 0, 1000000]]);
+    await entry(o.household, o.orgId, '2026-08-12', 'Bán Shopee Q3', [['112', 500000, 0], ['511.SHOPEE', 0, 500000]]);
+    const reversed = await entry(o.household, o.orgId, '2026-09-01', 'Bán nhầm Q3', [['131', 200000, 0], ['5111', 0, 200000]]);
+    await entry(o.household, o.orgId, '2026-09-02', 'Đảo bán Q3', [['5111', 200000, 0], ['131', 0, 200000]], { reverses: reversed });
+
+    // Confirm both quarters actually exceed LEDGER_LINE_LIMIT in the ledger report path.
+    await expect(query(o, 'finance.ledger.account', { period: '2026-Q3', legalEntityId: o.household, accountCode: '511' })).rejects.toMatchObject({ code: 'PERIOD_TOO_LARGE' });
+    await expect(query(o, 'finance.ledger.account', { period: '2026-Q4', legalEntityId: o.household, accountCode: '511' })).rejects.toMatchObject({ code: 'PERIOD_TOO_LARGE' });
+
+    const q3 = await cnkd(o, 3);
+    expect(q3.revenue).toBe('1500000');
+    expect(q3.totals).toEqual({ revenue: '1500000', vat: '15000', pit: '7500', tax: '22500' });
+    expect(q3.due).toBe('22500');
+
+    const q4 = await cnkd(o, 4);
+    expect(q4.revenue).toBe('2500100');
+    expect(q4.yearToDate.revenueBefore).toBe('1500000');
+    expect(q4.yearToDate.revenueToDate).toBe('4000100');
   });
 });

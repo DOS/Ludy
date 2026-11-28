@@ -18,17 +18,16 @@ import { HOUSEHOLD_TRADES, zHouseholdCnkd, zHouseholdCnkdGet } from '@ludy/kerne
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { money, sum, toMoney } from '@ludy/l10n-vn';
+import { ledgerPeriod } from './domain/ledger-reports.ts';
 import { pickInForce } from './domain/household-rules.ts';
 import { taxOn } from './domain/household-tax.ts';
 import { householdProfileView } from './household.ts';
 import { yearToDateBlock } from './household-annual.ts';
-import { salesEntriesOf, tradesDifferEarlierInYear } from './household-year-sales.ts';
+import { salesTotalsOf, tradesDifferEarlierInYear } from './household-year-sales.ts';
 import { vatCutBlock, vatCutInForce, vatCutUnconfirmed } from './household-vat-cut.ts';
-import { accountLedgerOf } from './ledger-reports.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
-const SALES_ACCOUNT = '511';
 const FORM = '01/CNKD';
 
 const notRequired = () => new DomainError('HOUSEHOLD_RETURN_NOT_REQUIRED', 422, 'Hộ kinh doanh này không phải kê khai tờ khai 01/CNKD theo quý trong kỳ đã chọn');
@@ -41,8 +40,8 @@ export const householdCnkd = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<HouseholdCnkd> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
-    const ledger = await accountLedgerOf(ctx, `${input.year}-Q${input.quarter}`, entity, SALES_ACCOUNT);
-    const { to } = ledger.period;
+    const period = ledgerPeriod(`${input.year}-Q${input.quarter}`);
+    const { to } = period;
     // The return starts the day the household's first profile took effect: days before it are outside it.
     const opened = await ctx.trx
       .selectFrom('ludy_finance.household_profile')
@@ -53,7 +52,7 @@ export const householdCnkd = defineQuery({
       .limit(1)
       .executeTakeFirst();
     if (!opened || opened.effective_from > to) throw notRequired();
-    const from = ledger.period.from > opened.effective_from ? ledger.period.from : opened.effective_from;
+    const from = period.from > opened.effective_from ? period.from : opened.effective_from;
     // One profile for the whole quarter: a change inside it would need two returns' worth of parts, which a quarter cannot be asked for.
     const changed = await ctx.trx
       .selectFrom('ludy_finance.household_profile')
@@ -89,9 +88,8 @@ export const householdCnkd = defineQuery({
       if (!rates.has(t)) throw new DomainError('HOUSEHOLD_RATE_MISSING', 422, 'Chưa có tỷ lệ thuế cho một ngành nghề trong hồ sơ', { trade: t });
     }
 
-    // Revenue: the ledger's movement of 511 over the days of the return (credit less debit, so a return or a reversal lowers it).
-    const days = ledger.lines.filter((l) => l.entryDate >= from);
-    const revenue = toMoney(sum(days.map((l) => l.credit)).minus(sum(days.map((l) => l.debit))));
+    // Revenue: the ledger's movement of 511 over the days of the return [from, to] and earlier in the year [Jan 1, from) in one SQL aggregate (credit less debit, so a return or a reversal lowers it), with no LEDGER_LINE_LIMIT cap (#3216).
+    const { quarter: revenue, before: beforeRevenue } = await salesTotalsOf(ctx, entity, { yearStart: `${input.year}-01-01`, from, to });
 
     // The split: a single trade takes everything and cannot be split; several trades take what the household entered, each once, none negative, together no more than the revenue.
     const invalid = (message: string) => new DomainError('HOUSEHOLD_SPLIT_INVALID', 422, message);
@@ -154,9 +152,7 @@ export const householdCnkd = defineQuery({
     const cutRow = await vatCutInForce(ctx, to);
     const vatCut = vatCutBlock({ answer: profile.vatCutEligible, cut: cutRow, lines, complete });
     // The yearly rule (#3710 slice 3): the year's revenue so far decides whether anything is owed. What is owed in the quarter is the year-to-date tax at its last day less the year-to-date tax before it.
-    // The revenue before the quarter comes from the ledger; with several trades the household enters its split (`splitBefore`, per ask, nothing stored) and what is not given a trade holds the tax back.
-    const beforeEntries = from > `${input.year}-01-01` ? await salesEntriesOf(ctx, entity, { from: `${input.year}-01-01`, before: from }) : [];
-    const beforeRevenue = toMoney(sum(beforeEntries.map((e) => e.amount)));
+    // `beforeRevenue` was read in the same SQL snapshot above; with several trades the household enters its split (`splitBefore`, per ask, nothing stored) and what is not given a trade holds the tax back.
     const beforeGiven = new Map<string, string>();
     if (trades.length === 1) {
       if (input.splitBefore && input.splitBefore.length > 0) throw invalid('Hộ chỉ có một ngành nghề nên không chia doanh thu');

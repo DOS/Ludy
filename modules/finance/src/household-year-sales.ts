@@ -5,6 +5,7 @@
 // sub-accounts whose root is 511 (the same notion as `accountLedgerOf(..., '511')`).
 import { sql } from 'kysely';
 import type { QueryContext } from '@ludy/kernel-runtime';
+import { money, toMoney } from '@ludy/l10n-vn';
 
 type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
 
@@ -14,25 +15,59 @@ export interface SalesEntry {
   amount: string;
 }
 
-// `from` and `to` are days (inclusive); with `before` instead of `to` the range stops the day before it.
-export async function salesEntriesOf(ctx: Ctx, entity: string, range: { from: string; to: string } | { from: string; before: string }): Promise<SalesEntry[]> {
-  let query = ctx.trx
+export interface SalesTotals {
+  quarter: string;
+  before: string;
+}
+
+// Canonical decimal money string from a SQL numeric::text result (strips trailing zeros, never '-0').
+export function normalizeSalesTotal(raw: string | null | undefined): string {
+  const value = money(raw);
+  return value.isZero() ? '0' : toMoney(value);
+}
+
+function salesLines(ctx: Ctx, entity: string) {
+  return ctx.trx
     .selectFrom('ludy_finance.journal_line as l')
     .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
-    .select(['j.id', 'j.entry_date'])
-    .select(sql<string>`SUM(l.credit - l.debit)::text`.as('amount'))
     .where('l.org_id', '=', ctx.orgId)
+    .where('l.legal_entity_id', '=', entity)
     .where('j.legal_entity_id', '=', entity)
-    .where('j.entry_date', '>=', range.from)
     .where((eb) =>
       eb.or([
         eb('l.account_code', 'like', '511%'),
         eb('l.account_code', 'in', eb.selectFrom('ludy_finance.org_account').select('code').where('org_id', '=', ctx.orgId).where('root_code', '=', '511')),
       ]),
     );
+}
+
+// `from` and `to` are days (inclusive); with `before` instead of `to` the range stops the day before it.
+export async function salesEntriesOf(ctx: Ctx, entity: string, range: { from: string; to: string } | { from: string; before: string }): Promise<SalesEntry[]> {
+  let query = salesLines(ctx, entity)
+    .select(['j.id', 'j.entry_date'])
+    .select(sql<string>`SUM(l.credit - l.debit)::text`.as('amount'))
+    .where('j.entry_date', '>=', range.from);
   query = 'to' in range ? query.where('j.entry_date', '<=', range.to) : query.where('j.entry_date', '<', range.before);
   const rows = await query.groupBy(['j.id', 'j.entry_date']).orderBy('j.entry_date').orderBy('j.id').execute();
   return rows.map((r) => ({ entryId: r.id, date: r.entry_date, amount: r.amount }));
+}
+
+// One-statement revenue sums for 01/CNKD (#3216): net movement (credit less debit) of account 511 and its sub-accounts over [from, to] (the return quarter) and [yearStart, from) (earlier in the year).
+// Reads one PostgreSQL snapshot with no LEDGER_LINE_LIMIT cap and returns two scalars rather than per-entry or per-line rows.
+export async function salesTotalsOf(ctx: Ctx, entity: string, range: { yearStart: string; from: string; to: string }): Promise<SalesTotals> {
+  const scanFrom = range.yearStart < range.from ? range.yearStart : range.from;
+  const row = await salesLines(ctx, entity)
+    .select([
+      sql<string>`COALESCE(SUM(l.credit - l.debit) FILTER (WHERE j.entry_date >= ${range.from}::date), 0)::text`.as('quarter'),
+      sql<string>`COALESCE(SUM(l.credit - l.debit) FILTER (WHERE j.entry_date >= ${range.yearStart}::date AND j.entry_date < ${range.from}::date), 0)::text`.as('before'),
+    ])
+    .where('j.entry_date', '>=', scanFrom)
+    .where('j.entry_date', '<=', range.to)
+    .executeTakeFirst();
+  return {
+    quarter: normalizeSalesTotal(row?.quarter),
+    before: normalizeSalesTotal(row?.before),
+  };
 }
 
 // With one trade the year's revenue is put on it whole, which is wrong when an earlier profile of the year named another trade: the sales before the book's first day were made under that one. True when a profile
