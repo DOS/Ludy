@@ -10,6 +10,8 @@ import {
   zMeetingBriefDraftSaveOutput,
   zMeetingFactsInput,
   zMeetingFactsOutput,
+  zMeetingResearchInput,
+  zMeetingResearchOutput,
 } from './crm-meeting-facts.ts';
 import { zMinutesLinkCreate, zMinutesLinkCreated, zMinutesLinkItems, zMinutesLinkList, zMinutesLinkRevoke, zMinutesLinkRevoked, zMinutesLinkSwitch, zMinutesLinkSwitchGet, zOrgMinutesLinkList, zOrgMinutesLinkListInput } from './meeting-minutes-link.ts';
 import { z } from 'zod';
@@ -1516,6 +1518,8 @@ export const contract = {
       conversations: oc.input(zPartyDealsQuery).output(z.array(zConversationOther)),
       // Pre-meeting deterministic facts brief for an agenda event, booking, or meeting matched by case-folded attendee email (#4991 PM1, AI-free).
       meetingFacts: oc.input(zMeetingFactsInput).output(zMeetingFactsOutput),
+      // Dy's pre-meeting brief (PM2, #4992) from PM1 facts and optionally the contact's confirmed company website.
+      meetingResearch: oc.input(zMeetingResearchInput).output(zMeetingResearchOutput),
       // SG1 contact "Can chu y" list and per-member "Da xem" marks (#4993).
       attention: oc.input(zPartyAttentionQuery).output(zPartyAttentionList),
       markAttentionSeen: oc.input(zPartyAttentionMarkSeen).output(zPartyAttentionSeen),

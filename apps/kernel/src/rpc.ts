@@ -12,7 +12,7 @@ import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, t
 import { assertSignCaProviderAllowed, validateSignaturePngBase64 } from '@ludy/mod-sign';
 import { SANDBOX_CA_SECRET, createSandboxCaAdapter } from '@ludy/sign';
 import type { SignApiKeyListResult, SignApiKeyRecord, SignCaConnectionRecord, SignCaSettingsResult, SignDepositProfileContract, SignWebhookDeleteResult, SignWebhookDeliveriesResult, SignWebhookListResult, SignWebhookPingResult, SignWebhookRecord } from '@ludy/kernel-contract';
-import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@ludy/kernel-contract';
+import type { McpWakeView, MeetingHookView, MeetingResearchSourceOutput, QuoteLinkCreated } from '@ludy/kernel-contract';
 import { makePairingCode } from './mcp-endpoint.ts';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import { adLaunchCapable } from './ads-launch-capable.ts';
@@ -122,6 +122,7 @@ import { explainSurplus, stockSurplusAi } from './stock-surplus-ai.ts';
 import { einvoiceReasonAi, suggestCorrectionReason } from './einvoice-reason-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
+import { meetingResearchAi, prepareMeetingResearch } from './crm-meeting-research-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { prepareProjectCycleSummary, projectCycleSummaryAi } from './project-cycle-summary-ai.ts';
 import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, prepareRoadmapSignalMatch, projectRoadmapAi } from './project-roadmap-ai.ts';
@@ -722,6 +723,8 @@ export function createRpcHandler(
   // Dy's brief before a booking linked to a deal (#3115): the same reader and model, a budget of its own. It is told the deal's facts and, while the org allows AI on customers' words, the latest messages the
   // member may read; what it answers is a summary and 2 to 3 points that are refused when they hold a figure, a link or a name the facts do not hold. Computed when read; nothing is stored or sent.
   const meetingBriefCoworker = meetingBriefAi(conversationReader?.meetingBrief ? { meetingBrief: conversationReader.meetingBrief.bind(conversationReader) } : null, suggestionBudget());
+  // Dy's pre-meeting research brief (#4992, PM2): PM1 facts plus optional confirmed company homepage fetch, sharing the drafts' rate budget.
+  const meetingResearchCoworker = meetingResearchAi(conversationReader?.meetingResearch ? { meetingResearch: conversationReader.meetingResearch.bind(conversationReader) } : null, drafts);
 
   // Vy's weekly status of one project (#2597): deterministic counts and task titles/comments in the member's own transaction
   // (never reading notes), then one metered model call outside it; refused when any number outside input appears.
@@ -2316,6 +2319,14 @@ export function createRpcHandler(
         list: os.crm.contacts.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.contact.list', input, { actor, orgId }))),
         conversations: os.crm.contacts.conversations.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.conversations', input, { actor, orgId }))),
         meetingFacts: os.crm.contacts.meetingFacts.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.contact.meeting_facts', input, { actor, orgId }))),
+        meetingResearch: os.crm.contacts.meetingResearch.handler(({ context, input }) =>
+          inCrm(context, (orgId, actor) =>
+            prepareMeetingResearch(meetingResearchCoworker, orgId, actor.userId, input, {
+              readSource: (srcInput) => runtime.query<MeetingResearchSourceOutput>('crm.contact.meeting_research_source', srcInput, { actor, orgId }),
+              recordAudit: (auditInput) => runtime.execute('crm.contact.meeting_research.audit', auditInput, { actor, orgId }).then(() => undefined),
+            }),
+          ),
+        ),
         attention: os.crm.contacts.attention.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.attention', input, { actor, orgId }))),
         markAttentionSeen: os.crm.contacts.markAttentionSeen.handler(crmCommand('crm.party.attention_seen')),
         // The company a person may work at (#2438): the three rules read in the member's own transaction, then the model orders the names outside it, through the

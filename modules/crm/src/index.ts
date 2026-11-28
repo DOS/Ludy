@@ -17,7 +17,7 @@ import { nextStepCommands, nextStepQueries } from './next-steps.ts';
 import { attentionCommands, attentionQueries } from './attention.ts';
 import { followupQueries } from './followup-source.ts';
 import { meetingBriefQueries } from './meeting-brief.ts';
-import { meetingFactsQueries } from './meeting-facts.ts';
+import { meetingFactsCommands, meetingFactsQueries } from './meeting-facts.ts';
 import { quoteCommands, quoteQueries } from './quotes.ts';
 import { quotePdfCommands, quotePdfQueries } from './quote-pdf.ts';
 import { quoteSuggestSource } from './quote-suggest.ts';
@@ -59,6 +59,6 @@ export { dealSalesOrders, quoteAccept, quoteDecline, salesOrderCancel, salesOrde
 
 export { crmToday } from './today.ts';
 
-export const crmCommands = [...crmEngageProposalCommands, ...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...dealMeetingUpdateCommands, ...stageCommands, ...importCommands, ...nextStepCommands, ...attentionCommands, ...quoteCommands, ...quotePdfCommands, ...salesOrderCommands, ...mcpCrmWriteCommands];
+export const crmCommands = [...crmEngageProposalCommands, ...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...dealMeetingUpdateCommands, ...stageCommands, ...importCommands, ...nextStepCommands, ...attentionCommands, ...quoteCommands, ...quotePdfCommands, ...salesOrderCommands, ...mcpCrmWriteCommands, ...meetingFactsCommands];
 export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...companySuggestQueries, ...importQueries, ...nextStepQueries, ...attentionQueries, ...quoteQueries, quoteSuggestSource, ...followupQueries, ...meetingBriefQueries, ...meetingFactsQueries, quoteReport, ...quotePdfQueries, ...salesOrderQueries, crmToday, crmWonDealsSignals, crmOpenDealsSignals, ...mcpCrmQueries, ...crmWakeQueries];
 export { crmManifest } from './manifest.ts';

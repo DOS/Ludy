@@ -88,6 +88,7 @@ export type MeetingFactsInvoices = z.infer<typeof zMeetingFactsInvoices>;
 export const zMeetingFactsContact = z.strictObject({
   partyId: zId,
   contactName: z.string(),
+  websiteUrl: z.string().max(270).nullable().optional(),
   deals: z.array(zMeetingFactsDeal).max(MEETING_FACTS_DEALS_MAX),
   latestQuote: zMeetingFactsQuote.nullable(),
   invoices: zMeetingFactsInvoices.nullable(),
@@ -102,6 +103,77 @@ export const zMeetingFactsOutput = z.strictObject({
   contacts: z.array(zMeetingFactsContact).max(MEETING_FACTS_CONTACTS_MAX),
 });
 export type MeetingFactsOutput = z.infer<typeof zMeetingFactsOutput>;
+
+export const MEETING_RESEARCH_AI_STATES = ['ok', 'off', 'paused', 'budget', 'busy', 'failed', 'refused'] as const;
+export const zMeetingResearchAiState = z.enum(MEETING_RESEARCH_AI_STATES);
+export type MeetingResearchAiState = z.infer<typeof zMeetingResearchAiState>;
+
+export const MEETING_RESEARCH_WEBSITE_OUTCOMES = [
+  'none',
+  'skipped',
+  'used',
+  'blocked',
+  'redirect_blocked',
+  'forbidden',
+  'rate_limited',
+  'challenge',
+  'not_html',
+  'timeout',
+  'failed',
+] as const;
+export const zMeetingResearchWebsiteOutcome = z.enum(MEETING_RESEARCH_WEBSITE_OUTCOMES);
+export type MeetingResearchWebsiteOutcome = z.infer<typeof zMeetingResearchWebsiteOutcome>;
+
+export const zMeetingResearchInput = z.strictObject({
+  targetKind: zMeetingBriefTargetKind,
+  targetId: zId,
+  partyId: zId,
+  readWebsite: z.boolean(),
+  expectedWebsiteUrl: z.string().max(270).nullable().optional(),
+});
+export type MeetingResearchInput = z.infer<typeof zMeetingResearchInput>;
+
+export const zMeetingResearchOutput = z.strictObject({
+  ai: zMeetingResearchAiState,
+  partyId: zId,
+  websiteUrl: z.string().max(270).nullable(),
+  websiteOutcome: zMeetingResearchWebsiteOutcome,
+  summary: z.string().max(600).nullable(),
+  points: z.array(z.string().max(240)).max(3),
+  websiteQuotes: z.array(z.string().max(200)).max(2),
+  tainted: z.literal(true),
+});
+export type MeetingResearchOutput = z.infer<typeof zMeetingResearchOutput>;
+
+export const zMeetingResearchSourceInput = z.strictObject({
+  targetKind: zMeetingBriefTargetKind,
+  targetId: zId,
+  partyId: zId,
+});
+export type MeetingResearchSourceInput = z.infer<typeof zMeetingResearchSourceInput>;
+
+export const zMeetingResearchSourceOutput = z.strictObject({
+  aiStopped: z.boolean(),
+  aiBudgetSpent: z.boolean(),
+  wordsAllowed: z.boolean(),
+  contact: zMeetingFactsContact.nullable(),
+});
+export type MeetingResearchSourceOutput = z.infer<typeof zMeetingResearchSourceOutput>;
+
+export const zMeetingResearchAuditInput = z.strictObject({
+  targetKind: zMeetingBriefTargetKind,
+  targetId: zId,
+  partyId: zId,
+  aiState: zMeetingResearchAiState,
+  dealsCount: z.number().int().min(0).max(MEETING_FACTS_DEALS_MAX),
+  messagesCount: z.number().int().min(0).max(MEETING_FACTS_MESSAGES_MAX),
+  websiteRequested: z.boolean(),
+  websiteUsed: z.boolean(),
+  websiteChars: z.number().int().min(0).max(3_000),
+  quotesCount: z.number().int().min(0).max(2),
+  pointsCount: z.number().int().min(0).max(3),
+});
+export type MeetingResearchAuditInput = z.infer<typeof zMeetingResearchAuditInput>;
 
 export const zMeetingBriefDraftListInput = z.strictObject({
   targetKind: zMeetingBriefTargetKind,
