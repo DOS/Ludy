@@ -568,7 +568,7 @@ export interface HttpDeps {
   // Every other POST /api/files running at once (#432): each holds its body (up to MAX_FILES_PER_UPLOAD files, about
   // 26 MB) in memory. Default: twice UPLOAD_COMPLETE_CONCURRENCY, and half of that for one user.
   directUploads?: ConcurrencyLimiter;
-  // Exports of the books (GET /api/export/*) building at once in this process (#2121). Default: EXPORT_CONCURRENCY, and
+  // Exports of the books (/api/export/*, GET and the two household worksheets by POST) building at once in this process (#2121). Default: EXPORT_CONCURRENCY, and
   // two of them for one user.
   exports?: ConcurrencyLimiter;
   // Channel connections (ADR-0025): the broker that seals tokens, and whether the sandbox channel is on. Unset: no
@@ -5933,42 +5933,35 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
 
-    // The 01/CNKD quarterly return worksheet of a household business (#2518), ?legalEntityId=<household>&year=2026&quarter=3 and, for a household with several trades, &split=goods:1000000,services:600000 (and, from the yearly rule, &splitBefore=... and &deductionTrade=...).
-    // The query checks the year and quarter, the roles, the profile and the split, and refuses (422) while revenue is unassigned (forExport), so the file only ever holds whole figures. While a row
-    // behind the figures is still unconfirmed the file is given and every figure in it carries the provisional label (#2518). The audit row is recorded before the file is sent. A worksheet: Ludy files nothing.
-    app.get('/api/export/household-cnkd.xlsx', async (c) => {
+    // The body of a household return worksheet request (#5324): the typed amounts and the split by trade are the household's figures, so they travel in a JSON body and never in a URL (an access log, a browser history or a proxy
+    // would keep them). The body is the input of the query as the screen sends it, without forExport, which the route sets itself; the query's own schema (strict, one per field) refuses anything else with a 422.
+    const householdWorksheetBody = async (c: { req: { json: () => Promise<unknown> } }): Promise<Record<string, unknown>> => {
+      const raw: unknown = await c.req.json().catch(() => null);
+      // forExport is the route's own (it makes the query refuse a held worksheet), so a body that names it is refused, never trusted.
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw) || 'forExport' in raw) throw new DomainError('VALIDATION', 422, 'Dữ liệu không hợp lệ');
+      return raw as Record<string, unknown>;
+    };
+    // The 01/CNKD quarterly return worksheet of a household business (#2518), POST with a JSON body { legalEntityId, year, quarter } and, for a household with several trades, split: [{ trade, revenue }] (and, from the yearly rule,
+    // splitBefore: [{ trade, revenue }] and deductionTrade). The query checks the year and quarter, the roles, the profile and the split, and refuses (422) while revenue is unassigned (forExport), so the file only ever holds
+    // whole figures. While a row behind the figures is still unconfirmed the file is given and every figure in it carries the provisional label (#2518). The audit row is recorded before the file is sent. A worksheet: Ludy files nothing.
+    // The export slot (app.use above) is taken before bodyLimit reads the body, as on the upload routes: a member who sends a slow body holds at most their own two slots until the request times out.
+    app.post('/api/export/household-cnkd.xlsx', bodyLimit({ maxSize: 8 * 1024 }), async (c) => {
       try {
         const user = c.get('user');
         const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const actor = actorOf(user);
-        const legalEntityId = c.req.query('legalEntityId') ?? '';
-        const year = Number(c.req.query('year') ?? '');
-        const quarter = Number(c.req.query('quarter') ?? '');
-        const tradeSplit = (text: string) =>
-          text
-            .split(',')
-            .filter((part) => part !== '')
-            .map((part) => {
-              // Everything after the first colon is the amount, so "goods:1:2" fails the amount check instead of being read as 1.
-              const at = part.indexOf(':');
-              return { trade: at < 0 ? part : part.slice(0, at), revenue: at < 0 ? '' : part.slice(at + 1) };
-            });
-        const split = tradeSplit(c.req.query('split') ?? '');
-        // The yearly rule (#3710 slice 3): &splitBefore=goods:600000 is the split of the year's revenue before the quarter, &deductionTrade=services the trade that takes the threshold deduction.
-        const splitBefore = tradeSplit(c.req.query('splitBefore') ?? '');
-        const deductionTrade = c.req.query('deductionTrade');
-        const sheetData = await runtime.query<HouseholdCnkd>(
-          'finance.household.cnkd',
-          { legalEntityId, year, quarter, ...(split.length > 0 ? { split } : {}), ...(splitBefore.length > 0 ? { splitBefore } : {}), ...(deductionTrade ? { deductionTrade } : {}), forExport: true },
-          { actor, orgId },
-        );
+        const input = await householdWorksheetBody(c);
+        const sheetData = await runtime.query<HouseholdCnkd>('finance.household.cnkd', { ...input, forExport: true }, { actor, orgId });
+        const period = `${sheetData.period.year}-Q${sheetData.period.quarter}`;
         const bytes = await buildCnkdWorkbook(sheetData, config.BRAND_NAME);
-        await runtime.execute('finance.household.export', { legalEntityId, book: '01/CNKD', period: `${year}-Q${quarter}`, rows: sheetData.lines.length }, { actor, orgId });
+        // The file name is built before the audit row is written, as for the household books above.
+        const disposition = attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'to-khai-01-cnkd', period, ORG_SLUG], 'xlsx');
+        await runtime.execute('finance.household.export', { legalEntityId: String(input.legalEntityId), book: '01/CNKD', period, rows: sheetData.lines.length }, { actor, orgId });
         return new Response(body(bytes), {
           headers: {
             'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'to-khai-01-cnkd', `${year}-Q${quarter}`, ORG_SLUG], 'xlsx'),
+            'content-disposition': disposition,
             'cache-control': 'private, no-store',
           },
         });
@@ -5977,31 +5970,26 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
 
-    // The 02/CNKD-TNCN-QTT annual PIT finalization worksheet of a household on the income method (#5285), ?legalEntityId=<household>&year=2026 and, when the household typed them, &withheld=<dong>&prepaid=<dong>&noPaymentRevenue=<dong>
-    // (whole dong; an empty or fractional value is a 422). The query checks the year, the roles, the profile, the amounts and refuses (422 HOUSEHOLD_RETURN_HELD) while anything is held (forExport), so the file only ever holds
+    // The 02/CNKD-TNCN-QTT annual PIT finalization worksheet of a household on the income method (#5285), POST with a JSON body { legalEntityId, year } and, when the household typed them, withheld, prepaid and noPaymentRevenue
+    // (whole dong, as text; an empty or fractional value is a 422). The query checks the year, the roles, the profile, the amounts and refuses (422 HOUSEHOLD_RETURN_HELD) while anything is held (forExport), so the file only ever holds
     // whole figures. While a row behind the figures is still unconfirmed the file is given and every figure that depends on it carries the provisional label. The audit row is recorded before the file is sent. A worksheet: Ludy files nothing.
-    app.get('/api/export/household-qtt.xlsx', async (c) => {
+    app.post('/api/export/household-qtt.xlsx', bodyLimit({ maxSize: 8 * 1024 }), async (c) => {
       try {
         const user = c.get('user');
         const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const actor = actorOf(user);
-        const legalEntityId = c.req.query('legalEntityId') ?? '';
-        const year = Number(c.req.query('year') ?? '');
-        const withheld = c.req.query('withheld');
-        const prepaid = c.req.query('prepaid');
-        const noPaymentRevenue = c.req.query('noPaymentRevenue');
-        const sheetData = await runtime.query<HouseholdQtt>(
-          'finance.household.qtt',
-          { legalEntityId, year, ...(withheld !== undefined ? { withheld } : {}), ...(prepaid !== undefined ? { prepaid } : {}), ...(noPaymentRevenue !== undefined ? { noPaymentRevenue } : {}), forExport: true },
-          { actor, orgId },
-        );
+        const input = await householdWorksheetBody(c);
+        const sheetData = await runtime.query<HouseholdQtt>('finance.household.qtt', { ...input, forExport: true }, { actor, orgId });
+        const year = sheetData.period.year;
         const bytes = await buildQttWorkbook(sheetData, config.BRAND_NAME);
-        await runtime.execute('finance.household.export', { legalEntityId, book: '02/CNKD-TNCN-QTT', period: String(year), rows: sheetData.lines.length }, { actor, orgId });
+        // The file name is built before the audit row is written, as for the household books above.
+        const disposition = attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'to-khai-02-cnkd-tncn-qtt', String(year), ORG_SLUG], 'xlsx');
+        await runtime.execute('finance.household.export', { legalEntityId: String(input.legalEntityId), book: '02/CNKD-TNCN-QTT', period: String(year), rows: sheetData.lines.length }, { actor, orgId });
         return new Response(body(bytes), {
           headers: {
             'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'to-khai-02-cnkd-tncn-qtt', String(year), ORG_SLUG], 'xlsx'),
+            'content-disposition': disposition,
             'cache-control': 'private, no-store',
           },
         });
