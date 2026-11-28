@@ -228,7 +228,7 @@ async function assertPostable(ctx: QueryContext, built: Built) {
   const lines = built.worked.entry.map((l) => ({ account: l.account, partyId: null, debit: l.debit, credit: l.credit }));
   const problems = journalVoucherProblems(lines);
   if (problems.length > 0) throw new DomainError('STOCK_COUNT_UNSUPPORTED', 422, 'Không lập được bút toán chênh lệch kiểm kê: bút toán không hợp lệ', { problems });
-  await assertUsableAccounts(ctx, lines.map((l) => l.account));
+  await assertUsableAccounts(ctx, lines.map((l) => l.account), { legalEntityId: built.head.legal_entity_id, date: built.head.count_date });
 }
 
 function proposalOf(built: Built): StockCountProposal {

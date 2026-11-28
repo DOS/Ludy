@@ -48,13 +48,18 @@ const PROBLEM_MESSAGES: Record<JournalVoucherProblem, string> = {
   TOTAL_TOO_LARGE: 'Tổng số tiền vượt quá giới hạn cho phép',
 };
 
-// Every check of a voucher, when it is asked for and again when it is posted: its shape, its accounts (in the org's
-// chart and in use) and its parties (found in the org; read FOR SHARE when posting, so they stay as read until commit).
-export async function checkJournalVoucherLines(ctx: QueryContext, lines: ReadonlyArray<{ account: string; partyId: string | null; debit: string; credit: string }>, lock: boolean) {
+// Every check of a voucher, when it is asked for and again when it is posted: its shape, its accounts (in the chart of the legal entity's books on the voucher's date, and in use) and its parties (found in the org; read
+// FOR SHARE when posting, so they stay as read until commit). `entry` is the voucher's entity (left out: the default, as when it is posted) and date (#1403); a call without it checks against the org's TT133 chart.
+export async function checkJournalVoucherLines(
+  ctx: QueryContext,
+  lines: ReadonlyArray<{ account: string; partyId: string | null; debit: string; credit: string }>,
+  lock: boolean,
+  entry?: { legalEntityId: string | null | undefined; date: string },
+) {
   const problems = journalVoucherProblems(lines);
   const first = problems[0];
   if (first) throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, PROBLEM_MESSAGES[first], { problems });
-  await assertUsableAccounts(ctx, lines.map((l) => l.account));
+  await assertUsableAccounts(ctx, lines.map((l) => l.account), entry ? { legalEntityId: await resolveLegalEntity(ctx, entry.legalEntityId), date: entry.date } : undefined);
   const ids = [...new Set(lines.flatMap((l) => (l.partyId ? [l.partyId] : [])))];
   const parties = new Map<string, { id: string; name: string; tax_code: string | null }>();
   if (ids.length > 0) {
@@ -84,7 +89,7 @@ export const prepareJournalVoucher = defineCommand({
       input = raw;
     }
     const lines = input.lines.map((l) => ({ ...l, partyId: l.partyId ?? null }));
-    const parties = await checkJournalVoucherLines(ctx, lines, false);
+    const parties = await checkJournalVoucherLines(ctx, lines, false, { legalEntityId: input.legalEntityId, date: input.date });
     // The legal entity whose books the voucher goes to (#1280), stored with the proposal so the approver posts it there.
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     // A month-end accrual of platform fees (a key in the description, slice F of #2516): one standing at a time, one waiting per platform and month.
@@ -215,7 +220,7 @@ export const recordJournalVoucher = defineCommand({
     const lines = payload.lines.map((l) => ({ account: l.account, partyId: l.party?.id ?? null, debit: l.debit, credit: l.credit }));
     // The stored payload is checked as if new: a sub-account deactivated or a party gone since it was asked for is
     // refused here. The total is the lines' sum, never taken from the payload as is.
-    await checkJournalVoucherLines(ctx, lines, true);
+    await checkJournalVoucherLines(ctx, lines, true, { legalEntityId: payload.legalEntityId, date: payload.date });
     // Asked again at the approval: an accrual posted since the request, or another proposal of the same accrual, refuses this one.
     if (payload.legalEntityId) await refuseSecondFeeAccrual(ctx, payload.legalEntityId, payload.description, ctx.proposalId);
     if (journalVoucherTotal(lines) !== payload.total) {

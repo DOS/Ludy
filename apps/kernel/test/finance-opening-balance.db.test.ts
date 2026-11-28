@@ -342,7 +342,7 @@ suite('opening balances from Excel (#320)', () => {
 
   // A balanced entry written as the superuser in its own transaction (any writer: the guard runs for every role); the
   // database error, or null once committed.
-  async function rawEntry(orgId: string, entryDate: string, sourceType = 'test.sale'): Promise<{ code: string | undefined; message: string; detail: string | undefined } | null> {
+  async function rawEntry(orgId: string, entryDate: string, sourceType = 'test.sale', accounts: readonly [string, string] = ['111', '411']): Promise<{ code: string | undefined; message: string; detail: string | undefined } | null> {
     return admin(async (c) => {
       await c.query('BEGIN');
       try {
@@ -351,8 +351,8 @@ suite('opening balances from Excel (#320)', () => {
           [orgId, entryDate, sourceType, randomUUID()],
         );
         await c.query(
-          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '111', 500, 0), ($1, $2, 2, '411', 0, 500)`,
-          [orgId, rows[0]?.id],
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, $3, 500, 0), ($1, $2, 2, $4, 0, 500)`,
+          [orgId, rows[0]?.id, accounts[0], accounts[1]],
         );
         await c.query('COMMIT');
         return null;
@@ -604,5 +604,68 @@ suite('opening balances from Excel (#320)', () => {
     const [line] = (await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_finance.bank_line WHERE org_id = $1', [orgId]))).rows;
     const suggested = await rpc('bank/lineVoucher', await tokenFor(owner), { bankLineId: line?.id }, slug);
     expect(suggested.body).toMatchObject({ voucher: { counterAccount: '331', amount: '25000000' }, suggested: { party: { id: known }, reason: 'balance' } });
+  });
+
+  it('opens a TT99 entity on TT99 accounts as at the day before its first TT99 year, and keeps the chart under it (#1403)', async () => {
+    const fresh = await rpc('org/create', await tokenFor(owner), { name: 'Công ty Số dư TT99', idempotencyKey: randomUUID() }, null);
+    const slug = String(fresh.body?.slug);
+    const orgId = String(fresh.body?.orgId);
+    const entity = (await admin((c) => c.query<{ id: string }>(`SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`, [orgId]))).rows[0]?.id as string;
+    const startTt99 = () =>
+      admin((c) => c.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2026-01-01')`, [orgId, entity]));
+    // 212 (finance lease assets) and 213 (intangible assets) are TT99 accounts that TT133 does not have; 2112 is the other way round.
+    const tt99Rows = [row('212', '600000', ''), row('213', '400000', ''), row('411', '', '1000000')];
+    const opening = (rows: ReturnType<typeof row>[]) => ({ asOf: '2025-12-31', rows });
+
+    // Under TT133 (no books row yet), the TT99-only accounts are unknown, as before.
+    const before = await rpc('openingBalance/preview', await tokenFor(owner), opening(tt99Rows), slug);
+    expect(before.body.rows.map((r: any) => r.errors)).toEqual([['ACCOUNT_UNKNOWN'], ['ACCOUNT_UNKNOWN'], []]);
+
+    await startTt99();
+    // From 1 January 2026 the books are TT99: the balances as at 31 December open on TT99 accounts, and a TT133-only account is unknown.
+    const after = await rpc('openingBalance/preview', await tokenFor(owner), opening(tt99Rows), slug);
+    expect(after.body).toMatchObject({ ok: true, errors: [], lines: 3 });
+    const tt133Only = await rpc('openingBalance/preview', await tokenFor(owner), opening([row('2112', '1000', ''), row('411', '', '1000')]), slug);
+    expect(tt133Only.body.rows.map((r: any) => r.errors)).toEqual([['ACCOUNT_UNKNOWN'], []]);
+    // An ordinary entry of that day is still checked against the chart of its own day, TT133, so it cannot name the TT99-only account.
+    expect(await rawEntry(orgId, '2025-12-31', 'test.sale', ['212', '411'])).toMatchObject({ code: '23503' });
+
+    const posted = await post(owner, opening(tt99Rows), slug);
+    expect(posted.status).toBe(200);
+    const lines = await admin((c) => c.query<{ account_code: string }>(`SELECT account_code FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no`, [orgId, posted.body.journalEntryId]));
+    expect(lines.rows.map((r) => r.account_code)).toEqual(['212', '213', '411']);
+
+    // The row cannot be removed or moved while the opening entry stands under its chart.
+    expect(await admin((c) => c.query(`DELETE FROM ludy_finance.legal_entity_books WHERE org_id = $1`, [orgId])).then(() => null, (e: { code?: string; message?: string }) => e)).toMatchObject({
+      code: '23514',
+      message: 'BOOKS_REGIME_IN_USE',
+    });
+
+    // Its reversal is dated the same day and mirrors the lines, so it is under the same chart.
+    const asked = await rpc(
+      'inbox/request',
+      await tokenFor(owner),
+      { command: 'finance.journal.reverse', input: { entryId: posted.body.journalEntryId, entryDate: '2025-12-31', reason: 'Sai số' }, idempotencyKey: randomUUID() },
+      slug,
+    );
+    expect((await rpc('inbox/approve', await tokenFor(owner, { mfa: true }), { acceptUnverifiedSignature: true, id: asked.body.proposalId, revision: 1, idempotencyKey: randomUUID() }, slug)).status).toBe(200);
+  });
+
+  it('refuses to start TT99 books the day after a TT133 opening entry, which the new chart would claim (#1403)', async () => {
+    const fresh = await rpc('org/create', await tokenFor(owner), { name: 'Công ty Số dư TT133', idempotencyKey: randomUUID() }, null);
+    const slug = String(fresh.body?.slug);
+    const orgId = String(fresh.body?.orgId);
+    expect((await post(owner, balanced('2025-12-31'), slug)).status).toBe(200);
+    const start = (from: string) =>
+      admin((c) =>
+        c.query(
+          `INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from)
+           SELECT $1, id, 'tt99', '2026.1', $2 FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`,
+          [orgId, from],
+        ),
+      ).then(() => null, (e: { code?: string; message?: string }) => e);
+    expect(await start('2026-01-01')).toMatchObject({ code: '23514', message: 'BOOKS_REGIME_IN_USE' });
+    // A year start further on is not touched by it.
+    expect(await start('2027-01-01')).toBeNull();
   });
 });

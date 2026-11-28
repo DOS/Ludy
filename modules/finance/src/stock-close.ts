@@ -141,7 +141,7 @@ async function assertPostable(ctx: QueryContext, built: Built) {
   const lines = built.worked.lines.map((l) => ({ account: l.account, partyId: null, debit: l.debit, credit: l.credit }));
   const problems = journalVoucherProblems(lines);
   if (problems.length > 0) throw new DomainError('STOCK_CLOSE_UNSUPPORTED', 422, `Không lập được bút toán giá vốn tháng ${label(built.month)}: bút toán không hợp lệ`, { problems });
-  await assertUsableAccounts(ctx, lines.map((l) => l.account));
+  await assertUsableAccounts(ctx, lines.map((l) => l.account), { legalEntityId: built.legalEntityId, date: monthEnd(built.month) });
 }
 
 function proposalOf(built: Built): StockCloseProposal {
