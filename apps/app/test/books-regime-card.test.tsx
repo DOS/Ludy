@@ -80,7 +80,9 @@ describe('BooksRegimeCard', () => {
     expect(html).toContain(prefix(b.offered));
     expect(html).toContain(prefix(b.choose));
     expect(html).toContain('2027');
-    expect(html).not.toContain('Công ty TNHH Mẫu');
+    // No heading with the entity name (the region is still labelled by it for a screen reader, so the name is in an attribute, not in the text).
+    expect(html).not.toContain('</h3>');
+    expect(html).not.toMatch(/>Công ty TNHH Mẫu</);
     expect(html).not.toContain(b.ownerOnly);
     // The form of a choice is closed until the button is pressed.
     expect(html).not.toContain(b.ack);
