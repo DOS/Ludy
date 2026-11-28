@@ -54,7 +54,6 @@ suite('an owner chooses Circular 99 for an entity (#1403 slice B1)', () => {
     );
   const cancel = (entity: string, effectiveFrom: string, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asMfa(who.admin)) =>
     rt.execute('finance.books.cancel_regime', { legalEntityId: entity, effectiveFrom }, { actor, orgId, idempotencyKey: randomUUID() });
-  const detailOf = (id: string) => rt.query<{ payload: Record<string, unknown> | null }>('kernel.inbox.get', { id }, { actor: asUser(who.owner), orgId });
   const stateOf = async (entity: string) =>
     (await rt.query<BooksRegimeState>('finance.books.regime_state', {}, { actor: asUser(who.owner), orgId })).entities.find((e) => e.legalEntityId === entity);
   const rowsOf = (entity: string) =>
@@ -197,7 +196,7 @@ suite('an owner chooses Circular 99 for an entity (#1403 slice B1)', () => {
     const proposal = (entity: string, payload: Record<string, unknown>) =>
       admin(
         async (a) =>
-          (await a.query<{ id: string }>(`INSERT INTO ludy_kernel.proposal (org_id, kind, command, title, payload, legal_entity_id) VALUES ($1, 'finance.cash_voucher', 'finance.voucher.record', 'Phiếu thử', $2::jsonb, $3) RETURNING id`, [orgId, JSON.stringify(payload), entity])).rows[0]?.id as string,
+          (await a.query<{ id: string }>(`INSERT INTO ludy_kernel.proposal (org_id, kind, command, title, payload, legal_entity_id, eligible_approvers, authors) VALUES ($1, 'finance.cash_voucher', 'finance.voucher.record', 'Phiếu thử', $2::jsonb, $3, ARRAY[$4::uuid], '[]') RETURNING id`, [orgId, JSON.stringify(payload), entity, who.owner])).rows[0]?.id as string,
       );
     const dated = await newEntity('Đề xuất đề ngày sau');
     const waiting = await proposal(dated, { date: '2041-03-01' });
@@ -241,7 +240,9 @@ suite('an owner chooses Circular 99 for an entity (#1403 slice B1)', () => {
     const after = await newEntity('Phiếu lập khi đã chuyển');
     await setRegime(after, '2041-01-01');
     const late = await askVoucher(after, '2041-03-01');
-    expect((await detailOf(late)).payload).toMatchObject({ regime: 'tt99', chartVersion: '2026.1' });
+    // The stored payload, as the preparer stamped it (the inbox shows a parsed voucher, not this).
+    const stored = await admin(async (a) => (await a.query<{ payload: Record<string, unknown> }>(`SELECT payload FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, late])).rows[0]?.payload);
+    expect(stored).toMatchObject({ regime: 'tt99', chartVersion: '2026.1' });
     await admin((a) => a.query(`DELETE FROM ludy_finance.legal_entity_books WHERE org_id = $1 AND legal_entity_id = $2`, [orgId, after]));
     expect(await refusal(approveVoucher(late))).toMatchObject({ code: 'BOOKS_REGIME_CHANGED', status: 409 });
   });
