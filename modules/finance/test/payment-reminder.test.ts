@@ -9,6 +9,7 @@ import {
   allocateReceivable,
   daysBetween,
   foreignTotalsOf,
+  isCollectionPaused,
   noticeLevel,
   overdueOf,
   paymentReminderSource,
@@ -428,5 +429,14 @@ describe('paymentReminderSource', () => {
     expect(paymentReminderSourceLevel(source)).toBe(2);
     expect(paymentReminderSourceLevel('finance.payment_reminder.notice1')).toBe(1);
     expect(paymentReminderSourceLevel('finance.payment_reminder.notice4')).toBeNull();
+  });
+});
+
+describe('isCollectionPaused', () => {
+  it('treats today and future pause dates as paused, and null or past dates as active', () => {
+    expect(isCollectionPaused(null, '2026-11-28')).toBe(false);
+    expect(isCollectionPaused('2026-11-27', '2026-11-28')).toBe(false);
+    expect(isCollectionPaused('2026-11-28', '2026-11-28')).toBe(true);
+    expect(isCollectionPaused('2026-12-15', '2026-11-28')).toBe(true);
   });
 });

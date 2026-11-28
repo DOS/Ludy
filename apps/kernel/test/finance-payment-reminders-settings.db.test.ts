@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CUSTOMER_COLLECTION_MAX, type CustomerCollectionList } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { enterUser } from './context-token.ts';
@@ -317,5 +318,90 @@ suite('payment reminder settings (#2488)', () => {
     // A set through a duplicate lands on the kept party (the locks of lockedKeptParty see the merge) and wins from then on.
     await execute(o, 'finance.customer_collection.set', { partyId: two, termsDays: 55, pausedUntil: null });
     expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: one })).toMatchObject({ partyId: kept, termsDays: 55 });
+  });
+
+  it('lists customers with custom payment terms regardless of invoices or pauses, supports clearing, enforces viewer read-only, isolates orgs, and bounds results (#2544)', async () => {
+    const o = await org();
+    const otherOrg = await org();
+    expect(await query<CustomerCollectionList>(o, 'finance.customer_collection.list', {}, o.viewer)).toEqual({ orgTermsDays: 30, customers: [], more: false });
+
+    const onlyTerms = await customer(o, 'Công ty Bê Tông');
+    const pausedAndTerms = await customer(o, 'Công ty An Khang');
+    const expiredPauseAndTerms = await customer(o, 'Công ty Cát Lợi');
+    const onlyPaused = await customer(o, 'Công ty Tạm Dừng Riêng');
+    const foreignCustomer = await customer(otherOrg, 'Công ty Tổ Chức Khác');
+
+    const futurePause = daysFromNow(14);
+    const pastPause = daysFromNow(-2);
+    // Customers with custom terms and zero invoices/overdue items, plus a paused-only customer and a different org's customer.
+    await execute(o, 'finance.collection_setting.set', { termsDays: 45, weeklyItem: false });
+    await execute(o, 'finance.customer_collection.set', { partyId: onlyTerms, termsDays: 60 }, o.member);
+    await execute(o, 'finance.customer_collection.set', { partyId: pausedAndTerms, termsDays: 20, pausedUntil: futurePause }, o.admin);
+    await execute(o, 'finance.customer_collection.set', { partyId: expiredPauseAndTerms, termsDays: 90, pausedUntil: pastPause });
+    await execute(o, 'finance.customer_collection.set', { partyId: onlyPaused, termsDays: null, pausedUntil: futurePause });
+    await execute(otherOrg, 'finance.customer_collection.set', { partyId: foreignCustomer, termsDays: 15 });
+
+    // Every role including viewer reads the list; paused-only and other-org rows stay out; sorted deterministically by name then partyId.
+    for (const reader of [o.owner, o.admin, o.member, o.viewer]) {
+      const res = await query<CustomerCollectionList>(o, 'finance.customer_collection.list', {}, reader);
+      expect(res).toEqual({
+        orgTermsDays: 45,
+        customers: [
+          { partyId: pausedAndTerms, name: 'Công ty An Khang', termsDays: 20, pausedUntil: futurePause, paused: true },
+          { partyId: onlyTerms, name: 'Công ty Bê Tông', termsDays: 60, pausedUntil: null, paused: false },
+          { partyId: expiredPauseAndTerms, name: 'Công ty Cát Lợi', termsDays: 90, pausedUntil: pastPause, paused: false },
+        ],
+        more: false,
+      });
+    }
+    expect(await query<CustomerCollectionList>(otherOrg, 'finance.customer_collection.list', {})).toEqual({
+      orgTermsDays: 30,
+      customers: [{ partyId: foreignCustomer, name: 'Công ty Tổ Chức Khác', termsDays: 15, pausedUntil: null, paused: false }],
+      more: false,
+    });
+
+    // Viewer cannot mutate or clear; member/admin/owner can edit and clear (clearing keeps any active pause intact).
+    await expect(execute(o, 'finance.customer_collection.set', { partyId: onlyTerms, termsDays: null }, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await execute(o, 'finance.customer_collection.set', { partyId: pausedAndTerms, termsDays: null }, o.member);
+    expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: pausedAndTerms })).toMatchObject({ termsDays: null, effectiveTermsDays: 45, pausedUntil: futurePause });
+    await execute(o, 'finance.customer_collection.set', { partyId: onlyTerms, termsDays: 75 }, o.admin);
+    const afterEdit = await query<CustomerCollectionList>(o, 'finance.customer_collection.list', {});
+    expect(afterEdit.customers.map((c) => [c.partyId, c.termsDays])).toEqual([
+      [onlyTerms, 75],
+      [expiredPauseAndTerms, 90],
+    ]);
+
+    // Merged duplicate group: duplicate's custom terms + kept party's pause show once under the kept party, and clearing removes the group.
+    const kept = await customer(o, 'Công ty Giữ Gộp');
+    const dup = await customer(o, 'Công ty Bị Gộp');
+    await execute(o, 'finance.customer_collection.set', { partyId: kept, pausedUntil: futurePause });
+    await execute(o, 'finance.customer_collection.set', { partyId: dup, termsDays: 50 });
+    await admin((c) => c.query('UPDATE ludy_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dup, kept]));
+    const withDup = await query<CustomerCollectionList>(o, 'finance.customer_collection.list', {});
+    expect(withDup.customers.find((c) => c.partyId === kept)).toEqual({ partyId: kept, name: 'Công ty Giữ Gộp', termsDays: 50, pausedUntil: futurePause, paused: true });
+    expect(withDup.customers.some((c) => c.partyId === dup)).toBe(false);
+    await execute(o, 'finance.customer_collection.set', { partyId: kept, termsDays: null });
+    expect((await query<CustomerCollectionList>(o, 'finance.customer_collection.list', {})).customers.some((c) => c.partyId === kept)).toBe(false);
+
+    // Bounded list at CUSTOMER_COLLECTION_MAX (200) sets `more: true` deterministically without dropping the first customers by name.
+    const bounded = await org();
+    await admin(async (c) => {
+      await c.query(
+        `WITH inserted AS (
+           INSERT INTO ludy_kernel.party (org_id, kind, name)
+           SELECT $1, 'organization', 'Khách ' || lpad(i::text, 3, '0')
+           FROM generate_series(1, $2) AS i
+           RETURNING id
+         )
+         INSERT INTO ludy_finance.customer_collection (org_id, party_id, terms_days)
+         SELECT $1, id, 40 FROM inserted`,
+        [bounded.orgId, CUSTOMER_COLLECTION_MAX + 1],
+      );
+    });
+    const capped = await query<CustomerCollectionList>(bounded, 'finance.customer_collection.list', {});
+    expect(capped.customers).toHaveLength(CUSTOMER_COLLECTION_MAX);
+    expect(capped.more).toBe(true);
+    expect(capped.customers[0]?.name).toBe('Khách 001');
+    expect(capped.customers[CUSTOMER_COLLECTION_MAX - 1]?.name).toBe(`Khách ${String(CUSTOMER_COLLECTION_MAX).padStart(3, '0')}`);
   });
 });

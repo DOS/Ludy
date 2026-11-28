@@ -40,6 +40,7 @@ import {
   allForeignAmountsOf,
   allocateReceivable,
   foreignTotalsOf,
+  isCollectionPaused,
   noticeLevel,
   overdueOf,
   reminderLang,
@@ -203,7 +204,7 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
       termsDays,
     );
     const pausedUntil = set?.paused_until ?? null;
-    return [{ partyId: party.id, name: party.name, email: party.email, receivable, overdue: overdueOf(receivable), termsDays, ownTermsDays: set?.terms_days ?? null, pausedUntil, paused: pausedUntil !== null && pausedUntil >= today }];
+    return [{ partyId: party.id, name: party.name, email: party.email, receivable, overdue: overdueOf(receivable), termsDays, ownTermsDays: set?.terms_days ?? null, pausedUntil, paused: isCollectionPaused(pausedUntil, today) }];
   });
 }
 

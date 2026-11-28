@@ -166,5 +166,21 @@ export const zCustomerCollection = z.object({
   pausedUntil: z.string().nullable(),
 });
 export type CustomerCollection = z.infer<typeof zCustomerCollection>;
+// The most customers with custom payment terms one list returns, ordered by name then party id.
+export const CUSTOMER_COLLECTION_MAX = 200;
+export const zCustomerCollectionSummary = z.object({
+  partyId: zId,
+  name: z.string(),
+  termsDays: zTermsDays,
+  pausedUntil: z.string().nullable(),
+  paused: z.boolean(),
+});
+export type CustomerCollectionSummary = z.infer<typeof zCustomerCollectionSummary>;
+export const zCustomerCollectionList = z.object({
+  orgTermsDays: zTermsDays,
+  customers: z.array(zCustomerCollectionSummary),
+  more: z.boolean(),
+});
+export type CustomerCollectionList = z.infer<typeof zCustomerCollectionList>;
 // Only what is named changes: leaving a field out keeps it (lifting a pause keeps the customer's own terms).
 export const zCustomerCollectionSet = z.object({ partyId: zId, termsDays: zTermsDays.nullable().optional(), pausedUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional() });
