@@ -160,7 +160,7 @@ suite('the 02/CNKD-TNCN-QTT annual worksheet of a household business (#5285)', (
     expect(w.household).toEqual({ name: 'Hộ kinh doanh Nguyễn Văn A', taxCode: null, representativeName: 'Nguyễn Văn A' });
     expect(w.form).toMatchObject({ form: '02/CNKD-TNCN-QTT', version: '2026.1', status: 'confirmed' });
     // Revenue is the ledger's movement of 511: 1.2 billion + 600 million, with the platform part taken out of [09a].
-    expect(line(w, '09')).toBe('1800000000');
+    expect(line(w, '09')).toBe(String(1_800_000_000));
     expect(line(w, '09a')).toBe('1500000000');
     expect(line(w, '09b')).toBe('300000000');
     expect(line(w, '09c')).toBe('0');
