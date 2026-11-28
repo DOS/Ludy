@@ -4,7 +4,8 @@
 # `compose ps --status running` lists), STUB_WORKER_DOWN_DIGEST (the worker is down while this image runs),
 # STUB_MIGRATE_EXIT, STUB_PULL_FAIL, STUB_BUILD_TIMES (space-separated digest=LUDY_BUILD_TIME pairs that `image
 # inspect` answers; an image not listed carries none), STUB_ORPHAN_CONTAINERS (space-separated
-# project:service=id entries returned for matching `docker ps` label filters), STUB_VOLUMES (space-separated
+# project:service=id entries returned for matching `docker ps` label filters), STUB_INSPECT_SERVICES (space-separated
+# cid|service|oneoff|running entries returned when inspecting compose service metadata), STUB_VOLUMES (space-separated
 # volume names reported by `docker volume inspect`), STUB_PG_CLUSTER_IDS (space-separated vol=cluster_id pairs
 # reported by `docker run ... -v <vol>:...` when matching PostgreSQL cluster identifiers).
 #
@@ -172,6 +173,16 @@ if [ "${1:-}" = inspect ]; then
         exit 0
       fi
     done
+    exit 0
+  fi
+  if [[ "$fmt" == *com.docker.compose.service* ]]; then
+    for item in ${STUB_INSPECT_SERVICES:-}; do
+      if [ "${item%%|*}" = "$target" ]; then
+        printf '%s\n' "${item#*|}"
+        exit 0
+      fi
+    done
+    printf '||false\n'
     exit 0
   fi
   if [[ "$fmt" == *Config.Env* ]]; then
