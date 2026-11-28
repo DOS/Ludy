@@ -195,6 +195,7 @@ const zRecordRow = z.object({
   sellerName: z.string().max(500),
   // The buyer on a sales list's row; null on a purchase row.
   buyerTaxCode: z.string().regex(/^[0-9]{10}(-[0-9]{3})?$|^[0-9]{12}$/).nullable().default(null),
+  buyerName: z.string().max(500).nullable().default(null),
   template: z.string().regex(/^[0-9A-Z]{1,11}$/).nullable(),
   series: z.string().min(1).max(20),
   number: z.string().min(1).max(20),
@@ -287,6 +288,7 @@ export const portalListRecord = defineCommand({
             seller_tax_code: r.sellerTaxCode,
             seller_name: r.sellerName,
             buyer_tax_code: r.buyerTaxCode,
+            buyer_name: r.buyerName,
             template: r.template,
             series: r.series,
             number: r.number,
@@ -522,7 +524,7 @@ export async function reconcilePeriod(
       : (
           await ctx.trx
             .selectFrom('ludy_finance.portal_invoice_row')
-            .select(['list_id', 'row_no', 'seller_tax_code', 'seller_name', 'buyer_tax_code', 'template', 'series', 'number', 'issue_date', 'currency', 'subtotal', 'vat_amount', 'total', 'status', 'status_label'])
+            .select(['list_id', 'row_no', 'seller_tax_code', 'seller_name', 'buyer_tax_code', 'buyer_name', 'template', 'series', 'number', 'issue_date', 'currency', 'subtotal', 'vat_amount', 'total', 'status', 'status_label'])
             .where('org_id', '=', ctx.orgId)
             .where('list_id', 'in', done)
             .orderBy('list_id')
@@ -534,6 +536,7 @@ export async function reconcilePeriod(
           sellerTaxCode: r.seller_tax_code,
           sellerName: r.seller_name,
           buyerTaxCode: r.buyer_tax_code,
+          buyerName: r.buyer_name,
           template: r.template,
           series: r.series,
           number: r.number,
@@ -682,10 +685,12 @@ export function checkPortalList(
         continue;
       }
     }
+    const buyerName = r.buyerName?.replace(/\s+/g, ' ').trim() || null;
     rows.push({
       rowNo: r.rowNo,
       sellerName: r.sellerName,
       buyerTaxCode: sale ? buyer : null,
+      buyerName: sale ? buyerName : null,
       template: r.template,
       series: r.series,
       number: r.number,

@@ -295,6 +295,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'ludy_finance.portal_invoice_row.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   'ludy_finance.portal_invoice_row.seller_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   'ludy_finance.portal_invoice_row.seller_name': { kind: 'name', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
+  'ludy_finance.portal_invoice_row.buyer_name': { kind: 'name', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   // Free text that can name a person (#1948): searched for the value anywhere inside it. Social's posts and comments
   // are left out while Social is paused (decision D5).
   'ludy_kernel.activity.summary': {

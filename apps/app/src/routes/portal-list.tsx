@@ -41,7 +41,8 @@ function ItemRow({ item, slug, direction }: { item: ReconcileItem; slug: string;
   const invoice = item.portal ?? item.ludy;
   if (!invoice) return null;
   // A sale's other party is its customer; the seller is the company itself (#2141).
-  const partyName = direction === 'sale' ? (item.ludy?.buyerName ?? '') : item.portal?.sellerName || item.ludy?.sellerName || '';
+  // On a missing sale or before approval, the portal row carries the buyer's name (#2151).
+  const partyName = direction === 'sale' ? (item.portal?.buyerName?.trim() || item.ludy?.buyerName?.trim() || '') : item.portal?.sellerName || item.ludy?.sellerName || '';
   const partyTaxCode = direction === 'sale' ? (item.portal?.buyerTaxCode ?? item.ludy?.buyerTaxCode ?? null) : (item.portal?.sellerTaxCode ?? item.ludy?.sellerTaxCode ?? null);
   const notes: string[] = [];
   // A declared_late item is outside the period by definition; its section says so, and the note gives its posting date.
@@ -58,7 +59,7 @@ function ItemRow({ item, slug, direction }: { item: ReconcileItem; slug: string;
       <TableCell className="text-muted-foreground tabular-nums">{f.date(invoice.issueDate)}</TableCell>
       <TableCell className="font-mono text-xs text-foreground">{invoiceLabel(invoice)}</TableCell>
       <TableCell className="text-foreground">
-        {partyName}
+        {partyName || (!partyTaxCode ? <span className="text-subtle-foreground">-</span> : null)}
         {partyTaxCode && <span className="block font-mono text-xs text-subtle-foreground">{partyTaxCode}</span>}
       </TableCell>
       <TableCell className="text-right text-foreground tabular-nums">

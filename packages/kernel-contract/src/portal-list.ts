@@ -61,8 +61,9 @@ export const zPortalRow = z.object({
   rowNo: z.number().int().positive(),
   sellerTaxCode: z.string(),
   sellerName: z.string(),
-  // The buyer's tax code on a sales list's row (null on a purchase row, and where the list has none).
+  // The buyer's tax code and name on a sales list's row (null on a purchase row, and where the list has none).
   buyerTaxCode: z.string().nullable(),
+  buyerName: z.string().nullable(),
   template: z.string().nullable(),
   series: z.string(),
   number: z.string(),
