@@ -17,6 +17,7 @@
 import { sql, type RawBuilder } from 'kysely';
 import type { MemberRole } from '@ludy/db';
 import {
+  CASH_FORECAST_ITEM_LABEL_MAX,
   FOLLOWUP_MAIL_SOURCE,
   TRACKER_ALERT_MAIL_SOURCE,
   NOTE_BODY_MAX,
@@ -199,6 +200,13 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'name',
     handling: 'keep_legal',
     reason: "The name of the household's representative, printed on its books of Circular 152 beside the signature; part of the accounting records, kept with them and removed with the org",
+  },
+  // An item the owner entered into the 90-day cash forecast (#5326): the owner's own words for it, which may name a person (a landlord, an employee). Unlike the books it is a plan the owner can change or delete,
+  // so an erasure edits the value out of the label and the item stays. It is never written to an audit row or sent to a model.
+  'ludy_finance.cash_forecast_item.label': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The owner's own name for an expected cost or receipt in the cash forecast, which may name a person: mentions are replaced with a redaction marker",
   },
   // Agents and connected accounts.
   'ludy_kernel.agent.display_name': { kind: 'other', handling: 'not_personal', reason: 'The name of an AI agent' },
@@ -1610,6 +1618,7 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'ludy_projects.project_column.name',
   'ludy_projects.project_cycle.name',
   'ludy_projects.project_cycle.goal',
+  'ludy_finance.cash_forecast_item.label',
   'ludy_projects.roadmap_board.title',
   'ludy_projects.roadmap_board.description',
   'ludy_projects.roadmap_item.public_title',
@@ -2696,6 +2705,20 @@ export const personalDataErase = defineCommand({
          WHERE o.org_id = pc.org_id AND o.id = pc.id AND pc.org_id = ${ctx.orgId}::uuid AND ${projectColumnName}
          RETURNING ${freeTextMatch(probe, sql.ref('o.name'))} AS name`.execute(ctx.trx);
       add('ludy_projects.project_column.name', projectColumns.filter((c) => c.name).length);
+
+      // Cash forecast items whose label quotes the person (#5326): replace the mention, cut to the column's limit and trimmed, since the table checks a label has no edge spaces (a label is never emptied: the mark stands in).
+      const itemLabel = freeTextMatch(probe, sql.ref('i.label'));
+      const { rows: forecastItems } = await sql<{ label: boolean }>`
+        UPDATE ludy_finance.cash_forecast_item i
+           SET label = COALESCE(
+                 NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('i.label'), REDACTED_MARK)}, ${CASH_FORECAST_ITEM_LABEL_MAX}::int)), ''),
+                 ${REDACTED_MARK}
+               ),
+               updated_at = ${ctx.now}
+          FROM ludy_finance.cash_forecast_item o
+         WHERE o.org_id = i.org_id AND o.id = i.id AND i.org_id = ${ctx.orgId}::uuid AND ${itemLabel}
+         RETURNING ${freeTextMatch(probe, sql.ref('o.label'))} AS label`.execute(ctx.trx);
+      add('ludy_finance.cash_forecast_item.label', forecastItems.filter((r) => r.label).length);
 
       // Project cycles whose name or goal quotes the person (#4361): replace mentions bounded to column limits.
       const cycleName = freeTextMatch(probe, sql.ref('c.name'));

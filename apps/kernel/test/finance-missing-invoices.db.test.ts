@@ -9,10 +9,10 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
-import { sql } from 'kysely';
+import { Kysely, PostgresDialect, sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@ludy/db';
+import { createDb, createPool, type Database, type Db } from '@ludy/db';
 import type { ExtractClient } from '@ludy/extract-contract';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { kernelCommands, kernelQueries } from '@ludy/kernel';
@@ -141,16 +141,23 @@ suite('missing invoice requests (#669)', () => {
   });
 
   // Uploads a list, imports it for the period and runs the worker step.
-  async function importList(invoices: PortalInvoiceSpec[], period: string) {
+  async function importList(
+    invoices: PortalInvoiceSpec[],
+    period: string,
+    options: { direction?: 'purchase' | 'sale'; who?: Account; slug?: string; orgId?: string } = {},
+  ) {
+    const actor = options.who ?? owner;
+    const slug = options.slug ?? org.slug;
+    const targetOrgId = options.orgId ?? org.orgId;
     const form = new FormData();
     form.append('file', new File([Buffer.from(portalListXlsx(invoices))], `ds-${period}.xlsx`));
     form.append('purpose', 'import');
-    const uploaded = await app.request('/api/files', { method: 'POST', headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-ludy-org': org.slug }, body: form });
+    const uploaded = await app.request('/api/files', { method: 'POST', headers: { authorization: `Bearer ${await tokenFor(actor)}`, 'x-ludy-org': slug }, body: form });
     expect(uploaded.status).toBe(200);
     const fileId = ((await uploaded.json()) as any).files[0].fileId as string;
-    const imported = await rpc('portalList/import', owner, { period, fileId });
+    const imported = await rpc('portalList/import', actor, { period, fileId, ...(options.direction ? { direction: options.direction } : {}) }, slug);
     expect(imported.status, JSON.stringify(imported.body)).toBe(200);
-    await importPortalList({ runtime: workerRuntime, store, extract }, org.orgId, imported.body.listId);
+    await importPortalList({ runtime: workerRuntime, store, extract }, targetOrgId, imported.body.listId);
     return imported.body.listId as string;
   }
 
@@ -364,5 +371,67 @@ suite('missing invoice requests (#669)', () => {
     }
     // Only the worker may scan.
     await expect(pool.query('SELECT * FROM ludy_finance.missing_invoice_reminders_due(1)')).rejects.toThrow(/permission denied/);
+  });
+
+  it('ignores periods that only have sales lists when running the purchase reminder (#2158)', async () => {
+    const vnNow = new Date(Date.now() + 7 * 3_600_000);
+    const currentMonth = vnNow.toISOString().slice(0, 7);
+    const [cy, cm] = currentMonth.split('-');
+    const prevMonth = new Date(Date.UTC(Number(cy), Number(cm) - 2, 15)).toISOString().slice(0, 7);
+    const [py, pm] = prevMonth.split('-');
+
+    const created = await rpc('org/create', owner, { name: 'Công ty Chỉ Bán Ra', idempotencyKey: randomUUID() }, null);
+    expect(created.status).toBe(200);
+    const salesOnly = { slug: String(created.body?.slug), orgId: String(created.body?.orgId) };
+    expect((await rpc('org/setTaxCode', owner, { taxCode: BUYER }, salesOnly.slug)).status).toBe(200);
+    expect((await rpc('org/setContactEmail', owner, { email: 'ketoan@chiban.test' }, salesOnly.slug)).status).toBe(200);
+    expect((await rpc('missingInvoices/setReminder', owner, { day: 5 }, salesOnly.slug)).status).toBe(200);
+
+    // Period with only a sales portal list (and an unbooked sale missing from Ludy).
+    await importList(
+      [spec('8801', `05/${cm}/${cy}`, { sellerTaxCode: BUYER, buyerTaxCode: '0101234564' })],
+      currentMonth,
+      { direction: 'sale', slug: salesOnly.slug, orgId: salesOnly.orgId },
+    );
+    const saleReconcile = await rpc('portalList/reconcile', owner, { period: currentMonth, direction: 'sale' }, salesOnly.slug);
+    expect(saleReconcile.status).toBe(200);
+    expect(saleReconcile.body.lists).toEqual([expect.objectContaining({ status: 'done', direction: 'sale', rowCount: 1 })]);
+    expect(saleReconcile.body.summary.missing).toBe(1);
+
+    const portalListQueries: Array<{ sql: string; parameters: readonly unknown[] }> = [];
+    const loggedDb = new Kysely<Database>({
+      dialect: new PostgresDialect({ pool: workerPool }),
+      log(event) {
+        if (event.level === 'query' && event.query.sql.includes('portal_invoice_list')) {
+          portalListQueries.push({ sql: event.query.sql, parameters: event.query.parameters });
+        }
+      },
+    });
+    const loggedRuntime = new Runtime(loggedDb, { manifests: TEST_MANIFESTS }).register({
+      commands: [...kernelCommands, ...financeCommands],
+      queries: [...kernelQueries({ inboundDomain: INBOUND }), ...financeQueries],
+    });
+
+    // Only the listed query runs (filtered to direction = 'purchase'); no purchase reconcile runs for the sales-only period.
+    const first = await loggedRuntime.execute('finance.missing_invoices.remind', {}, { actor: ACTOR, orgId: salesOnly.orgId });
+    expect(first).toEqual({ action: 'stopped' });
+    expect(portalListQueries).toHaveLength(1);
+    expect(portalListQueries[0]?.parameters).toContain('purchase');
+    expect(portalListQueries[0]?.parameters).not.toContain(currentMonth);
+
+    // Add a purchase list in the previous month: the reminder sends only that month's missing purchase invoice and still skips the sales-only month.
+    await importList([spec('8802', `05/${pm}/${py}`)], prevMonth, { direction: 'purchase', slug: salesOnly.slug, orgId: salesOnly.orgId });
+    expect((await rpc('missingInvoices/setReminder', owner, { day: 5 }, salesOnly.slug)).status).toBe(200);
+    portalListQueries.length = 0;
+
+    const second = await loggedRuntime.execute<any>('finance.missing_invoices.remind', {}, { actor: ACTOR, orgId: salesOnly.orgId });
+    expect(second).toMatchObject({ action: 'sent', status: 'queued', count: 1 });
+    const row = await mailRow(second.messageId);
+    expect(row.payload.periods.map((p: { period: string }) => p.period)).toEqual([prevMonth]);
+    expect(row.payload.periods[0].items.map((i: { number: string }) => i.number)).toEqual(['8802']);
+    expect(portalListQueries).toHaveLength(2);
+    expect(portalListQueries.every((q) => q.parameters.includes('purchase'))).toBe(true);
+    expect(portalListQueries.some((q) => q.parameters.includes(currentMonth))).toBe(false);
+    expect(portalListQueries[1]?.parameters).toContain(prevMonth);
   });
 });

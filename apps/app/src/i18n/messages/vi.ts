@@ -18228,6 +18228,7 @@ export const vi = {
       HOUSEHOLD_RETURN_NOT_REQUIRED: 'Hộ này không phải kê khai tờ khai này trong kỳ đã chọn (chưa có hồ sơ, hoặc hồ sơ không theo phương pháp của tờ khai)',
       HOUSEHOLD_RETURN_METHOD: 'Tờ khai này không dành cho phương pháp thuế của hộ: tờ khai 01/CNKD theo quý dành cho hộ nộp theo tỷ lệ trên doanh thu, tờ khai quyết toán 02/CNKD-TNCN-QTT dành cho hộ nộp theo thu nhập; hộ còn lại nhờ kế toán lập',
       HOUSEHOLD_RETURN_PROFILE_CHANGED: 'Hồ sơ hộ kinh doanh đổi trong kỳ này nên chưa lập được bảng tính; hãy nhờ kế toán',
+      CASH_FORECAST_ITEM_LIMIT: 'Mỗi pháp nhân chỉ nhập được tối đa 100 khoản dự kiến; hãy xóa bớt một khoản trước khi thêm khoản mới.',
       HOUSEHOLD_RETURN_HELD: 'Bảng tính đang bị giữ lại (doanh thu chưa quá mức không chịu thuế, lỗ, chi phí chưa xếp nhóm, chia doanh thu sàn chưa khớp hoặc năm đã kết chuyển 911); xem lý do trên bảng, chưa xuất file được',
       HOUSEHOLD_QTT_INPUT: 'Số tiền tự nhập (thuế đã khấu trừ, thuế đã tạm nộp, doanh thu sàn không có chức năng thanh toán) phải là số đồng nguyên và không âm',
       HOUSEHOLD_RATE_MISSING: 'Chưa có tỷ lệ thuế cho một ngành nghề trong hồ sơ',
@@ -20115,6 +20116,9 @@ export const vi = {
       },
       overview: 'Xem tổng quan kế toán: tiền, lợi nhuận, phải thu, phải trả',
       cash_forecast: 'Xem dự báo dòng tiền 30, 60 và 90 ngày',
+      cash_forecast_items: 'Xem các khoản dự kiến đã nhập vào dự báo dòng tiền',
+      cash_forecast_item_set: 'Nhập hoặc sửa một khoản dự kiến trong dự báo dòng tiền',
+      cash_forecast_item_remove: 'Xóa một khoản dự kiến khỏi dự báo dòng tiền',
       home_money: 'Xem số tiền chưa thu, chưa trả và tiền ngân hàng trên Trang chủ',
       payroll: {
         settlement: 'Xem bút toán và các khoản chi của tháng lương đã duyệt đang ở bước nào',

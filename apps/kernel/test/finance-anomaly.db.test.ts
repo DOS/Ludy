@@ -22,6 +22,10 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const PARSED = JSON.parse(readFileSync(new URL('../../../packages/l10n-vn/test/fixtures/einvoice-basic.parsed.json', import.meta.url), 'utf8')) as ParsedInvoice;
+const fixture = (name: string) => readFileSync(new URL(`../../extract/test/fixtures/${name}`, import.meta.url), 'utf8');
+const BASIC_XML = fixture('einvoice-basic.xml');
+const REPLACEMENT_XML = fixture('einvoice-replacement.xml');
+const ADJUSTMENT_XML = fixture('einvoice-adjustment.xml');
 const suite = ADMIN ? describe : describe.skip;
 
 class MemoryStore implements BlobStore {
@@ -307,5 +311,147 @@ suite('anomaly flags on a purchase proposal (#2380)', () => {
     // Its account is now on a booked document, yet the next invoice naming it is still a change: only an XML or a PDF read, whose account was checked against the text, makes history.
     const next = await propose('8741', withBank(PHOTO));
     expect((await anomalies(next)).map((c) => c.id)).toContain('anomaly_bank');
+  });
+
+  describe('correction invoices and non-correction history (#2425)', () => {
+    let testOrgId = '';
+
+    beforeAll(async () => {
+      ({ orgId: testOrgId } = await createOrg(rt, asUser(users.owner), 'Công ty hóa đơn điều chỉnh'));
+      await admin(async (c) => {
+        await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'admin')`, [testOrgId, users.admin, users.approver]);
+      });
+    });
+
+    const xmlWith = (
+      base: string,
+      opts: { number: string; date: string; bank: string; relatedNumber?: string; relatedDate?: string; body?: string },
+    ) => {
+      let out = base
+        .replace(/<SHDon>\d+<\/SHDon>/, `<SHDon>${opts.number}</SHDon>`)
+        .replace(/<NLap>[\d-]+<\/NLap>/, `<NLap>${opts.date}</NLap>`)
+        .replace('</NBan>', `<STKNHang>${opts.bank}</STKNHang></NBan>`);
+      if (opts.relatedNumber) out = out.replace(/<SHDCLQuan>\d+<\/SHDCLQuan>/, `<SHDCLQuan>${opts.relatedNumber}</SHDCLQuan>`);
+      if (opts.relatedDate) out = out.replace(/<NLHDCLQuan>[\d-]+<\/NLHDCLQuan>/, `<NLHDCLQuan>${opts.relatedDate}</NLHDCLQuan>`);
+      if (opts.body) out = out.replace(/<DSHHDVu>[\s\S]*<\/TToan>/, opts.body);
+      return out;
+    };
+
+    const proposeXml = async (xml: string, number: string) => {
+      const bytes = new TextEncoder().encode(xml);
+      const sha256 = sha256Hex(bytes);
+      const storageKey = fileKey(testOrgId, sha256);
+      const generation = await store.put(storageKey, bytes);
+      const { fileId } = await rt.execute<{ fileId: string }>(
+        'kernel.file.ingest',
+        { filename: `hd-${number}.xml`, contentType: 'application/xml', sizeBytes: bytes.byteLength, sha256, storageKey, generation, source: 'upload' },
+        { actor: asUser(users.owner), orgId: testOrgId },
+      );
+      const { proposalId } = await extractAndPropose({ runtime: worker, store, extractor: null, extract, today: () => '2026-10-13' }, testOrgId, fileId);
+      return proposalId as string;
+    };
+
+    const approveXml = async (id: string) => {
+      const detail = await rt.query<Detail>('kernel.inbox.get', { id }, { actor: asUser(users.approver), orgId: testOrgId });
+      return rt.execute('kernel.proposal.approve', { id, revision: detail.revision, acceptFailedChecks: true, acceptUnverifiedSignature: true }, { actor: asMfa(users.approver), orgId: testOrgId });
+    };
+
+    const anomaliesXml = async (id: string) =>
+      (
+        await admin(
+          async (c) =>
+            (
+              await c.query<{ checks: Array<{ id: string; status: string; code: string; params?: Record<string, string> }> }>(
+                `SELECT payload -> 'checks' AS checks FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`,
+                [testOrgId, id],
+              )
+            ).rows[0]?.checks ?? [],
+        )
+      ).filter((c) => c.id.startsWith('anomaly'));
+
+    const positiveAdjBody =
+      '<DSHHDVu><HHDVu><TChat>1</TChat><STT>1</STT><THHDVu>Điều chỉnh tăng phí quảng cáo Facebook</THHDVu><DVTinh>Gói</DVTinh><SLuong>2</SLuong><DGia>100000</DGia><ThTien>200000</ThTien><TSuat>10%</TSuat></HHDVu></DSHHDVu><TToan><THTTLTSuat><LTSuat><TSuat>10%</TSuat><ThTien>200000</ThTien><TThue>20000</TThue></LTSuat></THTTLTSuat><TgTCThue>200000</TgTCThue><TgTThue>20000</TgTThue><TgTTTBSo>220000</TgTTTBSo></TToan>';
+    const smallPriceJumpBody =
+      '<DSHHDVu><HHDVu><TChat>1</TChat><STT>1</STT><THHDVu>Phí quảng cáo Facebook</THHDVu><DVTinh>Gói</DVTinh><SLuong>0.2</SLuong><DGia>700000</DGia><ThTien>140000</ThTien><TSuat>10%</TSuat></HHDVu></DSHHDVu><TToan><THTTLTSuat><LTSuat><TSuat>10%</TSuat><ThTien>140000</ThTien><TThue>14000</TThue></LTSuat></THTTLTSuat><TgTCThue>140000</TgTCThue><TgTThue>14000</TgTThue><TgTTTBSo>154000</TgTTTBSo></TToan>';
+    const smallReplacementBody =
+      '<DSHHDVu><HHDVu><TChat>1</TChat><STT>1</STT><THHDVu>Cước dịch vụ thay thế</THHDVu><DVTinh>Gói</DVTinh><SLuong>1</SLuong><DGia>200000</DGia><ThTien>200000</ThTien><TSuat>10%</TSuat></HHDVu></DSHHDVu><TToan><THTTLTSuat><LTSuat><TSuat>10%</TSuat><ThTien>200000</ThTien><TThue>20000</TThue></LTSuat></THTTLTSuat><TgTCThue>200000</TgTCThue><TgTThue>20000</TgTThue><TgTTTBSo>220000</TgTTTBSo></TToan>';
+    const highNormalBody =
+      '<DSHHDVu><HHDVu><TChat>1</TChat><STT>1</STT><MHHDVu>INT-01</MHHDVu><THHDVu>Cước dịch vụ internet tháng 9/2026</THHDVu><DVTinh>Tháng</DVTinh><SLuong>3</SLuong><DGia>1000000</DGia><ThTien>3000000</ThTien><TSuat>10%</TSuat></HHDVu><HHDVu><TChat>1</TChat><STT>2</STT><THHDVu>Phí quảng cáo Facebook</THHDVu><DVTinh>Gói</DVTinh><SLuong>6</SLuong><DGia>500000</DGia><ThTien>3000000</ThTien><TSuat>10%</TSuat></HHDVu><HHDVu><TChat>3</TChat><STT>3</STT><THHDVu>Chiết khấu thương mại</THHDVu><ThTien>600000</ThTien><TSuat>10%</TSuat></HHDVu></DSHHDVu><TToan><THTTLTSuat><LTSuat><TSuat>10%</TSuat><ThTien>5400000</ThTien><TThue>540000</TThue></LTSuat></THTTLTSuat><TgTCThue>5400000</TgTCThue><TgTThue>540000</TgTThue><TgTTTBSo>5940000</TgTTTBSo></TToan>';
+    const lowNormalBody =
+      '<DSHHDVu><HHDVu><TChat>1</TChat><STT>1</STT><THHDVu>Phí quảng cáo Facebook</THHDVu><DVTinh>Gói</DVTinh><SLuong>1</SLuong><DGia>500000</DGia><ThTien>500000</ThTien><TSuat>10%</TSuat></HHDVu></DSHHDVu><TToan><THTTLTSuat><LTSuat><TSuat>10%</TSuat><ThTien>500000</ThTien><TThue>50000</TThue></LTSuat></THTTLTSuat><TgTCThue>500000</TgTCThue><TgTThue>50000</TgTThue><TgTTTBSo>550000</TgTTTBSo></TToan>';
+
+    it('does not count adjustments toward the 5-invoice amount history threshold (#2425)', async () => {
+      // Four regular invoices (1,980,000 each) plus two small positive adjustments (220,000 each): six documents in force, yet only four non-correction totals.
+      for (const n of ['9001', '9002', '9003', '9004']) {
+        await approveXml(await proposeXml(xmlWith(BASIC_XML, { number: n, date: '2026-09-15', bank: BANK }), n));
+      }
+      for (const n of ['9031', '9032']) {
+        await approveXml(
+          await proposeXml(
+            xmlWith(ADJUSTMENT_XML, { number: n, date: '2026-09-16', bank: BANK, relatedNumber: '9004', relatedDate: '2026-09-15', body: positiveAdjBody }),
+            n,
+          ),
+        );
+      }
+      const beforeFive = await proposeXml(xmlWith(BASIC_XML, { number: '9040', date: '2026-09-17', bank: BANK, body: highNormalBody }), '9040');
+      expect(await anomaliesXml(beforeFive)).toEqual([]);
+    });
+
+    it('skips the amount check on adjustment and replacement invoices while keeping bank and price checks (#2425)', async () => {
+      // Two more regular invoices so 9001..9006 reach six non-correction invoices.
+      for (const n of ['9005', '9006']) {
+        await approveXml(await proposeXml(xmlWith(BASIC_XML, { number: n, date: '2026-09-15', bank: BANK }), n));
+      }
+
+      // A small positive adjustment or replacement with invoice.related set skips anomaly_amount while bank and price checks still fire.
+      const adjProposal = await proposeXml(
+        xmlWith(ADJUSTMENT_XML, { number: '9008', date: '2026-09-20', bank: '0987654321', relatedNumber: '9005', relatedDate: '2026-09-15', body: smallPriceJumpBody }),
+        '9008',
+      );
+      expect((await anomaliesXml(adjProposal)).map((c) => [c.id, c.code])).toEqual([
+        ['anomaly_bank', 'anomaly_bank.changed'],
+        ['anomaly_price', 'anomaly_price.jump'],
+      ]);
+      const repProposal = await proposeXml(
+        xmlWith(REPLACEMENT_XML, { number: '9009', date: '2026-09-20', bank: '0987654321', relatedNumber: '9005', relatedDate: '2026-09-15', body: smallPriceJumpBody }),
+        '9009',
+      );
+      expect((await anomaliesXml(repProposal)).map((c) => [c.id, c.code])).toEqual([
+        ['anomaly_bank', 'anomaly_bank.changed'],
+        ['anomaly_price', 'anomaly_price.jump'],
+      ]);
+    });
+
+    it('excludes adjustment and replacement documents from normal history totals even past the 12-doc window (#2425)', async () => {
+      // Book one small replacement (voids 9006, leaving 5 regular invoices 9001..9005) and six more small adjustments so 9 newest in-force docs are corrections.
+      await approveXml(
+        await proposeXml(
+          xmlWith(REPLACEMENT_XML, { number: '9007', date: '2026-09-20', bank: BANK, relatedNumber: '9006', relatedDate: '2026-09-15', body: smallReplacementBody }),
+          '9007',
+        ),
+      );
+      for (const n of ['9011', '9012', '9013', '9014', '9015', '9016']) {
+        await approveXml(
+          await proposeXml(
+            xmlWith(ADJUSTMENT_XML, { number: n, date: '2026-09-20', bank: BANK, relatedNumber: '9005', relatedDate: '2026-09-15', body: positiveAdjBody }),
+            n,
+          ),
+        );
+      }
+
+      // Normal invoice at 1,980,000 raises nothing; genuine high (5,940,000) and low (550,000) still judge against the 5 regular invoices (usual 1,980,000).
+      const usualNormal = await proposeXml(xmlWith(BASIC_XML, { number: '9020', date: '2026-09-25', bank: BANK }), '9020');
+      expect(await anomaliesXml(usualNormal)).toEqual([]);
+
+      const highNormal = await proposeXml(xmlWith(BASIC_XML, { number: '9021', date: '2026-09-25', bank: BANK, body: highNormalBody }), '9021');
+      expect(await anomaliesXml(highNormal)).toMatchObject([
+        { id: 'anomaly_amount', status: 'warn', code: 'anomaly_amount.unusual', params: { direction: 'high', usual: '1980000', count: '5', total: '5940000' } },
+      ]);
+
+      const lowNormal = await proposeXml(xmlWith(BASIC_XML, { number: '9022', date: '2026-09-25', bank: BANK, body: lowNormalBody }), '9022');
+      expect(await anomaliesXml(lowNormal)).toMatchObject([
+        { id: 'anomaly_amount', status: 'warn', code: 'anomaly_amount.unusual', params: { direction: 'low', usual: '1980000', count: '5', total: '550000' } },
+      ]);
+    });
   });
 });

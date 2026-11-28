@@ -54,6 +54,7 @@ export interface LudyFinanceSchema {
   'ludy_finance.bank_feed_listed_account': FinanceBankFeedListedAccountTable;
   'ludy_finance.bank_line': FinanceBankLineTable;
   'ludy_finance.bank_party_rule': FinanceBankPartyRuleTable;
+  'ludy_finance.cash_forecast_item': FinanceCashForecastItemTable;
   'ludy_finance.cash_voucher': FinanceCashVoucherTable;
   'ludy_finance.categorization_rule': FinanceCategorizationRuleTable;
   'ludy_finance.channel_order': FinanceChannelOrderTable;
@@ -1041,6 +1042,23 @@ export interface FinanceBankPartyRuleTable {
   confirmed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   source_voucher_id: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** ludy_finance.cash_forecast_item */
+export interface FinanceCashForecastItemTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  label: string;
+  category: string;
+  direction: string;
+  amount: string;
+  first_date: string;
+  recurrence: string;
+  end_date: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** ludy_finance.cash_voucher */
