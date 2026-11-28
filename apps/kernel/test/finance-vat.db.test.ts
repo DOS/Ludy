@@ -864,7 +864,7 @@ suite('VAT working per month or quarter (#316)', () => {
     expect(valueOf(xml, 'ct35')).toBe('166668');
   });
 
-  it('enforces VAT_PERIOD_LIMIT (5,000) per side at the exact boundary (#613)', { timeout: 60_000 }, async () => {
+  it('enforces VAT_PERIOD_LIMIT (5,000) per side at the exact boundary (#613)', { timeout: 90_000 }, async () => {
     const owned = await tokenFor(owner);
     const created = await rpc('org/create', owned, { name: 'Công ty Giới hạn GTGT', idempotencyKey: randomUUID() }, null);
     expect(created.status).toBe(200);

@@ -123,11 +123,12 @@ describe('loadVatReport single-statement SQL (#613)', () => {
         expect(normalizedSql).toContain(table);
       }
 
-      // Limit gating runs before child aggregation using set-based ANY(ARRAY(...)) probes, never per-row child SubPlans.
+      // Limit gating runs before child aggregation using set-based CTE JOINs, never per-row child SubPlans or unhashed ANY(ARRAY(...)) scans.
       expect(query.parameters).toContain(VAT_PERIOD_LIMIT + 1);
       expect(query.parameters).toContain(VAT_PERIOD_LIMIT);
-      expect(query.sql).toContain('ANY (ARRAY(SELECT id FROM "purchase_docs"))');
-      expect(query.sql).toContain('ANY (ARRAY(SELECT id FROM "sale_docs"))');
+      expect(normalizedSql).toContain('FROM purchase_docs pd');
+      expect(normalizedSql).toContain('FROM sale_docs pd');
+      expect(normalizedSql).not.toContain('ANY (ARRAY(');
       expect(query.sql).toContain('d.subtotal::text');
       expect(query.sql).toContain('d.invoice_date::text');
       expect(query.sql).not.toContain('SECURITY DEFINER');

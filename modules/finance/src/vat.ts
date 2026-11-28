@@ -616,6 +616,9 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
     (SELECT purchase_count <= ${VAT_PERIOD_LIMIT} AND sale_count <= ${VAT_PERIOD_LIMIT} AND late_sale_count <= ${VAT_PERIOD_LIMIT} FROM within_limits)
   `;
 
+  // Every document id in purchase_docs / sale_docs is unique (latestRevision and LATERAL LIMIT 1 yield at most one row
+  // per document), so JOIN preserves child row cardinality while letting PostgreSQL hash-join or probe PKs instead of
+  // falling back to an unhashed linear ANY(ARRAY(...)) scan on un-analyzed tables.
   const docLinesJson = (cte: 'purchase_docs' | 'sale_docs', countCol: 'purchase_count' | 'sale_count') => {
     const cteRef = sql.id(cte);
     const countRef = sql.id(countCol);
@@ -624,10 +627,11 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
         json_agg(json_build_array(l.document_id, l.amount::text, l.vat_rate) ORDER BY l.document_id, l.line_no),
         '[]'::json
       )
-      FROM ludy_finance.purchase_line l
+      FROM ${cteRef} pd
+      JOIN ludy_finance.purchase_line l
+        ON l.org_id = ${ctx.orgId}::uuid
+       AND l.document_id = pd.id
       WHERE (SELECT ${countRef} BETWEEN 1 AND ${VAT_PERIOD_LIMIT} AND purchase_count <= ${VAT_PERIOD_LIMIT} AND sale_count <= ${VAT_PERIOD_LIMIT} AND late_sale_count <= ${VAT_PERIOD_LIMIT} FROM within_limits)
-        AND l.org_id = ${ctx.orgId}::uuid
-        AND l.document_id = ANY (ARRAY(SELECT id FROM ${cteRef}))
     `;
   };
 
@@ -639,10 +643,11 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
         json_agg(json_build_array(r.document_id, r.vat_rate, r.taxable_amount::text, r.vat_amount::text) ORDER BY r.document_id, r.row_no),
         '[]'::json
       )
-      FROM ludy_finance.purchase_tax_rate r
+      FROM ${cteRef} pd
+      JOIN ludy_finance.purchase_tax_rate r
+        ON r.org_id = ${ctx.orgId}::uuid
+       AND r.document_id = pd.id
       WHERE (SELECT ${countRef} BETWEEN 1 AND ${VAT_PERIOD_LIMIT} AND purchase_count <= ${VAT_PERIOD_LIMIT} AND sale_count <= ${VAT_PERIOD_LIMIT} AND late_sale_count <= ${VAT_PERIOD_LIMIT} FROM within_limits)
-        AND r.org_id = ${ctx.orgId}::uuid
-        AND r.document_id = ANY (ARRAY(SELECT id FROM ${cteRef}))
     `;
   };
 
@@ -728,10 +733,11 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
         )
         FROM (
           SELECT DISTINCT ON (c.document_id) c.document_id, c.outcome, c.voucher_id, c.note, c.created_at
-          FROM ludy_finance.input_vat_check c
+          FROM purchase_docs pd
+          JOIN ludy_finance.input_vat_check c
+            ON c.org_id = ${ctx.orgId}::uuid
+           AND c.document_id = pd.id
           WHERE (SELECT purchase_count BETWEEN 1 AND ${VAT_PERIOD_LIMIT} AND sale_count <= ${VAT_PERIOD_LIMIT} AND late_sale_count <= ${VAT_PERIOD_LIMIT} FROM within_limits)
-            AND c.org_id = ${ctx.orgId}::uuid
-            AND c.document_id = ANY (ARRAY(SELECT id FROM purchase_docs))
           ORDER BY c.document_id, c.created_at DESC, c.id DESC
         ) m
       ) AS purchase_marks,
@@ -808,14 +814,12 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
           WHERE ${allWithinLimits}
             AND r.org_id = ${ctx.orgId}::uuid
             AND r.legal_entity_id = ${legalEntityId}::uuid
-            AND r.period = ANY (
-              ARRAY(
-                SELECT p FROM pg_catalog.unnest(${staticReturnPeriods}::text[]) AS p
-                UNION
-                SELECT original_period FROM late_sale_periods
-                UNION
-                SELECT other_period FROM late_sale_periods
-              )
+            AND r.period IN (
+              SELECT p FROM pg_catalog.unnest(${staticReturnPeriods}::text[]) AS p
+              UNION
+              SELECT original_period FROM late_sale_periods
+              UNION
+              SELECT other_period FROM late_sale_periods
             )
           ORDER BY r.period, r.created_at DESC, r.id DESC
         ) f
@@ -836,7 +840,7 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
            AND e.detail ->> 'legalEntityId' = ${legalEntityId}::uuid::text
           WHERE EXISTS (SELECT 1 FROM lock_targets)
             AND e.occurred_at >= (SELECT pg_catalog.min(lt.from_date) FROM lock_targets lt)
-            AND (e.detail ->> 'month') = ANY (ARRAY(SELECT lt.lock_month FROM lock_targets lt))
+            AND (e.detail ->> 'month') IN (SELECT lt.lock_month FROM lock_targets lt)
           GROUP BY t.period_key
         ) m
       ) AS lock_events
