@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// DRAFT TT99 B02-DN map and the regime a statement is read under (#5187), on synthetic entries worked out by hand. The map itself comes from secondary sources
-// (domain/tt99-reports.ts), so these tests pin what the code does with it, not that it is the official form.
+// DRAFT TT99 B02-DN map and the regime a statement is read under (#5187), on synthetic entries worked out by hand. The map was checked against the official text (domain/tt99-reports.ts, #5269) but
+// the accountant has not confirmed it, so these tests pin what the code does with it.
 import { describe, expect, it } from 'vitest';
 import { B02_LINES, B02_LINES_TT99, B02_ROLES, b02LinesFor, buildB02, type ReportEntry } from '../src/index.ts';
 import { statementsBooksOf } from '../src/statements-regime.ts';
@@ -88,6 +88,38 @@ describe('TT99 B02-DN map (draft)', () => {
     const report = buildB02(entries, LE, '2026-01-01', '2026-12-31', 'VND', B02_LINES_TT99);
     expect(amounts(report.lines)['01']).toBe('500000000');
     expect(report.unmapped).toEqual([{ accountCode: '622', partyId: null, amount: '7' }]);
+  });
+
+  it('counts a revenue deduction once after the period-end entry Dr 511 / Cr 521 (official line 02: the 511 debit that pairs with a 521 credit)', () => {
+    // The circular closes 521 into 511 at period end (Dr 511 / Cr 521, no 911 in it); the 20M discount of YEAR is closed that way, and 511 is then closed to 911. Line 02 stays 20M (521) + 10M (the direct return) = 30M.
+    const closed = [
+      ...YEAR,
+      entry('2026-12-31', [['511', 20_000_000, 0], ['521', 0, 20_000_000]]),
+      entry('2026-12-31', [['511', 460_000_000, 0], ['911', 0, 460_000_000]]),
+    ];
+    const a = amounts(buildB02(closed, LE, '2026-01-01', '2026-12-31', 'VND', B02_LINES_TT99).lines);
+    expect(a['01']).toBe('500000000');
+    expect(a['02']).toBe('30000000');
+    expect(a['10']).toBe('470000000');
+    expect(a['60']).toBe('155000000');
+    expect(buildB02(closed, LE, '2026-01-01', '2026-12-31', 'VND', B02_LINES_TT99).unmapped).toEqual([]);
+    // Before and after the closing entry, the same statement.
+    expect(buildB02(YEAR, LE, '2026-01-01', '2026-12-31', 'VND', B02_LINES_TT99).lines).toEqual(buildB02(closed, LE, '2026-01-01', '2026-12-31', 'VND', B02_LINES_TT99).lines);
+  });
+
+  it('still reads a return booked straight on 511 (no 521 in the entry) as a deduction', () => {
+    const entries = [entry('2026-02-10', [['131', 100, 0], ['511', 0, 100]]), entry('2026-03-05', [['511', 30, 0], ['131', 0, 30]])];
+    const a = amounts(buildB02(entries, LE, '2026-01-01', '2026-12-31', 'VND', B02_LINES_TT99).lines);
+    expect(a['01']).toBe('100');
+    expect(a['02']).toBe('30');
+    expect(a['10']).toBe('70');
+  });
+
+  it('reads a deduction on 521 only, with no closing entry yet', () => {
+    const entries = [entry('2026-02-10', [['131', 100, 0], ['511', 0, 100]]), entry('2026-02-20', [['521', 15, 0], ['131', 0, 15]])];
+    const a = amounts(buildB02(entries, LE, '2026-01-01', '2026-12-31', 'VND', B02_LINES_TT99).lines);
+    expect(a['02']).toBe('15');
+    expect(a['10']).toBe('85');
   });
 
   it('defines every formula part before the line that uses it, and no code twice', () => {

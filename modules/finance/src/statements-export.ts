@@ -11,7 +11,7 @@ import { b01For } from './domain/tt99-reports.ts';
 import type { ColumnAmounts, FinancialStatements, StatementLine, UnmappedRow } from './statements.ts';
 
 export const DRAFT_NOTICE = 'BẢN NHÁP: mã chỉ tiêu và cách lấy số liệu từ tài khoản chưa được kế toán kiểm tra; không dùng để nộp.';
-// B02 read under the TT99 chart (#5187): the line codes and the account map come from secondary sources, not the official text.
+// B02 read under the TT99 chart (#5187): the line codes and the account map were checked against the official text (#5269) but not confirmed by the accountant (#61).
 export const TT99_NOTICE = 'Kết quả hoạt động kinh doanh (B02) đọc theo hệ thống tài khoản Thông tư 99, mã chỉ tiêu lấy từ nguồn thứ cấp, chưa đối chiếu văn bản chính thức.';
 // The fixed label of a TT99 B01 (#5204): every placement of an account on a line is Ludy's own, until the accountant confirms it (#61). It sits under the draft notice at the top of the sheet.
 export const B01_TT99_DRAFT = 'Bản nháp, kế toán chưa xác nhận cách lập';
