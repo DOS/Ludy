@@ -2146,15 +2146,15 @@ export function visibleTools(tools: readonly ToolDescriptor[], actor: UserActor)
 // Charges one draft against the grant's and the org's daily caps (`ludy_kernel.mcp_drafts_charge`) and answers 0, or the seconds to the next midnight UTC when a cap is used up. A grant that is no longer
 // valid (revoked between the token check and now) is answered as the rest of the endpoint answers it, 401.
 async function chargeDailyDraft(runtime: Runtime, orgId: string, grantId: string, caps: DraftDailyCaps): Promise<number> {
-  try {
-    const { rows } = await runtime.orgless((db) =>
-      sql<{ wait: number }>`SELECT ludy_kernel.mcp_drafts_charge(${grantId}::uuid, ${orgId}::uuid, ${caps.perGrant}::int, ${caps.perOrg}::int) AS wait`.execute(db),
-    );
-    return rows[0]?.wait ?? 0;
-  } catch (error) {
-    if ((error as { code?: unknown } | null)?.code === '22023') throw new DomainError('UNAUTHENTICATED', 401, 'Quyền kết nối không còn hiệu lực');
-    throw error;
-  }
+  return await runtime.orgless(async (db) => {
+    try {
+      const { rows } = await sql<{ wait: number }>`SELECT ludy_kernel.mcp_drafts_charge(${grantId}::uuid, ${orgId}::uuid, ${caps.perGrant}::int, ${caps.perOrg}::int) AS wait`.execute(db);
+      return rows[0]?.wait ?? 0;
+    } catch (error) {
+      if ((error as { code?: unknown } | null)?.code === '22023') throw new DomainError('UNAUTHENTICATED', 401, 'Quyền kết nối không còn hiệu lực');
+      throw error;
+    }
+  });
 }
 
 // The one write an AI app has (#3227, plan section 3.8, owner decision 2026-11-14): a draft Social post that waits, marked as an AI's and not trusted, for a person to send to review and approve in
@@ -2167,7 +2167,7 @@ function draftTool(runtime: Runtime, actor: UserActor, orgId: string, draftBudge
     writeScope: MCP_DRAFT_SCOPE,
     title: 'Create a Social draft for review',
     description:
-      'Creates ONE draft Social post in the organization, for a person to review: the text, optionally a title, a link, a time zone and a proposed time (only a suggestion: nothing is scheduled), and 1 to 20 channels (connectionId: the id of a channel, which ludy_social_posts_list shows for the channels of posts that exist; each channel may have its own text and title). The draft is marked as written by an AI app and as not trusted. It stays a draft: nobody is notified, and a person must send it to review and approve every channel in Ludy before anything is published. This tool cannot approve, schedule, publish, edit or delete anything, upload media, or connect a channel. Every successful call makes a new draft, so do not repeat one that succeeded. A few drafts a minute at most; over that the answer says how long to wait.',
+      'Creates ONE draft Social post in the organization, for a person to review: the text, optionally a title, a link, a time zone and a proposed time (only a suggestion: nothing is scheduled), and 1 to 20 channels (connectionId: the id of a channel, which ludy_social_posts_list shows for the channels of posts that exist; each channel may have its own text and title). The draft is marked as written by an AI app and as not trusted. It stays a draft: nobody is notified, and a person must send it to review and approve every channel in Ludy before anything is published. This tool cannot approve, schedule, publish, edit or delete anything, upload media, or connect a channel. Every successful call makes a new draft, so do not repeat one that succeeded. A few drafts a minute at most, and a limited number a day; over either the answer says how long to wait (the daily limit starts again at midnight UTC).',
     inputSchema: schemaOf(zMcpDraftCreate),
     argsSchema: zMcpDraftCreate,
     outputSchema: {
@@ -2186,7 +2186,7 @@ function draftTool(runtime: Runtime, actor: UserActor, orgId: string, draftBudge
       if (!ticket.allowed) throw new DomainError('RATE_LIMITED', 429, 'Quá nhiều bản nháp trong một lúc, hãy thử lại sau', { retryAfterSeconds: ticket.retryAfterSeconds });
       try {
         // The daily cap (#3253), in the database so it holds across API instances and restarts: one draft charged to the grant and the org before the command runs (the draft's own transaction may write
-        // nothing but the draft). Used up: the seconds to midnight UTC, refused as rate limited, which the endpoint audits as such; the minute budget's slot is released by the `finally` below.
+        // nothing but the draft). Used up: the seconds to midnight UTC, refused as rate limited, which the endpoint audits as such; the minute budget's one-at-a-time slot is released by the `finally` below (its token stays spent).
         const grantId = actor.mcp?.grantId;
         if (grantId === undefined) throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP mới dùng được công cụ này');
         const wait = await chargeDailyDraft(runtime, orgId, grantId, caps);
