@@ -11,7 +11,7 @@ import { bankAccountRuns, Decimal, descriptionRuleText, type DecimalValue, type 
 
 // What the books remember of a vendor.
 export interface VendorHistory {
-  // The VND totals of the vendor's last invoices in force, newest first.
+  // The VND totals of the vendor's last non-correction invoices in force, newest first.
   totals: readonly string[];
   // The unit prices of their lines, newest invoice first (VND, as booked).
   prices: ReadonlyArray<{ description: string; unitPrice: string }>;
@@ -147,14 +147,23 @@ export function priceCheck(lines: ReadonlyArray<{ description: string; unitPrice
 }
 
 // The flags of a purchase invoice, in a fixed order. `history` is null for a vendor the books do not know yet.
+// An adjustment or replacement invoice (`related` set) carries a delta or reissued total against an earlier invoice, so
+// the amount rule skips it while bank account and unit price checks still run (#2425).
 export function anomalyChecks(
-  invoice: { sellerBankAccount: string | null | undefined; total: string | null; lines: ReadonlyArray<{ description: string; unitPrice: string | null }> },
+  invoice: {
+    sellerBankAccount: string | null | undefined;
+    total: string | null;
+    lines: ReadonlyArray<{ description: string; unitPrice: string | null }>;
+    related?: boolean | { kind: 'replacement' | 'adjustment' } | null | undefined;
+  },
   history: VendorHistory | null,
 ): InvoiceCheck[] {
   if (history === null) return [];
-  return [bankAccountCheck(invoice.sellerBankAccount, history.bankAccounts), amountCheck(invoice.total, history.totals), priceCheck(invoice.lines, history.prices)].filter(
-    (c): c is InvoiceCheck => c !== null,
-  );
+  return [
+    bankAccountCheck(invoice.sellerBankAccount, history.bankAccounts),
+    invoice.related ? null : amountCheck(invoice.total, history.totals),
+    priceCheck(invoice.lines, history.prices),
+  ].filter((c): c is InvoiceCheck => c !== null);
 }
 
 // The net pay of a pay run paid in cash while some net pay is 5 million or more (#2532, docs/plan/payroll.md row 19: a payment of 5 million or more in one go must be non-cash for the pay to be

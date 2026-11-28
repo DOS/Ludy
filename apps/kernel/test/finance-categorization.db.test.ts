@@ -556,4 +556,436 @@ suite('learned account rules with provenance (#1399)', () => {
       olderCreatedAt: '2026-10-01T00:00:00Z',
     });
   });
+
+  describe('learned sales account rules (#1452)', () => {
+    let salesOrg = { slug: '', orgId: '' };
+    let customerPartyId = '';
+    let firstSaleDocId = '';
+    let firstSaleRuleId = '';
+
+    const buildInvoiceXml = (
+      number: string,
+      options: {
+        month?: string | undefined;
+        sellerName?: string | undefined;
+        sellerTaxCode?: string | null | undefined;
+        buyerName?: string | undefined;
+        buyerTaxCode?: string | null | undefined;
+      } = {},
+    ) => {
+      let xml = FIXTURE.toString('utf8')
+        .replace('<SHDon>1234</SHDon>', `<SHDon>${number}</SHDon>`)
+        .replace('tháng 9/2026', `tháng ${options.month ?? '9/2026'}`);
+      xml = xml.replace(/<NBan>[\s\S]*?<\/NBan>/, (block) => {
+        let out = block;
+        if (options.sellerName !== undefined) out = out.replace('<Ten>CÔNG TY TNHH DỊCH VỤ MẪU</Ten>', `<Ten>${options.sellerName}</Ten>`);
+        if (options.sellerTaxCode === null) out = out.replace('<MST>0101234564</MST>', '');
+        else if (options.sellerTaxCode !== undefined) out = out.replace('<MST>0101234564</MST>', `<MST>${options.sellerTaxCode}</MST>`);
+        return out;
+      });
+      xml = xml.replace(/<NMua>[\s\S]*?<\/NMua>/, (block) => {
+        let out = block;
+        if (options.buyerName !== undefined) out = out.replace('<Ten>CÔNG TY CỔ PHẦN NGƯỜI MUA MẪU</Ten>', `<Ten>${options.buyerName}</Ten>`);
+        if (options.buyerTaxCode === null) out = out.replace('<MST>0309876546</MST>', '');
+        else if (options.buyerTaxCode !== undefined) out = out.replace('<MST>0309876546</MST>', `<MST>${options.buyerTaxCode}</MST>`);
+        return out;
+      });
+      return new TextEncoder().encode(xml);
+    };
+
+    async function proposeSalesOrg(
+      number: string,
+      options: {
+        month?: string | undefined;
+        sellerName?: string | undefined;
+        sellerTaxCode?: string | null | undefined;
+        buyerName?: string | undefined;
+        buyerTaxCode?: string | null | undefined;
+        legalEntityId?: string | undefined;
+      } = {},
+    ) {
+      const bytes = buildInvoiceXml(number, options);
+      const sha256 = sha256Hex(bytes);
+      const storageKey = fileKey(salesOrg.orgId, sha256);
+      const generation = await store.put(storageKey, bytes);
+      const { fileId } = await runtime.execute<{ fileId: string }>(
+        'kernel.file.ingest',
+        {
+          filename: `sale-${number}.xml`,
+          contentType: 'application/xml',
+          sizeBytes: bytes.byteLength,
+          sha256,
+          storageKey,
+          generation,
+          source: 'upload',
+          ...(options.legalEntityId ? { legalEntityId: options.legalEntityId } : {}),
+        },
+        { actor: asUser(owner.userId), orgId: salesOrg.orgId },
+      );
+      const proposal = await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-13' }, salesOrg.orgId, fileId);
+      return String(proposal.proposalId);
+    }
+
+    const salesDetail = async (id: string) =>
+      (await rpc('inbox/get', owner, { id }, salesOrg.slug)).body as { revision: number; payload: { direction?: string; regime?: string; lines: Line[] } };
+
+    const approveSalesOrg = (id: string, revision: number) =>
+      runtime.execute<{ documentId: string; journalEntryId: string }>('kernel.proposal.approve', { acceptUnverifiedSignature: true, id, revision }, {
+        actor: asMfa(owner.userId),
+        orgId: salesOrg.orgId,
+        idempotencyKey: randomUUID(),
+      });
+
+    async function editAndApproveSalesOrg(id: string, accounts: Record<string, string>) {
+      const before = await salesDetail(id);
+      const lineAccounts = Object.entries(accounts).map(([prefix, debitAccount]) => ({ lineNo: lineOf(before.payload.lines, prefix).lineNo, debitAccount }));
+      const edited = await rpc('inbox/edit', owner, { id, revision: before.revision, lineAccounts, idempotencyKey: randomUUID() }, salesOrg.slug);
+      expect(edited).toMatchObject({ status: 200, body: { changed: true } });
+      const revised = await salesDetail(id);
+      for (const { lineNo } of lineAccounts) {
+        expect(revised.payload.lines.find((l) => l.lineNo === lineNo)?.accountRule).toMatchObject({ source: 'user' });
+      }
+      return approveSalesOrg(id, revised.revision);
+    }
+
+    const salesRulesRows = async (orgId = salesOrg.orgId) =>
+      admin(async (c) =>
+        (
+          await c.query<{
+            id: string;
+            direction: string;
+            vendor_party_id: string | null;
+            match_kind: string;
+            match_text: string;
+            label: string | null;
+            debit_account: string;
+            confirmed_by: string | null;
+            source_document_id: string | null;
+          }>(
+            `SELECT id, direction, vendor_party_id, match_kind, match_text, label, debit_account, confirmed_by, source_document_id
+               FROM ludy_finance.categorization_rule
+              WHERE org_id = $1
+              ORDER BY direction, match_text`,
+            [orgId],
+          )
+        ).rows,
+      );
+
+    beforeAll(async () => {
+      const created = await rpc('org/create', owner, { name: 'Công ty Bán hàng Quy tắc', idempotencyKey: randomUUID() }, null);
+      salesOrg = { slug: String(created.body?.slug), orgId: String(created.body?.orgId) };
+      expect(await rpc('org/setTaxCode', owner, { taxCode: '0101234564' }, salesOrg.slug)).toMatchObject({ status: 200 });
+      const invite = await rpc('org/invite', owner, { email: member.email, role: 'member' }, salesOrg.slug, { mfa: true });
+      expect(invite.status).toBe(200);
+      expect((await rpc('invites/accept', member, { token: String(invite.body?.acceptPath).split('#')[1] }, null)).status).toBe(200);
+    });
+
+    it('proposes 511 initially, teaches nothing when unedited, and learns a sale rule with provenance and zero vendor_account_rule when edited', async () => {
+      const firstId = await proposeSalesOrg('9301');
+      const firstProposal = await salesDetail(firstId);
+      expect(firstProposal.payload.direction).toBe('sale');
+      expect(lineOf(firstProposal.payload.lines, 'Cước dịch vụ internet')).toMatchObject({ debitAccount: '511', accountRule: { source: 'builtin' } });
+      await approveSalesOrg(firstId, firstProposal.revision);
+      expect(await salesRulesRows()).toEqual([]);
+
+      const secondId = await proposeSalesOrg('9302');
+      const recorded = await editAndApproveSalesOrg(secondId, { 'Cước dịch vụ internet': '5113' });
+      firstSaleDocId = recorded.documentId;
+
+      const rows = await salesRulesRows();
+      expect(rows).toEqual([
+        {
+          id: expect.any(String),
+          direction: 'sale',
+          vendor_party_id: expect.any(String),
+          match_kind: 'description',
+          match_text: 'cuoc dich vu internet thang',
+          label: 'Cước dịch vụ internet tháng 9/2026',
+          debit_account: '5113',
+          confirmed_by: owner.userId,
+          source_document_id: firstSaleDocId,
+        },
+      ]);
+      firstSaleRuleId = rows[0]!.id;
+      customerPartyId = rows[0]!.vendor_party_id!;
+
+      // Sales never write a vendor_account_rule row.
+      const defaults = await admin(async (c) =>
+        (await c.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_finance.vendor_account_rule WHERE org_id = $1`, [salesOrg.orgId])).rows[0]?.n,
+      );
+      expect(Number(defaults)).toBe(0);
+
+      const audits = await admin(async (c) =>
+        (
+          await c.query<{ detail: Record<string, unknown> }>(
+            `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.purchase.record' AND proposal_id = $2 AND outcome = 'ok'`,
+            [salesOrg.orgId, secondId],
+          )
+        ).rows,
+      );
+      expect(audits[0]?.detail).toMatchObject({
+        direction: 'sale',
+        learned_rules: [{ ruleId: firstSaleRuleId, lineNo: 1, account: '5113', created: true }],
+      });
+    });
+
+    it('proposes the learned sale rule on the customer next invoice and updates provenance plus corrections when overridden', async () => {
+      const nextId = await proposeSalesOrg('9303', { month: '11/2026' });
+      const nextProposal = await salesDetail(nextId);
+      expect(lineOf(nextProposal.payload.lines, 'Cước dịch vụ internet')).toMatchObject({
+        debitAccount: '5113',
+        reason: 'Theo quy tắc đã học: cùng mặt hàng của khách hàng này',
+        accountRule: { source: 'learned', scope: 'vendor', matchKind: 'description', ruleId: firstSaleRuleId },
+      });
+      expect(lineOf(nextProposal.payload.lines, 'Phí quảng cáo Facebook')).toMatchObject({
+        debitAccount: '511',
+        accountRule: { source: 'builtin' },
+      });
+
+      const corrected = await editAndApproveSalesOrg(nextId, { 'Cước dịch vụ internet': '5118' });
+      const listed = (await rpc('accountRules/list', owner, undefined, salesOrg.slug)).body as Array<{
+        id: string;
+        direction: string;
+        accountCode: string;
+        corrections: number;
+        sourceDocument: { documentId: string } | null;
+      }>;
+      const updated = listed.find((r) => r.id === firstSaleRuleId);
+      expect(updated).toMatchObject({
+        direction: 'sale',
+        accountCode: '5118',
+        corrections: 1,
+        sourceDocument: { documentId: corrected.documentId },
+      });
+    });
+
+    it('matches a customer without a tax code by name for both learning and suggesting', async () => {
+      const firstId = await proposeSalesOrg('9304', { buyerName: 'KHÁCH HÀNG KHÔNG MST', buyerTaxCode: null });
+      await editAndApproveSalesOrg(firstId, { 'Phí quảng cáo Facebook': '5118' });
+
+      const secondId = await proposeSalesOrg('9305', { month: '12/2026', buyerName: 'Khách hàng không MST', buyerTaxCode: null });
+      const secondProposal = await salesDetail(secondId);
+      expect(lineOf(secondProposal.payload.lines, 'Phí quảng cáo Facebook')).toMatchObject({
+        debitAccount: '5118',
+        reason: 'Theo quy tắc đã học: cùng mặt hàng của khách hàng này',
+        accountRule: { source: 'learned', scope: 'vendor', matchKind: 'description' },
+      });
+    });
+
+    it('isolates purchase and sale rules per direction and never applies one direction to the other', async () => {
+      // Same party & same keyword can coexist across purchase and sale directions.
+      expect(
+        await rpc('accountRules/create', owner, { keyword: 'phi dich vu', accountCode: '6422', direction: 'purchase', vendorPartyId: customerPartyId }, salesOrg.slug),
+      ).toMatchObject({ status: 200 });
+      expect(
+        await rpc('accountRules/create', owner, { keyword: 'phi dich vu', accountCode: '5113', direction: 'sale', vendorPartyId: customerPartyId }, salesOrg.slug),
+      ).toMatchObject({ status: 200 });
+
+      // Org-wide purchase keyword 'quang cao' -> 6421 must never apply to a sales invoice for customerPartyId.
+      expect(await rpc('accountRules/create', owner, { keyword: 'quang cao', accountCode: '6421', direction: 'purchase' }, salesOrg.slug)).toMatchObject({
+        status: 200,
+      });
+      const saleId = await proposeSalesOrg('9306', { month: '12/2026' });
+      expect(lineOf((await salesDetail(saleId)).payload.lines, 'Phí quảng cáo Facebook')).toMatchObject({
+        debitAccount: '511',
+        accountRule: { source: 'builtin' },
+      });
+
+      // A purchase invoice from that same counterparty (0309876546) ignores its learned sale rule ('5118' on Cước dịch vụ internet)
+      // and gets purchase built-in account '6422'.
+      const purchaseId = await proposeSalesOrg('9307', {
+        sellerName: 'CÔNG TY CỔ PHẦN NGƯỜI MUA MẪU',
+        sellerTaxCode: '0309876546',
+        buyerName: 'CÔNG TY TNHH DỊCH VỤ MẪU',
+        buyerTaxCode: '0101234564',
+      });
+      const purchaseProposal = await salesDetail(purchaseId);
+      expect(purchaseProposal.payload.direction).toBeUndefined();
+      expect(lineOf(purchaseProposal.payload.lines, 'Cước dịch vụ internet')).toMatchObject({
+        debitAccount: '6422',
+        accountRule: { source: 'builtin' },
+      });
+    });
+
+    it('validates account rules per direction in settings RPCs, enforces RBAC and DB constraints, and keeps direction immutable', async () => {
+      expect(await rpc('accountRules/create', owner, { keyword: 'doanh thu sai', accountCode: '6422', direction: 'sale' }, salesOrg.slug)).toMatchObject({
+        status: 422,
+        body: { code: 'NOT_REVENUE_ACCOUNT' },
+      });
+      expect(await rpc('accountRules/create', owner, { keyword: 'chi phi sai', accountCode: '5111', direction: 'purchase' }, salesOrg.slug)).toMatchObject({
+        status: 422,
+        body: { code: 'REVENUE_ACCOUNT_ON_PURCHASE' },
+      });
+
+      const createdSale = await rpc('accountRules/create', owner, { keyword: 'quang cao', accountCode: '711', direction: 'sale' }, salesOrg.slug);
+      expect(createdSale).toMatchObject({ status: 200 });
+      const createdId = String(createdSale.body?.id);
+      expect(await rpc('accountRules/create', owner, { keyword: 'quang cao', accountCode: '5113', direction: 'sale' }, salesOrg.slug)).toMatchObject({
+        status: 409,
+        body: { code: 'RULE_EXISTS' },
+      });
+
+      // Next sales invoice matches the org-wide sales keyword rule ('711').
+      const saleMatchedId = await proposeSalesOrg('9308');
+      expect(lineOf((await salesDetail(saleMatchedId)).payload.lines, 'Phí quảng cáo Facebook')).toMatchObject({
+        debitAccount: '711',
+        reason: 'Theo quy tắc đã học: từ khóa "quang cao"',
+        accountRule: { source: 'learned', scope: 'org', matchKind: 'keyword', ruleId: createdId },
+      });
+
+      // Members can read direction on rules, cannot create or remove sales rules; other org gets 404.
+      const memberList = await rpc('accountRules/list', member, undefined, salesOrg.slug);
+      expect(memberList.status).toBe(200);
+      expect((memberList.body as Array<{ id: string; direction: string }>).find((r) => r.id === createdId)?.direction).toBe('sale');
+      expect(await rpc('accountRules/create', member, { keyword: 'khac', accountCode: '5113', direction: 'sale' }, salesOrg.slug)).toMatchObject({ status: 403 });
+      expect(await rpc('accountRules/remove', member, { id: createdId }, salesOrg.slug)).toMatchObject({ status: 403 });
+      expect(await rpc('accountRules/remove', other, { id: createdId }, orgB.slug)).toMatchObject({ status: 404, body: { code: 'RULE_NOT_FOUND' } });
+      expect(await rpc('accountRules/remove', owner, { id: createdId }, salesOrg.slug)).toMatchObject({ status: 200, body: { id: createdId } });
+
+      // DB check & column privilege guard: wrong account-direction pairs fail CHECK, and ludy_tenant cannot UPDATE direction.
+      await expect(
+        admin((c) =>
+          c.query(`INSERT INTO ludy_finance.categorization_rule (org_id, direction, match_kind, match_text, debit_account) VALUES ($1, 'sale', 'keyword', 'db check sale', '6422')`, [
+            salesOrg.orgId,
+          ]),
+        ),
+      ).rejects.toThrow(/categorization_rule_direction_account_check/);
+      await expect(
+        admin((c) =>
+          c.query(`INSERT INTO ludy_finance.categorization_rule (org_id, direction, match_kind, match_text, debit_account) VALUES ($1, 'purchase', 'keyword', 'db check pur', '5111')`, [
+            salesOrg.orgId,
+          ]),
+        ),
+      ).rejects.toThrow(/categorization_rule_direction_account_check/);
+
+      const client = new pg.Client({ connectionString: new URL(adminUrl).toString() });
+      await client.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SET LOCAL ROLE ludy_tenant');
+        await expect(client.query(`UPDATE ludy_finance.categorization_rule SET direction = 'purchase'`)).rejects.toThrow(/permission denied/);
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        await client.end();
+      }
+    });
+
+    it('learns no sales rule and writes no learned_rules audit entry on a non-user approval', async () => {
+      const systemApproveSale = defineCommand({
+        name: 'kernel.test_sales_system_approve',
+        input: z.object({ proposalId: z.uuid() }),
+        risk: 'R3',
+        sideEffect: 'financial',
+        access: 'system',
+        handler: async (ctx, input) => {
+          const proposal = await ctx.trx
+            .selectFrom('ludy_kernel.proposal')
+            .select(['payload'])
+            .where('org_id', '=', ctx.orgId)
+            .where('id', '=', input.proposalId)
+            .forUpdate()
+            .executeTakeFirstOrThrow();
+          await ctx.trx
+            .updateTable('ludy_kernel.proposal')
+            .set({ status: 'approved', decided_at: ctx.now, executed_command_id: ctx.commandId })
+            .where('org_id', '=', ctx.orgId)
+            .where('id', '=', input.proposalId)
+            .execute();
+          const result = await ctx.run<{ documentId: string; journalEntryId: string }>(
+            'finance.purchase.record',
+            { payload: proposal.payload, acceptFailedChecks: false },
+            { proposalId: input.proposalId },
+          );
+          await ctx.trx
+            .updateTable('ludy_kernel.proposal')
+            .set({ status: 'executed', result: JSON.stringify(result) })
+            .where('org_id', '=', ctx.orgId)
+            .where('id', '=', input.proposalId)
+            .execute();
+          return result;
+        },
+      });
+      const systemRuntime = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({
+        commands: [...kernelCommands, ...financeCommands, systemApproveSale],
+        queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
+      });
+
+      const id = await proposeSalesOrg('9309', { buyerName: 'KHÁCH HÀNG DUYỆT HỆ THỐNG', buyerTaxCode: null });
+      const before = await salesDetail(id);
+      const adLineNo = lineOf(before.payload.lines, 'Phí quảng cáo Facebook').lineNo;
+      const edited = await rpc('inbox/edit', owner, { id, revision: before.revision, lineAccounts: [{ lineNo: adLineNo, debitAccount: '5113' }], idempotencyKey: randomUUID() }, salesOrg.slug);
+      expect(edited).toMatchObject({ status: 200, body: { changed: true } });
+
+      const rulesBefore = await salesRulesRows();
+      await systemRuntime.execute(
+        'kernel.test_sales_system_approve',
+        { proposalId: id },
+        { actor: { type: 'system', component: 'test.agent' }, orgId: salesOrg.orgId, idempotencyKey: randomUUID() },
+      );
+      expect(await salesRulesRows()).toEqual(rulesBefore);
+      const audit = await admin(async (c) =>
+        (
+          await c.query<{ actor_type: string; detail: Record<string, unknown> }>(
+            `SELECT actor_type, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.purchase.record' AND proposal_id = $2`,
+            [salesOrg.orgId, id],
+          )
+        ).rows,
+      );
+      expect(audit[0]).toMatchObject({ actor_type: 'system', detail: { direction: 'sale' } });
+      expect(audit[0]?.detail).not.toHaveProperty('learned_rules');
+    });
+
+    it('learns nothing on TT99 sales and filters TT133-only revenue rules while keeping TT99-compatible sales rules', async () => {
+      const tt99EntityId = await admin(
+        async (c) =>
+          (
+            await c.query<{ id: string }>(
+              `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, tax_code, created_by) VALUES ($1, 'Công ty TT99 Bán hàng', 'company', '0312345678', $2) RETURNING id`,
+              [salesOrg.orgId, owner.userId],
+            )
+          ).rows[0]?.id as string,
+      );
+      await admin((c) =>
+        c.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2026-01-01')`, [
+          salesOrg.orgId,
+          tt99EntityId,
+        ]),
+      );
+
+      // Approving an edited TT99 sale learns no categorization rule.
+      const tt99FirstId = await proposeSalesOrg('9310', { sellerTaxCode: '0312345678', legalEntityId: tt99EntityId });
+      const tt99First = await salesDetail(tt99FirstId);
+      expect(tt99First.payload.regime).toBe('tt99');
+      await editAndApproveSalesOrg(tt99FirstId, { 'Cước dịch vụ internet': '711' });
+
+      const tt99RulesAfterApprove = await admin(async (c) =>
+        (
+          await c.query<{ id: string }>(
+            `SELECT id FROM ludy_finance.categorization_rule WHERE org_id = $1 AND legal_entity_id = $2`,
+            [salesOrg.orgId, tt99EntityId],
+          )
+        ).rows,
+      );
+      expect(tt99RulesAfterApprove).toEqual([]);
+
+      // TT133-only revenue rule ('5113') on tt99EntityId is filtered out on TT99 extraction, while '711' stays offered.
+      expect(
+        await rpc('accountRules/create', owner, { keyword: 'internet', accountCode: '5113', direction: 'sale', legalEntityId: tt99EntityId }, salesOrg.slug),
+      ).toMatchObject({ status: 200 });
+      expect(
+        await rpc('accountRules/create', owner, { keyword: 'quang cao', accountCode: '711', direction: 'sale', legalEntityId: tt99EntityId }, salesOrg.slug),
+      ).toMatchObject({ status: 200 });
+
+      const tt99SecondId = await proposeSalesOrg('9311', { sellerTaxCode: '0312345678', legalEntityId: tt99EntityId });
+      const tt99Second = await salesDetail(tt99SecondId);
+      expect(lineOf(tt99Second.payload.lines, 'Cước dịch vụ internet')).toMatchObject({
+        debitAccount: '511',
+        accountRule: { source: 'builtin' },
+      });
+      expect(lineOf(tt99Second.payload.lines, 'Phí quảng cáo Facebook')).toMatchObject({
+        debitAccount: '711',
+        accountRule: { source: 'learned', scope: 'org', matchKind: 'keyword' },
+      });
+    });
+  });
 });

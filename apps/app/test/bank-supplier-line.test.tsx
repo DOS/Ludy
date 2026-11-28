@@ -30,6 +30,7 @@ const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 
 const line: BankLine = { id: '00000000-0000-4000-8000-0000000000a1', date: '2026-11-05', description: 'Chuyen khoan NCC', amount: '-110000', balance: null, reference: null, ambiguous: false, importId: '00000000-0000-4000-8000-0000000000b1', state: { status: 'open' } };
 const candidate = { paymentId: '00000000-0000-4000-8000-0000000000d1', partyId: '00000000-0000-4000-8000-0000000000e1', partyName: 'Cong ty Anh Duong', invoiceNumber: 'HD-0042', amount: '110000', exportedAt: '2026-11-04T03:00:00.000Z', reason: 'amount_note' as const };
+const secondCandidate = { paymentId: '00000000-0000-4000-8000-0000000000d2', partyId: '00000000-0000-4000-8000-0000000000e2', partyName: 'Cong ty Binh Minh', invoiceNumber: 'HD-0088', amount: '110000', exportedAt: '2026-11-04T04:00:00.000Z', reason: 'amount' as const };
 
 function render(match: BankSupplierMatch, locale: 'vi' | 'en' = 'en'): string {
   setActiveLocale(locale);
@@ -50,18 +51,51 @@ describe('the supplier payment an open money-out line may be (#3700 S3c)', () =>
   });
 
   it('shows the candidate with its supplier, invoice and amount and the one button, and calls nothing', () => {
-    const html = render({ bankLineId: line.id, date: line.date, candidates: [candidate] });
+    const html = render({ bankLineId: line.id, date: line.date, candidates: [candidate], ambiguous: false, matchCount: 1 });
     expect(html).toContain('data-testid="bank-supplier-candidate"');
     expect(html).toContain('Cong ty Anh Duong');
     expect(html).toContain('HD-0042');
     expect(html).toContain('data-testid="bank-supplier-open"');
+    expect(html).toContain('max-md:min-h-11');
+    // Single match omits the multi-payment ambiguity warning.
+    expect(html).not.toContain('bank-supplier-ambiguous');
+    expect(html).not.toContain('bank-supplier-candidate-ambiguous');
     // The confirmation and the request come only after the button.
     expect(html).not.toContain('bank-supplier-form');
     expect(html).not.toContain('bank-supplier-asked');
     expect(cache.calls).toEqual([]);
   });
 
+  it('shows an explicit ambiguity warning with icon and reason for multi-payment keyless match in en and vi (#3788)', () => {
+    const enHtml = render({ bankLineId: line.id, date: line.date, candidates: [candidate, secondCandidate], ambiguous: true, matchCount: 2 }, 'en');
+    expect(enHtml).toContain('data-testid="bank-supplier-ambiguous"');
+    expect(enHtml).toContain('role="note"');
+    expect(enHtml).toContain('aria-hidden="true"');
+    expect(enHtml).toContain('Ambiguous match');
+    expect(enHtml).toContain('This bank line carries no beneficiary account number, and 2 approved, exported supplier payments match the exact same amount.');
+    expect(enHtml).toContain('Verify before settling');
+    expect(enHtml.match(/data-testid="bank-supplier-candidate-ambiguous"/g)).toHaveLength(2);
+    expect(enHtml).toContain('Cong ty Anh Duong');
+    expect(enHtml).toContain('Cong ty Binh Minh');
+
+    cache.current.clear();
+    const viHtml = render({ bankLineId: line.id, date: line.date, candidates: [candidate, secondCandidate], ambiguous: true, matchCount: 2 }, 'vi');
+    expect(viHtml).toContain('data-testid="bank-supplier-ambiguous"');
+    expect(viHtml).toContain('Khớp mơ hồ');
+    expect(viHtml).toContain('Dòng sao kê này không có số tài khoản người nhận, trong khi có 2 khoản chi nhà cung cấp đã duyệt và đã xuất file khớp đúng số tiền này.');
+    expect(viHtml).toContain('Cần tự đối chiếu');
+    expect(viHtml.match(/data-testid="bank-supplier-candidate-ambiguous"/g)).toHaveLength(2);
+  });
+
+  it('omits the multi-payment ambiguity warning when the line carries a beneficiary account number', () => {
+    const html = render({ bankLineId: line.id, date: line.date, candidates: [candidate, secondCandidate], ambiguous: false, matchCount: 2 }, 'en');
+    expect(html).toContain('Cong ty Anh Duong');
+    expect(html).toContain('Cong ty Binh Minh');
+    expect(html).not.toContain('bank-supplier-ambiguous');
+    expect(html).not.toContain('bank-supplier-candidate-ambiguous');
+  });
+
   it('shows nothing for a line that equals no supplier payment', () => {
-    expect(render({ bankLineId: line.id, date: line.date, candidates: [] })).toBe('');
+    expect(render({ bankLineId: line.id, date: line.date, candidates: [], ambiguous: false, matchCount: 0 })).toBe('');
   });
 });

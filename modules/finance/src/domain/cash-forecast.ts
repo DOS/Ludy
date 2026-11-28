@@ -12,6 +12,8 @@
 // - An approved supplier payment is dated on the first day its bank file may go. Its amount is still inside the party's 331 until a bank line is matched, so it is taken out of that
 //   party's pool first (and its invoice out of the allocation): nothing is counted twice. What it counts for is capped by the party's 331 balance, so a payment already booked by hand does not
 //   leave twice.
+// - An item the owner entered (#5326) falls on each of its dates in the window (domain/cash-forecast-items.ts) as entered_in or entered_out. Entering one takes its category off the left-out line (loan: loans;
+//   other: recurring costs, only when it repeats); the books' own figures are unchanged. Nothing else is derived from its label, which never gets here.
 // - Items past day 90 are left out. The lowest balance is the earliest day on a tie.
 import { Decimal, type DecimalValue } from '@ludy/l10n-vn';
 import {
@@ -22,9 +24,14 @@ import {
   PAYABLE_TERMS_DAYS,
   type CashForecast,
   type CashForecastCheckpoint,
+  type CashForecastEnteredCategory,
+  type CashForecastEnteredDirection,
+  type CashForecastEnteredRecurrence,
   type CashForecastItem,
+  type CashForecastNotIncluded,
   type CashForecastTaxMarker,
 } from '@ludy/kernel-contract';
+import { occurrencesOf } from './cash-forecast-items.ts';
 import { canonical } from './money.ts';
 import { addDays, allocateReceivable, daysBetween, type OpenInvoice, type SaleInvoice } from './payment-reminder.ts';
 
@@ -89,6 +96,29 @@ export function allocatePayable(documents: readonly PayableDocument[], balance: 
   return { open, unlinked: rest.other, approved: counted };
 }
 
+// An item the owner entered, as the forecast needs it: no label (the owner's words never reach the figures, the audit or the model).
+export interface EnteredForecastItem {
+  category: CashForecastEnteredCategory;
+  direction: CashForecastEnteredDirection;
+  // Whole dong above zero, a decimal string.
+  amount: string;
+  firstDate: string;
+  recurrence: CashForecastEnteredRecurrence;
+  endDate: string | null;
+}
+
+// What an entered item brings into the forecast, so the left-out line stops naming it. A one-off "other" is no recurring cost, so it leaves that line alone.
+const COVERS: Readonly<Record<CashForecastEnteredCategory, CashForecastNotIncluded>> = { payroll: 'payroll', insurance: 'insurance', tax: 'tax', rent: 'rent', loan: 'loans', other: 'recurring' };
+
+export function notIncludedAfter(entered: readonly Pick<EnteredForecastItem, 'category' | 'recurrence'>[]): CashForecastNotIncluded[] {
+  const covered = new Set<CashForecastNotIncluded>();
+  for (const item of entered) {
+    if (item.category === 'other' && item.recurrence === 'once') continue;
+    covered.add(COVERS[item.category]);
+  }
+  return CASH_FORECAST_NOT_INCLUDED.filter((key) => !covered.has(key));
+}
+
 export interface CashForecastInput {
   legalEntityId: string;
   // Day 0, YYYY-MM-DD.
@@ -104,6 +134,8 @@ export interface CashForecastInput {
   unlinkedPayables: string;
   approvedPayments: readonly ApprovedPayment[];
   taxMarkers: readonly CashForecastTaxMarker[];
+  // The items the owner entered for this entity (at most CASH_FORECAST_ITEMS_MAX), empty when there are none.
+  entered: readonly EnteredForecastItem[];
   truncated: boolean;
 }
 
@@ -144,13 +176,18 @@ export function buildCashForecast(input: CashForecastInput): CashForecast {
     const at = indexOf(today, a.payableOn);
     if (at <= CASH_FORECAST_DAYS) items.push({ kind: 'approved_payment', date: at < 0 ? today : a.payableOn, amount: canonical(amount) });
   }
+  for (const e of input.entered) {
+    const amount = new Decimal(e.amount);
+    if (amount.lessThanOrEqualTo(0)) continue;
+    for (const date of occurrencesOf(e, today)) items.push({ kind: e.direction === 'in' ? 'entered_in' : 'entered_out', date, amount: canonical(amount) });
+  }
 
   const opening = new Decimal(input.openingCash);
   const inOf: DecimalValue[] = Array.from({ length: CASH_FORECAST_DAYS + 1 }, () => ZERO);
   const outOf: DecimalValue[] = Array.from({ length: CASH_FORECAST_DAYS + 1 }, () => ZERO);
   for (const item of items) {
     const at = indexOf(today, item.date);
-    if (item.kind === 'receipt') inOf[at] = (inOf[at] ?? ZERO).plus(item.amount);
+    if (item.kind === 'receipt' || item.kind === 'entered_in') inOf[at] = (inOf[at] ?? ZERO).plus(item.amount);
     else outOf[at] = (outOf[at] ?? ZERO).plus(item.amount);
   }
   const series: { date: string; balance: string }[] = [];
@@ -188,7 +225,7 @@ export function buildCashForecast(input: CashForecastInput): CashForecast {
     unlinkedReceivablesNotCounted: canonical(unlinkedReceivables),
     payableTermsDays: PAYABLE_TERMS_DAYS,
     estimatedPayables,
-    notIncluded: [...CASH_FORECAST_NOT_INCLUDED],
+    notIncluded: notIncludedAfter(input.entered),
     taxMarkers: [...input.taxMarkers].sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.obligation.localeCompare(b.obligation)),
     truncated: input.truncated,
   };

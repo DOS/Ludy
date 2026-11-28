@@ -34,6 +34,7 @@ import {
   zAccount,
   zBankPartyRule,
   zCategorizationRule,
+  zDocumentDirection,
   zAgentBudget,
   zAiMeter,
   zAiUsageReport,
@@ -3368,10 +3369,12 @@ export const contract = {
     set: oc.input(z.object({ accountCode: zAccountCode, itemCode: zMisaCode, warehouseCode: zMisaCode.nullable() })).output(zMisaGoodsCode),
     remove: oc.input(z.object({ accountCode: zAccountCode })).output(z.object({ removed: z.boolean() })),
   },
-  // Learned account rules (#1399), shown in Settings. list: every role, newest first (at most 500). create: owners and
-  // admins (R1), a keyword rule for every vendor or for one; RULE_TEXT_TOO_SHORT (422) when fewer than two letters or
-  // digits are left once normalized, RULE_EXISTS (409) for the same keyword and vendor. remove: owners and admins (R1),
-  // any rule, learned or added; RULE_NOT_FOUND (404). Approving an invoice writes the rules learned from it.
+  // Learned account rules (#1399, #1452), shown in Settings. list: every role, newest first (at most 500). create:
+  // owners and admins (R1), a keyword rule for purchases or sales, for every counterparty or for one; RULE_TEXT_TOO_SHORT
+  // (422) when fewer than two letters or digits are left once normalized, RULE_EXISTS (409) for the same direction,
+  // keyword and counterparty, REVENUE_ACCOUNT_ON_PURCHASE / NOT_REVENUE_ACCOUNT (422) when the account mismatches direction.
+  // remove: owners and admins (R1), any rule, learned or added; RULE_NOT_FOUND (404). Approving a purchase or sales
+  // invoice writes the rules learned from it.
   // The learned rules that point a bank line's text at a party (#2402): list (every role) and remove (owners and admins,
   // R1, audited; RULE_NOT_FOUND 404). Approving the voucher of a bank line whose party a person chose writes the rule.
   bankPartyRules: {
@@ -3732,7 +3735,13 @@ export const contract = {
     list: oc.input(zLegalEntityChoice.optional()).output(z.array(zCategorizationRule)),
     create: oc
       .input(
-        z.object({ keyword: z.string().trim().min(1).max(500), accountCode: zAccountCode, vendorPartyId: zId.nullable().optional(), legalEntityId: zId.optional() }),
+        z.object({
+          keyword: z.string().trim().min(1).max(500),
+          accountCode: zAccountCode,
+          direction: zDocumentDirection.optional(),
+          vendorPartyId: zId.nullable().optional(),
+          legalEntityId: zId.optional(),
+        }),
       )
       .output(z.object({ id: zId })),
     remove: oc.input(z.object({ id: zId })).output(z.object({ id: zId })),

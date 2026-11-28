@@ -36,7 +36,8 @@ export interface AccountSuggestion {
 }
 
 // A learned rule as the suggestion reads it: `text` is in normalized form (normalizeRuleText), `vendor` is true for a
-// rule of this invoice's vendor and false for one that applies to every vendor.
+// rule of this invoice's vendor/customer and false for one that applies to every vendor/customer. `direction` defaults
+// to 'purchase' when omitted by callers/tests that build purchase rules directly.
 export interface LearnedRule {
   id: string;
   vendor: boolean;
@@ -44,7 +45,11 @@ export interface LearnedRule {
   text: string;
   label: string | null;
   account: string;
+  direction?: 'purchase' | 'sale' | undefined;
 }
+
+// Same rule as isRevenueAccount in @ludy/kernel-contract (which this package does not depend on).
+const isRevenueAccountCode = (code: string): boolean => /^(5|711|3387)/.test(code);
 
 // The longest text a rule matches (the database CHECK on ludy_finance.categorization_rule.match_text says the same).
 export const RULE_TEXT_MAX = 200;
@@ -106,15 +111,16 @@ export function matchLearnedRule(description: string, rules: readonly LearnedRul
   return best;
 }
 
-function learnedSuggestion(rule: LearnedRule): AccountSuggestion {
+function learnedSuggestion(rule: LearnedRule, direction: 'purchase' | 'sale' = 'purchase'): AccountSuggestion {
   const shown = rule.label?.trim() || rule.text;
+  const partyPhrase = direction === 'sale' ? 'của khách hàng này' : 'của nhà cung cấp này';
   const reason =
     rule.kind === 'description'
       ? rule.vendor
-        ? 'Theo quy tắc đã học: cùng mặt hàng của nhà cung cấp này'
+        ? `Theo quy tắc đã học: cùng mặt hàng ${partyPhrase}`
         : 'Theo quy tắc đã học: cùng mặt hàng'
       : rule.vendor
-        ? `Theo quy tắc đã học: từ khóa "${shown}" của nhà cung cấp này`
+        ? `Theo quy tắc đã học: từ khóa "${shown}" ${partyPhrase}`
         : `Theo quy tắc đã học: từ khóa "${shown}"`;
   return {
     account: rule.account,
@@ -175,11 +181,12 @@ export function suggestDebitAccount(
   // The books regime the purchase is posted under on its date; none is TT133.
   regime?: string,
 ): AccountSuggestion {
-  const own = matchLearnedRule(line.description, rules, true);
-  if (own) return learnedSuggestion(own);
+  const purchaseRules = rules.filter((r) => r.direction !== 'sale');
+  const own = matchLearnedRule(line.description, purchaseRules, true);
+  if (own) return learnedSuggestion(own, 'purchase');
   if (vendorDefault) return { account: vendorDefault, reason: 'Theo lần duyệt trước của nhà cung cấp này', rule: { source: 'vendor_default' } };
-  const shared = matchLearnedRule(line.description, rules, false);
-  if (shared) return learnedSuggestion(shared);
+  const shared = matchLearnedRule(line.description, purchaseRules, false);
+  if (shared) return learnedSuggestion(shared, 'purchase');
   const builtin = { source: 'builtin' } as const;
   if (ASSET_PATTERN.test(line.description) && money(line.amount).greaterThanOrEqualTo(FIXED_ASSET_THRESHOLD)) {
     return { account: '211', reason: 'Giá trị từ 30 triệu, có thể là tài sản cố định', rule: builtin };
@@ -339,9 +346,38 @@ export const RECEIVABLE_ACCOUNT = '131';
 export const REVENUE_ACCOUNT = '511';
 export const VAT_OUTPUT = '3331';
 
-// Every line of a sale is proposed to 511; the accountant may pick a sub-account (5111 goods, 5113 services) per line.
-export function bookableSaleLines(invoice: ParsedInvoice): ProposedLine[] {
-  return bookableLines(invoice, REVENUE_ACCOUNT).map((l) => ({ ...l, reason: 'Doanh thu bán hàng và cung cấp dịch vụ', accountRule: { source: 'builtin' } }));
+// The revenue account proposed for a sales line (#1452), most specific first: a learned sales rule of this customer
+// (same item, then keyword), a learned sales rule for every customer, then the built-in 511 revenue account. Purchase
+// rules and non-revenue accounts are ignored so a sales rule can never propose a non-revenue account and a purchase
+// rule can never apply to a sale.
+export function suggestSalesAccount(line: InvoiceLine, rules: readonly LearnedRule[] = []): AccountSuggestion {
+  const salesRules = rules.filter((r) => r.direction !== 'purchase' && isRevenueAccountCode(r.account));
+  const own = matchLearnedRule(line.description, salesRules, true);
+  if (own) return learnedSuggestion(own, 'sale');
+  const shared = matchLearnedRule(line.description, salesRules, false);
+  if (shared) return learnedSuggestion(shared, 'sale');
+  return { account: REVENUE_ACCOUNT, reason: 'Doanh thu bán hàng và cung cấp dịch vụ', rule: { source: 'builtin' } };
+}
+
+// Lines of a sales invoice that carry value for bookkeeping: each line uses learned sales rules before 511 (#1452).
+export function bookableSaleLines(invoice: ParsedInvoice, rules: readonly LearnedRule[] = []): ProposedLine[] {
+  return invoice.lines
+    .filter((l) => !money(lineContribution(l)).isZero())
+    .map((l) => {
+      const suggestion = suggestSalesAccount(l, rules);
+      return {
+        lineNo: l.lineNo,
+        description: l.description,
+        unit: l.unit,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        amount: lineContribution(l),
+        vatRate: l.vatRate,
+        debitAccount: suggestion.account,
+        reason: suggestion.reason,
+        accountRule: suggestion.rule,
+      };
+    });
 }
 
 // Revenue deductions under Circular 99 (#3712 slice 4, research C3): a sale's returns, trade discounts and price reductions are debited to 521, one account (never 5211 to 5213), and closed to

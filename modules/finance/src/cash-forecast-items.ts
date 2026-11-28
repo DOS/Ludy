@@ -3,8 +3,8 @@
 // of ONE legal entity. finance.cash_forecast_item_set creates (no id) or edits (id) an item and finance.cash_forecast_item_remove deletes it: both R1 (nothing is posted, paid or sent), for owners and admins,
 // and for a user only (an agent, Vy or an MCP client writes none). The runtime audits every run; the audit holds the item's id, category, direction, recurrence, amount and dates (and the previous ones on an
 // edit), NEVER the label: it is the owner's own words, often a person's name, and an audit row cannot be erased. finance.cash_forecast_items lists an entity's items for the card, for every role. An entity
-// holds at most CASH_FORECAST_ITEMS_MAX items; the count and the write run under one advisory lock per entity, so two writers cannot both take the last place. The forecast read that merges the items into its
-// figures is a later step of the same issue.
+// holds at most CASH_FORECAST_ITEMS_MAX items; the count and the write run under one advisory lock per entity, so two writers cannot both take the last place. The forecast read (cash-forecast.ts) merges the items into its
+// figures, without their label.
 import { sql } from 'kysely';
 import type { MemberRole } from '@ludy/db';
 import {

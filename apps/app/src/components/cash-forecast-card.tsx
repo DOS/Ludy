@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The 30/60/90-day cash forecast of the Kế toán app (#4391), a card on the Tổng quan: the booked cash of the chosen legal entity, the lowest balance the next 90 days are expected to reach and its day, the balance
-// after 30, 60 and 90 days with what comes in and goes out, what the figures leave out, and the dates they are estimated from. Every figure comes from the books (finance.cash_forecast, decided by code); the coworker's
+// after 30, 60 and 90 days with what comes in and goes out, what the figures leave out (less of it once the owner has entered an item, #5326), and the dates they are estimated from. Every figure comes from the books (finance.cash_forecast, decided by code); the coworker's
 // note on the low point is read from the same figures by the model and hidden when there is no model, the AI budget is spent or its text was refused, so the figures, and the lowest balance among them, never wait for it.
 // Nothing here is a promise or an advice: the card says it is a forecast.
 import { useQuery } from '@tanstack/react-query';
 import { useLocale, useTranslations } from 'use-intl';
 import { TAX_OBLIGATIONS, type CashForecast, type TaxObligation } from '@ludy/kernel-contract';
 import { Card } from '@ludy/ui/components/card';
+import { CashForecastItems } from './cash-forecast-items.tsx';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
@@ -94,7 +95,7 @@ export function CashForecastView({ data, version }: { data: CashForecast; versio
           <li>{data.estimatedPayables === false ? t('termsConcrete') : t('estimates', { days: String(data.payableTermsDays) })}</li>
           {!isZero(data.overdueReceiptsNotCounted) && <li>{t('overdue', { amount: f.money(data.overdueReceiptsNotCounted) })}</li>}
           {!isZero(data.unlinkedReceivablesNotCounted) && <li>{t('unlinked', { amount: f.money(data.unlinkedReceivablesNotCounted) })}</li>}
-          <li>{t('notIncluded.line', { items: left })}</li>
+          {data.notIncluded.length > 0 && <li>{t('notIncluded.line', { items: left })}</li>}
           {data.taxMarkers.length > 0 && (
             <li>
               {t('taxMarkers')}{' '}
@@ -107,6 +108,7 @@ export function CashForecastView({ data, version }: { data: CashForecast; versio
             </li>
           )}
         </ul>
+        <CashForecastItems legalEntityId={data.legalEntityId} />
       </Card>
     </section>
   );

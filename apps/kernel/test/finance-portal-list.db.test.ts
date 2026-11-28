@@ -158,12 +158,12 @@ suite('tax portal purchase list (#465)', () => {
   });
 
   // Uploads a list, imports it for the period and runs the worker step.
-  async function importList(invoices: PortalInvoiceSpec[], period: string, direction?: 'purchase' | 'sale') {
+  async function importList(invoices: PortalInvoiceSpec[], period: string, direction?: 'purchase' | 'sale', legalEntityId?: string) {
     const bytes = portalListXlsx(invoices);
     const uploaded = await upload(await tokenFor(owner), `ds-${period}.xlsx`, bytes);
     expect(uploaded.status).toBe(200);
     const fileId = uploaded.body.files[0].fileId as string;
-    const imported = await rpc('portalList/import', await tokenFor(owner), { period, fileId, ...(direction ? { direction } : {}) });
+    const imported = await rpc('portalList/import', await tokenFor(owner), { period, fileId, ...(direction ? { direction } : {}), ...(legalEntityId ? { legalEntityId } : {}) });
     expect(imported.status, JSON.stringify(imported.body)).toBe(200);
     const listId = imported.body.listId as string;
     await importPortalList({ runtime: workerRuntime, store, extract }, org.orgId, listId);
@@ -721,5 +721,112 @@ suite('tax portal purchase list (#465)', () => {
       )).rows,
     );
     expect(storedPurchaseRows).toEqual([{ buyer_tax_code: null, buyer_name: null }]);
+  }, 60_000);
+
+  it("verifies portal list ownership against each legal entity's own tax code (#2158)", async () => {
+    const token = await tokenFor(owner);
+    const listed = await rpc('legalEntities/list', token, undefined);
+    expect(listed.status).toBe(200);
+    const defaultEntity = (listed.body as Array<{ id: string; isDefault: boolean }>).find((e) => e.isDefault)?.id as string;
+
+    const branchCode = `${BUYER}-001`;
+    const subCode = '0109998887';
+    const branchRes = await rpc('legalEntities/create', token, { name: 'Chi nhánh 1', kind: 'branch', taxCode: branchCode, parentId: defaultEntity });
+    expect(branchRes.status, JSON.stringify(branchRes.body)).toBe(200);
+    const branchId = branchRes.body.id as string;
+
+    const subRes = await rpc('legalEntities/create', token, { name: 'Công ty con', kind: 'company', taxCode: subCode, parentId: null });
+    expect(subRes.status, JSON.stringify(subRes.body)).toBe(200);
+    const subId = subRes.body.id as string;
+
+    const bareRes = await rpc('legalEntities/create', token, { name: 'Chi nhánh chưa có MST', kind: 'branch', taxCode: null, parentId: defaultEntity });
+    expect(bareRes.status, JSON.stringify(bareRes.body)).toBe(200);
+    const bareId = bareRes.body.id as string;
+
+    // 1. Branch (13-digit sub-tax-code) accepts its own sales and purchase lists, and refuses the default entity's and a sibling branch's.
+    const branchSaleOk = await importList([saleSpec('9301', '10/01/2025', { sellerTaxCode: branchCode })], '2025-01', 'sale', branchId);
+    const branchSaleDefault = await importList([saleSpec('9302', '10/01/2025', { sellerTaxCode: BUYER })], '2025-01', 'sale', branchId);
+    const branchSaleSibling = await importList([saleSpec('9303', '10/01/2025', { sellerTaxCode: `${BUYER}-002` })], '2025-01', 'sale', branchId);
+    const branchSales = await rpc('portalList/reconcile', token, { period: '2025-01', direction: 'sale', legalEntityId: branchId });
+    expect(branchSales.status).toBe(200);
+    expect(branchSales.body.lists).toEqual([
+      expect.objectContaining({ id: branchSaleOk.listId, status: 'done', rowCount: 1 }),
+      expect.objectContaining({ id: branchSaleDefault.listId, status: 'failed', error: expect.stringContaining(`${BUYER}, không phải của công ty này (${branchCode})`) }),
+      expect.objectContaining({ id: branchSaleSibling.listId, status: 'failed', error: expect.stringContaining(`${BUYER}-002, không phải của công ty này (${branchCode})`) }),
+    ]);
+
+    const branchPurchaseOk = await importList([spec('9304', '11/01/2025', { buyerTaxCode: branchCode })], '2025-01', 'purchase', branchId);
+    const branchPurchaseDefault = await importList([spec('9305', '11/01/2025', { buyerTaxCode: BUYER })], '2025-01', 'purchase', branchId);
+    const branchPurchases = await rpc('portalList/reconcile', token, { period: '2025-01', direction: 'purchase', legalEntityId: branchId });
+    expect(branchPurchases.status).toBe(200);
+    expect(branchPurchases.body.lists).toEqual([
+      expect.objectContaining({ id: branchPurchaseOk.listId, status: 'done', rowCount: 1 }),
+      expect.objectContaining({ id: branchPurchaseDefault.listId, status: 'failed', error: expect.stringContaining(`${BUYER}, không phải của công ty này (${branchCode})`) }),
+    ]);
+
+    // 2. Distinct entity (10-digit tax code) vs default entity: each accepts its own sales/purchase list and rejects the other's.
+    const subSaleOk = await importList([saleSpec('9401', '10/02/2025', { sellerTaxCode: subCode })], '2025-02', 'sale', subId);
+    const subSaleDefault = await importList([saleSpec('9402', '10/02/2025', { sellerTaxCode: BUYER })], '2025-02', 'sale', subId);
+    const subSales = await rpc('portalList/reconcile', token, { period: '2025-02', direction: 'sale', legalEntityId: subId });
+    expect(subSales.body.lists).toEqual([
+      expect.objectContaining({ id: subSaleOk.listId, status: 'done', rowCount: 1 }),
+      expect.objectContaining({ id: subSaleDefault.listId, status: 'failed', error: expect.stringContaining(`${BUYER}, không phải của công ty này (${subCode})`) }),
+    ]);
+
+    const subPurchaseOk = await importList([spec('9403', '11/02/2025', { buyerTaxCode: subCode })], '2025-02', 'purchase', subId);
+    const subPurchaseDefault = await importList([spec('9404', '11/02/2025', { buyerTaxCode: BUYER })], '2025-02', 'purchase', subId);
+    const subPurchases = await rpc('portalList/reconcile', token, { period: '2025-02', direction: 'purchase', legalEntityId: subId });
+    expect(subPurchases.body.lists).toEqual([
+      expect.objectContaining({ id: subPurchaseOk.listId, status: 'done', rowCount: 1 }),
+      expect.objectContaining({ id: subPurchaseDefault.listId, status: 'failed', error: expect.stringContaining(`${BUYER}, không phải của công ty này (${subCode})`) }),
+    ]);
+
+    const defaultSaleSub = await importList([saleSpec('9405', '12/02/2025', { sellerTaxCode: subCode })], '2025-02', 'sale', defaultEntity);
+    const defaultSales = await rpc('portalList/reconcile', token, { period: '2025-02', direction: 'sale', legalEntityId: defaultEntity });
+    expect(defaultSales.body.lists).toEqual([
+      expect.objectContaining({ id: defaultSaleSub.listId, status: 'failed', error: expect.stringContaining(`${subCode}, không phải của công ty này (${BUYER})`) }),
+    ]);
+
+    const defaultPurchaseSub = await importList([spec('9406', '12/02/2025', { buyerTaxCode: subCode })], '2025-02', 'purchase', defaultEntity);
+    const defaultPurchases = await rpc('portalList/reconcile', token, { period: '2025-02', direction: 'purchase', legalEntityId: defaultEntity });
+    expect(defaultPurchases.body.lists).toEqual([
+      expect.objectContaining({ id: defaultPurchaseSub.listId, status: 'failed', error: expect.stringContaining(`${subCode}, không phải của công ty này (${BUYER})`) }),
+    ]);
+
+    // 3. Bare entity (tax_code null): refused at import and never falls back to tenant.tax_code in the worker.
+    const bareUpload = await upload(token, 'ds-bare.xlsx', portalListXlsx([saleSpec('9501', '10/03/2025')]));
+    expect(bareUpload.status).toBe(200);
+    const bareImport = await rpc('portalList/import', token, { period: '2025-03', fileId: bareUpload.body.files[0].fileId, direction: 'sale', legalEntityId: bareId });
+    expect(bareImport.status).toBe(409);
+    expect(bareImport.body.code).toBe('TAX_CODE_REQUIRED');
+
+    const barePendingId = await admin(
+      async (c) =>
+        (
+          await c.query<{ id: string }>(
+            `INSERT INTO ludy_finance.portal_invoice_list (org_id, period, direction, legal_entity_id, file_id, filename, created_by)
+             VALUES ($1, '2025-03', 'sale', $2, $3, 'ds-bare.xlsx', $4) RETURNING id`,
+            [org.orgId, bareId, bareUpload.body.files[0].fileId, owner.userId],
+          )
+        ).rows[0]?.id as string,
+    );
+    await importPortalList({ runtime: workerRuntime, store, extract }, org.orgId, barePendingId);
+    const bareReconcile = await rpc('portalList/reconcile', token, { period: '2025-03', direction: 'sale', legalEntityId: bareId });
+    expect(bareReconcile.body.lists).toEqual([
+      expect.objectContaining({ id: barePendingId, status: 'failed', error: expect.stringContaining('mã số thuế của công ty trong Cài đặt') }),
+    ]);
+
+    // 4. An entity with its own tax code inside an org whose tenant.tax_code is null can still import and verify against its own code.
+    const outsiderToken = await tokenFor(outsider);
+    const otherBranch = await rpc('legalEntities/create', outsiderToken, { name: 'Chi nhánh có MST', kind: 'company', taxCode: '0108887776', parentId: null }, otherOrg.slug);
+    expect(otherBranch.status, JSON.stringify(otherBranch.body)).toBe(200);
+    const otherBranchId = otherBranch.body.id as string;
+    const otherUpload = await upload(outsiderToken, 'ds-other-branch.xlsx', portalListXlsx([saleSpec('9601', '10/04/2025', { sellerTaxCode: '0108887776' })]), 'import', otherOrg.slug);
+    expect(otherUpload.status).toBe(200);
+    const otherImported = await rpc('portalList/import', outsiderToken, { period: '2025-04', fileId: otherUpload.body.files[0].fileId, direction: 'sale', legalEntityId: otherBranchId }, otherOrg.slug);
+    expect(otherImported.status, JSON.stringify(otherImported.body)).toBe(200);
+    await importPortalList({ runtime: workerRuntime, store, extract }, otherOrg.orgId, otherImported.body.listId);
+    const otherReconcile = await rpc('portalList/reconcile', outsiderToken, { period: '2025-04', direction: 'sale', legalEntityId: otherBranchId }, otherOrg.slug);
+    expect(otherReconcile.body.lists).toEqual([expect.objectContaining({ id: otherImported.body.listId, status: 'done', rowCount: 1 })]);
   }, 60_000);
 });

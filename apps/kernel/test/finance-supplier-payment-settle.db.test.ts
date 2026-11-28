@@ -77,12 +77,12 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
   const addAccount = (o: Org, number = NUMBER) =>
     execute<{ id: string; last4: string }>(o, 'finance.supplier_bank_account.add', { partyId: o.supplier, bankName: 'Vietcombank', accountHolder: HOLDER, accountNumber: number });
   // A received invoice of the supplier with its own entry (a document without its entry is refused at commit), as the commands record one.
-  async function invoice(o: Org, total = '110'): Promise<string> {
+  async function invoice(o: Org, total = '110', partyId = o.supplier): Promise<string> {
     const doc = randomUUID();
     const entry = randomUUID();
     await admin(async (c) => {
       await c.query('BEGIN');
-      await c.query("INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-01', $5::numeric - 10, 10, $5)", [o.orgId, doc, o.supplier, `inv-${doc.slice(0, 8)}`, total]);
+      await c.query("INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-01', $5::numeric - 10, 10, $5)", [o.orgId, doc, partyId, `inv-${doc.slice(0, 8)}`, total]);
       await c.query("INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'payment test', 'finance.purchase_document', $3)", [o.orgId, entry, doc]);
       await c.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [o.orgId, entry]);
       await c.query('COMMIT');
@@ -269,25 +269,36 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     const payment = await ready(o);
     const second = await ready(o);
     const line = await bankLine(o, '-110');
-    const matchOf = (id: string) => rt.query<{ candidates: Array<{ paymentId: string; partyName: string; amount: string }> }>('finance.bank.supplier_match', { bankLineId: id }, { actor: user(o.owner), orgId: o.orgId });
+    const matchOf = (id: string) =>
+      rt.query<{ candidates: Array<{ paymentId: string; partyName: string; amount: string }>; ambiguous: boolean; matchCount: number }>(
+        'finance.bank.supplier_match',
+        { bankLineId: id },
+        { actor: user(o.owner), orgId: o.orgId },
+      );
     // Not exported yet: not offered.
-    expect((await matchOf(line)).candidates).toEqual([]);
+    expect(await matchOf(line)).toMatchObject({ candidates: [], ambiguous: false, matchCount: 0 });
     await exportFile(o, [payment.id]);
     const day = await fileDay(o, payment.id);
     const early = await bankLine(o, '-110', day);
-    expect((await matchOf(early)).candidates).toMatchObject([{ paymentId: payment.id, amount: '110' }]);
-    expect((await matchOf(await bankLine(o, '-111', day))).candidates).toEqual([]);
-    expect((await matchOf(await bankLine(o, '110', day))).candidates).toEqual([]);
+    expect(await matchOf(early)).toMatchObject({ candidates: [{ paymentId: payment.id, amount: '110' }], ambiguous: false, matchCount: 1 });
+    expect(await matchOf(await bankLine(o, '-111', day))).toMatchObject({ candidates: [], ambiguous: false, matchCount: 0 });
+    expect(await matchOf(await bankLine(o, '110', day))).toMatchObject({ candidates: [], ambiguous: false, matchCount: 0 });
     // A second exported payment of the same amount is offered too; the settlement asked for one holds its whole line (not offered to the other payment), while another open line still offers the other.
     await exportFile(o, [second.id]);
     // Dated on the later of the two file days, so a run across Vietnam midnight offers both.
     const openDay = [day, await fileDay(o, second.id)].sort().at(-1) as string;
     const open = await bankLine(o, '-110', openDay);
-    expect((await matchOf(open)).candidates.map((c) => c.paymentId).sort()).toEqual([payment.id, second.id].sort());
+    const openMatch = await matchOf(open);
+    expect(openMatch.ambiguous).toBe(true);
+    expect(openMatch.matchCount).toBe(2);
+    expect(openMatch.candidates.map((c) => c.paymentId).sort()).toEqual([payment.id, second.id].sort());
     await ask(o, payment.id, open);
-    expect((await matchOf(open)).candidates).toEqual([]);
+    expect(await matchOf(open)).toMatchObject({ candidates: [], ambiguous: false, matchCount: 0 });
     const another = await bankLine(o, '-110', await fileDay(o, second.id));
-    expect((await matchOf(another)).candidates.map((c) => c.paymentId)).toEqual([second.id]);
+    const anotherMatch = await matchOf(another);
+    expect(anotherMatch.ambiguous).toBe(false);
+    expect(anotherMatch.matchCount).toBe(1);
+    expect(anotherMatch.candidates.map((c) => c.paymentId)).toEqual([second.id]);
     // An ordinary voucher for the held line is refused too, so the settlement cannot be starved by the other approval.
     const held = await codeOf(execute(o, 'kernel.proposal.request', { command: 'finance.voucher.record', input: { type: 'bank_debit', date: openDay, cashAccount: '1121', partyId: o.supplier, description: 'x', lines: [{ account: '331', amount: '110' }], bankLineId: open } }));
     expect(held).toBe('BANK_LINE_PROPOSED');
@@ -385,5 +396,62 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     const l3 = await bankLine(o3, '-110', await fileDay(o3, p3.id), '012345678901');
     await unguarded((c) => c.query('DELETE FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2', [o3.orgId, `supplier:${o3.supplier}`]));
     expect(await codeOf(ask(o3, p3.id, l3))).toBe('SUPPLIER_PAYMENT_ACCOUNT_MISMATCH');
+  });
+
+  it('flags multi-payment amount matches as ambiguous only when the bank line has no beneficiary account number (#3788)', async () => {
+    const o = await org(true);
+    await addAccount(o, NUMBER);
+    const secondSupplier = randomUUID();
+    const secondNumber = '9988776655';
+    await admin((c) => c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp hai')", [o.orgId, secondSupplier]));
+    await execute(o, 'finance.supplier_bank_account.add', { partyId: secondSupplier, bankName: 'ACB', accountHolder: 'Cong ty Hai', accountNumber: secondNumber });
+
+    const p1 = await pay(o, await invoice(o, '250000'));
+    await released(o, p1.id);
+    await exportFile(o, [p1.id]);
+
+    const p2 = await pay(o, await invoice(o, '250000', secondSupplier));
+    await released(o, p2.id);
+
+    const matchOf = (id: string) =>
+      rt.query<{ bankLineId: string; date: string; candidates: Array<{ paymentId: string; partyId: string; partyName: string; invoiceNumber: string; amount: string }>; ambiguous: boolean; matchCount: number }>(
+        'finance.bank.supplier_match',
+        { bankLineId: id },
+        { actor: user(o.owner), orgId: o.orgId },
+      );
+
+    // Before the second payment is exported, only 1 approved exported payment matches -> not ambiguous.
+    const day1 = await fileDay(o, p1.id);
+    const singleKeyless = await bankLine(o, '-250000', day1, null);
+    expect(await matchOf(singleKeyless)).toMatchObject({ ambiguous: false, matchCount: 1, candidates: [{ paymentId: p1.id, amount: '250000' }] });
+
+    // Once both payments of 250,000 are approved and exported, a keyless line triggers ambiguous = true with matchCount = 2.
+    await exportFile(o, [p2.id]);
+    const day = [day1, await fileDay(o, p2.id)].sort().at(-1) as string;
+    const keylessLine = await bankLine(o, '-250000', day, null);
+    const keylessResult = await matchOf(keylessLine);
+    expect(keylessResult.ambiguous).toBe(true);
+    expect(keylessResult.matchCount).toBe(2);
+    expect(keylessResult.candidates.map((c) => c.paymentId).sort()).toEqual([p1.id, p2.id].sort());
+    // Never expose raw supplier bank account numbers or last4 in match results (#3113).
+    const serialized = JSON.stringify(keylessResult);
+    expect(serialized).not.toContain('012345678901');
+    expect(serialized).not.toContain(secondNumber);
+    expect(serialized).not.toContain('8901');
+    expect(serialized).not.toContain('6655');
+
+    // A line carrying a beneficiary account number does NOT trigger the keyless multi-payment ambiguity warning.
+    const keyedLine = await bankLine(o, '-250000', day, '012345678901');
+    const keyedResult = await matchOf(keyedLine);
+    expect(keyedResult.ambiguous).toBe(false);
+    expect(keyedResult.matchCount).toBe(2);
+
+    // A bank line on another legal entity never matches or counts payments from the first legal entity.
+    const [branch] = await rows<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [o.orgId, o.owner]);
+    const [branchLine] = await rows<{ id: string }>(
+      "INSERT INTO ludy_finance.bank_line (org_id, legal_entity_id, bank_account, import_id, position, value_date, description, amount, bank_ref, counterparty_account) VALUES ($1, $2, '1121', $3, 1, $4, 'Chuyen khoan NCC', '-250000', $5, NULL) RETURNING id",
+      [o.orgId, branch?.id, randomUUID(), day, `FT${randomUUID().slice(0, 8)}`],
+    );
+    expect(await matchOf(branchLine?.id as string)).toMatchObject({ candidates: [], ambiguous: false, matchCount: 0 });
   });
 });

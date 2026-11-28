@@ -6,9 +6,9 @@
 // route's, never the module's.
 // - finance.bank_feed.map: maps an account of an active bank feed connection to a bank account of an entity, or points
 //   an existing mapping at another bank account of the same entity.
-// - finance.bank_feed.unmap: removes a mapping; the lines it brought in stay, as imported ones do.
+// - finance.bank_feed.unmap: removes a mapping (including on an expired or disconnected connection); the lines it brought in stay, as imported ones do.
 // - finance.bank_feed.accounts: the mappings the caller's entities hold, with their connection's name and status.
-// - finance.bank_feed.connections: the live connections, mapped or not, for the Settings card.
+// - finance.bank_feed.connections: live connections (mapped or not) plus revoked connections that still hold a mapping, mapped first then newest first, for the Settings card.
 // - finance.bank_feed.listed: the accounts a connection reaches, as the worker last listed them.
 // The worker's sync (#2044 part 2b, apps/kernel/src/bank-feed-sync.ts) runs two system commands:
 // - finance.bank_feed.record_accounts: the accounts the provider lists for a connection, replacing the last listing;
@@ -232,20 +232,24 @@ export const bankFeedAccounts = defineQuery({
   },
 });
 
-// The org's live bank feed connections, whether an account of theirs is mapped or not, newest first: the Settings card
-// lists them to map from and to say which one expired (#2099). The managers' alone, as the listing is org-wide.
+// The org's live bank feed connections (mapped or not), plus any revoked connection that still holds a mapped account
+// so owners and admins can inspect and unmap stale mappings (#2127). Mapped connections sort before unmapped ones so
+// the 500-row limit cannot hide active or stale mappings (#2128), then newest first. Managers only (org-wide listing).
 export const bankFeedConnections = defineQuery({
   name: 'finance.bank_feed.connections',
   input: z.object({}),
   access: MANAGERS,
   handler: async (ctx): Promise<BankFeedConnectionView[]> => {
+    const hasMappedAccount = sql<boolean>`EXISTS (SELECT 1 FROM ludy_finance.bank_feed_account AS a WHERE a.org_id = c.org_id AND a.channel_connection_id = c.id)`;
     const rows = await ctx.trx
-      .selectFrom('ludy_kernel.channel_connection')
-      .select(['id', 'provider', 'display_name', 'status', 'connected_at'])
-      .where('org_id', '=', ctx.orgId)
-      .where('provider', 'like', 'bank\\_%')
-      .where('status', '<>', 'revoked')
-      .orderBy('connected_at', 'desc')
+      .selectFrom('ludy_kernel.channel_connection as c')
+      .select(['c.id', 'c.provider', 'c.display_name', 'c.status', 'c.connected_at'])
+      .where('c.org_id', '=', ctx.orgId)
+      .where('c.provider', 'like', 'bank\\_%')
+      .where((eb) => eb.or([eb('c.status', '<>', 'revoked'), hasMappedAccount]))
+      .orderBy(hasMappedAccount, 'desc')
+      .orderBy('c.connected_at', 'desc')
+      .orderBy('c.id', 'desc')
       .limit(500)
       .execute();
     return rows

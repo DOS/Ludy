@@ -249,7 +249,7 @@ function AccountRow({
     orpc.bankFeeds.unmap.mutationOptions({
       onSuccess: async () => {
         setBankAccount('');
-        await refreshAccounts();
+        await Promise.all([refreshAccounts(), refreshConnections()]);
       },
     }),
   );
@@ -269,6 +269,7 @@ function AccountRow({
     });
   };
   const active = connection.status === 'active';
+  const revoked = connection.status === 'revoked';
   return (
     <li className="py-3 text-sm">
       <p className="flex flex-wrap items-center gap-2 text-foreground">
@@ -282,12 +283,12 @@ function AccountRow({
         </p>
       )}
       {mapped && <PullReason account={mapped} />}
-      {row.gone && (
+      {row.gone && !revoked && (
         <p className="text-xs text-warning" role="status">
           {t('gone')}
         </p>
       )}
-      {!row.gone && (
+      {!row.gone && !revoked && (
         <form className="mt-2 space-y-2" onSubmit={submit} aria-label={t('mapForm', { name: row.displayName })} noValidate>
           <div className="flex flex-wrap items-center gap-2">
             <label htmlFor={feedFromId} className="text-xs text-muted-foreground">
@@ -340,7 +341,7 @@ function AccountRow({
           type="button"
           variant="ghost"
           size="sm"
-          className="mt-1"
+          className="mt-1 min-h-11"
           onClick={() => unmap.mutate({ feedAccountId: mapped.id, idempotencyKey: crypto.randomUUID() })}
           aria-label={t('unmapOf', { name: row.displayName })}
         >
@@ -521,6 +522,7 @@ function ConnectionItem({
     refetchInterval: (query) => (connection.status === 'active' && query.state.data?.length === 0 && query.state.dataUpdateCount + query.state.errorUpdateCount < 24 ? 5000 : false),
   });
   const rows = feedAccountRows(listed.data ?? null, mapped);
+  const visibleRows = connection.status === 'revoked' ? rows.filter((r) => r.mapped !== null) : rows;
   return (
     <li className="py-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -532,6 +534,11 @@ function ConnectionItem({
           {t('expiredHint')}
         </p>
       )}
+      {connection.status === 'revoked' && (
+        <p className="mt-1 text-xs text-warning" role="status">
+          {t('revokedHint')}
+        </p>
+      )}
       {connection.status === 'error' && (
         <p className="mt-1 text-xs text-warning" role="status">
           {t('errorHint')}
@@ -541,16 +548,18 @@ function ConnectionItem({
       {listed.error && <ErrorText>{errorMessage(listed.error)}</ErrorText>}
       {listed.isLoading ? (
         <RowsSkeleton />
-      ) : rows.length === 0 ? (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <p className="text-xs text-subtle-foreground">{t('waiting')}</p>
-          <Button type="button" variant="ghost" size="sm" onClick={() => void listed.refetch()}>
-            {t('refresh')}
-          </Button>
-        </div>
+      ) : visibleRows.length === 0 ? (
+        connection.status === 'active' ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <p className="text-xs text-subtle-foreground">{t('waiting')}</p>
+            <Button type="button" variant="ghost" size="sm" onClick={() => void listed.refetch()}>
+              {t('refresh')}
+            </Button>
+          </div>
+        ) : null
       ) : (
         <ul className="mt-1 divide-y">
-          {rows.map((row) => (
+          {visibleRows.map((row) => (
             // Keyed by the mapping too, so the form starts from a mapping made or removed since.
             <AccountRow key={`${row.externalAccountId}:${row.mapped?.id ?? ''}:${row.mapped?.bankAccount ?? ''}:${row.mapped?.feedFrom ?? ''}`} connection={connection} row={row} bankAccounts={bankAccounts} entities={entities} />
           ))}
@@ -565,7 +574,7 @@ function ReadOnlyList({ accounts }: { accounts: readonly BankFeedAccountView[] }
   const t = useTranslations('bankFeeds');
   const f = useFormat();
   return (
-    <Card className="block p-4" aria-label={t('title')}>
+    <Card className="block p-4" role="region" aria-label={t('title')}>
       <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
       <p className="mt-2 text-sm text-muted-foreground">{t('readOnlyIntro')}</p>
       <ul className="mt-3 divide-y">
@@ -606,7 +615,7 @@ export function BankFeedsCard({ role, offers = { sandbox: true, tingee: false } 
     // Nothing to change and nothing mapped: nothing to show. A read that failed is not "nothing mapped": say so.
     if (accounts.data) return accounts.data.length > 0 ? <ReadOnlyList accounts={accounts.data} /> : null;
     return accounts.error ? (
-      <Card className="block p-4" aria-label={t('title')}>
+      <Card className="block p-4" role="region" aria-label={t('title')}>
         <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
         <ErrorText>{errorMessage(accounts.error)}</ErrorText>
       </Card>
@@ -616,7 +625,7 @@ export function BankFeedsCard({ role, offers = { sandbox: true, tingee: false } 
   const loading = connections.isLoading || accounts.isLoading || chart.isLoading || entities.isLoading;
   const failure = connections.error ?? accounts.error ?? chart.error ?? entities.error;
   return (
-    <Card className="block p-4" aria-label={t('title')}>
+    <Card className="block p-4" role="region" aria-label={t('title')}>
       <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
       <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
       {loading ? (

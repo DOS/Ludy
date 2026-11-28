@@ -19,7 +19,7 @@ vi.mock('../src/lib/api.ts', () => {
         return node([...path, prop]);
       },
     });
-  return { orpc: node([]), errorMessage: (e: unknown) => String(e) };
+  return { orpc: node([]), errorMessage: (e: unknown) => String(e), queryClient: {} };
 });
 
 const { CashForecastView } = await import('../src/components/cash-forecast-card.tsx');

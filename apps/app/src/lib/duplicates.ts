@@ -2,7 +2,7 @@
 // The "it already exists" checks of the add dialogs in Settings (#3608): while a person types, the dialog shows the record that
 // the new one would repeat (HubSpot, Attio). The dialog keeps its save button off while one stands (the server refuses the same
 // cases); the server still decides, so a repeat that differs in a way these helpers do not see is refused there with its own reason. Each takes the rows the card already read, so no request is made.
-import { normalizeAccountCode } from '@ludy/kernel-contract';
+import { normalizeAccountCode, type DocumentDirection } from '@ludy/kernel-contract';
 import { keywordRuleText } from '@ludy/l10n-vn';
 
 // What a bank prints between the digit groups is dropped; the module keeps the digits (zBankAccountNumberSet).
@@ -32,15 +32,24 @@ function vendorPartyIdOf(vendor: unknown): string | null {
   return null;
 }
 
-// The keyword rule of the chosen scope (every vendor when vendorPartyId is null, or that vendor's own) that the typed one repeats.
-export function duplicateKeywordRule<T extends { matchKind: string; matchText: string; vendor: unknown }>(
+// The keyword rule of the chosen direction and scope (every vendor/customer when vendorPartyId is null, or that party's own) that the typed one repeats.
+export function duplicateKeywordRule<T extends { direction?: DocumentDirection; matchKind: string; matchText: string; vendor: unknown }>(
   rules: readonly T[],
   typed: string,
   vendorPartyId: string | null = null,
+  direction: DocumentDirection = 'purchase',
 ): T | null {
   const key = keywordKey(typed);
   if (key === '') return null;
-  return rules.find((rule) => rule.matchKind === 'keyword' && rule.matchText === key && vendorPartyIdOf(rule.vendor) === vendorPartyId) ?? null;
+  return (
+    rules.find(
+      (rule) =>
+        (rule.direction ?? 'purchase') === direction &&
+        rule.matchKind === 'keyword' &&
+        rule.matchText === key &&
+        vendorPartyIdOf(rule.vendor) === vendorPartyId,
+    ) ?? null
+  );
 }
 
 // An invited address that already belongs to a member, or that already has an invitation waiting.
