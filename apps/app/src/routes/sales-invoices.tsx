@@ -23,6 +23,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { reasonButtonOff, reasonFill } from '../lib/einvoice-reason.ts';
 import { applyPrevious } from '../lib/invoice-copy.ts';
+import { closesNoticeConfirm } from '../lib/notice-confirm.ts';
 import { appendSource, bookingDay, bookingSourceText, dealSourceText } from '../lib/invoice-crm-source.ts';
 import { ClientError, client, errorMessage, getCurrentOrg, isStepUpRequired, orpc, queryClient, uploadAgreement } from '../lib/api.ts';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
@@ -944,7 +945,18 @@ function NoticeCard({ notice, reference, draftId }: { notice: EInvoiceNotice; re
         )}
       </div>
       {canSendEmail && confirmOpen && (
-        <div ref={confirmPanelRef} tabIndex={-1} role="group" aria-labelledby={confirmHeadingId} className="mt-2 space-y-2 rounded-md border border-border p-3 outline-none focus-visible:ring-2 focus-visible:ring-ring/50" data-testid="invoice-notice-send-confirm">
+        <div
+          ref={confirmPanelRef}
+          tabIndex={-1}
+          role="group"
+          aria-labelledby={confirmHeadingId}
+          // Escape closes it as the Close button does (#5257), and the key goes no further once it has.
+          onKeyDown={(e) => {
+            if (!closesNoticeConfirm(e.key, sendMail.isPending)) return;
+            e.stopPropagation();
+            closeConfirm();
+          }}
+          className="mt-2 space-y-2 rounded-md border border-border p-3 outline-none focus-visible:ring-2 focus-visible:ring-ring/50" data-testid="invoice-notice-send-confirm">
           <p id={confirmHeadingId} className="text-sm font-medium">{t('notice.sendConfirmTitle')}</p>
           <p className="text-xs text-subtle-foreground">{t('notice.sendSubject', { subject })}</p>
           <p className="text-xs text-subtle-foreground">{t('notice.sendConfirmNote', { email: buyerEmail })}</p>

@@ -259,6 +259,8 @@ export const einvoiceNoticeSend = defineCommand({
       .set({ buyer_notice_mail_id: mail.id })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', existing.id)
+      // The row is locked and its state checked above; the update still names the state, as the settle command's does (#5257).
+      .where('buyer_notice_state', '=', 'todo')
       .returningAll()
       .executeTakeFirstOrThrow();
     const mailStatus = mail.status === 'suppressed' ? 'suppressed' : 'queued';
