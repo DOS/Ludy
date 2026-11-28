@@ -414,6 +414,7 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
     );
     await rt.execute('meetings.summary.save', { meetingId, summary: 'Private board notes', decisions: ['Approved'] }, { actor: asUser(o.owner), orgId: o.orgId });
     await rt.execute('meetings.result.publish', { meetingId, confirmed: true }, { actor: asUser(o.owner), orgId: o.orgId });
+    await admin((c) => c.query('UPDATE ludy_kernel.tenant SET meeting_minutes_esign = true WHERE org_id = $1::uuid', [o.orgId]));
     const mmEnv = await sendAndOpenEnvelope({
       orgId: o.orgId,
       creatorId: o.owner,
