@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { BOOKS_SWITCH_BLOCKERS, type BooksBlocker } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';
-import { blockerWording, booksRegimeActions, waitingProposalIds } from '../src/lib/books-regime.ts';
+import { blockerWording, booksRegimeActions, statusKey, waitingProposalIds } from '../src/lib/books-regime.ts';
 
 const offered = { nextSwitchDate: '2027-01-01', scheduled: null, blockers: [] as BooksBlocker[] };
 const waiting = { nextSwitchDate: null, scheduled: { effectiveFrom: '2027-01-01', cancellable: true }, blockers: [] as BooksBlocker[] };
@@ -57,6 +57,20 @@ describe('blockerWording', () => {
     for (const [locale, catalog] of [['vi', vi], ['en', en]] as const) {
       expect(Object.keys(catalog.booksRegime.blockers).toSorted(), locale).toEqual([...BOOKS_SWITCH_BLOCKERS].toSorted());
       for (const sentence of Object.values(catalog.booksRegime.blockers)) expect(sentence.trim(), locale).not.toBe('');
+    }
+  });
+});
+
+describe('statusKey', () => {
+  it('picks the line of the closed card: Circular 99 in force, a choice waiting, or Circular 133', () => {
+    expect(statusKey({ regime: 'tt99', scheduled: null })).toBe('status99');
+    expect(statusKey({ regime: 'tt133', scheduled: { effectiveFrom: '2027-01-01', cancellable: true } })).toBe('statusScheduled');
+    expect(statusKey({ regime: 'tt133', scheduled: null })).toBe('status133');
+  });
+
+  it('has a line in Vietnamese and in English for each of them', () => {
+    for (const [locale, catalog] of [['vi', vi], ['en', en]] as const) {
+      for (const key of ['status133', 'status99', 'statusScheduled', 'statusMany'] as const) expect(catalog.booksRegime[key].trim(), `${locale} ${key}`).not.toBe('');
     }
   });
 });

@@ -4,7 +4,7 @@
 // Every member reads it. The kernel decides every rule again; this offers what can succeed and shows its reason otherwise. No model text: a switch of books is a legal act decided by a person.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from 'react';
 import { useTranslations } from 'use-intl';
 import type { BooksRegimeEntity } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
@@ -14,7 +14,7 @@ import { StepUpPrompt } from '../components/two-factor.tsx';
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
-import { blockerWording, booksRegimeActions, waitingProposalIds } from '../lib/books-regime.ts';
+import { blockerWording, booksRegimeActions, statusKey, waitingProposalIds } from '../lib/books-regime.ts';
 
 // What a person can do on one entity: a form with its own confirm button opens under the entity, then the step-up prompt when the kernel asks for a fresh second factor.
 type Mode = 'choose' | 'takeBack';
@@ -228,24 +228,50 @@ function EntityBooks({ entity, role, named }: { entity: BooksRegimeEntity; role:
   );
 }
 
-// The card: one block per entity, with the entity's name only when there are several (one person, the defaults, nothing to set up).
+// The one line the closed card shows: the regime in force and, when one is chosen, from when; with several entities, how many. A person sees where the books stand without opening the card.
+function Status({ entities }: { entities: readonly BooksRegimeEntity[] }) {
+  const t = useTranslations('booksRegime');
+  const f = useFormat();
+  const [only] = entities;
+  if (!only) return null;
+  const text =
+    entities.length > 1
+      ? t('statusMany', { count: entities.length })
+      : t(statusKey(only), { date: f.date(only.regime === 'tt99' ? only.since : (only.scheduled?.effectiveFrom ?? null)) });
+  return (
+    <span role="status" className="text-sm text-foreground" data-testid="books-regime-status">
+      {text}
+    </span>
+  );
+}
+
+// Closed by default, as the VAT card of marketplace sales is: a legal choice an owner makes once, so it takes one line (76 px) of the Accounting tab until opened, which keeps the tab under 1200 px at 1440 wide
+// (e2e/tests/settings-tabs.spec.ts). One block per entity inside, with the entity's name only when there are several (one person, the defaults, nothing to set up).
 export function BooksRegimeCard({ role }: { role: string | null | undefined }) {
   const t = useTranslations('booksRegime');
+  const headingId = useId();
   const state = useQuery(orpc.booksRegime.state.queryOptions());
   const entities = state.data?.entities ?? [];
   return (
-    <Card className="block p-4" data-testid="books-regime-card">
-      <h2 className="text-sm font-medium text-muted-foreground">{t('title')}</h2>
-      <p className="mt-1 text-sm text-muted-foreground">{t('intro')}</p>
-      {state.error && <ErrorText>{errorMessage(state.error)}</ErrorText>}
-      {!state.data && !state.error && <RowsSkeleton rows={2} />}
-      {entities.length > 0 && (
-        <div className="mt-4 space-y-4 divide-y divide-border">
-          {entities.map((entity) => (
-            <EntityBooks key={entity.legalEntityId} entity={entity} role={role} named={entities.length > 1} />
-          ))}
-        </div>
-      )}
+    <Card role="group" aria-labelledby={headingId} className="block p-4" data-testid="books-regime-card">
+      <details data-testid="books-regime-details">
+        <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
+          <span id={headingId} className="text-sm font-medium text-muted-foreground">
+            {t('title')}
+          </span>
+          <Status entities={entities} />
+        </summary>
+        <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
+        {state.error && <ErrorText>{errorMessage(state.error)}</ErrorText>}
+        {!state.data && !state.error && <RowsSkeleton rows={2} />}
+        {entities.length > 0 && (
+          <div className="mt-4 space-y-4 divide-y divide-border">
+            {entities.map((entity) => (
+              <EntityBooks key={entity.legalEntityId} entity={entity} role={role} named={entities.length > 1} />
+            ))}
+          </div>
+        )}
+      </details>
     </Card>
   );
 }

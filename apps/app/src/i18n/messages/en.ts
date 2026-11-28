@@ -10638,6 +10638,10 @@ export const en = {
   booksRegime: {
     title: 'Accounting regime',
     intro: 'The books of an entity follow Circular 133 or Circular 99. A switch starts on 1 January of a year, and only while that year has no entries.',
+    status133: 'Circular 133',
+    status99: 'Circular 99 since {date}',
+    statusScheduled: 'Circular 133, Circular 99 chosen from {date}',
+    statusMany: '{count, plural, one {# entity, open to see} other {# entities, open to see}}',
     current133: 'The books follow Circular 133.',
     current99: 'The books follow Circular 99 since {date}.',
     scheduledOpen: 'Circular 99 is chosen from {date}. No entry falls under it yet, so the choice can still be taken back.',

@@ -37,6 +37,13 @@ export function blockerWording(blocker: BooksBlocker): BlockerWording {
   }
 }
 
+// The message key under `booksRegime` of the line the closed card shows for one entity: Circular 99 in force (since a date), Circular 133 with a choice waiting (from a date), or Circular 133.
+export type StatusKey = 'status99' | 'statusScheduled' | 'status133';
+export function statusKey(entity: Pick<BooksRegimeEntity, 'regime' | 'scheduled'>): StatusKey {
+  if (entity.regime === 'tt99') return 'status99';
+  return entity.scheduled ? 'statusScheduled' : 'status133';
+}
+
 // The posting proposals that hold a switch, across the blockers of an entity, in the order the state lists them and each once.
 export function waitingProposalIds(blockers: readonly BooksBlocker[]): string[] {
   return [...new Set(blockers.flatMap((b) => (b.code === 'PENDING_PROPOSALS' ? (b.proposalIds ?? []) : [])))];

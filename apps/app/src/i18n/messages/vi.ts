@@ -10635,6 +10635,10 @@ export const vi = {
   booksRegime: {
     title: 'Chế độ kế toán',
     intro: 'Sổ của pháp nhân được ghi theo Thông tư 133 hoặc Thông tư 99. Chỉ chuyển được từ ngày 1 tháng 1 của một năm, và chỉ khi năm đó chưa có bút toán nào.',
+    status133: 'Thông tư 133',
+    status99: 'Thông tư 99 từ ngày {date}',
+    statusScheduled: 'Thông tư 133, đã chọn chuyển sang Thông tư 99 từ ngày {date}',
+    statusMany: '{count, plural, other {# pháp nhân, mở ra để xem}}',
     current133: 'Đang ghi sổ theo Thông tư 133.',
     current99: 'Đang ghi sổ theo Thông tư 99 từ ngày {date}.',
     scheduledOpen: 'Đã chọn chuyển sang Thông tư 99 từ ngày {date}. Chưa có bút toán nào ghi theo chế độ mới nên còn hủy được.',

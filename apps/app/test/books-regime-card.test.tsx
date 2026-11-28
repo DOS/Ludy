@@ -89,6 +89,20 @@ describe('BooksRegimeCard', () => {
     expect(html).toMatch(/role="status"[^>]*data-testid="books-regime-done"[^>]*><\/p>|data-testid="books-regime-done"[^>]*role="status"[^>]*><\/p>/);
   });
 
+  // Closed by default so the Accounting tab stays under 1200 px at 1440 wide (the e2e spec measures it): one summary line, the title and where the books stand.
+  it('is closed by default with one status line that says where the books stand', () => {
+    const status = (html: string) => /data-testid="books-regime-status">([^<]*)</.exec(html)?.[1] ?? '';
+    const closed = render([entity()], 'owner');
+    expect(closed).toContain('<details');
+    expect(closed).not.toMatch(/<details[^>]*\sopen/);
+    expect(closed).toContain('<summary');
+    expect(closed).toMatch(/aria-labelledby="[^"]+"/);
+    expect(status(closed)).toBe('Circular 133');
+    expect(status(render([entity({ regime: 'tt99', since: '2027-01-01', nextSwitchDate: null })], 'owner'))).toMatch(/^Circular 99 since .*2027/);
+    expect(status(render([entity({ nextSwitchDate: null, scheduled: { effectiveFrom: '2027-01-01', cancellable: true } })], 'owner'))).toMatch(/^Circular 133, Circular 99 chosen from .*2027/);
+    expect(status(render([entity(), entity({ legalEntityId: '00000000-0000-7000-8000-000000000002', name: 'Chi nhánh Hà Nội', isDefault: false })], 'owner'))).toBe('2 entities, open to see');
+  });
+
   // The kernel refuses a choice while a posting proposal waits (after the second factor), so the card names the date and the proposals and offers no button.
   it('does not offer the switch while a posting proposal holds it, though a date is named', () => {
     const html = render([entity({ blockers: [{ code: 'PENDING_PROPOSALS', proposalIds: [idA], nextSwitchDate: '2027-01-01' }] })], 'owner');
