@@ -141,6 +141,30 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
       copyFileSync(join(MIGRATIONS, name), join(before, name));
     }
     await migrate({ adminUrl, dir: before });
+    // This test runs the current code on that older schema on purpose (the rows it writes first must exist before the migration under test), and every posting of the current code
+    // takes the entity's period_lock row FOR SHARE through ludy_finance.period_lock_share before it reads the books (#1403). That function is from 20270103030000, long after
+    // THIS_VERSION, so the older schema is given it here: the body of that migration, unchanged. The migrations applied below replace it with the same body.
+    await admin((c) =>
+      c.query(`
+        CREATE OR REPLACE FUNCTION ludy_finance.period_lock_share(p_legal_entity_id uuid) RETURNS date
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+        DECLARE
+          v_org uuid := ludy_kernel.ctx_org_id();
+          v_entity uuid;
+          v_through date;
+        BEGIN
+          IF v_org IS NULL THEN
+            RAISE EXCEPTION 'NO_CONTEXT' USING ERRCODE = '42501';
+          END IF;
+          v_entity := ludy_finance.period_lock_entity(v_org, p_legal_entity_id);
+          INSERT INTO ludy_finance.period_lock (org_id, legal_entity_id) VALUES (v_org, v_entity) ON CONFLICT (org_id, legal_entity_id) DO NOTHING;
+          SELECT p.locked_through INTO v_through FROM ludy_finance.period_lock p WHERE p.org_id = v_org AND p.legal_entity_id = v_entity FOR SHARE;
+          RETURN v_through;
+        END $$;
+        REVOKE ALL ON FUNCTION ludy_finance.period_lock_share(uuid) FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+        GRANT EXECUTE ON FUNCTION ludy_finance.period_lock_share(uuid) TO ludy_tenant;
+      `),
+    );
     connect('sha256', true);
 
     const db = createDb(pool);
