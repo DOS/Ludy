@@ -54,8 +54,8 @@ describe('householdFourthQuarterDue', () => {
   it('is the last day of January after the year, moved to the next working day', () => {
     // 31 January 2027 is a Sunday (Decree 68/2026/NĐ-CP Art. 8(3)(a); the day-off rule, Decree 252/2026/NĐ-CP Art. 3(7)).
     expect(householdFourthQuarterDue(2026)).toBe('2027-02-01');
-    // 31 January 2028 is a Monday.
-    expect(householdFourthQuarterDue(2027)).toBe('2028-01-31');
+    // 31 January 2028 is a Monday, and the compensatory day of the Saturday 29 January, the fifth day of Tết (Labor Code Art. 111(3)): Tuesday 1 February.
+    expect(householdFourthQuarterDue(2027)).toBe('2028-02-01');
   });
 });
 

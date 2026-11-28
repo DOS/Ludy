@@ -19613,6 +19613,7 @@ export const vi = {
       quarter_summary: 'Xem số liệu của một quý đã qua: doanh thu, chi phí, lợi nhuận, tiền, công nợ, thuế và kho',
       today: 'Xem việc kế toán cần bạn hôm nay',
       month_close: 'Xem những việc còn mở khi chốt sổ tháng',
+      year_end: 'Xem những việc còn mở khi kết thúc năm',
       signals: {
         overdue_receivables: 'Xem khách nào đang nợ quá hạn, để đối chiếu với deal đang mở',
         supplier_bank_changes: 'Xem nhà cung cấp nào vừa đổi tài khoản ngân hàng, để cảnh báo khi có khoản chi đang chờ',

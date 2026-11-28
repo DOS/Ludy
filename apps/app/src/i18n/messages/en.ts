@@ -19613,6 +19613,7 @@ export const en = {
       quarter_summary: 'View the figures of a quarter that has ended: revenue, costs, profit, cash, receivables, payables, tax and stock',
       today: 'Read what needs you in accounting today',
       month_close: 'Read what is still open for the month close',
+      year_end: 'Read what is still open for the year end',
       signals: {
         overdue_receivables: 'Read which customers owe past the due date, to check them against open deals',
         supplier_bank_changes: 'Read which suppliers changed their bank account recently, to warn when a payment is waiting',
