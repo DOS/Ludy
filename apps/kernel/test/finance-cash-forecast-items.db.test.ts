@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { CASH_FORECAST_ITEMS_MAX, type CashForecastItems, type CashForecastItemView, type PersonalDataErasure, type PersonalDataResult } from '@ludy/kernel-contract';
+import { CASH_FORECAST_ITEMS_MAX, type CashForecastItems, type CashForecastItemSaved, type CashForecastItemView, type PersonalDataErasure, type PersonalDataResult } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -57,7 +57,7 @@ suite('the owner-entered items of the cash forecast (#5326)', () => {
   }
   const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const query = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.query<T>(name, input, { actor: asUser(user), orgId: o.orgId });
-  const setItem = (o: Org, input: Record<string, unknown>, user = o.owner) => execute<CashForecastItemView>(o, 'finance.cash_forecast_item_set', input, user);
+  const setItem = (o: Org, input: Record<string, unknown>, user = o.owner) => execute<CashForecastItemSaved>(o, 'finance.cash_forecast_item_set', input, user);
   const list = (o: Org, over: Record<string, unknown> = {}, user = o.owner) => query<CashForecastItems>(o, 'finance.cash_forecast_items', { asOf: '2026-12-01', ...over }, user);
   const audits = (o: Org, command: string) =>
     admin(async (c) =>
@@ -102,11 +102,12 @@ suite('the owner-entered items of the cash forecast (#5326)', () => {
   it('lets an owner create an item, shows it in the list with its next date, and keeps the label out of the audit row', async () => {
     const o = await org();
     const item = await setItem(o, rent);
-    expect(item).toMatchObject({ legalEntityId: o.entity, label: 'Tiền thuê nhà ông Nam', category: 'rent', direction: 'out', amount: '15000000', firstDate: '2026-12-05', recurrence: 'monthly', endDate: null });
+    // The answer of a save names the item and its entity, nothing the owner typed (#5333); the list holds the rest.
+    expect(item).toEqual({ id: item.id, legalEntityId: o.entity });
     const listed = await list(o);
     expect(listed).toMatchObject({ legalEntityId: o.entity, asOf: '2026-12-01', limit: CASH_FORECAST_ITEMS_MAX });
     expect(listed.items).toHaveLength(1);
-    expect(listed.items[0]).toMatchObject({ id: item.id, nextDate: '2026-12-05' });
+    expect(listed.items[0]).toMatchObject({ id: item.id, legalEntityId: o.entity, label: 'Tiền thuê nhà ông Nam', category: 'rent', direction: 'out', amount: '15000000', firstDate: '2026-12-05', recurrence: 'monthly', endDate: null, nextDate: '2026-12-05' });
     // The audit row says what kind of item, how much and when: never the label (the owner's own words, often a person's name).
     const rows = await audits(o, 'finance.cash_forecast_item_set');
     expect(rows).toEqual([{ item_id: item.id, created: true, category: 'rent', direction: 'out', recurrence: 'monthly', amount: '15000000', first_date: '2026-12-05', end_date: null }]);
@@ -118,7 +119,8 @@ suite('the owner-entered items of the cash forecast (#5326)', () => {
     const o = await org();
     const item = await setItem(o, rent);
     const edited = await setItem(o, { id: item.id, label: 'Thuê kho', category: 'rent', direction: 'out', amount: '18000000', firstDate: '2026-12-10', recurrence: 'quarterly', endDate: '2027-12-10' }, o.admin);
-    expect(edited).toMatchObject({ id: item.id, legalEntityId: o.entity, label: 'Thuê kho', amount: '18000000', recurrence: 'quarterly', endDate: '2027-12-10', nextDate: '2026-12-10' });
+    expect(edited).toEqual({ id: item.id, legalEntityId: o.entity });
+    expect((await list(o)).items[0]).toMatchObject({ id: item.id, legalEntityId: o.entity, label: 'Thuê kho', amount: '18000000', recurrence: 'quarterly', endDate: '2027-12-10', nextDate: '2026-12-10' });
     const rows = await audits(o, 'finance.cash_forecast_item_set');
     expect(rows[1]).toEqual({
       item_id: item.id,
@@ -139,7 +141,8 @@ suite('the owner-entered items of the cash forecast (#5326)', () => {
     expect(JSON.stringify(rows)).not.toContain('Thuê kho');
     // Editing a repeating item into a one-off drops its end date.
     const once = await setItem(o, { id: item.id, label: 'Thuê kho', category: 'rent', direction: 'out', amount: '18000000', firstDate: '2027-02-01', recurrence: 'once' });
-    expect(once).toMatchObject({ recurrence: 'once', endDate: null, nextDate: '2027-02-01' });
+    expect(once).toEqual({ id: item.id, legalEntityId: o.entity });
+    expect((await list(o)).items[0]).toMatchObject({ recurrence: 'once', endDate: null, nextDate: '2027-02-01' });
   });
 
   it('refuses a member, a viewer and a caller that is not a user, and writes nothing', async () => {
@@ -269,7 +272,8 @@ suite('the owner-entered items of the cash forecast (#5326)', () => {
     expect((await list(o)).items).toHaveLength(CASH_FORECAST_ITEMS_MAX);
     // An edit of an existing item is not a new place; another entity has its own.
     const first = (await list(o)).items[0] as CashForecastItemView;
-    await expect(setItem(o, { ...rent, id: first.id, amount: '2' })).resolves.toMatchObject({ id: first.id, amount: '2' });
+    await expect(setItem(o, { ...rent, id: first.id, amount: '2' })).resolves.toEqual({ id: first.id, legalEntityId: o.entity });
+    expect((await list(o)).items.find((i) => i.id === first.id)?.amount).toBe('2');
     await expect(setItem(o, { ...rent, legalEntityId: o.branch })).resolves.toMatchObject({ legalEntityId: o.branch });
   });
 
@@ -287,6 +291,45 @@ suite('the owner-entered items of the cash forecast (#5326)', () => {
     for (const r of outcomes.filter((x) => x.status === 'rejected')) expect((r as PromiseRejectedResult).reason).toMatchObject({ code: 'CASH_FORECAST_ITEM_LIMIT' });
     const held = await admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_finance.cash_forecast_item WHERE org_id = $1 AND legal_entity_id = $2', [o.orgId, o.entity])).rows[0]?.n));
     expect(held).toBe(CASH_FORECAST_ITEMS_MAX);
+  });
+
+  it('keeps the label out of the answer a save leaves for its idempotency key, which an erasure does not reach (#5333)', async () => {
+    const o = await org();
+    const key = randomUUID();
+    const label = 'Thuê nhà chị Lan 0912345678';
+    const saved = await rt.execute<CashForecastItemSaved>('finance.cash_forecast_item_set', { ...rent, label }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: key });
+    expect(saved).toEqual({ id: saved.id, legalEntityId: o.entity });
+    const stored = await admin(async (c) =>
+      (await c.query<{ response: string }>("SELECT coalesce(response::text, '') AS response FROM ludy_kernel.idempotency_key WHERE org_id = $1 AND key = $2 AND command = 'finance.cash_forecast_item_set'", [o.orgId, key])).rows,
+    );
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.response).toContain(saved.id);
+    expect(stored[0]?.response).not.toContain('Lan');
+    expect(stored[0]?.response).not.toContain('0912345678');
+    // The same key again is answered from what was stored, with no label either.
+    const again = await rt.execute<CashForecastItemSaved>('finance.cash_forecast_item_set', { ...rent, label }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: key });
+    expect(again).toEqual(saved);
+  });
+
+  it('lists a row the table holds even when it is not whole dong or is the largest the table allows (#5333)', async () => {
+    const o = await org();
+    await admin((c) =>
+      c.query(
+        `INSERT INTO ludy_finance.cash_forecast_item (org_id, legal_entity_id, label, category, direction, amount, first_date, recurrence)
+         VALUES ($1, $2, 'Khoản lẻ', 'other', 'out', 1500.5, DATE '2026-12-05', 'once'),
+                ($1, $2, 'Khoản lớn nhất', 'other', 'in', 1000000000000000, DATE '2026-12-06', 'once'),
+                ($1, $2, 'Khoản nhỏ nhất', 'other', 'out', 0.0001, DATE '2026-12-07', 'once')`,
+        [o.orgId, o.entity],
+      ),
+    );
+    const listed = await list(o);
+    expect(listed.items.map((i) => [i.label, i.amount])).toEqual([
+      ['Khoản lẻ', '1500.5'],
+      ['Khoản lớn nhất', '1000000000000000'],
+      ['Khoản nhỏ nhất', '0.0001'],
+    ]);
+    // A new item is still whole dong: the table's width is for what is read back, not for what is entered.
+    await expect(setItem(o, { ...rent, amount: '1500.5' })).rejects.toMatchObject({ code: 'VALIDATION' });
   });
 
   it('finds and erases a person\'s number written in a label (PDPL), keeping the item itself', async () => {

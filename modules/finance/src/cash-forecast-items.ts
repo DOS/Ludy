@@ -4,7 +4,7 @@
 // and for a user only (an agent, Vy or an MCP client writes none). The runtime audits every run; the audit holds the item's id, category, direction, recurrence, amount and dates (and the previous ones on an
 // edit), NEVER the label: it is the owner's own words, often a person's name, and an audit row cannot be erased. finance.cash_forecast_items lists an entity's items for the card, for every role. An entity
 // holds at most CASH_FORECAST_ITEMS_MAX items; the count and the write run under one advisory lock per entity, so two writers cannot both take the last place. The forecast read (cash-forecast.ts) merges the items into its
-// figures, without their label.
+// figures, without their label. A save answers the id and the entity only, never the label (#5333).
 import { sql } from 'kysely';
 import type { MemberRole } from '@ludy/db';
 import {
@@ -15,6 +15,7 @@ import {
   zFinanceCashForecastInput,
   type CashForecastItemRemove,
   type CashForecastItems,
+  type CashForecastItemSaved,
   type CashForecastItemSet,
   type CashForecastItemView,
 } from '@ludy/kernel-contract';
@@ -65,6 +66,9 @@ function viewOf(row: ItemRow, today: string): CashForecastItemView {
     nextDate: nextOccurrence({ firstDate, recurrence: row.recurrence, endDate }, today),
   };
 }
+
+// What a save answers: the id and the entity, never the label (the answer may be kept for an idempotency key, where an erasure does not reach it, #5333); the card reads the list again.
+const savedOf = (row: ItemRow): CashForecastItemSaved => ({ id: row.id, legalEntityId: row.legal_entity_id });
 
 // What an audit row may say of an item: ids, the kind, the money and the dates, never the label.
 const auditOf = (row: ItemRow, prefix = ''): Record<string, unknown> => ({
@@ -125,9 +129,8 @@ const cashForecastItemSet = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
-  handler: async (ctx, input: CashForecastItemSet): Promise<CashForecastItemView> => {
+  handler: async (ctx, input: CashForecastItemSet): Promise<CashForecastItemSaved> => {
     if (ctx.actor.type !== 'user') throw usersOnly();
-    const today = await databaseToday(ctx.trx);
     const values = {
       label: input.label,
       category: input.category,
@@ -154,7 +157,7 @@ const cashForecastItemSet = defineCommand({
         .executeTakeFirst()) as unknown as ItemRow | undefined;
       if (!row) throw itemNotFound();
       ctx.audit({ item_id: row.id, created: false, ...auditOf(row), ...auditOf(current, 'previous_') });
-      return viewOf(row, today);
+      return savedOf(row);
     }
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
     await lockEntity(ctx, entity);
@@ -171,7 +174,7 @@ const cashForecastItemSet = defineCommand({
       .returning([...COLUMNS])
       .executeTakeFirstOrThrow()) as unknown as ItemRow;
     ctx.audit({ item_id: row.id, created: true, ...auditOf(row) });
-    return viewOf(row, today);
+    return savedOf(row);
   },
 });
 

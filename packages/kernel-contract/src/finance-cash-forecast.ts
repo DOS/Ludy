@@ -153,6 +153,15 @@ export type CashForecastItemSet = z.infer<typeof zCashForecastItemSet>;
 export const zCashForecastItemRemove = z.object({ id: zId });
 export type CashForecastItemRemove = z.infer<typeof zCashForecastItemRemove>;
 
+// What finance.cash_forecast_item_set answers: which item it wrote, and nothing the owner typed. The label is the owner's own words (often a person's name) and a command's answer may be kept for a
+// caller's idempotency key for days, where an erasure does not reach it (#5333); the card reads the list again after a save.
+export const zCashForecastItemSaved = z.object({ id: zId, legalEntityId: zId });
+export type CashForecastItemSaved = z.infer<typeof zCashForecastItemSaved>;
+
+// An amount as the table holds it (numeric(20,4), above zero, up to 10^15): the list reads back whatever a row holds, so one written by the database owner (a restore, a repair) with a fraction
+// or the largest value the table allows does not fail the whole list (#5333). A new item is still whole dong (zItemAmount).
+const zStoredItemAmount = z.string().regex(/^\d{1,16}(\.\d{1,4})?$/, 'an amount the table holds');
+
 // An item as the owner sees it: what they entered and its next occurrence on or after day 0 within the 91 days of the forecast (null when none falls in it: finished, or later than day 90).
 export const zCashForecastItemView = z.object({
   id: zId,
@@ -160,7 +169,7 @@ export const zCashForecastItemView = z.object({
   label: z.string(),
   category: zCashForecastEnteredCategory,
   direction: zCashForecastEnteredDirection,
-  amount: zItemAmount,
+  amount: zStoredItemAmount,
   firstDate: zLocalDate,
   recurrence: zCashForecastEnteredRecurrence,
   endDate: zLocalDate.nullable(),
