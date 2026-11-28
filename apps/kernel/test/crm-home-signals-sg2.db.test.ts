@@ -36,6 +36,7 @@ import {
 import { Runtime, fileKey, putFile, sha256Hex, type BlobStore, type UserActor } from '@ludy/kernel-runtime';
 import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { addDays, financeCommands, financeQueries } from '@ludy/mod-finance';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { hashSigningToken, signCommands, signQueries } from '@ludy/mod-sign';
 import { AVAILABLE_MODULES } from '../src/config.ts';
 import { SIGN_ACTOR } from '../src/sign-worker.ts';
@@ -144,7 +145,7 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
     orgId: string;
     creatorId: string;
     title: string;
-    sourceKind?: 'standalone' | 'hr_contract';
+    sourceKind?: 'standalone' | 'hr_contract' | 'meeting_minutes';
     sourceId?: string | null;
     signerEmail: string;
     signerRole?: 'signer' | 'approver' | 'cc';
@@ -270,8 +271,8 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
     db = createDb(pool);
 
     const kernelCmds = buildKernelCommands({ shippedModules: AVAILABLE_MODULES });
-    const allCommands = [...kernelCmds, ...crmCommands, ...financeCommands, ...signCommands];
-    const allQueries = [...kernelQueries({ inboundDomain: null }), ...crmQueries, ...financeQueries, ...signQueries];
+    const allCommands = [...kernelCmds, ...crmCommands, ...financeCommands, ...meetingsCommands, ...signCommands];
+    const allQueries = [...kernelQueries({ inboundDomain: null }), ...crmQueries, ...financeQueries, ...meetingsQueries, ...signQueries];
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
       commands: allCommands,
       queries: allQueries,
@@ -383,7 +384,7 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
       await c.query('COMMIT');
     });
 
-    // 5. Confidential hr_contract (created by owner) & meeting_minutes (retained_org_visible = true -> visible to owner in browser, NEVER via MCP!).
+    // 5. Confidential hr_contract (created by owner) & meeting_minutes (attendees meeting recorded by owner -> visible to owner in browser, NEVER to member or via MCP!).
     const hrEnv = await sendAndOpenEnvelope({
       orgId: o.orgId,
       creatorId: o.owner,
@@ -392,31 +393,34 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
       sourceId: randomUUID(),
       signerEmail: 'hr-secret@acme.test',
     });
-    const mmEnvId = randomUUID();
     const mmParty = (await rows<{ id: string }>(
       "INSERT INTO ludy_kernel.party (org_id, kind, name, email) VALUES ($1, 'person', 'Minutes Contact', 'minutes@acme.test') RETURNING id",
       [o.orgId],
     ))[0]!.id;
-    await admin(async (c) => {
-      await c.query('BEGIN');
-      await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(
-        `INSERT INTO ludy_sign.envelope (
-           org_id, id, title, status, routing_mode, source_kind, source_id, source_file_id,
-           source_storage_key, source_generation, source_sha256, inspect_status, page_count,
-           page_dimensions_json, retained_org_visible, created_by
-         )
-         SELECT $1::uuid, $2::uuid, 'Board Minutes', 'sent', 'parallel', 'meeting_minutes', $3::uuid, f.id,
-                f.storage_key, f.generation, f.sha256, 'passed', 1, '[{"page":1,"widthPt":595,"heightPt":842,"rotation":0}]'::jsonb, true, $4::uuid
-         FROM ludy_kernel.file f WHERE f.org_id = $1::uuid AND f.id = $5::uuid`,
-        [o.orgId, mmEnvId, randomUUID(), o.owner, newerEnv.fileId],
-      );
-      await c.query(
-        `INSERT INTO ludy_sign.signer (org_id, envelope_id, routing_order, signer_role, role_label, name, email, delivery_mode, status, viewed_at)
-         VALUES ($1::uuid, $2::uuid, 1, 'signer', 'Director', 'Director', 'minutes@acme.test', 'link', 'viewed', now())`,
-        [o.orgId, mmEnvId],
-      );
-      await c.query('COMMIT');
+    await rt.execute('kernel.org.set_app', { module: 'meetings', enabled: true }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    const { meetingId } = await rt.execute<{ meetingId: string }>(
+      'meetings.meeting.create',
+      {
+        title: 'Board Minutes Meeting',
+        language: 'vi',
+        visibility: 'attendees',
+        keepVideo: false,
+        liveNotes: false,
+        summaryTemplate: 'general',
+        consentMethod: 'told_at_start',
+        readerUserIds: [],
+      },
+      { actor: asUser(o.owner), orgId: o.orgId },
+    );
+    await rt.execute('meetings.summary.save', { meetingId, summary: 'Private board notes', decisions: ['Approved'] }, { actor: asUser(o.owner), orgId: o.orgId });
+    await rt.execute('meetings.result.publish', { meetingId, confirmed: true }, { actor: asUser(o.owner), orgId: o.orgId });
+    const mmEnv = await sendAndOpenEnvelope({
+      orgId: o.orgId,
+      creatorId: o.owner,
+      title: 'Board Minutes',
+      sourceKind: 'meeting_minutes',
+      sourceId: meetingId,
+      signerEmail: 'minutes@acme.test',
     });
 
     // Browser viewer gets [].
@@ -431,10 +435,11 @@ suite('SG2 Home contact attention signals and sign.signals.opened on PostgreSQL 
     ]);
     expect(JSON.stringify(memberRows)).not.toMatch(/Secret|HR Salary|alice@|dup@/i);
 
-    // Browser owner sees confidential HR & org-visible meeting_minutes in addition to standalone.
+    // Browser owner sees confidential HR & private meeting_minutes in addition to standalone.
     const ownerRows = await rt.query<SignOpenedSignal[]>(SIGN_OPENED_SIGNALS_READ, {}, { actor: asUser(o.owner), orgId: o.orgId });
     expect(ownerRows.map((r) => r.partyId).sort()).toEqual([pDupKeep, pHr, pKept, mmParty].sort());
     expect(ownerRows.some((r) => r.envelopeId === hrEnv.envelopeId)).toBe(true);
+    expect(ownerRows.some((r) => r.envelopeId === mmEnv.envelopeId)).toBe(true);
     expect(ownerRows.some((r) => r.partyId === pOld || r.partyId === pCc)).toBe(false);
 
     // MCP member-bound grant is refused 403 FORBIDDEN.
