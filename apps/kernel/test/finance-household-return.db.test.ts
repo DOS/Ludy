@@ -536,25 +536,36 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
     const reversed = await entry(o.household, o.orgId, '2026-09-01', 'Bán nhầm Q3', [['131', 200000, 0], ['5111', 0, 200000]]);
     await entry(o.household, o.orgId, '2026-09-02', 'Đảo bán Q3', [['131', 0, 200000], ['5111', 200000, 0]], { reverses: reversed });
 
-    // TEMPORARY DIAGNOSTIC (#5300), removed before merge: the plan of the probe statement and the timing of the real query, before and after ANALYZE.
+    // TEMPORARY DIAGNOSTIC (#5300), removed before merge: table statistics, the plan of the count probe and of the opening-balance aggregate, and the timing of the real query, before and after ANALYZE.
     const diag = async (label: string) => {
       const plan = await admin(async (a) => {
         await a.query("SET statement_timeout = '90s'");
-        const stats = await a.query("SELECT relname, reltuples::bigint AS reltuples, n_live_tup, last_analyze, last_autoanalyze FROM pg_stat_user_tables WHERE relname IN ('journal_entry', 'journal_line') AND schemaname = 'ludy_finance'");
-        const explain = await a.query(
-          `EXPLAIN (ANALYZE, BUFFERS, SETTINGS) SELECT count(*) AS n FROM (SELECT 1 FROM ludy_finance.journal_entry AS j INNER JOIN ludy_finance.journal_line AS l ON l.org_id = j.org_id AND l.entry_id = j.id WHERE j.org_id = $1 AND j.legal_entity_id = $2 AND j.entry_date >= '2026-07-01' AND j.entry_date <= '2026-09-30' LIMIT 50001) AS counted`,
+        const stats = await a.query(
+          "SELECT c.relname, c.reltuples::bigint AS reltuples, s.n_live_tup, s.last_analyze, s.last_autoanalyze FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid WHERE n.nspname = 'ludy_finance' AND c.relname IN ('journal_entry', 'journal_line')",
+        );
+        const probe = await a.query(
+          `EXPLAIN (ANALYZE, BUFFERS, SETTINGS) SELECT count(*) AS n FROM (SELECT 1 FROM ludy_finance.journal_entry AS j INNER JOIN ludy_finance.journal_line AS l ON l.org_id = j.org_id AND l.entry_id = j.id WHERE j.org_id = $1 AND j.legal_entity_id = $2 AND j.entry_date >= '2026-10-01' AND j.entry_date <= '2026-12-31' LIMIT 50001) AS counted`,
           [o.orgId, o.household],
         );
-        return `${JSON.stringify(stats.rows)}\n${explain.rows.map((r) => r['QUERY PLAN']).join('\n')}`;
+        const opening = await a.query(
+          `EXPLAIN (ANALYZE, BUFFERS) SELECT l.account_code, COALESCE(dp.duplicate_of, l.party_id) AS party_id, sum(l.debit) AS debit, sum(l.credit) AS credit FROM ludy_finance.journal_line AS l INNER JOIN ludy_finance.journal_entry AS j ON j.org_id = l.org_id AND j.id = l.entry_id LEFT JOIN ludy_kernel.party AS dp ON dp.org_id = l.org_id AND dp.id = l.party_id WHERE l.org_id = $1 AND l.legal_entity_id = $2 AND j.entry_date < '2026-10-01' GROUP BY l.account_code, COALESCE(dp.duplicate_of, l.party_id)`,
+          [o.orgId, o.household],
+        );
+        const text = (rows: Array<Record<string, string>>) => rows.map((r) => r['QUERY PLAN']).join('\n');
+        return `${JSON.stringify(stats.rows)}\n-- probe Q4\n${text(probe.rows)}\n-- opening before Q4\n${text(opening.rows)}`;
       });
-      const started = Date.now();
-      let outcome = 'ok';
-      try {
-        await query(o, 'finance.ledger.account', { period: '2026-Q3', legalEntityId: o.household, accountCode: '511' });
-      } catch (error) {
-        outcome = (error as { code?: string }).code ?? String(error);
+      const timings: string[] = [];
+      for (const period of ['2026-Q3', '2026-Q4']) {
+        const started = Date.now();
+        let outcome = 'ok';
+        try {
+          await query(o, 'finance.ledger.account', { period, legalEntityId: o.household, accountCode: '511' });
+        } catch (error) {
+          outcome = (error as { code?: string }).code ?? String(error);
+        }
+        timings.push(`${period} -> ${outcome} in ${Date.now() - started} ms`);
       }
-      console.log(`QTT-DIAG ${label}: finance.ledger.account Q3 -> ${outcome} in ${Date.now() - started} ms\n${plan}`);
+      console.log(`QTT-DIAG ${label}: finance.ledger.account ${timings.join('; ')}\n${plan}`);
     };
     await diag('before ANALYZE');
     await admin((a) => a.query('ANALYZE ludy_finance.journal_entry, ludy_finance.journal_line'));
