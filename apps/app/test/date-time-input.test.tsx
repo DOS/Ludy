@@ -131,6 +131,16 @@ describe('TimeInput and DateTimeInput', () => {
     expect(picker.split(' ')).toEqual(expect.arrayContaining(['w-11', 'md:w-9']));
     expect(field.split(' ')).toEqual(expect.arrayContaining(['pr-11', 'md:pr-9', 'h-7']));
     for (const classes of [button, picker, field]) expect(classes).not.toMatch(/\bsm:(?:w|pr)-9\b/);
+    // The premise: the field itself is 44 px high below md, whatever height the caller passes.
+    expect(field.split(' ')).toContain('max-md:min-h-11');
+    // The time field is the same shape and changes at the same breakpoint.
+    const time = render(<TimeInput aria-label="Time" value="09:30" inputClassName="h-7" onChange={() => undefined} />);
+    const timeButton = classOf(/<button[^>]*aria-label="Open the clock"[^>]*>/.exec(time)?.[0]);
+    const timePicker = classOf((time.match(/<input[^>]*>/g) ?? []).find((tag) => tag.includes('type="time"')));
+    const timeField = classOf((time.match(/<input[^>]*>/g) ?? []).find((tag) => tag.includes('aria-label="Time"') && !tag.includes('type="time"')));
+    expect(timeButton.split(' ')).toEqual(expect.arrayContaining(['w-11', 'md:w-9']));
+    expect(timePicker.split(' ')).toEqual(expect.arrayContaining(['w-11', 'md:w-9']));
+    expect(timeField.split(' ')).toEqual(expect.arrayContaining(['pr-11', 'md:pr-9', 'max-md:min-h-11']));
   });
 
   it('names the date half by the id a label points to', () => {
