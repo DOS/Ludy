@@ -2,7 +2,7 @@
 // The month a fiscal year ends cannot change while an org keeps Circular 99 books (issue #5311, follow-up of #1403) on PostgreSQL 17, through kernel.tax_profile.save: an org without a Circular 99 row moves the
 // month and back; one that has the row (chosen through finance.books.set_regime) is refused, FISCAL_YEAR_END_LOCKED, with the profile and the audit as they were, and still saves the same month with other
 // fields changed; the first save of an org that has no profile row yet is refused too when it names another month than December; a change to December is always allowed (a bad row can be repaired); the
-// guard sees Circular 99 books on an entity the saver cannot see; cancelling the books frees the month; the first save and the first switch never both succeed; and the guard is the table's, so a direct UPDATE meets it as well.
+// the guard sees Circular 99 books on an entity other than the default one; cancelling the books frees the month; the first save and the first switch never both succeed; and the guard is the table's, so a direct UPDATE meets it as well.
 // Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -163,21 +163,20 @@ suite('the fiscal-year month is locked while an org keeps Circular 99 books (#53
     expect(await tt99Rows(o)).toBe(1);
   });
 
-  it('refuses an admin limited to another legal entity too when the Circular 99 books are on a legal entity the admin cannot see (why the guard is definer)', async () => {
+  it('refuses the month when the Circular 99 books are on a legal entity other than the default one, and frees it when that row is cancelled', async () => {
+    // The guard looks at every entity of the org, not only the default one. (An owner or admin sees every entity; only a member or viewer can be limited to one, and neither saves the tax profile.)
     const o = await makeOrg('Công ty hai pháp nhân');
-    const main = await defaultEntity(o);
     const branch = await admin(
       async (a) => (await a.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'company', $2) RETURNING id`, [o.orgId, o.owner])).rows[0]?.id as string,
     );
-    const limited = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${randomUUID().slice(0, 8)}@fiscal-lock.test`, name: null });
-    await admin((a) => a.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role, legal_entity_ids) VALUES ($1, $2, 'admin', ARRAY[$3::uuid])`, [o.orgId, limited, main]));
+    await save(o, 12);
     await switchToTt99(o, branch);
     expect(await tt99Rows(o)).toBe(1);
-    const saveAs = (month: number) =>
-      rt.execute('kernel.tax_profile.save', { obligations: [], pitFilingPeriod: null, fiscalYearEndMonth: month }, { actor: asUser(limited), orgId: o.orgId, idempotencyKey: randomUUID() });
-    expect(await refusal(saveAs(3))).toMatchObject({ code: 'FISCAL_YEAR_END_LOCKED', status: 409 });
-    expect(await monthOf(o)).toBeUndefined();
-    expect(await saveAs(12)).toMatchObject({ fiscalYearEndMonth: 12 });
+    expect(await refusal(save(o, 3))).toMatchObject({ code: 'FISCAL_YEAR_END_LOCKED', status: 409 });
+    expect(await monthOf(o)).toBe(12);
+    await cancelTt99(o, branch);
+    expect(await tt99Rows(o)).toBe(0);
+    expect(await save(o, 3)).toMatchObject({ fiscalYearEndMonth: 3 });
   });
 
   it('frees the month again when the Circular 99 books are cancelled', async () => {
