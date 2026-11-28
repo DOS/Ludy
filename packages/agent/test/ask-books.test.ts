@@ -25,7 +25,7 @@ const LEAD_EN = 'This is the profit and loss report for the period shown on the 
 
 describe('the catalogue', () => {
   it('is closed, labelled in both languages, and "none" is only a choice, never an entry', () => {
-    expect([...ASK_BOOKS_ENTRIES]).toEqual(['profit_loss', 'cash_balance', 'receivables_top', 'payables_top', 'vat_position', 'stock_value']);
+    expect([...ASK_BOOKS_ENTRIES]).toEqual(['profit_loss', 'cash_balance', 'receivables_top', 'payables_top', 'receivables_aging', 'payables_aging', 'customers_top_sales', 'suppliers_top_purchases', 'vat_position', 'stock_value']);
     expect([...ASK_BOOKS_CHOICES]).toEqual([...ASK_BOOKS_ENTRIES, 'none']);
     for (const language of ['vi', 'en'] as const) for (const entry of ASK_BOOKS_ENTRIES) expect(ASK_BOOKS_LABEL[language][entry].length).toBeGreaterThan(0);
     expect(ASK_BOOKS_PERIODS).toContain('named');
@@ -122,6 +122,16 @@ describe('the prompt', () => {
     expect(askBooksInstructions('en')).toContain('English');
     for (const entry of ASK_BOOKS_ENTRIES) expect(askBooksInstructions('en')).toContain(`"${entry}"`);
   });
+
+  it('tells the model what an aging and a ranking answer, apart from the balances, and the period a ranking with none named gets (#5338)', () => {
+    const text = askBooksInstructions('en');
+    expect(text).toContain('overdue customer debts');
+    expect(text).toContain('overdue supplier debts');
+    expect(text).toContain('which customers bought the most');
+    expect(text).toContain('which suppliers the business bought the most from');
+    expect(text).toContain('the biggest debtor by balance');
+    expect(text).toContain('"this_year" when a ranking of customers or suppliers names no period');
+  });
 });
 
 describe('askBooksLeadProblem', () => {
@@ -172,6 +182,31 @@ describe('askBooksLeadProblem', () => {
     expect(askBooksLeadProblem('Công nợ của Bảo.', 'Bao còn nợ bao nhiêu')).toBe('ECHO');
     expect(askBooksLeadProblem('Đây là báo cáo công nợ phải thu.', 'Ai còn nợ mình nhiều nhất')).toBeNull();
     expect(askBooksLeadProblem('Đây là báo cáo kết quả kinh doanh của kỳ được chọn.', '[period] lãi bao nhiêu')).toBeNull();
+  });
+
+  it.each([
+    ['Theo', 'Theo còn nợ quá hạn bao nhiêu'],
+    ['Hóa', 'Hóa nợ quá hạn bao nhiêu ngày'],
+    ['Hoa', 'Hóa nợ quá hạn bao nhiêu ngày'],
+    ['Đơn', 'Đơn mua nhiều nhất là ai'],
+    ['Mua', 'Mua nợ mình bao nhiêu'],
+    ['Quá', 'Quá nợ mình bao nhiêu'],
+    ['Hạn', 'Hạn nợ mình bao nhiêu'],
+    ['Ngày', 'Ngày nợ mình bao nhiêu'],
+    ['Ra', 'Ra nợ mình bao nhiêu'],
+  ])('refuses a typed name that is a word of the newer catalogue labels (%s), as the fixed word list does not grow with the catalogue', (name, question) => {
+    expect(askBooksLeadProblem(`Báo cáo công nợ của ${name}.`, `[period] ${question}`)).toBe('ECHO');
+  });
+
+  it('refuses the English words of the newer labels typed as names', () => {
+    expect(askBooksLeadProblem('Report for Due.', '[period] Due owes us how much')).toBe('ECHO');
+    expect(askBooksLeadProblem('Report for Sales.', '[period] Sales owes us how much')).toBe('ECHO');
+    expect(askBooksLeadProblem('Report for We.', '[period] We owe how much')).toBe('ECHO');
+  });
+
+  it('refuses a word of the question that only a newer label has, even when the sentence is plain', () => {
+    // "quá" and "hạn" are in the question and not in the fixed list: a sentence repeating them is dropped, never shown.
+    expect(askBooksLeadProblem('Đây là báo cáo nợ quá hạn.', 'Ai nợ quá hạn nhiều nhất')).toBe('ECHO');
   });
 
   it('refuses a word the owner typed that is not part of the catalogue, so a name is not repeated back', () => {

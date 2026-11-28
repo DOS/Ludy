@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   AI_FEATURE_KEYS,
+  ASK_BOOKS_ENTRIES,
   AdsCampaignWriter,
   AskBooksCoworker,
   ConversationWriter,
@@ -310,11 +311,16 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       // A payload where the entry should be: not one of the closed lists, so there is no choice at all.
       const poisonedEntry = new AskBooksCoworker(STUB_CONFIG, async () => ({ output: { entry: c.poisonedOutput, period: 'last_month', lead: '' }, usage: zeroUsage }));
       expect((await poisonedEntry.pick('profit please', c.language)).kind, c.id).toBe('none');
-      // A payload where the sentence should be: the choice is from the closed lists and stands, the sentence is dropped.
-      const poisonedLead = new AskBooksCoworker(STUB_CONFIG, async () => ({ output: { entry: 'profit_loss', period: 'last_month', lead: c.poisonedOutput }, usage: zeroUsage }));
-      const res = await poisonedLead.pick('profit please', c.language);
-      expect(res.kind, c.id).toBe('choice');
-      if (res.kind === 'choice') expect(res.lead, c.id).toBeNull();
+      // A payload where the sentence should be: the choice is from the closed lists and stands, the sentence is dropped. Every entry of the catalogue, the agings and the rankings (#5338) included.
+      for (const entry of ASK_BOOKS_ENTRIES) {
+        const poisonedLead = new AskBooksCoworker(STUB_CONFIG, async () => ({ output: { entry, period: 'last_month', lead: c.poisonedOutput }, usage: zeroUsage }));
+        const res = await poisonedLead.pick('report please', c.language);
+        expect(res.kind, `${c.id} ${entry}`).toBe('choice');
+        if (res.kind === 'choice') {
+          expect(res.entry, `${c.id} ${entry}`).toBe(entry);
+          expect(res.lead, `${c.id} ${entry}`).toBeNull();
+        }
+      }
     }
   });
 

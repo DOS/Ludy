@@ -29,7 +29,7 @@ import {
   type StockReportRow,
 } from '@ludy/kernel-contract';
 import { money } from '@ludy/l10n-vn';
-import type { FinancialStatements, LedgerReport, VatReport } from '@ludy/mod-finance';
+import type { FinanceAging, FinancePartyRanking, FinancialStatements, LedgerReport, VatReport } from '@ludy/mod-finance';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 // A read of the runtime as the asking member: the caller closes over the org and the actor, so a refusal of the read propagates unchanged.
@@ -105,6 +105,40 @@ export async function runAskBooksEntry(query: AskBooksQuery, entry: AskBooksEntr
         figures: [figure('total', owedTotal.toFixed()), ...(otherSide.greaterThan(0) ? [figure('advances', otherSide.toFixed())] : [])],
         top: owed.slice(0, ASK_BOOKS_TOP).map((row) => ({ name: row.name, amount: row.amount.toFixed() })),
         partyCount: owed.length,
+        notes: [],
+      };
+    }
+    case 'receivables_aging':
+    case 'payables_aging': {
+      // The aging as of the period's end (the read answers today for a period that is not over). Its buckets, its undated part and the other side of the account are its own figures, never netted into one another; the
+      // names of the largest overdue parties come from the read and are drawn by code, never sent to the model.
+      const aging = await query<FinanceAging>('finance.aging', { side: entry === 'receivables_aging' ? 'receivable' : 'payable', asOf: period.to, ...entity });
+      return {
+        ...base,
+        figures: [
+          figure('overdue', money(aging.overdue.total).toFixed()),
+          figure('not_due', money(aging.buckets.not_due).toFixed()),
+          figure('overdue_1_30', money(aging.buckets.overdue_1_30).toFixed()),
+          figure('overdue_31_60', money(aging.buckets.overdue_31_60).toFixed()),
+          figure('overdue_61_90', money(aging.buckets.overdue_61_90).toFixed()),
+          figure('overdue_over_90', money(aging.buckets.overdue_over_90).toFixed()),
+          figure('undated', money(aging.undated).toFixed()),
+          ...(money(aging.advances).greaterThan(0) ? [figure('advances', money(aging.advances).toFixed())] : []),
+        ],
+        top: aging.overdue.parties.slice(0, ASK_BOOKS_TOP).map((row) => ({ name: row.name === null ? null : row.name.slice(0, 300), amount: money(row.amount).toFixed() })),
+        partyCount: aging.overdue.partyCount,
+        notes: [...(aging.estimatedDueDates ? (['estimated_due_dates'] as const) : []), ...(aging.truncated ? (['truncated'] as const) : [])],
+      };
+    }
+    case 'customers_top_sales':
+    case 'suppliers_top_purchases': {
+      // The invoiced documents of the period, net of VAT, by party (finance.party_ranking); the card says it counts invoiced documents.
+      const ranking = await query<FinancePartyRanking>('finance.party_ranking', { side: entry === 'customers_top_sales' ? 'sales' : 'purchases', period: period.value, ...entity });
+      return {
+        ...base,
+        figures: [figure('total', money(ranking.total).toFixed())],
+        top: ranking.parties.slice(0, ASK_BOOKS_TOP).map((row) => ({ name: row.name.slice(0, 300), amount: money(row.amount).toFixed() })),
+        partyCount: ranking.partyCount,
         notes: [],
       };
     }
