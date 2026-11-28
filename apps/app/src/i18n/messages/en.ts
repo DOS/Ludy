@@ -20070,6 +20070,11 @@ export const en = {
         record: 'Post the month\'s payroll entry',
         regime: 'Read the entity\'s accounting regime to pick the payroll accounts',
       },
+      books: {
+        cancel_regime: 'Take back the choice to move to Circular 99 before it takes effect',
+        regime_state: 'Read an entity\'s accounting regime and what blocks a switch',
+        set_regime: 'Choose to move an entity to Circular 99 accounting from 1 January',
+      },
       period: {
         closing_remind: 'Remind to lock a period',
         lock: 'Lock a period',

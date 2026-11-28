@@ -20070,6 +20070,11 @@ export const vi = {
         record: 'Ghi sổ bút toán lương tháng',
         regime: 'Xem chế độ kế toán của pháp nhân để chọn tài khoản hạch toán lương',
       },
+      books: {
+        cancel_regime: 'Hủy lựa chọn chuyển sang Thông tư 99 trước ngày hiệu lực',
+        regime_state: 'Xem chế độ kế toán của pháp nhân và việc gì đang chặn việc chuyển',
+        set_regime: 'Chọn chuyển pháp nhân sang chế độ kế toán Thông tư 99 từ ngày 1 tháng 1',
+      },
       period: {
         closing_remind: 'Nhắc khóa sổ kỳ kế toán',
         lock: 'Khóa sổ kỳ kế toán',
