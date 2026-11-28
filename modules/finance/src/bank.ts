@@ -307,7 +307,8 @@ export async function importStatement(ctx: CommandContext, input: BankStatementI
   );
   // Lines that need a look (a conflict is one too, #2191): the owners and admins are told (#671, finance.notification.dispatch).
   const toLookAt = preview.counts.ambiguous + preview.counts.conflict;
-  if (toLookAt > 0) await ctx.emit('finance.bank.imported', { importId, bankAccount: input.bankAccount, ambiguous: toLookAt });
+  // `ambiguous` is every line that needs a look, conflicts included, as it always was; `conflicts` says how many of them are references that came back with other figures (#2197), and is left out when there is none.
+  if (toLookAt > 0) await ctx.emit('finance.bank.imported', { importId, bankAccount: input.bankAccount, ambiguous: toLookAt, ...(preview.counts.conflict > 0 ? { conflicts: preview.counts.conflict } : {}) });
   return result;
 }
 
@@ -361,7 +362,7 @@ export async function ingestFeedLines(ctx: CommandContext, input: BankFeedIngest
   }
   // Lines that need a look (a conflict is one too, #2191): the owners and admins are told, as for an import (#671).
   const toLookAt = counts.ambiguous + counts.conflict;
-  if (toLookAt > 0) await ctx.emit('finance.bank.imported', { importId, bankAccount: input.bankAccount, ambiguous: toLookAt });
+  if (toLookAt > 0) await ctx.emit('finance.bank.imported', { importId, bankAccount: input.bankAccount, ambiguous: toLookAt, ...(counts.conflict > 0 ? { conflicts: counts.conflict } : {}) });
   return { importId, counts, breaks };
 }
 

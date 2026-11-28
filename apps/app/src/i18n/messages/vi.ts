@@ -1385,6 +1385,7 @@ export const vi = {
       task_rerouted: 'Việc chuyển đến bạn: {title}',
       tasks_rerouted: '{count, plural, other {# việc}} chuyển đến bạn',
       bank_attention: 'Sao kê tài khoản {account} có {lines, plural, other {# dòng}} cần xem lại',
+      bank_attention_conflicts: 'Sao kê tài khoản {account} có {lines, plural, other {# dòng}} cần xem lại, trong đó {conflicts, plural, other {# dòng}} có mã tham chiếu đã có nhưng khác ngày hoặc số tiền',
       portal_attention: 'Đối chiếu cổng thuế {period}: {summary}',
       portal_attention_sale: 'Đối chiếu hóa đơn bán ra với cổng thuế {period}: {summary}',
       portal_attention_missing: '{count, plural, other {# hóa đơn}} chưa có trong {brand}',

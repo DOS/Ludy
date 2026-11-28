@@ -1,6 +1,6 @@
 // Finance's in-app notifications (#671), written through the kernel's notifyMembers() (packages/kernel/src/notifications.ts):
 // - finance.bank_attention: a bank statement import left lines that need a look (ambiguous ones: the bank's file could
-//   not tell them apart from lines already there). The owners and admins, never the person who imported it.
+//   not tell them apart from lines already there; and conflicts, a reference that came back with another date or amount, #2197, named in detail.conflicts). The owners and admins, never the person who imported it.
 // - finance.portal_attention: the tax portal's purchase (or, with detail.direction 'sale', sales, #2141) list of a period was read, and the period has invoices the
 //   portal lists and Ludy does not, whose amounts differ, or that were cancelled or replaced on the portal while still in Ludy (#2152); or the list could not be read.
 //   The member who imported it, and the owners and admins.
@@ -51,14 +51,16 @@ export const notificationDispatch = defineCommand({
     if (!event) return { sent: 0 };
     switch (event.type) {
       case 'finance.bank.imported': {
-        const e = z.object({ importId: zId, bankAccount: z.string().max(50), ambiguous: z.number().int().positive() }).safeParse(event.payload);
+        // `ambiguous` counts every line that needs a look; `conflicts` (#2197, absent from an event written before it) is how many of them are references that came back with another date or amount.
+        const e = z.object({ importId: zId, bankAccount: z.string().max(50), ambiguous: z.number().int().positive(), conflicts: z.number().int().positive().optional() }).safeParse(event.payload);
         if (!e.success) return { sent: 0 };
+        const conflicts = Math.min(e.data.conflicts ?? 0, e.data.ambiguous);
         const sent = await notifyMembers(ctx, {
           kind: BANK_ATTENTION,
           users: await ownersAndAdmins(ctx),
           key: `bank_import:${e.data.importId}`,
           subject: { type: 'finance.bank_import', id: e.data.importId },
-          detail: { bankAccount: e.data.bankAccount, lines: String(e.data.ambiguous) },
+          detail: { bankAccount: e.data.bankAccount, lines: String(e.data.ambiguous), ...(conflicts > 0 ? { conflicts: String(conflicts) } : {}) },
           eventId: event.id,
           actor: event.actor,
         });
