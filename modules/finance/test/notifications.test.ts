@@ -1,7 +1,7 @@
 // When a period is called closing (#671): its VAT return is due within PERIOD_CLOSING_DAYS days and the lock does not
 // cover it. The notification itself is written in apps/kernel/test/notifications.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { PERIOD_CLOSING_DAYS, closingPeriod, periodEnd } from '../src/notifications.ts';
+import { PERIOD_CLOSING_DAYS, closingPeriod, periodEnd, portalAttentionDetail } from '../src/notifications.ts';
 
 describe('periodEnd', () => {
   it('is the last day of the month or quarter', () => {
@@ -32,5 +32,30 @@ describe('closingPeriod', () => {
     expect(closingPeriod('quarter', null, '2026-10-28')).toEqual({ period: '2026-Q3', dueDate: '2026-11-02' });
     expect(closingPeriod('quarter', '2026-09-30', '2026-10-30')).toBeNull();
     expect(closingPeriod('quarter', null, '2026-10-16')).toBeNull();
+  });
+});
+
+describe('portalAttentionDetail', () => {
+  it('fires when only voidInLudy > 0 for both purchase and sale lists, and skips clean 0/0/0 lists', () => {
+    expect(portalAttentionDetail({ period: '2026-09', status: 'done', direction: 'sale' }, { missing: 0, amountMismatch: 0, voidInLudy: 2 })).toEqual({
+      period: '2026-09',
+      missing: '0',
+      amountMismatch: '0',
+      voidInLudy: '2',
+      direction: 'sale',
+    });
+    expect(portalAttentionDetail({ period: '2026-09', status: 'done', direction: 'purchase' }, { missing: 0, amountMismatch: 0, voidInLudy: 1 })).toEqual({
+      period: '2026-09',
+      missing: '0',
+      amountMismatch: '0',
+      voidInLudy: '1',
+    });
+    expect(portalAttentionDetail({ period: '2026-09', status: 'done', direction: 'purchase' }, { missing: 0, amountMismatch: 0, voidInLudy: 0 })).toBeNull();
+    expect(portalAttentionDetail({ period: '2026-09', status: 'done', direction: 'sale' }, { missing: 0, amountMismatch: 0, voidInLudy: 0 })).toBeNull();
+    expect(portalAttentionDetail({ period: '2026-09', status: 'failed', direction: 'sale' })).toEqual({
+      period: '2026-09',
+      failed: 'true',
+      direction: 'sale',
+    });
   });
 });
