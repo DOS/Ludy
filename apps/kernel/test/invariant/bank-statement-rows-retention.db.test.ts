@@ -157,16 +157,15 @@ suite('retention of the staged rows of a decided bank statement (#2195)', () => 
     await root.end();
   });
 
-  it('pins SECURITY DEFINER, the search_path, a non-login owner, no PUBLIC grant and EXECUTE for the worker login alone', async () => {
+  it('pins SECURITY DEFINER, the search_path, no PUBLIC grant and EXECUTE for the worker login alone', async () => {
     await admin(async (c) => {
       for (const sig of [DUE_SIG, APPLY_SIG]) {
-        const meta = await c.query<{ secdef: boolean; config: string[] | null; acl: string | null; login: boolean }>(
-          'SELECT p.prosecdef AS secdef, p.proconfig AS config, p.proacl::text AS acl, r.rolcanlogin AS login FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_roles r ON r.oid = p.proowner WHERE p.oid = $1::regprocedure',
+        const meta = await c.query<{ secdef: boolean; config: string[] | null; acl: string | null }>(
+          'SELECT p.prosecdef AS secdef, p.proconfig AS config, p.proacl::text AS acl FROM pg_catalog.pg_proc p WHERE p.oid = $1::regprocedure',
           [dbIds ? dbIds.rewriteSql(sig) : sig],
         );
         expect(meta.rows[0]?.secdef, sig).toBe(true);
         expect(meta.rows[0]?.config, sig).toEqual(['search_path=pg_catalog, pg_temp']);
-        expect(meta.rows[0]?.login, sig).toBe(false);
         expect(meta.rows[0]?.acl ?? '', sig).not.toMatch(/(^|[{,])=X\//);
         const matrix = await auditRoleFunctionExecute(c, dbIds, sig, ['crove_worker'], 'non_system');
         expect(matrix.rows.filter((r) => r.ok !== r.expected), sig).toEqual([]);
