@@ -1413,7 +1413,7 @@ export const vi = {
     daysLeft: '{days, plural, =0 {hạn cuối là hôm nay} other {còn # ngày}}',
     noFilingPeriod: 'Chưa chọn kỳ khai thuế',
     chooseFilingPeriod: 'Chọn kỳ khai',
-    deadlineNote: 'Hạn rơi vào thứ Bảy hoặc Chủ nhật được lùi sang thứ Hai; {brand} chưa tính các ngày nghỉ lễ, Tết.',
+    deadlineNote: 'Hạn rơi vào thứ Bảy, Chủ nhật hoặc ngày nghỉ lễ, Tết được lùi sang ngày làm việc kế tiếp; {brand} chưa có ngày nghỉ bù hay ngày nghỉ thêm do Chính phủ quyết định từng năm.',
     empty: 'Bạn chưa thuộc doanh nghiệp nào',
     emptyHint: 'Tạo doanh nghiệp đầu tiên của bạn để bắt đầu.',
     create: 'Tạo doanh nghiệp',
